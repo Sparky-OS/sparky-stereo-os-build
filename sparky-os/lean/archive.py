@@ -227,6 +227,30 @@ def selector_matches(token, obj, arch):
     return fnmatch.fnmatchcase(name, token)
 
 
+def policy_priority(data, obj, arch):
+    """The priority an APT preferences file gives this package version, by its version records: the first record whose
+    Package tokens name it and whose "Pin: version GLOB" matches its version (apt_preferences(5): "The first specific-form
+    record matching an available package version determines the priority of the package version"); None when no such
+    record names it. Records pinned by release or origin do not say anything about one supplied version here."""
+    for paragraph in data.decode(errors='replace').split('\n\n'):
+        fields = {}
+        for line in paragraph.splitlines():
+            if ':' in line and not line.startswith('#'):
+                key, value = line.split(':', 1)
+                fields[key.strip()] = value.strip()
+        tokens = fields.get('Package', '').split()
+        pin = fields.get('Pin', '')
+        if not tokens or not pin.startswith('version ') or 'Pin-Priority' not in fields:
+            continue
+        if fnmatch.fnmatchcase(obj['Version'], pin[len('version '):].strip()) and \
+                any(selector_matches(token, obj, arch) for token in tokens):
+            try:
+                return int(fields['Pin-Priority'])
+            except ValueError:
+                return None
+    return None
+
+
 def hard_dependencies(obj):
     """Names a package needs in every plan: a Depends or Pre-Depends group with one alternative."""
     names = set()
@@ -940,6 +964,14 @@ class Archive:
         (directory / 'policy-attempts.json').write_text(json.dumps(attempts, indent=2) + '\n')
         raise last_error
 
+    def candidate_priority(self, owner, candidate):
+        """The priority owner's preferences files give the candidate's own version, or None."""
+        for data in self.preferences(owner).values():
+            found = policy_priority(data, candidate['control'], self.arch)
+            if found is not None:
+                return found
+        return None
+
     def check_policies(self, candidate, inputs, local, directory, args, installed):
         """Every coinstallable policy must also install the case, when the plan uses a name a policy pins.
 
@@ -978,6 +1010,16 @@ class Archive:
                             if conflict_edge(obj, other, self.arch) or conflict_edge(other, obj, self.arch)]
                 if blockers:
                     row['result'] = 'skipped: conflicts with ' + ', '.join(sorted(set(blockers)))
+                    continue
+                # A candidate that one policy locks (1000 or more) and this one pins out (under 1000, "never preferred
+                # while the locked version is available") belongs to the other policy's stack: its exact relations
+                # are the other stack's, and this policy's own packages are not the ones it asks for.
+                mine = self.candidate_priority(item, candidate)
+                owners_of = [other for other in alternatives if other is not item
+                             if (self.candidate_priority(other, candidate) or 0) >= 1000]
+                if mine is not None and mine < 1000 and owners_of:
+                    row['result'] = ('skipped: this version is pinned at %d by %s and locked by %s' %
+                                     (mine, obj['Package'], ', '.join(sorted(o['control']['Package'] for o in owners_of))))
                     continue
                 if [selected['sha256'] for selected in chosen] == [item['sha256']]:
                     row['result'] = 'selected solve'

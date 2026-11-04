@@ -39,7 +39,7 @@ KEY_SHA256=25100d6f2eccaee7d6719a70e3c0c6145064aa9edc2c32148f693ac4c524a376
 # ships without one (its i386 packages, cuda-drivers) get it, byte for byte (carry.py stage)
 COPYRIGHT_SHA256=9a9f6ab4e21ac09ea5a6fbb8a721ae0192220959471fba5d9daeb07a60022253
 MODV=$(dpkg-parsechangelog -l "$MODULE/debian/changelog" -S Version)
-VERSION=$MODV+lc1
+VERSION=${CARRY_VERSION:-$MODV+lc1}   # CARRY_VERSION: rebuild a carried set at its own version (ONLY names the packages to build)
 NV=${MODV%%+sparky*}
 [ "$(head -n1 "$HERE/changelog" | sed -n 's/^@SOURCE@ (\([^)]*\)) .*binary-only=yes$/\1/p')" = "$VERSION" ] ||
 	{ echo "the first entry of $HERE/changelog is not for $VERSION, the module's version with +lc1" >&2; exit 1; }
@@ -83,6 +83,7 @@ dpkg-deb --fsys-tarfile "$deb" | tar -xO ./usr/share/doc/nvidia-driver/copyright
 n=0
 while IFS=$'\t' read -r package arch file size digest; do
 	case $package in '#'* | '') continue ;; esac
+	[ -z "${ONLY:-}" ] || case " $ONLY " in *" $package "*) ;; *) continue ;; esac
 	deb=$(nvidia_deb "$file" "$size" "$digest")
 	w=$WORK/p/${package}_$arch
 	python3 -I "$HERE/carry.py" stage "$deb" "$NV" "$VERSION" "$HERE/packages.tsv" "$HERE/changelog" \

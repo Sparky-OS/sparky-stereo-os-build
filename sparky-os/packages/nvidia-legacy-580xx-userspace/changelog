@@ -14,6 +14,13 @@
     the homepage, the bug tracker and a note in the description; where
     NVIDIA's package ships ELF files and declares no dependency at all
     (libnvidia-nscq), the dependency dpkg-shlibdeps derives from them.
+  * nvidia-kernel-support does not Provide, Conflict with or Replace
+    nvidia-detect, as NVIDIA's package does (NVIDIA's own nvidia-detect is
+    an empty transitional package). On Debian nvidia-detect is the real
+    detector, Hardware Setup runs /usr/bin/nvidia-detect, the two packages
+    share no file, and with the Provides apt 3.3's dist-upgrade replaced
+    Debian's nvidia-detect with nvidia-kernel-support (ORDER 390). Its other
+    Provides, Conflicts and Replaces are NVIDIA's.
   * Added: README.sparky-stereo, this entry and the Lean Code manifest,
     which records every NVIDIA file as kept as NVIDIA ships it; and, in the
     packages NVIDIA ships without one (its i386 packages, cuda-drivers),

@@ -142,6 +142,15 @@ def rewrite_relation(value, names, nv_version, version):
     return re.sub(r'([a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?)\s*\(\s*(=)\s*([^)\s]+)\s*\)', one, value)
 
 
+def drop_relation(value, name):
+    """The relation list without the entries naming `name`. NVIDIA's nvidia-kernel-support Provides, Conflicts and Replaces
+    nvidia-detect because NVIDIA's own nvidia-detect is an empty transitional package; on Debian nvidia-detect is the real
+    detector (/usr/bin/nvidia-detect, which Hardware Setup runs), shares no file with nvidia-kernel-support, and must stay:
+    with the Provides, apt 3.3's dist-upgrade replaced it with this package, which has no such command (ORDER 390)."""
+    kept = [entry for entry in (e.strip() for e in value.split(',')) if entry and entry.split(' ')[0].split(':')[0] != name]
+    return ', '.join(kept)
+
+
 def payload(tar_bytes):
     """{path: (kind, mode, sha256 or link target, owner)} of a .deb's data archive."""
     out = {}
@@ -235,6 +244,8 @@ def stage(deb, nv_version, version, packages_path, changelog, readme, copyright_
             continue
         elif key in RELATIONS:
             value = rewrite_relation(value, names, nv_version, version)
+            if package == 'nvidia-kernel-support' and key in ('Provides', 'Conflicts', 'Replaces'):
+                value = drop_relation(value, 'nvidia-detect')
         elif low == 'description':
             value += ('\n .\n Sparky Stereo OS: NVIDIA\'s ' + package + ' ' + nv_version + ' for Debian 12, its files'
                       '\n byte for byte as NVIDIA ships them, for the Maxwell, Pascal and Volta'
@@ -330,6 +341,8 @@ def verify(built, nvidia_json):
             problems.append(f'control {key}: {control.get(key)!r}, NVIDIA {nvidia.get(key)!r}')
     for key in RELATIONS:
         want = rewrite_relation(nvidia[key], set(ref['names']), ref['nv_version'], ref['version']) if key in nvidia else None
+        if want and nvidia.get('Package') == 'nvidia-kernel-support' and key in ('Provides', 'Conflicts', 'Replaces'):
+            want = drop_relation(want, 'nvidia-detect')
         if key == 'Depends' and ref['added_depends']:
             want = ref['added_depends']
         if key == 'Breaks':

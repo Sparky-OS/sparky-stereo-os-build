@@ -28,3 +28,19 @@ Pin-Priority: -1
 Package: deb-multimedia-keyring
 Pin: release o=Sparky Stereo OS
 Pin-Priority: 400
+
+# NVIDIA's 580 user space, which the edition carries from NVIDIA's own Debian 12 packages for Maxwell, Pascal and Volta
+# (ORDER 354), is a candidate only where one of the two driver locks raises it: sparky-stereo-nvidia-legacy-580xx-driver-lock
+# gives it 1005 in 09sparky-stereo-nvidia-legacy-580xx-driver-lock, and the main lock gives it 100; both files sort before
+# this one, and apt_preferences(5) says "The first specific-form record matching an available package version determines
+# the priority of the package version", so a lock decides first and this record only applies with no lock. Without it the
+# general record above (1001) made these binaries the candidates on every system, and apt 3.3's solver, in a
+# dist-upgrade, treats a package as obsolete when another binary of its source package has a higher source version at an
+# equal or higher priority (apt-pkg/depsolver.cc, ObsoletedByNewerSourceVersion): Debian's nvidia-detect 550 (source
+# nvidia-graphics-drivers) was replaced by our nvidia-kernel-support 580, which Provides, Conflicts and Replaces it, and
+# nvidia-modprobe 580 came with it, on a machine whose hardware setup had chosen no NVIDIA stack (measured, r1103a). The
+# set is the one the locks name (the source packages NVIDIA's own nvidia-driver-pinning package pins, and cuda-drivers*),
+# only from this repository: NVIDIA's CUDA repository and Debian are not matched.
+Package: src:nvidia-graphics-drivers:any src:nvidia-open:any cuda-drivers* src:nvidia-modprobe src:nvidia-persistenced src:nvidia-settings src:nvidia-xconfig src:libnvidia-nscq src:libnvsdm src:nvidia-fabricmanager src:nvidia-imex
+Pin: release o=Sparky Stereo OS
+Pin-Priority: -1
