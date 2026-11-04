@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.6
+VERSION=0.1.6+lc1
 PACKAGE=sparky-stereo-cec
 COPY=${COPY_RECIPE:-$HERE/../../../tools/copy-recipe.py}
 TOOLKIT=$(cd "$HERE/../.." && pwd)
