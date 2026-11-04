@@ -62,5 +62,5 @@ repair_json="$repair_json,\"$driver\",\"$dir\""
 for attr in "$@"; do repair_json="$repair_json,\"$attr\""; done
 repair_json="$repair_json]"
 echo "sparky-stereo-wheel-access: $driver: $failed could not be set up for the $GROUP group: $reason" >&2
-"$ENGINE" keep --machine --repair "[$repair_json]" "$PACKAGE" "$key" LOCAL2 "$driver" "$failed" "$reason" || exit 1
+"$ENGINE" keep --machine --repair "$repair_json" "$PACKAGE" "$key" LOCAL2 "$driver" "$failed" "$reason" || exit 1
 exit 1
