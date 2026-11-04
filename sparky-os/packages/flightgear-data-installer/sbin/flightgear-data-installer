@@ -1,0 +1,341 @@
+#!/bin/bash
+# Created by Daniel Ramos (Capitain Jack) 2026/11/04
+# Copyright 2026 under the GNU GPL3 License
+# Fetches FlightGear's own data release, checks its recorded SHA-256 and unpacks it where FlightGear looks for it.
+# Usage: flightgear-data-installer [install] [--file FILE]   |   --purge   |   --check
+set -euo pipefail
+umask 022
+LIB=/usr/share/flightgear-data-installer
+LANGDIR=/usr/share/sparky/flightgear-data-installer
+CACHE=/var/cache/flightgear-data-installer
+STATE=/var/lib/flightgear-data-installer
+DATA_DIR=/usr/share/games/flightgear
+MIRROR_URL=
+[ -r /etc/default/flightgear-data-installer ] && . /etc/default/flightgear-data-installer
+. "$LIB/recorded"
+case $MIRROR_URL in
+	'') FETCH_URL=$URL ;;
+	https://* | file:///*) FETCH_URL=$MIRROR_URL ;;
+	*) FETCH_URL=$URL ;;
+esac
+
+load_language() {
+	# the whole locale first, then its language; English is always loaded under it
+	local l v cand
+	. "$LANGDIR/en"
+	for v in "${LC_ALL:-}" "${LC_MESSAGES:-}" "${LANG:-}"; do
+		[ -n "$v" ] && { l=$v; break; }
+	done
+	l=${l:-C}
+	l=${l%%.*}
+	l=${l%%@*}
+	case $l in
+		pt | pt_*) cand=pt_BR ;;
+		zh_TW | zh_HK | zh_MO) cand=zh_TW ;;
+		zh | zh_*) cand=zh_CN ;;
+		*) cand=${l%%_*} ;;
+	esac
+	case $cand in
+		de | fr | ja | ko | pl | pt_BR | zh_CN | zh_TW) [ -r "$LANGDIR/$cand" ] && . "$LANGDIR/$cand" ;;
+	esac
+	return 0
+}
+
+say() {
+	local key=$1
+	shift
+	local -n fmt="MSG_$key"
+	# shellcheck disable=SC2059
+	printf "flightgear-data-installer: $fmt\n" "$@"
+}
+die() {
+	local key=$1
+	shift
+	local -n fmt="MSG_$key"
+	# shellcheck disable=SC2059
+	printf "flightgear-data-installer: $fmt\n" "$@" >&2
+	if [ -n "$KEPT_FILE" ] && [ -f "$KEPT_FILE" ]; then
+		# shellcheck disable=SC2059
+		printf "flightgear-data-installer: $MSG_KEPT\n" "$CACHE" >&2
+	fi
+	exit 1
+}
+
+human() {
+	local b=$1
+	if [ "$b" -ge 1073741824 ]; then
+		printf '%d.%02d GiB' $((b / 1073741824)) $((b % 1073741824 * 100 / 1073741824))
+	else
+		printf '%d.%d MiB' $((b / 1048576)) $((b % 1048576 * 10 / 1048576))
+	fi
+}
+avail() {
+	local dir=$1 blocks size
+	while [ ! -d "$dir" ]; do dir=$(dirname "$dir"); done
+	read -r blocks size < <(stat -f -c '%a %S' "$dir")
+	echo $((blocks * size))
+}
+devof() {
+	local dir=$1
+	while [ ! -d "$dir" ]; do dir=$(dirname "$dir"); done
+	stat -c %d "$dir"
+}
+
+KEPT_FILE=
+STAGE=
+WATCHER=
+LINKING=
+PENDING=$STATE/pending
+CURL_LOG=
+cleanup() {
+	local rc=$?
+	trap - EXIT
+	[ -n "$WATCHER" ] && kill "$WATCHER" 2>/dev/null || true
+	if [ -n "$LINKING" ]; then
+		# nothing half-made: what this run linked into place is taken out again
+		remove_listed "$PENDING.files" "$PENDING.dirs"
+		rm -f "$PENDING.files" "$PENDING.dirs"
+	fi
+	[ -n "$STAGE" ] && rm -rf "$STAGE"
+	[ -n "$CURL_LOG" ] && rm -f "$CURL_LOG"
+	exit "$rc"
+}
+
+remove_listed() {
+	local files=$1 dirs=$2 f d
+	if [ -f "$files" ]; then
+		while IFS= read -r f; do
+			rm -f -- "$f"
+		done <"$files"
+	fi
+	if [ -f "$dirs" ]; then
+		# deepest first; a directory that still holds something of someone else stays
+		while IFS= read -r d; do
+			rmdir -- "$d" 2>/dev/null || true
+		done < <(sort -r "$dirs")
+	fi
+}
+
+check_tools() {
+	local t pkg
+	for t in curl:curl tar:tar xz:xz-utils sha256sum:coreutils flock:util-linux find:findutils stat:coreutils; do
+		pkg=${t#*:}
+		command -v "${t%%:*}" >/dev/null 2>&1 || die TOOL "${t%%:*}" "$pkg"
+	done
+}
+
+sha_of() {
+	sha256sum -- "$1" | cut -d' ' -f1
+}
+
+data_ok() {
+	# our record says the data is here: every file we listed is there, and the version is the recorded one
+	[ -f "$STATE/installed" ] || return 1
+	[ "$(cat "$STATE/installed")" = "$DATA_VERSION $SHA256" ] || return 1
+	[ -f "$STATE/files.list" ] || return 1
+	local f
+	while IFS= read -r f; do
+		[ -e "$f" ] || return 1
+	done <"$STATE/files.list"
+	return 0
+}
+
+forget_ours() {
+	remove_listed "$STATE/files.list" "$STATE/dirs.list"
+	remove_listed "$PENDING.files" "$PENDING.dirs"
+	rm -f "$STATE/installed" "$STATE/files.list" "$STATE/dirs.list" "$PENDING.files" "$PENDING.dirs"
+}
+
+download() {
+	local dest=$1 have=0 dev
+	[ -f "$dest" ] && have=$(stat -c %s "$dest")
+	if [ "$have" -gt "$SIZE" ]; then
+		rm -f "$dest"
+		have=0
+	fi
+	[ "$have" -eq "$SIZE" ] && return 0
+	if [ "$have" -gt 0 ]; then
+		say RESUMING "$(human "$have")" "$(human "$SIZE")"
+	else
+		say DOWNLOADING "$DATA_VERSION" "$(human "$SIZE")"
+	fi
+	CURL_LOG=$(mktemp "$CACHE/curl.XXXXXX")
+	local opts=(--location --fail --silent --show-error --proto '=https,file' --proto-redir '=https' --retry 3
+		--retry-delay 5 --connect-timeout 30 --speed-limit 1000 --speed-time 60 -C - -o "$dest")
+	if [ -t 2 ]; then
+		opts+=(--progress-bar)
+	else
+		(
+			exec 9>&-
+			while sleep 15; do
+				[ -f "$dest" ] || continue
+				cur=$(stat -c %s "$dest")
+				say PROGRESS "$(human "$cur")" "$(human "$SIZE")" "$((cur * 100 / SIZE))"
+			done
+		) &
+		WATCHER=$!
+	fi
+	if ! curl "${opts[@]}" "$FETCH_URL" 2>"$CURL_LOG"; then
+		[ -n "$WATCHER" ] && kill "$WATCHER" 2>/dev/null || true
+		WATCHER=
+		local why
+		why=$(tr '\r' '\n' <"$CURL_LOG" | grep -v '^[# ]*[0-9.]*%*$' | tail -n 1)
+		die DOWNLOAD "$FETCH_URL" "${why:-curl}" "$CACHE" "$FILE_NAME"
+	fi
+	[ -n "$WATCHER" ] && kill "$WATCHER" 2>/dev/null || true
+	WATCHER=
+	[ -t 2 ] && echo >&2
+	return 0
+}
+
+install_data() {
+	local userfile=$1 tarball got need_cache need_data
+	[ "$(id -u)" -eq 0 ] || die ROOT
+	check_tools
+	mkdir -p "$CACHE" "$STATE"
+	exec 9>"$CACHE/lock"
+	flock -n 9 || die BUSY
+	rm -rf "$(dirname "$DATA_DIR")"/.flightgear-data-installer.* "$CACHE"/curl.* "$CACHE"/tar.*
+	trap cleanup EXIT
+	# a run that stopped half way is taken out first, then our own incomplete or damaged data
+	if [ -f "$PENDING.files" ]; then
+		remove_listed "$PENDING.files" "$PENDING.dirs"
+		rm -f "$PENDING.files" "$PENDING.dirs"
+	fi
+	if [ -z "$userfile" ] && data_ok; then
+		say PRESENT "$DATA_VERSION" "$DATA_DIR"
+		return 0
+	fi
+	if [ -f "$STATE/files.list" ]; then
+		forget_ours
+	fi
+
+	if [ -n "$userfile" ]; then
+		[ -f "$userfile" ] && [ -r "$userfile" ] || die FILE "$userfile"
+		say USING_FILE "$userfile"
+		tarball=$userfile
+	else
+		tarball=$CACHE/$FILE_NAME
+	fi
+
+	# the room both steps need, said before anything is fetched
+	local have=0
+	[ -z "$userfile" ] && [ -f "$tarball" ] && have=$(stat -c %s "$tarball")
+	need_cache=0
+	[ -z "$userfile" ] && need_cache=$((SIZE > have ? SIZE - have : 0))
+	need_data=$((UNPACKED + UNPACKED / 20))
+	mkdir -p "$(dirname "$DATA_DIR")"
+	if [ "$(devof "$CACHE")" = "$(devof "$DATA_DIR")" ]; then
+		[ "$(avail "$CACHE")" -ge $((need_cache + need_data)) ] ||
+			die SPACE "$CACHE" "$(human $((need_cache + need_data)))" "$(human "$(avail "$CACHE")")"
+	else
+		[ "$(avail "$CACHE")" -ge "$need_cache" ] || die SPACE "$CACHE" "$(human "$need_cache")" "$(human "$(avail "$CACHE")")"
+		[ "$(avail "$DATA_DIR")" -ge "$need_data" ] || die SPACE "$(dirname "$DATA_DIR")" "$(human "$need_data")" "$(human "$(avail "$DATA_DIR")")"
+	fi
+
+	[ -z "$userfile" ] && download "$tarball"
+	say VERIFYING
+	got=$(sha_of "$tarball")
+	if [ "$got" != "$SHA256" ]; then
+		if [ -z "$userfile" ]; then
+			rm -f "$tarball"
+			die HASH "$got" "$SHA256"
+		fi
+		die HASH_FILE "$got" "$SHA256"
+	fi
+
+	[ -z "$userfile" ] && KEPT_FILE=$tarball
+	say UNPACKING "$DATA_DIR"
+	STAGE=$(mktemp -d "$(dirname "$DATA_DIR")/.flightgear-data-installer.XXXXXX")
+	local err
+	err=$(mktemp "$CACHE/tar.XXXXXX")
+	if ! xz -dc -- "$tarball" 2>"$err" | tar -x --no-same-owner --no-same-permissions -C "$STAGE" 2>>"$err"; then
+		local why
+		why=$(tail -n 1 "$err")
+		rm -f "$err"
+		die UNPACK "${why:-xz or tar}"
+	fi
+	rm -f "$err"
+	local root=$STAGE/$TOP
+	[ -d "$root" ] || die UNPACK "$TOP"
+	[ "$(tr -d '[:space:]' <"$root/version" 2>/dev/null)" = "$DATA_VERSION" ] ||
+		die VERSION "$(tr -d '[:space:]' <"$root/version" 2>/dev/null || echo '-')" "$DATA_VERSION"
+	# Debian's own data package does the same: no world-writable files, scripts that are run stay executable
+	find "$root" -type d -exec chmod 755 {} +
+	find "$root" -type f -exec chmod 644 {} +
+	local s
+	for s in Textures/Trees/convert.pl Aircraft/Instruments-3d/FG1000/Nasal/MFDPages/createpgs.pl; do
+		[ -f "$root/$s" ] && chmod 755 "$root/$s"
+	done
+
+	# every path is checked before anything is placed: a file that is already there and is not ours stops the install
+	: >"$PENDING.files"
+	: >"$PENDING.dirs"
+	local rel src target d
+	if [ ! -d "$DATA_DIR" ]; then
+		d=$DATA_DIR
+		while [ ! -d "$d" ]; do
+			echo "$d" >>"$PENDING.dirs"
+			d=$(dirname "$d")
+		done
+	fi
+	while IFS= read -r -d '' rel; do
+		src=$rel
+		rel=${rel#"$root"/}
+		target=$DATA_DIR/$rel
+		if [ -d "$src" ] && [ ! -L "$src" ]; then
+			if [ -e "$target" ] || [ -L "$target" ]; then
+				[ -d "$target" ] && [ ! -L "$target" ] || { rm -f "$PENDING.files" "$PENDING.dirs"; die CONFLICT "$target"; }
+			else
+				echo "$target" >>"$PENDING.dirs"
+			fi
+		else
+			if [ -e "$target" ] || [ -L "$target" ]; then
+				rm -f "$PENDING.files" "$PENDING.dirs"
+				die CONFLICT "$target"
+			fi
+			echo "$target" >>"$PENDING.files"
+		fi
+	done < <(find "$root" -mindepth 1 -print0)
+
+	mkdir -p "$DATA_DIR"
+	LINKING=1
+	if ! cp -al "$root/." "$DATA_DIR/" 2>"$STAGE/.cp-error"; then
+		die UNPACK "$(tail -n 1 "$STAGE/.cp-error")"
+	fi
+	LINKING=
+	printf '%s %s\n' "$DATA_VERSION" "$SHA256" >"$STATE/installed.new"
+	mv "$PENDING.files" "$STATE/files.list"
+	mv "$PENDING.dirs" "$STATE/dirs.list"
+	mv "$STATE/installed.new" "$STATE/installed"
+	rm -rf "$STAGE"
+	STAGE=
+	[ -z "$userfile" ] && rm -f "$tarball"
+	say DONE "$DATA_VERSION" "$DATA_DIR"
+}
+
+purge_data() {
+	[ "$(id -u)" -eq 0 ] || die ROOT
+	forget_ours
+	rm -rf "$CACHE" "$STATE"
+	return 0
+}
+
+load_language
+case ${1:-install} in
+	install)
+		userfile=
+		if [ "${2:-}" = --file ]; then
+			userfile=${3:-}
+			[ -n "$userfile" ] || die FILE ''
+		fi
+		install_data "$userfile"
+		;;
+	--file)
+		[ -n "${2:-}" ] || die FILE ''
+		install_data "$2"
+		;;
+	--purge) purge_data ;;
+	--check) data_ok ;;
+	*) die USAGE ;;
+esac

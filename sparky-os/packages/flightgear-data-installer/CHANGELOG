@@ -1,0 +1,9 @@
+-------------------------------------------------------------------------------
+  Version 2024.1.5-1 (2026-11-04)
+-------------------------------------------------------------------------------
+  * New (ORDER 399; Daniel, 2026-10-31: "we do not host it", "small downloader is better"): fetches FlightGear's 2024.1.5
+    data release from its SourceForge release page, checks the recorded SHA-256, unpacks it in /usr/share/games/flightgear,
+    Provides flightgear-data-all, -base, -ai and -models at 1:2024.1.5. Debian removed flightgear-data from testing on
+    16 October (bug #1146394), so flightgear could not be installed.
+  * Every failure (no network, a partial download, a hash that differs, no room, a file of another package in the way, a
+    wrong version) stops and says what failed, why and what to do, in the nine languages; nothing half-unpacked is left.
