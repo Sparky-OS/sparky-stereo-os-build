@@ -7,6 +7,9 @@
 # the ones the kernel adds for it (drivers/gpu/drm/drm_edid.c, stereo_mandatory_modes).
 # When a desktop session is reachable it also says what each display is doing now, read
 # with kscreen-doctor -o (read-only). Nothing here changes a mode or a setting.
+# A probe that is missing, times out or fails is said in the stack block ("could not be read" or
+# "could not be checked", with the tool and why), never left out or reported as "not announced"
+# (ORDER 346f-3, U41; Daniel, 2026-11-01: "either it works or not and the user must know").
 
 set -eu
 
@@ -31,16 +34,56 @@ fi
 
 pnp_ids=/usr/share/hwdata/pnp.ids
 
+# probe SECONDS COMMAND...: runs a read-only probe; its output is in $probe_out, its status in $probe_rc and the
+# first line of its error text in $probe_err
+probe() {
+    probe_secs=$1
+    shift
+    probe_errfile=$(mktemp)
+    probe_out=$(timeout "$probe_secs" "$@" 2> "$probe_errfile") && probe_rc=0 || probe_rc=$?
+    probe_err=$(head -n 1 "$probe_errfile" | cut -c 1-200)
+    rm -f "$probe_errfile"
+}
+
+# why_failed TOOL SECONDS: the cause of the probe that just failed, in words
+why_failed() {
+    case $probe_rc in
+        124) echo "$1 did not answer within $2 seconds" ;;
+        126 | 127) echo "$1 could not be run${probe_err:+ ($probe_err)}" ;;
+        *) echo "$1 exited with status $probe_rc${probe_err:+ ($probe_err)}" ;;
+    esac
+}
+
+# notes: what could not be read, one line each, shown in the stack block
+notes=
+note() {
+    notes="${notes:+$notes
+}  $1"
+}
+
 # What the desktop session says, when there is one (not over SSH or on a console).
 state=
-if { [ -n "${WAYLAND_DISPLAY:-}" ] || [ -n "${DISPLAY:-}" ]; } && command -v kscreen-doctor > /dev/null 2>&1; then
-    state=$(timeout 10 kscreen-doctor -o 2> /dev/null | sed 's/\x1b\[[0-9;]*m//g') || state=
-fi
-
-# The stereo and HDR switches of each output, from the same session (kscreen-doctor -j, read-only).
 json=
-if [ -n "$state" ]; then
-    json=$(timeout 10 kscreen-doctor -j 2> /dev/null) || json=
+if [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
+    if ! command -v kscreen-doctor > /dev/null 2>&1; then
+        note "Live display state, not read: kscreen-doctor is not installed"
+    else
+        probe 10 kscreen-doctor -o
+        if [ "$probe_rc" = 0 ]; then
+            state=$(printf '%s\n' "$probe_out" | sed 's/\x1b\[[0-9;]*m//g')
+            # The stereo and HDR switches of each output, from the same session (kscreen-doctor -j, read-only).
+            if [ -n "$state" ]; then
+                probe 10 kscreen-doctor -j
+                if [ "$probe_rc" = 0 ]; then
+                    json=$probe_out
+                else
+                    note "Stereo and HDR switches of the displays, not read: $(why_failed "kscreen-doctor -j" 10)"
+                fi
+            fi
+        else
+            note "Live display state, not read: $(why_failed "kscreen-doctor -o" 10)"
+        fi
+    fi
 fi
 
 # The value of key $2 of output $1 in that JSON, empty when the key is not there.
@@ -141,8 +184,23 @@ live() {
 egl=
 vulkan=
 if [ -z "$keys" ]; then
-    command -v eglinfo > /dev/null 2>&1 && egl=$(timeout 30 eglinfo -B 2> /dev/null | sed -n '/^Device platform:/,$p') || true
-    command -v vulkaninfo > /dev/null 2>&1 && vulkan=$(timeout 30 vulkaninfo --summary 2> /dev/null) || true
+    if ! command -v eglinfo > /dev/null 2>&1; then
+        note "OpenGL renderer of each card, not read: eglinfo is not installed"
+    else
+        probe 30 eglinfo -B
+        [ "$probe_rc" = 0 ] || note "OpenGL renderer of each card, not read completely: $(why_failed eglinfo 30)"
+        egl=$(printf '%s\n' "$probe_out" | sed -n '/^Device platform:/,$p')
+    fi
+    if ! command -v vulkaninfo > /dev/null 2>&1; then
+        note "Vulkan device of each card, not read: vulkaninfo is not installed"
+    else
+        probe 30 vulkaninfo --summary
+        if [ "$probe_rc" = 0 ]; then
+            vulkan=$probe_out
+        else
+            note "Vulkan device of each card, not read: $(why_failed vulkaninfo 30)"
+        fi
+    fi
 fi
 
 card_opengl() {
@@ -212,19 +270,33 @@ stack() {
     [ -z "$edition" ] || echo "$edition"
     echo "  Kernel: $(uname -r)"
     if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wayland-info > /dev/null 2>&1; then
-        version=$(timeout 10 wayland-info 2> /dev/null | sed -n "s/.*interface: 'kde_stereo_content_manager_v1', *version: *\([0-9]*\).*/\1/p" | head -n 1)
-        if [ -n "$version" ]; then
-            echo "  Compositor stereo: announced (kde_stereo_content_manager_v1, version $version)"
+        probe 10 wayland-info
+        if [ "$probe_rc" != 0 ]; then
+            echo "  Compositor stereo: could not be checked ($(why_failed wayland-info 10))"
         else
-            echo "  Compositor stereo: not announced"
+            version=$(printf '%s\n' "$probe_out" | sed -n "s/.*interface: 'kde_stereo_content_manager_v1', *version: *\([0-9]*\).*/\1/p" | head -n 1)
+            if [ -n "$version" ]; then
+                echo "  Compositor stereo: announced (kde_stereo_content_manager_v1, version $version)"
+            else
+                echo "  Compositor stereo: not announced"
+            fi
         fi
     elif [ -n "${DISPLAY:-}" ] && command -v xprop > /dev/null 2>&1; then
-        version=$(timeout 10 xprop -root _KDE_NET_WM_STEREO_CONTENT_SUPPORTED 2> /dev/null | sed -n 's/.*= *\([0-9]*\).*/\1/p')
-        if [ -n "$version" ]; then
-            echo "  Compositor stereo: announced (_KDE_NET_WM_STEREO_CONTENT_SUPPORTED, version $version)"
+        probe 10 xprop -root _KDE_NET_WM_STEREO_CONTENT_SUPPORTED
+        if [ "$probe_rc" != 0 ]; then
+            echo "  Compositor stereo: could not be checked ($(why_failed xprop 10))"
         else
-            echo "  Compositor stereo: not announced"
+            version=$(printf '%s\n' "$probe_out" | sed -n 's/.*= *\([0-9]*\).*/\1/p')
+            if [ -n "$version" ]; then
+                echo "  Compositor stereo: announced (_KDE_NET_WM_STEREO_CONTENT_SUPPORTED, version $version)"
+            else
+                echo "  Compositor stereo: not announced"
+            fi
         fi
+    elif [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        echo "  Compositor stereo: could not be checked (wayland-info is not installed)"
+    elif [ -n "${DISPLAY:-}" ]; then
+        echo "  Compositor stereo: could not be checked (xprop is not installed)"
     fi
     if command -v dpkg-query > /dev/null 2>&1; then
         packages=$(dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' kwin-wayland mesa-libgallium libgl1-mesa-dri mesa-vulkan-layer-stereo libstereo-declare1 libkf6screen8 libkscreen-bin kscreen libnvidia-egl-wayland1 2> /dev/null | sed -n 's/^[a-z]i  *//p' | awk '!listed[$1]++') || packages=
@@ -233,6 +305,7 @@ stack() {
             printf '%s\n' "$packages" | sed 's/^/    /'
         fi
     fi
+    [ -z "$notes" ] || printf '%s\n' "$notes"
     echo
 }
 [ -n "$keys" ] || { mark stack -; stack; }
