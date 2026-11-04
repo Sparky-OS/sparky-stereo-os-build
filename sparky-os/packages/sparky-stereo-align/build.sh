@@ -7,7 +7,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the output directory}
-VERSION=0.1.2+lc1
+VERSION=0.1.3+lc1
 PKG=sparky-stereo-align
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.$PKG.XXXXXX")
@@ -27,8 +27,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: python3, python3-pil, sparky-stereo-integration (>= 0.1.0)
-Enhances: hugin-tools
+Depends: python3, python3-pil, hugin-tools, sparky-stereo-integration (>= 0.1.0)
 Section: Utilities
 Priority: optional
 Homepage: https://sparkylinux.org

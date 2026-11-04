@@ -64,11 +64,30 @@ t_happy_unchanged() {
 	check "normal run wrote the aligned file" test -f /tmp/u44/base-aligned.pns
 }
 
+t_missing_align_image_stack() {
+	local out rc
+	rm -f /tmp/u44/base-aligned.pns
+	out=$(env -i LANG=en_US.UTF-8 "$TOOL" pns -- /tmp/u44/base.png /tmp/u44/pair-right.png 2>&1) && rc=0 || rc=$?
+	check "missing align_image_stack fails the run" test "$rc" -ne 0
+	check "missing align_image_stack is said in the tool's own words" grep -q "align_image_stack is not installed" <<<"$out"
+	check "missing align_image_stack gives no traceback" bash -c '! grep -q Traceback <<<"$0"' "$out"
+	check "no aligned file was written without the tool" bash -c '! ls /tmp/u44/base-aligned.pns >/dev/null 2>&1'
+}
+
+t_missing_align_image_stack_german() {
+	local out rc
+	out=$(env -i LANG=de_DE.UTF-8 "$TOOL" pns -- /tmp/u44/base.png /tmp/u44/pair-right.png 2>&1) && rc=0 || rc=$?
+	check "german missing align_image_stack fails the run" test "$rc" -ne 0
+	check "german missing align_image_stack is said" grep -q "nicht installiert" <<<"$out"
+}
+
 setup
 t_pair_with_missing_eye
 t_both_missing_named
 t_directory_named
 t_missing_named_german
 t_happy_unchanged
+t_missing_align_image_stack
+t_missing_align_image_stack_german
 [ "$FAILS" -eq 0 ] || { echo "$FAILS test(s) failed"; exit 1; }
 echo "all tests passed"

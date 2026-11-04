@@ -230,6 +230,8 @@ def read_plain(path):
 # ---- Hugin -------------------------------------------------------------------------------------------
 
 def align(left, right, tmp):
+    if not shutil_which('align_image_stack'):
+        raise Fail(S['10'])
     for n, im in (('0', left), ('1', right)):
         im.save(os.path.join(tmp, f'eye{n}.tif'), compression='tiff_lzw')
     cmd = ['align_image_stack', '-S', '--use-given-order', '--align-to-first', '-a', os.path.join(tmp, 'aligned')]
