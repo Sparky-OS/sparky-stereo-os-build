@@ -189,6 +189,25 @@ tree=/unused
         self.assertNotIn('transaction', files)
         self.assertTrue(result.stderr.strip())
 
+    def test_link_check_that_cannot_be_prepared_stops_before_the_build(self):
+        prepare = block('\n\t# 4b.', '\n\t# every processor')
+        with tempfile.TemporaryDirectory(prefix='fdk-lc-') as tmp:
+            setup = ('B=%s; BUILD_USER=$(id -un); BINS=fdk402-ghost-a,fdk402-ghost-b; VER=1; host_arch=amd64; LC_ROOT_GB=0\n'
+                     'as_user() { bash -c "$1"; }\n' % tmp)
+            result, files = self.execute('success', setup + prepare)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('The link check of the new build could not be prepared', result.stderr)
+        self.assertNotIn('transaction', files)
+        self.assertIn('--rebuild', files['problems']['build']['text'])
+
+    def test_link_check_has_room_floor_on_root(self):
+        prepare = block('\n\t# 4b.', '\n\t# every processor')
+        with tempfile.TemporaryDirectory(prefix='fdk-lc-') as tmp:
+            setup = ('B=%s; BUILD_USER=$(id -un); BINS=a; VER=1; host_arch=amd64; LC_ROOT_GB=99999999\n' % tmp)
+            result, files = self.execute('success', setup + prepare)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Not enough room in /', result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
