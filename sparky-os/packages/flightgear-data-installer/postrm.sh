@@ -1,9 +1,11 @@
 #!/bin/sh
 # postrm script
 set -e
-# The program is already gone when purge runs, so the purge is written out here: every file and directory this
-# package placed is in the lists it kept, and only those are removed.
-if [ "$1" = "purge" ]; then
+# The data leaves with the package, on remove as well as on purge, as Debian's data packages and
+# ttf-mscorefonts-installer do (ORDER 399b): every file and directory this package placed is in the lists it kept, and
+# only those are removed, with what was downloaded. The program is already gone by now, so this is written out here.
+# An upgrade (postrm upgrade of the old version) leaves the data where it is.
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
 	S=/var/lib/flightgear-data-installer
 	for l in files.list pending.files; do
 		[ -f "$S/$l" ] || continue

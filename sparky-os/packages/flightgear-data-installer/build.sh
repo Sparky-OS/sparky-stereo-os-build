@@ -19,6 +19,10 @@ trap 'rm -rf "$W"' EXIT
 COPY="$HERE/../../../tools/copy-recipe.py"
 python3 "$COPY" "$HERE" "$W/inputs"
 I=$W/inputs
+# the install-time download this package declares in its control file is the recorded one (size and source), read once
+# from the file the program reads, so the two cannot differ
+# shellcheck source=/dev/null
+. "$I/recorded"
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/sbin" "$D/usr/share/$PKG" "$D/usr/share/sparky/$PKG" "$D/usr/share/doc/$PKG" "$D/etc/default"
 install -m 755 "$I/sbin/flightgear-data-installer" "$D/usr/sbin/flightgear-data-installer"
@@ -29,6 +33,7 @@ install -m 644 "$I/copyright" "$I/README.md" "$D/usr/share/doc/$PKG/"
 install -m 755 "$I/postinst.sh" "$D/DEBIAN/postinst"
 install -m 755 "$I/postrm.sh" "$D/DEBIAN/postrm"
 printf '/etc/default/flightgear-data-installer\n' >"$D/DEBIAN/conffiles"
+SIZE_BYTES=$SIZE
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOS
 Package: $PKG
@@ -39,6 +44,8 @@ Installed-Size: $SIZE
 Depends: bash (>= 4.3), ca-certificates, curl, xz-utils
 Provides: flightgear-data-all (= $DATA), flightgear-data-base (= $DATA), flightgear-data-ai (= $DATA), flightgear-data-models (= $DATA)
 Conflicts: flightgear-data-all, flightgear-data-base, flightgear-data-ai, flightgear-data-models
+Install-Download-Size: $SIZE_BYTES
+Install-Download-Source: $URL
 Section: games
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -46,11 +53,11 @@ Description: Fetches FlightGear's data from FlightGear's release page
   FlightGear needs about two gigabytes of data (aircraft, scenery, sounds,
   models). The edition does not host it: this small package downloads
   FlightGear's own data release 2024.1.5 from FlightGear's release page on
-  SourceForge, checks it against the SHA-256 recorded here, and unpacks it in
+  SourceForge in parallel byte ranges, checks it against the SHA-256 recorded here, and unpacks it in
   /usr/share/games/flightgear. A download that fails, a file that does not
   match or a computer with no network stops the installation and says what
   failed and what to do, in nine languages; nothing half-unpacked is left.
-  Purging the package removes the data it unpacked.
+  Removing the package removes the data it unpacked.
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | grep -v '^etc/' | sort | xargs md5sum) >"$D/DEBIAN/md5sums"
 mkdir -p "$OUT"
