@@ -8,6 +8,8 @@
 set -u
 B=/build; W=/workspace/gl-stereo; RIG=$(dirname "$0")
 export DEBIAN_FRONTEND=noninteractive
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts /run/host-ca.crt and /run/https-only-apt.sh read-only
+sh /run/https-only-apt.sh || exit 1
 log() { echo "$(date +%T) $*" >> $B/requalify.log; }
 user() { setpriv --reuid=1000 --regid=1000 --groups=125 env -i HOME=$B/home PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 bash $RIG/requalify-steps.sh "$1"; }
 mkdir -p $B/home; chown 1000:1000 $B $B/home

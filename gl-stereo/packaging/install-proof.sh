@@ -5,11 +5,13 @@ export DEBIAN_FRONTEND=noninteractive
 mkdir -p /build/proof-home
 export HOME=/build/proof-home
 rm -f /etc/apt/apt.conf.d/docker-clean
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): in-rootfs.sh binds the helper and the host CA bundle into this root
+sh /run/https-only-apt.sh
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' >/etc/apt/preferences.d/stereo-rig
 apt-get -y update
 apt-get -y --no-install-recommends install gpgv
 dpkg -i /var/local/sparky-stereo-repo/carried/deb-multimedia-keyring_2024.9.1_all.deb
-printf '%s\n' 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] http://www.deb-multimedia.org forky main' >/etc/apt/sources.list.d/deb-multimedia.list
+printf '%s\n' 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main' >/etc/apt/sources.list.d/deb-multimedia.list
 apt-get -y update
 packages=()
 if [ "${1:-}" != --dependencies-only ]; then

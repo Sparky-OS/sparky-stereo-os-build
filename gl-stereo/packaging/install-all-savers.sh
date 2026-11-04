@@ -4,6 +4,8 @@ set -euo pipefail
 test -e /.dockerenv
 test "$(id -u)" = 0
 export DEBIAN_FRONTEND=noninteractive
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts /run/host-ca.crt and /run/https-only-apt.sh read-only
+sh /run/https-only-apt.sh
 apt-get -y --reinstall --no-install-recommends install /packages/gl-stereo*_0.3.0-1_*.deb /packages/libstereoshow*_0.3.0-1_*.deb /packages/xscreensaver*_6.09+dfsg1-2+stereo3d2_*.deb plasma-desktop=4:6.7.4-1+stereo3d1
 mkdir -p /build/home
 chown 1000:1000 /build/home /home/stereo-test
