@@ -2016,6 +2016,9 @@ def verify(P, names, deep=False):
     pkgs = dpkg_packages(P, db)
     bad = back = 0
     built_count = 0
+    # information, never a problem (ORDER 398): an earlier renderer's form that restore takes back from its original,
+    # and a file dpkg-stereo did not project that something else rewrote after the install
+    older = unprojected = 0
     # --deep files whose original could not be had: never counted as checked (U57)
     unchecked = {}
     deb_errors = {}
@@ -2038,10 +2041,20 @@ def verify(P, names, deep=False):
                     good = os.path.islink(P.real(path)) and os.readlink(P.real(path)) == row['target']
             except OSError:
                 good = False
-            if not good:
-                print(f'LCCHANGED {path} (differs from its build-time payload; user edits remain untouched)')
-                bad += 1
+            if good:
+                continue
+            if row['status'] != 'projected' and os.path.lexists(P.real(path)):
+                # --deep checks the rows dpkg-stereo did not project too, for the payload's own bytes: a maintainer
+                # script, a trigger or the person may rewrite one after the install (depmod's modules.dep, the
+                # os-release and issue files), and dpkg-stereo leaves it; it is said, not counted
+                print(f'AFTERINST {path} ({text("LOCAL78")})')
+                unprojected += 1
+                continue
+            print(f'LCCHANGED {path} (differs from its build-time payload; user edits remain untouched)')
+            bad += 1
     sums_cache = {}
+    owners = dict(_installed(P, db))
+    metadata = {}
     # --deep reads each .deb once: the records go package by package, and one package's originals at a time
     items = sorted(files.items(), key=(lambda kv: (kv[1]['package'], kv[1]['version'], kv[0])) if deep else None)
     group, from_deb, wanted = None, {}, {}
@@ -2104,6 +2117,13 @@ def verify(P, names, deep=False):
                 continue
         if orig is not None:
             reason, detail = conffile_projection.projection_matches(path, orig, data, rec['package'])
+            if reason == 'projection-mismatch' and deep and rec.get('conffile') != '1' and \
+                    recorded_projection(P, path, rec, orig, data, owners, metadata, any_renderer=True)[0] == 'ok':
+                # restore's own checks (owner, version, md5sums, the original's digests, the installed bytes)
+                # accept this file, so restore takes it back from its original: an earlier renderer's form
+                print(f'OLDFORM   {path} ({text("LOCAL77")})')
+                older += 1
+                continue
             if reason != 'ok':
                 print(f'MISMATCH  {path} ({reason}: {detail})')
                 bad += 1
@@ -2138,6 +2158,8 @@ def verify(P, names, deep=False):
     print(f'dpkg-stereo: {len(files) - lost} projected files checked, {bad} problems'
           + (f', {back} in their package\'s own bytes (restored, not projected)' if back else '')
           + f', {built_count} lc1 package manifests checked'
+          + (f', {text("LOCAL79", [older])}' if older else '')
+          + (f', {text("LOCAL80", [unprojected])}' if unprojected else '')
           + (f', {sum(map(len, waiting.values()))} C and C++ files of {len(waiting)} package versions waiting for '
              f'their .deb (PENDING)' if waiting else '')
           + (f', {lost} files NOT checked against their package (NODEB)' if lost else '')

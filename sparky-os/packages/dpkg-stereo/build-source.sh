@@ -42,6 +42,16 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * dpkg-stereo --verify --deep exits 0 on a healthy system (ORDER 398):
+    a file an earlier renderer projected, which restore takes back from its
+    original, and a file dpkg-stereo did not project that a maintainer
+    script rewrote after the install, are information with their own
+    labels and counts and no longer problems. Real damage stays counted.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 04 Nov 2026 14:00:00 +0000
+
+dpkg-stereo (0.1.36) unstable; urgency=medium
+
   * Carry Lean Code 0.1.28: every Lean Code build leaves a build record
     beside its .deb files (ORDER 394b). Includes 0.1.35's alternative-policy
     ordering.
