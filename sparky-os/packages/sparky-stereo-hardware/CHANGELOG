@@ -1,4 +1,9 @@
 -------------------------------------------------------------------------------
+  Version 0.1.23 (2026-11-04)
+-------------------------------------------------------------------------------
+  * After Hardware Setup switches NVIDIA stacks (the open modules and 615 to the 580 driver, or back), the previous stack's own leftovers go and the run says which (ORDER 390; Daniel, 2026-10-07: "we don't grow so fast, and when grow self prune", and never a general `apt autoremove`, which on his host would remove CUDA). Measured in clean containers: after a switch to 580, firmware-nvidia-gsp 615.71.09-2 stayed installed beside the 580 user space; after a switch to 615, libnvidia-egl-wayland1 and libwayland-server0 stayed. They are the packages the previous stack's own packages needed, that nothing needs now and that apt would autoremove; packages that were already unneeded before the switch, packages nobody installed for the NVIDIA stack, and everything the person installed stay. The removal is simulated first and must remove exactly these; if it would remove anything else, or apt fails, nothing more is removed and the run says so (two new messages, LOCAL59 and LOCAL60, in the nine languages)
+
+-------------------------------------------------------------------------------
   Version 0.1.22 (2026-11-03)
 -------------------------------------------------------------------------------
   * Let Repair wait for a running apt or dpkg operation before installing NVIDIA's

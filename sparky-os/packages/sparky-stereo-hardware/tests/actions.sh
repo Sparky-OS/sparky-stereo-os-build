@@ -315,6 +315,72 @@ setup_nvidia
 refute grep -q 'apt-get -y purge' "$calls"
 echo 'PASS the open modules after NVIDIA 580: its lock and module purged first (and only when installed); a failed purge stops and says so'
 
+# A switch between the NVIDIA stacks removes the previous stack's own leftovers, never a general autoremove. The doubles stand
+# for apt: what was unneeded before, what the previous stack needed, what is unneeded now, and what a purge would remove.
+unneeded_now=
+unneeded_before_switch=
+stack_closure=
+purge_plan=
+nvidia_stack_closure() { printf '%s\n' $stack_closure | sort -u; }
+unneeded_packages() {
+	if [[ ${unit_phase:-0} == 1 ]] || grep -q 'install nvidia-driver=' "$calls"; then printf '%s\n' $unneeded_now | sort -u; else printf '%s\n' $unneeded_before_switch | sort -u; fi
+}
+apt-get() {
+	echo "apt-get $*" >>"$calls"
+	if [[ $* == *--simulate*purge* ]]; then
+		if [[ -n $purge_plan ]]; then set -- $purge_plan; else set -- "${@:4}"; fi
+		for package; do printf 'Purg %s [1] \n' "$package"; done
+	fi
+}
+module_version=615.71.09-2+stereo3d4
+installed_packages="$LEGACY_LOCK $LEGACY_MODULE $REPO"
+unit_phase=1
+stack_closure="firmware-nvidia-gsp libnvidia-egl-wayland21 libwayland-server0 libc6"
+unneeded_now="firmware-nvidia-gsp libwayland-server0 orphan-before unrelated-orphan"
+before_switch="orphan-before unrelated-orphan-x"
+: >"$calls"
+remove_previous_stack_leftovers "$(printf '%s\n' $before_switch | sort -u)" "$(nvidia_stack_closure)" >"$T/out"
+grep -Fxq 'NVIDIA: removed the previous driver stack'"'"'s leftovers: firmware-nvidia-gsp libwayland-server0' "$T/out"
+grep -Fxq 'DEBIAN_FRONTEND=noninteractive apt-get -y purge firmware-nvidia-gsp libwayland-server0' "$calls"
+refute grep -q 'autoremove' "$calls"
+refute grep -Fq 'orphan-before' "$T/out"
+refute grep -Fq 'unrelated-orphan' "$calls"
+echo 'PASS a switch removes only what the previous stack needed and nothing needs now: not a package that was unneeded before, not an unrelated unneeded package, never autoremove'
+: >"$calls"
+purge_plan="firmware-nvidia-gsp libwayland-server0 something-else"
+fails_with 'NVIDIA: removing the previous driver stack.s leftovers firmware-nvidia-gsp libwayland-server0 would also remove other packages' remove_previous_stack_leftovers "orphan-before" "$(nvidia_stack_closure)"
+refute grep -q 'apt-get -y purge' "$calls"
+purge_plan=
+fail_stale=1
+: >"$calls"
+fails_with 'NVIDIA: the previous driver stack.s leftovers firmware-nvidia-gsp libwayland-server0 could not be removed' remove_previous_stack_leftovers "orphan-before" "$(nvidia_stack_closure)"
+fail_stale=0
+unneeded_now="orphan-before"
+: >"$calls"
+remove_previous_stack_leftovers "orphan-before" "$(nvidia_stack_closure)" >"$T/out"
+grep -Fxq 'NVIDIA: the previous driver stack left nothing behind' "$T/out"
+refute grep -q 'apt-get -y purge' "$calls"
+echo 'PASS a purge that would remove more, a failed purge and a switch with nothing left each say so; nothing is removed unsafely'
+# setup_nvidia ties it together: the record is taken while the other stack is installed, the removal comes after the driver
+unit_phase=0
+unneeded_now="firmware-nvidia-gsp"
+unneeded_before_switch=
+stack_closure="firmware-nvidia-gsp libc6"
+installed_packages="$LOCK $REPO $LEGACY_LOCK $LEGACY_MODULE"
+: >"$calls"
+setup_nvidia >"$T/out"
+install_line=$(line_of "$DRIVER_LINE")
+leftover_line=$(line_of 'DEBIAN_FRONTEND=noninteractive apt-get -y purge firmware-nvidia-gsp')
+[[ -n $install_line && -n $leftover_line ]] && ((install_line < leftover_line))
+installed_packages="$LOCK $REPO"
+unneeded_now="firmware-nvidia-gsp"
+: >"$calls"
+setup_nvidia >"$T/out"
+refute grep -q 'purge firmware-nvidia-gsp' "$calls"
+installed_packages=
+unset -f apt-get nvidia_stack_closure unneeded_packages
+echo 'PASS setup_nvidia removes the leftovers after the new driver is in, and only when it switched from the other stack'
+
 # Rig drivers: every refusal says why.
 uname() { echo "${kernel_name:-7.3.1-stereo3d14}"; }
 fails_with 'Wheel driver evdi-dkms: not one of the wheel drivers' setup_rig_driver evdi-dkms
