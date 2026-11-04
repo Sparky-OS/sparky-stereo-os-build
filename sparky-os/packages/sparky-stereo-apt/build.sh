@@ -80,7 +80,11 @@ Signed-By: /usr/share/keyrings/deb-multimedia-keyring.pgp
 EOS
 cp "$HERE/../../apt/sparky-stereo" "$D/etc/apt/preferences.d/sparky-stereo"
 # Debian's and deb-multimedia's builds of our packages, and Debian's tasks, are blocked (generated from the repository index)
-python3 "$HERE/../../apt/make-only-ours.py" "${REPO:-${SPARKY_REPO_DIR:?}}" >/dev/null
+# KEEP_ONLY_OURS=1 keeps the file as it is in the tree (a rebuild for a change that does not touch the block list, ORDER 399b);
+# the publication round regenerates it over its cohort as before.
+if [ "${KEEP_ONLY_OURS:-0}" != 1 ]; then
+	python3 "$HERE/../../apt/make-only-ours.py" "${REPO:-${SPARKY_REPO_DIR:?}}" >/dev/null
+fi
 cp "$HERE/../../apt/sparky-stereo-only-ours" "$D/etc/apt/preferences.d/sparky-stereo-only-ours"
 chmod 644 "$D/etc/apt/sources.list.d/sparky-stereo.sources" "$D/etc/apt/sources.list.d/sparky-stereo-deb-multimedia.sources" \
 	"$D/etc/apt/preferences.d/sparky-stereo" "$D/etc/apt/preferences.d/sparky-stereo-only-ours"
