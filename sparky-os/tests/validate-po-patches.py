@@ -54,6 +54,7 @@ def parse_patch_sections(patch_text, errors, patch_name):
     hunk_open = False
     old_count = new_count = counted_old = counted_new = 0
     hunk_start_line = 0
+    last_hunk_line = False
 
     def close_section():
         nonlocal section
@@ -62,7 +63,7 @@ def parse_patch_sections(patch_text, errors, patch_name):
             section = None
 
     def close_hunk():
-        nonlocal hunk_open, counted_old, counted_new, hunk_start_line
+        nonlocal hunk_open, counted_old, counted_new, hunk_start_line, last_hunk_line
         if hunk_open and (counted_old != old_count or counted_new != new_count):
             errors.append("%s: hunk at line %d: expected %d/%d lines, got %d/%d"
                           % (patch_name, hunk_start_line, old_count, new_count,
@@ -70,28 +71,21 @@ def parse_patch_sections(patch_text, errors, patch_name):
         hunk_open = False
         counted_old = counted_new = 0
         hunk_start_line = 0
+        last_hunk_line = False
 
     while index < len(lines):
         number = index + 1
         line = lines[index]
         index += 1
 
-        if hunk_open:
-            if line == r"\ No newline at end of file":
-                if counted_old <= old_count or counted_new <= new_count:
-                    continue
-                errors.append("%s: line %d: misplaced no-newline marker" % (patch_name, number))
+        if line == r"\ No newline at end of file":
+            if section is not None and last_hunk_line:
                 continue
-            first = line[:1]
-            if not (section is not None and first in ("+", "-", " ")):
-                errors.append("%s: line %d: line outside hunk: %s"
-                              % (patch_name, number, line or "<blank>"))
-                close_hunk()
-                continue
-            if first != "+":
-                old_count += 1
-            if first != "-":
-                new_count += 1
+            errors.append("%s: line %d: misplaced no-newline marker" % (patch_name, number))
+            continue
+
+        if hunk_open and line[:1] in {"+", "-", " "}:
+            first = line[0]
             if first == "+" or first == "-":
                 section["added"].append(line[1:])
             if first != "-":
@@ -103,7 +97,13 @@ def parse_patch_sections(patch_text, errors, patch_name):
                               % (patch_name, hunk_start_line))
             elif counted_old == old_count and counted_new == new_count:
                 hunk_open = False
+                last_hunk_line = True
+                continue
+            last_hunk_line = True
             continue
+
+        if hunk_open:
+            close_hunk()
 
         if line.startswith("diff --git "):
             close_hunk()
