@@ -56,6 +56,11 @@ It also avoids a circular bootstrap: a module can require a firmware version tha
 An unrelated package takes no conditional policy unless its dependency solve needs one.
 A failed subset is retained in `case-*/policy-attempts.json` with its solver log; failure of every subset refuses the case.
 Space, timeout and other execution errors stop immediately, rather than being treated as a different policy choice.
+Under a selected alternative policy the gate gives no pin of its own to a supplied package that policy's records name, so those records order it as they do on an installed system: the first specific record that matches a version decides its priority ([apt_preferences(5)](https://manpages.debian.org/testing/apt/apt_preferences.5.en.html)), and the other stack's supplied versions no longer outrank the lock.
+The archive may then supply such a name, as on an installed system.
+When the selected plan uses a name an alternative policy pins, the case is solved again under each other alternative policy it can be installed with, and every one must succeed (`case-*/policy-checks.json`).
+A policy is skipped, with the reason recorded, when it conflicts with the candidate, with a package of the plan that is not a policy owner, or with a policy owner the plan needs in every case (a Depends group with one alternative).
+A failure under any other policy is a failure of the case.
 This is what lets an exact dependency take an archive version that is not the newest: APT's solver takes only the candidate for an exact dependency (apt 2.9.17, "Reject all non-candidates outright for strict pinning"), so `nvidia-kernel-open-dkms-stereo3d`'s `firmware-nvidia-gsp (= 615.71.09-2)` resolves from the CUDA repository only with sparky-stereo-nvidia-driver-lock's pin, as on an installed edition (ORDER 329).
 APT's `--no-strict-pinning` would solve it without the lock, but an installed system does not, so the gate would pass what a person's APT refuses.
 Each case records the files it applied, their packages and hashes, in `case-*/preferences.json` and in `resolution.json`.

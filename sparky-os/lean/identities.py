@@ -53,6 +53,10 @@ RELEASED = {
     # ORDER 390: alternative driver policies in archive qualification.
     '0.1.26': {'9a83b16f4d70007e2aa7b82f6eef9a99119fb8953462ec4f8e0d516551fddef0':
                'lean 0.1.26 (collapse-blank,pointer,c-drop-lines) code 9a83b16f4d70007e'},
+    # ORDER 390: a selected alternative policy orders the names it pins as on an installed system; a case that uses a
+    # pinned name must install under every coinstallable policy.
+    '0.1.27': {'3ee1f0b77127a873731534113f4b41dfd53b55a2606bece7d684804693b79a72':
+               'lean 0.1.27 (collapse-blank,pointer,c-drop-lines) code 3ee1f0b77127a873'},
 }
 
 # Digests that built under a label without being its released renderer: never accepted.

@@ -685,3 +685,52 @@ def test_a_policy_can_conflict_with_its_own_virtual_name(context, tmp_path):
     q = context.qualify(deb(tmp_path, 'consumer', depends='policy'), [policy])
     assert [p['package'][0] for p in manifest(q)['preferences']] == ['policy']
     q.close()
+
+
+def alternative_locks(tmp_path):
+    main = deb(tmp_path, 'main-lock', arch='all', extra='Conflicts: legacy-lock\n', files={
+        'etc/apt/preferences.d/10main-lock': LOCK_TEXT})
+    legacy = deb(tmp_path, 'legacy-lock', arch='all', extra='Conflicts: main-lock\n', files={
+        'etc/apt/preferences.d/09legacy-lock': LOCK_TEXT.replace(b'version 1', b'version 2')})
+    return main, legacy
+
+
+def test_a_selected_policy_orders_the_names_it_pins_as_on_an_installed_system(two_firmwares, tmp_path):
+    # The other stack's supplied identity of a name the main lock pins (here firmware 3, as libcuda1 580 is
+    # beside the main lock's 615) must not outrank the lock's own records: the lock's firmware 1 at 1005 wins,
+    # as it does on a system where the edition's repository gives the supplied version only a general pin.
+    context = archive.Archive(two_firmwares, tmp_path / 'scratch', 'amd64')
+    main, legacy = alternative_locks(tmp_path)
+    other_stack = deb(tmp_path, 'firmware', '3', arch='all')
+    module = deb(tmp_path, 'main-module', depends='main-lock, firmware (= 1)')
+    q = context.qualify(module, [main, legacy, other_stack])
+    rows = manifest(q)
+    assert ('firmware', '1', 'all') in [tuple(r['identity']) for r in rows['packages']]
+    assert {p['package'][0] for p in rows['preferences']} == {'main-lock'}
+    checks = json.loads((q.directory / 'policy-checks.json').read_text())
+    assert checks['named_by_policy'] == ['firmware']
+    assert [c['result'] for c in checks['checks']] == ['skipped: conflicts with main-lock', 'selected solve']
+    q.close()
+
+
+def test_a_case_that_uses_a_pinned_name_must_install_under_each_coinstallable_policy(two_firmwares, tmp_path):
+    context = archive.Archive(two_firmwares, tmp_path / 'scratch', 'amd64')
+    main, legacy = alternative_locks(tmp_path)
+    # Installable under the main lock only, and nothing in its plan conflicts with the legacy lock.
+    bound = deb(tmp_path, 'bound-to-one-stack', depends='firmware (= 1)')
+    with pytest.raises(package.Invalid, match=r'installable without legacy-lock but not under it'):
+        context.qualify(bound, [main, legacy])
+    # Installable under every policy.
+    open_case = deb(tmp_path, 'either-stack', depends='firmware')
+    q = context.qualify(open_case, [main, legacy])
+    checks = json.loads((q.directory / 'policy-checks.json').read_text())
+    assert [c['result'] for c in checks['checks']] == ['selected', 'selected'] or \
+        sorted(c['result'] for c in checks['checks']) == ['selected', 'selected solve']
+    q.close()
+    # A case that needs one stack's lock is not asked to install under the other.
+    needs_main = deb(tmp_path, 'needs-main', depends='main-lock, firmware (= 1)')
+    context.qualify(needs_main, [main, legacy]).close()
+    # A case that uses no pinned name is solved once.
+    q = context.qualify(deb(tmp_path, 'plain'), [main, legacy])
+    assert json.loads((q.directory / 'policy-checks.json').read_text())['checks'] == []
+    q.close()
