@@ -39,14 +39,14 @@ Package: sparky-stereo-nvidia-legacy-580xx-driver-lock
 Architecture: all
 Multi-Arch: foreign
 Depends: ${misc:Depends}
+Conflicts: sparky-stereo-nvidia-driver-lock
 XB-Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
 Description: Keep NVIDIA's driver at the version of the 580 kernel module
  An APT preferences file, generated from this package's version, that keeps
  every NVIDIA driver package at ${nvidia:Version}, the version
  nvidia-legacy-580xx-kernel-dkms is built for, and never installs another
- NVIDIA kernel module package. It sorts before
- sparky-stereo-nvidia-driver-lock's file and names the same packages, so it
- decides while it is installed: a newer driver from NVIDIA's repositories,
+ NVIDIA kernel module package. It conflicts with the open driver lock, so
+ only the selected stack's policy is installed. A newer driver from NVIDIA's repositories,
  which no longer runs Maxwell, Pascal and Volta cards, cannot replace the
  580 driver.
  .

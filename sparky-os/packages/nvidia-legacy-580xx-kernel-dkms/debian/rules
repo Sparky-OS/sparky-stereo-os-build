@@ -13,15 +13,17 @@ LOCK := debian/sparky-stereo-nvidia-legacy-580xx-driver-lock
 
 override_dh_auto_configure override_dh_auto_build override_dh_auto_test override_dh_auto_clean:
 
-override_dh_auto_install:
+override_dh_auto_install-arch:
 	mkdir -p $(MOD)/usr/src/nvidia-$(NV_UPSTREAM)
 	tar --exclude=./debian --exclude=./.pc --exclude=./.sparky-lc -cf - . | tar -xf - -C $(MOD)/usr/src/nvidia-$(NV_UPSTREAM)
+
+override_dh_auto_install-indep:
 	mkdir -p $(LOCK)/etc/apt/preferences.d
 	sed 's/@NV_VERSION@/$(NV_VERSION)/g' debian/nvidia-driver-lock.in >$(LOCK)/etc/apt/preferences.d/09sparky-stereo-nvidia-legacy-580xx-driver-lock
 	! grep -q '@NV_VERSION@' $(LOCK)/etc/apt/preferences.d/09sparky-stereo-nvidia-legacy-580xx-driver-lock
 	grep -q '^Pin: version $(NV_VERSION)\*$$' $(LOCK)/etc/apt/preferences.d/09sparky-stereo-nvidia-legacy-580xx-driver-lock
 
-override_dh_dkms:
+override_dh_dkms-arch:
 	dh_dkms -p nvidia-legacy-580xx-kernel-dkms -V $(NV_UPSTREAM)
 
 override_dh_gencontrol:

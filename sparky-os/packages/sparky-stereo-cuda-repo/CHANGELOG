@@ -1,4 +1,9 @@
 -------------------------------------------------------------------------------
+  Version 20261104~sparky9~0 (2026-11-04)
+-------------------------------------------------------------------------------
+  * Accept either NVIDIA driver lock so both driver stacks can use CUDA sources
+
+-------------------------------------------------------------------------------
   Version 20261101.2~sparky9~0 (2026-11-01)
 -------------------------------------------------------------------------------
   * A source of the person's own for NVIDIA's repository is kept untouched, and the package then writes none of its own: two sources for one URI with different Signed-By stop apt ("Conflicting values set for option Signed-By"), as on Daniel's host. The pins still apply, since they go by origin. The postinst says which it did. So the source is no longer a conffile: the postinst writes it from /usr/share/sparky-stereo-cuda-repo only when no other source names the repository, and the postrm removes it (ORDER 342, Opus's review)

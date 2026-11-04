@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import hashlib
 import io
+import itertools
+from functools import lru_cache
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -123,6 +125,61 @@ def preference_names(paths):
         if path.parent == PREFERENCES_PARTS and path.name not in ('', '.', '..') and '\n' not in path.name:
             names.add(path.name)
     return sorted(names)
+
+
+def policy_relations(value):
+    """Binary Conflicts/Provides entries; dependency choices remain entirely APT's job."""
+    for entry in value.split(','):
+        if not entry.strip():
+            continue
+        match = re.fullmatch(r'\s*([a-z0-9][a-z0-9+.-]*)(?::([a-z0-9-]+))?'
+                             r'(?:\s*\((<<|<=|=|>=|>>)\s*([^\s()]+)\))?\s*', entry)
+        if not match:
+            raise package.Invalid(f'unsupported binary policy relationship: {entry!r}')
+        yield match.groups()
+
+
+@lru_cache(maxsize=4096)
+def version_matches(version, operator, wanted):
+    result = subprocess.run(['dpkg', '--compare-versions', version, operator, wanted])
+    if result.returncode not in (0, 1):
+        raise package.Invalid(f'invalid policy version comparison: {version} {operator} {wanted}')
+    return result.returncode == 0
+
+
+def conditional_policies(inputs, arch):
+    """Policy owners in a real Conflicts edge in this supplied universe, in either direction.
+
+    Match concrete and versioned virtual names, including one-sided conflicts. A self-conflict
+    through Provides does not exclude the providing package (Debian Policy 7.5).
+    The final APT solve still validates the complete selected closure, including archive packages.
+    """
+    providers = {}
+    for item in inputs:
+        obj = item['control']
+        aliases = [(obj['Package'], None, '=', obj['Version'])] + list(policy_relations(obj.get('Provides', '')))
+        for name, qualifier, operator, version in aliases:
+            if qualifier not in (None, 'any', 'native', arch):
+                continue
+            providers.setdefault(name, []).append((item, version))
+    conditional = set()
+    for item in inputs:
+        for name, qualifier, operator, wanted in policy_relations(item['control'].get('Conflicts', '')):
+            if qualifier not in (None, 'any', 'native', arch):
+                continue
+            for other, version in providers.get(name, ()):
+                if item is other:
+                    continue
+                if operator and (version is None or not version_matches(version, operator, wanted)):
+                    continue
+                for owner in (item, other):
+                    if owner['preferences']:
+                        conditional.add(owner['sha256'])
+    return conditional
+
+
+class PolicySolveFailure(package.Invalid):
+    """APT refused this policy selection; another coinstallable selection may resolve it."""
 
 
 def identity(obj):
@@ -460,7 +517,7 @@ class Archive:
         self.scratch.mkdir(parents=True, exist_ok=True)
         self.ensure_space(1 << 20)
         self._inputs, self._indexes, self._active, self._records = {}, set(), set(), {}
-        self._preferences, self.policy = {}, []
+        self._preferences, self.policy, self._conditional = {}, [], {}
         self.universes = self.scratch / 'universes'
         self.universes.mkdir(exist_ok=True)
         self.base = Path(tempfile.mkdtemp(prefix=f'link-{arch}-', dir=self.scratch))
@@ -566,7 +623,7 @@ class Archive:
     def ensure_space(self, required=0):
         space(self.scratch, required, self.minimum, self.root_minimum)
 
-    def run(self, args, label, nothing_found=False):
+    def run(self, args, label, nothing_found=False, policy_solve=False):
         # APT writes only private state. Monitor its growth as well as reserving
         # space before starting; terminate only this command's process group.
         # nothing_found accepts only apt-cache's own exit 100 with no output and
@@ -596,7 +653,8 @@ class Archive:
         if nothing_found and proc.returncode == 100 and not out and err == 'E: No packages found\n':
             return out
         if proc.returncode:
-            raise package.Invalid(f'archive {label} failed (see {self.base / (label + ".log")}):\n' + (out + err)[-5000:])
+            error = PolicySolveFailure if policy_solve and proc.returncode == 100 else package.Invalid
+            raise error(f'archive {label} failed (see {self.base / (label + ".log")}):\n' + (out + err)[-5000:])
         return out
 
     def input(self, path):
@@ -740,11 +798,13 @@ class Archive:
         for name in sorted(named):
             preferences.append(f'Package: {name}\nPin: version *\nPin-Priority: -1\n\n')
         (self.base / 'etc/preferences').write_text(''.join(preferences))
-        # The edition's own APT policy (sparky-stereo-apt's pins, the NVIDIA driver lock) is part
-        # of every installed edition before its other packages. APT parses /etc/apt/preferences
-        # first, then preferences.d in lexicographic order, and the first specific record that
-        # matches a version decides it (apt_preferences(5)), so the exact pins above still win
-        # for supplied packages; APT itself ignores a name outside its naming convention.
+        if token not in self._conditional:
+            self._conditional[token] = conditional_policies(inputs, self.arch)
+        return candidate, inputs, local
+
+    def apply_policy(self, inputs):
+        # Exact edition pins remain in /etc/apt/preferences and precede shipped policy.
+        # APT reads these files in lexicographic order; the first specific record wins.
         policy = {}
         for item in inputs:
             for name, data in self.preferences(item).items():
@@ -760,7 +820,41 @@ class Archive:
             (parts / name).write_bytes(data)
         self.policy = [{'path': str(PREFERENCES_PARTS / name), 'package': owner,
                         'sha256': hashlib.sha256(data).hexdigest()} for name, (owner, data) in sorted(policy.items())]
-        return candidate, inputs, local
+
+    def solve(self, candidate, inputs, local, directory, args):
+        conditional = self._conditional[local.name]
+        alternatives = [item for item in inputs if item['sha256'] in conditional]
+        common = [item for item in inputs if item['sha256'] not in conditional]
+        attempts, last_error = [], None
+        for count in range(len(alternatives) + 1):
+            for chosen in itertools.combinations(alternatives, count):
+                enabled = {item['sha256'] for item in chosen}
+                if candidate['sha256'] in conditional and candidate['sha256'] not in enabled:
+                    continue
+                self.apply_policy(common + list(chosen))
+                requests = []
+                for item in alternatives:
+                    obj = item['control']
+                    # Enabled policies must actually be installed; disabled ones cannot enter
+                    # the dependency closure without their policy. APT handles all relations.
+                    requests.append(f'{obj["Package"]}={obj["Version"]}' if item['sha256'] in enabled
+                                    else obj['Package'] + '-')
+                label = directory.name + (f'-policy-{len(attempts)}' if alternatives else '') + '-solve'
+                attempt = {'solver': str(self.base / (label + '.log')), 'preferences': self.policy,
+                           'enabled': [identity(item['control']) for item in chosen]}
+                attempts.append(attempt)
+                try:
+                    plan = self.run(args + requests, label, policy_solve=True)
+                except PolicySolveFailure as error:
+                    attempt['result'] = 'unsatisfied'
+                    last_error = error
+                else:
+                    attempt['result'] = 'selected'
+                    (directory / 'policy-attempts.json').write_text(json.dumps(attempts, indent=2) + '\n')
+                    (directory / 'preferences.json').write_text(json.dumps(self.policy, indent=2) + '\n')
+                    return plan, label
+        (directory / 'policy-attempts.json').write_text(json.dumps(attempts, indent=2) + '\n')
+        raise last_error
 
     def signed(self, directory, local, downloads):
         """Check every downloaded identity against its own record in the signed index.
@@ -820,12 +914,10 @@ class Archive:
 
     def _qualify(self, deb, siblings, directory, recommends=()):
         candidate, inputs, local = self.universe(deb, siblings)
-        (directory / 'preferences.json').write_text(json.dumps(self.policy, indent=2) + '\n')
         candidate_bytes = self.cached_input(candidate)
         args = ['apt-get', '-y', '--no-remove', '--no-install-recommends', '--download-only',
                 '--print-uris', 'install', str(candidate_bytes)] + list(recommends)
-        label = directory.name + '-solve'
-        plan = self.run(args, label)
+        plan, label = self.solve(candidate, inputs, local, directory, args)
         root = directory / 'root'
         root.mkdir()
         for mountpoint in ('proc', 'dev', 'tmp'):

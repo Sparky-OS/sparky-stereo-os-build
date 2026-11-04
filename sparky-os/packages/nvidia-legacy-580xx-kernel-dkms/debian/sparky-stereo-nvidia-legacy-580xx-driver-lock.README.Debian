@@ -26,15 +26,11 @@ order:
 3. The same packages at any other version: priority 100.
 4. This package itself: priority 1001 from the edition's repository.
 
-sparky-stereo-nvidia-driver-lock (the lock of the open modules, version 615)
-stays installed beside it: sparky-stereo-cuda-repo depends on it, and every
-image has both. Its file, 10sparky-stereo-nvidia-driver-lock, names the same
-packages, and APT reads this file first: "The first specific-form record that
-matches an available package version determines the priority of the package
-version" (apt_preferences(5)). So while this package is installed, its records
-decide every version of those packages, and the 615 lock decides none.
-Hardware Setup removes this package before it installs the open modules on a
-card that runs them.
+The two driver lock packages conflict: install the lock for the selected
+stack before resolving its driver packages. sparky-stereo-cuda-repo accepts
+either lock, so the CUDA repository remains available on both stacks.
+Purge the previous lock when switching stacks: removing it without purging
+keeps its configuration file and its APT policy.
 
 NVIDIA's user space for 580 (nvidia-driver, its libraries, nvidia-settings,
 libnvcuvid1) is NVIDIA's, as the 615 user space is, and NVIDIA publishes it
