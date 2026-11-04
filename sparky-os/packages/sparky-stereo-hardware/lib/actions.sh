@@ -345,11 +345,13 @@ setup_nvidia() {
 		done
 	fi
 	# Nothing is changed when the edition's module is not there: the setup stops and says so.
-	if ! apt-cache show --no-all-versions "$module" >"$WORK/nvidia-module" 2>&1 || ! grep -q '^Package:' "$WORK/nvidia-module"; then
+	# Every version the sources offer, not only apt's candidate: the other stack's lock, while it is installed, pins this module
+	# at -1 (never installed), and apt has no candidate for it until that lock is gone, which is the switch this run makes.
+	if ! apt-cache show "$module" >"$WORK/nvidia-module" 2>&1 || ! grep -q '^Package:' "$WORK/nvidia-module"; then
 		err "$missing" "$module"
 		return 1
 	fi
-	found_version=$(sed -n 's/^Version: //p' "$WORK/nvidia-module" | head -n1)
+	found_version=$(sed -n 's/^Version: //p' "$WORK/nvidia-module" | sort -V | tail -n1)
 	nvidia_version=$(nvidia_version_of "$found_version" "$suffix")
 	if [[ -z $nvidia_version ]]; then
 		err "$unsuffixed" "$found_version"
