@@ -1,4 +1,13 @@
 -------------------------------------------------------------------------------
+  Version 20261103.1~sparky9~0 (2026-11-03)
+-------------------------------------------------------------------------------
+  * sparky-stereo-only-ours regenerated over the published repository (the tree behind /var/tmp/sparky-repo-current, InRelease of 2 Nov 2026) and the 424 packages of round r1103a (ORDER 387): 1267 packages blocked, as 2363 names (2095 before); 239 Architecture: all names at 100 where their source is not built (210 before); 5 packages that are not ours at 400 (unchanged); 894 names we ship for amd64 only, blocked for i386 too
+  * 144 packages are new in the block list, none removed: Debian's and deb-multimedia's builds of them are at -1 from this version
+  * the dpkg family (ORDER 363, 372): dpkg, dpkg-dbgsym, dpkg-dev, libdpkg-dev, libdpkg-perl, dselect and their -lc-hr and -dbgsym builds. dpkg-stereo's Pre-Depends on dpkg-lean-code ties the edition to its own dpkg, so Debian's dpkg, dpkg-dev, libdpkg-perl, libdpkg-dev and dselect are never offered, whatever version Debian reaches
+  * the NVIDIA 580 user space for Maxwell, Pascal and Volta (ORDER 354): 37 packages of source nvidia-graphics-drivers, nvidia-settings (libxnvctrl0, libxnvctrl-dev), nvidia-modprobe, nvidia-persistenced, nvidia-xconfig, nvidia-fabricmanager, libnvidia-nscq, cuda-drivers, cuda-drivers-580 and nvidia-legacy-580xx-kernel-dkms. Only Debian's and deb-multimedia's builds are blocked; NVIDIA's own repository is not named by any record, so its compute packages stay NVIDIA's (sparky-stereo-cuda-repo's pin)
+  * the other new names are the packages the round adds or rebuilds: kernel build 15 (linux-image, linux-headers 7.3.1-stereo3d15, -v3 and rt), zfs-linux (32), qt6-svg (14), librsvg (10), xfsprogs (5), pkcs11-proxy (5), cgm-zig, command-not-found, snmptt and sparky-aptus-stereo-appcenter (2 each)
+
+-------------------------------------------------------------------------------
   Version 20261102.1~sparky9~0 (2026-11-02)
 -------------------------------------------------------------------------------
   * Enable AppStream's five DEP-11 icon targets for every repository, so Discover and KRunner can resolve cached program icons (ORDER 356).
