@@ -42,6 +42,15 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * Carry Lean Code 0.1.27: a case under an alternative APT policy is
+    ordered by that policy's own records, as on an installed system, and
+    must install under every coinstallable policy when its plan uses a
+    name a policy pins (ORDER 390). Includes 0.1.34's restore fix.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 04 Nov 2026 01:40:00 +0000
+
+dpkg-stereo (0.1.33) unstable; urgency=medium
+
   * Carry Lean Code 0.1.26: qualify conflicting APT policies only with
     their coinstallable owners selected, preserving strict edition pins
     and both NVIDIA driver stacks (ORDER 390).

@@ -10,6 +10,7 @@ can contribute files to the execution root. No maintainer scripts are run.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import io
 import itertools
@@ -180,6 +181,60 @@ def conditional_policies(inputs, arch):
 
 class PolicySolveFailure(package.Invalid):
     """APT refused this policy selection; another coinstallable selection may resolve it."""
+
+
+def conflict_edge(first, second, arch):
+    """True when `first` declares a Conflicts entry that `second` (its name or a Provides) satisfies."""
+    aliases = [(second['Package'], None, '=', second['Version'])] + list(policy_relations(second.get('Provides', '')))
+    for name, qualifier, operator, wanted in policy_relations(first.get('Conflicts', '')):
+        if qualifier not in (None, 'any', 'native', arch):
+            continue
+        for alias, alias_qualifier, alias_operator, version in aliases:
+            if alias != name or alias_qualifier not in (None, 'any', 'native', arch):
+                continue
+            if operator and (version is None or not version_matches(version, operator, wanted)):
+                continue
+            return True
+    return False
+
+
+def policy_selectors(data):
+    """The Package tokens of the records of an APT preferences file (apt_preferences(5), "Package" field)."""
+    tokens = []
+    for line in data.decode(errors='replace').splitlines():
+        if line.startswith('Package:'):
+            tokens.extend(line.split(':', 1)[1].split())
+    return tokens
+
+
+def selector_matches(token, obj, arch):
+    """Whether one Package token of a preferences record names this binary package.
+
+    apt_preferences(5): a binary name, "src:" and a source name, a glob(7) expression or a /regular expression/,
+    with an architecture qualifier (":any", ":native" or an architecture) after a name.
+    """
+    source = token.startswith('src:')
+    if source:
+        token = token[4:]
+    regex = len(token) > 2 and token.startswith('/') and token.endswith('/')
+    if not regex and ':' in token:
+        token, qualifier = token.rsplit(':', 1)
+        if qualifier not in ('any', 'native', obj['Architecture']) and not (obj['Architecture'] == 'all' and qualifier == arch):
+            return False
+    name = obj.get('Source', obj['Package']).split()[0] if source else obj['Package']
+    if regex:
+        return re.search(token[1:-1], name) is not None
+    return fnmatch.fnmatchcase(name, token)
+
+
+def hard_dependencies(obj):
+    """Names a package needs in every plan: a Depends or Pre-Depends group with one alternative."""
+    names = set()
+    for field in ('Depends', 'Pre-Depends'):
+        for group in obj.get(field, '').split(','):
+            if group.strip() and '|' not in group:
+                names.add(re.split(r'[\s(:]', group.strip(), maxsplit=1)[0])
+    return names
 
 
 def identity(obj):
@@ -791,16 +846,31 @@ class Archive:
             self.run(['apt-get', '-y', '-o', 'Dir::Etc::sourcelist=local.list', '-o',
                       'APT::Update::Error-Mode=any', 'update'], 'local-' + token)
             self._indexes.add(token)
-        preferences = []
-        for item in inputs:
-            obj = item['control']
-            preferences.append(f'Package: {obj["Package"]}\nPin: version {obj["Version"]}\nPin-Priority: 1001\n\n')
-        for name in sorted(named):
-            preferences.append(f'Package: {name}\nPin: version *\nPin-Priority: -1\n\n')
-        (self.base / 'etc/preferences').write_text(''.join(preferences))
+        self.write_exact_pins(inputs)
         if token not in self._conditional:
             self._conditional[token] = conditional_policies(inputs, self.arch)
         return candidate, inputs, local
+
+    def write_exact_pins(self, inputs, ordered=()):
+        """The gate's own pins in /etc/preferences, read before preferences.d: every supplied identity at 1001, every
+        other version of a supplied name never. `ordered` holds supplied packages that a selected alternative policy
+        names; they get no pin of ours, so that policy's own records order them as they do on an installed system
+        (apt_preferences(5): the first specific-form record matching a version decides its priority)."""
+        skip = {item['sha256'] for item in ordered}
+        preferences = []
+        for item in inputs:
+            obj = item['control']
+            if item['sha256'] not in skip:
+                preferences.append(f'Package: {obj["Package"]}\nPin: version {obj["Version"]}\nPin-Priority: 1001\n\n')
+        for name in sorted({item['control']['Package'] for item in inputs if item['sha256'] not in skip}):
+            preferences.append(f'Package: {name}\nPin: version *\nPin-Priority: -1\n\n')
+        (self.base / 'etc/preferences').write_text(''.join(preferences))
+
+    def ordered_by_policy(self, inputs, chosen, conditional):
+        """Supplied packages, other than alternative policy owners, that the chosen alternative policies name."""
+        tokens = [token for item in chosen for data in self.preferences(item).values() for token in policy_selectors(data)]
+        return [item for item in inputs if item['sha256'] not in conditional
+                and any(selector_matches(token, item['control'], self.arch) for token in tokens)]
 
     def apply_policy(self, inputs):
         # Exact edition pins remain in /etc/apt/preferences and precede shipped policy.
@@ -821,6 +891,24 @@ class Archive:
         self.policy = [{'path': str(PREFERENCES_PARTS / name), 'package': owner,
                         'sha256': hashlib.sha256(data).hexdigest()} for name, (owner, data) in sorted(policy.items())]
 
+    def attempt(self, inputs, alternatives, common, chosen, conditional, args, label):
+        """One solve with the alternative policies in `chosen` enabled and every other alternative excluded.
+
+        The chosen policies' own records order the packages they name, as on an installed system; the gate's exact
+        pins keep every other supplied identity. Returns the plan or raises PolicySolveFailure.
+        """
+        enabled = {item['sha256'] for item in chosen}
+        self.apply_policy(common + list(chosen))
+        self.write_exact_pins(inputs, self.ordered_by_policy(inputs, chosen, conditional))
+        requests = []
+        for item in alternatives:
+            obj = item['control']
+            # Enabled policies must actually be installed; disabled ones cannot enter
+            # the dependency closure without their policy. APT handles all relations.
+            requests.append(f'{obj["Package"]}={obj["Version"]}' if item['sha256'] in enabled
+                            else obj['Package'] + '-')
+        return self.run(args + requests, label, policy_solve=True)
+
     def solve(self, candidate, inputs, local, directory, args):
         conditional = self._conditional[local.name]
         alternatives = [item for item in inputs if item['sha256'] in conditional]
@@ -831,30 +919,86 @@ class Archive:
                 enabled = {item['sha256'] for item in chosen}
                 if candidate['sha256'] in conditional and candidate['sha256'] not in enabled:
                     continue
-                self.apply_policy(common + list(chosen))
-                requests = []
-                for item in alternatives:
-                    obj = item['control']
-                    # Enabled policies must actually be installed; disabled ones cannot enter
-                    # the dependency closure without their policy. APT handles all relations.
-                    requests.append(f'{obj["Package"]}={obj["Version"]}' if item['sha256'] in enabled
-                                    else obj['Package'] + '-')
                 label = directory.name + (f'-policy-{len(attempts)}' if alternatives else '') + '-solve'
-                attempt = {'solver': str(self.base / (label + '.log')), 'preferences': self.policy,
-                           'enabled': [identity(item['control']) for item in chosen]}
+                attempt = {'solver': str(self.base / (label + '.log')), 'enabled': [identity(item['control']) for item in chosen]}
                 attempts.append(attempt)
                 try:
-                    plan = self.run(args + requests, label, policy_solve=True)
+                    plan = self.attempt(inputs, alternatives, common, chosen, conditional, args, label)
                 except PolicySolveFailure as error:
+                    attempt['preferences'] = self.policy
                     attempt['result'] = 'unsatisfied'
                     last_error = error
                 else:
+                    attempt['preferences'] = self.policy
                     attempt['result'] = 'selected'
                     (directory / 'policy-attempts.json').write_text(json.dumps(attempts, indent=2) + '\n')
                     (directory / 'preferences.json').write_text(json.dumps(self.policy, indent=2) + '\n')
+                    self.selected = (chosen, attempts)
+                    self.ordered_names = {item['control']['Package']
+                                          for item in self.ordered_by_policy(inputs, chosen, conditional)}
                     return plan, label
         (directory / 'policy-attempts.json').write_text(json.dumps(attempts, indent=2) + '\n')
         raise last_error
+
+    def check_policies(self, candidate, inputs, local, directory, args, installed):
+        """Every coinstallable policy must also install the case, when the plan uses a name a policy pins.
+
+        `installed` is the control of every package of the selected plan. A name is pinned when a Package token of
+        an alternative policy's records names it. The case is then solved once under each alternative policy that
+        can be installed with it: one that conflicts with the candidate, with a package of the plan other than a
+        policy owner, or with a policy owner the plan needs in every case (a single-alternative Depends) is not
+        coinstallable and is recorded as skipped. A solve that fails under a coinstallable policy is a failure of
+        the case, not a different configuration. The state of the selected solve is restored afterwards.
+        """
+        conditional = self._conditional[local.name]
+        alternatives = [item for item in inputs if item['sha256'] in conditional]
+        if not alternatives:
+            return
+        common = [item for item in inputs if item['sha256'] not in conditional]
+        chosen, attempts = self.selected
+        tokens = [token for item in alternatives for data in self.preferences(item).values() for token in policy_selectors(data)]
+        owners = {item['control']['Package'] for item in alternatives}
+        named = sorted({obj['Package'] for obj in installed
+                        if obj['Package'] not in owners and any(selector_matches(t, obj, self.arch) for t in tokens)})
+        report = {'named_by_policy': named, 'checks': []}
+        if named:
+            fixed = [obj for obj in installed if obj['Package'] not in owners]
+            needed = set()
+            for obj in installed:
+                needed |= hard_dependencies(obj)
+            required = [item['control'] for item in alternatives if item['control']['Package'] in needed]
+            for item in alternatives:
+                obj = item['control']
+                row = {'policy': identity(obj)}
+                report['checks'].append(row)
+                if item['sha256'] == candidate['sha256']:
+                    row['result'] = 'the case is this policy'
+                    continue
+                blockers = [other['Package'] for other in fixed + [o for o in required if o is not obj]
+                            if conflict_edge(obj, other, self.arch) or conflict_edge(other, obj, self.arch)]
+                if blockers:
+                    row['result'] = 'skipped: conflicts with ' + ', '.join(sorted(set(blockers)))
+                    continue
+                if [selected['sha256'] for selected in chosen] == [item['sha256']]:
+                    row['result'] = 'selected solve'
+                    continue
+                label = f'{directory.name}-check-{len(report["checks"])}-solve'
+                row['solver'] = str(self.base / (label + '.log'))
+                try:
+                    self.attempt(inputs, alternatives, common, [item], conditional, args, label)
+                except PolicySolveFailure as error:
+                    row['result'] = 'unsatisfied'
+                    row['preferences'] = self.policy
+                    (directory / 'policy-checks.json').write_text(json.dumps(report, indent=2) + '\n')
+                    raise package.Invalid(f'{identity(candidate["control"])} is installable without {obj["Package"]}'
+                                          f' but not under it, and nothing in its plan conflicts with that policy; '
+                                          f'it names {", ".join(named)}:\n{error}') from error
+                row['result'] = 'selected'
+                row['preferences'] = self.policy
+        (directory / 'policy-checks.json').write_text(json.dumps(report, indent=2) + '\n')
+        # Leave the selected solve's policy and pins in place for the rest of the case.
+        self.apply_policy(common + list(chosen))
+        self.write_exact_pins(inputs, self.ordered_by_policy(inputs, chosen, conditional))
 
     def signed(self, directory, local, downloads):
         """Check every downloaded identity against its own record in the signed index.
@@ -929,7 +1073,9 @@ class Archive:
         selected_archives = []
         selected_inputs = []
         by_hash = {item['sha256']: item for item in inputs}
-        named = {item['control']['Package'] for item in inputs}
+        # A name the selected alternative policy orders is no longer reserved for the supplied identity: its own
+        # records decide between the supplied version and the archive's, as on an installed system.
+        named = {item['control']['Package'] for item in inputs} - self.ordered_names
         downloads = []
         deferred = None
         try:
@@ -995,6 +1141,7 @@ class Archive:
         if not any(identity(item['control']) == identity(candidate['control']) for item in selected_inputs):
             raise package.Invalid('archive solver omitted the requested candidate')
         selected_archives += [(self.cached_input(item), item['control']) for item in selected_inputs]
+        self.check_policies(candidate, inputs, local, directory, args, [obj for _, obj in selected_archives])
         unmodeled = []
         diversions = diversion_map(selected_archives, root, unmodeled)
         (directory / 'diversions.json').write_text(json.dumps(
