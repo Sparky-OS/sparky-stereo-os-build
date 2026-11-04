@@ -220,6 +220,11 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	cp /build/zram-check.py $R/tmp/
 	inr python3 /tmp/zram-check.py / || { echo "!! zram or zswap is in the image; see the gate's findings above" >&2; exit 1; }
 	rm -f $R/tmp/zram-check.py
+	# nothing that downloads data while it is installed (a package declaring Install-Download-Size, FlightGear's data): the games and
+	# their data come when the person chooses them while installing, never on the ISO (Daniel, 2026-11-04; ORDER 399b)
+	cp /build/check-no-install-downloads.py $R/tmp/
+	inr python3 /tmp/check-no-install-downloads.py / || { echo "!! a package that downloads data while it is installed, or FlightGear's data, is in the image; see the gate's findings above" >&2; exit 1; }
+	rm -f $R/tmp/check-no-install-downloads.py
 	# DKMS's signing key never ships: one key in the image would be every installed machine's key (dkms-project/dkms
 	# #574; dkms signs nothing and makes no key in a chroot unless try_sign_modules=true, #575). Each installed system
 	# makes its own and signs the image's DKMS modules at its first boot (dkms-sign-unsigned.service), and GRUB's menu
