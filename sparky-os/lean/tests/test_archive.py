@@ -619,3 +619,69 @@ def test_a_pin_shipped_without_being_declared_a_conffile_applies(two_firmwares, 
     q = context.qualify(deb(tmp_path, 'module', depends='firmware (= 1)'), [lock])
     assert ('firmware', '1', 'all') in [tuple(r['identity']) for r in manifest(q)['packages']]
     q.close()
+
+
+def test_conflicting_driver_locks_follow_the_cases_install_set(two_firmwares, tmp_path):
+    context = archive.Archive(two_firmwares, tmp_path / 'scratch', 'amd64')
+    main = deb(tmp_path, 'main-lock', arch='all', extra='Conflicts: legacy-lock\n', files={
+        'etc/apt/preferences.d/10main-lock': LOCK_TEXT})
+    legacy_text = LOCK_TEXT.replace(b'version 1', b'version 2')
+    legacy = deb(tmp_path, 'legacy-lock', arch='all', extra='Conflicts: main-lock\n', files={
+        'etc/apt/preferences.d/09legacy-lock': legacy_text})
+    module = deb(tmp_path, 'main-module', depends='main-lock, firmware (= 1)')
+    older = deb(tmp_path, 'legacy-module', depends='legacy-lock, firmware (= 2)')
+    global_policy = policy_package(tmp_path, name='global-policy', file='99global',
+                                   text=b'Package: leaf\nPin: version *\nPin-Priority: 700\n')
+    siblings = [main, legacy, module, older, global_policy]
+    for candidate, owner, firmware in ((module, 'main-lock', '1'), (older, 'legacy-lock', '2'),
+                                       (module, 'main-lock', '1')):
+        q = context.qualify(candidate, siblings)
+        rows = manifest(q)
+        assert {p['package'][0] for p in rows['preferences']} == {owner, 'global-policy'}
+        assert ('firmware', firmware, 'all') in [tuple(r['identity']) for r in rows['packages']]
+        assert {r['identity'][0] for r in rows['inputs'] if r['selected']} == {owner, archive.control(candidate)['Package']}
+        assert len(list((context.base / 'etc/preferences.d').iterdir())) == 2
+        q.close()
+    # An unrelated case must not acquire a driver lock just to use its pins.
+    q = context.qualify(deb(tmp_path, 'unrelated-case'), siblings)
+    assert {p['package'][0] for p in manifest(q)['preferences']} == {'global-policy'}
+    q.close()
+    # A genuinely impossible co-installation must still fail.
+    with pytest.raises(package.Invalid, match='solve failed'):
+        context.qualify(deb(tmp_path, 'both-stacks', depends='main-lock, legacy-lock'), siblings)
+
+
+@pytest.mark.parametrize('conflict,provides,expected', [
+    ('module', '', True),
+    ('module (<< 2)', '', True),
+    ('module (<< 1)', '', False),
+    ('module:amd64 (>= 1)', '', True),
+    ('module:arm64', '', False),
+    ('virtual-module', 'Provides: virtual-module\n', True),
+    ('virtual-module (>= 2)', 'Provides: virtual-module (= 2)\n', True),
+    ('virtual-module (>> 2)', 'Provides: virtual-module (= 2)\n', False),
+    ('virtual-module (>= 2)', 'Provides: virtual-module\n', False),
+])
+def test_policy_conflicts_match_versions_virtual_names_and_architectures(context, tmp_path, conflict, provides, expected):
+    policy = deb(tmp_path, 'policy', arch='all', extra=f'Conflicts: {conflict}\n', files={
+        'etc/apt/preferences.d/10policy': b'Package: leaf\nPin: version *\nPin-Priority: 700\n'})
+    module = deb(tmp_path, 'module', extra=provides)
+    q = context.qualify(module, [policy])
+    assert bool(manifest(q)['preferences']) is not expected
+    q.close()
+
+
+def test_one_sided_conflict_on_the_consumer_disables_policy(context, tmp_path):
+    policy = policy_package(tmp_path)
+    consumer = deb(tmp_path, 'consumer', extra='Conflicts: fixture-lock\n')
+    q = context.qualify(consumer, [policy])
+    assert not manifest(q)['preferences']
+    q.close()
+
+
+def test_a_policy_can_conflict_with_its_own_virtual_name(context, tmp_path):
+    policy = deb(tmp_path, 'policy', arch='all', extra='Provides: virtual-policy\nConflicts: virtual-policy\n', files={
+        'etc/apt/preferences.d/10policy': b'Package: leaf\nPin: version *\nPin-Priority: 700\n'})
+    q = context.qualify(deb(tmp_path, 'consumer', depends='policy'), [policy])
+    assert [p['package'][0] for p in manifest(q)['preferences']] == ['policy']
+    q.close()

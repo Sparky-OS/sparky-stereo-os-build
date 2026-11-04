@@ -45,7 +45,17 @@ They are the files each supplied package ships directly in `/etc/apt/preferences
 So the gate reads each input's small control member, lists the data of only a package without md5sums, and opens the data of only the packages that ship such a file.
 APT parses `/etc/apt/preferences` first and then `preferences.d` in lexicographic order, and the first specific record that matches a version decides its priority ([apt_preferences(5)](https://manpages.debian.org/testing/apt/apt_preferences.5.en.html)), so the gate's exact pins, in the first file, still decide every supplied package.
 The shipped files are copied under their own names, and APT ignores a name outside its naming convention, as it does on an installed system.
-Two supplied packages shipping one file name are refused, as dpkg refuses the second.
+Two active policy packages shipping one file name are refused, as dpkg refuses the second.
+Policy packages that conflict with another supplied package are alternatives, not universal edition policy.
+The gate identifies those owners using binary Conflicts and Provides, in both directions, with version and architecture matching.
+It tries conditional policy subsets in increasing size and deterministic package order; ordinary nonconflicting policy always applies.
+For each attempt it explicitly requests every enabled policy package at its supplied version and forbids every disabled policy package in that solve.
+APT then checks the candidate's complete dependency closure with strict pinning and Conflicts still enforced.
+This makes a selected policy real: a pin cannot qualify a package while its owner cannot be installed with that package.
+It also avoids a circular bootstrap: a module can require a firmware version that APT cannot select until its lock's pin is active.
+An unrelated package takes no conditional policy unless its dependency solve needs one.
+A failed subset is retained in `case-*/policy-attempts.json` with its solver log; failure of every subset refuses the case.
+Space, timeout and other execution errors stop immediately, rather than being treated as a different policy choice.
 This is what lets an exact dependency take an archive version that is not the newest: APT's solver takes only the candidate for an exact dependency (apt 2.9.17, "Reject all non-candidates outright for strict pinning"), so `nvidia-kernel-open-dkms-stereo3d`'s `firmware-nvidia-gsp (= 615.71.09-2)` resolves from the CUDA repository only with sparky-stereo-nvidia-driver-lock's pin, as on an installed edition (ORDER 329).
 APT's `--no-strict-pinning` would solve it without the lock, but an installed system does not, so the gate would pass what a person's APT refuses.
 Each case records the files it applied, their packages and hashes, in `case-*/preferences.json` and in `resolution.json`.

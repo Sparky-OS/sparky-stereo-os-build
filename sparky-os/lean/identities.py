@@ -50,6 +50,9 @@ RELEASED = {
     # ORDER 372: Perl quotes, including /x pattern text, remain literal.
     '0.1.25': {'de4a718bfb6893b85c8054898082ad54b6cceb6c278fb22436930f3a987cd7c5':
                'lean 0.1.25 (collapse-blank,pointer,c-drop-lines) code de4a718bfb6893b8'},
+    # ORDER 390: alternative driver policies in archive qualification.
+    '0.1.26': {'9a83b16f4d70007e2aa7b82f6eef9a99119fb8953462ec4f8e0d516551fddef0':
+               'lean 0.1.26 (collapse-blank,pointer,c-drop-lines) code 9a83b16f4d70007e'},
 }
 
 # Digests that built under a label without being its released renderer: never accepted.
