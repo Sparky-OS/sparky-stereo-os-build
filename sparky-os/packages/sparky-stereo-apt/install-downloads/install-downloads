@@ -8,11 +8,13 @@ when the connection is metered. See sparky_install_downloads.py for the declarat
   As apt's JSON hook (AptCli::Hooks::Install, /etc/apt/apt.conf.d/61sparky-install-downloads): it answers apt's hello and acts at
   org.debian.apt.hooks.install.statistics, the call right before the question (apt 1.6 and later; /usr/share/doc/apt/json-hooks-protocol.md).
   install-downloads check [--json] PACKAGE...   what `apt-get install PACKAGE...` would download, from apt's own simulation.
+(The question is not asked with -y, nor when only the named packages are installed; the notice says which of the three it is.)
 
 Setting (apt configuration): Sparky::Install-Downloads::Announce "metered" (default) | "always" | "never".
 metered: shown when NetworkManager says the connection is metered (yes, guess-yes), and also when it cannot be read, with that said;
 always: shown for every install; never: nothing is shown. A failure to read the declarations is said on the screen and never stops the install.
 """
+import fnmatch
 import json
 import os
 import re
@@ -99,12 +101,29 @@ def new_downloads(packages, records):
     return out
 
 
-def show(downloads, mode, interactive):
-    result = sid.assess(downloads, mode, interactive)
+def question_kind(options, params):
+    """Whether apt will ask "Do you want to continue?": not with -y, and not when what it installs is only what was named
+    (private-install.cc: it asks when the number of packages to install or remove differs from the number requested)."""
+    if str(options.get('APT::Get::Assume-Yes', '')).lower() in ('true', '1', 'yes'):
+        return 'unattended'
+    terms = []
+    for term in params.get('search-terms', []):
+        term = re.sub(r'[=/].*$', '', term)
+        terms.append(re.sub(r'[+-]$', '', term).split(':')[0])
+    for package in params.get('packages', []):
+        if package.get('mode') in ('keep',):
+            continue
+        if not any(fnmatch.fnmatchcase(package.get('name', ''), t) for t in terms):
+            return 'asked'
+    return 'not-asked'
+
+
+def show(downloads, mode, question):
+    result = sid.assess(downloads, mode, question)
     if result['announce']:
         sys.stdout.write('\n'.join(result['text']) + '\n')
         sys.stdout.flush()
-        if not interactive:
+        if question == 'unattended':
             # an install nobody is asked about leaves its notice in the log as well as on the screen
             try:
                 subprocess.run(['logger', '-t', 'sparky-install-downloads', '-p', 'user.notice', '--', ' '.join(result['text'])],
@@ -154,9 +173,7 @@ def hook():
                     continue
                 packages = message.get('params', {}).get('packages', [])
                 downloads = new_downloads(packages, Records())
-                yes = str(options.get('APT::Get::Assume-Yes', '')).lower() in ('true', '1', 'yes')
-                interactive = not yes and (os.isatty(1) or os.isatty(2))
-                show(downloads, mode, interactive)
+                show(downloads, mode, question_kind(options, message.get('params', {})))
             except Exception as error:  # the install goes on; the screen says nothing could be checked
                 say_error('hook_error', why='%s: %s' % (type(error).__name__, error))
 
@@ -185,7 +202,7 @@ def check(argv):
     if problem:
         say_error('setting', why=problem)
     downloads = new_downloads(simulate(names), Records())
-    result = sid.assess(downloads, mode, True)
+    result = sid.assess(downloads, mode, 'asked')
     if as_json:
         print(json.dumps(result, ensure_ascii=False))
     elif result['announce']:

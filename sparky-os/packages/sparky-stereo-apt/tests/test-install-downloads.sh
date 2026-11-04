@@ -8,7 +8,7 @@
 #     2 no, 4 guess-no, 0 unknown, and not at all
 #   - on a terminal, `apt install` and `apt-get install` print the size and source before "Continue?", answering n installs and downloads nothing
 #   - not metered: nothing extra; the same install is red without the package's hook
-#   - -y: no question, the notice says so and the install goes on
+#   - -y: no question, the notice says so and the install goes on; an install of only the named package asks nothing either, and the notice says so
 #   - an upgrade whose declaration did not change is not announced again; a changed one is
 #   - a malformed declaration is said and the install goes on; the setting Announce works in its three values; nine languages
 # Usage: docker run --rm --name flightgear-399b-test -v PKGS:/pkgs:ro -v THIS:/t:ro -v HELPERS:/h:ro IMAGE /t/test-install-downloads.sh
@@ -65,8 +65,11 @@ mkpkg() { # name version extra-control-lines
 }
 rm -rf /repo; mkdir -p /repo
 mkpkg plain-pkg 1 ""
-mkpkg data-pkg 1 "Install-Download-Size: 123456789
+mkpkg data-pkg 1 "Depends: plain-pkg
+Install-Download-Size: 123456789
 Install-Download-Source: https://example.org/data-1.bin"
+mkpkg solo-pkg 1 "Install-Download-Size: 4096000
+Install-Download-Source: https://example.org/solo.bin"
 mkpkg bad-pkg 1 "Install-Download-Size: lots
 Install-Download-Source: https://example.org/x"
 mkpkg half-pkg 1 "Install-Download-Size: 5000"
@@ -101,7 +104,7 @@ metered 1
 out=$(run_apt n apt-get install data-pkg)
 echo "$out" | sed -n '/NEW packages/,$p' | head -n 14
 check "the notice says the connection is metered and what NetworkManager said" has "$out" "metered (NetworkManager says: yes)"
-check "the notice names the package, its size (117.74 MiB) and its source" has "$out" "data-pkg: 117.74 MiB from https://example.org/data-1.bin"
+check "the notice names the package, its size (117.7 MiB) and its source" has "$out" "data-pkg: 117.7 MiB from https://example.org/data-1.bin"
 check "the notice comes before apt's question" bash -c "n1=\$(grep -n 'data-pkg: 117.74' <<<'$out' | head -1 | cut -d: -f1); n2=\$(grep -n 'Do you want to continue' <<<'$out' | head -1 | cut -d: -f1); [ -n \"\$n1\" ] && [ -n \"\$n2\" ] && [ \$n1 -lt \$n2 ]"
 check "it says answering n downloads nothing" has "$out" "Answer n to the question below and nothing is downloaded"
 check "answering n: nothing is installed" test "$(installed data-pkg)" != installed
@@ -109,7 +112,7 @@ check "answering n: nothing was downloaded into apt's archive" bash -c "! ls /va
 
 echo "== the same for the apt command"
 out=$(run_apt n apt install data-pkg)
-check "apt install: the notice is there too, with size and source" bash -c "grep -q 'data-pkg: 117.74 MiB from https://example.org/data-1.bin' <<<'$out' && grep -q 'metered' <<<'$out'"
+check "apt install: the notice is there too, with size and source" bash -c "grep -q 'data-pkg: 117.7 MiB from https://example.org/data-1.bin' <<<'$out' && grep -q 'metered' <<<'$out'"
 check "apt install: answering n installs nothing" test "$(installed data-pkg)" != installed
 
 echo "== NetworkManager's other answers"
@@ -122,11 +125,11 @@ for v in 2:no 4:guess-no; do
 	check "Metered=${v%%:*} (${v#*:}): nothing extra is shown" bash -c "! grep -q -e 'metered' -e 'data-pkg: 117' -e 'example.org/data-1' <<<'$out'"
 done
 metered 0; out=$(run_apt n apt-get install data-pkg)
-check "Metered=0 (unknown): shown, and it says it could not tell" bash -c "grep -q 'Could not tell whether this connection is metered' <<<'$out' && grep -q 'data-pkg: 117.74 MiB' <<<'$out'"
+check "Metered=0 (unknown): shown, and it says it could not tell" bash -c "grep -q 'Could not tell whether this connection is metered' <<<'$out' && grep -q 'data-pkg: 117.7 MiB' <<<'$out'"
 nm_stop
 out=$(run_apt n apt-get install data-pkg)
 echo "$out" | grep -i "could not tell" | head -n 2
-check "NetworkManager not on the bus: shown, and it says what it read" bash -c "grep -q 'Could not tell whether this connection is metered (NetworkManager did not answer' <<<'$out' && grep -q 'data-pkg: 117.74 MiB' <<<'$out'"
+check "NetworkManager not on the bus: shown, and it says what it read" bash -c "grep -q 'Could not tell whether this connection is metered (NetworkManager did not answer' <<<'$out' && grep -q 'data-pkg: 117.7 MiB' <<<'$out'"
 nm_start; metered 2
 
 echo "== not metered: the install runs, and a package that declares nothing never shows anything"
@@ -137,12 +140,15 @@ out=$(run_apt n apt-get install plain-pkg)
 check "metered, a package without a declaration: nothing extra" bash -c "! grep -q -e 'metered' -e 'download more' <<<'$out'"
 apt-get -y -qq remove data-pkg >/dev/null 2>&1
 
-echo "== -y and no terminal: no question; the notice says so"
+echo "== -y: no question; the notice says so; and an install of only the named package: apt asks nothing, the notice says so"
 out=$(apt-get -y install data-pkg 2>&1)
 echo "$out" | grep -A3 -i "metered" | head -n 6
-check "-y, metered: the notice is printed and says no question is asked here" bash -c "grep -q 'data-pkg: 117.74 MiB' <<<'$out' && grep -q 'No question is asked here' <<<'$out'"
+check "-y, metered: the notice is printed and says no question is asked here" bash -c "grep -q 'data-pkg: 117.7 MiB' <<<'$out' && grep -q 'No question is asked here' <<<'$out'"
 check "-y: the install went on" test "$(installed data-pkg)" = installed
-apt-get -y -qq remove data-pkg >/dev/null 2>&1
+apt-get -y -qq remove data-pkg plain-pkg >/dev/null 2>&1
+out=$(run_apt n apt-get install solo-pkg)
+check "only the named package (apt asks nothing): the notice says so and to press Ctrl+C" bash -c "grep -q 'solo-pkg: 3.9 MiB from https://example.org/solo.bin' <<<'$out' && grep -q 'apt asks no question here' <<<'$out' && grep -q 'Ctrl+C' <<<'$out'"
+apt-get -y -qq remove solo-pkg >/dev/null 2>&1
 
 echo "== the setting"
 printf 'Sparky::Install-Downloads::Announce "never";\n' >/etc/apt/apt.conf.d/99test
@@ -150,10 +156,10 @@ metered 1; out=$(run_apt n apt-get install data-pkg)
 check "never: nothing is shown on a metered connection" bash -c "! grep -q -e 'metered' -e 'data-pkg: 117' <<<'$out'"
 printf 'Sparky::Install-Downloads::Announce "always";\n' >/etc/apt/apt.conf.d/99test
 metered 2; out=$(run_apt n apt-get install data-pkg)
-check "always: shown on a connection that is not metered, without the metered sentence" bash -c "grep -q 'data-pkg: 117.74 MiB' <<<'$out' && ! grep -q 'This connection is metered' <<<'$out'"
+check "always: shown on a connection that is not metered, without the metered sentence" bash -c "grep -q 'data-pkg: 117.7 MiB' <<<'$out' && ! grep -q 'This connection is metered' <<<'$out'"
 printf 'Sparky::Install-Downloads::Announce "sometimes";\n' >/etc/apt/apt.conf.d/99test
 metered 1; out=$(run_apt n apt-get install data-pkg)
-check "an invalid value is said and metered is used" bash -c "grep -q 'Sparky::Install-Downloads::Announce is \"sometimes\"' <<<'$out' && grep -q 'data-pkg: 117.74 MiB' <<<'$out'"
+check "an invalid value is said and metered is used" bash -c "grep -q 'Sparky::Install-Downloads::Announce is \"sometimes\"' <<<'$out' && grep -q 'data-pkg: 117.7 MiB' <<<'$out'"
 rm -f /etc/apt/apt.conf.d/99test
 
 echo "== malformed declarations are said and never stop the install"
@@ -166,16 +172,18 @@ apt-get -y -qq remove bad-pkg half-pkg >/dev/null 2>&1
 
 echo "== upgrades: announced only when the download changes"
 apt-get -y -qq install data-pkg >/dev/null 2>&1
-mkpkg data-pkg 2 "Install-Download-Size: 123456789
+mkpkg data-pkg 2 "Depends: plain-pkg
+Install-Download-Size: 123456789
 Install-Download-Source: https://example.org/data-1.bin"
 reindex; metered 1
 out=$(run_apt n apt-get install data-pkg)
 check "an upgrade with the same declaration: not announced (the data stays)" bash -c "! grep -q 'data-pkg: 117' <<<'$out'"
-mkpkg data-pkg 3 "Install-Download-Size: 234567890
+mkpkg data-pkg 3 "Depends: plain-pkg
+Install-Download-Size: 234567890
 Install-Download-Source: https://example.org/data-3.bin"
 reindex
 out=$(run_apt n apt-get install data-pkg)
-check "an upgrade with another size and source: announced with the new ones" has "$out" "data-pkg: 223.70 MiB from https://example.org/data-3.bin"
+check "an upgrade with another size and source: announced with the new ones" has "$out" "data-pkg: 223.7 MiB from https://example.org/data-3.bin"
 apt-get -y -qq remove data-pkg >/dev/null 2>&1
 
 echo "== the reader's own command (what Stereo APTus uses) and the languages"

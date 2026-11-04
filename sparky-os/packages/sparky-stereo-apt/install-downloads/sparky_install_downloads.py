@@ -116,9 +116,11 @@ def messages():
     return text
 
 
-def assess(downloads, mode='metered', interactive=True, state=None):
+def assess(downloads, mode='metered', question='asked', state=None):
     """What a front end shows. downloads: [{package, version, size, source}]. Returns a dict:
-    announce (bool), state (yes, no, unknown), detail, downloads (with size_text) and text (the lines, in the person's language)."""
+    announce (bool), state (yes, no, unknown), detail, downloads (with size_text) and text (the lines, in the person's language).
+    question: asked (apt will ask "Do you want to continue?"), not-asked (only the named packages are installed, apt asks nothing)
+    or unattended (-y)."""
     result = {'announce': False, 'state': 'no', 'detail': '', 'mode': mode, 'downloads': [], 'text': []}
     if not downloads or mode == 'never':
         return result
@@ -138,6 +140,6 @@ def assess(downloads, mode='metered', interactive=True, state=None):
     lines.append(msg['intro'])
     for d in result['downloads']:
         lines.append(msg['line'].format(package=d['package'], size=d['size_text'], source=d['source']))
-    lines.append(msg['ask'] if interactive else msg['unattended'])
+    lines.append({'asked': msg['ask'], 'not-asked': msg['noquestion'], 'unattended': msg['unattended']}[question])
     result['text'] = lines
     return result
