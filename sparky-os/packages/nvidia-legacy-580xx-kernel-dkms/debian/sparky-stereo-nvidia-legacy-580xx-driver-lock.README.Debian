@@ -10,21 +10,28 @@ modules for the edition's kernels. This package keeps NVIDIA's driver at that
 version while it is installed.
 
 /etc/apt/preferences.d/09sparky-stereo-nvidia-legacy-580xx-driver-lock is
-generated from this package's version when it is built. Its four records, in
+generated from this package's version when it is built. Its five records, in
 order:
 
-1. NVIDIA's and Debian's own NVIDIA kernel module packages
+1. nvidia-detect from Debian's archive: priority 1010. The records below name
+   source nvidia-graphics-drivers, and NVIDIA's own nvidia-detect (a
+   documentation-only package with no command) would win them at 1005.
+   Hardware Setup chains Debian's real detector, so it stays: apt_preferences(5)
+   says the first specific-form record matching an available package version
+   determines its priority, and this record matches only versions from
+   Debian's archive.
+2. NVIDIA's and Debian's own NVIDIA kernel module packages
    (nvidia-kernel-open-dkms, nvidia-kernel-dkms, nvidia-open-kernel-dkms) and
    the edition's open modules (nvidia-kernel-open-dkms-stereo3d): priority -1,
    never installed. nvidia-legacy-580xx-kernel-dkms provides
    nvidia-kernel-dkms at its own version, the version of the carried user
    space, so NVIDIA's user space is satisfied by it.
-2. Every NVIDIA driver package at the version the 580 module is built for:
+3. Every NVIDIA driver package at the version the 580 module is built for:
    priority 1005. The set is the one sparky-stereo-nvidia-driver-lock names
    (the packages NVIDIA's own nvidia-driver-pinning package pins), with this
    module in the place of the open one.
-3. The same packages at any other version: priority 100.
-4. This package itself: priority 1001 from the edition's repository.
+4. The same packages at any other version: priority 100.
+5. This package itself: priority 1001 from the edition's repository.
 
 The two driver lock packages conflict: install the lock for the selected
 stack before resolving its driver packages. sparky-stereo-cuda-repo accepts
