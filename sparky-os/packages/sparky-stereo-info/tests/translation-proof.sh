@@ -4,6 +4,7 @@
 # ORDER 346f-3b: stereo-display-info's person-readable output ships in the nine languages (memory required-languages), and what the
 # KInfoCenter page parses does not change. The golden files are the output of the published script (sparky-stereo-info 20261104,
 # commit 805609a) on the fixture of fixture.sh, in English: text, --keys and --sections.
+# ORDER 405b: the two lines "colour resolution" now read "colour depth" (one name for bits per colour); the goldens changed for those lines only.
 # Usage: translation-proof.sh STEREO_DISPLAY_INFO LANGDIR      exit 0 only when every case matches
 set -u
 S=${1:?the stereo-display-info script}
