@@ -5,7 +5,7 @@
 # Builds flightgear-data-installer: the small package that fetches FlightGear's own data release, checks its recorded
 # SHA-256 and unpacks it where FlightGear looks (ORDER 399; Daniel, 2026-10-31: "we do not host it", "small downloader
 # is better"). flightgear Depends on flightgear-data-all, which this package Provides at the version FlightGear needs.
-# Needs only dpkg-deb; run it in a throwaway container or on any Debian.
+# Needs dpkg-dev and python3; the .debs and the source package (.dsc and tarball) come out together. Run it in a throwaway container or on any Debian.
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 umask 022
@@ -60,6 +60,8 @@ Description: Fetches FlightGear's data from FlightGear's release page
   Removing the package removes the data it unpacked.
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | grep -v '^etc/' | sort | xargs md5sum) >"$D/DEBIAN/md5sums"
-mkdir -p "$OUT"
-"$HERE/../../repo/provenance.sh" --tree "$D"
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$D" "$OUT"
+mkdir -p "$OUT" "$W/authoring"
+cp -a "$I/." "$W/authoring/"
+mkdir -p "$W/authoring/build-tools"
+cp "$COPY" "$W/authoring/build-tools/"
+PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$W/authoring"
