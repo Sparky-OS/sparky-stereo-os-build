@@ -34,7 +34,7 @@ DBUS_TARGETS="testStereoDepthWallpaperCuts testTabBoxStereo"
 for t in $TARGETS; do
     bus=; case " $DBUS_TARGETS " in *" $t "*) bus="dbus-run-session --" ;; esac
     # testStereoDownscale opens EGL's default display, which has no platform without a display server
-    out=$(setpriv --reuid=1000 --regid=1000 --groups=$(stat -c %g /dev/dri/renderD128)$([ -c /dev/udmabuf ] && echo ,$(stat -c %g /dev/udmabuf)) env HOME=/t LANG=C.UTF-8 QT_QPA_PLATFORM=offscreen EGL_PLATFORM=surfaceless XDG_RUNTIME_DIR=/t timeout 300 $bus bin/$t 2>&1); rc=$?
+    out=$(setpriv --reuid=1000 --regid=1000 --groups=44,125 env HOME=/t LANG=C.UTF-8 QT_QPA_PLATFORM=offscreen EGL_PLATFORM=surfaceless XDG_RUNTIME_DIR=/t timeout 300 $bus bin/$t 2>&1); rc=$?
     echo "$out" > /t/$t.log
     echo "$t exit $rc $(echo "$out" | grep -E '^Totals')"
 done

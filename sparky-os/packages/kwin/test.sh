@@ -15,10 +15,8 @@ sparky_need SPARKY_REPO_DIR
 WORK=$(cd "$1" && pwd)
 TESTS=$(mkdir -p "$2" && cd "$2" && pwd)
 EXTRA=$(cd "$3" && pwd)
-NODE=/dev/dri/renderD128
-UDMABUF=()
-[ -c /dev/udmabuf ] && UDMABUF=(--device /dev/udmabuf --group-add "$(stat -c %g /dev/udmabuf)")
-docker run --rm --cpus 4 --platform linux/amd64 --device "$NODE" --group-add "$(stat -c %g "$NODE")" "${UDMABUF[@]}" \
+# The AMD iGPU is never passed in (HOUSE-RULES, hold on the AMD iGPU): the RTX 3060 through CDI, no udmabuf.
+docker run --rm --ulimit core=0 --name w196-kwin-test --cpus 4 --platform linux/amd64 --device nvidia.com/gpu=0 --group-add 44 --group-add 125 \
 	-v "$TESTS":/t -v "$WORK":/work:ro -v "$EXTRA":/extra:ro -v "$SPARKY_REPO_DIR":/repo:ro -v "$HERE":/tools:ro \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \

@@ -1,0 +1,1375 @@
+Description: The flat stereo display as a WebXR device and the CSS depth property (ORDER 194, 195, 414)
+ Three modes the person picks (flat TV or output, flat headset, VR over the phone), the separation from
+ libstereo-policy's display depth (the display's kind and physical size, the person's strength and screen
+ plane on top), Escape and a visible Exit control, an entry hint and the mode's name, input per mode, the
+ keyboard focus kept across a session, and a frame submission that no longer polls for ever when a
+ presentation ends (the browser could not quit). CSS: the property depth (sunk | screen | popped |
+ <percentage> | <number>), parsed and computed, behind layout.css.depth.enabled (off until elements are
+ drawn at their depth). This is the difference between browser commit 075e18be19 and 81fecb57fbd546be8ed75e082d62210a7ad75833
+ (Sparky-OS/waterfox, branch stereo3d).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+diff --git a/browser/actors/StereoXRChild.sys.mjs b/browser/actors/StereoXRChild.sys.mjs
+new file mode 100644
+index 0000000000..51ee531542
+--- /dev/null
++++ b/browser/actors/StereoXRChild.sys.mjs
+@@ -0,0 +1,182 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Sparky Stereo OS: what the person sees while an immersive WebXR session
++// shows the flat stereo display: a hint on entry (Esc leaves, how the mouse and
++// keyboard move the view), the mode the person chose, and a visible Exit
++// control, always on the screen, in the person's language.
++//
++// The browser itself tells the document when such a session begins and ends
++// (XRSession, the chrome-only events MozStereoXRStart and MozStereoXREnd; a page
++// cannot send them); this actor draws the overlay into the document's anonymous
++// content, in the top layer so that it lies over the full screen canvas, and its
++// Exit button ends the session through XRSystem.exitFlatSession(), which only
++// the browser's own code can call. Escape needs no overlay: XRSession ends the
++// session on it, with or without full screen (WebXR Device API, "shut down the
++// session").
++
++const MODES = ["tv", "headset", "phone"];
++const HINT_SECONDS = 9;
++
++export class StereoXRChild extends JSWindowActorChild {
++  #content = null;
++  #popovers = [];
++  #focused = null;
++  #refocus = null;
++  #timer = 0;
++
++  handleEvent(event) {
++    if (event.type == "MozStereoXRStart") {
++      try {
++        this.#show();
++      } catch (e) {
++        console.error("StereoXR: the overlay could not be drawn", e);
++      }
++    } else if (event.type == "MozStereoXREnd") {
++      this.#hide();
++      this.#refocus = this.#focused;
++      this.#focused = null;
++      this.#restoreFocus();
++    } else if (event.type == "fullscreenchange") {
++      if (this.#content) {
++        // The canvas is put into the top layer after the session began (the
++        // fullscreen request is answered later): raise the overlay over it.
++        this.#raise();
++      }
++      this.#restoreFocus();
++    }
++  }
++
++  // Leaving full screen takes the keyboard focus off the page's element (the
++  // Enter button that began the session, for one): give it back once the
++  // document is out of full screen, so that the keyboard goes on from where it
++  // was (Tab, Enter and Esc alone enter and leave 3D again).
++  #restoreFocus() {
++    const element = this.#refocus;
++    const doc = this.document;
++    if (!element || !doc || doc.fullscreenElement) {
++      return;
++    }
++    this.#refocus = null;
++    try {
++      if (element.isConnected && doc.activeElement != element) {
++        element.focus({ preventScroll: true });
++      }
++    } catch (e) {
++      // the element is gone
++    }
++  }
++
++  #raise() {
++    for (const element of this.#popovers) {
++      try {
++        element.hidePopover();
++        element.showPopover();
++      } catch (e) {
++        // the element is gone (the hint after its time)
++      }
++    }
++  }
++
++  didDestroy() {
++    this.#hide();
++  }
++
++  #show() {
++    this.#hide();
++    const doc = this.document;
++    this.#focused = doc && doc.activeElement != doc.body ? doc.activeElement : null;
++    const win = this.contentWindow;
++    if (!doc || !win) {
++      return;
++    }
++    const mode = Math.min(
++      Math.max(Services.prefs.getIntPref("dom.vr.flat.mode", 0), 0),
++      2
++    );
++    const l10n = new Localization(["browser/browserContext.ftl"], true);
++    const [exit, hint, modeName] = l10n.formatValuesSync([
++      "stereo-xr-exit",
++      mode == 2 ? "stereo-xr-hint-phone" : "stereo-xr-hint-flat",
++      "stereo-xr-mode-" + MODES[mode],
++    ]);
++
++    const content = doc.insertAnonymousContent();
++    this.#content = content;
++    const root = content.root;
++    const style = doc.createElement("style");
++    style.textContent = `
++      .stereo-xr {
++        position: fixed; inset: auto; margin: 0; border: 0; padding: 8px 14px;
++        background: rgba(0, 0, 0, 0.72); color: #fff;
++        font: 16px/1.4 sans-serif; border-radius: 8px;
++        display: flex; align-items: center; gap: 14px; overflow: visible;
++      }
++      #stereo-xr-bar { top: 12px; right: 12px; pointer-events: auto; }
++      #stereo-xr-hint { bottom: 24px; left: 50%; transform: translateX(-50%);
++                        max-width: 80vw; text-align: center; }
++      #stereo-xr-hint[hidden] { display: none; }
++      button { font: inherit; color: #fff; background: #b3261e; border: 0;
++               border-radius: 6px; padding: 6px 14px; cursor: pointer; }
++      button:hover { background: #d0382e; }
++      button:focus-visible { outline: 3px solid #fff; }
++    `;
++    const bar = doc.createElement("div");
++    bar.id = "stereo-xr-bar";
++    bar.className = "stereo-xr";
++    bar.setAttribute("popover", "manual");
++    const label = doc.createElement("span");
++    label.textContent = modeName;
++    const button = doc.createElement("button");
++    button.id = "stereo-xr-exit";
++    button.textContent = exit;
++    button.addEventListener("click", () => {
++      try {
++        win.navigator.xr.exitFlatSession();
++      } catch (e) {
++        console.error("StereoXR: the Exit control could not end the session", e);
++      }
++    });
++    bar.append(label, button);
++    const hintBox = doc.createElement("div");
++    hintBox.id = "stereo-xr-hint";
++    hintBox.className = "stereo-xr";
++    hintBox.setAttribute("popover", "manual");
++    hintBox.textContent = hint;
++    root.append(style, bar, hintBox);
++    // The top layer, after the full screen canvas went into it: over it.
++    this.#popovers = [bar, hintBox];
++    bar.showPopover();
++    hintBox.showPopover();
++    this.#timer = win.setTimeout(() => {
++      this.#timer = 0;
++      this.#popovers = this.#popovers.filter(e => e != hintBox);
++      try {
++        hintBox.hidePopover();
++      } catch (e) {
++        // already gone
++      }
++    }, HINT_SECONDS * 1000);
++  }
++
++  #hide() {
++    if (this.#timer) {
++      try {
++        this.contentWindow.clearTimeout(this.#timer);
++      } catch (e) {
++        // the window is gone
++      }
++      this.#timer = 0;
++    }
++    if (this.#content) {
++      try {
++        this.document.removeAnonymousContent(this.#content);
++      } catch (e) {
++        // the document is gone
++      }
++      this.#content = null;
++    }
++    this.#popovers = [];
++  }
++}
+diff --git a/browser/actors/moz.build b/browser/actors/moz.build
+index adcbb03231..af809e0bd8 100644
+--- a/browser/actors/moz.build
++++ b/browser/actors/moz.build
+@@ -83,6 +83,9 @@ with Files("SpeechDispatcher*.sys.mjs"):
+ with Files("StereoSiteMarkChild.sys.mjs"):
+     BUG_COMPONENT = ("Core", "Audio/Video: Playback")
+ 
++with Files("StereoXRChild.sys.mjs"):
++    BUG_COMPONENT = ("Core", "WebVR")
++
+ with Files("SwitchDocumentDirectionChild.sys.mjs"):
+     BUG_COMPONENT = ("Core", "Internationalization")
+ 
+@@ -141,6 +144,7 @@ FINAL_TARGET_FILES.actors += [
+     "SpeechDispatcherChild.sys.mjs",
+     "SpeechDispatcherParent.sys.mjs",
+     "StereoSiteMarkChild.sys.mjs",
++    "StereoXRChild.sys.mjs",
+     "SwitchDocumentDirectionChild.sys.mjs",
+     "WebRTCChild.sys.mjs",
+     "WebRTCParent.sys.mjs",
+diff --git a/browser/base/content/browser-context.inc.xhtml b/browser/base/content/browser-context.inc.xhtml
+index c40b99d725..3e991bce81 100644
+--- a/browser/base/content/browser-context.inc.xhtml
++++ b/browser/base/content/browser-context.inc.xhtml
+@@ -264,6 +264,62 @@
+                     />
+         </menupopup>
+       </menu>
++      <menu id="context-xr-stereo" data-l10n-id="main-context-menu-xr-stereo">
++        <menupopup>
++          <menuitem id="context-xr-stereo-mode-tv"
++                    data-l10n-id="main-context-menu-xr-stereo-mode-tv"
++                    type="radio"
++                    name="xrstereomode"
++                    />
++          <menuitem id="context-xr-stereo-mode-headset"
++                    data-l10n-id="main-context-menu-xr-stereo-mode-headset"
++                    type="radio"
++                    name="xrstereomode"
++                    />
++          <menuitem id="context-xr-stereo-mode-phone"
++                    data-l10n-id="main-context-menu-xr-stereo-mode-phone"
++                    type="radio"
++                    name="xrstereomode"
++                    />
++          <menuseparator/>
++          <menuitem id="context-xr-stereo-depth-less"
++                    data-l10n-id="main-context-menu-xr-stereo-depth-less"
++                    type="radio"
++                    name="xrstereodepth"
++                    />
++          <menuitem id="context-xr-stereo-depth-normal"
++                    data-l10n-id="main-context-menu-xr-stereo-depth-normal"
++                    type="radio"
++                    name="xrstereodepth"
++                    />
++          <menuitem id="context-xr-stereo-depth-more"
++                    data-l10n-id="main-context-menu-xr-stereo-depth-more"
++                    type="radio"
++                    name="xrstereodepth"
++                    />
++          <menuitem id="context-xr-stereo-depth-most"
++                    data-l10n-id="main-context-menu-xr-stereo-depth-most"
++                    type="radio"
++                    name="xrstereodepth"
++                    />
++          <menuseparator/>
++          <menuitem id="context-xr-stereo-plane-nearer"
++                    data-l10n-id="main-context-menu-xr-stereo-plane-nearer"
++                    type="radio"
++                    name="xrstereoplane"
++                    />
++          <menuitem id="context-xr-stereo-plane-default"
++                    data-l10n-id="main-context-menu-xr-stereo-plane-default"
++                    type="radio"
++                    name="xrstereoplane"
++                    />
++          <menuitem id="context-xr-stereo-plane-farther"
++                    data-l10n-id="main-context-menu-xr-stereo-plane-farther"
++                    type="radio"
++                    name="xrstereoplane"
++                    />
++        </menupopup>
++      </menu>
+       <menuitem id="context-leave-dom-fullscreen"
+                 data-l10n-id="main-context-menu-media-video-leave-fullscreen"
+                 />
+diff --git a/browser/base/content/browser-context.js b/browser/base/content/browser-context.js
+index fc6ce768e4..828a15c52d 100644
+--- a/browser/base/content/browser-context.js
++++ b/browser/base/content/browser-context.js
+@@ -122,6 +122,20 @@ document.addEventListener(
+         case "context-video-stereo-swap":
+           gContextMenu.mediaCommand("stereoSwap");
+           break;
++        case "context-xr-stereo-mode-tv":
++        case "context-xr-stereo-mode-headset":
++        case "context-xr-stereo-mode-phone":
++        case "context-xr-stereo-depth-less":
++        case "context-xr-stereo-depth-normal":
++        case "context-xr-stereo-depth-more":
++        case "context-xr-stereo-depth-most":
++        case "context-xr-stereo-plane-nearer":
++        case "context-xr-stereo-plane-default":
++        case "context-xr-stereo-plane-farther":
++          gContextMenu.setXRStereo(
++            event.target.id.slice("context-xr-stereo-".length)
++          );
++          break;
+         case "context-canvas-stereo-off":
+           gContextMenu.setCanvasStereo(false);
+           break;
+diff --git a/browser/base/content/nsContextMenu.sys.mjs b/browser/base/content/nsContextMenu.sys.mjs
+index 5338037305..5651caa77c 100644
+--- a/browser/base/content/nsContextMenu.sys.mjs
++++ b/browser/base/content/nsContextMenu.sys.mjs
+@@ -109,6 +109,13 @@ const IMAGE_ONLY_PROTOCOLS = [
+ 
+ // The 3D Canvas menu's depths: the eyes' separation in tenths of a percent
+ // of the view's width (permission "stereo-camera-depth").
++// The flat stereo display as a WebXR device: the person's modes, depths (in
++// percent of the display's own default) and screen planes (in millimetres,
++// 0 for the default).
++const XR_STEREO_MODES = { tv: 0, headset: 1, phone: 2 };
++const XR_STEREO_DEPTHS = { less: 50, normal: 100, more: 150, most: 200 };
++const XR_STEREO_PLANES = { nearer: 600, default: 0, farther: 2000 };
++
+ const CANVAS_STEREO_DEPTHS = { less: 10, normal: 20, more: 30, most: 40 };
+ 
+ export class nsContextMenu {
+@@ -1093,6 +1100,50 @@ export class nsContextMenu {
+     );
+     // A WebGL scene drawn once per eye from its own camera, for the page's
+     // site, and the depth (Sparky Stereo OS).
++    // The flat stereo display as a WebXR device: how the person sees it
++    // (mode, depth, screen plane), global preferences, never derived from the
++    // output.
++    const xrMenu =
++      Services.prefs.getBoolPref("dom.vr.flat.enabled", false) &&
++      (this.onCanvas ||
++        !(
++          this.onLink ||
++          this.onImage ||
++          this.onVideo ||
++          this.onAudio ||
++          this.isContentSelected ||
++          this.onTextInput
++        ));
++    this.showItem("context-xr-stereo", xrMenu);
++    if (xrMenu) {
++      const mode = Services.prefs.getIntPref("dom.vr.flat.mode", 0);
++      for (const [name, value] of Object.entries(XR_STEREO_MODES)) {
++        this.setItemAttr(
++          "context-xr-stereo-mode-" + name,
++          "checked",
++          value == mode
++        );
++      }
++      const strength = Services.prefs.getIntPref(
++        "dom.vr.flat.depth-strength",
++        100
++      );
++      for (const [name, value] of Object.entries(XR_STEREO_DEPTHS)) {
++        this.setItemAttr(
++          "context-xr-stereo-depth-" + name,
++          "checked",
++          value == strength
++        );
++      }
++      const plane = Services.prefs.getIntPref("dom.vr.flat.screen-plane-mm", 0);
++      for (const [name, value] of Object.entries(XR_STEREO_PLANES)) {
++        this.setItemAttr(
++          "context-xr-stereo-plane-" + name,
++          "checked",
++          value == plane
++        );
++      }
++    }
+     this.showItem("context-canvas-stereo", this.onCanvas);
+     if (this.onCanvas) {
+       const on = this.canvasStereoOn();
+@@ -2653,6 +2704,25 @@ export class nsContextMenu {
+     );
+   }
+ 
++  // The 3D Display menu: mode, depth (percent of the display's own) and the
++  // screen plane's distance (mm, 0 for the default).
++  setXRStereo(item) {
++    const [kind, name] = [item.split("-")[0], item.split("-").slice(1).join("-")];
++    if (kind == "mode" && name in XR_STEREO_MODES) {
++      Services.prefs.setIntPref("dom.vr.flat.mode", XR_STEREO_MODES[name]);
++    } else if (kind == "depth" && name in XR_STEREO_DEPTHS) {
++      Services.prefs.setIntPref(
++        "dom.vr.flat.depth-strength",
++        XR_STEREO_DEPTHS[name]
++      );
++    } else if (kind == "plane" && name in XR_STEREO_PLANES) {
++      Services.prefs.setIntPref(
++        "dom.vr.flat.screen-plane-mm",
++        XR_STEREO_PLANES[name]
++      );
++    }
++  }
++
+   setCanvasStereoDepth(name) {
+     const value = CANVAS_STEREO_DEPTHS[name];
+     if (value) {
+diff --git a/browser/components/DesktopActorRegistry.sys.mjs b/browser/components/DesktopActorRegistry.sys.mjs
+index c7619dd325..d02dd7384f 100644
+--- a/browser/components/DesktopActorRegistry.sys.mjs
++++ b/browser/components/DesktopActorRegistry.sys.mjs
+@@ -839,6 +839,22 @@ let JSWINDOWACTORS = {
+     allFrames: true,
+   },
+ 
++  // Sparky Stereo OS: the hint, the mode and the Exit control while an
++  // immersive WebXR session shows the flat stereo display.
++  StereoXR: {
++    child: {
++      esModuleURI: "resource:///actors/StereoXRChild.sys.mjs",
++      events: {
++        MozStereoXRStart: {},
++        MozStereoXREnd: {},
++        fullscreenchange: {},
++      },
++    },
++
++    messageManagerGroups: ["browsers"],
++    allFrames: true,
++  },
++
+   ASRouter: {
+     parent: {
+       esModuleURI: "resource:///actors/ASRouterParent.sys.mjs",
+diff --git a/browser/locales/en-US/browser/browserContext.ftl b/browser/locales/en-US/browser/browserContext.ftl
+index 976e5b1167..bf46aba491 100644
+--- a/browser/locales/en-US/browser/browserContext.ftl
++++ b/browser/locales/en-US/browser/browserContext.ftl
+@@ -297,6 +297,53 @@ main-context-menu-canvas-stereo-depth-more =
+ main-context-menu-canvas-stereo-depth-most =
+     .label = Most Depth
+ 
++## The flat stereo display as a WebXR device (Sparky Stereo OS): how the person
++## sees it, never derived from the output (a 3D television and a headset can be
++## shown at once): the mode, the depth, and where the screen plane is. The
++## browser's own overlay shows the hint and the Exit control while a session
++## lasts.
++
++main-context-menu-xr-stereo =
++    .label = 3D Display
++    .accesskey = 3
++
++main-context-menu-xr-stereo-mode-tv =
++    .label = Flat TV or output
++
++main-context-menu-xr-stereo-mode-headset =
++    .label = Flat headset
++
++main-context-menu-xr-stereo-mode-phone =
++    .label = VR over the phone
++
++main-context-menu-xr-stereo-depth-less =
++    .label = Less depth
++
++main-context-menu-xr-stereo-depth-normal =
++    .label = Normal depth
++
++main-context-menu-xr-stereo-depth-more =
++    .label = More depth
++
++main-context-menu-xr-stereo-depth-most =
++    .label = Most depth
++
++main-context-menu-xr-stereo-plane-nearer =
++    .label = Screen plane: nearer
++
++main-context-menu-xr-stereo-plane-default =
++    .label = Screen plane: default
++
++main-context-menu-xr-stereo-plane-farther =
++    .label = Screen plane: farther
++
++stereo-xr-exit = Exit 3D
++stereo-xr-hint-flat = Esc leaves 3D. Drag with the mouse to look; W, A, S, D or the arrow keys and the wheel move you.
++stereo-xr-hint-phone = Esc leaves 3D. The phone headset's head tracking and controllers are not connected yet: the mouse and keyboard move the view.
++stereo-xr-mode-tv = Flat TV or output
++stereo-xr-mode-headset = Flat headset
++stereo-xr-mode-phone = VR over the phone
++
+ ## The access keys for "Show Controls" and "Hide Controls" are the same
+ ## because the two context-menu items are mutually exclusive.
+ 
+diff --git a/dom/base/use_counter_metrics.yaml b/dom/base/use_counter_metrics.yaml
+index b7b3e2c11f..4df9fd6e22 100644
+--- a/dom/base/use_counter_metrics.yaml
++++ b/dom/base/use_counter_metrics.yaml
+@@ -108,7 +108,7 @@ use.counter:
+     send_in_pings:
+       - use-counters
+ 
+-# Total of 2570 use counter metrics (excludes denominators).
++# Total of 2573 use counter metrics (excludes denominators).
+ # Total of 403 'page' use counters.
+ use.counter.page:
+   svgsvgelement_getelementbyid:
+@@ -6962,7 +6962,7 @@ use.counter.page:
+     send_in_pings:
+       - use-counters
+ 
+-# Total of 402 'document' use counters.
++# Total of 403 'document' use counters.
+ use.counter.doc:
+   svgsvgelement_getelementbyid:
+     type: counter
+@@ -19044,7 +19044,7 @@ use.counter.deprecated_ops.doc:
+     send_in_pings:
+       - use-counters
+ 
+-# Total of 729 'CSS (page)' use counters.
++# Total of 730 'CSS (page)' use counters.
+ use.counter.css.page:
+   css_align_items:
+     type: counter
+@@ -22446,6 +22446,23 @@ use.counter.css.page:
+     send_in_pings:
+       - use-counters
+ 
++  css_depth:
++    type: counter
++    description: >
++      Whether a page used the CSS property depth.
++      Compare against `use.counter.top_level_content_documents_destroyed`
++      to calculate the rate.
++    bugs:
++      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
++    data_reviews:
++      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
++    notification_emails:
++      - dom-core@mozilla.com
++      - emilio@mozilla.com
++    expires: never
++    send_in_pings:
++      - use-counters
++
+   css_filter:
+     type: counter
+     description: >
+@@ -31439,7 +31456,7 @@ use.counter.css.page:
+     send_in_pings:
+       - use-counters
+ 
+-# Total of 729 'CSS (document)' use counters.
++# Total of 730 'CSS (document)' use counters.
+ use.counter.css.doc:
+   css_align_items:
+     type: counter
+@@ -34841,6 +34858,23 @@ use.counter.css.doc:
+     send_in_pings:
+       - use-counters
+ 
++  css_depth:
++    type: counter
++    description: >
++      Whether a document used the CSS property depth.
++      Compare against `use.counter.content_documents_destroyed`
++      to calculate the rate.
++    bugs:
++      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
++    data_reviews:
++      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
++    notification_emails:
++      - dom-core@mozilla.com
++      - emilio@mozilla.com
++    expires: never
++    send_in_pings:
++      - use-counters
++
+   css_filter:
+     type: counter
+     description: >
+diff --git a/dom/ipc/ContentParent.cpp b/dom/ipc/ContentParent.cpp
+index 019ce99395..69dbdc2484 100644
+--- a/dom/ipc/ContentParent.cpp
++++ b/dom/ipc/ContentParent.cpp
+@@ -8104,6 +8104,31 @@ IPCResult ContentParent::RecvGetStereoFileSwap(
+   return IPC_OK();
+ }
+ 
++IPCResult ContentParent::RecvGetStereoDisplayDepth(
++    const int32_t& aKind, const int32_t& aWidthMm, const int32_t& aHeightMm,
++    const double& aStrengthPercent, GetStereoDisplayDepthResolver&& aResolver) {
++  using ResolverArgs = std::tuple<const int32_t&, const double&, const double&,
++                                  const int32_t&, const int32_t&>;
++  int32_t ok = -1, distance = 0, known = 0;
++  double sunk = 0, popped = 0;
++#if defined(MOZ_WAYLAND)
++  const auto* policy = layers::GetStereoPolicy();
++  if (policy && policy->displayDepth) {
++    layers::StereoPolicy::Depth depth{};
++    ok = policy->displayDepth(aKind, aWidthMm, aHeightMm, aStrengthPercent, 0,
++                              0, &depth);
++    if (ok == 0) {
++      sunk = depth.mSunkPx;
++      popped = depth.mPoppedPx;
++      distance = depth.mViewingDistanceMm;
++      known = depth.mSizeKnown;
++    }
++  }
++#endif
++  aResolver(ResolverArgs(ok, sunk, popped, distance, known));
++  return IPC_OK();
++}
++
+ IPCResult ContentParent::RecvGetStereoSiteMark(
+     const nsCString& aKeywords, GetStereoSiteMarkResolver&& aResolver) {
+   using ResolverArgs = std::tuple<const int32_t&, const int32_t&,
+diff --git a/dom/ipc/ContentParent.h b/dom/ipc/ContentParent.h
+index cf0351be7c..2ec7a18a46 100644
+--- a/dom/ipc/ContentParent.h
++++ b/dom/ipc/ContentParent.h
+@@ -1407,6 +1407,11 @@ class ContentParent final : public PContentParent,
+   mozilla::ipc::IPCResult RecvGetStereoFileSwap(
+       nsIURI* aURI, GetStereoFileSwapResolver&& aResolver);
+ 
++  mozilla::ipc::IPCResult RecvGetStereoDisplayDepth(
++      const int32_t& aKind, const int32_t& aWidthMm, const int32_t& aHeightMm,
++      const double& aStrengthPercent,
++      GetStereoDisplayDepthResolver&& aResolver);
++
+   mozilla::ipc::IPCResult RecvGetStereoSiteMark(
+       const nsCString& aKeywords, GetStereoSiteMarkResolver&& aResolver);
+ 
+diff --git a/dom/ipc/PContent.ipdl b/dom/ipc/PContent.ipdl
+index 16a8fea894..39010fee43 100644
+--- a/dom/ipc/PContent.ipdl
++++ b/dom/ipc/PContent.ipdl
+@@ -1981,6 +1981,16 @@ parent:
+     // library is missing or too old); the layout and order are its
+     // stereo_policy_layout and stereo_policy_order values, the aspect the
+     // shape of one view (0 and 0 when none is given).
++    // Sparky Stereo OS: the depth of a display, read by libstereo-policy,
++    // the one source the desktop reads too (stereo_policy_display_depth):
++    // the limits the display sinks and pops at (pixels of a 1920 wide view),
++    // the distance it is seen from and whether its size was known. aOk is 0,
++    // or -1 when the library is missing or too old.
++    async GetStereoDisplayDepth(int32_t aKind, int32_t aWidthMm,
++                                int32_t aHeightMm, double aStrengthPercent)
++        returns (int32_t aOk, double aSunkPx, double aPoppedPx,
++                 int32_t aDistanceMm, int32_t aSizeKnown);
++
+     async GetStereoSiteMark(nsCString aKeywords)
+         returns (int32_t aFound, int32_t aLayout, int32_t aOrder,
+                  int32_t aAspectNum, int32_t aAspectDen);
+diff --git a/dom/vr/XRFrame.cpp b/dom/vr/XRFrame.cpp
+index 0aa1a02b06..978f88bead 100644
+--- a/dom/vr/XRFrame.cpp
++++ b/dom/vr/XRFrame.cpp
+@@ -84,6 +84,12 @@ already_AddRefed<XRViewerPose> XRFrame::GetViewerPose(
+       viewerPosition = mSession->FlatPosition();
+       viewerOrientation = mSession->FlatOrientation();
+       windowViews = mSession->GetWindowViews();
++      if (!windowViews.mReady) {
++        // The display's depth is being read: no pose yet (a viewer pose may
++        // be null, WebXR 5.1 XRFrame.getViewerPose, and a page
++        // asks again on the next frame).
++        return nullptr;
++      }
+     }
+ 
+     gfx::Matrix4x4Double headTransform;
+@@ -128,6 +134,9 @@ already_AddRefed<XRViewerPose> XRFrame::GetViewerPose(
+     // geometry"). The views share the canvas, left half and right half
+     // (XRWebGLLayer::GetViewport), and the canvas is declared to hold both.
+     const XRSession::WindowViews windowViews = mSession->GetWindowViews();
++    if (!windowViews.mReady) {
++      return nullptr;
++    }
+     viewerPose =
+         mSession->PooledViewerPose(gfx::Matrix4x4Double(), emulatedPosition);
+     for (int32_t eye = 0; eye < gfx::VRDisplayState::NumEyes; eye++) {
+diff --git a/dom/vr/XRSession.cpp b/dom/vr/XRSession.cpp
+index 54e40b7484..252ccba1cc 100644
+--- a/dom/vr/XRSession.cpp
++++ b/dom/vr/XRSession.cpp
+@@ -25,9 +25,14 @@
+ #include "mozilla/dom/XRInputSourceEvent.h"
+ #include "mozilla/dom/XRSessionEvent.h"
+ #include <algorithm>
++#include <cmath>
++#include <tuple>
+ 
+ #include "mozilla/StaticPrefs_dom.h"
++#include "mozilla/dom/ContentChild.h"
+ #include "mozilla/dom/DOMRect.h"
++#include "nsContentUtils.h"
++#include "mozilla/StaticPrefs_dom.h"
+ #include "mozilla/dom/Element.h"
+ #include "mozilla/dom/ElementBinding.h"
+ #include "mozilla/dom/HTMLCanvasElement.h"
+@@ -381,6 +386,7 @@ void XRSession::StartFlatPresentation(HTMLCanvasElement* aCanvas) {
+   }
+   RefPtr<Promise> promise =
+       aCanvas->RequestFullscreen(FullscreenOptions(), CallerType::System, rv);
++  NotifyFlatSession(true);
+   if (nsGlobalWindowInner* win = GetOwnerWindow()) {
+     mFlatInput = new FlatInputListener(this);
+     for (const auto& type : kFlatInputEvents) {
+@@ -389,7 +395,20 @@ void XRSession::StartFlatPresentation(HTMLCanvasElement* aCanvas) {
+   }
+ }
+ 
++void XRSession::NotifyFlatSession(bool aStarted) {
++  // The browser's own UI (the StereoXR actor) shows the hint, the mode and the
++  // Exit control while the session lasts; pages do not see this event.
++  if (Document* doc = mFlatCanvas ? mFlatCanvas->OwnerDoc() : nullptr) {
++    nsContentUtils::DispatchEventOnlyToChrome(
++        doc, doc, aStarted ? u"MozStereoXRStart"_ns : u"MozStereoXREnd"_ns,
++        CanBubble::eYes, Cancelable::eNo);
++  }
++}
++
+ void XRSession::StopFlatPresentation() {
++  if (mFlatCanvas) {
++    NotifyFlatSession(false);
++  }
+   if (mFlatInput) {
+     if (nsGlobalWindowInner* win = GetOwnerWindow()) {
+       for (const auto& type : kFlatInputEvents) {
+@@ -412,11 +431,63 @@ void XRSession::StopFlatPresentation() {
+   }
+ }
+ 
++int32_t XRSession::FlatMode() {
++  return std::clamp<int32_t>(StaticPrefs::dom_vr_flat_mode(), 0, 2);
++}
++
++void XRSession::AskFlatDepth(int32_t aKind, int32_t aWidthMm, int32_t aHeightMm,
++                             uint32_t aStrength, uint64_t aKey) const {
++  mFlatDepthAsked = aKey;
++  if (!XRE_IsContentProcess()) {
++    return;
++  }
++  ContentChild* child = ContentChild::GetSingleton();
++  if (!child) {
++    return;
++  }
++  child->SendGetStereoDisplayDepth(aKind, aWidthMm, aHeightMm,
++                                   double(aStrength))
++      ->Then(
++          GetMainThreadSerialEventTarget(), __func__,
++          [self = RefPtr{const_cast<XRSession*>(this)}, aKey](
++              const std::tuple<int32_t, double, double, int32_t, int32_t>&
++                  aAnswer) {
++            const auto [ok, sunk, popped, distance, known] = aAnswer;
++            if (self->mFlatDepthAsked != aKey) {
++              return;
++            }
++            if (ok != 0) {
++              // Said, never silent: the package depends on libstereo-policy1
++              // 1.15, so this is a library that was removed or replaced.
++              nsContentUtils::LogSimpleConsoleError(
++                  u"Stereo: libstereo-policy 1.15 or newer is missing, so the "
++                  u"display's depth cannot be read and the flat stereo "
++                  u"display shows no views."_ns,
++                  "media"_ns, false, true);
++              return;
++            }
++            if (!known && !self->mFlatSizeNoticed) {
++              self->mFlatSizeNoticed = true;
++              nsContentUtils::LogSimpleConsoleError(
++                  u"Stereo: the display's size is not known, so the depth of "
++                  u"a 24 inch monitor stands in for it."_ns,
++                  "media"_ns, false, true);
++            }
++            self->mFlatDepth.mReady = true;
++            self->mFlatDepth.mKey = aKey;
++            self->mFlatDepth.mSunkPx = sunk;
++            self->mFlatDepth.mPoppedPx = popped;
++            self->mFlatDepth.mViewingDistanceMm = distance;
++          },
++          [](mozilla::ipc::ResponseRejectReason) {});
++}
++
+ XRSession::WindowViews XRSession::GetWindowViews() const {
+   // The window: its size in device pixels and in millimetres.
+   RefPtr<widget::Screen> screen =
+       widget::ScreenManager::GetSingleton().GetPrimaryScreen();
+   double dpi = screen ? screen->GetDPI() : 0.0;
++  const bool sizeKnown = dpi > 0.0;
+   if (dpi <= 0.0) {
+     dpi = 96.0;
+   }
+@@ -439,18 +510,69 @@ XRSession::WindowViews XRSession::GetWindowViews() const {
+   }
+   const double width = pixels.width * 25.4 / dpi;
+   const double height = pixels.height * 25.4 / dpi;
+-  const double distance = StaticPrefs::dom_vr_flat_viewer_distance_mm();
+-  const double separation = StaticPrefs::dom_vr_flat_eye_separation_mm();
++
++  WindowViews views;
++  views.mEyeResolution = pixels;
++  double viewer = StaticPrefs::dom_vr_flat_viewer_distance_mm();
++  double separation = StaticPrefs::dom_vr_flat_eye_separation_mm();
++  double plane = viewer;
++  if (separation <= 0) {
++    // The depth of the display, under the person's choice (WebXR is in
++    // metres, the display's depth in pixels of a 1920 wide view): the
++    // screen's own size (that of the display, not of an inline canvas) and
++    // the mode decide what is comfortable, the person's strength scales it.
++    const int32_t kind = FlatMode() == 0 ? 0 : 2;
++    const uint32_t strength = StaticPrefs::dom_vr_flat_depth_strength();
++    const gfx::IntSize screenPixels =
++        screen ? screen->GetRect().Size().ToUnknownSize() : pixels;
++    const int32_t screenWidthMm =
++        sizeKnown ? int32_t(lround(screenPixels.width * 25.4 / dpi)) : 0;
++    const int32_t screenHeightMm =
++        sizeKnown ? int32_t(lround(screenPixels.height * 25.4 / dpi)) : 0;
++    const uint64_t key = (uint64_t(kind) << 60) ^
++                         (uint64_t(screenWidthMm & 0xfffff) << 40) ^
++                         (uint64_t(screenHeightMm & 0xfffff) << 20) ^
++                         uint64_t(strength) ^ 0x1000000000000000ull;
++    if (key != mFlatDepthAsked) {
++      AskFlatDepth(kind, screenWidthMm, screenHeightMm, strength, key);
++    }
++    if (!mFlatDepth.mReady) {
++      views.mReady = false;
++      return views;
++    }
++    if (viewer <= 0) {
++      viewer = mFlatDepth.mViewingDistanceMm;
++    }
++    // The screen plane: where an object has no parallax, in the page's world.
++    // The window is that far away and as large as keeps the view's angle, and
++    // the eyes are apart by the display's far parallax (its sunk limit) as a
++    // fraction of that window: an object at distance z has a parallax of
++    // that fraction of the window times (1 - plane / z), so it sinks
++    // towards the far limit and pops in front of the plane.
++    const double person = StaticPrefs::dom_vr_flat_screen_plane_mm();
++    plane = person > 0 ? person : 1000.0;
++    const double windowWidth = width * plane / viewer;
++    separation = mFlatDepth.mSunkPx / 1920.0 * windowWidth;
++    // the window as the eyes at the plane see it
++  } else {
++    // The expert's own physical separation: the screen at the viewer's
++    // distance (700 mm unless set), as before the display's depth.
++    if (viewer <= 0) {
++      viewer = 700.0;
++    }
++    plane = viewer;
++  }
++  const double windowWidth = width * plane / viewer;
++  const double windowHeight = height * plane / viewer;
+ 
+   // Each eye's frustum through the window: the window's edge on the eye's
+   // own side is nearer to it by half the separation, the other edge farther.
+   // VRFieldOfView takes up, right, down, left, in degrees.
+   const double ownSide =
+-      atan((width - separation) / 2.0 / distance) / kRadPerDegree;
++      atan((windowWidth - separation) / 2.0 / plane) / kRadPerDegree;
+   const double otherSide =
+-      atan((width + separation) / 2.0 / distance) / kRadPerDegree;
+-  const double vertical = atan(height / 2.0 / distance) / kRadPerDegree;
+-  WindowViews views;
++      atan((windowWidth + separation) / 2.0 / plane) / kRadPerDegree;
++  const double vertical = atan(windowHeight / 2.0 / plane) / kRadPerDegree;
+   views.mFieldOfView[gfx::VRDisplayState::Eye_Left] =
+       gfx::VRFieldOfView(vertical, otherSide, vertical, ownSide);
+   views.mFieldOfView[gfx::VRDisplayState::Eye_Right] =
+@@ -458,7 +580,6 @@ XRSession::WindowViews XRSession::GetWindowViews() const {
+   const float offset = float(separation / 2000.0);
+   views.mOffset[gfx::VRDisplayState::Eye_Left] = gfx::Point3D(-offset, 0, 0);
+   views.mOffset[gfx::VRDisplayState::Eye_Right] = gfx::Point3D(offset, 0, 0);
+-  views.mEyeResolution = pixels;
+   return views;
+ }
+ 
+@@ -493,6 +614,15 @@ void XRSession::HandleFlatInput(Event& aEvent) {
+   } else if (KeyboardEvent* key = aEvent.AsKeyboardEvent()) {
+     nsAutoString name;
+     key->GetKey(name);
++    if (name.EqualsLiteral("Escape")) {
++      // Escape always ends the immersive session on the flat display, with
++      // or without full screen (WebXR 4.1 "shut down the session":
++      // the user agent may end a session at any time, and must when the
++      // person asks it to), and the page sees its "end" event.
++      aEvent.PreventDefault();
++      ExitPresentInternal();
++      return;
++    }
+     if (name.EqualsLiteral("ArrowUp") || name.EqualsLiteral("w")) {
+       move(0.1, 0.0);
+     } else if (name.EqualsLiteral("ArrowDown") || name.EqualsLiteral("s")) {
+diff --git a/dom/vr/XRSession.h b/dom/vr/XRSession.h
+index 1bc54c3269..0fdf45c538 100644
+--- a/dom/vr/XRSession.h
++++ b/dom/vr/XRSession.h
+@@ -116,11 +116,17 @@ class XRSession final : public DOMEventTargetHelper, public nsARefreshObserver {
+     std::array<gfx::VRFieldOfView, gfx::VRDisplayState::NumEyes> mFieldOfView;
+     std::array<gfx::Point3D, gfx::VRDisplayState::NumEyes> mOffset;
+     gfx::IntSize mEyeResolution;
++    // False until the display's depth has been read (a pose is not reported
++    // before: WebXR 5.1 XRFrame.getViewerPose may return null).
++    bool mReady = true;
+   };
+   bool IsFlat() const;
+   bool IsInlineStereo() const { return mInlineStereo; }
+   void SetInlineStereo(bool aInlineStereo) { mInlineStereo = aInlineStereo; }
+   WindowViews GetWindowViews() const;
++  // The person's choice of how the screen is seen (dom.vr.flat.mode): 0 flat
++  // TV or output, 1 flat headset, 2 VR over the phone.
++  static int32_t FlatMode();
+   // With no controllers, the viewer turns with the mouse and moves with the
+   // keys and the wheel; this is the viewer's pose in the session's space.
+   gfx::QuaternionDouble FlatOrientation() const;
+@@ -186,6 +192,25 @@ class XRSession final : public DOMEventTargetHelper, public nsARefreshObserver {
+   double mFlatYaw = 0.0;
+   double mFlatPitch = 0.0;
+   gfx::PointDouble3D mFlatPosition;
++
++  // The display's depth for the mode, size and strength it was asked for,
++  // read by libstereo-policy in the parent process (the one source the
++  // desktop reads too); the key tells what it answers.
++  struct FlatDepth {
++    bool mReady = false;
++    uint64_t mKey = 0;
++    double mSunkPx = 0;
++    double mPoppedPx = 0;
++    int32_t mViewingDistanceMm = 0;
++  };
++  mutable FlatDepth mFlatDepth;
++  mutable uint64_t mFlatDepthAsked = 0;
++  mutable bool mFlatSizeNoticed = false;
++  void AskFlatDepth(int32_t aKind, int32_t aWidthMm, int32_t aHeightMm,
++                    uint32_t aStrength, uint64_t aKey) const;
++  // Tells the page's document (the browser's own UI listens) that the flat
++  // display's immersive session began or ended.
++  void NotifyFlatSession(bool aStarted);
+ };
+ 
+ }  // namespace dom
+diff --git a/dom/vr/XRSystem.cpp b/dom/vr/XRSystem.cpp
+index 8bcc1142f6..031d3f8b73 100644
+--- a/dom/vr/XRSystem.cpp
++++ b/dom/vr/XRSystem.cpp
+@@ -89,6 +89,12 @@ void XRSystem::Shutdown() {
+   }
+ }
+ 
++void XRSystem::ExitFlatSession() {
++  if (RefPtr<XRSession> session = mActiveImmersiveSession) {
++    session->ExitPresent();
++  }
++}
++
+ void XRSystem::SessionEnded(XRSession* aSession) {
+   if (mActiveImmersiveSession == aSession) {
+     mActiveImmersiveSession = nullptr;
+diff --git a/dom/vr/XRSystem.h b/dom/vr/XRSystem.h
+index b29272184a..9b90dfd591 100644
+--- a/dom/vr/XRSystem.h
++++ b/dom/vr/XRSystem.h
+@@ -110,6 +110,9 @@ class XRSystem final : public DOMEventTargetHelper,
+   bool OnXRPermissionRequestAllow();
+   void OnXRPermissionRequestCancel();
+   bool HasActiveImmersiveSession() const;
++  // The browser's Exit control on the flat stereo display (WebXR 4.1
++  // "shut down the session"): ends the active immersive session.
++  void ExitFlatSession();
+ 
+   // WebIDL Boilerplate
+   static already_AddRefed<XRSystem> Create(nsPIDOMWindowInner* aWindow);
+diff --git a/dom/webidl/WebXR.webidl b/dom/webidl/WebXR.webidl
+index 26223bd412..e0b7eb7dd2 100644
+--- a/dom/webidl/WebXR.webidl
++++ b/dom/webidl/WebXR.webidl
+@@ -15,6 +15,11 @@ interface XRSystem : EventTarget {
+   [NewObject, NeedsCallerType]
+   Promise<XRSession> requestSession(XRSessionMode mode, optional XRSessionInit options = {});
+ 
++  // Sparky Stereo OS: the browser's own Exit control (Escape too) ends the
++  // immersive session on the flat stereo display. Pages do not see it.
++  [ChromeOnly]
++  undefined exitFlatSession();
++
+   // Events
+   attribute EventHandler ondevicechange;
+ };
+diff --git a/gfx/layers/StereoPolicy.cpp b/gfx/layers/StereoPolicy.cpp
+index 5b5fa5a7b0..bc9dfc2e70 100644
+--- a/gfx/layers/StereoPolicy.cpp
++++ b/gfx/layers/StereoPolicy.cpp
+@@ -30,6 +30,8 @@ const StereoPolicy* GetStereoPolicy() {
+         dlsym(handle, "stereo_policy_file_swap_eyes"));
+     lib.siteMarkList = reinterpret_cast<decltype(lib.siteMarkList)>(
+         dlsym(handle, "stereo_policy_site_mark_list"));
++    lib.displayDepth = reinterpret_cast<decltype(lib.displayDepth)>(
++        dlsym(handle, "stereo_policy_display_depth"));
+     if (!lib.videoLayout || !lib.videoFullViews) {
+       MOZ_LOG(sStereoPolicyLog, LogLevel::Debug,
+               ("libstereo-policy.so.1 lacks its video entries"));
+diff --git a/gfx/layers/StereoPolicy.h b/gfx/layers/StereoPolicy.h
+index cf77e62adc..8f86c76b21 100644
+--- a/gfx/layers/StereoPolicy.h
++++ b/gfx/layers/StereoPolicy.h
+@@ -42,6 +42,22 @@ struct StereoPolicy {
+   // none is given. Null in libraries older than 1.13.
+   int (*siteMarkList)(const char* aKeywords, int* aLayout, int* aOrder,
+                       int* aAspectNum, int* aAspectDen) = nullptr;
++
++  // The depth of a display (libstereo-policy 1.15, stereo-policy.h): the one
++  // source of how far a stereo output sinks and pops, read by the desktop and
++  // by the browser. Mirrors struct stereo_policy_depth.
++  struct Depth {
++    double mSunkPx;          // behind the screen, pixels of a 1920 wide view
++    double mPoppedPx;        // in front of it
++    int mViewingDistanceMm;  // where the viewer sits
++    int mSizeKnown;          // 1 when the physical size was given
++  };
++  static constexpr int kDisplayFramed = 0;
++  static constexpr int kDisplayAnaglyph = 1;
++  static constexpr int kDisplayHeadset = 2;
++  int (*displayDepth)(int aKind, int aWidthMm, int aHeightMm,
++                      double aStrengthPercent, double aSunkOverridePx,
++                      double aPoppedOverridePx, Depth* aOut) = nullptr;
+ };
+ 
+ // Null without the library.
+diff --git a/gfx/vr/VRManager.cpp b/gfx/vr/VRManager.cpp
+index 209cfe355d..bdb13ae12a 100644
+--- a/gfx/vr/VRManager.cpp
++++ b/gfx/vr/VRManager.cpp
+@@ -1223,6 +1223,7 @@ void VRManager::ClearHapticSlot(size_t aSlot) {
+ }
+ 
+ void VRManager::ShutdownSubmitThread() {
++  mAbortSubmit = true;
+   if (mSubmitThread) {
+     mSubmitThread->Shutdown();
+     mSubmitThread = nullptr;
+@@ -1238,6 +1239,7 @@ void VRManager::StartPresentation() {
+   }
+ 
+   // Indicate that we are ready to start immersive mode
++  mAbortSubmit = false;
+   mBrowserState.presentationActive = true;
+   mBrowserState.layerState[0].type = VRLayerType::LayerType_Stereo_Immersive;
+   PushState();
+@@ -1256,6 +1258,7 @@ void VRManager::StopPresentation() {
+   }
+ 
+   // Indicate that we have stopped immersive mode
++  mAbortSubmit = true;
+   mBrowserState.presentationActive = false;
+   memset(mBrowserState.layerState, 0,
+          sizeof(VRLayerState) * std::size(mBrowserState.layerState));
+@@ -1429,9 +1432,14 @@ bool VRManager::SubmitFrame(const layers::SurfaceDescriptor& aTexture,
+   PullState([&]() {
+     return (mDisplayInfo.mDisplayState.lastSubmittedFrameId >= aFrameId) ||
+            mDisplayInfo.mDisplayState.suppressFrames ||
+-           !mDisplayInfo.mDisplayState.isConnected;
++           !mDisplayInfo.mDisplayState.isConnected || mAbortSubmit;
+   });
+ 
++  if (mAbortSubmit) {
++    // The presentation stopped while the frame was in flight.
++    return false;
++  }
++
+   if (mDisplayInfo.mDisplayState.suppressFrames ||
+       !mDisplayInfo.mDisplayState.isConnected) {
+     // External implementation wants to suppress frames, service has shut
+diff --git a/gfx/vr/VRManager.h b/gfx/vr/VRManager.h
+index 93ad89e25c..4019504249 100644
+--- a/gfx/vr/VRManager.h
++++ b/gfx/vr/VRManager.h
+@@ -159,6 +159,12 @@ class VRManager : nsIObserver {
+   RefPtr<nsITimer> mTaskTimer;
+   mozilla::Monitor mCurrentSubmitTaskMonitor MOZ_UNANNOTATED;
+   RefPtr<CancelableRunnable> mCurrentSubmitTask;
++  // Set when the presentation stops or the submit thread is about to be shut
++  // down: a frame submission waiting for the service to say it took the frame
++  // (VRManager::SubmitFrame) stops waiting. Without it a session that ends
++  // while a frame is in flight leaves the submit thread polling for ever,
++  // holding mCurrentSubmitTaskMonitor, and the browser cannot quit.
++  mozilla::Atomic<bool> mAbortSubmit{false};
+   uint64_t mLastSubmittedFrameId;
+   uint64_t mLastStartedFrame;
+   VRDisplayCapabilityFlags mRuntimeSupportFlags;
+diff --git a/gfx/vr/VRShMem.cpp b/gfx/vr/VRShMem.cpp
+index 8346696f37..c1c1b517bc 100644
+--- a/gfx/vr/VRShMem.cpp
++++ b/gfx/vr/VRShMem.cpp
+@@ -3,6 +3,7 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ #include "VRShMem.h"
++#include "mozilla/TimeStamp.h"
+ 
+ #ifdef MOZILLA_INTERNAL_API
+ #  include "nsString.h"
+@@ -34,6 +35,8 @@ static const char* kShmemName = "/moz.gecko.vr_ext." SHMEM_VERSION;
+ 
+ #if !defined(MOZ_WIDGET_ANDROID)
+ namespace {
++constexpr double kMaxWaitSeconds = 3.0;
++
+ void YieldThread() {
+ #  if defined(XP_WIN)
+   ::Sleep(0);
+@@ -579,7 +582,21 @@ void VRShMem::PullSystemState(
+   if (!mExternalShmem) {
+     return;
+   }
++  // A wait for the service to take a frame is bounded: the service takes one
++  // every refresh, so a few seconds without it means it is gone or stuck, and
++  // the thread polling for it (the VR submit thread, which holds the lock the
++  // compositor thread needs) must not be held for ever: the browser could not
++  // quit (Sparky Stereo OS, ORDER 195).
++  const TimeStamp waitStart = TimeStamp::Now();
+   while (true) {
++    if (aWaitCondition &&
++        (TimeStamp::Now() - waitStart).ToSeconds() > kMaxWaitSeconds) {
++      fprintf(stderr,
++              "VRShMem::PullSystemState: gave up waiting for the VR service "
++              "after %.0f seconds\n",
++              kMaxWaitSeconds);
++      return;
++    }
+     {  // Scope for WaitForMutex
+ #  if defined(XP_WIN)
+       bool status = true;
+@@ -606,6 +623,12 @@ void VRShMem::PullSystemState(
+           // We did not get a clean copy, and we are not waiting for a condition
+           // to exit from PullState call.
+           return;
++        } else if (aWaitCondition()) {
++          // No clean copy, and the wait is over all the same: the caller is
++          // told to stop waiting (a presentation that ended leaves the
++          // service's state without a clean generation for good, so the
++          // condition was never asked while the service was gone).
++          return;
+         }
+         // Yield the thread while polling
+         YieldThread();
+diff --git a/layout/style/nsStyleStruct.cpp b/layout/style/nsStyleStruct.cpp
+index a12af828e5..4d7efc9fc2 100644
+--- a/layout/style/nsStyleStruct.cpp
++++ b/layout/style/nsStyleStruct.cpp
+@@ -3512,6 +3512,7 @@ nsStyleEffects::nsStyleEffects(const nsStyleEffects& aSource)
+       mBackdropFilters(aSource.mBackdropFilters),
+       mClip(aSource.mClip),
+       mOpacity(aSource.mOpacity),
++      mDepth(aSource.mDepth),
+       mMixBlendMode(aSource.mMixBlendMode) {
+   MOZ_COUNT_CTOR(nsStyleEffects);
+ }
+@@ -3570,6 +3571,11 @@ nsChangeHint nsStyleEffects::CalcDifference(
+     }
+   }
+ 
++  if (mDepth != aNewData.mDepth) {
++    // The element is drawn once per view at its own depth: repaint it.
++    hint |= nsChangeHint_RepaintFrame;
++  }
++
+   if (HasFilters() != aNewData.HasFilters()) {
+     // A change from/to being a containing block for position:fixed.
+     hint |= nsChangeHint_UpdateContainingBlock;
+diff --git a/layout/style/nsStyleStruct.h b/layout/style/nsStyleStruct.h
+index 61c98d02ab..cf409252c7 100644
+--- a/layout/style/nsStyleStruct.h
++++ b/layout/style/nsStyleStruct.h
+@@ -2404,6 +2404,9 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleEffects {
+   mozilla::StyleOwnedSlice<mozilla::StyleFilter> mBackdropFilters;
+   mozilla::StyleClipRectOrAuto mClip;  // offsets from UL border edge
+   float mOpacity;
++  // Sparky Stereo OS: where the element lies in depth, from -1 (the sunk limit)
++  // to 1 (the popped limit), 0 at the screen: CSS `depth`.
++  float mDepth = 0.0f;
+   mozilla::StyleBlend mMixBlendMode;
+ };
+ 
+diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
+index a08c0896f3..1783e3f9c0 100644
+--- a/modules/libpref/init/StaticPrefList.yaml
++++ b/modules/libpref/init/StaticPrefList.yaml
+@@ -5715,23 +5715,54 @@
+ # hardware.  If a VR multitasking environment, this should be set
+ # very low or set to 0.
+ # The flat stereo display: the screen itself offered as an immersive WebXR
+-# device. Each eye's view goes through the screen as a window, seen from the
+-# viewer's seat (both distances in millimetres), and the session's canvas
+-# shows both eyes side by side, declared to a compositor that shows each eye
+-# its half (gfx/vr/service/FlatSession.cpp). It also offers inline-stereo.
++# device. Each eye's view goes through the screen as a window, and the
++# session's canvas shows both eyes side by side, declared to a compositor that
++# shows each eye its half (gfx/vr/service/FlatSession.cpp). It also offers
++# inline-stereo.
++#
++# The person picks how it is seen, never the output (they may show a 3D
++# television and a headset at once): the mode, then the depth, both read
++# with the display's own default under them (libstereo-policy's display
++# depth, the one source the desktop reads too).
++#   0 flat TV or output: a framed screen, gentle separation around the
++#     screen plane, a gentle pop;
++#   1 flat headset: the screen as a window in a headset, more separation;
++#   2 VR over the phone: the phone headset's own session, with head tracking
++#     and controllers once the tracked phone headset delivers them.
+ - name: dom.vr.flat.enabled
+   type: RelaxedAtomicBool
+   value: false
+   mirror: always
+ 
++- name: dom.vr.flat.mode
++  type: RelaxedAtomicInt32
++  value: 0
++  mirror: always
++
++# The person's depth, in percent of the display's default (100).
++- name: dom.vr.flat.depth-strength
++  type: RelaxedAtomicUint32
++  value: 100
++  mirror: always
++
++# Where the screen plane is in the page's world, in millimetres: the distance
++# at which an object has no parallax. 0 is the default, 1000.
++- name: dom.vr.flat.screen-plane-mm
++  type: RelaxedAtomicUint32
++  value: 0
++  mirror: always
++
++# Expert overrides of the display's own geometry, in millimetres, 0 for the
++# display's own: the distance the screen is seen from, and a physical eye
++# separation (which, when set, replaces the depth of the display).
+ - name: dom.vr.flat.viewer-distance-mm
+   type: RelaxedAtomicUint32
+-  value: 700
++  value: 0
+   mirror: always
+ 
+ - name: dom.vr.flat.eye-separation-mm
+   type: RelaxedAtomicUint32
+-  value: 64
++  value: 0
+   mirror: always
+ 
+ - name: dom.vr.inactive.timeout
+@@ -10532,6 +10563,16 @@
+   mirror: always
+   rust: true
+ 
++# Sparky Stereo OS: the CSS `depth` property (sunk | screen | popped |
++# <percentage> | <number>), the same words as Union, Stereo KWin and SVGStereo.
++# Off until the browser draws an element once per view at its depth: a page
++# that is told a property exists must see it do something.
++- name: layout.css.depth.enabled
++  type: RelaxedAtomicBool
++  value: false
++  mirror: always
++  rust: true
++
+ # Whether to enable CSS Anchor Positioning support.
+ # https://drafts.csswg.org/css-anchor-position-1/
+ - name: layout.css.anchor-positioning.enabled
+diff --git a/servo/components/style/properties/longhands.toml b/servo/components/style/properties/longhands.toml
+index f63fd4f206..1917f87f47 100644
+--- a/servo/components/style/properties/longhands.toml
++++ b/servo/components/style/properties/longhands.toml
+@@ -1477,6 +1477,15 @@ spec = "https://drafts.csswg.org/css-color/#transparency"
+ servo_restyle_damage = "repaint"
+ affects = "paint"
+ 
++[depth]
++type = "Depth"
++initial = "0.0"
++struct = "effects"
++gecko_pref = "layout.css.depth.enabled"
++spec = "https://github.com/Sparky-OS/svgstereo/blob/main/DEPTH.md"
++servo_restyle_damage = "repaint"
++affects = "paint"
++
+ [order]
+ type = "Integer"
+ initial = "0"
+diff --git a/servo/components/style/values/computed/mod.rs b/servo/components/style/values/computed/mod.rs
+index db09e5bfa0..08ec1a47d9 100644
+--- a/servo/components/style/values/computed/mod.rs
++++ b/servo/components/style/values/computed/mod.rs
+@@ -1068,6 +1068,9 @@ impl NonNegativeNumberOrPercentage {
+ /// A type used for opacity.
+ pub type Opacity = CSSFloat;
+ 
++/// A type used for depth: the level, from -1 (sunk) to 1 (popped), 0 at the screen.
++pub type Depth = CSSFloat;
++
+ /// A `<integer>` value.
+ pub type Integer = CSSInteger;
+ 
+diff --git a/servo/components/style/values/specified/mod.rs b/servo/components/style/values/specified/mod.rs
+index c71e5b3261..5c302c7808 100644
+--- a/servo/components/style/values/specified/mod.rs
++++ b/servo/components/style/values/specified/mod.rs
+@@ -364,6 +364,69 @@ impl ToComputedValue for Opacity {
+     }
+ }
+ 
++/// A specified CSS `depth`: where an element lies in depth on a stereoscopic display, as Union, Stereo KWin and SVGStereo
++/// name it: `sunk | screen | popped | <percentage> | <number>`. The keywords are the levels -1, 0 and 1, a number is a
++/// level from -1 to 1 and a percentage a fraction of the limit on its side from -100% to 100%. The limits are the
++/// person's and the display's, never the page's; a value out of range is ignored as a declaration.
++#[derive(Clone, Debug, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToCss, ToShmem, ToTyped)]
++pub enum Depth {
++    /// The sunk limit, level -1.
++    Sunk,
++    /// The plane of what the element lies on, level 0.
++    Screen,
++    /// The popped limit, level 1.
++    Popped,
++    /// A fraction of the limit on its side.
++    Level(NumberOrPercentage),
++}
++
++impl Parse for Depth {
++    fn parse<'i, 't>(
++        context: &ParserContext,
++        input: &mut Parser<'i, 't>,
++    ) -> Result<Self, ParseError<'i>> {
++        if let Ok(keyword) = input.try_parse(|input| -> Result<Depth, ParseError<'i>> {
++            Ok(try_match_ident_ignore_ascii_case! { input,
++                "sunk" => Depth::Sunk,
++                "screen" => Depth::Screen,
++                "popped" => Depth::Popped,
++            })
++        }) {
++            return Ok(keyword);
++        }
++        let value = NumberOrPercentage::parse(context, input)?.into_simplified_number();
++        if let NumberOrPercentage::Number(ref number) = value {
++            if let Some(level) = number.get() {
++                if !(-1.0..=1.0).contains(&level) {
++                    return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
++                }
++            }
++        }
++        Ok(Depth::Level(value))
++    }
++}
++
++impl ToComputedValue for Depth {
++    type ComputedValue = CSSFloat;
++
++    #[inline]
++    fn to_computed_value(&self, context: &Context) -> CSSFloat {
++        match *self {
++            Depth::Sunk => -1.0,
++            Depth::Screen => 0.0,
++            Depth::Popped => 1.0,
++            Depth::Level(ref value) => value.to_computed_value(context).value().max(-1.0).min(1.0),
++        }
++    }
++
++    #[inline]
++    fn from_computed_value(computed: &CSSFloat) -> Self {
++        Depth::Level(NumberOrPercentage::Number(Number::from_computed_value(
++            computed,
++        )))
++    }
++}
++
+ /// The specified value of a grid `<track-breadth>`
+ pub type TrackBreadth = GenericTrackBreadth<LengthPercentage>;
+ 

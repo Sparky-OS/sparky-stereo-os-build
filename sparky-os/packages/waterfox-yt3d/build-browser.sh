@@ -18,7 +18,7 @@ PUBLISHED=$(cd "$2" && pwd -P)
 TOOLS=$(cd "$3" && pwd -P)
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 sparky_provenance_init sparky-lc-migration:20261020
-docker run "${SPARKY_PROV_ARGS[@]}" --rm --name w196-browser --cpus 8 --memory 32g --platform linux/amd64 \
+docker run "${SPARKY_PROV_ARGS[@]}" --rm --ulimit core=0 --name w196-browser --cpus ${BROWSER_JOBS:-8} -e BROWSER_JOBS=${BROWSER_JOBS:-8} --memory 32g --platform linux/amd64 \
 	-v "$WORK":/work -v "$PUBLISHED":/in:ro -v "$HERE/browser":/patches:ro -v "$TOOLS":/browser-toolchains:ro \
 	-v "$HERE/../..":/toolkit:ro \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
