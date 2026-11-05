@@ -19,7 +19,8 @@ Design followed (Daniel's words, as recorded):
 
 ## Order
 
-1. `next-source.sh qt6-multimedia` then `build.sh qt6-multimedia`; the debs go into a flat repository (`apt-ftparchive packages . > Packages`, `Release`).
+1. `next-source.sh qt6-multimedia` then `build.sh qt6-multimedia`; the debs go into a flat repository: `apt-ftparchive packages . > Packages` and `apt-ftparchive -o APT::FTPArchive::Release::Origin="Sparky Stereo OS" release . > Release`. The Origin matters: the build container pins the edition's origin at 1001, and a flat repository without it loses to the published +13 (Dragon's build dependency on +14 then reads "not going to be installed").
+   `build.sh` takes the published edition's .deb list as its 8th argument (the link gate resolves edition libraries, libavutil61 +stereo3d9 among them, from that snapshot as the publisher does; without it Debian's and deb-multimedia's higher-numbered 9.0.2-dmo4 wins and the gate rightly fails on av_multiview_real_to_double).
 2. `next-source.sh dragon` then `build.sh dragon ... NEW_DIR` with that repository: dragon builds against qt6-multimedia-dev +stereo3d14.
 
 ## Dependencies added or changed
