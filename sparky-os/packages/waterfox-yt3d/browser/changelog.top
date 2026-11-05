@@ -1,0 +1,30 @@
+sparky-stereo-browser (@DEBVERSION@) unstable; urgency=medium
+
+  * A video site's mark of its videos, read from the keywords of the page:
+    YouTube's yt3d tags (yt3d:enable=LR, RL, LonR, RonL, true, false;
+    swap; aspect; the left and right rectangles; malformed values read as
+    far as they can be). The tags are read by libstereo-policy's site mark
+    reader, the one reader the edition's programs share (PlasmaTube uses
+    it too); the browser keeps no copy of its rules. The mark counts for a
+    video whose stream and container carry none, after the stream's frame
+    packing SEI and the container's mark, under the 3D Video menu's choice
+    of the person and before the shape rule. A watch page's
+    <meta name="keywords"> reaches its videos through a small actor
+    (media.stereo.site-marks, on; media.stereo.site-marks.hosts, empty for
+    every page).
+  * The first form, yt3d:enable=true, is right eye first and yt3d:swap=true
+    makes it left eye first, as YouTube's player took them (PlasmaTube's
+    first patch had them the other way round).
+  * The shape rule is libstereo-policy's: only a frame at least three
+    times as wide as high is taken for side by side, so a 2.40:1 scope film
+    stays flat.
+  * Depends on libstereo-policy1 (>= 1.13.0), which has the site mark
+    reader.
+  * The source states what it is: SOURCE.edition.json (a quilt patch on the
+    unchanged stereo3d5 orig tarball), debian/browser-build.env
+    (MOZ_SOURCE_CHANGESET) and the vendor baseline name browser commit
+    075e18be19b8a5f2fcc5b782c4392169a4c0eec0 (the stereo3d5 commit
+    b1d115f8d3 plus the site mark patch).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@
+

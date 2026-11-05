@@ -1,0 +1,457 @@
+From 075e18be19b8a5f2fcc5b782c4392169a4c0eec0 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 5 Nov 2026 02:13:05 -0300
+Subject: [PATCH] Video: a video site's mark, read from the page's keywords
+
+YouTube took the layout of a 3D upload from the video's keywords (yt3d:enable=LR
+and the others), and its watch page, like Invidious and Piped, still carries
+them in <meta name="keywords">. A video whose stream and container carry no
+stereo mark now takes that site mark, from libstereo-policy's site mark reader
+(stereo_policy_site_mark_list, version 1.13), the one reader the edition's
+programs share: the browser keeps no copy of the tags' rules.
+
+A small actor (StereoSiteMark, browser/actors) hands the page's keywords to its
+videos (HTMLVideoElement.stereoSiteKeywords, chrome only) when the video loads,
+when the page's DOM is ready and when a single-page site announces new keywords
+(YouTube's yt-navigate-finish; yt-navigate-start clears them). The content
+process sends them to the parent (PContent.GetStereoSiteMark), which reads them
+with the library, and applies the answer only if the element still has the same
+keywords. The mark counts as the user's choice would for a video without a mark
+of its own: under the user's own choice in the 3D Video menu and under the
+stream's frame packing SEI and the container's mark, over the picture's shape.
+Keywords that name no arrangement the policy has (an unsupported rectangle) say
+so in the browser console and give no mark.
+
+media.stereo.site-marks (on) switches it off; media.stereo.site-marks.hosts
+(empty: every page) limits it to a list of domains.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ browser/actors/StereoSiteMarkChild.sys.mjs    | 81 +++++++++++++++++++
+ browser/actors/moz.build                      |  4 +
+ browser/app/profile/firefox.js                |  7 ++
+ .../components/DesktopActorRegistry.sys.mjs   | 21 +++++
+ dom/ipc/ContentParent.cpp                     | 25 ++++++
+ dom/ipc/ContentParent.h                       |  3 +
+ dom/ipc/PContent.ipdl                         | 11 +++
+ dom/media/mediaelement/HTMLMediaElement.cpp   | 76 ++++++++++++++++-
+ dom/media/mediaelement/HTMLMediaElement.h     | 15 ++++
+ dom/webidl/HTMLVideoElement.webidl            |  7 ++
+ gfx/layers/StereoPolicy.cpp                   |  2 +
+ gfx/layers/StereoPolicy.h                     |  8 ++
+ 12 files changed, 258 insertions(+), 2 deletions(-)
+ create mode 100644 browser/actors/StereoSiteMarkChild.sys.mjs
+
+diff --git a/browser/actors/StereoSiteMarkChild.sys.mjs b/browser/actors/StereoSiteMarkChild.sys.mjs
+new file mode 100644
+index 0000000000..8b3656898d
+--- /dev/null
++++ b/browser/actors/StereoSiteMarkChild.sys.mjs
+@@ -0,0 +1,81 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Sparky Stereo OS: a video site's mark of its videos, read from the keywords
++// of the page it declares them in. YouTube took the layout of a 3D upload
++// from its keywords (yt3d:enable=LR and the others), and its watch page, like
++// Invidious and Piped, still carries them in <meta name="keywords">. This
++// actor only hands the page's keywords to its videos (HTMLVideoElement's
++// chrome-only stereoSiteKeywords); the tags are read by libstereo-policy,
++// the one reader of the edition's programs, in the parent process, and the
++// mark counts under the 3D Video menu's choice and under the stream's and
++// the container's own marks.
++//
++// media.stereo.site-marks switches it off; media.stereo.site-marks.hosts
++// (comma separated domains, empty for every page) says where it applies.
++
++const PREF = "media.stereo.site-marks";
++const HOSTS_PREF = "media.stereo.site-marks.hosts";
++// A watch page's keywords are a few hundred bytes; more is not a list of tags.
++const MAX_KEYWORDS = 4096;
++
++export class StereoSiteMarkChild extends JSWindowActorChild {
++  #enabledFor(doc) {
++    if (!Services.prefs.getBoolPref(PREF, true)) {
++      return false;
++    }
++    const hosts = Services.prefs
++      .getStringPref(HOSTS_PREF, "")
++      .split(",")
++      .map(h => h.trim().toLowerCase())
++      .filter(Boolean);
++    if (!hosts.length) {
++      return true;
++    }
++    let host = "";
++    try {
++      host = doc.location.hostname.toLowerCase();
++    } catch (e) {
++      return false;
++    }
++    return hosts.some(h => host == h || host.endsWith("." + h));
++  }
++
++  #keywords(doc) {
++    const meta = doc.querySelector('meta[name="keywords" i]');
++    const content = (meta && meta.content) || "";
++    return content.length <= MAX_KEYWORDS ? content : "";
++  }
++
++  #mark(videos, keywords) {
++    for (const video of videos) {
++      if (video.stereoSiteKeywords !== undefined) {
++        video.stereoSiteKeywords = keywords;
++      }
++    }
++  }
++
++  handleEvent(event) {
++    const doc = this.document;
++    if (!doc || !this.#enabledFor(doc)) {
++      return;
++    }
++    switch (event.type) {
++      case "yt-navigate-start":
++        // The next video's keywords are not on the page yet: no mark until
++        // they are, so a flat video is never shown with the last one's.
++        this.#mark(doc.querySelectorAll("video"), "");
++        break;
++      case "loadstart":
++      case "loadedmetadata":
++        if (event.target.localName == "video") {
++          this.#mark([event.target], this.#keywords(doc));
++        }
++        break;
++      default:
++        // DOMContentLoaded, yt-navigate-finish, yt-page-data-updated
++        this.#mark(doc.querySelectorAll("video"), this.#keywords(doc));
++    }
++  }
++}
+diff --git a/browser/actors/moz.build b/browser/actors/moz.build
+index 90365893ac..adcbb03231 100644
+--- a/browser/actors/moz.build
++++ b/browser/actors/moz.build
+@@ -80,6 +80,9 @@ with Files("SearchSERPTelemetry*.sys.mjs"):
+ with Files("SpeechDispatcher*.sys.mjs"):
+     BUG_COMPONENT = ("Core", "Web Speech")
+ 
++with Files("StereoSiteMarkChild.sys.mjs"):
++    BUG_COMPONENT = ("Core", "Audio/Video: Playback")
++
+ with Files("SwitchDocumentDirectionChild.sys.mjs"):
+     BUG_COMPONENT = ("Core", "Internationalization")
+ 
+@@ -137,6 +140,7 @@ FINAL_TARGET_FILES.actors += [
+     "SearchSERPTelemetryParent.sys.mjs",
+     "SpeechDispatcherChild.sys.mjs",
+     "SpeechDispatcherParent.sys.mjs",
++    "StereoSiteMarkChild.sys.mjs",
+     "SwitchDocumentDirectionChild.sys.mjs",
+     "WebRTCChild.sys.mjs",
+     "WebRTCParent.sys.mjs",
+diff --git a/browser/app/profile/firefox.js b/browser/app/profile/firefox.js
+index 845f4b83cc..dd8b60c7bb 100644
+--- a/browser/app/profile/firefox.js
++++ b/browser/app/profile/firefox.js
+@@ -2393,6 +2393,13 @@ pref("identity.fxaccounts.telemetry.clientAssociationPing.enabled", true);
+ pref("media.gmp-gmpopenh264.visible", true);
+ pref("media.gmp-gmpopenh264.enabled", true);
+ 
++// Sparky Stereo OS: a video site's mark of its videos, read from the
++// keywords of the page (YouTube's yt3d tags) when the stream and its
++// container carry none; the 3D Video menu's choice is above it. The hosts
++// are a comma separated list of domains (empty: every page).
++pref("media.stereo.site-marks", true);
++pref("media.stereo.site-marks.hosts", "");
++
+ pref("media.videocontrols.picture-in-picture.enabled", true);
+ pref("media.videocontrols.picture-in-picture.audio-toggle.enabled", true);
+ pref("media.videocontrols.picture-in-picture.video-toggle.enabled", true);
+diff --git a/browser/components/DesktopActorRegistry.sys.mjs b/browser/components/DesktopActorRegistry.sys.mjs
+index 48487160a8..c7619dd325 100644
+--- a/browser/components/DesktopActorRegistry.sys.mjs
++++ b/browser/components/DesktopActorRegistry.sys.mjs
+@@ -818,6 +818,27 @@ let JSWINDOWACTORS = {
+     allFrames: true,
+   },
+ 
++  // Sparky Stereo OS: the page's keywords to its videos, for a video site's
++  // stereo mark (YouTube's yt3d tags).
++  StereoSiteMark: {
++    child: {
++      esModuleURI: "resource:///actors/StereoSiteMarkChild.sys.mjs",
++      events: {
++        DOMContentLoaded: {},
++        loadstart: { capture: true },
++        loadedmetadata: { capture: true },
++        // The page's own events: they need not bubble, so they are caught
++        // on the way down.
++        "yt-navigate-start": { capture: true, wantUntrusted: true },
++        "yt-navigate-finish": { capture: true, wantUntrusted: true },
++        "yt-page-data-updated": { capture: true, wantUntrusted: true },
++      },
++    },
++
++    messageManagerGroups: ["browsers"],
++    allFrames: true,
++  },
++
+   ASRouter: {
+     parent: {
+       esModuleURI: "resource:///actors/ASRouterParent.sys.mjs",
+diff --git a/dom/ipc/ContentParent.cpp b/dom/ipc/ContentParent.cpp
+index 7513468c7d..019ce99395 100644
+--- a/dom/ipc/ContentParent.cpp
++++ b/dom/ipc/ContentParent.cpp
+@@ -8104,6 +8104,31 @@ IPCResult ContentParent::RecvGetStereoFileSwap(
+   return IPC_OK();
+ }
+ 
++IPCResult ContentParent::RecvGetStereoSiteMark(
++    const nsCString& aKeywords, GetStereoSiteMarkResolver&& aResolver) {
++  using ResolverArgs = std::tuple<const int32_t&, const int32_t&,
++                                  const int32_t&, const int32_t&,
++                                  const int32_t&>;
++#if defined(MOZ_WAYLAND)
++  // A page's keywords are short; a longer text is not a list of tags.
++  constexpr uint32_t kMaxKeywords = 16 * 1024;
++  const auto* policy = layers::GetStereoPolicy();
++  int layout = 0, order = 0, aspectNum = 0, aspectDen = 0;
++  int found = -1;
++  if (policy && policy->siteMarkList && aKeywords.Length() <= kMaxKeywords) {
++    found = policy->siteMarkList(aKeywords.get(), &layout, &order, &aspectNum,
++                                 &aspectDen);
++  }
++  const int32_t result[] = {found, layout, order, aspectNum, aspectDen};
++  aResolver(ResolverArgs(result[0], result[1], result[2], result[3],
++                         result[4]));
++#else
++  const int32_t none = -1, zero = 0;
++  aResolver(ResolverArgs(none, zero, zero, zero, zero));
++#endif
++  return IPC_OK();
++}
++
+ IPCResult ContentParent::RecvGetSystemGeolocationPermissionBehavior(
+     GetSystemGeolocationPermissionBehaviorResolver&& aResolver) {
+   PermissionObserver::EnsureMonitoringInParent(PermissionName::Geolocation);
+diff --git a/dom/ipc/ContentParent.h b/dom/ipc/ContentParent.h
+index 10788e0ed1..cf0351be7c 100644
+--- a/dom/ipc/ContentParent.h
++++ b/dom/ipc/ContentParent.h
+@@ -1407,6 +1407,9 @@ class ContentParent final : public PContentParent,
+   mozilla::ipc::IPCResult RecvGetStereoFileSwap(
+       nsIURI* aURI, GetStereoFileSwapResolver&& aResolver);
+ 
++  mozilla::ipc::IPCResult RecvGetStereoSiteMark(
++      const nsCString& aKeywords, GetStereoSiteMarkResolver&& aResolver);
++
+   mozilla::ipc::IPCResult RecvGetSystemGeolocationPermissionBehavior(
+       GetSystemGeolocationPermissionBehaviorResolver&& aResolver);
+ 
+diff --git a/dom/ipc/PContent.ipdl b/dom/ipc/PContent.ipdl
+index 7c04b883dc..16a8fea894 100644
+--- a/dom/ipc/PContent.ipdl
++++ b/dom/ipc/PContent.ipdl
+@@ -1974,6 +1974,17 @@ parent:
+     // attributes.
+     async GetStereoFileSwap(nullable nsIURI aURI) returns (int32_t aSwap);
+ 
++    // Sparky Stereo OS: the stereo mark a video site declares in the keywords
++    // of its page (YouTube's yt3d tags), read by libstereo-policy, the one
++    // reader of the edition's programs. aFound is that reader's return value
++    // (1 a mark, 0 no yt3d tag, 2 tags that name no arrangement, -1 the
++    // library is missing or too old); the layout and order are its
++    // stereo_policy_layout and stereo_policy_order values, the aspect the
++    // shape of one view (0 and 0 when none is given).
++    async GetStereoSiteMark(nsCString aKeywords)
++        returns (int32_t aFound, int32_t aLayout, int32_t aOrder,
++                 int32_t aAspectNum, int32_t aAspectDen);
++
+     // Returns the status of the geolocation permission on this system.
+     // May not be accurate if the information is not known.
+     async GetSystemGeolocationPermissionBehavior() returns (SystemGeolocationPermissionBehavior permission);
+diff --git a/dom/media/mediaelement/HTMLMediaElement.cpp b/dom/media/mediaelement/HTMLMediaElement.cpp
+index 6b8cc12df1..4a98e6fe6b 100644
+--- a/dom/media/mediaelement/HTMLMediaElement.cpp
++++ b/dom/media/mediaelement/HTMLMediaElement.cpp
+@@ -7035,7 +7035,8 @@ VideoFrameContainer* HTMLMediaElement::GetVideoFrameContainer() {
+   mVideoFrameContainer = new VideoFrameContainer(
+       this, MakeAndAddRef<ImageContainer>(ImageUsageType::VideoFrameContainer,
+                                           ImageContainer::ASYNCHRONOUS));
+-  mVideoFrameContainer->SetStereoChoice(mStereoChoice);
++  mVideoFrameContainer->SetStereoChoice(mStereoChoice ? mStereoChoice
++                                                       : mStereoSiteMark);
+   mVideoFrameContainer->SetStereoSwap(mStereoSwap);
+ 
+   return mVideoFrameContainer;
+@@ -7043,9 +7044,80 @@ VideoFrameContainer* HTMLMediaElement::GetVideoFrameContainer() {
+ 
+ void HTMLMediaElement::SetStereoChoice(const Maybe<StereoMode>& aChoice) {
+   mStereoChoice = aChoice;
++  UpdateStereoChoice();
++}
++
++void HTMLMediaElement::UpdateStereoChoice() {
+   if (mVideoFrameContainer) {
+-    mVideoFrameContainer->SetStereoChoice(aChoice);
++    mVideoFrameContainer->SetStereoChoice(mStereoChoice ? mStereoChoice
++                                                         : mStereoSiteMark);
++  }
++}
++
++// Sparky Stereo OS: a video site's mark, from the keywords of the page
++// (YouTube's yt3d tags). The parent process reads them with
++// libstereo-policy's site mark reader, the one reader the edition's programs
++// share; the content process keeps no copy of its rules. The answer applies
++// only if the element still has the keywords it was asked about.
++void HTMLMediaElement::SetStereoSiteKeywords(const nsAString& aKeywords) {
++  if (mStereoSiteKeywords == aKeywords) {
++    return;
+   }
++  mStereoSiteKeywords = aKeywords;
++  mStereoSiteMark = Nothing();
++  UpdateStereoChoice();
++  if (aKeywords.IsEmpty() || !XRE_IsContentProcess()) {
++    return;
++  }
++  ContentChild* child = ContentChild::GetSingleton();
++  if (!child) {
++    return;
++  }
++  NS_ConvertUTF16toUTF8 keywords(aKeywords);
++  child->SendGetStereoSiteMark(keywords)->Then(
++      GetMainThreadSerialEventTarget(), __func__,
++      [self = RefPtr{this}, asked = nsString(aKeywords)](
++          const std::tuple<int32_t, int32_t, int32_t, int32_t, int32_t>&
++              aAnswer) {
++        const auto [found, layout, order, aspectNum, aspectDen] = aAnswer;
++        if (self->mStereoSiteKeywords != asked) {
++          return;
++        }
++        if (found == 2) {
++          // yt3d tags that name no arrangement of the policy: no mark; the
++          // keywords are said once, in the console.
++          nsContentUtils::LogSimpleConsoleError(
++              u"Stereo: the page's yt3d keywords name no arrangement this "
++              u"browser reads (an unsupported rectangle or value); the video "
++              u"is not marked."_ns,
++              "media"_ns, self->OwnerDoc()->IsInPrivateBrowsing(),
++              self->OwnerDoc()->IsInChromeDocShell());
++        }
++        if (found == -1) {
++          // Said, never silent: the package depends on libstereo-policy1
++          // 1.13, so this is a library that was removed or replaced.
++          nsContentUtils::LogSimpleConsoleError(
++              u"Stereo: libstereo-policy 1.13 or newer is missing, so the "
++              u"page's yt3d keywords cannot be read and the video is not "
++              u"marked."_ns,
++              "media"_ns, self->OwnerDoc()->IsInPrivateBrowsing(),
++              self->OwnerDoc()->IsInChromeDocShell());
++        }
++        if (found != 1) {
++          return;
++        }
++        // stereo_policy_layout: 1 side by side, 2 top and bottom, 0 not 3D;
++        // stereo_policy_order: 0 left eye first, 1 right eye first.
++        const bool rightFirst = order == 1;
++        self->mStereoSiteMark =
++            Some(layout == 1   ? (rightFirst ? StereoMode::RIGHT_LEFT
++                                             : StereoMode::LEFT_RIGHT)
++                 : layout == 2 ? (rightFirst ? StereoMode::BOTTOM_TOP
++                                             : StereoMode::TOP_BOTTOM)
++                               : StereoMode::MONO);
++        self->UpdateStereoChoice();
++      },
++      [](mozilla::ipc::ResponseRejectReason) {});
+ }
+ 
+ // Sparky Stereo OS: a local video file may carry its viewer's Swap Eyes
+diff --git a/dom/media/mediaelement/HTMLMediaElement.h b/dom/media/mediaelement/HTMLMediaElement.h
+index 54f92b3fcf..b5a6332857 100644
+--- a/dom/media/mediaelement/HTMLMediaElement.h
++++ b/dom/media/mediaelement/HTMLMediaElement.h
+@@ -323,6 +323,16 @@ class HTMLMediaElement : public nsGenericHTMLElement,
+   bool StereoSwap() const { return mStereoSwap; }
+   // Asks the parent process for the Swap Eyes correction of a file: video.
+   void RequestStereoFileSwap();
++  // The keywords of the page the video is shown in, as the browser's own UI
++  // hands them on (the stereo-site-mark actor), and the mark they declare:
++  // YouTube's yt3d tags, read by libstereo-policy's one reader (Sparky
++  // Stereo OS). The mark counts as the user's choice would for a video
++  // without a mark of its own, under the user's own choice and the stream's
++  // and container's marks; Nothing() when the keywords declare none.
++  void SetStereoSiteKeywords(const nsAString& aKeywords);
++  void GetStereoSiteKeywords(nsAString& aKeywords) const {
++    aKeywords = mStereoSiteKeywords;
++  }
+ 
+   /**
+    * Call this to reevaluate whether we should start/stop due to our owner
+@@ -1502,6 +1512,11 @@ class HTMLMediaElement : public nsGenericHTMLElement,
+ 
+   Maybe<StereoMode> mStereoChoice;
+   bool mStereoSwap = false;
++  // The page's keywords and the mark the site declares in them.
++  nsString mStereoSiteKeywords;
++  Maybe<StereoMode> mStereoSiteMark;
++  // What the frames take for the user's choice: the user's, else the site's.
++  void UpdateStereoChoice();
+ 
+   // Holds a reference to the MediaStream that has been set in the src
+   // attribute.
+diff --git a/dom/webidl/HTMLVideoElement.webidl b/dom/webidl/HTMLVideoElement.webidl
+index 1c175c96be..23ba021a5e 100644
+--- a/dom/webidl/HTMLVideoElement.webidl
++++ b/dom/webidl/HTMLVideoElement.webidl
+@@ -109,6 +109,13 @@ partial interface HTMLVideoElement {
+   attribute DOMString stereoChoice;
+   [Func="IsChromeOrUAWidget"]
+   attribute boolean stereoSwap;
++  // The keywords of the page the video is shown in, comma separated, which
++  // the browser's own UI (the StereoSiteMark actor) hands on: a video site's
++  // mark of its videos (YouTube's yt3d tags) is read from them by
++  // libstereo-policy and counts as a choice under the user's own and under
++  // the stream's and the container's marks. "" for none.
++  [Func="IsChromeOrUAWidget"]
++  attribute DOMString stereoSiteKeywords;
+ };
+ 
+ // https://w3c.github.io/picture-in-picture/#htmlvideoelement-extensions
+diff --git a/gfx/layers/StereoPolicy.cpp b/gfx/layers/StereoPolicy.cpp
+index f723f85017..5b5fa5a7b0 100644
+--- a/gfx/layers/StereoPolicy.cpp
++++ b/gfx/layers/StereoPolicy.cpp
+@@ -28,6 +28,8 @@ const StereoPolicy* GetStereoPolicy() {
+         dlsym(handle, "stereo_policy_video_full_views"));
+     lib.fileSwapEyes = reinterpret_cast<decltype(lib.fileSwapEyes)>(
+         dlsym(handle, "stereo_policy_file_swap_eyes"));
++    lib.siteMarkList = reinterpret_cast<decltype(lib.siteMarkList)>(
++        dlsym(handle, "stereo_policy_site_mark_list"));
+     if (!lib.videoLayout || !lib.videoFullViews) {
+       MOZ_LOG(sStereoPolicyLog, LogLevel::Debug,
+               ("libstereo-policy.so.1 lacks its video entries"));
+diff --git a/gfx/layers/StereoPolicy.h b/gfx/layers/StereoPolicy.h
+index 9c6996ff27..cf77e62adc 100644
+--- a/gfx/layers/StereoPolicy.h
++++ b/gfx/layers/StereoPolicy.h
+@@ -34,6 +34,14 @@ struct StereoPolicy {
+   // The extended attribute user.stereo-policy.swap-eyes of a file: 1, 0, or
+   // -1 when it cannot be read. Null in libraries older than 1.4.
+   int (*fileSwapEyes)(const char* aPath) = nullptr;
++  // A video site's mark read from the keywords of its page (YouTube's yt3d
++  // tags, in libstereo-policy 1.13): 1 for a mark (layout kLayoutNone for
++  // "not 3D"), 0 when the keywords carry no yt3d tag, 2 when they carry tags
++  // that name no arrangement, -1 for a bad argument. aAspectNum and
++  // aAspectDen are the shape of one view as the site shows it, 0 and 0 when
++  // none is given. Null in libraries older than 1.13.
++  int (*siteMarkList)(const char* aKeywords, int* aLayout, int* aOrder,
++                      int* aAspectNum, int* aAspectDen) = nullptr;
+ };
+ 
+ // Null without the library.
+-- 
+2.53.0
+

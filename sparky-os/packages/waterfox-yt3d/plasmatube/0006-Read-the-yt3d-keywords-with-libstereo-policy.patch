@@ -1,0 +1,195 @@
+From 30c750f0bd89602f7e76db93bbb81c9aa8e58238 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 5 Nov 2026 09:31:58 -0300
+Subject: [PATCH] Read the yt3d keywords with libstereo-policy
+
+The edition has one reader of YouTube's yt3d keywords, in libstereo-policy
+(stereo_policy_site_mark), which its browser uses too. PlasmaTube calls it
+instead of keeping a table of the tags.
+
+The reader takes the first form, yt3d:enable=true, as right eye first, as
+YouTube's player did (it showed a parallel video right only with
+yt3d:swap=true), so yt3d:swap=true makes it left eye first: this reverses
+the order the first patch gave these two tags, which showed "3D Maestro"
+(enable=true, swap=true) with its eyes swapped. The rectangles are read
+numerically ("Kate in 3D!" has left=0_0._0.5_1), and rectangles beat the
+first form's side by side.
+
+Depends on libstereo-policy1 (>= 1.13.0) and builds against
+libstereo-policy-dev.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ CMakeLists.txt                       |  4 ++
+ src/CMakeLists.txt                   |  2 +-
+ src/autotests/stereokeywordstest.cpp |  8 +++-
+ src/utils/stereokeywords.cpp         | 72 ++++++++++------------------
+ src/utils/stereokeywords.h           | 12 ++---
+ 5 files changed, 42 insertions(+), 56 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9fae69d..a98fdaa 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -74,6 +74,10 @@ if(HAVE_MPVQT_VIDEO_LAYER)
+     find_package(Qt6 ${QT_MIN_VERSION} REQUIRED NO_MODULE COMPONENTS ShaderTools)
+ endif()
+ 
++# the edition's one reader of the yt3d keywords
++find_package(PkgConfig REQUIRED)
++pkg_check_modules(STEREO_POLICY REQUIRED IMPORTED_TARGET stereo-policy>=1.13.0)
++
+ find_package(Qt6Keychain)
+ set_package_properties(Qt6Keychain PROPERTIES
+         TYPE REQUIRED
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 62c483e..d276bc5 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -42,7 +42,7 @@ target_sources(plasmatube_static PRIVATE
+         utils/stereokeywords.cpp
+         utils/stereokeywords.h
+ )
+-target_link_libraries(plasmatube_static PRIVATE Qt::Core Qt::Qml)
++target_link_libraries(plasmatube_static PRIVATE Qt::Core Qt::Qml PkgConfig::STEREO_POLICY)
+ 
+ add_executable(plasmatube)
+ ecm_add_qml_module(plasmatube
+diff --git a/src/autotests/stereokeywordstest.cpp b/src/autotests/stereokeywordstest.cpp
+index 6686cc8..379e6aa 100644
+--- a/src/autotests/stereokeywordstest.cpp
++++ b/src/autotests/stereokeywordstest.cpp
+@@ -23,10 +23,14 @@ private Q_SLOTS:
+         QTest::newRow("rl") << QStringList{u"yt3d:enable=RL"_s} << u"sbs2r"_s;
+         QTest::newRow("lonr") << QStringList{u"yt3d:enable=LonR"_s} << u"ab2l"_s;
+         QTest::newRow("ronl") << QStringList{u"yt3d:enable=RonL"_s} << u"ab2r"_s;
+-        QTest::newRow("true") << QStringList{u"yt3d:enable=true"_s} << u"sbs2l"_s;
++        QTest::newRow("true") << QStringList{u"yt3d:enable=true"_s} << u"sbs2r"_s;
+         QTest::newRow("false") << QStringList{u"yt3d:enable=false"_s} << QString();
+         QTest::newRow("case and space") << QStringList{u" YT3D:Enable=lr "_s} << u"sbs2l"_s;
+-        QTest::newRow("swap") << QStringList{u"yt3d:enable=true"_s, u"yt3d:swap=true"_s} << u"sbs2r"_s;
++        QTest::newRow("swap") << QStringList{u"yt3d:enable=true"_s, u"yt3d:swap=true"_s} << u"sbs2l"_s;
++        QTest::newRow("swap of left first") << QStringList{u"yt3d:enable=LR"_s, u"yt3d:swap=true"_s} << u"sbs2r"_s;
++        QTest::newRow("3D Maestro") << QStringList{u"guitar"_s, u"yt3d:enable=true"_s, u"yt3d:aspect=16:9"_s, u"yt3d:swap=true"_s} << u"sbs2l"_s;
++        QTest::newRow("Kate in 3D! rectangles alone, one malformed") << QStringList{u"yt3d:right=0.5_0_1_1"_s, u"yt3d:left=0_0._0.5_1"_s} << u"sbs2l"_s;
++        QTest::newRow("Kate in 3D!") << QStringList{u"yt3d:enable=true"_s, u"yt3d:aspect=4:3"_s, u"yt3d:right=0.5_0_1_1"_s, u"yt3d:left=0_0._0.5_1"_s} << u"sbs2l"_s;
+         QTest::newRow("swap first") << QStringList{u"yt3d:swap=true"_s, u"yt3d:enable=LonR"_s} << u"ab2r"_s;
+         QTest::newRow("swap alone") << QStringList{u"yt3d:swap=true"_s} << QString();
+         QTest::newRow("rectangles side by side") << QStringList{u"yt3d:left=0_0_0.5_1"_s, u"yt3d:right=0.5_0_1_1"_s} << u"sbs2l"_s;
+diff --git a/src/utils/stereokeywords.cpp b/src/utils/stereokeywords.cpp
+index 16345cc..7c6dbfa 100644
+--- a/src/utils/stereokeywords.cpp
++++ b/src/utils/stereokeywords.cpp
+@@ -3,60 +3,40 @@
+ 
+ #include "stereokeywords.h"
+ 
++#include <stereo-policy.h>
++
++#include <QByteArray>
++#include <QList>
++
+ using namespace Qt::StringLiterals;
+ 
+ QString StereoKeywords::stereoInput(const QStringList &keywords)
+ {
+-    QString packing;
+-    QString leftRect;
+-    QString rightRect;
+-    bool swap = false;
+-
++    // The tags are read by libstereo-policy, the one reader of the edition's programs (the browser uses it too).
++    QList<QByteArray> utf8;
++    QList<const char *> tags;
++    utf8.reserve(keywords.size());
+     for (const QString &keyword : keywords) {
+-        const QString tag = keyword.trimmed().toLower();
+-        if (tag.startsWith(u"yt3d:enable="_s)) {
+-            const QString value = tag.mid(u"yt3d:enable="_s.size());
+-            if (value == u"lr"_s || value == u"true"_s) {
+-                packing = u"sbs2l"_s;
+-            } else if (value == u"rl"_s) {
+-                packing = u"sbs2r"_s;
+-            } else if (value == u"lonr"_s) {
+-                packing = u"ab2l"_s;
+-            } else if (value == u"ronl"_s) {
+-                packing = u"ab2r"_s;
+-            }
+-        } else if (tag == u"yt3d:swap=true"_s || tag == u"yt3d:swap"_s) {
+-            swap = true;
+-        } else if (tag.startsWith(u"yt3d:left="_s)) {
+-            leftRect = tag.mid(u"yt3d:left="_s.size());
+-        } else if (tag.startsWith(u"yt3d:right="_s)) {
+-            rightRect = tag.mid(u"yt3d:right="_s.size());
+-        }
++        utf8.append(keyword.toUtf8());
+     }
+-
+-    // the first form, for sources that are not side by side parallel: where each eye is, as left, top, right and bottom
+-    // fractions of the frame
+-    if (packing.isEmpty()) {
+-        const QString sideBySide = u"0_0_0.5_1"_s;
+-        const QString sideBySideRight = u"0.5_0_1_1"_s;
+-        const QString overUnder = u"0_0_1_0.5"_s;
+-        const QString overUnderBottom = u"0_0.5_1_1"_s;
+-
+-        if (leftRect == sideBySide && rightRect == sideBySideRight) {
+-            packing = u"sbs2l"_s;
+-        } else if (leftRect == sideBySideRight && rightRect == sideBySide) {
+-            packing = u"sbs2r"_s;
+-        } else if (leftRect == overUnder && rightRect == overUnderBottom) {
+-            packing = u"ab2l"_s;
+-        } else if (leftRect == overUnderBottom && rightRect == overUnder) {
+-            packing = u"ab2r"_s;
+-        }
++    for (const QByteArray &tag : std::as_const(utf8)) {
++        tags.append(tag.constData());
+     }
+ 
+-    if (packing.isEmpty() || !swap) {
+-        return packing;
++    int layout = STEREO_POLICY_LAYOUT_NONE;
++    int order = STEREO_POLICY_LEFT_FIRST;
++    if (stereo_policy_site_mark(tags.constData(), tags.size(), &layout, &order, nullptr, nullptr) != 1) {
++        return {};
+     }
+ 
+-    // the eyes are the other way round
+-    return packing.endsWith(u'l') ? packing.chopped(1) + u'r' : packing.chopped(1) + u'l';
++    // mpv's names of the half size packings; mpv tells half from full size views by the shape of the frame
++    const bool rightFirst = order == STEREO_POLICY_RIGHT_FIRST;
++    switch (layout) {
++    case STEREO_POLICY_LAYOUT_SIDE_BY_SIDE:
++        return rightFirst ? u"sbs2r"_s : u"sbs2l"_s;
++    case STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM:
++        return rightFirst ? u"ab2r"_s : u"ab2l"_s;
++    default: // the site says the video is not 3D
++        return {};
++    }
+ }
+diff --git a/src/utils/stereokeywords.h b/src/utils/stereokeywords.h
+index 6fb8688..e1e81a0 100644
+--- a/src/utils/stereokeywords.h
++++ b/src/utils/stereokeywords.h
+@@ -13,13 +13,11 @@ namespace StereoKeywords
+  * The 3D packing that a video's keywords declare, as the name mpv gives it (the values of its stereo-in
+  * parameter), or an empty string when they declare none.
+  *
+- * YouTube took these tags for 3D uploads: yt3d:enable=LR (left eye on the left, right eye on the right),
+- * RL, LonR (left eye on top) and RonL, and in the first form yt3d:enable=true (the same as LR) with
+- * yt3d:swap=true to exchange the eyes, and in the first form yt3d:left and yt3d:right, the rectangle of each eye, which
+- * are taken for the usual halves (left=0_0_0.5_1 right=0.5_0_1_1, and left=0_0_1_0.5 right=0_0.5_1_1 for top and bottom). Invidious and Piped hand the video's keywords on as they are.
+- * The names are those of the half size packings; mpv tells half from full size views by what the stream says and the
+- * shape of the frame. A video that has neither a mark nor such keywords is left to mpv, which takes it for side by side
+- * by its shape (three times as wide as high) through the players' shared rule.
++ * YouTube took these tags for 3D uploads (yt3d:enable=LR, RL, LonR, RonL, true, false, yt3d:swap, yt3d:aspect and the
++ * rectangles yt3d:left and yt3d:right); Invidious and Piped hand the video's keywords on as they are. The tags are read by
++ * libstereo-policy's site mark reader, which the edition's browser uses too (docs/yt3d.md in stereo-layer lists every form):
++ * the first form, yt3d:enable=true, is right eye first and yt3d:swap=true makes it left eye first.
++ * The names are those of the half size packings; mpv tells half from full size views by the shape of the frame.
+  */
+ QString stereoInput(const QStringList &keywords);
+ 
+-- 
+2.53.0
+
