@@ -2,9 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Created by Daniel Ramos (Capitain Jack) 2026/10/14
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/14
+# Last update 2026/11/04
 # Choose the minimise effect of Kubabbar Glass: Magic Lamp (default of the menu bar and dock layout) or Squash, both built into KWin.
+# A failure to save or to apply is said and kept (sparky-stereo-problems, person scope); "done" is printed only after
+# KWin itself reports the effect loaded (ORDER 346f-5, audit 343 U39). The saved setting is never replaced.
 set -eu
+package=sparky-stereo-look-kubabbar-glass-menubar
+key=minimize
 
 dir=/usr/share/sparky/kubabbar-glass-minimize
 [ -d "$dir" ] || dir=$(dirname "$0")/../lang/minimize
@@ -42,16 +46,52 @@ case "$1" in
 	squash) lamp=false; squash=true ;;
 	*) printf "$(msg unknown)\n" "$1" >&2; usage >&2; exit 2 ;;
 esac
-kwriteconfig6 --file kwinrc --group Plugins --key magiclampEnabled "$lamp"
-kwriteconfig6 --file kwinrc --group Plugins --key squashEnabled "$squash"
-effect_call() {
-	dbus-send --session --type=method_call --dest=org.kde.KWin /Effects "org.kde.kwin.Effects.$1" "string:$2" 2>/dev/null || true
+command="kubabbar-glass-minimize $1"
+repair=$(printf '["kubabbar-glass-minimize","%s"]' "$1")
+problem() { # message-id setting reason
+	sparky-stereo-problems keep --person --repair "$repair" "$package" "$key" "$1" "$2" "$3" "$command" || true
 }
-if [ "$lamp" = true ]; then
-	effect_call unloadEffect squash
-	effect_call loadEffect magiclamp
-else
-	effect_call unloadEffect magiclamp
-	effect_call loadEffect squash
+save() { # key value
+	if err=$(kwriteconfig6 --file kwinrc --group Plugins --key "$1" "$2" 2>&1); then
+		return 0
+	fi
+	problem LOCAL2 "$1" "${err:-kwriteconfig6 failed}"
+	exit 1
+}
+# Both keys are written, or the first is put back when the second cannot be.
+old_lamp=$(kreadconfig6 --file kwinrc --group Plugins --key magiclampEnabled 2>/dev/null) || old_lamp=
+save magiclampEnabled "$lamp"
+if ! err=$(kwriteconfig6 --file kwinrc --group Plugins --key squashEnabled "$squash" 2>&1); then
+	[ -z "$old_lamp" ] || kwriteconfig6 --file kwinrc --group Plugins --key magiclampEnabled "$old_lamp" 2>/dev/null || true
+	problem LOCAL2 squashEnabled "${err:-kwriteconfig6 failed}"
+	exit 1
 fi
+# Ask KWin and read its answer: the effect is applied only when KWin says it is loaded.
+kwin() { # method effect -> prints KWin's boolean answer, if any
+	dbus-send --session --print-reply=literal --type=method_call --dest=org.kde.KWin /Effects "org.kde.kwin.Effects.$1" "string:$2" 2>&1
+}
+live_failure=
+ask() { # method effect
+	if ! answer=$(kwin "$1" "$2"); then
+		live_failure="KWin did not answer $1 $2: $(printf '%s' "$answer" | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')"
+		return 1
+	fi
+}
+if [ "$lamp" = true ]; then want=magiclamp; other=squash; else want=squash; other=magiclamp; fi
+if ask unloadEffect "$other" && ask loadEffect "$want" && ask isEffectLoaded "$want"; then
+	case $answer in
+		*true*) ;;
+		*) live_failure="KWin reports that the $want effect is not loaded" ;;
+	esac
+fi
+if [ -z "$live_failure" ] && ask isEffectLoaded "$other"; then
+	case $answer in
+		*true*) live_failure="KWin reports that the $other effect is still loaded" ;;
+	esac
+fi
+if [ -n "$live_failure" ]; then
+	problem LOCAL3 "$1" "$live_failure"
+	exit 1
+fi
+sparky-stereo-problems clear --person "$package" "$key" || true
 printf "$(msg done)\n" "$1"
