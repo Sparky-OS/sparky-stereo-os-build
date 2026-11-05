@@ -183,8 +183,9 @@ def main():
     os.environ.update(DEBFULLNAME=NAME, DEBEMAIL=MAIL)
     with tempfile.TemporaryDirectory(prefix='lc-successor-', dir=args.work or out.parent) as work:
         work = Path(work)
-        subprocess.run(['dpkg-source', '--no-copy', '-x', str(dsc), str(work / 'old')], check=True,
-                       stdout=subprocess.DEVNULL)
+        # --in-place: unpatched, so an overlay that replaces a published patch is not met by that patch's applied state (.pc)
+        subprocess.run(['dpkg-source', '--no-copy', *(['--skip-patches'] if args.in_place else []), '-x', str(dsc), str(work / 'old')],
+                       check=True, stdout=subprocess.DEVNULL)
         old, new = work / 'old', work / 'new'
         name, version = parse(old, 'Source'), parse(old, 'Version')
         if args.in_place:
