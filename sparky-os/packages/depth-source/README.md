@@ -33,3 +33,10 @@ Design followed (Daniel's words, as recorded):
 - `patches/dragon/0005`: Dragon offers to save the correction into the file; stereo-layer 1.13.0 (`stereo-layer-source.sh` makes its +lc1 source from the release tag of the fork clone, `build.sh stereo-layer` builds it) carries `stereo_mark_save` in libstereo-av. Dragon Depends on mkvtoolnix (mkvpropedit writes Matroska), and builds against libstereo-av-dev and libstereo-policy-dev 1.13.0.
 - `dragon-3d-video.po.patch` holds 68 strings now: the 40 of the menu and window, and the 28 of the offer (all nine languages, English in the code). It was regenerated from the release catalogs, never edited by hand.
 - Build order: stereo-layer 1.13.0 first (the debs go into the flat repository with qt6-multimedia's), then dragon.
+
+## ORDER 411, group 2e
+
+- `patches/qt6-multimedia/0027, 0028` (branch `order411-2e` of danielcamposramos/qtmultimedia over `order411-qt`): VideoOutput draws the views of a depth video on the GPU, the best way that keeps the frame rate (libstereo-dibr 1.15.0's ladder and timings), and the tests. qt6-multimedia Build-Depends libstereo-dibr-dev (>= 1.15.0).
+- `patches/dragon/0007` (branch `order411-2e-pkg` of danielcamposramos/dragon over `order411-2c-pkg`): Automatic way of drawing in the 3D Video Settings window, bound to the video only until the person picks a warping or a gap filling. dragon 4:26.04.0-1+stereo3d9+lc1 Depends libstereo-layer1 (>= 1.15.0) and builds against libstereo-av-dev and libstereo-policy-dev (>= 1.15.0).
+- Build order: stereo-layer 1.15.0 (`stereo-layer-source.sh FORK release-1.15.0 OUT`, `build.sh stereo-layer`), then qt6-multimedia (flat repository with the stereo-layer debs, `ROUND_SOURCES="stereo-layer"`; the source directory needs the orig tarball beside the .dsc), then dragon (flat repository with both).
+
