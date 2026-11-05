@@ -13,7 +13,8 @@ printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://w
 printf 'deb https://deb.debian.org/debian testing contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian-extra-components.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 git config --global safe.directory '*'
-NEWV=1.13.0-1 ORIG=stereo-layer_1.13.0.orig.tar.xz PREFIX=stereo-layer-1.13.0 REV=release-1.13.0
+VER=${STEREO_LAYER_VERSION:-1.13.0}
+NEWV=$VER-1 ORIG=stereo-layer_$VER.orig.tar.xz PREFIX=stereo-layer-$VER REV=release-$VER
 cd /work
 # 1. The plain source package: the tag's tree is the orig tarball, its debian/ directory the packaging.
 mkdir plain export && cd plain
