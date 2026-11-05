@@ -1,4 +1,12 @@
 -------------------------------------------------------------------------------
+  Version 20261104.2~sparky9~0 (2026-11-04)
+-------------------------------------------------------------------------------
+  * The local rebuild passes Lean Code's link check on a computer where nothing is configured (ORDER 402): the build stopped at "check-link needs --archive-config / --scratch" on every computer but the edition's build machines
+  * The check resolves the build's dependencies from this computer's own apt sources, the ones that serve what the build depends on and with the keys apt trusts for them (link-config), and compares the rebuilt programs with the edition's FFmpeg of the same version downloaded from the repository
+  * bubblewrap is a dependency (the check starts the programs in an isolated root); the check wants 12 GB free on / and says so before the build
+  * A link check that cannot be prepared stops before the build and says why, in nine languages
+
+-------------------------------------------------------------------------------
   Version 20261104.1~sparky9~0 (2026-11-04)
 -------------------------------------------------------------------------------
   * No source line file of its own any more (ORDER 400): sparky-stereo-apt's sparky-stereo.sources already says "Types: deb deb-src" for the same repository, so this package's sparky-stereo-ffmpeg-src.sources made apt warn "Target Sources (main/source/Sources) is configured multiple times" at every update. The file is removed on upgrade the Debian way (dpkg-maintscript-helper rm_conffile in preinst, postinst and postrm: an unchanged copy goes, a copy you edited is kept as FILE.dpkg-bak, an upgrade that stops puts it back), and the package depends on sparky-stereo-apt (>= 20261104.2~sparky9~0), the first that carries deb-src for sure. apt-get source ffmpeg-dmo, which the build runs, reads the deb-src line of sparky-stereo.sources
