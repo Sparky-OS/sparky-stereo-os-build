@@ -11,7 +11,7 @@ Design followed (Daniel's words, as recorded):
 
 ## Files
 
-- `patches/qt6-multimedia/0016-0024`: the depth series, rebased on the published stack (patches 0001 to 0015 and qt-mvhevc); `git format-patch` of branch `depth-6.11.2-stereo3d14` of invent/github danielcamposramos/qtmultimedia over `b13-stack` (the published stack as commits).
+- `patches/qt6-multimedia/0016-0026`: the depth series (0025 and 0026 are ORDER 411: a depth video recorded sideways or upside down is drawn the right way up, and the compositor path of a depth video is a test of the isolated Stereo KWin), rebased on the published stack (patches 0001 to 0015 and qt-mvhevc); `git format-patch` of branches `depth-6.11.2-stereo3d14` (0016 to 0024) and `order411-qt` (0025, 0026) of invent/github danielcamposramos/qtmultimedia over `b13-stack` (the published stack as commits).
 - `patches/dragon/0002 to 0005, dragon-3d-video.po.patch`: branches `depth-stereo3d6-pkg` (0002 to 0004) and `order411-save-pkg` (0005) of danielcamposramos/dragon over `b5-stack` (the published +stereo3d5); the translations are the edition's `translations/dragon-3d-video.po.patch`.
 - `changelog/*.items`: the changelog items, one paragraph per item.
 - `next-source.sh PACKAGE PUBLISHED.dsc OUT [SYMBOLS]`: the next +lc1 source (`repo/lc-successor.py --in-place --overlay`): the published history stays a byte identical suffix of the new changelog, the toolkit is this tree's, and nothing else of debian/ changes but the patches, the series, the symbols file and the dependency texts the script names.
