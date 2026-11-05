@@ -30,7 +30,7 @@ M = {
  'de': ['%s konnte nicht geändert werden', '%s Datei(en) markiert als: %s', '3D-Markierung aus %s Datei(en) entfernt', '%s hat diese Markierung bereits.', '%s hat bereits eine andere Markierung: %s. Durch diese ersetzen: %s?', '%s hat keine Videospur.', '%s Datei(en) geändert, %s fehlgeschlagen', "%s hat keine 3D-Markierung.", '%s kann nicht markiert werden: Die Datei fehlt oder ist keine reguläre Datei.'],
  'ja': ['%s を変更できませんでした', '%s 個のファイルを次としてマークしました: %s', '%s 個のファイルから3Dマークを削除しました', '%s には既にこのマークがあります。', '%s には既に別のマークがあります: %s。次に置き換えますか: %s？', '%s にはビデオトラックがありません。', '%s 個のファイルを変更し、%s 個が失敗しました', "%s には3Dマークがありません。", '%s をマークできません。ファイルが存在しないか、通常のファイルではありません。'],
  'ko': ['%s을(를) 변경할 수 없습니다', '%s개 파일을 다음으로 표시했습니다: %s', '%s개 파일에서 3D 표시를 제거했습니다', '%s에는 이미 이 표시가 있습니다.', '%s에는 이미 다른 표시가 있습니다: %s. 다음으로 바꿀까요: %s?', '%s에는 비디오 트랙이 없습니다.', '%s개 파일을 변경했고 %s개가 실패했습니다', "%s에는 3D 표시가 없습니다.", '%s을(를) 표시할 수 없습니다. 파일이 없거나 일반 파일이 아닙니다.'],
- 'zh_CN': ['无法更改 %s', '已将 %s 个文件标记为：%s', '已从 %s 个文件中移除 3D 标记', '%s 已有此标记。', '%s 已有另一个标记：%s。要替换为：%s 吗？', '%s 没有视频轨道。', '已更改 %s 个文件，%s 个失败', "%s 没有 3D 标记。", '无法标记 %s：文件缺失或不是常规文件。'],
+ 'zh_CN': ['无法更改 %s', '已将 %s 个文件标记为：%s', '已从 %s 个文件中移除 3D 标记', '%s 已有此标记。', '%s 已有另一个标记：%s。要替换为：%s 吗？', '%s 没有视频轨道。', '已更改 %s 个文件，%s 个失败', "%s 没有 3D 标记。", '无法标记 %s：文件缺失或不是普通文件。'],
  'zh_TW': ['無法變更 %s', '已將 %s 個檔案標記為：%s', '已從 %s 個檔案移除 3D 標記', '%s 已有此標記。', '%s 已有另一個標記：%s。要取代為：%s 嗎？', '%s 沒有視訊軌。', '已變更 %s 個檔案，%s 個失敗', "%s 沒有 3D 標記。", '無法標記 %s：檔案遺失或不是一般檔案。'],
 }
 # value: (layout index in W, order) ; order None = none, 'l' left first, 'r' right first. RFC 9559 5.1.4.1.28.3
