@@ -1,0 +1,407 @@
+From 075df19a6c9abdb9b2c04e52dadb10ccf945941d Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 5 Nov 2026 20:00:07 -0300
+Subject: [PATCH 36/37] VideoOutput: the imported frames' textures are made
+ readable by the passes, and an import that reads as zeros is refused and said
+
+First run on the A10 (a real VA-API frame, Carrizo decoding, Carrizo and Hainan drawing): the import was reported "imported" and the views
+were drawn from all-zero planes (a green picture). Qt's VA-API converter binds the DMA-BUF's EGLImage to a texture it generated and leaves the
+filters as created (a minification filter that needs mipmaps: the texture is incomplete), because the scene graph's sampler sets them when it
+draws; the passes here read the level 0 by texel, and an incomplete texture reads as zeros. The planes' filters are now set to nearest before the
+passes read them, and the first frames of a stream (and every sixtieth) are sampled at the middle of the picture: luma and chroma all zero
+is no picture, so the import is refused, the frames are copied from then on and lastFrameRouteWhy() says why (a DMA-BUF another GPU accepts and
+reads as zeros is no import). VideoOutput.stereoDepthReadBacks() counts the checks and the empty ones.
+
+Tests: depthImportsHardwareFrames' double now leaves the filters as the converter does (red without the fix: the views come out of zeros),
+depthRefusesEmptyImportedPlanes (all-zero planes are copied and said; red without the check), depthTextureFramesConvertLikeTheCopies (a consumer
+on another thread gets from a frame of textures what it gets from the read back frame, 8, 10 and 16 bits).
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ src/multimediaquick/qquickvideodepth.cpp      | 115 +++++++++++++++++-
+ src/multimediaquick/qquickvideodepth_p.h      |   3 +
+ src/multimediaquick/qquickvideooutput.cpp     |   3 +
+ .../qquickvideostereo/CMakeLists.txt          |   1 +
+ .../tst_qquickvideostereo.cpp                 |  97 ++++++++++++++-
+ 5 files changed, 212 insertions(+), 7 deletions(-)
+
+diff --git a/src/multimediaquick/qquickvideodepth.cpp b/src/multimediaquick/qquickvideodepth.cpp
+index 9d836440e..6209ecad1 100644
+--- a/src/multimediaquick/qquickvideodepth.cpp
++++ b/src/multimediaquick/qquickvideodepth.cpp
+@@ -581,6 +581,21 @@ void main()
+ }
+ )";
+ 
++// A block of an imported frame's planes at the middle of the picture, as the bytes a check reads back: luma, and the two chroma samples
++const char kProbe[] = R"(
++uniform sampler2D u_y;
++uniform sampler2D u_uv;
++uniform ivec2 u_origin;
++uniform ivec2 u_size;
++out vec4 o_color;
++void main()
++{
++    ivec2 at = ivec2(gl_FragCoord.xy) + u_origin;
++    vec2 c = texelFetch(u_uv, clamp(at >> 1, ivec2(0), (u_size >> 1) - 1), 0).rg;
++    o_color = vec4(texelFetch(u_y, clamp(at, ivec2(0), u_size - 1), 0).r, c, 1.0);
++}
++)";
++
+ // One channel of an RGBA picture as the depth map
+ const char kChannel[] = R"(
+ uniform sampler2D u_y;
+@@ -888,6 +903,45 @@ public:
+             *why = QStringLiteral("the planes have no OpenGL texture");
+             return false;
+         }
++        // The decoder's converter leaves the textures it made of the DMA-BUFs as they were created: a minification filter that needs mipmaps,
++        // which makes the texture incomplete and reads as zeros in a pass of ours (Qt's own sampler sets the filter when the scene graph draws
++        // them). The passes read level 0 at texel coordinates: the filters are set to nearest.
++        for (unsigned id : { unsigned(gy), unsigned(guv) }) {
++            m_f->glBindTexture(GL_TEXTURE_2D_, id);
++            m_f->glTexParameteri(GL_TEXTURE_2D_, 0x2801 /* MIN_FILTER */, 0x2600 /* NEAREST */);
++            m_f->glTexParameteri(GL_TEXTURE_2D_, 0x2800 /* MAG_FILTER */, 0x2600);
++            m_f->glTexParameteri(GL_TEXTURE_2D_, 0x2802 /* WRAP_S */, 0x812F /* CLAMP_TO_EDGE */);
++            m_f->glTexParameteri(GL_TEXTURE_2D_, 0x2803 /* WRAP_T */, 0x812F);
++        }
++        // A DMA-BUF the decoding GPU wrote can be accepted by another GPU and read back as zeros (the tiling or the synchronisation of the
++        // two devices does not agree). The planes of the first frames, and of every sixtieth, are sampled at the middle of the picture: a
++        // block of all-zero luma and chroma is no picture, so the import is refused, said, and the frames are copied from then on.
++        if (size != m_checkSize || bytes != m_checkBytes) {
++            m_checkSize = size;
++            m_checkBytes = bytes;
++            m_checked = m_emptyInRow = m_sinceCheck = 0;
++            m_importBad = false;
++        }
++        if (m_importBad) {
++            *why = QStringLiteral("the planes the decoder's frames were imported as were empty: this GPU cannot read the decoding GPU's DMA-BUF");
++            return false;
++        }
++        if (m_checked < 8 || ++m_sinceCheck >= 60) {
++            m_sinceCheck = 0;
++            const int found = sampleImported(unsigned(gy), unsigned(guv), size);
++            ++m_checked;
++            ++m_checksDone;
++            if (found == 1) {
++                ++m_checksEmpty;
++                if (++m_emptyInRow >= 4 || m_checked > 8) {
++                    m_importBad = true;
++                    *why = QStringLiteral("the planes the decoder's frames were imported as are empty: this GPU cannot read the decoding GPU's DMA-BUF");
++                    return false;
++                }
++            } else if (found == 0) {
++                m_emptyInRow = 0;
++            }
++        }
+         m_imp.y = unsigned(gy);
+         m_imp.uv = unsigned(guv);
+         m_imp.textures = std::move(textures);
+@@ -898,6 +952,34 @@ public:
+         return true;
+     }
+ 
++    // Whether a block of 32x32 luma samples with their chroma, at the middle of the imported planes, is all zero: 1 for empty, 0 for a picture,
++    // -1 when the planes cannot be sampled
++    int sampleImported(unsigned y, unsigned uv, const QSize &size)
++    {
++        const int n = 32;
++        makeTexture(ProbeTex, n, n, GL_RGBA8_, GL_RGBA_);
++        m_f->glUseProgram(m_probe);
++        bindExternal(0, y, m_probe, "u_y");
++        bindExternal(1, uv, m_probe, "u_uv");
++        m_f->glUniform2i(m_f->glGetUniformLocation(m_probe, "u_origin"), std::max(0, (size.width() - n) / 2 & ~1), std::max(0, (size.height() - n) / 2 & ~1));
++        m_f->glUniform2i(m_f->glGetUniformLocation(m_probe, "u_size"), size.width(), size.height());
++        pass(m_probe, ProbeTex, n, n);
++        uchar block[32 * 32 * 4];
++        m_f->glPixelStorei(0x0D05 /* GL_PACK_ALIGNMENT */, 1);
++        m_f->glReadPixels(0, 0, n, n, GL_RGBA_, GL_UNSIGNED_BYTE_, block);
++        if (m_f->glGetError() != 0)
++            return -1;
++        int most[3] = {};
++        for (int i = 0; i < n * n; ++i)
++            for (int c = 0; c < 3; ++c)
++                most[c] = std::max<int>(most[c], block[4 * i + c]);
++        if (most[0] == 0 && most[1] == 0 && most[2] == 0)
++            return 1;
++        return 0;
++    }
++    int importChecks() const { return m_checksDone; }
++    int importEmpties() const { return m_checksEmpty; }
++
+     // After the drawing: the frame's textures wait for the next one (the converter reuses them) and the frame is let go
+     void releaseImport()
+     {
+@@ -1020,7 +1102,7 @@ public:
+     }
+ 
+ private:
+-    enum TexId { Y, U, V, Raw, Pic, Depth, Target, LayerPic, LayerDepth, OutY, OutU, OutV, NbTextures };
++    enum TexId { Y, U, V, Raw, Pic, Depth, Target, LayerPic, LayerDepth, OutY, OutU, OutV, ProbeTex, NbTextures };
+     using Tex = GlTex;
+ 
+     bool fail(const QString &why, QString *out)
+@@ -1072,6 +1154,8 @@ private:
+                 m_f->glDeleteProgram(m_luma);
+             if (m_lumaInt)
+                 m_f->glDeleteProgram(m_lumaInt);
++            if (m_probe)
++                m_f->glDeleteProgram(m_probe);
+             m_imp = {};
+             m_oldTextures.reset();
+             m_rhi.reset();
+@@ -1079,7 +1163,7 @@ private:
+         }
+         m_gl = nullptr;
+         m_tex = {};
+-        m_vao = m_fbo = m_convert = m_channel = m_encode = m_luma = m_lumaInt = 0;
++        m_vao = m_fbo = m_convert = m_channel = m_encode = m_luma = m_lumaInt = m_probe = 0;
+         m_rhiFailed = false;
+         m_shared = false;
+         m_group = nullptr;
+@@ -1139,14 +1223,15 @@ private:
+         m_encode = program(kEncode);
+         m_luma = program(kLuma);
+         m_lumaInt = program(kLumaInt);
+-        return m_convert && m_channel && m_encode && m_luma && m_lumaInt;
++        m_probe = program(kProbe);
++        return m_convert && m_channel && m_encode && m_luma && m_lumaInt && m_probe;
+     }
+ 
+     void makeTexture(TexId id, int w, int h, unsigned internal, unsigned format,
+                      unsigned type = GL_UNSIGNED_BYTE_)
+     {
+         Tex &t = m_tex[id];
+-        if (!t.id && (id == Target || id >= OutY)) {
++        if (!t.id && (id == Target || id == OutY || id == OutU || id == OutV)) {
+             // a texture a frame handed out and gave back: the same size and format, drawn into again
+             std::lock_guard<std::mutex> lock(m_poolMutex);
+             for (auto it = m_pool.begin(); it != m_pool.end(); ++it) {
+@@ -1511,7 +1596,13 @@ private:
+     QString m_rhiWhy;
+     Imported m_imp;
+     QVideoFrameTexturesUPtr m_oldTextures;
+-    unsigned m_luma = 0, m_lumaInt = 0;
++    unsigned m_luma = 0, m_lumaInt = 0, m_probe = 0;
++    // what the checks of imported planes found: the frame size and format they are for, the checks made, the empty ones in a row, and the verdict
++    QSize m_checkSize;
++    int m_checkBytes = 0;
++    int m_checked = 0, m_emptyInRow = 0, m_sinceCheck = 0;
++    bool m_importBad = false;
++    int m_checksDone = 0, m_checksEmpty = 0;
+     uintptr_t m_importBase = 0;
+     ptrdiff_t m_importStride = 0, m_importBytes = 1;
+ };
+@@ -2248,6 +2339,13 @@ int Renderer::hardwareReadBacks() const
+     return d->hwReadBacks;
+ }
+ 
++int Renderer::importChecks(int *empty) const
++{
++    if (empty)
++        *empty = d->gpu.importEmpties();
++    return d->gpu.importChecks();
++}
++
+ void Renderer::setSinkRhi(QRhi *rhi)
+ {
+     d->sink = rhi;
+@@ -2374,6 +2472,13 @@ int Renderer::hardwareReadBacks() const
+     return 0;
+ }
+ 
++int Renderer::importChecks(int *empty) const
++{
++    if (empty)
++        *empty = 0;
++    return 0;
++}
++
+ void Renderer::setSinkRhi(QRhi *)
+ {
+ }
+diff --git a/src/multimediaquick/qquickvideodepth_p.h b/src/multimediaquick/qquickvideodepth_p.h
+index 377391b1a..ac94c86a1 100644
+--- a/src/multimediaquick/qquickvideodepth_p.h
++++ b/src/multimediaquick/qquickvideodepth_p.h
+@@ -146,6 +146,9 @@ public:
+     QString lastFrameRouteWhy() const;
+     // The hardware frames this Renderer read back to system memory
+     int hardwareReadBacks() const;
++    // The imported frames sampled for a picture (the first ones and every sixtieth), and how many of those samples were empty: a DMA-BUF
++    // another GPU accepted and read as zeros is refused and the frames are copied, which lastFrameRouteWhy() says
++    int importChecks(int *empty = nullptr) const;
+ 
+     // The video sink the drawn views are shown by: when it draws with OpenGL the drawing context is made to share its textures (the
+     // sink's RHI is the scene graph's, set from the thread that shows the frames)
+diff --git a/src/multimediaquick/qquickvideooutput.cpp b/src/multimediaquick/qquickvideooutput.cpp
+index 191107a82..1adeb0f41 100644
+--- a/src/multimediaquick/qquickvideooutput.cpp
++++ b/src/multimediaquick/qquickvideooutput.cpp
+@@ -1299,6 +1299,9 @@ QVariantMap QQuickVideoOutput::stereoDepthReadBacks() const
+     if (m_depthRenderer) {
+         map.insert(QStringLiteral("frames"), m_depthRenderer->hardwareReadBacks());
+         map.insert(QStringLiteral("views"), m_depthRenderer->viewsReadBacks());
++        int empty = 0;
++        map.insert(QStringLiteral("importChecks"), m_depthRenderer->importChecks(&empty));
++        map.insert(QStringLiteral("importEmpty"), empty);
+     }
+     return map;
+ }
+diff --git a/tests/auto/integration/qquickvideostereo/CMakeLists.txt b/tests/auto/integration/qquickvideostereo/CMakeLists.txt
+index a80304cd6..5a9b4a42e 100644
+--- a/tests/auto/integration/qquickvideostereo/CMakeLists.txt
++++ b/tests/auto/integration/qquickvideostereo/CMakeLists.txt
+@@ -15,6 +15,7 @@ qt_internal_add_test(tst_qquickvideostereo
+         Qt::MultimediaQuickPrivate
+         Qt::Qml
+         Qt::Quick
++        Qt::QuickPrivate
+ )
+ 
+ qt_internal_add_test(tst_qquickvideocrop
+diff --git a/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp b/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
+index 77e857e8e..aa96aa10c 100644
+--- a/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
++++ b/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
+@@ -25,6 +25,7 @@
+ #include <QtGui/qguiapplication.h>
+ #include <QtGui/qtransform.h>
+ #include <QtQuick/qquickwindow.h>
++#include <QtQuick/private/qquickwindow_p.h>
+ 
+ #include <algorithm>
+ #include <atomic>
+@@ -95,11 +96,14 @@ private slots:
+     void depthOnTheGpuKeepsTheDepth();
+     void depthImportsHardwareFrames_data();
+     void depthImportsHardwareFrames();
++    void depthRefusesEmptyImportedPlanes();
+     void depthDeepCases_data();
+     void depthDeepCases();
+     void depthInVideoOutput();
+     void depthViewsReachTheSinkAsTextures_data();
+     void depthViewsReachTheSinkAsTextures();
++    void depthTextureFramesConvertLikeTheCopies_data();
++    void depthTextureFramesConvertLikeTheCopies();
+     void depthRotated_data();
+     void depthRotated();
+     void depthRotatedFormats_data();
+@@ -1064,8 +1068,8 @@ public:
+             f->glTexImage2D(GL_TEXTURE_2D, 0, int(internal), w, h, 0, channels == 1 ? GL_RED : GL_RG,
+                             deep ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE, data.data());
+             f->glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+-            f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+-            f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++            // The filters stay as they are created, as the VA-API converter leaves its textures: a minification filter that needs mipmaps
++            // (the texture is incomplete, and a pass that reads it by texel reads zeros) until the importing pass sets them
+             m_ids[i] = id;
+             const QRhiTexture::Format format = deep ? (channels == 1 ? QRhiTexture::R16 : QRhiTexture::RG16)
+                                                     : (channels == 1 ? QRhiTexture::R8 : QRhiTexture::RG8);
+@@ -1263,6 +1267,42 @@ void tst_QQuickVideoStereo::depthImportsHardwareFrames()
+ // The cases of the depth captures at 10 and 16 bits (tools/qt/make-deep-cases.py makes the frames from the cases' pictures, DEEP_CASES is their
+ // directory): the views the GPU draws against the C code's at the source's depth. The same criterion as the 8 bit cases, in 8 bit
+ // equivalents of the codes: fewer than one pixel in 500 off by more than 2, a mean under 0.25
++// A DMA-BUF another GPU accepts and reads as zeros (the first import on the A10, before the filters were set): luma and chroma all zero is
++// no picture, so the frames are copied from then on and the reason is said; a frame with a picture is imported (the control, above)
++void tst_QQuickVideoStereo::depthRefusesEmptyImportedPlanes()
++{
++    if (!QQuickVideoDepth::canDraw())
++        QSKIP("built without libstereo-dibr");
++    QTemporaryDir cache;
++    qputenv("XDG_CACHE_HOME", cache.path().toLocal8Bit());
++    const int w = 128, h = 64;
++    std::vector<uchar> luma(size_t(2 * w) * h, 0), chroma(size_t(2 * w) * (h / 2), 0);
++    QVideoFrameFormat f(QSize(2 * w, h), QVideoFrameFormat::Format_NV12);
++    f.setStereoMode(Mode::DepthSideBySide);
++    FakeCounts counts;
++    auto hardware = [&] {
++        std::vector<FakeHardwareBuffer::Plane> planes;
++        planes.emplace_back(luma, 2 * w, 2 * w, h, 1);
++        planes.emplace_back(chroma, 2 * w, w, h / 2, 2);
++        return QVideoFramePrivate::createFrame(std::make_unique<FakeHardwareBuffer>(f, std::move(planes), false, &counts), f);
++    };
++    auto o = fixedWay();
++    o.gpu = true;
++    QQuickVideoDepth::Renderer renderer;
++    QVideoFrame drawn;
++    for (int i = 0; i < 6; ++i) {
++        const auto result = renderer.draw(hardware(), Mode::DepthSideBySide, false, {}, o, &drawn);
++        if (result != QQuickVideoDepth::Renderer::Result::Drawn || !renderer.lastOnGpu())
++            QSKIP("no OpenGL context in this environment");
++    }
++    QCOMPARE(renderer.lastFrameRoute(), QQuickVideoDepth::Renderer::FrameRoute::Copied);
++    QVERIFY2(renderer.lastFrameRouteWhy().contains(u"empty"_s), qPrintable(renderer.lastFrameRouteWhy()));
++    QVERIFY(renderer.hardwareReadBacks() >= 1);
++    int empty = 0;
++    QVERIFY(renderer.importChecks(&empty) >= 4);
++    QVERIFY(empty >= 4);
++}
++
+ void tst_QQuickVideoStereo::depthDeepCases_data()
+ {
+     QTest::addColumn<QString>("raw");
+@@ -1565,6 +1605,59 @@ void tst_QQuickVideoStereo::depthViewsReachTheSinkAsTextures()
+     QVERIFY2(worst == 0, qPrintable(u"the texture route and the read back differ by %1 codes"_s.arg(worst)));
+ }
+ 
++void tst_QQuickVideoStereo::depthTextureFramesConvertLikeTheCopies_data()
++{
++    depthViewsReachTheSinkAsTextures_data();
++}
++
++// A consumer that is not the sink (the stereo layer's presenter converts on a thread of its own, with a context of its own) gets from a frame of
++// textures what it gets from the frame the read back makes: the same image, whatever the depth of the source
++void tst_QQuickVideoStereo::depthTextureFramesConvertLikeTheCopies()
++{
++    if (!QQuickVideoDepth::canDraw())
++        QSKIP("built without libstereo-dibr");
++    if (qgetenv("QSG_RHI_BACKEND") != "opengl")
++        QSKIP("QSG_RHI_BACKEND=opengl is not set: the sink must draw with OpenGL");
++    QFETCH(int, format);
++    const auto pf = QVideoFrameFormat::PixelFormat(format);
++    QTemporaryDir cache;
++    qputenv("XDG_CACHE_HOME", cache.path().toLocal8Bit());
++    const int w = 128, h = 64;
++    QQuickWindow window;
++    window.resize(64, 64);
++    window.show();
++    QVERIFY(QTest::qWaitForWindowExposed(&window));
++    QRhi *rhi = nullptr;
++    QTRY_VERIFY((rhi = QQuickWindowPrivate::get(&window)->rhi) != nullptr);
++    QVERIFY(rhi->backend() == QRhi::OpenGLES2);
++    const QVideoFrame frame = pf == QVideoFrameFormat::Format_YUV444P ? depthFrame(Mode::DepthSideBySide, false, w, h)
++                                                                      : deepDepthFrame(pf, w, h);
++    auto drawn = [&](bool textures, QQuickVideoDepth::Renderer::ViewsRoute expected) {
++        QQuickVideoDepth::Renderer renderer;
++        renderer.setSinkRhi(rhi);
++        QQuickVideoDepth::Options o = fixedWay();
++        o.gpu = true;
++        o.viewsAsTexture = textures;
++        QVideoFrame out;
++        for (int i = 0; i < 2; ++i)
++            [&] { QCOMPARE(renderer.draw(frame, Mode::DepthSideBySide, false, {}, o, &out), QQuickVideoDepth::Renderer::Result::Drawn); }();
++        [&] { QVERIFY2(renderer.lastViewsRoute() == expected, qPrintable(renderer.lastViewsRouteWhy())); }();
++        // converted on a thread of its own, as the presenter does
++        QImage image;
++        std::thread([&] { image = qImageFromVideoFrame(out, QVideoFrameImageDepth::Float16); }).join();
++        return std::make_pair(image, renderer.viewsReadBacks());
++    };
++    const auto texture = drawn(true, QQuickVideoDepth::Renderer::ViewsRoute::Texture);
++    const auto copy = drawn(false, QQuickVideoDepth::Renderer::ViewsRoute::ReadBack);
++    QVERIFY(!texture.first.isNull());
++    QVERIFY(!copy.first.isNull());
++    QCOMPARE(texture.first.size(), copy.first.size());
++    QCOMPARE(texture.first.format(), copy.first.format());
++    // the consumer's mapping is a read back, and counted
++    QVERIFY(texture.second >= 1);
++    QCOMPARE(texture.first, copy.first);
++}
++
+ namespace {
+ 
+ // The luma of a region of a mapped planar frame
+-- 
+2.53.0
+
