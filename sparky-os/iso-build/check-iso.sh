@@ -9,7 +9,7 @@
 # boot image), command-not-found's index is filled, and every kernel the ISO boots or installs carries the security
 # fixes kernel-fixes.py lists, with no older kernel left (the ISO's kernels, initrds and menus; the image's /boot,
 # module trees, DKMS builds and kernel packages, linux-libc-dev included), and nothing of zram or zswap is in the image
-# or its boot menus (zram-check.py). Runs as root in the build image (privileged,
+# or its boot menus (zram-check.py), and no package that downloads data while it is installed and no FlightGear data (check-no-install-downloads.py). Runs as root in the build image (privileged,
 # for the loop mounts and the chroot), with the root file system at /rootfs and the build tree at /build. The ISO and
 # its filesystem.squashfs are mounted read-only and only a few small files are copied out, into the container's own
 # /tmp. Prints a report; exits 1 on any failed check.
@@ -117,6 +117,9 @@ if mount -o loop,ro "$I/live/filesystem.squashfs" "$T/image"; then
 	echo "-- nothing of zram or zswap of ours (zram-check.py: the image and the ISO's boot menus; the person may opt in later)"
 	python3 /build/zram-check.py "$T/image" --also "$T/boot_grub_grub.cfg" --also "$T/isolinux_isolinux.cfg" > "$T/zram.txt" 2>&1 \
 		&& ok "$(cat "$T/zram.txt")" || { sed 's/^/   /' "$T/zram.txt"; no "zram or zswap in the image or its boot menus"; }
+	echo "-- no package that downloads data while it is installed, and no FlightGear data (check-no-install-downloads.py; the games come when the person chooses them while installing)"
+	python3 /build/check-no-install-downloads.py "$T/image" > "$T/downloads.txt" 2>&1 \
+		&& ok "$(cat "$T/downloads.txt")" || { sed 's/^/   /' "$T/downloads.txt"; no "an install-time download or FlightGear's data is on the image"; }
 	umount "$T/image"
 else
 	no "cannot mount the image's filesystem.squashfs"

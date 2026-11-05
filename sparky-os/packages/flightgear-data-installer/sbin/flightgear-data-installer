@@ -1,0 +1,506 @@
+#!/bin/bash
+# Created by Daniel Ramos (Capitain Jack) 2026/11/04
+# Copyright 2026 under the GNU GPL3 License
+# Fetches FlightGear's own data release, checks its recorded SHA-256 and unpacks it where FlightGear looks for it.
+# Usage: flightgear-data-installer [install] [--file FILE]   |   --purge   |   --check
+set -euo pipefail
+umask 022
+LIB=/usr/share/flightgear-data-installer
+LANGDIR=/usr/share/sparky/flightgear-data-installer
+CACHE=/var/cache/flightgear-data-installer
+STATE=/var/lib/flightgear-data-installer
+DATA_DIR=/usr/share/games/flightgear
+MIRROR_URL=
+PARALLEL=8
+[ -r /etc/default/flightgear-data-installer ] && . /etc/default/flightgear-data-installer
+. "$LIB/recorded"
+case $MIRROR_URL in
+	'') FETCH_URL=$URL ;;
+	https://* | file:///*) FETCH_URL=$MIRROR_URL ;;
+	*) FETCH_URL=$URL ;;
+esac
+
+load_language() {
+	# the whole locale first, then its language; English is always loaded under it
+	local l v cand
+	. "$LANGDIR/en"
+	for v in "${LC_ALL:-}" "${LC_MESSAGES:-}" "${LANG:-}"; do
+		[ -n "$v" ] && { l=$v; break; }
+	done
+	l=${l:-C}
+	l=${l%%.*}
+	l=${l%%@*}
+	case $l in
+		pt | pt_*) cand=pt_BR ;;
+		zh_TW | zh_HK | zh_MO) cand=zh_TW ;;
+		zh | zh_*) cand=zh_CN ;;
+		*) cand=${l%%_*} ;;
+	esac
+	case $cand in
+		de | fr | ja | ko | pl | pt_BR | zh_CN | zh_TW)
+			# shellcheck source=/dev/null
+			[ -r "$LANGDIR/$cand" ] && . "$LANGDIR/$cand"
+			;;
+	esac
+	return 0
+}
+
+say() {
+	local key=$1
+	shift
+	local -n fmt="MSG_$key"
+	# shellcheck disable=SC2059
+	printf "flightgear-data-installer: $fmt\n" "$@"
+}
+die() {
+	local key=$1
+	shift
+	local -n fmt="MSG_$key"
+	# shellcheck disable=SC2059
+	printf "flightgear-data-installer: $fmt\n" "$@" >&2
+	if [ -n "$KEPT_FILE" ] && [ -e "$KEPT_FILE" ]; then
+		# shellcheck disable=SC2059
+		printf "flightgear-data-installer: $MSG_KEPT\n" "$CACHE" >&2
+	fi
+	exit 1
+}
+
+human() {
+	local b=$1
+	if [ "$b" -ge 1073741824 ]; then
+		printf '%d.%02d GiB' $((b / 1073741824)) $((b % 1073741824 * 100 / 1073741824))
+	else
+		printf '%d.%d MiB' $((b / 1048576)) $((b % 1048576 * 10 / 1048576))
+	fi
+}
+avail() {
+	local dir=$1 blocks size
+	while [ ! -d "$dir" ]; do dir=$(dirname "$dir"); done
+	read -r blocks size < <(stat -f -c '%a %S' "$dir")
+	echo $((blocks * size))
+}
+devof() {
+	local dir=$1
+	while [ ! -d "$dir" ]; do dir=$(dirname "$dir"); done
+	stat -c %d "$dir"
+}
+
+KEPT_FILE=
+STAGE=
+WORKERS=()
+PARTS=
+SOURCE_FILE=
+PARTS_N=0
+LINKING=
+PENDING=$STATE/pending
+CURL_LOG=
+stop_workers() {
+	local p
+	for p in "${WORKERS[@]}"; do
+		kill "$p" 2>/dev/null || true
+	done
+	for p in "${WORKERS[@]}"; do
+		wait "$p" 2>/dev/null || true
+	done
+	WORKERS=()
+}
+
+cleanup() {
+	local rc=$?
+	trap - EXIT
+	stop_workers
+	[ -n "$STAGE" ] && rm -rf "$STAGE"
+	if [ -n "$LINKING" ]; then
+		# nothing half-made: what this run placed, and the folders it made, are taken out again
+		remove_listed "$PENDING.files" "$PENDING.dirs"
+		rm -f "$PENDING.files" "$PENDING.dirs" "$PENDING.shared"
+	fi
+	[ -n "$CURL_LOG" ] && rm -f "$CURL_LOG"
+	if [ "$rc" -ne 0 ]; then
+		# a download that brought nothing leaves no part files; one that brought bytes keeps them for the next run
+		rm -f "$CACHE"/parts.*/*.failed "$CACHE"/parts.*/*.err "$CACHE"/parts.*/*.hdr "$CACHE"/parts.*/*.short 2>/dev/null || true
+		find "$CACHE" -maxdepth 2 -name 'part.*' -type f -empty -delete 2>/dev/null || true
+		rmdir "$CACHE"/parts.* 2>/dev/null || true
+	fi
+	if [ "$rc" -ne 0 ] && [ -z "$KEPT_FILE" ] && [ ! -f "$STATE/installed" ]; then
+		# a run that installed nothing leaves nothing, not even its empty folders
+		rm -f "$CACHE/lock" "$CACHE"/*.part 2>/dev/null || true
+		rmdir "$CACHE" "$STATE" 2>/dev/null || true
+	fi
+	exit "$rc"
+}
+
+remove_listed() {
+	local files=$1 dirs=$2 f d
+	if [ -f "$files" ]; then
+		while IFS= read -r f; do
+			rm -f -- "$f"
+		done <"$files"
+	fi
+	if [ -f "$dirs" ]; then
+		# deepest first; a directory that still holds something of someone else stays
+		while IFS= read -r d; do
+			rmdir -- "$d" 2>/dev/null || true
+		done < <(sort -r "$dirs")
+	fi
+}
+
+remove_shared() {
+	# folders that were there before and held our files too: when nothing else is in them any more they go with the data
+	local d
+	[ -f "$1" ] || return 0
+	while IFS= read -r d; do
+		rmdir -- "$d" 2>/dev/null || true
+	done < <(sort -r "$1")
+}
+
+check_tools() {
+	local t pkg
+	for t in curl:curl tar:tar xz:xz-utils sha256sum:coreutils flock:util-linux find:findutils stat:coreutils; do
+		pkg=${t#*:}
+		command -v "${t%%:*}" >/dev/null 2>&1 || die TOOL "${t%%:*}" "$pkg"
+	done
+}
+
+sha_of() {
+	sha256sum -- "$1" | cut -d' ' -f1
+}
+
+data_ok() {
+	# our record says the data is here: every file we listed is there, and the version is the recorded one
+	[ -f "$STATE/installed" ] || return 1
+	[ "$(cat "$STATE/installed")" = "$DATA_VERSION $SHA256" ] || return 1
+	[ -f "$STATE/files.list" ] || return 1
+	local f
+	while IFS= read -r f; do
+		[ -e "$f" ] || return 1
+	done <"$STATE/files.list"
+	return 0
+}
+
+forget_ours() {
+	remove_listed "$STATE/files.list" "$STATE/dirs.list"
+	remove_listed "$PENDING.files" "$PENDING.dirs"
+	remove_shared "$STATE/shared.list"
+	rm -f "$STATE/installed" "$STATE/files.list" "$STATE/dirs.list" "$STATE/shared.list" "$PENDING.files" "$PENDING.dirs" "$PENDING.shared"
+}
+
+# The download is split into PARALLEL byte ranges, each fetched by its own curl into its own part file; one connection to the
+# release page gives 150 to 200 kB/s, so the ranges are what make the 1.75 GiB a matter of minutes (ORDER 399b measured both).
+# A part that is cut is continued from the bytes it already has, so a stopped run continues where it was.
+fetch_part() {
+	local file=$1 start=$2 len=$3 have attempts=0 oversize=0 code rc now
+	local errf=$file.err cpid=
+	# this runs as a background job of its own: it handles every status itself
+	set +e
+	trap 'kill "$cpid" 2>/dev/null; exit 143' TERM
+	while :; do
+		have=0
+		[ -f "$file" ] && have=$(stat -c %s "$file")
+		if [ "$have" -gt "$len" ]; then
+			# more bytes than the range holds: the server did not honour it; start this part again, and stop after a few tries
+			: >"$file"
+			have=0
+			oversize=$((oversize + 1))
+			if [ "$oversize" -ge 5 ]; then
+				echo "the server sent more bytes than the byte range asked for" >"$file.failed"
+				return 1
+			fi
+		fi
+		[ "$have" -eq "$len" ] && return 0
+		rm -f "$file.hdr"
+		curl --location --fail --silent --show-error --proto '=https,file' --proto-redir '=https' --connect-timeout 30 \
+			--speed-limit 1000 --speed-time 60 --range "$((start + have))-$((start + len - 1))" -D "$file.hdr" \
+			"$FETCH_URL" >>"$file" 2>"$errf" &
+		cpid=$!
+		wait "$cpid"
+		rc=$?
+		code=$(grep -i '^HTTP/' "$file.hdr" 2>/dev/null | tail -n 1 | cut -d' ' -f2 | tr -d '\r')
+		if [ "$rc" -eq 0 ] && [ -n "$code" ] && [ "$code" != 206 ] && ! { [ "$code" = 200 ] && [ "$start" -eq 0 ] && [ "$have" -eq 0 ] && [ "$len" -eq "$SIZE" ]; }; then
+			: >"$file"
+			echo "the server answered HTTP $code to a byte range request, so it does not serve byte ranges" >"$file.failed"
+			return 1
+		fi
+		now=0
+		[ -f "$file" ] && now=$(stat -c %s "$file")
+		if [ "$now" -gt "$have" ]; then
+			attempts=0
+		elif [ "$rc" -eq 0 ] || [ "$rc" -eq 33 ] || [ "$rc" -eq 36 ] || [ "$code" = 416 ]; then
+			# the server has no more bytes than it sent (or none at that place): its file is shorter than the recorded one
+			: >"$file.short"
+			return 0
+		else
+			attempts=$((attempts + 1))
+			if [ "$attempts" -ge 5 ]; then
+				tr '\r' '\n' <"$errf" | tail -n 1 >"$file.failed"
+				[ -s "$file.failed" ] || echo "curl exit $rc" >"$file.failed"
+				return 1
+			fi
+			sleep 3
+		fi
+	done
+}
+
+download() {
+	# leaves the parts of the data file in $PARTS, whole and in order
+	local n=$PARALLEL i start len chunk have last=0 now cur d f tty=0 total got
+	case $PARALLEL in
+		'' | *[!0-9]*) die SETTING "$PARALLEL" ;;
+	esac
+	[ "$PARALLEL" -ge 1 ] && [ "$PARALLEL" -le 16 ] || die SETTING "$PARALLEL"
+	# a download that was stopped continues with the number of parts it had
+	for d in "$CACHE"/parts.*; do
+		[ -d "$d" ] && n=${d##*parts.}
+	done
+	PARTS=$CACHE/parts.$n
+	mkdir -p "$PARTS"
+	chunk=$(((SIZE + n - 1) / n))
+	have=0
+	for ((i = 0; i < n; i++)); do
+		[ -f "$PARTS/part.$i" ] && have=$((have + $(stat -c %s "$PARTS/part.$i")))
+	done
+	PARTS_N=$n
+	rm -f "$PARTS"/*.failed "$PARTS"/*.err "$PARTS"/*.hdr "$PARTS"/*.short
+	[ "$have" -ge "$SIZE" ] && return 0
+	if [ "$have" -gt 0 ]; then
+		say RESUMING "$(human "$have")" "$(human "$SIZE")"
+	else
+		say DOWNLOADING "$DATA_VERSION" "$(human "$SIZE")"
+	fi
+	[ -t 2 ] && tty=1
+	for ((i = 0; i < n; i++)); do
+		start=$((i * chunk))
+		len=$chunk
+		[ $((start + len)) -gt "$SIZE" ] && len=$((SIZE - start))
+		[ "$len" -gt 0 ] || continue
+		fetch_part "$PARTS/part.$i" "$start" "$len" &
+		WORKERS+=($!)
+	done
+	while :; do
+		cur=0
+		local alive=0 p
+		for ((i = 0; i < n; i++)); do
+			[ -f "$PARTS/part.$i" ] && cur=$((cur + $(stat -c %s "$PARTS/part.$i")))
+		done
+		for p in "${WORKERS[@]}"; do
+			kill -0 "$p" 2>/dev/null && alive=1
+		done
+		if compgen -G "$PARTS/*.failed" >/dev/null; then
+			local why
+			why=$(for f in "$PARTS"/*.failed; do head -n 1 "$f"; break; done)
+			stop_workers
+			die DOWNLOAD "$FETCH_URL" "${why:-curl}" "$CACHE" "$FILE_NAME"
+		fi
+		now=$(date +%s)
+		if [ "$now" -ge $((last + (tty == 1 ? 2 : 15))) ]; then
+			last=$now
+			if [ "$tty" -eq 1 ]; then
+				printf '\r%s' "$(say PROGRESS "$(human "$cur")" "$(human "$SIZE")" "$((cur * 100 / SIZE))")" >&2
+			else
+				say PROGRESS "$(human "$cur")" "$(human "$SIZE")" "$((cur * 100 / SIZE))"
+			fi
+		fi
+		[ "$alive" -eq 0 ] && break
+		sleep 0.3
+	done
+	[ "$tty" -eq 1 ] && echo >&2
+	stop_workers
+	total=0
+	for ((i = 0; i < n; i++)); do
+		[ -f "$PARTS/part.$i" ] && total=$((total + $(stat -c %s "$PARTS/part.$i")))
+	done
+	if [ "$total" -ne "$SIZE" ]; then
+		if compgen -G "$PARTS/*.short" >/dev/null; then
+			# the server's file ends before the recorded size: it is another file, said as a mismatch
+			got=$(stream_data | sha256sum | cut -d' ' -f1)
+			rm -rf "$PARTS"
+			die HASH "$got" "$SHA256"
+		fi
+		die DOWNLOAD "$FETCH_URL" "$(human "$total") of $(human "$SIZE") arrived" "$CACHE" "$FILE_NAME"
+	fi
+	return 0
+}
+
+# the data file as one stream: the file the person gave, a whole file in the cache, or the downloaded parts in order
+stream_data() {
+	if [ -n "$SOURCE_FILE" ]; then
+		cat -- "$SOURCE_FILE"
+	else
+		local i
+		for ((i = 0; i < PARTS_N; i++)); do
+			cat -- "$PARTS/part.$i"
+		done
+	fi
+}
+
+install_data() {
+	local userfile=$1 got need_cache need_data
+	[ "$(id -u)" -eq 0 ] || die ROOT
+	check_tools
+	mkdir -p "$CACHE" "$STATE"
+	exec 9>"$CACHE/lock"
+	flock -n 9 || die BUSY
+	rm -rf "$(dirname "$DATA_DIR")"/.flightgear-data-installer.* "$CACHE"/curl.* "$CACHE"/tar.*
+	trap cleanup EXIT
+	trap 'exit 143' INT TERM HUP
+	# a run that stopped half way is taken out first, then our own incomplete or damaged data
+	if [ -f "$PENDING.files" ]; then
+		remove_listed "$PENDING.files" "$PENDING.dirs"
+		rm -f "$PENDING.files" "$PENDING.dirs" "$PENDING.shared"
+	fi
+	if [ -z "$userfile" ] && data_ok; then
+		say PRESENT "$DATA_VERSION" "$DATA_DIR"
+		return 0
+	fi
+	if [ -f "$STATE/files.list" ]; then
+		forget_ours
+	fi
+
+	SOURCE_FILE=
+	PARTS_N=0
+	if [ -n "$userfile" ]; then
+		[ -f "$userfile" ] && [ -r "$userfile" ] || die FILE "$userfile"
+		say USING_FILE "$userfile"
+		SOURCE_FILE=$userfile
+	elif [ -f "$CACHE/$FILE_NAME" ] && [ "$(stat -c %s "$CACHE/$FILE_NAME")" -eq "$SIZE" ]; then
+		# a whole file in the cache (put there by the person, or by an earlier version of this program)
+		SOURCE_FILE=$CACHE/$FILE_NAME
+	fi
+
+	# the room both steps need, said before anything is fetched
+	local have=0 d f
+	if [ -z "$SOURCE_FILE" ]; then
+		for d in "$CACHE"/parts.*; do
+			[ -d "$d" ] || continue
+			for f in "$d"/part.*; do
+				[ -f "$f" ] && have=$((have + $(stat -c %s "$f")))
+			done
+		done
+	fi
+	need_cache=0
+	[ -z "$SOURCE_FILE" ] && need_cache=$((SIZE > have ? SIZE - have : 0))
+	need_data=$((UNPACKED + UNPACKED / 20))
+	if [ "$(devof "$CACHE")" = "$(devof "$DATA_DIR")" ]; then
+		[ "$(avail "$CACHE")" -ge $((need_cache + need_data)) ] ||
+			die SPACE "$CACHE" "$(human $((need_cache + need_data)))" "$(human "$(avail "$CACHE")")"
+	else
+		[ "$(avail "$CACHE")" -ge "$need_cache" ] || die SPACE "$CACHE" "$(human "$need_cache")" "$(human "$(avail "$CACHE")")"
+		[ "$(avail "$DATA_DIR")" -ge "$need_data" ] || die SPACE "$(dirname "$DATA_DIR")" "$(human "$need_data")" "$(human "$(avail "$DATA_DIR")")"
+	fi
+
+	if [ -z "$SOURCE_FILE" ]; then
+		download
+	fi
+	say VERIFYING
+	got=$(stream_data | sha256sum | cut -d' ' -f1)
+	if [ "$got" != "$SHA256" ]; then
+		if [ -z "$userfile" ]; then
+			rm -rf "$PARTS"
+			[ -n "$SOURCE_FILE" ] && rm -f "$SOURCE_FILE"
+			die HASH "$got" "$SHA256"
+		fi
+		die HASH_FILE "$got" "$SHA256"
+	fi
+
+	[ -z "$userfile" ] && KEPT_FILE=${PARTS:-$SOURCE_FILE}
+	say UNPACKING "$DATA_DIR"
+	# the folders this run makes on the way to the data folder are listed first, so a failure takes them out again
+	d=$DATA_DIR
+	: >"$PENDING.dirs"
+	while [ ! -d "$d" ]; do
+		echo "$d" >>"$PENDING.dirs"
+		d=$(dirname "$d")
+	done
+	LINKING=1
+	mkdir -p "$(dirname "$DATA_DIR")"
+	STAGE=$(mktemp -d "$(dirname "$DATA_DIR")/.flightgear-data-installer.XXXXXX")
+	local err
+	err=$(mktemp "$CACHE/tar.XXXXXX")
+	if ! stream_data | xz -dc 2>"$err" | tar -x --no-same-owner --no-same-permissions -C "$STAGE" 2>>"$err"; then
+		local why
+		why=$(tail -n 1 "$err")
+		rm -f "$err"
+		die UNPACK "${why:-xz or tar}"
+	fi
+	rm -f "$err"
+	local root=$STAGE/$TOP
+	[ -d "$root" ] || die UNPACK "$TOP"
+	[ "$(tr -d '[:space:]' <"$root/version" 2>/dev/null)" = "$DATA_VERSION" ] ||
+		die VERSION "$(tr -d '[:space:]' <"$root/version" 2>/dev/null || echo '-')" "$DATA_VERSION"
+	# Debian's own data package does the same: no world-writable files, scripts that are run stay executable
+	find "$root" -type d -exec chmod 755 {} +
+	find "$root" -type f -exec chmod 644 {} +
+	local s
+	for s in Textures/Trees/convert.pl Aircraft/Instruments-3d/FG1000/Nasal/MFDPages/createpgs.pl; do
+		[ -f "$root/$s" ] && chmod 755 "$root/$s"
+	done
+
+	# every path is checked before anything is placed: a file that is already there and is not ours stops the install
+	local rel src target
+	: >"$PENDING.files"
+	: >"$PENDING.shared"
+	[ -d "$DATA_DIR" ] && echo "$DATA_DIR" >>"$PENDING.shared"
+	[ -d "$(dirname "$DATA_DIR")" ] && echo "$(dirname "$DATA_DIR")" >>"$PENDING.shared"
+	while IFS= read -r -d '' rel; do
+		src=$rel
+		rel=${rel#"$root"/}
+		target=$DATA_DIR/$rel
+		if [ -d "$src" ] && [ ! -L "$src" ]; then
+			if [ -e "$target" ] || [ -L "$target" ]; then
+				[ -d "$target" ] && [ ! -L "$target" ] || die CONFLICT "$target"
+				echo "$target" >>"$PENDING.shared"
+			else
+				echo "$target" >>"$PENDING.dirs"
+			fi
+		else
+			if [ -e "$target" ] || [ -L "$target" ]; then
+				die CONFLICT "$target"
+			fi
+			echo "$target" >>"$PENDING.files"
+		fi
+	done < <(find "$root" -mindepth 1 -print0)
+
+	mkdir -p "$DATA_DIR"
+	if ! cp -al "$root/." "$DATA_DIR/" 2>"$STAGE/.cp-error"; then
+		die UNPACK "$(tail -n 1 "$STAGE/.cp-error")"
+	fi
+	LINKING=
+	printf '%s %s\n' "$DATA_VERSION" "$SHA256" >"$STATE/installed.new"
+	mv "$PENDING.files" "$STATE/files.list"
+	mv "$PENDING.dirs" "$STATE/dirs.list"
+	mv "$PENDING.shared" "$STATE/shared.list"
+	mv "$STATE/installed.new" "$STATE/installed"
+	rm -rf "$STAGE"
+	STAGE=
+	if [ -z "$userfile" ]; then
+		[ -n "$PARTS" ] && rm -rf "$PARTS"
+		[ -n "$SOURCE_FILE" ] && rm -f "$SOURCE_FILE"
+	fi
+	say DONE "$DATA_VERSION" "$DATA_DIR"
+}
+
+purge_data() {
+	[ "$(id -u)" -eq 0 ] || die ROOT
+	forget_ours
+	rm -rf "$CACHE" "$STATE"
+	return 0
+}
+
+load_language
+case ${1:-install} in
+	install)
+		userfile=
+		if [ "${2:-}" = --file ]; then
+			userfile=${3:-}
+			[ -n "$userfile" ] || die FILE ''
+		fi
+		install_data "$userfile"
+		;;
+	--file)
+		[ -n "${2:-}" ] || die FILE ''
+		install_data "$2"
+		;;
+	--purge) purge_data ;;
+	--check) data_ok ;;
+	*) die USAGE ;;
+esac

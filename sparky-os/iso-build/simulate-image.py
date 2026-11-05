@@ -144,6 +144,11 @@ def main():
     if any(re.fullmatch(r'linux-(?:image|headers)-.*amd64(?:-unsigned)?', p['Package'])
            for p in final.values()):
         raise ValueError('Debian kernel/headers in resolved image')
+    # a package that downloads data while it is installed (Sparky-Install-Download-Size in its control file) never belongs on the image:
+    # the games and their data come when the person chooses them while installing (Daniel, 2026-11-04; ORDER 399b)
+    downloaders = sorted(p['Package'] for p in final.values() if 'Sparky-Install-Download-Size' in p)
+    if downloaders:
+        raise ValueError('image packages that download data when installed (Sparky-Install-Download-Size): ' + ' '.join(downloaders))
     rows = ['package\tarchitecture\tversion\tinstalled_kib\tarchive_bytes\tsource\tsha256\tchange']
     for key, record in sorted(final.items()):
         if 'Installed-Size' not in record:

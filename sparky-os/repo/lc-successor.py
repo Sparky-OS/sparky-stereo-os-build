@@ -13,6 +13,8 @@ folded Build-Depends, an edition entry that is also the Lean Code entry, the 19 
 the published debian/ directory stays as it is but for its toolkit, replaced by this tree's (the files debian_prepare
 copies), and its changelog, which gains the plain entry for NEXT and the Lean Code entry for NEXT+lc1 on top (one entry,
 NEXT, for a source whose versions carry no +lc1). Only the changelog and the toolkit may differ.
+--depends OLD NEW (with --in-place): the one dependency text of debian/control the recipe changes, each exactly once, and nothing else of
+debian/ but the toolkit and the changelog (ORDER 399: flightgear's Depends names the FlightGear data downloader).
 --preserve PATTERN REASON: the next version keeps one more file as authored for a source consumer the recipe names
 (lean.debian_prepare --preserve-source): the published plan stays as it is and gains this pattern, nothing else.
 --recipe DIR: the next version carries a recipe change: DIR is the recipe's debian/ directory, whose changelog is the
@@ -86,8 +88,9 @@ def toolkit_files(sparky_os):
     return files
 
 
-def in_place(old, new, name, version, nxt, items):
-    """--in-place: the published debian/ with this tree's toolkit and two new changelog entries; nothing else."""
+def in_place(old, new, name, version, nxt, items, depends=()):
+    """--in-place: the published debian/ with this tree's toolkit and two new changelog entries; nothing else but the
+    dependency texts --depends names (each exactly once in debian/control)."""
     shutil.copytree(old, new, symlinks=True, copy_function=os.link, ignore=lambda d, names: ['debian'] if Path(d) == old else [])
     shutil.copytree(old / 'debian', new / 'debian', symlinks=True)
     rules = (new / 'debian/rules').read_text()
@@ -99,6 +102,11 @@ def in_place(old, new, name, version, nxt, items):
     for rel, src in toolkit_files(HERE.parent).items():
         (kit / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, kit / rel)
+    for before, after in depends:
+        control = (new / 'debian/control').read_text()
+        if control.count(before) != 1:
+            raise ValueError(f'--depends: {before!r} is not exactly once in debian/control')
+        (new / 'debian/control').write_text(control.replace(before, after))
     lc = version.endswith('+lc1')
     plain = version[:-len('+lc1')] if lc else version
     if subprocess.run(['dpkg', '--compare-versions', nxt, 'gt', plain]).returncode:
@@ -112,7 +120,8 @@ def in_place(old, new, name, version, nxt, items):
     changed = sorted(tree_diff(old, new))
     kit_rel = str(kit.relative_to(new)) + '/'
     toolkit = [p for p in changed if p.startswith(kit_rel)]
-    other = [p for p in changed if p != 'debian/changelog' and p not in toolkit]
+    allowed = {'debian/changelog'} | ({'debian/control'} if depends else set())
+    other = [p for p in changed if p not in allowed and p not in toolkit]
     if other:
         raise ValueError(f'the new source differs beyond its changelog and toolkit: {other}')
     return {'source': name, 'old': version, 'new': nxt + '+lc1' if lc else nxt, 'mode': 'in-place', 'toolkit_dir': kit_rel,
@@ -142,6 +151,8 @@ def main():
     ap.add_argument('--next')
     ap.add_argument('--item', action='append')
     ap.add_argument('--recipe', type=Path, help="the recipe's debian/ directory for the next version")
+    ap.add_argument('--depends', nargs=2, action='append', default=[], metavar=('OLD', 'NEW'),
+                    help='with --in-place: one text of debian/control replaced by another (a dependency the recipe changes)')
     ap.add_argument('--in-place', action='store_true', help='keep the published debian/ but for its toolkit and changelog')
     ap.add_argument('--preserve', nargs=2, action='append', default=[], metavar=('PATTERN', 'REASON'),
                     help='one more source-consumer pattern for the next version, its reason beside it')
@@ -151,6 +162,8 @@ def main():
     args = ap.parse_args()
     if not ((args.recipe and not args.next and not args.item and not args.in_place) or (not args.recipe and args.next and args.item)):
         ap.error('either --next and --item (no source change), or --recipe DIR')
+    if args.depends and not args.in_place:
+        ap.error('--depends goes with --in-place')
     if args.recipe and args.recipe.resolve().name != 'debian':
         ap.error("--recipe names a recipe's debian/ directory")
     dsc = args.dsc.resolve()
@@ -166,7 +179,7 @@ def main():
         if args.in_place:
             if args.recipe:
                 raise ValueError('--in-place and --recipe exclude each other')
-            report = in_place(old, work / 'new', name, version, args.next, args.item)
+            report = in_place(old, work / 'new', name, version, args.next, args.item, args.depends)
             finish(work, dsc, name, version, report['new'], old, out, report)
             return
         if not version.endswith('+lc1'):
