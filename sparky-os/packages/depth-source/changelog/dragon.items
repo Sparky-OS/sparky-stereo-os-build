@@ -10,10 +10,12 @@ The 3D Video menu and the 3D Video Settings window offer to save the 3D correcti
 
 The strings of the offer in Polish, Brazilian Portuguese, French, German, Japanese, Korean and Chinese, Simplified and Traditional (31 more strings in dragon-3d-video.po.patch, 71 in all).
 
-debian/control: also depends on mkvtoolnix, whose mkvpropedit writes Matroska files, and on libstereo-layer1 1.15.0, whose QML module holds the depth controls, and builds against libstereo-av-dev and libstereo-policy-dev 1.15.0 (stereo-layer 1.14.0, which carries the writers); the tests need ffmpeg and mkvtoolnix.
+debian/control: also depends on mkvtoolnix, whose mkvpropedit writes Matroska files, and on libstereo-layer1 1.16.0, whose QML module holds the depth controls, and builds against libstereo-av-dev and libstereo-policy-dev 1.16.0 (stereo-layer 1.14.0, which carries the writers); the tests need ffmpeg and mkvtoolnix.
 
 The 3D Video Settings window shows the options of drawing the views from a picture and its depth map (depth strength, screen plane, shift, which eye the picture is, warping, gap filling, smoothing, the depth range) for a video that carries a depth map: the set and the controls of libstereo-layer 1.14.0, the same in every player, with the best default measured on scenes with known views (layered warping with depth-aided filling). The choice is kept for the file in dragonplayerrc, group StereoVideo, like the swap, and is no entry at the default; the earlier keys of the 3DVideo group that held it for every video are gone.
 
 The views of a depth video are drawn the best way that keeps its frame rate (ORDER 411, group 2e): the 3D Video Settings window has Automatic, which is on until the person picks a warping or a gap filling, and says which way was chosen for the video and why (for example "Layered, Pyramid (Layered, Depth-aided does not keep 30 frames a second on this GPU)"); the way picked is the person's for everything, the slowest included, and is kept for the file like the rest of the options. The warping and the gap filling are bound to the video only when they are the person's; the choice told to the controls does not rewrite the per-file store.
 
 This entry also carries the work of 4:26.04.0-1+stereo3d6, 4:26.04.0-1+stereo3d7 and 4:26.04.0-1+stereo3d8, which were staged and never published.
+
+The controls also say when the GPU was reset while drawing (the processor draws then) and when a way needs more of the GPU's memory than is free (ORDER 411, step 2f; the words are in libstereo-layer1 1.16.0).
