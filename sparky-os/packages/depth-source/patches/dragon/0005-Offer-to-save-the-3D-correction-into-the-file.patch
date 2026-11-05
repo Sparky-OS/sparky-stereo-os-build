@@ -1,0 +1,890 @@
+From efa046e21ae6968850c527473df9bb4a0af65847 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 5 Nov 2026 10:06:24 -0300
+Subject: [PATCH 5/5] Offer to save the 3D correction into the file
+
+The packing the person chose and the swap of the eyes are kept in the program's
+own store, next to the resume position, and the file is never touched on its
+own. When a correction is set, the video is shown in 3D and it is a file on
+this computer, the 3D Video menu and the 3D Video Settings window offer to
+save the correction into the file. The question comes first. On yes the
+shared library of the stereo layer (libstereo-av, stereo_mark_save) writes it:
+Matroska and WebM StereoMode (the depth layouts 15 to 20 included), MP4 and
+MOV st3d. The file is read back; the stored choice is unmarked and the file is
+read again as it is. A refusal says why and what to do, leaves the file as it
+was and keeps the choice: a depth layout into MP4, a layout WebM cannot name, a
+stream that declares its own layout, no room in an MP4 header, mkvpropedit
+missing, a half or full size choice the shape of the video does not give.
+
+Dragon without the library is built without the offer (the menu entry never
+appears). A test of the writing and the refusals makes ffmpeg files and reads
+them back.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+(cherry picked from commit eac9f9b0913b53aacf04aa1f2b4e7ebe6b6498c8)
+---
+ CMakeLists.txt                   |   9 ++
+ autotests/CMakeLists.txt         |   9 ++
+ autotests/stereosavetest.cpp     | 253 +++++++++++++++++++++++++++++++
+ src/CMakeLists.txt               |   5 +
+ src/backend.cpp                  |  54 +++++++
+ src/backend.h                    |  10 ++
+ src/qml/ControlsBar.qml          | 155 ++++++++++++++++---
+ src/qml/StereoSettingsWindow.qml |  12 ++
+ src/stereosave.cpp               | 178 ++++++++++++++++++++++
+ src/stereosave.h                 |  38 +++++
+ 10 files changed, 704 insertions(+), 19 deletions(-)
+ create mode 100644 autotests/CMakeLists.txt
+ create mode 100644 autotests/stereosavetest.cpp
+ create mode 100644 src/stereosave.cpp
+ create mode 100644 src/stereosave.h
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9721cf7..e5aa219 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -50,6 +50,10 @@ find_package(KF6 ${KF_MIN_VERSION} REQUIRED
+ 
+ find_package(PkgConfig)
+ pkg_check_modules(libavcodec REQUIRED IMPORTED_TARGET libavcodec)
++# The writers of the 3D layout into the file, and the words of the layouts (Sparky Stereo OS's stereo-layer): without them
++# Dragon is built without the offer to save the 3D correction into the file, and says so
++pkg_check_modules(stereomark IMPORTED_TARGET stereo-av>=1.13.0 stereo-policy)
++add_feature_info("Save the 3D correction into the file" stereomark_FOUND "needs libstereo-av and libstereo-policy 1.13 of stereo-layer")
+ 
+ configure_file(config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
+ 
+@@ -63,6 +67,11 @@ add_definitions(-DTRANSLATION_DOMAIN="dragonplayer")
+ add_subdirectory(src)
+ add_subdirectory(misc)
+ 
++if(BUILD_TESTING AND stereomark_FOUND)
++    enable_testing()
++    add_subdirectory(autotests)
++endif()
++
+ ki18n_install(po)
+ 
+ 
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+new file mode 100644
+index 0000000..ce95d6f
+--- /dev/null
++++ b/autotests/CMakeLists.txt
+@@ -0,0 +1,9 @@
++# SPDX-License-Identifier: BSD-2-Clause
++# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS Test)
++
++add_executable(stereosavetest stereosavetest.cpp ../src/stereosave.cpp)
++target_include_directories(stereosavetest PRIVATE ../src)
++target_link_libraries(stereosavetest PRIVATE Qt6::Core Qt6::Test KF6::I18n PkgConfig::stereomark)
++add_test(NAME stereosavetest COMMAND stereosavetest)
+diff --git a/autotests/stereosavetest.cpp b/autotests/stereosavetest.cpp
+new file mode 100644
+index 0000000..4a23a99
+--- /dev/null
++++ b/autotests/stereosavetest.cpp
+@@ -0,0 +1,253 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#include "stereosave.h"
++
++#include <QFile>
++#include <QProcess>
++#include <QStandardPaths>
++#include <QTemporaryDir>
++#include <QTest>
++
++#include <stereo-mark.h>
++
++using namespace Qt::StringLiterals;
++
++// Saving the 3D correction into a file: what is written, what is refused and why, what the program may unmark afterwards.
++// The files are made with ffmpeg and read back with the library's reader; the test fails when a tool is missing.
++class StereoSaveTest : public QObject
++{
++    Q_OBJECT
++private:
++    QTemporaryDir m_dir;
++
++    bool run(const QString &program, const QStringList &arguments)
++    {
++        QProcess process;
++        process.start(program, arguments);
++        return process.waitForFinished(60000) && process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
++    }
++
++    QString make(const QString &name, const QString &format, const QStringList &extra = {})
++    {
++        const QString path = m_dir.filePath(name);
++        QStringList args{u"-v"_s, u"error"_s, u"-y"_s, u"-f"_s, u"lavfi"_s, u"-i"_s, u"testsrc=size=160x90:rate=10:duration=1"_s};
++        args += extra;
++        args += {u"-f"_s, format, path};
++        if (!run(u"ffmpeg"_s, args)) {
++            QTest::qFail(qPrintable(u"ffmpeg could not make "_s + name), __FILE__, __LINE__);
++        }
++        return path;
++    }
++
++    static QByteArray bytes(const QString &path)
++    {
++        QFile file(path);
++        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
++    }
++
++    static int markOf(const QString &path)
++    {
++        int container = -1;
++        int value = -2;
++        return stereo_mark_read(path.toUtf8().constData(), 1, &container, &value) == STEREO_MARK_WRITTEN ? value : -3;
++    }
++
++    StereoSave::Request request(const QString &path, const QString &mark, bool chosen, bool swap) const
++    {
++        StereoSave::Request r;
++        r.path = path;
++        r.mark = mark;
++        r.packingChosen = chosen;
++        r.swap = swap;
++        r.frameWidth = 1920;
++        r.frameHeight = 1080;
++        return r;
++    }
++
++private Q_SLOTS:
++    void initTestCase()
++    {
++        QVERIFY(m_dir.isValid());
++        QVERIFY2(!QStandardPaths::findExecutable(u"ffmpeg"_s).isEmpty(), "ffmpeg is needed to make the files");
++        QVERIFY2(!QStandardPaths::findExecutable(u"mkvpropedit"_s).isEmpty(), "mkvpropedit is needed to read what is written");
++    }
++
++    // The packing the person chose is written, and the stored choice may be unmarked
++    void matroskaPacking()
++    {
++        const QString path = make(u"a.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s});
++        QCOMPARE(markOf(path), -1);
++        const StereoSave::Outcome out = StereoSave::save(request(path, u"topBottom"_s, true, false));
++        QVERIFY2(out.saved, qPrintable(out.message));
++        QCOMPARE(out.status, u"written"_s);
++        QVERIFY(out.clearInput);
++        QVERIFY(!out.clearSwap);
++        QCOMPARE(markOf(path), 3); // top and bottom, left eye first
++    }
++
++    // Only the swap is the correction: the file's packing stays, its eye order turns round
++    void matroskaSwapOnly()
++    {
++        const QString path = make(u"b.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s, u"-metadata:s:v"_s, u"stereo_mode=left_right"_s});
++        QCOMPARE(markOf(path), 1);
++        const StereoSave::Outcome out = StereoSave::save(request(path, u"sideBySide"_s, false, true));
++        QVERIFY2(out.saved, qPrintable(out.message));
++        QVERIFY(!out.clearInput);
++        QVERIFY(out.clearSwap);
++        QCOMPARE(markOf(path), 11); // side by side, right eye first
++        // and back again: the swap of the swapped file is the first order
++        const StereoSave::Outcome back = StereoSave::save(request(path, u"sideBySide"_s, false, true));
++        QVERIFY2(back.saved, qPrintable(back.message));
++        QCOMPARE(markOf(path), 1);
++    }
++
++    // A swap on a video that says nothing: the packing in use, right eye first
++    void matroskaSwapOfUnmarked()
++    {
++        const QString path = make(u"c.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s});
++        const StereoSave::Outcome out = StereoSave::save(request(path, u"sideBySide"_s, false, true));
++        QVERIFY2(out.saved, qPrintable(out.message));
++        QCOMPARE(markOf(path), 11);
++    }
++
++    // The same again: the file carries it already, nothing is written, and the choice is no longer needed
++    void unchanged()
++    {
++        const QString path = make(u"d.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s});
++        QVERIFY(StereoSave::save(request(path, u"sideBySide"_s, true, false)).saved);
++        const QByteArray before = bytes(path);
++        const StereoSave::Outcome out = StereoSave::save(request(path, u"sideBySide"_s, true, false));
++        QVERIFY(out.saved);
++        QCOMPARE(out.status, u"unchanged"_s);
++        QVERIFY(out.clearInput);
++        QCOMPARE(bytes(path), before);
++    }
++
++    // A depth layout into Matroska: the packing is written (StereoMode 15 to 20); the swap belongs to the drawn views
++    // and stays with the video
++    void matroskaDepth()
++    {
++        const QString path = make(u"e.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s});
++        const StereoSave::Outcome out = StereoSave::save(request(path, u"depthSideBySideDepthFirst"_s, true, true));
++        QVERIFY2(out.saved, qPrintable(out.message));
++        QCOMPARE(markOf(path), 16);
++        QVERIFY(out.clearInput);
++        QVERIFY(!out.clearSwap);
++        QVERIFY2(out.message.contains(u"stays with this video"_s), qPrintable(out.message));
++        const QString graphics = make(u"e2.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s});
++        QVERIFY(StereoSave::save(request(graphics, u"depthGraphicsTopBottom"_s, true, false)).saved);
++        QCOMPARE(markOf(graphics), 19);
++        const QString background = make(u"e3.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s});
++        QVERIFY(StereoSave::save(request(background, u"depthBackgroundQuarters"_s, true, false)).saved);
++        QCOMPARE(markOf(background), 20);
++    }
++
++    // The swap of a layout that has no eye order cannot be written; with no packing to write, nothing is
++    void swapWithoutAnOrder()
++    {
++        const QString path = make(u"f.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s});
++        const QByteArray before = bytes(path);
++        const StereoSave::Outcome out = StereoSave::save(request(path, u"anaglyphCyanRed"_s, false, true));
++        QVERIFY(!out.saved);
++        QCOMPARE(out.status, u"swap"_s);
++        QVERIFY(!out.clearInput);
++        QVERIFY(!out.clearSwap);
++        QVERIFY(out.message.contains(u"The file was not changed"_s));
++        QCOMPARE(bytes(path), before);
++    }
++
++    // MP4 has no depth value: refused, the file is as it was, the choice is kept, the reason said
++    void mp4RefusesDepth()
++    {
++        const QString path = make(u"g.mp4"_s, u"mp4"_s, {u"-c:v"_s, u"mpeg4"_s});
++        const QByteArray before = bytes(path);
++        const StereoSave::Outcome out = StereoSave::save(request(path, u"depthSideBySidePictureFirst"_s, true, false));
++        QVERIFY(!out.saved);
++        QCOMPARE(out.status, u"mp4-depth"_s);
++        QVERIFY(!out.clearInput);
++        QVERIFY(!out.clearSwap);
++        QVERIFY2(out.message.contains(u"MP4"_s) && out.message.contains(u"depth map"_s) && out.message.contains(u"not changed"_s), qPrintable(out.message));
++        QCOMPARE(bytes(path), before);
++        // and what st3d can name is written
++        QVERIFY(StereoSave::save(request(path, u"sideBySide"_s, true, true)).saved);
++        QCOMPARE(markOf(path), 4); // side by side, right eye first
++    }
++
++    void webmSubset()
++    {
++        const QString path = make(u"h.webm"_s, u"webm"_s, {u"-c:v"_s, u"libvpx"_s, u"-b:v"_s, u"200k"_s});
++        const QByteArray before = bytes(path);
++        const StereoSave::Outcome refused = StereoSave::save(request(path, u"rowInterleaved"_s, true, false));
++        QVERIFY(!refused.saved);
++        QCOMPARE(refused.status, u"webm-layout"_s);
++        QVERIFY2(refused.message.contains(u"WebM"_s) && refused.message.contains(u"Matroska"_s), qPrintable(refused.message));
++        QCOMPARE(bytes(path), before);
++        QVERIFY(StereoSave::save(request(path, u"topBottom"_s, true, false)).saved);
++        QCOMPARE(markOf(path), 3);
++    }
++
++    // The mark cannot say half or full size: a choice the shape of the video does not give is refused
++    void viewsOfTheShape()
++    {
++        const QString path = make(u"i.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s});
++        const QByteArray before = bytes(path);
++        StereoSave::Request wrong = request(path, u"sideBySide"_s, true, false);
++        wrong.frameWidth = 3840; // two full 1920 pictures: the shape says full views
++        wrong.frameHeight = 1080;
++        wrong.views = 0; // the person chose half
++        const StereoSave::Outcome refused = StereoSave::save(wrong);
++        QVERIFY(!refused.saved);
++        QCOMPARE(refused.status, u"views"_s);
++        QCOMPARE(bytes(path), before);
++        StereoSave::Request right = wrong;
++        right.views = 1;
++        QVERIFY2(StereoSave::save(right).saved, "the choice the shape gives is written");
++        QCOMPARE(markOf(path), 1);
++        // a 1920x1080 frame holds two 960x1080 views: the shape says half
++        const QString half = make(u"i2.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s});
++        StereoSave::Request h = request(half, u"sideBySide"_s, true, false);
++        h.views = 0;
++        QVERIFY(StereoSave::save(h).saved);
++    }
++
++    // Not a file on this computer
++    void notLocal()
++    {
++        const StereoSave::Outcome out = StereoSave::save(request(QString(), u"sideBySide"_s, true, false));
++        QVERIFY(!out.saved);
++        QVERIFY(out.message.contains(u"not changed"_s));
++    }
++
++    // mkvpropedit is missing: said, with what to install, the file untouched
++    void toolMissing()
++    {
++        const QString path = make(u"j.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s});
++        const QByteArray before = bytes(path);
++        const QByteArray oldPath = qgetenv("PATH");
++        qputenv("PATH", QByteArray(m_dir.path().toUtf8()));
++        const StereoSave::Outcome out = StereoSave::save(request(path, u"sideBySide"_s, true, false));
++        qputenv("PATH", oldPath);
++        QVERIFY(!out.saved);
++        QCOMPARE(out.status, u"tool-missing"_s);
++        QVERIFY2(out.message.contains(u"mkvtoolnix"_s), qPrintable(out.message));
++        QCOMPARE(bytes(path), before);
++    }
++
++    // A file that is not a video: refused, untouched
++    void notAVideo()
++    {
++        const QString path = m_dir.filePath(u"k.txt"_s);
++        QFile file(path);
++        QVERIFY(file.open(QIODevice::WriteOnly));
++        file.write("text");
++        file.close();
++        const StereoSave::Outcome out = StereoSave::save(request(path, u"sideBySide"_s, true, false));
++        QVERIFY(!out.saved);
++        QCOMPARE(out.status, u"container"_s);
++        QCOMPARE(bytes(path), QByteArray("text"));
++    }
++};
++
++QTEST_GUILESS_MAIN(StereoSaveTest)
++#include "stereosavetest.moc"
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 142885f..0154be9 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -43,6 +43,11 @@ target_link_libraries(dragonmodule
+         Qt6::Quick
+         Qt6::Multimedia
+         PkgConfig::libavcodec)
++if(stereomark_FOUND)
++    target_sources(dragonmodule PRIVATE stereosave.cpp)
++    target_link_libraries(dragonmodule PRIVATE PkgConfig::stereomark)
++    target_compile_definitions(dragonmodule PRIVATE DRAGON_STEREO_SAVE)
++endif()
+ # Set mpris2 as include dir so the qml plugin source can find it
+ target_include_directories(dragonmodule PRIVATE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mpris2>")
+ ecm_finalize_qml_module(dragonmodule DESTINATION ${KDE_INSTALL_QMLDIR})
+diff --git a/src/backend.cpp b/src/backend.cpp
+index 7e443ce..807e819 100644
+--- a/src/backend.cpp
++++ b/src/backend.cpp
+@@ -2,8 +2,12 @@
+ // SPDX-FileCopyrightText: 2025 Harald Sitter <sitter@kde.org>
+ 
+ #include "backend.h"
++#ifdef DRAGON_STEREO_SAVE
++#include "stereosave.h"
++#endif
+ 
+ #include <KConfigGroup>
++#include <KLocalizedString>
+ #include <KSharedConfig>
+ #include <QCryptographicHash>
+ #include <QtMultimedia/QVideoSink>
+@@ -86,3 +90,53 @@ void Backend::setStereoInput(const QUrl &url, int input, int automatic)
+         group.deleteEntry(stereoKey(url) + u".input"_s);
+     group.sync();
+ }
++
++bool Backend::isLocalFile(const QUrl &url) const
++{
++    return url.isLocalFile();
++}
++
++bool Backend::canSaveStereo() const
++{
++#ifdef DRAGON_STEREO_SAVE
++    return true;
++#else
++    return false;
++#endif
++}
++
++QVariantMap
++Backend::saveStereoToFile(const QUrl &url, int videoTrack, const QString &mark, int views, int frameWidth, int frameHeight, bool packingChosen, bool swap)
++{
++#ifndef DRAGON_STEREO_SAVE
++    Q_UNUSED(url)
++    Q_UNUSED(videoTrack)
++    Q_UNUSED(mark)
++    Q_UNUSED(views)
++    Q_UNUSED(frameWidth)
++    Q_UNUSED(frameHeight)
++    Q_UNUSED(packingChosen)
++    Q_UNUSED(swap)
++    return {{u"saved"_s, false},
++            {u"clearInput"_s, false},
++            {u"clearSwap"_s, false},
++            {u"status"_s, u"not-built"_s},
++            {u"message"_s, i18nc("@info", "This build of Dragon cannot write the 3D correction into a file. The correction stays with this video in Dragon.")}};
++#else
++    StereoSave::Request request;
++    request.path = url.isLocalFile() ? url.toLocalFile() : QString();
++    request.videoTrack = videoTrack;
++    request.mark = mark;
++    request.views = views;
++    request.frameWidth = frameWidth;
++    request.frameHeight = frameHeight;
++    request.packingChosen = packingChosen;
++    request.swap = swap;
++    const StereoSave::Outcome outcome = StereoSave::save(request);
++    return {{u"saved"_s, outcome.saved},
++            {u"clearInput"_s, outcome.clearInput},
++            {u"clearSwap"_s, outcome.clearSwap},
++            {u"status"_s, outcome.status},
++            {u"message"_s, outcome.message}};
++#endif
++}
+diff --git a/src/backend.h b/src/backend.h
+index c85cbe8..6a3a324 100644
+--- a/src/backend.h
++++ b/src/backend.h
+@@ -4,6 +4,7 @@
+ #pragma once
+ 
+ #include <QUrl>
++#include <QVariantMap>
+ #include <QtQmlIntegration>
+ 
+ class QVideoSink;
+@@ -35,5 +36,14 @@ public:
+     Q_INVOKABLE int stereoInput(const QUrl &url, int automatic) const;
+     Q_INVOKABLE void setStereoInput(const QUrl &url, int input, int automatic);
+ 
++    // Whether the video is a file on this computer, which the correction can be saved into, and whether this build of
++    // Dragon can write it at all (it needs the library of the stereo layer)
++    Q_INVOKABLE bool isLocalFile(const QUrl &url) const;
++    Q_INVOKABLE bool canSaveStereo() const;
++    // Writes the correction into the file, after the person agreed: see StereoSave. The result has saved, clearInput,
++    // clearSwap, status and message.
++    Q_INVOKABLE QVariantMap
++    saveStereoToFile(const QUrl &url, int videoTrack, const QString &mark, int views, int frameWidth, int frameHeight, bool packingChosen, bool swap);
++
+     static BackendAttachedType *qmlAttachedProperties(QObject *object);
+ };
+diff --git a/src/qml/ControlsBar.qml b/src/qml/ControlsBar.qml
+index 7695ed9..1e8958a 100644
+--- a/src/qml/ControlsBar.qml
++++ b/src/qml/ControlsBar.qml
+@@ -285,6 +285,12 @@ OverlayPopup {
+                         onToggled: toolbar.stereoSettings.depth = checked
+                     }
+                     QQC2.MenuSeparator {}
++                    Kirigami.Action {
++                        text: i18nc("@action:button offers to write the 3D correction of this video into the file", "Save the 3D Correction into the File…")
++                        icon.name: "document-save"
++                        visible: toolbar.canOfferSave
++                        onTriggered: toolbar.askToSaveStereoCorrection()
++                    }
+                     Kirigami.Action {
+                         text: i18nc("@action:button opens the 3D video settings", "3D Video Settings…")
+                         icon.name: "configure"
+@@ -401,25 +407,25 @@ OverlayPopup {
+ 
+     // The input formats a 3D video can be taken for: every packing of the spec and the depth layouts
+     readonly property var stereoInputModel: [
+-            { text: i18nc("@action:button 3D video input format, from what the video says", "Automatic"), value: Multimedia.VideoOutput.StereoAutomatic },
+-            { text: i18nc("@action:button 3D video input format", "Side by Side, Half Size Views"), value: Multimedia.VideoOutput.StereoSideBySideHalf },
+-            { text: i18nc("@action:button 3D video input format", "Side by Side, Full Size Views"), value: Multimedia.VideoOutput.StereoSideBySideFull },
+-            { text: i18nc("@action:button 3D video input format", "Side by Side, Quincunx"), value: Multimedia.VideoOutput.StereoSideBySideQuincunx },
+-            { text: i18nc("@action:button 3D video input format", "Top and Bottom, Half Size Views"), value: Multimedia.VideoOutput.StereoTopBottomHalf },
+-            { text: i18nc("@action:button 3D video input format", "Top and Bottom, Full Size Views"), value: Multimedia.VideoOutput.StereoTopBottomFull },
+-            { text: i18nc("@action:button 3D video input format", "Row Interleaved"), value: Multimedia.VideoOutput.StereoRowInterleaved },
+-            { text: i18nc("@action:button 3D video input format", "Column Interleaved"), value: Multimedia.VideoOutput.StereoColumnInterleaved },
+-            { text: i18nc("@action:button 3D video input format", "Checkerboard"), value: Multimedia.VideoOutput.StereoCheckerboard },
+-            { text: i18nc("@action:button 3D video input format", "Frame Sequential"), value: Multimedia.VideoOutput.StereoFrameSequence },
+-            { text: i18nc("@action:button 3D video input format, red and cyan anaglyph, shown as it is", "Anaglyph, Red and Cyan"), value: Multimedia.VideoOutput.StereoAnaglyphCyanRed },
+-            { text: i18nc("@action:button 3D video input format, green and magenta anaglyph, shown as it is", "Anaglyph, Green and Magenta"), value: Multimedia.VideoOutput.StereoAnaglyphGreenMagenta },
+-            { text: i18nc("@action:button 3D video input format, 2D plus depth: the views are drawn from the depth map", "Picture and Depth Map, Side by Side"), value: Multimedia.VideoOutput.StereoDepthSideBySide },
+-            { text: i18nc("@action:button 3D video input format, 2D plus depth", "Depth Map and Picture, Side by Side"), value: Multimedia.VideoOutput.StereoDepthSideBySideDepthFirst },
+-            { text: i18nc("@action:button 3D video input format, 2D plus depth", "Picture above Its Depth Map"), value: Multimedia.VideoOutput.StereoDepthTopBottom },
+-            { text: i18nc("@action:button 3D video input format, 2D plus depth", "Depth Map above Its Picture"), value: Multimedia.VideoOutput.StereoDepthTopBottomDepthFirst },
+-            { text: i18nc("@action:button 3D video input format, 2D plus depth with graphics over it (HDMI 1.4a)", "Picture, Depth Map and Graphics"), value: Multimedia.VideoOutput.StereoDepthGraphics },
+-            { text: i18nc("@action:button 3D video input format, 2D plus depth with the background it hides", "Picture and Depth Map over a Background"), value: Multimedia.VideoOutput.StereoDepthBackground },
+-            { text: i18nc("@action:button 3D video input format, the video is not 3D", "Not 3D"), value: Multimedia.VideoOutput.StereoNone }
++            { text: i18nc("@action:button 3D video input format, from what the video says", "Automatic"), value: Multimedia.VideoOutput.StereoAutomatic, mark: "", views: -1 },
++            { text: i18nc("@action:button 3D video input format", "Side by Side, Half Size Views"), value: Multimedia.VideoOutput.StereoSideBySideHalf, mark: "sideBySide", views: 0 },
++            { text: i18nc("@action:button 3D video input format", "Side by Side, Full Size Views"), value: Multimedia.VideoOutput.StereoSideBySideFull, mark: "sideBySide", views: 1 },
++            { text: i18nc("@action:button 3D video input format", "Side by Side, Quincunx"), value: Multimedia.VideoOutput.StereoSideBySideQuincunx, mark: "sideBySideQuincunx", views: -1 },
++            { text: i18nc("@action:button 3D video input format", "Top and Bottom, Half Size Views"), value: Multimedia.VideoOutput.StereoTopBottomHalf, mark: "topBottom", views: 0 },
++            { text: i18nc("@action:button 3D video input format", "Top and Bottom, Full Size Views"), value: Multimedia.VideoOutput.StereoTopBottomFull, mark: "topBottom", views: 1 },
++            { text: i18nc("@action:button 3D video input format", "Row Interleaved"), value: Multimedia.VideoOutput.StereoRowInterleaved, mark: "rowInterleaved", views: -1 },
++            { text: i18nc("@action:button 3D video input format", "Column Interleaved"), value: Multimedia.VideoOutput.StereoColumnInterleaved, mark: "columnInterleaved", views: -1 },
++            { text: i18nc("@action:button 3D video input format", "Checkerboard"), value: Multimedia.VideoOutput.StereoCheckerboard, mark: "checkerboard", views: -1 },
++            { text: i18nc("@action:button 3D video input format", "Frame Sequential"), value: Multimedia.VideoOutput.StereoFrameSequence, mark: "frameSequential", views: -1 },
++            { text: i18nc("@action:button 3D video input format, red and cyan anaglyph, shown as it is", "Anaglyph, Red and Cyan"), value: Multimedia.VideoOutput.StereoAnaglyphCyanRed, mark: "anaglyphCyanRed", views: -1 },
++            { text: i18nc("@action:button 3D video input format, green and magenta anaglyph, shown as it is", "Anaglyph, Green and Magenta"), value: Multimedia.VideoOutput.StereoAnaglyphGreenMagenta, mark: "anaglyphGreenMagenta", views: -1 },
++            { text: i18nc("@action:button 3D video input format, 2D plus depth: the views are drawn from the depth map", "Picture and Depth Map, Side by Side"), value: Multimedia.VideoOutput.StereoDepthSideBySide, mark: "depthSideBySidePictureFirst", views: -1 },
++            { text: i18nc("@action:button 3D video input format, 2D plus depth", "Depth Map and Picture, Side by Side"), value: Multimedia.VideoOutput.StereoDepthSideBySideDepthFirst, mark: "depthSideBySideDepthFirst", views: -1 },
++            { text: i18nc("@action:button 3D video input format, 2D plus depth", "Picture above Its Depth Map"), value: Multimedia.VideoOutput.StereoDepthTopBottom, mark: "depthTopBottomPictureFirst", views: -1 },
++            { text: i18nc("@action:button 3D video input format, 2D plus depth", "Depth Map above Its Picture"), value: Multimedia.VideoOutput.StereoDepthTopBottomDepthFirst, mark: "depthTopBottomDepthFirst", views: -1 },
++            { text: i18nc("@action:button 3D video input format, 2D plus depth with graphics over it (HDMI 1.4a)", "Picture, Depth Map and Graphics"), value: Multimedia.VideoOutput.StereoDepthGraphics, mark: "depthGraphicsTopBottom", views: -1 },
++            { text: i18nc("@action:button 3D video input format, 2D plus depth with the background it hides", "Picture and Depth Map over a Background"), value: Multimedia.VideoOutput.StereoDepthBackground, mark: "depthBackgroundQuarters", views: -1 },
++            { text: i18nc("@action:button 3D video input format, the video is not 3D", "Not 3D"), value: Multimedia.VideoOutput.StereoNone, mark: "mono", views: -1 }
+ ]
+ 
+     // The packing chosen and the swap of the eyes belong to the file they were chosen for
+@@ -433,6 +439,117 @@ OverlayPopup {
+         stereoState.setStereoSwap(player.source, swapped)
+     }
+ 
++    // The entry of the input format list for a packing value, or null (a depth map of its own is not in the list)
++    function stereoInputEntry(value) {
++        for (const entry of stereoInputModel) {
++            if (entry.value === value) {
++                return entry
++            }
++        }
++        return null
++    }
++
++    // A correction of this video is set, the video is shown in 3D, and it is a file on this computer: the program offers
++    // to save the correction into the file, and never writes it on its own
++    readonly property bool canOfferSave: stereoState.canSaveStereo()
++        && videoOutput.stereoVideo
++        && stereoSettings.view !== Multimedia.VideoOutput.StereoFlat
++        && (videoOutput.stereoInput !== Multimedia.VideoOutput.StereoAutomatic || videoOutput.stereoSwapEyes)
++        && stereoState.isLocalFile(player.source)
++
++    Component {
++        id: saveDialogComponent
++        Kirigami.PromptDialog {
++            property string fileName
++            property string correction
++            title: i18nc("@title:window", "Save the 3D Correction into the File?")
++            subtitle: i18nc("@info %1 file name", "This changes the file %1 so that it carries the correction. Dragon then no longer keeps it for this video, and other programs show the video the same way.", fileName)
++                + "\n\n" + correction
++            standardButtons: QQC2.Dialog.Save | QQC2.Dialog.Cancel
++            onAccepted: toolbar.saveStereoCorrection()
++            onClosed: destroy()
++        }
++    }
++
++    Component {
++        id: saveResultComponent
++        Kirigami.PromptDialog {
++            property bool saved
++            property string message
++            title: saved ? i18nc("@title:window", "3D Correction Saved") : i18nc("@title:window", "The 3D Correction Was Not Saved")
++            subtitle: message
++            standardButtons: QQC2.Dialog.Ok
++            dialogType: saved ? Kirigami.PromptDialog.Success : Kirigami.PromptDialog.Warning
++            onClosed: destroy()
++        }
++    }
++
++    // The question comes first: nothing is written until the person says yes
++    function askToSaveStereoCorrection() {
++        const entry = stereoInputEntry(videoOutput.stereoInput)
++        let lines = []
++        if (entry && videoOutput.stereoInput !== Multimedia.VideoOutput.StereoAutomatic) {
++            lines.push(i18nc("@info %1 the input format chosen", "Input format: %1", entry.text))
++        }
++        if (videoOutput.stereoSwapEyes) {
++            lines.push(i18nc("@action:button 3D video, the left and right views are the other way round", "Swap Left and Right Eyes"))
++        }
++        const dialog = saveDialogComponent.createObject(appWindow, {
++            fileName: player.source.toString().split("/").pop(),
++            correction: lines.join("\n")
++        })
++        dialog.open()
++        return dialog
++    }
++
++    // Resume where the video was when the file is read again with its new mark
++    property var resumeAfterSave: null
++    Connections {
++        target: toolbar.player
++        enabled: toolbar.resumeAfterSave !== null
++        function onMediaStatusChanged() {
++            if (toolbar.player.mediaStatus !== Multimedia.MediaPlayer.LoadedMedia) {
++                return
++            }
++            const resume = toolbar.resumeAfterSave
++            toolbar.resumeAfterSave = null
++            toolbar.player.position = resume.position
++            if (resume.playing) {
++                toolbar.player.play()
++            } else {
++                toolbar.player.pause()
++            }
++        }
++    }
++
++    function saveStereoCorrection() {
++        const input = videoOutput.stereoInput
++        const packingChosen = input !== Multimedia.VideoOutput.StereoAutomatic
++        const entry = stereoInputEntry(packingChosen ? input : videoOutput.stereoPacking)
++        const result = stereoState.saveStereoToFile(player.source, Math.max(player.activeVideoTrack, 0) + 1,
++                                                    entry ? entry.mark : "depthSeparate", packingChosen && entry ? entry.views : -1,
++                                                    Math.round(videoOutput.sourceRect.width), Math.round(videoOutput.sourceRect.height),
++                                                    packingChosen, videoOutput.stereoSwapEyes)
++        if (result.saved) {
++            // the file carries the correction now: the stored choice is unmarked, and the file is read again as it is
++            const source = player.source
++            if (result.clearInput) {
++                stereoState.setStereoInput(source, Multimedia.VideoOutput.StereoAutomatic, Multimedia.VideoOutput.StereoAutomatic)
++            }
++            if (result.clearSwap) {
++                stereoState.setStereoSwap(source, false)
++            }
++            resumeAfterSave = {
++                position: player.position,
++                playing: player.playbackState === Multimedia.MediaPlayer.PlayingState
++            }
++            player.source = ""
++            player.source = source
++        }
++        saveResultComponent.createObject(appWindow, {saved: result.saved, message: result.message}).open()
++        return result
++    }
++
+     // One window of 3D video settings, made when first asked for
+     function openStereoSettings() {
+         if (!stereoSettingsWindow) {
+diff --git a/src/qml/StereoSettingsWindow.qml b/src/qml/StereoSettingsWindow.qml
+index 9f5375a..759a348 100644
+--- a/src/qml/StereoSettingsWindow.qml
++++ b/src/qml/StereoSettingsWindow.qml
+@@ -103,6 +103,18 @@ Kirigami.ApplicationWindow {
+                                 + "the screen's own swap is in the display settings.")
+                 }
+             }
++
++            QQC2.Button {
++                visible: root.controls.canOfferSave
++                text: i18nc("@action:button offers to write the 3D correction of this video into the file", "Save the 3D Correction into the File…")
++                icon.name: "document-save"
++                onClicked: root.controls.askToSaveStereoCorrection()
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "Writes the input format and the swap of this video into the file itself, after you confirm. "
++                                + "The file is read back, and put back as it was if it does not show the layout.")
++                }
++            }
+         }
+     }
+ }
+diff --git a/src/stereosave.cpp b/src/stereosave.cpp
+new file mode 100644
+index 0000000..64fd81f
+--- /dev/null
++++ b/src/stereosave.cpp
+@@ -0,0 +1,178 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#include "stereosave.h"
++
++#include <KLocalizedString>
++#include <QByteArray>
++#include <QFileInfo>
++#include <QSet>
++
++#include <stereo-mark.h>
++#include <stereo-policy.h>
++
++using namespace Qt::StringLiterals;
++
++namespace
++{
++// The words of Stereo3DLayout that take an eye order (stereo-policy.h, stereo_policy_read_mark)
++bool takesOrder(const QString &mark)
++{
++    static const QSet<QString> words{u"sideBySide"_s,
++                                     u"sideBySideQuincunx"_s,
++                                     u"topBottom"_s,
++                                     u"checkerboard"_s,
++                                     u"rowInterleaved"_s,
++                                     u"columnInterleaved"_s,
++                                     u"frameSequential"_s,
++                                     u"blockLaced"_s,
++                                     u"multiView"_s};
++    return words.contains(mark);
++}
++
++// The layouts whose eye order a swap of left and right eyes turns round. In a depth layout the order is where the
++// picture is, and the swap is the drawn views'; one picture in colours has no order.
++bool carriesSwap(int layout)
++{
++    switch (layout) {
++    case STEREO_POLICY_LAYOUT_SIDE_BY_SIDE:
++    case STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM:
++    case STEREO_POLICY_LAYOUT_CHECKERBOARD:
++    case STEREO_POLICY_LAYOUT_ROWS:
++    case STEREO_POLICY_LAYOUT_COLUMNS:
++    case STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL:
++    case STEREO_POLICY_LAYOUT_BLOCK_LACED:
++    case STEREO_POLICY_LAYOUT_SIDE_BY_SIDE_QUINCUNX:
++        return true;
++    default:
++        return false;
++    }
++}
++
++int family(int layout)
++{
++    return layout == STEREO_POLICY_LAYOUT_FRAME_SEQUENTIAL ? STEREO_POLICY_LAYOUT_BLOCK_LACED : layout;
++}
++
++QString untouched()
++{
++    return i18nc("@info", "The file was not changed. The correction stays with this video in Dragon.");
++}
++
++QString refusal(const QString &reason)
++{
++    return reason + u' ' + untouched();
++}
++
++QString reasonFor(int status, const stereo_mark_result &result)
++{
++    switch (status) {
++    case STEREO_MARK_NOT_LOCAL:
++        return i18nc("@info", "Only a file on this computer can be changed, and this video is not one.");
++    case STEREO_MARK_CONTAINER:
++        return i18nc("@info", "This file's format has no 3D mark that Dragon writes. Matroska, WebM, MP4 and MOV files can carry the correction.");
++    case STEREO_MARK_NO_TRACK:
++        return i18nc("@info", "The video track that is playing could not be found in the file.");
++    case STEREO_MARK_BROKEN:
++        return i18nc("@info", "The structure of the file could not be read.");
++    case STEREO_MARK_LAYOUT:
++        return i18nc("@info", "This file format has no mark for the chosen input format or eye order.");
++    case STEREO_MARK_WEBM_LAYOUT:
++        return i18nc(
++            "@info",
++            "WebM files can only say mono, side by side or top and bottom, with either eye first. A Matroska (.mkv) file can carry the other layouts.");
++    case STEREO_MARK_MP4_DEPTH:
++        return i18nc("@info", "MP4 files have no mark for a picture packed with its depth map. A Matroska (.mkv) file can carry it.");
++    case STEREO_MARK_STREAM_DECLARES:
++        return i18nc("@info",
++                     "The video stream itself declares its 3D layout (frame packing), and that comes before any mark in the file, so a mark in the file would "
++                     "not change how the video is shown.");
++    case STEREO_MARK_MP4_NO_ROOM:
++        return i18nc("@info",
++                     "The header of the file has no room for the mark without moving the video data. Copy the streams into a new file to make room, for "
++                     "example with: ffmpeg -i in.mp4 -c copy out.mp4");
++    case STEREO_MARK_MP4_ENTRIES:
++        return i18nc("@info", "The video track has more than one sample description, which the mark cannot cover.");
++    case STEREO_MARK_TOOL_MISSING:
++        return i18nc("@info", "Matroska files are changed with mkvpropedit, from the package mkvtoolnix, and it is not installed.");
++    case STEREO_MARK_WRITE_FAILED:
++        return i18nc("@info %1 what the system said", "The file could not be written: %1", QString::fromUtf8(result.details));
++    case STEREO_MARK_READ_BACK:
++        return i18nc("@info", "The file did not show the layout when it was read back after writing. It was put back as it was.");
++    default:
++        return i18nc("@info %1 a word for the problem", "The file could not be changed (%1).", QString::fromLatin1(stereo_mark_status_name(status)));
++    }
++}
++}
++
++StereoSave::Outcome StereoSave::save(const Request &request)
++{
++    Outcome out;
++    const QString fileName = QFileInfo(request.path).fileName();
++    const QByteArray path = request.path.toUtf8();
++
++    // The word, with a left first order to read it; a mark that does not read is a mistake of the caller
++    const QString word = takesOrder(request.mark) ? request.mark + u"LeftFirst"_s : request.mark;
++    int layout = STEREO_POLICY_LAYOUT_NONE;
++    int order = STEREO_POLICY_LEFT_FIRST;
++    int anaglyph = STEREO_POLICY_ANAGLYPH_NONE;
++    if (request.path.isEmpty() || stereo_policy_read_mark(word.toLatin1().constData(), &layout, &order, &anaglyph) != 1) {
++        out.status = u"not-local"_s;
++        out.message = refusal(reasonFor(STEREO_MARK_NOT_LOCAL, stereo_mark_result{}));
++        return out;
++    }
++
++    // The mark in the file says the packing and the eye order, not whether the views are half or full size; Dragon takes
++    // that from the video's shape. A choice of half or full that the shape does not give cannot be written.
++    if (request.views >= 0 && (layout == STEREO_POLICY_LAYOUT_SIDE_BY_SIDE || layout == STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM)) {
++        const int byShape = stereo_policy_video_views(request.frameWidth, request.frameHeight, 1, 1, 0, 0, STEREO_POLICY_UPSAMPLED_UNKNOWN, layout, nullptr);
++        if (byShape != request.views) {
++            out.status = u"views"_s;
++            out.message = refusal(i18nc("@info",
++                                        "A mark in the file says the packing and the eye order, not whether the views are half or full size. Dragon takes "
++                                        "that from the shape of the video, and for this video the shape gives the other one than the one you chose."));
++            return out;
++        }
++    }
++
++    // The eye order of the packing: the file's own, turned round by the swap
++    const bool swapCarried = carriesSwap(layout);
++    if (takesOrder(request.mark)) {
++        int container = 0;
++        int value = -1;
++        if (stereo_mark_read(path.constData(), request.videoTrack, &container, &value) == STEREO_MARK_WRITTEN && value >= 0) {
++            int fileLayout = 0;
++            int fileOrder = 0;
++            if (stereo_mark_value_layout(container, value, &fileLayout, &fileOrder, nullptr) && family(fileLayout) == family(layout)) {
++                order = fileOrder;
++            }
++        }
++        if (request.swap && swapCarried) {
++            order = order == STEREO_POLICY_LEFT_FIRST ? STEREO_POLICY_RIGHT_FIRST : STEREO_POLICY_LEFT_FIRST;
++        }
++    }
++
++    if (!request.packingChosen && request.swap && !swapCarried) {
++        out.status = u"swap"_s;
++        out.message = refusal(i18nc("@info", "The swap of left and right eyes cannot be written for this layout."));
++        return out;
++    }
++
++    stereo_mark_result result;
++    const int status = stereo_mark_save(path.constData(), request.videoTrack, layout, order, anaglyph, &result);
++    out.status = QString::fromLatin1(stereo_mark_status_name(status));
++    if (status != STEREO_MARK_WRITTEN && status != STEREO_MARK_UNCHANGED) {
++        out.message = refusal(reasonFor(status, result));
++        return out;
++    }
++    out.saved = true;
++    out.clearInput = request.packingChosen;
++    out.clearSwap = request.swap && swapCarried;
++    out.message = status == STEREO_MARK_WRITTEN
++        ? i18nc("@info %1 file name", "The 3D correction is saved in the file %1. Dragon no longer keeps it for this video.", fileName)
++        : i18nc("@info %1 file name", "The file %1 already says this. Dragon no longer needs to keep the correction for this video.", fileName);
++    if (request.swap && !swapCarried) {
++        out.message += u' ' + i18nc("@info", "The swap of left and right eyes cannot be written for this layout; it stays with this video in Dragon.");
++    }
++    return out;
++}
+diff --git a/src/stereosave.h b/src/stereosave.h
+new file mode 100644
+index 0000000..71abc3e
+--- /dev/null
++++ b/src/stereosave.h
+@@ -0,0 +1,38 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#pragma once
++
++#include <QString>
++
++// Saving the 3D correction of a video into the file itself, when the person asked for it. The program never writes a
++// file on its own: the correction (the packing the person chose and the swap of the eyes) is kept in the program's own
++// store, next to the resume position, and is offered for saving. The writing is the shared library's
++// (libstereo-av, stereo_mark_save): Matroska and WebM StereoMode, MP4 and MOV st3d.
++namespace StereoSave
++{
++struct Request {
++    QString path;
++    int videoTrack = 1; // the video track playing, counted from 1
++    // The Stereo3DLayout word of the packing in use, without its eye order ("sideBySide", "topBottom", "anaglyphCyanRed",
++    // "depthSideBySidePictureFirst", ...)
++    QString mark;
++    // Whether the person chose the half size (0) or the full size (1) views, or neither (-1)
++    int views = -1;
++    int frameWidth = 0;
++    int frameHeight = 0;
++    // Whether the person chose the packing; else it is what the video says, and only the swap is the correction
++    bool packingChosen = false;
++    bool swap = false;
++};
++
++struct Outcome {
++    bool saved = false; // the file carries the layout now (or carried it already)
++    bool clearInput = false; // the stored packing is no longer needed
++    bool clearSwap = false; // the stored swap is no longer needed
++    QString status; // the library's word for the status, for logs and tests
++    QString message; // for the person: what happened, why, and what to do
++};
++
++Outcome save(const Request &request);
++}
+-- 
+2.53.0
+

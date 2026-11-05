@@ -23,11 +23,13 @@ qt6-multimedia)
 		--depends 'libavcodec63 (>= 10:9.0.2-dmo1+stereo3d6+lc1), libpipewire-0.3-0t64 [linux-any],' 'libavcodec63 (>= 10:9.0.2-dmo1+stereo3d6+lc1), libavutil61 (>= 10:9.0.2-dmo1+stereo3d5~), libpipewire-0.3-0t64 [linux-any],')
 	;;
 dragon)
-	NEXT=4:26.04.0-1+stereo3d6
+	NEXT=4:26.04.0-1+stereo3d7
 	depends=(--depends 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d10+lc1),' 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d14+lc1),'
 		--depends 'Depends: libqt6multimedia6 (>= 6.11.2-3+stereo3d10+lc1),' 'Depends: libqt6multimedia6 (>= 6.11.2-3+stereo3d14+lc1),'
 		--depends 'qml6-module-qtmultimedia (>= 6.11.2-3+stereo3d10+lc1),' 'qml6-module-qtmultimedia (>= 6.11.2-3+stereo3d14+lc1),'
-		--depends $'         ${misc:Depends},' $'         kde-cli-tools,\n         kscreen,\n         ${misc:Depends},')
+		--depends $'         ${misc:Depends},' $'         kde-cli-tools,\n         kscreen,\n         mkvtoolnix,\n         ${misc:Depends},'
+		--depends 'libkf6windowsystem-dev (>= 6.12.0~),' $'libkf6windowsystem-dev (>= 6.12.0~),\n               libstereo-av-dev (>= 1.13.0),\n               libstereo-policy-dev (>= 1.13.0),'
+		--depends 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d14+lc1),' $'qt6-multimedia-dev (>= 6.11.2-3+stereo3d14+lc1), ffmpeg <!nocheck>, mkvtoolnix <!nocheck>,')
 	;;
 *) echo "unknown package $PKG" >&2; exit 2 ;;
 esac

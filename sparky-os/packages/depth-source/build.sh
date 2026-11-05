@@ -1,8 +1,8 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/11/05
 # Copyright 2026 under the GNU GPL3 License
-# Sparky Stereo OS: builds qt6-multimedia 6.11.2-3+stereo3d14+lc1 or dragon 4:26.04.0-1+stereo3d6+lc1 (depth as a 3D source,
-# ORDER 151 step R part 2, group 2) from the source next-source.sh made, through Lean Code (build-in-container.sh): the debs
+# Sparky Stereo OS: builds qt6-multimedia 6.11.2-3+stereo3d14+lc1 or dragon 4:26.04.0-1+stereo3d7+lc1 (depth as a 3D source,
+# ORDER 151 step R part 2, group 2, and the offer to save the 3D correction into the file, ORDER 411) from the source next-source.sh made, through Lean Code (build-in-container.sh): the debs
 # are built from the +lc1 source with the link and start gate against the earlier +lc1 build, then lean.release check-debs.
 # Usage: build.sh PACKAGE WORK SOURCE_DIR PREVIOUS_DIR REPO_DIR ARCHIVE_DIR [NEW_DIR [PREVIOUS_SIBLINGS_FILE]]
 #   SOURCE_DIR: the folder next-source.sh wrote (the new .dsc and Debian tarball) with the orig tarball beside them
