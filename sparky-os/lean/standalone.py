@@ -71,7 +71,7 @@ def _build(tree, out, authoring, architecture, build_dependencies):
     tree, out, authoring = (Path(p).resolve() for p in (tree, out, authoring))
     fields = package.control(tree)
     name, version, arch = package.identity(fields)
-    if arch != architecture or "-" in version or ":" in version:
+    if arch != architecture or ":" in version:
         raise ValueError("This adapter requires a native source version and the selected architecture")
     check_architecture(arch)
     if fields.get("source", name) not in (name, f"{name} ({version})"):

@@ -19,6 +19,16 @@ class StandaloneSource(unittest.TestCase):
     def test_source_roundtrip_preserves_payload_links_modes_and_bytes(self):
         self.source_roundtrip('all')
 
+    def test_debian_revision_keeps_its_source_name(self):
+        tree = self.stage('1-1')
+        docs = tree / 'usr/share/doc/lc-demo'
+        docs.mkdir(parents=True)
+        (docs / 'copyright').write_text('Copyright 2026 Example\nLicense: MIT\n')
+        out = self.base / 'out'
+        standalone.build(tree, out, self.authoring(git=True))
+        self.assertIn('Version: 1-1', (out / 'lc-demo_1-1.dsc').read_text())
+        self.assertTrue((out / 'lc-demo_1-1.tar.xz').is_file())
+
     def test_architecture_constrained_scripts_rebuild_with_same_architecture(self):
         arch = subprocess.check_output(['dpkg-architecture', '-qDEB_HOST_ARCH'],
                                        text=True).strip()
