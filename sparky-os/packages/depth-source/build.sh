@@ -28,8 +28,11 @@ SIBS=${8:+$(readlink -f "$8")}
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 mkdir -p "$WORK/home"
 sparky_provenance_init sparky-lc-migration:20261020
-# the candidate side supplies the edition without this package's own earlier binaries (the gate refuses two versions of one supplied package)
-[ -z "$SIBS" ] || grep -v "/pool/main/./$PKG/" "$SIBS" > "$WORK/siblings-current.txt"
+# the candidate side supplies the edition without this package's own earlier binaries and those of ROUND_SOURCES (the sources built earlier in the round) (the gate refuses two versions of one supplied package)
+if [ -n "$SIBS" ]; then
+	cp "$SIBS" "$WORK/siblings-current.txt"
+	for src in $PKG ${ROUND_SOURCES:-}; do grep -v "/pool/main/./$src/" "$WORK/siblings-current.txt" > "$WORK/siblings-current.tmp" || true; mv "$WORK/siblings-current.tmp" "$WORK/siblings-current.txt"; done
+fi
 # and with the debs built earlier in the round (/new), which the candidate may depend on
 [ -z "$SIBS" ] || [ -z "$NEW" ] || for d in "$NEW"/*.deb; do case $d in *-dbgsym_*|*-lc-hr_*) ;; *) echo "/new/$(basename "$d")" >> "$WORK/siblings-current.txt" ;; esac; done
 docker run --rm --name "d151-build-$PKG" --cpus "${THREADS:-6}" --platform linux/amd64 \
