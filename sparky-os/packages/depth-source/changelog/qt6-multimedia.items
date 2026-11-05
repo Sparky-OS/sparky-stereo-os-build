@@ -8,4 +8,4 @@ The eye chosen on a paused frame is shown: the node kept the source rectangle of
 
 QAudioDecoder with the SoX resampler, the edition's default: a frame that gives no samples yet no longer stalls the decoding, and the samples the resampler holds back come out at the end; tst_qaudiodecoderbackend failed with +stereo3d13 and passes again.
 
-debian/control: Build-Depends libstereo-dibr-dev (>= 1.9.0).
+debian/control: Build-Depends libstereo-dibr-dev (>= 1.9.0); libqt6multimedia6 depends on libavutil61 (>= 10:9.0.2-dmo1+stereo3d5~), which has av_multiview_real_to_double and the depth side data the FFmpeg backend reads (the link gate found the symbol undefined against Debian's libavutil).

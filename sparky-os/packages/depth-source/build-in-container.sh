@@ -26,7 +26,7 @@ mkdir -p "$SPARKY_LC_SCRATCH"
 useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/lc/source
-runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" \
+runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev SPARKY_LC_PREVIOUS_SIBLINGS_FILE="${SPARKY_LC_PREVIOUS_SIBLINGS_FILE:-}" SPARKY_LC_SIBLINGS_FILE="${SPARKY_LC_SIBLINGS_FILE:-}" SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" \
 	DEB_BUILD_OPTIONS="$DEB_BUILD_OPTIONS" dpkg-buildpackage -us -uc -j"${THREADS:-6}"
 cd /work/lc
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/lc/*+lc1_*.deb
