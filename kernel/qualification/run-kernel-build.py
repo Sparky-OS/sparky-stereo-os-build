@@ -95,7 +95,7 @@ status = dict(source=name, version=version, architecture='amd64', state='queued'
               signed=False, source_descriptor_sha256=hashlib.sha256(descriptor.read_bytes()).hexdigest())
 (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
 container = 'sparky-lc-kernel-' + flavour
-command = ['docker', 'run', '--rm', '--platform', 'linux/amd64', '--name', container,
+command = ['docker', 'run', '--rm', '--ulimit', 'core=0', '--platform', 'linux/amd64', '--name', container,
            '--cpus', '4', '--memory', args.memory, '--security-opt', 'seccomp=unconfined',
            '--security-opt', 'apparmor=unconfined', '--security-opt', 'systempaths=unconfined',
            '-v', str(work) + ':/work',
