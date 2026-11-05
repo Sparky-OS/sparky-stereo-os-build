@@ -5,7 +5,7 @@
 # /prev the earlier +lc1 builds, /fork the stereo-layer clone (tag release-1.13.0).
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
-export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=8
+export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=${JOBS:-8}
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 unset DEB_BUILD_PROFILES # the complete cohort: AV, layer, policy and DIBR
 printf 'deb [trusted=yes] file:/repo mashtabba main\n' > /etc/apt/sources.list.d/edition.list
@@ -44,6 +44,16 @@ mkdir -p "$SPARKY_LC_SCRATCH"
 id builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/lc/source
-runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" dpkg-buildpackage -us -uc -j8
+runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" dpkg-buildpackage -us -uc -j${JOBS:-8}
 cd /work/lc
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/lc/*+lc1_*.deb
+# The whole test suite again, by hand, for its exit codes: the build's own dh_auto_test already ran it (a failure stops the build).
+cd /work/lc/source/obj-x86_64-linux-gnu
+set +e
+runuser -u builder -- env QT_QPA_PLATFORM=offscreen ctest --output-on-failure > /work/ctest.log 2>&1
+echo "ctest exit code: $?" | tee -a /work/ctest.log
+for t in policytest marktest; do
+    runuser -u builder -- env QT_QPA_PLATFORM=offscreen ctest --output-on-failure -R "^$t\$" > /work/ctest-$t.log 2>&1
+    echo "$t (ctest -R ^$t\$) exit code: $?" | tee -a /work/ctest.log
+done
+grep -E "tests passed|Passed|Failed|\*\*\*" /work/ctest.log | tee -a /work/build.log
