@@ -35,7 +35,7 @@ if [ -n "$SIBS" ]; then
 fi
 # and with the debs built earlier in the round (/new), which the candidate may depend on
 [ -z "$SIBS" ] || [ -z "$NEW" ] || for d in "$NEW"/*.deb; do case $d in *-dbgsym_*|*-lc-hr_*) ;; *) echo "/new/$(basename "$d")" >> "$WORK/siblings-current.txt" ;; esac; done
-docker run --rm --name "d151-build-$PKG" --cpus "${THREADS:-6}" --platform linux/amd64 \
+docker run --rm --name "${BUILD_NAME_PREFIX:-d411-build}-$PKG" --cpus "${THREADS:-6}" --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e PKG="$PKG" -e THREADS="${THREADS:-6}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
 	-v "$ARCHIVE":/archive:ro -v "$WORK":/work -v "$SRC":/src:ro -v "$REPO":/repo:ro -v "$PREV":/prev:ro \
