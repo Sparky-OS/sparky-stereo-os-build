@@ -1,0 +1,7 @@
+Carry Daniel's open FFmpeg pull request 25398 (https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25398, fork branch hwaccel-fallback of code.ffmpeg.org danielcamposramos/FFmpeg): a get_format callback that queries hardware frame parameters and then chooses a software format no longer leaves the unused hardware state allocated, which aborted frame-threaded HEVC decoding at the worker-context assertion of pthread_frame.c.
+
+Patch 0052 now is the pull request's fix commit 60f372459e with its DEP-3 header (Origin: the fork commit, Forwarded: the pull request); the code is the one-line change +stereo3d6 already carried, and only the comment differs.
+
+Patch 0067 adds the pull request's FATE test efc1a824b6 (libavcodec/tests/get_format.c, fate-get-format): an uninitialized DRM device and a test hwaccel exercise the query and the cleanup without a GPU; it builds with libdrm, which this package enables.
+
+Qt Multimedia 6.11.2-3+stereo3d14 depends on this version, because its software-format rule needs the fixed libavcodec.

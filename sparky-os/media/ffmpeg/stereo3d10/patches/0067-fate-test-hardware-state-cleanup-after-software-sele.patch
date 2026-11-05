@@ -1,0 +1,223 @@
+Description: fate: test hardware state cleanup after software selection
+ Add a FATE test using an uninitialized DRM device and a test hwaccel, so
+ the query and cleanup are exercised without hardware.
+ .
+ Assisted-by: gpt-6.1-sol via Codex
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/efc1a824b6530b2394a4c05bb73ffea2ab7637c5
+Forwarded: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25398
+Last-Update: 2026-11-05
+
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index 53c638c878..abe80706c6 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -1397,6 +1397,7 @@ TESTPROGS-$(CONFIG_APV_DECODER)           += apv
+ TESTPROGS-$(CONFIG_AV1_VAAPI_ENCODER)     += av1_levels
+ TESTPROGS-$(CONFIG_CABAC)                 += cabac
+ TESTPROGS-$(CONFIG_CELP_MATH)             += celp_math
++TESTPROGS-$(CONFIG_LIBDRM)                += get_format
+ TESTPROGS-$(CONFIG_GOLOMB)                += golomb
+ TESTPROGS-$(CONFIG_IDCTDSP)               += dct
+ TESTPROGS-$(CONFIG_DXV_ENCODER)           += hashtable
+diff --git a/libavcodec/tests/get_format.c b/libavcodec/tests/get_format.c
+new file mode 100644
+index 0000000000..818bd79ea7
+--- /dev/null
++++ b/libavcodec/tests/get_format.c
+@@ -0,0 +1,157 @@
++/*
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include <stdio.h>
++
++#include "libavutil/hwcontext.h"
++#include "libavutil/pixdesc.h"
++#include "libavcodec/avcodec.h"
++#include "libavcodec/codec_internal.h"
++#include "libavcodec/decode.h"
++#include "libavcodec/hwaccel_internal.h"
++#include "libavcodec/hwconfig.h"
++#include "libavcodec/internal.h"
++
++typedef struct TestContext {
++    enum AVPixelFormat choice;
++    int query;
++    int fail_query;
++    int keep_frames;
++    int queries;
++    int initialized;
++    int uninitialized;
++} TestContext;
++
++static int frame_params(AVCodecContext *avctx, AVBufferRef *ref)
++{
++    TestContext *test = avctx->opaque;
++    AVHWFramesContext *frames = (AVHWFramesContext *)ref->data;
++
++    test->queries++;
++    if (!avctx->internal->hwaccel_priv_data)
++        return AVERROR_BUG;
++    if (test->fail_query)
++        return AVERROR(EINVAL);
++    frames->format    = AV_PIX_FMT_DRM_PRIME;
++    frames->sw_format = AV_PIX_FMT_YUV420P;
++    frames->width    = 16;
++    frames->height   = 16;
++    return 0;
++}
++
++static int hwaccel_init(AVCodecContext *avctx)
++{
++    TestContext *test = avctx->opaque;
++    test->initialized++;
++    return 0;
++}
++
++static int hwaccel_uninit(AVCodecContext *avctx)
++{
++    TestContext *test = avctx->opaque;
++    test->uninitialized++;
++    return 0;
++}
++
++static const FFHWAccel hwaccel = {
++    .p.name         = "test",
++    .p.pix_fmt      = AV_PIX_FMT_DRM_PRIME,
++    .priv_data_size = 1,
++    .frame_params   = frame_params,
++    .init           = hwaccel_init,
++    .uninit         = hwaccel_uninit,
++};
++
++static const AVCodecHWConfigInternal hwconfig = {
++    .public = {
++        .pix_fmt     = AV_PIX_FMT_DRM_PRIME,
++        .methods     = AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX |
++                       AV_CODEC_HW_CONFIG_METHOD_HW_FRAMES_CTX,
++        .device_type = AV_HWDEVICE_TYPE_DRM,
++    },
++    .hwaccel = &hwaccel,
++};
++
++static const FFCodec codec = {
++    .p.name = "test",
++    .hw_configs = (const AVCodecHWConfigInternal *const []) { &hwconfig, NULL },
++};
++
++static enum AVPixelFormat get_format(AVCodecContext *avctx,
++                                    const enum AVPixelFormat *formats)
++{
++    TestContext *test = avctx->opaque;
++    AVBufferRef *frames = NULL;
++    int ret;
++
++    if (test->query) {
++        ret = avcodec_get_hw_frames_parameters(avctx, avctx->hw_device_ctx,
++                                               formats[0], &frames);
++        if ((ret < 0) != test->fail_query)
++            return AV_PIX_FMT_NONE;
++        if (test->keep_frames)
++            avctx->hw_frames_ctx = frames;
++        else
++            av_buffer_unref(&frames);
++    }
++    return test->choice;
++}
++
++static int run_test(const char *name, enum AVPixelFormat choice,
++                    int query, int fail_query, int keep_frames)
++{
++    static const enum AVPixelFormat formats[] = {
++        AV_PIX_FMT_DRM_PRIME, AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE
++    };
++    TestContext test = { .choice = choice, .query = query,
++                         .fail_query = fail_query, .keep_frames = keep_frames };
++    AVCodecInternal internal = { 0 };
++    AVCodecContext avctx = { .codec = &codec.p, .internal = &internal,
++                             .opaque = &test, .get_format = get_format };
++    enum AVPixelFormat ret;
++
++    /* Frame parameter queries need no hardware with an uninitialized DRM device. */
++    avctx.hw_device_ctx = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_DRM);
++    if (!avctx.hw_device_ctx)
++        return 1;
++
++    ret = ff_get_format(&avctx, formats);
++    printf("%s: format=%s queries=%d private=%d hwaccel=%d frames=%d init=%d refs=%d\n",
++           name, ret == AV_PIX_FMT_NONE ? "none" : av_get_pix_fmt_name(ret),
++           test.queries, !!internal.hwaccel_priv_data, !!avctx.hwaccel,
++           !!avctx.hw_frames_ctx, test.initialized,
++           av_buffer_get_ref_count(avctx.hw_device_ctx));
++    ff_hwaccel_uninit(&avctx);
++    printf("  cleanup: uninit=%d refs=%d\n", test.uninitialized,
++           av_buffer_get_ref_count(avctx.hw_device_ctx));
++    av_buffer_unref(&avctx.hw_device_ctx);
++    return 0;
++}
++
++int main(void)
++{
++    av_log_set_level(AV_LOG_QUIET);
++    return run_test("software", AV_PIX_FMT_YUV420P, 0, 0, 0) ||
++           run_test("query/software", AV_PIX_FMT_YUV420P, 1, 0, 0) ||
++           run_test("query/frames/software", AV_PIX_FMT_YUV420P, 1, 0, 1) ||
++           run_test("failed-query/software", AV_PIX_FMT_YUV420P, 1, 1, 0) ||
++           run_test("query/none", AV_PIX_FMT_NONE, 1, 0, 1) ||
++           run_test("query/invalid", AV_PIX_FMT_RGB24, 1, 0, 1) ||
++           run_test("query/invalid-format", AV_PIX_FMT_NB, 1, 0, 1) ||
++           run_test("query/hardware", AV_PIX_FMT_DRM_PRIME, 1, 0, 1);
++}
+diff --git a/tests/fate/libavcodec.mak b/tests/fate/libavcodec.mak
+index 713b1feb36..e576b3bbcd 100644
+--- a/tests/fate/libavcodec.mak
++++ b/tests/fate/libavcodec.mak
+@@ -46,6 +46,10 @@ fate-codec_desc: libavcodec/tests/codec_desc$(EXESUF)
+ fate-codec_desc: CMD = run libavcodec/tests/codec_desc$(EXESUF)
+ fate-codec_desc: CMP = null
+ 
++FATE_LIBAVCODEC-$(CONFIG_LIBDRM) += fate-get-format
++fate-get-format: libavcodec/tests/get_format$(EXESUF)
++fate-get-format: CMD = run libavcodec/tests/get_format$(EXESUF)
++
+ FATE_LIBAVCODEC-$(CONFIG_GOLOMB) += fate-golomb
+ fate-golomb: libavcodec/tests/golomb$(EXESUF)
+ fate-golomb: CMD = run libavcodec/tests/golomb$(EXESUF)
+diff --git a/tests/ref/fate/get-format b/tests/ref/fate/get-format
+new file mode 100644
+index 0000000000..b515d41c44
+--- /dev/null
++++ b/tests/ref/fate/get-format
+@@ -0,0 +1,16 @@
++software: format=yuv420p queries=0 private=0 hwaccel=0 frames=0 init=0 refs=1
++  cleanup: uninit=0 refs=1
++query/software: format=yuv420p queries=1 private=0 hwaccel=0 frames=0 init=0 refs=1
++  cleanup: uninit=0 refs=1
++query/frames/software: format=yuv420p queries=1 private=0 hwaccel=0 frames=0 init=0 refs=1
++  cleanup: uninit=0 refs=1
++failed-query/software: format=yuv420p queries=1 private=0 hwaccel=0 frames=0 init=0 refs=1
++  cleanup: uninit=0 refs=1
++query/none: format=none queries=1 private=0 hwaccel=0 frames=0 init=0 refs=1
++  cleanup: uninit=0 refs=1
++query/invalid: format=none queries=1 private=0 hwaccel=0 frames=0 init=0 refs=1
++  cleanup: uninit=0 refs=1
++query/invalid-format: format=none queries=1 private=0 hwaccel=0 frames=0 init=0 refs=1
++  cleanup: uninit=0 refs=1
++query/hardware: format=drm_prime queries=1 private=1 hwaccel=1 frames=1 init=1 refs=2
++  cleanup: uninit=1 refs=1

@@ -1,0 +1,36 @@
+Description: avcodec/decode: clear queried hardware state when choosing software
+ A get_format callback can successfully query hardware frame parameters
+ and then select a software format. The query leaves hwaccel_priv_data
+ allocated, although no hwaccel is initialized. Frame-threaded HEVC
+ decoding then aborts when updating a worker context.
+ .
+ Uninitialize the unused hardware state when a software format is
+ selected, as is already done on error.
+ .
+ Assisted-by: gpt-6.1-sol via Codex
+ Assisted-by: gpt-6-astra via Codex
+ .
+ Carried from pull request 25398 (still open). The edition shipped the same one-line change since +stereo3d6 as its own patch; this replaces that patch with the pull request's commit, whose test is patch 0067.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/60f372459e2631964e3d8d2c17e7bf95fac195c3
+Forwarded: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25398
+Last-Update: 2026-11-05
+
+diff --git a/libavcodec/decode.c b/libavcodec/decode.c
+index 3f1dfac..0cd8477 100644
+--- a/libavcodec/decode.c
++++ b/libavcodec/decode.c
+@@ -1357,7 +1357,9 @@ int ff_get_format(AVCodecContext *avctx, const enum AVPixelFormat *fmt)
+         --n;
+     }
+ 
+-    if (ret < 0)
++    // A successful hardware frame query can leave private state behind
++    // even when the callback chooses a software format.
++    if (ret < 0 || !(desc->flags & AV_PIX_FMT_FLAG_HWACCEL))
+         ff_hwaccel_uninit(avctx);
+ 
+     av_freep(&choices);
+-- 
+2.53.0
+
