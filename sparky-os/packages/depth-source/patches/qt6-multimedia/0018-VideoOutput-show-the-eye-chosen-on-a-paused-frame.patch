@@ -1,0 +1,55 @@
+From 10eb2d8eab95adf867fba9341042dab596f756cc Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 13:17:35 -0300
+Subject: [PATCH 18/24] VideoOutput: show the eye chosen on a paused frame
+
+Choosing another view of a 3D video (stereoView) shows the frame again with
+another eye rectangle. While the video plays, the next frame redraws it; on a
+paused frame the node kept the source rectangle of the eye shown before,
+since the geometry is only marked dirty when the frame's size changes and
+both eyes have the same size: switching from the left eye to the right one
+on a still frame kept showing the left one.
+
+Mark the geometry dirty when the eye rectangle changes. Measured on a
+captured paused frame of a full side by side video switched from one eye to
+the other: before, the two captures were the same picture (11.66 pixels from
+the expected parallax at the nearest object); now each is its eye's view.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+(cherry picked from commit 788174edd3f1e67101754764cd43ebaa4ac50011)
+---
+ src/multimediaquick/qquickvideooutput.cpp | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/src/multimediaquick/qquickvideooutput.cpp b/src/multimediaquick/qquickvideooutput.cpp
+index 1e070d6c1..717eb4c13 100644
+--- a/src/multimediaquick/qquickvideooutput.cpp
++++ b/src/multimediaquick/qquickvideooutput.cpp
+@@ -1374,10 +1374,12 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+ 
+     bool videoChanged = false;
+     bool layerChanged = false;
++    bool eyeChanged = false;
+     {
+         QMutexLocker lock(&m_frameMutex);
+         videoChanged = m_stereo.video != result.video || m_stereo.packing != result.packing;
+         layerChanged = m_stereo.layerActive != result.layerActive;
++        eyeChanged = m_stereo.eyeRect != result.eyeRect;
+         m_stereo.video = result.video;
+         m_stereo.packing = result.packing;
+         m_stereo.layerWanted = result.layerWanted;
+@@ -1426,7 +1428,13 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+ #endif
+         });
+     }
+-    QMetaObject::invokeMethod(this, &QQuickVideoOutput::_q_newFrame, displaySize);
++    QMetaObject::invokeMethod(this, [this, displaySize, eyeChanged] {
++        // another view of the frame, of the same size (the other eye of a still frame): the area
++        // of the frame that is shown is set again
++        if (eyeChanged)
++            m_geometryDirty = true;
++        _q_newFrame(displaySize);
++    });
+ }
+ 
+ std::optional<std::chrono::nanoseconds> QQuickVideoOutput::g_signalBackoff;

@@ -1,0 +1,7 @@
+The 3D Video menu also chooses the depth layouts of a video with its depth map (picture and depth map side by side or one above the other, either first; with graphics; over a background) and turns the views drawn from depth maps on and off; Swap Left and Right Eyes is offered for 3D video only.
+
+A 3D Video Settings window holds what is the program's: Enable 3D, the shortcut to KDE's display settings (where the screen's 3D mode is chosen), and for the video playing its input format (every packing and the depth layouts) and the swap of its left and right eyes. The input format and the swap are kept with the file they were chosen for, next to the other per-file choices of the program, and are unmarked again when they return to their default.
+
+The 3D Video strings in Polish, Brazilian Portuguese, French, German, Japanese, Korean and Chinese, Simplified and Traditional (dragon-3d-video.po.patch of the edition's translations, 40 strings), the menu of patch 0001 among them.
+
+debian/control: depends on Qt Multimedia +stereo3d14, which draws the views from depth maps, and on kde-cli-tools and kscreen, which the Display Settings shortcut starts (kcmshell6 kcm_kscreen).

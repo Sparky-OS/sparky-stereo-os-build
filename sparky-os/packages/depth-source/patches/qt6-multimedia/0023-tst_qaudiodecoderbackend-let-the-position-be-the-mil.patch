@@ -1,0 +1,42 @@
+From ab97b34f4d0f395915b2478a173a6da6cf6f72d3 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 14:47:10 -0300
+Subject: [PATCH 23/24] tst_qaudiodecoderbackend: let the position be the
+ millisecond the summed durations lose
+
+fileTest checks the position of each buffer of a decoding to 11050 Hz
+against the sum of the durations of the buffers before it, to the
+millisecond. The position is the time of the buffer's first sample; each
+duration is whole microseconds, so the sum loses up to a microsecond a
+buffer and falls a millisecond short of the position where it crosses a
+millisecond boundary first. With buffers of even sizes that did not
+happen on this file; with the uneven ones of the SoX resampler it does
+(position 340 against 339).
+
+Accept the position up to a millisecond above the sum; the check that
+follows already allows 20.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+(cherry picked from commit 6221574ea2e73a932aba96d358121b73c8b36ce0)
+---
+ .../qaudiodecoderbackend/tst_qaudiodecoderbackend.cpp      | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/tests/auto/integration/qaudiodecoderbackend/tst_qaudiodecoderbackend.cpp b/tests/auto/integration/qaudiodecoderbackend/tst_qaudiodecoderbackend.cpp
+index 547e7c400..b69db9c06 100644
+--- a/tests/auto/integration/qaudiodecoderbackend/tst_qaudiodecoderbackend.cpp
++++ b/tests/auto/integration/qaudiodecoderbackend/tst_qaudiodecoderbackend.cpp
+@@ -528,7 +528,12 @@ void tst_QAudioDecoderBackend::fileTest()
+         buffer = d.read();
+         QVERIFY(buffer.isValid());
+         QTRY_VERIFY(!positionSpy.isEmpty());
+-        QCOMPARE(positionSpy.takeLast().at(0).toLongLong(), qlonglong(durationToMs(duration)));
++        // The position is the time of the buffer's first sample; the sum of the durations before
++        // it loses up to a microsecond a buffer (each is whole microseconds), so it can be a
++        // millisecond short where the buffers are of uneven sizes (a resampler to another rate)
++        const qlonglong position = positionSpy.takeLast().at(0).toLongLong();
++        QCOMPARE_GE(position, qlonglong(durationToMs(duration)));
++        QCOMPARE_LE(position, qlonglong(durationToMs(duration)) + 1);
+         QCOMPARE_LT(d.position() - durationToMs(duration), 20u);
+ 
+         duration += buffer.duration();

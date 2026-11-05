@@ -1,0 +1,218 @@
+From b6bd4ac28fa38dd99a2872e5d143049f84e44443 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 13:17:43 -0300
+Subject: [PATCH 19/24] QVideoFrameFormat: add the depth layouts and the depth
+ mark
+
+A 2D plus depth video holds a picture with its depth map, from which the two
+views of a stereoscopic 3D picture are drawn (depth-image-based rendering):
+packed in the frame next to each other or one above the other, either first,
+in four rows with graphics and their depth (HDMI 1.4a's "L + depth +
+graphics + graphics-depth", 3D_Structure 0101), in four quarters with the
+background the picture hides, or as a picture whose depth map comes apart.
+
+Add these as StereoMode values (DepthSideBySide, DepthTopBottom,
+DepthGraphics, DepthBackground, DepthSeparate), the order of picture and
+depth as StereoFlag::DepthFirst, and stereoDepthMark(): what a depth sample
+means, as the Stereo3DDepth mark of Sparky Stereo OS's depth marks
+(stereo-layer, docs/depth-marks.md), which the depth representation
+information of H.264 (H.13.2.3) and H.265 (G.14.3.4), the supplemental
+information of an ISO/IEC 23002-3 auxiliary video stream and a Matroska
+track's STEREO3D_DEPTH tag translate into. The layouts are the
+Stereo3DLayout values of the same document.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+(cherry picked from commit 318e31ec792d326d776549ebbaaa685d66db365e)
+---
+ src/multimedia/video/qvideoframeformat.cpp    | 64 ++++++++++++++++++-
+ src/multimedia/video/qvideoframeformat.h      | 13 +++-
+ .../tst_qvideoframeformat.cpp                 | 21 +++++-
+ 3 files changed, 94 insertions(+), 4 deletions(-)
+
+diff --git a/src/multimedia/video/qvideoframeformat.cpp b/src/multimedia/video/qvideoframeformat.cpp
+index a075d0a45..944547560 100644
+--- a/src/multimedia/video/qvideoframeformat.cpp
++++ b/src/multimedia/video/qvideoframeformat.cpp
+@@ -40,6 +40,7 @@ public:
+             && frameRatesEqual(frameRate, other.frameRate) && colorSpace == other.colorSpace
+             && transformation == other.transformation && stereoMode == other.stereoMode
+             && stereoFlags == other.stereoFlags && stereoView == other.stereoView
++            && stereoDepthMark == other.stereoDepthMark
+             && pixelAspectRatio == other.pixelAspectRatio)
+             return true;
+ 
+@@ -64,6 +65,7 @@ public:
+     QVideoFrameFormat::StereoMode stereoMode = QVideoFrameFormat::StereoMode::None;
+     QVideoFrameFormat::StereoFlags stereoFlags;
+     QVideoFrameFormat::StereoView stereoView = QVideoFrameFormat::StereoView::Packed;
++    QString stereoDepthMark;
+     QSize pixelAspectRatio = QSize(1, 1);
+ };
+ 
+@@ -711,6 +713,34 @@ void QVideoFrameFormat::setColorRange(ColorRange range)
+     \value AnaglyphGreenMagenta
+     Both views in one picture, as green and magenta anaglyph (StereoMode 12).
+ 
++    The depth layouts hold one picture with its depth map (2D plus depth), from which the two
++    views are drawn (depth-image-based rendering): the Stereo3DLayout values of Sparky Stereo OS's
++    depth marks (stereo-layer, docs/depth-marks.md), which a Matroska track carries as its
++    STEREO3D_LAYOUT tag. The picture comes first unless stereoFlags() has
++    \l StereoFlag::DepthFirst. What a depth sample means is given by stereoDepthMark().
++
++    \value DepthSideBySide
++    The picture and its depth map next to each other, each half of the frame
++    (depthSideBySidePictureFirst and depthSideBySideDepthFirst).
++
++    \value DepthTopBottom
++    The picture and its depth map on top of each other, each half of the frame
++    (depthTopBottomPictureFirst and depthTopBottomDepthFirst; the picture on top is HDMI 1.4a's
++    "L + depth").
++
++    \value DepthGraphics
++    From the top, each a quarter of the frame: the picture, its depth map, graphics and their
++    depth map, where a depth sample of 0 is no graphics (depthGraphicsTopBottom, HDMI 1.4a's
++    "L + depth + graphics + graphics-depth").
++
++    \value DepthBackground
++    In quarters: the picture and its depth map above a background picture and its depth map, which
++    fills what the picture uncovers (depthBackgroundQuarters).
++
++    \value DepthSeparate
++    The frame is the picture; its depth map is an image of its own that the frame does not hold
++    (depthSeparate), so only the picture can be shown.
++
+     \since 6.12
+ */
+ 
+@@ -723,6 +753,10 @@ void QVideoFrameFormat::setColorRange(ColorRange range)
+     The first view of the packing is the right eye's (content_interpretation_type 2 of the frame
+     packing arrangement SEI, the "right eye first" StereoMode values, AV_STEREO3D_FLAG_INVERT).
+ 
++    \value DepthFirst
++    In \l StereoMode::DepthSideBySide and \l StereoMode::DepthTopBottom, the depth map comes
++    first, the picture second (the DepthFirst Stereo3DLayout values).
++
+     \since 6.12
+ */
+ 
+@@ -806,6 +840,33 @@ void QVideoFrameFormat::setStereoView(StereoView view)
+     d->stereoView = view;
+ }
+ 
++/*!
++    Returns what a sample of the depth map of a frame in a depth layout means, as a Stereo3DDepth
++    mark of Sparky Stereo OS's depth marks (stereo-layer, docs/depth-marks.md): a word for the
++    kind, then key=value pairs separated by spaces, such as \c{"inverseZ near=0.25 far=10"}. The
++    backend gives it from the stream: the depth representation information of H.264 (H.13.2.3)
++    and H.265 (G.14.3.4), the supplemental information of an ISO/IEC 23002-3 auxiliary video
++    stream, or the STEREO3D_DEPTH tag of a Matroska track. An empty mark says nothing: larger
++    samples are nearer.
++
++    \since 6.12
++*/
++QString QVideoFrameFormat::stereoDepthMark() const
++{
++    return d->stereoDepthMark;
++}
++
++/*!
++    Sets what a sample of the depth map means to the Stereo3DDepth mark \a mark.
++
++    \since 6.12
++*/
++void QVideoFrameFormat::setStereoDepthMark(const QString &mark)
++{
++    detach();
++    d->stereoDepthMark = mark;
++}
++
+ /*!
+     Returns the pixel aspect ratio that the samples of the frame are to be shown with, as
+     a width (numerator) and a height (denominator), when the backend has left it to the
+@@ -1147,7 +1208,8 @@ QDebug operator<<(QDebug dbg, const QVideoFrameFormat &f)
+         << "\n    mirrored=" << f.isMirrored()
+         << "\n    range=" << f.colorRange()
+         << "\n    colorTransfer=" << f.colorTransfer()
+-        << "\n    stereoMode=" << f.stereoMode() << f.stereoFlags() << f.stereoView();
++        << "\n    stereoMode=" << f.stereoMode() << f.stereoFlags() << f.stereoView()
++        << f.stereoDepthMark();
+ 
+     return dbg;
+ }
+diff --git a/src/multimedia/video/qvideoframeformat.h b/src/multimedia/video/qvideoframeformat.h
+index 65a9cc383..a0c8be667 100644
+--- a/src/multimedia/video/qvideoframeformat.h
++++ b/src/multimedia/video/qvideoframeformat.h
+@@ -140,7 +140,12 @@ public:
+         Checkerboard,
+         FrameSequence,
+         AnaglyphCyanRed,
+-        AnaglyphGreenMagenta
++        AnaglyphGreenMagenta,
++        DepthSideBySide,
++        DepthTopBottom,
++        DepthGraphics,
++        DepthBackground,
++        DepthSeparate
+     };
+     Q_ENUM(StereoMode)
+ 
+@@ -148,7 +153,8 @@ public:
+     {
+         RightEyeFirst = 0x1,
+         Multiview = 0x2,
+-        BaseViewRight = 0x4
++        BaseViewRight = 0x4,
++        DepthFirst = 0x8
+     };
+     Q_DECLARE_FLAGS(StereoFlags, StereoFlag)
+     Q_FLAG(StereoFlags)
+@@ -232,6 +238,9 @@ public:
+     StereoView stereoView() const;
+     void setStereoView(StereoView view);
+ 
++    QString stereoDepthMark() const;
++    void setStereoDepthMark(const QString &mark);
++
+     QSize pixelAspectRatio() const;
+     void setPixelAspectRatio(QSize ratio);
+ 
+diff --git a/tests/auto/unit/multimedia/qvideoframeformat/tst_qvideoframeformat.cpp b/tests/auto/unit/multimedia/qvideoframeformat/tst_qvideoframeformat.cpp
+index 925a744ee..bf874c25c 100644
+--- a/tests/auto/unit/multimedia/qvideoframeformat/tst_qvideoframeformat.cpp
++++ b/tests/auto/unit/multimedia/qvideoframeformat/tst_qvideoframeformat.cpp
+@@ -352,7 +352,9 @@ void tst_QVideoFrameFormat::stereoMode()
+     const QVideoFrameFormat mono = format;
+     const auto modes = { Mode::SideBySide, Mode::TopBottom, Mode::SideBySideQuincunx,
+                          Mode::RowInterleaved, Mode::ColumnInterleaved, Mode::Checkerboard,
+-                         Mode::FrameSequence, Mode::AnaglyphCyanRed, Mode::AnaglyphGreenMagenta };
++                         Mode::FrameSequence, Mode::AnaglyphCyanRed, Mode::AnaglyphGreenMagenta,
++                         Mode::DepthSideBySide, Mode::DepthTopBottom, Mode::DepthGraphics,
++                         Mode::DepthBackground, Mode::DepthSeparate };
+     for (const auto mode : modes) {
+         format.setStereoMode(mode);
+         QCOMPARE(format.stereoMode(), mode);
+@@ -372,6 +374,23 @@ void tst_QVideoFrameFormat::stereoMode()
+     format.setStereoView(QVideoFrameFormat::StereoView::Packed);
+     QVERIFY(format == mono);
+ 
++    // a picture with its depth map: the order of the two, and what a depth sample means
++    format.setStereoMode(Mode::DepthSideBySide);
++    format.setStereoFlags(QVideoFrameFormat::StereoFlag::DepthFirst);
++    QVERIFY(format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::DepthFirst));
++    QVERIFY(!format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::RightEyeFirst));
++    QVERIFY(format.stereoDepthMark().isEmpty());
++    QVideoFrameFormat marked = format;
++    marked.setStereoDepthMark(QStringLiteral("inverseZ near=0.5 far=64"));
++    QCOMPARE(marked.stereoDepthMark(), QStringLiteral("inverseZ near=0.5 far=64"));
++    QVERIFY(marked != format);
++    QVERIFY(format.stereoDepthMark().isEmpty());
++    marked.setStereoDepthMark({});
++    QVERIFY(marked == format);
++    format.setStereoFlags({});
++    format.setStereoMode(Mode::None);
++    QVERIFY(format == mono);
++
+     QCOMPARE(int(Mode::None), 0);
+ }
+ 

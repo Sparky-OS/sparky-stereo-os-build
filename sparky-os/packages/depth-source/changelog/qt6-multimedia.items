@@ -1,0 +1,11 @@
+Depth as a 3D source (ORDER 151, step R part 2): a video with its depth map (2D plus depth) is decoded like any other packing and handed to the compositor as full side by side. QVideoFrameFormat gains the depth layouts of the edition's depth marks (StereoMode DepthSideBySide, DepthTopBottom, DepthGraphics, DepthBackground, DepthSeparate), StereoFlag::DepthFirst (0x8: Multiview 0x2 and BaseViewRight 0x4 of the MV-HEVC patch keep their values) and stereoDepthMark(). The FFmpeg backend reads the STEREO3D_LAYOUT and STEREO3D_DEPTH tags of packed videos, the depth auxiliary layer of H.265 (AuxId 2) and the ISO/IEC 23002-3 depth streams, and pairs each picture with its depth map. VideoOutput draws the two views with libstereo-dibr, one picture per eye at the size the video holds, no resize before the compositor, with every choice of libstereo-dibr as a property (stereoDepth, stereoDepthView, Warp, Fill, Radius, Smooth, Range, Zero, Shift, Meaning, Near, Far, Mark); the depth layouts are values of stereoInput.
+
+A depth layer of H.265 is decoded in software, which no hardware decoder outputs, and so is every stream whose hardware frames would lose bits or that has no hardware format of the routed device: the log says so in each case, never silently.
+
+A converted full range frame stays full range and keeps its color and side data: a depth map squeezed into the video range drew the views with 85% of their parallax. The format callback takes the software format when no hardware format is chosen: a stream the bit depth check turned away from NVDEC was decoded there after all.
+
+The eye chosen on a paused frame is shown: the node kept the source rectangle of the eye shown before.
+
+QAudioDecoder with the SoX resampler, the edition's default: a frame that gives no samples yet no longer stalls the decoding, and the samples the resampler holds back come out at the end; tst_qaudiodecoderbackend failed with +stereo3d13 and passes again.
+
+debian/control: Build-Depends libstereo-dibr-dev (>= 1.9.0).

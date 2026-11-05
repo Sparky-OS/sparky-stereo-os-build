@@ -1,0 +1,1192 @@
+From dd051a0df43dbb94685d72d7f63b2b8a98ecca97 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 13:21:51 -0300
+Subject: [PATCH 20/24] FFmpeg backend: decode depth maps with their pictures
+
+A 2D plus depth video carries the depth map of its pictures in one of three
+ways the FFmpeg backend did not follow: packed in the frame with the picture
+(a Matroska track says the layout in its STEREO3D_LAYOUT tag), as the depth
+auxiliary layer of an H.265 stream (AuxId 2, H.265 Table F.2), or as a
+stream of its own (an ISO/IEC 23002-3 auxiliary video stream, MPEG-2
+transport stream type 0x1E). A packed video showed both halves side by side
+as one picture; of the other two only the pictures were shown.
+
+With an FFmpeg that exports the depth (libavutil/multiview.h; Sparky Stereo
+OS's FFmpeg +stereo3d5), and unless QT_FFMPEG_VIDEO_DEPTH=0:
+
+- The layout of a packed video becomes the frame's depth StereoMode and
+  StereoFlag::DepthFirst, the meaning of its samples (STEREO3D_DEPTH) the
+  frame's stereoDepthMark().
+- The H.265 decoder is asked for the pictures of the depth layer too
+  (depth_output both); no hardware decoder outputs them, so such a stream
+  is decoded in software, which getFormat() decides once the decoder says
+  the stream has one (depth_available).
+- An auxiliary depth stream is not offered as a video track: the demuxer
+  reads it with the video, and its own decoder decodes it.
+
+The stream decoder pairs each picture with the depth map of the same time
+(raw streams without times in order), and packs the two side by side in one
+frame of the picture's format: the depth map's samples as the luma of the
+right half, at the picture's size and sample depth, with neutral chroma.
+The frame says depthSideBySidePictureFirst, and its depth mark is what the
+stream says: the depth representation information of H.264 (H.13.2.3) or
+H.265 (G.14.3.4), with DMin and DMax counted in samples of the picture, or
+the supplemental information of the ISO/IEC 23002-3 stream (nkfar and
+nknear, or a parallax map's parallax_zero, parallax_scale and reference
+width). A picture whose depth map does not come is shown alone.
+
+The marks are those of Sparky Stereo OS (stereo-layer, docs/depth-marks.md);
+the views are drawn by the consumer (VideoOutput).
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+(cherry picked from commit b4a186f117ca8c79e532aa74200084817f93733d)
+---
+ src/plugins/multimedia/ffmpeg/CMakeLists.txt  |   1 +
+ .../playbackengine/qffmpegcodeccontext.cpp    |   6 +
+ .../ffmpeg/playbackengine/qffmpegdemuxer.cpp  |   7 +-
+ .../ffmpeg/playbackengine/qffmpegdemuxer_p.h  |   2 +-
+ .../playbackengine/qffmpegmediadataholder.cpp |  26 ++
+ .../playbackengine/qffmpegmediadataholder_p.h |  12 +
+ .../playbackengine/qffmpegstreamdecoder.cpp   | 155 +++++++-
+ .../playbackengine/qffmpegstreamdecoder_p.h   |  27 +-
+ .../playbackengine/qffmpegvideorenderer.cpp   |  32 +-
+ .../playbackengine/qffmpegvideorenderer_p.h   |   5 +-
+ .../multimedia/ffmpeg/qffmpegdepth.cpp        | 373 ++++++++++++++++++
+ .../multimedia/ffmpeg/qffmpegdepth_p.h        |  95 +++++
+ .../multimedia/ffmpeg/qffmpeghwaccel.cpp      |  10 +
+ .../ffmpeg/qffmpegplaybackengine.cpp          |  36 +-
+ .../ffmpeg/qffmpegplaybackengine_p.h          |   3 +
+ 15 files changed, 777 insertions(+), 13 deletions(-)
+ create mode 100644 src/plugins/multimedia/ffmpeg/qffmpegdepth.cpp
+ create mode 100644 src/plugins/multimedia/ffmpeg/qffmpegdepth_p.h
+
+diff --git a/src/plugins/multimedia/ffmpeg/CMakeLists.txt b/src/plugins/multimedia/ffmpeg/CMakeLists.txt
+index f20dfac73..93a7ef406 100644
+--- a/src/plugins/multimedia/ffmpeg/CMakeLists.txt
++++ b/src/plugins/multimedia/ffmpeg/CMakeLists.txt
+@@ -30,6 +30,7 @@ qt_internal_add_module(FFmpegMediaPluginImplPrivate
+         qffmpegmediaformatinfo.cpp qffmpegmediaformatinfo_p.h
+         qffmpegmediaintegration.cpp qffmpegmediaintegration_p.h
+         qffmpegvideobuffer.cpp qffmpegvideobuffer_p.h
++        qffmpegdepth.cpp qffmpegdepth_p.h
+         qffmpegimagecapture.cpp qffmpegimagecapture_p.h
+         qffmpegmediacapturesession.cpp qffmpegmediacapturesession_p.h
+         qffmpegmediarecorder.cpp qffmpegmediarecorder_p.h
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext.cpp b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext.cpp
+index 7713e0b87..555219b08 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegcodeccontext.cpp
+@@ -3,6 +3,7 @@
+ 
+ #include "playbackengine/qffmpegcodeccontext_p.h"
+ #include "qffmpegcodecstorage_p.h"
++#include "qffmpegdepth_p.h"
+ 
+ #include <QtMultimedia/qplaybackoptions.h>
+ extern "C" {
+@@ -143,6 +144,11 @@ q23::expected<CodecContext, QString> CodecContext::create(AVStream *stream,
+     if (options.playbackIntent() == QPlaybackOptions::PlaybackIntent::LowLatencyStreaming)
+         av_dict_set(opts, "flags", "low_delay", 0);
+ 
++    // The depth auxiliary layer of an H.265 stream (AuxId 2, the edition's FFmpeg): its pictures
++    // come after their pictures, which the stream decoder packs with them (qffmpegdepth_p.h)
++    if (stream->codecpar->codec_id == AV_CODEC_ID_HEVC && depthWanted())
++        av_dict_set(opts, "depth_output", "both", 0);
++
+     av_dict_set(opts, "refcounted_frames", "1", 0);
+     av_dict_set(opts, "threads", "auto", 0);
+     applyExperimentalCodecOptions(*decoder, opts);
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegdemuxer.cpp b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegdemuxer.cpp
+index e7a8ab585..2e0517ece 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegdemuxer.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegdemuxer.cpp
+@@ -52,7 +52,7 @@ static bool isPacketWithinStreamDuration(const AVFormatContext *context, const P
+ 
+ Demuxer::Demuxer(const PlaybackEngineObjectID &id, AVFormatContext *context,
+                  TrackPosition initialPosUs, bool seekPending, const LoopOffset &loopOffset,
+-                 const StreamIndexes &streamIndexes, int loops)
++                 const StreamIndexes &streamIndexes, int loops, int depthStreamIndex)
+     : PlaybackEngineObject(id),
+       m_context(context),
+       m_sessionCtx{ initialPosUs, loopOffset, !seekPending && initialPosUs == TrackPosition{ 0 } },
+@@ -72,6 +72,11 @@ Demuxer::Demuxer(const PlaybackEngineObjectID &id, AVFormatContext *context,
+             m_streams[streamIndexes[i]] = { trackType };
+         }
+     }
++    // the depth maps of the video's pictures, in a stream of their own, go to the video's decoder
++    if (depthStreamIndex >= 0 && streamIndexes[QPlatformMediaPlayer::VideoStream] >= 0) {
++        qCDebug(qLcDemuxer) << "Activate demuxing the depth stream" << depthStreamIndex;
++        m_streams[depthStreamIndex] = { QPlatformMediaPlayer::VideoStream };
++    }
+ }
+ 
+ void Demuxer::seek(quint64 sessionId, TrackPosition initialPosUs, const LoopOffset &loopOffset)
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegdemuxer_p.h b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegdemuxer_p.h
+index 312b3a587..3a0b23048 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegdemuxer_p.h
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegdemuxer_p.h
+@@ -32,7 +32,7 @@ class Demuxer : public PlaybackEngineObject
+ public:
+     Demuxer(const PlaybackEngineObjectID &id, AVFormatContext *context, TrackPosition initialPosUs,
+             bool seekPending, const LoopOffset &loopOffset, const StreamIndexes &streamIndexes,
+-            int loops);
++            int loops, int depthStreamIndex = -1);
+ 
+     void seek(quint64 sessionId, TrackPosition initialPosUs, const LoopOffset &loopOffset);
+ 
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder.cpp b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder.cpp
+index d13d64ec6..364f919a4 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder.cpp
+@@ -139,6 +139,22 @@ QVideoFrameFormat::StereoMode MediaDataHolder::stereoMode() const
+     return QVideoFrameFormat::StereoMode::None;
+ }
+ 
++StreamDepth MediaDataHolder::streamDepth() const
++{
++    const int streamIndex = m_currentAVStreamIndex[QPlatformMediaPlayer::VideoStream];
++    if (streamIndex < 0)
++        return {};
++    return QFFmpeg::streamDepth(m_context->streams[streamIndex]);
++}
++
++int MediaDataHolder::depthStreamIndex() const
++{
++    if (!depthWanted() || m_depthStreams.isEmpty()
++        || m_currentAVStreamIndex[QPlatformMediaPlayer::VideoStream] < 0)
++        return -1;
++    return m_depthStreams.first();
++}
++
+ VideoTransformation MediaDataHolder::transformation() const
+ {
+     // TODO: Add QMediaMetaData::Mirrored and take from it and QMediaMetaData::Orientation:
+@@ -375,6 +391,16 @@ MediaDataHolder::MediaDataHolder(AVFormatContextUPtr context,
+         if (stream->disposition & AV_DISPOSITION_ATTACHED_PIC)
+             continue; // Ignore attached picture streams because we treat them as metadata
+ 
++        if (trackType == QPlatformMediaPlayer::VideoStream && streamAuxiliaryId(stream) == 2) {
++            // the depth map of the pictures of another stream, decoded with them, not a track:
++            // a depth map proper first, a parallax map after
++            if (!streamIsParallaxMap(stream))
++                m_depthStreams.prepend(int(i));
++            else
++                m_depthStreams.append(int(i));
++            continue;
++        }
++
+         if (stream->time_base.num <= 0 || stream->time_base.den <= 0) {
+             // An invalid stream timebase is not expected to be given by FFmpeg
+             qCWarning(qLcMediaDataHolder) << "A stream for the track type" << trackType
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder_p.h b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder_p.h
+index d7324a28d..8fbd39ca6 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder_p.h
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegmediadataholder_p.h
+@@ -22,6 +22,7 @@
+ #include <QtMultimedia/private/qmultimediautils_p.h>
+ #include <QtFFmpegMediaPluginImpl/private/qffmpegtime_p.h>
+ #include <QtFFmpegMediaPluginImpl/private/qffmpeg_p.h>
++#include <QtFFmpegMediaPluginImpl/private/qffmpegdepth_p.h>
+ 
+ #include <array>
+ #include <optional>
+@@ -78,6 +79,15 @@ public:
+     // values of Matroska's StereoMode, which FFmpeg only gives as the stream's stereo_mode tag
+     QVideoFrameFormat::StereoMode stereoMode() const;
+ 
++    // The depth marks of the video stream's track (STEREO3D_LAYOUT and STEREO3D_DEPTH)
++    StreamDepth streamDepth() const;
++
++    // The stream that holds the depth map of the video stream's pictures, an ISO/IEC 23002-3
++    // auxiliary video stream or an MP4 auxiliary depth track (its AuxId 2; a parallax map draws
++    // the views as a depth map does): decoded with the video, not a track of its own. -1 if
++    // none, or QT_FFMPEG_VIDEO_DEPTH=0.
++    int depthStreamIndex() const;
++
+     AVFormatContext *avContext();
+ 
+     int currentStreamIndex(QPlatformMediaPlayer::TrackType trackType) const;
+@@ -99,6 +109,8 @@ private:
+     bool m_isSeekable = false;
+ 
+     StreamIndexes m_currentAVStreamIndex = { -1, -1, -1 };
++    // the auxiliary video streams that hold depth maps (AuxId 2), the first a depth map proper
++    QList<int> m_depthStreams;
+     StreamsMap m_streamMap;
+     StreamIndexes m_requestedStreams = { -1, -1, -1 };
+     TrackDuration m_duration = TrackDuration(0);
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegstreamdecoder.cpp b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegstreamdecoder.cpp
+index 2b48c9ebd..6f6a0842a 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegstreamdecoder.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegstreamdecoder.cpp
+@@ -3,6 +3,8 @@
+ 
+ #include "playbackengine/qffmpegstreamdecoder_p.h"
+ #include "playbackengine/qffmpegmediadataholder_p.h"
++#include "qffmpegdepth_p.h"
++#include "qffmpeghwaccel_p.h"
+ #include <qloggingcategory.h>
+ extern "C" {
+ #include <libavutil/stereo3d.h>
+@@ -15,14 +17,18 @@ Q_STATIC_LOGGING_CATEGORY(qLcStreamDecoder, "qt.multimedia.ffmpeg.streamdecoder"
+ namespace QFFmpeg {
+ 
+ StreamDecoder::StreamDecoder(const PlaybackEngineObjectID &id, const CodecContext &codecContext,
+-                             TrackPosition absSeekPos)
++                             TrackPosition absSeekPos,
++                             const std::optional<CodecContext> &depthCodecContext)
+     : PlaybackEngineObject(id),
+       m_codecContext(codecContext),
++      m_depthCodecContext(depthCodecContext),
+       m_trackType(MediaDataHolder::trackTypeFromMediaType(codecContext.context()->codec_type)),
+       m_sessionCtx{ absSeekPos }
+ {
+     qCDebug(qLcStreamDecoder) << "Create stream decoder, trackType" << m_trackType
+-                              << "absSeekPos:" << absSeekPos.get();
++                              << "absSeekPos:" << absSeekPos.get() << "depth stream:"
++                              << (m_depthCodecContext ? int(m_depthCodecContext->streamIndex())
++                                                      : -1);
+     Q_ASSERT(m_trackType != QPlatformMediaPlayer::NTrackTypes);
+ }
+ 
+@@ -30,6 +36,8 @@ StreamDecoder::~StreamDecoder()
+ {
+     avcodec_flush_buffers(m_codecContext.context());
+     stereo_av_pair_reset(m_codecContext.stereoPair());
++    if (m_depthCodecContext)
++        avcodec_flush_buffers(m_depthCodecContext->context());
+ }
+ 
+ void StreamDecoder::seek(quint64 sessionID, TrackPosition pos, const LoopOffset &offset)
+@@ -38,6 +46,9 @@ void StreamDecoder::seek(quint64 sessionID, TrackPosition pos, const LoopOffset
+         m_sessionCtx = { offset.loopStartTimeUs.asDuration() + pos };
+         avcodec_flush_buffers(m_codecContext.context());
+         stereo_av_pair_reset(m_codecContext.stereoPair());
++        if (m_depthCodecContext)
++            avcodec_flush_buffers(m_depthCodecContext->context());
++        clearDepth();
+     });
+ }
+ 
+@@ -79,6 +90,9 @@ void StreamDecoder::doNextStep()
+ 
+         avcodec_flush_buffers(m_codecContext.context());
+         stereo_av_pair_reset(m_codecContext.stereoPair());
++        if (m_depthCodecContext)
++            avcodec_flush_buffers(m_depthCodecContext->context());
++        clearDepth();
+         m_sessionCtx.offset = packet.loopOffset();
+     }
+ 
+@@ -143,6 +157,14 @@ void StreamDecoder::onFrameFound(const Frame &frame)
+ 
+ void StreamDecoder::decodeMedia(const Packet &packet)
+ {
++    if (m_depthCodecContext && packet.isValid()
++        && packet.avPacket()->stream_index == int(m_depthCodecContext->streamIndex())) {
++        decodeDepth(packet);
++        return;
++    }
++    if (m_depthCodecContext && !packet.isValid())
++        decodeDepth(packet); // the end: the last depth maps first
++
+     auto sendPacketResult = sendAVPacket(packet);
+ 
+     if (sendPacketResult == AVERROR(EAGAIN)) {
+@@ -199,8 +221,11 @@ void StreamDecoder::receiveAVFrames(bool flushPacket)
+         }
+ 
+ 
++        // the pictures of a depth layer (auxiliary picture 2) are not views of a multiview pair
++        const bool depthPicture = m_trackType == QPlatformMediaPlayer::VideoStream
++                && frameAuxiliaryId(avFrame.get()) == 2;
+         bool multiview = false;
+-        if (m_trackType == QPlatformMediaPlayer::VideoStream) {
++        if (m_trackType == QPlatformMediaPlayer::VideoStream && !depthPicture) {
+             int paired = stereo_av_pair_frame(m_codecContext.stereoPair(), m_codecContext.context(), avFrame.get(), 1);
+             if (paired == 0)
+                 continue;
+@@ -215,11 +240,135 @@ void StreamDecoder::receiveAVFrames(bool flushPacket)
+         if (m_trackType == QPlatformMediaPlayer::VideoStream)
+             avFrame = copyFromHwPool(std::move(avFrame));
+ 
++        if (m_trackType == QPlatformMediaPlayer::VideoStream && depthPicture) {
++            // a picture of the depth layer, after its picture
++            m_depthLayer = true;
++            holdDepth(std::move(avFrame), m_codecContext.stream());
++            pairDepth(false);
++            continue;
++        }
++        if (m_trackType == QPlatformMediaPlayer::VideoStream && !multiview && depthExpected()) {
++            holdPicture(std::move(avFrame));
++            pairDepth(false);
++            continue;
++        }
++
+         Frame frame{ m_sessionCtx.offset, std::move(avFrame), m_codecContext, id() };
+         if (multiview)
+             frame.setMultiview(stereo_av_pair_base_eye(m_codecContext.stereoPair()) == AV_STEREO3D_VIEW_RIGHT);
+         onFrameFound(frame);
+     }
++    if (flushPacket)
++        pairDepth(true);
++}
++
++bool StreamDecoder::depthExpected() const
++{
++    if (m_depthCodecContext || m_depthLayer)
++        return true;
++    // the decoder says whether the stream has a depth layer, whose pictures it outputs
++    return decoderOutputsDepthLayer(m_codecContext.context());
++}
++
++void StreamDecoder::decodeDepth(const Packet &packet)
++{
++    AVCodecContext *context = m_depthCodecContext->context();
++    int result = avcodec_send_packet(context, packet.isValid() ? packet.avPacket() : nullptr);
++    if (result == AVERROR(EAGAIN)) {
++        receiveDepthFrames();
++        result = avcodec_send_packet(context, packet.isValid() ? packet.avPacket() : nullptr);
++    }
++    if (result == 0 || !packet.isValid())
++        receiveDepthFrames();
++    pairDepth(false);
++}
++
++void StreamDecoder::receiveDepthFrames()
++{
++    while (true) {
++        auto avFrame = makeAVFrame();
++        if (avcodec_receive_frame(m_depthCodecContext->context(), avFrame.get()) < 0)
++            break;
++        holdDepth(std::move(avFrame), m_depthCodecContext->stream());
++    }
++}
++
++static qint64 frameTime(const AVFrame *frame, const AVStream *stream)
++{
++    const int64_t pts = frame->best_effort_timestamp != AV_NOPTS_VALUE
++            ? frame->best_effort_timestamp
++            : frame->pts;
++    return pts == AV_NOPTS_VALUE ? AV_NOPTS_VALUE
++                                 : av_rescale_q(pts, stream->time_base, AV_TIME_BASE_Q);
++}
++
++void StreamDecoder::holdPicture(AVFrameUPtr frame)
++{
++    const qint64 time = frameTime(frame.get(), m_codecContext.stream());
++    m_heldPictures.push_back({ std::move(frame), time });
++}
++
++void StreamDecoder::holdDepth(AVFrameUPtr frame, const AVStream *stream)
++{
++    const qint64 time = frameTime(frame.get(), stream);
++    m_heldDepths.push_back({ std::move(frame), time });
++}
++
++void StreamDecoder::pairDepth(bool final)
++{
++    // a depth map belongs to the picture of its time; a millisecond is the tolerance of streams
++    // whose time bases differ
++    constexpr qint64 tolerance = 1000;
++    constexpr size_t maxHeldPictures = 4;
++    while (!m_heldPictures.empty()) {
++        DepthPending &picture = m_heldPictures.front();
++        auto match =
++                std::find_if(m_heldDepths.begin(), m_heldDepths.end(), [&](const DepthPending &d) {
++                    return picture.time != AV_NOPTS_VALUE && d.time != AV_NOPTS_VALUE
++                            && std::abs(d.time - picture.time) <= tolerance;
++                });
++        // frames without times (a raw stream): a depth map goes with the picture it follows, in
++        // order
++        if (match == m_heldDepths.end() && picture.time == AV_NOPTS_VALUE && !m_heldDepths.empty()
++            && m_heldDepths.front().time == AV_NOPTS_VALUE)
++            match = m_heldDepths.begin();
++        AVFrameUPtr out;
++        if (match != m_heldDepths.end()) {
++            out = packPictureAndDepth(picture.frame.get(), match->frame.get());
++            if (!out)
++                qCWarning(qLcStreamDecoder) << "The picture could not be packed with its depth map";
++            m_heldDepths.erase(m_heldDepths.begin(), match + 1);
++        } else {
++            // a depth map later than the picture: the picture's own is not coming
++            const bool missed =
++                    !m_heldDepths.empty() && m_heldDepths.back().time > picture.time + tolerance;
++            if (!final && !missed && m_heldPictures.size() <= maxHeldPictures)
++                break;
++        }
++        if (!out) { // the picture alone
++            qCDebug(qLcStreamDecoder)
++                    << "picture at" << picture.time
++                    << "without its depth map, depth maps held:" << m_heldDepths.size()
++                    << (m_heldDepths.empty() ? -1 : m_heldDepths.front().time);
++            out = std::move(picture.frame);
++        }
++        m_heldPictures.pop_front();
++        onFrameFound({ m_sessionCtx.offset, std::move(out), m_codecContext, id() });
++    }
++    // depth maps older than every picture to come have no picture any more
++    while (!m_heldDepths.empty() && !m_heldPictures.empty()
++           && m_heldDepths.front().time + tolerance < m_heldPictures.front().time)
++        m_heldDepths.pop_front();
++    // the decoders' delays differ (frame threads): depth maps may come well before their pictures
++    constexpr size_t maxHeldDepths = 64;
++    while (m_heldDepths.size() > maxHeldDepths)
++        m_heldDepths.pop_front();
++}
++
++void StreamDecoder::clearDepth()
++{
++    m_heldPictures.clear();
++    m_heldDepths.clear();
+ }
+ 
+ void StreamDecoder::decodeSubtitle(const Packet &packet)
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegstreamdecoder_p.h b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegstreamdecoder_p.h
+index c81475786..d9a3b0f5b 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegstreamdecoder_p.h
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegstreamdecoder_p.h
+@@ -21,6 +21,7 @@
+ 
+ #include <QtCore/qqueue.h>
+ 
++#include <deque>
+ #include <optional>
+ 
+ QT_BEGIN_NAMESPACE
+@@ -31,8 +32,12 @@ class StreamDecoder : public PlaybackEngineObject
+ {
+     Q_OBJECT
+ public:
++    // depthCodecContext: the decoder of the stream that holds the depth maps of the pictures (an
++    // ISO/IEC 23002-3 auxiliary video stream, an MP4 auxiliary depth track), whose packets come
++    // to this decoder too
+     StreamDecoder(const PlaybackEngineObjectID &id, const CodecContext &codecContext,
+-                  TrackPosition absSeekPos);
++                  TrackPosition absSeekPos,
++                  const std::optional<CodecContext> &depthCodecContext = std::nullopt);
+ 
+     ~StreamDecoder() override;
+ 
+@@ -72,8 +77,28 @@ private:
+ 
+     void receiveAVFrames(bool flushPacket = false);
+ 
++    // Depth as a 3D source: a picture is handed on packed with its depth map (the depth auxiliary
++    // layer of an H.265 stream, or a depth stream of its own) side by side, in one frame
++    // (QFFmpeg::packPictureAndDepth). A picture waits for its depth map while one is to come.
++    struct DepthPending
++    {
++        AVFrameUPtr frame;
++        qint64 time = 0; // AV_TIME_BASE units
++    };
++    bool depthExpected() const;
++    void decodeDepth(const Packet &packet);
++    void receiveDepthFrames();
++    void holdPicture(AVFrameUPtr frame);
++    void holdDepth(AVFrameUPtr frame, const AVStream *stream);
++    void pairDepth(bool final);
++    void clearDepth();
++
+ private:
+     CodecContext m_codecContext;
++    std::optional<CodecContext> m_depthCodecContext;
++    std::deque<DepthPending> m_heldPictures;
++    std::deque<DepthPending> m_heldDepths;
++    bool m_depthLayer = false; // a depth picture of the stream's depth layer came
+ 
+     const QPlatformMediaPlayer::TrackType m_trackType;
+ 
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
+index 30c049b74..3caaae3bc 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer.cpp
+@@ -12,8 +12,13 @@ namespace QFFmpeg {
+ 
+ VideoRenderer::VideoRenderer(const PlaybackEngineObjectID &id, const TimeController &tc,
+                              QVideoSink *sink, const VideoTransformation &transform,
+-                             QVideoFrameFormat::StereoMode streamStereoMode)
+-    : Renderer(id, tc), m_sink(sink), m_transform(transform), m_stereoMode(streamStereoMode)
++                             QVideoFrameFormat::StereoMode streamStereoMode,
++                             const StreamDepth &streamDepth)
++    : Renderer(id, tc),
++      m_sink(sink),
++      m_transform(transform),
++      m_stereoMode(streamStereoMode),
++      m_streamDepth(streamDepth)
+ {
+ }
+ 
+@@ -64,6 +69,24 @@ VideoRenderer::RenderingResult VideoRenderer::renderInternal(Frame frame)
+     }
+ #endif
+ 
++    // Depth as a 3D source (qffmpegdepth_p.h): a picture with its depth map, which the stream
++    // decoder packed (the frame's metadata says it) or the track's tags say is packed. What a
++    // depth sample means: the decoder's packing says it from the depth map's side data; else the
++    // frame's own depth side data, else the track's tag.
++    using StereoMode = QVideoFrameFormat::StereoMode;
++    const StreamDepth packed = frameDepth(frame.avFrame());
++    const std::optional<DepthLayout> depthLayout =
++            packed.layout ? packed.layout : m_streamDepth.layout;
++    QString depthMark = packed.mark;
++    if (depthLayout && depthMark.isEmpty()) {
++        const int width = frame.avFrame()->width;
++        const bool halfWidth = depthLayout->mode == StereoMode::DepthSideBySide
++                || depthLayout->mode == StereoMode::DepthBackground;
++        depthMark = depthMarkFromSideData(frame.avFrame(), nullptr, halfWidth ? width / 2 : width);
++        if (depthMark.isEmpty())
++            depthMark = m_streamDepth.mark;
++    }
++
+     const auto pixelAspectRatio = codecContext->pixelAspectRatio(frame.avFrame());
+     auto buffer = std::make_unique<QFFmpegVideoBuffer>(frame.takeAVFrame(), pixelAspectRatio,
+                                                       m_stereoMode, m_sink->preserveNativeSize());
+@@ -89,6 +112,11 @@ VideoRenderer::RenderingResult VideoRenderer::renderInternal(Frame frame)
+     format.setStereoMode(m_stereoMode);
+     format.setStereoFlags(m_stereoFlags);
+     format.setStereoView(stereo ? stereo->view : QVideoFrameFormat::StereoView::Packed);
++    if (depthLayout && m_stereoMode == StereoMode::None) {
++        format.setStereoMode(depthLayout->mode);
++        format.setStereoFlags(depthLayout->flags);
++        format.setStereoDepthMark(depthMark);
++    }
+     format.setPixelAspectRatio(buffer->pixelAspectRatio());
+     QVideoFrame videoFrame = QVideoFramePrivate::createFrame(std::move(buffer), format);
+     videoFrame.setStartTime(frame.startTime().get());
+diff --git a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer_p.h b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer_p.h
+index 8f54567e5..5a4c7ded4 100644
+--- a/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer_p.h
++++ b/src/plugins/multimedia/ffmpeg/playbackengine/qffmpegvideorenderer_p.h
+@@ -19,6 +19,7 @@
+ #include <QtMultimedia/qvideoframeformat.h>
+ #include <QtMultimedia/private/qvideotransformation_p.h>
+ #include <QtCore/qpointer.h>
++#include <QtFFmpegMediaPluginImpl/private/qffmpegdepth_p.h>
+ 
+ QT_BEGIN_NAMESPACE
+ 
+@@ -32,7 +33,8 @@ class VideoRenderer : public Renderer
+ public:
+     VideoRenderer(const PlaybackEngineObjectID &id, const TimeController &tc, QVideoSink *sink,
+                   const VideoTransformation &transform,
+-                  QVideoFrameFormat::StereoMode streamStereoMode);
++                  QVideoFrameFormat::StereoMode streamStereoMode,
++                  const StreamDepth &streamDepth = {});
+ 
+     void setOutput(QVideoSink *sink, bool cleanPrevSink = false);
+ 
+@@ -44,6 +46,7 @@ private:
+     VideoTransformation m_transform;
+     QVideoFrameFormat::StereoMode m_stereoMode;
+     QVideoFrameFormat::StereoFlags m_stereoFlags;
++    StreamDepth m_streamDepth;
+ };
+ 
+ } // namespace QFFmpeg
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegdepth.cpp b/src/plugins/multimedia/ffmpeg/qffmpegdepth.cpp
+new file mode 100644
+index 000000000..2ca856497
+--- /dev/null
++++ b/src/plugins/multimedia/ffmpeg/qffmpegdepth.cpp
+@@ -0,0 +1,373 @@
++// Copyright (C) 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++#include "qffmpegdepth_p.h"
++
++extern "C" {
++#include <libavutil/dict.h>
++#include <libavutil/hwcontext.h>
++#include <libavutil/imgutils.h>
++#include <libavutil/opt.h>
++#include <libavutil/pixdesc.h>
++#include <libavutil/stereo3d.h>
++#if __has_include(<libavutil/multiview.h>)
++#  include <libavutil/multiview.h>
++#  define QT_FFMPEG_DEPTH
++#endif
++}
++
++#include <cstring>
++
++QT_BEGIN_NAMESPACE
++
++namespace QFFmpeg {
++
++namespace {
++
++constexpr const char *layoutKey = "STEREO3D_LAYOUT";
++constexpr const char *depthKey = "STEREO3D_DEPTH";
++
++// a number as the marks write them: the C notation, whatever the locale
++QByteArray number(double value)
++{
++    return QByteArray::number(value, 'g', 15);
++}
++
++#ifdef QT_FFMPEG_DEPTH
++const AVFrameSideData *sideData(const AVFrame *frame, AVFrameSideDataType type)
++{
++    return frame ? av_frame_get_side_data(frame, type) : nullptr;
++}
++#endif
++
++int planeHeight(const AVPixFmtDescriptor *desc, int plane, int height)
++{
++    const bool chroma = !(desc->flags & AV_PIX_FMT_FLAG_RGB) && (plane == 1 || plane == 2);
++    return chroma ? AV_CEIL_RSHIFT(height, desc->log2_chroma_h) : height;
++}
++
++// The software frame of a frame that may be in hardware memory
++AVFrameUPtr softwareFrame(const AVFrame *frame)
++{
++    AVFrameUPtr sw = makeAVFrame();
++    if (!sw)
++        return {};
++    if (frame->hw_frames_ctx) {
++        if (av_hwframe_transfer_data(sw.get(), frame, 0) < 0)
++            return {};
++        av_frame_copy_props(sw.get(), frame);
++    } else if (av_frame_ref(sw.get(), frame) < 0) {
++        return {};
++    }
++    return sw;
++}
++
++} // namespace
++
++bool depthSupported()
++{
++#ifdef QT_FFMPEG_DEPTH
++    return true;
++#else
++    return false;
++#endif
++}
++
++bool depthWanted()
++{
++    static const bool wanted = depthSupported()
++            && !(qEnvironmentVariableIsSet("QT_FFMPEG_VIDEO_DEPTH")
++                 && qEnvironmentVariableIntValue("QT_FFMPEG_VIDEO_DEPTH") == 0);
++    return wanted;
++}
++
++int streamAuxiliaryId(const AVStream *stream)
++{
++#ifdef QT_FFMPEG_DEPTH
++    if (!stream)
++        return 0;
++    if (const AVPacketSideData *sd = streamSideData(stream, AV_PKT_DATA_AUXILIARY_ID)) {
++        if (sd->size >= sizeof(int))
++            return *reinterpret_cast<const int *>(sd->data);
++    }
++    // a parallax map (ISO/IEC 23002-3) gives the views as a depth map does
++    if (streamSideData(stream, AV_PKT_DATA_AUXILIARY_VIDEO_INFO))
++        return 2;
++#else
++    Q_UNUSED(stream);
++#endif
++    return 0;
++}
++
++bool streamIsParallaxMap(const AVStream *stream)
++{
++#ifdef QT_FFMPEG_DEPTH
++    if (const AVPacketSideData *sd = streamSideData(stream, AV_PKT_DATA_AUXILIARY_VIDEO_INFO)) {
++        const auto *info = reinterpret_cast<const AVAuxiliaryVideoInfo *>(sd->data);
++        return sd->size >= sizeof(AVAuxiliaryVideoInfo)
++                && info->type == AV_AUXILIARY_VIDEO_PARALLAX;
++    }
++#else
++    Q_UNUSED(stream);
++#endif
++    return false;
++}
++
++int frameAuxiliaryId(const AVFrame *frame)
++{
++#ifdef QT_FFMPEG_DEPTH
++    if (const AVFrameSideData *sd = sideData(frame, AV_FRAME_DATA_AUXILIARY_ID)) {
++        if (sd->size >= sizeof(int))
++            return *reinterpret_cast<const int *>(sd->data);
++    }
++#else
++    Q_UNUSED(frame);
++#endif
++    return 0;
++}
++
++bool decoderOutputsDepthLayer(AVCodecContext *context)
++{
++    if (!context)
++        return false;
++    int64_t available = 0;
++    int64_t output = 0;
++    constexpr int search = AV_OPT_SEARCH_CHILDREN;
++    return av_opt_get_int(context, "depth_available", search, &available) >= 0
++            && av_opt_get_int(context, "depth_output", search, &output) >= 0 && available && output;
++}
++
++std::optional<DepthLayout> depthLayoutFromWord(QByteArrayView word)
++{
++    using Mode = QVideoFrameFormat::StereoMode;
++    using Flag = QVideoFrameFormat::StereoFlag;
++    if (word.isEmpty())
++        return std::nullopt;
++    // docs/depth-marks.md, Stereo3DLayout
++    struct Entry
++    {
++        const char *word;
++        Mode mode;
++        bool depthFirst;
++    };
++    static const Entry entries[] = {
++        { "depthSideBySidePictureFirst", Mode::DepthSideBySide, false },
++        { "depthSideBySideDepthFirst", Mode::DepthSideBySide, true },
++        { "depthTopBottomPictureFirst", Mode::DepthTopBottom, false },
++        { "depthTopBottomDepthFirst", Mode::DepthTopBottom, true },
++        { "depthGraphicsTopBottom", Mode::DepthGraphics, false },
++        { "depthBackgroundQuarters", Mode::DepthBackground, false },
++        { "depthSeparate", Mode::DepthSeparate, false },
++    };
++    for (const Entry &e : entries) {
++        if (word == QByteArrayView(e.word)) {
++            DepthLayout result;
++            result.mode = e.mode;
++            if (e.depthFirst)
++                result.flags |= Flag::DepthFirst;
++            return result;
++        }
++    }
++    return std::nullopt;
++}
++
++StreamDepth streamDepth(const AVStream *stream)
++{
++    StreamDepth result;
++    if (!stream)
++        return result;
++    if (const AVDictionaryEntry *tag = av_dict_get(stream->metadata, layoutKey, nullptr, 0))
++        result.layout = depthLayoutFromWord(QByteArrayView(tag->value));
++    if (const AVDictionaryEntry *tag = av_dict_get(stream->metadata, depthKey, nullptr, 0))
++        result.mark = QString::fromUtf8(tag->value);
++    return result;
++}
++
++StreamDepth frameDepth(const AVFrame *frame)
++{
++    StreamDepth result;
++    if (!frame)
++        return result;
++    if (const AVDictionaryEntry *tag = av_dict_get(frame->metadata, layoutKey, nullptr, 0))
++        result.layout = depthLayoutFromWord(QByteArrayView(tag->value));
++    if (const AVDictionaryEntry *tag = av_dict_get(frame->metadata, depthKey, nullptr, 0))
++        result.mark = QString::fromUtf8(tag->value);
++    return result;
++}
++
++QString depthMarkFromSideData(const AVFrame *depth, const AVFrame *picture, int viewWidth)
++{
++#ifdef QT_FFMPEG_DEPTH
++    // H.264 H.13.2.3, H.265 G.14.3.4: the first view's parameters
++    const AVFrameSideData *sd = sideData(depth, AV_FRAME_DATA_DEPTH_REPRESENTATION_INFO);
++    if (!sd)
++        sd = sideData(picture, AV_FRAME_DATA_DEPTH_REPRESENTATION_INFO);
++    if (sd) {
++        const auto *info = reinterpret_cast<const AVDepthRepresentationInfo *>(sd->data);
++        const AVDepthRepresentationView *v =
++                info->nb_views ? av_depth_representation_info_get_view(info, 0) : nullptr;
++        QByteArray mark;
++        switch (info->type) {
++        case AV_DEPTH_REPRESENTATION_INVERSE_Z:
++            mark = "inverseZ";
++            break;
++        case AV_DEPTH_REPRESENTATION_DISPARITY:
++            mark = "disparity";
++            break;
++        case AV_DEPTH_REPRESENTATION_Z:
++            mark = "z";
++            break;
++        case AV_DEPTH_REPRESENTATION_NONLINEAR_DISPARITY:
++            mark = "nonlinearDisparity";
++            break;
++        default:
++            return {}; // a reserved type says nothing
++        }
++        if (v && info->z_near_present && info->z_far_present
++            && (info->type == AV_DEPTH_REPRESENTATION_INVERSE_Z
++                || info->type == AV_DEPTH_REPRESENTATION_Z)) {
++            mark += " near=" + number(av_multiview_real_to_double(&v->z_near));
++            mark += " far=" + number(av_multiview_real_to_double(&v->z_far));
++        }
++        if (v && info->d_min_present && info->d_max_present
++            && (info->type == AV_DEPTH_REPRESENTATION_DISPARITY
++                || info->type == AV_DEPTH_REPRESENTATION_NONLINEAR_DISPARITY)) {
++            // in luma samples of the view (the picture)
++            mark += " min=" + number(av_multiview_real_to_double(&v->d_min));
++            mark += " max=" + number(av_multiview_real_to_double(&v->d_max));
++            mark += " width=" + QByteArray::number(viewWidth);
++        }
++        if (info->type == AV_DEPTH_REPRESENTATION_NONLINEAR_DISPARITY
++            && info->nb_nonlinear_model >= 3) {
++            mark += " model=";
++            for (int i = 0; i < info->nb_nonlinear_model; ++i)
++                mark += (i ? "," : "") + QByteArray::number(info->nonlinear_model[i]);
++        }
++        return QString::fromLatin1(mark);
++    }
++    // ISO/IEC 23002-3, which is not freely available: as open implementations read it
++    sd = sideData(depth, AV_FRAME_DATA_AUXILIARY_VIDEO_INFO);
++    if (sd) {
++        const auto *info = reinterpret_cast<const AVAuxiliaryVideoInfo *>(sd->data);
++        if (info->type == AV_AUXILIARY_VIDEO_PARALLAX) {
++            return QString::fromLatin1("parallax parallaxZero=" + number(info->parallax_zero)
++                                       + " parallaxScale=" + number(info->parallax_scale)
++                                       + " wref=" + number(info->wref));
++        }
++        // kfar behind the screen, knear in front of it: the screen is where one gives way to the
++        // other
++        if (info->nkfar + info->nknear > 0)
++            return QString::fromLatin1(
++                    "nearness zero=" + number(double(info->nkfar) / (info->nkfar + info->nknear)));
++        return QStringLiteral("nearness");
++    }
++#else
++    Q_UNUSED(depth);
++    Q_UNUSED(picture);
++    Q_UNUSED(viewWidth);
++#endif
++    return {};
++}
++
++AVFrameUPtr packPictureAndDepth(const AVFrame *picture, const AVFrame *depth)
++{
++    if (!picture || !depth)
++        return {};
++    AVFrameUPtr pic = softwareFrame(picture);
++    AVFrameUPtr dep = softwareFrame(depth);
++    if (!pic || !dep)
++        return {};
++    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(AVPixelFormat(pic->format));
++    const AVPixFmtDescriptor *ddesc = av_pix_fmt_desc_get(AVPixelFormat(dep->format));
++    if (!desc || !ddesc || !(desc->flags & AV_PIX_FMT_FLAG_PLANAR)
++        || (desc->flags
++            & (AV_PIX_FMT_FLAG_HWACCEL | AV_PIX_FMT_FLAG_BITSTREAM | AV_PIX_FMT_FLAG_PAL
++               | AV_PIX_FMT_FLAG_FLOAT))
++        || (ddesc->flags
++            & (AV_PIX_FMT_FLAG_HWACCEL | AV_PIX_FMT_FLAG_BITSTREAM | AV_PIX_FMT_FLAG_PAL
++               | AV_PIX_FMT_FLAG_FLOAT))
++        || desc->comp[0].step > 2 || ddesc->comp[0].step > 2)
++        return {};
++
++    const int w = pic->width, h = pic->height;
++    AVFrameUPtr out = makeAVFrame();
++    out->format = pic->format;
++    out->width = 2 * w;
++    out->height = h;
++    if (av_frame_get_buffer(out.get(), 0) < 0 || av_frame_copy_props(out.get(), pic.get()) < 0)
++        return {};
++    av_frame_remove_side_data(out.get(), AV_FRAME_DATA_STEREO3D);
++
++    // the left half: the picture
++    const int planes = av_pix_fmt_count_planes(AVPixelFormat(pic->format));
++    for (int p = 0; p < planes; ++p) {
++        const int bytes = av_image_get_linesize(AVPixelFormat(pic->format), w, p);
++        if (bytes <= 0)
++            return {};
++        av_image_copy_plane(out->data[p], out->linesize[p], pic->data[p], pic->linesize[p], bytes,
++                            planeHeight(desc, p, h));
++    }
++
++    // the right half: the depth samples as the luma, at the picture's size and depth; the other
++    // components neutral (mid chroma, opaque alpha, gray for RGB)
++    const AVComponentDescriptor &luma = desc->comp[0];
++    const AVComponentDescriptor &dluma = ddesc->comp[0];
++    const int bits = luma.depth, dbits = dluma.depth;
++    const bool rgb = desc->flags & AV_PIX_FMT_FLAG_RGB;
++    if (dbits < 1 || dbits > 16)
++        return {};
++    // a component deeper than 8 bits is in 16 bit words
++    auto put = [&](const AVComponentDescriptor &comp, int x, int y, unsigned value) {
++        uint8_t *row =
++                out->data[comp.plane] + ptrdiff_t(y) * out->linesize[comp.plane] + comp.offset;
++        if (comp.depth > 8)
++            reinterpret_cast<uint16_t *>(row)[x * comp.step / 2] = uint16_t(value << comp.shift);
++        else
++            row[x * comp.step] = uint8_t(value << comp.shift);
++    };
++    auto get = [](const AVComponentDescriptor &comp, const uint8_t *row, int x) {
++        row += comp.offset;
++        const unsigned s = comp.depth > 8
++                ? reinterpret_cast<const uint16_t *>(row)[x * comp.step / 2]
++                : row[x * comp.step];
++        return (s >> comp.shift) & ((1u << comp.depth) - 1);
++    };
++    const uint64_t maxOut = (1u << bits) - 1, maxIn = (1u << dbits) - 1;
++    for (int y = 0; y < h; ++y) {
++        const int sy = int((int64_t(y) * dep->height) / h);
++        const uint8_t *drow = dep->data[dluma.plane] + ptrdiff_t(sy) * dep->linesize[dluma.plane];
++        for (int x = 0; x < w; ++x) {
++            const int sx = int((int64_t(x) * dep->width) / w);
++            // the same fraction of the largest value, in the picture's bits
++            const uint64_t s = get(dluma, drow, sx);
++            put(luma, w + x, y, unsigned((s * maxOut + maxIn / 2) / maxIn));
++        }
++    }
++    for (int c = 1; c < desc->nb_components; ++c) {
++        const AVComponentDescriptor &comp = desc->comp[c];
++        const bool alpha = c == 3 || (c == 1 && desc->nb_components == 2);
++        const bool full = alpha || rgb;
++        const int cw = full ? w : AV_CEIL_RSHIFT(w, desc->log2_chroma_w);
++        const int ch = full ? h : AV_CEIL_RSHIFT(h, desc->log2_chroma_h);
++        for (int y = 0; y < ch; ++y) {
++            const uint8_t *lumaRow =
++                    out->data[luma.plane] + ptrdiff_t(y) * out->linesize[luma.plane];
++            for (int x = 0; x < cw; ++x) {
++                const unsigned value = alpha ? (1u << comp.depth) - 1
++                        : rgb ? get(luma, lumaRow, w + x) // the gray of the depth sample
++                              : 1u << (comp.depth - 1);
++                put(comp, cw + x, y, value);
++            }
++        }
++    }
++
++    av_dict_set(&out->metadata, layoutKey, "depthSideBySidePictureFirst", 0);
++    const QString mark = depthMarkFromSideData(depth, picture, w);
++    if (!mark.isEmpty())
++        av_dict_set(&out->metadata, depthKey, mark.toUtf8().constData(), 0);
++    return out;
++}
++
++} // namespace QFFmpeg
++
++QT_END_NAMESPACE
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegdepth_p.h b/src/plugins/multimedia/ffmpeg/qffmpegdepth_p.h
+new file mode 100644
+index 000000000..80983006a
+--- /dev/null
++++ b/src/plugins/multimedia/ffmpeg/qffmpegdepth_p.h
+@@ -0,0 +1,95 @@
++// Copyright (C) 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++#ifndef QFFMPEGDEPTH_P_H
++#define QFFMPEGDEPTH_P_H
++
++//
++//  W A R N I N G
++//  -------------
++//
++// This file is not part of the Qt API.  It exists purely as an
++// implementation detail.  This header file may change from version to
++// version without notice, or even be removed.
++//
++// We mean it.
++//
++
++#include <QtFFmpegMediaPluginImpl/private/qffmpeg_p.h>
++#include <QtMultimedia/qvideoframeformat.h>
++#include <QtCore/qbytearray.h>
++
++#include <optional>
++
++QT_BEGIN_NAMESPACE
++
++// Depth as a 3D source: a picture with its depth map (2D plus depth), from which the consumer
++// draws the two views (QVideoFrameFormat's depth layouts). The layouts and the meaning of the
++// samples are the marks of Sparky Stereo OS (stereo-layer, docs/depth-marks.md); FFmpeg says them
++// in its depth side data, the AuxId of a depth layer or stream, and a Matroska track's tags.
++namespace QFFmpeg {
++
++// Whether the edition's FFmpeg is there, which exports the depth (libavutil/multiview.h)
++bool depthSupported();
++
++// Whether depth maps are decoded with the pictures: with the edition's FFmpeg, unless
++// QT_FFMPEG_VIDEO_DEPTH=0 says not to (then a video with its depth map shows its picture alone)
++bool depthWanted();
++
++// The AuxId of an auxiliary video stream (H.265 Table F.2: 2 a depth map), as the demuxer says
++// it (an ISO/IEC 23002-3 stream, MPEG-2 transport stream type 0x1E, or an MP4 auxiliary depth
++// track): 2 for a depth or parallax map, 0 for a stream that is not auxiliary
++int streamAuxiliaryId(const AVStream *stream);
++
++// Whether the auxiliary stream is an ISO/IEC 23002-3 parallax map, not a depth map proper
++bool streamIsParallaxMap(const AVStream *stream);
++
++// The AuxId of a frame of a depth auxiliary layer (FFmpeg's depth_output), 0 for any other
++int frameAuxiliaryId(const AVFrame *frame);
++
++// Whether the H.265 decoder outputs the pictures of the stream's depth auxiliary layer: the stream
++// has one (depth_available, known once the decoder has read its parameter sets) and they are
++// asked for (depth_output)
++bool decoderOutputsDepthLayer(AVCodecContext *context);
++
++struct DepthLayout
++{
++    QVideoFrameFormat::StereoMode mode = QVideoFrameFormat::StereoMode::None;
++    QVideoFrameFormat::StereoFlags flags;
++};
++
++// The layout a Stereo3DLayout word names, when it is a depth layout (docs/depth-marks.md; an
++// unknown word means one picture)
++std::optional<DepthLayout> depthLayoutFromWord(QByteArrayView word);
++
++// The depth marks of a stream, from the simple tags of its track (STEREO3D_LAYOUT and
++// STEREO3D_DEPTH, until the layouts are registered as Matroska StereoMode values)
++struct StreamDepth
++{
++    std::optional<DepthLayout> layout;
++    QString mark;
++};
++StreamDepth streamDepth(const AVStream *stream);
++
++// What the samples of a depth map mean, as a Stereo3DDepth mark, from the side data of the
++// depth frame, else of the picture: the depth representation information of H.264 (H.13.2.3)
++// and H.265 (G.14.3.4), the supplemental information of an ISO/IEC 23002-3 stream. Only what the
++// stream says is written, so that the user's range, screen and shift apply where it says none.
++// Empty when nothing says it. viewWidth is the width of the picture, which DMin and DMax are of.
++QString depthMarkFromSideData(const AVFrame *depth, const AVFrame *picture, int viewWidth);
++
++// The picture and its depth map packed side by side in one frame of the picture's pixel format,
++// twice as wide: the depth map's first plane, at the picture's size and sample depth, as the luma
++// of the right half (neutral chroma). Its metadata says it: STEREO3D_LAYOUT
++// depthSideBySidePictureFirst, and STEREO3D_DEPTH from the side data. Null where the picture's
++// pixel format has no planes of its own (packed YUV) or a frame cannot be read.
++AVFrameUPtr packPictureAndDepth(const AVFrame *picture, const AVFrame *depth);
++
++// The depth marks of a frame's metadata (a frame packed by packPictureAndDepth)
++StreamDepth frameDepth(const AVFrame *frame);
++
++} // namespace QFFmpeg
++
++QT_END_NAMESPACE
++
++#endif
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp b/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp
+index f10905ff0..a903b2245 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp
+@@ -10,6 +10,7 @@
+ 
+ #include "qffmpeg_p.h"
+ #include "qffmpegcodecstorage_p.h"
++#include "qffmpegdepth_p.h"
+ #include "qffmpegmediaintegration_p.h"
+ #include "qffmpegvideobuffer_p.h"
+ #include "qscopedvaluerollback.h"
+@@ -355,6 +356,15 @@ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *fmt)
+         }
+ 
+         auto format = formatAndScore.value;
++        // No hardware decoder outputs the depth auxiliary layer of an H.265 stream: a stream that
++        // has one (the decoder says it, depth_available) is decoded in software when its depth
++        // pictures are asked for (depth_output). This comes first, so that no hardware frames are
++        // set up for nothing
++        if (format && decoderOutputsDepthLayer(codecContext)) {
++            qCInfo(qLHWAccel) << "Not decoding in hardware: the stream has a depth layer, which "
++                                 "only software decoding outputs";
++            format = std::nullopt;
++        }
+         if (format && !hwFramesKeepDepth(codecContext, *format))
+             format = std::nullopt;
+         if (format) {
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegplaybackengine.cpp b/src/plugins/multimedia/ffmpeg/qffmpegplaybackengine.cpp
+index bec87ee53..320fa3b9a 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegplaybackengine.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpegplaybackengine.cpp
+@@ -205,7 +205,8 @@ PlaybackEngine::createRenderer(QPlatformMediaPlayer::TrackType trackType)
+     switch (trackType) {
+     case QPlatformMediaPlayer::VideoStream:
+         return m_videoSink ? createPlaybackEngineObject<VideoRenderer>(
+-                       m_timeController, m_videoSink, m_media.transformation(), m_media.stereoMode())
++                                     m_timeController, m_videoSink, m_media.transformation(),
++                                     m_media.stereoMode(), m_media.streamDepth())
+                            : RendererPtr{ {}, {} };
+     case QPlatformMediaPlayer::AudioStream:
+         return m_audioOutput || m_audioBufferOutput
+@@ -376,8 +377,10 @@ void PlaybackEngine::createStreamAndRenderer(QPlatformMediaPlayer::TrackType tra
+                 &PlaybackEngine::onRendererFinished);
+     }
+ 
+-    auto &stream = m_streams[trackType] =
+-            createPlaybackEngineObject<StreamDecoder>(*codecContext, renderer->seekPosition());
++    const auto depthContext =
++            trackType == QPlatformMediaPlayer::VideoStream ? depthCodecContext() : std::nullopt;
++    auto &stream = m_streams[trackType] = createPlaybackEngineObject<StreamDecoder>(
++            *codecContext, renderer->seekPosition(), depthContext);
+ 
+     Q_ASSERT(trackType == stream->trackType());
+ 
+@@ -414,6 +417,25 @@ std::optional<CodecContext> PlaybackEngine::codecContextForTrack(QPlatformMediaP
+     return codecContext;
+ }
+ 
++std::optional<CodecContext> PlaybackEngine::depthCodecContext()
++{
++    const int streamIndex = m_media.depthStreamIndex();
++    if (streamIndex < 0)
++        return {};
++    if (!m_depthCodecContext) {
++        auto maybeCodecContext = CodecContext::create(m_media.avContext()->streams[streamIndex],
++                                                      m_media.avContext(), m_options);
++        if (!maybeCodecContext) {
++            // the video is shown without its depth maps
++            qCWarning(qLcPlaybackEngine) << "Cannot create the codec of the depth stream"
++                                         << streamIndex << maybeCodecContext.error();
++            return {};
++        }
++        m_depthCodecContext = maybeCodecContext.value();
++    }
++    return m_depthCodecContext;
++}
++
+ bool PlaybackEngine::hasMediaStream() const
+ {
+     return m_renderers[QPlatformMediaPlayer::AudioStream]
+@@ -436,9 +458,13 @@ void PlaybackEngine::createDemuxer()
+ 
+     const TrackPosition currentLoopPosUs = currentPosition(false);
+ 
++    const int depthStreamIndex =
++            streamIndexes[QPlatformMediaPlayer::VideoStream] >= 0 && m_depthCodecContext
++            ? int(m_depthCodecContext->streamIndex())
++            : -1;
+     m_demuxer = createPlaybackEngineObject<Demuxer>(m_media.avContext(), currentLoopPosUs,
+                                                     m_seekPending, m_currentLoopOffset,
+-                                                    streamIndexes, m_loops);
++                                                    streamIndexes, m_loops, depthStreamIndex);
+ 
+     m_seekPending = false;
+ 
+@@ -586,6 +612,8 @@ void PlaybackEngine::setActiveTrack(QPlatformMediaPlayer::TrackType trackType, i
+         return;
+ 
+     m_codecContexts[trackType] = {};
++    if (trackType == QPlatformMediaPlayer::VideoStream)
++        m_depthCodecContext = {};
+ 
+     m_renderers[trackType].reset();
+     m_streams = defaultObjectsArray<decltype(m_streams)>();
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegplaybackengine_p.h b/src/plugins/multimedia/ffmpeg/qffmpegplaybackengine_p.h
+index 1842f4c94..c0beb67f1 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegplaybackengine_p.h
++++ b/src/plugins/multimedia/ffmpeg/qffmpegplaybackengine_p.h
+@@ -192,6 +192,7 @@ private:
+     static QString objectThreadName(const PlaybackEngineObject &object);
+ 
+     std::optional<CodecContext> codecContextForTrack(QPlatformMediaPlayer::TrackType trackType);
++    std::optional<CodecContext> depthCodecContext();
+ 
+     bool hasMediaStream() const;
+ 
+@@ -234,6 +235,8 @@ private:
+     bool m_seekPending = false;
+ 
+     std::array<std::optional<CodecContext>, QPlatformMediaPlayer::NTrackTypes> m_codecContexts;
++    // the decoder of the depth maps of the video's pictures, in a stream of their own
++    std::optional<CodecContext> m_depthCodecContext;
+     int m_loops = QMediaPlayer::Once;
+     LoopOffset m_currentLoopOffset;
+ 

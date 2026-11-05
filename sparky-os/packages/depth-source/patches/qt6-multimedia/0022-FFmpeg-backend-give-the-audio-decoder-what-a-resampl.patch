@@ -1,0 +1,128 @@
+From e428f607712455387108ddf9f28e283d8a2fb90f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 14:47:10 -0300
+Subject: [PATCH 22/24] FFmpeg backend: give the audio decoder what a resampler
+ holds back
+
+QAudioDecoder decodes one frame a step and hands out one buffer a step,
+resampled to the format asked for. A resampler with a delay, as the SoX
+engine of libswresample is (QT_FFMPEG_AUDIO_RESAMPLER=soxr, the default
+of Sparky Stereo OS), gives no samples for the first frames and keeps the
+last ones until it is told the input has ended:
+
+- a step that resampled to nothing handed out an empty buffer, which is
+  not a buffer: no buffer was ready, nothing was read, and the decoder
+  waited for a read that never came (tst_qaudiodecoderbackend's
+  deviceTest, 44.1 kHz to 8 kHz, got no buffer at all);
+- the samples it held at the end were dropped.
+
+Decode the next frame at once when a frame gives no samples yet, and at
+the end of the stream flush the resampler into a last buffer. The decoder
+reads that buffer after the stream has ended, when the renderer is gone,
+so asking it for the next step then does nothing.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+(cherry picked from commit a9c0cff855caceee7db6da5c3763b38b30c6b4b2)
+---
+ .../multimedia/ffmpeg/qffmpegaudiodecoder.cpp | 25 ++++++++++++++++---
+ .../multimedia/ffmpeg/qffmpegresampler.cpp    | 23 +++++++++++++++++
+ .../multimedia/ffmpeg/qffmpegresampler_p.h    |  4 +++
+ 3 files changed, 48 insertions(+), 4 deletions(-)
+
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegaudiodecoder.cpp b/src/plugins/multimedia/ffmpeg/qffmpegaudiodecoder.cpp
+index 1da1a9aee..5028b8e78 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegaudiodecoder.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpegaudiodecoder.cpp
+@@ -27,14 +27,28 @@ public:
+ 
+     RenderingResult renderInternal(Frame frame) override
+     {
+-        if (!frame.isValid())
++        if (!frame.isValid()) {
++            // the end of the stream: what the resampler still holds back
++            if (m_resampler) {
++                QAudioBuffer tail = m_resampler->flush();
++                if (tail.frameCount() > 0)
++                    emit newAudioBuffer(tail);
++            }
+             return {};
++        }
+ 
+         if (!m_resampler)
+             m_resampler = QFFmpegResampler::createFromCodecContext(frame.codecContext(), m_format);
+ 
+-        if (m_resampler)
+-            emit newAudioBuffer(m_resampler->resample(frame.avFrame()));
++        if (m_resampler) {
++            QAudioBuffer buffer = m_resampler->resample(frame.avFrame());
++            if (buffer.frameCount() > 0)
++                emit newAudioBuffer(buffer);
++            else
++                // a resampler with a delay (the SoX one) gave nothing for this frame yet: no
++                // buffer is read for it, so the next frame is decoded at once
++                doForceStep();
++        }
+ 
+         return {};
+     }
+@@ -72,7 +86,10 @@ public:
+ 
+     void nextBuffer()
+     {
+-        Q_ASSERT(m_audioRenderer);
++        // the renderer is gone once the stream has ended (the last buffer, which the resampler
++        // held back, is read after it)
++        if (!m_audioRenderer)
++            return;
+         Q_ASSERT(!m_audioRenderer->isStepForced());
+ 
+         m_audioRenderer->doForceStep();
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegresampler.cpp b/src/plugins/multimedia/ffmpeg/qffmpegresampler.cpp
+index e582c0371..242ccf192 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegresampler.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpegresampler.cpp
+@@ -117,6 +117,29 @@ QAudioBuffer QFFmpegResampler::resample(const uint8_t **inputData, int inputSamp
+     return QAudioBuffer(samples, m_outputFormat, startTime);
+ }
+ 
++QAudioBuffer QFFmpegResampler::flush()
++{
++    const int maxOutSamples = swr_get_out_samples(m_resampler.get(), 0);
++    if (maxOutSamples <= 0)
++        return {};
++
++    QByteArray samples(m_outputFormat.bytesForFrames(maxOutSamples), Qt::Uninitialized);
++    auto *out = reinterpret_cast<uint8_t *>(samples.data());
++    const int outSamples = swr_convert(m_resampler.get(), &out, maxOutSamples, nullptr, 0);
++    if (outSamples <= 0)
++        return {};
++
++    samples.resize(m_outputFormat.bytesForFrames(outSamples));
++
++    const qint64 startTime = m_outputFormat.durationForFrames(m_samplesProcessed) + m_startTime;
++    m_samplesProcessed += outSamples;
++
++    qCDebug(qLcResamplerTrace).nospace()
++            << "Flushed output buffer. Time stamp: " << startTime << "us. Samples out: "
++            << outSamples;
++    return QAudioBuffer(samples, m_outputFormat, startTime);
++}
++
+ int QFFmpegResampler::adjustMaxOutSamples(int inputSamplesCount)
+ {
+     int maxOutSamples = swr_get_out_samples(m_resampler.get(), inputSamplesCount);
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegresampler_p.h b/src/plugins/multimedia/ffmpeg/qffmpegresampler_p.h
+index c4002dd03..90e23a670 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegresampler_p.h
++++ b/src/plugins/multimedia/ffmpeg/qffmpegresampler_p.h
+@@ -51,6 +51,10 @@ public:
+ 
+     QAudioBuffer resample(const AVFrame *frame);
+ 
++    // The samples the resampler still holds back at the end of the input (a resampler with a
++    // delay, such as the SoX one, gives them only when told the input has ended)
++    QAudioBuffer flush();
++
+     qint64 samplesProcessed() const { return m_samplesProcessed; }
+     void setSampleCompensation(qint32 delta, quint32 distance);
+     qint32 activeSampleCompensationDelta() const;

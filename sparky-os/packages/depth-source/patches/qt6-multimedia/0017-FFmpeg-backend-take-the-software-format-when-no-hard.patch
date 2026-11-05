@@ -1,0 +1,40 @@
+From ca5201da1425aefa96a390534819da8791259f58 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 13:17:20 -0300
+Subject: [PATCH 17/24] FFmpeg backend: take the software format when no
+ hardware format is chosen
+
+getFormat() falls back to the first format FFmpeg suggests when neither a
+hardware format nor a format Qt shows without conversion is taken. The
+hardware formats come first in that list, and FFmpeg asks again only when
+the setup of the format given fails, so the fallback picked a hardware format
+after all wherever one matched the device context: a stream that
+hwFramesKeepDepth() turned away from NVDEC was decoded on NVDEC anyway.
+
+Take the first software format of the list, the native one.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+(cherry picked from commit f6a6e002e23bb451d952cd4051ce36cf71a41a60)
+---
+ src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp b/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp
+index 5cfb9401b..f10905ff0 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpeghwaccel.cpp
+@@ -371,7 +371,13 @@ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *fmt)
+         return *noConversionFormat;
+     }
+ 
+-    const AVPixelFormat format = !suggestedFormats.empty() ? suggestedFormats[0] : AV_PIX_FMT_NONE;
++    // The native format is the software one: the hardware formats come first in the list, and one
++    // of the device context's type would be set up after all, since FFmpeg asks again only when
++    // the setup of the format given fails
++    const auto softwareFormat = findIf(suggestedFormats, &isSwPixelFormat);
++    const AVPixelFormat format = softwareFormat ? *softwareFormat
++            : !suggestedFormats.empty()         ? suggestedFormats[0]
++                                                : AV_PIX_FMT_NONE;
+     qCDebug(qLHWAccel) << "Selected format with conversion" << format;
+ 
+     // take the native format, this will involve one additional format conversion on the CPU side

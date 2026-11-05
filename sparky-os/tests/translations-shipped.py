@@ -40,6 +40,7 @@ TRANSLATIONS = Path(__file__).resolve().parent.parent / 'translations'
 SOURCES = {
     'command-not-found-messages.po.patch': ('command-not-found', 'command-not-found'),
     'discover-backend-split.po.patch': ('plasma-discover', None),
+    'dragon-3d-video.po.patch': ('dragon', None),
     'kalgebra-stereo3d.po.patch': ('kalgebra', None),
     'kalzium-stereo3d.po.patch': ('kalzium', None),
     'kf6-kfilemetadata-stereo3d.po.patch': ('kf6-kfilemetadata', None),

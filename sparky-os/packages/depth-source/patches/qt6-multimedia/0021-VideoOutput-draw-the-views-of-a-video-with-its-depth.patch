@@ -1,0 +1,1850 @@
+From ffe1787ea58214d1a7c4d8c9d6369c899f60ca69 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 13:22:04 -0300
+Subject: [PATCH 21/24] VideoOutput: draw the views of a video with its depth
+ map
+
+A frame in a depth layout holds a picture with its depth map (2D plus
+depth): the FFmpeg backend says so in the frame's StereoMode, and packs a
+depth layer or depth stream with its picture. VideoOutput showed such a
+frame as it is stored, picture and depth map side by side.
+
+Draw the two views from it with libstereo-dibr (depth-image-based
+rendering, Sparky Stereo OS's stereo-layer 1.9.0) into a frame of the same
+pixel format, both views at the picture's size, the left eye first, and
+show that as full side by side 3D video: each eye its view on a 3D
+compositor, the eye chosen elsewhere (stereoView), the eyes swapped by
+stereoSwapEyes. Every layout of the depth marks is read
+(depthSideBySidePictureFirst and DepthFirst, depthTopBottomPictureFirst
+and DepthFirst, depthGraphicsTopBottom with graphics over the picture,
+depthBackgroundQuarters with the background filling what the picture
+uncovers), in planar, semi-planar and 32 bit RGB formats of 8 to 16 bits.
+
+What a depth sample means is, first to last: the user's Stereo3DDepth mark
+(stereoDepthMark), the user's meaning (stereoDepthMeaning with
+stereoDepthNear and stereoDepthFar), the stream's mark, then nearness. A
+malformed mark shows the picture alone (docs/depth-marks.md, rule 1), as
+does stereoDepth set to false; StereoFlat shows the frame as stored.
+Every choice of libstereo-dibr is a property: the picture as the left eye
+or the middle (stereoDepthView), forward, backward or layered warping
+(stereoDepthWarp), the fill of what the views uncover (stereoDepthFill,
+with stereoDepthRadius), the smoothing of the depth (stereoDepthSmooth,
+stereoDepthSigmaH, stereoDepthSigmaV), the range, the screen position and
+a shift (stereoDepthRange, stereoDepthZero, stereoDepthShift). A choice
+that changes redraws a paused frame. The depth layouts are stereoInput
+values too, for a video that does not say it.
+
+Without libstereo-dibr (pkg-config stereo-dibr >= 1.9.0) the picture is
+shown alone.
+
+The test draws frames of every layout with a disc nearer than a box nearer
+than the background, and measures the shift of each between the views
+against the parallax the convention gives; marks of the user and of the
+file, and malformed ones, are checked the same way.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+(cherry picked from commit a78b9b91f3b15a4c81a47bc1bbba4fa8b7bf78f0)
+---
+ src/multimediaquick/CMakeLists.txt            |   7 +
+ src/multimediaquick/qquickvideodepth.cpp      | 495 ++++++++++++++++
+ src/multimediaquick/qquickvideodepth_p.h      |  93 +++
+ src/multimediaquick/qquickvideooutput.cpp     | 543 +++++++++++++++++-
+ src/multimediaquick/qquickvideooutput_p.h     | 136 ++++-
+ src/multimediaquick/qquickvideostereo.cpp     |  16 +-
+ src/multimediaquick/qquickvideostereo_p.h     |   2 +
+ .../tst_qquickvideostereo.cpp                 | 219 +++++++
+ 8 files changed, 1488 insertions(+), 23 deletions(-)
+ create mode 100644 src/multimediaquick/qquickvideodepth.cpp
+ create mode 100644 src/multimediaquick/qquickvideodepth_p.h
+
+diff --git a/src/multimediaquick/CMakeLists.txt b/src/multimediaquick/CMakeLists.txt
+index 2f136c4f6..f97569ac3 100644
+--- a/src/multimediaquick/CMakeLists.txt
++++ b/src/multimediaquick/CMakeLists.txt
+@@ -28,6 +28,7 @@ qt_internal_add_qml_module(MultimediaQuickPrivate
+         qquicksoundeffect.cpp qquicksoundeffect_p.h
+         qquickvideooutput.cpp qquickvideooutput_p.h
+         qquickvideostereo.cpp qquickvideostereo_p.h
++        qquickvideodepth.cpp qquickvideodepth_p.h
+         qquickvideostereolayer.cpp qquickvideostereolayer_p.h
+         qquickvideostereopresenter.cpp qquickvideostereopresenter_p.h
+         qsgvideonode_p.cpp qsgvideonode_p.h
+@@ -60,6 +61,12 @@ if(PkgConfig_FOUND)
+     pkg_check_modules(STEREO_DECLARE QUIET IMPORTED_TARGET stereo-declare)
+     # the one rule for video that says nothing about being 3D, and for full or half views (Sparky Stereo OS)
+     pkg_check_modules(STEREO_POLICY QUIET IMPORTED_TARGET stereo-policy)
++    # the views of a picture with its depth map, drawn by libstereo-dibr (Sparky Stereo OS)
++    pkg_check_modules(STEREO_DIBR QUIET IMPORTED_TARGET stereo-dibr>=1.9.0)
++endif()
++if(STEREO_DIBR_FOUND)
++    target_compile_definitions(MultimediaQuickPrivate PRIVATE QT_MM_STEREO_DIBR)
++    target_link_libraries(MultimediaQuickPrivate PRIVATE PkgConfig::STEREO_DIBR)
+ endif()
+ if(STEREO_POLICY_FOUND)
+     target_compile_definitions(MultimediaQuickPrivate PRIVATE QT_MM_STEREO_POLICY)
+diff --git a/src/multimediaquick/qquickvideodepth.cpp b/src/multimediaquick/qquickvideodepth.cpp
+new file mode 100644
+index 000000000..b6e6ce8f8
+--- /dev/null
++++ b/src/multimediaquick/qquickvideodepth.cpp
+@@ -0,0 +1,495 @@
++// Copyright (C) 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++#include "qquickvideodepth_p.h"
++
++#include <QtMultimedia/private/qvideoframeconverter_p.h>
++#include <QtGui/qimage.h>
++
++#ifdef QT_MM_STEREO_DIBR
++#  include <stereo-dibr.h>
++#endif
++
++#include <cmath>
++#include <cstring>
++#include <vector>
++
++QT_BEGIN_NAMESPACE
++
++namespace QQuickVideoDepth {
++
++using Mode = QVideoFrameFormat::StereoMode;
++using PixelFormat = QVideoFrameFormat::PixelFormat;
++
++bool isDepthLayout(Mode mode)
++{
++    switch (mode) {
++    case Mode::DepthSideBySide:
++    case Mode::DepthTopBottom:
++    case Mode::DepthGraphics:
++    case Mode::DepthBackground:
++    case Mode::DepthSeparate:
++        return true;
++    default:
++        return false;
++    }
++}
++
++QRect pictureRect(Mode mode, bool depthFirst, QSize frameSize)
++{
++    const int w = frameSize.width(), h = frameSize.height();
++    switch (mode) {
++    case Mode::DepthSideBySide:
++        return depthFirst ? QRect(w / 2, 0, w / 2, h) : QRect(0, 0, w / 2, h);
++    case Mode::DepthTopBottom:
++        return depthFirst ? QRect(0, h / 2, w, h / 2) : QRect(0, 0, w, h / 2);
++    case Mode::DepthGraphics:
++        return QRect(0, 0, w, h / 4);
++    case Mode::DepthBackground:
++        return QRect(0, 0, w / 2, h / 2);
++    default:
++        return QRect(0, 0, w, h);
++    }
++}
++
++bool canDraw()
++{
++#ifdef QT_MM_STEREO_DIBR
++    return true;
++#else
++    return false;
++#endif
++}
++
++#ifdef QT_MM_STEREO_DIBR
++
++namespace {
++
++// Where a component of a pixel format is: the plane, its first sample and the samples from one
++// to the next in that plane, and the subsampling against the first component
++struct Component
++{
++    int plane = 0;
++    int offset = 0;
++    int step = 1;
++    int log2w = 0;
++    int log2h = 0;
++    enum Kind { Luma, Chroma, Alpha, Color } kind = Luma;
++};
++
++struct Layout
++{
++    int count = 0;
++    Component c[4];
++    int bytes = 1; // per sample
++    int bits = 8;
++    int depthComponent = 0; // the component the depth samples are read from
++    bool semiPlanar = false;
++};
++
++bool layoutOf(PixelFormat format, Layout *l)
++{
++    using C = Component;
++    auto yuv = [&](int bytes, int bits, int log2w, int log2h, int uPlane, int vPlane) {
++        *l = {};
++        l->count = 3;
++        l->bytes = bytes;
++        l->bits = bits;
++        l->c[0] = { 0, 0, 1, 0, 0, C::Luma };
++        l->c[1] = { uPlane, 0, 1, log2w, log2h, C::Chroma };
++        l->c[2] = { vPlane, 0, 1, log2w, log2h, C::Chroma };
++    };
++    auto semi = [&](int bytes, int bits, int uOffset, int vOffset) {
++        *l = {};
++        l->count = 3;
++        l->bytes = bytes;
++        l->bits = bits;
++        l->semiPlanar = true;
++        l->c[0] = { 0, 0, 1, 0, 0, C::Luma };
++        l->c[1] = { 1, uOffset, 2, 1, 1, C::Chroma };
++        l->c[2] = { 1, vOffset, 2, 1, 1, C::Chroma };
++    };
++    auto rgba = [&](int alphaOffset) {
++        *l = {};
++        l->count = 4;
++        l->depthComponent = 1;
++        for (int i = 0; i < 4; ++i)
++            l->c[i] = { 0, i, 4, 0, 0, i == alphaOffset ? C::Alpha : C::Color };
++        if (l->depthComponent == alphaOffset)
++            l->depthComponent = 2;
++    };
++    switch (format) {
++    case PixelFormat::Format_YUV420P:
++        yuv(1, 8, 1, 1, 1, 2);
++        return true;
++    case PixelFormat::Format_YV12:
++        yuv(1, 8, 1, 1, 2, 1);
++        return true;
++    case PixelFormat::Format_YUV422P:
++        yuv(1, 8, 1, 0, 1, 2);
++        return true;
++    case PixelFormat::Format_YUV444P:
++        yuv(1, 8, 0, 0, 1, 2);
++        return true;
++    case PixelFormat::Format_YUV420P10:
++        yuv(2, 10, 1, 1, 1, 2);
++        return true;
++    case PixelFormat::Format_YUV422P16:
++        yuv(2, 16, 1, 0, 1, 2);
++        return true;
++    case PixelFormat::Format_YUV444P16:
++        yuv(2, 16, 0, 0, 1, 2);
++        return true;
++    case PixelFormat::Format_NV12:
++        semi(1, 8, 0, 1);
++        return true;
++    case PixelFormat::Format_NV21:
++        semi(1, 8, 1, 0);
++        return true;
++    case PixelFormat::Format_P010:
++    case PixelFormat::Format_P016:
++        semi(2, 16, 0, 1);
++        return true;
++    case PixelFormat::Format_Y8:
++        *l = {};
++        l->count = 1;
++        l->c[0] = { 0, 0, 1, 0, 0, C::Luma };
++        return true;
++    case PixelFormat::Format_Y16:
++        *l = {};
++        l->count = 1;
++        l->bytes = 2;
++        l->bits = 16;
++        l->c[0] = { 0, 0, 1, 0, 0, C::Luma };
++        return true;
++    // 32 bit RGB, in the byte order of memory (little endian for the 0xAARRGGBB formats)
++    case PixelFormat::Format_ARGB8888:
++    case PixelFormat::Format_ARGB8888_Premultiplied:
++    case PixelFormat::Format_XRGB8888:
++        rgba(3);
++        return true;
++    case PixelFormat::Format_BGRA8888:
++    case PixelFormat::Format_BGRA8888_Premultiplied:
++    case PixelFormat::Format_BGRX8888:
++        rgba(0);
++        return true;
++    case PixelFormat::Format_ABGR8888:
++    case PixelFormat::Format_XBGR8888:
++    case PixelFormat::Format_RGBA8888:
++    case PixelFormat::Format_RGBX8888:
++        rgba(3);
++        return true;
++    default:
++        return false;
++    }
++}
++
++// A component of a mapped frame as a plane of its own, the samples copied out (a semi-planar or
++// interleaved component) or used in place
++struct PlaneData
++{
++    std::vector<uint8_t> copy;
++    uint8_t *data = nullptr;
++    ptrdiff_t stride = 0;
++};
++
++PlaneData componentPlane(uchar *const bits[4], const int strides[4], const Layout &l, int c, int w,
++                         int h)
++{
++    const Component &comp = l.c[c];
++    const int cw = (w + (1 << comp.log2w) - 1) >> comp.log2w;
++    const int ch = (h + (1 << comp.log2h) - 1) >> comp.log2h;
++    PlaneData p;
++    if (comp.step == 1) {
++        p.data = bits[comp.plane] + comp.offset * l.bytes;
++        p.stride = strides[comp.plane];
++        return p;
++    }
++    p.copy.resize(size_t(cw) * ch * l.bytes);
++    p.stride = ptrdiff_t(cw) * l.bytes;
++    for (int y = 0; y < ch; ++y) {
++        const uint8_t *src =
++                bits[comp.plane] + ptrdiff_t(y) * strides[comp.plane] + comp.offset * l.bytes;
++        uint8_t *dst = p.copy.data() + ptrdiff_t(y) * p.stride;
++        for (int x = 0; x < cw; ++x)
++            std::memcpy(dst + x * l.bytes, src + ptrdiff_t(x) * comp.step * l.bytes, l.bytes);
++    }
++    p.data = p.copy.data();
++    return p;
++}
++
++void putComponent(uchar *const bits[4], const int strides[4], const Layout &l, int c, int w, int h,
++                  const PlaneData &p)
++{
++    const Component &comp = l.c[c];
++    if (comp.step == 1 && p.copy.empty())
++        return; // drawn in place
++    const int cw = (w + (1 << comp.log2w) - 1) >> comp.log2w;
++    const int ch = (h + (1 << comp.log2h) - 1) >> comp.log2h;
++    for (int y = 0; y < ch; ++y) {
++        const uint8_t *src = p.data + ptrdiff_t(y) * p.stride;
++        uint8_t *dst =
++                bits[comp.plane] + ptrdiff_t(y) * strides[comp.plane] + comp.offset * l.bytes;
++        for (int x = 0; x < cw; ++x)
++            std::memcpy(dst + ptrdiff_t(x) * comp.step * l.bytes, src + x * l.bytes, l.bytes);
++    }
++}
++
++// A frame's components as a stereo_dibr_picture, the plane order of the components
++void fillPicture(stereo_dibr_picture *pic, std::vector<PlaneData> &planes, const Layout &l, int w,
++                 int h, bool fullRange)
++{
++    std::memset(pic, 0, sizeof(*pic));
++    pic->width = w;
++    pic->height = h;
++    pic->nb_planes = l.count;
++    const unsigned max = (1u << l.bits) - 1;
++    for (int c = 0; c < l.count; ++c) {
++        stereo_dibr_plane &pl = pic->plane[c];
++        pl.data = planes[c].data;
++        pl.stride = planes[c].stride;
++        pl.bytes = l.bytes;
++        pl.log2_w = l.c[c].log2w;
++        pl.log2_h = l.c[c].log2h;
++        // a hole of the none fill is black: limited range black and neutral chroma for YUV,
++        // zero for RGB, opaque alpha
++        switch (l.c[c].kind) {
++        case Component::Luma:
++            pl.hole = fullRange ? 0 : 16u << (l.bits - 8);
++            break;
++        case Component::Chroma:
++            pl.hole = 1u << (l.bits - 1);
++            break;
++        case Component::Alpha:
++            pl.hole = max;
++            break;
++        case Component::Color:
++            pl.hole = 0;
++            break;
++        }
++    }
++}
++
++int packingOf(Mode mode)
++{
++    switch (mode) {
++    case Mode::DepthSideBySide:
++        return STEREO_DIBR_PACKING_SIDE_BY_SIDE;
++    case Mode::DepthTopBottom:
++        return STEREO_DIBR_PACKING_TOP_BOTTOM;
++    case Mode::DepthGraphics:
++        return STEREO_DIBR_PACKING_GRAPHICS;
++    case Mode::DepthBackground:
++        return STEREO_DIBR_PACKING_BACKGROUND;
++    default:
++        return -1;
++    }
++}
++
++} // namespace
++
++struct Renderer::Private
++{
++    stereo_dibr *dibr = nullptr;
++    std::vector<float> table, layerTable;
++    std::vector<uint16_t> lut;
++    ~Private() { stereo_dibr_free(dibr); }
++
++    // 1: read, 0: malformed (one picture), -1: error
++    int readMark(const QString &text, int bits, stereo_depth_convention *c)
++    {
++        uint16_t model[65];
++        int nbModel = 0;
++        const QByteArray mark = text.toUtf8();
++        if (stereo_depth_read_mark(mark.constData(), c, model, &nbModel) < 0)
++            return 0;
++        c->bits = bits;
++        if (nbModel) {
++            lut.resize(size_t(1) << bits);
++            if (stereo_depth_nonlinear_lut(model, nbModel, bits, lut.data()) < 0)
++                return -1;
++            c->lut = lut.data();
++        }
++        return 1;
++    }
++
++    // What a depth sample means: the user's mark, else the user's meaning, else the stream's mark,
++    // else nearness; over the user's range, screen and shift
++    int convention(const QString &fileMark, const Options &o, int bits, stereo_depth_convention *c)
++    {
++        std::memset(c, 0, sizeof(*c));
++        c->bits = bits;
++        c->zero = o.zero;
++        c->range = o.range;
++        c->shift = o.shift;
++        c->kind = o.meaning < 0 ? STEREO_DEPTH_NEARNESS : o.meaning;
++        if (o.zNear > 0 && o.zFar > 0) {
++            c->z_present = 1;
++            c->z_near = o.zNear;
++            c->z_far = o.zFar;
++        }
++        if (!o.mark.isEmpty())
++            return readMark(o.mark, bits, c);
++        if (o.meaning >= 0)
++            return 1;
++        if (!fileMark.isEmpty())
++            return readMark(fileMark, bits, c);
++        return 1;
++    }
++};
++
++Renderer::Renderer() : d(std::make_unique<Private>())
++{
++    d->dibr = stereo_dibr_alloc();
++}
++
++Renderer::~Renderer() = default;
++
++Renderer::Result Renderer::draw(const QVideoFrame &input, Mode mode, bool depthFirst,
++                                const QString &fileMark, const Options &options, QVideoFrame *out)
++{
++    const int packing = packingOf(mode);
++    if (packing < 0 || !d->dibr || !input.isValid())
++        return Result::Failed;
++
++    QVideoFrame frame = input;
++    Layout l;
++    if (!layoutOf(frame.pixelFormat(), &l)) {
++        // packed YUV and the formats of hardware textures: drawn from their 8 bit RGBA image
++        const QImage image = qImageFromVideoFrame(frame, QVideoFrameImageDepth::Bits8);
++        if (image.isNull())
++            return Result::Failed;
++        frame = QVideoFrame(image.convertToFormat(QImage::Format_RGBA8888));
++        if (!layoutOf(frame.pixelFormat(), &l))
++            return Result::Failed;
++    }
++    if (!frame.map(QVideoFrame::ReadOnly))
++        return Result::Failed;
++
++    const int w = frame.width(), h = frame.height();
++    const bool fullRange = frame.surfaceFormat().colorRange() == QVideoFrameFormat::ColorRange_Full
++            || l.c[0].kind == Component::Color;
++    uchar *inBits[4] = {};
++    int inStrides[4] = {};
++    for (int p = 0; p < frame.planeCount() && p < 4; ++p) {
++        inBits[p] = const_cast<uchar *>(frame.bits(p));
++        inStrides[p] = frame.bytesPerLine(p);
++    }
++    std::vector<PlaneData> inPlanes;
++    for (int c = 0; c < l.count; ++c)
++        inPlanes.push_back(componentPlane(inBits, inStrides, l, c, w, h));
++    stereo_dibr_picture whole;
++    fillPicture(&whole, inPlanes, l, w, h, fullRange);
++    // the depth samples are the first plane of a picture of the depth component alone
++    stereo_dibr_picture depthWhole = whole;
++    depthWhole.nb_planes = 1;
++    depthWhole.plane[0] = whole.plane[l.depthComponent];
++
++    stereo_dibr_parts parts, depthParts;
++    if (stereo_dibr_unpack(&whole, packing, depthFirst, 0, &parts) < 0
++        || stereo_dibr_unpack(&depthWhole, packing, depthFirst, 0, &depthParts) < 0) {
++        frame.unmap();
++        return Result::Failed;
++    }
++    const int vw = parts.picture.width, vh = parts.picture.height;
++
++    stereo_depth_convention c;
++    const int known = d->convention(fileMark, options, l.bits, &c);
++    if (known <= 0) {
++        frame.unmap();
++        return known == 0 ? Result::PictureAlone : Result::Failed;
++    }
++    const size_t tableSize = size_t(1) << l.bits;
++    d->table.resize(tableSize);
++    if (stereo_depth_parallax_table(&c, vw, d->table.data()) < 0) {
++        frame.unmap();
++        return Result::Failed;
++    }
++
++    // the output: the same pixel format and color, twice the picture's width
++    QVideoFrameFormat format = frame.surfaceFormat();
++    format.setFrameSize(QSize(2 * vw, vh));
++    format.setViewport(QRect(0, 0, 2 * vw, vh));
++    format.setStereoMode(Mode::SideBySide);
++    format.setStereoFlags({});
++    format.setStereoDepthMark({});
++    QVideoFrame result(format);
++    if (!result.map(QVideoFrame::WriteOnly)) {
++        frame.unmap();
++        return Result::Failed;
++    }
++    uchar *outBits[4] = {};
++    int outStrides[4] = {};
++    for (int p = 0; p < result.planeCount() && p < 4; ++p) {
++        outBits[p] = result.bits(p);
++        outStrides[p] = result.bytesPerLine(p);
++    }
++    std::vector<PlaneData> outPlanes;
++    for (int cc = 0; cc < l.count; ++cc)
++        outPlanes.push_back(componentPlane(outBits, outStrides, l, cc, 2 * vw, vh));
++    stereo_dibr_picture outWhole;
++    fillPicture(&outWhole, outPlanes, l, 2 * vw, vh, fullRange);
++    // the left and right views: the halves of the output
++    stereo_dibr_picture left = outWhole, right = outWhole;
++    left.width = right.width = vw;
++    for (int cc = 0; cc < l.count; ++cc) {
++        const int cx = (vw + (1 << l.c[cc].log2w) - 1) >> l.c[cc].log2w;
++        right.plane[cc].data =
++                static_cast<uint8_t *>(outWhole.plane[cc].data) + ptrdiff_t(cx) * l.bytes;
++    }
++
++    stereo_dibr_params prm;
++    stereo_dibr_params_default(&prm);
++    prm.view = options.view;
++    prm.warp = options.warp;
++    prm.fill = options.fill;
++    prm.smooth = options.smooth;
++    prm.sigma_h = options.sigmaH;
++    prm.sigma_v = options.sigmaV;
++    prm.radius = options.radius;
++    int r;
++    if (parts.layer.width) {
++        // a layer's 0 is nothing there (docs/depth-marks.md)
++        d->layerTable = d->table;
++        d->layerTable[0] = NAN;
++        r = stereo_dibr_render_layer(d->dibr, &prm, d->table.data(), int(tableSize), &parts.picture,
++                                     &depthParts.depth, parts.layer_role, &parts.layer,
++                                     d->layerTable.data(), int(tableSize), &depthParts.layer_depth,
++                                     &left, &right);
++    } else {
++        r = stereo_dibr_render(d->dibr, &prm, d->table.data(), int(tableSize), &parts.picture,
++                               &depthParts.depth, &left, &right);
++    }
++    for (int cc = 0; cc < l.count; ++cc)
++        putComponent(outBits, outStrides, l, cc, 2 * vw, vh, outPlanes[cc]);
++    result.unmap();
++    frame.unmap();
++    if (r < 0)
++        return Result::Failed;
++    result.setStartTime(input.startTime());
++    result.setEndTime(input.endTime());
++    *out = result;
++    return Result::Drawn;
++}
++
++#else
++
++struct Renderer::Private
++{
++};
++
++Renderer::Renderer() : d(std::make_unique<Private>()) { }
++
++Renderer::~Renderer() = default;
++
++Renderer::Result Renderer::draw(const QVideoFrame &, Mode, bool, const QString &, const Options &,
++                                QVideoFrame *)
++{
++    return Result::Failed;
++}
++
++#endif
++
++} // namespace QQuickVideoDepth
++
++QT_END_NAMESPACE
+diff --git a/src/multimediaquick/qquickvideodepth_p.h b/src/multimediaquick/qquickvideodepth_p.h
+new file mode 100644
+index 000000000..7de734715
+--- /dev/null
++++ b/src/multimediaquick/qquickvideodepth_p.h
+@@ -0,0 +1,93 @@
++// Copyright (C) 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++#ifndef QQUICKVIDEODEPTH_P_H
++#define QQUICKVIDEODEPTH_P_H
++
++//
++//  W A R N I N G
++//  -------------
++//
++// This file is not part of the Qt API.  It exists purely as an
++// implementation detail.  This header file may change from version to
++// version without notice, or even be removed.
++//
++// We mean it.
++//
++
++#include <QtCore/qrect.h>
++#include <QtCore/qstring.h>
++#include <QtMultimedia/qvideoframe.h>
++#include <QtMultimedia/qvideoframeformat.h>
++#include <QtMultimediaQuick/private/qtmultimediaquickglobal_p.h>
++
++#include <memory>
++
++QT_BEGIN_NAMESPACE
++
++// Depth as a 3D source: the two views of a picture with its depth map (2D plus depth), drawn
++// with libstereo-dibr (depth-image-based rendering, Sparky Stereo OS's stereo-layer) into a full
++// side by side frame, both views at the picture's size, the left eye first. The layouts and the
++// meaning of the samples are the depth marks (stereo-layer, docs/depth-marks.md).
++namespace QQuickVideoDepth {
++
++// Every choice of how the views are drawn, with libstereo-dibr's defaults
++struct Options
++{
++    bool enabled = true;
++    int view = 0;   // 0: the picture is the left eye, 1: the middle
++    int warp = 0;   // 0 forward, 1 backward, 2 layered
++    int fill = 0;   // 0 background extension, 1 depth-aided, 2 Telea, 3 none
++    int smooth = 0; // 0 off, 1 asymmetric Gaussian
++    double sigmaH = 10, sigmaV = 30; // the Gaussian's, pixels of a view 1920 wide
++    int radius = 5;
++    double range = 58; // the largest parallax either side of the screen, pixels of a view 1920 wide
++    double zero = 0.5; // where the screen is, from the farthest samples (0) to the nearest (1)
++    double shift = 0;  // a parallax added to all, pixels of a view 1920 wide
++    // -1: what the video says; else a kind of libstereo-dibr (0 nearness .. 9 metric)
++    int meaning = -1;
++    double zNear = 0, zFar = 0; // the near and far distances, when both are set
++    QString mark;      // a whole Stereo3DDepth mark, before the meaning and the video's
++};
++
++// Whether the mode is one of the depth layouts
++Q_MULTIMEDIAQUICK_EXPORT bool isDepthLayout(QVideoFrameFormat::StereoMode mode);
++
++// The rectangle of the picture in a frame of the depth layout (the picture shown alone)
++Q_MULTIMEDIAQUICK_EXPORT QRect pictureRect(QVideoFrameFormat::StereoMode mode, bool depthFirst,
++                                           QSize frameSize);
++
++// Whether libstereo-dibr is there to draw the views
++Q_MULTIMEDIAQUICK_EXPORT bool canDraw();
++
++class Q_MULTIMEDIAQUICK_EXPORT Renderer
++{
++public:
++    enum class Result {
++        // the views, full side by side
++        Drawn,
++        // a malformed Stereo3DDepth mark means one picture (docs/depth-marks.md, rule 1)
++        PictureAlone,
++        // a frame that cannot be read, or no libstereo-dibr
++        Failed
++    };
++
++    Renderer();
++    ~Renderer();
++
++    // Draws the views of the frame, in the depth layout mode (DepthFirst in depthFirst), into a
++    // frame of the same pixel format and color, twice the picture's width, marked
++    // StereoMode::SideBySide. fileMark is what the stream says a sample means.
++    Result draw(const QVideoFrame &frame, QVideoFrameFormat::StereoMode mode, bool depthFirst,
++                const QString &fileMark, const Options &options, QVideoFrame *out);
++
++private:
++    struct Private;
++    std::unique_ptr<Private> d;
++};
++
++} // namespace QQuickVideoDepth
++
++QT_END_NAMESPACE
++
++#endif
+diff --git a/src/multimediaquick/qquickvideooutput.cpp b/src/multimediaquick/qquickvideooutput.cpp
+index 717eb4c13..76d77f9ef 100644
+--- a/src/multimediaquick/qquickvideooutput.cpp
++++ b/src/multimediaquick/qquickvideooutput.cpp
+@@ -18,6 +18,7 @@
+ 
+ #include <QtMultimediaQuick/private/qsgvideonode_p.h>
+ #include <QtMultimediaQuick/private/qquickvideostereo_p.h>
++#include <QtMultimediaQuick/private/qquickvideodepth_p.h>
+ #ifdef QT_MM_STEREO_POLICY
+ #include <stereo-policy.h>
+ #endif
+@@ -68,6 +69,27 @@ bool packingFromInput(QQuickVideoOutput::StereoInput input, QQuickVideoStereo::P
+     case QQuickVideoOutput::StereoAnaglyphCyanRed: *packing = { StereoMode::AnaglyphCyanRed, false, Size::ByShape }; return true;
+     case QQuickVideoOutput::StereoAnaglyphGreenMagenta: *packing = { StereoMode::AnaglyphGreenMagenta, false, Size::ByShape }; return true;
+     case QQuickVideoOutput::StereoNone: *packing = {}; return true;
++    case QQuickVideoOutput::StereoDepthSideBySide:
++        *packing = { StereoMode::DepthSideBySide, false, Size::ByShape, false, {} };
++        return true;
++    case QQuickVideoOutput::StereoDepthSideBySideDepthFirst:
++        *packing = { StereoMode::DepthSideBySide, false, Size::ByShape, true, {} };
++        return true;
++    case QQuickVideoOutput::StereoDepthTopBottom:
++        *packing = { StereoMode::DepthTopBottom, false, Size::ByShape, false, {} };
++        return true;
++    case QQuickVideoOutput::StereoDepthTopBottomDepthFirst:
++        *packing = { StereoMode::DepthTopBottom, false, Size::ByShape, true, {} };
++        return true;
++    case QQuickVideoOutput::StereoDepthGraphics:
++        *packing = { StereoMode::DepthGraphics, false, Size::ByShape, false, {} };
++        return true;
++    case QQuickVideoOutput::StereoDepthBackground:
++        *packing = { StereoMode::DepthBackground, false, Size::ByShape, false, {} };
++        return true;
++    case QQuickVideoOutput::StereoDepthSeparate:
++        *packing = { StereoMode::DepthSeparate, false, Size::ByShape, false, {} };
++        return true;
+     case QQuickVideoOutput::StereoAutomatic: break;
+     }
+     return false;
+@@ -86,6 +108,18 @@ QQuickVideoOutput::StereoInput inputFromPacking(const QQuickVideoStereo::Packing
+     case StereoMode::FrameSequence: return QQuickVideoOutput::StereoFrameSequence;
+     case StereoMode::AnaglyphCyanRed: return QQuickVideoOutput::StereoAnaglyphCyanRed;
+     case StereoMode::AnaglyphGreenMagenta: return QQuickVideoOutput::StereoAnaglyphGreenMagenta;
++    case StereoMode::DepthSideBySide:
++        return packing.depthFirst ? QQuickVideoOutput::StereoDepthSideBySideDepthFirst
++                                  : QQuickVideoOutput::StereoDepthSideBySide;
++    case StereoMode::DepthTopBottom:
++        return packing.depthFirst ? QQuickVideoOutput::StereoDepthTopBottomDepthFirst
++                                  : QQuickVideoOutput::StereoDepthTopBottom;
++    case StereoMode::DepthGraphics:
++        return QQuickVideoOutput::StereoDepthGraphics;
++    case StereoMode::DepthBackground:
++        return QQuickVideoOutput::StereoDepthBackground;
++    case StereoMode::DepthSeparate:
++        return QQuickVideoOutput::StereoDepthSeparate;
+     case StereoMode::None: break;
+     }
+     return QQuickVideoOutput::StereoNone;
+@@ -511,10 +545,12 @@ void QQuickVideoOutput::clearOutput()
+     video that does not, or says it wrong:
+ 
+     \value StereoAutomatic What the stream says.
+-    \value StereoSideBySide Side by side, the first view on the left; "half" or "full" by the shape of the frame.
++    \value StereoSideBySide Side by side, the first view on the left; "half" or "full" by the shape
++           of the frame.
+     \value StereoSideBySideHalf Side by side, each view squeezed to half the width of the frame.
+     \value StereoSideBySideFull Side by side, each view as wide as half the frame.
+-    \value StereoTopBottom Top and bottom, the first view on top; "half" or "full" by the shape of the frame.
++    \value StereoTopBottom Top and bottom, the first view on top; "half" or "full" by the shape of
++           the frame.
+     \value StereoTopBottomHalf Top and bottom, each view squeezed to half the height.
+     \value StereoTopBottomFull Top and bottom, each view as high as half the frame.
+     \value StereoSideBySideQuincunx Side by side with quincunx sampling.
+@@ -523,12 +559,32 @@ void QQuickVideoOutput::clearOutput()
+     \value StereoCheckerboard The views in a checkerboard, the first at the top left pixel.
+     \value StereoFrameSequence The frames are the views in turn.
+     \value StereoAnaglyphCyanRed Both views in the colors, red and cyan: shown as they are.
+-    \value StereoAnaglyphGreenMagenta Both views in the colors, green and magenta: shown as they are.
++    \value StereoAnaglyphGreenMagenta Both views in the colors, green and magenta: shown as they
++           are.
+     \value StereoNone The video is not 3D, whatever the stream says.
++    \value StereoDepthSideBySide A picture and its depth map next to each other, the picture on
++           the left: the views are drawn from the depth (\l stereoDepth).
++    \value StereoDepthSideBySideDepthFirst A depth map and its picture next to each other, the
++           depth map on the left.
++    \value StereoDepthTopBottom A picture above its depth map.
++    \value StereoDepthTopBottomDepthFirst A depth map above its picture.
++    \value StereoDepthGraphics Four rows from the top: the picture, its depth map, graphics and
++           their depth map, where a depth sample of 0 is no graphics.
++    \value StereoDepthBackground Four quarters: the picture and its depth map above a background
++           and its depth map, which fills what the picture uncovers.
++    \value StereoDepthSeparate The frame is a picture whose depth map is not in it: the picture
++           is shown alone.
+ 
+     The packings are those of H.264 Table D-8 and H.265 Table D.8, and of RFC 9559 section
+     5.1.4.1.28.3 (StereoMode 0 to 14). The first view is the left eye's, unless the stream says
+-    the right eye comes first; \l stereoSwapEyes turns the order round.
++    the right eye comes first; \l stereoSwapEyes turns the order round. The depth layouts are
++    the depth marks of Sparky Stereo OS (stereo-layer, docs/depth-marks.md): Stereo3DLayout
++    depthSideBySidePictureFirst, depthSideBySideDepthFirst, depthTopBottomPictureFirst,
++    depthTopBottomDepthFirst, depthGraphicsTopBottom (HDMI 1.4a, 3D_Structure 0101, "L + depth +
++    graphics + graphics-depth"), depthBackgroundQuarters and depthSeparate. The picture and its
++    depth map of a stream whose depth comes apart from its pictures, an H.265 depth auxiliary
++    layer (AuxId 2) or an ISO/IEC 23002-3 auxiliary video stream, come packed as
++    \c StereoDepthSideBySide.
+ */
+ QQuickVideoOutput::StereoInput QQuickVideoOutput::stereoInput() const
+ {
+@@ -578,7 +634,8 @@ void QQuickVideoOutput::setStereoSwapEyes(bool swap)
+     What is shown of a stereoscopic 3D video:
+ 
+     \value StereoBothEyes Each eye its view. Where the compositor takes stereo content, the
+-           views are in a surface of their own under the window's (\l stereoLayerActive), declared as
++           views are in a surface of their own under the window's (\l stereoLayerActive), declared
++           as
+            full side by side, and the window's own surface keeps what it draws over the video, the
+            same in both eyes. Elsewhere the left eye's view is shown.
+     \value StereoLeftEye The left eye's view only.
+@@ -671,8 +728,10 @@ void QQuickVideoOutput::setStereoScaling(StereoScaling scaling)
+     The depth of the surface the two views are shown in, when it is the surface of the layer.
+ 
+     \value StereoSurface8Bit 8 bits per channel.
+-    \value StereoSurface10Bit 10 bits per channel (the compositor takes it or the surface stays at 8).
+-    \value StereoSurfaceHalfFloat Half float, or 16 bits per channel where the compositor has no half float.
++    \value StereoSurface10Bit 10 bits per channel (the compositor takes it or the surface stays at
++           8).
++    \value StereoSurfaceHalfFloat Half float, or 16 bits per channel where the compositor has no
++           half float.
+     \value StereoSurfaceBySource The depth of the video: 8 bits for 8 bit video, 10 bits for
+            10 bit video, half float above.
+ 
+@@ -709,6 +768,384 @@ bool QQuickVideoOutput::stereoVideo() const
+     return m_stereo.video;
+ }
+ 
++/*!
++    \qmlproperty bool QtMultimedia::VideoOutput::stereoDepth
++
++    Whether the two views of a video that comes with its depth map are drawn from it
++    (depth-image-based rendering) and shown as any other 3D video. When \c false, the picture is
++    shown alone. The default value is \c true.
++*/
++bool QQuickVideoOutput::stereoDepth() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return m_stereo.depth.enabled;
++}
++
++void QQuickVideoOutput::setStereoDepth(bool value)
++{
++    {
++        QMutexLocker lock(&m_frameMutex);
++        if (m_stereo.depth.enabled == value)
++            return;
++        m_stereo.depth.enabled = value;
++    }
++    emit stereoDepthChanged();
++    reprocessFrame();
++}
++
++/*!
++    \qmlproperty enumeration QtMultimedia::VideoOutput::stereoDepthView
++
++    What the picture of a video with its depth map is: \list \li \c StereoDepthPictureLeft (the
++    default): the left eye's view; the right eye's is drawn \li \c StereoDepthPictureCenter: the
++    middle; both eyes' views are drawn \endlist
++*/
++QQuickVideoOutput::StereoDepthView QQuickVideoOutput::stereoDepthView() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return StereoDepthView(m_stereo.depth.view);
++}
++
++void QQuickVideoOutput::setStereoDepthView(StereoDepthView value)
++{
++    {
++        QMutexLocker lock(&m_frameMutex);
++        if (m_stereo.depth.view == int(value))
++            return;
++        m_stereo.depth.view = int(value);
++    }
++    emit stereoDepthViewChanged();
++    reprocessFrame();
++}
++
++/*!
++    \qmlproperty enumeration QtMultimedia::VideoOutput::stereoDepthWarp
++
++    How the picture is warped into a view: \c StereoDepthForward (the default) moves each pixel of
++    the picture to its place in the view, \c StereoDepthBackward warps the depth first and then
++    takes each pixel of the view from the picture, \c StereoDepthLayered draws the edges of near
++    objects as a layer over the rest.
++*/
++QQuickVideoOutput::StereoDepthWarp QQuickVideoOutput::stereoDepthWarp() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return StereoDepthWarp(m_stereo.depth.warp);
++}
++
++void QQuickVideoOutput::setStereoDepthWarp(StereoDepthWarp value)
++{
++    {
++        QMutexLocker lock(&m_frameMutex);
++        if (m_stereo.depth.warp == int(value))
++            return;
++        m_stereo.depth.warp = int(value);
++    }
++    emit stereoDepthWarpChanged();
++    reprocessFrame();
++}
++
++/*!
++    \qmlproperty enumeration QtMultimedia::VideoOutput::stereoDepthFill
++
++    How the areas each view sees behind near objects, which the picture does not show, are filled:
++    \c StereoDepthFillBackground (the default) extends the background, \c StereoDepthFillDepth takes
++    background pixels only, \c StereoDepthFillTelea inpaints from the background side (Telea),
++    \c StereoDepthFillNone leaves them black.
++*/
++QQuickVideoOutput::StereoDepthFill QQuickVideoOutput::stereoDepthFill() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return StereoDepthFill(m_stereo.depth.fill);
++}
++
++void QQuickVideoOutput::setStereoDepthFill(StereoDepthFill value)
++{
++    {
++        QMutexLocker lock(&m_frameMutex);
++        if (m_stereo.depth.fill == int(value))
++            return;
++        m_stereo.depth.fill = int(value);
++    }
++    emit stereoDepthFillChanged();
++    reprocessFrame();
++}
++
++/*!
++    \qmlproperty enumeration QtMultimedia::VideoOutput::stereoDepthSmooth
++
++    Whether the depth map is smoothed before the views are drawn: \c StereoDepthSmoothOff (the
++    default) or \c StereoDepthSmoothGaussian, an asymmetric Gaussian of stereoDepthSigmaH and
++    stereoDepthSigmaV.
++*/
++QQuickVideoOutput::StereoDepthSmooth QQuickVideoOutput::stereoDepthSmooth() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return StereoDepthSmooth(m_stereo.depth.smooth);
++}
++
++void QQuickVideoOutput::setStereoDepthSmooth(StereoDepthSmooth value)
++{
++    {
++        QMutexLocker lock(&m_frameMutex);
++        if (m_stereo.depth.smooth == int(value))
++            return;
++        m_stereo.depth.smooth = int(value);
++    }
++    emit stereoDepthSmoothChanged();
++    reprocessFrame();
++}
++
++/*!
++    \qmlproperty real QtMultimedia::VideoOutput::stereoDepthSigmaH
++
++    The horizontal standard deviation of the smoothing, in pixels of a view 1920 wide. The default
++    value is 10.
++*/
++qreal QQuickVideoOutput::stereoDepthSigmaH() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return m_stereo.depth.sigmaH;
++}
++
++void QQuickVideoOutput::setStereoDepthSigmaH(qreal value)
++{
++    {
++        QMutexLocker lock(&m_frameMutex);
++        if (m_stereo.depth.sigmaH == value)
++            return;
++        m_stereo.depth.sigmaH = value;
++    }
++    emit stereoDepthSigmaHChanged();
++    reprocessFrame();
++}
++
++/*!
++    \qmlproperty real QtMultimedia::VideoOutput::stereoDepthSigmaV
++
++    The vertical standard deviation of the smoothing, in pixels of a view 1920 wide. The default
++    value is 30.
++*/
++qreal QQuickVideoOutput::stereoDepthSigmaV() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return m_stereo.depth.sigmaV;
++}
++
++void QQuickVideoOutput::setStereoDepthSigmaV(qreal value)
++{
++    {
++        QMutexLocker lock(&m_frameMutex);
++        if (m_stereo.depth.sigmaV == value)
++            return;
++        m_stereo.depth.sigmaV = value;
++    }
++    emit stereoDepthSigmaVChanged();
++    reprocessFrame();
++}
++
++/*!
++    \qmlproperty int QtMultimedia::VideoOutput::stereoDepthRadius
++
++    The neighbourhood that the StereoDepthFillDepth and StereoDepthFillTelea fills take the colours
++    from, in pixels. The default value is 5.
++*/
++int QQuickVideoOutput::stereoDepthRadius() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return m_stereo.depth.radius;
++}
++
++void QQuickVideoOutput::setStereoDepthRadius(int value)
++{
++    {
++        QMutexLocker lock(&m_frameMutex);
++        if (m_stereo.depth.radius == value)
++            return;
++        m_stereo.depth.radius = value;
++    }
++    emit stereoDepthRadiusChanged();
++    reprocessFrame();
++}
++
++/*!
++    \qmlproperty real QtMultimedia::VideoOutput::stereoDepthRange
++
++    For depth maps without distances, the largest parallax either side of the screen, in pixels of a
++    view 1920 wide. The default value is 58, about one degree of visual angle for a viewer three
++    picture heights away.
++*/
++qreal QQuickVideoOutput::stereoDepthRange() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return m_stereo.depth.range;
++}
++
++void QQuickVideoOutput::setStereoDepthRange(qreal value)
++{
++    {
++        QMutexLocker lock(&m_frameMutex);
++        if (m_stereo.depth.range == value)
++            return;
++        m_stereo.depth.range = value;
++    }
++    emit stereoDepthRangeChanged();
++    reprocessFrame();
++}
++
++/*!
++    \qmlproperty real QtMultimedia::VideoOutput::stereoDepthZero
++
++    For depth maps without distances, where the screen is, from the farthest samples (0) to the
++    nearest (1). The default value is 0.5.
++*/
++qreal QQuickVideoOutput::stereoDepthZero() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return m_stereo.depth.zero;
++}
++
++void QQuickVideoOutput::setStereoDepthZero(qreal value)
++{
++    {
++        QMutexLocker lock(&m_frameMutex);
++        if (m_stereo.depth.zero == value)
++            return;
++        m_stereo.depth.zero = value;
++    }
++    emit stereoDepthZeroChanged();
++    reprocessFrame();
++}
++
++/*!
++    \qmlproperty real QtMultimedia::VideoOutput::stereoDepthShift
++
++    A parallax added to every point, in pixels of a view 1920 wide: positive moves the whole scene
++    behind the screen, negative in front of it. The default value is 0.
++*/
++qreal QQuickVideoOutput::stereoDepthShift() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return m_stereo.depth.shift;
++}
++
++void QQuickVideoOutput::setStereoDepthShift(qreal value)
++{
++    {
++        QMutexLocker lock(&m_frameMutex);
++        if (m_stereo.depth.shift == value)
++            return;
++        m_stereo.depth.shift = value;
++    }
++    emit stereoDepthShiftChanged();
++    reprocessFrame();
++}
++
++/*!
++    \qmlproperty enumeration QtMultimedia::VideoOutput::stereoDepthMeaning
++
++    What a sample of the depth map means, in place of what the video says (\c StereoDepthAutomatic,
++    the default): \c StereoDepthNearness (larger samples nearer, 2D-plus-depth),
++    \c StereoDepthFarness, \c StereoDepthInverseZ, \c StereoDepthDisparity, \c StereoDepthZ and
++    \c StereoDepthNonlinearDisparity (the depth representation types 0 to 3 of H.265 Table G.3),
++    \c StereoDepthParallax (an ISO/IEC 23002-3 parallax map), \c StereoDepthRangeLinear and
++    \c StereoDepthRangeInverse (the depth map formats of Google's Dynamic Depth 1.0) and
++    \c StereoDepthMetric (a depth sensor's distances, 0 being no measurement).
++*/
++QQuickVideoOutput::StereoDepthMeaning QQuickVideoOutput::stereoDepthMeaning() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return StereoDepthMeaning(m_stereo.depth.meaning);
++}
++
++void QQuickVideoOutput::setStereoDepthMeaning(StereoDepthMeaning value)
++{
++    {
++        QMutexLocker lock(&m_frameMutex);
++        if (m_stereo.depth.meaning == int(value))
++            return;
++        m_stereo.depth.meaning = int(value);
++    }
++    emit stereoDepthMeaningChanged();
++    reprocessFrame();
++}
++
++/*!
++    \qmlproperty real QtMultimedia::VideoOutput::stereoDepthNear
++
++    With stereoDepthFar: ZNear of a Z depth map that carries none, Near of a Dynamic Depth map, and
++    the distance the inverse of a sensor's distances is spread from, in the map's unit. Used when
++    both are above 0. The default value is 0.
++*/
++qreal QQuickVideoOutput::stereoDepthNear() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return m_stereo.depth.zNear;
++}
++
++void QQuickVideoOutput::setStereoDepthNear(qreal value)
++{
++    {
++        QMutexLocker lock(&m_frameMutex);
++        if (m_stereo.depth.zNear == value)
++            return;
++        m_stereo.depth.zNear = value;
++    }
++    emit stereoDepthNearChanged();
++    reprocessFrame();
++}
++
++/*!
++    \qmlproperty real QtMultimedia::VideoOutput::stereoDepthFar
++
++    With stereoDepthNear: ZFar, Far, and the distance the inverse of a sensor's distances is spread
++    to. The default value is 0.
++*/
++qreal QQuickVideoOutput::stereoDepthFar() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return m_stereo.depth.zFar;
++}
++
++void QQuickVideoOutput::setStereoDepthFar(qreal value)
++{
++    {
++        QMutexLocker lock(&m_frameMutex);
++        if (m_stereo.depth.zFar == value)
++            return;
++        m_stereo.depth.zFar = value;
++    }
++    emit stereoDepthFarChanged();
++    reprocessFrame();
++}
++
++/*!
++    \qmlproperty string QtMultimedia::VideoOutput::stereoDepthMark
++
++    What a depth sample means as a Stereo3DDepth mark of Sparky Stereo OS's depth marks
++    (stereo-layer, docs/depth-marks.md): a word for the kind, then key=value pairs separated by
++    spaces, such as \c{"nonlinearDisparity min=2 max=40 width=1920 model=0,20,7,0"}. It gives every
++    parameter of every kind, and comes before stereoDepthMeaning and what the video says;
++    stereoDepthRange, stereoDepthZero and stereoDepthShift apply where it has none. A malformed mark
++    shows the picture alone. The default value is empty.
++*/
++QString QQuickVideoOutput::stereoDepthMark() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return m_stereo.depth.mark;
++}
++
++void QQuickVideoOutput::setStereoDepthMark(const QString &value)
++{
++    {
++        QMutexLocker lock(&m_frameMutex);
++        if (m_stereo.depth.mark == value)
++            return;
++        m_stereo.depth.mark = value;
++    }
++    emit stereoDepthMarkChanged();
++    reprocessFrame();
++}
++
+ /*!
+     \qmlproperty enumeration QtMultimedia::VideoOutput::stereoPacking
+     \readonly
+@@ -1142,7 +1579,7 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+     using namespace QQuickVideoStereo;
+     using Size = Packing::Size;
+ 
+-    QVideoFrame shown = frame;
++    QVideoFrame shown;
+     QSize displaySize = frame.size();
+     StereoState st;
+ #ifdef QT_MM_STEREO_LAYER
+@@ -1162,6 +1599,53 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+         cropped = m_aspectRatioMode == Qt::KeepAspectRatioByExpanding;
+     }
+ 
++    // A picture with its depth map (2D plus depth): its views are drawn into full side by side
++    // (QQuickVideoDepth, libstereo-dibr), which is shown from here on as any other 3D frame; the
++    // frame as stored for StereoFlat; the picture alone where the views are not drawn (stereoDepth
++    // false, a malformed Stereo3DDepth mark, a depth map the frame does not hold)
++    QVideoFrame input = frame;
++    StereoInput depthInput = StereoNone;
++    QRectF depthPictureRect;
++    if (frame.isValid()) {
++        const QVideoFrameFormat format = frame.surfaceFormat();
++        Packing depth;
++        depth.mode = format.stereoMode();
++        depth.depthFirst = format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::DepthFirst);
++        if (st.input != StereoAutomatic)
++            packingFromInput(st.input, &depth);
++        if (QQuickVideoDepth::isDepthLayout(depth.mode)) {
++            depthInput = inputFromPacking(depth, frame.size());
++            bool alone = st.view != StereoFlat;
++            if (alone && st.depth.enabled && depth.mode != StereoMode::DepthSeparate) {
++                QVideoFrame drawn;
++                QMutexLocker lock(&m_depthMutex);
++                if (!m_depthRenderer)
++                    m_depthRenderer = std::make_unique<QQuickVideoDepth::Renderer>();
++                const auto drawResult =
++                        m_depthRenderer->draw(frame, depth.mode, depth.depthFirst,
++                                              format.stereoDepthMark(), st.depth, &drawn);
++                if (drawResult == QQuickVideoDepth::Renderer::Result::Drawn) {
++                    input = drawn;
++                    alone = false;
++                } else if (drawResult == QQuickVideoDepth::Renderer::Result::Failed) {
++                    qCDebug(qLcVideo)
++                            << "the views of a picture with its depth map could not be drawn";
++                }
++            }
++            if (alone) {
++                const QSize size = frame.size();
++                const QRect rect =
++                        QQuickVideoDepth::pictureRect(depth.mode, depth.depthFirst, size);
++                depthPictureRect = QRectF(
++                        qreal(rect.x()) / size.width(), qreal(rect.y()) / size.height(),
++                        qreal(rect.width()) / size.width(), qreal(rect.height()) / size.height());
++            }
++        }
++    }
++    const bool depthDrawn =
++            depthInput != StereoNone && depthPictureRect.isNull() && st.view != StereoFlat;
++    shown = input;
++
+     // Stereoscopic 3D: which packing the frames have, and what is to be shown of it
+     Packing packing;
+     bool twoViews = false;
+@@ -1172,9 +1656,9 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+     result.eyeRect = QRectF(0, 0, 1, 1);
+     result.layerActive = false;
+     result.layerWanted = false;
+-    if (frame.isValid()) {
+-        const QVideoFrameFormat format = frame.surfaceFormat();
+-        const QSize storedSize = frame.size();
++    if (input.isValid()) {
++        const QVideoFrameFormat format = input.surfaceFormat();
++        const QSize storedSize = input.size();
+         // a stereo frame the backend left at its stored size is shown at the shape of its pixels
+         const QSize par = format.pixelAspectRatio();
+         const QSize frameSize = par.width() > 0 && par.height() > 0 && par.width() != par.height()
+@@ -1187,12 +1671,16 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+         baseOnly = multiview && (st.input == StereoNone || st.view == StereoFlat);
+         if (multiview)
+             packing.size = Size::Full;
+-        if (st.input != StereoAutomatic && !baseOnly) {
++        if (depthDrawn) {
++            // the drawn views, full side by side, the left eye first, whatever the input says
++            packing = { StereoMode::SideBySide, false, Size::Full, false, {} };
++        } else if (st.input != StereoAutomatic && !baseOnly) {
+             packingFromInput(st.input, &packing);
+         }
+ #ifdef QT_MM_STEREO_POLICY
+         else if (packing.mode == StereoMode::None && st.shapeFallback && !frameSize.isEmpty()
+-                   && stereo_policy_video_side_by_side_by_shape(frameSize.width(), frameSize.height()) == 1) {
++                 && stereo_policy_video_side_by_side_by_shape(frameSize.width(), frameSize.height())
++                         == 1) {
+             packing = { StereoMode::SideBySide, false, Size::Full };
+         }
+ #endif
+@@ -1279,7 +1767,7 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+                 m_stereoHeldEye = -1;
+             } else {
+                 if (eye == (rightFirst ? 1 : 0) || m_stereoHeldFrame.isValid()) {
+-                    m_stereoHeldFrame = frame;
++                    m_stereoHeldFrame = input;
+                     m_stereoHeldEye = eye ^ int(st.swapEyes);
+                 }
+                 resolved = false;
+@@ -1291,7 +1779,7 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+         }
+         if (resolved) {
+             QQuickVideoStereoPresenter::Job job;
+-            job.frame = retained.frame.isValid() ? retained.frame : frame;
++            job.frame = retained.frame.isValid() ? retained.frame : input;
+             job.otherFrame = retained.frame.isValid() ? retained.otherFrame : otherFrame;
+             job.packing = packing;
+             job.swapEyes = st.swapEyes;
+@@ -1352,20 +1840,33 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+                 } else {
+                     // the views are interleaved: taken apart on the CPU, into a frame of their own
+                     const int depth = sourceDepth(format.pixelFormat());
+-                    const QImage image = qImageFromVideoFrame(
+-                            frame, depth > 12 ? QVideoFrameImageDepth::Float32 : QVideoFrameImageDepth::Float16);
++                    const QImage image =
++                            qImageFromVideoFrame(input,
++                                                 depth > 12 ? QVideoFrameImageDepth::Float32
++                                                            : QVideoFrameImageDepth::Float16);
+                     QImage view = extractView(image, packing, index,
+                                               st.scaling == StereoLanczos ? Scaling::Lanczos
+                                                       : st.scaling == StereoBicubic ? Scaling::Bicubic : Scaling::Bilinear);
+                     if (!view.isNull()) {
+                         shown = QVideoFrame(view.convertToFormat(QImage::Format_RGBA8888_Premultiplied));
+-                        shown.setStartTime(frame.startTime());
+-                        shown.setEndTime(frame.endTime());
++                        shown.setStartTime(input.startTime());
++                        shown.setEndTime(input.endTime());
+                         displaySize = shown.size();
+                     }
+                 }
+             }
+         }
++        if (depthInput != StereoNone) {
++            // a picture with its depth map is a 3D video in the depth layout
++            result.video = true;
++            result.packing = depthInput;
++            if (!depthPictureRect.isNull()) {
++                result.eyeRect = depthPictureRect;
++                displaySize = QSizeF(frameSize.width() * depthPictureRect.width(),
++                                     frameSize.height() * depthPictureRect.height())
++                                      .toSize();
++            }
++        }
+     } else {
+         result.video = false;
+         result.packing = StereoNone;
+@@ -1403,7 +1904,7 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+         m_stereo.lastView = result.lastView;
+         m_stereo.viewVaries = result.viewVaries;
+         // the frame is kept, to be shown again when the choices change, only for 3D video
+-        if (twoViews)
++        if (twoViews || depthInput != StereoNone)
+             m_stereoLastFrame = frame;
+         else
+             m_stereoLastFrame = QVideoFrame();
+@@ -1412,7 +1913,7 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+ 
+         m_videoFormat = shown.surfaceFormat();
+         m_frame = shown;
+-        m_frameDisplayingRotation = qNormalizedFrameTransformation(frame, m_orientation).rotation;
++        m_frameDisplayingRotation = qNormalizedFrameTransformation(input, m_orientation).rotation;
+         m_frameChanged = true;
+     }
+ 
+diff --git a/src/multimediaquick/qquickvideooutput_p.h b/src/multimediaquick/qquickvideooutput_p.h
+index 3d800a8e9..4721ef216 100644
+--- a/src/multimediaquick/qquickvideooutput_p.h
++++ b/src/multimediaquick/qquickvideooutput_p.h
+@@ -26,6 +26,7 @@
+ #include <QtMultimedia/qvideoframeformat.h>
+ #include <QtMultimedia/qvideosink.h>
+ #include <QtMultimediaQuick/private/qtmultimediaquickglobal_p.h>
++#include <QtMultimediaQuick/private/qquickvideodepth_p.h>
+ 
+ #include <atomic>
+ #include <memory>
+@@ -82,6 +83,35 @@ class Q_MULTIMEDIAQUICK_EXPORT QQuickVideoOutput : public QQuickItem
+     Q_PROPERTY(StereoInput stereoPacking READ stereoPacking NOTIFY stereoVideoChanged)
+     Q_PROPERTY(bool stereoLayerSupported READ stereoLayerSupported CONSTANT)
+     Q_PROPERTY(bool stereoLayerActive READ stereoLayerActive NOTIFY stereoLayerActiveChanged)
++    Q_PROPERTY(bool stereoDepth READ stereoDepth WRITE setStereoDepth NOTIFY stereoDepthChanged)
++    Q_PROPERTY(StereoDepthView stereoDepthView READ stereoDepthView WRITE setStereoDepthView
++                       NOTIFY stereoDepthViewChanged)
++    Q_PROPERTY(StereoDepthWarp stereoDepthWarp READ stereoDepthWarp WRITE setStereoDepthWarp
++                       NOTIFY stereoDepthWarpChanged)
++    Q_PROPERTY(StereoDepthFill stereoDepthFill READ stereoDepthFill WRITE setStereoDepthFill
++                       NOTIFY stereoDepthFillChanged)
++    Q_PROPERTY(StereoDepthSmooth stereoDepthSmooth READ stereoDepthSmooth WRITE setStereoDepthSmooth
++                       NOTIFY stereoDepthSmoothChanged)
++    Q_PROPERTY(qreal stereoDepthSigmaH READ stereoDepthSigmaH WRITE setStereoDepthSigmaH
++                       NOTIFY stereoDepthSigmaHChanged)
++    Q_PROPERTY(qreal stereoDepthSigmaV READ stereoDepthSigmaV WRITE setStereoDepthSigmaV
++                       NOTIFY stereoDepthSigmaVChanged)
++    Q_PROPERTY(int stereoDepthRadius READ stereoDepthRadius WRITE setStereoDepthRadius
++                       NOTIFY stereoDepthRadiusChanged)
++    Q_PROPERTY(qreal stereoDepthRange READ stereoDepthRange WRITE setStereoDepthRange
++                       NOTIFY stereoDepthRangeChanged)
++    Q_PROPERTY(qreal stereoDepthZero READ stereoDepthZero WRITE setStereoDepthZero
++                       NOTIFY stereoDepthZeroChanged)
++    Q_PROPERTY(qreal stereoDepthShift READ stereoDepthShift WRITE setStereoDepthShift
++                       NOTIFY stereoDepthShiftChanged)
++    Q_PROPERTY(StereoDepthMeaning stereoDepthMeaning READ stereoDepthMeaning
++                       WRITE setStereoDepthMeaning NOTIFY stereoDepthMeaningChanged)
++    Q_PROPERTY(qreal stereoDepthNear READ stereoDepthNear WRITE setStereoDepthNear
++                       NOTIFY stereoDepthNearChanged)
++    Q_PROPERTY(qreal stereoDepthFar READ stereoDepthFar WRITE setStereoDepthFar
++                       NOTIFY stereoDepthFarChanged)
++    Q_PROPERTY(QString stereoDepthMark READ stereoDepthMark WRITE setStereoDepthMark
++                       NOTIFY stereoDepthMarkChanged)
+     Q_MOC_INCLUDE(qvideosink.h)
+     Q_MOC_INCLUDE(qvideoframe.h)
+     QML_NAMED_ELEMENT(VideoOutput)
+@@ -125,10 +155,63 @@ public:
+         StereoFrameSequence,
+         StereoAnaglyphCyanRed,
+         StereoAnaglyphGreenMagenta,
+-        StereoNone
++        StereoNone,
++        // A picture with its depth map (2D plus depth), from which the views are drawn: the depth
++        // layouts of Sparky Stereo OS's depth marks (QVideoFrameFormat::StereoMode)
++        StereoDepthSideBySide,
++        StereoDepthSideBySideDepthFirst,
++        StereoDepthTopBottom,
++        StereoDepthTopBottomDepthFirst,
++        StereoDepthGraphics,
++        StereoDepthBackground,
++        StereoDepthSeparate
+     };
+     Q_ENUM(StereoInput)
+ 
++    // The views drawn from a depth map: the choices of libstereo-dibr, see the properties
++    enum StereoDepthView
++    {
++        StereoDepthPictureLeft,
++        StereoDepthPictureCenter
++    };
++    Q_ENUM(StereoDepthView)
++    enum StereoDepthWarp
++    {
++        StereoDepthForward,
++        StereoDepthBackward,
++        StereoDepthLayered
++    };
++    Q_ENUM(StereoDepthWarp)
++    enum StereoDepthFill
++    {
++        StereoDepthFillBackground,
++        StereoDepthFillDepth,
++        StereoDepthFillTelea,
++        StereoDepthFillNone
++    };
++    Q_ENUM(StereoDepthFill)
++    enum StereoDepthSmooth
++    {
++        StereoDepthSmoothOff,
++        StereoDepthSmoothGaussian
++    };
++    Q_ENUM(StereoDepthSmooth)
++    enum StereoDepthMeaning
++    {
++        StereoDepthAutomatic = -1,
++        StereoDepthNearness,
++        StereoDepthFarness,
++        StereoDepthInverseZ,
++        StereoDepthDisparity,
++        StereoDepthZ,
++        StereoDepthNonlinearDisparity,
++        StereoDepthParallax,
++        StereoDepthRangeLinear,
++        StereoDepthRangeInverse,
++        StereoDepthMetric
++    };
++    Q_ENUM(StereoDepthMeaning)
++
+     // What is shown of a stereoscopic 3D video
+     enum StereoView
+     {
+@@ -196,6 +279,36 @@ public:
+     StereoInput stereoPacking() const;
+     static bool stereoLayerSupported();
+     bool stereoLayerActive() const;
++    bool stereoDepth() const;
++    void setStereoDepth(bool value);
++    StereoDepthView stereoDepthView() const;
++    void setStereoDepthView(StereoDepthView value);
++    StereoDepthWarp stereoDepthWarp() const;
++    void setStereoDepthWarp(StereoDepthWarp value);
++    StereoDepthFill stereoDepthFill() const;
++    void setStereoDepthFill(StereoDepthFill value);
++    StereoDepthSmooth stereoDepthSmooth() const;
++    void setStereoDepthSmooth(StereoDepthSmooth value);
++    qreal stereoDepthSigmaH() const;
++    void setStereoDepthSigmaH(qreal value);
++    qreal stereoDepthSigmaV() const;
++    void setStereoDepthSigmaV(qreal value);
++    int stereoDepthRadius() const;
++    void setStereoDepthRadius(int value);
++    qreal stereoDepthRange() const;
++    void setStereoDepthRange(qreal value);
++    qreal stereoDepthZero() const;
++    void setStereoDepthZero(qreal value);
++    qreal stereoDepthShift() const;
++    void setStereoDepthShift(qreal value);
++    StereoDepthMeaning stereoDepthMeaning() const;
++    void setStereoDepthMeaning(StereoDepthMeaning value);
++    qreal stereoDepthNear() const;
++    void setStereoDepthNear(qreal value);
++    qreal stereoDepthFar() const;
++    void setStereoDepthFar(qreal value);
++    QString stereoDepthMark() const;
++    void setStereoDepthMark(const QString &value);
+ 
+ Q_SIGNALS:
+     void sourceChanged();
+@@ -213,6 +326,21 @@ Q_SIGNALS:
+     void stereoSurfaceChanged();
+     void stereoVideoChanged();
+     void stereoLayerActiveChanged();
++    void stereoDepthChanged();
++    void stereoDepthViewChanged();
++    void stereoDepthWarpChanged();
++    void stereoDepthFillChanged();
++    void stereoDepthSmoothChanged();
++    void stereoDepthSigmaHChanged();
++    void stereoDepthSigmaVChanged();
++    void stereoDepthRadiusChanged();
++    void stereoDepthRangeChanged();
++    void stereoDepthZeroChanged();
++    void stereoDepthShiftChanged();
++    void stereoDepthMeaningChanged();
++    void stereoDepthNearChanged();
++    void stereoDepthFarChanged();
++    void stereoDepthMarkChanged();
+ 
+ protected:
+     QSGNode *updatePaintNode(QSGNode *, UpdatePaintNodeData *) override;
+@@ -272,6 +400,8 @@ private:
+         bool shapeFallback = true;
+         StereoScaling scaling = StereoLanczos;
+         StereoSurface surface = StereoSurfaceBySource;
++        // the views drawn from a depth map
++        QQuickVideoDepth::Options depth;
+ 
+         // what the video in hand is
+         bool video = false;                // two views in the frames
+@@ -286,6 +416,10 @@ private:
+     };
+     StereoState m_stereo;
+     QVideoFrame m_stereoLastFrame;          // to show again when the choices change
++    // draws the views of a picture with its depth map (libstereo-dibr), from the threads of the
++    // video and of the item in turn
++    QMutex m_depthMutex;
++    std::unique_ptr<QQuickVideoDepth::Renderer> m_depthRenderer;
+     // The layer of the views, where the platform has one (QT_MM_STEREO_LAYER): kept in the class
+     // whatever the build, so that every user of this header sees the same class
+     struct StereoPair;
+diff --git a/src/multimediaquick/qquickvideostereo.cpp b/src/multimediaquick/qquickvideostereo.cpp
+index e6db8cf03..35339bde3 100644
+--- a/src/multimediaquick/qquickvideostereo.cpp
++++ b/src/multimediaquick/qquickvideostereo.cpp
+@@ -23,7 +23,21 @@ using Mode = QVideoFrameFormat::StereoMode;
+ 
+ bool hasTwoViews(Mode mode)
+ {
+-    return mode != Mode::None && mode != Mode::AnaglyphCyanRed && mode != Mode::AnaglyphGreenMagenta;
++    // the anaglyphs hold both views in the colors; the depth layouts hold one picture and its
++    // depth map, which the views are drawn from (QQuickVideoDepth)
++    switch (mode) {
++    case Mode::None:
++    case Mode::AnaglyphCyanRed:
++    case Mode::AnaglyphGreenMagenta:
++    case Mode::DepthSideBySide:
++    case Mode::DepthTopBottom:
++    case Mode::DepthGraphics:
++    case Mode::DepthBackground:
++    case Mode::DepthSeparate:
++        return false;
++    default:
++        return true;
++    }
+ }
+ 
+ bool isFullSize(const Packing &packing, QSize frameSize)
+diff --git a/src/multimediaquick/qquickvideostereo_p.h b/src/multimediaquick/qquickvideostereo_p.h
+index 8aa806707..c94a4a0e9 100644
+--- a/src/multimediaquick/qquickvideostereo_p.h
++++ b/src/multimediaquick/qquickvideostereo_p.h
+@@ -39,6 +39,8 @@ struct Packing
+     QVideoFrameFormat::StereoMode mode = QVideoFrameFormat::StereoMode::None;
+     bool rightEyeFirst = false;
+     enum class Size { ByShape, Half, Full } size = Size::ByShape;
++    // the depth layouts: the depth map comes first (QVideoFrameFormat::StereoFlag::DepthFirst)
++    bool depthFirst = false;
+     // The size the frame is shown at, when it is not the size it is stored in (a frame the
+     // backend left unscaled to the shape of its pixels, QVideoFrameFormat::pixelAspectRatio()):
+     // the views are then restored from the stored samples to the size of a view of this
+diff --git a/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp b/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
+index a9a580078..07d6cff45 100644
+--- a/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
++++ b/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
+@@ -12,11 +12,14 @@
+ #include <QtMultimedia/private/qvideoframeconverter_p.h>
+ #include <QtMultimediaQuick/private/qquickvideooutput_p.h>
+ #include <QtMultimediaQuick/private/qquickvideostereo_p.h>
++#include <QtMultimediaQuick/private/qquickvideodepth_p.h>
++#include <QtCore/qrandom.h>
+ 
+ #include <set>
+ 
+ using namespace QQuickVideoStereo;
+ using Mode = QVideoFrameFormat::StereoMode;
++using namespace Qt::StringLiterals;
+ 
+ namespace {
+ 
+@@ -60,6 +63,10 @@ private slots:
+     void pairImageFormats_data();
+     void pairImageFormats();
+     void stereoVideoFromFrames();
++    void depthLayouts_data();
++    void depthLayouts();
++    void depthMarks();
++    void depthInVideoOutput();
+ };
+ 
+ void tst_QQuickVideoStereo::sizes_data()
+@@ -369,5 +376,217 @@ void tst_QQuickVideoStereo::pairImageFormats()
+     }
+ }
+ 
++namespace {
++
++// A frame of a depth layout, as a decoder gives it (YUV 4:4:4, full range): a picture of noise in
++// the luma, its depth map a constant 64 with a box of 160 (larger nearer); the graphics and the
++// background of their layouts, a band of depth 250 and a picture of depth 40.
++QVideoFrame depthFrame(Mode mode, bool depthFirst, int w, int h)
++{
++    QRandomGenerator rng(151);
++    QSize size(w, h);
++    switch (mode) {
++    case Mode::DepthSideBySide:
++        size = QSize(2 * w, h);
++        break;
++    case Mode::DepthTopBottom:
++        size = QSize(w, 2 * h);
++        break;
++    case Mode::DepthGraphics:
++        size = QSize(w, 4 * h);
++        break;
++    case Mode::DepthBackground:
++        size = QSize(2 * w, 2 * h);
++        break;
++    default:
++        break;
++    }
++    QVideoFrameFormat format(size, QVideoFrameFormat::Format_YUV444P);
++    format.setColorRange(QVideoFrameFormat::ColorRange_Full);
++    format.setStereoMode(mode);
++    if (depthFirst)
++        format.setStereoFlags(QVideoFrameFormat::StereoFlag::DepthFirst);
++    QVideoFrame frame(format);
++    if (!frame.map(QVideoFrame::WriteOnly))
++        return {};
++    auto picture = [&](int x0, int y0) {
++        for (int y = 0; y < h; ++y)
++            for (int x = 0; x < w; ++x) {
++                frame.bits(0)[(y0 + y) * frame.bytesPerLine(0) + x0 + x] =
++                        uchar(rng.bounded(40, 216));
++                frame.bits(1)[(y0 + y) * frame.bytesPerLine(1) + x0 + x] = 128;
++                frame.bits(2)[(y0 + y) * frame.bytesPerLine(2) + x0 + x] = 128;
++            }
++    };
++    auto depth = [&](int x0, int y0, auto value) {
++        for (int y = 0; y < h; ++y)
++            for (int x = 0; x < w; ++x) {
++                frame.bits(0)[(y0 + y) * frame.bytesPerLine(0) + x0 + x] = uchar(value(x, y));
++                frame.bits(1)[(y0 + y) * frame.bytesPerLine(1) + x0 + x] = 128;
++                frame.bits(2)[(y0 + y) * frame.bytesPerLine(2) + x0 + x] = 128;
++            }
++    };
++    auto boxDepth = [&](int x, int y) {
++        return x >= w / 4 && x < w / 2 && y >= h / 4 && y < 3 * h / 4 ? 160 : 64;
++    };
++    switch (mode) {
++    case Mode::DepthSideBySide:
++        picture(depthFirst ? w : 0, 0);
++        depth(depthFirst ? 0 : w, 0, boxDepth);
++        break;
++    case Mode::DepthTopBottom:
++        picture(0, depthFirst ? h : 0);
++        depth(0, depthFirst ? 0 : h, boxDepth);
++        break;
++    case Mode::DepthGraphics:
++        picture(0, 0);
++        depth(0, h, boxDepth);
++        picture(0, 2 * h);
++        depth(0, 3 * h, [&](int, int) { return 0; }); // no graphics
++        break;
++    case Mode::DepthBackground:
++        picture(0, 0);
++        depth(w, 0, boxDepth);
++        picture(0, h);
++        depth(w, h, [&](int, int) { return 40; });
++        break;
++    default:
++        break;
++    }
++    frame.unmap();
++    return frame;
++}
++
++// The shift of the luma of row y around x from the left view to the right one, by block matching
++double shiftAt(const QVideoFrame &pair, int y, int x, int search)
++{
++    QVideoFrame f = pair;
++    if (!f.map(QVideoFrame::ReadOnly))
++        return qQNaN();
++    const int w = f.width() / 2, half = 4;
++    const uchar *luma = f.bits(0);
++    const int stride = f.bytesPerLine(0);
++    double best = 1e30;
++    int bestDx = 0;
++    for (int dx = -search; dx <= search; ++dx) {
++        double cost = 0;
++        for (int yy = y - half; yy <= y + half; ++yy)
++            for (int xx = x - half; xx <= x + half; ++xx)
++                cost += std::abs(int(luma[yy * stride + xx])
++                                 - int(luma[yy * stride + w + xx + dx]));
++        if (cost < best) {
++            best = cost;
++            bestDx = dx;
++        }
++    }
++    f.unmap();
++    return bestDx;
++}
++
++double expectedParallax(const QString &mark, int sample, int width)
++{
++    QQuickVideoDepth::Options o;
++    Q_UNUSED(o);
++    // nearness, the screen at 0.5 and 58 pixels at 1920 either side (libstereo-dibr)
++    const double v = sample / 255.0;
++    const double range = 58.0 * width / 1920.0;
++    Q_UNUSED(mark);
++    return v >= 0.5 ? -(v - 0.5) / 0.5 * range : (0.5 - v) / 0.5 * range;
++}
++
++} // namespace
++
++void tst_QQuickVideoStereo::depthLayouts_data()
++{
++    QTest::addColumn<int>("mode");
++    QTest::addColumn<bool>("depthFirst");
++    QTest::newRow("side by side") << int(Mode::DepthSideBySide) << false;
++    QTest::newRow("side by side, depth first") << int(Mode::DepthSideBySide) << true;
++    QTest::newRow("top and bottom") << int(Mode::DepthTopBottom) << false;
++    QTest::newRow("top and bottom, depth first") << int(Mode::DepthTopBottom) << true;
++    QTest::newRow("graphics") << int(Mode::DepthGraphics) << false;
++    QTest::newRow("background") << int(Mode::DepthBackground) << false;
++}
++
++void tst_QQuickVideoStereo::depthLayouts()
++{
++    if (!QQuickVideoDepth::canDraw())
++        QSKIP("built without libstereo-dibr");
++    QFETCH(int, mode);
++    QFETCH(bool, depthFirst);
++    const int w = 240, h = 136;
++    const QVideoFrame frame = depthFrame(Mode(mode), depthFirst, w, h);
++    QVERIFY(frame.isValid());
++    QQuickVideoDepth::Renderer renderer;
++    QVideoFrame pair;
++    QCOMPARE(renderer.draw(frame, Mode(mode), depthFirst, {}, {}, &pair),
++             QQuickVideoDepth::Renderer::Result::Drawn);
++    QCOMPARE(pair.size(), QSize(2 * w, h));
++    QCOMPARE(pair.surfaceFormat().stereoMode(), Mode::SideBySide);
++    QCOMPARE(pair.pixelFormat(), QVideoFrameFormat::Format_YUV444P);
++    // the background (64) and the box (160) at their parallax, to the pixel
++    QCOMPARE(shiftAt(pair, h / 8, w * 3 / 4, 12), qRound(expectedParallax({}, 64, w)));
++    QCOMPARE(shiftAt(pair, h / 2, w * 3 / 8, 12), qRound(expectedParallax({}, 160, w)));
++    QCOMPARE(QQuickVideoDepth::pictureRect(Mode(mode), depthFirst, frame.size()).size(),
++             QSize(w, h));
++}
++
++void tst_QQuickVideoStereo::depthMarks()
++{
++    if (!QQuickVideoDepth::canDraw())
++        QSKIP("built without libstereo-dibr");
++    const int w = 240, h = 136;
++    const QVideoFrame frame = depthFrame(Mode::DepthSideBySide, false, w, h);
++    QQuickVideoDepth::Renderer renderer;
++    QVideoFrame pair;
++    // the stream's mark: larger samples farther, so the box is behind the background
++    QCOMPARE(renderer.draw(frame, Mode::DepthSideBySide, false, u"farness"_s, {}, &pair),
++             QQuickVideoDepth::Renderer::Result::Drawn);
++    QCOMPARE(shiftAt(pair, h / 2, w * 3 / 8, 12), -qRound(expectedParallax({}, 160, w)));
++    // the user's meaning comes before it, and the user's mark before both
++    QQuickVideoDepth::Options o;
++    o.meaning = 0;
++    QCOMPARE(renderer.draw(frame, Mode::DepthSideBySide, false, u"farness"_s, o, &pair),
++             QQuickVideoDepth::Renderer::Result::Drawn);
++    QCOMPARE(shiftAt(pair, h / 2, w * 3 / 8, 12), qRound(expectedParallax({}, 160, w)));
++    o.mark = u"farness"_s;
++    QCOMPARE(renderer.draw(frame, Mode::DepthSideBySide, false, {}, o, &pair),
++             QQuickVideoDepth::Renderer::Result::Drawn);
++    QCOMPARE(shiftAt(pair, h / 2, w * 3 / 8, 12), -qRound(expectedParallax({}, 160, w)));
++    // a malformed mark, the user's or the stream's, means one picture
++    o.mark = u"nearness zero=abc"_s;
++    QCOMPARE(renderer.draw(frame, Mode::DepthSideBySide, false, {}, o, &pair),
++             QQuickVideoDepth::Renderer::Result::PictureAlone);
++    QCOMPARE(renderer.draw(frame, Mode::DepthSideBySide, false, u"nearness zero=abc"_s, {}, &pair),
++             QQuickVideoDepth::Renderer::Result::PictureAlone);
++}
++
++void tst_QQuickVideoStereo::depthInVideoOutput()
++{
++    QQuickVideoOutput output;
++    QVideoSink *sink = output.videoSink();
++    const int w = 240, h = 136;
++    sink->setVideoFrame(depthFrame(Mode::DepthSideBySide, false, w, h));
++    QTRY_COMPARE(output.stereoPacking(), QQuickVideoOutput::StereoDepthSideBySide);
++    QCOMPARE(output.stereoVideo(), true);
++    // a view, or the picture alone: the size of the picture
++    QTRY_COMPARE(output.implicitWidth(), qreal(w));
++    output.setStereoDepth(false);
++    QTRY_COMPARE(output.implicitWidth(), qreal(w));
++    // the frame as stored
++    output.setStereoView(QQuickVideoOutput::StereoFlat);
++    QTRY_COMPARE(output.implicitWidth(), qreal(2 * w));
++    // the user says how an unmarked frame packs its depth
++    output.setStereoView(QQuickVideoOutput::StereoBothEyes);
++    output.setStereoDepth(true);
++    QVideoFrame unmarked = depthFrame(Mode::DepthTopBottom, false, w, h);
++    QVideoFrameFormat format = unmarked.surfaceFormat();
++    QCOMPARE(format.stereoMode(), Mode::DepthTopBottom);
++    output.setStereoInput(QQuickVideoOutput::StereoDepthTopBottom);
++    sink->setVideoFrame(unmarked);
++    QTRY_COMPARE(output.stereoPacking(), QQuickVideoOutput::StereoDepthTopBottom);
++    QTRY_COMPARE(output.implicitHeight(), qreal(h));
++}
++
+ QTEST_MAIN(tst_QQuickVideoStereo)
+ #include "tst_qquickvideostereo.moc"

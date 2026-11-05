@@ -1,0 +1,63 @@
+From 9254cd393b1494e3bb5232a6ffb8339cbeac28b9 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 5 Nov 2026 01:13:16 -0300
+Subject: [PATCH 4/4] backend: clang-format, as KDE's format job asks
+
+Formatting only: the include order and the one line ifs of the per-file store (the published stack's and this series').
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ src/backend.cpp | 8 +++++---
+ src/backend.h   | 2 +-
+ 2 files changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/src/backend.cpp b/src/backend.cpp
+index 52b4114..7e443ce 100644
+--- a/src/backend.cpp
++++ b/src/backend.cpp
+@@ -3,10 +3,10 @@
+ 
+ #include "backend.h"
+ 
+-#include <QtMultimedia/QVideoSink>
+ #include <KConfigGroup>
+ #include <KSharedConfig>
+ #include <QCryptographicHash>
++#include <QtMultimedia/QVideoSink>
+ 
+ using namespace Qt::StringLiterals;
+ 
+@@ -59,7 +59,8 @@ bool Backend::stereoSwap(const QUrl &url) const
+ 
+ void Backend::setStereoSwap(const QUrl &url, bool swap)
+ {
+-    if (url.isEmpty()) return;
++    if (url.isEmpty())
++        return;
+     KConfigGroup group(KSharedConfig::openConfig(), QStringLiteral("StereoVideo"));
+     // a choice back at its default is unmarked: the file has no entry
+     if (swap)
+@@ -76,7 +77,8 @@ int Backend::stereoInput(const QUrl &url, int automatic) const
+ 
+ void Backend::setStereoInput(const QUrl &url, int input, int automatic)
+ {
+-    if (url.isEmpty()) return;
++    if (url.isEmpty())
++        return;
+     KConfigGroup group(KSharedConfig::openConfig(), QStringLiteral("StereoVideo"));
+     if (input != automatic)
+         group.writeEntry(stereoKey(url) + u".input"_s, input);
+diff --git a/src/backend.h b/src/backend.h
+index 85d0cb5..c85cbe8 100644
+--- a/src/backend.h
++++ b/src/backend.h
+@@ -3,8 +3,8 @@
+ 
+ #pragma once
+ 
+-#include <QtQmlIntegration>
+ #include <QUrl>
++#include <QtQmlIntegration>
+ 
+ class QVideoSink;
+ 

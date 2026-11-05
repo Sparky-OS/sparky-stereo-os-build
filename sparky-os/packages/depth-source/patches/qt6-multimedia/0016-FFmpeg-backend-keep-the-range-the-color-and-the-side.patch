@@ -1,0 +1,98 @@
+From d01aeb09ee31b3902307616c5925bae6543018fb Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 13:17:20 -0300
+Subject: [PATCH 16/24] FFmpeg backend: keep the range, the color and the side
+ data of a converted frame
+
+A software frame in a pixel format Qt has no shader for, or flipped, or of
+non-square pixels, is converted with swscale into a new frame. The new frame
+lost what the decoded one said of itself: its color space, transfer and
+range (AVCOL_RANGE_UNSPECIFIED is read as video range), and its side data,
+the mastering display's among them, which maxNits() reads from it.
+
+The JPEG formats of FFmpeg (yuvj420p and the like, full range YUV under
+their own names, which decoders still output for full range H.264 and H.265)
+are among the converted ones, and swscale squeezes them into the video range
+of the format without the J. A picture survives that, at the cost of some
+precision; a depth map does not, since its samples are depths and not colors
+(H.265 G.14.3.4): a full range depth map read back after the conversion had
+its depth 230 at 213 and its 64 at 71, which drew the views of a 2D plus
+depth video with 85% of their parallax.
+
+Keep a full range picture full range (sws_setColorspaceDetails), and copy
+the frame's properties to the converted one; a frame scaled to the shape of
+its pixels gets square pixels.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+(cherry picked from commit cb7b936c0c3dcae90be3d228e302be6032455330)
+---
+ .../multimedia/ffmpeg/qffmpegvideobuffer.cpp  | 44 +++++++++++++++++++
+ 1 file changed, 44 insertions(+)
+
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
+index 56fce8be6..beeef9ccd 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpegvideobuffer.cpp
+@@ -19,6 +19,21 @@ QT_BEGIN_NAMESPACE
+ 
+ using namespace QFFmpeg;
+ 
++// FFmpeg's JPEG pixel formats, full range YUV under their own names
++static bool isJpegPixelFormat(AVPixelFormat format)
++{
++    switch (format) {
++    case AV_PIX_FMT_YUVJ420P:
++    case AV_PIX_FMT_YUVJ422P:
++    case AV_PIX_FMT_YUVJ444P:
++    case AV_PIX_FMT_YUVJ440P:
++    case AV_PIX_FMT_YUVJ411P:
++        return true;
++    default:
++        return false;
++    }
++}
++
+ static bool isFrameFlipped(const AVFrame& frame) {
+     for (int i = 0; i < AV_NUM_DATA_POINTERS && frame.data[i]; ++i) {
+         if (frame.linesize[i] < 0)
+@@ -125,11 +140,40 @@ void QFFmpegVideoBuffer::convertSWFrame()
+         SwsContextUPtr scaleContext = createSwsContext(actualSize, actualAVPixelFormat, m_size,
+                                                        targetAVPixelFormat, SWS_BICUBIC);
+ 
++        // A full range picture stays full range: its samples keep their values, which for a
++        // depth map are not colors but depths (H.265 G.14.3.4), instead of being squeezed into
++        // the video range of a format without a J
++        const AVPixFmtDescriptor *descriptor = av_pix_fmt_desc_get(actualAVPixelFormat);
++        const bool fullRangeYuv = descriptor && !(descriptor->flags & AV_PIX_FMT_FLAG_RGB)
++                && (m_swFrame->color_range == AVCOL_RANGE_JPEG
++                    || isJpegPixelFormat(actualAVPixelFormat));
++        if (scaleContext && fullRangeYuv) {
++            int *inverseTable = nullptr;
++            int *table = nullptr;
++            int srcRange = 0;
++            int dstRange = 0;
++            int brightness = 0;
++            int contrast = 0;
++            int saturation = 0;
++            if (sws_getColorspaceDetails(scaleContext.get(), &inverseTable, &srcRange, &table,
++                                         &dstRange, &brightness, &contrast, &saturation)
++                >= 0)
++                sws_setColorspaceDetails(scaleContext.get(), inverseTable, 1, table, 1, brightness,
++                                         contrast, saturation);
++        }
++
+         auto newFrame = makeAVFrame();
+         newFrame->width = m_size.width();
+         newFrame->height = m_size.height();
+         newFrame->format = targetAVPixelFormat;
+         av_frame_get_buffer(newFrame.get(), 0);
++        // the color, the side data and the metadata stay the frame's; the pixels of a frame
++        // scaled to the shape of its pixels are square
++        av_frame_copy_props(newFrame.get(), m_swFrame.get());
++        if (fullRangeYuv)
++            newFrame->color_range = AVCOL_RANGE_JPEG;
++        if (m_size != actualSize)
++            newFrame->sample_aspect_ratio = { 1, 1 };
+ 
+         sws_scale(scaleContext.get(), m_swFrame->data, m_swFrame->linesize, 0, m_swFrame->height,
+                   newFrame->data, newFrame->linesize);

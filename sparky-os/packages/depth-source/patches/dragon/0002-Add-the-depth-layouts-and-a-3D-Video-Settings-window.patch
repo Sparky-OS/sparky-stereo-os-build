@@ -1,0 +1,728 @@
+From 4f8a9325228d2b1dae6ebd9f31b4effb573259cd Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 13:35:02 -0300
+Subject: [PATCH 2/4] Add the depth layouts and a 3D Video Settings window
+
+Qt Multimedia's VideoOutput now draws the two views of a video that comes
+with its depth map (2D plus depth: packed in the frame, an H.265 depth
+layer, or a depth stream of its own) with libstereo-dibr, and shows them as
+full side by side 3D video, with every choice of how they are drawn as a
+property. Dragon Player gets them:
+
+- The Input Format list of the 3D Video menu names the depth layouts:
+  picture and depth map side by side, either first; one above the other,
+  either first; with graphics (HDMI 1.4a's "L + depth + graphics +
+  graphics-depth"); over a background.
+- The menu turns the views from depth maps on and off, and opens a 3D Video
+  Settings window and KDE's display settings (kcmshell6 kcm_kscreen), where
+  the screen's 3D mode is chosen.
+- The 3D Video Settings window, in a window of its own so that the video
+  stays in sight: Enable 3D, Display Settings, the shape fallback, the
+  resizing filter of half size views and the color depth of the 3D views;
+  and for videos with a depth map, the picture as the left eye or the
+  middle, the warping, the fill of uncovered areas and its neighbourhood,
+  the smoothing of the depth, the range, the screen position, the shift,
+  what a depth sample means with its near and far distances, and a whole
+  Stereo3DDepth mark.
+
+The choices are kept (QtCore's Settings, group 3DVideo) and the video
+output is bound to them, the view chosen in the menu too; every change
+applies at once, to a paused frame as well.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+(cherry picked from commit a37326e2a1b4b96dee4fe0e54eec1af9366ef4aa)
+---
+ src/CMakeLists.txt               |   4 +
+ src/displaysettings.cpp          |  21 ++
+ src/displaysettings.h            |  20 ++
+ src/qml/ControlsBar.qml          |  53 ++++-
+ src/qml/PlayerPage.qml           |  26 +++
+ src/qml/StereoSettings.qml       |  38 +++
+ src/qml/StereoSettingsWindow.qml | 384 +++++++++++++++++++++++++++++++
+ 7 files changed, 542 insertions(+), 4 deletions(-)
+ create mode 100644 src/displaysettings.cpp
+ create mode 100644 src/displaysettings.h
+ create mode 100644 src/qml/StereoSettings.qml
+ create mode 100644 src/qml/StereoSettingsWindow.qml
+
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 9a0b240..142885f 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -15,6 +15,8 @@ ecm_target_qml_sources(dragonmodule
+         qml/Main.qml
+         qml/OverlayPopup.qml
+         qml/PlayerPage.qml
++        qml/StereoSettings.qml
++        qml/StereoSettingsWindow.qml
+         qml/VolumeButton.qml
+         qml/WelcomeView.qml
+ )
+@@ -24,6 +26,7 @@ target_sources(dragonmodule
+         mpris2/mediaplayer2player.cpp
+         mpris2/mpris2.cpp
+         backend.cpp
++        displaysettings.cpp
+         fileopen.cpp
+         sandbox.cpp)
+ target_link_libraries(dragonmodule
+@@ -31,6 +34,7 @@ target_link_libraries(dragonmodule
+         Qt6::Core
+         KF6::ConfigCore
+         KF6::KIOCore
++        KF6::KIOGui
+         KF6::I18n
+         KF6::Service
+         KF6::WindowSystem
+diff --git a/src/displaysettings.cpp b/src/displaysettings.cpp
+new file mode 100644
+index 0000000..5735562
+--- /dev/null
++++ b/src/displaysettings.cpp
+@@ -0,0 +1,21 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#include "displaysettings.h"
++
++#include <QStandardPaths>
++
++#include <KIO/CommandLauncherJob>
++
++using namespace Qt::StringLiterals;
++
++bool DisplaySettings::isAvailable() const
++{
++    return !QStandardPaths::findExecutable(u"kcmshell6"_s).isEmpty();
++}
++
++void DisplaySettings::open()
++{
++    auto *job = new KIO::CommandLauncherJob(u"kcmshell6"_s, {u"kcm_kscreen"_s}, this);
++    job->start();
++}
+diff --git a/src/displaysettings.h b/src/displaysettings.h
+new file mode 100644
+index 0000000..026d02a
+--- /dev/null
++++ b/src/displaysettings.h
+@@ -0,0 +1,20 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++#pragma once
++
++#include <QtQmlIntegration>
++
++// KDE's display settings, where the screen's 3D mode is chosen
++class DisplaySettings : public QObject
++{
++    Q_OBJECT
++    QML_ELEMENT
++    QML_SINGLETON
++    Q_PROPERTY(bool available READ isAvailable CONSTANT)
++public:
++    using QObject::QObject;
++
++    [[nodiscard]] bool isAvailable() const;
++    Q_INVOKABLE void open();
++};
+diff --git a/src/qml/ControlsBar.qml b/src/qml/ControlsBar.qml
+index d5fe4d3..12851e1 100644
+--- a/src/qml/ControlsBar.qml
++++ b/src/qml/ControlsBar.qml
+@@ -10,6 +10,8 @@ import QtMultimedia as Multimedia
+ import org.kde.coreaddons as KCoreAddons
+ import org.kde.dragon as Dragon
+ 
++import org.kde.dragon
++
+ OverlayPopup {
+     id: toolbar
+     Dragon.Backend { id: stereoState }
+@@ -19,6 +21,9 @@ OverlayPopup {
+     property alias toolbarHandler: toolbarHandler
+     required property Multimedia.MediaPlayer player
+     required property Multimedia.VideoOutput videoOutput
++    // the 3D settings the video output is bound to: the menu sets them, not the output
++    required property StereoSettings stereoSettings
++    property StereoSettingsWindow stereoSettingsWindow: null
+     property alias seekSlider: seekSlider
+     property bool stackedMode: false
+ 
+@@ -235,25 +240,25 @@ OverlayPopup {
+                         enabled: videoOutput.stereoVideo
+                         text: i18nc("@action:button stereoscopic 3D view selector, shown in 3D by the display", "3D")
+                         checked: videoOutput.stereoView === Multimedia.VideoOutput.StereoBothEyes
+-                        onToggled: videoOutput.stereoView = Multimedia.VideoOutput.StereoBothEyes
++                        onToggled: toolbar.stereoSettings.view = Multimedia.VideoOutput.StereoBothEyes
+                     }
+                     QQC2.RadioDelegate {
+                         enabled: videoOutput.stereoVideo
+                         text: i18nc("@action:button stereoscopic 3D view selector", "Left View")
+                         checked: videoOutput.stereoView === Multimedia.VideoOutput.StereoLeftEye
+                                  || (videoOutput.stereoView === Multimedia.VideoOutput.StereoBothEyes && !videoOutput.stereoLayerSupported)
+-                        onToggled: videoOutput.stereoView = Multimedia.VideoOutput.StereoLeftEye
++                        onToggled: toolbar.stereoSettings.view = Multimedia.VideoOutput.StereoLeftEye
+                     }
+                     QQC2.RadioDelegate {
+                         enabled: videoOutput.stereoVideo
+                         text: i18nc("@action:button stereoscopic 3D view selector", "Right View")
+                         checked: videoOutput.stereoView === Multimedia.VideoOutput.StereoRightEye
+-                        onToggled: videoOutput.stereoView = Multimedia.VideoOutput.StereoRightEye
++                        onToggled: toolbar.stereoSettings.view = Multimedia.VideoOutput.StereoRightEye
+                     }
+                     QQC2.RadioDelegate {
+                         text: i18nc("@action:button stereoscopic 3D view selector, both views as the video holds them", "Both Views, as Stored")
+                         checked: videoOutput.stereoView === Multimedia.VideoOutput.StereoFlat
+-                        onToggled: videoOutput.stereoView = Multimedia.VideoOutput.StereoFlat
++                        onToggled: toolbar.stereoSettings.view = Multimedia.VideoOutput.StereoFlat
+                     }
+                     QQC2.MenuSeparator {}
+                     QQC2.Menu {
+@@ -272,6 +277,12 @@ OverlayPopup {
+                                 { text: i18nc("@action:button 3D video input format", "Frame Sequential"), value: Multimedia.VideoOutput.StereoFrameSequence },
+                                 { text: i18nc("@action:button 3D video input format, red and cyan anaglyph, shown as it is", "Anaglyph, Red and Cyan"), value: Multimedia.VideoOutput.StereoAnaglyphCyanRed },
+                                 { text: i18nc("@action:button 3D video input format, green and magenta anaglyph, shown as it is", "Anaglyph, Green and Magenta"), value: Multimedia.VideoOutput.StereoAnaglyphGreenMagenta },
++                                { text: i18nc("@action:button 3D video input format, 2D plus depth: the views are drawn from the depth map", "Picture and Depth Map, Side by Side"), value: Multimedia.VideoOutput.StereoDepthSideBySide },
++                                { text: i18nc("@action:button 3D video input format, 2D plus depth", "Depth Map and Picture, Side by Side"), value: Multimedia.VideoOutput.StereoDepthSideBySideDepthFirst },
++                                { text: i18nc("@action:button 3D video input format, 2D plus depth", "Picture above Its Depth Map"), value: Multimedia.VideoOutput.StereoDepthTopBottom },
++                                { text: i18nc("@action:button 3D video input format, 2D plus depth", "Depth Map above Its Picture"), value: Multimedia.VideoOutput.StereoDepthTopBottomDepthFirst },
++                                { text: i18nc("@action:button 3D video input format, 2D plus depth with graphics over it (HDMI 1.4a)", "Picture, Depth Map and Graphics"), value: Multimedia.VideoOutput.StereoDepthGraphics },
++                                { text: i18nc("@action:button 3D video input format, 2D plus depth with the background it hides", "Picture and Depth Map over a Background"), value: Multimedia.VideoOutput.StereoDepthBackground },
+                                 { text: i18nc("@action:button 3D video input format, the video is not 3D", "Not 3D"), value: Multimedia.VideoOutput.StereoNone }
+                             ]
+                             delegate: QQC2.RadioDelegate {
+@@ -290,6 +301,23 @@ OverlayPopup {
+                             stereoState.setStereoSwap(player.source, checked)
+                         }
+                     }
++                    QQC2.CheckDelegate {
++                        text: i18nc("@action:button 3D video, 2D plus depth: the two views are drawn from the depth map, else the picture is shown alone", "Draw the Views from Depth Maps")
++                        checked: toolbar.stereoSettings.depth
++                        onToggled: toolbar.stereoSettings.depth = checked
++                    }
++                    QQC2.MenuSeparator {}
++                    Kirigami.Action {
++                        text: i18nc("@action:button opens the 3D video settings", "3D Video Settings…")
++                        icon.name: "configure"
++                        onTriggered: toolbar.openStereoSettings()
++                    }
++                    Kirigami.Action {
++                        text: i18nc("@action:button", "Display Settings…")
++                        icon.name: "preferences-desktop-display"
++                        enabled: DisplaySettings.available
++                        onTriggered: DisplaySettings.open()
++                    }
+                 }
+                 QQC2.Menu {
+                     icon.name: "kdenlive-add-clip-symbolic"
+@@ -385,6 +413,23 @@ OverlayPopup {
+         }
+     }
+ 
++    Component {
++        id: stereoSettingsWindowComponent
++        StereoSettingsWindow {
++            settings: toolbar.stereoSettings
++        }
++    }
++
++    // One window of 3D video settings, made when first asked for
++    function openStereoSettings() {
++        if (!stereoSettingsWindow) {
++            stereoSettingsWindow = stereoSettingsWindowComponent.createObject(appWindow)
++        }
++        stereoSettingsWindow.show()
++        stereoSettingsWindow.raise()
++        stereoSettingsWindow.requestActivate()
++    }
++
+     HoverHandler {
+         id: toolbarHandler
+         margin: Kirigami.Units.gridUnit
+diff --git a/src/qml/PlayerPage.qml b/src/qml/PlayerPage.qml
+index a0c998b..1b6a65d 100644
+--- a/src/qml/PlayerPage.qml
++++ b/src/qml/PlayerPage.qml
+@@ -19,6 +19,7 @@ Kirigami.Page {
+     property var storedVisibility: null
+     property alias player: player
+     property alias videoContainer: videoContainer
++    property alias stereoSettings: stereoSettings
+     required property QtObject fullscreenAction
+ 
+     // Depending on whether the About page is on the stack we'll either want a header (about page) or not (video page)
+@@ -156,6 +157,30 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+         Multimedia.VideoOutput {
+             id: video
+             anchors.fill: parent
++
++            stereoView: stereoSettings.view
++            stereoShapeFallback: stereoSettings.shapeFallback
++            stereoScaling: stereoSettings.scaling
++            stereoSurface: stereoSettings.surface
++            stereoDepth: stereoSettings.depth
++            stereoDepthView: stereoSettings.depthView
++            stereoDepthWarp: stereoSettings.depthWarp
++            stereoDepthFill: stereoSettings.depthFill
++            stereoDepthRadius: stereoSettings.depthRadius
++            stereoDepthSmooth: stereoSettings.depthSmooth
++            stereoDepthSigmaH: stereoSettings.depthSigmaH
++            stereoDepthSigmaV: stereoSettings.depthSigmaV
++            stereoDepthRange: stereoSettings.depthRange
++            stereoDepthZero: stereoSettings.depthZero
++            stereoDepthShift: stereoSettings.depthShift
++            stereoDepthMeaning: stereoSettings.depthMeaning
++            stereoDepthNear: stereoSettings.depthNear
++            stereoDepthFar: stereoSettings.depthFar
++            stereoDepthMark: stereoSettings.depthMark
++        }
++
++        Dragon.StereoSettings {
++            id: stereoSettings
+         }
+ 
+         Multimedia.AudioOutput {
+@@ -386,6 +411,7 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+         ControlsBar {
+             id: toolbar
+             videoOutput: video
++            stereoSettings: stereoSettings
+ 
+             readonly property int switchWidth: Kirigami.Units.gridUnit * 30
+ 
+diff --git a/src/qml/StereoSettings.qml b/src/qml/StereoSettings.qml
+new file mode 100644
+index 0000000..c88ca13
+--- /dev/null
++++ b/src/qml/StereoSettings.qml
+@@ -0,0 +1,38 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++import QtCore
++import QtMultimedia
++
++// How 3D videos are shown, kept between sessions: the stereo properties of the VideoOutput, with
++// its defaults. A video that comes with its depth map (2D plus depth) has its two views drawn by
++// libstereo-dibr, which the depth properties steer.
++Settings {
++    category: "3DVideo"
++
++    // What is shown of a 3D video: each eye its view (3D), one view, or the frame as stored
++    property int view: VideoOutput.StereoBothEyes
++    // A video that says nothing and is at least 3 times as wide as high is full side by side
++    property bool shapeFallback: true
++    // The filter that restores the size of half size and interleaved views
++    property int scaling: VideoOutput.StereoLanczos
++    // The color depth of the surface the views are shown in, on a 3D screen
++    property int surface: VideoOutput.StereoSurfaceBySource
++
++    // The views of a video with a depth map, drawn from it (else its picture alone)
++    property bool depth: true
++    property int depthView: VideoOutput.StereoDepthPictureLeft
++    property int depthWarp: VideoOutput.StereoDepthForward
++    property int depthFill: VideoOutput.StereoDepthFillBackground
++    property int depthRadius: 5
++    property int depthSmooth: VideoOutput.StereoDepthSmoothOff
++    property real depthSigmaH: 10
++    property real depthSigmaV: 30
++    property real depthRange: 58
++    property real depthZero: 0.5
++    property real depthShift: 0
++    property int depthMeaning: VideoOutput.StereoDepthAutomatic
++    property real depthNear: 0
++    property real depthFar: 0
++    property string depthMark
++}
+diff --git a/src/qml/StereoSettingsWindow.qml b/src/qml/StereoSettingsWindow.qml
+new file mode 100644
+index 0000000..7b3fd08
+--- /dev/null
++++ b/src/qml/StereoSettingsWindow.qml
+@@ -0,0 +1,384 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++import QtQuick
++import QtQuick.Layouts
++import QtQuick.Controls as QQC2
++import QtMultimedia as Multimedia
++import org.kde.kirigami as Kirigami
++
++import org.kde.dragon
++
++// 3D video settings, in a window of their own so that the video stays in sight while they
++// change: whether 3D videos are shown in 3D, the screen's 3D mode (KDE's display settings), how
++// the views of a 3D video are restored, and every choice of how the two views of a video with a
++// depth map are drawn (libstereo-dibr). Every change applies at once and is kept.
++Kirigami.ApplicationWindow {
++    id: root
++
++    required property StereoSettings settings
++
++    title: i18nc("@title:window", "3D Video Settings")
++    width: Kirigami.Units.gridUnit * 34
++    height: Kirigami.Units.gridUnit * 40
++    minimumWidth: Kirigami.Units.gridUnit * 24
++    minimumHeight: Kirigami.Units.gridUnit * 20
++
++    // A spin box of decimals: value holds the number times 10^decimals
++    component DecimalSpinBox: QQC2.SpinBox {
++        id: decimalSpinBox
++
++        property int decimals: 1
++        readonly property real factor: Math.pow(10, decimals)
++        readonly property real realValue: value / factor
++
++        editable: true
++        stepSize: factor / 10 >= 1 ? factor / 10 : 1
++        validator: DoubleValidator {
++            bottom: Math.min(decimalSpinBox.from, decimalSpinBox.to) / decimalSpinBox.factor
++            top: Math.max(decimalSpinBox.from, decimalSpinBox.to) / decimalSpinBox.factor
++            decimals: decimalSpinBox.decimals
++            notation: DoubleValidator.StandardNotation
++        }
++        textFromValue: function(value, locale) {
++            return Number(value / factor).toLocaleString(locale, "f", decimals)
++        }
++        valueFromText: function(text, locale) {
++            return Math.round(Number.fromLocaleString(locale, text) * factor)
++        }
++    }
++
++    // A combo box of a VideoOutput enumeration: model elements of text (shown) and value
++    component ChoiceComboBox: QQC2.ComboBox {
++        id: choiceComboBox
++
++        property int choice
++
++        signal chosen(int value)
++
++        textRole: "text"
++        valueRole: "value"
++        implicitContentWidthPolicy: QQC2.ComboBox.WidestText
++        // again when the model is in
++        currentIndex: count > 0 ? indexOfValue(choice) : -1
++        onActivated: choiceComboBox.chosen(choiceComboBox.currentValue)
++    }
++
++    // A tool tip that shows while the control is hovered
++    component HoverToolTip: QQC2.ToolTip {
++        visible: parent.hovered && text.length > 0
++        delay: Kirigami.Units.toolTipDelay
++    }
++
++    pageStack.initialPage: Kirigami.ScrollablePage {
++        title: root.title
++        globalToolBarStyle: Kirigami.ApplicationHeaderStyle.None
++
++        Kirigami.FormLayout {
++            Kirigami.Separator {
++                Kirigami.FormData.isSection: true
++                Kirigami.FormData.label: i18nc("@title:group", "3D video")
++            }
++
++            QQC2.CheckBox {
++                text: i18nc("@option:check", "Enable 3D")
++                checked: root.settings.view !== Multimedia.VideoOutput.StereoFlat
++                onToggled: root.settings.view = checked ? Multimedia.VideoOutput.StereoBothEyes
++                                                        : Multimedia.VideoOutput.StereoFlat
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "Shows 3D videos in 3D, whatever their packing, as full side by side "
++                                + "views for the screen's 3D mode. When off, a 3D video is shown as it is stored.")
++                }
++            }
++
++            QQC2.Button {
++                Kirigami.FormData.label: i18nc("@label", "Screen:")
++                text: i18nc("@action:button", "Display Settings…")
++                icon.name: "preferences-desktop-display"
++                enabled: DisplaySettings.available
++                onClicked: DisplaySettings.open()
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "The screen's 3D mode is chosen in KDE's display settings.")
++                }
++            }
++
++            QQC2.CheckBox {
++                text: i18nc("@option:check", "Take a very wide video for two views side by side")
++                checked: root.settings.shapeFallback
++                onToggled: root.settings.shapeFallback = checked
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "A video that does not say it is 3D, and is at least three times as "
++                                + "wide as high, is taken for two full size views next to each other: no film is "
++                                + "that wide.")
++                }
++            }
++
++            ChoiceComboBox {
++                Kirigami.FormData.label: i18nc("@label:listbox", "Resizing of half size views:")
++                choice: root.settings.scaling
++                model: [
++                    { text: i18nc("@item:inlistbox resizing filter", "Bilinear"), value: Multimedia.VideoOutput.StereoBilinear },
++                    { text: i18nc("@item:inlistbox resizing filter", "Bicubic"), value: Multimedia.VideoOutput.StereoBicubic },
++                    { text: i18nc("@item:inlistbox resizing filter", "Lanczos"), value: Multimedia.VideoOutput.StereoLanczos }
++                ]
++                onChosen: (value) => root.settings.scaling = value
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "The filter that restores the full size of views squeezed to half "
++                                + "the frame, or of interleaved views.")
++                }
++            }
++
++            ChoiceComboBox {
++                Kirigami.FormData.label: i18nc("@label:listbox", "Color depth of the 3D views:")
++                choice: root.settings.surface
++                model: [
++                    { text: i18nc("@item:inlistbox color depth", "As the video"), value: Multimedia.VideoOutput.StereoSurfaceBySource },
++                    { text: i18nc("@item:inlistbox color depth", "8 bits"), value: Multimedia.VideoOutput.StereoSurface8Bit },
++                    { text: i18nc("@item:inlistbox color depth", "10 bits"), value: Multimedia.VideoOutput.StereoSurface10Bit },
++                    { text: i18nc("@item:inlistbox color depth", "Half float"), value: Multimedia.VideoOutput.StereoSurfaceHalfFloat }
++                ]
++                onChosen: (value) => root.settings.surface = value
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "The color depth of the surface the two views are shown in on a 3D "
++                                + "screen: as the video (8 bits for 8 bit video, 10 bits for 10 bit video, half float "
++                                + "above), or always the one chosen.")
++                }
++            }
++
++            Kirigami.Separator {
++                Kirigami.FormData.isSection: true
++                Kirigami.FormData.label: i18nc("@title:group", "Videos with a depth map")
++            }
++
++            QQC2.CheckBox {
++                id: depthCheckBox
++
++                text: i18nc("@option:check", "Draw the two views from the depth map")
++                checked: root.settings.depth
++                onToggled: root.settings.depth = checked
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "A video that comes with its depth map (2D plus depth: packed in the "
++                                + "frame, a depth layer of H.265, or a depth stream of its own) is shown in 3D. When off, "
++                                + "its picture is shown alone. The depth layer of an H.265 video is decoded in software.")
++                }
++            }
++
++            ChoiceComboBox {
++                Kirigami.FormData.label: i18nc("@label:listbox", "The picture is:")
++                enabled: depthCheckBox.checked
++                choice: root.settings.depthView
++                model: [
++                    { text: i18nc("@item:inlistbox the picture is", "The left eye's view"), value: Multimedia.VideoOutput.StereoDepthPictureLeft },
++                    { text: i18nc("@item:inlistbox the picture is", "Between the eyes"), value: Multimedia.VideoOutput.StereoDepthPictureCenter }
++                ]
++                onChosen: (value) => root.settings.depthView = value
++            }
++
++            ChoiceComboBox {
++                Kirigami.FormData.label: i18nc("@label:listbox", "Warping:")
++                enabled: depthCheckBox.checked
++                choice: root.settings.depthWarp
++                model: [
++                    { text: i18nc("@item:inlistbox warping", "Forward"), value: Multimedia.VideoOutput.StereoDepthForward },
++                    { text: i18nc("@item:inlistbox warping", "Backward"), value: Multimedia.VideoOutput.StereoDepthBackward },
++                    { text: i18nc("@item:inlistbox warping", "Layered"), value: Multimedia.VideoOutput.StereoDepthLayered }
++                ]
++                onChosen: (value) => root.settings.depthWarp = value
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "Forward moves each pixel of the picture to its place in the view; "
++                                + "backward moves the depth first, then takes each pixel of the view from the picture; "
++                                + "layered draws the edges of near objects as a layer over the rest.")
++                }
++            }
++
++            ChoiceComboBox {
++                Kirigami.FormData.label: i18nc("@label:listbox", "Uncovered areas:")
++                enabled: depthCheckBox.checked
++                choice: root.settings.depthFill
++                model: [
++                    { text: i18nc("@item:inlistbox fill", "Extend the background"), value: Multimedia.VideoOutput.StereoDepthFillBackground },
++                    { text: i18nc("@item:inlistbox fill", "From background pixels"), value: Multimedia.VideoOutput.StereoDepthFillDepth },
++                    { text: i18nc("@item:inlistbox fill", "Inpaint (Telea)"), value: Multimedia.VideoOutput.StereoDepthFillTelea },
++                    { text: i18nc("@item:inlistbox fill", "Leave black"), value: Multimedia.VideoOutput.StereoDepthFillNone }
++                ]
++                onChosen: (value) => root.settings.depthFill = value
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "How the areas each view sees behind near objects, which the picture "
++                                + "does not show, are filled.")
++                }
++            }
++
++            QQC2.SpinBox {
++                Kirigami.FormData.label: i18nc("@label:spinbox", "Fill neighbourhood (pixels):")
++                enabled: depthCheckBox.checked
++                editable: true
++                from: 1
++                to: 100
++                value: root.settings.depthRadius
++                onValueModified: root.settings.depthRadius = value
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "The neighbourhood that the background pixels and inpainting fills "
++                                + "take the colours from.")
++                }
++            }
++
++            ChoiceComboBox {
++                Kirigami.FormData.label: i18nc("@label:listbox", "Depth smoothing:")
++                enabled: depthCheckBox.checked
++                choice: root.settings.depthSmooth
++                model: [
++                    { text: i18nc("@item:inlistbox smoothing", "Off"), value: Multimedia.VideoOutput.StereoDepthSmoothOff },
++                    { text: i18nc("@item:inlistbox smoothing", "Asymmetric Gaussian"), value: Multimedia.VideoOutput.StereoDepthSmoothGaussian }
++                ]
++                onChosen: (value) => root.settings.depthSmooth = value
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "Smoothing the depth map before drawing leaves fewer and smaller "
++                                + "uncovered areas, and bends straight lines near the edges of objects.")
++                }
++            }
++
++            DecimalSpinBox {
++                Kirigami.FormData.label: i18nc("@label:spinbox", "Horizontal smoothing (pixels at 1920):")
++                enabled: depthCheckBox.checked && root.settings.depthSmooth === Multimedia.VideoOutput.StereoDepthSmoothGaussian
++                from: 0
++                to: 10000
++                value: Math.round(root.settings.depthSigmaH * factor)
++                onValueModified: root.settings.depthSigmaH = realValue
++            }
++
++            DecimalSpinBox {
++                Kirigami.FormData.label: i18nc("@label:spinbox", "Vertical smoothing (pixels at 1920):")
++                enabled: depthCheckBox.checked && root.settings.depthSmooth === Multimedia.VideoOutput.StereoDepthSmoothGaussian
++                from: 0
++                to: 10000
++                value: Math.round(root.settings.depthSigmaV * factor)
++                onValueModified: root.settings.depthSigmaV = realValue
++            }
++
++            DecimalSpinBox {
++                Kirigami.FormData.label: i18nc("@label:spinbox", "Depth range (pixels at 1920):")
++                enabled: depthCheckBox.checked
++                from: 0
++                to: 5000
++                value: Math.round(root.settings.depthRange * factor)
++                onValueModified: root.settings.depthRange = realValue
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "For depth maps without distances: the largest shift between the eyes "
++                                + "either side of the screen, in pixels of a picture 1920 wide. 58, the default, is about "
++                                + "one degree for a viewer three picture heights away.")
++                }
++            }
++
++            DecimalSpinBox {
++                Kirigami.FormData.label: i18nc("@label:spinbox", "Screen position:")
++                enabled: depthCheckBox.checked
++                decimals: 2
++                from: 0
++                to: 100
++                value: Math.round(root.settings.depthZero * factor)
++                onValueModified: root.settings.depthZero = realValue
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "For depth maps without distances: where the screen is, from the "
++                                + "farthest depth (0) to the nearest (1). Things nearer than it come out of the screen.")
++                }
++            }
++
++            DecimalSpinBox {
++                Kirigami.FormData.label: i18nc("@label:spinbox", "Shift (pixels at 1920):")
++                enabled: depthCheckBox.checked
++                from: -5000
++                to: 5000
++                value: Math.round(root.settings.depthShift * factor)
++                onValueModified: root.settings.depthShift = realValue
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "A shift between the eyes added everywhere: positive moves the whole "
++                                + "scene behind the screen, negative in front of it.")
++                }
++            }
++
++            ChoiceComboBox {
++                Kirigami.FormData.label: i18nc("@label:listbox", "Depth samples mean:")
++                enabled: depthCheckBox.checked
++                choice: root.settings.depthMeaning
++                model: [
++                    { text: i18nc("@item:inlistbox depth meaning", "What the video says"), value: Multimedia.VideoOutput.StereoDepthAutomatic },
++                    { text: i18nc("@item:inlistbox depth meaning", "Nearer when larger"), value: Multimedia.VideoOutput.StereoDepthNearness },
++                    { text: i18nc("@item:inlistbox depth meaning", "Farther when larger"), value: Multimedia.VideoOutput.StereoDepthFarness },
++                    { text: i18nc("@item:inlistbox depth meaning", "Inverse distance (1/Z)"), value: Multimedia.VideoOutput.StereoDepthInverseZ },
++                    { text: i18nc("@item:inlistbox depth meaning", "Disparity"), value: Multimedia.VideoOutput.StereoDepthDisparity },
++                    { text: i18nc("@item:inlistbox depth meaning", "Distance (Z)"), value: Multimedia.VideoOutput.StereoDepthZ },
++                    { text: i18nc("@item:inlistbox depth meaning", "Non-linear disparity"), value: Multimedia.VideoOutput.StereoDepthNonlinearDisparity },
++                    { text: i18nc("@item:inlistbox depth meaning", "Parallax map"), value: Multimedia.VideoOutput.StereoDepthParallax },
++                    { text: i18nc("@item:inlistbox depth meaning", "Distance, near to far (Dynamic Depth)"), value: Multimedia.VideoOutput.StereoDepthRangeLinear },
++                    { text: i18nc("@item:inlistbox depth meaning", "Inverse distance, near to far (Dynamic Depth)"), value: Multimedia.VideoOutput.StereoDepthRangeInverse },
++                    { text: i18nc("@item:inlistbox depth meaning", "A depth sensor's distances"), value: Multimedia.VideoOutput.StereoDepthMetric }
++                ]
++                onChosen: (value) => root.settings.depthMeaning = value
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "What a sample of the depth map means, in place of what the video "
++                                + "says about it.")
++                }
++            }
++
++            DecimalSpinBox {
++                Kirigami.FormData.label: i18nc("@label:spinbox", "Near distance:")
++                enabled: depthCheckBox.checked
++                decimals: 2
++                from: 0
++                to: 100000000
++                value: Math.round(root.settings.depthNear * factor)
++                onValueModified: root.settings.depthNear = realValue
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "With the far distance: the distances of a Z or Dynamic Depth map "
++                                + "that carries none, or between which a sensor's distances are spread, in the map's "
++                                + "own unit. 0 leaves them to the video.")
++                }
++            }
++
++            DecimalSpinBox {
++                Kirigami.FormData.label: i18nc("@label:spinbox", "Far distance:")
++                enabled: depthCheckBox.checked
++                decimals: 2
++                from: 0
++                to: 100000000
++                value: Math.round(root.settings.depthFar * factor)
++                onValueModified: root.settings.depthFar = realValue
++            }
++
++            QQC2.TextField {
++                id: depthMark
++
++                Kirigami.FormData.label: i18nc("@label:textbox", "Depth mark:")
++                Layout.fillWidth: true
++                enabled: depthCheckBox.checked
++                text: root.settings.depthMark
++                placeholderText: i18nc("@info:placeholder", "for example: inverseZ near=0.25 far=10")
++                onEditingFinished: root.settings.depthMark = text
++
++                HoverToolTip {
++                    text: i18nc("@info:tooltip", "What a depth sample means, with all its values, as a Stereo3DDepth "
++                                + "mark of Sparky Stereo OS: a kind, then key=value pairs. It comes before the choice "
++                                + "above and what the video says; a malformed mark shows the picture alone.")
++                }
++            }
++        }
++    }
++
++    // a mark being typed is kept when the window closes
++    onClosing: root.settings.depthMark = depthMark.text
++}
