@@ -41,8 +41,9 @@ docker run --rm --name "$NAME" --platform linux/amd64 --cpus "${CPUS:-4}" --memo
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$ARCHIVE":/archive:ro \
 	"${PREV_MOUNT[@]}" "${PREV_ENV[@]}" \
 	-v "$WORK":/work -v "$HERE/..":/toolkit:ro -v "$REPO":/repo:ro "${EXTRA_MOUNT[@]}" \
-	-e SRC="$SRC" -e VERSION="$VERSION" -e OWNER="$(id -u):$(id -g)" "$IMAGE" bash -c '
+	-e SRC="$SRC" -e VERSION="$VERSION" -e OWNER="$(id -u):$(id -g)" -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMAGE" bash -c '
 set -euo pipefail
+sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive
 export DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com DEB_BUILD_OPTIONS=parallel=4
 cp /repo/sparky-stereo-repo.asc /usr/share/keyrings/

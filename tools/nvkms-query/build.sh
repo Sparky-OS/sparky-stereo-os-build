@@ -10,9 +10,10 @@ OUT=${2:-${SPARKY_SCRATCH:?}/sparky-os/nvkms-query}
 VER=$(sed -n 's/^NVIDIA_VERSION *= *//p' "$TREE/version.mk")
 mkdir -p "$(dirname "$OUT")"
 docker run --rm --cpus 4 -e DEBIAN_FRONTEND=noninteractive \
-	-v "$HERE":/src:ro -v "$TREE":/tree:ro -v "$(dirname "$OUT")":/out \
+	-v "$HERE":/src:ro -v "$TREE":/tree:ro -v "$(dirname "$OUT")":/out -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
 	debian:testing sh -c "
 set -e
+sh /run/https-only-apt.sh
 apt-get update -qq && apt-get -y install --no-install-recommends gcc libc6-dev >/dev/null
 S=/tree/src
 gcc -O2 -Wall -static -DNVKMS_DRIVER_VERSION=\\\"$VER\\\" \

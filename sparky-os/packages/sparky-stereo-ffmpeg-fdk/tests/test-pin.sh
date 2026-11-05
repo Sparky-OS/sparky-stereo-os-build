@@ -27,7 +27,7 @@ if [ "${INSIDE:-0}" != 1 ]; then
 	rm -f "$T"/pinpkgs/*.deb
 	if [ -n "${PREBUILT:-}" ]; then cp "$PREBUILT" "$T/pinpkgs/"; else OUT="$T/pinpkgs" "$HERE/../build.sh" >/dev/null; fi
 	exec docker run --rm --name "${NAME:-sparky-fdk-pintest}" --platform linux/amd64 --cpus 1 \
-		-v "$T/pinpkgs:/pkgs:ro" -v "$PINS:/pins:ro" -v "$HERE/..:/g:ro" -e INSIDE=1 "$IMAGE" bash /g/tests/test-pin.sh
+		-v "$T/pinpkgs:/pkgs:ro" -v "$PINS:/pins:ro" -v "$HERE/..:/g:ro" -e INSIDE=1 -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMAGE" bash -c 'sh /run/https-only-apt.sh && exec bash /g/tests/test-pin.sh'
 fi
 
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C

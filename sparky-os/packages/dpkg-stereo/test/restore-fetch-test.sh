@@ -12,6 +12,9 @@
 #   (the program to test, the folder holding its lean package, its language files' folder, a scratch folder; the
 #   program's journal catalogs are read from ../lib/systemd/catalog beside it, so the problems engine knows them)
 set -u
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 BIN=$1 LIB=$2 LANGS=$3 W=$4
 export DEBIAN_FRONTEND=noninteractive DPKG_STEREO_LIB=$LIB DPKG_STEREO_LANG_DIR=$LANGS LANG=C.UTF-8
 export SPARKY_STEREO_PROBLEMS_CATALOG="$(cd "$(dirname "$BIN")/../lib/systemd/catalog" 2>/dev/null && pwd):/usr/lib/systemd/catalog"

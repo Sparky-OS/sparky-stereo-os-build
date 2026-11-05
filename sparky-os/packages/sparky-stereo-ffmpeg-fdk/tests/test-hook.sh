@@ -19,11 +19,14 @@
 #     listens, in a container, is the one line allowed)
 #   a failure nothing could keep (the engine's store broken, a clear that fails, the library missing with the engine
 #     broken): apt-get update and apt update fail
-# Usage: docker run --rm --cpus 1 -v PACKAGE-FOLDER:/g:ro IMAGE bash /g/tests/test-hook.sh [/g | /usr]
+# Usage: docker run --rm --cpus 1 -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v BUILD-CHECKOUT/tools/https-only-apt.sh:/run/https-only-apt.sh:ro -v PACKAGE-FOLDER:/g:ro IMAGE bash /g/tests/test-hook.sh [/g | /usr]
 #   (IMAGE: debian:testing with sparky-stereo-problems and python3 installed; /usr tests the installed package with its
 #   own hook file in /etc/apt/apt.conf.d and its catalogs; for a package folder its hook file is installed with the
 #   folder's path and its catalogs are generated)
 # Last update 2026/11/02
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 export DEBIAN_FRONTEND=noninteractive
 G=${1:-/g}
 PASS=0; FAIL=0

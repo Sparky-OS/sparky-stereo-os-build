@@ -28,6 +28,11 @@ def sh(cmd, check=True, **kw):
     return r
 
 
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the test
+sh(['sh', '/run/https-only-apt.sh'])
+
+
 def check(ok, text):
     results.append(ok)
     print(('PASS  ' if ok else 'FAIL  ') + '%s: %s' % (CASE, text), flush=True)

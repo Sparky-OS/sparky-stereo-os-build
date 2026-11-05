@@ -1,6 +1,9 @@
 # Sparky Stereo OS, ORDER 247: rebuild of lane 41's source package inside the published-image container (mounts: /stage staged debs, /in the lc1 .dsc set, /toolkit sparky-os, /out). Created by Daniel Ramos (Capitain Jack) 2026/10/24
 # Copyright 2026 under the GNU GPL3 License
 set -euo pipefail
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4 DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 mkdir -p /repo && cd /repo && cp /stage/*/*.deb . && dpkg-scanpackages -m . 2>/dev/null > Packages
 echo 'deb [trusted=yes] file:/repo ./' > /etc/apt/sources.list.d/staged.list

@@ -37,8 +37,9 @@ for name in nvidia-kernel-support nvidia-modprobe; do
 	[ "$(sha256sum <"$OUT/nvidia/debs/${name}_${NV}_amd64.deb" | cut -d' ' -f1)" = "$sum" ] || { echo "$name is not NVIDIA's" >&2; exit 1; }
 done
 docker run --rm --platform linux/amd64 --cpus 4 -e DEBIAN_FRONTEND=noninteractive -e OWNER="$(id -u):$(id -g)" \
-	-v "$REPO":/repo:ro -v "$DEBS":/debs:ro -v "$OUT/nvidia/debs":/nvidia:ro -v "$OUT":/out "$IMAGE" bash -c '
+	-v "$REPO":/repo:ro -v "$DEBS":/debs:ro -v "$OUT/nvidia/debs":/nvidia:ro -v "$OUT":/out -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMAGE" bash -c '
 set -euo pipefail
+sh /run/https-only-apt.sh
 kernels=("$@")
 cat >/etc/apt/sources.list.d/sparky-stereo.sources <<S
 Types: deb

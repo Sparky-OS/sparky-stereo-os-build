@@ -12,8 +12,10 @@ trap 'docker rm -f classic-look-prepare >/dev/null 2>&1 || true' EXIT
 docker run --name classic-look-prepare --platform linux/amd64 --cpus 4 --user 0:0 \
 	--entrypoint /bin/sh \
 	-v ${SPARKY_REPO_DIR:?}:/var/local/sparky-stereo-repo:ro \
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
 	-e CLASSIC_UID="$task_uid" -e CLASSIC_GID="$task_gid" "$base" -c '
 	set -e
+	sh /run/https-only-apt.sh
 	apt-get update
 	DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-recommends install \
 		plasma-workspace plasma-desktop kwin-style-aurorae konsole kate systemsettings \

@@ -13,6 +13,9 @@
 # EXPECT=green: every module is built, signed, with the release's vermagic, and no make.log says "gcc: not found".
 # EXPECT=red (the published 14.2 headers): DKMS fails, and its make logs say "gcc: not found".
 set -uo pipefail
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 REL=$1; ORDER=$2; EXPECT=$3; MODE=$4
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 NR="--no-install-recommends"

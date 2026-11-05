@@ -3,12 +3,14 @@
 set -euo pipefail
 mkdir -p /build/home
 rm -f /etc/apt/apt.conf.d/docker-clean
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): in-rootfs.sh binds the helper and the host CA bundle into this root
+sh /run/https-only-apt.sh
 dpkg --configure -a
 apt-get -y update
 apt-get -y --no-install-recommends --fix-broken install
 apt-get -y --no-install-recommends install gpgv
 dpkg -i /var/local/sparky-stereo-repo/carried/deb-multimedia-keyring_2024.9.1_all.deb
-printf '%s\n' 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] http://www.deb-multimedia.org forky main' >/etc/apt/sources.list.d/deb-multimedia.list
+printf '%s\n' 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main' >/etc/apt/sources.list.d/deb-multimedia.list
 apt-get -y update
 apt-get -y --no-install-recommends build-dep kscreenlocker plasma-desktop xscreensaver
 apt-get -y --no-install-recommends install build-essential dpkg-dev debhelper devscripts lintian fakeroot \

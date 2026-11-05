@@ -3,7 +3,9 @@
 # invoking user (docker run --user), so nothing is installed at build time and no file in the output is owned by root.
 FROM debian:testing
 ENV DEBIAN_FRONTEND=noninteractive LC_ALL=C
-RUN apt-get update -qq && apt-get -y install --no-install-recommends \
+RUN --mount=type=bind,from=https-only-apt,source=https-only-apt.sh,target=/run/https-only-apt.sh \
+    --mount=type=bind,from=host-ca,source=ca-certificates.crt,target=/run/host-ca.crt \
+    sh /run/https-only-apt.sh && apt-get update -qq && apt-get -y install --no-install-recommends \
       build-essential bc bison flex libssl-dev libelf-dev libdw-dev dwarves cpio kmod rsync \
       python3 git ca-certificates xz-utils zstd patch \
       debhelper dpkg-dev fakeroot lsb-release \

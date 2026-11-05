@@ -4,13 +4,17 @@ set -euo pipefail
 repo=$PWD
 apt_dir=$repo/out/packages/apt
 mkdir -p "$apt_dir/keyring"
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): this container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); not root, so its settings go to a file apt is pointed at
+HTTPS_ONLY_APT_CONF=$apt_dir/https-only-apt.conf sh /run/https-only-apt.sh
+export APT_CONFIG=$apt_dir/https-only-apt.conf
 dpkg-deb -x /var/local/sparky-stereo-repo/carried/deb-multimedia-keyring_2024.9.1_all.deb "$apt_dir/keyring"
 cat > "$apt_dir/sources.list" <<'SOURCES'
-deb http://deb.debian.org/debian testing main
-deb-src http://deb.debian.org/debian testing main
+deb https://deb.debian.org/debian testing main
+deb-src https://deb.debian.org/debian testing main
 deb [trusted=yes] file:///var/local/sparky-stereo-repo ./
 SOURCES
-printf 'deb [signed-by=%s/keyring/usr/share/keyrings/deb-multimedia-keyring.pgp] http://www.deb-multimedia.org forky main\n' "$apt_dir" >> "$apt_dir/sources.list"
+printf 'deb [signed-by=%s/keyring/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main\n' "$apt_dir" >> "$apt_dir/sources.list"
 args=(-o "Dir::State::lists=$apt_dir/lists" -o "Dir::Cache=$apt_dir/cache"
       -o "Dir::Etc::sourcelist=$apt_dir/sources.list" -o Dir::Etc::sourceparts=-
       -o APT::Sandbox::User= -o Debug::NoLocking=1)

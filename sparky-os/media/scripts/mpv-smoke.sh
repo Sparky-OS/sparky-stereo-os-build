@@ -2,6 +2,9 @@
 # In a fresh debian:testing container with deb-multimedia (the proof base), the repository at /repo, the edition's pins at /pins
 # and the rig's clips at /clips: ffmpeg and mpv install from the repository, and both decode a clip with no display and no audio.
 # Run as root in the container (apt needs it); prints what was installed and the exit codes.
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 export DEBIAN_FRONTEND=noninteractive
 cp /pins/sparky-stereo /pins/sparky-stereo-only-ours /etc/apt/preferences.d/
 echo 'deb [trusted=yes] file:/repo ./' >/etc/apt/sources.list.d/sparky-stereo.list

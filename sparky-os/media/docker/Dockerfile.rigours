@@ -2,7 +2,10 @@
 FROM mdmo-rig:base
 ENV DEBIAN_FRONTEND=noninteractive
 COPY --from=apt sparky-stereo sparky-stereo-only-ours /etc/apt/preferences.d/
-RUN --mount=type=bind,from=repo,target=/repo --mount=type=cache,target=/var/cache/apt/archives \
+RUN --mount=type=bind,from=https-only-apt,source=https-only-apt.sh,target=/run/https-only-apt.sh \
+    --mount=type=bind,from=host-ca,source=ca-certificates.crt,target=/run/host-ca.crt \
+    --mount=type=bind,from=repo,target=/repo --mount=type=cache,target=/var/cache/apt/archives \
+    sh /run/https-only-apt.sh && \
     echo 'deb [trusted=yes] file:/repo ./' > /etc/apt/sources.list.d/sparky-stereo-stage.list \
  && apt-get update -qq && apt-cache policy mpv ffmpeg libavcodec63 | grep -E "^[a-z]|Candidate|\*\*\*|stereo3d|dmo|Packages" | head -30 > /policy.txt; cat /policy.txt; \
     apt-get -y -o APT::Keep-Downloaded-Packages=true install --no-install-recommends ffmpeg mpv > /install-media.log 2>&1; tail -3 /install-media.log; \

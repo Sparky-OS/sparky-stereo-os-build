@@ -3,6 +3,7 @@
 set -euo pipefail
 while [ ! -f /build/logs/xscreensaver-build.status ]; do sleep 5; done
 test "$(cat /build/logs/xscreensaver-build.status)" = 0
+sh /run/https-only-apt.sh   # apt over HTTPS only (ORDER 400b, CVE-2026-109518); in-rootfs.sh binds the helper and the host CA bundle
 apt-get -y --no-install-recommends install \
     /build/sources/xscreensaver-data_6.09+dfsg1-2+stereo3d1_amd64.deb \
     /build/sources/xscreensaver-data-extra_6.09+dfsg1-2+stereo3d1_amd64.deb \

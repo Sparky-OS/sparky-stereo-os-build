@@ -16,8 +16,9 @@ HERE=$(dirname "$(readlink -f "$0")")
 RIG=${RIG_IMAGE:-kernel-73-263-efi-rig:1}
 OUT=$W/$LABEL; rm -rf "$OUT"; mkdir -p "$OUT"
 # the system, in a throwaway forky container (apt from Debian; the edition's packages from DEBS_DIR as a flat source)
-docker run --name "vram-vm-$LABEL" --platform linux/amd64 -v "$DEBS":/debs:ro -v "$KDEB":/kernel.deb:ro -v "$HERE":/t:ro debian:forky bash -c '
+docker run --name "vram-vm-$LABEL" --platform linux/amd64 -v "$DEBS":/debs:ro -v "$KDEB":/kernel.deb:ro -v "$HERE":/t:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro debian:forky bash -c '
 set -e
+sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive
 apt-get -y update >/dev/null
 apt-get -y --no-install-recommends install systemd systemd-sysv udev kmod initramfs-tools linux-base dbus dbus-user-session libpam-systemd dpkg-dev >/dev/null

@@ -39,4 +39,4 @@ fi
 exec docker run --rm --name "${NAME:-sparky-fdk-e2e}" --platform linux/amd64 --cpus 4 --tmpfs /var/tmp:rw,exec,mode=1777,size=12g --tmpfs /mnt/noexec:rw,noexec,mode=1777,size=12g --tmpfs /mnt/small:rw,mode=1777,size=1g \
 	-v "$T/repo2:/repo2:ro" -v "$T/repo2-no386:/repo2-no386:ro" -v "$T/repo3:/repo3:ro" \
 	-v "$T/pkgs:/pkgs:ro" -v "$PINS:/pins:ro" -v "$HERE:/tests:ro" \
-	-e I386="$I386" -e FAST="${FAST:-0}" -e STOP_AFTER_4D="${STOP_AFTER_4D:-0}" -e ONLY_4D="${ONLY_4D:-0}" "$IMAGE" bash /tests/inside.sh
+	-e I386="$I386" -e FAST="${FAST:-0}" -e STOP_AFTER_4D="${STOP_AFTER_4D:-0}" -e ONLY_4D="${ONLY_4D:-0}" -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMAGE" bash -c 'sh /run/https-only-apt.sh && exec bash /tests/inside.sh'

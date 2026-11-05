@@ -38,7 +38,7 @@ flat) REPO=${REPO:-${SPARKY_REPO_DIR:?}} ;;
 *) echo "EDITION_REPO must be live or flat"; exit 2 ;;
 esac
 IMAGE=${IMAGE:-beta-iso-lutz-build:1}; NAME=${NAME:-beta-iso-lutz}
-docker image inspect "$IMAGE" >/dev/null 2>&1 || docker build --platform linux/amd64 -t "$IMAGE" "$HERE"
+docker image inspect "$IMAGE" >/dev/null 2>&1 || "$HERE/../../tools/https-only-build.sh" --platform linux/amd64 -t "$IMAGE" "$HERE"
 mkdir -p "$TREE" "$STAGE" "$CACHE" "$WORK" "$OUT" "$LOGS" "$OVL"
 sm=; [ -n "${SIGNED_MODULES:-}" ] && sm="-v $SIGNED_MODULES:/signed:ro -e SIGNED_MODULES=/signed"
 [ -n "${SIGNED_KERNEL:-}" ] && sm="$sm -v $SIGNED_KERNEL:/signed-kernel.deb:ro -e SIGNED_KERNEL=/signed-kernel.deb"

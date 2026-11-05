@@ -9,7 +9,8 @@
 set -euo pipefail
 PKG=$(cd "${1:-$(dirname "$0")/..}" && pwd)
 TESTS=$(cd "$(dirname "$0")" && pwd)
-docker run --rm -e DEBIAN_FRONTEND=noninteractive -v "$PKG":/pkg:ro -v "$TESTS":/tests:ro debian:testing bash -c '
+docker run --rm -e DEBIAN_FRONTEND=noninteractive -v "$PKG":/pkg:ro -v "$TESTS":/tests:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro debian:testing bash -c '
+sh /run/https-only-apt.sh
 apt-get update -qq >/dev/null && apt-get install -y -qq python3 >/dev/null
 D=/ HERE=/pkg source /pkg/payload.sh
 mkdir -p /pkg-tests-run && cp -r /tests/. /pkg-tests-run/

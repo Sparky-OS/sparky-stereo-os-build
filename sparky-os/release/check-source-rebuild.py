@@ -63,6 +63,7 @@ cd /work
 dpkg-source -x "$TASK_DSC" source
 if [ "$TASK_SOURCE" = vibe ]; then
     export DEBIAN_FRONTEND=noninteractive
+    sh /run/https-only-apt.sh
     apt-get -y update
     apt-get -y --no-install-recommends build-dep /work/source
 fi
@@ -82,6 +83,8 @@ fi
             "--cpus", "2", "-e", "TASK_DSC=" + dsc.name,
             "-e", "TASK_SOURCE=" + name,
             "-v", f"{work}:/work", "-v", f"{kit}:/toolkit:ro",
+            "-v", "/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro",
+            "-v", str(Path(__file__).resolve().parents[2] / "tools" / "https-only-apt.sh") + ":/run/https-only-apt.sh:ro",
             "sparky-lc-migration:20261020", "bash", "/work/run.sh",
         ], 'sparky-lc-source-' + name, log)
         if process.wait():

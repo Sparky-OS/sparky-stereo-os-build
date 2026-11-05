@@ -26,9 +26,11 @@ docker run -d --name "$name" --cpus 4 --platform linux/386 \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
 	-v "$WORK":/work -v "$SRC":/src:ro -v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
 	sparky-lc-migration:20261020-i386 bash -c '
 trap "chown -R 1000:1000 /work" EXIT
 set -euo pipefail
+sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS="parallel=4 nocheck"
 export DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com
 printf "deb [trusted=yes] file:/repo mashtabba main\n" > /etc/apt/sources.list.d/edition.list

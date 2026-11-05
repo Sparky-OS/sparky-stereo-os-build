@@ -10,8 +10,11 @@
 #   - the deb-multimedia source file is there and apt update reads deb-multimedia's repository with that keyring, without a warning
 #   - the pins are read: our FFmpeg and mpv are the candidates, deb-multimedia's builds of them are at -1, and the carried
 #     keyring is at 400, below deb-multimedia's own
-# Usage: docker run --rm --cpus 2 -v REPO:/repo:ro -v PKGS:/pkgs:ro -v THIS:/t:ro debian:testing /t/test-dmo.sh
+# Usage: docker run --rm --cpus 2 -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v BUILD-CHECKOUT/tools/https-only-apt.sh:/run/https-only-apt.sh:ro -v REPO:/repo:ro -v PKGS:/pkgs:ro -v THIS:/t:ro debian:testing /t/test-dmo.sh
 # Last update 2026/10/08
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 export DEBIAN_FRONTEND=noninteractive
 PASS=0; FAIL=0
 ok() { echo "PASS $*"; PASS=$((PASS + 1)); }

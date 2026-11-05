@@ -18,6 +18,9 @@
 #   With OLD.deb the test starts on Debian's dpkg; NEEDS names the .deb files this version needs that OLD did not
 #   (the edition's dpkg and the problems engine, for 0.1.27 and later), and apt brings them with it in one run.
 set -u
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 DEB=$1 W=$2 OLD=${3:-}
 export DEBIAN_FRONTEND=noninteractive
 # case D starts from the state only the versions before 0.1.5 left (a dpkg stopped at the lock made them leave

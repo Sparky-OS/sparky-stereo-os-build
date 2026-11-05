@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Debian's image under the name of the running kernel (the host's uname -r is what POSIX::uname sees in a container too)
 set -eu
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 export DEBIAN_FRONTEND=noninteractive
 P=/proof; D=/debs
 apt-get update -qq >/dev/null 2>&1

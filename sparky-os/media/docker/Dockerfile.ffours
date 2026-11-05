@@ -2,6 +2,9 @@
 # (nothing of deb-multimedia's FFmpeg underneath: what apt pulls in for them is all there is)
 FROM mdmo-proofbase:1
 ENV DEBIAN_FRONTEND=noninteractive
-RUN --mount=type=bind,from=ffdebs,target=/ffdebs \
+RUN --mount=type=bind,from=https-only-apt,source=https-only-apt.sh,target=/run/https-only-apt.sh \
+    --mount=type=bind,from=host-ca,source=ca-certificates.crt,target=/run/host-ca.crt \
+    --mount=type=bind,from=ffdebs,target=/ffdebs \
+    sh /run/https-only-apt.sh && \
     apt-get update -qq && apt-get -y --no-install-recommends install python3-minimal /ffdebs/ffmpeg_*.deb /ffdebs/ffplay_*.deb /ffdebs/libavcodec63_*.deb /ffdebs/libavdevice63_*.deb /ffdebs/libavfilter12_*.deb /ffdebs/libavformat63_*.deb /ffdebs/libavutil61_*.deb /ffdebs/libswresample7_*.deb /ffdebs/libswscale10_*.deb > /install-ours.log 2>&1; tail -3 /install-ours.log; \
     dpkg -l | awk '/^ii/{print $2" "$3}' | grep -E "^(ffmpeg|ffplay|libavcodec63|libfdk|libx264|libx265) " | tee /package-versions-ours.txt; rm -rf /var/lib/apt/lists/*
