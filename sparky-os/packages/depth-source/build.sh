@@ -30,6 +30,8 @@ mkdir -p "$WORK/home"
 sparky_provenance_init sparky-lc-migration:20261020
 # the candidate side supplies the edition without this package's own earlier binaries (the gate refuses two versions of one supplied package)
 [ -z "$SIBS" ] || grep -v "/pool/main/./$PKG/" "$SIBS" > "$WORK/siblings-current.txt"
+# and with the debs built earlier in the round (/new), which the candidate may depend on
+[ -z "$SIBS" ] || [ -z "$NEW" ] || for d in "$NEW"/*.deb; do case $d in *-dbgsym_*|*-lc-hr_*) ;; *) echo "/new/$(basename "$d")" >> "$WORK/siblings-current.txt" ;; esac; done
 docker run --rm --name "d151-build-$PKG" --cpus "${THREADS:-6}" --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e PKG="$PKG" -e THREADS="${THREADS:-6}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
