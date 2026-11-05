@@ -20,7 +20,7 @@ case $PKG in
 qt6-multimedia)
 	NEXT=6.11.2-3+stereo3d14
 	depends=(--depends $'               libstereo-policy-dev (>= 1.5.0),' $'               libstereo-dibr-dev (>= 1.9.0),\n               libstereo-policy-dev (>= 1.5.0),'
-		--depends 'libavcodec63 (>= 10:9.0.2-dmo1+stereo3d6+lc1), libpipewire-0.3-0t64 [linux-any],' 'libavcodec63 (>= 10:9.0.2-dmo1+stereo3d6+lc1), libavutil61 (>= 10:9.0.2-dmo1+stereo3d5~), libpipewire-0.3-0t64 [linux-any],')
+		--depends 'libavcodec63 (>= 10:9.0.2-dmo1+stereo3d6+lc1), libpipewire-0.3-0t64 [linux-any],' 'libavcodec63 (>= 10:9.0.2-dmo1+stereo3d10~), libavutil61 (>= 10:9.0.2-dmo1+stereo3d5~), libpipewire-0.3-0t64 [linux-any],')
 	;;
 dragon)
 	NEXT=4:26.04.0-1+stereo3d6

@@ -26,4 +26,5 @@ Design followed (Daniel's words, as recorded):
 ## Dependencies added or changed
 
 - qt6-multimedia Build-Depends: libstereo-dibr-dev (>= 1.9.0), from the edition's repository (1.12.0-5+lc1 published; checked with apt-cache policy in the build container).
+- qt6-multimedia Depends libavcodec63 (>= 10:9.0.2-dmo1+stereo3d10~), edition's ffmpeg-dmo (ORDER 410: pull request 25398 and its test, patches 0052 and 0067 in media/ffmpeg/stereo3d10; the earlier floor was +stereo3d6+lc1, which has the same one-line change as the edition's own patch); checked with the built libavcodec63 debs and the link gate.
 - dragon: qt6-multimedia-dev, libqt6multimedia6 and qml6-module-qtmultimedia raised to 6.11.2-3+stereo3d14+lc1; Depends kde-cli-tools (kcmshell6) and kscreen (kcm_kscreen), which the Display Settings shortcut starts; both are Debian packages, checked with apt-cache policy.
