@@ -44,6 +44,7 @@ ALLOW = {
     'sparky-os/packages/dpkg-stereo/test/no-fallbacks-test.sh': 'the apt-get in it is text of messages the test matches, and a stub apt-get it writes',
     'sparky-os/packages/sparky-stereo-hardware/tests/actions.sh': 'apt-get is a shell function stub and the apt lines are strings the test compares: no apt runs',
     'sparky-os/packages/sparky-stereo-hardware/tests/repair-lock.py': 'its apt.conf names one file: repository and an empty sourceparts: no network source exists',
+    'sparky-os/packages/sparky-stereo-integration/tests/catalogue-proof.sh': 'it removes every apt source and writes one file: repository (/srv/repo): no network source exists',
 }
 
 # apt that reaches the network or the package lists: a verb of apt / apt-get / aptitude, a bootstrap tool, apt-file
