@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/24
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/29
+# Last update 2026/11/04
 # Writes pack.json (for ../sparky-stereo-integration/make-pack.py) and lang/<code> (for the worker) from the one
 # table below, so the menu and the worker's messages say the same words. Usage: gen.py OUT-DIR
 # StereoMode values: RFC 9559 section 5.1.4.1.28.3 and IANA records 15 to 20 (Matroska element StereoMode, ID 0x53B8).
@@ -21,17 +21,17 @@ W = {
  'zh_CN': ['非 3D（单视图）', '左右并排', '上下排列', '棋盘格', '逐行交错', '逐列交错', '红蓝立体（青色与红色）', '绿品立体（绿色与品红）', '双眼合在一个块中', '左眼在先', '右眼在先', '移除 3D 标记', '标记为 3D', '图像和深度左右并排，图像在前', '图像和深度左右并排，深度在前', '图像和深度上下排列，图像在前', '图像和深度上下排列，深度在前', '图像、深度、图形和图形深度，从上到下', '图像、深度、背景和背景深度，四分格'],
  'zh_TW': ['非 3D（單視圖）', '左右並排', '上下排列', '棋盤格', '逐行交錯', '逐列交錯', '紅藍立體（青色與紅色）', '綠洋紅立體（綠色與洋紅）', '雙眼合在一個區塊中', '左眼在先', '右眼在先', '移除 3D 標記', '標記為 3D', '影像和深度左右並排，影像在前', '影像和深度左右並排，深度在前', '影像和深度上下排列，影像在前', '影像和深度上下排列，深度在前', '影像、深度、圖形和圖形深度，由上到下', '影像、深度、背景和背景深度，四分格'],
 }
-# worker messages (LOCAL2 to LOCAL9), printf order: M2 name; M3 count, label; M4 count; M5 name; M6 name, old, new; M7 name; M8 changed, failed; M9 name
+# worker messages (LOCAL2 to LOCAL10), printf order: M2 name; M3 count, label; M4 count; M5 name; M6 name, old, new; M7 name; M8 changed, failed; M9 name; M10 name
 M = {
- 'en': ['Could not change %s', 'Marked %s file(s) as: %s', 'Removed the 3D mark from %s file(s)', '%s already has this mark.', '%s already has a different mark: %s. Replace it with: %s?', '%s has no video track.', 'Changed %s file(s), %s failed', "%s has no 3D mark."],
- 'pl': ['Nie udało się zmienić %s', 'Oznaczono %s plik(ów) jako: %s', 'Usunięto znacznik 3D z %s plik(ów)', '%s ma już ten znacznik.', '%s ma już inny znacznik: %s. Zastąpić go znacznikiem: %s?', '%s nie ma ścieżki wideo.', 'Zmieniono %s plik(ów), niepowodzeń: %s', "%s nie ma znacznika 3D."],
- 'pt_BR': ['Não foi possível alterar %s', '%s arquivo(s) marcado(s) como: %s', 'Marca 3D removida de %s arquivo(s)', '%s já tem esta marca.', '%s já tem outra marca: %s. Substituir por: %s?', '%s não tem faixa de vídeo.', '%s arquivo(s) alterado(s), %s com falha', "%s não tem marca 3D."],
- 'fr': ['Impossible de modifier %s', '%s fichier(s) marqué(s) comme : %s', 'Marque 3D retirée de %s fichier(s)', '%s porte déjà cette marque.', '%s porte déjà une autre marque : %s. La remplacer par : %s ?', "%s n'a pas de piste vidéo.", '%s fichier(s) modifié(s), %s en échec', "%s n'a pas de marque 3D."],
- 'de': ['%s konnte nicht geändert werden', '%s Datei(en) markiert als: %s', '3D-Markierung aus %s Datei(en) entfernt', '%s hat diese Markierung bereits.', '%s hat bereits eine andere Markierung: %s. Durch diese ersetzen: %s?', '%s hat keine Videospur.', '%s Datei(en) geändert, %s fehlgeschlagen', "%s hat keine 3D-Markierung."],
- 'ja': ['%s を変更できませんでした', '%s 個のファイルを次としてマークしました: %s', '%s 個のファイルから3Dマークを削除しました', '%s には既にこのマークがあります。', '%s には既に別のマークがあります: %s。次に置き換えますか: %s？', '%s にはビデオトラックがありません。', '%s 個のファイルを変更し、%s 個が失敗しました', "%s には3Dマークがありません。"],
- 'ko': ['%s을(를) 변경할 수 없습니다', '%s개 파일을 다음으로 표시했습니다: %s', '%s개 파일에서 3D 표시를 제거했습니다', '%s에는 이미 이 표시가 있습니다.', '%s에는 이미 다른 표시가 있습니다: %s. 다음으로 바꿀까요: %s?', '%s에는 비디오 트랙이 없습니다.', '%s개 파일을 변경했고 %s개가 실패했습니다', "%s에는 3D 표시가 없습니다."],
- 'zh_CN': ['无法更改 %s', '已将 %s 个文件标记为：%s', '已从 %s 个文件中移除 3D 标记', '%s 已有此标记。', '%s 已有另一个标记：%s。要替换为：%s 吗？', '%s 没有视频轨道。', '已更改 %s 个文件，%s 个失败', "%s 没有 3D 标记。"],
- 'zh_TW': ['無法變更 %s', '已將 %s 個檔案標記為：%s', '已從 %s 個檔案移除 3D 標記', '%s 已有此標記。', '%s 已有另一個標記：%s。要取代為：%s 嗎？', '%s 沒有視訊軌。', '已變更 %s 個檔案，%s 個失敗', "%s 沒有 3D 標記。"],
+ 'en': ['Could not change %s', 'Marked %s file(s) as: %s', 'Removed the 3D mark from %s file(s)', '%s already has this mark.', '%s already has a different mark: %s. Replace it with: %s?', '%s has no video track.', 'Changed %s file(s), %s failed', "%s has no 3D mark.", 'Cannot mark %s: the file is missing or is not a regular file.'],
+ 'pl': ['Nie udało się zmienić %s', 'Oznaczono %s plik(ów) jako: %s', 'Usunięto znacznik 3D z %s plik(ów)', '%s ma już ten znacznik.', '%s ma już inny znacznik: %s. Zastąpić go znacznikiem: %s?', '%s nie ma ścieżki wideo.', 'Zmieniono %s plik(ów), niepowodzeń: %s', "%s nie ma znacznika 3D.", 'Nie można oznaczyć %s: plik nie istnieje lub nie jest zwykłym plikiem.'],
+ 'pt_BR': ['Não foi possível alterar %s', '%s arquivo(s) marcado(s) como: %s', 'Marca 3D removida de %s arquivo(s)', '%s já tem esta marca.', '%s já tem outra marca: %s. Substituir por: %s?', '%s não tem faixa de vídeo.', '%s arquivo(s) alterado(s), %s com falha', "%s não tem marca 3D.", 'Não é possível marcar %s: o arquivo não existe ou não é um arquivo comum.'],
+ 'fr': ['Impossible de modifier %s', '%s fichier(s) marqué(s) comme : %s', 'Marque 3D retirée de %s fichier(s)', '%s porte déjà cette marque.', '%s porte déjà une autre marque : %s. La remplacer par : %s ?', "%s n'a pas de piste vidéo.", '%s fichier(s) modifié(s), %s en échec', "%s n'a pas de marque 3D.", "Impossible de marquer %s : le fichier est manquant ou n'est pas un fichier ordinaire."],
+ 'de': ['%s konnte nicht geändert werden', '%s Datei(en) markiert als: %s', '3D-Markierung aus %s Datei(en) entfernt', '%s hat diese Markierung bereits.', '%s hat bereits eine andere Markierung: %s. Durch diese ersetzen: %s?', '%s hat keine Videospur.', '%s Datei(en) geändert, %s fehlgeschlagen', "%s hat keine 3D-Markierung.", '%s kann nicht markiert werden: Die Datei fehlt oder ist keine reguläre Datei.'],
+ 'ja': ['%s を変更できませんでした', '%s 個のファイルを次としてマークしました: %s', '%s 個のファイルから3Dマークを削除しました', '%s には既にこのマークがあります。', '%s には既に別のマークがあります: %s。次に置き換えますか: %s？', '%s にはビデオトラックがありません。', '%s 個のファイルを変更し、%s 個が失敗しました', "%s には3Dマークがありません。", '%s をマークできません。ファイルが存在しないか、通常のファイルではありません。'],
+ 'ko': ['%s을(를) 변경할 수 없습니다', '%s개 파일을 다음으로 표시했습니다: %s', '%s개 파일에서 3D 표시를 제거했습니다', '%s에는 이미 이 표시가 있습니다.', '%s에는 이미 다른 표시가 있습니다: %s. 다음으로 바꿀까요: %s?', '%s에는 비디오 트랙이 없습니다.', '%s개 파일을 변경했고 %s개가 실패했습니다', "%s에는 3D 표시가 없습니다.", '%s을(를) 표시할 수 없습니다. 파일이 없거나 일반 파일이 아닙니다.'],
+ 'zh_CN': ['无法更改 %s', '已将 %s 个文件标记为：%s', '已从 %s 个文件中移除 3D 标记', '%s 已有此标记。', '%s 已有另一个标记：%s。要替换为：%s 吗？', '%s 没有视频轨道。', '已更改 %s 个文件，%s 个失败', "%s 没有 3D 标记。", '无法标记 %s：文件缺失或不是普通文件。'],
+ 'zh_TW': ['無法變更 %s', '已將 %s 個檔案標記為：%s', '已從 %s 個檔案移除 3D 標記', '%s 已有此標記。', '%s 已有另一個標記：%s。要取代為：%s 嗎？', '%s 沒有視訊軌。', '已變更 %s 個檔案，%s 個失敗', "%s 沒有 3D 標記。", '無法標記 %s：檔案遺失或不是一般檔案。'],
 }
 # value: (layout index in W, order) ; order None = none, 'l' left first, 'r' right first. RFC 9559 5.1.4.1.28.3
 MODES = {0: (0, None), 1: (1, 'l'), 2: (2, 'r'), 3: (2, 'l'), 4: (3, 'r'), 5: (3, 'l'), 6: (4, 'r'), 7: (4, 'l'),
@@ -48,7 +48,7 @@ def label(lang, n):
 def main():
     out = sys.argv[1]
     os.makedirs(os.path.join(out, 'lang'), exist_ok=True)
-    hdr = '#!/bin/bash\n# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/24\n# Copyright 2026 under the GNU GPL3 License\n# Last update 2026/10/24\n'
+    hdr = '#!/bin/bash\n# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/24\n# Copyright 2026 under the GNU GPL3 License\n# Last update 2026/11/04\n'
     for lang in LANGS:
         body = f'LOCAL1="{W[lang][12]}"\n'
         body += ''.join(f'LOCAL{i + 2}="{s}"\n' for i, s in enumerate(M[lang]))

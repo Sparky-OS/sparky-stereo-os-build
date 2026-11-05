@@ -6,7 +6,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the output directory}
-VERSION=0.1.5+lc1
+VERSION=0.1.6+lc1
 PKG=sparky-stereo-audio-convert
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.$PKG.XXXXXX")
