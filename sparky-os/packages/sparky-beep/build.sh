@@ -18,7 +18,7 @@ OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 PKG=sparky-beep
 SOURCE_VERSION=$(sed -n '2s/^  Version \(.*\) (.*$/\1/p' "$SRC/CHANGELOG")
 [ -n "$SOURCE_VERSION" ] || { echo "no version in $SRC/CHANGELOG" >&2; exit 1; }
-VERSION=${VERSION:-0.2.3+lc1}
+VERSION=${VERSION:-0.2.4+lc1}
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/beep-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 COPY="$HERE/../../../tools/copy-recipe.py"

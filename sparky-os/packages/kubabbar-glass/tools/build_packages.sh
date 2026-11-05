@@ -7,8 +7,8 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dest=${DEST:-${SPARKY_STAGING_DIR:?}/classic-look/m2}
-version=${VERSION:-20261102.4~sparky9~0+lc1}
-look_version=${LOOK_VERSION:-20261102.4~sparky9~0+lc1}
+version=${VERSION:-20261104.1~sparky9~0+lc1}
+look_version=${LOOK_VERSION:-20261104.1~sparky9~0+lc1}
 work=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/kubabbar-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 RECIPE=$repo
@@ -141,8 +141,19 @@ Free Software Foundation; version 3 of the License.
 On Debian systems, the complete text of the GNU General Public License version 3 can be found in /usr/share/common-licenses/GPL-3.
 COPYRIGHT
 doc "$k" sparky-stereo-look-kubabbar-glass "$work/look-copyright"
+# The messages of kubabbar-glass-style for sparky-stereo-problems, in the nine languages (ORDER 346f-5, U39).
+sparky-stereo-problems catalog sparky-stereo-look-kubabbar-glass "$repo/lang/apply" "$k/usr/lib/systemd/catalog" --subject LOCAL1
+mkdir -p "$k/DEBIAN"
+cat > "$k/DEBIAN/postrm" <<'POSTRM'
+#!/bin/sh
+set -e
+if [ "$1" = remove ]; then
+	sparky-stereo-problems clear --all sparky-stereo-look-kubabbar-glass
+fi
+POSTRM
+chmod 755 "$k/DEBIAN/postrm"
 cp "$repo/README.md" "$repo/ABOUT.md" "$k/usr/share/doc/sparky-stereo-look-kubabbar-glass/"
-control "$k" sparky-stereo-look-kubabbar-glass "kde-style-breeze, kwin-style-aurorae, libkf6config-bin, oxygen-icon-theme, sparky-stereo-gtk (= $version), sparky-stereo-look" \
+control "$k" sparky-stereo-look-kubabbar-glass "dbus-bin, kde-style-breeze, kwin-style-aurorae, libkf6config-bin, oxygen-icon-theme, sparky-stereo-gtk (= $version), sparky-stereo-look, sparky-stereo-problems" \
 	"kde-style-oxygen-qt6, qt6-style-kvantum, qt5-style-kvantum, sddm" "" \
 	"Kubabbar Glass, the classic Sparky Stereo OS look" \
 	"Kubabbar Glass is our own name for this look, chosen by Daniel Ramos on 14 October 2026." \
