@@ -62,7 +62,8 @@ echo "udevadm completed: $*"
         listed = subprocess.run(['sparky-stereo-problems', 'list', '--json', 'sparky-stereo-kernel-settings'], env=env, preexec_fn=person, capture_output=True, text=True)
         assert listed.returncode == 0, listed.stderr
         (out / f'{case}.json').write_text(listed.stdout)
-        records = json.loads(listed.stdout)
+        # only the udev reload is judged here: the postinst's other steps (zram-migration, retire-zram) have their own tests
+        records = [r for r in json.loads(listed.stdout) if r.get('key') == 'udev-reload']
         check(result.returncode == 0, f'{case}: maintainer script completes')
         if applies:
             check((work / 'calls').read_text().splitlines() == ['control --reload'], f'{case}: reload runs')

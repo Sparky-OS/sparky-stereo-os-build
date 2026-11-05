@@ -9,7 +9,10 @@
 # Never listed: hardware-found.list (the hardware setup installs those per machine), aptus.list
 # and base-remove.list (not installed), and emulation-3d.list (emulators install from APTus
 # Stereo AppCenter, never from the ISO; prepack.sh --final purges them).
-# Last update 2026/10/24: sparky-stereo-integrations, the meta of the stereo integration packs, read from integrations.tsv
+# Last update 2026/11/04 (ORDER 346f-3b): the catalogue integrations.map is its own package, sparky-stereo-integration-catalogue,
+# which sparky-stereo-integration Depends on, so the runner is never installed without the catalogue it reads and the meta no
+# longer has to be depended on back (a cycle through the packs, which Depend on the runner).
+# Earlier update 2026/10/24: sparky-stereo-integrations, the meta of the stereo integration packs, read from integrations.tsv
 # (data packs in its Depends, native packs in the Recommends of the role tasks whose programs they serve; sparky-stereo-desktop
 # depends on it). --list-integrations names every pack and what carries it.
 # Earlier update 2026/10/19: both developer tasks remain opt-in; only the OS-developer task depends on
@@ -231,6 +234,11 @@ def tasks():
 # revision 2), so no dim, screen-off or lock happens (Daniel, 2026-10-10: until our qt6-base carries it, ORDER item 31).
 BREAKS = {
     'sparky-stereo-desktop': ['libkf6idletime6 (<< 6.30.0-2)'],
+    # the catalogue file integrations.map moved from the meta to its own package (ORDER 346f-3b); @VERSION@ is this build's version
+    'sparky-stereo-integration-catalogue': ['sparky-stereo-integrations (<< @VERSION@)'],
+}
+REPLACES = {
+    'sparky-stereo-integration-catalogue': ['sparky-stereo-integrations (<< @VERSION@)'],
 }
 
 # Provides per kernel meta-package: the same virtual packages Debian's linux-image-amd64 and
@@ -266,6 +274,10 @@ META = {
         'Sparky Stereo integrations',
         'This meta package installs the stereo integration packs of Sparky Stereo OS: the Dolphin right click menus and other data that serve programs such as Hugin and MKVToolNix. Each pack waits inert until its program is installed, and offers the program when the person uses it without; the programs themselves come with the role tasks or the APTus Stereo AppCenter.',
         ['sparky-stereo-integration'] + packs_in_repository('data'), []),
+    'sparky-stereo-integration-catalogue': (
+        'Sparky Stereo integration catalogue',
+        'This package holds the catalogue of the stereo integration packs of Sparky Stereo OS: which packs go with which program. The runner of the Dolphin right click actions, sparky-stereo-integration, reads it to install a missing program together with its packs, and depends on it.',
+        [], []),
     'sparky-stereo-gaming': (
         'Sparky Stereo gaming (transitional package)',
         'This transitional package moves systems to task-sparky-stereo-gamer, the gamer task of Sparky Stereo OS. It can be removed.',
@@ -362,6 +374,10 @@ def main():
         path = os.path.join(dd, name)
         open(path, 'w').write('\n'.join(l for l in lines if l != '') + '\n'); os.chmod(path, 0o755)
     for pkg, (title, body, dep, rec) in META.items():
+        if pkg == 'sparky-stereo-integrations':
+            # the meta moved the catalogue file out (ORDER 346f-3b): with a plain `apt upgrade` the meta must not move ahead of the
+            # package that now holds integrations.map, or an installed runner finds no catalogue until the full upgrade (measured)
+            dep = dep + [f'sparky-stereo-integration-catalogue (>= {version})']
         dep = sorted(set(dep))
         for n in dep:   # no versioned library names in Depends
             b = n.split(' ')[0].split(':')[0]
@@ -376,7 +392,7 @@ def main():
         doc = os.path.join(d, 'usr', 'share', 'doc', pkg)
         os.makedirs(doc, exist_ok=True)
         open(os.path.join(doc, 'copyright'), 'w').write(COPYRIGHT)
-        if pkg == 'sparky-stereo-integrations':
+        if pkg == 'sparky-stereo-integration-catalogue':
             # the AppCenter's install sets, from the same list (make-appcenter-entries.py writes the same text)
             md = os.path.join(d, 'usr', 'share', 'sparky-stereo')
             os.makedirs(md, exist_ok=True)
@@ -389,7 +405,9 @@ def main():
         if rec:
             f.append(('Recommends', ', '.join(rec)))
         if pkg in BREAKS:
-            f.append(('Breaks', ', '.join(BREAKS[pkg])))
+            f.append(('Breaks', ', '.join(BREAKS[pkg]).replace('@VERSION@', v)))
+        if pkg in REPLACES:
+            f.append(('Replaces', ', '.join(REPLACES[pkg]).replace('@VERSION@', v)))
         if pkg.startswith(('linux-image-sparky-stereo', 'linux-headers-sparky-stereo')):
             f.append(('Provides', ', '.join(KERNEL_PROVIDES['image' if pkg.startswith('linux-image-') else 'headers'])))
         f += [('Section', 'System'), ('Priority', 'optional'), ('Homepage', 'https://sparkylinux.org'),
