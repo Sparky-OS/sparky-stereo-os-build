@@ -4,8 +4,9 @@ Description: The flat stereo display as a WebXR device and the CSS depth propert
  plane on top), Escape and a visible Exit control, an entry hint and the mode's name, input per mode, the
  keyboard focus kept across a session, and a frame submission that no longer polls for ever when a
  presentation ends (the browser could not quit). CSS: the property depth (sunk | screen | popped |
- <percentage> | <number>), an element drawn once per eye at its depth, layout.css.depth.enabled on; WebGL canvases marked on
- NVIDIA (DMABuf WebGL on where an output shows stereo 3D); the VR shared memory with one writer. This is the difference between browser commit 075e18be19 and b9daf180f65d08902e4bb00f46adafda1c7da615
+ <percentage> | <number>), an element drawn once per eye at its depth, the limits those KWin tells for the output the window is on
+ (kde_stereo_depth_v1 version 5, live), hit testing and scroll frames following the drawn copies, layout.css.depth.enabled on; WebGL canvases marked on
+ NVIDIA (DMABuf WebGL on where an output shows stereo 3D); the VR shared memory with one writer. This is the difference between browser commit 075e18be19 and 73841dee658811c882b90124b2e822fed325afdc
  (Sparky-OS/waterfox, branch stereo3d).
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Forwarded: not-needed
@@ -1213,6 +1214,31 @@ index 8346696f37..5924dab22c 100644
          }
          // Yield the thread while polling
          YieldThread();
+diff --git a/gfx/webrender_bindings/WebRenderAPI.h b/gfx/webrender_bindings/WebRenderAPI.h
+index 4fc3eacbb3..a1949d7977 100644
+--- a/gfx/webrender_bindings/WebRenderAPI.h
++++ b/gfx/webrender_bindings/WebRenderAPI.h
+@@ -641,6 +641,20 @@ class DisplayListBuilder final {
+   Maybe<wr::WrSpatialId> GetSpatialIdForDefinedLayer(
+       const ActiveScrolledRoot* aASR) const;
+ 
++  // Scroll frames defined while this lives belong to one copy of an element
++  // drawn twice, once for each eye (nsDisplayStereoDepth): they are forgotten
++  // when it ends, so the other copy defines its own, inside its own shift.
++  class AutoForgetDefinedLayers {
++   public:
++    explicit AutoForgetDefinedLayers(DisplayListBuilder& aBuilder)
++        : mBuilder(aBuilder), mSaved(aBuilder.mASRToSpatialIdMap) {}
++    ~AutoForgetDefinedLayers() { mBuilder.mASRToSpatialIdMap = std::move(mSaved); }
++
++   private:
++    DisplayListBuilder& mBuilder;
++    std::unordered_map<const ActiveScrolledRoot*, wr::WrSpatialId> mSaved;
++  };
++
+   wr::WrSpatialId DefineScrollLayer(
+       const ActiveScrolledRoot* aAsr,
+       const layers::ScrollableLayerGuid::ViewID& aViewId,
 diff --git a/gfx/wr/webrender/src/batch.rs b/gfx/wr/webrender/src/batch.rs
 index 94d8edbc5d..88073e78c0 100644
 --- a/gfx/wr/webrender/src/batch.rs
@@ -1384,8 +1410,34 @@ index e3f5e3f0d6..4735bd4d5e 100644
      }
  }
  
+diff --git a/layout/base/nsPresContext.cpp b/layout/base/nsPresContext.cpp
+index 10e71c54e9..4a94b0b966 100644
+--- a/layout/base/nsPresContext.cpp
++++ b/layout/base/nsPresContext.cpp
+@@ -349,6 +349,8 @@ static const char* gPrefixCallbackPrefs[] = {
+     "font.",
+     "gfx.font_rendering.",
+     "layout.css.font-visibility.",
++    // CSS depth: the limits KWin gives the window's output, live
++    "widget.wayland.stereo-depth.",
+     nullptr,
+ };
+ 
+@@ -532,6 +534,12 @@ void nsPresContext::PreferenceChanged(const char* aPrefName) {
+   }
+ 
+   nsDependentCString prefName(aPrefName);
++  if (StringBeginsWith(prefName, "widget.wayland.stereo-depth."_ns)) {
++    // The depth limits changed (or the window is no longer awake): the
++    // elements with a depth are drawn at their new places.
++    RebuildAllStyleData(nsChangeHint_RepaintFrame, RestyleHint{});
++    return;
++  }
+   if (prefName.EqualsLiteral("layout.css.dpi") ||
+       prefName.EqualsLiteral("layout.css.devPixelsPerPx")) {
+     int32_t oldAppUnitsPerDevPixel = mDeviceContext->AppUnitsPerDevPixel();
 diff --git a/layout/generic/nsIFrame.cpp b/layout/generic/nsIFrame.cpp
-index d93bfcc9d5..d1734395ef 100644
+index d93bfcc9d5..7843d6baef 100644
 --- a/layout/generic/nsIFrame.cpp
 +++ b/layout/generic/nsIFrame.cpp
 @@ -3760,6 +3760,18 @@ void nsIFrame::BuildDisplayListForStackingContext(
@@ -1407,7 +1459,30 @@ index d93bfcc9d5..d1734395ef 100644
    // We build nsDisplayViewTransitionCapture here, and then use
    // nsDisplayTransform to wrap it, to make sure we create the correct transform
    // for the captured element and its descendants. This is necessary to make
-@@ -11969,6 +11981,11 @@ bool nsIFrame::IsStackingContext(const nsStyleDisplay* aStyleDisplay,
+@@ -4409,6 +4421,22 @@ void nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder* aBuilder,
+   NS_ASSERTION(!child->IsPlaceholderFrame(),
+                "Should have dealt with placeholders already");
+ 
++  // A depth element is drawn twice, each copy moved sideways by up to its
++  // disparity: what is visible, and what a click reaches, is wider than its own
++  // box by that much (Sparky Stereo OS, CSS depth).
++  if (child->StyleEffects()->mDepth != 0.0f &&
++      StaticPrefs::layout_css_depth_enabled()) {
++    if (Maybe<int32_t> disparity = nsDisplayStereoDepth::ShiftForLevel(
++            child, child->StyleEffects()->mDepth)) {
++      const nscoord margin =
++          std::abs(*disparity) * child->PresContext()->AppUnitsPerDevPixel();
++      if (margin) {
++        visible.Inflate(margin, 0);
++        dirty.Inflate(margin, 0);
++      }
++    }
++  }
++
+   if (!DescendIntoChild(aBuilder, child, visible, dirty)) {
+     DL_LOGV("Skipped frame %p", child);
+     return;
+@@ -11969,6 +11997,11 @@ bool nsIFrame::IsStackingContext(const nsStyleDisplay* aStyleDisplay,
    if (HasOpacity(aStyleDisplay, aStyleEffects, nullptr)) {
      return true;
    }
@@ -1432,7 +1507,7 @@ index 3abe66c363..89edfe31fa 100644
                            TYPE_RENDERS_NO_IMAGES | TYPE_IS_CONTAINER)
  DECLARE_DISPLAY_ITEM_TYPE(OUTLINE, TYPE_RENDERS_NO_IMAGES)
 diff --git a/layout/painting/nsDisplayList.cpp b/layout/painting/nsDisplayList.cpp
-index 391320462a..38a58c02e5 100644
+index 391320462a..58a75793e9 100644
 --- a/layout/painting/nsDisplayList.cpp
 +++ b/layout/painting/nsDisplayList.cpp
 @@ -50,6 +50,14 @@
@@ -1450,23 +1525,50 @@ index 391320462a..38a58c02e5 100644
  #include "mozilla/StaticPrefs_gfx.h"
  #include "mozilla/StaticPrefs_layers.h"
  #include "mozilla/StaticPrefs_layout.h"
-@@ -5267,6 +5275,143 @@ void nsDisplayOpacity::WriteDebugInfo(std::stringstream& aStream) {
+@@ -1062,8 +1070,22 @@ bool nsDisplayListBuilder::MarkOutOfFlowFrameForDisplay(
+     const nsRect& aDirtyRect) {
+   MOZ_ASSERT(aFrame->GetParent() == aDirtyFrame);
+   nsRect dirty;
++  // A depth element is drawn twice, each copy moved sideways: the area it
++  // needs is wider than its box by its disparity.
++  nsRect visibleArea = aVisibleRect;
++  nsRect dirtyArea = aDirtyRect;
++  if (aFrame->StyleEffects()->mDepth != 0.0f &&
++      StaticPrefs::layout_css_depth_enabled()) {
++    if (Maybe<int32_t> disparity = nsDisplayStereoDepth::ShiftForLevel(
++            aFrame, aFrame->StyleEffects()->mDepth)) {
++      const nscoord margin =
++          std::abs(*disparity) * aFrame->PresContext()->AppUnitsPerDevPixel();
++      visibleArea.Inflate(margin, 0);
++      dirtyArea.Inflate(margin, 0);
++    }
++  }
+   nsRect visible = OutOfFlowDisplayData::ComputeVisibleRectForFrame(
+-      this, aFrame, aVisibleRect, aDirtyRect, &dirty);
++      this, aFrame, visibleArea, dirtyArea, &dirty);
+   if (!aFrame->HasAnyStateBits(NS_FRAME_FORCE_DISPLAY_LIST_DESCEND_INTO) &&
+       visible.IsEmpty()) {
+     return false;
+@@ -5267,6 +5289,225 @@ void nsDisplayOpacity::WriteDebugInfo(std::stringstream& aStream) {
    aStream << ")";
  }
  
-+// CSS depth (ORDER 414): the display's limits in pixels of a view 1920 wide,
-+// from libstereo-policy's display depth (the display's kind and physical size,
-+// with the person's strength: the same source WebXR's flat modes and the
-+// desktop use), asked once of the parent and kept; the pages repaint when the
-+// answer comes.
++// CSS depth (ORDER 414): the limits in pixels of a view 1920 wide are the
++// person's own (KWin's SunkLimit and PoppedLimit) built on the display of the
++// output the window mainly sits on, which KWin tells the window live
++// (kde_stereo_depth_v1 version 5, widget.wayland.stereo-depth.* in the
++// preferences); without that protocol (another compositor) libstereo-policy's
++// display default stands in, with the person's strength, asked of the parent
++// once, and a notice says so.
 +namespace {
-+struct StereoDepthLimits {
++struct StereoDepthDefault {
 +  bool mAsked = false;
 +  bool mReady = false;
++  bool mNoticed = false;
 +  double mSunk = 0;
 +  double mPopped = 0;
 +};
-+StereoDepthLimits sStereoDepthLimits;
++StereoDepthDefault sStereoDepthDefault;
 +}  // namespace
 +
 +/* static */
@@ -1475,81 +1577,158 @@ index 391320462a..38a58c02e5 100644
 +  if (!gfx::gfxVars::StereoOutputs()) {
 +    return Nothing();
 +  }
-+  if (!sStereoDepthLimits.mReady) {
-+    if (!sStereoDepthLimits.mAsked) {
-+      sStereoDepthLimits.mAsked = true;
-+      RefPtr<widget::Screen> screen =
-+          widget::ScreenManager::GetSingleton().GetPrimaryScreen();
-+      double dpi = screen ? screen->GetDPI() : 0.0;
-+      LayoutDeviceIntRect rect;
-+      if (screen) {
-+        rect = LayoutDeviceIntRect::FromUnknownRect(
-+            gfx::IntRect(screen->GetRect().ToUnknownRect()));
-+      }
-+      int32_t widthMm = 0, heightMm = 0;
-+      if (dpi > 0.0 && !rect.IsEmpty()) {
-+        widthMm = int32_t(rect.Width() / dpi * 25.4);
-+        heightMm = int32_t(rect.Height() / dpi * 25.4);
-+      }
-+      // The flat headset and phone modes are headsets, the rest framed screens
-+      // (libstereo-policy's display kinds 0 framed, 2 headset).
-+      const int32_t kind = std::clamp<int32_t>(
-+                               StaticPrefs::dom_vr_flat_mode(), 0, 2) == 0
-+                               ? 0
-+                               : 2;
-+      const double strength = double(StaticPrefs::dom_vr_flat_depth_strength());
-+      nsPresContext* pc = aFrame->PresContext();
-+      RefPtr<nsPresContext> keep(pc);
-+      if (XRE_IsContentProcess()) {
-+        if (dom::ContentChild* child = dom::ContentChild::GetSingleton()) {
-+          child->SendGetStereoDisplayDepth(kind, widthMm, heightMm, strength)
-+              ->Then(
-+                  GetMainThreadSerialEventTarget(), __func__,
-+                  [keep](const std::tuple<int32_t, double, double, int32_t,
-+                                          int32_t>& aAnswer) {
-+                    const auto [ok, sunk, popped, distance, known] = aAnswer;
-+                    if (ok != 0) {
-+                      return;
-+                    }
-+                    sStereoDepthLimits.mSunk = sunk;
-+                    sStereoDepthLimits.mPopped = popped;
-+                    sStereoDepthLimits.mReady = true;
-+                    // The pages show their depth now.
-+                    keep->RebuildAllStyleData(nsChangeHint_RepaintFrame,
-+                                              RestyleHint{});
-+                  },
-+                  [](mozilla::ipc::ResponseRejectReason) {});
-+        }
-+      }
-+#if defined(MOZ_WAYLAND)
-+      else if (const auto* policy = layers::GetStereoPolicy()) {
-+        layers::StereoPolicy::Depth depth{};
-+        if (policy->displayDepth &&
-+            policy->displayDepth(kind, widthMm, heightMm, strength, 0, 0,
-+                                 &depth) == 0) {
-+          sStereoDepthLimits.mSunk = depth.mSunkPx;
-+          sStereoDepthLimits.mPopped = depth.mPoppedPx;
-+          sStereoDepthLimits.mReady = true;
-+        }
-+      }
-+#endif
-+    }
-+    if (!sStereoDepthLimits.mReady) {
-+      return Nothing();
-+    }
++  // KWin says whether the window may show depth now (the active window, a
++  // popup...), as for a 2D output otherwise.
++  if (!Preferences::GetBool("widget.wayland.stereo-depth.awake", true)) {
++    return Nothing();
 +  }
-+  // The window's width in device pixels: the unit of the limits is a view
-+  // 1920 wide.
++  double sunk = 0, popped = 0;
++  if (Preferences::GetBool("widget.wayland.stereo-depth.from-compositor",
++                           false)) {
++    sunk = Preferences::GetInt("widget.wayland.stereo-depth.sunk-100", 0) /
++           100.0;
++    popped = Preferences::GetInt("widget.wayland.stereo-depth.popped-100", 0) /
++             100.0;
++  } else {
++    if (!sStereoDepthDefault.mReady) {
++      if (!sStereoDepthDefault.mAsked) {
++        sStereoDepthDefault.mAsked = true;
++        RefPtr<widget::Screen> screen =
++            widget::ScreenManager::GetSingleton().GetPrimaryScreen();
++        double dpi = screen ? screen->GetDPI() : 0.0;
++        LayoutDeviceIntRect rect;
++        if (screen) {
++          rect = LayoutDeviceIntRect::FromUnknownRect(
++              gfx::IntRect(screen->GetRect().ToUnknownRect()));
++        }
++        int32_t widthMm = 0, heightMm = 0;
++        if (dpi > 0.0 && !rect.IsEmpty()) {
++          widthMm = int32_t(rect.Width() / dpi * 25.4);
++          heightMm = int32_t(rect.Height() / dpi * 25.4);
++        }
++        const int32_t kind =
++            std::clamp<int32_t>(StaticPrefs::dom_vr_flat_mode(), 0, 2) == 0 ? 0
++                                                                            : 2;
++        const double strength =
++            double(StaticPrefs::dom_vr_flat_depth_strength());
++        nsPresContext* pc = aFrame->PresContext();
++        RefPtr<nsPresContext> keep(pc);
++        if (XRE_IsContentProcess()) {
++          if (dom::ContentChild* child = dom::ContentChild::GetSingleton()) {
++            child->SendGetStereoDisplayDepth(kind, widthMm, heightMm, strength)
++                ->Then(
++                    GetMainThreadSerialEventTarget(), __func__,
++                    [keep](const std::tuple<int32_t, double, double, int32_t,
++                                            int32_t>& aAnswer) {
++                      const auto [ok, s, p, distance, known] = aAnswer;
++                      if (ok != 0) {
++                        return;
++                      }
++                      sStereoDepthDefault.mSunk = s;
++                      sStereoDepthDefault.mPopped = p;
++                      sStereoDepthDefault.mReady = true;
++                      keep->RebuildAllStyleData(nsChangeHint_RepaintFrame,
++                                                RestyleHint{});
++                    },
++                    [](mozilla::ipc::ResponseRejectReason) {});
++          }
++        }
++#if defined(MOZ_WAYLAND)
++        else if (const auto* policy = layers::GetStereoPolicy()) {
++          layers::StereoPolicy::Depth depth{};
++          if (policy->displayDepth &&
++              policy->displayDepth(kind, widthMm, heightMm, strength, 0, 0,
++                                   &depth) == 0) {
++            sStereoDepthDefault.mSunk = depth.mSunkPx;
++            sStereoDepthDefault.mPopped = depth.mPoppedPx;
++            sStereoDepthDefault.mReady = true;
++          }
++        }
++#endif
++      }
++      if (!sStereoDepthDefault.mReady) {
++        return Nothing();
++      }
++    }
++    if (!sStereoDepthDefault.mNoticed) {
++      sStereoDepthDefault.mNoticed = true;
++      nsContentUtils::LogSimpleConsoleError(
++          u"Stereo: the compositor does not tell the depth limits "
++          u"(kde_stereo_depth_v1 version 5), so libstereo-policy's default for "
++          u"the display stands in for the person's own."_ns,
++          "layout"_ns, false, true);
++    }
++    sunk = sStereoDepthDefault.mSunk;
++    popped = sStereoDepthDefault.mPopped;
++  }
++  // The width of the view: the output's, in device pixels (the unit of the
++  // limits is a view 1920 wide, scaled to the output as KWin does).
 +  int32_t width = 0;
-+  if (nsIWidget* widget = aFrame->GetNearestWidget()) {
-+    width = widget->GetClientBounds().Width();
++  if (RefPtr<widget::Screen> screen =
++          widget::ScreenManager::GetSingleton().GetPrimaryScreen()) {
++    width = screen->GetRect().Width();
 +  }
 +  if (width <= 0) {
 +    return Nothing();
 +  }
-+  const double limit =
-+      aLevel > 0 ? sStereoDepthLimits.mPopped : sStereoDepthLimits.mSunk;
++  const double limit = aLevel > 0 ? popped : sunk;
 +  return Some(int32_t(std::lround(double(aLevel) * limit * width / 1920.0)));
++}
++
++nsRect nsDisplayStereoDepth::GetBounds(nsDisplayListBuilder* aBuilder,
++                                       bool* aSnap) const {
++  nsRect bounds = nsDisplayWrapList::GetBounds(aBuilder, aSnap);
++  const Maybe<int32_t> disparity = ShiftForLevel(mFrame, mLevel);
++  if (disparity && *disparity != 0) {
++    const int32_t apd = mFrame->PresContext()->AppUnitsPerDevPixel();
++    const int32_t shifts[2] = {*disparity - *disparity / 2, -(*disparity / 2)};
++    nsRect all = bounds;
++    for (int32_t shift : shifts) {
++      nsRect copy = bounds;
++      copy.MoveBy(shift * apd, 0);
++      all = all.Union(copy);
++    }
++    bounds = all;
++  }
++  return bounds;
++}
++
++void nsDisplayStereoDepth::HitTest(nsDisplayListBuilder* aBuilder,
++                                   const nsRect& aRect, HitTestState* aState,
++                                   nsTArray<nsIFrame*>* aOutFrames) {
++  // The click area follows the drawn element: what the person sees is two
++  // copies, one shifted for each eye. A popped element is hit where either
++  // copy is drawn (no dead area), a sunk one only where both are (nothing
++  // beyond the picture); a point of the page is hit in a copy at the point
++  // moved by that copy's shift.
++  const Maybe<int32_t> disparity = ShiftForLevel(mFrame, mLevel);
++  if (!disparity || *disparity == 0) {
++    nsDisplayWrapList::HitTest(aBuilder, aRect, aState, aOutFrames);
++    return;
++  }
++  const int32_t apd = mFrame->PresContext()->AppUnitsPerDevPixel();
++  const int32_t shifts[2] = {*disparity - *disparity / 2, -(*disparity / 2)};
++  AutoTArray<nsIFrame*, 8> hits[2];
++  for (int eye = 0; eye < 2; eye++) {
++    nsRect rect = aRect;
++    rect.MoveBy(-shifts[eye] * apd, 0);
++    nsDisplayWrapList::HitTest(aBuilder, rect, aState, &hits[eye]);
++  }
++  if (*disparity > 0) {
++    for (int eye = 0; eye < 2; eye++) {
++      for (nsIFrame* frame : hits[eye]) {
++        if (!aOutFrames->Contains(frame)) {
++          aOutFrames->AppendElement(frame);
++        }
++      }
++    }
++  } else {
++    for (nsIFrame* frame : hits[0]) {
++      if (hits[1].Contains(frame) && !aOutFrames->Contains(frame)) {
++        aOutFrames->AppendElement(frame);
++      }
++    }
++  }
 +}
 +
 +void nsDisplayStereoDepth::Paint(nsDisplayListBuilder* aBuilder,
@@ -1583,6 +1762,8 @@ index 391320462a..38a58c02e5 100644
 +        wr::WrStackingContextClip::ClipChain(aBuilder.CurrentClipChainId());
 +    params.flags |= eye == 0 ? wr::StackingContextFlags::EYE_LEFT
 +                             : wr::StackingContextFlags::EYE_RIGHT;
++    // The scroll frames inside this copy are defined in this copy's shift.
++    wr::DisplayListBuilder::AutoForgetDefinedLayers forget(aBuilder);
 +    StackingContextHelper sc(aSc, GetActiveScrolledRoot(), mFrame, this,
 +                             aBuilder, params);
 +    aManager->CommandBuilder().CreateWebRenderCommandsFromDisplayList(
@@ -1595,10 +1776,10 @@ index 391320462a..38a58c02e5 100644
      wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
      const StackingContextHelper& aSc, RenderRootStateManager* aManager,
 diff --git a/layout/painting/nsDisplayList.h b/layout/painting/nsDisplayList.h
-index 292a173f5d..1c48c701fe 100644
+index 292a173f5d..0471e63b0e 100644
 --- a/layout/painting/nsDisplayList.h
 +++ b/layout/painting/nsDisplayList.h
-@@ -5230,6 +5230,63 @@ class nsDisplayOpacity final : public nsDisplayWrapList {
+@@ -5230,6 +5230,69 @@ class nsDisplayOpacity final : public nsDisplayWrapList {
    bool mForceIsolation : 1;
  };
  
@@ -1648,6 +1829,12 @@ index 292a173f5d..1c48c701fe 100644
 +  }
 +  bool CreatesStackingContextHelper() override { return true; }
 +  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
++  void HitTest(nsDisplayListBuilder* aBuilder, const nsRect& aRect,
++               HitTestState* aState,
++               nsTArray<nsIFrame*>* aOutFrames) override;
++  // Both drawn copies, so that a point on either one reaches HitTest.
++  nsRect GetBounds(nsDisplayListBuilder* aBuilder,
++                   bool* aSnap) const override;
 +
 +  // The depth shift in device pixels of a level (-1 sunk, 0 screen, 1
 +  // popped) for a frame's window, or Nothing while the display's limits are
@@ -1910,3 +2097,931 @@ index c71e5b3261..5c302c7808 100644
  /// The specified value of a grid `<track-breadth>`
  pub type TrackBreadth = GenericTrackBreadth<LengthPercentage>;
  
+diff --git a/widget/gtk/nsWaylandDisplay.cpp b/widget/gtk/nsWaylandDisplay.cpp
+index 52322c5a01..a84446f37e 100644
+--- a/widget/gtk/nsWaylandDisplay.cpp
++++ b/widget/gtk/nsWaylandDisplay.cpp
+@@ -3,6 +3,8 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ #include "nsWaylandDisplay.h"
++#include "mozilla/Preferences.h"
++#include "mozilla/widget/kde-stereo-content-v1-client-protocol.h"
+ #include "DMABufFormats.h"
+ 
+ #include "base/message_loop.h"    // for MessageLoop
+@@ -988,6 +990,69 @@ void nsWaylandDisplay::RemoveStereoOutputDevice(StereoOutputDevice* aDevice) {
+   UpdateStereoOutputs();
+ }
+ 
++// The desktop's depth for a surface (see FollowStereoDepth).
++static void StereoDepthStateEvent(void* aData, kde_stereo_depth_v1*,
++                                  uint32_t aAwake, uint32_t aOutputEdges) {
++  static_cast<nsWaylandDisplay*>(aData)->StereoDepthStateChanged(aAwake != 0);
++}
++
++static void StereoDepthLimitsEvent(void* aData, kde_stereo_depth_v1*,
++                                   wl_fixed_t aSunk, wl_fixed_t aPopped) {
++  static_cast<nsWaylandDisplay*>(aData)->StereoDepthLimitsChanged(
++      wl_fixed_to_double(aSunk), wl_fixed_to_double(aPopped));
++}
++
++static const kde_stereo_depth_v1_listener kStereoDepthListener = {
++    StereoDepthStateEvent,
++    StereoDepthLimitsEvent,
++};
++
++kde_stereo_depth_v1* nsWaylandDisplay::FollowStereoDepth(
++    wl_surface* aSurface) {
++  // get_depth is since version 3 of the protocol (an older KWin has no
++  // depth to follow: the page's depth then comes from libstereo-policy).
++  if (!mStereoContentManager || mStereoContentManagerVersion < 3 ||
++      !aSurface) {
++    return nullptr;
++  }
++  kde_stereo_depth_v1* depth =
++      kde_stereo_content_manager_v1_get_depth(mStereoContentManager, aSurface);
++  if (depth) {
++    kde_stereo_depth_v1_add_listener(depth, &kStereoDepthListener, this);
++  }
++  return depth;
++}
++
++void nsWaylandDisplay::UnfollowStereoDepth(kde_stereo_depth_v1* aDepth) {
++  if (aDepth) {
++    kde_stereo_depth_v1_destroy(aDepth);
++  }
++}
++
++void nsWaylandDisplay::StereoDepthStateChanged(bool aAwake) {
++  static const char kAwake[] = "widget.wayland.stereo-depth.awake";
++  if (Preferences::GetBool(kAwake, true) != aAwake) {
++    Preferences::SetBool(kAwake, aAwake, PrefValueKind::Default);
++  }
++}
++
++void nsWaylandDisplay::StereoDepthLimitsChanged(double aSunk, double aPopped) {
++  static const char kSunk[] = "widget.wayland.stereo-depth.sunk-100";
++  static const char kPopped[] = "widget.wayland.stereo-depth.popped-100";
++  static const char kFrom[] = "widget.wayland.stereo-depth.from-compositor";
++  const int32_t sunk = int32_t(std::lround(aSunk * 100.0));
++  const int32_t popped = int32_t(std::lround(aPopped * 100.0));
++  if (Preferences::GetInt(kSunk, -1) != sunk) {
++    Preferences::SetInt(kSunk, sunk, PrefValueKind::Default);
++  }
++  if (Preferences::GetInt(kPopped, -1) != popped) {
++    Preferences::SetInt(kPopped, popped, PrefValueKind::Default);
++  }
++  if (!Preferences::GetBool(kFrom, false)) {
++    Preferences::SetBool(kFrom, true, PrefValueKind::Default);
++  }
++}
++
+ void nsWaylandDisplay::UpdateStereoOutputs() {
+   bool stereo = false;
+   for (const auto& device : mStereoOutputDevices) {
+@@ -1043,6 +1108,11 @@ static void global_registry_handler(void* data, wl_registry* registry,
+     display->SetIdleInhibitManager(idle_inhibit_manager);
+   } else if (iface.EqualsLiteral("kde_stereo_content_manager_v1")) {
+     display->SetHasStereoContent();
++    display->SetStereoContentManager(
++        WaylandRegistryBind<kde_stereo_content_manager_v1>(
++            registry, id, &kde_stereo_content_manager_v1_interface,
++            std::min(version, 5u)),
++        std::min(version, 5u));
+   } else if (iface.EqualsLiteral("kde_output_device_registry_v2")) {
+     // KWin's outputs and their modes, for whether one shows stereo 3D.
+     auto* outputs = WaylandRegistryBind<kde_output_device_registry_v2>(
+diff --git a/widget/gtk/nsWaylandDisplay.h b/widget/gtk/nsWaylandDisplay.h
+index fdbbbc20eb..e377c393f5 100644
+--- a/widget/gtk/nsWaylandDisplay.h
++++ b/widget/gtk/nsWaylandDisplay.h
+@@ -14,6 +14,7 @@
+ #include "mozilla/widget/idle-inhibit-unstable-v1-client-protocol.h"
+ #include "mozilla/widget/kde-appmenu-client-protocol.h"
+ #include "mozilla/widget/kde-output-device-v2-client-protocol.h"
++#include "mozilla/widget/kde-stereo-content-v1-client-protocol.h"
+ #include "mozilla/widget/linux-dmabuf-unstable-v1-client-protocol.h"
+ #include "mozilla/widget/primary-selection-unstable-v1-client-protocol.h"
+ #include "mozilla/widget/pointer-constraints-unstable-v1-client-protocol.h"
+@@ -94,6 +95,22 @@ class nsWaylandDisplay {
+   // on its own.
+   bool HasStereoContent() const { return mHasStereoContent; }
+   void SetHasStereoContent() { mHasStereoContent = true; }
++  // The desktop's depth for a surface (kde_stereo_depth_v1, version 5): whether
++  // elements drawn inside it may be shown in depth, and the limits of the
++  // output it mainly sits on, the person's own (KWin's SunkLimit and
++  // PoppedLimit) built on that display. They are kept in the preferences
++  // widget.wayland.stereo-depth.* for every process, and the pages repaint when
++  // they change. Returns the object to destroy with UnfollowStereoDepth, or
++  // null when the compositor has no such protocol.
++  void SetStereoContentManager(kde_stereo_content_manager_v1* aManager,
++                               uint32_t aVersion) {
++    mStereoContentManager = aManager;
++    mStereoContentManagerVersion = aVersion;
++  }
++  kde_stereo_depth_v1* FollowStereoDepth(wl_surface* aSurface);
++  void UnfollowStereoDepth(kde_stereo_depth_v1* aDepth);
++  void StereoDepthStateChanged(bool aAwake);
++  void StereoDepthLimitsChanged(double aSunk, double aPopped);
+   // An output that shows stereo 3D, or can (Sparky Stereo OS): KWin lists a
+   // 3D mode for it (the display's own HDMI 1.4 3D modes, or the virtual 3D
+   // modes its stereo toggles turn on) or pairs it with another output, as
+@@ -271,6 +288,8 @@ class nsWaylandDisplay {
+ 
+   bool mIsPrimarySelectionEnabled = false;
+   bool mHasStereoContent = false;
++  kde_stereo_content_manager_v1* mStereoContentManager = nullptr;
++  uint32_t mStereoContentManagerVersion = 0;
+   bool mHasStereoOutput = false;
+   nsTArray<UniquePtr<StereoOutputDevice>> mStereoOutputDevices;
+ 
+diff --git a/widget/gtk/nsWindow.cpp b/widget/gtk/nsWindow.cpp
+index 9d11df1895..1b963ab36f 100644
+--- a/widget/gtk/nsWindow.cpp
++++ b/widget/gtk/nsWindow.cpp
+@@ -7427,6 +7427,15 @@ void nsWindow::OnMap() {
+ 
+   RefreshWindowClass();
+ 
++#ifdef MOZ_WAYLAND
++  // Follow the desktop's depth for this window (Sparky Stereo OS): the limits
++  // of the output it sits on, live.
++  if (mSurface && mWindowType == WindowType::TopLevel && !mStereoDepth) {
++    mStereoDepth = WaylandDisplayGet()->FollowStereoDepth(
++        mSurface->GetWlSurface());
++  }
++#endif
++
+   if (GdkIsX11Display()) {
+     if (CompositorBridgeChild* remoteRenderer = GetRemoteRenderer()) {
+       remoteRenderer->SendResume();
+@@ -7440,6 +7449,13 @@ void nsWindow::OnMap() {
+ void nsWindow::OnUnmap() {
+   LOG("nsWindow::OnUnmap");
+ 
++#ifdef MOZ_WAYLAND
++  if (mStereoDepth) {
++    WaylandDisplayGet()->UnfollowStereoDepth(mStereoDepth);
++    mStereoDepth = nullptr;
++  }
++#endif
++
+ #ifdef MOZ_WAYLAND
+   if (AsWayland()) {
+     AsWayland()->ClearPipResources();
+diff --git a/widget/gtk/nsWindow.h b/widget/gtk/nsWindow.h
+index 18df35031e..28c93f7d08 100644
+--- a/widget/gtk/nsWindow.h
++++ b/widget/gtk/nsWindow.h
+@@ -616,6 +616,8 @@ class nsWindow : public nsIWidget {
+   void* mEGLWindow = nullptr;
+ #ifdef MOZ_WAYLAND
+   RefPtr<mozilla::widget::WaylandSurface> mSurface;
++  // KWin's kde_stereo_depth_v1 for this window (Sparky Stereo OS).
++  struct kde_stereo_depth_v1* mStereoDepth = nullptr;
+ #endif
+   RefPtr<gfxImageSurface> mDragPopupSurface;
+   LayoutDeviceIntRegion mDragPopupSurfaceRegion;
+diff --git a/widget/gtk/wayland/kde-stereo-content-v1-client-protocol.h b/widget/gtk/wayland/kde-stereo-content-v1-client-protocol.h
+new file mode 100644
+index 0000000000..3fdf7a49ec
+--- /dev/null
++++ b/widget/gtk/wayland/kde-stereo-content-v1-client-protocol.h
+@@ -0,0 +1,628 @@
++/* Generated by wayland-scanner 1.26.0 */
++
++#ifndef KDE_STEREO_CONTENT_V1_CLIENT_PROTOCOL_H
++#define KDE_STEREO_CONTENT_V1_CLIENT_PROTOCOL_H
++
++#include <stdint.h>
++#include <stddef.h>
++#include "wayland-client.h"
++
++#ifdef  __cplusplus
++extern "C" {
++#endif
++
++/**
++ * @page page_kde_stereo_content_v1 The kde_stereo_content_v1 protocol
++ * @section page_ifaces_kde_stereo_content_v1 Interfaces
++ * - @subpage page_iface_kde_stereo_content_manager_v1 - declare stereo content of surfaces
++ * - @subpage page_iface_kde_stereo_content_v1 - stereo content declaration of one surface
++ * - @subpage page_iface_kde_stereo_depth_v1 - desktop depth of one surface
++ * @section page_copyright_kde_stereo_content_v1 Copyright
++ * <pre>
++ *
++ * SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ *
++ * SPDX-License-Identifier: MIT-CMU
++ * </pre>
++ */
++struct kde_stereo_content_manager_v1;
++struct kde_stereo_content_v1;
++struct kde_stereo_depth_v1;
++struct wl_surface;
++
++#ifndef KDE_STEREO_CONTENT_MANAGER_V1_INTERFACE
++#define KDE_STEREO_CONTENT_MANAGER_V1_INTERFACE
++/**
++ * @page page_iface_kde_stereo_content_manager_v1 kde_stereo_content_manager_v1
++ * @section page_iface_kde_stereo_content_manager_v1_desc Description
++ *
++ * A program tells the compositor that a surface's picture holds two
++ * views packed full side by side, with the left view first.
++ * The compositor renders the declared surface using each view.
++ * The global being present announces support.
++ *
++ * Since version 3, a program may also follow a surface's desktop depth
++ * with get_depth, to draw the elements inside the surface at their own
++ * depths.
++ *
++ * Clients may use this protocol to declare stereo content. The version 1
++ * wire values are stable; future requests must use a new interface version.
++ * Destroying the manager does not affect declarations it created.
++ * @section page_iface_kde_stereo_content_manager_v1_api API
++ * See @ref iface_kde_stereo_content_manager_v1.
++ */
++/**
++ * @defgroup iface_kde_stereo_content_manager_v1 The kde_stereo_content_manager_v1 interface
++ *
++ * A program tells the compositor that a surface's picture holds two
++ * views packed full side by side, with the left view first.
++ * The compositor renders the declared surface using each view.
++ * The global being present announces support.
++ *
++ * Since version 3, a program may also follow a surface's desktop depth
++ * with get_depth, to draw the elements inside the surface at their own
++ * depths.
++ *
++ * Clients may use this protocol to declare stereo content. The version 1
++ * wire values are stable; future requests must use a new interface version.
++ * Destroying the manager does not affect declarations it created.
++ */
++extern const struct wl_interface kde_stereo_content_manager_v1_interface;
++#endif
++#ifndef KDE_STEREO_CONTENT_V1_INTERFACE
++#define KDE_STEREO_CONTENT_V1_INTERFACE
++/**
++ * @page page_iface_kde_stereo_content_v1 kde_stereo_content_v1
++ * @section page_iface_kde_stereo_content_v1_desc Description
++ *
++ * The declaration of one surface, created with
++ * kde_stereo_content_manager_v1.create.
++ *
++ * Since version 2, a surface declared side_by_side_full is one view
++ * wide and its buffer holds both views: unless a wp_viewport destination
++ * is set, the surface's size is half the width the buffer would give it
++ * (after the buffer scale, the buffer transform and a viewport source)
++ * by the full height. A viewport destination, when set, is the size of
++ * one view. With version 1 the surface's size follows its buffer as for
++ * any other surface, so a client that declares at version 1 maps the
++ * buffer onto one view's size itself, for example with a viewport.
++ *
++ * Version 3 changes nothing in this interface.
++ * Version 4 adds a double-buffered native source rectangle for each view.
++ * @section page_iface_kde_stereo_content_v1_api API
++ * See @ref iface_kde_stereo_content_v1.
++ */
++/**
++ * @defgroup iface_kde_stereo_content_v1 The kde_stereo_content_v1 interface
++ *
++ * The declaration of one surface, created with
++ * kde_stereo_content_manager_v1.create.
++ *
++ * Since version 2, a surface declared side_by_side_full is one view
++ * wide and its buffer holds both views: unless a wp_viewport destination
++ * is set, the surface's size is half the width the buffer would give it
++ * (after the buffer scale, the buffer transform and a viewport source)
++ * by the full height. A viewport destination, when set, is the size of
++ * one view. With version 1 the surface's size follows its buffer as for
++ * any other surface, so a client that declares at version 1 maps the
++ * buffer onto one view's size itself, for example with a viewport.
++ *
++ * Version 3 changes nothing in this interface.
++ * Version 4 adds a double-buffered native source rectangle for each view.
++ */
++extern const struct wl_interface kde_stereo_content_v1_interface;
++#endif
++#ifndef KDE_STEREO_DEPTH_V1_INTERFACE
++#define KDE_STEREO_DEPTH_V1_INTERFACE
++/**
++ * @page page_iface_kde_stereo_depth_v1 kde_stereo_depth_v1
++ * @section page_iface_kde_stereo_depth_v1_desc Description
++ *
++ * The compositor shows the desktop's own surfaces at depth levels: the
++ * active window at the screen, the windows lying behind it sunk, menus,
++ * tooltips and popups popped. This object lets a client show depth
++ * inside a surface as well, by drawing the surface's elements once per
++ * view at their own depths and handing the two views over full side by
++ * side, declared with kde_stereo_content_v1:
++ *
++ * - the compositor tells the client when the elements inside the surface
++ * may be shown in depth, and which of the surface's edges lie on its
++ * output's edge;
++ * - the client marks such a pair as the desktop's own depth rather than
++ * stereo content;
++ * - a popup surface may declare its place.
++ *
++ * The depth limits are the user's settings, built on the display they are
++ * shown on: since version 5 the compositor tells the client the limits of
++ * the output the surface mainly sits on (depth_limits), the same limits it
++ * applies to its own surfaces there, so that an element drawn inside the
++ * surface at the popped limit and a menu the compositor pops lie at the same
++ * depth on the same screen. Before version 5 the client reads the user's
++ * settings itself.
++ *
++ * A surface may have any number of these objects. The depth state is sent
++ * to each of them. The surface is marked as desktop depth while any of
++ * its objects marks it, and its place is the one set most recently by any
++ * of its objects that has one.
++ *
++ * When the surface is destroyed, the object becomes inert: its requests
++ * are ignored and no further event is sent.
++ * @section page_iface_kde_stereo_depth_v1_api API
++ * See @ref iface_kde_stereo_depth_v1.
++ */
++/**
++ * @defgroup iface_kde_stereo_depth_v1 The kde_stereo_depth_v1 interface
++ *
++ * The compositor shows the desktop's own surfaces at depth levels: the
++ * active window at the screen, the windows lying behind it sunk, menus,
++ * tooltips and popups popped. This object lets a client show depth
++ * inside a surface as well, by drawing the surface's elements once per
++ * view at their own depths and handing the two views over full side by
++ * side, declared with kde_stereo_content_v1:
++ *
++ * - the compositor tells the client when the elements inside the surface
++ * may be shown in depth, and which of the surface's edges lie on its
++ * output's edge;
++ * - the client marks such a pair as the desktop's own depth rather than
++ * stereo content;
++ * - a popup surface may declare its place.
++ *
++ * The depth limits are the user's settings, built on the display they are
++ * shown on: since version 5 the compositor tells the client the limits of
++ * the output the surface mainly sits on (depth_limits), the same limits it
++ * applies to its own surfaces there, so that an element drawn inside the
++ * surface at the popped limit and a menu the compositor pops lie at the same
++ * depth on the same screen. Before version 5 the client reads the user's
++ * settings itself.
++ *
++ * A surface may have any number of these objects. The depth state is sent
++ * to each of them. The surface is marked as desktop depth while any of
++ * its objects marks it, and its place is the one set most recently by any
++ * of its objects that has one.
++ *
++ * When the surface is destroyed, the object becomes inert: its requests
++ * are ignored and no further event is sent.
++ */
++extern const struct wl_interface kde_stereo_depth_v1_interface;
++#endif
++
++#ifndef KDE_STEREO_CONTENT_MANAGER_V1_ERROR_ENUM
++#define KDE_STEREO_CONTENT_MANAGER_V1_ERROR_ENUM
++enum kde_stereo_content_manager_v1_error {
++	/**
++	 * the surface already has a stereo content declaration
++	 */
++	KDE_STEREO_CONTENT_MANAGER_V1_ERROR_ALREADY_DECLARED = 0,
++};
++#endif /* KDE_STEREO_CONTENT_MANAGER_V1_ERROR_ENUM */
++
++#define KDE_STEREO_CONTENT_MANAGER_V1_DESTROY 0
++#define KDE_STEREO_CONTENT_MANAGER_V1_CREATE 1
++#define KDE_STEREO_CONTENT_MANAGER_V1_GET_DEPTH 2
++
++
++/**
++ * @ingroup iface_kde_stereo_content_manager_v1
++ */
++#define KDE_STEREO_CONTENT_MANAGER_V1_DESTROY_SINCE_VERSION 1
++/**
++ * @ingroup iface_kde_stereo_content_manager_v1
++ */
++#define KDE_STEREO_CONTENT_MANAGER_V1_CREATE_SINCE_VERSION 1
++/**
++ * @ingroup iface_kde_stereo_content_manager_v1
++ */
++#define KDE_STEREO_CONTENT_MANAGER_V1_GET_DEPTH_SINCE_VERSION 3
++
++/** @ingroup iface_kde_stereo_content_manager_v1 */
++static inline void
++kde_stereo_content_manager_v1_set_user_data(struct kde_stereo_content_manager_v1 *kde_stereo_content_manager_v1, void *user_data)
++{
++	wl_proxy_set_user_data((struct wl_proxy *) kde_stereo_content_manager_v1, user_data);
++}
++
++/** @ingroup iface_kde_stereo_content_manager_v1 */
++static inline void *
++kde_stereo_content_manager_v1_get_user_data(struct kde_stereo_content_manager_v1 *kde_stereo_content_manager_v1)
++{
++	return wl_proxy_get_user_data((struct wl_proxy *) kde_stereo_content_manager_v1);
++}
++
++static inline uint32_t
++kde_stereo_content_manager_v1_get_version(struct kde_stereo_content_manager_v1 *kde_stereo_content_manager_v1)
++{
++	return wl_proxy_get_version((struct wl_proxy *) kde_stereo_content_manager_v1);
++}
++
++/**
++ * @ingroup iface_kde_stereo_content_manager_v1
++ */
++static inline void
++kde_stereo_content_manager_v1_destroy(struct kde_stereo_content_manager_v1 *kde_stereo_content_manager_v1)
++{
++	wl_proxy_marshal_flags((struct wl_proxy *) kde_stereo_content_manager_v1,
++			 KDE_STEREO_CONTENT_MANAGER_V1_DESTROY, NULL, wl_proxy_get_version((struct wl_proxy *) kde_stereo_content_manager_v1), WL_MARSHAL_FLAG_DESTROY);
++}
++
++/**
++ * @ingroup iface_kde_stereo_content_manager_v1
++ *
++ * Creates a kde_stereo_content_v1 object for the given surface. The
++ * declaration is none until set_content is called. If the surface
++ * already has a declaration, the already_declared error is raised.
++ */
++static inline struct kde_stereo_content_v1 *
++kde_stereo_content_manager_v1_create(struct kde_stereo_content_manager_v1 *kde_stereo_content_manager_v1, struct wl_surface *surface)
++{
++	struct wl_proxy *id;
++
++	id = wl_proxy_marshal_flags((struct wl_proxy *) kde_stereo_content_manager_v1,
++			 KDE_STEREO_CONTENT_MANAGER_V1_CREATE, &kde_stereo_content_v1_interface, wl_proxy_get_version((struct wl_proxy *) kde_stereo_content_manager_v1), 0, NULL, surface);
++
++	return (struct kde_stereo_content_v1 *) id;
++}
++
++/**
++ * @ingroup iface_kde_stereo_content_manager_v1
++ *
++ * Creates a kde_stereo_depth_v1 object for the given surface. A surface
++ * may have any number of them, made by any part of the client, such as
++ * a toolkit and its style, and independently of its stereo content
++ * declaration.
++ */
++static inline struct kde_stereo_depth_v1 *
++kde_stereo_content_manager_v1_get_depth(struct kde_stereo_content_manager_v1 *kde_stereo_content_manager_v1, struct wl_surface *surface)
++{
++	struct wl_proxy *id;
++
++	id = wl_proxy_marshal_flags((struct wl_proxy *) kde_stereo_content_manager_v1,
++			 KDE_STEREO_CONTENT_MANAGER_V1_GET_DEPTH, &kde_stereo_depth_v1_interface, wl_proxy_get_version((struct wl_proxy *) kde_stereo_content_manager_v1), 0, NULL, surface);
++
++	return (struct kde_stereo_depth_v1 *) id;
++}
++
++#ifndef KDE_STEREO_CONTENT_V1_ERROR_ENUM
++#define KDE_STEREO_CONTENT_V1_ERROR_ENUM
++enum kde_stereo_content_v1_error {
++	/**
++	 * the surface no longer exists
++	 */
++	KDE_STEREO_CONTENT_V1_ERROR_NO_SURFACE = 0,
++	/**
++	 * invalid per-view source rectangle
++	 * @since 4
++	 */
++	KDE_STEREO_CONTENT_V1_ERROR_BAD_SOURCE = 1,
++};
++/**
++ * @ingroup iface_kde_stereo_content_v1
++ */
++#define KDE_STEREO_CONTENT_V1_ERROR_BAD_SOURCE_SINCE_VERSION 4
++#endif /* KDE_STEREO_CONTENT_V1_ERROR_ENUM */
++
++#ifndef KDE_STEREO_CONTENT_V1_CONTENT_ENUM
++#define KDE_STEREO_CONTENT_V1_CONTENT_ENUM
++/**
++ * @ingroup iface_kde_stereo_content_v1
++ * full side-by-side packing of the two views
++ *
++ * The value matches the X11 property _KDE_NET_WM_STEREO_CONTENT.
++ */
++enum kde_stereo_content_v1_content {
++	/**
++	 * no stereo content
++	 */
++	KDE_STEREO_CONTENT_V1_CONTENT_NONE = 0,
++	/**
++	 * side by side, native width per view, left first
++	 */
++	KDE_STEREO_CONTENT_V1_CONTENT_SIDE_BY_SIDE_FULL = 3,
++};
++#endif /* KDE_STEREO_CONTENT_V1_CONTENT_ENUM */
++
++#define KDE_STEREO_CONTENT_V1_DESTROY 0
++#define KDE_STEREO_CONTENT_V1_SET_CONTENT 1
++#define KDE_STEREO_CONTENT_V1_SET_VIEW_SOURCE 2
++
++
++/**
++ * @ingroup iface_kde_stereo_content_v1
++ */
++#define KDE_STEREO_CONTENT_V1_DESTROY_SINCE_VERSION 1
++/**
++ * @ingroup iface_kde_stereo_content_v1
++ */
++#define KDE_STEREO_CONTENT_V1_SET_CONTENT_SINCE_VERSION 1
++/**
++ * @ingroup iface_kde_stereo_content_v1
++ */
++#define KDE_STEREO_CONTENT_V1_SET_VIEW_SOURCE_SINCE_VERSION 4
++
++/** @ingroup iface_kde_stereo_content_v1 */
++static inline void
++kde_stereo_content_v1_set_user_data(struct kde_stereo_content_v1 *kde_stereo_content_v1, void *user_data)
++{
++	wl_proxy_set_user_data((struct wl_proxy *) kde_stereo_content_v1, user_data);
++}
++
++/** @ingroup iface_kde_stereo_content_v1 */
++static inline void *
++kde_stereo_content_v1_get_user_data(struct kde_stereo_content_v1 *kde_stereo_content_v1)
++{
++	return wl_proxy_get_user_data((struct wl_proxy *) kde_stereo_content_v1);
++}
++
++static inline uint32_t
++kde_stereo_content_v1_get_version(struct kde_stereo_content_v1 *kde_stereo_content_v1)
++{
++	return wl_proxy_get_version((struct wl_proxy *) kde_stereo_content_v1);
++}
++
++/**
++ * @ingroup iface_kde_stereo_content_v1
++ *
++ * Resets the content to none on the next wl_surface commit. The surface
++ * may receive a new declaration immediately.
++ */
++static inline void
++kde_stereo_content_v1_destroy(struct kde_stereo_content_v1 *kde_stereo_content_v1)
++{
++	wl_proxy_marshal_flags((struct wl_proxy *) kde_stereo_content_v1,
++			 KDE_STEREO_CONTENT_V1_DESTROY, NULL, wl_proxy_get_version((struct wl_proxy *) kde_stereo_content_v1), WL_MARSHAL_FLAG_DESTROY);
++}
++
++/**
++ * @ingroup iface_kde_stereo_content_v1
++ *
++ * Takes effect with the next commit of the surface. Unknown values
++ * are treated as none. Declaring none clears the format and does not
++ * destroy the declaration object.
++ */
++static inline void
++kde_stereo_content_v1_set_content(struct kde_stereo_content_v1 *kde_stereo_content_v1, uint32_t content)
++{
++	wl_proxy_marshal_flags((struct wl_proxy *) kde_stereo_content_v1,
++			 KDE_STEREO_CONTENT_V1_SET_CONTENT, NULL, wl_proxy_get_version((struct wl_proxy *) kde_stereo_content_v1), 0, content);
++}
++
++/**
++ * @ingroup iface_kde_stereo_content_v1
++ *
++ * Select a rectangle independently within each view of side_by_side_full
++ * content. Coordinates are native buffer pixels after the buffer transform,
++ * relative to the top left of each half of the viewport source rectangle.
++ * The viewport destination remains the logical size of one drawing area.
++ * No new packing or view-order value is introduced.
++ *
++ * The rectangle is double buffered with wl_surface.commit. Initially it is
++ * unset. Set all four values to -1 to unset it. Otherwise x and y must be
++ * nonnegative and width and height strictly positive. The rectangle must
++ * fit inside each view when a buffer is committed; otherwise bad_source is
++ * raised. With no viewport destination, the rectangle's size divided by
++ * buffer scale gives the surface size. Fractional edges are retained.
++ *
++ * Setting content to none or destroying the declaration also unsets the
++ * rectangle. This request on a destroyed wl_surface raises no_surface.
++ * Existing clients which do not set a view source keep their behavior.
++ */
++static inline void
++kde_stereo_content_v1_set_view_source(struct kde_stereo_content_v1 *kde_stereo_content_v1, wl_fixed_t x, wl_fixed_t y, wl_fixed_t width, wl_fixed_t height)
++{
++	wl_proxy_marshal_flags((struct wl_proxy *) kde_stereo_content_v1,
++			 KDE_STEREO_CONTENT_V1_SET_VIEW_SOURCE, NULL, wl_proxy_get_version((struct wl_proxy *) kde_stereo_content_v1), 0, x, y, width, height);
++}
++
++#ifndef KDE_STEREO_DEPTH_V1_EDGE_ENUM
++#define KDE_STEREO_DEPTH_V1_EDGE_ENUM
++/**
++ * @ingroup iface_kde_stereo_depth_v1
++ * edges of a surface
++ */
++enum kde_stereo_depth_v1_edge {
++	/**
++	 * the left edge
++	 */
++	KDE_STEREO_DEPTH_V1_EDGE_LEFT = 1,
++	/**
++	 * the top edge
++	 */
++	KDE_STEREO_DEPTH_V1_EDGE_TOP = 2,
++	/**
++	 * the right edge
++	 */
++	KDE_STEREO_DEPTH_V1_EDGE_RIGHT = 4,
++	/**
++	 * the bottom edge
++	 */
++	KDE_STEREO_DEPTH_V1_EDGE_BOTTOM = 8,
++};
++#endif /* KDE_STEREO_DEPTH_V1_EDGE_ENUM */
++
++/**
++ * @ingroup iface_kde_stereo_depth_v1
++ * @struct kde_stereo_depth_v1_listener
++ */
++struct kde_stereo_depth_v1_listener {
++	/**
++	 * Whether the surface may show depth inside it now
++	 *
++	 * Sent once after the object is created and again whenever
++	 * either value changes.
++	 *
++	 * awake is nonzero while elements drawn inside the surface may be
++	 * shown in depth: the surface is on an output that shows stereo,
++	 * and it is awake, as the active window on top of what it
++	 * overlaps, a popup, a panel or a desktop widget is, rather than
++	 * one of the windows lying flat behind the active one. While the
++	 * surface is not awake the client draws it as for a 2D output.
++	 *
++	 * output_edges are the edges of the surface, for a window those of
++	 * its frame, that touch an edge of its output. Nothing at such an
++	 * edge comes nearer than the screen.
++	 * @param awake nonzero while depth may be shown inside the surface
++	 * @param output_edges the surface's edges on its output's edge
++	 */
++	void (*depth_state)(void *data,
++			    struct kde_stereo_depth_v1 *kde_stereo_depth_v1,
++			    uint32_t awake,
++			    uint32_t output_edges);
++	/**
++	 * The depth limits on the surface's output
++	 *
++	 * Sent after depth_state once the object is created and again
++	 * whenever either value changes, such as when the surface moves to
++	 * another output, the output's mode or kind changes, or the user
++	 * changes the settings.
++	 *
++	 * sunk and popped are how far behind and in front of the screen
++	 * the compositor lets anything go on the output the surface mainly
++	 * sits on, in pixels of a view 1920 wide. They are the user's
++	 * limits built on the output's display: a headset gets more
++	 * separation, a framed 3D screen less (the display's kind and
++	 * physical size, libstereo-policy). A surface scales them to its
++	 * own view's width, and nothing it draws reaches beyond them.
++	 * @param sunk the sunk limit, pixels of a view 1920 wide
++	 * @param popped the popped limit, pixels of a view 1920 wide
++	 * @since 5
++	 */
++	void (*depth_limits)(void *data,
++			     struct kde_stereo_depth_v1 *kde_stereo_depth_v1,
++			     wl_fixed_t sunk,
++			     wl_fixed_t popped);
++};
++
++/**
++ * @ingroup iface_kde_stereo_depth_v1
++ */
++static inline int
++kde_stereo_depth_v1_add_listener(struct kde_stereo_depth_v1 *kde_stereo_depth_v1,
++				 const struct kde_stereo_depth_v1_listener *listener, void *data)
++{
++	return wl_proxy_add_listener((struct wl_proxy *) kde_stereo_depth_v1,
++				     (void (**)(void)) listener, data);
++}
++
++#define KDE_STEREO_DEPTH_V1_DESTROY 0
++#define KDE_STEREO_DEPTH_V1_SET_DESKTOP_DEPTH 1
++#define KDE_STEREO_DEPTH_V1_SET_PLACE 2
++#define KDE_STEREO_DEPTH_V1_UNSET_PLACE 3
++
++/**
++ * @ingroup iface_kde_stereo_depth_v1
++ */
++#define KDE_STEREO_DEPTH_V1_DEPTH_STATE_SINCE_VERSION 1
++/**
++ * @ingroup iface_kde_stereo_depth_v1
++ */
++#define KDE_STEREO_DEPTH_V1_DEPTH_LIMITS_SINCE_VERSION 5
++
++/**
++ * @ingroup iface_kde_stereo_depth_v1
++ */
++#define KDE_STEREO_DEPTH_V1_DESTROY_SINCE_VERSION 1
++/**
++ * @ingroup iface_kde_stereo_depth_v1
++ */
++#define KDE_STEREO_DEPTH_V1_SET_DESKTOP_DEPTH_SINCE_VERSION 1
++/**
++ * @ingroup iface_kde_stereo_depth_v1
++ */
++#define KDE_STEREO_DEPTH_V1_SET_PLACE_SINCE_VERSION 1
++/**
++ * @ingroup iface_kde_stereo_depth_v1
++ */
++#define KDE_STEREO_DEPTH_V1_UNSET_PLACE_SINCE_VERSION 1
++
++/** @ingroup iface_kde_stereo_depth_v1 */
++static inline void
++kde_stereo_depth_v1_set_user_data(struct kde_stereo_depth_v1 *kde_stereo_depth_v1, void *user_data)
++{
++	wl_proxy_set_user_data((struct wl_proxy *) kde_stereo_depth_v1, user_data);
++}
++
++/** @ingroup iface_kde_stereo_depth_v1 */
++static inline void *
++kde_stereo_depth_v1_get_user_data(struct kde_stereo_depth_v1 *kde_stereo_depth_v1)
++{
++	return wl_proxy_get_user_data((struct wl_proxy *) kde_stereo_depth_v1);
++}
++
++static inline uint32_t
++kde_stereo_depth_v1_get_version(struct kde_stereo_depth_v1 *kde_stereo_depth_v1)
++{
++	return wl_proxy_get_version((struct wl_proxy *) kde_stereo_depth_v1);
++}
++
++/**
++ * @ingroup iface_kde_stereo_depth_v1
++ *
++ * The desktop depth mark and the place this object set are withdrawn
++ * on the next wl_surface commit.
++ */
++static inline void
++kde_stereo_depth_v1_destroy(struct kde_stereo_depth_v1 *kde_stereo_depth_v1)
++{
++	wl_proxy_marshal_flags((struct wl_proxy *) kde_stereo_depth_v1,
++			 KDE_STEREO_DEPTH_V1_DESTROY, NULL, wl_proxy_get_version((struct wl_proxy *) kde_stereo_depth_v1), WL_MARSHAL_FLAG_DESTROY);
++}
++
++/**
++ * @ingroup iface_kde_stereo_depth_v1
++ *
++ * Nonzero marks the full side-by-side pair the surface shows, declared
++ * with kde_stereo_content_v1 by this client or its graphics library, as
++ * the desktop's own elements drawn once per view rather than stereo
++ * content: where the compositor treats stereo content differently, for
++ * example in switching a display into a 3D mode, in stereo screenshots
++ * or in estimating the depth of content, the surface counts as part of
++ * the desktop. The compositor still presents each view separately. Zero
++ * withdraws the mark.
++ *
++ * Takes effect with the next wl_surface commit.
++ */
++static inline void
++kde_stereo_depth_v1_set_desktop_depth(struct kde_stereo_depth_v1 *kde_stereo_depth_v1, uint32_t desktop_depth)
++{
++	wl_proxy_marshal_flags((struct wl_proxy *) kde_stereo_depth_v1,
++			 KDE_STEREO_DEPTH_V1_SET_DESKTOP_DEPTH, NULL, wl_proxy_get_version((struct wl_proxy *) kde_stereo_depth_v1), 0, desktop_depth);
++}
++
++/**
++ * @ingroup iface_kde_stereo_depth_v1
++ *
++ * Declares where a popup surface (a menu, tooltip, popup or dialog) sits
++ * in depth, as a fraction of the user's limits: -1 is the sunk limit, 0
++ * the screen and 1 the popped limit; values beyond are limited to that
++ * range. The compositor places the surface there under its own rules: a
++ * surface at its output's edge stays at the screen, and a popup is never
++ * behind the surface it was opened from. Without a place the compositor
++ * places the surface itself. The place of a surface that is not a popup
++ * is ignored.
++ *
++ * Takes effect with the next wl_surface commit.
++ */
++static inline void
++kde_stereo_depth_v1_set_place(struct kde_stereo_depth_v1 *kde_stereo_depth_v1, wl_fixed_t depth)
++{
++	wl_proxy_marshal_flags((struct wl_proxy *) kde_stereo_depth_v1,
++			 KDE_STEREO_DEPTH_V1_SET_PLACE, NULL, wl_proxy_get_version((struct wl_proxy *) kde_stereo_depth_v1), 0, depth);
++}
++
++/**
++ * @ingroup iface_kde_stereo_depth_v1
++ *
++ * Withdraws the place this object set. Takes effect with the next
++ * wl_surface commit.
++ */
++static inline void
++kde_stereo_depth_v1_unset_place(struct kde_stereo_depth_v1 *kde_stereo_depth_v1)
++{
++	wl_proxy_marshal_flags((struct wl_proxy *) kde_stereo_depth_v1,
++			 KDE_STEREO_DEPTH_V1_UNSET_PLACE, NULL, wl_proxy_get_version((struct wl_proxy *) kde_stereo_depth_v1), 0);
++}
++
++#ifdef  __cplusplus
++}
++#endif
++
++#endif
+diff --git a/widget/gtk/wayland/kde-stereo-content-v1-protocol.c b/widget/gtk/wayland/kde-stereo-content-v1-protocol.c
+new file mode 100644
+index 0000000000..0a4f9cc326
+--- /dev/null
++++ b/widget/gtk/wayland/kde-stereo-content-v1-protocol.c
+@@ -0,0 +1,82 @@
++/* Generated by wayland-scanner 1.26.0 */
++
++/*
++ * SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ *
++ * SPDX-License-Identifier: MIT-CMU
++ */
++
++#include <stdbool.h>
++#include <stdlib.h>
++#include <stdint.h>
++#include "wayland-util.h"
++
++#ifndef __has_attribute
++# define __has_attribute(x) 0  /* Compatibility with non-clang compilers. */
++#endif
++
++#if (__has_attribute(visibility) || defined(__GNUC__) && __GNUC__ >= 4)
++#define WL_PRIVATE __attribute__ ((visibility("hidden")))
++#else
++#define WL_PRIVATE
++#endif
++
++extern const struct wl_interface kde_stereo_content_v1_interface;
++extern const struct wl_interface kde_stereo_depth_v1_interface;
++#pragma GCC visibility push(default)
++extern const struct wl_interface wl_surface_interface;
++#pragma GCC visibility pop
++
++static const struct wl_interface *kde_stereo_content_v1_types[] = {
++	NULL,
++	NULL,
++	NULL,
++	NULL,
++	&kde_stereo_content_v1_interface,
++	&wl_surface_interface,
++	&kde_stereo_depth_v1_interface,
++	&wl_surface_interface,
++};
++
++static const struct wl_message kde_stereo_content_manager_v1_requests[] = {
++	{ "destroy", "", kde_stereo_content_v1_types + 0 },
++	{ "create", "no", kde_stereo_content_v1_types + 4 },
++	{ "get_depth", "3no", kde_stereo_content_v1_types + 6 },
++};
++
++WL_PRIVATE const struct wl_interface kde_stereo_content_manager_v1_interface = {
++	"kde_stereo_content_manager_v1", 5,
++	3, kde_stereo_content_manager_v1_requests,
++	0, NULL,
++};
++
++static const struct wl_message kde_stereo_content_v1_requests[] = {
++	{ "destroy", "", kde_stereo_content_v1_types + 0 },
++	{ "set_content", "u", kde_stereo_content_v1_types + 0 },
++	{ "set_view_source", "4ffff", kde_stereo_content_v1_types + 0 },
++};
++
++WL_PRIVATE const struct wl_interface kde_stereo_content_v1_interface = {
++	"kde_stereo_content_v1", 5,
++	3, kde_stereo_content_v1_requests,
++	0, NULL,
++};
++
++static const struct wl_message kde_stereo_depth_v1_requests[] = {
++	{ "destroy", "", kde_stereo_content_v1_types + 0 },
++	{ "set_desktop_depth", "u", kde_stereo_content_v1_types + 0 },
++	{ "set_place", "f", kde_stereo_content_v1_types + 0 },
++	{ "unset_place", "", kde_stereo_content_v1_types + 0 },
++};
++
++static const struct wl_message kde_stereo_depth_v1_events[] = {
++	{ "depth_state", "uu", kde_stereo_content_v1_types + 0 },
++	{ "depth_limits", "5ff", kde_stereo_content_v1_types + 0 },
++};
++
++WL_PRIVATE const struct wl_interface kde_stereo_depth_v1_interface = {
++	"kde_stereo_depth_v1", 5,
++	4, kde_stereo_depth_v1_requests,
++	2, kde_stereo_depth_v1_events,
++};
++
+diff --git a/widget/gtk/wayland/moz.build b/widget/gtk/wayland/moz.build
+index 125f942d61..3d6e80e5e1 100644
+--- a/widget/gtk/wayland/moz.build
++++ b/widget/gtk/wayland/moz.build
+@@ -13,6 +13,7 @@ SOURCES += [
+     "idle-inhibit-unstable-v1-protocol.c",
+     "kde-appmenu-protocol.c",
+     "kde-output-device-v2-protocol.c",
++    "kde-stereo-content-v1-protocol.c",
+     "linux-dmabuf-unstable-v1-protocol.c",
+     "pointer-constraints-unstable-v1-protocol.c",
+     "pointer-gestures-unstable-v1-protocol.c",
+@@ -35,6 +36,7 @@ EXPORTS.mozilla.widget += [
+     "idle-inhibit-unstable-v1-client-protocol.h",
+     "kde-appmenu-client-protocol.h",
+     "kde-output-device-v2-client-protocol.h",
++    "kde-stereo-content-v1-client-protocol.h",
+     "linux-dmabuf-unstable-v1-client-protocol.h",
+     "pointer-constraints-unstable-v1-client-protocol.h",
+     "pointer-gestures-unstable-v1-client-protocol.h",

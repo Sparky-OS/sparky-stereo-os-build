@@ -28,3 +28,11 @@ Three recipes, run in this order, each in the Lean Code migration container with
    gate needs libstereo-policy1 (>= 1.15.0) in an archive: until lane 411's stereo-layer 1.15.0 is published, a fixture archive
    with a throwaway key holds the stereo-layer debs (SPARKY_LC_ARCHIVE_DIR with a second source in sources.json); rebuild the
    gate against the published library before publication.
+
+## ORDER 414c (2026-11-06): browser +stereo3d7 again, the depth from KWin
+
+`browser/0003` now runs to Gecko 73841dee65: the browser binds `kde_stereo_content_manager_v1` up to version 5 and follows
+`kde_stereo_depth_v1` (awake, and the sunk and popped limits of the output the window mainly sits on, live); a click lands where a
+depth element is drawn; scroll frames inside it move with it in both copies; a KWin whose protocol is older than 3 leaves the pages
+on libstereo-policy's default with a console notice. The recipe is unchanged otherwise (`BROWSER_JOBS=4`, `SIBLINGS_DIR`).
+The stage folder 414c-browser-7 supersedes 414b-browser-7.
