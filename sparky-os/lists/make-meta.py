@@ -298,8 +298,8 @@ META = {
         sorted(HARDWARE_OPTIONAL & set(lst('hardware'))) + ['sparky-stereo-dkms-compat', 'sparky-stereo-vram-boost']),
     'sparky-stereo-system': (
         'Sparky Stereo system',
-        'This meta package installs the system tools of Sparky Stereo OS: Flatpak, snapshots, containers, Android support, the kernel settings, the Cushion Swap File on disk and the groups every desktop user needs.',
-        sorted(set(lst('system')) - SYSTEM_OPTIONAL) + STEREO_STACK + ['sparky-stereo-cushion-swap', 'sparky-stereo-kernel-settings', 'sparky-stereo-user-groups'],
+        'This meta package installs the system tools of Sparky Stereo OS: Flatpak, snapshots, containers, Android support, the kernel settings, the Cushion Swap File on disk, the groups every desktop user needs, and the BleachBit cleaners and presets of the edition.',
+        sorted(set(lst('system')) - SYSTEM_OPTIONAL) + STEREO_STACK + ['sparky-stereo-cushion-swap', 'sparky-stereo-housekeeping', 'sparky-stereo-kernel-settings', 'sparky-stereo-user-groups'],
         sorted(SYSTEM_OPTIONAL & set(lst('system')))),
     'linux-image-sparky-stereo': (
         'Sparky Stereo kernel',
