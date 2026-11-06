@@ -22,7 +22,12 @@ assert not {row.get('package') for row in rows}&{'network-manager-vpnc-gnome','n
 onimage=set(lines('system.list'))
 assert {'network-manager-openvpn','network-manager-openconnect','network-manager-l2tp'} <= onimage
 assert {'network-manager-openvpn','network-manager-openconnect','network-manager-l2tp'} <= {row['package'] for row in vpn}
+installed=set(lines('apps.list')+lines('image.list')+lines('system.list'))
+# the VPN page names the plain plugins the image already carries; the Tools section is for what the image does not install
+tools={name for row in rows if row['section']=='tools' for name in [row['package']]+row.get('also',[])}
+assert not tools & installed, 'a Tools entry names no package the image installs: removing the entry would remove it'
 assert not offered & set(lines('apps.list')+lines('image.list')), 'a program the image installs is not an extra'
+assert 'network-manager-vpnc' not in {row.get('package') for row in rows}, 'network-manager-vpnc has left forky'
 required=set(lines('image.list')+lines('emulation-3d.list'))
 required.update(s.split()[0] for s in lines('roles.tsv') if s.split()[-1]=='3d')
 assert required <= packages, required-packages
