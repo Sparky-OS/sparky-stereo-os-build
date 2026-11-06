@@ -402,3 +402,48 @@ def test_a_recommends_that_ships_another_library_does_not_help(tmp_path):
     after = game('1+lc1', 'libxrandr2')
     with pytest.raises(package.Invalid, match='not found libdemo_gl.so.1'):
         linkcheck.check(after, archive_context=context)
+
+
+def _runpath_case(tmp_path):
+    """qt6-declarative-examples' shape (ORDER 311 group 3b): a plugin needs a library of its own package; the previous
+    build could not find it (its library is in a directory its run path does not reach), the new build ships it where
+    the run path reaches. `built(version, libdir)`: the package with the library in /usr/LIBDIR (a directory the loader searches only when it is a system library directory)."""
+    from lean.tests.archive_fixtures import signed_archive, deb
+    (tmp_path / 'lib.c').write_text('int own_value(void) { return 7; }\n')
+    (tmp_path / 'prog.c').write_text('int own_value(void);\nint main(void) { return own_value() == 7 ? 0 : 1; }\n')
+    subprocess.run(['gcc', '-shared', '-fPIC', '-o', str(tmp_path / 'libdemoown.so'), '-Wl,-soname,libdemoown.so',
+                    str(tmp_path / 'lib.c')], check=True)
+    (tmp_path / 'prog.c').write_text('int own_value(void);\nint plugin_value(void) { return own_value(); }\n')
+    subprocess.run(['gcc', '-shared', '-fPIC', '-o', str(tmp_path / 'libplug.so'), str(tmp_path / 'prog.c'),
+                    f'-L{tmp_path}', '-ldemoown', '-Wl,-rpath,$ORIGIN/../lib'], check=True)
+    context = archive.Archive(signed_archive(tmp_path / 'archive'), tmp_path / 'scratch', 'amd64')
+
+    def built(version, libdir):
+        return deb(tmp_path / f'own-{version}', 'demo-own', version, depends='libc6',
+                   files={'usr/bin/libplug.so': tmp_path / 'libplug.so', f'usr/{libdir}/libdemoown.so': tmp_path / 'libdemoown.so'})
+    return context, built
+
+
+def test_a_library_the_previous_build_could_not_find_and_this_one_finds_is_a_note(tmp_path):
+    context, built = _runpath_case(tmp_path)
+    before, after = built('1', 'share/own/x86_64-linux-gnu'), built('1+lc1', 'lib/x86_64-linux-gnu')
+    notes = linkcheck.check(after, previous_deb=before, archive_context=context)
+    assert any('/usr/bin/libplug.so: the previous build could not find libdemoown.so; this build finds it' in n
+               for n in notes), notes
+
+
+def test_a_library_missing_in_both_builds_still_blocks(tmp_path):
+    context, built = _runpath_case(tmp_path)
+    before, after = built('1', 'share/own/x86_64-linux-gnu'), built('1+lc1', 'share/own/x86_64-linux-gnu')
+    with pytest.raises(package.Invalid, match='predecessor failed archive-qualified resolution'):
+        linkcheck.check(after, previous_deb=before, archive_context=context)
+    with pytest.raises(package.Invalid, match='not found libdemoown.so'):
+        linkcheck.check(after, archive_context=context)
+
+
+def test_a_library_found_before_and_missing_now_still_blocks(tmp_path):
+    context, built = _runpath_case(tmp_path)
+    before, after = built('1', 'lib/x86_64-linux-gnu'), built('1+lc1', 'share/own/x86_64-linux-gnu')
+    assert linkcheck.check(before, previous_deb=before, archive_context=context) == []
+    with pytest.raises(package.Invalid, match='1 new not found: libdemoown.so'):
+        linkcheck.check(after, previous_deb=before, archive_context=context)
