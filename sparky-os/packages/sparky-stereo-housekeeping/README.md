@@ -1,5 +1,5 @@
 sparky-stereo-housekeeping
-Cleaners for BleachBit that the edition adds. The first is "System mail".
+BleachBit's presets and cleaners that the edition adds: Daniel's safe presets, and the "System mail" cleaner.
 
 Copyright (C) 2026 Paweł Pijanowski, Daniel Ramos (Capitain Jack) and others, see copyright file.
 
@@ -8,6 +8,19 @@ This program is free software: you can redistribute it and/or modify it under th
 This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+Presets
+-------
+
+Daniel, 2026-10-14: "my default settings apply for root and for the user - safe non removing languages"; ORDER, 2026-10-23, item b: ship them as the edition default, "shipped ready".
+BleachBit reads one file, `~/.config/bleachbit/bleachbit.ini` (`bleachbit.options_file`, from `$HOME`); it has no system-wide default.
+So the user's preset is `/etc/skel/.config/bleachbit/bleachbit.ini` (a conffile: every account tool copies it for a new person), and root's is copied to `/root/.config/bleachbit/bleachbit.ini` by the first install, only when root has no file.
+A file that exists is never written, an upgrade writes nothing, and root's file is not written again after root deleted it.
+An existing person has no file made for them: copy `/etc/skel/.config/bleachbit/bleachbit.ini` yourself if you want it.
+Both presets are Daniel's A10 files without their `[list/shred_drives]` (BleachBit's free-space wipe targets, one personal path each; no free-space wipe is ticked) and `[hashpath]`.
+Root's: apt (clean, autoclean, package lists), deepscan (ds_store, thumbs_db, tmp, vim swap), journald, system (cache, memory, rotated logs, tmp), x11 debug logs.
+The user's: evolution cache, firefox (backup, cache, crash reports, vacuum), thunderbird (cache, vacuum), journald, system (cache, rotated logs, tmp).
+Never `system.localizations`, never `apt.autoremove`, and none of the `system_mail` options.
 
 System mail
 -----------
