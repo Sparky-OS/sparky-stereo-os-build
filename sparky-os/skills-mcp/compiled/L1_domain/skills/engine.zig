@@ -84,6 +84,16 @@ pub const Engine = struct {
         };
     }
 
+    /// An engine over a checkout of the public tree (`root/skills` and the reference files beside it), for `--root`.
+    /// The skills there are of the kind that holds the reference tree.
+    pub fn initCheckout(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, root: []const u8) !Engine {
+        const probe = try Session.load(arena, io, env);
+        for (probe.kinds) |k| if (k.holds_reference_tree) {
+            return initTree(arena, io, env, k.folder, try std.fmt.allocPrint(arena, "{s}/skills", .{root}), root);
+        };
+        return error.NoReferenceKind;
+    }
+
     /// An engine over one explicit tree of skills, for tests and `--root`: every skill counts as installed.
     pub fn initTree(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, kind: []const u8, path: []const u8, ref_root: ?[]const u8) !Engine {
         var e: Engine = .{ .arena = arena, .io = io, .session = try Session.load(arena, io, env) };

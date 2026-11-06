@@ -92,7 +92,7 @@ fn dispatch(init: std.process.Init, arena: std.mem.Allocator, io: std.Io, args_i
         return;
     }
     var e = (if (root) |r|
-        engine.Engine.initTree(arena, io, init.environ_map, "developer", try std.fmt.allocPrint(arena, "{s}/skills", .{r}), r)
+        engine.Engine.initCheckout(arena, io, init.environ_map, r)
     else
         engine.Engine.init(arena, io, init.environ_map)) catch |err| {
         return fail(arena, io, o, 2, "The skills could not be read ({s}), so nothing is served. Check that /var/lib/dpkg/status is readable.", .{@errorName(err)});

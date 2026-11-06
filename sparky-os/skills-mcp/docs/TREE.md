@@ -73,7 +73,13 @@ A new domain is a new folder under `L1_domain/`.
 When a file has two of: several responsibilities, mixed concerns, several public entry points, it is split into one atom per responsibility under a topic folder with a `_topic_summary.md`, and the old path stays as a thin entry point.
 Every folder under `compiled/` and `surfaces/` carries a `_topic_summary.md` of at most ten lines.
 
-## Which parts exist at milestone 2a
+## Which parts exist at milestone 2b
 
-Present now: the folder tree, `docs/`, the build and the scanner, the atoms `frontmatter`, `pathsafe`, `eligibility`, `manifest`, `lang_lookup`, `command_gate`, `ai_detect` and `rank` as contract stubs that return `error.NotImplemented`, the primitive `sha256` (working, as the control that the harness can pass), and the failing tests listed in `tests/README.md`.
-Planned and not yet created (no empty folders, a half-mirror is drift): the other primitives, atoms `sections`, `budget`, `ratelimit`, the operations, the catalogue, the doors' code and the assistants' and tools' kind files.
+Present: every level and door below, working and tested.
+- L6: `fsio`, `dpkg_status`, `proc`, `sha256`, `jsonargs`.
+- L4 atoms: `frontmatter`, `pathsafe`, `eligibility`, `manifest`, `lang_lookup`, `command_gate`, `ai_detect`, `rank`, `sections`, `budget`, `ratelimit`, `skill_uri`, `skill_record`, `statefile`, `slot_class`, `command_spec`.
+- L5 operations: `op_find`, `op_list`, `op_sections`, `op_context`, `op_read`, `op_manifest`, `op_commands`, `op_run`.
+- L3 `catalogue`, L2 `session`, L1 `skills/engine`.
+- Doors: `surfaces/main.zig`, `surfaces/cli/verbs.zig`, `surfaces/mcp/server.zig`; kinds: two eras, five assistants, seven tools, two skill kinds, nine languages.
+- Registries and what a new variant needs: an assistant is one file with its program, home folder and register, unregister and list commands; a tool is one file with name, description, schema, `read_only` and `call`; an era is one file with `id`, `revision` and `recognises`; a language is `<id>.zig` and `<id>.json` with the same keys as English; a skill kind is one file with `folder` and its three flags.
+Not here: the package that carries the program (see the report), the dialog (the bash helper), the optional ranker (not asked for).

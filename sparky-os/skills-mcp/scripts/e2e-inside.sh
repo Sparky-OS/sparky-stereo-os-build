@@ -15,6 +15,10 @@ check() { # name, command that must succeed
 if [ "${AS_ROOT:-}" = 1 ]; then
 	out=$($BIN serve </dev/null 2>&1); code=$?
 	[ "$code" = 2 ] && grep -q 'never as root' <<<"$out" && ok "serve refuses root" || bad "serve refuses root ($code)"
+	export SPARKY_STEREO_PACKAGES=x HOME=/tmp/rh XDG_DATA_DIRS=/tmp/rxdg; mkdir -p $HOME /tmp/rxdg/agent-skills/user/net-fix
+	printf -- '---\nname: net-fix\ndescription: d\n---\n' > /tmp/rxdg/agent-skills/user/net-fix/SKILL.md
+	echo '[{"id":"say","argv":["/bin/echo","hi"],"slots":{},"run":"assistant"}]' > /tmp/rxdg/agent-skills/user/net-fix/commands.json
+	out=$(echo y | $BIN run net-fix say 2>&1); grep -q 'never run as root' <<<"$out" && ! grep -q '^hi$' <<<"$out" && ok "a command from a skill is never run as root" || bad "a command from a skill is never run as root"
 	echo "files passing: $pass, files failing: $failn"; [ "$failn" = 0 ]; exit
 fi
 

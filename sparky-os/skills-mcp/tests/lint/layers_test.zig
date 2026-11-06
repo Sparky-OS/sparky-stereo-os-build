@@ -95,6 +95,8 @@ test "surfaces import only the domain facade and primitives" {
         const src = try dir.readFileAlloc(io, e.path, gpa, .limited(1 << 20));
         for (try importsOf(gpa, src)) |imp| {
             if (std.mem.eql(u8, imp, "std") or std.mem.eql(u8, imp, "options") or std.mem.eql(u8, imp, "engine")) continue;
+            // the doors' own modules and the registries they read
+            if (std.mem.startsWith(u8, imp, "kinds_") or std.mem.startsWith(u8, imp, "cli_") or std.mem.startsWith(u8, imp, "mcp_")) continue;
             const r = (try rankOfImport(gpa, io, imp)) orelse return error.UnknownImport;
             if (r != 0) {
                 std.debug.print("surfaces/{s}: imports {s} (rank {d}); only engine and primitives are allowed\n", .{ e.path, imp, r });

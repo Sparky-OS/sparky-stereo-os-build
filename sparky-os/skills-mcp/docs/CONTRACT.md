@@ -47,3 +47,13 @@ Nothing is retried on another path behind the person's back.
 - `ai_detect.found(assistants, probe)`: true when any assistant kind's detection finds its program on `PATH` or its configuration folder in the person's home.
   The result lists which assistants, so the person can see why (see "How the server knows the person uses AI tools" in the report).
 - `rank.score(...)`: the Python scoring (fields name 3.0, readme task table 2.0, description 1.0; weight `ln(1 + (N - n + 0.5) / (n + 0.5))`), reproduced from the goldens.
+
+## Decisions made while building (2b)
+
+- A command slot names a class, not a regular expression: `word`, `int` or `enum:a,b,c` (`slot_class`). Zig's standard library has no regular expressions, and a fixed class cannot be made to run for ever on crafted input. `expect` offers `exit` and `stdout_contains`.
+- A child process gets only `LANG`, `HOME`, `XDG_*` and a fixed `PATH=/usr/bin:/bin`, runs without a shell, for at most 30 seconds, with at most 16 KiB of output, and never as root.
+- `list`, `find`, `context`, `sections`, `read`, `manifest` and `commands` serve only skills whose package is installed (dpkg's status file, or `SPARKY_STEREO_PACKAGES`); `--all` (find, list) shows the rest. An unreadable status file stops the program with a message; it never serves everything.
+- Through the command line the person is always asked before a command runs; through MCP the decision is the gate's. A command that needs the person's yes when no confirmation channel exists (this server implements none) is refused with the line to run by hand.
+- Front matter reaches MCP clients as a JSON object from a YAML subset (scalars, `>` and `|` block scalars, one nested mapping, `- item` lists); scalars stay strings.
+- `skill://<origin>/<kind>/<name>/<file>`: the name is the segment before the file, as the Skills extension requires; a name in two origins is refused with both addresses until the origin is given.
+- The era of a request is asked of the era variants; `server/discover` needs `params._meta`. The shape of the `server/discover` result (supportedVersions, capabilities, serverInfo, instructions) is not on the saved evidence pages and rests on the 2026-07-28 base specification, which this lane could not re-read offline: check it against a real client before release.
