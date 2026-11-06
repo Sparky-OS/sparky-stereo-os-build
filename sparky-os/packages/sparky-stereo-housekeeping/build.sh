@@ -26,6 +26,11 @@ install -m 644 "$HERE/share/system_mail.xml.in" "$D/usr/share/$PKG/system_mail.x
 install -m 644 "$HERE"/po/*.po "$D/usr/share/$PKG/po/"
 install -m 644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
 install -m 644 "$HERE/README.md" "$D/usr/share/doc/$PKG/README.md"
+# Daniel's safe BleachBit presets (ORDER item b, 2026-10-23; his 2026-10-14 "my default settings apply for root and
+# for the user - safe non removing languages"): a new person gets theirs from /etc/skel, root's is written once at
+# the first install, only when root has none. An existing bleachbit.ini is never written.
+install -D -m 644 "$HERE/share/bleachbit-user.ini" "$D/etc/skel/.config/bleachbit/bleachbit.ini"
+install -m 644 "$HERE/share/bleachbit-root.ini" "$D/usr/share/$PKG/bleachbit-root.ini"
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
 Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
 
@@ -66,6 +71,12 @@ cat >"$D/DEBIAN/postinst" <<'EOS'
 #!/bin/sh
 set -e
 L=/usr/lib/sparky-stereo-housekeeping
+if [ "$1" = configure ] && [ -z "${2:-}" ] && [ ! -e /root/.config/bleachbit/bleachbit.ini ]; then
+	# root's preset, once; never over a file root has (nor again after root deleted it: only the first install)
+	mkdir -p -m 700 /root/.config/bleachbit
+	cp /usr/share/sparky-stereo-housekeeping/bleachbit-root.ini /root/.config/bleachbit/bleachbit.ini
+	chmod 600 /root/.config/bleachbit/bleachbit.ini
+fi
 if [ "$1" = configure ] || [ "$1" = triggered ]; then
 	python3 $L/problems.py run system-mail LOCAL1 --repair python3 $L/system_mail.py refresh -- python3 $L/system_mail.py refresh || :
 fi
@@ -89,6 +100,7 @@ if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null; then
 fi
 exit 0
 EOS
+echo /etc/skel/.config/bleachbit/bleachbit.ini >"$D/DEBIAN/conffiles"
 chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/prerm" "$D/DEBIAN/postrm"
 # bleachbit's cleaners folder (bleachbit installed or upgraded) and one file of each mail program (installed, removed)
 printf 'interest-noawait %s\n' /usr/share/bleachbit/cleaners /usr/sbin/exim4 /usr/sbin/exim_dbmbuild /usr/sbin/postfix \
@@ -106,7 +118,9 @@ Section: admin
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Sparky Stereo OS cleaners for BleachBit
-  A "System mail" cleaner for BleachBit, never ticked on its own: it empties
+  Daniel's safe BleachBit presets, one for root and one for each new
+  person (an existing bleachbit.ini is never written), and a "System mail"
+  cleaner for BleachBit, never ticked on its own: it empties
   the local mailbox (your own, or every one as administrator), deletes
   dead.letter, and deletes the queues that mail programs no longer
   installed (exim4, postfix, nullmailer, dma, msmtp) left behind. The queue
