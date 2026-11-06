@@ -49,6 +49,16 @@ rm -f "$T/called"; "$S" -- "$T/data/-dash.exe"
 check "name starting with a dash: ./-dash.exe" [ "$(cat "$T/called")" = "start|/unix|./-dash.exe|$T/data" ]
 rm -f "$T/called"; "$S" -- "$T/data/b.msi" "$T/data/a folder/setup program.exe"
 check "two files: both started" [ "$(wc -l < "$T/called")" = 2 ]
+cp "$T/bin/wine" "$T/bin/wine.ok"
+printf '#!/bin/sh\necho "wine: cannot start" >&2\nexit 3\n' > "$T/bin/wine"
+rm -f "$T/called"; "$S" -- "$T/data/b.msi" 2> "$T/err"; rc=$?
+check "wine cannot start the file: exit 1" [ $rc = 1 ]
+check "wine cannot start the file: the file and the status are said" grep -q "Wine could not start $T/data/b.msi (it ended with status 3)" "$T/err"
+LANG=de_DE.UTF-8 "$S" -- "$T/data/b.msi" 2> "$T/err"
+check "wine cannot start the file: said in German" grep -q 'Wine konnte .* nicht starten (Beendigungsstatus 3)' "$T/err"
+LANG=zh_TW.UTF-8 "$S" -- "$T/data/b.msi" 2> "$T/err"
+check "wine cannot start the file: said in Traditional Chinese" grep -q '無法啟動' "$T/err"
+mv "$T/bin/wine.ok" "$T/bin/wine"
 rm -f "$T/called"; "$S" -- "$T/data/missing.exe" "$T/data/b.msi" 2> "$T/err"; rc=$?
 check "a missing file among two: exit 1" [ $rc = 1 ]
 check "a missing file: named" grep -q "Cannot run $T/data/missing.exe" "$T/err"

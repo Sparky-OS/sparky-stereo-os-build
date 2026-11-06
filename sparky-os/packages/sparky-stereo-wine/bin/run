@@ -32,6 +32,8 @@ if [ $# -eq 0 ]; then
 	exit 2
 fi
 status=0
+pids=()
+names=()
 for file in "$@"; do
 	if [ ! -f "$file" ]; then
 		# shellcheck disable=SC2059
@@ -42,6 +44,16 @@ for file in "$@"; do
 	dir=$(dirname -- "$file")
 	base=$(basename -- "$file")
 	( cd -- "$dir" && exec wine start /unix "./$base" ) &
+	pids+=($!)
+	names+=("$file")
 done
-wait
+# a file Wine could not start is said, with Wine's status, and ends the worker non-zero
+for i in "${!pids[@]}"; do
+	if wait "${pids[$i]}"; then :; else
+		code=$?
+		# shellcheck disable=SC2059
+		fail "$(printf "$LOCAL4" "${names[$i]}" "$code")"
+		status=1
+	fi
+done
 exit $status
