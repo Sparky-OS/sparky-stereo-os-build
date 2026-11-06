@@ -26,7 +26,7 @@ CLOCK = [
     (re.compile(r'datetime\.(utc)?now\('), 'datetime.now reads the clock'),
     (re.compile(r'(?<![\w-])date\s+(-R|-u\s+-R|--rfc-2822|-Iseconds)(?![\w-])'), '`date -R` reads the clock'),
 ]
-PACK = re.compile(r'dpkg-source -b\b|dpkg-buildpackage\b(?![^\n]*\s-[a-zA-Z]*[bBAF]\b)')
+PACK = re.compile(r"""dpkg-source -b\b|dpkg-source['"],\s*['"]-b['"]|dpkg-buildpackage\b(?![^\n]*\s-[a-zA-Z]*[bBAF]\b)""")
 MAKES_TREE = re.compile(r'\bdch\b|debian_prepare|lean\.standalone|\s-S\b')   # a build of a tree somebody else prepared packs no source of its own
 DCH_SHELL = re.compile(r'(?:^|[;&|(]\s*|&&\s*)dch\s')
 NORMALIZE = re.compile(r'normalize-tree|normalize_tree|\bnormalize\b|reproducible\.normalize|reproducible\.pack')
@@ -42,7 +42,7 @@ def tracked(root):
 
 def findings(rel, text):
     found = []
-    writes = bool(re.search(r'\bdch\b|changelog|dpkg-source -b|dpkg-buildpackage', text))
+    writes = bool(re.search(r'\bdch\b|changelog|dpkg-buildpackage', text) or PACK.search(text))
     if not writes:
         return found
     lines = text.splitlines()
@@ -79,7 +79,7 @@ def main(root):
             continue
         text = (root / rel).read_text(errors='replace')
         found = findings(rel, text)
-        if re.search(r'\bdch\b|changelog|dpkg-source -b|dpkg-buildpackage', text):
+        if re.search(r'\bdch\b|changelog|dpkg-buildpackage', text) or PACK.search(text):
             checked += 1
         problems += found
     print(f'{checked} source-writing scripts checked, {len(problems)} findings')
