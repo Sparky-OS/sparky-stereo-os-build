@@ -8,7 +8,7 @@ Description: The flat stereo display as a WebXR device and the CSS depth propert
  (kde_stereo_depth_v1 version 5, live), hit testing and scroll frames following the drawn copies, layout.css.depth.enabled on; the stereo window rule (a popped
  element that touches the output's edge stays at the screen: KWin's output_edges and the viewport's flush sides); WebGL canvases marked on
  NVIDIA (DMABuf WebGL on where an output shows stereo 3D, and about:support saying so); every popup an xdg_popup under Stereo KWin
- (widget.wayland.popups-as-xdg-popups); the VR shared memory with one writer. This is the difference between browser commit 075e18be19 and 9e5eab05c5ad84fc01270f2a28d328f454167e40
+ (widget.wayland.popups-as-xdg-popups); the depth state of each window its own (kde_stereo_depth_v1 per toplevel, sent to the browsers of that window); the window rule in frames of other processes; the URL bar's results list popped; no move of a subsurface popup whose window is gone (the quit crash); the VR shared memory with one writer. This is the difference between browser commit 075e18be19 and 9254cd42f2a884d4a0c7a6bee117b874cb91dd25
  (Sparky-OS/waterfox, branch stereo3d).
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Forwarded: not-needed
@@ -496,6 +496,25 @@ index 976e5b1167..bf46aba491 100644
  ## The access keys for "Show Controls" and "Hide Controls" are the same
  ## because the two context-menu items are mutually exclusive.
  
+diff --git a/browser/themes/shared/urlbar-searchbar.css b/browser/themes/shared/urlbar-searchbar.css
+index a54ac5e6ba..33d227f7ee 100644
+--- a/browser/themes/shared/urlbar-searchbar.css
++++ b/browser/themes/shared/urlbar-searchbar.css
+@@ -442,6 +442,14 @@ toolbar[inactive="true"] .urlbar,
+   position: relative;
+ }
+ 
++/* Sparky Stereo OS: the results list is the active window's menu, drawn in the
++ * window. On a stereo output it is popped like a menu, by the same CSS depth
++ * the pages use (the window's own limits from KWin; flat on a 2D output and
++ * in a window that is not the active one). */
++.urlbarView {
++  depth: popped;
++}
++
+ @media not -moz-pref("browser.nova.enabled") {
+   @keyframes urlbar-grow {
+     0% {
 diff --git a/dom/base/use_counter_metrics.yaml b/dom/base/use_counter_metrics.yaml
 index b7b3e2c11f..4df9fd6e22 100644
 --- a/dom/base/use_counter_metrics.yaml
@@ -585,10 +604,10 @@ index b7b3e2c11f..4df9fd6e22 100644
      type: counter
      description: >
 diff --git a/dom/ipc/BrowserChild.cpp b/dom/ipc/BrowserChild.cpp
-index 5e4f470d2e..86623efd1f 100644
+index 5e4f470d2e..bf7783f8af 100644
 --- a/dom/ipc/BrowserChild.cpp
 +++ b/dom/ipc/BrowserChild.cpp
-@@ -1224,6 +1224,23 @@ mozilla::ipc::IPCResult BrowserChild::RecvSizeModeChanged(
+@@ -1224,6 +1224,57 @@ mozilla::ipc::IPCResult BrowserChild::RecvSizeModeChanged(
    return IPC_OK();
  }
  
@@ -609,14 +628,56 @@ index 5e4f470d2e..86623efd1f 100644
 +  return IPC_OK();
 +}
 +
++static void StereoDepthRepaintDocument(Document* aDocument) {
++  if (!aDocument) {
++    return;
++  }
++  if (nsPresContext* pc = aDocument->GetPresContext()) {
++    pc->RebuildAllStyleData(nsChangeHint_RepaintFrame, RestyleHint{});
++  }
++  aDocument->EnumerateSubDocuments([](Document& aSub) {
++    StereoDepthRepaintDocument(&aSub);
++    return CallState::Continue;
++  });
++}
++
++mozilla::ipc::IPCResult BrowserChild::RecvStereoDepth(
++    const bool& aAwake, const bool& aFromCompositor, const int32_t& aSunk100,
++    const int32_t& aPopped100, const uint32_t& aOutputEdges,
++    const int32_t& aOutputWidth) {
++  widget::StereoDepthState state;
++  state.mAwake = aAwake;
++  state.mFromCompositor = aFromCompositor;
++  state.mSunk100 = aSunk100;
++  state.mPopped100 = aPopped100;
++  state.mOutputEdges = aOutputEdges;
++  state.mOutputWidth = aOutputWidth;
++  if (state == mStereoDepth) {
++    return IPC_OK();
++  }
++  mStereoDepth = state;
++  // Elements with a depth are drawn at their new places.
++  nsCOMPtr<Document> topDocument = GetTopLevelDocument();
++  StereoDepthRepaintDocument(topDocument);
++  return IPC_OK();
++}
++
  mozilla::ipc::IPCResult BrowserChild::RecvChildToParentMatrix(
      const Maybe<gfx::Matrix4x4>& aMatrix,
      const ScreenRect& aTopLevelViewportVisibleRectInBrowserCoords) {
 diff --git a/dom/ipc/BrowserChild.h b/dom/ipc/BrowserChild.h
-index 7561b9d512..56155e3fe7 100644
+index 7561b9d512..b650f768b6 100644
 --- a/dom/ipc/BrowserChild.h
 +++ b/dom/ipc/BrowserChild.h
-@@ -267,6 +267,10 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
+@@ -5,6 +5,7 @@
+ #ifndef mozilla_dom_BrowserChild_h
+ #define mozilla_dom_BrowserChild_h
+ 
++#include "mozilla/widget/StereoDepthState.h"
+ #include "PuppetWidget.h"
+ #include "mozilla/Attributes.h"
+ #include "mozilla/DOMEventTargetHelper.h"
+@@ -267,6 +268,18 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
    mozilla::ipc::IPCResult RecvUpdateDimensions(
        const mozilla::dom::DimensionInfo& aDimensionInfo);
    mozilla::ipc::IPCResult RecvSizeModeChanged(const nsSizeMode& aSizeMode);
@@ -624,36 +685,95 @@ index 7561b9d512..56155e3fe7 100644
 +  // window rule).
 +  mozilla::ipc::IPCResult RecvStereoViewportEdges(const uint32_t& aEdges);
 +  uint32_t StereoViewportEdges() const { return mStereoViewportEdges; }
++  // What the desktop said about the window this page is shown in.
++  mozilla::ipc::IPCResult RecvStereoDepth(
++      const bool& aAwake, const bool& aFromCompositor, const int32_t& aSunk100,
++      const int32_t& aPopped100, const uint32_t& aOutputEdges,
++      const int32_t& aOutputWidth);
++  const mozilla::widget::StereoDepthState& StereoDepth() const {
++    return mStereoDepth;
++  }
  
    mozilla::ipc::IPCResult RecvChildToParentMatrix(
        const mozilla::Maybe<mozilla::gfx::Matrix4x4>& aMatrix,
-@@ -879,6 +883,7 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
+@@ -879,6 +892,8 @@ class BrowserChild final : public nsMessageManagerScriptExecutor,
    RefPtr<APZEventState> mAPZEventState;
  
    // Position of client area relative to the outer window
 +  uint32_t mStereoViewportEdges = 0;
++  mozilla::widget::StereoDepthState mStereoDepth;
    LayoutDeviceIntPoint mClientOffset;
    // Position of tab, relative to parent widget (typically the window)
    // NOTE: This value is valuable only for the top level browser.
 diff --git a/dom/ipc/BrowserParent.cpp b/dom/ipc/BrowserParent.cpp
-index c59d679441..6be16edcbd 100644
+index c59d679441..5391adba54 100644
 --- a/dom/ipc/BrowserParent.cpp
 +++ b/dom/ipc/BrowserParent.cpp
-@@ -1202,6 +1202,52 @@ void BrowserParent::UpdateDimensions(const LayoutDeviceIntRect& rect,
+@@ -1202,6 +1202,116 @@ void BrowserParent::UpdateDimensions(const LayoutDeviceIntRect& rect,
  
      (void)SendUpdateDimensions(GetDimensionInfo());
    }
 +  UpdateStereoViewportEdges();
 +}
 +
++void BrowserParent::UpdateStereoDepth() {
++  if (mIsDestroyed) {
++    return;
++  }
++  nsCOMPtr<nsIWidget> widget = GetWidget();
++  if (!widget) {
++    return;
++  }
++  // Popups and the like ask their window's own state.
++  nsIWidget* top = widget->GetTopLevelWidget();
++  const widget::StereoDepthState state =
++      (top ? top : widget.get())->GetStereoDepthState();
++  if (mStereoDepthSent && state == mStereoDepthState) {
++    return;
++  }
++  mStereoDepthSent = true;
++  mStereoDepthState = state;
++  (void)SendStereoDepth(state.mAwake, state.mFromCompositor, state.mSunk100,
++                        state.mPopped100, state.mOutputEdges,
++                        state.mOutputWidth);
++}
++
++/* static */
++void BrowserParent::StereoDepthChanged(nsIWidget* aWidget) {
++  for (auto* cp : ContentParent::AllProcesses(ContentParent::eLive)) {
++    for (const auto& key : cp->ManagedPBrowserParent()) {
++      BrowserParent* browser = BrowserParent::GetFrom(key);
++      if (!browser) {
++        continue;
++      }
++      nsCOMPtr<nsIWidget> widget = browser->GetWidget();
++      if (widget && widget->GetTopLevelWidget() == aWidget) {
++        browser->UpdateStereoDepth();
++      }
++    }
++  }
++}
++
 +void BrowserParent::UpdateStereoViewportEdges() {
-+  if (mIsDestroyed || !mUpdatedDimensions) {
++  UpdateStereoDepth();
++  if (mIsDestroyed) {
 +    return;
 +  }
 +  // The sides of this browser's viewport that are flush with the window's
-+  // client area; a frame inside another process has no such side here.
++  // client area. A frame in another process (a Fission iframe, a page in full
++  // screen is often one) tells its elements against the top-level browser's
++  // viewport (BrowserChild's top-level visible rect), so it gets that
++  // browser's flush sides.
 +  uint32_t edges = 0;
-+  if (!GetBrowserBridgeParent()) {
++  if (GetBrowserBridgeParent()) {
++    if (BrowserParent* top = BrowserParent::GetFrom(mFrameElement.get())) {
++      if (top != this) {
++        edges = top->mStereoViewportEdges;
++      }
++    }
++  } else if (!mUpdatedDimensions) {
++    return;
++  } else {
 +    if (nsCOMPtr<nsIWidget> widget = GetWidget()) {
 +      const LayoutDeviceIntRect bounds = widget->GetClientBounds();
 +      const LayoutDeviceIntPoint offset = GetChildProcessOffset();
@@ -689,29 +809,57 @@ index c59d679441..6be16edcbd 100644
 +  mStereoViewportEdgesSent = true;
 +  mStereoViewportEdges = edges;
 +  (void)SendStereoViewportEdges(edges);
++  if (!GetBrowserBridgeParent()) {
++    // The frames embedded in other processes follow this browser's sides.
++    if (nsCOMPtr<nsIWidget> widget = GetWidget()) {
++      for (auto* cp : ContentParent::AllProcesses(ContentParent::eLive)) {
++        for (const auto& key : cp->ManagedPBrowserParent()) {
++          BrowserParent* browser = BrowserParent::GetFrom(key);
++          if (browser && browser != this && browser->GetBrowserBridgeParent() &&
++              BrowserParent::GetFrom(browser->mFrameElement.get()) == this) {
++            browser->UpdateStereoViewportEdges();
++          }
++        }
++      }
++    }
++  }
  }
  
  DimensionInfo BrowserParent::GetDimensionInfo() {
 diff --git a/dom/ipc/BrowserParent.h b/dom/ipc/BrowserParent.h
-index dee8de2e6d..b650d92bc2 100644
+index dee8de2e6d..646628751a 100644
 --- a/dom/ipc/BrowserParent.h
 +++ b/dom/ipc/BrowserParent.h
-@@ -475,6 +475,9 @@ class BrowserParent final : public PBrowserParent,
+@@ -5,6 +5,7 @@
+ #ifndef mozilla_dom_BrowserParent_h
+ #define mozilla_dom_BrowserParent_h
+ 
++#include "mozilla/widget/StereoDepthState.h"
+ #include "LiveResizeListener.h"
+ #include "Units.h"
+ #include "js/TypeDecls.h"
+@@ -475,6 +476,13 @@ class BrowserParent final : public PBrowserParent,
    nsresult UpdatePosition();
  
    void SizeModeChanged(const nsSizeMode& aSizeMode);
 +  // CSS depth, the stereo window rule: tells the page which sides of its
 +  // viewport are flush with the window.
 +  void UpdateStereoViewportEdges();
++  // CSS depth: tells the page what the desktop said about its window.
++  void UpdateStereoDepth();
++  // The window's depth changed: tells the pages of every browser in it.
++  static void StereoDepthChanged(nsIWidget* aWidget);
  
    void HandleAccessKey(const WidgetKeyboardEvent& aEvent,
                         nsTArray<uint32_t>& aCharCodes);
-@@ -941,6 +944,8 @@ class BrowserParent final : public PBrowserParent,
+@@ -941,6 +949,10 @@ class BrowserParent final : public PBrowserParent,
    DesktopToLayoutDeviceScale mDesktopToDeviceScale;
    bool mUpdatedDimensions;
    nsSizeMode mSizeMode;
 +  uint32_t mStereoViewportEdges = 0;
 +  bool mStereoViewportEdgesSent = false;
++  mozilla::widget::StereoDepthState mStereoDepthState;
++  bool mStereoDepthSent = false;
    LayoutDeviceIntPoint mClientOffset;
    LayoutDeviceIntPoint mChromeOffset;
  
@@ -768,10 +916,10 @@ index cf0351be7c..2ec7a18a46 100644
        const nsCString& aKeywords, GetStereoSiteMarkResolver&& aResolver);
  
 diff --git a/dom/ipc/PBrowser.ipdl b/dom/ipc/PBrowser.ipdl
-index 91f170e7b9..dcaa585f43 100644
+index 91f170e7b9..1dc0f0dcd0 100644
 --- a/dom/ipc/PBrowser.ipdl
 +++ b/dom/ipc/PBrowser.ipdl
-@@ -697,6 +697,11 @@ child:
+@@ -697,6 +697,20 @@ child:
  
      async SizeModeChanged(nsSizeMode sizeMode);
  
@@ -779,6 +927,15 @@ index 91f170e7b9..dcaa585f43 100644
 +    // flush with the window (bit 1 left, 2 top, 4 right, 8 bottom, as
 +    // kde_stereo_depth_v1's edges).
 +    async StereoViewportEdges(uint32_t edges);
++
++    // Sparky Stereo OS, CSS depth: what the desktop told the window this page
++    // is shown in (kde_stereo_depth_v1): may it show depth now, the limits of
++    // its output (pixels of a view 1920 wide, times 100; fromCompositor says
++    // they are KWin's), the window's sides on the output's edge and the
++    // output's width in device pixels.
++    async StereoDepth(bool awake, bool fromCompositor, int32_t sunk100,
++                      int32_t popped100, uint32_t outputEdges,
++                      int32_t outputWidth);
 +
      async ChildToParentMatrix(Matrix4x4? aMatrix,
                                ScreenRect aRemoteDocumentRect);
@@ -1575,32 +1732,6 @@ index e3f5e3f0d6..4735bd4d5e 100644
      }
  }
  
-diff --git a/layout/base/nsPresContext.cpp b/layout/base/nsPresContext.cpp
-index 10e71c54e9..4a94b0b966 100644
---- a/layout/base/nsPresContext.cpp
-+++ b/layout/base/nsPresContext.cpp
-@@ -349,6 +349,8 @@ static const char* gPrefixCallbackPrefs[] = {
-     "font.",
-     "gfx.font_rendering.",
-     "layout.css.font-visibility.",
-+    // CSS depth: the limits KWin gives the window's output, live
-+    "widget.wayland.stereo-depth.",
-     nullptr,
- };
- 
-@@ -532,6 +534,12 @@ void nsPresContext::PreferenceChanged(const char* aPrefName) {
-   }
- 
-   nsDependentCString prefName(aPrefName);
-+  if (StringBeginsWith(prefName, "widget.wayland.stereo-depth."_ns)) {
-+    // The depth limits changed (or the window is no longer awake): the
-+    // elements with a depth are drawn at their new places.
-+    RebuildAllStyleData(nsChangeHint_RepaintFrame, RestyleHint{});
-+    return;
-+  }
-   if (prefName.EqualsLiteral("layout.css.dpi") ||
-       prefName.EqualsLiteral("layout.css.devPixelsPerPx")) {
-     int32_t oldAppUnitsPerDevPixel = mDeviceContext->AppUnitsPerDevPixel();
 diff --git a/layout/generic/nsIFrame.cpp b/layout/generic/nsIFrame.cpp
 index d93bfcc9d5..7843d6baef 100644
 --- a/layout/generic/nsIFrame.cpp
@@ -1672,7 +1803,7 @@ index 3abe66c363..89edfe31fa 100644
                            TYPE_RENDERS_NO_IMAGES | TYPE_IS_CONTAINER)
  DECLARE_DISPLAY_ITEM_TYPE(OUTLINE, TYPE_RENDERS_NO_IMAGES)
 diff --git a/layout/painting/nsDisplayList.cpp b/layout/painting/nsDisplayList.cpp
-index 391320462a..06b2b41da7 100644
+index 391320462a..09876cd5ce 100644
 --- a/layout/painting/nsDisplayList.cpp
 +++ b/layout/painting/nsDisplayList.cpp
 @@ -50,6 +50,14 @@
@@ -1714,7 +1845,7 @@ index 391320462a..06b2b41da7 100644
    if (!aFrame->HasAnyStateBits(NS_FRAME_FORCE_DISPLAY_LIST_DESCEND_INTO) &&
        visible.IsEmpty()) {
      return false;
-@@ -5267,6 +5289,289 @@ void nsDisplayOpacity::WriteDebugInfo(std::stringstream& aStream) {
+@@ -5267,6 +5289,342 @@ void nsDisplayOpacity::WriteDebugInfo(std::stringstream& aStream) {
    aStream << ")";
  }
  
@@ -1744,24 +1875,48 @@ index 391320462a..06b2b41da7 100644
 +// (kde_stereo_depth_v1) and on which the viewport is flush with the window
 +// (the parent's BrowserParent::UpdateStereoViewportEdges). The viewport's own
 +// clipping away from the output's edge is not part of the rule.
++// The distance from an output's edge that the browser's own windows keep
++// popped things from, in device pixels (Daniel, 2026-11-06: a 10 px invisible
++// border that constrains popups on the borders; KWin keeps it for popups).
++static constexpr int32_t kStereoChromeEdgeMargin = 10;
++
 +static bool StereoDepthTouchesOutputEdge(nsIFrame* aFrame,
-+                                         int32_t aDisparity) {
-+  const uint32_t outputEdges = uint32_t(
-+      Preferences::GetInt("widget.wayland.stereo-depth.edges", 0));
++                                         int32_t aDisparity,
++                                         uint32_t outputEdges) {
 +  if (!outputEdges) {
 +    return false;
 +  }
 +  nsPresContext* rootPc =
 +      aFrame->PresContext()->GetInProcessRootContentDocumentPresContext();
++  if (!rootPc) {
++    // A chrome document has no root content document: its own root.
++    rootPc = aFrame->PresContext()->GetRootPresContext();
++  }
 +  if (!rootPc || !rootPc->PresShell()) {
 +    return false;
 +  }
 +  RefPtr<dom::BrowserChild> child =
 +      dom::BrowserChild::GetFrom(rootPc->PresShell());
-+  if (!child) {
-+    return false;
++  const nscoord apd = rootPc->AppUnitsPerDevPixel();
++  uint32_t viewportEdges = 0;
++  // How close to the side counts as touching it: a page's elements touch it
++  // when their drawn copy reaches it; the browser's own windows (the URL bar's
++  // results list) keep the 10 px border KWin keeps for popups and windows,
++  // measured on the output.
++  nscoord margin = 0;
++  Maybe<ScreenRect> topLevelRect;
++  if (child) {
++    viewportEdges = child->StereoViewportEdges();
++    // A frame in another process measures against the top-level viewport.
++    if (!child->IsTopLevel()) {
++      topLevelRect = child->GetTopLevelViewportVisibleRectInBrowserCoords();
++    }
++  } else {
++    // A chrome document is the window itself.
++    viewportEdges = 15;
++    margin = kStereoChromeEdgeMargin * apd;
 +  }
-+  const uint32_t edges = outputEdges & child->StereoViewportEdges();
++  const uint32_t edges = outputEdges & viewportEdges;
 +  if (!edges) {
 +    return false;
 +  }
@@ -1773,23 +1928,51 @@ index 391320462a..06b2b41da7 100644
 +  const nsRect rect = nsLayoutUtils::TransformFrameRectToAncestor(
 +      aFrame, aFrame->InkOverflowRectRelativeToSelf(),
 +      RelativeTo{rootFrame});
-+  const nsSize viewport = rootFrame->GetSize();
-+  const nscoord apd = rootPc->AppUnitsPerDevPixel();
++  nsRect viewport(nsPoint(), rootFrame->GetSize());
++  if (topLevelRect) {
++    viewport = nsRect(NSToCoordRound(topLevelRect->x * apd),
++                      NSToCoordRound(topLevelRect->y * apd),
++                      NSToCoordRound(topLevelRect->width * apd),
++                      NSToCoordRound(topLevelRect->height * apd));
++  }
 +  // The left eye's copy moves right by the larger half, the right eye's left
 +  // by the smaller (the same split the drawing uses).
 +  const nscoord right = (aDisparity - aDisparity / 2) * apd;
 +  const nscoord left = (aDisparity / 2) * apd;
-+  const bool touches = ((edges & 1) && rect.x - left <= 0) ||
-+                       ((edges & 4) && rect.XMost() + right >= viewport.width) ||
-+                       ((edges & 2) && rect.y <= 0) ||
-+                       ((edges & 8) && rect.YMost() >= viewport.height);
++  const bool touches =
++      ((edges & 1) && rect.x - left <= viewport.x + margin) ||
++      ((edges & 4) && rect.XMost() + right >= viewport.XMost() - margin) ||
++      ((edges & 2) && rect.y <= viewport.y + margin) ||
++      ((edges & 8) && rect.YMost() >= viewport.YMost() - margin);
 +  static LazyLogModule sLog("StereoDepth");
 +  MOZ_LOG(sLog, LogLevel::Verbose,
 +          ("StereoDepthTouchesOutputEdge frame %p disparity %d edges %u "
 +           "(output %u, viewport %u) rect %s viewport %s -> %d",
-+           aFrame, aDisparity, edges, outputEdges, child->StereoViewportEdges(),
++           aFrame, aDisparity, edges, outputEdges, viewportEdges,
 +           ToString(rect).c_str(), ToString(viewport).c_str(), touches));
 +  return touches;
++}
++
++// What the desktop told the window this frame is shown in: a page in a
++// content process has it from its browser's parent (BrowserChild), a chrome
++// document asks its own window. Each window has its own state.
++static widget::StereoDepthState StereoDepthStateOf(nsIFrame* aFrame) {
++  nsPresContext* pc = aFrame->PresContext();
++  if (nsPresContext* rootPc = pc->GetInProcessRootContentDocumentPresContext()) {
++    if (rootPc->PresShell()) {
++      if (RefPtr<dom::BrowserChild> child =
++              dom::BrowserChild::GetFrom(rootPc->PresShell())) {
++        return child->StereoDepth();
++      }
++    }
++  }
++  if (nsIWidget* widget = pc->GetRootWidget()) {
++    if (nsIWidget* top = widget->GetTopLevelWidget()) {
++      return top->GetStereoDepthState();
++    }
++    return widget->GetStereoDepthState();
++  }
++  return widget::StereoDepthState();
 +}
 +
 +/* static */
@@ -1798,18 +1981,16 @@ index 391320462a..06b2b41da7 100644
 +  if (!gfx::gfxVars::StereoOutputs()) {
 +    return Nothing();
 +  }
++  const widget::StereoDepthState state = StereoDepthStateOf(aFrame);
 +  // KWin says whether the window may show depth now (the active window, a
 +  // popup...), as for a 2D output otherwise.
-+  if (!Preferences::GetBool("widget.wayland.stereo-depth.awake", true)) {
++  if (!state.mAwake) {
 +    return Nothing();
 +  }
 +  double sunk = 0, popped = 0;
-+  if (Preferences::GetBool("widget.wayland.stereo-depth.from-compositor",
-+                           false)) {
-+    sunk = Preferences::GetInt("widget.wayland.stereo-depth.sunk-100", 0) /
-+           100.0;
-+    popped = Preferences::GetInt("widget.wayland.stereo-depth.popped-100", 0) /
-+             100.0;
++  if (state.mFromCompositor) {
++    sunk = state.mSunk100 / 100.0;
++    popped = state.mPopped100 / 100.0;
 +  } else {
 +    if (!sStereoDepthDefault.mReady) {
 +      if (!sStereoDepthDefault.mAsked) {
@@ -1884,10 +2065,12 @@ index 391320462a..06b2b41da7 100644
 +  }
 +  // The width of the view: the output's, in device pixels (the unit of the
 +  // limits is a view 1920 wide, scaled to the output as KWin does).
-+  int32_t width = 0;
-+  if (RefPtr<widget::Screen> screen =
-+          widget::ScreenManager::GetSingleton().GetPrimaryScreen()) {
-+    width = screen->GetRect().Width();
++  int32_t width = state.mOutputWidth;
++  if (width <= 0) {
++    if (RefPtr<widget::Screen> screen =
++            widget::ScreenManager::GetSingleton().GetPrimaryScreen()) {
++      width = screen->GetRect().Width();
++    }
 +  }
 +  if (width <= 0) {
 +    return Nothing();
@@ -1898,7 +2081,8 @@ index 391320462a..06b2b41da7 100644
 +  // The stereo window rule (memory stereo-plasma-depth-rules, 2026-10-05): a
 +  // popped element cut by the edge of the output looks wrong, so what touches
 +  // the output's edge stays at the screen.
-+  if (disparity > 0 && StereoDepthTouchesOutputEdge(aFrame, disparity)) {
++  if (disparity > 0 && StereoDepthTouchesOutputEdge(aFrame, disparity,
++                                                    state.mOutputEdges)) {
 +    return Some(0);
 +  }
 +  return Some(disparity);
@@ -2344,8 +2528,57 @@ index c71e5b3261..5c302c7808 100644
  /// The specified value of a grid `<track-breadth>`
  pub type TrackBreadth = GenericTrackBreadth<LengthPercentage>;
  
+diff --git a/widget/StereoDepthState.h b/widget/StereoDepthState.h
+new file mode 100644
+index 0000000000..63faea8a9e
+--- /dev/null
++++ b/widget/StereoDepthState.h
+@@ -0,0 +1,43 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#ifndef mozilla_widget_StereoDepthState_h
++#define mozilla_widget_StereoDepthState_h
++
++#include <cstdint>
++
++namespace mozilla::widget {
++
++// What the desktop tells one window about depth (Sparky Stereo OS, CSS depth;
++// kde_stereo_depth_v1): whether the window may show depth now (the active
++// window), the limits of the output it mainly sits on, which of its sides lie
++// on that output's edge and how wide the output is. Each window has its own;
++// pages read the state of the window they are shown in.
++struct StereoDepthState {
++  bool mAwake = true;
++  // The limits come from the compositor (otherwise the display default of
++  // libstereo-policy stands in).
++  bool mFromCompositor = false;
++  // Limits in pixels of a view 1920 wide, times 100.
++  int32_t mSunk100 = 0;
++  int32_t mPopped100 = 0;
++  // The window's sides on the output's edge: 1 left, 2 top, 4 right, 8 bottom.
++  uint32_t mOutputEdges = 0;
++  // The output's width in device pixels, 0 when not known.
++  int32_t mOutputWidth = 0;
++
++  bool operator==(const StereoDepthState& aOther) const {
++    return mAwake == aOther.mAwake && mFromCompositor == aOther.mFromCompositor &&
++           mSunk100 == aOther.mSunk100 && mPopped100 == aOther.mPopped100 &&
++           mOutputEdges == aOther.mOutputEdges &&
++           mOutputWidth == aOther.mOutputWidth;
++  }
++  bool operator!=(const StereoDepthState& aOther) const {
++    return !(*this == aOther);
++  }
++};
++
++}  // namespace mozilla::widget
++
++#endif
 diff --git a/widget/gtk/nsWaylandDisplay.cpp b/widget/gtk/nsWaylandDisplay.cpp
-index 52322c5a01..90492e77f4 100644
+index 52322c5a01..6c07b099af 100644
 --- a/widget/gtk/nsWaylandDisplay.cpp
 +++ b/widget/gtk/nsWaylandDisplay.cpp
 @@ -3,6 +3,8 @@
@@ -2357,20 +2590,21 @@ index 52322c5a01..90492e77f4 100644
  #include "DMABufFormats.h"
  
  #include "base/message_loop.h"    // for MessageLoop
-@@ -988,6 +990,81 @@ void nsWaylandDisplay::RemoveStereoOutputDevice(StereoOutputDevice* aDevice) {
+@@ -988,6 +990,47 @@ void nsWaylandDisplay::RemoveStereoOutputDevice(StereoOutputDevice* aDevice) {
    UpdateStereoOutputs();
  }
  
-+// The desktop's depth for a surface (see FollowStereoDepth).
++// The desktop's depth for a surface (see FollowStereoDepth): the events go to
++// the window the object was made for.
 +static void StereoDepthStateEvent(void* aData, kde_stereo_depth_v1*,
 +                                  uint32_t aAwake, uint32_t aOutputEdges) {
-+  static_cast<nsWaylandDisplay*>(aData)->StereoDepthStateChanged(aAwake != 0,
-+                                                                 aOutputEdges);
++  static_cast<nsWindow*>(aData)->StereoDepthStateEvent(aAwake != 0,
++                                                        aOutputEdges);
 +}
 +
 +static void StereoDepthLimitsEvent(void* aData, kde_stereo_depth_v1*,
 +                                   wl_fixed_t aSunk, wl_fixed_t aPopped) {
-+  static_cast<nsWaylandDisplay*>(aData)->StereoDepthLimitsChanged(
++  static_cast<nsWindow*>(aData)->StereoDepthLimitsEvent(
 +      wl_fixed_to_double(aSunk), wl_fixed_to_double(aPopped));
 +}
 +
@@ -2379,18 +2613,18 @@ index 52322c5a01..90492e77f4 100644
 +    StereoDepthLimitsEvent,
 +};
 +
-+kde_stereo_depth_v1* nsWaylandDisplay::FollowStereoDepth(
-+    wl_surface* aSurface) {
++kde_stereo_depth_v1* nsWaylandDisplay::FollowStereoDepth(wl_surface* aSurface,
++                                                         nsWindow* aWindow) {
 +  // get_depth is since version 3 of the protocol (an older KWin has no
 +  // depth to follow: the page's depth then comes from libstereo-policy).
 +  if (!mStereoContentManager || mStereoContentManagerVersion < 3 ||
-+      !aSurface) {
++      !aSurface || !aWindow) {
 +    return nullptr;
 +  }
 +  kde_stereo_depth_v1* depth =
 +      kde_stereo_content_manager_v1_get_depth(mStereoContentManager, aSurface);
 +  if (depth) {
-+    kde_stereo_depth_v1_add_listener(depth, &kStereoDepthListener, this);
++    kde_stereo_depth_v1_add_listener(depth, &kStereoDepthListener, aWindow);
 +  }
 +  return depth;
 +}
@@ -2401,45 +2635,10 @@ index 52322c5a01..90492e77f4 100644
 +  }
 +}
 +
-+void nsWaylandDisplay::StereoDepthStateChanged(bool aAwake,
-+                                               uint32_t aOutputEdges) {
-+  static const char kAwake[] = "widget.wayland.stereo-depth.awake";
-+  static const char kEdges[] = "widget.wayland.stereo-depth.edges";
-+  static LazyLogModule sLog("StereoDepth");
-+  MOZ_LOG(sLog, LogLevel::Debug,
-+          ("nsWaylandDisplay::StereoDepthStateChanged awake %d output_edges %u",
-+           aAwake, aOutputEdges));
-+  if (Preferences::GetBool(kAwake, true) != aAwake) {
-+    Preferences::SetBool(kAwake, aAwake, PrefValueKind::Default);
-+  }
-+  // The window's edges that touch the edge of its output: nothing at such an
-+  // edge comes nearer than the screen (the stereo window rule).
-+  if (Preferences::GetInt(kEdges, 0) != int32_t(aOutputEdges)) {
-+    Preferences::SetInt(kEdges, int32_t(aOutputEdges), PrefValueKind::Default);
-+  }
-+}
-+
-+void nsWaylandDisplay::StereoDepthLimitsChanged(double aSunk, double aPopped) {
-+  static const char kSunk[] = "widget.wayland.stereo-depth.sunk-100";
-+  static const char kPopped[] = "widget.wayland.stereo-depth.popped-100";
-+  static const char kFrom[] = "widget.wayland.stereo-depth.from-compositor";
-+  const int32_t sunk = int32_t(std::lround(aSunk * 100.0));
-+  const int32_t popped = int32_t(std::lround(aPopped * 100.0));
-+  if (Preferences::GetInt(kSunk, -1) != sunk) {
-+    Preferences::SetInt(kSunk, sunk, PrefValueKind::Default);
-+  }
-+  if (Preferences::GetInt(kPopped, -1) != popped) {
-+    Preferences::SetInt(kPopped, popped, PrefValueKind::Default);
-+  }
-+  if (!Preferences::GetBool(kFrom, false)) {
-+    Preferences::SetBool(kFrom, true, PrefValueKind::Default);
-+  }
-+}
-+
  void nsWaylandDisplay::UpdateStereoOutputs() {
    bool stereo = false;
    for (const auto& device : mStereoOutputDevices) {
-@@ -1043,6 +1120,11 @@ static void global_registry_handler(void* data, wl_registry* registry,
+@@ -1043,6 +1086,11 @@ static void global_registry_handler(void* data, wl_registry* registry,
      display->SetIdleInhibitManager(idle_inhibit_manager);
    } else if (iface.EqualsLiteral("kde_stereo_content_manager_v1")) {
      display->SetHasStereoContent();
@@ -2452,7 +2651,7 @@ index 52322c5a01..90492e77f4 100644
      // KWin's outputs and their modes, for whether one shows stereo 3D.
      auto* outputs = WaylandRegistryBind<kde_output_device_registry_v2>(
 diff --git a/widget/gtk/nsWaylandDisplay.h b/widget/gtk/nsWaylandDisplay.h
-index fdbbbc20eb..dade30f92b 100644
+index fdbbbc20eb..bd2efc9c02 100644
 --- a/widget/gtk/nsWaylandDisplay.h
 +++ b/widget/gtk/nsWaylandDisplay.h
 @@ -14,6 +14,7 @@
@@ -2463,7 +2662,15 @@ index fdbbbc20eb..dade30f92b 100644
  #include "mozilla/widget/linux-dmabuf-unstable-v1-client-protocol.h"
  #include "mozilla/widget/primary-selection-unstable-v1-client-protocol.h"
  #include "mozilla/widget/pointer-constraints-unstable-v1-client-protocol.h"
-@@ -94,6 +95,22 @@ class nsWaylandDisplay {
+@@ -32,6 +33,7 @@
+ #include <gbm.h>
+ 
+ using GdkMonitor = struct _GdkMonitor;
++class nsWindow;
+ 
+ namespace mozilla::widget {
+ 
+@@ -94,6 +96,22 @@ class nsWaylandDisplay {
    // on its own.
    bool HasStereoContent() const { return mHasStereoContent; }
    void SetHasStereoContent() { mHasStereoContent = true; }
@@ -2479,14 +2686,14 @@ index fdbbbc20eb..dade30f92b 100644
 +    mStereoContentManager = aManager;
 +    mStereoContentManagerVersion = aVersion;
 +  }
-+  kde_stereo_depth_v1* FollowStereoDepth(wl_surface* aSurface);
++  // The events of the returned object go to aWindow (one object per window).
++  kde_stereo_depth_v1* FollowStereoDepth(wl_surface* aSurface,
++                                         nsWindow* aWindow);
 +  void UnfollowStereoDepth(kde_stereo_depth_v1* aDepth);
-+  void StereoDepthStateChanged(bool aAwake, uint32_t aOutputEdges);
-+  void StereoDepthLimitsChanged(double aSunk, double aPopped);
    // An output that shows stereo 3D, or can (Sparky Stereo OS): KWin lists a
    // 3D mode for it (the display's own HDMI 1.4 3D modes, or the virtual 3D
    // modes its stereo toggles turn on) or pairs it with another output, as
-@@ -271,6 +288,8 @@ class nsWaylandDisplay {
+@@ -271,6 +289,8 @@ class nsWaylandDisplay {
  
    bool mIsPrimarySelectionEnabled = false;
    bool mHasStereoContent = false;
@@ -2496,10 +2703,90 @@ index fdbbbc20eb..dade30f92b 100644
    nsTArray<UniquePtr<StereoOutputDevice>> mStereoOutputDevices;
  
 diff --git a/widget/gtk/nsWindow.cpp b/widget/gtk/nsWindow.cpp
-index 9d11df1895..1b963ab36f 100644
+index 9d11df1895..47c0ae89e1 100644
 --- a/widget/gtk/nsWindow.cpp
 +++ b/widget/gtk/nsWindow.cpp
-@@ -7427,6 +7427,15 @@ void nsWindow::OnMap() {
+@@ -33,6 +33,9 @@
+ #include "mozilla/Assertions.h"
+ #include "mozilla/Components.h"
+ #include "mozilla/GRefPtr.h"
++#include "mozilla/dom/BrowserParent.h"
++#include "mozilla/dom/DocumentInlines.h"
++#include "nsPresContext.h"
+ #include "mozilla/dom/Document.h"
+ #include "mozilla/dom/WheelEventBinding.h"
+ #include "mozilla/gfx/2D.h"
+@@ -5264,6 +5267,69 @@ void nsWindow::PerformFullscreenTransition(FullscreenTransitionStage aStage,
+                      nullptr);
+ }
+ 
++// Sparky Stereo OS, CSS depth: KWin tells each toplevel whether it may show
++// depth now, the limits of the output it mainly sits on and which of its
++// sides lie on that output's edge. The state is this window's own: the pages
++// shown in it read it (the parent tells the content processes of its
++// browsers, chrome documents ask the widget), so two windows never read each
++// other's.
++mozilla::widget::StereoDepthState nsWindow::GetStereoDepthState() {
++  mozilla::widget::StereoDepthState state = mStereoDepthState;
++  if (RefPtr<mozilla::widget::Screen> screen = GetWidgetScreen()) {
++    state.mOutputWidth = screen->GetRect().Width();
++  }
++  return state;
++}
++
++static void StereoDepthRepaintDocument(mozilla::dom::Document* aDocument) {
++  if (!aDocument) {
++    return;
++  }
++  if (nsPresContext* pc = aDocument->GetPresContext()) {
++    pc->RebuildAllStyleData(nsChangeHint_RepaintFrame, mozilla::RestyleHint{});
++  }
++  aDocument->EnumerateSubDocuments([](mozilla::dom::Document& aSub) {
++    StereoDepthRepaintDocument(&aSub);
++    return mozilla::CallState::Continue;
++  });
++}
++
++void nsWindow::StereoDepthChanged() {
++  mozilla::dom::BrowserParent::StereoDepthChanged(this);
++  if (mWidgetListener) {
++    if (mozilla::PresShell* presShell = mWidgetListener->GetPresShell()) {
++      StereoDepthRepaintDocument(presShell->GetDocument());
++    }
++  }
++}
++
++void nsWindow::StereoDepthStateEvent(bool aAwake, uint32_t aOutputEdges) {
++  static mozilla::LazyLogModule sLog("StereoDepth");
++  MOZ_LOG(sLog, mozilla::LogLevel::Debug,
++          ("nsWindow::StereoDepthStateEvent %p awake %d output_edges %u", this,
++           aAwake, aOutputEdges));
++  if (mStereoDepthState.mAwake == aAwake &&
++      mStereoDepthState.mOutputEdges == aOutputEdges) {
++    return;
++  }
++  mStereoDepthState.mAwake = aAwake;
++  mStereoDepthState.mOutputEdges = aOutputEdges;
++  StereoDepthChanged();
++}
++
++void nsWindow::StereoDepthLimitsEvent(double aSunk, double aPopped) {
++  const int32_t sunk = int32_t(std::lround(aSunk * 100.0));
++  const int32_t popped = int32_t(std::lround(aPopped * 100.0));
++  if (mStereoDepthState.mFromCompositor && mStereoDepthState.mSunk100 == sunk &&
++      mStereoDepthState.mPopped100 == popped) {
++    return;
++  }
++  mStereoDepthState.mFromCompositor = true;
++  mStereoDepthState.mSunk100 = sunk;
++  mStereoDepthState.mPopped100 = popped;
++  StereoDepthChanged();
++}
++
+ already_AddRefed<mozilla::widget::Screen> nsWindow::GetWidgetScreen() {
+   // Wayland can read screen directly
+   if (GdkIsWaylandDisplay()) {
+@@ -7427,6 +7493,15 @@ void nsWindow::OnMap() {
  
    RefreshWindowClass();
  
@@ -2508,14 +2795,14 @@ index 9d11df1895..1b963ab36f 100644
 +  // of the output it sits on, live.
 +  if (mSurface && mWindowType == WindowType::TopLevel && !mStereoDepth) {
 +    mStereoDepth = WaylandDisplayGet()->FollowStereoDepth(
-+        mSurface->GetWlSurface());
++        mSurface->GetWlSurface(), this);
 +  }
 +#endif
 +
    if (GdkIsX11Display()) {
      if (CompositorBridgeChild* remoteRenderer = GetRemoteRenderer()) {
        remoteRenderer->SendResume();
-@@ -7440,6 +7449,13 @@ void nsWindow::OnMap() {
+@@ -7440,6 +7515,13 @@ void nsWindow::OnMap() {
  void nsWindow::OnUnmap() {
    LOG("nsWindow::OnUnmap");
  
@@ -2530,20 +2817,33 @@ index 9d11df1895..1b963ab36f 100644
    if (AsWayland()) {
      AsWayland()->ClearPipResources();
 diff --git a/widget/gtk/nsWindow.h b/widget/gtk/nsWindow.h
-index 18df35031e..28c93f7d08 100644
+index 18df35031e..f7020bb67e 100644
 --- a/widget/gtk/nsWindow.h
 +++ b/widget/gtk/nsWindow.h
-@@ -616,6 +616,8 @@ class nsWindow : public nsIWidget {
+@@ -270,6 +270,10 @@ class nsWindow : public nsIWidget {
+                                    uint16_t aDuration, nsISupports* aData,
+                                    nsIRunnable* aCallback) override;
+   already_AddRefed<mozilla::widget::Screen> GetWidgetScreen() override;
++  mozilla::widget::StereoDepthState GetStereoDepthState() override;
++  void StereoDepthStateEvent(bool aAwake, uint32_t aOutputEdges);
++  void StereoDepthLimitsEvent(double aSunk, double aPopped);
++  void StereoDepthChanged();
+   nsresult MakeFullScreen(bool aFullScreen) override;
+   void HideWindowChrome(bool aShouldHide) override;
+ 
+@@ -616,6 +620,10 @@ class nsWindow : public nsIWidget {
    void* mEGLWindow = nullptr;
  #ifdef MOZ_WAYLAND
    RefPtr<mozilla::widget::WaylandSurface> mSurface;
 +  // KWin's kde_stereo_depth_v1 for this window (Sparky Stereo OS).
 +  struct kde_stereo_depth_v1* mStereoDepth = nullptr;
++  // What KWin said about this window (limits come with their own event).
++  mozilla::widget::StereoDepthState mStereoDepthState;
  #endif
    RefPtr<gfxImageSurface> mDragPopupSurface;
    LayoutDeviceIntRegion mDragPopupSurfaceRegion;
 diff --git a/widget/gtk/nsWindowWayland.cpp b/widget/gtk/nsWindowWayland.cpp
-index 69ae6a6c20..105fa2ce1d 100644
+index 69ae6a6c20..4a209120d4 100644
 --- a/widget/gtk/nsWindowWayland.cpp
 +++ b/widget/gtk/nsWindowWayland.cpp
 @@ -788,12 +788,22 @@ bool nsWindowWayland::WaylandPopupCheckAndGetAnchor(GdkRectangle* aPopupAnchor,
@@ -2584,7 +2884,7 @@ index 69ae6a6c20..105fa2ce1d 100644
      LOG("  type matches and we're not forced to hide it, quit.");
      return;
    }
-@@ -834,11 +844,14 @@ void nsWindowWayland::WaylandPopupPrepareForMove() {
+@@ -834,11 +844,23 @@ void nsWindowWayland::WaylandPopupPrepareForMove() {
  void nsWindowWayland::WaylandPopupMovePlain(int aX, int aY) {
    LOG("nsWindowWayland::WaylandPopupMovePlain(%d, %d)", aX, aY);
  
@@ -2598,10 +2898,19 @@ index 69ae6a6c20..105fa2ce1d 100644
 -                            GDK_WINDOW_TYPE_HINT_TOOLTIP);
 +                            GDK_WINDOW_TYPE_HINT_TOOLTIP ||
 +                        PopupsAsXdgPopups());
++
++  if (GtkWindow* parent = gtk_window_get_transient_for(GTK_WINDOW(mShell))) {
++    auto* parentWindow = nsWindow::FromGtkWidget(GTK_WIDGET(parent));
++    if (parentWindow && (parentWindow->IsDestroyed() ||
++                         !gtk_widget_get_mapped(GTK_WIDGET(parent)))) {
++      LOG("  the popup's parent window is hidden or destroyed, not moving.");
++      return;
++    }
++  }
  
    gtk_window_move(GTK_WINDOW(mShell), aX, aY);
  
-@@ -1434,6 +1447,9 @@ bool nsWindowWayland::WaylandPopupConfigure() {
+@@ -1434,6 +1456,9 @@ bool nsWindowWayland::WaylandPopupConfigure() {
  
    // See gdkwindow-wayland.c and
    // should_map_as_popup()/should_map_as_subsurface()
@@ -2611,7 +2920,7 @@ index 69ae6a6c20..105fa2ce1d 100644
    GdkWindowTypeHint gtkTypeHint;
    switch (mPopupType) {
      case PopupType::Menu:
-@@ -1443,11 +1459,13 @@ bool nsWindowWayland::WaylandPopupConfigure() {
+@@ -1443,11 +1468,13 @@ bool nsWindowWayland::WaylandPopupConfigure() {
        LOG("  popup type Menu");
        break;
      case PopupType::Tooltip:
@@ -2627,7 +2936,7 @@ index 69ae6a6c20..105fa2ce1d 100644
        LOG("  popup type Utility");
        break;
    }
-@@ -1456,7 +1474,8 @@ bool nsWindowWayland::WaylandPopupConfigure() {
+@@ -1456,7 +1483,8 @@ bool nsWindowWayland::WaylandPopupConfigure() {
      // GDK_WINDOW_TYPE_HINT_UTILITY is mapped as wl_subsurface
      // by default.
      LOG("  not tracked in popup hierarchy, switch to Utility");
@@ -2637,6 +2946,20 @@ index 69ae6a6c20..105fa2ce1d 100644
    }
    gtk_window_set_type_hint(GTK_WINDOW(mShell), gtkTypeHint);
  
+@@ -1813,7 +1841,12 @@ void nsWindowWayland::WaylandPopupSetDirectPosition() {
+ 
+   GtkWindow* parentGtkWindow = gtk_window_get_transient_for(GTK_WINDOW(mShell));
+   auto* window = nsWindow::FromGtkWidget(GTK_WIDGET(parentGtkWindow));
+-  if (!window) {
++  // The window this popup is a subsurface of is hidden or gone (the
++  // application is quitting with the popup open): its surface is destroyed
++  // and moving the subsurface now is a protocol error ("no parent") that ends
++  // the browser with a crash.
++  if (!window || window->IsDestroyed() ||
++      !gtk_widget_get_mapped(GTK_WIDGET(parentGtkWindow))) {
+     return;
+   }
+   GdkWindow* gdkWindow = window->GetGdkWindow();
 diff --git a/widget/gtk/nsWindowWayland.h b/widget/gtk/nsWindowWayland.h
 index 4eb25309aa..2186ed79c4 100644
 --- a/widget/gtk/nsWindowWayland.h
@@ -3394,3 +3717,42 @@ index 125f942d61..3d6e80e5e1 100644
      "linux-dmabuf-unstable-v1-client-protocol.h",
      "pointer-constraints-unstable-v1-client-protocol.h",
      "pointer-gestures-unstable-v1-client-protocol.h",
+diff --git a/widget/moz.build b/widget/moz.build
+index 813b1d5351..539d13e8d9 100644
+--- a/widget/moz.build
++++ b/widget/moz.build
+@@ -230,6 +230,7 @@ EXPORTS.mozilla.widget += [
+     "RemoteLookAndFeel.h",
+     "Screen.h",
+     "ScreenManager.h",
++    "StereoDepthState.h",
+     "TextRecognition.h",
+     "ThemeChangeKind.h",
+     "ThemeDrawing.h",
+diff --git a/widget/nsIWidget.h b/widget/nsIWidget.h
+index ca248338ae..b796b74c95 100644
+--- a/widget/nsIWidget.h
++++ b/widget/nsIWidget.h
+@@ -15,6 +15,7 @@
+ #include "mozilla/Attributes.h"
+ #include "mozilla/EventForwards.h"
+ #include "mozilla/Maybe.h"
++#include "mozilla/widget/StereoDepthState.h"
+ #include "mozilla/RefPtr.h"
+ #include "mozilla/TimeStamp.h"
+ #include "mozilla/TypedEnumBits.h"
+@@ -1174,6 +1175,14 @@ class nsIWidget : public nsSupportsWeakReference {
+    */
+   virtual already_AddRefed<mozilla::widget::Screen> GetWidgetScreen();
+ 
++  /**
++   * What the desktop tells this window about depth (Sparky Stereo OS, CSS
++   * depth); the default is a window that may show depth with no limits.
++   */
++  virtual mozilla::widget::StereoDepthState GetStereoDepthState() {
++    return mozilla::widget::StereoDepthState();
++  }
++
+   /**
+    * Put the toplevel window into or out of fullscreen mode.
+    *
