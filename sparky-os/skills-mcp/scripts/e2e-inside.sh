@@ -77,7 +77,7 @@ modern=$(printf '%s\n' \
  "{\"jsonrpc\":\"2.0\",\"id\":14,\"method\":\"resources/list\",\"params\":{$M}}" \
  | timeout 5 $BIN serve 2>/dev/null)
 line() { grep "\"id\":$1[,}]" <<<"$modern"; }
-line 1 | grep -q '"resultType":"complete","supportedVersions":\["2026-07-28"\]' && line 1 | grep -q '"extensions":{"io.modelcontextprotocol/skills":{}}' && ok "modern server/discover declares the Skills extension" || bad "modern server/discover declares the Skills extension"
+line 1 | grep -q '"resultType":"complete","supportedVersions":\["2026-07-28"\]' && line 1 | grep -q '"ttlMs":5000,"cacheScope":"private"' && line 1 | grep -q '"extensions":{"io.modelcontextprotocol/skills":{}}' && ok "modern server/discover declares the Skills extension" || bad "modern server/discover declares the Skills extension"
 line 2 | grep -q '"resultType":"complete","ttlMs":5000' && ok "modern tools/list is cacheable" || bad "modern tools/list is cacheable"
 line 3 | grep -q '"code":-32602' && ok "no _meta and no initialize is -32602" || bad "no _meta and no initialize is -32602"
 line 4 | grep -q '"code":-32602' && ok "server/discover without _meta is -32602" || bad "server/discover without _meta is -32602"
