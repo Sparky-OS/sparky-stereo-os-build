@@ -13,6 +13,7 @@
 set -euo pipefail
 umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
+REPRO=$HERE/../../repo/reproducible.py
 OUT=${OUT:?Set OUT to the output directory}
 VERSION=$(dpkg-parsechangelog -l "$HERE/debian/changelog" -S Version)
 PACKAGE=sparky-stereo-skills
@@ -183,6 +184,8 @@ binary-arch build build-arch build-indep clean:
 .PHONY: binary binary-arch binary-indep build build-arch build-indep clean
 EOF
 chmod +x "$S/debian/rules"
+# the source tree is dated like the package (the snapshot's date) and its modes normalized, so the checkout time and the umask stay out (ORDER 421b)
+python3 "$REPRO" normalize "$SOURCE_DATE_EPOCH" "$S"
 (cd "$W" && dpkg-source -b "$S" >/dev/null)
 cp "$W/${PACKAGE}_${VERSION}.dsc" "$W/${PACKAGE}_${VERSION}.tar.xz" "$OUT/"
 echo "built $OUT/${PACKAGE}_${VERSION}.dsc"

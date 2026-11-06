@@ -5,6 +5,10 @@
 # SOURCE_DSC names the unmodified Debian 6.7.4-3 source and its adjacent archives.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+REPRO="$HERE/../../repo/reproducible.py"
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 TOOLKIT=$(cd "$HERE/../.." && pwd)
 : "${SPARKY_LC_ARCHIVE_CONFIG:?Set an explicit public signed archive configuration}"
 : "${SPARKY_LC_SCRATCH:?Set private archive qualification scratch}"
@@ -53,15 +57,17 @@ core.write_text(core.read_text() + 'usr/lib/systemd/catalog/plasma-discover*.cat
 install = Path('debian/plasma-discover-backend-fwupd.install')
 install.write_text(install.read_text() + 'usr/lib/${DEB_HOST_MULTIARCH}/qt6/plugins/discover-notifier/FirmwareNotifier.so\n')
 PY
-dch --newversion "$VERSION" --distribution mashtabba \
+dch --date "$SOURCE_DATE_RFC2822" --newversion "$VERSION" --distribution mashtabba \
 	'Default to Flatpak and firmware; retain an explicit persistent PackageKit option for Debian packages.'
-dch --append 'Compile the AppStream caches of the Flatpak catalogs in a short-lived process, so Discover loads compiled caches and does not keep the XML of the catalogs in its heap.'
-dch --append 'Keep a failed cache compile in sparky-stereo-problems, with the texts in the nine languages.'
+dch --date "$SOURCE_DATE_RFC2822" --append 'Compile the AppStream caches of the Flatpak catalogs in a short-lived process, so Discover loads compiled caches and does not keep the XML of the catalogs in its heap.'
+dch --date "$SOURCE_DATE_RFC2822" --append 'Keep a failed cache compile in sparky-stereo-problems, with the texts in the nine languages.'
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-source -b .
 cp "$BUILD_ROOT"/*.dsc "$BUILD_ROOT"/*.debian.tar.* "$BUILD_ROOT"/*.orig.tar.* "$OUT/authored/"
 dpkg-source -x "$BUILD_ROOT/plasma-discover_${VERSION}.dsc" "$BUILD_ROOT/lean-source"
 PYTHONPATH="$LEAN_TOOLKIT" python3 -m lean.debian_prepare "$BUILD_ROOT/lean-source" "$VERSION+lc1" --toolkit "$LEAN_TOOLKIT"
 cd "$BUILD_ROOT/lean-source"
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -us -uc -j4
 PYTHONPATH="$LEAN_TOOLKIT" python3 -m lean.release check-debs "$BUILD_ROOT"/*+lc1_*.deb
 cp "$BUILD_ROOT"/*+lc1_*.deb "$OUT/"

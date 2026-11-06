@@ -9,6 +9,9 @@ import shutil
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'repo'))
+import reproducible
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -18,9 +21,11 @@ def main():
     source = args.source.resolve()
     toolkit = args.toolkit.resolve()
     recipe = Path(__file__).resolve().parent
+    stamp = reproducible.recipe_epoch([recipe])
     env = os.environ | {'DEBFULLNAME': 'Daniel Ramos (Capitain Jack)',
                         'DEBEMAIL': 'Capitain_Jack@yahoo.com',
-                        'QUILT_PATCHES': 'debian/patches', 'PYTHONPATH': str(toolkit)}
+                        'QUILT_PATCHES': 'debian/patches', 'PYTHONPATH': str(toolkit),
+                        'SOURCE_DATE_EPOCH': str(stamp)}
     old = subprocess.check_output(['dpkg-parsechangelog', '-SVersion'], cwd=source, text=True).strip()
     if old != '10.0~repack-12+stereo3d6+lc1' or (source / '.sparky-lc').exists():
         raise ValueError('Expected a fresh extraction of the retained Wine +6 descriptor')
@@ -54,13 +59,14 @@ def main():
     if text.count(anchor) != 1:
         raise ValueError('Review changed libwine template')
     template.write_text(text.replace(anchor, anchor + ' libstereo-declare1 (>= 1.8.0-1),\n'))
-    subprocess.run(['dch', '--newversion', '10.0~repack-12+stereo3d7', '--distribution', 'unstable',
+    subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', '10.0~repack-12+stereo3d7', '--distribution', 'unstable',
                     'Keep stereo Vulkan children attached to their actual window lifetime; maintain clipping, membership and first-paint ordering with a transactional versioned producer acknowledgement.'], cwd=source, env=env, check=True)
     command = [sys.executable, '-m', 'lean.debian_prepare', str(source), '10.0~repack-12+stereo3d7+lc1', '--toolkit', str(toolkit), '--build-dependency', 'bubblewrap']
     for pattern, reason in preserve.items():
         command += ['--preserve-source', pattern, reason]
     subprocess.run(command, env=env, check=True)
     subprocess.run([sys.executable, str(recipe / 'sync-control.py'), str(source)], env=env, check=True)
+    reproducible.normalize_tree(source, stamp)
 
 
 if __name__ == '__main__':

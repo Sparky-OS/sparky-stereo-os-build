@@ -11,6 +11,7 @@
 # Last update 2026/11/03
 trap 'chown -R 1000:1000 /work/' EXIT
 set -euo pipefail
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS='parallel=4'
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com LC_ALL=C.UTF-8
 UPSTREAM=1.23.11
@@ -38,7 +39,7 @@ grep -q 'test-coinstall-shared-files-leancode:' tests/t-multiarch/Makefile
 printf '%s\n' "$VERSION" >.dist-version
 python3 - <<'PY'
 from pathlib import Path
-import email.utils
+import os
 path = Path('debian/control')
 text = path.read_text()
 old = next(line for line in text.splitlines() if line.startswith('Maintainer: ')) + '\n'
@@ -61,10 +62,11 @@ entry = Path('/tools/changelog-stereo3d3.txt').read_text()
 assert entry.startswith('dpkg (1.23.11+stereo3d3) mashtabba;'), entry[:60]
 assert p.read_text().startswith('dpkg (1.23.11) unstable;')
 p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  '
-             + email.utils.formatdate(localtime=True) + '\n\n' + p.read_text())
+             + os.environ['SOURCE_DATE_RFC2822'] + '\n\n' + p.read_text())
 PY
 grep -A12 '^Package: dpkg$' debian/control | grep -E '^(Package|Provides|Essential)'
 cd ..
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" t
 dpkg-source -b t >/dev/null
 rm -rf t
 # the Lean Code source
@@ -86,6 +88,7 @@ debhelper.link_gate = lambda built: print('link gate after the build: lean.relea
 debhelper.build(root, root / 'debian/sparky-lean-toolkit/provenance.sh')
 PYWRAP
 sed -i "s|^\tPYTHONPATH=\$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.debhelper --provenance .*\$|\tpython3 \$(CURDIR)/debian/sparky-builddeb.py \$(CURDIR)|" /work/lc/authored/debian/rules
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /work/lc/authored
 (cd /work/lc/authored && dpkg-source -b . >/dev/null)
 dpkg-source -x dpkg_$VERSION+lc1.dsc /work/lc/source >/dev/null
 apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.log 2>&1

@@ -1,6 +1,10 @@
 #!/bin/bash
 # Extend the published source package, keeping its complete patch and LC pipeline.
 set -euo pipefail
+REPRO=/run/reproducible.py
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 source_dir=${1:?directory containing the published +stereo3d3+lc1 source package}
 work=${2:?empty output directory}
 recipe=$(cd "$(dirname "$0")" && pwd)
@@ -17,10 +21,11 @@ patch=0009-preserve-stereo-pairs-across-child-redirection.patch
 cp "$recipe/patches/$patch" source/debian/patches/
 printf '%s\n' "$patch" >> source/debian/patches/series
 cd source
-dch --newversion '2:24.1.13-1+stereo3d4' --distribution unstable \
+dch --date "$SOURCE_DATE_RFC2822" --newversion '2:24.1.13-1+stereo3d4' --distribution unstable \
     'Preserve both stereo child views across first-copy presentation, compositor redirection and backing-pixmap recycling; keep declaration ownership in Mesa.'
-dch --newversion '2:24.1.13-1+stereo3d4+lc1' --distribution UNRELEASED \
+dch --date "$SOURCE_DATE_RFC2822" --newversion '2:24.1.13-1+stereo3d4+lc1' --distribution UNRELEASED \
     'Retain the published source and payload Lean Code pipeline with provenance before sealing.'
 dpkg-source --before-build .
 cd ..
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" source
 dpkg-source -b source

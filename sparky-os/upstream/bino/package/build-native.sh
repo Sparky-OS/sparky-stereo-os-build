@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Run inside the isolated package image; paths are supplied by the caller.
 set -euo pipefail
+REPRO=/run/reproducible.py
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 export DEBEMAIL=Capitain_Jack@yahoo.com
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)'
 export DEB_BUILD_OPTIONS=parallel=4
@@ -44,10 +48,11 @@ s=s.replace(' It can output these videos for several types\n of anaglyph glasses
 p.write_text(s)
 PY
 rm -rf debian/sparky-lean-toolkit
-dch --newversion 2.8-1+stereo3d9 --distribution unstable \
+dch --date "$SOURCE_DATE_RFC2822" --newversion 2.8-1+stereo3d9 --distribution unstable \
  'Translate the seven anaglyph input labels in all nine required locales through the existing Qt resources, preserving older catalogs and reviewed media behavior.'
 PYTHONPATH="$toolkit" python3 -m lean.debian_prepare . 2.8-1+stereo3d9+lc1 --toolkit "$toolkit" \
  --preserve-source 'src/*.hpp' 'Qt moc consumes these authored declarations; preserve this additional consumer input.'
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -S -us -uc -d
 if [ "${BINO_SOURCE_ONLY:-0}" = 1 ]; then exit 0; fi
 cd "$work"

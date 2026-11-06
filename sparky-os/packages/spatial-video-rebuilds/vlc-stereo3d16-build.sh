@@ -1,6 +1,10 @@
 # Sparky Stereo OS, ORDER 249: vlc-stereo +stereo3d16, the published +stereo3d15+lc1 source with 3d-0046 (full screen on Wayland as on X11) added as its own patch, built through Lean Code. Runs as root inside a container of the published set (Debian testing, deb-multimedia and the edition's repository pinned at 1001); mounts: /in the +stereo3d15+lc1 source package, /toolkit sparky-os, /prev the +stereo3d15+lc1 .deb files for the link and start gate, /out. Created by Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
 set -euo pipefail
+REPRO=/toolkit/repo/reproducible.py
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 # apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
 # tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
 sh /run/https-only-apt.sh || exit 1
@@ -26,12 +30,13 @@ rm -rf debian/sparky-lean-toolkit
 cp /toolkit/upstream/vlc/${P#3d-} debian/patches/$P
 echo $P >> debian/patches/series
 QUILT_PATCHES=debian/patches quilt push
-dch --newversion 3.0.24-1+stereo3d16 --distribution unstable 'Full screen on Wayland behaves as on X11 (3d-0046): a double click enters and leaves VLC'"'"'s full screen as F does, with the menu bar and the controls hidden (Qt'"'"'s press of the double click no longer counts as a second one); moving the mouse shows the full screen controller at the bottom of the screen (a popup of the main window, where KWin centred a tool window on the video) and the cursor, both hidden again after mouse-hide-timeout; the controller stays while the pointer is over it and keeps its cursor.'
+dch --date "$SOURCE_DATE_RFC2822" --newversion 3.0.24-1+stereo3d16 --distribution unstable 'Full screen on Wayland behaves as on X11 (3d-0046): a double click enters and leaves VLC'"'"'s full screen as F does, with the menu bar and the controls hidden (Qt'"'"'s press of the double click no longer counts as a second one); moving the mouse shows the full screen controller at the bottom of the screen (a popup of the main window, where KWin centred a tool window on the video) and the cursor, both hidden again after mouse-hide-timeout; the controller stays while the pointer is over it and keeps its cursor.'
 head -12 debian/changelog
 PYTHONPATH=/toolkit python3 -m lean.debian_prepare . 3.0.24-1+stereo3d16+lc1 --toolkit /toolkit
 apt-get -y --no-install-recommends build-dep /out/lc/src > /out/build-dep.log 2>&1 || { tail -20 /out/build-dep.log; exit 1; }
 useradd --create-home --uid 1000 builder 2>/dev/null || true
 chown -R builder /out
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" /out/lc/src
 runuser -u builder -- bash -c 'cd /out/lc/src && dpkg-buildpackage -S -us -uc -d > /out/source.log 2>&1'
 cd /out/lc && dpkg-source -x vlc_3.0.24-1+stereo3d16+lc1.dsc src2 >/dev/null 2>&1; chown -R builder /out
 cd src2

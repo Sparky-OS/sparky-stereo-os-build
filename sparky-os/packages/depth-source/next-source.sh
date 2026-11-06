@@ -15,6 +15,9 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../repo" && pwd)
 PKG=$1 DSC=$(readlink -f "$2") OUT=$3 SYM=${4:-}
+# the date of this source is its recipe's: SOURCE_DATE_EPOCH, else the last commit touching this folder (ORDER 421b)
+SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$REPO/reproducible.py" epoch "$HERE")}
+export SOURCE_DATE_EPOCH
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 case $PKG in
 qt6-multimedia)

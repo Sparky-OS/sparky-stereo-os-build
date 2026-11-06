@@ -18,11 +18,15 @@ printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://w
 printf 'deb https://deb.debian.org/debian testing contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian-extra-components.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 git config --global safe.directory '*'
+# A native source is dated by its commit, never by the clock (ORDER 421b); the build record says so.
+SOURCE_DATE_EPOCH=$(git -C /fork log -1 --format=%ct "$REV")
+export SOURCE_DATE_EPOCH SPARKY_SOURCE_DATE_BASIS="the commit $REV of the source repository"
 test "$(git -C /fork show "$REV":debian/changelog | head -1)" = "sview ($NEWV) UNRELEASED; urgency=medium"
 mkdir -p /work/plain && cd /work/plain
 git -C /fork archive --format=tar --prefix="sview-$NEWV/" "$REV" | tar -x
 # the dates of the files are the commit's, so the same commit gives the same source archive
-touch -d "@$(git -C /fork log -1 --format=%ct "$REV")" "sview-$NEWV"
+touch -d "@$SOURCE_DATE_EPOCH" "sview-$NEWV"
+python3 /run/reproducible.py normalize "$SOURCE_DATE_EPOCH" "sview-$NEWV"
 dpkg-source -b "sview-$NEWV" >/dev/null
 rm -rf "sview-$NEWV"
 ls
@@ -37,6 +41,7 @@ dpkg-query -W libstereo-declare-dev
 # the link and start gate of lean.debhelper runs the rebuilt programs in a bubblewrap root
 apt-get -y --no-install-recommends install bubblewrap >>/work/build-dep.log 2>&1
 mkdir -p "$SPARKY_LC_SCRATCH"
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /work/lc/source
 useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/lc/source

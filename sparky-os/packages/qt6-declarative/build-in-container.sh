@@ -5,6 +5,7 @@
 # Runs inside the Lean Code migration container; build.sh starts it. /work is the job folder, /src Debian's source package, /prev earlier builds, /patches this folder's patches.
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 printf 'deb [trusted=yes] file:/repo ./\n' > /etc/apt/sources.list.d/edition.list
@@ -24,14 +25,15 @@ for p in /patches/s1-*.patch; do
 done
 python3 - <<'CHANGELOG'
 from pathlib import Path
-import email.utils, re
+import os, re
 p = Path('debian/changelog')
 entry = Path('/tools/changelog-stereo3d1.txt').read_text()
 assert entry.startswith('qt6-declarative (6.11.2+dfsg-3+stereo3d1) unstable;'), entry[:60]
-p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + email.utils.formatdate(localtime=True) + '\n\n' + p.read_text())
+p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n' + p.read_text())
 CHANGELOG
 head -24 debian/changelog
 cd ..
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" t
 dpkg-source -b t >/dev/null
 rm -rf t
 ls
@@ -46,6 +48,7 @@ PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source 6.11.2+dfsg-3
 	--preserve-source 'tests/*' 'Qt test inputs include deliberate comment and invalid-syntax fixtures consumed as text by qmllint, qmlformat and the QML compiler tests; preserve the upstream test corpus while projecting production source'
 apt-get -y update >/dev/null 2>&1
 apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.log 2>&1
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /work/lc/source
 useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/lc/source

@@ -6,7 +6,6 @@ The compiler bundle is supplied separately and verified against retained hashes.
 This recipe never treats the old browser executable as a native rebuild.
 """
 import argparse
-import email.utils
 import json
 import os
 from pathlib import Path
@@ -16,7 +15,11 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1]))
+sys.path.insert(0, str(HERE.parents[1] / 'repo'))
 from lean.debian_prepare import prepare
+import reproducible
+
+STAMP = reproducible.recipe_epoch([HERE])
 
 
 def main(root, accepted, manifest):
@@ -44,7 +47,7 @@ def main(root, accepted, manifest):
                         .replace('@DEBVERSION@', version.removesuffix('+lc1'))
                         .replace('@VERSION@', '6.7.5')
                         .replace('@GECKO@', (root / 'config/milestone.txt').read_text().strip())
-                        .replace('@DATE@', email.utils.formatdate(localtime=False)))
+                        .replace('@DATE@', reproducible.rfc2822(STAMP)))
     control = debian / 'control'
     text = control.read_text()
     text = text.replace('Build-Depends: debhelper-compat (= 13),',
@@ -109,6 +112,7 @@ override_dh_clean:
                and fnmatchcase(p.relative_to(root).as_posix(), pattern)
                for p in root.rglob('*')):
             preserve.append((pattern, reason))
+    os.environ['SOURCE_DATE_EPOCH'] = str(STAMP)
     os.environ['DEBFULLNAME'] = 'Daniel Ramos (Capitain Jack)'
     os.environ['DEBEMAIL'] = 'Capitain_Jack@yahoo.com'
     prepare(root, version, HERE.parents[1], preserve_sources=preserve)

@@ -31,6 +31,8 @@ git -C /fork archive --format=tar --prefix="$PREFIX/" "$REV" | tar -x -C export
 cp -a "export/$PREFIX/debian" debian-export
 rm -rf "export/$PREFIX/debian"
 stamp=$(git -C /fork log -1 --format=%ct "$REV")
+# The source is dated by its release commit, never by the clock (ORDER 421b)
+export SOURCE_DATE_EPOCH=$stamp
 tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$stamp" -C export -cf - "$PREFIX" | xz -9e > "stereo-layer_$UP.orig.tar.xz"
 tar -xf "stereo-layer_$UP.orig.tar.xz"
 cp -a debian-export "$PREFIX/debian"
@@ -39,6 +41,7 @@ rm -rf debian/sparky-lean-toolkit
 PYTHONPATH=/toolkit python3 -m lean.debian_prepare . "$NEWV+lc1" --toolkit /toolkit \
 	--preserve-source 'src/*.h' 'Qt moc and QML type registration consume authored declarations.' \
 	--preserve-source 'src/*.cpp' 'Qt moc and QML type registration also scan these sources.'
+python3 /toolkit/repo/reproducible.py normalize-tree "$stamp" .
 dpkg-buildpackage -S -us -uc -d >/dev/null
 cd ..
 cp stereo-layer_"$UP".orig.tar.xz stereo-layer_"$NEWV"+lc1.dsc stereo-layer_"$NEWV"+lc1.debian.tar.xz /out/

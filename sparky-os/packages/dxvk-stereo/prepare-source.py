@@ -8,6 +8,9 @@ import shutil
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'repo'))
+import reproducible
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -16,6 +19,7 @@ def main():
     args = parser.parse_args()
     source, toolkit = args.source.resolve(), args.toolkit.resolve()
     recipe = Path(__file__).resolve().parent
+    stamp = reproducible.recipe_epoch([recipe])
     env = os.environ | {'DEBFULLNAME': 'Daniel Ramos (Capitain Jack)',
                         'DEBEMAIL': 'Capitain_Jack@yahoo.com',
                         'QUILT_PATCHES': 'debian/patches', 'PYTHONPATH': str(toolkit)}
@@ -50,9 +54,10 @@ def main():
     series.write_text(upstream[0] + '\n' + series.read_text().rstrip() + '\n' +
                       '\n'.join(name for name, _ in patches[1:]) + '\n')
     subprocess.run(['quilt', 'push', '-a'], cwd=source, env=env, check=True)
-    subprocess.run(['dch', '--newversion', '2.7.1-4+stereo3d5', '--distribution', 'unstable',
+    subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', '2.7.1-4+stereo3d5', '--distribution', 'unstable',
                     'Backport ficool2 upstream commit 3dbf33cb2205dd0d573cbc7a65e3855d97a4800b to use the requested swapchain resize dimensions. Retain exact packed-eye copies, the versioned Wine child-surface contract and ordinary WSI fallback.'], cwd=source, env=env, check=True)
-    subprocess.run([sys.executable, '-m', 'lean.debian_prepare', str(source), '2.7.1-4+stereo3d5+lc1', '--toolkit', str(toolkit), '--build-dependency', 'bubblewrap'], env=env, check=True)
+    subprocess.run([sys.executable, '-m', 'lean.debian_prepare', str(source), '2.7.1-4+stereo3d5+lc1', '--toolkit', str(toolkit), '--build-dependency', 'bubblewrap'], env=env | {'SOURCE_DATE_EPOCH': str(stamp)}, check=True)
+    reproducible.normalize_tree(source, stamp)
 
 
 if __name__ == '__main__':

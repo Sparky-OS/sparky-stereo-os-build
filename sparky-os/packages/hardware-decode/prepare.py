@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Prepare plain Debian sources; the existing Lean Code release pipeline follows."""
 import argparse
-import email.utils
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 
 here = Path(__file__).resolve().parent
+sys.path.insert(0, str(here.parents[1] / 'repo'))
+import reproducible
+stamp = reproducible.recipe_epoch([here])
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('package', choices=['ffmpeg-dmo', 'mpv-dmo', 'mlt', 'kdenlive', 'vlc', 'qt6-multimedia', 'libplacebo-dmo'])
 p.add_argument('source', type=Path)
@@ -139,6 +142,7 @@ body = (a.entry.read_text().rstrip('\n') + '\n' if a.entry else
         '    precision and retain software fallback and stereo frame properties.\n')
 entry = (f'{a.package} ({a.version}) unstable; urgency=medium\n\n' + body + '\n'
          ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  '
-         + email.utils.formatdate(localtime=True) + '\n\n')
+         + reproducible.rfc2822(stamp) + '\n\n')
 changelog.write_text(entry + old)
 print(f'Prepared {a.package} {a.version}; existing Lean Code integration retained: {a.published_lc}.')
+reproducible.normalize_tree(source, stamp)

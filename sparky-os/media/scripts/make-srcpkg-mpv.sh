@@ -2,6 +2,8 @@
 # Source packages: dmo's own source package with only our patches, changelog and packaging changes added
 set -eu
 export HOME=/tmp/home; mkdir -p $HOME
+# A source is dated by its own changelog entry, and its tree is normalized so the checkout time and the umask stay out (ORDER 421b)
+REPRO=${REPRO:-/run/reproducible.py}
 cd /w/srcpkg
 for pkg in ffmpeg mpv; do
   case $pkg in
@@ -16,7 +18,8 @@ for pkg in ffmpeg mpv; do
   rm -rf $dir/debian/patches && cp -a $built/debian/patches $dir/debian/patches
   if [ $pkg = mpv ]; then cp $built/debian/control $built/debian/rules $dir/debian/; fi
   (cd $dir && dpkg-source --before-build .)
-  dpkg-source -b $dir
+  SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$REPRO" changelog $dir/debian/changelog)} python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" $dir
+  SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$REPRO" changelog $dir/debian/changelog)} dpkg-source -b $dir
   (cd $dir && dpkg-source --after-build .)
 done
 ls -la

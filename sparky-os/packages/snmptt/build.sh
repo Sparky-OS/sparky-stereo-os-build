@@ -13,6 +13,10 @@
 # Last update 2026/11/02
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+REPRO="$HERE/../../repo/reproducible.py"
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 : "${LEAN_TOOLKIT:=$(cd "$HERE/../.." && pwd)}"
 : "${SOURCE_DSC:?Set SOURCE_DSC to Debian snmptt_1.5-3.dsc}"
 : "${BUILD_ROOT:?Set BUILD_ROOT to a new disposable directory}"
@@ -42,13 +46,15 @@ text = text[:match.end()] + ' libnet-ip-perl,' + text[match.end():]
 path.write_text(text)
 PY
 grep -A3 '^Package: snmptt$' debian/control | grep -q 'Depends: libnet-ip-perl,'
-dch --newversion "$VERSION" --distribution mashtabba \
+dch --date "$SOURCE_DATE_RFC2822" --newversion "$VERSION" --distribution mashtabba \
 	'snmptt.ini ships ipv6_enable = 1, which needs Net::IP: depend on libnet-ip-perl (snmptt stopped with "Could not load the Perl module Net::IP!").'
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-source -b . >/dev/null
 cd "$BUILD_ROOT"
 cp snmptt_${VERSION}.dsc snmptt_${VERSION}.debian.tar.* snmptt_1.5.orig.tar.* "$OUT/authored/"
 dpkg-source -x "snmptt_${VERSION}.dsc" lean-source >/dev/null
 PYTHONPATH="$LEAN_TOOLKIT" python3 -m lean.debian_prepare lean-source "$VERSION+lc1" --toolkit "$LEAN_TOOLKIT"
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" lean-source
 (cd lean-source && dpkg-source -b . >/dev/null)
 dpkg-source -x "snmptt_${VERSION}+lc1.dsc" build >/dev/null
 if [ "${LINK_GATE_ON_HOST:-0}" = 1 ]; then

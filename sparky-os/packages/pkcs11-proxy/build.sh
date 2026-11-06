@@ -13,6 +13,10 @@
 # Last update 2026/11/02
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+REPRO="$HERE/../../repo/reproducible.py"
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 : "${LEAN_TOOLKIT:=$(cd "$HERE/../.." && pwd)}"
 : "${SOURCE_DSC:?Set SOURCE_DSC to Debian pkcs11-proxy_0.4.1-5.dsc}"
 : "${BUILD_ROOT:?Set BUILD_ROOT to a new disposable directory}"
@@ -42,13 +46,15 @@ text = text[:match.end()] + ' libsofthsm2,' + text[match.end():]
 path.write_text(text)
 PY
 grep -A4 '^Package: pkcs11-daemon$' debian/control | grep -q 'Depends: libsofthsm2,'
-dch --newversion "$VERSION" --distribution mashtabba \
+dch --date "$SOURCE_DATE_RFC2822" --newversion "$VERSION" --distribution mashtabba \
 	'pkcs11-daemon: /etc/default/pkcs11-daemon names SoftHSM'"'"'s library as PKCS11_LIB: depend on libsofthsm2 (the daemon stopped with "couldn'"'"'t open library").'
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-source -b . >/dev/null
 cd "$BUILD_ROOT"
 cp pkcs11-proxy_${VERSION}.dsc pkcs11-proxy_${VERSION}.debian.tar.* pkcs11-proxy_0.4.1.orig.tar.* "$OUT/authored/"
 dpkg-source -x "pkcs11-proxy_${VERSION}.dsc" lean-source >/dev/null
 PYTHONPATH="$LEAN_TOOLKIT" python3 -m lean.debian_prepare lean-source "$VERSION+lc1" --toolkit "$LEAN_TOOLKIT"
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" lean-source
 (cd lean-source && dpkg-source -b . >/dev/null)
 dpkg-source -x "pkcs11-proxy_${VERSION}+lc1.dsc" build >/dev/null
 if [ "${LINK_GATE_ON_HOST:-0}" = 1 ]; then

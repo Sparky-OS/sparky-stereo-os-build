@@ -3,12 +3,15 @@
 # Copyright 2026 Daniel Campos Ramos
 """Append the reviewed CPU refresh series to the published QEMU Debian source."""
 import argparse
-from datetime import datetime, timezone
-from email.utils import format_datetime
 from pathlib import Path
 import shutil
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'repo'))
+import reproducible
 
 HERE = Path(__file__).resolve().parent
+STAMP = reproducible.recipe_epoch([HERE])
 BASE = '1:11.1.2+ds-3+stereo3d6+lc1'
 NEXT = '1:11.1.2+ds-3+stereo3d7+lc1'
 PATCHES = (
@@ -50,10 +53,11 @@ def main(root):
   * Carry the three reviewed downstream commits together as DEP-3 patches;
     retain the published native-sample patch and Debian's existing fixes.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  {format_datetime(datetime.now(timezone.utc))}
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  {reproducible.rfc2822(STAMP)}
 
 '''
     changelog.write_text(entry + old)
+    reproducible.normalize_tree(root, STAMP)
     print(f'Prepared patch integration {BASE} -> {NEXT}; package build pending')
 
 

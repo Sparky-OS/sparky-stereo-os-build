@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Run in the isolated build image against the published +10 source archive.
 set -euo pipefail
+REPRO=/run/reproducible.py
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 export DEBEMAIL=Capitain_Jack@yahoo.com
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)'
 export DEB_BUILD_OPTIONS='nocheck parallel=4'
@@ -25,9 +29,10 @@ for symbol in ('_ZN10QVideoSink21setPreserveNativeSizeEb',
     s += f' {symbol}@Qt_6 6.11.2-3+stereo3d11\n'
 p.write_text(s)
 PY
-dch --newversion 6.11.2-3+stereo3d11+lc1 --distribution UNRELEASED \
+dch --date "$SOURCE_DATE_RFC2822" --newversion 6.11.2-3+stereo3d11+lc1 --distribution UNRELEASED \
  'Add a default-off QVideoSink native-raster capability for consumers that preserve source samples and pixel aspect; retain declared marks and existing consumer behavior.'
 # The published source already carries the qualified native/payload Lean Code pipeline.
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -S -us -uc -d
 cd "$work"
 dpkg-source -x qt6-multimedia_6.11.2-3+stereo3d11+lc1.dsc binary-source

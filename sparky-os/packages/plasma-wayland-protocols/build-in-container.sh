@@ -5,6 +5,7 @@
 # Runs inside the Lean Code migration container; build.sh starts it. /work is the job folder, /src the +stereo3d9 source package, /prev the earlier +lc1 builds, /patches this folder's patches.
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 printf 'deb [trusted=yes] file:/repo mashtabba main\n' > /etc/apt/sources.list.d/edition.list
@@ -28,11 +29,12 @@ from pathlib import Path
 p = Path('debian/changelog')
 entry = Path('/tools/changelog-stereo3d10.txt').read_text()
 assert entry.startswith('plasma-wayland-protocols (1.21.0-1+stereo3d10) unstable;'), entry[:60]
-import email.utils
-p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + email.utils.formatdate(localtime=True) + '\n\n' + p.read_text())
+import os
+p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n' + p.read_text())
 CHANGELOG
 head -24 debian/changelog
 cd ..
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" t
 dpkg-source -b t >/dev/null
 rm -rf t
 ls
@@ -46,6 +48,7 @@ apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.lo
 # the link and start gate of lean.debhelper runs the rebuilt programs in a bubblewrap root
 apt-get -y --no-install-recommends install bubblewrap >>/work/build-dep.log 2>&1
 mkdir -p "$SPARKY_LC_SCRATCH"
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /work/lc/source
 useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/lc/source

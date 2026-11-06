@@ -3,6 +3,7 @@
 # Copyright 2026 Daniel Campos Ramos
 """Keep resolved meta-package controls and the generator inputs in a source archive."""
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import sys
@@ -11,7 +12,9 @@ import tempfile
 trees, version, out = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]).resolve()
 root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(root))
+sys.path.insert(0, str(root / 'repo'))
 from lean import package
+import reproducible
 with tempfile.TemporaryDirectory(dir=out, prefix='.meta-source-') as temp:
     work = Path(temp)
     source = work / f'sparky-stereo-meta-{version}'
@@ -90,6 +93,9 @@ binary-arch build build-arch build-indep clean:
 .PHONY: binary binary-arch binary-indep build build-arch build-indep clean
 ''')
     rules.chmod(0o755)
-    subprocess.run(['dpkg-source', '-b', str(source)], cwd=work, check=True)
+    # a native source: dated by its own changelog entry, the whole tree normalized (ORDER 421b)
+    stamp = reproducible.parse_trailer((source / 'debian/changelog').read_text())
+    reproducible.normalize(source, stamp)
+    subprocess.run(['dpkg-source', '-b', str(source)], cwd=work, check=True, env=os.environ | {'SOURCE_DATE_EPOCH': str(stamp)})
     for suffix in ('dsc', 'tar.xz'):
         shutil.copy2(work / f'sparky-stereo-meta_{version}.{suffix}', out)

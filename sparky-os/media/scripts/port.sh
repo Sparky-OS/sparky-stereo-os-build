@@ -17,7 +17,8 @@
 #   REVISION         the number after +stereo3d (1 for the first build on this dmo version)
 #   OUTDIR           where the source package goes
 #   FFMPEG_VERSION   mpv only: the ffmpeg-dmo version (ours) it is built against, for the changelog
-#   SOURCE_DATE      the date of the changelog entry (RFC 5322, default now)
+#   SOURCE_DATE_EPOCH  the date of the changelog entry; default the committer date of the last commit touching ../<package> (a clean
+#                    tree is required), never the clock (ORDER 421b). SOURCE_DATE (RFC 5322) is still read and gives the epoch.
 # Last update 2026/10/08
 set -euo pipefail
 pkg=${1:?package: ffmpeg or mpv}
@@ -28,6 +29,11 @@ ffv=${5:-}
 HERE=$(cd "$(dirname "$0")" && pwd)
 M=$HERE/../$pkg
 case $pkg in ffmpeg | mpv) ;; *) echo "package: ffmpeg or mpv" >&2; exit 2 ;; esac
+REPRO=$HERE/../../repo/reproducible.py
+if [ -z "${SOURCE_DATE_EPOCH:-}" ] && [ -n "${SOURCE_DATE:-}" ]; then SOURCE_DATE_EPOCH=$(date -u -d "$SOURCE_DATE" +%s); fi
+SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$REPRO" epoch "$M")}
+SOURCE_DATE=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH
 dmover=$(sed -n 's/^Version: //p' "$dsc")
 version=$dmover+stereo3d$rev
 W=$(mktemp -d "${TMPDIR:-/tmp}/port-$pkg.XXXXXX")
@@ -48,13 +54,14 @@ mkdir -p debian/patches
 cp "$M"/patches/*.patch debian/patches/
 cat "$M/patches/series" >>debian/patches/series
 patch -p1 --no-backup-if-mismatch <"$M/packaging.diff" >/dev/null
-sed -e "s|@VERSION@|$version|" -e "s|@DMOVERSION@|$dmover|" -e "s|@FFMPEG@|$ffv|" -e "s|@DATE@|${SOURCE_DATE:-$(date -R)}|" "$M/changelog.in" | cat - debian/changelog >debian/changelog.new
+sed -e "s|@VERSION@|$version|" -e "s|@DMOVERSION@|$dmover|" -e "s|@FFMPEG@|$ffv|" -e "s|@DATE@|$SOURCE_DATE|" "$M/changelog.in" | cat - debian/changelog >debian/changelog.new
 mv debian/changelog.new debian/changelog
 # the patches must apply in order (quilt says which one does not)
 QUILT_PATCHES=debian/patches quilt --quiltrc=/dev/null push -a >/dev/null
 QUILT_PATCHES=debian/patches quilt --quiltrc=/dev/null pop -a >/dev/null
 rm -rf .pc
 dpkg-source --before-build . >/dev/null
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 cd ..
 dpkg-source -b tree 2>&1 | grep -v -E 'signature|because|warning' || true
 (cd tree && dpkg-source --after-build . >/dev/null)

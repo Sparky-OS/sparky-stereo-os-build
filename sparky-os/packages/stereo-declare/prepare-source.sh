@@ -18,10 +18,13 @@ git -C "$clone" archive --format=tar --prefix="$prefix/" "$rev" | tar -x -C "$ou
 cp -a "$out/export/$prefix/debian" "$out/debian-export"
 rm -r "$out/export/$prefix/debian"
 stamp=$(git -C "$clone" log -1 --format=%ct "$rev")
+# The source is dated by its release commit, never by the clock (ORDER 421b); debian/ is normalized before each dpkg-source -b.
+export SOURCE_DATE_EPOCH=$stamp
 tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$stamp" -C "$out/export" -cf - "$prefix" | xz -T4 -6 > "$out/plain/stereo-declare_1.9.0.orig.tar.xz"
 cd "$out/plain"
 tar -xf stereo-declare_1.9.0.orig.tar.xz
 cp -a "$out/debian-export" "$prefix/debian"
+python3 "$toolkit/repo/reproducible.py" normalize-tree "$stamp" "$prefix"
 dpkg-source -b "$prefix"
 cp ./*.tar.xz ./*.dsc "$out/lc/"
 cd "$out/lc"
@@ -42,5 +45,6 @@ lines[index] = lines[index].split('>  ', 1)[0] + '>  Tue, 03 Nov 2026 23:32:18 +
 p.write_text(''.join(lines))
 DATE
 # The sole LC descriptor is shared by both native architecture builds.
+python3 "$toolkit/repo/reproducible.py" normalize-tree "$stamp" source
 dpkg-source -b source
 sha256sum ./*.dsc ./*.tar.xz > source-closure.sha256

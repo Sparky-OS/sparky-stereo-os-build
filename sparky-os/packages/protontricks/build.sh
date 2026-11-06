@@ -8,6 +8,10 @@
 # Usage: build.sh [workdir]     (default ${SPARKY_WORKSPACES}/hand-installed-apps/ptx/build)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
+REPRO=/run/reproducible.py
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 WORK=${1:-${SPARKY_WORKSPACES:?}/hand-installed-apps/ptx/build}
 NEW=1.15.0
 OUR=$NEW+ds-1+sparky1
@@ -34,13 +38,14 @@ cp -a old/debian new/
 cd new
 # debian/patches/remove-usage-of-bundled-vdf.patch refreshed: 1.15.0 moved the code its hunks touch
 cp /patches/remove-usage-of-bundled-vdf.patch debian/patches/
-dch -v $OUR -D unstable --force-distribution "New upstream version $NEW+ds (imported with uscan and the +ds repack, as debian/watch and debian/copyright say)." 
-dch -a "Rebuilt for Sparky Stereo OS: no change to debian/ other than this entry and the maintainer fields."
+dch --date "$SOURCE_DATE_RFC2822" -v $OUR -D unstable --force-distribution "New upstream version $NEW+ds (imported with uscan and the +ds repack, as debian/watch and debian/copyright say)." 
+dch --date "$SOURCE_DATE_RFC2822" -a "Rebuilt for Sparky Stereo OS: no change to debian/ other than this entry and the maintainer fields."
 sed -i "s/^Maintainer: \(.*\)/Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\nXSBC-Original-Maintainer: \1/" debian/control
 sed -i "s|^Homepage: https://github.com/Matoking/protontricks|Homepage: https://github.com/Matoking/protontricks|" debian/control
 quilt --version >/dev/null 2>&1 || apt-get install -y -qq quilt >/dev/null
 diff -ru /out/src/old/debian debian > /out/debian-changes.diff || true
 apt-get build-dep -y -qq . 2>&1 | tail -2
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -us -uc -sa 2>&1 | tail -15
 cd .. && cp -a protontricks_* /out/ && chown -R $HOST_UID:$HOST_UID /out && ls /out
 '

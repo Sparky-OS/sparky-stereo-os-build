@@ -1,6 +1,10 @@
 # Sparky Stereo OS, ORDER 247: rebuild of lane 41's mpv-dmo +stereo3d7 as +stereo3d8, same container layout as the other scripts here. Created by Daniel Ramos (Capitain Jack) 2026/10/24
 # Copyright 2026 under the GNU GPL3 License
 set -euo pipefail
+REPRO=/toolkit/repo/reproducible.py
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 # apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
 # tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
 sh /run/https-only-apt.sh || exit 1
@@ -27,12 +31,13 @@ python3 /patch/mpv8-edit.py
 echo mpv-store-swap-to-file.patch >> debian/patches/series
 cp /tmp/command.c.orig player/command.c
 QUILT_PATCHES=debian/patches quilt push -a -q 2>&1 | tail -1 || true
-dch --newversion 1:0.41.0-dmo9+stereo3d8 --distribution unstable 'Keep the explicit save-to-file command video-stereo-store-swap, under the name the published +stereo3d6 used: it writes the swap of the eyes into the playing local file only when asked and then unmarks the per-file mark; the swap property keeps the person'"'"'s choice in the per-file store alone. +stereo3d7 had replaced the command by a second per-file-store write, which removed the way to save to the file.'
+dch --date "$SOURCE_DATE_RFC2822" --newversion 1:0.41.0-dmo9+stereo3d8 --distribution unstable 'Keep the explicit save-to-file command video-stereo-store-swap, under the name the published +stereo3d6 used: it writes the swap of the eyes into the playing local file only when asked and then unmarks the per-file mark; the swap property keeps the person'"'"'s choice in the per-file store alone. +stereo3d7 had replaced the command by a second per-file-store write, which removed the way to save to the file.'
 PYTHONPATH=/toolkit python3 -m lean.debian_prepare . 1:0.41.0-dmo9+stereo3d8+lc1 --toolkit /toolkit
 apt-get -y update >/dev/null 2>&1
 apt-get -y --no-install-recommends build-dep /out/lc/src > /out/build-dep.log 2>&1 || { tail -20 /out/build-dep.log; exit 1; }
 useradd --create-home --uid 1000 builder 2>/dev/null || true
 chown -R builder /out
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" /out/lc/src
 runuser -u builder -- bash -c 'cd /out/lc/src && dpkg-buildpackage -S -us -uc -d > /out/source.log 2>&1'
 cd /out/lc && dpkg-source -x mpv-dmo_0.41.0-dmo9+stereo3d8+lc1.dsc src2 >/dev/null 2>&1; chown -R builder /out
 cd src2

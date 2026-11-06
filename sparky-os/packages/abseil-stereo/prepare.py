@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """Prepare the reviewed Debian Abseil source for the edition's matching pair."""
-from datetime import datetime, timezone
-from email.utils import format_datetime
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'repo'))
+import reproducible
+
 here = Path(__file__).resolve().parent
+stamp = reproducible.recipe_epoch([here])
 source = Path(sys.argv[1]).resolve()
 version = subprocess.check_output(['dpkg-parsechangelog', '-l', str(source / 'debian/changelog'),
                                    '-S', 'Version'], text=True).strip()
@@ -30,6 +32,7 @@ entry = '''abseil (20260526.0-2+stereo3d1) unstable; urgency=medium
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  DATE
 
-'''.replace('DATE', format_datetime(datetime.now(timezone.utc)))
+'''.replace('DATE', reproducible.rfc2822(stamp))
 changelog.write_text(entry + changelog.read_text())
+reproducible.normalize_tree(source, stamp)
 print('Prepared Abseil 20260526.0-2+stereo3d1; apply Lean Code and build both architectures')

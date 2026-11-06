@@ -5,6 +5,7 @@
 # /prev the earlier +lc1 builds, /fork the stereo-layer clone (tag release-1.13.0).
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=${JOBS:-8}
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 unset DEB_BUILD_PROFILES # the complete cohort: AV, layer, policy and DIBR
@@ -26,6 +27,7 @@ tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$stamp" -C /work/e
 tar -xf "$ORIG"
 cp -a /work/debian-export "$PREFIX/debian"
 test "$(dpkg-parsechangelog -l "$PREFIX/debian/changelog" -S Version)" = "$NEWV"
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" "$PREFIX"
 dpkg-source -b "$PREFIX" >/dev/null
 rm -rf "$PREFIX"
 ls
@@ -42,6 +44,7 @@ apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.lo
 # the link and start gate of lean.debhelper runs the rebuilt programs in a bubblewrap root
 apt-get -y --no-install-recommends install bubblewrap >>/work/build-dep.log 2>&1
 mkdir -p "$SPARKY_LC_SCRATCH"
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /work/lc/source
 id builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/lc/source

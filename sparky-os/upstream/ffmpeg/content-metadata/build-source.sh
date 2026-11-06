@@ -1,6 +1,10 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 set -euo pipefail
+REPRO=/run/reproducible.py
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 export DEBEMAIL=Capitain_Jack@yahoo.com
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)'
 input=${1:?published source package directory}
@@ -14,6 +18,7 @@ cp "$recipe/retain-st3d-with-vexu.patch" debian/patches/0053-avformat-mov-retain
 cp "$recipe/fate-stereo-metadata.patch" debian/patches/0054-fate-mov-stereo-metadata.patch
 printf '%s\n' 0053-avformat-mov-retain-st3d-with-vexu.patch 0054-fate-mov-stereo-metadata.patch >> debian/patches/series
 QUILT_PATCHES=debian/patches quilt push -a
-dch --newversion '10:9.0.2-dmo1+stereo3d7+lc1' --distribution unstable 'Preserve st3d packing and right-first/custom modes when merging vexu eye metadata, with generated FATE regression coverage.'
+dch --date "$SOURCE_DATE_RFC2822" --newversion '10:9.0.2-dmo1+stereo3d7+lc1' --distribution unstable 'Preserve st3d packing and right-first/custom modes when merging vexu eye metadata, with generated FATE regression coverage.'
 # Retain the published native projection, restore and qualified payload hooks.
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -S -us -uc -d

@@ -6,6 +6,10 @@
 # The caller supplies SPARKY_LC_ARCHIVE_CONFIG, SPARKY_LC_SCRATCH and the previous cohort.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+REPRO="$HERE/../../repo/reproducible.py"
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 TOOLKIT=$(cd "$HERE/../.." && pwd)
 WORK=$(mkdir -p "$1" && cd "$1" && pwd)
 SOURCE=$(cd "$2" && pwd)
@@ -25,13 +29,15 @@ printf '%s\n' s6-0001-session-shortcuts-logout-default.patch >> debian/patches/s
 dpkg-source --before-build .
 python3 - "$HERE/changelog-stereo3d6.txt" <<'PY'
 from pathlib import Path
-import email.utils,sys
+import os,sys
 p=Path('debian/changelog')
-p.write_text(Path(sys.argv[1]).read_text().rstrip()+'\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  '+email.utils.formatdate(localtime=True)+'\n\n'+p.read_text())
+p.write_text(Path(sys.argv[1]).read_text().rstrip()+'\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  '+os.environ['SOURCE_DATE_RFC2822']+'\n\n'+p.read_text())
 PY
 cd ..
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" source
 dpkg-source -b source
 cd source
 PYTHONPATH="$TOOLKIT" python3 -m lean.debian_prepare "$WORK/source" 4:6.7.4-2+stereo3d6+lc1 --toolkit "$TOOLKIT"
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -us -uc -j4
 PYTHONPATH="$TOOLKIT" python3 -m lean.release check-debs "$WORK"/*+lc1_*.deb

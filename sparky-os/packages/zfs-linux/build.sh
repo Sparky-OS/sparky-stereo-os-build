@@ -7,6 +7,10 @@
 set -euo pipefail
 export TEST_JOBS=4
 HERE=$(cd "$(dirname "$0")" && pwd)
+REPRO="$HERE/../../repo/reproducible.py"
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 TOOLKIT=$(cd "$HERE/../.." && pwd)
 : "${SPARKY_LC_ARCHIVE_CONFIG:?Set the signed public archive configuration}"
 : "${SPARKY_LC_SCRATCH:?Set archive qualification scratch}"
@@ -38,13 +42,15 @@ s = s.replace(original, 'Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack
 s = s.replace('Homepage: https://zfsonlinux.org/', 'Homepage: https://sparkylinux.org\nBugs: https://github.com/Sparky-OS/sparky-stereo-os/issues', 1)
 p.write_text(s)
 PY
-dch --newversion "$VERSION" --distribution mashtabba \
+dch --date "$SOURCE_DATE_RFC2822" --newversion "$VERSION" --distribution mashtabba \
 	'Backport OpenZFS Linux 7.3 compatibility by Rob Norris, co-developed with TheAlmightyOgreLord, and the supported-kernel declaration by ooonea.eth.'
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-source -b .
 cp "$BUILD_ROOT"/*.dsc "$BUILD_ROOT"/*.debian.tar.* "$BUILD_ROOT"/*.orig.tar.* "$OUT/authored/"
 dpkg-source -x "$BUILD_ROOT/zfs-linux_$VERSION.dsc" "$BUILD_ROOT/lean-source"
 PYTHONPATH="$TOOLKIT" python3 -m lean.debian_prepare "$BUILD_ROOT/lean-source" "$VERSION+lc1" --toolkit "$TOOLKIT" --build-dependency clang
 cd "$BUILD_ROOT/lean-source"
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -us -uc -j4
 PYTHONPATH="$TOOLKIT" python3 -m lean.release check-debs "$BUILD_ROOT"/*+lc1_*.deb
 PYTHONPATH="$TOOLKIT" python3 -m lean.release check-identity "$BUILD_ROOT"/*+lc1_*.deb

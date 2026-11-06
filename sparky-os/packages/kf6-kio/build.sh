@@ -23,6 +23,12 @@ sh /run/https-only-apt.sh || exit 1
 HERE=$(cd "$(dirname "$0")" && pwd)
 : "${SPARKY_PUBLISHED_TREE:?}" "${SPARKY_RELEASE_TOOLKIT:?}" "${SPARKY_LC_PREVIOUS_DIR:?}" "${BUILD_ROOT:?}" "${OUT:?}"
 : "${SPARKY_LC_ARCHIVE_CONFIG:?}" "${SPARKY_LC_SCRATCH:?}"
+# The source is dated by its recipe, never by the clock (ORDER 421b): SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch
+# sparky-os/packages/kf6-kio), which the changelog entry, Lean Code and dpkg-source all read.
+REPRO=$SPARKY_RELEASE_TOOLKIT/repo/reproducible.py
+: "${SOURCE_DATE_EPOCH:?export the recipe date: python3 $SPARKY_RELEASE_TOOLKIT/repo/reproducible.py epoch $HERE}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 PREDECESSOR=6.30.0-1+stereo3d7+lc1
 VERSION=6.30.0-1+stereo3d9+lc1
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY
@@ -69,7 +75,7 @@ for name in kf6-kio-gpu-launch.po.patch; do
 done
 (cd source && QUILT_PATCHES=debian/patches quilt push -a > ../quilt.log)
 python3 - source "$VERSION" <<'PY'
-import email.utils, sys
+import os, sys
 from pathlib import Path
 source, version = Path(sys.argv[1]), sys.argv[2]
 changelog = source/'debian/changelog'
@@ -93,7 +99,7 @@ entry = (f'kf6-kio ({version}) testing; urgency=medium\n\n'
          '    carries the catalogue patch as the build repository has it.\n'
          '  * The new messages in Polish, Brazilian Portuguese, French, German,\n'
          '    Japanese, Korean and Chinese (Simplified and Traditional).\n\n'
-         ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + email.utils.formatdate(localtime=True) + '\n\n')
+         ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n')
 changelog.write_text(entry + old)
 PY
 dpkg-parsechangelog -l source/debian/changelog -S Version | grep -qx "$VERSION"
@@ -114,6 +120,7 @@ apt-get -y --no-install-recommends build-dep ./source > build-dep.log 2>&1
 apt-get -y --no-install-recommends install bubblewrap >> build-dep.log 2>&1
 id -u builder > /dev/null 2>&1 || useradd --create-home --uid 1000 builder
 mkdir -p "$SPARKY_LC_SCRATCH"
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" "$BUILD_ROOT/source"
 chown -R builder:builder "$BUILD_ROOT" "$SPARKY_LC_SCRATCH"
 cd source
 runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR="$SPARKY_LC_PREVIOUS_DIR" SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" \

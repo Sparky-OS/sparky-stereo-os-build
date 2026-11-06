@@ -9,6 +9,7 @@
 # published .dsc, DSC_SHA256 its checksum, PLAIN_OPTIONS the plain-from-lc.py option the source's shape needs.
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 : "${DSC:?}" "${DSC_SHA256:?}" "${PLAIN_OPTIONS?}" "${PATCH:?}"
@@ -66,7 +67,7 @@ echo "$PATCH" >> t/debian/patches/series
 (cd t && dpkg-source --before-build . && dpkg-source --after-build .)
 python3 - <<'CHANGELOG'
 from pathlib import Path
-import email.utils, re, subprocess
+import os, re, subprocess
 entry = Path('/entry').read_text()
 m = re.match(r'(\S+) \((\S+)\) unstable; urgency=medium\n\n', entry)
 assert m and '+lc' not in m.group(2), entry[:80]
@@ -76,11 +77,12 @@ assert old.startswith(m.group(1) + ' ('), old[:60]
 current = old.split('(', 1)[1].split(')', 1)[0]
 subprocess.run(['dpkg', '--compare-versions', m.group(2), 'gt', current], check=True)
 p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  '
-             + email.utils.formatdate(localtime=True) + '\n\n' + old)
+             + os.environ['SOURCE_DATE_RFC2822'] + '\n\n' + old)
 Path('/work/version').write_text(m.group(2) + '\n')
 CHANGELOG
 VERSION=$(cat /work/version)
 head -12 t/debian/changelog
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" t
 dpkg-source -b t >/dev/null
 rm -rf t
 ls
@@ -106,6 +108,7 @@ dpkg-query -W -f='${Package}\t${Version}\n' > /work/build-environment.tsv
 # the link and start gate of lean.debhelper runs the rebuilt programs in a bubblewrap root
 apt-get -y --no-install-recommends install bubblewrap >> /work/build-dep.log 2>&1
 mkdir -p "$SPARKY_LC_SCRATCH"
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /work/lc/source
 id -u builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/lc/source

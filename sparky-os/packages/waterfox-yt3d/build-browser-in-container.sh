@@ -5,6 +5,7 @@
 # /patches: browser/ of this recipe; /browser-toolchains: the compiler bundle.
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=${BROWSER_JOBS:-8}
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 OLD=6.7.5-0+stereo3d5+lc1 NEW=6.7.5-0+stereo3d9 COMMIT=9254cd42f2a884d4a0c7a6bee117b874cb91dd25 OLDCOMMIT=b1d115f8d3070a81f3e231acb86cc446656581fd
@@ -18,15 +19,15 @@ mkdir -p debian/patches
 cp /patches/0001-*.patch /patches/0002-*.patch /patches/0003-*.patch /patches/0004-*.patch debian/patches/
 ls /patches/0001-*.patch /patches/0002-*.patch /patches/0003-*.patch /patches/0004-*.patch | xargs -n1 basename > debian/patches/series
 python3 - <<'PY'
-import email.utils
-top = open('/patches/changelog9.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d9').replace('@DATE@', email.utils.formatdate(localtime=False))
-top += open('/patches/changelog8.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d8').replace('@DATE@', email.utils.formatdate(localtime=False))
-top += open('/patches/changelog7.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d7').replace('@DATE@', email.utils.formatdate(localtime=False))
-top += open('/patches/changelog.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d6').replace('@DATE@', email.utils.formatdate(localtime=False))
+import os
+top = open('/patches/changelog9.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d9').replace('@DATE@', os.environ['SOURCE_DATE_RFC2822'])
+top += open('/patches/changelog8.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d8').replace('@DATE@', os.environ['SOURCE_DATE_RFC2822'])
+top += open('/patches/changelog7.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d7').replace('@DATE@', os.environ['SOURCE_DATE_RFC2822'])
+top += open('/patches/changelog.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d6').replace('@DATE@', os.environ['SOURCE_DATE_RFC2822'])
 lc = ('sparky-stereo-browser (6.7.5-0+stereo3d9+lc1) UNRELEASED; urgency=medium\n\n'
       '  * Apply verified native Lean Code before compilation and qualified lc1\n'
       '    payload assembly; retain exact authored source and HR companions.\n\n'
-      ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + email.utils.formatdate(localtime=False) + '\n\n')
+      ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n')
 old = open('debian/changelog').read()
 open('debian/changelog', 'w').write(lc + top + old[old.index('sparky-stereo-browser (6.7.5-0+stereo3d5) unstable'):])
 PY
@@ -57,6 +58,7 @@ sed -i "s/^MOZ_SOURCE_CHANGESET=.*/MOZ_SOURCE_CHANGESET=$COMMIT/" debian/browser
 grep -q "\"browser_commit\": \"$OLDCOMMIT\"" debian/cargo-baseline.json
 sed -i "s/\"browser_commit\": \"$OLDCOMMIT\"/\"browser_commit\": \"$COMMIT\"/" debian/cargo-baseline.json
 cd ..
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" src
 dpkg-source -b src
 rm -rf src
 sha256sum -c /work/orig.sha256

@@ -12,6 +12,10 @@ set -euo pipefail
 WORK=${1:-${SPARKY_WORKSPACES:?}/hand-installed-apps/capi/build}
 mkdir -p "$WORK"
 HERE=$(dirname "$(readlink -f "$0")")
+REPRO="$HERE/../../repo/reproducible.py"
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 docker run --rm -e HOST_UID=$(id -u) -v "$WORK":/out -v "$HERE/compat-include":/compat:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro sparky-pkg-base:amd64 bash -c '
 set -e
 sh /run/https-only-apt.sh
@@ -26,7 +30,7 @@ apt-get source libcapi20-3 2>&1 | tail -3 || true
 cd libcapi20-3-*
 cp debian/changelog /out/work/changelog.orig; cp debian/control /out/work/control.orig
 CUR=$(dpkg-parsechangelog -S Version)
-dch -v "$CUR+sparky1" -D unstable --force-distribution "Rebuilt for Sparky Stereo OS: Sparky wine depends on libcapi20-3t64, whose binary is not in Debian testing (bug #1143331)."
+dch --date "$SOURCE_DATE_RFC2822" -v "$CUR+sparky1" -D unstable --force-distribution "Rebuilt for Sparky Stereo OS: Sparky wine depends on libcapi20-3t64, whose binary is not in Debian testing (bug #1143331)."
 sed -i "s/^Maintainer: \(.*\)/Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\nXSBC-Original-Maintainer: \1/" debian/control
 mkdir -p debian/compat-include && cp -a /compat/linux /compat/README debian/compat-include/
 printf "\nexport DEB_CPPFLAGS_MAINT_APPEND = -I\$(CURDIR)/debian/compat-include\n" >> debian/rules
@@ -38,8 +42,9 @@ License: GPL-2 with Linux-syscall-note
  Copied unchanged from linux-libc-dev 6.12.107-1 (Debian stable); the headers are
  no longer in linux-libc-dev in testing. SPDX: GPL-2.0 WITH Linux-syscall-note.
 X
-dch -a "debian/compat-include: the two kernel CAPI headers linux-libc-dev no longer ships, used through CPPFLAGS (debian/rules); configure stops without them, which is why the package is not in testing."
+dch --date "$SOURCE_DATE_RFC2822" -a "debian/compat-include: the two kernel CAPI headers linux-libc-dev no longer ships, used through CPPFLAGS (debian/rules); configure stops without them, which is why the package is not in testing."
 apt-get build-dep -y -qq . 2>&1 | tail -1
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -us -uc -sa 2>&1 | tail -6
 cd .. && lintian -I libcapi20-3t64_*.deb 2>&1 | head -20 > lintian.txt; cat lintian.txt
 chown -R $HOST_UID:$HOST_UID /out; ls /out/work
