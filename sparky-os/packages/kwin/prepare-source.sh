@@ -22,7 +22,7 @@ printf '%s  %s\n' 81c8091594a3b7e1a9d4ea44a7f4c56b508e0872d67f79e5ff8f2fa0d1de45
 cp "$input/kwin_6.7.4-2+stereo3d41+lc1.dsc" "$input/kwin_6.7.4-2+stereo3d41+lc1.debian.tar.xz" \
     "$input/kwin_6.7.4.orig.tar.xz" "$input/kwin_6.7.4.orig.tar.xz.asc" .
 dpkg-source -x kwin_6.7.4-2+stereo3d41+lc1.dsc source
-python3 "$toolkit/repo/plain-from-lc.py" source
+python3 "$toolkit/repo/plain-from-lc.py" --save-plan "$out/published-preserve.json" source
 cd source
 grep -qx s41-0001-plugins-screenshot-Drop-X-KDE-DBUS-Restricted-Interf.patch debian/patches/series
 for patch in "$HERE"/patches/s42-*.patch; do
@@ -55,7 +55,7 @@ cp kwin_6.7.4-2+stereo3d42.dsc kwin_6.7.4-2+stereo3d42.debian.tar.xz \
 cd "$out/lc"
 dpkg-source -x kwin_6.7.4-2+stereo3d42.dsc source
 PYTHONPATH="$toolkit" python3 -m lean.debian_prepare "$out/lc/source" \
-    4:6.7.4-2+stereo3d42+lc1 --toolkit "$toolkit"
+    4:6.7.4-2+stereo3d42+lc1 --toolkit "$toolkit" --preserve-plan "$out/published-preserve.json"
 # Keep the accepted release's timestamp; the pipeline owns the entry and lc marker.
 python3 - <<'DATE'
 from pathlib import Path

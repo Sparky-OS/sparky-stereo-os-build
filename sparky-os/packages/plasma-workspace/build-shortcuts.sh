@@ -22,7 +22,7 @@ cp "$SOURCE/plasma-workspace_6.7.4-2+stereo3d5+lc1.dsc" \
    "$SOURCE/plasma-workspace_6.7.4-2+stereo3d5+lc1.debian.tar.xz" \
    "$SOURCE/plasma-workspace_6.7.4.orig.tar.xz" "$SOURCE/plasma-workspace_6.7.4.orig.tar.xz.asc" .
 dpkg-source -x plasma-workspace_6.7.4-2+stereo3d5+lc1.dsc source
-python3 "$TOOLKIT/repo/plain-from-lc.py" source
+python3 "$TOOLKIT/repo/plain-from-lc.py" --save-plan "$WORK/published-preserve.json" source
 cd source
 cp "$HERE/patches/s6-0001-session-shortcuts-logout-default.patch" debian/patches/
 printf '%s\n' s6-0001-session-shortcuts-logout-default.patch >> debian/patches/series
@@ -37,7 +37,7 @@ cd ..
 python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" source
 dpkg-source -b source
 cd source
-PYTHONPATH="$TOOLKIT" python3 -m lean.debian_prepare "$WORK/source" 4:6.7.4-2+stereo3d6+lc1 --toolkit "$TOOLKIT"
+PYTHONPATH="$TOOLKIT" python3 -m lean.debian_prepare "$WORK/source" 4:6.7.4-2+stereo3d6+lc1 --toolkit "$TOOLKIT" --preserve-plan "$WORK/published-preserve.json"
 python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -us -uc -j4
 PYTHONPATH="$TOOLKIT" python3 -m lean.release check-debs "$WORK"/*+lc1_*.deb

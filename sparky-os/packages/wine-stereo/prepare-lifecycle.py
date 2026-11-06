@@ -32,6 +32,7 @@ def main():
     preserve = json.loads((source / 'debian/sparky-lean-preserve.json').read_text())
     if '*.h' not in preserve:
         raise ValueError('Missing the WIDL/WRC authored-header preserve contract')
+    plan = source.with_name(source.name + '.published-preserve.json')
     rules = (source / 'debian/rules').read_text()
     if '--enable-archs=x86_64,i386' not in rules:
         raise ValueError('Missing existing WoW64 configuration')
@@ -41,7 +42,7 @@ def main():
         raise ValueError('Refusing to replace a patch')
     patch = recipe / 'patches/wine-vulkan-child-lifecycle.patch'
     subprocess.run(['patch', '--dry-run', '--fuzz=0', '-p1', '-i', str(patch)], cwd=source, check=True)
-    subprocess.run([sys.executable, str(toolkit / 'repo/plain-from-lc.py'), '--edition-entry', str(source)], env=env, check=True)
+    subprocess.run([sys.executable, str(toolkit / 'repo/plain-from-lc.py'), '--edition-entry', '--save-plan', str(plan), str(source)], env=env, check=True)
     shutil.copy2(patch, target)
     with (source / 'debian/patches/series').open('a') as stream:
         stream.write('\n' + name + '\n')
@@ -61,9 +62,8 @@ def main():
     template.write_text(text.replace(anchor, anchor + ' libstereo-declare1 (>= 1.8.0-1),\n'))
     subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', '10.0~repack-12+stereo3d7', '--distribution', 'unstable',
                     'Keep stereo Vulkan children attached to their actual window lifetime; maintain clipping, membership and first-paint ordering with a transactional versioned producer acknowledgement.'], cwd=source, env=env, check=True)
-    command = [sys.executable, '-m', 'lean.debian_prepare', str(source), '10.0~repack-12+stereo3d7+lc1', '--toolkit', str(toolkit), '--build-dependency', 'bubblewrap']
-    for pattern, reason in preserve.items():
-        command += ['--preserve-source', pattern, reason]
+    command = [sys.executable, '-m', 'lean.debian_prepare', str(source), '10.0~repack-12+stereo3d7+lc1', '--toolkit', str(toolkit), '--build-dependency', 'bubblewrap',
+               '--preserve-plan', str(plan)]
     subprocess.run(command, env=env, check=True)
     subprocess.run([sys.executable, str(recipe / 'sync-control.py'), str(source)], env=env, check=True)
     reproducible.normalize_tree(source, stamp)

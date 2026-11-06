@@ -57,7 +57,7 @@ def source_date_epoch():
     return int(when)
 
 
-def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=(), generated_outputs=()):
+def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=(), generated_outputs=(), carried_plan=None):
     when = source_date_epoch()
     root, toolkit = Path(root).resolve(), Path(toolkit).resolve()
     rules_path = root / "debian/rules"
@@ -77,6 +77,12 @@ def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=(), 
     destination = root / "debian/sparky-lean-toolkit"
     if destination.exists():
         raise ValueError("Refusing to replace an existing toolkit")
+    # ORDER 435: the published source's plan (repo/plain-from-lc.py --save-plan FILE) comes first, then this call's own patterns
+    carried = Path(carried_plan) if carried_plan else None
+    carried_text = carried.read_text() if carried and carried.exists() else None
+    carried_items = list(json.loads(carried_text).items()) if carried_text is not None else []
+    own_items = list(preserve_sources)
+    preserve_sources = carried_items + own_items
     preserve = {}
     for pattern, reason in preserve_sources:
         if (not pattern or pattern.startswith('/') or '..' in pattern.split('/')
@@ -86,6 +92,12 @@ def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=(), 
     preserve_path = root / 'debian/sparky-lean-preserve.json'
     if preserve and preserve_path.exists():
         raise ValueError("Preserve the existing source-consumer plan; do not replace it")
+    if carried_text is not None and not own_items and json.dumps(preserve, indent=2) + '\n' != carried_text:
+        source = subprocess.check_output(["dpkg-parsechangelog", "-S", "Source"], cwd=root, text=True).strip()
+        raise ValueError(
+            f"{source} {old}: the published source's debian/sparky-lean-preserve.json ({carried}) is not the form lean.debian_prepare "
+            "writes, so the next source would not carry it byte for byte; no source is written without it. Rerun the package through "
+            "repo/lc-successor.py, which keeps the published plan, or fix the plan in its recipe")
     generated = {}
     for pattern, form, reason in generated_outputs:
         if pattern in generated:
@@ -156,6 +168,10 @@ if __name__ == "__main__":
     parser.add_argument("--preserve-source", nargs=2, action="append", default=[],
                         metavar=("PATTERN", "REASON"),
                         help="Keep source read by an additional consumer unchanged; retained in source")
+    parser.add_argument("--preserve-plan", type=Path, metavar="FILE",
+                        help="The published source's source-consumer plan saved by repo/plain-from-lc.py --save-plan FILE; "
+                             "its patterns are kept, then those of --preserve-source, and with no other pattern the written "
+                             "plan must equal FILE byte for byte (a missing FILE is a source without a plan)")
     parser.add_argument("--generated-output", nargs=3, action="append", default=[],
                         metavar=("PATTERN", "FORM", "REASON"),
                         help="An installed file a build step generates from a source copy in an exact form "
@@ -163,6 +179,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     try:
         prepare(args.root, args.version, args.toolkit, args.build_dependency, args.preserve_source,
-                args.generated_output)
+                args.generated_output, args.preserve_plan)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, str(error) + "\n")

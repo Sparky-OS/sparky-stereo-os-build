@@ -26,8 +26,7 @@ def main():
     old = subprocess.check_output(['dpkg-parsechangelog', '-SVersion'], cwd=source, text=True).strip()
     if old != '2.7.1-4+stereo3d3+lc1' or (source / '.sparky-lc').exists():
         raise ValueError('Expected a fresh extraction of the retained DXVK +3 descriptor')
-    if (source / 'debian/sparky-lean-preserve.json').exists():
-        raise ValueError('Review the changed source-consumer preserve plan')
+    plan = source.with_name(source.name + '.published-preserve.json')
     upstream = ('stereo3d/0000-upstream-d3d11-resize-dimensions.patch',
                 'upstream-d3d11-resize-dimensions.patch')
     patches = [upstream,
@@ -46,7 +45,7 @@ def main():
     text = text.replace(suffix, '\n').replace(
         'Build-Depends:', 'Build-Depends: gcc, node-acorn, nodejs, perl, python3, python3-yaml,', 1)
     control.write_text(text)
-    subprocess.run([sys.executable, str(toolkit / 'repo/plain-from-lc.py'), str(source)], env=env, check=True)
+    subprocess.run([sys.executable, str(toolkit / 'repo/plain-from-lc.py'), '--save-plan', str(plan), str(source)], env=env, check=True)
     subprocess.run(['quilt', 'pop', '-a'], cwd=source, env=env, check=True)
     for name, authored in patches:
         shutil.copy2(recipe / 'patches' / authored, source / 'debian/patches' / name)
@@ -56,7 +55,7 @@ def main():
     subprocess.run(['quilt', 'push', '-a'], cwd=source, env=env, check=True)
     subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', '2.7.1-4+stereo3d5', '--distribution', 'unstable',
                     'Backport ficool2 upstream commit 3dbf33cb2205dd0d573cbc7a65e3855d97a4800b to use the requested swapchain resize dimensions. Retain exact packed-eye copies, the versioned Wine child-surface contract and ordinary WSI fallback.'], cwd=source, env=env, check=True)
-    subprocess.run([sys.executable, '-m', 'lean.debian_prepare', str(source), '2.7.1-4+stereo3d5+lc1', '--toolkit', str(toolkit), '--build-dependency', 'bubblewrap'], env=env | {'SOURCE_DATE_EPOCH': str(stamp)}, check=True)
+    subprocess.run([sys.executable, '-m', 'lean.debian_prepare', str(source), '2.7.1-4+stereo3d5+lc1', '--toolkit', str(toolkit), '--build-dependency', 'bubblewrap', '--preserve-plan', str(plan)], env=env | {'SOURCE_DATE_EPOCH': str(stamp)}, check=True)
     reproducible.normalize_tree(source, stamp)
 
 

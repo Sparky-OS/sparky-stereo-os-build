@@ -180,5 +180,8 @@ fi
 # ORDER 433: the transition route keeps the published source's Lean Code preserve plan
 bash "$OS/tests/reproducible-sources/transition-preserve.sh" "$OS" || fail=1
 
+# ORDER 435: every route through plain-from-lc.py keeps the plan; plain-from-lc.py is atomic
+bash "$OS/tests/reproducible-sources/plain-preserve.sh" "$OS" || fail=1
+
 [ $fail = 0 ] && echo "PASS reproducible sources" || echo "FAILED"
 exit $fail

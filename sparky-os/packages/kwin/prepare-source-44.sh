@@ -22,7 +22,7 @@ printf '%s  %s\n' a4244ddef20f7b1428381d02c09899a810d29476e1d4079f7ccc57b1c42a9f
 cp "$input/kwin_6.7.4-2+stereo3d43+lc1.dsc" "$input/kwin_6.7.4-2+stereo3d43+lc1.debian.tar.xz" \
     "$input/kwin_6.7.4.orig.tar.xz" "$input/kwin_6.7.4.orig.tar.xz.asc" .
 dpkg-source -x kwin_6.7.4-2+stereo3d43+lc1.dsc source
-python3 "$toolkit/repo/plain-from-lc.py" source
+python3 "$toolkit/repo/plain-from-lc.py" --save-plan "$out/published-preserve.json" source
 cd source
 grep -qx s43-0002-autotests-The-depth-limits-follow-the-output.patch debian/patches/series
 for patch in "$HERE"/patches/s44-*.patch; do
@@ -56,7 +56,7 @@ cp kwin_6.7.4-2+stereo3d44.dsc kwin_6.7.4-2+stereo3d44.debian.tar.xz \
 cd "$out/lc"
 dpkg-source -x kwin_6.7.4-2+stereo3d44.dsc source
 PYTHONPATH="$toolkit" python3 -m lean.debian_prepare "$out/lc/source" \
-    4:6.7.4-2+stereo3d44+lc1 --toolkit "$toolkit"
+    4:6.7.4-2+stereo3d44+lc1 --toolkit "$toolkit" --preserve-plan "$out/published-preserve.json"
 # The pipeline owns the entry and lc marker; its date is the recipe's (SOURCE_DATE_EPOCH, passed to dch by debian_prepare).
 python3 - "$entry_date" <<'DATE'
 import sys

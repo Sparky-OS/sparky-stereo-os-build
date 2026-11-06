@@ -9,7 +9,15 @@ Every step checks that the text it removes is the text debian_prepare writes; an
 The published repository holds only +lc1 sources, and the next version of a package starts from
 its plain source: unpack the published .dsc (dpkg-source -x), run this on the tree, then pack it
 with dpkg-source -b next to the orig tarball and its .asc.
-  plain-from-lc.py [--no-build-depends | --build-depends-at-end] [--edition-entry | --lc-successor] LC_SOURCE_DIR
+  plain-from-lc.py [--no-build-depends | --build-depends-at-end] [--edition-entry | --lc-successor] [--save-plan FILE | --drop-plan] LC_SOURCE_DIR
+The preserve plan (ORDER 435): a source that holds debian/sparky-lean-preserve.json (the Lean Code source-consumer plan) needs
+--save-plan FILE, which copies the plan to FILE (a path outside the tree, which must not exist) before the tree loses it, so
+the caller hands it back to the next source with lean.debian_prepare --preserve-plan FILE, which checks it byte for byte; or
+--drop-plan, for a caller that carries the plan itself (repo/lc-successor.py reads it through --save-plan too). With neither,
+the tool stops before it changes anything, so no route drops a plan without saying so. A source without a plan needs neither
+(--save-plan then writes no file, and FILE must not exist).
+Atomic (ORDER 435): every check and every new text comes first; the tree is written only when all of them passed, so a stop
+leaves it as it was.
 --no-build-depends: the +lc1 source was prepared before debian_prepare added the build dependencies
 (the native batch of 20 October 2026, kscreenlocker and plasma-desktop +stereo3d1+lc1 among them); the
 tool then checks that Build-Depends does not start with them and leaves it as it is.
@@ -36,17 +44,31 @@ no_build_depends = '--no-build-depends' in args
 at_end = '--build-depends-at-end' in args
 edition_entry = '--edition-entry' in args
 lc_successor = '--lc-successor' in args
-assert not (edition_entry and lc_successor) and not (no_build_depends and at_end), __doc__
-args = [a for a in args if a not in ('--no-build-depends', '--build-depends-at-end', '--edition-entry', '--lc-successor')]
+drop_plan = '--drop-plan' in args
+save_plan = None
+if '--save-plan' in args:
+    i = args.index('--save-plan')
+    assert i + 1 < len(args), __doc__
+    save_plan = Path(args[i + 1])
+    del args[i:i + 2]
+assert not (edition_entry and lc_successor) and not (no_build_depends and at_end) and not (drop_plan and save_plan), __doc__
+args = [a for a in args if a not in ('--no-build-depends', '--build-depends-at-end', '--edition-entry', '--lc-successor', '--drop-plan')]
 assert len(args) == 1 and not args[0].startswith('--'), __doc__
 root = Path(args[0])
 deb = root / 'debian'
 
 toolkit = deb / 'sparky-lean-toolkit'
+plan = deb / 'sparky-lean-preserve.json'
 assert toolkit.is_dir(), 'no debian/sparky-lean-toolkit: not an lc1 source'
-shutil.rmtree(toolkit)
-(deb / 'sparky-lean-preserve.json').unlink(missing_ok=True)
+if plan.exists():
+    assert drop_plan or save_plan, (f'{root} holds a Lean Code preserve plan (debian/sparky-lean-preserve.json): pass --save-plan FILE and hand FILE to '
+                                    'lean.debian_prepare --preserve-plan, or --drop-plan if the caller carries the plan itself; nothing was changed')
+if save_plan:
+    assert not save_plan.exists(), f'{save_plan} exists: a plan saved by an earlier run would be taken for this source\'s'
+    assert not root.resolve() in save_plan.resolve().parents, f'{save_plan} is inside the tree'
 
+# every check and every new text first; the tree is written only after all of them passed (ORDER 435)
+writes = []
 control = (deb / 'control').read_text()
 prefix = 'Build-Depends: gcc, node-acorn, nodejs, perl, python3, python3-yaml,'
 if no_build_depends:
@@ -55,10 +77,10 @@ elif at_end:
     suffix = ', gcc, node-acorn, nodejs, perl, python3, python3-yaml\n'
     assert prefix not in control and len(re.findall(r'^Build-Depends: .*' + re.escape(suffix), control, re.M)) == 1, \
         'Build-Depends does not end with the lc1 build dependencies'
-    (deb / 'control').write_text(re.sub(r'^(Build-Depends: .*)' + re.escape(suffix), lambda m: m.group(1) + '\n', control, flags=re.M))
+    writes.append((deb / 'control', re.sub(r'^(Build-Depends: .*)' + re.escape(suffix), lambda m: m.group(1) + '\n', control, flags=re.M)))
 else:
     assert control.count(prefix) == 1, 'the lc1 build dependencies are not where debian_prepare puts them'
-    (deb / 'control').write_text(control.replace(prefix, 'Build-Depends:'))
+    writes.append((deb / 'control', control.replace(prefix, 'Build-Depends:')))
 
 rules = (deb / 'rules').read_text()
 tail = """
@@ -75,7 +97,7 @@ override_dh_builddeb:
 \tPYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.debhelper --provenance $(CURDIR)/debian/sparky-lean-toolkit/provenance.sh
 """
 assert rules.endswith(tail), 'the rules file does not end with the lc1 targets'
-(deb / 'rules').write_text(rules[:-len(tail)] + '\n')
+writes.append((deb / 'rules', rules[:-len(tail)] + '\n'))
 
 changelog = (deb / 'changelog').read_text()
 first, body, trailer, rest = changelog.split('\n\n', 3)
@@ -93,20 +115,28 @@ if lc_successor:
     assert lc_trailer.startswith(' -- ') and '\n' not in lc_trailer, lc_trailer
     assert older.startswith(m.group(1) + ' (' + m_lc.group(1) + ') '), 'the earlier plain entry does not follow: ' + older[:80]
     assert subprocess.run(['dpkg', '--compare-versions', m.group(2), 'gt', m_lc.group(1)]).returncode == 0, (m.group(2), m_lc.group(1))
-    (deb / 'changelog').write_text(f'{m.group(1)} ({m.group(2)}) unstable; urgency=medium\n\n' + body + '\n\n' + trailer + '\n\n' + older)
-    print(f'{m.group(1)} {m.group(2)}+lc1 -> {m.group(2)} (the {m_lc.group(1)}+lc1 Lean Code entry left out)')
-    sys.exit(0)
-m = re.match(r'(\S+) \((\S+)\+lc1\) UNRELEASED; urgency=medium$', first)
-assert m, 'the first changelog entry is not an +lc1 entry: ' + first
-assert trailer.startswith(' -- ') and '\n' not in trailer, trailer
-if edition_entry:
-    items = re.split(r'\n(?=  \* )', body)
-    assert items.count(lean_item) == 1 and len(items) > 1, body
-    assert not rest.startswith(m.group(1) + ' (' + m.group(2) + ') '), 'a plain entry follows: run without --edition-entry'
-    items.remove(lean_item)
-    rest = f'{m.group(1)} ({m.group(2)}) unstable; urgency=medium\n\n' + '\n'.join(items) + '\n\n' + trailer + '\n\n' + rest
+    writes.append((deb / 'changelog', f'{m.group(1)} ({m.group(2)}) unstable; urgency=medium\n\n' + body + '\n\n' + trailer + '\n\n' + older))
+    message = f'{m.group(1)} {m.group(2)}+lc1 -> {m.group(2)} (the {m_lc.group(1)}+lc1 Lean Code entry left out)'
 else:
-    assert body.startswith('  * Apply verified native Lean Code before compilation'), body
-    assert rest.startswith(m.group(1) + ' (' + m.group(2) + ') '), rest[:80]
-(deb / 'changelog').write_text(rest)
-print(f'{m.group(1)} {m.group(2)}+lc1 -> {m.group(2)}')
+    m = re.match(r'(\S+) \((\S+)\+lc1\) UNRELEASED; urgency=medium$', first)
+    assert m, 'the first changelog entry is not an +lc1 entry: ' + first
+    assert trailer.startswith(' -- ') and '\n' not in trailer, trailer
+    if edition_entry:
+        items = re.split(r'\n(?=  \* )', body)
+        assert items.count(lean_item) == 1 and len(items) > 1, body
+        assert not rest.startswith(m.group(1) + ' (' + m.group(2) + ') '), 'a plain entry follows: run without --edition-entry'
+        items.remove(lean_item)
+        rest = f'{m.group(1)} ({m.group(2)}) unstable; urgency=medium\n\n' + '\n'.join(items) + '\n\n' + trailer + '\n\n' + rest
+    else:
+        assert body.startswith('  * Apply verified native Lean Code before compilation'), body
+        assert rest.startswith(m.group(1) + ' (' + m.group(2) + ') '), rest[:80]
+    writes.append((deb / 'changelog', rest))
+    message = f'{m.group(1)} {m.group(2)}+lc1 -> {m.group(2)}'
+
+if save_plan and plan.exists():
+    shutil.copyfile(plan, save_plan)
+for path, text in writes:
+    path.write_text(text)
+shutil.rmtree(toolkit)
+plan.unlink(missing_ok=True)
+print(message)
