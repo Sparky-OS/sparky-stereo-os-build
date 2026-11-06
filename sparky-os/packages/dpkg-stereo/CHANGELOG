@@ -1,4 +1,14 @@
 -------------------------------------------------------------------------------
+  Version 0.1.39 (2026-11-06)
+-------------------------------------------------------------------------------
+  * debsums is a Depends (ORDER 437). --debsums is a feature of the package,
+    and "a dependency a designed feature needs is a Depends" (Daniel,
+    2026-11-02, memory design-check-every-default); 0.1.38 had it as a
+    Suggests. debsums is 108 KB installed (Depends libdpkg-perl,
+    libfile-fnmatch-perl, perl). --debsums still says what to do when debsums
+    was removed afterwards (LOCAL81, exit 2).
+
+-------------------------------------------------------------------------------
   Version 0.1.38 (2026-11-06)
 -------------------------------------------------------------------------------
   * --debsums [PACKAGE...]: Lean Code's front for debsums (ORDER 252c, J16).

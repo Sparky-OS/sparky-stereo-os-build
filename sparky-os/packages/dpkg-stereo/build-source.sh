@@ -42,6 +42,14 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * debsums is a Depends of dpkg-stereo (ORDER 437): dpkg-stereo --debsums is
+    one of its commands, and a dependency a designed feature needs is a
+    Depends, not a Suggests.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 06 Nov 2026 21:00:00 +0000
+
+dpkg-stereo (0.1.38) unstable; urgency=medium
+
   * dpkg-stereo --debsums: Lean Code's front for debsums (ORDER 252c). The
     projected files are checked by their lean hashes, every other file
     through debsums, which alone calls each projected file changed. A file
