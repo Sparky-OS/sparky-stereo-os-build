@@ -12,7 +12,7 @@
 # IMAGE: an image with gcc, make, flex, bison, bc, libelf, libssl and qemu-system-x86 (the EFI mixed rig image, kernel/tests/efi-mixed/docker, has them).
 set -euo pipefail
 SRC=$(readlink -f "$1"); B=$(mkdir -p "$2" && readlink -f "$2"); K=$(readlink -f "$3"); LOG=$(readlink -f "$4")
-docker run --rm --platform linux/amd64 --cpus "${CPUS:-4}" --memory 8g --user "$(id -u):$(id -g)" -e HOME=/tmp \
+docker run --rm --ulimit core=0 --platform linux/amd64 --cpus "${CPUS:-4}" --memory 8g --user "$(id -u):$(id -g)" -e HOME=/tmp \
 	--device /dev/kvm --group-add "$(getent group kvm | cut -d: -f3)" \
 	-v "$SRC":/src:ro -v "$B":/b -v "$K":/k.kunitconfig:ro -v "$(dirname "$LOG")":/out "${IMAGE:?an image with the kernel build tools and qemu-system-x86}" \
 	sh -c "cd /src && python3 tools/testing/kunit/kunit.py run --arch=x86_64 --build_dir=/b --kunitconfig=/k.kunitconfig \
