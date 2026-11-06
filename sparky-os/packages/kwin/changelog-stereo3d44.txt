@@ -1,0 +1,14 @@
+kwin (4:6.7.4-2+stereo3d44) unstable;
+
+  * Keep popups off the edges of an output that shows stereo 3D: an invisible
+    border (kwinrc [StereoDepth] PopupBorder, default 10 logical pixels, 0
+    switches it off, also a slider in the stereo depth settings) shrinks the
+    area xdg_popups (menus, sub-menus, tooltips, select lists), the panel
+    shell's popups (notifications, on-screen displays, tooltips, applet
+    popups) and override-redirect X11 menus are placed in, so a popped popup
+    never touches the edge, where the edge rule would flatten it to the
+    screen's level. A popup that cannot fit inside the border keeps stock
+    placement on that axis. Outputs that do not show 3D are unchanged
+    (ORDER 418).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 06 Nov 2026 14:17:11 +0000

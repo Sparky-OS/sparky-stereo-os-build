@@ -10,6 +10,8 @@
 # Tools ask only for the keys they use and stop with the key's name when one is missing.
 
 # Local development repository: the flat apt tree that sparky-os/repo/make-repo.sh indexes.
+# The kwin recipe's link gate (packages/kwin/build-44.sh) reads it as the apt source file:/repo mashtabba: for that recipe it must hold
+# dists/mashtabba/main/binary-amd64/Packages (a published repository such as the last sparky-repo-rNNNN folder), not the flat tree alone.
 SPARKY_REPO_DIR=$HOME/sparky-os/repo
 # Where sparky-os/repo/update-repo.sh moves the versions a new upload replaces.
 SPARKY_REPO_SUPERSEDED=$HOME/sparky-os/repo-superseded
