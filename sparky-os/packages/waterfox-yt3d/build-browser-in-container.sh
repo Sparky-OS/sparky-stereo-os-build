@@ -30,6 +30,23 @@ open('debian/changelog', 'w').write(lc + top + old[old.index('sparky-stereo-brow
 PY
 grep -q 'libstereo-policy1 (>= 1.4.0)' debian/control
 sed -i 's/libstereo-policy1 (>= 1.4.0)/libstereo-policy1 (>= 1.15.0)/' debian/control
+# the nine languages of the edition (German added): the launcher's own translations too
+python3 - <<'DESKTOP'
+import re
+p = 'debian/sparky-stereo-browser.desktop'
+s = open(p, encoding='utf-8').read()
+assert '[de]' not in s
+de = {'Naviguer sur le Web': 'Im Internet surfen', 'Navigateur Web': 'Webbrowser', 'Nouvelle fen\u00eatre': 'Neues Fenster',
+      'Nouvelle fen\u00eatre de navigation priv\u00e9e': 'Neues privates Fenster', 'Ouvrir le gestionnaire de profils': 'Profilverwaltung \u00f6ffnen'}
+out = []
+for line in s.splitlines(keepends=True):
+    out.append(line)
+    m = re.match(r'(Comment|GenericName|Name)\[fr\]=(.*)$', line.rstrip('\n'))
+    if m:
+        out.append('%s[de]=%s\n' % (m.group(1), de[m.group(2)]))
+assert ''.join(out).count('[de]') == 5
+open(p, 'w', encoding='utf-8').write(''.join(out))
+DESKTOP
 # the nine languages of the edition (German added)
 grep -q -- '--locales en-US pl pt-BR fr ja ko zh-CN zh-TW' debian/build.sh
 sed -i 's/--locales en-US pl pt-BR fr ja ko zh-CN zh-TW/--locales en-US pl pt-BR fr de ja ko zh-CN zh-TW/' debian/build.sh
