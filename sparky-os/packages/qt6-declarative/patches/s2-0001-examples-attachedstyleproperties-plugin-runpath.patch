@@ -1,0 +1,27 @@
+Description: attachedstyleproperties example: the plugin's run path reaches libMyStyle.so
+ The example installs MyStyleplugin in bin/MyStyle and libMyStyle.so in the
+ library directory beside bin. The plugin got the run path of the example's
+ other targets ($ORIGIN/../lib/...), one directory short, so the dynamic
+ loader cannot find libMyStyle.so and the example cannot load its style.
+ The plugin now goes up two directories.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Bug: https://qt-project.atlassian.net/browse/QTBUG-129784
+Bug: https://qt-project.atlassian.net/browse/QTBUG-135094
+Forwarded: no
+Last-Update: 2026-11-06
+
+--- a/examples/quickcontrols/attachedstyleproperties/MyStyle/CMakeLists.txt
++++ b/examples/quickcontrols/attachedstyleproperties/MyStyle/CMakeLists.txt
+@@ -42,6 +42,12 @@
+     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}/MyStyle"
+     LIBRARY DESTINATION "${CMAKE_INSTALL_BINDIR}/MyStyle"
+ )
++# The plugin is installed in ${CMAKE_INSTALL_BINDIR}/MyStyle and loads libMyStyle.so from ${CMAKE_INSTALL_LIBDIR},
++# beside the bin directory: its run path must go up two directories, not the one the example's other targets use
++# (QTBUG-129784, QTBUG-135094).
++set_target_properties(MyStyleplugin PROPERTIES
++    INSTALL_RPATH "$ORIGIN:$ORIGIN/../../${CMAKE_INSTALL_LIBDIR}"
++)
+ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/qmldir
+     DESTINATION "${CMAKE_INSTALL_BINDIR}/MyStyle"
+ )

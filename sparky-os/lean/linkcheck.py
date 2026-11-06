@@ -378,6 +378,17 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
             # An unusable predecessor cannot establish a successful regression
             # baseline. Library-only imports supplied by a program remain valid.
             broken_before = [key for key in before if key[1] != 'undefined' or not re.search(r'\.so(\.|$)', key[0])]
+            # A library the previous build could not find and this build finds is an improvement, not a regression
+            # (qt6-declarative-examples: Qt's attachedstyleproperties plugin had a run path one directory short of its
+            # libMyStyle.so, fixed in +stereo3d2). The gate says so and goes on. A library missing in both builds
+            # stays a block: a carried defect is fixed, not noted; any other unusable predecessor stops the build.
+            # The key is also absent when this build no longer ships the ELF file at all: then nothing finds the
+            # library, and the note says that instead.
+            shipped = {'/' + str(path.relative_to(new_root)) for path in elf_files(new_root)}
+            for name, kind, item in [k for k in broken_before if k[1] == 'not found' and k not in now]:
+                notes.append(f'{name}: the previous build could not find {item}; this build finds it' if name in shipped
+                             else f'{name}: the previous build could not find {item}; this build no longer ships the file')
+            broken_before = [k for k in broken_before if k[1] != 'not found' or k in now]
             if broken_before:
                 raise package.Invalid('predecessor failed archive-qualified resolution: ' +
                                       '; '.join(f'{name}: {kind} {item}' for name, kind, item in broken_before[:5]))

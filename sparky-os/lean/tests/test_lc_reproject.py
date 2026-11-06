@@ -132,8 +132,11 @@ class Reproject(unittest.TestCase):
         self.assertEqual(report['stats']['tool_line_old'], 1)
         self.assertEqual(report['stats']['tool_line_new'], 0)
         self.assertEqual(report['stats']['c_files_with_tool_line_old'], 1)
+        # since ORDER 412 check-debs refuses a build that did not pass its host facts (sparky_provenance_init); this test builds
+        # nothing in a container, so it states that
         subprocess.run([sys.executable, '-m', 'lean.release', 'check-debs', str(new), str(hr)], check=True,
-                       cwd=REPO.parent, stdout=subprocess.DEVNULL)
+                       cwd=REPO.parent, stdout=subprocess.DEVNULL,
+                       env=dict(os.environ, SPARKY_PROVENANCE_OPTOUT='unit test: the packages are re-projected on the host, no container build'))
 
     def test_a_sibling_at_the_old_version_follows(self):
         out = self.tmp / 'out'
