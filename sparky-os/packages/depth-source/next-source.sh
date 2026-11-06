@@ -45,6 +45,38 @@ if [ -n "$SYM" ]; then
 	cp "$W/published/debian/libqt6multimedia6.symbols" "$W/overlay/libqt6multimedia6.symbols"
 	cat "$SYM" >> "$W/overlay/libqt6multimedia6.symbols"
 fi
+# The vendored ffnvcodec header of patch 0032 (Qt dev 2506a582c8, MIT) gets its entry in debian/copyright (Opus, ORDER 411 2h review).
+if [ "$PKG" = qt6-multimedia ] && [ -f "$HERE/patches/$PKG/0032-3rdparty-import-ffnvcodec-dynlink_cuda.h.patch" ]; then
+	cp "$W/published/debian/copyright" "$W/overlay/copyright"
+	grep -q '^Files: src/3rdparty/nv-codec-headers/' "$W/overlay/copyright" || cat >> "$W/overlay/copyright" <<'COPYRIGHT'
+
+Files: src/3rdparty/nv-codec-headers/*
+Copyright: 2016, no holder named in ffnvcodec/dynlink_cuda.h (FFmpeg's nv-codec-headers, carried by Qt)
+License: Expat
+
+License: Expat
+ Permission is hereby granted, free of charge, to any person
+ obtaining a copy of this software and associated documentation
+ files (the "Software"), to deal in the Software without
+ restriction, including without limitation the rights to use,
+ copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the software, and to permit persons to whom the
+ software is furnished to do so, subject to the following
+ conditions:
+ .
+ The above copyright notice and this permission notice shall be
+ included in all copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ OTHER DEALINGS IN THE SOFTWARE.
+COPYRIGHT
+fi
 mapfile -t items < <(python3 - "$HERE/changelog/$PKG.items" <<'PY'
 import sys
 # one item per paragraph (blank line between), its lines joined by a space
