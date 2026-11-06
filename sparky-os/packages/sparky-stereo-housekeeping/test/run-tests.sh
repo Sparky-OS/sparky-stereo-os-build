@@ -255,7 +255,7 @@ ok "carol: --preset --preview lists her own mailbox and no one else's mail or qu
 if [ "$MODE" = postfix ]; then
 	:
 else
-	ok "BleachBit reads root's: apt.clean, deepscan.tmp, system.memory, x11.debug_logs on, apt.autoremove off" 'ini_has /root apt.clean True && ini_has /root deepscan.tmp True && ini_has /root system.memory True && ini_has /root x11.debug_logs True && ! ini_has /root apt.autoremove True && ! ini_has /root system.localizations True && ! ini_has /root system_mail.queues True'
+	ok "BleachBit reads root's: apt.clean, deepscan.tmp, system.memory, x11.debug_logs and system_mail (dead letters, mailboxes, queues) on, apt.autoremove and localizations off" 'ini_has /root apt.clean True && ini_has /root deepscan.tmp True && ini_has /root system.memory True && ini_has /root x11.debug_logs True && ini_has /root system_mail.dead_letter True && ini_has /root system_mail.mailboxes True && ini_has /root system_mail.queues True && ! ini_has /root apt.autoremove True && ! ini_has /root system.localizations True'
 	mkdir -p /var/lib/apt/lists; echo x >/var/lib/apt/lists/fixture_Packages
 	out=$(env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root USER=root LANG=C.UTF-8 bleachbit --preset --preview 2>&1)
 	ok "root: --preset --preview lists the preset's work (apt lists, the mailboxes) and never the installed program's queue" 'echo "$out" | grep -q "/var/lib/apt/lists/fixture_Packages" && echo "$out" | grep -q "/var/mail/" && ! echo "$out" | grep -q "/var/spool/dma"'
