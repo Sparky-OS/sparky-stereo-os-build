@@ -8,6 +8,12 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 out=$(realpath -m "$1")
 input=$(realpath "$2")
 toolkit=$(realpath "$3")
+# ORDER 421: the source's date is the recipe's, the date of its own changelog entry: no clock, zone, umask or checkout time
+# reaches the bytes (SOURCE_DATE_EPOCH for dpkg-source's tar times, debian/ normalized before each dpkg-source -b).
+entry_date=$(sed -n 's/^ -- [^>]*>  //p' "$HERE/changelog-stereo3d44.txt" | head -1)
+SOURCE_DATE_EPOCH=$(date -u -d "$entry_date" +%s)
+export SOURCE_DATE_EPOCH
+normalize() { python3 "$toolkit/repo/reproducible.py" normalize "$SOURCE_DATE_EPOCH" "$1"; }
 mkdir -p "$out"
 mkdir "$out/plain" "$out/lc"
 cd "$out/plain"
@@ -43,6 +49,7 @@ for name in Path('debian/source/include-binaries').read_text().splitlines():
     assert Path(name).is_file(), name
 CHANGELOG
 cd ..
+normalize source/debian
 dpkg-source -b source
 cp kwin_6.7.4-2+stereo3d44.dsc kwin_6.7.4-2+stereo3d44.debian.tar.xz \
     kwin_6.7.4.orig.tar.xz kwin_6.7.4.orig.tar.xz.asc "$out/lc/"
@@ -50,8 +57,9 @@ cd "$out/lc"
 dpkg-source -x kwin_6.7.4-2+stereo3d44.dsc source
 PYTHONPATH="$toolkit" python3 -m lean.debian_prepare "$out/lc/source" \
     4:6.7.4-2+stereo3d44+lc1 --toolkit "$toolkit"
-# Keep the accepted release's timestamp; the pipeline owns the entry and lc marker.
-python3 - <<'DATE'
+# The pipeline owns the entry and lc marker; its date is the recipe's (SOURCE_DATE_EPOCH, passed to dch by debian_prepare).
+python3 - "$entry_date" <<'DATE'
+import sys
 from pathlib import Path
 p = Path('source/debian/changelog')
 s = p.read_text()
@@ -59,8 +67,8 @@ assert s.startswith('kwin (4:6.7.4-2+stereo3d44+lc1) UNRELEASED;')
 lines = s.splitlines(keepends=True)
 index = next(i for i, line in enumerate(lines) if line.startswith(' -- '))
 assert lines[index].startswith(' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ')
-lines[index] = lines[index].split('>  ', 1)[0] + '>  Fri, 06 Nov 2026 14:17:11 +0000\n'
-p.write_text(''.join(lines))
+assert lines[index].split('>  ', 1)[1].strip() == sys.argv[1], (lines[index], sys.argv[1])
 DATE
+normalize source/debian
 dpkg-source -b source
 sha256sum ./*.dsc ./*.tar.xz ./*.asc > source-closure.sha256

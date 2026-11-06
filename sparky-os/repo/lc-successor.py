@@ -6,6 +6,9 @@ change, made the way every recipe makes its next version (ORDER 311): the publis
 (dpkg-source -x), plain-from-lc.py turns it back into its plain source, a plain entry at the recipe's next number
 says why (no source change), lean.debian_prepare adds this toolkit at NEXT+lc1 with the source-consumer plan the
 published source retained, and dpkg-source -b packs it next to the same orig tarball.
+Reproducibility (ORDER 421): the date of the changelog entries is the one the command names (--source-date-epoch or
+SOURCE_DATE_EPOCH, UTC), and the Debian tarball is packed with debian/ at that time and at normal modes, so the same command
+on the same published source gives the same bytes on any day, in any zone and under any umask. Without a date the tool stops.
 The kernel recipe also records its package version in debian/kernel-build.env (kernel/lean/prepare.py); that line
 follows. Any other difference between the published and the new source stops the tool.
 --in-place: for a published source whose shape plain-from-lc.py does not know (the six lc1 build dependencies inside a
@@ -29,7 +32,6 @@ Usage: lc-successor.py --next NEXT --item TEXT [--item TEXT...] OLD.dsc OUT
   OUT: receives the new .dsc and Debian tarball (the orig tarball is the published one, unchanged).
 """
 import argparse
-import email.utils
 import filecmp
 import json
 import os
@@ -44,6 +46,9 @@ import textwrap
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from lean import debian_prepare  # noqa: E402
+import reproducible  # noqa: E402
+
+STAMP = None  # the source's date (ORDER 421): SOURCE_DATE_EPOCH or --source-date-epoch, set in main()
 
 NAME = 'Daniel Ramos (Capitain Jack)'
 MAIL = 'Capitain_Jack@yahoo.com'
@@ -54,11 +59,12 @@ def parse(root, field):
 
 
 def entry(name, version, items):
+    # the date is the recipe's (STAMP), UTC; never the clock (ORDER 421)
     # whole words only: a name such as dpkg-stereo or a long path is never split across lines
     body = '\n'.join(textwrap.fill(i, width=79, initial_indent='  * ', subsequent_indent='    ',
                                    break_on_hyphens=False, break_long_words=False) for i in items)
     return (f'{name} ({version}) unstable; urgency=medium\n\n{body}\n\n'
-            f' -- {NAME} <{MAIL}>  {email.utils.formatdate(localtime=True)}\n\n')
+            f' -- {NAME} <{MAIL}>  {reproducible.rfc2822(STAMP)}\n\n')
 
 
 def tree_diff(a, b, rel=Path('.')):
@@ -125,7 +131,7 @@ def in_place(old, new, name, version, nxt, items, depends=(), overlay=None):
     text = entry(name, nxt, items) + changelog.read_text()
     if lc:
         text = (f'{name} ({nxt}+lc1) UNRELEASED; urgency=medium\n\n{LEAN_ITEM}\n\n'
-                f' -- {NAME} <{MAIL}>  {email.utils.formatdate(localtime=True)}\n\n') + text
+                f' -- {NAME} <{MAIL}>  {reproducible.rfc2822(STAMP)}\n\n') + text
     changelog.write_text(text)
     changed = sorted(tree_diff(old, new))
     kit_rel = str(kit.relative_to(new)) + '/'
@@ -142,7 +148,7 @@ def finish(work, dsc, name, version, new_version, old, out, report):
     """dpkg-source -b next to the published orig tarball; the new .dsc, Debian tarball, both changelogs and the report."""
     for f in dsc.parent.glob(f'{name}_*.orig*'):
         os.symlink(f, work / f.name)
-    subprocess.run(['dpkg-source', '-b', 'new'], cwd=work, check=True, stdout=subprocess.DEVNULL)
+    reproducible.pack(work, 'new', STAMP, stdout=subprocess.DEVNULL)
     stem = f'{name}_{new_version.split(":", 1)[-1]}'
     made = sorted(p.name for p in work.glob(stem + '.*'))
     for n in made:
@@ -168,6 +174,9 @@ def main():
     ap.add_argument('--preserve', nargs=2, action='append', default=[], metavar=('PATTERN', 'REASON'),
                     help='one more source-consumer pattern for the next version, its reason beside it')
     ap.add_argument('--work', type=Path)
+    ap.add_argument('--source-date-epoch', type=int, metavar='SECONDS',
+                    help='the source\'s date (default: SOURCE_DATE_EPOCH); the changelog entries, the tar times and the modes are fixed by it, '
+                         'so the same command gives the same bytes. A successor has no recipe file, so its command names the date.')
     ap.add_argument('dsc', type=Path)
     ap.add_argument('out', type=Path)
     args = ap.parse_args()
@@ -180,7 +189,12 @@ def main():
     dsc = args.dsc.resolve()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
-    os.environ.update(DEBFULLNAME=NAME, DEBEMAIL=MAIL)
+    global STAMP
+    try:
+        STAMP = args.source_date_epoch if args.source_date_epoch is not None else reproducible.epoch()
+    except reproducible.NoRecipeDate as error:
+        ap.error(f'{error} (or pass --source-date-epoch)')
+    os.environ.update(DEBFULLNAME=NAME, DEBEMAIL=MAIL, SOURCE_DATE_EPOCH=str(STAMP))
     with tempfile.TemporaryDirectory(prefix='lc-successor-', dir=args.work or out.parent) as work:
         work = Path(work)
         subprocess.run(['dpkg-source', '--no-copy', '-x', str(dsc), str(work / 'old')], check=True,
