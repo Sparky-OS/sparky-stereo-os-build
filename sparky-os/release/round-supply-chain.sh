@@ -15,7 +15,10 @@
 # The image is SPARKY_SUPPLY_CHAIN_IMAGE (default sparky-supply-chain-tools:1, built from release/supply-chain-image).
 # A DEST made of symlinks (a publication copy that links the pool) needs the folders its links point into:
 # SPARKY_SUPPLY_CHAIN_MOUNTS="/abs/dir /abs/dir2" mounts each read only at the same path.
-# Last update 2026/11/04
+# ROUND_BUILD_COMMIT (ORDER 428, optional but set by official-part1.sh): the full commit of the build repository the round
+# ran from (round-worktree.sh). It is written into OUT/publish/round-toolkit-ROUND.json, which SHA256SUMS lists, so the
+# detached signature covers the statement of which toolkit made the tree. Without it the file is not made and the run says so.
+# Last update 2026/11/06
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 [ $# -eq 4 ] || { sed -n '/^# Usage/,/^# Last/p' "$0" | sed 's/^# \?//' >&2; exit 2; }
@@ -46,7 +49,7 @@ done
 [ -s "$OUT/work/stagedirs.txt" ] || { echo "STAGEDIRS lists no folder" >&2; exit 1; }
 # the container writes its output to OUT/work/round.log (the docker stream can lose the last lines of a short run)
 status=0
-docker run --rm --network none --user "$(id -u):$(id -g)" --cpus 4 -e HOME=/out -e ROUND="$ROUND" \
+docker run --rm --network none --user "$(id -u):$(id -g)" --cpus 4 -e HOME=/out -e ROUND="$ROUND" -e ROUND_BUILD_COMMIT="${ROUND_BUILD_COMMIT:-}" \
 	-v "$DEST":/dest:ro -v "$HERE/..":/toolkit:ro -v "$OUT":/out "${MOUNTS[@]}" \
 	"$IMAGE" bash /toolkit/release/round-supply-chain-inner.sh || status=$?
 cat "$OUT/work/round.log" 2>/dev/null || true
