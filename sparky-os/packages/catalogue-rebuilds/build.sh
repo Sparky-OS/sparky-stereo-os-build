@@ -21,6 +21,7 @@
 #   with build-essential, devscripts and python3).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/../../repo/build-provenance.sh"
 : "${SPARKY_PUBLISHED_TREE:?the signed published tree, read only}"
 : "${SPARKY_LC_ARCHIVE_DIR:?the folder of the link gate, mounted at /archive}"
 : "${SPARKY_BUILD_IMAGE:?a debian:testing build image}"
@@ -55,7 +56,8 @@ for stanza in text.split('\n\n'):
 sys.exit('not in SHA256SUMS or the published Sources: ' + dsc)
 PY
 DSC_SHA256=$(cat "$WORK/dsc.sha256")
-docker run --rm --cpus 4 --platform linux/amd64 \
+sparky_provenance_init "$SPARKY_BUILD_IMAGE"
+docker run --rm --cpus 4 --platform linux/amd64 "${SPARKY_PROV_ARGS[@]}" \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	-e DSC="$DSC" -e DSC_SHA256="$DSC_SHA256" -e PLAIN_OPTIONS="$PLAIN_OPTIONS" -e PATCH="$PATCH" -e CODE_PATCH="${CODE_PATCH:-}" -e CONTROL_PACKAGE="${CONTROL_PACKAGE:-}" -e CONTROL_FIELD="${CONTROL_FIELD:-}" -e CONTROL_ADD="${CONTROL_ADD:-}" \
 	-e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \

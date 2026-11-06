@@ -12,6 +12,7 @@ set -euo pipefail
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY
 here=$(cd "$(dirname "$0")" && pwd)
 packages=$(cd "$here/../.." && pwd)
+. "$here/../../../repo/build-provenance.sh"
 pkg=$1
 suffix=${2:-}
 work=$SPARKY_PACKAGE_WORK/jobs/$pkg$suffix
@@ -21,7 +22,8 @@ entry=build-in-container.sh
 [ "$pkg" != sparky-stereo-hardware ] || entry=build-hardware.sh
 cp "$here/$entry" "$work/build-entry.sh"
 printf '%s\n' "$name" >> "${SPARKY_ARTIFACTS:?Set the lane artifact record}"
-docker run --platform linux/amd64 --cpus 4 --name "$name" -e PKG="$pkg" -e SOURCE_DSC="${SOURCE_DSC:-}" -e BINARY_ONLY="${BINARY_ONLY:-}" \
+sparky_provenance_init "$SPARKY_PACKAGE_IMAGE"
+docker run --platform linux/amd64 --cpus 4 --name "$name" "${SPARKY_PROV_ARGS[@]}" -e PKG="$pkg" -e SOURCE_DSC="${SOURCE_DSC:-}" -e BINARY_ONLY="${BINARY_ONLY:-}" \
  -v "$work:/work" -v "$SPARKY_PUBLISHED_TREE:/pub:ro" \
  -v "$SPARKY_PACKAGE_WORK/new:/new:ro" -v "$SPARKY_PACKAGE_WORK/previous:/previous:ro" \
  -v "$SPARKY_PACKAGE_WORK/out/$pkg:/candidate:ro" -v "$packages:/kit:ro" -v "$SPARKY_RELEASE_TOOLKIT:/toolkit:ro" \
