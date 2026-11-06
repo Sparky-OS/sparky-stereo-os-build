@@ -1,0 +1,55 @@
+From f6448c2891f69974c162dff014ba3ccd94e879c8 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 6 Nov 2026 16:57:12 -0300
+Subject: [PATCH 1/2] scene: Put notifications and on-screen displays at the
+ popped limit
+
+A notification or an on-screen display is the nearest thing on a stereo output.
+They took a share of the popped limit like the menus worked in, so a stack of
+notifications, a notification beside an on-screen display or beside a menu left
+the older or lower one at a fraction of the limit (one pixel of three).
+Take them out of the share and put them at the limit, within the person's
+PoppedLimit; menus and popups share what is left as before.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ src/scene/stereodepth.cpp | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/src/scene/stereodepth.cpp b/src/scene/stereodepth.cpp
+index aa3c525..8ab9f24 100644
+--- a/src/scene/stereodepth.cpp
++++ b/src/scene/stereodepth.cpp
+@@ -67,6 +67,12 @@ static bool isPopup(const Window *window)
+         || window->isOnScreenDisplay() || window->isAppletPopup() || window->isPopupWindow();
+ }
+ 
++// what the panel shell shows to be noticed, not to be worked in: notifications and on-screen displays
++static bool isAlert(const Window *window)
++{
++    return window->isNotification() || window->isCriticalNotification() || window->isOnScreenDisplay();
++}
++
+ static Role roleOf(const Window *window);
+ 
+ static bool isOnStage(const Window *window, const LogicalOutput *output)
+@@ -169,6 +175,10 @@ qreal StereoDepth::level(const Window *window)
+         if (const auto place = declaredPlace(window)) {
+             // where the program declared it, under the rules below
+             level = std::clamp(*place, -1.0, 1.0);
++        } else if (isAlert(window)) {
++            // a notification or an on-screen display is the nearest thing on the output, at the
++            // popped limit whatever else is popped: the share below is for what is worked in
++            level = 1;
+         } else {
+             // the popped limit is shared by what is popped over each other, the topmost at the
+             // limit; a popup with a declared place takes no share
+@@ -176,7 +186,7 @@ qreal StereoDepth::level(const Window *window)
+             int below = 0;
+             bool found = false;
+             for (const Window *other : stack) {
+-                if (isOnStage(other, output) && roleOf(other) == Role::Popped && !touchesEdge(other) && !declaredPlace(other)) {
++                if (isOnStage(other, output) && roleOf(other) == Role::Popped && !touchesEdge(other) && !declaredPlace(other) && !isAlert(other)) {
+                     count++;
+                     found |= other == window;
+                     below += !found;
