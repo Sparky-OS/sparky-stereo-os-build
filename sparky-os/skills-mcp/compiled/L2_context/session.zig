@@ -111,12 +111,13 @@ pub const Session = struct {
 /// `SPARKY_STEREO_PACKAGES` (space separated) replaces dpkg's status file, as the helper has always allowed for tests.
 /// An unreadable status file is an error: skills are never all served because the check could not be made.
 fn readInstalled(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map) !eligibility.Installed {
-    if (env.get("SPARKY_STEREO_PACKAGES")) |p| {
+    // an empty value is no override, as in the helper (`[ -n "$SPARKY_STEREO_PACKAGES" ]`)
+    if (env.get("SPARKY_STEREO_PACKAGES")) |p| if (p.len > 0) {
         var out: std.ArrayList([]const u8) = .empty;
         var it = std.mem.tokenizeAny(u8, p, " \t\n");
         while (it.next()) |n| try out.append(arena, n);
         return .{ .names = out.items };
-    }
+    };
     const text = fsio.readFile(arena, io, "/var/lib/dpkg/status", 256 << 20) catch return error.DpkgStatusUnreadable;
     return .{ .names = try dpkg_status.installed(arena, text) };
 }

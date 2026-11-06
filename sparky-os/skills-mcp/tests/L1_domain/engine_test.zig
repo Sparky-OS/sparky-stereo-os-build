@@ -144,3 +144,17 @@ test "the manifest digests equal the Skills extension's example" {
     try std.testing.expectEqualStrings("sha256:61f4ea6d2c75fde1b4977219e7e3107d491c3c26aefb6686e84d6281c088d9ee", &m[1].digest);
     try std.testing.expectEqualStrings("sha256:f2ff774b1737ff3dec81c47946f9976f18a1a9f69dda0a81f22eabd95173c158", &m[2].digest);
 }
+
+test "an empty SPARKY_STEREO_PACKAGES is no override: dpkg's own status file decides" {
+    var st = arenaState();
+    defer st.deinit();
+    const a = st.allocator();
+    const io = std.testing.io;
+    var s = try testkit.Scratch.make(io, "/tmp/skills-mcp-engine-7");
+    defer s.cleanup();
+    const env = try testkit.env(a, &.{ .{ "XDG_DATA_DIRS", "/tmp/skills-mcp-engine-7/usr/share" }, .{ "HOME", "/tmp/skills-mcp-engine-7/h" }, .{ "SPARKY_STEREO_PACKAGES", "" } });
+    try s.write("usr/share/agent-skills/developer/needs-dpkg/SKILL.md", try testkit.skill(a, "needs-dpkg", "Needs dpkg.", "dpkg"));
+    try s.write("usr/share/agent-skills/developer/needs-absent/SKILL.md", try testkit.skill(a, "needs-absent", "Needs an absent package.", "zz-no-such-package"));
+    var e = try engine.Engine.init(a, io, env);
+    try std.testing.expectEqualStrings("needs-dpkg ", try names(try e.list(null, false), a));
+}
