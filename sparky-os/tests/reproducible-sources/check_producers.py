@@ -5,6 +5,9 @@
 For every tracked script under sparky-os, kernel and tools that writes a changelog entry or packs a source:
 - the clock is not read for a date (formatdate, datetime.now, `date -R`, a dch without --date);
 - a file that packs a source (dpkg-source -b, dpkg-buildpackage without -b/-B) normalizes its tree first (repo/reproducible.py).
+ORDER 435: every script that runs repo/plain-from-lc.py says what becomes of the source's Lean Code preserve plan: --drop-plan (the
+caller carries it itself, as repo/lc-successor.py does) or --save-plan FILE, and a script that saves a plan hands it back to
+lean.debian_prepare (--preserve-plan FILE, or carried_plan=).
 Files that the 421 inventory listed by pattern but that write no source are named below with the reason.
 Usage: check_producers.py [BUILD_REPO_ROOT]     Exit 0 clean, 1 with every finding named.
 """
@@ -71,13 +74,34 @@ def findings(rel, text):
     return found
 
 
+PLAIN_CALL = re.compile(r'plain-from-lc\.py')
+
+
+def plan_findings(rel, text):
+    """ORDER 435: a plain-from-lc.py call names --save-plan or --drop-plan; a saved plan reaches lean.debian_prepare."""
+    found, calls, in_doc = [], [], False
+    for n, l in enumerate(text.splitlines(), 1):
+        was = in_doc
+        in_doc ^= l.count('"""') % 2 == 1
+        if was or in_doc or l.lstrip().startswith('#') or not PLAIN_CALL.search(l):
+            continue
+        calls.append(n)
+        if '--save-plan' not in l and '--drop-plan' not in l:
+            found.append(f'{rel}:{n}: plain-from-lc.py without --save-plan or --drop-plan: the Lean Code preserve plan would be dropped')
+    if calls and '--save-plan' in text and not re.search(r'--preserve-plan|carried_plan', text):
+        found.append(f'{rel}:{calls[0]}: --save-plan without --preserve-plan (or carried_plan=): the saved plan never reaches lean.debian_prepare')
+    return found
+
+
 def main(root):
     root = Path(root)
     problems, checked = [], 0
     for rel in tracked(root):
+        text = (root / rel).read_text(errors='replace')
+        if rel != 'sparky-os/repo/plain-from-lc.py':
+            problems += plan_findings(rel, text)
         if rel in NOT_SOURCE:
             continue
-        text = (root / rel).read_text(errors='replace')
         found = findings(rel, text)
         if re.search(r'\bdch\b|changelog|dpkg-buildpackage', text) or PACK.search(text):
             checked += 1

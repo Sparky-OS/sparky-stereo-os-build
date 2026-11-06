@@ -5,8 +5,9 @@ Steps: plain debian/ (plain-from-lc.py on `dpkg-source --skip-patches -x` of the
 and series + the entry -> lean.debian_prepare with this tree's toolkit -> dpkg-source -b next to the published orig tarball.
 Why not lc-successor.py: its --in-place --overlay keeps the old patched upstream tree, so a replaced patch makes dpkg-source -b stop with
 "unexpected upstream changes"; its --recipe mode only allows debian/ changes.
-Usage: make-source.py PLAIN0 ORIGTARBALL OUTDIR     (PLAIN0 = the plain tree: dpkg-source --skip-patches -x PUBLISHED.dsc PLAIN0, then
-plain-from-lc.py PLAIN0)"""
+Usage: make-source.py PLAIN0 ORIGTARBALL OUTDIR PLAN     (PLAIN0 = the plain tree: dpkg-source --skip-patches -x PUBLISHED.dsc PLAIN0, then
+plain-from-lc.py --save-plan PLAN PLAIN0; PLAN is the published source's Lean Code preserve plan, which the next source keeps
+byte for byte; a source without one leaves PLAN unwritten)"""
 import os, shutil, subprocess, sys, tempfile
 from pathlib import Path
 SPARKY_OS = Path(__file__).resolve().parents[2]
@@ -17,7 +18,7 @@ from lean import debian_prepare
 import reproducible
 RECIPE = SPARKY_OS / 'media/ffmpeg/stereo3d11'
 NEXT = '10:9.0.2-dmo1+stereo3d11'
-plain0, orig, out = (Path(a).resolve() for a in sys.argv[1:4])
+plain0, orig, out, plan = (Path(a).resolve() for a in sys.argv[1:5])
 out.mkdir(parents=True, exist_ok=True)
 # ORDER 421: the date of the source is the recipe's, the committer date of the last commit that touched the recipe folder or this
 # script (or SOURCE_DATE_EPOCH); the clock, the zone, the umask and the checkout time do not reach the bytes.
@@ -37,7 +38,7 @@ shutil.copy2(RECIPE / 'patches/series', pd / 'series')
 entry = (RECIPE / 'changelog.entry').read_text().replace('@VERSION@', NEXT).replace('@DATE@', reproducible.rfc2822(STAMP))
 ch = new / 'debian/changelog'
 ch.write_text(entry + '\n' + ch.read_text())
-debian_prepare.prepare(new, NEXT + '+lc1', SPARKY_OS, preserve_sources=[])
+debian_prepare.prepare(new, NEXT + '+lc1', SPARKY_OS, preserve_sources=[], carried_plan=plan)
 os.symlink(orig, work / orig.name)
 reproducible.pack(work, 'new', STAMP)
 for f in work.glob('ffmpeg-dmo_9.0.2-dmo1+*'):

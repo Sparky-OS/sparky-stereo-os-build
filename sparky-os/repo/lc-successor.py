@@ -227,11 +227,12 @@ def main():
         if f'Build-Depends: {six},' not in control:
             # the 20 October wheel DKMS sources: the six at the end; the next source has them where debian_prepare puts them
             if not re.search(r'^Build-Depends: .*, ' + re.escape(six) + r'\n', control, re.M):
-                raise ValueError('the lc1 build dependencies are in no place plain-from-lc.py knows')
+                raise ValueError('the lc1 build dependencies are in no place plain-from-lc knows')
             mode = ['--build-depends-at-end']
             moved = re.sub(r'^Build-Depends: (.*), ' + re.escape(six) + r'\n', lambda m: f'Build-Depends: {six}, {m.group(1)}\n',
                            control, flags=re.M)
-        subprocess.run([sys.executable, str(HERE / 'plain-from-lc.py'), *mode, str(new)], check=True)
+        carried = work / 'published-preserve.json'
+        subprocess.run([sys.executable, str(HERE / 'plain-from-lc.py'), *mode, '--save-plan', str(carried), str(new)], check=True)
         plain = parse(new, 'Version')
         if plain != version[:-len('+lc1')]:
             raise ValueError(f'plain-from-lc gave {plain}, not {version[:-4]}')
@@ -259,7 +260,7 @@ def main():
             if text.count(line) != 1:
                 raise ValueError('debian/kernel-build.env does not record the published version')
             env.write_text(text.replace(line, f'PACKAGE_VERSION={args.next}+lc1\n'))
-        debian_prepare.prepare(new, args.next + '+lc1', HERE.parent, preserve_sources=preserve)
+        debian_prepare.prepare(new, args.next + '+lc1', HERE.parent, preserve_sources=args.preserve, carried_plan=carried)
         if plan.exists() or (old / 'debian/sparky-lean-preserve.json').exists():
             if json.loads(plan.read_text()) != {**published_plan, **dict(args.preserve)}:
                 raise ValueError('the source-consumer plan changed beyond the --preserve patterns')

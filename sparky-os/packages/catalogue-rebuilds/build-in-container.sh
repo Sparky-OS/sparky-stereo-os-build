@@ -33,7 +33,7 @@ for line in dsc.read_text().split('Checksums-Sha256:\n', 1)[1].splitlines():
 COPY
 dpkg-source -x "$DSC" t >/dev/null
 # shellcheck disable=SC2086
-python3 /toolkit/repo/plain-from-lc.py $PLAIN_OPTIONS t
+python3 /toolkit/repo/plain-from-lc.py $PLAIN_OPTIONS --save-plan /work/published-preserve.json t
 [ -z "$(tail -c1 t/debian/patches/series)" ] || echo >> t/debian/patches/series
 # the code half the translations belong to, when it was never built either (CODE_PATCH: a path under the toolkit)
 if [ -n "${CODE_PATCH:-}" ]; then
@@ -101,7 +101,7 @@ for line in dsc.read_text().split('Checksums-Sha256:\n', 1)[1].splitlines():
 COPY
 dpkg-source -x "$PLAIN_DSC" /work/lc/source >/dev/null
 cd /work/lc/source
-PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source "$VERSION+lc1" --toolkit /toolkit
+PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source "$VERSION+lc1" --toolkit /toolkit --preserve-plan /work/published-preserve.json
 apt-get -y update > /work/apt-update.log 2>&1
 apt-get -y --no-install-recommends build-dep /work/lc/source > /work/build-dep.log 2>&1 || { tail -40 /work/build-dep.log; exit 1; }
 dpkg-query -W -f='${Package}\t${Version}\n' > /work/build-environment.tsv

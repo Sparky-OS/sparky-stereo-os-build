@@ -4,7 +4,7 @@
 # +stereo3d1+lc1 source had: plain-from-lc.py removes the plan whatever its option, and the route never gave it back.
 # Runs packages/transition-rebuilds/prepare-lc-source.sh (the route's source half) on a small fixture: a published +lc1 source with a
 # two-pattern plan, one without a plan, and one whose plan is not in the form lean.debian_prepare writes. A copy of the script with the
-# carrying removed (what the route did before) must fail the same checks, so this test can fail.
+# carrying removed (--drop-plan, no --preserve-plan: what the route did before ORDER 433) must fail the same checks, so this test can fail.
 # Needs dpkg-dev, devscripts (dch), python3, xz; run it in a container, not on the desktop.
 # Usage: bash transition-preserve.sh [SPARKY_OS_DIR]
 set -uo pipefail
@@ -79,19 +79,19 @@ fi
 if route "$OS/packages/transition-rebuilds" indented; then
 	bad "the route accepted a plan it could not carry unchanged"
 else
-	grep -q 'prepare-lc-source: fixture' "$T/route-indented.log" && grep -q 'lc-successor.py' "$T/route-indented.log" \
+	grep -q '^fixture 1.0-2: ' "$T/route-indented.log" && grep -q 'lc-successor.py' "$T/route-indented.log" \
 		&& ok "a plan that would change stops the route with the source named and the way on" || bad "stop message: $(tail -3 "$T/route-indented.log")"
 fi
 
 # red: the route as it was (no carrying, no check) loses the plan, so the checks above can fail
 mkdir -p "$T/old" && python3 - "$OS/packages/transition-rebuilds/prepare-lc-source.sh" "$T/old/prepare-lc-source.sh" <<'PY'
-import re, sys
+import sys
 from pathlib import Path
 s = Path(sys.argv[1]).read_text()
-a = s.index('PRESERVE=()\n'); b = s.index('# shellcheck disable=SC2086')
-s = s[:a] + 'PRESERVE=()\n' + s[b:]
-a = s.index('if [ -e "$WORK/published-preserve.json" ]')
-Path(sys.argv[2]).write_text(s[:a])
+s = s.replace('--save-plan "$WORK/published-preserve.json"', '--drop-plan')
+s = s.replace(' --preserve-plan "$WORK/published-preserve.json"', '')
+assert '--drop-plan' in s and '--preserve-plan' not in s.split('plain-from-lc.py')[-1].split('\n', 1)[1]
+Path(sys.argv[2]).write_text(s)
 PY
 if route "$T/old" good; then
 	[ ! -e "$T/work-good/lc/source/debian/sparky-lean-preserve.json" ] && ok "red: without the carrying the new source has no plan (today's main before ORDER 433)" || bad "red: the plan survived without the carrying, so this test cannot fail"

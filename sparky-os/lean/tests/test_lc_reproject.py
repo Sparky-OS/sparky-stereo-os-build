@@ -287,7 +287,7 @@ class Successor(unittest.TestCase):
         self.assertEqual(heads, [('1.0-2+lc1', 'UNRELEASED'), ('1.0-2', 'unstable'), ('1.0-1', 'unstable')])
         self.assertIn('ORDER 311', (tree / 'debian/changelog').read_text())
         self.assertEqual(json.loads((tree / 'debian/sparky-lean-preserve.json').read_text()), {'src/demo.h': 'a generator reads it'})
-        subprocess.run([sys.executable, str(REPO / 'plain-from-lc.py'), str(tree)], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run([sys.executable, str(REPO / 'plain-from-lc.py'), '--drop-plan', str(tree)], check=True, stdout=subprocess.DEVNULL)
         self.assertEqual(subprocess.check_output(['dpkg-parsechangelog', '-S', 'Version'], cwd=tree, text=True).strip(), '1.0-2')
 
     def test_preserve_adds_a_pattern_and_nothing_else(self):

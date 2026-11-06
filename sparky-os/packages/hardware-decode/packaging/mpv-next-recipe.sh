@@ -23,7 +23,8 @@ export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.c
 mkdir -p "$WORK" "$OUT"
 [ ! -e "$WORK/published" ] || { echo "$WORK/published exists" >&2; exit 1; }
 dpkg-source --skip-patches -x "$DSC" "$WORK/published" >/dev/null
-python3 "$REPO/plain-from-lc.py" "$WORK/published"
+# lc-successor.py --recipe below reads the published source's Lean Code preserve plan itself and carries it; this scratch copy only gives the recipe its plain debian/
+python3 "$REPO/plain-from-lc.py" --drop-plan "$WORK/published"
 R=$WORK/recipe/debian
 mkdir -p "$WORK/recipe"
 cp -a "$WORK/published/debian" "$R"

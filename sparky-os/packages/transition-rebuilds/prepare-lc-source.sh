@@ -3,9 +3,10 @@
 # +lc1 source; the first half of a transition rebuild (build-in-container.sh runs it, tests/reproducible-sources runs it on a fixture).
 # Created by Daniel Ramos (Capitain Jack) 2026/11/06
 # Copyright 2026 under the GNU GPL3 License
-# The published source's Lean Code source-consumer plan (debian/sparky-lean-preserve.json) is read before plain-from-lc.py removes
-# it and handed to lean.debian_prepare (--preserve-source), as repo/lc-successor.py does (ORDER 433). The new plan must equal the
-# published one byte for byte; otherwise the script stops and says so, and never writes a source that lost its plan.
+# The published source's Lean Code source-consumer plan (debian/sparky-lean-preserve.json) is saved by plain-from-lc.py
+# (--save-plan) and handed back to lean.debian_prepare (--preserve-plan), the shared way of every route (ORDER 433, 435). The new
+# plan must equal the published one byte for byte; otherwise debian_prepare stops and names the source, and no source is written
+# that lost its plan.
 # Folders (environment, the defaults are the container's): WORK, SRC (the published .dsc and every file it names), ENTRY (the
 # changelog entry file), TOOLKIT (the build tree's sparky-os folder), REPRODUCIBLE (repo/reproducible.py).
 # Needs: DSC, DSC_SHA256, PLAIN_OPTIONS (empty, --edition-entry, --lc-successor or --no-build-depends), SOURCE_DATE_EPOCH and
@@ -30,20 +31,8 @@ for line in dsc.read_text().split('Checksums-Sha256:\n', 1)[1].splitlines():
     shutil.copy2(dsc.parent / name, name)
 COPY
 dpkg-source -x "$DSC" t >/dev/null
-# plain-from-lc.py removes the plan with the rest of what debian_prepare added; the next +lc1 source gets the published one back
-PRESERVE=()
-if [ -e t/debian/sparky-lean-preserve.json ]; then
-	cp t/debian/sparky-lean-preserve.json "$WORK/published-preserve.json"
-	mapfile -d '' -t PAIRS < <(python3 -c '
-import json, sys
-for pattern, reason in json.load(open(sys.argv[1])).items():
-    sys.stdout.write(pattern + "\0" + reason + "\0")' "$WORK/published-preserve.json")
-	for ((i = 0; i < ${#PAIRS[@]}; i += 2)); do
-		PRESERVE+=(--preserve-source "${PAIRS[i]}" "${PAIRS[i + 1]}")
-	done
-fi
-# shellcheck disable=SC2086
-python3 "$TOOLKIT/repo/plain-from-lc.py" $PLAIN_OPTIONS t
+# the published plan is saved beside the tree and handed back to lean.debian_prepare, which checks it byte for byte (ORDER 435)
+python3 "$TOOLKIT/repo/plain-from-lc.py" $PLAIN_OPTIONS --save-plan "$WORK/published-preserve.json" t
 python3 - <<'CHANGELOG'
 from pathlib import Path
 import os, re, subprocess
@@ -80,14 +69,4 @@ for line in dsc.read_text().split('Checksums-Sha256:\n', 1)[1].splitlines():
 COPY
 dpkg-source -x "$PLAIN_DSC" "$WORK/lc/source" >/dev/null
 cd "$WORK/lc/source"
-PYTHONPATH="$TOOLKIT" python3 -m lean.debian_prepare "$WORK/lc/source" "$VERSION+lc1" --toolkit "$TOOLKIT" "${PRESERVE[@]}"
-if [ -e "$WORK/published-preserve.json" ]; then
-	cmp -s "$WORK/published-preserve.json" debian/sparky-lean-preserve.json || {
-		echo "prepare-lc-source: $NAME ${DSC#*_}: the published source's debian/sparky-lean-preserve.json did not come through the rebuild unchanged; no source is written without it." >&2
-		echo "The plan is not the form lean.debian_prepare writes (or a pattern was refused): rerun this package through repo/lc-successor.py, which keeps the published plan, or fix the plan in its recipe." >&2
-		exit 1
-	}
-elif [ -e debian/sparky-lean-preserve.json ]; then
-	echo "prepare-lc-source: $NAME: a source-consumer plan appeared that the published source did not have" >&2
-	exit 1
-fi
+PYTHONPATH="$TOOLKIT" python3 -m lean.debian_prepare "$WORK/lc/source" "$VERSION+lc1" --toolkit "$TOOLKIT" --preserve-plan "$WORK/published-preserve.json"
