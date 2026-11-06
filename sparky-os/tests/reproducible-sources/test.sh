@@ -25,6 +25,8 @@ tar -C "$T/up" --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 -cf - 
 cp -r "$T/up/fixture-1.0" "$T/tree"
 mkdir -p "$T/tree/debian/source"
 printf '3.0 (quilt)\n' > "$T/tree/debian/source/format"
+printf '\0\1\2 a binary file that travels in the Debian tarball\n' > "$T/tree/data.bin"
+printf 'data.bin\n' > "$T/tree/debian/source/include-binaries"
 printf 'Source: fixture\nSection: misc\nPriority: optional\nMaintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\nBuild-Depends: debhelper-compat (= 13)\nStandards-Version: 4.7.0\n\nPackage: fixture\nArchitecture: all\nDescription: fixture\n fixture for the reproducible source test\n' > "$T/tree/debian/control"
 printf '#!/usr/bin/make -f\n%%:\n\tdh $@\n' > "$T/tree/debian/rules"; chmod +x "$T/tree/debian/rules"
 printf 'Files: *\nCopyright: 2026 Daniel Campos Ramos\nLicense: GPL-3+\n' > "$T/tree/debian/copyright"
@@ -33,7 +35,7 @@ if ! (cd "$T/tree" && SOURCE_DATE_EPOCH=$STAMP PYTHONPATH="$OS" python3 -m lean.
 	cat "$T/prep.log"; bad "fixture: debian_prepare failed"; exit 1
 fi
 grep -q "SOURCE_DATE_EPOCH is not set" "$T/prep.log" && bad "debian_prepare warned about the clock although SOURCE_DATE_EPOCH was set"
-python3 "$OS/repo/reproducible.py" normalize $STAMP "$T/tree/debian"
+python3 "$OS/repo/reproducible.py" normalize-tree $STAMP "$T/tree"
 mv "$T/tree" "$T/pub/fixture-1.0"
 (cd "$T/pub" && SOURCE_DATE_EPOCH=$STAMP dpkg-source -b fixture-1.0 >/dev/null 2>&1) || { bad "fixture: dpkg-source -b failed"; exit 1; }
 ls "$T/pub"/*.dsc >/dev/null || exit 1
@@ -70,6 +72,7 @@ if run_three "$OS"; then
 	same a b && same a c && ok "three successors (3 zones, 3 umasks, 3 checkout times$(command -v faketime >/dev/null && echo ', 3 clocks')) are byte-identical: $(sha256sum < "$T/out-a/fixture_1.0-2+lc1.debian.tar.xz" | cut -c1-16) $(sha256sum < "$T/out-a/fixture_1.0-2+lc1.dsc" | cut -c1-16)" || bad "successors differ between runs"
 	d=$(sed -n 's/^ -- [^>]*>  //p' "$T/out-a/fixture_1.0-2+lc1.changelog" | head -2 | tr '\n' '|')
 	[ "$d" = "$(python3 "$OS/repo/reproducible.py" rfc2822 $STAMP)|$(python3 "$OS/repo/reproducible.py" rfc2822 $STAMP)|" ] && ok "both new changelog entries carry the recipe date" || bad "entry dates: $d"
+	tar -tf "$T/out-a/fixture_1.0-2+lc1.debian.tar.xz" | grep -qx data.bin && ok "the include-binaries file travels in the Debian tarball (and is covered)" || bad "data.bin is not in the Debian tarball"
 	tar -tvf "$T/out-a/fixture_1.0-2+lc1.debian.tar.xz" --full-time | awk '{print $4" "$5}' | sort -u > "$T/times"
 	[ "$(wc -l < "$T/times")" -eq 1 ] && grep -q '^2026-11-06 14:17:11' "$T/times" && ok "every tar member has the recipe time" || bad "tar times: $(cat "$T/times" | head -3)"
 	tar -tvf "$T/out-a/fixture_1.0-2+lc1.debian.tar.xz" | awk '{print $1}' | grep -qvE '^d.........$|^-rw-r--r--$|^-rwxr-xr-x$' && bad "unexpected modes in the tar" || ok "modes are 0644, 0755 or directories"
@@ -100,7 +103,7 @@ python3 - "$T/broken/repo/reproducible.py" <<'PY'
 import sys
 from pathlib import Path
 p = Path(sys.argv[1]); s = p.read_text()
-a = "    normalize(Path(workdir) / tree / 'debian', stamp)\n"
+a = "    normalize_tree(Path(workdir) / tree, stamp)\n"
 b = "    return subprocess.run(['dpkg-source', '-b', tree], cwd=workdir, check=True, **kw)\n"
 assert a in s
 s = s.replace(a, '').replace("    env = {**os.environ, 'SOURCE_DATE_EPOCH': str(stamp)}\n    return subprocess.run(['dpkg-source', '-b', tree], cwd=workdir, check=True, env=env, **kw)\n", b)

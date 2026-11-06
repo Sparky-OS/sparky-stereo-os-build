@@ -24,6 +24,7 @@ Usage as a program (for shell recipes):
   reproducible.py epoch PATH...        print the recipe date as an epoch (step 1, else step 2 for these paths)
   reproducible.py rfc2822 EPOCH        print it as a changelog trailer date
   reproducible.py normalize EPOCH DIR  set the mtime and mode of everything under DIR
+  reproducible.py normalize-tree EPOCH TREE  the same for what dpkg-source -b takes from TREE: debian/ and its include-binaries
 """
 import datetime
 import email.utils
@@ -98,9 +99,28 @@ def normalize(root, stamp):
     os.utime(root, (stamp, stamp))
 
 
+def normalize_tree(tree, stamp):
+    """What dpkg-source -b takes from a source tree into the Debian tarball: debian/ and the binary files that
+    debian/source/include-binaries lists (they travel in that tarball under their upstream paths, with their own mtime
+    and mode; kwin's autotests/integration/data/*.bin differed between runs under another umask)."""
+    tree = Path(tree)
+    normalize(tree / 'debian', stamp)
+    listing = tree / 'debian/source/include-binaries'
+    if listing.is_file():
+        for line in listing.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            path = tree / line
+            if not path.is_file() or path.is_symlink():
+                raise NoRecipeDate(f'debian/source/include-binaries names {line}, which is not a regular file of the tree')
+            os.chmod(path, 0o755 if path.stat().st_mode & 0o111 else 0o644)
+            os.utime(path, (stamp, stamp))
+
+
 def pack(workdir, tree, stamp, **kw):
-    """dpkg-source -b TREE in WORKDIR with debian/ normalized and SOURCE_DATE_EPOCH set (dpkg-source clamps the tar times)."""
-    normalize(Path(workdir) / tree / 'debian', stamp)
+    """dpkg-source -b TREE in WORKDIR with its Debian tarball inputs normalized and SOURCE_DATE_EPOCH set (dpkg-source clamps the tar times)."""
+    normalize_tree(Path(workdir) / tree, stamp)
     env = {**os.environ, 'SOURCE_DATE_EPOCH': str(stamp)}
     return subprocess.run(['dpkg-source', '-b', tree], cwd=workdir, check=True, env=env, **kw)
 
@@ -113,6 +133,8 @@ def main(argv):
             print(rfc2822(argv[1]))
         elif len(argv) == 3 and argv[0] == 'normalize':
             normalize(argv[2], int(argv[1]))
+        elif len(argv) == 3 and argv[0] == 'normalize-tree':
+            normalize_tree(argv[2], int(argv[1]))
         else:
             sys.exit(__doc__)
     except NoRecipeDate as error:
