@@ -447,3 +447,17 @@ def test_a_library_found_before_and_missing_now_still_blocks(tmp_path):
     assert linkcheck.check(before, previous_deb=before, archive_context=context) == []
     with pytest.raises(package.Invalid, match='1 new not found: libdemoown.so'):
         linkcheck.check(after, previous_deb=before, archive_context=context)
+
+
+def test_a_file_the_new_build_no_longer_ships_is_said_so_not_found(tmp_path):
+    """The key of the predecessor's "not found" is also absent when the ELF file is gone: the note must not say the new
+    build finds the library."""
+    from lean.tests.archive_fixtures import deb
+    context, built = _runpath_case(tmp_path)
+    before = built('1', 'share/own/x86_64-linux-gnu')
+    after = deb(tmp_path / 'own-gone', 'demo-own', '1+lc1', depends='libc6',
+                files={'usr/lib/x86_64-linux-gnu/libdemoown.so': tmp_path / 'libdemoown.so'})
+    notes = linkcheck.check(after, previous_deb=before, archive_context=context)
+    assert any('/usr/bin/libplug.so: the previous build could not find libdemoown.so; this build no longer ships the file'
+               in n for n in notes), notes
+    assert not any('this build finds it' in n for n in notes), notes
