@@ -36,3 +36,12 @@ Three recipes, run in this order, each in the Lean Code migration container with
 depth element is drawn; scroll frames inside it move with it in both copies; a KWin whose protocol is older than 3 leaves the pages
 on libstereo-policy's default with a console notice. The recipe is unchanged otherwise (`BROWSER_JOBS=4`, `SIBLINGS_DIR`).
 The stage folder 414c-browser-7 supersedes 414b-browser-7.
+
+## ORDER 414d (2026-11-06): browser +stereo3d8, the stereo window rule, popups as popups, about:support
+
+`browser/0003` now runs to Gecko 9e5eab05c5: a popped element that touches the output's edge stays at the screen (KWin's
+`output_edges`, the viewport's flush sides; a page in full screen), every popup (the `<select>` list, tooltips, form autocomplete, permission
+prompts) is an xdg_popup of its own surface under Stereo KWin (`widget.wayland.popups-as-xdg-popups`), and about:support says that
+DMABuf WebGL on NVIDIA is forced on by `widget.dmabuf-webgl.stereo-nvidia.enabled` (or blocked, saying the preference is false).
+`build-browser.sh` makes 6.7.5-0+stereo3d8+lc1 (`browser/changelog8.top`, `0002` states the commit and the version). The call is as for
++stereo3d7: `BROWSER_JOBS=4 SIBLINGS_DIR=.../siblings-1171 SPARKY_LC_ARCHIVE_DIR=.../archive SPARKY_REPO_DIR=/var/tmp/sparky-repo-current`.

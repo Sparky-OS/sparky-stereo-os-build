@@ -1,0 +1,30 @@
+sparky-stereo-browser (@DEBVERSION@) unstable; urgency=medium
+
+  * CSS depth, the stereo window rule (ORDER 414d): a popped element whose
+    drawn copy, in either eye, reaches a side of the page's viewport that
+    lies on the output's edge is drawn at the screen, as the desktop keeps
+    anything popped that touches the output's edge at the screen (something in
+    front of the screen cut by the screen's edge looks wrong; behind it is
+    like looking through a window). The side counts when Stereo KWin lists
+    it among the window's edges on the output's edge (kde_stereo_depth_v1,
+    output_edges) and the viewport is flush with the window there (a page in
+    full screen). Inset elements, sunk elements and a window away from the
+    output's edge keep their level; the click area and the scroll frames follow.
+  * Every popup is an xdg_popup of its own surface under Stereo KWin: the
+    <select> list, tooltips, form autocomplete and the permission prompts were
+    wl_subsurfaces of the window, which sit at the window's level, while the
+    context menu, an xdg_popup, was popped by the desktop. Now all of them are
+    popped, at the same level as a Qt menu on the same output.
+    widget.wayland.popups-as-xdg-popups (default true) turns it off for
+    Gecko's own choice.
+  * about:support tells the truth about DMABuf WebGL on NVIDIA: where an
+    output shows stereo 3D the feature is forced on by
+    widget.dmabuf-webgl.stereo-nvidia.enabled (the block of Mozilla's bug
+    1924578 stays in the decision log), and with that preference false it is
+    blocked and says so.
+  * The source states what it is: browser commit 9e5eab05c5 (Sparky-OS/waterfox,
+    branch stereo3d) in SOURCE.edition.json, debian/browser-build.env and the
+    vendor baseline.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@
+
