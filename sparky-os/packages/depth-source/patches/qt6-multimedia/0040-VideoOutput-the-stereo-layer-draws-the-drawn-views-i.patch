@@ -1,0 +1,1081 @@
+From 756a2671f7c82e6b089af251b93a5f98bce3e067 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 5 Nov 2026 22:01:09 -0300
+Subject: [PATCH 40/41] VideoOutput: the stereo layer draws the drawn views
+ itself into a window surface of the GPU, with no read back and no copy
+
+The compositor's stereo layer (the declared full side by side Stereo KWin takes) had its frames converted and copied into wl_shm buffers by the
+presenter's thread. For the drawn views of a depth video (frames of textures) the layer now makes an EGL context that shares the drawing context's textures,
+a window surface for its wl_surface (wl_egl_window: the driver exchanges the buffers with the compositor, as DMA-BUF where both take them, with their
+modifiers, release and synchronisation) and draws the two eyes with one pass: the crop, the eye order and the format of the surface, at the depth of the
+views (RGBA8; RGBA16 for 10 to 16 bit content into a 10 bit or half float surface; never a surface of less depth: where the driver has none the presenter
+copies through wl_shm, counted, with the reason). The drawn views carry their RGB texture (Target) for this; frames, window surface and the layer's context
+live as long as the layer. QT_MM_STEREO_LAYER_SHM=1 forces the wl_shm path (the control), QT_MM_STEREO_LAYER_DUMP=dir dumps the first frames of either path
+for the proofs. stereoDepthRoute says which path and why, stereoDepthReadBacks() counts the frames of each.
+
+The matrix of a frame that does not say is the one Qt's own conversion assumes (HD BT.709, SD BT.601), and the output says it: a deep depth video of an untagged
+HD stream was drawn and encoded with BT.601 and decoded by the scene graph and the presenter with BT.709 (10 bit views 2.4 % off, now 1.2 % from chroma
+subsampling alone).
+
+Tests: depthOnTheGpuKeepsTheDepth and the deep cases at 12 bits (P016, YUV422P16, YUV444P16 with the code in the high 12 bits; red when the encode pass is cut to 10 bits).
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ src/multimediaquick/qquickvideodepth.cpp      |  77 ++-
+ src/multimediaquick/qquickvideodepth_p.h      |  14 +
+ src/multimediaquick/qquickvideooutput.cpp     |  36 +-
+ .../qquickvideostereolayer.cpp                | 498 ++++++++++++++++++
+ .../qquickvideostereolayer_p.h                |  13 +
+ .../qquickvideostereopresenter.cpp            |  56 ++
+ .../qquickvideostereopresenter_p.h            |  15 +
+ .../tst_qquickvideostereo.cpp                 |  14 +-
+ 8 files changed, 705 insertions(+), 18 deletions(-)
+
+diff --git a/src/multimediaquick/qquickvideodepth.cpp b/src/multimediaquick/qquickvideodepth.cpp
+index f3367ea9a..b29a255ab 100644
+--- a/src/multimediaquick/qquickvideodepth.cpp
++++ b/src/multimediaquick/qquickvideodepth.cpp
+@@ -19,6 +19,7 @@
+ #  include <stereo-dibr-gl.h>
+ #  if QT_CONFIG(opengl)
+ #    include <QtGui/qopenglcontext.h>
++#    include <QtGui/qopenglcontext_platform.h>
+ #    include <rhi/qrhi.h>
+ #    include <rhi/qrhi_platform.h>
+ #    include <QtGui/qopenglextrafunctions.h>
+@@ -629,6 +630,14 @@ public:
+         std::array<GlTex, 3> plane;
+         int nplanes = 0;
+         unsigned generation = 0;
++        // the views as one RGB picture (RGBA8, or RGBA16 for a deeper source), the two eyes side by side, for the stereo layer's pass: the
++        // texture of plane 0 for 8 bit content, a texture of its own (rgbOwned) for a deeper one
++        GlTex rgb;
++        bool rgbOwned = false;
++        // the EGL display and context of the drawing context, when it is one, for a consumer that makes a context sharing it
++        void *eglDisplay = nullptr;
++        void *eglContext = nullptr;
++        bool es = false;
+     };
+ 
+     enum class Source { Planar, SemiUV, SemiVU, Rgba };
+@@ -748,6 +757,13 @@ public:
+         if (!m_context->makeCurrent(m_surface.get()))
+             return fail(QStringLiteral("the OpenGL context could not be made current"), why);
+         g_depthContext = m_context.get();
++        m_eglDisplay = m_eglContext = nullptr;
++#if QT_CONFIG(egl)
++        if (auto *egl = m_context->nativeInterface<QNativeInterface::QEGLContext>()) {
++            m_eglDisplay = egl->display();
++            m_eglContext = reinterpret_cast<void *>(egl->nativeContext());
++        }
++#endif
+         m_f = m_context->extraFunctions();
+         // 16 bit normalised textures: in the core profile always, on OpenGL ES with GL_EXT_texture_norm16
+         m_deepOk = !m_context->isOpenGLES() || m_context->hasExtension(QByteArrayLiteral("GL_EXT_texture_norm16"));
+@@ -792,6 +808,16 @@ public:
+             m_out.erase(v.plane[i].id);
+             (m_pool.size() < 8 ? m_pool : m_trash).push_back(v.plane[i]);
+         }
++        if (v.rgbOwned) {
++            m_out.erase(v.rgb.id);
++            (m_pool.size() < 8 ? m_pool : m_trash).push_back(v.rgb);
++        }
++    }
++    void fillEgl(Views *views) const
++    {
++        views->eglDisplay = m_eglDisplay;
++        views->eglContext = m_eglContext;
++        views->es = m_context && m_context->isOpenGLES();
+     }
+     unsigned generation()
+     {
+@@ -1083,7 +1109,9 @@ public:
+             *views = {};
+             views->nplanes = 1;
+             views->plane[0] = handOut(Target);
++            views->rgb = views->plane[0];
+             views->generation = m_generation;
++            fillEgl(views);
+             return m_f->glGetError() == 0 || (*why = QStringLiteral("the views could not be handed to the sink"), false);
+         }
+         // the views into the frame
+@@ -1383,6 +1411,8 @@ private:
+         if (views) {
+             // the planes are the frame: handed out as they are, finished before the sink's context draws them
+             m_f->glFinish();
++            views->rgb = handOut(Target);
++            views->rgbOwned = true;
+             views->plane[0] = handOut(OutY);
+             views->plane[1] = handOut(OutU);
+             views->nplanes = 2;
+@@ -1391,6 +1421,7 @@ private:
+                 views->nplanes = 3;
+             }
+             views->generation = m_generation;
++            fillEgl(views);
+             if (m_f->glGetError() != 0) {
+                 *why = QStringLiteral("the views could not be handed to the sink");
+                 return false;
+@@ -1590,6 +1621,7 @@ private:
+     std::set<unsigned> m_out;
+     unsigned m_generation = 1;
+     bool m_deepOk = true;
++    void *m_eglDisplay = nullptr, *m_eglContext = nullptr;
+     Deep m_deep;
+     std::unique_ptr<QRhi> m_rhi;
+     bool m_rhiFailed = false;
+@@ -1659,6 +1691,21 @@ public:
+     }
+     void unmap() override { }
+     QVideoFrameFormat format() const override { return m_format; }
++    // What the stereo layer needs to draw these views itself, in a context of its own that shares the drawing context's textures
++    bool layerSource(LayerSource *out) const
++    {
++        const auto drawer = m_drawer.lock();
++        if (!drawer || m_views.generation != drawer->generation() || !m_views.rgb.id || !m_views.eglDisplay || !m_views.eglContext)
++            return false;
++        out->eglDisplay = m_views.eglDisplay;
++        out->eglContext = m_views.eglContext;
++        out->es = m_views.es;
++        out->texture = m_views.rgb.id;
++        out->width = m_views.rgb.w;
++        out->height = m_views.rgb.h;
++        out->deep = m_views.rgb.internal == GL_RGBA16_;
++        return true;
++    }
+     quint64 textureHandle(QRhi &rhi, int plane) override
+     {
+         const auto drawer = m_drawer.lock();
+@@ -1681,6 +1728,19 @@ private:
+ 
+ } // namespace
+ 
++bool layerSourceOf(const QVideoFrame &frame, LayerSource *out)
++{
++#ifdef QT_MM_DEPTH_GPU
++    QHwVideoBuffer *hw = QVideoFramePrivate::hwBuffer(frame);
++    const auto *drawn = dynamic_cast<const DrawnViewsBuffer *>(hw);
++    return drawn && drawn->layerSource(out);
++#else
++    Q_UNUSED(frame);
++    Q_UNUSED(out);
++    return false;
++#endif
++}
++
+ struct Renderer::Private
+ {
+     enum class Outcome { Drawn, PictureAlone, Failed, GpuFailed };
+@@ -2124,13 +2184,20 @@ Renderer::Private::Outcome Renderer::Private::render(const QVideoFrame &input, M
+         layerTable[0] = NAN;
+     }
+ 
++    // The matrix of the frame: what it says, and for a frame that does not say, what Qt's own conversion assumes (HD video is BT.709, SD BT.601; the
++    // scene graph and the stereo layer's presenter convert the drawn frame with it): the views are then drawn and encoded with the matrix Qt decodes
++    // them with, and the output frame says it
++    QVideoFrameFormat::ColorSpace matrix = frame.surfaceFormat().colorSpace();
++    if (matrix == QVideoFrameFormat::ColorSpace_Undefined)
++        matrix = vh > 576 ? QVideoFrameFormat::ColorSpace_BT709 : QVideoFrameFormat::ColorSpace_BT601;
+     // the output: the views at the picture's size, side by side
+     QVideoFrameFormat format = frame.surfaceFormat();
++    format.setColorSpace(matrix);
+     if (useGpu && !deepGpu) {
+         // RGBA 8 bit, drawn by the GPU
+         const QVideoFrameFormat from = format;
+         format = QVideoFrameFormat(QSize(2 * vw, vh), PixelFormat::Format_RGBA8888);
+-        format.setColorSpace(from.colorSpace());
++        format.setColorSpace(matrix);
+         format.setColorTransfer(from.colorTransfer());
+         format.setColorRange(QVideoFrameFormat::ColorRange_Full);
+         format.setStreamFrameRate(from.streamFrameRate());
+@@ -2211,13 +2278,7 @@ Renderer::Private::Outcome Renderer::Private::render(const QVideoFrame &input, M
+             }
+             if (ok)
+                 ok = gpu.draw(source, deep, fullRange,
+-                              frame.surfaceFormat().colorSpace()
+-                                      == QVideoFrameFormat::ColorSpace_BT709
+-                                      ? 1
+-                                      : frame.surfaceFormat().colorSpace()
+-                                              == QVideoFrameFormat::ColorSpace_BT2020
+-                                              ? 2
+-                                              : 0,
++                              matrix == QVideoFrameFormat::ColorSpace_BT709 ? 1 : matrix == QVideoFrameFormat::ColorSpace_BT2020 ? 2 : 0,
+                               parts, depthParts, prm, table.data(), int(tableSize),
+                               layerTable.empty() ? nullptr : layerTable.data(), texOut ? nullptr : &result,
+                               texOut ? &views : nullptr, &reason);
+diff --git a/src/multimediaquick/qquickvideodepth_p.h b/src/multimediaquick/qquickvideodepth_p.h
+index ac94c86a1..7285add43 100644
+--- a/src/multimediaquick/qquickvideodepth_p.h
++++ b/src/multimediaquick/qquickvideodepth_p.h
+@@ -110,6 +110,20 @@ struct Q_MULTIMEDIAQUICK_EXPORT GpuMemory
+     }
+ };
+ 
++// The drawn views of a frame of textures, as one RGB texture (RGBA8, or RGBA16 normalised for a deeper source; the two eyes side by side, left
++// first, row 0 the top), and the EGL display and context of the drawing context they belong to: the stereo layer makes a context that shares it
++// and draws them into its own surface, with no read back. False for any other frame, and for views whose drawing context is gone.
++struct Q_MULTIMEDIAQUICK_EXPORT LayerSource
++{
++    void *eglDisplay = nullptr;
++    void *eglContext = nullptr;
++    bool es = false;
++    unsigned texture = 0;
++    int width = 0, height = 0;
++    bool deep = false;
++};
++Q_MULTIMEDIAQUICK_EXPORT bool layerSourceOf(const QVideoFrame &frame, LayerSource *out);
++
+ class Q_MULTIMEDIAQUICK_EXPORT Renderer
+ {
+ public:
+diff --git a/src/multimediaquick/qquickvideooutput.cpp b/src/multimediaquick/qquickvideooutput.cpp
+index d9d8fb09d..3b3e3c650 100644
+--- a/src/multimediaquick/qquickvideooutput.cpp
++++ b/src/multimediaquick/qquickvideooutput.cpp
+@@ -1303,6 +1303,16 @@ QVariantMap QQuickVideoOutput::stereoDepthReadBacks() const
+         int empty = 0;
+         map.insert(QStringLiteral("importChecks"), m_depthRenderer->importChecks(&empty));
+         map.insert(QStringLiteral("importEmpty"), empty);
++#ifdef QT_MM_STEREO_LAYER
++        {
++            QMutexLocker frameLock(&m_frameMutex);
++            if (m_stereoPresenter) {
++                const auto route = m_stereoPresenter->layerRoute();
++                map.insert(QStringLiteral("layerGpuFrames"), route.gpuFrames);
++                map.insert(QStringLiteral("layerCopiedFrames"), route.copiedFrames);
++            }
++        }
++#endif
+     }
+     return map;
+ }
+@@ -2095,18 +2105,32 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+         result.sequence = 0;
+     }
+ 
+-    // Shown in the compositor's stereo layer, the views are not taken by the scene graph: the layer's presenter maps the frame (a read back
+-    // to system memory when the views are textures), converts it to the buffer format it hands the compositor and copies it into shared
+-    // memory. The route says so.
++    // Shown in the compositor's stereo layer, the views are not taken by the scene graph: the layer's presenter draws them into a window surface of the
++    // GPU (no read back), or maps the frame (a read back to system memory when the views are textures), converts it to the buffer format it hands
++    // the compositor and copies it into shared memory. The route says which, and why.
++#ifdef QT_MM_STEREO_LAYER
+     if (!depthRoute.isEmpty() && result.layerActive) {
++        QQuickVideoStereoPresenter::LayerRoute layerRoute;
++        {
++            QMutexLocker lock(&m_frameMutex);
++            if (m_stereoPresenter)
++                layerRoute = m_stereoPresenter->layerRoute();
++        }
+         depthRoute.insert(QStringLiteral("layer"), true);
+-        if (depthRoute.value(QStringLiteral("views")).toString() == u"texture") {
++        depthRoute.insert(QStringLiteral("layerDmabuf"), layerRoute.dmabuf);
++        if (layerRoute.gpuActive) {
++            depthRoute.insert(QStringLiteral("views"), QStringLiteral("texture"));
++            depthRoute.insert(QStringLiteral("viewsWhy"),
++                              QStringLiteral("the stereo layer draws the views into a window surface of the GPU (no read back, no copy of ours)"));
++        } else if (depthRoute.value(QStringLiteral("views")).toString() == u"texture") {
+             depthRoute.insert(QStringLiteral("views"), QStringLiteral("readBack"));
+             depthRoute.insert(QStringLiteral("viewsWhy"),
+-                              QStringLiteral("the compositor's stereo layer takes the views from system memory (its presenter converts them to the "
+-                                             "buffer format of the output and copies them into shared memory buffers)"));
++                              layerRoute.copiedFrames || !layerRoute.why.isEmpty()
++                                      ? QStringLiteral("the stereo layer takes the views from system memory: %1").arg(layerRoute.why)
++                                      : QStringLiteral("the stereo layer takes the views from system memory (no frame has reached it yet)"));
+         }
+     }
++#endif
+     setDepthRoute(depthRoute);
+ 
+     bool videoChanged = false;
+diff --git a/src/multimediaquick/qquickvideostereolayer.cpp b/src/multimediaquick/qquickvideostereolayer.cpp
+index bd5db69bc..75158218c 100644
+--- a/src/multimediaquick/qquickvideostereolayer.cpp
++++ b/src/multimediaquick/qquickvideostereolayer.cpp
+@@ -11,10 +11,18 @@
+ #include <QtGui/qwindow.h>
+ #include <QtGui/qpa/qplatformwindow_p.h>
+ 
++#include <QtCore/qlibrary.h>
++#include <QtCore/qfile.h>
++
++#define WL_EGL_PLATFORM 1
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
+ #include <cstring>
++#include <dlfcn.h>
+ #include <sys/mman.h>
+ #include <unistd.h>
+ #include <wayland-client.h>
++#include <wayland-egl.h>
+ 
+ #include <stereo-declare.h>
+ 
+@@ -26,6 +34,7 @@ QT_BEGIN_NAMESPACE
+ Q_STATIC_LOGGING_CATEGORY(qLcStereoLayer, "qt.multimedia.video.stereolayer")
+ 
+ using namespace QQuickVideoStereo;
++using namespace Qt::StringLiterals;
+ 
+ namespace {
+ 
+@@ -53,6 +62,7 @@ struct Globals
+     wp_viewporter *viewporter = nullptr;
+     wp_color_manager_v1 *colorManager = nullptr;
+     bool stereo = false;
++    bool dmabuf = false;
+     QList<uint32_t> shmFormats;
+     // what the color manager supports
+     bool parametric = false;
+@@ -97,6 +107,8 @@ void registryGlobal(void *data, wl_registry *registry, uint32_t name, const char
+         wp_color_manager_v1_add_listener(g->colorManager, &colorManagerListener, g);
+     } else if (!strcmp(interface, "kde_stereo_content_manager_v1")) {
+         g->stereo = true;
++    } else if (!strcmp(interface, "zwp_linux_dmabuf_v1")) {
++        g->dmabuf = true;
+     }
+ }
+ void registryGlobalRemove(void *, wl_registry *, uint32_t) { }
+@@ -208,6 +220,294 @@ const wp_image_description_v1_listener imageDescriptionListener = { imageDescrip
+ 
+ } // namespace
+ 
++// ---- the views drawn into a window surface of the layer's own (no read back) ---------------------------------------------------------------
++
++// The EGL and wayland-egl entry points, loaded when first needed (the library links neither)
++struct EglApi
++{
++    EGLBoolean (*bindAPI)(EGLenum) = nullptr;
++    EGLBoolean (*chooseConfig)(EGLDisplay, const EGLint *, EGLConfig *, EGLint, EGLint *) = nullptr;
++    EGLContext (*createContext)(EGLDisplay, EGLConfig, EGLContext, const EGLint *) = nullptr;
++    EGLSurface (*createWindowSurface)(EGLDisplay, EGLConfig, EGLNativeWindowType, const EGLint *) = nullptr;
++    EGLBoolean (*makeCurrent)(EGLDisplay, EGLSurface, EGLSurface, EGLContext) = nullptr;
++    EGLBoolean (*swapBuffers)(EGLDisplay, EGLSurface) = nullptr;
++    EGLBoolean (*swapInterval)(EGLDisplay, EGLint) = nullptr;
++    EGLBoolean (*destroySurface)(EGLDisplay, EGLSurface) = nullptr;
++    EGLBoolean (*destroyContext)(EGLDisplay, EGLContext) = nullptr;
++    EGLint (*getError)() = nullptr;
++    EGLBoolean (*getConfigs)(EGLDisplay, EGLConfig *, EGLint, EGLint *) = nullptr;
++    EGLBoolean (*getConfigAttrib)(EGLDisplay, EGLConfig, EGLint, EGLint *) = nullptr;
++    void *(*getProcAddress)(const char *) = nullptr;
++    wl_egl_window *(*windowCreate)(wl_surface *, int, int) = nullptr;
++    void (*windowResize)(wl_egl_window *, int, int, int, int) = nullptr;
++    void (*windowDestroy)(wl_egl_window *) = nullptr;
++    bool ok = false;
++
++    static const EglApi &get()
++    {
++        static const EglApi api = [] {
++            EglApi a;
++            static QLibrary egl(QStringLiteral("EGL"), 1), wegl(QStringLiteral("wayland-egl"), 1);
++            if (!egl.load() || !wegl.load())
++                return a;
++// by the process's own symbol lookup first, so that what is preloaded into the program (a recorder, a debugging layer) sees these calls as it sees
++// Qt's own, and by the library's handle where the lookup finds nothing
++#define QT_MM_RESOLVE(lib, member, name)                                                                         \
++    do {                                                                                                         \
++        void *symbol = dlsym(RTLD_DEFAULT, name);                                                                \
++        a.member = reinterpret_cast<decltype(a.member)>(symbol ? symbol : reinterpret_cast<void *>(lib.resolve(name))); \
++    } while (0)
++            QT_MM_RESOLVE(egl, bindAPI, "eglBindAPI");
++            QT_MM_RESOLVE(egl, chooseConfig, "eglChooseConfig");
++            QT_MM_RESOLVE(egl, createContext, "eglCreateContext");
++            QT_MM_RESOLVE(egl, createWindowSurface, "eglCreateWindowSurface");
++            QT_MM_RESOLVE(egl, makeCurrent, "eglMakeCurrent");
++            QT_MM_RESOLVE(egl, swapBuffers, "eglSwapBuffers");
++            QT_MM_RESOLVE(egl, swapInterval, "eglSwapInterval");
++            QT_MM_RESOLVE(egl, destroySurface, "eglDestroySurface");
++            QT_MM_RESOLVE(egl, destroyContext, "eglDestroyContext");
++            QT_MM_RESOLVE(egl, getError, "eglGetError");
++            QT_MM_RESOLVE(egl, getConfigs, "eglGetConfigs");
++            QT_MM_RESOLVE(egl, getConfigAttrib, "eglGetConfigAttrib");
++            QT_MM_RESOLVE(egl, getProcAddress, "eglGetProcAddress");
++            QT_MM_RESOLVE(wegl, windowCreate, "wl_egl_window_create");
++            QT_MM_RESOLVE(wegl, windowResize, "wl_egl_window_resize");
++            QT_MM_RESOLVE(wegl, windowDestroy, "wl_egl_window_destroy");
++#undef QT_MM_RESOLVE
++            a.ok = a.bindAPI && a.chooseConfig && a.createContext && a.createWindowSurface && a.makeCurrent && a.swapBuffers
++                    && a.swapInterval && a.destroySurface && a.destroyContext && a.getError && a.getProcAddress && a.windowCreate
++                    && a.windowResize && a.windowDestroy && a.getConfigs && a.getConfigAttrib;
++            return a;
++        }();
++        return api;
++    }
++};
++
++// The OpenGL entry points of the one pass, from the context the layer makes
++struct GlApi
++{
++    using Enum = unsigned;
++    unsigned (*createShader)(Enum) = nullptr;
++    void (*shaderSource)(unsigned, int, const char *const *, const int *) = nullptr;
++    void (*compileShader)(unsigned) = nullptr;
++    void (*getShaderiv)(unsigned, Enum, int *) = nullptr;
++    unsigned (*createProgram)() = nullptr;
++    void (*attachShader)(unsigned, unsigned) = nullptr;
++    void (*linkProgram)(unsigned) = nullptr;
++    void (*getProgramiv)(unsigned, Enum, int *) = nullptr;
++    void (*deleteShader)(unsigned) = nullptr;
++    void (*useProgram)(unsigned) = nullptr;
++    int (*getUniformLocation)(unsigned, const char *) = nullptr;
++    void (*uniform1i)(int, int) = nullptr;
++    void (*uniform2i)(int, int, int) = nullptr;
++    void (*activeTexture)(Enum) = nullptr;
++    void (*bindTexture)(Enum, unsigned) = nullptr;
++    void (*drawArrays)(Enum, int, int) = nullptr;
++    void (*viewport)(int, int, int, int) = nullptr;
++    void (*genVertexArrays)(int, unsigned *) = nullptr;
++    void (*bindVertexArray)(unsigned) = nullptr;
++    void (*finish)() = nullptr;
++    void (*disable)(Enum) = nullptr;
++    void (*readPixels)(int, int, int, int, Enum, Enum, void *) = nullptr;
++    bool ok = false;
++
++    bool load(const EglApi &egl)
++    {
++#define QT_MM_GL(member, name) member = reinterpret_cast<decltype(member)>(egl.getProcAddress(name))
++        QT_MM_GL(createShader, "glCreateShader");
++        QT_MM_GL(shaderSource, "glShaderSource");
++        QT_MM_GL(compileShader, "glCompileShader");
++        QT_MM_GL(getShaderiv, "glGetShaderiv");
++        QT_MM_GL(createProgram, "glCreateProgram");
++        QT_MM_GL(attachShader, "glAttachShader");
++        QT_MM_GL(linkProgram, "glLinkProgram");
++        QT_MM_GL(getProgramiv, "glGetProgramiv");
++        QT_MM_GL(deleteShader, "glDeleteShader");
++        QT_MM_GL(useProgram, "glUseProgram");
++        QT_MM_GL(getUniformLocation, "glGetUniformLocation");
++        QT_MM_GL(uniform1i, "glUniform1i");
++        QT_MM_GL(uniform2i, "glUniform2i");
++        QT_MM_GL(activeTexture, "glActiveTexture");
++        QT_MM_GL(bindTexture, "glBindTexture");
++        QT_MM_GL(drawArrays, "glDrawArrays");
++        QT_MM_GL(viewport, "glViewport");
++        QT_MM_GL(genVertexArrays, "glGenVertexArrays");
++        QT_MM_GL(bindVertexArray, "glBindVertexArray");
++        QT_MM_GL(finish, "glFinish");
++        QT_MM_GL(disable, "glDisable");
++        QT_MM_GL(readPixels, "glReadPixels");
++#undef QT_MM_GL
++        ok = createShader && shaderSource && compileShader && getShaderiv && createProgram && attachShader && linkProgram && getProgramiv
++                && deleteShader && useProgram && getUniformLocation && uniform1i && uniform2i && activeTexture && bindTexture && drawArrays
++                && viewport && genVertexArrays && bindVertexArray && finish && disable && readPixels;
++        return ok;
++    }
++};
++
++// The window surface formats a display has, as "r.g.b.a" (with f for floating point), for the message of a refusal
++QString windowFormatsOf(EGLDisplay display)
++{
++    const EglApi &egl = EglApi::get();
++    EGLint count = 0;
++    egl.getConfigs(display, nullptr, 0, &count);
++    QList<EGLConfig> configs(count);
++    egl.getConfigs(display, configs.data(), count, &count);
++    QStringList formats;
++    for (int i = 0; i < count; ++i) {
++        EGLint surface = 0, r = 0, g = 0, b = 0, a = 0, type = 0;
++        egl.getConfigAttrib(display, configs[i], EGL_SURFACE_TYPE, &surface);
++        if (!(surface & EGL_WINDOW_BIT))
++            continue;
++        egl.getConfigAttrib(display, configs[i], EGL_RED_SIZE, &r);
++        egl.getConfigAttrib(display, configs[i], EGL_GREEN_SIZE, &g);
++        egl.getConfigAttrib(display, configs[i], EGL_BLUE_SIZE, &b);
++        egl.getConfigAttrib(display, configs[i], EGL_ALPHA_SIZE, &a);
++        egl.getConfigAttrib(display, configs[i], EGL_COLOR_COMPONENT_TYPE_EXT, &type);
++        const QString text = QStringLiteral("%1.%2.%3.%4%5").arg(r).arg(g).arg(b).arg(a).arg(type == EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT ? u"f"_s : u""_s);
++        if (!formats.contains(text))
++            formats << text;
++    }
++    return formats.join(u' ');
++}
++
++// What the window surface of a format asks of the driver
++bool configAttributes(BufferFormat format, bool es, EGLint *out, int capacity)
++{
++    int n = 0;
++    auto put = [&](EGLint k, EGLint v) { out[n++] = k; out[n++] = v; };
++    Q_ASSERT(capacity >= 24);
++    put(EGL_SURFACE_TYPE, EGL_WINDOW_BIT);
++    put(EGL_RENDERABLE_TYPE, es ? EGL_OPENGL_ES3_BIT : EGL_OPENGL_BIT);
++    switch (format) {
++    case BufferFormat::Xrgb8888:
++        put(EGL_RED_SIZE, 8);
++        put(EGL_GREEN_SIZE, 8);
++        put(EGL_BLUE_SIZE, 8);
++        put(EGL_ALPHA_SIZE, 0);
++        break;
++    case BufferFormat::Xrgb2101010:
++        put(EGL_RED_SIZE, 10);
++        put(EGL_GREEN_SIZE, 10);
++        put(EGL_BLUE_SIZE, 10);
++        put(EGL_ALPHA_SIZE, 2);
++        break;
++    case BufferFormat::Xbgr16161616f:
++        put(EGL_COLOR_COMPONENT_TYPE_EXT, EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT);
++        put(EGL_RED_SIZE, 16);
++        put(EGL_GREEN_SIZE, 16);
++        put(EGL_BLUE_SIZE, 16);
++        put(EGL_ALPHA_SIZE, 16);
++        break;
++    case BufferFormat::Xbgr16161616:
++        return false; // no window surface of 16 bit unsigned normalised in EGL
++    }
++    out[n] = EGL_NONE;
++    return true;
++}
++
++struct GpuSurface
++{
++    using Enum = unsigned;
++    EGLDisplay display = nullptr;
++    EGLContext shareContext = nullptr;
++    EGLContext context = nullptr;
++    EGLConfig config = nullptr;
++    EGLSurface surface = nullptr;
++    wl_egl_window *window = nullptr;
++    bool es = false;
++    BufferFormat format = BufferFormat::Xrgb8888;
++    QSize size;
++    GlApi gl;
++    unsigned program = 0, vao = 0;
++    int uSrc = -1, uCrop = -1, uEye = -1, uSwap = -1, uWidth = -1;
++    bool current = false;
++    int dumped = 0;
++
++    bool active() const { return surface != nullptr; }
++
++    // The surface and the window, kept: the context and the program stay for the next one
++    void dropSurface()
++    {
++        const EglApi &egl = EglApi::get();
++        if (!egl.ok)
++            return;
++        if (current) {
++            egl.makeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++            current = false;
++        }
++        if (surface)
++            egl.destroySurface(display, surface);
++        surface = nullptr;
++        if (window)
++            egl.windowDestroy(window);
++        window = nullptr;
++        size = {};
++    }
++
++    void dropAll()
++    {
++        dropSurface();
++        const EglApi &egl = EglApi::get();
++        if (context && egl.ok)
++            egl.destroyContext(display, context);
++        context = nullptr;
++        program = vao = 0;
++        shareContext = nullptr;
++    }
++
++    unsigned compile(Enum type, const char *body)
++    {
++        const QByteArray prefix = es ? QByteArrayLiteral("#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\n")
++                                     : QByteArrayLiteral("#version 330 core\n");
++        const QByteArray source = prefix + body;
++        const char *text = source.constData();
++        const unsigned shader = gl.createShader(type);
++        gl.shaderSource(shader, 1, &text, nullptr);
++        gl.compileShader(shader);
++        int ok = 0;
++        gl.getShaderiv(shader, 0x8B81 /* COMPILE_STATUS */, &ok);
++        if (!ok) {
++            gl.deleteShader(shader);
++            return 0;
++        }
++        return shader;
++    }
++
++    // The pass: the two eyes of the source, cropped, side by side in the window surface (row 0 of the texture is the top of the picture)
++    bool buildProgram()
++    {
++        static const char vertex[] = "void main() { vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0); }\n";
++        static const char fragment[] =
++                "uniform sampler2D u_src;\nuniform ivec2 u_crop;\nuniform ivec2 u_eye;\nuniform int u_swap;\nuniform int u_width;\nout vec4 o_color;\n"
++                "void main()\n{\n    ivec2 p = ivec2(gl_FragCoord.xy);\n    int e = p.x >= u_eye.x ? 1 : 0;\n    int se = u_swap != 0 ? 1 - e : e;\n"
++                "    ivec2 s = ivec2(se * u_width + u_crop.x + (p.x - e * u_eye.x), u_crop.y + (u_eye.y - 1 - p.y));\n"
++                "    o_color = vec4(texelFetch(u_src, s, 0).rgb, 1.0);\n}\n";
++        const unsigned vs = compile(0x8B31 /* VERTEX_SHADER */, vertex);
++        const unsigned fs = vs ? compile(0x8B30 /* FRAGMENT_SHADER */, fragment) : 0;
++        if (!vs || !fs)
++            return false;
++        program = gl.createProgram();
++        gl.attachShader(program, vs);
++        gl.attachShader(program, fs);
++        gl.linkProgram(program);
++        gl.deleteShader(vs);
++        gl.deleteShader(fs);
++        int ok = 0;
++        gl.getProgramiv(program, 0x8B82 /* LINK_STATUS */, &ok);
++        if (!ok) {
++            program = 0;
++            return false;
++        }
++        gl.genVertexArrays(1, &vao);
++        uSrc = gl.getUniformLocation(program, "u_src");
++        uCrop = gl.getUniformLocation(program, "u_crop");
++        uEye = gl.getUniformLocation(program, "u_eye");
++        uSwap = gl.getUniformLocation(program, "u_swap");
++        uWidth = gl.getUniformLocation(program, "u_width");
++        return true;
++    }
++};
++
+ struct QQuickVideoStereoLayer::Private
+ {
+     QMutex mutex;
+@@ -229,6 +529,9 @@ struct QQuickVideoStereoLayer::Private
+     bool mapped = false;
+     bool colorSet = false;
+     Color color;
++    GpuSurface gpu;
++    int frames = 0, shmDumped = 0;
++    BufferFormat gpuWanted = BufferFormat::Xrgb8888;
+ 
+     void place();
+     void dispatch() { wl_display_dispatch_queue_pending(display, queue); }
+@@ -344,6 +647,7 @@ std::unique_ptr<QQuickVideoStereoLayer> QQuickVideoStereoLayer::create(QWindow *
+ QQuickVideoStereoLayer::~QQuickVideoStereoLayer()
+ {
+     QMutexLocker lock(&d->mutex);
++    d->gpu.dropAll();
+     if (d->declared)
+         stereo_remove_wayland(d->surface);
+     if (d->stereoInitialized)
+@@ -460,6 +764,11 @@ bool QQuickVideoStereoLayer::present(const QImage &left, const QImage &right, Bu
+     d->rect = rect;
+     if (d->rect.isEmpty())
+         return false;
++    // a window surface of the GPU owns the buffers of the wl_surface: it is let go before wl_shm buffers are attached
++    if (d->gpu.active()) {
++        qCInfo(qLcStereoLayer) << "the views are shown through wl_shm buffers again: the window surface of the GPU is let go";
++        d->gpu.dropSurface();
++    }
+     // Nothing is listened to on the queue of the layer but the release of buffers
+     d->dispatch();
+ 
+@@ -479,6 +788,19 @@ bool QQuickVideoStereoLayer::present(const QImage &left, const QImage &right, Bu
+         return false; // the compositor holds them all: retry after release, including paused updates
+ 
+     writePair(left, right, format, buffer->data, pixels.width() * bytesPerPixel(format));
++    // the diagnostic of the proofs, as for the GPU path: the buffer as the compositor gets it
++    static const QByteArray dumpDir = qgetenv("QT_MM_STEREO_LAYER_DUMP");
++    if (!dumpDir.isEmpty() && ++d->frames > 3 && d->shmDumped < 6) {
++        const QString base = QString::fromLocal8Bit(dumpDir) + QStringLiteral("/shm-%1").arg(d->shmDumped++);
++        QFile out(base + QStringLiteral(".raw"));
++        if (out.open(QIODevice::WriteOnly))
++            out.write(reinterpret_cast<const char *>(buffer->data), qint64(pixels.width()) * bytesPerPixel(format) * pixels.height());
++        else
++            qCWarning(qLcStereoLayer) << "the dump could not be written:" << out.errorString();
++        QFile info(base + QStringLiteral(".txt"));
++        if (info.open(QIODevice::WriteOnly))
++            info.write(QStringLiteral("%1 %2 %3 rows from the top\n").arg(format == BufferFormat::Xrgb2101010 ? u"xr30"_s : format == BufferFormat::Xrgb8888 ? u"xr24"_s : u"xb4h"_s).arg(pixels.width()).arg(pixels.height()).toUtf8());
++    }
+ 
+     d->place();
+     if (!d->declared) {
+@@ -497,11 +819,179 @@ bool QQuickVideoStereoLayer::present(const QImage &left, const QImage &right, Bu
+     return true;
+ }
+ 
++bool QQuickVideoStereoLayer::gpuActive() const
++{
++    QMutexLocker lock(&d->mutex);
++    return d->gpu.active();
++}
++
++bool QQuickVideoStereoLayer::compositorHasDmabuf() const
++{
++    return d->globals.dmabuf;
++}
++
++bool QQuickVideoStereoLayer::presentGpu(const QQuickVideoDepth::LayerSource &source, bool swapEyes, const QRect &crop,
++                                        BufferFormat format, const QRect &rect, BufferFormat *used, QString *why)
++{
++    const EglApi &egl = EglApi::get();
++    if (!egl.ok) {
++        *why = QStringLiteral("libEGL or libwayland-egl could not be loaded");
++        return false;
++    }
++    if (!source.eglDisplay || !source.eglContext || !source.texture || crop.isEmpty() || rect.isEmpty()
++        || crop.x() < 0 || crop.y() < 0 || crop.x() + crop.width() > source.width / 2 || crop.y() + crop.height() > source.height) {
++        *why = QStringLiteral("the views of the frame cannot be drawn by the layer (no shared context, or an empty or outside crop)");
++        return false;
++    }
++    QMutexLocker lock(&d->mutex);
++    GpuSurface &g = d->gpu;
++    d->rect = rect;
++    d->dispatch();
++    const QSize pixels(crop.width() * 2, crop.height());
++    const bool es = source.es;
++    // the formats from the one asked for down, as chooseFormat() does for wl_shm
++    const BufferFormat chain[] = { BufferFormat::Xrgb2101010, BufferFormat::Xbgr16161616f, BufferFormat::Xbgr16161616, BufferFormat::Xrgb8888 };
++    if (g.context && (g.display != source.eglDisplay || g.shareContext != source.eglContext || g.es != es || d->gpuWanted != format)) {
++        qCInfo(qLcStereoLayer) << "the layer's context is made again:" << (g.display != source.eglDisplay) << (g.shareContext != source.eglContext)
++                               << (g.es != es) << (d->gpuWanted != format);
++        g.dropAll();
++    }
++    if (g.active() && g.size != pixels) {
++        egl.windowResize(g.window, pixels.width(), pixels.height(), 0, 0);
++        g.size = pixels;
++    }
++    if (!g.active()) {
++        g.dropSurface();
++        egl.bindAPI(es ? EGL_OPENGL_ES_API : EGL_OPENGL_API);
++        QString lastWhy;
++        // Only the format asked for: a surface of less depth than the views have is no hand-over (the wl_shm buffers of the presenter carry
++        // the depth the compositor offers), so the caller shows them through present() and says why
++        // (a surface of more depth is no loss: 10 bit content goes into a half float surface where the driver has no 10 bit one)
++        for (BufferFormat f : chain) {
++            if (f != format && !(format == BufferFormat::Xrgb2101010 && f == BufferFormat::Xbgr16161616f))
++                continue;
++            EGLint attributes[32];
++            if (!configAttributes(f, es, attributes, 32)) {
++                lastWhy = QStringLiteral("EGL has no window surface of 16 bit unsigned normalised");
++                continue;
++            }
++            EGLConfig config = nullptr;
++            EGLint count = 0;
++            if (!egl.chooseConfig(source.eglDisplay, attributes, &config, 1, &count) || count < 1) {
++                lastWhy = QStringLiteral("the driver has no window surface of this format (it has %1)").arg(windowFormatsOf(source.eglDisplay));
++                continue;
++            }
++            if (g.context && g.format != f)
++                g.dropAll();
++            if (!g.context) {
++                const EGLint contextAttributes[] = { EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, es ? 0 : 3,
++                                                     EGL_CONTEXT_OPENGL_PROFILE_MASK, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT, EGL_NONE };
++                const EGLint esAttributes[] = { EGL_CONTEXT_MAJOR_VERSION, 3, EGL_NONE };
++                g.context = egl.createContext(source.eglDisplay, config, source.eglContext, es ? esAttributes : contextAttributes);
++                if (!g.context) {
++                    lastWhy = QStringLiteral("a context sharing the drawing context's could not be made (EGL error 0x%1)").arg(egl.getError(), 0, 16);
++                    continue;
++                }
++                g.display = source.eglDisplay;
++                g.shareContext = source.eglContext;
++                g.es = es;
++            }
++            g.window = egl.windowCreate(d->surface, pixels.width(), pixels.height());
++            g.surface = g.window ? egl.createWindowSurface(source.eglDisplay, config, reinterpret_cast<EGLNativeWindowType>(g.window), nullptr)
++                                 : nullptr;
++            if (!g.surface) {
++                lastWhy = QStringLiteral("the driver made no window surface of this format for the layer (EGL error 0x%1)").arg(egl.getError(), 0, 16);
++                g.dropSurface();
++                continue;
++            }
++            g.config = config;
++            g.format = f;
++            g.size = pixels;
++            d->gpuWanted = format;
++            break;
++        }
++        if (!g.active()) {
++            *why = lastWhy.isEmpty() ? QStringLiteral("no window surface could be made for the layer") : lastWhy;
++            return false;
++        }
++        qCInfo(qLcStereoLayer) << "the views are drawn into a window surface of the GPU, shared with the drawing context: format" << int(g.format) << ":"
++                               << (d->globals.dmabuf ? "the compositor offers zwp_linux_dmabuf_v1" : "the compositor does not offer zwp_linux_dmabuf_v1");
++    }
++    *used = g.format;
++    if (!egl.makeCurrent(g.display, g.surface, g.surface, g.context)) {
++        *why = QStringLiteral("the layer's context could not be made current (EGL error 0x%1)").arg(egl.getError(), 0, 16);
++        g.dropSurface();
++        return false;
++    }
++    g.current = true;
++    if (!g.program) {
++        if (!g.gl.load(egl) || !g.buildProgram()) {
++            *why = QStringLiteral("the layer's pass does not build on this OpenGL");
++            g.dropAll();
++            return false;
++        }
++        egl.swapInterval(g.display, 0);
++    }
++    g.gl.viewport(0, 0, pixels.width(), pixels.height());
++    g.gl.disable(0x0BE2 /* BLEND */);
++    g.gl.disable(0x0C11 /* SCISSOR_TEST */);
++    g.gl.useProgram(g.program);
++    g.gl.bindVertexArray(g.vao);
++    g.gl.activeTexture(0x84C0);
++    g.gl.bindTexture(0x0DE1 /* TEXTURE_2D */, source.texture);
++    g.gl.uniform1i(g.uSrc, 0);
++    g.gl.uniform2i(g.uCrop, crop.x(), crop.y());
++    g.gl.uniform2i(g.uEye, crop.width(), crop.height());
++    g.gl.uniform1i(g.uSwap, swapEyes ? 1 : 0);
++    g.gl.uniform1i(g.uWidth, source.width / 2);
++    g.gl.drawArrays(0x0004 /* TRIANGLES */, 0, 3);
++
++    // A diagnostic for the proofs: the first frames of the surface read back as the surface holds them (RGBA8, RGB10_A2, RGBA half float), into
++    // QT_MM_STEREO_LAYER_DUMP
++    static const QByteArray dumpDir = qgetenv("QT_MM_STEREO_LAYER_DUMP");
++    if (!dumpDir.isEmpty() && ++d->frames > 3 && g.dumped < 6) {
++        const bool tenBit = g.format == BufferFormat::Xrgb2101010, half = g.format == BufferFormat::Xbgr16161616f;
++        const int bytes = half ? 8 : 4;
++        QByteArray pixelsBack(pixels.width() * pixels.height() * bytes, 0);
++        g.gl.readPixels(0, 0, pixels.width(), pixels.height(), 0x1908 /* RGBA */, half ? 0x140B /* HALF_FLOAT */ : tenBit ? 0x8368 /* UNSIGNED_INT_2_10_10_10_REV */ : 0x1401, pixelsBack.data());
++        const QString base = QString::fromLocal8Bit(dumpDir) + QStringLiteral("/layer-%1").arg(g.dumped++);
++        QFile out(base + QStringLiteral(".raw"));
++        if (out.open(QIODevice::WriteOnly))
++            out.write(pixelsBack);
++        QFile info(base + QStringLiteral(".txt"));
++        if (info.open(QIODevice::WriteOnly))
++            info.write(QStringLiteral("%1 %2 %3 rows from the bottom\n").arg(half ? u"rgba16f"_s : tenBit ? u"rgb10a2"_s : u"rgba8"_s).arg(pixels.width()).arg(pixels.height()).toUtf8());
++    }
++
++    d->place();
++    if (!d->declared) {
++        const int result = stereo_declare_wayland(d->surface, STEREO_SBS_FULL, STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT);
++        if (result < 0)
++            qCWarning(qLcStereoLayer) << "declaring the stereo content failed:" << strerror(-result);
++        else
++            d->declared = true;
++    }
++    const bool swapped = egl.swapBuffers(g.display, g.surface);
++    // the textures are the drawing context's: finished here before the frame is let go and they are drawn into again
++    g.gl.finish();
++    egl.makeCurrent(g.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++    g.current = false;
++    if (!swapped) {
++        *why = QStringLiteral("the window surface of the layer could not be swapped (EGL error 0x%1)").arg(egl.getError(), 0, 16);
++        g.dropSurface();
++        return false;
++    }
++    wl_display_flush(d->display);
++    d->mapped = true;
++    return true;
++}
++
+ void QQuickVideoStereoLayer::hide()
+ {
+     QMutexLocker lock(&d->mutex);
+     if (!d->mapped)
+         return;
++    // a window surface of the GPU is kept: the driver attaches its next buffer at the next swap
+     wl_surface_attach(d->surface, nullptr, 0, 0);
+     wl_surface_commit(d->surface);
+     wl_display_flush(d->display);
+@@ -530,6 +1020,14 @@ void QQuickVideoStereoLayer::hide() { }
+ void QQuickVideoStereoLayer::setColor(const Color &) { }
+ bool QQuickVideoStereoLayer::hasColorManagement() const { return false; }
+ bool QQuickVideoStereoLayer::canDescribe(const Color &) { return false; }
++bool QQuickVideoStereoLayer::gpuActive() const { return false; }
++bool QQuickVideoStereoLayer::compositorHasDmabuf() const { return false; }
++bool QQuickVideoStereoLayer::presentGpu(const QQuickVideoDepth::LayerSource &, bool, const QRect &, QQuickVideoStereo::BufferFormat,
++                                        const QRect &, QQuickVideoStereo::BufferFormat *, QString *why)
++{
++    *why = QStringLiteral("no stereo layer");
++    return false;
++}
+ 
+ QT_END_NAMESPACE
+ 
+diff --git a/src/multimediaquick/qquickvideostereolayer_p.h b/src/multimediaquick/qquickvideostereolayer_p.h
+index 69c047ad8..2e5b27d05 100644
+--- a/src/multimediaquick/qquickvideostereolayer_p.h
++++ b/src/multimediaquick/qquickvideostereolayer_p.h
+@@ -19,6 +19,7 @@
+ #include <QtGui/qimage.h>
+ #include <QtMultimedia/qvideoframeformat.h>
+ #include <QtMultimediaQuick/private/qquickvideostereo_p.h>
++#include <QtMultimediaQuick/private/qquickvideodepth_p.h>
+ 
+ #include <memory>
+ 
+@@ -54,6 +55,18 @@ public:
+     // backpressure: retry the latest matching pair when buffers are released.
+     bool present(const QImage &left, const QImage &right, QQuickVideoStereo::BufferFormat format,
+                  const QRect &rect);
++    // Shows the views of a frame of textures (the drawn views of a depth video) without a read back: the layer makes an EGL context that shares the
++    // drawing context's textures, a window surface for its wl_surface (the driver exchanges the buffers with the compositor as DMA-BUF where both
++    // take them), and draws the two eyes into it with one pass at the texture's depth. crop is the part of one eye shown, in the eye's pixels.
++    // False with the reason in why: the caller then shows the views through present(), which leaves the window surface. *used is the format of
++    // the surface: the one asked for where the driver has a surface of it, else the next one down (said in the log).
++    bool presentGpu(const QQuickVideoDepth::LayerSource &source, bool swapEyes, const QRect &crop,
++                    QQuickVideoStereo::BufferFormat format, const QRect &rect,
++                    QQuickVideoStereo::BufferFormat *used, QString *why);
++    // Whether the last view was shown through a window surface of the GPU
++    bool gpuActive() const;
++    // Whether the compositor offers zwp_linux_dmabuf_v1
++    bool compositorHasDmabuf() const;
+     // Takes the layer off the screen until the next present()
+     void hide();
+ 
+diff --git a/src/multimediaquick/qquickvideostereopresenter.cpp b/src/multimediaquick/qquickvideostereopresenter.cpp
+index 242ab2f1d..9e30e3344 100644
+--- a/src/multimediaquick/qquickvideostereopresenter.cpp
++++ b/src/multimediaquick/qquickvideostereopresenter.cpp
+@@ -4,6 +4,7 @@
+ #include "qquickvideostereopresenter_p.h"
+ 
+ #include <QtMultimedia/private/qvideoframeconverter_p.h>
++#include <QtMultimediaQuick/private/qquickvideodepth_p.h>
+ #include <QtCore/qloggingcategory.h>
+ #include <QtCore/qfloat16.h>
+ 
+@@ -20,6 +21,8 @@ using Mode = QVideoFrameFormat::StereoMode;
+ QQuickVideoStereoPresenter::QQuickVideoStereoPresenter(QWindow *window)
+     : m_window(window)
+ {
++    // the diagnostic: the views are always converted and copied into wl_shm buffers (the control of the layer's GPU path)
++    m_forceShm = qEnvironmentVariableIntValue("QT_MM_STEREO_LAYER_SHM") != 0;
+     start();
+     QMutexLocker lock(&m_mutex);
+     while (!m_created)
+@@ -57,6 +60,12 @@ void QQuickVideoStereoPresenter::clear()
+     m_condition.wakeAll();
+ }
+ 
++QQuickVideoStereoPresenter::LayerRoute QQuickVideoStereoPresenter::layerRoute() const
++{
++    QMutexLocker lock(&m_routeMutex);
++    return m_route;
++}
++
+ void QQuickVideoStereoPresenter::submit(Job job)
+ {
+     QMutexLocker lock(&m_mutex);
+@@ -104,6 +113,53 @@ void QQuickVideoStereoPresenter::process(State::Work work)
+     const QVideoFrameFormat format = job.frame.surfaceFormat();
+     const bool rightFirst = job.packing.rightEyeFirst != job.swapEyes;
+     const auto depth = job.wide ? QVideoFrameImageDepth::Float32 : QVideoFrameImageDepth::Float16;
++    QString gpuWhy;
++    // The drawn views of a depth video are textures of the drawing context: the layer draws them into a window surface of the GPU, with no read back
++    // and no conversion or copy of ours (the driver and the compositor exchange the buffers, as DMA-BUF where both take them)
++    if (m_forceShm) {
++        gpuWhy = QStringLiteral("QT_MM_STEREO_LAYER_SHM asks for wl_shm buffers");
++    } else if (format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::Multiview) || job.packing.mode != Mode::SideBySide
++               || job.packing.size != Packing::Size::Full) {
++        gpuWhy = QStringLiteral("the frame is not the full side by side the drawing passes make");
++    } else {
++        QQuickVideoDepth::LayerSource source;
++        if (!QQuickVideoDepth::layerSourceOf(job.frame, &source)) {
++            gpuWhy = QStringLiteral("the frame is not made of textures of a drawing context the layer can share");
++        } else {
++            const QSize eye(source.width / 2, source.height);
++            QRect crop(QPoint(0, 0), eye);
++            if (work.geometry.crop)
++                crop = coverCrop(eye, job.displaySize, work.geometry.destination.size());
++            if (crop.isEmpty()) {
++                gpuWhy = QStringLiteral("the crop of the views is empty");
++            } else {
++                // the revision check and the commit stay together, as for the wl_shm buffers
++                QMutexLocker lock(&m_mutex);
++                if (!m_state.isCurrent(work.revision))
++                    return;
++                m_layer->setColor({ format.colorSpace(), format.colorTransfer(), format.colorRange(), format.maxLuminance() });
++                BufferFormat used = job.format;
++                if (m_layer->presentGpu(source, rightFirst, crop, job.format, work.geometry.destination, &used, &gpuWhy)) {
++                    QMutexLocker routeLock(&m_routeMutex);
++                    ++m_route.gpuFrames;
++                    m_route.gpuActive = true;
++                    m_route.dmabuf = m_layer->compositorHasDmabuf();
++                    job.frame = {};
++                    return;
++                }
++            }
++        }
++    }
++    {
++        QMutexLocker routeLock(&m_routeMutex);
++        ++m_route.copiedFrames;
++        m_route.gpuActive = false;
++        if (m_route.why != gpuWhy)
++            qCInfo(qLcStereoPresenter).noquote() << "the views are converted and copied into wl_shm buffers by the presenter:" << gpuWhy;
++        m_route.why = gpuWhy;
++        if (m_layer)
++            m_route.dmabuf = m_layer->compositorHasDmabuf();
++    }
+     QImage left, right;
+     if (format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::Multiview)) {
+         left = qImageFromVideoFrameView(job.frame, rightFirst ? 1 : 0, depth);
+diff --git a/src/multimediaquick/qquickvideostereopresenter_p.h b/src/multimediaquick/qquickvideostereopresenter_p.h
+index e48b1df06..abd4c12bc 100644
+--- a/src/multimediaquick/qquickvideostereopresenter_p.h
++++ b/src/multimediaquick/qquickvideostereopresenter_p.h
+@@ -151,6 +151,18 @@ public:
+     void submit(Job job);
+     void hide();
+ 
++    // How the views reached the layer: frames of textures drawn by the layer into a window surface of the GPU (no read back, no copy of ours),
++    // and frames converted and copied into wl_shm buffers (with the reason of the last one that was not drawn by the GPU)
++    struct LayerRoute
++    {
++        int gpuFrames = 0;
++        int copiedFrames = 0;
++        QString why;
++        bool dmabuf = false;   // the compositor offers zwp_linux_dmabuf_v1
++        bool gpuActive = false; // the last frame was drawn by the GPU
++    };
++    LayerRoute layerRoute() const;
++
+ private:
+     // The thread makes the layer, shows into it, and lets it go: the library that declares the
+     // stereo content keeps its state per thread
+@@ -165,6 +177,9 @@ private:
+     bool m_stopping = false;
+     bool m_created = false;
+     bool m_valid = false;
++    mutable QMutex m_routeMutex;
++    LayerRoute m_route;
++    bool m_forceShm = false;
+ };
+ 
+ QT_END_NAMESPACE
+diff --git a/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp b/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
+index c170abee3..e65ba0bb8 100644
+--- a/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
++++ b/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
+@@ -914,6 +914,10 @@ void tst_QQuickVideoStereo::depthOnTheGpuKeepsTheDepth_data()
+     QTest::newRow("YUV 4:2:0 10 bit, BT.601, full") << int(yuv) << 10 << 0 << int(QVideoFrameFormat::ColorSpace_BT601) << true;
+     QTest::newRow("P010, BT.2020, limited") << int(QVideoFrameFormat::Format_P010) << 10 << 6 << int(QVideoFrameFormat::ColorSpace_BT2020) << false;
+     QTest::newRow("P016, BT.709, limited") << int(QVideoFrameFormat::Format_P016) << 16 << 0 << int(QVideoFrameFormat::ColorSpace_BT709) << false;
++    // 12 bit: yuv420p12, yuv422p12, yuv444p12 and NVDEC's P012 reach the passes as P016, YUV422P16 and YUV444P16 with the code in the high 12 bits
++    QTest::newRow("12 bit in P016 (P012, yuv420p12), BT.709, limited") << int(QVideoFrameFormat::Format_P016) << 12 << 4 << int(QVideoFrameFormat::ColorSpace_BT709) << false;
++    QTest::newRow("12 bit in YUV422P16 (yuv422p12), BT.601, full") << int(QVideoFrameFormat::Format_YUV422P16) << 12 << 4 << int(QVideoFrameFormat::ColorSpace_BT601) << true;
++    QTest::newRow("12 bit in YUV444P16 (yuv444p12), BT.2020, limited") << int(QVideoFrameFormat::Format_YUV444P16) << 12 << 4 << int(QVideoFrameFormat::ColorSpace_BT2020) << false;
+     QTest::newRow("YUV 4:2:2 16 bit, BT.601, full") << int(QVideoFrameFormat::Format_YUV422P16) << 16 << 0 << int(QVideoFrameFormat::ColorSpace_BT601) << true;
+     QTest::newRow("YUV 4:4:4 16 bit, BT.709, limited") << int(QVideoFrameFormat::Format_YUV444P16) << 16 << 0 << int(QVideoFrameFormat::ColorSpace_BT709) << false;
+ }
+@@ -938,9 +942,11 @@ void tst_QQuickVideoStereo::depthOnTheGpuKeepsTheDepth()
+     const int log2h = (pf == QVideoFrameFormat::Format_YUV422P16 || pf == QVideoFrameFormat::Format_YUV444P16) ? 0 : 1;
+     const int w = 128, h = 64;
+     const int unit = 1 << shift;
+-    const int lo = bits == 10 ? 300 : 20000, step = bits == 10 ? 1 : 7;
++    // 12 bit content is held in the high bits of 16 bit words (P016 and the 16 bit planar formats: the unit is 16 words, as Qt's FFmpeg backend
++    // converts yuv420p12 and the other 12 bit formats and as NVDEC's P012 is read), a code a step as the 10 bit ramp has
++    const int lo = bits == 10 ? 300 : bits == 12 ? 1200 : 20000, step = bits == 16 ? 7 : 1;
+     const int maxCode = (1 << bits) - 1;
+-    const int Ucode = bits == 10 ? 517 : 33001, Vcode = bits == 10 ? 507 : 32001;
++    const int Ucode = bits == 10 ? 517 : bits == 12 ? 2059 : 33001, Vcode = bits == 10 ? 507 : bits == 12 ? 2003 : 32001;
+     QVideoFrameFormat f(QSize(2 * w, h), pf);
+     f.setColorSpace(QVideoFrameFormat::ColorSpace(space));
+     f.setColorRange(full ? QVideoFrameFormat::ColorRange_Full : QVideoFrameFormat::ColorRange_Video);
+@@ -986,7 +992,7 @@ void tst_QQuickVideoStereo::depthOnTheGpuKeepsTheDepth()
+         return int(*(reinterpret_cast<const quint16 *>(fr.bits(plane) + y * fr.bytesPerLine(plane)) + x)) / unit;
+     };
+     // the ramp, in both views: the codes within the error of the conversion of those the C code draws, none of them lost
+-    const int tolerance = bits == 10 ? 1 : 24;
++    const int tolerance = bits == 10 ? 1 : bits == 12 ? 2 : 24;
+     auto run = [&](const QVideoFrame &fr, int x0, int x1, int y) {
+         std::set<int> distinct;
+         for (int x = x0; x < x1; ++x)
+@@ -1029,7 +1035,7 @@ void tst_QQuickVideoStereo::depthOnTheGpuKeepsTheDepth()
+             const int expected = (semi ? c == 0 : plane == 1) ? Ucode : Vcode;
+             const int at = (cx >> log2w) * (semi ? 2 : 1) + c;
+             const int g = code(gpu, plane, at, cy >> log2h), r = code(cpu, plane, at, cy >> log2h);
+-            const int cTolerance = bits == 10 ? 2 : 24;
++            const int cTolerance = bits == 10 ? 2 : bits == 12 ? 4 : 24;
+             QVERIFY2(std::abs(g - expected) <= cTolerance, qPrintable(u"chroma %1 of plane %2: %3, the source's %4"_s.arg(c).arg(plane).arg(g).arg(expected)));
+             QVERIFY2(std::abs(g - r) <= cTolerance, qPrintable(u"chroma %1 of plane %2: %3, the C code's %4"_s.arg(c).arg(plane).arg(g).arg(r)));
+         }
+-- 
+2.53.0
+
