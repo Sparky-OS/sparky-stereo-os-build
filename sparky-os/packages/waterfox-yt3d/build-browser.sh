@@ -18,7 +18,16 @@ PUBLISHED=$(cd "$2" && pwd -P)
 TOOLS=$(cd "$3" && pwd -P)
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 sparky_provenance_init sparky-lc-migration:20261020
-docker run "${SPARKY_PROV_ARGS[@]}" --rm --ulimit core=0 --name w196-browser --cpus ${BROWSER_JOBS:-8} -e BROWSER_JOBS=${BROWSER_JOBS:-8} --memory 32g --platform linux/amd64 \
+# The link gate (lean.release check-link) runs when SIBLINGS_DIR (the unpublished libstereo-policy debs, with siblings.txt),
+# SPARKY_LC_ARCHIVE_DIR (the public sources.json and keyrings) and SPARKY_REPO_DIR (the published edition tree) are set.
+GATE=()
+if [ -n "${SIBLINGS_DIR:-}" ]; then
+	: "${SPARKY_LC_ARCHIVE_DIR:?the folder of the link gate}" "${SPARKY_REPO_DIR:?the published edition tree}"
+	GATE=(--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
+		-v "$SIBLINGS_DIR":/sib:ro -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro -v "$SPARKY_REPO_DIR":/repo:ro
+		-e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch)
+fi
+docker run "${SPARKY_PROV_ARGS[@]}" "${GATE[@]}" --rm --ulimit core=0 --name w196-browser --cpus ${BROWSER_JOBS:-8} -e BROWSER_JOBS=${BROWSER_JOBS:-8} --memory 32g --platform linux/amd64 \
 	-v "$WORK":/work -v "$PUBLISHED":/in:ro -v "$HERE/browser":/patches:ro -v "$TOOLS":/browser-toolchains:ro \
 	-v "$HERE/../..":/toolkit:ro \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \

@@ -74,3 +74,15 @@ runuser -u builder -- env SPARKY_BROWSER_TOOLCHAIN_ROOT=/browser-toolchains dpkg
 cp .sparky-lc/source.json /work/native-source.json
 cd /work/build
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/build/*+lc1_*.deb
+# The link gate (ORDER 414b): the browser's libraries resolve in the public archives and the edition's published tree, with the
+# unpublished libstereo-policy1 of /sib as its sibling, and the program starts (LD_BIND_NOW=1, no display).
+if [ -d /sib ]; then
+    printf '# package\tprogram\targuments\nsparky-stereo-browser\t/usr/lib/sparky-stereo-browser/sparky-stereo-browser-bin\t--version\n' > /work/browser-smoke.tsv
+    printf 'deb [trusted=yes] file:/repo mashtabba main\n' > /etc/apt/sources.list.d/edition.list
+    apt-get -y update >/work/apt-update-gate.log 2>&1 || true
+    apt-get -y --no-install-recommends install bubblewrap >/work/gate-setup.log 2>&1
+    mkdir -p /work/link-scratch && chown -R builder:builder /work/link-scratch
+    unset DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
+    PYTHONPATH=/toolkit python3 -m lean.release check-link --archive-config "$SPARKY_LC_ARCHIVE_CONFIG" --scratch "$SPARKY_LC_SCRATCH" \
+        --siblings-file /sib/siblings.txt --previous-dir /in --smoke /work/browser-smoke.tsv /work/build/sparky-stereo-browser_*+lc1_amd64.deb 2>&1 | tee /work/link-gate.log
+fi

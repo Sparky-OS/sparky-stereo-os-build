@@ -26,7 +26,7 @@ sparky_provenance_init "${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}"
 docker run --rm --ulimit core=0 --name w196-kwin-pkg --cpus 4 --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
-	-v "$WORK":/work -v "$SRC":/src:ro -v "$EXTRA":/extra:ro \
+	${SIBLINGS_DIR:+-v "$SIBLINGS_DIR":/sib:ro -e SPARKY_LC_SIBLINGS_FILE=/sib/siblings.txt} -v "$WORK":/work -v "$SRC":/src:ro -v "$EXTRA":/extra:ro \
 	-v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
 	-v "$HERE/patches":/patches:ro \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
