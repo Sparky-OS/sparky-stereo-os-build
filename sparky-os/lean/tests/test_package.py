@@ -65,6 +65,10 @@ class Packages(unittest.TestCase):
         self.work = tempfile.TemporaryDirectory(prefix='test-lc-')
         self.addCleanup(self.work.cleanup)
         self.base = Path(self.work.name)
+        # a source is dated by its recipe (ORDER 421b); the recipe date of these fixtures is this one
+        dated = patch.dict(os.environ, {'SOURCE_DATE_EPOCH': '1793974631'})
+        dated.start()
+        self.addCleanup(dated.stop)
 
     def stage(self, version='1', arch='all', package_name='lc-demo'):
         root = self.base / f'stage-{package_name}-{version}-{arch}'
@@ -1271,7 +1275,7 @@ class SourcePackage(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='test-lc-source-') as d:
             base = Path(d)
             root, recipe = self.tree(base)
-            env = {**os.environ, 'GIT_CEILING_DIRECTORIES': str(base), 'PYTHONDONTWRITEBYTECODE': '1',
+            env = {**os.environ, 'SOURCE_DATE_EPOCH': '1793974631', 'GIT_CEILING_DIRECTORIES': str(base), 'PYTHONDONTWRITEBYTECODE': '1',
                    'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}
             subprocess.run(['git', 'init', '-q', str(root)], env=env, check=True)
             subprocess.run(['git', '-C', str(root), 'add', '-A'], env=env, check=True)

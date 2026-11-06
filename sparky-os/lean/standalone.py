@@ -7,13 +7,13 @@ An architecture-constrained script package requires an explicit matching host.
 Native binaries must use their native source build and its pre-compilation proof.
 """
 import argparse
-import email.utils
 import json
 import os
 from pathlib import Path
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 
 from . import package, release, tracked
@@ -69,6 +69,14 @@ def _build(tree, out, authoring, architecture, build_dependencies):
         raise ValueError("Invalid additional build dependency")
     extra_build_deps = "".join(", " + dep for dep in build_dependencies)
     tree, out, authoring = (Path(p).resolve() for p in (tree, out, authoring))
+    # The source is dated by its recipe, never by the clock (ORDER 421b): SOURCE_DATE_EPOCH, else the last commit touching the
+    # authoring folder, which must be committed.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "repo"))
+    import reproducible
+    try:
+        stamp = reproducible.epoch([authoring])
+    except reproducible.NoRecipeDate as error:
+        raise ValueError(f"no source date: {error}") from None
     fields = package.control(tree)
     name, version, arch = package.identity(fields)
     if arch != architecture or ":" in version:
@@ -130,7 +138,7 @@ def _build(tree, out, authoring, architecture, build_dependencies):
             f"{name} ({version}) unstable; urgency=medium\n\n"
             "  * Build from retained authored staging and generator inputs; apply\n"
             "    qualified Lean Code and publish matching HR documentation.\n\n"
-            f" -- {maintainer}  {email.utils.formatdate(localtime=False)}\n"
+            f" -- {maintainer}  {reproducible.rfc2822(stamp)}\n"
         )
         (source / "debian/source/format").write_text("3.0 (native)\n")
         # The source archive is a resolved payload, not an editor checkout.
@@ -181,7 +189,9 @@ with tempfile.TemporaryDirectory(dir=root, prefix=".staging-") as work:
                          f"{other_target} build build-arch build-indep clean:\n"
                          ".PHONY: binary binary-arch binary-indep build build-arch build-indep clean\n")
         rules.chmod(0o755)
-        subprocess.run(["dpkg-source", "-b", str(source)], cwd=work, check=True)
+        reproducible.normalize(source, stamp)
+        subprocess.run(["dpkg-source", "-b", str(source)], cwd=work, check=True,
+                       env=os.environ | {"SOURCE_DATE_EPOCH": str(stamp)})
         release.build_tree(tree, out)
         for suffix in ("dsc", "tar.xz"):
             shutil.copy2(work / f"{name}_{version}.{suffix}", out)

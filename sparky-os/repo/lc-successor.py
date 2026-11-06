@@ -45,6 +45,7 @@ import textwrap
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
+sys.path.insert(0, str(HERE))
 from lean import debian_prepare  # noqa: E402
 import reproducible  # noqa: E402
 
