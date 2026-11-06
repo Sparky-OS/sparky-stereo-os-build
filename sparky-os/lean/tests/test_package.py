@@ -1249,6 +1249,7 @@ class SourcePackage(unittest.TestCase):
             shutil.copy2(f, root / 'sparky-os/lean')
         (root / 'sparky-os/repo').mkdir(parents=True)
         shutil.copy2(self.REPO / 'repo/provenance.sh', root / 'sparky-os/repo')
+        shutil.copy2(self.REPO / 'repo/reproducible.py', root / 'sparky-os/repo')    # build-source.sh dates and normalizes by it (ORDER 421b)
         (root / 'tools').mkdir()
         shutil.copy2(self.REPO.parent / 'tools/copy-recipe.py', root / 'tools')
         return root, recipe
