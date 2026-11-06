@@ -78,6 +78,14 @@ Wiring one is two lines: source `build-provenance.sh` after `HERE=`, call `spark
 `tests/supply-chain/test-wiring.sh` fails on a host driver (a `docker run` in packages, release or upstream) whose container reaches the gate without the call, the helper or the opt-out.
 Plain builds that never reach the Lean Code gate (`repo/build-from-dsc.sh`) write no record.
 
+**The source date (ORDER 421b).**
+The same init call gives the build the date of its recipe, never the clock's: `SOURCE_DATE_EPOCH` as the caller set it, else the committer date of the last commit that touched the calling script's folder (the folder is passed as a second argument by a driver that is not the recipe; a tree with uncommitted changes there stops the call and says to commit or set the variable).
+The call exports `SOURCE_DATE_EPOCH` and `SOURCE_DATE_RFC2822` (the changelog trailer date, UTC) and `SPARKY_PROV_ARGS` carries both into the container, with `SPARKY_SOURCE_DATE_BASIS` (where the date came from) and `repo/reproducible.py` mounted at `/run/reproducible.py`.
+The scripts that write a changelog entry or pack a source read the date from there: `dch --date "$SOURCE_DATE_RFC2822"`, and `python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" TREE` before every `dpkg-source -b`, so the checkout time, the umask, the zone and the clock stay out of the bytes.
+`lean.debian_prepare` stops without `SOURCE_DATE_EPOCH`; `lean.standalone` takes the date of its `--authoring` folder.
+The build record carries `sourceDateEpoch` and `sourceDateBasis`, and the statement copies them into `internalParameters.buildRecord`, so a reader can make the source again.
+`tests/reproducible-sources/test.sh` proves the bytes (in a container); `check_producers.py` (also run by `test-wiring.sh`) fails on any script that writes a source from the clock.
+
 `make-provenance.py --build-dir DIR` (also the older `--buildinfo-dir`) searches the folders for records and `.buildinfo` files.
 A record changes the statement:
 

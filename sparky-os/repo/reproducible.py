@@ -22,6 +22,7 @@ person knowing.
 
 Usage as a program (for shell recipes):
   reproducible.py epoch PATH...        print the recipe date as an epoch (step 1, else step 2 for these paths)
+  reproducible.py changelog FILE       print the epoch of the newest entry of a debian/changelog (a native package's own date)
   reproducible.py rfc2822 EPOCH        print it as a changelog trailer date
   reproducible.py normalize EPOCH DIR  set the mtime and mode of everything under DIR
   reproducible.py normalize-tree EPOCH TREE  the same for what dpkg-source -b takes from TREE: debian/ and its include-binaries
@@ -65,6 +66,14 @@ def epoch(paths=(), env=None):
     if not stamp.isdigit():
         raise NoRecipeDate('no commit touches the recipe paths: ' + ' '.join(rel))
     return int(stamp)
+
+
+def recipe_epoch(paths=()):
+    """epoch() for a program that writes an entry: stops with the reason and no traceback when there is no recipe date."""
+    try:
+        return epoch(paths)
+    except NoRecipeDate as error:
+        sys.exit(f'reproducible: {error}')
 
 
 def rfc2822(stamp):
@@ -129,7 +138,14 @@ def main(argv):
     try:
         if len(argv) >= 2 and argv[0] == 'epoch':
             print(epoch(argv[1:]))
+        elif len(argv) == 2 and argv[0] == 'changelog':
+            try:
+                print(parse_trailer(Path(argv[1]).read_text()))
+            except (OSError, ValueError) as error:
+                raise NoRecipeDate(f'{argv[1]}: no dated changelog entry ({error}); set SOURCE_DATE_EPOCH') from None
         elif len(argv) == 2 and argv[0] == 'rfc2822':
+            if not argv[1].isdigit():
+                raise NoRecipeDate(f'{argv[1]!r} is not a number of seconds (SOURCE_DATE_EPOCH)')
             print(rfc2822(argv[1]))
         elif len(argv) == 3 and argv[0] == 'normalize':
             normalize(argv[2], int(argv[1]))

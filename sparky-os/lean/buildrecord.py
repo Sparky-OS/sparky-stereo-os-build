@@ -177,6 +177,10 @@ def _write(folder, source, version, debs, facts, unrecorded_hosts, environ, now,
         obj['recipeRepository'] = environ['SPARKY_BUILD_REPOSITORY']
     if 'recipeCommit' in facts:
         obj['recipeDirty'] = environ.get('SPARKY_BUILD_DIRTY') == '1'
+    if re.fullmatch(r'\d{1,12}', environ.get('SOURCE_DATE_EPOCH', '')):
+        obj['sourceDateEpoch'] = int(environ['SOURCE_DATE_EPOCH'])
+        if environ.get('SPARKY_SOURCE_DATE_BASIS'):
+            obj['sourceDateBasis'] = environ['SPARKY_SOURCE_DATE_BASIS']
     if optout:
         obj['provenanceOptOut'] = optout
     obj['debs'] = [_file_row(d) for d in debs]
