@@ -1,0 +1,18 @@
+-------------------------------------------------------------------------------
+  Version 0.1.0 (2026-11-06)
+-------------------------------------------------------------------------------
+  * New package, ORDER 415 (Daniel, 2026-11-05, after the station's local mail was cleared: "that cleaning was due
+    long ago - we should include those as a bleech bit option...(clear internal mailing system)"): BleachBit's
+    "System mail" cleaner (id system_mail), unticked everywhere, with four options: your local mailbox (emptied in
+    place), every local mailbox and root's saved mail (administrator), dead.letter, and the queues of mail programs
+    that are no longer installed
+  * A queue is listed only when dpkg says every package of its mail program is gone and the program is not on the
+    system; CleanerML has no such condition, so dpkg runs system_mail.py again whenever one of those programs is
+    installed or removed (trigger on its program) and when bleachbit is installed or upgraded
+  * The cleaner's text is translated in the nine languages: the strings join Debian's bleachbit catalog of each
+    language (bleachbit.mo diverted to .debian, rewritten with Debian's own translation winning); removing this
+    package gives Debian's catalogs back
+  * A failure to write the cleaner is said and kept by the edition's one engine (sparky-stereo-problems), with
+    sparky-stereo-housekeeping repair to try again
+  * BleachBit's presets (ORDER, kernel build 10 entry, item b) have not shipped, so no preset exists to leave the
+    option out of: BleachBit ticks nothing it was not told to tick
