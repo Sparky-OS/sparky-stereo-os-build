@@ -318,6 +318,7 @@ allow_in_config() {
 add_languages() {
 	local code
 	EXPLICIT=("${KEEP[@]}")
+	code=$(keep_names | sed 's/ *$//; s/ /,/g')
 	KEEP+=("en||")
 	plan_install
 	if [ "$DRY_RUN" -eq 1 ]; then
@@ -339,7 +340,6 @@ add_languages() {
 	allow_in_config
 	echo "$LOCAL15"
 	if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${INSTALL[@]}"; then
-		code=$(keep_names | sed 's/ *$//; s/ /,/g')
 		# shellcheck disable=SC2059
 		printf "$LOCAL35\n" "$code" "$code" >&2
 		return 4

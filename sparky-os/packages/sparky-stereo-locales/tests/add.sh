@@ -53,9 +53,9 @@ check "manpages-ja is gone" not installed manpages-ja
 check "tesseract-ocr-jpn-vert is gone" not installed tesseract-ocr-jpn-vert
 check "manpages-pl stays" installed manpages-pl
 check "tesseract-ocr-eng stays (English is always kept)" installed tesseract-ocr-eng
-$TOOL --restore >/dev/null 2>&1
-check "--restore brings the manual pages of ja back" installed manpages-ja
-check "--restore brings the Tesseract files of ja back" installed tesseract-ocr-jpn
+$TOOL --keep pl,ja >/dev/null 2>&1
+check "--keep pl,ja brings the manual pages of ja back" installed manpages-ja
+check "--keep pl,ja brings the Tesseract files of ja back" installed tesseract-ocr-jpn
 
 echo "== --add: nothing is removed"
 # the person pruned every language but Polish and German with this tool earlier: ja, fr and pt are entirely gone
