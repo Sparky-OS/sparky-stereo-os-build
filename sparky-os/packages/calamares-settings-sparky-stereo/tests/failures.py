@@ -297,6 +297,14 @@ class InstallerFailures(unittest.TestCase):
         self.language_fixture('ko_KR.UTF-8')
         self.mock_chroot(tool=4)
         (self.bin / 'sparky-stereo-problems').unlink()
+        # the engine may be installed on the machine that runs the test (the installer image has it): the path holds
+        # every tool of /usr/bin except the engine, so the engine is missing whatever is installed
+        shadow = self.root / 'usr-bin'
+        shadow.mkdir()
+        for tool in Path('/usr/bin').iterdir():
+            if tool.name != 'sparky-stereo-problems':
+                (shadow / tool.name).symlink_to(tool)
+        self.env['PATH'] = f'{self.bin}:{shadow}'
         r = self.run_script('language-packs')
         self.failed(r, 'language packages')
 
