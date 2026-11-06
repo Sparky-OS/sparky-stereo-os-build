@@ -3,9 +3,12 @@
 -------------------------------------------------------------------------------
   * New package, ORDER 415 (Daniel, 2026-11-05, after the station's local mail was cleared: "that cleaning was due
     long ago - we should include those as a bleech bit option...(clear internal mailing system)"): BleachBit's
-    "System mail" cleaner (id system_mail), unticked everywhere, with four options: your local mailbox (emptied in
+    "System mail" cleaner (id system_mail), unticked in BleachBit's own defaults, with four options: your local mailbox (emptied in
     place), every local mailbox and root's saved mail (administrator), dead.letter, and the queues of mail programs
     that are no longer installed
+  * Ticked in Daniel's presets (Daniel, 2026-11-06: "on the choice - ticked in presets"): the user preset ticks
+    the person's own dead.letter and local mailbox, root's preset the dead letters, every mailbox and the queues of
+    removed mail programs; each option's warning stays in its description
   * A queue is listed only when dpkg says every package of its mail program is gone and the program is not on the
     system; CleanerML has no such condition, so dpkg runs system_mail.py again whenever one of those programs is
     installed or removed (trigger on its program) and when bleachbit is installed or upgraded

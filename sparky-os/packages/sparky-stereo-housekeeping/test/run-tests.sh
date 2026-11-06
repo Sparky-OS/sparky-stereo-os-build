@@ -248,16 +248,17 @@ ok "an existing person with no file still has none" '[ ! -e /home/bob/.config/bl
 useradd -m -u 1003 -s /bin/bash carol
 ok "a new person starts with the user preset (/etc/skel)" 'cmp -s /home/carol/.config/bleachbit/bleachbit.ini /etc/skel/.config/bleachbit/bleachbit.ini && [ "$(stat -c %U /home/carol/.config/bleachbit/bleachbit.ini)" = carol ]'
 ok "BleachBit reads it: system.tmp, journald.clean, firefox.cache on" 'ini_has /home/carol system.tmp True && ini_has /home/carol journald.clean True && ini_has /home/carol firefox.cache True'
-ok "the user preset ticks no localizations, no free-space wipe, no autoremove, no system_mail" '! ini_has /home/carol system.localizations True && ! ini_has /home/carol system.free_disk_space True && ! ini_has /home/carol apt.autoremove True && ! ini_has /home/carol system_mail.mailbox True && ! ini_has /home/carol system_mail.mailboxes True && ! ini_has /home/carol system_mail.queues True && ! ini_has /home/carol system_mail.dead_letter True && ! grep -q shred /etc/skel/.config/bleachbit/bleachbit.ini'
+ok "the user preset ticks no localizations, no free-space wipe, no autoremove; system_mail's own options ticked (Daniel 2026-11-06)" '! ini_has /home/carol system.localizations True && ! ini_has /home/carol system.free_disk_space True && ! ini_has /home/carol apt.autoremove True && ini_has /home/carol system_mail.dead_letter True && ini_has /home/carol system_mail.mailbox True && ! ini_has /home/carol system_mail.mailboxes True && ! ini_has /home/carol system_mail.queues True'
+printf 'From cron\n\nnotice\n' > /var/mail/carol; chown carol:mail /var/mail/carol; chmod 660 /var/mail/carol
 out=$(setpriv --reuid=1003 --regid=1003 --init-groups env -i PATH=/usr/bin:/bin HOME=/home/carol USER=carol LANG=C.UTF-8 bleachbit --preset --preview 2>&1)
-ok "carol: --preset --preview touches no mail" '! echo "$out" | grep -q "/var/mail\|dead.letter\|/var/spool"'
+ok "carol: --preset --preview lists her own mailbox and no one else's mail or queue" 'echo "$out" | grep -q "/var/mail/carol" && ! echo "$out" | grep -v "/var/mail/carol" | grep -q "/var/mail/\|/var/spool"'
 if [ "$MODE" = postfix ]; then
 	:
 else
 	ok "BleachBit reads root's: apt.clean, deepscan.tmp, system.memory, x11.debug_logs on, apt.autoremove off" 'ini_has /root apt.clean True && ini_has /root deepscan.tmp True && ini_has /root system.memory True && ini_has /root x11.debug_logs True && ! ini_has /root apt.autoremove True && ! ini_has /root system.localizations True && ! ini_has /root system_mail.queues True'
 	mkdir -p /var/lib/apt/lists; echo x >/var/lib/apt/lists/fixture_Packages
 	out=$(env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root USER=root LANG=C.UTF-8 bleachbit --preset --preview 2>&1)
-	ok "root: --preset --preview lists the preset's work (apt lists) and no mail" 'echo "$out" | grep -q "/var/lib/apt/lists/fixture_Packages" && ! echo "$out" | grep -q "/var/mail\|dead.letter\|/var/spool/dma\|/var/spool/exim4"'
+	ok "root: --preset --preview lists the preset's work (apt lists, the mailboxes) and never the installed program's queue" 'echo "$out" | grep -q "/var/lib/apt/lists/fixture_Packages" && echo "$out" | grep -q "/var/mail/" && ! echo "$out" | grep -q "/var/spool/dma"'
 fi
 # the same package again (an upgrade): nothing of anyone's is written
 sha_alice=$(sha256sum /home/alice/.config/bleachbit/bleachbit.ini | cut -d' ' -f1); sha_root=$(sha256sum /root/.config/bleachbit/bleachbit.ini | cut -d' ' -f1)
