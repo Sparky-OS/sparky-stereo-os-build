@@ -10,6 +10,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'config'))
 import local_config as cfg
 from build_slots import start_build
+from provenance_args import provenance_args
 
 base = cfg.path('SPARKY_MIGRATION_WORK')
 origin = base / 'browser-source'
@@ -45,7 +46,7 @@ status = {'source': 'sparky-stereo-browser', 'version': '6.7.5-0+stereo3d5+lc1',
           'headless_stereo_bench': 'required after successful package build'}
 (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
 container = 'sparky-lc-browser-amd64'
-command = ['docker', 'run', '--rm', '--platform', 'linux/amd64', '--name', container,
+command = ['docker', 'run', '--rm', *provenance_args('sparky-lc-migration:20261020'), '--platform', 'linux/amd64', '--name', container,
            '--cpus', '4', '--memory', '32g', '-v', str(work) + ':/work',
            '-v', str(source) + ':/work/source',
            '-v', str(cfg.path('SPARKY_BROWSER_WORK') / 'home') + ':/browser-toolchains:ro',

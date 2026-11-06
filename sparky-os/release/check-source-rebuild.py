@@ -11,6 +11,7 @@ import tarfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'config'))
 import local_config as cfg
 from build_slots import start_build
+from provenance_args import provenance_args
 
 sys.path.insert(0, str(cfg.TREE / 'sparky-os'))
 from lean.package import stanzas
@@ -79,7 +80,7 @@ fi
     (work / "run.sh").write_text(recipe)
     with (work / "build.log").open("wb") as log:
         process = start_build([
-            "docker", "run", "--rm", "--platform", "linux/amd64", "--name", "sparky-lc-source-" + name,
+            "docker", "run", "--rm", *provenance_args("sparky-lc-migration:20261020"), "--platform", "linux/amd64", "--name", "sparky-lc-source-" + name,
             "--cpus", "2", "-e", "TASK_DSC=" + dsc.name,
             "-e", "TASK_SOURCE=" + name,
             "-v", f"{work}:/work", "-v", f"{kit}:/toolkit:ro",

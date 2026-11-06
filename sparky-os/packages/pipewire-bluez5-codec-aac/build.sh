@@ -4,6 +4,7 @@
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/../../repo/build-provenance.sh"
 PWV=${1:-1.6.9}
 DEBV=${2:-1.6.9-2}
 OUT=${OUT:-${SPARKY_SCRATCH:?}/bt-aac}
@@ -13,7 +14,9 @@ mkdir -p "$OUT"
 OUT=$(realpath "$OUT")
 [ ! -e "$OUT/pipewire-bluez5-codec-aac_${DEBV}+aac2+lc1_amd64.deb" ] ||
     { echo "Use a fresh output directory; this version already exists" >&2; exit 2; }
+sparky_provenance_init debian:testing
 docker run --rm --cpus "${CPUS:-4}" \
+    "${SPARKY_PROV_ARGS[@]}" \
     -v "$OUT:/out" -v "$HERE:/recipe:ro" -v "$HERE/../..:/toolkit:ro" \
     -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
     -e PWV="$PWV" -e DEBV="$DEBV" -e HOSTID="$(id -u):$(id -g)" \

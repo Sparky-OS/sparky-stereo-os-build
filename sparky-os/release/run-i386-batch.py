@@ -14,6 +14,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'config'))
 import local_config as cfg
 from build_slots import start_build
+from provenance_args import provenance_args
 
 sys.path.insert(0, str(cfg.TREE / 'sparky-os'))
 from lean.package import stanzas
@@ -128,7 +129,7 @@ for name in sys.argv[1:]:
         shutil.copy2(original, work / filename)
     (work / "run.sh").write_text(recipe)
     container = "sparky-lc-" + name + "-" + architecture
-    command = ["docker", "run", "--rm", "--platform", platform,
+    command = ["docker", "run", "--rm", *provenance_args("sparky-lc-migration:20261020-" + architecture), "--platform", platform,
                "--name", container, "--cpus", "4", "-e", f"TASK_DSC={dsc.name}",
                "-e", f"TASK_ARCH={architecture}",
                "-v", f"{work}:/work", "-v", f"{repo}:/repo:ro",

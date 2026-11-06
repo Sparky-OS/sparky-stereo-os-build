@@ -15,6 +15,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'config'))
 import local_config as cfg
 from build_slots import start_build
+from provenance_args import provenance_args
 
 notes = cfg.path('SPARKY_RUN_RECORD')
 base = cfg.path('SPARKY_MIGRATION_WORK')
@@ -399,7 +400,7 @@ for name in requested:
     version = job["version"] + "+lc1"
     container = "sparky-lc-" + name.replace("+", "-").replace(".", "-") + "-amd64"
     command = [
-        "docker", "run", "--rm", "--name", container, "--cpus", "4",
+        "docker", "run", "--rm", *provenance_args("sparky-lc-migration:20261020"), "--name", container, "--cpus", "4",
         "-e", f"TASK_DSC={dsc}", "-e", f"TASK_VERSION={version}",
         "-e", f"TASK_SOURCE={name}",
         "-v", f"{work}:/work", "-v", f"{repo}:/repo:ro",
