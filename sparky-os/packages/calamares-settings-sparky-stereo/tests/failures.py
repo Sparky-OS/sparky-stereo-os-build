@@ -63,7 +63,8 @@ class InstallerFailures(unittest.TestCase):
 
     def test_U01_shellprocess_contract(self):
         expected = {'dualboot': (False, 120), 'efifallback': (True, 120),
-                    'grublanguage': (True, 300), 'offlineon': (False, 60), 'offlineoff': (True, 60)}
+                    'grublanguage': (True, 300), 'offlineon': (False, 60), 'offlineoff': (True, 60),
+                    'languagepacks': (True, 1800)}
         for name, (host, timeout) in expected.items():
             with self.subTest(name=name):
                 conf = yaml.safe_load((PACKAGE / f'etc/modules/shellprocess-{name}.conf').read_text())
@@ -219,6 +220,95 @@ class InstallerFailures(unittest.TestCase):
         self.assertEqual(self.run_script('efi-fallback').returncode, 0)
         self.assertEqual(list(dst.iterdir()), [dst / 'bootx64.efi'])
         self.assertEqual((dst / 'bootx64.efi').read_text(), 'Windows loader')
+
+    # ORDER 252c, J8: the language packs step. The chroot and the problems engine are stand-ins that record their calls.
+    def language_fixture(self, lang, tool=True):
+        (self.target / 'etc/default').mkdir(parents=True, exist_ok=True)
+        (self.target / 'etc/default/locale').write_text(f'LANG={lang}\n')
+        if tool:
+            (self.target / 'usr/bin').mkdir(parents=True, exist_ok=True)
+            (self.target / 'usr/bin/sparky-stereo-locales').write_text('#!/bin/sh\n')
+            (self.target / 'usr/bin/sparky-stereo-locales').chmod(0o755)
+        self.calls = self.root / 'calls'
+        self.calls.write_text('')
+        self.mock('sparky-stereo-problems', f'echo "ENGINE root=$SPARKY_STEREO_ROOT $*" >> {self.calls}')
+
+    def mock_chroot(self, update=0, tool=0):
+        # chroot ROOT env VAR... COMMAND ARG...: records the command and ends with the status the case wants
+        self.mock('chroot', f'shift; shift; while case "$1" in *=*) shift;; *) false;; esac; do :; done; '
+                            f'echo "CHROOT $*" >> {self.calls}; case "$1" in apt-get) exit {update};; *) exit {tool};; esac')
+
+    def test_languagepacks_english_does_nothing(self):
+        self.language_fixture('en_US.UTF-8')
+        r = self.run_script('language-packs')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.calls.read_text(), '')
+
+    def test_languagepacks_adds_the_chosen_language(self):
+        self.language_fixture('de_DE.UTF-8')
+        self.mock_chroot()
+        r = self.run_script('language-packs')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        calls = self.calls.read_text().splitlines()
+        self.assertEqual(calls[0], 'CHROOT apt-get update')
+        self.assertEqual(calls[1], 'CHROOT /usr/bin/sparky-stereo-locales --add system')
+        self.assertIn('clear --machine sparky-stereo-locales add-system', calls[2])
+        self.assertEqual(len(calls), 3, calls)
+
+    def kept(self):
+        lines = [l for l in self.calls.read_text().splitlines() if l.startswith('ENGINE') and ' keep ' in l]
+        self.assertEqual(len(lines), 1, self.calls.read_text())
+        self.assertIn(f'root={self.target}', lines[0])
+        self.assertIn('--repair ["/usr/bin/sparky-stereo-locales","--add","system"]', lines[0])
+        self.assertIn('sparky-stereo-locales add-system', lines[0])
+        return lines[0]
+
+    def test_languagepacks_tool_missing_is_kept_not_fatal(self):
+        self.language_fixture('ja_JP.UTF-8', tool=False)
+        r = self.run_script('language-packs')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('the Locale tool is not in the new system', self.kept())
+        self.assertIn('the Locale tool is not in the new system', r.stderr)
+        self.assertNotIn('CHROOT', self.calls.read_text())
+
+    def test_languagepacks_no_network_is_kept_not_fatal(self):
+        self.language_fixture('ja_JP.UTF-8')
+        self.mock_chroot(update=100)
+        r = self.run_script('language-packs')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('apt-get update ended with status 100', self.kept())
+        self.assertNotIn('--add system', self.calls.read_text().split('ENGINE')[0])
+
+    def test_languagepacks_tool_failure_is_kept_not_fatal(self):
+        self.language_fixture('ko_KR.UTF-8')
+        self.mock_chroot(tool=4)
+        r = self.run_script('language-packs')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('ended with status 4', self.kept())
+
+    def test_languagepacks_unkeepable_stops_the_installation(self):
+        self.language_fixture('ko_KR.UTF-8')
+        self.mock_chroot(tool=4)
+        self.mock('sparky-stereo-problems', 'echo "engine failed" >&2; exit 1')
+        r = self.run_script('language-packs')
+        self.failed(r, 'language packages')
+
+    def test_languagepacks_engine_missing_stops_the_installation(self):
+        self.language_fixture('ko_KR.UTF-8')
+        self.mock_chroot(tool=4)
+        (self.bin / 'sparky-stereo-problems').unlink()
+        r = self.run_script('language-packs')
+        self.failed(r, 'language packages')
+
+    def test_languagepacks_missing_root_and_every_language(self):
+        self.env['ROOT'] = str(self.root / 'absent')
+        for lang in ('en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW'):
+            with self.subTest(lang=lang):
+                self.env['INSTALLER_LANG'] = lang + '.UTF-8'
+                r = self.run_script('language-packs')
+                self.assertNotEqual(r.returncode, 0)
+                expected = (PACKAGE / 'lib/lang' / lang).read_text().split("LANGPACKS_ERROR='")[1].split("'\n")[0].replace("'\\''", "'")
+                self.assertIn(expected, r.stderr)
 
 
 if __name__ == '__main__':
