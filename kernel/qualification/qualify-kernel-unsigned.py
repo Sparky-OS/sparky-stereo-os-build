@@ -41,7 +41,7 @@ for kind in ('image', 'headers'):
 release = next((out / 'image/boot').glob('vmlinuz-*')).name.removeprefix('vmlinuz-')
 (out / 'inputs.json').write_text(json.dumps(dict(release=release, archives=archives, unsigned=True,
     settings=str(settings), image=IMAGE), indent=2) + '\n')
-command = ['docker', 'run', '--rm', '--name', 'sparky-212-boot-' + flavour, '--cpus', '4', '--memory', '8g',
+command = ['docker', 'run', '--rm', '--ulimit', 'core=0', '--name', 'sparky-212-boot-' + flavour, '--cpus', '4', '--memory', '8g',
            '--device', '/dev/kvm', '-e', 'SPARKY_UNSIGNED=1', '-v', f'{out}:/validation', '-v', f'{inputs}:/inputs:ro',
            IMAGE, 'python3', '/inputs/run.py', release]
 with (out / 'driver.log').open('w') as log:
