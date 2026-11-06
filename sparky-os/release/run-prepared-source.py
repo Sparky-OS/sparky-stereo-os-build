@@ -11,6 +11,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'config'))
 import local_config as cfg
 from build_slots import start_build
+from provenance_args import provenance_args
 
 notes = cfg.path('SPARKY_RUN_RECORD')
 base = cfg.path('SPARKY_MIGRATION_WORK')
@@ -87,7 +88,7 @@ status = {'source': name, 'version': version, 'architecture': 'amd64',
           'source_descriptor_sha256': hashlib.sha256(descriptor.read_bytes()).hexdigest()}
 (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
 container = 'sparky-lc-' + name + '-amd64'
-command = ['docker', 'run', '--rm', '--platform', 'linux/amd64', '--name', container, '--cpus', '4',
+command = ['docker', 'run', '--rm', *provenance_args('sparky-lc-migration:20261020'), '--platform', 'linux/amd64', '--name', container, '--cpus', '4',
            '-e', 'TASK_DSC=' + descriptor.name, '-v', str(work) + ':/work',
            '-e', 'TASK_KIND=' + ('signed-upstream-release' if vendor_release else 'native'),
            '-v', str(cfg.path('SPARKY_REPO_DIR')) + ':/repo:ro', '-v', str(kit) + ':/toolkit:ro',
