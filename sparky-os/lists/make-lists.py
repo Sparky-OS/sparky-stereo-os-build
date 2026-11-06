@@ -252,6 +252,7 @@ group('system', 'System', [
     'flatpak', 'plasma-discover-backend-flatpak', 'distrobox', 'waydroid', 'btrfs-progs',
     'timeshift', 'synaptic',   # snapshots: Timeshift (with grub-btrfs)
     'sparky-stereo-boot',   # the boot follows the main screen's saved choice, splash and login in its 3D mode (ORDER 138)
+    'sparky-stereo-firewall-apps',   # KDE Connect's ufw profile allowed from the local network once ufw is on (ORDER 252c, J19)
     'command-not-found', 'apt-file',   # a missing program names its package, in the terminal and on Dolphin's right-click (Daniel's design)
     'grub-btrfs', 'scx-scheds', 'ananicy-cpp', 'sunshine', 'protonup-qt', 'hhd', 'decky-loader',
 ])

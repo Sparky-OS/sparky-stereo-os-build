@@ -47,5 +47,14 @@ class DeveloperList(unittest.TestCase):
                 self.assertNotRegex(text, r"alias\s+(fd|bat)=")
 
 
+class SystemList(unittest.TestCase):
+    def test_firewall_pack_is_on_the_image_and_generated(self):
+        self.assertIn('sparky-stereo-firewall-apps', names(LISTS / 'system.list'))
+        self.assertIn("'sparky-stereo-firewall-apps'", (LISTS / 'make-lists.py').read_text())
+        header = (LISTS / 'system.list').read_text().splitlines()[0]
+        self.assertIn('(%d packages;' % len(names(LISTS / 'system.list')), header)
+        self.assertEqual(names(LISTS / 'system.list'), sorted(set(names(LISTS / 'system.list'))))
+
+
 if __name__ == '__main__':
     unittest.main()
