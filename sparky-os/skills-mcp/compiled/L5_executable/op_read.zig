@@ -17,8 +17,7 @@ pub fn run(arena: std.mem.Allocator, io: std.Io, rec: skill_record.Rec, rel: []c
     pathsafe.checkResolved(root, real) catch return error.Refused;
     const bytes = fsio.readFile(arena, io, real, max_bytes) catch |e| switch (e) {
         error.StreamTooLong => return error.TooLarge,
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.NotFound,
+        else => return if (e == error.OutOfMemory) e else error.NotFound,
     };
     if (!std.unicode.utf8ValidateSlice(bytes)) return error.NotText;
     return bytes;

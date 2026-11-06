@@ -1,5 +1,5 @@
-//! Daniel, 2026-11-06: commands in skills run "with confirmation if the person has no ai tool, on by default if the
-//! user is already using AI tools". Both ways, and every refusal, so no cell of the table is untested.
+//! Commands in skills run with the person's confirmation when no AI assistant is on the system, and by default under the
+//! assistant's own approval when one is. Both ways, and every refusal, so no cell of the table is untested.
 const std = @import("std");
 const gate = @import("command_gate");
 

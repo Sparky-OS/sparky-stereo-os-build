@@ -1,4 +1,4 @@
-//! Memory required-languages: every string the server adds ships in the nine languages, each file with the
+//! The nine required languages: every string the server adds ships in the nine languages, each file with the
 //! same keys as English and the same placeholders.
 const std = @import("std");
 const langs = @import("kinds_lang");

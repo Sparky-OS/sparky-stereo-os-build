@@ -1,4 +1,4 @@
-//! "Only what is installed is served" (ORDER 226). `a | b` means any one alternative (the shell helper's packages_allowed).
+//! "Only what is installed is served". `a | b` means any one alternative (the shell helper's packages_allowed).
 const std = @import("std");
 const eligibility = @import("eligibility");
 

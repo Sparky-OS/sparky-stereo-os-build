@@ -2,7 +2,7 @@
 //! MCP resources page: servers must validate resource URIs and sanitize file paths against directory traversal.
 const std = @import("std");
 
-pub const Error = error{ Refused, OutOfMemory };
+pub const Error = error{Refused} || std.mem.Allocator.Error;
 
 /// A skill name: `[a-z0-9]+(-[a-z0-9]+)*`, 1 to 64 characters (agentskills.io specification).
 pub fn validName(name: []const u8) bool {

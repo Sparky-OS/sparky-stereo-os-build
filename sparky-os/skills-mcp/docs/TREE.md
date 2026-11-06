@@ -1,6 +1,6 @@
 # The skills server: its tree and what each path claims
 
-Daniel's choice (2026-11-06, ORDER 430): the server is written in cgm-zig, hyper-modular, with everything a variable.
+The server is written in cgm-zig, split into small levels, and every variant (a protocol era, an assistant, a language, a tool) is a file dropped into a folder rather than a branch in the code.
 A path here reveals four things: the concern root, the level, the artifact projection and the owner.
 This page is the plan the tree follows; `tests/lint/` fails when the tree stops following it.
 
@@ -30,13 +30,13 @@ One product, `skills-mcp`, one engine, three doors onto it.
 | `old_attempts/` | the Python reference engine that the Zig engine must equal, kept until the Zig one passes its goldens, then moved aside, never deleted | none |
 
 Mirroring: every level folder under `compiled/` has the same-named folder under `tests/`.
-There is one product, so nothing is shared by two products and there is no `common/`; the day a second product needs a piece, that piece moves to `common/` in both and the half-mirror rule applies.
-Lean Code makes the runtime and human readable projections at packaging; this tree holds only authored sources, with no `.source` files (memory sparky-stereo-os-lean-code-policy).
+There is one product, so nothing is shared by two products and there is no `common/`; the day a second product needs a piece, that piece moves to a `common/` folder that both products mirror, so no folder exists in one product and not in the other.
+Only authored sources live here, comments included; the packaging step (Lean Code) makes the installed form, so no generated or stripped copy is kept in this tree.
 
 ## Levels in `compiled/`
 
 Dependencies point one way, from the top of this list down to the primitives; a lower level never imports a higher one.
-My reading of the doctrine's order "L1 domain ... L6 primitive" is: L6 is the bottom, an L5 executable composes L4 atoms (so L4 sits below L5 although its number is smaller), then L3, L2, L1.
+The numbers name the kind of module, not the order: L6 is the bottom, an L5 executable composes L4 atoms (so L4 sits below L5 although its number is smaller), then L3, L2, L1 on top.
 The lint rank is therefore primitive 0, atomic 1, executable 2, organization 3, context 4, domain 5.
 
 | Level | Folder | Holds | May import |
@@ -53,7 +53,7 @@ The lint rank is therefore primitive 0, atomic 1, executable 2, organization 3, 
 ## Everything is a variable: the `_kinds/` registries
 
 A variant is a file dropped into a `_kinds/<registry>/` folder; the parent discovers it and holds no list.
-Hardcoding a variant in a parent is a halt condition, and `tests/kinds/` fails on it.
+A variant written into a parent instead of dropped into its folder fails `tests/lint/`.
 Zig has no run-time directory discovery, so discovery happens in the build: `tools/kinds_scan.zig` lists a registry folder and `build.zig` generates one module per registry (`kinds_<registry>`), a sorted tuple of the folder's files.
 Adding a variant is adding a file; removing one is removing it; no existing reference breaks.
 
@@ -73,7 +73,7 @@ A new domain is a new folder under `L1_domain/`.
 When a file has two of: several responsibilities, mixed concerns, several public entry points, it is split into one atom per responsibility under a topic folder with a `_topic_summary.md`, and the old path stays as a thin entry point.
 Every folder under `compiled/` and `surfaces/` carries a `_topic_summary.md` of at most ten lines.
 
-## Which parts exist at milestone 2b
+## What exists
 
 Present: every level and door below, working and tested.
 - L6: `fsio`, `dpkg_status`, `proc`, `sha256`, `jsonargs`.

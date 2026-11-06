@@ -28,7 +28,7 @@ Names are fixed here so the doors and the tests can be written first.
 ## Errors
 
 A failure is a value, never a crash and never an empty success: `error.InvalidArgument`, `error.NotFound`, `error.Refused` (path or size rule), `error.Ambiguous` (one name in two origins; the message lists both URIs), `error.NotImplemented` (only while a stub), `error.NeedsConfirmation` (the gate), `error.NotEligible` (reported with `all` off only for an explicit name).
-Each carries a plain sentence for the person: what failed, why, what to do (memory no-silent-fallbacks).
+Each carries a plain sentence for the person: what failed, why, what to do.
 Nothing is retried on another path behind the person's back.
 
 ## Atom contracts at milestone 2a
@@ -38,10 +38,10 @@ Nothing is retried on another path behind the person's back.
   A symlink that leaves the root is refused by `pathsafe.checkResolved`, which sees the resolved path.
 - `eligibility.allowed(field, installed)`: the `a | b` rule above; an empty field is allowed.
 - `manifest.entry(uri, bytes)`: `{uri, digest "sha256:<hex>", size}`; the digests of `data/fixtures/pdf-processing/` equal the Skills extension's own example (SKILL.md 151 bytes, 99b73749...ab19e; invoice.md 29, 61f4ea6d...d9ee; purchase-order.md 35, f2ff774b...c158).
-- `lang_lookup.pick(available, locale)`: the whole locale (`zh_TW`), then the bare language (`fr` serves `fr_CA`), then `en`; Chinese keeps its territory (memory required-languages).
-- `command_gate.decide(policy, ai_tool_found, command, via)`: Daniel's second choice, as a function.
+- `lang_lookup.pick(available, locale)`: the whole locale (`zh_TW`), then the bare language (`fr` serves `fr_CA`), then `en`; Chinese keeps its territory (the edition's nine languages keep their territory).
+- `command_gate.decide(policy, ai_tool_found, command, via)`: the rule for running a command a skill lists, as a function.
   Policy `auto` (default): an AI tool found means the command may run at the assistant's own approval; none found means the person confirms first.
-  Policy `assistant` and policy `ask` force either way; both are options (memory every-path-a-user-option).
+  Policy `assistant` and policy `ask` force either way; both are options.
   A command marked `person` always asks the person.
   It returns `.run`, `.ask_person` or `.refuse` with a reason, and never `.run` for a command not in the skill's `commands.json`.
 - `ai_detect.found(assistants, probe)`: true when any assistant kind's detection finds its program on `PATH` or its configuration folder in the person's home.

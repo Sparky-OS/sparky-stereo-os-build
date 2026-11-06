@@ -1,5 +1,6 @@
-//! L4 atom: may a command of a user skill run now, and who must say yes (Daniel, 2026-11-06).
-//! "with confirmation if the person has no ai tool, on by default if the user is already using AI tools".
+//! L4 atom: may a command of a user skill run now, and who must say yes.
+//! The rule: a person with no AI assistant on the system confirms every command first; a person who already uses
+//! AI assistants gets the commands by default, under that assistant's own approval. Both are choices the person can change.
 //! Through the command line the person is the one at the keyboard, so the person is always asked: no assistant is in the loop.
 const std = @import("std");
 
