@@ -13,6 +13,7 @@ from lean.tests.test_buildrecord import HOST, make_deb
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'release'))
 import supply_chain
+import provenance_args
 
 FACTS = ('recipeCommit', 'builderImage', 'invocationId', 'startedOn')
 
@@ -81,3 +82,21 @@ class OptOut(TestCase):
         with TemporaryDirectory() as d:
             with self.assertRaisesRegex(buildrecord.Incomplete, 'provenance required'):
                 buildrecord.record([make_deb(d)], environ={'SPARKY_PROVENANCE_OPTOUT': 'x', 'SPARKY_PROVENANCE_REQUIRED': '1'})
+
+
+class PythonDrivers(TestCase):
+    """release/provenance_args.py hands the shell function's arguments to the Python build drivers."""
+    def run_helper(self, body):
+        with TemporaryDirectory() as d:
+            stub = Path(d) / 'stub.sh'
+            stub.write_text(body)
+            with mock.patch.object(provenance_args, 'SCRIPT', stub):
+                return provenance_args.provenance_args('img:1')
+
+    def test_arguments_come_back_as_docker_run_words(self):
+        words = self.run_helper('sparky_provenance_init() { SPARKY_PROV_ARGS=(-e "A=1 2" -e B=3 "$1"); }\n')
+        self.assertEqual(words, ['-e', 'A=1 2', '-e', 'B=3', 'img:1'])
+
+    def test_a_stopped_init_stops_the_driver(self):
+        with self.assertRaisesRegex(SystemExit, 'stopped'):
+            self.run_helper('sparky_provenance_init() { return 1; }\n')
