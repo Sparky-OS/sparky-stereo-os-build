@@ -7,7 +7,7 @@ trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=${BROWSER_JOBS:-8}
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
-OLD=6.7.5-0+stereo3d5+lc1 NEW=6.7.5-0+stereo3d7 COMMIT=81fecb57fbd546be8ed75e082d62210a7ad75833 OLDCOMMIT=b1d115f8d3070a81f3e231acb86cc446656581fd
+OLD=6.7.5-0+stereo3d5+lc1 NEW=6.7.5-0+stereo3d7 COMMIT=b9daf180f65d08902e4bb00f46adafda1c7da615 OLDCOMMIT=b1d115f8d3070a81f3e231acb86cc446656581fd
 cd /work && mkdir plain && cd plain
 cp /in/sparky-stereo-browser_6.7.5.orig.tar.xz "/in/sparky-stereo-browser_$OLD.dsc" "/in/sparky-stereo-browser_$OLD.debian.tar.xz" .
 sha256sum sparky-stereo-browser_6.7.5.orig.tar.xz | tee /work/orig.sha256

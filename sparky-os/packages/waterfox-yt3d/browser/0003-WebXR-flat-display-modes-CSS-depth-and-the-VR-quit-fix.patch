@@ -4,8 +4,8 @@ Description: The flat stereo display as a WebXR device and the CSS depth propert
  plane on top), Escape and a visible Exit control, an entry hint and the mode's name, input per mode, the
  keyboard focus kept across a session, and a frame submission that no longer polls for ever when a
  presentation ends (the browser could not quit). CSS: the property depth (sunk | screen | popped |
- <percentage> | <number>), parsed and computed, behind layout.css.depth.enabled (off until elements are
- drawn at their depth). This is the difference between browser commit 075e18be19 and 81fecb57fbd546be8ed75e082d62210a7ad75833
+ <percentage> | <number>), an element drawn once per eye at its depth, layout.css.depth.enabled on; WebGL canvases marked on
+ NVIDIA (DMABuf WebGL on where an output shows stereo 3D); the VR shared memory with one writer. This is the difference between browser commit 075e18be19 and b9daf180f65d08902e4bb00f46adafda1c7da615
  (Sparky-OS/waterfox, branch stereo3d).
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Forwarded: not-needed
@@ -1028,8 +1028,38 @@ index cf77e62adc..8f86c76b21 100644
  };
  
  // Null without the library.
+diff --git a/gfx/thebes/gfxPlatform.cpp b/gfx/thebes/gfxPlatform.cpp
+index 2bfb660183..855d002f2b 100644
+--- a/gfx/thebes/gfxPlatform.cpp
++++ b/gfx/thebes/gfxPlatform.cpp
+@@ -3350,6 +3350,25 @@ void gfxPlatform::InitWebGLConfig() {
+                       discardFailureId);
+     }
+     gfxVars::SetUseDMABufWebGL(feature.IsEnabled());
++
++    // A WebGL canvas reaches the compositor as a DMABuf surface that carries
++    // its stereo mode (WebGLContext.cpp SetStereoMode); Mozilla blocks DMABuf
++    // WebGL on every NVIDIA proprietary driver (bug 1924578), so a stereo
++    // canvas (WebXR on the flat display, the camera hack) was drawn into the
++    // page's tiles unmarked and no view was declared. Where an output shows
++    // stereo 3D the block does not hold (the edition targets NVIDIA on Linux);
++    // widget.dmabuf-webgl.stereo-nvidia.enabled turns it back on for the
++    // person. gfxVars::StereoOutputs is set by InitWebRenderConfig, before.
++    if (!feature.IsEnabled() && gfxVars::StereoOutputs() &&
++        gfxVars::UseDMABuf() &&
++        StaticPrefs::widget_dmabuf_webgl_stereo_nvidia_enabled_AtStartup() &&
++        StaticPrefs::widget_dmabuf_webgl_enabled_AtStartup()) {
++      nsAutoString vendor;
++      if (NS_SUCCEEDED(gfxInfo->GetAdapterVendorID(vendor)) &&
++          vendor.EqualsLiteral("0x10de")) {
++        gfxVars::SetUseDMABufWebGL(true);
++      }
++    }
+   }
+ #endif
+ }
 diff --git a/gfx/vr/VRManager.cpp b/gfx/vr/VRManager.cpp
-index 209cfe355d..bdb13ae12a 100644
+index 209cfe355d..aff94c0377 100644
 --- a/gfx/vr/VRManager.cpp
 +++ b/gfx/vr/VRManager.cpp
 @@ -1223,6 +1223,7 @@ void VRManager::ClearHapticSlot(size_t aSlot) {
@@ -1056,7 +1086,7 @@ index 209cfe355d..bdb13ae12a 100644
    mBrowserState.presentationActive = false;
    memset(mBrowserState.layerState, 0,
           sizeof(VRLayerState) * std::size(mBrowserState.layerState));
-@@ -1429,9 +1432,14 @@ bool VRManager::SubmitFrame(const layers::SurfaceDescriptor& aTexture,
+@@ -1429,9 +1432,27 @@ bool VRManager::SubmitFrame(const layers::SurfaceDescriptor& aTexture,
    PullState([&]() {
      return (mDisplayInfo.mDisplayState.lastSubmittedFrameId >= aFrameId) ||
             mDisplayInfo.mDisplayState.suppressFrames ||
@@ -1067,6 +1097,19 @@ index 209cfe355d..bdb13ae12a 100644
 +  if (mAbortSubmit) {
 +    // The presentation stopped while the frame was in flight.
 +    return false;
++  }
++  if (mDisplayInfo.mDisplayState.lastSubmittedFrameId < aFrameId &&
++      !mDisplayInfo.mDisplayState.suppressFrames &&
++      mDisplayInfo.mDisplayState.isConnected) {
++    // Not taken by the service: say what the state was (the wait gave up).
++    fprintf(stderr,
++            "VRManager::SubmitFrame: frame %llu not taken: service last %llu, "
++            "presentationActive %d, enumerationCompleted %d, shutdown %d\n",
++            (unsigned long long)aFrameId,
++            (unsigned long long)mDisplayInfo.mDisplayState.lastSubmittedFrameId,
++            (int)mBrowserState.presentationActive,
++            (int)mEnumerationCompleted,
++            (int)mDisplayInfo.mDisplayState.shutdown);
 +  }
 +
    if (mDisplayInfo.mDisplayState.suppressFrames ||
@@ -1090,18 +1133,19 @@ index 93ad89e25c..4019504249 100644
    uint64_t mLastStartedFrame;
    VRDisplayCapabilityFlags mRuntimeSupportFlags;
 diff --git a/gfx/vr/VRShMem.cpp b/gfx/vr/VRShMem.cpp
-index 8346696f37..c1c1b517bc 100644
+index 8346696f37..5924dab22c 100644
 --- a/gfx/vr/VRShMem.cpp
 +++ b/gfx/vr/VRShMem.cpp
-@@ -3,6 +3,7 @@
+@@ -3,6 +3,8 @@
   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
  
  #include "VRShMem.h"
++#include "mozilla/StaticMutex.h"
 +#include "mozilla/TimeStamp.h"
  
  #ifdef MOZILLA_INTERNAL_API
  #  include "nsString.h"
-@@ -34,6 +35,8 @@ static const char* kShmemName = "/moz.gecko.vr_ext." SHMEM_VERSION;
+@@ -34,6 +36,8 @@ static const char* kShmemName = "/moz.gecko.vr_ext." SHMEM_VERSION;
  
  #if !defined(MOZ_WIDGET_ANDROID)
  namespace {
@@ -1110,7 +1154,31 @@ index 8346696f37..c1c1b517bc 100644
  void YieldThread() {
  #  if defined(XP_WIN)
    ::Sleep(0);
-@@ -579,7 +582,21 @@ void VRShMem::PullSystemState(
+@@ -424,10 +428,21 @@ void VRShMem::PushBrowserState(VRBrowserState& aBrowserState,
+ #  endif  // defined(XP_WIN)
+ 
+   if (status) {
+-    mExternalShmem->geckoGenerationA = mExternalShmem->geckoGenerationA + 1;
++    // The browser state is written by more than one thread (the compositor's
++    // and the VR submit thread's): two writers interleaving lost an update of
++    // one generation counter, which left geckoGenerationA and
++    // geckoGenerationB apart for good, and the service discarded every later
++    // copy as a dirty one, took no frame and the page's frames waited for it
++    // (Sparky Stereo OS, ORDER 195). One writer at a time, and the second
++    // counter takes the first's value, so a state apart heals at the next
++    // push.
++    static mozilla::StaticMutex sPushBrowserStateMutex;
++    mozilla::StaticMutexAutoLock lock(sPushBrowserStateMutex);
++    const int64_t generation = mExternalShmem->geckoGenerationA + 1;
++    mExternalShmem->geckoGenerationA = generation;
+     memcpy((void*)&(mExternalShmem->geckoState), (void*)&aBrowserState,
+            sizeof(VRBrowserState));
+-    mExternalShmem->geckoGenerationB = mExternalShmem->geckoGenerationB + 1;
++    mExternalShmem->geckoGenerationB = generation;
+   }
+ #endif    // defined(MOZ_WIDGET_ANDROID)
+ }
+@@ -579,7 +594,21 @@ void VRShMem::PullSystemState(
    if (!mExternalShmem) {
      return;
    }
@@ -1132,7 +1200,7 @@ index 8346696f37..c1c1b517bc 100644
      {  // Scope for WaitForMutex
  #  if defined(XP_WIN)
        bool status = true;
-@@ -606,6 +623,12 @@ void VRShMem::PullSystemState(
+@@ -606,6 +635,12 @@ void VRShMem::PullSystemState(
            // We did not get a clean copy, and we are not waiting for a condition
            // to exit from PullState call.
            return;
@@ -1145,8 +1213,457 @@ index 8346696f37..c1c1b517bc 100644
          }
          // Yield the thread while polling
          YieldThread();
+diff --git a/gfx/wr/webrender/src/batch.rs b/gfx/wr/webrender/src/batch.rs
+index 94d8edbc5d..88073e78c0 100644
+--- a/gfx/wr/webrender/src/batch.rs
++++ b/gfx/wr/webrender/src/batch.rs
+@@ -735,17 +735,22 @@ pub struct BatchBuilder {
+     /// The eye a stereo tile is batched for (0 left, 1 right), whose part
+     /// of each stereo picture is drawn (crate::stereo).
+     stereo_eye: Option<usize>,
++    /// Whether primitives drawn for one eye are filtered (the picture cache tiles' batches,
++    /// not those of the intermediate surfaces, whose pictures each belong to one eye).
++    eye_filter: bool,
+ }
+ 
+ impl BatchBuilder {
+     pub fn set_stereo_eye(&mut self, eye: Option<usize>) {
+         self.stereo_eye = eye;
++        self.eye_filter = true;
+     }
+ 
+     pub fn new(batcher: AlphaBatchBuilder) -> Self {
+         BatchBuilder {
+             glyph_fetch_buffer: Vec::new(),
+             stereo_eye: None,
++            eye_filter: false,
+             batcher,
+         }
+     }
+@@ -840,6 +845,27 @@ impl BatchBuilder {
+         gpu_buffer_builder: &mut GpuBufferBuilder,
+         segments: &[RenderTaskId],
+     ) {
++        // CSS depth (crate::stereo): a primitive drawn for one eye is batched in that eye's
++        // drawing of a tile drawn once per eye; in a tile drawn once, only the left eye's copy.
++        {
++            let draw_index = match cmd {
++                PrimitiveCommand::Simple { draw_index }
++                | PrimitiveCommand::Complex { draw_index, .. }
++                | PrimitiveCommand::Instance { draw_index, .. }
++                | PrimitiveCommand::Quad { draw_index, .. } => draw_index,
++            };
++            let eye = prim_instances[draw_index.0 as usize].eye;
++            if eye != 0 && self.eye_filter {
++                let wanted = match self.stereo_eye {
++                    Some(eye_index) => 1u8 << eye_index,
++                    None => 1u8,
++                };
++                if eye != wanted {
++                    return;
++                }
++            }
++        }
++
+         let (draw_index, extra_prim_gpu_address) = match cmd {
+             PrimitiveCommand::Simple { draw_index } => {
+                 (draw_index, None)
+diff --git a/gfx/wr/webrender/src/prim_store/mod.rs b/gfx/wr/webrender/src/prim_store/mod.rs
+index 1f673269be..71a4f29cd7 100644
+--- a/gfx/wr/webrender/src/prim_store/mod.rs
++++ b/gfx/wr/webrender/src/prim_store/mod.rs
+@@ -821,6 +821,10 @@ pub struct PrimitiveInstance {
+     /// intern key can deduplicate across differently-sized instances of the
+     /// same prim shape.
+     pub unsnapped_prim_rect: LayoutRect,
++
++    /// The eye this primitive belongs to in a tile drawn once per eye (crate::stereo):
++    /// 0 for both, EYE_LEFT or EYE_RIGHT of the stacking contexts that drew it.
++    pub eye: u8,
+ }
+ 
+ impl PrimitiveInstance {
+@@ -833,6 +837,7 @@ impl PrimitiveInstance {
+             kind,
+             clip_leaf_id,
+             unsnapped_prim_rect,
++            eye: 0,
+         }
+     }
+ 
+diff --git a/gfx/wr/webrender/src/scene_building.rs b/gfx/wr/webrender/src/scene_building.rs
+index f3f8760c75..aa33fb7451 100644
+--- a/gfx/wr/webrender/src/scene_building.rs
++++ b/gfx/wr/webrender/src/scene_building.rs
+@@ -432,6 +432,11 @@ pub struct SceneBuilder<'a> {
+     /// Stack of requested raster spaces for stacking contexts
+     raster_space_stack: Vec<RasterSpace>,
+ 
++    /// The eye the primitives being added belong to (0 both, else EYE_LEFT or EYE_RIGHT of the
++    /// stacking context that holds them), and the eyes of the contexts the traversal is inside.
++    current_eye: u8,
++    eye_stack: Vec<u8>,
++
+     /// Maintains state for any currently active shadows
+     pending_shadow_items: VecDeque<ShadowItem>,
+ 
+@@ -542,6 +547,8 @@ impl<'a> SceneBuilder<'a> {
+             sc_stack: mem::take(&mut recycler.sc_stack),
+             containing_block_stack: mem::take(&mut recycler.containing_block_stack),
+             raster_space_stack: mem::take(&mut recycler.raster_space_stack),
++            current_eye: 0,
++            eye_stack: Vec::new(),
+             prim_store: mem::take(&mut recycler.prim_store),
+             clip_store: mem::take(&mut recycler.clip_store),
+             interners,
+@@ -944,6 +951,13 @@ impl<'a> SceneBuilder<'a> {
+                             snapshot,
+                         );
+ 
++                        // CSS depth: the contexts that draw an element for one eye (crate::stereo).
++                        let eye_bits = info.stacking_context.flags.bits();
++                        let eye = ((eye_bits >> 3) & 0x3) as u8;
++                        self.eye_stack.push(self.current_eye);
++                        if eye != 0 {
++                            self.current_eye = eye;
++                        }
+                         let sc_info = self.push_stacking_context(
+                             composition_operations,
+                             info.stacking_context.transform_style,
+@@ -1022,6 +1036,7 @@ impl<'a> SceneBuilder<'a> {
+                 ContextKind::Root => {}
+                 ContextKind::StackingContext { sc_info } => {
+                     self.pop_stacking_context(sc_info);
++                    self.current_eye = self.eye_stack.pop().unwrap_or(0);
+                 }
+                 ContextKind::ReferenceFrame => {
+                 }
+@@ -1961,11 +1976,14 @@ impl<'a> SceneBuilder<'a> {
+     /// Add an already created primitive to the draw lists.
+     pub fn add_primitive_to_draw_list(
+         &mut self,
+-        prim_instance: PrimitiveInstance,
++        mut prim_instance: PrimitiveInstance,
+         prim_rect: LayoutRect,
+         spatial_node_index: SpatialNodeIndex,
+         flags: PrimitiveFlags,
+     ) {
++        // The eye of the stacking context the traversal is in (CSS depth).
++        prim_instance.eye = self.current_eye;
++
+         // Add primitive to the top-most stacking context on the stack.
+ 
+         // If we have a valid stacking context, the primitive gets added to that.
+diff --git a/gfx/wr/webrender/src/tile_cache/mod.rs b/gfx/wr/webrender/src/tile_cache/mod.rs
+index 69cb0f00dd..94c01b346e 100644
+--- a/gfx/wr/webrender/src/tile_cache/mod.rs
++++ b/gfx/wr/webrender/src/tile_cache/mod.rs
+@@ -2287,6 +2287,8 @@ impl TileCacheInstance {
+ 
+         // Build the list of resources that this primitive has dependencies on.
+         let mut prim_info = PrimitiveDependencyInfo::new(prim_instance.uid(), pic_coverage_rect);
++        // A primitive drawn for one eye (CSS depth): the tile is drawn once per eye.
++        prim_info.stereo |= prim_instance.eye != 0;
+         // Compute once here so it's available for both prim_info and the tile loop.
+         let prim_clamp_to_tile = matches!(
+             prim_instance.kind,
+diff --git a/gfx/wr/webrender_api/src/display_item.rs b/gfx/wr/webrender_api/src/display_item.rs
+index e3f5e3f0d6..4735bd4d5e 100644
+--- a/gfx/wr/webrender_api/src/display_item.rs
++++ b/gfx/wr/webrender_api/src/display_item.rs
+@@ -961,6 +961,12 @@ bitflags! {
+         const WRAPS_BACKDROP_FILTER = 1 << 1;
+         /// If true, this stacking context must be isolated from parent by a surface.
+         const FORCED_ISOLATION = 1 << 2;
++        /// Sparky Stereo OS (CSS depth, crate::stereo): the primitives of this stacking context
++        /// belong to the left eye's drawing of a tile drawn once per eye, shifted by the
++        /// depth of their element; they are not drawn in the right eye's.
++        const EYE_LEFT = 1 << 3;
++        /// The same for the right eye.
++        const EYE_RIGHT = 1 << 4;
+     }
+ }
+ 
+diff --git a/layout/generic/nsIFrame.cpp b/layout/generic/nsIFrame.cpp
+index d93bfcc9d5..d1734395ef 100644
+--- a/layout/generic/nsIFrame.cpp
++++ b/layout/generic/nsIFrame.cpp
+@@ -3760,6 +3760,18 @@ void nsIFrame::BuildDisplayListForStackingContext(
+     createdContainer = true;
+   }
+ 
++  // CSS depth (Sparky Stereo OS, ORDER 414): an element with a `depth` is
++  // drawn once per eye, as a whole, shifted by its depth; a page without depth
++  // is untouched.
++  if (StaticPrefs::layout_css_depth_enabled() && !resultList.IsEmpty() &&
++      StyleEffects()->mDepth != 0.0f) {
++    resultList.AppendNewToTop<nsDisplayStereoDepth>(
++        aBuilder, this, &resultList, containerItemASR,
++        nsDisplayItem::ContainerASRType::AncestorOfContained,
++        StyleEffects()->mDepth);
++    createdContainer = true;
++  }
++
+   // We build nsDisplayViewTransitionCapture here, and then use
+   // nsDisplayTransform to wrap it, to make sure we create the correct transform
+   // for the captured element and its descendants. This is necessary to make
+@@ -11969,6 +11981,11 @@ bool nsIFrame::IsStackingContext(const nsStyleDisplay* aStyleDisplay,
+   if (HasOpacity(aStyleDisplay, aStyleEffects, nullptr)) {
+     return true;
+   }
++  // CSS depth (Sparky Stereo OS): an element drawn at a depth is drawn as a
++  // whole, a stacking context.
++  if (aStyleEffects->mDepth != 0.0f && StaticPrefs::layout_css_depth_enabled()) {
++    return true;
++  }
+   if (IsTransformed()) {
+     return true;
+   }
+diff --git a/layout/painting/nsDisplayItemTypesList.inc b/layout/painting/nsDisplayItemTypesList.inc
+index 3abe66c363..89edfe31fa 100644
+--- a/layout/painting/nsDisplayItemTypesList.inc
++++ b/layout/painting/nsDisplayItemTypesList.inc
+@@ -41,6 +41,7 @@ DECLARE_DISPLAY_ITEM_TYPE(LIST_FOCUS, TYPE_RENDERS_NO_IMAGES)
+ DECLARE_DISPLAY_ITEM_TYPE(MARGIN_GUIDES, TYPE_RENDERS_NO_IMAGES)
+ DECLARE_DISPLAY_ITEM_TYPE(MASK, TYPE_IS_CONTAINER)
+ DECLARE_DISPLAY_ITEM_TYPE(OPACITY, TYPE_RENDERS_NO_IMAGES | TYPE_IS_CONTAINER)
++DECLARE_DISPLAY_ITEM_TYPE(STEREO_DEPTH, TYPE_RENDERS_NO_IMAGES | TYPE_IS_CONTAINER)
+ DECLARE_DISPLAY_ITEM_TYPE(OPTION_EVENT_GRABBER,
+                           TYPE_RENDERS_NO_IMAGES | TYPE_IS_CONTAINER)
+ DECLARE_DISPLAY_ITEM_TYPE(OUTLINE, TYPE_RENDERS_NO_IMAGES)
+diff --git a/layout/painting/nsDisplayList.cpp b/layout/painting/nsDisplayList.cpp
+index 391320462a..38a58c02e5 100644
+--- a/layout/painting/nsDisplayList.cpp
++++ b/layout/painting/nsDisplayList.cpp
+@@ -50,6 +50,14 @@
+ #include "mozilla/ServoComputedData.h"
+ #include "mozilla/ShapeUtils.h"
+ #include "mozilla/StaticPrefs_apz.h"
++#include "mozilla/StaticPrefs_dom.h"
++#include "mozilla/dom/ContentChild.h"
++#include "mozilla/widget/ScreenManager.h"
++#if defined(MOZ_WAYLAND)
++#  include "mozilla/layers/StereoPolicy.h"
++#endif
++#include "nsIScreen.h"
++#include "nsIWidget.h"
+ #include "mozilla/StaticPrefs_gfx.h"
+ #include "mozilla/StaticPrefs_layers.h"
+ #include "mozilla/StaticPrefs_layout.h"
+@@ -5267,6 +5275,143 @@ void nsDisplayOpacity::WriteDebugInfo(std::stringstream& aStream) {
+   aStream << ")";
+ }
+ 
++// CSS depth (ORDER 414): the display's limits in pixels of a view 1920 wide,
++// from libstereo-policy's display depth (the display's kind and physical size,
++// with the person's strength: the same source WebXR's flat modes and the
++// desktop use), asked once of the parent and kept; the pages repaint when the
++// answer comes.
++namespace {
++struct StereoDepthLimits {
++  bool mAsked = false;
++  bool mReady = false;
++  double mSunk = 0;
++  double mPopped = 0;
++};
++StereoDepthLimits sStereoDepthLimits;
++}  // namespace
++
++/* static */
++Maybe<int32_t> nsDisplayStereoDepth::ShiftForLevel(nsIFrame* aFrame,
++                                                   float aLevel) {
++  if (!gfx::gfxVars::StereoOutputs()) {
++    return Nothing();
++  }
++  if (!sStereoDepthLimits.mReady) {
++    if (!sStereoDepthLimits.mAsked) {
++      sStereoDepthLimits.mAsked = true;
++      RefPtr<widget::Screen> screen =
++          widget::ScreenManager::GetSingleton().GetPrimaryScreen();
++      double dpi = screen ? screen->GetDPI() : 0.0;
++      LayoutDeviceIntRect rect;
++      if (screen) {
++        rect = LayoutDeviceIntRect::FromUnknownRect(
++            gfx::IntRect(screen->GetRect().ToUnknownRect()));
++      }
++      int32_t widthMm = 0, heightMm = 0;
++      if (dpi > 0.0 && !rect.IsEmpty()) {
++        widthMm = int32_t(rect.Width() / dpi * 25.4);
++        heightMm = int32_t(rect.Height() / dpi * 25.4);
++      }
++      // The flat headset and phone modes are headsets, the rest framed screens
++      // (libstereo-policy's display kinds 0 framed, 2 headset).
++      const int32_t kind = std::clamp<int32_t>(
++                               StaticPrefs::dom_vr_flat_mode(), 0, 2) == 0
++                               ? 0
++                               : 2;
++      const double strength = double(StaticPrefs::dom_vr_flat_depth_strength());
++      nsPresContext* pc = aFrame->PresContext();
++      RefPtr<nsPresContext> keep(pc);
++      if (XRE_IsContentProcess()) {
++        if (dom::ContentChild* child = dom::ContentChild::GetSingleton()) {
++          child->SendGetStereoDisplayDepth(kind, widthMm, heightMm, strength)
++              ->Then(
++                  GetMainThreadSerialEventTarget(), __func__,
++                  [keep](const std::tuple<int32_t, double, double, int32_t,
++                                          int32_t>& aAnswer) {
++                    const auto [ok, sunk, popped, distance, known] = aAnswer;
++                    if (ok != 0) {
++                      return;
++                    }
++                    sStereoDepthLimits.mSunk = sunk;
++                    sStereoDepthLimits.mPopped = popped;
++                    sStereoDepthLimits.mReady = true;
++                    // The pages show their depth now.
++                    keep->RebuildAllStyleData(nsChangeHint_RepaintFrame,
++                                              RestyleHint{});
++                  },
++                  [](mozilla::ipc::ResponseRejectReason) {});
++        }
++      }
++#if defined(MOZ_WAYLAND)
++      else if (const auto* policy = layers::GetStereoPolicy()) {
++        layers::StereoPolicy::Depth depth{};
++        if (policy->displayDepth &&
++            policy->displayDepth(kind, widthMm, heightMm, strength, 0, 0,
++                                 &depth) == 0) {
++          sStereoDepthLimits.mSunk = depth.mSunkPx;
++          sStereoDepthLimits.mPopped = depth.mPoppedPx;
++          sStereoDepthLimits.mReady = true;
++        }
++      }
++#endif
++    }
++    if (!sStereoDepthLimits.mReady) {
++      return Nothing();
++    }
++  }
++  // The window's width in device pixels: the unit of the limits is a view
++  // 1920 wide.
++  int32_t width = 0;
++  if (nsIWidget* widget = aFrame->GetNearestWidget()) {
++    width = widget->GetClientBounds().Width();
++  }
++  if (width <= 0) {
++    return Nothing();
++  }
++  const double limit =
++      aLevel > 0 ? sStereoDepthLimits.mPopped : sStereoDepthLimits.mSunk;
++  return Some(int32_t(std::lround(double(aLevel) * limit * width / 1920.0)));
++}
++
++void nsDisplayStereoDepth::Paint(nsDisplayListBuilder* aBuilder,
++                                 gfxContext* aCtx) {
++  // Not drawn through WebRender: the element once, at the screen.
++  GetChildren()->Paint(aBuilder, aCtx,
++                       mFrame->PresContext()->AppUnitsPerDevPixel());
++}
++
++bool nsDisplayStereoDepth::CreateWebRenderCommands(
++    wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
++    const StackingContextHelper& aSc, RenderRootStateManager* aManager,
++    nsDisplayListBuilder* aDisplayListBuilder) {
++  const Maybe<int32_t> disparity = ShiftForLevel(mFrame, mLevel);
++  if (!disparity || *disparity == 0) {
++    return nsDisplayWrapList::CreateWebRenderCommands(
++        aBuilder, aResources, aSc, aManager, aDisplayListBuilder);
++  }
++  // Positive disparity moves the left eye's copy right of the right eye's (as
++  // Stereo KWin and Union split it): left = d - d/2, right = -(d/2).
++  const int32_t shifts[2] = {*disparity - *disparity / 2, -(*disparity / 2)};
++  for (int eye = 0; eye < 2; eye++) {
++    gfx::Matrix4x4 translation =
++        gfx::Matrix4x4::Translation(float(shifts[eye]), 0.0f, 0.0f);
++    wr::WrTransformInfo transformInfo;
++    transformInfo.transform = wr::ToLayoutTransform(translation);
++    wr::StackingContextParams params;
++    params.mBoundTransform = &translation;
++    params.mTransformPtr = &transformInfo;
++    params.clip =
++        wr::WrStackingContextClip::ClipChain(aBuilder.CurrentClipChainId());
++    params.flags |= eye == 0 ? wr::StackingContextFlags::EYE_LEFT
++                             : wr::StackingContextFlags::EYE_RIGHT;
++    StackingContextHelper sc(aSc, GetActiveScrolledRoot(), mFrame, this,
++                             aBuilder, params);
++    aManager->CommandBuilder().CreateWebRenderCommandsFromDisplayList(
++        &mList, this, aDisplayListBuilder, sc, aBuilder, aResources);
++  }
++  return true;
++}
++
+ bool nsDisplayOpacity::CreateWebRenderCommands(
+     wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
+     const StackingContextHelper& aSc, RenderRootStateManager* aManager,
+diff --git a/layout/painting/nsDisplayList.h b/layout/painting/nsDisplayList.h
+index 292a173f5d..1c48c701fe 100644
+--- a/layout/painting/nsDisplayList.h
++++ b/layout/painting/nsDisplayList.h
+@@ -5230,6 +5230,63 @@ class nsDisplayOpacity final : public nsDisplayWrapList {
+   bool mForceIsolation : 1;
+ };
+ 
++/**
++ * Sparky Stereo OS: an element with a CSS `depth`, drawn once per eye: its
++ * content twice, shifted by its depth to either side, the left eye's copy for
++ * the left eye's drawing of the tile that holds it, the right eye's for the
++ * right (WebRender's stacking context flags EYE_LEFT and EYE_RIGHT). The
++ * element moves as a whole, its text with it; layout is untouched.
++ */
++class nsDisplayStereoDepth : public nsDisplayWrapList {
++ public:
++  nsDisplayStereoDepth(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
++                       nsDisplayList* aList,
++                       const ActiveScrolledRoot* aActiveScrolledRoot,
++                       ContainerASRType aContainerASRType, float aLevel)
++      : nsDisplayWrapList(aBuilder, aFrame, aList, aActiveScrolledRoot,
++                          aContainerASRType, true),
++        mLevel(aLevel) {
++    MOZ_COUNT_CTOR(nsDisplayStereoDepth);
++  }
++  nsDisplayStereoDepth(nsDisplayListBuilder* aBuilder,
++                       const nsDisplayStereoDepth& aOther)
++      : nsDisplayWrapList(aBuilder, aOther), mLevel(aOther.mLevel) {
++    MOZ_COUNT_CTOR(nsDisplayStereoDepth);
++  }
++
++  MOZ_COUNTED_DTOR_OVERRIDE(nsDisplayStereoDepth)
++
++  NS_DISPLAY_DECL_NAME("StereoDepth", TYPE_STEREO_DEPTH)
++
++  nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
++                           bool* aSnap) const override {
++    *aSnap = false;
++    return nsRegion();
++  }
++  void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
++                                 const nsDisplayItemGeometry* aGeometry,
++                                 nsRegion* aInvalidRegion) const override {}
++  bool CreateWebRenderCommands(
++      wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
++      const StackingContextHelper& aSc,
++      layers::RenderRootStateManager* aManager,
++      nsDisplayListBuilder* aDisplayListBuilder) override;
++  bool ShouldFlattenAway(nsDisplayListBuilder* aBuilder) override {
++    return false;
++  }
++  bool CreatesStackingContextHelper() override { return true; }
++  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
++
++  // The depth shift in device pixels of a level (-1 sunk, 0 screen, 1
++  // popped) for a frame's window, or Nothing while the display's limits are
++  // not known yet (asked of the parent) or no output shows stereo 3D.
++  static mozilla::Maybe<int32_t> ShiftForLevel(nsIFrame* aFrame, float aLevel);
++
++ private:
++  float mLevel;
++  NS_DISPLAY_ALLOW_CLONING()
++};
++
+ class nsDisplayBlendMode : public nsDisplayWrapList {
+  public:
+   nsDisplayBlendMode(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
 diff --git a/layout/style/nsStyleStruct.cpp b/layout/style/nsStyleStruct.cpp
-index a12af828e5..4d7efc9fc2 100644
+index a12af828e5..6306e9cb5a 100644
 --- a/layout/style/nsStyleStruct.cpp
 +++ b/layout/style/nsStyleStruct.cpp
 @@ -3512,6 +3512,7 @@ nsStyleEffects::nsStyleEffects(const nsStyleEffects& aSource)
@@ -1157,13 +1674,17 @@ index a12af828e5..4d7efc9fc2 100644
        mMixBlendMode(aSource.mMixBlendMode) {
    MOZ_COUNT_CTOR(nsStyleEffects);
  }
-@@ -3570,6 +3571,11 @@ nsChangeHint nsStyleEffects::CalcDifference(
+@@ -3570,6 +3571,15 @@ nsChangeHint nsStyleEffects::CalcDifference(
      }
    }
  
 +  if (mDepth != aNewData.mDepth) {
-+    // The element is drawn once per view at its own depth: repaint it.
-+    hint |= nsChangeHint_RepaintFrame;
++    // The element is drawn once per view at its own depth: repaint it; having
++    // a depth or not makes it a stacking context, which frames are built for.
++    hint |= (mDepth == 0.0f) != (aNewData.mDepth == 0.0f)
++                ? nsChangeHint_RepaintFrame | nsChangeHint_UpdateEffects |
++                      nsChangeHint_AddOrRemoveTransform
++                : nsChangeHint_RepaintFrame;
 +  }
 +
    if (HasFilters() != aNewData.HasFilters()) {
@@ -1184,7 +1705,7 @@ index 61c98d02ab..cf409252c7 100644
  };
  
 diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
-index a08c0896f3..1783e3f9c0 100644
+index a08c0896f3..7cedb2668a 100644
 --- a/modules/libpref/init/StaticPrefList.yaml
 +++ b/modules/libpref/init/StaticPrefList.yaml
 @@ -5715,23 +5715,54 @@
@@ -1248,23 +1769,39 @@ index a08c0896f3..1783e3f9c0 100644
    mirror: always
  
  - name: dom.vr.inactive.timeout
-@@ -10532,6 +10563,16 @@
+@@ -10532,6 +10563,17 @@
    mirror: always
    rust: true
  
 +# Sparky Stereo OS: the CSS `depth` property (sunk | screen | popped |
 +# <percentage> | <number>), the same words as Union, Stereo KWin and SVGStereo.
-+# Off until the browser draws an element once per view at its depth: a page
-+# that is told a property exists must see it do something.
++# On: an element with a depth is drawn once per view at its depth (WebRender
++# draws the tiles that hold it once per eye); where no output shows stereo 3D
++# the page is drawn as without the property.
 +- name: layout.css.depth.enabled
 +  type: RelaxedAtomicBool
-+  value: false
++  value: true
 +  mirror: always
 +  rust: true
 +
  # Whether to enable CSS Anchor Positioning support.
  # https://drafts.csswg.org/css-anchor-position-1/
  - name: layout.css.anchor-positioning.enabled
+@@ -20592,6 +20634,14 @@
+   mirror: once
+ #endif
+ 
++# Sparky Stereo OS: DMABuf WebGL on NVIDIA proprietary drivers, which Mozilla
++# blocks (bug 1924578), where an output shows stereo 3D: a stereo canvas needs
++# its DMABuf surface to carry its stereo mode to the compositor.
++- name: widget.dmabuf-webgl.stereo-nvidia.enabled
++  type: bool
++  value: true
++  mirror: once
++
+ # Use DMABuf backend for WebGL.
+ - name: widget.dmabuf-webgl.enabled
+   type: bool
 diff --git a/servo/components/style/properties/longhands.toml b/servo/components/style/properties/longhands.toml
 index f63fd4f206..1917f87f47 100644
 --- a/servo/components/style/properties/longhands.toml

@@ -15,8 +15,21 @@ sparky-stereo-browser (@DEBVERSION@) unstable; urgency=medium
     runs in eight hung.
   * CSS depth (ORDER 414): the property depth (sunk | screen | popped |
     <percentage> | <number>), the words Union, Stereo KWin and SVGStereo share,
-    parsed and computed, not inherited; layout.css.depth.enabled is off until
-    the browser draws an element once per view at its depth.
+    not inherited. An element with a depth is drawn once per eye, as a whole,
+    its text with it: WebRender draws the tiles that hold it once per eye and
+    shifts each copy by the element's depth, the limits those of
+    libstereo-policy's display depth with the person's strength. With no output
+    that shows stereo 3D the page is drawn as without the property.
+    layout.css.depth.enabled is on.
+  * A WebGL canvas on an NVIDIA proprietary driver reaches the compositor with
+    its stereo mode where an output shows stereo 3D (Mozilla's block of DMABuf
+    WebGL on NVIDIA, bug 1924578, does not hold there;
+    widget.dmabuf-webgl.stereo-nvidia.enabled turns it back on), so WebXR's
+    flat display declares its views on NVIDIA.
+  * The VR shared memory is written by one thread at a time: two writers
+    interleaving left its generation counters apart for good, the VR service
+    took no frame, and the page waited (the quit hang, then a three-second
+    wait). The launcher carries German lines.
   * The 3D Display menu, the overlay and the 3D Video and 3D Canvas menus in
     the edition's nine languages (German added).
   * Depends on libstereo-policy1 (>= 1.15.0), which has the display depth.
