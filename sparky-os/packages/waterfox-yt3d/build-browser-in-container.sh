@@ -7,7 +7,7 @@ trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=${BROWSER_JOBS:-8}
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
-OLD=6.7.5-0+stereo3d5+lc1 NEW=6.7.5-0+stereo3d8 COMMIT=9e5eab05c5ad84fc01270f2a28d328f454167e40 OLDCOMMIT=b1d115f8d3070a81f3e231acb86cc446656581fd
+OLD=6.7.5-0+stereo3d5+lc1 NEW=6.7.5-0+stereo3d9 COMMIT=9254cd42f2a884d4a0c7a6bee117b874cb91dd25 OLDCOMMIT=b1d115f8d3070a81f3e231acb86cc446656581fd
 cd /work && mkdir plain && cd plain
 cp /in/sparky-stereo-browser_6.7.5.orig.tar.xz "/in/sparky-stereo-browser_$OLD.dsc" "/in/sparky-stereo-browser_$OLD.debian.tar.xz" .
 sha256sum sparky-stereo-browser_6.7.5.orig.tar.xz | tee /work/orig.sha256
@@ -19,10 +19,11 @@ cp /patches/0001-*.patch /patches/0002-*.patch /patches/0003-*.patch /patches/00
 ls /patches/0001-*.patch /patches/0002-*.patch /patches/0003-*.patch /patches/0004-*.patch | xargs -n1 basename > debian/patches/series
 python3 - <<'PY'
 import email.utils
-top = open('/patches/changelog8.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d8').replace('@DATE@', email.utils.formatdate(localtime=False))
+top = open('/patches/changelog9.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d9').replace('@DATE@', email.utils.formatdate(localtime=False))
+top += open('/patches/changelog8.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d8').replace('@DATE@', email.utils.formatdate(localtime=False))
 top += open('/patches/changelog7.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d7').replace('@DATE@', email.utils.formatdate(localtime=False))
 top += open('/patches/changelog.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d6').replace('@DATE@', email.utils.formatdate(localtime=False))
-lc = ('sparky-stereo-browser (6.7.5-0+stereo3d8+lc1) UNRELEASED; urgency=medium\n\n'
+lc = ('sparky-stereo-browser (6.7.5-0+stereo3d9+lc1) UNRELEASED; urgency=medium\n\n'
       '  * Apply verified native Lean Code before compilation and qualified lc1\n'
       '    payload assembly; retain exact authored source and HR companions.\n\n'
       ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + email.utils.formatdate(localtime=False) + '\n\n')
