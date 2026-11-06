@@ -7,7 +7,8 @@
 # transition took out of the archive (the link gate's predecessor universe), /entry the changelog entry, /toolkit the build
 # tree's sparky-os folder, /repo the edition's published tree (read only) and /archive the link gate's sources.json with
 # the public keyrings it names. DSC names the published .dsc, DSC_SHA256 its checksum, PLAIN_OPTIONS the
-# plain-from-lc.py option the source's shape needs (empty, --edition-entry, --lc-successor or --no-build-depends).
+# plain-from-lc.py option the source's shape needs (empty, --edition-entry, --lc-successor or --no-build-depends). The source's
+# preparation (plain source, entry, +lc1 source, the published Lean Code preserve plan carried over) is prepare-lc-source.sh (ORDER 433).
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
 : "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
@@ -18,60 +19,8 @@ printf 'deb [signed-by=/archive/sparky-stereo-repo.gpg] file:/repo mashtabba mai
 printf 'deb [signed-by=/archive/deb-multimedia-keyring.gpg] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 cd /work
-mkdir plain && cd plain
-echo "$DSC_SHA256  /src/$DSC" | sha256sum -c
-python3 - <<'COPY'
-import hashlib, os, shutil
-from pathlib import Path
-dsc = Path('/src') / os.environ['DSC']
-shutil.copy2(dsc, dsc.name)
-for line in dsc.read_text().split('Checksums-Sha256:\n', 1)[1].splitlines():
-    if not line.startswith(' '):
-        break
-    digest, size, name = line.split()
-    assert hashlib.sha256((dsc.parent / name).read_bytes()).hexdigest() == digest, name
-    shutil.copy2(dsc.parent / name, name)
-COPY
-dpkg-source -x "$DSC" t >/dev/null
-# shellcheck disable=SC2086
-python3 /toolkit/repo/plain-from-lc.py $PLAIN_OPTIONS t
-python3 - <<'CHANGELOG'
-from pathlib import Path
-import os, re, subprocess
-entry = Path('/entry').read_text()
-m = re.match(r'(\S+) \((\S+)\) unstable; urgency=medium\n\n', entry)
-assert m and '+lc' not in m.group(2), entry[:80]
-p = Path('t/debian/changelog')
-old = p.read_text()
-assert old.startswith(m.group(1) + ' ('), old[:60]
-current = old.split('(', 1)[1].split(')', 1)[0]
-subprocess.run(['dpkg', '--compare-versions', m.group(2), 'gt', current], check=True)
-p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  '
-             + os.environ['SOURCE_DATE_RFC2822'] + '\n\n' + old)
-Path('/work/version').write_text(m.group(2) + '\n')
-CHANGELOG
-VERSION=$(cat /work/version)
-head -12 t/debian/changelog
-python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" t
-dpkg-source -b t >/dev/null
-rm -rf t
-ls
-mkdir -p /work/lc && cd /work/lc
-NAME=${DSC%%_*}
-PLAIN_DSC=${NAME}_${VERSION#*:}.dsc
-python3 - "$PLAIN_DSC" <<'COPY'
-import shutil, sys
-from pathlib import Path
-dsc = Path('/work/plain') / sys.argv[1]
-shutil.copy2(dsc, dsc.name)
-for line in dsc.read_text().split('Checksums-Sha256:\n', 1)[1].splitlines():
-    if not line.startswith(' '):
-        break
-    shutil.copy2(dsc.parent / line.split()[2], line.split()[2])
-COPY
-dpkg-source -x "$PLAIN_DSC" /work/lc/source >/dev/null
+bash /tools/prepare-lc-source.sh
 cd /work/lc/source
-PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source "$VERSION+lc1" --toolkit /toolkit
 apt-get -y update > /work/apt-update.log 2>&1
 apt-get -y --no-install-recommends build-dep /work/lc/source > /work/build-dep.log 2>&1 || { tail -40 /work/build-dep.log; exit 1; }
 dpkg-query -W -f='${Package}\t${Version}\n' > /work/build-environment.tsv
