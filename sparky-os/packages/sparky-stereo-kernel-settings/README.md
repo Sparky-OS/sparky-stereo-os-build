@@ -40,11 +40,16 @@ usr/lib/udev/rules.d/60-sparky-block.rules  BFQ on rotating disks, 256 KiB read-
 usr/lib/udev/rules.d/99-sparky-audio.rules  audio group: cpu_dma_latency, rtc0, hpet
 usr/lib/tmpfiles.d/sparky-thp.conf          THP defrag defer+madvise, THP shrinker threshold
 etc/security/limits.d/20-sparky-audio.conf  rtprio 99 and nice -11 for @audio (a conffile)
+etc/tmpfiles.d/tmp.conf                     /tmp keeps its files: no boot wipe, no age cleanup; /var/tmp as Debian (a conffile)
 
 /tmp on disk (Daniel: "the dumb /tmp mounted at a ram fs - final result? no ram"): the first install of 20261010.2
 masks tmp.mount, the way Debian's trixie release notes describe it (5.1.6). This package never empties /tmp: Daniel
-never asked for a wipe (2026-11-02), and 20261103.1 removes the boot-wipe rule earlier versions shipped. Debian's own
-tmpfiles.d/tmp.conf still applies as Debian ships it. An administrator's own /etc/systemd/system/tmp.mount is left alone;
+never asked for a wipe (2026-11-02), and 20261103.1 removed the boot-wipe rule earlier versions shipped. Debian's own
+usr/lib/tmpfiles.d/tmp.conf still ages /tmp out after 10 days (q /tmp 1777 root root 10d), which is the RAM-disk behaviour
+Daniel moved /tmp to the disk to leave (2026-11-06: "make sure the tmp cleaner is really off"). From 20261106.1 the
+conffile /etc/tmpfiles.d/tmp.conf, which overrides Debian's file of the same name, says "q /tmp 1777 root root -"
+(no age: systemd-tmpfiles --clean never removes from /tmp) and keeps Debian's "q /var/tmp 1777 root root 30d".
+A person's own edit of that file is kept on upgrade (dpkg conffile rules). An administrator's own /etc/systemd/system/tmp.mount is left alone;
 "systemctl unmask tmp.mount" brings /tmp in RAM back and is kept on upgrades. Purging the package removes the mask it
 created. The change applies at the next boot.
 

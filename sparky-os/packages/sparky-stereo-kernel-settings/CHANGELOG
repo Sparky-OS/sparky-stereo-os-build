@@ -1,4 +1,13 @@
 -------------------------------------------------------------------------------
+  Version 20261106.1~sparky9~0 (2026-11-06)
+-------------------------------------------------------------------------------
+  * Ship /etc/tmpfiles.d/tmp.conf as a conffile: "q /tmp 1777 root root -", so
+    /tmp keeps its files on every install (no boot wipe, no age cleanup);
+    /var/tmp keeps Debian's 30 days. It overrides Debian's file of the same name.
+  * tests/tmp-on-disk-test.sh checks the effective rule, that a clean pass removes
+    nothing from /tmp aged 11 days, and that an edited conffile survives an upgrade.
+
+-------------------------------------------------------------------------------
   Version 20261103.4~sparky9~0 (2026-11-03)
 -------------------------------------------------------------------------------
   * Allow the person’s zram packages without Conflicts, Breaks or Replaces.

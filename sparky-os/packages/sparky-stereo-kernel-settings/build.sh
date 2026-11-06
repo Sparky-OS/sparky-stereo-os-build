@@ -5,10 +5,10 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=20261103.4~sparky9~0+lc1
+VERSION=20261106.1~sparky9~0+lc1
 PACKAGE=sparky-stereo-kernel-settings
 DEPENDS='python3, apt, sparky-stereo-problems, libpam-modules, systemd, mount, udev'
-FILES='etc/security/limits.d/20-sparky-audio.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
+FILES='etc/security/limits.d/20-sparky-audio.conf etc/tmpfiles.d/tmp.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.kernel-settings.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -48,7 +48,7 @@ Description: Kernel tunables for Sparky Stereo OS
   kernel patches of performance kernels. Closes kexec after boot and excludes
   automatic compressed RAM swap; the person may opt in through Stereo APTus.
 EOT
-printf '%s\n' /etc/security/limits.d/20-sparky-audio.conf >"$D/DEBIAN/conffiles"
+printf '%s\n' /etc/security/limits.d/20-sparky-audio.conf /etc/tmpfiles.d/tmp.conf >"$D/DEBIAN/conffiles"
 cat >"$D/DEBIAN/postinst" <<'EOT'
 #!/bin/sh
 set -e
