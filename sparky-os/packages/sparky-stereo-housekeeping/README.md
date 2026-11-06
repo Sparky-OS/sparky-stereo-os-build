@@ -28,7 +28,7 @@ System mail
 Daniel, 2026-11-05: "that cleaning was due long ago - we should include those as a bleech bit option...(clear internal mailing system)".
 Machine-generated mail (cron, anacron, netdata, sudo, chkrootkit, mail program bounces) is system logs.
 A person's own mail is not, so the options say plainly what they delete.
-None of them is ticked unless the person ticks it.
+Daniel's presets tick them (Daniel, 2026-11-06: "on the choice - ticked in presets"): the user preset the person's own dead.letter and local mailbox, root's preset the dead letters, every mailbox and the queues of removed mail programs. BleachBit's own defaults leave them unticked, and a person can untick any of them; each option's warning says what it deletes.
 
 | Option | What it does | Who |
 | --- | --- | --- |
