@@ -37,7 +37,8 @@ install -Dm644 "$W/src/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
 install -Dm644 "$W/src/docs/TREE.md" "$D/usr/share/doc/$PACKAGE/TREE.md"
 install -Dm644 "$W/src/docs/CONTRACT.md" "$D/usr/share/doc/$PACKAGE/CONTRACT.md"
 mkdir -p "$D/DEBIAN"
-SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$REPRO" changelog "$HERE/debian/changelog")}
+# a native package is dated by its own newest changelog entry, so the source package and the build agree
+SOURCE_DATE_EPOCH=$(python3 "$REPRO" changelog "$HERE/debian/changelog")
 export SOURCE_DATE_EPOCH
 find "$D" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
