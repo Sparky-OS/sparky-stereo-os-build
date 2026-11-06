@@ -47,7 +47,7 @@ Version: $VERSION
 Architecture: amd64
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Section: devel
+Section: Development
 Priority: optional
 Homepage: https://sparkylinux.org
 Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues

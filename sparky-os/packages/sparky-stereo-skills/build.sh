@@ -197,7 +197,7 @@ binary-indep:
 	if test -f ../sparky-stereo-skills-lc-hr_$$(dpkg-parsechangelog -S Version)_all.deb; then dpkg-distaddfile sparky-stereo-skills-lc-hr_$$(dpkg-parsechangelog -S Version)_all.deb doc optional; sed -i '/^sparky-stereo-skills-lc-hr_/s/$$/ automatic=yes/' debian/files; fi
 binary-arch:
 	OUT=$(CURDIR)/.. COPY_RECIPE=$(CURDIR)/build-tools/copy-recipe.py bash ./build-engine.sh
-	dpkg-distaddfile sparky-stereo-skills-engine_$$(dpkg-parsechangelog -S Version)_amd64.deb devel optional
+	dpkg-distaddfile sparky-stereo-skills-engine_$$(dpkg-parsechangelog -S Version)_amd64.deb Development optional
 binary: binary-indep binary-arch
 build build-arch build-indep clean:
 .PHONY: binary binary-arch binary-indep build build-arch build-indep clean
