@@ -7,3 +7,5 @@ pub const register_argv: []const []const u8 = &[_][]const u8{ "codex", "mcp", "a
 /// The assistant's documentation names no removal command (read 2026-11-06), so none is invented: the person is told what to delete.
 pub const unregister_argv: []const []const u8 = &.{};
 pub const unregister_note: []const u8 = "delete the [mcp_servers.sparky-stereo-skills] table from ~/.codex/config.toml";
+/// Asks the assistant whether the server is registered with it.
+pub const list_argv: []const []const u8 = &[_][]const u8{ "codex", "mcp", "list" };

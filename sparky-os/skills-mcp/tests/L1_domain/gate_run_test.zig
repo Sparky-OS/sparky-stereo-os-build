@@ -28,7 +28,9 @@ fn setup(a: std.mem.Allocator, io: std.Io, s: *testkit.Scratch, with_ai: bool) !
         .{ "LANG", "C" },
         .{ "SPARKY_STEREO_PACKAGES", "x" },
     });
-    return engine.Engine.init(a, io, env);
+    var e = try engine.Engine.init(a, io, env);
+    e.assistants = &assistants;
+    return e;
 }
 
 test "default policy auto: an AI tool found lets the assistant approve, none found asks the person" {
@@ -39,14 +41,14 @@ test "default policy auto: an AI tool found lets the assistant approve, none fou
     var s1 = try testkit.Scratch.make(io, "/tmp/skills-mcp-gate-1");
     defer s1.cleanup();
     var with = try setup(a, io, &s1, true);
-    const g1 = try with.gate("net-fix", "say", .mcp, &assistants);
+    const g1 = try with.gate("net-fix", "say", .mcp);
     try std.testing.expectEqual(engine.Policy.auto, with.session.commandsPolicy());
     try std.testing.expect(g1.decision == .run_assistant_approves);
     try std.testing.expectEqual(@as(usize, 1), g1.ai_found.len);
     var s2 = try testkit.Scratch.make(io, "/tmp/skills-mcp-gate-2");
     defer s2.cleanup();
     var without = try setup(a, io, &s2, false);
-    const g2 = try without.gate("net-fix", "say", .mcp, &assistants);
+    const g2 = try without.gate("net-fix", "say", .mcp);
     try std.testing.expect(g2.decision == .ask_person);
     try std.testing.expectEqual(@as(usize, 0), g2.ai_found.len);
 }
@@ -62,11 +64,11 @@ test "the switch works both ways and is remembered: ask forces the question, ass
     try e.session.setCommandsPolicy(.ask);
     var again = try setup(a, io, &s, true);
     try std.testing.expectEqual(engine.Policy.ask, again.session.commandsPolicy());
-    try std.testing.expect((try again.gate("net-fix", "say", .mcp, &assistants)).decision == .ask_person);
+    try std.testing.expect((try again.gate("net-fix", "say", .mcp)).decision == .ask_person);
     try again.session.setCommandsPolicy(.assistant);
     var third = try setup(a, io, &s, false);
-    try std.testing.expect((try third.gate("net-fix", "say", .mcp, &assistants)).decision == .run_assistant_approves);
-    try std.testing.expect((try third.gate("net-fix", "admin", .mcp, &assistants)).decision == .ask_person);
+    try std.testing.expect((try third.gate("net-fix", "say", .mcp)).decision == .run_assistant_approves);
+    try std.testing.expect((try third.gate("net-fix", "admin", .mcp)).decision == .ask_person);
 }
 
 test "an unlisted command is refused, the command line always asks, developer skills list no commands" {
@@ -77,8 +79,8 @@ test "an unlisted command is refused, the command line always asks, developer sk
     var s = try testkit.Scratch.make(io, "/tmp/skills-mcp-gate-4");
     defer s.cleanup();
     var e = try setup(a, io, &s, true);
-    try std.testing.expect((try e.gate("net-fix", "rm-rf", .mcp, &assistants)).decision == .refuse);
-    try std.testing.expect((try e.gate("net-fix", "say", .cli, &assistants)).decision == .ask_person);
+    try std.testing.expect((try e.gate("net-fix", "rm-rf", .mcp)).decision == .refuse);
+    try std.testing.expect((try e.gate("net-fix", "say", .cli)).decision == .ask_person);
     try std.testing.expectError(error.Failed, e.commands("dev-only"));
 }
 

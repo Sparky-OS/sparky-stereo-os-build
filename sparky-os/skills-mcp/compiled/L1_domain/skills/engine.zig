@@ -25,6 +25,7 @@ pub const Rec = skill_record.Rec;
 pub const Origin = skill_record.Origin;
 pub const FindRow = op_find.Row;
 pub const Policy = command_gate.Policy;
+pub const parsePolicy = command_gate.parsePolicy;
 pub const Via = command_gate.Via;
 pub const Heading = sections.Heading;
 pub const ManifestEntry = manifest.Entry;
@@ -32,8 +33,19 @@ pub const Command = op_commands.Command;
 pub const RunValue = op_run.Value;
 pub const Outcome = op_run.Outcome;
 pub const Assistant = ai_detect.Assistant;
+pub const RateWindow = @import("ratelimit").Window;
+pub const SkillUri = skill_uri.Parsed;
+pub const parseUri = skill_uri.parse;
+pub const max_read_bytes = op_read.max_bytes;
 
 pub const Failure = error.Failed;
+
+/// The skill's front matter as a JSON object text (the Skills extension's `frontmatter`).
+pub fn frontmatterJson(arena: std.mem.Allocator, text: []const u8) ![]const u8 {
+    return @import("frontmatter").toJson(arena, text);
+}
+
+
 
 pub const Engine = struct {
     arena: std.mem.Allocator,
@@ -45,6 +57,8 @@ pub const Engine = struct {
     problems: std.ArrayList([]const u8) = .empty,
     recs: []const Rec = &.{},
     ref_root: ?[]const u8 = null,
+    /// The assistants this build can register with (the doors fill it from their registry).
+    assistants: []const Assistant = &.{},
 
     pub fn init(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map) !Engine {
         var e: Engine = .{ .arena = arena, .io = io, .session = try Session.load(arena, io, env) };
@@ -79,7 +93,12 @@ pub const Engine = struct {
         return e;
     }
 
-    fn fail(self: *Engine, comptime fmt: []const u8, args: anytype) error{Failed} {
+    /// The text of a skill's SKILL.md.
+    pub fn skillText(self: *Engine, r: Rec) ![]u8 {
+        return fsio.readFile(self.arena, self.io, try skill_record.skillFile(self.arena, r), 1 << 20);
+    }
+
+    pub fn fail(self: *Engine, comptime fmt: []const u8, args: anytype) error{Failed} {
         self.message = std.fmt.allocPrint(self.arena, fmt, args) catch "out of memory";
         return error.Failed;
     }
@@ -97,7 +116,11 @@ pub const Engine = struct {
     }
 
     pub fn uri(self: *Engine, r: Rec, file: []const u8) ![]u8 {
-        return skill_uri.format(self.arena, @tagName(r.origin), r.kind, r.name, file);
+        return self.uriOf(r.name, r.kind, r.origin, file);
+    }
+
+    pub fn uriOf(self: *Engine, name: []const u8, kind: []const u8, origin: Origin, file: []const u8) ![]u8 {
+        return skill_uri.format(self.arena, @tagName(origin), kind, name, file);
     }
 
     /// The one skill called `name` that is installed; a name in two origins is refused with both addresses.
@@ -190,13 +213,13 @@ pub const Engine = struct {
     }
 
     /// The decision the gate makes for one command of one skill, and the command itself.
-    pub fn gate(self: *Engine, name: []const u8, id: []const u8, via: Via, assistants: []const Assistant) !struct { cmd: ?Command, decision: command_gate.Decision, ai_found: []const []const u8 } {
+    pub fn gate(self: *Engine, name: []const u8, id: []const u8, via: Via) !struct { cmd: ?Command, decision: command_gate.Decision, ai_found: []const []const u8 } {
         const cmds = try self.commands(name);
         var cmd: ?Command = null;
         for (cmds) |c| if (std.mem.eql(u8, c.id, id)) {
             cmd = c;
         };
-        const found = try self.session.assistantsFound(assistants);
+        const found = try self.session.assistantsFound(self.assistants);
         const decision = command_gate.decide(self.session.commandsPolicy(), found.len > 0, cmd != null, if (cmd) |c| switch (c.marked) {
             .assistant => command_gate.Marked.assistant,
             .person => command_gate.Marked.person,

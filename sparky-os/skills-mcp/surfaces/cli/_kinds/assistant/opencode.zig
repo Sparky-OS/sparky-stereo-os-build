@@ -7,3 +7,5 @@ pub const register_argv: []const []const u8 = &[_][]const u8{ "opencode", "mcp",
 /// The assistant's documentation names no removal command (read 2026-11-06), so none is invented: the person is told what to delete.
 pub const unregister_argv: []const []const u8 = &.{};
 pub const unregister_note: []const u8 = "delete the sparky-stereo-skills entry under mcp in your opencode.jsonc";
+/// Asks the assistant whether the server is registered with it.
+pub const list_argv: []const []const u8 = &[_][]const u8{ "opencode", "mcp", "list" };

@@ -7,3 +7,5 @@ pub const register_argv: []const []const u8 = &[_][]const u8{ "cline", "mcp", "a
 /// Codex and OpenCode: the removal command is the documented guess; `mcp status` verifies the result by asking the assistant.
 pub const unregister_argv: []const []const u8 = &[_][]const u8{ "cline", "mcp", "remove", "sparky-stereo-skills" };
 pub const unregister_note: []const u8 = "";
+/// Asks the assistant whether the server is registered with it.
+pub const list_argv: []const []const u8 = &[_][]const u8{ "cline", "mcp", "list" };
