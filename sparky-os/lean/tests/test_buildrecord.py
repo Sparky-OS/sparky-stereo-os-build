@@ -53,11 +53,14 @@ class Record(TestCase):
 
     def test_missing_host_facts_are_listed_not_guessed(self):
         with TemporaryDirectory() as d:
-            (path,) = buildrecord.record([make_deb(d)], environ={})
+            # the build script ran sparky_provenance_init (it always passes the invocation id and the clock) but git and
+            # docker could not be read: those two facts are listed, never guessed
+            env = {k: HOST[k] for k in ('SPARKY_BUILD_INVOCATION', 'SPARKY_BUILD_STARTED')}
+            (path,) = buildrecord.record([make_deb(d)], environ=env)
             obj = json.loads(path.read_text())
-            for key in ('recipeCommit', 'builderImage', 'invocationId', 'startedOn'):
+            for key in ('recipeCommit', 'builderImage'):
                 self.assertNotIn(key, obj)
-            self.assertEqual(sorted(obj['unrecorded']), ['builderImage', 'buildinfo', 'invocationId', 'recipeCommit', 'startedOn'])
+            self.assertEqual(sorted(obj['unrecorded']), ['builderImage', 'buildinfo', 'recipeCommit'])
 
     def test_required_stops_the_build(self):
         with TemporaryDirectory() as d:
