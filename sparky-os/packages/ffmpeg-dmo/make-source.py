@@ -7,17 +7,25 @@ Why not lc-successor.py: its --in-place --overlay keeps the old patched upstream
 "unexpected upstream changes"; its --recipe mode only allows debian/ changes.
 Usage: make-source.py PLAIN0 ORIGTARBALL OUTDIR     (PLAIN0 = the plain tree: dpkg-source --skip-patches -x PUBLISHED.dsc PLAIN0, then
 plain-from-lc.py PLAIN0)"""
-import email.utils, os, shutil, subprocess, sys, tempfile
+import os, shutil, subprocess, sys, tempfile
 from pathlib import Path
 SPARKY_OS = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SPARKY_OS.parent))
 sys.path.insert(0, str(SPARKY_OS))
+sys.path.insert(0, str(SPARKY_OS / 'repo'))
 from lean import debian_prepare
+import reproducible
 RECIPE = SPARKY_OS / 'media/ffmpeg/stereo3d11'
 NEXT = '10:9.0.2-dmo1+stereo3d11'
 plain0, orig, out = (Path(a).resolve() for a in sys.argv[1:4])
 out.mkdir(parents=True, exist_ok=True)
-os.environ.update(DEBFULLNAME='Daniel Ramos (Capitain Jack)', DEBEMAIL='Capitain_Jack@yahoo.com', TZ='America/Sao_Paulo')
+# ORDER 421: the date of the source is the recipe's, the committer date of the last commit that touched the recipe folder or this
+# script (or SOURCE_DATE_EPOCH); the clock, the zone, the umask and the checkout time do not reach the bytes.
+try:
+    STAMP = reproducible.epoch([RECIPE, Path(__file__)])
+except reproducible.NoRecipeDate as error:
+    sys.exit(f'make-source: {error}')
+os.environ.update(DEBFULLNAME='Daniel Ramos (Capitain Jack)', DEBEMAIL='Capitain_Jack@yahoo.com', TZ='UTC', SOURCE_DATE_EPOCH=str(STAMP))
 work = Path(tempfile.mkdtemp(prefix='mk-', dir=out))
 new = work / 'new'
 shutil.copytree(plain0, new, symlinks=True, ignore=lambda d, n: ['debian'] if Path(d) == plain0 else [])
@@ -26,12 +34,12 @@ pd = new / 'debian/patches'
 for p in sorted((RECIPE / 'patches').glob('0*.patch')):
     shutil.copy2(p, pd / p.name)
 shutil.copy2(RECIPE / 'patches/series', pd / 'series')
-entry = (RECIPE / 'changelog.entry').read_text().replace('@VERSION@', NEXT).replace('@DATE@', email.utils.formatdate(localtime=True))
+entry = (RECIPE / 'changelog.entry').read_text().replace('@VERSION@', NEXT).replace('@DATE@', reproducible.rfc2822(STAMP))
 ch = new / 'debian/changelog'
 ch.write_text(entry + '\n' + ch.read_text())
 debian_prepare.prepare(new, NEXT + '+lc1', SPARKY_OS, preserve_sources=[])
 os.symlink(orig, work / orig.name)
-subprocess.run(['dpkg-source', '-b', 'new'], cwd=work, check=True)
+reproducible.pack(work, 'new', STAMP)
 for f in work.glob('ffmpeg-dmo_9.0.2-dmo1+*'):
     shutil.copyfile(f, out / f.name)
 shutil.rmtree(work)

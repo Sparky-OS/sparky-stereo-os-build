@@ -6,11 +6,15 @@ This is intentionally a checked preparation step, not an unrestricted rules
 rewriter. Custom packaging hooks require their own reviewed integration.
 """
 import argparse
+import datetime
+import email.utils
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 
 from . import source_tree
 
@@ -106,8 +110,16 @@ def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=(), 
         preserve_path.write_text(json.dumps(preserve, indent=2) + '\n')
     if generated:
         generated_path.write_text(json.dumps(generated, indent=2) + '\n')
+    # ORDER 421: the entry's date is the recipe's (SOURCE_DATE_EPOCH, always UTC), so the same recipe gives the same
+    # source; without it dch dates the entry by the clock and the source is not reproducible, which is said here.
+    when = os.environ.get("SOURCE_DATE_EPOCH")
+    if when is None:
+        print("debian_prepare: SOURCE_DATE_EPOCH is not set: the changelog entry is dated by the clock and "
+              "this source will not be byte-reproducible", file=sys.stderr)
+    date = [] if when is None else ["--date", email.utils.format_datetime(
+        datetime.datetime.fromtimestamp(int(when), datetime.timezone.utc))]
     subprocess.run([
-        "dch", "--newversion", version, "--distribution", "UNRELEASED",
+        "dch", *date, "--newversion", version, "--distribution", "UNRELEASED",
         "Apply verified native Lean Code before compilation and qualified lc1 "
         "payload assembly; retain exact authored source and HR companions.",
     ], cwd=root, check=True)
