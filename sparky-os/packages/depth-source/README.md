@@ -60,3 +60,13 @@ Design followed (Daniel's words, as recorded):
 - `patches/qt6-multimedia/0039 to 0041` (branch `order411-2i` of danielcamposramos/qtmultimedia over `order411-2h`): NVDEC's P012 frames in the CUDA converter; the stereo layer draws the drawn views itself into an EGL window surface of the GPU (no read back, no copy of ours; wl_shm only where the driver has no surface of the depth, counted and said); the colour matrix of an untagged frame as Qt's own conversion has it; the compositor case reads both kinds of recorded surface.
 - debian/copyright names the vendored ffnvcodec header (commit 591bfef of the coordinator).
 - Build order unchanged (stereo-layer 1.17.1 is as in 2h).
+
+## ORDER 411, step 2j
+
+- `patches/qt6-multimedia/0042 to 0045` (branch `order411-2j` of danielcamposramos/qtmultimedia over `order411-2i`):
+  - 0042: NVDEC's 4:4:4 frames are imported as three planes by the CUDA converter and the depth passes, not copied (YUV444P, YUV444P16, and FFmpeg 8's YUV444P10MSB and YUV444P12MSB);
+  - 0043: a depth video no longer clears the stereo presenter at every frame (the output compared the stored input's format and packing with the drawn views'; the wl_shm control now delivers buffers on the A10);
+  - 0044 and 0045: 12 to 16 bit video reaches the compositor at 16 bits: StereoSurface16Bit, a window surface of the driver where it has one, buffers the layer allocates (GBM, EGLImage, zwp_linux_dmabuf_v1) where it has none, wl_shm XBGR16161616 last, counted and said; the route says what was observed; the window surface has exactly the depth asked for (Mesa answered a request for 8.8.8 with a 10.10.10 config).
+- qml6-module-qtmultimedia Depends libgbm1 and libwayland-egl1 (the stereo layer loads them; `next-source.sh` changes that one stanza of debian/control, each text exactly once).
+- Build order unchanged (stereo-layer 1.17.1 is as in 2h and 2i).
+
