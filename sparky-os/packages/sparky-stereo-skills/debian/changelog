@@ -1,3 +1,19 @@
+sparky-stereo-skills (0.3.0~dev20261106) unstable; urgency=medium
+
+  * Split: the program that finds, reads and serves the skills is the new
+    sparky-stereo-skills-engine (amd64, static, written in cgm-zig); this
+    package keeps link, unlink, the dialog and export and depends on it.
+  * find, list, context, sections, commands, run, mcp and serve go through the
+    engine; list shows only the skills whose packages are installed, as link
+    always did.
+  * /usr/share/agent-skills/paths.d/sparky-stereo-skills.conf names the
+    skills tree: the place any package can use to add skills of its own.
+  * The dialog asks whether the assistants may also ask the skills through MCP
+    (unchecked) and who approves the commands a skill lists.
+  * python3-yaml is no longer needed at run time.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 06 Nov 2026 12:00:00 +0000
+
 sparky-stereo-skills (0.2.18~dev20261102) unstable; urgency=medium
 
   * Refresh the public skills snapshot to 0df2927 (ORDER 327): each
