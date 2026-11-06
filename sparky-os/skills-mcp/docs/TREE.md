@@ -1,7 +1,7 @@
 # The skills server: its tree and what each path claims
 
 The server is written in cgm-zig, split into small levels, and every variant (a protocol era, an assistant, a language, a tool) is a file dropped into a folder rather than a branch in the code.
-A path here reveals four things: the concern root, the level, the artifact projection and the owner.
+A path here reveals four things: the concern root, the level, the artifact projection and who looks after it.
 This page is the plan the tree follows; `tests/lint/` fails when the tree stops following it.
 
 ## The product and its doors

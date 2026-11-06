@@ -54,7 +54,10 @@ pub fn load(arena: std.mem.Allocator, io: std.Io, rec: skill_record.Rec) Error![
     const path = try std.fmt.allocPrint(arena, "{s}/commands.json", .{rec.dir});
     const text = fsio.readFile(arena, io, path, 256 * 1024) catch |e| switch (e) {
         error.FileNotFound => return &.{},
-        else => return if (e == error.OutOfMemory) e else error.BadCommands,
+        else => {
+            if (e == error.OutOfMemory) return error.OutOfMemory;
+            return error.BadCommands;
+        },
     };
     return parse(arena, text);
 }

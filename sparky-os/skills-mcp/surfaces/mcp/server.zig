@@ -158,7 +158,7 @@ pub const Server = struct {
                         },
                         error.InvalidArgument => return error.InvalidArgument,
                         else => blk: {
-                            if (e == error.OutOfMemory) return e;
+                            if (e == error.OutOfMemory) return error.OutOfMemory;
                             is_error = true;
                             break :blk try std.fmt.allocPrint(arena, "The call failed: {s}.", .{@errorName(e)});
                         },
@@ -207,7 +207,7 @@ pub const Server = struct {
             for (try eng.list(null, false)) |r| {
                 const entry = skillEntry(arena, eng, r) catch |e| switch (e) {
                     else => {
-                        if (e == error.OutOfMemory) return e;
+                        if (e == error.OutOfMemory) return error.OutOfMemory;
                         continue; // a broken skill is not served; skills/get names the reason
                     },
                 };
@@ -229,7 +229,10 @@ pub const Server = struct {
             const origin = std.meta.stringToEnum(engine.Origin, parsed.origin) orelse return error.InvalidArgument;
             const r = eng.resolve(parsed.name, origin) catch return error.NotFound;
             const entry = skillEntry(arena, eng, r) catch |e| switch (e) {
-                else => return if (e == error.OutOfMemory) e else error.NotFound,
+                else => {
+            if (e == error.OutOfMemory) return error.OutOfMemory;
+            return error.NotFound;
+        },
             };
             return std.fmt.allocPrint(arena, "{{\"skill\":{s}{s}}}", .{ entry, cacheable(modern) });
         }
