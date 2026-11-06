@@ -1,17 +1,22 @@
 #!/bin/sh
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/31
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/04 (ORDER 400)
+# Last update 2026/11/06 (ORDER 413)
 # The first upgrade that made the /etc files conffiles moved the unchanged ones aside (preinst); dpkg has installed the
 # new ones now, so the old copies go.
 # Plain http:// sources become https:// (Daniel, 2026-11-04: "change them to https"): apt 3.3.5's retries let an attacker on the
-# network path replace a verified package downloaded over plain HTTP (CVE-2026-109518, DSA-6607-1), and the block file this
-# package ships (apt.conf.d/00sparky-block-plain-http) refuses plain http:// until apt 3.3.6 is in Debian testing. Every file
+# network path replace a verified package downloaded over plain HTTP (CVE-2026-109518, DSA-6607-1). The block file that
+# refused plain http:// until apt 3.3.6 reached Debian testing (apt.conf.d/00sparky-block-plain-http, 20261104.2 to 20261104.3)
+# is removed by this version, which depends on apt (>= 3.3.6); the conversion stays. Every file
 # changed is copied first to /var/backups/sparky-stereo-apt/STAMP/<its path> and named on the screen. Only text that is not a
 # comment is changed. A source whose server has no HTTPS then fails at apt update with apt's own error: it is never
 # turned back to http:// here, and nothing is skipped quietly. A failure here (a read-only /etc, no room for the copy) stops
 # the configuration with its own message, so the person is told.
 set -e
+# The plain-HTTP block of 20261104.2 to 20261104.3 leaves (ORDER 413): the same call in preinst, postinst and postrm. An unmodified
+# file is removed; one a person changed is kept as FILE.dpkg-bak and said (dpkg-maintscript-helper(1): rm_conffile).
+# prior-version is this version with ~ (20261106.1~sparky9~0~), so a rebuild of 20261104.3 with a local suffix is covered too.
+dpkg-maintscript-helper rm_conffile /etc/apt/apt.conf.d/00sparky-block-plain-http 20261106.1~sparky9~0~ sparky-stereo-apt -- "$@"
 FILES="/etc/apt/sources.list.d/sparky-stereo.sources /etc/apt/sources.list.d/sparky-stereo-deb-multimedia.sources
 /etc/apt/preferences.d/sparky-stereo /etc/apt/preferences.d/sparky-stereo-only-ours"
 BACKUPS=/var/backups/sparky-stereo-apt
@@ -29,4 +34,13 @@ if [ "$1" = configure ]; then
 		sed -i --follow-symlinks '/^[[:space:]]*#/!s|http://|https://|g' "$f"
 		echo "sparky-stereo-apt: $f: plain http:// sources changed to https:// (the file as it was: $copy)"
 	done
+fi
+# The block's removal is said, with its reason (no silent change to a person's system). The removal itself is the helper's call above.
+if [ "$1" = configure ] && [ -n "${2:-}" ] && dpkg --compare-versions "$2" ge 20261104.2~sparky9~0 && dpkg --compare-versions "$2" lt 20261106.1~sparky9~0~; then
+	B=/etc/apt/apt.conf.d/00sparky-block-plain-http
+	if [ -e "$B.dpkg-bak" ]; then
+		echo "sparky-stereo-apt: $B was changed by you: it is kept as $B.dpkg-bak, which apt does not read, so the block no longer applies; this version needs apt 3.3.6 (the fix for CVE-2026-109518)"
+	elif [ ! -e "$B" ]; then
+		echo "sparky-stereo-apt: $B removed: it refused plain http:// sources until apt 3.3.6 (the fix for CVE-2026-109518) reached Debian testing, and this version needs apt 3.3.6. Plain http:// sources are still changed to https:// (the copies are in $BACKUPS)"
+	fi
 fi
