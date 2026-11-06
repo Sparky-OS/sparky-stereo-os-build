@@ -252,6 +252,7 @@ group('system', 'System', [
     'flatpak', 'plasma-discover-backend-flatpak', 'distrobox', 'waydroid', 'btrfs-progs',
     'timeshift', 'synaptic',   # snapshots: Timeshift (with grub-btrfs)
     'sparky-stereo-boot',   # the boot follows the main screen's saved choice, splash and login in its 3D mode (ORDER 138)
+    'sparky-stereo-firewall-apps',   # KDE Connect's ufw profile allowed from the local network once ufw is on (ORDER 252c, J19)
     'command-not-found', 'apt-file',   # a missing program names its package, in the terminal and on Dolphin's right-click (Daniel's design)
     'grub-btrfs', 'scx-scheds', 'ananicy-cpp', 'sunshine', 'protonup-qt', 'hhd', 'decky-loader',
 ])
@@ -329,6 +330,10 @@ group('developer', 'Developer: code and game engines', kf6_dev + qt6_dev + pysid
     'git', 'git-lfs', 'gitk', 'git-gui', 'tig', 'git-filter-repo', 'git-crypt', 'git-review', 'mercurial', 'subversion',
     'fossil', 'glab', 'tea', 'pre-commit',
     'gh',   # GitHub's CLI: in unstable only (2026-10-16)
+    # The terminal set (ORDER 252c, study item J25): command-not-found offers each by its Debian name, and names the
+    # program Debian installs under another name first (fd-find runs as fdfind, bat as batcat; no alias, ORDER 252b J15).
+    # debsums is the tool behind dpkg-stereo --debsums (J16)
+    'ripgrep', 'fd-find', 'bat', 'fzf', 'tealdeer', 'ncdu', 'btop', 'tmux', 'debsums',
     # Containers and virtual machines (libguestfs-tools: Daniel, 2026-10-16, "you can include that package")
     'docker.io', 'docker-compose', 'docker-buildx', 'podman', 'podman-compose', 'buildah', 'skopeo', 'incus', 'lxc',
     'systemd-container', 'qemu-system', 'qemu-utils', 'libvirt-daemon-system', 'libvirt-clients', 'virt-manager', 'virt-viewer',

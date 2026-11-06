@@ -1,0 +1,41 @@
+#!/bin/bash
+# Created by Daniel Ramos (Capitain Jack) and Claude Sonnet 5.5 2026/11/06
+# Copyright 2026 under the GNU GPL3 License
+# Opens ClamTk on the file or folder the person chose in Dolphin: scan -- PATH
+# Called by the Dolphin entry "Scan for viruses" through sparky-stereo-integration, which has checked for clamtk.
+# ClamTk reads only its first argument and has no options (clamtk 6.07: my $arg = decode('utf8', $ARGV[0]); an existing
+# path goes to ClamTk::Scan->filter, anything else opens its window with no scan), so exactly one existing path is
+# passed, as it is (no "--": it would be taken for the path), and nothing is changed in it: the scan is ClamTk's, with
+# the person's own ClamTk settings.
+set -u
+DIR=/usr/share/sparky/sparky-stereo-clamav
+LANGCODE=$(grep -m1 '^LANG=' /etc/default/locale 2>/dev/null | cut -d= -f2 | tr -d '"')
+LANGCODE=${LC_ALL:-${LC_MESSAGES:-${LANG:-$LANGCODE}}}
+LANGCODE=${LANGCODE%%.*}
+LANGCODE=${LANGCODE%%@*}
+if [ -f "$DIR/$LANGCODE" ]; then
+	. "$DIR/$LANGCODE"
+elif [ -f "$DIR/${LANGCODE%%_*}" ]; then
+	. "$DIR/${LANGCODE%%_*}"
+else
+	. "$DIR/en"
+fi
+[ "${1:-}" = -- ] && shift
+fail() {
+	if [ "${SPARKY_STEREO_INTEGRATION_UI:-auto}" != none ] && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v kdialog >/dev/null; then
+		kdialog --title "$LOCAL1" --error "$1"
+	else
+		echo "$1" >&2
+	fi
+}
+if [ $# -ne 1 ]; then
+	fail "$LOCAL3"
+	exit 2
+fi
+if [ ! -f "$1" ] && [ ! -d "$1" ]; then
+	# shellcheck disable=SC2059
+	fail "$(printf "$LOCAL2" "$1")"
+	exit 1
+fi
+case "$1" in -*) set -- "./$1" ;; esac
+exec clamtk "$1"

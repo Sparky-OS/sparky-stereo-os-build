@@ -16,7 +16,7 @@ umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
 LEAN=$(cd "$HERE/../../lean" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=0.1.37
+VERSION=0.1.39
 PKG=dpkg-stereo
 W=$(mktemp -d "${TMPDIR:-/tmp}/dpkg-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
@@ -128,7 +128,7 @@ Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
 Pre-Depends: dpkg (>= 1.23.11+stereo3d1+lc1), dpkg-lean-code (>= 1)
-Depends: python3, apt, sparky-stereo-problems (>= 0.1.0)
+Depends: python3, apt, sparky-stereo-problems (>= 0.1.0), debsums
 Recommends: gcc, node-acorn, nodejs, perl, python3-yaml
 Section: System
 Priority: optional

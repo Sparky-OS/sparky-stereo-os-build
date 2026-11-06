@@ -1,4 +1,32 @@
 -------------------------------------------------------------------------------
+  Version 0.1.39 (2026-11-06)
+-------------------------------------------------------------------------------
+  * debsums is a Depends (ORDER 437). --debsums is a feature of the package,
+    and "a dependency a designed feature needs is a Depends" (Daniel,
+    2026-11-02, memory design-check-every-default); 0.1.38 had it as a
+    Suggests. debsums is 108 KB installed (Depends libdpkg-perl,
+    libfile-fnmatch-perl, perl). --debsums still says what to do when debsums
+    was removed afterwards (LOCAL81, exit 2).
+
+-------------------------------------------------------------------------------
+  Version 0.1.38 (2026-11-06)
+-------------------------------------------------------------------------------
+  * --debsums [PACKAGE...]: Lean Code's front for debsums (ORDER 252c, J16).
+    debsums checks every file against its package's md5sums, and a projected
+    file is not its package's bytes by design, so debsums alone calls every
+    lean file changed. The front checks the projected files by their lean
+    hashes (what --verify does) and sends every other file to debsums; a file
+    debsums names that dpkg-stereo projected is not counted twice. A file
+    debsums finds changed or missing is printed as DEBSUMS and is a problem
+    (exit 1). A package without an md5sums file is information (NOSUMS, not
+    counted). debsums not installed, not finishing or asked for an unknown
+    package is an incomplete check, said with what to do, exit 2, never clean.
+    debsums itself is a Suggests, and a row of the developer task.
+    Messages LOCAL81 to LOCAL85 in the nine languages. Test:
+    test/debsums-front-test.sh (control: debsums alone calls the projected
+    files changed; green; four reds).
+
+-------------------------------------------------------------------------------
   Version 0.1.37 (2026-11-04)
 -------------------------------------------------------------------------------
   * --verify --deep exits 0 on a healthy, just-upgraded system (ORDER 398).

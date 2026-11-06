@@ -1,4 +1,16 @@
 -------------------------------------------------------------------------------
+  Version 0.3.0 (2026-11-06)
+-------------------------------------------------------------------------------
+  * ORDER 252c, study item J8: the tool knows the manual pages (manpages-LANG) and the Tesseract language files
+    (tesseract-ocr-eng, pol, por, fra, deu, jpn, kor, chi-sim, chi-tra and the vertical ones) of the nine required
+    languages, so --keep keeps and removes them with the language, and --restore brings them back
+  * --add CODE[,CODE] (or the word system, the language of /etc/default/locale): installs the edition's packages of
+    a language none of which is on the system; nothing is ever removed. A language this tool removed before and
+    is excluded from in dpkg's configuration is let back in. A failed install says so, in the nine languages,
+    with the command to try again, and exits 4. The Calamares step of calamares-settings-sparky-stereo runs
+    --add system in the new system.
+
+-------------------------------------------------------------------------------
   Version 0.2.4 (2026-10-30)
 -------------------------------------------------------------------------------
   * Added the German, Korean, Simplified Chinese and Traditional Chinese name and comment of the menu entry

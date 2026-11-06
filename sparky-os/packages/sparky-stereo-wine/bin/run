@@ -1,0 +1,59 @@
+#!/bin/bash
+# Created by Daniel Ramos (Capitain Jack) and Claude Sonnet 5.5 2026/11/06
+# Copyright 2026 under the GNU GPL3 License
+# Starts the Windows programs and installers the person chose in Dolphin with Wine: run -- FILE...
+# Called by the Dolphin entry "Run with Wine" through sparky-stereo-integration, which has checked for wine.
+# The command is the one Wine's own desktop entry uses (wine start /unix FILE, /usr/share/doc/wine/examples/wine.desktop),
+# started in the file's folder as a Windows program expects. The entry is the person's choice for each file: no default
+# handler is registered, so a double click never runs a downloaded Windows program.
+set -u
+DIR=/usr/share/sparky/sparky-stereo-wine
+LANGCODE=$(grep -m1 '^LANG=' /etc/default/locale 2>/dev/null | cut -d= -f2 | tr -d '"')
+LANGCODE=${LC_ALL:-${LC_MESSAGES:-${LANG:-$LANGCODE}}}
+LANGCODE=${LANGCODE%%.*}
+LANGCODE=${LANGCODE%%@*}
+if [ -f "$DIR/$LANGCODE" ]; then
+	. "$DIR/$LANGCODE"
+elif [ -f "$DIR/${LANGCODE%%_*}" ]; then
+	. "$DIR/${LANGCODE%%_*}"
+else
+	. "$DIR/en"
+fi
+[ "${1:-}" = -- ] && shift
+fail() {
+	if [ "${SPARKY_STEREO_INTEGRATION_UI:-auto}" != none ] && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v kdialog >/dev/null; then
+		kdialog --title "$LOCAL1" --error "$1"
+	else
+		echo "$1" >&2
+	fi
+}
+if [ $# -eq 0 ]; then
+	fail "$LOCAL3"
+	exit 2
+fi
+status=0
+pids=()
+names=()
+for file in "$@"; do
+	if [ ! -f "$file" ]; then
+		# shellcheck disable=SC2059
+		fail "$(printf "$LOCAL2" "$file")"
+		status=1
+		continue
+	fi
+	dir=$(dirname -- "$file")
+	base=$(basename -- "$file")
+	( cd -- "$dir" && exec wine start /unix "./$base" ) &
+	pids+=($!)
+	names+=("$file")
+done
+# a file Wine could not start is said, with Wine's status, and ends the worker non-zero
+for i in "${!pids[@]}"; do
+	if wait "${pids[$i]}"; then :; else
+		code=$?
+		# shellcheck disable=SC2059
+		fail "$(printf "$LOCAL4" "${names[$i]}" "$code")"
+		status=1
+	fi
+done
+exit $status

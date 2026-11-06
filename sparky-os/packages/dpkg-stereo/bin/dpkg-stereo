@@ -20,6 +20,8 @@ usage: dpkg-stereo [--root DIR] [--map /etc=DIR ...] COMMAND
   --pre-invoke             before dpkg: restore projected conffiles only for older dpkg
   --post-invoke            after dpkg (dpkg's post-invoke hook): project what changed, reproject conffiles
   --verify [PACKAGE...]    projected files against their lean hashes, pristine records against dpkg's
+  --debsums [PACKAGE...]   --verify for the projected files, debsums for every other file (debsums alone calls
+                           each projected file changed)
   --restore [PACKAGE...]   the original files back (all packages without a name), records dropped; a package
                            version neither APT's cache nor its sources hold comes from snapshot.debian.org when
                            it is Debian's, and what cannot come back is said with the one thing that brings it back
@@ -2172,6 +2174,61 @@ def verify(P, names, deep=False):
     return 1 if bad else 2 if lost or unrecorded else 0
 
 
+def debsums_front(P, names):
+    """Lean Code's front for debsums (ORDER 252c, J16): `debsums` checks every file against its package's md5sums,
+    and a projected file is not its package's bytes by design, so debsums alone calls every lean file changed.
+    The projected files are checked here by their lean hashes (--verify); every other file goes to debsums, and the
+    files debsums names that are projected are not its business. A file debsums finds changed or missing is a
+    problem; a package without an md5sums file is information (debsums -l), as those packages' files cannot be
+    checked by it; debsums not installed, or not finishing, is an incomplete check (exit 2), never a clean one."""
+    import re
+    import shutil
+    import subprocess
+    rc = verify(P, names, False)
+    tool = shutil.which('debsums')
+    if tool is None:
+        say('LOCAL81', [], sys.stdout)
+        return rc or 2
+    projected = set(Records(P, 'records'))
+    for obj in lc_package.installed(P, None).values():
+        if isinstance(obj, dict):
+            projected.update(row['path'] for row in obj['files'] if row['status'] == 'projected')
+    root = ['-r', P.root] if P.root else []
+    run = subprocess.run([tool, '-s', *root, *(names or ())], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         text=True, errors='replace')
+    changed = missing = 0
+    other = []
+    seen = set()
+    nosums = set()
+    none_re = re.compile(r'^debsums: no md5sums for (\S+)$')
+    line_re = re.compile(r'^debsums: (changed|missing) file (.+) \(from (\S+) package\)$')
+    for line in (run.stdout + run.stderr).splitlines():
+        found = line_re.match(line)
+        if not found:
+            none = none_re.match(line)
+            if none:
+                nosums.add(none.group(1))
+            elif line.strip():
+                other.append(line.strip())
+            continue
+        kind, path = found.group(1), found.group(2)
+        if path in projected or (kind, path) in seen:
+            continue
+        seen.add((kind, path))
+        if kind == 'changed':
+            print(f'DEBSUMS   {path} ({text("LOCAL83")})')
+            changed += 1
+        else:
+            print(f'DEBSUMS   {path} ({text("LOCAL84")})')
+            missing += 1
+    if run.returncode not in (0, 2) or other:
+        say('LOCAL82', [run.returncode, '; '.join(other[:3]) or '-'], sys.stdout)
+        return rc if rc == 1 else 2
+    print(f'dpkg-stereo: debsums: {changed} files changed, {missing} missing'
+          + (f', {text("LOCAL85", [len(nosums)])}' if nosums else ''))
+    return 1 if rc == 1 or changed or missing else rc
+
+
 def tell(log, key, args=()):
     """KEY through LOG in the system's language, and in English too when that is another (as say() does)."""
     lang = language()
@@ -3648,6 +3705,7 @@ def main():
     g.add_argument('--pre-invoke', action='store_true')
     g.add_argument('--post-invoke', action='store_true')
     g.add_argument('--verify', nargs='*')
+    g.add_argument('--debsums', nargs='*')
     ap.add_argument('--deep', action='store_true', help='with --verify: check every original against its .deb')
     g.add_argument('--restore', nargs='*')
     ap.add_argument('--deb', action='append', default=[], metavar='FILE.deb',
@@ -3710,6 +3768,8 @@ def run_command(P, a):
         return 0
     if a.verify is not None:
         return verify(P, a.verify, a.deep)
+    if a.debsums is not None:
+        return debsums_front(P, a.debsums)
     if a.restore is not None:
         return restore(P, a.restore, fetch=True, debs=a.deb)
     if a.repair_consumers:

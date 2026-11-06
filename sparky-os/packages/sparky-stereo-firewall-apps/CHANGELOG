@@ -1,0 +1,9 @@
+-------------------------------------------------------------------------------
+  Version 0.1.0 (2026-11-06)
+-------------------------------------------------------------------------------
+  * Initial release (ORDER 252c, study item J19): KDE Connect's ufw application profile is allowed once from the
+    private and link-local network ranges (RFC 1918, RFC 3927; with IPv6 on, RFC 4193 and RFC 4291 2.5.6), as ordinary
+    ufw rules, when ufw and the profile are both on the system. The firewall stays off by default, as Debian ships it.
+    A dpkg trigger on /etc/ufw/applications.d runs it, so the order of the installs does not matter. A profile handled
+    once is recorded, so a rule the person deletes in System Settings, Firewall stays deleted. A rule that cannot be
+    added is said and kept by sparky-stereo-problems with a repair. The message is in the nine languages.
