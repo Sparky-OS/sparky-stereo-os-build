@@ -62,3 +62,47 @@ print $d->output();'''
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SourceDate(unittest.TestCase):
+    """ORDER 421b: debian_prepare dates its entry by the recipe's SOURCE_DATE_EPOCH and stops without it; no clock fallback."""
+    def tree(self, root):
+        (root / 'debian').mkdir()
+        (root / 'debian/rules').write_text('#!/usr/bin/make -f\n%:\n\tdh $@\n')
+        (root / 'debian/control').write_text('Source: fixture\nBuild-Depends: debhelper-compat (= 13)\n\n'
+                                             'Package: fixture\nArchitecture: any\nDescription: fixture\n')
+        (root / 'debian/changelog').write_text('fixture (1) unstable; urgency=medium\n\n  * Fixture.\n\n'
+                                               ' -- Example <example@example.invalid>  Tue, 20 Oct 2026 10:00:00 +0000\n')
+
+    def test_without_a_date_it_stops_and_changes_nothing(self):
+        from unittest import mock
+        import os
+        from lean.debian_prepare import prepare
+        toolkit = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.tree(root)
+            before = (root / 'debian/rules').read_text(), (root / 'debian/changelog').read_text()
+            for value in (None, '', 'yesterday'):
+                env = {k: v for k, v in os.environ.items() if k != 'SOURCE_DATE_EPOCH'}
+                if value is not None:
+                    env['SOURCE_DATE_EPOCH'] = value
+                with mock.patch.dict(os.environ, env, clear=True):
+                    with self.assertRaisesRegex(ValueError, 'SOURCE_DATE_EPOCH.*(not set|not a number).*clock'):
+                        prepare(root, '1+lc1', toolkit)
+            self.assertEqual(before, ((root / 'debian/rules').read_text(), (root / 'debian/changelog').read_text()))
+            self.assertFalse((root / 'debian/sparky-lean-toolkit').exists())
+
+    @unittest.skipUnless(shutil.which('dch') and shutil.which('dpkg-parsechangelog'), 'Debian source tools required')
+    def test_with_a_date_the_entry_carries_it_in_utc(self):
+        from unittest import mock
+        import os
+        from lean.debian_prepare import prepare
+        toolkit = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.tree(root)
+            with mock.patch.dict(os.environ, {'SOURCE_DATE_EPOCH': '1793974631', 'TZ': 'Asia/Tokyo',
+                                             'DEBFULLNAME': 'Example', 'DEBEMAIL': 'example@example.invalid'}):
+                prepare(root, '1+lc1', toolkit)
+            self.assertIn('  Fri, 06 Nov 2026 14:17:11 +0000\n', (root / 'debian/changelog').read_text())

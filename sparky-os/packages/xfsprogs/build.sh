@@ -16,6 +16,10 @@
 # Last update 2026/11/02
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+REPRO="$HERE/../../repo/reproducible.py"
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 : "${LEAN_TOOLKIT:=$(cd "$HERE/../.." && pwd)}"
 : "${SOURCE_DSC:?Set SOURCE_DSC to Debian xfsprogs_7.2.0-1.dsc}"
 : "${BUILD_ROOT:?Set BUILD_ROOT to a new disposable directory}"
@@ -46,13 +50,15 @@ for p in xfs_healer-correct-xfd-api-usage.patch xfs_healer-fail-earlier-on-non-x
 done
 dpkg-source --before-build .
 grep -q 'if (ret == ENOTTY) {' healer/xfs_healer.c
-dch --newversion "$VERSION" --distribution mashtabba \
+dch --date "$SOURCE_DATE_RFC2822" --newversion "$VERSION" --distribution mashtabba \
 	'Carry upstream d28edf8 and fde1eee (v7.2.1, Darrick J. Wong; Closes Debian #1149571 here): xfs_healer --supported on a file system that is not XFS ends with status 1, so systemd skips xfs_healer@- on an ext4 root.'
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-source -b . >/dev/null
 cd "$BUILD_ROOT"
 cp xfsprogs_${VERSION}.dsc xfsprogs_${VERSION}.debian.tar.* xfsprogs_7.2.0.orig.tar.* "$OUT/authored/"
 dpkg-source -x "xfsprogs_${VERSION}.dsc" lean-source >/dev/null
 PYTHONPATH="$LEAN_TOOLKIT" python3 -m lean.debian_prepare lean-source "$VERSION+lc1" --toolkit "$LEAN_TOOLKIT"
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" lean-source
 (cd lean-source && dpkg-source -b . >/dev/null)
 dpkg-source -x "xfsprogs_${VERSION}+lc1.dsc" build >/dev/null
 if [ "${LINK_GATE_ON_HOST:-0}" = 1 ]; then

@@ -5,6 +5,10 @@
 # built in plank-build:1 as the user
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -e
+REPRO=/run/reproducible.py
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 W=${1:-${SPARKY_SCRATCH:?}/qtmm-lane/pkg-plank}
 H=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p $W/patches $W/home
@@ -21,7 +25,9 @@ mkdir -p debian/source debian/patches
 cp /w/plank-player-debian/{control,rules,copyright,changelog} debian/; cp /w/plank-player-debian/source/format debian/source/
 cp /w/patches/*.patch debian/patches/; ls /w/patches/*.patch | xargs -n1 basename > debian/patches/series
 mkdir -p ../srcpkg && cp -a . ../srcpkg/plank-player-$U && cp ../plank-player_$U.orig.tar.xz ../srcpkg/
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" ../srcpkg/plank-player-$U
 (cd ../srcpkg/plank-player-$U && dpkg-source -b . > ../source.log 2>&1)
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -us -uc -d -j4 > ../build.log 2>&1 || { tail -40 ../build.log; exit 1; }
 tail -3 ../build.log; ls ..
 '

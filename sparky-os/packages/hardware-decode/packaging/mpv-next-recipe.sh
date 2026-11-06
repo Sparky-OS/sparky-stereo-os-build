@@ -16,6 +16,9 @@ shift 5
 patches=()
 while [ "$1" != -- ]; do patches+=("$1"); shift; done
 shift
+# the date of this source is its recipe's: SOURCE_DATE_EPOCH, else the last commit touching the hardware-decode folder (ORDER 421b)
+SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$REPO/reproducible.py" epoch "$HERE/..")}
+export SOURCE_DATE_EPOCH
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 mkdir -p "$WORK" "$OUT"
 [ ! -e "$WORK/published" ] || { echo "$WORK/published exists" >&2; exit 1; }

@@ -41,4 +41,6 @@ if s.count(old) != 1:
     raise SystemExit('cgm-zig: unexpected Lean configure hook; review integration')
 p.write_text(s.replace(old, '\tbash debian/cgm/bootstrap-source.sh $(CURDIR)'))
 PYRULES
+# debian/ is dated by the recipe's source and its modes normalized, so the checkout time and the umask stay out (ORDER 421b)
+python3 "$HERE/../../repo/reproducible.py" normalize-tree "$SOURCE_DATE_EPOCH" "$TREE"
 (cd "$TREE" && dpkg-source -b .)

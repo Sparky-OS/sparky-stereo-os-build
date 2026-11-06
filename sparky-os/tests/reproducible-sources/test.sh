@@ -4,6 +4,9 @@
 # umasks, checkout times and (with faketime installed) clocks, and fails on any difference in the .dsc or the .debian.tar.xz.
 # Also: the recipe date comes from SOURCE_DATE_EPOCH or a committed recipe, never from the clock (repo/reproducible.py), and a
 # broken copy of the packer (no normalization) is caught, so this test can fail.
+# ORDER 421b: lean.debian_prepare stops without a date (red), sparky_provenance_init gives every build its recipe date and the
+# container arguments (repo/build-provenance.sh), and no script that writes a source reads the clock or packs an unnormalized
+# tree (check_producers.py, with a red copy).
 # (faketime moves stat() times too unless NO_FAKE_STAT=1; the test sets it, as the checkout times are real files.)
 # Needs dpkg-dev, devscripts (dch), python3, perl, git, xz; run it in a container, not on the desktop.
 # Usage: bash test.sh [SPARKY_OS_DIR]     (the tree under test, default: this one)
@@ -31,10 +34,15 @@ printf 'Source: fixture\nSection: misc\nPriority: optional\nMaintainer: Daniel R
 printf '#!/usr/bin/make -f\n%%:\n\tdh $@\n' > "$T/tree/debian/rules"; chmod +x "$T/tree/debian/rules"
 printf 'Files: *\nCopyright: 2026 Daniel Campos Ramos\nLicense: GPL-3+\n' > "$T/tree/debian/copyright"
 printf 'fixture (1.0-1) unstable; urgency=medium\n\n  * Fixture.\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 12:00:00 +0000\n' > "$T/tree/debian/changelog"
+# red (ORDER 421b): without a date debian_prepare stops, says what to set, and touches nothing
+if (cd "$T/tree" && env -u SOURCE_DATE_EPOCH PYTHONPATH="$OS" python3 -m lean.debian_prepare "$T/tree" 1.0-1+lc1 --toolkit "$OS" >"$T/nodate.log" 2>&1); then
+	bad "debian_prepare ran without SOURCE_DATE_EPOCH"
+else
+	grep -q 'SOURCE_DATE_EPOCH is not set' "$T/nodate.log" && grep -q 'reproducible.py epoch' "$T/nodate.log" && [ ! -e "$T/tree/debian/sparky-lean-toolkit" ] && ok "debian_prepare without a date stops, names the remedy and leaves the tree as it was" || bad "no-date stop: $(tail -2 "$T/nodate.log")"
+fi
 if ! (cd "$T/tree" && SOURCE_DATE_EPOCH=$STAMP PYTHONPATH="$OS" python3 -m lean.debian_prepare "$T/tree" 1.0-1+lc1 --toolkit "$OS" >"$T/prep.log" 2>&1); then
 	cat "$T/prep.log"; bad "fixture: debian_prepare failed"; exit 1
 fi
-grep -q "SOURCE_DATE_EPOCH is not set" "$T/prep.log" && bad "debian_prepare warned about the clock although SOURCE_DATE_EPOCH was set"
 python3 "$OS/repo/reproducible.py" normalize-tree $STAMP "$T/tree"
 mv "$T/tree" "$T/pub/fixture-1.0"
 (cd "$T/pub" && SOURCE_DATE_EPOCH=$STAMP dpkg-source -b fixture-1.0 >/dev/null 2>&1) || { bad "fixture: dpkg-source -b failed"; exit 1; }
@@ -115,5 +123,59 @@ if run_three "$T/broken"; then
 else
 	cat "$T"/log-*; bad "red run failed to run"
 fi
+# ORDER 421b: the engine step. A build script that calls sparky_provenance_init gets its recipe's date (SOURCE_DATE_EPOCH, else the
+# last commit touching the script's folder, clean tree), the changelog date in UTC, and the container arguments carrying both and
+# reproducible.py; with no date it stops (return 1) and says why.
+E=$T/engine; mkdir -p "$E/sparky-os/repo" "$E/sparky-os/packages/demo" "$E/sparky-os/packages/other"
+cp "$OS/repo/build-provenance.sh" "$OS/repo/reproducible.py" "$E/sparky-os/repo/"
+cat > "$E/sparky-os/packages/demo/build.sh" <<'DEMO'
+#!/bin/bash
+set -euo pipefail
+. "$(dirname "$0")/../../repo/build-provenance.sh"
+sparky_provenance_init no-such-image:0
+echo "EPOCH=$SOURCE_DATE_EPOCH"
+echo "RFC=$SOURCE_DATE_RFC2822"
+printf 'ARG %s\n' "${SPARKY_PROV_ARGS[@]}"
+DEMO
+echo a > "$E/sparky-os/packages/demo/a"; echo b > "$E/sparky-os/packages/other/b"
+(cd "$E" && git init -q . && git add . && GIT_COMMITTER_DATE='2026-10-01T10:00:00+0000' git -c user.name=t -c user.email=t@example.org commit -q -m one &&
+	echo c >> sparky-os/packages/other/b && GIT_COMMITTER_DATE='2026-10-09T10:00:00+0000' git -c user.name=t -c user.email=t@example.org commit -q -am two)
+want=$(date -u -d '2026-10-01 10:00:00' +%s)
+out=$(env -u SOURCE_DATE_EPOCH TZ=Asia/Tokyo bash "$E/sparky-os/packages/demo/build.sh" 2>&1)
+grep -qx "EPOCH=$want" <<<"$out" && ok "sparky_provenance_init: the recipe date is the last commit touching the recipe's folder, not the newer commit elsewhere" || bad "engine date: $out"
+grep -qx "RFC=Thu, 01 Oct 2026 10:00:00 +0000" <<<"$out" && ok "the changelog date is UTC whatever the zone" || bad "engine rfc: $out"
+grep -qx "ARG SOURCE_DATE_EPOCH=$want" <<<"$out" && grep -q "ARG SOURCE_DATE_RFC2822=Thu, 01 Oct 2026" <<<"$out" && grep -q "ARG $E/sparky-os/repo/reproducible.py:/run/reproducible.py:ro" <<<"$out" && grep -q 'ARG SPARKY_SOURCE_DATE_BASIS=the last commit touching sparky-os/packages/demo' <<<"$out" && ok "the container arguments carry the date, its basis and reproducible.py" || bad "engine args: $out"
+out=$(SOURCE_DATE_EPOCH=$STAMP bash "$E/sparky-os/packages/demo/build.sh" 2>&1)
+grep -qx "EPOCH=$STAMP" <<<"$out" && grep -q 'ARG SPARKY_SOURCE_DATE_BASIS=environment' <<<"$out" && ok "SOURCE_DATE_EPOCH set by the caller wins and the basis says so" || bad "engine env: $out"
+echo dirty >> "$E/sparky-os/packages/demo/a"
+if out=$(env -u SOURCE_DATE_EPOCH bash "$E/sparky-os/packages/demo/build.sh" 2>&1); then bad "red: a recipe with uncommitted changes got a date: $out"; else
+	grep -q 'not committed' <<<"$out" && grep -q 'no source date' <<<"$out" && ok "red: an uncommitted recipe stops the call and names the way out" || bad "dirty message: $out"
+fi
+# the Python drivers get the same through release/provenance_args.py
+if python3 - "$OS" "$E" "$want" <<'PY'
+import os, sys
+from pathlib import Path
+os_dir, e, want = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+sys.path.insert(0, str(os_dir / 'release'))
+import provenance_args
+provenance_args.SCRIPT = e / 'sparky-os/repo/build-provenance.sh'
+os.system('cd %s/sparky-os/packages/demo && git checkout -q a' % e)
+os.environ.pop('SOURCE_DATE_EPOCH', None)
+words = provenance_args.provenance_args('no-such-image:0', e / 'sparky-os/packages/demo')
+assert f'SOURCE_DATE_EPOCH={want}' in words, words
+PY
+then ok "release/provenance_args.py hands a Python driver the same date"; else bad "provenance_args"; fi
+
+# ORDER 421b: no script that writes a source reads the clock or packs an unnormalized tree; a broken copy is caught
+ROOT=$(cd "$OS/.." && pwd)
+if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+	prod=$(python3 "$OS/tests/reproducible-sources/check_producers.py" "$ROOT" 2>&1) && ok "producers: $(head -1 <<<"$prod")" || bad "producers: $prod"
+	rm -rf "$T/pr" && mkdir -p "$T/pr/sparky-os/packages/x" && (cd "$T/pr" && git init -q . &&
+		printf '#!/bin/bash\nset -e\ndch --newversion 1-1 "x"\ndpkg-source -b .\n' > sparky-os/packages/x/build.sh && git add . && git -c user.name=t -c user.email=t@example.org commit -q -m x)
+	python3 "$OS/tests/reproducible-sources/check_producers.py" "$T/pr" >"$T/pr.log" 2>&1 && bad "red: a producer with a clock-dated dch and an unnormalized pack passed" || { grep -q 'dch without --date' "$T/pr.log" && grep -q 'without normalizing' "$T/pr.log" && ok "red: the producers check names a dch without --date and an unnormalized pack"; } || bad "producers red: $(cat "$T/pr.log")"
+else
+	echo "skip producers (the tree is not in a git checkout)"
+fi
+
 [ $fail = 0 ] && echo "PASS reproducible sources" || echo "FAILED"
 exit $fail

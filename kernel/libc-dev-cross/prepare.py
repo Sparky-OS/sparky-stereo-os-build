@@ -28,7 +28,6 @@ The tree is then prepared by the Lean Code toolkit (sparky-os/lean/debian_prepar
 retains it as a native source package.
 """
 import argparse
-import email.utils
 import importlib.util
 import os
 from pathlib import Path
@@ -40,8 +39,12 @@ import sys
 HERE = Path(__file__).resolve().parent
 KIT = HERE.parents[1]
 LIBC_DEV = KIT / 'kernel/lean/libc-dev.py'
+sys.path.insert(0, str(KIT / 'sparky-os/repo'))
+import reproducible
 MAINTAINER = 'Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>'
 NAME = 'linux-stereo-libc-dev-cross'
+# the source is dated by its recipe, never by the clock: SOURCE_DATE_EPOCH, else the last commit touching this folder (ORDER 421b)
+STAMP = reproducible.recipe_epoch([HERE])
 
 
 def load_libc_dev():
@@ -90,7 +93,7 @@ def main(out, libc_dev_version, counter):
         f'  * Debian\'s linux-libc-dev-ARCH-cross packages, every architecture Debian builds them\n'
         f'    for, as links into linux-libc-dev {libc_dev_version}, so that the cross toolchains\n'
         '    install beside the edition\'s userspace headers.\n\n'
-        f' -- {MAINTAINER}  {email.utils.formatdate(localtime=False)}\n')
+        f' -- {MAINTAINER}  {reproducible.rfc2822(STAMP)}\n')
     (debian / 'copyright').write_text(
         'Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n'
         f'Upstream-Name: {NAME}\n'
@@ -130,7 +133,9 @@ override_dh_auto_clean:
     os.environ['DEBEMAIL'] = 'Capitain_Jack@yahoo.com'
     sys.path.insert(0, str(KIT / 'sparky-os'))
     from lean.debian_prepare import prepare
+    os.environ['SOURCE_DATE_EPOCH'] = str(STAMP)
     prepare(root, counter + '+lc1', KIT / 'sparky-os')
+    reproducible.normalize(root, STAMP)      # a native source: everything in the tree is packed
     subprocess.run(['dpkg-source', '-b', root.name], cwd=root.parent, check=True)
     print(NAME, counter + '+lc1', 'binaries', prefix + counter + '+lc1', 'for linux-libc-dev', libc_dev_version)
 

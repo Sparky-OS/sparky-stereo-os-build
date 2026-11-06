@@ -50,6 +50,20 @@ class NeverCalled(TestCase):
             self.assertEqual(obj['unrecorded'], [])
             self.assertNotIn('provenanceOptOut', obj)
 
+    def test_the_source_date_and_its_basis_are_in_the_record(self):
+        # ORDER 421b: the record says which recipe date the source used, so a reader can make the source again
+        with TemporaryDirectory() as d:
+            (Path(d) / 'demo_1.0-1+lc1_amd64.buildinfo').write_text('Format: 1.0\n')
+            environ = dict(HOST, SOURCE_DATE_EPOCH='1793974631', SPARKY_SOURCE_DATE_BASIS='the last commit touching packages/demo')
+            (path,) = buildrecord.record([make_deb(d)], environ=environ)
+            obj = json.loads(path.read_text())
+            self.assertEqual(obj['sourceDateEpoch'], 1793974631)
+            self.assertEqual(obj['sourceDateBasis'], 'the last commit touching packages/demo')
+            self.assertEqual(supply_chain.read_build_record(path)['sourceDateEpoch'], 1793974631)
+        with TemporaryDirectory() as d:
+            (path,) = buildrecord.record([make_deb(d)], environ=dict(HOST))
+            self.assertNotIn('sourceDateEpoch', json.loads(path.read_text()))
+
     def test_one_fact_alone_is_the_init_path_not_the_missing_call(self):
         with TemporaryDirectory() as d:
             (path,) = buildrecord.record([make_deb(d)], environ={'SPARKY_BUILD_STARTED': HOST['SPARKY_BUILD_STARTED']})

@@ -54,4 +54,9 @@ echo "-- scripts that run lean.release check-debs from a folder with no wired sc
 for d in $(grep -rl 'lean.release check-debs' "$OS/packages" "$OS/upstream" "$OS/release" --include=*.sh --include=*.py | xargs -n1 dirname | sort -u); do
 	grep -lqE '^[[:space:]]*sparky_provenance_init ' "$d"/*.sh 2>/dev/null || echo "   ${d#$OS/}"
 done
+# ORDER 421b: the same call gives every build its source date; no script that writes a source may read the clock or pack an
+# unnormalized tree (tests/reproducible-sources/test.sh, in a container, proves the bytes; this is its static half)
+if git -C "$OS/.." rev-parse --git-dir >/dev/null 2>&1; then
+	python3 "$OS/tests/reproducible-sources/check_producers.py" "$OS/.." || fail=1
+fi
 [ $fail = 0 ] && echo "ALL PASS" || { echo "FAILED"; exit 1; }

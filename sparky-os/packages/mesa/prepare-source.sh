@@ -4,6 +4,11 @@ set -euo pipefail
 source_dir=${1:?directory containing the published +stereo3d16+lc1 source package}
 work=${2:?empty output directory}
 recipe=$(cd "$(dirname "$0")" && pwd)
+# the date of this source is its recipe's: SOURCE_DATE_EPOCH, else the last commit touching this folder (ORDER 421b)
+REPRO=$recipe/../../repo/reproducible.py
+SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$REPRO" epoch "$recipe")}
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 mkdir -p "$work"
 test -z "$(ls -A "$work")"
@@ -20,14 +25,14 @@ for patch in 0027-dri3-first-resize-and-xwindow-stereo-lifetime.patch \
 done
 python3 - "$recipe" <<'PY'
 from pathlib import Path
-from email.utils import formatdate
+import os
 import sys
 recipe = Path(sys.argv[1])
 root = Path('source')
 p = root / 'debian/changelog'
 entry = (recipe / 'changelog-stereo3d17.txt').read_text()
 assert entry.startswith('mesa (26.1.6-1+stereo3d17) unstable;')
-entry += '\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + formatdate(localtime=True) + '\n\n'
+entry += '\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n'
 p.write_text(entry + p.read_text())
 # debian/rules regenerates control from control.in; preserve the pipeline's build dependencies in both.
 sys.path.insert(0, str(root / 'debian/sparky-lean-toolkit'))
@@ -37,8 +42,9 @@ for name in ('control.in', 'control'):
     p.write_text(add_build_dependencies(p.read_text(), ['gcc', 'node-acorn', 'nodejs', 'perl', 'python3', 'python3-yaml']))
 PY
 cd source
-dch --newversion 26.1.6-1+stereo3d17+lc1 --distribution UNRELEASED \
+dch --date "$SOURCE_DATE_RFC2822" --newversion 26.1.6-1+stereo3d17+lc1 --distribution UNRELEASED \
     'Retain the published source-consumer preservation plan and verified native/payload Lean Code pipeline.'
 dpkg-source --before-build .
 cd ..
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" source
 dpkg-source -b source

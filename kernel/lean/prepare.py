@@ -6,7 +6,6 @@ The export must identify its pinned tag, applied patch hashes and flavour in
 SOURCE.edition.json. This does not operate on a development checkout.
 """
 import argparse
-import email.utils
 import importlib.util
 import json
 import os
@@ -18,7 +17,9 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1] / 'sparky-os'))
+sys.path.insert(0, str(HERE.parents[1] / 'sparky-os/repo'))
 from lean.debian_prepare import prepare
+import reproducible
 sys.path.insert(0, str(HERE))
 import upstream
 
@@ -31,6 +32,8 @@ def libc_dev_module():
 
 
 def main(root, recipe, counter, smoke, packaging_revision=None):
+    # the source is dated by its recipe, never by the clock: SOURCE_DATE_EPOCH, else the last commit touching kernel/lean (ORDER 421b)
+    stamp = reproducible.recipe_epoch([HERE])
     root, recipe = root.resolve(), recipe.resolve()
     source = json.loads((root / 'SOURCE.edition.json').read_text())
     flavour = source['flavour']
@@ -118,7 +121,7 @@ def main(root, recipe, counter, smoke, packaging_revision=None):
     (debian / 'changelog').write_text(
         f'{name} ({version}) unstable; urgency=medium\n\n'
         '  * Retain the accepted kernel source and configuration for Lean Code migration.\n\n'
-        f' -- {maintainer}  {email.utils.formatdate(localtime=False)}\n')
+        f' -- {maintainer}  {reproducible.rfc2822(stamp)}\n')
     shutil.copy2(root / 'COPYING', debian / 'copyright')
     target = debian / 'kernel-recipe'
     target.mkdir()
@@ -205,6 +208,7 @@ override_dh_auto_clean:
             if re.search(rb'^\s*\.macro\b', path.read_bytes(), re.M):
                 preserve.append((path.relative_to(root).as_posix(),
                                  'Header contains assembly-language macros; the C-only checker cannot qualify its assembler consumer'))
+    os.environ['SOURCE_DATE_EPOCH'] = str(stamp)
     os.environ['DEBFULLNAME'] = 'Daniel Ramos (Capitain Jack)'
     os.environ['DEBEMAIL'] = 'Capitain_Jack@yahoo.com'
     prepare(root, version + '+lc1', HERE.parents[1] / 'sparky-os', preserve_sources=preserve)

@@ -7,6 +7,10 @@
 # sources, /prev the earlier +lc1 builds, /patches the folder of the patch files, /tools this folder.
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
+REPRO=/toolkit/repo/reproducible.py
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS='parallel=4 nocheck'
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 printf 'deb [trusted=yes] file:/repo ./\n' > /etc/apt/sources.list.d/edition.list
@@ -48,9 +52,9 @@ for l in open(sys.argv[1]):
         lines.append(l)
 if not lines:
     raise SystemExit('no changelog entry for ' + sys.argv[2])
-print('dch -v %s --distribution testing --force-distribution %s' % (shlex.quote(sys.argv[2]), shlex.quote(lines[0])))
+print('dch --date "$SOURCE_DATE_RFC2822" -v %s --distribution testing --force-distribution %s' % (shlex.quote(sys.argv[2]), shlex.quote(lines[0])))
 for t in lines[1:]:
-    print('dch -a %s' % shlex.quote(t))
+    print('dch --date "$SOURCE_DATE_RFC2822" -a %s' % shlex.quote(t))
 ENTRY
 . /work/entry.sh
 # the translation catalogues the patches change are made again after the build: the release tarball's are newer than
@@ -60,6 +64,7 @@ if ! grep -q '^execute_after_dh_auto_build:' debian/rules; then
 fi
 head -40 debian/changelog
 cd ..
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" t
 dpkg-source -b t > /work/source-build.log 2>&1 || { cat /work/source-build.log; exit 1; }
 rm -rf t
 ls
@@ -71,6 +76,7 @@ PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source $VERSION+lc1 
 apt-get -y update >/dev/null 2>&1
 apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.log 2>&1
 dpkg -l libchromaprint-dev libavcodec-dev libstereo-policy-dev libstereo-declare-dev libqt5core5t64 libupnp-dev 2>/dev/null | grep '^ii' > /work/build-env.txt || true
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" /work/lc/source
 useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/lc/source

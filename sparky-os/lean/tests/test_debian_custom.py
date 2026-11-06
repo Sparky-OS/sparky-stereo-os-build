@@ -48,7 +48,8 @@ class CustomBuilderTests(unittest.TestCase):
             self.fixture(root)
             authored_rules = (root / "debian/rules").read_bytes()
             with patch.dict(os.environ, {"DEBFULLNAME": "Example",
-                                        "DEBEMAIL": "example@example.invalid"}):
+                                        "DEBEMAIL": "example@example.invalid",
+                                        "SOURCE_DATE_EPOCH": "1793974631"}):
                 integrate(root, "1+lc1", toolkit, ["qt6-declarative-dev"])
             self.assertEqual((root / "build.sh").read_text(), BUILDER)
             self.assertEqual((root / "debian/rules.before-lean").read_bytes(), authored_rules)

@@ -216,7 +216,8 @@ def main():
         }
         if rec:
             internal['buildRecord'].update({'buildArchitecture': rec['buildArchitecture'], 'startBasis': rec.get('startBasis'),
-                                            'unrecorded': rec['unrecorded'], 'provenanceOptOut': rec.get('provenanceOptOut')})
+                                            'unrecorded': rec['unrecorded'], 'provenanceOptOut': rec.get('provenanceOptOut'),
+                                            'sourceDateEpoch': rec.get('sourceDateEpoch'), 'sourceDateBasis': rec.get('sourceDateBasis')})
             internal['buildRecord'] = {k: v for k, v in internal['buildRecord'].items() if v is not None}
         if bi:
             internal['buildinfo'].update({'environment': bi.get('Environment', '').strip().split('\n'),

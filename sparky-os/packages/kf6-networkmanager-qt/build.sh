@@ -5,6 +5,10 @@
 # SOURCE_DSC names the unmodified Debian 6.30.0-1 source and its adjacent archives.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+REPRO="$HERE/../../repo/reproducible.py"
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 TOOLKIT=$(cd "$HERE/../.." && pwd)
 : "${SPARKY_LC_ARCHIVE_CONFIG:?Set an explicit public signed archive configuration}"
 : "${SPARKY_LC_SCRATCH:?Set private archive qualification scratch}"
@@ -37,13 +41,15 @@ text = text.replace('Homepage: https://invent.kde.org/frameworks/networkmanager-
                     'Homepage: https://sparkylinux.org\nBugs: https://github.com/Sparky-OS/sparky-stereo-os/issues', 1)
 path.write_text(text)
 PY
-dch --newversion "$VERSION" --distribution mashtabba \
+dch --date "$SOURCE_DATE_RFC2822" --newversion "$VERSION" --distribution mashtabba \
 	'Provide an asynchronous, error-reporting NetworkManager connectivity-check choice.'
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-source -b .
 cp "$BUILD_ROOT"/*.dsc "$BUILD_ROOT"/*.debian.tar.* "$BUILD_ROOT"/*.orig.tar.* "$OUT/authored/"
 dpkg-source -x "$BUILD_ROOT/kf6-networkmanager-qt_${VERSION}.dsc" "$BUILD_ROOT/lean-source"
 PYTHONPATH="$LEAN_TOOLKIT" python3 -m lean.debian_prepare "$BUILD_ROOT/lean-source" "$VERSION+lc1" --toolkit "$LEAN_TOOLKIT"
 cd "$BUILD_ROOT/lean-source"
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -us -uc -j4
 PYTHONPATH="$LEAN_TOOLKIT" python3 -m lean.release check-debs "$BUILD_ROOT"/*+lc1_*.deb
 cp "$BUILD_ROOT"/*+lc1_*.deb "$OUT/"

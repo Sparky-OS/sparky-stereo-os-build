@@ -174,5 +174,10 @@ binary-arch build build-arch build-indep clean:
 .PHONY: binary binary-arch binary-indep build build-arch build-indep clean
 EOF
 chmod +x "$S/debian/rules"
+# A native package is dated by its own newest changelog entry (ORDER 421b); the tree is normalized so the checkout time and the umask stay out
+REPRO="$HERE/../../repo/reproducible.py"
+SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$REPRO" changelog "$S/debian/changelog")}
+export SOURCE_DATE_EPOCH
+python3 "$REPRO" normalize "$SOURCE_DATE_EPOCH" "$S"
 (cd "$W" && dpkg-source -b "$S")
 cp "$W/dpkg-stereo_$VERSION.dsc" "$W/dpkg-stereo_$VERSION.tar.xz" "$OUT/"

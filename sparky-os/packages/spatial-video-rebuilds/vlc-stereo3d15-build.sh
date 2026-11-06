@@ -1,6 +1,10 @@
 # Sparky Stereo OS, ORDER 247: rebuild of lane 41's source package inside the published-image container (mounts: /stage staged debs, /in the lc1 .dsc set, /toolkit sparky-os, /out). Created by Daniel Ramos (Capitain Jack) 2026/10/24
 # Copyright 2026 under the GNU GPL3 License
 set -euo pipefail
+REPRO=/toolkit/repo/reproducible.py
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 # apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
 # tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
 sh /run/https-only-apt.sh || exit 1
@@ -24,13 +28,14 @@ c=c.replace(' liblua5.4-dev,\n',' liblua5.4-dev,\n libgme-dev,\n libvpl-dev,\n',
 PY
 head -12 debian/changelog
 rm -rf debian/sparky-lean-toolkit
-dch --newversion 3.0.24-1+stereo3d15 --distribution unstable 'Rebuild with libgme-dev and libvpl-dev named in Build-Depends: +stereo3d14 was built where they were not installed and silently lost the QSV and game-music plugins (libqsv_plugin.so, libgme_plugin.so); the Lua plugin linked Lua 5.2 because liblua5.2-dev was installed, so Build-Conflicts: liblua5.2-dev makes it Lua 5.4 again, as in +stereo3d13.'
+dch --date "$SOURCE_DATE_RFC2822" --newversion 3.0.24-1+stereo3d15 --distribution unstable 'Rebuild with libgme-dev and libvpl-dev named in Build-Depends: +stereo3d14 was built where they were not installed and silently lost the QSV and game-music plugins (libqsv_plugin.so, libgme_plugin.so); the Lua plugin linked Lua 5.2 because liblua5.2-dev was installed, so Build-Conflicts: liblua5.2-dev makes it Lua 5.4 again, as in +stereo3d13.'
 PYTHONPATH=/toolkit python3 -m lean.debian_prepare . 3.0.24-1+stereo3d15+lc1 --toolkit /toolkit
 apt-get -y update >/dev/null 2>&1
 apt-get -y --no-install-recommends build-dep /out/lc/src > /out/build-dep.log 2>&1 || { tail -20 /out/build-dep.log; exit 1; }
 dpkg -l | grep -E "liblua5|libgme|libvpl" | awk '{print $2,$3}'
 useradd --create-home --uid 1000 builder 2>/dev/null || true
 chown -R builder /out
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" /out/lc/src
 runuser -u builder -- bash -c 'cd /out/lc/src && dpkg-buildpackage -S -us -uc -d > /out/source.log 2>&1'
 cd /out/lc && dpkg-source -x vlc_3.0.24-1+stereo3d15+lc1.dsc src2 >/dev/null 2>&1; chown -R builder /out
 cd src2

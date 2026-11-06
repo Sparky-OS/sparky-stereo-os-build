@@ -8,6 +8,12 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 out=$(realpath -m "$1")
 input=$(realpath "$2")
 toolkit=$(realpath "$3")
+# ORDER 421b: the source's date is the recipe's, the date of its own changelog entry (as prepare-source-44.sh): no clock, zone,
+# umask or checkout time reaches the bytes; debian/ and its include-binaries are normalized before each dpkg-source -b.
+entry_date=$(sed -n 's/^ -- [^>]*>  //p' "$HERE/changelog-stereo3d43.txt" | head -1)
+SOURCE_DATE_EPOCH=$(date -u -d "$entry_date" +%s)
+export SOURCE_DATE_EPOCH
+normalize() { python3 "$toolkit/repo/reproducible.py" normalize-tree "$SOURCE_DATE_EPOCH" "$1"; }
 mkdir -p "$out"
 mkdir "$out/plain" "$out/lc"
 cd "$out/plain"
@@ -49,6 +55,7 @@ for name in Path('debian/source/include-binaries').read_text().splitlines():
     assert Path(name).is_file(), name
 CHANGELOG
 cd ..
+normalize source
 dpkg-source -b source
 cp kwin_6.7.4-2+stereo3d43.dsc kwin_6.7.4-2+stereo3d43.debian.tar.xz \
     kwin_6.7.4.orig.tar.xz kwin_6.7.4.orig.tar.xz.asc "$out/lc/"
@@ -68,5 +75,6 @@ assert lines[index].startswith(' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@
 lines[index] = lines[index].split('>  ', 1)[0] + '>  Thu, 05 Nov 2026 18:39:54 +0000\n'
 p.write_text(''.join(lines))
 DATE
+normalize source
 dpkg-source -b source
 sha256sum ./*.dsc ./*.tar.xz ./*.asc > source-closure.sha256

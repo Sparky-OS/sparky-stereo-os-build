@@ -5,6 +5,7 @@
 # /extra: libstereo-policy 1.13.0-1+lc1; /repo: the signed tree; /prev: the earlier +lc1 builds; /recipe: patch and changelog entry.
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=${JOBS:-8}
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 printf 'deb [trusted=yes] file:/repo mashtabba main\n' > /etc/apt/sources.list.d/edition.list
@@ -20,12 +21,12 @@ test "$(dpkg-parsechangelog -S Distribution)" != UNRELEASED
 cp /recipe/0006-*.patch debian/patches/
 basename /recipe/0006-*.patch >> debian/patches/series
 python3 - <<'PY'
-import email.utils
+import os
 from pathlib import Path
 entry = Path('/recipe/changelog.txt').read_text()
 assert entry.startswith('plasmatube (26.08.1-1+stereo3d5) unstable;'), entry[:60]
 p = Path('debian/changelog')
-p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + email.utils.formatdate(localtime=True) + '\n\n' + p.read_text())
+p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n' + p.read_text())
 c = Path('debian/control'); s = c.read_text()
 old = '               libmpvqt-dev (>= 1.2.0-3+stereo3d2~),\n'
 assert s.count(old) == 1
@@ -35,6 +36,7 @@ assert s.count(old) == 1
 c.write_text(s.replace(old, old + '         libstereo-policy1 (>= 1.13.0),\n'))
 PY
 cd ..
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" t
 dpkg-source -b t >/dev/null
 rm -rf t
 ls
@@ -51,6 +53,7 @@ apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.lo
 apt-get -y --no-install-recommends install bubblewrap >>/work/build-dep.log 2>&1
 mkdir -p "$SPARKY_LC_SCRATCH"
 ls /extra/libstereo-policy1_*.deb > /work/siblings.txt
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /work/lc/source
 useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/lc/source

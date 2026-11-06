@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from lean import package, project
 
@@ -216,6 +217,10 @@ class Successor(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
         os.environ.update(DEBFULLNAME='Daniel Ramos (Capitain Jack)', DEBEMAIL='Capitain_Jack@yahoo.com')
+        # a source is dated by its recipe (ORDER 421, 421b); the recipe date of these fixtures is this one
+        dated = mock.patch.dict(os.environ, {'SOURCE_DATE_EPOCH': '1793974631'})
+        dated.start()
+        self.addCleanup(dated.stop)
 
     def published(self, at_end=False):
         work = self.tmp / 'pub'
@@ -257,6 +262,7 @@ class Successor(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('lc_successor', REPO / 'lc-successor.py')
         tool = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(tool)
+        tool.STAMP = 1793974631      # main() sets it from SOURCE_DATE_EPOCH or --source-date-epoch
         item = ('No-change rebuild of 5.73.0+git20260320.d106f1c-1 for the Lean Code toolkit 0.1.20 of build-repo main '
                 '29f2ebc: C and C++ files lose their comment-only lines, with no #line directive and no empty line where a '
                 'comment was; dpkg-stereo --resolve finds a lean line\'s authored line by its content (ORDER 334).')

@@ -6,6 +6,7 @@
 # /prev earlier builds, /tools this folder (debian-salsa, patches, the changelog entry).
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 printf 'deb [trusted=yes] file:/repo ./\n' > /etc/apt/sources.list.d/edition.list
@@ -39,12 +40,12 @@ done
 cd "$PREFIX"
 ENTRY="$ENTRY" NEWV="$NEWV" python3 - <<'PACKAGING'
 from pathlib import Path
-import email.utils, re
+import re
 p = Path('debian/changelog')
 import os
 entry = Path(os.environ['ENTRY']).read_text()
 assert entry.startswith('plasma-union (' + os.environ['NEWV'] + ') unstable;'), entry[:70]
-p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + email.utils.formatdate(localtime=True) + '\n\n' + p.read_text())
+p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n' + p.read_text())
 c = Path('debian/control')
 s = c.read_text()
 old = '               libryml-dev,\n'
@@ -72,6 +73,7 @@ r.write_text(s)
 PACKAGING
 head -40 debian/changelog
 cd ..
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" "$PREFIX"
 dpkg-source -b "$PREFIX" >/dev/null
 rm -rf "$PREFIX" /work/export
 ls
@@ -89,6 +91,7 @@ apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.lo
 v=$(dpkg-query -W -f='${Version}' libstereo-declare-dev)
 dpkg --compare-versions "$v" ge 1.5.0~ || { echo "libstereo-declare-dev $v is older than 1.5.0" >&2; exit 1; }
 echo "libstereo-declare-dev $v"
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /work/lc/source
 useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/lc/source

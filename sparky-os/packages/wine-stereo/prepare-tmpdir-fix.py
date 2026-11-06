@@ -6,6 +6,10 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'repo'))
+import reproducible
 
 
 def main():
@@ -15,6 +19,7 @@ def main():
     args = parser.parse_args()
     source = args.source.resolve()
     recipe = Path(__file__).resolve().parent
+    stamp = reproducible.recipe_epoch([recipe])
     environment = os.environ | {
         'DEBFULLNAME': 'Daniel Ramos (Capitain Jack)',
         'DEBEMAIL': 'Capitain_Jack@yahoo.com',
@@ -43,10 +48,11 @@ def main():
     with series.open('a') as stream:
         stream.write('\n' + patch_name + '\n')
     subprocess.run(['quilt', 'push', '-a'], cwd=source, env=environment, check=True)
-    subprocess.run(['dch', '--newversion', args.version, '--distribution', 'UNRELEASED',
+    subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', args.version, '--distribution', 'UNRELEASED',
                     'Fix the wineserver temporary-directory helper freeing borrowed TMPDIR memory; retain native win32 compatibility and all stereo patches.'],
                    cwd=source, env=environment, check=True)
     subprocess.run(['sh', 'debian/scripts/check-control'], cwd=source, env=environment, check=True)
+    reproducible.normalize_tree(source, stamp)
 
 
 if __name__ == '__main__':

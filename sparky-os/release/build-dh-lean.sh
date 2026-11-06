@@ -31,6 +31,9 @@ if [ -n "${SPARKY_LC_PREVIOUS_DIR:-}" ]; then
 	PREV_MOUNT=(-v "$(realpath "$SPARKY_LC_PREVIOUS_DIR")":/prev:ro) PREV_ENV=(-e SPARKY_LC_PREVIOUS_DIR=/prev)
 fi
 mkdir -p "$WORK/out"
+# A source is dated by its own newest changelog entry, never by the clock (ORDER 421b); the build record says so.
+SOURCE_DATE_EPOCH=$(python3 "$HERE/../repo/reproducible.py" changelog "$WORK/$SRC/debian/changelog")
+export SOURCE_DATE_EPOCH SPARKY_SOURCE_DATE_BASIS="the newest changelog entry of $SRC"
 sparky_provenance_init "$IMAGE"
 NAME=lean-dh-$(basename "$SRC" | sed 's/[^A-Za-z0-9_.-]/-/g')
 EXTRA_MOUNT=()
@@ -63,6 +66,7 @@ fi
 useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" "/work/$SRC"
 runuser -u builder -- dpkg-source -b "$SRC"
 dsc=$(ls /work/*.dsc | grep -v "+lc1" | head -1)
 runuser -u builder -- mkdir -p /work/out/authored
@@ -70,6 +74,7 @@ cp "$dsc" /work/*.debian.tar.xz /work/*.orig.tar.xz /work/out/authored/
 runuser -u builder -- dpkg-source -x "$dsc" /work/lean-source
 runuser -u builder -- env PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lean-source "$VERSION" --toolkit /toolkit
 apt-get -y --no-install-recommends build-dep /work/lean-source
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /work/lean-source
 cd /work/lean-source
 runuser -u builder -- dpkg-buildpackage -us -uc -j4
 cp .sparky-lc/source.json /work/out/native-source.json

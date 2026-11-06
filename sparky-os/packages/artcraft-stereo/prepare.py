@@ -7,7 +7,6 @@ Inputs: exported edition commit with SOURCE.edition.json and locked vendor/,
 plus the accepted mkdeb.sh recipe. Never operates on the development checkout.
 """
 import argparse
-import email.utils
 import json
 import os
 from pathlib import Path
@@ -18,7 +17,11 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1]))
+sys.path.insert(0, str(HERE.parents[1] / 'repo'))
 from lean.debian_prepare import prepare
+import reproducible
+
+STAMP = reproducible.recipe_epoch([HERE])
 
 
 def main(root, legacy):
@@ -55,7 +58,7 @@ def main(root, legacy):
     (debian / 'changelog').write_text(
         f'{name} ({version.removesuffix("+lc1")}) unstable; urgency=medium\n\n'
         f'  * Retain the currently shipped source revision {origin["commit"]}.\n\n'
-        f' -- {maintainer}  {email.utils.formatdate(localtime=False)}\n')
+        f' -- {maintainer}  {reproducible.rfc2822(STAMP)}\n')
     (debian / 'source/format').write_text('3.0 (quilt)\n')
     (debian / 'source/options').write_text('extend-diff-ignore = (^|/)(target|dist|\\.sparky-lc)(/|$)\n')
     shutil.copy2(root / 'LICENSE-MIT', debian / 'copyright')
@@ -123,6 +126,7 @@ override_dh_clean:
 \tdh_clean -Xvendor/
 ''')
     (debian / 'rules').chmod(0o755)
+    os.environ['SOURCE_DATE_EPOCH'] = str(STAMP)
     os.environ['DEBFULLNAME'] = 'Daniel Ramos (Capitain Jack)'
     os.environ['DEBEMAIL'] = 'Capitain_Jack@yahoo.com'
     prepare(root, version, HERE.parents[1])

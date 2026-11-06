@@ -1,6 +1,10 @@
 # Sparky Stereo OS, ORDER 250: digikam +stereo3d3, the published +stereo3d2+lc1 source with native file opening and both MimeType lists added as its own patch, built through Lean Code. Runs as root inside a container of the published set (Debian forky, deb-multimedia and the edition's repository pinned at 1001); mounts: /in the +stereo3d2+lc1 source package, /toolkit sparky-os, /patch the patch, /prev the +stereo3d2+lc1 .deb files for the link and start gate, /out. Created by Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
 set -euo pipefail
+REPRO=/toolkit/repo/reproducible.py
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 # apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
 # tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
 sh /run/https-only-apt.sh || exit 1
@@ -36,12 +40,13 @@ libMagick++-7.Q16 5 libmagick++-7.q16-5 (>= 8:7.1.2.33+dmo)
 libMagickCore-7.Q16 10 libmagickcore-7.q16-10 (>= 8:7.1.2.33+dmo)
 libstereo-layer 1 libstereo-layer1 (>= 1.9.0)
 SHLIBS
-dch --newversion 4:9.1.0-1+stereo3d3 --distribution unstable 'Open local files in the native digiKam preview without importing or changing them. List image/x-jps, image/x-mpo and image/x-pns directly in both digiKam and Showfoto desktop entries; retain Gwenview as the edition default and preserve the published dependency floors.'
+dch --date "$SOURCE_DATE_RFC2822" --newversion 4:9.1.0-1+stereo3d3 --distribution unstable 'Open local files in the native digiKam preview without importing or changing them. List image/x-jps, image/x-mpo and image/x-pns directly in both digiKam and Showfoto desktop entries; retain Gwenview as the edition default and preserve the published dependency floors.'
 head -14 debian/changelog
 PYTHONPATH=/toolkit python3 -m lean.debian_prepare . 4:9.1.0-1+stereo3d3+lc1 --toolkit /toolkit
 apt-get -y --no-install-recommends build-dep /out/lc/src > /out/build-dep.log 2>&1 || { tail -20 /out/build-dep.log; exit 1; }
 id builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
 chown -R builder /out
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" /out/lc/src
 runuser -u builder -- bash -c 'cd /out/lc/src && dpkg-buildpackage -S -us -uc -d > /out/source.log 2>&1'
 cd /out/lc && dpkg-source -x digikam_9.1.0-1+stereo3d3+lc1.dsc src2 >/dev/null 2>&1; chown -R builder /out
 cd src2

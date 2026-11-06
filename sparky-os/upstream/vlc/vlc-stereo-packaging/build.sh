@@ -2,6 +2,10 @@
 # Builds vlc-stereo and vlc-stereo-plugin-pipewire. Run inside the build image (see README) as a normal user:
 #   UP=/src (this repository folder, read-only)  WORK=/work (writable)  OUT=/out (writable)
 set -eux
+REPRO=/run/reproducible.py
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 UP=${UP:-/src}; WORK=${WORK:-/work}; OUT=${OUT:-/out}; PK=$UP/vlc-stereo-packaging
 VER=${VER:-3.0.24-1+stereo3d6}
 export PK
@@ -42,14 +46,15 @@ for l in open(sys.argv[1]):
         cur = [l[3:], []]; ent.append(cur)
     elif l and cur: cur[1].append(l)
 for v, lines in ent:
-    print('dch -v %s --distribution testing --force-distribution %s' % (shlex.quote(v), shlex.quote(lines[0])))
+    print('dch --date "$SOURCE_DATE_RFC2822" -v %s --distribution testing --force-distribution %s' % (shlex.quote(v), shlex.quote(lines[0])))
     for t in lines[1:]:
-        print('dch -a %s' % shlex.quote(t))
+        print('dch --date "$SOURCE_DATE_RFC2822" -a %s' % shlex.quote(t))
     if v == ver: break
 PY
 . $WORK/entries.sh
 
 # 4. the Debian source package of the build (.dsc, orig tarball, debian.tar.xz), made before the build so that no build product is in the tree
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -S -uc -us -d
 mkdir -p $OUT && cp ../vlc_$VER.dsc ../vlc_$VER.debian.tar.xz ../vlc_*.orig.tar.xz* $OUT/
 [ -n "${SOURCE_ONLY:-}" ] && exit 0
