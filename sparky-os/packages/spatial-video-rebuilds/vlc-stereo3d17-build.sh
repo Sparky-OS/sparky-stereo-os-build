@@ -43,7 +43,7 @@ PYTHONPATH=/toolkit python3 -m lean.debian_prepare . 3.0.24-1+stereo3d17+lc1 --t
 apt-get -y --no-install-recommends build-dep /out/lc/src > /out/build-dep.log 2>&1 || { tail -20 /out/build-dep.log; exit 1; }
 # the link and start gate of lean.debhelper runs the rebuilt programs in a bubblewrap root, against the archives of sources.json
 : "${SPARKY_LC_ARCHIVE_CONFIG:?the signed archive configuration of the link gate (sparky-os/lean/archive.md)}"
-: "${SPARKY_LC_SCRATCH:?the link gate's scratch directory}"
+: "${SPARKY_LC_SCRATCH:?the scratch directory of the link gate}"
 apt-get -y --no-install-recommends install bubblewrap >> /out/build-dep.log 2>&1
 mkdir -p "$SPARKY_LC_SCRATCH"
 useradd --create-home --uid 1000 builder 2>/dev/null || true
