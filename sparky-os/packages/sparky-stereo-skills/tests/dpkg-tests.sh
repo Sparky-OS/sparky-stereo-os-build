@@ -72,7 +72,8 @@ check "...and it can be read through the helper's context" 'as_user sparky-stere
 check "...and it is served over MCP as skill://system/user/zz-test/SKILL.md" 'out=$(printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"resources/read\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"},\"uri\":\"skill://system/user/zz-test/SKILL.md\"}}" | timeout 5 runuser -u tester -- env HOME=/home/tester sparky-stereo-skills serve 2>/dev/null); grep -q "Body from zz-skill-pkg" <<<"$out"'
 out=$(dpkg -i /tmp/zz-skill-clash.deb 2>&1); code=$?
 check "dpkg refuses a third package that ships the same path" '[ $code -ne 0 ] && grep -q "trying to overwrite .*zz-test/SKILL.md.*also in package zz-skill-pkg" <<<"$out"'
-check "...and the first package's skill is untouched" 'as_user sparky-stereo-skills context zz-test --max-chars 400000 | grep -q "Body from zz-skill-pkg" && ! dpkg -s zz-skill-clash >/dev/null 2>&1'
+check "...and the first package's skill is untouched" 'as_user sparky-stereo-skills context zz-test --max-chars 400000 | grep -q "Body from zz-skill-pkg" && ! dpkg -s zz-skill-clash 2>/dev/null | grep -q "^Status: install ok installed"'
+dpkg --purge zz-skill-clash >/dev/null 2>&1
 dpkg -i /tmp/zz-skill-gated.deb >/dev/null 2>&1
 check "a skill whose program is absent is not served, and --all still shows it" '! as_user sparky-stereo-skills list | grep -q "^zz-gated: " && as_user sparky-stereo-skills list --all | grep -q "^zz-gated: "'
 dpkg -r zz-skill-gated >/dev/null 2>&1; dpkg -r zz-skill-pkg >/dev/null 2>&1
