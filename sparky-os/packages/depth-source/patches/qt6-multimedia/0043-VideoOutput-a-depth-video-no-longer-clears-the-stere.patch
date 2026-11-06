@@ -1,0 +1,97 @@
+From 77ca945abde00df06b897902eb6ed79d0d4623fa Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 5 Nov 2026 23:42:39 -0300
+Subject: [PATCH] VideoOutput: a depth video no longer clears the stereo
+ presenter at every frame
+
+setFrame compared the format of the frame stored for showing again (for a depth video the stored input, the picture with its depth map) with the
+format of the frame shown (the drawn views), and the packing the depth layout says with the packing of the drawn views (full side by side). They were
+different at every frame, so the presenter was cleared at every frame: its state revision moved, and the conversion of a slow wl_shm presentation
+(the control that shows the views from system memory) was dropped as out of date before it was committed. On the A10 that control delivered no buffer
+in 9 seconds.
+
+The output keeps the format and the packing of the frame as it was shown (m_stereoLastShownFormat, shownPacking) and compares those.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ src/multimediaquick/qquickvideooutput.cpp | 15 +++++++++++----
+ src/multimediaquick/qquickvideooutput_p.h |  3 +++
+ 2 files changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/src/multimediaquick/qquickvideooutput.cpp b/src/multimediaquick/qquickvideooutput.cpp
+index 3b3e3c650..866faa9d7 100644
+--- a/src/multimediaquick/qquickvideooutput.cpp
++++ b/src/multimediaquick/qquickvideooutput.cpp
+@@ -1921,18 +1921,21 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+         result.video = twoViews && !baseOnly;
+         result.packing = packing.mode == StereoMode::None ? StereoNone
+                                                           : inputFromPacking(packing, frameSize);
++        result.shownPacking = result.packing;
+         if (!twoViews)
+             result.sequence = 0;
+ 
+ #ifdef QT_MM_STEREO_LAYER
+         if (!repeated) {
+             QMutexLocker lock(&m_frameMutex);
+-            auto previous = m_stereoLastFrame.surfaceFormat();
++            // the format and the packing of the frame shown before, as they were compared then: for a depth video the frame kept to show again is the
++            // stored one (the picture with its depth map) and the frame shown the drawn views, so the stored one is no measure of what changed
++            auto previous = m_stereoLastShownFormat;
+             auto incoming = format;
+             previous.setStereoView(QVideoFrameFormat::StereoView::Packed);
+             incoming.setStereoView(QVideoFrameFormat::StereoView::Packed);
+             if (m_stereoLastFrame.isValid()
+-                    && (previous != incoming || result.packing != st.packing)) {
++                    && (previous != incoming || result.shownPacking != st.shownPacking)) {
+                 ++m_stereoSourceSerial;
+                 m_stereoPair.reset();
+                 m_stereoHeldFrame = {};
+@@ -2143,6 +2146,7 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+         eyeChanged = m_stereo.eyeRect != result.eyeRect;
+         m_stereo.video = result.video;
+         m_stereo.packing = result.packing;
++        m_stereo.shownPacking = result.shownPacking;
+         m_stereo.layerWanted = result.layerWanted;
+ #ifdef QT_MM_STEREO_LAYER
+         if (!twoViews || (baseOnly && st.input == StereoNone)) {
+@@ -2164,10 +2168,13 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame, bool repeated)
+         m_stereo.lastView = result.lastView;
+         m_stereo.viewVaries = result.viewVaries;
+         // the frame is kept, to be shown again when the choices change, only for 3D video
+-        if (twoViews || depthInput != StereoNone)
++        if (twoViews || depthInput != StereoNone) {
+             m_stereoLastFrame = frame;
+-        else
++            m_stereoLastShownFormat = input.isValid() ? input.surfaceFormat() : frame.surfaceFormat();
++        } else {
+             m_stereoLastFrame = QVideoFrame();
++            m_stereoLastShownFormat = {};
++        }
+         if (skip)
+             return;
+ 
+diff --git a/src/multimediaquick/qquickvideooutput_p.h b/src/multimediaquick/qquickvideooutput_p.h
+index efc2330be..f1f4b3a1a 100644
+--- a/src/multimediaquick/qquickvideooutput_p.h
++++ b/src/multimediaquick/qquickvideooutput_p.h
+@@ -429,6 +429,8 @@ private:
+         // what the video in hand is
+         bool video = false;                // two views in the frames
+         StereoInput packing = StereoNone;  // as the stream or the input says (never Automatic)
++        // the packing of the frame as it is shown (a depth video: the full side by side of its drawn views, where packing says the depth layout)
++        StereoInput shownPacking = StereoNone;
+         bool layerWanted = false;          // shown through the layer, if there is one
+         bool layerActive = false;
+         bool cropGeometrySupported = false;
+@@ -439,6 +441,7 @@ private:
+     };
+     StereoState m_stereo;
+     QVideoFrame m_stereoLastFrame;          // to show again when the choices change
++    QVideoFrameFormat m_stereoLastShownFormat; // the format of the frame as it was shown (a depth video: of the drawn views)
+     // draws the views of a picture with its depth map (libstereo-dibr), from the threads of the
+     // video and of the item in turn
+     mutable QMutex m_depthMutex;
+-- 
+2.53.0
+

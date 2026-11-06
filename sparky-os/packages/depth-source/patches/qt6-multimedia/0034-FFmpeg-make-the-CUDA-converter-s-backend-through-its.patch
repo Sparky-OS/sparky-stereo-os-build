@@ -1,0 +1,37 @@
+From 051c7c571103df8bcd208c7f5b7d6fcd1d25f683 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 5 Nov 2026 19:16:59 -0300
+Subject: [PATCH 34/37] FFmpeg: make the CUDA converter's backend through its
+ factory (6.11.2)
+
+Dev makes every backend with ConverterType::create(); 6.11.2 constructs them (std::make_shared<ConverterType>(&rhi)). The backport of
+c57f4af5ab keeps its factory and calls it from updateBackend(), so the commits before this one stay upstream's own.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ src/plugins/multimedia/ffmpeg/qffmpegtextureconverter.cpp | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpegtextureconverter.cpp b/src/plugins/multimedia/ffmpeg/qffmpegtextureconverter.cpp
+index 1d412f8ca..4fb98b659 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpegtextureconverter.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpegtextureconverter.cpp
+@@ -123,7 +123,13 @@ void TextureConverter::updateBackend(AVPixelFormat fmt)
+ 
+     applyConverterTypeByPixelFormat(m_format, m_rhi, [this](auto converterTypeIdentity) {
+         using ConverterType = typename decltype(converterTypeIdentity)::type;
+-        m_backend = std::make_shared<ConverterType>(&m_rhi);
++#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)
++        // the CUDA converter is made by its factory (it returns null when the GPU is not an NVIDIA one the frames come from)
++        if constexpr (std::is_same_v<ConverterType, CUDATextureConverterFactory>)
++            m_backend = ConverterType::create(&m_rhi);
++        else
++#endif
++            m_backend = std::make_shared<ConverterType>(&m_rhi);
+     });
+ }
+ 
+-- 
+2.53.0
+

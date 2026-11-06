@@ -1,18 +1,18 @@
 # Depth as a 3D source in Qt Multimedia and Dragon (ORDER 151, step R part 2, group 2)
 
-qt6-multimedia 6.11.2-3+stereo3d14+lc1 and dragon 4:26.04.0-1+stereo3d6+lc1.
+qt6-multimedia 6.11.2-3+stereo3d14+lc1 and dragon 4:26.04.0-1+stereo3d7+lc1 (stereo3d6 was staged and never published; stereo3d7 carries its work and the offer to save the 3D correction into the file, ORDER 411).
 A picture with its depth map (2D plus depth) is decoded like any other packing and handed to Stereo KWin as full side by side, each eye at the size the video holds.
 
 Design followed (Daniel's words, as recorded):
 - Engine, not per program (2026-10-07): "intervene in the engine instead of per case ... qt multimedia it is."
 - Depth is a stereo format (2026-10-16): "it's fundamental, don't you think? LG will like to see it there".
 - A program's 3D options are only enable 3D, render resolution per eye and a shortcut to Display Settings; a player adds the input packing and a per-file swap of left and right eyes (2026-10-31).
-- Never touch the user's file (2026-10-23): the packing and the swap are kept in the program's per-file store.
+- Never touch the user's file (2026-10-23): the packing and the swap are kept in the program's per-file store, and the program offers to save them into the file; it writes only when the person says yes, then unmarks the stored choice (ORDER 411: `patches/dragon/0005`, the writers in stereo-layer 1.13.0's `stereo_mark_save`).
 
 ## Files
 
-- `patches/qt6-multimedia/0016-0024`: the depth series, rebased on the published stack (patches 0001 to 0015 and qt-mvhevc); `git format-patch` of branch `depth-6.11.2-stereo3d14` of invent/github danielcamposramos/qtmultimedia over `b13-stack` (the published stack as commits).
-- `patches/dragon/0002, 0003, dragon-3d-video.po.patch`: branch `depth-stereo3d6` of danielcamposramos/dragon over `b5-stack` (the published +stereo3d5); the translations are the edition's `translations/dragon-3d-video.po.patch`.
+- `patches/qt6-multimedia/0016-0026`: the depth series (0025 and 0026 are ORDER 411: a depth video recorded sideways or upside down is drawn the right way up, and the compositor path of a depth video is a test of the isolated Stereo KWin), rebased on the published stack (patches 0001 to 0015 and qt-mvhevc); `git format-patch` of branches `depth-6.11.2-stereo3d14` (0016 to 0024) and `order411-qt` (0025, 0026) of invent/github danielcamposramos/qtmultimedia over `b13-stack` (the published stack as commits).
+- `patches/dragon/0002 to 0005, dragon-3d-video.po.patch`: branches `depth-stereo3d6-pkg` (0002 to 0004) and `order411-save-pkg` (0005) of danielcamposramos/dragon over `b5-stack` (the published +stereo3d5); the translations are the edition's `translations/dragon-3d-video.po.patch`.
 - `changelog/*.items`: the changelog items, one paragraph per item.
 - `next-source.sh PACKAGE PUBLISHED.dsc OUT [SYMBOLS]`: the next +lc1 source (`repo/lc-successor.py --in-place --overlay`): the published history stays a byte identical suffix of the new changelog, the toolkit is this tree's, and nothing else of debian/ changes but the patches, the series, the symbols file and the dependency texts the script names.
 - `build.sh` and `build-in-container.sh`: the Lean Code build in `sparky-lc-migration:20261020` with the link and start gate against the published +lc1 build (`SPARKY_LC_ARCHIVE_CONFIG`, `SPARKY_LC_SCRATCH`), then `lean.release check-debs`.
@@ -27,3 +27,46 @@ Design followed (Daniel's words, as recorded):
 
 - qt6-multimedia Build-Depends: libstereo-dibr-dev (>= 1.9.0), from the edition's repository (1.12.0-5+lc1 published; checked with apt-cache policy in the build container).
 - dragon: qt6-multimedia-dev, libqt6multimedia6 and qml6-module-qtmultimedia raised to 6.11.2-3+stereo3d14+lc1; Depends kde-cli-tools (kcmshell6) and kscreen (kcm_kscreen), which the Display Settings shortcut starts; both are Debian packages, checked with apt-cache policy.
+
+## ORDER 411, group 2b
+
+- `patches/dragon/0005`: Dragon offers to save the correction into the file; stereo-layer 1.13.0 (`stereo-layer-source.sh` makes its +lc1 source from the release tag of the fork clone, `build.sh stereo-layer` builds it) carries `stereo_mark_save` in libstereo-av. Dragon Depends on mkvtoolnix (mkvpropedit writes Matroska), and builds against libstereo-av-dev and libstereo-policy-dev 1.13.0.
+- `dragon-3d-video.po.patch` holds 68 strings now: the 40 of the menu and window, and the 28 of the offer (all nine languages, English in the code). It was regenerated from the release catalogs, never edited by hand.
+- Build order: stereo-layer 1.13.0 first (the debs go into the flat repository with qt6-multimedia's), then dragon.
+
+## ORDER 411, group 2e
+
+- `patches/qt6-multimedia/0027, 0028` (branch `order411-2e` of danielcamposramos/qtmultimedia over `order411-qt`): VideoOutput draws the views of a depth video on the GPU, the best way that keeps the frame rate (libstereo-dibr 1.15.0's ladder and timings), and the tests. qt6-multimedia Build-Depends libstereo-dibr-dev (>= 1.15.0).
+- `patches/dragon/0007` (branch `order411-2e-pkg` of danielcamposramos/dragon over `order411-2c-pkg`): Automatic way of drawing in the 3D Video Settings window, bound to the video only until the person picks a warping or a gap filling. dragon 4:26.04.0-1+stereo3d9+lc1 Depends libstereo-layer1 (>= 1.15.0) and builds against libstereo-av-dev and libstereo-policy-dev (>= 1.15.0).
+- Build order: stereo-layer 1.15.0 (`stereo-layer-source.sh FORK release-1.15.0 OUT`, `build.sh stereo-layer`), then qt6-multimedia (flat repository with the stereo-layer debs, `ROUND_SOURCES="stereo-layer"`; the source directory needs the orig tarball beside the .dsc), then dragon (flat repository with both).
+- `next-source.sh qt6-multimedia PUBLISHED.dsc OUT symbols/qt6-multimedia-stereo3d14.symbols`: the two QVideoFrameFormat symbols +stereo3d14 adds to libqt6multimedia6.symbols; leaving the fourth argument out drops them (the first 2e source did, and the diff against the accepted +14 showed it).
+
+## ORDER 411, step 2g
+
+- `patches/qt6-multimedia/0030` (branch `order411-2g` of danielcamposramos/qtmultimedia over `order411-2f`): 10, 12 and 16 bit depth video on the GPU path at the source's depth (P010, P016, YUV420P10, YUV422P16, YUV444P16), the decoder's VA-API frames read where they are (QHwVideoBuffer::mapTextures through a QRhi sharing the drawing context, no copy to system memory), and VideoOutput::stereoDepthGpuMemory.
+- `patches/dragon/0008` (branch `order411-2g` of danielcamposramos/dragon over `order411-2e`): the 3D Video Settings lists say beside a way that needs more of the GPU's memory than is free, from stereoDepthGpuMemory.
+- stereo-layer 1.17.0 (`stereo-layer-source.sh FORK release-1.17.0 OUT`): the passes hold the source's depth (`stereo_dibr_gl_set_precision`), the layered depth-aided way at 1080p per eye peaks at 193 MB counted instead of 309 MB (the driver took 252 MB instead of 359 MB on an RTX 3060), and `stereo_dibr_way_fits()` is the one rule of the guard and of the controls' sentence. qt6-multimedia and dragon depend on libstereo-dibr-dev, libstereo-layer1, libstereo-av-dev and libstereo-policy-dev (>= 1.17.0).
+- Build order as in group 2e: stereo-layer 1.17.0, qt6-multimedia (`ROUND_SOURCES="stereo-layer"`, fourth argument of next-source.sh the symbols file), dragon (`ROUND_SOURCES="stereo-layer qt6-multimedia"`).
+
+## ORDER 411, step 2h
+
+- `patches/qt6-multimedia/0031 to 0034` carry Qt's own change for NVDEC frames (not our code): `FFmpeg: Add CUDA hw-texture converter for NVDEC decode on Linux` (Tim Blechmann, qt/qtmultimedia dev c57f4af5ab, 2026-09-16, reviewed by Artem Dyomin), with the vendored ffnvcodec header it includes (`3rdparty: import ffnvcodec dynlink_cuda.h`, 2506a582c8) and the Vulkan helpers (`Multimedia: add QDebug support for VkResult and VAStatus`, fad9a642f0, the Vulkan part only: the VA-API part and the changes to the VA-API converter are dev's own and 6.11.2's converter differs). 0034 makes the converter's backend through its factory, as 6.11.2 constructs its backends. Not carried: the test library helper and tst_qcudatextureconverter, which need dev's test library. Upstream was searched first (Gerrit answered 403 to the lane; the GitHub mirror qt/qtmultimedia, dev branch, and its file histories were read).
+- `patches/qt6-multimedia/0035 to 0041` (branch `order411-2h` of danielcamposramos/qtmultimedia over `order411-2g`): the drawn views go to the video sink as GL textures (no read back) when the sink draws with OpenGL, VideoOutput.stereoDepthRoute and stereoDepthReadBacks() (the stereo layer's presenter still reads the views back: told), and the imported frames' textures are made readable by the passes with the first frames of a stream sampled for a picture (the first VA-API import on the A10 read as zeros).
+- stereo-layer 1.17.1 (`stereo-layer-source.sh FORK release-1.17.1 OUT`): stereo_dibr_way_memory() counts the picture, its depth and the views at the content's depth. qt6-multimedia and dragon depend on libstereo-* (>= 1.17.1).
+- Build order as in step 2g, with stereo-layer 1.17.1 (the build used THREADS=4, BUILD_NAME_PREFIX=d411-build, ARCHIVE_DIR /mnt/build/depth-151/archive, the published edition's .deb list /mnt/build/depth-151/work/previous-siblings.txt).
+
+## ORDER 411, step 2i
+
+- `patches/qt6-multimedia/0039 to 0041` (branch `order411-2i` of danielcamposramos/qtmultimedia over `order411-2h`): NVDEC's P012 frames in the CUDA converter; the stereo layer draws the drawn views itself into an EGL window surface of the GPU (no read back, no copy of ours; wl_shm only where the driver has no surface of the depth, counted and said); the colour matrix of an untagged frame as Qt's own conversion has it; the compositor case reads both kinds of recorded surface.
+- debian/copyright names the vendored ffnvcodec header (commit 591bfef of the coordinator).
+- Build order unchanged (stereo-layer 1.17.1 is as in 2h).
+
+## ORDER 411, step 2j
+
+- `patches/qt6-multimedia/0042 to 0045` (branch `order411-2j` of danielcamposramos/qtmultimedia over `order411-2i`):
+  - 0042: NVDEC's 4:4:4 frames are imported as three planes by the CUDA converter and the depth passes, not copied (YUV444P, YUV444P16, and FFmpeg 8's YUV444P10MSB and YUV444P12MSB);
+  - 0043: a depth video no longer clears the stereo presenter at every frame (the output compared the stored input's format and packing with the drawn views'; the wl_shm control now delivers buffers on the A10);
+  - 0044 and 0045: 12 to 16 bit video reaches the compositor at 16 bits: StereoSurface16Bit, a window surface of the driver where it has one, buffers the layer allocates (GBM, EGLImage, zwp_linux_dmabuf_v1) where it has none, wl_shm XBGR16161616 last, counted and said; the route says what was observed; the window surface has exactly the depth asked for (Mesa answered a request for 8.8.8 with a 10.10.10 config).
+- qml6-module-qtmultimedia Depends libgbm1 and libwayland-egl1 (the stereo layer loads them; `next-source.sh` changes that one stanza of debian/control, each text exactly once).
+- Build order unchanged (stereo-layer 1.17.1 is as in 2h and 2i).
+

@@ -19,15 +19,18 @@ export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.c
 case $PKG in
 qt6-multimedia)
 	NEXT=6.11.2-3+stereo3d14
-	depends=(--depends $'               libstereo-policy-dev (>= 1.5.0),' $'               libstereo-dibr-dev (>= 1.9.0),\n               libstereo-policy-dev (>= 1.5.0),'
-		--depends 'libavcodec63 (>= 10:9.0.2-dmo1+stereo3d6+lc1), libpipewire-0.3-0t64 [linux-any],' 'libavcodec63 (>= 10:9.0.2-dmo1+stereo3d6+lc1), libavutil61 (>= 10:9.0.2-dmo1+stereo3d5~), libpipewire-0.3-0t64 [linux-any],')
+	depends=(--depends $'               libstereo-policy-dev (>= 1.5.0),' $'               libstereo-dibr-dev (>= 1.17.1),\n               libstereo-policy-dev (>= 1.5.0),'
+		--depends 'libavcodec63 (>= 10:9.0.2-dmo1+stereo3d6+lc1), libpipewire-0.3-0t64 [linux-any],' 'libavcodec63 (>= 10:9.0.2-dmo1+stereo3d6+lc1), libavutil61 (>= 10:9.0.2-dmo1+stereo3d5~), libpipewire-0.3-0t64 [linux-any],'
+		--depends $'Depends: ${misc:Depends},\n         ${qml6:Depends},\n         ${shlibs:Depends},\nBreaks: libqt6multimediaquick6,' $'Depends: ${misc:Depends},\n         ${qml6:Depends},\n         ${shlibs:Depends},\n         libgbm1,\n         libwayland-egl1,\nBreaks: libqt6multimediaquick6,')
 	;;
 dragon)
-	NEXT=4:26.04.0-1+stereo3d6
+	NEXT=4:26.04.0-1+stereo3d9
 	depends=(--depends 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d10+lc1),' 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d14+lc1),'
 		--depends 'Depends: libqt6multimedia6 (>= 6.11.2-3+stereo3d10+lc1),' 'Depends: libqt6multimedia6 (>= 6.11.2-3+stereo3d14+lc1),'
 		--depends 'qml6-module-qtmultimedia (>= 6.11.2-3+stereo3d10+lc1),' 'qml6-module-qtmultimedia (>= 6.11.2-3+stereo3d14+lc1),'
-		--depends $'         ${misc:Depends},' $'         kde-cli-tools,\n         kscreen,\n         ${misc:Depends},')
+		--depends $'         ${misc:Depends},' $'         kde-cli-tools,\n         kscreen,\n         libstereo-layer1 (>= 1.17.1),\n         mkvtoolnix,\n         ${misc:Depends},'
+		--depends 'libkf6windowsystem-dev (>= 6.12.0~),' $'libkf6windowsystem-dev (>= 6.12.0~),\n               libstereo-av-dev (>= 1.17.1),\n               libstereo-policy-dev (>= 1.17.1),'
+		--depends 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d14+lc1),' $'qt6-multimedia-dev (>= 6.11.2-3+stereo3d14+lc1), ffmpeg <!nocheck>, mkvtoolnix <!nocheck>,')
 	;;
 *) echo "unknown package $PKG" >&2; exit 2 ;;
 esac
@@ -42,6 +45,38 @@ for p in "$HERE/patches/$PKG"/*.patch; do basename "$p" >> "$W/overlay/patches/s
 if [ -n "$SYM" ]; then
 	cp "$W/published/debian/libqt6multimedia6.symbols" "$W/overlay/libqt6multimedia6.symbols"
 	cat "$SYM" >> "$W/overlay/libqt6multimedia6.symbols"
+fi
+# The vendored ffnvcodec header of patch 0032 (Qt dev 2506a582c8, MIT) gets its entry in debian/copyright (Opus, ORDER 411 2h review).
+if [ "$PKG" = qt6-multimedia ] && [ -f "$HERE/patches/$PKG/0032-3rdparty-import-ffnvcodec-dynlink_cuda.h.patch" ]; then
+	cp "$W/published/debian/copyright" "$W/overlay/copyright"
+	grep -q '^Files: src/3rdparty/nv-codec-headers/' "$W/overlay/copyright" || cat >> "$W/overlay/copyright" <<'COPYRIGHT'
+
+Files: src/3rdparty/nv-codec-headers/*
+Copyright: 2016, no holder named in ffnvcodec/dynlink_cuda.h (FFmpeg's nv-codec-headers, carried by Qt)
+License: Expat
+
+License: Expat
+ Permission is hereby granted, free of charge, to any person
+ obtaining a copy of this software and associated documentation
+ files (the "Software"), to deal in the Software without
+ restriction, including without limitation the rights to use,
+ copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the software, and to permit persons to whom the
+ software is furnished to do so, subject to the following
+ conditions:
+ .
+ The above copyright notice and this permission notice shall be
+ included in all copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ OTHER DEALINGS IN THE SOFTWARE.
+COPYRIGHT
 fi
 mapfile -t items < <(python3 - "$HERE/changelog/$PKG.items" <<'PY'
 import sys

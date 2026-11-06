@@ -1,0 +1,400 @@
+From 2692e2ab6ae64cfc5b23152196d8afdcc205e8b6 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 5 Nov 2026 11:54:24 -0300
+Subject: [PATCH 6/6] Offer the depth options for a video that carries a depth map,
+ kept for the file; write the size of the views and refuse what is not laced
+
+The 3D Video Settings window shows the options of drawing the views of a picture and its depth map (libstereo-layer's
+DepthControls, the same in every player) for a video that carries a depth map. The set is the library's, with its measured
+default; the choice is kept for the file in dragonplayerrc, group StereoVideo, like the swap, and is no entry at the default. The
+global depth keys of the 3DVideo group are gone.
+
+Saving the correction: a half or full size choice that the shape of the video does not give is written into Matroska and WebM
+as DisplayWidth and DisplayHeight (RFC 9559 18.10) and refused for MP4, which has no field; a frame sequential or block laced
+layout is refused unless the file's blocks are laced (StereoMode 13 and 14).
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+(cherry picked from commit 42d05441da612548f55704c1eecb8d138a7ce499)
+---
+ autotests/stereosavetest.cpp     | 73 +++++++++++++++++++++++++-------
+ src/backend.cpp                  | 18 ++++++++
+ src/backend.h                    |  5 +++
+ src/qml/ControlsBar.qml          |  4 ++
+ src/qml/PlayerPage.qml           | 35 +++++++++------
+ src/qml/StereoSettings.qml       | 15 +------
+ src/qml/StereoSettingsWindow.qml | 15 ++++++-
+ src/stereosave.cpp               | 42 ++++++++++++++----
+ 8 files changed, 156 insertions(+), 51 deletions(-)
+
+diff --git a/autotests/stereosavetest.cpp b/autotests/stereosavetest.cpp
+index 4a23a99..d276511 100644
+--- a/autotests/stereosavetest.cpp
++++ b/autotests/stereosavetest.cpp
+@@ -187,28 +187,69 @@ private Q_SLOTS:
+         QCOMPARE(markOf(path), 3);
+     }
+ 
+-    // The mark cannot say half or full size: a choice the shape of the video does not give is refused
++    // Half or full size views: Matroska says it with DisplayWidth and DisplayHeight (RFC 9559 18.10); a size as large as the
++    // frame says nothing, and the shape of the video decides
+     void viewsOfTheShape()
+     {
+-        const QString path = make(u"i.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s});
+-        const QByteArray before = bytes(path);
+-        StereoSave::Request wrong = request(path, u"sideBySide"_s, true, false);
+-        wrong.frameWidth = 3840; // two full 1920 pictures: the shape says full views
+-        wrong.frameHeight = 1080;
+-        wrong.views = 0; // the person chose half
+-        const StereoSave::Outcome refused = StereoSave::save(wrong);
+-        QVERIFY(!refused.saved);
+-        QCOMPARE(refused.status, u"views"_s);
+-        QCOMPARE(bytes(path), before);
+-        StereoSave::Request right = wrong;
+-        right.views = 1;
+-        QVERIFY2(StereoSave::save(right).saved, "the choice the shape gives is written");
++        // 640x360 holds two 320x360 views or one 640x360 picture squeezed: the shape says half
++        const QString path = make(u"i.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s, u"-vf"_s, u"scale=640:360"_s});
++        StereoSave::Request full = request(path, u"sideBySide"_s, true, false);
++        full.frameWidth = 640;
++        full.frameHeight = 360;
++        full.views = 1;
++        const StereoSave::Outcome saved = StereoSave::save(full);
++        QVERIFY2(saved.saved, qPrintable(saved.message));
+         QCOMPARE(markOf(path), 1);
+-        // a 1920x1080 frame holds two 960x1080 views: the shape says half
+-        const QString half = make(u"i2.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s});
++        stereo_mark_detail d;
++        QCOMPARE(stereo_mark_read_detail(path.toUtf8().constData(), 1, &d), int(STEREO_MARK_WRITTEN));
++        QCOMPARE(d.display_width, 320); // one plane
++        QCOMPARE(d.display_height, 360);
++        // half is what the shape says: only the packing is written
++        const QString half = make(u"i2.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s, u"-vf"_s, u"scale=640:360"_s});
+         StereoSave::Request h = request(half, u"sideBySide"_s, true, false);
++        h.frameWidth = 640;
++        h.frameHeight = 360;
+         h.views = 0;
+         QVERIFY(StereoSave::save(h).saved);
++        QCOMPARE(stereo_mark_read_detail(half.toUtf8().constData(), 1, &d), int(STEREO_MARK_WRITTEN));
++        QCOMPARE(d.display_width, 0);
++        // 640x180: the shape says full, and half cannot be written (a size as large as the frame says nothing): refused, untouched
++        const QString wide = make(u"i3.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s, u"-vf"_s, u"scale=640:180"_s});
++        const QByteArray before = bytes(wide);
++        StereoSave::Request w = request(wide, u"sideBySide"_s, true, false);
++        w.frameWidth = 640;
++        w.frameHeight = 180;
++        w.views = 0;
++        const StereoSave::Outcome refused = StereoSave::save(w);
++        QVERIFY(!refused.saved);
++        QCOMPARE(refused.status, u"views"_s);
++        QCOMPARE(bytes(wide), before);
++        // MP4 has no field for the size: refused when the shape gives the other, written (the packing) when it agrees
++        const QString mp4 = make(u"i4.mp4"_s, u"mp4"_s, {u"-c:v"_s, u"mpeg4"_s, u"-vf"_s, u"scale=640:360"_s});
++        const QByteArray mp4Before = bytes(mp4);
++        StereoSave::Request fm = full;
++        fm.path = mp4;
++        const StereoSave::Outcome noField = StereoSave::save(fm);
++        QVERIFY(!noField.saved);
++        QCOMPARE(noField.status, u"mp4-views"_s);
++        QVERIFY2(noField.message.contains(u"MP4"_s) && noField.message.contains(u"Matroska"_s), qPrintable(noField.message));
++        QCOMPARE(bytes(mp4), mp4Before);
++        StereoSave::Request mh = h;
++        mh.path = mp4;
++        QVERIFY(StereoSave::save(mh).saved);
++        QCOMPARE(markOf(mp4), 2);
++    }
++
++    // Both eyes laced in one block (StereoMode 13 and 14) is written only when the blocks are: ffmpeg's frames alternate
++    void frameSequentialNeedsLacedBlocks()
++    {
++        const QString path = make(u"j2.mkv"_s, u"matroska"_s, {u"-c:v"_s, u"mpeg4"_s});
++        const QByteArray before = bytes(path);
++        const StereoSave::Outcome out = StereoSave::save(request(path, u"frameSequential"_s, true, false));
++        QVERIFY(!out.saved);
++        QCOMPARE(out.status, u"not-laced"_s);
++        QVERIFY2(out.message.contains(u"laced"_s) && out.message.contains(u"not changed"_s), qPrintable(out.message));
++        QCOMPARE(bytes(path), before);
+     }
+ 
+     // Not a file on this computer
+diff --git a/src/backend.cpp b/src/backend.cpp
+index 807e819..3fb60aa 100644
+--- a/src/backend.cpp
++++ b/src/backend.cpp
+@@ -91,6 +91,24 @@ void Backend::setStereoInput(const QUrl &url, int input, int automatic)
+     group.sync();
+ }
+ 
++QString Backend::depthText(const QUrl &url) const
++{
++    return KConfigGroup(KSharedConfig::openConfig(), QStringLiteral("StereoVideo")).readEntry(stereoKey(url) + u".depth"_s, QString());
++}
++
++void Backend::setDepthText(const QUrl &url, const QString &text)
++{
++    if (url.isEmpty())
++        return;
++    KConfigGroup group(KSharedConfig::openConfig(), QStringLiteral("StereoVideo"));
++    // a choice back at its default is unmarked: the file has no entry
++    if (text.isEmpty())
++        group.deleteEntry(stereoKey(url) + u".depth"_s);
++    else
++        group.writeEntry(stereoKey(url) + u".depth"_s, text);
++    group.sync();
++}
++
+ bool Backend::isLocalFile(const QUrl &url) const
+ {
+     return url.isLocalFile();
+diff --git a/src/backend.h b/src/backend.h
+index 6a3a324..0c4c626 100644
+--- a/src/backend.h
++++ b/src/backend.h
+@@ -36,6 +36,11 @@ public:
+     Q_INVOKABLE int stereoInput(const QUrl &url, int automatic) const;
+     Q_INVOKABLE void setStereoInput(const QUrl &url, int input, int automatic);
+ 
++    // The person's choice of how the views of a picture with its depth map are drawn, kept per file like the swap: the text of
++    // libstereo-dibr's options (empty for the default, which is no entry)
++    Q_INVOKABLE QString depthText(const QUrl &url) const;
++    Q_INVOKABLE void setDepthText(const QUrl &url, const QString &text);
++
+     // Whether the video is a file on this computer, which the correction can be saved into, and whether this build of
+     // Dragon can write it at all (it needs the library of the stereo layer)
+     Q_INVOKABLE bool isLocalFile(const QUrl &url) const;
+diff --git a/src/qml/ControlsBar.qml b/src/qml/ControlsBar.qml
+index 1e8958a..dc3e25b 100644
+--- a/src/qml/ControlsBar.qml
++++ b/src/qml/ControlsBar.qml
+@@ -23,6 +23,10 @@ OverlayPopup {
+     required property Multimedia.VideoOutput videoOutput
+     // the 3D settings the video output is bound to: the menu sets them, not the output
+     required property StereoSettings stereoSettings
++    // how the views of a picture with its depth map are drawn (libstereo-dibr's options, kept for the file)
++    required property var depthSettings
++    // the video carries a depth map, in its frames (a depth layout) or beside them: the depth options are for it alone
++    readonly property bool depthContent: videoOutput.stereoVideo && videoOutput.stereoPacking >= Multimedia.VideoOutput.StereoDepthSideBySide
+     property StereoSettingsWindow stereoSettingsWindow: null
+     property alias seekSlider: seekSlider
+     property bool stackedMode: false
+diff --git a/src/qml/PlayerPage.qml b/src/qml/PlayerPage.qml
+index 5592440..1080bfc 100644
+--- a/src/qml/PlayerPage.qml
++++ b/src/qml/PlayerPage.qml
+@@ -10,6 +10,7 @@ import Qt.labs.animation
+ import QtMultimedia as Multimedia
+ 
+ import org.kde.dragon as Dragon
++import org.sparky.stereo as Stereo
+ 
+ Kirigami.Page {
+     id: videoPage
+@@ -20,6 +21,7 @@ Kirigami.Page {
+     property alias player: player
+     property alias videoContainer: videoContainer
+     property alias stereoSettings: stereoSettings
++    property alias depthSettings: depthSettings
+     required property QtObject fullscreenAction
+ 
+     // Depending on whether the About page is on the stack we'll either want a header (about page) or not (video page)
+@@ -163,19 +165,19 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+             stereoScaling: stereoSettings.scaling
+             stereoSurface: stereoSettings.surface
+             stereoDepth: stereoSettings.depth
+-            stereoDepthView: stereoSettings.depthView
+-            stereoDepthWarp: stereoSettings.depthWarp
+-            stereoDepthFill: stereoSettings.depthFill
+-            stereoDepthRadius: stereoSettings.depthRadius
+-            stereoDepthSmooth: stereoSettings.depthSmooth
+-            stereoDepthSigmaH: stereoSettings.depthSigmaH
+-            stereoDepthSigmaV: stereoSettings.depthSigmaV
+-            stereoDepthRange: stereoSettings.depthRange
+-            stereoDepthZero: stereoSettings.depthZero
+-            stereoDepthShift: stereoSettings.depthShift
++            stereoDepthView: depthSettings.view
++            stereoDepthWarp: depthSettings.warp
++            stereoDepthFill: depthSettings.fill
++            stereoDepthRadius: depthSettings.radius
++            stereoDepthSmooth: depthSettings.smooth
++            stereoDepthSigmaH: depthSettings.sigmaH
++            stereoDepthSigmaV: depthSettings.sigmaV
++            stereoDepthRange: depthSettings.strength
++            stereoDepthZero: depthSettings.zero
++            stereoDepthShift: depthSettings.shift
+             stereoDepthMeaning: stereoSettings.depthMeaning
+-            stereoDepthNear: stereoSettings.depthNear
+-            stereoDepthFar: stereoSettings.depthFar
++            stereoDepthNear: depthSettings.nearDistance
++            stereoDepthFar: depthSettings.farDistance
+             stereoDepthMark: stereoSettings.depthMark
+         }
+ 
+@@ -183,6 +185,13 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+             id: stereoSettings
+         }
+ 
++        // How the views of a picture with its depth map are drawn: the options of libstereo-dibr, with its measured default, kept
++        // for the file like the swap (the controls show them only for a video that carries a depth map)
++        Stereo.StereoDepthSettings {
++            id: depthSettings
++            onChanged: stereoState.setDepthText(player.source, text)
++        }
++
+         Multimedia.AudioOutput {
+             id: audio
+             BoundaryRule on volume {
+@@ -225,6 +234,7 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+                 // The choice of the packing, and the swap of the eyes, are for the file they were made for
+                 video.stereoInput = stereoState.stereoInput(source, Multimedia.VideoOutput.StereoAutomatic)
+                 video.stereoSwapEyes = stereoState.stereoSwap(source)
++                depthSettings.text = stereoState.depthText(source)
+             }
+         }
+ 
+@@ -412,6 +422,7 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+             id: toolbar
+             videoOutput: video
+             stereoSettings: stereoSettings
++            depthSettings: depthSettings
+ 
+             readonly property int switchWidth: Kirigami.Units.gridUnit * 30
+ 
+diff --git a/src/qml/StereoSettings.qml b/src/qml/StereoSettings.qml
+index 1f01998..4823f38 100644
+--- a/src/qml/StereoSettings.qml
++++ b/src/qml/StereoSettings.qml
+@@ -22,20 +22,9 @@ Settings {
+     // The color depth of the surface the views are shown in, on a 3D screen
+     property int surface: VideoOutput.StereoSurfaceBySource
+ 
+-    // The views of a video with a depth map, drawn from it (else its picture alone)
++    // The views of a video with a depth map, drawn from it (else its picture alone). How they are drawn is the person's choice
++    // for each file, from the options of libstereo-dibr (StereoDepthSettings), not a setting of the program
+     property bool depth: true
+-    property int depthView: VideoOutput.StereoDepthPictureLeft
+-    property int depthWarp: VideoOutput.StereoDepthForward
+-    property int depthFill: VideoOutput.StereoDepthFillBackground
+-    property int depthRadius: 5
+-    property int depthSmooth: VideoOutput.StereoDepthSmoothOff
+-    property real depthSigmaH: 10
+-    property real depthSigmaV: 30
+-    property real depthRange: 58
+-    property real depthZero: 0.5
+-    property real depthShift: 0
+     property int depthMeaning: VideoOutput.StereoDepthAutomatic
+-    property real depthNear: 0
+-    property real depthFar: 0
+     property string depthMark
+ }
+diff --git a/src/qml/StereoSettingsWindow.qml b/src/qml/StereoSettingsWindow.qml
+index 759a348..a23b48d 100644
+--- a/src/qml/StereoSettingsWindow.qml
++++ b/src/qml/StereoSettingsWindow.qml
+@@ -8,6 +8,7 @@ import QtMultimedia as Multimedia
+ import org.kde.kirigami as Kirigami
+ 
+ import org.kde.dragon
++import org.sparky.stereo as Stereo
+ 
+ // 3D video settings, in a window of their own so that the video stays in sight while they
+ // change. Dragon decodes any packing of a 3D video, the depth layouts included, and hands the
+@@ -24,7 +25,7 @@ Kirigami.ApplicationWindow {
+ 
+     title: i18nc("@title:window", "3D Video Settings")
+     width: Kirigami.Units.gridUnit * 28
+-    height: Kirigami.Units.gridUnit * 16
++    height: Kirigami.Units.gridUnit * 30
+     minimumWidth: Kirigami.Units.gridUnit * 22
+     minimumHeight: Kirigami.Units.gridUnit * 12
+ 
+@@ -104,6 +105,18 @@ Kirigami.ApplicationWindow {
+                 }
+             }
+ 
++            // The options of drawing the views of a picture with its depth map: the library's set with its measured default, the
++            // same controls in every player, shown for a video that carries a depth map and kept for the file
++            Kirigami.Separator {
++                visible: root.controls.depthContent
++                Kirigami.FormData.isSection: true
++            }
++
++            Stereo.DepthControls {
++                visible: root.controls.depthContent
++                settings: root.controls.depthSettings
++            }
++
+             QQC2.Button {
+                 visible: root.controls.canOfferSave
+                 text: i18nc("@action:button offers to write the 3D correction of this video into the file", "Save the 3D Correction into the File…")
+diff --git a/src/stereosave.cpp b/src/stereosave.cpp
+index 64fd81f..e159cf5 100644
+--- a/src/stereosave.cpp
++++ b/src/stereosave.cpp
+@@ -97,6 +97,16 @@ QString reasonFor(int status, const stereo_mark_result &result)
+         return i18nc("@info", "Matroska files are changed with mkvpropedit, from the package mkvtoolnix, and it is not installed.");
+     case STEREO_MARK_WRITE_FAILED:
+         return i18nc("@info %1 what the system said", "The file could not be written: %1", QString::fromUtf8(result.details));
++    case STEREO_MARK_MP4_VIEWS:
++        return i18nc("@info",
++                     "MP4 files have no field for whether the views are half or full size, and for this video the shape gives the other size than the one you "
++                     "chose. A Matroska (.mkv) file can carry it.");
++    case STEREO_MARK_VIEWS_LAYOUT:
++        return i18nc("@info", "Half or full size views are a choice of side by side and top and bottom only.");
++    case STEREO_MARK_NOT_LACED:
++        return i18nc("@info",
++                     "The mark for both eyes laced in one block (Matroska StereoMode 13 and 14) is true only when each block of the video holds both eyes, and "
++                     "the blocks of this file do not, so the mark was not written.");
+     case STEREO_MARK_READ_BACK:
+         return i18nc("@info", "The file did not show the layout when it was read back after writing. It was put back as it was.");
+     default:
+@@ -122,16 +132,29 @@ StereoSave::Outcome StereoSave::save(const Request &request)
+         return out;
+     }
+ 
+-    // The mark in the file says the packing and the eye order, not whether the views are half or full size; Dragon takes
+-    // that from the video's shape. A choice of half or full that the shape does not give cannot be written.
++    // Whether the views are half or full size: a reader decides from the shape of the video unless the file says (RFC 9559
++    // section 18.10: Matroska's DisplayWidth and DisplayHeight, one plane's size). When the shape already gives what the person
++    // chose, only the packing is written; else the size is written into Matroska and WebM, MP4's st3d has no field for it, and
++    // what a reader would still decide from a size as large as the frame is checked with the same policy the readers use.
++    int writeViews = STEREO_MARK_VIEWS_UNSPECIFIED;
+     if (request.views >= 0 && (layout == STEREO_POLICY_LAYOUT_SIDE_BY_SIDE || layout == STEREO_POLICY_LAYOUT_TOP_AND_BOTTOM)) {
+         const int byShape = stereo_policy_video_views(request.frameWidth, request.frameHeight, 1, 1, 0, 0, STEREO_POLICY_UPSAMPLED_UNKNOWN, layout, nullptr);
+         if (byShape != request.views) {
+-            out.status = u"views"_s;
+-            out.message = refusal(i18nc("@info",
+-                                        "A mark in the file says the packing and the eye order, not whether the views are half or full size. Dragon takes "
+-                                        "that from the shape of the video, and for this video the shape gives the other one than the one you chose."));
+-            return out;
++            const bool side = layout == STEREO_POLICY_LAYOUT_SIDE_BY_SIDE;
++            // the plane the file would then carry: one view's size for full views, the frame's size (which says nothing) for half
++            const int planeW = request.views == 1 && side ? request.frameWidth / 2 : request.frameWidth;
++            const int planeH = request.views == 1 && !side ? request.frameHeight / 2 : request.frameHeight;
++            const int byFile =
++                stereo_policy_video_views(request.frameWidth, request.frameHeight, 1, 1, planeW, planeH, STEREO_POLICY_UPSAMPLED_UNKNOWN, layout, nullptr);
++            if (byFile != request.views) {
++                out.status = u"views"_s;
++                out.message =
++                    refusal(i18nc("@info",
++                                  "A size as large as the frame is what a file without a size says, so the shape of this video decides, and it gives the "
++                                  "other size of views than the one you chose."));
++                return out;
++            }
++            writeViews = request.views;
+         }
+     }
+ 
+@@ -158,8 +181,9 @@ StereoSave::Outcome StereoSave::save(const Request &request)
+         return out;
+     }
+ 
+-    stereo_mark_result result;
+-    const int status = stereo_mark_save(path.constData(), request.videoTrack, layout, order, anaglyph, &result);
++    stereo_mark_views_result viewsResult;
++    const int status = stereo_mark_save_views(path.constData(), request.videoTrack, layout, order, anaglyph, writeViews, &viewsResult);
++    const stereo_mark_result &result = viewsResult.base;
+     out.status = QString::fromLatin1(stereo_mark_status_name(status));
+     if (status != STEREO_MARK_WRITTEN && status != STEREO_MARK_UNCHANGED) {
+         out.message = refusal(reasonFor(status, result));
+-- 
+2.53.0
+
