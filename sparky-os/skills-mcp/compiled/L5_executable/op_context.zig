@@ -1,5 +1,5 @@
 //! L5 operation: the selected maintainer context, for readers without file tools. Byte for byte the Python
-//! `render` (tools/skills-context.py): common guidance first, then the chosen skills, sections and references,
+//! `render`: common guidance first, then the chosen skills, sections and references,
 //! each with its source name and the SHA-256 of the whole file; over budget is an error, never a cut.
 const std = @import("std");
 const fsio = @import("fsio");

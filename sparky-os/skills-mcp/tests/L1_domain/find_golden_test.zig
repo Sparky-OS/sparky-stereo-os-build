@@ -1,5 +1,5 @@
 //! Equality with the Python engine: for the recorded queries, `find` returns the same skills in the same order with
-//! the same score to two decimals (data/golden/find-symptoms.tsv, recorded from tools/skills-context.py --find).
+//! the same score to two decimals (data/golden/find-symptoms.tsv, recorded from the Python engine this one replaced).
 //! The skills checkout is given with -Dskills-src; without it the test fails, a skipped oracle proves nothing.
 const std = @import("std");
 const options = @import("options");

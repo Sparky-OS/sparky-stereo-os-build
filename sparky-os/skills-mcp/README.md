@@ -8,6 +8,6 @@ A person at a terminal (`sparky-stereo-skills find|list|context|sections|command
 - `tests/README.md`: what is tested and how to run it.
 - `scripts/`: build the tests, run them in a container, run the program end to end, show a rule failing when it is removed.
 - `envs/`: the two container images (build, and a real MCP client).
-- `old_attempts/python-engine/`: the Python tool this engine replaces, kept because the golden files were recorded from it.
+- `data/golden/` and `data/routing/`: what the Python engine this one replaced answered, recorded as data (its last commit in Sparky-OS/sparky-stereo-os is 9c834ddc312e0c92f4923bfe088e67b3cd54d0bc); no test needs that engine any more.
 
 The packages are in `sparky-os/packages/sparky-stereo-skills`: `sparky-stereo-skills` (the skills, link, the dialog, export) and `sparky-stereo-skills-engine` (this program, amd64), built from one source package.

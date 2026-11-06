@@ -27,7 +27,6 @@ One product, `skills-mcp`, one engine, three doors onto it.
 | `envs/` | the container recipe the tests run in | build |
 | `tests/` | one folder per concern root and level that it tests, mirrored | tests |
 | `docs/` | this tree, the contract, the design check | docs |
-| `old_attempts/` | the Python reference engine that the Zig engine must equal, kept until the Zig one passes its goldens, then moved aside, never deleted | none |
 
 Mirroring: every level folder under `compiled/` has the same-named folder under `tests/`.
 There is one product, so nothing is shared by two products and there is no `common/`; the day a second product needs a piece, that piece moves to a `common/` folder that both products mirror, so no folder exists in one product and not in the other.

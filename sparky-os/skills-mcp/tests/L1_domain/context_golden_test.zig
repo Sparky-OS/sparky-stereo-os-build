@@ -1,5 +1,5 @@
 //! `context`, `sections` and `find` equal the Python tool's output for the same tree (data/fixtures/ref-tree and
-//! the goldens recorded from tools/skills-context.py run on it), byte for byte, including the over budget refusal.
+//! the goldens recorded from the Python engine this one replaced, run on it), byte for byte, including the over budget refusal.
 const std = @import("std");
 const engine = @import("engine");
 const testkit = @import("testkit");
