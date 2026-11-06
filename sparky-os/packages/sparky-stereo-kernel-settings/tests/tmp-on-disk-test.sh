@@ -8,7 +8,7 @@
 # administrator's choice alone, and ship no /tmp rule: /tmp keeps its files across
 # boots (Daniel, 2026-11-02: "I never asked for a wipe"), and ship /etc/tmpfiles.d/tmp.conf, which keeps them
 # between boots too: no age cleanup (Daniel, 2026-11-06: "make sure the tmp cleaner is really off").
-# OLD = the previously published package, installed in the container (the upgrade proof); faketime moves the clock.
+# OLD = the previously published package, installed in the container (the upgrade proof); datefudge moves the clock (libfaketime would shift the files' own times too).
 set -u
 DEB=${DEB:?built package}
 OUT=${OUT:?results folder}
@@ -68,7 +68,7 @@ clean() {
 	echo old >"$root/var/tmp/untouched-11-days"
 	mkdir -p "$root/tmp/dir"
 	echo old >"$root/tmp/dir/inside"
-	faketime -f '+11d' systemd-tmpfiles --root="$root" --clean >"$OUT/clean-$1.log" 2>&1
+	datefudge '11 days' systemd-tmpfiles --root="$root" --clean >"$OUT/clean-$1.log" 2>&1
 	local r=""
 	[[ -e $root/tmp/untouched-11-days ]] && r+=tmp-kept || r+=tmp-removed
 	[[ -e $root/tmp/dir/inside ]] && r+=,subdir-kept || r+=,subdir-removed
@@ -82,10 +82,12 @@ mkdir -p "$vt/usr/lib/tmpfiles.d" "$vt/etc/tmpfiles.d" "$vt/var/tmp" "$vt/tmp"
 cp /usr/lib/tmpfiles.d/tmp.conf "$vt/usr/lib/tmpfiles.d/tmp.conf"
 cp "$W/data/etc/tmpfiles.d/tmp.conf" "$vt/etc/tmpfiles.d/tmp.conf"
 echo old >"$vt/var/tmp/old" ; echo old >"$vt/tmp/old"
-faketime -f '+31d' systemd-tmpfiles --root="$vt" --clean >"$OUT/clean-vartmp.log" 2>&1
+datefudge '31 days' systemd-tmpfiles --root="$vt" --clean >"$OUT/clean-vartmp.log" 2>&1
 check package-vartmp-still-30-days "$([[ -e $vt/var/tmp/old ]] && echo kept || echo removed),$([[ -e $vt/tmp/old ]] && echo kept || echo removed)" removed,kept
-dry=$(faketime -f '+11d' systemd-tmpfiles --root="$W/clean-package" --clean --dry-run 2>&1)
-check dry-run-lists-nothing-under-tmp "$(grep -c ' /tmp' <<<"$dry")" 0
+dry=$(SYSTEMD_LOG_LEVEL=debug datefudge '11 days' systemd-tmpfiles --root="$W/clean-package" --clean --dry-run 2>&1)
+echo old >"$W/clean-debian/tmp/again"
+check control-dry-run-lists-debian-clean "$(datedry=$(SYSTEMD_LOG_LEVEL=debug datefudge '11 days' systemd-tmpfiles --root="$W/clean-debian" --clean --dry-run 2>&1); grep -c 'Would remove .*/tmp/' <<<"$datedry" | sed 's/^[1-9].*/lists/')" lists
+check dry-run-lists-nothing-under-tmp "$(grep -c 'Would remove .*/tmp/' <<<"$dry")" 0
 cfg=$(systemd-tmpfiles --root="$W/clean-package" --cat-config 2>&1)
 check effective-tmp-rule "$(grep -c '^q /tmp 1777 root root -$' <<<"$cfg")" 1
 check debian-tmp-rule-shadowed "$(grep -c '^q /tmp 1777 root root 10d' <<<"$cfg")" 0
