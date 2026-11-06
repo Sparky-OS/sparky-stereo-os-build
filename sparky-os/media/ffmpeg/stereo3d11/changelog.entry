@@ -1,0 +1,29 @@
+ffmpeg-dmo (@VERSION@) unstable; urgency=medium
+
+  * Carry the frame_packing option of h264_metadata and hevc_metadata as
+    FFmpeg pull request 25395 (https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25395)
+    has it after the review of 2026-10-31: patches 0010 to 0013 are replaced
+    by the corrected series and 0068 is added after 0011. The first revision
+    they carried had none of the corrections below, and its showinfo tests
+    are gone with the old 0013 (the API tests replace them).
+    - H.265: inserting an arrangement clears general_non_packed_constraint_flag
+      and its sub-layer flag in the VPS and SPS, those of the extradata too
+      (H.265 7.4.4, D.3.16); a layout given too late for the parameter sets
+      already passed on is an error.
+    - H.265: the SEI NAL unit written for a picture has the TemporalId and the
+      layer of that picture (H.265 D.3.1; patch 0068 in cbs_sei).
+    - H.264 and H.265: a new message ends the arrangements of other ids that
+      are still in force, and a 2D description in H.265 ends them without a
+      replacement (H.264 D.2.26, H.265 D.3.16); the self-contained flags follow
+      the messages already seen in the coded video sequence.
+    - H.264 and H.265: extraction no longer exports mirrored views or quincunx
+      layouts that AVStereo3D cannot describe; removal also covers the
+      extradata; the H.264 tile format needs a cropped size that is a multiple
+      of 3 (H.264 D.2.26).
+    - New FATE tests: cbs-h264-frame-packing, cbs-hevc-frame-packing,
+      cbs-hevc-frame-packing-constraint and cbs-hevc-frame-packing-sublayers.
+    - Patch 0010 also changes where a new H.264 SEI unit goes (in front of the
+      IDR slice), as it did; the upstream reference of cbs-h264-metadata-sei
+      follows it in the pull request and does not exist in 9.0.2.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@
