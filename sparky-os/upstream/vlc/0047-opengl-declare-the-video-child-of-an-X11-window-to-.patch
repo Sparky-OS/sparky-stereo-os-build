@@ -34,13 +34,12 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
 ---
 --- a/modules/video_output/opengl/display.c
 +++ b/modules/video_output/opengl/display.c
-@@ -34,6 +34,9 @@
+@@ -34,6 +34,8 @@
  #include <vlc_opengl.h>
  #ifdef HAVE_STEREO_DECLARE
  # include <vlc_xlib.h>
 +# include <errno.h>
 +# include <vlc_dialog.h>
-+# include <X11/Xatom.h>
  # include <stereo-declare.h>
  # ifdef VLC_GL_WAYLAND
  #  include <wayland-client.h>

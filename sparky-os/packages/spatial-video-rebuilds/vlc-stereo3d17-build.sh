@@ -41,13 +41,18 @@ dch --date "$SOURCE_DATE_RFC2822" --newversion 3.0.24-1+stereo3d17 --distributio
 head -12 debian/changelog
 PYTHONPATH=/toolkit python3 -m lean.debian_prepare . 3.0.24-1+stereo3d17+lc1 --toolkit /toolkit
 apt-get -y --no-install-recommends build-dep /out/lc/src > /out/build-dep.log 2>&1 || { tail -20 /out/build-dep.log; exit 1; }
+# the link and start gate of lean.debhelper runs the rebuilt programs in a bubblewrap root, against the archives of sources.json
+: "${SPARKY_LC_ARCHIVE_CONFIG:?the signed archive configuration of the link gate (sparky-os/lean/archive.md)}"
+: "${SPARKY_LC_SCRATCH:?the link gate's scratch directory}"
+apt-get -y --no-install-recommends install bubblewrap >> /out/build-dep.log 2>&1
+mkdir -p "$SPARKY_LC_SCRATCH"
 useradd --create-home --uid 1000 builder 2>/dev/null || true
 chown -R builder /out
 python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" /out/lc/src
 runuser -u builder -- bash -c 'cd /out/lc/src && dpkg-buildpackage -S -us -uc -d > /out/source.log 2>&1'
 cd /out/lc && dpkg-source -x vlc_3.0.24-1+stereo3d17+lc1.dsc src2 >/dev/null 2>&1; chown -R builder /out
 cd src2
-runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev dpkg-buildpackage -us -uc -b -j4 > /out/build.log 2>&1 || { echo BUILD-FAILED; tail -30 /out/build.log; }
+runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" dpkg-buildpackage -us -uc -b -j4 > /out/build.log 2>&1 || { echo BUILD-FAILED; tail -30 /out/build.log; }
 cd /out/lc && PYTHONPATH=/toolkit python3 -m lean.release check-debs /out/lc/*+lc1_*.deb
 chown -R 1000:1000 /out
 ls /out/lc
