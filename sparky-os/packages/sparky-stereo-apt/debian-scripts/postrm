@@ -5,6 +5,10 @@
 # When the upgrade that makes the /etc files conffiles stops, the files preinst moved aside go back; dpkg itself removes
 # the conffiles at purge.
 set -e
+# The plain-HTTP block of 20261104.2 to 20261104.3 leaves (ORDER 413): the same call in preinst, postinst and postrm. An unmodified
+# file is removed; one a person changed is kept as FILE.dpkg-bak and said (dpkg-maintscript-helper(1): rm_conffile).
+# prior-version is this version with ~ (20261106.1~sparky9~0~), so a rebuild of 20261104.3 with a local suffix is covered too.
+dpkg-maintscript-helper rm_conffile /etc/apt/apt.conf.d/00sparky-block-plain-http 20261106.1~sparky9~0~ sparky-stereo-apt -- "$@"
 FILES="/etc/apt/sources.list.d/sparky-stereo.sources /etc/apt/sources.list.d/sparky-stereo-deb-multimedia.sources
 /etc/apt/preferences.d/sparky-stereo /etc/apt/preferences.d/sparky-stereo-only-ours"
 case "$1" in
