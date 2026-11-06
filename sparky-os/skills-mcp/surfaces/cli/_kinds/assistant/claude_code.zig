@@ -2,6 +2,8 @@
 pub const id = "claude_code";
 pub const programs = [_][]const u8{"claude"};
 pub const home_dirs = [_][]const u8{".claude"};
-/// Empty until milestone 2b fills it from the table in the plan (section 4).
-pub const register_argv: []const []const u8 = &.{};
-pub const unregister_argv: []const []const u8 = &.{};
+/// From each assistant's own documentation (read 2026-11-06); the absolute path survives a launcher with another PATH.
+pub const register_argv: []const []const u8 = &[_][]const u8{ "claude", "mcp", "add", "--scope", "user", "sparky-stereo-skills", "--", "/usr/bin/sparky-stereo-skills", "serve" };
+/// Codex and OpenCode: the removal command is the documented guess; `mcp status` verifies the result by asking the assistant.
+pub const unregister_argv: []const []const u8 = &[_][]const u8{ "claude", "mcp", "remove", "sparky-stereo-skills", "--scope", "user" };
+pub const unregister_note: []const u8 = "";

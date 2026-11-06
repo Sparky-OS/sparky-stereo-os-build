@@ -1,5 +1,6 @@
 //! L4 atom: may a command of a user skill run now, and who must say yes (Daniel, 2026-11-06).
 //! "with confirmation if the person has no ai tool, on by default if the user is already using AI tools".
+//! Through the command line the person is the one at the keyboard, so the person is always asked: no assistant is in the loop.
 const std = @import("std");
 
 pub const Policy = enum { auto, assistant, ask };
@@ -15,10 +16,15 @@ pub const Decision = union(enum) {
 };
 
 pub fn decide(policy: Policy, ai_tool_found: bool, listed: bool, marked: Marked, via: Via) Decision {
-    _ = policy;
-    _ = ai_tool_found;
-    _ = listed;
-    _ = marked;
-    _ = via;
-    return .{ .refuse = "not implemented" };
+    if (!listed) return .{ .refuse = "That command is not listed by the skill, so it was not run." };
+    if (via == .cli or marked == .person) return .ask_person;
+    return switch (policy) {
+        .ask => .ask_person,
+        .assistant => .run_assistant_approves,
+        .auto => if (ai_tool_found) .run_assistant_approves else .ask_person,
+    };
+}
+
+pub fn parsePolicy(text: []const u8) ?Policy {
+    return std.meta.stringToEnum(Policy, text);
 }

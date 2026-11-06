@@ -10,7 +10,8 @@ pub const Entry = struct {
 };
 
 pub fn entry(uri: []const u8, bytes: []const u8) !Entry {
-    _ = uri;
-    _ = bytes;
-    return error.NotImplemented;
+    var e: Entry = .{ .uri = uri, .digest = undefined, .size = bytes.len };
+    @memcpy(e.digest[0..7], "sha256:");
+    @memcpy(e.digest[7..], &sha256.hex(bytes));
+    return e;
 }

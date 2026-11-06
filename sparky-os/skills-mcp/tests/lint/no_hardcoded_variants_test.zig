@@ -1,6 +1,6 @@
 //! Halt condition: "a new variant is hardcoded in a parent instead of dropped into `_kinds/`".
-//! A variant id of five or more characters (the ids "user" and "en" are too common as words to be searched for)
-//! must not appear as a quoted string anywhere under compiled/ or surfaces/ outside the _kinds/ folders.
+//! The id of a variant (every id, "en" and "user" included) must not appear as a quoted string anywhere under
+//! compiled/ or surfaces/ outside the _kinds/ folders; code that needs it goes through the registry or an enum.
 const std = @import("std");
 const registries = .{
     @import("kinds_era"),     @import("kinds_tool"),
@@ -38,7 +38,6 @@ test "no parent names a variant" {
             const src = try withoutComments(gpa, raw);
             examined += 1;
             inline for (registries) |reg| for (reg.names) |n| {
-                if (n.len < 5) continue;
                 const quoted = try std.fmt.allocPrint(gpa, "\"{s}\"", .{n});
                 if (std.mem.indexOf(u8, src, quoted) != null) {
                     std.debug.print("{s}/{s}: hardcodes the variant {s}\n", .{ top, e.path, n });

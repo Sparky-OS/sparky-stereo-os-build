@@ -14,10 +14,23 @@ pub const Assistant = struct {
     home_dirs: []const []const u8,
 };
 
+fn contains(list: []const []const u8, name: []const u8) bool {
+    for (list) |n| if (std.mem.eql(u8, n, name)) return true;
+    return false;
+}
+
 /// Ids of the assistants found, in the order of `assistants`; empty means none.
 pub fn found(arena: std.mem.Allocator, assistants: []const Assistant, probe: Probe) ![]const []const u8 {
-    _ = arena;
-    _ = assistants;
-    _ = probe;
-    return error.NotImplemented;
+    var out: std.ArrayList([]const u8) = .empty;
+    for (assistants) |a| {
+        var hit = false;
+        for (a.programs) |p| if (contains(probe.on_path, p)) {
+            hit = true;
+        };
+        for (a.home_dirs) |h| if (contains(probe.in_home, h)) {
+            hit = true;
+        };
+        if (hit) try out.append(arena, a.id);
+    }
+    return out.toOwnedSlice(arena);
 }

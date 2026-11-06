@@ -3,7 +3,8 @@
 //! The skills checkout is given with -Dskills-src; without it the test fails, a skipped oracle proves nothing.
 const std = @import("std");
 const options = @import("options");
-const find = @import("find");
+const engine = @import("engine");
+const testkit = @import("testkit");
 
 test "find equals the Python oracle on every golden query" {
     if (options.skills_src.len == 0) return error.SkillsSourceNotGiven;
@@ -13,7 +14,9 @@ test "find equals the Python oracle on every golden query" {
     const io = std.testing.io;
     const golden = try std.Io.Dir.cwd().readFileAlloc(io, "data/golden/find-symptoms.tsv", arena, .limited(1 << 20));
     var cur_query: []const u8 = "";
-    var rows: []const find.Row = &.{};
+    var rows: []const engine.FindRow = &.{};
+    const tree = try std.fmt.allocPrint(arena, "{s}/skills", .{options.skills_src});
+    var e = try engine.Engine.initTree(arena, io, try testkit.env(arena, &.{ .{ "SPARKY_STEREO_PACKAGES", "x" }, .{ "HOME", "/tmp" } }), "developer", tree, null);
     var checked: usize = 0;
     var lines = std.mem.splitScalar(u8, golden, '\n');
     while (lines.next()) |line| {
@@ -25,7 +28,7 @@ test "find equals the Python oracle on every golden query" {
         const want_score = try std.fmt.parseFloat(f64, f.next().?);
         if (!std.mem.eql(u8, query, cur_query)) {
             cur_query = query;
-            rows = try find.run(arena, io, options.skills_src, query, 3);
+            rows = try e.find(query, 3, true);
         }
         try std.testing.expect(want_rank <= rows.len);
         const got = rows[want_rank - 1];

@@ -8,7 +8,7 @@ IMAGE=${IMAGE:-skills-mcp-430-base:1}
 W=$(mktemp -d "$OUT/negctl.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 cp -r "$HERE/compiled" "$HERE/surfaces" "$HERE/tests" "$HERE/data" "$W/"
-printf 'const find = @import("find");\n' > "$W/compiled/L4_atomic/manifest/upward.zig"
+printf 'const find = @import("op_find");\n' > "$W/compiled/L4_atomic/manifest/upward.zig"
 printf 'pub const era = "stateless_2026_07_28";\n' > "$W/compiled/L5_executable/hardcoded.zig"
 docker run --rm --network none --ulimit core=0 --user "$(id -u):$(id -g)" -v "$W:/w:ro" -v "$OUT/out/tests:/t:ro" -w /w "$IMAGE" bash -c '
 	for t in lint_layers_test lint_no_hardcoded_variants_test; do

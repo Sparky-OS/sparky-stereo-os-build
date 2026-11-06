@@ -17,7 +17,7 @@ const surfaces_rank: u8 = 6;
 
 /// Rank of an imported module name: primitives are named by file stem, atoms by folder, operations by stem.
 fn rankOfImport(gpa: std.mem.Allocator, io: std.Io, name: []const u8) !?u8 {
-    inline for (.{ .{ "compiled/L6_primitive", 0 }, .{ "compiled/L5_executable", 2 } }) |p| {
+    inline for (.{ .{ "compiled/L6_primitive", 0 }, .{ "compiled/L5_executable", 2 }, .{ "compiled/L3_organization", 3 }, .{ "compiled/L2_context", 4 }, .{ "compiled/L1_domain/skills", 5 } }) |p| {
         const path = try std.fmt.allocPrint(gpa, "{s}/{s}.zig", .{ p[0], name });
         defer gpa.free(path);
         if (std.Io.Dir.cwd().access(io, path, .{})) |_| return p[1] else |_| {}
@@ -58,6 +58,7 @@ test "no file under compiled/ imports a module of equal or higher rank, or a fil
             const src = try dir.readFileAlloc(io, e.path, gpa, .limited(1 << 20));
             for (try importsOf(gpa, src)) |imp| {
                 if (std.mem.eql(u8, imp, "std") or std.mem.eql(u8, imp, "options")) continue;
+                if (std.mem.eql(u8, imp, "kinds_skill_kind") and lv.rank == 4) continue; // the one registry the context level reads
                 if (std.mem.endsWith(u8, imp, ".zig")) {
                     std.debug.print("{s}/{s}: imports a file path ({s}); import a named module\n", .{ lv.dir, e.path, imp });
                     return error.FilePathImport;

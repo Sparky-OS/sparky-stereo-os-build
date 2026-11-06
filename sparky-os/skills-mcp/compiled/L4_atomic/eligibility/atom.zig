@@ -11,7 +11,13 @@ pub const Installed = struct {
 };
 
 pub fn allowed(field: []const u8, installed: Installed) bool {
-    _ = field;
-    _ = installed;
+    const trimmed = std.mem.trim(u8, field, " \t");
+    if (trimmed.len == 0) return true;
+    var it = std.mem.splitScalar(u8, trimmed, '|');
+    while (it.next()) |alt| {
+        const name = std.mem.trim(u8, alt, " \t");
+        if (name.len == 0) continue;
+        if (installed.has(name)) return true;
+    }
     return false;
 }
