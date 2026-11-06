@@ -1,0 +1,12 @@
+plasmatube (26.08.1-1+stereo3d5) unstable; urgency=medium
+
+  * Read a video's yt3d keywords with libstereo-policy 1.13's site mark
+    reader, the one reader of the edition's programs (the browser uses it
+    too), instead of a table of the tags in PlasmaTube: ORDER 193.
+  * The first form, yt3d:enable=true, is right eye first and yt3d:swap=true
+    makes it left eye first, as YouTube's player took them. The first patch
+    had them the other way round, so "3D Maestro" (enable=true,
+    swap=true) showed its eyes swapped. The rectangles are read as numbers
+    ("Kate in 3D!" has left=0_0._0.5_1), and beat the first form.
+  * Build-Depends libstereo-policy-dev (>= 1.13.0) and Depends
+    libstereo-policy1 (>= 1.13.0).

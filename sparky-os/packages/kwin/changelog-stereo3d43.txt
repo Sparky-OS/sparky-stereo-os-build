@@ -1,0 +1,12 @@
+kwin (4:6.7.4-2+stereo3d43) unstable; urgency=medium
+
+  * Give each output the depth limits of its display: the person's SunkLimit
+    and PoppedLimit are built on the depth libstereo-policy gives the output's
+    kind (framed, anaglyph, headset) and physical size, for windows, the
+    wallpaper and the eye shifts (ORDER 414).
+  * Stereo protocol version 5: kde_stereo_depth_v1.depth_limits tells a
+    program the limits of the output its surface mainly sits on, so a page's
+    popped element and the desktop's popped menu agree on the same screen.
+  * Build-depend on libstereo-policy-dev (>= 1.15.0).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 05 Nov 2026 18:39:54 +0000

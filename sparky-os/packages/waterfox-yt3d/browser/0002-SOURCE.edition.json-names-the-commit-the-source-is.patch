@@ -1,0 +1,25 @@
+Description: SOURCE.edition.json states the commit the source really is
+ The orig tarball is the accepted stereo3d5 export (browser commit b1d115f8d3),
+ unchanged so that its name and bytes stay those of the published source package;
+ the patches of this series are the difference to browser commit
+ 73841dee658811c882b90124b2e822fed325afdc (Sparky-OS/waterfox, branch stereo3d: 075e18be19 and the six commits of 6b and 414 on it).
+ This patch makes the export's own description say so: the browser commit, the
+ packaging commit (the lane's package/ at d2d078971e) and the version.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+--- a/SOURCE.edition.json
++++ b/SOURCE.edition.json
+@@ -1,8 +1,8 @@
+ {
+-  "browser_commit": "b1d115f8d3070a81f3e231acb86cc446656581fd",
++  "browser_commit": "73841dee658811c882b90124b2e822fed325afdc",
+   "locales_commit": "caf051bfc4b02d5e937bb2804b543e7b9fbf0750",
+-  "packaging_commit": "6538adda0b10c05deee31763210e219afe8647f6",
+-  "version": "6.7.5-0+stereo3d5+lc1",
++  "packaging_commit": "d2d078971e2dc33b3a48865248983e3a6af77def",
++  "version": "6.7.5-0+stereo3d7+lc1",
+   "build_date": "20260929212553",
+   "accepted_build_preparation_sha256": {
+     "waterfox/browser/locales/en-US/browser/waterfox/appearance.ftl": "fb5b362d784f46e3e1786011b0443a0e09403c87f1198741ccbf5e5b0370a32b",
