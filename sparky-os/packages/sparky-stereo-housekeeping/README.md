@@ -52,4 +52,4 @@ python3, gettext, dpkg, sparky-stereo-problems; bleachbit is recommended.
 Build:
 -------------
 OUT=/path/to/output ./build.sh (inside debian:testing)
-test/make-test-deb.sh OUTDIR builds the package for test/run-tests.sh without the engine's catalogs and Lean Code's sealing.
+The tests (test/run-tests.sh) run the sealed package in a throwaway container with the published engine installed.

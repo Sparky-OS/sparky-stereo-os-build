@@ -7,7 +7,8 @@
 # The mail is made up (cron, sudo and chkrootkit notices of an invented machine); every check can fail.
 #   run-tests.sh postfix|dma DEB      postfix: postfix installed, exim4, nullmailer and dma absent, with their queues
 #                                     left behind. dma: dma installed, the others absent; ends with a delivery.
-# Needs the container's network for apt (start it with the https-only helper) and the package from make-test-deb.sh.
+# Needs the container's network for apt (start it with the https-only helper), the edition's published sparky-stereo-problems
+# engine installed, and the package built by build.sh (the real, sealed one).
 set -u
 MODE=${1:?postfix or dma}
 DEB=${2:?package file}
@@ -73,29 +74,27 @@ listed() { grep -oE '(/[A-Za-z0-9._@~+-]+)+' | sort -u; }
 ok "red: bleachbit has no system_mail cleaner yet" '! bb root --list-cleaners | grep -q "^system_mail\."'
 ok "red: --preview system_mail.mailbox lists nothing" '! bb root --preview system_mail.mailbox | grep -q "Truncate"'
 
-# --- the package; the engine (sparky-stereo-problems) is a stub that runs the command and keeps a line when it fails
-mkdir -p /usr/lib/python3/dist-packages
-cat >/usr/lib/python3/dist-packages/sparky_stereo_problems.py <<'EOS'
-import subprocess
+# --- presets: what exists before the package (an existing person with an edited file, root with or without one)
+mkdir -p /home/alice/.config/bleachbit
+printf '[tree]\nsystem.tmp = False\nfirefox.cache = True\n\n[list/whitelist/paths]\n0 = file\n1 = /home/alice/keep-this\n' >/home/alice/.config/bleachbit/bleachbit.ini
+chown -R alice:alice /home/alice/.config
+sha_alice=$(sha256sum /home/alice/.config/bleachbit/bleachbit.ini | cut -d' ' -f1)
+if [ "$MODE" = postfix ]; then
+	mkdir -p /root/.config/bleachbit; printf '[tree]\nsystem.tmp = True\n' >/root/.config/bleachbit/bleachbit.ini
+	sha_root=$(sha256sum /root/.config/bleachbit/bleachbit.ini | cut -d' ' -f1)
+fi
 
-
-class Steps:
-    def __init__(self, tag, words=None):
-        pass
-
-    def main(self, argv, doc):
-        i = argv.index('--')
-        rc = subprocess.run(argv[i + 1:]).returncode
-        if rc:
-            open('/var/tmp/problems-kept', 'a').write('%s %s rc=%d\n' % (argv[1], argv[2], rc))
-        return rc
-
-    def __getattr__(self, name):
-        return None
-EOS
+# --- the package, with the real engine
+# (the red checks above ran BleachBit as root, which wrote a file of its own defaults: root has none, as on a new machine)
+[ "$MODE" != dma ] || rm -rf /root/.config/bleachbit
 dpkg -i "$DEB" >/tmp/dpkg.log 2>&1 || { cat /tmp/dpkg.log; echo "FAIL dpkg -i"; exit 1; }
+sed "s/^/    dpkg: /" /tmp/dpkg.log | tail -5
+# read before BleachBit has run, because BleachBit itself writes defaults into a file it reads
+ok "an existing person's edited bleachbit.ini is the same bytes after the install" '[ "$(sha256sum /home/alice/.config/bleachbit/bleachbit.ini | cut -d" " -f1)" = "$sha_alice" ]'
+[ "$MODE" != dma ] || ok "root had none: it starts with the root preset, mode 600, in a 700 folder" 'cmp -s /root/.config/bleachbit/bleachbit.ini /usr/share/sparky-stereo-housekeeping/bleachbit-root.ini && [ "$(stat -c %a /root/.config/bleachbit/bleachbit.ini)" = 600 ] && [ "$(stat -c %a /root/.config/bleachbit)" = 700 ]'
+[ "$MODE" != postfix ] || ok "root had its own file: the same bytes after the install" '[ "$(sha256sum /root/.config/bleachbit/bleachbit.ini | cut -d" " -f1)" = "$sha_root" ]'
 ok "the cleaner is installed by the package's own postinst" 'bb root --list-cleaners | grep -q "^system_mail\."'
-ok "nothing was kept as a problem" '[ ! -e /var/tmp/problems-kept ]'
+ok "nothing was kept as a problem" 'sparky-stereo-housekeeping status >/dev/null'
 ok "the cleaner file is not world writable" '[ "$(stat -c %a /usr/share/bleachbit/cleaners/system_mail.xml)" = 644 ]'
 
 # --- the queues the cleaner offers follow dpkg
@@ -182,7 +181,7 @@ if [ "$MODE" = postfix ]; then
 	ok "msmtp installed: its queue is no longer listed" '! grep -q ".msmtp.queue" $XML'
 	DEBIAN_FRONTEND=noninteractive apt-get -y -qq purge msmtp >/dev/null 2>&1
 	ok "msmtp purged: its queue is listed again" 'grep -q ".msmtp.queue" $XML'
-	ok "no trigger left a problem behind" '[ ! -e /var/tmp/problems-kept ]'
+	ok "no trigger left a problem behind" 'sparky-stereo-housekeeping status >/dev/null'
 else
 	DEBIAN_FRONTEND=noninteractive apt-get -y -qq remove dma >/dev/null 2>&1
 	ok "dma removed: dpkg's trigger lists its spool" 'grep -q "path=\"/var/spool/dma\"" $XML'
@@ -235,6 +234,52 @@ rm -f /usr/share/locale/de/LC_MESSAGES/bleachbit.mo
 DEBIAN_FRONTEND=noninteractive apt-get -y -qq --reinstall install bleachbit >/dev/null 2>&1
 w=$(env -i PATH=/usr/bin:/bin HOME=/root LANG=de_DE.UTF-8 LANGUAGE=de_DE python3 -I /tmp/words.py 2>&1 | head -1)
 ok "bleachbit reinstalled: the German name is back after dpkg's trigger" '[ "$w" = Systemmail ] && [ -s /usr/share/locale/de/LC_MESSAGES/bleachbit.mo.debian ]'
+
+# --- the presets: new people and root start with them, an existing file is never written
+ini_has() { # ini_has HOME-DIR section.key value: BleachBit's own reading of the file
+	env -i PATH=/usr/bin:/bin HOME="$1" python3 -I -c "
+import sys
+sys.path.insert(0, '/usr/share')
+from bleachbit.Options import options
+c, o = sys.argv[1].split('.', 1)
+sys.exit(0 if str(options.get_tree(c, o)) == sys.argv[2] else 1)" "$2" "$3"
+}
+ok "an existing person with no file still has none" '[ ! -e /home/bob/.config/bleachbit/bleachbit.ini ]'
+useradd -m -u 1003 -s /bin/bash carol
+ok "a new person starts with the user preset (/etc/skel)" 'cmp -s /home/carol/.config/bleachbit/bleachbit.ini /etc/skel/.config/bleachbit/bleachbit.ini && [ "$(stat -c %U /home/carol/.config/bleachbit/bleachbit.ini)" = carol ]'
+ok "BleachBit reads it: system.tmp, journald.clean, firefox.cache on" 'ini_has /home/carol system.tmp True && ini_has /home/carol journald.clean True && ini_has /home/carol firefox.cache True'
+ok "the user preset ticks no localizations, no free-space wipe, no autoremove, no system_mail" '! ini_has /home/carol system.localizations True && ! ini_has /home/carol system.free_disk_space True && ! ini_has /home/carol apt.autoremove True && ! ini_has /home/carol system_mail.mailbox True && ! ini_has /home/carol system_mail.mailboxes True && ! ini_has /home/carol system_mail.queues True && ! ini_has /home/carol system_mail.dead_letter True && ! grep -q shred /etc/skel/.config/bleachbit/bleachbit.ini'
+out=$(setpriv --reuid=1003 --regid=1003 --init-groups env -i PATH=/usr/bin:/bin HOME=/home/carol USER=carol LANG=C.UTF-8 bleachbit --preset --preview 2>&1)
+ok "carol: --preset --preview touches no mail" '! echo "$out" | grep -q "/var/mail\|dead.letter\|/var/spool"'
+if [ "$MODE" = postfix ]; then
+	:
+else
+	ok "BleachBit reads root's: apt.clean, deepscan.tmp, system.memory, x11.debug_logs on, apt.autoremove off" 'ini_has /root apt.clean True && ini_has /root deepscan.tmp True && ini_has /root system.memory True && ini_has /root x11.debug_logs True && ! ini_has /root apt.autoremove True && ! ini_has /root system.localizations True && ! ini_has /root system_mail.queues True'
+	mkdir -p /var/lib/apt/lists; echo x >/var/lib/apt/lists/fixture_Packages
+	out=$(env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root USER=root LANG=C.UTF-8 bleachbit --preset --preview 2>&1)
+	ok "root: --preset --preview lists the preset's work (apt lists) and no mail" 'echo "$out" | grep -q "/var/lib/apt/lists/fixture_Packages" && ! echo "$out" | grep -q "/var/mail\|dead.letter\|/var/spool/dma\|/var/spool/exim4"'
+fi
+# the same package again (an upgrade): nothing of anyone's is written
+sha_alice=$(sha256sum /home/alice/.config/bleachbit/bleachbit.ini | cut -d' ' -f1); sha_root=$(sha256sum /root/.config/bleachbit/bleachbit.ini | cut -d' ' -f1)
+dpkg -i "$DEB" >/dev/null 2>&1
+rm -f /home/carol/.config/bleachbit/bleachbit.ini
+ok "reinstall: alice's and root's files are the same bytes" '[ "$(sha256sum /home/alice/.config/bleachbit/bleachbit.ini | cut -d" " -f1)" = "$sha_alice" ] && [ "$(sha256sum /root/.config/bleachbit/bleachbit.ini | cut -d" " -f1)" = "$sha_root" ]'
+ok "reinstall: a file a person deleted does not come back" '[ ! -e /home/carol/.config/bleachbit/bleachbit.ini ]'
+rm -f /root/.config/bleachbit/bleachbit.ini; dpkg -i "$DEB" >/dev/null 2>&1
+ok "upgrade: root's deleted file is not written again" '[ ! -e /root/.config/bleachbit/bleachbit.ini ]'
+
+# --- the real engine keeps a failure and its repair clears it
+CL=/usr/share/bleachbit/cleaners/system_mail.xml
+rm -f $CL; mkdir $CL
+DEBIAN_FRONTEND=noninteractive apt-get -y -qq --reinstall install bleachbit >/tmp/apt-fail.log 2>&1
+ok "the cleaner could not be written: the package still configures" 'dpkg -s sparky-stereo-housekeeping | grep -q "^Status: install ok installed"'
+sparky-stereo-housekeeping status 2>&1 | sed 's/^/    status: /'
+ok "the engine keeps the problem (status exits 1 and names the repair)" '! sparky-stereo-housekeeping status >/dev/null 2>&1'
+ok "the engine's list holds a problem of sparky-stereo-housekeeping" 'sparky-stereo-problems list 2>/dev/null | grep -q "sparky-stereo-housekeeping" || ls /var/lib/sparky-stereo-problems | grep -q housekeeping'
+rmdir $CL
+sparky-stereo-housekeeping repair 2>&1 | sed 's/^/    repair: /'
+ok "repair wrote the cleaner again" '[ -f $CL ] && bb root --list-cleaners | grep -q "^system_mail\."'
+ok "repair cleared the problem" 'sparky-stereo-housekeeping status >/dev/null 2>&1'
 
 # --- removal gives everything back
 before_debian=$(md5sum /usr/share/locale/de/LC_MESSAGES/bleachbit.mo.debian | cut -d' ' -f1)

@@ -31,6 +31,9 @@ install -m 644 "$HERE/README.md" "$D/usr/share/doc/$PKG/README.md"
 # the first install, only when root has none. An existing bleachbit.ini is never written.
 install -D -m 644 "$HERE/share/bleachbit-user.ini" "$D/etc/skel/.config/bleachbit/bleachbit.ini"
 install -m 644 "$HERE/share/bleachbit-root.ini" "$D/usr/share/$PKG/bleachbit-root.ini"
+# /etc/skel is the one way a new person on any account tool (adduser, KDE, the installer) starts with a file: the tag
+# is overridden on purpose
+install -D -m 644 "$HERE/share/lintian-overrides" "$D/usr/share/lintian/overrides/$PKG"
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
 Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
 
@@ -112,24 +115,24 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: python3, gettext, dpkg, sparky-stereo-problems (>= 0.1.0)
+Depends: python3, gettext, sparky-stereo-problems (>= 0.1.0)
 Recommends: bleachbit
 Section: admin
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Sparky Stereo OS cleaners for BleachBit
-  Daniel's safe BleachBit presets, one for root and one for each new
-  person (an existing bleachbit.ini is never written), and a "System mail"
-  cleaner for BleachBit, never ticked on its own: it empties
-  the local mailbox (your own, or every one as administrator), deletes
-  dead.letter, and deletes the queues that mail programs no longer
-  installed (exim4, postfix, nullmailer, dma, msmtp) left behind. The queue
-  of an installed mail program is never touched. Each option says what kind
-  of mail it holds and that a person's own mail in the local mailbox is
-  deleted too.
-  .
-  The cleaner's text is translated in the nine languages of the edition,
-  added to Debian's translation of BleachBit, which keeps its own wording.
+ Daniel's safe BleachBit presets, one for root and one for each new
+ person (an existing bleachbit.ini is never written), and a "System mail"
+ cleaner for BleachBit, never ticked on its own: it empties
+ the local mailbox (your own, or every one as administrator), deletes
+ dead.letter, and deletes the queues that mail programs no longer
+ installed (exim4, postfix, nullmailer, dma, msmtp) left behind. The queue
+ of an installed mail program is never touched. Each option says what kind
+ of mail it holds and that a person's own mail in the local mailbox is
+ deleted too.
+ .
+ The cleaner's text is translated in the nine languages of the edition,
+ added to Debian's translation of BleachBit, which keeps its own wording.
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
