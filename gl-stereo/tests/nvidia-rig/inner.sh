@@ -18,7 +18,7 @@ CP=$!
 sleep 6
 python3 /rig/check.py ${OUTPNG:-} 2>&1 | tail -3
 grep RESULT /tmp/client.$$.log
-[ -n "${MAPS:-}" ] && { grep -E "${MAPSRE:-GLX_mesa|gallium|zink_dri|libEGL_mesa}" /proc/$CP/maps | awk "{print \$6}" | sort -u; }
+[ -n "${MAPS:-}" ] && { for f in $(grep -E "${MAPSRE:-GLX_mesa|gallium|zink_dri|libEGL_mesa}" /proc/$CP/maps | awk "{print \$6}" | sort -u); do p=$(dpkg -S "$f" 2>/dev/null | head -1 | cut -d: -f1); echo "$f ${p:+(package $p $(dpkg-query -W -f='${Version}' $p 2>/dev/null))}"; done; }
 [ -n "${SHOWLOG:-}" ] && tail -${TAILN:-20} /tmp/client.$$.log
 [ -n "${SAVELOG:-}" ] && cp /tmp/client.$$.log /out/${SAVELOG}
 kill $CP 2>/dev/null; wait $CP 2>/dev/null

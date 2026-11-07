@@ -20,6 +20,7 @@ while [ $i -lt $K ]; do
   sleep ${WAITS:-4}
   v=$(python3 /rig/check.py 2>&1 | sed -n 's/.*"verdict": "\([A-Z-]*\)".*/\1/p')
   echo "client $i ${v:-NOCHECK} $(grep -h -E "RESULT|zink through|gl-stereo:" /tmp/client.$$.$i.log | tr "\n" " " | cut -c1-230)"
+  if [ -n "${MAPS:-}" ] && [ $i = 1 ]; then for f in $(grep -E "${MAPSRE:-GLX_mesa|gallium|zink_dri|libEGL_mesa|libgl-stereo}" /proc/$CP/maps | awk "{print \$6}" | sort -u); do p=$(dpkg -S "$f" 2>/dev/null | head -1 | cut -d: -f1); echo "client-maps $f ${p:+(package $p $(dpkg-query -W -f='${Version}' $p 2>/dev/null))}"; done; fi
   kill $CP 2>/dev/null; wait $CP 2>/dev/null
   sleep 1
 done
