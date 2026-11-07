@@ -58,6 +58,8 @@ LANG=de_DE.UTF-8 "$S" -- "$T/data/b.msi" 2> "$T/err"
 check "wine cannot start the file: said in German" grep -q 'Wine konnte .* nicht starten (Exit-Status 3)' "$T/err"
 LANG=zh_TW.UTF-8 "$S" -- "$T/data/b.msi" 2> "$T/err"
 check "wine cannot start the file: said in Traditional Chinese" grep -q '無法啟動' "$T/err"
+LANG=ko_KR.UTF-8 "$S" -- "$T/data/b.msi" 2> "$T/err"
+check "wine cannot start the file: said in Korean, with what FILE is" grep -q 'wine start /unix 파일 (파일은 해당 파일의 경로입니다)\.' "$T/err"
 mv "$T/bin/wine.ok" "$T/bin/wine"
 rm -f "$T/called"; "$S" -- "$T/data/missing.exe" "$T/data/b.msi" 2> "$T/err"; rc=$?
 check "a missing file among two: exit 1" [ $rc = 1 ]
