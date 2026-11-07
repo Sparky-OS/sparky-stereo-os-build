@@ -3,9 +3,9 @@ Description: Tell the person when the guest's picture cannot be shown
  A GL scanout that cannot be imported left the viewer black, and the
  only word of it was a log line nobody sees. The viewer now shows a
  short message over the black picture: what failed, in plain words,
- and what to do (the Wayland session, or QT_XCB_GL_INTEGRATION=xcb_egl
- where Qt's GLX integration gives no EGL display). It goes away when an
- import succeeds.
+ and what to do (the Wayland session, with Karton not forced to run
+ on X11, where Qt's GLX integration gives no EGL display). It goes away
+ when an import succeeds.
  .
  The log line is written once for each distinct width, height, format
  and modifier, not for every scanout record the guest sends.
@@ -150,7 +150,7 @@ index f5510f9..175da20 100644
      bool m_scanoutDirty = false;
      EGLImageKHR m_eglImage = EGL_NO_IMAGE_KHR;
 diff --git a/src/qml/VMViewerWindow.qml b/src/qml/VMViewerWindow.qml
-index c7404f0..2239d81 100644
+index c7404f0..ee14be3 100644
 --- a/src/qml/VMViewerWindow.qml
 +++ b/src/qml/VMViewerWindow.qml
 @@ -114,6 +114,32 @@ Kirigami.ApplicationWindow {
@@ -179,7 +179,7 @@ index c7404f0..2239d81 100644
 +                    icon.name: "dialog-warning"
 +                    text: i18n("The picture of the virtual machine cannot be shown here.")
 +                    explanation: domainViewer.importProblem === DomainViewer.ImportNoEglDisplay
-+                        ? i18n("This window cannot take the picture from the graphics card. Use the Wayland session, or start Karton with the environment variable QT_XCB_GL_INTEGRATION=xcb_egl.")
++                        ? i18n("This window cannot take the picture from the graphics card. Use the Wayland session, and start Karton without forcing it to run on X11.")
 +                        : i18n("The graphics card did not hand over the picture. Close this window and open the viewer again. If the picture is still missing, send in the Karton log lines about the GL scanout.")
 +                }
 +            }
