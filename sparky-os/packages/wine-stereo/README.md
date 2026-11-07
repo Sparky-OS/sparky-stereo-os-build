@@ -279,3 +279,9 @@ This is a legal bounded concurrency control, not sanitizer coverage or proof of 
 `build-ev-btn.sh source` makes the one source package, `build-ev-btn.sh build` builds an architecture from it with the Lean Code gate.
 Check in a guest whose kernel has the EV_BTN series and joydev built in, with a writable `/run` holding a udev database that tags the fixture's `eventN`, `jsN` and `inputN` as joysticks: the stock package opens `/dev/input/js0` (`+hid` trace: `udev_add_device ... node "/dev/input/js0"`) and logs `err:hid:set_report_from_event TODO` with garbage values; the package with the patches does not open it and logs none, the 128-button fixture shows 128 buttons and all 128 presses through DirectInput.
 Upstream state on 2026-11-07: Wine master has none of the three (no node filter in `udev_add_device`, no EV_BTN, `usages->Usage >= 128` still in `joystick_hid.c`).
+
+## The link gate's archive list for this source
+
+Wine's embedded Lean Code toolkit (the one inside the published `+stereo3d7+lc1` source) accepts only `uri`, `suite`, `components`, `keyring` and `check_valid_until` in the archive list, so the shared list with the `architectures` field of the CUDA entry stops the gate with "unknown archive source configuration field".
+`gate-sources.json` is the list the `+stereo3d8` build ran with: the shared list without the CUDA entry (sha256 75fa06c05f62271f31a401c5aacfde82b9fe253526c6e50fb08c7892d16bc558), keyring paths under `/archive/keyrings`, and the edition's own repository (`file:///repo`) as the last source.
+Use it as `/archive/sources.json` (`SPARKY_LC_ARCHIVE_DIR`) for this package; a later source with a newer toolkit takes the shared list.
