@@ -92,7 +92,15 @@ mkdir -p /work/lc && cd /work/lc
 cp ../s1/gtk4_4.24.1+ds-1+stereo3d1.dsc ../s1/gtk4_4.24.1+ds-1+stereo3d1.debian.tar.xz ../s1/gtk4_4.24.1+ds.orig.tar.xz .
 dpkg-source -x gtk4_4.24.1+ds-1+stereo3d1.dsc /work/lc/source >/dev/null
 cd /work/lc/source
-PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source 4.24.1+ds-1+stereo3d1+lc1 --toolkit /toolkit
+# g-ir-scanner and gi-docgen read the gtk-doc comments, with their (transfer ...) and (nullable) annotations, from the C
+# sources and headers of gtk, gdk and gsk: the typelib and the documentation need them, so those files stay as they are.
+PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source 4.24.1+ds-1+stereo3d1+lc1 --toolkit /toolkit \
+	--preserve-source 'gtk/*.c' 'g-ir-scanner and gi-docgen read the gtk-doc comments and annotations of the C sources and headers' \
+	--preserve-source 'gtk/*.h' 'g-ir-scanner and gi-docgen read the gtk-doc comments and annotations of the C sources and headers' \
+	--preserve-source 'gdk/*.c' 'g-ir-scanner and gi-docgen read the gtk-doc comments and annotations of the C sources and headers' \
+	--preserve-source 'gdk/*.h' 'g-ir-scanner and gi-docgen read the gtk-doc comments and annotations of the C sources and headers' \
+	--preserve-source 'gsk/*.c' 'g-ir-scanner and gi-docgen read the gtk-doc comments and annotations of the C sources and headers' \
+	--preserve-source 'gsk/*.h' 'g-ir-scanner and gi-docgen read the gtk-doc comments and annotations of the C sources and headers'
 apt-get -y update >/dev/null 2>&1
 apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.log 2>&1
 # the link and start gate of lean.debhelper runs the rebuilt programs in a bubblewrap root
