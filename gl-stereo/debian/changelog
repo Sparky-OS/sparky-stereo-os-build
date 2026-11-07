@@ -1,3 +1,15 @@
+gl-stereo (0.4.3-1) testing; urgency=medium
+
+  * X11: say it when the compositor did not double a declared window within
+    the wait, instead of leaving a black second view that looks like success.
+    The wait is GL_STEREO_DOUBLING_WAIT_MS (1000 by default, 0 or
+    GL_STEREO_NO_DOUBLING_WAIT does not wait).
+  * New tests/nvidia-rig: the proof rig of the two NVIDIA OpenGL paths (an SDL
+    stereo window and a Qt stereo widget with the colours of each eye, the
+    capture check, one fresh KWin session per probe, loops with a control).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 07 Nov 2026 15:21:52 -0300
+
 gl-stereo (0.4.2-1) testing; urgency=medium
 
   * Every OpenGL 4.6 drawing command reaches the view it names: the

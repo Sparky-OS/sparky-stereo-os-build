@@ -1,0 +1,43 @@
+Description: eglExportDMABUFImageMESA says so when the driver made no dma-buf
+ dri2_export_dma_buf_image_mesa() ignored the result of the descriptor query:
+ when the driver gave none (zink on NVIDIA's Vulkan driver) the call returned
+ EGL_TRUE and wrote nothing into the caller's array, and GTK sent the
+ uninitialised integers to the compositor, which ended the connection (ORDER 457).
+ .
+ A failed query now closes the descriptors already made, leaves -1 in the array
+ and returns EGL_FALSE with EGL_BAD_MATCH, so a caller can say that the image
+ cannot be exported.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-07
+Assisted-by: Claude Sonnet via Claude Code
+---
+diff --git a/src/egl/drivers/dri2/egl_dri2.c b/src/egl/drivers/dri2/egl_dri2.c
+index 7d3740f..1d66259 100644
+--- a/src/egl/drivers/dri2/egl_dri2.c
++++ b/src/egl/drivers/dri2/egl_dri2.c
+@@ -2614,9 +2614,21 @@ dri2_export_dma_buf_image_mesa(_EGLDisplay *disp, _EGLImage *img, int *fds,
+           *    "If the number of fds is less than the number of planes, then
+           *    subsequent fd slots should contain -1."
+           */
+-         if (i == 0 || is_disjoint)
+-            dri2_query_image(image, __DRI_IMAGE_ATTRIB_FD, &fds[i]);
+-         else
++         if (i == 0 || is_disjoint) {
++            if (!dri2_query_image(image, __DRI_IMAGE_ATTRIB_FD, &fds[i])) {
++               /* The driver made no dma-buf: say so, and leave no descriptor behind. */
++               fds[i] = -1;
++               if (i)
++                  dri2_destroy_image(image);
++               for (int j = 0; j < i; j++) {
++                  if (fds[j] >= 0)
++                     close(fds[j]);
++                  fds[j] = -1;
++               }
++               mtx_unlock(&dri2_dpy->lock);
++               return _eglError(EGL_BAD_MATCH, "eglExportDMABUFImageMESA: the driver cannot export the image as a dma-buf");
++            }
++         } else
+             fds[i] = -1;
+       }
+ 
