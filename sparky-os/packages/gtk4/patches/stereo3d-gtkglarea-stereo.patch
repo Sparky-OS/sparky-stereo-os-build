@@ -1,0 +1,1545 @@
+Description: GtkGLArea: stereo, one view per eye on a subsurface declared as stereo content
+ GtkGLArea gains a stereo property. A stereo area emits its render signal
+ twice for each frame, the left view first, each time into a framebuffer of
+ the area's size, and gtk_gl_area_get_current_eye() tells which view the
+ handler draws. The two views are copied side by side into one texture, twice
+ the width of the area and opaque, which goes to the compositor on a
+ subsurface of its own (the path GtkGraphicsOffload takes), declared as full
+ side by side stereo content with kde_stereo_content_v1 (version 2 or later:
+ the surface is one view wide, so the area keeps its size). The rest of the
+ window stays the window's own surface, drawn once.
+ .
+ An area that asks for stereo and cannot show it per eye says so: it logs the
+ reason once, sets stereo-error, keeps stereo-shown FALSE and renders the left
+ view alone as an area without stereo does. GSK's offload takes the whole
+ texture for a stereo subsurface, and where GTK cannot offload it the clip the
+ area draws it with leaves the left view alone, so the two views are never
+ shown side by side in the area's place.
+ .
+ An area that does not ask for stereo behaves as before: nothing is created,
+ declared or bound for it.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS
+Forwarded: no
+Last-Update: 2026-11-07
+---
+diff --git a/gdk/gdksubsurface.c b/gdk/gdksubsurface.c
+index 9233ad7..c02c69a 100644
+--- a/gdk/gdksubsurface.c
++++ b/gdk/gdksubsurface.c
+@@ -20,6 +20,7 @@
+ #include "gdksubsurfaceprivate.h"
+ #include "gdksurfaceprivate.h"
+ #include "gdktexture.h"
++#include "gdkglcontext.h"
+ #include "gsk/gskrectprivate.h"
+ 
+ G_DEFINE_TYPE (GdkSubsurface, gdk_subsurface, G_TYPE_OBJECT)
+@@ -43,12 +44,27 @@ gdk_subsurface_finalize (GObject *object)
+   G_OBJECT_CLASS (gdk_subsurface_parent_class)->finalize (object);
+ }
+ 
++static gboolean
++gdk_subsurface_real_set_stereo (GdkSubsurface  *subsurface,
++                                gboolean        stereo,
++                                GError        **error)
++{
++  if (!stereo)
++    return TRUE;
++
++  g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                       "This windowing system has no way to declare a subsurface as stereo content");
++  return FALSE;
++}
++
+ static void
+ gdk_subsurface_class_init (GdkSubsurfaceClass *class)
+ {
+   GObjectClass *object_class = G_OBJECT_CLASS (class);
+ 
+   object_class->finalize = gdk_subsurface_finalize;
++
++  class->set_stereo = gdk_subsurface_real_set_stereo;
+ }
+ 
+ /*< private >
+@@ -379,3 +395,57 @@ gdk_subsurface_get_bounds (GdkSubsurface   *subsurface,
+   if (gdk_subsurface_get_background_rect (subsurface, &background))
+     graphene_rect_union (bounds, &background, bounds);
+ }
++
++/*< private >
++ * gdk_subsurface_set_stereo:
++ * @subsurface: a `GdkSubsurface`
++ * @stereo: whether the contents attached to @subsurface hold two views
++ * @error: return location for an error
++ *
++ * Declares that the textures attached to @subsurface hold two views,
++ * the left eye and the right eye, full side by side with the left
++ * eye first, each at the resolution it was rendered at.
++ *
++ * The destination rectangle given to [method@Gdk.Subsurface.attach]
++ * is then the size of one view, and the texture is twice as wide as
++ * the view is shown. The compositor shows the left view to the left
++ * eye and the right view to the right eye.
++ *
++ * The declaration takes effect with the next attach. If the compositor
++ * cannot take the declaration, @error says why and the subsurface is
++ * unchanged.
++ *
++ * Returns: %TRUE if the declaration was made (or removed)
++ */
++gboolean
++gdk_subsurface_set_stereo (GdkSubsurface  *subsurface,
++                           gboolean        stereo,
++                           GError        **error)
++{
++  g_return_val_if_fail (GDK_IS_SUBSURFACE (subsurface), FALSE);
++  g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
++
++  if (!GDK_SUBSURFACE_GET_CLASS (subsurface)->set_stereo (subsurface, stereo, error))
++    return FALSE;
++
++  subsurface->stereo = !!stereo;
++
++  return TRUE;
++}
++
++/*< private >
++ * gdk_subsurface_is_stereo:
++ * @subsurface: a `GdkSubsurface`
++ *
++ * Returns whether @subsurface was declared as stereo content with
++ * gdk_subsurface_set_stereo().
++ *
++ * Returns: %TRUE if the textures attached hold two views
++ */
++gboolean
++gdk_subsurface_is_stereo (GdkSubsurface *subsurface)
++{
++  g_return_val_if_fail (GDK_IS_SUBSURFACE (subsurface), FALSE);
++
++  return subsurface->stereo;
++}
+diff --git a/gdk/gdksubsurfaceprivate.h b/gdk/gdksubsurfaceprivate.h
+index c95b1a4..ee4a643 100644
+--- a/gdk/gdksubsurfaceprivate.h
++++ b/gdk/gdksubsurfaceprivate.h
+@@ -39,6 +39,7 @@ struct _GdkSubsurface
+   int ref_count;
+ 
+   gboolean above_parent;
++  gboolean stereo;
+   GdkSubsurface *sibling_above;
+   GdkSubsurface *sibling_below;
+ };
+@@ -65,6 +66,9 @@ struct _GdkSubsurfaceClass
+                (* get_transform)       (GdkSubsurface         *subsurface);
+   gboolean     (* get_background_rect) (GdkSubsurface         *subsurface,
+                                         graphene_rect_t       *rect);
++  gboolean     (* set_stereo)          (GdkSubsurface         *subsurface,
++                                        gboolean               stereo,
++                                        GError               **error);
+ };
+ 
+ GdkSurface *    gdk_subsurface_get_parent          (GdkSubsurface         *subsurface);
+@@ -92,5 +96,9 @@ gboolean        gdk_subsurface_get_background_rect (GdkSubsurface         *subsu
+                                                     graphene_rect_t       *rect);
+ void            gdk_subsurface_get_bounds          (GdkSubsurface         *subsurface,
+                                                     graphene_rect_t       *bounds);
++gboolean        gdk_subsurface_is_stereo           (GdkSubsurface         *subsurface);
++gboolean        gdk_subsurface_set_stereo          (GdkSubsurface         *subsurface,
++                                                    gboolean               stereo,
++                                                    GError               **error);
+ 
+ G_END_DECLS
+diff --git a/gdk/wayland/gdkdisplay-wayland.c b/gdk/wayland/gdkdisplay-wayland.c
+index a8b6912..99f01a3 100644
+--- a/gdk/wayland/gdkdisplay-wayland.c
++++ b/gdk/wayland/gdkdisplay-wayland.c
+@@ -121,6 +121,8 @@
+ #define SHM_VERSION                     1
+ #define SHORTCUTS_INHIBIT_VERSION       1
+ #define SINGLE_PIXEL_BUFFER_VERSION     1
++#define STEREO_CONTENT_MIN_VERSION      2
++#define STEREO_CONTENT_VERSION          3
+ #define SYSTEM_BELL_VERSION             1
+ #define SUBCOMPOSITOR_VERSION           1
+ #define TABLET_VERSION                  2
+@@ -728,6 +730,13 @@ gdk_registry_handle_global (void               *data,
+                           &wp_single_pixel_buffer_manager_v1_interface,
+                           MIN (version, SINGLE_PIXEL_BUFFER_VERSION));
+     }
++  else if (match_global (display_wayland, interface, version, kde_stereo_content_manager_v1_interface.name, STEREO_CONTENT_MIN_VERSION))
++    {
++      display_wayland->stereo_content_manager =
++        wl_registry_bind (display_wayland->wl_registry, id,
++                          &kde_stereo_content_manager_v1_interface,
++                          MIN (version, STEREO_CONTENT_VERSION));
++    }
+   else if (match_global (display_wayland, interface, version, xdg_system_bell_v1_interface.name, 0))
+     {
+       display_wayland->system_bell =
+@@ -953,6 +962,7 @@ gdk_wayland_display_dispose (GObject *object)
+   g_clear_pointer (&display_wayland->viewporter, wp_viewporter_destroy);
+   g_clear_pointer (&display_wayland->presentation, wp_presentation_destroy);
+   g_clear_pointer (&display_wayland->single_pixel_buffer, wp_single_pixel_buffer_manager_v1_destroy);
++  g_clear_pointer (&display_wayland->stereo_content_manager, kde_stereo_content_manager_v1_destroy);
+   g_clear_pointer (&display_wayland->linux_dmabuf, zwp_linux_dmabuf_v1_destroy);
+   g_clear_pointer (&display_wayland->dmabuf_formats_info, dmabuf_formats_info_free);
+   g_clear_pointer (&display_wayland->color, gdk_wayland_color_free);
+diff --git a/gdk/wayland/gdkdisplay-wayland.h b/gdk/wayland/gdkdisplay-wayland.h
+index b755f68..c8caeb2 100644
+--- a/gdk/wayland/gdkdisplay-wayland.h
++++ b/gdk/wayland/gdkdisplay-wayland.h
+@@ -42,6 +42,7 @@
+ #include <gdk/wayland/viewporter-client-protocol.h>
+ #include <gdk/wayland/presentation-time-client-protocol.h>
+ #include <gdk/wayland/single-pixel-buffer-v1-client-protocol.h>
++#include <gdk/wayland/kde-stereo-content-v1-client-protocol.h>
+ #include <gdk/wayland/xdg-dialog-v1-client-protocol.h>
+ #include <gdk/wayland/xdg-system-bell-v1-client-protocol.h>
+ #include <gdk/wayland/cursor-shape-v1-client-protocol.h>
+@@ -131,6 +132,7 @@ struct _GdkWaylandDisplay
+   struct wp_viewporter *viewporter;
+   struct wp_presentation *presentation;
+   struct wp_single_pixel_buffer_manager_v1 *single_pixel_buffer;
++  struct kde_stereo_content_manager_v1 *stereo_content_manager;
+   struct wp_cursor_shape_manager_v1 *cursor_shape;
+   struct xdg_toplevel_icon_manager_v1 *toplevel_icon;
+   struct xdg_session_manager_v1 *session_manager;
+diff --git a/gdk/wayland/gdksubsurface-wayland-private.h b/gdk/wayland/gdksubsurface-wayland-private.h
+index 0597428..b74b2e9 100644
+--- a/gdk/wayland/gdksubsurface-wayland-private.h
++++ b/gdk/wayland/gdksubsurface-wayland-private.h
+@@ -37,6 +37,8 @@ struct _GdkWaylandSubsurface
+   gboolean bg_attached;
+ 
+   struct zwp_idle_inhibitor_v1 *idle_inhibitor;
++
++  struct kde_stereo_content_v1 *stereo_content;
+ };
+ 
+ struct _GdkWaylandSubsurfaceClass
+diff --git a/gdk/wayland/gdksubsurface-wayland.c b/gdk/wayland/gdksubsurface-wayland.c
+index b8f5f98..e44f343 100644
+--- a/gdk/wayland/gdksubsurface-wayland.c
++++ b/gdk/wayland/gdksubsurface-wayland.c
+@@ -929,6 +929,56 @@ gdk_wayland_subsurface_get_background_rect (GdkSubsurface   *sub,
+ /* }}} */
+ /* {{{ GObject boilerplate */
+ 
++static gboolean
++gdk_wayland_subsurface_set_stereo (GdkSubsurface  *sub,
++                                   gboolean        stereo,
++                                   GError        **error)
++{
++  GdkWaylandSubsurface *self = GDK_WAYLAND_SUBSURFACE (sub);
++  GdkWaylandDisplay *display;
++
++  if (sub->parent == NULL)
++    {
++      g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                           "The subsurface was destroyed");
++      return FALSE;
++    }
++
++  display = GDK_WAYLAND_DISPLAY (gdk_surface_get_display (sub->parent));
++
++  if (!stereo)
++    {
++      if (self->stereo_content)
++        {
++          kde_stereo_content_v1_destroy (self->stereo_content);
++          self->stereo_content = NULL;
++          GDK_DISPLAY_DEBUG (gdk_surface_get_display (sub->parent), OFFLOAD,
++                             "[%p] Stereo content declaration removed", self);
++        }
++      return TRUE;
++    }
++
++  if (self->stereo_content)
++    return TRUE;
++
++  if (display->stereo_content_manager == NULL)
++    {
++      g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                           "The compositor does not announce kde_stereo_content_manager_v1 version 2 or later");
++      return FALSE;
++    }
++
++  self->stereo_content = kde_stereo_content_manager_v1_create (display->stereo_content_manager,
++                                                               self->surface);
++  kde_stereo_content_v1_set_content (self->stereo_content,
++                                     KDE_STEREO_CONTENT_V1_CONTENT_SIDE_BY_SIDE_FULL);
++
++  GDK_DISPLAY_DEBUG (gdk_surface_get_display (sub->parent), OFFLOAD,
++                     "[%p] Declared as full side by side stereo content", self);
++
++  return TRUE;
++}
++
+ G_DEFINE_TYPE (GdkWaylandSubsurface, gdk_wayland_subsurface, GDK_TYPE_SUBSURFACE)
+ 
+ static void
+@@ -952,6 +1002,7 @@ gdk_wayland_subsurface_finalize (GObject *object)
+   g_clear_pointer (&self->bg_subsurface, wl_subsurface_destroy);
+   g_clear_pointer (&self->bg_surface, wl_surface_destroy);
+   g_clear_pointer (&self->idle_inhibitor, zwp_idle_inhibitor_v1_destroy);
++  g_clear_pointer (&self->stereo_content, kde_stereo_content_v1_destroy);
+ 
+   G_OBJECT_CLASS (gdk_wayland_subsurface_parent_class)->finalize (object);
+ }
+@@ -971,6 +1022,7 @@ gdk_wayland_subsurface_class_init (GdkWaylandSubsurfaceClass *class)
+   subsurface_class->get_texture_rect = gdk_wayland_subsurface_get_texture_rect;
+   subsurface_class->get_transform = gdk_wayland_subsurface_get_transform;
+   subsurface_class->get_background_rect = gdk_wayland_subsurface_get_background_rect;
++  subsurface_class->set_stereo = gdk_wayland_subsurface_set_stereo;
+ };
+ 
+ /* }}} */
+diff --git a/gdk/wayland/meson.build b/gdk/wayland/meson.build
+index 7e89f4b..5ff0354 100644
+--- a/gdk/wayland/meson.build
++++ b/gdk/wayland/meson.build
+@@ -179,6 +179,11 @@ proto_sources = [
+     'stability': 'staging',
+     'version': 1,
+   },
++  {
++    'name': 'kde-stereo-content',
++    'stability': 'private',
++    'version': 1,
++  },
+ ]
+ 
+ gdk_wayland_gen_headers = []
+diff --git a/gdk/wayland/protocol/kde-stereo-content-v1.xml b/gdk/wayland/protocol/kde-stereo-content-v1.xml
+new file mode 100644
+index 0000000..1972868
+--- /dev/null
++++ b/gdk/wayland/protocol/kde-stereo-content-v1.xml
+@@ -0,0 +1,204 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<protocol name="kde_stereo_content_v1">
++  <copyright><![CDATA[
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++    SPDX-License-Identifier: MIT-CMU
++    ]]></copyright>
++
++<interface name="kde_stereo_content_manager_v1" version="3">
++  <description summary="declare stereo content of surfaces">
++    A program tells the compositor that a surface's picture holds two
++    views, one per eye, packed full side by side, with the left eye first.
++    The compositor renders the declared surface once per eye with that
++    eye's view. The global being present announces support.
++
++    Since version 3, a program may also follow a surface's desktop depth
++    with get_depth, to draw the elements inside the surface at their own
++    depths.
++
++    Clients may use this protocol to declare stereo content. The version 1
++    wire values are stable; future requests must use a new interface version.
++    Destroying the manager does not affect declarations it created.
++  </description>
++
++  <request name="destroy" type="destructor">
++    <description summary="Destroy the stereo content manager."/>
++  </request>
++
++  <request name="create">
++    <description summary="Create a stereo content declaration for a surface">
++      Creates a kde_stereo_content_v1 object for the given surface. The
++      declaration is none until set_content is called. If the surface
++      already has a declaration, the already_declared error is raised.
++    </description>
++    <arg name="id" type="new_id" interface="kde_stereo_content_v1"/>
++    <arg name="surface" type="object" interface="wl_surface"/>
++  </request>
++
++  <enum name="error">
++    <entry name="already_declared" value="0" summary="the surface already has a stereo content declaration"/>
++  </enum>
++
++  <request name="get_depth" since="3">
++    <description summary="Follow and describe a surface's desktop depth">
++      Creates a kde_stereo_depth_v1 object for the given surface. A surface
++      may have any number of them, made by any part of the client, such as
++      a toolkit and its style, and independently of its stereo content
++      declaration.
++    </description>
++    <arg name="id" type="new_id" interface="kde_stereo_depth_v1"/>
++    <arg name="surface" type="object" interface="wl_surface"/>
++  </request>
++</interface>
++
++<interface name="kde_stereo_content_v1" version="3">
++  <description summary="stereo content declaration of one surface">
++    The declaration of one surface, created with
++    kde_stereo_content_manager_v1.create.
++
++    Since version 2, a surface declared side_by_side_full is one eye
++    wide and its buffer holds both eyes: unless a wp_viewport destination
++    is set, the surface's size is half the width the buffer would give it
++    (after the buffer scale, the buffer transform and a viewport source)
++    by the full height. A viewport destination, when set, is the size of
++    one eye. With version 1 the surface's size follows its buffer as for
++    any other surface, so a client that declares at version 1 maps the
++    buffer onto one eye's size itself, for example with a viewport.
++
++    Version 3 changes nothing in this interface.
++  </description>
++
++  <enum name="error">
++    <entry name="no_surface" value="0" summary="the surface no longer exists"/>
++  </enum>
++
++  <request name="destroy" type="destructor">
++    <description summary="Remove the declaration">
++      Resets the content to none on the next wl_surface commit. The surface
++      may receive a new declaration immediately.
++    </description>
++  </request>
++
++  <enum name="content">
++    <description summary="full side-by-side packing of the two views">
++      The value matches the X11 property _KDE_NET_WM_STEREO_CONTENT.
++    </description>
++    <entry name="none" value="0" summary="no stereo content"/>
++    <entry name="side_by_side_full" value="3" summary="side by side, full width per eye, left first"/>
++  </enum>
++
++  <request name="set_content">
++    <description summary="Declare the surface's stereo content">
++      Takes effect with the next commit of the surface. Unknown values
++      are treated as none. Declaring none clears the format and does not
++      destroy the declaration object.
++    </description>
++    <arg name="content" type="uint" enum="content" summary="packing and eye order"/>
++  </request>
++
++</interface>
++
++<interface name="kde_stereo_depth_v1" version="3">
++  <description summary="desktop depth of one surface">
++    The compositor shows the desktop's own surfaces at depth levels: the
++    active window at the screen, the windows lying behind it sunk, menus,
++    tooltips and popups popped. This object lets a client show depth
++    inside a surface as well, by drawing the surface's elements once per
++    eye at their own depths and handing the two views over full side by
++    side, declared with kde_stereo_content_v1:
++
++    - the compositor tells the client when the elements inside the surface
++      may be shown in depth, and which of the surface's edges lie on its
++      output's edge;
++    - the client marks such a pair as the desktop's own depth rather than
++      stereo content;
++    - a popup surface may declare its place.
++
++    The depth limits are the user's settings; the client reads them itself.
++
++    A surface may have any number of these objects. The depth state is sent
++    to each of them. The surface is marked as desktop depth while any of
++    its objects marks it, and its place is the one set most recently by any
++    of its objects that has one.
++
++    When the surface is destroyed, the object becomes inert: its requests
++    are ignored and no further event is sent.
++  </description>
++
++  <enum name="edge" bitfield="true">
++    <description summary="edges of a surface"/>
++    <entry name="left" value="1" summary="the left edge"/>
++    <entry name="top" value="2" summary="the top edge"/>
++    <entry name="right" value="4" summary="the right edge"/>
++    <entry name="bottom" value="8" summary="the bottom edge"/>
++  </enum>
++
++  <request name="destroy" type="destructor">
++    <description summary="Destroy the object">
++      The desktop depth mark and the place this object set are withdrawn
++      on the next wl_surface commit.
++    </description>
++  </request>
++
++  <event name="depth_state">
++    <description summary="Whether the surface may show depth inside it now">
++      Sent once after the object is created and again whenever either
++      value changes.
++
++      awake is nonzero while elements drawn inside the surface may be shown
++      in depth: the surface is on an output that shows stereo, and it is
++      awake, as the active window on top of what it overlaps, a popup, a
++      panel or a desktop widget is, rather than one of the windows lying
++      flat behind the active one. While the surface is not awake the client
++      draws it as for a 2D output.
++
++      output_edges are the edges of the surface, for a window those of its
++      frame, that touch an edge of its output. Nothing at such an edge comes
++      nearer than the screen.
++    </description>
++    <arg name="awake" type="uint" summary="nonzero while depth may be shown inside the surface"/>
++    <arg name="output_edges" type="uint" enum="edge" summary="the surface's edges on its output's edge"/>
++  </event>
++
++  <request name="set_desktop_depth">
++    <description summary="Mark the surface's pair as the desktop's own depth">
++      Nonzero marks the full side-by-side pair the surface shows, declared
++      with kde_stereo_content_v1 by this client or its graphics library, as
++      the desktop's own elements drawn once per eye rather than stereo
++      content: where the compositor treats stereo content differently, for
++      example in switching a display into a 3D mode, in stereo screenshots
++      or in estimating the depth of content, the surface counts as part of
++      the desktop. The compositor still shows each view in its eye. Zero
++      withdraws the mark.
++
++      Takes effect with the next wl_surface commit.
++    </description>
++    <arg name="desktop_depth" type="uint" summary="nonzero marks the pair, zero withdraws the mark"/>
++  </request>
++
++  <request name="set_place">
++    <description summary="Declare the place of a popup surface">
++      Declares where a popup surface (a menu, tooltip, popup or dialog) sits
++      in depth, as a fraction of the user's limits: -1 is the sunk limit, 0
++      the screen and 1 the popped limit; values beyond are limited to that
++      range. The compositor places the surface there under its own rules: a
++      surface at its output's edge stays at the screen, and a popup is never
++      behind the surface it was opened from. Without a place the compositor
++      places the surface itself. The place of a surface that is not a popup
++      is ignored.
++
++      Takes effect with the next wl_surface commit.
++    </description>
++    <arg name="depth" type="fixed" summary="the place, from -1 to 1 of the user's limits"/>
++  </request>
++
++  <request name="unset_place">
++    <description summary="Withdraw the declared place">
++      Withdraws the place this object set. Takes effect with the next
++      wl_surface commit.
++    </description>
++  </request>
++</interface>
++
++</protocol>
+diff --git a/gsk/gskoffload.c b/gsk/gskoffload.c
+index 13a74bc..fdb1320 100644
+--- a/gsk/gskoffload.c
++++ b/gsk/gskoffload.c
+@@ -41,6 +41,7 @@
+ 
+ #include "gdkrgbaprivate.h"
+ #include "gdksurfaceprivate.h"
++#include "gdksubsurfaceprivate.h"
+ 
+ #include <graphene.h>
+ 
+@@ -247,7 +248,18 @@ find_texture_to_attach (GskOffload          *self,
+                 height = tmp;
+               }
+ 
+-            if (has_clip)
++            if (has_clip && gdk_subsurface_is_stereo (subsurface))
++              {
++                /* The texture holds both views and the compositor shows
++                 * it all, one view wide: the clip says where the area is,
++                 * and is what GSK draws when the texture is not offloaded
++                 * (the left view alone). */
++                out_source_rect->origin.x = 0;
++                out_source_rect->origin.y = 0;
++                out_source_rect->size.width = width;
++                out_source_rect->size.height = height;
++              }
++            else if (has_clip)
+               {
+                 float dx = node->bounds.origin.x;
+                 float dy = node->bounds.origin.y;
+diff --git a/gtk/gtkglarea.c b/gtk/gtkglarea.c
+index 8962f0a..8335ac6 100644
+--- a/gtk/gtkglarea.c
++++ b/gtk/gtkglarea.c
+@@ -28,6 +28,7 @@
+ #include "gtkprivate.h"
+ #include "gtksnapshot.h"
+ #include "gtknative.h"
++#include "gtksnapshotprivate.h"
+ #include "gtkwidgetprivate.h"
+ #include "gtksnapshot.h"
+ #include "gtkrenderlayoutprivate.h"
+@@ -36,6 +37,9 @@
+ #include "gdk/gdkglcontextprivate.h"
+ #include "gdk/gdkdmabuftexturebuilderprivate.h"
+ #include "gdk/gdkdmabuftextureprivate.h"
++#include "gdk/gdksubsurfaceprivate.h"
++#include "gdk/gdksurfaceprivate.h"
++#include "gdk/gdkframeclockprivate.h"
+ 
+ #ifdef HAVE_UNISTD_H
+ #include <unistd.h>
+@@ -191,6 +195,20 @@ typedef struct {
+   gboolean auto_render;
+   gboolean use_es;
+   GdkGLAPI allowed_apis;
++
++  gboolean stereo;
++  gboolean stereo_rendering;
++  gboolean stereo_shown;
++  gboolean stereo_pushed;
++  GError *stereo_error;
++  GtkGLAreaEye current_eye;
++  GdkSubsurface *subsurface;
++  GdkFrameClock *frame_clock;
++  gulong after_paint_id;
++  guint eye_texture;
++  guint blit_frame_buffer;
++  int eye_width;
++  int eye_height;
+ } GtkGLAreaPrivate;
+ 
+ enum {
+@@ -205,6 +223,10 @@ enum {
+ 
+   PROP_AUTO_RENDER,
+ 
++  PROP_STEREO,
++  PROP_STEREO_SHOWN,
++  PROP_STEREO_ERROR,
++
+   LAST_PROP
+ };
+ 
+@@ -220,6 +242,7 @@ enum {
+ 
+ static void gtk_gl_area_allocate_buffers (GtkGLArea *area);
+ static void gtk_gl_area_allocate_texture (GtkGLArea *area);
++static void gtk_gl_area_stereo_fail (GtkGLArea *area, GError *error);
+ 
+ static guint area_signals[LAST_SIGNAL] = { 0, };
+ 
+@@ -257,6 +280,10 @@ G_GNUC_END_IGNORE_DEPRECATIONS
+       gtk_gl_area_set_allowed_apis (self, g_value_get_flags (value));
+       break;
+ 
++    case PROP_STEREO:
++      gtk_gl_area_set_stereo (self, g_value_get_boolean (value));
++      break;
++
+     default:
+       G_OBJECT_WARN_INVALID_PROPERTY_ID (gobject, prop_id, pspec);
+     }
+@@ -302,6 +329,18 @@ G_GNUC_END_IGNORE_DEPRECATIONS
+       g_value_set_flags (value, gtk_gl_area_get_api (GTK_GL_AREA (gobject)));
+       break;
+ 
++    case PROP_STEREO:
++      g_value_set_boolean (value, priv->stereo);
++      break;
++
++    case PROP_STEREO_SHOWN:
++      g_value_set_boolean (value, priv->stereo_shown);
++      break;
++
++    case PROP_STEREO_ERROR:
++      g_value_set_boxed (value, priv->stereo_error);
++      break;
++
+     default:
+       G_OBJECT_WARN_INVALID_PROPERTY_ID (gobject, prop_id, pspec);
+     }
+@@ -547,6 +586,9 @@ gtk_gl_area_allocate_texture (GtkGLArea *area)
+   width = gtk_widget_get_width (widget) * scale;
+   height = gtk_widget_get_height (widget) * scale;
+ 
++  if (priv->stereo_rendering)
++    width *= 2;
++
+   if (gdk_gl_texture_builder_get_width (priv->texture->builder) != width ||
+       gdk_gl_texture_builder_get_height (priv->texture->builder) != height)
+     {
+@@ -556,7 +598,16 @@ gtk_gl_area_allocate_texture (GtkGLArea *area)
+       glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+       glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+ 
+-      if (gdk_gl_context_get_api (priv->context) == GDK_GL_API_GLES)
++      if (priv->stereo_rendering)
++        {
++          /* Both views side by side, each at the size of the area: the
++           * picture is opaque, so a subsurface can lie above or below. */
++          if (gdk_gl_context_get_api (priv->context) == GDK_GL_API_GLES)
++            glTexImage2D (GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
++          else
++            glTexImage2D (GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
++        }
++      else if (gdk_gl_context_get_api (priv->context) == GDK_GL_API_GLES)
+         glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+       else
+         glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+@@ -564,6 +615,55 @@ gtk_gl_area_allocate_texture (GtkGLArea *area)
+       gdk_gl_texture_builder_set_width (priv->texture->builder, width);
+       gdk_gl_texture_builder_set_height (priv->texture->builder, height);
+     }
++
++  if (gdk_gl_context_get_api (priv->context) == GDK_GL_API_GLES)
++    gdk_gl_texture_builder_set_format (priv->texture->builder,
++                                       priv->stereo_rendering ? GDK_MEMORY_R8G8B8X8
++                                                              : GDK_MEMORY_R8G8B8A8_PREMULTIPLIED);
++  else
++    gdk_gl_texture_builder_set_format (priv->texture->builder,
++                                       priv->stereo_rendering ? GDK_MEMORY_B8G8R8X8
++                                                              : GDK_MEMORY_B8G8R8A8_PREMULTIPLIED);
++}
++
++/*
++ * Allocates the texture one view is rendered into. The two views are then
++ * copied side by side into the texture the compositor gets, so the program
++ * renders each view as it renders an area without stereo.
++ */
++static void
++gtk_gl_area_allocate_eye (GtkGLArea *area,
++                          int        width,
++                          int        height)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  if (priv->eye_texture == 0)
++    {
++      glGenTextures (1, &priv->eye_texture);
++      priv->eye_width = 0;
++      priv->eye_height = 0;
++    }
++
++  if (priv->blit_frame_buffer == 0)
++    glGenFramebuffers (1, &priv->blit_frame_buffer);
++
++  if (priv->eye_width != width || priv->eye_height != height)
++    {
++      glBindTexture (GL_TEXTURE_2D, priv->eye_texture);
++      glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
++      glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
++      glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++      glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++
++      if (gdk_gl_context_get_api (priv->context) == GDK_GL_API_GLES)
++        glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
++      else
++        glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
++
++      priv->eye_width = width;
++      priv->eye_height = height;
++    }
+ }
+ 
+ /**
+@@ -597,6 +697,15 @@ gtk_gl_area_attach_buffers (GtkGLArea *area)
+   else if (priv->needs_resize)
+     gtk_gl_area_allocate_texture (area);
+ 
++  if (priv->stereo_rendering)
++    {
++      int scale = gtk_widget_get_scale_factor (GTK_WIDGET (area));
++
++      gtk_gl_area_allocate_eye (area,
++                                gtk_widget_get_width (GTK_WIDGET (area)) * scale,
++                                gtk_widget_get_height (GTK_WIDGET (area)) * scale);
++    }
++
+   if (!priv->have_buffers)
+     gtk_gl_area_ensure_buffers (area);
+   else if (priv->needs_resize)
+@@ -604,7 +713,10 @@ gtk_gl_area_attach_buffers (GtkGLArea *area)
+ 
+   glBindFramebuffer (GL_FRAMEBUFFER, priv->frame_buffer);
+ 
+-  if (priv->texture != NULL)
++  if (priv->stereo_rendering)
++    glFramebufferTexture2D (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
++                            GL_TEXTURE_2D, priv->eye_texture, 0);
++  else if (priv->texture != NULL)
+     glFramebufferTexture2D (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                             GL_TEXTURE_2D, gdk_gl_texture_builder_get_id (priv->texture->builder), 0);
+ 
+@@ -629,6 +741,20 @@ gtk_gl_area_delete_buffers (GtkGLArea *area)
+ 
+   priv->have_buffers = FALSE;
+ 
++  if (priv->eye_texture != 0)
++    {
++      glDeleteTextures (1, &priv->eye_texture);
++      priv->eye_texture = 0;
++      priv->eye_width = 0;
++      priv->eye_height = 0;
++    }
++
++  if (priv->blit_frame_buffer != 0)
++    {
++      glDeleteFramebuffers (1, &priv->blit_frame_buffer);
++      priv->blit_frame_buffer = 0;
++    }
++
+   if (priv->depth_stencil_buffer != 0)
+     {
+       glDeleteRenderbuffers (1, &priv->depth_stencil_buffer);
+@@ -657,6 +783,185 @@ gtk_gl_area_delete_textures (GtkGLArea *area)
+   g_clear_list (&priv->textures, delete_one_texture);
+ }
+ 
++static void
++gtk_gl_area_after_paint (GdkFrameClock *clock,
++                         GtkGLArea     *area)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  if (!priv->stereo_pushed)
++    return;
++
++  priv->stereo_pushed = FALSE;
++
++  if (!priv->stereo_rendering || priv->subsurface == NULL)
++    return;
++
++  if (gdk_subsurface_get_texture (priv->subsurface) == NULL)
++    {
++      /* GSK drew the left view alone, in place, instead of offloading both */
++      gtk_gl_area_stereo_fail (area,
++                               g_error_new_literal (GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                                                    "GTK could not hand the picture to the compositor on a subsurface of its own "
++                                                    "(the area must be fully visible, with no rounded clip, opacity or "
++                                                    "transform that is not a flip or a scale, and the picture must be a dma-buf; "
++                                                    "GDK_DEBUG=offload names the cause)"));
++      return;
++    }
++
++  if (!priv->stereo_shown)
++    {
++      priv->stereo_shown = TRUE;
++      g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_SHOWN]);
++    }
++}
++
++static void
++gtk_gl_area_stereo_release (GtkGLArea *area)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  if (priv->frame_clock != NULL)
++    {
++      g_signal_handler_disconnect (priv->frame_clock, priv->after_paint_id);
++      priv->after_paint_id = 0;
++      g_clear_object (&priv->frame_clock);
++    }
++
++  g_clear_object (&priv->subsurface);
++  priv->stereo_rendering = FALSE;
++  priv->stereo_pushed = FALSE;
++}
++
++static void
++gtk_gl_area_stereo_fail (GtkGLArea *area,
++                         GError    *error)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  if (priv->stereo_error != NULL)
++    {
++      g_error_free (error);
++      return;
++    }
++
++  priv->stereo_error = error;
++
++  g_message ("GtkGLArea %p: the stereo picture cannot be shown per eye, "
++             "the area shows its left view only: %s",
++             area, error->message);
++
++  if (priv->stereo_shown)
++    {
++      priv->stereo_shown = FALSE;
++      g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_SHOWN]);
++    }
++  g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_ERROR]);
++
++  gtk_widget_queue_draw (GTK_WIDGET (area));
++}
++
++/* Decides, for this frame, whether the area renders one view per eye and
++ * hands both to the compositor on a subsurface declared as stereo content.
++ * A stereo area that cannot is told apart from one that did not ask. */
++static void
++gtk_gl_area_prepare_stereo (GtkGLArea *area)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++  GtkWidget *widget = GTK_WIDGET (area);
++  GError *error = NULL;
++
++  priv->stereo_rendering = FALSE;
++
++  if (!priv->stereo || priv->stereo_error != NULL)
++    {
++      if (priv->subsurface != NULL)
++        gtk_gl_area_stereo_release (area);
++      return;
++    }
++
++  if (priv->subsurface == NULL)
++    {
++      priv->subsurface = gdk_surface_create_subsurface (gtk_widget_get_surface (widget));
++      if (priv->subsurface == NULL)
++        {
++          gtk_gl_area_stereo_fail (area,
++                                   g_error_new_literal (GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                                                        "This display has no subsurfaces (GTK offers them on Wayland, "
++                                                        "with wl_subcompositor and wp_viewporter)"));
++          return;
++        }
++
++      if (!gdk_subsurface_set_stereo (priv->subsurface, TRUE, &error))
++        {
++          g_clear_object (&priv->subsurface);
++          gtk_gl_area_stereo_fail (area, error);
++          return;
++        }
++
++      priv->frame_clock = g_object_ref (gtk_widget_get_frame_clock (widget));
++      priv->after_paint_id = g_signal_connect (priv->frame_clock, "after-paint",
++                                               G_CALLBACK (gtk_gl_area_after_paint), area);
++    }
++
++  priv->stereo_rendering = TRUE;
++}
++
++static void
++gtk_gl_area_blit_eye (GtkGLArea    *area,
++                      GtkGLAreaEye  eye,
++                      int           width,
++                      int           height)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++  GLboolean scissor = glIsEnabled (GL_SCISSOR_TEST);
++  int x = eye == GTK_GL_AREA_EYE_RIGHT ? width : 0;
++
++  glBindFramebuffer (GL_DRAW_FRAMEBUFFER, priv->blit_frame_buffer);
++  glFramebufferTexture2D (GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
++                          gdk_gl_texture_builder_get_id (priv->texture->builder), 0);
++  glBindFramebuffer (GL_READ_FRAMEBUFFER, priv->frame_buffer);
++  glReadBuffer (GL_COLOR_ATTACHMENT0);
++
++  glDisable (GL_SCISSOR_TEST);
++  glBlitFramebuffer (0, 0, width, height,
++                     x, 0, x + width, height,
++                     GL_COLOR_BUFFER_BIT, GL_NEAREST);
++  if (scissor)
++    glEnable (GL_SCISSOR_TEST);
++
++  glBindFramebuffer (GL_FRAMEBUFFER, priv->frame_buffer);
++}
++
++static void
++gtk_gl_area_render_views (GtkGLArea *area,
++                          int        width,
++                          int        height)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++  gboolean unused;
++
++  if (priv->stereo_rendering)
++    {
++      GtkGLAreaEye eye;
++
++      for (eye = GTK_GL_AREA_EYE_LEFT; eye <= GTK_GL_AREA_EYE_RIGHT; eye++)
++        {
++          priv->current_eye = eye;
++          glBindFramebuffer (GL_FRAMEBUFFER, priv->frame_buffer);
++          g_signal_emit (area, area_signals[RENDER], 0, priv->context, &unused);
++          gtk_gl_area_blit_eye (area, eye, width, height);
++        }
++    }
++  else
++    {
++      priv->current_eye = priv->stereo ? GTK_GL_AREA_EYE_LEFT : GTK_GL_AREA_EYE_NONE;
++      g_signal_emit (area, area_signals[RENDER], 0, priv->context, &unused);
++    }
++
++  priv->current_eye = GTK_GL_AREA_EYE_NONE;
++}
++
+ static void
+ gtk_gl_area_unrealize (GtkWidget *widget)
+ {
+@@ -677,6 +982,15 @@ gtk_gl_area_unrealize (GtkWidget *widget)
+   g_clear_object (&priv->context);
+   g_clear_error (&priv->error);
+ 
++  gtk_gl_area_stereo_release (area);
++  if (priv->stereo_shown || priv->stereo_error != NULL)
++    {
++      priv->stereo_shown = FALSE;
++      g_clear_error (&priv->stereo_error);
++      g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_SHOWN]);
++      g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_ERROR]);
++    }
++
+   GTK_WIDGET_CLASS (gtk_gl_area_parent_class)->unrealize (widget);
+ }
+ 
+@@ -758,7 +1072,6 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+ {
+   GtkGLArea *area = GTK_GL_AREA (widget);
+   GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
+-  gboolean unused;
+   int w, h, scale;
+   GLenum status;
+ 
+@@ -783,6 +1096,8 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+ 
+   gtk_gl_area_make_current (area);
+ 
++  gtk_gl_area_prepare_stereo (area);
++
+   gtk_gl_area_attach_buffers (area);
+ 
+  if (priv->has_depth_buffer)
+@@ -806,7 +1121,7 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+               priv->needs_resize = FALSE;
+             }
+ 
+-          g_signal_emit (area, area_signals[RENDER], 0, priv->context, &unused);
++          gtk_gl_area_render_views (area, w, h);
+         }
+ 
+       priv->needs_render = FALSE;
+@@ -845,18 +1160,51 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+             gdk_dmabuf_close_fds (&dmabuf);
+         }
+ 
+-      /* Our texture is rendered by OpenGL, so it is upside down,
+-       * compared to what GSK expects, so flip it back.
+-       */
+-      gtk_snapshot_save (snapshot);
+-      gtk_snapshot_translate (snapshot, &GRAPHENE_POINT_INIT (0, gtk_widget_get_height (widget)));
+-      gtk_snapshot_scale (snapshot, 1, -1);
+-      gtk_snapshot_append_texture (snapshot,
+-                                   holder,
+-                                   &GRAPHENE_RECT_INIT (0, 0,
+-                                                        gtk_widget_get_width (widget),
+-                                                        gtk_widget_get_height (widget)));
+-      gtk_snapshot_restore (snapshot);
++      if (priv->stereo_rendering && holder == texture->gl_texture)
++        gtk_gl_area_stereo_fail (area,
++                                 g_error_new_literal (GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                                                      "The OpenGL context cannot export its picture as a dma-buf, "
++                                                      "which a subsurface needs"));
++
++      if (priv->stereo_rendering)
++        {
++          /* The texture holds both views, twice the width of the area. The
++           * subsurface shows all of it, one view wide; where GTK cannot
++           * offload it, the clip leaves the left view alone, drawn as an
++           * area without stereo draws it. */
++          priv->stereo_pushed = TRUE;
++          gtk_snapshot_push_subsurface (snapshot, priv->subsurface);
++          gtk_snapshot_save (snapshot);
++          gtk_snapshot_translate (snapshot, &GRAPHENE_POINT_INIT (0, gtk_widget_get_height (widget)));
++          gtk_snapshot_scale (snapshot, 1, -1);
++          gtk_snapshot_push_clip (snapshot,
++                                  &GRAPHENE_RECT_INIT (0, 0,
++                                                       gtk_widget_get_width (widget),
++                                                       gtk_widget_get_height (widget)));
++          gtk_snapshot_append_texture (snapshot,
++                                       holder,
++                                       &GRAPHENE_RECT_INIT (0, 0,
++                                                            2 * gtk_widget_get_width (widget),
++                                                            gtk_widget_get_height (widget)));
++          gtk_snapshot_pop (snapshot);
++          gtk_snapshot_restore (snapshot);
++          gtk_snapshot_pop (snapshot);
++        }
++      else
++        {
++          /* Our texture is rendered by OpenGL, so it is upside down,
++           * compared to what GSK expects, so flip it back.
++           */
++          gtk_snapshot_save (snapshot);
++          gtk_snapshot_translate (snapshot, &GRAPHENE_POINT_INIT (0, gtk_widget_get_height (widget)));
++          gtk_snapshot_scale (snapshot, 1, -1);
++          gtk_snapshot_append_texture (snapshot,
++                                       holder,
++                                       &GRAPHENE_RECT_INIT (0, 0,
++                                                            gtk_widget_get_width (widget),
++                                                            gtk_widget_get_height (widget)));
++          gtk_snapshot_restore (snapshot);
++        }
+ 
+       g_object_unref (holder);
+     }
+@@ -878,6 +1226,16 @@ create_context_accumulator (GSignalInvocationHint *ihint,
+   return g_value_get_object (handler_return) == NULL;
+ }
+ 
++static void
++gtk_gl_area_finalize (GObject *object)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (GTK_GL_AREA (object));
++
++  g_clear_error (&priv->stereo_error);
++
++  G_OBJECT_CLASS (gtk_gl_area_parent_class)->finalize (object);
++}
++
+ static void
+ gtk_gl_area_class_init (GtkGLAreaClass *klass)
+ {
+@@ -1003,6 +1361,76 @@ gtk_gl_area_class_init (GtkGLAreaClass *klass)
+                         G_PARAM_STATIC_NAME |
+                         G_PARAM_EXPLICIT_NOTIFY);
+ 
++  /**
++   * GtkGLArea:stereo:
++   *
++   * If set to %TRUE the widget renders one view for each eye and hands
++   * both to the compositor, side by side on a surface of their own.
++   *
++   * The [signal@Gtk.GLArea::render] signal is then emitted twice for each
++   * frame, the left view first, and [method@Gtk.GLArea.get_current_eye]
++   * tells which view the handler draws. Each view is drawn into a
++   * framebuffer of the area's size, exactly as for an area without stereo.
++   * The picture handed over is opaque: the alpha channel of the views is
++   * not kept.
++   *
++   * The rest of the window stays an ordinary window, drawn once and seen
++   * the same by both eyes. The stereo picture lies on a subsurface, so it
++   * needs a compositor that announces `kde_stereo_content_manager_v1`
++   * (version 2 or later), a display with subsurfaces (Wayland), and an
++   * area that GTK can offload as [class@Gtk.GraphicsOffload] does: fully
++   * visible, with no rounded clip or opacity over it, and an OpenGL
++   * context that can export its picture as a dma-buf.
++   *
++   * If the picture cannot be shown per eye, the area says so: it logs
++   * the reason once, sets [property@Gtk.GLArea:stereo-error] and keeps
++   * [property@Gtk.GLArea:stereo-shown] at %FALSE. It then renders the
++   * left view alone, once for each frame, as an area without stereo
++   * draws, with [method@Gtk.GLArea.get_current_eye] returning
++   * %GTK_GL_AREA_EYE_LEFT. It never shows the two views side by side in
++   * the area's place.
++   *
++   * Since: 4.24
++   */
++  obj_props[PROP_STEREO] =
++    g_param_spec_boolean ("stereo", NULL, NULL,
++                          FALSE,
++                          G_PARAM_READWRITE | G_PARAM_STATIC_NAME |
++                          G_PARAM_EXPLICIT_NOTIFY);
++
++  /**
++   * GtkGLArea:stereo-shown:
++   *
++   * Whether the compositor has been handed the two views and shows them
++   * per eye.
++   *
++   * It turns %TRUE after the first frame that was handed over, and stays
++   * %FALSE while [property@Gtk.GLArea:stereo] is %FALSE or when
++   * [property@Gtk.GLArea:stereo-error] is set.
++   *
++   * Since: 4.24
++   */
++  obj_props[PROP_STEREO_SHOWN] =
++    g_param_spec_boolean ("stereo-shown", NULL, NULL,
++                          FALSE,
++                          G_PARAM_READABLE | G_PARAM_STATIC_NAME |
++                          G_PARAM_EXPLICIT_NOTIFY);
++
++  /**
++   * GtkGLArea:stereo-error:
++   *
++   * Why the area, though [property@Gtk.GLArea:stereo] is set, cannot
++   * show its views per eye. It is %NULL otherwise.
++   *
++   * Since: 4.24
++   */
++  obj_props[PROP_STEREO_ERROR] =
++    g_param_spec_boxed ("stereo-error", NULL, NULL,
++                        G_TYPE_ERROR,
++                        G_PARAM_READABLE | G_PARAM_STATIC_NAME |
++                        G_PARAM_EXPLICIT_NOTIFY);
++
++  gobject_class->finalize = gtk_gl_area_finalize;
+   gobject_class->set_property = gtk_gl_area_set_property;
+   gobject_class->get_property = gtk_gl_area_get_property;
+   gobject_class->notify = gtk_gl_area_notify;
+@@ -1571,3 +1999,144 @@ gtk_gl_area_make_current (GtkGLArea *area)
+   if (priv->context != NULL)
+     gdk_gl_context_make_current (priv->context);
+ }
++
++/**
++ * gtk_gl_area_set_stereo:
++ * @area: a `GtkGLArea`
++ * @stereo: whether to render one view for each eye
++ *
++ * Sets whether the area renders one view for each eye.
++ *
++ * See [property@Gtk.GLArea:stereo].
++ *
++ * Since: 4.24
++ */
++void
++gtk_gl_area_set_stereo (GtkGLArea *area,
++                        gboolean   stereo)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_if_fail (GTK_IS_GL_AREA (area));
++
++  stereo = !!stereo;
++
++  if (priv->stereo == stereo)
++    return;
++
++  priv->stereo = stereo;
++
++  gtk_gl_area_stereo_release (area);
++
++  if (priv->stereo_shown || priv->stereo_error != NULL)
++    {
++      priv->stereo_shown = FALSE;
++      g_clear_error (&priv->stereo_error);
++      g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_SHOWN]);
++      g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_ERROR]);
++    }
++
++  if (gtk_widget_get_realized (GTK_WIDGET (area)) && priv->context != NULL)
++    {
++      gtk_gl_area_make_current (area);
++      gtk_gl_area_delete_buffers (area);
++      gtk_gl_area_delete_textures (area);
++    }
++
++  priv->needs_resize = TRUE;
++  priv->needs_render = TRUE;
++
++  g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO]);
++  gtk_widget_queue_draw (GTK_WIDGET (area));
++}
++
++/**
++ * gtk_gl_area_get_stereo:
++ * @area: a `GtkGLArea`
++ *
++ * Returns whether the area is set to render one view for each eye.
++ *
++ * See [property@Gtk.GLArea:stereo].
++ *
++ * Returns: %TRUE if the area asks for stereo
++ *
++ * Since: 4.24
++ */
++gboolean
++gtk_gl_area_get_stereo (GtkGLArea *area)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_val_if_fail (GTK_IS_GL_AREA (area), FALSE);
++
++  return priv->stereo;
++}
++
++/**
++ * gtk_gl_area_get_stereo_shown:
++ * @area: a `GtkGLArea`
++ *
++ * Returns whether the two views are shown per eye.
++ *
++ * See [property@Gtk.GLArea:stereo-shown].
++ *
++ * Returns: %TRUE if the compositor shows the views per eye
++ *
++ * Since: 4.24
++ */
++gboolean
++gtk_gl_area_get_stereo_shown (GtkGLArea *area)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_val_if_fail (GTK_IS_GL_AREA (area), FALSE);
++
++  return priv->stereo_shown;
++}
++
++/**
++ * gtk_gl_area_get_stereo_error:
++ * @area: a `GtkGLArea`
++ *
++ * Gets why the area cannot show its views per eye.
++ *
++ * See [property@Gtk.GLArea:stereo-error].
++ *
++ * Returns: (transfer none) (nullable): the reason, or %NULL
++ *
++ * Since: 4.24
++ */
++const GError *
++gtk_gl_area_get_stereo_error (GtkGLArea *area)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_val_if_fail (GTK_IS_GL_AREA (area), NULL);
++
++  return priv->stereo_error;
++}
++
++/**
++ * gtk_gl_area_get_current_eye:
++ * @area: a `GtkGLArea`
++ *
++ * Gets the eye whose view the [signal@Gtk.GLArea::render] handler is
++ * drawing.
++ *
++ * Outside of the signal, and for an area that does not ask for stereo,
++ * it is %GTK_GL_AREA_EYE_NONE. For an area that asks for stereo but
++ * cannot show it per eye, it is %GTK_GL_AREA_EYE_LEFT.
++ *
++ * Returns: the eye
++ *
++ * Since: 4.24
++ */
++GtkGLAreaEye
++gtk_gl_area_get_current_eye (GtkGLArea *area)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  g_return_val_if_fail (GTK_IS_GL_AREA (area), GTK_GL_AREA_EYE_NONE);
++
++  return priv->current_eye;
++}
+diff --git a/gtk/gtkglarea.h b/gtk/gtkglarea.h
+index bb26bce..05fd080 100644
+--- a/gtk/gtkglarea.h
++++ b/gtk/gtkglarea.h
+@@ -38,6 +38,25 @@ G_BEGIN_DECLS
+ typedef struct _GtkGLArea               GtkGLArea;
+ typedef struct _GtkGLAreaClass          GtkGLAreaClass;
+ 
++/**
++ * GtkGLAreaEye:
++ * @GTK_GL_AREA_EYE_NONE: not rendering a view for an eye: outside of the
++ *   [signal@Gtk.GLArea::render] signal, or the area does not ask for stereo
++ * @GTK_GL_AREA_EYE_LEFT: the view for the left eye is being rendered
++ * @GTK_GL_AREA_EYE_RIGHT: the view for the right eye is being rendered
++ *
++ * The eye a `GtkGLArea` renders for during its [signal@Gtk.GLArea::render]
++ * signal.
++ *
++ * Since: 4.24
++ */
++typedef enum
++{
++  GTK_GL_AREA_EYE_NONE,
++  GTK_GL_AREA_EYE_LEFT,
++  GTK_GL_AREA_EYE_RIGHT
++} GtkGLAreaEye;
++
+ struct _GtkGLArea
+ {
+   /*< private >*/
+@@ -124,6 +143,18 @@ void            gtk_gl_area_make_current                (GtkGLArea    *area);
+ GDK_AVAILABLE_IN_ALL
+ void            gtk_gl_area_attach_buffers              (GtkGLArea    *area);
+ 
++GDK_AVAILABLE_IN_ALL
++void            gtk_gl_area_set_stereo                  (GtkGLArea    *area,
++                                                         gboolean      stereo);
++GDK_AVAILABLE_IN_ALL
++gboolean        gtk_gl_area_get_stereo                  (GtkGLArea    *area);
++GDK_AVAILABLE_IN_ALL
++gboolean        gtk_gl_area_get_stereo_shown            (GtkGLArea    *area);
++GDK_AVAILABLE_IN_ALL
++const GError *  gtk_gl_area_get_stereo_error            (GtkGLArea    *area);
++GDK_AVAILABLE_IN_ALL
++GtkGLAreaEye    gtk_gl_area_get_current_eye             (GtkGLArea    *area);
++
+ GDK_AVAILABLE_IN_ALL
+ void            gtk_gl_area_set_error                   (GtkGLArea    *area,
+                                                          const GError *error);
+diff --git a/testsuite/gtk/glarea.c b/testsuite/gtk/glarea.c
+new file mode 100644
+index 0000000..c318570
+--- /dev/null
++++ b/testsuite/gtk/glarea.c
+@@ -0,0 +1,164 @@
++/* GtkGLArea: the stereo property, the eye getter, and the honest failure
++ * when the views cannot be shown per eye.
++ *
++ * The test displays have no compositor that takes stereo content, so a stereo
++ * area must say so: stereo-shown stays FALSE, stereo-error is set, and the area
++ * renders its left view alone, once for each frame.
++ */
++
++#include <gtk/gtk.h>
++
++typedef struct
++{
++  int renders;
++  GtkGLAreaEye eyes[4];
++  gboolean timed_out;
++} RenderLog;
++
++static gboolean
++render_cb (GtkGLArea *area,
++           GdkGLContext *context,
++           RenderLog *log)
++{
++  if (log->renders < G_N_ELEMENTS (log->eyes))
++    log->eyes[log->renders] = gtk_gl_area_get_current_eye (area);
++  log->renders++;
++
++  return TRUE;
++}
++
++static gboolean
++timeout_cb (gpointer data)
++{
++  RenderLog *log = data;
++
++  log->timed_out = TRUE;
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++count_notify (GObject *object, GParamSpec *pspec, gpointer data)
++{
++  int *count = data;
++
++  (*count)++;
++}
++
++static void
++test_stereo_property (void)
++{
++  GtkWidget *area = gtk_gl_area_new ();
++  int notified = 0;
++  gboolean shown = TRUE;
++  GError *error = NULL;
++
++  g_object_ref_sink (area);
++
++  g_assert_false (gtk_gl_area_get_stereo (GTK_GL_AREA (area)));
++  g_assert_false (gtk_gl_area_get_stereo_shown (GTK_GL_AREA (area)));
++  g_assert_null (gtk_gl_area_get_stereo_error (GTK_GL_AREA (area)));
++  g_assert_cmpint (gtk_gl_area_get_current_eye (GTK_GL_AREA (area)), ==, GTK_GL_AREA_EYE_NONE);
++
++  g_signal_connect (area, "notify::stereo", G_CALLBACK (count_notify), &notified);
++
++  gtk_gl_area_set_stereo (GTK_GL_AREA (area), TRUE);
++  g_assert_true (gtk_gl_area_get_stereo (GTK_GL_AREA (area)));
++  g_assert_cmpint (notified, ==, 1);
++
++  gtk_gl_area_set_stereo (GTK_GL_AREA (area), TRUE);
++  g_assert_cmpint (notified, ==, 1);
++
++  g_object_get (area, "stereo-shown", &shown, "stereo-error", &error, NULL);
++  g_assert_false (shown);
++  g_assert_null (error);
++
++  g_object_set (area, "stereo", FALSE, NULL);
++  g_assert_false (gtk_gl_area_get_stereo (GTK_GL_AREA (area)));
++  g_assert_cmpint (notified, ==, 2);
++
++  g_object_unref (area);
++}
++
++static void
++test_stereo_unavailable (void)
++{
++  GtkWidget *window = gtk_window_new ();
++  GtkWidget *area = gtk_gl_area_new ();
++  RenderLog log = { 0, };
++  guint timeout;
++
++  gtk_widget_set_size_request (area, 64, 48);
++  gtk_window_set_child (GTK_WINDOW (window), area);
++  g_signal_connect (area, "render", G_CALLBACK (render_cb), &log);
++  gtk_gl_area_set_stereo (GTK_GL_AREA (area), TRUE);
++
++  gtk_window_present (GTK_WINDOW (window));
++
++  timeout = g_timeout_add_seconds (10, timeout_cb, &log);
++  while (log.renders == 0 && !log.timed_out &&
++         gtk_gl_area_get_error (GTK_GL_AREA (area)) == NULL)
++    g_main_context_iteration (NULL, TRUE);
++  g_source_remove (timeout);
++
++  if (gtk_gl_area_get_error (GTK_GL_AREA (area)) != NULL)
++    {
++      g_test_skip ("No OpenGL context");
++      gtk_window_destroy (GTK_WINDOW (window));
++      return;
++    }
++
++  g_assert_false (log.timed_out);
++  g_assert_cmpint (log.renders, >=, 1);
++
++  /* the stereo views were rendered at most once, and only if GTK could try
++   * to offload them: whatever came, the area then renders the left view alone */
++  g_assert_cmpint (log.eyes[0], ==, GTK_GL_AREA_EYE_LEFT);
++
++  /* a frame later the area knows it cannot show the views per eye */
++  timeout = g_timeout_add_seconds (10, timeout_cb, &log);
++  while (gtk_gl_area_get_stereo_error (GTK_GL_AREA (area)) == NULL && !log.timed_out)
++    g_main_context_iteration (NULL, TRUE);
++  g_source_remove (timeout);
++
++  g_assert_false (log.timed_out);
++  g_assert_false (gtk_gl_area_get_stereo_shown (GTK_GL_AREA (area)));
++  g_assert_nonnull (gtk_gl_area_get_stereo_error (GTK_GL_AREA (area)));
++  g_assert_error ((GError *) gtk_gl_area_get_stereo_error (GTK_GL_AREA (area)),
++                  GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE);
++
++  /* the area keeps drawing, the left view, never both side by side */
++  log.renders = 0;
++  gtk_widget_queue_draw (area);
++  timeout = g_timeout_add_seconds (10, timeout_cb, &log);
++  while (log.renders == 0 && !log.timed_out)
++    g_main_context_iteration (NULL, TRUE);
++  g_source_remove (timeout);
++  g_assert_cmpint (log.renders, ==, 1);
++  g_assert_cmpint (log.eyes[0], ==, GTK_GL_AREA_EYE_LEFT);
++
++  /* without the request, no eye and no error */
++  gtk_gl_area_set_stereo (GTK_GL_AREA (area), FALSE);
++  g_assert_null (gtk_gl_area_get_stereo_error (GTK_GL_AREA (area)));
++  log.renders = 0;
++  gtk_widget_queue_draw (area);
++  timeout = g_timeout_add_seconds (10, timeout_cb, &log);
++  while (log.renders == 0 && !log.timed_out)
++    g_main_context_iteration (NULL, TRUE);
++  g_source_remove (timeout);
++  g_assert_cmpint (log.renders, ==, 1);
++  g_assert_cmpint (log.eyes[0], ==, GTK_GL_AREA_EYE_NONE);
++
++  gtk_window_destroy (GTK_WINDOW (window));
++}
++
++int
++main (int argc, char *argv[])
++{
++  gtk_test_init (&argc, &argv);
++
++  g_test_add_func ("/glarea/stereo-property", test_stereo_property);
++  g_test_add_func ("/glarea/stereo-unavailable", test_stereo_unavailable);
++
++  return g_test_run ();
++}
+diff --git a/testsuite/gtk/meson.build b/testsuite/gtk/meson.build
+index db4dfc6..e0db056 100644
+--- a/testsuite/gtk/meson.build
++++ b/testsuite/gtk/meson.build
+@@ -54,6 +54,7 @@ tests = [
+   { 'name': 'floating' },
+   { 'name': 'flowbox' },
+   { 'name': 'gestures' },
++  { 'name': 'glarea' },
+   { 'name': 'grid' },
+   { 'name': 'grid-layout' },
+   { 'name': 'icontheme' },
