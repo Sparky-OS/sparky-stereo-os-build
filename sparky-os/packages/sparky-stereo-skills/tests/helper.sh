@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/01
+# Last update 2026/11/07
 # Checks sparky-stereo-skills as installed (or the one named by HELPER), in a throwaway home: what it links, what it
 # leaves alone, what it skips, how it follows an upgrade, what it removes, its archive, its languages and its refusal
 # to run as root. Run as an ordinary user inside a container; prints ok or FAIL per check and exits 1 on any FAIL.
@@ -138,4 +138,13 @@ REF=$(dirname "$SYSTEM")
 check "find ranks the skill for a symptom first, with the context command to run next" 'out=$(SPARKY_STEREO_REFERENCE=$REF "$HELPER" find --limit 1 an apt pin that ignores i386 2>&1); grep -q "^1\. edition-packaging " <<<"$out" && grep -q "Next: sparky-stereo-skills context edition-packaging" <<<"$out" && ! grep -q "^2\. " <<<"$out"'
 check "find without words is refused" '! SPARKY_STEREO_REFERENCE=$REF "$HELPER" find >/dev/null 2>&1'
 check "the help names find in all nine languages" '(for l in en_US pl_PL pt_BR fr_FR de_DE ja_JP ko_KR zh_CN zh_TW; do out=$(LANG=$l.UTF-8 "$HELPER" --help); grep -q "^  find \[--limit N\] " <<<"$out" || exit 1; done)'
+# reviewed wording (ORDER 447): the same approval setting has one word inside a language, and a Japanese help line that reads
+STRINGS=${SPARKY_STEREO_SKILLS_STRINGS:-/usr/share/sparky/sparky-stereo-skills}
+# shellcheck disable=SC2329 # called through check's eval
+word_in() { local code=$1 word=$2 a b; a=$(. "$STRINGS/$code"; printf '%s' "$LOCAL30"); b=$(. "$STRINGS/$code"; printf '%s' "$LOCAL32"); grep -q -- "$word" <<<"$a" && grep -q -- "$word" <<<"$b"; }
+check "Polish says zatwierdzenie (any case ending) in both approval labels (LOCAL30 and LOCAL32)" 'word_in pl zatwierdzeni'
+check "Polish no longer says zgoda for the approval" '! (. "$STRINGS/pl"; grep -q zgod <<<"$LOCAL30")'
+check "French says approbation in both approval labels (LOCAL30 and LOCAL32)" 'word_in fr approbation'
+check "French no longer says accord for the approval" '! (. "$STRINGS/fr"; grep -q accord <<<"$LOCAL30")'
+check "Japanese help line: the registration is made and cancelled with its own verbs" 'out=$(LANG=ja_JP.UTF-8 "$HELPER" --help); grep -q "サーバーをアシスタントに登録したり、登録を解除したり、状態を表示したり、コマンドを誰が承認するかを選んだりします" <<<"$out" && ! grep -q "登録・削除" <<<"$out"'
 exit $fail
