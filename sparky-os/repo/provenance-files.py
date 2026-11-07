@@ -5,7 +5,8 @@
 # provenance.sh names them in the copyright file after Debian's own debian/* paragraph. Credit goes to whoever wrote the work, so
 # a patch is ours only when its header says so:
 #   - it has a From: or Author: line with Daniel's address, and
-#   - it has no DEP-3 Origin: of upstream, backport or vendor (a carried commit stays its author's, whoever carries it).
+#   - it has no DEP-3 Origin: of upstream or backport (a carried commit stays its author's, whoever carries it); "vendor" means a
+#     distribution made it, so it is ours only by the From:/Author: line, like a patch with no Origin:.
 # A patch with no From:, Author: or Origin: line stops the run and is named; nothing is guessed.
 # Usage: provenance-files.py SOURCE_ROOT PATTERN...   (patterns are globs of file names under debian/patches)
 import fnmatch
@@ -14,7 +15,7 @@ import sys
 from pathlib import Path
 
 MINE = {'capitain_jack@yahoo.com'}
-CARRIED = ('upstream', 'backport', 'vendor')
+CARRIED = ('upstream', 'backport')
 END = re.compile(r'^(---|Index: |diff |@@ |\+\+\+ )')
 
 

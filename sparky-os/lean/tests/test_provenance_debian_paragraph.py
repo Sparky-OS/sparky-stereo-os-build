@@ -235,6 +235,17 @@ class PatchHeaders(unittest.TestCase):
         self.assertIn('s42-0002-bare.patch', r.stderr)
         self.assertFalse((root / 'debian/sparky-provenance-files').exists())
 
+    def test_a_vendor_patch_is_ours_only_when_daniel_wrote_it(self):
+        # DEP-3's "vendor" is a patch made by a distribution: ours when the header names Daniel, another vendor's otherwise
+        ours = 'From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>\nOrigin: vendor\nForwarded: no\nSubject: ours\n\n---\n a | 1 +\n'
+        theirs = 'Author: Another Vendor <vendor@example.org>\nOrigin: vendor, https://example.org/v/1\nSubject: theirs\n\n---\n a | 1 +\n'
+        root = self.tree(**{'s47-0004-ours-vendor.patch': ours, 's47-0005-their-vendor.patch': theirs})
+        r = self.run_helper(root, 's??-????-*.patch')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        names = (root / 'debian/sparky-provenance-files').read_text()
+        self.assertIn('debian/patches/s47-0004-ours-vendor.patch', names)
+        self.assertNotIn('s47-0005', names)
+
     def test_a_pattern_that_matches_no_patch_stops_the_run(self):
         root = self.tree(**{'s42-0001-ours.patch': self.OURS_PATCH})
         self.assertNotEqual(self.run_helper(root, 'x*.patch').returncode, 0)
