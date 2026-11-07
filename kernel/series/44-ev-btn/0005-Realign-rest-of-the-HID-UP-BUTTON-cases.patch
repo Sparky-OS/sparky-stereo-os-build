@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tomasz Pakuła <tomasz.pakula.oficjalny@gmail.com>
+Date: Sun, 4 Jan 2026 21:31:40 +0000
+Subject: Input: Realign rest of the HID_UP_BUTTON cases
+
+The switch statement here had too much indentation.
+
+Signed-off-by: Tomasz Pakuła <tomasz.pakula.oficjalny@gmail.com>
+
+[ORDER 15: carried unchanged from Tomasz Pakuła's "[RFC PATCH n/6] Input: New EV_BTN event for generic buttons", linux-input and LKML, 2026-01-04 (the newest posted version; no v2 by 2026-11-06, not in torvalds/linux master of 2026-11-06).
+Link: https://lore.kernel.org/all/20260104213132.163904-1-tomasz.pakula.oficjalny@gmail.com/
+Archive copy of this patch: https://lkml.iu.edu/2601.0/01922.html
+Review so far: Benjamin Tissoires 2026-01-08 asks for a different shape of patches 3 and 4 (map the HID Button usage page to EV_BTN directly, EV_BTN only for that page, keep the existing EV_KEY mapping without the upper bound); Peter Hutterer 2026-01-08 and Randy Dunlap 2026-01-04 (documentation wording of patch 1); Ivan Gorinov 2026-01-07 (EVIOCGKEY-like read of the initial state). The author has not posted a revision; this group is the text as posted and is replaced by the author's next version when it is posted.
+Applies to v7.3.1 without change of any hunk.
+Drop this group when the series, in the author's or the maintainers' final form, is in the release this kernel moves to.]
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ drivers/hid/hid-input.c | 30 +++++++++++++++---------------
+ 1 file changed, 15 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/hid/hid-input.c b/drivers/hid/hid-input.c
+index 1c11077b1577..9542829de234 100644
+--- a/drivers/hid/hid-input.c
++++ b/drivers/hid/hid-input.c
+@@ -770,22 +770,22 @@ static void hidinput_configure_usage(struct hid_input *hidinput, struct hid_fiel
+ 				code = KEY_RESERVED;
+ 			break;
+ 		case HID_GD_GAMEPAD:
+-				if (code <= 0xf)
+-					code += BTN_GAMEPAD;
+-				else
+-					code += BTN_TRIGGER_HAPPY - 0x10;
+-				break;
++			if (code <= 0xf)
++				code += BTN_GAMEPAD;
++			else
++				code += BTN_TRIGGER_HAPPY - 0x10;
++			break;
+ 		case HID_CP_CONSUMER_CONTROL:
+-				if (hidinput_field_in_collection(device, field,
+-								 HID_COLLECTION_NAMED_ARRAY,
+-								 HID_CP_PROGRAMMABLEBUTTONS)) {
+-					if (code <= 0x1d)
+-						code += KEY_MACRO1;
+-					else
+-						code += BTN_TRIGGER_HAPPY - 0x1e;
+-					break;
+-				}
+-				fallthrough;
++			if (hidinput_field_in_collection(device, field,
++							 HID_COLLECTION_NAMED_ARRAY,
++							 HID_CP_PROGRAMMABLEBUTTONS)) {
++				if (code <= 0x1d)
++					code += KEY_MACRO1;
++				else
++					code += BTN_TRIGGER_HAPPY - 0x1e;
++				break;
++			}
++			fallthrough;
+ 		default:
+ 			switch (field->physical) {
+ 			case HID_GD_MOUSE:
+-- 
+2.52.0
