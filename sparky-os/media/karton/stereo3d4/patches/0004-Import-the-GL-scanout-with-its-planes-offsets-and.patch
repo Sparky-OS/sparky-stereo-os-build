@@ -1,0 +1,306 @@
+Description: Import the GL scanout with its planes, offsets and modifier
+ .
+ Karton read the scanout through the single-plane API, which carries no
+ modifier, and built the EGL image from the stride alone. A driver that
+ tiles its buffers (NVIDIA's) then receives a buffer it reads as
+ linear, and the guest's picture never shows.
+ .
+ Use spice_display_channel_get_gl_scanout2() and build the EGL
+ attribute list the way spice-gtk's own EGL path does: every plane with
+ its descriptor, pitch, offset and the buffer's modifier. Clear stale
+ GL errors before binding the image so the check covers only the bind.
+ .
+ An import that fails now says so once per scanout (size, fourcc,
+ modifier, planes, and whether Qt gave an EGL display) instead of
+ leaving a blank view with a debug line.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other
+Forwarded: no
+Last-Update: 2026-11-07
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ src/glscanoutrenderer.cpp | 136 ++++++++++++++++++++++++++------------
+ src/glscanoutrenderer.h   |   8 ++-
+ 2 files changed, 98 insertions(+), 46 deletions(-)
+
+diff --git a/src/glscanoutrenderer.cpp b/src/glscanoutrenderer.cpp
+index 9f2ead8..a52a763 100644
+--- a/src/glscanoutrenderer.cpp
++++ b/src/glscanoutrenderer.cpp
+@@ -14,6 +14,9 @@
+ 
+ #include "karton_debug.h"
+ 
++// DRM_FORMAT_MOD_INVALID of <drm_fourcc.h>: the buffer has no modifier to tell the driver
++static constexpr quint64 s_modifierInvalid = 0x00ffffffffffffffULL;
++
+ GlScanoutRenderer::~GlScanoutRenderer()
+ {
+     detach();
+@@ -29,7 +32,7 @@ void GlScanoutRenderer::attach(SpiceDisplayChannel *channel)
+     attachStereo(channel);
+     // TODO: Might need to check if gl is enabled. Domains created by virt-manager are not accel3d by default.
+ 
+-    if (auto scanout = spice_display_channel_get_gl_scanout(channel)) {
++    if (auto scanout = spice_display_channel_get_gl_scanout2(channel)) {
+         handleGlScanout(scanout);
+     }
+ }
+@@ -67,31 +70,46 @@ void GlScanoutRenderer::gl_scanout_notify_callback(GObject *object, GParamSpec *
+     Q_UNUSED(pspec);
+ 
+     auto *self = static_cast<GlScanoutRenderer *>(user_data);
+-    if (auto scanout = spice_display_channel_get_gl_scanout(SPICE_DISPLAY_CHANNEL(object))) {
++    if (auto scanout = spice_display_channel_get_gl_scanout2(SPICE_DISPLAY_CHANNEL(object))) {
+         self->handleGlScanout(scanout);
+     }
+ }
+ 
+-void GlScanoutRenderer::handleGlScanout(const SpiceGlScanout *scanout)
++void GlScanoutRenderer::closeScanoutFds()
++{
++    for (auto &fd : m_scanout.fd) {
++        if (fd >= 0) {
++            close(fd);
++        }
++        fd = -1;
++    }
++}
++
++void GlScanoutRenderer::handleGlScanout(const SpiceGlScanout2 *scanout)
+ {
+     bool sizeChanged = false;
+ 
+     {
+         QMutexLocker locker(&m_scanoutLock);
+ 
+-        if (m_hasScanout && m_scanout.fd >= 0) {
+-            close(m_scanout.fd);
+-            m_scanout.fd = -1;
+-        }
++        closeScanoutFds();
+ 
++        m_importWarned = false;
+         m_scanout = *scanout; // struct copy
+ 
+-        // duplicate the file descriptor if exists
+-        // we will be using the duplicate, and the original is freed by SPICE (gl_draw_done).
+-        if (scanout->fd >= 0) {
+-            m_scanout.fd = dup(scanout->fd);
+-            if (m_scanout.fd < 0) {
++        // duplicate the file descriptors if they exist
++        // we will be using the duplicates, and the originals are freed by SPICE (gl_draw_done).
++        for (guint i = 0; i < G_N_ELEMENTS(m_scanout.fd); ++i) {
++            m_scanout.fd[i] = -1;
++        }
++        for (guint i = 0; i < scanout->num_planes && i < G_N_ELEMENTS(m_scanout.fd); ++i) {
++            if (scanout->fd[i] < 0) {
++                continue;
++            }
++            m_scanout.fd[i] = dup(scanout->fd[i]);
++            if (m_scanout.fd[i] < 0) {
+                 qCWarning(KARTON_DEBUG) << "Failed to duplicate scanout FD";
++                closeScanoutFds();
+                 return;
+             }
+         }
+@@ -110,28 +128,28 @@ void GlScanoutRenderer::handleGlScanout(const SpiceGlScanout *scanout)
+     Q_EMIT frameReady();
+ }
+ 
+-void GlScanoutRenderer::createTextureFromScanout(const SpiceGlScanout *scanout)
++bool GlScanoutRenderer::createTextureFromScanout(const SpiceGlScanout2 *scanout)
+ {
+     qCDebug(KARTON_DEBUG) << "=== createTextureFromScanout()";
+-    qCDebug(KARTON_DEBUG) << "FD:" << scanout->fd;
++    qCDebug(KARTON_DEBUG) << "FD:" << scanout->fd[0];
+     qCDebug(KARTON_DEBUG) << "Size:" << scanout->width << "x" << scanout->height;
+     qCDebug(KARTON_DEBUG) << "Format:" << QStringLiteral("0x%1").arg(scanout->format, 0, 16);
+-    qCDebug(KARTON_DEBUG) << "Stride:" << scanout->stride;
++    qCDebug(KARTON_DEBUG) << "Stride:" << scanout->stride[0] << "Modifier:" << QStringLiteral("0x%1").arg(scanout->modifier, 0, 16);
+ 
+-    if (scanout->fd == -1) {
+-        return;
++    if (scanout->fd[0] == -1 || scanout->num_planes == 0 || scanout->num_planes > 4) {
++        return false;
+     }
+ 
+     QOpenGLContext *context = QOpenGLContext::currentContext();
+     if (!context) {
+         qCDebug(KARTON_DEBUG) << "No current OpenGL context";
+-        return;
++        return false;
+     }
+ 
+     QOpenGLFunctions *gl = context->functions();
+     if (!gl) {
+         qCDebug(KARTON_DEBUG) << "Failed to get OpenGL functions";
+-        return;
++        return false;
+     }
+ 
+     // not in handleGlScanout(): no EGL display is current there, so the destroy is skipped
+@@ -142,7 +160,7 @@ void GlScanoutRenderer::createTextureFromScanout(const SpiceGlScanout *scanout)
+         gl->glGenTextures(1, &m_texId);
+         if (m_texId == 0) { // glGenTextures modifies m_texId
+             qCDebug(KARTON_DEBUG) << "Failed to generate texture";
+-            return;
++            return false;
+         }
+     }
+ 
+@@ -150,39 +168,66 @@ void GlScanoutRenderer::createTextureFromScanout(const SpiceGlScanout *scanout)
+     EGLDisplay display = eglGetCurrentDisplay();
+     if (display == EGL_NO_DISPLAY) {
+         qCDebug(KARTON_DEBUG) << "Failed to get EGL display";
+-        return;
++        return false;
+     }
+ 
+-    EGLint attrs[] = {EGL_DMA_BUF_PLANE0_FD_EXT,
+-                      scanout->fd,
+-                      EGL_DMA_BUF_PLANE0_PITCH_EXT,
+-                      static_cast<EGLint>(scanout->stride),
+-                      EGL_DMA_BUF_PLANE0_OFFSET_EXT,
+-                      0,
+-                      EGL_WIDTH,
+-                      static_cast<EGLint>(scanout->width),
+-                      EGL_HEIGHT,
+-                      static_cast<EGLint>(scanout->height),
+-                      EGL_LINUX_DRM_FOURCC_EXT,
+-                      static_cast<EGLint>(scanout->format),
+-                      EGL_NONE};
++    static const EGLint fdAttrs[] = {EGL_DMA_BUF_PLANE0_FD_EXT, EGL_DMA_BUF_PLANE1_FD_EXT, EGL_DMA_BUF_PLANE2_FD_EXT, EGL_DMA_BUF_PLANE3_FD_EXT};
++    static const EGLint offsetAttrs[] = {EGL_DMA_BUF_PLANE0_OFFSET_EXT, EGL_DMA_BUF_PLANE1_OFFSET_EXT, EGL_DMA_BUF_PLANE2_OFFSET_EXT, EGL_DMA_BUF_PLANE3_OFFSET_EXT};
++    static const EGLint pitchAttrs[] = {EGL_DMA_BUF_PLANE0_PITCH_EXT, EGL_DMA_BUF_PLANE1_PITCH_EXT, EGL_DMA_BUF_PLANE2_PITCH_EXT, EGL_DMA_BUF_PLANE3_PITCH_EXT};
++    static const EGLint modifierLoAttrs[] = {EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT,
++                                             EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT,
++                                             EGL_DMA_BUF_PLANE2_MODIFIER_LO_EXT,
++                                             EGL_DMA_BUF_PLANE3_MODIFIER_LO_EXT};
++    static const EGLint modifierHiAttrs[] = {EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT,
++                                             EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT,
++                                             EGL_DMA_BUF_PLANE2_MODIFIER_HI_EXT,
++                                             EGL_DMA_BUF_PLANE3_MODIFIER_HI_EXT};
++
++    // The same attribute list spice-gtk's own EGL path builds: every plane carries its descriptor and the buffer's modifier,
++    // without which a driver reads a tiled buffer as linear or refuses it.
++    EGLint attrs[64];
++    int i = 0;
++    attrs[i++] = EGL_WIDTH;
++    attrs[i++] = static_cast<EGLint>(scanout->width);
++    attrs[i++] = EGL_HEIGHT;
++    attrs[i++] = static_cast<EGLint>(scanout->height);
++    attrs[i++] = EGL_LINUX_DRM_FOURCC_EXT;
++    attrs[i++] = static_cast<EGLint>(scanout->format);
++    for (guint j = 0; j < scanout->num_planes; ++j) {
++        attrs[i++] = fdAttrs[j];
++        attrs[i++] = scanout->fd[j] >= 0 ? scanout->fd[j] : scanout->fd[0];
++        attrs[i++] = pitchAttrs[j];
++        attrs[i++] = static_cast<EGLint>(scanout->stride[j]);
++        attrs[i++] = offsetAttrs[j];
++        attrs[i++] = static_cast<EGLint>(scanout->offset[j]);
++        if (scanout->modifier != s_modifierInvalid) {
++            attrs[i++] = modifierLoAttrs[j];
++            attrs[i++] = static_cast<EGLint>(scanout->modifier & 0xffffffff);
++            attrs[i++] = modifierHiAttrs[j];
++            attrs[i++] = static_cast<EGLint>(scanout->modifier >> 32);
++        }
++    }
++    attrs[i++] = EGL_NONE;
+ 
+     // create egl image
+     if (!m_eglCreateImageKHR) {
+         m_eglCreateImageKHR = (PFNEGLCREATEIMAGEKHRPROC)eglGetProcAddress("eglCreateImageKHR");
+         if (!m_eglCreateImageKHR) {
+             qCDebug(KARTON_DEBUG) << "eglCreateImageKHR not available";
+-            return;
++            return false;
+         }
+     }
+     m_eglImage = m_eglCreateImageKHR(display, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, nullptr, attrs);
+ 
+     if (m_eglImage == EGL_NO_IMAGE_KHR) {
+         EGLint error = eglGetError();
+-        qCDebug(KARTON_DEBUG) << "Failed to create EGL image, error:" << QStringLiteral("0x%1").arg(error, 0, 16);
+-        return;
++        qCWarning(KARTON_DEBUG) << "Failed to create EGL image, error:" << QStringLiteral("0x%1").arg(error, 0, 16);
++        return false;
+     }
+ 
++    // Qt's own rendering may have left an error; the check below must cover only the image bind.
++    while (gl->glGetError() != GL_NO_ERROR) {
++    }
+     gl->glBindTexture(GL_TEXTURE_2D, m_texId);
+ 
+     gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+@@ -195,7 +240,7 @@ void GlScanoutRenderer::createTextureFromScanout(const SpiceGlScanout *scanout)
+         m_glEGLImageTargetTexture2DOES = (PFNGLEGLIMAGETARGETTEXTURE2DOESPROC)eglGetProcAddress("glEGLImageTargetTexture2DOES");
+         if (!m_glEGLImageTargetTexture2DOES) {
+             qCDebug(KARTON_DEBUG) << "glEGLImageTargetTexture2DOES not supported";
+-            return;
++            return false;
+         }
+     }
+     m_glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, (GLeglImageOES)m_eglImage);
+@@ -206,6 +251,7 @@ void GlScanoutRenderer::createTextureFromScanout(const SpiceGlScanout *scanout)
+     }
+ 
+     gl->glBindTexture(GL_TEXTURE_2D, 0); // unbind texture
++    return glError == GL_NO_ERROR;
+ }
+ 
+ // triggered by update()
+@@ -217,7 +263,14 @@ QSGNode *GlScanoutRenderer::updatePaintNode(QQuickWindow *window, QSGNode *oldNo
+     {
+         QMutexLocker locker(&m_scanoutLock);
+         if (m_hasScanout && (m_texId == 0 || m_scanoutDirty)) {
+-            createTextureFromScanout(&m_scanout);
++            const bool imported = createTextureFromScanout(&m_scanout);
++            if (!imported && !m_importWarned) {
++                m_importWarned = true;
++                qCWarning(KARTON_DEBUG) << "The GL scanout could not be imported:" << m_scanout.width << "x" << m_scanout.height << "fourcc"
++                                        << QStringLiteral("0x%1").arg(m_scanout.format, 0, 16) << "modifier"
++                                        << QStringLiteral("0x%1").arg(m_scanout.modifier, 0, 16) << "planes" << m_scanout.num_planes
++                                        << (eglGetCurrentDisplay() != EGL_NO_DISPLAY ? "(EGL)" : "(no EGL display: Qt is not using its EGL integration)");
++            }
+             m_scanoutDirty = false;
+         }
+         frameSize = QSize(m_imageWidth, m_imageHeight);
+@@ -342,10 +395,7 @@ void GlScanoutRenderer::cleanupEGLResources()
+ {
+     QMutexLocker locker(&m_scanoutLock);
+ 
+-    if (m_hasScanout && m_scanout.fd >= 0) {
+-        close(m_scanout.fd);
+-        m_scanout.fd = -1;
+-    }
++    closeScanoutFds();
+     m_hasScanout = false;
+     m_scanoutDirty = false;
+ 
+diff --git a/src/glscanoutrenderer.h b/src/glscanoutrenderer.h
+index aee6da0..f5510f9 100644
+--- a/src/glscanoutrenderer.h
++++ b/src/glscanoutrenderer.h
+@@ -49,8 +49,9 @@ public:
+ private:
+     static void gl_draw_callback(SpiceDisplayChannel *channel, guint x, guint y, guint width, guint height, gpointer user_data);
+     static void gl_scanout_notify_callback(GObject *object, GParamSpec *pspec, gpointer user_data);
+-    void handleGlScanout(const SpiceGlScanout *scanout);
+-    void createTextureFromScanout(const SpiceGlScanout *scanout);
++    void handleGlScanout(const SpiceGlScanout2 *scanout);
++    bool createTextureFromScanout(const SpiceGlScanout2 *scanout);
++    void closeScanoutFds();
+     void cleanupEGLImage();
+     void cleanupEGLResources();
+     // reads the scanout back and keeps its two views side by side, for the stereo surface
+@@ -64,7 +65,8 @@ private:
+     mutable QMutex m_scanoutLock;
+     int m_imageWidth = 0;
+     int m_imageHeight = 0;
+-    SpiceGlScanout m_scanout = {};
++    SpiceGlScanout2 m_scanout = {{-1, -1, -1, -1}};
++    bool m_importWarned = false;
+     bool m_hasScanout = false;
+     bool m_scanoutDirty = false;
+     EGLImageKHR m_eglImage = EGL_NO_IMAGE_KHR;

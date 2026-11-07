@@ -1,0 +1,15 @@
+karton (@VERSION@) unstable; urgency=medium
+
+  * The guest's picture shows on an NVIDIA card under a native Wayland
+    session (patch stereo3d/0004). Before, the GL scanout was imported as an
+    EGL image from its stride alone, without the buffer's modifier or planes,
+    so a driver that tiles its buffers read it as linear. Karton now builds
+    the image the way spice-gtk's own EGL path does, with every plane, its
+    offset and the buffer's modifier, drains stale GL errors before the bind,
+    and says once when a scanout cannot be imported. The xcb platform keeps
+    Qt's own integration choice (GLX by default): a compositor read-back
+    showed that forcing EGL there leaves every Karton window black on NVIDIA
+    under Xwayland, so that default waits for a measurement on real Xorg and
+    on Mesa. ORDER 255.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@
