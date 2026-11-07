@@ -1,0 +1,30 @@
+Description: Fix some debug prints that caused errors in linux joystick
+Author: Tomasz Pakuła
+Origin: upstream, https://github.com/libsdl-org/SDL/pull/14758 (commit 28671b7be3)
+Bug: https://github.com/libsdl-org/SDL/pull/14758
+Forwarded: not-needed
+Applied-Upstream: no, open pull request, 2026-11-07
+Last-Update: 2026-11-07
+---
+diff --git a/src/joystick/linux/SDL_sysjoystick.c b/src/joystick/linux/SDL_sysjoystick.c
+index 267aa4fa6db34..eef9511551389 100644
+--- a/src/joystick/linux/SDL_sysjoystick.c
++++ b/src/joystick/linux/SDL_sysjoystick.c
+@@ -1925,7 +1925,7 @@ static void PollAllSensors(Uint64 timestamp, SDL_Joystick *joystick)
+             if (ioctl(joystick->hwdata->fd_sensor, EVIOCGABS(ABS_RX + i), &absinfo) >= 0) {
+                 values[i] = absinfo.value * (SDL_PI_F / 180.f) / joystick->hwdata->gyro_scale[i];
+ #ifdef DEBUG_INPUT_EVENTS
+-                SDL_Log("Joystick : Re-read Gyro (axis %d) val= %f", i, data[i]);
++                SDL_Log("Joystick : Re-read Gyro (axis %d) val= %f", i, values[i]);
+ #endif
+             }
+         }
+@@ -1939,7 +1939,7 @@ static void PollAllSensors(Uint64 timestamp, SDL_Joystick *joystick)
+             if (ioctl(joystick->hwdata->fd_sensor, EVIOCGABS(ABS_X + i), &absinfo) >= 0) {
+                 values[i] = absinfo.value * SDL_STANDARD_GRAVITY / joystick->hwdata->accelerometer_scale[i];
+ #ifdef DEBUG_INPUT_EVENTS
+-                SDL_Log("Joystick : Re-read Accelerometer (axis %d) val= %f", i, data[i]);
++                SDL_Log("Joystick : Re-read Accelerometer (axis %d) val= %f", i, values[i]);
+ #endif
+             }
+         }

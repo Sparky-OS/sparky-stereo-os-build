@@ -1,0 +1,28 @@
+Description: linux joystick: use the real EVIOCGBTNCNT ioctl number when the headers lack it
+ Pull request 14758 falls back to "#define EVIOCGBTNCNT 0" when the kernel
+ headers it is built against have no EV_BTN. ioctl(fd, 0, ...) always fails,
+ so a library built against older headers (every Debian build until the
+ kernel headers carry EV_BTN) never used the kernel's EV_BTN and showed 79
+ buttons on a kernel that offers 128. Found by running the 128-button fixture on
+ an EV_BTN kernel with the library as the pull request has it. The number is the
+ one of the posted kernel series (_IOR('E', 0x1c, unsigned int)); if the kernel
+ series changes it, this patch changes with it.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (ORDER 15), written with Claude Sonnet 5.5
+Forwarded: no
+Last-Update: 2026-11-07
+---
+--- a/src/joystick/linux/SDL_sysjoystick.c
++++ b/src/joystick/linux/SDL_sysjoystick.c
+@@ -61,6 +61,11 @@
+ #define EV_BTN 0x06
+ #define EVIOCGBTNCNT 0
+ #endif
++#if EVIOCGBTNCNT == 0
++// The fallback above is no ioctl number: ioctl(fd, 0, ...) always fails and the kernel's EV_BTN would never be used
++#undef EVIOCGBTNCNT
++#define EVIOCGBTNCNT _IOR('E', 0x1c, unsigned int)
++#endif
+ #ifndef BTN_NORTH
+ #define BTN_NORTH 0x133
+ #endif

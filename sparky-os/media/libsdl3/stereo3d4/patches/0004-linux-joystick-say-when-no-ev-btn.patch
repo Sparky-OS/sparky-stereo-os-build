@@ -1,0 +1,27 @@
+Description: linux joystick: say so when buttons can be lost without EV_BTN
+ The kernel numbers at most 80 joystick buttons with key codes (BTN_JOYSTICK
+ up to KEY_MAX). Without the EV_BTN event a device that uses the last code may
+ have more buttons than the kernel reports, and SDL then dropped them without a
+ word. Say it once when the joystick is opened. The text is shown by default:
+ SDL_Log is an application-category message at info priority.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (ORDER 15), written with Claude Sonnet 5.5
+Forwarded: no
+Last-Update: 2026-11-07
+---
+--- a/src/joystick/linux/SDL_sysjoystick.c
++++ b/src/joystick/linux/SDL_sysjoystick.c
+@@ -1283,6 +1283,13 @@
+                     ++joystick->nbuttons;
+                 }
+             }
++            // The kernel numbers at most KEY_MAX - BTN_JOYSTICK + 1 buttons with key codes. A device that uses the last code
++            // may have more buttons that are not reported without EV_BTN.
++            if (test_bit(KEY_MAX, keybit)) {
++                SDL_Log("Joystick %s uses the last button code this kernel can number and the kernel has no EV_BTN event: "
++                        "any further buttons are not reported. Use a kernel with EV_BTN to get all of them.",
++                        joystick->hwdata->fname);
++            }
+         }
+         for (i = ABS_HAT0X; i <= ABS_HAT3Y; i += 2) {
+             int hat_x = -1;
