@@ -46,9 +46,6 @@ for u in nvidia-persistenced nvidia-powerd; do
 	install -Dm644 "$HERE/share/systemd/nvidia-units/sparky-stereo-hardware.conf" "$D/usr/lib/systemd/system/$u.service.d/sparky-stereo-hardware.conf"
 done
 install -Dm644 "$HERE/share/udev/71-sparky-stereo-nvidia-units.rules" "$D/usr/lib/udev/rules.d/71-sparky-stereo-nvidia-units.rules"
-# units of other packages that only some machines can run (ORDER 43): thermald on Intel CPUs, NVIDIA's IMEX daemon on a configured IMEX domain
-install -Dm644 "$HERE/share/systemd/thermald/sparky-stereo-hardware.conf" "$D/usr/lib/systemd/system/thermald.service.d/sparky-stereo-hardware.conf"
-install -Dm644 "$HERE/share/systemd/nvidia-imex/sparky-stereo-hardware.conf" "$D/usr/lib/systemd/system/nvidia-imex.service.d/sparky-stereo-hardware.conf"
 
 sparky-stereo-problems catalog sparky-stereo-hardware "$HERE/problems-lang" "$D/usr/lib/systemd/catalog" \
 	--subject LOCAL1=LOCAL2,LOCAL3,LOCAL4 --subject LOCAL9=LOCAL5,LOCAL6,LOCAL7,LOCAL8,LOCAL10,LOCAL11,LOCAL12,LOCAL13,LOCAL14,LOCAL15,LOCAL16

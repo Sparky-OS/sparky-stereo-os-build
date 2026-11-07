@@ -13,11 +13,7 @@ if [ "$1" = configure ]; then
 	if [ -d /run/systemd/system ]; then
 		systemctl daemon-reload || true
 		if [ ! -e /sys/module/nvidia ]; then systemctl reset-failed nvidia-persistenced.service nvidia-powerd.service >/dev/null 2>&1 || true; fi
-		# thermald (Intel CPUs only) and nvidia-imex (a configured IMEX domain) are skipped where they cannot run; a failure
-		# they left from before this package is no longer counted
-		grep -qs '^vendor_id[[:space:]]*:[[:space:]]*GenuineIntel' /proc/cpuinfo || systemctl reset-failed thermald.service >/dev/null 2>&1 || true
-		[ -e /etc/nvidia-imex/nodes_config.cfg ] || systemctl reset-failed nvidia-imex.service >/dev/null 2>&1 || true
-		# an Intel machine that has thermald from an earlier image keeps it: marked manual once, after this apt run
+		# thermald from an earlier image: kept on Intel, removed on other CPUs where it is unused and automatic, once, after this apt run
 		/usr/lib/sparky-stereo-hardware/thermald-manual check || true
 	fi
 	sparky-stereo-opengl-default ||
