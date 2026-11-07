@@ -1,0 +1,388 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 7 Nov 2026 12:00:00 -0300
+Subject: [PATCH] VideoOutput: the stereo layer is active only once the
+ compositor took its declaration; a failed declaration withdraws the layer,
+ says why, and the video is drawn the ordinary way
+
+The layer attached and committed the two views even when stereo_declare_wayland failed (only a qCWarning), and stereoLayerActive (layerWanted &&
+presenterReady) never looked at the declaration: the person saw the packed frame, both views side by side in each eye, while the player said 3D
+(ORDER 49's October picture).
+
+The surface is now declared when the layer is made, before any buffer is attached to it (the same single declaration, no longer in the commit of the
+first frame), and a refusal is kept for the layer's life. A layer whose declaration failed attaches and commits nothing on any of its three routes
+(window surface, own DMA-BUF buffers, wl_shm), and its presenter is not valid and says why: VideoOutput does not use it, stereoLayerActive is false,
+the item draws the video through the scene graph (one view, by stereoView), and the new property stereoLayerFailure holds the reason (also logged
+once, qt.multimedia.video.stereolayer). The reason stays while the same 3D video plays, so the declaration is not asked for again at every frame,
+and clears when the 3D video ends or the item changes window: the next 3D video declares again.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+--- a/src/multimediaquick/qquickvideostereolayer.cpp
++++ b/src/multimediaquick/qquickvideostereolayer.cpp
+@@ -892,6 +892,7 @@
+     wp_color_management_surface_v1 *colorSurface = nullptr;
+     Buffer buffers[3];
+     bool declared = false;
++    int declareError = 0; // errno of the declaration the compositor library refused: kept for the layer's life, nothing is shown without the declaration
+     bool stereoInitialized = false;
+     QRect rect;
+     QRect placed;
+@@ -907,11 +908,32 @@
+     BufferFormat gpuWanted = BufferFormat::Xrgb8888;
+ 
+     void place();
++    bool ensureDeclared();
+     bool presentDmabuf(const QQuickVideoDepth::LayerSource &source, bool swapEyes, const QRect &crop, BufferFormat format, BufferFormat *used,
+                        QString *why, bool *backpressure);
+     void dispatch() { wl_display_dispatch_queue_pending(display, queue); }
+ };
+ 
++// The surface is declared as full side by side stereo content once, before anything is attached to it: a buffer of two views is never committed
++// to a surface the compositor has not taken as stereo content (it would show the packed frame, flat). A refusal stays: the layer is withdrawn
++// (declarationFailure()) and the caller draws the video the ordinary way.
++bool QQuickVideoStereoLayer::Private::ensureDeclared()
++{
++    if (declared)
++        return true;
++    if (declareError)
++        return false;
++    const int result = stereo_declare_wayland(surface, STEREO_SBS_FULL, STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT);
++    if (result < 0) {
++        declareError = -result;
++        qCWarning(qLcStereoLayer) << "declaring the stereo content failed:" << strerror(declareError)
++                                  << "- the layer is not used, the video is drawn the ordinary way, not in 3D";
++        return false;
++    }
++    declared = true;
++    return true;
++}
++
+ // The views drawn into buffers the layer allocated (GBM), given to the compositor as DMA-BUF; false with the reason in *why, or with
+ // *backpressure when the compositor holds every buffer
+ bool QQuickVideoStereoLayer::Private::presentDmabuf(const QQuickVideoDepth::LayerSource &source, bool swapEyes, const QRect &crop,
+@@ -1225,14 +1247,11 @@
+     g.gl.bindFramebuffer(0x8D40, 0);
+     egl.makeCurrent(t.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+ 
+-    place();
+-    if (!declared) {
+-        const int result = stereo_declare_wayland(surface, STEREO_SBS_FULL, STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT);
+-        if (result < 0)
+-            qCWarning(qLcStereoLayer) << "declaring the stereo content failed:" << strerror(-result);
+-        else
+-            declared = true;
++    if (!ensureDeclared()) {
++        *why = QStringLiteral("the stereo content is not declared");
++        return false;
+     }
++    place();
+     slot->busy = true;
+     wl_surface_attach(surface, slot->buffer, 0, 0);
+     wl_surface_damage_buffer(surface, 0, 0, pixels.width(), pixels.height());
+@@ -1348,9 +1367,19 @@
+     wl_region *empty = wl_compositor_create_region(p->globals.compositor);
+     wl_surface_set_input_region(p->surface, empty);
+     wl_region_destroy(empty);
++    // declared now, before the first buffer: the layer exists only as stereo content the compositor took (a refusal is in declarationFailure())
++    p->ensureDeclared();
+     return layer;
+ }
+ 
++QString QQuickVideoStereoLayer::declarationFailure() const
++{
++    QMutexLocker lock(&d->mutex);
++    if (!d->declareError)
++        return QString();
++    return QStringLiteral("the compositor's stereo content declaration failed (%1)").arg(QString::fromLocal8Bit(strerror(d->declareError)));
++}
++
+ QQuickVideoStereoLayer::~QQuickVideoStereoLayer()
+ {
+     QMutexLocker lock(&d->mutex);
+@@ -1512,14 +1541,9 @@
+             info.write(QStringLiteral("%1 %2 %3 rows from the top\n").arg(format == BufferFormat::Xrgb2101010 ? u"xr30"_s : format == BufferFormat::Xrgb8888 ? u"xr24"_s : format == BufferFormat::Xbgr16161616 ? u"xb48"_s : u"xb4h"_s).arg(pixels.width()).arg(pixels.height()).toUtf8());
+     }
+ 
++    if (!d->ensureDeclared())
++        return false;
+     d->place();
+-    if (!d->declared) {
+-        const int result = stereo_declare_wayland(d->surface, STEREO_SBS_FULL, STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT);
+-        if (result < 0)
+-            qCWarning(qLcStereoLayer) << "declaring the stereo content failed:" << strerror(-result);
+-        else
+-            d->declared = true;
+-    }
+     buffer->busy = true;
+     wl_surface_attach(d->surface, buffer->buffer, 0, 0);
+     wl_surface_damage_buffer(d->surface, 0, 0, pixels.width(), pixels.height());
+@@ -1732,14 +1756,15 @@
+     // into QT_MM_STEREO_LAYER_DUMP
+     dumpFramebuffer(g.gl, g.format, pixels, g.dumped, d->frames, "rows from the bottom");
+ 
+-    d->place();
+-    if (!d->declared) {
+-        const int result = stereo_declare_wayland(d->surface, STEREO_SBS_FULL, STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT);
+-        if (result < 0)
+-            qCWarning(qLcStereoLayer) << "declaring the stereo content failed:" << strerror(-result);
+-        else
+-            d->declared = true;
++    if (!d->ensureDeclared()) {
++        // nothing is swapped: the surface keeps no buffer of two views
++        g.gl.finish();
++        egl.makeCurrent(g.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++        g.current = false;
++        *why = QStringLiteral("the stereo content is not declared");
++        return false;
+     }
++    d->place();
+     const bool swapped = egl.swapBuffers(g.display, g.surface);
+     // the textures are the drawing context's: finished here before the frame is let go and they are drawn into again
+     g.gl.finish();
+@@ -1792,6 +1817,7 @@
+ bool QQuickVideoStereoLayer::gpuActive() const { return false; }
+ QQuickVideoStereoLayer::GpuPathInfo QQuickVideoStereoLayer::gpuPath() const { return {}; }
+ bool QQuickVideoStereoLayer::compositorHasDmabuf() const { return false; }
++QString QQuickVideoStereoLayer::declarationFailure() const { return {}; }
+ bool QQuickVideoStereoLayer::presentGpu(const QQuickVideoDepth::LayerSource &, bool, const QRect &, QQuickVideoStereo::BufferFormat,
+                                         const QRect &, QQuickVideoStereo::BufferFormat *, QString *why, bool *)
+ {
+--- a/src/multimediaquick/qquickvideostereolayer_p.h
++++ b/src/multimediaquick/qquickvideostereolayer_p.h
+@@ -80,6 +80,9 @@
+     GpuPathInfo gpuPath() const;
+     // Whether the compositor offers zwp_linux_dmabuf_v1
+     bool compositorHasDmabuf() const;
++    // Empty while the stereo content is declared (or not yet asked); else why the compositor's library refused the declaration. A layer whose
++    // declaration failed shows nothing (present() and presentGpu() return false without attaching): the caller draws the video another way
++    QString declarationFailure() const;
+     // Takes the layer off the screen until the next present()
+     void hide();
+ 
+--- a/src/multimediaquick/qquickvideostereopresenter.cpp
++++ b/src/multimediaquick/qquickvideostereopresenter.cpp
+@@ -60,6 +60,12 @@
+     m_condition.wakeAll();
+ }
+ 
++QString QQuickVideoStereoPresenter::refusal() const
++{
++    QMutexLocker lock(&m_mutex);
++    return m_refusal;
++}
++
+ QQuickVideoStereoPresenter::LayerRoute QQuickVideoStereoPresenter::layerRoute() const
+ {
+     QMutexLocker lock(&m_routeMutex);
+@@ -78,7 +84,10 @@
+     m_layer = QQuickVideoStereoLayer::create(m_window);
+     {
+         QMutexLocker lock(&m_mutex);
+-        m_valid = m_layer != nullptr;
++        // a layer whose declaration the compositor's library refused is not used: the presenter is not valid, and says why
++        if (m_layer)
++            m_refusal = m_layer->declarationFailure();
++        m_valid = m_layer != nullptr && m_refusal.isEmpty();
+         m_created = true;
+         m_condition.wakeAll();
+     }
+--- a/src/multimediaquick/qquickvideostereopresenter_p.h
++++ b/src/multimediaquick/qquickvideostereopresenter_p.h
+@@ -144,8 +144,10 @@
+     explicit QQuickVideoStereoPresenter(QWindow *window);
+     ~QQuickVideoStereoPresenter();
+ 
+-    // False if the layer could not be made (no stereo compositor, window not created)
+-    bool isValid() const { return m_valid; }
++    // False if the layer could not be made (no stereo compositor, window not created), or its stereo content declaration was refused (refusal() says why)
++    bool isValid() const { QMutexLocker lock(&m_mutex); return m_valid; }
++    // Empty unless the declaration of the layer's stereo content failed
++    QString refusal() const;
+     void setGeometry(Geometry geometry);
+     void clear();
+     void submit(Job job);
+@@ -175,7 +177,7 @@
+ 
+     QWindow *m_window;
+     std::unique_ptr<QQuickVideoStereoLayer> m_layer;
+-    QMutex m_mutex;
++    mutable QMutex m_mutex;
+     QWaitCondition m_condition;
+     State m_state;
+     bool m_stopping = false;
+@@ -184,6 +186,7 @@
+     mutable QMutex m_routeMutex;
+     LayerRoute m_route;
+     bool m_forceShm = false;
++    QString m_refusal;
+ };
+ 
+ QT_END_NAMESPACE
+--- a/src/multimediaquick/qquickvideooutput.cpp
++++ b/src/multimediaquick/qquickvideooutput.cpp
+@@ -1394,7 +1394,10 @@
+     \readonly
+ 
+     Whether the video is shown through the layer: both views, each to its eye. The item itself
+-    is then a transparent hole in the window over the layer.
++    is then a transparent hole in the window over the layer. The layer is active only once the
++    compositor's library took the declaration of its surface as stereo content: a video whose
++    declaration failed is drawn the ordinary way (one view, by \l stereoView), and this is
++    false, with the reason in \l stereoLayerFailure.
+ */
+ bool QQuickVideoOutput::stereoLayerActive() const
+ {
+@@ -1402,6 +1405,22 @@
+     return m_stereo.layerActive;
+ }
+ 
++/*!
++    \qmlproperty string QtMultimedia::VideoOutput::stereoLayerFailure
++    \readonly
++
++    Empty, or why a 3D video that is wanted in the layer is not shown in it: the declaration of the
++    layer's surface as stereo content failed (the error is also logged, category
++    \c qt.multimedia.video.stereolayer). The video is then drawn the ordinary way, one view, and
++    not as 3D; a player can say so to the person. The reason stays until the 3D video ends (the
++    next 3D video makes the declaration again) or the item changes window.
++*/
++QString QQuickVideoOutput::stereoLayerFailure() const
++{
++    QMutexLocker lock(&m_frameMutex);
++    return m_stereoLayerFailure;
++}
++
+ void QQuickVideoOutput::reprocessFrame()
+ {
+     QVideoFrame frame;
+@@ -1418,13 +1437,28 @@
+ #ifdef QT_MM_STEREO_LAYER
+     if (m_stereoPresenter || !m_window || !m_window->handle() || !stereoLayerSupported())
+         return;
++    {
++        // a declaration the compositor refused is not asked for again while the same 3D video plays
++        QMutexLocker lock(&m_frameMutex);
++        if (!m_stereoLayerFailure.isEmpty())
++            return;
++    }
+     if (!m_window->format().hasAlpha()) {
+         qCWarning(qLcVideo) << "stereo layer: the window has no alpha buffer";
+         return;
+     }
+     auto presenter = std::make_shared<QQuickVideoStereoPresenter>(m_window);
+-    if (!presenter->isValid())
++    if (!presenter->isValid()) {
++        const QString refusal = presenter->refusal();
++        if (!refusal.isEmpty()) {
++            {
++                QMutexLocker lock(&m_frameMutex);
++                m_stereoLayerFailure = refusal;
++            }
++            emit stereoLayerFailureChanged();
++        }
+         return;
++    }
+     const QPoint margins(m_window->frameMargins().left(), m_window->frameMargins().top());
+     m_stereoRect = mapRectToScene(fillMode() == PreserveAspectCrop ? boundingRect() : m_contentRect).toRect().translated(margins);
+     presenter->setGeometry({ m_stereoRect, fillMode() == PreserveAspectCrop });
+@@ -1455,6 +1489,7 @@
+         wanted = m_stereo.layerWanted;
+     }
+     if (!wanted) {
++        bool failureCleared = false;
+         if (m_stereoPresenter) {
+             std::shared_ptr<QQuickVideoStereoPresenter> old;
+             {
+@@ -1463,6 +1498,14 @@
+                 old = std::move(m_stereoPresenter);
+             }
+         }
++        {
++            // the 3D video is over: the next one declares again
++            QMutexLocker lock(&m_frameMutex);
++            failureCleared = !m_stereoLayerFailure.isEmpty();
++            m_stereoLayerFailure.clear();
++        }
++        if (failureCleared)
++            emit stereoLayerFailureChanged();
+         return;
+     }
+     if (!m_stereoPresenter) {
+@@ -1568,7 +1611,11 @@
+         QMutexLocker lock(&m_frameMutex);
+         m_stereoPresenterReady = false;
+         old = std::move(m_stereoPresenter);
++        const bool failureCleared = !m_stereoLayerFailure.isEmpty();
++        m_stereoLayerFailure.clear();
+         lock.unlock();
++        if (failureCleared)
++            emit stereoLayerFailureChanged();
+     }
+ #endif
+     if (m_window) {
+--- a/src/multimediaquick/qquickvideooutput_p.h
++++ b/src/multimediaquick/qquickvideooutput_p.h
+@@ -84,6 +84,7 @@
+     Q_PROPERTY(StereoInput stereoPacking READ stereoPacking NOTIFY stereoVideoChanged)
+     Q_PROPERTY(bool stereoLayerSupported READ stereoLayerSupported CONSTANT)
+     Q_PROPERTY(bool stereoLayerActive READ stereoLayerActive NOTIFY stereoLayerActiveChanged)
++    Q_PROPERTY(QString stereoLayerFailure READ stereoLayerFailure NOTIFY stereoLayerFailureChanged)
+     Q_PROPERTY(bool stereoDepth READ stereoDepth WRITE setStereoDepth NOTIFY stereoDepthChanged)
+     Q_PROPERTY(StereoDepthView stereoDepthView READ stereoDepthView WRITE setStereoDepthView
+                        NOTIFY stereoDepthViewChanged)
+@@ -289,6 +290,7 @@
+     StereoInput stereoPacking() const;
+     static bool stereoLayerSupported();
+     bool stereoLayerActive() const;
++    QString stereoLayerFailure() const;
+     bool stereoDepth() const;
+     void setStereoDepth(bool value);
+     StereoDepthView stereoDepthView() const;
+@@ -345,6 +347,7 @@
+     void stereoSurfaceChanged();
+     void stereoVideoChanged();
+     void stereoLayerActiveChanged();
++    void stereoLayerFailureChanged();
+     void stereoDepthChanged();
+     void stereoDepthViewChanged();
+     void stereoDepthWarpChanged();
+@@ -463,6 +466,7 @@
+     int m_stereoHeldEye = -1;               // physical eye, independent of input eye swap
+     std::shared_ptr<QQuickVideoStereoPresenter> m_stereoPresenter;
+     std::atomic_bool m_stereoPresenterReady = false;
++    QString m_stereoLayerFailure;           // why the compositor refused the layer's declaration, until the 3D video ends
+     QTimer m_stereoTimer;
+     QRect m_stereoRect;
+ 
+--- a/src/multimediaquick/Video.qml
++++ b/src/multimediaquick/Video.qml
+@@ -158,6 +158,7 @@
+         \qmlproperty enumeration Video::stereoPacking
+         \qmlproperty bool Video::stereoLayerSupported
+         \qmlproperty bool Video::stereoLayerActive
++        \qmlproperty string Video::stereoLayerFailure
+ 
+         These are the stereoscopic 3D properties of VideoOutput, see
+         \l {VideoOutput::stereoInput}{VideoOutput}.
+@@ -172,6 +173,7 @@
+     readonly property alias stereoPacking:        videoOut.stereoPacking
+     readonly property alias stereoLayerSupported: videoOut.stereoLayerSupported
+     readonly property alias stereoLayerActive:    videoOut.stereoLayerActive
++    readonly property alias stereoLayerFailure:   videoOut.stereoLayerFailure
+ 
+ 
+     /*** Properties of MediaPlayer ***/
+--- a/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
++++ b/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
+@@ -299,6 +299,7 @@
+     QCOMPARE(output.stereoVideo(), false);
+     QCOMPARE(output.stereoPacking(), QQuickVideoOutput::StereoNone);
+     QCOMPARE(output.stereoLayerActive(), false);
++    QCOMPARE(output.stereoLayerFailure(), QString());
+ 
+     QSignalSpy input(&output, &QQuickVideoOutput::stereoInputChanged);
+     output.setStereoInput(QQuickVideoOutput::StereoTopBottomHalf);
+-- 
+2.53.0
