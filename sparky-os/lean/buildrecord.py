@@ -19,6 +19,7 @@ fallbacks). A recipe that cannot have host facts says so with SPARKY_PROVENANCE_
 the reason in "provenanceOptOut" and still lists the unrecorded facts.
 """
 from datetime import datetime, timezone
+import glob
 import hashlib
 import json
 import os
@@ -91,15 +92,49 @@ def _file_row(path):
     return {'name': path.name, 'sha256': h.hexdigest()}
 
 
+def _checksum_rows(path):
+    """(source field, sha256 -> file name) of a .buildinfo or .changes: the files its Checksums-Sha256 lists. Both are
+    deb822 files, possibly PGP-signed; only the two fields this needs are read."""
+    source, rows, in_sums = None, {}, False
+    for line in path.read_text(errors='replace').splitlines():
+        if line[:1] in (' ', '\t'):
+            fields = line.split()
+            if in_sums and len(fields) == 3:
+                rows[fields[0]] = fields[2]
+            continue
+        in_sums = line.startswith('Checksums-Sha256:')
+        if line.startswith('Source:'):
+            source = line.split(':', 1)[1].strip()
+    return source, rows
+
+
+def _split_source(field, version):
+    """'name' or 'name (source version)' -> (name, source version); without parentheses the binary version stands."""
+    m = re.match(r'^(\S+)\s*\((.+)\)$', field)
+    return m.groups() if m else (field, version)
+
+
 def _control(deb):
+    """(source, source version, architecture, binary version) of a .deb. The source is its own Source field. A binary
+    package whose name differs from its source and that carries no Source field (a recipe that wrote DEBIAN/control by
+    hand) is placed by the .buildinfo or .changes beside it that lists this very file by its SHA-256; the log says so.
+    With neither, the package's own name stands and the record reports the missing .buildinfo (nothing is guessed)."""
     out = subprocess.run(['dpkg-deb', '-f', str(deb), 'Package', 'Version', 'Architecture', 'Source'],
                          capture_output=True, text=True, check=True).stdout
     fields = dict(line.split(': ', 1) for line in out.splitlines() if ': ' in line)
-    source, version = fields.get('Source', fields['Package']), fields['Version']
-    m = re.match(r'^(\S+)\s*\((.+)\)$', source)
-    if m:
-        source, version = m.groups()
-    return source, version, fields['Architecture']
+    binary_version = fields['Version']
+    if 'Source' in fields:
+        source, version = _split_source(fields['Source'], binary_version)
+        return source, version, fields['Architecture'], binary_version
+    digest = _file_row(deb)['sha256']
+    for build_file in sorted(deb.parent.glob('*.buildinfo')) + sorted(deb.parent.glob('*.changes')):
+        field, rows = _checksum_rows(build_file)
+        if field and rows.get(digest) == deb.name:
+            source, version = _split_source(field, binary_version)
+            if source != fields['Package']:
+                print(f'lc1: {deb.name} has no Source field; {build_file.name} lists it as built from {source}')
+            return source, version, fields['Architecture'], binary_version
+    return fields['Package'], binary_version, fields['Architecture'], binary_version
 
 
 def _host_facts(environ):
@@ -137,12 +172,12 @@ def _init_state(environ):
 
 def record(debs, environ=None, now=None):
     """Write the build record for the .deb files of a build and return the paths: one record for each source version
-    in each folder. Stops (Incomplete) when SPARKY_PROVENANCE_REQUIRED=1 and a host fact is missing."""
+    in each folder, however many binary packages the source built (dpkg names the .buildinfo after the source). Stops (Incomplete) when SPARKY_PROVENANCE_REQUIRED=1 and a host fact is missing."""
     environ = os.environ if environ is None else environ
     groups = {}
     for deb in sorted(Path(d).resolve() for d in debs):
-        source, version, _ = _control(deb)
-        groups.setdefault((deb.parent, source, version), []).append(deb)
+        source, version, _, binary_version = _control(deb)
+        groups.setdefault((deb.parent, source, version), []).append((deb, binary_version))
     _, optout = _init_state(environ)
     facts, unrecorded_hosts = _host_facts(environ)
     if unrecorded_hosts and environ.get('SPARKY_PROVENANCE_REQUIRED') == '1':
@@ -153,7 +188,8 @@ def record(debs, environ=None, now=None):
             for (folder, source, version), group in sorted(groups.items())]
 
 
-def _write(folder, source, version, debs, facts, unrecorded_hosts, environ, now, optout=None):
+def _write(folder, source, version, built, facts, unrecorded_hosts, environ, now, optout=None):
+    debs = [deb for deb, _ in built]
     unrecorded = list(unrecorded_hosts)
     started = None
     start_file = folder / START
@@ -184,10 +220,15 @@ def _write(folder, source, version, debs, facts, unrecorded_hosts, environ, now,
     if optout:
         obj['provenanceOptOut'] = optout
     obj['debs'] = [_file_row(d) for d in debs]
+    # dpkg-genbuildinfo and dpkg-genchanges name their files SOURCE_BINARYVERSION_ARCH.*, the .dsc SOURCE_SOURCEVERSION.dsc
+    # (they differ for a binNMU); the version is matched whole, so 1.0-1 never takes the files of 1.0-10
+    plain = version.split(':', 1)[-1]
+    binary_versions = sorted({bv.split(':', 1)[-1] for _, bv in built} | {plain})
     kept = []
-    for pattern in ('*.buildinfo', '*.changes', '*.dsc'):
-        kept += [_file_row(p) for p in sorted(folder.glob(f'{source}_*{pattern[1:]}'))
-                 if f'_{version.split(":", 1)[-1]}' in p.name]
+    for suffix in ('.buildinfo', '.changes'):
+        names = {p.name: p for v in binary_versions for p in folder.glob(f'{glob.escape(source)}_{glob.escape(v)}_*{suffix}')}
+        kept += [_file_row(names[n]) for n in sorted(names)]
+    kept += [_file_row(p) for p in sorted(folder.glob(f'{glob.escape(source)}_{glob.escape(plain)}.dsc'))]
     obj['files'] = kept
     if not any(row['name'].endswith('.buildinfo') for row in kept):
         unrecorded.append('buildinfo')
