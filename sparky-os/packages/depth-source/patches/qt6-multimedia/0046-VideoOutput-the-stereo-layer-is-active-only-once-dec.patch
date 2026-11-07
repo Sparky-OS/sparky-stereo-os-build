@@ -16,6 +16,12 @@ the item draws the video through the scene graph (one view, by stereoView), and 
 once, qt.multimedia.video.stereolayer). The reason stays while the same 3D video plays, so the declaration is not asked for again at every frame,
 and clears when the 3D video ends or the item changes window: the next 3D video declares again.
 
+The other failures to make the layer on a compositor that announces the stereo global are said the same way, through stereoLayerFailure and one log line, and
+no presenter is made again for them while the same 3D video plays (they were silent and asked again at every timer tick): the window without a wl_surface, the
+declaration library that could not start (stereo_declare_wayland_init busy because the process already holds its state, say), the library that did not take the
+announced global (stereo_supported_wayland false), and the window without an alpha buffer. A compositor that announces no stereo global is a 2D desktop and no
+failure (ORDER 448b).
+
 Assisted-by: Claude Sonnet 5.5 via Claude Code
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
@@ -81,7 +87,47 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
      slot->busy = true;
      wl_surface_attach(surface, slot->buffer, 0, 0);
      wl_surface_damage_buffer(surface, 0, 0, pixels.width(), pixels.height());
-@@ -1348,9 +1367,19 @@
+@@ -1313,13 +1332,21 @@
+ 
+ QQuickVideoStereoLayer::QQuickVideoStereoLayer() : d(std::make_unique<Private>()) { }
+ 
+-std::unique_ptr<QQuickVideoStereoLayer> QQuickVideoStereoLayer::create(QWindow *window)
++std::unique_ptr<QQuickVideoStereoLayer> QQuickVideoStereoLayer::create(QWindow *window, QString *why)
+ {
++    // A compositor that announces the stereo global and the layer still cannot be made is said (why), once: nothing is shown in 3D and the caller must not ask again
++    auto failed = [why](const QString &what) -> std::unique_ptr<QQuickVideoStereoLayer> {
++        const QString text = QStringLiteral("the stereo layer could not be made (%1): the video is drawn the ordinary way, not in 3D").arg(what);
++        qCWarning(qLcStereoLayer).noquote() << text;
++        if (why)
++            *why = text;
++        return nullptr;
++    };
+     if (!window || !isSupported())
+         return nullptr;
+     auto *windowInterface = window->nativeInterface<QNativeInterface::Private::QWaylandWindow>();
+     if (!windowInterface || !windowInterface->surface())
+-        return nullptr;
++        return failed(QStringLiteral("the window has no wl_surface"));
+ 
+     std::unique_ptr<QQuickVideoStereoLayer> layer(new QQuickVideoStereoLayer);
+     Private *p = layer->d.get();
+@@ -1327,12 +1354,12 @@
+     p->display = waylandDisplay();
+     p->queue = wl_display_create_queue(p->display);
+     p->registry = readGlobals(p->display, p->queue, p->globals);
+-    if (stereo_declare_wayland_init(p->display, p->queue) != 0)
+-        return nullptr;
++    if (const int result = stereo_declare_wayland_init(p->display, p->queue); result != 0)
++        return failed(QStringLiteral("the declaration library could not start: %1").arg(QString::fromLocal8Bit(strerror(-result))));
+     p->stereoInitialized = true;
+     wl_display_roundtrip_queue(p->display, p->queue);
+     if (!stereo_supported_wayland())
+-        return nullptr;
++        return failed(QStringLiteral("the declaration library did not take the compositor's stereo global"));
+ 
+     p->surface = wl_compositor_create_surface(p->globals.compositor);
+     p->subsurface = wl_subcompositor_get_subsurface(p->globals.subcompositor, p->surface,
+@@ -1348,9 +1375,19 @@
      wl_region *empty = wl_compositor_create_region(p->globals.compositor);
      wl_surface_set_input_region(p->surface, empty);
      wl_region_destroy(empty);
@@ -101,7 +147,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  QQuickVideoStereoLayer::~QQuickVideoStereoLayer()
  {
      QMutexLocker lock(&d->mutex);
-@@ -1512,14 +1541,9 @@
+@@ -1512,14 +1549,9 @@
              info.write(QStringLiteral("%1 %2 %3 rows from the top\n").arg(format == BufferFormat::Xrgb2101010 ? u"xr30"_s : format == BufferFormat::Xrgb8888 ? u"xr24"_s : format == BufferFormat::Xbgr16161616 ? u"xb48"_s : u"xb4h"_s).arg(pixels.width()).arg(pixels.height()).toUtf8());
      }
  
@@ -118,7 +164,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
      buffer->busy = true;
      wl_surface_attach(d->surface, buffer->buffer, 0, 0);
      wl_surface_damage_buffer(d->surface, 0, 0, pixels.width(), pixels.height());
-@@ -1732,14 +1756,15 @@
+@@ -1732,14 +1764,15 @@
      // into QT_MM_STEREO_LAYER_DUMP
      dumpFramebuffer(g.gl, g.format, pixels, g.dumped, d->frames, "rows from the bottom");
  
@@ -141,7 +187,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
      const bool swapped = egl.swapBuffers(g.display, g.surface);
      // the textures are the drawing context's: finished here before the frame is let go and they are drawn into again
      g.gl.finish();
-@@ -1792,6 +1817,7 @@
+@@ -1776,7 +1809,7 @@
+ struct QQuickVideoStereoLayer::Private { };
+ 
+ bool QQuickVideoStereoLayer::isSupported() { return false; }
+-std::unique_ptr<QQuickVideoStereoLayer> QQuickVideoStereoLayer::create(QWindow *) { return nullptr; }
++std::unique_ptr<QQuickVideoStereoLayer> QQuickVideoStereoLayer::create(QWindow *, QString *) { return nullptr; }
+ QQuickVideoStereoLayer::QQuickVideoStereoLayer() = default;
+ QQuickVideoStereoLayer::~QQuickVideoStereoLayer() = default;
+ QQuickVideoStereo::BufferFormat QQuickVideoStereoLayer::chooseFormat(QQuickVideoStereo::BufferFormat) const
+@@ -1792,6 +1825,7 @@
  bool QQuickVideoStereoLayer::gpuActive() const { return false; }
  QQuickVideoStereoLayer::GpuPathInfo QQuickVideoStereoLayer::gpuPath() const { return {}; }
  bool QQuickVideoStereoLayer::compositorHasDmabuf() const { return false; }
@@ -151,7 +206,18 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  {
 --- a/src/multimediaquick/qquickvideostereolayer_p.h
 +++ b/src/multimediaquick/qquickvideostereolayer_p.h
-@@ -80,6 +80,9 @@
+@@ -42,7 +42,9 @@
+     // Whether this compositor has what the layer needs: wl_subcompositor, wp_viewporter, wl_shm and
+     // the stereo content declaration
+     static bool isSupported();
+-    static std::unique_ptr<QQuickVideoStereoLayer> create(QWindow *window);
++    // Null with the reason in *why (and one log line) when the compositor announces the stereo global and the layer still cannot be made; null
++    // with *why empty when the window or the desktop is not one a layer is made for (isSupported())
++    static std::unique_ptr<QQuickVideoStereoLayer> create(QWindow *window, QString *why = nullptr);
+ 
+     ~QQuickVideoStereoLayer();
+ 
+@@ -80,6 +82,9 @@
      GpuPathInfo gpuPath() const;
      // Whether the compositor offers zwp_linux_dmabuf_v1
      bool compositorHasDmabuf() const;
@@ -176,14 +242,18 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  QQuickVideoStereoPresenter::LayerRoute QQuickVideoStereoPresenter::layerRoute() const
  {
      QMutexLocker lock(&m_routeMutex);
-@@ -78,7 +84,10 @@
-     m_layer = QQuickVideoStereoLayer::create(m_window);
+@@ -75,10 +81,13 @@
+ 
+ void QQuickVideoStereoPresenter::run()
+ {
+-    m_layer = QQuickVideoStereoLayer::create(m_window);
++    QString why;
++    m_layer = QQuickVideoStereoLayer::create(m_window, &why);
      {
          QMutexLocker lock(&m_mutex);
 -        m_valid = m_layer != nullptr;
-+        // a layer whose declaration the compositor's library refused is not used: the presenter is not valid, and says why
-+        if (m_layer)
-+            m_refusal = m_layer->declarationFailure();
++        // a layer that could not be made, or whose declaration the compositor's library refused, is not used: the presenter is not valid, and says why
++        m_refusal = m_layer ? m_layer->declarationFailure() : why;
 +        m_valid = m_layer != nullptr && m_refusal.isEmpty();
          m_created = true;
          m_condition.wakeAll();
@@ -234,7 +304,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  */
  bool QQuickVideoOutput::stereoLayerActive() const
  {
-@@ -1402,6 +1405,22 @@
+@@ -1402,6 +1405,25 @@
      return m_stereo.layerActive;
  }
  
@@ -242,9 +312,12 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 +    \qmlproperty string QtMultimedia::VideoOutput::stereoLayerFailure
 +    \readonly
 +
-+    Empty, or why a 3D video that is wanted in the layer is not shown in it: the declaration of the
-+    layer's surface as stereo content failed (the error is also logged, category
-+    \c qt.multimedia.video.stereolayer). The video is then drawn the ordinary way, one view, and
++    Empty, or why a 3D video that is wanted in the layer is not shown in it: the compositor announces
++    the stereo declaration and the layer could not be made (the window has no wl_surface or no alpha
++    buffer, the declaration library could not start or did not take the compositor's global) or its
++    surface's declaration as stereo content failed (the reason is also logged, once, category
++    \c qt.multimedia.video.stereolayer or \c qt.multimedia.video). A desktop that announces no
++    stereo declaration is a 2D desktop, not a failure. The video is then drawn the ordinary way, one view, and
 +    not as 3D; a player can say so to the person. The reason stays until the 3D video ends (the
 +    next 3D video makes the declaration again) or the item changes window.
 +*/
@@ -257,7 +330,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  void QQuickVideoOutput::reprocessFrame()
  {
      QVideoFrame frame;
-@@ -1418,13 +1437,28 @@
+@@ -1418,13 +1440,35 @@
  #ifdef QT_MM_STEREO_LAYER
      if (m_stereoPresenter || !m_window || !m_window->handle() || !stereoLayerSupported())
          return;
@@ -268,7 +341,15 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 +            return;
 +    }
      if (!m_window->format().hasAlpha()) {
-         qCWarning(qLcVideo) << "stereo layer: the window has no alpha buffer";
+-        qCWarning(qLcVideo) << "stereo layer: the window has no alpha buffer";
++        // said once: the failure is kept until the 3D video ends, and no other presenter is made for it
++        const QString text = QStringLiteral("the stereo layer could not be made (the window has no alpha buffer): the video is drawn the ordinary way, not in 3D");
++        qCWarning(qLcVideo).noquote() << text;
++        {
++            QMutexLocker lock(&m_frameMutex);
++            m_stereoLayerFailure = text;
++        }
++        emit stereoLayerFailureChanged();
          return;
      }
      auto presenter = std::make_shared<QQuickVideoStereoPresenter>(m_window);
@@ -287,7 +368,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
      const QPoint margins(m_window->frameMargins().left(), m_window->frameMargins().top());
      m_stereoRect = mapRectToScene(fillMode() == PreserveAspectCrop ? boundingRect() : m_contentRect).toRect().translated(margins);
      presenter->setGeometry({ m_stereoRect, fillMode() == PreserveAspectCrop });
-@@ -1455,6 +1489,7 @@
+@@ -1455,6 +1499,7 @@
          wanted = m_stereo.layerWanted;
      }
      if (!wanted) {
@@ -295,7 +376,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
          if (m_stereoPresenter) {
              std::shared_ptr<QQuickVideoStereoPresenter> old;
              {
-@@ -1463,6 +1498,14 @@
+@@ -1463,6 +1508,14 @@
                  old = std::move(m_stereoPresenter);
              }
          }
@@ -310,7 +391,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
          return;
      }
      if (!m_stereoPresenter) {
-@@ -1568,7 +1611,11 @@
+@@ -1568,7 +1621,11 @@
          QMutexLocker lock(&m_frameMutex);
          m_stereoPresenterReady = false;
          old = std::move(m_stereoPresenter);
