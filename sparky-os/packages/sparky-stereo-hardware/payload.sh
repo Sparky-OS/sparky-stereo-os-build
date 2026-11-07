@@ -23,9 +23,9 @@ ln -s /dev/null "$D/usr/lib/systemd/system/sparky-stereo-hardware-nvidia-i386.se
 install -Dm755 "$HERE/bin/sparky-stereo-bt-voice-check" "$D/usr/lib/sparky-stereo-hardware/bt-voice-check"
 install -Dm644 "$HERE/share/systemd/sparky-stereo-hardware-bt-voice.service" "$D/usr/lib/systemd/system/sparky-stereo-hardware-bt-voice.service"
 install -Dm644 "$HERE/share/udev/71-sparky-stereo-bt-voice.rules" "$D/usr/lib/udev/rules.d/71-sparky-stereo-bt-voice.rules"
-# a newly connected headset (Bluetooth, or USB with a headset form factor) takes the sound and hands it back when it leaves (ORDER 129)
-install -Dm644 "$HERE/share/wireplumber/50-sparky-stereo-headset.conf" "$D/usr/share/wireplumber/wireplumber.conf.d/50-sparky-stereo-headset.conf"
-install -Dm644 "$HERE/share/wireplumber/sparky-stereo-headset.lua" "$D/usr/share/wireplumber/scripts/sparky-stereo-headset.lua"
+# a newly connected headset or speaker (Bluetooth, or USB) takes the sound and hands it back when it leaves; the script is wanted, not required (ORDER 129)
+install -Dm644 "$HERE/share/wireplumber/50-sparky-stereo-new-output.conf" "$D/usr/share/wireplumber/wireplumber.conf.d/50-sparky-stereo-new-output.conf"
+install -Dm644 "$HERE/share/wireplumber/sparky-stereo-new-output.lua" "$D/usr/share/wireplumber/scripts/sparky-stereo-new-output.lua"
 mkdir -p "$D/usr/lib/sparky-stereo-hardware" "$D/usr/share/sparky/sparky-stereo-hardware"
 install -m644 "$HERE"/lib/* "$D/usr/lib/sparky-stereo-hardware/"
 install -m644 "$HERE"/lang/* "$HERE/share/nvidia-open.ids" "$HERE/share/network-ids.tsv" "$HERE/share/nvidia-open-source.txt" "$HERE/share/rig-devices.json" "$D/usr/share/sparky/sparky-stereo-hardware/"
