@@ -7,11 +7,13 @@ if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
 fi
 if [ "$1" = remove ] && command -v deb-systemd-helper > /dev/null; then
 	deb-systemd-helper mask sparky-stereo-opengl-default.service >/dev/null || true
+	deb-systemd-helper disable sparky-stereo-hardware-bt-voice.service >/dev/null || true
 fi
 if [ "$1" = purge ]; then
 	if command -v deb-systemd-helper > /dev/null; then
 		deb-systemd-helper purge sparky-stereo-opengl-default.service >/dev/null || true
 		deb-systemd-helper unmask sparky-stereo-opengl-default.service >/dev/null || true
+		deb-systemd-helper purge sparky-stereo-hardware-bt-voice.service >/dev/null || true
 	fi
 	rm -f /etc/sparky-stereo/opengl-stereo.conf
 	rmdir /etc/sparky-stereo 2>/dev/null || true

@@ -1,0 +1,123 @@
+#!/usr/bin/python3
+# Created by Daniel Ramos (Capitain Jack) and Paweł "pavroo" Pijanowski 2026/11/07
+# Copyright 2026 under the GNU GPL3 License
+# sparky-stereo-bt-voice-check [--list] [--dry-run] [--wait SECONDS]
+# A Bluetooth adapter that has no SCO buffers cannot carry a headset's microphone or calls (ORDER 133): the kernel refuses every
+# voice connection (Bluetooth core, hci_connect_sco(): "Controller does not support SCO or eSCO over HCI"), and PipeWire then gives a
+# silent microphone. This tells the person instead (Daniel, 2026-11-01: "either it works or not and the user must know").
+# It reads each adapter's state through the HCI socket (HCIGETDEVLIST, HCIGETDEVINFO), which needs no root and no debugfs:
+# an adapter that is up, BR/EDR capable (LMP features byte 4 bit 5 clear) and reports sco_pkts 0 cannot carry voice.
+# The notice is the machine's, kept by sparky-stereo-problems under bt-voice-<address> and cleared when the adapter is gone or can.
+#   --list      print what was read and the verdict, keep nothing
+#   --dry-run   print the engine commands instead of running them
+#   --wait N    wait up to N seconds for adapters that are not up yet (the check runs at boot and when an adapter appears)
+# SPARKY_BT_VOICE_FIXTURE=FILE (tests): a JSON list of adapters replaces the HCI socket.
+import fcntl, glob, json, os, socket, struct, subprocess, sys, time
+
+PKG = "sparky-stereo-hardware"
+HCIGETDEVLIST = 0x800448D2
+HCIGETDEVINFO = 0x800448D3
+STORE = os.environ.get("SPARKY_STEREO_ROOT", "") + "/var/lib/sparky-stereo-problems"
+
+
+def read_adapters():
+    fx = os.environ.get("SPARKY_BT_VOICE_FIXTURE")
+    if fx:
+        with open(fx) as f:
+            return json.load(f)
+    try:
+        s = socket.socket(31, socket.SOCK_RAW, 1)  # AF_BLUETOOTH, BTPROTO_HCI (not every Python build names them)
+    except OSError:
+        return []
+    out = []
+    try:
+        buf = bytearray(struct.pack("H", 16) + b"\0" * (2 + 16 * 8))
+        fcntl.ioctl(s.fileno(), HCIGETDEVLIST, buf, True)
+        n = struct.unpack_from("H", buf, 0)[0]
+        for i in range(n):
+            dev_id = struct.unpack_from("H", buf, 4 + i * 8)[0]
+            info = bytearray(92)
+            struct.pack_into("H", info, 0, dev_id)
+            fcntl.ioctl(s.fileno(), HCIGETDEVINFO, info, True)
+            name = bytes(info[2:10]).split(b"\0")[0].decode()
+            addr = ":".join("%02X" % b for b in reversed(info[10:16]))
+            flags = struct.unpack_from("I", info, 16)[0]
+            bus = info[20] & 0x0F
+            feat = list(info[21:29])
+            sco_mtu, sco_pkts = struct.unpack_from("HH", info, 48)
+            out.append({"name": name, "address": addr, "up": bool(flags & 1), "bus": bus, "features": feat, "sco_mtu": sco_mtu, "sco_pkts": sco_pkts})
+    finally:
+        s.close()
+    return out
+
+
+def le_only(a):
+    return bool(a["features"][4] & 0x20)  # LMP features byte 4 bit 5: BR/EDR not supported
+
+
+def verdict(a):
+    if not a["up"]:
+        return "not up"
+    if le_only(a):
+        return "LE only"
+    return "NO VOICE" if a["sco_pkts"] == 0 else "voice ok"
+
+
+def describe(a):
+    # the USB product string and ids, when the adapter is a USB one
+    try:
+        dev = os.path.realpath("/sys/class/bluetooth/%s/device" % a["name"])
+        usb = os.path.dirname(dev)
+        def rd(n):
+            with open(os.path.join(usb, n)) as f:
+                return f.read().strip()
+        return "%s (%s:%s)" % (rd("product"), rd("idVendor"), rd("idProduct"))
+    except OSError:
+        return a["name"] + " " + a["address"]
+
+
+def key(a):
+    return "bt-voice-" + a["address"].replace(":", "").lower()
+
+
+def engine(args, dry):
+    cmd = ["sparky-stereo-problems"] + args
+    if dry:
+        print(" ".join(cmd))
+        return
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def main(argv):
+    lst = "--list" in argv
+    dry = "--dry-run" in argv
+    wait = int(argv[argv.index("--wait") + 1]) if "--wait" in argv else 0
+    deadline = time.time() + wait
+    while True:
+        ads = read_adapters()
+        if all(a["up"] for a in ads) or time.time() >= deadline:
+            break
+        time.sleep(3)
+    for a in ads:
+        a["verdict"] = verdict(a)
+        if lst:
+            print("%s %s bus %d sco %d:%d -> %s  [%s]" % (a["name"], a["address"], a["bus"], a["sco_mtu"], a["sco_pkts"], a["verdict"], describe(a)))
+    if lst:
+        return 0
+    present = set()
+    for a in ads:
+        present.add(key(a))
+        if a["verdict"] == "NO VOICE":
+            engine(["keep", PKG, key(a), "LOCAL18", describe(a)], dry)
+        elif a["verdict"] in ("voice ok", "LE only"):
+            engine(["clear", PKG, key(a)], dry)
+    # adapters that were unplugged: their notice goes with them
+    for f in glob.glob(os.path.join(STORE, PKG + "_bt-voice-*.json")):
+        k = os.path.basename(f)[len(PKG) + 1:-5]
+        if k not in present:
+            engine(["clear", PKG, k], dry)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

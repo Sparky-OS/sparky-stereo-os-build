@@ -19,6 +19,13 @@ install -Dm644 "$HERE/share/systemd/sparky-stereo-hardware-nvidia-i386.service" 
 # OnFailure= cannot remove a dependency another drop-in added: measured with systemd 262)
 mkdir -p "$D/usr/lib/systemd/system/sparky-stereo-hardware-nvidia-i386.service.d"
 ln -s /dev/null "$D/usr/lib/systemd/system/sparky-stereo-hardware-nvidia-i386.service.d/50-sparky-stereo-problems.conf"
+# a Bluetooth adapter that cannot carry voice is told to the person, once, by the engine (ORDER 133): at boot and when an adapter appears or goes
+install -Dm755 "$HERE/bin/sparky-stereo-bt-voice-check" "$D/usr/lib/sparky-stereo-hardware/bt-voice-check"
+install -Dm644 "$HERE/share/systemd/sparky-stereo-hardware-bt-voice.service" "$D/usr/lib/systemd/system/sparky-stereo-hardware-bt-voice.service"
+install -Dm644 "$HERE/share/udev/71-sparky-stereo-bt-voice.rules" "$D/usr/lib/udev/rules.d/71-sparky-stereo-bt-voice.rules"
+# a newly connected headset or speaker (Bluetooth, or USB) takes the sound and hands it back when it leaves; the script is wanted, not required (ORDER 129)
+install -Dm644 "$HERE/share/wireplumber/50-sparky-stereo-new-output.conf" "$D/usr/share/wireplumber/wireplumber.conf.d/50-sparky-stereo-new-output.conf"
+install -Dm644 "$HERE/share/wireplumber/sparky-stereo-new-output.lua" "$D/usr/share/wireplumber/scripts/sparky-stereo-new-output.lua"
 mkdir -p "$D/usr/lib/sparky-stereo-hardware" "$D/usr/share/sparky/sparky-stereo-hardware"
 install -m644 "$HERE"/lib/* "$D/usr/lib/sparky-stereo-hardware/"
 install -m644 "$HERE"/lang/* "$HERE/share/nvidia-open.ids" "$HERE/share/network-ids.tsv" "$HERE/share/nvidia-open-source.txt" "$HERE/share/rig-devices.json" "$D/usr/share/sparky/sparky-stereo-hardware/"
@@ -48,4 +55,5 @@ done
 install -Dm644 "$HERE/share/udev/71-sparky-stereo-nvidia-units.rules" "$D/usr/lib/udev/rules.d/71-sparky-stereo-nvidia-units.rules"
 
 sparky-stereo-problems catalog sparky-stereo-hardware "$HERE/problems-lang" "$D/usr/lib/systemd/catalog" \
-	--subject LOCAL1=LOCAL2,LOCAL3,LOCAL4 --subject LOCAL9=LOCAL5,LOCAL6,LOCAL7,LOCAL8,LOCAL10,LOCAL11,LOCAL12,LOCAL13,LOCAL14,LOCAL15,LOCAL16
+	--subject LOCAL1=LOCAL2,LOCAL3,LOCAL4 --subject LOCAL9=LOCAL5,LOCAL6,LOCAL7,LOCAL8,LOCAL10,LOCAL11,LOCAL12,LOCAL13,LOCAL14,LOCAL15,LOCAL16 \
+	--subject LOCAL17=LOCAL18
