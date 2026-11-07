@@ -106,6 +106,18 @@ static struct {
     double percent, convergence;
     const char *dump_dir, *stats_path;
 } config;
+/* How long a window may wait for the compositor to double it before the driver sizes its buffers:
+ * GL_STEREO_DOUBLING_WAIT_MS, 1000 by default; GL_STEREO_NO_DOUBLING_WAIT or 0 does not wait. */
+static unsigned doubling_wait_ms(void)
+{
+    const char *s = getenv("GL_STEREO_DOUBLING_WAIT_MS");
+    if (getenv("GL_STEREO_NO_DOUBLING_WAIT")) return 0;
+    if (!s || !*s) return 1000;
+    char *end;
+    unsigned long v = strtoul(s, &end, 10);
+    return *end || v > 60000 ? 1000 : (unsigned)v;
+}
+
 static double number(const char *name, double fallback, double lo, double hi)
 {
     const char *s = getenv(name);
@@ -259,13 +271,17 @@ static void bind_context(Display *d, GLXDrawable draw, GLXContext context)
              * current. A compositor doubles a declared window shortly after; give it
              * that time first, so a driver that misses the resize (NVIDIA's OpenGL:
              * the second view stayed black) starts at the doubled size. */
-            if (w->compositor_sizes && support >= 1 && !w->doubled && (w->map_requested || w->mapped) &&
-                !getenv("GL_STEREO_NO_DOUBLING_WAIT")) {
-                for (int i = 0; i < 100 && !w->doubled; ++i) {
+            unsigned wait_ms = doubling_wait_ms();
+            if (w->compositor_sizes && support >= 1 && !w->doubled && (w->map_requested || w->mapped) && wait_ms) {
+                for (unsigned ms = 0; ms < wait_ms && !w->doubled; ms += 10) {
                     XSync(d, False);
                     if (r_XGetWindowAttributes(d, w->window, &a) && a.width == 2 * w->width) w->doubled = 1;
                     else usleep(10000);
                 }
+                if (!w->doubled && r_XGetWindowAttributes(d, w->window, &a) && a.width == 2 * w->width) w->doubled = 1;
+                if (!w->doubled)
+                    fprintf(stderr, "gl-stereo: the compositor did not double window %lu to two views within %u ms; "
+                            "the second view may stay empty\n", (unsigned long)w->window, wait_ms);
             }
         }
     }
