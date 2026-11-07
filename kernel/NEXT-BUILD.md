@@ -32,7 +32,7 @@ The final `.config` holds every option of the fragments (`configure.sh` stops ot
 ## Build 9 (queued 2026-10-09)
 
 - rt gets the guest virtio-gpu stereo patches (series group 33), as base and v3 already have them.
-- EV_BTN (queue item 15): Tomasz Pakuła's "Input: New EV_BTN event" series, so joysticks keep more than 80 buttons, with its SDL and Wine parts in our packages; and `HID_WINWING` on.
+- EV_BTN (queue item 15): in main as series group 44 (Tomasz Pakuła's posted RFC, six patches unchanged, plus our 0007 sizing the evdev buffer), proven at runtime on a reduced kernel (ORDER 15 milestone 2); the next build carries it in all three flavours. Its SDL part (libsdl3 patches 0001 to 0004) and the Wine port follow as packages. `HID_WINWING` on is still to do.
 
 ## Flavour parity (Daniel, 2026-10-21)
 
