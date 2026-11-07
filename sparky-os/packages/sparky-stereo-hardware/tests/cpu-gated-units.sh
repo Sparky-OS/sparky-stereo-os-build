@@ -32,7 +32,7 @@ else
 fi
 # nvidia-imex: skipped until the administrator's node file exists
 rm -f /etc/nvidia-imex/nodes_config.cfg
-if systemd-analyze condition --unit=nvidia-imex.service 2>&1 | grep -q 'ConditionPathExists=/etc/nvidia-imex/nodes_config.cfg .* failed'; then
+if systemd-analyze condition --unit=nvidia-imex.service 2>&1 | grep -q 'ConditionPathExists=/etc/nvidia-imex/nodes_config.cfg failed'; then
 	ok "nvidia-imex.service without /etc/nvidia-imex/nodes_config.cfg: the condition fails, the unit is skipped"
 else
 	bad "nvidia-imex.service without the node file is not skipped: $(systemd-analyze condition --unit=nvidia-imex.service 2>&1 | tr '\n' ' ')"
