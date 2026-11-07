@@ -7,7 +7,9 @@
 # dpkg-buildpackage -us -uc and lean.release check-debs. Nothing is installed on the host.
 #
 # Usage: build-dh-lean.sh WORK SOURCE_DIR VERSION REPO
-#   WORK        folder holding SOURCE_DIR and its NAME_UPSTREAM.orig.tar.xz; results land in WORK/out
+#   WORK        folder holding SOURCE_DIR and its NAME_UPSTREAM.orig.tar.xz (and any NAME_UPSTREAM.orig-COMPONENT.tar.xz,
+#               the additional upstream tarballs of a 3.0 (quilt) source, unpacked in SOURCE_DIR/COMPONENT); results land
+#               in WORK/out
 #   SOURCE_DIR  the unpacked upstream tree with our debian/ (a folder name inside WORK)
 #   VERSION     the Lean Code version, debian/changelog's version plus +lc1
 #   REPO        the edition's repository (a flat tree with dists/mashtabba), mounted read-only
@@ -17,7 +19,7 @@
 # with keyring paths under /archive (sparky-os/lean/archive.md), and those keyrings. lean.debhelper runs the link and start
 # gate when the packages are built, and it refuses to run without it. SPARKY_LC_PREVIOUS_DIR, when set, is a folder of the
 # earlier +lc1 builds the gate compares with (mounted at /prev).
-# Last update 2026/11/01
+# Last update 2026/11/07
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../repo/build-provenance.sh"
@@ -71,6 +73,8 @@ runuser -u builder -- dpkg-source -b "$SRC"
 dsc=$(ls /work/*.dsc | grep -v "+lc1" | head -1)
 runuser -u builder -- mkdir -p /work/out/authored
 cp "$dsc" /work/*.debian.tar.xz /work/*.orig.tar.xz /work/out/authored/
+# the additional upstream tarballs of a source with components, which its .dsc lists too
+find /work -maxdepth 1 -name "*.orig-*.tar.*" -exec cp {} /work/out/authored/ \;
 runuser -u builder -- dpkg-source -x "$dsc" /work/lean-source
 runuser -u builder -- env PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lean-source "$VERSION" --toolkit /toolkit
 apt-get -y --no-install-recommends build-dep /work/lean-source
@@ -82,5 +86,6 @@ cd /work
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/*+lc1_*.deb
 mv /work/*+lc1* /work/out/
 cp /work/*.orig.tar.xz /work/out/
+find /work -maxdepth 1 -name "*.orig-*.tar.*" -exec cp {} /work/out/ \;
 chown -R "$OWNER" /work
 '
