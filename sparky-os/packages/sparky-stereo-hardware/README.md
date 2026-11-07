@@ -156,3 +156,21 @@ Programs that keep NVIDIA's own OpenGL (since 0.1.10): CUDA and OpenGL sharing n
 The test is `tests/opengl-default.sh` (fixture sysfs trees, menu entries and lists).
 
 HDMI®, HDMI® High-Definition Multimedia Interface and the HDMI® Logo are trademarks or registered trademarks of HDMI Licensing Administrator, Inc.
+
+A Bluetooth adapter that cannot carry voice (ORDER 133):
+-------------
+`sparky-stereo-hardware-bt-voice.service` (at boot, and started by a udev rule when an adapter appears or goes) runs `/usr/lib/sparky-stereo-hardware/bt-voice-check --wait 90`.
+It reads each adapter through the HCI socket (`HCIGETDEVLIST`, `HCIGETDEVINFO`: no root, no debugfs) and keeps a machine problem `bt-voice-ADDRESS` for an adapter that is up, BR/EDR capable and reports `sco_pkts` 0.
+Such an adapter gives the computer no voice channel (the Bluetooth core refuses every SCO connection, `hci_connect_sco()` "Controller does not support SCO or eSCO over HCI"), so a headset microphone through it stays silent while music still plays.
+The measured case is the clone sold under the CSR id 0a12:0001 (Barrot 8041a02 family, HCI revision 0x0810): the chip reports 16 SCO buffers and the kernel's rule for fake CSR controllers (Pedro Nishiyama, 2025, a SCO connection without the voice setting can lock the controller up) zeroes them. The edition leaves that rule alone.
+The message is in `problems-lang` (LOCAL17, LOCAL18) in the nine languages.
+`/usr/lib/sparky-stereo-hardware/bt-voice-check --list` prints what it reads and the verdict, as any user, and keeps nothing; `--dry-run` prints the engine commands.
+
+A newly connected headset (ORDER 129):
+-------------
+`/usr/share/wireplumber/wireplumber.conf.d/50-sparky-stereo-headset.conf` loads `/usr/share/wireplumber/scripts/sparky-stereo-headset.lua`.
+WirePlumber adds 30000 to the priority of the sink the person chose and then skips the search for a better one, so a new device cannot win by its own priority.
+The hook runs before `default-nodes/find-selected-default-node` and selects the newest connected headset (a Bluetooth audio sink, or a USB sound card with form factor headset, headphone or hands-free) above that; it sets only the live default and never writes the person's choice, so the chosen sink is back when the headset goes.
+Off for one person: a file in `~/.config/wireplumber/wireplumber.conf.d` with `wireplumber.settings = { sparky.headset-takes-the-sound = false }`.
+WirePlumber's own `bluetooth.autoswitch-to-headset-profile` (headset profile while a program records, back to music afterwards) is on by default and is not changed.
+Measured on the A10 (WirePlumber 0.5.18): a virtual sink named like a Bluetooth sink, one with bus usb and form factor headset, two together (the newer holds it, the first again when it leaves), a usb speaker (does not take it), the switch off.

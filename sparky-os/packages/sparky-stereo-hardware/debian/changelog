@@ -1,3 +1,23 @@
+sparky-stereo-hardware (0.1.25) unstable; urgency=medium
+
+  * A Bluetooth adapter that cannot carry a headset's microphone or calls is
+    told to the person, once, through the engine (sparky-stereo-problems):
+    sparky-stereo-hardware-bt-voice.service runs at boot and when an adapter
+    appears or goes (a udev rule), reads each adapter's state through the HCI
+    socket (no root, no debugfs) and keeps a machine problem for an adapter
+    that is up, BR/EDR capable and reports no SCO buffers (the CSR clone
+    0a12:0001 with HCI revision 0x0810: the kernel's fake-CSR rule leaves it
+    SCO MTU 48:0 and every voice connection is refused). The notice is in the
+    nine languages and is cleared when the adapter is unplugged. ORDER 133.
+  * A newly connected headset takes the sound and hands it back when it
+    leaves: a WirePlumber hook (scripts/sparky-stereo-headset.lua, loaded by
+    wireplumber.conf.d/50-sparky-stereo-headset.conf) selects a Bluetooth audio
+    sink, or a USB sound card whose form factor is headset, headphone or
+    hands-free, above the person's chosen sink without writing the person's
+    choice; the setting sparky.headset-takes-the-sound turns it off. ORDER 129.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 07 Nov 2026 16:30:00 -0300
+
 sparky-stereo-hardware (0.1.21) unstable; urgency=medium
 
   * NVIDIA's i386 libraries install by themselves after the apt run that
