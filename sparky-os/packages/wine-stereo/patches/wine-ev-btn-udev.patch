@@ -1,0 +1,101 @@
+Description: winebus udev backend: report the joystick buttons of the kernel's EV_BTN event
+ The Linux input event EV_BTN (Tomasz Pakuła's "Input: New EV_BTN event for
+ generic buttons", linux-input 2026-01-04, kernel series group 44 of the
+ edition) numbers a joystick's buttons from 1 with no limit at KEY_MAX, which
+ stops EV_KEY at 80 buttons. When the device offers EV_BTN and EVIOCGBTNCNT
+ gives a count, the device's HID report holds that many buttons and an EV_BTN
+ event sets button code - 1; EV_KEY is then ignored for the device, so a button
+ is not counted twice. A device without EV_BTN is as before.
+ This is the idea of Wine merge request 9853 (winebus: Add support for EV_BTN
+ to udev, open draft, written for Wine master and in conflict with it) ported
+ to the lnxev code of Wine 10.0. Differences from the merge request: the
+ event bit is read and tested before the ioctl is used; the fallback
+ EVIOCGBTNCNT is the real number, _IOR('E', 0x1c, unsigned int), not 0 (the
+ ioctl 0 always fails, so a build against headers without EV_BTN never used the
+ event); the event-bit buffer is sized (EV_MAX + 7) / 8; an event code outside
+ 1 to the button count is ignored; a device that has EV_BTN but gives no count
+ is said on the error channel (the failed ioctl with its errno, or a count of 0) and keeps the EV_KEY path. Its second patch
+ (BTN_GAMEPAD decides if a device is a gamepad) is left out.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Origin: other, https://gitlab.winehq.org/wine/wine/-/merge_requests/9853 (idea and first patch by Tomasz Pakuła)
+Bug: https://gitlab.winehq.org/wine/wine/-/merge_requests/9853
+Forwarded: no
+Last-Update: 2026-11-07
+
+--- a/dlls/winebus.sys/bus_udev.c
++++ b/dlls/winebus.sys/bus_udev.c
+@@ -54,6 +54,12 @@
+ # ifndef SYN_DROPPED
+ #  define SYN_DROPPED 3
+ # endif
++# ifndef EV_BTN
++#  define EV_BTN 0x06
++# endif
++# ifndef EVIOCGBTNCNT
++#  define EVIOCGBTNCNT _IOR('E', 0x1c, unsigned int)
++# endif
+ #endif
+ 
+ #ifndef BUS_BLUETOOTH
+@@ -187,6 +193,8 @@
+     BYTE rel_map[ARRAY_SIZE(relative_usages)];
+     BYTE hat_map[8];
+     BYTE button_map[KEY_MAX];
++    BOOL ev_btn;
++    unsigned int ev_btn_count;
+ 
+     int haptic_effect_id;
+     int effect_ids[256];
+@@ -535,6 +543,7 @@
+ static NTSTATUS build_report_descriptor(struct unix_device *iface, struct udev_device *dev)
+ {
+     struct input_absinfo abs_info[ARRAY_SIZE(absolute_usages)];
++    BYTE evbits[(EV_MAX+7)/8];
+     BYTE absbits[(ABS_MAX+7)/8];
+     BYTE relbits[(REL_MAX+7)/8];
+     BYTE ffbits[(FF_MAX+7)/8];
+@@ -606,8 +615,30 @@
+     if (hat_count && !hid_device_add_hatswitch(iface, hat_count))
+         return STATUS_NO_MEMORY;
+ 
++    /* The kernel's EV_BTN event numbers a joystick's buttons from 1 with no limit at KEY_MAX (80 buttons) */
++    if (ioctl(impl->base.device_fd, EVIOCGBIT(0, sizeof(evbits)), evbits) == -1)
++    {
++        WARN("ioctl(EVIOCGBIT, 0) failed: %d %s\n", errno, strerror(errno));
++        memset(evbits, 0, sizeof(evbits));
++    }
++    if (test_bit(evbits, EV_BTN))
++    {
++        unsigned int ev_btn_count = 0;
++
++        if (ioctl(impl->base.device_fd, EVIOCGBTNCNT, &ev_btn_count) == -1)
++            ERR("the device has EV_BTN but EVIOCGBTNCNT failed (%d %s): its buttons are counted from EV_KEY\n", errno, strerror(errno));
++        else if (!ev_btn_count)
++            ERR("the device has EV_BTN but EVIOCGBTNCNT gave a count of 0: its buttons are counted from EV_KEY\n");
++        else
++        {
++            impl->ev_btn = TRUE;
++            impl->ev_btn_count = ev_btn_count;
++        }
++    }
++
+     /* For now lump all buttons just into incremental usages, Ignore Keys */
+-    button_count = count_buttons(impl->base.device_fd, impl->button_map);
++    if (impl->ev_btn) button_count = impl->ev_btn_count;
++    else button_count = count_buttons(impl->base.device_fd, impl->button_map);
+     if (button_count && !hid_device_add_buttons(iface, HID_USAGE_PAGE_BUTTON, 1, button_count))
+         return STATUS_NO_MEMORY;
+ 
+@@ -692,7 +723,12 @@
+     case EV_MSC:
+         return FALSE;
+ #endif
++    case EV_BTN:
++        if (impl->ev_btn && ie->code >= 1 && ie->code <= impl->ev_btn_count)
++            hid_device_set_button(iface, ie->code - 1, ie->value);
++        return FALSE;
+     case EV_KEY:
++        if (impl->ev_btn) return FALSE;
+         hid_device_set_button(iface, impl->button_map[ie->code], ie->value);
+         return FALSE;
+     case EV_ABS:
