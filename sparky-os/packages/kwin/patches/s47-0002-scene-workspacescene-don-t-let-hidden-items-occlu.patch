@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xaver Hugl
+Date: Sun, 25 Oct 2026 20:53:06 +0100
+Subject: [PATCH] scene/workspacescene: don't let hidden items occlude anything
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+addOpaqueRegionRecursive() doesn't check visibility, so hidden items
+still count as opaque in the occlusion cull pass of
+WorkspaceScene::collectDamage(). A cached QuickSceneEffect view is
+hidden but stays in the overlay, and since QuickSceneView has no alpha
+channel its whole rect is opaque. After closing a cached effect once,
+all window damage on that output gets culled and windows stop
+repainting.
+
+An item that isn't visible isn't painted, so it can't occlude
+anything. Skip hidden items and their children, matching how
+painting treats them.
+
+
+(cherry picked from commit 62222dbf2474439a905959cb5d63a60171d97086)
+
+Co-authored-by: Rafał Domecki
+
+Carried unchanged, applied with a 55-line offset (the stereo depth code sits above). The edition's own
+addSolidRegionRecursive, which clears the eye passes below culling windows (ORDER 319), already skips
+items that are not explicitly visible, so only addOpaqueRegionRecursive needed the check.
+
+Origin: upstream, https://invent.kde.org/plasma/kwin/-/commit/37d327ce46b09fadd722d19812d2481dcbdd0a40
+Author: Xaver Hugl
+Applied-Upstream: v6.7.6, 37d327ce46 (Plasma/6.7), 62222dbf24 (master)
+Last-Update: 2026-11-07
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ src/scene/workspacescene.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/scene/workspacescene.cpp b/src/scene/workspacescene.cpp
+index 571948e9fa..2dbe2b1782 100644
+--- a/src/scene/workspacescene.cpp
++++ b/src/scene/workspacescene.cpp
+@@ -603,6 +603,9 @@ void WorkspaceScene::preparePaintGenericScreen()
+ 
+ static void addOpaqueRegionRecursive(SceneView *view, Item *item, const std::optional<ClipCorner> &parentCorner, Region &ret)
+ {
++    if (!item->isVisible()) {
++        return;
++    }
+     const std::optional<ClipCorner> corner = calculateClipCorner(item, parentCorner);
+     RegionF opaque = item->opaque();
+     if (corner.has_value()) {
+-- 
+2.53.0
+
