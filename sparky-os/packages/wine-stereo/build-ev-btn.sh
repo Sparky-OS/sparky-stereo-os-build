@@ -22,8 +22,10 @@ source)
 	WORK=$(realpath -m "${2:?work folder}") DSC=$(realpath "${3:?published .dsc}")
 	[ ! -e "$WORK" ] || [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 2; }
 	mkdir -p "$WORK/source"
-	STAMP=$(python3 "$TOP/repo/reproducible.py" epoch "$HERE")
-	docker run --rm --platform linux/amd64 -e TZ=UTC -e SOURCE_DATE_EPOCH="$STAMP" -e OWNER="$(id -u):$(id -g)" \
+	export SOURCE_DATE_EPOCH=$(python3 "$TOP/repo/reproducible.py" epoch "$HERE")
+	export SPARKY_SOURCE_DATE_BASIS="the last commit touching sparky-os/packages/wine-stereo"
+	sparky_provenance_init "$IMAGE" "$HERE"
+	docker run --rm --platform linux/amd64 -e TZ=UTC "${SPARKY_PROV_ARGS[@]}" -e OWNER="$(id -u):$(id -g)" \
 		-v "$(dirname "$DSC")":/src:ro -v "$WORK":/work -v "$TOP":/toolkit:ro \
 		-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$TOP/../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
 		"$IMAGE" bash -c '
@@ -37,6 +39,7 @@ source)
 		dpkg-source -x /src/'"$(basename "$DSC")"' tree >/dev/null
 		python3 /toolkit/packages/wine-stereo/prepare-ev-btn.py /work/tree '"$NEXT"'
 		[ -e /work/wine_10.0~repack.orig.tar.xz ] || ln -s /src/wine_10.0~repack.orig.tar.xz /work/
+		python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /work/tree
 		dpkg-source -b tree >/dev/null
 		mv /work/wine_* /work/source/ 2>/dev/null || true
 		cp -L /src/wine_10.0~repack.orig.tar.xz /work/source/ 2>/dev/null || true
