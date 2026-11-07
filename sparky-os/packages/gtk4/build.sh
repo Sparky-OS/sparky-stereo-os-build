@@ -15,8 +15,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../../repo/build-provenance.sh"
 . "$HERE/../../config/local-config.sh"
 sparky_need SPARKY_REPO_DIR
-# The link gate's archive list is the recipe's own (archive-sources.json: Debian testing with its installer component for
-# libgtk-4-1-udeb, deb-multimedia for the media libraries, the edition's tree as file:/repo), with the public keyrings copied
+# The link gate's archive list is the recipe's own (archive-sources.json: Debian testing, deb-multimedia for the media libraries, the edition's tree as file:/repo), with the public keyrings copied
 # beside it; SPARKY_LC_ARCHIVE_DIR still wins when the local configuration names one.
 if [ -z "${SPARKY_LC_ARCHIVE_DIR:-}" ]; then
 	SPARKY_LC_ARCHIVE_DIR=$(mktemp -d)

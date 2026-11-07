@@ -7,7 +7,9 @@
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
 : "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
-export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS='parallel=4 nocheck'
+# libgtk-4-1-udeb (Debian-Installer's GTK front end, which the edition's installer, Calamares, does not use) is not built: its
+# udeb dependencies cannot be solved with the deb packages in one link-gate root (libc6-udeb and libc6 ship the same files)
+export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS='parallel=4 nocheck' DEB_BUILD_PROFILES=noudeb
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 printf 'deb [trusted=yes] file:/repo mashtabba main\n' > /etc/apt/sources.list.d/edition.list
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
