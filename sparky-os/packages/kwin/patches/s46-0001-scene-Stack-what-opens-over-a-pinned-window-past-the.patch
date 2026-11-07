@@ -1,0 +1,136 @@
+From 2657144590397a125fb3842e708b83a596e4a823 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 6 Nov 2026 22:14:54 -0300
+Subject: [PATCH] scene: Stack what opens over a pinned window past the popped
+ limit
+
+A window kept above the others stays at the person's PoppedLimit. Its
+menus, sub-menus and popups (transients of a pinned window), and a
+notification or an on-screen display shown over it (its frame overlaps
+the pinned window's and it is stacked above), now stack further out:
+the layers over one pinned window share one more popped limit, each a
+step nearer the viewer than the layer under it, the spacing the popped
+share had before notifications were put at the limit.
+
+Everything else keeps its level: menus of unpinned windows share the
+popped range inside the limit, notifications away from a pinned window
+sit at the limit, a pinned window on the output's edge is at the screen
+and what opens over it keeps the ordinary rules, 2D outputs change
+nothing. The damage margin (maxEyeShift) covers the extra shift.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ src/scene/stereodepth.cpp | 46 +++++++++++++++++++++++++++++++++++++--
+ src/scene/stereodepth.h   |  8 +++++--
+ 2 files changed, 50 insertions(+), 4 deletions(-)
+
+diff --git a/src/scene/stereodepth.cpp b/src/scene/stereodepth.cpp
+index 8ab9f24..0b35dc8 100644
+--- a/src/scene/stereodepth.cpp
++++ b/src/scene/stereodepth.cpp
+@@ -31,6 +31,12 @@ static constexpr qreal s_referenceWidth = 1920;
+ static constexpr qreal s_referenceSunk = 10;
+ static constexpr qreal s_referencePopped = 4;
+ 
++// What opens over a window kept above the others (its menus and sub-menus, and a notification or an on-screen display
++// shown over it) stacks further out than the person's popped limit, where that window stays. The layers over one pinned
++// window share this many popped limits beyond it, so each is a step of span / layers nearer the viewer than the layer
++// under it: the spacing the popped share had before notifications were put at the limit (limit / surfaces in the pile).
++static constexpr qreal s_pinnedStackSpan = 1.0;
++
+ // how long a change of level lasts at the default animation speed: towards the viewer quickly, so
+ // that nothing is drawn behind what it is over for more than an instant, and away from it gently
+ static constexpr std::chrono::milliseconds s_riseDuration(80);
+@@ -124,6 +130,29 @@ static Role roleOf(const Window *window)
+     return active && mainWindow(active) == window && !isCovered(window) ? Role::Active : Role::Sunk;
+ }
+ 
++// the window kept above the others that @a window opens over: the one it is transient for, or for a notification or an
++// on-screen display the topmost pinned window below it in the stack whose frame it overlaps
++static const Window *pinnedBase(const Window *window)
++{
++    const Window *main = mainWindow(window);
++    if (main != window) {
++        return roleOf(main) == Role::Above ? main : nullptr;
++    }
++    if (!isAlert(window)) {
++        return nullptr;
++    }
++    const QList<Window *> &stack = workspace()->stackingOrder();
++    const RectF frame = window->frameGeometry();
++    for (qsizetype i = stack.indexOf(const_cast<Window *>(window)) - 1; i >= 0; --i) {
++        const Window *other = stack[i];
++        if (other == mainWindow(other) && isOnStage(other, window->output()) && roleOf(other) == Role::Above
++            && other->frameGeometry().intersects(frame)) {
++            return other;
++        }
++    }
++    return nullptr;
++}
++
+ // where the program declared a popup sits (kde_stereo_depth_v1.set_place), from -1 to 1
+ static std::optional<qreal> declaredPlace(const Window *window)
+ {
+@@ -175,6 +204,19 @@ qreal StereoDepth::level(const Window *window)
+         if (const auto place = declaredPlace(window)) {
+             // where the program declared it, under the rules below
+             level = std::clamp(*place, -1.0, 1.0);
++        } else if (const Window *base = pinnedBase(window); base && !touchesEdge(base)) {
++            // over a pinned window, which stays at the limit: one step further out than the layer under it
++            int count = 0;
++            int below = 0;
++            bool found = false;
++            for (const Window *other : stack) {
++                if (isOnStage(other, output) && roleOf(other) == Role::Popped && !touchesEdge(other) && !declaredPlace(other) && pinnedBase(other) == base) {
++                    count++;
++                    found |= other == window;
++                    below += !found;
++                }
++            }
++            level = found ? 1 + s_pinnedStackSpan * qreal(below + 1) / count : 1;
+         } else if (isAlert(window)) {
+             // a notification or an on-screen display is the nearest thing on the output, at the
+             // popped limit whatever else is popped: the share below is for what is worked in
+@@ -473,13 +515,13 @@ int StereoDepth::eyeShift(int parallax, StereoEye eye)
+ 
+ int StereoDepth::maxEyeShift(int viewWidth, const LogicalOutput *output)
+ {
+-    const qreal limit = std::max(sunkLimit(output), poppedLimit(output));
++    const qreal limit = std::max(sunkLimit(output), poppedLimit(output) * (1 + s_pinnedStackSpan));
+     return (std::lround(limit * viewWidth / s_referenceWidth) + 1) / 2;
+ }
+ 
+ int StereoDepth::maxEyeShift(int viewWidth)
+ {
+-    const qreal limit = std::max(options->stereoSunkLimit(), options->stereoPoppedLimit());
++    const qreal limit = std::max(options->stereoSunkLimit(), options->stereoPoppedLimit() * (1 + s_pinnedStackSpan));
+     return (std::lround(limit * viewWidth / s_referenceWidth) + 1) / 2;
+ }
+ 
+diff --git a/src/scene/stereodepth.h b/src/scene/stereodepth.h
+index 3d54cd9..024a98d 100644
+--- a/src/scene/stereodepth.h
++++ b/src/scene/stereodepth.h
+@@ -25,13 +25,17 @@ class Window;
+  * The depth levels of the desktop's own elements on a stereo output, and who sits at which one.
+  *
+  * A level runs from -1 (the sunk limit, behind the screen) through 0 (the screen) to +1 (the
+- * popped limit, in front of it). Anything between is valid, nothing goes beyond. The active
++ * popped limit, in front of it). Anything between is valid, nothing goes beyond (but for what
++ * opens over a pinned window, below). The active
+  * window is at the screen's level and what pops up over it (menus, dialogs, tooltips) is popped,
+  * the inactive windows share the sunk range evenly in their stacking order, the wallpaper is at
+  * the sunk limit, panels are at the screen's level, and a popped thing that touches the edge of
+  * its output stays at the screen's level. A window the user or a rule pinned above the others
+  * (Keep Above) stays at the popped limit and one pinned below (Keep Below) at the sunk limit,
+- * whatever is active. Fullscreen windows and windows that are not part of
++ * whatever is active. What opens over a pinned-above window (its menus and sub-menus, and the
++ * notifications and on-screen displays shown over it) is the one exception to "nothing goes
++ * beyond": it stacks further out than the popped limit, each layer a step nearer than the layer
++ * under it, the layers sharing one more popped limit. Fullscreen windows and windows that are not part of
+  * the desktop's own elements stay at the screen's level.
+  *
+  * Nothing is behind what it covers: the active window comes to the screen's level once it is on
+-- 
+2.53.0
+
