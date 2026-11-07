@@ -100,7 +100,8 @@ PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source 4.24.1+ds-1+s
 	--preserve-source 'gdk/*.c' 'g-ir-scanner and gi-docgen read the gtk-doc comments and annotations of the C sources and headers' \
 	--preserve-source 'gdk/*.h' 'g-ir-scanner and gi-docgen read the gtk-doc comments and annotations of the C sources and headers' \
 	--preserve-source 'gsk/*.c' 'g-ir-scanner and gi-docgen read the gtk-doc comments and annotations of the C sources and headers' \
-	--preserve-source 'gsk/*.h' 'g-ir-scanner and gi-docgen read the gtk-doc comments and annotations of the C sources and headers'
+	--preserve-source 'gsk/*.h' 'g-ir-scanner and gi-docgen read the gtk-doc comments and annotations of the C sources and headers' \
+	--preserve-source 'demos/*' 'demos/gtk-demo/geninclude.py reads the title and the keywords from the first comment of each demo and loops at the end of the file when the comment is gone'
 apt-get -y update >/dev/null 2>&1
 apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.log 2>&1
 # the link and start gate of lean.debhelper runs the rebuilt programs in a bubblewrap root
