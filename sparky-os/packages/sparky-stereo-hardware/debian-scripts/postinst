@@ -17,6 +17,8 @@ if [ "$1" = configure ]; then
 		# they left from before this package is no longer counted
 		grep -qs '^vendor_id[[:space:]]*:[[:space:]]*GenuineIntel' /proc/cpuinfo || systemctl reset-failed thermald.service >/dev/null 2>&1 || true
 		[ -e /etc/nvidia-imex/nodes_config.cfg ] || systemctl reset-failed nvidia-imex.service >/dev/null 2>&1 || true
+		# an Intel machine that has thermald from an earlier image keeps it: marked manual once, after this apt run
+		/usr/lib/sparky-stereo-hardware/thermald-manual check || true
 	fi
 	sparky-stereo-opengl-default ||
 		echo 'sparky-stereo-hardware: the OpenGL stereo default could not be written now (sparky-stereo-opengl-default failed); sparky-stereo-opengl-default.service writes it at the next boot' >&2

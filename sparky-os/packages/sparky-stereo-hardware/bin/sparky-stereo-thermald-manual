@@ -1,0 +1,50 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/07
+# Copyright 2026 under the GNU GPL3 License
+# thermald on an Intel machine that has it from an image before 0.1.24 was installed as a dependency of
+# sparky-stereo-hardware-support, which no longer depends on it (ORDER 43). Upgrading removes nothing, but apt would then
+# list the automatically installed thermald for `apt autoremove`. This marks it manually installed, once, on an Intel CPU
+# where it is installed ("Intel machines keep it", do-not-remove-functionality). Same shape as nvidia-i386 (ORDER 363b):
+#   check    after every dpkg run (dpkg's post-invoke hook): nothing unless the CPU is Intel, thermald is installed, it is
+#            marked automatic and the step has not run before. Inside an apt run apt rewrites its state file when the run
+#            ends, so a mark made now would be lost: it starts sparky-stereo-hardware-thermald-manual.service without
+#            waiting (systemctl --no-block), which waits for the run and then runs `auto`.
+#   auto     the unit's step: waits until no apt or dpkg run holds dpkg's locks (apt-get check with DPkg::Lock::Timeout=-1),
+#            marks thermald manual, writes the stamp and says so in the journal. It never runs again: a person who later
+#            marks thermald automatic keeps that choice.
+set -u
+STAMP=/var/lib/sparky-stereo-hardware/thermald-manual
+UNIT=sparky-stereo-hardware-thermald-manual.service
+TAG=sparky-stereo-hardware
+intel() { grep -qs '^vendor_id[[:space:]]*:[[:space:]]*GenuineIntel' /proc/cpuinfo; }
+installed() { [[ $(dpkg-query -W -f='${db:Status-Status}' thermald 2>/dev/null) == installed ]]; }
+automatic() { [[ -n $(apt-mark showauto thermald 2>/dev/null) ]]; }
+say() { logger -t "$TAG" -- "$1" 2>/dev/null || true; echo "$TAG: $1" >&2; }
+wanted() { [[ ! -e $STAMP ]] && intel && installed && automatic; }
+case ${1:-} in
+check)
+	[[ ! -e $STAMP ]] && intel && installed || exit 0
+	if ! automatic; then
+		# already the person's own (manual): nothing to mark, nothing to do again
+		mkdir -p "${STAMP%/*}" && : >"$STAMP"
+		exit 0
+	fi
+	if [[ -d /run/systemd/system ]] && ! systemd-detect-virt --quiet --chroot 2>/dev/null; then
+		out=$(systemctl --no-block start "$UNIT" 2>&1) || say "thermald is installed on an Intel CPU as an automatic package; systemctl start $UNIT failed ($out). Run: apt-mark manual thermald"
+	else
+		say "thermald is installed on an Intel CPU as an automatic package and systemd cannot start $UNIT here. Run: apt-mark manual thermald"
+	fi
+	;;
+auto)
+	apt-get -q -o DPkg::Lock::Timeout=-1 check >/dev/null 2>&1
+	wanted || exit 0
+	if apt-mark manual thermald >/dev/null; then
+		mkdir -p "${STAMP%/*}" && : >"$STAMP"
+		say 'thermald marked manually installed, once (Intel CPU; the metapackage no longer depends on it, so apt autoremove keeps it)'
+	else
+		say 'apt-mark manual thermald failed; run it by hand'
+		exit 1
+	fi
+	;;
+*) echo "usage: ${0##*/} check|auto" >&2; exit 2 ;;
+esac

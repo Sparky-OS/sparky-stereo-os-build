@@ -9,6 +9,9 @@ install -Dm755 "$HERE/bin/sparky-stereo-hardware" "$D/usr/bin/sparky-stereo-hard
 # NVIDIA's i386 libraries when i386 comes after NVIDIA's driver: dpkg's post-invoke hook checks after every dpkg run
 install -Dm755 "$HERE/bin/sparky-stereo-nvidia-i386" "$D/usr/lib/sparky-stereo-hardware/nvidia-i386"
 install -Dm644 "$HERE/share/dpkg/sparky-stereo-hardware" "$D/etc/dpkg/dpkg.cfg.d/sparky-stereo-hardware"
+# thermald stays on an Intel machine that has it from an earlier image (ORDER 43): marked manual once, after the apt run
+install -Dm755 "$HERE/bin/sparky-stereo-thermald-manual" "$D/usr/lib/sparky-stereo-hardware/thermald-manual"
+install -Dm644 "$HERE/share/systemd/sparky-stereo-hardware-thermald-manual.service" "$D/usr/lib/systemd/system/sparky-stereo-hardware-thermald-manual.service"
 # the unit the hook starts inside an apt run: it installs them once that run has ended, under the engine
 install -Dm644 "$HERE/share/systemd/sparky-stereo-hardware-nvidia-i386.service" "$D/usr/lib/systemd/system/sparky-stereo-hardware-nvidia-i386.service"
 # told once: the unit's own step keeps its failure in the engine (with apt's output and the Repair), so the engine's

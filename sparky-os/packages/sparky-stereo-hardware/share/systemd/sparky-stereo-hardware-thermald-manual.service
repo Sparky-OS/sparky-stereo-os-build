@@ -1,0 +1,13 @@
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/07
+# Copyright 2026 under the GNU GPL3 License
+# Started by dpkg's post-invoke hook inside an apt run on an Intel CPU where thermald is installed as an automatic
+# package: waits until that run has ended, then marks it manually installed, once (ORDER 43).
+[Unit]
+Description=Keep thermald on this Intel machine (mark it manually installed, once)
+Documentation=file:/usr/share/doc/sparky-stereo-hardware/README.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/sparky-stereo-hardware/thermald-manual auto
+TimeoutStartSec=infinity
+KillMode=process
