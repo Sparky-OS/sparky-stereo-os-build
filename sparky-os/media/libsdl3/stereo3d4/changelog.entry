@@ -1,0 +1,19 @@
+libsdl3 (@VERSION@) unstable; urgency=medium
+
+  * Carry Tomasz Pakuła's SDL pull request 14758
+    (https://github.com/libsdl-org/SDL/pull/14758, open, two commits of
+    2026-01-04, patches 0001 and 0002): a joystick on a kernel that has the
+    EV_BTN event (kernel series group 44 of the edition, "Input: New EV_BTN
+    event for generic buttons") reports every button the device has, so 128
+    buttons arrive as 128 (without it Linux joysticks stop at 80 buttons, and
+    SDL at 79). ORDER 15.
+  * 0003: the pull request falls back to "#define EVIOCGBTNCNT 0" when the
+    build headers lack EV_BTN, and ioctl(fd, 0, ...) always fails, so a library
+    built before the headers carry EV_BTN never used the event. The real
+    number is _IOR('E', 0x1c, unsigned int). Found with the 128-button
+    fixture on an EV_BTN kernel.
+  * 0004: when the kernel has no EV_BTN and a joystick uses the last key code
+    (so it may have more buttons than the kernel numbers), SDL says so once
+    when the joystick is opened; it dropped them in silence before.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@

@@ -53,7 +53,7 @@ cp /repo/sparky-stereo-repo.asc /usr/share/keyrings/
 printf "Types: deb\nURIs: file:/repo\nSuites: mashtabba\nComponents: main\nSigned-By: /usr/share/keyrings/sparky-stereo-repo.asc\n" > /etc/apt/sources.list.d/sparky.sources
 printf "Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n" > /etc/apt/preferences.d/sparky
 apt-get -y update >/dev/null
-apt-get -y --no-install-recommends install build-essential debhelper devscripts dpkg-dev python3 deb-multimedia-keyring >/dev/null
+apt-get -y --no-install-recommends install build-essential debhelper devscripts dpkg-dev python3 deb-multimedia-keyring bubblewrap >/dev/null
 # the media stack of the edition sits on deb-multimedia (the packaging skill): its build dependencies resolve only with it
 printf "deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n" > /etc/apt/sources.list.d/multimedia.list
 apt-get -y update >/dev/null
