@@ -31,6 +31,12 @@ for patch in "$HERE"/patches/s44-*.patch "$HERE"/patches/s45-*.patch "$HERE"/pat
     cp "$patch" "debian/patches/$name"
     printf '%s\n' "$name" >> debian/patches/series
 done
+# ORDER 451: the files of this packaging that are ours, for the copyright file (provenance.sh); every patch of the series named
+# sNN-NNNN-*.patch is ours, Debian's own debian/* paragraph keeps the rest
+cat > debian/sparky-provenance-files <<'OURS'
+# The files of debian/ added by Sparky Stereo OS; provenance.sh names them in the copyright file after Debian's own debian/* paragraph.
+debian/patches/s??-????-*.patch
+OURS
 dpkg-source --before-build .
 python3 - "$HERE/changelog-stereo3d44.txt" "$HERE/changelog-stereo3d45.txt" "$HERE/changelog-stereo3d46.txt" <<'CHANGELOG'
 from pathlib import Path
