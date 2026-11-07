@@ -108,7 +108,7 @@ def build_tree(root, out, preserve=None):
 
 def check_debs(paths):
     """Check final archive bytes and require matching, independently marked HR companions."""
-    verified, hr_blobs = {}, {}
+    verified, hr_blobs, copyrights = {}, {}, {}
     for deb in paths:
         with tempfile.TemporaryDirectory(prefix='lc-check-') as work:
             subprocess.run(['dpkg-deb', '--raw-extract', str(deb), work], check=True, stdout=subprocess.DEVNULL)
@@ -120,6 +120,8 @@ def check_debs(paths):
             if key in verified:
                 raise package.Invalid(f'duplicate package identity: {key}')
             verified[key] = obj
+            licence = Path(work) / 'usr/share/doc' / obj['package'] / 'copyright'
+            copyrights[key] = licence.read_bytes() if licence.is_file() and not licence.is_symlink() else None
             if obj['package'].endswith('-lc-hr'):
                 # Decompression is bounded by the projected file size cap.
                 for row in obj['files']:
@@ -135,6 +137,10 @@ def check_debs(paths):
         hr_key = (obj['hr_package'], obj['version'], obj['architecture'])
         if hr_key not in verified:
             raise package.Invalid(f'{key}: matching HR documentation package is missing')
+        # ORDER 451c: the companion says exactly what its base package says about who wrote the packaging; build_tree copies the
+        # base's final copyright (after provenance.sh) into it, and a pair from different builds is refused
+        if copyrights[key] != copyrights[hr_key]:
+            raise package.Invalid(f'{key}: the copyright file of {obj["hr_package"]} is not the copyright file of {obj["package"]}')
         for row in obj['files']:
             if row['status'] != 'projected':
                 continue

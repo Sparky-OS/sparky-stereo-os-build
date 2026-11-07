@@ -170,6 +170,51 @@ class Packages(unittest.TestCase):
             if expected == 'BSL-1.0':
                 self.assertNotIn('GPL', last)
 
+    REBUILT_COPYRIGHT = ('Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n\n'
+                         'Files: *\nCopyright: 2026 Upstream\nLicense: GPL-2+\n\n'
+                         'Files: debian/*\nCopyright: 2026 Debian Packager\nLicense: GPL-2+\n\n'
+                         'License: GPL-2+\n The licence text.\n')
+
+    def stage_with_copyright(self, name, text):
+        root = self.stage('1', 'all', name)
+        cf = root / f'usr/share/doc/{name}/copyright'
+        cf.parent.mkdir(parents=True, exist_ok=True)
+        cf.write_text(text)
+        return root
+
+    def packed_copyright(self, deb):
+        out = self.base / ('x-' + deb.stem)
+        subprocess.run(['dpkg-deb', '-x', str(deb), str(out)], check=True)
+        return (out / 'usr/share/doc' / deb.name.split('_')[0] / 'copyright').read_bytes()
+
+    def test_orders_451c_the_hr_companion_says_what_its_base_says(self):
+        # a rebuild: Debian's own debian/* paragraph, then ours with only our files; the companion carries the base's final text
+        provenance = Path(__file__).resolve().parents[2] / 'repo/provenance.sh'
+        root = self.stage_with_copyright('lc-demo', self.REBUILT_COPYRIGHT)
+        subprocess.run(['bash', str(provenance), '--tree', str(root)], check=True)
+        out = self.base / 'out-451c'
+        release.build_tree(root, out)
+        base, companion = out / 'lc-demo_1_all.deb', out / 'lc-demo-lc-hr_1_all.deb'
+        text = self.packed_copyright(base)
+        self.assertEqual(self.packed_copyright(companion), text)
+        self.assertIn(b'Debian Packager', text)
+        self.assertEqual(text.count(b'\nFiles: debian/*\n'), 1, text)
+        release.check_debs([base, companion])
+
+    def test_orders_451c_a_companion_from_another_build_is_refused(self):
+        provenance = Path(__file__).resolve().parents[2] / 'repo/provenance.sh'
+        one = self.stage_with_copyright('lc-demo', self.REBUILT_COPYRIGHT)
+        subprocess.run(['bash', str(provenance), '--tree', str(one)], check=True)
+        one = one.rename(self.base / 'first-build')
+        two = self.stage_with_copyright('lc-demo', self.REBUILT_COPYRIGHT.replace('Debian Packager', 'Someone Else'))
+        subprocess.run(['bash', str(provenance), '--tree', str(two)], check=True)
+        release.build_tree(one, self.base / 'out-a')
+        release.build_tree(two, self.base / 'out-b')
+        release.check_debs([self.base / 'out-a/lc-demo_1_all.deb', self.base / 'out-a/lc-demo-lc-hr_1_all.deb'])
+        with self.assertRaises(package.Invalid) as refused:
+            release.check_debs([self.base / 'out-a/lc-demo_1_all.deb', self.base / 'out-b/lc-demo-lc-hr_1_all.deb'])
+        self.assertIn('copyright file of lc-demo-lc-hr is not the copyright file of lc-demo', str(refused.exception))
+
     def test_build_runtime_and_hr_are_exact_and_separate(self):
         tree, out, deb = self.build()
         obj = package.check_tree(tree)
