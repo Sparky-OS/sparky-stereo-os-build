@@ -6,7 +6,9 @@
 # dpkg refusing a third package that ships the same path, the dependency, and the upgrade from the published helper.
 # Inputs (mounted by run-dpkg-tests.sh): /debs holds the new .deb files, /published the published sparky-stereo-skills .deb.
 # yad is a dialog toolkit this container does not have; it is ignored for dependency purposes (the dialog is tested with a stub).
-set -uo pipefail
+# no pipefail: grep -q ends a pipe early and the program writing into it can then die of SIGPIPE, which pipefail turns into a
+# failed check at random (seen once in three runs of the same debs, ORDER 447); the grep decides what each check says
+set -u
 NEW_HELPER=$(ls /debs/sparky-stereo-skills_*_all.deb)
 NEW_ENGINE=$(ls /debs/sparky-stereo-skills-engine_*_amd64.deb)
 OLD_HELPER=$(ls /published/sparky-stereo-skills_*_all.deb)

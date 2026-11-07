@@ -1,4 +1,12 @@
 -------------------------------------------------------------------------------
+  Version 0.3.0~dev20261107.1 (UNRELEASED)
+-------------------------------------------------------------------------------
+  * Three wording corrections after the second-model review (ORDER 447; gpt-6.1-sol through the Codex CLI, answers accepted by Opus as written; every other language and string was reviewed with no errors)
+  * pl LOCAL30 says "zatwierdzenie" (as LOCAL32 does) instead of "zgoda" for the approval setting; fr LOCAL30 says "approbation" (as LOCAL32 does) instead of "accord"
+  * ja LOCAL33, the "mcp register" help line: registering and cancelling the registration have their own verbs, because 「アシスタントに」 could not govern 「削除」
+  * Still a first draft with AI assistance, pending review by native speakers. The helper tests now check the three corrections, and the dpkg tests no longer fail at random when a program dies of SIGPIPE behind grep -q (no pipefail)
+
+-------------------------------------------------------------------------------
   Version 0.3.0~dev20261107 (UNRELEASED)
 -------------------------------------------------------------------------------
   * Rebuilt so the engine package has its Source field and one build record covers both packages (ORDER 439)
