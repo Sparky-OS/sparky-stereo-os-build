@@ -467,6 +467,8 @@
 #      documentation of 0001; the author has not posted a revision. The same limit was addressed by Ivan Gorinov (2025-12-20, raise the HID joystick range from 80 to 112 codes) and Ricardo
 #      Esteves (2026-02-09, KEY_MAX to 0x31d); neither is carried: EV_BTN has no ceiling at KEY_MAX. Consumers: SDL pull request 14758 and Wine merge request 9853 (both unmerged drafts),
 #      evtest merge request 25. Applies strictly (git apply) on the build 16 trees of base, v3 and rt, the common series.txt gives all three flavours the group.
+#      0007 is ours, not in the posted series: the evdev client buffer is sized from an estimate that counts 7 events for all keys, so a report that changes many of the 128 buttons at once overflowed it
+#      (runtime proof, reduced 7.3.1 kernel: 44 of 128 EV_BTN events and SYN_DROPPED); it adds one event per EV_BTN button to the estimate and is proposed to the author with its test.
 #      Drop this group when the series, in the author's or the maintainers' final form, is in the release this kernel moves to.
 44-ev-btn/0001-Introduce-EV-BTN-event-for-generic-buttons.patch
 44-ev-btn/0002-Add-info-about-EV-BTN.patch
@@ -474,3 +476,4 @@
 44-ev-btn/0004-Assign-EV-BTN-event-to-HID-Joysticks.patch
 44-ev-btn/0005-Realign-rest-of-the-HID-UP-BUTTON-cases.patch
 44-ev-btn/0006-Add-EVIOCGBTNCNT.patch
+44-ev-btn/0007-Size-the-evdev-buffer-for-EV-BTN-buttons.patch
