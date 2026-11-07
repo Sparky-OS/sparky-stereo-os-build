@@ -557,7 +557,7 @@ index 13a74bc..fdb1320 100644
                  float dx = node->bounds.origin.x;
                  float dy = node->bounds.origin.y;
 diff --git a/gtk/gtkglarea.c b/gtk/gtkglarea.c
-index 8962f0a..8335ac6 100644
+index 8962f0a..42f4de1 100644
 --- a/gtk/gtkglarea.c
 +++ b/gtk/gtkglarea.c
 @@ -28,6 +28,7 @@
@@ -578,7 +578,24 @@ index 8962f0a..8335ac6 100644
  
  #ifdef HAVE_UNISTD_H
  #include <unistd.h>
-@@ -191,6 +195,20 @@ typedef struct {
+@@ -162,6 +166,16 @@
+  *
+  * If you need to change the options for creating the `GdkGLContext`
+  * you should use the [signal@Gtk.GLArea::create-context] signal.
++ *
++ * ## Stereo
++ *
++ * With [property@Gtk.GLArea:stereo] set, the area renders one view for
++ * each eye: the [signal@Gtk.GLArea::render] signal is emitted twice for each
++ * frame, the left view first, and [method@Gtk.GLArea.get_current_eye] tells
++ * which view the handler draws, so it can place its camera for that eye.
++ * The two views go to the compositor side by side, on a surface of their own
++ * declared as stereo content, and the rest of the window is drawn once. If
++ * they cannot be shown per eye, [property@Gtk.GLArea:stereo-error] says why.
+  */
+ 
+ typedef struct {
+@@ -191,6 +205,20 @@ typedef struct {
    gboolean auto_render;
    gboolean use_es;
    GdkGLAPI allowed_apis;
@@ -599,7 +616,7 @@ index 8962f0a..8335ac6 100644
  } GtkGLAreaPrivate;
  
  enum {
-@@ -205,6 +223,10 @@ enum {
+@@ -205,6 +233,10 @@ enum {
  
    PROP_AUTO_RENDER,
  
@@ -610,7 +627,7 @@ index 8962f0a..8335ac6 100644
    LAST_PROP
  };
  
-@@ -220,6 +242,7 @@ enum {
+@@ -220,6 +252,7 @@ enum {
  
  static void gtk_gl_area_allocate_buffers (GtkGLArea *area);
  static void gtk_gl_area_allocate_texture (GtkGLArea *area);
@@ -618,7 +635,7 @@ index 8962f0a..8335ac6 100644
  
  static guint area_signals[LAST_SIGNAL] = { 0, };
  
-@@ -257,6 +280,10 @@ G_GNUC_END_IGNORE_DEPRECATIONS
+@@ -257,6 +290,10 @@ G_GNUC_END_IGNORE_DEPRECATIONS
        gtk_gl_area_set_allowed_apis (self, g_value_get_flags (value));
        break;
  
@@ -629,7 +646,7 @@ index 8962f0a..8335ac6 100644
      default:
        G_OBJECT_WARN_INVALID_PROPERTY_ID (gobject, prop_id, pspec);
      }
-@@ -302,6 +329,18 @@ G_GNUC_END_IGNORE_DEPRECATIONS
+@@ -302,6 +339,18 @@ G_GNUC_END_IGNORE_DEPRECATIONS
        g_value_set_flags (value, gtk_gl_area_get_api (GTK_GL_AREA (gobject)));
        break;
  
@@ -648,7 +665,7 @@ index 8962f0a..8335ac6 100644
      default:
        G_OBJECT_WARN_INVALID_PROPERTY_ID (gobject, prop_id, pspec);
      }
-@@ -547,6 +586,9 @@ gtk_gl_area_allocate_texture (GtkGLArea *area)
+@@ -547,6 +596,9 @@ gtk_gl_area_allocate_texture (GtkGLArea *area)
    width = gtk_widget_get_width (widget) * scale;
    height = gtk_widget_get_height (widget) * scale;
  
@@ -658,7 +675,7 @@ index 8962f0a..8335ac6 100644
    if (gdk_gl_texture_builder_get_width (priv->texture->builder) != width ||
        gdk_gl_texture_builder_get_height (priv->texture->builder) != height)
      {
-@@ -556,7 +598,16 @@ gtk_gl_area_allocate_texture (GtkGLArea *area)
+@@ -556,7 +608,16 @@ gtk_gl_area_allocate_texture (GtkGLArea *area)
        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
  
@@ -676,7 +693,7 @@ index 8962f0a..8335ac6 100644
          glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
        else
          glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
-@@ -564,6 +615,55 @@ gtk_gl_area_allocate_texture (GtkGLArea *area)
+@@ -564,6 +625,55 @@ gtk_gl_area_allocate_texture (GtkGLArea *area)
        gdk_gl_texture_builder_set_width (priv->texture->builder, width);
        gdk_gl_texture_builder_set_height (priv->texture->builder, height);
      }
@@ -732,7 +749,7 @@ index 8962f0a..8335ac6 100644
  }
  
  /**
-@@ -597,6 +697,15 @@ gtk_gl_area_attach_buffers (GtkGLArea *area)
+@@ -597,6 +707,15 @@ gtk_gl_area_attach_buffers (GtkGLArea *area)
    else if (priv->needs_resize)
      gtk_gl_area_allocate_texture (area);
  
@@ -748,7 +765,7 @@ index 8962f0a..8335ac6 100644
    if (!priv->have_buffers)
      gtk_gl_area_ensure_buffers (area);
    else if (priv->needs_resize)
-@@ -604,7 +713,10 @@ gtk_gl_area_attach_buffers (GtkGLArea *area)
+@@ -604,7 +723,10 @@ gtk_gl_area_attach_buffers (GtkGLArea *area)
  
    glBindFramebuffer (GL_FRAMEBUFFER, priv->frame_buffer);
  
@@ -760,7 +777,7 @@ index 8962f0a..8335ac6 100644
      glFramebufferTexture2D (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                              GL_TEXTURE_2D, gdk_gl_texture_builder_get_id (priv->texture->builder), 0);
  
-@@ -629,6 +741,20 @@ gtk_gl_area_delete_buffers (GtkGLArea *area)
+@@ -629,6 +751,20 @@ gtk_gl_area_delete_buffers (GtkGLArea *area)
  
    priv->have_buffers = FALSE;
  
@@ -781,7 +798,7 @@ index 8962f0a..8335ac6 100644
    if (priv->depth_stencil_buffer != 0)
      {
        glDeleteRenderbuffers (1, &priv->depth_stencil_buffer);
-@@ -657,6 +783,185 @@ gtk_gl_area_delete_textures (GtkGLArea *area)
+@@ -657,6 +793,185 @@ gtk_gl_area_delete_textures (GtkGLArea *area)
    g_clear_list (&priv->textures, delete_one_texture);
  }
  
@@ -967,7 +984,7 @@ index 8962f0a..8335ac6 100644
  static void
  gtk_gl_area_unrealize (GtkWidget *widget)
  {
-@@ -677,6 +982,15 @@ gtk_gl_area_unrealize (GtkWidget *widget)
+@@ -677,6 +992,15 @@ gtk_gl_area_unrealize (GtkWidget *widget)
    g_clear_object (&priv->context);
    g_clear_error (&priv->error);
  
@@ -983,7 +1000,7 @@ index 8962f0a..8335ac6 100644
    GTK_WIDGET_CLASS (gtk_gl_area_parent_class)->unrealize (widget);
  }
  
-@@ -758,7 +1072,6 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+@@ -758,7 +1082,6 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
  {
    GtkGLArea *area = GTK_GL_AREA (widget);
    GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
@@ -991,7 +1008,7 @@ index 8962f0a..8335ac6 100644
    int w, h, scale;
    GLenum status;
  
-@@ -783,6 +1096,8 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+@@ -783,6 +1106,8 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
  
    gtk_gl_area_make_current (area);
  
@@ -1000,7 +1017,7 @@ index 8962f0a..8335ac6 100644
    gtk_gl_area_attach_buffers (area);
  
   if (priv->has_depth_buffer)
-@@ -806,7 +1121,7 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+@@ -806,7 +1131,7 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
                priv->needs_resize = FALSE;
              }
  
@@ -1009,7 +1026,7 @@ index 8962f0a..8335ac6 100644
          }
  
        priv->needs_render = FALSE;
-@@ -845,18 +1160,51 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+@@ -845,18 +1170,51 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
              gdk_dmabuf_close_fds (&dmabuf);
          }
  
@@ -1073,7 +1090,7 @@ index 8962f0a..8335ac6 100644
  
        g_object_unref (holder);
      }
-@@ -878,6 +1226,16 @@ create_context_accumulator (GSignalInvocationHint *ihint,
+@@ -878,6 +1236,16 @@ create_context_accumulator (GSignalInvocationHint *ihint,
    return g_value_get_object (handler_return) == NULL;
  }
  
@@ -1090,7 +1107,7 @@ index 8962f0a..8335ac6 100644
  static void
  gtk_gl_area_class_init (GtkGLAreaClass *klass)
  {
-@@ -1003,6 +1361,76 @@ gtk_gl_area_class_init (GtkGLAreaClass *klass)
+@@ -1003,6 +1371,76 @@ gtk_gl_area_class_init (GtkGLAreaClass *klass)
                          G_PARAM_STATIC_NAME |
                          G_PARAM_EXPLICIT_NOTIFY);
  
@@ -1167,7 +1184,18 @@ index 8962f0a..8335ac6 100644
    gobject_class->set_property = gtk_gl_area_set_property;
    gobject_class->get_property = gtk_gl_area_get_property;
    gobject_class->notify = gtk_gl_area_notify;
-@@ -1571,3 +1999,144 @@ gtk_gl_area_make_current (GtkGLArea *area)
+@@ -1019,6 +1457,10 @@ gtk_gl_area_class_init (GtkGLAreaClass *klass)
+    * The @context is bound to the @area prior to emitting this function,
+    * and the buffers are painted to the window once the emission terminates.
+    *
++   * If [property@Gtk.GLArea:stereo] is set, the signal is emitted twice for
++   * each frame, once for each view, and [method@Gtk.GLArea.get_current_eye]
++   * tells which one.
++   *
+    * Returns: %TRUE to stop other handlers from being invoked for the event.
+    *   %FALSE to propagate the event further.
+    */
+@@ -1571,3 +2013,144 @@ gtk_gl_area_make_current (GtkGLArea *area)
    if (priv->context != NULL)
      gdk_gl_context_make_current (priv->context);
  }
