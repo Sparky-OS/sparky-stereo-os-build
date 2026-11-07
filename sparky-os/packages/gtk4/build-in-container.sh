@@ -30,6 +30,7 @@ from pathlib import Path
 p = Path('debian/libgtk-4-1.symbols.in')
 s = p.read_text()
 add = {
+    ' gtk_gl_area_eye_get_type@Base 4.24.1+ds-1+stereo3d1\n': ' gtk_gl_area_get_allowed_apis@Base 4.12.0\n',
     ' gtk_gl_area_get_current_eye@Base 4.24.1+ds-1+stereo3d1\n': ' gtk_gl_area_get_error@Base 4.0.0\n',
     ' gtk_gl_area_get_stereo@Base 4.24.1+ds-1+stereo3d1\n gtk_gl_area_get_stereo_error@Base 4.24.1+ds-1+stereo3d1\n gtk_gl_area_get_stereo_shown@Base 4.24.1+ds-1+stereo3d1\n': ' gtk_gl_area_get_type@Base 4.0.0\n',
     ' gtk_gl_area_set_stereo@Base 4.24.1+ds-1+stereo3d1\n': ' gtk_gl_area_set_use_es@Base 4.0.0\n',
