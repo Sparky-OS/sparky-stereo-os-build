@@ -1,0 +1,148 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 7 Nov 2026 11:53:57 -0300
+Subject: [PATCH] drm/vkms: compose and write back the frame of both eyes
+
+A stereo mode of HDMI 1.4a describes one eye: hdisplay and vdisplay are
+the size of one view, while the frame holds both views and, for frame
+packing, the vertical blanking between them (section 8.2.3.2 and
+Appendix H). drm_mode_get_hv_timing() returns the size of that frame:
+vdisplay plus one vtotal for frame packing, field alternative and
+L + depth, plus three for L + depth + graphics + graphics-depth, twice
+the lines for line alternative, twice the width for side by side (full).
+The atomic helpers already clip the planes to it, but the composer still
+stopped at the mode's own size and the writeback connector refused a
+buffer of the frame, so the second view never reached the writeback
+buffer or the CRC.
+
+Add vkms_frame_size() and use it for the composed area, the line buffers
+and the writeback buffer. Top and bottom and side by side (half) keep
+the size of the mode, their eyes share its frame. A frame-sequential
+frame stays one eye at the size of the mode, although the planes cover
+both eyes, so the frame-sequential model is unchanged.
+
+Nothing changes for a 2D mode, and the connector still allows no stereo
+mode until the next patch.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/vkms/vkms_composer.c  | 12 ++++++++----
+ drivers/gpu/drm/vkms/vkms_drv.h       | 20 ++++++++++++++++++++
+ drivers/gpu/drm/vkms/vkms_writeback.c | 10 +++++++---
+ 3 files changed, 35 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/gpu/drm/vkms/vkms_composer.c b/drivers/gpu/drm/vkms/vkms_composer.c
+index 8e38e63..5cee3d4 100644
+--- a/drivers/gpu/drm/vkms/vkms_composer.c
++++ b/drivers/gpu/drm/vkms/vkms_composer.c
+@@ -491,10 +491,12 @@ static void blend(struct vkms_writeback_job *wb,
+ 		.b = DRM_ARGB64_GETB(bgcolor),
+ 	};
+ 
+-	int crtc_y_limit = crtc_state->base.mode.vdisplay;
+-	int crtc_x_limit = crtc_state->base.mode.hdisplay;
++	int crtc_x_limit, crtc_y_limit;
++	int x_offset;
++
++	vkms_frame_size(&crtc_state->base.mode, &crtc_x_limit, &crtc_y_limit);
+ 	/* A right-eye frame sends the right half of the frame the planes cover */
+-	int x_offset = eye == VKMS_EYE_RIGHT ? crtc_x_limit : 0;
++	x_offset = eye == VKMS_EYE_RIGHT ? crtc_x_limit : 0;
+ 
+ 	/*
+ 	 * The planes are composed line-by-line to avoid heavy memory usage. It is a necessary
+@@ -555,6 +557,7 @@ static int compose_active_planes(struct vkms_writeback_job *active_wb,
+ {
+ 	size_t line_width, pixel_size = sizeof(struct pixel_argb_u16);
+ 	struct line_buffer output_buffer, stage_buffer;
++	int frame_width, frame_height;
+ 	int ret = 0;
+ 
+ 	/*
+@@ -571,7 +574,8 @@ static int compose_active_planes(struct vkms_writeback_job *active_wb,
+ 	if (WARN_ON(check_format_funcs(crtc_state, active_wb)))
+ 		return -EINVAL;
+ 
+-	line_width = crtc_state->base.mode.hdisplay;
++	vkms_frame_size(&crtc_state->base.mode, &frame_width, &frame_height);
++	line_width = frame_width;
+ 	stage_buffer.n_pixels = line_width;
+ 	output_buffer.n_pixels = line_width;
+ 
+diff --git a/drivers/gpu/drm/vkms/vkms_drv.h b/drivers/gpu/drm/vkms/vkms_drv.h
+index 4772d39..6876f25 100644
+--- a/drivers/gpu/drm/vkms/vkms_drv.h
++++ b/drivers/gpu/drm/vkms/vkms_drv.h
+@@ -131,6 +131,26 @@ static inline enum vkms_eye vkms_frame_sequential_eye(u64 frame, u64 first)
+ 	return (frame - first) & 1 ? VKMS_EYE_RIGHT : VKMS_EYE_LEFT;
+ }
+ 
++/**
++ * vkms_frame_size() - The size of the frame the CRTC composes and writeback receives
++ * @mode: The mode
++ * @width: Receives the width
++ * @height: Receives the height
++ *
++ * For a stereo mode of HDMI 1.4a (section 8.2.3.2 and Appendix H) it is the
++ * buffer that holds both eyes, as drm_mode_get_hv_timing() gives it: vdisplay
++ * plus one vtotal for frame packing, twice the width for side by side (full).
++ * Top and bottom and side by side (half) keep the size of the mode, their
++ * eyes share its frame. A frame-sequential frame carries one eye at the size
++ * of the mode, although the planes cover both eyes.
++ */
++static inline void vkms_frame_size(const struct drm_display_mode *mode, int *width, int *height)
++{
++	drm_mode_get_hv_timing(mode, width, height);
++	if (drm_mode_is_frame_sequential(mode))
++		*width = mode->hdisplay;
++}
++
+ /**
+  * typedef pixel_read_line_t - These functions are used to read a pixel line in the source frame,
+  * convert it to `struct pixel_argb_u16` and write it to @out_pixel.
+diff --git a/drivers/gpu/drm/vkms/vkms_writeback.c b/drivers/gpu/drm/vkms/vkms_writeback.c
+index 2712016..61e1622 100644
+--- a/drivers/gpu/drm/vkms/vkms_writeback.c
++++ b/drivers/gpu/drm/vkms/vkms_writeback.c
+@@ -39,6 +39,7 @@ static int vkms_wb_atomic_check(struct drm_connector *connector,
+ 	struct drm_crtc_state *crtc_state;
+ 	struct drm_framebuffer *fb;
+ 	const struct drm_display_mode *mode;
++	int width, height;
+ 	int ret;
+ 
+ 	if (!conn_state->writeback_job || !conn_state->writeback_job->fb)
+@@ -50,8 +51,10 @@ static int vkms_wb_atomic_check(struct drm_connector *connector,
+ 	crtc_state = drm_atomic_get_new_crtc_state(state, conn_state->crtc);
+ 	mode = &crtc_state->mode;
+ 
++	vkms_frame_size(mode, &width, &height);
++
+ 	fb = conn_state->writeback_job->fb;
+-	if (fb->width != mode->hdisplay || fb->height != mode->vdisplay) {
++	if (fb->width != width || fb->height != height) {
+ 		DRM_DEBUG_KMS("Invalid framebuffer size %ux%u\n",
+ 			      fb->width, fb->height);
+ 		return -EINVAL;
+@@ -138,15 +141,16 @@ static void vkms_wb_atomic_commit(struct drm_connector *conn,
+ 	struct drm_connector_state *conn_state = wb_conn->base.state;
+ 	struct vkms_crtc_state *crtc_state = output->composer_state;
+ 	struct drm_framebuffer *fb = connector_state->writeback_job->fb;
+-	u16 crtc_height = crtc_state->base.mode.vdisplay;
+-	u16 crtc_width = crtc_state->base.mode.hdisplay;
+ 	struct vkms_writeback_job *active_wb;
+ 	struct vkms_frame_info *wb_frame_info;
+ 	u32 wb_format = fb->format->format;
++	int crtc_width, crtc_height;
+ 
+ 	if (!conn_state)
+ 		return;
+ 
++	vkms_frame_size(&crtc_state->base.mode, &crtc_width, &crtc_height);
++
+ 	active_wb = conn_state->writeback_job->priv;
+ 	wb_frame_info = &active_wb->wb_frame_info;
+ 
+-- 
+2.53.0
+
