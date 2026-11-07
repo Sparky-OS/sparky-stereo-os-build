@@ -1,0 +1,497 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 7 Nov 2026 13:09:55 -0300
+Subject: [PATCH] drm/vkms: take a writeback job's vblank reference once the
+ CRTC is on
+
+A writeback commit that enables the CRTC never completed. The job's
+vblank reference was taken in prepare_writeback_job(), before the commit
+enables the CRTC. A CRTC that is off holds the private reference that
+drm_crtc_vblank_off() takes ("prevent drm_vblank_get"), so
+drm_crtc_vblank_get() returned -EINVAL there, nobody looked at the
+result, and drm_crtc_vblank_on_config() found no user and left the
+vblank timer stopped. The composer, which signals the job's fence, runs
+only from that timer, so the fence never signalled; the job stayed first
+in the connector's queue, and every later job's completion signalled it
+instead of its own. The cleanup then dropped a reference it never held.
+
+A device whose CRTC is already on at the first commit does not show it,
+as the module's default device, whose fbdev client enables the CRTC. A
+device made through configfs starts with its CRTC off: the first commit
+timed out at the fence even for a 2D mode, and so did every commit after
+it.
+
+Count the composer user in prepare_writeback_job(), as the previous
+patch of this group does, because every prepared job is cleaned up. Take
+the vblank reference in atomic_commit(), where the CRTC is on, keep
+whether it was taken in the job, put it in the cleanup, and complete the
+job with the error if the reference cannot be taken. The CRC source
+keeps vkms_set_composer(), which holds a reference of its own.
+
+The KUnit fixture now enables vblank handling and uses the driver's
+commit tail like a real device, because the default commit tail waits
+for vblanks and starts the timer on its own. The new tests commit a
+writeback job with the CRTC off and with it on, for a 2D mode and for
+each stereo layout, and fail when the job does not complete.
+
+Fixes: drm/vkms: keep the composer running for every writeback job
+Assisted-by: Claude Sonnet 5.5
+---
+ drivers/gpu/drm/vkms/tests/vkms_stereo_test.c | 172 ++++++++++++++++--
+ drivers/gpu/drm/vkms/vkms_composer.c          |  32 +++-
+ drivers/gpu/drm/vkms/vkms_drv.c               |   5 +-
+ drivers/gpu/drm/vkms/vkms_drv.h               |   6 +
+ drivers/gpu/drm/vkms/vkms_writeback.c         |  23 ++-
+ 5 files changed, 210 insertions(+), 28 deletions(-)
+
+diff --git a/drivers/gpu/drm/vkms/tests/vkms_stereo_test.c b/drivers/gpu/drm/vkms/tests/vkms_stereo_test.c
+index 60820d8..6f8e6d2 100644
+--- a/drivers/gpu/drm/vkms/tests/vkms_stereo_test.c
++++ b/drivers/gpu/drm/vkms/tests/vkms_stereo_test.c
+@@ -2,14 +2,19 @@
+ 
+ #include <kunit/test.h>
+ 
++#include <linux/delay.h>
++
+ #include <drm/drm_atomic.h>
++#include <drm/drm_atomic_helper.h>
+ #include <drm/drm_atomic_uapi.h>
+ #include <drm/drm_drv.h>
+ #include <drm/drm_fourcc.h>
+ #include <drm/drm_framebuffer.h>
++#include <drm/drm_gem_shmem_helper.h>
+ #include <drm/drm_kunit_helpers.h>
+ #include <drm/drm_modeset_lock.h>
+ #include <drm/drm_probe_helper.h>
++#include <drm/drm_vblank.h>
+ #include <drm/drm_writeback.h>
+ 
+ #include "../vkms_config.h"
+@@ -263,8 +268,15 @@ static void vkms_stereo_test_config_destroy(void *config)
+ 	vkms_config_destroy(config);
+ }
+ 
++static void vkms_stereo_test_vblank_off(void *crtc)
++{
++	/* The vblank timer must not outlive the device */
++	drm_crtc_vblank_off(crtc);
++}
++
+ static void vkms_stereo_test_fb_destroy(struct drm_framebuffer *fb)
+ {
++	drm_gem_object_put(fb->obj[0]);
+ 	drm_framebuffer_cleanup(fb);
+ }
+ 
+@@ -281,12 +293,18 @@ static struct drm_framebuffer *vkms_stereo_test_create_fb(struct kunit *test,
+ 							  int width, int height)
+ {
+ 	struct vkms_stereo_test_priv *priv = test->priv;
++	struct drm_gem_shmem_object *shmem;
+ 	struct drm_framebuffer *fb;
+ 	int ret;
+ 
+ 	fb = kunit_kzalloc(test, sizeof(*fb), GFP_KERNEL);
+ 	KUNIT_ASSERT_NOT_NULL(test, fb);
+ 
++	/* A commit maps the buffer, so it needs the memory of a real one */
++	shmem = drm_gem_shmem_create(&priv->vkmsdev->drm, PAGE_ALIGN(width * 4 * height));
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, shmem);
++	fb->obj[0] = &shmem->base;
++
+ 	fb->dev = &priv->vkmsdev->drm;
+ 	fb->format = drm_format_info(DRM_FORMAT_XRGB8888);
+ 	fb->width = width;
+@@ -337,12 +355,18 @@ static int vkms_stereo_test_init_edid(struct kunit *test, const u8 *edid, size_t
+ 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dev);
+ 
+ 	priv->vkmsdev = drm_kunit_helper_alloc_drm_device(test, dev, struct vkms_device, drm,
+-							  DRIVER_MODESET | DRIVER_ATOMIC);
++							  DRIVER_MODESET | DRIVER_ATOMIC | DRIVER_GEM);
+ 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, priv->vkmsdev);
+ 
++	/* The commit tail of a real device: the default one waits for vblanks and starts the timer */
++	priv->vkmsdev->drm.mode_config.helper_private = &vkms_mode_config_helpers;
++
+ 	priv->vkmsdev->config = config;
+ 	config->dev = priv->vkmsdev;
+ 
++	ret = drm_vblank_init(&priv->vkmsdev->drm, vkms_config_get_num_crtcs(config));
++	KUNIT_ASSERT_EQ(test, ret, 0);
++
+ 	ret = vkms_output_init(priv->vkmsdev);
+ 	KUNIT_ASSERT_EQ(test, ret, 0);
+ 
+@@ -356,6 +380,9 @@ static int vkms_stereo_test_init_edid(struct kunit *test, const u8 *edid, size_t
+ 	vkms_config_for_each_connector(config, connector_cfg)
+ 		priv->connector = &connector_cfg->connector->base;
+ 
++	ret = kunit_add_action_or_reset(test, vkms_stereo_test_vblank_off, priv->crtc);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++
+ 	return 0;
+ }
+ 
+@@ -490,13 +517,14 @@ KUNIT_ARRAY_PARAM(vkms_stereo_test_frame, vkms_stereo_test_frame_cases,
+ 		  vkms_stereo_test_frame_case_desc);
+ 
+ /*
+- * Checks an update showing a primary plane of the frame size and writing
+- * the composed frame back to a buffer of wb_width x wb_height.
++ * Checks, or commits, an update showing a primary plane of the frame size and,
++ * when wb_width is not 0, writing the composed frame back to a buffer of
++ * wb_width x wb_height.
+  */
+-static int vkms_stereo_test_check_update(struct kunit *test,
+-					 const struct drm_display_mode *mode,
+-					 int width, int height,
+-					 int wb_width, int wb_height)
++static int vkms_stereo_test_update(struct kunit *test,
++				   const struct drm_display_mode *mode,
++				   int width, int height,
++				   int wb_width, int wb_height, bool commit)
+ {
+ 	struct vkms_stereo_test_priv *priv = test->priv;
+ 	struct drm_device *drm = &priv->vkmsdev->drm;
+@@ -509,7 +537,6 @@ static int vkms_stereo_test_check_update(struct kunit *test,
+ 	int ret;
+ 
+ 	fb = vkms_stereo_test_create_fb(test, width, height);
+-	wb_fb = vkms_stereo_test_create_fb(test, wb_width, wb_height);
+ 
+ 	drm_modeset_acquire_init(&ctx, 0);
+ 
+@@ -538,14 +565,17 @@ static int vkms_stereo_test_check_update(struct kunit *test,
+ 	plane_state->src_w = width << 16;
+ 	plane_state->src_h = height << 16;
+ 
+-	wb_state = drm_atomic_get_connector_state(state, &priv->wb_connector->base);
+-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, wb_state);
+-	ret = drm_atomic_set_crtc_for_connector(wb_state, priv->crtc);
+-	KUNIT_ASSERT_EQ(test, ret, 0);
+-	ret = drm_writeback_set_fb(wb_state, wb_fb);
+-	KUNIT_ASSERT_EQ(test, ret, 0);
++	if (wb_width) {
++		wb_fb = vkms_stereo_test_create_fb(test, wb_width, wb_height);
++		wb_state = drm_atomic_get_connector_state(state, &priv->wb_connector->base);
++		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, wb_state);
++		ret = drm_atomic_set_crtc_for_connector(wb_state, priv->crtc);
++		KUNIT_ASSERT_EQ(test, ret, 0);
++		ret = drm_writeback_set_fb(wb_state, wb_fb);
++		KUNIT_ASSERT_EQ(test, ret, 0);
++	}
+ 
+-	ret = drm_atomic_check_only(state);
++	ret = commit ? drm_atomic_commit(state) : drm_atomic_check_only(state);
+ 
+ 	drm_modeset_drop_locks(&ctx);
+ 	drm_modeset_acquire_fini(&ctx);
+@@ -553,6 +583,14 @@ static int vkms_stereo_test_check_update(struct kunit *test,
+ 	return ret;
+ }
+ 
++static int vkms_stereo_test_check_update(struct kunit *test,
++					 const struct drm_display_mode *mode,
++					 int width, int height,
++					 int wb_width, int wb_height)
++{
++	return vkms_stereo_test_update(test, mode, width, height, wb_width, wb_height, false);
++}
++
+ /*
+  * The writeback connector takes a buffer of the frame size, so it receives
+  * both eyes, and refuses any other size.
+@@ -577,6 +615,106 @@ static void vkms_stereo_test_writeback_frame(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
+ }
+ 
++/*
++ * A writeback job completes, whether the CRTC was off or already on when it
++ * was committed: the composer runs from the vblank timer, which has to be
++ * running for the job. A job is prepared before the CRTC is enabled, so it
++ * cannot take the vblank reference then.
++ */
++static bool vkms_stereo_test_writeback_done(struct kunit *test)
++{
++	struct vkms_stereo_test_priv *priv = test->priv;
++	unsigned long end = jiffies + 2 * HZ;
++	unsigned long flags;
++	bool empty = false;
++
++	while (!empty && time_before(jiffies, end)) {
++		spin_lock_irqsave(&priv->wb_connector->job_lock, flags);
++		empty = list_empty(&priv->wb_connector->job_queue);
++		spin_unlock_irqrestore(&priv->wb_connector->job_lock, flags);
++		if (!empty)
++			msleep(10);
++	}
++
++	return empty;
++}
++
++/* The job is cleaned up from a worker, which the device must outlive */
++static void vkms_stereo_test_writeback_cleaned(struct kunit *test)
++{
++	struct vkms_stereo_test_priv *priv = test->priv;
++	struct vkms_output *output = drm_crtc_to_vkms_output(priv->crtc);
++	unsigned long end = jiffies + 2 * HZ;
++	unsigned int users;
++
++	do {
++		spin_lock_irq(&output->lock);
++		users = output->composer_users;
++		spin_unlock_irq(&output->lock);
++		if (users)
++			msleep(10);
++	} while (users && time_before(jiffies, end));
++
++	KUNIT_EXPECT_EQ(test, users, 0);
++	msleep(10);
++}
++
++/* The planes keep their buffers mapped until they are disabled */
++static void vkms_stereo_test_disable_all(struct kunit *test)
++{
++	struct vkms_stereo_test_priv *priv = test->priv;
++	struct drm_modeset_acquire_ctx ctx;
++	int ret;
++
++	drm_modeset_acquire_init(&ctx, 0);
++	ret = drm_atomic_helper_disable_all(&priv->vkmsdev->drm, &ctx);
++	drm_modeset_drop_locks(&ctx);
++	drm_modeset_acquire_fini(&ctx);
++
++	KUNIT_EXPECT_EQ(test, ret, 0);
++}
++
++static void vkms_stereo_test_writeback_commit(struct kunit *test, bool crtc_on)
++{
++	const struct vkms_stereo_test_frame_case *t = test->param_value;
++	struct vkms_stereo_test_priv *priv = test->priv;
++	const struct drm_display_mode *mode;
++	int ret;
++
++	vkms_stereo_test_probe(test);
++
++	mode = vkms_stereo_test_find_mode(test, &t->mode);
++	KUNIT_ASSERT_NOT_NULL(test, mode);
++
++	if (crtc_on) {
++		ret = vkms_stereo_test_update(test, mode, t->width, t->height, 0, 0, true);
++		KUNIT_ASSERT_EQ(test, ret, 0);
++	}
++
++	ret = vkms_stereo_test_update(test, mode, t->width, t->height, t->width, t->height,
++				      true);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++
++	if (!vkms_stereo_test_writeback_done(test)) {
++		KUNIT_FAIL(test, "the writeback job never completed");
++		/* Let the job go, or its buffer is still mapped when the test ends */
++		drm_writeback_signal_completion(priv->wb_connector, -ETIMEDOUT);
++	}
++
++	vkms_stereo_test_writeback_cleaned(test);
++	vkms_stereo_test_disable_all(test);
++}
++
++static void vkms_stereo_test_writeback_from_off(struct kunit *test)
++{
++	vkms_stereo_test_writeback_commit(test, false);
++}
++
++static void vkms_stereo_test_writeback_from_on(struct kunit *test)
++{
++	vkms_stereo_test_writeback_commit(test, true);
++}
++
+ /*
+  * The frame of each structure the 3D EDID above adds (HDMI 1.4a, Figures
+  * H-2 to H-6): twice the lines for line alternative, one vtotal more for
+@@ -615,6 +753,10 @@ static struct kunit_case vkms_stereo_test_cases[] = {
+ 	KUNIT_CASE(vkms_stereo_test_edid_modes),
+ 	KUNIT_CASE_PARAM(vkms_stereo_test_writeback_frame,
+ 			 vkms_stereo_test_frame_gen_params),
++	KUNIT_CASE_PARAM(vkms_stereo_test_writeback_from_off,
++			 vkms_stereo_test_frame_gen_params),
++	KUNIT_CASE_PARAM(vkms_stereo_test_writeback_from_on,
++			 vkms_stereo_test_frame_gen_params),
+ 	{}
+ };
+ 
+diff --git a/drivers/gpu/drm/vkms/vkms_composer.c b/drivers/gpu/drm/vkms/vkms_composer.c
+index 5cee3d4..24fc21c 100644
+--- a/drivers/gpu/drm/vkms/vkms_composer.c
++++ b/drivers/gpu/drm/vkms/vkms_composer.c
+@@ -731,27 +731,39 @@ int vkms_verify_crc_source(struct drm_crtc *crtc, const char *src_name,
+  * The composer runs while it has a user: the CRC source while it is set, and
+  * each writeback job from its preparation to its cleanup. A job is cleaned up
+  * after its completion is signalled, so the job of the next commit can be
+- * prepared before the previous one is cleaned up: each user holds the composer
+- * and a vblank reference of its own.
++ * prepared before the previous one is cleaned up: each user is counted on its
++ * own.
++ * Returns false when there was no user to remove.
+  */
+-void vkms_set_composer(struct vkms_output *out, bool enabled)
++bool vkms_composer_user(struct vkms_output *out, bool add)
+ {
+-	bool put = false;
+-
+-	if (enabled)
+-		drm_crtc_vblank_get(&out->crtc);
++	bool ok = true;
+ 
+ 	spin_lock_irq(&out->lock);
+-	if (enabled) {
++	if (add) {
+ 		out->composer_users++;
+ 	} else if (!WARN_ON(!out->composer_users)) {
+ 		out->composer_users--;
+-		put = true;
++	} else {
++		ok = false;
+ 	}
+ 	out->composer_enabled = out->composer_users > 0;
+ 	spin_unlock_irq(&out->lock);
+ 
+-	if (put)
++	return ok;
++}
++
++/*
++ * The CRC source is a composer user that holds a vblank reference of its own.
++ * A writeback job takes its reference when it is committed, see
++ * vkms_wb_atomic_commit().
++ */
++void vkms_set_composer(struct vkms_output *out, bool enabled)
++{
++	if (enabled)
++		drm_crtc_vblank_get(&out->crtc);
++
++	if (vkms_composer_user(out, enabled) && !enabled)
+ 		drm_crtc_vblank_put(&out->crtc);
+ }
+ 
+diff --git a/drivers/gpu/drm/vkms/vkms_drv.c b/drivers/gpu/drm/vkms/vkms_drv.c
+index 5a640b5..4e442ae 100644
+--- a/drivers/gpu/drm/vkms/vkms_drv.c
++++ b/drivers/gpu/drm/vkms/vkms_drv.c
+@@ -13,6 +13,8 @@
+ #include <linux/device/faux.h>
+ #include <linux/dma-mapping.h>
+ 
++#include <kunit/visibility.h>
++
+ #include <drm/clients/drm_client_setup.h>
+ #include <drm/drm_gem.h>
+ #include <drm/drm_atomic.h>
+@@ -126,9 +128,10 @@ static const struct drm_mode_config_funcs vkms_mode_funcs = {
+ 	.atomic_commit = drm_atomic_helper_commit,
+ };
+ 
+-static const struct drm_mode_config_helper_funcs vkms_mode_config_helpers = {
++VISIBLE_IF_KUNIT const struct drm_mode_config_helper_funcs vkms_mode_config_helpers = {
+ 	.atomic_commit_tail = vkms_atomic_commit_tail,
+ };
++EXPORT_SYMBOL_IF_KUNIT(vkms_mode_config_helpers);
+ 
+ static int vkms_modeset_init(struct vkms_device *vkmsdev)
+ {
+diff --git a/drivers/gpu/drm/vkms/vkms_drv.h b/drivers/gpu/drm/vkms/vkms_drv.h
+index 6876f25..aef3ab0 100644
+--- a/drivers/gpu/drm/vkms/vkms_drv.h
++++ b/drivers/gpu/drm/vkms/vkms_drv.h
+@@ -89,6 +89,7 @@ struct vkms_writeback_job {
+ 	struct iosys_map data[DRM_FORMAT_MAX_PLANES];
+ 	struct vkms_frame_info wb_frame_info;
+ 	pixel_write_t pixel_write;
++	bool vblank_held;
+ };
+ 
+ /**
+@@ -415,6 +416,10 @@ struct vkms_output *vkms_crtc_init(struct drm_device *dev,
+  */
+ int vkms_output_init(struct vkms_device *vkmsdev);
+ 
++#if IS_ENABLED(CONFIG_KUNIT)
++extern const struct drm_mode_config_helper_funcs vkms_mode_config_helpers;
++#endif
++
+ /**
+  * vkms_plane_init() - Initialize a plane
+  *
+@@ -437,6 +442,7 @@ void vkms_stereo_link_mark_writeback(struct vkms_output *out, u64 frame);
+ 
+ /* Composer Support */
+ void vkms_composer_worker(struct work_struct *work);
++bool vkms_composer_user(struct vkms_output *out, bool add);
+ void vkms_set_composer(struct vkms_output *out, bool enabled);
+ void vkms_writeback_row(struct vkms_writeback_job *wb, const struct line_buffer *src_buffer, int y);
+ 
+diff --git a/drivers/gpu/drm/vkms/vkms_writeback.c b/drivers/gpu/drm/vkms/vkms_writeback.c
+index 61e1622..60d5ba3 100644
+--- a/drivers/gpu/drm/vkms/vkms_writeback.c
++++ b/drivers/gpu/drm/vkms/vkms_writeback.c
+@@ -7,6 +7,7 @@
+ #include <drm/drm_fourcc.h>
+ #include <drm/drm_writeback.h>
+ #include <drm/drm_print.h>
++#include <drm/drm_vblank.h>
+ #include <drm/drm_probe_helper.h>
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_gem_framebuffer_helper.h>
+@@ -103,7 +104,7 @@ static int vkms_wb_prepare_job(struct drm_writeback_connector *wb_connector,
+ 	job->priv = vkmsjob;
+ 
+ 	/* Released by vkms_wb_cleanup_job(), which every prepared job gets */
+-	vkms_set_composer(vkms_output, true);
++	vkms_composer_user(vkms_output, true);
+ 
+ 	return 0;
+ 
+@@ -127,7 +128,9 @@ static void vkms_wb_cleanup_job(struct drm_writeback_connector *connector,
+ 
+ 	drm_framebuffer_put(vkmsjob->wb_frame_info.fb);
+ 
+-	vkms_set_composer(vkms_output, false);
++	if (vkmsjob->vblank_held)
++		drm_crtc_vblank_put(&vkms_output->crtc);
++	vkms_composer_user(vkms_output, false);
+ 	kfree(vkmsjob);
+ }
+ 
+@@ -145,6 +148,7 @@ static void vkms_wb_atomic_commit(struct drm_connector *conn,
+ 	struct vkms_frame_info *wb_frame_info;
+ 	u32 wb_format = fb->format->format;
+ 	int crtc_width, crtc_height;
++	int ret;
+ 
+ 	if (!conn_state)
+ 		return;
+@@ -154,6 +158,21 @@ static void vkms_wb_atomic_commit(struct drm_connector *conn,
+ 	active_wb = conn_state->writeback_job->priv;
+ 	wb_frame_info = &active_wb->wb_frame_info;
+ 
++	/*
++	 * The composer runs from the vblank timer, which runs while the vblank
++	 * has a reference. A job is prepared before the CRTC is enabled, when
++	 * its vblank cannot be referenced yet, so the reference is taken here,
++	 * once the CRTC is on, and released by vkms_wb_cleanup_job().
++	 */
++	ret = drm_crtc_vblank_get(&output->crtc);
++	if (ret) {
++		drm_err(output->crtc.dev, "No vblank for the writeback job: %d\n", ret);
++		drm_writeback_queue_job(wb_conn, connector_state);
++		drm_writeback_signal_completion(wb_conn, ret);
++		return;
++	}
++	active_wb->vblank_held = true;
++
+ 	spin_lock_irq(&output->composer_lock);
+ 	crtc_state->active_writeback = active_wb;
+ 	crtc_state->wb_pending = true;
+-- 
+2.53.0
+
