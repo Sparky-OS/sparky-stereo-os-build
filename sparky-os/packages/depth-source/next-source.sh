@@ -10,7 +10,7 @@
 #   PACKAGE: qt6-multimedia | dragon
 #   PUBLISHED.dsc: the published +lc1 source (its orig tarball beside it)
 #   OUT: receives the new .dsc, Debian tarball, both changelogs and the successor report
-#   SYMBOLS_ADD (qt6-multimedia): a file of symbol lines for debian/libqt6multimedia6.symbols
+#   SYMBOLS_ADD (qt6-multimedia): a file of symbol lines for debian/libqt6multimedia6.symbols (none for the successor of +stereo3d14, whose symbols are published)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../repo" && pwd)
@@ -19,12 +19,22 @@ PKG=$1 DSC=$(readlink -f "$2") OUT=$3 SYM=${4:-}
 SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$REPO/reproducible.py" epoch "$HERE")}
 export SOURCE_DATE_EPOCH
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
+PUBLISHED_VERSION=$(sed -n 's/^Version: //p' "$DSC")
+ITEMS=$HERE/changelog/$PKG.items
 case $PKG in
 qt6-multimedia)
+	# a successor of the published +stereo3d14+lc1 (ORDER 448): its series already holds the patches before 0046, its control and symbols are +14's
+	if [ "$PUBLISHED_VERSION" = '6.11.2-3+stereo3d14+lc1' ]; then
+		NEXT=6.11.2-3+stereo3d15
+		depends=()
+		ITEMS=$HERE/changelog/qt6-multimedia-stereo3d15.items
+		[ -z "$SYM" ] || { echo "the +stereo3d14 symbols are in the published source: no SYMBOLS_ADD" >&2; exit 2; }
+	else
 	NEXT=6.11.2-3+stereo3d14
 	depends=(--depends $'               libstereo-policy-dev (>= 1.5.0),' $'               libstereo-dibr-dev (>= 1.17.1),\n               libstereo-policy-dev (>= 1.5.0),'
 		--depends 'libavcodec63 (>= 10:9.0.2-dmo1+stereo3d6+lc1), libpipewire-0.3-0t64 [linux-any],' 'libavcodec63 (>= 10:9.0.2-dmo1+stereo3d6+lc1), libavutil61 (>= 10:9.0.2-dmo1+stereo3d5~), libpipewire-0.3-0t64 [linux-any],'
 		--depends $'Depends: ${misc:Depends},\n         ${qml6:Depends},\n         ${shlibs:Depends},\nBreaks: libqt6multimediaquick6,' $'Depends: ${misc:Depends},\n         ${qml6:Depends},\n         ${shlibs:Depends},\n         libgbm1,\n         libwayland-egl1,\nBreaks: libqt6multimediaquick6,')
+	fi
 	;;
 dragon)
 	NEXT=4:26.04.0-1+stereo3d9
@@ -41,16 +51,20 @@ W=$(mktemp -d "${TMPDIR:-/tmp}/depth-source-XXXXXX")
 trap 'rm -rf "$W"' EXIT
 dpkg-source --skip-patches -x "$DSC" "$W/published" >/dev/null
 mkdir -p "$W/overlay/patches"
-cp "$HERE/patches/$PKG"/*.patch "$W/overlay/patches/"
 cp "$W/published/debian/patches/series" "$W/overlay/patches/series"
 [ "$(tail -c1 "$W/overlay/patches/series" | xxd -p)" = 0a ] || echo >> "$W/overlay/patches/series"
-for p in "$HERE/patches/$PKG"/*.patch; do basename "$p" >> "$W/overlay/patches/series"; done
+# the patches the published series does not hold yet (a successor of +stereo3d14 adds 0046 only)
+for p in "$HERE/patches/$PKG"/*.patch; do
+	grep -qxF "$(basename "$p")" "$W/published/debian/patches/series" && continue
+	cp "$p" "$W/overlay/patches/"
+	basename "$p" >> "$W/overlay/patches/series"
+done
 if [ -n "$SYM" ]; then
 	cp "$W/published/debian/libqt6multimedia6.symbols" "$W/overlay/libqt6multimedia6.symbols"
 	cat "$SYM" >> "$W/overlay/libqt6multimedia6.symbols"
 fi
 # The vendored ffnvcodec header of patch 0032 (Qt dev 2506a582c8, MIT) gets its entry in debian/copyright (Opus, ORDER 411 2h review).
-if [ "$PKG" = qt6-multimedia ] && [ -f "$HERE/patches/$PKG/0032-3rdparty-import-ffnvcodec-dynlink_cuda.h.patch" ]; then
+if [ "$PKG" = qt6-multimedia ] && [ "$PUBLISHED_VERSION" != 6.11.2-3+stereo3d14+lc1 ] && [ -f "$HERE/patches/$PKG/0032-3rdparty-import-ffnvcodec-dynlink_cuda.h.patch" ]; then
 	cp "$W/published/debian/copyright" "$W/overlay/copyright"
 	grep -q '^Files: src/3rdparty/nv-codec-headers/' "$W/overlay/copyright" || cat >> "$W/overlay/copyright" <<'COPYRIGHT'
 
@@ -81,7 +95,7 @@ License: Expat
  OTHER DEALINGS IN THE SOFTWARE.
 COPYRIGHT
 fi
-mapfile -t items < <(python3 - "$HERE/changelog/$PKG.items" <<'PY'
+mapfile -t items < <(python3 - "$ITEMS" <<'PY'
 import sys
 # one item per paragraph (blank line between), its lines joined by a space
 for para in open(sys.argv[1], encoding='utf-8').read().strip().split('\n\n'):
