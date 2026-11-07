@@ -64,12 +64,13 @@ PY
 	# Packaging credit in each copyright file, in Debian's copyright format; an older credit of ours is
 	# replaced. DEP-5 gives a file the last Files paragraph that matches it (Debian copyright format 1.0,
 	# "Files" field), so ours never sits after a paragraph of Debian's for debian/*: where the package
-	# has none, ours names all of debian/*; where it has one, ours names only the files that are ours.
+	# has none, ours names all of debian/*; where it has one, or the package is a rebuild of another maintainer's
+	# (Original-Maintainer), ours names only the files that are ours.
 	for cf in "$w"/usr/share/doc/*/copyright; do
 		[ -f "$cf" ] && [ ! -L "$cf" ] || continue
-		STANZA="$STANZA" MARK="$MARK" PAWEL="$PAWEL" NAME="$NAME" python3 - "$cf" "${SOURCE_ROOT:-}" <<'PY'
+		STANZA="$STANZA" MARK="$MARK" PAWEL="$PAWEL" NAME="$NAME" python3 - "$cf" "${SOURCE_ROOT:-}" "$w/DEBIAN/control" <<'PY'
 import glob, os, re, sys
-f, source = sys.argv[1:3]
+f, source, control = sys.argv[1:4]
 env = os.environ
 t = open(f, encoding='utf-8', errors='surrogateescape').read()
 mark = env['MARK']
@@ -128,13 +129,33 @@ t = re.sub(r'\n*' + re.escape(mark) + r': [^\n]*(?:\n[^\n]+)*\n*', '\n', t).stri
 head = t.lstrip().startswith('Format:')
 other = [patterns(p) for p in paragraphs(t)]
 debian_taken = any(ps and any(x.startswith('debian/') for x in ps) for ps in other)
+# A rebuild of someone else's package is told by two signals of the package itself, either is enough: its Original-Maintainer
+# field (the stamp above sets it when the package came with another maintainer and keeps it on a restamp), and a changelog
+# entry signed by anyone but us (a source rebuilt along our chain has our Maintainer already and no Original-Maintainer, but
+# keeps the packagers' entries). The packaging in a rebuild is theirs, so ours names only what we added.
+def signed_by_others(doc):
+    import gzip
+    for name in ('changelog.Debian.gz', 'changelog.gz', 'changelog.Debian', 'changelog'):
+        path = os.path.join(doc, name)
+        if not os.path.isfile(path) or os.path.islink(path):
+            continue
+        raw = open(path, 'rb').read()
+        text = (gzip.decompress(raw) if raw[:2] == b'\x1f\x8b' else raw).decode('utf-8', 'replace')
+        for who in re.findall(r'^ -- (.+?)  \S', text, re.M):
+            if 'Capitain_Jack@yahoo.com' not in who and not who.startswith('root <root@'):
+                return True
+    return False
+
+
+rebuilt = (debian_taken or signed_by_others(os.path.dirname(f))
+           or re.search(r'^Original-Maintainer: ', open(control, encoding='utf-8', errors='replace').read(), re.M) is not None)
 credit = stanza.split('\nLicense: ', 1)[0]
 if licence != 'GPL-2+':
     credit += '\nLicense: ' + licence
 else:
     credit = stanza
 t = t.rstrip('\n') + '\n\n'
-if head and not debian_taken:
+if head and not rebuilt:
     out = credit
 elif head:
     mine = []

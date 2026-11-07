@@ -141,7 +141,8 @@ class Packages(unittest.TestCase):
 
     def test_provenance_keeps_the_packaging_licence_of_ours(self):
         # DisplayXR's packaging is under BSL-1.0 (Sparky-OS/displayxr-packaging); the credit stays the
-        # edition's, the licence stays the packaging's, and the stand-alone paragraphs before it stay.
+        # edition's, the licence stays the packaging's, and the stand-alone paragraphs before it stay. Its control
+        # says our maintainer (ORDER 451: a package with an Original-Maintainer is a rebuild and gets a narrowed paragraph).
         provenance = Path(__file__).resolve().parents[2] / 'repo/provenance.sh'
         cases = {'BSL-1.0': 'BSL-1.0', 'GPL-2+': 'GPL-2+', None: 'GPL-2+'}
         for i, (ours, expected) in enumerate(cases.items()):
@@ -149,7 +150,7 @@ class Packages(unittest.TestCase):
             (root / 'DEBIAN').mkdir(parents=True)
             (root / 'DEBIAN/control').write_text(
                 'Package: lc-licence\nVersion: 1\nArchitecture: all\n'
-                'Maintainer: Example <dev@example.org>\nDescription: Licence fixture\n')
+                'Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\nDescription: Licence fixture\n')
             cf = root / 'usr/share/doc/lc-licence/copyright'
             cf.parent.mkdir(parents=True)
             text = ('Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n\n'

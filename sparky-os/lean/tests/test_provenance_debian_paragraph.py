@@ -17,6 +17,7 @@ HEADER = 'Format: https://www.debian.org/doc/packaging-manuals/copyright-format/
 UPSTREAM = 'Files: *\nCopyright: 2026 Upstream Authors\nLicense: GPL-2+\n'
 DEBIAN = ('Files: debian/*\nCopyright: 2026 Debian Qt/KDE Maintainers\n 2026 Aaron Rainbolt\nLicense: GPL-2+\n')
 LICENCE = 'License: GPL-2+\n The licence text.\n'
+OURS = 'Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>'
 CREDIT = "Daniel Ramos's edition of SparkyLinux"
 
 
@@ -46,7 +47,7 @@ class Provenance(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def stage(self, name, copyright_text, maintainer='Example <dev@example.org>'):
+    def stage(self, name, copyright_text, maintainer='Example <dev@example.org>'):  # the default stands for a rebuild
         root = self.base / name
         (root / 'DEBIAN').mkdir(parents=True)
         (root / 'DEBIAN/control').write_text(
@@ -73,7 +74,7 @@ class Provenance(unittest.TestCase):
         return subprocess.run(cmd, check=check, capture_output=True, text=True)
 
     def test_a_native_package_keeps_the_whole_debian_paragraph(self):
-        root, cf = self.stage('native', HEADER + UPSTREAM)
+        root, cf = self.stage('native', HEADER + UPSTREAM, maintainer=OURS)
         self.run_prov(root)
         text = cf.read_text()
         self.assertEqual(text.count('Files: debian/*\n'), 1, text)
@@ -142,7 +143,7 @@ class Provenance(unittest.TestCase):
     def test_the_packaging_of_ours_under_another_licence_keeps_it(self):
         text = HEADER + 'Files: *\nCopyright: 2026 Upstream\nLicense: BSL-1.0\n\nLicense: BSL-1.0\n The licence text.\n'
         root, cf = self.stage('bsl', text + '\nFiles: debian/*\nComment: Sparky Stereo OS packaging, older.\n'
-                              'Copyright: 2026 Daniel Ramos (Capitain Jack)\nLicense: BSL-1.0\n')
+                              'Copyright: 2026 Daniel Ramos (Capitain Jack)\nLicense: BSL-1.0\n', maintainer=OURS)
         self.run_prov(root)
         out = cf.read_text()
         self.assertIn('\nLicense: BSL-1.0\n', holder(out, 'debian/control') + '\n')
@@ -152,6 +153,91 @@ class Provenance(unittest.TestCase):
     def test_the_lean_build_step_hands_the_source_tree_to_provenance(self):
         text = (Path(__file__).resolve().parents[1] / 'debhelper.py').read_text()
         self.assertIn("'--tree', str(staging), '--source', str(root)", text)
+
+    def test_b_a_rebuild_without_a_debian_paragraph_does_not_claim_debian_star(self):
+        # qemu, fltk1.4, mlt and dpkg are such packages: Debian's copyright only has Files: *, the control says Original-Maintainer
+        root, cf = self.stage('rebuild-star', HEADER + UPSTREAM)
+        src = self.source('rebuild-star', ['debian/changelog', 'debian/patches/s1-0001-ours.patch'],
+                          manifest='debian/patches/s1-0001-ours.patch\n')
+        self.run_prov(root, src)
+        text = cf.read_text()
+        self.assertNotIn('\nFiles: debian/*\n', text)
+        self.assertNotIn(CREDIT, holder(text, 'debian/changelog'))
+        self.assertIn(CREDIT, holder(text, 'debian/patches/s1-0001-ours.patch'))
+        self.run_prov(root, src)
+        self.assertEqual(cf.read_text(), text)
+
+    def test_the_rebuild_signal_survives_a_restamp(self):
+        # the second pass sees our maintainer, but the Original-Maintainer the first pass wrote stays
+        root, cf = self.stage('restamp', HEADER + UPSTREAM)
+        self.run_prov(root)
+        first = cf.read_text()
+        self.assertIn('Original-Maintainer: Example', (root / 'DEBIAN/control').read_text())
+        self.run_prov(root)
+        self.assertEqual(cf.read_text(), first)
+
+    def changelog(self, root, name, trailer):
+        import gzip
+        path = root / f'usr/share/doc/{name}/changelog.Debian.gz'
+        path.write_bytes(gzip.compress((f'{name} (1) unstable; urgency=low\n\n  * x\n\n -- {trailer}  Sat, 07 Nov 2026 00:00:00 +0000\n').encode()))
+
+    def test_b_a_rebuild_told_by_its_changelog_when_the_control_has_no_original_maintainer(self):
+        # a source rebuilt along our chain (kwin, qemu's second binaries) has our Maintainer already; the packagers' entries stay
+        root, cf = self.stage('chain', HEADER + UPSTREAM, maintainer=OURS)
+        self.changelog(root, 'chain', 'Debian Packager <packager@example.org>')
+        self.run_prov(root)
+        text = cf.read_text()
+        self.assertNotIn('\nFiles: debian/*\n', text)
+        self.assertNotIn(CREDIT, holder(text, 'debian/changelog'))
+
+    def test_a_native_package_with_only_our_entries_keeps_the_whole_paragraph(self):
+        root, cf = self.stage('ownlog', HEADER + UPSTREAM, maintainer=OURS)
+        self.changelog(root, 'ownlog', 'root <root@0123456789ab>')
+        self.run_prov(root)
+        self.assertIn(CREDIT, holder(cf.read_text(), 'debian/changelog'))
+
+
+class PatchHeaders(unittest.TestCase):
+    HELPER = Path(__file__).resolve().parents[2] / 'repo/provenance-files.py'
+    UPSTREAM_PATCH = ('From dccbdbad Mon Sep 17 00:00:00 2001\nFrom: Another Author <author@example.org>\n'
+                      'Subject: [PATCH] carried\n\n(cherry picked from commit 0ea31ae7)\n---\n a | 1 +\n')
+    OURS_PATCH = 'From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>\nSubject: [PATCH] ours\n\n---\n a | 1 +\n'
+    ORIGIN_PATCH = ('From: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\nOrigin: upstream, https://example.org/c/1\n'
+                    'Subject: carried by us\n\n---\n a | 1 +\n')
+
+    def tree(self, **patches):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = Path(tmp.name) / 'debian/patches'
+        d.mkdir(parents=True)
+        for name, text in patches.items():
+            (d / name).write_text(text)
+        return Path(tmp.name)
+
+    def run_helper(self, root, *patterns):
+        return subprocess.run([sys.executable, '-I', str(self.HELPER), str(root), *patterns], capture_output=True, text=True)
+
+    def test_only_the_patches_that_say_they_are_ours_are_named(self):
+        root = self.tree(**{'s41-0001-carried.patch': self.UPSTREAM_PATCH, 's42-0001-ours.patch': self.OURS_PATCH,
+                            's43-0001-origin.patch': self.ORIGIN_PATCH})
+        r = self.run_helper(root, 's??-????-*.patch')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        names = (root / 'debian/sparky-provenance-files').read_text()
+        self.assertIn('debian/patches/s42-0001-ours.patch', names)
+        self.assertNotIn('s41-0001', names)
+        self.assertNotIn('s43-0001', names)
+        self.assertIn('left out s41-0001-carried.patch', r.stdout)
+
+    def test_a_patch_with_no_header_stops_the_run_and_is_named(self):
+        root = self.tree(**{'s42-0001-ours.patch': self.OURS_PATCH, 's42-0002-bare.patch': '--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n'})
+        r = self.run_helper(root, 's??-????-*.patch')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('s42-0002-bare.patch', r.stderr)
+        self.assertFalse((root / 'debian/sparky-provenance-files').exists())
+
+    def test_a_pattern_that_matches_no_patch_stops_the_run(self):
+        root = self.tree(**{'s42-0001-ours.patch': self.OURS_PATCH})
+        self.assertNotEqual(self.run_helper(root, 'x*.patch').returncode, 0)
 
 
 if __name__ == '__main__':
