@@ -44,6 +44,7 @@ find "$D" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOS
 Package: $PACKAGE
+Source: sparky-stereo-skills
 Version: $VERSION
 Architecture: amd64
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
