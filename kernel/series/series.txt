@@ -456,3 +456,21 @@
 #      Drop this group when either series is in the release this kernel moves to.
 43-amdgpu-vm-job-leak/0001-drm-amdgpu-make-amdgpu_vm_update_funcs-commit-return.patch
 43-amdgpu-vm-job-leak/0002-drm-amdgpu-free-job-when-amdgpu_vm_ptes_update-fails.patch
+
+# ==== 44-ev-btn: more than 80 buttons on a joystick: the EV_BTN event for generic, numbered buttons (ORDER 15)
+#      status: next build (build 17, all three flavours). Tomasz Pakuła's "[RFC PATCH 0/6] Input: New EV_BTN event for generic buttons", linux-input and LKML, 2026-01-04, carried as posted
+#      (no v2 by 2026-11-06; torvalds/linux master of 2026-11-06 has no EV_BTN and KEY_MAX is still 0x2ff). Joysticks keep the EV_KEY codes they have (up to 80 buttons, as before) and
+#      also send EV_BTN with the HID button number, so a device with 128 buttons shows all 128 to a client that reads EV_BTN: 0001 the EV_BTN event type (0x06) and its documentation,
+#      0002 the button count in /proc/bus/input/devices, uevent and modalias, 0003 hid-input sends EV_BTN with each HID button, 0004 HID joysticks get EV_BTN for every Button-page usage
+#      (up to INPUT_MAX_BUTTONS, 2048) even where EV_KEY runs out at KEY_MAX, 0005 re-indentation of the HID_UP_BUTTON switch, 0006 the EVIOCGBTNCNT ioctl (number of buttons). The patches are
+#      the posted text, Signed-off-by Tomasz Pakuła. Benjamin Tissoires (2026-01-08) asked for a smaller shape of 0003 and 0004 and Randy Dunlap (2026-01-04) for a wording change in the
+#      documentation of 0001; the author has not posted a revision. The same limit was addressed by Ivan Gorinov (2025-12-20, raise the HID joystick range from 80 to 112 codes) and Ricardo
+#      Esteves (2026-02-09, KEY_MAX to 0x31d); neither is carried: EV_BTN has no ceiling at KEY_MAX. Consumers: SDL pull request 14758 and Wine merge request 9853 (both unmerged drafts),
+#      evtest merge request 25. Applies strictly (git apply) on the build 16 trees of base, v3 and rt, the common series.txt gives all three flavours the group.
+#      Drop this group when the series, in the author's or the maintainers' final form, is in the release this kernel moves to.
+44-ev-btn/0001-Introduce-EV-BTN-event-for-generic-buttons.patch
+44-ev-btn/0002-Add-info-about-EV-BTN.patch
+44-ev-btn/0003-Fire-EV-BTN-if-found-in-ev-bit.patch
+44-ev-btn/0004-Assign-EV-BTN-event-to-HID-Joysticks.patch
+44-ev-btn/0005-Realign-rest-of-the-HID-UP-BUTTON-cases.patch
+44-ev-btn/0006-Add-EVIOCGBTNCNT.patch
