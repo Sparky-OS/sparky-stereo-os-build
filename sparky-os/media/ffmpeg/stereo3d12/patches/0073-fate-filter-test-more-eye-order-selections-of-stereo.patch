@@ -1,0 +1,100 @@
+Description: fate/filter: test more eye order selections of stereo3d
+ Add the two graphs that cover the corrected selections of interleaved
+ columns: icr to side by side with the right view first, and icl to icr
+ with the pairing of the columns exchanged. Each of the old expressions
+ restored alone makes one of them fail, and the existing tests still
+ pass. The graphs need no sample.
+ .
+ The references are separate files, so that the exchanged eyes cannot
+ match the hash of the other order.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Sonnet 5.5 via Claude Code
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/3cd1362c436bbdc6704ffc10c396ad03f1e87ecb
+Forwarded: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25377
+Last-Update: 2026-11-06
+
+diff --git a/tests/fate/filter-video.mak b/tests/fate/filter-video.mak
+index 8b87ba3..f3d88b4 100644
+--- a/tests/fate/filter-video.mak
++++ b/tests/fate/filter-video.mak
+@@ -633,6 +633,18 @@ fate-filter-stereo3d-icr-sbsl: CMD = framemd5 -/filter_complex $(TARGET_PATH)/te
+ FATE_FILTER-yes += $(FATE_STEREO3D_ICR-yes)
+ fate-filter-stereo3d: $(FATE_STEREO3D_ICR-yes)
+ 
++# Right-first columns to side by side with the right view first, and
++# columns to columns with the pairing of the columns exchanged.
++FATE_STEREO3D_ICR_MORE-$(call ALLYES, NULLSRC_FILTER GEQ_FILTER FORMAT_FILTER SCALE_FILTER \
++                              STEREO3D_FILTER RAWVIDEO_ENCODER FRAMEMD5_MUXER \
++                              FILE_PROTOCOL PIPE_PROTOCOL) += fate-filter-stereo3d-icr-sbsr fate-filter-stereo3d-icl-icr
++fate-filter-stereo3d-icr-sbsr: tests/data/filtergraphs/stereo3d-icr-sbsr
++fate-filter-stereo3d-icr-sbsr: CMD = framemd5 -/filter_complex $(TARGET_PATH)/tests/data/filtergraphs/stereo3d-icr-sbsr -frames:v 1 -pix_fmt rgb24
++fate-filter-stereo3d-icl-icr: tests/data/filtergraphs/stereo3d-icl-icr
++fate-filter-stereo3d-icl-icr: CMD = framemd5 -/filter_complex $(TARGET_PATH)/tests/data/filtergraphs/stereo3d-icl-icr -frames:v 1 -pix_fmt rgb24
++FATE_FILTER-yes += $(FATE_STEREO3D_ICR_MORE-yes)
++fate-filter-stereo3d: $(FATE_STEREO3D_ICR_MORE-yes)
++
+ FATE_STEREO3D_IRR-$(call ALLYES, NULLSRC_FILTER GEQ_FILTER FORMAT_FILTER SCALE_FILTER \
+                               SPLIT_FILTER HSTACK_FILTER STEREO3D_FILTER \
+                               RAWVIDEO_ENCODER FRAMEMD5_MUXER FILE_PROTOCOL PIPE_PROTOCOL) += fate-filter-stereo3d-irr-mono
+diff --git a/tests/filtergraphs/stereo3d-icl-icr b/tests/filtergraphs/stereo3d-icl-icr
+new file mode 100644
+index 0000000..a143cd8
+--- /dev/null
++++ b/tests/filtergraphs/stereo3d-icl-icr
+@@ -0,0 +1,8 @@
++nullsrc=s=128x48:r=1,
++format=gbrp,
++geq=r='if(not(mod(X,2)),255,255*between(X,64,79)*between(Y,24,31))':
++    g='if(not(mod(X,2)),255*between(X,16,31)*between(Y,8,15),255*between(X,64,79)*between(Y,24,31))':
++    b='if(not(mod(X,2)),255*between(X,16,31)*between(Y,8,15),255)',
++scale,
++format=rgb24,
++stereo3d=icl:icr
+diff --git a/tests/filtergraphs/stereo3d-icr-sbsr b/tests/filtergraphs/stereo3d-icr-sbsr
+new file mode 100644
+index 0000000..4110b94
+--- /dev/null
++++ b/tests/filtergraphs/stereo3d-icr-sbsr
+@@ -0,0 +1,8 @@
++nullsrc=s=128x48:r=1,
++format=gbrp,
++geq=r='if(mod(X,2),255,255*between(X,64,79)*between(Y,24,31))':
++    g='if(mod(X,2),255*between(X,16,31)*between(Y,8,15),255*between(X,64,79)*between(Y,24,31))':
++    b='if(mod(X,2),255*between(X,16,31)*between(Y,8,15),255)',
++scale,
++format=rgb24,
++stereo3d=icr:sbsr
+diff --git a/tests/ref/fate/filter-stereo3d-icl-icr b/tests/ref/fate/filter-stereo3d-icl-icr
+new file mode 100644
+index 0000000..52c0eb0
+--- /dev/null
++++ b/tests/ref/fate/filter-stereo3d-icl-icr
+@@ -0,0 +1,10 @@
++#format: frame checksums
++#version: 2
++#hash: MD5
++#tb 0: 1/1
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 128x48
++#sar 0: 1/1
++#stream#, dts,        pts, duration,     size, hash
++0,          0,          0,        1,    18432, 000cdef82fb065b8f7a355978c09ffb9
+diff --git a/tests/ref/fate/filter-stereo3d-icr-sbsr b/tests/ref/fate/filter-stereo3d-icr-sbsr
+new file mode 100644
+index 0000000..c96297e
+--- /dev/null
++++ b/tests/ref/fate/filter-stereo3d-icr-sbsr
+@@ -0,0 +1,10 @@
++#format: frame checksums
++#version: 2
++#hash: MD5
++#tb 0: 1/1
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 128x48
++#sar 0: 1/1
++#stream#, dts,        pts, duration,     size, hash
++0,          0,          0,        1,    18432, 46b490014ae8620df9eb5d57e7bb7c38

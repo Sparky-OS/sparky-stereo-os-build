@@ -1,0 +1,1492 @@
+Description: avcodec/bsf/h264_metadata,hevc_metadata: add the frame_packing option
+ Add pass, insert, remove and extract actions for frame packing
+ arrangement SEI messages. Insertion takes the layout from explicit
+ options, then packet Stereo 3D side data, then stream side data. Write
+ before each seek point, on non-key packets carrying side data, and when
+ replacing later arrangements or cancellations. Temporal arrangements are
+ written on every packet, using LEFT and RIGHT as physical eyes and the
+ selected content interpretation to determine the constituent frame
+ number. Packed or unspecified temporal views alternate in packet order,
+ which requires display-order input, and restart after a flush. An
+ explicit physical eye sets the phase for subsequent unspecified views.
+ Reject forbidden quincunx combinations and nonzero content
+ interpretation for H.264 type 6. Extraction leaves the bitstream intact
+ and exports the last non-reserved arrangement in the access unit as
+ packet Stereo 3D side data when its layout is representable. It does not
+ infer persistence on packets without a message. Flushing resets
+ done_first_au as well as the temporal phase, so display_orientation also
+ treats the first access unit after a flush as a seek point. This is
+ intentional because a flush starts a new input segment whose first
+ packet may have neither SPS nor a key flag.
+ .
+ The new message has the arrangement id 0 and replaces only a message
+ with that id. A persistent arrangement with another id, passed on by an
+ earlier access unit, stays in force until its coded video sequence
+ ends, so such ids are tracked and cancelled in the access unit that
+ gets the new message (H.264 D.2.26, H.265 D.3.16). H.265 has no
+ two-dimensional arrangement: a 2D description cancels them and writes
+ none.
+ .
+ H.265 insertion clears general_non_packed_constraint_flag, and the
+ sub-layer flag, in the VPS and SPS it passes on, those of the extradata
+ included, because the flag forbids a frame packing arrangement in the
+ coded video sequence (H.265 7.4.4). A layout that is first given after
+ parameter sets with the flag were passed on is an error. H.264 tile
+ format insertion is refused unless the cropped size of the active SPS is
+ a multiple of 3 both ways (D.2.26). Extraction does not export a
+ mirrored view or quincunx sampling other than that of the side by side
+ and checkerboard layouts, which AVStereo3D cannot describe. Removal also
+ removes the messages from the extradata, which comes without a packet.
+ .
+ The self-contained flags of a new message are those of the messages seen
+ before it in the coded video sequence, because they are the same in all
+ of them (H.264 D.2.26, H.265 D.3.16).
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Sonnet via Claude Code
+ Assisted-by: gpt-6-astra via Codex
+ Assisted-by: Claude Sonnet 5.5 via Claude Code
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/2ba7718645c057ef960734d4737d2fedaff87eb4
+Forwarded: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25395
+Last-Update: 2026-11-06
+
+diff --git a/doc/bitstream_filters.texi b/doc/bitstream_filters.texi
+index c6705bb..7aec54e 100644
+--- a/doc/bitstream_filters.texi
++++ b/doc/bitstream_filters.texi
+@@ -450,6 +450,89 @@ Insert mode works in conjunction with @code{rotate} and @code{flip} options.
+ Any pre-existing Display orientation messages will be removed in insert or remove mode.
+ Extract mode attaches the display matrix to the packet as side data.
+ 
++@item frame_packing
++Insert, remove or extract Frame packing arrangement SEI messages.
++See H.264 section D.1.26 and D.2.26 for syntax and semantics.
++
++@table @samp
++@item pass
++@item insert
++@item remove
++@item extract
++@end table
++
++Default is pass.
++
++Insert mode writes the message in front of every key frame, or in front of
++every frame for temporal interleaving, and replaces a pre-existing message in
++those access units. The layout comes from the @code{frame_packing_type},
++@code{frame_packing_view} and @code{frame_packing_quincunx} options, and what
++they leave unset comes from the Stereo 3D side data of the stream or of the
++packet, such as the one the Matroska demuxer reads from @code{StereoMode}.
++Without a type and without side data the stream is passed unchanged.
++This option describes an existing layout; it does not rearrange the pictures.
++For temporal interleaving, a per-packet Stereo 3D LEFT or RIGHT view selects
++the physical eye, with the content interpretation determining its constituent
++frame number. Otherwise the frames alternate in packet order, starting with frame 0
++and restarting after a flush. In that case the input must be in display order.
++An explicit view sets the phase for subsequent unspecified views.
++Reordered input requires a per-packet view description.
++Existing frame packing messages are replaced, including cancellation messages.
++The new message has the arrangement id 0. A persistent message with another id
++that an earlier access unit passed on is ended by a cancellation message in the
++access unit that gets the new one, so that it is the only layout in force.
++The new message has the frame0_self_contained_flag and frame1_self_contained_flag
++of the messages already seen in the coded video sequence, which are the same in
++all of them.
++Packet side data is applied on the packet that carries it.
++
++Extract mode attaches a representable frame packing message from the access
++unit to the packet as @code{AV_PKT_DATA_STEREO3D} side data, leaving the SEI
++in the bitstream. If several messages are present, the last one with a
++non-reserved arrangement ID is used. Cancellation messages, unknown content
++interpretations and layouts without an @code{AVStereo3D} equivalent do not
++produce side data; among them are a mirrored view (spatial_flipping_flag) and
++quincunx sampling other than that of the side by side and checkerboard layouts.
++Extraction describes messages present in the packet;
++it does not infer persistence on packets without a message.
++
++Remove mode also removes the messages from the extradata.
++
++@item frame_packing_type
++Set frame_packing_arrangement_type (H.264 table D-9).
++
++@table @samp
++@item checkerboard
++@item columns
++@item rows
++@item side_by_side
++@item top_bottom
++@item temporal
++@item 2d
++@item tile
++@end table
++
++Default is to take it from the Stereo 3D side data. The tile format needs a
++cropped picture size, with the crop of this filter applied, that is a multiple
++of 3 both ways.
++
++@item frame_packing_view
++Set content_interpretation_type: which view the first frame of the arrangement
++is.
++
++@table @samp
++@item unspecified
++@item left_first
++@item right_first
++@end table
++
++Default is to take it from the Stereo 3D side data, left first without any.
++
++@item frame_packing_quincunx
++Set quincunx_sampling_flag. Default is to take it from the Stereo 3D side data;
++it is always set for the checkerboard.
++A value of 1 is invalid for temporal interleaving, 2D and tile layouts.
++
+ @item rotate
+ Set rotation in display orientation SEI (anticlockwise angle in degrees).
+ Range is -360 to +360. Default is NaN.
+@@ -568,6 +651,90 @@ representable if the chroma is subsampled (H.265 section 7.4.3.2.1).
+ @item height
+ Set width and height after crop.
+ 
++@item frame_packing
++Insert, remove or extract Frame packing arrangement SEI messages.
++See H.265 section D.2.16 and D.3.16 for syntax and semantics.
++
++@table @samp
++@item pass
++@item insert
++@item remove
++@item extract
++@end table
++
++Default is pass.
++
++Insert mode writes the message in front of every key frame, or in front of
++every frame for temporal interleaving, and replaces a pre-existing message in
++those access units. The layout comes from the @code{frame_packing_type},
++@code{frame_packing_view} and @code{frame_packing_quincunx} options, and what
++they leave unset comes from the Stereo 3D side data of the stream or of the
++packet, such as the one the Matroska demuxer reads from @code{StereoMode}.
++Without a type and without side data the stream is passed unchanged.
++This option describes an existing layout; it does not rearrange the pictures.
++For temporal interleaving, a per-packet Stereo 3D LEFT or RIGHT view selects
++the physical eye, with the content interpretation determining its constituent
++frame number. Otherwise the frames alternate in packet order, starting with frame 0
++and restarting after a flush. In that case the input must be in display order.
++An explicit view sets the phase for subsequent unspecified views.
++Reordered input requires a per-packet view description.
++Existing frame packing messages are replaced, including cancellation messages.
++The new message has the arrangement id 0. A persistent message with another id
++that an earlier access unit passed on is ended by a cancellation message in the
++access unit that gets the new one, so that it is the only layout in force.
++The new message has the frame0_self_contained_flag and frame1_self_contained_flag
++of the messages already seen in the coded video sequence, which are the same in
++all of them.
++A Stereo 3D description of a two-dimensional picture has no H.265 arrangement:
++it ends the messages in force and writes none.
++Packet side data is applied on the packet that carries it.
++The SEI NAL unit written for an access unit has the TemporalId and the layer
++of its picture.
++A stream that is given a layout also stops declaring that it has none:
++general_non_packed_constraint_flag, and the sub-layer flag, are cleared in
++every VPS and SPS passed on, those of the extradata included
++(H.265 7.4.4). A layout that is first given by packet side data after a
++VPS or SPS with the flag set was passed on is an error.
++
++Extract mode attaches a representable frame packing message from the access
++unit to the packet as @code{AV_PKT_DATA_STEREO3D} side data, leaving the SEI
++in the bitstream. If several messages are present, the last one with a
++non-reserved arrangement ID is used. Cancellation messages, unknown content
++interpretations and layouts without an @code{AVStereo3D} equivalent do not
++produce side data; among them are a mirrored view (spatial_flipping_flag) and
++quincunx sampling other than that of the side by side layout.
++Extraction describes messages present in the packet;
++it does not infer persistence on packets without a message.
++
++Remove mode also removes the messages from the extradata.
++
++@item frame_packing_type
++Set frame_packing_arrangement_type (H.265 table D.8).
++
++@table @samp
++@item side_by_side
++@item top_bottom
++@item temporal
++@end table
++
++Default is to take it from the Stereo 3D side data.
++
++@item frame_packing_view
++Set content_interpretation_type: which view the first frame of the arrangement
++is.
++
++@table @samp
++@item unspecified
++@item left_first
++@item right_first
++@end table
++
++Default is to take it from the Stereo 3D side data, left first without any.
++
++@item frame_packing_quincunx
++Set quincunx_sampling_flag. Default is to take it from the Stereo 3D side data;
++it must be zero for temporal interleaving.
++
+ @item level
+ Set the level in the VPS and SPS.  See H.265 section A.4 and tables
+ A.6 and A.7.
+diff --git a/libavcodec/bsf/h264_metadata.c b/libavcodec/bsf/h264_metadata.c
+index b5d81e4..a909c8b 100644
+--- a/libavcodec/bsf/h264_metadata.c
++++ b/libavcodec/bsf/h264_metadata.c
+@@ -21,6 +21,8 @@
+ #include "libavutil/common.h"
+ #include "libavutil/mem.h"
+ #include "libavutil/opt.h"
++#include "libavutil/refstruct.h"
++#include "libavutil/stereo3d.h"
+ 
+ #include "libavcodec/bsf.h"
+ #include "libavcodec/bsf_internal.h"
+@@ -82,6 +84,21 @@ typedef struct H264MetadataContext {
+     int flip;
+     H264RawSEIDisplayOrientation display_orientation_payload;
+ 
++    int frame_packing;
++    int frame_packing_type;
++    int frame_packing_view;
++    int frame_packing_quincunx;
++    int frame_packing_frame;
++    H264RawSEIFramePackingArrangement frame_packing_payload;
++    SEIFramePackingState frame_packing_state;
++
++    // Cropped picture size of each SPS seen and the SPS of each PPS,
++    // to check a tile format arrangement against the active one.
++    struct {
++        int width, height;
++    } sps_size[H264_MAX_SPS_COUNT];
++    int8_t pps_sps[H264_MAX_PPS_COUNT];
++
+     int level;
+ } H264MetadataContext;
+ 
+@@ -465,6 +482,287 @@ static int h264_metadata_handle_display_orientation(AVBSFContext *bsf,
+     return 0;
+ }
+ 
++// Note the self-contained flags of the messages in the access unit and, when
++// track is set, the arrangements that stay in force after it.
++static int h264_metadata_track_frame_packing(AVBSFContext *bsf,
++                                             CodedBitstreamFragment *au,
++                                             int track)
++{
++    H264MetadataContext *ctx = bsf->priv_data;
++    SEIRawMessage *message = NULL;
++
++    while (ff_cbs_sei_find_message(ctx->common.output, au,
++                                   SEI_TYPE_FRAME_PACKING_ARRANGEMENT,
++                                   &message) == 0) {
++        const H264RawSEIFramePackingArrangement *payload = message->payload;
++        int err;
++
++        if (!payload->frame_packing_arrangement_cancel_flag)
++            ff_cbs_sei_frame_packing_note_flags(&ctx->frame_packing_state,
++                                                payload->frame0_self_contained_flag,
++                                                payload->frame1_self_contained_flag);
++        if (!track ||
++            !ff_cbs_sei_frame_packing_id_valid(payload->frame_packing_arrangement_id))
++            continue;
++        err = ff_cbs_sei_frame_packing_track(bsf, &ctx->frame_packing_state,
++                                             payload->frame_packing_arrangement_id,
++                                             payload->frame_packing_arrangement_cancel_flag,
++                                             payload->frame_packing_arrangement_repetition_period);
++        if (err < 0)
++            return err;
++    }
++
++    return 0;
++}
++
++// Cancel the arrangements that are in force, except the one with id 0, which
++// the message to be added replaces.
++static int h264_metadata_cancel_frame_packing(AVBSFContext *bsf,
++                                              CodedBitstreamFragment *au)
++{
++    H264MetadataContext *ctx = bsf->priv_data;
++    const SEIFramePackingState *state = &ctx->frame_packing_state;
++
++    for (int i = 0; i < state->nb_ids; i++) {
++        H264RawSEIFramePackingArrangement *cancel;
++        int err;
++
++        if (!state->ids[i])
++            continue;
++        cancel = av_refstruct_allocz(sizeof(*cancel));
++        if (!cancel)
++            return AVERROR(ENOMEM);
++        cancel->frame_packing_arrangement_id          = state->ids[i];
++        cancel->frame_packing_arrangement_cancel_flag = 1;
++        err = ff_cbs_sei_add_message(ctx->common.output, au, 1,
++                                     SEI_TYPE_FRAME_PACKING_ARRANGEMENT,
++                                     cancel, cancel);
++        av_refstruct_unref(&cancel);
++        if (err < 0) {
++            av_log(bsf, AV_LOG_ERROR, "Failed to add frame packing "
++                   "arrangement cancellation to access unit.\n");
++            return err;
++        }
++    }
++
++    return 0;
++}
++
++// Table D-9, type 7: the cropped picture is divided in three both ways.
++static int h264_metadata_check_tile_size(AVBSFContext *bsf,
++                                         CodedBitstreamFragment *au)
++{
++    H264MetadataContext *ctx = bsf->priv_data;
++    int width = 0, height = 0;
++
++    for (int i = 0; i < au->nb_units; i++) {
++        const H264RawSlice *slice;
++        int sps;
++
++        if (au->units[i].type != H264_NAL_SLICE &&
++            au->units[i].type != H264_NAL_IDR_SLICE)
++            continue;
++        slice = au->units[i].content;
++        sps   = ctx->pps_sps[slice->header.pic_parameter_set_id];
++        if (sps >= 0) {
++            width  = ctx->sps_size[sps].width;
++            height = ctx->sps_size[sps].height;
++        }
++        break;
++    }
++
++    if (!width || !height) {
++        av_log(bsf, AV_LOG_ERROR, "The tile format frame packing arrangement "
++               "needs the size of the picture, but its sequence parameter set "
++               "has not been seen.\n");
++        return AVERROR(EINVAL);
++    }
++    if (width % 3 || height % 3) {
++        av_log(bsf, AV_LOG_ERROR, "The tile format frame packing arrangement "
++               "needs a cropped picture size that is a multiple of 3 both "
++               "ways, not %dx%d.\n", width, height);
++        return AVERROR(EINVAL);
++    }
++
++    return 0;
++}
++
++static int h264_metadata_handle_frame_packing(AVBSFContext *bsf,
++                                              AVPacket *pkt,
++                                              CodedBitstreamFragment *au,
++                                              int seek_point)
++{
++    H264MetadataContext *ctx = bsf->priv_data;
++    H264RawSEIFramePackingArrangement *fp = &ctx->frame_packing_payload;
++    SEIFramePackingParams params;
++    SEIRawMessage *message = NULL;
++    const AVPacketSideData *sd;
++    const AVStereo3D *stereo = NULL;
++    int err, packet_stereo = 0;
++
++    if (ctx->frame_packing == BSF_ELEMENT_EXTRACT) {
++        const H264RawSEIFramePackingArrangement *last = NULL;
++
++        while (ff_cbs_sei_find_message(ctx->common.output, au,
++                                       SEI_TYPE_FRAME_PACKING_ARRANGEMENT,
++                                       &message) == 0) {
++            const H264RawSEIFramePackingArrangement *payload = message->payload;
++            unsigned int id = payload->frame_packing_arrangement_id;
++
++            if (id < 256 || (id >= 512 && id < (1U << 31)))
++                last = payload;
++        }
++        if (!last || last->frame_packing_arrangement_cancel_flag)
++            return 0;
++        // Mirroring a view and quincunx sampling other than the side by
++        // side and checkerboard layouts have no Stereo 3D description.
++        if (last->spatial_flipping_flag ||
++            (last->quincunx_sampling_flag &&
++             last->frame_packing_arrangement_type != SEI_FPA_H264_TYPE_CHECKERBOARD &&
++             last->frame_packing_arrangement_type != SEI_FPA_TYPE_SIDE_BY_SIDE))
++            return 0;
++
++        params = (SEIFramePackingParams) {
++            .type                         = last->frame_packing_arrangement_type,
++            .content_interpretation_type  = last->content_interpretation_type,
++            .quincunx_sampling_flag       = last->quincunx_sampling_flag,
++            .current_frame_is_frame0_flag = last->current_frame_is_frame0_flag,
++        };
++        return ff_cbs_sei_frame_packing_to_packet(pkt, &params);
++    }
++
++    if (ctx->frame_packing == BSF_ELEMENT_REMOVE) {
++        ff_cbs_sei_delete_message_type(ctx->common.output, au,
++                                       SEI_TYPE_FRAME_PACKING_ARRANGEMENT);
++        return 0;
++    }
++
++    for (int i = 0; i < au->nb_units; i++) {
++        // The persistence of an arrangement ends with its coded video
++        // sequence, which starts at an IDR picture and follows the end of a
++        // sequence.
++        if (au->units[i].type == H264_NAL_IDR_SLICE ||
++            au->units[i].type == H264_NAL_END_SEQUENCE) {
++            ff_cbs_sei_frame_packing_reset(&ctx->frame_packing_state);
++            break;
++        }
++    }
++
++    sd = av_packet_side_data_get(bsf->par_in->coded_side_data,
++                                 bsf->par_in->nb_coded_side_data,
++                                 AV_PKT_DATA_STEREO3D);
++    if (sd && sd->size >= sizeof(AVStereo3D))
++        stereo = (const AVStereo3D *)sd->data;
++    if (pkt) {
++        size_t size;
++        uint8_t *data = av_packet_get_side_data(pkt, AV_PKT_DATA_STEREO3D, &size);
++        if (data && size >= sizeof(AVStereo3D)) {
++            stereo = (const AVStereo3D *)data;
++            packet_stereo = 1;
++        }
++    }
++
++    err = ff_cbs_sei_frame_packing_params(bsf, AV_CODEC_ID_H264,
++                                          ctx->frame_packing_type,
++                                          ctx->frame_packing_view,
++                                          ctx->frame_packing_quincunx, stereo,
++                                          !ctx->frame_packing_frame,
++                                          &params);
++    if (err == AVERROR(ENOENT))
++        return h264_metadata_track_frame_packing(bsf, au, 1);
++    if (err < 0)
++        return err;
++
++    // The message of a frame sequence is needed on every frame, the others
++    // stay in force until the next one.
++    if (params.type != SEI_FPA_TYPE_INTERLEAVE_TEMPORAL &&
++        !seek_point && !packet_stereo &&
++        ff_cbs_sei_find_message(ctx->common.output, au,
++                                SEI_TYPE_FRAME_PACKING_ARRANGEMENT,
++                                &message) < 0)
++        return 0;
++
++    if (params.type == SEI_FPA_H264_TYPE_TILE) {
++        err = h264_metadata_check_tile_size(bsf, au);
++        if (err < 0)
++            return err;
++    }
++
++    // The self-contained flags are the same in all the messages of a coded
++    // video sequence, and 0 for the types 0 and 1.
++    h264_metadata_track_frame_packing(bsf, au, 0);
++
++    *fp = (H264RawSEIFramePackingArrangement) {
++        .frame_packing_arrangement_type             = params.type,
++        .quincunx_sampling_flag                     = params.quincunx_sampling_flag,
++        .content_interpretation_type                = params.content_interpretation_type,
++        .current_frame_is_frame0_flag               = params.current_frame_is_frame0_flag,
++        .frame_packing_arrangement_repetition_period = params.persistence,
++    };
++    if (ctx->frame_packing_state.self_contained_seen &&
++        params.type != SEI_FPA_H264_TYPE_CHECKERBOARD &&
++        params.type != SEI_FPA_H264_TYPE_INTERLEAVE_COLUMN) {
++        fp->frame0_self_contained_flag = ctx->frame_packing_state.frame0_self_contained_flag;
++        fp->frame1_self_contained_flag = ctx->frame_packing_state.frame1_self_contained_flag;
++    }
++
++    ff_cbs_sei_frame_packing_note_flags(&ctx->frame_packing_state,
++                                        fp->frame0_self_contained_flag,
++                                        fp->frame1_self_contained_flag);
++    ff_cbs_sei_delete_message_type(ctx->common.output, au,
++                                   SEI_TYPE_FRAME_PACKING_ARRANGEMENT);
++    // The new message has the arrangement id 0 and replaces only that one,
++    // so the arrangements of earlier messages that were passed on end here.
++    err = h264_metadata_cancel_frame_packing(bsf, au);
++    if (err < 0)
++        return err;
++    err = ff_cbs_sei_add_message(ctx->common.output, au, 1,
++                                 SEI_TYPE_FRAME_PACKING_ARRANGEMENT,
++                                 fp, NULL);
++    if (err < 0) {
++        av_log(bsf, AV_LOG_ERROR, "Failed to add frame packing arrangement "
++               "SEI message to access unit.\n");
++        return err;
++    }
++    ctx->frame_packing_state.nb_ids = 0;
++    err = ff_cbs_sei_frame_packing_track(bsf, &ctx->frame_packing_state, 0, 0,
++                                         params.persistence);
++    if (err < 0)
++        return err;
++
++    if (params.type == SEI_FPA_TYPE_INTERLEAVE_TEMPORAL)
++        ctx->frame_packing_frame = params.current_frame_is_frame0_flag;
++
++    return 0;
++}
++
++static void h264_metadata_save_sps_size(H264MetadataContext *ctx,
++                                        const H264RawSPS *sps)
++{
++    int crop_unit_x, crop_unit_y;
++
++    if (sps->separate_colour_plane_flag || sps->chroma_format_idc == 0) {
++        crop_unit_x = 1;
++        crop_unit_y = 2 - sps->frame_mbs_only_flag;
++    } else {
++        crop_unit_x = 1 + (sps->chroma_format_idc < 3);
++        crop_unit_y = (1 + (sps->chroma_format_idc < 2)) *
++                       (2 - sps->frame_mbs_only_flag);
++    }
++
++    ctx->sps_size[sps->seq_parameter_set_id].width  =
++        16 * (sps->pic_width_in_mbs_minus1 + 1);
++    ctx->sps_size[sps->seq_parameter_set_id].height =
++        16 * (sps->pic_height_in_map_units_minus1 + 1) *
++        (2 - sps->frame_mbs_only_flag);
++    if (sps->frame_cropping_flag) {
++        ctx->sps_size[sps->seq_parameter_set_id].width  -= crop_unit_x *
++            (sps->frame_crop_left_offset + sps->frame_crop_right_offset);
++        ctx->sps_size[sps->seq_parameter_set_id].height -= crop_unit_y *
++            (sps->frame_crop_top_offset + sps->frame_crop_bottom_offset);
++    }
++}
++
+ static int h264_metadata_update_fragment(AVBSFContext *bsf, AVPacket *pkt,
+                                          CodedBitstreamFragment *au)
+ {
+@@ -487,11 +785,19 @@ static int h264_metadata_update_fragment(AVBSFContext *bsf, AVPacket *pkt,
+     has_sps = 0;
+     for (i = 0; i < au->nb_units; i++) {
+         if (au->units[i].type == H264_NAL_SPS) {
+-            err = h264_metadata_update_sps(bsf, au->units[i].content);
++            H264RawSPS *sps = au->units[i].content;
++
++            err = h264_metadata_update_sps(bsf, sps);
+             if (err < 0)
+                 return err;
++            h264_metadata_save_sps_size(ctx, sps);
+             has_sps = 1;
+         }
++        if (au->units[i].type == H264_NAL_PPS) {
++            const H264RawPPS *pps = au->units[i].content;
++
++            ctx->pps_sps[pps->pic_parameter_set_id] = pps->seq_parameter_set_id;
++        }
+     }
+ 
+     if (pkt) {
+@@ -536,6 +842,15 @@ static int h264_metadata_update_fragment(AVBSFContext *bsf, AVPacket *pkt,
+             return err;
+     }
+ 
++    // Removal also covers the parameter sets and SEI of the extradata, which
++    // come without a packet.
++    if (ctx->frame_packing == BSF_ELEMENT_REMOVE ||
++        (pkt && ctx->frame_packing != BSF_ELEMENT_PASS)) {
++        err = h264_metadata_handle_frame_packing(bsf, pkt, au, seek_point);
++        if (err < 0)
++            return err;
++    }
++
+     if (pkt)
+         ctx->done_first_au = 1;
+ 
+@@ -553,6 +868,8 @@ static int h264_metadata_init(AVBSFContext *bsf)
+ {
+     H264MetadataContext *ctx = bsf->priv_data;
+ 
++    memset(ctx->pps_sps, -1, sizeof(ctx->pps_sps));
++
+     if (ctx->sei_user_data) {
+         SEIRawUserDataUnregistered *udu = &ctx->sei_user_data_payload;
+         int i, j;
+@@ -656,6 +973,41 @@ static const AVOption h264_metadata_options[] = {
+                              "Display orientation SEI",
+                              display_orientation, FLAGS),
+ 
++    BSF_ELEMENT_OPTIONS_PIRE("frame_packing",
++                            "Frame packing arrangement SEI",
++                            frame_packing, FLAGS),
++    { "frame_packing_type", "Set frame_packing_arrangement_type (table D-9), default: from the stream's Stereo 3D side data",
++        OFFSET(frame_packing_type), AV_OPT_TYPE_INT,
++        { .i64 = -1 }, -1, 7, FLAGS, .unit = "frame_packing_type" },
++    { "checkerboard", "Checkerboard interleaving",
++        0, AV_OPT_TYPE_CONST, { .i64 = 0 }, .flags = FLAGS, .unit = "frame_packing_type" },
++    { "columns", "Column interleaving",
++        0, AV_OPT_TYPE_CONST, { .i64 = 1 }, .flags = FLAGS, .unit = "frame_packing_type" },
++    { "rows", "Row interleaving",
++        0, AV_OPT_TYPE_CONST, { .i64 = 2 }, .flags = FLAGS, .unit = "frame_packing_type" },
++    { "side_by_side", "Side by side",
++        0, AV_OPT_TYPE_CONST, { .i64 = 3 }, .flags = FLAGS, .unit = "frame_packing_type" },
++    { "top_bottom", "Top and bottom",
++        0, AV_OPT_TYPE_CONST, { .i64 = 4 }, .flags = FLAGS, .unit = "frame_packing_type" },
++    { "temporal", "Temporal interleaving (frame sequence)",
++        0, AV_OPT_TYPE_CONST, { .i64 = 5 }, .flags = FLAGS, .unit = "frame_packing_type" },
++    { "2d", "Two-dimensional picture",
++        0, AV_OPT_TYPE_CONST, { .i64 = 6 }, .flags = FLAGS, .unit = "frame_packing_type" },
++    { "tile", "Tile format",
++        0, AV_OPT_TYPE_CONST, { .i64 = 7 }, .flags = FLAGS, .unit = "frame_packing_type" },
++    { "frame_packing_view", "Set frame_packing_arrangement content_interpretation_type, default: from the stream's Stereo 3D side data",
++        OFFSET(frame_packing_view), AV_OPT_TYPE_INT,
++        { .i64 = -1 }, -1, 2, FLAGS, .unit = "frame_packing_view" },
++    { "unspecified", "No interpretation",
++        0, AV_OPT_TYPE_CONST, { .i64 = 0 }, .flags = FLAGS, .unit = "frame_packing_view" },
++    { "left_first", "Frame 0 is the left view",
++        0, AV_OPT_TYPE_CONST, { .i64 = 1 }, .flags = FLAGS, .unit = "frame_packing_view" },
++    { "right_first", "Frame 0 is the right view",
++        0, AV_OPT_TYPE_CONST, { .i64 = 2 }, .flags = FLAGS, .unit = "frame_packing_view" },
++    { "frame_packing_quincunx", "Set quincunx_sampling_flag",
++        OFFSET(frame_packing_quincunx), AV_OPT_TYPE_INT,
++        { .i64 = -1 }, -1, 1, FLAGS },
++
+     { "rotate", "Set rotation in display orientation SEI (anticlockwise angle in degrees)",
+         OFFSET(rotate), AV_OPT_TYPE_DOUBLE,
+         { .dbl = NAN }, -360.0, +360.0, FLAGS },
+@@ -702,6 +1054,23 @@ static const AVOption h264_metadata_options[] = {
+     { NULL }
+ };
+ 
++static void h264_metadata_flush(AVBSFContext *bsf)
++{
++    H264MetadataContext *ctx = bsf->priv_data;
++
++    ctx->done_first_au = 0;
++    ctx->frame_packing_frame = 0;
++    ff_cbs_sei_frame_packing_reset(&ctx->frame_packing_state);
++}
++
++static void h264_metadata_close(AVBSFContext *bsf)
++{
++    H264MetadataContext *ctx = bsf->priv_data;
++
++    ff_cbs_sei_frame_packing_free(&ctx->frame_packing_state);
++    ff_cbs_bsf_generic_close(bsf);
++}
++
+ static const AVClass h264_metadata_class = {
+     .class_name = "h264_metadata_bsf",
+     .item_name  = av_default_item_name,
+@@ -719,6 +1088,7 @@ const FFBitStreamFilter ff_h264_metadata_bsf = {
+     .p.priv_class   = &h264_metadata_class,
+     .priv_data_size = sizeof(H264MetadataContext),
+     .init           = &h264_metadata_init,
+-    .close          = &ff_cbs_bsf_generic_close,
++    .close          = &h264_metadata_close,
+     .filter         = &ff_cbs_bsf_generic_filter,
++    .flush          = &h264_metadata_flush,
+ };
+diff --git a/libavcodec/bsf/h265_metadata.c b/libavcodec/bsf/h265_metadata.c
+index 214ec4b..1aee55e 100644
+--- a/libavcodec/bsf/h265_metadata.c
++++ b/libavcodec/bsf/h265_metadata.c
+@@ -18,12 +18,15 @@
+ 
+ #include "libavutil/common.h"
+ #include "libavutil/opt.h"
++#include "libavutil/refstruct.h"
++#include "libavutil/stereo3d.h"
+ 
+ #include "libavcodec/bsf.h"
+ #include "libavcodec/bsf_internal.h"
+ #include "libavcodec/cbs.h"
+ #include "libavcodec/cbs_bsf.h"
+ #include "libavcodec/cbs_h265.h"
++#include "libavcodec/cbs_sei.h"
+ #include "libavcodec/h2645data.h"
+ #include "libavcodec/h265_profile_level.h"
+ 
+@@ -65,6 +68,20 @@ typedef struct H265MetadataContext {
+     int level;
+     int level_guess;
+     int level_warned;
++
++    int done_first_au;
++
++    int frame_packing;
++    int frame_packing_type;
++    int frame_packing_view;
++    int frame_packing_quincunx;
++    int frame_packing_frame;
++    SEIRawFramePackingArrangement frame_packing_payload;
++    SEIFramePackingState frame_packing_state;
++    // A VPS or SPS that declares general_non_packed_constraint_flag was
++    // passed on while no arrangement was to be written.
++    int vps_non_packed;
++    int sps_non_packed;
+ } H265MetadataContext;
+ 
+ 
+@@ -412,11 +429,305 @@ static int h265_metadata_update_sps(AVBSFContext *bsf,
+     return 0;
+ }
+ 
++// Note the self-contained flags of the messages in the access unit and, when
++// track is set, the arrangements that stay in force after it.
++static int h265_metadata_track_frame_packing(AVBSFContext *bsf,
++                                             CodedBitstreamFragment *au,
++                                             int track)
++{
++    H265MetadataContext *ctx = bsf->priv_data;
++    SEIRawMessage *message = NULL;
++
++    while (ff_cbs_sei_find_message(ctx->common.output, au,
++                                   SEI_TYPE_FRAME_PACKING_ARRANGEMENT,
++                                   &message) == 0) {
++        const SEIRawFramePackingArrangement *payload = message->payload;
++        int err;
++
++        if (!payload->fp_arrangement_cancel_flag)
++            ff_cbs_sei_frame_packing_note_flags(&ctx->frame_packing_state,
++                                                payload->fp_frame0_self_contained_flag,
++                                                payload->fp_frame1_self_contained_flag);
++        if (!track ||
++            !ff_cbs_sei_frame_packing_id_valid(payload->fp_arrangement_id))
++            continue;
++        err = ff_cbs_sei_frame_packing_track(bsf, &ctx->frame_packing_state,
++                                             payload->fp_arrangement_id,
++                                             payload->fp_arrangement_cancel_flag,
++                                             payload->fp_arrangement_persistence_flag);
++        if (err < 0)
++            return err;
++    }
++
++    return 0;
++}
++
++// Cancel the arrangements that are in force. The one with id 0 is left when
++// the message to be added replaces it.
++static int h265_metadata_cancel_frame_packing(AVBSFContext *bsf,
++                                              CodedBitstreamFragment *au,
++                                              int cancel_zero)
++{
++    H265MetadataContext *ctx = bsf->priv_data;
++    const SEIFramePackingState *state = &ctx->frame_packing_state;
++
++    for (int i = 0; i < state->nb_ids; i++) {
++        SEIRawFramePackingArrangement *cancel;
++        int err;
++
++        if (!state->ids[i] && !cancel_zero)
++            continue;
++        cancel = av_refstruct_allocz(sizeof(*cancel));
++        if (!cancel)
++            return AVERROR(ENOMEM);
++        cancel->fp_arrangement_id          = state->ids[i];
++        cancel->fp_arrangement_cancel_flag = 1;
++        err = ff_cbs_sei_add_message(ctx->common.output, au, 1,
++                                     SEI_TYPE_FRAME_PACKING_ARRANGEMENT,
++                                     cancel, cancel);
++        av_refstruct_unref(&cancel);
++        if (err < 0) {
++            av_log(bsf, AV_LOG_ERROR, "Failed to add frame packing "
++                   "arrangement cancellation to access unit.\n");
++            return err;
++        }
++    }
++
++    return 0;
++}
++
++static int h265_metadata_handle_frame_packing(AVBSFContext *bsf,
++                                              AVPacket *pkt,
++                                              CodedBitstreamFragment *au,
++                                              int seek_point)
++{
++    H265MetadataContext *ctx = bsf->priv_data;
++    SEIRawFramePackingArrangement *fp = &ctx->frame_packing_payload;
++    SEIFramePackingParams params;
++    SEIRawMessage *message = NULL;
++    const AVPacketSideData *sd;
++    const AVStereo3D *stereo = NULL;
++    int err, packet_stereo = 0;
++
++    if (ctx->frame_packing == BSF_ELEMENT_EXTRACT) {
++        const SEIRawFramePackingArrangement *last = NULL;
++
++        while (ff_cbs_sei_find_message(ctx->common.output, au,
++                                       SEI_TYPE_FRAME_PACKING_ARRANGEMENT,
++                                       &message) == 0) {
++            const SEIRawFramePackingArrangement *payload = message->payload;
++            unsigned int id = payload->fp_arrangement_id;
++
++            if (id < 256 || (id >= 512 && id < (1U << 31)))
++                last = payload;
++        }
++        if (!last || last->fp_arrangement_cancel_flag)
++            return 0;
++        if (last->fp_arrangement_type < SEI_FPA_TYPE_SIDE_BY_SIDE ||
++            last->fp_arrangement_type > SEI_FPA_TYPE_INTERLEAVE_TEMPORAL)
++            return 0;
++        // Mirroring a view and quincunx sampling other than the side by
++        // side layout have no Stereo 3D description.
++        if (last->fp_spatial_flipping_flag ||
++            (last->fp_quincunx_sampling_flag &&
++             last->fp_arrangement_type != SEI_FPA_TYPE_SIDE_BY_SIDE))
++            return 0;
++
++        params = (SEIFramePackingParams) {
++            .type                         = last->fp_arrangement_type,
++            .content_interpretation_type  = last->fp_content_interpretation_type,
++            .quincunx_sampling_flag       = last->fp_quincunx_sampling_flag,
++            .current_frame_is_frame0_flag = last->fp_current_frame_is_frame0_flag,
++        };
++        return ff_cbs_sei_frame_packing_to_packet(pkt, &params);
++    }
++
++    if (ctx->frame_packing == BSF_ELEMENT_REMOVE) {
++        ff_cbs_sei_delete_message_type(ctx->common.output, au,
++                                       SEI_TYPE_FRAME_PACKING_ARRANGEMENT);
++        return 0;
++    }
++
++    for (int i = 0; i < au->nb_units; i++) {
++        // The persistence of an arrangement ends with its coded video
++        // sequence, which starts at an IDR or BLA picture and follows the
++        // end of a sequence or of the bitstream.
++        if ((au->units[i].type >= HEVC_NAL_BLA_W_LP &&
++             au->units[i].type <= HEVC_NAL_IDR_N_LP) ||
++            au->units[i].type == HEVC_NAL_EOS_NUT ||
++            au->units[i].type == HEVC_NAL_EOB_NUT) {
++            ff_cbs_sei_frame_packing_reset(&ctx->frame_packing_state);
++            break;
++        }
++    }
++
++    sd = av_packet_side_data_get(bsf->par_in->coded_side_data,
++                                 bsf->par_in->nb_coded_side_data,
++                                 AV_PKT_DATA_STEREO3D);
++    if (sd && sd->size >= sizeof(AVStereo3D))
++        stereo = (const AVStereo3D *)sd->data;
++    if (pkt) {
++        size_t size;
++        uint8_t *data = av_packet_get_side_data(pkt, AV_PKT_DATA_STEREO3D, &size);
++        if (data && size >= sizeof(AVStereo3D)) {
++            stereo = (const AVStereo3D *)data;
++            packet_stereo = 1;
++        }
++    }
++
++    // H.265 has no two-dimensional arrangement: the description ends the
++    // arrangements that are in force and nothing takes their place.
++    if (ctx->frame_packing_type < 0 && stereo &&
++        stereo->type == AV_STEREO3D_2D) {
++        ff_cbs_sei_delete_message_type(ctx->common.output, au,
++                                       SEI_TYPE_FRAME_PACKING_ARRANGEMENT);
++        err = h265_metadata_cancel_frame_packing(bsf, au, 1);
++        if (err < 0)
++            return err;
++        ctx->frame_packing_state.nb_ids = 0;
++        return 0;
++    }
++
++    err = ff_cbs_sei_frame_packing_params(bsf, AV_CODEC_ID_HEVC,
++                                          ctx->frame_packing_type,
++                                          ctx->frame_packing_view,
++                                          ctx->frame_packing_quincunx, stereo,
++                                          !ctx->frame_packing_frame,
++                                          &params);
++    if (err == AVERROR(ENOENT))
++        return h265_metadata_track_frame_packing(bsf, au, 1);
++    if (err < 0)
++        return err;
++
++    // The message of a frame sequence is needed on every frame, the others
++    // stay in force until the next one.
++    if (params.type != SEI_FPA_TYPE_INTERLEAVE_TEMPORAL &&
++        !seek_point && !packet_stereo &&
++        ff_cbs_sei_find_message(ctx->common.output, au,
++                                SEI_TYPE_FRAME_PACKING_ARRANGEMENT,
++                                &message) < 0)
++        return 0;
++
++    // Parameter sets that declare no arrangement can be present, and
++    // were passed on before this description was known.
++    if (ctx->vps_non_packed || ctx->sps_non_packed) {
++        av_log(bsf, AV_LOG_ERROR, "A frame packing arrangement cannot be "
++               "inserted: the VPS or SPS already passed on declares "
++               "general_non_packed_constraint_flag. Give the layout before "
++               "the first packet, as stream side data or with the "
++               "frame_packing_type option.\n");
++        return AVERROR(EINVAL);
++    }
++
++    // The self-contained flags are the same in all the messages of a coded
++    // video sequence.
++    h265_metadata_track_frame_packing(bsf, au, 0);
++
++    *fp = (SEIRawFramePackingArrangement) {
++        .fp_arrangement_type             = params.type,
++        .fp_quincunx_sampling_flag       = params.quincunx_sampling_flag,
++        .fp_content_interpretation_type  = params.content_interpretation_type,
++        .fp_current_frame_is_frame0_flag = params.current_frame_is_frame0_flag,
++        .fp_arrangement_persistence_flag = params.persistence,
++    };
++    if (ctx->frame_packing_state.self_contained_seen) {
++        fp->fp_frame0_self_contained_flag = ctx->frame_packing_state.frame0_self_contained_flag;
++        fp->fp_frame1_self_contained_flag = ctx->frame_packing_state.frame1_self_contained_flag;
++    }
++
++    ff_cbs_sei_frame_packing_note_flags(&ctx->frame_packing_state,
++                                        fp->fp_frame0_self_contained_flag,
++                                        fp->fp_frame1_self_contained_flag);
++    ff_cbs_sei_delete_message_type(ctx->common.output, au,
++                                   SEI_TYPE_FRAME_PACKING_ARRANGEMENT);
++    // The new message has the arrangement id 0 and replaces only that one,
++    // so the arrangements of earlier messages that were passed on end here.
++    err = h265_metadata_cancel_frame_packing(bsf, au, 0);
++    if (err < 0)
++        return err;
++    err = ff_cbs_sei_add_message(ctx->common.output, au, 1,
++                                 SEI_TYPE_FRAME_PACKING_ARRANGEMENT,
++                                 fp, NULL);
++    if (err < 0) {
++        av_log(bsf, AV_LOG_ERROR, "Failed to add frame packing arrangement "
++               "SEI message to access unit.\n");
++        return err;
++    }
++    ctx->frame_packing_state.nb_ids = 0;
++    err = ff_cbs_sei_frame_packing_track(bsf, &ctx->frame_packing_state, 0, 0,
++                                         params.persistence);
++    if (err < 0)
++        return err;
++
++    if (params.type == SEI_FPA_TYPE_INTERLEAVE_TEMPORAL)
++        ctx->frame_packing_frame = params.current_frame_is_frame0_flag;
++
++    return 0;
++}
++
++// Whether the access unit, or the extradata without a packet, comes with a
++// layout to be signalled by an arrangement.
++static int h265_metadata_frame_packing_wanted(AVBSFContext *bsf, AVPacket *pkt)
++{
++    H265MetadataContext *ctx = bsf->priv_data;
++    const AVPacketSideData *sd;
++    const AVStereo3D *stereo = NULL;
++
++    if (ctx->frame_packing != BSF_ELEMENT_INSERT)
++        return 0;
++    if (ctx->frame_packing_type >= 0)
++        return 1;
++
++    sd = av_packet_side_data_get(bsf->par_in->coded_side_data,
++                                 bsf->par_in->nb_coded_side_data,
++                                 AV_PKT_DATA_STEREO3D);
++    if (sd && sd->size >= sizeof(AVStereo3D))
++        stereo = (const AVStereo3D *)sd->data;
++    if (pkt) {
++        size_t size;
++        uint8_t *data = av_packet_get_side_data(pkt, AV_PKT_DATA_STEREO3D, &size);
++        if (data && size >= sizeof(AVStereo3D))
++            stereo = (const AVStereo3D *)data;
++    }
++
++    return stereo && (stereo->type == AV_STEREO3D_SIDEBYSIDE ||
++                      stereo->type == AV_STEREO3D_SIDEBYSIDE_QUINCUNX ||
++                      stereo->type == AV_STEREO3D_TOPBOTTOM ||
++                      stereo->type == AV_STEREO3D_FRAMESEQUENCE);
++}
++
++// general_non_packed_constraint_flag equal to 1 says that there is no frame
++// packing arrangement SEI message in the coded video sequence (H.265 7.4.4
++// semantics), so a stream that gets one cannot declare it.
++static void h265_metadata_allow_frame_packing(AVBSFContext *bsf,
++                                              H265RawProfileTierLevel *ptl,
++                                              int packing, int *left)
++{
++    int declared = ptl->general_non_packed_constraint_flag;
++
++    for (int i = 0; i < HEVC_MAX_SUB_LAYERS; i++)
++        declared |= ptl->sub_layer_profile_present_flag[i] &&
++                    ptl->sub_layer_non_packed_constraint_flag[i];
++    if (!declared)
++        return;
++
++    if (!packing) {
++        *left = ((H265MetadataContext *)bsf->priv_data)->frame_packing ==
++                BSF_ELEMENT_INSERT;
++        return;
++    }
++
++    ptl->general_non_packed_constraint_flag = 0;
++    for (int i = 0; i < HEVC_MAX_SUB_LAYERS; i++)
++        ptl->sub_layer_non_packed_constraint_flag[i] = 0;
++    *left = 0;
++}
++
+ static int h265_metadata_update_fragment(AVBSFContext *bsf, AVPacket *pkt,
+                                          CodedBitstreamFragment *au)
+ {
+     H265MetadataContext *ctx = bsf->priv_data;
+-    int err, i;
++    int err, i, has_vps, packing;
+ 
+     // If an AUD is present, it must be the first NAL unit.
+     if (au->nb_units && au->units[0].type == HEVC_NAL_AUD) {
+@@ -464,19 +775,47 @@ static int h265_metadata_update_fragment(AVBSFContext *bsf, AVPacket *pkt,
+     if (ctx->level == LEVEL_AUTO && !ctx->level_guess)
+         h265_metadata_guess_level(bsf, au);
+ 
++    has_vps = 0;
++    packing = h265_metadata_frame_packing_wanted(bsf, pkt);
+     for (i = 0; i < au->nb_units; i++) {
+         if (au->units[i].type == HEVC_NAL_VPS) {
+-            err = h265_metadata_update_vps(bsf, au->units[i].content);
++            H265RawVPS *vps = au->units[i].content;
++
++            err = h265_metadata_update_vps(bsf, vps);
+             if (err < 0)
+                 return err;
++            h265_metadata_allow_frame_packing(bsf, &vps->profile_tier_level,
++                                              packing, &ctx->vps_non_packed);
++            has_vps = 1;
+         }
+         if (au->units[i].type == HEVC_NAL_SPS) {
+-            err = h265_metadata_update_sps(bsf, au->units[i].content);
++            H265RawSPS *sps = au->units[i].content;
++
++            err = h265_metadata_update_sps(bsf, sps);
+             if (err < 0)
+                 return err;
++            h265_metadata_allow_frame_packing(bsf, &sps->profile_tier_level,
++                                              packing, &ctx->sps_non_packed);
+         }
+     }
+ 
++    // Removal also covers the parameter sets and SEI of the extradata, which
++    // come without a packet.
++    if (ctx->frame_packing == BSF_ELEMENT_REMOVE ||
++        (pkt && ctx->frame_packing != BSF_ELEMENT_PASS)) {
++        // The current packet is a seek point for metadata insertion if it
++        // is the first one, has a VPS or is marked as containing a key frame.
++        int seek_point = pkt && (!ctx->done_first_au || has_vps ||
++                                 (pkt->flags & AV_PKT_FLAG_KEY));
++
++        err = h265_metadata_handle_frame_packing(bsf, pkt, au, seek_point);
++        if (err < 0)
++            return err;
++    }
++
++    if (pkt)
++        ctx->done_first_au = 1;
++
+     return 0;
+ }
+ 
+@@ -531,6 +870,31 @@ static const AVOption h265_metadata_options[] = {
+         OFFSET(num_ticks_poc_diff_one), AV_OPT_TYPE_INT,
+         { .i64 = -1 }, -1, INT_MAX, FLAGS },
+ 
++    BSF_ELEMENT_OPTIONS_PIRE("frame_packing",
++                            "Frame packing arrangement SEI",
++                            frame_packing, FLAGS),
++    { "frame_packing_type", "Set frame_packing_arrangement_type (table D.8, 3 to 5), default: from the stream's Stereo 3D side data",
++        OFFSET(frame_packing_type), AV_OPT_TYPE_INT,
++        { .i64 = -1 }, -1, 5, FLAGS, .unit = "frame_packing_type" },
++    { "side_by_side", "Side by side",
++        0, AV_OPT_TYPE_CONST, { .i64 = 3 }, .flags = FLAGS, .unit = "frame_packing_type" },
++    { "top_bottom", "Top and bottom",
++        0, AV_OPT_TYPE_CONST, { .i64 = 4 }, .flags = FLAGS, .unit = "frame_packing_type" },
++    { "temporal", "Temporal interleaving (frame sequence)",
++        0, AV_OPT_TYPE_CONST, { .i64 = 5 }, .flags = FLAGS, .unit = "frame_packing_type" },
++    { "frame_packing_view", "Set frame_packing_arrangement content_interpretation_type, default: from the stream's Stereo 3D side data",
++        OFFSET(frame_packing_view), AV_OPT_TYPE_INT,
++        { .i64 = -1 }, -1, 2, FLAGS, .unit = "frame_packing_view" },
++    { "unspecified", "No interpretation",
++        0, AV_OPT_TYPE_CONST, { .i64 = 0 }, .flags = FLAGS, .unit = "frame_packing_view" },
++    { "left_first", "Frame 0 is the left view",
++        0, AV_OPT_TYPE_CONST, { .i64 = 1 }, .flags = FLAGS, .unit = "frame_packing_view" },
++    { "right_first", "Frame 0 is the right view",
++        0, AV_OPT_TYPE_CONST, { .i64 = 2 }, .flags = FLAGS, .unit = "frame_packing_view" },
++    { "frame_packing_quincunx", "Set quincunx_sampling_flag",
++        OFFSET(frame_packing_quincunx), AV_OPT_TYPE_INT,
++        { .i64 = -1 }, -1, 1, FLAGS },
++
+     { "crop_left", "Set left border crop offset",
+         OFFSET(crop_left), AV_OPT_TYPE_INT,
+         { .i64 = -1 }, -1, HEVC_MAX_WIDTH, FLAGS },
+@@ -577,6 +941,23 @@ static const AVOption h265_metadata_options[] = {
+     { NULL }
+ };
+ 
++static void h265_metadata_flush(AVBSFContext *bsf)
++{
++    H265MetadataContext *ctx = bsf->priv_data;
++
++    ctx->done_first_au = 0;
++    ctx->frame_packing_frame = 0;
++    ff_cbs_sei_frame_packing_reset(&ctx->frame_packing_state);
++}
++
++static void h265_metadata_close(AVBSFContext *bsf)
++{
++    H265MetadataContext *ctx = bsf->priv_data;
++
++    ff_cbs_sei_frame_packing_free(&ctx->frame_packing_state);
++    ff_cbs_bsf_generic_close(bsf);
++}
++
+ static const AVClass h265_metadata_class = {
+     .class_name = "h265_metadata_bsf",
+     .item_name  = av_default_item_name,
+@@ -594,6 +975,7 @@ const FFBitStreamFilter ff_hevc_metadata_bsf = {
+     .p.priv_class   = &h265_metadata_class,
+     .priv_data_size = sizeof(H265MetadataContext),
+     .init           = &h265_metadata_init,
+-    .close          = &ff_cbs_bsf_generic_close,
++    .close          = &h265_metadata_close,
+     .filter         = &ff_cbs_bsf_generic_filter,
++    .flush          = &h265_metadata_flush,
+ };
+diff --git a/libavcodec/cbs_sei.c b/libavcodec/cbs_sei.c
+index 1c1747e..59d1d77 100644
+--- a/libavcodec/cbs_sei.c
++++ b/libavcodec/cbs_sei.c
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include "libavutil/mem.h"
++#include "libavutil/stereo3d.h"
+ #include "cbs.h"
+ #include "cbs_internal.h"
+ #include "cbs_h264.h"
+@@ -737,3 +738,224 @@ const SEIMessageTypeDescriptor *ff_cbs_sei_find_type(CodedBitstreamContext *ctx,
+ 
+     return NULL;
+ }
++
++int ff_cbs_sei_frame_packing_params(void *log_ctx, enum AVCodecID codec_id,
++                                    int type, int content, int quincunx,
++                                    const AVStereo3D *stereo, int frame0,
++                                    SEIFramePackingParams *params)
++{
++    int explicit_type = type >= 0;
++
++    if (type < 0) {
++        if (!stereo)
++            return AVERROR(ENOENT);
++
++        switch (stereo->type) {
++        case AV_STEREO3D_CHECKERBOARD:
++            type = SEI_FPA_H264_TYPE_CHECKERBOARD;
++            break;
++        case AV_STEREO3D_COLUMNS:
++            type = SEI_FPA_H264_TYPE_INTERLEAVE_COLUMN;
++            break;
++        case AV_STEREO3D_LINES:
++            type = SEI_FPA_H264_TYPE_INTERLEAVE_ROW;
++            break;
++        case AV_STEREO3D_SIDEBYSIDE_QUINCUNX:
++            if (quincunx < 0)
++                quincunx = 1;
++            av_fallthrough;
++        case AV_STEREO3D_SIDEBYSIDE:
++            type = SEI_FPA_TYPE_SIDE_BY_SIDE;
++            break;
++        case AV_STEREO3D_TOPBOTTOM:
++            type = SEI_FPA_TYPE_TOP_BOTTOM;
++            break;
++        case AV_STEREO3D_FRAMESEQUENCE:
++            type = SEI_FPA_TYPE_INTERLEAVE_TEMPORAL;
++            break;
++        case AV_STEREO3D_2D:
++            type = SEI_FPA_H264_TYPE_2D;
++            break;
++        default:
++            av_log(log_ctx, AV_LOG_WARNING, "Stereo 3D type %s has no frame "
++                   "packing arrangement.\n", av_stereo3d_type_name(stereo->type));
++            return AVERROR(ENOENT);
++        }
++    }
++
++    if (codec_id == AV_CODEC_ID_H264 ? type > SEI_FPA_H264_TYPE_TILE :
++        (type < SEI_FPA_TYPE_SIDE_BY_SIDE || type > SEI_FPA_TYPE_INTERLEAVE_TEMPORAL)) {
++        // A layout of the stream that the codec cannot signal is left alone,
++        // one that was asked for is an error.
++        av_log(log_ctx, explicit_type ? AV_LOG_ERROR : AV_LOG_WARNING,
++               "Frame packing arrangement type %d is not defined for %s.\n",
++               type, codec_id == AV_CODEC_ID_H264 ? "H.264" : "H.265");
++        return explicit_type ? AVERROR(EINVAL) : AVERROR(ENOENT);
++    }
++
++    if (content < 0)
++        content = type == SEI_FPA_H264_TYPE_2D ? 0 :
++                  stereo && (stereo->flags & AV_STEREO3D_FLAG_INVERT) ? 2 : 1;
++    if (type == SEI_FPA_H264_TYPE_2D && content) {
++        av_log(log_ctx, AV_LOG_ERROR,
++               "A 2D frame packing arrangement requires content interpretation 0.\n");
++        return AVERROR(EINVAL);
++    }
++
++    if (type == SEI_FPA_TYPE_INTERLEAVE_TEMPORAL && stereo &&
++        stereo->type == AV_STEREO3D_FRAMESEQUENCE &&
++        (stereo->view == AV_STEREO3D_VIEW_LEFT ||
++         stereo->view == AV_STEREO3D_VIEW_RIGHT))
++        frame0 = (stereo->view == AV_STEREO3D_VIEW_LEFT) != (content == 2);
++
++    // Table D-9: the checkerboard is always quincunx sampled.
++    if (type == SEI_FPA_H264_TYPE_CHECKERBOARD)
++        quincunx = 1;
++    else if (quincunx < 0)
++        quincunx = type == SEI_FPA_TYPE_SIDE_BY_SIDE && stereo &&
++                   stereo->type == AV_STEREO3D_SIDEBYSIDE_QUINCUNX;
++    if (quincunx && type >= SEI_FPA_TYPE_INTERLEAVE_TEMPORAL) {
++        av_log(log_ctx, AV_LOG_ERROR,
++               "Frame packing arrangement type %d cannot be quincunx sampled.\n",
++               type);
++        return AVERROR(EINVAL);
++    }
++
++    *params = (SEIFramePackingParams) {
++        .type                         = type,
++        .content_interpretation_type  = content,
++        .quincunx_sampling_flag       = quincunx,
++        .current_frame_is_frame0_flag = type == SEI_FPA_TYPE_INTERLEAVE_TEMPORAL &&
++                                        frame0,
++        // The message of a temporal interleaving applies to one frame only.
++        .persistence                  = type != SEI_FPA_TYPE_INTERLEAVE_TEMPORAL,
++    };
++
++    return 0;
++}
++
++#define SEI_FRAME_PACKING_MAX_IDS 256
++
++int ff_cbs_sei_frame_packing_id_valid(uint32_t id)
++{
++    // The other values are reserved and decoders ignore them.
++    return id < 256 || (id >= 512 && id < (1U << 31));
++}
++
++int ff_cbs_sei_frame_packing_track(void *log_ctx, SEIFramePackingState *state,
++                                   uint32_t id, int cancel, int persistent)
++{
++    int i;
++
++    for (i = 0; i < state->nb_ids; i++) {
++        if (state->ids[i] == id)
++            break;
++    }
++
++    if (cancel || !persistent) {
++        if (i < state->nb_ids)
++            state->ids[i] = state->ids[--state->nb_ids];
++        return 0;
++    }
++    if (i < state->nb_ids)
++        return 0;
++
++    if (state->nb_ids >= SEI_FRAME_PACKING_MAX_IDS) {
++        av_log(log_ctx, AV_LOG_ERROR, "More than %d frame packing "
++               "arrangements are in force.\n", SEI_FRAME_PACKING_MAX_IDS);
++        return AVERROR(ENOSPC);
++    }
++    if (state->nb_ids >= state->alloc_size) {
++        unsigned int size = state->alloc_size ? 2 * state->alloc_size : 4;
++        uint32_t *ids = av_realloc_array(state->ids, size, sizeof(*ids));
++
++        if (!ids)
++            return AVERROR(ENOMEM);
++        state->ids        = ids;
++        state->alloc_size = size;
++    }
++    state->ids[state->nb_ids++] = id;
++    return 0;
++}
++
++void ff_cbs_sei_frame_packing_note_flags(SEIFramePackingState *state,
++                                         int frame0_self_contained_flag,
++                                         int frame1_self_contained_flag)
++{
++    if (state->self_contained_seen)
++        return;
++    state->self_contained_seen       = 1;
++    state->frame0_self_contained_flag = frame0_self_contained_flag;
++    state->frame1_self_contained_flag = frame1_self_contained_flag;
++}
++
++void ff_cbs_sei_frame_packing_reset(SEIFramePackingState *state)
++{
++    state->nb_ids             = 0;
++    state->self_contained_seen = 0;
++}
++
++void ff_cbs_sei_frame_packing_free(SEIFramePackingState *state)
++{
++    av_freep(&state->ids);
++    state->nb_ids     = 0;
++    state->alloc_size = 0;
++    state->self_contained_seen = 0;
++}
++
++int ff_cbs_sei_frame_packing_to_packet(AVPacket *pkt,
++                                      const SEIFramePackingParams *params)
++{
++    AVStereo3D *stereo;
++    enum AVStereo3DType type;
++    size_t size;
++    int err;
++
++    if (params->type != SEI_FPA_H264_TYPE_2D &&
++        (params->content_interpretation_type < 1 ||
++         params->content_interpretation_type > 2))
++        return 0;
++
++    switch (params->type) {
++    case SEI_FPA_H264_TYPE_CHECKERBOARD:
++        type = AV_STEREO3D_CHECKERBOARD;
++        break;
++    case SEI_FPA_H264_TYPE_INTERLEAVE_COLUMN:
++        type = AV_STEREO3D_COLUMNS;
++        break;
++    case SEI_FPA_H264_TYPE_INTERLEAVE_ROW:
++        type = AV_STEREO3D_LINES;
++        break;
++    case SEI_FPA_TYPE_SIDE_BY_SIDE:
++        type = params->quincunx_sampling_flag ? AV_STEREO3D_SIDEBYSIDE_QUINCUNX :
++                                              AV_STEREO3D_SIDEBYSIDE;
++        break;
++    case SEI_FPA_TYPE_TOP_BOTTOM:
++        type = AV_STEREO3D_TOPBOTTOM;
++        break;
++    case SEI_FPA_TYPE_INTERLEAVE_TEMPORAL:
++        type = AV_STEREO3D_FRAMESEQUENCE;
++        break;
++    case SEI_FPA_H264_TYPE_2D:
++        type = AV_STEREO3D_2D;
++        break;
++    default:
++        return 0;
++    }
++
++    stereo = av_stereo3d_alloc_size(&size);
++    if (!stereo)
++        return AVERROR(ENOMEM);
++    stereo->type = type;
++    if (type != AV_STEREO3D_2D && params->content_interpretation_type == 2)
++        stereo->flags = AV_STEREO3D_FLAG_INVERT;
++    if (type == AV_STEREO3D_FRAMESEQUENCE)
++        stereo->view = params->current_frame_is_frame0_flag !=
++                       (params->content_interpretation_type == 2) ?
++                       AV_STEREO3D_VIEW_LEFT : AV_STEREO3D_VIEW_RIGHT;
++
++    err = av_packet_add_side_data(pkt, AV_PKT_DATA_STEREO3D, (uint8_t *)stereo, size);
++    if (err < 0)
++        av_free(stereo);
++    return err;
++}
+diff --git a/libavcodec/cbs_sei.h b/libavcodec/cbs_sei.h
+index e3e3097..18ab8ce 100644
+--- a/libavcodec/cbs_sei.h
++++ b/libavcodec/cbs_sei.h
+@@ -275,4 +275,93 @@ int ff_cbs_sei_read_message(CodedBitstreamContext *ctx, struct GetBitContext *rw
+ int ff_cbs_sei_write_message(CodedBitstreamContext *ctx, struct PutBitContext *rw,
+                              SEIRawMessage *current);
+ 
++struct AVStereo3D;
++
++/**
++ * What a bitstream filter needs to write a frame packing arrangement SEI
++ * message, whichever codec it is for.
++ */
++typedef struct SEIFramePackingParams {
++    int type;                 ///< frame_packing_arrangement_type
++    int content_interpretation_type;
++    int quincunx_sampling_flag;
++    int current_frame_is_frame0_flag;
++    int persistence;          ///< 0 for the current frame only, 1 until a message
++                              ///< that ends it: the same frame_packing_arrangement_id
++                              ///< (or a cancellation), or the end of the coded video
++                              ///< sequence
++} SEIFramePackingParams;
++
++/**
++ * Work out the frame packing arrangement to signal.
++ *
++ * What is not given is taken from the Stereo 3D description.
++ *
++ * @param log_ctx  context for logging.
++ * @param codec_id AV_CODEC_ID_H264 or AV_CODEC_ID_HEVC.
++ * @param type     frame_packing_arrangement_type (H.264 Table D-9, H.265
++ *                 Table D.8), or a negative value to take it from stereo.
++ * @param content  content_interpretation_type (0 unspecified, 1 left view
++ *                 first, 2 right view first), or a negative value to take
++ *                 it from stereo.
++ * @param quincunx quincunx_sampling_flag, or a negative value to take it
++ *                 from stereo.
++ * @param stereo   Stereo 3D description, or NULL.
++ * @param frame0   current_frame_is_frame0_flag for temporal interleaving
++ *                 when stereo does not say which view the frame is.
++ * @return 0 on success, AVERROR(ENOENT) if there is nothing to signal (no
++ *         type given and no usable stereo), another negative value if the
++ *         parameters cannot be signalled in the codec.
++ */
++int ff_cbs_sei_frame_packing_params(void *log_ctx, enum AVCodecID codec_id,
++                                    int type, int content, int quincunx,
++                                    const struct AVStereo3D *stereo, int frame0,
++                                    SEIFramePackingParams *params);
++
++/**
++ * The frame packing arrangement messages whose persistence may still be in
++ * force, by frame_packing_arrangement_id, so that a bitstream filter that
++ * writes a new description can end them.
++ */
++typedef struct SEIFramePackingState {
++    uint32_t *ids;
++    int nb_ids;
++    unsigned int alloc_size;
++    // The self-contained flags, which are the same in every message of a
++    // coded video sequence, as the first message of the sequence had them.
++    int self_contained_seen;
++    int frame0_self_contained_flag;
++    int frame1_self_contained_flag;
++} SEIFramePackingState;
++
++/** Whether a decoder takes notice of a frame_packing_arrangement_id. */
++int ff_cbs_sei_frame_packing_id_valid(uint32_t id);
++
++/**
++ * Record a message seen in the bitstream.
++ *
++ * A cancellation and a message for the current frame only end the
++ * persistence of their id, a persistent message starts or replaces it.
++ *
++ * @return 0 on success, AVERROR(ENOSPC) if more arrangements are in force
++ *         than the state holds, another negative value on failure.
++ */
++int ff_cbs_sei_frame_packing_track(void *log_ctx, SEIFramePackingState *state,
++                                   uint32_t id, int cancel, int persistent);
++
++/** Record the self-contained flags of a message, unless a message of the
++ *  coded video sequence has set them. */
++void ff_cbs_sei_frame_packing_note_flags(SEIFramePackingState *state,
++                                         int frame0_self_contained_flag,
++                                         int frame1_self_contained_flag);
++
++/** Forget every arrangement, at the start of a coded video sequence. */
++void ff_cbs_sei_frame_packing_reset(SEIFramePackingState *state);
++
++void ff_cbs_sei_frame_packing_free(SEIFramePackingState *state);
++
++/** Attach a representable frame packing description to a packet. */
++int ff_cbs_sei_frame_packing_to_packet(AVPacket *pkt,
++                                      const SEIFramePackingParams *params);
++
+ #endif /* AVCODEC_CBS_SEI_H */
+diff --git a/libavcodec/sei.h b/libavcodec/sei.h
+index f96b7b6..593380f 100644
+--- a/libavcodec/sei.h
++++ b/libavcodec/sei.h
+@@ -152,6 +152,7 @@ typedef enum {
+     SEI_FPA_TYPE_TOP_BOTTOM               = 4,
+     SEI_FPA_TYPE_INTERLEAVE_TEMPORAL      = 5,
+     SEI_FPA_H264_TYPE_2D                  = 6,
++    SEI_FPA_H264_TYPE_TILE                = 7,
+ } SEIFpaType;
+ 
+ #endif /* AVCODEC_SEI_H */

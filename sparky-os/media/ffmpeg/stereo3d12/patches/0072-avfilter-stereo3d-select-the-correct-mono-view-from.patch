@@ -1,0 +1,77 @@
+Description: avfilter/stereo3d: select the correct mono view from interleaved rows
+ Keep the configured left row offset for mono-left output and copy the
+ right row offset for mono-right output. Swapping offsets only for one
+ input order selected the other eye for both irr mono outputs.
+ .
+ Add a FATE regression that independently generates right-first rows,
+ extracts both mono views and joins them in left-first order. It shares
+ the analytic reference of the column test and fails before this change.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/e514e07bc9b027d59c1d82d63e340333e34292a2
+Forwarded: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25377
+Last-Update: 2026-11-06
+
+diff --git a/libavfilter/vf_stereo3d.c b/libavfilter/vf_stereo3d.c
+index b53eb5a..81eea9e 100644
+--- a/libavfilter/vf_stereo3d.c
++++ b/libavfilter/vf_stereo3d.c
+@@ -549,16 +549,11 @@ static int config_output(AVFilterLink *outlink)
+         s->out.off_lstep = 1;
+         break;
+     case MONO_R:
+-        if (s->in.format != INTERLEAVE_COLS_LR) {
+-            s->in.off_left = s->in.off_right;
+-            s->in.row_left = s->in.row_right;
+-        }
+-        if (s->in.format == INTERLEAVE_ROWS_LR)
+-            FFSWAP(int, s->in.off_lstep, s->in.off_rstep);
++        s->in.off_left  = s->in.off_right;
++        s->in.row_left  = s->in.row_right;
++        s->in.off_lstep = s->in.off_rstep;
+         break;
+     case MONO_L:
+-        if (s->in.format == INTERLEAVE_ROWS_RL)
+-            FFSWAP(int, s->in.off_lstep, s->in.off_rstep);
+         break;
+     case ALTERNATING_RL:
+     case ALTERNATING_LR:
+diff --git a/tests/fate/filter-video.mak b/tests/fate/filter-video.mak
+index e834be7..8b87ba3 100644
+--- a/tests/fate/filter-video.mak
++++ b/tests/fate/filter-video.mak
+@@ -633,6 +633,15 @@ fate-filter-stereo3d-icr-sbsl: CMD = framemd5 -/filter_complex $(TARGET_PATH)/te
+ FATE_FILTER-yes += $(FATE_STEREO3D_ICR-yes)
+ fate-filter-stereo3d: $(FATE_STEREO3D_ICR-yes)
+ 
++FATE_STEREO3D_IRR-$(call ALLYES, NULLSRC_FILTER GEQ_FILTER FORMAT_FILTER SCALE_FILTER \
++                              SPLIT_FILTER HSTACK_FILTER STEREO3D_FILTER \
++                              RAWVIDEO_ENCODER FRAMEMD5_MUXER FILE_PROTOCOL PIPE_PROTOCOL) += fate-filter-stereo3d-irr-mono
++fate-filter-stereo3d-irr-mono: tests/data/filtergraphs/stereo3d-irr-mono
++fate-filter-stereo3d-irr-mono: CMD = framemd5 -/filter_complex $(TARGET_PATH)/tests/data/filtergraphs/stereo3d-irr-mono -frames:v 1 -pix_fmt rgb24
++fate-filter-stereo3d-irr-mono: REF = $(SRC_PATH)/tests/ref/fate/filter-stereo3d-icr-sbsl
++FATE_FILTER-yes += $(FATE_STEREO3D_IRR-yes)
++fate-filter-stereo3d: $(FATE_STEREO3D_IRR-yes)
++
+ FATE_FILTER_VSYNTH_VIDEO_FILTER-$(call ALLYES, SCALE_FILTER THUMBNAIL_FILTER) += fate-filter-thumbnail
+ fate-filter-thumbnail: CMD = video_filter "scale,thumbnail=10"
+ 
+diff --git a/tests/filtergraphs/stereo3d-irr-mono b/tests/filtergraphs/stereo3d-irr-mono
+new file mode 100644
+index 0000000..f2850cc
+--- /dev/null
++++ b/tests/filtergraphs/stereo3d-irr-mono
+@@ -0,0 +1,11 @@
++nullsrc=s=64x96:r=1,
++format=gbrp,
++geq=r='if(mod(Y,2),255,255*between(X,32,39)*between(Y,48,63))':
++    g='if(mod(Y,2),255*between(X,8,15)*between(Y,16,31),255*between(X,32,39)*between(Y,48,63))':
++    b='if(mod(Y,2),255*between(X,8,15)*between(Y,16,31),255)',
++scale,
++format=rgb24,
++split[left][right];
++[left]stereo3d=irr:ml[l];
++[right]stereo3d=irr:mr[r];
++[l][r]hstack

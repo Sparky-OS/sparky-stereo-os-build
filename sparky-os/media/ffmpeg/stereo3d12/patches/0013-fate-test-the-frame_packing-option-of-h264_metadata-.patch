@@ -1,0 +1,1294 @@
+Description: tests: check frame packing BSFs independently of decoder side data
+ Read the emitted SEI syntax and NAL placement directly and compare the
+ output with FATE references. Cover every layout and content
+ interpretation, packet and option precedence, explicit physical eyes,
+ unspecified temporal views, flush, replacement and removal. Check
+ extracted packet side data, unchanged encoded bytes, cancellation,
+ unsupported interpretations and 2D. Check that flushing also restores
+ the first-access-unit seek point for display_orientation.
+ .
+ Require extract_extradata for the API test and its FATE entries. The
+ H.264 orientation checks need parameter sets from extradata.
+ .
+ Also check, with messages written by the test itself: arrangements of
+ another id that stay in force, a cancellation that ends one, and a
+ layout followed by 2D; extraction of mirrored and quincunx layouts;
+ removal from the extradata and from new extradata side data; tile format
+ sizes and the self-contained flags. Two more entries use hevc/food.hevc,
+ whose VPS and SPS declare general_non_packed_constraint_flag, and
+ hevc-conformance/TSCL_A_VIDYO_5.bit, whose pictures are on four temporal
+ sublayers.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Sonnet via Claude Code
+ Assisted-by: gpt-6-astra via Codex
+ Assisted-by: Claude Sonnet 5.5 via Claude Code
+ .
+ Port to 9.0.2: tests/api/Makefile: the line is added at the top, 9.0.2 has other entries around it.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/6d274390d2604a67d1ef3000ce9bd08b734f1306
+Forwarded: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25395
+Last-Update: 2026-11-06
+
+diff --git a/tests/api/Makefile b/tests/api/Makefile
+index 987db1b..0171169 100644
+--- a/tests/api/Makefile
++++ b/tests/api/Makefile
+@@ -1,3 +1,4 @@
++APITESTPROGS-$(call ALLYES, EXTRACT_EXTRADATA_BSF H264_METADATA_BSF HEVC_METADATA_BSF H264_DEMUXER HEVC_DEMUXER H264_PARSER HEVC_PARSER) += api-bsf-frame-packing
+ APITESTPROGS-$(call ENCDEC, FLAC, FLAC) += api-flac
+ APITESTPROGS-$(call DEMDEC, H264, H264) += api-h264
+ APITESTPROGS-$(call DEMDEC, H264, H264) += api-h264-slice
+diff --git a/tests/api/api-bsf-frame-packing-test.c b/tests/api/api-bsf-frame-packing-test.c
+new file mode 100644
+index 0000000..f7a8824
+--- /dev/null
++++ b/tests/api/api-bsf-frame-packing-test.c
+@@ -0,0 +1,915 @@
++/*
++ * Copyright (c) 2026 Daniel Campos Ramos
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "libavcodec/bsf.h"
++#include "libavformat/avformat.h"
++#include "libavutil/opt.h"
++#include "libavutil/stereo3d.h"
++
++/* Read the SEI independently of CBS and the decoders. */
++static unsigned bits(const uint8_t *data, int *pos, int n)
++{
++    unsigned value = 0;
++    while (n--) {
++        value = (value << 1) | ((data[*pos >> 3] >> (7 - (*pos & 7))) & 1);
++        ++*pos;
++    }
++    return value;
++}
++
++static unsigned ue(const uint8_t *data, int *pos)
++{
++    int n = 0;
++    while (!bits(data, pos, 1) && n < 31)
++        n++;
++    return (1U << n) - 1 + bits(data, pos, n);
++}
++
++static void show(const AVPacket *pkt, int hevc)
++{
++    int start = -1, seen_vcl = 0, found = 0;
++    uint8_t *rbsp = av_malloc(pkt->size + AV_INPUT_BUFFER_PADDING_SIZE);
++    if (!rbsp)
++        exit(1);
++    for (int end = 0; end <= pkt->size; end++) {
++        int next = end + 3 <= pkt->size && !pkt->data[end] &&
++                   !pkt->data[end + 1] && pkt->data[end + 2] == 1;
++        if (!next && end != pkt->size)
++            continue;
++        if (start >= 0) {
++            int type = hevc ? (pkt->data[start] >> 1) & 63 : pkt->data[start] & 31;
++            int size = 0, zeros = 0;
++            if (hevc ? type < 32 : type >= 1 && type <= 5)
++                seen_vcl = 1;
++            if (hevc ? type == 39 || type == 40 : type == 6) {
++                for (int i = start + 1 + hevc; i < end; i++) {
++                    int b = pkt->data[i];
++                    if (zeros == 2 && b == 3) {
++                        zeros = 0;
++                        continue;
++                    }
++                    rbsp[size++] = b;
++                    zeros = b ? 0 : zeros + 1;
++                }
++                memset(rbsp + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
++                if (!size || rbsp[0] == 0x80) {
++                    printf(" empty-sei");
++                } else for (int i = 0; i < size && rbsp[i] != 0x80;) {
++                    unsigned payload = 0, length = 0;
++                    while (i < size && rbsp[i] == 255)
++                        payload += rbsp[i++];
++                    if (i >= size)
++                        exit(2);
++                    payload += rbsp[i++];
++                    while (i < size && rbsp[i] == 255)
++                        length += rbsp[i++];
++                    if (i >= size)
++                        exit(2);
++                    length += rbsp[i++];
++                    if (length > size - i)
++                        exit(2);
++                    if (payload == 45) {
++                        int pos = 0, cancel, type, q, content, frame0, persistence;
++                        const uint8_t *p = rbsp + i;
++                        ue(p, &pos);
++                        cancel = bits(p, &pos, 1);
++                        if (cancel || length < 4)
++                            exit(2);
++                        type = bits(p, &pos, 7);
++                        q = bits(p, &pos, 1);
++                        content = bits(p, &pos, 6);
++                        bits(p, &pos, 3);
++                        frame0 = bits(p, &pos, 1);
++                        bits(p, &pos, 2);
++                        if (!q && type != 5)
++                            bits(p, &pos, 16);
++                        bits(p, &pos, 8);
++                        persistence = hevc ? bits(p, &pos, 1) : ue(p, &pos);
++                        printf(" %d,%d,%d,%d,%d,%d", type, q, content, frame0, persistence, !seen_vcl);
++                        found++;
++                    }
++                    if (payload == 47) {
++                        printf(" orientation");
++                        found++;
++                    }
++                    i += length;
++                }
++            }
++        }
++        start = end + 3;
++    }
++    if (!found)
++        printf(" none");
++    putchar('\n');
++    av_free(rbsp);
++}
++
++typedef struct NAL {
++    int start, end, type, layer, tid;
++} NAL;
++
++/* Split an Annex B access unit. */
++static int split_nals(const uint8_t *data, int size, int hevc, NAL *nals, int max)
++{
++    int count = 0, start = -1;
++    for (int end = 0; end <= size; end++) {
++        int next = end + 3 <= size && !data[end] && !data[end + 1] && data[end + 2] == 1;
++        if (!next && end != size)
++            continue;
++        if (start >= 0 && start + 1 + hevc < end && count < max) {
++            int stop = end;
++            while (stop > start && !data[stop - 1])
++                stop--;
++            nals[count++] = (NAL) {
++                .start = start, .end = stop,
++                .type  = hevc ? (data[start] >> 1) & 63 : data[start] & 31,
++                .layer = hevc ? ((data[start] & 1) << 5) | (data[start + 1] >> 3) : 0,
++                .tid   = hevc ? (data[start + 1] & 7) - 1 : 0,
++            };
++        }
++        start = end + 3;
++    }
++    return count;
++}
++
++static int unescape(const uint8_t *data, int start, int end, uint8_t *rbsp)
++{
++    int size = 0, zeros = 0;
++    for (int i = start; i < end; i++) {
++        int b = data[i];
++        if (zeros == 2 && b == 3) {
++            zeros = 0;
++            continue;
++        }
++        rbsp[size++] = b;
++        zeros = b ? 0 : zeros + 1;
++    }
++    memset(rbsp + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
++    return size;
++}
++
++typedef struct Arrangement {
++    unsigned id;
++    int cancel, type, quincunx, content, flip, frame0, self_contained, persistence;
++} Arrangement;
++
++static void read_arrangement(const uint8_t *p, int hevc, Arrangement *a)
++{
++    int pos = 0;
++    memset(a, 0, sizeof(*a));
++    a->id     = ue(p, &pos);
++    a->cancel = bits(p, &pos, 1);
++    if (a->cancel)
++        return;
++    a->type     = bits(p, &pos, 7);
++    a->quincunx = bits(p, &pos, 1);
++    a->content  = bits(p, &pos, 6);
++    a->flip     = bits(p, &pos, 1);
++    bits(p, &pos, 2);
++    a->frame0 = bits(p, &pos, 1);
++    a->self_contained = bits(p, &pos, 2);
++    if (!a->quincunx && a->type != 5)
++        bits(p, &pos, 16);
++    bits(p, &pos, 8);
++    a->persistence = hevc ? bits(p, &pos, 1) : ue(p, &pos);
++}
++
++/* Walk the access unit: every NAL unit that matters, the frame packing
++ * messages in it, and the flag of the profile_tier_level that forbids them. */
++static void describe(const uint8_t *data, int size, int hevc)
++{
++    NAL nals[64];
++    uint8_t *rbsp = av_malloc(size + AV_INPUT_BUFFER_PADDING_SIZE);
++    int count = split_nals(data, size, hevc, nals, FF_ARRAY_ELEMS(nals));
++    if (!rbsp)
++        exit(1);
++    for (int n = 0; n < count; n++) {
++        const NAL *nal = &nals[n];
++        int length = unescape(data, nal->start + 1 + hevc, nal->end, rbsp);
++        if (hevc && (nal->type == 32 || nal->type == 33)) {
++            /* general_non_packed_constraint_flag: after the 32 bits of the
++             * VPS or the 8 bits of the SPS that precede profile_tier_level,
++             * profile space, tier, profile, 32 compatibility flags and the
++             * progressive and interlaced flags. */
++            int pos = (nal->type == 32 ? 32 : 8) + 2 + 1 + 5 + 32 + 2;
++            printf(" %s(non_packed=%u)", nal->type == 32 ? "vps" : "sps", bits(rbsp, &pos, 1));
++        } else if (hevc ? nal->type < 32 : nal->type >= 1 && nal->type <= 5) {
++            printf(" vcl(t%d,l%d)", nal->tid, nal->layer);
++        } else if (hevc ? nal->type == 39 || nal->type == 40 : nal->type == 6) {
++            for (int i = 0; i < length && rbsp[i] != 0x80;) {
++                unsigned payload = 0, len = 0;
++                while (i < length && rbsp[i] == 255)
++                    payload += rbsp[i++];
++                payload += rbsp[i++];
++                while (i < length && rbsp[i] == 255)
++                    len += rbsp[i++];
++                len += rbsp[i++];
++                if (len > length - i)
++                    exit(2);
++                if (payload == 45) {
++                    Arrangement a;
++                    read_arrangement(rbsp + i, hevc, &a);
++                    if (a.cancel)
++                        printf(" sei(t%d,l%d)[id=%u,cancel]", nal->tid, nal->layer, a.id);
++                    else
++                        printf(" sei(t%d,l%d)[id=%u,type=%d,q=%d,c=%d,flip=%d,f0=%d,s=%d,p=%d]",
++                               nal->tid, nal->layer, a.id, a.type, a.quincunx,
++                               a.content, a.flip, a.frame0, a.self_contained, a.persistence);
++                } else {
++                    printf(" sei(payload %u)", payload);
++                }
++                i += len;
++            }
++        }
++    }
++    putchar('\n');
++    av_free(rbsp);
++}
++
++static int fabricated_self_contained;
++
++/* An arrangement SEI NAL unit written here, not by the filter under test. */
++static int fabricate(int hevc, unsigned id, int cancel, int type, int quincunx,
++                     int content, int flip, int persistence, uint8_t *out)
++{
++    uint8_t payload[16] = { 0 }, rbsp[32];
++    int pos = 0, size, n = 0, zeros = 0;
++#define PUT(value, count) do { \
++        for (int k = (count) - 1; k >= 0; k--, pos++) \
++            payload[pos >> 3] |= (((value) >> k) & 1) << (7 - (pos & 7)); \
++    } while (0)
++    /* ue(id), for the small ids used here */
++    if (id < 3) {
++        PUT(id == 0 ? 1 : id == 1 ? 2 : 3, id == 0 ? 1 : 3);
++    } else {
++        exit(1);
++    }
++    PUT(cancel, 1);
++    if (!cancel) {
++        PUT(type, 7);
++        PUT(quincunx, 1);
++        PUT(content, 6);
++        PUT(flip, 1);
++        PUT(0, 2);
++        PUT(0, 1);
++        PUT(fabricated_self_contained, 2);
++        if (!quincunx && type != 5)
++            PUT(0, 16);
++        PUT(0, 8);
++        if (hevc)
++            PUT(persistence, 1);
++        else if (persistence)
++            PUT(2, 3);
++        else
++            PUT(1, 1);
++    }
++    PUT(0, 1); /* extension, upsampled aspect ratio */
++    PUT(1, 1);
++    size = (pos + 7) >> 3;
++    rbsp[0] = 45;
++    rbsp[1] = size;
++    memcpy(rbsp + 2, payload, size);
++    rbsp[2 + size] = 0x80;
++    out[n++] = 0;
++    out[n++] = 0;
++    out[n++] = 0;
++    out[n++] = 1;
++    if (hevc) {
++        out[n++] = 39 << 1;
++        out[n++] = 1;
++    } else {
++        out[n++] = 6;
++    }
++    for (int i = 0; i < size + 3; i++) {
++        if (zeros == 2 && rbsp[i] <= 3) {
++            out[n++] = 3;
++            zeros = 0;
++        }
++        out[n++] = rbsp[i];
++        zeros = rbsp[i] ? 0 : zeros + 1;
++    }
++#undef PUT
++    return n;
++}
++
++/* The access unit without its SEI NAL units but those of other uses, with
++ * extra bytes in front of the first slice. */
++static AVPacket *rebuild(const AVPacket *src, int hevc, const uint8_t *extra,
++                         int extra_size, int keep_sei)
++{
++    NAL nals[64];
++    int count = split_nals(src->data, src->size, hevc, nals, FF_ARRAY_ELEMS(nals));
++    AVPacket *pkt = av_packet_alloc();
++    uint8_t *out = av_malloc(src->size + extra_size + AV_INPUT_BUFFER_PADDING_SIZE);
++    int n = 0, added = !extra_size;
++    if (!pkt || !out)
++        exit(1);
++    for (int i = 0; i < count; i++) {
++        int vcl = hevc ? nals[i].type < 32 : nals[i].type >= 1 && nals[i].type <= 5;
++        int sei = hevc ? nals[i].type == 39 : nals[i].type == 6;
++        if (vcl && !added) {
++            memcpy(out + n, extra, extra_size);
++            n += extra_size;
++            added = 1;
++        }
++        if (sei && !keep_sei)
++            continue;
++        out[n++] = 0;
++        out[n++] = 0;
++        out[n++] = 0;
++        out[n++] = 1;
++        memcpy(out + n, src->data + nals[i].start, nals[i].end - nals[i].start);
++        n += nals[i].end - nals[i].start;
++    }
++    memset(out + n, 0, AV_INPUT_BUFFER_PADDING_SIZE);
++    if (av_packet_from_data(pkt, out, n) < 0)
++        exit(1);
++    pkt->flags = src->flags;
++    pkt->pts = src->pts;
++    pkt->dts = src->dts;
++    return pkt;
++}
++
++/* The bytes in front of the first slice: parameter sets and SEI. */
++static int before_first_slice(const AVPacket *pkt, int hevc)
++{
++    NAL nals[64];
++    int count = split_nals(pkt->data, pkt->size, hevc, nals, FF_ARRAY_ELEMS(nals));
++    for (int i = 0; i < count; i++) {
++        if (hevc ? nals[i].type < 32 : nals[i].type >= 1 && nals[i].type <= 5)
++            return nals[i].start - 4;
++    }
++    return pkt->size;
++}
++
++static int detail;
++
++static int add_stereo(AVPacketSideData **sd, int *nb_sd, int type, int invert, int view)
++{
++    size_t size;
++    AVStereo3D *st = av_stereo3d_alloc_size(&size);
++    if (!st)
++        return AVERROR(ENOMEM);
++    st->type = type;
++    st->flags = invert ? AV_STEREO3D_FLAG_INVERT : 0;
++    st->view = view;
++    if (!av_packet_side_data_add(sd, nb_sd, AV_PKT_DATA_STEREO3D, st, size, 0)) {
++        av_free(st);
++        return AVERROR(ENOMEM);
++    }
++    return 0;
++}
++
++static void test(const char *label, const char *name, const AVCodecParameters *par,
++                 AVPacket **input, int count, const char *options,
++                 int stream_type, int packet_type, int invert, int view, int flush)
++{
++    AVBSFContext *ctx = NULL;
++    AVPacket *pkt = av_packet_alloc();
++    int ret;
++    printf("%s:", label);
++    if (!pkt)
++        exit(1);
++    ret = av_bsf_alloc(av_bsf_get_by_name(name), &ctx);
++    if (ret < 0 || avcodec_parameters_copy(ctx->par_in, par) < 0)
++        exit(1);
++    av_packet_side_data_remove(ctx->par_in->coded_side_data,
++                              &ctx->par_in->nb_coded_side_data, AV_PKT_DATA_STEREO3D);
++    if (stream_type >= 0 && add_stereo(&ctx->par_in->coded_side_data,
++                                     &ctx->par_in->nb_coded_side_data,
++                                     stream_type, invert, view) < 0)
++        exit(1);
++    ctx->time_base_in = (AVRational) { 1, 25 };
++    ret = av_opt_set_from_string(ctx->priv_data, options, NULL, "=", ":");
++    if (ret >= 0)
++        ret = av_bsf_init(ctx);
++    if (ret < 0) {
++        printf(" error\n");
++        goto end;
++    }
++    for (int i = 0; i < count; i++) {
++        if (av_packet_ref(pkt, input[i]) < 0)
++            exit(1);
++        av_packet_side_data_remove(pkt->side_data, &pkt->side_data_elems, AV_PKT_DATA_STEREO3D);
++        if (packet_type >= 0 && add_stereo(&pkt->side_data, &pkt->side_data_elems,
++                                         packet_type, invert,
++                                         view < 0 ? (i ? AV_STEREO3D_VIEW_UNSPEC :
++                                                         AV_STEREO3D_VIEW_RIGHT) : view) < 0)
++            exit(1);
++        if (flush)
++            av_bsf_flush(ctx);
++        ret = av_bsf_send_packet(ctx, pkt);
++        if (ret >= 0)
++            ret = av_bsf_receive_packet(ctx, pkt);
++        if (ret < 0) {
++            printf(" error\n");
++            break;
++        }
++        if (detail)
++            describe(pkt->data, pkt->size, par->codec_id == AV_CODEC_ID_HEVC);
++        else
++            show(pkt, par->codec_id == AV_CODEC_ID_HEVC);
++        av_packet_unref(pkt);
++    }
++end:
++    av_packet_free(&pkt);
++    av_bsf_free(&ctx);
++}
++
++
++static void extract_test(const char *label, const char *name,
++                         const AVCodecParameters *par, AVPacket **input,
++                         int count, const char *prepare)
++{
++    AVBSFContext *ctx[2] = { NULL };
++    AVPacket *pkt = av_packet_alloc(), *original = av_packet_alloc();
++    int ret = 0;
++
++    printf("%s:", label);
++    if (!pkt || !original)
++        exit(1);
++    for (int j = 0; j < 2; j++) {
++        if (av_bsf_alloc(av_bsf_get_by_name(name), &ctx[j]) < 0 ||
++            avcodec_parameters_copy(ctx[j]->par_in, par) < 0)
++            exit(1);
++        ctx[j]->time_base_in = (AVRational) { 1, 25 };
++        ret = av_opt_set_from_string(ctx[j]->priv_data,
++                                    j ? "frame_packing=extract" : prepare,
++                                    NULL, "=", ":");
++        if (ret < 0 || (ret = av_bsf_init(ctx[j])) < 0)
++            goto end;
++    }
++    for (int i = 0; i < count; i++) {
++        const AVStereo3D *st;
++        size_t size;
++        if (av_packet_ref(pkt, input[i]) < 0)
++            exit(1);
++        for (int j = 0; j < 2; j++) {
++            ret = av_bsf_send_packet(ctx[j], pkt);
++            if (ret >= 0)
++                ret = av_bsf_receive_packet(ctx[j], pkt);
++            if (ret < 0)
++                goto end;
++            if (!j && av_packet_ref(original, pkt) < 0)
++                exit(1);
++        }
++        printf(" unchanged=%d", pkt->size == original->size &&
++               !memcmp(pkt->data, original->data, pkt->size));
++        st = (const AVStereo3D *)av_packet_get_side_data(pkt, AV_PKT_DATA_STEREO3D, &size);
++        if (st && size >= sizeof(*st))
++            printf(" stereo=%d,%d,%d\n", st->type, st->flags, st->view);
++        else
++            printf(" none\n");
++        av_packet_unref(original);
++        av_packet_unref(pkt);
++    }
++end:
++    if (ret < 0)
++        printf(" error\n");
++    av_bsf_free(&ctx[0]);
++    av_bsf_free(&ctx[1]);
++    av_packet_free(&pkt);
++    av_packet_free(&original);
++}
++
++/* Packets with their own Stereo 3D descriptions, one after the other. */
++static void sequence(const char *label, const char *name, const AVCodecParameters *par,
++                     AVPacket **input, int count, const char *options,
++                     int stream_type, const int *packet_type)
++{
++    AVBSFContext *ctx = NULL;
++    AVPacket *pkt = av_packet_alloc();
++    int ret, hevc = par->codec_id == AV_CODEC_ID_HEVC;
++    printf("%s:", label);
++    if (!pkt || av_bsf_alloc(av_bsf_get_by_name(name), &ctx) < 0 ||
++        avcodec_parameters_copy(ctx->par_in, par) < 0)
++        exit(1);
++    av_packet_side_data_remove(ctx->par_in->coded_side_data,
++                              &ctx->par_in->nb_coded_side_data, AV_PKT_DATA_STEREO3D);
++    if (stream_type >= 0 && add_stereo(&ctx->par_in->coded_side_data,
++                                     &ctx->par_in->nb_coded_side_data,
++                                     stream_type, 0, 0) < 0)
++        exit(1);
++    ctx->time_base_in = (AVRational) { 1, 25 };
++    ret = av_opt_set_from_string(ctx->priv_data, options, NULL, "=", ":");
++    if (ret >= 0)
++        ret = av_bsf_init(ctx);
++    if (ret < 0) {
++        printf(" error\n");
++        goto end;
++    }
++    for (int i = 0; i < count; i++) {
++        if (av_packet_ref(pkt, input[i]) < 0)
++            exit(1);
++        av_packet_side_data_remove(pkt->side_data, &pkt->side_data_elems, AV_PKT_DATA_STEREO3D);
++        if (packet_type && packet_type[i] >= 0 &&
++            add_stereo(&pkt->side_data, &pkt->side_data_elems, packet_type[i], 0, 0) < 0)
++            exit(1);
++        ret = av_bsf_send_packet(ctx, pkt);
++        if (ret >= 0)
++            ret = av_bsf_receive_packet(ctx, pkt);
++        if (ret < 0) {
++            printf(" error\n");
++            break;
++        }
++        printf(i ? "  packet %d:" : " packet %d:", i);
++        describe(pkt->data, pkt->size, hevc);
++        av_packet_unref(pkt);
++    }
++end:
++    av_packet_free(&pkt);
++    av_bsf_free(&ctx);
++}
++
++/* What the filter leaves of the parameter sets and SEI of the extradata,
++ * and of the extradata that a packet brings. */
++static void extradata_test(const char *label, const char *name, const AVCodecParameters *par,
++                           const AVPacket *first, const uint8_t *extradata, int size,
++                           const char *options)
++{
++    AVBSFContext *ctx = NULL;
++    AVPacket *pkt = av_packet_alloc();
++    int ret, hevc = par->codec_id == AV_CODEC_ID_HEVC;
++    size_t side_size;
++    uint8_t *side;
++    printf("%s: initial", label);
++    if (!pkt || av_bsf_alloc(av_bsf_get_by_name(name), &ctx) < 0 ||
++        avcodec_parameters_copy(ctx->par_in, par) < 0)
++        exit(1);
++    av_freep(&ctx->par_in->extradata);
++    ctx->par_in->extradata = av_mallocz(size + AV_INPUT_BUFFER_PADDING_SIZE);
++    if (!ctx->par_in->extradata)
++        exit(1);
++    memcpy(ctx->par_in->extradata, extradata, size);
++    ctx->par_in->extradata_size = size;
++    ctx->time_base_in = (AVRational) { 1, 25 };
++    ret = av_opt_set_from_string(ctx->priv_data, options, NULL, "=", ":");
++    if (ret >= 0)
++        ret = av_bsf_init(ctx);
++    if (ret < 0) {
++        printf(" error\n");
++        goto end;
++    }
++    describe(ctx->par_out->extradata, ctx->par_out->extradata_size, hevc);
++    printf("  new extradata:");
++    if (av_packet_ref(pkt, first) < 0)
++        exit(1);
++    side = av_packet_new_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA, size);
++    if (!side)
++        exit(1);
++    memcpy(side, extradata, size);
++    ret = av_bsf_send_packet(ctx, pkt);
++    if (ret >= 0)
++        ret = av_bsf_receive_packet(ctx, pkt);
++    if (ret < 0) {
++        printf(" error\n");
++        goto end;
++    }
++    side = av_packet_get_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA, &side_size);
++    if (side)
++        describe(side, side_size, hevc);
++    else
++        printf(" none\n");
++end:
++    av_packet_free(&pkt);
++    av_bsf_free(&ctx);
++}
++
++/* An arrangement written here, in a packet of its own, and extracted. */
++static void extract_fabricated(const char *label, const char *name, const AVCodecParameters *par,
++                               const AVPacket *first, int type, int quincunx, int flip)
++{
++    AVBSFContext *ctx = NULL;
++    AVPacket *src;
++    uint8_t nal[64];
++    int n, hevc = par->codec_id == AV_CODEC_ID_HEVC;
++    size_t size;
++    const AVStereo3D *st;
++    printf("%s:", label);
++    n = fabricate(hevc, 0, 0, type, quincunx, 1, flip, 1, nal);
++    src = rebuild(first, hevc, nal, n, 0);
++    if (av_bsf_alloc(av_bsf_get_by_name(name), &ctx) < 0 ||
++        avcodec_parameters_copy(ctx->par_in, par) < 0)
++        exit(1);
++    ctx->time_base_in = (AVRational) { 1, 25 };
++    if (av_opt_set(ctx->priv_data, "frame_packing", "extract", 0) < 0 ||
++        av_bsf_init(ctx) < 0 || av_bsf_send_packet(ctx, src) < 0 ||
++        av_bsf_receive_packet(ctx, src) < 0) {
++        printf(" error\n");
++        goto end;
++    }
++    st = (const AVStereo3D *)av_packet_get_side_data(src, AV_PKT_DATA_STEREO3D, &size);
++    if (st && size >= sizeof(*st))
++        printf(" stereo=%d,%d,%d\n", st->type, st->flags, st->view);
++    else
++        printf(" none\n");
++end:
++    av_packet_free(&src);
++    av_bsf_free(&ctx);
++}
++
++/* What an extraction can say about a message written here. */
++static void extraction_tests(const char *name, const AVCodecParameters *par,
++                             const AVPacket *first)
++{
++    int hevc = par->codec_id == AV_CODEC_ID_HEVC;
++    extract_fabricated("extract-plain-sbs", name, par, first, 3, 0, 0);
++    extract_fabricated("extract-flipped-sbs", name, par, first, 3, 0, 1);
++    extract_fabricated("extract-flipped-tb", name, par, first, 4, 0, 1);
++    extract_fabricated("extract-quincunx-sbs", name, par, first, 3, 1, 0);
++    extract_fabricated("extract-quincunx-tb", name, par, first, 4, 1, 0);
++    extract_fabricated("extract-flipped-quincunx-sbs", name, par, first, 3, 1, 1);
++    if (!hevc) {
++        extract_fabricated("extract-quincunx-columns", name, par, first, 1, 1, 0);
++        extract_fabricated("extract-quincunx-checkerboard", name, par, first, 0, 1, 0);
++    }
++}
++
++/* Arrangements that persist, and what a later description does to them. */
++static void state_tests(AVFormatContext *fmt, AVPacket **input, int hevc)
++{
++    const char *name = hevc ? "hevc_metadata" : "h264_metadata";
++    const AVCodecParameters *par = fmt->streams[0]->codecpar;
++    AVPacket *foreign[2];
++    uint8_t nal[64];
++    int n, later[2] = { -1, AV_STEREO3D_TOPBOTTOM };
++    int to_two_d[2] = { AV_STEREO3D_SIDEBYSIDE, AV_STEREO3D_2D };
++    int to_two_d_later[3] = { AV_STEREO3D_SIDEBYSIDE, -1, AV_STEREO3D_2D };
++    int to_other[3] = { AV_STEREO3D_SIDEBYSIDE, -1, AV_STEREO3D_TOPBOTTOM };
++
++    extraction_tests(name, par, input[0]);
++
++    /* A message with the id 1 in the first packet, none of the filter's. */
++    n = fabricate(hevc, 1, 0, 3, 0, 1, 0, 1, nal);
++    foreign[0] = rebuild(input[0], hevc, nal, n, 0);
++    foreign[1] = av_packet_clone(input[1]);
++    if (!foreign[1])
++        exit(1);
++    sequence("persistent-then-description", name, par, foreign, 2,
++             "frame_packing=insert", -1, later);
++    sequence("persistent-then-explicit", name, par, foreign, 2,
++             "frame_packing=insert:frame_packing_type=4", -1, later);
++    /* The self-contained flags are the same in every message of a coded
++     * video sequence. */
++    {
++        AVPacket *flags[3];
++        int layouts[3] = { -1, AV_STEREO3D_TOPBOTTOM, AV_STEREO3D_SIDEBYSIDE };
++
++        fabricated_self_contained = 3;
++        n = fabricate(hevc, 1, 0, 3, 0, 1, 0, 1, nal);
++        flags[0] = rebuild(input[0], hevc, nal, n, 0);
++        fabricated_self_contained = 0;
++        flags[1] = av_packet_clone(input[1]);
++        flags[2] = av_packet_clone(input[2]);
++        if (!flags[1] || !flags[2])
++            exit(1);
++        sequence("persistent-self-contained", name, par, flags, 3,
++                 "frame_packing=insert", -1, layouts);
++        for (int i = 0; i < 3; i++)
++            av_packet_free(&flags[i]);
++    }
++    av_packet_free(&foreign[0]);
++    n = fabricate(hevc, 1, 0, 3, 0, 1, 0, 1, nal);
++    foreign[0] = rebuild(input[0], hevc, nal, n, 0);
++    sequence("persistent-without-description", name, par, foreign, 2,
++             "frame_packing=insert", -1, NULL);
++
++    /* A cancellation of the id 1 ends it, so nothing is left to cancel. */
++    {
++        AVPacket *cancelled[3];
++        int description[3] = { -1, -1, AV_STEREO3D_TOPBOTTOM };
++
++        n = fabricate(hevc, 1, 0, 3, 0, 1, 0, 1, nal);
++        cancelled[0] = rebuild(input[0], hevc, nal, n, 0);
++        n = fabricate(hevc, 1, 1, 0, 0, 0, 0, 0, nal);
++        cancelled[1] = rebuild(input[1], hevc, nal, n, 0);
++        cancelled[2] = av_packet_clone(input[2]);
++        if (!cancelled[2])
++            exit(1);
++        sequence("cancelled-then-description", name, par, cancelled, 3,
++                 "frame_packing=insert", -1, description);
++        for (int i = 0; i < 3; i++)
++            av_packet_free(&cancelled[i]);
++    }
++    av_packet_free(&foreign[0]);
++    av_packet_free(&foreign[1]);
++
++    /* The arrangement of the extradata. */
++    n = fabricate(hevc, 1, 0, 3, 0, 1, 0, 1, nal);
++    foreign[0] = rebuild(input[0], hevc, nal, n, 0);
++    extradata_test("extradata-pass", name, par, foreign[0], foreign[0]->data,
++                   before_first_slice(foreign[0], hevc), "frame_packing=pass");
++    extradata_test("extradata-remove", name, par, foreign[0], foreign[0]->data,
++                   before_first_slice(foreign[0], hevc), "frame_packing=remove");
++    av_packet_free(&foreign[0]);
++
++    /* From a layout to none, and to another one. */
++    sequence("layout-then-2d", name, par, input, 2,
++             "frame_packing=insert", -1, to_two_d);
++    sequence("layout-then-2d-later", name, par, input, 3,
++             "frame_packing=insert", -1, to_two_d_later);
++    sequence("layout-then-other-later", name, par, input, 3,
++             "frame_packing=insert", -1, to_other);
++}
++
++/* VPS and SPS that declare general_non_packed_constraint_flag. */
++static int constraint_tests(AVFormatContext *fmt)
++{
++    const AVCodecParameters *par = fmt->streams[0]->codecpar;
++    AVPacket *input[3];
++    NAL nals[16];
++    int none[3] = { -1, -1, -1 };
++    int late[3] = { -1, AV_STEREO3D_SIDEBYSIDE, -1 };
++    int first[3] = { AV_STEREO3D_SIDEBYSIDE, -1, -1 };
++    int two_d[3] = { AV_STEREO3D_2D, -1, -1 };
++    int count, size;
++    for (int i = 0; i < 3; i++) {
++        input[i] = av_packet_alloc();
++        if (!input[i] || av_read_frame(fmt, input[i]) < 0)
++            return 1;
++    }
++    sequence("untouched", "hevc_metadata", par, input, 1, "frame_packing=pass", -1, none);
++    sequence("no-description", "hevc_metadata", par, input, 1, "frame_packing=insert", -1, none);
++    sequence("explicit-type", "hevc_metadata", par, input, 1,
++             "frame_packing=insert:frame_packing_type=3", -1, none);
++    sequence("stream-description", "hevc_metadata", par, input, 1,
++             "frame_packing=insert", AV_STEREO3D_TOPBOTTOM, none);
++    sequence("stream-2d", "hevc_metadata", par, input, 1,
++             "frame_packing=insert", AV_STEREO3D_2D, none);
++    sequence("packet-description-first", "hevc_metadata", par, input, 1,
++             "frame_packing=insert", -1, first);
++    sequence("packet-description-late", "hevc_metadata", par, input, 2,
++             "frame_packing=insert", -1, late);
++    sequence("packet-2d-first", "hevc_metadata", par, input, 1,
++             "frame_packing=insert", -1, two_d);
++    /* the parameter sets of the first packet as extradata */
++    count = split_nals(input[0]->data, input[0]->size, 1, nals, FF_ARRAY_ELEMS(nals));
++    size = 0;
++    for (int i = 0; i < count; i++) {
++        if (nals[i].type >= 32)
++            size = nals[i].end;
++        else
++            break;
++    }
++    extradata_test("extradata-explicit-type", "hevc_metadata", par, input[0],
++                   input[0]->data, size, "frame_packing=insert:frame_packing_type=3");
++    extradata_test("extradata-no-description", "hevc_metadata", par, input[0],
++                   input[0]->data, size, "frame_packing=insert");
++    for (int i = 0; i < 3; i++)
++        av_packet_free(&input[i]);
++    avformat_close_input(&fmt);
++    return 0;
++}
++
++/* New SEI units in access units on higher temporal sublayers. */
++static int sublayer_tests(AVFormatContext *fmt)
++{
++    const AVCodecParameters *par = fmt->streams[0]->codecpar;
++    AVPacket *input[8];
++    int every[8];
++    for (int i = 0; i < 8; i++) {
++        input[i] = av_packet_alloc();
++        if (!input[i] || av_read_frame(fmt, input[i]) < 0)
++            return 1;
++        every[i] = AV_STEREO3D_SIDEBYSIDE;
++    }
++    sequence("packet-description", "hevc_metadata", par, input, 8,
++             "frame_packing=insert", -1, every);
++    sequence("explicit-type", "hevc_metadata", par, input, 8,
++             "frame_packing=insert:frame_packing_type=4:frame_packing_view=2", -1, NULL);
++    for (int i = 0; i < 8; i++)
++        av_packet_free(&input[i]);
++    avformat_close_input(&fmt);
++    return 0;
++}
++
++int main(int argc, char **argv)
++{
++    static const int types[] = { AV_STEREO3D_CHECKERBOARD, AV_STEREO3D_COLUMNS,
++        AV_STEREO3D_LINES, AV_STEREO3D_SIDEBYSIDE, AV_STEREO3D_TOPBOTTOM,
++        AV_STEREO3D_FRAMESEQUENCE, AV_STEREO3D_2D, AV_STEREO3D_SIDEBYSIDE_QUINCUNX };
++    AVFormatContext *fmt = NULL;
++    AVPacket *input[3];
++    const char *name;
++    int hevc;
++    if (argc != 3)
++        return 1;
++    hevc = !strncmp(argv[1], "hevc", 4);
++    name = hevc ? "hevc_metadata" : "h264_metadata";
++    if (avformat_open_input(&fmt, argv[2], NULL, NULL) < 0 ||
++        avformat_find_stream_info(fmt, NULL) < 0)
++        return 1;
++    if (!strcmp(argv[1], "hevc-constraint"))
++        return constraint_tests(fmt);
++    if (!strcmp(argv[1], "hevc-sublayers"))
++        return sublayer_tests(fmt);
++    for (int i = 0; i < 3; i++) {
++        input[i] = av_packet_alloc();
++        if (!input[i] || av_read_frame(fmt, input[i]) < 0)
++            return 1;
++    }
++    for (int type = hevc ? 3 : 0; type <= (hevc ? 5 : 7); type++) {
++        for (int view = 0; view <= 2; view++) {
++            char label[64], options[128];
++            snprintf(label, sizeof(label), "type%d-view%d", type, view);
++            snprintf(options, sizeof(options), "frame_packing=insert:frame_packing_type=%d:frame_packing_view=%d%s", type, view,
++                     type == 7 ? ":crop_right=4:crop_bottom=4" : "");
++            test(label, name, fmt->streams[0]->codecpar, input, 1, options, -1, -1, 0, 0, 0);
++        }
++    }
++    if (!hevc) {
++        test("type7-uncropped", name, fmt->streams[0]->codecpar, input, 1, "frame_packing=insert:frame_packing_type=7", -1, -1, 0, 0, 0);
++        test("type7-width-14", name, fmt->streams[0]->codecpar, input, 1, "frame_packing=insert:frame_packing_type=7:crop_right=2", -1, -1, 0, 0, 0);
++        test("type7-height-14", name, fmt->streams[0]->codecpar, input, 1, "frame_packing=insert:frame_packing_type=7:crop_bottom=2", -1, -1, 0, 0, 0);
++    }
++    for (int i = 0; i < 8; i++) {
++        for (int invert = 0; invert < 2; invert++) {
++            char label[64];
++            snprintf(label, sizeof(label), "stereo%d-invert%d", i, invert);
++            test(label, name, fmt->streams[0]->codecpar, input, 1, "frame_packing=insert", types[i], -1, invert, 0, 0);
++        }
++    }
++    test("remove", name, fmt->streams[0]->codecpar, input, 1, "frame_packing=remove", -1, -1, 0, 0, 0);
++    test("packet-wins", name, fmt->streams[0]->codecpar, input, 1, "frame_packing=insert", AV_STEREO3D_TOPBOTTOM, AV_STEREO3D_SIDEBYSIDE, 1, 0, 0);
++    test("option-wins", name, fmt->streams[0]->codecpar, input, 1, "frame_packing=insert:frame_packing_type=4:frame_packing_view=1", AV_STEREO3D_SIDEBYSIDE, -1, 1, 0, 0);
++    test("quincunx", name, fmt->streams[0]->codecpar, input, 1, "frame_packing=insert:frame_packing_type=3:frame_packing_quincunx=1", -1, -1, 0, 0, 0);
++    test("invalid-temporal-quincunx", name, fmt->streams[0]->codecpar, input, 1, "frame_packing=insert:frame_packing_type=5:frame_packing_quincunx=1", -1, -1, 0, 0, 0);
++    for (int view = AV_STEREO3D_VIEW_LEFT; view <= AV_STEREO3D_VIEW_RIGHT; view++) {
++        test(view == AV_STEREO3D_VIEW_LEFT ? "packet-frame0" : "packet-frame1", name, fmt->streams[0]->codecpar, input, 1, "frame_packing=insert:frame_packing_type=5", -1, AV_STEREO3D_FRAMESEQUENCE, 0, view, 0);
++    }
++    test("packet-nonkey", name, fmt->streams[0]->codecpar, input, 2, "frame_packing=insert", -1, AV_STEREO3D_TOPBOTTOM, 0, 0, 0);
++    test("replace-cancel", name, fmt->streams[0]->codecpar, input, 3, "frame_packing=insert:frame_packing_type=3", -1, -1, 0, 0, 0);
++    test("pass", name, fmt->streams[0]->codecpar, input, 1, "frame_packing=pass", -1, -1, 0, 0, 0);
++    test("no-description", name, fmt->streams[0]->codecpar, input, 1, "frame_packing=insert", -1, -1, 0, 0, 0);
++    test("inferred-quincunx", name, fmt->streams[0]->codecpar, input, 1, "frame_packing=insert:frame_packing_type=3", AV_STEREO3D_SIDEBYSIDE_QUINCUNX, -1, 0, 0, 0);
++    test("temporal", name, fmt->streams[0]->codecpar, input, 2, "frame_packing=insert:frame_packing_type=5", -1, -1, 0, 0, 0);
++    test("temporal-flush", name, fmt->streams[0]->codecpar, input, 2, "frame_packing=insert:frame_packing_type=5", -1, -1, 0, 0, 1);
++
++    for (int invert = 0; invert < 2; invert++) {
++        for (int view = AV_STEREO3D_VIEW_PACKED; view <= AV_STEREO3D_VIEW_UNSPEC; view++) {
++            char label[64];
++            snprintf(label, sizeof(label), "temporal-view%d-invert%d", view, invert);
++            test(label, name, fmt->streams[0]->codecpar, input, 2,
++                 "frame_packing=insert:frame_packing_type=5", -1,
++                 AV_STEREO3D_FRAMESEQUENCE, invert, view, 0);
++        }
++    }
++    test("temporal-override-content", name, fmt->streams[0]->codecpar, input, 1,
++         "frame_packing=insert:frame_packing_type=5:frame_packing_view=1", -1,
++         AV_STEREO3D_FRAMESEQUENCE, 1, AV_STEREO3D_VIEW_LEFT, 0);
++    for (int invert = 0; invert < 2; invert++)
++        test(invert ? "temporal-right-unspec-inverted" : "temporal-right-unspec",
++             name, fmt->streams[0]->codecpar, input, 2,
++             "frame_packing=insert:frame_packing_type=5", -1,
++             AV_STEREO3D_FRAMESEQUENCE, invert, -1, 0);
++    extract_test("extract-original", name, fmt->streams[0]->codecpar, input, 3,
++                 "frame_packing=pass");
++    extract_test("extract-absent", name, fmt->streams[0]->codecpar, input, 1,
++                 "frame_packing=remove");
++    for (int type = hevc ? 3 : 0; type <= (hevc ? 5 : 7); type++) {
++        for (int content = 0; content < 3; content++) {
++            char label[64], options[128];
++            if (type == 6 && content)
++                continue;
++            snprintf(label, sizeof(label), "extract-type%d-content%d", type, content);
++            snprintf(options, sizeof(options), "frame_packing=insert:frame_packing_type=%d:frame_packing_view=%d%s", type, content,
++                     type == 7 ? ":crop_right=4:crop_bottom=4" : "");
++            extract_test(label, name, fmt->streams[0]->codecpar, input, type == 5 ? 2 : 1, options);
++        }
++    }
++    extract_test("extract-quincunx", name, fmt->streams[0]->codecpar, input, 1,
++                 "frame_packing=insert:frame_packing_type=3:frame_packing_quincunx=1");
++    if (!hevc) {
++        AVPacket *nonkey[] = { input[1], input[1] };
++        test("orientation-no-flush", name, fmt->streams[0]->codecpar, nonkey, 2,
++             "display_orientation=insert:rotate=90", -1, -1, 0, 0, 0);
++        test("orientation-flush", name, fmt->streams[0]->codecpar, nonkey, 2,
++             "display_orientation=insert:rotate=90", -1, -1, 0, 0, 1);
++    }
++    state_tests(fmt, input, hevc);
++    for (int i = 0; i < 3; i++)
++        av_packet_free(&input[i]);
++    avformat_close_input(&fmt);
++    return 0;
++}
+diff --git a/tests/fate/cbs.mak b/tests/fate/cbs.mak
+index d9200de..90620e6 100644
+--- a/tests/fate/cbs.mak
++++ b/tests/fate/cbs.mak
+@@ -219,3 +219,13 @@ $(foreach N,$(FATE_CBS_VP9_SAMPLES),$(eval $(call FATE_CBS_TEST,vp9,$(basename $
+ FATE_CBS_VP9-$(call FATE_CBS_DEPS, IVF, VP9, VP9, VP9, IVF) = $(FATE_CBS_vp9)
+ FATE_SAMPLES_AVCONV += $(FATE_CBS_VP9-yes)
+ fate-cbs-vp9: $(FATE_CBS_VP9-yes)
++
++FATE_CBS_FRAME_PACKING-$(call ALLYES, EXTRACT_EXTRADATA_BSF H264_METADATA_BSF HEVC_METADATA_BSF H264_DEMUXER HEVC_DEMUXER H264_PARSER HEVC_PARSER FILE_PROTOCOL) += fate-cbs-h264-frame-packing fate-cbs-hevc-frame-packing \
++                                                                      fate-cbs-hevc-frame-packing-constraint fate-cbs-hevc-frame-packing-sublayers
++fate-cbs-h264-frame-packing: CMD = run $(APITESTSDIR)/api-bsf-frame-packing-test$(EXESUF) h264 $(TARGET_SAMPLES)/h264/frame-packing-persistence.h264
++fate-cbs-hevc-frame-packing: CMD = run $(APITESTSDIR)/api-bsf-frame-packing-test$(EXESUF) hevc $(TARGET_SAMPLES)/hevc/frame-packing-persistence.hevc
++fate-cbs-hevc-frame-packing-constraint: CMD = run $(APITESTSDIR)/api-bsf-frame-packing-test$(EXESUF) hevc-constraint $(TARGET_SAMPLES)/hevc/food.hevc
++fate-cbs-hevc-frame-packing-sublayers: CMD = run $(APITESTSDIR)/api-bsf-frame-packing-test$(EXESUF) hevc-sublayers $(TARGET_SAMPLES)/hevc-conformance/TSCL_A_VIDYO_5.bit
++$(FATE_CBS_FRAME_PACKING-yes): $(APITESTSDIR)/api-bsf-frame-packing-test$(EXESUF)
++FATE_SAMPLES_FFMPEG += $(FATE_CBS_FRAME_PACKING-yes)
++fate-cbs: $(FATE_CBS_FRAME_PACKING-yes)
+diff --git a/tests/ref/fate/cbs-h264-frame-packing b/tests/ref/fate/cbs-h264-frame-packing
+new file mode 100644
+index 0000000..40887ef
+--- /dev/null
++++ b/tests/ref/fate/cbs-h264-frame-packing
+@@ -0,0 +1,149 @@
++type0-view0: 0,1,0,0,1,1
++type0-view1: 0,1,1,0,1,1
++type0-view2: 0,1,2,0,1,1
++type1-view0: 1,0,0,0,1,1
++type1-view1: 1,0,1,0,1,1
++type1-view2: 1,0,2,0,1,1
++type2-view0: 2,0,0,0,1,1
++type2-view1: 2,0,1,0,1,1
++type2-view2: 2,0,2,0,1,1
++type3-view0: 3,0,0,0,1,1
++type3-view1: 3,0,1,0,1,1
++type3-view2: 3,0,2,0,1,1
++type4-view0: 4,0,0,0,1,1
++type4-view1: 4,0,1,0,1,1
++type4-view2: 4,0,2,0,1,1
++type5-view0: 5,0,0,1,0,1
++type5-view1: 5,0,1,1,0,1
++type5-view2: 5,0,2,1,0,1
++type6-view0: 6,0,0,0,1,1
++type6-view1: error
++type6-view2: error
++type7-view0: 7,0,0,0,1,1
++type7-view1: 7,0,1,0,1,1
++type7-view2: 7,0,2,0,1,1
++type7-uncropped: error
++type7-width-14: error
++type7-height-14: error
++stereo0-invert0: 0,1,1,0,1,1
++stereo0-invert1: 0,1,2,0,1,1
++stereo1-invert0: 1,0,1,0,1,1
++stereo1-invert1: 1,0,2,0,1,1
++stereo2-invert0: 2,0,1,0,1,1
++stereo2-invert1: 2,0,2,0,1,1
++stereo3-invert0: 3,0,1,0,1,1
++stereo3-invert1: 3,0,2,0,1,1
++stereo4-invert0: 4,0,1,0,1,1
++stereo4-invert1: 4,0,2,0,1,1
++stereo5-invert0: 5,0,1,1,0,1
++stereo5-invert1: 5,0,2,1,0,1
++stereo6-invert0: 6,0,0,0,1,1
++stereo6-invert1: 6,0,0,0,1,1
++stereo7-invert0: 3,1,1,0,1,1
++stereo7-invert1: 3,1,2,0,1,1
++remove: none
++packet-wins: 3,0,2,0,1,1
++option-wins: 4,0,1,0,1,1
++quincunx: 3,1,1,0,1,1
++invalid-temporal-quincunx: error
++packet-frame0: 5,0,1,1,0,1
++packet-frame1: 5,0,1,0,0,1
++packet-nonkey: 4,0,1,0,1,1
++ 4,0,1,0,1,1
++replace-cancel: 3,0,1,0,1,1
++ none
++ 3,0,1,0,1,1
++pass: 3,0,1,0,1,1
++no-description: 3,0,1,0,1,1
++inferred-quincunx: 3,1,1,0,1,1
++temporal: 5,0,1,1,0,1
++ 5,0,1,0,0,1
++temporal-flush: 5,0,1,1,0,1
++ 5,0,1,1,0,1
++temporal-view0-invert0: 5,0,1,1,0,1
++ 5,0,1,0,0,1
++temporal-view1-invert0: 5,0,1,1,0,1
++ 5,0,1,1,0,1
++temporal-view2-invert0: 5,0,1,0,0,1
++ 5,0,1,0,0,1
++temporal-view3-invert0: 5,0,1,1,0,1
++ 5,0,1,0,0,1
++temporal-view0-invert1: 5,0,2,1,0,1
++ 5,0,2,0,0,1
++temporal-view1-invert1: 5,0,2,0,0,1
++ 5,0,2,0,0,1
++temporal-view2-invert1: 5,0,2,1,0,1
++ 5,0,2,1,0,1
++temporal-view3-invert1: 5,0,2,1,0,1
++ 5,0,2,0,0,1
++temporal-override-content: 5,0,1,1,0,1
++temporal-right-unspec: 5,0,1,0,0,1
++ 5,0,1,1,0,1
++temporal-right-unspec-inverted: 5,0,2,1,0,1
++ 5,0,2,0,0,1
++extract-original: unchanged=1 stereo=1,0,0
++ unchanged=1 none
++ unchanged=1 none
++extract-absent: unchanged=1 none
++extract-type0-content0: unchanged=1 none
++extract-type0-content1: unchanged=1 stereo=4,0,0
++extract-type0-content2: unchanged=1 stereo=4,1,0
++extract-type1-content0: unchanged=1 none
++extract-type1-content1: unchanged=1 stereo=7,0,0
++extract-type1-content2: unchanged=1 stereo=7,1,0
++extract-type2-content0: unchanged=1 none
++extract-type2-content1: unchanged=1 stereo=6,0,0
++extract-type2-content2: unchanged=1 stereo=6,1,0
++extract-type3-content0: unchanged=1 none
++extract-type3-content1: unchanged=1 stereo=1,0,0
++extract-type3-content2: unchanged=1 stereo=1,1,0
++extract-type4-content0: unchanged=1 none
++extract-type4-content1: unchanged=1 stereo=2,0,0
++extract-type4-content2: unchanged=1 stereo=2,1,0
++extract-type5-content0: unchanged=1 none
++ unchanged=1 none
++extract-type5-content1: unchanged=1 stereo=3,0,1
++ unchanged=1 stereo=3,0,2
++extract-type5-content2: unchanged=1 stereo=3,1,2
++ unchanged=1 stereo=3,1,1
++extract-type6-content0: unchanged=1 stereo=0,0,0
++extract-type7-content0: unchanged=1 none
++extract-type7-content1: unchanged=1 none
++extract-type7-content2: unchanged=1 none
++extract-quincunx: unchanged=1 stereo=5,0,0
++orientation-no-flush: orientation
++ none
++orientation-flush: orientation
++ orientation
++extract-plain-sbs: stereo=1,0,0
++extract-flipped-sbs: none
++extract-flipped-tb: none
++extract-quincunx-sbs: stereo=5,0,0
++extract-quincunx-tb: none
++extract-flipped-quincunx-sbs: none
++extract-quincunx-columns: none
++extract-quincunx-checkerboard: stereo=4,0,0
++persistent-then-description: packet 0: sei(t0,l0)[id=1,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++  packet 1: sei(t0,l0)[id=1,cancel] sei(t0,l0)[id=0,type=4,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++persistent-then-explicit: packet 0: sei(t0,l0)[id=0,type=4,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++  packet 1: sei(t0,l0)[id=0,type=4,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++persistent-self-contained: packet 0: sei(t0,l0)[id=1,type=3,q=0,c=1,flip=0,f0=0,s=3,p=1] vcl(t0,l0)
++  packet 1: sei(t0,l0)[id=1,cancel] sei(t0,l0)[id=0,type=4,q=0,c=1,flip=0,f0=0,s=3,p=1] vcl(t0,l0)
++  packet 2: sei(t0,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=3,p=1] vcl(t0,l0)
++persistent-without-description: packet 0: sei(t0,l0)[id=1,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++  packet 1: vcl(t0,l0)
++cancelled-then-description: packet 0: sei(t0,l0)[id=1,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++  packet 1: sei(t0,l0)[id=1,cancel] vcl(t0,l0)
++  packet 2: sei(t0,l0)[id=0,type=4,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++extradata-pass: initial sei(t0,l0)[id=1,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1]
++  new extradata: sei(t0,l0)[id=1,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1]
++extradata-remove: initial
++  new extradata:
++layout-then-2d: packet 0: sei(t0,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++  packet 1: sei(t0,l0)[id=0,type=6,q=0,c=0,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++layout-then-2d-later: packet 0: sei(t0,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++  packet 1: vcl(t0,l0)
++  packet 2: sei(t0,l0)[id=0,type=6,q=0,c=0,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++layout-then-other-later: packet 0: sei(t0,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++  packet 1: vcl(t0,l0)
++  packet 2: sei(t0,l0)[id=0,type=4,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
+diff --git a/tests/ref/fate/cbs-hevc-frame-packing b/tests/ref/fate/cbs-hevc-frame-packing
+new file mode 100644
+index 0000000..f21fb40
+--- /dev/null
++++ b/tests/ref/fate/cbs-hevc-frame-packing
+@@ -0,0 +1,112 @@
++type3-view0: 3,0,0,0,1,1
++type3-view1: 3,0,1,0,1,1
++type3-view2: 3,0,2,0,1,1
++type4-view0: 4,0,0,0,1,1
++type4-view1: 4,0,1,0,1,1
++type4-view2: 4,0,2,0,1,1
++type5-view0: 5,0,0,1,0,1
++type5-view1: 5,0,1,1,0,1
++type5-view2: 5,0,2,1,0,1
++stereo0-invert0: 3,0,1,0,1,1
++stereo0-invert1: 3,0,1,0,1,1
++stereo1-invert0: 3,0,1,0,1,1
++stereo1-invert1: 3,0,1,0,1,1
++stereo2-invert0: 3,0,1,0,1,1
++stereo2-invert1: 3,0,1,0,1,1
++stereo3-invert0: 3,0,1,0,1,1
++stereo3-invert1: 3,0,2,0,1,1
++stereo4-invert0: 4,0,1,0,1,1
++stereo4-invert1: 4,0,2,0,1,1
++stereo5-invert0: 5,0,1,1,0,1
++stereo5-invert1: 5,0,2,1,0,1
++stereo6-invert0: none
++stereo6-invert1: none
++stereo7-invert0: 3,1,1,0,1,1
++stereo7-invert1: 3,1,2,0,1,1
++remove: none
++packet-wins: 3,0,2,0,1,1
++option-wins: 4,0,1,0,1,1
++quincunx: 3,1,1,0,1,1
++invalid-temporal-quincunx: error
++packet-frame0: 5,0,1,1,0,1
++packet-frame1: 5,0,1,0,0,1
++packet-nonkey: 4,0,1,0,1,1
++ 4,0,1,0,1,1
++replace-cancel: 3,0,1,0,1,1
++ none
++ 3,0,1,0,1,1
++pass: 3,0,1,0,1,1
++no-description: 3,0,1,0,1,1
++inferred-quincunx: 3,1,1,0,1,1
++temporal: 5,0,1,1,0,1
++ 5,0,1,0,0,1
++temporal-flush: 5,0,1,1,0,1
++ 5,0,1,1,0,1
++temporal-view0-invert0: 5,0,1,1,0,1
++ 5,0,1,0,0,1
++temporal-view1-invert0: 5,0,1,1,0,1
++ 5,0,1,1,0,1
++temporal-view2-invert0: 5,0,1,0,0,1
++ 5,0,1,0,0,1
++temporal-view3-invert0: 5,0,1,1,0,1
++ 5,0,1,0,0,1
++temporal-view0-invert1: 5,0,2,1,0,1
++ 5,0,2,0,0,1
++temporal-view1-invert1: 5,0,2,0,0,1
++ 5,0,2,0,0,1
++temporal-view2-invert1: 5,0,2,1,0,1
++ 5,0,2,1,0,1
++temporal-view3-invert1: 5,0,2,1,0,1
++ 5,0,2,0,0,1
++temporal-override-content: 5,0,1,1,0,1
++temporal-right-unspec: 5,0,1,0,0,1
++ 5,0,1,1,0,1
++temporal-right-unspec-inverted: 5,0,2,1,0,1
++ 5,0,2,0,0,1
++extract-original: unchanged=1 stereo=1,0,0
++ unchanged=1 none
++ unchanged=1 none
++extract-absent: unchanged=1 none
++extract-type3-content0: unchanged=1 none
++extract-type3-content1: unchanged=1 stereo=1,0,0
++extract-type3-content2: unchanged=1 stereo=1,1,0
++extract-type4-content0: unchanged=1 none
++extract-type4-content1: unchanged=1 stereo=2,0,0
++extract-type4-content2: unchanged=1 stereo=2,1,0
++extract-type5-content0: unchanged=1 none
++ unchanged=1 none
++extract-type5-content1: unchanged=1 stereo=3,0,1
++ unchanged=1 stereo=3,0,2
++extract-type5-content2: unchanged=1 stereo=3,1,2
++ unchanged=1 stereo=3,1,1
++extract-quincunx: unchanged=1 stereo=5,0,0
++extract-plain-sbs: stereo=1,0,0
++extract-flipped-sbs: none
++extract-flipped-tb: none
++extract-quincunx-sbs: stereo=5,0,0
++extract-quincunx-tb: none
++extract-flipped-quincunx-sbs: none
++persistent-then-description: packet 0: vps(non_packed=0) sps(non_packed=0) sei(t0,l0)[id=1,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++  packet 1: sei(t0,l0)[id=1,cancel] sei(t0,l0)[id=0,type=4,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++persistent-then-explicit: packet 0: vps(non_packed=0) sps(non_packed=0) sei(t0,l0)[id=0,type=4,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++  packet 1: sei(t0,l0)[id=0,type=4,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++persistent-self-contained: packet 0: vps(non_packed=0) sps(non_packed=0) sei(t0,l0)[id=1,type=3,q=0,c=1,flip=0,f0=0,s=3,p=1] vcl(t0,l0)
++  packet 1: sei(t0,l0)[id=1,cancel] sei(t0,l0)[id=0,type=4,q=0,c=1,flip=0,f0=0,s=3,p=1] vcl(t0,l0)
++  packet 2: sei(t0,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=3,p=1] vcl(t0,l0)
++persistent-without-description: packet 0: vps(non_packed=0) sps(non_packed=0) sei(t0,l0)[id=1,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++  packet 1: vcl(t0,l0)
++cancelled-then-description: packet 0: vps(non_packed=0) sps(non_packed=0) sei(t0,l0)[id=1,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++  packet 1: sei(t0,l0)[id=1,cancel] vcl(t0,l0)
++  packet 2: sei(t0,l0)[id=0,type=4,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++extradata-pass: initial vps(non_packed=0) sps(non_packed=0) sei(t0,l0)[id=1,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1]
++  new extradata: vps(non_packed=0) sps(non_packed=0) sei(t0,l0)[id=1,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1]
++extradata-remove: initial vps(non_packed=0) sps(non_packed=0)
++  new extradata: vps(non_packed=0) sps(non_packed=0)
++layout-then-2d: packet 0: vps(non_packed=0) sps(non_packed=0) sei(t0,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++  packet 1: sei(t0,l0)[id=0,cancel] vcl(t0,l0)
++layout-then-2d-later: packet 0: vps(non_packed=0) sps(non_packed=0) sei(t0,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++  packet 1: vcl(t0,l0)
++  packet 2: sei(t0,l0)[id=0,cancel] vcl(t0,l0)
++layout-then-other-later: packet 0: vps(non_packed=0) sps(non_packed=0) sei(t0,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
++  packet 1: vcl(t0,l0)
++  packet 2: sei(t0,l0)[id=0,type=4,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0)
+diff --git a/tests/ref/fate/cbs-hevc-frame-packing-constraint b/tests/ref/fate/cbs-hevc-frame-packing-constraint
+new file mode 100644
+index 0000000..b6c71b9
+--- /dev/null
++++ b/tests/ref/fate/cbs-hevc-frame-packing-constraint
+@@ -0,0 +1,13 @@
++untouched: packet 0: vps(non_packed=1) sps(non_packed=1) sei(payload 129) sei(payload 0) sei(payload 1) sei(payload 6) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0)
++no-description: packet 0: vps(non_packed=1) sps(non_packed=1) sei(payload 129) sei(payload 0) sei(payload 1) sei(payload 6) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0)
++explicit-type: packet 0: vps(non_packed=0) sps(non_packed=0) sei(payload 129) sei(t0,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] sei(payload 0) sei(payload 1) sei(payload 6) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0)
++stream-description: packet 0: vps(non_packed=0) sps(non_packed=0) sei(payload 129) sei(t0,l0)[id=0,type=4,q=0,c=1,flip=0,f0=0,s=0,p=1] sei(payload 0) sei(payload 1) sei(payload 6) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0)
++stream-2d: packet 0: vps(non_packed=1) sps(non_packed=1) sei(payload 129) sei(payload 0) sei(payload 1) sei(payload 6) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0)
++packet-description-first: packet 0: vps(non_packed=0) sps(non_packed=0) sei(payload 129) sei(t0,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] sei(payload 0) sei(payload 1) sei(payload 6) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0)
++packet-description-late: packet 0: vps(non_packed=1) sps(non_packed=1) sei(payload 129) sei(payload 0) sei(payload 1) sei(payload 6) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0)
++ error
++packet-2d-first: packet 0: vps(non_packed=1) sps(non_packed=1) sei(payload 129) sei(payload 0) sei(payload 1) sei(payload 6) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0) vcl(t0,l0)
++extradata-explicit-type: initial vps(non_packed=0) sps(non_packed=0) sei(payload 129) sei(payload 0) sei(payload 1) sei(payload 6)
++  new extradata: vps(non_packed=0) sps(non_packed=0) sei(payload 129) sei(payload 0) sei(payload 1) sei(payload 6)
++extradata-no-description: initial vps(non_packed=1) sps(non_packed=1) sei(payload 129) sei(payload 0) sei(payload 1) sei(payload 6)
++  new extradata: vps(non_packed=1) sps(non_packed=1) sei(payload 129) sei(payload 0) sei(payload 1) sei(payload 6)
+diff --git a/tests/ref/fate/cbs-hevc-frame-packing-sublayers b/tests/ref/fate/cbs-hevc-frame-packing-sublayers
+new file mode 100644
+index 0000000..817cbc0
+--- /dev/null
++++ b/tests/ref/fate/cbs-hevc-frame-packing-sublayers
+@@ -0,0 +1,16 @@
++packet-description: packet 0: vps(non_packed=0) sps(non_packed=0) sei(t0,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0) sei(payload 132)
++  packet 1: sei(t0,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t0,l0) sei(payload 132)
++  packet 2: sei(t1,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t1,l0) sei(payload 132)
++  packet 3: sei(t2,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t2,l0) sei(payload 132)
++  packet 4: sei(t3,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t3,l0) sei(payload 132)
++  packet 5: sei(t3,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t3,l0) sei(payload 132)
++  packet 6: sei(t2,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t2,l0) sei(payload 132)
++  packet 7: sei(t3,l0)[id=0,type=3,q=0,c=1,flip=0,f0=0,s=0,p=1] vcl(t3,l0) sei(payload 132)
++explicit-type: packet 0: vps(non_packed=0) sps(non_packed=0) sei(t0,l0)[id=0,type=4,q=0,c=2,flip=0,f0=0,s=0,p=1] vcl(t0,l0) sei(payload 132)
++  packet 1: vcl(t0,l0) sei(payload 132)
++  packet 2: vcl(t1,l0) sei(payload 132)
++  packet 3: vcl(t2,l0) sei(payload 132)
++  packet 4: vcl(t3,l0) sei(payload 132)
++  packet 5: vcl(t3,l0) sei(payload 132)
++  packet 6: vcl(t2,l0) sei(payload 132)
++  packet 7: vcl(t3,l0) sei(payload 132)
