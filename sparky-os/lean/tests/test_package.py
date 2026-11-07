@@ -139,6 +139,36 @@ class Packages(unittest.TestCase):
         release.build_tree(root, out)
         release.check_debs([out / 'lc-links_1_all.deb'])
 
+    def test_provenance_keeps_the_packaging_licence_of_ours(self):
+        # DisplayXR's packaging is under BSL-1.0 (Sparky-OS/displayxr-packaging); the credit stays the
+        # edition's, the licence stays the packaging's, and the stand-alone paragraphs before it stay.
+        provenance = Path(__file__).resolve().parents[2] / 'repo/provenance.sh'
+        cases = {'BSL-1.0': 'BSL-1.0', 'GPL-2+': 'GPL-2+', None: 'GPL-2+'}
+        for i, (ours, expected) in enumerate(cases.items()):
+            root = self.base / f'licence-{i}'
+            (root / 'DEBIAN').mkdir(parents=True)
+            (root / 'DEBIAN/control').write_text(
+                'Package: lc-licence\nVersion: 1\nArchitecture: all\n'
+                'Maintainer: Example <dev@example.org>\nDescription: Licence fixture\n')
+            cf = root / 'usr/share/doc/lc-licence/copyright'
+            cf.parent.mkdir(parents=True)
+            text = ('Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n\n'
+                    'Files: *\nCopyright: 2026 Upstream\nLicense: BSL-1.0\n\n'
+                    'License: BSL-1.0\n The licence text.\n')
+            if ours:
+                text += (f'\nFiles: debian/*\nComment: Sparky Stereo OS packaging, an older credit.\n'
+                         f'Copyright: 2026 Daniel Ramos (Capitain Jack)\nLicense: {ours}\n')
+            cf.write_text(text)
+            subprocess.run(['bash', str(provenance), '--tree', str(root)], check=True)
+            out = cf.read_text()
+            self.assertEqual(out.count('\nFiles: debian/*\n'), 1, out)
+            last = out[out.index('\nFiles: debian/*\n'):]
+            self.assertIn("Daniel Ramos's edition of SparkyLinux", last)
+            self.assertIn(f'\nLicense: {expected}\n', last + '\n')
+            self.assertIn('License: BSL-1.0\n The licence text.\n', out)
+            if expected == 'BSL-1.0':
+                self.assertNotIn('GPL', last)
+
     def test_build_runtime_and_hr_are_exact_and_separate(self):
         tree, out, deb = self.build()
         obj = package.check_tree(tree)

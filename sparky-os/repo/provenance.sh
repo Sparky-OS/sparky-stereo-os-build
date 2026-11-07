@@ -66,13 +66,19 @@ PY
 	for cf in "$w"/usr/share/doc/*/copyright; do
 		[ -f "$cf" ] && [ ! -L "$cf" ] || continue
 		STANZA="$STANZA" MARK="$MARK" python3 - "$cf" <<'PY'
-import os, sys
+import os, re, sys
 f = sys.argv[1]
 t = open(f, encoding='utf-8', errors='surrogateescape').read()
+stanza = os.environ['STANZA']
 k = t.find('\nFiles: debian/*\nComment: ' + os.environ['MARK'])
 if k >= 0:
+    # a packaging of ours under another licence keeps it (DisplayXR's is BSL-1.0, as agreed with the
+    # project); the licence is then a short name whose stand-alone paragraph comes earlier in the file
+    m = re.search(r'^License: (\S+)$', t[k:], re.M)
+    if m and m.group(1) != 'GPL-2+':
+        stanza = stanza.split('\nLicense: ', 1)[0] + '\nLicense: ' + m.group(1)
     t = t[:k]
-t = t.rstrip('\n') + '\n\n' + os.environ['STANZA'] + '\n'
+t = t.rstrip('\n') + '\n\n' + stanza + '\n'
 open(f, 'w', encoding='utf-8', errors='surrogateescape').write(t)
 PY
 	done
