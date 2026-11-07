@@ -15,8 +15,16 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../../repo/build-provenance.sh"
 . "$HERE/../../config/local-config.sh"
 sparky_need SPARKY_REPO_DIR
-: "${SPARKY_LC_ARCHIVE_DIR:?the link gate's folder, mounted at /archive: sources.json (the public archives, and the edition's
-  published tree as file:/repo) and the public keyrings it names; see sparky-os/lean/archive.md}"
+# The link gate's archive list is the recipe's own (archive-sources.json: Debian testing with its installer component for
+# libgtk-4-1-udeb, deb-multimedia for the media libraries, the edition's tree as file:/repo), with the public keyrings copied
+# beside it; SPARKY_LC_ARCHIVE_DIR still wins when the local configuration names one.
+if [ -z "${SPARKY_LC_ARCHIVE_DIR:-}" ]; then
+	SPARKY_LC_ARCHIVE_DIR=$(mktemp -d)
+	trap 'rm -rf "$SPARKY_LC_ARCHIVE_DIR"' EXIT
+	cp "$HERE/archive-sources.json" "$SPARKY_LC_ARCHIVE_DIR/sources.json"
+	cp /usr/share/keyrings/debian-archive-keyring.pgp /usr/share/keyrings/deb-multimedia-keyring.pgp "$SPARKY_LC_ARCHIVE_DIR/"
+	cp "$SPARKY_REPO_DIR/sparky-stereo-repo.asc" "$SPARKY_LC_ARCHIVE_DIR/"
+fi
 WORK=$(mkdir -p "$1" && cd "$1" && pwd)
 PREV=$(cd "$2" && pwd)
 SRC=$(cd "$3" && pwd)
