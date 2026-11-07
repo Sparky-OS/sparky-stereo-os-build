@@ -1,0 +1,431 @@
+Description: EGL on X11 lists its child window and keeps a stereo window one eye wide
+ A stereo EGL window surface (EGL_EXT_multiview_window) on a child X window
+ declared _KDE_NET_WM_STEREO_CONTENT but never listed itself in its owner's
+ _KDE_NET_WM_STEREO_CONTENT_CHILDREN, so the compositor, which shows a child's
+ own surface per eye only when it is listed, drew the packed buffer squeezed
+ into the child. Mesa's GLX lists its children (patches 0017 to 0019); the
+ calls are now one header, util/u_x11_stereo_child.h, that the EGL platform and
+ the Vulkan paths share (a server grab around the read and write of the list,
+ an owner found as GLX finds it, windows that are gone dropped when a child is
+ added, the child kept while its window lives).
+ .
+ The EGL surface also writes _KDE_NET_WM_STEREO_CONTENT_VERSION 4 before the
+ declaration when the compositor announces 4 or later, and then stops making
+ the window twice as wide, as patch 0014 did for GLX: the window stays one eye
+ wide, the buffer is twice its width (dri_drawable->stereo_window_one_eye), and
+ the software path puts the packed image into a pixmap that it presents to the
+ window. Before this the window of a stereo EGL surface was one eye twice, and
+ an unmap and map of the window made the compositor double it again (640 wide
+ became 1280, then 2560).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-07
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+--- /dev/null
++++ b/src/util/u_x11_stereo_child.h
+@@ -0,0 +1,131 @@
++/*
++ * Copyright 2026 Daniel Campos Ramos
++ * SPDX-License-Identifier: MIT
++ *
++ * The X11 side of a stereo area that is a child window: the window lists the
++ * child in _KDE_NET_WM_STEREO_CONTENT_CHILDREN (WINDOW/32) so that the
++ * compositor shows the child's own surface one view per eye while the rest of
++ * the window stays the same in both eyes. GLX does this with an observer
++ * thread (src/glx/dri_common.c); EGL on X11 and the Vulkan paths use these
++ * calls, once, when the child declares its stereo content.
++ */
++#ifndef U_X11_STEREO_CHILD_H
++#define U_X11_STEREO_CHILD_H
++
++#include <stdbool.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <xcb/xcb.h>
++
++static inline xcb_atom_t
++u_x11_stereo_atom(xcb_connection_t *conn, const char *name, bool only_if_exists)
++{
++   xcb_intern_atom_reply_t *reply = xcb_intern_atom_reply(
++      conn, xcb_intern_atom(conn, only_if_exists, strlen(name), name), NULL);
++   xcb_atom_t atom = reply ? reply->atom : XCB_ATOM_NONE;
++   free(reply);
++   return atom;
++}
++
++/* The version of the declaration the compositor announces on the root window,
++ * 0 without one. */
++static inline uint32_t
++u_x11_stereo_support_version(xcb_connection_t *conn, xcb_window_t root)
++{
++   xcb_atom_t atom = u_x11_stereo_atom(conn, "_KDE_NET_WM_STEREO_CONTENT_SUPPORTED", true);
++   if (atom == XCB_ATOM_NONE)
++      return 0;
++   xcb_get_property_reply_t *reply = xcb_get_property_reply(
++      conn, xcb_get_property(conn, 0, root, atom, XCB_ATOM_CARDINAL, 0, 1), NULL);
++   uint32_t version = reply && reply->format == 32 &&
++                      xcb_get_property_value_length(reply) >= (int)sizeof(uint32_t) ?
++                      *(const uint32_t *)xcb_get_property_value(reply) : 0;
++   free(reply);
++   return version;
++}
++
++/* The window that holds the child: the one below the root on the way up, as
++ * GLX takes it. XCB_WINDOW_NONE when the child is itself below the root or its
++ * ancestors cannot be read. */
++static inline xcb_window_t
++u_x11_stereo_owner(xcb_connection_t *conn, xcb_window_t child)
++{
++   xcb_window_t window = child;
++   for (int depth = 0; depth < 64; depth++) {
++      xcb_query_tree_reply_t *tree =
++         xcb_query_tree_reply(conn, xcb_query_tree(conn, window), NULL);
++      if (!tree)
++         return XCB_WINDOW_NONE;
++      xcb_window_t parent = tree->parent, root = tree->root;
++      free(tree);
++      if (parent == root || parent == XCB_WINDOW_NONE)
++         return window == child ? XCB_WINDOW_NONE : window;
++      window = parent;
++   }
++   return XCB_WINDOW_NONE;
++}
++
++/* Writes _KDE_NET_WM_STEREO_CONTENT_VERSION on the window. */
++static inline void
++u_x11_stereo_set_version(xcb_connection_t *conn, xcb_window_t window, uint32_t version)
++{
++   xcb_atom_t atom = u_x11_stereo_atom(conn, "_KDE_NET_WM_STEREO_CONTENT_VERSION", false);
++   if (atom != XCB_ATOM_NONE)
++      xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, atom,
++                          XCB_ATOM_CARDINAL, 32, 1, &version);
++}
++
++/* Adds the child to its owner's _KDE_NET_WM_STEREO_CONTENT_CHILDREN once, and
++ * leaves it there while its window lives (the compositor follows the child's
++ * DestroyNotify). Windows that are gone leave the list when a child is added.
++ * Nothing is done for a child that is below the root: a stereo top-level
++ * declares itself. */
++static inline void
++u_x11_stereo_list_child(xcb_connection_t *conn, xcb_window_t child)
++{
++   xcb_window_t owner = u_x11_stereo_owner(conn, child);
++   xcb_atom_t atom = u_x11_stereo_atom(conn, "_KDE_NET_WM_STEREO_CONTENT_CHILDREN", false);
++   if (owner == XCB_WINDOW_NONE || atom == XCB_ATOM_NONE)
++      return;
++
++   /* the read, the change and the write must not interleave with another client's */
++   xcb_grab_server(conn);
++   xcb_get_property_reply_t *property = xcb_get_property_reply(
++      conn, xcb_get_property(conn, false, owner, atom, XCB_ATOM_WINDOW, 0, UINT32_MAX / 4), NULL);
++   if (property && (property->type == XCB_NONE ||
++                    (property->type == XCB_ATOM_WINDOW && property->format == 32))) {
++      unsigned count = property->type == XCB_NONE ? 0 : xcb_get_property_value_length(property) / 4;
++      const xcb_window_t *old = count ? xcb_get_property_value(property) : NULL;
++      xcb_window_t *updated = malloc((count + 1) * sizeof(*updated));
++      if (updated) {
++         unsigned n = 0;
++         bool found = false;
++         for (unsigned i = 0; i < count; i++) {
++            if (old[i] == child) {
++               if (found)
++                  continue;
++               found = true;
++            } else {
++               xcb_get_window_attributes_reply_t *attributes = xcb_get_window_attributes_reply(
++                  conn, xcb_get_window_attributes(conn, old[i]), NULL);
++               if (!attributes)
++                  continue;
++               free(attributes);
++            }
++            updated[n++] = old[i];
++         }
++         if (!found)
++            updated[n++] = child;
++         if (!found || n != count || memcmp(old, updated, n * sizeof(*updated)))
++            free(xcb_request_check(conn, xcb_change_property_checked(
++               conn, XCB_PROP_MODE_REPLACE, owner, atom, XCB_ATOM_WINDOW, 32, n, updated)));
++         free(updated);
++      }
++   }
++   free(property);
++   xcb_ungrab_server(conn);
++   xcb_flush(conn);
++}
++
++#endif
+--- a/src/egl/drivers/dri2/egl_dri2.h
++++ b/src/egl/drivers/dri2/egl_dri2.h
+@@ -314,6 +314,10 @@
+    _EGLSurface base;
+    struct dri_drawable *dri_drawable;
+    bool stereo;
++   /* The X11 window stays one eye wide (declaration version 4) and presents a
++    * buffer twice its width, holding both eyes.
++    */
++   bool x11_stereo_one_eye;
+    __DRIbuffer buffers[5];
+    bool have_fake_front;
+ 
+@@ -601,7 +605,7 @@
+ 
+ #ifdef HAVE_X11_PLATFORM
+ bool dri2_x11_stereo_supported(_EGLDisplay *disp);
+-void dri2_x11_declare_stereo(struct dri2_egl_display *dri2_dpy,
++bool dri2_x11_declare_stereo(struct dri2_egl_display *dri2_dpy,
+                              xcb_drawable_t drawable, uint16_t width);
+ #endif
+ #ifdef HAVE_WAYLAND_PLATFORM
+--- a/src/egl/drivers/dri2/platform_x11.c
++++ b/src/egl/drivers/dri2/platform_x11.c
+@@ -59,6 +59,9 @@
+ #include "platform_x11.h"
+ #include "drm-uapi/drm_fourcc.h"
+ #include "dri_util.h"
++#include "dri_drawable.h"
++#include "util/u_x11_stereo_child.h"
++#include <xcb/present.h>
+ 
+ /* The version of the stereo content declaration the compositor announces on
+  * the root window, 0 without one; from 3 the compositor itself makes a
+@@ -97,6 +100,9 @@
+ static int
+ dri2_x11_eye_width(const _EGLSurface *surf, int width)
+ {
++   /* a window that stays one eye wide is the width of one view */
++   if (((const struct dri2_egl_surface *)surf)->x11_stereo_one_eye)
++      return width;
+    return surf->MultiviewViewCount > 1 ? width / 2 : width;
+ }
+ 
+@@ -106,12 +112,22 @@
+    return surf->Width * (surf->MultiviewViewCount > 1 ? 2 : 1);
+ }
+ 
+-void
++/* Declares the window as holding stereo content. Returns whether the window
++ * stays one eye wide, with a buffer twice its width (declaration version 4 and
++ * later), and lists a child window with its owner (version 5 and later), so the
++ * compositor shows the child's own surface one view per eye.
++ */
++bool
+ dri2_x11_declare_stereo(struct dri2_egl_display *dri2_dpy,
+                         xcb_drawable_t drawable, uint16_t width)
+ {
+    if (width == 0 || width > UINT16_MAX / 2)
+-      return;
++      return false;
++
++   const uint32_t version = dri2_x11_stereo_support_version(dri2_dpy);
++   /* before the declaration, so the compositor reads the window's size as one eye's */
++   if (version >= 4)
++      u_x11_stereo_set_version(dri2_dpy->conn, drawable, 4);
+ 
+    xcb_intern_atom_cookie_t cookie = xcb_intern_atom(
+       dri2_dpy->conn, 0, strlen("_KDE_NET_WM_STEREO_CONTENT"),
+@@ -126,12 +142,15 @@
+    }
+    /* declared first, so the compositor reads the size as a stereo window's;
+     * from declaration version 3 the compositor doubles the X11 window */
+-   if (dri2_x11_stereo_support_version(dri2_dpy) < 3) {
++   if (version < 3) {
+       uint32_t packed_width = 2 * width;
+       xcb_configure_window(dri2_dpy->conn, drawable, XCB_CONFIG_WINDOW_WIDTH,
+                            &packed_width);
+    }
++   if (version >= 5)
++      u_x11_stereo_list_child(dri2_dpy->conn, drawable);
+    xcb_flush(dri2_dpy->conn);
++   return version >= 4;
+ }
+ 
+ static void
+@@ -226,6 +245,37 @@
+    x11_get_drawable_info(draw, x, y, w, h, loaderPrivate);
+ }
+ 
++/* A stereo window that stays one eye wide shows a buffer twice its width:
++ * both eyes go into a pixmap of that size, presented to the window, which
++ * Xwayland hands to the compositor as it is. */
++static xcb_pixmap_t
++swrast_stereo_pixmap(struct dri2_egl_display *dri2_dpy,
++                     struct dri2_egl_surface *dri2_surf, int op, int x, int y,
++                     int *w, int *h)
++{
++   if (!dri2_surf->x11_stereo_one_eye || op != __DRI_SWRAST_IMAGE_OP_SWAP ||
++       x != 0 || y != 0)
++      return XCB_NONE;
++   /* the image is the packed buffer, which may be padded beyond both eyes */
++   *w = MIN2(*w, 2 * dri2_surf->base.Width);
++   *h = MIN2(*h, dri2_surf->base.Height);
++   xcb_pixmap_t pixmap = xcb_generate_id(dri2_dpy->conn);
++   xcb_create_pixmap(dri2_dpy->conn, dri2_surf->depth, pixmap,
++                     dri2_surf->drawable, *w, *h);
++   return pixmap;
++}
++
++static void
++swrast_stereo_present(struct dri2_egl_display *dri2_dpy,
++                      struct dri2_egl_surface *dri2_surf, xcb_pixmap_t pixmap)
++{
++   if (!pixmap)
++      return;
++   xcb_present_pixmap(dri2_dpy->conn, dri2_surf->drawable, pixmap, 0, 0, 0, 0,
++                      0, 0, 0, 0, XCB_PRESENT_OPTION_NONE, 0, 0, 0, 0, NULL);
++   xcb_free_pixmap(dri2_dpy->conn, pixmap);
++}
++
+ static void
+ swrastPutImage2(struct dri_drawable *draw, int op, int x, int y, int w, int h,
+                 int stride, char *data, void *loaderPrivate)
+@@ -233,6 +283,10 @@
+    struct dri2_egl_surface *dri2_surf = loaderPrivate;
+    struct dri2_egl_display *dri2_dpy =
+       dri2_egl_display(dri2_surf->base.Resource.Display);
++   xcb_drawable_t target = dri2_surf->drawable;
++   xcb_pixmap_t stereo_pixmap = swrast_stereo_pixmap(dri2_dpy, dri2_surf, op, x, y, &w, &h);
++   if (stereo_pixmap)
++      target = stereo_pixmap;
+    int stride_b = dri2_surf->bytes_per_pixel * w;
+    size_t hdr_len = sizeof(xcb_put_image_request_t);
+    size_t size = (hdr_len + stride_b * h) >> 2;
+@@ -261,7 +315,7 @@
+    if (stride_b != stride) {
+       for (unsigned i = 0; i < h; i++) {
+          cookie = xcb_put_image(
+-            dri2_dpy->conn, XCB_IMAGE_FORMAT_Z_PIXMAP, dri2_surf->drawable, gc, w,
++            dri2_dpy->conn, XCB_IMAGE_FORMAT_Z_PIXMAP, target, gc, w,
+             1, x, y+i, 0, dri2_surf->depth, stride_b, (uint8_t*)data);
+          xcb_discard_reply(dri2_dpy->conn, cookie.sequence);
+ 
+@@ -269,7 +323,7 @@
+       }
+    } else if (size < max_req_len) {
+       cookie = xcb_put_image(
+-         dri2_dpy->conn, XCB_IMAGE_FORMAT_Z_PIXMAP, dri2_surf->drawable, gc, w,
++         dri2_dpy->conn, XCB_IMAGE_FORMAT_Z_PIXMAP, target, gc, w,
+          h, x, y, 0, dri2_surf->depth, h * stride_b, (const uint8_t *)data);
+       xcb_discard_reply(dri2_dpy->conn, cookie.sequence);
+    } else {
+@@ -280,7 +334,7 @@
+          int this_lines = MIN2(num_lines, y_todo);
+          cookie =
+             xcb_put_image(dri2_dpy->conn, XCB_IMAGE_FORMAT_Z_PIXMAP,
+-                          dri2_surf->drawable, gc, w, this_lines, x, y_start, 0,
++                          target, gc, w, this_lines, x, y_start, 0,
+                           dri2_surf->depth, this_lines * stride_b,
+                           ((const uint8_t *)data + y_start * stride_b));
+          xcb_discard_reply(dri2_dpy->conn, cookie.sequence);
+@@ -288,6 +342,7 @@
+          y_todo -= this_lines;
+       }
+    }
++   swrast_stereo_present(dri2_dpy, dri2_surf, stereo_pixmap);
+    xcb_flush(dri2_dpy->conn);
+ }
+ 
+@@ -359,6 +414,14 @@
+    struct dri2_egl_display *dri2_dpy =
+       dri2_egl_display(dri2_surf->base.Resource.Display);
+    xcb_generic_error_t *error = NULL;
++   xcb_drawable_t target = dri2_surf->drawable;
++   int pw = w, ph = h;
++   xcb_pixmap_t stereo_pixmap = swrast_stereo_pixmap(dri2_dpy, dri2_surf, op, x, y, &pw, &ph);
++   if (stereo_pixmap) {
++      target = stereo_pixmap;
++      w = pw;
++      h = ph;
++   }
+ 
+    xcb_shm_seg_t shm_seg = xcb_generate_id(dri2_dpy->conn);
+    error = xcb_request_check(dri2_dpy->conn,
+@@ -385,7 +448,7 @@
+    }
+ 
+    cookie = xcb_shm_put_image(dri2_dpy->conn,
+-         dri2_surf->drawable,
++         target,
+          gc,
+          stride / dri2_surf->bytes_per_pixel, h,
+          x, 0,
+@@ -396,6 +459,7 @@
+          0, shm_seg, stride * y);
+    xcb_discard_reply(dri2_dpy->conn, cookie.sequence);
+ 
++   swrast_stereo_present(dri2_dpy, dri2_surf, stereo_pixmap);
+    xcb_flush(dri2_dpy->conn);
+    xcb_shm_detach(dri2_dpy->conn, shm_seg);
+ }
+@@ -543,13 +607,14 @@
+          goto cleanup_dri_drawable;
+       }
+ 
++      if (type == EGL_WINDOW_BIT &&
++          dri2_surf->base.MultiviewViewCount > 1)
++         dri2_surf->x11_stereo_one_eye =
++            dri2_x11_declare_stereo(dri2_dpy, dri2_surf->drawable,
++                                    reply->width);
+       dri2_surf->base.Width = dri2_x11_eye_width(&dri2_surf->base,
+                                                  reply->width);
+       dri2_surf->base.Height = reply->height;
+-      if (type == EGL_WINDOW_BIT &&
+-          dri2_surf->base.MultiviewViewCount > 1)
+-         dri2_x11_declare_stereo(dri2_dpy, dri2_surf->drawable,
+-                                 reply->width);
+       dri2_surf->depth = reply->depth;
+       free(reply);
+    }
+@@ -557,6 +622,9 @@
+    if (!dri2_create_drawable(dri2_dpy, config, dri2_surf, dri2_surf))
+       goto cleanup_pixmap;
+ 
++   if (dri2_surf->x11_stereo_one_eye)
++      dri2_surf->dri_drawable->stereo_window_one_eye = true;
++
+    if (type == EGL_PBUFFER_BIT) {
+       dri2_surf->depth = conf->BufferSize;
+    }
+--- a/src/egl/drivers/dri2/platform_x11_dri3.c
++++ b/src/egl/drivers/dri2/platform_x11_dri3.c
+@@ -37,6 +37,7 @@
+ #include "util/macros.h"
+ 
+ #include "egl_dri2.h"
++#include "dri_drawable.h"
+ #include "platform_x11_dri3.h"
+ 
+ #include "loader.h"
+@@ -56,8 +57,10 @@
+ {
+    struct dri3_egl_surface *dri3_surf = loader_drawable_to_egl_surface(draw);
+ 
++   /* a window that stays one eye wide is the width of one view */
+    dri3_surf->surf.base.Width =
+-      dri3_surf->surf.base.MultiviewViewCount > 1 ? width / 2 : width;
++      dri3_surf->surf.base.MultiviewViewCount > 1 &&
++      !dri3_surf->surf.x11_stereo_one_eye ? width / 2 : width;
+    dri3_surf->surf.base.Height = height;
+ }
+ 
+@@ -204,7 +207,8 @@
+          _eglError(EGL_BAD_NATIVE_WINDOW, "xcb_get_geometry");
+          goto cleanup_pixmap;
+       }
+-      dri2_x11_declare_stereo(dri2_dpy, drawable, geometry->width);
++      dri3_surf->surf.x11_stereo_one_eye =
++         dri2_x11_declare_stereo(dri2_dpy, drawable, geometry->width);
+       free(geometry);
+    }
+ 
+@@ -218,6 +222,9 @@
+       goto cleanup_pixmap;
+    }
+ 
++   if (dri3_surf->surf.x11_stereo_one_eye)
++      dri3_surf->loader_drawable.dri_drawable->stereo_window_one_eye = true;
++
+    if (dri3_surf->surf.base.ProtectedContent &&
+        dri2_dpy->fd_render_gpu != dri2_dpy->fd_display_gpu) {
+       _eglError(EGL_BAD_ALLOC, "dri3_surface_create");
