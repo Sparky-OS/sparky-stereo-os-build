@@ -376,7 +376,7 @@
 37-dp-dual-mode-hdmi-3d/0005-drm-nouveau-attach-the-side-by-side-full-timing-to-D.patch
 37-dp-dual-mode-hdmi-3d/0006-drm-nouveau-test-which-outputs-carry-HDMI-3D.patch
 
-# ==== 38-vkms-dp-frame-sequential: a VKMS model of a DisplayPort source sending frame-sequential stereo: a connector with a type and an EDID, one eye per frame from the side by side frame with flips at the pair boundary, a per-frame log of the eye, MSA MISC1 and VSC SDP, the connector opt-in, KUnit; a fix of VKMS's composer for back-to-back writeback jobs (ORDER 257 milestone 3); and the stereo modes of an EDID listed by a VKMS connector, their frame composed and written back, tested (ORDER 450; 10 commits)
+# ==== 38-vkms-dp-frame-sequential: a VKMS model of a DisplayPort source sending frame-sequential stereo: a connector with a type and an EDID, one eye per frame from the side by side frame with flips at the pair boundary, a per-frame log of the eye, MSA MISC1 and VSC SDP, the connector opt-in, KUnit; a fix of VKMS's composer for back-to-back writeback jobs (ORDER 257 milestone 3); and the stereo modes of an EDID listed by a VKMS connector, their frame composed and written back, tested (ORDER 450); a writeback job takes its vblank reference once the CRTC is on, so a configfs device completes its first writeback commit (ORDER 452; 11 commits)
 #      status: this build (build 14, all three flavours: 7.3.1-14+lc1). Source: lane dp-stereo-257-m3, written on v7.3 plus groups 01-37 (build 13's tree with groups 36 and 37). Plan: queue/dp-stereo-257/PLAN.md sections 6.2 and 7.
 #      needs 36: DRM_MODE_FLAG_3D_FRAME_SEQUENTIAL and its frame (0001), drm_connector.stereo_frame_sequential_allowed (0002), the frame-sequential twins of stereo DTDs (0004) and the VSC SDP stereo byte (0006, packed by drm_dp_vsc_sdp_pack()).
 #      0001 fixes a stock VKMS race, also in drm-misc-next of 2026-10-29: a writeback job's cleanup, run after its fence signals, switched the composer off, so a job committed right after the previous fence was never composed (IGT: the third of back-to-back captures timed out). The composer now counts its users (the CRC source, each writeback job from prepare to cleanup). Independent of stereo; an upstream candidate on its own.
@@ -398,6 +398,7 @@
 38-vkms-dp-frame-sequential/0008-drm-vkms-compose-and-write-back-the-frame-of-both-ey.patch
 38-vkms-dp-frame-sequential/0009-drm-vkms-allow-the-stereo-modes-of-the-EDID.patch
 38-vkms-dp-frame-sequential/0010-drm-vkms-test-the-stereo-modes-listed-from-an-EDID.patch
+38-vkms-dp-frame-sequential/0011-drm-vkms-take-a-writeback-job-s-vblank-reference-on.patch
 
 # ==== 39-amdgpu-dp-frame-sequential: amdgpu sends frame-sequential stereo in-band on DisplayPort (DCN, SST): the OTG alternates the eyes of the side by side frame, the DIG's stereo sync drives MSA MISC1 bits 2:1, the VSC SDP says DB0 = 0x01; DCN 2.0's HUBP latches stereo flips at the stereo sync; a stereo_state debugfs file reads it all back (ORDER 257 milestone 5; 6 commits)
 #      status: this build (build 14, all three flavours: 7.3.1-14+lc1). Source: lane dp-stereo-257-m5, written on v7.3 plus groups 01-38 (build 13's tree with groups 36 to 38, tree 322e5ed448 checked against main's series). Plan: queue/dp-stereo-257/PLAN.md sections 3.1, 6.3 and 7 (milestone 5).
