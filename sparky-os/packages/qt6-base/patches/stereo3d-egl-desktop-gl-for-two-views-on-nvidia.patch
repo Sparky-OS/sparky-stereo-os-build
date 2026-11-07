@@ -1,0 +1,65 @@
+Description: Choose a desktop OpenGL config for a stereo window on an EGL that offers two views
+ Qt takes an OpenGL ES config on NVIDIA's EGL (desktop OpenGL there is "for
+ development purposes"). A stereo window needs desktop OpenGL: its two views are
+ the left and right back buffers, and the decorations context of a window under
+ Qt's own frame (stereo3d-wayland-egl-eye-slots) is a desktop OpenGL context made
+ from the window's config. On NVIDIA's EGL with the gl-stereo layer's two views
+ (EGL_EXT_multiview_window) the config had no EGL_OPENGL_BIT, the decorations
+ context could not be created ("Failed to create the decorations EGLContext") and
+ the window stayed black wherever the compositor offers no server-side frame.
+ .
+ q_desktopGLAllowed() keeps the exception for NVIDIA's EGL and lifts it for a
+ stereo format on a display that lists EGL_EXT_multiview_window, in the config
+ chooser and in the format Qt reads back from the config. NVIDIA's own EGL does
+ not list the extension, so a program without the layer, and every non-stereo
+ format, keep OpenGL ES as before.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-07
+Assisted-by: Claude Sonnet via Claude Code
+---
+diff --git a/src/gui/opengl/platform/egl/qeglconvenience.cpp b/src/gui/opengl/platform/egl/qeglconvenience.cpp
+index fbcd29e9..eb2516f3 100644
+--- a/src/gui/opengl/platform/egl/qeglconvenience.cpp
++++ b/src/gui/opengl/platform/egl/qeglconvenience.cpp
+@@ -202,6 +202,20 @@ QEglConfigChooser::~QEglConfigChooser()
+ {
+ }
+ 
++#ifndef QT_NO_OPENGL
++// NVIDIA EGL only provides desktop GL for development purposes, and recommends against using it.
++// A stereo format is the exception where the display offers two views of a window surface
++// (EGL_EXT_multiview_window, as the gl-stereo layer gives over NVIDIA's EGL): those views are
++// the left and right back buffers of desktop OpenGL, and the platform's decorations context
++// for such a window is a desktop OpenGL context that needs a config of that API.
++static bool q_desktopGLAllowed(EGLDisplay display, const QSurfaceFormat &format)
++{
++    const char *vendor = eglQueryString(display, EGL_VENDOR);
++    return !vendor || !strstr(vendor, "NVIDIA")
++            || (format.stereo() && q_hasEglExtension(display, "EGL_EXT_multiview_window"));
++}
++#endif // QT_NO_OPENGL
++
+ EGLConfig QEglConfigChooser::chooseConfig()
+ {
+     QList<EGLint> configureAttributes = q_createConfigAttributesFromFormat(m_format);
+@@ -217,9 +231,7 @@ EGLConfig QEglConfigChooser::chooseConfig()
+ #ifdef EGL_VERSION_1_4
+     case QSurfaceFormat::DefaultRenderableType: {
+ #ifndef QT_NO_OPENGL
+-        // NVIDIA EGL only provides desktop GL for development purposes, and recommends against using it.
+-        const char *vendor = eglQueryString(display(), EGL_VENDOR);
+-        if (QOpenGLContext::openGLModuleType() == QOpenGLContext::LibGL && (!vendor || !strstr(vendor, "NVIDIA")))
++        if (QOpenGLContext::openGLModuleType() == QOpenGLContext::LibGL && q_desktopGLAllowed(display(), m_format))
+             configureAttributes.append(EGL_OPENGL_BIT);
+         else
+ #endif // QT_NO_OPENGL
+@@ -375,7 +387,7 @@ QSurfaceFormat q_glFormatFromConfig(EGLDisplay display, const EGLConfig config,
+     else if (referenceFormat.renderableType() == QSurfaceFormat::DefaultRenderableType
+ #ifndef QT_NO_OPENGL
+              && QOpenGLContext::openGLModuleType() == QOpenGLContext::LibGL
+-             && !strstr(eglQueryString(display, EGL_VENDOR), "NVIDIA")
++             && q_desktopGLAllowed(display, referenceFormat)
+ #endif
+              && (renderableType & EGL_OPENGL_BIT))
+         format.setRenderableType(QSurfaceFormat::OpenGL);
