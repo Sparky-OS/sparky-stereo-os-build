@@ -22,3 +22,10 @@ gtk4 (4.24.1+ds-1+stereo3d1) unstable; urgency=medium
     gtk_gl_area_get_current_eye. New test: testsuite/gtk/glarea.
     Searched first: GTK's main branch, its merge requests and issues
     (2026-11-07) have no stereo, multiview or per-eye GL in GtkGLArea.
+  * gdk: an EGL dma-buf export that leaves a plane without an open file
+    descriptor is a failed export (stereo3d-gdk-dmabuf-export-open-fds).
+    Mesa's zink on NVIDIA's proprietary Vulkan driver reports success and
+    does not write the descriptors; GTK passed uninitialised integers to the
+    compositor, which ended the connection (EBADF) as soon as a GtkGLArea
+    inside a GtkGraphicsOffload was offloaded. GTK now draws the texture
+    itself, as for any export that cannot be done.

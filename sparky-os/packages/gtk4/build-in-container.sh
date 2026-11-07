@@ -20,7 +20,7 @@ echo '43ca7e4305ba039a28451b818c5f2f0027ea998f3279fa2a18087e7a8146a640  /src/gtk
 cp /src/gtk4_4.24.1+ds-1.dsc /src/gtk4_4.24.1+ds-1.debian.tar.xz /src/gtk4_4.24.1+ds.orig.tar.xz .
 dpkg-source -x gtk4_4.24.1+ds-1.dsc t >/dev/null
 cd t
-for p in /patches/stereo3d-gtkglarea-stereo.patch; do
+for p in /patches/stereo3d-gdk-dmabuf-export-open-fds.patch /patches/stereo3d-gtkglarea-stereo.patch; do
 	cp "$p" debian/patches/
 	basename "$p" >> debian/patches/series
 done
