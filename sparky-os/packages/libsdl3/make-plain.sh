@@ -53,7 +53,7 @@ PY
 '
 T=$WORK/libsdl3-3.4.18+ds
 cp "$RECIPE"/patches/000*.patch "$T/debian/patches/"
-cp "$RECIPE/patches/series.list" "$T/debian/patches/series"
+cp "$RECIPE/patches/series" "$T/debian/patches/series"
 { sed -e "s/@VERSION@/$NEXT/" -e "s/@DATE@/$DATE/" "$RECIPE/changelog.entry"; echo; cat "$T/debian/changelog"; } > "$T/debian/changelog.new"
 mv "$T/debian/changelog.new" "$T/debian/changelog"
 echo "plain source of $NEXT in $T"
