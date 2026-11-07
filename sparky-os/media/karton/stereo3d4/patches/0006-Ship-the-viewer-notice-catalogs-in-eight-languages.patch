@@ -1,0 +1,310 @@
+Description: Ship the viewer notice catalogs in eight languages
+ .
+ The three strings of the viewer notice in Polish, Brazilian
+ Portuguese, French, German, Japanese, Korean and Simplified and
+ Traditional Chinese (English stays in the code), installed with
+ ki18n_install(po). A first draft written with AI assistance,
+ pending review by native speakers.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other
+Forwarded: no
+Last-Update: 2026-11-07
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ CMakeLists.txt     |  3 +++
+ po/de/karton.po    | 28 ++++++++++++++++++++++++++++
+ po/fr/karton.po    | 28 ++++++++++++++++++++++++++++
+ po/ja/karton.po    | 28 ++++++++++++++++++++++++++++
+ po/ko/karton.po    | 28 ++++++++++++++++++++++++++++
+ po/pl/karton.po    | 28 ++++++++++++++++++++++++++++
+ po/pt_BR/karton.po | 28 ++++++++++++++++++++++++++++
+ po/zh_CN/karton.po | 28 ++++++++++++++++++++++++++++
+ po/zh_TW/karton.po | 28 ++++++++++++++++++++++++++++
+ 9 files changed, 227 insertions(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e82f5f9..5c6d7c0 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -72,6 +72,9 @@ find_package(KF6 REQUIRED COMPONENTS
+ 
+ find_package(KF6KirigamiAddons 1.11.0 REQUIRED)
+ 
++# the catalogs of po/, installed when gettext is there to compile them
++ki18n_install(po)
++
+ install(FILES
+     img/karton_logo.svg
+     DESTINATION ${KDE_INSTALL_ICONDIR}/hicolor/scalable/apps
+diff --git a/po/de/karton.po b/po/de/karton.po
+new file mode 100644
+index 0000000..d8e576f
+--- /dev/null
++++ b/po/de/karton.po
+@@ -0,0 +1,28 @@
++# Translation of karton into de.
++# First draft written with AI assistance (Claude Sonnet 5.5, ORDER 255j), pending review by native speakers.
++# SPDX-License-Identifier: GPL-3.0-or-later
++#
++msgid ""
++msgstr ""
++"Project-Id-Version: karton\n"
++"Report-Msgid-Bugs-To: https://bugs.kde.org/\n"
++"Language: de\n"
++"PO-Revision-Date: 2026-11-07 00:00+0000\n"
++"Last-Translator: AI-assisted first draft, pending native speakers\n"
++"Language-Team: de\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=2; plural=(n != 1);\n"
++
++#: src/qml/VMViewerWindow.qml:137
++msgid "The picture of the virtual machine cannot be shown here."
++msgstr "Das Bild der virtuellen Maschine kann hier nicht angezeigt werden."
++
++#: src/qml/VMViewerWindow.qml:139
++msgid "This window cannot take the picture from the graphics card. Use the Wayland session, and start Karton without forcing it to run on X11."
++msgstr "Dieses Fenster kann das Bild nicht von der Grafikkarte übernehmen. Verwenden Sie die Wayland-Sitzung und starten Sie Karton, ohne es auf X11 zu erzwingen."
++
++#: src/qml/VMViewerWindow.qml:140
++msgid "The graphics card did not hand over the picture. Close this window and open the viewer again. If the picture is still missing, send in the Karton log lines about the GL scanout."
++msgstr "Die Grafikkarte hat das Bild nicht übergeben. Schließen Sie dieses Fenster und öffnen Sie die Anzeige erneut. Fehlt das Bild weiterhin, senden Sie die Protokollzeilen von Karton zum GL scanout ein."
+diff --git a/po/fr/karton.po b/po/fr/karton.po
+new file mode 100644
+index 0000000..a964e7d
+--- /dev/null
++++ b/po/fr/karton.po
+@@ -0,0 +1,28 @@
++# Translation of karton into fr.
++# First draft written with AI assistance (Claude Sonnet 5.5, ORDER 255j), pending review by native speakers.
++# SPDX-License-Identifier: GPL-3.0-or-later
++#
++msgid ""
++msgstr ""
++"Project-Id-Version: karton\n"
++"Report-Msgid-Bugs-To: https://bugs.kde.org/\n"
++"Language: fr\n"
++"PO-Revision-Date: 2026-11-07 00:00+0000\n"
++"Last-Translator: AI-assisted first draft, pending native speakers\n"
++"Language-Team: fr\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=2; plural=(n > 1);\n"
++
++#: src/qml/VMViewerWindow.qml:137
++msgid "The picture of the virtual machine cannot be shown here."
++msgstr "L'image de la machine virtuelle ne peut pas être affichée ici."
++
++#: src/qml/VMViewerWindow.qml:139
++msgid "This window cannot take the picture from the graphics card. Use the Wayland session, and start Karton without forcing it to run on X11."
++msgstr "Cette fenêtre ne peut pas recevoir l'image de la carte graphique. Utilisez la session Wayland et lancez Karton sans le forcer à s'exécuter sur X11."
++
++#: src/qml/VMViewerWindow.qml:140
++msgid "The graphics card did not hand over the picture. Close this window and open the viewer again. If the picture is still missing, send in the Karton log lines about the GL scanout."
++msgstr "La carte graphique n'a pas transmis l'image. Fermez cette fenêtre et rouvrez la visionneuse. Si l'image reste absente, envoyez les lignes du journal de Karton concernant le GL scanout."
+diff --git a/po/ja/karton.po b/po/ja/karton.po
+new file mode 100644
+index 0000000..d416af1
+--- /dev/null
++++ b/po/ja/karton.po
+@@ -0,0 +1,28 @@
++# Translation of karton into ja.
++# First draft written with AI assistance (Claude Sonnet 5.5, ORDER 255j), pending review by native speakers.
++# SPDX-License-Identifier: GPL-3.0-or-later
++#
++msgid ""
++msgstr ""
++"Project-Id-Version: karton\n"
++"Report-Msgid-Bugs-To: https://bugs.kde.org/\n"
++"Language: ja\n"
++"PO-Revision-Date: 2026-11-07 00:00+0000\n"
++"Last-Translator: AI-assisted first draft, pending native speakers\n"
++"Language-Team: ja\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=1; plural=0;\n"
++
++#: src/qml/VMViewerWindow.qml:137
++msgid "The picture of the virtual machine cannot be shown here."
++msgstr "仮想マシンの画面をここに表示できません。"
++
++#: src/qml/VMViewerWindow.qml:139
++msgid "This window cannot take the picture from the graphics card. Use the Wayland session, and start Karton without forcing it to run on X11."
++msgstr "このウィンドウはグラフィックスカードから画面を受け取れません。Wayland セッションを使い、Karton を X11 で動作するよう強制せずに起動してください。"
++
++#: src/qml/VMViewerWindow.qml:140
++msgid "The graphics card did not hand over the picture. Close this window and open the viewer again. If the picture is still missing, send in the Karton log lines about the GL scanout."
++msgstr "グラフィックスカードが画面を渡しませんでした。このウィンドウを閉じて、ビューアーを開き直してください。それでも表示されない場合は、GL scanoutに関する Karton のログの行を送ってください。"
+diff --git a/po/ko/karton.po b/po/ko/karton.po
+new file mode 100644
+index 0000000..34bbb9d
+--- /dev/null
++++ b/po/ko/karton.po
+@@ -0,0 +1,28 @@
++# Translation of karton into ko.
++# First draft written with AI assistance (Claude Sonnet 5.5, ORDER 255j), pending review by native speakers.
++# SPDX-License-Identifier: GPL-3.0-or-later
++#
++msgid ""
++msgstr ""
++"Project-Id-Version: karton\n"
++"Report-Msgid-Bugs-To: https://bugs.kde.org/\n"
++"Language: ko\n"
++"PO-Revision-Date: 2026-11-07 00:00+0000\n"
++"Last-Translator: AI-assisted first draft, pending native speakers\n"
++"Language-Team: ko\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=1; plural=0;\n"
++
++#: src/qml/VMViewerWindow.qml:137
++msgid "The picture of the virtual machine cannot be shown here."
++msgstr "가상 머신의 화면을 여기에 표시할 수 없습니다."
++
++#: src/qml/VMViewerWindow.qml:139
++msgid "This window cannot take the picture from the graphics card. Use the Wayland session, and start Karton without forcing it to run on X11."
++msgstr "이 창은 그래픽 카드에서 화면을 받을 수 없습니다. Wayland 세션을 사용하고, Karton을 X11에서 실행되도록 강제하지 말고 시작하십시오."
++
++#: src/qml/VMViewerWindow.qml:140
++msgid "The graphics card did not hand over the picture. Close this window and open the viewer again. If the picture is still missing, send in the Karton log lines about the GL scanout."
++msgstr "그래픽 카드가 화면을 전달하지 않았습니다. 이 창을 닫고 뷰어를 다시 여십시오. 화면이 계속 나오지 않으면 GL scanout에 관한 Karton 로그 줄을 보내 주십시오."
+diff --git a/po/pl/karton.po b/po/pl/karton.po
+new file mode 100644
+index 0000000..b53b869
+--- /dev/null
++++ b/po/pl/karton.po
+@@ -0,0 +1,28 @@
++# Translation of karton into pl.
++# First draft written with AI assistance (Claude Sonnet 5.5, ORDER 255j), pending review by native speakers.
++# SPDX-License-Identifier: GPL-3.0-or-later
++#
++msgid ""
++msgstr ""
++"Project-Id-Version: karton\n"
++"Report-Msgid-Bugs-To: https://bugs.kde.org/\n"
++"Language: pl\n"
++"PO-Revision-Date: 2026-11-07 00:00+0000\n"
++"Last-Translator: AI-assisted first draft, pending native speakers\n"
++"Language-Team: pl\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=3; plural=(n==1 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
++
++#: src/qml/VMViewerWindow.qml:137
++msgid "The picture of the virtual machine cannot be shown here."
++msgstr "Obraz maszyny wirtualnej nie może być tutaj wyświetlony."
++
++#: src/qml/VMViewerWindow.qml:139
++msgid "This window cannot take the picture from the graphics card. Use the Wayland session, and start Karton without forcing it to run on X11."
++msgstr "To okno nie może odebrać obrazu z karty graficznej. Użyj sesji Wayland i uruchom Karton bez wymuszania działania na X11."
++
++#: src/qml/VMViewerWindow.qml:140
++msgid "The graphics card did not hand over the picture. Close this window and open the viewer again. If the picture is still missing, send in the Karton log lines about the GL scanout."
++msgstr "Karta graficzna nie przekazała obrazu. Zamknij to okno i otwórz podgląd ponownie. Jeśli obrazu nadal nie ma, prześlij wiersze dziennika programu Karton dotyczące GL scanout."
+diff --git a/po/pt_BR/karton.po b/po/pt_BR/karton.po
+new file mode 100644
+index 0000000..5f1f738
+--- /dev/null
++++ b/po/pt_BR/karton.po
+@@ -0,0 +1,28 @@
++# Translation of karton into pt_BR.
++# First draft written with AI assistance (Claude Sonnet 5.5, ORDER 255j), pending review by native speakers.
++# SPDX-License-Identifier: GPL-3.0-or-later
++#
++msgid ""
++msgstr ""
++"Project-Id-Version: karton\n"
++"Report-Msgid-Bugs-To: https://bugs.kde.org/\n"
++"Language: pt_BR\n"
++"PO-Revision-Date: 2026-11-07 00:00+0000\n"
++"Last-Translator: AI-assisted first draft, pending native speakers\n"
++"Language-Team: pt_BR\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=2; plural=(n > 1);\n"
++
++#: src/qml/VMViewerWindow.qml:137
++msgid "The picture of the virtual machine cannot be shown here."
++msgstr "A imagem da máquina virtual não pode ser exibida aqui."
++
++#: src/qml/VMViewerWindow.qml:139
++msgid "This window cannot take the picture from the graphics card. Use the Wayland session, and start Karton without forcing it to run on X11."
++msgstr "Esta janela não consegue receber a imagem da placa de vídeo. Use a sessão Wayland e inicie o Karton sem forçá-lo a rodar no X11."
++
++#: src/qml/VMViewerWindow.qml:140
++msgid "The graphics card did not hand over the picture. Close this window and open the viewer again. If the picture is still missing, send in the Karton log lines about the GL scanout."
++msgstr "A placa de vídeo não entregou a imagem. Feche esta janela e abra o visualizador novamente. Se a imagem continuar ausente, envie as linhas do registro do Karton sobre o GL scanout."
+diff --git a/po/zh_CN/karton.po b/po/zh_CN/karton.po
+new file mode 100644
+index 0000000..f15d76d
+--- /dev/null
++++ b/po/zh_CN/karton.po
+@@ -0,0 +1,28 @@
++# Translation of karton into zh_CN.
++# First draft written with AI assistance (Claude Sonnet 5.5, ORDER 255j), pending review by native speakers.
++# SPDX-License-Identifier: GPL-3.0-or-later
++#
++msgid ""
++msgstr ""
++"Project-Id-Version: karton\n"
++"Report-Msgid-Bugs-To: https://bugs.kde.org/\n"
++"Language: zh_CN\n"
++"PO-Revision-Date: 2026-11-07 00:00+0000\n"
++"Last-Translator: AI-assisted first draft, pending native speakers\n"
++"Language-Team: zh_CN\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=1; plural=0;\n"
++
++#: src/qml/VMViewerWindow.qml:137
++msgid "The picture of the virtual machine cannot be shown here."
++msgstr "此处无法显示虚拟机的画面。"
++
++#: src/qml/VMViewerWindow.qml:139
++msgid "This window cannot take the picture from the graphics card. Use the Wayland session, and start Karton without forcing it to run on X11."
++msgstr "此窗口无法从显卡获取画面。请使用 Wayland 会话，并且不要强制 Karton 在 X11 上运行。"
++
++#: src/qml/VMViewerWindow.qml:140
++msgid "The graphics card did not hand over the picture. Close this window and open the viewer again. If the picture is still missing, send in the Karton log lines about the GL scanout."
++msgstr "显卡没有交出画面。请关闭此窗口并重新打开查看器。如果画面仍然缺失，请发送 Karton 日志中与 GL scanout 有关的行。"
+diff --git a/po/zh_TW/karton.po b/po/zh_TW/karton.po
+new file mode 100644
+index 0000000..e82d7b8
+--- /dev/null
++++ b/po/zh_TW/karton.po
+@@ -0,0 +1,28 @@
++# Translation of karton into zh_TW.
++# First draft written with AI assistance (Claude Sonnet 5.5, ORDER 255j), pending review by native speakers.
++# SPDX-License-Identifier: GPL-3.0-or-later
++#
++msgid ""
++msgstr ""
++"Project-Id-Version: karton\n"
++"Report-Msgid-Bugs-To: https://bugs.kde.org/\n"
++"Language: zh_TW\n"
++"PO-Revision-Date: 2026-11-07 00:00+0000\n"
++"Last-Translator: AI-assisted first draft, pending native speakers\n"
++"Language-Team: zh_TW\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"Plural-Forms: nplurals=1; plural=0;\n"
++
++#: src/qml/VMViewerWindow.qml:137
++msgid "The picture of the virtual machine cannot be shown here."
++msgstr "此處無法顯示虛擬機器的畫面。"
++
++#: src/qml/VMViewerWindow.qml:139
++msgid "This window cannot take the picture from the graphics card. Use the Wayland session, and start Karton without forcing it to run on X11."
++msgstr "此視窗無法從顯示卡取得畫面。請使用 Wayland 工作階段，並且不要強制 Karton 在 X11 上執行。"
++
++#: src/qml/VMViewerWindow.qml:140
++msgid "The graphics card did not hand over the picture. Close this window and open the viewer again. If the picture is still missing, send in the Karton log lines about the GL scanout."
++msgstr "顯示卡沒有交出畫面。請關閉此視窗並重新開啟檢視器。如果畫面仍然缺失，請傳送 Karton 紀錄檔中與 GL scanout 有關的行。"

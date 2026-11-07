@@ -25,6 +25,16 @@ docker run --rm --platform linux/amd64 -e TZ=UTC -v "$SRC":/src:ro -v "$WORK":/w
 	cd /work
 	dpkg-source --no-copy --skip-patches -x /src/'"$(basename "$DSC")"' tree >/dev/null
 	python3 /toolkit/repo/plain-from-lc.py --drop-plan tree
+	# patch 0006 installs the catalogs of po/ with ki18n_install(), which compiles them with msgfmt
+	python3 - <<PY
+import re
+p = "tree/debian/control"
+s = open(p).read()
+assert "gettext" not in s
+s, n = re.subn(r"^(Build-Depends: )", r"\\1gettext, ", s, count=1, flags=re.M)
+assert n == 1
+open(p, "w").write(s)
+PY
 	cp /src/karton_0.1~prealpha+git20260905.08e13cf.orig.tar.xz /work/
 	mv tree karton-tree
 '

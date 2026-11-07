@@ -11,5 +11,17 @@ karton (@VERSION@) unstable; urgency=medium
     showed that forcing EGL there leaves every Karton window black on NVIDIA
     under Xwayland, so that default waits for a measurement on real Xorg and
     on Mesa. ORDER 255.
+  * Patches 0005 and 0006: when the picture cannot be imported the viewer
+    says so, in place of the black window: that the picture cannot be shown,
+    why in plain words, and what to do (the Wayland session, with Karton
+    not forced to run on X11, where Qt's GLX integration gives no EGL
+    display; forcing Qt's EGL integration is not offered, it leaves the
+    window black on NVIDIA under Xwayland). The notice goes away when an import succeeds. The log line is
+    written once for each distinct width, height, format and modifier, not
+    for every scanout record. The three strings come in Polish, Brazilian
+    Portuguese, French, German, Japanese, Korean and Simplified and
+    Traditional Chinese, a first draft written with AI assistance, pending
+    native speakers (a second model reviewed it and its corrections are
+    applied). ORDER 255j.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@
