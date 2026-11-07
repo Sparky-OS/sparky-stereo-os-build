@@ -1,0 +1,31 @@
+gtk4 (4.24.1+ds-1+stereo3d1) unstable; urgency=medium
+
+  * Sparky Stereo OS: a stereo GtkGLArea (ORDER 137, stereo3d-gtkglarea-stereo).
+    GtkGLArea draws into a framebuffer of its own and had no way to hand
+    two views to the compositor. A stereo area (property stereo) emits its
+    render signal twice for each frame, the left view first, each into a
+    framebuffer of the area's size, and gtk_gl_area_get_current_eye() says
+    which view the handler draws. The views are copied side by side into one
+    opaque texture, twice the width of the area, which goes to the
+    compositor on a subsurface of its own, the way GtkGraphicsOffload hands
+    over a picture, declared as full side by side stereo content with
+    kde_stereo_content_v1 (version 2 or later, so the area keeps its size
+    on the screen). The rest of the window stays the window's own surface,
+    drawn once and seen the same by both eyes.
+  * An area that cannot be shown per eye says so (properties stereo-shown
+    and stereo-error, one log message with the reason) and renders its left
+    view alone as an area without stereo does; it never shows the two views
+    side by side in its place. An area without stereo, and every other
+    widget and window, is unchanged.
+  * New API: GtkGLAreaEye, gtk_gl_area_set_stereo, gtk_gl_area_get_stereo,
+    gtk_gl_area_get_stereo_shown, gtk_gl_area_get_stereo_error,
+    gtk_gl_area_get_current_eye. New test: testsuite/gtk/glarea.
+    Searched first: GTK's main branch, its merge requests and issues
+    (2026-11-07) have no stereo, multiview or per-eye GL in GtkGLArea.
+  * gdk: an EGL dma-buf export that leaves a plane without an open file
+    descriptor is a failed export (stereo3d-gdk-dmabuf-export-open-fds).
+    Mesa's zink on NVIDIA's proprietary Vulkan driver reports success and
+    does not write the descriptors; GTK passed uninitialised integers to the
+    compositor, which ended the connection (EBADF) as soon as a GtkGLArea
+    inside a GtkGraphicsOffload was offloaded. GTK now draws the texture
+    itself, as for any export that cannot be done.

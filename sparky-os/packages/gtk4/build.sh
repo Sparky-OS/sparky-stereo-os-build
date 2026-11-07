@@ -1,0 +1,55 @@
+#!/bin/bash
+# Sparky Stereo OS: builds gtk4 4.24.1+ds-1+stereo3d1+lc1 from Debian's 4.24.1+ds-1 source package.
+# Created by Daniel Ramos (Capitain Jack) 2026/11/07
+# Copyright 2026 under the GNU GPL3 License
+# Source package once (the stereo GtkGLArea patch after Debian's series, the changelog entry), then the Lean Code source,
+# then the build with the link and start gate against Debian's 4.24.1+ds-1 build (ORDER 137). Debian's own test suite
+# is not run here: the proof runs GTK's suites before and after the patch (tests/gtk-glarea-stereo).
+# Candidates stay in WORK. A guard stops the build below 12 GB free on / or 10 GB on the WORK disk.
+# Usage: build.sh WORK PREVIOUS_DIR SOURCE_DIR   (PREVIOUS_DIR: a folder holding Debian's gtk4 4.24.1+ds-1 binary packages;
+#   SOURCE_DIR: the folder holding Debian's gtk4_4.24.1+ds-1.dsc, its debian.tar.xz and the orig tarball, checked
+#   against Debian testing's signed Sources index)
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/../../repo/build-provenance.sh"
+. "$HERE/../../config/local-config.sh"
+sparky_need SPARKY_REPO_DIR
+# The link gate's archive list is the recipe's own (archive-sources.json: Debian testing, deb-multimedia for the media libraries, the edition's tree as file:/repo), with the public keyrings copied
+# beside it; SPARKY_LC_ARCHIVE_DIR still wins when the local configuration names one.
+if [ -z "${SPARKY_LC_ARCHIVE_DIR:-}" ]; then
+	SPARKY_LC_ARCHIVE_DIR=$(mktemp -d)
+	trap 'rm -rf "$SPARKY_LC_ARCHIVE_DIR"' EXIT
+	cp "$HERE/archive-sources.json" "$SPARKY_LC_ARCHIVE_DIR/sources.json"
+	cp /usr/share/keyrings/debian-archive-keyring.pgp /usr/share/keyrings/deb-multimedia-keyring.pgp "$SPARKY_LC_ARCHIVE_DIR/"
+	cp "$SPARKY_REPO_DIR/sparky-stereo-repo.asc" "$SPARKY_LC_ARCHIVE_DIR/"
+fi
+WORK=$(mkdir -p "$1" && cd "$1" && pwd)
+PREV=$(cd "$2" && pwd)
+SRC=$(cd "$3" && pwd)
+[ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
+name=gtk4-build-$$
+sparky_provenance_init sparky-lc-migration:20261020
+docker run -d --name "$name" --cpus 4 --platform linux/amd64 \
+	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
+	-v "$WORK":/work -v "$SRC":/src:ro \
+	-v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
+	-v "$HERE/patches":/patches:ro \
+	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+	sparky-lc-migration:20261020 bash -c 'sh /run/https-only-apt.sh && bash /tools/build-in-container.sh > /work/build.log 2>&1' >/dev/null
+guard=ok
+while [ "$(docker inspect -f '{{.State.Running}}' "$name")" = true ]; do
+	root=$(df -BG --output=avail / | tail -1 | tr -dc 0-9)
+	disk=$(df -BG --output=avail "$WORK" | tail -1 | tr -dc 0-9)
+	if [ "$root" -lt 12 ] || [ "$disk" -lt 10 ]; then
+		echo "stopping the build: / has ${root} GB and $WORK ${disk} GB free" >&2
+		docker kill "$name" >/dev/null
+		guard=stopped
+	fi
+	sleep 5
+done
+status=$(docker inspect -f '{{.State.ExitCode}}' "$name")
+docker rm "$name" >/dev/null
+[ "$guard" = ok ] && [ "$status" = 0 ] || { echo "the build failed (exit $status, guard $guard): $WORK/build.log" >&2; exit 1; }

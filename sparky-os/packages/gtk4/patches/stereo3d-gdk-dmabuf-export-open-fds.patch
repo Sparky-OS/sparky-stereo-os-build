@@ -1,0 +1,63 @@
+Description: gdk: an EGL dma-buf export that leaves a plane without an open file descriptor is a failed export
+ eglExportDMABUFImageMESA reports success and does not write the file
+ descriptors with Mesa's zink on NVIDIA's proprietary Vulkan driver, so
+ gdk_gl_context_export_dmabuf() read uninitialised integers and the GL
+ texture was handed to the Wayland compositor as a dma-buf with a descriptor
+ that was not open. The connection ended with "Error 9 (Bad file
+ descriptor) dispatching to Wayland display" as soon as a GtkGLArea inside a
+ GtkGraphicsOffload was offloaded (measured: Debian's gtk4 4.24.1 with a plain
+ offloaded area, 2 of 2 runs; the stereo area before this change, 4 of 6
+ runs). The descriptors now start at -1, and the export counts only when every plane's
+ descriptor is open; otherwise it fails as any export that cannot be done
+ does, and GTK draws the texture itself.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS
+Forwarded: no
+Last-Update: 2026-11-07
+---
+diff --git a/gdk/gdkglcontext.c b/gdk/gdkglcontext.c
+index ae06a06..2149138 100644
+--- a/gdk/gdkglcontext.c
++++ b/gdk/gdkglcontext.c
+@@ -100,6 +100,7 @@
+ 
+ #include "gsk/gskrendernodeprivate.h"
+ 
++#include <fcntl.h>
+ #include <math.h>
+ 
+ #define DEFAULT_ALLOWED_APIS GDK_GL_API_GL | GDK_GL_API_GLES
+@@ -2394,6 +2395,11 @@ gdk_gl_context_export_dmabuf (GdkGLContext *self,
+       goto out;
+     }
+ 
++  /* A driver can report success without writing the descriptors (Mesa's
++   * zink on NVIDIA's proprietary Vulkan driver does) */
++  for (i = 0; i < GDK_DMABUF_MAX_PLANES; i++)
++    fds[i] = -1;
++
+   if (!eglExportDMABUFImageMESA (egl_display,
+                                  image,
+                                  fds,
+@@ -2404,6 +2410,21 @@ gdk_gl_context_export_dmabuf (GdkGLContext *self,
+       goto out;
+     }
+ 
++  for (i = 0; i < n_planes; i++)
++    {
++      if (fds[i] < 0 || fcntl (fds[i], F_GETFD) < 0)
++        {
++          GDK_DISPLAY_DEBUG (display, DMABUF,
++                             "eglExportDMABUFImageMESA gave no open file descriptor for plane %d", i);
++          for (i = 0; i < n_planes; i++)
++            {
++              if (fds[i] >= 0 && fcntl (fds[i], F_GETFD) >= 0)
++                g_close (fds[i], NULL);
++            }
++          goto out;
++        }
++    }
++
+   dmabuf->fourcc = (guint32)fourcc;
+   dmabuf->modifier = modifiers[0];
+   dmabuf->n_planes = n_planes;
