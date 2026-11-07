@@ -1,0 +1,76 @@
+Description: zink makes the image of a dma-buf export with a modifier the driver can render with
+ add_resource_bind() gave an image that is about to be exported as a dma-buf
+ the one modifier DRM_FORMAT_MOD_LINEAR. NVIDIA's Vulkan driver lists linear
+ for the format without the colour attachment blend feature that a render
+ target needs, so the image could not be made, eglExportDMABUFImageMESA had no
+ descriptor to give, and GTK's GtkGraphicsOffload around a GtkGLArea on the
+ edition's default zink died with EBADF (ORDER 457).
+ .
+ Linear is still the choice when its features are the best the driver lists.
+ Otherwise the driver is offered the single plane modifiers with the best
+ features, and the exported dma-buf carries the one it chose (on the RTX 3060,
+ 615.71.09: 0x300000000606014).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-07
+Assisted-by: Claude Sonnet via Claude Code
+---
+--- a/src/gallium/drivers/zink/zink_resource.c
++++ b/src/gallium/drivers/zink/zink_resource.c
+@@ -1803,14 +1803,50 @@
+    struct zink_resource_object *old_obj = res->obj;
+    ASSERTED uint64_t mod = DRM_FORMAT_MOD_INVALID;
+    if (bind & ZINK_BIND_DMABUF && !res->modifiers_count && !res->obj->is_buffer && screen->info.have_EXT_image_drm_format_modifier) {
+-      res->modifiers_count = 1;
+-      res->modifiers = malloc(res->modifiers_count * sizeof(uint64_t));
+-      if (!res->modifiers) {
+-         mesa_loge("ZINK: failed to allocate res->modifiers!");
+-         return false;
++      /* The image is made for a dma-buf export: linear when the driver gives linear images all the
++       * features its best single plane modifier has. NVIDIA's lists linear without the colour
++       * attachment blend feature, so a render target cannot be linear there; then the driver is
++       * offered the single plane modifiers with the best features and the exported dma-buf carries
++       * the one it chose.
++       */
++      const struct zink_modifier_props *prop = zink_get_modifier_props(screen, res->base.b.format);
++      VkFormatFeatureFlags best = 0;
++      bool linear_is_best = false;
++      unsigned candidates = 0;
++      for (unsigned i = 0; i < prop->drmFormatModifierCount; i++) {
++         const VkDrmFormatModifierPropertiesEXT *p = &prop->pDrmFormatModifierProperties[i];
++         if (p->drmFormatModifierPlaneCount == 1 && util_bitcount(p->drmFormatModifierTilingFeatures) > util_bitcount(best))
++            best = p->drmFormatModifierTilingFeatures;
+       }
++      for (unsigned i = 0; i < prop->drmFormatModifierCount; i++) {
++         const VkDrmFormatModifierPropertiesEXT *p = &prop->pDrmFormatModifierProperties[i];
++         if (p->drmFormatModifierPlaneCount != 1 || (p->drmFormatModifierTilingFeatures & best) != best)
++            continue;
++         candidates++;
++         if (p->drmFormatModifier == DRM_FORMAT_MOD_LINEAR)
++            linear_is_best = true;
++      }
++      if (linear_is_best || !candidates) {
++         res->modifiers_count = 1;
++         res->modifiers = malloc(res->modifiers_count * sizeof(uint64_t));
++         if (!res->modifiers) {
++            mesa_loge("ZINK: failed to allocate res->modifiers!");
++            return false;
++         }
+ 
+-      mod = res->modifiers[0] = DRM_FORMAT_MOD_LINEAR;
++         mod = res->modifiers[0] = DRM_FORMAT_MOD_LINEAR;
++      } else {
++         res->modifiers = malloc(candidates * sizeof(uint64_t));
++         if (!res->modifiers) {
++            mesa_loge("ZINK: failed to allocate res->modifiers!");
++            return false;
++         }
++         for (unsigned i = 0; i < prop->drmFormatModifierCount; i++) {
++            const VkDrmFormatModifierPropertiesEXT *p = &prop->pDrmFormatModifierProperties[i];
++            if (p->drmFormatModifierPlaneCount == 1 && (p->drmFormatModifierTilingFeatures & best) == best)
++               res->modifiers[res->modifiers_count++] = p->drmFormatModifier;
++         }
++      }
+    }
+    struct zink_resource_object *new_obj = resource_object_create(screen, &res->base.b, NULL, &res->linear, res->modifiers, res->modifiers_count, NULL, NULL);
+    if (!new_obj) {

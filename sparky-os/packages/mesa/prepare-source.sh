@@ -18,7 +18,9 @@ cd "$work"
 echo '0643bf6f934a9c5cf5b459c19f1fc7f4944872c50de3d0cc3e8d7b8e9e2a9394  '"$source_dir/mesa_26.1.6-1+stereo3d17+lc1.dsc" | sha256sum -c
 cp "$source_dir/mesa_26.1.6.orig.tar.xz" .
 dpkg-source -x "$source_dir/mesa_26.1.6-1+stereo3d17+lc1.dsc" source
-for patch in 0029-glx-zink-through-dri3-while-the-compositor-announces-stereo.patch; do
+for patch in 0029-glx-zink-through-dri3-while-the-compositor-announces-stereo.patch \
+             0030-zink-export-dma-buf-with-a-modifier-the-driver-can-render-with.patch \
+             0031-egl-export-dma-buf-fails-when-the-driver-made-none.patch; do
     cp "$recipe/patches/$patch" source/debian/patches/
     printf '%s\n' "$patch" >> source/debian/patches/series
 done
