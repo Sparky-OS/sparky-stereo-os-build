@@ -2,7 +2,7 @@
 //! build.zig and the tests use this one function, so the build and the test agree on what a registry holds.
 const std = @import("std");
 
-pub const Error = error{ OutOfMemory, ScanFailed };
+pub const Error = std.mem.Allocator.Error || error{ScanFailed};
 
 /// Names (without `.zig`) of the variants in `sub_path` of `dir`, sorted, so the generated registry is deterministic.
 /// A missing folder is an empty registry; any other failure is reported, never taken for "empty".

@@ -93,6 +93,9 @@ mv "$D/usr/share/sparky-stereo-os/MANIFEST.sha256" "$D/usr/share/sparky-stereo-o
 chmod -R u=rwX,go=rX "$D/usr/share/sparky-stereo-os"
 install -m644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
 install -Dm755 "$HERE/bin/sparky-stereo-skills" "$D/usr/bin/sparky-stereo-skills"
+# the standard place for skills (agent-skills/<kind>/<name>): the edition's own tree stays where it is and is named here
+mkdir -p "$D/usr/share/agent-skills/paths.d"
+printf '# the skills of this package, in the folder the package has always used\ndeveloper /usr/share/sparky-stereo-os/skills\n' >"$D/usr/share/agent-skills/paths.d/sparky-stereo-skills.conf"
 mkdir -p "$D/usr/share/sparky/sparky-stereo-skills"
 install -m644 "$HERE"/lang/* "$D/usr/share/sparky/sparky-stereo-skills/"
 install -Dm644 "$HERE/share/sparky-stereo-skills.desktop" "$D/usr/share/applications/sparky-stereo-skills.desktop"
@@ -108,7 +111,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: gawk | mawk, python3, python3-yaml, yad
+Depends: gawk | mawk, python3, yad, sparky-stereo-skills-engine (>= $VERSION)
 Section: Development
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -122,7 +125,8 @@ Description: Sparky Stereo OS instructions for distribution maintainers
   skills with sparky-stereo-skills (Claude Code, Codex, Gemini CLI, OpenCode,
   GitHub Copilot, Cursor, goose and Cline), or makes an archive for Open
   WebUI; it is offered once at login, and the package itself never writes
-  into home folders.
+  into home folders. The program that finds, reads and serves the skills (also
+  to AI assistants over MCP) is in sparky-stereo-skills-engine.
 EOF
 echo /etc/xdg/autostart/sparky-stereo-skills.desktop >"$D/DEBIAN/conffiles"
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
@@ -136,6 +140,8 @@ mkdir -p "$S/debian/source"
 python3 "$COPY" "$HERE" "$S"
 mkdir -p "$S/build-tools"
 cp "$COPY" "$S/build-tools/"
+cp "$REPRO" "$S/build-tools/reproducible.py"
+python3 "$COPY" "$RECIPE/../../skills-mcp" "$S/engine-src"
 rm -rf "$S/public"
 cp -a "$P" "$S/public"
 rm -rf "$S/release-toolkit"
@@ -152,14 +158,14 @@ Source: $PACKAGE
 Section: Development
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Build-Depends: git, gcc, node-acorn, nodejs, perl, python3, python3-yaml
+Build-Depends: git, gcc, node-acorn, nodejs, perl, python3, python3-yaml, binutils, cgm-zig (>= 0.16.0+cgm.0399d2b19b-2+lc1)
 Standards-Version: 4.7.4
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
 
 Package: $PACKAGE
 Architecture: all
-Depends: gawk | mawk, python3, python3-yaml, yad
+Depends: gawk | mawk, python3, yad, sparky-stereo-skills-engine (>= $VERSION)
 Description: Sparky Stereo OS instructions for distribution maintainers
  The public skills of Sparky Stereo OS, from Sparky-OS/sparky-stereo-os,
  with the documents and tools they refer to, in /usr/share/sparky-stereo-os.
@@ -169,18 +175,31 @@ Description: Sparky Stereo OS instructions for distribution maintainers
  skills with sparky-stereo-skills (Claude Code, Codex, Gemini CLI, OpenCode,
  GitHub Copilot, Cursor, goose and Cline), or makes an archive for Open
  WebUI; it is offered once at login, and the package itself never writes
- into home folders.
+ into home folders. The program that finds, reads and serves the skills (also
+ to AI assistants over MCP) is in sparky-stereo-skills-engine.
+
+Package: $PACKAGE-engine
+Architecture: amd64
+Description: engine of the Sparky Stereo OS skills, for people and for AI assistants
+ One small static program (written in Zig) that finds the skills installed on
+ this system, tells which of them apply because their packages are installed,
+ and serves them on the command line and, started by an AI assistant, over the
+ Model Context Protocol on stdio.
 EOF
 cp "$HERE/debian/changelog" "$S/debian/changelog"
 cp "$HERE/copyright" "$S/debian/copyright"
 echo '3.0 (native)' >"$S/debian/source/format"
 cat >"$S/debian/rules" <<'EOF'
 #!/usr/bin/make -f
-binary binary-indep:
+binary-indep:
 	OUT=$(CURDIR)/.. COPY_RECIPE=$(CURDIR)/build-tools/copy-recipe.py SOURCE_PACKAGE=no bash ./build.sh
 	dpkg-distaddfile $$(dpkg-parsechangelog -S Source)_$$(dpkg-parsechangelog -S Version)_all.deb Development optional
 	if test -f ../sparky-stereo-skills-lc-hr_$$(dpkg-parsechangelog -S Version)_all.deb; then dpkg-distaddfile sparky-stereo-skills-lc-hr_$$(dpkg-parsechangelog -S Version)_all.deb doc optional; sed -i '/^sparky-stereo-skills-lc-hr_/s/$$/ automatic=yes/' debian/files; fi
-binary-arch build build-arch build-indep clean:
+binary-arch:
+	OUT=$(CURDIR)/.. COPY_RECIPE=$(CURDIR)/build-tools/copy-recipe.py bash ./build-engine.sh
+	dpkg-distaddfile sparky-stereo-skills-engine_$$(dpkg-parsechangelog -S Version)_amd64.deb Development optional
+binary: binary-indep binary-arch
+build build-arch build-indep clean:
 .PHONY: binary binary-arch binary-indep build build-arch build-indep clean
 EOF
 chmod +x "$S/debian/rules"

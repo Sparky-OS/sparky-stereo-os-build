@@ -1,4 +1,4 @@
-//! "A new variant is hardcoded in a parent instead of dropped into _kinds/" is a halt condition.
+//! A variant is a file dropped into a _kinds/ folder; none is written into a parent.
 //! Drop-a-file: adding a file to a registry folder adds a variant, removing it removes it, nothing else changes.
 const std = @import("std");
 const scan = @import("kinds_scan");

@@ -1,4 +1,4 @@
-//! Memory required-languages: the whole locale, then the bare language, then English; Chinese keeps its territory.
+//! The whole locale, then the bare language, then English; Chinese keeps its territory.
 const std = @import("std");
 const lang_lookup = @import("lang_lookup");
 

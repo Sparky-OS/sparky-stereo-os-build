@@ -1,5 +1,5 @@
 //! L5 operation: the commands a user skill lists in `commands.json`, as data. The skill's Markdown may show a
-//! command, but only a command in this file can ever run (Daniel, 2026-10-23: "the assistant may run only commands a skill lists").
+//! command, but only a command in this file can ever run (an assistant runs only commands a skill lists).
 //! Shape: [{"id","argv":["prog","{slot}"],"slots":{"slot":"word|int|enum:a,b"},"expect":{"exit":0,"stdout_contains":"text"},"run":"assistant|person"}]
 const std = @import("std");
 const fsio = @import("fsio");
@@ -18,7 +18,7 @@ const Raw = struct {
     run: []const u8 = "person",
 };
 
-pub const Error = error{ BadCommands, OutOfMemory };
+pub const Error = error{BadCommands} || std.mem.Allocator.Error;
 
 /// `json` of a skill's commands.json. A malformed file is `error.BadCommands`, never an empty list.
 pub fn parse(arena: std.mem.Allocator, json: []const u8) Error![]const Command {
@@ -54,8 +54,10 @@ pub fn load(arena: std.mem.Allocator, io: std.Io, rec: skill_record.Rec) Error![
     const path = try std.fmt.allocPrint(arena, "{s}/commands.json", .{rec.dir});
     const text = fsio.readFile(arena, io, path, 256 * 1024) catch |e| switch (e) {
         error.FileNotFound => return &.{},
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.BadCommands,
+        else => {
+            if (e == error.OutOfMemory) return error.OutOfMemory;
+            return error.BadCommands;
+        },
     };
     return parse(arena, text);
 }

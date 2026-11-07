@@ -8,7 +8,7 @@ pub const Frontmatter = struct {
     requires_packages: []const u8,
 };
 
-pub const Error = error{ InvalidArgument, OutOfMemory };
+pub const Error = error{InvalidArgument} || std.mem.Allocator.Error;
 
 /// The block between the opening `---` line and the next `---` line, or null.
 pub fn block(text: []const u8) ?[]const u8 {

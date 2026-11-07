@@ -1,5 +1,5 @@
 //! L4 atom: the offline, deterministic ranking of skills for a task or symptom, equal to the Python `find`
-//! (tools/skills-context.py at the commit recorded in data/golden/SOURCE): terms are stemmed words, weight(t) =
+//! (the Python engine this one replaced, whose answers are recorded in data/golden): terms are stemmed words, weight(t) =
 //! ln(1 + (N - n + 0.5) / (n + 0.5)), fields name 3.0, task table 2.0, description 1.0.
 const std = @import("std");
 

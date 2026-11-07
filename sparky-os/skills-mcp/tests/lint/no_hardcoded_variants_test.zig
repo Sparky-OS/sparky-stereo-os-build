@@ -1,4 +1,4 @@
-//! Halt condition: "a new variant is hardcoded in a parent instead of dropped into `_kinds/`".
+//! A variant is dropped into a `_kinds/` folder; a parent that names one in its code fails this test.
 //! The id of a variant (every id, "en" and "user" included) must not appear as a quoted string anywhere under
 //! compiled/ or surfaces/ outside the _kinds/ folders; code that needs it goes through the registry or an enum.
 const std = @import("std");

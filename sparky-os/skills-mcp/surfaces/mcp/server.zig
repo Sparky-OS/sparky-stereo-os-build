@@ -126,7 +126,9 @@ pub const Server = struct {
             inline for (eras.all) |era| if (comptime std.mem.eql(u8, era.id, "stateless")) {
                 try versions.print(arena, "\"{s}\"", .{era.revision});
             };
-            return std.fmt.allocPrint(arena, "{{{s}\"supportedVersions\":[{s}],\"capabilities\":{s},\"serverInfo\":{{\"name\":\"{s}\",\"version\":\"{s}\"}},\"instructions\":{s}}}", .{ rt, versions.items, capabilities, server_name, server_version, try std.json.Stringify.valueAlloc(arena, instructions, .{}) });
+            // the shape the 2026-07-28 schema gives DiscoverResult: supportedVersions, capabilities, ttlMs and cacheScope
+            // are required, the server's name goes in _meta under io.modelcontextprotocol/serverInfo
+            return std.fmt.allocPrint(arena, "{{{s}\"supportedVersions\":[{s}],\"capabilities\":{s},\"instructions\":{s},\"ttlMs\":5000,\"cacheScope\":\"private\",\"_meta\":{{\"io.modelcontextprotocol/serverInfo\":{{\"name\":\"{s}\",\"version\":\"{s}\"}}}}}}", .{ rt, versions.items, capabilities, try std.json.Stringify.valueAlloc(arena, instructions, .{}), server_name, server_version });
         }
         if (std.mem.eql(u8, method, "tools/list")) {
             var out: std.ArrayList(u8) = .empty;
@@ -155,8 +157,8 @@ pub const Server = struct {
                             break :blk eng.message;
                         },
                         error.InvalidArgument => return error.InvalidArgument,
-                        error.OutOfMemory => return error.OutOfMemory,
                         else => blk: {
+                            if (e == error.OutOfMemory) return error.OutOfMemory;
                             is_error = true;
                             break :blk try std.fmt.allocPrint(arena, "The call failed: {s}.", .{@errorName(e)});
                         },
@@ -204,8 +206,10 @@ pub const Server = struct {
             var first = true;
             for (try eng.list(null, false)) |r| {
                 const entry = skillEntry(arena, eng, r) catch |e| switch (e) {
-                    error.OutOfMemory => return error.OutOfMemory,
-                    else => continue, // listed again by skills/get with its refusal reason; a broken skill is not served
+                    else => {
+                        if (e == error.OutOfMemory) return error.OutOfMemory;
+                        continue; // a broken skill is not served; skills/get names the reason
+                    },
                 };
                 if (!first) try out.append(arena, ',');
                 first = false;
@@ -225,8 +229,10 @@ pub const Server = struct {
             const origin = std.meta.stringToEnum(engine.Origin, parsed.origin) orelse return error.InvalidArgument;
             const r = eng.resolve(parsed.name, origin) catch return error.NotFound;
             const entry = skillEntry(arena, eng, r) catch |e| switch (e) {
-                error.OutOfMemory => return error.OutOfMemory,
-                else => return error.NotFound,
+                else => {
+            if (e == error.OutOfMemory) return error.OutOfMemory;
+            return error.NotFound;
+        },
             };
             return std.fmt.allocPrint(arena, "{{\"skill\":{s}{s}}}", .{ entry, cacheable(modern) });
         }
@@ -260,13 +266,20 @@ pub const Log = struct {
     method: []const u8 = "",
     subject: []const u8 = "",
     started: i64 = 0,
-    outcome: []const u8 = "",
+    outcome_buf: [16]u8 = undefined,
+    outcome_len: usize = 0,
 
+    /// `outcome` is copied: it may live in a buffer of the caller's that is gone by the time the line is written.
     pub fn set(self: *Log, method: []const u8, subject: []const u8, started: i64, outcome: []const u8) void {
         self.method = method;
         self.subject = subject;
         self.started = started;
-        self.outcome = outcome;
+        self.outcome_len = @min(outcome.len, self.outcome_buf.len);
+        @memcpy(self.outcome_buf[0..self.outcome_len], outcome[0..self.outcome_len]);
+    }
+
+    pub fn outcomeText(self: *const Log) []const u8 {
+        return self.outcome_buf[0..self.outcome_len];
     }
 };
 
@@ -309,7 +322,7 @@ pub fn serve(init: std.process.Init, assistants: []const engine.Assistant) !void
         const ds = day.getDaySeconds();
         const yd = day.getEpochDay().calculateYearDay();
         const md = yd.calculateMonthDay();
-        try stderr.interface.print("{d}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z {s} {s} {d}ms {s}\n", .{ yd.year, md.month.numeric(), md.day_index + 1, ds.getHoursIntoDay(), ds.getMinutesIntoHour(), ds.getSecondsIntoMinute(), log.method, log.subject, now - log.started, log.outcome });
+        try stderr.interface.print("{d}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z {s} {s} {d}ms {s}\n", .{ yd.year, md.month.numeric(), md.day_index + 1, ds.getHoursIntoDay(), ds.getMinutesIntoHour(), ds.getSecondsIntoMinute(), log.method, log.subject, now - log.started, log.outcomeText() });
         try stderr.interface.flush();
     }
 }

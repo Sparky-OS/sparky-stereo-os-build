@@ -4,7 +4,7 @@ const std = @import("std");
 
 pub const Heading = struct { line: usize, level: usize, title: []const u8 };
 
-pub const Error = error{ NotFound, Ambiguous, OutOfMemory };
+pub const Error = error{ NotFound, Ambiguous } || std.mem.Allocator.Error;
 
 fn lineStarts(arena: std.mem.Allocator, text: []const u8) ![]const []const u8 {
     var out: std.ArrayList([]const u8) = .empty;
