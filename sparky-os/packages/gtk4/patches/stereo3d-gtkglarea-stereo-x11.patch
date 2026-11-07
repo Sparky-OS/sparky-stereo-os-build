@@ -1,0 +1,640 @@
+Description: GtkGLArea: stereo on X11, a child window declared as stereo content
+ On X11 a stereo area is a child window of the toplevel's X window (a frame
+ of the size of one view and, inside it, a window twice as wide), declared as
+ full side by side stereo content and listed as the toplevel's stereo child
+ with libstereo-declare (loaded with g_module when the first stereo area
+ asks, so GTK has no dependency on it). The two views are read back and put
+ into the window; the first frames are repeated because the window manager
+ redirects the declared child a little after the declaration. An area that
+ cannot do it (no library, a window manager that announces less than version
+ 8) says so with stereo-error and draws its left view alone, as on Wayland.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS
+Forwarded: no
+Last-Update: 2026-11-08
+---
+diff --git a/gdk/x11/gdkx11stereochild-private.h b/gdk/x11/gdkx11stereochild-private.h
+new file mode 100644
+index 0000000..17c5799
+--- /dev/null
++++ b/gdk/x11/gdkx11stereochild-private.h
+@@ -0,0 +1,28 @@
++/* GDK - The GIMP Drawing Kit
++ *
++ * gdkx11stereochild-private.h: a stereo area on X11, a child window declared as stereo content
++ *
++ * SPDX-License-Identifier: LGPL-2.1-or-later
++ */
++
++#pragma once
++
++#include <gdk/gdk.h>
++
++G_BEGIN_DECLS
++
++typedef struct _GdkX11StereoChild GdkX11StereoChild;
++
++GdkX11StereoChild * gdk_x11_stereo_child_new       (GdkSurface         *surface,
++                                                    GError            **error);
++void                gdk_x11_stereo_child_free      (GdkX11StereoChild  *child);
++gboolean            gdk_x11_stereo_child_present   (GdkX11StereoChild  *child,
++                                                    int                 x,
++                                                    int                 y,
++                                                    int                 view_width,
++                                                    int                 view_height,
++                                                    const guint8       *rgba,
++                                                    GError            **error);
++void                gdk_x11_stereo_child_hide      (GdkX11StereoChild  *child);
++
++G_END_DECLS
+diff --git a/gdk/x11/gdkx11stereochild.c b/gdk/x11/gdkx11stereochild.c
+new file mode 100644
+index 0000000..d872066
+--- /dev/null
++++ b/gdk/x11/gdkx11stereochild.c
+@@ -0,0 +1,285 @@
++/* GDK - The GIMP Drawing Kit
++ *
++ * gdkx11stereochild.c: a stereo area on X11
++ *
++ * An area that holds the two views of a stereo picture is a child window of
++ * the toplevel's X window, and the window manager shows each view to one eye
++ * and the rest of the window the same to both. The child is declared with
++ * the library that writes the properties, libstereo-declare, loaded when the
++ * first stereo area asks, so that GTK does not depend on it.
++ *
++ * The area's place is a frame window of the size of one view. Inside it lies
++ * a window twice as wide, which holds the two views side by side at the
++ * resolution they were drawn at; it is the window that is declared, with the
++ * size one view is shown at (the frame's size). X clips it to the frame.
++ *
++ * SPDX-License-Identifier: LGPL-2.1-or-later
++ */
++
++#include "config.h"
++
++#include "gdkx11stereochild-private.h"
++
++#include <glib/gi18n-lib.h>
++#include <gdk/x11/gdkx11display.h>
++#include <gdk/x11/gdkx11surface.h>
++#include <X11/Xlib.h>
++#include <X11/Xutil.h>
++#include <gmodule.h>
++
++#include <errno.h>
++#include <string.h>
++
++/* enum stereo_layout, enum stereo_class of libstereo-declare's header */
++#define STEREO_SBS_FULL    3
++#define STEREO_CLASS_NONE  0
++
++/* Support version 8 of _KDE_NET_WM_STEREO_CONTENT_SUPPORTED takes the size
++ * one view is shown at from a child that holds its views at full width. */
++#define NEEDED_SUPPORT 8
++
++typedef struct
++{
++  GModule *module;
++  unsigned (* supported)   (Display *display);
++  int      (* declare)     (Display *display, Window parent, Window child, int layout,
++                            int content_class, unsigned subclass,
++                            unsigned view_width, unsigned view_height);
++  int      (* one_view)    (Display *display, Window window, unsigned width, unsigned height);
++  int      (* remove)      (Display *display, Window parent, Window child);
++} StereoDeclare;
++
++static StereoDeclare *
++stereo_declare_load (GError **error)
++{
++  static StereoDeclare lib;
++  static gboolean tried;
++  static GError *load_error;
++
++  if (!tried)
++    {
++      tried = TRUE;
++      lib.module = g_module_open ("libstereo-declare.so.1", G_MODULE_BIND_LAZY | G_MODULE_BIND_LOCAL);
++      if (lib.module == NULL)
++        {
++          g_set_error (&load_error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                       "libstereo-declare.so.1 cannot be loaded: %s", g_module_error ());
++        }
++      else if (!g_module_symbol (lib.module, "stereo_supported_x11", (gpointer *) &lib.supported) ||
++               !g_module_symbol (lib.module, "stereo_declare_x11_child", (gpointer *) &lib.declare) ||
++               !g_module_symbol (lib.module, "stereo_declare_x11_one_view_size", (gpointer *) &lib.one_view) ||
++               !g_module_symbol (lib.module, "stereo_remove_x11_child", (gpointer *) &lib.remove))
++        {
++          g_set_error (&load_error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                       "libstereo-declare.so.1 is older than 1.7.0, which declares X11 children: %s",
++                       g_module_error ());
++          g_clear_pointer (&lib.module, g_module_close);
++        }
++    }
++
++  if (lib.module == NULL)
++    {
++      g_propagate_error (error, g_error_copy (load_error));
++      return NULL;
++    }
++
++  return &lib;
++}
++
++struct _GdkX11StereoChild
++{
++  GdkDisplay *display;
++  Display *xdisplay;
++  Window toplevel;
++  Window frame;
++  Window own;
++  GC gc;
++  StereoDeclare *lib;
++
++  int x, y, view_width, view_height;
++  gboolean mapped;
++  gboolean declared;
++};
++
++GdkX11StereoChild *
++gdk_x11_stereo_child_new (GdkSurface  *surface,
++                          GError     **error)
++{
++  GdkDisplay *display = gdk_surface_get_display (surface);
++  Display *xdisplay;
++  StereoDeclare *lib;
++  GdkX11StereoChild *child;
++  unsigned support;
++
++  if (!GDK_IS_X11_DISPLAY (display))
++    {
++      g_set_error_literal (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                           "This display is not an X11 display");
++      return NULL;
++    }
++
++  lib = stereo_declare_load (error);
++  if (lib == NULL)
++    return NULL;
++
++  xdisplay = gdk_x11_display_get_xdisplay (display);
++  support = lib->supported (xdisplay);
++  if (support < NEEDED_SUPPORT)
++    {
++      g_set_error (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                   support == 0 ? "The window manager does not announce stereo content (_KDE_NET_WM_STEREO_CONTENT_SUPPORTED)"
++                                : "The window manager announces stereo content version %u, a child that holds both views needs %d",
++                   support, NEEDED_SUPPORT);
++      return NULL;
++    }
++
++  child = g_new0 (GdkX11StereoChild, 1);
++  child->display = display;
++  child->xdisplay = xdisplay;
++  child->toplevel = gdk_x11_surface_get_xid (surface);
++  child->lib = lib;
++
++  return child;
++}
++
++static void
++child_create_windows (GdkX11StereoChild *child)
++{
++  XSetWindowAttributes attributes = { 0, };
++  XWindowAttributes toplevel;
++
++  XGetWindowAttributes (child->xdisplay, child->toplevel, &toplevel);
++
++  attributes.event_mask = 0;
++  attributes.colormap = toplevel.colormap;
++  attributes.border_pixel = 0;
++  attributes.background_pixel = 0;
++  attributes.backing_store = NotUseful;
++
++  /* No events are selected on either window, so the pointer and the keys go to the toplevel */
++  child->frame = XCreateWindow (child->xdisplay, child->toplevel, 0, 0, 1, 1, 0,
++                                toplevel.depth, InputOutput, toplevel.visual,
++                                CWEventMask | CWColormap | CWBorderPixel | CWBackPixel, &attributes);
++  child->own = XCreateWindow (child->xdisplay, child->frame, 0, 0, 1, 1, 0,
++                              toplevel.depth, InputOutput, toplevel.visual,
++                              CWEventMask | CWColormap | CWBorderPixel | CWBackPixel, &attributes);
++  child->gc = XCreateGC (child->xdisplay, child->own, 0, NULL);
++}
++
++void
++gdk_x11_stereo_child_hide (GdkX11StereoChild *child)
++{
++  if (child->frame == None || !child->mapped)
++    return;
++
++  gdk_x11_display_error_trap_push (child->display);
++  XUnmapWindow (child->xdisplay, child->frame);
++  gdk_x11_display_error_trap_pop_ignored (child->display);
++  child->mapped = FALSE;
++}
++
++void
++gdk_x11_stereo_child_free (GdkX11StereoChild *child)
++{
++  if (child == NULL)
++    return;
++
++  gdk_x11_display_error_trap_push (child->display);
++  if (child->declared)
++    child->lib->remove (child->xdisplay, child->toplevel, child->own);
++  if (child->gc)
++    XFreeGC (child->xdisplay, child->gc);
++  if (child->frame != None)
++    XDestroyWindow (child->xdisplay, child->frame);
++  XSync (child->xdisplay, False);
++  gdk_x11_display_error_trap_pop_ignored (child->display);
++
++  g_free (child);
++}
++
++/* @rgba holds the two views side by side, 2 * view_width samples wide and
++ * view_height high, four bytes a sample with red first, the top row first. */
++gboolean
++gdk_x11_stereo_child_present (GdkX11StereoChild  *child,
++                              int                 x,
++                              int                 y,
++                              int                 view_width,
++                              int                 view_height,
++                              const guint8       *rgba,
++                              GError            **error)
++{
++  XWindowAttributes attributes;
++  XImage *image;
++  guint8 *data;
++  gsize n = (gsize) 2 * view_width * view_height;
++  gboolean resized;
++  int result;
++
++  gdk_x11_display_error_trap_push (child->display);
++
++  if (child->frame == None)
++    child_create_windows (child);
++
++  resized = view_width != child->view_width || view_height != child->view_height;
++
++  if (resized)
++    {
++      XResizeWindow (child->xdisplay, child->own, 2 * view_width, view_height);
++      XResizeWindow (child->xdisplay, child->frame, view_width, view_height);
++    }
++
++  if (x != child->x || y != child->y)
++    XMoveWindow (child->xdisplay, child->frame, x, y);
++
++  child->x = x;
++  child->y = y;
++  child->view_width = view_width;
++  child->view_height = view_height;
++
++  if (!child->declared)
++    {
++      result = child->lib->declare (child->xdisplay, child->toplevel, child->own,
++                                    STEREO_SBS_FULL, STEREO_CLASS_NONE, 0,
++                                    view_width, view_height);
++      if (result < 0)
++        {
++          XSync (child->xdisplay, False);
++          gdk_x11_display_error_trap_pop_ignored (child->display);
++          g_set_error (error, GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
++                       "libstereo-declare could not declare the child: %s", g_strerror (-result));
++          return FALSE;
++        }
++      child->declared = TRUE;
++    }
++  else if (resized)
++    child->lib->one_view (child->xdisplay, child->own, view_width, view_height);
++
++  if (!child->mapped)
++    {
++      XMapWindow (child->xdisplay, child->own);
++      XMapWindow (child->xdisplay, child->frame);
++      child->mapped = TRUE;
++    }
++
++  XGetWindowAttributes (child->xdisplay, child->own, &attributes);
++
++  /* Xlib wants the samples as the visual lays them out: blue, green, red, then the unused or alpha byte */
++  data = malloc (n * 4);
++  for (gsize i = 0; i < n; i++)
++    {
++      data[4 * i + 0] = rgba[4 * i + 2];
++      data[4 * i + 1] = rgba[4 * i + 1];
++      data[4 * i + 2] = rgba[4 * i + 0];
++      data[4 * i + 3] = 0xff;
++    }
++
++  image = XCreateImage (child->xdisplay, attributes.visual, attributes.depth, ZPixmap, 0,
++                        (char *) data, 2 * view_width, view_height, 32, 0);
++  XPutImage (child->xdisplay, child->own, child->gc, image, 0, 0, 0, 0, 2 * view_width, view_height);
++  XDestroyImage (image);
++  XFlush (child->xdisplay);
++
++  gdk_x11_display_error_trap_pop_ignored (child->display);
++
++  return TRUE;
++}
+diff --git a/gdk/x11/meson.build b/gdk/x11/meson.build
+index 4a56861..cf04622 100644
+--- a/gdk/x11/meson.build
++++ b/gdk/x11/meson.build
+@@ -37,6 +37,7 @@ gdk_x11_sources = gdk_x11_public_sources + files([
+   'gdkselectionoutputstream-x11.c',
+   'gdktextlistconverter-x11.c',
+   'gdkvulkancontext-x11.c',
++  'gdkx11stereochild.c',
+   'gdkxftdefaults.c',
+ ])
+ 
+@@ -64,6 +65,7 @@ gdk_x11_gen_headers = []
+ install_headers(gdk_x11_public_headers, 'gdkx.h', subdir: 'gtk-4.0/gdk/x11/')
+ 
+ gdk_x11_deps = [
++  gmodule_dep,
+   xrender_dep,
+   xi_dep,
+   xext_dep,
+diff --git a/gtk/gtkglarea.c b/gtk/gtkglarea.c
+index 42f4de1..5209711 100644
+--- a/gtk/gtkglarea.c
++++ b/gtk/gtkglarea.c
+@@ -40,12 +40,17 @@
+ #include "gdk/gdksubsurfaceprivate.h"
+ #include "gdk/gdksurfaceprivate.h"
+ #include "gdk/gdkframeclockprivate.h"
++#ifdef GDK_WINDOWING_X11
++#include "gdk/x11/gdkx11stereochild-private.h"
++#include <gdk/x11/gdkx11surface.h>
++#endif
+ 
+ #ifdef HAVE_UNISTD_H
+ #include <unistd.h>
+ #endif
+ 
+ #include <epoxy/gl.h>
++#include <string.h>
+ 
+ /**
+  * GtkGLArea:
+@@ -213,6 +218,14 @@ typedef struct {
+   GError *stereo_error;
+   GtkGLAreaEye current_eye;
+   GdkSubsurface *subsurface;
++#ifdef GDK_WINDOWING_X11
++  GdkX11StereoChild *x11_child;
++  guint8 *x11_pixels;
++  guint8 *x11_rows;
++  gsize x11_size;
++  guint x11_repeat_id;
++  int x11_repeats;
++#endif
+   GdkFrameClock *frame_clock;
+   gulong after_paint_id;
+   guint eye_texture;
+@@ -839,6 +852,13 @@ gtk_gl_area_stereo_release (GtkGLArea *area)
+     }
+ 
+   g_clear_object (&priv->subsurface);
++#ifdef GDK_WINDOWING_X11
++  g_clear_pointer (&priv->x11_child, gdk_x11_stereo_child_free);
++  g_clear_pointer (&priv->x11_pixels, g_free);
++  g_clear_pointer (&priv->x11_rows, g_free);
++  priv->x11_size = 0;
++  g_clear_handle_id (&priv->x11_repeat_id, g_source_remove);
++#endif
+   priv->stereo_rendering = FALSE;
+   priv->stereo_pushed = FALSE;
+ }
+@@ -890,6 +910,25 @@ gtk_gl_area_prepare_stereo (GtkGLArea *area)
+       return;
+     }
+ 
++#ifdef GDK_WINDOWING_X11
++  if (priv->x11_child == NULL && priv->subsurface == NULL &&
++      GDK_IS_X11_SURFACE (gtk_widget_get_surface (widget)))
++    {
++      priv->x11_child = gdk_x11_stereo_child_new (gtk_widget_get_surface (widget), &error);
++      if (priv->x11_child == NULL)
++        {
++          gtk_gl_area_stereo_fail (area, error);
++          return;
++        }
++    }
++
++  if (priv->x11_child != NULL)
++    {
++      priv->stereo_rendering = TRUE;
++      return;
++    }
++#endif
++
+   if (priv->subsurface == NULL)
+     {
+       priv->subsurface = gdk_surface_create_subsurface (gtk_widget_get_surface (widget));
+@@ -1076,6 +1115,104 @@ release_dmabuf_texture (gpointer data)
+     g_free (texture);
+ }
+ 
++#ifdef GDK_WINDOWING_X11
++/* The window manager takes the declared child out of the toplevel's clipping
++ * a little after the declaration, and what is drawn on the half of the child
++ * outside the frame before that is lost: the first frames are drawn again. */
++static gboolean
++gtk_gl_area_x11_repeat (gpointer data)
++{
++  GtkGLArea *area = data;
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++
++  priv->needs_render = TRUE;
++  gtk_widget_queue_draw (GTK_WIDGET (area));
++
++  if (--priv->x11_repeats > 0)
++    return G_SOURCE_CONTINUE;
++
++  priv->x11_repeat_id = 0;
++  return G_SOURCE_REMOVE;
++}
++
++/* Reads the two views back and hands them to the stereo child window of the
++ * area, at the area's place in the toplevel's X window. The picture takes one
++ * copy through the CPU; the views stay at the resolution they were drawn at. */
++static gboolean
++gtk_gl_area_x11_present (GtkGLArea *area,
++                         int        width,
++                         int        height)
++{
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
++  GtkWidget *widget = GTK_WIDGET (area);
++  GtkNative *native = gtk_widget_get_native (widget);
++  graphene_rect_t bounds;
++  double nx, ny;
++  gsize stride = (gsize) 2 * width * 4;
++  gsize size = stride * height;
++  int scale = gtk_widget_get_scale_factor (widget);
++  GError *error = NULL;
++
++  if (size != priv->x11_size)
++    {
++      g_free (priv->x11_pixels);
++      g_free (priv->x11_rows);
++      priv->x11_pixels = g_malloc (size);
++      priv->x11_rows = g_malloc (size);
++      priv->x11_size = size;
++    }
++
++  glBindFramebuffer (GL_READ_FRAMEBUFFER, priv->blit_frame_buffer);
++  glReadBuffer (GL_COLOR_ATTACHMENT0);
++  glPixelStorei (GL_PACK_ALIGNMENT, 1);
++  glReadPixels (0, 0, 2 * width, height, GL_RGBA, GL_UNSIGNED_BYTE, priv->x11_pixels);
++  glBindFramebuffer (GL_FRAMEBUFFER, priv->frame_buffer);
++
++  /* OpenGL's first row is the bottom one */
++  for (int row = 0; row < height; row++)
++    memcpy (priv->x11_rows + (gsize) row * stride,
++            priv->x11_pixels + (gsize) (height - 1 - row) * stride,
++            stride);
++
++  if (!gtk_widget_compute_bounds (widget, GTK_WIDGET (native), &bounds))
++    return FALSE;
++  gtk_native_get_surface_transform (native, &nx, &ny);
++
++  if (!gdk_x11_stereo_child_present (priv->x11_child,
++                                     (int) ((bounds.origin.x + nx) * scale),
++                                     (int) ((bounds.origin.y + ny) * scale),
++                                     width, height, priv->x11_rows, &error))
++    {
++      gtk_gl_area_stereo_fail (area, error);
++      return FALSE;
++    }
++
++  if (!priv->stereo_shown)
++    {
++      priv->stereo_shown = TRUE;
++      g_object_notify_by_pspec (G_OBJECT (area), obj_props[PROP_STEREO_SHOWN]);
++      priv->x11_repeats = 10;
++      if (priv->x11_repeat_id == 0)
++        priv->x11_repeat_id = g_timeout_add (100, gtk_gl_area_x11_repeat, area);
++    }
++
++  return TRUE;
++}
++#endif
++
++static void
++gtk_gl_area_unmap (GtkWidget *widget)
++{
++#ifdef GDK_WINDOWING_X11
++  GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (GTK_GL_AREA (widget));
++
++  if (priv->x11_child != NULL)
++    gdk_x11_stereo_child_hide (priv->x11_child);
++#endif
++
++  GTK_WIDGET_CLASS (gtk_gl_area_parent_class)->unmap (widget);
++}
++
+ static void
+ gtk_gl_area_snapshot (GtkWidget   *widget,
+                       GtkSnapshot *snapshot)
+@@ -1084,6 +1221,7 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+   GtkGLAreaPrivate *priv = gtk_gl_area_get_instance_private (area);
+   int w, h, scale;
+   GLenum status;
++  gboolean x11_shown = FALSE;
+ 
+   scale = gtk_widget_get_scale_factor (widget);
+   w = gtk_widget_get_width (widget) * scale;
+@@ -1148,7 +1286,11 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+                                                           texture);
+       holder = texture->gl_texture;
+ 
+-      if (gdk_gl_context_export_dmabuf (priv->context,
++      if (
++#ifdef GDK_WINDOWING_X11
++          priv->x11_child == NULL &&
++#endif
++          gdk_gl_context_export_dmabuf (priv->context,
+                                         gdk_gl_texture_builder_get_id (texture->builder),
+                                         &dmabuf))
+         {
+@@ -1170,20 +1312,32 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+             gdk_dmabuf_close_fds (&dmabuf);
+         }
+ 
++#ifdef GDK_WINDOWING_X11
++      if (priv->x11_child != NULL)
++        x11_shown = gtk_gl_area_x11_present (area, w, h);
++      else
++#endif
+       if (priv->stereo_rendering && holder == texture->gl_texture)
+         gtk_gl_area_stereo_fail (area,
+                                  g_error_new_literal (GDK_GL_ERROR, GDK_GL_ERROR_NOT_AVAILABLE,
+                                                       "The OpenGL context cannot export its picture as a dma-buf, "
+                                                       "which a subsurface needs"));
+ 
+-      if (priv->stereo_rendering)
++      if (x11_shown)
++        {
++          /* The stereo child window covers the area */
++        }
++      else if (priv->stereo_rendering)
+         {
+           /* The texture holds both views, twice the width of the area. The
+            * subsurface shows all of it, one view wide; where GTK cannot
+            * offload it, the clip leaves the left view alone, drawn as an
+            * area without stereo draws it. */
+-          priv->stereo_pushed = TRUE;
+-          gtk_snapshot_push_subsurface (snapshot, priv->subsurface);
++          if (priv->subsurface != NULL)
++            {
++              priv->stereo_pushed = TRUE;
++              gtk_snapshot_push_subsurface (snapshot, priv->subsurface);
++            }
+           gtk_snapshot_save (snapshot);
+           gtk_snapshot_translate (snapshot, &GRAPHENE_POINT_INIT (0, gtk_widget_get_height (widget)));
+           gtk_snapshot_scale (snapshot, 1, -1);
+@@ -1198,7 +1352,8 @@ gtk_gl_area_snapshot (GtkWidget   *widget,
+                                                             gtk_widget_get_height (widget)));
+           gtk_snapshot_pop (snapshot);
+           gtk_snapshot_restore (snapshot);
+-          gtk_snapshot_pop (snapshot);
++          if (priv->subsurface != NULL)
++            gtk_snapshot_pop (snapshot);
+         }
+       else
+         {
+@@ -1257,6 +1412,7 @@ gtk_gl_area_class_init (GtkGLAreaClass *klass)
+ 
+   widget_class->realize = gtk_gl_area_realize;
+   widget_class->unrealize = gtk_gl_area_unrealize;
++  widget_class->unmap = gtk_gl_area_unmap;
+   widget_class->size_allocate = gtk_gl_area_size_allocate;
+   widget_class->snapshot = gtk_gl_area_snapshot;
+ 
+@@ -1385,12 +1541,16 @@ gtk_gl_area_class_init (GtkGLAreaClass *klass)
+    * not kept.
+    *
+    * The rest of the window stays an ordinary window, drawn once and seen
+-   * the same by both eyes. The stereo picture lies on a subsurface, so it
+-   * needs a compositor that announces `kde_stereo_content_manager_v1`
+-   * (version 2 or later), a display with subsurfaces (Wayland), and an
+-   * area that GTK can offload as [class@Gtk.GraphicsOffload] does: fully
+-   * visible, with no rounded clip or opacity over it, and an OpenGL
+-   * context that can export its picture as a dma-buf.
++   * the same by both eyes. On Wayland the stereo picture lies on a
++   * subsurface, so it needs a compositor that announces
++   * `kde_stereo_content_manager_v1` (version 2 or later) and an area that
++   * GTK can offload as [class@Gtk.GraphicsOffload] does: fully visible,
++   * with no rounded clip or opacity over it, and an OpenGL context that can
++   * export its picture as a dma-buf. On X11 it is a child window of the
++   * toplevel's window, declared with `libstereo-declare` (loaded when the
++   * first stereo area asks) to a window manager that announces version 8 of
++   * `_KDE_NET_WM_STEREO_CONTENT_SUPPORTED`; the picture takes one copy
++   * through the CPU, and a 2D widget drawn over the area is hidden by it.
+    *
+    * If the picture cannot be shown per eye, the area says so: it logs
+    * the reason once, sets [property@Gtk.GLArea:stereo-error] and keeps

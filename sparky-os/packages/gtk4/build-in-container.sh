@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sparky Stereo OS: gtk4 4.24.1+ds-1+stereo3d1, Debian's 4.24.1+ds-1 with the stereo GtkGLArea patch, built with Lean Code.
+# Sparky Stereo OS: gtk4 4.24.1+ds-1+stereo3d2, Debian's 4.24.1+ds-1 with the stereo GtkGLArea patches (Wayland and X11) and the demo, built with Lean Code.
 # Created by Daniel Ramos (Capitain Jack) 2026/11/07
 # Copyright 2026 under the GNU GPL3 License
 # Runs inside the Lean Code migration container; build.sh starts it. /work is the job folder, /src Debian's source package,
@@ -22,7 +22,7 @@ echo '43ca7e4305ba039a28451b818c5f2f0027ea998f3279fa2a18087e7a8146a640  /src/gtk
 cp /src/gtk4_4.24.1+ds-1.dsc /src/gtk4_4.24.1+ds-1.debian.tar.xz /src/gtk4_4.24.1+ds.orig.tar.xz .
 dpkg-source -x gtk4_4.24.1+ds-1.dsc t >/dev/null
 cd t
-for p in /patches/stereo3d-gdk-dmabuf-export-open-fds.patch /patches/stereo3d-gtkglarea-stereo.patch; do
+for p in /patches/stereo3d-gdk-dmabuf-export-open-fds.patch /patches/stereo3d-gtkglarea-stereo.patch /patches/stereo3d-gtkglarea-stereo-x11.patch /patches/stereo3d-gtk-demo-glarea-stereo.patch; do
 	cp "$p" debian/patches/
 	basename "$p" >> debian/patches/series
 done
@@ -76,12 +76,22 @@ License: MIT-CMU
 """
 p.write_text(s.replace(anchor, stanza + anchor) + license_text)
 COPYRIGHT
+# the X11 route loads libstereo-declare when the first stereo area asks; X11 stereo areas are a designed feature, so libgtk-4-1 depends on it
+# (Daniel, memory design-check-every-default: a dependency a designed feature needs is a Depends)
+python3 - <<'CONTROL'
+from pathlib import Path
+p = Path('debian/control')
+s = p.read_text()
+old = "         libgtk-4-common (>= ${source:Upstream-Version}),\n"
+assert s.count(old) == 1
+p.write_text(s.replace(old, old + "         libstereo-declare1 (>= 1.7.0),\n"))
+CONTROL
 python3 - <<'CHANGELOG'
 from pathlib import Path
 import os
 p = Path('debian/changelog')
-entry = Path('/tools/changelog-stereo3d1.txt').read_text()
-assert entry.startswith('gtk4 (4.24.1+ds-1+stereo3d1) unstable;'), entry[:60]
+entry = Path('/tools/changelog-stereo3d2.txt').read_text()
+assert entry.startswith('gtk4 (4.24.1+ds-1+stereo3d2) unstable;'), entry[:60]
 assert p.read_text().startswith('gtk4 (4.24.1+ds-1) ')
 p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n' + p.read_text())
 CHANGELOG
@@ -92,12 +102,12 @@ dpkg-source -b t >/dev/null
 rm -rf t
 ls
 mkdir -p /work/lc && cd /work/lc
-cp ../s1/gtk4_4.24.1+ds-1+stereo3d1.dsc ../s1/gtk4_4.24.1+ds-1+stereo3d1.debian.tar.xz ../s1/gtk4_4.24.1+ds.orig.tar.xz .
-dpkg-source -x gtk4_4.24.1+ds-1+stereo3d1.dsc /work/lc/source >/dev/null
+cp ../s1/gtk4_4.24.1+ds-1+stereo3d2.dsc ../s1/gtk4_4.24.1+ds-1+stereo3d2.debian.tar.xz ../s1/gtk4_4.24.1+ds.orig.tar.xz .
+dpkg-source -x gtk4_4.24.1+ds-1+stereo3d2.dsc /work/lc/source >/dev/null
 cd /work/lc/source
 # g-ir-scanner and gi-docgen read the gtk-doc comments, with their (transfer ...) and (nullable) annotations, from the C
 # sources and headers of gtk, gdk and gsk: the typelib and the documentation need them, so those files stay as they are.
-PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source 4.24.1+ds-1+stereo3d1+lc1 --toolkit /toolkit \
+PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source 4.24.1+ds-1+stereo3d2+lc1 --toolkit /toolkit \
 	--preserve-source 'gtk/*.c' 'g-ir-scanner and gi-docgen read the gtk-doc comments and annotations of the C sources and headers' \
 	--preserve-source 'gtk/*.h' 'g-ir-scanner and gi-docgen read the gtk-doc comments and annotations of the C sources and headers' \
 	--preserve-source 'gdk/*.c' 'g-ir-scanner and gi-docgen read the gtk-doc comments and annotations of the C sources and headers' \

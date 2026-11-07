@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sparky Stereo OS: builds gtk4 4.24.1+ds-1+stereo3d1+lc1 from Debian's 4.24.1+ds-1 source package.
+# Sparky Stereo OS: builds gtk4 4.24.1+ds-1+stereo3d2+lc1 from Debian's 4.24.1+ds-1 source package.
 # Created by Daniel Ramos (Capitain Jack) 2026/11/07
 # Copyright 2026 under the GNU GPL3 License
 # Source package once (the stereo GtkGLArea patch after Debian's series, the changelog entry), then the Lean Code source,
