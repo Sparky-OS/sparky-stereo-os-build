@@ -1,0 +1,17 @@
+kwin (4:6.7.4-2+stereo3d49) unstable;
+
+  * A configure that changes only a window's states keeps the size the
+    client committed. XdgToplevelWindow::sendRoleConfigure() fills every
+    configure with the move-resize geometry, and while a configure was
+    scheduled the committed geometry was ignored, so a client that resized
+    itself when its popup closed and the window was activated again got the
+    old size back, acknowledged it and lost its resize. Only a configure that
+    asks for a size (maximize, fullscreen, tiling, an interactive resize or
+    any other resize by KWin, recorded by moveResizeInternal(); a move after
+    the request does not clear it) now holds the committed geometry back
+    (s49-0001, ORDER 459). Tests: testXdgShellWindow's
+    testSelfResizeWhileActivationConfigureIsPending,
+    testMaximizeWinsOverSelfResizeBeforeConfigure and
+    testResizeThenMoveKeepsRequestedSizeBeforeConfigure (s49-0002).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 07 Nov 2026 20:06:39 +0000
