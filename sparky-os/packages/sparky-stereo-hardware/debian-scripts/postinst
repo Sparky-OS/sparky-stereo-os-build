@@ -13,6 +13,8 @@ if [ "$1" = configure ]; then
 	if [ -d /run/systemd/system ]; then
 		systemctl daemon-reload || true
 		if [ ! -e /sys/module/nvidia ]; then systemctl reset-failed nvidia-persistenced.service nvidia-powerd.service >/dev/null 2>&1 || true; fi
+		# thermald from an earlier image: kept on Intel, removed on other CPUs where it is unused and automatic, once, after this apt run
+		/usr/lib/sparky-stereo-hardware/thermald-manual check || true
 	fi
 	sparky-stereo-opengl-default ||
 		echo 'sparky-stereo-hardware: the OpenGL stereo default could not be written now (sparky-stereo-opengl-default failed); sparky-stereo-opengl-default.service writes it at the next boot' >&2

@@ -1,0 +1,64 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/07
+# Copyright 2026 under the GNU GPL3 License
+# thermald runs on Intel CPUs only (ORDER 43). Before 0.1.24 the metapackage sparky-stereo-hardware-support installed it on
+# every machine as an automatic package; it no longer depends on it. This settles the machines that have it, once:
+#   Intel CPU        thermald stays: marked manually installed, so `apt autoremove` keeps it ("Intel machines keep it").
+#   other CPU        thermald marked automatic (our old metapackage put it there) and needed by no installed package is removed
+#                    (apt-get remove, not purge: its configuration stays) and the journal says why.
+#                    One marked manual (the person installed it) is left as it is, even though it cannot run there
+#                    (Daniel, 2026-11-07: "If manually installed leave it, maybe a intel user is planning a migration").
+# Same shape as nvidia-i386 (ORDER 363b):
+#   check    after every dpkg run (dpkg's post-invoke hook) and in the postinst: does nothing unless there is something to
+#            settle. Inside an apt run apt rewrites its state file when the run ends, so a change made now would be lost: it
+#            starts sparky-stereo-hardware-thermald-manual.service without waiting (systemctl --no-block).
+#   auto     the unit's step: waits until no apt or dpkg run holds dpkg's locks (apt-get check with DPkg::Lock::Timeout=-1),
+#            settles, writes the stamp and says so in the journal. It never runs again: a later choice of the person stays.
+set -u
+STAMP=/var/lib/sparky-stereo-hardware/thermald-manual
+UNIT=sparky-stereo-hardware-thermald-manual.service
+TAG=sparky-stereo-hardware
+intel() { grep -qs '^vendor_id[[:space:]]*:[[:space:]]*GenuineIntel' /proc/cpuinfo; }
+installed() { [[ $(dpkg-query -W -f='${db:Status-Status}' thermald 2>/dev/null) == installed ]]; }
+automatic() { [[ -n $(apt-mark showauto thermald 2>/dev/null) ]]; }
+# nothing else installed needs it: removing it removes it alone
+alone() { [[ $(apt-get -s remove thermald 2>/dev/null | grep '^Remv' | awk '{print $2}' | tr '\n' ' ') == 'thermald ' ]]; }
+say() { logger -t "$TAG" -- "$1" 2>/dev/null || true; echo "$TAG: $1" >&2; }
+stamp() { mkdir -p "${STAMP%/*}" && : >"$STAMP"; }
+# what to do now: mark, remove, or nothing (a final "nothing" writes the stamp)
+decide() {
+	[[ -e $STAMP ]] && { echo none; return; }
+	installed || { echo none; return; }
+	if ! automatic; then stamp; echo none; return; fi
+	if intel; then echo mark; elif alone; then echo remove; else echo none; fi
+}
+case ${1:-} in
+check)
+	[[ $(decide) == none ]] && exit 0
+	if [[ -d /run/systemd/system ]] && ! systemd-detect-virt --quiet --chroot 2>/dev/null; then
+		out=$(systemctl --no-block start "$UNIT" 2>&1) || say "thermald needs settling on this CPU and systemctl start $UNIT failed ($out)"
+	else
+		say "thermald needs settling on this CPU and systemd cannot start $UNIT here; run: $0 auto"
+	fi
+	;;
+auto)
+	apt-get -q -o DPkg::Lock::Timeout=-1 check >/dev/null 2>&1
+	case $(decide) in
+	mark)
+		if apt-mark manual thermald >/dev/null; then
+			stamp
+			say 'thermald marked manually installed, once (Intel CPU; the metapackage no longer depends on it, so apt autoremove keeps it)'
+		else
+			say 'apt-mark manual thermald failed; run it by hand'; exit 1
+		fi ;;
+	remove)
+		if DEBIAN_FRONTEND=noninteractive apt-get -y -q remove thermald >/dev/null; then
+			stamp
+			say 'thermald removed, once: it runs on Intel CPUs only, this CPU is not Intel, the old metapackage had installed it and no package needs it (its configuration is kept; apt install thermald brings it back)'
+		else
+			say 'apt-get remove thermald failed; thermald stays'; exit 1
+		fi ;;
+	esac
+	;;
+*) echo "usage: ${0##*/} check|auto" >&2; exit 2 ;;
+esac

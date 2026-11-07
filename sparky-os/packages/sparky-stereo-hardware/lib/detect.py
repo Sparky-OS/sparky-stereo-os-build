@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/01
+# Last update 2026/11/07
 """Turn captured hardware facts into a deterministic installation plan."""
 import pathlib
 import json
@@ -39,7 +39,8 @@ vendors = set(re.findall(r"^vendor_id\s*:\s*(\S+)", read("cpuinfo"), re.M))
 for vendor, package in (("AuthenticAMD", "amd64-microcode"), ("GenuineIntel", "intel-microcode")):
     if vendor in vendors:
         match(f"CPU {vendor}", package)
-        if vendor == "GenuineIntel" and laptop == "0":
+        if vendor == "GenuineIntel":
+            # thermald exits on any other vendor ("Unsupported cpu model or platform"), so only an Intel machine gets it
             packages.add("thermald")
 if not vendors:
     emit("found", "No x86 CPU vendor")

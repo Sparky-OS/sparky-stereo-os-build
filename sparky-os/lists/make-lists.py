@@ -199,9 +199,10 @@ group('languages', 'Languages (all of Steam\'s)', langs + [
 ])
 
 # 7. Hardware: firmware and the tools the hardware setup uses (DKMS drivers only when found).
+# thermald is not listed: it runs on Intel CPUs only, so sparky-stereo-hardware's detection installs it there (ORDER 43).
 group('hardware', 'Hardware support', [
     'laptop-detect', 'isenkram-cli', 'discover', 'nvidia-detect', 'lm-sensors',   # fans: CoolerControl
-    'thermald', 'power-profiles-daemon', 'fwupd', 'inxi', 'hw-probe', 'bluetooth',
+    'power-profiles-daemon', 'fwupd', 'inxi', 'hw-probe', 'bluetooth',
     'firmware-linux', 'firmware-linux-nonfree', 'firmware-misc-nonfree', 'firmware-amd-graphics',
     'firmware-nvidia-graphics',   # nouveau's firmware, GSP included: without it Turing and newer have no GR engine (VM test 2026-10-02); firmware-nvidia-gsp is NVIDIA's own driver firmware, not this
     'firmware-realtek', 'firmware-iwlwifi', 'firmware-atheros', 'firmware-brcm80211',
