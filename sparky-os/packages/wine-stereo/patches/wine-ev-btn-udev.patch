@@ -14,7 +14,7 @@ Description: winebus udev backend: report the joystick buttons of the kernel's E
  ioctl 0 always fails, so a build against headers without EV_BTN never used the
  event); the event-bit buffer is sized (EV_MAX + 7) / 8; an event code outside
  1 to the button count is ignored; a device that has EV_BTN but gives no count
- is said on the error channel and keeps the EV_KEY path. Its second patch
+ is said on the error channel (the failed ioctl with its errno, or a count of 0) and keeps the EV_KEY path. Its second patch
  (BTN_GAMEPAD decides if a device is a gamepad) is left out.
 Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Origin: other, https://gitlab.winehq.org/wine/wine/-/merge_requests/9853 (idea and first patch by Tomasz Pakuła)
@@ -54,7 +54,7 @@ Last-Update: 2026-11-07
      BYTE absbits[(ABS_MAX+7)/8];
      BYTE relbits[(REL_MAX+7)/8];
      BYTE ffbits[(FF_MAX+7)/8];
-@@ -606,8 +615,28 @@
+@@ -606,8 +615,30 @@
      if (hat_count && !hid_device_add_hatswitch(iface, hat_count))
          return STATUS_NO_MEMORY;
  
@@ -68,8 +68,10 @@ Last-Update: 2026-11-07
 +    {
 +        unsigned int ev_btn_count = 0;
 +
-+        if (ioctl(impl->base.device_fd, EVIOCGBTNCNT, &ev_btn_count) == -1 || !ev_btn_count)
-+            ERR("the device has EV_BTN but EVIOCGBTNCNT gave no button count (%d %s): its buttons are counted from EV_KEY\n", errno, strerror(errno));
++        if (ioctl(impl->base.device_fd, EVIOCGBTNCNT, &ev_btn_count) == -1)
++            ERR("the device has EV_BTN but EVIOCGBTNCNT failed (%d %s): its buttons are counted from EV_KEY\n", errno, strerror(errno));
++        else if (!ev_btn_count)
++            ERR("the device has EV_BTN but EVIOCGBTNCNT gave a count of 0: its buttons are counted from EV_KEY\n");
 +        else
 +        {
 +            impl->ev_btn = TRUE;
@@ -84,7 +86,7 @@ Last-Update: 2026-11-07
      if (button_count && !hid_device_add_buttons(iface, HID_USAGE_PAGE_BUTTON, 1, button_count))
          return STATUS_NO_MEMORY;
  
-@@ -692,7 +721,12 @@
+@@ -692,7 +723,12 @@
      case EV_MSC:
          return FALSE;
  #endif
