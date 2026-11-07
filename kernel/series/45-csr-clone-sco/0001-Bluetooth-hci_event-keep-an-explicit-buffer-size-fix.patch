@@ -1,0 +1,45 @@
+From 000d53e73004da4dd4e87ea91c65fc854c57d0c8 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 7 Nov 2026 13:27:07 -0300
+Subject: [PATCH 1/2] Bluetooth: hci_event: keep an explicit buffer size fixup
+ when READ_VOICE_SETTING is broken
+
+hci_cc_read_buffer_size() applies HCI_QUIRK_FIXUP_BUFFER_SIZE and then
+zeroes sco_pkts when read_voice_setting_capable() is false, so the
+fixup never takes effect on a controller with
+HCI_QUIRK_BROKEN_READ_VOICE_SETTING, for example the fake CSR clones
+that btusb_setup_csr() detects. This also makes btusb's force_scofix
+parameter a no-op on them.
+
+14d17c78a4b1 ("Bluetooth: Disable SCO support if READ_VOICE_SETTING is
+unsupported/broken") disables SCO there because a SCO connection
+without the proper voice_setting can lock the controller up. That stays
+the default. The fixup quirk is set only on purpose (a driver's table
+entry or force_scofix), so when it is set, keep its buffers.
+
+Assisted-by: Claude:claude-sonnet-5-5
+---
+ net/bluetooth/hci_event.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/net/bluetooth/hci_event.c b/net/bluetooth/hci_event.c
+index 2f5e21f..37cfc46 100644
+--- a/net/bluetooth/hci_event.c
++++ b/net/bluetooth/hci_event.c
+@@ -947,7 +947,12 @@ static u8 hci_cc_read_buffer_size(struct hci_dev *hdev, void *data,
+ 		hdev->sco_pkts = 8;
+ 	}
+ 
+-	if (!read_voice_setting_capable(hdev))
++	/* A controller whose voice setting cannot be read has SCO disabled,
++	 * unless the buffer sizes are fixed up on purpose: that quirk is set
++	 * only by a driver's table entry or by the force_scofix parameter.
++	 */
++	if (!read_voice_setting_capable(hdev) &&
++	    !hci_test_quirk(hdev, HCI_QUIRK_FIXUP_BUFFER_SIZE))
+ 		hdev->sco_pkts = 0;
+ 
+ 	hdev->acl_cnt = hdev->acl_pkts;
+-- 
+2.53.0
+

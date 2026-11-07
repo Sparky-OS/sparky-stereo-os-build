@@ -1,0 +1,41 @@
+From ad8063ada32002569abea1c7ecced2cf582e7e7c Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 7 Nov 2026 13:27:07 -0300
+Subject: [PATCH 2/2] Bluetooth: btusb: assume working SCO buffers on the CSR
+ clone 0a12:0001 bcdDevice 0x8891 subversion 0x2312
+
+This clone is not told apart from a genuine CSR dongle by the existing
+checks, and with the default setup no SCO connection can be made: SCO
+MTU 48:0 is logged and every connect is refused. Set
+HCI_QUIRK_FIXUP_BUFFER_SIZE, as for the genuine old CSR dongles
+(BTUSB_WRONG_SCO_MTU), unless disable_scofix is set.
+
+Whether the clone carries voice is proven only by audio through a real
+SCO link, in CVSD and mSBC.
+
+Assisted-by: Claude:claude-sonnet-5-5
+---
+ drivers/bluetooth/btusb.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/bluetooth/btusb.c b/drivers/bluetooth/btusb.c
+index 2154ad8..a92e458 100644
+--- a/drivers/bluetooth/btusb.c
++++ b/drivers/bluetooth/btusb.c
+@@ -2718,6 +2718,13 @@ static int btusb_setup_csr(struct hci_dev *hdev)
+ 			usb_enable_autosuspend(data->udev);
+ 	}
+ 
++	/* Assume working SCO buffers for this clone (bcdDevice 0x8891, LMP
++	 * subversion 0x2312), as for the genuine old CSR dongles.
++	 */
++	if (bcdDevice == 0x8891 && le16_to_cpu(rp->lmp_subver) == 0x2312 &&
++	    !disable_scofix)
++		hci_set_quirk(hdev, HCI_QUIRK_FIXUP_BUFFER_SIZE);
++
+ 	kfree_skb(skb);
+ 
+ 	return 0;
+-- 
+2.53.0
+
