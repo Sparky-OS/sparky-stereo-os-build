@@ -52,7 +52,7 @@ def build(root, provenance):
         fields = package.control(staging)
         name, version, arch = package.identity(fields)
         source_tree.restore_payload(root, staging, check_coverage=False)
-        subprocess.run(['bash', str(provenance), '--tree', str(staging)], check=True)
+        subprocess.run(['bash', str(provenance), '--tree', str(staging), '--source', str(root)], check=True)
         before = set(root.parent.glob('*.deb'))
         release.build_tree(staging, root.parent)
         outputs = sorted(set(root.parent.glob('*.deb')) - before)

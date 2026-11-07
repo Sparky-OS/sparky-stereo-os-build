@@ -31,6 +31,9 @@ for patch in "$HERE"/patches/s44-*.patch "$HERE"/patches/s45-*.patch "$HERE"/pat
     cp "$patch" "debian/patches/$name"
     printf '%s\n' "$name" >> debian/patches/series
 done
+# ORDER 451: the patches of ours, for the copyright file (provenance.sh): read from each patch's header, a carried upstream
+# commit (s41-0001) stays its author's
+python3 "$toolkit/repo/provenance-files.py" . 's??-????-*.patch'
 dpkg-source --before-build .
 python3 - "$HERE/changelog-stereo3d44.txt" "$HERE/changelog-stereo3d45.txt" "$HERE/changelog-stereo3d46.txt" <<'CHANGELOG'
 from pathlib import Path
