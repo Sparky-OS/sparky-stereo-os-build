@@ -1,0 +1,245 @@
+Description: Tell the person when the guest's picture cannot be shown
+ .
+ A GL scanout that cannot be imported left the viewer black, and the
+ only word of it was a log line nobody sees. The viewer now shows a
+ short message over the black picture: what failed, in plain words,
+ and what to do (the Wayland session, or QT_XCB_GL_INTEGRATION=xcb_egl
+ where Qt's GLX integration gives no EGL display). It goes away when an
+ import succeeds.
+ .
+ The log line is written once for each distinct width, height, format
+ and modifier, not for every scanout record the guest sends.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other
+Forwarded: no
+Last-Update: 2026-11-07
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ src/domainviewer.cpp       |  2 ++
+ src/domainviewer.h         | 15 +++++++++++++++
+ src/glscanoutrenderer.cpp  | 22 +++++++++++++++-------
+ src/glscanoutrenderer.h    |  6 +++++-
+ src/qml/VMViewerWindow.qml | 28 +++++++++++++++++++++++++++-
+ src/spicedisplayrenderer.h | 24 ++++++++++++++++++++++++
+ 6 files changed, 88 insertions(+), 9 deletions(-)
+
+diff --git a/src/domainviewer.cpp b/src/domainviewer.cpp
+index 6099bfb..0ca560d 100644
+--- a/src/domainviewer.cpp
++++ b/src/domainviewer.cpp
+@@ -170,6 +170,7 @@ void DomainViewer::disconnectFromSpice()
+     if (m_renderer) {
+         m_renderer->detach();
+         m_renderer.reset();
++        Q_EMIT importProblemChanged();
+     }
+     m_stereoSurface.reset();
+ 
+@@ -330,6 +331,7 @@ void DomainViewer::attachDisplayChannel(SpiceChannel *channel)
+     connect(m_renderer.get(), &SpiceDisplayRenderer::frameReady, this, &QQuickItem::update);
+     connect(m_renderer.get(), &SpiceDisplayRenderer::frameSizeChanged, this, &DomainViewer::handleRendererFrameSizeChanged);
+     connect(m_renderer.get(), &SpiceDisplayRenderer::stereoFrameReady, this, &DomainViewer::scheduleStereoUpdate);
++    connect(m_renderer.get(), &SpiceDisplayRenderer::importProblemChanged, this, &DomainViewer::importProblemChanged);
+ 
+     m_renderer->attach(SPICE_DISPLAY_CHANNEL(channel));
+ }
+diff --git a/src/domainviewer.h b/src/domainviewer.h
+index 5da5693..f09ff00 100644
+--- a/src/domainviewer.h
++++ b/src/domainviewer.h
+@@ -31,8 +31,22 @@ class DomainViewer : public QQuickItem
+     Q_PROPERTY(QString host MEMBER m_host NOTIFY hostChanged)
+     Q_PROPERTY(int port MEMBER m_port NOTIFY portChanged)
+     Q_PROPERTY(QSizeF availableArea READ availableArea WRITE setAvailableArea NOTIFY availableAreaChanged)
++    // why the guest's picture cannot be shown, ImportOk while it can
++    Q_PROPERTY(ImportProblem importProblem READ importProblem NOTIFY importProblemChanged)
+ 
+ public:
++    enum ImportProblem {
++        ImportOk = SpiceDisplayRenderer::ImportOk,
++        ImportNoEglDisplay = SpiceDisplayRenderer::ImportNoEglDisplay,
++        ImportFailed = SpiceDisplayRenderer::ImportFailed,
++    };
++    Q_ENUM(ImportProblem)
++
++    ImportProblem importProblem() const
++    {
++        return m_renderer ? static_cast<ImportProblem>(m_renderer->importProblem()) : ImportOk;
++    }
++
+     explicit DomainViewer(QQuickItem *parent = nullptr);
+     ~DomainViewer();
+ 
+@@ -102,6 +116,7 @@ Q_SIGNALS:
+     void portChanged();
+     void hostChanged();
+     void availableAreaChanged();
++    void importProblemChanged();
+ 
+ private Q_SLOTS:
+     void handleHostPort(int exitCode, const QString &output);
+diff --git a/src/glscanoutrenderer.cpp b/src/glscanoutrenderer.cpp
+index a52a763..4dedc1e 100644
+--- a/src/glscanoutrenderer.cpp
++++ b/src/glscanoutrenderer.cpp
+@@ -94,7 +94,6 @@ void GlScanoutRenderer::handleGlScanout(const SpiceGlScanout2 *scanout)
+ 
+         closeScanoutFds();
+ 
+-        m_importWarned = false;
+         m_scanout = *scanout; // struct copy
+ 
+         // duplicate the file descriptors if they exist
+@@ -264,12 +263,19 @@ QSGNode *GlScanoutRenderer::updatePaintNode(QQuickWindow *window, QSGNode *oldNo
+         QMutexLocker locker(&m_scanoutLock);
+         if (m_hasScanout && (m_texId == 0 || m_scanoutDirty)) {
+             const bool imported = createTextureFromScanout(&m_scanout);
+-            if (!imported && !m_importWarned) {
+-                m_importWarned = true;
+-                qCWarning(KARTON_DEBUG) << "The GL scanout could not be imported:" << m_scanout.width << "x" << m_scanout.height << "fourcc"
+-                                        << QStringLiteral("0x%1").arg(m_scanout.format, 0, 16) << "modifier"
+-                                        << QStringLiteral("0x%1").arg(m_scanout.modifier, 0, 16) << "planes" << m_scanout.num_planes
+-                                        << (eglGetCurrentDisplay() != EGL_NO_DISPLAY ? "(EGL)" : "(no EGL display: Qt is not using its EGL integration)");
++            if (imported) {
++                setImportProblem(ImportOk);
++            } else {
++                const bool noEglDisplay = eglGetCurrentDisplay() == EGL_NO_DISPLAY;
++                setImportProblem(noEglDisplay ? ImportNoEglDisplay : ImportFailed);
++                // once for each kind of scanout: the guest sends a record for every update
++                const auto key = std::make_tuple(m_scanout.width, m_scanout.height, m_scanout.format, m_scanout.modifier);
++                if (m_importWarned.insert(key).second) {
++                    qCWarning(KARTON_DEBUG) << "The GL scanout could not be imported:" << m_scanout.width << "x" << m_scanout.height << "fourcc"
++                                            << QStringLiteral("0x%1").arg(m_scanout.format, 0, 16) << "modifier"
++                                            << QStringLiteral("0x%1").arg(m_scanout.modifier, 0, 16) << "planes" << m_scanout.num_planes
++                                            << (noEglDisplay ? "(no EGL display: Qt is not using its EGL integration)" : "(EGL)");
++                }
+             }
+             m_scanoutDirty = false;
+         }
+@@ -398,6 +404,8 @@ void GlScanoutRenderer::cleanupEGLResources()
+     closeScanoutFds();
+     m_hasScanout = false;
+     m_scanoutDirty = false;
++    m_importWarned.clear();
++    setImportProblem(ImportOk);
+ 
+     cleanupEGLImage();
+ 
+diff --git a/src/glscanoutrenderer.h b/src/glscanoutrenderer.h
+index f5510f9..175da20 100644
+--- a/src/glscanoutrenderer.h
++++ b/src/glscanoutrenderer.h
+@@ -3,6 +3,9 @@
+ 
+ #pragma once
+ 
++#include <set>
++#include <tuple>
++
+ #include "spicedisplayrenderer.h"
+ 
+ #include <EGL/egl.h>
+@@ -66,7 +69,8 @@ private:
+     int m_imageWidth = 0;
+     int m_imageHeight = 0;
+     SpiceGlScanout2 m_scanout = {{-1, -1, -1, -1}};
+-    bool m_importWarned = false;
++    // the scanouts (width, height, format, modifier) whose failed import is in the log already
++    std::set<std::tuple<quint32, quint32, quint32, quint64>> m_importWarned;
+     bool m_hasScanout = false;
+     bool m_scanoutDirty = false;
+     EGLImageKHR m_eglImage = EGL_NO_IMAGE_KHR;
+diff --git a/src/qml/VMViewerWindow.qml b/src/qml/VMViewerWindow.qml
+index c7404f0..2239d81 100644
+--- a/src/qml/VMViewerWindow.qml
++++ b/src/qml/VMViewerWindow.qml
+@@ -114,6 +114,32 @@ Kirigami.ApplicationWindow {
+                     }
+                 }
+             }
++
++            // the guest's picture cannot be shown: say so, a black window tells the person nothing
++            Rectangle {
++                id: importProblemNotice
++
++                visible: domainViewer.importProblem !== DomainViewer.ImportOk
++                anchors.centerIn: parent
++                width: Math.min(parent.width - Kirigami.Units.gridUnit * 2, Kirigami.Units.gridUnit * 36)
++                height: importProblemMessage.implicitHeight + Kirigami.Units.gridUnit * 2
++                radius: Kirigami.Units.largeSpacing
++                color: Kirigami.Theme.backgroundColor
++                Kirigami.Theme.colorSet: Kirigami.Theme.Window
++                Kirigami.Theme.inherit: false
++
++                Kirigami.PlaceholderMessage {
++                    id: importProblemMessage
++
++                    anchors.centerIn: parent
++                    width: parent.width - Kirigami.Units.gridUnit * 2
++                    icon.name: "dialog-warning"
++                    text: i18n("The picture of the virtual machine cannot be shown here.")
++                    explanation: domainViewer.importProblem === DomainViewer.ImportNoEglDisplay
++                        ? i18n("This window cannot take the picture from the graphics card. Use the Wayland session, or start Karton with the environment variable QT_XCB_GL_INTEGRATION=xcb_egl.")
++                        : i18n("The graphics card did not hand over the picture. Close this window and open the viewer again. If the picture is still missing, send in the Karton log lines about the GL scanout.")
++                }
++            }
+         }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/src/spicedisplayrenderer.h b/src/spicedisplayrenderer.h
+index d89cc25..b7a66ef 100644
+--- a/src/spicedisplayrenderer.h
++++ b/src/spicedisplayrenderer.h
+@@ -12,6 +12,7 @@
+ #include <QSGNode>
+ #include <QSize>
+ 
++#include <atomic>
+ #include <optional>
+ 
+ #include "stereoframe.h"
+@@ -46,19 +47,42 @@ public:
+         return QImage();
+     }
+ 
++    // Why the guest's picture cannot be shown, ImportOk while it can
++    enum ImportProblem {
++        ImportOk = 0,
++        // Qt gives no EGL display, so a GL scanout cannot become an image (Qt's GLX integration on X11)
++        ImportNoEglDisplay = 1,
++        // the display refused the buffer
++        ImportFailed = 2,
++    };
++    int importProblem() const
++    {
++        return m_importProblem.load();
++    }
++
+ Q_SIGNALS:
+     void frameSizeChanged();
+     void frameReady();
+     void stereoChanged();
+     // stereoFrame() has a new image
+     void stereoFrameReady();
++    // importProblem() changed; emitted from the render thread, delivered in the GUI thread
++    void importProblemChanged();
+ 
+ protected:
++    void setImportProblem(int problem)
++    {
++        if (m_importProblem.exchange(problem) != problem) {
++            Q_EMIT importProblemChanged();
++        }
++    }
++
+     // Follows the stereo layout the display channel announces (a SPICE with the stereo display message)
+     void attachStereo(SpiceDisplayChannel *channel);
+     void detachStereo();
+ 
+ private:
++    std::atomic<int> m_importProblem{ImportOk};
+     static void stereo_notify_callback(GObject *object, GParamSpec *pspec, gpointer user_data);
+     void readStereo();
+ 
