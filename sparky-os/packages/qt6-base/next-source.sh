@@ -20,7 +20,7 @@ trap 'rm -rf "$W"' EXIT
 dpkg-source --skip-patches -x "$DSC" "$W/published" >/dev/null
 mkdir -p "$W/overlay/patches"
 cp "$W/published/debian/patches/series" "$W/overlay/patches/series"
-[ "$(tail -c1 "$W/overlay/patches/series" | xxd -p)" = 0a ] || echo >> "$W/overlay/patches/series"
+[ -z "$(tail -c1 "$W/overlay/patches/series")" ] || echo >> "$W/overlay/patches/series"
 for p in "$HERE"/patches/*.patch; do
 	grep -qxF "$(basename "$p")" "$W/published/debian/patches/series" && continue
 	cp "$p" "$W/overlay/patches/"
