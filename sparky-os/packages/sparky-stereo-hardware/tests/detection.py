@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/02
+# Last update 2026/11/07
 import hashlib
 import pathlib
 import subprocess
@@ -18,7 +18,12 @@ cases = [
     ('empty', {}, set(), set()),
     ('intel-laptop', {'laptop': '0', 'cpuinfo': 'vendor_id : GenuineIntel\n'},
      {'task-laptop', 'power-profiles-daemon', 'thermald', 'intel-microcode'}, set()),
+    # thermald exits on any CPU that is not Intel (ORDER 43): only the Intel machines get it, laptop or desktop
+    ('intel-desktop', {'cpuinfo': 'vendor_id : GenuineIntel\n'}, {'intel-microcode', 'thermald'}, set()),
     ('amd-desktop', {'cpuinfo': 'vendor_id : AuthenticAMD\n'}, {'amd64-microcode'}, set()),
+    ('amd-laptop', {'laptop': '0', 'cpuinfo': 'vendor_id : AuthenticAMD\n'},
+     {'task-laptop', 'power-profiles-daemon', 'amd64-microcode'}, set()),
+    ('other-vendor', {'cpuinfo': 'vendor_id : HygonGenuine\n'}, set(), set()),
     ('firmware', {'firmware-packages': 'firmware-iwlwifi firmware-realtek\n'},
      {'firmware-iwlwifi', 'firmware-realtek'}, set()),
     ('turing', {'lspci': '0000:01:00.0 0300: 10de:1e04 (rev a1)\n'},
@@ -74,7 +79,7 @@ fixture_cases = {
         'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes',
         'fact\tboard\tGigabyte Technology Co., Ltd. / B550 TEST BOARD',
         'fact\tusb-vendors\t1b1c (Corsair) 1d6b'], []),
-    'razer-mt7922-v3': ({'intel-microcode', 'firmware-mediatek'}, [
+    'razer-mt7922-v3': ({'intel-microcode', 'thermald', 'firmware-mediatek'}, [
         'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes',
         'fact\tboard\tASUSTeK COMPUTER INC. / Z370 TEST BOARD',
         'fact\tusb-vendors\t1532 (Razer)',
@@ -83,7 +88,7 @@ fixture_cases = {
     'broadcom-4331-v2': ({'task-laptop', 'power-profiles-daemon', 'thermald', 'intel-microcode'}, [
         'fact\tcpu-level\tv2', 'fact\tx86-64-v3\tno',
         'fact\tnetwork-pci\t14e4:4331'], ['candidate\tbroadcom-sta-dkms\t14e4:4331: closed Broadcom wl driver']),
-    'baseline-cpu': ({'intel-microcode'}, [
+    'baseline-cpu': ({'intel-microcode', 'thermald'}, [
         'fact\tcpu-level\tv1', 'fact\tx86-64-v3\tno'], []),
 }
 for name, (expected_packages, expected_lines, candidate_prefixes) in fixture_cases.items():
