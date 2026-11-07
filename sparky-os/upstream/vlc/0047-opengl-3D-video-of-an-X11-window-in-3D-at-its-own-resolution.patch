@@ -85,7 +85,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
  # ifdef VLC_GL_WAYLAND
      struct wl_event_queue *stereo_queue;
      struct wp_viewport *viewport;
-@@ -127,6 +143,236 @@ static void SetViewSize(vout_display_sys
+@@ -127,6 +143,237 @@ static void SetViewSize(vout_display_sys
          logical_height > 0 ? logical_height : 1);
  }
  #endif
@@ -169,6 +169,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
 +    if (var_Type (session, name) != 0)
 +        return false;
 +    var_Create (session, name, VLC_VAR_BOOL);
++    msg_Dbg (vd, "showing the notice \"%s\", once for this VLC session", name);
 +    return true;
 +}
 +
@@ -322,7 +323,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
  /**
   * Declares the video window to the compositor as full side by side stereo
   * content, left eye first, while a stereoscopic video plays. The compositor
-@@ -161,10 +407,14 @@ static void DeclareStereo (vout_display_
+@@ -161,10 +408,14 @@ static void DeclareStereo (vout_display_
           * ownership of its display and default event queue. */
          struct wl_event_queue *queue = wl_display_create_queue(surface->display.wl);
          if (queue == NULL)
@@ -337,7 +338,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
              return;
          }
          struct wp_viewporter *viewporter = NULL;
-@@ -173,6 +423,7 @@ static void DeclareStereo (vout_display_
+@@ -173,6 +424,7 @@ static void DeclareStereo (vout_display_
          {
              stereo_declare_wayland_finish();
              wl_event_queue_destroy(queue);
@@ -345,7 +346,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
              return;
          }
          wl_proxy_set_queue((struct wl_proxy *)wrapper, queue);
-@@ -182,6 +433,7 @@ static void DeclareStereo (vout_display_
+@@ -182,6 +434,7 @@ static void DeclareStereo (vout_display_
          {
              stereo_declare_wayland_finish();
              wl_event_queue_destroy(queue);
@@ -353,7 +354,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
              return;
          }
          static const struct wl_registry_listener listener = {
-@@ -208,26 +460,31 @@ static void DeclareStereo (vout_display_
+@@ -208,26 +461,31 @@ static void DeclareStereo (vout_display_
              wp_viewporter_destroy(viewporter);
          wl_registry_destroy(registry);
          if (!sys->stereo)
@@ -366,13 +367,13 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
      }
  #endif
 -    if (surface->type != VOUT_WINDOW_TYPE_XID || !vlc_xlib_init (VLC_OBJECT(vd)))
+-        return;
+-
+-    Display *x11 = XOpenDisplay (surface->display.x11);
+-    if (x11 == NULL)
 +    if (sys->x11 == NULL)
          return;
  
--    Display *x11 = XOpenDisplay (surface->display.x11);
--    if (x11 == NULL)
--        return;
--
 -    if (stereo_supported_x11 (x11) >= 3
 -     && stereo_declare_x11 (x11, surface->handle.xid, STEREO_SBS_FULL,
 -                            STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT) == 0)
@@ -396,7 +397,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
  }
  
  /**
-@@ -235,11 +492,12 @@ static void DeclareStereo (vout_display_
+@@ -235,11 +493,12 @@ static void DeclareStereo (vout_display_
   */
  static void RemoveStereo (vout_display_sys_t *sys, vout_window_t *surface)
  {
@@ -413,7 +414,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
      }
  # ifdef VLC_GL_WAYLAND
      if (sys->stereo_queue != NULL)
-@@ -254,6 +512,61 @@ static void RemoveStereo (vout_display_s
+@@ -254,6 +513,61 @@ static void RemoveStereo (vout_display_s
  # endif
      sys->stereo = false;
  }
@@ -475,7 +476,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
  #endif
  
  /* Display callbacks */
-@@ -280,6 +593,10 @@ static int Open (vlc_object_t *obj)
+@@ -280,6 +594,10 @@ static int Open (vlc_object_t *obj)
      sys->pool = NULL;
  #ifdef HAVE_STEREO_DECLARE
      sys->x11 = NULL;
@@ -486,7 +487,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
      sys->stereo = false;
  # ifdef VLC_GL_WAYLAND
      sys->stereo_queue = NULL;
-@@ -320,6 +637,10 @@ static int Open (vlc_object_t *obj)
+@@ -320,6 +638,10 @@ static int Open (vlc_object_t *obj)
      }
  #endif
  
@@ -497,7 +498,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
      sys->gl = vlc_gl_Create (surface, API, gl_name);
      if (sys->gl == NULL)
          goto error;
-@@ -336,7 +657,7 @@ static int Open (vlc_object_t *obj)
+@@ -336,7 +658,7 @@ static int Open (vlc_object_t *obj)
      unsigned width, height;
      int stride;
      PlaceOnDisplay (vd, vd->cfg, &place, &aspect, &width, &height, &stride);
@@ -506,7 +507,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
  
      /* Initialize video display */
      const vlc_fourcc_t *spu_chromas;
-@@ -368,6 +689,10 @@ error:
+@@ -368,6 +690,10 @@ error:
  #endif
      if (sys->gl != NULL)
          vlc_gl_Release (sys->gl);
@@ -517,7 +518,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
      if (surface != NULL)
          vout_display_DeleteWindow (vd, surface);
      free (sys);
-@@ -393,6 +718,9 @@ static void Close (vlc_object_t *obj)
+@@ -393,6 +719,9 @@ static void Close (vlc_object_t *obj)
      vlc_gl_ReleaseCurrent (gl);
  
      vlc_gl_Release (gl);
@@ -527,7 +528,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
      vout_display_DeleteWindow (vd, surface);
      free (sys);
  }
-@@ -460,11 +788,29 @@ static void PlaceOnSurface(vout_display_
+@@ -460,11 +789,29 @@ static void PlaceOnSurface(vout_display_
      *width = cfg->display.width * (sys->stereo ? 2 : 1);
      *height = cfg->display.height;
      *stride = sys->stereo ? cfg->display.width : 0;
@@ -561,7 +562,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
  # endif
      if (!sys->stereo || !viewport)
          return;
-@@ -546,7 +892,10 @@ static int ChangeDisplay (vout_display_t
+@@ -546,7 +893,10 @@ static int ChangeDisplay (vout_display_t
  #if defined(HAVE_STEREO_DECLARE) && defined(VLC_GL_WAYLAND)
      SetViewSize(sys, cfg->display.width, cfg->display.height);
  #endif
@@ -573,7 +574,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
      if (vlc_gl_MakeCurrent (sys->gl) != VLC_SUCCESS)
          return VLC_EGENERIC;
      vout_display_opengl_SetWindowAspectRatio(sys->vgl, aspect);
-@@ -589,7 +938,7 @@ static int Control (vout_display_t *vd,
+@@ -589,7 +939,7 @@ static int Control (vout_display_t *vd,
          unsigned width, height;
          int stride;
          PlaceOnSurface(vd, cfg, &place, &width, &height, &stride);
