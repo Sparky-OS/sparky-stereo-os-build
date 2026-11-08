@@ -1,0 +1,699 @@
+Description: A compositor on another GPU, the application menu's 3D Video and 3D Display, a WebRender blob panic (ORDER 465)
+ A hybrid machine routed the browser to the NVIDIA GPU while Stereo KWin renders on the AMD one: the layers' buffers
+ (exported EGLImages) and hardware decoded pictures carried modifiers that are in none of the compositor's linux-dmabuf
+ feedback tranches and KWin closed the connection ("importing the supplied dmabufs failed"). A frame whose
+ (fourcc, modifier) the compositor does not advertise is copied to shared memory (render layers) or drawn into a
+ render layer (decoded pictures); a pair it advertises stays zero-copy. The application menu gets 3D Video and
+ 3D Display, acting on the page's main video, for pages that take the right click. WebRender: blob images deleted
+ later in the same transaction are no longer rasterised (Mozilla bug 1839001, Glenn Watson, mozilla-firefox
+ 6faf7d9af278), the "no blob image template" crash.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+diff --git a/browser/actors/ContextMenuChild.sys.mjs b/browser/actors/ContextMenuChild.sys.mjs
+index 1ee95e7044..100ca5f972 100644
+--- a/browser/actors/ContextMenuChild.sys.mjs
++++ b/browser/actors/ContextMenuChild.sys.mjs
+@@ -74,6 +74,46 @@ export class ContextMenuChild extends JSWindowActorChild {
+         });
+       }
+ 
++      case "ContextMenu:MainVideoStereo": {
++        // The application menu's 3D Video menu (Sparky Stereo OS): the same
++        // per-video choices as the context menu, on the main video of this
++        // document, which is the playing one with the largest area.
++        let best = null;
++        let bestScore = -1;
++        for (let video of this.document.querySelectorAll("video")) {
++          if (video.stereoChoice === undefined) {
++            continue;
++          }
++          let rect = video.getBoundingClientRect();
++          let area = Math.max(0, rect.width) * Math.max(0, rect.height);
++          if (!area) {
++            continue;
++          }
++          let score = area + (video.paused || video.ended ? 0 : 1e12);
++          if (score > bestScore) {
++            best = video;
++            bestScore = score;
++          }
++        }
++        if (!best) {
++          return { found: false };
++        }
++        switch (message.data.command) {
++          case "stereoChoice":
++            best.stereoChoice = message.data.data;
++            break;
++          case "stereoSwap":
++            best.stereoSwap = !best.stereoSwap;
++            break;
++        }
++        return {
++          found: true,
++          score: bestScore,
++          choice: best.stereoChoice,
++          swap: !!best.stereoSwap,
++        };
++      }
++
+       case "ContextMenu:Hiding": {
+         this.context = null;
+         this.target = null;
+diff --git a/browser/base/content/appmenu-viewcache.inc.xhtml b/browser/base/content/appmenu-viewcache.inc.xhtml
+index 45087df06a..2e9e29254f 100644
+--- a/browser/base/content/appmenu-viewcache.inc.xhtml
++++ b/browser/base/content/appmenu-viewcache.inc.xhtml
+@@ -162,6 +162,18 @@
+                      key="key_preferencesCmdMac"
+ #endif
+                      />
++      <toolbarbutton id="appMenu-stereo-video-button"
++                     class="subviewbutton subviewbutton-nav"
++                     data-l10n-id="main-context-menu-video-stereo"
++                     closemenu="none"
++                     hidden="true"
++                     />
++      <toolbarbutton id="appMenu-stereo-display-button"
++                     class="subviewbutton subviewbutton-nav"
++                     data-l10n-id="main-context-menu-xr-stereo"
++                     closemenu="none"
++                     hidden="true"
++                     />
+       <toolbarbutton id="appMenu-more-button2"
+                      class="subviewbutton subviewbutton-nav"
+                      data-l10n-id="appmenuitem-more-tools"
+@@ -466,6 +478,106 @@
+     </vbox>
+   </panelview>
+ 
++  <!-- The 3D Video and 3D Display menus of the context menu, reachable from
++       here because a page can take the context menu over (Sparky Stereo OS). -->
++  <panelview id="appmenu-stereo-video" class="PanelUI-subView">
++    <vbox class="panel-subview-body">
++      <toolbarbutton id="appmenu-stereo-video-auto"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-video-stereo-auto"
++                     type="checkbox"
++                     />
++      <toolbarbutton id="appmenu-stereo-video-mono"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-video-stereo-mono"
++                     type="checkbox"
++                     />
++      <toolbarbutton id="appmenu-stereo-video-side-by-side"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-video-stereo-side-by-side"
++                     type="checkbox"
++                     />
++      <toolbarbutton id="appmenu-stereo-video-side-by-side-right-first"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-video-stereo-side-by-side-right-first"
++                     type="checkbox"
++                     />
++      <toolbarbutton id="appmenu-stereo-video-top-bottom"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-video-stereo-top-bottom"
++                     type="checkbox"
++                     />
++      <toolbarbutton id="appmenu-stereo-video-top-bottom-right-first"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-video-stereo-top-bottom-right-first"
++                     type="checkbox"
++                     />
++      <toolbarseparator/>
++      <toolbarbutton id="appmenu-stereo-video-swap"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-video-stereo-swap"
++                     type="checkbox"
++                     />
++    </vbox>
++  </panelview>
++
++  <panelview id="appmenu-stereo-display" class="PanelUI-subView">
++    <vbox class="panel-subview-body">
++      <toolbarbutton id="appmenu-stereo-display-mode-tv"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-xr-stereo-mode-tv"
++                     type="checkbox"
++                     />
++      <toolbarbutton id="appmenu-stereo-display-mode-headset"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-xr-stereo-mode-headset"
++                     type="checkbox"
++                     />
++      <toolbarbutton id="appmenu-stereo-display-mode-phone"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-xr-stereo-mode-phone"
++                     type="checkbox"
++                     />
++      <toolbarseparator/>
++      <toolbarbutton id="appmenu-stereo-display-depth-less"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-xr-stereo-depth-less"
++                     type="checkbox"
++                     />
++      <toolbarbutton id="appmenu-stereo-display-depth-normal"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-xr-stereo-depth-normal"
++                     type="checkbox"
++                     />
++      <toolbarbutton id="appmenu-stereo-display-depth-more"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-xr-stereo-depth-more"
++                     type="checkbox"
++                     />
++      <toolbarbutton id="appmenu-stereo-display-depth-most"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-xr-stereo-depth-most"
++                     type="checkbox"
++                     />
++      <toolbarseparator/>
++      <toolbarbutton id="appmenu-stereo-display-plane-nearer"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-xr-stereo-plane-nearer"
++                     type="checkbox"
++                     />
++      <toolbarbutton id="appmenu-stereo-display-plane-default"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-xr-stereo-plane-default"
++                     type="checkbox"
++                     />
++      <toolbarbutton id="appmenu-stereo-display-plane-farther"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-xr-stereo-plane-farther"
++                     type="checkbox"
++                     />
++    </vbox>
++  </panelview>
++
+   <panelview id="PanelUI-developer-tools" class="PanelUI-subview">
+     <vbox id="PanelUI-developer-tools-view"
+           class="panel-subview-body"
+diff --git a/browser/components/customizableui/content/panelUI.js b/browser/components/customizableui/content/panelUI.js
+index 4bf7f4fedf..cae11f8d41 100644
+--- a/browser/components/customizableui/content/panelUI.js
++++ b/browser/components/customizableui/content/panelUI.js
+@@ -196,6 +196,19 @@ const PanelUI = {
+     ).addEventListener("command", this._onLibraryCommand);
+     this.mainView.addEventListener("command", this);
+     this.mainView.addEventListener("ViewShowing", this._onMainViewShow);
++    this._onStereoVideoShow = this._onStereoVideoShow.bind(this);
++    this._onStereoVideoCommand = this._onStereoVideoCommand.bind(this);
++    this._onStereoDisplayShow = this._onStereoDisplayShow.bind(this);
++    this._onStereoDisplayCommand = this._onStereoDisplayCommand.bind(this);
++    let stereoVideo = PanelMultiView.getViewNode(document, "appmenu-stereo-video");
++    stereoVideo.addEventListener("ViewShowing", this._onStereoVideoShow);
++    stereoVideo.addEventListener("command", this._onStereoVideoCommand);
++    let stereoDisplay = PanelMultiView.getViewNode(
++      document,
++      "appmenu-stereo-display"
++    );
++    stereoDisplay.addEventListener("ViewShowing", this._onStereoDisplayShow);
++    stereoDisplay.addEventListener("command", this._onStereoDisplayCommand);
+     this._eventListenersAdded = true;
+   },
+ 
+@@ -441,12 +454,140 @@ const PanelUI = {
+       case "appMenu-more-button2":
+         this.showMoreToolsPanel(target);
+         break;
++      case "appMenu-stereo-video-button":
++        this.showSubView("appmenu-stereo-video", target);
++        break;
++      case "appMenu-stereo-display-button":
++        this.showSubView("appmenu-stereo-display", target);
++        break;
+       case "appMenu-help-button2":
+         this.showSubView("PanelUI-helpView", target);
+         break;
+     }
+   },
+ 
++  // The 3D Video and 3D Display menus (Sparky Stereo OS). They are the context
++  // menu's own, reachable from the application menu because a page (YouTube)
++  // takes the right click for its own menu. 3D Video acts on the page's main
++  // video: the playing one with the largest area, in the page or one of its
++  // frames. The choice is the video's own, kept per video as the context menu
++  // keeps it.
++  _STEREO_VIDEO_CHOICES: [
++    "auto",
++    "mono",
++    "side-by-side",
++    "side-by-side-right-first",
++    "top-bottom",
++    "top-bottom-right-first",
++  ],
++  _STEREO_XR: {
++    mode: { pref: "dom.vr.flat.mode", values: { tv: 0, headset: 1, phone: 2 } },
++    depth: {
++      pref: "dom.vr.flat.depth-strength",
++      values: { less: 50, normal: 100, more: 150, most: 200 },
++    },
++    plane: {
++      pref: "dom.vr.flat.screen-plane-mm",
++      values: { nearer: 600, default: 0, farther: 2000 },
++    },
++  },
++
++  // The main video of the selected tab as {actor, state}, or null.
++  async _stereoMainVideo(command, data) {
++    let best = null;
++    let browsingContext = gBrowser.selectedBrowser.browsingContext;
++    for (let context of browsingContext.getAllBrowsingContextsInSubtree()) {
++      let global = context.currentWindowGlobal;
++      if (!global) {
++        continue;
++      }
++      try {
++        let actor = global.getActor("ContextMenu");
++        let state = await actor.sendQuery("ContextMenu:MainVideoStereo", {
++          command: "query",
++        });
++        if (state && state.found && (!best || state.score > best.state.score)) {
++          best = { actor, state };
++        }
++      } catch (e) {
++        // A frame that is gone or has no actor has no video to offer.
++      }
++    }
++    if (best && command != "query") {
++      best.state = await best.actor.sendQuery("ContextMenu:MainVideoStereo", {
++        command,
++        data,
++      });
++    }
++    return best;
++  },
++
++  _showStereoVideoState(view, best) {
++    let choice = best ? best.state.choice || "auto" : null;
++    for (let name of this._STEREO_VIDEO_CHOICES) {
++      let button = view.querySelector("#appmenu-stereo-video-" + name);
++      button.toggleAttribute("disabled", !best);
++      button.setAttribute("checked", name == choice);
++    }
++    let swap = view.querySelector("#appmenu-stereo-video-swap");
++    swap.toggleAttribute("disabled", !best);
++    swap.setAttribute("checked", !!(best && best.state.swap));
++  },
++
++  async _onStereoVideoShow(event) {
++    let best = await this._stereoMainVideo("query");
++    this._showStereoVideoState(event.target, best);
++  },
++
++  async _onStereoVideoCommand(event) {
++    let id = event.target.id.slice("appmenu-stereo-video-".length);
++    let best =
++      id == "swap"
++        ? await this._stereoMainVideo("stereoSwap")
++        : await this._stereoMainVideo("stereoChoice", id == "auto" ? "" : id);
++    this._showStereoVideoState(
++      PanelMultiView.getViewNode(document, "appmenu-stereo-video"),
++      best
++    );
++  },
++
++  _onStereoDisplayShow(event) {
++    for (let [group, { pref, values }] of Object.entries(this._STEREO_XR)) {
++      let current = Services.prefs.getIntPref(pref, group == "depth" ? 100 : 0);
++      for (let [name, value] of Object.entries(values)) {
++        event.target
++          .querySelector("#appmenu-stereo-display-" + group + "-" + name)
++          .setAttribute("checked", value == current);
++      }
++    }
++  },
++
++  _onStereoDisplayCommand(event) {
++    let [group, name] = event.target.id
++      .slice("appmenu-stereo-display-".length)
++      .split("-");
++    let entry = this._STEREO_XR[group];
++    if (entry && name in entry.values) {
++      Services.prefs.setIntPref(entry.pref, entry.values[name]);
++    }
++    this._onStereoDisplayShow({
++      target: PanelMultiView.getViewNode(document, "appmenu-stereo-display"),
++    });
++  },
++
++  // 3D Video shows where the page can have a stereo video; 3D Display where
++  // the flat stereo display is offered as a WebXR device.
++  _showStereoButtons() {
++    let video = document.getElementById("appMenu-stereo-video-button");
++    let display = document.getElementById("appMenu-stereo-display-button");
++    if (video) {
++      video.hidden = false;
++    }
++    if (display) {
++      display.hidden = !Services.prefs.getBoolPref("dom.vr.flat.enabled", false);
++    }
++  },
++
+   get isReady() {
+     return !!this._isReady;
+   },
+@@ -718,6 +859,7 @@ const PanelUI = {
+   },
+ 
+   _onMainViewShow(event) {
++    PanelUI._showStereoButtons();
+     let panelview = event.target;
+     let messageId = panelview.getAttribute(
+       MenuMessage.SHOWING_FXA_MENU_MESSAGE_ATTR
+diff --git a/gfx/layers/NativeLayerWayland.cpp b/gfx/layers/NativeLayerWayland.cpp
+index afe1d43693..2bab42f82c 100644
+--- a/gfx/layers/NativeLayerWayland.cpp
++++ b/gfx/layers/NativeLayerWayland.cpp
+@@ -21,6 +21,7 @@
+ #include "mozilla/layers/NativeLayerWayland.h"
+ 
+ #include <dlfcn.h>
++#include <inttypes.h>
+ #include <utility>
+ #include <algorithm>
+ #include <cmath>
+@@ -29,6 +30,7 @@
+ #include "nsGtkUtils.h"
+ #include "GLContextProvider.h"
+ #include "GLBlitHelper.h"
++#include "GLReadTexImageHelper.h"
+ #include "mozilla/gfx/DataSurfaceHelpers.h"
+ #include "mozilla/gfx/Logging.h"
+ #include "mozilla/gfx/gfxVars.h"
+@@ -1716,10 +1718,59 @@ bool NativeLayerWaylandRender::CommitFrontBufferToScreenLocked(
+     ReleaseStereoBufferLocked(aProofOfLock);
+   }
+ 
++  if (auto* dmabuf = shown->AsWaylandBufferDMABUF();
++      dmabuf && !dmabuf->GetSurface()->CompositorCanImport()) {
++    if (RefPtr<widget::WaylandBuffer> copy = CopyToSharedMemoryLocked(shown)) {
++      mSurface->InvalidateLocked(aProofOfLock);
++      shown = copy;
++    } else {
++      gfxCriticalNoteOnce << "NativeLayerWaylandRender: copy for the compositor "
++                             "on another GPU failed";
++      return false;
++    }
++  }
++
+   mSurface->AttachLocked(aProofOfLock, shown);
+   return true;
+ }
+ 
++RefPtr<widget::WaylandBuffer> NativeLayerWaylandRender::CopyToSharedMemoryLocked(
++    const RefPtr<widget::WaylandBuffer>& aSource) {
++  RefPtr<gl::GLContext> gl = mSurfacePoolHandle->gl();
++  if (!gl || !gl->MakeCurrent()) {
++    return nullptr;
++  }
++  Maybe<GLuint> source =
++      mSurfacePoolHandle->GetFramebufferForBuffer(aSource, false);
++  if (!source) {
++    return nullptr;
++  }
++  const IntSize size = aSource->GetSize().ToUnknownSize();
++  RefPtr<widget::WaylandBufferSHM> shm =
++      widget::WaylandBufferSHM::Create(aSource->GetSize());
++  if (!shm) {
++    return nullptr;
++  }
++  RefPtr<gfx::DataSourceSurface> surface =
++      gfx::Factory::CreateWrappingDataSourceSurface(
++          (uint8_t*)shm->GetImageData(), size.width * 4, size,
++          gfx::SurfaceFormat::B8G8R8A8);
++  if (!surface) {
++    return nullptr;
++  }
++  gl->fBindFramebuffer(LOCAL_GL_READ_FRAMEBUFFER, *source);
++  gl::ReadPixelsIntoDataSurface(gl, surface);
++  mSharedMemoryBuffer = shm;
++  static uint64_t sCopies = 0;
++  if ((sCopies++ & 0x1ff) == 0) {
++    LOG("NativeLayerWaylandRender: %" PRIu64
++        " frames copied for a compositor that cannot import their modifier "
++        "(last %d x %d)",
++        sCopies, size.width, size.height);
++  }
++  return shm;
++}
++
+ RefPtr<widget::WaylandBuffer> NativeLayerWaylandRender::RepackStereoLocked(
+     const WaylandSurfaceLock& aProofOfLock) {
+   if (!mFrontBuffer) {
+diff --git a/gfx/layers/NativeLayerWayland.h b/gfx/layers/NativeLayerWayland.h
+index 9c0bffdebb..dca4ca9a52 100644
+--- a/gfx/layers/NativeLayerWayland.h
++++ b/gfx/layers/NativeLayerWayland.h
+@@ -429,6 +429,11 @@ class NativeLayerWaylandRender final : public NativeLayerWayland {
+   // left eye first, into mStereoBuffer.
+   RefPtr<widget::WaylandBuffer> RepackStereoLocked(
+       const widget::WaylandSurfaceLock& aProofOfLock);
++  // The compositor runs on another GPU than the one drawing: it gets a copy of
++  // the frame in shared memory instead of a buffer it cannot import.
++  RefPtr<widget::WaylandBuffer> CopyToSharedMemoryLocked(
++      const RefPtr<widget::WaylandBuffer>& aSource);
++  RefPtr<widget::WaylandBuffer> mSharedMemoryBuffer;
+   bool CommitFrontBufferToScreenLocked(
+       const widget::WaylandSurfaceLock& aProofOfLock) override;
+ 
+diff --git a/gfx/layers/opengl/DMABUFTextureHostOGL.cpp b/gfx/layers/opengl/DMABUFTextureHostOGL.cpp
+index 391f528908..1a7cf1d6fc 100644
+--- a/gfx/layers/opengl/DMABUFTextureHostOGL.cpp
++++ b/gfx/layers/opengl/DMABUFTextureHostOGL.cpp
+@@ -219,9 +219,12 @@ void DMABUFTextureHostOGL::PushDisplayItems(
+   }
+   bool preferCompositorSurface =
+       aFlags.contains(PushDisplayItemFlag::PREFER_COMPOSITOR_SURFACE);
++  // A picture the compositor cannot import (another GPU's modifier) is drawn
++  // by WebRender into a layer instead, which is copied for the compositor.
+   bool supportsDirectComposition =
+       widget::GetGlobalDMABufFormats()->SupportsDirectComposition(
+-          mSurface->GetFormat());
++          mSurface->GetFormat()) &&
++      mSurface->CompositorCanImport();
+ 
+   switch (mSurface->GetFormat()) {
+     case gfx::SurfaceFormat::R8G8B8X8:
+diff --git a/gfx/wr/webrender/src/api_resources.rs b/gfx/wr/webrender/src/api_resources.rs
+index d0cece19f5..0364b195b1 100644
+--- a/gfx/wr/webrender/src/api_resources.rs
++++ b/gfx/wr/webrender/src/api_resources.rs
+@@ -111,6 +111,7 @@ impl ApiResources {
+                 ResourceUpdate::DeleteBlobImage(key) => {
+                     transaction.use_scene_builder_thread = true;
+                     self.blob_image_templates.remove(&key);
++                    blobs_to_rasterize.retain(|k| *k != key);
+                     if let Some(ref mut handler) = self.blob_image_handler {
+                         handler.delete(key);
+                     }
+diff --git a/gfx/wr/webrender/src/render_api.rs b/gfx/wr/webrender/src/render_api.rs
+index 55aea1bf03..b4822744c1 100644
+--- a/gfx/wr/webrender/src/render_api.rs
++++ b/gfx/wr/webrender/src/render_api.rs
+@@ -1531,3 +1531,58 @@ pub struct MemoryReport {
+     pub render_texture_hosts: usize,
+     pub upload_staging_textures: usize,
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::api::{BlobImageResources, ImageDescriptorFlags, ImageFormat};
++
++    struct NullRasterizer;
++    impl AsyncBlobImageRasterizer for NullRasterizer {
++        fn rasterize(
++            &mut self,
++            _requests: &[BlobImageParams],
++            _low_priority: bool,
++            _tile_pool: &mut crate::api::BlobTilePool,
++        ) -> Vec<(BlobImageRequest, BlobImageResult)> {
++            Vec::new()
++        }
++    }
++
++    struct NullBlobHandler;
++    impl BlobImageHandler for NullBlobHandler {
++        fn create_blob_rasterizer(&mut self) -> Box<dyn AsyncBlobImageRasterizer> {
++            Box::new(NullRasterizer)
++        }
++        fn create_similar(&self) -> Box<dyn BlobImageHandler> {
++            Box::new(NullBlobHandler)
++        }
++        fn prepare_resources(&mut self, _: &dyn BlobImageResources, _: &[BlobImageParams]) {}
++        fn add(&mut self, _: BlobImageKey, _: Arc<BlobImageData>, _: &DeviceIntRect, _: TileSize) {}
++        fn update(&mut self, _: BlobImageKey, _: Arc<BlobImageData>, _: &DeviceIntRect, _: &BlobDirtyRect) {}
++        fn delete(&mut self, _: BlobImageKey) {}
++        fn delete_font(&mut self, _: FontKey) {}
++        fn delete_font_instance(&mut self, _: FontInstanceKey) {}
++        fn clear_namespace(&mut self, _: IdNamespace) {}
++        fn enable_multithreading(&mut self, _: bool) {}
++    }
++
++    #[test]
++    fn delete_blob_image_in_same_transaction_as_add() {
++        let namespace = IdNamespace(1);
++        let mut resources = ApiResources::new(
++            Some(Box::new(NullBlobHandler)),
++            SharedFontResources::new(namespace),
++        );
++        let key = BlobImageKey(ImageKey::new(namespace, 1));
++        let rect = DeviceIntRect::from_size(DeviceIntSize::new(64, 64));
++        let descriptor = ImageDescriptor::new(64, 64, ImageFormat::BGRA8, ImageDescriptorFlags::empty());
++
++        let mut txn = Transaction::new();
++        txn.add_blob_image(key, descriptor, Arc::new(vec![0; 16]), rect, None);
++        txn.delete_blob_image(key);
++        let mut msg = txn.finalize(DocumentId::new(namespace, 0));
++        resources.update(&mut msg);
++        assert!(msg.blob_requests.is_empty());
++    }
++}
+diff --git a/widget/gtk/DMABufFormats.cpp b/widget/gtk/DMABufFormats.cpp
+index 52817db453..a4cc4a7e95 100644
+--- a/widget/gtk/DMABufFormats.cpp
++++ b/widget/gtk/DMABufFormats.cpp
+@@ -5,6 +5,8 @@
+ #include <xf86drm.h>
+ #include <sys/mman.h>
+ #include <sys/types.h>
++#include <atomic>
++#include <inttypes.h>
+ #include <gbm.h>
+ #include <mutex>
+ 
+@@ -377,6 +379,8 @@ void DMABufFormats::EnsureBasicFormats() {
+   mDMABufFeedback->PendingTrancheDone();
+ }
+ 
++bool DMABufFormats::HasFeedback() { return !!mDMABufFeedback; }
++
+ DMABufFormats::DMABufFormats() = default;
+ 
+ DMABufFormats::~DMABufFormats() {
+@@ -388,6 +392,33 @@ DMABufFormats::~DMABufFormats() {
+ }
+ 
+ #ifdef MOZ_WAYLAND
++// Linux DMA-BUF protocol: a buffer's format and modifier are importable by the
++// compositor when they are in a tranche of its feedback (tranche_formats, the
++// format table), INVALID meaning the driver's own implicit layout. A buffer
++// made by another GPU (an EGLImage export on NVIDIA: block linear) is in none
++// and the compositor closes the connection: "importing the supplied dmabufs
++// failed". An implicit modifier is left as it always was.
++bool DMABufCompositorCanImport(uint32_t aFourcc, uint64_t aModifier) {
++  if (aModifier == DRM_FORMAT_MOD_INVALID || !GdkIsWaylandDisplay()) {
++    return true;
++  }
++  RefPtr<DMABufFormats> formats = WaylandDisplayGet()->GetDMABufFormats();
++  if (!formats || !formats->HasFeedback()) {
++    return true;
++  }
++  DRMFormat* format = formats->GetFormat(aFourcc);
++  const bool can = !format || !format->UseModifiers() ||
++                   format->IsFormatModifierSupported(aModifier);
++  static std::atomic<uint64_t> sLastPair{0};
++  const uint64_t pair = aModifier ^ (uint64_t(aFourcc) << 40);
++  if (sLastPair.exchange(pair) != pair) {
++    LOGDMABUF(("DMABufCompositorCanImport(): format 0x%x modifier %" PRIx64
++               " -> %d",
++               aFourcc, aModifier, can));
++  }
++  return can;
++}
++
+ RefPtr<DMABufFormats> CreateDMABufFeedbackFormats(
+     wl_surface* aSurface, const DMABufFormatsCallback& aFormatRefreshCB) {
+   if (!WaylandDisplayGet()->HasDMABufFeedback()) {
+diff --git a/widget/gtk/DMABufFormats.h b/widget/gtk/DMABufFormats.h
+index b98050b600..bb80bd5180 100644
+--- a/widget/gtk/DMABufFormats.h
++++ b/widget/gtk/DMABufFormats.h
+@@ -5,6 +5,7 @@
+ #ifndef MOZ_DMABUF_FORMATS_H_
+ #define MOZ_DMABUF_FORMATS_H_
+ 
++#include <sys/types.h>
+ #include "nsTArray.h"
+ #include "mozilla/gfx/Types.h"
+ 
+@@ -84,6 +85,7 @@ class DMABufFormats final {
+   void PendingDMABufFeedbackDone();
+ 
+   DRMFormat* GetFormat(uint32_t aFormat, bool aRequestScanoutFormat = false);
++  bool HasFeedback();
+   DMABufFormats();
+ 
+   void EnsureBasicFormats();
+@@ -102,6 +104,10 @@ class DMABufFormats final {
+ };
+ 
+ #ifdef MOZ_WAYLAND
++// False when the Wayland compositor advertises modifiers for the format and
++// aModifier is none of them (the compositor could not import such a buffer).
++bool DMABufCompositorCanImport(uint32_t aFourcc, uint64_t aModifier);
++
+ RefPtr<DMABufFormats> CreateDMABufFeedbackFormats(
+     wl_surface* aSurface,
+     const std::function<void(DMABufFormats*)>& aFormatRefreshCB = nullptr);
+diff --git a/widget/gtk/DMABufSurface.cpp b/widget/gtk/DMABufSurface.cpp
+index ad891638bb..bfc2ce1f34 100644
+--- a/widget/gtk/DMABufSurface.cpp
++++ b/widget/gtk/DMABufSurface.cpp
+@@ -285,6 +285,17 @@ bool DMABufSurface::UseDmaBufGL(GLContext* aGLContext) {
+   return true;
+ }
+ 
++bool DMABufSurface::CompositorCanImport() const {
++  const int planes = const_cast<DMABufSurface*>(this)->GetTextureCount();
++  for (int i = 0; i < planes; i++) {
++    if (!mozilla::widget::DMABufCompositorCanImport(mFOURCCFormat,
++                                                    GetPlaneModifier(i))) {
++      return false;
++    }
++  }
++  return true;
++}
++
+ bool DMABufSurface::UseDmaBufExportExtension(GLContext* aGLContext) {
+   static bool useDmabufExport = [&]() {
+     if (!gfx::gfxVars::UseDMABufSurfaceExport()) {
+diff --git a/widget/gtk/DMABufSurface.h b/widget/gtk/DMABufSurface.h
+index b87cbf911b..f08f6d2700 100644
+--- a/widget/gtk/DMABufSurface.h
++++ b/widget/gtk/DMABufSurface.h
+@@ -127,6 +127,9 @@ class DMABufSurface {
+     return sSurfaceTypeNames[static_cast<int>(mSurfaceType)];
+   };
+   int32_t GetFOURCCFormat() const { return mFOURCCFormat; };
++  virtual uint64_t GetPlaneModifier(int aPlane) const = 0;
++  // The compositor can import every plane's modifier (its dmabuf feedback).
++  bool CompositorCanImport() const;
+   virtual int GetTextureCount() = 0;
+   virtual bool HoldsTexture() = 0;
+ 
+@@ -443,6 +446,9 @@ class DMABufSurfaceRGBA final : public DMABufSurface {
+       mozilla::widget::DMABufDeviceLock* aDeviceLock, int aPlane) override;
+ 
+   size_t GetUsedMemoryRGBA();
++  uint64_t GetPlaneModifier(int aPlane) const override {
++    return mBufferModifier;
++  }
+ 
+  private:
+   int mWidth;
+@@ -507,6 +513,9 @@ class DMABufSurfaceYUV final : public DMABufSurface {
+     return mEGLImage[aPlane];
+   };
+ 
++  uint64_t GetPlaneModifier(int aPlane) const override {
++    return mBufferModifiers[aPlane];
++  }
+   int GetTextureCount() override;
+   bool HoldsTexture() override;
+ 
