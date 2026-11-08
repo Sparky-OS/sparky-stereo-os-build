@@ -93,7 +93,7 @@ state() { # base version, failure marker
 	[ -n "$1" ] && printf "LOCAL_BASE='%s'\nLOCAL_VERSION='%s+fdk1'\nLOCAL_USER='tester'\nLOCAL_PACKAGES='ffmpeg'\n" "$1" "$1" >/tmp/state/installed
 	sparky-stereo-problems clear --all sparky-stereo-ffmpeg-fdk
 	if [ -n "$2" ]; then
-		details=$(python3 -c 'import json,sys; print(json.dumps({"data":{"version":sys.argv[1]}}))' "$2")
+		details=$(python3 -c 'import json,sys; print(json.dumps({"data":{"version":sys.argv[1],"helper":sys.argv[2]}}))' "$2" "$(dpkg-query -W -f='${Version}' sparky-stereo-ffmpeg-fdk 2>/dev/null)")
 		sparky-stereo-problems keep --machine --quiet --details "$details" sparky-stereo-ffmpeg-fdk build LOCAL70 "$2" /tmp/build.log
 	fi
 	return 0

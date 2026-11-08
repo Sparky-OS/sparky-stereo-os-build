@@ -51,10 +51,17 @@ case "$rc" in
 *) check_failed "dpkg --compare-versions: $rc" ;;
 esac
 failed=$(problem_data build version) || check_failed 'sparky-stereo-problems list'
+failed_helper=$(problem_data build helper) || check_failed 'sparky-stereo-problems list'
 if [ "$failed" = "$repo" ]; then
-	problem_clear update-check || exit 1
-	printf "$LOCAL70\n" "$repo" "$STATE/last-build.log"
-	exit 0
+	if [ "$failed_helper" = "$(helper_version)" ]; then
+		# the same FFmpeg failed under this very version of the helper: the same cause would stop it again
+		problem_clear update-check || exit 1
+		printf "$LOCAL70\n" "$repo" "$STATE/last-build.log"
+		exit 0
+	fi
+	# the helper has changed since (or the failure came from an older one that did not record it): the cause may have been
+	# the helper's, so it is tried once more; a failure then is recorded under this version and stops the retries
+	printf "$LOCAL86\n" "$repo" "${failed_helper:-?}"
 fi
 # a rebuild already running: nothing to start
 ( flock -n -E 75 9 ) 9>"$LOCK"

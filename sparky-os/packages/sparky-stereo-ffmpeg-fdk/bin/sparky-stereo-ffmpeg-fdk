@@ -119,7 +119,7 @@ fail() {
 	local key=$1 details
 	shift
 	printf "${!key}\n" "$@" >&2
-	details=$(python3 -c 'import json,sys; print(json.dumps({"data":{"version":sys.argv[1]},"args":[[sys.argv[2],*sys.argv[3:]]]}))' "$FAILED_VERSION" "$key" "$@") || exit 1
+	details=$(python3 -c 'import json,sys; print(json.dumps({"data":{"version":sys.argv[1],"helper":sys.argv[2]},"args":[[sys.argv[3],*sys.argv[4:]]]}))' "$FAILED_VERSION" "$(helper_version)" "$key" "$@") || exit 1
 	# A manual first build may have no installed identity; retry it through the user-facing --rebuild command.
 	sparky-stereo-problems keep --machine --quiet --details "$details" \
 		"$FDK_PACKAGE" build LOCAL79 || exit 1
@@ -250,7 +250,7 @@ PY
 }
 
 worker() {
-	local info VER BINS LOCALVER INSTALLED OTHERS host_arch tree jobs low high cores want f name arch other sim removals h plan
+	local cause info VER BINS LOCALVER INSTALLED OTHERS host_arch tree jobs low high cores want f name arch other sim removals h plan
 	check_user
 	mkdir -p "$STATE" "$(dirname "$LOG")"
 	exec 9>"$LOCK"
@@ -401,6 +401,12 @@ PY
 	if [ $? -ne 0 ]; then
 		cp "$B/build.log" "$STATE/last-build.log" 2>/dev/null
 		tail -n 25 "$B/build.log"
+		# the cause, said as it is: a retry does not mend a fault of this package (ORDER 462)
+		cause=$(explain_build_failure "$STATE/last-build.log") || cause=
+		case "$cause" in
+		LOCAL85\ *) fail LOCAL85 "$VER" "${cause#LOCAL85 }" "$STATE/last-build.log" ;;
+		LOCAL87\ *) fail LOCAL87 "${cause#LOCAL87 }" "$STATE/last-build.log" ;;
+		esac
 		fail LOCAL39 "$STATE/last-build.log"
 	fi
 	note "build finished"

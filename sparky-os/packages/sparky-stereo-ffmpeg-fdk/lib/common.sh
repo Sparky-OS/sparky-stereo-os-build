@@ -155,3 +155,23 @@ for r in rows:
         print("\n".join(value) if isinstance(value, list) else value)
 ' "$1" "$2"
 )
+
+# The version of this package, which the failure of a build is recorded with: a build that failed under an older version of the
+# helper is tried again by itself once the helper has changed, since the cause may have been the helper's (ORDER 462).
+helper_version() {
+	if [ -n "${SPARKY_FDK_HELPER_VERSION+x}" ]; then printf '%s' "$SPARKY_FDK_HELPER_VERSION"; return; fi
+	dpkg-query -W -f='${Version}' "$FDK_PACKAGE" 2>/dev/null
+}
+
+# What stopped a build whose log is $1: prints "KEY LINE", the message key and the log line that shows the cause.
+#   LOCAL85   Lean Code's link check was started without its archives (check-link needs --archive-config / --scratch): the
+#             package's fault, deterministic, and no retry on this computer can change it
+#   LOCAL87   anything else: the last line of the log that names an error, so the message says what stopped it
+explain_build_failure() {
+	local log=$1 line
+	line=$(grep -m1 -F 'check-link needs --archive-config' "$log" 2>/dev/null)
+	if [ -n "$line" ]; then printf 'LOCAL85 %s\n' "$line"; return 0; fi
+	line=$(tail -n 300 "$log" 2>/dev/null | grep -E -i '(^|[^a-z])(error|failed|cannot|refus|unmet|blocked)' | grep -v -E '^make(\[[0-9]+\])?: (Leaving|Entering)' | tail -n 1)
+	if [ -n "$line" ]; then printf 'LOCAL87 %s\n' "$line"; return 0; fi
+	return 1
+}

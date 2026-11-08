@@ -1,4 +1,19 @@
 -------------------------------------------------------------------------------
+  Version 20261108.1~sparky9~0 (2026-11-08)
+-------------------------------------------------------------------------------
+  * ORDER 463: the generator the old edition's automatic dependency left (systemd-zram-generator, marked automatic, not
+    chosen) is purged once, as thermald was settled (ORDER 43): sparky-stereo-kernel-settings-zram-leftover.service waits
+    until no apt or dpkg run holds the locks, simulates the purge, and purges only when nothing else installed needs it;
+    started without waiting by the postinst, and at boot while the leftover is still there. A generator the person chose
+    (apt-mark manual, Stereo APTus, ZRAM=on in the old file, zram-tools by hand) is kept as it is, and the guard
+    (--allow) still holds it off until it is gone. The notice no longer says the leftover "is not used" (Debian's
+    /usr/lib/systemd/zram-generator.conf makes the generator create zram0 at every boot): it says the generator is being
+    removed, and a second message says it was
+  * A failed systemd-zram-setup@zram0 is told by a handler of this package with no Repair: the engine's generic handler
+    (Repair: systemctl restart) is masked by name for that unit, because it offered to start a unit the edition did not set up
+  * tests/leftover.sh (red on 20261106.1, green on this version), in the systemd container
+
+-------------------------------------------------------------------------------
   Version 20261106.1~sparky9~0 (2026-11-06)
 -------------------------------------------------------------------------------
   * Ship /etc/tmpfiles.d/tmp.conf as a conffile: "q /tmp 1777 root root -", so

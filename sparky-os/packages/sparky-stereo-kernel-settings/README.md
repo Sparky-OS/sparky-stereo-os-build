@@ -71,7 +71,9 @@ The generated swap unit runs after setup and checks the guard's runtime marker, 
 The generator may create an empty device node before the condition runs; no capacity or active swap is established by the blocked setup.
 Installing the generator explicitly through apt or Stereo APTus marks it manual; the next setup passes without changing a mask or configuration.
 Stereo APTus tells the person to restart for the generator's normal boot setup.
-A kept notice explains the leftover and apt autoremove, in nine languages.
+A kept notice says the leftover is switched off and being removed, in nine languages (since 20261108.1, ORDER 463).
+The leftover is purged once by sparky-stereo-kernel-settings-zram-leftover.service, which waits for apt's and dpkg's locks and purges only when the simulation removes nothing else; a package that needs it keeps it, switched off, with a notice naming them.
+A failed systemd-zram-setup@zram0 is told with no Repair: nothing starts a unit the edition did not set up (the person opts in, and out, from Stereo APTus).
 An earlier ZRAM=on with an automatic generator is protected using our own APT::NeverAutoRemove policy file, not by writing apt's database or running a second apt during configuration.
 The person is told of this protection and can still explicitly uninstall the package.
 An unsuccessful retirement is shown and kept in the problems engine with its repair command.
