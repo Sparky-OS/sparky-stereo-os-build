@@ -11,7 +11,10 @@ export DEBIAN_FRONTEND=noninteractive
 # apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts /run/host-ca.crt and /run/https-only-apt.sh read-only
 sh /run/https-only-apt.sh || exit 1
 log() { echo "$(date +%T) $*" >> $B/requalify.log; }
-user() { setpriv --reuid=1000 --regid=1000 --groups=125 env -i HOME=$B/home PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 bash $RIG/requalify-steps.sh "$1"; }
+# XWAYLAND_NO_GLAMOR=1 (container variable) keeps Xwayland on its shared-memory path: on a device other than the README's
+# AMD render node (the RTX 3060 through CDI) Xwayland's glamor path changes the pixels of translucent window content, and
+# the exact producer-against-KWin composition check then fails for 41 of 130 savers with the unchanged layer
+user() { setpriv --reuid=1000 --regid=1000 --groups=125 env -i HOME=$B/home PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 ${XWAYLAND_NO_GLAMOR:+XWAYLAND_NO_GLAMOR=$XWAYLAND_NO_GLAMOR} bash $RIG/requalify-steps.sh "$1"; }
 mkdir -p $B/home; chown 1000:1000 $B $B/home
 # dbus-daemon and Xwayland look the test user up by its UID
 getent group 1000 > /dev/null || groupadd -g 1000 auditor
