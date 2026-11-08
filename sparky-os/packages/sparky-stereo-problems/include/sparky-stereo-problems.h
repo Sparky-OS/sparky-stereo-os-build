@@ -65,13 +65,19 @@ int ssp_say(const char *package, const char *message, const char *const *args, i
  * shows again where it was hidden), or -1 */
 int ssp_repair(int scope, const char *package, const char *key);
 
-/* The person's own view: hidden until its message changes or a repair fails; shown again */
+/* The person's own view, "Dismiss" in the notifier and the Problems page: hidden until its message changes or a repair
+ * fails; shown again. A problem of this boot (a failed service) stays dismissed when it fails the same way at a later
+ * boot */
 int ssp_hide(int scope, const char *package, const char *key);
 int ssp_show(int scope, const char *package, const char *key);
 
 /* Every kept problem (of PACKAGE, or all when NULL) as a JSON array, oldest first, with "title", "text", "lang",
  * "hidden" and "labels" (the actions' labels) in LANG (a LANGUAGE-style list) or the person's languages when NULL */
 char *ssp_list_json(const char *package, const char *lang);
+
+/* The same, and also the problems the person dismissed that are not happening now (a failed service that works
+ * again): "over" is true for those, "hidden" too, and Show (ssp_show) is how the person ends the dismissal */
+char *ssp_list_over_json(const char *package, const char *lang);
 
 /* MESSAGE of PACKAGE as JSON {"title", "text", "lang"} */
 char *ssp_render(const char *package, const char *message, const char *const *args, int nargs, const char *lang);

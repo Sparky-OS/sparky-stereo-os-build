@@ -67,7 +67,7 @@ check "not hidden for root and the command line" "[ \"\$(js $W/r.json 'd[0][\"hi
 check "the machine's record is unchanged by a person's hide" "[ \$(stat -c %U $M/${P}_hid.json) = root ] && ! grep -q hidden $M/${P}_hid.json"
 check "the hide is kept in the person's own state" "ls /home/alice/.local/state/sparky-stereo-problems/.hidden/machine_${P}_hid >/dev/null"
 as alice $B list >$W/a.txt
-check "list says it is hidden for you" "grep -q 'hidden for you' $W/a.txt"
+check "list says it is dismissed by you" "grep -q 'dismissed by you' $W/a.txt"
 $B keep --machine $P hid LOCAL4 "H" h.service @LOCAL8 --repair '["sh","-c","echo still broken; exit 3"]'
 as alice $B list --json >$W/a.json
 check "kept again with the same message, it keeps its hide" "[ \"\$(js $W/a.json 'd[0][\"hidden\"]')\" = True ]"
@@ -87,6 +87,127 @@ check "a hidden problem whose message changes shows again" "[ \"\$(js $W/a.json 
 had=$( [ -e /home/alice/.local/state/sparky-stereo-problems/.hidden/machine_${P}_hid ] && echo yes)
 $B clear --machine $P hid; as alice $B list >/dev/null
 check "the person's hide of a problem that is over goes with it" "[ \"$had\" = yes ] && [ ! -e /home/alice/.local/state/sparky-stereo-problems/.hidden/machine_${P}_hid ]"
+
+echo "== dismiss across scopes and a reboot (ORDER 468)"
+# hide and show are the engine's verbs; the person's word is Dismiss and Bring back. A reboot of /run is simulated by
+# emptying this boot's store: the record is new (another id) when the same service fails again
+reset
+H=/home/alice/.local/state/sparky-stereo-problems/.hidden
+$B keep --boot $P svc LOCAL4 "Demo Service" svc.service @LOCAL8 --repair '["true"]' --severity failed
+as alice $B hide --boot $P svc; rc=$?
+check "a person dismisses a failed service of this boot (exit 0)" "[ $rc = 0 ]"
+as alice $B list --json >$W/a.json; as bob $B list --json >$W/b.json
+check "it is dismissed for that person and stays listed with its evidence" "pyck $W/a.json 'len(d) == 1 and d[0][\"hidden\"] and not d[0][\"over\"] and d[0][\"repair\"] == [[\"true\"]]'"
+check "not for another person" "[ \"\$(js $W/b.json 'd[0][\"hidden\"]')\" = False ]"
+check "the mark is the person's, private, and holds a copy of the record and its fingerprint" "[ \"\$(stat -c %a $H/boot_${P}_svc)\" = 600 ] && pyck $H/boot_${P}_svc 'd[\"key\"] == \"svc\" and d[\"fingerprint\"].startswith(\"LOCAL4\") and d[\"text_en\"] != \"\"'"
+old=$(js /run/sparky-stereo-problems/${P}_svc.json 'd["id"]')
+rm -f /run/sparky-stereo-problems/${P}_svc.json
+as alice $B list --json >$W/a.json
+check "after the reboot, before it fails again: not listed" "pyck $W/a.json 'len(d) == 0'"
+as alice $B list --json --over >$W/a.json
+check "list --over lists it as dismissed and not happening now, with its text from the copy" "pyck $W/a.json 'len(d) == 1 and d[0][\"over\"] and d[0][\"hidden\"] and d[0][\"key\"] == \"svc\" and \"Demo Service\" in d[0][\"text\"] and d[0][\"scope\"] == \"boot\"'"
+as alice $B list --over >$W/a.txt
+check "and the text list says so" "grep -q 'dismissed by you' $W/a.txt && grep -q 'not happening now' $W/a.txt"
+as bob $B list --json --over >$W/b.json
+check "another person has nothing dismissed" "pyck $W/b.json 'len(d) == 0'"
+as alice $B list --json --over $P >$W/a.json; as alice $B list --json --over sparky-stereo-boot >$W/a2.json
+check "the package filter applies to it" "pyck $W/a.json 'len(d) == 1' && pyck $W/a2.json 'len(d) == 0'"
+$B keep --boot $P svc LOCAL4 "Demo Service" svc.service @LOCAL8 --repair '["true"]' --severity failed
+new=$(js /run/sparky-stereo-problems/${P}_svc.json 'd["id"]')
+as alice $B list --json >$W/a.json
+check "the same service failing the same way at the next boot is a new record" "[ -n \"$old\" ] && [ -n \"$new\" ] && [ \"$old\" != \"$new\" ]"
+check "and it is still dismissed: the person does not see it again" "pyck $W/a.json 'len(d) == 1 and d[0][\"hidden\"] and not d[0][\"over\"]'"
+check "the mark moved to the new record, so the id and generation hold it from here on" "[ \"\$(js $H/boot_${P}_svc 'd[\"id\"]')\" = \"$new\" ]"
+as alice $B list --json --over >$W/a.json
+check "list --over shows it once, as happening now" "pyck $W/a.json 'len(d) == 1 and not d[0][\"over\"]'"
+rm -f /run/sparky-stereo-problems/${P}_svc.json
+$B keep --boot $P svc LOCAL4 "Demo Service" svc.service @LOCAL9 --repair '["true"]' --severity failed
+as alice $B list --json >$W/a.json
+check "the same service failing another way at the next boot shows again" "pyck $W/a.json 'len(d) == 1 and not d[0][\"hidden\"]'"
+$B keep --boot $P svc LOCAL4 "Demo Service" svc.service @LOCAL9 --repair '["sh","-c","exit 3"]' --severity failed
+as alice $B hide --boot $P svc
+$B repair --boot $P svc >/dev/null 2>&1; rc=$?
+as alice $B list --json >$W/a.json
+check "a repair that fails shows a dismissed service of this boot again" "[ $rc = 3 ] && pyck $W/a.json 'not d[0][\"hidden\"]'"
+as alice $B hide --boot $P svc
+as alice $B list --json >$W/a.json
+check "dismissed again after the failed repair, it is dismissed" "pyck $W/a.json 'd[0][\"hidden\"]'"
+rm -f /run/sparky-stereo-problems/${P}_svc.json
+$B keep --boot $P svc LOCAL4 "Demo Service" svc.service @LOCAL9 --repair '["sh","-c","exit 3"]' --severity failed
+as alice $B list --json >$W/a.json
+check "and carried to the next boot" "pyck $W/a.json 'd[0][\"hidden\"]'"
+rm -f /run/sparky-stereo-problems/${P}_svc.json
+as alice $B show --boot $P svc; rc=$?
+check "Bring back (show) of one that is not happening now: exit 0 and the mark goes" "[ $rc = 0 ] && [ ! -e $H/boot_${P}_svc ]"
+as alice $B list --json --over >$W/a.json
+check "nothing is listed any more" "pyck $W/a.json 'len(d) == 0'"
+$B keep --boot $P svc LOCAL4 "Demo Service" svc.service @LOCAL9 --repair '["true"]' --severity failed
+as alice $B list --json >$W/a.json
+check "a service brought back and failing again is shown" "pyck $W/a.json 'len(d) == 1 and not d[0][\"hidden\"]'"
+as alice $B hide --boot $P svc; as alice $B show --boot $P svc
+as alice $B list --json >$W/a.json
+check "Bring back of one that is happening now shows it" "pyck $W/a.json 'not d[0][\"hidden\"]'"
+
+# a mark made by engine 0.1.x (id, generation and time only) still holds, and carries to the next boot once read
+reset
+$B keep --boot $P oldmark LOCAL4 "Old" o.service @LOCAL8 --repair '["true"]'
+oid=$(js /run/sparky-stereo-problems/${P}_oldmark.json 'd["id"]')
+mkdir -p $H; printf '{"id":"%s","generation":1,"time":"2026-11-08T00:00:00Z"}\n' "$oid" >$H/boot_${P}_oldmark; chown -R alice /home/alice/.local
+as alice $B list --json >$W/a.json
+check "an older mark (id and generation only) still dismisses" "pyck $W/a.json 'd[0][\"hidden\"]'"
+check "and is given its fingerprint when it is read" "pyck $H/boot_${P}_oldmark 'd[\"fingerprint\"].startswith(\"LOCAL4\")'"
+rm -f /run/sparky-stereo-problems/${P}_oldmark.json
+$B keep --boot $P oldmark LOCAL4 "Old" o.service @LOCAL8 --repair '["true"]'
+as alice $B list --json >$W/a.json
+check "then it carries to the next boot" "pyck $W/a.json 'd[0][\"hidden\"]'"
+
+# a failed service is the same service however it failed and whatever its Description says: the unit is the key
+reset
+$B keep --boot $P fs.service LOCAL4 "First Description" fs.service @LOCAL8 --details '{"args":["First Description","fs.service",["LOCAL5","1"]],"unit":"fs.service"}' --repair '["true"]' 2>/dev/null
+as alice $B hide --boot $P fs.service
+rm -f /run/sparky-stereo-problems/${P}_fs.service.json
+$B keep --boot $P fs.service LOCAL4 "Changed Description" fs.service @LOCAL8 --details '{"args":["Changed Description","fs.service",["LOCAL5","2"]],"unit":"fs.service"}' --repair '["true"]' 2>/dev/null
+as alice $B list --json >$W/a.json
+check "a failed service that fails with another exit status and another Description at the next boot stays dismissed" "pyck $W/a.json 'len(d) == 1 and d[0][\"hidden\"] and \"Changed Description\" in d[0][\"text\"]'"
+$B keep --boot $P fs.service LOCAL4 "Changed Description" fs.service @LOCAL8 --details '{"args":["Changed Description","fs.service",["LOCAL5","3"]],"unit":"fs.service"}' --repair '["sh","-c","exit 3"]' 2>/dev/null
+as alice $B list --json >$W/a.json
+check "and in the same boot a new exit status keeps it dismissed too" "pyck $W/a.json 'd[0][\"hidden\"]'"
+$B repair --boot $P fs.service >/dev/null 2>&1
+as alice $B list --json >$W/a.json
+check "a repair that fails shows it again" "pyck $W/a.json 'not d[0][\"hidden\"]'"
+as alice $B list --json --over >$W/a.json
+check "a dismissed failed service stays listed with its mark until Bring back" "[ -e $H/boot_${P}_fs.service ]"
+rm -f /run/sparky-stereo-problems/${P}_fs.service.json
+$B keep --machine $P fm LOCAL4 "M" m.service @LOCAL8 --details '{"args":["M","m.service",["LOCAL5","1"]],"unit":"m.service"}' --repair '["true"]' 2>/dev/null
+as alice $B hide --machine $P fm
+$B keep --machine $P fm LOCAL4 "M" m.service @LOCAL8 --details '{"args":["M","m.service",["LOCAL5","2"]],"unit":"m.service"}' --repair '["true"]' 2>/dev/null
+as alice $B list --json >$W/a.json
+check "a machine problem with a changed message still shows" "pyck $W/a.json 'not d[0][\"hidden\"]'"
+
+reset
+$B keep --machine $P mach LOCAL4 "M" m.service @LOCAL8 --repair '["true"]'
+as alice $B hide --machine $P mach
+as alice $B list --json >$W/a.json
+check "a machine problem dismissed: dismissed" "pyck $W/a.json 'd[0][\"hidden\"]'"
+$B keep --machine $P mach LOCAL4 "M" m.service @LOCAL8 --repair '["true"]'
+as alice $B list --json --over >$W/a.json
+check "a new process and the same problem kept again (as after a reboot): still dismissed, listed once" "pyck $W/a.json 'len(d) == 1 and d[0][\"hidden\"] and not d[0][\"over\"]'"
+$B clear --machine $P mach
+as alice $B list --json --over >$W/a.json
+check "a machine problem that is repaired leaves no dismissed ghost" "pyck $W/a.json 'len(d) == 0' && [ ! -e /home/alice/.local/state/sparky-stereo-problems/.hidden/machine_${P}_mach ]"
+as alice $B keep $P own LOCAL4 "O" o.service @LOCAL8
+as alice $B hide $P own
+as alice $B list --json >$W/a.json
+check "a person's own problem dismissed: dismissed" "pyck $W/a.json 'd[0][\"hidden\"]'"
+as alice $B keep $P own LOCAL4 "O" o.service @LOCAL8
+as alice $B list --json >$W/a.json
+check "and still when kept again with the same message" "pyck $W/a.json 'd[0][\"hidden\"]'"
+as alice $B keep $P own LOCAL4 "O" o.service @LOCAL9
+as alice $B list --json >$W/a.json
+check "a new message shows it again (a different message is a different problem)" "pyck $W/a.json 'not d[0][\"hidden\"]'"
+as alice $B hide --boot $P nosuch >$W/e.out 2>&1; rc=$?
+check "dismissing what is not kept: exit 1, said" "[ $rc = 1 ] && grep -q 'is not kept' $W/e.out"
+reset
 
 echo "== repair"
 reset

@@ -20,7 +20,10 @@
 //
 // Hide is the person's: it keeps the problem listed and hidden with its evidence, in the person's own state
 // ($XDG_STATE_HOME/sparky-stereo-problems/.hidden), and it holds only while the problem keeps its message and no
-// repair failed since (the record's id and generation); Show undoes it.
+// repair failed since (the record's id and generation); Show undoes it. The mark keeps a copy of the record and its
+// fingerprint (message and arguments): a problem of this boot (a failed service) is new at every boot, so there the
+// same fingerprint carries the dismissal to the new record, and the mark stays, listed as dismissed and not
+// happening now, until Show (ORDER 468).
 
 const std = @import("std");
 const sys = @import("sys.zig");
@@ -28,7 +31,7 @@ const sys = @import("sys.zig");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 
-pub const version = "0.1.2";
+pub const version = "0.2.0";
 pub const engine_package = "sparky-stereo-problems";
 const support_url = "https://github.com/Sparky-OS/sparky-stereo-os/issues";
 const output_lines = 200;
@@ -1515,6 +1518,31 @@ fn personName() []const u8 {
     return "?";
 }
 
+// What a dismissal of R is for: the same message with the same arguments is the same problem, at another boot too
+fn fingerprint(ctx: *Ctx, r: Record) Failure![]const u8 {
+    // A failed system service (the engine's own handler) is the same service to the person however it failed
+    // (another exit status) and whatever its Description says: its unit is the key. Every other problem is its message
+    if (r.unit) |u| {
+        if (std.mem.eql(u8, r.package, engine_package) and std.mem.eql(u8, r.message, "LOCAL4")) return cat(ctx.a, &.{ "unit\n", u });
+    }
+    return cat(ctx.a, &.{ r.message, "\n", try argsJson(ctx, r.args) });
+}
+
+// The person's mark of R: a copy of the record (its id and generation are what the mark holds to), the fingerprint
+// and when it was dismissed
+fn writeMark(ctx: *Ctx, hd: []const u8, scope: Scope, r: Record, when: ?[]const u8) Failure!bool {
+    var w = Writer{ .a = ctx.a };
+    try w.open("{");
+    try writeRecordFields(&w, ctx, r);
+    try w.key("fingerprint");
+    try w.str(try fingerprint(ctx, r));
+    try w.key("dismissed");
+    try w.str(when orelse try nowIso(ctx.a));
+    try w.close("}");
+    try w.raw("\n");
+    return writeFileAtomic(ctx.a, hd, try hideName(ctx, scope, r.package, r.key), w.out.items, 0o600);
+}
+
 pub fn hide(ctx: *Ctx, scope: Scope, package: []const u8, key: []const u8) Failure!void {
     try checkNames(ctx, package, key);
     const dir = try needDir(ctx, scope, package, key);
@@ -1526,19 +1554,7 @@ pub fn hide(ctx: *Ctx, scope: Scope, package: []const u8, key: []const u8) Failu
     };
     const hd = (try hideDir(ctx)) orelse return fail(ctx, "LOCAL15", &.{ key, package, "~/.local/state", "no home folder" });
     if (!try ensureDir(ctx.a, hd, 0o700, true)) return fail(ctx, "LOCAL15", &.{ key, package, hd, strerror(sys.errno()) });
-    var w = Writer{ .a = ctx.a };
-    try w.open("{");
-    try w.key("id");
-    try w.str(r.id);
-    try w.key("generation");
-    try w.int(r.generation);
-    try w.key("time");
-    try w.str(try nowIso(ctx.a));
-    try w.close("}");
-    try w.raw("\n");
-    if (!try writeFileAtomic(ctx.a, hd, try hideName(ctx, scope, package, key), w.out.items, 0o600)) {
-        return fail(ctx, "LOCAL15", &.{ key, package, hd, strerror(sys.errno()) });
-    }
+    if (!try writeMark(ctx, hd, scope, r, null)) return fail(ctx, "LOCAL15", &.{ key, package, hd, strerror(sys.errno()) });
     try journalEvent(ctx, "hidden", "LOCAL19", &.{ key, package, personName() }, "6", scope, r, path);
 }
 
@@ -1560,7 +1576,20 @@ pub fn isHidden(ctx: *Ctx, scope: Scope, r: Record) Failure!bool {
     if (v != .object) return false;
     const id = fieldStr(v.object, "id") orelse return false;
     const generation = fieldInt(v.object, "generation") orelse return false;
-    return std.mem.eql(u8, id, r.id) and generation == r.generation;
+    if (std.mem.eql(u8, id, r.id) and generation == r.generation) {
+        // a mark made before the fingerprint existed (engine 0.1.x) gets one, so it carries to the next boot too
+        if (scope == .boot and fieldStr(v.object, "fingerprint") == null) _ = try writeMark(ctx, hd, scope, r, fieldStr(v.object, "time"));
+        return true;
+    }
+    // A problem of this boot is a new record at every boot (a new id): the same message and arguments, with no
+    // repair failed since the dismissal, is the same problem, so the dismissal moves to the new record. From then
+    // on the id and generation hold it, and a repair that fails shows it again like any other
+    if (scope != .boot) return false;
+    const fp = fieldStr(v.object, "fingerprint") orelse return false;
+    if (!std.mem.eql(u8, fp, try fingerprint(ctx, r))) return false;
+    if (r.repairs_failed > (fieldInt(v.object, "repairs_failed") orelse 0)) return false;
+    _ = try writeMark(ctx, hd, scope, r, fieldStr(v.object, "dismissed"));
+    return true;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1681,6 +1710,8 @@ pub const Listed = struct {
     record: ?Record,
     unreadable: []const u8 = "",
     hidden: bool = false,
+    // a dismissed problem of this boot's kind that is not happening now: only its mark is left (listAll)
+    over: bool = false,
 };
 
 fn lessByFirst(_: void, x: Listed, y: Listed) bool {
@@ -1692,6 +1723,12 @@ fn lessByFirst(_: void, x: Listed, y: Listed) bool {
 // Every kept problem, the machine's, this boot's and the person's, oldest first; a record that cannot be read is
 // listed as such, never left out. A failed service that systemd no longer has as failed is over and goes
 pub fn collect(ctx: *Ctx, package: ?[]const u8) Failure![]Listed {
+    return collectAll(ctx, package, false);
+}
+
+// WITH_OVER also lists the dismissed problems of this boot's kind that are not happening now (a failed service that
+// works again, or the last boot's): their mark is all that is left, and Show is how the person ends it
+pub fn collectAll(ctx: *Ctx, package: ?[]const u8, with_over: bool) Failure![]Listed {
     var out: std.ArrayList(Listed) = .empty;
     var names: std.StringHashMapUnmanaged(void) = .empty;
     for ([_]Scope{ .machine, .boot, .person }) |scope| {
@@ -1718,7 +1755,10 @@ pub fn collect(ctx: *Ctx, package: ?[]const u8) Failure![]Listed {
                 .missing => {},
                 .unreadable => |e| try out.append(ctx.a, .{ .scope = scope, .file = path, .record = null, .unreadable = e }),
                 .record => |r| {
-                    if (package) |p| if (!std.mem.eql(u8, p, r.package)) continue;
+                    if (package) |p| if (!std.mem.eql(u8, p, r.package)) {
+                        try names.put(ctx.a, try hideName(ctx, scope, r.package, r.key), {});
+                        continue;
+                    };
                     const present = try installed(ctx, r.package);
                     if (present == true and !r.package_seen) try observePackage(ctx, scope, dir, n, r);
                     if (!std.mem.eql(u8, r.package, engine_package) and r.package_seen and present == false and
@@ -1739,25 +1779,36 @@ pub fn collect(ctx: *Ctx, package: ?[]const u8) Failure![]Listed {
             }
         }
     }
-    std.mem.sort(Listed, out.items, {}, lessByFirst);
-    // the person's hide marks of problems that are over go with them
-    if (package == null) {
-        if (try hideDir(ctx)) |hd| {
-            if (sys.opendir(try z(ctx.a, hd))) |d| {
-                defer _ = sys.closedir(d);
-                while (sys.readdir(d)) |e| {
-                    const n = std.mem.sliceTo(&e.name, 0);
-                    if (n.len == 0 or n[0] == '.') continue;
-                    if (!names.contains(n)) _ = sys.unlink(try z(ctx.a, try cat(ctx.a, &.{ hd, "/", n })));
+    // the person's hide marks of problems that are over go with them, except a problem of this boot's kind: its mark
+    // stays, because the same problem comes back at the next boot (isHidden), and it is listed when asked for
+    if (try hideDir(ctx)) |hd| {
+        if (sys.opendir(try z(ctx.a, hd))) |d| {
+            defer _ = sys.closedir(d);
+            while (sys.readdir(d)) |e| {
+                const n = std.mem.sliceTo(&e.name, 0);
+                if (n.len == 0 or n[0] == '.' or names.contains(n)) continue;
+                const mark = try cat(ctx.a, &.{ hd, "/", n });
+                if (!std.mem.startsWith(u8, n, "boot_")) {
+                    if (package == null) _ = sys.unlink(try z(ctx.a, mark));
+                    continue;
+                }
+                if (!with_over) continue;
+                switch (try readRecord(ctx, mark)) {
+                    .record => |r| {
+                        if (package) |p| if (!std.mem.eql(u8, p, r.package)) continue;
+                        try out.append(ctx.a, .{ .scope = .boot, .file = mark, .record = r, .hidden = true, .over = true });
+                    },
+                    else => {},
                 }
             }
         }
     }
+    std.mem.sort(Listed, out.items, {}, lessByFirst);
     return out.items;
 }
 
-pub fn listJson(ctx: *Ctx, package: ?[]const u8, lang: ?[]const u8) Failure![]const u8 {
-    const items = try collect(ctx, package);
+pub fn listJson(ctx: *Ctx, package: ?[]const u8, lang: ?[]const u8, with_over: bool) Failure![]const u8 {
+    const items = try collectAll(ctx, package, with_over);
     var w = Writer{ .a = ctx.a };
     try w.open("[");
     for (items) |item| {
@@ -1777,6 +1828,8 @@ pub fn listJson(ctx: *Ctx, package: ?[]const u8, lang: ?[]const u8) Failure![]co
             try w.str(shown.lang);
             try w.key("hidden");
             try w.boolean(item.hidden);
+            try w.key("over");
+            try w.boolean(item.over);
             try w.key("labels");
             try w.open("[");
             for (r.actions) |act| {
