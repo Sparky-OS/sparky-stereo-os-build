@@ -1,4 +1,17 @@
 -------------------------------------------------------------------------------
+  Version 20261108~sparky9~0 (2026-11-08)
+-------------------------------------------------------------------------------
+  * The splash stays inside the desktop's own depth limits (ORDER 472; Daniel, 2026-11-08: "on plymouth - the separation is
+    huge", on a laptop panel in red/cyan). Scaling by the eye's width was right (the same rule as Stereo KWin's), but the
+    levels were fixed above the desktop's popped limit: the logo 9.08 px, the base 4.54 and a popping electron 8.54 at 1920,
+    against 4 px (kwinrc [StereoDepth] PoppedLimit); at 1366 per eye 5 px against 3. Now the base is half the popped
+    limit, the logo and the nearest electron the popped limit (2, 4 and 4 px at 1920), and the farthest electron sinks 4,
+    inside the sunk limit of 10
+  * A level is placed by its whole disparity, rounded to a pixel with the odd pixel to the left eye; each eye rounded its
+    half before, which made every disparity even and, at a few hundred pixels per eye, put base and logo on one level
+  * tests/depth-limits.py checks the generated script against the desktop's limits at 1280, 1366, 1920, 2560 and 3840
+
+-------------------------------------------------------------------------------
   Version 20261016~sparky9~0 (2026-10-16)
 -------------------------------------------------------------------------------
   * First version: sparky-stereo-lines and sparky-stereo-lines-height

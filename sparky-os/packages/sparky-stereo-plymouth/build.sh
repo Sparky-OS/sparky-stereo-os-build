@@ -9,7 +9,7 @@
 set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
-VERSION=20261025~sparky9~0+lc1
+VERSION=20261108~sparky9~0+lc1
 PKG=sparky-stereo-plymouth
 umask 022
 mkdir -p "$OUT"
