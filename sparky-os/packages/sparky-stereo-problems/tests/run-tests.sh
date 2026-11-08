@@ -148,6 +148,19 @@ as alice $B hide --boot $P svc; as alice $B show --boot $P svc
 as alice $B list --json >$W/a.json
 check "Bring back of one that is happening now shows it" "pyck $W/a.json 'not d[0][\"hidden\"]'"
 
+# a mark made by engine 0.1.x (id, generation and time only) still holds, and carries to the next boot once read
+reset
+$B keep --boot $P oldmark LOCAL4 "Old" o.service @LOCAL8 --repair '["true"]'
+oid=$(js /run/sparky-stereo-problems/${P}_oldmark.json 'd["id"]')
+mkdir -p $H; printf '{"id":"%s","generation":1,"time":"2026-11-08T00:00:00Z"}\n' "$oid" >$H/boot_${P}_oldmark; chown -R alice /home/alice/.local
+as alice $B list --json >$W/a.json
+check "an older mark (id and generation only) still dismisses" "pyck $W/a.json 'd[0][\"hidden\"]'"
+check "and is given its fingerprint when it is read" "pyck $H/boot_${P}_oldmark 'd[\"fingerprint\"].startswith(\"LOCAL4\")'"
+rm -f /run/sparky-stereo-problems/${P}_oldmark.json
+$B keep --boot $P oldmark LOCAL4 "Old" o.service @LOCAL8 --repair '["true"]'
+as alice $B list --json >$W/a.json
+check "then it carries to the next boot" "pyck $W/a.json 'd[0][\"hidden\"]'"
+
 reset
 $B keep --machine $P mach LOCAL4 "M" m.service @LOCAL8 --repair '["true"]'
 as alice $B hide --machine $P mach

@@ -1571,7 +1571,11 @@ pub fn isHidden(ctx: *Ctx, scope: Scope, r: Record) Failure!bool {
     if (v != .object) return false;
     const id = fieldStr(v.object, "id") orelse return false;
     const generation = fieldInt(v.object, "generation") orelse return false;
-    if (std.mem.eql(u8, id, r.id) and generation == r.generation) return true;
+    if (std.mem.eql(u8, id, r.id) and generation == r.generation) {
+        // a mark made before the fingerprint existed (engine 0.1.x) gets one, so it carries to the next boot too
+        if (scope == .boot and fieldStr(v.object, "fingerprint") == null) _ = try writeMark(ctx, hd, scope, r, fieldStr(v.object, "time"));
+        return true;
+    }
     // A problem of this boot is a new record at every boot (a new id): the same message and arguments, with no
     // repair failed since the dismissal, is the same problem, so the dismissal moves to the new record. From then
     // on the id and generation hold it, and a repair that fails shows it again like any other
