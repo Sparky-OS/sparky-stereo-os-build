@@ -1,0 +1,8 @@
+[Unit]
+Description=End the kept death of %i if it ran well on its GPU
+# systemd looks for a kept death before it starts anything: a normal end of a program costs no process
+ConditionPathExistsGlob=%S/sparky-stereo-problems/sparky-stereo-graphics_died-*.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sparky-stereo-gpu-env --survived %i

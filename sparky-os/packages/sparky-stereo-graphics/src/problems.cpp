@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "problems.h"
+#include "launchwatch.h"
 
 #include <sparky-stereo-problems.h>
 
@@ -28,9 +29,14 @@ bool Problem::isEmpty() const
     return kind.isEmpty();
 }
 
+bool Problem::isDeath() const
+{
+    return kind == u"app-died"_s;
+}
+
 bool Problem::isChoice() const
 {
-    return !system && !kind.isEmpty() && kind != u"record-write"_s && kind != u"systemd-reload"_s;
+    return !system && !kind.isEmpty() && kind != u"record-write"_s && kind != u"systemd-reload"_s && !isDeath();
 }
 
 namespace Problems
@@ -109,6 +115,30 @@ Problem fromResolution(const QString &key, const Resolution &resolution, const Q
     return problem;
 }
 
+Problem fromDeath(const QString &appName, const QString &appId, const QString &app, const QString &how, int number, const QString &word,
+                  const QString &output, int gpuIndex, const QList<Gpu> &gpus, const QList<int> &instead)
+{
+    Problem problem;
+    problem.key = LaunchWatch::keyOf(appName);
+    problem.kind = u"app-died"_s;
+    problem.app = app.isEmpty() ? appName : app;
+    problem.command = appId;
+    problem.detail = how;
+    problem.extra = word;
+    problem.status = number;
+    problem.output = output;
+    if (gpuIndex >= 0 && gpuIndex < gpus.size()) {
+        problem.requested = gpus.at(gpuIndex).id;
+        problem.gpu = gpus.at(gpuIndex).name;
+    }
+    for (int index : instead) {
+        if (index >= 0 && index < gpus.size() && index != gpuIndex) {
+            problem.alternatives.append({gpus.at(index).id, gpus.at(index).name});
+        }
+    }
+    return problem;
+}
+
 QString profileError(const QString &error, const QString &detail)
 {
     if (error == u"no-bus"_s) {
@@ -147,6 +177,7 @@ static QJsonObject toJson(const Problem &p)
         {u"command"_s, p.command},
         {u"status"_s, p.status},
         {u"output"_s, p.output},
+        {u"app"_s, p.app},
     };
 }
 
@@ -166,6 +197,7 @@ static Problem fromJson(const QJsonObject &o)
     p.command = o.value(u"command"_s).toString();
     p.status = o.value(u"status"_s).toInt();
     p.output = o.value(u"output"_s).toString();
+    p.app = o.value(u"app"_s).toString();
     return p;
 }
 
@@ -213,8 +245,39 @@ static QJsonArray profileArg(const QString &error, const QString &detail)
     return QJsonArray{ctx(c, "power-profiles-daemon is not running")};
 }
 
+// How a program stopped, as a message inside the sentence ([KEY, ARG...], like profileArg)
+static QJsonArray howArg(const Problem &p)
+{
+    if (p.detail == u"crash"_s) {
+        return QJsonArray{ctx("@info how a program stopped, %1 is a signal number", "it crashed (signal %1)"), QString::number(p.status)};
+    }
+    if (p.detail == u"exit"_s) {
+        return QJsonArray{ctx("@info how a program stopped, %1 is an exit status", "it exited with status %1"), QString::number(p.status)};
+    }
+    return QJsonArray{ctx("@info how a program stopped, %1 is the word systemd gives the result", "systemd reports %1"), p.extra};
+}
+
+static QString howText(const Problem &p)
+{
+    if (p.detail == u"crash"_s) {
+        return i18nc("@info how a program stopped, %1 is a signal number", "it crashed (signal %1)", p.status);
+    }
+    if (p.detail == u"exit"_s) {
+        return i18nc("@info how a program stopped, %1 is an exit status", "it exited with status %1", p.status);
+    }
+    return i18nc("@info how a program stopped, %1 is the word systemd gives the result", "systemd reports %1", p.extra);
+}
+
 Sentences sentences(const Problem &p)
 {
+    if (p.isDeath()) {
+        Sentences d;
+        d.key = ctx("@info %1 is a program, %2 a GPU name, %3 says how it stopped", "%1 stopped right after it started on %2: %3.");
+        d.args = QJsonArray{p.app, p.gpu, howArg(p)};
+        d.more.append(QJsonArray{ctx("@info what to do",
+                                     "It was not started again on another GPU. If this GPU is the cause, choose another one for it below, or in System Settings, Graphics.")});
+        return d;
+    }
     // the same sentences as message(), named by their catalog keys (CONTEXT|MSGID of this package's .po files), so the
     // engine says them in each reader's language; autotests/enginetextstest.sh checks the two agree
     const bool main = p.key == u"main-gpu"_s;
@@ -289,7 +352,17 @@ bool keep(Problem problem, const QString &dir)
     const int scope = scopeOf(dir);
     const Sentences s = sentences(problem);
     QJsonArray actions;
-    if (problem.isChoice()) {
+    if (problem.isDeath()) {
+        // the other GPUs are only ever the person's explicit choice, for this program only (its desktop entry's own key)
+        for (const Alternative &gpu : problem.alternatives) {
+            actions.append(QJsonObject{{u"id"_s, QString(u"use:"_s + gpu.id)},
+                                       {u"label"_s, QJsonArray{ctx("@action:button %1 is a GPU name", "Use %1"), gpu.name}},
+                                       {u"command"_s, QJsonArray{u"sparky-stereo-gpu-env"_s, u"--use-app"_s, problem.command, gpu.id}}});
+        }
+        actions.append(QJsonObject{{u"id"_s, u"open"_s},
+                                   {u"label"_s, QJsonArray{ctx("@action:button", "Open Graphics settings")}},
+                                   {u"command"_s, QJsonArray{u"systemsettings"_s, u"kcm_sparkystereo_graphics"_s}}});
+    } else if (problem.isChoice()) {
         // the other GPUs are only ever the person's explicit choice: "Use NAME", which saves that GPU as the choice
         for (const Alternative &gpu : problem.alternatives) {
             if (gpu.id != problem.requested) {
@@ -406,6 +479,9 @@ QString kindInSentence(const QString &key)
 
 QString title(const Problem &problem)
 {
+    if (problem.isDeath()) {
+        return i18nc("@title notification", "A program stopped on its GPU");
+    }
     if (problem.isChoice()) {
         return i18nc("@title notification", "A graphics choice cannot be used");
     }
@@ -419,6 +495,12 @@ static QString address(const QString &id)
 
 QString message(const Problem &p)
 {
+    if (p.isDeath()) {
+        return i18nc("@info %1 is a program, %2 a GPU name, %3 says how it stopped", "%1 stopped right after it started on %2: %3.", p.app, p.gpu, howText(p))
+            + u' '
+            + i18nc("@info what to do",
+                    "It was not started again on another GPU. If this GPU is the cause, choose another one for it below, or in System Settings, Graphics.");
+    }
     const bool main = p.key == u"main-gpu"_s;
     const QString kind = kindInSentence(p.key);
     QStringList text;

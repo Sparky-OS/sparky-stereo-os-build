@@ -3,6 +3,7 @@
 
 #include "fixtures.h"
 #include "graphicskcm.h"
+#include "problems.h"
 
 #include <KConfig>
 #include <KConfigGroup>
@@ -26,6 +27,7 @@ private Q_SLOTS:
     void theOffersAreTheExplicitChoice();
     void aMissingMainGpuIsSaid();
     void aMeasuredGpuThatIsGoneIsSaid();
+    void aProgramThatStoppedAtStartIsListedWithItsButtons();
 
 private:
     std::unique_ptr<GraphicsKcm> page(const QString &machine)
@@ -175,6 +177,29 @@ void PageProblemsTest::aMeasuredGpuThatIsGoneIsSaid()
     QVERIFY2(kcm->measuredText().contains(u"The GPU this computer was measured best on, 10de:2504, is not here now"_s), qPrintable(kcm->measuredText()));
     const QVariantMap players = row(kcm->categories(), u"key"_s, u"Players"_s);
     QVERIFY2(players.value(u"nowText"_s).toString().contains(u"the GPU measured best for this computer is not here now"_s), qPrintable(players.value(u"nowText"_s).toString()));
+}
+
+void PageProblemsTest::aProgramThatStoppedAtStartIsListedWithItsButtons()
+{
+    // ORDER 467: what sparky-stereo-gpu-env --died keeps is on the page, with the engine's own buttons
+    using namespace SparkyGraphics;
+    const QList<Gpu> gpus = GpuInventory::read(m_machines.path() + u"/host"_s);
+    QCOMPARE(gpus.size(), 2);
+    int discrete = gpus.at(0).kind == GpuKind::Discrete ? 0 : 1;
+    const Problem problem = Problems::fromDeath(u"sparky-browser"_s, u"sparky-browser.desktop"_s, u"Sparky Browser"_s, u"crash"_s, 11, QString(), QString(), discrete, gpus, {1 - discrete});
+    QVERIFY(Problems::keep(problem, Problems::userDir()));
+    auto kcm = page(u"host"_s);
+    const QVariantMap row_ = row(kcm->property("problems").toList(), u"key"_s, u"died-sparky-browser"_s);
+    QVERIFY(!row_.isEmpty());
+    // the text is the engine's, rendered from the installed catalog; this test has none, so it is the message itself
+    QVERIFY2(row_.value(u"text"_s).toString().contains(u"stopped right after it started on "_s), qPrintable(row_.value(u"text"_s).toString()));
+    QCOMPARE(row_.value(u"package"_s).toString(), u"sparky-stereo-graphics"_s);
+    QStringList ids;
+    for (const QVariant &action : row_.value(u"actions"_s).toList()) {
+        ids << action.toMap().value(u"id"_s).toString();
+    }
+    QCOMPARE(ids, (QStringList{u"use:"_s + gpus.at(1 - discrete).id, u"open"_s}));
+    QVERIFY(row_.value(u"gpus"_s).toList().isEmpty()); // not a saved choice: no change of a kind's GPU is offered
 }
 
 QTEST_GUILESS_MAIN(PageProblemsTest)

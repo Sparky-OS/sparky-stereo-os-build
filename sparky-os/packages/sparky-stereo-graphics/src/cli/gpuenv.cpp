@@ -13,6 +13,13 @@
 //   sparky-stereo-gpu-env --notify      starts the session's notifier (sparky-stereo-problems-plasma), which shows the
 //                                       kept problems
 //   sparky-stereo-gpu-env --use KEY GPU "Use NAME" of a kept problem: saves GPU as the person's choice for KEY
+//   sparky-stereo-gpu-env --died UNIT   run by the session's systemd when an application's service fails (the drop-in
+//                                       app-.service.d/10-sparky-stereo-graphics.conf, ORDER 467): when a program this page
+//                                       sent to a GPU stopped right after it started, say so and keep it
+//   sparky-stereo-gpu-env --survived UNIT  run when such a service ends cleanly: a program that ran past the window on
+//                                       its GPU ends the kept death of that program
+//   sparky-stereo-gpu-env --use-app ID GPU  "Use NAME" of a kept death: that program's own desktop entry key (the
+//                                       desktop's GPU, or the discrete one), nothing else changes
 //
 // --3d: the program presents 3D, so Automatic is the GPU measured best on this machine (the machine record,
 // sparky-stereo-gpu-record), whatever the power profile, as it always is for players.
@@ -33,6 +40,7 @@
 #include "appentries.h"
 #include "gpuinventory.h"
 #include "graphicssettings.h"
+#include "launchwatch.h"
 #include "machinerecord.h"
 #include "powerprofiles.h"
 #include "problems.h"
@@ -66,7 +74,7 @@ static int usage(const QString &problem)
     err << problem << '\n'
         << i18nc("@info:shell %1 is the command's synopsis, which stays as it is", "Usage: %1",
                  u"sparky-stereo-gpu-env [--category C | --app ID | --choice X] [--3d] [--profile P] [--root DIR] [--print what] [--shell] [--ask] | "
-                 "--session | --list [--json] | --problems | --notify | --use KEY GPU"_s)
+                 "--session | --list [--json] | --problems | --notify | --use KEY GPU | --use-app ID GPU | --died UNIT | --survived UNIT"_s)
         << '\n';
     return 2;
 }
@@ -133,6 +141,129 @@ static QString ask(const Problem &problem)
     return QString::fromUtf8(dialog.readAllStandardOutput()).trimmed();
 }
 
+
+// ORDER 467. A program this page sent to a GPU that stops right after it starts is told, never started again on another
+// GPU: systemd (the session's manager runs every application as app-NAME@ID.service) knows how it ended, and runs this
+// when the service fails. Not told: a program the page did not send anywhere, one that ended cleanly (a launcher, a
+// single-instance program handing over to the one already running, a person closing it), one the person or the system
+// killed (SIGKILL), and one that stopped after the window ([Launch] DiedWithin, 10 s).
+static int died(const QString &unit, const QString &root)
+{
+    QTextStream err(stderr);
+    const QString name = LaunchWatch::appNameOf(unit);
+    const int window = LaunchWatch::window();
+    if (name.isEmpty() || window == 0) {
+        return 0;
+    }
+    const UnitFacts facts = LaunchWatch::read(unit);
+    if (!facts.found) {
+        err << "sparky-stereo-gpu-env: " << i18nc("@info:shell %1 is a systemd unit, %2 why not", "Could not ask systemd how %1 ended: %2", unit, facts.error) << '\n';
+        return 3;
+    }
+    if (facts.result == u"success"_s) {
+        return 0;
+    }
+    QString how;
+    QString word;
+    if (facts.result == u"core-dump"_s || (facts.result == u"signal"_s && facts.exitCode != 9 && facts.exitCode != 15 && facts.exitCode != 2 && facts.exitCode != 1 && facts.exitCode != 13)) {
+        how = u"crash"_s;
+    } else if (facts.result == u"signal"_s) {
+        return 0;
+    } else if (facts.result == u"exit-code"_s) {
+        how = u"exit"_s;
+    } else {
+        how = u"result"_s;
+        word = facts.result;
+    }
+    const double seconds = facts.seconds();
+    if (seconds < 0 || seconds > window) {
+        return 0;
+    }
+    const AppEntry entry = AppEntries::fromFile(facts.sourcePath);
+    if (entry.id.isEmpty()) {
+        return 0;
+    }
+    const QList<Gpu> gpus = GpuInventory::read(root);
+    const GraphicsSettings settings;
+    const MachineRecord record = MachineRecord::read();
+    const Resolver resolver(gpus, settings.mainGpu(), PowerProfiles::read(), record.bestGpu);
+    const Resolution resolution = resolver.resolveApp(entry, settings, false);
+    if (!resolution.problem.isEmpty() || resolution.gpuIndex < 0 || resolution.environment.isEmpty()) {
+        return 0;
+    }
+    bool sent = true;
+    for (const QString &line : resolution.environment) {
+        sent = sent && facts.environment.contains(line);
+    }
+    if (!sent && entry.preference == AppPreference::OtherGpu) {
+        // KDE's own key, which KIO applies with its own variables
+        for (const QString &line : std::as_const(facts.environment)) {
+            sent = sent || line.startsWith(u"DRI_PRIME="_s) || line.startsWith(u"__NV_PRIME_RENDER_OFFLOAD="_s);
+        }
+    }
+    if (!sent) {
+        return 0;
+    }
+    // the GPUs this program can be sent to instead, as its own desktop entry can say it
+    QList<int> instead;
+    for (AppPreference preference : {AppPreference::MainGpu, AppPreference::OtherGpu}) {
+        AppEntry other = entry;
+        other.preference = preference;
+        const Resolution r = resolver.resolveApp(other, settings, false);
+        if (r.problem.isEmpty() && r.gpuIndex >= 0 && r.gpuIndex != resolution.gpuIndex && gpus.at(r.gpuIndex).usable() && !instead.contains(r.gpuIndex)) {
+            instead << r.gpuIndex;
+        }
+    }
+    const Problem problem = Problems::fromDeath(name, entry.id, entry.name, how, facts.exitCode, word, LaunchWatch::lastLines(unit), resolution.gpuIndex, gpus, instead);
+    err << "sparky-stereo-gpu-env: " << Problems::message(problem) << '\n';
+    return Problems::keep(problem, Problems::userDir()) ? 0 : 3;
+}
+
+// A program that ran past the window on its GPU and ended cleanly works there: the kept death of it is over
+static int survived(const QString &unit)
+{
+    const QString name = LaunchWatch::appNameOf(unit);
+    if (name.isEmpty()) {
+        return 0;
+    }
+    const UnitFacts facts = LaunchWatch::read(unit);
+    if (!facts.found || facts.result != u"success"_s || facts.seconds() < qMax(LaunchWatch::window(), 1)) {
+        return 0;
+    }
+    return Problems::clear(LaunchWatch::keyOf(name), Problems::userDir()) ? 0 : 3;
+}
+
+// "Use NAME" of a kept death: the desktop entry's own PrefersNonDefaultGPU, as the page writes it. The desktop's GPU is
+// false and the discrete GPU is true; another GPU has no key, so it is chosen on the page
+static int useApp(const QString &id, const QString &gpuId, const QString &root)
+{
+    const AppEntry entry = AppEntries::fromEnvironment().find(id);
+    if (entry.id.isEmpty()) {
+        return usage(i18nc("@info:shell %1 is an application ID", "No desktop entry %1", id));
+    }
+    const QList<Gpu> gpus = GpuInventory::read(root);
+    const GraphicsSettings settings;
+    const MachineRecord record = MachineRecord::read();
+    const Resolver resolver(gpus, settings.mainGpu(), PowerProfiles::read(), record.bestGpu);
+    for (AppPreference preference : {AppPreference::MainGpu, AppPreference::OtherGpu}) {
+        AppEntry other = entry;
+        other.preference = preference;
+        const Resolution r = resolver.resolveApp(other, settings, false);
+        if (r.problem.isEmpty() && r.gpuIndex >= 0 && gpus.at(r.gpuIndex).id == gpuId) {
+            if (!AppEntries::fromEnvironment().setPreference(entry.id, preference)) {
+                QTextStream(stderr) << "sparky-stereo-gpu-env: " << i18nc("@info", "The graphics settings could not be saved.") << '\n';
+                return 3;
+            }
+            QString name = entry.id;
+            name.chop(8); // ".desktop"
+            return Problems::clear(LaunchWatch::keyOf(name), Problems::userDir()) ? 0 : 3;
+        }
+    }
+    QTextStream(stderr) << "sparky-stereo-gpu-env: "
+                        << i18nc("@info", "That GPU cannot be chosen for one program here. Choose it in System Settings, Graphics.") << '\n';
+    return 4;
+}
+
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
@@ -154,6 +285,10 @@ int main(int argc, char **argv)
     bool notify = false;
     QString useKey;
     QString useGpu;
+    QString diedUnit;
+    QString survivedUnit;
+    QString useApp_;
+    QString useAppGpu;
     for (int i = 0; i < args.size(); ++i) {
         const QString &arg = args.at(i);
         const auto value = [&]() -> QString {
@@ -187,6 +322,13 @@ int main(int argc, char **argv)
             problems = true;
         } else if (arg == u"--notify"_s) {
             notify = true;
+        } else if (arg == u"--died"_s) {
+            diedUnit = value();
+        } else if (arg == u"--survived"_s) {
+            survivedUnit = value();
+        } else if (arg == u"--use-app"_s) {
+            useApp_ = value();
+            useAppGpu = value();
         } else if (arg == u"--use"_s) {
             useKey = value();
             useGpu = value();
@@ -195,6 +337,15 @@ int main(int argc, char **argv)
         }
     }
 
+    if (!diedUnit.isEmpty()) {
+        return died(diedUnit, root);
+    }
+    if (!survivedUnit.isEmpty()) {
+        return survived(survivedUnit);
+    }
+    if (!useApp_.isEmpty()) {
+        return useApp(useApp_, useAppGpu, root);
+    }
     if (notify) {
         // the edition's one engine and its session notifier show the kept problems (ORDER 350): this starts it
         return QProcess::execute(u"systemctl"_s, {u"--user"_s, u"start"_s, u"sparky-stereo-problems-notifier.service"_s});

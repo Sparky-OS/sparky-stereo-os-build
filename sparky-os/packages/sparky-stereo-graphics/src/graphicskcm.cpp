@@ -226,7 +226,15 @@ QVariantList GraphicsKcm::problems() const
     for (const Problem &problem : liveProblems(m_settings)) {
         add(problem);
     }
-    for (const QJsonValue &value : Problems::records({u"sparky-stereo-vram-boost"_s})) {
+    // the engine's records the page lists as they are kept: the video memory step, and (ORDER 467) a program that stopped
+    // right after it started on its GPU, with the engine's own labels and commands
+    QJsonArray kept = Problems::records({u"sparky-stereo-vram-boost"_s});
+    for (const QJsonValue &value : Problems::records({u"sparky-stereo-graphics"_s})) {
+        if (value.toObject().value(u"key"_s).toString().startsWith(u"died-"_s)) {
+            kept.append(value);
+        }
+    }
+    for (const QJsonValue &value : std::as_const(kept)) {
         const QJsonObject record = value.toObject();
         QVariantList actions;
         const auto commands = record.value(u"actions"_s).toArray();
@@ -245,7 +253,7 @@ QVariantList GraphicsKcm::problems() const
 
 void GraphicsKcm::runProblemAction(const QString &package, const QString &key, const QString &id)
 {
-    if (package != u"sparky-stereo-vram-boost"_s) {
+    if (package != u"sparky-stereo-vram-boost"_s && !(package == u"sparky-stereo-graphics"_s && key.startsWith(u"died-"_s))) {
         return;
     }
     for (const QJsonValue &value : Problems::records({package})) {

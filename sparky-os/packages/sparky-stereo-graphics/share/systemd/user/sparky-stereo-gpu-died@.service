@@ -1,0 +1,6 @@
+[Unit]
+Description=Tell that %i stopped right after it started on its GPU
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sparky-stereo-gpu-env --died %i
