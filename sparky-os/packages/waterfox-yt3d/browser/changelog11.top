@@ -1,0 +1,14 @@
+sparky-stereo-browser (@DEBVERSION@) unstable; urgency=medium
+
+  * 360 videos and WebXR sessions work again when the browser is routed to a
+    GPU that is not the one Stereo KWin renders on (+stereo3d10 drew a 360
+    video twice in one view and VR ended the browser): a WebGL canvas keeps
+    its layer and its stereo declaration, and the layer is copied to shared
+    memory for the compositor. The picture's format and modifier are looked up
+    in the tranches of the compositor's main device only.
+  * Side by Side, Top and Bottom and Swap Eyes from the application menu act on
+    the YouTube player's video (checked on a plain side by side video on both
+    routes).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@
+
