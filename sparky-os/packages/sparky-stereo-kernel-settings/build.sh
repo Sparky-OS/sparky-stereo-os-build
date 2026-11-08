@@ -23,6 +23,9 @@ mkdir -p "$D/usr/lib/systemd/system/systemd-zram-setup@zram0.service.d" "$D/usr/
 cat >"$D/usr/lib/systemd/system/systemd-zram-setup@zram0.service.d/50-sparky-migration.conf" <<'EOF'
 [Unit]
 RequiresMountsFor=/var/lib/apt /var/lib/sparky-stereo-kernel-settings
+# At boot this unit is started several times; on a machine where the guard skipped each start they ended in
+# "start-limit-hit", a failure of a unit that was correctly doing nothing (station's journal, 2026-11-08).
+StartLimitIntervalSec=0
 [Service]
 ExecCondition=/usr/libexec/sparky-stereo/zram-migration --allow
 EOF
