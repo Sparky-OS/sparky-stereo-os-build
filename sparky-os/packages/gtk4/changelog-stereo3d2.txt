@@ -1,4 +1,4 @@
-gtk4 (4.24.1+ds-1+stereo3d1) unstable; urgency=medium
+gtk4 (4.24.1+ds-1+stereo3d2) unstable; urgency=medium
 
   * Sparky Stereo OS: a stereo GtkGLArea (ORDER 137, stereo3d-gtkglarea-stereo).
     GtkGLArea draws into a framebuffer of its own and had no way to hand
@@ -29,3 +29,15 @@ gtk4 (4.24.1+ds-1+stereo3d1) unstable; urgency=medium
     compositor, which ended the connection (EBADF) as soon as a GtkGLArea
     inside a GtkGraphicsOffload was offloaded. GTK now draws the texture
     itself, as for any export that cannot be done.
+  * Sparky Stereo OS: the stereo GtkGLArea on X11 (ORDER 137, milestone 2,
+    stereo3d-gtkglarea-stereo-x11). On X11 a stereo area is a child window of
+    the toplevel's X window, declared as full side by side stereo content and
+    listed as its stereo child with libstereo-declare 1.7.0 or later, loaded
+    when the first stereo area asks (libgtk-4-1 depends on libstereo-declare1). The two views
+    are read back and put into the window; the first frames are repeated while
+    the window manager redirects the child. A window manager that announces
+    less than version 8 of _KDE_NET_WM_STEREO_CONTENT_SUPPORTED, or a missing
+    library, is said with stereo-error, and the area draws its left view alone.
+    A 2D widget drawn over an X11 stereo area is hidden by it.
+  * gtk-demo: the OpenGL Area demo has a Stereo check button and draws the
+    triangle with the camera of each eye (stereo3d-gtk-demo-glarea-stereo).
