@@ -161,6 +161,29 @@ $B keep --boot $P oldmark LOCAL4 "Old" o.service @LOCAL8 --repair '["true"]'
 as alice $B list --json >$W/a.json
 check "then it carries to the next boot" "pyck $W/a.json 'd[0][\"hidden\"]'"
 
+# a failed service is the same service however it failed and whatever its Description says: the unit is the key
+reset
+$B keep --boot $P fs.service LOCAL4 "First Description" fs.service @LOCAL8 --details '{"args":["First Description","fs.service",["LOCAL5","1"]],"unit":"fs.service"}' --repair '["true"]' 2>/dev/null
+as alice $B hide --boot $P fs.service
+rm -f /run/sparky-stereo-problems/${P}_fs.service.json
+$B keep --boot $P fs.service LOCAL4 "Changed Description" fs.service @LOCAL8 --details '{"args":["Changed Description","fs.service",["LOCAL5","2"]],"unit":"fs.service"}' --repair '["true"]' 2>/dev/null
+as alice $B list --json >$W/a.json
+check "a failed service that fails with another exit status and another Description at the next boot stays dismissed" "pyck $W/a.json 'len(d) == 1 and d[0][\"hidden\"] and \"Changed Description\" in d[0][\"text\"]'"
+$B keep --boot $P fs.service LOCAL4 "Changed Description" fs.service @LOCAL8 --details '{"args":["Changed Description","fs.service",["LOCAL5","3"]],"unit":"fs.service"}' --repair '["sh","-c","exit 3"]' 2>/dev/null
+as alice $B list --json >$W/a.json
+check "and in the same boot a new exit status keeps it dismissed too" "pyck $W/a.json 'd[0][\"hidden\"]'"
+$B repair --boot $P fs.service >/dev/null 2>&1
+as alice $B list --json >$W/a.json
+check "a repair that fails shows it again" "pyck $W/a.json 'not d[0][\"hidden\"]'"
+as alice $B list --json --over >$W/a.json
+check "a dismissed failed service stays listed with its mark until Bring back" "[ -e $H/boot_${P}_fs.service ]"
+rm -f /run/sparky-stereo-problems/${P}_fs.service.json
+$B keep --machine $P fm LOCAL4 "M" m.service @LOCAL8 --details '{"args":["M","m.service",["LOCAL5","1"]],"unit":"m.service"}' --repair '["true"]' 2>/dev/null
+as alice $B hide --machine $P fm
+$B keep --machine $P fm LOCAL4 "M" m.service @LOCAL8 --details '{"args":["M","m.service",["LOCAL5","2"]],"unit":"m.service"}' --repair '["true"]' 2>/dev/null
+as alice $B list --json >$W/a.json
+check "a machine problem with a changed message still shows" "pyck $W/a.json 'not d[0][\"hidden\"]'"
+
 reset
 $B keep --machine $P mach LOCAL4 "M" m.service @LOCAL8 --repair '["true"]'
 as alice $B hide --machine $P mach

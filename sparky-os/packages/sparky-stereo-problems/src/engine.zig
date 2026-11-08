@@ -1520,6 +1520,11 @@ fn personName() []const u8 {
 
 // What a dismissal of R is for: the same message with the same arguments is the same problem, at another boot too
 fn fingerprint(ctx: *Ctx, r: Record) Failure![]const u8 {
+    // A failed system service (the engine's own handler) is the same service to the person however it failed
+    // (another exit status) and whatever its Description says: its unit is the key. Every other problem is its message
+    if (r.unit) |u| {
+        if (std.mem.eql(u8, r.package, engine_package) and std.mem.eql(u8, r.message, "LOCAL4")) return cat(ctx.a, &.{ "unit\n", u });
+    }
     return cat(ctx.a, &.{ r.message, "\n", try argsJson(ctx, r.args) });
 }
 

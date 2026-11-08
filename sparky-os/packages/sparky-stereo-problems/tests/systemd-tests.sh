@@ -107,9 +107,9 @@ systemctl reset-failed failer.service
 $B list >/dev/null
 rm -f $R
 systemctl start failer.service 2>/dev/null
-check "it fails another way (exit status 4): a new record" "waitfor '[ -f $R ]' 30 && pyck $R 'd[\"args\"][2] == [\"LOCAL5\", \"4\"]'"
+check "it fails with another exit status (4): a new record" "waitfor '[ -f $R ]' 30 && pyck $R 'd[\"args\"][2] == [\"LOCAL5\", \"4\"]'"
 asp $B list --json >/tmp/p4.json
-check "and the person sees it: it is not dismissed" "python3 -c \"import json,sys; d=[p for p in json.load(open('/tmp/p4.json')) if p['key'] == 'failer.service']; sys.exit(0 if d and not d[0]['hidden'] else 1)\""
+check "and the person does not see it: the same service is still dismissed" "python3 -c \"import json,sys; d=[p for p in json.load(open('/tmp/p4.json')) if p['key'] == 'failer.service']; sys.exit(0 if d and d[0]['hidden'] else 1)\""
 asp $B show --boot $P failer.service
 rm -f /etc/systemd/system/failer.service.d/other.conf
 systemctl daemon-reload
