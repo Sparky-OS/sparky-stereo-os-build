@@ -1,0 +1,286 @@
+Description: An RGB layer the compositor cannot import keeps its layer and is copied (ORDER 465, round 4)
+ +stereo3d10 stopped promoting every picture whose modifier the compositor does not list, which also took a
+ WebGL canvas (a 360 video, a WebXR session) out of its layer and with it its stereo declaration. Only decoded
+ YUV pictures are drawn by WebRender instead of promoted; an RGB external layer stays and is copied to shared
+ memory at commit, without making its wl_buffer (the import request). The pair is looked up in the tranches of
+ the compositor's main device only (zwp_linux_dmabuf_feedback_v1: main_device, tranche_target_device).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+diff --git a/gfx/layers/NativeLayerWayland.cpp b/gfx/layers/NativeLayerWayland.cpp
+index 2bab42f82c..a83d964b3e 100644
+--- a/gfx/layers/NativeLayerWayland.cpp
++++ b/gfx/layers/NativeLayerWayland.cpp
+@@ -1969,7 +1969,9 @@ void NativeLayerWaylandExternal::AttachExternalImage(
+       mTextureHost->GetSurface()->GetUID(), mSize.width, mSize.height, mIsHDR,
+       mIsOpaque, surface->CanRecycle());
+ 
+-  mFrontBuffer = surface->CanRecycle()
++  // Borrowing makes the wl_buffer (the import request) at once: a picture the
++  // compositor cannot import is copied at commit and never imported.
++  mFrontBuffer = surface->CanRecycle() && surface->CompositorCanImport()
+                      ? mRootLayer->BorrowExternalBuffer(surface)
+                      : widget::WaylandBufferDMABUF::CreateExternal(surface);
+ }
+@@ -2252,10 +2254,75 @@ bool NativeLayerWaylandExternal::CommitFrontBufferToScreenLocked(
+         aProofOfLock, surfaceYUV->GetYUVColorSpace(),
+         surfaceYUV->IsFullRange(), surfaceYUV->GetWPChromaLocation());
+   }
++  if (auto* dmabuf = buffer->AsWaylandBufferDMABUF();
++      dmabuf && !dmabuf->GetSurface()->CompositorCanImport()) {
++    if (RefPtr<widget::WaylandBuffer> copy = CopyToSharedMemoryLocked(buffer)) {
++      buffer = copy;
++    } else {
++      gfxCriticalNoteOnce << "NativeLayerWaylandExternal: copy for the "
++                             "compositor on another GPU failed";
++      return false;
++    }
++  }
+   mSurface->AttachLocked(aProofOfLock, buffer);
+   return true;
+ }
+ 
++RefPtr<widget::WaylandBuffer> NativeLayerWaylandExternal::CopyToSharedMemoryLocked(
++    const RefPtr<widget::WaylandBuffer>& aSource) {
++  auto* dmabuf = aSource->AsWaylandBufferDMABUF();
++  if (!dmabuf) {
++    return nullptr;
++  }
++  RefPtr<DMABufSurface> surface = dmabuf->GetSurface();
++  if (!surface || surface->GetAsDMABufSurfaceYUV()) {
++    return nullptr;
++  }
++  if (!mStereoPoolHandle) {
++    mStereoPoolHandle = mRootLayer->GetSurfacePoolHandle();
++  }
++  if (!mStereoPoolHandle || !mStereoPoolHandle->gl()) {
++    return nullptr;
++  }
++  RefPtr<gl::GLContext> gl = mStereoPoolHandle->gl();
++  if (!gl->MakeCurrent()) {
++    return nullptr;
++  }
++  if (!surface->GetTexture(0) && !surface->CreateTexture(gl, 0)) {
++    return nullptr;
++  }
++  const IntSize size(surface->GetWidth(0), surface->GetHeight(0));
++  RefPtr<widget::WaylandBufferSHM> shm = widget::WaylandBufferSHM::Create(
++      LayoutDeviceIntSize::FromUnknownSize(size));
++  if (!shm) {
++    return nullptr;
++  }
++  RefPtr<gfx::DataSourceSurface> data =
++      gfx::Factory::CreateWrappingDataSourceSurface(
++          (uint8_t*)shm->GetImageData(), size.width * 4, size,
++          gfx::SurfaceFormat::B8G8R8A8);
++  if (!data) {
++    return nullptr;
++  }
++  GLuint fbo = 0;
++  gl->fGenFramebuffers(1, &fbo);
++  gl->fBindFramebuffer(LOCAL_GL_FRAMEBUFFER, fbo);
++  gl->fFramebufferTexture2D(LOCAL_GL_FRAMEBUFFER, LOCAL_GL_COLOR_ATTACHMENT0,
++                            LOCAL_GL_TEXTURE_2D, surface->GetTexture(0), 0);
++  const bool complete = gl->fCheckFramebufferStatus(LOCAL_GL_FRAMEBUFFER) ==
++                        LOCAL_GL_FRAMEBUFFER_COMPLETE;
++  if (complete) {
++    gl::ReadPixelsIntoDataSurface(gl, data);
++  }
++  gl->fBindFramebuffer(LOCAL_GL_FRAMEBUFFER, 0);
++  gl->fDeleteFramebuffers(1, &fbo);
++  if (!complete) {
++    return nullptr;
++  }
++  mSharedMemoryBuffer = shm;
++  return shm;
++}
++
+ NativeLayerWaylandExternal::~NativeLayerWaylandExternal() {
+   LOG("NativeLayerWaylandExternal::~NativeLayerWaylandExternal()");
+ }
+diff --git a/gfx/layers/NativeLayerWayland.h b/gfx/layers/NativeLayerWayland.h
+index dca4ca9a52..b235b15d22 100644
+--- a/gfx/layers/NativeLayerWayland.h
++++ b/gfx/layers/NativeLayerWayland.h
+@@ -475,6 +475,12 @@ class NativeLayerWaylandExternal final : public NativeLayerWayland {
+  private:
+   ~NativeLayerWaylandExternal() override;
+ 
++  // The compositor cannot import the picture's modifier (it runs on another
++  // GPU): it gets a copy in shared memory, the layer and its stereo
++  // declaration stay.
++  RefPtr<widget::WaylandBuffer> CopyToSharedMemoryLocked(
++      const RefPtr<widget::WaylandBuffer>& aSource);
++  RefPtr<widget::WaylandBuffer> mSharedMemoryBuffer;
+   RefPtr<widget::WaylandBuffer> RepackStereoLocked(
+       const widget::WaylandSurfaceLock& aProofOfLock);
+   RefPtr<widget::WaylandBuffer> RepackStereoYUVLocked(
+diff --git a/gfx/layers/opengl/DMABUFTextureHostOGL.cpp b/gfx/layers/opengl/DMABUFTextureHostOGL.cpp
+index 1a7cf1d6fc..8785295bfe 100644
+--- a/gfx/layers/opengl/DMABUFTextureHostOGL.cpp
++++ b/gfx/layers/opengl/DMABUFTextureHostOGL.cpp
+@@ -219,12 +219,14 @@ void DMABUFTextureHostOGL::PushDisplayItems(
+   }
+   bool preferCompositorSurface =
+       aFlags.contains(PushDisplayItemFlag::PREFER_COMPOSITOR_SURFACE);
+-  // A picture the compositor cannot import (another GPU's modifier) is drawn
+-  // by WebRender into a layer instead, which is copied for the compositor.
++  // A decoded picture the compositor cannot import (another GPU's modifier) is
++  // drawn by WebRender into a layer instead, which is copied for the
++  // compositor; an RGB picture (a WebGL canvas) keeps its layer, and with it
++  // its stereo declaration, and the layer copies it.
+   bool supportsDirectComposition =
+       widget::GetGlobalDMABufFormats()->SupportsDirectComposition(
+           mSurface->GetFormat()) &&
+-      mSurface->CompositorCanImport();
++      (!mSurface->GetAsDMABufSurfaceYUV() || mSurface->CompositorCanImport());
+ 
+   switch (mSurface->GetFormat()) {
+     case gfx::SurfaceFormat::R8G8B8X8:
+diff --git a/widget/gtk/DMABufFormats.cpp b/widget/gtk/DMABufFormats.cpp
+index a4cc4a7e95..c5d0a57224 100644
+--- a/widget/gtk/DMABufFormats.cpp
++++ b/widget/gtk/DMABufFormats.cpp
+@@ -6,6 +6,7 @@
+ #include <sys/mman.h>
+ #include <sys/types.h>
+ #include <atomic>
++#include <string.h>
+ #include <inttypes.h>
+ #include <gbm.h>
+ #include <mutex>
+@@ -85,6 +86,12 @@ class DMABufFormatTable final {
+ 
+ class DMABufFeedbackTranche final {
+  public:
++  void SetDevice(dev_t aDevice) {
++    mDevice = aDevice;
++    mHasDevice = true;
++  }
++  bool HasDevice() const { return mHasDevice; }
++  dev_t Device() const { return mDevice; }
+ #ifdef MOZ_WAYLAND
+   void SetFormats(DMABufFormatTable* aFormatTable, wl_array* aIndices) {
+     // Formats are reported as array with appropriate modifiers.
+@@ -146,12 +153,40 @@ class DMABufFeedbackTranche final {
+   }
+ 
+  private:
++  dev_t mDevice = 0;
++  bool mHasDevice = false;
+   bool mIsScanout = false;
+   nsTArray<RefPtr<DRMFormat>> mFormats;
+ };
+ 
+ class DMABufFeedback final {
+  public:
++  void SetMainDevice(dev_t aDevice) {
++    mMainDevice = aDevice;
++    mHasMainDevice = true;
++  }
++  // The tranches of the main device are what the compositor imports for any
++  // surface; a tranche for another device (a scanout device) lists what that
++  // device can scan out (linux-dmabuf-v1, zwp_linux_dmabuf_feedback_v1:
++  // tranche_target_device, tranche_flags.scanout), not what the compositor can
++  // import. A feedback without devices (version 3) counts as one tranche set.
++  bool MainDeviceImports(uint32_t aFormat, uint64_t aModifier,
++                         bool* aFormatListed) {
++    for (const auto& tranche : mTranches) {
++      if (mHasMainDevice && tranche->HasDevice() &&
++          tranche->Device() != mMainDevice) {
++        continue;
++      }
++      if (DRMFormat* format = tranche->GetFormat(aFormat)) {
++        *aFormatListed = true;
++        if (!format->UseModifiers() ||
++            format->IsFormatModifierSupported(aModifier)) {
++          return true;
++        }
++      }
++    }
++    return false;
++  }
+   DMABufFormatTable* FormatTable() { return &mFormatTable; }
+   DMABufFeedbackTranche* PendingTranche() {
+     if (!mPendingTranche) {
+@@ -179,6 +214,8 @@ class DMABufFeedback final {
+   }
+ 
+  private:
++  dev_t mMainDevice = 0;
++  bool mHasMainDevice = false;
+   DMABufFormatTable mFormatTable;
+   UniquePtr<DMABufFeedbackTranche> mPendingTranche;
+   nsTArray<UniquePtr<DMABufFeedbackTranche>> mTranches;
+@@ -215,7 +252,15 @@ static void dmabuf_feedback_format_table(
+ static void dmabuf_feedback_tranche_target_device(
+     void* data, struct zwp_linux_dmabuf_feedback_v1* dmabuf_feedback,
+     struct wl_array* dev) {
+-  // We're getting device from GL
++  // The rendering device comes from GL; the tranche's target is kept to tell
++  // the main device's tranches from a scanout device's.
++  auto* dmabuf = static_cast<DMABufFormats*>(data);
++  if (!dmabuf || !dev || dev->size != sizeof(dev_t)) {
++    return;
++  }
++  dev_t device;
++  memcpy(&device, dev->data, sizeof(device));
++  dmabuf->GetPendingDMABufFeedback()->PendingTranche()->SetDevice(device);
+ }
+ 
+ static void dmabuf_feedback_tranche_formats(
+@@ -276,7 +321,13 @@ static void dmabuf_feedback_done(
+ static void dmabuf_feedback_main_device(
+     void* data, struct zwp_linux_dmabuf_feedback_v1* dmabuf_feedback,
+     struct wl_array* dev) {
+-  // We're getting DRM device from GL.
++  auto* dmabuf = static_cast<DMABufFormats*>(data);
++  if (!dmabuf || !dev || dev->size != sizeof(dev_t)) {
++    return;
++  }
++  dev_t device;
++  memcpy(&device, dev->data, sizeof(device));
++  dmabuf->GetPendingDMABufFeedback()->SetMainDevice(device);
+ }
+ 
+ static const struct zwp_linux_dmabuf_feedback_v1_listener
+@@ -381,6 +432,12 @@ void DMABufFormats::EnsureBasicFormats() {
+ 
+ bool DMABufFormats::HasFeedback() { return !!mDMABufFeedback; }
+ 
++bool DMABufFormats::MainDeviceImports(uint32_t aFormat, uint64_t aModifier,
++                                      bool* aFormatListed) {
++  return mDMABufFeedback &&
++         mDMABufFeedback->MainDeviceImports(aFormat, aModifier, aFormatListed);
++}
++
+ DMABufFormats::DMABufFormats() = default;
+ 
+ DMABufFormats::~DMABufFormats() {
+@@ -406,9 +463,9 @@ bool DMABufCompositorCanImport(uint32_t aFourcc, uint64_t aModifier) {
+   if (!formats || !formats->HasFeedback()) {
+     return true;
+   }
+-  DRMFormat* format = formats->GetFormat(aFourcc);
+-  const bool can = !format || !format->UseModifiers() ||
+-                   format->IsFormatModifierSupported(aModifier);
++  bool listed = false;
++  const bool can = formats->MainDeviceImports(aFourcc, aModifier, &listed) ||
++                   !listed;
+   static std::atomic<uint64_t> sLastPair{0};
+   const uint64_t pair = aModifier ^ (uint64_t(aFourcc) << 40);
+   if (sLastPair.exchange(pair) != pair) {
+diff --git a/widget/gtk/DMABufFormats.h b/widget/gtk/DMABufFormats.h
+index bb80bd5180..7ba32f7ebf 100644
+--- a/widget/gtk/DMABufFormats.h
++++ b/widget/gtk/DMABufFormats.h
+@@ -86,6 +86,8 @@ class DMABufFormats final {
+ 
+   DRMFormat* GetFormat(uint32_t aFormat, bool aRequestScanoutFormat = false);
+   bool HasFeedback();
++  bool MainDeviceImports(uint32_t aFormat, uint64_t aModifier,
++                         bool* aFormatListed);
+   DMABufFormats();
+ 
+   void EnsureBasicFormats();

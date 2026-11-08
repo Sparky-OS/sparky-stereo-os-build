@@ -8,7 +8,7 @@ set -euo pipefail
 : "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=${BROWSER_JOBS:-8}
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
-OLD=6.7.5-0+stereo3d9+lc1 NEW=6.7.5-0+stereo3d10 COMMIT=a60fdf02aefbea5346c4e39a03d9b5b15d5f1552 OLDCOMMIT=9254cd42f2a884d4a0c7a6bee117b874cb91dd25
+OLD=6.7.5-0+stereo3d10+lc1 NEW=6.7.5-0+stereo3d11 COMMIT=96fae8a2cb7a63fd69bbc3666897e84af8f50c43 OLDCOMMIT=a60fdf02aefbea5346c4e39a03d9b5b15d5f1552
 cd /work && mkdir plain && cd plain
 cp /in/sparky-stereo-browser_6.7.5.orig.tar.xz "/in/sparky-stereo-browser_$OLD.dsc" "/in/sparky-stereo-browser_$OLD.debian.tar.xz" .
 sha256sum sparky-stereo-browser_6.7.5.orig.tar.xz | tee /work/orig.sha256
@@ -16,17 +16,17 @@ sha256sum sparky-stereo-browser_6.7.5.orig.tar.xz | tee /work/orig.sha256
 dpkg-source -x "sparky-stereo-browser_$OLD.dsc" src >/dev/null
 cd src
 mkdir -p debian/patches
-cp /patches/0005-*.patch /patches/0006-*.patch debian/patches/
-ls /patches/0005-*.patch /patches/0006-*.patch | xargs -n1 basename >> debian/patches/series
+cp /patches/0007-*.patch /patches/0008-*.patch debian/patches/
+ls /patches/0007-*.patch /patches/0008-*.patch | xargs -n1 basename >> debian/patches/series
 python3 - <<'PY'
 import os
-top = open('/patches/changelog10.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d10').replace('@DATE@', os.environ['SOURCE_DATE_RFC2822'])
-lc = ('sparky-stereo-browser (6.7.5-0+stereo3d10+lc1) UNRELEASED; urgency=medium\n\n'
+top = open('/patches/changelog11.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d11').replace('@DATE@', os.environ['SOURCE_DATE_RFC2822'])
+lc = ('sparky-stereo-browser (6.7.5-0+stereo3d11+lc1) UNRELEASED; urgency=medium\n\n'
       '  * Apply verified native Lean Code before compilation and qualified lc1\n'
       '    payload assembly; retain exact authored source and HR companions.\n\n'
       ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n')
 old = open('debian/changelog').read()
-open('debian/changelog', 'w').write(lc + top + old[old.index('sparky-stereo-browser (6.7.5-0+stereo3d9) unstable'):])
+open('debian/changelog', 'w').write(lc + top + old[old.index('sparky-stereo-browser (6.7.5-0+stereo3d10) unstable'):])
 PY
 grep -q "^MOZ_SOURCE_CHANGESET=$OLDCOMMIT\$" debian/browser-build.env
 sed -i "s/^MOZ_SOURCE_CHANGESET=.*/MOZ_SOURCE_CHANGESET=$COMMIT/" debian/browser-build.env
