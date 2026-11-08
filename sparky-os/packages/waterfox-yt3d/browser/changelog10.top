@@ -1,0 +1,22 @@
+sparky-stereo-browser (@DEBVERSION@) unstable; urgency=medium
+
+  * The browser no longer dies at start when it is routed to a GPU that is not
+    the one Stereo KWin renders on (the Performance profile sends it to the
+    discrete GPU): its layers' buffers and hardware decoded pictures carried
+    the discrete GPU's modifiers, which the compositor's linux-dmabuf
+    feedback does not list, and KWin closed the connection ("importing the
+    supplied dmabufs failed"). A frame whose format and modifier the
+    compositor does not advertise is copied to shared memory (render
+    layers) or drawn into a render layer (decoded pictures); one it
+    advertises, as on Mesa, stays zero-copy. The browser still renders on the
+    GPU the routing chose.
+  * The application menu has 3D Video and 3D Display, the context menu's own
+    choices, acting on the page's main video, for pages (YouTube) that take
+    the right click for their own menu.
+  * WebRender no longer panics "no blob image template" when a transaction
+    touches a blob image and deletes it (Mozilla bug 1839001, Glenn Watson).
+  * The source states what it is: browser commit a60fdf02ae (Sparky-OS/waterfox,
+    branch stereo3d, ORDER 465).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@
+
