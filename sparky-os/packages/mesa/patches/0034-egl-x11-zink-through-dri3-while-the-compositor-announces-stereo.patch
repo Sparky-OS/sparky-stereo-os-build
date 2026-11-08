@@ -1,0 +1,59 @@
+Description: EGL takes zink through DRI3, not kopper, while the compositor announces stereo
+ Kopper, zink's own window system path, has no second view of a window: an EGL
+ two-view window surface on zink (NVIDIA's Vulkan driver) showed the left view
+ in both eyes unless LIBGL_KOPPER_DISABLE=1 was set for the program. The EGL X11
+ platform decides as GLX does since patch 0029: LIBGL_KOPPER_DISABLE set to 0 or 1
+ decides as before; unset it is no while the root window announces
+ _KDE_NET_WM_STEREO_CONTENT_SUPPORTED 2 or newer and DRI3 is connected. The route
+ is named in the log (EGL_LOG_LEVEL=info).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-07
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+--- a/src/egl/drivers/dri2/platform_x11.c
++++ b/src/egl/drivers/dri2/platform_x11.c
+@@ -48,6 +48,7 @@
+ #include "util/bitscan.h"
+ #include "util/macros.h"
+ #include "util/u_debug.h"
++#include "util/os_misc.h"
+ #include "util/log.h"
+ #include <sys/stat.h>
+ #include <sys/types.h>
+@@ -1426,12 +1427,14 @@
+       return EGL_FALSE;
+ #endif
+ 
++   bool dri3_connected = false;
+ #ifdef HAVE_LIBDRM
+    /* If LIBGL_KOPPER_DRI2 is enabled, skip the X11 render device checks.
+     * We're going to enable Zink anyway.
+     */
+    if (!force_zink) {
+       bool status = dri3_x11_connect(dri2_dpy, disp->Options.ForceSoftware);
++      dri3_connected = status;
+       /* the status here is ignored for zink-with-kopper and swrast,
+        * otherwise return whatever error/fallback status as failure
+        */
+@@ -1442,6 +1445,20 @@
+ 
+    dri2_detect_swrast_kopper(disp);
+ 
++   /* Kopper, zink's own window system path, has no second view of a window:
++    * while the compositor announces stereo content (declaration version 2 or
++    * later) zink goes through DRI3, as GLX does. LIBGL_KOPPER_DISABLE set to 0
++    * or 1 decides as before. */
++   if (dri2_dpy->kopper && dri3_connected && !os_get_option("LIBGL_KOPPER_DISABLE") &&
++       dri2_x11_stereo_support_version(dri2_dpy) >= 2) {
++      _eglLog(_EGL_INFO, "zink through DRI3, not kopper: the compositor announces stereo content "
++                         "and kopper has no second view of a window");
++      dri2_dpy->kopper = false;
++      dri2_dpy->swrast = (disp->Options.ForceSoftware && strcmp(dri2_dpy->driver_name, "vmwgfx")) ||
++                         !dri2_dpy->driver_name || strstr(dri2_dpy->driver_name, "swrast");
++      dri2_dpy->swrast_not_kms = dri2_dpy->swrast && (!dri2_dpy->driver_name || strcmp(dri2_dpy->driver_name, "kms_swrast"));
++   }
++
+    if (dri2_dpy->kopper)
+       return dri2_initialize_x11_kopper(disp, force_zink);
+ 

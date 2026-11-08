@@ -20,7 +20,10 @@ cp "$source_dir/mesa_26.1.6.orig.tar.xz" .
 dpkg-source -x "$source_dir/mesa_26.1.6-1+stereo3d17+lc1.dsc" source
 for patch in 0029-glx-zink-through-dri3-while-the-compositor-announces-stereo.patch \
              0030-zink-export-dma-buf-with-a-modifier-the-driver-can-render-with.patch \
-             0031-egl-export-dma-buf-fails-when-the-driver-made-none.patch; do
+             0031-egl-export-dma-buf-fails-when-the-driver-made-none.patch \
+             0032-egl-x11-list-the-child-window-and-keep-a-stereo-window-one-eye-wide.patch \
+             0033-vulkan-x11-list-the-child-window.patch \
+             0034-egl-x11-zink-through-dri3-while-the-compositor-announces-stereo.patch; do
     cp "$recipe/patches/$patch" source/debian/patches/
     printf '%s\n' "$patch" >> source/debian/patches/series
 done
@@ -31,10 +34,13 @@ import sys
 recipe = Path(sys.argv[1])
 root = Path('source')
 p = root / 'debian/changelog'
-entry = (recipe / 'changelog-stereo3d18.txt').read_text()
-assert entry.startswith('mesa (26.1.6-1+stereo3d18) unstable;')
-entry += '\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n'
-p.write_text(entry + p.read_text())
+# +stereo3d18 was never published: its two entries and +stereo3d19's ship in one source
+entries = ''
+for number in ('19', '18'):
+    entry = (recipe / f'changelog-stereo3d{number}.txt').read_text()
+    assert entry.startswith(f'mesa (26.1.6-1+stereo3d{number}) unstable;')
+    entries += entry + '\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n'
+p.write_text(entries + p.read_text())
 # debian/rules regenerates control from control.in; preserve the pipeline's build dependencies in both.
 sys.path.insert(0, str(root / 'debian/sparky-lean-toolkit'))
 from lean.debian_prepare import add_build_dependencies
@@ -43,7 +49,7 @@ for name in ('control.in', 'control'):
     p.write_text(add_build_dependencies(p.read_text(), ['gcc', 'node-acorn', 'nodejs', 'perl', 'python3', 'python3-yaml']))
 PY
 cd source
-dch --date "$SOURCE_DATE_RFC2822" --newversion 26.1.6-1+stereo3d18+lc1 --distribution UNRELEASED \
+dch --date "$SOURCE_DATE_RFC2822" --newversion 26.1.6-1+stereo3d19+lc1 --distribution UNRELEASED \
     'Retain the published source-consumer preservation plan and verified native/payload Lean Code pipeline.'
 dpkg-source --before-build .
 cd ..

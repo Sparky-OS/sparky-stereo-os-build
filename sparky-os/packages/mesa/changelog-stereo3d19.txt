@@ -1,0 +1,23 @@
+mesa (26.1.6-1+stereo3d19) unstable; urgency=medium
+
+  * EGL on X11 lists its child window (0032): a stereo EGL window surface on a
+    child X window is listed in its owner's
+    _KDE_NET_WM_STEREO_CONTENT_CHILDREN, so the compositor shows its own
+    surface one view per eye instead of the packed buffer squeezed into the
+    child. The calls are one header, util/u_x11_stereo_child.h, shared with
+    the Vulkan paths.
+  * With declaration version 4 or later an EGL stereo window stays one eye
+    wide (0032): _KDE_NET_WM_STEREO_CONTENT_VERSION 4 is written before the
+    declaration, the buffer is twice the window's width, and the software path
+    presents a pixmap of that size, as 0014 did for GLX. Unmapping and mapping
+    the window no longer makes the compositor double it again (640 wide became
+    1280, then 2560).
+  * Vulkan on X11 lists its child window (0033): the stereo layer and the
+    window system integration's stereo swapchain list the child with the same
+    calls; the layer writes _KDE_NET_WM_STEREO_CONTENT_VERSION 4 from version
+    4 and halves the surface's width only for version 3.
+  * EGL takes zink through DRI3, not kopper, while the compositor announces
+    stereo content (0034), as GLX does since 0029: kopper has no second view
+    of a window, so an EGL two-view window on NVIDIA's Vulkan driver showed
+    the left view in both eyes. LIBGL_KOPPER_DISABLE set to 0 or 1 still
+    decides.
