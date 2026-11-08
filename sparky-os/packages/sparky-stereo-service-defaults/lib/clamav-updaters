@@ -1,0 +1,37 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/08
+# Copyright 2026 under the GNU GPL3 License
+# ClamAV has two database updaters that cannot run together: clamav-freshclam.service (a daemon that holds
+# /var/log/clamav/freshclam.log) and clamav-freshclam-once.service with its timer (one run that needs the same lock).
+# Debian's clamav-freshclam up to 1.4.4+dfsg-1 enabled all three, so the once service failed at every boot ("Failed to lock the log
+# file", Debian bug #1134489). 1.4.4+dfsg-2 stopped enabling the once pair on a new install ("Don't Enable freshclam
+# once+timer by default"), but an upgrade keeps the units the older package had enabled, and so do the computers installed
+# before. This switches the once pair off where the daemon is on and the pair is on, which is the state Debian's packaging
+# now intends, and says so. Either updater can be switched on again by the person: this runs once, from the postinst of
+# the version that first carries it (0.1.5), and again only as the problems engine's Repair.
+# Exit status: 0 nothing to do or done; 1 a unit could not be switched off (said by systemctl).
+set -u
+[ -z "${DPKG_ROOT:-}" ] || exit 0
+PKG=sparky-stereo-service-defaults
+DAEMON=clamav-freshclam.service
+state() { systemctl is-enabled "$1" 2>/dev/null; }
+[ "$(state "$DAEMON")" = enabled ] || exit 0
+on=
+for unit in clamav-freshclam-once.service clamav-freshclam-once.timer; do
+	[ "$(state "$unit")" = enabled ] && on="$on $unit"
+done
+[ -n "$on" ] || exit 0
+status=0
+for unit in $on; do
+	# systemctl disable removes the symlinks; deb-systemd-helper's was-enabled in clamav-freshclam's postinst reads them
+	# (measured: the next clamav-freshclam configure leaves the pair off)
+	if [ -d /run/systemd/system ]; then systemctl disable --now "$unit" || status=1; else systemctl disable "$unit" || status=1; fi
+done
+[ "$status" = 0 ] || exit "$status"
+if [ -d /run/systemd/system ]; then
+	# this boot's failure of the once service is over: the unit's failed state and the engine's notice for it
+	systemctl reset-failed clamav-freshclam-once.service 2>/dev/null || :
+	sparky-stereo-problems clear --boot sparky-stereo-problems clamav-freshclam-once.service 2>/dev/null || :
+fi
+sparky-stereo-problems say "$PKG" LOCAL22
+exit 0

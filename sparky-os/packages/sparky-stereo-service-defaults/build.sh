@@ -27,6 +27,7 @@ install -D -m 755 "$HERE/NetworkManager/dispatcher.d/90-sparky-stereo-ipwatchd" 
 	"$D/usr/lib/NetworkManager/dispatcher.d/90-sparky-stereo-ipwatchd"
 install -m 755 "$HERE/bin/sparky-stereo-service-defaults" "$D/usr/bin/"
 install -m 644 "$HERE/lib/problems.py" "$D/usr/lib/$PKG/problems.py"
+install -m 755 "$HERE/lib/clamav-updaters" "$D/usr/lib/$PKG/clamav-updaters"
 install -m 644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
 install -m 644 "$HERE/README.md" "$D/usr/share/doc/$PKG/README.md"
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
@@ -68,6 +69,11 @@ set -e
 if [ "$1" = "configure" ] && [ -d /run/systemd/system ]; then
 	python3 /usr/lib/sparky-stereo-service-defaults/problems.py run systemd-reload LOCAL21 -- systemctl daemon-reload || :
 fi
+# ORDER 460: ClamAV's two updaters (see the helper): once, when this version first arrives, and as the engine's Repair
+if [ "$1" = "configure" ] && { [ -z "${2:-}" ] || dpkg --compare-versions "$2" lt 0.1.5~; }; then
+	sparky-stereo-problems run --machine --repair '["/usr/lib/sparky-stereo-service-defaults/clamav-updaters"]' \
+		sparky-stereo-service-defaults clamav-updaters LOCAL23 -- /usr/lib/sparky-stereo-service-defaults/clamav-updaters || :
+fi
 exit 0
 EOS
 cat >"$D/DEBIAN/postrm" <<'EOS'
@@ -93,14 +99,14 @@ Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
 Depends: systemd, python3, iproute2, sparky-stereo-problems (>= 0.1.0)
-Breaks: snmptt (<< 1.5-3+sparky1~), pkcs11-daemon (<< 0.4.1-5+sparky1~), xfsprogs (<< 7.2.0-1+sparky1~)
+Breaks: snmptt (<< 1.5-3+sparky1~), pkcs11-daemon (<< 0.4.1-5+sparky1~), xfsprogs (<< 7.2.0-1+sparky1~), urfkill (<< 0.5.0-8+sparky1~)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Sparky Stereo working defaults for services
   systemd drop-ins that give services of other packages a working default
   where they failed at every boot on a fresh system. What a service needs is
-  supplied (the edition's builds of snmptt, pkcs11-daemon and xfsprogs); a
+  supplied (the edition's builds of snmptt, pkcs11-daemon, xfsprogs and urfkill); a
   service that still cannot start is said and kept, with the reason and what
   to do, and shown in the session, never skipped behind the person's back.
   No service is removed or masked; each cause is reported to the package that

@@ -23,7 +23,8 @@ Nothing fails silently (Daniel, 2026-11-01: "either it works or not and the user
 | pkcs11-daemon | Its default library, SoftHSM's, is not installed with it | The edition's pkcs11-daemon 0.4.1-5+sparky1 depends on libsofthsm2 |
 | xfs_healer@- | On a root that is not XFS, `xfs_healer --supported` ended with status 255 | xfsprogs 7.2.0-1+sparky1 carries upstream's fde1eee: status 1, a skip |
 | ipwatchd | Started before any interface has an IPv4 address | Waits for one (a skip); NetworkManager starts it; a failed probe is said |
-| urfkill | Debian's 0.5.0-8 needs ConsoleKit | Not on the image; where installed, its failure is said with the reason |
+| urfkill | Debian's 0.5.0-8 asks ConsoleKit for sessions (its debian/rules lost `--with-session-tracking=systemd`, Debian bug #1152866) | The edition's urfkill 0.5.0-8+sparky1 asks systemd-logind; this package Breaks Debian's; where Debian's is held in place anyway, its failure is said with the reason |
+| clamav-freshclam-once | Enabled beside the freshclam daemon by clamav up to 1.4.4+dfsg-1, it cannot lock the shared log file (Debian bug #1134489) | Once, when 0.1.5 arrives: the once service and its timer are switched off where the daemon is on, and it is said; either can be switched on again |
 | stas-config@ | /etc/nvme missing without nvme-cli | Created first |
 
 Dependencies:
