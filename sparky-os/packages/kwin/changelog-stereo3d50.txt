@@ -1,0 +1,35 @@
+kwin (4:6.7.4-2+stereo3d50) unstable;
+
+  * A popup larger than the room inside the invisible border of an output
+    that shows 3D (a menu taller than the output leaves, an Open With or
+    Create New with many entries) keeps its level: StereoDepth::level()
+    flattened it to the screen's level as a popped thing touching the
+    output's edge, so its sub-menu was drawn behind its parent (s50-0001,
+    ORDER 464).
+  * The launch feedback (the busy cursor) is part of the pointer on an
+    output that shows 3D: the icon takes the pointer's plane, the bounce
+    goes in depth only, between that plane and the popped limit above it,
+    and the blinking and static feedback follow the plane; on an output that
+    does not show 3D the bounce is KDE's own, up and down on the screen. It
+    follows the output under the pointer (s50-0002, ORDER 464).
+  * The windows beneath the active one step back one layer each, a layer
+    being a fifth of the sunk limit, the first right behind the screen; from
+    the sixth on they share the limit with the bottom of the pile and never
+    go behind the wallpaper. Before, they shared the range among them, so
+    the one window beneath the active one was at the limit, the wallpaper's
+    depth (s50-0003, ORDER 464).
+  * A chain of menus stacks one popped limit per level: level n is n limits
+    from its base, the screen for a plain window and the pinned window's
+    level for a window kept above the others; a dialog is a level of the chain; a menu alone stays at the
+    limit and opening a sub-menu moves nothing above it (before, the chain
+    shared the limit and a parent moved back). Notifications and on-screen
+    displays are unchanged (s50-0004, ORDER 464).
+  * The active output starts, and comes back when the active output goes
+    away, on the screen marked main in Display Settings (priority 1), not on
+    the first output the backend lists; the pointer starts on its centre
+    (s50-0005, ORDER 464). Tests: testStereoDepthStack,
+    testStartupFeedbackStereo and testOutputOrder (s50-0006 to s50-0008);
+    testStereoDepthPopups, testStereoDepthPinnedStack, testStereoDepthPinned,
+    testStereoDepthMotion and testQuickStereo expect the new levels.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 08 Nov 2026 05:05:00 +0000
