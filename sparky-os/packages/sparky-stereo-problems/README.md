@@ -37,8 +37,11 @@ Each message's MESSAGE_ID is the name-based UUID (version 5, URL namespace) of `
 
 ## The person
 
-`sparky-stereo-problems list` shows every problem; the session's notifier (sparky-stereo-problems-plasma) shows each as a notification, with Show details, Repair, the record's own actions and Hide.
-Hide is the person's: the problem stays listed with its evidence and comes back when its message changes or a repair fails; `show` undoes it.
+`sparky-stereo-problems list` shows every problem; the session's notifier (sparky-stereo-problems-plasma) shows each as a notification, with Show details, Repair, the record's own actions and Dismiss, and the Problems page of System Settings lists the current and the dismissed ones.
+Dismiss is the engine's `hide` and Bring back its `show` (ORDER 468), the person's own: the problem stays kept and listed with its evidence, and comes back when its message changes or a repair fails; `show` undoes it.
+The mark (`$XDG_STATE_HOME/sparky-stereo-problems/.hidden/`) holds a copy of the record and its fingerprint, the message and its arguments.
+A problem of this boot, such as a failed service, is a new record at every boot; there the same fingerprint carries the dismissal to the new record, so the same unit failing the same way stays dismissed and another exit status shows again.
+`list --over` (C: `ssp_list_over_json`) also lists the dismissed problems of this boot's kind that are not happening now (`"over": true`), which is how the page shows them and how Bring back ends their mark.
 Repairing the machine's problems runs through `pkexec` and the polkit action `org.sparkylinux.sparkystereo.problems.repair`, which runs only `repair` of what root kept.
 
 ## Every failed system service

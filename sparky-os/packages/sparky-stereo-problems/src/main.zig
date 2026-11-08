@@ -21,7 +21,7 @@ const usage_lines = [_]Line{
     .{ .syntax = "clear [SCOPE] PACKAGE KEY", .what = "LOCAL40" },
     .{ .syntax = "clear --all PACKAGE", .what = "LOCAL46" },
     .{ .syntax = "say PACKAGE MESSAGE [ARG...]", .what = "LOCAL41" },
-    .{ .syntax = "list [--json] [--lang LANGUAGES] [PACKAGE]", .what = "LOCAL42" },
+    .{ .syntax = "list [--json] [--over] [--lang LANGUAGES] [PACKAGE]", .what = "LOCAL42" },
     .{ .syntax = "repair [SCOPE] PACKAGE [KEY]", .what = "LOCAL43" },
     .{ .syntax = "hide [SCOPE] PACKAGE KEY", .what = "LOCAL44" },
     .{ .syntax = "show [SCOPE] PACKAGE KEY", .what = "LOCAL45" },
@@ -106,6 +106,7 @@ const Parsed = struct {
     positional: std.ArrayList([]const u8) = .empty,
     command: ?[]const []const u8 = null,
     json: bool = false,
+    over: bool = false,
     lang: ?[]const u8 = null,
     repairs: std.ArrayList([]const []const u8) = .empty,
     actions: std.ArrayList(engine.Action) = .empty,
@@ -175,6 +176,10 @@ fn parse(ctx: *Ctx, args: []const []const u8) !Parsed {
         }
         if (std.mem.eql(u8, x, "--json")) {
             p.json = true;
+            continue;
+        }
+        if (std.mem.eql(u8, x, "--over")) {
+            p.over = true;
             continue;
         }
         if (std.mem.eql(u8, x, "--all")) {
@@ -300,11 +305,11 @@ fn messageArgs(ctx: *Ctx, p: *Parsed, from: usize) ![]const Value {
 fn printList(ctx: *Ctx, p: *Parsed) !u8 {
     const pkg: ?[]const u8 = if (p.positional.items.len > 0) p.positional.items[0] else null;
     if (p.json) {
-        const out = try engine.listJson(ctx, pkg, p.lang);
+        const out = try engine.listJson(ctx, pkg, p.lang, p.over);
         _ = engine.writeAll(1, out);
         return 0;
     }
-    const items = try engine.collect(ctx, pkg);
+    const items = try engine.collectAll(ctx, pkg, p.over);
     var out: std.ArrayList(u8) = .empty;
     const none = try engine.render(ctx, engine.engine_package, "LOCAL27", &.{}, p.lang);
     if (items.len == 0) {
@@ -323,6 +328,10 @@ fn printList(ctx: *Ctx, p: *Parsed) !u8 {
         if (item.hidden) {
             const h = try engine.render(ctx, engine.engine_package, "LOCAL24", &.{}, shown.lang);
             try out.print(ctx.a, "  [{s}]", .{h.text});
+        }
+        if (item.over) {
+            const o = try engine.render(ctx, engine.engine_package, "LOCAL71", &.{}, shown.lang);
+            try out.print(ctx.a, "  [{s}]", .{o.text});
         }
         try out.print(ctx.a, "\n  {s}\n", .{shown.title});
         var lines = std.mem.splitScalar(u8, shown.text, '\n');

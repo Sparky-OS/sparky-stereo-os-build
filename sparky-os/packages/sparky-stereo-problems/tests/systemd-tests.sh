@@ -79,6 +79,42 @@ check "when systemd no longer has it as failed, it is over: not listed" "! grep 
 check "and its record goes" "[ ! -f $R ]"
 check "that is in the journal too" "journalctl -o json MESSAGE_ID=$($B message-id $P LOCAL21) | grep -q failer.service"
 
+echo "== Dismiss a failed service: it stays dismissed when it fails the same way at the next boot (ORDER 468)"
+id person >/dev/null 2>&1 || useradd -m person
+asp() { runuser -u person -- env -i HOME=/home/person PATH=/usr/bin:/bin "$@"; }
+systemctl start failer.service 2>/dev/null
+check "the service fails: kept for this boot" "waitfor '[ -f $R ]' 30"
+old=$(python3 -c "import json; print(json.load(open('$R'))['id'])")
+asp $B hide --boot $P failer.service
+asp $B list --json >/tmp/p1.json
+check "the person dismisses it" "python3 -c \"import json,sys; d=[p for p in json.load(open('/tmp/p1.json')) if p['key'] == 'failer.service']; sys.exit(0 if d and d[0]['hidden'] else 1)\""
+# the next boot: systemd has no failed unit and /run is empty again (a reboot cannot be had inside this container)
+systemctl reset-failed failer.service
+$B list >/dev/null
+rm -f $R
+asp $B list --json --over >/tmp/p2.json
+check "until it fails again it is listed as dismissed and not happening now" "python3 -c \"import json,sys; d=[p for p in json.load(open('/tmp/p2.json')) if p['key'] == 'failer.service']; sys.exit(0 if d and d[0]['hidden'] and d[0]['over'] else 1)\""
+systemctl start failer.service 2>/dev/null
+check "it fails the same way: a new record" "waitfor '[ -f $R ]' 30 && [ \"\$(python3 -c \"import json; print(json.load(open('$R'))['id'])\")\" != \"$old\" ]"
+asp $B list --json >/tmp/p3.json
+check "and the person does not see it again: dismissed" "python3 -c \"import json,sys; d=[p for p in json.load(open('/tmp/p3.json')) if p['key'] == 'failer.service']; sys.exit(0 if d and d[0]['hidden'] and not d[0]['over'] else 1)\""
+$B list --json >/tmp/r3.json
+check "for root it is not dismissed: the mark is the person's" "python3 -c \"import json,sys; d=[p for p in json.load(open('/tmp/r3.json')) if p['key'] == 'failer.service']; sys.exit(0 if d and not d[0]['hidden'] else 1)\""
+mkdir -p /etc/systemd/system/failer.service.d
+printf '[Service]\nExecStart=\nExecStart=/bin/sh -c "exit 4"\n' >/etc/systemd/system/failer.service.d/other.conf
+systemctl daemon-reload
+systemctl reset-failed failer.service
+$B list >/dev/null
+rm -f $R
+systemctl start failer.service 2>/dev/null
+check "it fails another way (exit status 4): a new record" "waitfor '[ -f $R ]' 30 && pyck $R 'd[\"args\"][2] == [\"LOCAL5\", \"4\"]'"
+asp $B list --json >/tmp/p4.json
+check "and the person sees it: it is not dismissed" "python3 -c \"import json,sys; d=[p for p in json.load(open('/tmp/p4.json')) if p['key'] == 'failer.service']; sys.exit(0 if d and not d[0]['hidden'] else 1)\""
+asp $B show --boot $P failer.service
+rm -f /etc/systemd/system/failer.service.d/other.conf
+systemctl daemon-reload
+systemctl reset-failed failer.service
+
 echo "== the stores keep their own entries only (a flat store)"
 check "no subfolder and no dot-file is left in the machine's store" "[ -z \"\$(find /var/lib/sparky-stereo-problems -mindepth 1 -not -name .lock -name '.*')\" ] && [ -z \"\$(find /var/lib/sparky-stereo-problems -mindepth 1 -type d)\" ]"
 

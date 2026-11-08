@@ -258,7 +258,18 @@ export fn ssp_list_json(package: ?[*:0]const u8, lang: ?[*:0]const u8) ?[*:0]u8 
     var c: Call = undefined;
     begin(&c);
     defer c.deinit();
-    const out = engine.listJson(&c.ctx, str(package), str(lang)) catch |e| {
+    const out = engine.listJson(&c.ctx, str(package), str(lang), false) catch |e| {
+        _ = result(&c.ctx, e);
+        return null;
+    };
+    return dup(out);
+}
+
+export fn ssp_list_over_json(package: ?[*:0]const u8, lang: ?[*:0]const u8) ?[*:0]u8 {
+    var c: Call = undefined;
+    begin(&c);
+    defer c.deinit();
+    const out = engine.listJson(&c.ctx, str(package), str(lang), true) catch |e| {
         _ = result(&c.ctx, e);
         return null;
     };
