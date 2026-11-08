@@ -53,10 +53,10 @@ check "the path unit watches the stores" "ux systemctl --user is-active --quiet 
 check "one notification at login" "waitfor '[ \$(n) = 1 ]' 30 && sleep 2 && [ \$(n) = 1 ]"
 check "it is the summary of the two, a line each" "[ \"\$(nf 1 summary)\" = '2 problems need attention' ] && nf 1 body | grep -q '• The system service First Service (one.service) failed' && nf 1 body | grep -q '• The system service Second Service (two.service) failed'"
 check "critical, because a problem failed, and it stays (no timeout)" "[ \"\$(nf 1 urgency)\" = 2 ] && [ \"\$(nf 1 timeout)\" = 0 ]"
-check "it offers Show details" "nf 1 actions | grep -q 'Show details'"
+check "it offers Show details and Dismiss all" "nf 1 actions | grep -q 'Show details' && nf 1 actions | grep -q 'Dismiss all'"
 invoke 1 "Show details"
 check "Show details opens one notification per problem" "waitfor '[ \$(n) = 3 ]' 20"
-check "each with its own buttons: Show details, Repair (when it has one), Hide" "nf 2 actions | grep -q \"'Repair'\" && nf 2 actions | grep -q \"'Hide'\" && ! nf 3 actions | grep -q \"'Repair'\""
+check "each with its own buttons: Show details, Repair (when it has one), Dismiss" "nf 2 actions | grep -q \"'Repair'\" && nf 2 actions | grep -q \"'Dismiss'\" && ! nf 2 actions | grep -q \"'Hide'\" && ! nf 3 actions | grep -q \"'Repair'\""
 check "each says what failed and why" "nf 2 body | grep -q 'The system service First Service (one.service) failed: it did not finish in time'"
 
 echo "== then one notification per new or changed problem"
@@ -71,18 +71,33 @@ check "and the old one is closed" "closed 4"
 $B keep --machine --severity degraded $P part LOCAL4 "Partial" p.service @LOCAL8
 check "a degraded problem is Normal and times out" "waitfor '[ \$(n) = 6 ]' 20 && [ \"\$(nf 6 urgency)\" = 1 ] && [ \"\$(nf 6 timeout)\" = -1 ]"
 
-echo "== Show details, Hide"
+echo "== Show details, Dismiss"
 invoke 5 "Show details"
 check "Show details shows the evidence (kdialog --textbox)" "waitfor '[ -s $H/kdialog.log ]' 20 && grep -q 'ARGS: --title Sparky Stereo OS: a system service failed --textbox' $H/kdialog.log && grep -q 'Kept since: ' $H/kdialog.log && grep -q 'Kept in: /var/lib/sparky-stereo-problems/sparky-stereo-problems_three.json' $H/kdialog.log"
-invoke 6 "Hide"
-check "Hide hides it for the person" "waitfor 'ux $B list --json | python3 -c \"import json,sys; sys.exit(0 if any(p[\\\"key\\\"] == \\\"part\\\" and p[\\\"hidden\\\"] for p in json.load(sys.stdin)) else 1)\"' 20"
+invoke 6 "Dismiss"
+check "Dismiss dismisses it for the person" "waitfor 'ux $B list --json | python3 -c \"import json,sys; sys.exit(0 if any(p[\\\"key\\\"] == \\\"part\\\" and p[\\\"hidden\\\"] for p in json.load(sys.stdin)) else 1)\"' 20"
 check "and not for root" "$B list --json | python3 -c 'import json,sys; sys.exit(0 if any(p[\"key\"] == \"part\" and not p[\"hidden\"] for p in json.load(sys.stdin)) else 1)'"
+check "the dismissal is said, with where the problem stays and how to bring it back" "waitfor '[ \"\$(nf -1 summary)\" = \"One problem dismissed\" ]' 20 && nf -1 body | grep -q 'Problems in System Settings' && nf -1 actions | grep -q 'Open Problems'"
+check "its own notification is closed" "closed 6"
 c=$(n)
 $B keep --machine --severity degraded $P part LOCAL4 "Partial" p.service @LOCAL8
 sleep 3
-check "a hidden problem kept again with the same message: no notification" "[ \$(n) = $c ]"
+check "a dismissed problem kept again with the same message: no notification" "[ \$(n) = $c ]"
 $B keep --machine --severity degraded $P part LOCAL4 "Partial" p.service @LOCAL9
 check "it comes back when its message changes" "waitfor '[ \$(n) = $((c + 1)) ]' 20 && nf -1 body | grep -q 'started too often'"
+
+echo "== a dismissal made on the Problems page (the engine's hide and show)"
+$B keep --machine $P ext LOCAL4 "External" e.service @LOCAL8
+check "a problem: one notification" "waitfor 'nf -1 body | grep -q \"External (e.service)\"' 20"
+ext=$(n)
+ux $B hide --machine $P ext
+check "dismissed outside the notification: it closes" "waitfor 'closed $ext' 20"
+c=$(n)
+sleep 2
+check "and is not told again" "[ \$(n) = $c ]"
+ux $B show --machine $P ext
+check "brought back on the page: it is told again" "waitfor '[ \$(n) = $((c + 1)) ]' 20 && nf -1 body | grep -q 'External (e.service)'"
+$B clear --machine $P ext
 
 echo "== Repair"
 ux $B keep $P mine LOCAL4 "Mine" m.service @LOCAL8 --repair '["true"]'
@@ -160,6 +175,15 @@ c=$(n)
 ux systemctl --user start sparky-stereo-problems-notifier.service
 check "a new login shows the open problems again, in German" "waitfor '[ \$(n) -gt $c ]' 20 && nf -1 summary | grep -q 'Probleme brauchen Aufmerksamkeit' && nf -1 actions | grep -q 'Details anzeigen'"
 ux systemctl --user unset-environment LANG
+echo "== Dismiss all on the summary"
+open_keys() { ux $B list --json | python3 -c 'import json,sys; print(" ".join(p["key"] for p in json.load(sys.stdin) if not p["hidden"]))'; }
+sumid=$(n)
+check "the login summary has Dismiss all, in German" "nf -1 actions | grep -q 'Alle verwerfen'"
+check "problems are open for the person before it" "[ -n \"\$(open_keys)\" ]"
+invoke "$sumid" "Alle verwerfen"
+check "Dismiss all dismisses every problem of the summary for the person" "waitfor '[ -z \"\$(open_keys)\" ]' 20"
+check "and says how many, in German" "waitfor 'nf -1 summary | grep -q \"Probleme verworfen\"' 20"
+check "the summary is closed" "closed $sumid"
 # the record only (memory performance-is-not-a-gate): the notifier's memory while it shows a session's problems
 pid=$(ux systemctl --user show -p MainPID --value sparky-stereo-problems-notifier.service)
 if [ -n "$pid" ] && [ "$pid" != 0 ]; then

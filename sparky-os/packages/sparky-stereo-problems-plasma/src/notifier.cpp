@@ -154,8 +154,14 @@ void Notifier::rescan()
     }
     const QJsonArray all = QJsonDocument::fromJson(QByteArray(json)).array();
     ssp_free(json);
+    // the person's dismissals, which the Problems page makes too: its folder is watched when it exists
+    const QString hiddenDir = QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation) + u"/sparky-stereo-problems/.hidden"_s;
+    if (QFileInfo::exists(hiddenDir) && !m_watcher.directories().contains(hiddenDir)) {
+        m_watcher.addPath(hiddenDir);
+    }
     QList<QJsonObject> open;
     QSet<QString> handles;
+    QSet<QString> dismissedNow;
     m_watchUnits = false;
     for (const QJsonValue &v : all) {
         QJsonObject p = v.toObject();
@@ -169,13 +175,19 @@ void Notifier::rescan()
             p[u"text"_s] = engineText("LOCAL25", {p[u"file"_s].toString() + u": "_s + p[u"unreadable"_s].toString()});
         }
         if (p[u"hidden"_s].toBool()) {
+            dismissedNow.insert(identOf(p));
             continue;
+        }
+        if (m_dismissed.contains(identOf(p))) {
+            // brought back on the Problems page: told again, as a new problem is
+            m_notified.remove(identOf(p));
         }
         open << p;
         handles.insert(handleOf(p));
         m_watchUnits = m_watchUnits || !p[u"unit"_s].toString().isEmpty();
     }
-    // a problem that is over, or hidden, closes its notification
+    m_dismissed = dismissedNow;
+    // a problem that is over, or dismissed, closes its notification
     const QStringList shown = m_shown.keys();
     for (const QString &h : shown) {
         if (!handles.contains(h)) {
@@ -239,8 +251,8 @@ void Notifier::notifyOne(const QJsonObject &p)
         });
     }
     if (!p.contains(u"unreadable"_s)) {
-        connect(n->addAction(i18nc("@action:button", "Hide")), &KNotificationAction::activated, this, [this, p] {
-            hide(p);
+        connect(n->addAction(i18nc("@action:button", "Dismiss")), &KNotificationAction::activated, this, [this, p] {
+            dismiss(p);
         });
     }
     connect(n, &KNotification::closed, this, [this, handle, n] {
@@ -281,6 +293,9 @@ void Notifier::notifySummary(const QList<QJsonObject> &problems)
     };
     connect(n->addDefaultAction(i18nc("@action:button", "Show details")), &KNotificationAction::activated, this, expand);
     connect(n->addAction(i18nc("@action:button", "Show details")), &KNotificationAction::activated, this, expand);
+    connect(n->addAction(i18nc("@action:button", "Dismiss all")), &KNotificationAction::activated, this, [this, problems] {
+        dismissAll(problems);
+    });
     m_summary = n;
     n->sendEvent();
 }
@@ -362,15 +377,53 @@ void Notifier::repair(const QJsonObject &p)
     process->start(program, args);
 }
 
-void Notifier::hide(const QJsonObject &p)
+void Notifier::dismiss(const QJsonObject &p)
 {
     const QByteArray package = p[u"package"_s].toString().toUtf8();
     const QByteArray key = p[u"key"_s].toString().toUtf8();
     if (ssp_hide(scopeCode(p[u"scope"_s].toString()), package.constData(), key.constData()) != 0) {
-        tell(u"error"_s, i18nc("@title", "The problem could not be hidden"), QString::fromUtf8(ssp_error()).toHtmlEscaped());
+        tell(u"error"_s, i18nc("@title", "The problem could not be dismissed"), QString::fromUtf8(ssp_error()).toHtmlEscaped());
         return;
     }
     closeShown(handleOf(p));
+    tellDismissed(1);
+}
+
+void Notifier::dismissAll(const QList<QJsonObject> &problems)
+{
+    int done = 0;
+    for (const QJsonObject &p : problems) {
+        if (p.contains(u"unreadable"_s)) {
+            continue;
+        }
+        const QByteArray package = p[u"package"_s].toString().toUtf8();
+        const QByteArray key = p[u"key"_s].toString().toUtf8();
+        if (ssp_hide(scopeCode(p[u"scope"_s].toString()), package.constData(), key.constData()) != 0) {
+            tell(u"error"_s, i18nc("@title", "The problem could not be dismissed"), QString::fromUtf8(ssp_error()).toHtmlEscaped());
+            continue;
+        }
+        closeShown(handleOf(p));
+        ++done;
+    }
+    if (m_summary) {
+        m_summary->close();
+    }
+    if (done > 0) {
+        tellDismissed(done);
+    }
+}
+
+// Dismissing is told, never silent: where the dismissed problems are kept, and how to bring one back
+void Notifier::tellDismissed(int count)
+{
+    auto *n = new KNotification(u"dismissed"_s, KNotification::CloseOnTimeout);
+    n->setComponentName(u"sparky-stereo-problems"_s);
+    n->setTitle(i18ncp("@title", "One problem dismissed", "%1 problems dismissed", count));
+    n->setText(i18nc("@info", "You will not be notified about it again unless it changes. It stays listed under Problems in System Settings, where you can bring it back."));
+    connect(n->addAction(i18nc("@action:button", "Open Problems")), &KNotificationAction::activated, this, [] {
+        QProcess::startDetached(u"systemsettings"_s, {u"kcm_sparkystereo_problems"_s});
+    });
+    n->sendEvent();
 }
 
 void Notifier::runAction(const QJsonObject &p, int index)
