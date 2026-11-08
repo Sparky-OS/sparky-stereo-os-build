@@ -1,4 +1,20 @@
 -------------------------------------------------------------------------------
+  Version 20261108.1~sparky9~0 (2026-11-08)
+-------------------------------------------------------------------------------
+  * ORDER 462: a failed build is tried again by itself once this package has changed. The station's failure (the link
+    check stopped at "check-link needs --archive-config / --scratch") came from 20261029, three minutes before 20261104.2
+    (ORDER 402) gave the check this computer's own archives; the failure was migrated as a record that said "Try again:
+    sparky-stereo-ffmpeg-fdk --rebuild" and the update check never rebuilt a version that had failed, so the fixed helper
+    never ran. The record now carries the helper's version (data.helper); check-update starts the rebuild when it differs
+    or is missing (a migrated record), and stops again when the build fails under the same version
+  * The failure names its cause: a link check started without its archives is told as a fault of the helper that ran it,
+    with the log line and without "try again" (LOCAL85); any other failed build is told by the last error line of its log
+    (LOCAL87) instead of "The build failed" alone. Nine languages
+  * tests: test-engine.py (the retry under an older or missing helper, the same helper not retried, the explanations;
+    red on 20261104.2), check-link-call.sh (the gate's own call with a small package, red without archives and green with
+    link-config's)
+
+-------------------------------------------------------------------------------
   Version 20261104.2~sparky9~0 (2026-11-04)
 -------------------------------------------------------------------------------
   * The local rebuild passes Lean Code's link check on a computer where nothing is configured (ORDER 402): the build stopped at "check-link needs --archive-config / --scratch" on every computer but the edition's build machines

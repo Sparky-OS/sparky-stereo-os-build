@@ -32,7 +32,7 @@ class EngineChecks(unittest.TestCase):
         self.env = os.environ | {'SPARKY_FDK_LIBDIR': str(LIB), 'SPARKY_FDK_LANGDIR': str(LANG),
             'SPARKY_FDK_STATE': str(self.state), 'SPARKY_STEREO_ROOT': str(self.root / 'engine'),
             'SPARKY_FDK_LOCK': str(self.root / 'lock'), 'SPARKY_FDK_LOG': str(self.root / 'log'),
-            'PATH': str(self.bin) + ':' + os.environ['PATH'], 'LANG': 'en_US.UTF-8', 'LANGUAGE': 'en'}
+            'SPARKY_FDK_HELPER_VERSION': 'H2', 'PATH': str(self.bin) + ':' + os.environ['PATH'], 'LANG': 'en_US.UTF-8', 'LANGUAGE': 'en'}
         self.source = self.root / 'Sources'
         self.source.write_text('Package: ffmpeg-dmo\nVersion: 2\nBinary: ffmpeg, libavcodec99\n\n')
         self.env['SPARKY_FDK_BIN']=str(self.bin/'worker')
@@ -242,12 +242,42 @@ class EngineChecks(unittest.TestCase):
                 self.assertEqual(result.returncode,0,result.stderr)
                 self.assertFalse((self.state/'launched').exists())
 
-    def test_failed_version_is_read_from_engine(self):
-        self.keep('build','LOCAL70',('2','/log'),{'data':{'version':'2'}})
+    def test_failed_version_under_the_same_helper_is_not_retried(self):
+        # the same FFmpeg failed under this very version of the helper: the same cause would stop it again
+        self.keep('build','LOCAL70',('2','/log'),{'data':{'version':'2','helper':'H2'}})
         result=self.run_hook()
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn('failed earlier',result.stdout)
         self.assertFalse((self.state/'launched').exists())
+
+    def test_failed_version_under_an_older_helper_is_retried_once(self):
+        # ORDER 462: a failure recorded by an older helper, or by one that recorded none (a migrated one), is tried again
+        for helper in ('H1', None):
+            with self.subTest(helper=helper):
+                (self.state/'launched').unlink(missing_ok=True)
+                data={'version':'2'}
+                if helper: data['helper']=helper
+                self.keep('build','LOCAL70',('2','/log'),{'data':data})
+                result=self.run_hook()
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertIn('changed since the build',result.stdout)
+                self.assertTrue((self.state/'launched').exists(), 'the rebuild was not started')
+
+    def test_explained_build_failures(self):
+        common=str(LIB/'common.sh')
+        log=self.root/'build.log'
+        def explain(text):
+            log.write_text(text)
+            return subprocess.run(['bash','-c','. "$1"; explain_build_failure "$2"',  'x', common, str(log)], env=self.env, text=True, capture_output=True)
+        # the failure the station reported: the link check of Lean Code started without its archives
+        r=explain('dh_builddeb\ncheck-link needs --archive-config / --scratch (or SPARKY_LC_ARCHIVE_CONFIG / SPARKY_LC_SCRATCH); see lean/archive.md\nmake[1]: *** [debian/rules:268: override_dh_builddeb] Error 1\n')
+        self.assertEqual(r.returncode,0); self.assertTrue(r.stdout.startswith('LOCAL85 check-link needs --archive-config'),r.stdout)
+        # another failure is told by its own last error line, never by a generic "try again"
+        r=explain('configure: error: libfdk-aac not found\nmake: *** [debian/rules:195: binary-arch] Error 2\nmake[1]: Leaving directory x\n')
+        self.assertEqual(r.returncode,0); self.assertTrue(r.stdout.startswith('LOCAL87 '),r.stdout); self.assertIn('Error 2',r.stdout)
+        # nothing recognisable: no explanation is invented
+        r=explain('all went quiet\n')
+        self.assertNotEqual(r.returncode,0); self.assertEqual(r.stdout,'')
 
     def test_battery_and_running_build_stay_inactive(self):
         self.stub('on_ac_power','exit 1')
