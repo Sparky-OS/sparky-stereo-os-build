@@ -34,7 +34,6 @@ export SPARKY_STEREO_PROBLEMS_CATALOG=$T/catalog:/usr/lib/systemd/catalog
 ROUTE=$("$BIN/sparky-stereo-gpu-env" --app "$T/usr/applications/sparky-browser.desktop" --profile performance)
 [ -n "$ROUTE" ] || { echo "no route for the browser"; exit 1; }
 env_json=$(python3 -I -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))' <<<"$ROUTE")
-EDITOR_ROUTE=$("$BIN/sparky-stereo-gpu-env" --app "$T/usr/applications/editor.desktop" --profile performance)
 B=$T/usr/applications/sparky-browser.desktop
 ED=$T/usr/applications/editor.desktop
 # one unit per case: app-NAME@ID.service as KIO names it (the name escaped by systemd: a dash is \x2d)
@@ -71,11 +70,11 @@ cat >"$T/bus.conf" <<CONF
 CONF
 dbus-daemon --config-file="$T/bus.conf" --nofork >"$T/bus.log" 2>&1 &
 BUS=$!
-for i in $(seq 1 50); do [ -S "$T/bus" ] && break; sleep 0.1; done
+for _ in $(seq 1 50); do [ -S "$T/bus" ] && break; sleep 0.1; done
 export DBUS_SESSION_BUS_ADDRESS="unix:path=$T/bus"
 python3 -I "$SRC/autotests/fake-systemd.py" "$T/units.json" >"$T/sd.log" 2>&1 &
 SD=$!
-for i in $(seq 1 50); do grep -q ready "$T/sd.log" && break; sleep 0.1; done
+for _ in $(seq 1 50); do grep -q ready "$T/sd.log" && break; sleep 0.1; done
 grep -q ready "$T/sd.log" || { cat "$T/sd.log"; exit 1; }
 died() { "$BIN/sparky-stereo-gpu-env" --died "$1" >"$T/out" 2>"$T/err"; echo $?; }
 survived() { "$BIN/sparky-stereo-gpu-env" --survived "$1" >"$T/out" 2>"$T/err"; echo $?; }
@@ -87,7 +86,7 @@ check "a crash at start: exit 0" "$(died "$(U sparky-browser a1)")" 0
 has "a crash at start: said" "$T/err" "Sparky Browser stopped right after it started on NVIDIA GeForce RTX 3060 Lite Hash Rate: it crashed (signal 11)."
 check "a crash at start: one record" "$(kept)" 1
 R=$PROBLEMS/sparky-stereo-graphics_died-sparky-browser.json
-check "a crash at start: kept under the program's name, \x2d read as a dash" "$(test -e "$R"; echo $?)" 0
+check "a crash at start: kept under the program's name, \x2d read as a dash" "$([ -e "$R" ] && echo 0 || echo 1)" 0
 check "a crash at start: the record's kind" "$(field "$R" 'd["data"]["kind"]')" "app-died"
 check "a crash at start: the GPU it died on" "$(field "$R" 'd["data"]["requested"]')" "pci-0000:01:00.0"
 check "a crash at start: Use NAME is the desktop's GPU, for this program only" "$(field "$R" '[a["command"] for a in d["actions"] if a["id"].startswith("use:")]')" "[['sparky-stereo-gpu-env', '--use-app', 'sparky-browser.desktop', 'pci-0000:0b:00.0']]"

@@ -101,6 +101,24 @@ EOS
 cat >"$S/debian/changelog" <<EOS
 $PACKAGE ($VERSION) unstable; urgency=medium
 
+  * ORDER 467 (Daniel, 2026-11-08: "I could not launch waterfox"): a program
+    this page sent to a GPU that stops right after it starts is told and
+    kept. The session's systemd runs every program KIO starts as
+    app-NAME@ID.service and knows how it ended; a drop-in
+    (/usr/lib/systemd/user/app-.service.d) runs sparky-stereo-gpu-env --died
+    when such a service fails and --survived when it ends cleanly. A death is
+    kept in the problems engine (key died-NAME) only for a program sent to a
+    GPU, that failed within [Launch] DiedWithin (10 seconds, 0 turns it off),
+    with the program's last output, and "Use NAME" for the GPU its desktop
+    entry can name (--use-app, the entry's own PrefersNonDefaultGPU). The
+    program is never started again; a launcher, a hand-over, a person
+    closing it and a crash after the window raise nothing. The Graphics page
+    lists the kept deaths. Nine languages.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 08 Nov 2026 12:00:00 -0300
+
+$PACKAGE (0.2.6) unstable; urgency=medium
+
   * Add the video memory protection opt-in through KAuth and the package conffile.
   * Show VRAM problems and their translated actions from the shared engine.
 
