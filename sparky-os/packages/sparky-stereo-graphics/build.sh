@@ -6,7 +6,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.2.6
+VERSION=0.2.7
 PACKAGE=sparky-stereo-graphics
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.graphics.XXXXXX")
@@ -33,7 +33,7 @@ mkdir -p "$D/usr/lib/systemd/catalog"
 sparky-stereo-problems catalog $PACKAGE "$HERE/po" "$D/usr/lib/systemd/catalog" --domain kcm_sparkystereo_graphics \
 	--context "@info" --context "@item kind of program" --context "@action:button" \
 	--subject "@title notification|A graphics choice cannot be used" \
-	--subject-map '{"@info %1 is a file|The machine'"'"'s GPU record, %1, could not be written. Until it is, Automatic treats this computer as not measured. Run: sudo sparky-stereo-gpu-record --apply-known": "@title notification|Graphics needs a repair", "@info %1 is an exit status|systemd could not reload its units after the Graphics page was installed (exit status %1). The boot service that writes the machine'"'"'s GPU record may not start. Run: sudo systemctl daemon-reload": "@title notification|Graphics needs a repair", "@info %1 is a file|A kept problem of the Graphics page cannot be read: %1.": "@title notification|Graphics needs a repair"}'
+	--subject-map '{"@info %1 is a file|The machine'"'"'s GPU record, %1, could not be written. Until it is, Automatic treats this computer as not measured. Run: sudo sparky-stereo-gpu-record --apply-known": "@title notification|Graphics needs a repair", "@info %1 is an exit status|systemd could not reload its units after the Graphics page was installed (exit status %1). The boot service that writes the machine'"'"'s GPU record may not start. Run: sudo systemctl daemon-reload": "@title notification|Graphics needs a repair", "@info %1 is a file|A kept problem of the Graphics page cannot be read: %1.": "@title notification|Graphics needs a repair", "@info %1 is a program, %2 a GPU name, %3 says how it stopped|%1 stopped right after it started on %2: %3.": "@title notification|A program stopped on its GPU"}'
 install -Dm644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
 install -m644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
 mkdir -p "$D/DEBIAN" "$WORK/shlibs/debian"
