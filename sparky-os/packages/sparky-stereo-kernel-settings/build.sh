@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=20261106.1~sparky9~0+lc1
+VERSION=20261108.1~sparky9~0+lc1
 PACKAGE=sparky-stereo-kernel-settings
 DEPENDS='python3, apt, sparky-stereo-problems, libpam-modules, systemd, mount, udev'
 FILES='etc/security/limits.d/20-sparky-audio.conf etc/tmpfiles.d/tmp.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
@@ -31,6 +31,40 @@ cat >"$D/usr/lib/systemd/system/dev-zram0.swap.d/50-sparky-migration.conf" <<'EO
 # The generator orders this swap after its setup service, which evaluates the guard.
 ConditionPathExists=!/run/sparky-stereo-kernel-settings/blocked-zram0
 EOF
+# ORDER 463: the leftover generator is removed once (after the apt run, or at the next boot), and a failed zram unit is told
+# without the engine's generic Repair, which would start a unit the edition did not set up.
+SYSTEMD=$D/usr/lib/systemd/system
+cat >"$SYSTEMD/sparky-stereo-kernel-settings-zram-leftover.service" <<'EOF'
+[Unit]
+Description=Remove the compressed swap generator an older edition left installed (once)
+Documentation=file:/usr/share/doc/sparky-stereo-kernel-settings/README.md
+ConditionPathExists=/var/lib/sparky-stereo-kernel-settings/leftover-zram-generator
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/sparky-stereo/zram-migration --purge-leftover
+TimeoutStartSec=infinity
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+EOF
+mkdir -p "$SYSTEMD/multi-user.target.wants"
+ln -s ../sparky-stereo-kernel-settings-zram-leftover.service "$SYSTEMD/multi-user.target.wants/sparky-stereo-kernel-settings-zram-leftover.service"
+cat >"$SYSTEMD/sparky-stereo-kernel-settings-zram-failed@.service" <<'EOF'
+[Unit]
+Description=Say the failure of %i without offering to start it again
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/sparky-stereo/zram-migration --failed %i
+EOF
+cat >"$SYSTEMD/systemd-zram-setup@zram0.service.d/60-sparky-zram-failure.conf" <<'EOF'
+[Unit]
+# The engine's generic handler (Repair: systemctl restart) is masked by name beside this one; see problems-engine-350.
+OnFailure=sparky-stereo-kernel-settings-zram-failed@%n.service
+EOF
+ln -s /dev/null "$SYSTEMD/systemd-zram-setup@zram0.service.d/50-sparky-stereo-problems.conf"
 sparky-stereo-problems catalog "$PACKAGE" "$HERE/problems-lang" "$D/usr/lib/systemd/catalog" --subject LOCAL1
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOT
@@ -62,6 +96,11 @@ fi
 if [ "$1" = configure ]; then
 	# Stop/reset only the edition’s former Auto zram0, never a person’s choice.
 	sparky-stereo-problems run --machine sparky-stereo-kernel-settings zram-migration LOCAL5 -- /usr/libexec/sparky-stereo/zram-migration --migrate || :
+	# ORDER 463: a generator left by the old package is purged once when the person did not choose it; the apt run that is
+	# configuring this package still holds the locks, so the unit waits for it
+	if [ -f /var/lib/sparky-stereo-kernel-settings/leftover-zram-generator ] && [ -d /run/systemd/system ] && [ -z "${DPKG_ROOT:-}" ]; then
+		systemctl --no-block start sparky-stereo-kernel-settings-zram-leftover.service || sparky-stereo-problems say sparky-stereo-kernel-settings LOCAL28
+	fi
 	if [ -f /var/lib/sparky-stereo-kernel-settings/retire-owned-zram0 ]; then
 		cleanup='
 set -e

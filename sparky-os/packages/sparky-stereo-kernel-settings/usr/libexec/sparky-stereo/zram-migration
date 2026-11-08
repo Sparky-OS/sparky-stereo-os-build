@@ -1,7 +1,17 @@
 #!/usr/bin/python3
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Gate only the generator inherited from the edition's old automatic dependency."""
+"""Gate, and then remove, the generator inherited from the edition's old automatic dependency (ORDER 463).
+
+--allow           the ExecCondition of systemd-zram-setup@zram0: skip the setup while the generator is only an unchosen leftover
+--migrate         at configure: keep what is to be said about a chosen or a leftover generator
+--purge-leftover  once, after the apt run that brought this version (and at boot while the leftover is still there): purge
+                  systemd-zram-generator when it is marked automatic and no other package needs it, as thermald was settled
+                  (ORDER 43); a generator the person chose (installed by hand, chosen in Stereo APTus, ZRAM=on, zram-tools
+                  by hand) is kept
+--failed UNIT     the handler of a failed zram unit: said and kept for this boot, with no Repair that would start it
+"""
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -14,6 +24,8 @@ BLOCKED = Path('/run/sparky-stereo-kernel-settings/blocked-zram0')
 PROTECTION = Path('/etc/apt/apt.conf.d/90sparky-stereo-chosen-zram')
 PACKAGE = 'sparky-stereo-kernel-settings'
 ENGINE = '/usr/bin/sparky-stereo-problems'
+GENERATOR = 'systemd-zram-generator'
+REPAIR = '["/usr/libexec/sparky-stereo/zram-migration","--purge-leftover"]'
 
 
 def auto_packages():
@@ -50,6 +62,75 @@ def allowed():
     return installed('zram-tools') and 'zram-tools' not in automatic
 
 
+def say(message):
+    subprocess.run([ENGINE, 'say', PACKAGE, message], check=False)
+
+
+def apt_idle():
+    # waits until no apt or dpkg run holds dpkg's locks: inside an apt run apt rewrites its state file when the run ends
+    subprocess.run(['/usr/bin/apt-get', '-q', '-o', 'DPkg::Lock::Timeout=-1', 'check'],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def finish_leftover(remove_marker=True):
+    BLOCKED.unlink(missing_ok=True)
+    if remove_marker:
+        (STATE / 'leftover-zram-generator').unlink(missing_ok=True)
+    subprocess.run([ENGINE, 'clear', '--machine', PACKAGE, 'leftover-generator'], check=True)
+
+
+def purge_leftover():
+    marker = STATE / 'leftover-zram-generator'
+    if not marker.exists():
+        return 0
+    if allowed():
+        # chosen meanwhile (apt-mark manual, Stereo APTus, ZRAM=on, zram-tools): the person's, kept as it is
+        finish_leftover()
+        return 0
+    apt_idle()
+    if allowed():
+        finish_leftover()
+        return 0
+    if not installed(GENERATOR):
+        finish_leftover()
+        return 0
+    env = dict(os.environ, LC_ALL='C', DEBIAN_FRONTEND='noninteractive')
+    plan = subprocess.run(['/usr/bin/apt-get', '-s', 'purge', GENERATOR], capture_output=True, text=True, env=env)
+    if plan.returncode != 0:
+        raise RuntimeError('apt-get -s purge ' + GENERATOR + ' failed: ' + plan.stderr.strip())
+    names = sorted({line.split()[1] for line in plan.stdout.splitlines() if line.startswith(('Remv ', 'Purg '))})
+    others = [n for n in names if n != GENERATOR]
+    if others:
+        # something else installed needs it: it stays, switched off by the guard, and the notice says why
+        subprocess.run([ENGINE, 'keep', '--machine', '--severity', 'notice', PACKAGE,
+                        'leftover-generator', 'LOCAL26', ' '.join(others)], check=True)
+        return 0
+    if subprocess.run([ENGINE, 'run', '--machine', '--repair', REPAIR, PACKAGE, 'purge-leftover', 'LOCAL24', '--',
+                       '/usr/bin/apt-get', '-y', '-q', 'purge', GENERATOR], env=env).returncode != 0:
+        return 1
+    # a zram0 this boot's generator set up before the guard held is retired too: it is the edition's former one
+    cleanup = (
+        'set -e\n'
+        'if awk \'$1 == "/dev/zram0" { f=1 } END { exit !f }\' /proc/swaps; then\n'
+        '  if [ -d /run/systemd/system ]; then systemctl stop dev-zram0.swap || true; fi\n'
+        '  if awk \'$1 == "/dev/zram0" { f=1 } END { exit !f }\' /proc/swaps; then swapoff /dev/zram0; fi\n'
+        'fi\n'
+        'if [ -r /sys/block/zram0/disksize ] && [ "$(cat /sys/block/zram0/disksize)" != 0 ]; then echo 1 >/sys/block/zram0/reset; fi\n')
+    if subprocess.run([ENGINE, 'run', '--machine', '--repair', REPAIR, PACKAGE, 'retire-zram', 'LOCAL5', '--', '/bin/sh', '-c', cleanup]).returncode != 0:
+        return 1
+    finish_leftover()
+    say('LOCAL25')
+    return 0
+
+
+def failed(unit):
+    # no repair: starting a zram unit again is not something the edition set up (Daniel 2026-11-03: off and not installed;
+    # the person opts in from Stereo APTus)
+    subprocess.run([ENGINE, 'keep', '--boot', '--severity', 'failed', '--unit', unit, PACKAGE, 'zram-setup', 'LOCAL27', unit],
+                   check=True)
+    return 0
+
+
 def main():
     if sys.argv[1:] == ['--allow']:
         if allowed():
@@ -62,6 +143,10 @@ def main():
         BLOCKED.parent.mkdir(parents=True, exist_ok=True)
         BLOCKED.touch()
         return 1  # systemd ExecCondition skips setup without starting swap.
+    if sys.argv[1:] == ['--purge-leftover']:
+        return purge_leftover()
+    if len(sys.argv) == 3 and sys.argv[1] == '--failed':
+        return failed(sys.argv[2])
     if sys.argv[1:] != ['--migrate']:
         return 2
     if (STATE / 'preserve-chosen-zram').exists() and installed('systemd-zram-generator'):
