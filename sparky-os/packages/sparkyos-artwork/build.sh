@@ -36,6 +36,13 @@ O=$D/usr/share/wallpapers/SparkyOSOxygen
 mkdir -p "$O/contents/images" "$O/contents/stereo"
 ln -s /opt/artwork/sparkyos-oxygen.png "$O/contents/images/3840x2160.png"
 ln -s /opt/artwork/sparkyos-oxygen-3d.pns "$O/contents/stereo/7680x2160.pns"
+# the smaller sizes Plasma's Image wallpaper chooses from (ORDER 456): downscales of the same pictures, the 3840x2160 kept
+python3 "$HERE/wallpaper-sizes.py" "$ART/opt/sparkyos-oxygen.png" "$O/contents/images"
+for P in "$D"/usr/share/wallpapers/*/; do
+	if [ "${P%/}" != "$O" ] && [ -f "$P/contents/images/3840x2160.png" ]; then
+		python3 "$HERE/wallpaper-sizes.py" "$P/contents/images/3840x2160.png" "$P/contents/images"
+	fi
+done
 python3 -c "
 from PIL import Image
 im = Image.open('$ART/opt/sparkyos-oxygen.png').convert('RGB'); im.thumbnail((400, 225)); im.save('$O/contents/screenshot.png')"
@@ -59,9 +66,17 @@ cat >>"$D/usr/share/doc/$PKG/copyright" <<'EOS'
 
 Files: usr/share/wallpapers/SparkyOSOxygen/*
     The Oxygen wallpaper above (opt/sparkyos-oxygen.png and its pair), as a Plasma wallpaper package
-    made by this package's build; its screenshot is the picture scaled down.
+    made by this package's build; its screenshot and its smaller sizes are the picture scaled down.
     Copyright 2019-2026 (C) Daniel Ramos (Capitain Jack)
     License: GPL-2+
+EOS
+cat >>"$D/usr/share/doc/$PKG/copyright" <<'EOS'
+
+Files: usr/share/wallpapers/*/contents/images/1280x720.png usr/share/wallpapers/*/contents/images/1366x768.png
+ usr/share/wallpapers/*/contents/images/1600x900.png usr/share/wallpapers/*/contents/images/1920x1080.png
+ usr/share/wallpapers/*/contents/images/2560x1440.png
+    The 3840x2160 picture of each wallpaper package scaled down by this package's build (wallpaper-sizes.py), so Plasma
+    decodes a picture near the screen's size. They carry the copyright and licence of the picture they are made from.
 EOS
 cat >"$D/DEBIAN/postinst" <<'EOS'
 #!/bin/sh
@@ -111,7 +126,8 @@ Description: SparkyOS Artwork
   Backgrounds for the Sparky Stereo OS desktop, GRUB and other system
   elements: the SparkyOS Oxygen wallpaper, flat and as a stereo pair, the
   GRUB background, the swirl pixmaps and eighteen stereo wallpapers for
-  Plasma, each with its flat picture and its full side by side pair.
+  Plasma, each with its flat picture, in the sizes Plasma chooses from, and
+  its full side by side pair.
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
