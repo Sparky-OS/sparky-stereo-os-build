@@ -1,0 +1,27 @@
+From f9ff8bf1f4f9cb4511c4d15232946393b54df8be Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 9 Nov 2026 18:29:55 -0300
+Subject: [PATCH] wayland: Respect the stereo depth limits event version
+
+Only resources bound at version 5 or newer can receive depth_limits. Sending it to a legacy client whose interface has only depth_state makes libwayland reject the unknown event and disconnect the client, including the lock-screen greeter.
+
+Keep depth_state for legacy clients and preserve the existing limit updates for version 5 clients.
+
+Assisted-by: gpt-6-astra via Codex
+---
+ src/wayland/stereocontent_v1.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/wayland/stereocontent_v1.cpp b/src/wayland/stereocontent_v1.cpp
+index 5d787a2..a46d03f 100644
+--- a/src/wayland/stereocontent_v1.cpp
++++ b/src/wayland/stereocontent_v1.cpp
+@@ -172,7 +172,7 @@ void StereoDepthSurfaceV1::sendState(bool awake, uint32_t outputEdges, qreal sun
+         send_depth_state(awake ? 1 : 0, outputEdges);
+     }
+     const auto limits = std::make_pair(sunk, popped);
+-    if (m_sentLimits != limits) {
++    if (resource()->version() >= KDE_STEREO_DEPTH_V1_DEPTH_LIMITS_SINCE_VERSION && m_sentLimits != limits) {
+         m_sentLimits = limits;
+         send_depth_limits(wl_fixed_from_double(sunk), wl_fixed_from_double(popped));
+     }
