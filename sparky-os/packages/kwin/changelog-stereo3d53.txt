@@ -1,0 +1,23 @@
+kwin (4:6.7.4-2+stereo3d53) unstable;
+
+  * A declared X11 child is shown only where X shows it. The child's buffer is
+    whole (it is redirected, so Xwayland gives it a surface of its own), and
+    the scene drew all of it at the child's place: the part of a child larger
+    than its window showed outside the window, and a window stacked over the
+    child (a sibling mapped after it) was hidden by it. X11StereoChild::visible
+    is now the X11 window's area, cut to the windows between it and the child,
+    less the bounding shapes of the viewable windows stacked over the child or
+    over a window between (declared children excepted: the scene orders those),
+    and SurfaceItemXwaylandChild::shapeForSourceBox() (where both eyes' quads and
+    shape() come from) is cut to it, wherever the child is
+    placed or however it is scaled (s53-0001).
+  * A window that appears, moves, is restacked or goes away after the child was
+    listed is noticed: KWin selects SubstructureNotify on the X11 window and on
+    the windows between it and the child (the X11 window's own event mask keeps
+    its bits), and Workspace::workspaceEvent hands those events to the child's
+    owner. A covering window's shape change is watched on the window itself.
+    The area follows the X11 window's size (s53-0001).
+  * Tests: testX11Window's testStereoChildWindowClip and
+    testStereoChildWindowClipAncestor, which fail on +stereo3d52 (s53-0002).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 09 Nov 2026 16:27:23 +0000
