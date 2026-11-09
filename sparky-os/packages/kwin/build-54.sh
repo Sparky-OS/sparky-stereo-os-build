@@ -13,6 +13,7 @@
 #   gate must see that the repository does not have yet: the snapshot for this build, and the one the previous build was qualified against.
 # SPARKY_REPO_DIR must be a real apt repository (dists/mashtabba/main/binary-amd64/Packages), not a flat pool: the gate reads it as file:/repo.
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+# SPARKY_KWIN_RESUME=1 resumes a prepared WORK after interruption. Keep its original SOURCE_DATE_EPOCH.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../../repo/build-provenance.sh"
@@ -24,15 +25,21 @@ WORK=$(mkdir -p "$1" && cd "$1" && pwd)
 PREV=$(cd "$2" && pwd)
 SRC=$(cd "$3" && pwd)
 EXTRA=$(cd "$4" && pwd)
-[ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
+if [ "${SPARKY_KWIN_RESUME:-0}" = 1 ]; then
+    : "${SOURCE_DATE_EPOCH:?resume needs the original build's source date}"
+    [ -f "$WORK/lc/source/obj-x86_64-linux-gnu/Makefile" ]
+    [ -f "$WORK/lc/source-closure.sha256" ]
+else
+    [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
+fi
 sparky_provenance_init "${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}"
 docker run --rm --ulimit core=0 --name kwin-487b-pkg --cpus 4 --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
+	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_KWIN_RESUME="${SPARKY_KWIN_RESUME:-0}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
 	${SIBLINGS_DIR:+-v "$SIBLINGS_DIR":/sib:ro -e SPARKY_LC_SIBLINGS_FILE=/sib/siblings.txt} \
 	${PREVIOUS_SIBLINGS_DIR:+-v "$PREVIOUS_SIBLINGS_DIR":/psib:ro -e SPARKY_LC_PREVIOUS_SIBLINGS_FILE=/psib/siblings.txt} -v "$WORK":/work -v "$SRC":/src:ro -v "$EXTRA":/extra:ro \
 	-v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
 	-v "$HERE/patches":/patches:ro \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
-	"${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}" bash -c 'sh /run/https-only-apt.sh && bash /tools/build-in-container-54.sh > /work/build.log 2>&1'
+	"${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}" bash -c 'sh /run/https-only-apt.sh && bash /tools/build-in-container-54.sh >> /work/build.log 2>&1'
