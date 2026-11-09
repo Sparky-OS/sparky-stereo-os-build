@@ -28,6 +28,7 @@ const usage_lines = [_]Line{
     .{ .syntax = "catalog PACKAGE DIR OUTDIR [--subject KEY[=MESSAGE,...]]... [--subject-map JSON] [--keys MESSAGE,...] [--context PREFIX]... [--domain NAME]", .what = "LOCAL47" },
     .{ .syntax = "text [SCOPE] [--lang LANGUAGES] PACKAGE KEY", .what = "LOCAL63" },
     .{ .syntax = "service-failed [UNIT]", .what = "LOCAL48" },
+    .{ .syntax = "sleep-attempt UNIT", .what = "LOCAL95" },
 };
 const options =
     \\  --severity failed|degraded|notice  --repair JSON-ARRAY  --command JSON-ARRAY  --status N
@@ -494,6 +495,19 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
     }
     if (std.mem.eql(u8, verb, "service-failed")) {
         _ = engine.serviceFailed(ctx, if (pos.len > 0) pos[0] else null) catch |e| {
+            if (e == error.Failed) {
+                _ = said(ctx);
+                journalNote(ctx);
+                return 1;
+            }
+            return e;
+        };
+        journalNote(ctx);
+        return 0;
+    }
+    if (std.mem.eql(u8, verb, "sleep-attempt")) {
+        if (pos.len != 1) return wrongUse(ctx, "LOCAL53", &.{"UNIT"});
+        _ = engine.sleepAttempt(ctx, pos[0]) catch |e| {
             if (e == error.Failed) {
                 _ = said(ctx);
                 journalNote(ctx);
