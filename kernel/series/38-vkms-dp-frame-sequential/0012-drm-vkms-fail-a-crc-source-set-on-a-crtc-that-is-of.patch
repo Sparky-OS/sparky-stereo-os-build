@@ -1,0 +1,198 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 9 Nov 2026 21:47:00 -0300
+Subject: [PATCH] drm/vkms: fail a CRC source set on a CRTC that is off
+
+Opening the CRC capture file of a CRTC that is off corrupts the
+device's vblank reference count. vkms_set_crc_source() calls
+vkms_set_composer(), which asks drm_crtc_vblank_get() for a reference.
+A CRTC that is off holds the private reference that
+drm_crtc_vblank_off() takes ("prevent drm_vblank_get"), so the get
+returns -EINVAL there; vkms_set_composer() does not look at the
+result, counts the CRC source as a composer user, and sets
+composer_enabled. The capture still works, because the composer is a
+software one, but when the file closes vkms_set_crc_source() puts a
+reference it never took: drm_vblank_put() warns
+"vblank put called with refcount 0" (or, with other users counted,
+silently decays the count), and a device opened and closed twice this
+way ends with the count below zero.
+
+This is the same shape the previous patch of this group fixed for
+writeback jobs; that patch named the CRC source as the trap still
+open. Opening the file through debugfs on a real CRTC does not reach
+the driver: crtc_crc_open() fails a CRTC that is not active with -EIO
+first, which is a defect of its own (the core hides the case the
+driver mishandles). Set through vkms_set_crc_source() directly, as
+configfs clients do or a future core change would, the KUnit tests of
+this patch show the failed get and the decayed count: red without the
+fix (the get returns -EINVAL but the capture is reported enabled and
+a user is counted), green with it.
+
+Make vkms_set_composer() take the vblank reference before the
+composer user is counted, return the error without counting when the
+get fails, and put the reference only when a user was counted;
+vkms_set_crc_source() now fails with the get's error, and the tests
+set a CRC source with the CRTC off and with it on and check the
+result, crc_enabled and the composer user count on open and on close.
+
+The fix matches the direction of Aditya's "[PATCH] drm/vkms: Keep
+composition enabled for concurrent users" (dri-devel, 2026-10-25,
+unanswered and not in drm-misc-next at 8deaade4a5a4),
+adapted to this group's composer-user counter; upstream gets a note
+by the kernel-layers rule when the series goes.
+
+Fixes: drm/vkms: keep the composer running for every writeback job
+Assisted-by: kimi-k3:cloud (Ollama) via Codex
+---
+ drivers/gpu/drm/vkms/tests/vkms_stereo_test.c | 69 ++++++++++++++++++
+ drivers/gpu/drm/vkms/vkms_composer.c          | 20 ++++++++++++++++----
+ drivers/gpu/drm/vkms/vkms_drv.h               |  2 +-
+ 3 files changed, 86 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/vkms/tests/vkms_stereo_test.c b/drivers/gpu/drm/vkms/tests/vkms_stereo_test.c
+index 6f8e6d2..4c04ca2 100644
+--- a/drivers/gpu/drm/vkms/tests/vkms_stereo_test.c
++++ b/drivers/gpu/drm/vkms/tests/vkms_stereo_test.c
+@@ -715,6 +715,73 @@ static void vkms_stereo_test_writeback_from_on(struct kunit *test)
+ 	vkms_stereo_test_writeback_commit(test, true);
+ }
+ 
++static unsigned int vkms_stereo_test_composer_users(struct kunit *test)
++{
++	struct vkms_stereo_test_priv *priv = test->priv;
++	struct vkms_output *output = drm_crtc_to_vkms_output(priv->crtc);
++	unsigned int users;
++
++	spin_lock_irq(&output->lock);
++	users = output->composer_users;
++	spin_unlock_irq(&output->lock);
++
++	return users;
++}
++
++/*
++ * The CRC file can be opened on a CRTC that is off: the vblank reference of
++ * the CRC source cannot be taken then, so setting the source has to fail, and
++ * clearing it must not put a reference that was never taken.
++ */
++static void vkms_stereo_test_crc_from_off(struct kunit *test)
++{
++	struct vkms_stereo_test_priv *priv = test->priv;
++	struct vkms_output *output = drm_crtc_to_vkms_output(priv->crtc);
++	int ret;
++
++	ret = vkms_set_crc_source(priv->crtc, "auto");
++	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
++	KUNIT_EXPECT_FALSE(test, output->crc_enabled);
++	KUNIT_EXPECT_EQ(test, vkms_stereo_test_composer_users(test), 0);
++
++	/* Closing the CRC file sets no source: no reference to put, no warning */
++	ret = vkms_set_crc_source(priv->crtc, NULL);
++	KUNIT_EXPECT_EQ(test, ret, 0);
++	KUNIT_EXPECT_FALSE(test, output->crc_enabled);
++	KUNIT_EXPECT_EQ(test, vkms_stereo_test_composer_users(test), 0);
++}
++
++/* On an active CRTC the CRC source takes and releases its vblank reference */
++static void vkms_stereo_test_crc_from_on(struct kunit *test)
++{
++	static const struct vkms_stereo_test_mode mode_2d = { 1920, 1080, 60, 0 };
++	struct vkms_stereo_test_priv *priv = test->priv;
++	struct vkms_output *output = drm_crtc_to_vkms_output(priv->crtc);
++	const struct drm_display_mode *mode;
++	int ret;
++
++	vkms_stereo_test_probe(test);
++
++	mode = vkms_stereo_test_find_mode(test, &mode_2d);
++	KUNIT_ASSERT_NOT_NULL(test, mode);
++
++	ret = vkms_stereo_test_update(test, mode, mode->hdisplay, mode->vdisplay,
++				      0, 0, true);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++
++	ret = vkms_set_crc_source(priv->crtc, "auto");
++	KUNIT_EXPECT_EQ(test, ret, 0);
++	KUNIT_EXPECT_TRUE(test, output->crc_enabled);
++	KUNIT_EXPECT_EQ(test, vkms_stereo_test_composer_users(test), 1);
++
++	ret = vkms_set_crc_source(priv->crtc, NULL);
++	KUNIT_EXPECT_EQ(test, ret, 0);
++	KUNIT_EXPECT_FALSE(test, output->crc_enabled);
++	KUNIT_EXPECT_EQ(test, vkms_stereo_test_composer_users(test), 0);
++
++	vkms_stereo_test_disable_all(test);
++}
++
+ /*
+  * The frame of each structure the 3D EDID above adds (HDMI 1.4a, Figures
+  * H-2 to H-6): twice the lines for line alternative, one vtotal more for
+@@ -751,6 +818,8 @@ static void vkms_stereo_test_no_edid(struct kunit *test)
+ 
+ static struct kunit_case vkms_stereo_test_cases[] = {
+ 	KUNIT_CASE(vkms_stereo_test_edid_modes),
++	KUNIT_CASE(vkms_stereo_test_crc_from_off),
++	KUNIT_CASE(vkms_stereo_test_crc_from_on),
+ 	KUNIT_CASE_PARAM(vkms_stereo_test_writeback_frame,
+ 			 vkms_stereo_test_frame_gen_params),
+ 	KUNIT_CASE_PARAM(vkms_stereo_test_writeback_from_off,
+diff --git a/drivers/gpu/drm/vkms/vkms_composer.c b/drivers/gpu/drm/vkms/vkms_composer.c
+index 24fc21c..b9d8812 100644
+--- a/drivers/gpu/drm/vkms/vkms_composer.c
++++ b/drivers/gpu/drm/vkms/vkms_composer.c
+@@ -757,14 +757,24 @@ bool vkms_composer_user(struct vkms_output *out, bool add)
+  * The CRC source is a composer user that holds a vblank reference of its own.
+  * A writeback job takes its reference when it is committed, see
+  * vkms_wb_atomic_commit().
++ * The vblank reference is taken before the user is counted, so a failed
++ * drm_crtc_vblank_get() (the CRTC is off) fails the call and leaves no
++ * reference to put when the composer is disabled again.
+  */
+-void vkms_set_composer(struct vkms_output *out, bool enabled)
++int vkms_set_composer(struct vkms_output *out, bool enabled)
+ {
+-	if (enabled)
+-		drm_crtc_vblank_get(&out->crtc);
++	int ret = 0;
++
++	if (enabled) {
++		ret = drm_crtc_vblank_get(&out->crtc);
++		if (ret)
++			return ret;
++	}
+ 
+ 	if (vkms_composer_user(out, enabled) && !enabled)
+ 		drm_crtc_vblank_put(&out->crtc);
++
++	return ret;
+ }
+ 
+ int vkms_set_crc_source(struct drm_crtc *crtc, const char *src_name)
+@@ -779,8 +789,10 @@ int vkms_set_crc_source(struct drm_crtc *crtc, const char *src_name)
+ 
+ 	/* The core sets a source when the CRC file is opened and none when it is closed */
+ 	if (enabled != out->crc_enabled) {
++		ret = vkms_set_composer(out, enabled);
++		if (ret)
++			return ret;
+ 		out->crc_enabled = enabled;
+-		vkms_set_composer(out, enabled);
+ 	}
+ 
+ 	return 0;
+diff --git a/drivers/gpu/drm/vkms/vkms_drv.h b/drivers/gpu/drm/vkms/vkms_drv.h
+index aef3ab0..8802078 100644
+--- a/drivers/gpu/drm/vkms/vkms_drv.h
++++ b/drivers/gpu/drm/vkms/vkms_drv.h
+@@ -443,7 +443,7 @@ void vkms_stereo_link_mark_writeback(struct vkms_output *out, u64 frame);
+ /* Composer Support */
+ void vkms_composer_worker(struct work_struct *work);
+ bool vkms_composer_user(struct vkms_output *out, bool add);
+-void vkms_set_composer(struct vkms_output *out, bool enabled);
++int vkms_set_composer(struct vkms_output *out, bool enabled);
+ void vkms_writeback_row(struct vkms_writeback_job *wb, const struct line_buffer *src_buffer, int y);
+ 
+ /* Writeback */
+-- 
+2.53.0
+
