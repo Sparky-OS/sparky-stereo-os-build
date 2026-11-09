@@ -5,7 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
-from catalogue import eligible
+from catalogue import describe, diagnose
 
 manifest=Path(sys.argv[1])
 catalogue=Path(sys.argv[2])
@@ -34,7 +34,8 @@ for item in proofs:
     assert item['verification']['settings_unchanged'] is True
     assert item['verification']['kwin_composition'] is True
     assert item['verification']['camera_or_flat'] is True
-    assert eligible(dict(item,library=str(library))),(item['id'],'ineligible camera proof')
+    stale.extend('%s: %s'%(item['id'],describe(reason)) for reason in diagnose(dict(item,library=str(library))) if reason['kind']!='proof')
+    assert not [r for r in diagnose(dict(item,library=str(library))) if r['kind']=='proof'],(item['id'],'ineligible camera proof: its receipt does not pass the proof gates')
     settings=Path('/usr/share/xscreensaver/config')/(item['id']+'.xml')
     expected=inventory[item['id']]['settings_sha256']
     if item['id'] in owning_settings:
