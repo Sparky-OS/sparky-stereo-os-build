@@ -20,7 +20,7 @@ printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /et
 log_suffix=
 # prepare-source-54.sh already produced the immutable source archives. A full
 # build would repack them after clean changes directory mtimes.
-build_args=(-b)
+build_args=()
 if [ "${SPARKY_KWIN_RESUME:-0}" = 1 ]; then
     echo 'Resuming the retained +54 package build without cleaning or regenerating source.'
     (cd "$job/lc" && sha256sum -c source-closure.sha256)
@@ -34,7 +34,7 @@ for path in Path(sys.argv[1]).rglob('*.o'):
         path.unlink()
 OBJECTS
     log_suffix=-resume
-    build_args=(-nc -b)
+    build_args=(-nc)
 fi
 apt-get -y update > "$job/apt-update$log_suffix.log" 2>&1
 apt-get -y --no-install-recommends install devscripts quilt bubblewrap > "$job/setup$log_suffix.log" 2>&1
@@ -52,5 +52,5 @@ chown -R builder:builder "$job" "$SPARKY_LC_SCRATCH"
 cd "$job/lc/source"
 runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev ${SPARKY_LC_PREVIOUS_SIBLINGS_FILE:+SPARKY_LC_PREVIOUS_SIBLINGS_FILE=$SPARKY_LC_PREVIOUS_SIBLINGS_FILE} ${SPARKY_LC_SIBLINGS_FILE:+SPARKY_LC_SIBLINGS_FILE=$SPARKY_LC_SIBLINGS_FILE} \
     SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" \
-    dpkg-buildpackage "${build_args[@]}" -us -uc -j4
+    dpkg-buildpackage -b "${build_args[@]}" -us -uc -j4
 PYTHONPATH=/toolkit python3 -m lean.release check-debs "$job/lc/"*.deb
