@@ -1,0 +1,172 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 9 Nov 2026 01:34:42 -0300
+Subject: [PATCH 1/2] x11window: Tell a window that declares stereo content the
+ depth limits of its output
+
+Stereo KWin sends kde_stereo_depth_v1.depth_limits to a Wayland surface that
+asked for it. An X11 client cannot ask: its surface is Xwayland's, so the limits
+of the output it sits on never reached it, and a program running in an X11
+window (the OpenXR runtime's own window, a game, a toolkit) could not draw
+inside the depth the person set for that screen.
+
+StereoDepthStates::update() already has the two numbers for the window's
+output. For an X11 window that declares stereo content it now also writes
+them, as the Wayland event carries them (wl_fixed_t, 24.8 fixed point, pixels
+of a view 1920 wide), in _KDE_NET_WM_STEREO_DEPTH_LIMITS: CARDINAL/32, exactly
+two values, sunk then popped. The property follows the person's settings, the
+output's mode and kind and the window's move to another output, and goes when
+the window stops declaring. _KDE_NET_WM_STEREO_CONTENT_SUPPORTED is 10, so a
+client knows the property will come.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ src/atoms.cpp                   |  1 +
+ src/atoms.h                     |  1 +
+ src/netinfo.cpp                 |  5 ++++-
+ src/scene/stereodepthstates.cpp |  7 +++++++
+ src/x11window.cpp               | 31 +++++++++++++++++++++++++++++++
+ src/x11window.h                 |  9 +++++++++
+ 6 files changed, 53 insertions(+), 1 deletion(-)
+
+diff --git a/src/atoms.cpp b/src/atoms.cpp
+index ccc7963956..92b5f29425 100644
+--- a/src/atoms.cpp
++++ b/src/atoms.cpp
+@@ -61,6 +61,7 @@ Atoms::Atoms()
+     , kde_net_wm_stereo_content_one_view_commit(QByteArrayLiteral("_KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_COMMIT"))
+     , kde_net_wm_stereo_content_one_view_size(QByteArrayLiteral("_KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_SIZE"))
+     , kde_net_wm_stereo_content_supported(QByteArrayLiteral("_KDE_NET_WM_STEREO_CONTENT_SUPPORTED"))
++    , kde_net_wm_stereo_depth_limits(QByteArrayLiteral("_KDE_NET_WM_STEREO_DEPTH_LIMITS"))
+     , utf8_string(QByteArrayLiteral("UTF8_STRING"))
+     , text(QByteArrayLiteral("TEXT"))
+     , uri_list(QByteArrayLiteral("text/uri-list"))
+diff --git a/src/atoms.h b/src/atoms.h
+index 8f8a7583eb..096f54096d 100644
+--- a/src/atoms.h
++++ b/src/atoms.h
+@@ -76,6 +76,7 @@ public:
+     Xcb::Atom kde_net_wm_stereo_content_one_view_commit;
+     Xcb::Atom kde_net_wm_stereo_content_one_view_size;
+     Xcb::Atom kde_net_wm_stereo_content_supported;
++    Xcb::Atom kde_net_wm_stereo_depth_limits;
+     Xcb::Atom utf8_string;
+     Xcb::Atom text;
+     Xcb::Atom uri_list;
+diff --git a/src/netinfo.cpp b/src/netinfo.cpp
+index 1b8cf10c74..4fb4240e32 100644
+--- a/src/netinfo.cpp
++++ b/src/netinfo.cpp
+@@ -137,7 +137,10 @@ RootInfo *RootInfo::create()
+     // _KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_SIZE, so a child may hold both views at full width or
+     // the native raster of a video while the ordinary window paints its controls above it.
+     // 9 also consumes child bounding shapes, independently for each packed eye.
+-    const uint32_t stereoContentSupported = 9;
++    // 10 also tells a window that declares stereo content the depth limits of the output it mainly
++    // sits on, in its own _KDE_NET_WM_STEREO_DEPTH_LIMITS (what kde_stereo_depth_v1.depth_limits
++    // carries to a Wayland surface), and keeps the property current.
++    const uint32_t stereoContentSupported = 10;
+     xcb_change_property(kwinApp()->x11Connection(), XCB_PROP_MODE_REPLACE, kwinApp()->x11RootWindow(),
+                         atoms->kde_net_wm_stereo_content_supported, XCB_ATOM_CARDINAL, 32, 1, &stereoContentSupported);
+ 
+diff --git a/src/scene/stereodepthstates.cpp b/src/scene/stereodepthstates.cpp
+index e0b57cd38b..0a2a890238 100644
+--- a/src/scene/stereodepthstates.cpp
++++ b/src/scene/stereodepthstates.cpp
+@@ -13,6 +13,7 @@
+ #include "wayland/surface.h"
+ #include "window.h"
+ #include "workspace.h"
++#include "x11window.h"
+ 
+ namespace KWin
+ {
+@@ -59,6 +60,7 @@ void StereoDepthStates::watch(Window *window)
+     connect(window, &Window::minimizedChanged, this, &StereoDepthStates::scheduleUpdate);
+     connect(window, &Window::hiddenChanged, this, &StereoDepthStates::scheduleUpdate);
+     connect(window, &Window::desktopsChanged, this, &StereoDepthStates::scheduleUpdate);
++    connect(window, &Window::stereoContentChanged, this, &StereoDepthStates::scheduleUpdate);
+     if (SurfaceInterface *surface = window->surface()) {
+         // a surface may be followed before its window is shown, or again later
+         connect(surface, &SurfaceInterface::stereoDepthFollowed, this, &StereoDepthStates::scheduleUpdate);
+@@ -79,6 +81,11 @@ void StereoDepthStates::update()
+     m_scheduled = false;
+     const auto windows = workspace()->windows();
+     for (Window *window : windows) {
++        if (auto *x11Window = qobject_cast<X11Window *>(window)) {
++            // an X11 window cannot make a kde_stereo_depth_v1 object: the limits of its output
++            // reach it as a property, whether or not its surface exists yet
++            x11Window->updateStereoDepthLimits(StereoDepth::sunkLimit(window->output()), StereoDepth::poppedLimit(window->output()));
++        }
+         SurfaceInterface *surface = window->surface();
+         if (!surface || window->isDeleted()) {
+             continue;
+diff --git a/src/x11window.cpp b/src/x11window.cpp
+index 4c1485b581..48092f5cbe 100644
+--- a/src/x11window.cpp
++++ b/src/x11window.cpp
+@@ -4380,6 +4380,37 @@ void X11Window::getStereoContentClass()
+     readStereoContentClass(property);
+ }
+ 
++void X11Window::updateStereoDepthLimits(qreal sunk, qreal popped)
++{
++    if (!m_managed || isDeleted()) {
++        return;
++    }
++    if (declaredStereoContent() == StereoContentNone) {
++        if (m_stereoDepthLimitsWritten) {
++            m_stereoDepthLimitsWritten = false;
++            xcb_delete_property(kwinApp()->x11Connection(), window(), atoms->kde_net_wm_stereo_depth_limits);
++            xcb_flush(kwinApp()->x11Connection());
++        }
++        return;
++    }
++    // _KDE_NET_WM_STEREO_DEPTH_LIMITS: CARDINAL/32, exactly two values, sunk and popped as
++    // kde_stereo_depth_v1.depth_limits carries them: 24.8 fixed point (wl_fixed_t), pixels of a
++    // view 1920 wide, for the output the window mainly sits on
++    const auto fixed = [](qreal value) {
++        return uint32_t(int32_t(std::llround(value * 256)));
++    };
++    const uint32_t limits[2] = {fixed(sunk), fixed(popped)};
++    if (m_stereoDepthLimitsWritten && limits[0] == m_stereoDepthLimits[0] && limits[1] == m_stereoDepthLimits[1]) {
++        return;
++    }
++    m_stereoDepthLimitsWritten = true;
++    m_stereoDepthLimits[0] = limits[0];
++    m_stereoDepthLimits[1] = limits[1];
++    xcb_change_property(kwinApp()->x11Connection(), XCB_PROP_MODE_REPLACE, window(),
++                        atoms->kde_net_wm_stereo_depth_limits, XCB_ATOM_CARDINAL, 32, 2, limits);
++    xcb_flush(kwinApp()->x11Connection());
++}
++
+ Xcb::Property X11Window::fetchStereoContentVersion() const
+ {
+     return Xcb::Property(false, window(), atoms->kde_net_wm_stereo_content_version, XCB_ATOM_CARDINAL, 0, 1);
+diff --git a/src/x11window.h b/src/x11window.h
+index bf7ec92271..3a4c6da8b6 100644
+--- a/src/x11window.h
++++ b/src/x11window.h
+@@ -103,6 +103,12 @@ public:
+     QSizeF stereoClientScale() const;
+     QSizeF stereoWindowScale() const;
+     QSizeF programSizeScale() const;
++    /**
++     * Writes the depth limits of the output the window mainly sits on to its
++     * _KDE_NET_WM_STEREO_DEPTH_LIMITS while it declares stereo content, and removes the
++     * property when it stops declaring. Called by StereoDepthStates on every change.
++     */
++    void updateStereoDepthLimits(qreal sunk, qreal popped);
+     /**
+      * The child windows that hold stereo content (_KDE_NET_WM_STEREO_CONTENT_CHILDREN).
+      */
+@@ -382,6 +388,9 @@ private:
+     QSizeF m_stereoClientScale = QSizeF(1, 1);
+     QSizeF m_stereoWindowScale = QSizeF(1, 1);
+     uint32_t m_stereoContentVersion = 0;
++    // the values last written to _KDE_NET_WM_STEREO_DEPTH_LIMITS: sunk and popped as 24.8 fixed point
++    bool m_stereoDepthLimitsWritten = false;
++    uint32_t m_stereoDepthLimits[2] = {0, 0};
+     // the size one view is shown at, as the program declares it
+     QSizeF m_stereoOneViewSize;
+     uint32_t m_stereoPlaceSerial = 0;
