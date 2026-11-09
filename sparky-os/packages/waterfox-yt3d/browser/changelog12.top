@@ -1,0 +1,11 @@
+sparky-stereo-browser (@DEBVERSION@) unstable; urgency=medium
+
+  * Hardware video decoding on an NVIDIA GPU shows the picture: a decoded video
+    the compositor cannot import was drawn by WebRender from empty textures and
+    came out solid green. Vulkan Video decoding (Mozilla's own path) is on by
+    default and proved on the NVIDIA proprietary driver series 615, with the
+    decoder's sandbox on; every other GPU keeps the route it had, and an NVIDIA
+    driver older than 615 keeps software decoding, with the reason in
+    about:support.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@
