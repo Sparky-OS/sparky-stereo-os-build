@@ -3,6 +3,8 @@
 # plank-player 5.27.80+git20261005.f87e775-1+stereo3d2: KDE's master at f87e775 (the orig tarball of +stereo3d1), our two patches
 # (plank-player/*.patch: the 3D menu bound to Qt Multimedia's Video, and the Return key fix), packaging/ from ./plank-player-debian,
 # built in plank-build:1 as the user
+# The orig tarball is the published pool's (pool/main/p/plank-player/plank-player_5.27.80+git20261005.f87e775.orig.tar.xz; its SHA-256 is in the published .dsc), and plank-build:1 is a forky container with the
+# package's Build-Depends. The shipped +lc1 source and build (ORDER 453b) are made by sparky-os/packages/depth-source: next-source.sh plank-player, then build.sh plank-player.
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -e
 REPRO=/run/reproducible.py

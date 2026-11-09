@@ -7,7 +7,7 @@
 # on top of the published history (repo/lc-successor.py --in-place --overlay), so the old changelog stays a byte
 # identical suffix of the new one (the dch trap of ORDER 278 is never met: dch is not used).
 #   next-source.sh PACKAGE PUBLISHED.dsc OUT [SYMBOLS_ADD]
-#   PACKAGE: qt6-multimedia | dragon
+#   PACKAGE: qt6-multimedia | dragon | plank-player
 #   PUBLISHED.dsc: the published +lc1 source (its orig tarball beside it)
 #   OUT: receives the new .dsc, Debian tarball, both changelogs and the successor report
 #   SYMBOLS_ADD (qt6-multimedia): a file of symbol lines for debian/libqt6multimedia6.symbols (none for the successor of +stereo3d14, whose symbols are published)
@@ -37,6 +37,14 @@ qt6-multimedia)
 	fi
 	;;
 dragon)
+	# a successor of the published +stereo3d9+lc1 (ORDER 453): its series holds 0001 to 0008 and the translations; it needs the Qt Multimedia that says a refused declaration (+stereo3d15, stereoLayerFailure)
+	if [ "$PUBLISHED_VERSION" = '4:26.04.0-1+stereo3d9+lc1' ] || [ "$PUBLISHED_VERSION" = '26.04.0-1+stereo3d9+lc1' ]; then
+		NEXT=4:26.04.0-1+stereo3d10
+		ITEMS=$HERE/changelog/dragon-stereo3d10.items
+		depends=(--depends 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d14+lc1),' 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d15+lc1),'
+			--depends 'Depends: libqt6multimedia6 (>= 6.11.2-3+stereo3d14+lc1),' 'Depends: libqt6multimedia6 (>= 6.11.2-3+stereo3d15+lc1),'
+			--depends 'qml6-module-qtmultimedia (>= 6.11.2-3+stereo3d14+lc1),' 'qml6-module-qtmultimedia (>= 6.11.2-3+stereo3d15+lc1),')
+	else
 	NEXT=4:26.04.0-1+stereo3d9
 	depends=(--depends 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d10+lc1),' 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d14+lc1),'
 		--depends 'Depends: libqt6multimedia6 (>= 6.11.2-3+stereo3d10+lc1),' 'Depends: libqt6multimedia6 (>= 6.11.2-3+stereo3d14+lc1),'
@@ -44,6 +52,15 @@ dragon)
 		--depends $'         ${misc:Depends},' $'         kde-cli-tools,\n         kscreen,\n         libstereo-layer1 (>= 1.17.1),\n         mkvtoolnix,\n         ${misc:Depends},'
 		--depends 'libkf6windowsystem-dev (>= 6.12.0~),' $'libkf6windowsystem-dev (>= 6.12.0~),\n               libstereo-av-dev (>= 1.17.1),\n               libstereo-policy-dev (>= 1.17.1),'
 		--depends 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d14+lc1),' $'qt6-multimedia-dev (>= 6.11.2-3+stereo3d14+lc1), ffmpeg <!nocheck>, mkvtoolnix <!nocheck>,')
+	fi
+	;;
+plank-player)
+	# a successor of the published 5.27.80+git20261005.f87e775-1+stereo3d2+lc1 (ORDER 453b): the orig tarball is the published one, patch 0003 shows a refused declaration (needs Qt Multimedia +stereo3d15)
+	[ "$PUBLISHED_VERSION" = '5.27.80+git20261005.f87e775-1+stereo3d2+lc1' ] || { echo "plank-player: the successor is made from +stereo3d2+lc1, not $PUBLISHED_VERSION" >&2; exit 2; }
+	NEXT=5.27.80+git20261005.f87e775-1+stereo3d3
+	ITEMS=$HERE/changelog/plank-player-stereo3d3.items
+	depends=(--depends 'libqt6multimedia6 (>= 6.11.2-3+stereo3d3~),' 'libqt6multimedia6 (>= 6.11.2-3+stereo3d15~),'
+		--depends 'qml6-module-qtmultimedia (>= 6.11.2-3+stereo3d3~),' 'qml6-module-qtmultimedia (>= 6.11.2-3+stereo3d15~),')
 	;;
 *) echo "unknown package $PKG" >&2; exit 2 ;;
 esac
@@ -54,7 +71,9 @@ mkdir -p "$W/overlay/patches"
 cp "$W/published/debian/patches/series" "$W/overlay/patches/series"
 [ "$(tail -c1 "$W/overlay/patches/series" | xxd -p)" = 0a ] || echo >> "$W/overlay/patches/series"
 # the patches the published series does not hold yet (a successor of +stereo3d14 adds 0046 only)
-for p in "$HERE/patches/$PKG"/*.patch; do
+PATCHDIR=$HERE/patches/$PKG
+[ "$PKG" != plank-player ] || PATCHDIR=$HERE/../../upstream/qtmultimedia/plank-player
+for p in "$PATCHDIR"/*.patch; do
 	grep -qxF "$(basename "$p")" "$W/published/debian/patches/series" && continue
 	cp "$p" "$W/overlay/patches/"
 	basename "$p" >> "$W/overlay/patches/series"

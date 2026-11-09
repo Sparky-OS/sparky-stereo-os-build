@@ -1,0 +1,117 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] Say when the desktop refuses to show a 3D video in 3D
+Origin: other, Sparky Stereo OS (ORDER 453)
+Forwarded: no
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+
+Qt Multimedia's Video declares the video to the desktop before it attaches anything; when the declaration is refused it draws the ordinary picture and says why in stereoLayerFailure (qt6-multimedia +stereo3d15, patch 0046). Plank Player shows that reason over the video, with the sentence in the nine languages.
+---
+--- a/app/qml/main.qml	2026-11-09 19:13:09.426154517 -0300
++++ psrc/plank-player-5.27.80+git20261005.f87e775/app/qml/main.qml	2026-11-09 19:13:58.869596117 -0300
+@@ -90,6 +90,26 @@
+             }
+         }
+ 
++        Rectangle {
++            id: stereoLayerFailureBanner
++            visible: video.stereoLayerFailure.length > 0
++            anchors.top: parent.top
++            anchors.left: parent.left
++            anchors.right: parent.right
++            height: failureText.implicitHeight + 16
++            color: Kirigami.Theme.neutralBackgroundColor
++            border.color: Kirigami.Theme.neutralTextColor
++            border.width: 1
++            Controls.Label {
++                id: failureText
++                anchors.fill: parent
++                anchors.margins: 8
++                wrapMode: Text.WordWrap
++                color: Kirigami.Theme.textColor
++                text: i18nc("@info %1 is the reason the desktop gave", "This video is shown flat: the desktop refused to show it in 3D (%1).", video.stereoLayerFailure)
++            }
++        }
++
+         PlayerOSD {
+             id: playerOSDItem
+             anchors.bottom: parent.bottom
+--- a/po/de/plank-player.po	2026-10-04 23:17:18.000000000 -0300
++++ psrc/plank-player-5.27.80+git20261005.f87e775/po/de/plank-player.po	2026-11-09 19:13:58.870121858 -0300
+@@ -27,3 +27,7 @@
+ #, kde-format
+ msgid "Press 'esc' or the [←] Back button to close"
+ msgstr "Drücken Sie zum Schließen die Taste „Esc“ oder [←] „Zurück“"
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "Dieses Video wird flach gezeigt: Der Desktop hat die Darstellung in 3D abgelehnt (%1)."
+--- a/po/fr/plank-player.po	2026-10-04 23:17:18.000000000 -0300
++++ psrc/plank-player-5.27.80+git20261005.f87e775/po/fr/plank-player.po	2026-11-09 19:13:58.870015468 -0300
+@@ -26,3 +26,7 @@
+ msgstr ""
+ "Veuillez appuyer sur la touche « Échap » ou sur le bouton de retour en "
+ "arrière [←] pour fermer."
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "Cette vidéo est affichée à plat : le bureau a refusé de l’afficher en 3D (%1)."
+--- a/po/ja/plank-player.po	2026-10-04 23:17:18.000000000 -0300
++++ psrc/plank-player-5.27.80+git20261005.f87e775/po/ja/plank-player.po	2026-11-09 19:13:58.870224338 -0300
+@@ -23,3 +23,7 @@
+ #, kde-format
+ msgid "Press 'esc' or the [←] Back button to close"
+ msgstr ""
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "このビデオは平面で表示されています。デスクトップが 3D 表示を拒否しました (%1)。"
+--- a/po/ko/plank-player.po	2026-10-04 23:17:18.000000000 -0300
++++ psrc/plank-player-5.27.80+git20261005.f87e775/po/ko/plank-player.po	2026-11-09 19:13:58.870338599 -0300
+@@ -26,3 +26,7 @@
+ #, kde-format
+ msgid "Press 'esc' or the [←] Back button to close"
+ msgstr "닫으려면 'Esc' 키 또는 [←] 뒤로 단추 누르기"
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "이 비디오는 평면으로 표시됩니다. 데스크톱이 3D 표시를 거부했습니다 (%1)."
+--- a/po/pl/plank-player.po	2026-10-04 23:17:18.000000000 -0300
++++ psrc/plank-player-5.27.80+git20261005.f87e775/po/pl/plank-player.po	2026-11-09 19:13:58.869785047 -0300
+@@ -26,3 +26,7 @@
+ #, kde-format
+ msgid "Press 'esc' or the [←] Back button to close"
+ msgstr "Naciśnij 'esc' lub przycisk [←], aby zamknąć"
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "To wideo jest pokazywane płasko: pulpit odmówił pokazania go w 3D (%1)."
+--- a/po/pt_BR/plank-player.po	2026-10-04 23:17:18.000000000 -0300
++++ psrc/plank-player-5.27.80+git20261005.f87e775/po/pt_BR/plank-player.po	2026-11-09 19:13:58.869905207 -0300
+@@ -26,3 +26,7 @@
+ #, kde-format
+ msgid "Press 'esc' or the [←] Back button to close"
+ msgstr "Pressione 'Esc' ou o botão Voltar [←] para fechar"
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "Este vídeo é mostrado em 2D: a área de trabalho recusou mostrá-lo em 3D (%1)."
+--- a/po/zh_CN/plank-player.po	2026-10-04 23:17:18.000000000 -0300
++++ psrc/plank-player-5.27.80+git20261005.f87e775/po/zh_CN/plank-player.po	2026-11-09 19:13:58.870443639 -0300
+@@ -26,3 +26,7 @@
+ #, kde-format
+ msgid "Press 'esc' or the [←] Back button to close"
+ msgstr "按 ESC 或 [←] 后退键以关闭"
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "此视频以平面方式显示：桌面拒绝以 3D 显示（%1）。"
+--- a/po/zh_TW/plank-player.po	2026-10-04 23:17:18.000000000 -0300
++++ psrc/plank-player-5.27.80+git20261005.f87e775/po/zh_TW/plank-player.po	2026-11-09 19:13:58.870549109 -0300
+@@ -26,3 +26,7 @@
+ #, kde-format
+ msgid "Press 'esc' or the [←] Back button to close"
+ msgstr "按下 Esc 或是「←」返回按鈕來關閉"
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "此影片以平面方式顯示：桌面拒絕以 3D 顯示（%1）。"
