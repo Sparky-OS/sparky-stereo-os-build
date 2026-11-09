@@ -18,7 +18,9 @@ printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://w
 printf 'deb https://deb.debian.org/debian testing contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian-extra-components.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 log_suffix=
-build_args=()
+# prepare-source-54.sh already produced the immutable source archives. A full
+# build would repack them after clean changes directory mtimes.
+build_args=(-b)
 if [ "${SPARKY_KWIN_RESUME:-0}" = 1 ]; then
     echo 'Resuming the retained +54 package build without cleaning or regenerating source.'
     (cd "$job/lc" && sha256sum -c source-closure.sha256)
