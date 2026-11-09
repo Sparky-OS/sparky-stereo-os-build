@@ -47,6 +47,7 @@ series.write_text(series.read_text().rstrip() + '\n' + '\n'.join(stereo) + '\n')
 subprocess.run(['dpkg-source', '--before-build', str(source)], check=True)
 dependencies = (
     'libstereo-declare-dev (>= 1.3.0) [amd64]',
+    'libstereo-dibr-dev (>= 1.17.1) [amd64]',
     'libspice-server-dev (>= 0.16.0+git20261010.acb8500-1+stereo3d2~) [amd64]',
 )
 for name in ['control', 'control-in']:
