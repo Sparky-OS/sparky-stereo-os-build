@@ -1,4 +1,10 @@
 -------------------------------------------------------------------------------
+  Version 20261109.1~sparky9~0 (2026-11-09)
+-------------------------------------------------------------------------------
+  * Regenerate sparky-stereo-only-ours from the published r1107a repository and the r1109a cohort, including the corrected urfkill build. The receipt-bound gl-stereo 0.4.3 build is deferred to the next round; the published 0.4.2 stays.
+  * The generated list adds 60 architecture-qualified names and drops 36; Debian and deb-multimedia builds of the added names are blocked.
+
+-------------------------------------------------------------------------------
   Version 20261106.1~sparky9~0 (2026-11-06)
 -------------------------------------------------------------------------------
   * The plain-HTTP block leaves, as 20261104.2 announced and Daniel decided (ORDER 400, 2026-11-04: "change them to https", "block http sources for now"; ORDER 413): apt 3.3.6, the fix for CVE-2026-109518 (DSA-6607-1), is in Debian testing. /etc/apt/apt.conf.d/00sparky-block-plain-http is no longer shipped and is removed on upgrade with dpkg-maintscript-helper rm_conffile (preinst, postinst and postrm, prior version 20261106.1~sparky9~0~, per dpkg-maintscript-helper(1)); a copy a person changed is kept as 00sparky-block-plain-http.dpkg-bak, which apt does not read. The postinst says which happened and why
