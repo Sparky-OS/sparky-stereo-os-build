@@ -25,6 +25,14 @@ if [ "${SPARKY_KWIN_RESUME:-0}" = 1 ]; then
     echo 'Resuming the retained +54 package build without cleaning or regenerating source.'
     (cd "$job/lc" && sha256sum -c source-closure.sha256)
     [ "$(dpkg-parsechangelog -l "$job/lc/source/debian/changelog" -S Version)" = '4:6.7.4-2+stereo3d54+lc1' ]
+    python3 - "$job/lc/source/obj-x86_64-linux-gnu" <<'OBJECTS'
+from pathlib import Path
+import sys
+for path in Path(sys.argv[1]).rglob('*.o'):
+    if path.stat().st_size == 0:
+        print(f'Discarding empty object left by the interrupted build: {path}')
+        path.unlink()
+OBJECTS
     log_suffix=-resume
     build_args=(-nc -b)
 fi
