@@ -45,7 +45,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-$PWD}
-VERSION=${VERSION:-20261106.1~sparky9~0+lc1}
+VERSION=${VERSION:-20261109.1~sparky9~0+lc1}
 # the oldest sparky-stereo-keyring with the repository's one key (the key has not changed since; 20261016 is published)
 KEYRING_VERSION=${KEYRING_VERSION:-20261008.1~sparky9~0+lc1}
 PKG=sparky-stereo-apt
