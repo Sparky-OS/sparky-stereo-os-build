@@ -1,4 +1,21 @@
 -------------------------------------------------------------------------------
+  Version 0.2.1 (2026-11-09)
+-------------------------------------------------------------------------------
+  * A failed hibernation says why (ORDER 446). systemd-hibernate, systemd-suspend-then-hibernate and systemd-hybrid-sleep
+    no longer say only that the service failed with "Repair starts it again": the engine reads the attempt's own
+    journal (systemd-sleep's lines of that invocation with their ERRNO= field and the SLEEP_STOP MESSAGE_ID, then the
+    kernel's lines between the attempt's first and last line, the device from _KERNEL_DEVICE) and names the cause: a
+    device that refused to freeze (virtio_pci_freeze returns -95 with a virtio-fs share, with the share's mount
+    points), programs that would not freeze, a locked-down kernel, no swap area big enough, no resume device, or the
+    kernel's or systemd-sleep's own line. Each says what to do; Repair (a new attempt, which sleeps the computer again)
+    is offered only where the cause can pass
+  * suspend-then-hibernate and hybrid sleep suspend instead when the hibernation fails and end well, so no
+    OnFailure= ran and the person was told nothing: their ExecStopPost runs the new `sleep-attempt UNIT`, which keeps
+    the reason for this boot, or ends the problem of the last attempt when this one worked
+  * New messages LOCAL72 to LOCAL95 in the nine languages; SPARKY_STEREO_PROBLEMS_JOURNAL names a journal folder to
+    read instead of the system's (tests keep a journal's export there)
+
+-------------------------------------------------------------------------------
   Version 0.2.0 (2026-11-08)
 -------------------------------------------------------------------------------
   * Dismiss and Bring back (ORDER 468; Daniel, 2026-11-08: "a dismiss on the problems of the computer so the person

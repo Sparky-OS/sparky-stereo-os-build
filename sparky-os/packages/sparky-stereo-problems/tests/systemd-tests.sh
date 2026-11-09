@@ -115,6 +115,57 @@ rm -f /etc/systemd/system/failer.service.d/other.conf
 systemctl daemon-reload
 systemctl reset-failed failer.service
 
+echo "== a failed hibernation says why (ORDER 446); the attempt's lines are written by a unit that logs as systemd-sleep"
+# the real systemd-sleep needs a kernel to hibernate; these units log what it logs (SyslogIdentifier, the <3> priority
+# prefix) and end as it ends. The kernel's own lines are read from a fixture in sleep-tests.sh: no kernel is asked here
+SLEEPERR='<3>Failed to find location to hibernate to: No space left on device'
+fakesleep() {
+	mkdir -p /etc/systemd/system/$1.d
+	printf '[Service]\nType=oneshot\nSyslogIdentifier=systemd-sleep\nExecStart=\nExecStart=/bin/sh -c "echo \\"%s\\"; exit %s"\n' "$SLEEPERR" "$2" >/etc/systemd/system/$1.d/zz-fake.conf
+}
+HIB=systemd-hibernate.service
+STH=systemd-suspend-then-hibernate.service
+fakesleep $HIB 1
+systemctl daemon-reload
+check "the top-level drop-in names the handler for the sleep unit" "systemctl show -p OnFailure $HIB | grep -qx 'OnFailure=sparky-stereo-problems-failed@$HIB'"
+systemctl start $HIB 2>/dev/null
+H=$RUN/${P}_$HIB.json
+check "a failed hibernation is kept for this boot by the handler" "waitfor '[ -f $H ]' 30"
+check "it says what could not be done and why, from the attempt's own journal line, not only that the service failed" "pyck $H 'd[\"message\"] == \"LOCAL72\" and d[\"args\"][1][0] == \"LOCAL81\" and \"No space left on device\" in d[\"args\"][1][1]'"
+check "the problem is shown with the reason and what to do" "$B list | grep -qF 'The computer could not hibernate: no swap area is big enough for the memory image (Failed to find location to hibernate to: No space left on device). Make the swap area'"
+check "it does not say that Repair starts it again, and it offers no repair for a cause that stays" "! $B text --boot $P $HIB | grep -qF 'Repair starts it again' && pyck $H 'd[\"repair\"] == []'"
+journalctl --sync 2>/dev/null
+SID=$($B message-id $P LOCAL72)
+check "the event is in the journal with the message's MESSAGE_ID and the reason as fields" "journalctl -o json MESSAGE_ID=\$SID | python3 -c 'import json,sys; e=[json.loads(l) for l in sys.stdin]; sys.exit(0 if any(x.get(\"SPARKY_PROBLEM_KEY\") == \"$HIB\" and x.get(\"SPARKY_ARG_A\") == \"hibernate\" and \"No space\" in x.get(\"SPARKY_ARG_B\", \"\") for x in e) else 1)'"
+check "journalctl -x explains it from the catalog" "journalctl -x MESSAGE_ID=\$SID --no-pager | grep -q 'The computer could not hibernate: no swap area is big enough'"
+LANG=de_DE.UTF-8 journalctl -x MESSAGE_ID=$SID --no-pager >/tmp/x-sleep-de.txt 2>&1
+check "and in German from the German catalog (its arguments are the journal's fields, in English: journalctl -x fills them in)" "grep -q 'Der Computer konnte nicht hibernate: ' /tmp/x-sleep-de.txt"
+printf '[Service]\nExecStart=\nExecStart=/bin/true\n' >/etc/systemd/system/$HIB.d/zz-fake.conf
+systemctl daemon-reload
+systemctl start $HIB 2>/dev/null
+$B list >/dev/null
+check "a hibernation that works again ends it (systemd no longer has the unit as failed)" "[ ! -f $H ]"
+rm -rf /etc/systemd/system/$HIB.d
+systemctl daemon-reload
+systemctl reset-failed $HIB 2>/dev/null
+
+echo "== suspend-then-hibernate that falls back to suspending ends well: its ExecStopPost still tells"
+check "the package's drop-in runs the engine after the service" "systemctl show -p ExecStopPost $STH | grep -q 'sparky-stereo-problems sleep-attempt'"
+check "the same for hybrid sleep" "systemctl show -p ExecStopPost systemd-hybrid-sleep.service | grep -q 'sparky-stereo-problems sleep-attempt'"
+fakesleep $STH 0
+systemctl daemon-reload
+systemctl start $STH 2>/dev/null
+S=$RUN/${P}_$STH.json
+check "the service ended well (no OnFailure ran) and the failed hibernation is kept" "systemctl is-failed --quiet $STH; [ \$? != 0 ] && waitfor '[ -f $S ]' 30"
+check "with the reason and no unit, so no unit state can end it early" "pyck $S 'd[\"args\"][1][0] == \"LOCAL81\" and d.get(\"unit\") is None'"
+check "it stays listed after the unit went inactive" "$B list | grep -qF 'The computer could not hibernate after suspending: no swap area is big enough'"
+printf '[Service]\nExecStart=\nExecStart=/bin/true\n' >/etc/systemd/system/$STH.d/zz-fake.conf
+systemctl daemon-reload
+systemctl start $STH 2>/dev/null
+check "the next attempt that works ends it" "waitfor '[ ! -f $S ]' 30"
+rm -rf /etc/systemd/system/$STH.d
+systemctl daemon-reload
+
 echo "== the stores keep their own entries only (a flat store)"
 check "no subfolder and no dot-file is left in the machine's store" "[ -z \"\$(find /var/lib/sparky-stereo-problems -mindepth 1 -not -name .lock -name '.*')\" ] && [ -z \"\$(find /var/lib/sparky-stereo-problems -mindepth 1 -type d)\" ]"
 

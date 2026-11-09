@@ -49,6 +49,39 @@ Repairing the machine's problems runs through `pkexec` and the polkit action `or
 `/usr/lib/systemd/system/service.d/50-sparky-stereo-problems.conf` names `sparky-stereo-problems-failed@%N.service` in `OnFailure=` for every service (systemd.unit(5), "Top level drop-ins with template units"; the handler's own instances have the drop-in masked).
 The handler keeps the failure for this boot with the service's last lines and `systemctl restart` as its repair; the problem is over when systemd no longer has the unit as failed.
 
+## A failed hibernation says why (0.2.1, ORDER 446)
+
+systemd-hibernate, systemd-suspend-then-hibernate and systemd-hybrid-sleep are failed services like any other, but "it stopped with exit status 1, Repair starts it again" is wrong for them: Repair hibernates again, and a device that cannot freeze refuses every time.
+For these three units the handler reads the attempt's own journal and keeps `The computer could not hibernate: REASON.` with what to do.
+
+What is read, in this order (the first that applies is the reason):
+
+- systemd-sleep's lines of the unit's invocation (`SYSLOG_IDENTIFIER=systemd-sleep`, matched by `INVOCATION_ID` or `_SYSTEMD_INVOCATION_ID`): its SLEEP_STOP message (`MESSAGE_ID=8811e6df2a8e40f58a94cea26f8ebf14`, `SD_MESSAGE_SLEEP_STOP`, with `ERRNO=` and `SLEEP=`) and any other line of priority error or worse (systemd v262 `src/sleep/sleep.c`: "Failed to put system to sleep. System resumed again: %m", "Failed to find location to hibernate to: %m", "No valid 'resume=' option found, refusing to hibernate.", "Failed to write mode to /sys/power/disk: %m").
+- the kernel's lines (`_TRANSPORT=kernel`) between the invocation's first line and five seconds after its last, so an earlier or later attempt is never read as this one's.
+  The device comes from the line itself (`virtio-pci 0000:00:05.0: PM: failed to freeze async: error -95`, which `_KERNEL_DEVICE=+pci:0000:00:05.0` carries as a field too).
+
+| Kind (message) | The kernel or systemd line that says it (source in v7.3.1 and systemd v262) | Repair |
+| --- | --- | --- |
+| lockdown (LOCAL80, fix LOCAL90) | `Lockdown: COMM: hibernation is restricted; see man kernel_lockdown.7`, security/lockdown/lockdown.c `lockdown_is_locked_down` (the check is `hibernation_available()`, kernel/power/hibernate.c) | none |
+| a virtio-fs share (LOCAL77, fix LOCAL86 with the share's mount points from `/proc/self/mountinfo`, LOCAL87 without) | `virtio-fs: suspend/resume not yet supported`, fs/fuse/virtio_fs.c `virtio_fs_freeze` (returns -EOPNOTSUPP), with the device lines below | none |
+| a device that refused (LOCAL76, fix LOCAL88) | `DEVICE: PM: failed to freeze|suspend|hibernate|quiesce|poweroff[ async| early| late| noirq]: error N`, drivers/base/power/main.c `pm_dev_err`; the driver's callback from `PM: bus_pm_freeze(): driver_freeze returns N` (`dpm_run_callback`) | none |
+| programs that would not freeze (LOCAL78 with their names from the `task:NAME state:` lines of `sched_show_task`, or LOCAL79; fix LOCAL89) | `Freezing user space processes failed after N seconds (N tasks refusing to freeze, wq_busy=N):`, kernel/power/process.c `try_to_freeze_tasks` (also "Freezing remaining freezable tasks" and "aborted") | retry, said as such |
+| no swap area big enough (LOCAL81, fix LOCAL91) | `Not enough free swap`, `Cannot find swap device, try swapon -a`, `Cannot get swap writer` (kernel/power/swap.c `swap_write_page`, `swsusp_write`), or systemd-sleep's `Failed to find location to hibernate to: %m` (ENOSPC is "No swap space available for hibernation", src/shared/hibernate-util.c) | none |
+| no resume device (LOCAL82, fix LOCAL92) | `No valid 'resume=' option found, refusing to hibernate.`, systemd v262 src/sleep/sleep.c | none |
+| the kernel's own error line (LOCAL83, fix LOCAL93) | any error line of the power code: `PM: hibernation: Some devices failed to power down, aborting` (kernel/power/hibernate.c `create_image`), `Some system devices failed to power down, aborting`, and the other `PM:` lines | retry, said as such |
+| systemd-sleep's line only (LOCAL84, fix LOCAL93) | its SLEEP_STOP message or another error line, with nothing from the kernel | retry, said as such |
+| nothing found (LOCAL85, fix LOCAL93) | the journal of that attempt holds no reason | retry, said as such |
+| the journal cannot be read (LOCAL94, fix LOCAL93) | `sd_journal_open` failed | retry, said as such |
+
+The retry (`systemctl restart UNIT`) is kept only where the cause can pass or is unknown; it puts the computer to sleep again, and the text says so.
+For a cause that stays, no repair is offered and the problem ends when systemd no longer has the unit as failed, which is the next hibernation that works.
+In `journalctl -x` the catalog's nested parts (the operation's name, the reason) are the journal's English fields: the sentence is in the reader's language, those parts are not.
+`SPARKY_STEREO_PROBLEMS_JOURNAL=DIR` makes the engine read a journal folder instead of the system's (tests keep fixtures there).
+
+suspend-then-hibernate and hybrid sleep suspend instead when the hibernation fails, and the service then ends well (systemd-sleep.c: "Couldn't hibernate, will try to suspend again."), so no `OnFailure=` runs.
+The package's drop-ins (`systemd-suspend-then-hibernate.service.d`, `systemd-hybrid-sleep.service.d`) run `sparky-stereo-problems sleep-attempt UNIT` in `ExecStopPost=`: it keeps the failed hibernation for this boot under the unit's key (no unit field, so no unit state ends it early), and ends it when a later attempt of that unit worked.
+A service that failed is left to its `OnFailure=` handler.
+
 ## Failures that outlive removal (0.1.1)
 
 A maintainer script at remove, purge or abort-install can keep an unresolved

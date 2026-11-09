@@ -132,6 +132,8 @@ pub const Ctx = struct {
     root: []const u8 = "",
     // folders searched in order; SPARKY_STEREO_PROBLEMS_CATALOG may name several, separated by ":"
     catalog_dir: []const u8 = "/usr/lib/systemd/catalog",
+    // a journal folder read instead of the system's (tests keep a journal's export there)
+    journal_dir: ?[]const u8 = null,
     euid: u32,
     under_pkexec: bool = false,
     // the last failure, in English (for support and the journal) and in the person's language
@@ -154,6 +156,7 @@ pub const Ctx = struct {
         if (!ctx.under_pkexec) {
             if (env("SPARKY_STEREO_ROOT")) |r| ctx.root = r;
             if (env("SPARKY_STEREO_PROBLEMS_CATALOG")) |c| ctx.catalog_dir = c;
+            if (env("SPARKY_STEREO_PROBLEMS_JOURNAL")) |d| ctx.journal_dir = d;
         }
         return ctx;
     }
@@ -1617,12 +1620,35 @@ pub fn unitProperty(ctx: *Ctx, unit: []const u8, property: []const u8) Failure!?
     return try ctx.a.dupe(u8, std.mem.span(out.?));
 }
 
-fn journalLines(ctx: *Ctx, invocation: ?[]const u8, unit: []const u8, max: usize) Failure![]const u8 {
+// The system journal, or the folder SPARKY_STEREO_PROBLEMS_JOURNAL names; the error of a failed open in ERR
+fn journalOpen(ctx: *Ctx, err_out: *c_int) Failure!?*anyopaque {
     var j: ?*anyopaque = null;
-    const r = sys.sd_journal_open(&j, sys.SD_JOURNAL_LOCAL_ONLY | sys.SD_JOURNAL_SYSTEM);
-    if (r < 0) return cat(ctx.a, &.{ "(the system journal could not be read: ", strerror(-r), ")" });
+    const r = if (ctx.journal_dir) |d|
+        sys.sd_journal_open_directory(&j, try z(ctx.a, d), 0)
+    else
+        sys.sd_journal_open(&j, sys.SD_JOURNAL_LOCAL_ONLY | sys.SD_JOURNAL_SYSTEM);
+    if (r < 0) {
+        err_out.* = -r;
+        return null;
+    }
+    return j;
+}
+
+// The value of the journal entry's field NAME
+fn jfield(ctx: *Ctx, j: *anyopaque, name: [*:0]const u8) Failure!?[]const u8 {
+    var data: ?[*]const u8 = null;
+    var len: usize = 0;
+    if (sys.sd_journal_get_data(j, name, &data, &len) < 0) return null;
+    const s = data.?[0..len];
+    const eq = std.mem.indexOfScalar(u8, s, '=') orelse return null;
+    return try ctx.a.dupe(u8, s[eq + 1 ..]);
+}
+
+fn journalLines(ctx: *Ctx, invocation: ?[]const u8, unit: []const u8, max: usize) Failure![]const u8 {
+    var open_err: c_int = 0;
+    const j = (try journalOpen(ctx, &open_err)) orelse return cat(ctx.a, &.{ "(the system journal could not be read: ", strerror(open_err), ")" });
     defer sys.sd_journal_close(j);
-    const jj = j.?;
+    const jj = j;
     const matches = if (invocation) |inv|
         [2][]const u8{ try cat(ctx.a, &.{ "_SYSTEMD_INVOCATION_ID=", inv }), try cat(ctx.a, &.{ "INVOCATION_ID=", inv }) }
     else
@@ -1643,12 +1669,341 @@ fn journalLines(ctx: *Ctx, invocation: ?[]const u8, unit: []const u8, max: usize
     return std.mem.join(ctx.a, "\n", lines.items);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// A failed sleep (ORDER 446): why systemd-hibernate, systemd-suspend-then-hibernate or systemd-hybrid-sleep failed, read from
+// that attempt's own journal: the lines of the unit's invocation (systemd-sleep's, with its ERRNO= field and the
+// MESSAGE_ID of sd-messages.h SD_MESSAGE_SLEEP_STOP), then the kernel's lines (_TRANSPORT=kernel, the device in
+// _KERNEL_DEVICE) between the attempt's first line and its last. The kernel's formats are those of kernel/power/*.c,
+// drivers/base/power/main.c and security/lockdown/lockdown.c; README.md lists each with its source line.
+
+const sleep_stop_id = "8811e6df2a8e40f58a94cea26f8ebf14";
+
+const SleepUnit = struct { unit: []const u8, phrase: []const u8 };
+const sleep_units = [_]SleepUnit{
+    .{ .unit = "systemd-hibernate.service", .phrase = "LOCAL73" },
+    .{ .unit = "systemd-suspend-then-hibernate.service", .phrase = "LOCAL74" },
+    .{ .unit = "systemd-hybrid-sleep.service", .phrase = "LOCAL75" },
+};
+
+pub fn sleepPhrase(unit: []const u8) ?[]const u8 {
+    for (sleep_units) |s| if (std.mem.eql(u8, s.unit, unit)) return s.phrase;
+    return null;
+}
+
+pub const SleepKind = enum { lockdown, virtiofs, device, tasks, swap, resume_device, kernel_line, sleep_line, unreadable, none };
+
+pub const SleepWhy = struct {
+    kind: SleepKind = .none,
+    // the failing devices as the kernel names them ("virtio-pci 0000:00:05.0")
+    devices: []const []const u8 = &.{},
+    callback: []const u8 = "",
+    verb: []const u8 = "",
+    error_number: []const u8 = "",
+    tasks: []const []const u8 = &.{},
+    // the line that says it, for the kinds that quote one
+    line: []const u8 = "",
+    // systemd-sleep itself reported an error (its SLEEP_STOP message or another error line)
+    sleep_error: bool = false,
+};
+
+fn contains(hay: []const u8, needle: []const u8) bool {
+    return std.mem.indexOf(u8, hay, needle) != null;
+}
+
+fn addUnique(ctx: *Ctx, list: *std.ArrayList([]const u8), item: []const u8) Failure!void {
+    for (list.items) |x| if (std.mem.eql(u8, x, item)) return;
+    try list.append(ctx.a, item);
+}
+
+pub fn sleepReason(ctx: *Ctx, unit: []const u8, invocation: ?[]const u8) Failure!SleepWhy {
+    var why = SleepWhy{};
+    var open_err: c_int = 0;
+    const j = (try journalOpen(ctx, &open_err)) orelse {
+        why.kind = .unreadable;
+        why.line = strerror(open_err);
+        return why;
+    };
+    defer sys.sd_journal_close(j);
+    const matches = if (invocation) |inv|
+        [2][]const u8{ try cat(ctx.a, &.{ "_SYSTEMD_INVOCATION_ID=", inv }), try cat(ctx.a, &.{ "INVOCATION_ID=", inv }) }
+    else
+        [2][]const u8{ try cat(ctx.a, &.{ "_SYSTEMD_UNIT=", unit }), try cat(ctx.a, &.{ "UNIT=", unit }) };
+    _ = sys.sd_journal_add_match(j, matches[0].ptr, matches[0].len);
+    _ = sys.sd_journal_add_disjunction(j);
+    _ = sys.sd_journal_add_match(j, matches[1].ptr, matches[1].len);
+    _ = sys.sd_journal_seek_head(j);
+    var start: u64 = 0;
+    var end: u64 = 0;
+    var stop_line: []const u8 = "";
+    var other_line: []const u8 = "";
+    while (sys.sd_journal_next(j) > 0) {
+        var us: u64 = 0;
+        if (sys.sd_journal_get_realtime_usec(j, &us) < 0) continue;
+        if (start == 0) start = us;
+        end = us;
+        const ident = (try jfield(ctx, j, "SYSLOG_IDENTIFIER")) orelse continue;
+        if (!std.mem.eql(u8, ident, "systemd-sleep")) continue;
+        const prio = std.fmt.parseInt(u8, (try jfield(ctx, j, "PRIORITY")) orelse "6", 10) catch 6;
+        if (prio > 3) continue;
+        const msg = (try jfield(ctx, j, "MESSAGE")) orelse continue;
+        const id = (try jfield(ctx, j, "MESSAGE_ID")) orelse "";
+        if (std.mem.eql(u8, id, sleep_stop_id)) {
+            if (stop_line.len == 0) stop_line = msg;
+        } else if (other_line.len == 0) other_line = msg;
+    }
+    why.sleep_error = stop_line.len > 0 or other_line.len > 0;
+    if (start == 0) return why;
+
+    var devices: std.ArrayList([]const u8) = .empty;
+    var tasks: std.ArrayList([]const u8) = .empty;
+    var virtiofs = false;
+    var cb_from_dpm = false;
+    var tasks_failed = false;
+    var lockdown_line: []const u8 = "";
+    var swap_line: []const u8 = "";
+    var kernel_line: []const u8 = "";
+    sys.sd_journal_flush_matches(j);
+    const kernel = "_TRANSPORT=kernel";
+    _ = sys.sd_journal_add_match(j, kernel.ptr, kernel.len);
+    _ = sys.sd_journal_seek_realtime_usec(j, start);
+    while (sys.sd_journal_next(j) > 0) {
+        var us: u64 = 0;
+        if (sys.sd_journal_get_realtime_usec(j, &us) < 0) continue;
+        if (us < start) continue;
+        if (us > end + 5_000_000) break;
+        const msg = (try jfield(ctx, j, "MESSAGE")) orelse continue;
+        const prio = std.fmt.parseInt(u8, (try jfield(ctx, j, "PRIORITY")) orelse "6", 10) catch 6;
+        // drivers/base/power/main.c pm_dev_err: "PM: failed to freeze async: error -95", after the device's name
+        if (std.mem.indexOf(u8, msg, ": PM: failed to ")) |at| {
+            const rest = msg[at + ": PM: failed to ".len ..];
+            try addUnique(ctx, &devices, msg[0..at]);
+            if (why.verb.len == 0) {
+                const e = std.mem.indexOfAny(u8, rest, " :") orelse rest.len;
+                why.verb = rest[0..e];
+                if (std.mem.indexOf(u8, rest, "error ")) |k| why.error_number = std.mem.trimStart(u8, rest[k + "error ".len ..], "-");
+            }
+            continue;
+        }
+        // dpm_run_callback and the bus's callback: "PM: pci_pm_freeze(): virtio_pci_freeze returns -95"
+        if (contains(msg, "(): ") and contains(msg, " returns ")) {
+            const a = std.mem.indexOf(u8, msg, "(): ").?;
+            const from = msg[a + "(): ".len ..];
+            const cb = from[0 .. std.mem.indexOf(u8, from, " returns ") orelse from.len];
+            const bus = msg[0..a];
+            // the driver's own callback is the one that is not dpm_run_callback's (which names the bus's)
+            const dpm = std.mem.endsWith(u8, bus, "dpm_run_callback");
+            if (why.callback.len == 0 or (cb_from_dpm and !dpm)) {
+                why.callback = cb;
+                cb_from_dpm = dpm;
+            }
+            continue;
+        }
+        // fs/fuse/virtio_fs.c virtio_fs_freeze
+        if (contains(msg, "virtio-fs: suspend/resume not yet supported")) virtiofs = true;
+        // kernel/power/process.c try_to_freeze_tasks: "Freezing user space processes failed after 20.003 seconds (1 tasks refusing to freeze, wq_busy=0):"
+        if (std.mem.startsWith(u8, msg, "Freezing ") and (contains(msg, " failed after ") or contains(msg, " aborted after "))) tasks_failed = true;
+        // sched_show_task, printed for each of them: "task:name   state:D ..."
+        if (std.mem.startsWith(u8, msg, "task:") and tasks_failed) {
+            const nm = std.mem.trim(u8, msg["task:".len .. std.mem.indexOf(u8, msg, " state:") orelse msg.len], " ");
+            if (nm.len > 0 and tasks.items.len < 6) try addUnique(ctx, &tasks, nm);
+        }
+        // security/lockdown/lockdown.c lockdown_is_locked_down: "Lockdown: systemd-sleep: hibernation is restricted; see man kernel_lockdown.7"
+        if (std.mem.startsWith(u8, msg, "Lockdown: ") and contains(msg, "hibernation is restricted")) lockdown_line = msg;
+        // kernel/power/swap.c
+        if (swap_line.len == 0 and (contains(msg, "Not enough free swap") or contains(msg, "Cannot find swap device") or contains(msg, "Cannot get swap writer"))) swap_line = msg;
+        // kernel/power/hibernate.c create_image, and any other error of the power code
+        if (kernel_line.len == 0 and prio <= 3 and (contains(msg, "failed to power down") or std.mem.startsWith(u8, msg, "PM: ") or contains(msg, " PM: "))) kernel_line = msg;
+    }
+    why.devices = devices.items;
+    why.tasks = tasks.items;
+    // the order is the order of certainty: a lock-down line is the whole reason, a device that refused is the reason
+    // whatever else the attempt printed
+    if (lockdown_line.len > 0) {
+        why.kind = .lockdown;
+        why.line = lockdown_line;
+    } else if (virtiofs and devices.items.len > 0) {
+        why.kind = .virtiofs;
+    } else if (devices.items.len > 0) {
+        why.kind = .device;
+    } else if (tasks_failed) {
+        why.kind = .tasks;
+    } else if (swap_line.len > 0) {
+        why.kind = .swap;
+        why.line = swap_line;
+    } else if (contains(other_line, "Failed to find location to hibernate to")) {
+        // systemd-sleep.c: ENOSPC is "No swap space available for hibernation" (hibernate-util.c)
+        why.kind = .swap;
+        why.line = other_line;
+    } else if (contains(other_line, "No valid 'resume=' option found")) {
+        why.kind = .resume_device;
+        why.line = other_line;
+    } else if (kernel_line.len > 0) {
+        why.kind = .kernel_line;
+        why.line = kernel_line;
+    } else if (stop_line.len > 0 or other_line.len > 0) {
+        why.kind = .sleep_line;
+        why.line = if (other_line.len > 0) other_line else stop_line;
+    }
+    return why;
+}
+
+// The mount points of every virtio-fs share, as "/a, /b" (empty when none is mounted)
+fn virtiofsMounts(ctx: *Ctx) Failure![]const u8 {
+    const text = readFile(ctx.a, try cat(ctx.a, &.{ ctx.root, "/proc/self/mountinfo" })) catch return "";
+    var out: std.ArrayList(u8) = .empty;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        const dash = std.mem.indexOf(u8, line, " - ") orelse continue;
+        if (!std.mem.startsWith(u8, line[dash + 3 ..], "virtiofs ")) continue;
+        var f = std.mem.tokenizeScalar(u8, line[0..dash], ' ');
+        var n: usize = 0;
+        while (f.next()) |x| : (n += 1) {
+            if (n != 4) continue;
+            if (out.items.len > 0) try out.appendSlice(ctx.a, ", ");
+            // mountinfo writes a space as \040
+            var i: usize = 0;
+            while (i < x.len) : (i += 1) {
+                if (x[i] == '\\' and i + 3 < x.len and std.mem.eql(u8, x[i + 1 .. i + 4], "040")) {
+                    try out.append(ctx.a, ' ');
+                    i += 3;
+                } else try out.append(ctx.a, x[i]);
+            }
+            break;
+        }
+    }
+    return out.items;
+}
+
+fn valuesOf(ctx: *Ctx, items: []const []const u8) Failure![]const Value {
+    const out = try ctx.a.alloc(Value, items.len);
+    for (items, 0..) |x, i| out[i] = .{ .string = x };
+    return out;
+}
+
+fn messageValue(ctx: *Ctx, key: []const u8, args: []const []const u8) Failure!Value {
+    var a: std.json.Array = .init(ctx.a);
+    try a.append(.{ .string = key });
+    for (args) |x| try a.append(.{ .string = x });
+    return .{ .array = a };
+}
+
+// The record of a failed sleep: what could not be done, the reason, what to do; the retry (systemctl restart UNIT) only
+// where the cause can pass
+fn sleepRecord(ctx: *Ctx, unit: []const u8, phrase: []const u8, why: SleepWhy) Failure!Record {
+    const devices = try std.mem.join(ctx.a, ", ", why.devices);
+    const step = if (why.callback.len > 0) why.callback else why.verb;
+    var reason: Value = undefined;
+    var fix: []const u8 = undefined;
+    var fix_args: []const []const u8 = &.{};
+    var retry = false;
+    switch (why.kind) {
+        .virtiofs => {
+            reason = try messageValue(ctx, "LOCAL77", &.{ devices, why.error_number });
+            const mounts = try virtiofsMounts(ctx);
+            fix = if (mounts.len > 0) "LOCAL86" else "LOCAL87";
+            if (mounts.len > 0) fix_args = &.{mounts};
+        },
+        .device => {
+            reason = try messageValue(ctx, "LOCAL76", &.{ devices, step, why.error_number });
+            fix = "LOCAL88";
+        },
+        .tasks => {
+            if (why.tasks.len > 0) {
+                reason = try messageValue(ctx, "LOCAL78", &.{try std.mem.join(ctx.a, ", ", why.tasks)});
+            } else reason = try messageValue(ctx, "LOCAL79", &.{});
+            fix = "LOCAL89";
+            retry = true;
+        },
+        .lockdown => {
+            reason = try messageValue(ctx, "LOCAL80", &.{});
+            fix = "LOCAL90";
+        },
+        .swap => {
+            reason = try messageValue(ctx, "LOCAL81", &.{why.line});
+            fix = "LOCAL91";
+        },
+        .resume_device => {
+            reason = try messageValue(ctx, "LOCAL82", &.{why.line});
+            fix = "LOCAL92";
+        },
+        .kernel_line => {
+            reason = try messageValue(ctx, "LOCAL83", &.{why.line});
+            fix = "LOCAL93";
+            retry = true;
+        },
+        .sleep_line => {
+            reason = try messageValue(ctx, "LOCAL84", &.{why.line});
+            fix = "LOCAL93";
+            retry = true;
+        },
+        .unreadable => {
+            reason = try messageValue(ctx, "LOCAL94", &.{why.line});
+            fix = "LOCAL93";
+            retry = true;
+        },
+        .none => {
+            reason = try messageValue(ctx, "LOCAL85", &.{});
+            fix = "LOCAL93";
+            retry = true;
+        },
+    }
+    const args = try ctx.a.alloc(Value, 2);
+    args[0] = try messageValue(ctx, phrase, &.{});
+    args[1] = reason;
+    const more = try ctx.a.alloc(Value, 1);
+    more[0] = try messageValue(ctx, fix, fix_args);
+    var retry_cmd: []const []const []const u8 = &.{};
+    if (retry) {
+        const cmd = try ctx.a.alloc([]const u8, 3);
+        cmd[0] = "systemctl";
+        cmd[1] = "restart";
+        cmd[2] = unit;
+        const one = try ctx.a.alloc([]const []const u8, 1);
+        one[0] = cmd;
+        retry_cmd = one;
+    }
+    return Record{
+        .package = engine_package,
+        .key = unit,
+        .message = "LOCAL72",
+        .args = args,
+        .more = more,
+        .severity = .failed,
+        .repair = retry_cmd,
+    };
+}
+
+// systemd-sleep that returned with the hibernation step failed while the service ended well (suspend-then-hibernate and
+// hybrid sleep suspend after a failed hibernation, and exit 0): the unit's ExecStopPost says it. A service that failed
+// is told by its OnFailure handler (serviceFailed); an attempt without a failure ends the problem of the last one
+pub fn sleepAttempt(ctx: *Ctx, unit_arg: []const u8) Failure!?Record {
+    var unit = unit_arg;
+    if (std.mem.indexOfScalar(u8, unit, '.') == null) unit = try cat(ctx.a, &.{ unit, ".service" });
+    const phrase = sleepPhrase(unit) orelse return fail(ctx, "LOCAL31", &.{ unit, engine_package });
+    const result = env("SERVICE_RESULT") orelse "success";
+    if (!std.mem.eql(u8, result, "success")) return null;
+    const why = try sleepReason(ctx, unit, env("INVOCATION_ID"));
+    if (!why.sleep_error) {
+        _ = try clear(ctx, .boot, engine_package, unit);
+        return null;
+    }
+    return try keep(ctx, .boot, try sleepRecord(ctx, unit, phrase, why));
+}
+
 // The handler of every failed system service (sparky-stereo-problems-failed@.service, from the top-level drop-in
 // service.d/50-sparky-stereo-problems.conf, systemd.unit(5) "Top level drop-ins with template units"): the failure is
 // kept for this boot with the service's own last lines, and its repair is systemd's restart
 pub fn serviceFailed(ctx: *Ctx, unit_arg: ?[]const u8) Failure!Record {
     var unit = env("MONITOR_UNIT") orelse unit_arg orelse return fail(ctx, "LOCAL31", &.{ "", engine_package });
     if (std.mem.indexOfScalar(u8, unit, '.') == null) unit = try cat(ctx.a, &.{ unit, ".service" });
+    if (sleepPhrase(unit)) |phrase| {
+        const why = try sleepReason(ctx, unit, env("MONITOR_INVOCATION_ID"));
+        var r = try sleepRecord(ctx, unit, phrase, why);
+        r.status = std.fmt.parseInt(i64, env("MONITOR_EXIT_STATUS") orelse "", 10) catch null;
+        r.output = try journalLines(ctx, env("MONITOR_INVOCATION_ID"), unit, 20);
+        r.unit = unit;
+        return keep(ctx, .boot, r);
+    }
     const result = env("MONITOR_SERVICE_RESULT") orelse "";
     const status = env("MONITOR_EXIT_STATUS") orelse "";
     var reason: std.json.Array = .init(ctx.a);
