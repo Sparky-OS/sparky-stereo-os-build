@@ -26,7 +26,7 @@ PREV=$(cd "$2" && pwd)
 SRC=$(cd "$3" && pwd)
 EXTRA=$(cd "$4" && pwd)
 if [ "${SPARKY_KWIN_RESUME:-0}" = 1 ]; then
-    : "${SOURCE_DATE_EPOCH:?resume needs the original build's source date}"
+    : "${SOURCE_DATE_EPOCH:?resume needs the original source date}"
     [ -f "$WORK/lc/source/obj-x86_64-linux-gnu/Makefile" ]
     [ -f "$WORK/lc/source-closure.sha256" ]
 else
