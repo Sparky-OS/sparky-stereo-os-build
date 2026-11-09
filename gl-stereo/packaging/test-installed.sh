@@ -43,6 +43,7 @@ done
 python3 tests/launcher.py
 python3 tests/settings-dialog.py
 python3 tests/saver-preferences.py
+python3 tests/saver-receipts.py
 python3 tests/saver-frames.py
 python3 tests/starfield.py
 python3 tests/rocks.py

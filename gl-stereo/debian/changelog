@@ -1,3 +1,26 @@
+gl-stereo (0.4.4-1) testing; urgency=medium
+
+  * gl-stereo-savers depends on the exact XScreenSaver build its receipts name:
+    the packages that own the saver executables and settings files the 132
+    receipts bind, each (= its version), written into the Depends at build
+    time from the files install-qualified.py just proved equal. An
+    XScreenSaver rebuild can no longer be paired with receipts proved on
+    another one (0.4.2 offered 1 of 132 savers against +stereo3d4+lc1).
+  * A saver the catalogue cannot offer is said, never just left out: the
+    controller's log and `catalogue.py CATALOGUE` name each one with the
+    differing file and both hashes, and the saver list shows "Not offered"
+    with the reason and a count, in the nine languages (German added to the
+    list's strings). Receipts also bind each saver's settings file now.
+  * install-qualified.py names every receipt whose layer or saver binary is
+    not the installed one, with both hashes, instead of the first id.
+  * New packaging/check-round-savers.py, the publication gate: a round whose
+    gl-stereo-savers would offer fewer savers than it ships against that
+    round's XScreenSaver, or does not pin it exactly, is refused. New test
+    tests/saver-receipts.py (red and green on synthetic rounds).
+  * No change to the layer or to how any saver draws.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 09 Nov 2026 20:51:38 -0300
+
 gl-stereo (0.4.3-1) testing; urgency=medium
 
   * X11: say it when the compositor did not double a declared window within
