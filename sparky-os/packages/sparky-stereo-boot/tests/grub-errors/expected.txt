@@ -1,0 +1,15 @@
+# case | GRUB's messages that must appear (count x text; a regular expression) | whether it stops at "Press any key to continue..." (key = stops, go = boots on)
+good | - | go
+background-missing | 3 x error: file `/opt/artwork/sparky-black.png' not found\. | go
+background-cut | 3 x error: png: unexpected end of data\. | go
+background-not-png | 3 x error: png: not a png file\. | go
+root-uuid-changed | 4 x error: no such device: 11111111-2222-3333-4444-555555555555\. | key
+font-missing | 1 x error: file `/boot/grub/fonts/sparky-30\.pf2' not found\. | go
+kernel-missing | 1 x error: file `/boot/vmlinuz-7\.3\.1-stereo3d16' not found\. ; 1 x error: you need to load the kernel first\. | key
+initrd-missing | 1 x error: file `/boot/initrd\.img-7\.3\.1-stereo3d16' not found\. | key
+grubenv-damaged | 1 x error: invalid environment block\. | go
+edition-variable | - | go
+gfxmode-list | - | go
+saved-entry-gone | - | go
+default-out-of-range | - | go
+next-entry-gone | - | go

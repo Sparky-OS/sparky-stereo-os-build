@@ -1,3 +1,10 @@
+20261108~sparky9~0 (2026-11-08)
+  * The KDE splash is ours by default (ORDER 472; Daniel, 2026-11-08: "on KDE - splash screen is not ours"): /etc/xdg/ksplashrc
+    names the Sparky Stereo Oxygen splash. KSplash takes Breeze when no ksplashrc says otherwise, and a global theme's defaults
+    file is only applied when the person applies the theme. KConfig reads /etc/xdg below the person's file, key by key: a new
+    user, or one whose ksplashrc is empty or has no Theme key, gets ours; a Theme the person chose (another global theme, None)
+    stays. The package never writes a person's file
+
 20261103.2~sparky9~0 (2026-11-03)
   * Pin Stereo APTus first in the new-user panel layout
 
