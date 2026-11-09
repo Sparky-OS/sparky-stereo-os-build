@@ -1,0 +1,10 @@
+sparky-stereo-browser (@DEBVERSION@) unstable; urgency=medium
+
+  * A canvas, video or image with image-rendering: pixelated shows its
+    picture: on the Wayland compositor such an image was drawn from an empty
+    texture (a black canvas, a green video), and the compositor could not
+    scale it nearest-neighbour. It is now drawn by the browser with sharp
+    pixels when it is scaled; CesiumJS and three.js pages that set the style
+    show their scene again.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@
