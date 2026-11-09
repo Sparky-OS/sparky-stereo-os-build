@@ -13,8 +13,17 @@ Description: zink binds the whole last block of a sparse buffer
  beside the storage buffer bug of patch 0035. The bind now covers the whole
  last block, which is what the buffer's memory requirement is.
  .
+ The bind then ends past the VkBuffer when the buffer was created with the
+ size GL asked for, and a bind may not (VUID-VkSparseMemoryBind-size-01100:
+ size must be less than or equal to the size of the resource minus
+ resourceOffset). NVIDIA's driver tolerates it; RADV does not (zink on the
+ Renoir iGPU: VK_ERROR_DEVICE_LOST and "Failed to reserve a PRT VA region").
+ A sparse VkBuffer is therefore created with its size rounded up to the block,
+ so the whole-block bind lies inside it.
+ .
  Tested by tests/egl-surfaceless-sparse-tail.c: red before (864 and 31424
- bytes read back as zero), green after, on zink over NVIDIA's Vulkan driver.
+ bytes read back as zero), green after, on zink over NVIDIA's Vulkan driver
+ and over RADV (without the buffer size change the test fails on RADV).
  Related: mesa#10220 (Paulo Zanoni, closed 2024-02-23) describes this bind
  and says NVIDIA's driver fails it; Mesa main (zink_bo.c, 2026-11-09) still
  has the MIN2 against width0.
@@ -39,3 +48,20 @@ Assisted-by: Claude Sonnet via Claude Code
     mem_bind.memory = commit ? (bo->mem ? bo->mem : bo->u.slab.real->mem) : VK_NULL_HANDLE;
     mem_bind.memoryOffset = bo_offset * ZINK_SPARSE_BUFFER_PAGE_SIZE + (commit ? (bo->mem ? 0 : bo->offset) : 0);
     mem_bind.flags = 0;
+--- a/src/gallium/drivers/zink/zink_resource.c
++++ b/src/gallium/drivers/zink/zink_resource.c
+@@ -332,8 +332,13 @@
+    if (bind & PIPE_BIND_QUERY_BUFFER)
+       bci.usage |= VK_BUFFER_USAGE_CONDITIONAL_RENDERING_BIT_EXT;
+ 
+-   if (templ->flags & PIPE_RESOURCE_FLAG_SPARSE)
++   if (templ->flags & PIPE_RESOURCE_FLAG_SPARSE) {
+       bci.flags |= VK_BUFFER_CREATE_SPARSE_BINDING_BIT | VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT;
++      /* a sparse buffer is bound in whole blocks of its memory requirements' alignment, the last one included, so the buffer
++       * is that long too: a bind past the end of the buffer is invalid (VUID-VkSparseMemoryBind-size-01100)
++       */
++      bci.size = align64(bci.size, ZINK_SPARSE_BUFFER_PAGE_SIZE);
++   }
+    return bci;
+ }
+ 

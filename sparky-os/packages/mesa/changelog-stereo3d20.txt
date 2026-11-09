@@ -13,8 +13,10 @@ mesa (26.1.6-1+stereo3d20) unstable; urgency=medium
     the buffer's size, and the Vulkan specification binds sparse buffers in
     whole blocks of the memory requirements' alignment; NVIDIA's driver
     ignores a bind that stops inside a block, so the tail read back as zero.
-    The bind now covers the whole block. Mesa issue 10220, reported by Paulo
-    Zanoni, describes the same bind.
+    The bind now covers the whole block, and a sparse buffer is created with
+    its size rounded up to the block so that the bind lies inside it (RADV
+    loses the device on a bind past the end of the buffer). Mesa issue 10220,
+    reported by Paulo Zanoni, describes the same bind.
   * Two zink tests run with the package's own tests (debian/tests):
     zink-ssbo64 and zink-sparse-tail build the programs against the installed
     libraries and run them through zink; a machine without a Vulkan device
