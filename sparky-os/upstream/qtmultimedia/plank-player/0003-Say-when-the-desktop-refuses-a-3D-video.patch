@@ -8,7 +8,7 @@ Qt Multimedia's Video declares the video to the desktop before it attaches anyth
 ---
 --- a/app/qml/main.qml	2026-11-09 19:13:09.426154517 -0300
 +++ psrc/plank-player-5.27.80+git20261005.f87e775/app/qml/main.qml	2026-11-09 19:13:58.869596117 -0300
-@@ -90,6 +90,24 @@
+@@ -90,6 +90,26 @@
              }
          }
  
@@ -19,13 +19,15 @@ Qt Multimedia's Video declares the video to the desktop before it attaches anyth
 +            anchors.left: parent.left
 +            anchors.right: parent.right
 +            height: failureText.implicitHeight + 16
-+            color: "#cc5a1a"
++            color: Kirigami.Theme.neutralBackgroundColor
++            border.color: Kirigami.Theme.neutralTextColor
++            border.width: 1
 +            Controls.Label {
 +                id: failureText
 +                anchors.fill: parent
 +                anchors.margins: 8
 +                wrapMode: Text.WordWrap
-+                color: "white"
++                color: Kirigami.Theme.textColor
 +                text: i18nc("@info %1 is the reason the desktop gave", "This video is shown flat: the desktop refused to show it in 3D (%1).", video.stereoLayerFailure)
 +            }
 +        }

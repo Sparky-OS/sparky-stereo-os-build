@@ -1,4 +1,5 @@
 #!/bin/bash
+# SUPERSEDED (ORDER 453b): history of the +stereo3d1 state; the shipped recipe is in sparky-os/upstream/qtmultimedia, see README.md beside this file
 # build the stereo dragonplayer: Debian's source + our two patches (inside the build image, as the user)
 set -e
 REPRO=/run/reproducible.py

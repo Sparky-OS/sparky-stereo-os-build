@@ -70,3 +70,13 @@ Design followed (Daniel's words, as recorded):
 - qml6-module-qtmultimedia Depends libgbm1 and libwayland-egl1 (the stereo layer loads them; `next-source.sh` changes that one stanza of debian/control, each text exactly once).
 - Build order unchanged (stereo-layer 1.17.1 is as in 2h and 2i).
 
+
+## ORDER 453 and 453b: the players show a refused 3D declaration
+
+- `patches/dragon/0009` (Dragon: a Kirigami InlineMessage over the video, warning type) and `../../upstream/qtmultimedia/plank-player/0003` (Plank Player: a banner in the theme's own neutral colours) show `stereoLayerFailure` of Qt Multimedia +stereo3d15 (patch 0046): "This video is shown flat: the desktop refused to show it in 3D (%1)." in the nine languages. Neither player has a stereo layer of its own: both sit on `VideoOutput`'s.
+- dragon 4:26.04.0-1+stereo3d10+lc1 and plank-player 5.27.80+git20261005.f87e775-1+stereo3d3+lc1 depend on Qt Multimedia +stereo3d15.
+- Build, from the published sources (`$R` the published tree, `$FLAT` a flat repository of the +stereo3d15 debs made with `dpkg-scanpackages -m . /dev/null > Packages` plus a `Release` that says `Origin: Sparky Stereo OS`, `$SIBS` the published edition's .deb list, one `/repo/pool/...` path per line):
+  1. `next-source.sh dragon $R/pool/main/d/dragon/dragon_26.04.0-1+stereo3d9+lc1.dsc OUT` and `next-source.sh plank-player $R/pool/main/p/plank-player/plank-player_5.27.80+git20261005.f87e775-1+stereo3d2+lc1.dsc OUT` (the published orig tarball is copied beside each .dsc);
+  2. `ROUND_SOURCES=qt6-multimedia build.sh dragon WORK OUT PREV $R ARCHIVE $FLAT $SIBS` (and `plank-player`). Without `ROUND_SOURCES` the link gate stops with "conflicting supplied package: libqt6multimedia6": the published +stereo3d14 and the +stereo3d15 of the flat repository are both supplied.
+- Plank Player needs no build image of its own here: the Lean Code container builds it like Dragon (the old `plank-build:1` of `upstream/qtmultimedia/packaging/build-plank-player.sh` is history).
+- A source is dated by this folder's last commit (ORDER 421b), so a commit in this folder moves the changelog date of the next build; the staged 453b build used SOURCE_DATE_EPOCH 1794262505 (commit 988b8ef1).

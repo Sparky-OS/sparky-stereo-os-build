@@ -1,0 +1,19 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] Offer Swap Eyes only for a video shown in 3D
+Origin: other, Sparky Stereo OS (ORDER 453b)
+Forwarded: no
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+
+The per-file correction of the eyes is not offered on 2D content (Daniel, 2026-10-23: "of course no"; memory never-touch-the-user-file: "A correction for 3D is not offered on 2D content"). Plank Player's 3D menu listed Swap Eyes as enabled for every video, a flat clip included. The entry now needs a video that is shown in 3D, like the View entries; a video that says nothing about being 3D becomes one when the person picks its Input Format, and the entry is enabled from then on.
+---
+--- a/app/qml/StereoMenu.qml
++++ b/app/qml/StereoMenu.qml
+@@ -45,7 +45,7 @@
+         for (var i = 0; i < formats.length; ++i) {
+             list.push({ group: i18nc("@title:group 3D video input format selector", "Input Format"), text: formats[i].text, kind: "input", value: formats[i].value, needsStereo: false })
+         }
+-        list.push({ group: i18nc("@title:group 3D video eye selector", "Eyes"), text: i18nc("@action:button 3D video, the left and right views are the other way round", "Swap Eyes"), kind: "swap", value: 0, needsStereo: false })
++        list.push({ group: i18nc("@title:group 3D video eye selector", "Eyes"), text: i18nc("@action:button 3D video, the left and right views are the other way round", "Swap Eyes"), kind: "swap", value: 0, needsStereo: true })
+         return list
+     }
+ 
