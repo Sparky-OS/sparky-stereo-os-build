@@ -23,7 +23,9 @@ for patch in 0029-glx-zink-through-dri3-while-the-compositor-announces-stereo.pa
              0031-egl-export-dma-buf-fails-when-the-driver-made-none.patch \
              0032-egl-x11-list-the-child-window-and-keep-a-stereo-window-one-eye-wide.patch \
              0033-vulkan-x11-list-the-child-window.patch \
-             0034-egl-x11-zink-through-dri3-while-the-compositor-announces-stereo.patch; do
+             0034-egl-x11-zink-through-dri3-while-the-compositor-announces-stereo.patch \
+             0035-zink-keep-the-descriptor-binding-of-the-64-bit-storage-buffer-view.patch \
+             0036-zink-bind-the-whole-last-block-of-a-sparse-buffer.patch; do
     cp "$recipe/patches/$patch" source/debian/patches/
     printf '%s\n' "$patch" >> source/debian/patches/series
 done

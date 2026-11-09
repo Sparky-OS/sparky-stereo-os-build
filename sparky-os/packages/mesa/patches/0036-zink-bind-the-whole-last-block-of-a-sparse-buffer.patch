@@ -1,0 +1,41 @@
+Description: zink binds the whole last block of a sparse buffer
+ ARB_sparse_buffer lets a commit reach the end of a buffer without being a
+ whole number of pages. buffer_commit_single() cut the Vulkan bind to the
+ buffer's size (width0), so the last bind of a buffer of 864 bytes, or of one
+ with a partial last page, was 864 or 31424 bytes long. A Vulkan sparse bind is
+ made of blocks of VkMemoryRequirements::alignment (65536 here) and the memory
+ the buffer needs is that long. NVIDIA's proprietary driver ignored such a bind
+ (the pages stayed unbacked and read as zero, without an error), and the
+ validation layers report VUID-VkSparseMemoryBind-resourceOffset-09491.
+ .
+ It showed on the RTX 3060 (615.71.09) as a point cloud whose batch
+ descriptors and point arrays read zero: the cloud loaded and drew nothing,
+ beside the storage buffer bug of patch 0035. The bind now covers the whole
+ last block, which is what the buffer's memory requirement is.
+ .
+ Tested by tests/egl-surfaceless-sparse-tail.c: red before (864 and 31424
+ bytes read back as zero), green after, on zink over NVIDIA's Vulkan driver.
+ Related: mesa#10220 (Paulo Zanoni, closed 2024-02-23) describes this bind
+ and says NVIDIA's driver fails it; Mesa main (zink_bo.c, 2026-11-09) still
+ has the MIN2 against width0.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-09
+Assisted-by: Claude Sonnet via Claude Code
+---
+--- a/src/gallium/drivers/zink/zink_bo.c
++++ b/src/gallium/drivers/zink/zink_bo.c
+@@ -829,7 +829,12 @@
+ 
+    VkSparseMemoryBind mem_bind;
+    mem_bind.resourceOffset = offset;
+-   mem_bind.size = MIN2(res->base.b.width0 - offset, size);
++   /* GL lets a commit reach the end of the buffer without being a whole number of pages (ARB_sparse_buffer), but a Vulkan
++    * sparse bind is made of blocks of VkMemoryRequirements::alignment, and the memory the buffer needs is that long:
++    * bind the whole last block. NVIDIA's driver ignores a bind that stops inside a block (the pages stay unbacked and
++    * read as zero) and the validation layers report VUID-VkSparseMemoryBind-resourceOffset-09491.
++    */
++   mem_bind.size = MIN2(align64(res->base.b.width0, ZINK_SPARSE_BUFFER_PAGE_SIZE) - offset, size);
+    mem_bind.memory = commit ? (bo->mem ? bo->mem : bo->u.slab.real->mem) : VK_NULL_HANDLE;
+    mem_bind.memoryOffset = bo_offset * ZINK_SPARSE_BUFFER_PAGE_SIZE + (commit ? (bo->mem ? 0 : bo->offset) : 0);
+    mem_bind.flags = 0;
