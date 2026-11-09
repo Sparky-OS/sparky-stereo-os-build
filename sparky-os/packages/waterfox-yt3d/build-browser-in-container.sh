@@ -30,6 +30,10 @@ open('debian/changelog', 'w').write(lc + top + old[old.index('sparky-stereo-brow
 PY
 grep -q "^MOZ_SOURCE_CHANGESET=$OLDCOMMIT\$" debian/browser-build.env
 sed -i "s/^MOZ_SOURCE_CHANGESET=.*/MOZ_SOURCE_CHANGESET=$COMMIT/" debian/browser-build.env
+# The build ID is how a profile learns that its cached interface is old: the same ID over a new package kept the interface of the
+# first build, and menus added later never appeared. Every release gets its own, dated by the recipe, always later than the one before.
+grep -q '^MOZ_BUILD_DATE=' debian/browser-build.env
+sed -i "s/^MOZ_BUILD_DATE=.*/MOZ_BUILD_DATE=$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y%m%d%H%M%S)/" debian/browser-build.env
 grep -q "\"browser_commit\": \"$OLDCOMMIT\"" debian/cargo-baseline.json
 sed -i "s/\"browser_commit\": \"$OLDCOMMIT\"/\"browser_commit\": \"$COMMIT\"/" debian/cargo-baseline.json
 cd ..
