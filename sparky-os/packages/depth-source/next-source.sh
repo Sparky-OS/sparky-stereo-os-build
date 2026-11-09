@@ -37,6 +37,14 @@ qt6-multimedia)
 	fi
 	;;
 dragon)
+	# a successor of the published +stereo3d9+lc1 (ORDER 453): its series holds 0001 to 0008 and the translations; it needs the Qt Multimedia that says a refused declaration (+stereo3d15, stereoLayerFailure)
+	if [ "$PUBLISHED_VERSION" = '4:26.04.0-1+stereo3d9+lc1' ] || [ "$PUBLISHED_VERSION" = '26.04.0-1+stereo3d9+lc1' ]; then
+		NEXT=4:26.04.0-1+stereo3d10
+		ITEMS=$HERE/changelog/dragon-stereo3d10.items
+		depends=(--depends 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d14+lc1),' 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d15+lc1),'
+			--depends 'Depends: libqt6multimedia6 (>= 6.11.2-3+stereo3d14+lc1),' 'Depends: libqt6multimedia6 (>= 6.11.2-3+stereo3d15+lc1),'
+			--depends 'qml6-module-qtmultimedia (>= 6.11.2-3+stereo3d14+lc1),' 'qml6-module-qtmultimedia (>= 6.11.2-3+stereo3d15+lc1),')
+	else
 	NEXT=4:26.04.0-1+stereo3d9
 	depends=(--depends 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d10+lc1),' 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d14+lc1),'
 		--depends 'Depends: libqt6multimedia6 (>= 6.11.2-3+stereo3d10+lc1),' 'Depends: libqt6multimedia6 (>= 6.11.2-3+stereo3d14+lc1),'
@@ -44,6 +52,7 @@ dragon)
 		--depends $'         ${misc:Depends},' $'         kde-cli-tools,\n         kscreen,\n         libstereo-layer1 (>= 1.17.1),\n         mkvtoolnix,\n         ${misc:Depends},'
 		--depends 'libkf6windowsystem-dev (>= 6.12.0~),' $'libkf6windowsystem-dev (>= 6.12.0~),\n               libstereo-av-dev (>= 1.17.1),\n               libstereo-policy-dev (>= 1.17.1),'
 		--depends 'qt6-multimedia-dev (>= 6.11.2-3+stereo3d14+lc1),' $'qt6-multimedia-dev (>= 6.11.2-3+stereo3d14+lc1), ffmpeg <!nocheck>, mkvtoolnix <!nocheck>,')
+	fi
 	;;
 *) echo "unknown package $PKG" >&2; exit 2 ;;
 esac
