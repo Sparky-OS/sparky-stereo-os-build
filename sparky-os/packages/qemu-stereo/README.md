@@ -20,8 +20,10 @@ The source bundles the projection engine and preservation plan. Firmware under
 inputs until their respective consumers have independent qualification.
 
 QEMU regenerates `debian/control` from `debian/control-in`. Both must retain the
-checker dependencies, `libstereo-declare-dev` and the edition's minimum SPICE
-version; changing only the generated file can produce a source package that
+checker dependencies, `libstereo-declare-dev`, `libstereo-dibr-dev` (the GTK display
+draws a guest's picture with its depth through libstereo-dibr; its runtime
+`Depends: libstereo-dibr1 (>= 1.17.1)` comes from the library's shlibs file) and the
+edition's minimum SPICE version; changing only the generated file can produce a source package that
 fails its next clean rebuild. The shared preparation function accepts simple
 extra package names; versioned, architecture-qualified relations are added
 through the control-stanza helper to both files.
