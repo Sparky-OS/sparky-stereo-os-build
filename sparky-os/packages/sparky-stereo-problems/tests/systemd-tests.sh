@@ -138,7 +138,7 @@ journalctl --sync 2>/dev/null
 SID=$($B message-id $P LOCAL72)
 check "the event is in the journal with the message's MESSAGE_ID and the reason as fields" "journalctl -o json MESSAGE_ID=\$SID | python3 -c 'import json,sys; e=[json.loads(l) for l in sys.stdin]; sys.exit(0 if any(x.get(\"SPARKY_PROBLEM_KEY\") == \"$HIB\" and x.get(\"SPARKY_ARG_A\") == \"hibernate\" and \"No space\" in x.get(\"SPARKY_ARG_B\", \"\") for x in e) else 1)'"
 check "journalctl -x explains it from the catalog" "journalctl -x MESSAGE_ID=\$SID --no-pager | grep -q 'The computer could not hibernate: no swap area is big enough'"
-LANG=de_DE.UTF-8 journalctl -x MESSAGE_ID=\$SID --no-pager >/tmp/x-sleep-de.txt 2>&1
+LANG=de_DE.UTF-8 journalctl -x MESSAGE_ID=$SID --no-pager >/tmp/x-sleep-de.txt 2>&1
 check "and in German from the German catalog (its arguments are the journal's fields, in English: journalctl -x fills them in)" "grep -q 'Der Computer konnte nicht hibernate: ' /tmp/x-sleep-de.txt"
 printf '[Service]\nExecStart=\nExecStart=/bin/true\n' >/etc/systemd/system/$HIB.d/zz-fake.conf
 systemctl daemon-reload
