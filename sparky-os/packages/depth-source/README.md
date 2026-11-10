@@ -135,3 +135,8 @@ A settings read/write failure is visible in the banner, with the file named; med
 - The patch carries `tests/auto/unit/plugins/multimedia/ffmpeg/cudatextureconverter` (Linux, skips without NVIDIA). It was made against the source tree of the +stereo3d15+lc1 source; `next-source.sh` adds it to the series of a successor of +stereo3d14 with 0046.
 - Build as for +stereo3d15 (`next-source.sh qt6-multimedia PUBLISHED_+14.dsc OUT`, then `build.sh`); the source's date is this folder's last commit, so the staged +15 is made again after this commit, not before.
 
+
+## ORDER 497: Dragon Player's video takes the texture route on AMD
+
+- `patches/dragon/0013`: Harald Sitter's removal of Dragon's AMD texture hack (dragon master c30754882a, release/26.04 1f2f2942bc, after v26.04.0). v26.04.0's `main.cpp` set `QT_DISABLE_HW_TEXTURES_CONVERSION=1` when the OpenGL renderer string starts with "AMD " (QTBUG-138679), which makes Qt Multimedia's FFmpeg backend read every VA-API frame back into system memory (`Handle type: NoHandle`, `createTexturesFromMemory`); upstream cannot reproduce the Qt bug anymore. Plank Player has no such hack and takes `RhiTextureHandle`.
+- The staged dragon 4:26.04.0-1+stereo3d11+lc1 is rebuilt in place with 0013: `next-source.sh dragon` from the published +stereo3d9+lc1 .dsc as for 453c (0013 joins the series by itself), then `build.sh dragon` with the Qt Multimedia +stereo3d15 flat repository and `ROUND_SOURCES=qt6-multimedia`.
