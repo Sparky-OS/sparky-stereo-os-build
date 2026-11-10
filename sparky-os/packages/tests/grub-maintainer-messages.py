@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 PACKAGE = Path(__file__).resolve().parents[1] / 'sparky-stereo-grub-l10n'
-LANGUAGES = ('en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW')
+LANGUAGES = ('en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW')
 
 
 def messages(language):
