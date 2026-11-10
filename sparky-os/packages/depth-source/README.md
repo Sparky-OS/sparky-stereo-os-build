@@ -80,3 +80,37 @@ Design followed (Daniel's words, as recorded):
   2. `ROUND_SOURCES=qt6-multimedia build.sh dragon WORK OUT PREV $R ARCHIVE $FLAT $SIBS` (and `plank-player`). Without `ROUND_SOURCES` the link gate stops with "conflicting supplied package: libqt6multimedia6": the published +stereo3d14 and the +stereo3d15 of the flat repository are both supplied.
 - Plank Player needs no build image of its own here: the Lean Code container builds it like Dragon (the old `plank-build:1` of `upstream/qtmultimedia/packaging/build-plank-player.sh` is history).
 - A source is dated by this folder's last commit (ORDER 421b), so a commit in this folder moves the changelog date of the next build; the staged 453b build used SOURCE_DATE_EPOCH 1794262505 (commit 988b8ef1).
+
+## Inspect a player source before rebuilding
+
+Start from the archive's `.dsc`, Debian tarball and orig tarball, and inspect an unpublished successor separately.
+In the packaging container, list `debian/patches/series` and the top changelog entry with `tar -xOf PACKAGE.debian.tar.xz debian/patches/series` and `tar -xOf PACKAGE.debian.tar.xz debian/changelog`, then unpack with `dpkg-source -x PACKAGE.dsc SOURCE`.
+Check the `.dsc` checksums and the stage's `SHA256SUMS` before using either source.
+The published patch bytes and changelog must remain unchanged in the successor: its series extends the published series, and its changelog ends with the published changelog byte for byte.
+
+| Source | Player patches and successor additions |
+| --- | --- |
+| Dragon `+stereo3d9+lc1` to `+stereo3d10+lc1` | `upstream/qtmultimedia/dragon/0001`, `packages/spatial-video/patches/dragon-mvhevc.patch`, this folder's `patches/dragon/0002` through `0008`, and `dragon-3d-video.po.patch`; the successor adds `0009` |
+| Plank Player `+stereo3d2+lc1` to `+stereo3d3+lc1` | `upstream/qtmultimedia/plank-player/0001` and `0002`; the successor adds `0003` and `0004` |
+
+Paths in the table are relative to `sparky-os`, except the explicitly named paths in this folder.
+The `upstream/dragonplayer` and `upstream/plank-player` folders are superseded recipes.
+The accepted successor route is `next-source.sh` followed by this folder's `build.sh` for either player.
+Changing `upstream/qtmultimedia/packaging/plank-player-debian/control` alone does not change that route: `next-source.sh` modifies the published control file with exact dependency replacements.
+In `+stereo3d3+lc1`, both Qt Multimedia dependencies require `+stereo3d15~`; inspect the generated control file rather than inferring it from the older standalone packaging template.
+
+For player follow-ups, inspect these boundaries in the unpacked source:
+
+- Plank chooses the `org.kde.desktop` style in `app/main.cpp`, before loading `app/qml/main.qml`.
+  The style's QML module is required at startup even though this main QML file has no literal `import org.kde.desktop` line.
+- Plank's `app/qml/main.qml::onSourceChanged` resets `stereoInput` and `stereoSwapEyes` in the `+stereo3d3` source.
+  That source has no resume-position or per-file settings store; `app/main.cpp` supplies the `PlankPlayer` organisation and application names for a store in the application's configuration location.
+- Dragon's `src/qml/ControlsBar.qml::canOfferSave` already checks stereo content, the view, a local file and a changed packing or swap.
+  Test the generated menu item's visibility with the menu open: a `Kirigami.Action` inside a Qt Quick Controls `Menu` can have `visible: false` while its generated item remains visible and enabled.
+- Dragon's volume-wheel error is in `src/qml/PlayerPage.qml`, whose line changes when patches add content above it.
+  Upstream [merge request 86](https://invent.kde.org/multimedia/dragon/-/merge_requests/86), Erich Seifert's `ae56fa67c9d5ff4742136a25b0071d18a4f7f047`, corrects the `audioOutput` reference and restores its binding after scrolling.
+  Check the current upstream state before carrying it; preserve its author and the complete fix.
+  The other two reported sites are `src/qml/OverlayPopup.qml` (`backgroundSource`) and `src/qml/IconToolButton.qml` (an optional tooltip assigned to a string).
+
+Credits remain those of each source: Dragon names Max Howell, Ian Monroe and Harald Sitter in `src/main.cpp`; the overlay component names Marco Martin.
+Plank Player's `app/main.cpp` names Aditya Mehra.
