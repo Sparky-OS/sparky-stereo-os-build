@@ -6,7 +6,7 @@ import re
 import shlex
 import sys
 
-LANGUAGES = ('en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW')
+LANGUAGES = ('en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW')
 ARGUMENTS = {1: 1, 2: 1, 21: 2, 56: 2, 57: 0}
 
 
@@ -47,7 +47,7 @@ lang=${lang%%@*}
 case $lang in
 pt_BR|zh_CN|zh_TW) ;;
 zh*) lang=zh_CN ;;
-*) lang=${lang%%_*}; case $lang in pl|fr|de|ja|ko) ;; *) lang=en ;; esac ;;
+*) lang=${lang%%_*}; case $lang in pl|fr|de|es|ja|ko) ;; *) lang=en ;; esac ;;
 esac
 failure() {
 \tif [ "$1" = configure ]; then say 21 update-grub "$2"; else
