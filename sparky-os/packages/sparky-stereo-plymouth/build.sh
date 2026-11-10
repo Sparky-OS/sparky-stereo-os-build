@@ -89,5 +89,5 @@ TREE=$(cd "$HERE/../../.." && pwd)
 docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lean-standalone-sparky-stereo-plymouth" --ulimit core=0 --network none --platform linux/amd64 \
 	--user "$(id -u):$(id -g)" "${SPARKY_PROV_ARGS[@]}" -e HOME=/tmp -e PYTHONPATH="$TREE/sparky-os" \
 	-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-	-v "$TREE":"$TREE":ro -v "$D":"$D" -v "$OUT":"$OUT" "$IMAGE" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
+	-v "$TREE":"$TREE":ro -v "$D":"$D" -v "$OUT":"$OUT" "$IMAGE" sh -c 'python3 -m lean.standalone "$1" "$2" --authoring "$3" && cd "$2" && python3 -m lean.release check-debs ./*_all.deb' sh "$D" "$OUT" "$HERE"
 
