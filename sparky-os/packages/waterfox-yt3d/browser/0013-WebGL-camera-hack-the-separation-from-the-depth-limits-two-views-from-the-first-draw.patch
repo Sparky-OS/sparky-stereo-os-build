@@ -716,7 +716,7 @@ index bf46aba491..f3b1f53fab 100644
  ## The access keys for "Show Controls" and "Hide Controls" are the same
  ## because the two context-menu items are mutually exclusive.
 diff --git a/dom/canvas/ClientWebGLContext.cpp b/dom/canvas/ClientWebGLContext.cpp
-index e8c862b808..d864ad98c7 100644
+index e8c862b808..4d8c9ea61c 100644
 --- a/dom/canvas/ClientWebGLContext.cpp
 +++ b/dom/canvas/ClientWebGLContext.cpp
 @@ -28,11 +28,14 @@
@@ -883,7 +883,7 @@ index e8c862b808..d864ad98c7 100644
 +      u"browser the depth limits (kde_stereo_depth_v1), so no separation is "
 +      u"made up."_ns,
 +      "WebGL"_ns, false, true);
-+  RefPtr<dom::Document> doc = mCanvasElement->OwnerDoc();
++  dom::Document* doc = mCanvasElement->OwnerDoc();
 +  nsContentUtils::DispatchEventOnlyToChrome(
 +      doc, doc, u"MozStereoCanvasNoLimits"_ns, CanBubble::eYes,
 +      Cancelable::eNo);

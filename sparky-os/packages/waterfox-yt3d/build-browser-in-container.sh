@@ -8,7 +8,7 @@ set -euo pipefail
 : "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=${BROWSER_JOBS:-8}
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
-OLD=6.7.5-0+stereo3d13+lc1 NEW=6.7.5-0+stereo3d14 COMMIT=5f618506a2c765f64a62ac7103285fad5e7d36d0 OLDCOMMIT=6be1abb34e71b4352957a55f2db03c76d0d0c83d
+OLD=6.7.5-0+stereo3d13+lc1 NEW=6.7.5-0+stereo3d14 COMMIT=81488d318cf99c22ba60c6d5c595497dba428a9a OLDCOMMIT=6be1abb34e71b4352957a55f2db03c76d0d0c83d
 if [ -z "${BROWSER_RESUME:-}" ]; then
 cd /work && mkdir plain && cd plain
 cp /in/sparky-stereo-browser_6.7.5.orig.tar.xz "/in/sparky-stereo-browser_$OLD.dsc" "/in/sparky-stereo-browser_$OLD.debian.tar.xz" .
