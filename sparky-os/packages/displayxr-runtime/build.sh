@@ -21,7 +21,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=$(realpath -m "${1:?empty output folder}")
 CLONE=$(realpath "${2:?clone of Sparky-OS/displayxr-packaging}")
-PACKAGING_COMMIT=${3:-307eb47e61bd649605d4bbd409d3e886990183de}
+PACKAGING_COMMIT=${3:-5919e3be055ee2b1dc91698056d3719cfdde07d5}
 REPO=${REPO:-/var/tmp/sparky-repo-current}
 UPV=2.66.3
 RUNTIME_COMMIT=c96f08b7ca5b57418123da0741a4a7bd6346a402
