@@ -28,16 +28,10 @@ for p in 0035-zink-keep-the-descriptor-binding-of-the-64-bit-storage-buffer-view
 	cp "$HERE/patches/$p" "$W/overlay/patches/"
 	echo "$p" >> "$W/overlay/patches/series"
 done
-cp "$HERE/tests/egl-surfaceless-ssbo64.c" "$HERE/tests/egl-surfaceless-sparse-tail.c" "$HERE/zink-surfaceless" "$W/overlay/tests/"
+cp "$HERE/tests/egl-surfaceless-ssbo64.c" "$HERE/tests/egl-surfaceless-sparse-tail.c" "$HERE/zink-surfaceless" "$HERE/zink-ssbo64" "$HERE/zink-sparse-tail" "$W/overlay/tests/"
 cat "$W/published/debian/tests/control" - > "$W/overlay/tests/control" <<'CTL'
 
-Tests: zink-ssbo64
-Test-Command: debian/tests/zink-surfaceless egl-surfaceless-ssbo64
-Depends: build-essential, libegl1-mesa-dev, libgl1-mesa-dev, libegl-mesa0, libgl1-mesa-dri, mesa-vulkan-drivers
-Restrictions: skippable
-
-Tests: zink-sparse-tail
-Test-Command: debian/tests/zink-surfaceless egl-surfaceless-sparse-tail
+Tests: zink-ssbo64, zink-sparse-tail
 Depends: build-essential, libegl1-mesa-dev, libgl1-mesa-dev, libegl-mesa0, libgl1-mesa-dri, mesa-vulkan-drivers
 Restrictions: skippable
 CTL
