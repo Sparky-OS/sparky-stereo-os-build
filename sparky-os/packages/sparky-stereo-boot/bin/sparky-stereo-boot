@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/01
+# Last update 2026/11/09
 #
 # sparky-stereo-boot: the boot follows the saved choice of the main screen.
 #
@@ -15,6 +15,8 @@
 #   - the kernel line, through GRUB's environment block (no update-grub needed):
 #     plymouth.stereo= for the boot splash in the same 3D mode or stereo layout, and video=
 #     when the base mode is not the screen's preferred one, so the console keeps it too;
+#     each stereo output of plymouth.stereo= ends with popped= and sunk=, the main screen's depth limits (the person's
+#     kwinrc [StereoDepth] limits built on the display, as KWin resolves them), so the splash stays inside them;
 #   - the login screen: the settings copied to the greeter accounts of Plasma Login Manager
 #     and SDDM, whose KWin then shows the same output in 3D;
 #   - /var/lib/sparky-stereo-boot/main-output.json, the record of all of it.
@@ -44,6 +46,7 @@ import os
 import pwd
 import shlex
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -69,6 +72,12 @@ BOOT_PARAMS = ROOT + '/sys/kernel/boot_params/data'
 HANDOVER_LIMIT = float(os.environ.get('SPARKY_STEREO_HANDOVER_LIMIT', '600'))
 MAX_INPUT = 1024 * 1024
 GREETERS = (('plasmalogin', 'plasma-login-manager'), ('sddm', 'sddm'))
+POLICY_LIB = os.environ.get('SPARKY_STEREO_POLICY_LIB', 'libstereo-policy.so.1')
+KWINRC_SYSTEM = ROOT + '/etc/xdg/kwinrc'
+# the defaults of SunkLimit and PoppedLimit in KWin's kwin.kcfg, pixels of a view 1920 wide: the depth libstereo-policy
+# gives its reference monitor, the one every display's depth is scaled from
+DEPTH_DEFAULTS = {'SunkLimit': 10.0, 'PoppedLimit': 4.0}
+DEPTH_MAX = 1000.0
 SDDM_WAYLAND = ROOT + '/etc/sddm.conf.d/50-sparky-stereo-boot.conf'
 
 DEFAULTS = {
@@ -311,9 +320,148 @@ def describe_layout(flags):
     return None, False, False
 
 
-def compute(saved, setups, connected, options):
-    """What the boot shows, from the saved settings and the screens connected now"""
-    result = {'main': None, 'outputs': [], 'kernel': [], 'gfxmode': '', 'connector': '', 'stereo': False}
+
+# ------------------------------------------------------------------ the depth limits of the boot splash
+def read_stereo_depth(path, expect_uid=None):
+    """kwinrc's [StereoDepth] group in PATH: ({key: pixels}, None); ({}, None) when the file or the group is not
+    there; ({}, reason) when it is there and cannot be read or holds a value that is no limit. The two keys are
+    SunkLimit and PoppedLimit (KWin's kwin.kcfg)."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return {}, None
+    except OSError as error:
+        return {}, '%s: %s' % (path, error.strerror or error)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_INPUT:
+            return {}, '%s is not an ordinary file of a sensible size' % path
+        if expect_uid is not None and st.st_uid != expect_uid:
+            return {}, '%s is not owned by the person who saved it' % path
+        with os.fdopen(fd, 'rb', closefd=False) as f:
+            data = f.read(MAX_INPUT + 1).decode('utf-8', errors='replace')
+    except OSError as error:
+        return {}, '%s: %s' % (path, error.strerror or error)
+    finally:
+        os.close(fd)
+    values, group = {}, None
+    for line in data.splitlines():
+        line = line.strip()
+        if line.startswith('[') and line.endswith(']'):
+            group = line[1:-1]
+        elif group == 'StereoDepth' and '=' in line:
+            key, value = line.split('=', 1)
+            key = key.split('[', 1)[0].strip()
+            if key not in DEPTH_DEFAULTS:
+                continue
+            try:
+                number = float(value.strip())
+            except ValueError:
+                return {}, '%s: %s=%s is not a number' % (path, key, value.strip())
+            if not (0 <= number <= DEPTH_MAX):
+                return {}, '%s: %s=%s is not between 0 and %d' % (path, key, value.strip(), DEPTH_MAX)
+            values[key] = number
+    return values, None
+
+
+def depth_choice(source, kwinrc=None):
+    """The person's limits, as KWin reads them (a KConfig cascade: the system's /etc/xdg/kwinrc, then the person's
+    ~/.config/kwinrc): {'sunk': px or None, 'popped': px or None, 'reason': None or why the saved choice cannot be read}.
+    None is no choice saved for that limit: the display's default applies (design: 1 the person's choice, 2 the display)."""
+    values, reason = read_stereo_depth(KWINRC_SYSTEM)
+    own = {}
+    if kwinrc is None:
+        try:
+            entry = pwd.getpwnam(source)
+        except KeyError:
+            entry = None
+            reason = reason or 'there is no account %s to take kwinrc from' % source
+        if entry is not None:
+            own, why = read_stereo_depth(os.path.join(ROOT + entry.pw_dir, '.config', 'kwinrc'),
+                                         None if ROOT else entry.pw_uid)
+            reason = reason or why
+    else:
+        own, why = read_stereo_depth(kwinrc)
+        reason = reason or why
+    values.update(own)
+    return {'sunk': values.get('SunkLimit'), 'popped': values.get('PoppedLimit'), 'reason': reason}
+
+
+def edid_physical_mm(edid):
+    """The screen's size in millimetres as KWin takes it (src/utils/edid.cpp, determineScreenPhysicalSizeMm): the first
+    detailed timing whose image size has the aspect of its mode (within 0.1), else the basic size in centimetres.
+    (0, 0) when the EDID says nothing."""
+    if len(edid) >= 128:
+        for offset in (54, 72, 90, 108):
+            d = edid[offset:offset + 18]
+            if d[0] == 0 and d[1] == 0:
+                continue
+            hv = d[2] | ((d[4] & 0xf0) << 4)
+            vv = d[5] | ((d[7] & 0xf0) << 4)
+            hmm = d[12] | ((d[14] & 0xf0) << 4)
+            vmm = d[13] | ((d[14] & 0x0f) << 8)
+            if hmm > 0 and vmm > 0 and hv > 0 and vv > 0 and abs(hmm / vmm - hv / vv) <= 0.1:
+                return hmm, vmm
+        return edid[21] * 10, edid[22] * 10
+    return 0, 0
+
+
+class PolicyDepth(ctypes.Structure):
+    _fields_ = [('sunk_px', ctypes.c_double), ('popped_px', ctypes.c_double),
+                ('viewing_distance_mm', ctypes.c_int), ('size_known', ctypes.c_int)]
+
+
+def display_factors(flags, edid):
+    """How much more or less depth this display takes than the reference monitor, from libstereo-policy, the one source
+    of a display's depth for the desktop, the browser and the boot, asked as KWin asks it (StereoDepth::displayDepth):
+    the kind from the mode's flags (anaglyph; another virtual stereo twin: a headset; else a framed screen) and the
+    EDID's size, the person's strength 100. Returns (sunk factor, popped factor, kind, size known); an output of no
+    known size has the factor 1, as in KWin. Raises OSError or ValueError when the library cannot answer."""
+    kind = 1 if flags & (ANAGLYPH_MODERN | ANAGLYPH_CRT) else 2 if flags & VIRTUAL else 0
+    width, height = edid_physical_mm(edid)
+    lib = ctypes.CDLL(POLICY_LIB)
+    call = lib.stereo_policy_display_depth
+    call.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_double, ctypes.c_double, ctypes.c_double,
+                     ctypes.POINTER(PolicyDepth)]
+    call.restype = ctypes.c_int
+    depth = PolicyDepth()
+    if call(kind, width, height, 100.0, 0.0, 0.0, ctypes.byref(depth)) != 0:
+        raise ValueError('stereo_policy_display_depth refused kind %d, %dx%d mm' % (kind, width, height))
+    known = bool(width > 0 and height > 0 and depth.size_known)
+    sunk = depth.sunk_px / DEPTH_DEFAULTS['SunkLimit'] if known and depth.sunk_px > 0 else 1.0
+    popped = depth.popped_px / DEPTH_DEFAULTS['PoppedLimit'] if known and depth.popped_px > 0 else 1.0
+    return sunk, popped, kind, known
+
+
+def depth_limits(choice, main_flags, main_edid):
+    """What the splash may sink and pop on the main screen, pixels of a view 1920 wide, as KWin gives that output
+    (StereoDepth::sunkLimit and poppedLimit: the person's limit times the display's factor), and where each came from.
+    Never more than the person's limits allow; a limit nobody saved is the display's default."""
+    source = 'choice' if choice['sunk'] is not None or choice['popped'] is not None else 'display'
+    if choice['reason']:
+        source = 'display-unreadable'
+    problem = None
+    try:
+        sunk_factor, popped_factor, kind, known = display_factors(main_flags, main_edid)
+    except (OSError, ValueError, AttributeError) as error:
+        sunk_factor = popped_factor = 1.0
+        kind, known, problem = None, False, str(error)
+    sunk = (choice['sunk'] if choice['sunk'] is not None else DEPTH_DEFAULTS['SunkLimit']) * sunk_factor
+    popped = (choice['popped'] if choice['popped'] is not None else DEPTH_DEFAULTS['PoppedLimit']) * popped_factor
+    return {'sunkPx': round(sunk, 2), 'poppedPx': round(popped, 2), 'source': source,
+            'savedSunk': choice['sunk'], 'savedPopped': choice['popped'], 'unreadable': choice['reason'],
+            'displayKind': kind, 'sizeKnown': known, 'sunkFactor': round(sunk_factor, 4),
+            'poppedFactor': round(popped_factor, 4), 'policyProblem': problem}
+
+
+def number_text(value):
+    return ('%.2f' % value).rstrip('0').rstrip('.')
+
+
+def compute(saved, setups, connected, options, choice=None):
+    """What the boot shows, from the saved settings and the screens connected now; CHOICE is the person's depth limits
+    (depth_choice): the splash gets the main screen's limits with each stereo output"""
+    result = {'main': None, 'outputs': [], 'kernel': [], 'gfxmode': '', 'connector': '', 'stereo': False, 'depth': None}
     matches = match_outputs(saved, connected)
     if not matches:
         return result
@@ -337,6 +485,8 @@ def compute(saved, setups, connected, options):
     width, height = int(mode.get('width', 0)), int(mode.get('height', 0))
     refresh, flags = int(mode.get('refreshRate', 0)), int(mode.get('flags', 0))
     layout, right_first, hdmi = describe_layout(flags)
+    depth = depth_limits(choice, flags, out['edid']) if choice is not None else None
+    result['depth'] = depth
     swap = bool(main.get('stereoSwapEyes', False)) != right_first
     result['main'] = {'connector': out['connector'], 'card': out['card'], 'edidIdentifier': out['identifier'],
                       'edidHash': out['hash'], 'width': width, 'height': height, 'refreshRate': refresh,
@@ -351,6 +501,8 @@ def compute(saved, setups, connected, options):
         if mode_part:
             fields.append(mode_part)
         fields += options_list
+        if depth is not None:
+            fields += ['popped=' + number_text(depth['poppedPx']), 'sunk=' + number_text(depth['sunkPx'])]
         # two GPUs can both have a connector of that name: then the entry names its card
         if sum(1 for o in connected if o['connector'] == screen_out['connector']) > 1:
             fields.append('card=' + screen_out['card'])
@@ -534,12 +686,31 @@ def write_sddm_wayland(options, stereo):
     return False
 
 
-def apply(data, source):
-    """Takes KWin's saved settings (bytes) and writes everything the boot reads"""
+def say_depth(depth):
+    """Where the splash's depth comes from, said when the person's choice is not what it follows (no silent fallbacks)."""
+    if depth is None:
+        return
+    if depth['source'] == 'display-unreadable':
+        keep_problem('splash-depth', 'LOCAL68', [depth['unreadable']])
+    else:
+        forget_problem('splash-depth')
+        if depth['source'] == 'display':
+            log('no depth limits saved in kwinrc [StereoDepth]: the boot splash takes the display\'s default, popped %s px and '
+                'sunk %s px at 1920 px per eye' % (number_text(depth['poppedPx']), number_text(depth['sunkPx'])))
+    if depth['policyProblem']:
+        keep_problem('splash-depth-display', 'LOCAL69', [depth['policyProblem']])
+    else:
+        forget_problem('splash-depth-display')
+
+
+def apply(data, source, kwinrc=None):
+    """Takes KWin's saved settings (bytes) and writes everything the boot reads; the person's depth limits come from
+    SOURCE's kwinrc (KWINRC names another file, for tests)"""
     options = read_options()
     saved, setups = parse_kwin_config(data)
     connected = connected_outputs()
-    result = compute(saved, setups, connected, options)
+    result = compute(saved, setups, connected, options, depth_choice(source, kwinrc))
+    say_depth(result['depth'])
     if options['SPARKY_STEREO_BOOT'] == 'no':
         result['kernel'] = []
         result['outputs'] = []
@@ -555,6 +726,7 @@ def apply(data, source):
         'main': result['main'],
         'stereoOutputs': result['outputs'],
         'kernelArguments': result['kernel'],
+        'depth': result['depth'],
         'grubGfxmode': result['gfxmode'] if options['SPARKY_STEREO_GRUB'] != 'auto' and options['SPARKY_STEREO_BOOT'] != 'no' else '',
         'greeters': greeters,
         'sddmWayland': sddm_wayland,
@@ -749,6 +921,11 @@ def status():
         if record.get('stereoOutputs'):
             where = text(s, 'LOCAL6', 'the boot splash') if options.get('SPARKY_STEREO_SPLASH') != '2d' else text(s, 'LOCAL7', 'the login screen')
             print('%s: %s' % (text(s, 'LOCAL5', '3D switches on at'), where))
+    depth = (record or {}).get('depth')
+    if depth and (record or {}).get('stereoOutputs'):
+        words = {'choice': 'LOCAL71', 'display': 'LOCAL72', 'display-unreadable': 'LOCAL73'}
+        print(text(s, 'LOCAL70', 'Boot splash depth: popped %s px, sunk %s px at 1920 px per eye (%s)') % (
+            number_text(depth['poppedPx']), number_text(depth['sunkPx']), text(s, words[depth['source']], depth['source'])))
     grub = grub_display()
     modes = [m for m in grub.get('GFXMODE', '').split(',') if m]
     if grub.get('WANTED', 'auto') != 'auto' and len(modes) > 1:
@@ -1025,9 +1202,9 @@ def main(argv):
         return export_socket()
     if command == 'export-user' and len(argv) == 3:
         return export_user(argv[2])
-    if command == 'export-file' and len(argv) == 4:
+    if command == 'export-file' and len(argv) in (4, 5):
         try:
-            apply(open(argv[2], 'rb').read(), argv[3])
+            apply(open(argv[2], 'rb').read(), argv[3], argv[4] if len(argv) == 5 else None)
         except (ValueError, json.JSONDecodeError) as error:
             log('the settings were not read: %s' % error)
             return 1

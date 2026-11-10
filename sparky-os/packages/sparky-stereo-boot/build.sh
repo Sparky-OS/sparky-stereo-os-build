@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/03
+# Last update 2026/11/09
 #
 # Builds the sparky-stereo-boot package (hand assembled, Paweł's formula).
 #   build.sh OUTDIR
@@ -9,7 +9,7 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-boot
-VERSION=0.1.8+lc1
+VERSION=0.1.9+lc1
 umask 022
 mkdir -p "$OUT"
 D=$(mktemp -d "${TMPDIR:-/tmp}/stereo-boot-build.XXXXXX")
@@ -220,8 +220,8 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: grub-common, libdrm2, python3, systemd, sparky-stereo-problems (>= 0.1.0)
-Recommends: plymouth (>= 26.134.222-1+stereo3d1), sparky-stereo-plymouth
+Depends: grub-common, libdrm2, libstereo-policy1 (>= 1.15.0), python3, systemd, sparky-stereo-problems (>= 0.1.0)
+Recommends: plymouth (>= 26.134.222-1+stereo3d3), sparky-stereo-plymouth (>= 20261109~sparky9~0)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org

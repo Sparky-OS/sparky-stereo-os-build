@@ -1,4 +1,25 @@
 -------------------------------------------------------------------------------
+  Version 0.1.9 (2026-11-09)
+-------------------------------------------------------------------------------
+  * The boot splash follows the person's depth limits (ORDER 481; Daniel, 2026-11-05: "read the depth config by, and in this
+    order of importance: 1 - User choice (but based on 2); 2 - Current display"). Each stereo output of plymouth.stereo=
+    ends with popped=PIXELS:sunk=PIXELS, the main screen's limits as Stereo KWin resolves them: the person's PoppedLimit
+    and SunkLimit (kwinrc [StereoDepth], the system's /etc/xdg/kwinrc under the person's own file, as KConfig reads them)
+    times the display's factor from libstereo-policy (the kind from the mode's flags, the size from the EDID, as KWin asks
+    it), pixels of an eye 1920 wide. A limit nobody saved is the display's default; a limit of 0 stays 0
+  * The socket service reads the kwinrc of the account that connected (the peer's uid is checked as before), not data the
+    client sends; the session's path unit also watches ~/.config/kwinrc, so a change in 3D Depth reaches the next boot
+  * No silent fallbacks: no limits saved is said in the journal and shown by status ("the display's default"); a saved
+    value that is no limit (not a number, below 0, above 1000) or a kwinrc that cannot be read is kept as a problem
+    (splash-depth), and the display's default boots; a libstereo-policy that cannot answer is kept as a problem
+    (splash-depth-display), and the person's limits are used as they are
+  * Depends on libstereo-policy1 (>= 1.15.0); `sparky-stereo-boot export-file FILE USER [KWINRC]` takes the kwinrc
+    for tests
+  * tests/run-tests.py: ten cases for the limits (nothing saved, both saved, one saved, 0, a television, red/cyan, a
+    headset twin, the system file under the person's, two kinds of value that are no limit), each against libstereo-policy's
+    rule written out in the test
+
+-------------------------------------------------------------------------------
   Version 0.1.8 (2026-11-03)
 -------------------------------------------------------------------------------
   * This computer's DKMS key follows the edition key's design (ORDER 374; ORDER 260, Daniel, 2026-10-25: "we never
