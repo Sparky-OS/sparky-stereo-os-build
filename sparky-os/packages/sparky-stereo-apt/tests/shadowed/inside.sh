@@ -75,8 +75,27 @@ if [ "$MODE" != fresh ]; then
 	eq "the upgrade exits" "$?" 0
 	grep -E 'sparky-stereo-apt:' /tmp/new-install.log
 	check "the hook told that it settles it after the apt run" grep -q "sparky-stereo-apt: libmlt7-data from deb-multimedia ships files of the edition's packages under another name" /tmp/new-install.log
-	echo "== settling it (what sparky-stereo-apt-shadowed.service runs once apt has ended; no systemd in the container)"
-	if [ -x /usr/lib/sparky-stereo-apt/shadowed-by-dmo ]; then /usr/lib/sparky-stereo-apt/shadowed-by-dmo auto 2>&1 | tee /tmp/auto.log; else echo "no /usr/lib/sparky-stereo-apt/shadowed-by-dmo in this version" | tee /tmp/auto.log; fi
+	UNIT=sparky-stereo-apt-shadowed.service
+	# the unit's turn: SYSTEMD=1 (run-systemd.sh: PID 1 is systemd) waits for the unit the hook started and reads its journal; without it (run.sh,
+	# no systemd in the container) the unit's command runs by hand, which is all ORDER 458 could prove
+	settle() {
+		if [ -n "${SYSTEMD:-}" ]; then
+			local i st
+			# --no-block queued it during apt's run: wait for it to start and end (it waits for apt's locks first)
+			for i in $(seq 300); do
+				st=$(systemctl show -p ActiveState --value $UNIT)
+				{ [ "$st" = inactive ] || [ "$st" = failed ]; } && journalctl -u $UNIT -o cat --no-pager | grep -q . && break
+				sleep 1
+			done
+			echo "unit: ActiveState=$st Result=$(systemctl show -p Result --value $UNIT) ExecMainStatus=$(systemctl show -p ExecMainStatus --value $UNIT) (waited ${i}s)"
+			journalctl -u $UNIT -o short-precise --no-pager | grep -v 'apt-get\|Reading\|Building\|Solving' | cut -c1-260
+			journalctl -u $UNIT -o cat --no-pager >"$1"
+		else
+			if [ -x /usr/lib/sparky-stereo-apt/shadowed-by-dmo ]; then /usr/lib/sparky-stereo-apt/shadowed-by-dmo auto 2>&1 | tee "$1"; else echo "no /usr/lib/sparky-stereo-apt/shadowed-by-dmo in this version" | tee "$1"; fi
+		fi
+	}
+	if [ -n "${SYSTEMD:-}" ]; then echo "== settling it: sparky-stereo-apt-shadowed.service under systemd $(systemctl --version | head -1), started by the hook with --no-block"; else echo "== settling it (what sparky-stereo-apt-shadowed.service runs once apt has ended; no systemd in the container)"; fi
+	settle /tmp/auto.log
 	here() { [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = installed ]; }
 	case $MODE in
 	red | green)
@@ -96,7 +115,7 @@ if [ "$MODE" != fresh ]; then
 		sparky-stereo-problems list 2>&1 | grep -i -A3 'installed it yourself' | head -5
 		echo "== the person lets apt decide (apt-mark auto): the next run settles it"
 		apt-mark auto libmlt7-data >/dev/null
-		/usr/lib/sparky-stereo-apt/shadowed-by-dmo auto 2>&1 | tee /tmp/auto2.log
+		if [ -n "${SYSTEMD:-}" ]; then systemctl start $UNIT; journalctl -u $UNIT -o cat --no-pager >/tmp/auto2.log; else /usr/lib/sparky-stereo-apt/shadowed-by-dmo auto 2>&1 | tee /tmp/auto2.log; fi
 		here libmlt7-data && bad "libmlt7-data stays after apt-mark auto" || ok "libmlt7-data is gone after apt-mark auto"
 		eq "dpkg-stereo --verify libmlt-data" "$(dpkg-stereo --verify libmlt-data 2>&1 | tail -1 | grep -o '[0-9]* problems')" "0 problems"
 		eq "the engine's problem ended with it" "$(sparky-stereo-problems list 2>&1 | grep -c 'You installed it yourself')" 0
