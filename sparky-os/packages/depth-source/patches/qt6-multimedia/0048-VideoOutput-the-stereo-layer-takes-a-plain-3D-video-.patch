@@ -1,0 +1,961 @@
+From 5ea8d51ff6c6eea58f9f3ab720e8f4c499e02abb Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 10 Nov 2026 13:20:24 -0300
+Subject: [PATCH] VideoOutput: the stereo layer takes a plain 3D video from the
+ decoder's textures
+
+The layer's presenter drew the views of a frame into the compositor's window surface
+only for the drawn views of a depth video (layerSourceOf). Every other 3D video, a
+plain full side by side file included, was read back from the GPU, converted on the
+processor and copied into wl_shm buffers: about 250 to 280 percent of one core for a
+3840x1080 clip at 30 frames a second, on AMD and on NVIDIA, with the decoder's frames
+already on the GPU.
+
+PlainUnpacker takes the views of a decoder frame apart where they are. The frame is
+imported as the depth route imports it (QHwVideoBuffer::mapTextures through a QRhi on
+the drawing context: VA-API and CUDA), and one pass for each view converts the planes
+to RGB at the content's depth (RGBA8, or RGBA16 above 8 bits) into one texture, the
+first view of the packing at the left, each view at the size its samples have: a
+rectangle of the frame (side by side, top and bottom), every second row, every second
+column, the row's own checkers (H.264 Table D-8, H.265 Table D.8, Matroska StereoMode,
+RFC 9559), or the frame of each eye of a frame sequence. Nothing is interpolated or
+resized. The presenter hands that texture to the layer as it does the drawn views, so
+the layer draws it into its window surface with the crop and the eye order.
+
+The drawing context asks EGL for no reset notification: the layer's own context shares it, and EGL
+refuses a share list of contexts with different notification strategies (Mesa: "share list notification
+strategy mismatch", EGL_BAD_MATCH, on radeonsi, llvmpipe and NVIDIA alike), which the first run of the
+GPU route on the installed package showed as the layer falling back to wl_shm.
+
+A frame the GPU cannot take apart (decoded by the processor, a pixel format the passes
+do not read, a converter that refuses the DMA-BUF) still goes through wl_shm, and the
+presenter's log says why; a multiview stream keeps the copy. A log line says when the
+GPU route is on. A layer that refuses the views of a depth (NVIDIA 615 has no 16 bit unsigned window
+surface, and the compositor lists no XB48 modifier) is asked again every sixtieth frame, and the frames
+in between are copied at once with the reason, so the GPU does not take apart what the layer will not draw.
+
+tst_qquickvideostereo::plainPackingsOnTheGpu: every packing at 8, 10, 12 and 16 bit
+words, the views predicted from the packing alone, no read back, the textures mapped
+once for a frame and twice for a frame sequence. plainFramesTheGpuCannotTake: the
+refusals are said. plainViewsAreSharedByTheLayersContext: the layer's kind of context can share the unpacker's
+(red: EGL error 0x3009).
+
+Upstream: Qt has no compositor layer; dev (searched 2026-11-10) only reshapes
+QHwVideoBuffer (mapTextures overloads, HandleType deprecated).
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ src/multimediaquick/qquickvideodepth.cpp      | 378 +++++++++++++++++-
+ src/multimediaquick/qquickvideodepth_p.h      |  41 ++
+ .../qquickvideostereopresenter.cpp            |  52 ++-
+ .../qquickvideostereopresenter_p.h            |   7 +
+ .../tst_qquickvideostereo.cpp                 | 241 +++++++++++
+ 5 files changed, 705 insertions(+), 14 deletions(-)
+
+diff --git a/src/multimediaquick/qquickvideodepth.cpp b/src/multimediaquick/qquickvideodepth.cpp
+index 0f2cf69..d2f3982 100644
+--- a/src/multimediaquick/qquickvideodepth.cpp
++++ b/src/multimediaquick/qquickvideodepth.cpp
+@@ -600,6 +600,38 @@ void main()
+ }
+ )";
+ 
++// The conversion of kConvert for one view of a plain packing: the pixel of the view the pass draws (u_dst is where the view starts in the
++// target) is the sample of the frame the packing keeps for it. Nothing is interpolated: a view is the samples of its own rows, columns or
++// checkers, or a rectangle of the frame (u_origin). u_pack: 0 rectangle, 1 every second row, 2 every second column, 3 checkerboard.
++QByteArray unpackShader()
++{
++    static const char head[] = "uniform ivec2 u_origin;";
++    static const char line[] = "ivec2 at = ivec2(gl_FragCoord.xy) + u_origin;";
++    static const char block[] =
++        "uniform ivec2 u_dst;\n"
++        "uniform ivec2 u_frame;\n"
++        "uniform int u_pack;\n"
++        "uniform int u_first;\n";
++    static const char at[] =
++        "ivec2 e = ivec2(gl_FragCoord.xy) - u_dst;\n"
++        "    ivec2 at = u_origin + e;\n"
++        "    if (u_pack == 1)\n"
++        "        at = ivec2(e.x, 2 * e.y + u_first);\n"
++        "    else if (u_pack == 2)\n"
++        "        at = ivec2(2 * e.x + u_first, e.y);\n"
++        "    else if (u_pack == 3)\n"
++        "        at = ivec2(min(((e.y + u_first) & 1) + 2 * e.x, u_frame.x - 1), e.y);";
++    QByteArray text(kConvert);
++    if (!text.contains(head) || !text.contains(line))
++        return {};
++    text.replace(QByteArray(line), QByteArray(at));
++    QByteArray declarations(head);
++    declarations.append('\n').append(block);
++    text.replace(QByteArray(head), declarations);
++    return text;
++}
++
++
+ // One channel of an RGBA picture as the depth map
+ const char kChannel[] = R"(
+ uniform sampler2D u_y;
+@@ -692,7 +724,10 @@ public:
+ 
+     // The context and the library's passes, made on the thread that draws (a context belongs to
+     // one thread). Returns false with the reason.
+-    bool ensure(QString *why, QOpenGLContext *share = nullptr)
++    // watchReset: a context that tells when the GPU was reset (KHR_robustness, the depth drawing's guard). The stereo layer makes a context that
++    // shares this one, and EGL refuses sharing between contexts of different reset notification strategies (Mesa: "share list notification
++    // strategy mismatch", EGL_BAD_MATCH), so a context made for the layer to share (PlainUnpacker) asks for none
++    bool ensure(QString *why, QOpenGLContext *share = nullptr, bool watchReset = true)
+     {
+         if (m_lost) {
+             *why = QStringLiteral("the GPU was reset while drawing, it is not used again for this video");
+@@ -723,7 +758,8 @@ public:
+                 format.setVersion(3, 3);
+                 format.setProfile(QSurfaceFormat::CoreProfile);
+                 // a context that tells when the GPU was reset (KHR_robustness): the library watches it (stereo_dibr_gl_reset_status())
+-                format.setOption(QSurfaceFormat::ResetNotification);
++                if (watchReset)
++                    format.setOption(QSurfaceFormat::ResetNotification);
+                 candidate->setFormat(format);
+                 created = candidate->create();
+             }
+@@ -733,6 +769,7 @@ public:
+                     QSurfaceFormat format;
+                     format.setRenderableType(QSurfaceFormat::OpenGLES);
+                     format.setVersion(3, 0);
++                    if (watchReset)
+                     format.setOption(QSurfaceFormat::ResetNotification);
+                     candidate->setFormat(format);
+                     created = candidate->create();
+@@ -1141,6 +1178,105 @@ public:
+         return true;
+     }
+ 
++    // ---- the views of a plain packing --------------------------------------------------------------------------------------------------
++    // One RGB texture (RGBA8, or RGBA16 normalised for a deeper source) holds the two views of the packed frame side by side, the first view
++    // of the packing at the left, each view at the size its samples have (beginUnpack makes it, unpackEye draws one view of the frame
++    // imported by importFrame, finishUnpack hands the texture out): the stereo layer draws it into its window surface.
++    bool beginUnpack(const Deep &deep, int eyeWidth, int eyeHeight, QString *why)
++    {
++        dropTrash();
++        if (deep.on && !m_deepOk) {
++            *why = QStringLiteral("this OpenGL ES has no GL_EXT_texture_norm16: the 16 bit planes have no texture format");
++            return false;
++        }
++        m_deep = deep;
++        while (m_f->glGetError() != 0) { }
++        if (deep.on)
++            makeTexture(Target, eyeWidth * 2, eyeHeight, GL_RGBA16_, GL_RGBA_, GL_UNSIGNED_SHORT_);
++        else
++            makeTexture(Target, eyeWidth * 2, eyeHeight, GL_RGBA8_, GL_RGBA_);
++        return true;
++    }
++
++    // One view of the imported frame (m_imp) into the half dstEye of the texture: pack 0 is the rectangle of the frame at origin, 1 the rows
++    // first, first + 2, ..., 2 the columns, 3 the checkers (see unpackShader()); log2w and log2h are the chroma's subsampling
++    bool unpackEye(Source source, bool fullRange, int colorSpace, int log2w, int log2h, int pack, int first, QPoint origin, QSize frame,
++                   int dstEye, int eyeWidth, int eyeHeight)
++    {
++        if (!m_imp.on)
++            return false;
++        m_f->glUseProgram(m_unpack);
++        bindExternal(0, m_imp.y, m_unpack, "u_y");
++        bindExternal(1, m_imp.uv, m_unpack, "u_u");
++        bindExternal(2, m_imp.planar ? m_imp.v : m_imp.uv, m_unpack, "u_v");
++        auto at = [&](const char *name) { return m_f->glGetUniformLocation(m_unpack, name); };
++        m_f->glUniform2i(at("u_origin"), origin.x(), origin.y());
++        m_f->glUniform2i(at("u_dst"), dstEye * eyeWidth, 0);
++        m_f->glUniform2i(at("u_frame"), frame.width(), frame.height());
++        m_f->glUniform1i(at("u_pack"), pack);
++        m_f->glUniform1i(at("u_first"), first);
++        m_f->glUniform1i(at("u_mode"), source == Source::Planar ? 0 : source == Source::SemiUV ? 1 : 2);
++        m_f->glUniform2i(at("u_shift"), log2w, log2h);
++        float kr, kb;
++        kForMatrix(colorSpace, &kr, &kb);
++        m_f->glUniform2f(at("u_k"), kr, kb);
++        m_f->glUniform1i(at("u_full"), fullRange ? 1 : 0);
++        m_f->glUniform1f(at("u_scale"), m_deep.on ? 65535.f : 255.f);
++        m_f->glUniform1f(at("u_div"), m_deep.on ? m_deep.div : 1.f);
++        m_f->glUniform1f(at("u_max"), m_deep.on ? m_deep.max : 255.f);
++        m_f->glUniform1f(at("u_mid"), m_deep.on ? m_deep.mid : 128.f);
++        m_f->glBindFramebuffer(GL_FRAMEBUFFER_, m_fbo);
++        m_f->glFramebufferTexture2D(GL_FRAMEBUFFER_, GL_COLOR_ATTACHMENT0_, GL_TEXTURE_2D_, m_tex[Target].id, 0);
++        m_f->glViewport(dstEye * eyeWidth, 0, eyeWidth, eyeHeight);
++        m_f->glDisable(0x0BE2 /* BLEND */);
++        m_f->glDisable(0x0C11 /* SCISSOR_TEST */);
++        m_f->glBindVertexArray(m_vao);
++        m_f->glDrawArrays(0x0004 /* TRIANGLES */, 0, 3);
++        return true;
++    }
++
++    // The texture leaves the drawer with the views, finished before another context draws it
++    bool finishUnpack(Views *views, QString *why)
++    {
++        m_f->glFinish();
++        *views = {};
++        views->rgb = handOut(Target);
++        views->rgbOwned = true;
++        views->generation = m_generation;
++        fillEgl(views);
++        if (m_f->glGetError() != 0) {
++            *why = QStringLiteral("the views could not be handed to the stereo layer");
++            return false;
++        }
++        return true;
++    }
++
++    // The views' texture read back to system memory (a test, a diagnostic): RGBA8888, or RGBA64 for a deeper source
++    bool readRgb(const Views &v, QImage *image)
++    {
++        bool ok = false;
++        run([&] {
++            if (v.generation != generation() || !m_context || !makeCurrent())
++                return;
++            const bool deep = v.rgb.internal == GL_RGBA16_;
++            QImage result(v.rgb.w, v.rgb.h, deep ? QImage::Format_RGBA64 : QImage::Format_RGBA8888);
++            m_f->glBindFramebuffer(GL_FRAMEBUFFER_, m_fbo);
++            m_f->glFramebufferTexture2D(GL_FRAMEBUFFER_, GL_COLOR_ATTACHMENT0_, GL_TEXTURE_2D_, v.rgb.id, 0);
++            ok = m_f->glCheckFramebufferStatus(GL_FRAMEBUFFER_) == GL_FRAMEBUFFER_COMPLETE_;
++            if (ok) {
++                m_f->glPixelStorei(0x0D05 /* GL_PACK_ALIGNMENT */, 1);
++                m_f->glPixelStorei(GL_PACK_ROW_LENGTH_, int(result.bytesPerLine() / (deep ? 8 : 4)));
++                m_f->glReadPixels(0, 0, v.rgb.w, v.rgb.h, GL_RGBA_, deep ? GL_UNSIGNED_SHORT_ : GL_UNSIGNED_BYTE_, result.bits());
++                m_f->glPixelStorei(GL_PACK_ROW_LENGTH_, 0);
++                ok = m_f->glGetError() == 0;
++            }
++            doneCurrent();
++            if (ok)
++                *image = result;
++        });
++        return ok;
++    }
++
+ private:
+     enum TexId { Y, U, V, Raw, Pic, Depth, Target, LayerPic, LayerDepth, OutY, OutU, OutV, ProbeTex, NbTextures };
+     using Tex = GlTex;
+@@ -1196,6 +1332,8 @@ private:
+                 m_f->glDeleteProgram(m_lumaInt);
+             if (m_probe)
+                 m_f->glDeleteProgram(m_probe);
++            if (m_unpack)
++                m_f->glDeleteProgram(m_unpack);
+             m_imp = {};
+             m_oldTextures.reset();
+             m_rhi.reset();
+@@ -1203,7 +1341,7 @@ private:
+         }
+         m_gl = nullptr;
+         m_tex = {};
+-        m_vao = m_fbo = m_convert = m_channel = m_encode = m_luma = m_lumaInt = m_probe = 0;
++        m_vao = m_fbo = m_convert = m_channel = m_encode = m_luma = m_lumaInt = m_probe = m_unpack = 0;
+         m_rhiFailed = false;
+         m_shared = false;
+         m_group = nullptr;
+@@ -1264,7 +1402,9 @@ private:
+         m_luma = program(kLuma);
+         m_lumaInt = program(kLumaInt);
+         m_probe = program(kProbe);
+-        return m_convert && m_channel && m_encode && m_luma && m_lumaInt && m_probe;
++        const QByteArray unpack = unpackShader();
++        m_unpack = unpack.isEmpty() ? 0 : program(unpack.constData());
++        return m_convert && m_channel && m_encode && m_luma && m_lumaInt && m_probe && m_unpack;
+     }
+ 
+     void makeTexture(TexId id, int w, int h, unsigned internal, unsigned format,
+@@ -1640,7 +1780,7 @@ private:
+     QString m_rhiWhy;
+     Imported m_imp;
+     QVideoFrameTexturesUPtr m_oldTextures;
+-    unsigned m_luma = 0, m_lumaInt = 0, m_probe = 0;
++    unsigned m_luma = 0, m_lumaInt = 0, m_probe = 0, m_unpack = 0;
+     // what the checks of imported planes found: the frame size and format they are for, the checks made, the empty ones in a row, and the verdict
+     QSize m_checkSize;
+     int m_checkBytes = 0;
+@@ -2516,6 +2656,217 @@ Renderer::Result Renderer::draw(const QVideoFrame &input, Mode mode, bool depthF
+     }
+ }
+ 
++
++// ---- the views of a plain packing --------------------------------------------------------------------------------------------------
++
++#ifdef QT_MM_DEPTH_GPU
++
++struct PlainViews::Private
++{
++    std::weak_ptr<GpuDrawer> drawer;
++    GpuDrawer::Views views;
++    ~Private()
++    {
++        if (const auto owner = drawer.lock())
++            owner->recycle(views);
++    }
++};
++
++struct PlainUnpacker::Private
++{
++    std::shared_ptr<GpuDrawer> gpuOwner = std::make_shared<GpuDrawer>();
++    int frames = 0;
++};
++
++PlainViews::PlainViews() = default;
++PlainViews::~PlainViews() = default;
++PlainViews::PlainViews(PlainViews &&) noexcept = default;
++PlainViews &PlainViews::operator=(PlainViews &&) noexcept = default;
++
++bool PlainViews::layerSource(LayerSource *out) const
++{
++    if (!d)
++        return false;
++    const auto drawer = d->drawer.lock();
++    const GpuDrawer::Views &v = d->views;
++    if (!drawer || v.generation != drawer->generation() || !v.rgb.id || !v.eglDisplay || !v.eglContext)
++        return false;
++    out->eglDisplay = v.eglDisplay;
++    out->eglContext = v.eglContext;
++    out->es = v.es;
++    out->texture = v.rgb.id;
++    out->width = v.rgb.w;
++    out->height = v.rgb.h;
++    out->deep = v.rgb.internal == GL_RGBA16_;
++    return true;
++}
++
++QImage PlainViews::image() const
++{
++    QImage image;
++    if (d)
++        if (const auto drawer = d->drawer.lock())
++            drawer->readRgb(d->views, &image);
++    return image;
++}
++
++PlainUnpacker::PlainUnpacker() : d(std::make_unique<Private>()) { }
++PlainUnpacker::~PlainUnpacker() = default;
++
++int PlainUnpacker::unpackedFrames() const
++{
++    return d->frames;
++}
++
++bool PlainUnpacker::unpack(const QVideoFrame &frame, const QVideoFrame &other, Mode mode, int frameView, PlainViews *out, QString *why)
++{
++    // where each view is: the packing's samples, one pass for each view (H.264 Table D-8, H.265 Table D.8, Matroska StereoMode, RFC 9559)
++    const QSize size = frame.size();
++    int pack = 0, ew = 0, eh = 0;
++    bool sequence = false;
++    switch (mode) {
++    case Mode::SideBySide:
++    case Mode::SideBySideQuincunx:
++        ew = size.width() / 2;
++        eh = size.height();
++        break;
++    case Mode::TopBottom:
++        ew = size.width();
++        eh = size.height() / 2;
++        break;
++    case Mode::RowInterleaved:
++        pack = 1;
++        ew = size.width();
++        eh = size.height() / 2;
++        break;
++    case Mode::ColumnInterleaved:
++        pack = 2;
++        ew = size.width() / 2;
++        eh = size.height();
++        break;
++    case Mode::Checkerboard:
++        pack = 3;
++        ew = size.width() / 2;
++        eh = size.height();
++        break;
++    case Mode::FrameSequence:
++        sequence = true;
++        ew = size.width();
++        eh = size.height();
++        break;
++    default:
++        *why = QStringLiteral("the packing is not one the GPU takes apart");
++        return false;
++    }
++    if (ew <= 0 || eh <= 0 || !frame.isValid() || (sequence && (!other.isValid() || other.size() != size || other.pixelFormat() != frame.pixelFormat()))) {
++        *why = QStringLiteral("the frame has no two views of a size to draw");
++        return false;
++    }
++    Layout l;
++    GpuDrawer::Source source = GpuDrawer::Source::Planar;
++    GpuDrawer::Deep deep;
++    if (!layoutOf(frame.pixelFormat(), &l) || !gpuSourceOf(frame.pixelFormat(), l, &source, &deep) || source == GpuDrawer::Source::Rgba) {
++        *why = QStringLiteral("the pixel format %1 is not one the GPU reads").arg(QVideoFrameFormat::pixelFormatToString(frame.pixelFormat()));
++        return false;
++    }
++    if (!(l.semiPlanar && source == GpuDrawer::Source::SemiUV) && !(!l.semiPlanar && source == GpuDrawer::Source::Planar && l.count == 3)) {
++        *why = QStringLiteral("the frame's planes are neither luma with interleaved chroma nor three planes");
++        return false;
++    }
++    const QVideoFrameFormat surface = frame.surfaceFormat();
++    if (surface.viewport() != QRect(QPoint(0, 0), size) && !surface.viewport().isNull()) {
++        *why = QStringLiteral("the frame is cropped by a viewport");
++        return false;
++    }
++    QHwVideoBuffer *hw = QVideoFramePrivate::hwBuffer(frame);
++    QHwVideoBuffer *hwOther = sequence ? QVideoFramePrivate::hwBuffer(other) : nullptr;
++    if (!hw || (sequence && !hwOther)) {
++        *why = QStringLiteral("the frame is in system memory (decoded by the processor): there are no textures to take apart");
++        return false;
++    }
++    // the matrix of the frame: what it says, else what Qt's own conversion assumes (HD video is BT.709, SD BT.601)
++    QVideoFrameFormat::ColorSpace matrix = surface.colorSpace();
++    if (matrix == QVideoFrameFormat::ColorSpace_Undefined)
++        matrix = eh > 576 ? QVideoFrameFormat::ColorSpace_BT709 : QVideoFrameFormat::ColorSpace_BT601;
++    const int colorSpace = matrix == QVideoFrameFormat::ColorSpace_BT709 ? 1 : matrix == QVideoFrameFormat::ColorSpace_BT2020 ? 2 : 0;
++    const bool fullRange = surface.colorRange() == QVideoFrameFormat::ColorRange_Full;
++    const bool planar = source == GpuDrawer::Source::Planar;
++    GpuDrawer &gpu = *d->gpuOwner;
++    bool made = false;
++    gpu.run([&] { made = gpu.ensure(why, nullptr, false); });
++    if (!made)
++        return false;
++    bool ok = false;
++    GpuDrawer::Views views;
++    gpu.run([&] {
++        if (!gpu.makeCurrent()) {
++            *why = QStringLiteral("the OpenGL context could not be made current");
++            return;
++        }
++        ok = gpu.beginUnpack(deep, ew, eh, why);
++        // each view is drawn from the frame that holds it: both from the one frame, or (a frame sequence) from its own frame; the first
++        // view of the packing at the left, the left eye first for a frame sequence
++        QHwVideoBuffer *held = nullptr;
++        for (int view = 0; ok && view < 2; ++view) {
++            QHwVideoBuffer *from = hw;
++            if (sequence)
++                from = (view == 0) == (frameView == 0) ? hw : hwOther;
++            if (from != held) {
++                if (held)
++                    gpu.releaseImport();
++                bool hardware = false;
++                ok = gpu.importFrame(from, size, l.bytes, false, planar, &hardware, why);
++                // a frame the decoder keeps in system memory (a software decoder's) is no frame of textures: importFrame() says nothing
++                if (!ok && !hardware && why->isEmpty())
++                    *why = QStringLiteral("the frame is in system memory (decoded by the processor): there are no textures to take apart");
++                held = ok ? from : nullptr;
++            }
++            if (!ok)
++                break;
++            QPoint origin;
++            if (pack == 0 && !sequence) {
++                if (mode == Mode::TopBottom)
++                    origin = QPoint(0, view * eh);
++                else
++                    origin = QPoint(view * ew, 0);
++            }
++            ok = gpu.unpackEye(source, fullRange, colorSpace, l.c[1].log2w, l.c[1].log2h, pack, view, origin, size, view, ew, eh);
++        }
++        gpu.releaseImport();
++        if (ok)
++            ok = gpu.finishUnpack(&views, why);
++        gpu.doneCurrent();
++    });
++    if (!ok)
++        return false;
++    ++d->frames;
++    out->d = std::make_shared<PlainViews::Private>();
++    out->d->drawer = d->gpuOwner;
++    out->d->views = views;
++    return true;
++}
++
++#else
++
++struct PlainViews::Private { };
++struct PlainUnpacker::Private { };
++PlainViews::PlainViews() = default;
++PlainViews::~PlainViews() = default;
++PlainViews::PlainViews(PlainViews &&) noexcept = default;
++PlainViews &PlainViews::operator=(PlainViews &&) noexcept = default;
++bool PlainViews::layerSource(LayerSource *) const { return false; }
++QImage PlainViews::image() const { return {}; }
++PlainUnpacker::PlainUnpacker() : d(std::make_unique<Private>()) { }
++PlainUnpacker::~PlainUnpacker() = default;
++int PlainUnpacker::unpackedFrames() const { return 0; }
++bool PlainUnpacker::unpack(const QVideoFrame &, const QVideoFrame &, Mode, int, PlainViews *, QString *why)
++{
++    *why = QStringLiteral("this Qt Multimedia has no OpenGL");
++    return false;
++}
++
++#endif
++
+ #else
+ 
+ struct Renderer::Private
+@@ -2588,6 +2939,23 @@ Renderer::Result Renderer::draw(const QVideoFrame &, Mode, bool, const QString &
+     return Result::Failed;
+ }
+ 
++struct PlainViews::Private { };
++struct PlainUnpacker::Private { };
++PlainViews::PlainViews() = default;
++PlainViews::~PlainViews() = default;
++PlainViews::PlainViews(PlainViews &&) noexcept = default;
++PlainViews &PlainViews::operator=(PlainViews &&) noexcept = default;
++bool PlainViews::layerSource(LayerSource *) const { return false; }
++QImage PlainViews::image() const { return {}; }
++PlainUnpacker::PlainUnpacker() : d(std::make_unique<Private>()) { }
++PlainUnpacker::~PlainUnpacker() = default;
++int PlainUnpacker::unpackedFrames() const { return 0; }
++bool PlainUnpacker::unpack(const QVideoFrame &, const QVideoFrame &, Mode, int, PlainViews *, QString *why)
++{
++    *why = QStringLiteral("this Qt Multimedia was built without libstereo-dibr");
++    return false;
++}
++
+ #endif
+ 
+ } // namespace QQuickVideoDepth
+diff --git a/src/multimediaquick/qquickvideodepth_p.h b/src/multimediaquick/qquickvideodepth_p.h
+index 7285add..706c5f6 100644
+--- a/src/multimediaquick/qquickvideodepth_p.h
++++ b/src/multimediaquick/qquickvideodepth_p.h
+@@ -17,6 +17,7 @@
+ 
+ #include <QtCore/qrect.h>
+ #include <QtCore/qstring.h>
++#include <QtGui/qimage.h>
+ #include <QtMultimedia/qvideoframe.h>
+ #include <QtMultimedia/qvideoframeformat.h>
+ #include <QtMultimediaQuick/private/qtmultimediaquickglobal_p.h>
+@@ -124,6 +125,46 @@ struct Q_MULTIMEDIAQUICK_EXPORT LayerSource
+ };
+ Q_MULTIMEDIAQUICK_EXPORT bool layerSourceOf(const QVideoFrame &frame, LayerSource *out);
+ 
++// The views of a frame of a plain packing (side by side, top and bottom, rows, columns, checkerboard, frame sequence) taken apart by the GPU from
++// the decoder's own textures, as one RGB texture of the drawing context (RGBA8, or RGBA16 normalised for a deeper source; the first view of the
++// packing at the left, each view at the size its samples have, row 0 the top): the same hand-over as the drawn views of a depth video, for the
++// stereo layer to draw into its window surface, with no read back and no copy of ours.
++class Q_MULTIMEDIAQUICK_EXPORT PlainViews
++{
++public:
++    PlainViews();
++    ~PlainViews();
++    PlainViews(PlainViews &&) noexcept;
++    PlainViews &operator=(PlainViews &&) noexcept;
++
++    bool layerSource(LayerSource *out) const;
++    // The texture read back to system memory (RGBA8888, RGBA64 for a deeper source), for a test: the layer never does this
++    QImage image() const;
++
++    struct Private;
++    std::shared_ptr<Private> d;
++};
++
++class Q_MULTIMEDIAQUICK_EXPORT PlainUnpacker
++{
++public:
++    PlainUnpacker();
++    ~PlainUnpacker();
++
++    // Takes the views of the frame apart in the packing mode. other is the frame of the other eye of a frame sequence, frameView the eye
++    // (0 left, 1 right) of frame: the texture then holds the left eye first, whatever the order of the stream. False with the reason when the
++    // frame is not one the GPU can take apart where it is (a frame in system memory, a format the passes do not read, a converter that
++    // refuses it): the caller takes the copy to system memory and says why.
++    bool unpack(const QVideoFrame &frame, const QVideoFrame &other, QVideoFrameFormat::StereoMode mode, int frameView, PlainViews *out,
++                QString *why);
++    // The frames taken apart from the decoder's textures
++    int unpackedFrames() const;
++
++private:
++    struct Private;
++    std::unique_ptr<Private> d;
++};
++
+ class Q_MULTIMEDIAQUICK_EXPORT Renderer
+ {
+ public:
+diff --git a/src/multimediaquick/qquickvideostereopresenter.cpp b/src/multimediaquick/qquickvideostereopresenter.cpp
+index 2d6a11e..45ef710 100644
+--- a/src/multimediaquick/qquickvideostereopresenter.cpp
++++ b/src/multimediaquick/qquickvideostereopresenter.cpp
+@@ -108,6 +108,7 @@ void QQuickVideoStereoPresenter::run()
+         process(std::move(work));
+     }
+     m_layer.reset();
++    m_unpacker.reset();
+ }
+ 
+ void QQuickVideoStereoPresenter::process(State::Work work)
+@@ -123,18 +124,38 @@ void QQuickVideoStereoPresenter::process(State::Work work)
+     const bool rightFirst = job.packing.rightEyeFirst != job.swapEyes;
+     const auto depth = job.wide ? QVideoFrameImageDepth::Float32 : QVideoFrameImageDepth::Float16;
+     QString gpuWhy;
+-    // The drawn views of a depth video are textures of the drawing context: the layer draws them into a window surface of the GPU, with no read back
+-    // and no conversion or copy of ours (the driver and the compositor exchange the buffers, as DMA-BUF where both take them)
++    // The views of a frame of textures (the drawn views of a depth video, or the decoder's own frame of a plain packing taken apart by the GPU)
++    // are textures of a drawing context: the layer draws them into a window surface of the GPU, with no read back and no conversion or copy
++    // of ours (the driver and the compositor exchange the buffers, as DMA-BUF where both take them)
+     if (m_forceShm) {
+         gpuWhy = QStringLiteral("QT_MM_STEREO_LAYER_SHM asks for wl_shm buffers");
+-    } else if (format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::Multiview) || job.packing.mode != Mode::SideBySide
+-               || job.packing.size != Packing::Size::Full) {
+-        gpuWhy = QStringLiteral("the frame is not the full side by side the drawing passes make");
++    } else if (format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::Multiview)) {
++        gpuWhy = QStringLiteral("the frame holds the views of a multiview stream, not a plain packing");
+     } else {
+         QQuickVideoDepth::LayerSource source;
+-        if (!QQuickVideoDepth::layerSourceOf(job.frame, &source)) {
+-            gpuWhy = QStringLiteral("the frame is not made of textures of a drawing context the layer can share");
+-        } else {
++        QQuickVideoDepth::PlainViews plain;
++        bool haveSource = job.packing.mode == Mode::SideBySide && job.packing.size == Packing::Size::Full
++                && QQuickVideoDepth::layerSourceOf(job.frame, &source);
++        // the views of a frame sequence come left eye first; any other packing has its first view first, and the layer swaps them
++        bool swap = rightFirst;
++        // A layer that refused the views of this depth (the driver has no window surface of it, the compositor no buffer) refuses the next
++        // frames the same way: they are copied at once, the reason said, and the GPU takes the views apart again every sixtieth frame, so that
++        // a layer that can take them later does
++        const bool layerRefused = m_refusedFrames > 0 && m_refusedFormat == job.format && ++m_refusedFrames < 60;
++        if (layerRefused)
++            gpuWhy = m_refusedWhy;
++        else if (!haveSource) {
++            m_refusedFrames = 0;
++            if (!m_unpacker)
++                m_unpacker = std::make_unique<QQuickVideoDepth::PlainUnpacker>();
++            haveSource = m_unpacker->unpack(job.frame, job.otherFrame, job.packing.mode, job.frameView, &plain, &gpuWhy)
++                    && plain.layerSource(&source);
++            if (haveSource && job.packing.mode == Mode::FrameSequence)
++                swap = false;
++            if (!haveSource && gpuWhy.isEmpty())
++                gpuWhy = QStringLiteral("the frame is not made of textures of a drawing context the layer can share");
++        }
++        if (haveSource) {
+             const QSize eye(source.width / 2, source.height);
+             QRect crop(QPoint(0, 0), eye);
+             if (work.geometry.crop)
+@@ -149,7 +170,7 @@ void QQuickVideoStereoPresenter::process(State::Work work)
+                 m_layer->setColor({ format.colorSpace(), format.colorTransfer(), format.colorRange(), format.maxLuminance() });
+                 BufferFormat used = job.format;
+                 bool backpressure = false;
+-                if (m_layer->presentGpu(source, rightFirst, crop, job.format, work.geometry.destination, &used, &gpuWhy, &backpressure)) {
++                if (m_layer->presentGpu(source, swap, crop, job.format, work.geometry.destination, &used, &gpuWhy, &backpressure)) {
+                     const auto path = m_layer->gpuPath();
+                     QMutexLocker routeLock(&m_routeMutex);
+                     ++m_route.gpuFrames;
+@@ -160,6 +181,14 @@ void QQuickVideoStereoPresenter::process(State::Work work)
+                                                                                               : QStringLiteral("window surface");
+                     m_route.pathDescription = path.description;
+                     m_route.surfaceFormat = used;
++                    m_refusedFrames = 0;
++                    if (plain.d) {
++                        const QString taken = QStringLiteral("the views of the decoder's frames are taken apart by the GPU and drawn by the layer "
++                                                             "into its %1: no read back, no copy of ours").arg(m_route.path);
++                        if (m_saidGpu != taken)
++                            qCInfo(qLcStereoPresenter).noquote() << taken;
++                        m_saidGpu = taken;
++                    }
+                     job.frame = {};
+                     return;
+                 }
+@@ -168,6 +197,11 @@ void QQuickVideoStereoPresenter::process(State::Work work)
+                     m_state.retryPresentation(work.revision);
+                     return;
+                 }
++                if (plain.d) {
++                    m_refusedFrames = 1;
++                    m_refusedFormat = job.format;
++                    m_refusedWhy = gpuWhy;
++                }
+             }
+         }
+     }
+diff --git a/src/multimediaquick/qquickvideostereopresenter_p.h b/src/multimediaquick/qquickvideostereopresenter_p.h
+index 22ff47b..0b19d7d 100644
+--- a/src/multimediaquick/qquickvideostereopresenter_p.h
++++ b/src/multimediaquick/qquickvideostereopresenter_p.h
+@@ -29,6 +29,8 @@ QT_BEGIN_NAMESPACE
+ 
+ class QWindow;
+ 
++namespace QQuickVideoDepth { class PlainUnpacker; }
++
+ // Turns the frames of a stereoscopic 3D video into the pair of views the layer shows, off the
+ // threads of the video and of the scene graph, keeping only the newest frame when it is slower
+ // than the video
+@@ -186,6 +188,11 @@ private:
+     mutable QMutex m_routeMutex;
+     LayerRoute m_route;
+     bool m_forceShm = false;
++    std::unique_ptr<QQuickVideoDepth::PlainUnpacker> m_unpacker;
++    QString m_saidGpu;
++    int m_refusedFrames = 0;
++    QQuickVideoStereo::BufferFormat m_refusedFormat = QQuickVideoStereo::BufferFormat::Xrgb8888;
++    QString m_refusedWhy;
+     QString m_refusal;
+ };
+ 
+diff --git a/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp b/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
+index 13d1647..1091de7 100644
+--- a/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
++++ b/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
+@@ -19,6 +19,7 @@
+ #include <QtMultimediaQuick/private/qquickvideostereo_p.h>
+ #include <QtCore/qtemporarydir.h>
+ #include <QtCore/qfile.h>
++#include <QtCore/qlibrary.h>
+ #include <QtCore/qfileinfo.h>
+ #include <QtMultimediaQuick/private/qquickvideodepth_p.h>
+ #include <QtCore/qrandom.h>
+@@ -97,6 +98,10 @@ private slots:
+     void depthImportsHardwareFrames_data();
+     void depthImportsHardwareFrames();
+     void depthRefusesEmptyImportedPlanes();
++    void plainPackingsOnTheGpu_data();
++    void plainPackingsOnTheGpu();
++    void plainFramesTheGpuCannotTake();
++    void plainViewsAreSharedByTheLayersContext();
+     void depthDeepCases_data();
+     void depthDeepCases();
+     void depthInVideoOutput();
+@@ -1272,6 +1277,242 @@ void tst_QQuickVideoStereo::depthImportsHardwareFrames()
+     qunsetenv("XDG_CACHE_HOME");
+ }
+ 
++// The views of a plain packing taken apart by the GPU from the decoder's textures (the stereo layer draws them into its window surface instead of
++// copying them into wl_shm buffers): every packing of the specification the layer unpacks, 8 bit and 10, 12 and 16 bit words, the geometry
++// predicted from the packing alone (H.264 Table D-8, H.265 Table D.8, Matroska StereoMode: the view a sample belongs to) and never read back
++void tst_QQuickVideoStereo::plainPackingsOnTheGpu_data()
++{
++    QTest::addColumn<int>("mode");
++    QTest::addColumn<int>("format");
++    QTest::addColumn<int>("bits");
++    const struct { const char *name; Mode mode; } modes[] = {
++        { "side by side", Mode::SideBySide }, { "side by side quincunx", Mode::SideBySideQuincunx }, { "top and bottom", Mode::TopBottom },
++        { "rows", Mode::RowInterleaved }, { "columns", Mode::ColumnInterleaved }, { "checkerboard", Mode::Checkerboard },
++        { "frame sequence", Mode::FrameSequence }
++    };
++    const struct { const char *name; QVideoFrameFormat::PixelFormat format; int bits; } depths[] = {
++        { "8 bit", QVideoFrameFormat::Format_NV12, 8 }, { "10 bit", QVideoFrameFormat::Format_P010, 10 },
++        { "12 bit", QVideoFrameFormat::Format_P016, 12 }, { "16 bit", QVideoFrameFormat::Format_P016, 16 }
++    };
++    for (const auto &m : modes)
++        for (const auto &d : depths)
++            QTest::newRow(qPrintable(QStringLiteral("%1, %2").arg(QLatin1String(m.name), QLatin1String(d.name)))) << int(m.mode) << int(d.format) << d.bits;
++}
++
++void tst_QQuickVideoStereo::plainPackingsOnTheGpu()
++{
++    if (!QQuickVideoDepth::canDraw())
++        QSKIP("built without libstereo-dibr");
++    QFETCH(int, mode);
++    QFETCH(int, format);
++    QFETCH(int, bits);
++    const auto stereoMode = Mode(mode);
++    const auto pf = QVideoFrameFormat::PixelFormat(format);
++    const bool deep = bits > 8;
++    const int w = 64, h = 32, bytes = deep ? 2 : 1;
++    const bool sequence = stereoMode == Mode::FrameSequence;
++    // the sample of the luma at x, y of the frame number `salt`: the address of the sample, in the words of the depth (the low bits used)
++    auto word = [&](int x, int y, int salt) -> unsigned {
++        const unsigned address = unsigned(x * 37 + y * 91 + salt * 53 + 11);
++        if (!deep)
++            return address % 251 + 2;
++        const unsigned code = (address * 2654435761u >> 7) & ((1u << bits) - 1);
++        return pf == QVideoFrameFormat::Format_P010 ? code << 6 : code << (16 - bits);
++    };
++    FakeCounts counts;
++    auto makeFrame = [&](int salt) {
++        std::vector<uchar> luma(size_t(w) * h * bytes), chroma(size_t(w) * (h / 2) * bytes);
++        for (int y = 0; y < h; ++y)
++            for (int x = 0; x < w; ++x) {
++                if (deep)
++                    reinterpret_cast<quint16 *>(luma.data())[y * w + x] = quint16(word(x, y, salt));
++                else
++                    luma[size_t(y) * w + x] = uchar(word(x, y, salt));
++            }
++        // neutral chroma: with a full range frame every channel of the picture is the luma sample itself
++        for (size_t i = 0; i < chroma.size() / bytes; ++i) {
++            if (deep)
++                reinterpret_cast<quint16 *>(chroma.data())[i] = 0x8000;
++            else
++                chroma[i] = 0x80;
++        }
++        QVideoFrameFormat f(QSize(w, h), pf);
++        f.setColorSpace(QVideoFrameFormat::ColorSpace_BT709);
++        f.setColorRange(QVideoFrameFormat::ColorRange_Full);
++        std::vector<FakeHardwareBuffer::Plane> planes;
++        planes.emplace_back(luma, w * bytes, w, h, 1);
++        planes.emplace_back(chroma, w * bytes, w / 2, h / 2, 2);
++        return QVideoFramePrivate::createFrame(std::make_unique<FakeHardwareBuffer>(f, std::move(planes), deep, &counts), f);
++    };
++    QQuickVideoDepth::PlainUnpacker unpacker;
++    // where the sample of the view `view` (0 the first of the packing) at i, j is in the frame, by the packing's definition
++    auto source = [&](int view, int i, int j) -> QPoint {
++        switch (stereoMode) {
++        case Mode::SideBySide:
++        case Mode::SideBySideQuincunx: return QPoint(view * (w / 2) + i, j);
++        case Mode::TopBottom: return QPoint(i, view * (h / 2) + j);
++        case Mode::RowInterleaved: return QPoint(i, 2 * j + view);
++        case Mode::ColumnInterleaved: return QPoint(2 * i + view, j);
++        case Mode::Checkerboard: return QPoint(std::min(((j + view) & 1) + 2 * i, w - 1), j);
++        default: return QPoint(i, j);
++        }
++    };
++    const QSize eye = sequence ? QSize(w, h) : stereoMode == Mode::TopBottom || stereoMode == Mode::RowInterleaved ? QSize(w, h / 2) : QSize(w / 2, h);
++    // frame sequence: the frame is the right eye in one run and the left in the other (the texture always holds the left eye first)
++    for (int frameView = 0; frameView < (sequence ? 2 : 1); ++frameView) {
++        const QVideoFrame frame = makeFrame(0), other = sequence ? makeFrame(1) : QVideoFrame();
++        // the former gate: a frame that is not the drawn views of a depth video is no source for the layer
++        QQuickVideoDepth::LayerSource none;
++        QVERIFY(!QQuickVideoDepth::layerSourceOf(frame, &none));
++        QQuickVideoDepth::PlainViews views;
++        QString why;
++        counts.maps = counts.mapTextures = 0;
++        if (!unpacker.unpack(frame, other, stereoMode, frameView, &views, &why)) {
++            if (why.contains(u"OpenGL"_s) || why.contains(u"context"_s))
++                QSKIP(qPrintable(why));
++            QFAIL(qPrintable(why));
++        }
++        // never read back, the planes mapped once for a frame, twice for the two frames of a sequence
++        QCOMPARE(int(counts.maps), 0);
++        QCOMPARE(int(counts.mapTextures), sequence ? 2 : 1);
++        QQuickVideoDepth::LayerSource layer;
++        if (views.layerSource(&layer)) {
++            QCOMPARE(layer.width, 2 * eye.width());
++            QCOMPARE(layer.height, eye.height());
++            QCOMPARE(layer.deep, deep);
++        }
++        const QImage image = views.image();
++        QCOMPARE(image.size(), QSize(2 * eye.width(), eye.height()));
++        int wrong = 0, different = 0;
++        for (int view = 0; view < 2; ++view)
++            for (int j = 0; j < eye.height(); ++j)
++                for (int i = 0; i < eye.width(); ++i) {
++                    const QPoint at = source(view, i, j);
++                    // the frame sequence's left eye is `frame` when frameView is 0, else `other`
++                    const int salt = sequence ? (view == 0) == (frameView == 0) ? 0 : 1 : 0;
++                    const unsigned expected = word(at.x(), at.y(), salt);
++                    const QRgba64 pixel = image.pixelColor(view * eye.width() + i, j).rgba64();
++                    const unsigned got = deep ? pixel.red() : pixel.red8();
++                    const unsigned tolerance = deep ? 1 : 1;
++                    if (got + tolerance < expected || got > expected + tolerance)
++                        ++wrong;
++                    if (view == 1 && image.pixel(i, j) != image.pixel(eye.width() + i, j))
++                        ++different;
++                }
++        QVERIFY2(wrong == 0, qPrintable(u"%1 samples of %2 are not the samples the packing keeps for the view"_s.arg(wrong).arg(2 * eye.width() * eye.height())));
++        // the two views are made of different samples (the control: a pass that drew one view twice fails the check above, and the frames are
++        // made so that every view differs from the other)
++        QVERIFY2(different > eye.width() * eye.height() / 2, qPrintable(u"%1 of the samples differ between the views"_s.arg(different)));
++    }
++    QCOMPARE(unpacker.unpackedFrames(), sequence ? 2 : 1);
++}
++
++// A frame the GPU cannot take apart where it is is not taken apart quietly: the reason is told (the caller copies it, and says it)
++void tst_QQuickVideoStereo::plainFramesTheGpuCannotTake()
++{
++    if (!QQuickVideoDepth::canDraw())
++        QSKIP("built without libstereo-dibr");
++    QQuickVideoDepth::PlainUnpacker unpacker;
++    QQuickVideoDepth::PlainViews views;
++    QString why;
++    // decoded by the processor: no textures
++    QVideoFrameFormat f(QSize(64, 32), QVideoFrameFormat::Format_NV12);
++    QVideoFrame memory(f);
++    QVERIFY(!unpacker.unpack(memory, {}, Mode::SideBySide, 0, &views, &why));
++    QVERIFY2(why.contains(u"system memory"_s) || why.contains(u"OpenGL"_s), qPrintable(why));
++    // a software decoder's frame in a QHwVideoBuffer (FFmpeg's buffer is one for every frame): no textures, and the reason is said
++    {
++        class SoftwareBuffer : public FakeHardwareBuffer
++        {
++        public:
++            using FakeHardwareBuffer::FakeHardwareBuffer;
++            void initTextureConverter(QRhi &) override { }
++        };
++        FakeCounts softwareCounts;
++        std::vector<FakeHardwareBuffer::Plane> planes;
++        planes.emplace_back(std::vector<uchar>(64 * 32), 64, 64, 32, 1);
++        planes.emplace_back(std::vector<uchar>(64 * 16), 64, 32, 16, 2);
++        const QVideoFrame software = QVideoFramePrivate::createFrame(std::make_unique<SoftwareBuffer>(f, std::move(planes), false, &softwareCounts), f);
++        why.clear();
++        QVERIFY(!unpacker.unpack(software, {}, Mode::SideBySide, 0, &views, &why));
++        QVERIFY2(why.contains(u"system memory"_s) || why.contains(u"OpenGL"_s), qPrintable(why));
++        QCOMPARE(int(softwareCounts.mapTextures), 0);
++    }
++    // a packing the GPU does not take apart (the anaglyphs hold both views in the colours)
++    why.clear();
++    QVERIFY(!unpacker.unpack(memory, {}, Mode::AnaglyphCyanRed, 0, &views, &why));
++    QVERIFY(!why.isEmpty());
++    // a converter that refuses the frame (a DMA-BUF the drawing GPU cannot import)
++    class Refusing : public FakeHardwareBuffer
++    {
++    public:
++        using FakeHardwareBuffer::FakeHardwareBuffer;
++        QVideoFrameTexturesUPtr mapTextures(QRhi &, QVideoFrameTexturesUPtr &) override { return nullptr; }
++    };
++    FakeCounts counts;
++    std::vector<FakeHardwareBuffer::Plane> planes;
++    planes.emplace_back(std::vector<uchar>(64 * 32), 64, 64, 32, 1);
++    planes.emplace_back(std::vector<uchar>(64 * 16), 64, 32, 16, 2);
++    const QVideoFrame refused = QVideoFramePrivate::createFrame(std::make_unique<Refusing>(f, std::move(planes), false, &counts), f);
++    why.clear();
++    QVERIFY(!unpacker.unpack(refused, {}, Mode::SideBySide, 0, &views, &why));
++    if (!why.contains(u"OpenGL"_s))
++        QVERIFY2(why.contains(u"refused"_s), qPrintable(why));
++    QCOMPARE(unpacker.unpackedFrames(), 0);
++}
++
++// The stereo layer draws the views in a context of its own that shares the drawing context's (EGL, eglCreateContext with the share list): EGL refuses a
++// share list of contexts with different reset notification strategies (Mesa: "share list notification strategy mismatch", EGL_BAD_MATCH), and the
++// layer's context asks for none. A drawing context made for the layer to share must therefore ask for none either.
++void tst_QQuickVideoStereo::plainViewsAreSharedByTheLayersContext()
++{
++    if (!QQuickVideoDepth::canDraw())
++        QSKIP("built without libstereo-dibr");
++    const int w = 64, h = 32;
++    QVideoFrameFormat f(QSize(w, h), QVideoFrameFormat::Format_NV12);
++    FakeCounts counts;
++    std::vector<FakeHardwareBuffer::Plane> planes;
++    planes.emplace_back(std::vector<uchar>(w * h, 90), w, w, h, 1);
++    planes.emplace_back(std::vector<uchar>(w * h / 2, 128), w, w / 2, h / 2, 2);
++    const QVideoFrame frame = QVideoFramePrivate::createFrame(std::make_unique<FakeHardwareBuffer>(f, std::move(planes), false, &counts), f);
++    QQuickVideoDepth::PlainUnpacker unpacker;
++    QQuickVideoDepth::PlainViews views;
++    QString why;
++    if (!unpacker.unpack(frame, {}, Mode::SideBySide, 0, &views, &why))
++        QSKIP(qPrintable(why));
++    QQuickVideoDepth::LayerSource source;
++    if (!views.layerSource(&source) || !source.eglContext)
++        QSKIP("the drawing context is not an EGL context on this platform");
++    QLibrary egl(u"EGL"_s);
++    using BindApi = unsigned (*)(unsigned);
++    using ChooseConfig = unsigned (*)(void *, const int *, void **, int, int *);
++    using CreateContext = void *(*)(void *, void *, void *, const int *);
++    using DestroyContext = unsigned (*)(void *, void *);
++    using GetError = int (*)();
++    auto bindApi = reinterpret_cast<BindApi>(egl.resolve("eglBindAPI"));
++    auto chooseConfig = reinterpret_cast<ChooseConfig>(egl.resolve("eglChooseConfig"));
++    auto createContext = reinterpret_cast<CreateContext>(egl.resolve("eglCreateContext"));
++    auto destroyContext = reinterpret_cast<DestroyContext>(egl.resolve("eglDestroyContext"));
++    auto getError = reinterpret_cast<GetError>(egl.resolve("eglGetError"));
++    if (!bindApi || !chooseConfig || !createContext || !destroyContext || !getError)
++        QSKIP("libEGL could not be loaded");
++    constexpr int surfaceType = 0x3033, pbuffer = 0x0001, window = 0x0004, renderable = 0x3040, openGl = 0x0008, openGles3 = 0x0040, none = 0x3038;
++    const int configAttributes[] = { surfaceType, pbuffer | window, renderable, source.es ? openGles3 : openGl, none };
++    void *config = nullptr;
++    int count = 0;
++    if (!chooseConfig(source.eglDisplay, configAttributes, &config, 1, &count) || !count)
++        QSKIP("EGL has no config of the layer's kind");
++    bindApi(source.es ? 0x30A0 /* OPENGL_ES_API */ : 0x30A2 /* OPENGL_API */);
++    constexpr int major = 0x3098, minor = 0x30FB, profile = 0x30FD, core = 0x0001;
++    const int desktop[] = { major, 3, minor, 3, profile, core, none };
++    const int es[] = { major, 3, none };
++    getError();
++    void *context = createContext(source.eglDisplay, config, source.eglContext, source.es ? es : desktop);
++    const int error = getError();
++    QVERIFY2(context, qPrintable(u"eglCreateContext sharing the drawing context's: EGL error 0x%1"_s.arg(error, 0, 16)));
++    destroyContext(source.eglDisplay, context);
++}
++
+ // The cases of the depth captures at 10 and 16 bits (tools/qt/make-deep-cases.py makes the frames from the cases' pictures, DEEP_CASES is their
+ // directory): the views the GPU draws against the C code's at the source's depth. The same criterion as the 8 bit cases, in 8 bit
+ // equivalents of the codes: fewer than one pixel in 500 off by more than 2, a mean under 0.25
+-- 
+2.53.0
+
