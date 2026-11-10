@@ -27,7 +27,7 @@ if [ -n "${SIBLINGS_DIR:-}" ]; then
 		-v "$SIBLINGS_DIR":/sib:ro -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro -v "$SPARKY_REPO_DIR":/repo:ro
 		-e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch)
 fi
-docker run "${SPARKY_PROV_ARGS[@]}" "${GATE[@]}" --rm --ulimit core=0 --name w196-browser --cpus ${BROWSER_JOBS:-8} -e BROWSER_JOBS=${BROWSER_JOBS:-8} --memory 32g --platform linux/amd64 \
+docker run "${SPARKY_PROV_ARGS[@]}" "${GATE[@]}" --rm --ulimit core=0 --name ${BROWSER_CONTAINER:-w196-browser} --cpus ${BROWSER_JOBS:-8} -e BROWSER_JOBS=${BROWSER_JOBS:-8} --memory 32g --platform linux/amd64 \
 	-v "$WORK":/work -v "$PUBLISHED":/in:ro -v "$HERE/browser":/patches:ro -v "$TOOLS":/browser-toolchains:ro \
 	-v "$HERE/../..":/toolkit:ro \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
