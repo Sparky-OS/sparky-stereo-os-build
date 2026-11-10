@@ -1,0 +1,19 @@
+#!/bin/sh
+# autopkgtest: build one of the surfaceless EGL programs next to this script and run it through zink.
+# Exit 0 only when the program printed PASS on a zink renderer. 77 (skipped, said aloud) when zink has no Vulkan device or the
+# program could not start; any other result is a failure.
+set -u
+name=${1:?egl-surfaceless-ssbo64 or egl-surfaceless-sparse-tail}
+here=$(cd "$(dirname "$0")" && pwd)
+work=${AUTOPKGTEST_TMP:-$(mktemp -d)}
+cc -O2 -Wall -Wextra -Werror -o "$work/$name" "$here/$name.c" -lEGL -lGL || { echo "FAIL: $name does not build"; exit 1; }
+MESA_LOADER_DRIVER_OVERRIDE=zink "$work/$name" > "$work/out" 2>&1
+status=$?
+cat "$work/out"
+grep -q '^renderer:.*zink' "$work/out" || { echo "NOT RUN: $name did not get a zink renderer (zink found no Vulkan device); this is not a pass"; exit 77; }
+if [ "$status" -eq 2 ] || [ "$status" -eq 77 ]; then
+    echo "NOT RUN: $name could not start on zink (the driver lacks a feature the test needs); this is not a pass"
+    exit 77
+fi
+[ "$status" -eq 0 ] && grep -qx PASS "$work/out" || { echo "FAIL: $name"; exit 1; }
+echo "PASS: $name on zink"
