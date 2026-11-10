@@ -6,7 +6,8 @@
 # earlier in the round, /toolkit the build tree's sparky-os.
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
-export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS="nocheck parallel=${THREADS:-6}"
+ulimit -c 0
+export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS="nocheck parallel=${THREADS:-4}"
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 [ ! -d /new ] || printf 'deb [trusted=yes] file:/new ./\n' > /etc/apt/sources.list.d/edition-new.list
 printf 'deb [trusted=yes] file:/repo mashtabba main\n' > /etc/apt/sources.list.d/edition.list
@@ -27,6 +28,6 @@ useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/lc/source
 runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev SPARKY_LC_PREVIOUS_SIBLINGS_FILE="${SPARKY_LC_PREVIOUS_SIBLINGS_FILE:-}" SPARKY_LC_SIBLINGS_FILE="${SPARKY_LC_SIBLINGS_FILE:-}" SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" \
-	DEB_BUILD_OPTIONS="$DEB_BUILD_OPTIONS" dpkg-buildpackage -us -uc -j"${THREADS:-6}"
+	DEB_BUILD_OPTIONS="$DEB_BUILD_OPTIONS" dpkg-buildpackage -us -uc -j"${THREADS:-4}"
 cd /work/lc
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/lc/*+lc1_*.deb

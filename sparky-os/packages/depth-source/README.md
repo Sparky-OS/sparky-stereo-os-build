@@ -114,3 +114,17 @@ For player follow-ups, inspect these boundaries in the unpacked source:
 
 Credits remain those of each source: Dragon names Max Howell, Ian Monroe and Harald Sitter in `src/main.cpp`; the overlay component names Marco Martin.
 Plank Player's `app/main.cpp` names Aditya Mehra.
+
+## Player follow-ups (ORDER 453c)
+
+Dragon `4:26.04.0-1+stereo3d11+lc1` carries `0010` (the Save menu item itself and both entry points use `canOfferSave`), `0011` (Erich Seifert's complete MR 86), and `0012` (the popup reads its shader source; a button reads its action's tooltip or its own text).
+Plank Player `5.27.80+git20261005.f87e775-1+stereo3d4+lc1` carries `0005` (per-file input corrections) and `0006` (the settings failure message in eight catalogues, with English in QML).
+`next-source.sh` accepts Dragon +10 or +9 for +11, and Plank +3 or +2 for +4; prefer the accepted +10/+3 stage to keep its changelog history.
+Both Plank packaging routes require `qml6-module-org-kde-desktop`, and both Qt Multimedia runtime dependencies require +15.
+
+Plank has no resume store and does not link KConfig.
+It uses QtCore's QSettings with its existing organisation and application names, `PlankPlayer`, so its configuration file is `$XDG_CONFIG_HOME/PlankPlayer/PlankPlayer.conf` (normally `~/.config/PlankPlayer/PlankPlayer.conf`).
+The group is `[StereoVideo]`; SHA-256 of the fully encoded file URL is the swap key, and that hash plus `.input` is the packing key, matching Dragon's scheme.
+False swap and automatic packing remove their entries.
+Only menu choices write settings; loading another file reads them and never copies the previous file's choices.
+A settings read/write failure is visible in the banner, with the file named; media files and their metadata are never changed by Plank.

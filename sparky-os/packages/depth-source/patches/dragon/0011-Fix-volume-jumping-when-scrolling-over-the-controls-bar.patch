@@ -1,0 +1,26 @@
+Description: Fix volume jumping when scrolling over the controls bar
+ Bind to the player audio output and restore the binding after scrolling.
+Author: Erich Seifert
+Origin: upstream, https://invent.kde.org/multimedia/dragon/-/merge_requests/86
+Applied-Upstream: no (open merge request, checked 2026-11-10)
+Last-Update: 2026-11-10
+
+diff --git a/src/qml/PlayerPage.qml b/src/qml/PlayerPage.qml
+index 7a3aa184..b1acbe54 100644
+--- a/src/qml/PlayerPage.qml
++++ b/src/qml/PlayerPage.qml
+@@ -398,7 +398,13 @@ Please <link url="%1">contact the %2 developers</link> about this issue, or to f
+                 rotationScale: 0.01
+                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                 onWheel: player.audioOutput.volume = rotation
+-                rotation: audioOutput.volume
++                rotation: player.audioOutput.volume
++                onActiveChanged: {
++                    if (!active) {
++                        rotation = Qt.binding(() => player.audioOutput.volume)
++                        volumeBoundaryRule.returnToBounds()
++                    }
++                }
+             }
+         }
+ 

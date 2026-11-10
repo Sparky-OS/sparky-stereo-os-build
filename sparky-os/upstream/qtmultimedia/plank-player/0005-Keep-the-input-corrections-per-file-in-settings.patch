@@ -1,0 +1,181 @@
+Description: Keep input packing and eye order per file in the application settings
+Author: Daniel Campos Ramos
+Forwarded: not-needed
+Last-Update: 2026-11-10
+
+--- a/app/CMakeLists.txt
++++ b/app/CMakeLists.txt
+@@ -2,4 +2,6 @@
+ add_executable(plank-player ${plank_player_SRCS}
+     main.cpp
++    stereostate.cpp
++    stereostate.h
+ )
+ 
+--- a/app/main.cpp
++++ b/app/main.cpp
+@@ -2,4 +2,6 @@
+ //
+ // SPDX-License-Identifier: GPL-2.0-or-later
++
++#include "stereostate.h"
+ 
+ #include <QGuiApplication>
+@@ -31,5 +33,7 @@
+     KLocalizedString::setApplicationDomain(QByteArrayLiteral("plank-player"));
+ 
++    StereoState stereoState;
+     QQmlApplicationEngine engine;
++    engine.rootContext()->setContextProperty(QStringLiteral("stereoState"), &stereoState);
+     engine.rootContext()->setContextObject(new KLocalizedContext(&engine));
+     QUrl homePath(QStandardPaths::writableLocation(QStandardPaths::HomeLocation));
+--- /dev/null
++++ b/app/stereostate.h
+@@ -0,0 +1,25 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: GPL-2.0-or-later
++#pragma once
++
++#include <QObject>
++#include <QSettings>
++#include <QUrl>
++
++class StereoState : public QObject
++{
++    Q_OBJECT
++    Q_PROPERTY(QString failurePath READ failurePath NOTIFY failurePathChanged)
++public:
++    using QObject::QObject;
++    QString failurePath() const { return m_failurePath; }
++    Q_INVOKABLE bool stereoSwap(const QUrl &url);
++    Q_INVOKABLE int stereoInput(const QUrl &url, int automatic);
++    Q_INVOKABLE void setStereoSwap(const QUrl &url, bool swap);
++    Q_INVOKABLE void setStereoInput(const QUrl &url, int input, int automatic);
++Q_SIGNALS:
++    void failurePathChanged();
++private:
++    void checkStatus(QSettings &settings);
++    QString m_failurePath;
++};
+--- /dev/null
++++ b/app/stereostate.cpp
+@@ -0,0 +1,68 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: GPL-2.0-or-later
++#include "stereostate.h"
++#include <QCryptographicHash>
++
++static QString stereoKey(const QUrl &url)
++{
++    return QStringLiteral("StereoVideo/") + QString::fromLatin1(QCryptographicHash::hash(url.toEncoded(), QCryptographicHash::Sha256).toHex());
++}
++
++void StereoState::checkStatus(QSettings &settings)
++{
++    settings.sync();
++    const QString path = settings.status() == QSettings::NoError ? QString() : settings.fileName();
++    if (m_failurePath != path) {
++        m_failurePath = path;
++        Q_EMIT failurePathChanged();
++    }
++}
++
++bool StereoState::stereoSwap(const QUrl &url)
++{
++    if (url.isEmpty())
++        return false;
++    QSettings settings;
++    settings.setFallbacksEnabled(false);
++    const bool swap = settings.value(stereoKey(url), false).toBool();
++    checkStatus(settings);
++    return swap;
++}
++
++int StereoState::stereoInput(const QUrl &url, int automatic)
++{
++    if (url.isEmpty())
++        return automatic;
++    QSettings settings;
++    settings.setFallbacksEnabled(false);
++    const int input = settings.value(stereoKey(url) + QStringLiteral(".input"), automatic).toInt();
++    checkStatus(settings);
++    return input;
++}
++
++void StereoState::setStereoSwap(const QUrl &url, bool swap)
++{
++    if (url.isEmpty())
++        return;
++    QSettings settings;
++    settings.setFallbacksEnabled(false);
++    if (swap)
++        settings.setValue(stereoKey(url), true);
++    else
++        settings.remove(stereoKey(url));
++    checkStatus(settings);
++}
++
++void StereoState::setStereoInput(const QUrl &url, int input, int automatic)
++{
++    if (url.isEmpty())
++        return;
++    QSettings settings;
++    settings.setFallbacksEnabled(false);
++    const QString key = stereoKey(url) + QStringLiteral(".input");
++    if (input != automatic)
++        settings.setValue(key, input);
++    else
++        settings.remove(key);
++    checkStatus(settings);
++}
+--- a/app/qml/main.qml
++++ b/app/qml/main.qml
+@@ -51,4 +51,5 @@
+             id: stereoMenu
+             video: video
++            state: stereoState
+             onClosed: {
+                 playerOSDItem.opened = true
+@@ -62,6 +63,6 @@
+             // The choice of the packing is for the file it was made for
+             onSourceChanged: {
+-                video.stereoInput = VideoOutput.StereoAutomatic
+-                video.stereoSwapEyes = false
++                video.stereoInput = stereoState.stereoInput(video.source, VideoOutput.StereoAutomatic)
++                video.stereoSwapEyes = stereoState.stereoSwap(video.source)
+             }
+             anchors.top: parent.top
+@@ -93,5 +94,5 @@
+         Rectangle {
+             id: stereoLayerFailureBanner
+-            visible: video.stereoLayerFailure.length > 0
++            visible: video.stereoLayerFailure.length > 0 || stereoState.failurePath.length > 0
+             anchors.top: parent.top
+             anchors.left: parent.left
+@@ -107,5 +108,8 @@
+                 wrapMode: Text.WordWrap
+                 color: Kirigami.Theme.textColor
+-                text: i18nc("@info %1 is the reason the desktop gave", "This video is shown flat: the desktop refused to show it in 3D (%1).", video.stereoLayerFailure)
++                text: [video.stereoLayerFailure.length > 0
++                       ? i18nc("@info %1 is the reason the desktop gave", "This video is shown flat: the desktop refused to show it in 3D (%1).", video.stereoLayerFailure) : "",
++                       stereoState.failurePath.length > 0
++                       ? i18nc("@info %1 is the settings file", "The 3D correction settings could not be read or saved in %1. Check the file's permissions and contents.", stereoState.failurePath) : ""].filter(message => message.length > 0).join("\n")
+             }
+         }
+--- a/app/qml/StereoMenu.qml
++++ b/app/qml/StereoMenu.qml
+@@ -19,4 +19,5 @@
+ 
+     // The Video, whose stereoscopic 3D properties the menu sets
++    property var state
+     property var video
+ 
+@@ -125,6 +126,8 @@
+                         stereoMenuArea.video.stereoView = modelData.value
+                     } else if (modelData.kind === "input") {
++                        stereoMenuArea.state.setStereoInput(stereoMenuArea.video.source, modelData.value, VideoOutput.StereoAutomatic)
+                         stereoMenuArea.video.stereoInput = modelData.value
+                     } else {
++                        stereoMenuArea.state.setStereoSwap(stereoMenuArea.video.source, !stereoMenuArea.video.stereoSwapEyes)
+                         stereoMenuArea.video.stereoSwapEyes = !stereoMenuArea.video.stereoSwapEyes
+                     }
