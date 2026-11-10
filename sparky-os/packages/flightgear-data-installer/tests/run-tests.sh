@@ -252,7 +252,7 @@ for f in "$LANGD"/*; do
 	done < <(grep -o '^MSG_[A-Z_]*' "$LANGD/en")
 done
 check "messages: nine languages complete with the same placeholders" test "$(ls "$LANGD" | wc -l)" -eq 9 -a "$fail_msgs" -eq 0
-for pair in de_DE.UTF-8:"Führen Sie" fr_FR.UTF-8:"Lancez ceci" pl_PL.UTF-8:"Uruchom to" pt_BR.UTF-8:"Execute isto" ja_JP.UTF-8:"管理者として" ko_KR.UTF-8:"관리자 권한" zh_CN.UTF-8:"请以管理员" zh_TW.UTF-8:"請以管理員" en_US.UTF-8:"Run this as"; do
+for pair in de_DE.UTF-8:"Führen Sie" es_ES.UTF-8:"Ejecutar esto como" fr_FR.UTF-8:"Lancez ceci" pl_PL.UTF-8:"Uruchom to" pt_BR.UTF-8:"Execute isto" ja_JP.UTF-8:"管理者として" ko_KR.UTF-8:"관리자 권한" zh_CN.UTF-8:"请以管理员" zh_TW.UTF-8:"請以管理員" en_US.UTF-8:"Run this as"; do
 	loc=${pair%%:*}
 	want=${pair#*:}
 	out=$(setpriv --reuid=65534 --regid=65534 --clear-groups env LC_ALL=$loc "$BIN" install 2>&1)
