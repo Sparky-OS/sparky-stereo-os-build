@@ -37,7 +37,7 @@ mkdir -p "$WORK/out"
 SOURCE_DATE_EPOCH=$(python3 "$HERE/../repo/reproducible.py" changelog "$WORK/$SRC/debian/changelog")
 export SOURCE_DATE_EPOCH SPARKY_SOURCE_DATE_BASIS="the newest changelog entry of $SRC"
 sparky_provenance_init "$IMAGE"
-NAME=lean-dh-$(basename "$SRC" | sed 's/[^A-Za-z0-9_.-]/-/g')
+NAME=${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lean-dh-$(basename "$SRC" | sed 's/[^A-Za-z0-9_.-]/-/g')
 EXTRA_MOUNT=()
 [ -n "${EXTRA:-}" ] && EXTRA_MOUNT=(-v "$(realpath "$EXTRA")":/extra-debs:ro)
 # the gate isolates each case with bubblewrap, which needs the container's /proc unmasked
