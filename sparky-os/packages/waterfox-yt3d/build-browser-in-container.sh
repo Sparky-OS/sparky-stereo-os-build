@@ -8,7 +8,7 @@ set -euo pipefail
 : "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=${BROWSER_JOBS:-8}
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
-OLD=6.7.5-0+stereo3d13+lc1 NEW=6.7.5-0+stereo3d14 COMMIT=1981fbd3f7c81b5743a8b4368ed7d151a607de3f OLDCOMMIT=6be1abb34e71b4352957a55f2db03c76d0d0c83d
+OLD=6.7.5-0+stereo3d13+lc1 NEW=6.7.5-0+stereo3d14 COMMIT=5f618506a2c765f64a62ac7103285fad5e7d36d0 OLDCOMMIT=6be1abb34e71b4352957a55f2db03c76d0d0c83d
 if [ -z "${BROWSER_RESUME:-}" ]; then
 cd /work && mkdir plain && cd plain
 cp /in/sparky-stereo-browser_6.7.5.orig.tar.xz "/in/sparky-stereo-browser_$OLD.dsc" "/in/sparky-stereo-browser_$OLD.debian.tar.xz" .
@@ -17,8 +17,8 @@ sha256sum sparky-stereo-browser_6.7.5.orig.tar.xz | tee /work/orig.sha256
 dpkg-source -x "sparky-stereo-browser_$OLD.dsc" src >/dev/null
 cd src
 mkdir -p debian/patches
-cp /patches/0013-*.patch /patches/0014-*.patch /patches/0015-*.patch debian/patches/
-ls /patches/0013-*.patch /patches/0014-*.patch /patches/0015-*.patch | xargs -n1 basename >> debian/patches/series
+cp /patches/0013-*.patch /patches/0014-*.patch /patches/0015-*.patch /patches/0016-*.patch debian/patches/
+ls /patches/0013-*.patch /patches/0014-*.patch /patches/0015-*.patch /patches/0016-*.patch | xargs -n1 basename >> debian/patches/series
 python3 - <<'PY'
 import os
 top = open('/patches/changelog14.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d14').replace('@DATE@', os.environ['SOURCE_DATE_RFC2822'])
@@ -29,6 +29,10 @@ lc = ('sparky-stereo-browser (6.7.5-0+stereo3d14+lc1) UNRELEASED; urgency=medium
 old = open('debian/changelog').read()
 open('debian/changelog', 'w').write(lc + top + old[old.index('sparky-stereo-browser (6.7.5-0+stereo3d13) unstable'):])
 PY
+# The package's languages: the nine of the edition and the four Spanish locales (Spanish is the tenth required language; Mozilla's
+# locales carry a territory, and ORDER 473u round 3b gives the same Spanish text to all four).
+grep -q -- '--locales en-US pl pt-BR fr de ja ko zh-CN zh-TW$' debian/build.sh
+sed -i 's/--locales en-US pl pt-BR fr de ja ko zh-CN zh-TW$/--locales en-US pl pt-BR fr de ja ko zh-CN zh-TW es-ES es-MX es-AR es-CL/' debian/build.sh
 grep -q "^MOZ_SOURCE_CHANGESET=$OLDCOMMIT\$" debian/browser-build.env
 sed -i "s/^MOZ_SOURCE_CHANGESET=.*/MOZ_SOURCE_CHANGESET=$COMMIT/" debian/browser-build.env
 # The build ID is how a profile learns that its cached interface is old: the same ID over a new package kept the interface of the

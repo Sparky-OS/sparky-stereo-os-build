@@ -1,21 +1,25 @@
-Description: The browser's 3D menus lose the separation, screen plane and device type strings (ORDER 473u round 3)
+Description: The browser's 3D menus lose the separation, screen plane and device type strings; the Display Configuration label and the two notices (ORDER 473u round 3)
  The strings of the removed menus (the 3D Display menu, its modes, depths and screen planes, the 3D Canvas menu's depths, the
- phone and headset hints and mode names) go from the nine languages, and the Display Settings item's label is added
- in each: waterfox/browser/locales/LOCALE/browser/browser/browserContext.ftl. Applies after the 3D Display strings.
+ phone and headset hints and mode names) go from eight languages; the Display Configuration item's label (KDE's own name for
+ kcm_kscreen, with KDE's own translations) and the two notices of the notification bar (a 3D scene that stays flat for want
+ of depth limits, Display Configuration that could not be opened) are added in each: waterfox/browser/locales/LOCALE/browser/browser/browserContext.ftl.
+ Applies after the 3D Display strings.
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Forwarded: not-needed
 Assisted-by: Claude Sonnet 5.5 via Claude Code
 ---
 diff -ruN a/waterfox/browser/locales/de/browser/browser/browserContext.ftl b/waterfox/browser/locales/de/browser/browser/browserContext.ftl
---- a/waterfox/browser/locales/de/browser/browser/browserContext.ftl	2026-11-10 17:24:11.035968395 -0300
-+++ b/waterfox/browser/locales/de/browser/browser/browserContext.ftl	2026-11-10 17:24:11.043353943 -0300
-@@ -246,64 +246,15 @@
+--- a/waterfox/browser/locales/de/browser/browser/browserContext.ftl	2026-11-10 19:39:09.650981672 -0300
++++ b/waterfox/browser/locales/de/browser/browser/browserContext.ftl	2026-11-10 19:39:09.702562111 -0300
+@@ -246,64 +246,18 @@
  main-context-menu-canvas-stereo-on =
      .label = Ein
  
 -main-context-menu-canvas-stereo-depth-less =
 -    .label = Weniger Tiefe
--
++main-context-menu-stereo-display-settings =
++    .label = Anzeige-Einrichtung
+ 
 -main-context-menu-canvas-stereo-depth-normal =
 -    .label = Normale Tiefe
 -
@@ -58,8 +62,8 @@ diff -ruN a/waterfox/browser/locales/de/browser/browser/browserContext.ftl b/wat
 -
 -main-context-menu-xr-stereo-plane-farther =
 -    .label = Bildschirmebene: weiter weg
-+main-context-menu-stereo-display-settings =
-+    .label = Anzeigeeinstellungen…
++stereo-canvas-no-limits = Die 3D-Szene dieser Seite bleibt flach: Der Desktop teilt dem Browser Ihre Tiefengrenzen nicht mit (Stereo KWin fehlt).
++stereo-display-settings-failed = Die Anzeige-Einrichtung von KDE konnte nicht geöffnet werden: systemsettings wurde nicht gefunden oder startete nicht.
  
  stereo-xr-exit = 3D beenden
  
@@ -77,15 +81,17 @@ diff -ruN a/waterfox/browser/locales/de/browser/browser/browserContext.ftl b/wat
  ## because the two context-menu items are mutually exclusive.
  
 diff -ruN a/waterfox/browser/locales/fr/browser/browser/browserContext.ftl b/waterfox/browser/locales/fr/browser/browser/browserContext.ftl
---- a/waterfox/browser/locales/fr/browser/browser/browserContext.ftl	2026-11-10 17:24:11.036221256 -0300
-+++ b/waterfox/browser/locales/fr/browser/browser/browserContext.ftl	2026-11-10 17:24:11.043581344 -0300
-@@ -246,64 +246,15 @@
+--- a/waterfox/browser/locales/fr/browser/browser/browserContext.ftl	2026-11-10 19:39:09.647927853 -0300
++++ b/waterfox/browser/locales/fr/browser/browser/browserContext.ftl	2026-11-10 19:39:09.695724261 -0300
+@@ -246,64 +246,18 @@
  main-context-menu-canvas-stereo-on =
      .label = Activé
  
 -main-context-menu-canvas-stereo-depth-less =
 -    .label = Moins de profondeur
--
++main-context-menu-stereo-display-settings =
++    .label = Configuration de l'affichage
+ 
 -main-context-menu-canvas-stereo-depth-normal =
 -    .label = Profondeur normale
 -
@@ -128,8 +134,8 @@ diff -ruN a/waterfox/browser/locales/fr/browser/browser/browserContext.ftl b/wat
 -
 -main-context-menu-xr-stereo-plane-farther =
 -    .label = Plan de l'écran : plus loin
-+main-context-menu-stereo-display-settings =
-+    .label = Paramètres d’affichage…
++stereo-canvas-no-limits = La scène 3D de cette page reste plate : le bureau ne transmet pas au navigateur vos limites de profondeur (Stereo KWin est absent).
++stereo-display-settings-failed = La configuration de l'affichage de KDE n'a pas pu être ouverte : systemsettings est introuvable ou n'a pas démarré.
  
  stereo-xr-exit = Quitter la 3D
  
@@ -147,15 +153,17 @@ diff -ruN a/waterfox/browser/locales/fr/browser/browser/browserContext.ftl b/wat
  ## because the two context-menu items are mutually exclusive.
  
 diff -ruN a/waterfox/browser/locales/ja/browser/browser/browserContext.ftl b/waterfox/browser/locales/ja/browser/browser/browserContext.ftl
---- a/waterfox/browser/locales/ja/browser/browser/browserContext.ftl	2026-11-10 17:24:11.038164050 -0300
-+++ b/waterfox/browser/locales/ja/browser/browser/browserContext.ftl	2026-11-10 17:24:11.043790284 -0300
-@@ -246,64 +246,15 @@
+--- a/waterfox/browser/locales/ja/browser/browser/browserContext.ftl	2026-11-10 19:39:09.643450400 -0300
++++ b/waterfox/browser/locales/ja/browser/browser/browserContext.ftl	2026-11-10 19:39:09.690712687 -0300
+@@ -246,64 +246,18 @@
  main-context-menu-canvas-stereo-on =
      .label = オン
  
 -main-context-menu-canvas-stereo-depth-less =
 -    .label = 奥行き: 小
--
++main-context-menu-stereo-display-settings =
++    .label = ディスプレイ設定
+ 
 -main-context-menu-canvas-stereo-depth-normal =
 -    .label = 奥行き: 標準
 -
@@ -198,8 +206,8 @@ diff -ruN a/waterfox/browser/locales/ja/browser/browser/browserContext.ftl b/wat
 -
 -main-context-menu-xr-stereo-plane-farther =
 -    .label = スクリーン面: 奥
-+main-context-menu-stereo-display-settings =
-+    .label = ディスプレイ設定…
++stereo-canvas-no-limits = このページの 3D シーンは平面のままです。デスクトップが奥行きの限界をブラウザーに伝えていません (Stereo KWin がありません)。
++stereo-display-settings-failed = KDE のディスプレイ設定を開けませんでした。systemsettings が見つからないか、起動しませんでした。
  
  stereo-xr-exit = 3D を終了
  
@@ -217,15 +225,17 @@ diff -ruN a/waterfox/browser/locales/ja/browser/browser/browserContext.ftl b/wat
  ## because the two context-menu items are mutually exclusive.
  
 diff -ruN a/waterfox/browser/locales/ko/browser/browser/browserContext.ftl b/waterfox/browser/locales/ko/browser/browser/browserContext.ftl
---- a/waterfox/browser/locales/ko/browser/browser/browserContext.ftl	2026-11-10 17:24:11.038526531 -0300
-+++ b/waterfox/browser/locales/ko/browser/browser/browserContext.ftl	2026-11-10 17:24:11.044018405 -0300
-@@ -246,64 +246,15 @@
+--- a/waterfox/browser/locales/ko/browser/browser/browserContext.ftl	2026-11-10 19:39:09.625480518 -0300
++++ b/waterfox/browser/locales/ko/browser/browser/browserContext.ftl	2026-11-10 19:39:09.666929068 -0300
+@@ -246,64 +246,18 @@
  main-context-menu-canvas-stereo-on =
      .label = 켜기
  
 -main-context-menu-canvas-stereo-depth-less =
 -    .label = 깊이 작게
--
++main-context-menu-stereo-display-settings =
++    .label = 디스플레이 설정
+ 
 -main-context-menu-canvas-stereo-depth-normal =
 -    .label = 깊이 보통
 -
@@ -268,8 +278,8 @@ diff -ruN a/waterfox/browser/locales/ko/browser/browser/browserContext.ftl b/wat
 -
 -main-context-menu-xr-stereo-plane-farther =
 -    .label = 화면 평면: 멀게
-+main-context-menu-stereo-display-settings =
-+    .label = 디스플레이 설정…
++stereo-canvas-no-limits = 이 페이지의 3D 장면은 평면으로 유지됩니다. 데스크톱이 브라우저에 깊이 한계를 알려 주지 않습니다(Stereo KWin이 없음).
++stereo-display-settings-failed = KDE 디스플레이 설정을 열 수 없습니다. systemsettings를 찾지 못했거나 시작되지 않았습니다.
  
  stereo-xr-exit = 3D 종료
  
@@ -287,15 +297,17 @@ diff -ruN a/waterfox/browser/locales/ko/browser/browser/browserContext.ftl b/wat
  ## because the two context-menu items are mutually exclusive.
  
 diff -ruN a/waterfox/browser/locales/pl/browser/browser/browserContext.ftl b/waterfox/browser/locales/pl/browser/browser/browserContext.ftl
---- a/waterfox/browser/locales/pl/browser/browser/browserContext.ftl	2026-11-10 17:24:11.038779972 -0300
-+++ b/waterfox/browser/locales/pl/browser/browser/browserContext.ftl	2026-11-10 17:24:11.044239285 -0300
-@@ -246,64 +246,15 @@
+--- a/waterfox/browser/locales/pl/browser/browser/browserContext.ftl	2026-11-10 19:39:09.654078261 -0300
++++ b/waterfox/browser/locales/pl/browser/browser/browserContext.ftl	2026-11-10 19:39:09.708007007 -0300
+@@ -246,64 +246,18 @@
  main-context-menu-canvas-stereo-on =
      .label = Włączone
  
 -main-context-menu-canvas-stereo-depth-less =
 -    .label = Mniejsza głębia
--
++main-context-menu-stereo-display-settings =
++    .label = Ustawienia wyświetlania
+ 
 -main-context-menu-canvas-stereo-depth-normal =
 -    .label = Zwykła głębia
 -
@@ -338,8 +350,8 @@ diff -ruN a/waterfox/browser/locales/pl/browser/browser/browserContext.ftl b/wat
 -
 -main-context-menu-xr-stereo-plane-farther =
 -    .label = Płaszczyzna ekranu: dalej
-+main-context-menu-stereo-display-settings =
-+    .label = Ustawienia ekranu…
++stereo-canvas-no-limits = Scena 3D tej strony pozostaje płaska: pulpit nie przekazuje przeglądarce Twoich limitów głębi (brak Stereo KWin).
++stereo-display-settings-failed = Nie udało się otworzyć ustawień wyświetlania KDE: nie znaleziono programu systemsettings lub nie uruchomił się.
  
  stereo-xr-exit = Wyjdź z 3D
  
@@ -357,15 +369,17 @@ diff -ruN a/waterfox/browser/locales/pl/browser/browser/browserContext.ftl b/wat
  ## because the two context-menu items are mutually exclusive.
  
 diff -ruN a/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl b/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl
---- a/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl	2026-11-10 17:24:11.039044403 -0300
-+++ b/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl	2026-11-10 17:24:11.044537256 -0300
-@@ -246,64 +246,15 @@
+--- a/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl	2026-11-10 19:39:09.654534672 -0300
++++ b/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl	2026-11-10 19:39:09.708600888 -0300
+@@ -246,64 +246,18 @@
  main-context-menu-canvas-stereo-on =
      .label = Ligado
  
 -main-context-menu-canvas-stereo-depth-less =
 -    .label = Menos profundidade
--
++main-context-menu-stereo-display-settings =
++    .label = Configurações da tela
+ 
 -main-context-menu-canvas-stereo-depth-normal =
 -    .label = Profundidade normal
 -
@@ -408,8 +422,8 @@ diff -ruN a/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl b/
 -
 -main-context-menu-xr-stereo-plane-farther =
 -    .label = Plano da tela: mais longe
-+main-context-menu-stereo-display-settings =
-+    .label = Configurações de tela…
++stereo-canvas-no-limits = A cena 3D desta página continua plana: o desktop não informa ao navegador os seus limites de profundidade (falta o Stereo KWin).
++stereo-display-settings-failed = Não foi possível abrir as configurações da tela do KDE: o systemsettings não foi encontrado ou não iniciou.
  
  stereo-xr-exit = Sair do 3D
  
@@ -427,15 +441,17 @@ diff -ruN a/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl b/
  ## because the two context-menu items are mutually exclusive.
  
 diff -ruN a/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl b/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl
---- a/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl	2026-11-10 17:24:11.039261843 -0300
-+++ b/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl	2026-11-10 17:24:11.044778707 -0300
-@@ -246,64 +246,15 @@
+--- a/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl	2026-11-10 19:39:09.627254584 -0300
++++ b/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl	2026-11-10 19:39:09.671307191 -0300
+@@ -246,64 +246,18 @@
  main-context-menu-canvas-stereo-on =
      .label = 开启
  
 -main-context-menu-canvas-stereo-depth-less =
 -    .label = 景深较浅
--
++main-context-menu-stereo-display-settings =
++    .label = 显示器配置
+ 
 -main-context-menu-canvas-stereo-depth-normal =
 -    .label = 景深标准
 -
@@ -478,8 +494,8 @@ diff -ruN a/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl b/
 -
 -main-context-menu-xr-stereo-plane-farther =
 -    .label = 屏幕平面：远离
-+main-context-menu-stereo-display-settings =
-+    .label = 显示设置…
++stereo-canvas-no-limits = 此页面的 3D 场景保持平面：桌面没有把您的深度限制告知浏览器（缺少 Stereo KWin）。
++stereo-display-settings-failed = 无法打开 KDE 的显示器配置：未找到 systemsettings 或其未能启动。
  
  stereo-xr-exit = 退出 3D
  
@@ -497,15 +513,17 @@ diff -ruN a/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl b/
  ## because the two context-menu items are mutually exclusive.
  
 diff -ruN a/waterfox/browser/locales/zh-TW/browser/browser/browserContext.ftl b/waterfox/browser/locales/zh-TW/browser/browser/browserContext.ftl
---- a/waterfox/browser/locales/zh-TW/browser/browser/browserContext.ftl	2026-11-10 17:24:11.039503694 -0300
-+++ b/waterfox/browser/locales/zh-TW/browser/browser/browserContext.ftl	2026-11-10 17:24:11.045006157 -0300
-@@ -246,64 +246,15 @@
+--- a/waterfox/browser/locales/zh-TW/browser/browser/browserContext.ftl	2026-11-10 19:39:09.654721023 -0300
++++ b/waterfox/browser/locales/zh-TW/browser/browser/browserContext.ftl	2026-11-10 19:39:09.708817599 -0300
+@@ -246,64 +246,18 @@
  main-context-menu-canvas-stereo-on =
      .label = 開啟
  
 -main-context-menu-canvas-stereo-depth-less =
 -    .label = 景深較淺
--
++main-context-menu-stereo-display-settings =
++    .label = 顯示器設定
+ 
 -main-context-menu-canvas-stereo-depth-normal =
 -    .label = 景深標準
 -
@@ -548,8 +566,8 @@ diff -ruN a/waterfox/browser/locales/zh-TW/browser/browser/browserContext.ftl b/
 -
 -main-context-menu-xr-stereo-plane-farther =
 -    .label = 螢幕平面：遠離
-+main-context-menu-stereo-display-settings =
-+    .label = 顯示設定…
++stereo-canvas-no-limits = 此頁面的 3D 場景維持平面：桌面沒有將您的深度限制告知瀏覽器（缺少 Stereo KWin）。
++stereo-display-settings-failed = 無法開啟 KDE 的顯示器設定：找不到 systemsettings 或其無法啟動。
  
  stereo-xr-exit = 結束 3D
  
