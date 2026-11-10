@@ -18,6 +18,14 @@ gl-stereo (0.4.4-1) testing; urgency=medium
     round's XScreenSaver, or does not pin it exactly, is refused. New test
     tests/saver-receipts.py (red and green on synthetic rounds).
   * No change to the layer or to how any saver draws.
+  * The 130 saver receipts are requalified for the layer this version builds
+    (SHA-256 f83c52ca..., Lean Code build with gcc 16.2.0-4) against
+    xscreensaver 6.09+dfsg1-2+stereo3d4+lc1: 118 layer, 10 flat, 2 owning-fix,
+    the same outcomes saver by saver as 0.4.3's, depth residual mean -0.0435 px.
+    A gl-stereo rebuilt on another day gives another layer (same machine code,
+    other build ID) and needs its receipts made again.
+  * tests: test-installed.sh gives tests/saver-receipts.py the build-time
+    files it exercises (savers/pin.py, packaging/check-round-savers.py).
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 09 Nov 2026 20:51:38 -0300
 
