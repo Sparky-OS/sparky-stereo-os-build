@@ -45,6 +45,20 @@ This version Depends on apt (>= 3.3.6) and removes the block:
 - A source whose server has no HTTPS fails at apt update with apt's own error. Nothing turns it back to http:// and nothing hides the failure.
 To see what was changed: ls -R /var/backups/sparky-stereo-apt. A plain http:// source you add yourself works again, with apt 3.3.6.
 
+deb-multimedia's packages that ship the edition's files under another name (20261109.2):
+-------------
+The edition builds MLT 7 (Kdenlive's engine) and FFmpeg, and deb-multimedia builds them too, under other package names: libmlt7-data, libmlt-7-7, libmlt++-7-7, libmlt7-dev, libmlt++7-dev, melt7 and python3-mlt7 for MLT, and libavcodec-6-dev and the six like it for FFmpeg 6.1's development files.
+sparky-stereo-only-ours blocks a package by name, so none of these was blocked, and they ship files our packages ship (Debian Policy 7.6.1: a package that Replaces another "will replace the file from the old package"): libmlt7-data installed beside libmlt-data, took over its 400 files under /usr/share/mlt-7, and our MLT 7.40 ran with deb-multimedia's 7.42 data while dpkg-stereo --verify reported 16 changed files.
+Ours is the edition's: these 14 packages are pinned out in sparky-stereo-only-ours at -1, from deb-multimedia only, for the architectures our package is shipped for; the rest of deb-multimedia stays (apt/shadowed.py lists each with its reason).
+Before this version, apt-get install shotcut took our melt, libmlt7 and libmlt++7 out and installed deb-multimedia's MLT 7.42 (measured). deb-multimedia's programs built on its MLT (shotcut, shotcut-data, flowblade, synfig, synfigstudio, libsynfig0t64, libsynfig-dev, synfig-examples) are pinned out too, so their Debian builds, which use ours, are what apt installs; libmlt7-perl and libmlt7-ruby3.3 need deb-multimedia's libmlt-7-7 and cannot be installed beside ours.
+A pin does not remove what is installed, so after an upgrade (and after any later dpkg run) /usr/lib/sparky-stereo-apt/shadowed-by-dmo checks the machine and sparky-stereo-apt-shadowed.service settles it once the apt run has ended:
+- Installed by apt on its own (apt-mark showauto lists it) and needed by nothing else: removed (apt-get remove, so its configuration stays), then the edition's package installed again where it is installed, which brings back the files that were taken over. The journal says what was removed and why, once.
+- Installed by you (apt-mark showmanual lists it): left exactly as it is, and told. The engine (sparky-stereo-problems) keeps a notice with the two commands that switch to the edition's files; you may dismiss it, and it ends when the package is gone. If you decide to let apt choose, run apt-mark auto NAME and the next dpkg run settles it.
+- Automatic, but a package that stays needs it: left, and the notice names that package.
+- A step that fails (no network for the reinstall, a locked database) is kept by the engine with its repair, which runs the same step again; a failed reinstall says that files may be missing.
+To use one of them on purpose, name its version: apt-get install libmlt7-data=1:7.42.0-dmo1 (a pin of -1 stops apt from choosing the package, not you from naming it; measured with apt 3.3.6). It is then manual, and stays yours.
+Finding a new pair is find-shadowing.py in the build tree (the two repositories' Contents files; it exits 1 for a pair that apt/shadowed.py does not list); run it before a publication round.
+
 Keep your own pins in your own file:
 -------------
 The block list, sparky-stereo-only-ours, changes whenever the repository gains or drops a package, so a change made in it means a question at every such upgrade, and your copy no longer follows the repository.
@@ -71,7 +85,8 @@ Debian's and deb-multimedia's builds have none of the edition's stereo 3D change
 
 Dependencies:
 -------------
-apt (>= 2.9.26)
+apt (>= 3.3.6)
+sparky-stereo-problems (>= 0.1.2)
 sparky-apt
 sparky-stereo-keyring
 deb-multimedia-keyring

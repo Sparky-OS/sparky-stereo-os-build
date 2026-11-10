@@ -30,6 +30,42 @@ Package: deb-multimedia-keyring:any libunibreak-dev:any libunibreak-doc:any libu
 Pin: release o=Sparky Stereo OS
 Pin-Priority: 400
 
+# deb-multimedia's packages that ship files of one of ours under another name (apt/shadowed.py, ORDER 458): libmlt7-data owns
+# our MLT data, libmlt-7-7 and melt7 take our MLT out, libavcodec-6-dev and the like our FFmpeg development files. Blocked by
+# name, for the architectures ours is shipped for; the rest of deb-multimedia stays. A person who put one there by hand keeps it
+# (sparky-stereo-apt's shadowed-by-dmo says so and removes only one apt installed by itself).
+#   libavcodec-6-dev: ours is libavcodec-dev: FFmpeg 6.1 development files: Conflicts and Replaces libavcodec-dev, the same .so and .a names
+#   libavdevice-6-dev: ours is libavdevice-dev: as libavcodec-6-dev
+#   libavfilter-6-dev: ours is libavfilter-dev: as libavcodec-6-dev
+#   libavformat-6-dev: ours is libavformat-dev: as libavcodec-6-dev
+#   libavutil-6-dev: ours is libavutil-dev: as libavcodec-6-dev
+#   libmlt++-7-7: ours is libmlt++7: Conflicts and Replaces: libmlt++7, the same files under another name
+#   libmlt++7-dev: ours is libmlt++-dev: ships /usr/include/mlt-7/mlt++ of our libmlt++-dev
+#   libmlt-7-7: ours is libmlt7: Conflicts and Replaces: libmlt7: apt takes ours out for it when a dmo program (shotcut, flowblade, synfig) asks for it
+#   libmlt7-data: ours is libmlt-data: Replaces: libmlt-data, no Conflicts: it installs beside ours and owns its 400 files under /usr/share/mlt-7 (MLT 7.42 data under our 7.40)
+#   libmlt7-dev: ours is libmlt-dev: ships /usr/include/mlt-7/framework and the .so link of our libmlt-dev
+#   libswresample-6-dev: ours is libswresample-dev: as libavcodec-6-dev
+#   libswscale-6-dev: ours is libswscale-dev: as libavcodec-6-dev
+#   melt7: ours is melt: Conflicts and Replaces: melt, ships /usr/bin/melt and melt-7
+#   python3-mlt7: ours is python3-mlt: ships mlt7.py and _mlt7 of our python3-mlt with no Conflicts: dpkg refuses to unpack it beside ours, apt would still plan it
+Package: libavcodec-6-dev:amd64 libavcodec-6-dev:i386 libavdevice-6-dev:amd64 libavdevice-6-dev:i386 libavfilter-6-dev:amd64 libavfilter-6-dev:i386 libavformat-6-dev:amd64 libavformat-6-dev:i386 libavutil-6-dev:amd64 libavutil-6-dev:i386 libmlt++-7-7:amd64 libmlt++-7-7:i386 libmlt++7-dev:amd64 libmlt++7-dev:i386 libmlt-7-7:amd64 libmlt-7-7:i386 libmlt7-data:amd64 libmlt7-dev:amd64 libmlt7-dev:i386 libswresample-6-dev:amd64 libswresample-6-dev:i386 libswscale-6-dev:amd64 libswscale-6-dev:i386 melt7:amd64 melt7:i386 python3-mlt7:amd64 python3-mlt7:i386
+Pin: release o=Unofficial Multimedia Packages
+Pin-Priority: -1
+
+# deb-multimedia's programs that depend on those (PROGRAMS_ON_SHADOWED): with the packages above blocked their newer build could
+# never be installed and apt would stop; Debian's build, which links ours, is the candidate instead.
+#   flowblade: depends on python3-mlt7 and libmlt7-data; Debian has it
+#   libsynfig-dev: depends on libmlt++7-dev; Debian has it
+#   libsynfig0t64: depends on libmlt++-7-7; Debian has it
+#   shotcut: depends on melt7, libmlt-7-7 and libmlt++-7-7; Debian has it (26.9.27+ds-1, linked to libmlt7)
+#   shotcut-data: the data of shotcut: Debian's shotcut needs its own at its exact version
+#   synfig: the source of synfigstudio and libsynfig0t64, which depend on libmlt++-7-7; Debian has it
+#   synfig-examples: as synfig
+#   synfigstudio: depends on libmlt++-7-7; Debian has it
+Package: flowblade:any libsynfig-dev:any libsynfig0t64:any shotcut:any shotcut-data:any synfig:any synfig-examples:any synfigstudio:any
+Pin: release o=Unofficial Multimedia Packages
+Pin-Priority: -1
+
 # Debian's tasks and the multimedia blend: the edition's tasks are task-sparky-*
 Package: task-* multimedia-*
 Pin: release o=Debian

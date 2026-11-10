@@ -1,0 +1,13 @@
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/09
+# Copyright 2026 under the GNU GPL3 License
+# Started by dpkg's post-invoke hook (/etc/dpkg/dpkg.cfg.d/sparky-stereo-apt) when a deb-multimedia package that ships files of ours under
+# another name is installed: waits until the apt run has ended, then settles it (ORDER 458).
+[Unit]
+Description=Settle deb-multimedia packages that ship files of the edition's packages under another name
+Documentation=file:/usr/share/doc/sparky-stereo-apt/README.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/sparky-stereo-apt/shadowed-by-dmo auto
+TimeoutStartSec=infinity
+KillMode=process
