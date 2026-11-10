@@ -81,7 +81,7 @@ with tempfile.TemporaryDirectory(prefix='time-policy-') as tmp:
             (evidence / (zone.replace('/', '-') + mode + '.txt')).write_text(r.stdout + r.stderr)
     r = run([program, '--zone', 'Nowhere/Land', '--check'], env)
     check('unknown timezone --check remains a kept fault', r.returncode == 3 and bool(list(d.rglob('sparky-stereo-time_zone.json'))))
-    for lang in ('en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW'):
+    for lang in ('en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW'):
         words = run(['bash', '-c', 'source "$1"; printf "$LOCAL54" GU', 'bash', base / 'share/sparky/sparky-stereo-time' / lang], env).stdout
         r = run([program, '--zone', 'Pacific/Guam', '--check'], env | {'LANGUAGE': lang, 'LANG': lang + '.UTF-8'})
         (evidence / ('notice-' + lang + '.txt')).write_text(repr((r.returncode, r.stdout, r.stderr, words)))

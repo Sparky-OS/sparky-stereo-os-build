@@ -71,7 +71,7 @@ LANG=C $T --zone America/Sao_Paulo --no-reload >/dev/null
 grep -q 'server a.st1.ntp.br iburst nts' "$SPARKY_TIME_OUT" && echo "PASS file written" || { echo "FAIL file written"; FAILS=$((FAILS + 1)); }
 [ "$(LANG=C $T --zone America/Sao_Paulo --no-reload | head -n1)" = "Time servers unchanged" ] && echo "PASS second run unchanged" || { echo "FAIL second run"; FAILS=$((FAILS + 1)); }
 # strings: pt_BR, pl, en and de (German has its own strings since 20261029)
-for l in "pt_BR.UTF-8:Sem serviço nacional" "pl_PL.UTF-8:Brak krajowej usługi" "en_US.UTF-8:No national time service" "de_DE.UTF-8:Kein nationaler Zeitdienst"; do
+for l in "pt_BR.UTF-8:Sem serviço nacional" "pl_PL.UTF-8:Brak krajowej usługi" "en_US.UTF-8:No national time service" "de_DE.UTF-8:Kein nationaler Zeitdienst" "es_ES.UTF-8:No hay servicio horario nacional"; do
 	D=$(mktemp -d)
 	r=$(LANG=${l%%:*} SPARKY_TIME_OUT=$D/s.sources $T --zone Europe/Lisbon --no-reload)
 	echo "$r" | grep -q "${l#*:}" && echo "PASS text ${l%%:*}" || { echo "FAIL text ${l%%:*}: $r"; FAILS=$((FAILS + 1)); }
@@ -176,7 +176,7 @@ fresh; XS=$(mktemp -d); chmod 777 "$XS"; R=$(mktemp -d); chmod 555 "$R"
 out=$(SPARKY_TIME_OUT=$R/sub/s.sources XDG_STATE_HOME=$XS LANG=C $NOBODY $T --zone Europe/Paris --no-reload 2>&1); rc=$?
 ok "U13 unwritable sources: exit 4, said, not announced as written" '[ "$rc" = 4 ] && echo "$out" | grep -q "could not be written to" && ! echo "$out" | grep -q "written$"'
 # the nine languages, from the installed language files
-for l in en_US pl_PL pt_BR fr_FR de_DE ja_JP ko_KR zh_CN zh_TW; do
+for l in en_US pl_PL pt_BR fr_FR de_DE es_ES ja_JP ko_KR zh_CN zh_TW; do
 	code=${l%_*}; case $l in pt_BR|zh_CN|zh_TW) code=$l ;; esac
 	want=$(sed -n 's/^LOCAL10="\([^%]*\)%s.*/\1/p' "$LANGDIR/$code")
 	out=$(SPARKY_TIME_TSV=$D/missing.tsv LANG=$l.UTF-8 $T --print --zone Europe/Paris 2>&1 | head -n1)
