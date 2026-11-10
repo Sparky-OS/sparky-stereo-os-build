@@ -35,9 +35,9 @@ if [ -n "$SIBS" ]; then
 fi
 # and with the debs built earlier in the round (/new), which the candidate may depend on
 [ -z "$SIBS" ] || [ -z "$NEW" ] || for d in "$NEW"/*.deb; do case $d in *-dbgsym_*|*-lc-hr_*) ;; *) echo "/new/$(basename "$d")" >> "$WORK/siblings-current.txt" ;; esac; done
-docker run --rm --name "${BUILD_NAME_PREFIX:-d411-build}-$PKG" --cpus "${THREADS:-6}" --platform linux/amd64 \
+docker run --rm --name "${BUILD_NAME_PREFIX:-d411-build}-$PKG" --ulimit core=0 --cpus "${THREADS:-4}" --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-	"${SPARKY_PROV_ARGS[@]}" -e PKG="$PKG" -e THREADS="${THREADS:-6}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
+	"${SPARKY_PROV_ARGS[@]}" -e PKG="$PKG" -e THREADS="${THREADS:-4}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
 	-v "$ARCHIVE":/archive:ro -v "$WORK":/work -v "$SRC":/src:ro -v "$REPO":/repo:ro -v "$PREV":/prev:ro \
 	-v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro ${NEW:+-v "$NEW":/new:ro} ${SIBS:+-v "$SIBS":/previous-siblings.txt:ro -e SPARKY_LC_PREVIOUS_SIBLINGS_FILE=/previous-siblings.txt -v "$WORK/siblings-current.txt":/siblings.txt:ro -e SPARKY_LC_SIBLINGS_FILE=/siblings.txt} \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \

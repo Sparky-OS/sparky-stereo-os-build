@@ -1,0 +1,29 @@
+Description: Bind the popup background and button tooltip to their actual sources
+Author: Daniel Campos Ramos
+Forwarded: not-needed
+Last-Update: 2026-11-10
+
+--- a/src/qml/OverlayPopup.qml
++++ b/src/qml/OverlayPopup.qml
+@@ -45,5 +45,5 @@
+             id: backgroundEffect
+             anchors.fill: parent
+-            visible: backgroundSource !== null
++            visible: shaderSource.sourceItem !== null
+             z: -1
+ 
+--- a/src/qml/IconToolButton.qml
++++ b/src/qml/IconToolButton.qml
+@@ -8,4 +8,6 @@
+ 
+ QQC2.ToolButton {
++    id: button
++    readonly property Kirigami.Action tooltipAction: button.action as Kirigami.Action
+     display: QQC2.AbstractButton.IconOnly
+     QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+@@ -14,4 +16,4 @@
+                        && display === QQC2.AbstractButton.IconOnly
+                        && !pressed
+-    QQC2.ToolTip.text: (action as Kirigami.Action)?.tooltip
++    QQC2.ToolTip.text: tooltipAction ? tooltipAction.tooltip : button.text
+ }

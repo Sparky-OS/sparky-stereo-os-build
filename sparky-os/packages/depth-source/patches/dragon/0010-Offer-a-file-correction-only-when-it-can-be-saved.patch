@@ -1,0 +1,35 @@
+Description: Hide the correction menu item and guard both save entry points
+Author: Daniel Campos Ramos
+Forwarded: not-needed
+Last-Update: 2026-11-10
+
+--- a/src/qml/ControlsBar.qml
++++ b/src/qml/ControlsBar.qml
+@@ -290,8 +290,10 @@
+                     }
+                     QQC2.MenuSeparator {}
+-                    Kirigami.Action {
++                    QQC2.MenuItem {
+                         text: i18nc("@action:button offers to write the 3D correction of this video into the file", "Save the 3D Correction into the File…")
+                         icon.name: "document-save"
+                         visible: toolbar.canOfferSave
++                        enabled: toolbar.canOfferSave
++                        height: visible ? implicitHeight : 0
+                         onTriggered: toolbar.askToSaveStereoCorrection()
+                     }
+@@ -491,4 +493,7 @@
+     // The question comes first: nothing is written until the person says yes
+     function askToSaveStereoCorrection() {
++        if (!toolbar.canOfferSave) {
++            return null
++        }
+         const entry = stereoInputEntry(videoOutput.stereoInput)
+         let lines = []
+@@ -528,4 +533,7 @@
+ 
+     function saveStereoCorrection() {
++        if (!toolbar.canOfferSave) {
++            return null
++        }
+         const input = videoOutput.stereoInput
+         const packingChosen = input !== Multimedia.VideoOutput.StereoAutomatic
