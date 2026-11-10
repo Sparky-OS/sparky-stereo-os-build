@@ -9,6 +9,7 @@
 # that lost its plan.
 # Folders (environment, the defaults are the container's): WORK, SRC (the published .dsc and every file it names), ENTRY (the
 # changelog entry file), TOOLKIT (the build tree's sparky-os folder), REPRODUCIBLE (repo/reproducible.py).
+# Optional: EDIT, a script that changes the plain tree's debian/ (run inside it, after the changelog entry).
 # Needs: DSC, DSC_SHA256, PLAIN_OPTIONS (empty, --edition-entry, --lc-successor or --no-build-depends), SOURCE_DATE_EPOCH and
 # SOURCE_DATE_RFC2822. Leaves the plain source package in WORK/plain and the +lc1 source tree in WORK/lc/source.
 set -euo pipefail
@@ -49,6 +50,8 @@ p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitai
 Path(os.environ['WORK'], 'version').write_text(m.group(2) + '\n')
 CHANGELOG
 VERSION=$(cat "$WORK/version")
+# a rebuild that also changes the packaging (ORDER 458b: MLT's Perl and Ruby bindings): EDIT is a script run in the plain tree, after the entry
+if [ -n "${EDIT:-}" ]; then (cd t && bash "$EDIT"); fi
 head -12 t/debian/changelog
 python3 "$REPRODUCIBLE" normalize-tree "$SOURCE_DATE_EPOCH" t
 dpkg-source -b t >/dev/null

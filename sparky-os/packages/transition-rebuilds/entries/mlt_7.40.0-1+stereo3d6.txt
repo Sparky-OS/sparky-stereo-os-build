@@ -1,0 +1,15 @@
+mlt (7.40.0-1+stereo3d6) unstable; urgency=medium
+
+  * Build MLT's Perl and Ruby bindings (ORDER 458b): upstream's swig
+    directory builds them with -DSWIG_PERL=ON and -DSWIG_RUBY=ON.
+    New binary packages libmlt-perl (use mlt;) and libmlt-ruby
+    (require 'mlt'), both depending on this source's libmlt7 and
+    libmlt++7 at the exact version.
+  * deb-multimedia ships the same bindings as libmlt7-perl and
+    libmlt7-ruby3.3 against its own libmlt-7-7, which the edition's pins
+    keep out, so a person who had them could no longer install them.
+    Ours Conflicts with and Replaces those two, which carry the same module
+    files, so apt swaps them for ours.
+  * Build-Depends: libperl-dev, ruby, ruby-dev.
+  * debian/rules: mlt.so goes to Ruby's vendor architecture directory,
+    which is on its load path (upstream's vendor_ruby is not).
