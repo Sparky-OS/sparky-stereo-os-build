@@ -7,12 +7,11 @@
 # This is the edition's binNMU: the published source, back to its plain form (sparky-os/repo/plain-from-lc.py), one
 # changelog entry naming the order and the transition (entries/NAME_VERSION.txt), the Lean Code source
 # (lean.debian_prepare), then the build with the link and start gate. Candidates stay in WORK/lc.
-# Usage: build.sh WORK SOURCE_DIR DSC PREVIOUS_DIR ENTRY [PLAIN_OPTION [EDIT_SCRIPT]]
+# Usage: build.sh WORK SOURCE_DIR DSC PREVIOUS_DIR ENTRY [PLAIN_OPTION]
 #   SOURCE_DIR: the folder holding the published +lc1 .dsc and every file it names (checked against the tree's Sources);
 #   DSC: that .dsc's file name; PREVIOUS_DIR: the earlier +lc1 .deb files, plus the old library the transition removed
 #   (from snapshot.debian.org, checked against that day's signed index), so the predecessor still resolves and the gate
-#   compares the new build with it; ENTRY: the changelog entry; PLAIN_OPTION: as plain-from-lc.py documents; EDIT_SCRIPT: a script that
-#   changes the plain tree's debian/ (a rebuild that adds a package, ORDER 458b: packages/mlt-bindings/edit-source.sh).
+#   compares the new build with it; ENTRY: the changelog entry; PLAIN_OPTION: as plain-from-lc.py documents.
 # Settings: SPARKY_PUBLISHED_TREE (the signed published tree, read only: build dependencies and the gate's edition
 #   archive), SPARKY_LC_ARCHIVE_DIR (mounted at /archive: sources.json naming the public archives and file:/repo, and the
 #   public keyrings it names, sparky-stereo-repo.gpg and deb-multimedia-keyring.gpg among them; see sparky-os/lean/archive.md),
@@ -30,8 +29,6 @@ DSC=$3
 PREV=$(cd "$4" && pwd)
 ENTRY=$(cd "$(dirname "$5")" && pwd)/$(basename "$5")
 PLAIN_OPTIONS=${6:-}
-EDIT_MOUNT=() EDIT_ENV=()
-if [ -n "${7:-}" ]; then EDIT_MOUNT=(-v "$(realpath "$7")":/edit.sh:ro) EDIT_ENV=(-e EDIT=/edit.sh); fi
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 # The .dsc must be the one the signed tree publishes.
 python3 - "$SPARKY_PUBLISHED_TREE" "$DSC" >"$WORK/dsc.sha256" <<'PY'
@@ -49,9 +46,9 @@ sys.exit('not in the published Sources: ' + dsc)
 PY
 DSC_SHA256=$(cat "$WORK/dsc.sha256")
 sparky_provenance_init "$SPARKY_BUILD_IMAGE"
-docker run --rm --name "${SPARKY_CONTAINER_NAME:-transition-rebuild}" --cpus 4 --platform linux/amd64 \
+docker run --rm --cpus 4 --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-	"${EDIT_MOUNT[@]}" "${EDIT_ENV[@]}" -e DSC="$DSC" -e DSC_SHA256="$DSC_SHA256" -e PLAIN_OPTIONS="$PLAIN_OPTIONS" \
+	-e DSC="$DSC" -e DSC_SHA256="$DSC_SHA256" -e PLAIN_OPTIONS="$PLAIN_OPTIONS" \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
 	-v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro -v "$SPARKY_PUBLISHED_TREE":/repo:ro \
 	-v "$WORK":/work -v "$SRC":/src:ro -v "$PREV":/prev:ro -v "$ENTRY":/entry:ro \

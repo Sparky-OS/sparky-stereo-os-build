@@ -16,7 +16,6 @@ t = c.read_text()
 assert 'swig' in t and 'libperl-dev' not in t and 'Package: libmlt-perl' not in t
 t = t.replace(' swig\n', ' swig,\n libperl-dev,\n ruby,\n ruby-dev\n', 1) if re.search(r' swig\n', t) else t.replace(',\n swig', ',\n swig,\n libperl-dev,\n ruby,\n ruby-dev', 1)
 assert 'libperl-dev' in t
-body = ' MLT is an open source multimedia framework, designed and developed for\n television broadcasting. It provides a toolkit for broadcasters, video\n editors, media players, transcoders, web streamers and many more types of\n applications. The functionality of the system is provided via an assortment\n of ready to use tools, xml authoring components, and an extendible plug-in\n based API.\n .\n'.replace('\n television', '\n television')
 body = ' MLT is an open source multimedia framework, designed and developed for\n television broadcasting. It provides a toolkit for broadcasters, video\n editors, media players, transcoders, web streamers and many more types of\n applications. The functionality of the system is provided via an assortment\n of ready to use tools, xml authoring components, and an extendible plug-in\n based API.\n .\n'
 t = t.rstrip('\n') + '''
 
