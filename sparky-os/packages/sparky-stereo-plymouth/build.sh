@@ -11,6 +11,12 @@ HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 VERSION=20261109~sparky9~0+lc1
 PKG=sparky-stereo-plymouth
+# the host's facts for the build record, and the source date from the recipe's last commit (ORDER 394b, ORDER 421b)
+. "$HERE/../../repo/build-provenance.sh"
+sparky_provenance_init "${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}" "$HERE"
+for ((i = 0; i < ${#SPARKY_PROV_ARGS[@]}; i++)); do
+	[ "${SPARKY_PROV_ARGS[i]}" = -e ] && export "${SPARKY_PROV_ARGS[i + 1]}"
+done
 umask 022
 mkdir -p "$OUT"
 D=$(mktemp -d "${TMPDIR:-/tmp}/stereo-boot-build.XXXXXX")
@@ -77,5 +83,11 @@ Description: Sparky Stereo OS boot splash themes in stereo 3D
 CONTROL
 (cd "$D" && find usr -type f -exec md5sum {} + | sort -k2) > "$D/DEBIAN/md5sums"
 chmod 644 "$D/DEBIAN/control" "$D/DEBIAN/md5sums" "$D/DEBIAN/triggers"
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone \
-    "$D" "$OUT" --authoring "$HERE"
+# the gate runs in a container that is given the host's facts: its check-debs writes the complete build record
+IMAGE=${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}
+TREE=$(cd "$HERE/../../.." && pwd)
+docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lean-standalone-sparky-stereo-plymouth" --ulimit core=0 --network none --platform linux/amd64 \
+	--user "$(id -u):$(id -g)" "${SPARKY_PROV_ARGS[@]}" -e HOME=/tmp -e PYTHONPATH="$TREE/sparky-os" \
+	-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+	-v "$TREE":"$TREE":ro -v "$D":"$D" -v "$OUT":"$OUT" "$IMAGE" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
+

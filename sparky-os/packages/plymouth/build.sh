@@ -13,6 +13,10 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 DSC=$(readlink -f "$1"); OUT=$(readlink -f "$2")
 VERSION=26.134.222-1+stereo3d3
+REPRO="$HERE/../../repo/reproducible.py"
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 export DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL="Capitain_Jack@yahoo.com"
 mkdir -p "$OUT"
 cd "$OUT"
@@ -44,16 +48,17 @@ lines[start + 1:end] = block
 open(path, 'w').write('\n'.join(lines))
 PY
 # the changelog: one entry for each version the edition has published, then this one
-dch -v 26.134.222-1+stereo3d1 -D unstable --force-distribution "Stereo boot splash for Sparky Stereo OS (stereo3d-0001, stereo3d-0002):" >/dev/null
-dch -a "plymouth.stereo= names the outputs that show two eyes and how: the HDMI 1.4b 3D structures (frame packing, side by side full and half, top and bottom) in the 3D mode the compositor keeps, and on 2D modes side by side and top and bottom by hand, anaglyph (Dubois, linear light), rows, columns, checkerboard, frame-sequential and the panels of a stereo pair (mirrored, iZ3D)." >/dev/null
-dch -a "A theme declares Stereo=full-side-by-side to draw both eyes; the script plugin has Window.GetStereo (). Other themes show their picture in both eyes; nothing changes without plymouth.stereo=." >/dev/null
-dch -a "debian/libplymouth5.symbols: the three new functions of libply-splash-core." >/dev/null
-dch -v 26.134.222-1+stereo3d2 -D unstable --force-distribution "No-change rebuild of 26.134.222-1+stereo3d1 for the Lean Code toolkit 0.1.20 (ORDER 311, ORDER 334)." >/dev/null
-dch -v "$VERSION" -D unstable --force-distribution "The boot splash follows the person's depth limits (ORDER 481, stereo3d-0003):" >/dev/null
-dch -a "plymouth.stereo= entries take popped=PIXELS and sunk=PIXELS, the main screen's depth limits as Stereo KWin resolves them (the person's PoppedLimit and SunkLimit built on the display), pixels of an eye 1920 wide; a malformed value is said and the default stands." >/dev/null
-dch -a "The script plugin has Window.GetStereoPoppedLimit () and Window.GetStereoSunkLimit (), so a theme places its levels inside the limits. An entry without them gets the desktop's defaults, 4 and 10, and the renderer says so once per output." >/dev/null
-dch -a "debian/libplymouth5.symbols: ply_pixel_display_get_stereo_depth_limits and ply_renderer_get_head_stereo_depth_limits." >/dev/null
+dch --date "$SOURCE_DATE_RFC2822" -v 26.134.222-1+stereo3d1 -D unstable --force-distribution "Stereo boot splash for Sparky Stereo OS (stereo3d-0001, stereo3d-0002):" >/dev/null
+dch --date "$SOURCE_DATE_RFC2822" -a "plymouth.stereo= names the outputs that show two eyes and how: the HDMI 1.4b 3D structures (frame packing, side by side full and half, top and bottom) in the 3D mode the compositor keeps, and on 2D modes side by side and top and bottom by hand, anaglyph (Dubois, linear light), rows, columns, checkerboard, frame-sequential and the panels of a stereo pair (mirrored, iZ3D)." >/dev/null
+dch --date "$SOURCE_DATE_RFC2822" -a "A theme declares Stereo=full-side-by-side to draw both eyes; the script plugin has Window.GetStereo (). Other themes show their picture in both eyes; nothing changes without plymouth.stereo=." >/dev/null
+dch --date "$SOURCE_DATE_RFC2822" -a "debian/libplymouth5.symbols: the three new functions of libply-splash-core." >/dev/null
+dch --date "$SOURCE_DATE_RFC2822" -v 26.134.222-1+stereo3d2 -D unstable --force-distribution "No-change rebuild of 26.134.222-1+stereo3d1 for the Lean Code toolkit 0.1.20 (ORDER 311, ORDER 334)." >/dev/null
+dch --date "$SOURCE_DATE_RFC2822" -v "$VERSION" -D unstable --force-distribution "The boot splash follows the person's depth limits (ORDER 481, stereo3d-0003):" >/dev/null
+dch --date "$SOURCE_DATE_RFC2822" -a "plymouth.stereo= entries take popped=PIXELS and sunk=PIXELS, the main screen's depth limits as Stereo KWin resolves them (the person's PoppedLimit and SunkLimit built on the display), pixels of an eye 1920 wide; a malformed value is said and the default stands." >/dev/null
+dch --date "$SOURCE_DATE_RFC2822" -a "The script plugin has Window.GetStereoPoppedLimit () and Window.GetStereoSunkLimit (), so a theme places its levels inside the limits. An entry without them gets the desktop's defaults, 4 and 10, and the renderer says once per output which of the two is missing." >/dev/null
+dch --date "$SOURCE_DATE_RFC2822" -a "debian/libplymouth5.symbols: ply_pixel_display_get_stereo_depth_limits and ply_renderer_get_head_stereo_depth_limits." >/dev/null
 quilt pop -a -q >/dev/null
 rm -rf .pc
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 cd "$OUT"
 ls

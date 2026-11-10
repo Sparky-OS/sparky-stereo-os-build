@@ -1,6 +1,6 @@
-From 1b459f1b411a578293ef22b2e2556b15994168eb Mon Sep 17 00:00:00 2001
+From e56977d3886361b0df003ee56afc633dfff64da1 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Date: Mon, 9 Nov 2026 23:45:18 -0300
+Date: Tue, 10 Nov 2026 00:10:55 -0300
 Subject: [PATCH 3/3] renderers/drm: Give a stereo theme the depth limits of its
  output
 
@@ -10,8 +10,9 @@ an eye 1920 wide, the unit of the desktop's own limits (Stereo KWin's
 PoppedLimit and SunkLimit built on the display). The script plugin gets
 Window.GetStereoPoppedLimit () and Window.GetStereoSunkLimit (), so a theme
 places its levels inside them. An entry without them gets the desktop's
-defaults, 4 and 10, and the renderer says so once per output; a value that is
-no limit (not a number, negative, over 1000) is said and the default stands.
+defaults, 4 and 10, and the renderer says once per output which one is
+missing; a value that is no limit (not a number, negative, over 1000) is said
+and the default stands.
 
 Assisted-by: Claude Sonnet 5.5 via Claude Code
 ---
@@ -20,9 +21,9 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
  src/libply-splash-core/ply-renderer-plugin.h  |  4 ++
  src/libply-splash-core/ply-renderer.c         | 24 +++++++
  src/libply-splash-core/ply-renderer.h         |  4 ++
- src/plugins/renderers/drm/plugin.c            | 62 +++++++++++++++++
- src/plugins/splash/script/script-lib-sprite.c | 66 +++++++++++++++++++
- 7 files changed, 173 insertions(+)
+ src/plugins/renderers/drm/plugin.c            | 69 +++++++++++++++++++
+ src/plugins/splash/script/script-lib-sprite.c | 66 ++++++++++++++++++
+ 7 files changed, 180 insertions(+)
 
 diff --git a/src/libply-splash-core/ply-pixel-display.c b/src/libply-splash-core/ply-pixel-display.c
 index 6e6b8eb..416a0ca 100644
@@ -125,7 +126,7 @@ index cf83db9..e9d1c9a 100644
                                ply_renderer_head_t *head);
  
 diff --git a/src/plugins/renderers/drm/plugin.c b/src/plugins/renderers/drm/plugin.c
-index 90beeee..1002d5e 100644
+index 90beeee..f34b583 100644
 --- a/src/plugins/renderers/drm/plugin.c
 +++ b/src/plugins/renderers/drm/plugin.c
 @@ -141,8 +141,18 @@ typedef struct
@@ -187,7 +188,7 @@ index 90beeee..1002d5e 100644
  
                  backend->stereo_outputs = realloc (backend->stereo_outputs,
                                                     (backend->stereo_outputs_len + 1) * sizeof(ply_stereo_output_t));
-@@ -1559,6 +1588,38 @@ set_head_stereo_input (ply_renderer_backend_t *backend,
+@@ -1559,6 +1588,45 @@ set_head_stereo_input (ply_renderer_backend_t *backend,
          return true;
  }
  
@@ -216,8 +217,15 @@ index 90beeee..1002d5e 100644
 +        given = head->stereo->has_popped && head->stereo->has_sunk;
 +        if (!given && !head->depth_default_said) {
 +                head->depth_default_said = true;
-+                ply_error ("no depth limits for %s in plymouth.stereo=, the display's default is used: popped %g px, sunk %g px",
-+                           head->stereo->connector_name, *popped_px, *sunk_px);
++                if (!head->stereo->has_popped && !head->stereo->has_sunk)
++                        ply_error ("no depth limits for %s in plymouth.stereo=, the display's default is used: popped %g px, sunk %g px",
++                                   head->stereo->connector_name, *popped_px, *sunk_px);
++                else if (!head->stereo->has_popped)
++                        ply_error ("no popped= for %s in plymouth.stereo=, the display's default is used: popped %g px",
++                                   head->stereo->connector_name, *popped_px);
++                else
++                        ply_error ("no sunk= for %s in plymouth.stereo=, the display's default is used: sunk %g px",
++                                   head->stereo->connector_name, *sunk_px);
 +        }
 +
 +        return given;
@@ -226,7 +234,7 @@ index 90beeee..1002d5e 100644
  static void
  ply_renderer_head_remove (ply_renderer_backend_t *backend,
                            ply_renderer_head_t    *head)
-@@ -2968,6 +3029,7 @@ ply_renderer_backend_get_interface (void)
+@@ -2968,6 +3036,7 @@ ply_renderer_backend_get_interface (void)
                  .add_input_device             = add_input_device,
                  .remove_input_device          = remove_input_device,
                  .set_head_stereo_input        = set_head_stereo_input,

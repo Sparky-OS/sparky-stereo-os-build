@@ -10,6 +10,12 @@ HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-boot
 VERSION=0.1.9+lc1
+# the host's facts for the build record, and the source date from the recipe's last commit (ORDER 394b, ORDER 421b)
+. "$HERE/../../repo/build-provenance.sh"
+sparky_provenance_init "${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}" "$HERE"
+for ((i = 0; i < ${#SPARKY_PROV_ARGS[@]}; i++)); do
+	[ "${SPARKY_PROV_ARGS[i]}" = -e ] && export "${SPARKY_PROV_ARGS[i + 1]}"
+done
 umask 022
 mkdir -p "$OUT"
 D=$(mktemp -d "${TMPDIR:-/tmp}/stereo-boot-build.XXXXXX")
@@ -35,7 +41,10 @@ for u in sparky-stereo-boot-export.path sparky-stereo-boot-export.service; do
 done
 # the boot's messages, word for word, as journal catalogs: the edition's one engine keeps the boot's problems and its
 # session notifier shows them (0.1.6, ORDER 350)
-sparky-stereo-problems catalog sparky-stereo-boot "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL19
+# (the engine runs in a container: it is a package program)
+docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}catalog-$PKG" --ulimit core=0 --network none --platform linux/amd64 \
+	--user "$(id -u):$(id -g)" "${SPARKY_PROV_ARGS[@]}" -e HOME=/tmp -v "$HERE/lang":/lang:ro -v "$D":"$D" "${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}" \
+	sparky-stereo-problems catalog sparky-stereo-boot /lang "$D/usr/lib/systemd/catalog" --subject LOCAL19
 install -D -m 644 "$HERE/default/sparky-stereo-boot" "$D/etc/default/sparky-stereo-boot"
 install -D -m 755 "$HERE/initramfs/sparky-stereo-nvidia" "$D/usr/share/initramfs-tools/hooks/sparky-stereo-nvidia"
 install -D -m 644 "$HERE/modprobe/sparky-stereo-nvidia-kms.conf" "$D/usr/lib/modprobe.d/sparky-stereo-nvidia-kms.conf"
@@ -250,5 +259,11 @@ Description: Sparky Stereo OS boot that follows the main screen
 CONTROL
 (cd "$D" && find usr etc -type f -exec md5sum {} + | grep -v ' etc/' | sort -k2) > "$D/DEBIAN/md5sums"
 chmod 644 "$D/DEBIAN/control" "$D/DEBIAN/md5sums" "$D/DEBIAN/conffiles"
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone \
-    "$D" "$OUT" --authoring "$HERE"
+# the gate runs in a container that is given the host's facts: its check-debs writes the complete build record
+IMAGE=${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}
+TREE=$(cd "$HERE/../../.." && pwd)
+docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lean-standalone-sparky-stereo-boot" --ulimit core=0 --network none --platform linux/amd64 \
+	--user "$(id -u):$(id -g)" "${SPARKY_PROV_ARGS[@]}" -e HOME=/tmp -e PYTHONPATH="$TREE/sparky-os" \
+	-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+	-v "$TREE":"$TREE":ro -v "$D":"$D" -v "$OUT":"$OUT" "$IMAGE" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
+
