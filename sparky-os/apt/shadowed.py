@@ -1,6 +1,6 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/09
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/09 (ORDER 458)
+# Last update 2026/11/10 (ORDER 458b)
 """The deb-multimedia packages that ship files of one of our packages under another name (ORDER 458).
 
 make-only-ours.py blocks every build of ours by NAME, so deb-multimedia's libmlt-data never installs. deb-multimedia ships MLT 7 under the
@@ -32,6 +32,9 @@ SHADOWED_BY_DMO = {
     'libswscale-6-dev': ('libswscale-dev', 'as libavcodec-6-dev'),
 }
 NOT_SHADOWS = {
+    ('libmlt7-perl', 'libmlt-perl'): 'ORDER 458b: our MLT builds the Perl bindings (mlt.pm, mlt.so) that deb-multimedia ships as libmlt7-perl against its libmlt-7-7, which the pins keep out; '
+                                     'ours Conflicts with and Replaces it, so apt swaps it for ours and dpkg never meets two owners of the file; it cannot be installed beside ours (tests/shadowed/bindings.sh)',
+    ('libmlt7-ruby3.3', 'libmlt-ruby'): 'ORDER 458b: as libmlt7-perl: the Ruby bindings (mlt.so); ours Conflicts with and Replaces libmlt7-ruby3.3',
     ('oss4-dev', 'linux-libc-dev'): 'shares /usr/include/linux/soundcard.h with the kernel headers (ours and Debian\'s alike) and has no Replaces: dpkg refuses the unpack, '
                                     'so it can never own the file; it is deb-multimedia\'s own file overlap, not our files under another name',
 }
