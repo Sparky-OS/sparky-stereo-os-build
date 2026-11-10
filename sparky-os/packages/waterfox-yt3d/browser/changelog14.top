@@ -8,8 +8,10 @@ sparky-stereo-browser (@DEBVERSION@) unstable; urgency=medium
     display.
   * The camera hack's separation comes from the person's depth limits built
     on the display (kde_stereo_depth_v1 depth_limits) instead of a fixed 2
-    percent of the width; the 3D Canvas menu's Less, Normal, More and Most
-    stay the person's choice on top and scale it (webgl.stereo-camera.
+    percent of the width: a point at infinity lands at the sunk limit in the
+    output's pixels whatever the canvas's width; the 3D Canvas menu's Less,
+    Normal, More and Most stay the person's choice on top and scale it, never
+    past the limit (webgl.stereo-camera.
     separation-from-limits off keeps the fixed percentage).
   * A depth buffer that cannot be read, so that the plane stays the
     camera's own, is said once on the page's web console, with the reason.
