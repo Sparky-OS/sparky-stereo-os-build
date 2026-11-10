@@ -3,3 +3,5 @@ Hide the generated Save Correction menu item when no correction can be saved and
 Carry Erich Seifert’s complete upstream merge request 86 for the controls-bar volume wheel, with its binding restored after scrolling.
 
 Bind the popup background to its actual shader source and take each icon button’s tooltip from its action or its own label.
+
+Carry Harald Sitter's upstream removal of the AMD texture hack (dragon master c30754882a, release/26.04 1f2f2942bc): Dragon Player no longer sets QT_DISABLE_HW_TEXTURES_CONVERSION on AMD GPUs, so Qt Multimedia hands the VA-API decoder's frames to the video node as textures (Handle type: RhiTextureHandle) instead of copying every frame through system memory (QTBUG-138679, which upstream cannot reproduce anymore).
