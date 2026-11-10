@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-LANGS = ("en", "pl", "pt_BR", "fr", "ja", "ko", "zh_CN", "zh_TW")
+LANGS = ("en", "pl", "pt_BR", "fr", "de", "es", "ja", "ko", "zh_CN", "zh_TW")
 
 
 def environment(home, **extra):
