@@ -212,11 +212,11 @@ print(c.get_warning('mailbox') if hasattr(c, 'get_warning') else '')
 print(get_text('Delete'))
 EOS
 # glibc's gettext translates nothing in a locale that does not exist: they are made first
-for l in en_US de_DE fr_FR ja_JP ko_KR pl_PL pt_BR zh_CN zh_TW; do localedef -i $l -f UTF-8 $l.UTF-8 2>/dev/null; done
-for l in en_US de_DE fr_FR ja_JP ko_KR pl_PL pt_BR zh_CN zh_TW; do
+for l in en_US de_DE es_ES fr_FR ja_JP ko_KR pl_PL pt_BR zh_CN zh_TW; do localedef -i $l -f UTF-8 $l.UTF-8 2>/dev/null; done
+for l in en_US de_DE es_ES fr_FR ja_JP ko_KR pl_PL pt_BR zh_CN zh_TW; do
 	w=$(env -i PATH=/usr/bin:/bin HOME=/root LANG=$l.UTF-8 LANGUAGE=$l python3 -I /tmp/words.py 2>&1 | head -1)
 	echo "    $l: $w"
-	case $l in en_US) exp="System mail";; de_DE) exp=Systemmail;; fr_FR) exp="Courrier système";; ja_JP) exp=システムメール;; ko_KR) exp="시스템 메일";; pl_PL) exp="Poczta systemowa";; pt_BR) exp="Correio do sistema";; zh_CN) exp=系统邮件;; zh_TW) exp=系統郵件;; esac
+	case $l in en_US) exp="System mail";; de_DE) exp=Systemmail;; es_ES) exp="Correo del sistema";; fr_FR) exp="Courrier système";; ja_JP) exp=システムメール;; ko_KR) exp="시스템 메일";; pl_PL) exp="Poczta systemowa";; pt_BR) exp="Correio do sistema";; zh_CN) exp=系统邮件;; zh_TW) exp=系統郵件;; esac
 	ok "$l: the cleaner's name is $exp" '[ "$w" = "$exp" ]'
 done
 de_before=$(env -i PATH=/usr/bin:/bin HOME=/root LANG=de_DE.UTF-8 LANGUAGE=de_DE python3 -I - <<'EOS'

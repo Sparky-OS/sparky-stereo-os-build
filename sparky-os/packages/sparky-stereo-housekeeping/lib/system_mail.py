@@ -33,7 +33,7 @@ PACKAGE = 'sparky-stereo-housekeeping'
 CLEANERS = '/usr/share/bleachbit/cleaners'
 CLEANER = CLEANERS + '/system_mail.xml'
 LOCALE = '/usr/share/locale'
-LANGUAGES = ('de', 'fr', 'ja', 'ko', 'pl', 'pt_BR', 'zh_CN', 'zh_TW')
+LANGUAGES = ('de', 'es', 'fr', 'ja', 'ko', 'pl', 'pt_BR', 'zh_CN', 'zh_TW')
 PRESENT = ('installed', 'unpacked', 'half-installed', 'half-configured', 'triggers-awaited', 'triggers-pending')
 
 # (mail program, its packages, a file that shows the program is on the system, the queue folders)
