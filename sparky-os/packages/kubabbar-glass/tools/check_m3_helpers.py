@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-LANGS = ("en", "pl", "pt_BR", "fr", "ja", "ko", "zh_CN", "zh_TW")
+LANGS = ("en", "pl", "pt_BR", "fr", "de", "es", "ja", "ko", "zh_CN", "zh_TW")
 LNF = ROOT / "share/plasma/look-and-feel/kubabbar-glass-menubar"
 S1 = "Kubabbar Glass is our own name for this look, chosen by Daniel Ramos on 14 October 2026."
 S4 = "This look follows the same line: kù-babbar is the Sumerian word for silver, written with the signs for metal and shining."

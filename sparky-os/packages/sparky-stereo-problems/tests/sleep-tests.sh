@@ -110,12 +110,14 @@ check "a journal of another invocation's unit gives hybrid sleep its own words" 
 
 echo "== the nine languages"
 failed real $HIB
-for l in pl pt_BR fr de ja ko zh_CN zh_TW; do
+for l in pl pt_BR fr de es ja ko zh_CN zh_TW; do
 	T=$(text $HIB $l)
 	check "$l: the device is named and the text is not English" "grep -qF 'virtio-pci 0000:00:05.0' <<<\"\$T\" && ! grep -qF 'The computer could not' <<<\"\$T\" && ! grep -qF 'Unmount the virtio-fs' <<<\"\$T\""
 done
 check "de: says it in German" "has $HIB 'Der Computer konnte nicht in den Ruhezustand wechseln' de"
 check "pt_BR: says it in Portuguese" "has $HIB 'O computador não conseguiu hibernar' pt_BR"
+
+check "es: says it in Spanish" "has $HIB 'El equipo no pudo hibernar' es"
 
 echo "== suspend-then-hibernate and hybrid sleep that fall back to suspending"
 scenario fb fell-back $STH

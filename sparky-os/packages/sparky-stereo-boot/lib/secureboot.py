@@ -71,7 +71,7 @@ EFI = os.environ.get('SPARKY_STEREO_EFI', '/sys/firmware/efi')
 EFI_GLOBAL = '8be4df61-93ca-11d2-aa0d-00e098032b8c'
 SHIM_LOCK = '605dab50-e046-4300-abb6-3dd810dd8b23'
 CERT_X509 = UUID('a5c059a1-94e4-4aa7-87b5-ab155c2bf072').bytes_le   # EFI_CERT_X509_GUID
-LANGS = ['en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW']
+LANGS = ['en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW']
 COLUMNS = 98   # GRUB's terminal at 800x600 with Unifont 16 has 100 columns; wider screens have more
 
 

@@ -99,7 +99,7 @@ exit 0
     assert r['status'] == 1 and r['repair'] == [command], r
     call([engine, 'clear', '--all', pkg], 'clear-removed-package')
     assert any(r['key'] == key for r in json.loads(call([engine, 'list', '--json'], 'still-owned')))
-    for lang in ('en', 'de', 'pl', 'pt_BR', 'fr', 'ja', 'ko', 'zh_CN', 'zh_TW'):
+    for lang in ('en', 'de', 'es', 'pl', 'pt_BR', 'fr', 'ja', 'ko', 'zh_CN', 'zh_TW'):
         env = dict(os.environ, LANG='en_US.UTF-8', LC_ALL='en_US.UTF-8', LANGUAGE=lang)
         text = call([engine, 'text', '--machine', engine, key], f'language-{lang}', uid=1000, env=env)
         assert pkg in text and 'restore MOTD' in text and 'cannot stat' in text and 'LOCAL67' not in text, text

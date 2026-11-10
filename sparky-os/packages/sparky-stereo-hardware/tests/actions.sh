@@ -17,7 +17,7 @@ else
 	echo "FAIL: no strings next to $HARDWARE_ACTIONS_FILE and none installed"
 	exit 1
 fi
-LANGUAGES=(en pl pt_BR fr de ja ko zh_CN zh_TW)
+LANGUAGES=(en pl pt_BR fr de es ja ko zh_CN zh_TW)
 ROOT=$T/root
 WORK=$T/work
 mkdir -p "$ROOT" "$WORK"

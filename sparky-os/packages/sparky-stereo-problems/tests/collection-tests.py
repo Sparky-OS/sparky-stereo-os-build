@@ -122,7 +122,7 @@ with tempfile.TemporaryDirectory(prefix='collection-tests-') as path:
 
     call('keep', '--machine', '--details', '{"text_en":"Caller supplied English."}', package, 'english', 'LOCAL999')
     check('explicit English in details survives a missing catalog', records()[0]['text'] == 'Caller supplied English.')
-    for language in ('en', 'de', 'fr', 'pl', 'pt_BR', 'ja', 'ko', 'zh_CN', 'zh_TW'):
+    for language in ('en', 'de', 'es', 'fr', 'pl', 'pt_BR', 'ja', 'ko', 'zh_CN', 'zh_TW'):
         p = subprocess.run([binary, 'say', 'sparky-stereo-problems', 'LOCAL69', package, 'prepare', '7'],
                            env=dict(env, LANG='en_US.UTF-8', LANGUAGE=language), capture_output=True, text=True)
         check(f'generic explanation in {language} has every field',

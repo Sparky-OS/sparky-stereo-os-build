@@ -198,7 +198,7 @@ metered 2
 j=$(/usr/lib/sparky-stereo-apt/install-downloads check --json flightgear-data-installer)
 check "check --json, not metered: announce false" python3 -c "import json,sys; d=json.loads(sys.argv[1]); assert d['announce'] is False and d['downloads']==[]" "$j"
 metered 1
-for pair in de_DE.UTF-8:"getaktet" fr_FR.UTF-8:"limitée" pl_PL.UTF-8:"taryfowane" pt_BR.UTF-8:"limitada" ja_JP.UTF-8:"従量制" ko_KR.UTF-8:"종량제" zh_CN.UTF-8:"按流量计费" zh_TW.UTF-8:"按流量計費" en_US.UTF-8:"is metered"; do
+for pair in de_DE.UTF-8:"getaktet" es_ES.UTF-8:"uso medido" fr_FR.UTF-8:"limitée" pl_PL.UTF-8:"taryfowane" pt_BR.UTF-8:"limitada" ja_JP.UTF-8:"従量制" ko_KR.UTF-8:"종량제" zh_CN.UTF-8:"按流量计费" zh_TW.UTF-8:"按流量計費" en_US.UTF-8:"is metered"; do
 	loc=${pair%%:*}; want=${pair#*:}
 	apt-get -y -qq purge data-pkg plain-pkg >/dev/null 2>&1
 	out=$(LC_ALL=$loc python3 /h/pty-answer.py n apt-get install data-pkg 2>&1)

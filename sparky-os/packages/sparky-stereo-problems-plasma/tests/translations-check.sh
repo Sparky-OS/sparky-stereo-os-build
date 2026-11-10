@@ -11,8 +11,8 @@ fail=0
 ok() { echo "PASS  $1"; }
 no() { echo "FAIL  $1"; fail=$((fail + 1)); }
 check() { if eval "$2"; then ok "$1"; else no "$1"; fi; }
-L="de fr ja ko pl pt_BR zh_CN zh_TW"
-declare -A LOC=([de]=de_DE [fr]=fr_FR [ja]=ja_JP [ko]=ko_KR [pl]=pl_PL [pt_BR]=pt_BR [zh_CN]=zh_CN [zh_TW]=zh_TW)
+L="de es fr ja ko pl pt_BR zh_CN zh_TW"
+declare -A LOC=([de]=de_DE [es]=es_ES [fr]=fr_FR [ja]=ja_JP [ko]=ko_KR [pl]=pl_PL [pt_BR]=pt_BR [zh_CN]=zh_CN [zh_TW]=zh_TW)
 PLUGIN=$(find /usr/lib -name kcm_sparkystereo_problems.so -path '*plasma/kcms*' | head -1)
 NOTIFYRC=/usr/share/knotifications6/sparky-stereo-problems.notifyrc
 check "the page's plugin is installed" "[ -n \"$PLUGIN\" ]"

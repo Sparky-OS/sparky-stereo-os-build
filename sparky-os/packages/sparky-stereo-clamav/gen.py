@@ -6,11 +6,11 @@
 # table below, so the menu and the worker say the same words. Usage: gen.py OUT-DIR
 import json, os, sys
 
-LANGS = ['en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW']
+LANGS = ['en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW']
 # the menu entry
 NAME = {
  'en': 'Scan for viruses', 'pl': 'Skanuj w poszukiwaniu wirusów', 'pt_BR': 'Verificar vírus', 'fr': 'Rechercher des virus',
- 'de': 'Auf Viren prüfen', 'ja': 'ウイルスをスキャン', 'ko': '바이러스 검사', 'zh_CN': '扫描病毒', 'zh_TW': '掃描病毒',
+ 'de': 'Auf Viren prüfen', 'es': 'Buscar virus', 'ja': 'ウイルスをスキャン', 'ko': '바이러스 검사', 'zh_CN': '扫描病毒', 'zh_TW': '掃描病毒',
 }
 # worker messages LOCAL2 and LOCAL3, printf order: 2 path; 3 none
 M = {
@@ -19,6 +19,7 @@ M = {
  'pt_BR': ['Não é possível verificar %s: não existe ou não é um arquivo nem uma pasta.', 'Selecione um arquivo ou uma pasta para verificar.'],
  'fr': ["Impossible d'analyser %s : l'élément est manquant ou n'est ni un fichier ni un dossier.", 'Sélectionnez un fichier ou un dossier à analyser.'],
  'de': ['%s kann nicht geprüft werden: Es fehlt oder ist weder eine Datei noch ein Ordner.', 'Wählen Sie eine Datei oder einen Ordner zum Prüfen aus.'],
+ 'es': ['No se puede analizar %s: no existe o no es un archivo ni una carpeta.', 'Seleccione un archivo o una carpeta para analizar.'],
  'ja': ['%s をスキャンできません。存在しないか、ファイルでもフォルダーでもありません。', 'スキャンするファイルまたはフォルダーを1つ選択してください。'],
  'ko': ['%s을(를) 검사할 수 없습니다. 없거나 파일 또는 폴더가 아닙니다.', '검사할 파일 또는 폴더를 하나 선택하세요.'],
  'zh_CN': ['无法扫描 %s：它不存在，或不是文件或文件夹。', '请选择一个要扫描的文件或文件夹。'],

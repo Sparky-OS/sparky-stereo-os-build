@@ -4,7 +4,7 @@ CFLAGS ?= -O2 -g
 PACKAGES = x11 xcomposite xdamage stereo-declare
 CPPFLAGS += $(shell pkg-config --cflags $(PACKAGES))
 LDLIBS += $(shell pkg-config --libs $(PACKAGES))
-LANGUAGES = en pl pt_BR fr de ja ko zh_CN zh_TW
+LANGUAGES = en pl pt_BR fr de es ja ko zh_CN zh_TW
 CATALOGS = $(LANGUAGES:%=po/%.mo)
 all: wine-sbs-view $(CATALOGS)
 wine-sbs-view: main.c

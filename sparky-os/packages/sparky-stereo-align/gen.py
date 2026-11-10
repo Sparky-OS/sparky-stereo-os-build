@@ -6,7 +6,7 @@
 # table below. Usage: gen.py OUT-DIR
 import json, os, sys
 
-LANGS = ['en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW']
+LANGS = ['en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW']
 # submenu for two pictures, submenu for one stereo file, Save as JPS, MPO, PNS (one word is the format), first picture is the left eye, first picture is the right eye
 W = {
  'en': ['Align stereo pair', 'Align the two views', 'Save as %s', ', first picture is the left eye', ', first picture is the right eye'],
@@ -14,6 +14,7 @@ W = {
  'pt_BR': ['Alinhar par estéreo', 'Alinhar as duas vistas', 'Salvar como %s', ', a primeira imagem é o olho esquerdo', ', a primeira imagem é o olho direito'],
  'fr': ['Aligner la paire stéréo', 'Aligner les deux vues', 'Enregistrer en %s', ", la première image est l'œil gauche", ", la première image est l'œil droit"],
  'de': ['Stereopaar ausrichten', 'Beide Ansichten ausrichten', 'Als %s speichern', ', das erste Bild ist das linke Auge', ', das erste Bild ist das rechte Auge'],
+ 'es': ['Alinear par estéreo', 'Alinear las dos vistas', 'Guardar como %s', ', la primera imagen es el ojo izquierdo', ', la primera imagen es el ojo derecho'],
  'ja': ['ステレオペアを位置合わせ', '2つのビューを位置合わせ', '%sとして保存', '（最初の画像が左目）', '（最初の画像が右目）'],
  'ko': ['스테레오 쌍 정렬', '두 시점 정렬', '%s(으)로 저장', ' (첫 번째 사진이 왼쪽 눈)', ' (첫 번째 사진이 오른쪽 눈)'],
  'zh_CN': ['对齐立体图像对', '对齐两个视图', '保存为 %s', '（第一张图片为左眼）', '（第一张图片为右眼）'],
@@ -26,6 +27,7 @@ M = {
  'pt_BR': ['Salvo como %s.', 'Não foi possível alinhar as imagens: elas têm pontos em comum de menos.', '%s não é uma imagem estéreo (JPS, MPO ou PNS com marca).', 'As duas imagens têm tamanhos diferentes: %s e %s.', 'Não foi possível ler %s.', 'Selecione duas imagens ou uma imagem estéreo.', 'Olho esquerdo: %s. Olho direito: %s.', 'Não é possível alinhar %s: a entrada selecionada não existe.', 'Não é possível alinhar: o align_image_stack do Hugin não está instalado (pacote hugin-tools).'],
  'fr': ['Enregistré sous %s.', "Les images n'ont pas pu être alignées : elles ont trop peu de points communs.", "%s n'est pas une image stéréo (JPS, MPO ou PNS avec marque).", 'Les deux images ont des tailles différentes : %s et %s.', 'Impossible de lire %s.', 'Sélectionnez deux images ou une image stéréo.', 'Œil gauche : %s. Œil droit : %s.', "Impossible d'aligner %s : l'entrée sélectionnée est manquante.", "Impossible d'aligner : align_image_stack de Hugin n'est pas installé (paquet hugin-tools)."],
  'de': ['Gespeichert als %s.', 'Die Bilder konnten nicht ausgerichtet werden: Sie haben zu wenige gemeinsame Punkte.', '%s ist kein Stereobild (JPS, MPO oder PNS mit Markierung).', 'Die beiden Bilder haben unterschiedliche Größen: %s und %s.', '%s konnte nicht gelesen werden.', 'Wählen Sie zwei Bilder oder ein Stereobild aus.', 'Linkes Auge: %s. Rechtes Auge: %s.', '%s kann nicht ausgerichtet werden: Die ausgewählte Eingabe fehlt.', 'Ausrichten nicht möglich: align_image_stack von Hugin ist nicht installiert (Paket hugin-tools).'],
+ 'es': ['Guardado como %s.', 'No se pudieron alinear las imágenes: tienen muy pocos puntos en común.', '%s no es una imagen estéreo (JPS, MPO o PNS con marca).', 'Las dos imágenes tienen tamaños distintos: %s y %s.', 'No se pudo leer %s.', 'Seleccione dos imágenes o una imagen estéreo.', 'Ojo izquierdo: %s. Ojo derecho: %s.', 'No se puede alinear %s: falta la entrada seleccionada.', 'No se puede alinear: align_image_stack de Hugin no está instalado (paquete hugin-tools).'],
  'ja': ['%s として保存しました。', '画像を位置合わせできませんでした。共通する点が少なすぎます。', '%s はステレオ画像（マーク付きの JPS、MPO、PNS）ではありません。', '2つの画像のサイズが異なります: %s と %s。', '%s を読み込めませんでした。', '画像を2つ、またはステレオ画像を1つ選択してください。', '左目: %s。右目: %s。', '%s を位置合わせできません。選択された入力が見つかりません。', '位置合わせできません。Hugin の align_image_stack がインストールされていません（hugin-tools パッケージ）。'],
  'ko': ['%s(으)로 저장했습니다.', '사진을 정렬하지 못했습니다. 공통된 점이 너무 적습니다.', '%s은(는) 스테레오 사진(표시가 있는 JPS, MPO, PNS)이 아닙니다.', '두 사진의 크기가 다릅니다: %s 및 %s.', '%s을(를) 읽을 수 없습니다.', '사진 두 장 또는 스테레오 사진 한 장을 선택하세요.', '왼쪽 눈: %s. 오른쪽 눈: %s.', '%s을(를) 정렬할 수 없습니다. 선택한 입력이 없습니다.', '정렬할 수 없습니다. Hugin의 align_image_stack이 설치되어 있지 않습니다(hugin-tools 패키지).'],
  'zh_CN': ['已保存为 %s。', '无法对齐这些图片：它们的共同点太少。', '%s 不是立体图片（带标记的 JPS、MPO 或 PNS）。', '两张图片大小不同：%s 与 %s。', '无法读取 %s。', '请选择两张图片或一张立体图片。', '左眼：%s。右眼：%s。', '无法对齐 %s：所选输入不存在。', '无法对齐：未安装 Hugin 的 align_image_stack（hugin-tools 软件包）。'],

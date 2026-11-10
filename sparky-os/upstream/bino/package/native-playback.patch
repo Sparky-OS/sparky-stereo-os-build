@@ -30,7 +30,7 @@ Forwarded: not-needed
  	src/appicon.rc)
 -qt6_add_translations(bino TS_FILES i18n/bino_de.ts i18n/bino_ja.ts i18n/bino_ka.ts i18n/bino_zh.ts)
 +qt6_add_translations(bino TS_FILES
-+    i18n/bino_de.ts i18n/bino_fr.ts i18n/bino_ja.ts i18n/bino_ka.ts
++    i18n/bino_de.ts i18n/bino_es.ts i18n/bino_fr.ts i18n/bino_ja.ts i18n/bino_ka.ts
 +    i18n/bino_ko.ts i18n/bino_pl.ts i18n/bino_pt_BR.ts
 +    i18n/bino_zh.ts i18n/bino_zh_CN.ts i18n/bino_zh_TW.ts)
  qt6_add_resources(bino "misc" PREFIX "/" FILES
@@ -644,6 +644,47 @@ Forwarded: not-needed
      <message>
          <location filename="../src/modes.cpp" line="73"/>
          <source>Input autodetection</source>
+--- /dev/null
++++ b/i18n/bino_es.ts
+@@ -0,0 +1,38 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="es">
++<context>
++    <name>Gui</name>
++    <message>
++        <source>Input 3D anaglyph</source>
++        <translation>Entrada de anaglifo 3D</translation>
++    </message>
++</context>
++<context>
++    <name>Mode</name>
++    <message>
++        <source>Input anaglyph red/cyan</source>
++        <translation>Entrada de anaglifo rojo/cian</translation>
++    </message>
++    <message>
++        <source>Input anaglyph cyan/red</source>
++        <translation>Entrada de anaglifo cian/rojo</translation>
++    </message>
++    <message>
++        <source>Input anaglyph green/magenta</source>
++        <translation>Entrada de anaglifo verde/magenta</translation>
++    </message>
++    <message>
++        <source>Input anaglyph magenta/green</source>
++        <translation>Entrada de anaglifo magenta/verde</translation>
++    </message>
++    <message>
++        <source>Input anaglyph amber/blue</source>
++        <translation>Entrada de anaglifo ámbar/azul</translation>
++    </message>
++    <message>
++        <source>Input anaglyph blue/amber</source>
++        <translation>Entrada de anaglifo azul/ámbar</translation>
++    </message>
++</context>
++</TS>
 --- /dev/null
 +++ b/i18n/bino_fr.ts
 @@ -0,0 +1,38 @@
@@ -10913,7 +10954,7 @@ Forwarded: not-needed
 +here = Path(__file__).resolve().parent
 +expected = json.loads((here / 'expected.json').read_text())
 +locales = dict(en='en_US', pl='pl_PL', pt_BR='pt_BR', fr='fr_FR', de='de_DE',
-+               ja='ja_JP', ko='ko_KR', zh_CN='zh_CN', zh_TW='zh_TW')
++               es='es_ES', ja='ja_JP', ko='ko_KR', zh_CN='zh_CN', zh_TW='zh_TW')
 +failures = []
 +for lang, words in expected.items():
 +    if len(sys.argv) > 1:
@@ -10947,13 +10988,14 @@ Forwarded: not-needed
 +sys.exit(bool(failures))
 --- /dev/null
 +++ b/tests/translations/expected.json
-@@ -0,0 +1,11 @@
+@@ -0,0 +1,12 @@
 +{
 +  "en": ["Input 3D anaglyph", "Input anaglyph red/cyan", "Input anaglyph cyan/red", "Input anaglyph green/magenta", "Input anaglyph magenta/green", "Input anaglyph amber/blue", "Input anaglyph blue/amber"],
 +  "pl": ["Wejście anaglifowe 3D", "Wejście anaglifowe czerwony/cyjan", "Wejście anaglifowe cyjan/czerwony", "Wejście anaglifowe zielony/magenta", "Wejście anaglifowe magenta/zielony", "Wejście anaglifowe bursztynowy/niebieski", "Wejście anaglifowe niebieski/bursztynowy"],
 +  "pt_BR": ["Entrada de anáglifo 3D", "Entrada de anáglifo vermelho/ciano", "Entrada de anáglifo ciano/vermelho", "Entrada de anáglifo verde/magenta", "Entrada de anáglifo magenta/verde", "Entrada de anáglifo âmbar/azul", "Entrada de anáglifo azul/âmbar"],
 +  "fr": ["Entrée anaglyphe 3D", "Entrée anaglyphe rouge/cyan", "Entrée anaglyphe cyan/rouge", "Entrée anaglyphe vert/magenta", "Entrée anaglyphe magenta/vert", "Entrée anaglyphe ambre/bleu", "Entrée anaglyphe bleu/ambre"],
 +  "de": ["3D-Anaglypheneingabe", "Anaglypheneingabe Rot/Cyan", "Anaglypheneingabe Cyan/Rot", "Anaglypheneingabe Grün/Magenta", "Anaglypheneingabe Magenta/Grün", "Anaglypheneingabe Bernstein/Blau", "Anaglypheneingabe Blau/Bernstein"],
++  "es": ["Entrada de anaglifo 3D", "Entrada de anaglifo rojo/cian", "Entrada de anaglifo cian/rojo", "Entrada de anaglifo verde/magenta", "Entrada de anaglifo magenta/verde", "Entrada de anaglifo ámbar/azul", "Entrada de anaglifo azul/ámbar"],
 +  "ja": ["3Dアナグリフ入力", "アナグリフ入力 赤/シアン", "アナグリフ入力 シアン/赤", "アナグリフ入力 緑/マゼンタ", "アナグリフ入力 マゼンタ/緑", "アナグリフ入力 アンバー/青", "アナグリフ入力 青/アンバー"],
 +  "ko": ["3D 애너글리프 입력", "애너글리프 입력 빨강/시안", "애너글리프 입력 시안/빨강", "애너글리프 입력 초록/마젠타", "애너글리프 입력 마젠타/초록", "애너글리프 입력 호박색/파랑", "애너글리프 입력 파랑/호박색"],
 +  "zh_CN": ["3D 色差立体输入", "色差立体输入 红/青", "色差立体输入 青/红", "色差立体输入 绿/品红", "色差立体输入 品红/绿", "色差立体输入 琥珀色/蓝", "色差立体输入 蓝/琥珀色"],

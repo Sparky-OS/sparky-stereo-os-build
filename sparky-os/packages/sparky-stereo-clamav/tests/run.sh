@@ -23,7 +23,7 @@ done
 check "entry is offered for files and folders" grep -qx 'MimeType=inode/directory;application/octet-stream;' "$M"
 check "entry is offered for one selection (ClamTk takes one path)" grep -qx 'X-KDE-RequiredNumberOfUrls=1' "$M"
 check "entry calls the runner for the pack" grep -q '^Exec=sparky-stereo-integration run clamav -- %F$' "$M"
-for l in en pl pt_BR fr de ja ko zh_CN zh_TW; do
+for l in en pl pt_BR fr de es ja ko zh_CN zh_TW; do
 	check "name in $l" grep -q "^Name\(\[$l\]\)\?=." "$M"
 done
 check "the pack names clamtk" grep -qx 'program=clamtk' "$T/root/usr/share/sparky-stereo/integrations.d/clamav.conf"

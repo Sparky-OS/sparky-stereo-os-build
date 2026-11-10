@@ -16,7 +16,7 @@
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 probe_commands="fd bat ts cal cmatrix docker wakeonlan python"
-languages="en_US pl_PL pt_BR fr_FR de_DE ja_JP ko_KR zh_CN zh_TW"
+languages="en_US pl_PL pt_BR fr_FR de_DE es_ES ja_JP ko_KR zh_CN zh_TW"
 TABLE=/usr/share/command-not-found/renamed-commands
 # apt reads an armored key named .asc (sources.list(5), Signed-By)
 cp /repo/sparky-stereo-repo.asc /usr/share/keyrings/sparky-stereo-test.asc

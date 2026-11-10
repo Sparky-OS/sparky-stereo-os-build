@@ -7,7 +7,7 @@ Translation sources: one .ts per language, English the source language; a langua
 import sys, json, re, os
 from xml.sax.saxutils import escape
 
-LANGS = ['pl', 'pt_BR', 'fr', 'ja', 'ko', 'zh_CN', 'zh_TW']
+LANGS = ['pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW']
 
 def q(s): return json.dumps(s, ensure_ascii=False)
 

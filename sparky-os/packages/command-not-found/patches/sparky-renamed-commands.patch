@@ -21,7 +21,7 @@ Description: Name the programs Debian installs under another name
  have the command itself and left with the sqlite database in 2018; neither
  project has a renamed-commands table (searched 2026-11-02: Launchpad and
  salsa main, merge requests, Debian's and Launchpad's bugs).
- The three new messages ship in pl, pt_BR, fr, de, ja, ko, zh_CN and zh_TW.
+ The three new messages ship in pl, pt_BR, fr, de, es, ja, ko, zh_CN and zh_TW.
 Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Forwarded: https://bugs.debian.org/1152902
 Last-Update: 2026-11-02
@@ -31,6 +31,7 @@ Last-Update: 2026-11-02
  CommandNotFound/tests/test_renamed_commands.py  | 172 ++++++++++++++++++++++++
  po/command-not-found.pot                        |  15 +++
  po/de.po                                        |  15 +++
+ po/es.po                                        |  15 +++
  po/fr.po                                        |  15 +++
  po/ja.po                                        |  15 +++
  po/ko.po                                        |  15 +++
@@ -39,7 +40,7 @@ Last-Update: 2026-11-02
  po/zh_CN.po                                     |  15 +++
  po/zh_TW.po                                     |  15 +++
  setup.py                                        |   1 +
- 13 files changed, 442 insertions(+), 2 deletions(-)
+ 14 files changed, 457 insertions(+), 2 deletions(-)
 diff --git a/CommandNotFound/CommandNotFound.py b/CommandNotFound/CommandNotFound.py
 index 74f1b89..3c9f811 100644
 --- a/CommandNotFound/CommandNotFound.py
@@ -446,6 +447,29 @@ index 1986997..66677bb 100644
 +#, python-format
 +msgid "The renamed-commands table %(path)s could not be read (%(error)s); reinstalling command-not-found restores it."
 +msgstr "Die Tabelle der umbenannten Befehle %(path)s konnte nicht gelesen werden (%(error)s); eine Neuinstallation von command-not-found stellt sie wieder her."
+diff --git a/po/es.po b/po/es.po
+index e5c69a1..f4b32a2 100644
+--- a/po/es.po
++++ b/po/es.po
+@@ -171,3 +171,18 @@ msgstr "Python versión: %d.%d.%d %s %d"
+ #: ../CommandNotFound/util.py:36
+ msgid "Exception information:"
+ msgstr "Información de la excepción:"
++
++#: ../CommandNotFound/CommandNotFound.py
++#, c-format
++msgid "run it as '%s'"
++msgstr "ejecútela como «%s»"
++
++#: ../CommandNotFound/CommandNotFound.py
++#, python-format
++msgid "Command '%(command)s' is installed as '%(place)s' from deb %(package)s"
++msgstr "La orden «%(command)s» está instalada como «%(place)s» del paquete deb %(package)s"
++
++#: ../CommandNotFound/CommandNotFound.py
++#, python-format
++msgid "The renamed-commands table %(path)s could not be read (%(error)s); reinstalling command-not-found restores it."
++msgstr "La tabla de órdenes renombradas %(path)s no se pudo leer (%(error)s); reinstalar command-not-found la restablece."
 diff --git a/po/fr.po b/po/fr.po
 index 5fa671a..284d195 100644
 --- a/po/fr.po

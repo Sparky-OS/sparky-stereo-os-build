@@ -9,8 +9,8 @@ import sys
 from pathlib import Path
 
 po_dir = Path(sys.argv[1])
-languages = ["pl", "pt_BR", "fr", "de", "ja", "ko", "zh_CN", "zh_TW"]
-nplurals = {"pl": 3, "pt_BR": 2, "fr": 2, "de": 2, "ja": 1, "ko": 1, "zh_CN": 1, "zh_TW": 1}
+languages = ["pl", "pt_BR", "fr", "de", "es", "ja", "ko", "zh_CN", "zh_TW"]
+nplurals = {"pl": 3, "pt_BR": 2, "fr": 2, "de": 2, "es": 2, "ja": 1, "ko": 1, "zh_CN": 1, "zh_TW": 1}
 
 
 def q(text):

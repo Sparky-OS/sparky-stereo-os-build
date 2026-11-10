@@ -69,6 +69,7 @@ load_strings() {
 		zh_TW) source "$SHARE/zh_TW" ;;
 		fr_*) source "$SHARE/fr" ;;
 		de_*) source "$SHARE/de" ;;
+		es_*) source "$SHARE/es" ;;
 		ja_*) source "$SHARE/ja" ;;
 		ko_*) source "$SHARE/ko" ;;
 	esac

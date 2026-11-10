@@ -55,7 +55,7 @@ for po in "$P"/*.po; do
 	langs="$langs $l"
 done
 # English uses GRUB's source strings; all eight translated edition languages must be present.
-for l in pl pt_BR fr de ja ko zh_CN zh_TW; do
+for l in pl pt_BR fr de es ja ko zh_CN zh_TW; do
 	[ -s "$S/$l.mo" ] || { echo "Required GRUB translation $l is missing; supply its shell messages and rebuild." >&2; exit 1; }
 done
 langs=${langs# }

@@ -28,6 +28,7 @@ fake ":"
 check "the page answers nothing: unresolved" "$(copy)" "result=unresolved"
 fake "exit 3"
 check "in German" "$(copy LANG=de_DE.UTF-8 >/dev/null; grep -c 'konnte nicht ermittelt werden (Exit-Status von sparky-stereo-gpu-env 3)' "$T/err")" 1
+check "in Spanish" "$(copy LANG=es_MX.UTF-8 >/dev/null; grep -c 'no se pudo determinar la GPU elegida para los reproductores en Configuración del sistema, Gráficos (estado de salida de sparky-stereo-gpu-env 3)' "$T/err")" 1
 check "in Japanese" "$(copy LANGUAGE=ja >/dev/null; grep -c '特定できませんでした' "$T/err")" 1
 check "in Traditional Chinese" "$(copy LANG=zh_TW.UTF-8 >/dev/null; grep -c '無法確定' "$T/err")" 1
 check "a GPU chosen at launch: the page is not asked" "$(copy DRI_PRIME=1)" "result=unknown"

@@ -6,10 +6,10 @@
 # table below, so the menu and the worker say the same words. Usage: gen.py OUT-DIR
 import json, os, sys
 
-LANGS = ['en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW']
+LANGS = ['en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW']
 NAME = {
  'en': 'Run with Wine', 'pl': 'Uruchom w Wine', 'pt_BR': 'Executar com o Wine', 'fr': 'Exécuter avec Wine',
- 'de': 'Mit Wine ausführen', 'ja': 'Wine で実行', 'ko': 'Wine으로 실행', 'zh_CN': '用 Wine 运行', 'zh_TW': '用 Wine 執行',
+ 'de': 'Mit Wine ausführen', 'es': 'Ejecutar con Wine', 'ja': 'Wine で実行', 'ko': 'Wine으로 실행', 'zh_CN': '用 Wine 运行', 'zh_TW': '用 Wine 執行',
 }
 # worker messages LOCAL2 to LOCAL4, printf order: 2 file; 3 none; 4 file, status
 # (LOCAL4 is a first draft with AI assistance, pending review by native speakers)
@@ -19,6 +19,7 @@ M = {
  'pt_BR': ['Não é possível executar %s: o arquivo não existe ou não é um arquivo comum.', 'Selecione o programa do Windows a executar.', "O Wine não conseguiu iniciar %s (terminou com o status de saída %s). Para ver o motivo, execute em um terminal: wine start /unix ARQUIVO (ARQUIVO é o caminho do arquivo)."],
  'fr': ["Impossible d'exécuter %s : le fichier est manquant ou n'est pas un fichier ordinaire.", 'Sélectionnez le programme Windows à exécuter.', "Wine n'a pas pu démarrer %s (il s'est terminé avec le code de sortie %s). Pour voir pourquoi, lancez dans un terminal : wine start /unix FICHIER (FICHIER est le chemin du fichier)."],
  'de': ['%s kann nicht ausgeführt werden: Die Datei fehlt oder ist keine reguläre Datei.', 'Wählen Sie das Windows-Programm aus, das ausgeführt werden soll.', "Wine konnte %s nicht starten (Exit-Status %s). Um den Grund zu sehen, führen Sie in einem Terminal aus: wine start /unix DATEI (DATEI ist der Pfad der Datei)."],
+ 'es': ['No se puede ejecutar %s: el archivo no existe o no es un archivo normal.', 'Seleccione el programa de Windows que desea ejecutar.', "Wine no pudo iniciar %s (terminó con el estado de salida %s). Para ver el motivo, ejecute en una terminal: wine start /unix ARCHIVO (ARCHIVO es la ruta del archivo)."],
  'ja': ['%s を実行できません。ファイルが存在しないか、通常のファイルではありません。', '実行する Windows プログラムを選択してください。', "Wine が %s を起動できませんでした（終了ステータス %s）。原因を確認するには、端末で次のコマンドを実行してください: wine start /unix ファイル（ファイルはそのファイルのパスです）"],
  'ko': ['%s을(를) 실행할 수 없습니다. 파일이 없거나 일반 파일이 아닙니다.', '실행할 Windows 프로그램을 선택하세요.', "Wine이 %s을(를) 시작하지 못했습니다(종료 상태 %s). 이유를 보려면 터미널에서 다음 명령을 실행하세요: wine start /unix 파일 (파일은 해당 파일의 경로입니다)."],
  'zh_CN': ['无法运行 %s：文件缺失或不是普通文件。', '请选择要运行的 Windows 程序。', "Wine 无法启动 %s（退出状态 %s）。要查看原因，请在终端中运行：wine start /unix 文件（文件是该文件的路径）"],

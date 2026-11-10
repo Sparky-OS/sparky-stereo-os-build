@@ -6,15 +6,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char *const languages[] = { "en", "pl", "pt_BR", "fr", "de", "ja", "ko", "zh_CN", "zh_TW" };
+static const char *const languages[] = { "en", "pl", "pt_BR", "fr", "de", "es", "ja", "ko", "zh_CN", "zh_TW" };
 
-static const char *const texts[][9] = {
+static const char *const texts[][10] = {
     [MEDIA_GPU_TEXT_PAGE_FAILED] = {
         "the GPU chosen for players in System Settings, Graphics could not be resolved (sparky-stereo-gpu-env exit status %d). This video is decoded in software, on no other GPU.",
         "nie udało się ustalić procesora graficznego wybranego dla odtwarzaczy w Ustawieniach systemowych, Grafika (kod wyjścia sparky-stereo-gpu-env %d). To wideo jest dekodowane programowo, na żadnym innym procesorze graficznym.",
         "não foi possível determinar a GPU escolhida para os reprodutores em Configurações do Sistema, Gráficos (código de saída do sparky-stereo-gpu-env %d). Este vídeo é decodificado em software, em nenhuma outra GPU.",
         "le GPU choisi pour les lecteurs dans Configuration du système, Graphiques n'a pas pu être déterminé (code de sortie de sparky-stereo-gpu-env %d). Cette vidéo est décodée par logiciel, sur aucun autre GPU.",
         "die in den Systemeinstellungen unter Grafik für Player gewählte GPU konnte nicht ermittelt werden (Exit-Status von sparky-stereo-gpu-env %d). Dieses Video wird in Software dekodiert, auf keiner anderen GPU.",
+        "no se pudo determinar la GPU elegida para los reproductores en Configuración del sistema, Gráficos (estado de salida de sparky-stereo-gpu-env %d). Este vídeo se decodifica por software, en ninguna otra GPU.",
         "システム設定の「グラフィックス」でプレーヤー用に選んだGPUを特定できませんでした (sparky-stereo-gpu-env の終了ステータス %d)。この動画はソフトウェアでデコードし、他のGPUは使いません。",
         "시스템 설정의 그래픽에서 플레이어용으로 선택한 GPU를 확인하지 못했습니다(sparky-stereo-gpu-env 종료 상태 %d). 이 동영상은 소프트웨어로 디코딩하며 다른 GPU는 사용하지 않습니다.",
         "无法确定在“系统设置 > 图形”中为播放器选择的 GPU（sparky-stereo-gpu-env 退出状态 %d）。此视频以软件解码，不使用其他 GPU。",
@@ -26,6 +27,7 @@ static const char *const texts[][9] = {
         "a GPU escolhida para os reprodutores em Configurações do Sistema, Gráficos (%s) não está entre as GPUs que este programa pode abrir. Este vídeo é decodificado em software, em nenhuma outra GPU.",
         "le GPU choisi pour les lecteurs dans Configuration du système, Graphiques (%s) ne fait pas partie des GPU que ce programme peut ouvrir. Cette vidéo est décodée par logiciel, sur aucun autre GPU.",
         "die in den Systemeinstellungen unter Grafik für Player gewählte GPU (%s) ist nicht unter den GPUs, die dieses Programm öffnen kann. Dieses Video wird in Software dekodiert, auf keiner anderen GPU.",
+        "la GPU elegida para los reproductores en Configuración del sistema, Gráficos (%s) no figura entre las GPU que este programa puede abrir. Este vídeo se decodifica por software, en ninguna otra GPU.",
         "システム設定の「グラフィックス」でプレーヤー用に選んだGPU (%s) は、このプログラムが開けるGPUの中にありません。この動画はソフトウェアでデコードし、他のGPUは使いません。",
         "시스템 설정의 그래픽에서 플레이어용으로 선택한 GPU(%s)가 이 프로그램이 열 수 있는 GPU 중에 없습니다. 이 동영상은 소프트웨어로 디코딩하며 다른 GPU는 사용하지 않습니다.",
         "在“系统设置 > 图形”中为播放器选择的 GPU（%s）不在此程序可以打开的 GPU 之中。此视频以软件解码，不使用其他 GPU。",
@@ -37,6 +39,7 @@ static const char *const texts[][9] = {
         "a GPU escolhida para os reprodutores, %s, não consegue decodificar este vídeo em hardware. Ele é decodificado em software; para decodificá-lo em outra GPU, ative Decodificar em outra GPU em Configurações do Sistema, Gráficos.",
         "le GPU choisi pour les lecteurs, %s, ne peut pas décoder cette vidéo matériellement. Elle est décodée par logiciel ; pour la décoder plutôt sur un autre GPU, activez Décoder sur un autre GPU dans Configuration du système, Graphiques.",
         "die für Player gewählte GPU, %s, kann dieses Video nicht in Hardware dekodieren. Es wird in Software dekodiert; um es stattdessen auf einer anderen GPU zu dekodieren, schalten Sie in den Systemeinstellungen unter Grafik „Auf einer anderen GPU dekodieren“ ein.",
+        "la GPU elegida para los reproductores, %s, no puede decodificar este vídeo por hardware. Se decodifica por software; para decodificarlo en otra GPU, active Decodificar en otra GPU en Configuración del sistema, Gráficos.",
         "プレーヤー用に選んだGPU %s は、この動画をハードウェアでデコードできません。ソフトウェアでデコードします。代わりに別のGPUでデコードするには、システム設定の「グラフィックス」で「別のGPUでデコード」をオンにしてください。",
         "플레이어용으로 선택한 GPU %s은(는) 이 동영상을 하드웨어로 디코딩할 수 없습니다. 소프트웨어로 디코딩합니다. 대신 다른 GPU에서 디코딩하려면 시스템 설정의 그래픽에서 '다른 GPU에서 디코딩'을 켜십시오.",
         "为播放器选择的 GPU %s 无法以硬件解码此视频。此视频以软件解码；要改为在另一个 GPU 上解码，请在“系统设置 > 图形”中打开“在另一个 GPU 上解码”。",
@@ -48,6 +51,7 @@ static const char *const texts[][9] = {
         "a GPU escolhida para os reprodutores não consegue decodificar este vídeo em hardware, então ele é decodificado em %s, como Decodificar em outra GPU permite.",
         "le GPU choisi pour les lecteurs ne peut pas décoder cette vidéo matériellement : elle est donc décodée sur %s, comme Décoder sur un autre GPU le permet.",
         "die für Player gewählte GPU kann dieses Video nicht in Hardware dekodieren, daher wird es auf %s dekodiert, wie „Auf einer anderen GPU dekodieren“ es erlaubt.",
+        "la GPU elegida para los reproductores no puede decodificar este vídeo por hardware, así que se decodifica en %s, como permite Decodificar en otra GPU.",
         "プレーヤー用に選んだGPUはこの動画をハードウェアでデコードできないため、「別のGPUでデコード」の設定どおり %s でデコードします。",
         "플레이어용으로 선택한 GPU가 이 동영상을 하드웨어로 디코딩할 수 없어, '다른 GPU에서 디코딩'이 허용하는 대로 %s에서 디코딩합니다.",
         "为播放器选择的 GPU 无法以硬件解码此视频，因此按照“在另一个 GPU 上解码”的设置，在 %s 上解码。",
@@ -59,6 +63,7 @@ static const char *const texts[][9] = {
         "não foi possível perguntar à GPU escolhida para os reprodutores, %s, o que ela decodifica: o driver VA-API ou NVDEC dela não respondeu. Este vídeo é decodificado em software, em nenhuma outra GPU.",
         "le GPU choisi pour les lecteurs, %s, n'a pas pu indiquer ce qu'il décode : son pilote VA-API ou NVDEC n'a pas répondu. Cette vidéo est décodée par logiciel, sur aucun autre GPU.",
         "die für Player gewählte GPU, %s, konnte nicht gefragt werden, was sie dekodiert: ihr VA-API- oder NVDEC-Treiber hat nicht geantwortet. Dieses Video wird in Software dekodiert, auf keiner anderen GPU.",
+        "no se pudo preguntar a la GPU elegida para los reproductores, %s, qué decodifica: su controlador de VA-API o NVDEC no respondió. Este vídeo se decodifica por software, en ninguna otra GPU.",
         "プレーヤー用に選んだGPU %s に、何をデコードできるかを問い合わせられませんでした。VA-API または NVDEC のドライバーが応答しませんでした。この動画はソフトウェアでデコードし、他のGPUは使いません。",
         "플레이어용으로 선택한 GPU %s에 무엇을 디코딩할 수 있는지 물어보지 못했습니다. VA-API 또는 NVDEC 드라이버가 응답하지 않았습니다. 이 동영상은 소프트웨어로 디코딩하며 다른 GPU는 사용하지 않습니다.",
         "无法询问为播放器选择的 GPU %s 能解码什么：它的 VA-API 或 NVDEC 驱动程序没有响应。此视频以软件解码，不使用其他 GPU。",
@@ -70,6 +75,7 @@ static const char *const texts[][9] = {
         "Decodificando em software: a conversão deste vídeo precisa das imagens decodificadas na memória, e copiá-las de volta da GPU está desligado. Para copiá-las de volta, ative Copiar o vídeo decodificado de volta em Configurações do Sistema, Gráficos, ou escolha no reprodutor um decodificador que copia.",
         "Décodage par logiciel : la conversion de cette vidéo a besoin des images décodées en mémoire, et leur recopie depuis le GPU est désactivée. Pour les recopier plutôt, activez Recopier la vidéo décodée dans Configuration du système, Graphiques, ou choisissez dans le lecteur un décodeur qui recopie.",
         "Dekodierung in Software: Die Umwandlung dieses Videos braucht die dekodierten Bilder im Speicher, und das Zurückkopieren von der GPU ist aus. Um sie stattdessen zurückzukopieren, schalten Sie in den Systemeinstellungen unter Grafik „Dekodiertes Video zurückkopieren“ ein oder wählen Sie im Player einen kopierenden Decoder.",
+        "Decodificando por software: la conversión de este vídeo necesita las imágenes decodificadas en memoria, y la copia de vuelta desde la GPU está desactivada. Para copiarlas de vuelta, active Copiar de vuelta el vídeo decodificado en Configuración del sistema, Gráficos, o elija en el reproductor un decodificador que copie.",
         "ソフトウェアでデコードしています: この動画の変換にはデコードした画像がメモリー上に必要ですが、GPUからのコピーバックはオフです。代わりにコピーバックするには、システム設定の「グラフィックス」で「デコードした動画をコピーして戻す」をオンにするか、プレーヤーでコピーするデコーダーを選んでください。",
         "소프트웨어로 디코딩 중: 이 동영상의 변환에는 디코딩한 이미지가 메모리에 있어야 하는데, GPU에서 다시 복사해 오는 것이 꺼져 있습니다. 대신 다시 복사해 오려면 시스템 설정의 그래픽에서 '디코딩한 비디오를 다시 복사'를 켜거나, 플레이어에서 복사하는 디코더를 선택하십시오.",
         "正在以软件解码：此视频的转换需要内存中的解码画面，而从 GPU 复制回来的功能已关闭。要改为复制回来，请在“系统设置 > 图形”中打开“将解码的视频复制回来”，或在播放器中选择会复制的解码器。",

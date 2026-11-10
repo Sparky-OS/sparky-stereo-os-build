@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
 
-REQUIRED = ('en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW')
+REQUIRED = ('en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW')
 
 
 def messages(path):

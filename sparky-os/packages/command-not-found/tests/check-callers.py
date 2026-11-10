@@ -103,6 +103,7 @@ said = {
     'en_US': ("run it as 'fdfind'", header('fd')),
     'pl_PL': ("uruchom jako 'fdfind'", None), 'pt_BR': ("execute-o como 'fdfind'", "Comando 'fd' não encontrado, mas pode ser instalado com:"),
     'fr_FR': ('exécutez-la sous le nom « fdfind »', None), 'de_DE': ('als »fdfind« aufrufen', None),
+    'es_ES': ('ejecútela como «fdfind»', None),
     'ja_JP': ("'fdfind' として実行してください", None), 'ko_KR': ("'fdfind'(으)로 실행하십시오", None),
     'zh_CN': ('以 “fdfind” 运行', None), 'zh_TW': ("以 'fdfind' 執行", "找不到 'fd' 指令，但可以用以下方式安裝："),
 }

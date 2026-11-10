@@ -23,7 +23,7 @@ done
 check "programs and installers are offered" grep -qx 'MimeType=application/x-ms-dos-executable;application/x-dosexec;application/vnd.microsoft.portable-executable;application/x-ms-ne-executable;application/x-msi;' "$M"
 check "libraries (.dll only types) are not offered" sh -c "! grep -q 'x-msdownload' '$M'"
 check "entry calls the runner for the pack" grep -q '^Exec=sparky-stereo-integration run wine -- %F$' "$M"
-for l in en pl pt_BR fr de ja ko zh_CN zh_TW; do
+for l in en pl pt_BR fr de es ja ko zh_CN zh_TW; do
 	check "name in $l" grep -q "^Name\(\[$l\]\)\?=." "$M"
 done
 check "the pack names wine" grep -qx 'program=wine' "$T/root/usr/share/sparky-stereo/integrations.d/wine.conf"

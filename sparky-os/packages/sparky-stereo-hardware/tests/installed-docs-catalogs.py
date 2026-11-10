@@ -21,7 +21,7 @@ for name in ['sparky-stereo-opengl-default.service','sparky-stereo-hardware-nvid
         good=owner.returncode==0 and owner.stdout.startswith('sparky-stereo-hardware: ')
     print(('PASS ' if good else 'FAIL ')+name+': documentation shipped by this package')
     fail+=not good
-for lang in ['en','pl','pt_BR','fr','de','ja','ko','zh_CN','zh_TW']:
+for lang in ['en','pl','pt_BR','fr','de','es','ja','ko','zh_CN','zh_TW']:
     expected=re.search(r'^LOCAL16="(.*)"$',(Path(sys.argv[1])/lang).read_text(),re.M).group(1)
     p=subprocess.run(['sparky-stereo-problems','say','sparky-stereo-hardware','LOCAL16'],env=dict(os.environ,LANGUAGE=lang,LANG='en_US.UTF-8',LC_ALL='en_US.UTF-8'),capture_output=True,text=True)
     good=p.returncode==0 and expected in p.stdout+p.stderr

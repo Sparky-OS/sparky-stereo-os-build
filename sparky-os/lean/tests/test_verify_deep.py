@@ -165,7 +165,7 @@ class Case(unittest.TestCase):
         self.assertEqual(rc, 1, out)
 
     def test_messages_in_every_language(self):
-        for lang in ('en', 'de', 'fr', 'ja', 'ko', 'pl', 'pt_BR', 'zh_CN', 'zh_TW'):
+        for lang in ('en', 'de', 'es', 'fr', 'ja', 'ko', 'pl', 'pt_BR', 'zh_CN', 'zh_TW'):
             for key in ('LOCAL77', 'LOCAL78', 'LOCAL79', 'LOCAL80'):
                 self.assertIn(key + '="', (LANGS / lang).read_text(encoding='utf-8'), (lang, key))
                 self.assertEqual(self.m.text(key, [3] if key in ('LOCAL79', 'LOCAL80') else [], lang).count('%s'), 0)

@@ -51,7 +51,7 @@ for s in sections:
 print([(s["kind"], s["name"]) for s in sections]); print(displays)
 PY
 }
-LANGS="pt_BR pl fr de ja ko zh_CN zh_TW"
+LANGS="pt_BR pl fr de es ja ko zh_CN zh_TW"
 echo "== English is what it was"
 run LANGUAGE= LC_ALL=C LANG=C -- >"$T/en.txt";  cmp -s "$T/en.txt" "$H/golden/text.txt"; ok $? "English text: byte for byte the published script's"
 run LANGUAGE= LC_ALL=C LANG=C -- --sections >"$T/en.sec"; cmp -s "$T/en.sec" "$H/golden/sections.txt"; ok $? "English --sections: identical"

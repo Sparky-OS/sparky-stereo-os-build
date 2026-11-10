@@ -208,7 +208,7 @@ index 0000000..c7aa4de
 +assert {n.attrib['type'] for n in types['video/x-matroska-3d'].findall('m:sub-class-of',ns)} == {'video/x-matroska','application/x-matroska'}
 +for name,node in types.items():
 +    languages={c.attrib.get('{http://www.w3.org/XML/1998/namespace}lang','en') for c in node.findall('m:comment',ns)}
-+    assert languages == {'en','pl','pt_BR','fr','de','ja','ko','zh_CN','zh_TW'}, name
++    assert languages == {'en','pl','pt_BR','fr','de','es','ja','ko','zh_CN','zh_TW'}, name
 +    assert not node.findall('m:glob',ns), name
 +with tempfile.TemporaryDirectory(dir=xml.parent) as scratch:
 +    mime=Path(scratch)/'mime'
@@ -222,7 +222,7 @@ index 0000000..c7aa4de
 +                 'video/x-mp4-3d-180 video/x-mp4-3d',
 +                 'video/x-mp4-3d-180 video/x-mp4-180']:
 +        assert edge in edges,edge
-+print(f'PASS: {len(types)} types, nine languages, preserved container ancestry, standard MIME compiler')
++print(f'PASS: {len(types)} types, ten languages, preserved container ancestry, standard MIME compiler')
 diff --git a/autotests/content/check.py b/autotests/content/check.py
 new file mode 100644
 index 0000000..66b8323
@@ -776,7 +776,7 @@ new file mode 100644
 index 0000000..4179436
 --- /dev/null
 +++ b/data/content/catalogue.json
-@@ -0,0 +1,216 @@
+@@ -0,0 +1,224 @@
 +{
 +  "version": 1,
 +  "families": [
@@ -941,6 +941,11 @@ index 0000000..4179436
 +        "spherical": "Sphärisches {format}-Video",
 +        "stereo_spherical": "Stereoskopisches sphärisches {format}-Video"
 +      },
++      "es": {
++        "stereo": "Vídeo {format} estereoscópico",
++        "spherical": "Vídeo {format} esférico",
++        "stereo_spherical": "Vídeo {format} esférico estereoscópico"
++      },
 +      "ja": {
 +        "stereo": "{format} 立体映像",
 +        "spherical": "{format} 全天球映像",
@@ -977,6 +982,9 @@ index 0000000..4179436
 +      },
 +      "de": {
 +        "stereo": "Stereoskopisches {format}-Bild"
++      },
++      "es": {
++        "stereo": "Imagen {format} estereoscópica"
 +      },
 +      "ja": {
 +        "stereo": "{format} 立体画像"

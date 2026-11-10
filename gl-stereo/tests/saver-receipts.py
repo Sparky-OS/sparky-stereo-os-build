@@ -145,7 +145,7 @@ with tempfile.TemporaryDirectory(prefix='saver-receipts-') as work:
 
     # ---- the saver list: the dropped savers, the reason, nine languages -------------------------------------
     strings = json.loads((here/'savers/strings.json').read_text())
-    assert set(strings) == {'en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW'}
+    assert set(strings) == {'en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW'}
     import re
     for language, text in strings.items():
         assert len(text) == 18 and all(text), language

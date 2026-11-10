@@ -60,7 +60,7 @@ SOURCES = {
     'vlc-spatial-video.po.patch': ('vlc', 'vlc', 'usr/share/vlc-stereo/locale'),
 }
 
-LOCALES = {'pl': 'pl_PL', 'pt_BR': 'pt_BR', 'fr': 'fr_FR', 'de': 'de_DE', 'ja': 'ja_JP', 'ko': 'ko_KR',
+LOCALES = {'pl': 'pl_PL', 'pt_BR': 'pt_BR', 'fr': 'fr_FR', 'de': 'de_DE', 'es': 'es_ES', 'ja': 'ja_JP', 'ko': 'ko_KR',
            'zh_CN': 'zh_CN', 'zh_TW': 'zh_TW'}
 
 _UNESCAPE = re.compile(r'\\(["\\nt])')

@@ -187,7 +187,7 @@ class InstallerFailures(unittest.TestCase):
         self.failed(self.run_script('grub-language'), 'boot menu language')
 
     def test_all_localized_errors(self):
-        for lang in ('en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW'):
+        for lang in ('en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW'):
             with self.subTest(lang=lang):
                 self.env['INSTALLER_LANG'] = lang + '.UTF-8'
                 r = self.run_script('offline-packages', 'on')
@@ -310,7 +310,7 @@ class InstallerFailures(unittest.TestCase):
 
     def test_languagepacks_missing_root_and_every_language(self):
         self.env['ROOT'] = str(self.root / 'absent')
-        for lang in ('en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW'):
+        for lang in ('en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW'):
             with self.subTest(lang=lang):
                 self.env['INSTALLER_LANG'] = lang + '.UTF-8'
                 r = self.run_script('language-packs')

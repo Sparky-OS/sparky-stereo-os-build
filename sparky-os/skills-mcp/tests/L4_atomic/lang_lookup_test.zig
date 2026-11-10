@@ -2,7 +2,7 @@
 const std = @import("std");
 const lang_lookup = @import("lang_lookup");
 
-const nine = [_][]const u8{ "en", "pl", "pt_BR", "fr", "de", "ja", "ko", "zh_CN", "zh_TW" };
+const nine = [_][]const u8{ "en", "pl", "pt_BR", "fr", "de", "es", "ja", "ko", "zh_CN", "zh_TW" };
 
 test "whole locale first" {
     try std.testing.expectEqualStrings("pt_BR", lang_lookup.pick(&nine, "pt_BR.UTF-8", "en"));

@@ -69,7 +69,7 @@ run "$T/empty.map"
 if [ -d "$CAT" ]; then
 	run "$T/missing.map" pt_BR.UTF-8
 	grep -q "catálogo" "$T/err"; ok $? "the message is told in the person's language (pt_BR): $(head -c 120 "$T/err")"
-	for l in en pl pt_BR fr de ja ko zh_CN zh_TW; do
+	for l in en pl pt_BR fr de es ja ko zh_CN zh_TW; do
 		t=$(sparky-stereo-problems text --person --lang $l sparky-stereo-integration catalogue 2>&1)
 		[ -n "$t" ] && ! printf '%s' "$t" | grep -q "^$"; ok $? "kept record text in $l: $(printf '%s' "$t" | head -c 70)"
 	done

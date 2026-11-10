@@ -131,7 +131,7 @@ lang=${lang%%.*}
 case $lang in
 pt_BR|zh_CN|zh_TW) ;;
 zh*) lang=zh_CN ;;
-*) lang=${lang%%_*}; case $lang in pl|fr|de|ja|ko) ;; *) lang=en ;; esac ;;
+*) lang=${lang%%_*}; case $lang in pl|fr|de|es|ja|ko) ;; *) lang=en ;; esac ;;
 esac
 failed=0
 # a file of ours that cannot be removed would keep chrony on our servers after the package is gone: the removal
