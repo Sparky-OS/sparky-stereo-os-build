@@ -1190,7 +1190,7 @@ unit_says_why() {
 # Every message in the nine languages, with the English one's placeholders.
 messages_complete() {
 	local lang key ok=0 n_en n
-	for lang in pl pt_BR fr de ja ko zh_CN zh_TW; do
+	for lang in pl pt_BR fr de es ja ko zh_CN zh_TW; do
 		[[ -r $PKG/lang/$lang ]] || { echo "  no $lang"; ok=1; continue; }
 		while IFS= read -r key; do
 			n_en=$(grep "^$key=" "$PKG/lang/en" | grep -o '%s' | wc -l)
