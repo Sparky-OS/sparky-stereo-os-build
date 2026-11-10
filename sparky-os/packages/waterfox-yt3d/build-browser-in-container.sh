@@ -9,6 +9,7 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=${BROWSER_JOBS:-8}
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 OLD=6.7.5-0+stereo3d13+lc1 NEW=6.7.5-0+stereo3d14 COMMIT=ac402b8caa764d0de161c9d9846de7837abcbd8b OLDCOMMIT=6be1abb34e71b4352957a55f2db03c76d0d0c83d
+if [ -z "${BROWSER_RESUME:-}" ]; then
 cd /work && mkdir plain && cd plain
 cp /in/sparky-stereo-browser_6.7.5.orig.tar.xz "/in/sparky-stereo-browser_$OLD.dsc" "/in/sparky-stereo-browser_$OLD.debian.tar.xz" .
 sha256sum sparky-stereo-browser_6.7.5.orig.tar.xz | tee /work/orig.sha256
@@ -47,13 +48,16 @@ mkdir -p /work/build && cd /work/build
 cp /work/plain/sparky-stereo-browser_6.7.5.orig.tar.xz /work/plain/sparky-stereo-browser_$NEW+lc1.* .
 dpkg-source -x "sparky-stereo-browser_$NEW+lc1.dsc" source >/dev/null
 test "$(cat source/SOURCE.edition.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["browser_commit"])')" = "$COMMIT"
+
+fi
+cd /work/build
 apt-get -y update >/dev/null 2>&1
 apt-get -y --no-install-recommends build-dep /work/build/source >/work/build-dep.log 2>&1
 id builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd source
 sed -i "s/^mk_add_options MOZ_PARALLEL_BUILD=.*/mk_add_options MOZ_PARALLEL_BUILD=${BROWSER_JOBS:-8}/" debian/mozconfig
-runuser -u builder -- env SPARKY_BROWSER_TOOLCHAIN_ROOT=/browser-toolchains dpkg-buildpackage -us -uc -b -j${BROWSER_JOBS:-8}
+runuser -u builder -- env SPARKY_BROWSER_TOOLCHAIN_ROOT=/browser-toolchains dpkg-buildpackage -us -uc -b ${BROWSER_RESUME:+-nc} -j${BROWSER_JOBS:-8}
 cp .sparky-lc/source.json /work/native-source.json
 cd /work/build
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/build/*+lc1_*.deb
