@@ -1,0 +1,397 @@
+From 9bcc6c053b53a2dfe7e53c854c8c9856ad4ef2e2 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 10 Nov 2026 10:02:47 -0300
+Subject: [PATCH] FFmpeg: the CUDA converter frees its OpenGL textures on any
+ thread
+
+CUDAGLTextureConverter holds GL textures registered with CUDA, and its destructor
+made the QRhi's OpenGL context current to delete them. The converter is destroyed
+by whoever lets go the last reference to the decoder's frames context
+(HwFrameContextData, through av_buffer_unref), and that is not always the
+thread of the context: a player that opens another file closes the decoder on
+the GUI thread (QMediaPlayer::setSource, QFFmpeg::PlaybackEngine's destructor,
+avcodec_free_context), while the scene graph's render thread owns the context.
+QOpenGLContext::makeCurrent() then aborts the process: "Cannot make
+QOpenGLContext current in a different thread". Which thread drops the last
+reference depends on how long the render thread keeps its last frame, so it
+happens at some source changes and not at others.
+
+The converter now makes the context current only on the context's own thread.
+On another thread it gives its planes, the textures and their CUDA registrations,
+to the share group of the context (QOpenGLSharedResource), which frees them when
+one of its contexts is next made current, as Qt does for its own textures. CUDA
+refuses to unregister the resource of a texture without the texture's context
+current (cuGraphicsUnregisterResource returns CUDA_ERROR_INVALID_GRAPHICS_CONTEXT,
+219, and the result was never looked at), so the unregistering waits for the
+right thread too, and the plane keeps a reference to the decoder's device so that
+the CUDA context is still there then. A failed unregistration is now said.
+
+tst_qffmpegcudatextureconverter releases the frames context of a CUDA frame on
+the context's thread and on another thread, checks that the textures are gone
+after the context is next made current and that no unregistration failed. It
+skips without an NVIDIA GPU. Before the change the second case aborts with the
+message above.
+
+Upstream: the converter is Tim Blechmann's c57f4af5ab in dev (carried as the
+patch before this one); dev's file has the same destructor and no later change
+(searched 2026-11-10: the file's history, dev's commits since 2026-09-10,
+QTBUG-129994, which is the same abort for another path and was fixed by the QRhi
+refactoring of 6.8.2).
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ .../multimedia/ffmpeg/qffmpeghwaccel_cuda.cpp |  87 +++++++++-
+ .../plugins/multimedia/ffmpeg/CMakeLists.txt  |   1 +
+ .../cudatextureconverter/CMakeLists.txt       |  19 +++
+ .../tst_qffmpegcudatextureconverter.cpp       | 158 ++++++++++++++++++
+ 4 files changed, 261 insertions(+), 4 deletions(-)
+ create mode 100644 tests/auto/unit/plugins/multimedia/ffmpeg/cudatextureconverter/CMakeLists.txt
+ create mode 100644 tests/auto/unit/plugins/multimedia/ffmpeg/cudatextureconverter/tst_qffmpegcudatextureconverter.cpp
+
+diff --git a/src/plugins/multimedia/ffmpeg/qffmpeghwaccel_cuda.cpp b/src/plugins/multimedia/ffmpeg/qffmpeghwaccel_cuda.cpp
+index e60c821..0b14fc4 100644
+--- a/src/plugins/multimedia/ffmpeg/qffmpeghwaccel_cuda.cpp
++++ b/src/plugins/multimedia/ffmpeg/qffmpeghwaccel_cuda.cpp
+@@ -15,14 +15,17 @@
+ #include <QtCore/qlibrary.h>
+ #include <QtCore/qloggingcategory.h>
+ #include <QtCore/qscopeguard.h>
++#include <QtCore/qthread.h>
+ #include <QtCore/quuid.h>
+ #include <QtCore/private/quniquehandle_types_p.h>
+ 
+ #include <array>
+ #include <optional>
++#include <vector>
+ 
+ #if QT_CONFIG(opengl)
+ #  include <QtGui/qopenglcontext.h>
++#  include <QtGui/private/qopenglcontext_p.h>
+ #  include <QtGui/qopengl.h>
+ #  include <QtGui/qopenglfunctions.h>
+ #  ifndef GL_RG16F
+@@ -341,8 +344,11 @@ struct GlPlaneResource
+ 
+     void release(const CudaDriverApi *cudaApi, QOpenGLFunctions &functions)
+     {
+-        if (cudaResource && cudaApi)
+-            cudaApi->cuGraphicsUnregisterResource(cudaResource);
++        if (cudaResource && cudaApi) {
++            const CUresult result = cudaApi->cuGraphicsUnregisterResource(cudaResource);
++            if (result != CUDA_SUCCESS)
++                qWarning() << "cuGraphicsUnregisterResource failed:" << CudaResult(result, *cudaApi);
++        }
+         if (texture)
+             functions.glDeleteTextures(1, &texture);
+         cudaResource = nullptr;
+@@ -353,6 +359,59 @@ struct GlPlaneResource
+     CUgraphicsResource cudaResource = nullptr;
+ };
+ 
++// The planes of a converter that was released on another thread than the one of its OpenGL context. A
++// converter is released by whoever lets go the last reference to the decoder's frames context, and a player
++// that opens another file does that on the GUI thread, while the scene graph's render thread owns the context.
++// Qt aborts a QOpenGLContext made current off its thread, and CUDA refuses to unregister a graphics resource
++// without the context of its texture current (CUDA_ERROR_INVALID_GRAPHICS_CONTEXT): so the planes are given
++// to the share group of the context, which frees them when one of its contexts is next made current (as it
++// does for Qt's own textures), with a reference to the decoder's device so that the CUDA context is still
++// there then. When the share group goes first there is nothing to free, CUDA has dropped the registrations
++// with its context, and the reference is let go.
++class GlPlanesRelease final : public QOpenGLSharedResource
++{
++public:
++    GlPlanesRelease(QOpenGLContext *context, const CudaDriverApi *api, CUcontext cudaContext,
++                    AVBufferUPtr device)
++        : QOpenGLSharedResource(context->shareGroup()),
++          m_api(api),
++          m_cudaContext(cudaContext),
++          m_device(std::move(device))
++    {
++    }
++
++    void add(GlPlaneResource &plane)
++    {
++        m_planes.push_back({ plane.texture, plane.cudaResource });
++        plane.texture = 0;
++        plane.cudaResource = nullptr;
++    }
++
++protected:
++    void invalidateResource() override { m_planes.clear(); }
++
++    void freeResource(QOpenGLContext *context) override
++    {
++        std::optional<CudaContextGuard> guard = m_cudaContext && m_api
++                ? CudaContextGuard::create(*m_api, m_cudaContext)
++                : std::nullopt;
++        QOpenGLFunctions functions(context);
++        for (auto &[texture, cudaResource] : m_planes) {
++            GlPlaneResource plane;
++            plane.texture = texture;
++            plane.cudaResource = cudaResource;
++            plane.release(guard ? m_api : nullptr, functions);
++        }
++        m_planes.clear();
++    }
++
++private:
++    const CudaDriverApi *const m_api;
++    const CUcontext m_cudaContext;
++    const AVBufferUPtr m_device;
++    std::vector<std::pair<GLuint, CUgraphicsResource>> m_planes;
++};
++
+ class CUDAGLTextureConverter final : public TextureConverterBackend
+ {
+ public:
+@@ -490,6 +549,7 @@ private:
+         releasePlaneResources();
+         m_planeResourcesSize = frameSize;
+         m_planeResourcesFormat = framesCtx->sw_format;
++        m_device.reset(av_buffer_ref(framesCtx->device_ref));
+ 
+         auto *glContext =
+                 static_cast<const QRhiGles2NativeHandles *>(rhi->nativeHandles())->context;
+@@ -533,13 +593,31 @@ private:
+         if (!rhi)
+             return;
+ 
++        auto *glContext =
++                static_cast<const QRhiGles2NativeHandles *>(rhi->nativeHandles())->context;
++
++        if (glContext->thread() != QThread::currentThread()) {
++            // released on another thread than the one of the context: see GlPlanesRelease
++            const bool planes = ranges::any_of(m_planes, [](const auto &plane) { return bool(plane); });
++            if (!planes) {
++                m_device.reset();
++                return;
++            }
++            auto *release = new GlPlanesRelease(glContext, m_api, m_cudaContext, std::move(m_device));
++            for (auto &plane : m_planes) {
++                if (plane)
++                    release->add(*plane);
++                plane.reset();
++            }
++            release->free();
++            return;
++        }
++
+         std::optional<CudaContextGuard> guard = m_cudaContext && m_api
+                 ? CudaContextGuard::create(*m_api, m_cudaContext)
+                 : std::nullopt;
+ 
+         rhi->makeThreadLocalNativeContextCurrent();
+-        auto *glContext =
+-                static_cast<const QRhiGles2NativeHandles *>(rhi->nativeHandles())->context;
+         QOpenGLFunctions functions(glContext);
+ 
+         for (auto &plane : m_planes) {
+@@ -551,6 +629,7 @@ private:
+     }
+ 
+     const CudaDriverApi *const m_api;
++    AVBufferUPtr m_device; // the decoder's device, for the planes that are freed later (GlPlanesRelease)
+     PerPlaneArray<std::unique_ptr<GlPlaneResource>> m_planes;
+     QSize m_planeResourcesSize;
+     AVPixelFormat m_planeResourcesFormat = AV_PIX_FMT_NONE;
+diff --git a/tests/auto/unit/plugins/multimedia/ffmpeg/CMakeLists.txt b/tests/auto/unit/plugins/multimedia/ffmpeg/CMakeLists.txt
+index cd3b30d..3b91f4f 100644
+--- a/tests/auto/unit/plugins/multimedia/ffmpeg/CMakeLists.txt
++++ b/tests/auto/unit/plugins/multimedia/ffmpeg/CMakeLists.txt
+@@ -6,3 +6,4 @@ add_subdirectory(texturebridge)
+ add_subdirectory(qffmpegvideoencoderutils)
+ 
+ add_subdirectory(qffmpegvideobuffer)
++add_subdirectory(cudatextureconverter)
+diff --git a/tests/auto/unit/plugins/multimedia/ffmpeg/cudatextureconverter/CMakeLists.txt b/tests/auto/unit/plugins/multimedia/ffmpeg/cudatextureconverter/CMakeLists.txt
+new file mode 100644
+index 0000000..185cf9c
+--- /dev/null
++++ b/tests/auto/unit/plugins/multimedia/ffmpeg/cudatextureconverter/CMakeLists.txt
+@@ -0,0 +1,19 @@
++# Copyright (C) 2026 Daniel Campos Ramos
++# SPDX-License-Identifier: BSD-3-Clause
++
++#####################################################################
++## tst_qffmpegcudatextureconverter Test:
++#####################################################################
++
++if(NOT LINUX OR NOT QT_FEATURE_opengl)
++    return()
++endif()
++
++qt_internal_add_test(tst_qffmpegcudatextureconverter
++    SOURCES
++        tst_qffmpegcudatextureconverter.cpp
++    LIBRARIES
++        Qt::FFmpegMediaPluginImplPrivate
++        Qt::GuiPrivate
++        Qt::MultimediaPrivate
++)
+diff --git a/tests/auto/unit/plugins/multimedia/ffmpeg/cudatextureconverter/tst_qffmpegcudatextureconverter.cpp b/tests/auto/unit/plugins/multimedia/ffmpeg/cudatextureconverter/tst_qffmpegcudatextureconverter.cpp
+new file mode 100644
+index 0000000..2928b4b
+--- /dev/null
++++ b/tests/auto/unit/plugins/multimedia/ffmpeg/cudatextureconverter/tst_qffmpegcudatextureconverter.cpp
+@@ -0,0 +1,158 @@
++// Copyright (C) 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
++
++#include <QtTest/qtest.h>
++
++#include <QtCore/qregularexpression.h>
++#include <QtCore/qscopeguard.h>
++#include <QtCore/qsemaphore.h>
++#include <QtCore/qthread.h>
++#include <QtGui/qoffscreensurface.h>
++#include <QtGui/qopenglcontext.h>
++#include <QtGui/qopenglfunctions.h>
++#include <QtGui/rhi/qrhi.h>
++#include <QtGui/rhi/qrhi_platform.h>
++#include <QtFFmpegMediaPluginImpl/private/qffmpeg_p.h>
++#include <QtFFmpegMediaPluginImpl/private/qffmpeghwaccel_cuda_p.h>
++#include <QtFFmpegMediaPluginImpl/private/qffmpeghwaccel_p.h>
++
++#include <memory>
++#include <vector>
++
++QT_USE_NAMESPACE
++using namespace Qt::StringLiterals;
++
++extern "C" {
++#include <libavutil/hwcontext.h>
++}
++
++// The converter of NVDEC frames keeps GL textures registered with CUDA. It is released by whoever lets go the last reference to the frames
++// context of the decoder: when a player opens another file that is the GUI thread, and the OpenGL context belongs to the scene graph's
++// render thread, where Qt aborts a QOpenGLContext made current ("Cannot make QOpenGLContext current in a different thread")
++class tst_QFFmpegCudaTextureConverter : public QObject
++{
++    Q_OBJECT
++
++private slots:
++    void releasedOnAnotherThread_data();
++    void releasedOnAnotherThread();
++};
++
++void tst_QFFmpegCudaTextureConverter::releasedOnAnotherThread_data()
++{
++    QTest::addColumn<bool>("onTheContextThread");
++    QTest::newRow("the context's thread") << true;
++    QTest::newRow("another thread") << false;
++}
++
++void tst_QFFmpegCudaTextureConverter::releasedOnAnotherThread()
++{
++    QFETCH(bool, onTheContextThread);
++
++    // CUDA refuses to unregister the resource of a texture without the texture's context current (error 219): the converter says so
++    QTest::failOnWarning(QRegularExpression(u"cuGraphicsUnregisterResource failed"_s));
++
++    QRhiGles2InitParams params;
++    params.fallbackSurface = QRhiGles2InitParams::newFallbackSurface();
++    const auto surfaceGone = qScopeGuard([&] { delete params.fallbackSurface; });
++
++    QSemaphore ready, released, finished;
++    // what holds the frames context of the decoder: the last of these to go lets the converter go
++    QFFmpeg::HWAccelUPtr hw;
++    QFFmpeg::AVFrameUPtr frame;
++    std::vector<GLuint> textures;
++    bool unavailable = false;
++    QString why;
++    std::vector<int> stillThere;
++
++    // This thread is the render thread: it owns the QRhi and its context
++    std::unique_ptr<QThread> renderThread(QThread::create([&] {
++        std::unique_ptr<QRhi> rhi(QRhi::create(QRhi::OpenGLES2, &params));
++        // whatever happens, the frames context (and the converter in it) does not outlive the QRhi the converter points to
++        auto letGo = qScopeGuard([&] {
++            frame.reset();
++            hw.reset();
++        });
++        auto handOver = qScopeGuard([&] { ready.release(); });
++        if (!rhi || !rhi->makeThreadLocalNativeContextCurrent()) {
++            unavailable = true;
++            why = u"no OpenGL context"_s;
++            return;
++        }
++        hw = QFFmpeg::HWAccel::create(AV_HWDEVICE_TYPE_CUDA);
++        if (!hw) {
++            unavailable = true;
++            why = u"no CUDA (NVDEC) device"_s;
++            return;
++        }
++        hw->createFramesContext(AV_PIX_FMT_NV12, QSize(128, 64));
++        frame = QFFmpeg::makeAVFrame();
++        if (!hw->hwFramesContextAsBuffer() || av_hwframe_get_buffer(hw->hwFramesContextAsBuffer(), frame.get(), 0) < 0) {
++            unavailable = true;
++            why = u"no CUDA frame"_s;
++            return;
++        }
++        // the converter of the decoder's frames context for this QRhi, as the decoder's frames have it
++        QFFmpeg::TextureConverter *converter =
++                QFFmpeg::HwFrameContextData::ensure(*frame).textureConverterMapper.tryMap(*rhi, QFFmpeg::TextureConverter(*rhi)).first;
++        if (!converter->init(*frame) || converter->isNull()) {
++            unavailable = true;
++            why = u"no texture converter for the CUDA frame"_s;
++            return;
++        }
++        {
++            auto handles = converter->createTextureHandles(*frame, nullptr);
++            if (!handles) {
++                unavailable = true;
++                why = u"the converter refused the frame"_s;
++                return;
++            }
++            for (int plane = 0; plane < 2; ++plane)
++                textures.push_back(GLuint(handles->textureHandle(*rhi, plane)));
++        }
++        if (onTheContextThread) {
++            // the decoder is closed here, where the context lives
++            frame.reset();
++            hw.reset();
++        } else {
++            // ... on another thread, with no context current there, as a player opening the next file closes it on the GUI thread
++            handOver.dismiss();
++            ready.release();
++            released.acquire();
++        }
++        // the textures are gone, at once or when the context is next made current (the scene graph does it at every frame)
++        QOpenGLContext *context = static_cast<const QRhiGles2NativeHandles *>(rhi->nativeHandles())->context;
++        if (!context->makeCurrent(context->surface())) {
++            unavailable = true;
++            why = u"the context cannot be made current again"_s;
++            finished.release();
++            return;
++        }
++        QOpenGLFunctions f(context);
++        for (GLuint texture : textures)
++            stillThere.push_back(f.glIsTexture(texture) ? 1 : 0);
++        finished.release();
++    }));
++    renderThread->start();
++    ready.acquire();
++    if (unavailable) {
++        renderThread->wait();
++        QSKIP(qPrintable(why));
++    }
++    if (!onTheContextThread) {
++        // the render thread's context is current nowhere here: this made Qt abort before the fix
++        QVERIFY(QThread::currentThread() != renderThread.get());
++        frame.reset();
++        hw.reset();
++        released.release();
++    }
++    finished.acquire();
++    renderThread->wait();
++    QVERIFY2(!unavailable, qPrintable(why));
++    QCOMPARE(int(textures.size()), 2);
++    for (int still : stillThere)
++        QCOMPARE(still, 0);
++}
++
++QTEST_MAIN(tst_QFFmpegCudaTextureConverter)
++#include "tst_qffmpegcudatextureconverter.moc"
+-- 
+2.53.0
+

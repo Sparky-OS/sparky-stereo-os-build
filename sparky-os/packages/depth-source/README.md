@@ -128,3 +128,10 @@ The group is `[StereoVideo]`; SHA-256 of the fully encoded file URL is the swap 
 False swap and automatic packing remove their entries.
 Only menu choices write settings; loading another file reads them and never copies the previous file's choices.
 A settings read/write failure is visible in the banner, with the file named; media files and their metadata are never changed by Plank.
+
+## ORDER 496: the next file no longer aborts a player
+
+- `patches/qt6-multimedia/0047` (qt6-multimedia 6.11.2-3+stereo3d15+lc1, restaged in place, unpublished): the CUDA texture converter of 0033 frees its OpenGL textures on any thread. It made the QRhi's context current in its destructor, and the destructor runs on whichever thread lets go the last reference to the decoder's frames context; a player that opens another file does it on the GUI thread (`QMediaPlayer::setSource`, `PlaybackEngine`'s destructor, `avcodec_free_context`) and Qt aborts a context made current off its thread. Now: current only on the context's thread; elsewhere the planes (textures and CUDA registrations, which CUDA refuses to unregister without the texture's context current: error 219) go to the context's share group (`QOpenGLSharedResource`), which frees them at the next `makeCurrent` of one of its contexts, with a reference to the decoder's device so the CUDA context is still there; a failed unregistration is said.
+- The patch carries `tests/auto/unit/plugins/multimedia/ffmpeg/cudatextureconverter` (Linux, skips without NVIDIA). It was made against the source tree of the +stereo3d15+lc1 source; `next-source.sh` adds it to the series of a successor of +stereo3d14 with 0046.
+- Build as for +stereo3d15 (`next-source.sh qt6-multimedia PUBLISHED_+14.dsc OUT`, then `build.sh`); the source's date is this folder's last commit, so the staged +15 is made again after this commit, not before.
+
