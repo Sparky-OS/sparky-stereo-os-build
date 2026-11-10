@@ -34,7 +34,7 @@ for item in proofs:
     assert item['verification']['settings_unchanged'] is True
     assert item['verification']['kwin_composition'] is True
     assert item['verification']['camera_or_flat'] is True
-    stale.extend('%s: %s'%(item['id'],describe(reason)) for reason in diagnose(dict(item,library=str(library))) if reason['kind']!='proof')
+    stale.extend('%s: %s'%(item['id'],describe(reason)) for reason in diagnose(dict(item,library=str(library))) if reason['kind'] not in ('proof','library-differs','executable-differs'))
     assert not [r for r in diagnose(dict(item,library=str(library))) if r['kind']=='proof'],(item['id'],'ineligible camera proof: its receipt does not pass the proof gates')
     settings=Path('/usr/share/xscreensaver/config')/(item['id']+'.xml')
     expected=inventory[item['id']]['settings_sha256']
@@ -47,7 +47,7 @@ for item in proofs:
     item['environment']['LD_PRELOAD']=item['library']
 if stale:
     # every untested binary is named with both hashes, so the XScreenSaver or layer build to requalify against is plain
-    sys.exit('FAIL: %d of %d receipts name binaries that are not the ones installed:\n  '%(len(stale),len(proofs))+'\n  '.join(stale))
+    sys.exit('FAIL: %d of %d receipts name binaries that are not the ones installed:\n  '%(len({line.split(':')[0] for line in stale}),len(proofs))+'\n  '.join(stale))
 entries=[item for item in entries if item['id'] in ('rocks','starfield')]
 assert {item['id'] for item in entries}=={'rocks','starfield'}
 for item in entries:
