@@ -312,7 +312,7 @@ class EngineChecks(unittest.TestCase):
         self.assertIn('--rebuild',rows['build']['text'])
         self.assertEqual(rows['cleanup']['data']['packages'],['tool-a','tool-b'])
         self.assertTrue(rows['cleanup']['data']['legacy'])
-        for lang in ('en','pl','pt_BR','fr','de','ja','ko','zh_CN','zh_TW'):
+        for lang in ('en','pl','pt_BR','fr','de','es','ja','ko','zh_CN','zh_TW'):
             with self.subTest(lang=lang):
                 self.env['LANGUAGE']=lang
                 row=self.records()['cleanup']
@@ -332,7 +332,7 @@ class EngineChecks(unittest.TestCase):
         self.assertEqual((self.state/'last-failure').read_text(),'2\n')
 
     def test_unsafe_cleanup_message_in_every_language(self):
-        for lang in ('en','pl','pt_BR','fr','de','ja','ko','zh_CN','zh_TW'):
+        for lang in ('en','pl','pt_BR','fr','de','es','ja','ko','zh_CN','zh_TW'):
             with self.subTest(lang=lang):
                 self.env['LANGUAGE']=lang
                 self.keep('cleanup','LOCAL75',('keep-this-package',))
