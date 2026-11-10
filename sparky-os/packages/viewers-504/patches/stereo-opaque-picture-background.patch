@@ -1,0 +1,83 @@
+Description: Stereo picture area: a hole only where the declared surface shows, the view's own opaque background around it (ORDER 504)
+ Gwenview made the whole viewport transparent while a stereo picture was shown, so the strips around a picture that does not fill the view
+ showed what lies behind the window. The shared layer says where the picture shows (Stereo::WidgetLayer::shownRect()).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+---
+--- a/app/stereo/stereoviewadapter.cpp	2026-11-10 16:47:03.000000000 -0300
++++ b/app/stereo/stereoviewadapter.cpp	2026-11-10 17:08:15.507564739 -0300
+@@ -34,6 +34,9 @@
+     connect(&mLayer, &Stereo::WidgetLayer::activeChanged, this, [this]() {
+         mContainer->setStereoLayerActive(mLayer.isActive());
+     });
++    connect(&mLayer, &Stereo::WidgetLayer::shownChanged, this, [this]() {
++        mContainer->setStereoLayerShown(mLayer.shownRect());
++    });
+     connect(&mOutput, &Stereo::ScreenMode::modeChanged, this, [this]() {
+         mDirty = true;
+         update();
+--- a/lib/documentview/documentviewcontainer.cpp	2026-11-10 16:47:03.000000000 -0300
++++ b/lib/documentview/documentviewcontainer.cpp	2026-11-10 17:08:15.506918127 -0300
+@@ -174,8 +174,10 @@
+ void DocumentViewContainer::drawBackground(QPainter *painter, const QRectF &rect)
+ {
+     if (property("stereoLayerActive").toBool()) {
++        // The picture's surface lies below the window: a hole where it shows, the view's own background around it
+         painter->setCompositionMode(QPainter::CompositionMode_Source);
+-        painter->fillRect(rect, Qt::transparent);
++        painter->fillRect(rect, palette().brush(QPalette::Base));
++        painter->fillRect(rect.intersected(QRectF(property("stereoLayerShown").toRect())), Qt::transparent);
+         return;
+     }
+     QGraphicsView::drawBackground(painter, rect);
+@@ -357,6 +359,17 @@
+     }
+ }
+ 
++void DocumentViewContainer::setStereoLayerShown(const QRect &shown)
++{
++    setProperty("stereoLayerShown", shown);
++    for (DocumentView *view : d->mViews | d->mAddedViews) {
++        view->setProperty("stereoLayerShown", shown);
++        view->update();
++    }
++    scene()->update();
++    viewport()->update();
++}
++
+ void DocumentViewContainer::setStereoLayerActive(bool active)
+ {
+     setProperty("stereoLayerActive", active);
+@@ -367,6 +380,7 @@
+     }
+     for (DocumentView *view : d->mViews | d->mAddedViews) {
+         view->setProperty("stereoLayerActive", active);
++        view->setProperty("stereoLayerShown", property("stereoLayerShown"));
+         view->update();
+         if (auto *imageView = view->imageView()) {
+             imageView->setStereoLayerActive(active);
+--- a/lib/documentview/documentviewcontainer.h	2026-11-10 16:47:03.000000000 -0300
++++ b/lib/documentview/documentviewcontainer.h	2026-11-10 17:08:15.505447029 -0300
+@@ -84,6 +84,8 @@
+      */
+     void applyPalette(const QPalette &palette);
+     void setStereoLayerActive(bool active);
++    // Where the stereo picture shows in the viewport (Stereo::WidgetLayer::shownRect()): the rest of the view is its own opaque background
++    void setStereoLayerShown(const QRect &shown);
+ 
+ public Q_SLOTS:
+     void updateLayout();
+--- a/lib/documentview/documentview.cpp	2026-11-10 16:47:03.000000000 -0300
++++ b/lib/documentview/documentview.cpp	2026-11-10 17:08:15.507310018 -0300
+@@ -961,8 +961,10 @@
+     // Fill background manually, because setAutoFillBackground(true) fill with QPalette::Window,
+     // but our palettes use QPalette::Base for the background color/texture
+     if (property("stereoLayerActive").toBool()) {
++        // a hole where the picture's surface shows (the viewport's rectangle, in the scene's coordinates), the view's own background around it
+         painter->setCompositionMode(QPainter::CompositionMode_Source);
+-        painter->fillRect(rect(), Qt::transparent);
++        painter->fillRect(rect(), palette().base());
++        painter->fillRect(rect().intersected(mapRectFromScene(QRectF(property("stereoLayerShown").toRect()))), Qt::transparent);
+         painter->setCompositionMode(QPainter::CompositionMode_SourceOver);
+     } else {
+         painter->fillRect(rect(), palette().base());
