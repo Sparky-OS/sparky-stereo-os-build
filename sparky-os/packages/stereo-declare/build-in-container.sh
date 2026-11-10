@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build one native architecture from the shared stereo-declare 1.9 descriptor.
+# Build one native architecture from the shared stereo-declare 1.10 descriptor.
 # Usage: build-in-container.sh EMPTY_OUTPUT DSC PREVIOUS_DIR ARCHIVE_CONFIG
 # The caller supplies a prepared native SDK and a namespace-capable runner.
 set -euo pipefail
@@ -22,7 +22,7 @@ export TMPDIR="$out/tmp" SPARKY_LC_SCRATCH="$out/link-scratch"
 cd "$out"
 dpkg-source -x "$dsc" source
 cd source
-test "$(dpkg-parsechangelog -S Version)" = 1.9.0-1+lc1
+test "$(dpkg-parsechangelog -S Version)" = 1.10.0-1+lc1
 # dpkg derives SOURCE_DATE_EPOCH from this one descriptor's changelog.
 dpkg-buildpackage -us -uc "$kind" -j4
 PYTHONPATH="$PWD/debian/sparky-lean-toolkit" python3 -m lean.release check-debs "$out"/*.deb

@@ -28,7 +28,7 @@ elif [ "$mode" = binary ]; then
         --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
         "${SPARKY_PROV_ARGS[@]}" -v "$WORK":/work -v "$SRC":/src:ro -v "$PREV":/prev:ro -v "$HERE":/tools:ro \
         -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro "$5" \
-        bash /tools/build-in-container.sh /work/build /src/stereo-declare_1.9.0-1+lc1.dsc /prev /archive/sources.json
+        bash /tools/build-in-container.sh /work/build /src/stereo-declare_1.10.0-1+lc1.dsc /prev /archive/sources.json
 else
     echo 'Expected source or binary' >&2
     exit 1
