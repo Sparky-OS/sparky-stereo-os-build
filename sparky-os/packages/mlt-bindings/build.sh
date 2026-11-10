@@ -12,12 +12,14 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOP=$(cd "$HERE/../.." && pwd)
+. "$TOP/repo/build-provenance.sh"
 [ $# -eq 5 ] || { sed -n '/^# Usage/,/^# The date/p' "$0" | sed 's/^# \?//' >&2; exit 2; }
 WORK=$(mkdir -p "$1" && cd "$1" && pwd) DSC=$(realpath "$2") ARCH=$3 IMG=$4 REPO=$(realpath "$5")
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 EPOCH=$(python3 "$TOP/repo/reproducible.py" epoch "$HERE")
 mkdir -p "$WORK/source" "$WORK/overlay"
-docker run --rm --name "${SPARKY_CONTAINER_PREFIX:-shadowed-458b}-mlt-source" --ulimit core=0 --platform linux/amd64 --user "$(id -u):$(id -g)" -e HOME=/tmp \
+sparky_provenance_init "$IMG" "$HERE"
+docker run --rm --name "${SPARKY_CONTAINER_PREFIX:-shadowed-458b}-mlt-source" --ulimit core=0 --platform linux/amd64 --user "$(id -u):$(id -g)" -e HOME=/tmp "${SPARKY_PROV_ARGS[@]}" \
 	-e SOURCE_DATE_EPOCH="$EPOCH" -e DEBFULLNAME="Daniel Ramos (Capitain Jack)" -e DEBEMAIL=Capitain_Jack@yahoo.com \
 	-v "$TOP":/toolkit:ro -v "$HERE":/recipe:ro -v "$(dirname "$DSC")":/published:ro -v "$WORK":/work "$IMG" bash -c '
 	set -euo pipefail

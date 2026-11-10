@@ -2,7 +2,7 @@
 # Created by Daniel Ramos (Capitain Jack) 2026/11/10
 # Copyright 2026 under the GNU GPL3 License
 # ORDER 458b: MLT's Perl and Ruby bindings in our MLT. The edit run on the plain source of the published mlt before the +stereo3d6 source is
-# packed (transition-rebuilds/prepare-lc-source.sh runs it in the unpacked tree). Upstream's swig directory builds both with SWIG_PERL and
+# packed (packages/mlt-bindings/build.sh runs it in the unpacked tree). Upstream's swig directory builds both with SWIG_PERL and
 # SWIG_RUBY (src/swig/perl and src/swig/ruby of MLT 7.40.0); Debian's mlt packages only python3-mlt; deb-multimedia's mlt7-dmo builds
 # them as libmlt7-perl and libmlt7-ruby3.3 against its own libmlt-7-7, which the edition's pins keep out (ORDER 458).
 # Names that clash with nobody: libmlt-perl and libmlt-ruby (Debian's forky and deb-multimedia's forky have neither). Ours Conflicts with and
