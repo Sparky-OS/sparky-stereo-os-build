@@ -3,7 +3,7 @@
 const std = @import("std");
 const langs = @import("kinds_lang");
 
-const required = [_][]const u8{ "de", "en", "fr", "ja", "ko", "pl", "pt_BR", "zh_CN", "zh_TW" };
+const required = [_][]const u8{ "de", "en", "es", "fr", "ja", "ko", "pl", "pt_BR", "zh_CN", "zh_TW" };
 
 test "the nine required languages are present, no more and no fewer files than the set" {
     try std.testing.expectEqual(required.len, langs.names.len);
