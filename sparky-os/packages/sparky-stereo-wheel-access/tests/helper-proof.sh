@@ -15,7 +15,7 @@ groupmod -n games-gone games
 $H --mode g+w new-lg4ff "$D" range gain missing 2>/dev/null; ok $((! $? )) "failure exits 1"
 n=$(sparky-stereo-problems list --json sparky-stereo-wheel-access | python3 -c 'import json,sys; r=json.load(sys.stdin); print(len(r), r[0]["key"] if r else "")')
 [ "$n" = "1 new-lg4ff:0003_046D_C24F.0001" ] || [ "$n" = "1 new-lg4ff:0003:046D:C24F.0001" ]; ok $? "one problem for the wheel: $n"
-for l in en pt_BR pl fr de ja ko zh_CN zh_TW; do
+for l in en pt_BR pl fr de es ja ko zh_CN zh_TW; do
 	t=$(sparky-stereo-problems text --machine --lang $l sparky-stereo-wheel-access "$(sparky-stereo-problems list --json sparky-stereo-wheel-access | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["key"])')" 2>&1 | head -1)
 	echo "  $l: $t"
 	case $t in *range*gain*invalid\ group*) ok 0 "text $l names the controls and the reason" ;; *) ok 1 "text $l names the controls and the reason" ;; esac
