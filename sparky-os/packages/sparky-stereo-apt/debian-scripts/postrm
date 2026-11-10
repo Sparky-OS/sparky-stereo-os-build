@@ -1,7 +1,7 @@
 #!/bin/sh
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/31
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/31
+# Last update 2026/11/09 (ORDER 458)
 # When the upgrade that makes the /etc files conffiles stops, the files preinst moved aside go back; dpkg itself removes
 # the conffiles at purge.
 set -e
@@ -11,6 +11,12 @@ set -e
 dpkg-maintscript-helper rm_conffile /etc/apt/apt.conf.d/00sparky-block-plain-http 20261106.1~sparky9~0~ sparky-stereo-apt -- "$@"
 FILES="/etc/apt/sources.list.d/sparky-stereo.sources /etc/apt/sources.list.d/sparky-stereo-deb-multimedia.sources
 /etc/apt/preferences.d/sparky-stereo /etc/apt/preferences.d/sparky-stereo-only-ours"
+# what this package kept in the engine about shadowing packages ends with it (ORDER 350: a problem of a package that is gone cannot be repaired by it)
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+	if command -v sparky-stereo-problems >/dev/null; then
+		sparky-stereo-problems clear --all sparky-stereo-apt || echo "sparky-stereo-apt: the problems kept for sparky-stereo-apt could not be cleared (sparky-stereo-problems clear --all sparky-stereo-apt failed)" >&2
+	fi
+fi
 case "$1" in
 abort-install | abort-upgrade)
 	for f in $FILES; do
