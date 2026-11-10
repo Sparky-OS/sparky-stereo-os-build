@@ -49,7 +49,7 @@ useradd --create-home --uid 1000 builder 2>/dev/null || true
 chown -R builder /out
 python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" /out/lc/src
 runuser -u builder -- bash -c 'cd /out/lc/src && dpkg-buildpackage -S -us -uc -d > /out/source.log 2>&1'
-cd /out/lc && dpkg-source -x "$PKG"_*"$NEW"+lc1.dsc src2 >/dev/null 2>&1; chown -R builder /out
+cd /out/lc && dpkg-source -x "$PKG"_*"${NEW#*:}"+lc1.dsc src2 >/dev/null 2>&1; chown -R builder /out
 cd src2
 runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev dpkg-buildpackage -us -uc -b -j4 > /out/build.log 2>&1 || { echo BUILD-FAILED; tail -30 /out/build.log; }
 cd /out/lc && PYTHONPATH=/toolkit python3 -m lean.release check-debs /out/lc/*+lc1_*.deb
