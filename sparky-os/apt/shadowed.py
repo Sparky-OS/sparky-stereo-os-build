@@ -32,9 +32,9 @@ SHADOWED_BY_DMO = {
     'libswscale-6-dev': ('libswscale-dev', 'as libavcodec-6-dev'),
 }
 NOT_SHADOWS = {
-    ('libmlt7-perl', 'libmlt-perl'): 'ORDER 458b: our MLT builds the Perl bindings (mlt.pm, mlt.so) that deb-multimedia ships as libmlt7-perl against its libmlt-7-7, which the pins keep out; '
-                                     'ours Conflicts with and Replaces it, so apt swaps it for ours and dpkg never meets two owners of the file; it cannot be installed beside ours (tests/shadowed/bindings.sh)',
-    ('libmlt7-ruby3.3', 'libmlt-ruby'): 'ORDER 458b: as libmlt7-perl: the Ruby bindings (mlt.so); ours Conflicts with and Replaces libmlt7-ruby3.3',
+    ('libmlt7-perl', 'libmlt-perl'): ('ORDER 458b: our MLT builds the Perl bindings (mlt.pm, mlt.so) that deb-multimedia ships as libmlt7-perl against its libmlt-7-7, which the pins keep out; '
+                                      'ours Conflicts with and Replaces it, so apt swaps it for ours and dpkg never meets two owners of the file; it cannot be installed beside ours (tests/shadowed/bindings.sh). '
+                                      'Its libmlt7-ruby3.3 shares no path with our libmlt-ruby (mlt.so is in the Ruby archdir there and in the vendor architecture directory here) and is swapped by the same Conflicts and Replaces'),
     ('oss4-dev', 'linux-libc-dev'): 'shares /usr/include/linux/soundcard.h with the kernel headers (ours and Debian\'s alike) and has no Replaces: dpkg refuses the unpack, '
                                     'so it can never own the file; it is deb-multimedia\'s own file overlap, not our files under another name',
 }
