@@ -18,7 +18,7 @@ grep -v "/pool/main/./$PKG/" "$SIBS" > "$OUT/siblings-current.txt" || true
 for d in "$STAGE"/*/*.deb; do case $d in *-dbgsym_*|*-lc-hr_*) ;; *) echo "/stage/$(basename "$(dirname "$d")")/$(basename "$d")" >> "$OUT/siblings-current.txt" ;; esac; done
 IN=$OUT/in; mkdir -p "$IN"
 for f in "$TREE"/pool/main/${PKG:0:1}/$PKG/"$PKG"_*"${OLD#*:}"+lc1.dsc "$TREE"/pool/main/${PKG:0:1}/$PKG/"$PKG"_*"${OLD#*:}"+lc1.debian.tar.xz "$TREE"/pool/main/${PKG:0:1}/$PKG/"$PKG"_*.orig.tar.*; do cp "$f" "$IN/"; done
-PREV=$OUT/prev; mkdir -p "$PREV"; cp "$TREE"/pool/main/${PKG:0:1}/$PKG/*+lc1_amd64.deb "$PREV/" 2>/dev/null || true
+PREV=$OUT/prev; mkdir -p "$PREV"; cp "$TREE"/pool/main/${PKG:0:1}/$PKG/*+lc1_amd64.deb "$TREE"/pool/main/${PKG:0:1}/$PKG/*+lc1_all.deb "$PREV/" 2>/dev/null || true
 docker run --rm --name "${BUILD_NAME_PREFIX:-view-504-build}-$PKG" --ulimit core=0 --cpus "${THREADS:-4}" --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e PKG="$PKG" -e OLD="${OLD#*:}" -e NEW="$NEW" -e PATCH="$PATCH" -e ITEM="$ITEM" \
