@@ -22,6 +22,8 @@ TOOLS=$(cd "$3" && pwd -P)
 # unpacking the source again or cleaning; set SOURCE_DATE_EPOCH to the first run's value so the packages keep their date.
 OBJ=()
 [ -z "${BROWSER_OBJ_DIR:-}" ] || OBJ=(-v "$(cd "$BROWSER_OBJ_DIR" && pwd -P)":/work/build/source/obj-x86_64-pc-linux-gnu)
+# BROWSER_RUST_DIR: the cargo target folder (about a third of the objects) on a third place, mounted inside the object folder.
+[ -z "${BROWSER_RUST_DIR:-}" ] || OBJ+=(-v "$(cd "$BROWSER_RUST_DIR" && pwd -P)":/work/build/source/obj-x86_64-pc-linux-gnu/x86_64-unknown-linux-gnu)
 sparky_provenance_init sparky-lc-migration:20261020
 # The link gate (lean.release check-link) runs when SIBLINGS_DIR (the unpublished libstereo-policy debs, with siblings.txt),
 # SPARKY_LC_ARCHIVE_DIR (the public sources.json and keyrings) and SPARKY_REPO_DIR (the published edition tree) are set.
