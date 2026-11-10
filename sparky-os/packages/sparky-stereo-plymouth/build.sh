@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL2 License
-# Last update 2026/10/16
+# Last update 2026/11/09
 #
 # Builds sparky-stereo-plymouth: the sparky-stereo-lines boot splash themes, generated from
 # sparky-lines (upstream/sparky-lines, read only) by gen-theme.py.
@@ -9,7 +9,7 @@
 set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
-VERSION=20261108~sparky9~0+lc1
+VERSION=20261109~sparky9~0+lc1
 PKG=sparky-stereo-plymouth
 umask 022
 mkdir -p "$OUT"
@@ -57,7 +57,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: plymouth (>= 26.134.222-1+stereo3d1)
+Depends: plymouth (>= 26.134.222-1+stereo3d3)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -66,7 +66,9 @@ Description: Sparky Stereo OS boot splash themes in stereo 3D
   per eye. On a stereo output (plymouth.stereo=, written by
   sparky-stereo-boot from the saved choice of the main screen) each eye
   gets its own picture, the electrons popping and sinking along their
-  curves; on a 2D screen the theme draws once. Two depth rules:
+  curves; on a 2D screen the theme draws once. The depth stays inside the
+  limits the person set for the main screen (the kernel line's popped= and
+  sunk=, from sparky-stereo-boot). Two depth rules:
   sparky-stereo-lines (the slope of the curve) and
   sparky-stereo-lines-height (the height on the curve). The background is on
   the screen, the swirl with its orbits one step in front, the SparkyOS logo
