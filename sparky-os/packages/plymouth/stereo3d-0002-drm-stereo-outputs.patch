@@ -1,0 +1,1108 @@
+From 68b65b83aaa78a6f2c1ab2247d0911016a51072e Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 16 Oct 2026 08:02:12 -0300
+Subject: [PATCH 2/2] renderers/drm: Show the splash on stereo 3D outputs
+
+plymouth.stereo=CONNECTOR:LAYOUT[:OPTION...][,...] names the outputs
+that show two eyes and how. The HDMI 1.4b 3D structures (frame-packing,
+sbs-full, sbs-half, tab) are carried by the mode: the renderer asks the
+kernel for the stereo modes (DRM_CLIENT_CAP_STEREO_3D) and for their
+aspect-ratio flags, picks mode=WxH@mHz the way the compositor picks it,
+first in the connector's list with that size, refresh rate and 3D
+structure, and draws the eyes into the layout drm_mode_set_crtcinfo
+gives the mode (frame packing: the second eye at line vtotal). The
+other layouts draw into the output's 2D mode: sbs-half-2d and tab-2d
+for screens without 3D signalling, red/cyan anaglyph with Eric Dubois's
+matrices in linear light (anaglyph-modern, anaglyph-crt), rows, columns
+and checkerboard, sequential (one eye per refresh, page flipped), and
+the panels of a stereo pair (left, right, mirrored with hflip or vflip,
+the iZ3D back and front panels with formula=N and encoded). swap shows
+each eye's picture to the other eye; card=cardN names the device when
+two GPUs have a connector of the same name.
+
+A theme that draws one picture shows it in both eyes. On a 2D output of
+a stereo boot a stereo theme shows its left eye. A stereo boot skips
+simpledrm and waits for the GPU's driver, which has the modes and the
+outputs it names. Without plymouth.stereo= nothing changes.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ src/plugins/renderers/drm/meson.build |   1 +
+ src/plugins/renderers/drm/plugin.c    | 856 +++++++++++++++++++++++++-
+ 2 files changed, 849 insertions(+), 8 deletions(-)
+
+diff --git a/src/plugins/renderers/drm/meson.build b/src/plugins/renderers/drm/meson.build
+index 67649d1..ac70275 100644
+--- a/src/plugins/renderers/drm/meson.build
++++ b/src/plugins/renderers/drm/meson.build
+@@ -4,6 +4,7 @@ drm_plugin = shared_module('drm',
+     libply_dep,
+     libply_splash_core_dep,
+     libdrm_dep,
++    lm_dep,
+   ],
+   include_directories: config_h_inc,
+   name_prefix: '',
+diff --git a/src/plugins/renderers/drm/plugin.c b/src/plugins/renderers/drm/plugin.c
+index 52c9c16..90beeee 100644
+--- a/src/plugins/renderers/drm/plugin.c
++++ b/src/plugins/renderers/drm/plugin.c
+@@ -29,6 +29,7 @@
+ #include <assert.h>
+ #include <errno.h>
+ #include <fcntl.h>
++#include <math.h>
+ #include <signal.h>
+ #include <string.h>
+ #include <stdbool.h>
+@@ -69,12 +70,104 @@
+ #define DRM_MODE_ROTATE_0 (1 << 0)
+ #endif
+ 
++/* How an output shows the two eyes, asked for per connector with plymouth.stereo=.
++ * The first four are HDMI 3D structures, carried by the mode itself; the others
++ * draw both eyes into an ordinary 2D mode. */
++typedef enum
++{
++        PLY_STEREO_LAYOUT_NONE = 0,
++        PLY_STEREO_LAYOUT_FRAME_PACKING,
++        PLY_STEREO_LAYOUT_SIDE_BY_SIDE_FULL,
++        PLY_STEREO_LAYOUT_SIDE_BY_SIDE_HALF,
++        PLY_STEREO_LAYOUT_TOP_AND_BOTTOM,
++        PLY_STEREO_LAYOUT_SIDE_BY_SIDE_HALF_2D,
++        PLY_STEREO_LAYOUT_TOP_AND_BOTTOM_2D,
++        PLY_STEREO_LAYOUT_ANAGLYPH_MODERN,
++        PLY_STEREO_LAYOUT_ANAGLYPH_CRT,
++        PLY_STEREO_LAYOUT_ROWS,
++        PLY_STEREO_LAYOUT_COLUMNS,
++        PLY_STEREO_LAYOUT_CHECKERBOARD,
++        PLY_STEREO_LAYOUT_SEQUENTIAL,
++        PLY_STEREO_LAYOUT_LEFT_EYE,
++        PLY_STEREO_LAYOUT_RIGHT_EYE,
++        PLY_STEREO_LAYOUT_IZ3D_BACK,
++        PLY_STEREO_LAYOUT_IZ3D_FRONT,
++} ply_stereo_layout_t;
++
++static const struct
++{
++        const char         *name;
++        ply_stereo_layout_t layout;
++        uint32_t            drm_flag;
++} stereo_layouts[] = {
++        { "frame-packing",     PLY_STEREO_LAYOUT_FRAME_PACKING,      DRM_MODE_FLAG_3D_FRAME_PACKING      },
++        { "sbs-full",          PLY_STEREO_LAYOUT_SIDE_BY_SIDE_FULL,  DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL  },
++        { "sbs-half",          PLY_STEREO_LAYOUT_SIDE_BY_SIDE_HALF,  DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF  },
++        { "tab",               PLY_STEREO_LAYOUT_TOP_AND_BOTTOM,     DRM_MODE_FLAG_3D_TOP_AND_BOTTOM     },
++        { "sbs-half-2d",       PLY_STEREO_LAYOUT_SIDE_BY_SIDE_HALF_2D, 0                                 },
++        { "tab-2d",            PLY_STEREO_LAYOUT_TOP_AND_BOTTOM_2D,  0                                   },
++        { "anaglyph-modern",   PLY_STEREO_LAYOUT_ANAGLYPH_MODERN,    0                                   },
++        { "anaglyph-crt",      PLY_STEREO_LAYOUT_ANAGLYPH_CRT,       0                                   },
++        { "rows",              PLY_STEREO_LAYOUT_ROWS,               0                                   },
++        { "columns",           PLY_STEREO_LAYOUT_COLUMNS,            0                                   },
++        { "checkerboard",      PLY_STEREO_LAYOUT_CHECKERBOARD,       0                                   },
++        { "sequential",        PLY_STEREO_LAYOUT_SEQUENTIAL,         0                                   },
++        { "left",              PLY_STEREO_LAYOUT_LEFT_EYE,           0                                   },
++        { "right",             PLY_STEREO_LAYOUT_RIGHT_EYE,          0                                   },
++        { "iz3d-back",         PLY_STEREO_LAYOUT_IZ3D_BACK,          0                                   },
++        { "iz3d-front",        PLY_STEREO_LAYOUT_IZ3D_FRONT,         0                                   },
++};
++
++typedef enum
++{
++        PLY_STEREO_REFLECTION_NONE = 0,
++        PLY_STEREO_REFLECTION_HORIZONTAL,
++        PLY_STEREO_REFLECTION_VERTICAL,
++} ply_stereo_reflection_t;
++
++/* One output of plymouth.stereo=CONNECTOR:LAYOUT[:OPTION...][,CONNECTOR:LAYOUT...] */
++typedef struct
++{
++        char                   *connector_name;
++        char                   *card_name;      /* card=: the device, when two GPUs have a connector of that name */
++        ply_stereo_layout_t     layout;
++        uint32_t                drm_flag;
++        bool                    has_mode;
++        int                     mode_width;
++        int                     mode_height;
++        uint32_t                mode_refresh;   /* mHz */
++        bool                    mode_preferred;
++        bool                    swap_eyes;
++        ply_stereo_reflection_t reflection;
++        int                     iz3d_formula;
++        bool                    iz3d_linear;
++} ply_stereo_output_t;
++
+ struct _ply_renderer_head
+ {
+         ply_renderer_backend_t *backend;
+         ply_pixel_buffer_t     *pixel_buffer;
+         ply_rectangle_t         area;
+ 
++        /* Stereo 3D: area is what the theme draws, one eye or both eyes side by side;
++         * the scan out buffer holds the eyes in the layout of the output */
++        ply_stereo_layout_t     stereo_layout;
++        const ply_stereo_output_t *stereo;
++        bool                    stereo_input;
++        unsigned long           eye_width;
++        unsigned long           eye_height;
++        unsigned long           eye_stride_lines;
++        unsigned long           scan_out_width;
++        unsigned long           scan_out_height;
++        int                     device_scale;
++        ply_pixel_buffer_rotation_t rotation;
++
++        /* frame-sequential: the right eye's buffer, flipped with the left one at each refresh */
++        uint32_t                second_buffer_id;
++        unsigned long           second_row_stride;
++        uint32_t                shown_buffer_id;
++        bool                    flip_pending;
++
+         unsigned long           row_stride;
+ 
+         ply_array_t            *connector_ids;
+@@ -132,6 +225,8 @@ typedef struct
+         bool                        connected;
+         bool                        uses_hw_rotation;
+         bool                        is_non_desktop;
++        const ply_stereo_output_t  *stereo;
++        ply_stereo_layout_t         stereo_layout;
+ } ply_output_t;
+ 
+ struct _ply_renderer_backend
+@@ -159,6 +254,10 @@ struct _ply_renderer_backend
+         int32_t                     dither_green;
+         int32_t                     dither_blue;
+ 
++        ply_stereo_output_t        *stereo_outputs;
++        int                         stereo_outputs_len;
++        ply_fd_watch_t             *device_watch;
++
+         uint32_t                    is_active : 1;
+         uint32_t                    requires_explicit_flushing : 1;
+         uint32_t                    input_source_is_open : 1;
+@@ -178,6 +277,562 @@ static bool open_input_source (ply_renderer_backend_t      *backend,
+ static void flush_head (ply_renderer_backend_t *backend,
+                         ply_renderer_head_t    *head);
+ 
++static const char *
++stereo_layout_name (ply_stereo_layout_t layout)
++{
++        size_t i;
++
++        for (i = 0; i < PLY_NUMBER_OF_ELEMENTS (stereo_layouts); i++) {
++                if (stereo_layouts[i].layout == layout)
++                        return stereo_layouts[i].name;
++        }
++
++        return "none";
++}
++
++static void
++parse_stereo_outputs (ply_renderer_backend_t *backend)
++{
++        char *value, *entry, *entry_state = NULL;
++
++        value = ply_kernel_command_line_get_key_value ("plymouth.stereo=");
++        if (value == NULL)
++                return;
++
++        for (entry = strtok_r (value, ",", &entry_state); entry != NULL; entry = strtok_r (NULL, ",", &entry_state)) {
++                ply_stereo_output_t output = { 0 };
++                char *field, *field_state = NULL;
++                unsigned int refresh;
++                size_t i;
++
++                field = strtok_r (entry, ":", &field_state);
++                if (field == NULL)
++                        continue;
++                output.connector_name = strdup (field);
++                output.iz3d_linear = true;
++
++                field = strtok_r (NULL, ":", &field_state);
++                for (i = 0; field != NULL && i < PLY_NUMBER_OF_ELEMENTS (stereo_layouts); i++) {
++                        if (strcmp (field, stereo_layouts[i].name) == 0) {
++                                output.layout = stereo_layouts[i].layout;
++                                output.drm_flag = stereo_layouts[i].drm_flag;
++                        }
++                }
++
++                if (output.layout == PLY_STEREO_LAYOUT_NONE) {
++                        ply_trace ("Unknown stereo layout '%s' for %s", field ? field : "", output.connector_name);
++                        free (output.connector_name);
++                        continue;
++                }
++
++                while ((field = strtok_r (NULL, ":", &field_state)) != NULL) {
++                        if (sscanf (field, "mode=%dx%d@%u", &output.mode_width, &output.mode_height, &refresh) == 3) {
++                                output.has_mode = true;
++                                output.mode_refresh = refresh;
++                        } else if (strcmp (field, "preferred") == 0) {
++                                output.mode_preferred = true;
++                        } else if (strcmp (field, "swap") == 0) {
++                                output.swap_eyes = true;
++                        } else if (strcmp (field, "hflip") == 0) {
++                                output.reflection = PLY_STEREO_REFLECTION_HORIZONTAL;
++                        } else if (strcmp (field, "vflip") == 0) {
++                                output.reflection = PLY_STEREO_REFLECTION_VERTICAL;
++                        } else if (sscanf (field, "formula=%d", &output.iz3d_formula) == 1) {
++                                if (output.iz3d_formula < 0 || output.iz3d_formula > 5)
++                                        output.iz3d_formula = 0;
++                        } else if (strcmp (field, "encoded") == 0) {
++                                output.iz3d_linear = false;
++                        } else if (strncmp (field, "card=", 5) == 0) {
++                                free (output.card_name);
++                                output.card_name = strdup (field + 5);
++                        } else {
++                                ply_trace ("Unknown stereo option '%s' for %s", field, output.connector_name);
++                        }
++                }
++
++                ply_trace ("Stereo output %s: %s%s", output.connector_name,
++                           stereo_layout_name (output.layout), output.swap_eyes ? ", eyes swapped" : "");
++
++                backend->stereo_outputs = realloc (backend->stereo_outputs,
++                                                   (backend->stereo_outputs_len + 1) * sizeof(ply_stereo_output_t));
++                backend->stereo_outputs[backend->stereo_outputs_len++] = output;
++        }
++
++        free (value);
++}
++
++static const ply_stereo_output_t *
++find_stereo_output (ply_renderer_backend_t *backend,
++                    drmModeConnector       *connector)
++{
++        const char *type_name, *device;
++        char name[64];
++        int i;
++
++        if (backend->stereo_outputs_len == 0)
++                return NULL;
++
++        type_name = drmModeGetConnectorTypeName (connector->connector_type);
++        if (type_name == NULL)
++                return NULL;
++
++        snprintf (name, sizeof(name), "%s-%u", type_name, connector->connector_type_id);
++        device = strrchr (backend->device_name, '/');
++        device = device != NULL ? device + 1 : backend->device_name;
++
++        for (i = 0; i < backend->stereo_outputs_len; i++) {
++                if (strcmp (backend->stereo_outputs[i].connector_name, name) != 0)
++                        continue;
++                if (backend->stereo_outputs[i].card_name != NULL &&
++                    strcmp (backend->stereo_outputs[i].card_name, device) != 0)
++                        continue;
++                return &backend->stereo_outputs[i];
++        }
++
++        return NULL;
++}
++
++/* The refresh rate of a mode in mHz the way KWin and Weston compute it, so that a mode asked
++ * for by its refresh rate is the one the compositor picks too */
++static uint32_t
++mode_refresh_rate (const drmModeModeInfo *mode)
++{
++        uint64_t refresh;
++
++        if (mode->htotal == 0 || mode->vtotal == 0)
++                return 0;
++
++        refresh = ((uint64_t) mode->clock * 1000000 / mode->htotal + mode->vtotal / 2) / mode->vtotal;
++        if (mode->flags & DRM_MODE_FLAG_INTERLACE)
++                refresh *= 2;
++        if (mode->flags & DRM_MODE_FLAG_DBLSCAN)
++                refresh /= 2;
++        if (mode->vscan > 1)
++                refresh /= mode->vscan;
++
++        return refresh;
++}
++
++/* With mode=, the first mode of the connector's list with that size, refresh rate and 3D
++ * structure, as the compositor finds it; without, a mode of the 3D structure with the size
++ * of the 2D mode and the highest refresh rate. The 2D layouts keep the 2D mode unless one
++ * is asked for. */
++static drmModeModeInfo *
++find_stereo_mode (drmModeConnector          *connector,
++                  drmModeModeInfo           *mode_2d,
++                  const ply_stereo_output_t *stereo)
++{
++        drmModeModeInfo *best = NULL;
++        int i;
++
++        if (!stereo->has_mode && stereo->drm_flag == 0)
++                return mode_2d;
++
++        for (i = 0; i < connector->count_modes; i++) {
++                drmModeModeInfo *mode = &connector->modes[i];
++
++                if ((mode->flags & DRM_MODE_FLAG_3D_MASK) != stereo->drm_flag)
++                        continue;
++
++                if (stereo->has_mode) {
++                        if (mode->hdisplay != stereo->mode_width ||
++                            mode->vdisplay != stereo->mode_height ||
++                            mode_refresh_rate (mode) != stereo->mode_refresh)
++                                continue;
++                        if (stereo->drm_flag != 0 &&
++                            !!(mode->type & DRM_MODE_TYPE_PREFERRED) != stereo->mode_preferred)
++                                continue;
++                        best = mode;
++                        break;
++                }
++
++                if ((mode->flags & DRM_MODE_FLAG_INTERLACE) ||
++                    mode->hdisplay != mode_2d->hdisplay ||
++                    mode->vdisplay != mode_2d->vdisplay)
++                        continue;
++                if (best == NULL || mode_refresh_rate (mode) > mode_refresh_rate (best))
++                        best = mode;
++        }
++
++        if (best != NULL)
++                ply_trace ("Found mode %dx%d at %u mHz for stereo layout %s",
++                           best->hdisplay, best->vdisplay, mode_refresh_rate (best),
++                           stereo_layout_name (stereo->layout));
++        else
++                ply_trace ("No mode for stereo layout %s on %s",
++                           stereo_layout_name (stereo->layout), stereo->connector_name);
++
++        return best;
++}
++
++/* What a head shows: its stereo layout, or on a 2D output of a stereo boot the left eye */
++static ply_stereo_layout_t
++head_stereo_layout (ply_renderer_head_t *head)
++{
++        if (head->stereo_layout != PLY_STEREO_LAYOUT_NONE)
++                return head->stereo_layout;
++
++        if (head->stereo_input)
++                return PLY_STEREO_LAYOUT_LEFT_EYE;
++
++        return PLY_STEREO_LAYOUT_NONE;
++}
++
++static float srgb_to_linear[256];
++static uint8_t linear_to_srgb[4096];
++
++static void
++init_srgb_tables (void)
++{
++        static bool initialized;
++        int i;
++
++        if (initialized)
++                return;
++
++        for (i = 0; i < 256; i++) {
++                float value = i / 255.0f;
++
++                srgb_to_linear[i] = value <= 0.04045f ? value / 12.92f : powf ((value + 0.055f) / 1.055f, 2.4f);
++        }
++
++        for (i = 0; i < 4096; i++) {
++                float value = i / 4095.0f;
++
++                value = value <= 0.0031308f ? 12.92f * value : 1.055f * powf (value, 1.0f / 2.4f) - 0.055f;
++                linear_to_srgb[i] = (uint8_t) lrintf (value * 255.0f);
++        }
++
++        initialized = true;
++}
++
++static inline float
++channel_to_linear (uint32_t pixel,
++                   int      shift,
++                   bool     linear)
++{
++        uint32_t value = (pixel >> shift) & 0xff;
++
++        return linear ? srgb_to_linear[value] : value / 255.0f;
++}
++
++static inline uint32_t
++channel_from_linear (float value,
++                     int   shift,
++                     bool  linear)
++{
++        if (value < 0.0f)
++                value = 0.0f;
++        else if (value > 1.0f)
++                value = 1.0f;
++
++        if (linear)
++                return (uint32_t) linear_to_srgb[(int) lrintf (value * 4095.0f)] << shift;
++
++        return (uint32_t) lrintf (value * 255.0f) << shift;
++}
++
++static inline uint32_t
++average_pixels (uint32_t a,
++                uint32_t b)
++{
++        return (((a ^ b) & 0xfefefefeu) >> 1) + (a & b);
++}
++
++/* Eric Dubois's least-squares matrices for red/cyan glasses, the same KWin's anaglyph
++ * output uses: rows are the output's red, green and blue, columns the eye's */
++static const float dubois_modern[2][3][3] = {
++        { { 0.4154f, 0.4710f, 0.1669f }, { -0.0458f, -0.0484f, -0.0257f }, { -0.0547f, -0.0615f, 0.0128f } },
++        { { -0.0109f, -0.0364f, -0.0060f }, { 0.3756f, 0.7333f, 0.0111f }, { -0.0651f, -0.1287f, 1.2971f } },
++};
++
++static const float dubois_crt[2][3][3] = {
++        { { 0.456f, 0.500f, 0.176f }, { -0.040f, -0.038f, -0.016f }, { -0.015f, -0.021f, -0.005f } },
++        { { -0.043f, -0.088f, -0.002f }, { 0.378f, 0.734f, -0.018f }, { -0.072f, -0.113f, 1.226f } },
++};
++
++/* The theme's picture of one eye at x, y of the eye's area: a stereo theme draws the left
++ * eye in the left half and the right eye in the right half, any other theme one picture
++ * that both eyes get */
++static inline uint32_t
++eye_pixel (ply_renderer_head_t *head,
++           const uint32_t      *shadow,
++           int                  eye,
++           long                 x,
++           long                 y)
++{
++        if (head->stereo != NULL && head->stereo->swap_eyes)
++                eye = !eye;
++
++        if (!head->stereo_input)
++                eye = 0;
++
++        return shadow[y * head->area.width + eye * head->eye_width + x];
++}
++
++static inline void
++put_pixel (char         *map_address,
++           unsigned long row_stride,
++           unsigned long x,
++           unsigned long y,
++           uint32_t      pixel)
++{
++        *(uint32_t *) &map_address[y * row_stride + x * BYTES_PER_PIXEL] = pixel;
++}
++
++static uint32_t
++mix_anaglyph (const float matrix[2][3][3],
++              uint32_t    left,
++              uint32_t    right)
++{
++        float eyes[2][3], out;
++        uint32_t pixel = 0xff000000;
++        int channel, k;
++
++        for (k = 0; k < 3; k++) {
++                eyes[0][k] = channel_to_linear (left, 16 - 8 * k, true);
++                eyes[1][k] = channel_to_linear (right, 16 - 8 * k, true);
++        }
++
++        for (channel = 0; channel < 3; channel++) {
++                out = 0.0f;
++                for (k = 0; k < 3; k++)
++                        out += matrix[0][channel][k] * eyes[0][k] + matrix[1][channel][k] * eyes[1][k];
++                pixel |= channel_from_linear (out, 16 - 8 * channel, true);
++        }
++
++        return pixel;
++}
++
++/* iZ3D's analytic panel formulas, as KWin's iZ3D output and effcol's wiz3D have them:
++ * the back panel shows the picture, the front panel's polarisation sends it to the eyes */
++static uint32_t
++mix_iz3d (ply_renderer_head_t *head,
++          const uint32_t      *shadow,
++          long                 x,
++          long                 y)
++{
++        int formula = head->stereo->iz3d_formula;
++        bool linear = head->stereo->iz3d_linear;
++        bool front_panel = head->stereo_layout == PLY_STEREO_LAYOUT_IZ3D_FRONT;
++        float left[3], right[3], sum[3], back[3], front[3];
++        uint32_t pixel = 0xff000000;
++        int k;
++
++        if (formula >= 4) {
++                bool right_eye = ((formula == 4 ? y : x + y) % 2) != 0;
++                long w = head->eye_width, h = head->eye_height;
++
++                if (front_panel)
++                        return right_eye ? 0xff000000 : 0xffffffff;
++
++                for (k = 0; k < 3; k++)
++                        back[k] = channel_to_linear (eye_pixel (head, shadow, right_eye, x, y), 16 - 8 * k, linear);
++
++                if (formula == 4) {
++                        long other = ((y + (right_eye ? -1 : 1)) % h + h) % h;
++
++                        for (k = 0; k < 3; k++)
++                                back[k] = (back[k] + channel_to_linear (eye_pixel (head, shadow, right_eye, x % w, other), 16 - 8 * k, linear)) * 0.5f;
++                }
++
++                for (k = 0; k < 3; k++)
++                        pixel |= channel_from_linear (back[k], 16 - 8 * k, linear);
++
++                return pixel;
++        }
++
++        for (k = 0; k < 3; k++) {
++                left[k] = channel_to_linear (eye_pixel (head, shadow, 0, x, y), 16 - 8 * k, linear);
++                right[k] = channel_to_linear (eye_pixel (head, shadow, 1, x, y), 16 - 8 * k, linear);
++        }
++
++        if (formula == 2) {
++                float grey_left = 0.2989f * left[0] + 0.5870f * left[1] + 0.1140f * left[2];
++                float grey_right = 0.2989f * right[0] + 0.5870f * right[1] + 0.1140f * right[2];
++
++                for (k = 0; k < 3; k++) {
++                        left[k] = grey_left;
++                        right[k] = grey_right;
++                }
++        }
++
++        for (k = 0; k < 3; k++) {
++                sum[k] = left[k] + right[k];
++                back[k] = sum[k] * 0.5f;
++                front[k] = 0.5f;
++        }
++
++        if (formula == 0) {
++                float threshold = linear ? 0.0000000001f : 0.000001f;
++
++                for (k = 0; k < 3; k++) {
++                        if (sum[k] >= threshold)
++                                front[k] = right[k] / sum[k];
++                }
++        } else {
++                float total = sum[0] + sum[1] + sum[2];
++                float modulation = total >= 0.01f ? (right[0] + right[1] + right[2]) / total : 0.5f;
++
++                for (k = 0; k < 3; k++) {
++                        front[k] = modulation;
++                        if (formula == 3) {
++                                back[k] = sum[k] * (1.0f - modulation);
++                                front[k] = sum[k] * modulation;
++                        }
++                }
++        }
++
++        for (k = 0; k < 3; k++)
++                pixel |= channel_from_linear (front_panel ? front[k] : back[k], 16 - 8 * k, linear);
++
++        return pixel;
++}
++
++/* Draws the eyes at the rectangle x0, y0 to x1, y1 of the eye's area into the scan out buffer,
++ * in the layout of the head: frame packing puts the second eye at line vtotal (the active
++ * space between the eyes stays black), the half layouts average two pixels or two rows, the
++ * spatial patterns and frame-sequential pick an eye per pixel or per refresh */
++static void
++flush_stereo_rectangle (ply_renderer_head_t *head,
++                        const uint32_t      *shadow,
++                        long                 x0,
++                        long                 y0,
++                        long                 x1,
++                        long                 y1,
++                        char                *map_address,
++                        char                *second_map_address)
++{
++        unsigned long stride = head->row_stride;
++        long w = head->eye_width, h = head->eye_height;
++        long x, y;
++        int eye;
++
++        switch (head_stereo_layout (head)) {
++        case PLY_STEREO_LAYOUT_FRAME_PACKING:
++        case PLY_STEREO_LAYOUT_SIDE_BY_SIDE_FULL:
++                for (eye = 0; eye < 2; eye++) {
++                        long dx = head->stereo_layout == PLY_STEREO_LAYOUT_SIDE_BY_SIDE_FULL ? eye * w : 0;
++                        long dy = head->stereo_layout == PLY_STEREO_LAYOUT_FRAME_PACKING ? eye * (long) head->eye_stride_lines : 0;
++
++                        for (y = y0; y < y1; y++)
++                                for (x = x0; x < x1; x++)
++                                        put_pixel (map_address, stride, x + dx, y + dy, eye_pixel (head, shadow, eye, x, y));
++                }
++                break;
++        case PLY_STEREO_LAYOUT_SIDE_BY_SIDE_HALF:
++        case PLY_STEREO_LAYOUT_SIDE_BY_SIDE_HALF_2D:
++                x0 &= ~1L;
++                for (eye = 0; eye < 2; eye++)
++                        for (y = y0; y < y1; y++)
++                                for (x = x0; x + 1 < w && x < x1; x += 2)
++                                        put_pixel (map_address, stride, eye * (w / 2) + x / 2, y,
++                                                   average_pixels (eye_pixel (head, shadow, eye, x, y),
++                                                                   eye_pixel (head, shadow, eye, x + 1, y)));
++                break;
++        case PLY_STEREO_LAYOUT_TOP_AND_BOTTOM:
++        case PLY_STEREO_LAYOUT_TOP_AND_BOTTOM_2D:
++                y0 &= ~1L;
++                for (eye = 0; eye < 2; eye++)
++                        for (y = y0; y + 1 < h && y < y1; y += 2)
++                                for (x = x0; x < x1; x++)
++                                        put_pixel (map_address, stride, x, eye * (h / 2) + y / 2,
++                                                   average_pixels (eye_pixel (head, shadow, eye, x, y),
++                                                                   eye_pixel (head, shadow, eye, x, y + 1)));
++                break;
++        case PLY_STEREO_LAYOUT_ROWS:
++        case PLY_STEREO_LAYOUT_COLUMNS:
++        case PLY_STEREO_LAYOUT_CHECKERBOARD:
++                for (y = y0; y < y1; y++) {
++                        for (x = x0; x < x1; x++) {
++                                if (head->stereo_layout == PLY_STEREO_LAYOUT_ROWS)
++                                        eye = y & 1;
++                                else if (head->stereo_layout == PLY_STEREO_LAYOUT_COLUMNS)
++                                        eye = x & 1;
++                                else
++                                        eye = (x + y) & 1;
++                                put_pixel (map_address, stride, x, y, eye_pixel (head, shadow, eye, x, y));
++                        }
++                }
++                break;
++        case PLY_STEREO_LAYOUT_ANAGLYPH_MODERN:
++        case PLY_STEREO_LAYOUT_ANAGLYPH_CRT:
++                init_srgb_tables ();
++                for (y = y0; y < y1; y++)
++                        for (x = x0; x < x1; x++)
++                                put_pixel (map_address, stride, x, y,
++                                           mix_anaglyph (head->stereo_layout == PLY_STEREO_LAYOUT_ANAGLYPH_MODERN ? dubois_modern : dubois_crt,
++                                                         eye_pixel (head, shadow, 0, x, y),
++                                                         eye_pixel (head, shadow, 1, x, y)));
++                break;
++        case PLY_STEREO_LAYOUT_SEQUENTIAL:
++                for (y = y0; y < y1; y++) {
++                        for (x = x0; x < x1; x++) {
++                                put_pixel (map_address, stride, x, y, eye_pixel (head, shadow, 0, x, y));
++                                if (second_map_address != NULL)
++                                        put_pixel (second_map_address, head->second_row_stride, x, y, eye_pixel (head, shadow, 1, x, y));
++                        }
++                }
++                break;
++        case PLY_STEREO_LAYOUT_LEFT_EYE:
++        case PLY_STEREO_LAYOUT_RIGHT_EYE:
++                eye = head_stereo_layout (head) == PLY_STEREO_LAYOUT_RIGHT_EYE;
++                for (y = y0; y < y1; y++) {
++                        for (x = x0; x < x1; x++) {
++                                long dx = x, dy = y;
++
++                                if (head->stereo != NULL && head->stereo->reflection == PLY_STEREO_REFLECTION_HORIZONTAL)
++                                        dx = w - 1 - x;
++                                else if (head->stereo != NULL && head->stereo->reflection == PLY_STEREO_REFLECTION_VERTICAL)
++                                        dy = h - 1 - y;
++                                put_pixel (map_address, stride, dx, dy, eye_pixel (head, shadow, eye, x, y));
++                        }
++                }
++                break;
++        case PLY_STEREO_LAYOUT_IZ3D_BACK:
++        case PLY_STEREO_LAYOUT_IZ3D_FRONT:
++                init_srgb_tables ();
++                if (head->stereo->iz3d_formula == 4) {
++                        y0 = y0 > 0 ? y0 - 1 : 0;
++                        y1 = y1 < h ? y1 + 1 : h;
++                }
++                for (y = y0; y < y1; y++)
++                        for (x = x0; x < x1; x++)
++                                put_pixel (map_address, stride, x, y, mix_iz3d (head, shadow, x, y));
++                break;
++        case PLY_STEREO_LAYOUT_NONE:
++                break;
++        }
++}
++
++static void
++ply_renderer_head_flush_stereo_area (ply_renderer_head_t *head,
++                                     ply_rectangle_t     *area_to_flush,
++                                     char                *map_address,
++                                     char                *second_map_address)
++{
++        const uint32_t *shadow = ply_pixel_buffer_get_argb32_data (head->pixel_buffer);
++        long x0 = area_to_flush->x, x1 = area_to_flush->x + area_to_flush->width;
++        long y0 = area_to_flush->y, y1 = area_to_flush->y + area_to_flush->height;
++        long w = head->eye_width;
++
++        /* a rectangle of the stereo theme's picture is redrawn at its place in both eyes */
++        if (head->stereo_input && x0 >= w) {
++                x0 -= w;
++                x1 -= w;
++        } else if (head->stereo_input && x1 > w) {
++                x0 = 0;
++                x1 = w;
++        }
++
++        if (x1 > w)
++                x1 = w;
++        if (y1 > (long) head->eye_height)
++                y1 = head->eye_height;
++
++        flush_stereo_rectangle (head, shadow, x0, y0, x1, y1, map_address, second_map_address);
++}
++
+ static bool
+ ply_renderer_buffer_map (ply_renderer_backend_t *backend,
+                          ply_renderer_buffer_t  *buffer)
+@@ -572,10 +1227,15 @@ ply_renderer_head_add_connector (ply_renderer_head_t *head,
+         if (output->link_status == DRM_MODE_LINK_STATUS_BAD)
+                 head->scan_out_buffer_needs_reset = true;
+ 
+-        if (output->mode.hdisplay != head->area.width || output->mode.vdisplay != head->area.height) {
++        if (output->mode.hdisplay != head->eye_width || output->mode.vdisplay != head->eye_height) {
+                 ply_trace ("Tried to add connector with resolution %dx%d to %dx%d head",
+                            (int) output->mode.hdisplay, (int) output->mode.vdisplay,
+-                           (int) head->area.width, (int) head->area.height);
++                           (int) head->eye_width, (int) head->eye_height);
++                return false;
++        }
++
++        if (head->stereo_layout != output->stereo_layout) {
++                ply_trace ("Tried to add connector with another stereo layout to the head");
+                 return false;
+         }
+ 
+@@ -613,6 +1273,22 @@ ply_renderer_head_new (ply_renderer_backend_t *backend,
+         head->area.y = 0;
+         head->area.width = output->mode.hdisplay;
+         head->area.height = output->mode.vdisplay;
++        head->eye_width = output->mode.hdisplay;
++        head->eye_height = output->mode.vdisplay;
++        head->scan_out_width = output->mode.hdisplay;
++        head->scan_out_height = output->mode.vdisplay;
++        head->device_scale = output->device_scale;
++        head->rotation = output->rotation;
++        head->stereo = output->stereo;
++        head->stereo_layout = output->stereo_layout;
++
++        /* the sizes drm_mode_set_crtcinfo (CRTC_STEREO_DOUBLE) gives the mode */
++        if (head->stereo_layout == PLY_STEREO_LAYOUT_FRAME_PACKING) {
++                head->eye_stride_lines = output->mode.vtotal;
++                head->scan_out_height = output->mode.vdisplay + output->mode.vtotal;
++        } else if (head->stereo_layout == PLY_STEREO_LAYOUT_SIDE_BY_SIDE_FULL) {
++                head->scan_out_width = output->mode.hdisplay * 2;
++        }
+ 
+         if (gamma_size) {
+                 head->gamma_size = gamma_size;
+@@ -633,6 +1309,10 @@ ply_renderer_head_new (ply_renderer_backend_t *backend,
+         ply_pixel_buffer_set_device_scale (head->pixel_buffer, output->device_scale);
+ 
+         ply_trace ("Creating %ldx%ld renderer head", head->area.width, head->area.height);
++        if (head->stereo_layout != PLY_STEREO_LAYOUT_NONE)
++                ply_trace ("stereo head: layout %s, scan out buffer %lux%lu",
++                           stereo_layout_name (head->stereo_layout),
++                           head->scan_out_width, head->scan_out_height);
+         ply_pixel_buffer_fill_with_color (head->pixel_buffer, NULL,
+                                           0.0, 0.0, 0.0, 1.0);
+         /* Delay flush till first actual draw */
+@@ -733,10 +1413,59 @@ ply_renderer_head_set_scan_out_buffer (ply_renderer_backend_t *backend,
+                 return false;
+         }
+ 
++        head->shown_buffer_id = buffer_id;
+         ply_renderer_head_clear_plane_rotation (backend, head);
+         return true;
+ }
+ 
++static void
++queue_page_flip (ply_renderer_backend_t *backend,
++                 ply_renderer_head_t    *head)
++{
++        uint32_t next_buffer_id;
++
++        if (!backend->is_active || head->flip_pending ||
++            head->second_buffer_id == 0 || head->shown_buffer_id == 0)
++                return;
++
++        next_buffer_id = head->shown_buffer_id == head->scan_out_buffer_id ?
++                         head->second_buffer_id : head->scan_out_buffer_id;
++
++        if (drmModePageFlip (backend->device_fd, head->controller_id, next_buffer_id,
++                             DRM_MODE_PAGE_FLIP_EVENT, head) < 0) {
++                ply_trace ("Couldn't flip to the other eye on controller %d: %m", head->controller_id);
++                return;
++        }
++
++        head->flip_pending = true;
++        head->shown_buffer_id = next_buffer_id;
++}
++
++static void
++on_page_flip (int          fd,
++              unsigned int sequence,
++              unsigned int tv_sec,
++              unsigned int tv_usec,
++              void        *user_data)
++{
++        ply_renderer_head_t *head = user_data;
++
++        head->flip_pending = false;
++        queue_page_flip (head->backend, head);
++}
++
++static void
++on_device_event (ply_renderer_backend_t *backend,
++                 int                     fd)
++{
++        drmEventContext context = {
++                .version           = 2,
++                .page_flip_handler = on_page_flip,
++        };
++
++        drmHandleEvent (fd, &context);
++}
++
+ static bool
+ ply_renderer_head_map (ply_renderer_backend_t *backend,
+                        ply_renderer_head_t    *head)
+@@ -747,21 +1476,33 @@ ply_renderer_head_map (ply_renderer_backend_t *backend,
+ 
+         assert (head != NULL);
+ 
+-        ply_trace ("Creating buffer for %ldx%ld renderer head", head->area.width, head->area.height);
++        ply_trace ("Creating buffer for %ldx%ld renderer head", head->scan_out_width, head->scan_out_height);
+         head->scan_out_buffer_id = create_output_buffer (backend,
+-                                                         head->area.width, head->area.height,
++                                                         head->scan_out_width, head->scan_out_height,
+                                                          &head->row_stride);
+ 
+         if (head->scan_out_buffer_id == 0)
+                 return false;
+ 
+-        ply_trace ("Mapping buffer for %ldx%ld renderer head", head->area.width, head->area.height);
++        ply_trace ("Mapping buffer for %ldx%ld renderer head", head->scan_out_width, head->scan_out_height);
+         if (!map_buffer (backend, head->scan_out_buffer_id)) {
+                 destroy_output_buffer (backend, head->scan_out_buffer_id);
+                 head->scan_out_buffer_id = 0;
+                 return false;
+         }
+ 
++        if (head->stereo_layout == PLY_STEREO_LAYOUT_SEQUENTIAL) {
++                head->second_buffer_id = create_output_buffer (backend,
++                                                               head->scan_out_width, head->scan_out_height,
++                                                               &head->second_row_stride);
++                if (head->second_buffer_id != 0 && !map_buffer (backend, head->second_buffer_id)) {
++                        destroy_output_buffer (backend, head->second_buffer_id);
++                        head->second_buffer_id = 0;
++                }
++                if (head->second_buffer_id == 0)
++                        ply_trace ("No buffer for the right eye, showing the left eye only");
++        }
++
+         head->scan_out_buffer_needs_reset = true;
+         return true;
+ }
+@@ -775,6 +1516,47 @@ ply_renderer_head_unmap (ply_renderer_backend_t *backend,
+ 
+         destroy_output_buffer (backend, head->scan_out_buffer_id);
+         head->scan_out_buffer_id = 0;
++
++        if (head->second_buffer_id != 0) {
++                unmap_buffer (backend, head->second_buffer_id);
++                destroy_output_buffer (backend, head->second_buffer_id);
++                head->second_buffer_id = 0;
++        }
++        head->shown_buffer_id = 0;
++}
++
++/* A stereo theme draws both eyes side by side, so its head is twice an eye's width;
++ * a 2D output of a stereo boot then shows the left eye */
++static bool
++set_head_stereo_input (ply_renderer_backend_t *backend,
++                       ply_renderer_head_t    *head,
++                       bool                    stereo_input)
++{
++        unsigned long width;
++
++        if (head->backend != backend)
++                return false;
++
++        if (stereo_input && (backend->stereo_outputs_len == 0 ||
++                             head->rotation != PLY_PIXEL_BUFFER_ROTATE_UPRIGHT))
++                return false;
++
++        if (head->stereo_input == stereo_input)
++                return true;
++
++        width = stereo_input ? head->eye_width * 2 : head->eye_width;
++        ply_pixel_buffer_free (head->pixel_buffer);
++        head->pixel_buffer = ply_pixel_buffer_new_with_device_rotation (width, head->eye_height, head->rotation);
++        ply_pixel_buffer_set_device_scale (head->pixel_buffer, head->device_scale);
++        ply_pixel_buffer_fill_with_color (head->pixel_buffer, NULL, 0.0, 0.0, 0.0, 1.0);
++        ply_region_clear (ply_pixel_buffer_get_updated_areas (head->pixel_buffer));
++        head->area.width = width;
++        head->stereo_input = stereo_input;
++
++        ply_trace ("%ldx%ld renderer head: the theme draws %s", head->area.width, head->area.height,
++                   stereo_input ? "both eyes side by side" : "one picture");
++
++        return true;
+ }
+ 
+ static void
+@@ -907,6 +1689,7 @@ create_backend (const char     *device_name,
+         backend->output_buffers = ply_hashtable_new (ply_hashtable_direct_hash,
+                                                      ply_hashtable_direct_compare);
+         backend->heads_by_controller_id = ply_hashtable_new (NULL, NULL);
++        parse_stereo_outputs (backend);
+ 
+         return backend;
+ }
+@@ -920,9 +1703,17 @@ get_device_name (ply_renderer_backend_t *backend)
+ static void
+ destroy_backend (ply_renderer_backend_t *backend)
+ {
++        int i;
++
+         ply_trace ("destroying renderer backend for device %s", backend->device_name);
+         free_heads (backend);
+ 
++        for (i = 0; i < backend->stereo_outputs_len; i++) {
++                free (backend->stereo_outputs[i].connector_name);
++                free (backend->stereo_outputs[i].card_name);
++        }
++        free (backend->stereo_outputs);
++
+         free (backend->device_name);
+         ply_hashtable_free (backend->output_buffers);
+         ply_hashtable_free (backend->heads_by_controller_id);
+@@ -947,6 +1738,7 @@ activate (ply_renderer_backend_t *backend)
+                 head = (ply_renderer_head_t *) ply_list_node_get_data (node);
+                 /* Flush out any pending drawing to the buffer */
+                 flush_head (backend, head);
++                queue_page_flip (backend, head);
+                 node = ply_list_get_next_node (backend->heads, node);
+         }
+ }
+@@ -996,6 +1788,16 @@ load_driver (ply_renderer_backend_t *backend)
+ 
+         backend->device_fd = device_fd;
+ 
++        /* The 3D modes are listed only to clients that ask for them; the aspect-ratio flags
++         * too, and the compositor sees them (atomic clients do), so the mode found here is
++         * the one it keeps without a new mode set */
++        if (backend->stereo_outputs_len > 0) {
++                if (drmSetClientCap (device_fd, DRM_CLIENT_CAP_STEREO_3D, 1) != 0)
++                        ply_trace ("Could not ask for the stereo 3D modes: %m");
++                if (drmSetClientCap (device_fd, DRM_CLIENT_CAP_ASPECT_RATIO, 1) != 0)
++                        ply_trace ("Could not ask for the aspect ratio of the modes: %m");
++        }
++
+         drmDropMaster (device_fd);
+ 
+         return true;
+@@ -1054,6 +1856,11 @@ close_device (ply_renderer_backend_t *backend)
+ {
+         ply_trace ("closing device");
+ 
++        if (backend->device_watch != NULL) {
++                ply_event_loop_stop_watching_fd (backend->loop, backend->device_watch);
++                backend->device_watch = NULL;
++        }
++
+         free_heads (backend);
+ 
+         if (backend->terminal != NULL) {
+@@ -1231,6 +2038,16 @@ get_output_info (ply_renderer_backend_t *backend,
+                 ply_trace ("falling back to first available mode");
+                 mode = &connector->modes[0];
+         }
++
++        output->stereo = find_stereo_output (backend, connector);
++        if (output->stereo != NULL && !output->tiled && !backend->simpledrm) {
++                drmModeModeInfo *stereo_mode = find_stereo_mode (connector, mode, output->stereo);
++
++                if (stereo_mode != NULL) {
++                        mode = stereo_mode;
++                        output->stereo_layout = output->stereo->layout;
++                }
++        }
+         output->mode = *mode;
+ 
+         if (backend->simpledrm)
+@@ -1410,6 +2227,12 @@ check_simpledrm_resolution (ply_renderer_backend_t *backend,
+         if (!output->connected)
+                 return true;
+ 
++        /* the firmware's framebuffer has neither the 3D modes nor the outputs a stereo boot names */
++        if (backend->stereo_outputs_len > 0) {
++                ply_trace ("Skipping simpledrm device, the stereo outputs wait for the GPU's driver");
++                return false;
++        }
++
+         if ((output->mode.hdisplay == 640 && output->mode.vdisplay == 480) ||
+             (output->mode.hdisplay == 800 && output->mode.vdisplay == 600) ||
+             (output->mode.hdisplay == 1024 && output->mode.vdisplay == 768)) {
+@@ -1662,6 +2485,12 @@ map_to_device (ply_renderer_backend_t *backend)
+                 if (ply_renderer_head_map (backend, head))
+                         head_mapped = true;
+ 
++                if (head->second_buffer_id != 0 && backend->device_watch == NULL)
++                        backend->device_watch = ply_event_loop_watch_fd (backend->loop, backend->device_fd,
++                                                                         PLY_EVENT_LOOP_FD_STATUS_HAS_DATA,
++                                                                         (ply_event_handler_t) on_device_event,
++                                                                         NULL, backend);
++
+                 node = ply_list_get_next_node (backend->heads, node);
+         }
+ 
+@@ -1714,7 +2543,9 @@ reset_scan_out_buffer_if_needed (ply_renderer_backend_t *backend,
+         if (controller == NULL)
+                 return false;
+ 
+-        if (controller->buffer_id != head->scan_out_buffer_id) {
++        if (controller->buffer_id != head->scan_out_buffer_id &&
++            (head->second_buffer_id == 0 || controller->buffer_id != head->second_buffer_id)) {
++                head->flip_pending = false;
+                 ply_renderer_head_set_scan_out_buffer (backend, head,
+                                                        head->scan_out_buffer_id);
+                 did_reset = true;
+@@ -1734,7 +2565,7 @@ flush_head (ply_renderer_backend_t *backend,
+         ply_list_t *areas_to_flush;
+         ply_list_node_t *node;
+         ply_pixel_buffer_t *pixel_buffer;
+-        char *map_address;
++        char *map_address, *second_map_address;
+         bool dirty = false;
+         static enum { PLY_SET_MODE_ON_REDRAWS_UNKNOWN = -1,
+                       PLY_SET_MODE_ON_REDRAWS_DISABLED,
+@@ -1774,12 +2605,16 @@ flush_head (ply_renderer_backend_t *backend,
+         }
+ 
+         map_address = begin_flush (backend, head->scan_out_buffer_id);
++        second_map_address = head->second_buffer_id ? begin_flush (backend, head->second_buffer_id) : NULL;
+ 
+         node = ply_list_get_first_node (areas_to_flush);
+         while (node != NULL) {
+                 area_to_flush = (ply_rectangle_t *) ply_list_node_get_data (node);
+ 
+-                ply_renderer_head_flush_area (head, area_to_flush, map_address);
++                if (head_stereo_layout (head) != PLY_STEREO_LAYOUT_NONE)
++                        ply_renderer_head_flush_stereo_area (head, area_to_flush, map_address, second_map_address);
++                else
++                        ply_renderer_head_flush_area (head, area_to_flush, map_address);
+                 dirty = true;
+ 
+                 node = ply_list_get_next_node (areas_to_flush, node);
+@@ -1796,6 +2631,10 @@ flush_head (ply_renderer_backend_t *backend,
+                                    head->area.width, head->area.height);
+ 
+                 end_flush (backend, head->scan_out_buffer_id);
++                if (head->second_buffer_id) {
++                        end_flush (backend, head->second_buffer_id);
++                        queue_page_flip (backend, head);
++                }
+         }
+ 
+         ply_region_clear (updated_region);
+@@ -2128,6 +2967,7 @@ ply_renderer_backend_get_interface (void)
+                 .get_keymap                   = get_keymap,
+                 .add_input_device             = add_input_device,
+                 .remove_input_device          = remove_input_device,
++                .set_head_stereo_input        = set_head_stereo_input,
+         };
+ 
+         return &plugin_interface;
+-- 
+2.53.0
+

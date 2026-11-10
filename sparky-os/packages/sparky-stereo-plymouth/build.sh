@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL2 License
-# Last update 2026/10/16
+# Last update 2026/11/09
 #
 # Builds sparky-stereo-plymouth: the sparky-stereo-lines boot splash themes, generated from
 # sparky-lines (upstream/sparky-lines, read only) by gen-theme.py.
@@ -9,8 +9,14 @@
 set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
-VERSION=20261108~sparky9~0+lc1
+VERSION=20261109~sparky9~0+lc1
 PKG=sparky-stereo-plymouth
+# the host's facts for the build record, and the source date from the recipe's last commit (ORDER 394b, ORDER 421b)
+. "$HERE/../../repo/build-provenance.sh"
+sparky_provenance_init "${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}" "$HERE"
+for ((i = 0; i < ${#SPARKY_PROV_ARGS[@]}; i++)); do
+	[ "${SPARKY_PROV_ARGS[i]}" = -e ] && export "${SPARKY_PROV_ARGS[i + 1]}"
+done
 umask 022
 mkdir -p "$OUT"
 D=$(mktemp -d "${TMPDIR:-/tmp}/stereo-boot-build.XXXXXX")
@@ -57,7 +63,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: plymouth (>= 26.134.222-1+stereo3d1)
+Depends: plymouth (>= 26.134.222-1+stereo3d3)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -66,7 +72,9 @@ Description: Sparky Stereo OS boot splash themes in stereo 3D
   per eye. On a stereo output (plymouth.stereo=, written by
   sparky-stereo-boot from the saved choice of the main screen) each eye
   gets its own picture, the electrons popping and sinking along their
-  curves; on a 2D screen the theme draws once. Two depth rules:
+  curves; on a 2D screen the theme draws once. The depth stays inside the
+  limits the person set for the main screen (the kernel line's popped= and
+  sunk=, from sparky-stereo-boot). Two depth rules:
   sparky-stereo-lines (the slope of the curve) and
   sparky-stereo-lines-height (the height on the curve). The background is on
   the screen, the swirl with its orbits one step in front, the SparkyOS logo
@@ -75,5 +83,11 @@ Description: Sparky Stereo OS boot splash themes in stereo 3D
 CONTROL
 (cd "$D" && find usr -type f -exec md5sum {} + | sort -k2) > "$D/DEBIAN/md5sums"
 chmod 644 "$D/DEBIAN/control" "$D/DEBIAN/md5sums" "$D/DEBIAN/triggers"
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone \
-    "$D" "$OUT" --authoring "$HERE"
+# the gate runs in a container that is given the host's facts: its check-debs writes the complete build record
+IMAGE=${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}
+TREE=$(cd "$HERE/../../.." && pwd)
+docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lean-standalone-sparky-stereo-plymouth" --ulimit core=0 --network none --platform linux/amd64 \
+	--user "$(id -u):$(id -g)" "${SPARKY_PROV_ARGS[@]}" -e HOME=/tmp -e PYTHONPATH="$TREE/sparky-os" \
+	-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+	-v "$TREE":"$TREE":ro -v "$D":"$D" -v "$OUT":"$OUT" "$IMAGE" sh -c 'python3 -m lean.standalone "$1" "$2" --authoring "$3" && cd "$2" && python3 -m lean.release check-debs ./*_all.deb' sh "$D" "$OUT" "$HERE"
+

@@ -18,6 +18,7 @@ Stereo KWin keeps each person's display settings in ~/.config/kwinoutputconfig.j
 When the file changes, the session sends it to a socket the system runs, and the system writes what the boot reads:
 - GRUB: the main screen's resolution (the 2D base of a 3D mode), kept through the kernel with gfxpayload=keep (/etc/default/grub.d/30-sparky-stereo-boot.cfg, at update-grub, which runs only when the resolution changes);
 - the kernel line, from GRUB's environment block: plymouth.stereo= for the boot splash, and video= when the base mode is not the screen's preferred one;
+- the splash's depth: each stereo output of plymouth.stereo= ends with popped=PIXELS:sunk=PIXELS, the main screen's depth limits as Stereo KWin resolves them (the person's PoppedLimit and SunkLimit from kwinrc [StereoDepth], times the display's factor from libstereo-policy), pixels of an eye 1920 wide; Plymouth gives them to the theme, so the splash never pops or sinks past what the person allows. Nothing saved is the display's default, said in the journal and by `status`; a saved value that cannot be read is kept as a problem;
 - the login screen: the settings copied to Plasma Login Manager's and SDDM's accounts;
 - /var/lib/sparky-stereo-boot/main-output.json, the record.
 A stereo boot splash hands the screen to the login screen's KWin with no new mode set: plymouth-quit.service deactivates it, KWin takes the same 3D mode, and the splash quits after KWin's first frame.

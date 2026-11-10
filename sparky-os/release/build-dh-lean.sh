@@ -13,7 +13,8 @@
 #   SOURCE_DIR  the unpacked upstream tree with our debian/ (a folder name inside WORK)
 #   VERSION     the Lean Code version, debian/changelog's version plus +lc1
 #   REPO        the edition's repository (a flat tree with dists/mashtabba), mounted read-only
-# IMAGE (default sparky-lc-migration:20261020) and CPUS (default 4) can be set; EXTRA names a folder of .deb files not yet
+# IMAGE (default sparky-lc-migration:20261020) and CPUS (default 4) can be set; REAL_DIR names the directory the unpacked
+# source keeps when its build reads its version from it (plymouth: plymouth-26.134.222); EXTRA names a folder of .deb files not yet
 # in the repository (a library built just before), offered to apt as a flat source above the repository.
 # SPARKY_LC_ARCHIVE_DIR (required) is the link gate's folder, mounted at /archive: sources.json, the signed public archives
 # with keyring paths under /archive (sparky-os/lean/archive.md), and those keyrings. lean.debhelper runs the link and start
@@ -46,7 +47,7 @@ docker run --rm --name "$NAME" --platform linux/amd64 --cpus "${CPUS:-4}" --memo
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$ARCHIVE":/archive:ro \
 	"${PREV_MOUNT[@]}" "${PREV_ENV[@]}" \
 	-v "$WORK":/work -v "$HERE/..":/toolkit:ro -v "$REPO":/repo:ro "${EXTRA_MOUNT[@]}" \
-	-e SRC="$SRC" -e VERSION="$VERSION" -e OWNER="$(id -u):$(id -g)" -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMAGE" bash -c '
+	-e SRC="$SRC" -e VERSION="$VERSION" -e REAL_DIR="${REAL_DIR:-}" -e OWNER="$(id -u):$(id -g)" -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMAGE" bash -c '
 set -euo pipefail
 sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive
@@ -76,6 +77,11 @@ cp "$dsc" /work/*.debian.tar.xz /work/*.orig.tar.xz /work/out/authored/
 # the additional upstream tarballs of a source with components, which its .dsc lists too
 find /work -maxdepth 1 -name "*.orig-*.tar.*" -exec cp {} /work/out/authored/ \;
 runuser -u builder -- dpkg-source -x "$dsc" /work/lean-source
+if [ -n "$REAL_DIR" ]; then
+	# a source whose build reads its version from its own directory name (plymouth: generate-version.sh) keeps that
+	# name and the build path stays /work/lean-source, a link to it (run-native-batch.py does the same)
+	runuser -u builder -- sh -c "mv /work/lean-source /work/$REAL_DIR && ln -s $REAL_DIR /work/lean-source"
+fi
 runuser -u builder -- env PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lean-source "$VERSION" --toolkit /toolkit
 apt-get -y --no-install-recommends build-dep /work/lean-source
 python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /work/lean-source

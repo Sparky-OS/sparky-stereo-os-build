@@ -331,6 +331,29 @@ def boot_check():
     check('boot-check', rc == 0 and kept(root, 'grub-mode') is None, "the person's own gfxpayload: not checked")
 
 
+def splash_depth():
+    """ORDER 481: the limits the splash follows. A saved value that is no limit is kept (splash-depth) and the display's
+    default stands; the next export with a good value clears it. A libstereo-policy that cannot answer is kept
+    (splash-depth-display)."""
+    def depth(source, reason=None, problem=None):
+        return {'source': source, 'unreadable': reason, 'policyProblem': problem, 'poppedPx': 3.86, 'sunkPx': 9.66}
+    root, env = setup()
+    code, err = call(env, 'say_depth', depth('display-unreadable', '/home/x/.config/kwinrc: PoppedLimit=abc is not a number'))
+    k = kept(root, 'splash-depth')
+    check('splash depth', code == 0 and bool(k) and k['key'] == 'LOCAL68' and 'PoppedLimit=abc' in k['args'][0],
+          'a saved value that is no limit: kept, the reason is the argument (%s)' % (k and k['args']))
+    code, err = call(env, 'say_depth', depth('choice'))
+    check('splash depth', kept(root, 'splash-depth') is None, 'a readable choice clears it')
+    code, err = call(env, 'say_depth', depth('display'))
+    check('splash depth', kept(root, 'splash-depth') is None and 'the boot splash takes the display' in err,
+          'nothing saved: no problem kept, said in the journal')
+    code, err = call(env, 'say_depth', depth('choice', None, 'libstereo-policy.so.1: cannot open shared object file'))
+    k = kept(root, 'splash-depth-display')
+    check('splash depth', bool(k) and k['key'] == 'LOCAL69', 'the display\'s depth cannot be worked out: kept (%s)' % (k and k['key']))
+    code, err = call(env, 'say_depth', depth('choice'))
+    check('splash depth', kept(root, 'splash-depth-display') is None, 'it clears when the library answers again')
+
+
 def languages():
     """Every message the code uses exists in the nine languages, with the English %s count and no other directive."""
     used = set()
@@ -352,7 +375,7 @@ def languages():
 
 
 def main():
-    for part in (handover, problems, migrate, boot_check, languages):
+    for part in (handover, problems, migrate, boot_check, splash_depth, languages):
         try:
             part()
         except Exception as error:   # noqa: BLE001: a part that cannot run is a failure, said

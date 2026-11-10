@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/03
+# Last update 2026/11/09
 #
 # Builds the sparky-stereo-boot package (hand assembled, Paweł's formula).
 #   build.sh OUTDIR
@@ -9,7 +9,13 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-boot
-VERSION=0.1.8+lc1
+VERSION=0.1.9+lc1
+# the host's facts for the build record, and the source date from the recipe's last commit (ORDER 394b, ORDER 421b)
+. "$HERE/../../repo/build-provenance.sh"
+sparky_provenance_init "${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}" "$HERE"
+for ((i = 0; i < ${#SPARKY_PROV_ARGS[@]}; i++)); do
+	[ "${SPARKY_PROV_ARGS[i]}" = -e ] && export "${SPARKY_PROV_ARGS[i + 1]}"
+done
 umask 022
 mkdir -p "$OUT"
 D=$(mktemp -d "${TMPDIR:-/tmp}/stereo-boot-build.XXXXXX")
@@ -35,7 +41,10 @@ for u in sparky-stereo-boot-export.path sparky-stereo-boot-export.service; do
 done
 # the boot's messages, word for word, as journal catalogs: the edition's one engine keeps the boot's problems and its
 # session notifier shows them (0.1.6, ORDER 350)
-sparky-stereo-problems catalog sparky-stereo-boot "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL19
+# (the engine runs in a container: it is a package program)
+docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}catalog-$PKG" --ulimit core=0 --network none --platform linux/amd64 \
+	--user "$(id -u):$(id -g)" "${SPARKY_PROV_ARGS[@]}" -e HOME=/tmp -v "$HERE/lang":/lang:ro -v "$D":"$D" "${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}" \
+	sparky-stereo-problems catalog sparky-stereo-boot /lang "$D/usr/lib/systemd/catalog" --subject LOCAL19
 install -D -m 644 "$HERE/default/sparky-stereo-boot" "$D/etc/default/sparky-stereo-boot"
 install -D -m 755 "$HERE/initramfs/sparky-stereo-nvidia" "$D/usr/share/initramfs-tools/hooks/sparky-stereo-nvidia"
 install -D -m 644 "$HERE/modprobe/sparky-stereo-nvidia-kms.conf" "$D/usr/lib/modprobe.d/sparky-stereo-nvidia-kms.conf"
@@ -220,8 +229,8 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: grub-common, libdrm2, python3, systemd, sparky-stereo-problems (>= 0.1.0)
-Recommends: plymouth (>= 26.134.222-1+stereo3d1), sparky-stereo-plymouth
+Depends: grub-common, libdrm2, libstereo-policy1 (>= 1.15.0), python3, systemd, sparky-stereo-problems (>= 0.1.0)
+Recommends: plymouth (>= 26.134.222-1+stereo3d3), sparky-stereo-plymouth (>= 20261109~sparky9~0)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -250,5 +259,11 @@ Description: Sparky Stereo OS boot that follows the main screen
 CONTROL
 (cd "$D" && find usr etc -type f -exec md5sum {} + | grep -v ' etc/' | sort -k2) > "$D/DEBIAN/md5sums"
 chmod 644 "$D/DEBIAN/control" "$D/DEBIAN/md5sums" "$D/DEBIAN/conffiles"
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone \
-    "$D" "$OUT" --authoring "$HERE"
+# the gate runs in a container that is given the host's facts: its check-debs writes the complete build record
+IMAGE=${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}
+TREE=$(cd "$HERE/../../.." && pwd)
+docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lean-standalone-sparky-stereo-boot" --ulimit core=0 --network none --platform linux/amd64 \
+	--user "$(id -u):$(id -g)" "${SPARKY_PROV_ARGS[@]}" -e HOME=/tmp -e PYTHONPATH="$TREE/sparky-os" \
+	-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+	-v "$TREE":"$TREE":ro -v "$D":"$D" -v "$OUT":"$OUT" "$IMAGE" sh -c 'python3 -m lean.standalone "$1" "$2" --authoring "$3" && cd "$2" && python3 -m lean.release check-debs ./*_all.deb' sh "$D" "$OUT" "$HERE"
+
