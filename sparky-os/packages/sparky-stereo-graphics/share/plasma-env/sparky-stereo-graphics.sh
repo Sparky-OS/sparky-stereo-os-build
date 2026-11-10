@@ -31,6 +31,7 @@ if [ -z "${KWIN_DRM_DEVICES:-}" ]; then
 		pt_BR) _sp_m='O sparky-stereo-gpu-env não está instalado, então a GPU escolhida em Configurações do Sistema, Gráficos não pode ser aplicada. Reinstale-o: sudo apt-get install --reinstall sparky-stereo-graphics' ;;
 		fr) _sp_m="sparky-stereo-gpu-env est absent : le GPU choisi dans Configuration du système, Graphiques ne peut pas être appliqué. Réinstallez-le : sudo apt-get install --reinstall sparky-stereo-graphics" ;;
 		de) _sp_m='sparky-stereo-gpu-env fehlt, daher kann die in den Systemeinstellungen unter Grafik gewählte GPU nicht angewendet werden. Installieren Sie es neu: sudo apt-get install --reinstall sparky-stereo-graphics' ;;
+		es) _sp_m='Falta sparky-stereo-gpu-env, así que no se puede aplicar la GPU elegida en Configuración del sistema, Gráficos. Reinstálelo: sudo apt-get install --reinstall sparky-stereo-graphics' ;;
 		ja) _sp_m='sparky-stereo-gpu-env が見つからないため、システム設定の「グラフィックス」で選んだ GPU を適用できません。再インストールしてください: sudo apt-get install --reinstall sparky-stereo-graphics' ;;
 		ko) _sp_m='sparky-stereo-gpu-env가 없어서 시스템 설정의 그래픽에서 선택한 GPU를 적용할 수 없습니다. 다시 설치하십시오: sudo apt-get install --reinstall sparky-stereo-graphics' ;;
 		zh_CN) _sp_m='缺少 sparky-stereo-gpu-env，因此无法应用在“系统设置 > 图形”中选择的 GPU。请重新安装：sudo apt-get install --reinstall sparky-stereo-graphics' ;;
