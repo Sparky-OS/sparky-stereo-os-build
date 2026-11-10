@@ -11,7 +11,7 @@ import struct
 import subprocess
 import sys
 import time
-from catalogue import Rotation, active, load
+from catalogue import Rotation, active, load, report
 from frames import receive, send
 from preferences import disabled_savers
 
@@ -32,6 +32,8 @@ def read_display(fd, timeout=5):
 
 class Controller:
     def __init__(self, catalogue, control, consumer):
+        # a saver the catalogue cannot offer is said, with the file that differs and both hashes, never just left out
+        report(catalogue)
         self.rotation = Rotation(load(catalogue))
         self.control, self.consumer = control, consumer
         self.state = dict(locked=False, display_on=False, on_ac=False)

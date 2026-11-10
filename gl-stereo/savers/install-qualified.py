@@ -5,7 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
-from catalogue import eligible
+from catalogue import describe, diagnose
 
 manifest=Path(sys.argv[1])
 catalogue=Path(sys.argv[2])
@@ -20,17 +20,22 @@ layer_hash=hashlib.sha256(library.read_bytes()).hexdigest()
 # one eye moved by a pixel moves every depth receipt: their mean stays within a quarter pixel
 residuals=[item['proof']['residual_px'] for item in proofs if item['proof'].get('oracle')=='depth-v1']
 assert residuals and abs(sum(residuals)/len(residuals))<=.25,('depth residual mean',sum(residuals)/max(len(residuals),1))
+stale=[]
 for item in proofs:
     assert item['command'][0]=='/usr/libexec/xscreensaver/'+item['id']
     assert item['proof']['passed'] is True and item['proof']['placement']=='screen-level'
-    assert item['library_sha256']==layer_hash,(item['id'],'untested layer binary')
-    assert hashlib.sha256(Path(item['command'][0]).read_bytes()).hexdigest()==item['executable_sha256'],(item['id'],'untested saver binary')
+    if item['library_sha256']!=layer_hash:
+        stale.append('%s: layer %s differs: the receipt names %s, the built layer is %s'%(item['id'],library,item['library_sha256'],layer_hash))
+    found=hashlib.sha256(Path(item['command'][0]).read_bytes()).hexdigest()
+    if found!=item['executable_sha256']:
+        stale.append('%s: saver executable %s differs: the receipt names %s, the installed file is %s'%(item['id'],item['command'][0],item['executable_sha256'],found))
     assert item['qualification']['group'] in ('layer','owning-fix','flat')
     assert item['verification']['stock_2d_exact'] is True
     assert item['verification']['settings_unchanged'] is True
     assert item['verification']['kwin_composition'] is True
     assert item['verification']['camera_or_flat'] is True
-    assert eligible(dict(item,library=str(library))),(item['id'],'ineligible camera proof')
+    stale.extend('%s: %s'%(item['id'],describe(reason)) for reason in diagnose(dict(item,library=str(library))) if reason['kind'] not in ('proof','library-differs','executable-differs'))
+    assert not [r for r in diagnose(dict(item,library=str(library))) if r['kind']=='proof'],(item['id'],'ineligible camera proof: its receipt does not pass the proof gates')
     settings=Path('/usr/share/xscreensaver/config')/(item['id']+'.xml')
     expected=inventory[item['id']]['settings_sha256']
     if item['id'] in owning_settings:
@@ -40,6 +45,9 @@ for item in proofs:
     assert hashlib.sha256(settings.read_bytes()).hexdigest()==item['verification']['settings_sha256']==expected
     item['library']='/usr/lib/gl-stereo/libgl-stereo.so'
     item['environment']['LD_PRELOAD']=item['library']
+if stale:
+    # every untested binary is named with both hashes, so the XScreenSaver or layer build to requalify against is plain
+    sys.exit('FAIL: %d of %d receipts name binaries that are not the ones installed:\n  '%(len({line.split(':')[0] for line in stale}),len(proofs))+'\n  '.join(stale))
 entries=[item for item in entries if item['id'] in ('rocks','starfield')]
 assert {item['id'] for item in entries}=={'rocks','starfield'}
 for item in entries:
