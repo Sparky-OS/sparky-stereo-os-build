@@ -148,7 +148,7 @@ else
 fi
 
 # the nine languages
-for l in en_US pl_PL pt_BR fr_FR de_DE ja_JP ko_KR zh_CN zh_TW; do
+for l in en_US pl_PL pt_BR fr_FR de_DE es_ES ja_JP ko_KR zh_CN zh_TW; do
 	code=${l%_*}; case $l in pt_BR|zh_CN|zh_TW) code=$l ;; esac
 	want=$(sed -n 's/^LOCAL6="%s *\([^%"]*\)"$/\1/p' "$LANGDIR/$code")
 	out=$(PATH=$F:$PATH LANG=$l.UTF-8 sh -c ": >$F/addresses; $cond" 2>&1 | head -n1)
