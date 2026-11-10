@@ -14,7 +14,8 @@ STAGE=$(cd "$6" && pwd) TREE=$(cd "$7" && pwd) OUT=$(mkdir -p "$8" && cd "$8" &&
 [ -z "$(ls -A "$OUT")" ] || { echo "$OUT is not empty" >&2; exit 1; }
 sparky_provenance_init sparky-lc-migration:20261020
 # the candidate side supplies the edition without this package's own earlier binaries, and with the staged debs (/stage)
-grep -v "/pool/main/./$PKG/" "$SIBS" > "$OUT/siblings-current.txt" || true
+cp "$SIBS" "$OUT/siblings-current.txt"
+for src in $PKG ${ROUND_SOURCES:-stereo-layer}; do grep -v "/pool/main/./$src/" "$OUT/siblings-current.txt" > "$OUT/siblings-current.tmp" || true; mv "$OUT/siblings-current.tmp" "$OUT/siblings-current.txt"; done
 for d in "$STAGE"/*/*.deb; do case $d in *-dbgsym_*|*-lc-hr_*) ;; *) echo "/stage/$(basename "$(dirname "$d")")/$(basename "$d")" >> "$OUT/siblings-current.txt" ;; esac; done
 IN=$OUT/in; mkdir -p "$IN"
 for f in "$TREE"/pool/main/${PKG:0:1}/$PKG/"$PKG"_*"${OLD#*:}"+lc1.dsc "$TREE"/pool/main/${PKG:0:1}/$PKG/"$PKG"_*"${OLD#*:}"+lc1.debian.tar.xz "$TREE"/pool/main/${PKG:0:1}/$PKG/"$PKG"_*.orig.tar.*; do cp "$f" "$IN/"; done
