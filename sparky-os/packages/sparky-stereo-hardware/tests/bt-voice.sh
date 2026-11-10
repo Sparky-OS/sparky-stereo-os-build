@@ -26,7 +26,7 @@ run --list | grep -q 'LE only' && ok "an LE-only controller (BR/EDR not supporte
 printf '[]' > $T/f.json; mkdir -p $T/var/lib/sparky-stereo-problems; : > $T/var/lib/sparky-stereo-problems/sparky-stereo-hardware_bt-voice-aabbccddeeff.json
 SPARKY_STEREO_ROOT=$T run --dry-run | grep -q 'clear sparky-stereo-hardware bt-voice-aabbccddeeff' && ok "an unplugged adapter's notice is cleared" || bad "gone adapter"
 # the catalogue: LOCAL17 and LOCAL18 exist in all nine languages and LOCAL18 has one %s
-for l in en pt_BR de fr pl ja ko zh_CN zh_TW; do
+for l in en pt_BR de es fr pl ja ko zh_CN zh_TW; do
 	grep -q '^LOCAL17=' problems-lang/$l && [ "$(grep '^LOCAL18=' problems-lang/$l | grep -o '%s' | wc -l)" = 1 ] && ok "problems-lang/$l has LOCAL17 and LOCAL18 (one %s)" || bad "problems-lang/$l"
 done
 exit $failed
