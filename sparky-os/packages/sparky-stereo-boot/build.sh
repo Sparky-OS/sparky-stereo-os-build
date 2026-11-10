@@ -172,7 +172,7 @@ lang=${lang%%.*}
 case $lang in
 pt_BR|zh_CN|zh_TW) ;;
 zh*) lang=zh_CN ;;
-*) lang=${lang%%_*}; case $lang in pl|fr|de|ja|ko) ;; *) lang=en ;; esac ;;
+*) lang=${lang%%_*}; case $lang in pl|fr|de|es|ja|ko) ;; *) lang=en ;; esac ;;
 esac
 failed=0
 # STEP COMMAND...: a step whose failure leaves the next boot with what the package set up fails the removal (no

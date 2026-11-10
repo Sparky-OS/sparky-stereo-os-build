@@ -11,7 +11,7 @@
 import json, os, re, struct, subprocess, sys, tempfile, time
 
 PKG = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else ''
-LANGS = ('en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW')
+LANGS = ('en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW')
 results = []
 
 FAKE = r'''#!/bin/sh

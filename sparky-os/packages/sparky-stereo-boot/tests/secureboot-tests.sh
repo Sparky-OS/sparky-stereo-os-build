@@ -46,7 +46,7 @@ check "no shim: no GRUB entry" "$(run c en_US.UTF-8 grub)" ""
 
 # the entry: title in the system's language, the steps in nine languages (the system's first), MokManager beside GRUB,
 # and the fallback only under Secure Boot
-for l in en_US pl_PL pt_BR fr_FR de_DE ja_JP ko_KR zh_CN zh_TW; do
+for l in en_US pl_PL pt_BR fr_FR de_DE es_ES ja_JP ko_KR zh_CN zh_TW; do
 	out=$(run a $l.UTF-8 grub)
 	code=$l; case $l in pt_BR|zh_CN|zh_TW) ;; *) code=${l%_*} ;; esac
 	title=$(sed -n 's/^LOCAL12="\(.*\)"$/\1/p' "$P/lang/$code")
@@ -130,7 +130,7 @@ check "repaired: the DKMS step succeeds and clears its problem" "$rc:$(dkey)" "0
 
 # the second GRUB entry: with the partition's UUID GRUB looks for the certificate when it reads the menu, so it is
 # written whether or not DKMS has made its key yet; without the UUID it follows what update-grub finds
-for l in en_US pl_PL pt_BR fr_FR de_DE ja_JP ko_KR zh_CN zh_TW; do
+for l in en_US pl_PL pt_BR fr_FR de_DE es_ES ja_JP ko_KR zh_CN zh_TW; do
 	out=$(SPARKY_STEREO_ESP_UUID=ABCD-1234 run a $l.UTF-8 grub)
 	code=$l; case $l in pt_BR|zh_CN|zh_TW) ;; *) code=${l%_*} ;; esac
 	title=$(sed -n 's/^LOCAL62="\(.*\)"$/\1/p' "$P/lang/$code")
