@@ -12,10 +12,10 @@ SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
 export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 sh /run/https-only-apt.sh || exit 1
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4 DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
-mkdir -p /repo && cd /repo && cp /stage/*/*.deb . && dpkg-scanpackages -m . 2>/dev/null > Packages
-echo 'deb [trusted=yes] file:/repo ./' > /etc/apt/sources.list.d/staged.list
+mkdir -p /staged-repo && cd /staged-repo && cp /stage/*/*.deb . && dpkg-scanpackages -m . 2>/dev/null > Packages
+echo 'deb [trusted=yes] file:/staged-repo ./' > /etc/apt/sources.list.d/staged.list
 printf 'Package: *\nPin: origin ""\nPin-Priority: 1002\n' > /etc/apt/preferences.d/staged
-printf 'deb [trusted=yes] file:/edition mashtabba main\n' > /etc/apt/sources.list.d/edition.list
+printf 'deb [trusted=yes] file:/repo mashtabba main\n' > /etc/apt/sources.list.d/edition.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
 apt-get -y update >/dev/null 2>&1

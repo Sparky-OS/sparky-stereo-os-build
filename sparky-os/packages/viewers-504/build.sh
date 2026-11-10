@@ -22,7 +22,7 @@ PREV=$OUT/prev; mkdir -p "$PREV"; cp "$TREE"/pool/main/${PKG:0:1}/$PKG/*+lc1_amd
 docker run --rm --name "${BUILD_NAME_PREFIX:-view-504-build}-$PKG" --ulimit core=0 --cpus "${THREADS:-4}" --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e PKG="$PKG" -e OLD="${OLD#*:}" -e NEW="$NEW" -e PATCH="$PATCH" -e ITEM="$ITEM" \
-	-v "$STAGE":/stage:ro -v "$IN":/in:ro -v "$HERE/patches":/patch:ro -v "$HERE/../..":/toolkit:ro -v "$PREV":/prev:ro -v "$TREE":/edition:ro -v "$OUT":/out \
+	-v "$STAGE":/stage:ro -v "$IN":/in:ro -v "$HERE/patches":/patch:ro -v "$HERE/../..":/toolkit:ro -v "$PREV":/prev:ro -v "$TREE":/repo:ro -v "$OUT":/out \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
 	-v "$ARCHIVE":/archive:ro -v "$SIBS":/previous-siblings.txt:ro -v "$OUT/siblings-current.txt":/siblings.txt:ro -e SPARKY_LC_SCRATCH=/out/link-scratch -v "$HERE/recipe.sh":/recipe.sh:ro --entrypoint bash sparky-lc-migration:20261020 -c 'bash /recipe.sh' > "$OUT/recipe.log" 2>&1
