@@ -42,3 +42,21 @@ sudo systemctl daemon-reload
 
 Remove only this trace's staging directory and log directory after their evidence has been collected.
 Do not remove the containing systemd directories, and do not restart fwupd as part of cleanup.
+# Reading complete call sequences
+
+Run `python3 analyze.py trace.jsonl trace.jsonl.1 trace.jsonl.2` on collected
+copies. It groups by boot ID, orders by monotonic time, and includes every
+Filesystem Mount/Unmount call, the preceding mount snapshot, resolved caller,
+mount-state transition and remount result with original file/line references.
+Store its JSON output beside the evidence, outside this repository.
+
+Do not select only the last three calls before recovery: that can drop the
+successful Mount preceding an Unmount and reverse the ownership conclusion.
+An fstab entry is not proof that the filesystem was mounted at startup. Compare
+the initial mountinfo snapshot and the boot journal with the complete call history.
+The monitor does not capture successful method returns; use mount transitions,
+error records and the daemon's debug journal together to infer call outcomes.
+Count successful recoveries separately from attempted recoveries. A rejected
+start transaction mentioning reboot or umount targets is shutdown evidence,
+not evidence of an untraced fwupd call. The temporary recovery helper can race
+normal shutdown, so preserve its stderr and correlate the mount unit's journal.
