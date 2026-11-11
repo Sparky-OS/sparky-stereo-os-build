@@ -35,7 +35,7 @@ index 0000000000..2ce29ddf43
 +}
 diff --git a/browser/actors/StereoNoticeParent.sys.mjs b/browser/actors/StereoNoticeParent.sys.mjs
 new file mode 100644
-index 0000000000..604a84e7b9
+index 0000000000..7787453d79
 --- /dev/null
 +++ b/browser/actors/StereoNoticeParent.sys.mjs
 @@ -0,0 +1,28 @@
@@ -49,7 +49,7 @@ index 0000000000..604a84e7b9
 +      return;
 +    }
 +    const browser = this.browsingContext.top.embedderElement;
-+    const win = browser?.ownerGlobal;
++    const win = browser?.ownerGlobal ?? browser?.ownerDocument?.defaultView;
 +    if (!win?.gBrowser) {
 +      return;
 +    }
