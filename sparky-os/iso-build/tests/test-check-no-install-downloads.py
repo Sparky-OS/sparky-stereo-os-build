@@ -39,6 +39,20 @@ class Gate(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertIn('PASS', text)
 
+    def test_stock_microsoft_installer_without_declaration_is_refused(self):
+        code, text = run(str(self.root(CLEAN + '\nPackage: ttf-mscorefonts-installer\nStatus: install ok installed\n')))
+        self.assertEqual(code, 1, text)
+        self.assertIn('ttf-mscorefonts-installer', text)
+
+    def test_microsoft_font_data_without_package_is_refused(self):
+        root = self.root(CLEAN)
+        fonts = root / 'usr/share/fonts/truetype/msttcorefonts'
+        fonts.mkdir(parents=True)
+        (fonts / 'Arial.ttf').write_bytes(b'font data')
+        code, text = run(str(root))
+        self.assertEqual(code, 1, text)
+        self.assertIn('Microsoft', text)
+
     def test_declaring_package_is_refused_with_size_and_source(self):
         code, text = run(str(self.root(CLEAN + '\n' + DECL)))
         self.assertEqual(code, 1, text)
