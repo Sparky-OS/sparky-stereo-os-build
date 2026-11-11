@@ -82,6 +82,7 @@ with (out / ('terminal-launch-' + choice + '.log')).open('w') as log:
 assert answered, 'the real terminal never presented the licence question'
 if choice == 'close':
     assert status != 0, 'closing the terminal must not report a completed installation'
+    assert not list((Path(target) / 'usr/share/fonts/truetype/msttcorefonts').glob('*.ttf'))
 elif choice == 'accept':
     assert status == 0 and paused
     family = subprocess.check_output(['chroot', target, 'fc-match', '-f', '%{family}', 'Arial'], text=True)

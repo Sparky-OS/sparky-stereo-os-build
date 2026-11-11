@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Created by Daniel Ramos (Capitain Jack) 2026/11/04
 # Copyright 2026 under the GNU GPL3 License
-"""Refuse, in an image, any package that downloads data while it is installed, and FlightGear's data.
+"""Refuse install-time download packages and downloaded FlightGear or Microsoft core-font data on an image.
 
 Daniel, 2026-11-04: "if the user choosed on install to include the games, that's already during install, so no big deal, and
 yes, we will not ship with the iso heavy files ... aiming to max out at 7.5 Gb"; memory image-ships-our-stereo-programs:
@@ -63,7 +63,8 @@ def main(argv):
                 print('REFUSED /%s exists: downloaded data is on the image (FlightGear or Microsoft core fonts)' % rel)
                 bad = 1
     if not bad:
-        print('PASS no installed package declares an install-time download%s' % ('' if root is None else ', and FlightGear\'s data is not there'))
+        print('PASS no installed download package or Microsoft font installer%s' %
+              ('' if root is None else ', and no FlightGear or Microsoft core-font data'))
     return bad
 
 
