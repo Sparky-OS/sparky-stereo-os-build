@@ -8,7 +8,7 @@
 #include <QVariantMap>
 #include <functional>
 
-class PlayerAdaptor : public QDBusAbstractAdaptor, protected QDBusContext
+class PlayerAdaptor : public QObject, protected QDBusContext
 {
     Q_OBJECT
     Q_CLASSINFO("D-Bus Interface", "org.mpris.MediaPlayer2.Player")
@@ -27,21 +27,55 @@ class PlayerAdaptor : public QDBusAbstractAdaptor, protected QDBusContext
     Q_PROPERTY(bool CanControl READ canControl)
 public:
     PlayerAdaptor(QObject *object, Backend *backend, std::function<QString(std::function<void()>)> execute);
-    QString playbackStatus() const { return b->status; }
-    double rate() const { return 1; }
-    void setRate(double) {}
-    bool no() const { return false; }
-    double volume() const { return b->volume; }
-    qlonglong position() const { return b->position; }
-    bool canControl() const { return b->connected; }
-    bool canPlay() const { return b->connected && b->supports(QStringLiteral("AVTransport"), QStringLiteral("Play")); }
-    bool canPause() const { return b->connected && b->supports(QStringLiteral("AVTransport"), QStringLiteral("Pause")); }
-    bool canSeek() const { return b->connected && b->supports(QStringLiteral("AVTransport"), QStringLiteral("Seek")) && b->supports(QStringLiteral("AVTransport"), QStringLiteral("GetPositionInfo")); }
+    QString playbackStatus() const
+    {
+        return b->status;
+    }
+    double rate() const
+    {
+        return 1;
+    }
+    void setRate(double)
+    {
+    }
+    bool no() const
+    {
+        return false;
+    }
+    double volume() const
+    {
+        return b->volume;
+    }
+    qlonglong position() const
+    {
+        return b->position;
+    }
+    bool canControl() const
+    {
+        return b->connected;
+    }
+    bool canPlay() const
+    {
+        return b->connected && b->supports(QStringLiteral("AVTransport"), QStringLiteral("Play"));
+    }
+    bool canPause() const
+    {
+        return b->connected && b->supports(QStringLiteral("AVTransport"), QStringLiteral("Pause"));
+    }
+    bool canSeek() const
+    {
+        return b->connected && b->supports(QStringLiteral("AVTransport"), QStringLiteral("Seek"))
+            && b->supports(QStringLiteral("AVTransport"), QStringLiteral("GetPositionInfo"));
+    }
     QVariantMap metadata() const;
     void setVolume(double value);
 public Q_SLOTS:
-    void Next() {}
-    void Previous() {}
+    void Next()
+    {
+    }
+    void Previous()
+    {
+    }
     void Play();
     void Pause();
     void PlayPause();
@@ -51,6 +85,7 @@ public Q_SLOTS:
     void OpenUri(const QString &uri);
 Q_SIGNALS:
     void Seeked(qlonglong position);
+
 private:
     void run(std::function<void()> action);
     Backend *b;
@@ -70,14 +105,27 @@ class RootAdaptor : public QDBusAbstractAdaptor
     Q_PROPERTY(QStringList SupportedMimeTypes READ empty)
 public:
     RootAdaptor(QObject *object, Backend *backend, std::function<void()> raise);
-    bool yes() const { return true; }
-    bool no() const { return false; }
+    bool yes() const
+    {
+        return true;
+    }
+    bool no() const
+    {
+        return false;
+    }
     QString identity() const;
-    QString desktopEntry() const { return QStringLiteral("ums-renderer"); }
-    QStringList empty() const { return {}; }
+    QString desktopEntry() const
+    {
+        return QStringLiteral("ums-renderer");
+    }
+    QStringList empty() const
+    {
+        return {};
+    }
 public Q_SLOTS:
     void Raise();
     void Quit();
+
 private:
     Backend *b;
     std::function<void()> show;

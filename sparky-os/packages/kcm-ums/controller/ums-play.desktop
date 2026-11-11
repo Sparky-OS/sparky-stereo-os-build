@@ -1,0 +1,35 @@
+[Desktop Entry]
+Type=Service
+MimeType=video/*;audio/*;image/*;
+Actions=TV;Headset;
+X-KDE-RequiredNumberOfUrls=1
+X-KDE-Protocols=file
+X-KDE-Priority=TopLevel
+
+[Desktop Action TV]
+Name=Play on TV
+Name[de]=Auf dem Fernseher abspielen
+Name[es]=Reproducir en el televisor
+Name[fr]=Lire sur le téléviseur
+Name[pl]=Odtwórz na telewizorze
+Name[pt_BR]=Reproduzir na TV
+Name[ja]=テレビで再生
+Name[ko]=TV에서 재생
+Name[zh_CN]=在电视上播放
+Name[zh_TW]=在電視上播放
+Icon=video-display
+Exec=ums-renderer --target tv -- %u
+
+[Desktop Action Headset]
+Name=Play on the headset
+Name[de]=Im Headset abspielen
+Name[es]=Reproducir en el visor
+Name[fr]=Lire sur le casque
+Name[pl]=Odtwórz w goglach
+Name[pt_BR]=Reproduzir no headset
+Name[ja]=ヘッドセットで再生
+Name[ko]=헤드셋에서 재생
+Name[zh_CN]=在头显上播放
+Name[zh_TW]=在頭戴裝置上播放
+Icon=view-preview
+Exec=ums-renderer --target headset -- %u

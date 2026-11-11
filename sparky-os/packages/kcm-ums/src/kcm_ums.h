@@ -35,6 +35,7 @@ public:
     Q_INVOKABLE void removeFolder(int index);
     Q_INVOKABLE void restoreDefaultFolders();
     Q_INVOKABLE void openWebInterface();
+    Q_INVOKABLE void openDeviceControls();
 
     void load() override;
     void save() override;

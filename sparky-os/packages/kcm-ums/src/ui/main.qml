@@ -107,6 +107,12 @@ KCM.SimpleKCM {
             onClicked: kcm.openWebInterface()
         }
 
+        QQC2.Button {
+            icon.name: "video-display"
+            text: i18n("Control Devices")
+            onClicked: kcm.openDeviceControls()
+        }
+
         QQC2.Label {
             Layout.fillWidth: true
             wrapMode: Text.Wrap

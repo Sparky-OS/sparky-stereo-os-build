@@ -13,7 +13,10 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
-Window::Window(const QUrl &server) : backend(server, this), mprisObject(new QObject(this)) {
+Window::Window(const QUrl &server)
+    : backend(server, this)
+    , mprisObject(nullptr)
+{
     setWindowTitle(i18n("Media Devices"));
     resize(620, 400);
     auto layout = new QVBoxLayout(this);
@@ -34,7 +37,12 @@ Window::Window(const QUrl &server) : backend(server, this), mprisObject(new QObj
     status->setObjectName(QStringLiteral("status"));
     layout->addWidget(status);
     auto controls = new QHBoxLayout;
-    auto button = [&](const QString &text, const QString &name) { auto b = new QPushButton(text, this); b->setObjectName(name); controls->addWidget(b); return b; };
+    auto button = [&](const QString &text, const QString &name) {
+        auto b = new QPushButton(text, this);
+        b->setObjectName(name);
+        controls->addWidget(b);
+        return b;
+    };
     back = button(i18n("Back 10 s"), QStringLiteral("back"));
     play = button(i18n("Play"), QStringLiteral("play"));
     pause = button(i18n("Pause"), QStringLiteral("pause"));
@@ -61,58 +69,145 @@ Window::Window(const QUrl &server) : backend(server, this), mprisObject(new QObj
     layout->addWidget(signIn);
     auto settings = new QPushButton(i18n("Media Server Settings"), this);
     layout->addWidget(settings);
-    connect(settings, &QPushButton::clicked, this, [] { QProcess::startDetached(QStringLiteral("systemsettings"), {QStringLiteral("kcm_ums")}); });
+    connect(settings, &QPushButton::clicked, this, [] {
+        QProcess::startDetached(QStringLiteral("systemsettings"), {QStringLiteral("kcm_ums")});
+    });
     connect(signIn, &QPushButton::clicked, this, [this] {
         bool ok = false;
         const auto username = QInputDialog::getText(this, i18n("Sign in to UMS"), i18n("Username:"), QLineEdit::Normal, {}, &ok);
-        if (!ok) return;
+        if (!ok)
+            return;
         const auto password = QInputDialog::getText(this, i18n("Sign in to UMS"), i18n("Password:"), QLineEdit::Password, {}, &ok);
-        if (ok) execute([&] { backend.login(username, password); refresh(); });
+        if (ok)
+            execute([&] {
+                backend.login(username, password);
+                refresh();
+            });
     });
-    connect(refreshButton, &QPushButton::clicked, this, [this] { execute([this] { refresh(); }); });
-    connect(devices, &QComboBox::activated, this, [this] { selected(); });
-    connect(send, &QPushButton::clicked, this, [this] { execute([this] { backend.sendFile(source); }); });
-    connect(play, &QPushButton::clicked, this, [this] { execute([this] { backend.transport(QStringLiteral("Play")); }); });
-    connect(pause, &QPushButton::clicked, this, [this] { execute([this] { backend.transport(QStringLiteral("Pause")); }); });
-    connect(stop, &QPushButton::clicked, this, [this] { execute([this] { backend.transport(QStringLiteral("Stop")); }); });
-    connect(back, &QPushButton::clicked, this, [this] { execute([this] { backend.seek(qMax<qint64>(0, backend.position - 10000000)); }); });
-    connect(forward, &QPushButton::clicked, this, [this] { execute([this] { backend.seek(backend.position + 10000000); }); });
-    connect(volume, &QSlider::sliderReleased, this, [this] { execute([this] { backend.setVolume(volume->value() / 100.0); }); });
-    connect(brightness, &QSlider::sliderReleased, this, [this] { execute([this] { backend.setBrightness(brightness->value()); }); });
-    new RootAdaptor(mprisObject, &backend, [this] { show(); raise(); activateWindow(); });
-    new PlayerAdaptor(mprisObject, &backend, [this](std::function<void()> action) { return execute(std::move(action)); });
+    connect(refreshButton, &QPushButton::clicked, this, [this] {
+        execute([this] {
+            refresh();
+        });
+    });
+    connect(devices, &QComboBox::activated, this, [this] {
+        selected();
+    });
+    connect(send, &QPushButton::clicked, this, [this] {
+        execute([this] {
+            backend.sendFile(source);
+        });
+    });
+    connect(play, &QPushButton::clicked, this, [this] {
+        execute([this] {
+            backend.transport(QStringLiteral("Play"));
+        });
+    });
+    connect(pause, &QPushButton::clicked, this, [this] {
+        execute([this] {
+            backend.transport(QStringLiteral("Pause"));
+        });
+    });
+    connect(stop, &QPushButton::clicked, this, [this] {
+        execute([this] {
+            backend.transport(QStringLiteral("Stop"));
+        });
+    });
+    connect(back, &QPushButton::clicked, this, [this] {
+        execute([this] {
+            backend.seek(qMax<qint64>(0, backend.position - 10000000));
+        });
+    });
+    connect(forward, &QPushButton::clicked, this, [this] {
+        execute([this] {
+            backend.seek(backend.position + 10000000);
+        });
+    });
+    connect(volume, &QSlider::sliderReleased, this, [this] {
+        execute([this] {
+            backend.setVolume(volume->value() / 100.0);
+        });
+    });
+    connect(brightness, &QSlider::sliderReleased, this, [this] {
+        execute([this] {
+            backend.setBrightness(brightness->value());
+        });
+    });
+    mprisObject = new PlayerAdaptor(this, &backend, [this](std::function<void()> action) {
+        return execute(std::move(action));
+    });
+    new RootAdaptor(mprisObject, &backend, [this] {
+        show();
+        raise();
+        activateWindow();
+    });
     connect(&backend, &Backend::changed, this, [this] {
-        status->setText(backend.status == QLatin1String("Playing") ? i18n("Playing") : backend.status == QLatin1String("Paused") ? i18n("Paused") : i18n("Stopped"));
+        status->setText(backend.status == QLatin1String("Playing")      ? i18n("Playing")
+                            : backend.status == QLatin1String("Paused") ? i18n("Paused")
+                                                                        : i18n("Stopped"));
         play->setEnabled(backend.connected && backend.supports(QStringLiteral("AVTransport"), QStringLiteral("Play")));
         pause->setEnabled(backend.connected && backend.supports(QStringLiteral("AVTransport"), QStringLiteral("Pause")));
         stop->setEnabled(backend.connected && backend.supports(QStringLiteral("AVTransport"), QStringLiteral("Stop")));
-        const bool seeking = backend.connected && backend.supports(QStringLiteral("AVTransport"), QStringLiteral("Seek")) && backend.supports(QStringLiteral("AVTransport"), QStringLiteral("GetPositionInfo"));
-        back->setEnabled(seeking); forward->setEnabled(seeking);
+        const bool seeking = backend.connected && backend.supports(QStringLiteral("AVTransport"), QStringLiteral("Seek"))
+            && backend.supports(QStringLiteral("AVTransport"), QStringLiteral("GetPositionInfo"));
+        back->setEnabled(seeking);
+        forward->setEnabled(seeking);
         volume->setEnabled(backend.connected && backend.supports(QStringLiteral("RenderingControl"), QStringLiteral("SetVolume")));
-        if (!volume->isSliderDown()) volume->setValue(qRound(backend.volume * 100));
+        if (!volume->isSliderDown())
+            volume->setValue(qRound(backend.volume * 100));
         brightnessRow->setVisible(backend.supports(QStringLiteral("RenderingControl"), QStringLiteral("SetBrightness")));
         send->setEnabled(backend.connected && !source.isEmpty());
     });
     auto timer = new QTimer(this);
-    connect(timer, &QTimer::timeout, this, [this] { if (!busy && !mprisName.isEmpty()) execute([this] { backend.poll(); }); });
+    connect(timer, &QTimer::timeout, this, [this] {
+        if (!busy && !mprisName.isEmpty())
+            execute(
+                [this] {
+                    backend.poll();
+                },
+                false);
+    });
     timer->start(2000);
-    play->setEnabled(false); pause->setEnabled(false); stop->setEnabled(false); back->setEnabled(false); forward->setEnabled(false); volume->setEnabled(false); send->setEnabled(false); brightnessRow->hide();
+    play->setEnabled(false);
+    pause->setEnabled(false);
+    stop->setEnabled(false);
+    back->setEnabled(false);
+    forward->setEnabled(false);
+    volume->setEnabled(false);
+    send->setEnabled(false);
+    brightnessRow->hide();
 }
-QString Window::execute(std::function<void()> action) {
-    if (busy) return i18n("A device request is still running. Try again shortly.");
+QString Window::execute(std::function<void()> action, bool clearOnSuccess)
+{
+    if (busy)
+        return i18n("A device request is still running. Try again shortly.");
     QScopedValueRollback<bool> guard(busy, true);
-    try { action(); error->clear(); return {}; }
-    catch (const std::exception &e) { const auto message = QString::fromUtf8(e.what()); error->setText(message); return message; }
+    try {
+        action();
+        if (clearOnSuccess)
+            error->clear();
+        return {};
+    } catch (const std::exception &e) {
+        const auto message = QString::fromUtf8(e.what());
+        error->setText(message);
+        return message;
+    }
 }
-void Window::Open(const QString &target, const QString &url) {
-    if (busy) return;
+void Window::Open(const QString &target, const QString &url)
+{
+    if (busy)
+        return;
     kind = target;
     source = QUrl(url);
     file->setText(source.isEmpty() ? i18n("Select a device to control it.") : source.toDisplayString(QUrl::PreferLocalFile));
-    show(); raise(); activateWindow();
-    execute([this] { refresh(); });
+    show();
+    raise();
+    activateWindow();
+    execute([this] {
+        refresh();
+    });
 }
-void Window::refresh() {
+void Window::refresh()
+{
     auto bus = QDBusConnection::sessionBus();
     if (!mprisName.isEmpty()) {
         bus.unregisterService(mprisName);
@@ -124,23 +219,49 @@ void Window::refresh() {
     for (const auto &entry : backend.renderers()) {
         const auto renderer = entry.toObject();
         const auto name = renderer.value(QStringLiteral("name")).toString();
-        const bool headset = name.contains(QStringLiteral("Flat Headset"), Qt::CaseInsensitive) || name.contains(QStringLiteral("StereoDroid"), Qt::CaseInsensitive);
-        if ((kind == QLatin1String("headset") && !headset) || (kind == QLatin1String("tv") && headset)) continue;
-        if (!renderer.value(QStringLiteral("isActive")).toBool() || !renderer.value(QStringLiteral("isAllowed")).toBool()) continue;
+        const bool headset =
+            name.contains(QStringLiteral("Flat Headset"), Qt::CaseInsensitive) || name.contains(QStringLiteral("StereoDroid"), Qt::CaseInsensitive);
+        if ((kind == QLatin1String("headset") && !headset) || (kind == QLatin1String("tv") && headset))
+            continue;
+        if (!renderer.value(QStringLiteral("isActive")).toBool() || !renderer.value(QStringLiteral("isAllowed")).toBool())
+            continue;
         devices->addItem(name, renderer);
     }
-    if (devices->count() == 0) throw std::runtime_error(i18n("No matching device is available. Turn it on, allow it in UMS and refresh.").toUtf8().constData());
+    if (devices->count() == 0)
+        throw std::runtime_error(i18n("No matching device is available. Turn it on, allow it in UMS and refresh.").toUtf8().constData());
     // Selection is explicit; do not send a file just because discovery found a device.
     devices->setCurrentIndex(-1);
 }
-void Window::selected() {
+void Window::selected()
+{
     auto bus = QDBusConnection::sessionBus();
-    if (!mprisName.isEmpty()) { bus.unregisterService(mprisName); bus.unregisterObject(QStringLiteral("/org/mpris/MediaPlayer2")); mprisName.clear(); }
-    const auto failure = execute([this] { backend.select(devices->currentData().toJsonObject()); });
-    if (!failure.isEmpty()) return;
-    mprisName = QStringLiteral("org.mpris.MediaPlayer2.ums_renderer_") + QString::fromLatin1(QCryptographicHash::hash(backend.uuid.toUtf8(), QCryptographicHash::Sha256).toHex().left(16));
-    if (!bus.registerService(mprisName) || !bus.registerObject(QStringLiteral("/org/mpris/MediaPlayer2"), mprisObject, QDBusConnection::ExportAdaptors)) {
+    if (!mprisName.isEmpty()) {
+        bus.unregisterService(mprisName);
+        bus.unregisterObject(QStringLiteral("/org/mpris/MediaPlayer2"));
+        mprisName.clear();
+    }
+    const auto failure = execute([this] {
+        backend.select(devices->currentData().toJsonObject());
+    });
+    if (!failure.isEmpty())
+        return;
+    mprisName = QStringLiteral("org.mpris.MediaPlayer2.ums_renderer_")
+        + QString::fromLatin1(QCryptographicHash::hash(backend.uuid.toUtf8(), QCryptographicHash::Sha256).toHex().left(16));
+    if (!bus.registerService(mprisName)
+        || !bus.registerObject(QStringLiteral("/org/mpris/MediaPlayer2"),
+                               mprisObject,
+                               QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllProperties | QDBusConnection::ExportAllSignals
+                                   | QDBusConnection::ExportAdaptors)) {
         error->setText(i18n("Media controls could not connect to the session bus."));
         mprisName.clear();
+    }
+}
+
+Window::~Window()
+{
+    if (!mprisName.isEmpty()) {
+        auto bus = QDBusConnection::sessionBus();
+        bus.unregisterService(mprisName);
+        bus.unregisterObject(QStringLiteral("/org/mpris/MediaPlayer2"));
     }
 }

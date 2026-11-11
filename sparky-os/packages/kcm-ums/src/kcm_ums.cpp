@@ -9,6 +9,7 @@
 #include <KPluginFactory>
 
 #include <QDesktopServices>
+#include <QProcess>
 
 K_PLUGIN_CLASS_WITH_JSON(UmsKcm, "kcm_ums.json")
 
@@ -149,3 +150,10 @@ void UmsKcm::updateState()
 }
 
 #include "kcm_ums.moc"
+
+void UmsKcm::openDeviceControls()
+{
+    if (!QProcess::startDetached(QStringLiteral("ums-renderer"), {})) {
+        setError(i18n("Media Devices could not start."));
+    }
+}

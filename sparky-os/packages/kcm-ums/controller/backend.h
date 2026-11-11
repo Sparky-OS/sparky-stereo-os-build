@@ -43,6 +43,7 @@ public:
 Q_SIGNALS:
     void changed();
     void seeked(qint64 position);
+
 private:
     QByteArray request(const QUrl &url, const QByteArray &data = {}, const QByteArray &action = {});
     QJsonObject api(const QString &path, const QJsonObject &data = {});

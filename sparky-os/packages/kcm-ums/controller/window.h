@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include "backend.h"
-#include <QWidget>
-#include <functional>
 #include <QComboBox>
 #include <QLabel>
 #include <QPushButton>
 #include <QSlider>
+#include <QWidget>
+#include <functional>
 
 class Window : public QWidget
 {
@@ -15,9 +15,11 @@ class Window : public QWidget
     Q_CLASSINFO("D-Bus Interface", "org.sparky.UMS.Controller")
 public:
     explicit Window(const QUrl &server);
-    QString execute(std::function<void()> action);
+    ~Window() override;
+    QString execute(std::function<void()> action, bool clearOnSuccess = true);
 public Q_SLOTS:
     void Open(const QString &target, const QString &url);
+
 private:
     void refresh();
     void selected();

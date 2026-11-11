@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "umsprofile.h"
 #include "window.h"
 #include <KLocalizedString>
 #include <QApplication>
@@ -7,13 +8,13 @@
 #include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusReply>
-#include <QFile>
 #include <QDir>
+#include <QFile>
 #include <QRegularExpression>
 #include <QTimer>
-#include "umsprofile.h"
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("ums-renderer"));
     KLocalizedString::setApplicationDomain("kcm_ums");
@@ -25,7 +26,10 @@ int main(int argc, char **argv) {
     parser.addPositionalArgument(QStringLiteral("file"), i18n("One local file already shared by UMS"), QStringLiteral("[file]"));
     parser.process(app);
     const auto args = parser.positionalArguments();
-    if (args.size() > 1 || (!parser.value(QStringLiteral("target")).isEmpty() && parser.value(QStringLiteral("target")) != QLatin1String("tv") && parser.value(QStringLiteral("target")) != QLatin1String("headset"))) parser.showHelp(2);
+    if (args.size() > 1
+        || (!parser.value(QStringLiteral("target")).isEmpty() && parser.value(QStringLiteral("target")) != QLatin1String("tv")
+            && parser.value(QStringLiteral("target")) != QLatin1String("headset")))
+        parser.showHelp(2);
     const auto source = args.isEmpty() ? QUrl() : QUrl::fromUserInput(args.first(), QDir::currentPath(), QUrl::AssumeLocalFile);
     auto bus = QDBusConnection::sessionBus();
     const auto service = QStringLiteral("org.sparky.UMS.Controller");
@@ -40,12 +44,16 @@ int main(int argc, char **argv) {
         QFile config(UmsProfile::defaultDirectory() + QStringLiteral("/UMS.conf"));
         if (config.open(QIODevice::ReadOnly)) {
             const auto match = QRegularExpression(QStringLiteral("(?m)^\\s*web_gui_port\\s*=\\s*(\\d+)\\s*$")).match(QString::fromUtf8(config.readAll()));
-            if (match.hasMatch() && match.captured(1).toInt() > 0 && match.captured(1).toInt() < 65536) port = match.captured(1).toInt();
+            if (match.hasMatch() && match.captured(1).toInt() > 0 && match.captured(1).toInt() < 65536)
+                port = match.captured(1).toInt();
         }
         server = QStringLiteral("http://127.0.0.1:%1").arg(port);
     }
     Window window{QUrl(server)};
-    if (!bus.registerObject(QStringLiteral("/Controller"), &window, QDBusConnection::ExportAllSlots)) return 1;
-    QTimer::singleShot(0, &window, [&] { window.Open(parser.value(QStringLiteral("target")), source.toString()); });
+    if (!bus.registerObject(QStringLiteral("/Controller"), &window, QDBusConnection::ExportAllSlots))
+        return 1;
+    QTimer::singleShot(0, &window, [&] {
+        window.Open(parser.value(QStringLiteral("target")), source.toString());
+    });
     return app.exec();
 }
