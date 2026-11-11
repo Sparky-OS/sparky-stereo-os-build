@@ -1,0 +1,2208 @@
+Description: The camera hack's separation from the person's depth limits, a still canvas drawn with both cameras, the scene's plane (ORDER 473t, 473u)
+ The camera hack drew a canvas that is drawn once out of view with one camera, put the page's camera between the two eyes (so a
+ 2D output showed a picture half a separation off the page's own), kept the zero-parallax plane at five times the near distance
+ whatever the scene, and used a fixed 2 percent separation whatever the person's depth limits said. The host now draws two views
+ from the first draw, the left eye is the page's own camera (webgl.stereo-camera.left-eye-is-page-camera), the plane follows
+ the nearest and the farthest thing in the depth buffer inside the person's popped limit (webgl.stereo-camera.scene-plane, and
+ dom.vr.flat.scene-plane for the flat WebXR display), the separation is the sunk limit of the window's kde_stereo_depth_v1
+ depth_limits (a point at infinity lands at that sunk limit in the output's pixels whatever the canvas's width) unscaled by any choice of the browser, and a depth buffer that cannot be read is said once on the page's web console.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+diff --git a/browser/actors/StereoNoticeChild.sys.mjs b/browser/actors/StereoNoticeChild.sys.mjs
+new file mode 100644
+index 0000000000..2ce29ddf43
+--- /dev/null
++++ b/browser/actors/StereoNoticeChild.sys.mjs
+@@ -0,0 +1,17 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Sparky Stereo OS: a 3D scene (the camera hack) that stays flat because the
++// desktop does not tell the browser the person's depth limits is said to the
++// person in the browser's own notification bar. The browser itself tells the
++// document (the chrome-only event MozStereoCanvasNoLimits, once for the
++// canvas; a page cannot send it); the parent actor shows the bar.
++
++export class StereoNoticeChild extends JSWindowActorChild {
++  handleEvent(event) {
++    if (event.type == "MozStereoCanvasNoLimits") {
++      this.sendAsyncMessage("StereoNotice:NoLimits");
++    }
++  }
++}
+diff --git a/browser/actors/StereoNoticeParent.sys.mjs b/browser/actors/StereoNoticeParent.sys.mjs
+new file mode 100644
+index 0000000000..7787453d79
+--- /dev/null
++++ b/browser/actors/StereoNoticeParent.sys.mjs
+@@ -0,0 +1,28 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++export class StereoNoticeParent extends JSWindowActorParent {
++  receiveMessage(message) {
++    if (message.name != "StereoNotice:NoLimits") {
++      return;
++    }
++    const browser = this.browsingContext.top.embedderElement;
++    const win = browser?.ownerGlobal ?? browser?.ownerDocument?.defaultView;
++    if (!win?.gBrowser) {
++      return;
++    }
++    const box = win.gBrowser.getNotificationBox(browser);
++    if (box.getNotificationWithValue("stereo-canvas-no-limits")) {
++      return;
++    }
++    box.appendNotification(
++      "stereo-canvas-no-limits",
++      {
++        label: { "l10n-id": "stereo-canvas-no-limits" },
++        priority: box.PRIORITY_INFO_MEDIUM,
++      },
++      []
++    );
++  }
++}
+diff --git a/browser/actors/StereoXRChild.sys.mjs b/browser/actors/StereoXRChild.sys.mjs
+index 51ee531542..7970846f15 100644
+--- a/browser/actors/StereoXRChild.sys.mjs
++++ b/browser/actors/StereoXRChild.sys.mjs
+@@ -16,7 +16,6 @@
+ // session on it, with or without full screen (WebXR Device API, "shut down the
+ // session").
+ 
+-const MODES = ["tv", "headset", "phone"];
+ const HINT_SECONDS = 9;
+ 
+ export class StereoXRChild extends JSWindowActorChild {
+@@ -91,15 +90,11 @@ export class StereoXRChild extends JSWindowActorChild {
+     if (!doc || !win) {
+       return;
+     }
+-    const mode = Math.min(
+-      Math.max(Services.prefs.getIntPref("dom.vr.flat.mode", 0), 0),
+-      2
+-    );
+     const l10n = new Localization(["browser/browserContext.ftl"], true);
+     const [exit, hint, modeName] = l10n.formatValuesSync([
+       "stereo-xr-exit",
+-      mode == 2 ? "stereo-xr-hint-phone" : "stereo-xr-hint-flat",
+-      "stereo-xr-mode-" + MODES[mode],
++      "stereo-xr-hint-flat",
++      "stereo-xr-mode-tv",
+     ]);
+ 
+     const content = doc.insertAnonymousContent();
+diff --git a/browser/actors/moz.build b/browser/actors/moz.build
+index af809e0bd8..f5758ee5e9 100644
+--- a/browser/actors/moz.build
++++ b/browser/actors/moz.build
+@@ -83,6 +83,9 @@ with Files("SpeechDispatcher*.sys.mjs"):
+ with Files("StereoSiteMarkChild.sys.mjs"):
+     BUG_COMPONENT = ("Core", "Audio/Video: Playback")
+ 
++with Files("StereoNotice*.sys.mjs"):
++    BUG_COMPONENT = ("Core", "Canvas: WebGL")
++
+ with Files("StereoXRChild.sys.mjs"):
+     BUG_COMPONENT = ("Core", "WebVR")
+ 
+@@ -143,6 +146,8 @@ FINAL_TARGET_FILES.actors += [
+     "SearchSERPTelemetryParent.sys.mjs",
+     "SpeechDispatcherChild.sys.mjs",
+     "SpeechDispatcherParent.sys.mjs",
++    "StereoNoticeChild.sys.mjs",
++    "StereoNoticeParent.sys.mjs",
+     "StereoSiteMarkChild.sys.mjs",
+     "StereoXRChild.sys.mjs",
+     "SwitchDocumentDirectionChild.sys.mjs",
+diff --git a/browser/base/content/appmenu-viewcache.inc.xhtml b/browser/base/content/appmenu-viewcache.inc.xhtml
+index 2e9e29254f..4ebcbc867f 100644
+--- a/browser/base/content/appmenu-viewcache.inc.xhtml
++++ b/browser/base/content/appmenu-viewcache.inc.xhtml
+@@ -169,10 +169,8 @@
+                      hidden="true"
+                      />
+       <toolbarbutton id="appMenu-stereo-display-button"
+-                     class="subviewbutton subviewbutton-nav"
+-                     data-l10n-id="main-context-menu-xr-stereo"
+-                     closemenu="none"
+-                     hidden="true"
++                     class="subviewbutton"
++                     data-l10n-id="main-context-menu-stereo-display-settings"
+                      />
+       <toolbarbutton id="appMenu-more-button2"
+                      class="subviewbutton subviewbutton-nav"
+@@ -521,63 +519,6 @@
+     </vbox>
+   </panelview>
+ 
+-  <panelview id="appmenu-stereo-display" class="PanelUI-subView">
+-    <vbox class="panel-subview-body">
+-      <toolbarbutton id="appmenu-stereo-display-mode-tv"
+-                     class="subviewbutton"
+-                     data-l10n-id="main-context-menu-xr-stereo-mode-tv"
+-                     type="checkbox"
+-                     />
+-      <toolbarbutton id="appmenu-stereo-display-mode-headset"
+-                     class="subviewbutton"
+-                     data-l10n-id="main-context-menu-xr-stereo-mode-headset"
+-                     type="checkbox"
+-                     />
+-      <toolbarbutton id="appmenu-stereo-display-mode-phone"
+-                     class="subviewbutton"
+-                     data-l10n-id="main-context-menu-xr-stereo-mode-phone"
+-                     type="checkbox"
+-                     />
+-      <toolbarseparator/>
+-      <toolbarbutton id="appmenu-stereo-display-depth-less"
+-                     class="subviewbutton"
+-                     data-l10n-id="main-context-menu-xr-stereo-depth-less"
+-                     type="checkbox"
+-                     />
+-      <toolbarbutton id="appmenu-stereo-display-depth-normal"
+-                     class="subviewbutton"
+-                     data-l10n-id="main-context-menu-xr-stereo-depth-normal"
+-                     type="checkbox"
+-                     />
+-      <toolbarbutton id="appmenu-stereo-display-depth-more"
+-                     class="subviewbutton"
+-                     data-l10n-id="main-context-menu-xr-stereo-depth-more"
+-                     type="checkbox"
+-                     />
+-      <toolbarbutton id="appmenu-stereo-display-depth-most"
+-                     class="subviewbutton"
+-                     data-l10n-id="main-context-menu-xr-stereo-depth-most"
+-                     type="checkbox"
+-                     />
+-      <toolbarseparator/>
+-      <toolbarbutton id="appmenu-stereo-display-plane-nearer"
+-                     class="subviewbutton"
+-                     data-l10n-id="main-context-menu-xr-stereo-plane-nearer"
+-                     type="checkbox"
+-                     />
+-      <toolbarbutton id="appmenu-stereo-display-plane-default"
+-                     class="subviewbutton"
+-                     data-l10n-id="main-context-menu-xr-stereo-plane-default"
+-                     type="checkbox"
+-                     />
+-      <toolbarbutton id="appmenu-stereo-display-plane-farther"
+-                     class="subviewbutton"
+-                     data-l10n-id="main-context-menu-xr-stereo-plane-farther"
+-                     type="checkbox"
+-                     />
+-    </vbox>
+-  </panelview>
+-
+   <panelview id="PanelUI-developer-tools" class="PanelUI-subview">
+     <vbox id="PanelUI-developer-tools-view"
+           class="panel-subview-body"
+diff --git a/browser/base/content/browser-context.inc.xhtml b/browser/base/content/browser-context.inc.xhtml
+index 3e991bce81..699e9a7e88 100644
+--- a/browser/base/content/browser-context.inc.xhtml
++++ b/browser/base/content/browser-context.inc.xhtml
+@@ -242,81 +242,8 @@
+                     name="canvasstereo"
+                     />
+           <menuseparator/>
+-          <menuitem id="context-canvas-stereo-depth-less"
+-                    data-l10n-id="main-context-menu-canvas-stereo-depth-less"
+-                    type="radio"
+-                    name="canvasstereodepth"
+-                    />
+-          <menuitem id="context-canvas-stereo-depth-normal"
+-                    data-l10n-id="main-context-menu-canvas-stereo-depth-normal"
+-                    type="radio"
+-                    name="canvasstereodepth"
+-                    />
+-          <menuitem id="context-canvas-stereo-depth-more"
+-                    data-l10n-id="main-context-menu-canvas-stereo-depth-more"
+-                    type="radio"
+-                    name="canvasstereodepth"
+-                    />
+-          <menuitem id="context-canvas-stereo-depth-most"
+-                    data-l10n-id="main-context-menu-canvas-stereo-depth-most"
+-                    type="radio"
+-                    name="canvasstereodepth"
+-                    />
+-        </menupopup>
+-      </menu>
+-      <menu id="context-xr-stereo" data-l10n-id="main-context-menu-xr-stereo">
+-        <menupopup>
+-          <menuitem id="context-xr-stereo-mode-tv"
+-                    data-l10n-id="main-context-menu-xr-stereo-mode-tv"
+-                    type="radio"
+-                    name="xrstereomode"
+-                    />
+-          <menuitem id="context-xr-stereo-mode-headset"
+-                    data-l10n-id="main-context-menu-xr-stereo-mode-headset"
+-                    type="radio"
+-                    name="xrstereomode"
+-                    />
+-          <menuitem id="context-xr-stereo-mode-phone"
+-                    data-l10n-id="main-context-menu-xr-stereo-mode-phone"
+-                    type="radio"
+-                    name="xrstereomode"
+-                    />
+-          <menuseparator/>
+-          <menuitem id="context-xr-stereo-depth-less"
+-                    data-l10n-id="main-context-menu-xr-stereo-depth-less"
+-                    type="radio"
+-                    name="xrstereodepth"
+-                    />
+-          <menuitem id="context-xr-stereo-depth-normal"
+-                    data-l10n-id="main-context-menu-xr-stereo-depth-normal"
+-                    type="radio"
+-                    name="xrstereodepth"
+-                    />
+-          <menuitem id="context-xr-stereo-depth-more"
+-                    data-l10n-id="main-context-menu-xr-stereo-depth-more"
+-                    type="radio"
+-                    name="xrstereodepth"
+-                    />
+-          <menuitem id="context-xr-stereo-depth-most"
+-                    data-l10n-id="main-context-menu-xr-stereo-depth-most"
+-                    type="radio"
+-                    name="xrstereodepth"
+-                    />
+-          <menuseparator/>
+-          <menuitem id="context-xr-stereo-plane-nearer"
+-                    data-l10n-id="main-context-menu-xr-stereo-plane-nearer"
+-                    type="radio"
+-                    name="xrstereoplane"
+-                    />
+-          <menuitem id="context-xr-stereo-plane-default"
+-                    data-l10n-id="main-context-menu-xr-stereo-plane-default"
+-                    type="radio"
+-                    name="xrstereoplane"
+-                    />
+-          <menuitem id="context-xr-stereo-plane-farther"
+-                    data-l10n-id="main-context-menu-xr-stereo-plane-farther"
+-                    type="radio"
+-                    name="xrstereoplane"
++          <menuitem id="context-canvas-stereo-display-settings"
++                    data-l10n-id="main-context-menu-stereo-display-settings"
+                     />
+         </menupopup>
+       </menu>
+diff --git a/browser/base/content/browser-context.js b/browser/base/content/browser-context.js
+index 828a15c52d..167710e9cc 100644
+--- a/browser/base/content/browser-context.js
++++ b/browser/base/content/browser-context.js
+@@ -122,33 +122,14 @@ document.addEventListener(
+         case "context-video-stereo-swap":
+           gContextMenu.mediaCommand("stereoSwap");
+           break;
+-        case "context-xr-stereo-mode-tv":
+-        case "context-xr-stereo-mode-headset":
+-        case "context-xr-stereo-mode-phone":
+-        case "context-xr-stereo-depth-less":
+-        case "context-xr-stereo-depth-normal":
+-        case "context-xr-stereo-depth-more":
+-        case "context-xr-stereo-depth-most":
+-        case "context-xr-stereo-plane-nearer":
+-        case "context-xr-stereo-plane-default":
+-        case "context-xr-stereo-plane-farther":
+-          gContextMenu.setXRStereo(
+-            event.target.id.slice("context-xr-stereo-".length)
+-          );
+-          break;
+         case "context-canvas-stereo-off":
+           gContextMenu.setCanvasStereo(false);
+           break;
+         case "context-canvas-stereo-on":
+           gContextMenu.setCanvasStereo(true);
+           break;
+-        case "context-canvas-stereo-depth-less":
+-        case "context-canvas-stereo-depth-normal":
+-        case "context-canvas-stereo-depth-more":
+-        case "context-canvas-stereo-depth-most":
+-          gContextMenu.setCanvasStereoDepth(
+-            event.target.id.slice("context-canvas-stereo-depth-".length)
+-          );
++        case "context-canvas-stereo-display-settings":
++          gContextMenu.openStereoDisplaySettings();
+           break;
+         case "context-leave-dom-fullscreen":
+           gContextMenu.leaveDOMFullScreen();
+diff --git a/browser/base/content/nsContextMenu.sys.mjs b/browser/base/content/nsContextMenu.sys.mjs
+index 5651caa77c..4f2d2f30d4 100644
+--- a/browser/base/content/nsContextMenu.sys.mjs
++++ b/browser/base/content/nsContextMenu.sys.mjs
+@@ -107,16 +107,36 @@ const IMAGE_ONLY_PROTOCOLS = [
+   "page-icon:",
+ ];
+ 
+-// The 3D Canvas menu's depths: the eyes' separation in tenths of a percent
+-// of the view's width (permission "stereo-camera-depth").
+-// The flat stereo display as a WebXR device: the person's modes, depths (in
+-// percent of the display's own default) and screen planes (in millimetres,
+-// 0 for the default).
+-const XR_STEREO_MODES = { tv: 0, headset: 1, phone: 2 };
+-const XR_STEREO_DEPTHS = { less: 50, normal: 100, more: 150, most: 200 };
+-const XR_STEREO_PLANES = { nearer: 600, default: 0, farther: 2000 };
+-
+-const CANVAS_STEREO_DEPTHS = { less: 10, normal: 20, more: 30, most: 40 };
++// Sparky Stereo OS: the browser has no setting for the depth of a 3D picture,
++// for where the screen plane is or for the kind of device: the person's depth
++// limits come from the compositor, built on the display, and are changed in
++// KDE's Display Configuration (kcm_kscreen). This item opens it; when it
++// cannot, the notification bar says so.
++export async function openStereoDisplaySettings(aWindow) {
++  let failure;
++  try {
++    const { Subprocess } = ChromeUtils.importESModule(
++      "resource://gre/modules/Subprocess.sys.mjs"
++    );
++    const command = await Subprocess.pathSearch("systemsettings");
++    await Subprocess.call({ command, arguments: ["kcm_kscreen"] });
++    return;
++  } catch (e) {
++    failure = e;
++  }
++  console.error("Stereo: KDE's Display Configuration could not be opened", failure);
++  const box = aWindow?.gBrowser?.getNotificationBox();
++  if (box && !box.getNotificationWithValue("stereo-display-settings-failed")) {
++    box.appendNotification(
++      "stereo-display-settings-failed",
++      {
++        label: { "l10n-id": "stereo-display-settings-failed" },
++        priority: box.PRIORITY_WARNING_MEDIUM,
++      },
++      []
++    );
++  }
++}
+ 
+ export class nsContextMenu {
+   /**
+@@ -1099,64 +1119,12 @@ export class nsContextMenu {
+       this.onVideo && this.target.stereoChoice !== undefined
+     );
+     // A WebGL scene drawn once per eye from its own camera, for the page's
+-    // site, and the depth (Sparky Stereo OS).
+-    // The flat stereo display as a WebXR device: how the person sees it
+-    // (mode, depth, screen plane), global preferences, never derived from the
+-    // output.
+-    const xrMenu =
+-      Services.prefs.getBoolPref("dom.vr.flat.enabled", false) &&
+-      (this.onCanvas ||
+-        !(
+-          this.onLink ||
+-          this.onImage ||
+-          this.onVideo ||
+-          this.onAudio ||
+-          this.isContentSelected ||
+-          this.onTextInput
+-        ));
+-    this.showItem("context-xr-stereo", xrMenu);
+-    if (xrMenu) {
+-      const mode = Services.prefs.getIntPref("dom.vr.flat.mode", 0);
+-      for (const [name, value] of Object.entries(XR_STEREO_MODES)) {
+-        this.setItemAttr(
+-          "context-xr-stereo-mode-" + name,
+-          "checked",
+-          value == mode
+-        );
+-      }
+-      const strength = Services.prefs.getIntPref(
+-        "dom.vr.flat.depth-strength",
+-        100
+-      );
+-      for (const [name, value] of Object.entries(XR_STEREO_DEPTHS)) {
+-        this.setItemAttr(
+-          "context-xr-stereo-depth-" + name,
+-          "checked",
+-          value == strength
+-        );
+-      }
+-      const plane = Services.prefs.getIntPref("dom.vr.flat.screen-plane-mm", 0);
+-      for (const [name, value] of Object.entries(XR_STEREO_PLANES)) {
+-        this.setItemAttr(
+-          "context-xr-stereo-plane-" + name,
+-          "checked",
+-          value == plane
+-        );
+-      }
+-    }
++    // site (Sparky Stereo OS).
+     this.showItem("context-canvas-stereo", this.onCanvas);
+     if (this.onCanvas) {
+       const on = this.canvasStereoOn();
+       this.setItemAttr("context-canvas-stereo-on", "checked", on);
+       this.setItemAttr("context-canvas-stereo-off", "checked", !on);
+-      const depth = this.canvasStereoDepth();
+-      for (const [name, value] of Object.entries(CANVAS_STEREO_DEPTHS)) {
+-        this.setItemAttr(
+-          "context-canvas-stereo-depth-" + name,
+-          "checked",
+-          value == depth
+-        );
+-      }
+     }
+     this.showItem(
+       "context-media-showcontrols",
+@@ -2683,19 +2651,6 @@ export class nsContextMenu {
+     return Services.prefs.getBoolPref("webgl.stereo-camera.enabled", false);
+   }
+ 
+-  canvasStereoDepth() {
+-    const perm = Services.perms.testPermissionFromPrincipal(
+-      this.principal,
+-      "stereo-camera-depth"
+-    );
+-    if (perm >= 5 && perm <= 100) {
+-      return perm;
+-    }
+-    return Math.round(
+-      10 * Services.prefs.getFloatPref("webgl.stereo-camera.separation", 2.0)
+-    );
+-  }
+-
+   setCanvasStereo(on) {
+     Services.perms.addFromPrincipal(
+       this.principal,
+@@ -2704,34 +2659,8 @@ export class nsContextMenu {
+     );
+   }
+ 
+-  // The 3D Display menu: mode, depth (percent of the display's own) and the
+-  // screen plane's distance (mm, 0 for the default).
+-  setXRStereo(item) {
+-    const [kind, name] = [item.split("-")[0], item.split("-").slice(1).join("-")];
+-    if (kind == "mode" && name in XR_STEREO_MODES) {
+-      Services.prefs.setIntPref("dom.vr.flat.mode", XR_STEREO_MODES[name]);
+-    } else if (kind == "depth" && name in XR_STEREO_DEPTHS) {
+-      Services.prefs.setIntPref(
+-        "dom.vr.flat.depth-strength",
+-        XR_STEREO_DEPTHS[name]
+-      );
+-    } else if (kind == "plane" && name in XR_STEREO_PLANES) {
+-      Services.prefs.setIntPref(
+-        "dom.vr.flat.screen-plane-mm",
+-        XR_STEREO_PLANES[name]
+-      );
+-    }
+-  }
+-
+-  setCanvasStereoDepth(name) {
+-    const value = CANVAS_STEREO_DEPTHS[name];
+-    if (value) {
+-      Services.perms.addFromPrincipal(
+-        this.principal,
+-        "stereo-camera-depth",
+-        value
+-      );
+-    }
++  openStereoDisplaySettings() {
++    openStereoDisplaySettings(this.window);
+   }
+ 
+   mediaCommand(command, data) {
+diff --git a/browser/components/DesktopActorRegistry.sys.mjs b/browser/components/DesktopActorRegistry.sys.mjs
+index d02dd7384f..02a8af2661 100644
+--- a/browser/components/DesktopActorRegistry.sys.mjs
++++ b/browser/components/DesktopActorRegistry.sys.mjs
+@@ -839,6 +839,23 @@ let JSWINDOWACTORS = {
+     allFrames: true,
+   },
+ 
++  // Sparky Stereo OS: a 3D scene that stays flat because the desktop does not
++  // tell the browser the person's depth limits is said in the notification bar.
++  StereoNotice: {
++    parent: {
++      esModuleURI: "resource:///actors/StereoNoticeParent.sys.mjs",
++    },
++    child: {
++      esModuleURI: "resource:///actors/StereoNoticeChild.sys.mjs",
++      events: {
++        MozStereoCanvasNoLimits: {},
++      },
++    },
++
++    messageManagerGroups: ["browsers"],
++    allFrames: true,
++  },
++
+   // Sparky Stereo OS: the hint, the mode and the Exit control while an
+   // immersive WebXR session shows the flat stereo display.
+   StereoXR: {
+diff --git a/browser/components/customizableui/content/panelUI.js b/browser/components/customizableui/content/panelUI.js
+index cae11f8d41..49191b44d3 100644
+--- a/browser/components/customizableui/content/panelUI.js
++++ b/browser/components/customizableui/content/panelUI.js
+@@ -198,17 +198,9 @@ const PanelUI = {
+     this.mainView.addEventListener("ViewShowing", this._onMainViewShow);
+     this._onStereoVideoShow = this._onStereoVideoShow.bind(this);
+     this._onStereoVideoCommand = this._onStereoVideoCommand.bind(this);
+-    this._onStereoDisplayShow = this._onStereoDisplayShow.bind(this);
+-    this._onStereoDisplayCommand = this._onStereoDisplayCommand.bind(this);
+     let stereoVideo = PanelMultiView.getViewNode(document, "appmenu-stereo-video");
+     stereoVideo.addEventListener("ViewShowing", this._onStereoVideoShow);
+     stereoVideo.addEventListener("command", this._onStereoVideoCommand);
+-    let stereoDisplay = PanelMultiView.getViewNode(
+-      document,
+-      "appmenu-stereo-display"
+-    );
+-    stereoDisplay.addEventListener("ViewShowing", this._onStereoDisplayShow);
+-    stereoDisplay.addEventListener("command", this._onStereoDisplayCommand);
+     this._eventListenersAdded = true;
+   },
+ 
+@@ -458,7 +450,10 @@ const PanelUI = {
+         this.showSubView("appmenu-stereo-video", target);
+         break;
+       case "appMenu-stereo-display-button":
+-        this.showSubView("appmenu-stereo-display", target);
++        ChromeUtils.importESModule(
++          "chrome://browser/content/nsContextMenu.sys.mjs"
++        ).openStereoDisplaySettings(window);
++        this.hide();
+         break;
+       case "appMenu-help-button2":
+         this.showSubView("PanelUI-helpView", target);
+@@ -480,18 +475,6 @@ const PanelUI = {
+     "top-bottom",
+     "top-bottom-right-first",
+   ],
+-  _STEREO_XR: {
+-    mode: { pref: "dom.vr.flat.mode", values: { tv: 0, headset: 1, phone: 2 } },
+-    depth: {
+-      pref: "dom.vr.flat.depth-strength",
+-      values: { less: 50, normal: 100, more: 150, most: 200 },
+-    },
+-    plane: {
+-      pref: "dom.vr.flat.screen-plane-mm",
+-      values: { nearer: 600, default: 0, farther: 2000 },
+-    },
+-  },
+-
+   // The main video of the selected tab as {actor, state}, or null.
+   async _stereoMainVideo(command, data) {
+     let best = null;
+@@ -551,32 +534,8 @@ const PanelUI = {
+     );
+   },
+ 
+-  _onStereoDisplayShow(event) {
+-    for (let [group, { pref, values }] of Object.entries(this._STEREO_XR)) {
+-      let current = Services.prefs.getIntPref(pref, group == "depth" ? 100 : 0);
+-      for (let [name, value] of Object.entries(values)) {
+-        event.target
+-          .querySelector("#appmenu-stereo-display-" + group + "-" + name)
+-          .setAttribute("checked", value == current);
+-      }
+-    }
+-  },
+-
+-  _onStereoDisplayCommand(event) {
+-    let [group, name] = event.target.id
+-      .slice("appmenu-stereo-display-".length)
+-      .split("-");
+-    let entry = this._STEREO_XR[group];
+-    if (entry && name in entry.values) {
+-      Services.prefs.setIntPref(entry.pref, entry.values[name]);
+-    }
+-    this._onStereoDisplayShow({
+-      target: PanelMultiView.getViewNode(document, "appmenu-stereo-display"),
+-    });
+-  },
+-
+-  // 3D Video shows where the page can have a stereo video; 3D Display where
+-  // the flat stereo display is offered as a WebXR device.
++  // 3D Video shows where the page can have a stereo video; Display Settings
++  // opens KDE's, where the person's depth limits are.
+   _showStereoButtons() {
+     let video = document.getElementById("appMenu-stereo-video-button");
+     let display = document.getElementById("appMenu-stereo-display-button");
+@@ -584,7 +543,7 @@ const PanelUI = {
+       video.hidden = false;
+     }
+     if (display) {
+-      display.hidden = !Services.prefs.getBoolPref("dom.vr.flat.enabled", false);
++      display.hidden = false;
+     }
+   },
+ 
+diff --git a/browser/locales/en-US/browser/browserContext.ftl b/browser/locales/en-US/browser/browserContext.ftl
+index bf46aba491..f3b1f53fab 100644
+--- a/browser/locales/en-US/browser/browserContext.ftl
++++ b/browser/locales/en-US/browser/browserContext.ftl
+@@ -273,7 +273,8 @@ main-context-menu-video-stereo-swap =
+ 
+ ## A WebGL scene that has no stereo 3D of its own, drawn once per eye from
+ ## the page's own camera (Sparky Stereo OS), for the page's site: on or
+-## off, and how deep the picture looks (the distance between the eyes).
++## off. How deep the picture looks is the person's depth limits, changed in
++## KDE's Display Settings, which this menu opens.
+ 
+ main-context-menu-canvas-stereo =
+     .label = 3D Canvas
+@@ -285,64 +286,21 @@ main-context-menu-canvas-stereo-off =
+ main-context-menu-canvas-stereo-on =
+     .label = On
+ 
+-main-context-menu-canvas-stereo-depth-less =
+-    .label = Less Depth
++main-context-menu-stereo-display-settings =
++    .label = Display Configuration
+ 
+-main-context-menu-canvas-stereo-depth-normal =
+-    .label = Normal Depth
++## The flat stereo display as a WebXR device (Sparky Stereo OS): the browser's
++## own overlay shows the hint and the Exit control while a session lasts.
+ 
+-main-context-menu-canvas-stereo-depth-more =
+-    .label = More Depth
++## Said in the browser's own notification bar (Sparky Stereo OS). The label of
++## "main-context-menu-stereo-display-settings" is KDE's own name for the page.
+ 
+-main-context-menu-canvas-stereo-depth-most =
+-    .label = Most Depth
+-
+-## The flat stereo display as a WebXR device (Sparky Stereo OS): how the person
+-## sees it, never derived from the output (a 3D television and a headset can be
+-## shown at once): the mode, the depth, and where the screen plane is. The
+-## browser's own overlay shows the hint and the Exit control while a session
+-## lasts.
+-
+-main-context-menu-xr-stereo =
+-    .label = 3D Display
+-    .accesskey = 3
+-
+-main-context-menu-xr-stereo-mode-tv =
+-    .label = Flat TV or output
+-
+-main-context-menu-xr-stereo-mode-headset =
+-    .label = Flat headset
+-
+-main-context-menu-xr-stereo-mode-phone =
+-    .label = VR over the phone
+-
+-main-context-menu-xr-stereo-depth-less =
+-    .label = Less depth
+-
+-main-context-menu-xr-stereo-depth-normal =
+-    .label = Normal depth
+-
+-main-context-menu-xr-stereo-depth-more =
+-    .label = More depth
+-
+-main-context-menu-xr-stereo-depth-most =
+-    .label = Most depth
+-
+-main-context-menu-xr-stereo-plane-nearer =
+-    .label = Screen plane: nearer
+-
+-main-context-menu-xr-stereo-plane-default =
+-    .label = Screen plane: default
+-
+-main-context-menu-xr-stereo-plane-farther =
+-    .label = Screen plane: farther
++stereo-canvas-no-limits = This page's 3D scene stays flat: the desktop does not tell the browser your depth limits (Stereo KWin is missing).
++stereo-display-settings-failed = KDE's Display Configuration could not be opened: systemsettings was not found or did not start.
+ 
+ stereo-xr-exit = Exit 3D
+ stereo-xr-hint-flat = Esc leaves 3D. Drag with the mouse to look; W, A, S, D or the arrow keys and the wheel move you.
+-stereo-xr-hint-phone = Esc leaves 3D. The phone headset's head tracking and controllers are not connected yet: the mouse and keyboard move the view.
+ stereo-xr-mode-tv = Flat TV or output
+-stereo-xr-mode-headset = Flat headset
+-stereo-xr-mode-phone = VR over the phone
+ 
+ ## The access keys for "Show Controls" and "Hide Controls" are the same
+ ## because the two context-menu items are mutually exclusive.
+diff --git a/dom/canvas/ClientWebGLContext.cpp b/dom/canvas/ClientWebGLContext.cpp
+index e8c862b808..eb0daa1c7e 100644
+--- a/dom/canvas/ClientWebGLContext.cpp
++++ b/dom/canvas/ClientWebGLContext.cpp
+@@ -28,11 +28,14 @@
+ #include "mozilla/ResultVariant.h"
+ #include "mozilla/ScopeExit.h"
+ #include "mozilla/StaticPrefs_webgl.h"
++#include "mozilla/widget/StereoDepthState.h"
+ #include "mozilla/dom/BufferSourceBinding.h"
+ #include "mozilla/dom/Document.h"
+ #include "mozilla/dom/GeneratePlaceholderCanvasData.h"
+ #include "mozilla/dom/HTMLCanvasElement.h"
+ #include "mozilla/PermissionManager.h"
++#include "mozilla/PresShell.h"
++#include "nsPresContext.h"
+ #include "nsIFrame.h"
+ #include "mozilla/dom/ToJSValue.h"
+ #include "mozilla/dom/TypedArray.h"
+@@ -548,6 +551,10 @@ void ClientWebGLContext::Present(WebGLFramebufferJS* const xrFb,
+   }
+   webgl::SwapChainOptions asyncOptions =
+       PrepareAsyncSwapChainOptions(xrFb, webvr, options);
++  if (xrFb && options.flatXR) {
++    asyncOptions.stereoDepthA = mXRDepthA;
++    asyncOptions.stereoDepthNumerator = mXRDepthNumerator;
++  }
+   if (!xrFb && mFlatXR) {
+     // The canvas shows the frames of an immersive session on the flat stereo
+     // display: both eyes side by side, the left eye first.
+@@ -558,12 +565,54 @@ void ClientWebGLContext::Present(WebGLFramebufferJS* const xrFb,
+   } else if (!xrFb && StereoCameraPresents()) {
+     // The camera hack: both eyes, full side by side, left eye first.
+     asyncOptions.stereoCamera = true;
+-    asyncOptions.stereoDepth = mStereoDepth;
++    // The person's limits for this window: the separation of the eyes, and
++    // how far the scene's plane lets the nearest thing come. Read at every
++    // present, so a change in the person's limits is followed.
++    ReadStereoLimits(&asyncOptions.stereoSunk, &asyncOptions.stereoPopped,
++                     &asyncOptions.stereoViewRatio);
+     asyncOptions.stereoMode = uint8_t(StereoMode::LEFT_RIGHT);
+   }
+   Run<RPROC(Present)>(xrFb ? xrFb->mId : 0, type, webvr, asyncOptions);
+ }
+ 
++// A standard WebGL projection (right-handed, depth range 0 to 1) built from
++// the session's depth range, in the terms of StereoCamera::depthA and
++// depthNumerator.
++void ClientWebGLContext::SetXRDepthRange(const double aNear, const double aFar) {
++  if (!(aNear > 0.0) || !(aFar > aNear)) {
++    mXRDepthA = 0.0f;
++    mXRDepthNumerator = 0.0f;
++    return;
++  }
++  mXRDepthA = float((aFar + aNear) / (aFar - aNear));
++  mXRDepthNumerator = float(-2.0 * aFar * aNear / (aFar - aNear));
++}
++
++// Asked of the host (asynchronously) every 15th time: the host looks at the
++// frames now and then, and the session asks once a frame. The answer is the
++// one before.
++bool ClientWebGLContext::GetStereoScene(float* const aNearest,
++                                        float* const aFarthest) {
++  if (IsContextLost() || !mNotLost) {
++    return false;
++  }
++  if (mSceneAsked++ % 15 == 0 && NS_IsMainThread()) {
++    RefPtr<webgl::NotLostData> notLost(mNotLost);
++    const auto& child = notLost->outOfProcess;
++    child->FlushPendingCmds();
++    child->SendGetStereoScene()->Then(
++        GetMainThreadSerialEventTarget(), __func__,
++        [self = RefPtr{this}](const std::tuple<float, float>& aAnswer) {
++          self->mSceneNearest = std::get<0>(aAnswer);
++          self->mSceneFarthest = std::get<1>(aAnswer);
++        },
++        [](mozilla::ipc::ResponseRejectReason) {});
++  }
++  *aNearest = mSceneNearest;
++  *aFarthest = mSceneFarthest;
++  return mSceneNearest > 0.0f && mSceneFarthest >= mSceneNearest;
++}
++
+ void ClientWebGLContext::SetFlatXR(const bool flatXR, const uvec2 size) {
+   if (mFlatXR == flatXR && (!flatXR || mFlatXRSize == size)) return;
+   mFlatXR = flatXR;
+@@ -595,15 +644,22 @@ uvec2 ClientWebGLContext::PresentedSize() {
+ // is looked at, as the block's layout is the program's.
+ void ClientWebGLContext::LookForStereoCamera(const GLenum target,
+                                              const Span<const uint8_t>& aData) {
+-  if (mStereoCamera || target != LOCAL_GL_UNIFORM_BUFFER ||
+-      aData.size() > 64 * 1024 || !gfx::gfxVars::StereoContentDeclaration()) {
++  if (mStereoCamera || mNoStereoLimitsTold || target != LOCAL_GL_UNIFORM_BUFFER ||
++      aData.size() > 64 * 1024) {
+     return;
+   }
++  const bool declared = gfx::gfxVars::StereoContentDeclaration();
+   const float factor = StaticPrefs::webgl_stereo_camera_convergence();
+   for (size_t offset = 0; offset + 64 <= aData.size(); offset += 16) {
+     std::array<float, 16> m;
+     memcpy(m.data(), aData.data() + offset, 64);
+     if (webgl::ClassifyStereoCamera(m.data(), {}, factor)) {
++      if (!declared) {
++        // No Stereo KWin: the scene stays as the page drew it, and the person
++        // is told why (TellNoStereoLimits, once).
++        TellNoStereoLimits();
++        return;
++      }
+       mStereoCamera = true;
+       OnStereoCameraStarted();
+       return;
+@@ -611,6 +667,90 @@ void ClientWebGLContext::LookForStereoCamera(const GLenum target,
+   }
+ }
+ 
++// The person's depth limits for the window the canvas is in, in tenths of a
++// pixel of a view 1920 wide; false (both 0) where they are not known.
++bool ClientWebGLContext::ReadStereoLimits(uint16_t* const aSunk,
++                                          uint16_t* const aPopped,
++                                          uint32_t* const aViewRatio) const {
++  *aSunk = *aPopped = 0;
++  *aViewRatio = 0;
++  if (!NS_IsMainThread() || !mCanvasElement) {
++    // A canvas in a worker has no window to ask: the limits the process was
++    // last told (BrowserChild, or a main thread canvas), the canvas taken as
++    // shown at the size of its drawing buffer.
++    const int32_t sunk100 = widget::StereoDepthProcessLimits::sSunk100;
++    if (sunk100 <= 0) {
++      return false;
++    }
++    *aSunk = uint16_t(std::clamp<int32_t>(sunk100 / 10, 0, 65535));
++    *aPopped = uint16_t(std::clamp<int32_t>(
++        widget::StereoDepthProcessLimits::sPopped100 / 10, 0, 65535));
++    const int32_t outputWidth = widget::StereoDepthProcessLimits::sOutputWidth;
++    if (outputWidth > 0 && mRequestedSize.x >= 1) {
++      *aViewRatio = uint32_t(std::clamp(
++          std::lround(1000.0 * outputWidth / double(mRequestedSize.x)), 1L,
++          4000000L));
++    }
++    return true;
++  }
++  // The limits are the window's, so the page's root frame tells them as well
++  // as the canvas's own, which a canvas just made by a script does not have
++  // yet (no layout has run).
++  nsIFrame* frame = mCanvasElement->GetPrimaryFrame();
++  if (!frame) {
++    if (PresShell* presShell = mCanvasElement->OwnerDoc()->GetPresShell()) {
++      frame = presShell->GetRootFrame();
++    }
++  }
++  double sunk = 0, popped = 0;
++  if (!frame || !nsDisplayStereoDepth::LimitsFor(frame, &sunk, &popped)) {
++    return false;
++  }
++  *aPopped = uint16_t(std::clamp(std::lround(popped * 10.0), 0L, 65535L));
++  *aSunk = uint16_t(std::clamp(std::lround(sunk * 10.0), 0L, 65535L));
++  // The limits are in pixels of a view as wide as the output: the canvas's
++  // separation is a share of its own on-screen width, in device pixels. A
++  // canvas with no frame yet (a script has just made it and no layout has
++  // run) is taken as shown at the size of its drawing buffer.
++  const int32_t outputWidth = nsDisplayStereoDepth::OutputWidthFor(frame);
++  double canvasWidth = double(mRequestedSize.x);
++  if (nsIFrame* canvasFrame = mCanvasElement->GetPrimaryFrame()) {
++    canvasWidth = double(canvasFrame->GetContentRect().Width()) /
++                  double(canvasFrame->PresContext()->AppUnitsPerDevPixel());
++  }
++  if (outputWidth > 0 && canvasWidth >= 1.0) {
++    *aViewRatio = uint32_t(std::clamp(
++        std::lround(1000.0 * outputWidth / canvasWidth), 1L, 4000000L));
++  }
++  widget::StereoDepthProcessLimits::Publish(
++      int32_t(std::lround(sunk * 100.0)), int32_t(std::lround(popped * 100.0)),
++      outputWidth);
++  return true;
++}
++
++static LazyLogModule gWebGLStereoClientLog("WebGLStereo");
++
++// The browser's own notification bar tells the person that a 3D scene stays
++// flat because the desktop does not tell the browser the person's depth limits
++// (no Stereo KWin), once for the canvas; pages do not see the event. Where the
++// compositor is there and the limits come later, nothing is said.
++void ClientWebGLContext::TellNoStereoLimits() {
++  if (mNoStereoLimitsTold || !NS_IsMainThread() || !mCanvasElement ||
++      gfx::gfxVars::StereoContentDeclaration()) {
++    return;
++  }
++  mNoStereoLimitsTold = true;
++  nsContentUtils::LogSimpleConsoleError(
++      u"Stereo: this scene stays flat: the desktop does not tell the "
++      u"browser the depth limits (kde_stereo_depth_v1), so no separation is "
++      u"made up."_ns,
++      "WebGL"_ns, false, true);
++  dom::Document* doc = mCanvasElement->OwnerDoc();
++  nsContentUtils::DispatchEventOnlyToChrome(
++      doc, doc, u"MozStereoCanvasNoLimits"_ns, CanBubble::eYes,
++      Cancelable::eNo);
++}
++
+ void ClientWebGLContext::OnStereoCameraStarted() {
+   // The canvas's frames change size: a new canvas renderer, which only a full
+   // paint of the canvas's frame makes.
+@@ -620,6 +760,36 @@ void ClientWebGLContext::OnStereoCameraStarted() {
+       frame->InvalidateFrame();
+     }
+   }
++  BeginStereoCameraOnHost();
++}
++
++// A canvas that has not been painted yet (it is below the fold, in a hidden
++// tab or not yet on an output) is not presented, so the host would draw the
++// page's frames with one camera until the first present: a page that draws
++// once, as an on-demand renderer does, would show that one picture to both
++// eyes. Tell the host as soon as the camera is known, from the next draw on.
++// A canvas that is painted already switches at its next present with its
++// frames' new size.
++void ClientWebGLContext::BeginStereoCameraOnHost() {
++  if (mStereoCameraBegun || !mStereoCamera || IsContextLost() || !mNotLost ||
++      mNotLost->mCanvasRenderer) {
++    return;
++  }
++  if (!mStereoCameraSiteRead) {
++    UpdateStereoCameraSite();
++  }
++  if (!mStereoCameraSiteAllowed || mFlatXR || mInlineStereo ||
++      !gfx::gfxVars::StereoContentDeclaration()) {
++    return;
++  }
++  mStereoCameraBegun = true;
++  uint16_t sunk = 0, popped = 0;
++  uint32_t viewRatio = 0;
++  const bool known = ReadStereoLimits(&sunk, &popped, &viewRatio);
++  MOZ_LOG(gWebGLStereoClientLog, LogLevel::Info,
++          ("camera begins on the host, limits %s (sunk %.1f, popped %.1f)",
++           known ? "known" : "not known yet", sunk / 10.0, popped / 10.0));
++  Run<RPROC(SetStereoCamera)>(sunk, popped, viewRatio);
+ }
+ 
+ // Only where the two views are declared on a surface of their own: anywhere
+@@ -630,14 +800,11 @@ bool ClientWebGLContext::StereoCameraPresents() const {
+ }
+ 
+ // The 3D Canvas menu sets, for the page's site, whether its WebGL scenes are
+-// drawn once per eye (permission "stereo-camera", allow or deny) and the
+-// eyes' separation ("stereo-camera-depth", in tenths of a percent of the
+-// view's width); without them the preferences decide
+-// (webgl.stereo-camera.enabled, webgl.stereo-camera.separation). A canvas
+-// in a worker follows the preferences.
++// drawn once per eye (permission "stereo-camera", allow or deny); without it
++// webgl.stereo-camera.enabled decides. The depth is the person's limits, never
++// a choice of the page's site. A canvas in a worker follows the preference.
+ bool ClientWebGLContext::UpdateStereoCameraSite() {
+   bool allowed = StaticPrefs::webgl_stereo_camera_enabled();
+-  uint8_t depth = 0;
+   if (NS_IsMainThread() && mCanvasElement) {
+     if (RefPtr<PermissionManager> perms = PermissionManager::GetInstance()) {
+       nsIPrincipal* principal = mCanvasElement->NodePrincipal();
+@@ -650,15 +817,19 @@ bool ClientWebGLContext::UpdateStereoCameraSite() {
+           allowed = false;
+         }
+       }
+-      perm = nsIPermissionManager::UNKNOWN_ACTION;
+-      if (NS_SUCCEEDED(perms->TestPermissionFromPrincipal(
+-              principal, "stereo-camera-depth"_ns, &perm)) &&
+-          perm >= 5 && perm <= 100) {
+-        depth = uint8_t(perm);
+-      }
+     }
+   }
+-  mStereoDepth = depth;
++  // No limits, no separation: the edition invents none, so a canvas whose
++  // limits are not known stays as the page drew it (flat), and where the
++  // desktop has no Stereo KWin at all the person is told why.
++  if (allowed && mStereoCamera) {
++    uint16_t sunk = 0, popped = 0;
++    uint32_t viewRatio = 0;
++    if (!ReadStereoLimits(&sunk, &popped, &viewRatio) || sunk == 0) {
++      allowed = false;
++      TellNoStereoLimits();
++    }
++  }
+   mStereoCameraSiteAllowed = allowed;
+   mStereoCameraSiteRead = true;
+   return allowed != mStereoCameraAllowed;
+diff --git a/dom/canvas/ClientWebGLContext.h b/dom/canvas/ClientWebGLContext.h
+index 4128ac8816..0c8c4ff6e1 100644
+--- a/dom/canvas/ClientWebGLContext.h
++++ b/dom/canvas/ClientWebGLContext.h
+@@ -772,13 +772,22 @@ class ClientWebGLContext final : public nsICanvasRenderingContextInternal,
+   // is on for the page's site (mStereoCameraAllowed).
+   mutable bool mStereoCamera = false;
+   // The camera hack for the canvas's site (the 3D Canvas menu, permissions
+-  // "stereo-camera" and "stereo-camera-depth"), else the preferences: as
++  // "stereo-camera"), else the preferences: as
+   // last read (UpdateStereoCameraSite), and in effect, which follows with
+   // the next canvas renderer (the presented frames change size).
+   bool mStereoCameraSiteRead = false;
+   bool mStereoCameraSiteAllowed = false;
+   bool mStereoCameraAllowed = false;
+-  uint8_t mStereoDepth = 0;
++  // The host has been told that the camera hack begins (before the first
++  // present).
++  bool mStereoCameraBegun = false;
++  // The person has been told that the scene stays flat for want of limits.
++  bool mNoStereoLimitsTold = false;
++  float mXRDepthA = 0.0f;
++  float mXRDepthNumerator = 0.0f;
++  float mSceneNearest = 0.0f;
++  float mSceneFarthest = 0.0f;
++  uint32_t mSceneAsked = 0;
+   uvec2 mRequestedSize = {};
+ 
+  public:
+@@ -1121,7 +1130,17 @@ class ClientWebGLContext final : public nsICanvasRenderingContextInternal,
+   uvec2 PresentedSize();
+   bool IsPresentingFlatXR() const { return mFlatXR; }
+   bool StereoCameraPresents() const;
++  // An immersive session on the flat display tells the context the depth range
++  // of its projection, so that the host can read the scene's distances.
++  void SetXRDepthRange(double aNear, double aFar);
++  // The nearest and the farthest thing of the session's last frames looked at,
++  // in metres; false while none was.
++  bool GetStereoScene(float* aNearest, float* aFarthest);
+   void OnStereoCameraStarted();
++  void BeginStereoCameraOnHost();
++  void TellNoStereoLimits();
++  bool ReadStereoLimits(uint16_t* aSunk, uint16_t* aPopped,
++                        uint32_t* aViewRatio) const;
+   // Reads the site's choice; true when it differs from the one in effect.
+   bool UpdateStereoCameraSite();
+   void LookForStereoCamera(GLenum target, const Span<const uint8_t>& aData);
+diff --git a/dom/canvas/HostWebGLContext.h b/dom/canvas/HostWebGLContext.h
+index ac35766c2a..328b62b80e 100644
+--- a/dom/canvas/HostWebGLContext.h
++++ b/dom/canvas/HostWebGLContext.h
+@@ -177,6 +177,12 @@ class HostWebGLContext final : public SupportsWeakPtr {
+     mContext->WaitForTxn(aOwnerId, txnType, txnId);
+   }
+   void EndOfFrame() const { return (void)mContext->EndOfFrame(); }
++  // The camera hack starts before the canvas is first presented
++  // (ClientWebGLContext::OnStereoCameraStarted).
++  void SetStereoCamera(const uint16_t sunk, const uint16_t popped,
++                       const uint32_t viewRatio) const {
++    mContext->BeginStereoCamera(sunk, popped, viewRatio);
++  }
+   Maybe<layers::SurfaceDescriptor> GetFrontBuffer(ObjectId xrFb,
+                                                   const bool webvr) const;
+ 
+@@ -205,6 +211,9 @@ class HostWebGLContext final : public SupportsWeakPtr {
+   void Resize(const uvec2& size) { return mContext->Resize(size); }
+ 
+   uvec2 DrawingBufferSize() { return mContext->DrawingBufferSize(); }
++  void GetStereoScene(float* const nearest, float* const farthest) const {
++    mContext->GetStereoScene(nearest, farthest);
++  }
+ 
+   void OnMemoryPressure() { return mContext->OnMemoryPressure(); }
+ 
+diff --git a/dom/canvas/PWebGL.ipdl b/dom/canvas/PWebGL.ipdl
+index a4c5e9f516..376e383449 100644
+--- a/dom/canvas/PWebGL.ipdl
++++ b/dom/canvas/PWebGL.ipdl
+@@ -60,6 +60,7 @@ parent:
+ 
+   async DispatchCommands(BigBuffer commands, uint64_t size);
+   async Ping() returns (void_t ok);
++  async GetStereoScene() returns (float nearest, float farthest);
+   sync SyncPing();
+   async TexImage(uint32_t level, uint32_t respecFormat, uvec3 offset,
+                  PackingInfo pi, TexUnpackBlobDesc src);
+diff --git a/dom/canvas/WebGLContext.cpp b/dom/canvas/WebGLContext.cpp
+index 8ea18613a7..4803b00e10 100644
+--- a/dom/canvas/WebGLContext.cpp
++++ b/dom/canvas/WebGLContext.cpp
+@@ -634,8 +634,10 @@ void WebGLContext::UploadStereoCameras(const float aShift) const {
+     return;
+   }
+   const auto& link = *mActiveProgramLinkInfo;
++  const float plane = mStereoPlane;
+   for (const auto& [loc, camera] : link.stereoCameras) {
+-    const auto m = webgl::StereoCameraEye(camera, aShift);
++    mStereoLastCamera = Some(camera);
++    const auto m = webgl::StereoCameraEye(camera, aShift, plane);
+     gl->fUniformMatrix4fv(static_cast<GLint>(loc), 1, false, m.data());
+   }
+ 
+@@ -648,8 +650,9 @@ void WebGLContext::UploadStereoCameras(const float aShift) const {
+         const auto& shadow = buffer.mStereoShadow;
+         std::vector<uint8_t> bytes(shadow.begin() + offset,
+                                    shadow.begin() + offset + length);
++        mStereoLastCamera = Some(camera);
+         if (aShift != 0.0f) {
+-          const auto eye = webgl::StereoCameraEye(camera, aShift);
++          const auto eye = webgl::StereoCameraEye(camera, aShift, plane);
+           for (int i = 0; i < 16; i++) {
+             const int major = rowMajor ? i % 4 : i / 4;
+             const int minor = rowMajor ? i / 4 : i % 4;
+@@ -1743,6 +1746,246 @@ static void SetStereoMode(gl::SharedSurface* const surf,
+ }
+ #endif
+ 
++// The nearest and the farthest thing among depth buffer samples (the
++// background, at the far plane, is not a thing); false with too few things.
++static bool SceneRangeOf(const std::vector<float>& aDepth, const float aA,
++                         const float aNumerator, float* const aNearest,
++                         float* const aFarthest) {
++  std::vector<float> distances;
++  distances.reserve(aDepth.size());
++  webgl::StereoCamera camera;
++  camera.depthA = aA;
++  camera.depthNumerator = aNumerator;
++  for (const float z : aDepth) {
++    if (z > 0.0f && z < 0.99999f) {
++      const float d = webgl::StereoCameraDistance(camera, z);
++      if (d > 0.0f) {
++        distances.push_back(d);
++      }
++    }
++  }
++  if (distances.size() < 24) {
++    return false;
++  }
++  std::sort(distances.begin(), distances.end());
++  *aNearest = distances[distances.size() / 50];
++  *aFarthest = distances[distances.size() - 1 - distances.size() / 50];
++  return true;
++}
++
++// The same for a framebuffer of the page's own (the scene is drawn into one
++// when the page post-processes it): its depth attachment is read at its size
++// and reduced to 64 by 36 samples. A multisampled one cannot be read, which
++// the error says.
++bool WebGLContext::ReadSceneRangeFromFB(const GLuint aFB,
++                                        const gfx::IntSize aSize,
++                                        const bool aDepthStencil,
++                                        const float aA,
++                                        const float aNumerator,
++                                        float* const aNearest,
++                                        float* const aFarthest) {
++  constexpr int kW = 64;
++  constexpr int kH = 36;
++  if (!aFB || aSize.width <= 0 || aSize.height <= 0) {
++    return false;
++  }
++  const ScopedFBRebinder saveFB(this);
++  if (mScissorTestEnabled) {
++    gl->fDisable(LOCAL_GL_SCISSOR_TEST);
++  }
++  const auto cleanup = MakeScopeExit([&]() {
++    if (mScissorTestEnabled) {
++      gl->fEnable(LOCAL_GL_SCISSOR_TEST);
++    }
++  });
++  std::vector<float> full(size_t(aSize.width) * size_t(aSize.height));
++  {
++    gl::GLContext::LocalErrorScope errorScope(*gl);
++    // The depth is resolved by a blit into a single-sample renderbuffer of
++    // the same format (a blit needs equal formats, and a multisampled
++    // framebuffer cannot be read), then read.
++    gl->fBindFramebuffer(LOCAL_GL_READ_FRAMEBUFFER, aFB);
++    GLint bits = 0;
++    gl->fGetFramebufferAttachmentParameteriv(
++        LOCAL_GL_READ_FRAMEBUFFER,
++        aDepthStencil ? LOCAL_GL_DEPTH_STENCIL_ATTACHMENT
++                      : LOCAL_GL_DEPTH_ATTACHMENT,
++        LOCAL_GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE, &bits);
++    const GLenum format = aDepthStencil ? LOCAL_GL_DEPTH24_STENCIL8
++                          : bits >= 32  ? LOCAL_GL_DEPTH_COMPONENT32F
++                          : bits >= 24  ? LOCAL_GL_DEPTH_COMPONENT24
++                                        : LOCAL_GL_DEPTH_COMPONENT16;
++    if (!mStereoResolveFB || mStereoResolveSize != aSize ||
++        mStereoResolveFormat != format) {
++      if (mStereoResolveFB) {
++        gl->fDeleteFramebuffers(1, &mStereoResolveFB);
++        gl->fDeleteRenderbuffers(1, &mStereoResolveRB);
++      }
++      gl->fGenFramebuffers(1, &mStereoResolveFB);
++      gl->fGenRenderbuffers(1, &mStereoResolveRB);
++      gl->fBindRenderbuffer(LOCAL_GL_RENDERBUFFER, mStereoResolveRB);
++      gl->fRenderbufferStorage(LOCAL_GL_RENDERBUFFER, format, aSize.width,
++                               aSize.height);
++      gl->fBindFramebuffer(LOCAL_GL_DRAW_FRAMEBUFFER, mStereoResolveFB);
++      gl->fFramebufferRenderbuffer(
++          LOCAL_GL_DRAW_FRAMEBUFFER,
++          aDepthStencil ? LOCAL_GL_DEPTH_STENCIL_ATTACHMENT
++                        : LOCAL_GL_DEPTH_ATTACHMENT,
++          LOCAL_GL_RENDERBUFFER, mStereoResolveRB);
++      mStereoResolveSize = aSize;
++      mStereoResolveFormat = format;
++      gl->fBindRenderbuffer(LOCAL_GL_RENDERBUFFER, 0);
++    }
++    gl->fBindFramebuffer(LOCAL_GL_DRAW_FRAMEBUFFER, mStereoResolveFB);
++    gl->fBlitFramebuffer(0, 0, aSize.width, aSize.height, 0, 0, aSize.width,
++                         aSize.height, LOCAL_GL_DEPTH_BUFFER_BIT,
++                         LOCAL_GL_NEAREST);
++    gl->fBindFramebuffer(LOCAL_GL_READ_FRAMEBUFFER, mStereoResolveFB);
++    gl->fReadPixels(0, 0, aSize.width, aSize.height, LOCAL_GL_DEPTH_COMPONENT,
++                    LOCAL_GL_FLOAT, full.data());
++    if (const GLenum error = errorScope.GetError()) {
++      MOZ_LOG(gWebGLStereoLog, LogLevel::Debug,
++              ("scene plane: reading the depth of framebuffer %u (%d bits, "
++               "format 0x%x): error 0x%x",
++               aFB, bits, format, error));
++      mStereoSceneFB = 0;
++      mStereoReadError = error;
++      return false;
++    }
++  }
++  mStereoReadError = 0;
++  std::vector<float> depth;
++  depth.reserve(kW * kH);
++  for (int i = 0; i < kH; i++) {
++    for (int j = 0; j < kW; j++) {
++      const size_t x = size_t(j) * aSize.width / kW;
++      const size_t y = size_t(i) * aSize.height / kH;
++      depth.push_back(full[y * aSize.width + x]);
++    }
++  }
++  return SceneRangeOf(depth, aA, aNumerator, aNearest, aFarthest);
++}
++
++// The nearest and the farthest thing in the depth buffer of aSrc, in
++// distance along the view's axis (aA and aNumerator: StereoCamera::depthA and
++// depthNumerator); the background, at the far plane, is not a thing. The
++// depth buffer is resolved at its size, then reduced to 64 by 36 samples,
++// which are read back.
++bool WebGLContext::ReadSceneRange(const gl::MozFramebuffer& aSrc,
++                                  const float aA, const float aNumerator,
++                                  float* const aNearest,
++                                  float* const aFarthest) {
++  if (!aSrc.HasDepth()) {
++    return false;
++  }
++  return ReadSceneRangeFromFB(aSrc.mFB, aSrc.mSize, false, aA, aNumerator,
++                              aNearest, aFarthest);
++}
++
++// A plane that stays the camera's own because the depth buffer cannot be read
++// is said on the page's web console, once for the canvas, with the reason:
++// the page's scene then sits at webgl.stereo-camera.convergence times the
++// camera's near distance, not at the scene's own plane.
++void WebGLContext::SaySceneUnreadable(const char* const aReason) {
++  if (mStereoSceneSaid) {
++    return;
++  }
++  mStereoSceneSaid = true;
++  MOZ_LOG(gWebGLStereoLog, LogLevel::Warning,
++          ("scene plane: the depth buffer cannot be read: %s", aReason));
++  GenerateWarning(
++      "Stereo camera: the depth buffer cannot be read, so the zero-parallax "
++      "plane stays at %.1f times the camera's near distance instead of "
++      "following the scene: %s.",
++      StaticPrefs::webgl_stereo_camera_convergence(), aReason);
++}
++
++// The scene's zero-parallax plane (webgl.stereo-camera.scene-plane): where the
++// nearest and the farthest thing the page drew have equal and opposite
++// parallax (parallax goes with 1 / distance), no nearer than the person's
++// popped limit lets the nearest thing come: the parallax of a point at
++// distance z is separation * (plane / z - 1) of the view's width, and the limit
++// is in pixels of a view 1920 wide. The first frames are looked at, then one
++// in 64; a plane that moves by more than 15 percent moves half the way.
++void WebGLContext::EstimateStereoPlane() {
++  if (!StaticPrefs::webgl_stereo_camera_scene_plane() ||
++      !mStereoLastCamera || !mDefaultFB) {
++    return;
++  }
++  if (!mStereoSceneFB && !(mOptions.depth && mDefaultFB->HasDepth())) {
++    SaySceneUnreadable(
++        "the canvas has no depth buffer (it was created with depth: false) "
++        "and the page draws into no framebuffer of its own");
++    return;
++  }
++  const bool due = mStereoPresents < 4 || mStereoPresents % 64 == 0;
++  mStereoPresents++;
++  if (!due) {
++    return;
++  }
++  float nearest = 0, farthest = 0;
++  const bool read =
++      mStereoSceneFB
++          ? ReadSceneRangeFromFB(mStereoSceneFB, mStereoSceneSize,
++                                 mStereoSceneDepthStencil,
++                                 mStereoLastCamera->depthA,
++                                 mStereoLastCamera->depthNumerator, &nearest,
++                                 &farthest)
++          : ReadSceneRange(*mDefaultFB, mStereoLastCamera->depthA,
++                           mStereoLastCamera->depthNumerator, &nearest,
++                           &farthest);
++  if (!read) {
++    MOZ_LOG(gWebGLStereoLog, LogLevel::Debug,
++            ("scene plane: no scene in the depth buffer (%s)",
++             mStereoSceneFB ? "the page's framebuffer" : "the canvas"));
++    if (mStereoReadError) {
++      char reason[96];
++      SprintfLiteral(reason, "reading it failed with GL error 0x%x",
++                     mStereoReadError);
++      SaySceneUnreadable(reason);
++    } else if (++mStereoSceneMisses >= 4) {
++      SaySceneUnreadable(
++          "it holds no scene, only the far plane, in the first frames "
++          "looked at");
++    }
++    return;
++  }
++  mStereoSceneMisses = 0;
++  mSceneNearest = nearest;
++  mSceneFarthest = farthest;
++  float plane = 2.0f * nearest * farthest / (nearest + farthest);
++  bool limited = false;
++  if (mStereoPoppedPx > 0.0f && mStereoSeparation > 0.0f) {
++    // The parallax of a point at distance z is separation * (plane / z - 1)
++    // of the canvas's width. With the separation from the limits that is
++    // share * sunk * (plane / z - 1) in the output's pixels, so the popped
++    // limit allows the plane up to nearest * (1 + popped / (share * sunk)),
++    // whatever the canvas's width; with a fixed separation the view is taken
++    // as 1920 wide.
++    const float reach =
++        mStereoLimitShare > 0.0f && mStereoSunkPx > 0.0f
++            ? nearest * (1.0f + mStereoPoppedPx /
++                                    (mStereoLimitShare * mStereoSunkPx))
++            : nearest *
++                  (1.0f + mStereoPoppedPx / (1920.0f * mStereoSeparation));
++    if (plane > reach) {
++      plane = reach;
++      limited = true;
++    }
++  }
++  const float before = mStereoPlane;
++  if (before <= 0.0f) {
++    mStereoPlane = plane;
++  } else if (std::fabs(plane / before - 1.0f) > 0.15f) {
++    mStereoPlane = before + 0.5f * (plane - before);
++  }
++  MOZ_LOG(gWebGLStereoLog, LogLevel::Info,
++          ("scene plane: nearest %.3f farthest %.3f -> %.3f%s, in use %.3f "
++           "(was %.3f)",
++           nearest, farthest, plane, limited ? " (popped limit)" : "",
++           mStereoPlane, before));
++}
++
+ // For an overview of how WebGL compositing works, see:
+ // https://wiki.mozilla.org/Platform/GFX/WebGL/Compositing
+ bool WebGLContext::PresentInto(gl::SwapChain& swapChain) {
+@@ -1750,6 +1993,10 @@ bool WebGLContext::PresentInto(gl::SwapChain& swapChain) {
+ 
+   if (!ValidateAndInitFB(nullptr)) return false;
+ 
++  if (mStereoCamera) {
++    EstimateStereoPlane();
++  }
++
+   const auto size = mDefaultFB->mSize;
+   // The camera hack presents both eyes, full side by side, left eye first.
+   const bool stereo = mStereoCamera && EnsureStereoRightFB();
+@@ -1927,6 +2174,49 @@ void InitSwapChain(gl::GLContext& gl, gl::SwapChain& swapChain,
+   }
+ }
+ 
++// The depth limits are the person's, built on the display (the window's
++// kde_stereo_depth_v1 depth_limits, pixels of a view 1920 wide, scaled to the
++// output's width): a point at infinity shows the sunk limit as its parallax,
++// so it lands at the sunk limit in the output's pixels, and no choice of the
++// browser scales it. The separation is a share of the canvas's own width, so
++// it is the sunk limit over 1920 times the output's width over the canvas's
++// on-screen width (aViewRatio, in thousandths). The client presents in stereo
++// only where limits are known, so none made up stands here: no limits, no
++// separation.
++void WebGLContext::SetStereoSeparation(const uint16_t aSunk,
++                                       const uint16_t aPopped,
++                                       const uint32_t aViewRatio) {
++  mStereoPoppedPx = aPopped / 10.0f;
++  mStereoSunkPx = aSunk / 10.0f;
++  float separation;
++  if (aSunk > 0) {
++    mStereoLimitShare = 1.0f;
++    const float ratio = aViewRatio ? aViewRatio / 1000.0f : 1.0f;
++    separation = std::min(mStereoSunkPx / 1920.0f * ratio, 0.25f);
++  } else {
++    mStereoLimitShare = 0.0f;
++    separation = 0.0f;
++  }
++  if (separation != mStereoSeparation) {
++    MOZ_LOG(gWebGLStereoLog, LogLevel::Info,
++            ("separation %.4f of the width (sunk %.1f px, popped %.1f px, "
++             "view ratio %.3f, was %.4f)",
++             separation, mStereoSunkPx, mStereoPoppedPx, aViewRatio / 1000.0,
++             mStereoSeparation));
++  }
++  mStereoSeparation = separation;
++}
++
++void WebGLContext::BeginStereoCamera(const uint16_t aSunk,
++                                     const uint16_t aPopped,
++                                     const uint32_t aViewRatio) {
++  if (IsContextLost()) {
++    return;
++  }
++  SetStereoSeparation(aSunk, aPopped, aViewRatio);
++  mStereoCamera = true;
++}
++
+ void WebGLContext::Present(WebGLFramebuffer* const xrFb,
+                            const layers::TextureType consumerType,
+                            const bool webvr,
+@@ -1950,10 +2240,8 @@ void WebGLContext::Present(WebGLFramebuffer* const xrFb,
+ 
+   // The camera hack's depth for the canvas's site.
+   if (!xrFb && !webvr && options.stereoCamera) {
+-    mStereoSeparation =
+-        options.stereoDepth
+-            ? options.stereoDepth / 1000.0f
+-            : StaticPrefs::webgl_stereo_camera_separation() / 100.0f;
++    SetStereoSeparation(options.stereoSunk, options.stereoPopped,
++                        options.stereoViewRatio);
+   }
+   // The camera hack: the canvas presents both eyes from now on.
+   if (!xrFb && !webvr && options.stereoCamera != mStereoCamera) {
+@@ -1961,6 +2249,8 @@ void WebGLContext::Present(WebGLFramebuffer* const xrFb,
+     if (!mStereoCamera) {
+       mStereoRightFB = nullptr;
+       mStereoRightResolvedFB = nullptr;
++      mStereoPlane = 0.0f;
++      mStereoPresents = 0;
+     }
+   }
+ 
+@@ -1976,7 +2266,7 @@ void WebGLContext::Present(WebGLFramebuffer* const xrFb,
+   InitSwapChain(*gl, *swapChain, consumerType, useAsync);
+ 
+   if (maybeFB && options.flatXR) {
+-    PresentFlatXR(*maybeFB, consumerType);
++    PresentFlatXR(*maybeFB, consumerType, options);
+   }
+ 
+   bool valid = true;
+@@ -2002,7 +2292,37 @@ void WebGLContext::Present(WebGLFramebuffer* const xrFb,
+ }
+ 
+ void WebGLContext::PresentFlatXR(const gl::MozFramebuffer& fb,
+-                                 const layers::TextureType consumerType) {
++                                 const layers::TextureType consumerType,
++                                 const webgl::SwapChainOptions& options) {
++  // The scene the session drew, for the flat display's zero-parallax plane
++  // (XRSession::GetWindowViews asks for it).
++  if (StaticPrefs::webgl_stereo_camera_scene_plane() &&
++      options.stereoDepthNumerator != 0.0f) {
++    const bool due = mStereoXRPresents < 4 || mStereoXRPresents % 16 == 0;
++    mStereoXRPresents++;
++    mSceneWatch = true;
++    float nearest = 0, farthest = 0;
++    const bool read =
++        due && (mStereoSceneFB
++                    ? ReadSceneRangeFromFB(mStereoSceneFB, mStereoSceneSize,
++                                           mStereoSceneDepthStencil,
++                                           options.stereoDepthA,
++                                           options.stereoDepthNumerator,
++                                           &nearest, &farthest)
++                    : ReadSceneRange(fb, options.stereoDepthA,
++                                     options.stereoDepthNumerator, &nearest,
++                                     &farthest));
++    if (read) {
++      mSceneNearest = nearest;
++      mSceneFarthest = farthest;
++      MOZ_LOG(gWebGLStereoLog, LogLevel::Info,
++              ("scene (flat session): nearest %.3f farthest %.3f", nearest,
++               farthest));
++    } else if (due) {
++      MOZ_LOG(gWebGLStereoLog, LogLevel::Debug,
++              ("scene (flat session): none in the depth buffer"));
++    }
++  }
+   InitSwapChain(*gl, mFlatXRSwapChain, consumerType, true);
+   const auto colorSpace = ToColorSpace2ForOutput(mDrawingBufferColorSpace);
+   auto presenter = mFlatXRSwapChain.Acquire(fb.mSize, colorSpace,
+diff --git a/dom/canvas/WebGLContext.h b/dom/canvas/WebGLContext.h
+index 0092c98139..a6ea9a0274 100644
+--- a/dom/canvas/WebGLContext.h
++++ b/dom/canvas/WebGLContext.h
+@@ -37,6 +37,7 @@
+ #include "WebGLContextLossHandler.h"
+ #include "WebGLExtensions.h"
+ #include "WebGLObjectModel.h"
++#include "WebGLStereoCamera.h"
+ #include "WebGLStrongTypes.h"
+ #include "WebGLTypes.h"
+ 
+@@ -505,7 +506,8 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
+   bool PresentInto(gl::SwapChain& swapChain);
+   bool PresentIntoXR(gl::SwapChain& swapChain, const gl::MozFramebuffer& xrFb);
+   void PresentFlatXR(const gl::MozFramebuffer& xrFb,
+-                     layers::TextureType consumerType);
++                     layers::TextureType consumerType,
++                     const webgl::SwapChainOptions& options);
+ 
+   // The camera hack (WebGLStereoCamera.h): while the canvas presents two
+   // eyes, each draw into the default framebuffer is drawn once per eye, the
+@@ -514,7 +516,33 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
+   bool StereoCameraDraws() const;
+   bool EnsureStereoRightFB();
+   void UploadStereoCameras(float aShift) const;
++  void EstimateStereoPlane();
++  bool ReadSceneRangeFromFB(GLuint aFB, gfx::IntSize aSize,
++                            bool aDepthStencil, float aA,
++                            float aNumerator, float* aNearest,
++                            float* aFarthest);
++  bool ReadSceneRange(const gl::MozFramebuffer& aSrc, float aA,
++                      float aNumerator, float* aNearest, float* aFarthest);
++ public:
++  // The nearest and the farthest thing of the last frame looked at, in
++  // distance along the view (0 until one was), for the immersive session on
++  // the flat display, which draws its own plane.
++  void GetStereoScene(float* aNearest, float* aFarthest) const {
++    *aNearest = mSceneNearest;
++    *aFarthest = mSceneFarthest;
++  }
++ private:
+   void BlitStereoRightToCurDriverFB(const gfx::IntSize& aEyeSize);
++ public:
++  // The page's draws are made once per eye from now on, not from the
++  // canvas's first presentation: a canvas that is drawn once while it is out
++  // of view (never presented until it scrolls in) shows two views.
++  void BeginStereoCamera(uint16_t aSunk, uint16_t aPopped, uint32_t aViewRatio);
++  // The eyes' separation: the person's depth limits for the window (in tenths
++  // of a pixel of a view 1920 wide), in the output's pixels.
++  void SetStereoSeparation(uint16_t aSunk, uint16_t aPopped,
++                           uint32_t aViewRatio);
++ private:
+ 
+   void DrawPerEye(const std::function<void()>& aDraw);
+ 
+@@ -1368,9 +1396,38 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
+   uint32_t mStereoOffscreenDraws = 0;
+   // Draws once per eye into the page's own framebuffers.
+   uint32_t mStereoTargetDraws = 0;
+-  // The eyes' separation, a fraction of the view's width: the site's
+-  // (SwapChainOptions::stereoDepth) or webgl.stereo-camera.separation.
+-  float mStereoSeparation = 0.02f;
++  // The eyes' separation, a fraction of the view's width: the person's depth
++  // limits for the window (SwapChainOptions::stereoSunk).
++  float mStereoSeparation = 0.0f;
++  // The scene's zero-parallax distance (webgl.stereo-camera.scene-plane), in
++  // the camera's units of depth, 0 until a frame has been looked at; the
++  // camera of the last draw; the depth buffer's resolve and its small copy.
++  float mStereoPlane = 0.0f;
++  mutable Maybe<webgl::StereoCamera> mStereoLastCamera;
++  uint32_t mStereoPresents = 0;
++  float mStereoPoppedPx = 0.0f;
++  float mStereoSunkPx = 0.0f;
++  // 1 while the separation comes from the limits, 0 where none are known.
++  float mStereoLimitShare = 0.0f;
++  // The depth buffer could not be read for the scene's plane: said once on
++  // the page's console. Reads that found no scene (only the far plane).
++  bool mStereoSceneSaid = false;
++  uint32_t mStereoSceneMisses = 0;
++  GLenum mStereoReadError = 0;
++  void SaySceneUnreadable(const char* aReason);
++  float mSceneNearest = 0.0f;
++  float mSceneFarthest = 0.0f;
++  // The page's own framebuffer the scene was last drawn into per eye (0: the
++  // canvas's own) and its size.
++  GLuint mStereoSceneFB = 0;
++  bool mSceneWatch = false;
++  gfx::IntSize mStereoSceneSize;
++  bool mStereoSceneDepthStencil = false;
++  GLuint mStereoResolveFB = 0;
++  GLuint mStereoResolveRB = 0;
++  gfx::IntSize mStereoResolveSize;
++  GLenum mStereoResolveFormat = 0;
++  uint32_t mStereoXRPresents = 0;
+   gl::SwapChain mSnapshotSwapChain;
+ 
+   RefPtr<layers::RemoteTextureOwnerClient> mRemoteTextureOwner;
+diff --git a/dom/canvas/WebGLContextDraw.cpp b/dom/canvas/WebGLContextDraw.cpp
+index 0d3f0b4c51..22f11396fa 100644
+--- a/dom/canvas/WebGLContextDraw.cpp
++++ b/dom/canvas/WebGLContextDraw.cpp
+@@ -685,12 +685,17 @@ static bool HasInstancedDrawing(const WebGLContext& webgl) {
+ // post-processing (StereoTargetPerEye), once otherwise (shadow maps). The
+ // right eye's draw samples the right eye's copies of the textures it reads.
+ void WebGLContext::DrawPerEye(const std::function<void()>& aDraw) {
+-  const float s = mStereoSeparation;
++  // The left eye's shift and the right eye's: the page's camera between the
++  // eyes (-s, s) or the page's camera as the left eye (0, 2s), the same
++  // parallax between them either way.
++  const bool pageIsLeft = StaticPrefs::webgl_stereo_camera_left_eye_is_page_camera();
++  const float left = pageIsLeft ? 0.0f : -mStereoSeparation;
++  const float right = pageIsLeft ? 2.0f * mStereoSeparation : mStereoSeparation;
+   if (StereoCameraDraws()) {
+-    UploadStereoCameras(-s);
++    UploadStereoCameras(left);
+     aDraw();
+     gl->fBindFramebuffer(LOCAL_GL_DRAW_FRAMEBUFFER, mStereoRightFB->mFB);
+-    UploadStereoCameras(s);
++    UploadStereoCameras(right);
+     const bool swapped = BindStereoTwins(true);
+     aDraw();
+     if (swapped) {
+@@ -703,11 +708,21 @@ void WebGLContext::DrawPerEye(const std::function<void()>& aDraw) {
+   }
+   if (mBoundDrawFramebuffer && StereoTargetPerEye(*mBoundDrawFramebuffer)) {
+     auto& fb = *mBoundDrawFramebuffer;
++    if (const auto* info = fb.GetCompletenessInfo()) {
++      if (info->width && info->height &&
++          (fb.DepthAttachment().HasAttachment() ||
++           fb.DepthStencilAttachment().HasAttachment())) {
++        mStereoSceneFB = fb.mGLName;
++        mStereoSceneDepthStencil =
++            !fb.DepthAttachment().HasAttachment();
++        mStereoSceneSize = gfx::IntSize(info->width, info->height);
++      }
++    }
+     SyncStereoTwin(fb);
+-    UploadStereoCameras(-s);
++    UploadStereoCameras(left);
+     aDraw();
+     ApplyStereoTwinDrawBuffers(fb);
+-    UploadStereoCameras(s);
++    UploadStereoCameras(right);
+     const bool swapped = BindStereoTwins(true);
+     aDraw();
+     if (swapped) {
+@@ -722,6 +737,22 @@ void WebGLContext::DrawPerEye(const std::function<void()>& aDraw) {
+   aDraw();
+   if (mBoundDrawFramebuffer) {
+     mStereoOffscreenDraws++;
++    // An immersive session on the flat display draws its scene into a
++    // framebuffer of the page's own when it post-processes: the one with a
++    // depth buffer drawn last is the scene (the session's plane is looked for
++    // in it).
++    if (mSceneWatch) {
++      const auto& fb = *mBoundDrawFramebuffer;
++      if (const auto* info = fb.GetCompletenessInfo()) {
++        if (info->width && info->height &&
++            (fb.DepthAttachment().HasAttachment() ||
++             fb.DepthStencilAttachment().HasAttachment())) {
++          mStereoSceneFB = fb.mGLName;
++          mStereoSceneSize = gfx::IntSize(info->width, info->height);
++          mStereoSceneDepthStencil = !fb.DepthAttachment().HasAttachment();
++        }
++      }
++    }
+   }
+ }
+ 
+diff --git a/dom/canvas/WebGLMethodDispatcher.h b/dom/canvas/WebGLMethodDispatcher.h
+index fa2ca39fa6..100c4dd0f7 100644
+--- a/dom/canvas/WebGLMethodDispatcher.h
++++ b/dom/canvas/WebGLMethodDispatcher.h
+@@ -147,6 +147,7 @@ DEFINE_ASYNC(HostWebGLContext::SetFramebufferIsInOpaqueRAF)
+ DEFINE_ASYNC(HostWebGLContext::ClearVRSwapChain)
+ DEFINE_ASYNC(HostWebGLContext::CopyToSwapChain)
+ DEFINE_ASYNC(HostWebGLContext::EndOfFrame)
++DEFINE_ASYNC(HostWebGLContext::SetStereoCamera)
+ 
+ #undef DEFINE_ASYNC
+ #undef DEFINE_METHOD_DISPATCHER
+diff --git a/dom/canvas/WebGLParent.cpp b/dom/canvas/WebGLParent.cpp
+index a3617492b4..cdf57ffa8f 100644
+--- a/dom/canvas/WebGLParent.cpp
++++ b/dom/canvas/WebGLParent.cpp
+@@ -265,6 +265,13 @@ IPCResult WebGLParent::RecvCreateOpaqueFramebuffer(
+   return IPC_OK();
+ }
+ 
++void WebGLParent::StereoSceneOfHost(float* const nearest,
++                                    float* const farthest) const {
++  if (mHost) {
++    mHost->GetStereoScene(nearest, farthest);
++  }
++}
++
+ IPCResult WebGLParent::RecvDrawingBufferSize(uvec2* const ret) {
+   if (!mHost) {
+     return IPC_FAIL(this, "HostWebGLContext is not initialized.");
+diff --git a/dom/canvas/WebGLParent.h b/dom/canvas/WebGLParent.h
+index 3946c7e661..625ca48ca6 100644
+--- a/dom/canvas/WebGLParent.h
++++ b/dom/canvas/WebGLParent.h
+@@ -44,6 +44,7 @@ class WebGLParent : public PWebGLParent, public SupportsWeakPtr {
+   }
+ 
+   IPCResult RecvSyncPing() { return IPC_OK(); }
++  void StereoSceneOfHost(float* nearest, float* farthest) const;
+ 
+   IPCResult RecvDispatchCommands(mozilla::ipc::BigBuffer&&, uint64_t);
+   IPCResult RecvTexImage(uint32_t level, uint32_t respecFormat,
+@@ -70,6 +71,13 @@ class WebGLParent : public PWebGLParent, public SupportsWeakPtr {
+                                         const OpaqueFramebufferOptions&,
+                                         bool* ret);
+   IPCResult RecvDrawingBufferSize(uvec2* ret);
++  template <class ResolveT>
++  IPCResult RecvGetStereoScene(const ResolveT& Resolve) {
++    float nearest = 0, farthest = 0;
++    StereoSceneOfHost(&nearest, &farthest);
++    Resolve(std::tuple<float, float>(nearest, farthest));
++    return IPC_OK();
++  }
+   IPCResult RecvFinish();
+   IPCResult RecvGetBufferParameter(GLenum target, GLenum pname,
+                                    Maybe<double>* ret);
+diff --git a/dom/canvas/WebGLStereoCamera.h b/dom/canvas/WebGLStereoCamera.h
+index d405a574d6..8f31be5d4c 100644
+--- a/dom/canvas/WebGLStereoCamera.h
++++ b/dom/canvas/WebGLStereoCamera.h
+@@ -31,6 +31,10 @@ struct StereoCamera {
+   std::array<float, 16> mono = {};
+   // The zero-parallax distance, in the camera's units of depth.
+   float convergence = 0.0f;
++  // The distance along the view's axis of what a depth buffer value z (0 to
++  // 1) holds: (mDepthNumerator) / (2 z - 1 - mDepthA).
++  float depthNumerator = 0.0f;
++  float depthA = 0.0f;
+ };
+ 
+ inline bool StereoCameraFinite(const float* aM) {
+@@ -84,17 +88,41 @@ inline Maybe<StereoCamera> ClassifyStereoCamera(const float* aM,
+     camera.mono[i] = aM[i];
+   }
+   camera.convergence = near * aNearFactor;
++  // The clip w of a perspective camera is the distance along the view's
++  // axis, and z_clip = P22 * z_eye + P23: z_ndc = a' + P23 / distance, with
++  // a = -P22 for the right-handed camera and P22 for the left-handed one
++  // (the same row product as the near distance above).
++  {
++    const float a = aM[2] * aM[3] + aM[6] * aM[7] + aM[10] * aM[11];
++    camera.depthA = a;
++    camera.depthNumerator = aM[14] - a * aM[15];
++  }
+   return Some(camera);
+ }
+ 
+-// One eye's camera: aShift is -s for the left eye, +s for the right eye.
++// The distance along the view's axis of a depth buffer value (0 to 1, the
++// default range), 0 where the camera has no such distance.
++inline float StereoCameraDistance(const StereoCamera& aCamera, float aDepth) {
++  const float denominator = 2.0f * aDepth - 1.0f - aCamera.depthA;
++  if (denominator == 0.0f) {
++    return 0.0f;
++  }
++  const float d = aCamera.depthNumerator / denominator;
++  return std::isfinite(d) && d > 0.0f ? d : 0.0f;
++}
++
++// One eye's camera: aShift is the eye's shift as a share of the view's width
++// (-s for the left eye and +s for the right with the page's camera between
++// them, 0 and 2s with the page's camera as the left eye), aConvergence the
++// zero-parallax distance (0: the camera's own).
+ inline std::array<float, 16> StereoCameraEye(const StereoCamera& aCamera,
+-                                             float aShift) {
++                                             float aShift,
++                                             float aConvergence = 0.0f) {
+   std::array<float, 16> m = aCamera.mono;
+   for (int column = 0; column < 4; column++) {
+     m[4 * column] += aShift * aCamera.mono[4 * column + 3];
+   }
+-  m[12] -= aShift * aCamera.convergence;
++  m[12] -= aShift * (aConvergence > 0.0f ? aConvergence : aCamera.convergence);
+   return m;
+ }
+ 
+diff --git a/dom/canvas/WebGLTypes.h b/dom/canvas/WebGLTypes.h
+index 6aae3651fe..54e4b91217 100644
+--- a/dom/canvas/WebGLTypes.h
++++ b/dom/canvas/WebGLTypes.h
+@@ -836,17 +836,28 @@ struct SwapChainOptions final {
+   bool flatXR = false;
+   // The camera hack (WebGLStereoCamera.h): the canvas presents both eyes.
+   bool stereoCamera = false;
+-  // The camera hack's depth for the canvas's site (the 3D Canvas menu): the
+-  // eyes' separation in tenths of a percent of the view's width, 0 for
+-  // webgl.stereo-camera.separation.
+-  uint8_t stereoDepth = 0;
+-  // Pad to sizeof(u64):
++  uint8_t padding2 = 0;
++  // The person's depth limits for the window the canvas is in, in tenths of a
++  // pixel of a view 1920 wide (0: not known): how far in front of the screen
++  // the zero-parallax plane may let the nearest thing come.
++  uint16_t stereoPopped = 0;
++  uint16_t stereoSunk = 0;
+   uint16_t padding3 = 0;
++  // An immersive session on the flat display: its projection's depth range
++  // (StereoCamera::depthA and depthNumerator, 0 when not given).
++  float stereoDepthA = 0.0f;
++  float stereoDepthNumerator = 0.0f;
++  // The output's width over the canvas's on-screen width, in thousandths
++  // (0: not known, taken as 1000): the person's limits are pixels of a view
++  // 1920 wide scaled to the output, and the camera hack's separation is a
++  // share of the canvas's own width.
++  uint32_t stereoViewRatio = 0;
+ 
+   auto MutTiedFields() {
+     return std::tie(remoteTextureId, remoteTextureOwnerId, bgra,
+                     forceAsyncPresent, stereoMode, flatXR, stereoCamera,
+-                    stereoDepth, padding3);
++                    padding2, stereoPopped, stereoSunk, padding3, stereoDepthA,
++                    stereoDepthNumerator, stereoViewRatio);
+   }
+ };
+ 
+diff --git a/dom/ipc/BrowserChild.cpp b/dom/ipc/BrowserChild.cpp
+index bf7783f8af..461a7b09cf 100644
+--- a/dom/ipc/BrowserChild.cpp
++++ b/dom/ipc/BrowserChild.cpp
+@@ -1265,6 +1265,10 @@ mozilla::ipc::IPCResult BrowserChild::RecvStereoDepth(
+   state.mPopped100 = aPopped100;
+   state.mOutputEdges = aOutputEdges;
+   state.mOutputWidth = aOutputWidth;
++  if (aFromCompositor) {
++    widget::StereoDepthProcessLimits::Publish(aSunk100, aPopped100,
++                                              aOutputWidth);
++  }
+   if (state == mStereoDepth) {
+     return IPC_OK();
+   }
+diff --git a/dom/vr/XRSession.cpp b/dom/vr/XRSession.cpp
+index 252ccba1cc..d1a0f12918 100644
+--- a/dom/vr/XRSession.cpp
++++ b/dom/vr/XRSession.cpp
+@@ -431,10 +431,6 @@ void XRSession::StopFlatPresentation() {
+   }
+ }
+ 
+-int32_t XRSession::FlatMode() {
+-  return std::clamp<int32_t>(StaticPrefs::dom_vr_flat_mode(), 0, 2);
+-}
+-
+ void XRSession::AskFlatDepth(int32_t aKind, int32_t aWidthMm, int32_t aHeightMm,
+                              uint32_t aStrength, uint64_t aKey) const {
+   mFlatDepthAsked = aKey;
+@@ -482,6 +478,41 @@ void XRSession::AskFlatDepth(int32_t aKind, int32_t aWidthMm, int32_t aHeightMm,
+           [](mozilla::ipc::ResponseRejectReason) {});
+ }
+ 
++// The screen plane from the scene the page draws (dom.vr.flat.scene-plane),
++// in millimetres: the host looks at the session's frames in their depth
++// buffer (WebGLContext::ReadSceneRange) and the plane sits where the nearest
++// and the farthest thing have equal and opposite parallax (parallax goes with
++// 1 / distance), no nearer than the person's popped limit lets the nearest
++// thing come: the display's far parallax is the sunk limit, so an object at
++// distance z has a parallax of the sunk limit times (1 - plane / z), and the
++// popped limit allows the plane up to nearest * (1 + popped / sunk). A plane
++// that moves by more than 15 percent moves half the way. aDefault stands
++// until a frame has been looked at.
++double XRSession::FlatScenePlaneMm(const double aDefault) const {
++  if (!StaticPrefs::dom_vr_flat_scene_plane() || !mActiveRenderState) {
++    return aDefault;
++  }
++  XRWebGLLayer* layer = mActiveRenderState->GetBaseLayer();
++  float nearest = 0, farthest = 0;
++  if (!layer || !layer->mWebGL ||
++      !layer->mWebGL->GetStereoScene(&nearest, &farthest)) {
++    return mFlatScenePlaneMm > 0 ? mFlatScenePlaneMm : aDefault;
++  }
++  double plane = 2000.0 * double(nearest) * double(farthest) /
++                 double(nearest + farthest);
++  if (mFlatDepth.mReady && mFlatDepth.mSunkPx > 0) {
++    plane = std::min(plane, 1000.0 * double(nearest) *
++                                (1.0 + mFlatDepth.mPoppedPx /
++                                           mFlatDepth.mSunkPx));
++  }
++  if (mFlatScenePlaneMm <= 0) {
++    mFlatScenePlaneMm = plane;
++  } else if (std::fabs(plane / mFlatScenePlaneMm - 1.0) > 0.15) {
++    mFlatScenePlaneMm += 0.5 * (plane - mFlatScenePlaneMm);
++  }
++  return mFlatScenePlaneMm;
++}
++
+ XRSession::WindowViews XRSession::GetWindowViews() const {
+   // The window: its size in device pixels and in millimetres.
+   RefPtr<widget::Screen> screen =
+@@ -517,12 +548,12 @@ XRSession::WindowViews XRSession::GetWindowViews() const {
+   double separation = StaticPrefs::dom_vr_flat_eye_separation_mm();
+   double plane = viewer;
+   if (separation <= 0) {
+-    // The depth of the display, under the person's choice (WebXR is in
+-    // metres, the display's depth in pixels of a 1920 wide view): the
+-    // screen's own size (that of the display, not of an inline canvas) and
+-    // the mode decide what is comfortable, the person's strength scales it.
+-    const int32_t kind = FlatMode() == 0 ? 0 : 2;
+-    const uint32_t strength = StaticPrefs::dom_vr_flat_depth_strength();
++    // The depth of the display (WebXR is in metres, the display's depth in
++    // pixels of a 1920 wide view): the screen's own size (that of the
++    // display, not of an inline canvas) decides what is comfortable; no
++    // choice of the browser scales it.
++    const int32_t kind = 0;
++    const uint32_t strength = 100;
+     const gfx::IntSize screenPixels =
+         screen ? screen->GetRect().Size().ToUnknownSize() : pixels;
+     const int32_t screenWidthMm =
+@@ -549,8 +580,7 @@ XRSession::WindowViews XRSession::GetWindowViews() const {
+     // fraction of that window: an object at distance z has a parallax of
+     // that fraction of the window times (1 - plane / z), so it sinks
+     // towards the far limit and pops in front of the plane.
+-    const double person = StaticPrefs::dom_vr_flat_screen_plane_mm();
+-    plane = person > 0 ? person : 1000.0;
++    plane = FlatScenePlaneMm(1000.0);
+     const double windowWidth = width * plane / viewer;
+     separation = mFlatDepth.mSunkPx / 1920.0 * windowWidth;
+     // the window as the eyes at the plane see it
+@@ -672,6 +702,10 @@ void XRSession::StartFrame() {
+   if (!baseLayer) {
+     return;
+   }
++  if (baseLayer->mWebGL) {
++    baseLayer->mWebGL->SetXRDepthRange(mActiveRenderState->DepthNear(),
++                                       mActiveRenderState->DepthFar());
++  }
+ 
+   if (!IsImmersive() && mActiveRenderState->GetOutputCanvas() == nullptr) {
+     return;
+diff --git a/dom/vr/XRSession.h b/dom/vr/XRSession.h
+index 0fdf45c538..5a72dbd51d 100644
+--- a/dom/vr/XRSession.h
++++ b/dom/vr/XRSession.h
+@@ -124,9 +124,7 @@ class XRSession final : public DOMEventTargetHelper, public nsARefreshObserver {
+   bool IsInlineStereo() const { return mInlineStereo; }
+   void SetInlineStereo(bool aInlineStereo) { mInlineStereo = aInlineStereo; }
+   WindowViews GetWindowViews() const;
+-  // The person's choice of how the screen is seen (dom.vr.flat.mode): 0 flat
+-  // TV or output, 1 flat headset, 2 VR over the phone.
+-  static int32_t FlatMode();
++  double FlatScenePlaneMm(double aDefault) const;
+   // With no controllers, the viewer turns with the mouse and moves with the
+   // keys and the wheel; this is the viewer's pose in the session's space.
+   gfx::QuaternionDouble FlatOrientation() const;
+@@ -205,6 +203,7 @@ class XRSession final : public DOMEventTargetHelper, public nsARefreshObserver {
+   };
+   mutable FlatDepth mFlatDepth;
+   mutable uint64_t mFlatDepthAsked = 0;
++  mutable double mFlatScenePlaneMm = 0;
+   mutable bool mFlatSizeNoticed = false;
+   void AskFlatDepth(int32_t aKind, int32_t aWidthMm, int32_t aHeightMm,
+                     uint32_t aStrength, uint64_t aKey) const;
+diff --git a/layout/painting/nsDisplayList.cpp b/layout/painting/nsDisplayList.cpp
+index 09876cd5ce..5d7779b17e 100644
+--- a/layout/painting/nsDisplayList.cpp
++++ b/layout/painting/nsDisplayList.cpp
+@@ -5415,18 +5415,12 @@ static widget::StereoDepthState StereoDepthStateOf(nsIFrame* aFrame) {
+   return widget::StereoDepthState();
+ }
+ 
+-/* static */
+-Maybe<int32_t> nsDisplayStereoDepth::ShiftForLevel(nsIFrame* aFrame,
+-                                                   float aLevel) {
+-  if (!gfx::gfxVars::StereoOutputs()) {
+-    return Nothing();
+-  }
+-  const widget::StereoDepthState state = StereoDepthStateOf(aFrame);
+-  // KWin says whether the window may show depth now (the active window, a
+-  // popup...), as for a 2D output otherwise.
+-  if (!state.mAwake) {
+-    return Nothing();
+-  }
++// The person's depth limits for the window a frame is shown in, in pixels of
++// a view 1920 wide: from the compositor, else libstereo-policy's default for
++// the display. False while the default is not yet known.
++static bool StereoDepthLimitsOf(nsIFrame* aFrame,
++                                const widget::StereoDepthState& state,
++                                double* aSunk, double* aPopped) {
+   double sunk = 0, popped = 0;
+   if (state.mFromCompositor) {
+     sunk = state.mSunk100 / 100.0;
+@@ -5448,11 +5442,8 @@ Maybe<int32_t> nsDisplayStereoDepth::ShiftForLevel(nsIFrame* aFrame,
+           widthMm = int32_t(rect.Width() / dpi * 25.4);
+           heightMm = int32_t(rect.Height() / dpi * 25.4);
+         }
+-        const int32_t kind =
+-            std::clamp<int32_t>(StaticPrefs::dom_vr_flat_mode(), 0, 2) == 0 ? 0
+-                                                                            : 2;
+-        const double strength =
+-            double(StaticPrefs::dom_vr_flat_depth_strength());
++        const int32_t kind = 0;
++        const double strength = 100.0;
+         nsPresContext* pc = aFrame->PresContext();
+         RefPtr<nsPresContext> keep(pc);
+         if (XRE_IsContentProcess()) {
+@@ -5489,7 +5480,7 @@ Maybe<int32_t> nsDisplayStereoDepth::ShiftForLevel(nsIFrame* aFrame,
+ #endif
+       }
+       if (!sStereoDepthDefault.mReady) {
+-        return Nothing();
++        return false;
+       }
+     }
+     if (!sStereoDepthDefault.mNoticed) {
+@@ -5503,6 +5494,52 @@ Maybe<int32_t> nsDisplayStereoDepth::ShiftForLevel(nsIFrame* aFrame,
+     sunk = sStereoDepthDefault.mSunk;
+     popped = sStereoDepthDefault.mPopped;
+   }
++  *aSunk = sunk;
++  *aPopped = popped;
++  return true;
++}
++
++/* static */
++bool nsDisplayStereoDepth::LimitsFor(nsIFrame* aFrame, double* aSunkPx,
++                                     double* aPoppedPx) {
++  if (!gfx::gfxVars::StereoOutputs()) {
++    return false;
++  }
++  return StereoDepthLimitsOf(aFrame, StereoDepthStateOf(aFrame), aSunkPx,
++                             aPoppedPx);
++}
++
++/* static */
++int32_t nsDisplayStereoDepth::OutputWidthFor(nsIFrame* aFrame) {
++  if (!gfx::gfxVars::StereoOutputs()) {
++    return 0;
++  }
++  int32_t width = StereoDepthStateOf(aFrame).mOutputWidth;
++  if (width <= 0) {
++    if (RefPtr<widget::Screen> screen =
++            widget::ScreenManager::GetSingleton().GetPrimaryScreen()) {
++      width = screen->GetRect().Width();
++    }
++  }
++  return std::max(width, 0);
++}
++
++/* static */
++Maybe<int32_t> nsDisplayStereoDepth::ShiftForLevel(nsIFrame* aFrame,
++                                                   float aLevel) {
++  if (!gfx::gfxVars::StereoOutputs()) {
++    return Nothing();
++  }
++  const widget::StereoDepthState state = StereoDepthStateOf(aFrame);
++  // KWin says whether the window may show depth now (the active window, a
++  // popup...), as for a 2D output otherwise.
++  if (!state.mAwake) {
++    return Nothing();
++  }
++  double sunk = 0, popped = 0;
++  if (!StereoDepthLimitsOf(aFrame, state, &sunk, &popped)) {
++    return Nothing();
++  }
+   // The width of the view: the output's, in device pixels (the unit of the
+   // limits is a view 1920 wide, scaled to the output as KWin does).
+   int32_t width = state.mOutputWidth;
+diff --git a/layout/painting/nsDisplayList.h b/layout/painting/nsDisplayList.h
+index 0471e63b0e..20358612e2 100644
+--- a/layout/painting/nsDisplayList.h
++++ b/layout/painting/nsDisplayList.h
+@@ -5287,6 +5287,12 @@ class nsDisplayStereoDepth : public nsDisplayWrapList {
+   // popped) for a frame's window, or Nothing while the display's limits are
+   // not known yet (asked of the parent) or no output shows stereo 3D.
+   static mozilla::Maybe<int32_t> ShiftForLevel(nsIFrame* aFrame, float aLevel);
++  // The depth limits of the window the frame is shown in, in pixels of a view
++  // 1920 wide (sunk, popped), whether or not the window is awake now.
++  static bool LimitsFor(nsIFrame* aFrame, double* aSunkPx, double* aPoppedPx);
++  // The width of the view the limits are scaled to, in device pixels: the
++  // output's the window mainly sits on; 0 when not known.
++  static int32_t OutputWidthFor(nsIFrame* aFrame);
+ 
+  private:
+   float mLevel;
+diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
+index ab539c88ef..6599a17b34 100644
+--- a/modules/libpref/init/StaticPrefList.yaml
++++ b/modules/libpref/init/StaticPrefList.yaml
+@@ -5720,36 +5720,22 @@
+ # shows each eye its half (gfx/vr/service/FlatSession.cpp). It also offers
+ # inline-stereo.
+ #
+-# The person picks how it is seen, never the output (they may show a 3D
+-# television and a headset at once): the mode, then the depth, both read
+-# with the display's own default under them (libstereo-policy's display
+-# depth, the one source the desktop reads too).
+-#   0 flat TV or output: a framed screen, gentle separation around the
+-#     screen plane, a gentle pop;
+-#   1 flat headset: the screen as a window in a headset, more separation;
+-#   2 VR over the phone: the phone headset's own session, with head tracking
+-#     and controllers once the tracked phone headset delivers them.
++# It is a flat display with a framed screen, gentle separation around the
++# screen plane, a gentle pop: the separation is the person's depth limits for
++# the window (the compositor's, built on the display), never a choice of the
++# browser, and the screen plane is taken from the scene.
+ - name: dom.vr.flat.enabled
+   type: RelaxedAtomicBool
+   value: false
+   mirror: always
+ 
+-- name: dom.vr.flat.mode
+-  type: RelaxedAtomicInt32
+-  value: 0
+-  mirror: always
+-
+-# The person's depth, in percent of the display's default (100).
+-- name: dom.vr.flat.depth-strength
+-  type: RelaxedAtomicUint32
+-  value: 100
+-  mirror: always
+-
+-# Where the screen plane is in the page's world, in millimetres: the distance
+-# at which an object has no parallax. 0 is the default, 1000.
+-- name: dom.vr.flat.screen-plane-mm
+-  type: RelaxedAtomicUint32
+-  value: 0
++# Where the screen plane is: from the scene the page draws, the distance
++# that puts the nearest and the farthest thing at equal and opposite
++# parallax, no nearer than the person's popped limit lets the nearest thing
++# come (the page's frames are looked at in the depth buffer). False: 1000.
++- name: dom.vr.flat.scene-plane
++  type: RelaxedAtomicBool
++  value: true
+   mirror: always
+ 
+ # Expert overrides of the display's own geometry, in millimetres, 0 for the
+@@ -20090,19 +20076,34 @@
+   value: false
+   mirror: always
+ 
+-# The separation of the two eyes' views, in percent of the view's width,
+-# which a point at infinity shows.
+-- name: webgl.stereo-camera.separation
+-  type: AtomicFloat
+-  value: 2.0f
+-  mirror: always
+-
+ # The zero-parallax distance, as a multiple of the camera's near distance.
+ - name: webgl.stereo-camera.convergence
+   type: AtomicFloat
+   value: 5.0f
+   mirror: always
+ 
++# Where the two eyes' cameras sit. True: the left eye is the page's own
++# camera (the picture the page draws without the hack) and the right eye is
++# one separation to its right, so an output that shows only the left eye, a
++# 2D output or a window the compositor does not show depth in, shows exactly
++# what the page draws. False: the page's camera is between the eyes, each
++# half a separation away, and a 2D output shows the left eye half a
++# separation off the page's own view.
++- name: webgl.stereo-camera.left-eye-is-page-camera
++  type: RelaxedAtomicBool
++  value: true
++  mirror: always
++
++# The zero-parallax plane from the scene: the distance that puts the nearest
++# and the farthest thing the page drew at equal and opposite parallax, read
++# from the depth buffer of the canvas's frames and kept inside the person's
++# depth limits. False: webgl.stereo-camera.convergence times the camera's near
++# distance.
++- name: webgl.stereo-camera.scene-plane
++  type: RelaxedAtomicBool
++  value: true
++  mirror: always
++
+ # Per-eye render targets: a page framebuffer the page draws its scene into
+ # (a post-processing chain: bloom, an effect composer) gets a right eye's
+ # copy, so that what the page draws from it is stereo too. Off: those
+diff --git a/widget/StereoDepthState.h b/widget/StereoDepthState.h
+index 63faea8a9e..9628fe8082 100644
+--- a/widget/StereoDepthState.h
++++ b/widget/StereoDepthState.h
+@@ -7,6 +7,8 @@
+ 
+ #include <cstdint>
+ 
++#include "mozilla/Atomics.h"
++
+ namespace mozilla::widget {
+ 
+ // What the desktop tells one window about depth (Sparky Stereo OS, CSS depth;
+@@ -38,6 +40,26 @@ struct StereoDepthState {
+   }
+ };
+ 
++// The limits the content process last had told (by the compositor for a
++// window, or the display default the main thread read), for a canvas in a
++// worker, which has no window to ask: the limits are the person's, the same
++// for the windows of one output. Limits in pixels of a view 1920 wide, times
++// 100, and the output's width in device pixels; 0 while none is known.
++struct StereoDepthProcessLimits {
++  static inline mozilla::Atomic<int32_t, mozilla::Relaxed> sSunk100{0};
++  static inline mozilla::Atomic<int32_t, mozilla::Relaxed> sPopped100{0};
++  static inline mozilla::Atomic<int32_t, mozilla::Relaxed> sOutputWidth{0};
++
++  static void Publish(int32_t aSunk100, int32_t aPopped100,
++                      int32_t aOutputWidth) {
++    if (aSunk100 > 0) {
++      sSunk100 = aSunk100;
++      sPopped100 = aPopped100;
++      sOutputWidth = aOutputWidth;
++    }
++  }
++};
++
+ }  // namespace mozilla::widget
+ 
+ #endif

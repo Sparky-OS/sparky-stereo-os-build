@@ -1,0 +1,586 @@
+Description: The browser's 3D menus lose the separation, screen plane and device type strings; the Display Configuration label and the two notices (ORDER 473u round 3)
+ The strings of the removed menus (the 3D Display menu, its modes, depths and screen planes, the 3D Canvas menu's depths, the
+ phone and headset hints and mode names) go from eight languages; the Display Configuration item's label (KDE's own name for
+ kcm_kscreen, with KDE's own translations) and the two notices of the notification bar (a 3D scene that stays flat for want
+ of depth limits, Display Configuration that could not be opened) are added in each: waterfox/browser/locales/LOCALE/browser/browser/browserContext.ftl.
+ Applies after the 3D Display strings.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+diff -ruN a/waterfox/browser/locales/de/browser/browser/browserContext.ftl b/waterfox/browser/locales/de/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/de/browser/browser/browserContext.ftl	2026-11-10 19:39:09.650981672 -0300
++++ b/waterfox/browser/locales/de/browser/browser/browserContext.ftl	2026-11-10 19:39:09.702562111 -0300
+@@ -246,64 +246,18 @@
+ main-context-menu-canvas-stereo-on =
+     .label = Ein
+ 
+-main-context-menu-canvas-stereo-depth-less =
+-    .label = Weniger Tiefe
++main-context-menu-stereo-display-settings =
++    .label = Anzeige-Einrichtung
+ 
+-main-context-menu-canvas-stereo-depth-normal =
+-    .label = Normale Tiefe
+-
+-main-context-menu-canvas-stereo-depth-more =
+-    .label = Mehr Tiefe
+-
+-main-context-menu-canvas-stereo-depth-most =
+-    .label = Maximale Tiefe
+-
+-main-context-menu-xr-stereo =
+-    .label = 3D-Anzeige
+-    .accesskey = 3
+-
+-main-context-menu-xr-stereo-mode-tv =
+-    .label = Flacher Fernseher oder Ausgang
+-
+-main-context-menu-xr-stereo-mode-headset =
+-    .label = Flaches Headset
+-
+-main-context-menu-xr-stereo-mode-phone =
+-    .label = VR über das Handy
+-
+-main-context-menu-xr-stereo-depth-less =
+-    .label = Weniger Tiefe
+-
+-main-context-menu-xr-stereo-depth-normal =
+-    .label = Normale Tiefe
+-
+-main-context-menu-xr-stereo-depth-more =
+-    .label = Mehr Tiefe
+-
+-main-context-menu-xr-stereo-depth-most =
+-    .label = Maximale Tiefe
+-
+-main-context-menu-xr-stereo-plane-nearer =
+-    .label = Bildschirmebene: näher
+-
+-main-context-menu-xr-stereo-plane-default =
+-    .label = Bildschirmebene: Standard
+-
+-main-context-menu-xr-stereo-plane-farther =
+-    .label = Bildschirmebene: weiter weg
++stereo-canvas-no-limits = Die 3D-Szene dieser Seite bleibt flach: Der Desktop teilt dem Browser Ihre Tiefengrenzen nicht mit (Stereo KWin fehlt).
++stereo-display-settings-failed = Die Anzeige-Einrichtung von KDE konnte nicht geöffnet werden: systemsettings wurde nicht gefunden oder startete nicht.
+ 
+ stereo-xr-exit = 3D beenden
+ 
+ stereo-xr-hint-flat = Esc beendet 3D. Mit der Maus ziehen, um sich umzusehen; W, A, S, D oder die Pfeiltasten und das Mausrad bewegen Sie.
+ 
+-stereo-xr-hint-phone = Esc beendet 3D. Kopfverfolgung und Controller des Handy-Headsets sind noch nicht verbunden: Maus und Tastatur bewegen die Ansicht.
+-
+ stereo-xr-mode-tv = Flacher Fernseher oder Ausgang
+ 
+-stereo-xr-mode-headset = Flaches Headset
+-
+-stereo-xr-mode-phone = VR über das Handy
+-
+ ## The access keys for "Show Controls" and "Hide Controls" are the same
+ ## because the two context-menu items are mutually exclusive.
+ 
+diff -ruN a/waterfox/browser/locales/fr/browser/browser/browserContext.ftl b/waterfox/browser/locales/fr/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/fr/browser/browser/browserContext.ftl	2026-11-10 19:39:09.647927853 -0300
++++ b/waterfox/browser/locales/fr/browser/browser/browserContext.ftl	2026-11-10 19:39:09.695724261 -0300
+@@ -246,64 +246,18 @@
+ main-context-menu-canvas-stereo-on =
+     .label = Activé
+ 
+-main-context-menu-canvas-stereo-depth-less =
+-    .label = Moins de profondeur
++main-context-menu-stereo-display-settings =
++    .label = Configuration de l'affichage
+ 
+-main-context-menu-canvas-stereo-depth-normal =
+-    .label = Profondeur normale
+-
+-main-context-menu-canvas-stereo-depth-more =
+-    .label = Plus de profondeur
+-
+-main-context-menu-canvas-stereo-depth-most =
+-    .label = Profondeur maximale
+-
+-main-context-menu-xr-stereo =
+-    .label = Affichage 3D
+-    .accesskey = 3
+-
+-main-context-menu-xr-stereo-mode-tv =
+-    .label = TV ou sortie à plat
+-
+-main-context-menu-xr-stereo-mode-headset =
+-    .label = Casque à plat
+-
+-main-context-menu-xr-stereo-mode-phone =
+-    .label = VR via le téléphone
+-
+-main-context-menu-xr-stereo-depth-less =
+-    .label = Moins de profondeur
+-
+-main-context-menu-xr-stereo-depth-normal =
+-    .label = Profondeur normale
+-
+-main-context-menu-xr-stereo-depth-more =
+-    .label = Plus de profondeur
+-
+-main-context-menu-xr-stereo-depth-most =
+-    .label = Profondeur maximale
+-
+-main-context-menu-xr-stereo-plane-nearer =
+-    .label = Plan de l'écran : plus près
+-
+-main-context-menu-xr-stereo-plane-default =
+-    .label = Plan de l'écran : par défaut
+-
+-main-context-menu-xr-stereo-plane-farther =
+-    .label = Plan de l'écran : plus loin
++stereo-canvas-no-limits = La scène 3D de cette page reste plate : le bureau ne transmet pas au navigateur vos limites de profondeur (Stereo KWin est absent).
++stereo-display-settings-failed = La configuration de l'affichage de KDE n'a pas pu être ouverte : systemsettings est introuvable ou n'a pas démarré.
+ 
+ stereo-xr-exit = Quitter la 3D
+ 
+ stereo-xr-hint-flat = Échap quitte la 3D. Faites glisser la souris pour regarder ; W, A, S, D ou les flèches et la molette vous déplacent.
+ 
+-stereo-xr-hint-phone = Échap quitte la 3D. Le suivi de la tête et les manettes du casque téléphone ne sont pas encore connectés : la souris et le clavier déplacent la vue.
+-
+ stereo-xr-mode-tv = TV ou sortie à plat
+ 
+-stereo-xr-mode-headset = Casque à plat
+-
+-stereo-xr-mode-phone = VR via le téléphone
+-
+ ## The access keys for "Show Controls" and "Hide Controls" are the same
+ ## because the two context-menu items are mutually exclusive.
+ 
+diff -ruN a/waterfox/browser/locales/ja/browser/browser/browserContext.ftl b/waterfox/browser/locales/ja/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/ja/browser/browser/browserContext.ftl	2026-11-10 19:39:09.643450400 -0300
++++ b/waterfox/browser/locales/ja/browser/browser/browserContext.ftl	2026-11-10 19:39:09.690712687 -0300
+@@ -246,64 +246,18 @@
+ main-context-menu-canvas-stereo-on =
+     .label = オン
+ 
+-main-context-menu-canvas-stereo-depth-less =
+-    .label = 奥行き: 小
++main-context-menu-stereo-display-settings =
++    .label = ディスプレイ設定
+ 
+-main-context-menu-canvas-stereo-depth-normal =
+-    .label = 奥行き: 標準
+-
+-main-context-menu-canvas-stereo-depth-more =
+-    .label = 奥行き: 大
+-
+-main-context-menu-canvas-stereo-depth-most =
+-    .label = 奥行き: 最大
+-
+-main-context-menu-xr-stereo =
+-    .label = 3D ディスプレイ
+-    .accesskey = 3
+-
+-main-context-menu-xr-stereo-mode-tv =
+-    .label = フラット TV／出力
+-
+-main-context-menu-xr-stereo-mode-headset =
+-    .label = フラット ヘッドセット
+-
+-main-context-menu-xr-stereo-mode-phone =
+-    .label = スマートフォンによる VR
+-
+-main-context-menu-xr-stereo-depth-less =
+-    .label = 奥行き: 小
+-
+-main-context-menu-xr-stereo-depth-normal =
+-    .label = 奥行き: 標準
+-
+-main-context-menu-xr-stereo-depth-more =
+-    .label = 奥行き: 大
+-
+-main-context-menu-xr-stereo-depth-most =
+-    .label = 奥行き: 最大
+-
+-main-context-menu-xr-stereo-plane-nearer =
+-    .label = スクリーン面: 手前
+-
+-main-context-menu-xr-stereo-plane-default =
+-    .label = スクリーン面: 標準
+-
+-main-context-menu-xr-stereo-plane-farther =
+-    .label = スクリーン面: 奥
++stereo-canvas-no-limits = このページの 3D シーンは平面のままです。デスクトップが奥行きの限界をブラウザーに伝えていません (Stereo KWin がありません)。
++stereo-display-settings-failed = KDE のディスプレイ設定を開けませんでした。systemsettings が見つからないか、起動しませんでした。
+ 
+ stereo-xr-exit = 3D を終了
+ 
+ stereo-xr-hint-flat = Esc で 3D を終了します。マウスのドラッグで見回し、W A S D または矢印キーとホイールで移動します。
+ 
+-stereo-xr-hint-phone = Esc で 3D を終了します。スマートフォン ヘッドセットの頭部追跡とコントローラーはまだ接続されていません。マウスとキーボードで視点を動かします。
+-
+ stereo-xr-mode-tv = フラット TV／出力
+ 
+-stereo-xr-mode-headset = フラット ヘッドセット
+-
+-stereo-xr-mode-phone = スマートフォンによる VR
+-
+ ## The access keys for "Show Controls" and "Hide Controls" are the same
+ ## because the two context-menu items are mutually exclusive.
+ 
+diff -ruN a/waterfox/browser/locales/ko/browser/browser/browserContext.ftl b/waterfox/browser/locales/ko/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/ko/browser/browser/browserContext.ftl	2026-11-10 19:39:09.625480518 -0300
++++ b/waterfox/browser/locales/ko/browser/browser/browserContext.ftl	2026-11-10 19:39:09.666929068 -0300
+@@ -246,64 +246,18 @@
+ main-context-menu-canvas-stereo-on =
+     .label = 켜기
+ 
+-main-context-menu-canvas-stereo-depth-less =
+-    .label = 깊이 작게
++main-context-menu-stereo-display-settings =
++    .label = 디스플레이 설정
+ 
+-main-context-menu-canvas-stereo-depth-normal =
+-    .label = 깊이 보통
+-
+-main-context-menu-canvas-stereo-depth-more =
+-    .label = 깊이 크게
+-
+-main-context-menu-canvas-stereo-depth-most =
+-    .label = 깊이 최대
+-
+-main-context-menu-xr-stereo =
+-    .label = 3D 디스플레이
+-    .accesskey = 3
+-
+-main-context-menu-xr-stereo-mode-tv =
+-    .label = 평면 TV 또는 출력
+-
+-main-context-menu-xr-stereo-mode-headset =
+-    .label = 평면 헤드셋
+-
+-main-context-menu-xr-stereo-mode-phone =
+-    .label = 휴대폰 VR
+-
+-main-context-menu-xr-stereo-depth-less =
+-    .label = 깊이 작게
+-
+-main-context-menu-xr-stereo-depth-normal =
+-    .label = 깊이 보통
+-
+-main-context-menu-xr-stereo-depth-more =
+-    .label = 깊이 크게
+-
+-main-context-menu-xr-stereo-depth-most =
+-    .label = 깊이 최대
+-
+-main-context-menu-xr-stereo-plane-nearer =
+-    .label = 화면 평면: 가깝게
+-
+-main-context-menu-xr-stereo-plane-default =
+-    .label = 화면 평면: 기본
+-
+-main-context-menu-xr-stereo-plane-farther =
+-    .label = 화면 평면: 멀게
++stereo-canvas-no-limits = 이 페이지의 3D 장면은 평면으로 유지됩니다. 데스크톱이 브라우저에 깊이 한계를 알려 주지 않습니다(Stereo KWin이 없음).
++stereo-display-settings-failed = KDE 디스플레이 설정을 열 수 없습니다. systemsettings를 찾지 못했거나 시작되지 않았습니다.
+ 
+ stereo-xr-exit = 3D 종료
+ 
+ stereo-xr-hint-flat = Esc로 3D를 종료합니다. 마우스를 끌어 둘러보고, W A S D 또는 화살표 키와 휠로 이동합니다.
+ 
+-stereo-xr-hint-phone = Esc로 3D를 종료합니다. 휴대폰 헤드셋의 머리 추적과 컨트롤러는 아직 연결되지 않았습니다. 마우스와 키보드로 시점을 움직입니다.
+-
+ stereo-xr-mode-tv = 평면 TV 또는 출력
+ 
+-stereo-xr-mode-headset = 평면 헤드셋
+-
+-stereo-xr-mode-phone = 휴대폰 VR
+-
+ ## The access keys for "Show Controls" and "Hide Controls" are the same
+ ## because the two context-menu items are mutually exclusive.
+ 
+diff -ruN a/waterfox/browser/locales/pl/browser/browser/browserContext.ftl b/waterfox/browser/locales/pl/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/pl/browser/browser/browserContext.ftl	2026-11-10 19:39:09.654078261 -0300
++++ b/waterfox/browser/locales/pl/browser/browser/browserContext.ftl	2026-11-10 19:39:09.708007007 -0300
+@@ -246,64 +246,18 @@
+ main-context-menu-canvas-stereo-on =
+     .label = Włączone
+ 
+-main-context-menu-canvas-stereo-depth-less =
+-    .label = Mniejsza głębia
++main-context-menu-stereo-display-settings =
++    .label = Ustawienia wyświetlania
+ 
+-main-context-menu-canvas-stereo-depth-normal =
+-    .label = Zwykła głębia
+-
+-main-context-menu-canvas-stereo-depth-more =
+-    .label = Większa głębia
+-
+-main-context-menu-canvas-stereo-depth-most =
+-    .label = Największa głębia
+-
+-main-context-menu-xr-stereo =
+-    .label = Wyświetlacz 3D
+-    .accesskey = 3
+-
+-main-context-menu-xr-stereo-mode-tv =
+-    .label = Płaski telewizor lub wyjście
+-
+-main-context-menu-xr-stereo-mode-headset =
+-    .label = Płaski headset
+-
+-main-context-menu-xr-stereo-mode-phone =
+-    .label = VR przez telefon
+-
+-main-context-menu-xr-stereo-depth-less =
+-    .label = Mniejsza głębia
+-
+-main-context-menu-xr-stereo-depth-normal =
+-    .label = Zwykła głębia
+-
+-main-context-menu-xr-stereo-depth-more =
+-    .label = Większa głębia
+-
+-main-context-menu-xr-stereo-depth-most =
+-    .label = Największa głębia
+-
+-main-context-menu-xr-stereo-plane-nearer =
+-    .label = Płaszczyzna ekranu: bliżej
+-
+-main-context-menu-xr-stereo-plane-default =
+-    .label = Płaszczyzna ekranu: domyślna
+-
+-main-context-menu-xr-stereo-plane-farther =
+-    .label = Płaszczyzna ekranu: dalej
++stereo-canvas-no-limits = Scena 3D tej strony pozostaje płaska: pulpit nie przekazuje przeglądarce Twoich limitów głębi (brak Stereo KWin).
++stereo-display-settings-failed = Nie udało się otworzyć ustawień wyświetlania KDE: nie znaleziono programu systemsettings lub nie uruchomił się.
+ 
+ stereo-xr-exit = Wyjdź z 3D
+ 
+ stereo-xr-hint-flat = Esc kończy 3D. Przeciągnij myszą, by się rozejrzeć; W, A, S, D lub strzałki i kółko przesuwają widok.
+ 
+-stereo-xr-hint-phone = Esc kończy 3D. Śledzenie głowy i kontrolery gogli na telefon nie są jeszcze podłączone: widok porusza mysz i klawiatura.
+-
+ stereo-xr-mode-tv = Płaski telewizor lub wyjście
+ 
+-stereo-xr-mode-headset = Płaski headset
+-
+-stereo-xr-mode-phone = VR przez telefon
+-
+ ## The access keys for "Show Controls" and "Hide Controls" are the same
+ ## because the two context-menu items are mutually exclusive.
+ 
+diff -ruN a/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl b/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl	2026-11-10 19:39:09.654534672 -0300
++++ b/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl	2026-11-10 19:39:09.708600888 -0300
+@@ -246,64 +246,18 @@
+ main-context-menu-canvas-stereo-on =
+     .label = Ligado
+ 
+-main-context-menu-canvas-stereo-depth-less =
+-    .label = Menos profundidade
++main-context-menu-stereo-display-settings =
++    .label = Configurações da tela
+ 
+-main-context-menu-canvas-stereo-depth-normal =
+-    .label = Profundidade normal
+-
+-main-context-menu-canvas-stereo-depth-more =
+-    .label = Mais profundidade
+-
+-main-context-menu-canvas-stereo-depth-most =
+-    .label = Profundidade máxima
+-
+-main-context-menu-xr-stereo =
+-    .label = Tela 3D
+-    .accesskey = 3
+-
+-main-context-menu-xr-stereo-mode-tv =
+-    .label = TV ou saída plana
+-
+-main-context-menu-xr-stereo-mode-headset =
+-    .label = Headset plano
+-
+-main-context-menu-xr-stereo-mode-phone =
+-    .label = VR pelo celular
+-
+-main-context-menu-xr-stereo-depth-less =
+-    .label = Menos profundidade
+-
+-main-context-menu-xr-stereo-depth-normal =
+-    .label = Profundidade normal
+-
+-main-context-menu-xr-stereo-depth-more =
+-    .label = Mais profundidade
+-
+-main-context-menu-xr-stereo-depth-most =
+-    .label = Profundidade máxima
+-
+-main-context-menu-xr-stereo-plane-nearer =
+-    .label = Plano da tela: mais perto
+-
+-main-context-menu-xr-stereo-plane-default =
+-    .label = Plano da tela: padrão
+-
+-main-context-menu-xr-stereo-plane-farther =
+-    .label = Plano da tela: mais longe
++stereo-canvas-no-limits = A cena 3D desta página continua plana: o desktop não informa ao navegador os seus limites de profundidade (falta o Stereo KWin).
++stereo-display-settings-failed = Não foi possível abrir as configurações da tela do KDE: o systemsettings não foi encontrado ou não iniciou.
+ 
+ stereo-xr-exit = Sair do 3D
+ 
+ stereo-xr-hint-flat = Esc sai do 3D. Arraste o mouse para olhar; W, A, S, D ou as setas e a roda movem você.
+ 
+-stereo-xr-hint-phone = Esc sai do 3D. O rastreamento de cabeça e os controles do headset de celular ainda não estão conectados: o mouse e o teclado movem a visão.
+-
+ stereo-xr-mode-tv = TV ou saída plana
+ 
+-stereo-xr-mode-headset = Headset plano
+-
+-stereo-xr-mode-phone = VR pelo celular
+-
+ ## The access keys for "Show Controls" and "Hide Controls" are the same
+ ## because the two context-menu items are mutually exclusive.
+ 
+diff -ruN a/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl b/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl	2026-11-10 19:39:09.627254584 -0300
++++ b/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl	2026-11-10 19:39:09.671307191 -0300
+@@ -246,64 +246,18 @@
+ main-context-menu-canvas-stereo-on =
+     .label = 开启
+ 
+-main-context-menu-canvas-stereo-depth-less =
+-    .label = 景深较浅
++main-context-menu-stereo-display-settings =
++    .label = 显示器配置
+ 
+-main-context-menu-canvas-stereo-depth-normal =
+-    .label = 景深标准
+-
+-main-context-menu-canvas-stereo-depth-more =
+-    .label = 景深较深
+-
+-main-context-menu-canvas-stereo-depth-most =
+-    .label = 景深最深
+-
+-main-context-menu-xr-stereo =
+-    .label = 3D 显示
+-    .accesskey = 3
+-
+-main-context-menu-xr-stereo-mode-tv =
+-    .label = 平面电视或输出
+-
+-main-context-menu-xr-stereo-mode-headset =
+-    .label = 平面头显
+-
+-main-context-menu-xr-stereo-mode-phone =
+-    .label = 手机 VR
+-
+-main-context-menu-xr-stereo-depth-less =
+-    .label = 景深较浅
+-
+-main-context-menu-xr-stereo-depth-normal =
+-    .label = 景深标准
+-
+-main-context-menu-xr-stereo-depth-more =
+-    .label = 景深较深
+-
+-main-context-menu-xr-stereo-depth-most =
+-    .label = 景深最深
+-
+-main-context-menu-xr-stereo-plane-nearer =
+-    .label = 屏幕平面：靠近
+-
+-main-context-menu-xr-stereo-plane-default =
+-    .label = 屏幕平面：默认
+-
+-main-context-menu-xr-stereo-plane-farther =
+-    .label = 屏幕平面：远离
++stereo-canvas-no-limits = 此页面的 3D 场景保持平面：桌面没有把您的深度限制告知浏览器（缺少 Stereo KWin）。
++stereo-display-settings-failed = 无法打开 KDE 的显示器配置：未找到 systemsettings 或其未能启动。
+ 
+ stereo-xr-exit = 退出 3D
+ 
+ stereo-xr-hint-flat = 按 Esc 退出 3D。拖动鼠标环顾，W、A、S、D 或方向键和滚轮移动。
+ 
+-stereo-xr-hint-phone = 按 Esc 退出 3D。手机头显的头部追踪和手柄尚未连接：用鼠标和键盘移动视角。
+-
+ stereo-xr-mode-tv = 平面电视或输出
+ 
+-stereo-xr-mode-headset = 平面头显
+-
+-stereo-xr-mode-phone = 手机 VR
+-
+ ## The access keys for "Show Controls" and "Hide Controls" are the same
+ ## because the two context-menu items are mutually exclusive.
+ 
+diff -ruN a/waterfox/browser/locales/zh-TW/browser/browser/browserContext.ftl b/waterfox/browser/locales/zh-TW/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/zh-TW/browser/browser/browserContext.ftl	2026-11-10 19:39:09.654721023 -0300
++++ b/waterfox/browser/locales/zh-TW/browser/browser/browserContext.ftl	2026-11-10 19:39:09.708817599 -0300
+@@ -246,64 +246,18 @@
+ main-context-menu-canvas-stereo-on =
+     .label = 開啟
+ 
+-main-context-menu-canvas-stereo-depth-less =
+-    .label = 景深較淺
++main-context-menu-stereo-display-settings =
++    .label = 顯示器設定
+ 
+-main-context-menu-canvas-stereo-depth-normal =
+-    .label = 景深標準
+-
+-main-context-menu-canvas-stereo-depth-more =
+-    .label = 景深較深
+-
+-main-context-menu-canvas-stereo-depth-most =
+-    .label = 景深最深
+-
+-main-context-menu-xr-stereo =
+-    .label = 3D 顯示
+-    .accesskey = 3
+-
+-main-context-menu-xr-stereo-mode-tv =
+-    .label = 平面電視或輸出
+-
+-main-context-menu-xr-stereo-mode-headset =
+-    .label = 平面頭戴裝置
+-
+-main-context-menu-xr-stereo-mode-phone =
+-    .label = 手機 VR
+-
+-main-context-menu-xr-stereo-depth-less =
+-    .label = 景深較淺
+-
+-main-context-menu-xr-stereo-depth-normal =
+-    .label = 景深標準
+-
+-main-context-menu-xr-stereo-depth-more =
+-    .label = 景深較深
+-
+-main-context-menu-xr-stereo-depth-most =
+-    .label = 景深最深
+-
+-main-context-menu-xr-stereo-plane-nearer =
+-    .label = 螢幕平面：靠近
+-
+-main-context-menu-xr-stereo-plane-default =
+-    .label = 螢幕平面：預設
+-
+-main-context-menu-xr-stereo-plane-farther =
+-    .label = 螢幕平面：遠離
++stereo-canvas-no-limits = 此頁面的 3D 場景維持平面：桌面沒有將您的深度限制告知瀏覽器（缺少 Stereo KWin）。
++stereo-display-settings-failed = 無法開啟 KDE 的顯示器設定：找不到 systemsettings 或其無法啟動。
+ 
+ stereo-xr-exit = 結束 3D
+ 
+ stereo-xr-hint-flat = 按 Esc 結束 3D。拖曳滑鼠環顧，W、A、S、D 或方向鍵與滾輪移動。
+ 
+-stereo-xr-hint-phone = 按 Esc 結束 3D。手機頭戴裝置的頭部追蹤與控制器尚未連接：用滑鼠和鍵盤移動視角。
+-
+ stereo-xr-mode-tv = 平面電視或輸出
+ 
+-stereo-xr-mode-headset = 平面頭戴裝置
+-
+-stereo-xr-mode-phone = 手機 VR
+-
+ ## The access keys for "Show Controls" and "Hide Controls" are the same
+ ## because the two context-menu items are mutually exclusive.
+ 

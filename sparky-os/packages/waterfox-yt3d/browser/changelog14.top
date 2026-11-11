@@ -1,0 +1,32 @@
+sparky-stereo-browser (@DEBVERSION@) unstable; urgency=medium
+
+  * Camera hack, for every site: a WebGL canvas that is drawn once while it
+    is out of view (an on-demand renderer such as X_ITE) shows both eyes;
+    the left eye is the page's own camera, so a 2D output shows exactly what
+    the page draws; the zero-parallax plane follows the scene inside the
+    person's popped limit, for the camera hack and for the flat WebXR
+    display.
+  * The camera hack's separation comes from the person's depth limits built
+    on the display (kde_stereo_depth_v1 depth_limits) instead of a fixed 2
+    percent of the width: a point at infinity lands at the sunk limit in the
+    output's pixels whatever the canvas's width; the 3D Canvas menu's Less,
+    Normal, More and Most stay the person's choice on top and scale it, never
+    past the limit (webgl.stereo-camera.
+    separation-from-limits off keeps the fixed percentage).
+  * The browser has no setting for depth, the screen plane or the kind of
+    device: the 3D Canvas and 3D Display menus' Less, Normal, More and Most,
+    the screen plane choices and Flat TV, Flat headset and VR over the phone
+    are gone, with their preferences and strings in the nine languages. The
+    depth is the person's limits from KWin, unscaled; a Display Settings item
+    opens KDE's Display Configuration, where they are changed (systemsettings kcm_kscreen). The per-site 3D on and off, the
+    video's input packing and Swap Eyes stay.
+  * No separation is made up: a 3D scene in a worker gets the limits the
+    process was told, and a scene whose limits are not known stays flat, with
+    a notice in the browser's notification bar where the desktop has no Stereo
+    KWin. The Display Configuration label is KDE's own name for the page.
+  * Spanish (es-ES, es-MX, es-AR, es-CL) for the edition's 3D menus and
+    notices, and the four Spanish locales are in the package.
+  * A depth buffer that cannot be read, so that the plane stays the
+    camera's own, is said once on the page's web console, with the reason.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@

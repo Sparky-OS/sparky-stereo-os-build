@@ -45,3 +45,17 @@ prompts) is an xdg_popup of its own surface under Stereo KWin (`widget.wayland.p
 DMABuf WebGL on NVIDIA is forced on by `widget.dmabuf-webgl.stereo-nvidia.enabled` (or blocked, saying the preference is false).
 `build-browser.sh` makes 6.7.5-0+stereo3d8+lc1 (`browser/changelog8.top`, `0002` states the commit and the version). The call is as for
 +stereo3d7: `BROWSER_JOBS=4 SIBLINGS_DIR=.../siblings-1171 SPARKY_LC_ARCHIVE_DIR=.../archive SPARKY_REPO_DIR=/var/tmp/sparky-repo-current`.
+
+## ORDER 473u (2026-11-10): browser +stereo3d14, the camera hack from the person's depth limits
+
+`browser/0013` is Gecko 6be1abb34e to ac402b8caa (branch order473u of the fork): a WebGL canvas drawn once out of view shows both eyes,
+the left eye is the page's own camera (a 2D output shows what the page draws), the zero-parallax plane follows the scene inside the
+person's popped limit (the camera hack and the flat WebXR display), the hack's separation is the sunk limit of the window's
+`kde_stereo_depth_v1` depth_limits over 1920 pixels scaled by the 3D Canvas menu's Less, Normal, More and Most
+(`webgl.stereo-camera.separation-from-limits`), and a depth buffer that cannot be read is said once on the page's web console.
+`0014` states the commit and the version, `changelog14.top` the entry. The recipe starts from the +stereo3d13+lc1 source (the stage folder of
+that build is the published folder), is called as for +stereo3d8 with `BROWSER_JOBS=4`, and names its container with `BROWSER_CONTAINER`.
+
+ORDER 473u round 3 (2026-11-10): the edition's browser has no setting for the depth of a 3D picture, the screen plane or the kind of device (Daniel: a program's 3D options are only enabling 3D, the render resolution and a shortcut to Display Settings; the rest is KWin's). `browser/0013` now runs to Gecko 1981fbd3f7: the 3D Canvas and 3D Display menus' Less, Normal, More and Most, the screen plane choices and the Flat TV, Flat headset and VR over the phone modes are removed with their preferences, `FlatMode()`, the `stereo-camera-depth` permission and strings; `0015` removes the strings from the nine languages and adds the Display Settings item's label. The device chooser stays in the fork's branch `order473u-upstream-offer` (Gecko fe59fb1c3a), for an offer to Waterfox, not in this package.
+
+ORDER 473u round 3b: `browser/0013` runs to Gecko 5f618506a2 and no longer carries the branding folder (it stays an untracked folder of the tree, as the build expects it). The browser makes up no separation: canvases in workers get the limits the process was told, a scene with no known limits stays flat, and the notification bar says why where the desktop has no Stereo KWin. The Display Configuration item runs `systemsettings kcm_kscreen` only and is labelled with KDE's own name for the page in KDE's own translations; `0015` carries the strings of eight languages, `0016` Spanish for es-ES, es-MX, es-AR and es-CL, and the recipe adds those four locales to `package-multi-locale` (German was already in it). The package then ships the locales en-US, pl, pt-BR, fr, de, ja, ko, zh-CN, zh-TW, es-ES, es-MX, es-AR and es-CL.

@@ -8,7 +8,8 @@ set -euo pipefail
 : "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=${BROWSER_JOBS:-8}
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
-OLD=6.7.5-0+stereo3d12+lc1 NEW=6.7.5-0+stereo3d13 COMMIT=6be1abb34e71b4352957a55f2db03c76d0d0c83d OLDCOMMIT=f3cecda968d31d75cff9af6a7a8db6d6bf71a278
+OLD=6.7.5-0+stereo3d13+lc1 NEW=6.7.5-0+stereo3d14 COMMIT=4ed7888140abc8f4ab6e68a4166eeea88d2871d7 OLDCOMMIT=6be1abb34e71b4352957a55f2db03c76d0d0c83d
+if [ -z "${BROWSER_RESUME:-}" ]; then
 cd /work && mkdir plain && cd plain
 cp /in/sparky-stereo-browser_6.7.5.orig.tar.xz "/in/sparky-stereo-browser_$OLD.dsc" "/in/sparky-stereo-browser_$OLD.debian.tar.xz" .
 sha256sum sparky-stereo-browser_6.7.5.orig.tar.xz | tee /work/orig.sha256
@@ -16,18 +17,22 @@ sha256sum sparky-stereo-browser_6.7.5.orig.tar.xz | tee /work/orig.sha256
 dpkg-source -x "sparky-stereo-browser_$OLD.dsc" src >/dev/null
 cd src
 mkdir -p debian/patches
-cp /patches/0011-*.patch /patches/0012-*.patch debian/patches/
-ls /patches/0011-*.patch /patches/0012-*.patch | xargs -n1 basename >> debian/patches/series
+cp /patches/0013-*.patch /patches/0014-*.patch /patches/0015-*.patch /patches/0016-*.patch debian/patches/
+ls /patches/0013-*.patch /patches/0014-*.patch /patches/0015-*.patch /patches/0016-*.patch | xargs -n1 basename >> debian/patches/series
 python3 - <<'PY'
 import os
-top = open('/patches/changelog13.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d13').replace('@DATE@', os.environ['SOURCE_DATE_RFC2822'])
-lc = ('sparky-stereo-browser (6.7.5-0+stereo3d13+lc1) UNRELEASED; urgency=medium\n\n'
+top = open('/patches/changelog14.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d14').replace('@DATE@', os.environ['SOURCE_DATE_RFC2822'])
+lc = ('sparky-stereo-browser (6.7.5-0+stereo3d14+lc1) UNRELEASED; urgency=medium\n\n'
       '  * Apply verified native Lean Code before compilation and qualified lc1\n'
       '    payload assembly; retain exact authored source and HR companions.\n\n'
       ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n')
 old = open('debian/changelog').read()
-open('debian/changelog', 'w').write(lc + top + old[old.index('sparky-stereo-browser (6.7.5-0+stereo3d12) unstable'):])
+open('debian/changelog', 'w').write(lc + top + old[old.index('sparky-stereo-browser (6.7.5-0+stereo3d13) unstable'):])
 PY
+# The package's languages: the nine of the edition and the four Spanish locales (Spanish is the tenth required language; Mozilla's
+# locales carry a territory, and ORDER 473u round 3b gives the same Spanish text to all four).
+grep -q -- '--locales en-US pl pt-BR fr de ja ko zh-CN zh-TW$' debian/build.sh
+sed -i 's/--locales en-US pl pt-BR fr de ja ko zh-CN zh-TW$/--locales en-US pl pt-BR fr de ja ko zh-CN zh-TW es-ES es-MX es-AR es-CL/' debian/build.sh
 grep -q "^MOZ_SOURCE_CHANGESET=$OLDCOMMIT\$" debian/browser-build.env
 sed -i "s/^MOZ_SOURCE_CHANGESET=.*/MOZ_SOURCE_CHANGESET=$COMMIT/" debian/browser-build.env
 # The build ID is how a profile learns that its cached interface is old: the same ID over a new package kept the interface of the
@@ -47,13 +52,16 @@ mkdir -p /work/build && cd /work/build
 cp /work/plain/sparky-stereo-browser_6.7.5.orig.tar.xz /work/plain/sparky-stereo-browser_$NEW+lc1.* .
 dpkg-source -x "sparky-stereo-browser_$NEW+lc1.dsc" source >/dev/null
 test "$(cat source/SOURCE.edition.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["browser_commit"])')" = "$COMMIT"
+
+fi
+cd /work/build
 apt-get -y update >/dev/null 2>&1
 apt-get -y --no-install-recommends build-dep /work/build/source >/work/build-dep.log 2>&1
 id builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd source
 sed -i "s/^mk_add_options MOZ_PARALLEL_BUILD=.*/mk_add_options MOZ_PARALLEL_BUILD=${BROWSER_JOBS:-8}/" debian/mozconfig
-runuser -u builder -- env SPARKY_BROWSER_TOOLCHAIN_ROOT=/browser-toolchains dpkg-buildpackage -us -uc -b -j${BROWSER_JOBS:-8}
+runuser -u builder -- env SPARKY_BROWSER_TOOLCHAIN_ROOT=/browser-toolchains dpkg-buildpackage -us -uc -b ${BROWSER_RESUME:+-nc} -j${BROWSER_JOBS:-8}
 cp .sparky-lc/source.json /work/native-source.json
 cd /work/build
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/build/*+lc1_*.deb

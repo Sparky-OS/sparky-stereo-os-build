@@ -16,7 +16,14 @@ HERE=$(cd "$(dirname "$0")" && pwd -P)
 WORK=$(mkdir -p "$1" && cd "$1" && pwd -P)
 PUBLISHED=$(cd "$2" && pwd -P)
 TOOLS=$(cd "$3" && pwd -P)
-[ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
+[ -z "$(ls -A "$WORK")" ] || [ -n "${BROWSER_RESUME:-}" ] || { echo "$WORK is not empty" >&2; exit 1; }
+# BROWSER_OBJ_DIR: the object folder on another disk (the LTO build's objects do not fit beside the source on a small build disk), mounted where
+# the build looks for it. BROWSER_RESUME=1: a build stopped part way (a disk guard) goes on in the same WORK from its object folder, without
+# unpacking the source again or cleaning; set SOURCE_DATE_EPOCH to the first run's value so the packages keep their date.
+OBJ=()
+[ -z "${BROWSER_OBJ_DIR:-}" ] || OBJ=(-v "$(cd "$BROWSER_OBJ_DIR" && pwd -P)":/work/build/source/obj-x86_64-pc-linux-gnu)
+# BROWSER_RUST_DIR: the cargo target folder (about a third of the objects) on a third place, mounted inside the object folder.
+[ -z "${BROWSER_RUST_DIR:-}" ] || OBJ+=(-v "$(cd "$BROWSER_RUST_DIR" && pwd -P)":/work/build/source/obj-x86_64-pc-linux-gnu/x86_64-unknown-linux-gnu)
 sparky_provenance_init sparky-lc-migration:20261020
 # The link gate (lean.release check-link) runs when SIBLINGS_DIR (the unpublished libstereo-policy debs, with siblings.txt),
 # SPARKY_LC_ARCHIVE_DIR (the public sources.json and keyrings) and SPARKY_REPO_DIR (the published edition tree) are set.
@@ -27,7 +34,7 @@ if [ -n "${SIBLINGS_DIR:-}" ]; then
 		-v "$SIBLINGS_DIR":/sib:ro -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro -v "$SPARKY_REPO_DIR":/repo:ro
 		-e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch)
 fi
-docker run "${SPARKY_PROV_ARGS[@]}" "${GATE[@]}" --rm --ulimit core=0 --name w196-browser --cpus ${BROWSER_JOBS:-8} -e BROWSER_JOBS=${BROWSER_JOBS:-8} --memory 32g --platform linux/amd64 \
+docker run "${SPARKY_PROV_ARGS[@]}" "${GATE[@]}" "${OBJ[@]}" -e BROWSER_RESUME="${BROWSER_RESUME:-}" --rm --ulimit core=0 --name ${BROWSER_CONTAINER:-w196-browser} --cpus ${BROWSER_JOBS:-8} -e BROWSER_JOBS=${BROWSER_JOBS:-8} --memory 32g --platform linux/amd64 \
 	-v "$WORK":/work -v "$PUBLISHED":/in:ro -v "$HERE/browser":/patches:ro -v "$TOOLS":/browser-toolchains:ro \
 	-v "$HERE/../..":/toolkit:ro \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
