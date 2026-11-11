@@ -90,7 +90,8 @@ else:
     assert not fonts and outcome, (len(fonts), outcome)
     assert status == (0 if choice in ('refuse', 'close') else 1), status
 answer = subprocess.check_output(['chroot', target, 'debconf-communicate', 'ttf-mscorefonts-installer'],
-                                 input='GET msttcorefonts/accepted-mscorefonts-eula\n', text=True)
+                                 input='GET msttcorefonts/accepted-mscorefonts-eula\n', text=True,
+                                 env=dict(os.environ, DEBIAN_FRONTEND='noninteractive'))
 assert answer.strip() == ('0 true' if choice in ('accept', 'failed-download') else '0 false'), answer
 (out / 'debconf-answer.txt').write_text(answer)
 print(f'PASS private KWin Wayland {language} {choice}: exit={status}, fonts={len(fonts)}, notice={notice}')
