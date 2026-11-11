@@ -9,6 +9,8 @@
 #include <QRadioButton>
 #include <QTextEdit>
 #include <QTimer>
+#include <cstdio>
+#include <cstring>
 
 // Keep KDE's debconf renderer and protocol. Only the EULA actions differ from
 // its generic boolean's OK/Cancel radio buttons. Debconf alone stores consent.
@@ -88,6 +90,10 @@ private:
 
 int main(int argc, char **argv)
 {
+    if (argc == 2 && !std::strcmp(argv[1], "--version")) {
+        std::puts("sparky-core-fonts-dialog 1.0");
+        return 0;
+    }
     QApplication app(argc, argv);
     app.setQuitOnLastWindowClosed(false);
     if (argc != 2 || qEnvironmentVariableIsEmpty("CORE_FONTS_ACCEPT") ||
