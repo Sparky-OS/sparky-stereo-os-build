@@ -77,6 +77,7 @@ with logfile.open('w') as log:
             process.terminate()
             process.wait(timeout=5)
 assert answered, 'the KDE EULA was never presented'
+assert logfile.read_text().count('KDE debconf EULA') == 1, 'licence question repeated'
 fonts = list((Path(target) / 'usr/share/fonts/truetype/msttcorefonts').glob('*.ttf'))
 if choice == 'accept':
     assert status == 0 and fonts, (status, len(fonts))
