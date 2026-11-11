@@ -1,0 +1,17 @@
+Source: kcm-ums
+Section: Network
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: cmake, debhelper-compat (= 13), extra-cmake-modules (>= 6.10), gettext, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, qt6-base-dev, qt6-declarative-dev
+Standards-Version: 4.7.2
+Homepage: https://sparkylinux.org
+Rules-Requires-Root: no
+
+Package: kcm-ums
+Architecture: any
+Depends: qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, qml6-module-qtquick-controls, qml6-module-qtquick-dialogs, qml6-module-qtquick-layouts, systemsettings, ums (>= 15.9.0), ${misc:Depends}, ${shlibs:Depends}
+Description: System Settings page for Universal Media Server
+ Media Server (DLNA) under Multimedia in System Settings: switches the
+ ums user service on and off, sets the server name and the shared folders
+ (Pictures, Music and Videos by default), and opens UMS's web interface.
+ It writes UMS's own configuration files.
