@@ -152,7 +152,7 @@ Comment: Ubuntu 3.3ubuntu1 introduced the EULA prompt. Adapt its default-false
 + dpkg-reconfigure ttf-mscorefonts-installer
 --- a/debian/config
 +++ b/debian/config
-@@ -11,0 +12,17 @@
+@@ -11,0 +12,16 @@
 +
 +# EULA presentation adapted from Michael Vogt's Ubuntu preinst (3.3ubuntu1).
 +# No image or installer supplies an answer. Noninteractive keeps the false default.
@@ -165,7 +165,6 @@ Comment: Ubuntu 3.3ubuntu1 introduced the EULA prompt. Adapt its default-false
 +        db_fset msttcorefonts/present-mscorefonts-eula seen false
 +        db_fset msttcorefonts/accepted-mscorefonts-eula seen false
 +        db_input critical msttcorefonts/present-mscorefonts-eula || true
-+        db_go || true
 +        db_input critical msttcorefonts/accepted-mscorefonts-eula || true
 +        db_go || true
 +    fi

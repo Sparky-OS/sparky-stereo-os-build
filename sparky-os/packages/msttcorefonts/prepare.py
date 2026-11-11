@@ -28,7 +28,7 @@ text = text.replace('Multi-Arch: foreign\n', 'Multi-Arch: foreign\n'
                     'XB-Sparky-Install-Download-Source: https://downloads.sourceforge.net/corefonts/\n')
 control.write_text(text)
 date = email.utils.format_datetime(datetime.fromtimestamp(int(os.environ['SOURCE_DATE_EPOCH']), timezone.utc))
-changelog.write_text('msttcorefonts (3.8.1+stereo3d1) unstable; urgency=medium\n\n'
+changelog.write_text('msttcorefonts (3.8.1+stereo3d2) unstable; urgency=medium\n\n'
                     '  * Carry Michael Vogt\'s Ubuntu EULA presentation with default-false consent.\n'
                     '  * Download during target installation only; declare size and source to apt.\n'
                     '  * Say refusal and provide retry guidance for incomplete configuration.\n\n'

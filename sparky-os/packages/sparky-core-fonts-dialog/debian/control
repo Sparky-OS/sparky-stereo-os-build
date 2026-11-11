@@ -1,0 +1,17 @@
+Source: sparky-core-fonts-dialog
+Section: admin
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 14), cmake, qt6-base-dev, libdebconf-kde-dev (>= 1.2.1)
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+
+Package: sparky-core-fonts-dialog
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, qt6-wayland
+Description: KDE debconf licence window for the edition installer
+ Embeds KDE's debconf frontend for the target system's Microsoft core-font
+ licence. Offers explicit Accept and Decline actions, with Decline as the
+ default, and treats a closed licence window as a refusal.
+ No fonts or acceptance answers are shipped in this package.
