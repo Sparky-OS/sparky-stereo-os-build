@@ -1,0 +1,40 @@
+.TH UMS-RENDERER 1 "November 2026" "kcm-ums 0.2.0"
+.SH NAME
+ums-renderer \- select and control a Universal Media Server renderer
+.SH SYNOPSIS
+.B ums-renderer
+.RB [ --target " tv|headset" ]
+.RB [ --server " URL" ]
+.RB [ -- ]
+.RI [ file ]
+.SH DESCRIPTION
+Opens an explicit selector for devices already known to Universal Media Server.
+A selected file must already belong to the UMS shared library.
+The program does not enable sharing or start a separate media server.
+The selected renderer is exposed through MPRIS2 for Plasma media controls.
+.SH OPTIONS
+.TP
+.BI --target " group"
+Filter the selector to televisions and other non-headset renderers
+.RB ( tv )
+or Flat Headset and StereoDroid renderers
+.RB ( headset ).
+.TP
+.BI --server " URL"
+Use the specified UMS web interface.
+By default, use the local interface and the web_gui_port in UMS.conf.
+Use HTTPS when sending credentials to a remote server.
+.TP
+.B --help
+Show command-line help.
+.SH FILES
+UMS.conf and SHARED.conf in the UMS profile directory are read without
+changing their contents.
+UMS_PROFILE overrides the normal XDG configuration location.
+.SH LIMITATIONS
+Virtual, flattened, renamed or ambiguous library entries may be refused
+rather than matched by guessing.
+Control uses UPnP transport instance 0.
+.SH AUTHORS
+Daniel Campos Ramos, for Sparky Stereo OS.
+Universal Media Server, jUPnP, KDE Frameworks and MPRIS provide the underlying interfaces.
