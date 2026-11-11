@@ -5,7 +5,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../../repo/build-provenance.sh"
 OUT=$(realpath "${OUT:?set OUT to an empty output folder}")
-IMAGE=debian@sha256:cf15c569a84dfda832e421ab27a8049e962ba8e90571612396cd8db799279e4e
+IMAGE=${IMAGE:-debian@sha256:cf15c569a84dfda832e421ab27a8049e962ba8e90571612396cd8db799279e4e}
 sparky_provenance_init "$IMAGE"
 docker run --rm --name fonts-519-build --platform linux/amd64 --ulimit core=0 \
     "${SPARKY_PROV_ARGS[@]}" -e OWNER="$(id -u):$(id -g)" \
