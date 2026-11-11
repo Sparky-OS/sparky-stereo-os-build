@@ -1,0 +1,59 @@
+#!/usr/bin/python3
+# Created by Daniel Ramos (Capitain Jack) 2026/11/11
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/11/11
+"""Reconcile a masked tmp.mount with an inherited tmpfs fstab entry."""
+import os
+from pathlib import Path
+import stat
+import tempfile
+
+
+def reconcile(fstab, mask):
+    if not mask.is_symlink() or mask.resolve() != Path('/dev/null'):
+        return False
+    fstab = fstab.resolve()
+    if not fstab.exists():
+        return False
+    original = fstab.read_bytes()
+    lines = []
+    for line in original.splitlines(keepends=True):
+        fields = line.split()
+        if (fields and not fields[0].startswith(b'#') and len(fields) >= 4
+                and fields[1:3] == [b'/tmp', b'tmpfs']):
+            lines.append(b'# Disabled by sparky-stereo-kernel-settings: tmp.mount is masked.\n# ' + line)
+        else:
+            lines.append(line)
+    updated = b''.join(lines)
+    if updated == original:
+        return False
+    info = fstab.stat()
+    backup = fstab.with_name(fstab.name + '.before-sparky-tmp-on-disk')
+    try:
+        with backup.open('xb') as stream:
+            os.fchmod(stream.fileno(), stat.S_IMODE(info.st_mode))
+            os.fchown(stream.fileno(), info.st_uid, info.st_gid)
+            stream.write(original)
+    except FileExistsError:
+        pass
+    fd, name = tempfile.mkstemp(prefix='.fstab-', dir=fstab.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            os.fchmod(stream.fileno(), stat.S_IMODE(info.st_mode))
+            os.fchown(stream.fileno(), info.st_uid, info.st_gid)
+            stream.write(updated)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if fstab.read_bytes() != original:
+            raise RuntimeError('fstab changed during tmp.mount reconciliation')
+        os.replace(temporary, fstab)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return True
+
+
+if __name__ == '__main__':
+    if os.geteuid() != 0:
+        raise SystemExit('Run as root to reconcile /etc/fstab with tmp.mount.')
+    reconcile(Path('/etc/fstab'), Path('/etc/systemd/system/tmp.mount'))

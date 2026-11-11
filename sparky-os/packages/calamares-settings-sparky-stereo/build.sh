@@ -73,7 +73,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: calamares, os-prober, util-linux
+Depends: calamares, os-prober, util-linux, sparky-stereo-kernel-settings (>= 20261111.1~sparky9~0)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org

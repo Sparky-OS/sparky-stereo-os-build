@@ -1,4 +1,13 @@
 -------------------------------------------------------------------------------
+  Version 20261111.1~sparky9~0 (2026-11-11)
+-------------------------------------------------------------------------------
+  * ORDER 521: Reconcile inherited /tmp tmpfs fstab entries when tmp.mount is masked.
+    Keep the original as a backup and comment only the conflicting line.
+    A required masked mount previously prevented local-fs.target startup,
+    intermittently leaving the EFI partition unmounted. Never mount or unmount
+    anything during migration; preserve administrator units and unmasked choices.
+
+-------------------------------------------------------------------------------
   Version 20261108.1~sparky9~0 (2026-11-08)
 -------------------------------------------------------------------------------
   * ORDER 463: the generator the old edition's automatic dependency left (systemd-zram-generator, marked automatic, not

@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=20261108.1~sparky9~0+lc1
+VERSION=20261111.1~sparky9~0+lc1
 PACKAGE=sparky-stereo-kernel-settings
 DEPENDS='python3, apt, sparky-stereo-problems, libpam-modules, systemd, mount, udev'
 FILES='etc/security/limits.d/20-sparky-audio.conf etc/tmpfiles.d/tmp.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
@@ -18,6 +18,7 @@ for f in $FILES; do install -Dm644 "$HERE/$f" "$D/$f"; done
 install -m755 "$HERE/preinst" "$D/DEBIAN/preinst"
 install -m644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
 install -Dm755 "$HERE/usr/libexec/sparky-stereo/zram-migration" "$D/usr/libexec/sparky-stereo/zram-migration"
+install -Dm755 "$HERE/usr/libexec/sparky-stereo/tmp-on-disk" "$D/usr/libexec/sparky-stereo/tmp-on-disk"
 install -Dm644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
 mkdir -p "$D/usr/lib/systemd/system/systemd-zram-setup@zram0.service.d" "$D/usr/lib/systemd/system/dev-zram0.swap.d"
 cat >"$D/usr/lib/systemd/system/systemd-zram-setup@zram0.service.d/50-sparky-migration.conf" <<'EOF'
@@ -97,6 +98,7 @@ if [ "$1" = configure ] && dpkg --compare-versions "${2:-0}" lt 20261010.2~spark
 	: >/var/lib/sparky-stereo-kernel-settings/tmp-mount-masked
 fi
 if [ "$1" = configure ]; then
+	/usr/libexec/sparky-stereo/tmp-on-disk
 	# Stop/reset only the edition’s former Auto zram0, never a person’s choice.
 	sparky-stereo-problems run --machine sparky-stereo-kernel-settings zram-migration LOCAL5 -- /usr/libexec/sparky-stereo/zram-migration --migrate || :
 	# ORDER 463: a generator left by the old package is purged once when the person did not choose it; the apt run that is
