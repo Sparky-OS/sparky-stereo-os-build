@@ -109,7 +109,7 @@ try:
     if notice['announce']:
         print('core-fonts: shared download notice state=' + notice['state'], flush=True)
     if notice['announce'] and not message('\n'.join(notice['text'][:-1]), question=True):
-        message(os.environ['CORE_FONTS_REFUSED'])
+        message(os.environ['CORE_FONTS_SKIPPED'])
         status = 0
     else:
         (root / 'run').mkdir(exist_ok=True)
