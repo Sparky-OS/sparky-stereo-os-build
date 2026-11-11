@@ -3,12 +3,12 @@
 # SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 """Prepare the published KImageFormats stereo3d5 source as plain stereo3d6."""
 import argparse
-import email.utils
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('source', type=Path)
@@ -24,16 +24,21 @@ control_path = source / 'debian/control'
 control = control_path.read_text()
 # This historical source appends the six LC dependencies to a folded field.
 # The strict recovery helper accepts that form on one line; reflow only this field.
-start = control.index('Build-Depends:')
-end = control.index('\n\n', start)
-field = control[start:end]
+match = re.search(r'^Build-Depends:[^\n]*(?:\n[ \t]+[^\n]*)*', control, re.M)
+if match is None:
+    raise SystemExit('No Build-Depends field')
+start, end = match.span()
+field = match.group()
 suffix = ', gcc, node-acorn, nodejs, perl, python3, python3-yaml'
 if not field.endswith(suffix):
     raise SystemExit('The published LC dependency suffix changed')
 control_path.write_text(control[:start] + re.sub(r'\n[ \t]+', ' ', field) + control[end:])
-helper = recipe.parents[1] / 'repo/plain-from-lc.py'
-subprocess.run(['python3', str(helper), '--build-depends-at-end', '--edition-entry',
-                '--save-plan', str(source.parent / (source.name + '.preserve.json')), str(source)], check=True)
+carried_plan = source.parent / (source.name + '.preserve.json')
+plain_command = ['python3', str(recipe.parents[1] / 'repo/plain-from-lc.py'), '--save-plan', str(carried_plan)]
+plain_command += ['--build-depends-at-end', '--edition-entry', str(source)]
+subprocess.run(plain_command, check=True)
+sys.path.insert(0, str(recipe.parents[1] / 'repo'))
+import reproducible
 plain_control = control[:start] + field[:-len(suffix)] + control[end:]
 plain_control = plain_control.replace('Build-Depends:', 'Build-Depends: qt6-tools-dev, qt6-l10n-tools,', 1)
 control_path.write_text(plain_control)
@@ -51,8 +56,11 @@ entry = f'''kf6-kimageformats (6.30.0-1+stereo3d6) unstable; urgency=medium
     in all ten edition languages. Test every write through an independent
     segment parser and a reader round trip.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  {email.utils.formatdate(epoch, localtime=False)}
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  {reproducible.rfc2822(epoch)}
 
 '''
 changelog.write_text(entry + changelog.read_text())
+reproducible.normalize_tree(source, epoch)
+if carried_plan.exists():
+    print('Pass to lean.debian_prepare --preserve-plan:', carried_plan)
 print('Prepared plain kf6-kimageformats 6.30.0-1+stereo3d6')

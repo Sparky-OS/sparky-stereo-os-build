@@ -6,6 +6,7 @@ It does not modify a published archive.
 
 In a disposable build container, unpack the published descriptor with `dpkg-source -x`, set `SOURCE_DATE_EPOCH` from this recipe's commit timestamp, and run `python3 prepare-source.py SOURCE`.
 The script uses `sparky-os/repo/plain-from-lc.py`, retaining a preserve plan beside the source if one exists.
+Pass that carried plan to the native adapter’s `lean.debian_prepare --preserve-plan FILE`; this published baseline has no plan.
 For this historical source only, it reflows the folded Build-Depends field before the strict helper and restores its formatting afterward.
 It keeps the old series and adds `jps-descriptor.patch`.
 Pack the prepared source with `dpkg-source -b SOURCE`, then use the edition's native package adapter.
