@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.16)
+project(sparky-core-fonts-dialog VERSION 1.0 LANGUAGES CXX)
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(DebconfKDE 1.2.1 REQUIRED)
+add_executable(sparky-core-fonts-dialog main.cpp)
+target_link_libraries(sparky-core-fonts-dialog PRIVATE Qt6::Widgets DebconfKDE::Main)
+target_compile_options(sparky-core-fonts-dialog PRIVATE -Wall -Wextra -Werror)
+install(TARGETS sparky-core-fonts-dialog RUNTIME DESTINATION libexec)

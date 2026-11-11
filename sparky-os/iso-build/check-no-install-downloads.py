@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Created by Daniel Ramos (Capitain Jack) 2026/11/04
 # Copyright 2026 under the GNU GPL3 License
-"""Refuse, in an image, any package that downloads data while it is installed, and FlightGear's data.
+"""Refuse install-time download packages and downloaded FlightGear or Microsoft core-font data on an image.
 
 Daniel, 2026-11-04: "if the user choosed on install to include the games, that's already during install, so no big deal, and
 yes, we will not ship with the iso heavy files ... aiming to max out at 7.5 Gb"; memory image-ships-our-stereo-programs:
@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 FIELD = 'Sparky-Install-Download-Size'
-DATA = ('usr/share/games/flightgear/version',)
+DATA = ('usr/share/games/flightgear/version', 'usr/share/fonts/truetype/msttcorefonts')
 
 
 def declared(status_text):
@@ -34,8 +34,8 @@ def declared(status_text):
             fields[key] = value.strip()
         # present on the system in any state but removed: installed, unpacked, half-installed, half-configured, triggers pending
         wanted, _, state = fields.get('Status', 'install ok installed').rpartition(' ')
-        if FIELD in fields and wanted.startswith('install') and state not in ('not-installed', 'config-files'):
-            found.append((fields.get('Package', '?'), fields[FIELD], fields.get('Sparky-Install-Download-Source', '')))
+        if (FIELD in fields or fields.get('Package') == 'ttf-mscorefonts-installer') and wanted.startswith('install') and state not in ('not-installed', 'config-files'):
+            found.append((fields.get('Package', '?'), fields.get(FIELD, 'undeclared'), fields.get('Sparky-Install-Download-Source', '')))
     return found
 
 
@@ -60,10 +60,11 @@ def main(argv):
     if root is not None:
         for rel in DATA:
             if (root / rel).exists():
-                print('REFUSED /%s exists: FlightGear\'s data is on the image' % rel)
+                print('REFUSED /%s exists: downloaded data is on the image (FlightGear or Microsoft core fonts)' % rel)
                 bad = 1
     if not bad:
-        print('PASS no installed package declares an install-time download%s' % ('' if root is None else ', and FlightGear\'s data is not there'))
+        print('PASS no installed download package or Microsoft font installer%s' %
+              ('' if root is None else ', and no FlightGear or Microsoft core-font data'))
     return bad
 
 

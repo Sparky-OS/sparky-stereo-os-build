@@ -1,0 +1,49 @@
+#!/usr/bin/python3
+# Copyright 2026 Daniel Ramos (Capitain Jack), GPL-3.0-or-later
+"""Enable contrib on the target's Debian sources, preserving other sources and components."""
+from pathlib import Path
+import re
+import sys
+
+root = Path(sys.argv[1]).resolve()
+if root == Path('/'):
+    raise ValueError('An installation target is required; refusing the live root')
+apt = root / 'etc/apt'
+official = r'https://(?:deb|security|ftp(?:\.[a-zA-Z0-9-]+)?)\.debian\.org/debian(?:-security)?/?'
+seen = 0
+for path in [apt / 'sources.list', *sorted((apt / 'sources.list.d').glob('*.list')),
+             *sorted((apt / 'sources.list.d').glob('*.sources'))]:
+    if not path.is_file():
+        continue
+    original = path.read_text()
+    if path.suffix == '.sources':
+        sections = re.split(r'(\n[ \t]*\n)', original)
+        for index in range(0, len(sections), 2):
+            section = sections[index]
+            uris = re.search(r'^URIs:\s*(.*(?:\n[ \t]+[^\n]+)*)', section, re.M)
+            if not uris or not re.search(official + r'(?=\s|$)', uris[1]):
+                continue
+            if re.search(r'^Enabled:\s*no\s*$', section, re.M | re.I):
+                continue
+            components = re.search(r'^Components:([^\n]*(?:\n[ \t]+[^\n]+)*)', section, re.M)
+            if not components:
+                raise ValueError(f'{path}: Debian source has no Components field')
+            seen += 1
+            if 'contrib' not in components[1].split():
+                end = components.end()
+                sections[index] = section[:end] + ' contrib' + section[end:]
+        updated = ''.join(sections)
+    else:
+        lines = original.splitlines(keepends=True)
+        for index, line in enumerate(lines):
+            body, comment, tail = line.rstrip('\n').partition('#')
+            if not re.match(r'^\s*deb(?:-src)?\s+(?:\[[^\]]*\]\s+)?' + official + r'\s+', body):
+                continue
+            seen += 1
+            if 'contrib' not in body.split():
+                lines[index] = body.rstrip() + ' contrib' + (' #' + tail if comment else '') + '\n'
+        updated = ''.join(lines)
+    if updated != original:
+        path.write_text(updated)
+if not seen:
+    raise ValueError('No enabled HTTPS Debian source was found; configure Debian contrib before retrying core fonts')

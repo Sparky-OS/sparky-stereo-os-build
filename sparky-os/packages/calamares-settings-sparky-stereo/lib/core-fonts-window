@@ -1,0 +1,147 @@
+#!/usr/bin/python3
+# Copyright 2026 Daniel Ramos (Capitain Jack), GPL-3.0-or-later
+"""Live KDE frontend; the target's debconf remains the authority for consent."""
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+from PyQt6.QtCore import QEventLoop, QProcess, QProcessEnvironment, QTimer, Qt
+from PyQt6.QtWidgets import QApplication, QMessageBox, QProgressDialog
+
+sys.path.insert(0, '/usr/lib/sparky-stereo-apt')
+import sparky_install_downloads as downloads
+
+app = QApplication(sys.argv)
+app.setQuitOnLastWindowClosed(False)
+root = Path(sys.argv[1])
+title = os.environ['CORE_FONTS_TITLE']
+busy = QProgressDialog(title, '', 0, 0)
+busy.setCancelButton(None)
+busy.setWindowTitle(title)
+busy.setMinimumDuration(0)
+frontend = None
+
+
+def message(text, question=False):
+    busy.hide()
+    box = QMessageBox()
+    box.setWindowTitle(title)
+    box.setText(text)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    if question:
+        proceed = box.addButton(os.environ['CORE_FONTS_CONTINUE'], QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton(os.environ['CORE_FONTS_DECLINE'], QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+        return box.clickedButton() == proceed
+    box.addButton(os.environ['CORE_FONTS_CONTINUE'], QMessageBox.ButtonRole.AcceptRole)
+    print("core-fonts: outcome window shown", flush=True)
+    box.exec()
+    return True
+
+
+def run(command, environment=None):
+    """Keep Qt responsive during apt; never provide a terminal or fallback frontend."""
+    process = QProcess()
+    process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+    env = QProcessEnvironment.systemEnvironment()
+    for key, value in (environment or {}).items():
+        env.insert(key, value)
+    env.remove('DEBCONF_NONINTERACTIVE_SEEN')
+    process.setProcessEnvironment(env)
+    output = bytearray()
+
+    def drain():
+        data = bytes(process.readAllStandardOutput())
+        output.extend(data)
+        sys.stdout.buffer.write(data)
+        sys.stdout.buffer.flush()
+
+    process.readyReadStandardOutput.connect(drain)
+    loop = QEventLoop()
+    process.finished.connect(loop.quit)
+    process.errorOccurred.connect(loop.quit)
+    timer = QTimer()
+
+    def monitor():
+        if frontend is not None and frontend.poll() is not None:
+            process.kill()
+            loop.quit()
+
+    timer.timeout.connect(monitor)
+    timer.start(100)
+    process.start(command[0], command[1:])
+    if not process.waitForStarted(5000):
+        raise RuntimeError('could not start ' + command[0])
+    busy.show()
+    loop.exec()
+    timer.stop()
+    process.waitForFinished(5000)
+    drain()
+    busy.hide()
+    if frontend is not None and frontend.poll() is not None:
+        raise RuntimeError('the KDE debconf frontend stopped')
+    if process.exitStatus() != QProcess.ExitStatus.NormalExit or process.exitCode():
+        raise RuntimeError('command failed: ' + ' '.join(command))
+    return output.decode('utf-8', errors='replace')
+
+
+status = 1
+socket_dir = None
+try:
+    run([str(Path(__file__).with_name('core-fonts-contrib')), str(root)])
+    run(['chroot', str(root), 'apt-get', '--error-on=any', 'update'])
+    record = run(['chroot', str(root), 'apt-cache', 'show', '--no-all-versions', 'ttf-mscorefonts-installer'])
+    section = dict(line.split(': ', 1) for line in record.splitlines() if ': ' in line and not line.startswith(' '))
+    declaration = downloads.declaration(section)
+    if declaration is None:
+        raise RuntimeError('the edition install-time download declaration is missing')
+    setting = subprocess.check_output(['apt-config', 'shell', 'MODE', downloads.OPTION], text=True)
+    mode, problem = downloads.announce_mode(setting.removeprefix("MODE='").removesuffix("'\n"))
+    if problem:
+        print(problem, file=sys.stderr)
+    notice = downloads.assess([dict(declaration, package='ttf-mscorefonts-installer', version=section['Version'])], mode)
+    # The shared reader supplies the size, source, metering decision and words.
+    # Its final terminal instruction is replaced by this frontend's buttons.
+    if notice['announce']:
+        print('core-fonts: shared download notice state=' + notice['state'], flush=True)
+    if notice['announce'] and not message('\n'.join(notice['text'][:-1]), question=True):
+        message(os.environ['CORE_FONTS_SKIPPED'])
+        status = 0
+    else:
+        (root / 'run').mkdir(exist_ok=True)
+        socket_dir = Path(tempfile.mkdtemp(prefix='core-fonts-', dir=root / 'run'))
+        socket = socket_dir / 'debconf'
+        frontend = subprocess.Popen(['/usr/libexec/sparky-core-fonts-dialog', str(socket)])
+        for _ in range(100):
+            if socket.exists() or frontend.poll() is not None:
+                break
+            loop = QEventLoop()
+            QTimer.singleShot(50, loop.quit)
+            loop.exec()
+        if not socket.exists() or frontend.poll() is not None:
+            raise RuntimeError('the KDE debconf socket could not be started')
+        run(['chroot', str(root), 'apt-get', '-y', '-o', 'Dpkg::Use-Pty=0',
+             '-o', downloads.OPTION + '=never', 'install', 'ttf-mscorefonts-installer'],
+            {'DEBIAN_FRONTEND': 'passthrough', 'DEBIAN_PRIORITY': 'critical',
+             'DEBCONF_PIPE': '/run/' + socket_dir.name + '/debconf'})
+        if not (root / 'usr/share/fonts/truetype/msttcorefonts/Arial.ttf').is_file():
+            message(os.environ['CORE_FONTS_REFUSED'])
+        status = 0
+except Exception as error:
+    print('Microsoft core fonts: ' + str(error), file=sys.stderr)
+    message(os.environ['CORE_FONTS_DOWNLOAD_ERROR'])
+finally:
+    if frontend is not None:
+        frontend.terminate()
+        try:
+            frontend.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            frontend.kill()
+            frontend.wait()
+    if socket_dir:
+        shutil.rmtree(socket_dir)
+sys.exit(status)

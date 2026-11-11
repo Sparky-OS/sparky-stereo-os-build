@@ -7,3 +7,18 @@ OFFLINE_ERROR='Os pacotes de instalação offline estão ausentes ou seu índice
 LOCALE_ERROR='Não foi possível configurar o idioma selecionado para o menu de inicialização. Verifique o sistema de destino, seu arquivo de configuração regional e a instalação do GRUB nos caminhos abaixo e reinicie o instalador.'
 COMMAND='Uma etapa da instalação falhou. Verifique o diagnóstico abaixo e reinicie o instalador após corrigir o problema.'
 LANGPACKS_ERROR='Os pacotes do idioma escolhido para o novo sistema não puderam ser adicionados, e isso também não pôde ser guardado para o primeiro login. Verifique o diagnóstico abaixo e reinicie o instalador.'
+CORE_FONTS='Fontes básicas da Microsoft: leia a licença e responda à pergunta neste terminal.'
+CORE_FONTS_ERROR='As fontes da Microsoft não foram instaladas. Para ler e aceitar a licença, execute:
+dpkg-reconfigure ttf-mscorefonts-installer
+dpkg --configure ttf-mscorefonts-installer'
+CORE_FONTS_PAUSE='Pressione Enter para voltar ao instalador.'
+CORE_FONTS_TITLE='Fontes principais da Microsoft'
+CORE_FONTS_ACCEPT='Aceitar'
+CORE_FONTS_DECLINE='Recusar'
+CORE_FONTS_CONTINUE='Continuar'
+CORE_FONTS_REFUSED='A licença da Microsoft foi recusada ou sua janela foi fechada. As fontes da Microsoft não foram instaladas. Para ler e aceitar a licença depois, execute:
+dpkg-reconfigure ttf-mscorefonts-installer'
+CORE_FONTS_DOWNLOAD_ERROR='Não foi possível baixar ou configurar as fontes da Microsoft. Verifique a conexão e o registro do instalador e tente esta etapa novamente. Se o pacote ficou sem configurar, tente:
+dpkg --configure ttf-mscorefonts-installer'
+CORE_FONTS_SKIPPED='As fontes da Microsoft foram ignoradas antes da instalação do pacote. Para instalá-las depois e ler a licença, execute:
+apt install ttf-mscorefonts-installer'

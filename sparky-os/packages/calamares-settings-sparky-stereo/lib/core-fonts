@@ -1,0 +1,48 @@
+#!/bin/bash
+# Copyright 2026 Daniel Ramos (Capitain Jack), GPL-3.0-or-later
+# Both edition installers use the target's interactive apt and debconf. No consent is supplied here.
+set -euo pipefail
+. "$(dirname "$0")/installer-common"
+mode=${1:-}
+root=$(realpath -e -- "${2:-}") || fail corefonts 'invalid target directory'
+[[ $root = /* && $root != / && -d $root/etc/apt && -f $root/var/lib/dpkg/status ]] || fail corefonts "invalid target: $root"
+case $mode in
+--window)
+    export LANG=${INSTALLER_LANG:-${LANG:-C.UTF-8}}
+    export LC_ALL=$LANG
+    export CORE_FONTS_TITLE CORE_FONTS_ACCEPT CORE_FONTS_DECLINE CORE_FONTS_CONTINUE CORE_FONTS_SKIPPED CORE_FONTS_REFUSED CORE_FONTS_DOWNLOAD_ERROR CORE_FONTS_ERROR
+    exec "$(dirname "$0")/core-fonts-window" "$root"
+    ;;
+--terminal)
+    [[ -t 0 && -t 1 ]] || fail corefonts 'an interactive terminal is required'
+    export DEBIAN_FRONTEND=readline DEBIAN_PRIORITY=critical
+    export LANG=${INSTALLER_LANG:-${LANG:-C.UTF-8}}
+    unset DEBCONF_NONINTERACTIVE_SEEN
+    printf '%s\n' "$CORE_FONTS"
+    status=0
+    "$(dirname "$0")/core-fonts-contrib" "$root" || status=$?
+    if [[ $status = 0 ]]; then chroot "$root" apt-get --error-on=any update || status=$?; fi
+    if [[ $status = 0 ]]; then
+        record=$(chroot "$root" apt-cache show --no-all-versions ttf-mscorefonts-installer) || status=$?
+        if [[ $status = 0 ]] && { ! grep -q '^Sparky-Install-Download-Size: [1-9][0-9]*$' <<< "$record" ||
+                                 ! grep -q '^Sparky-Install-Download-Source: https://' <<< "$record"; }; then
+            printf '%s\n' 'ttf-mscorefonts-installer: the edition download declaration is missing; check Debian contrib and the edition repository.' >&2
+            status=1
+        fi
+    fi
+    if [[ $status = 0 ]]; then
+        chroot "$root" apt-get -o Dpkg::Use-Pty=0 install ttf-mscorefonts-installer || status=$?
+    fi
+    if [[ $status != 0 ]]; then
+        printf '%s\n' "$CORE_FONTS_ERROR" >&2
+    elif [[ ! -f $root/usr/share/fonts/truetype/msttcorefonts/Arial.ttf ]]; then
+        # Refusal is honoured without aborting the operating-system installation.
+        printf '%s\n' "$CORE_FONTS_ERROR" >&2
+    fi
+    printf '%s\n' "$CORE_FONTS_PAUSE"
+    read -r _ || { [[ $status != 0 ]] || status=1; }
+    if [[ -n ${3:-} ]]; then printf '%s\n' "$status" > "$3"; fi
+    exit "$status"
+    ;;
+*) fail corefonts 'usage: core-fonts --window|--terminal TARGET' ;;
+esac
