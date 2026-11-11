@@ -1,0 +1,512 @@
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+index c59f926..4889b26 100644
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -277,3 +277,8 @@ add_executable(anitest anitest.cpp)
+ target_link_libraries(anitest Qt6::Gui Qt6::Test)
+ ecm_mark_as_test(anitest)
+ add_test(NAME kimageformats-ani COMMAND anitest)
++
++add_executable(jpswritertest jpswritertest.cpp)
++target_link_libraries(jpswritertest Qt6::Gui Qt6::Test)
++add_test(NAME kimageformats-jps-writer COMMAND jpswritertest)
++set_tests_properties(kimageformats-jps-writer PROPERTIES ENVIRONMENT "QT_PLUGIN_PATH=${CMAKE_BINARY_DIR}/bin")
+diff --git a/autotests/jpswritertest.cpp b/autotests/jpswritertest.cpp
+new file mode 100644
+index 0000000..dcdd383
+--- /dev/null
++++ b/autotests/jpswritertest.cpp
+@@ -0,0 +1,156 @@
++// SPDX-License-Identifier: LGPL-2.1-or-later
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++#include <QBuffer>
++#include <QImageReader>
++#include <QImageWriter>
++#include <QTest>
++#include <QLocale>
++#include <QtEndian>
++
++class JpsWriterTest : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void layouts_data()
++    {
++        QTest::addColumn<QString>("mark");
++        QTest::addColumn<int>("descriptor");
++        QTest::newRow("legacy") << QString() << 0x201;
++        QTest::newRow("mono") << QStringLiteral("mono") << 0;
++        for (int layout = 1; layout <= 4; ++layout) {
++            for (int left = 0; left <= 1; ++left) {
++                const QString mark = layout == 4 ? (left ? QStringLiteral("anaglyphRedLeft") : QStringLiteral("anaglyphRedRight"))
++                    : QStringList{QStringLiteral("rowInterleaved"), QStringLiteral("sideBySide"), QStringLiteral("topBottom")}.at(layout - 1)
++                        + (left ? QStringLiteral("LeftFirst") : QStringLiteral("RightFirst"));
++                QTest::addRow("layout-%d-left-%d", layout, left) << mark << (1 | layout << 8 | left << 18);
++            }
++        }
++    }
++    void layouts()
++    {
++        QFETCH(QString, mark);
++        QFETCH(int, descriptor);
++        for (int flags = 0; flags < 4; ++flags) {
++            for (int separation : {0, 2, 255}) {
++                const int layout = (descriptor >> 8) & 255;
++                if (separation && layout != 2 && layout != 3)
++                    continue;
++                for (int display = 0; display < ((descriptor & 255) ? 1 : 3); ++display) {
++                    QImage source(128 + (layout == 2 ? separation : 0), 64 + (layout == 3 ? separation : 0), QImage::Format_RGB32);
++                    source.fill(Qt::red);
++                    source.setText(QStringLiteral("Stereo3DLayout"), mark);
++                    source.setText(QStringLiteral("Stereo3DJpsHalfHeight"), QString::number(flags & 1));
++                    source.setText(QStringLiteral("Stereo3DJpsHalfWidth"), QString::number(flags >> 1));
++                    source.setText(QStringLiteral("Stereo3DJpsSeparation"), QString::number(separation));
++                    source.setText(QStringLiteral("Stereo3DJpsDisplay"), QString::number(display));
++                    source.setText(QStringLiteral("Stereo3DJpsComment"), QStringLiteral("test"));
++                    QByteArray data;
++                    QBuffer output(&data);
++                    QVERIFY(output.open(QIODevice::WriteOnly));
++                    QImageWriter writer(&output, "jps");
++                    QVERIFY(writer.write(source));
++                    int found = 0;
++                    qsizetype at = 2;
++                    QVERIFY(data.startsWith(QByteArray::fromHex("ffd8")));
++                    while (at + 4 <= data.size()) {
++                        QCOMPARE(quint8(data[at]), quint8(255));
++                        const int marker = quint8(data[at + 1]);
++                        const int length = qFromBigEndian<quint16>(data.constData() + at + 2);
++                        QVERIFY(length >= 2 && at + 2 + length <= data.size());
++                        if (marker == 0xda)
++                            break;
++                        if (marker == 0xe3 && data.mid(at + 4, 8) == "_JPSJPS_") {
++                            ++found;
++                            QCOMPARE(length, 22);
++                            QCOMPARE(qFromBigEndian<quint16>(data.constData() + at + 12), quint16(4));
++                            QCOMPARE(qFromBigEndian<quint32>(data.constData() + at + 14), quint32(descriptor | flags << 16 | separation << 24 | display << 8));
++                            QCOMPARE(qFromBigEndian<quint16>(data.constData() + at + 18), quint16(4));
++                            QCOMPARE(data.mid(at + 20, 4), QByteArray("test"));
++                        }
++                        at += 2 + length;
++                    }
++                    QCOMPARE(found, 1);
++                    QBuffer input(&data);
++                    QVERIFY(input.open(QIODevice::ReadOnly));
++                    QImageReader reader(&input, "jps");
++                    const QImage decoded = reader.read();
++                    QVERIFY(!decoded.isNull());
++                    QCOMPARE(decoded.size(), source.size());
++                    QCOMPARE(decoded.text(QStringLiteral("Stereo3DLayout")), mark.isEmpty() ? QStringLiteral("sideBySideRightFirst") : mark);
++                    QCOMPARE(decoded.text(QStringLiteral("Stereo3DJpsHalfHeight")), QString::number(flags & 1));
++                    QCOMPARE(decoded.text(QStringLiteral("Stereo3DJpsHalfWidth")), QString::number(flags >> 1));
++                    QCOMPARE(decoded.text(QStringLiteral("Stereo3DJpsSeparation")), QString::number(separation));
++                    QCOMPARE(decoded.text(QStringLiteral("Stereo3DJpsDisplay")), QString::number(display));
++                    QCOMPARE(decoded.text(QStringLiteral("Stereo3DJpsComment")), QStringLiteral("test"));
++                }
++            }
++        }
++    }
++    void refusalTranslations_data()
++    {
++        QTest::addColumn<QString>("locale");
++        QTest::addColumn<QString>("message");
++        QTest::newRow("de") << QStringLiteral("de") << QString::fromUtf8("JPS kann nicht gespeichert werden: Die Anordnung oder die Deskriptorfelder werden nicht unterstützt oder sind ungültig.");
++        QTest::newRow("en") << QStringLiteral("en") << QString::fromUtf8("Cannot save JPS: the layout or descriptor fields are unsupported or invalid.");
++        QTest::newRow("es") << QStringLiteral("es") << QString::fromUtf8("No se puede guardar JPS: la disposición o los campos del descriptor no son compatibles o no son válidos.");
++        QTest::newRow("fr") << QStringLiteral("fr") << QString::fromUtf8("Impossible d’enregistrer le JPS : la disposition ou les champs du descripteur ne sont pas pris en charge ou sont invalides.");
++        QTest::newRow("ja") << QStringLiteral("ja") << QString::fromUtf8("JPS を保存できません。配置または記述子のフィールドが未対応か無効です。");
++        QTest::newRow("ko") << QStringLiteral("ko") << QString::fromUtf8("JPS를 저장할 수 없습니다. 배치 또는 설명자 필드가 지원되지 않거나 유효하지 않습니다.");
++        QTest::newRow("pl") << QStringLiteral("pl") << QString::fromUtf8("Nie można zapisać JPS: układ lub pola deskryptora są nieobsługiwane albo nieprawidłowe.");
++        QTest::newRow("pt_BR") << QStringLiteral("pt_BR") << QString::fromUtf8("Não foi possível salvar JPS: a disposição ou os campos do descritor não são compatíveis ou são inválidos.");
++        QTest::newRow("zh_CN") << QStringLiteral("zh_CN") << QString::fromUtf8("无法保存 JPS：布局或描述符字段不受支持或无效。");
++        QTest::newRow("zh_TW") << QStringLiteral("zh_TW") << QString::fromUtf8("無法儲存 JPS：配置或描述符欄位不受支援或無效。");
++    }
++    void refusalTranslations()
++    {
++        QFETCH(QString, locale);
++        QFETCH(QString, message);
++        const QLocale previous;
++        QLocale::setDefault(QLocale(locale));
++        QImage image(128, 64, QImage::Format_RGB32);
++        image.fill(Qt::red);
++        image.setText(QStringLiteral("Stereo3DLayout"), QStringLiteral("unsupported"));
++        QByteArray data;
++        QBuffer buffer(&data);
++        QVERIFY(buffer.open(QIODevice::WriteOnly));
++        QImageWriter writer(&buffer, "jps");
++        QTest::ignoreMessage(QtWarningMsg, qPrintable(message));
++        const bool written = writer.write(image);
++        QLocale::setDefault(previous);
++        QVERIFY(!written);
++        QVERIFY(data.isEmpty());
++    }
++    void refusal_data()
++    {
++        QTest::addColumn<QString>("key");
++        QTest::addColumn<QString>("value");
++        for (const QString &mark : {QStringLiteral("columnInterleavedLeftFirst"), QStringLiteral("checkerboardLeftFirst"),
++                 QStringLiteral("sideBySideQuincunxLeftFirst"), QStringLiteral("depthSideBySidePictureFirst"), QStringLiteral("depthSeparate"),
++                 QStringLiteral("multiViewLeftFirst"), QStringLiteral("anaglyphGreenLeft"), QStringLiteral("anaglyphAmberLeft"), QStringLiteral("unknown")})
++            QTest::addRow("%s", qPrintable(mark)) << QStringLiteral("Stereo3DLayout") << mark;
++        QTest::newRow("bad-half-width") << QStringLiteral("Stereo3DJpsHalfWidth") << QStringLiteral("2");
++        QTest::newRow("bad-half-height") << QStringLiteral("Stereo3DJpsHalfHeight") << QStringLiteral("-1");
++        QTest::newRow("bad-gap") << QStringLiteral("Stereo3DJpsSeparation") << QStringLiteral("256");
++        QTest::newRow("odd-gap") << QStringLiteral("Stereo3DJpsSeparation") << QStringLiteral("1");
++        QTest::newRow("bad-display") << QStringLiteral("Stereo3DJpsDisplay") << QStringLiteral("3");
++        QTest::newRow("not-a-number") << QStringLiteral("Stereo3DJpsHalfWidth") << QStringLiteral("true");
++        QTest::newRow("non-ascii-comment") << QStringLiteral("Stereo3DJpsComment") << QString::fromUtf8("\xc3\xa9");
++        QTest::newRow("oversized-comment") << QStringLiteral("Stereo3DJpsComment") << QString(65518, QLatin1Char('a'));
++    }
++    void refusal()
++    {
++        QFETCH(QString, key);
++        QFETCH(QString, value);
++        QImage source(128, 64, QImage::Format_RGB32);
++        source.fill(Qt::red);
++        source.setText(key, value);
++        QByteArray data("untouched");
++        QBuffer output(&data);
++        QVERIFY(output.open(QIODevice::ReadWrite));
++        QImageWriter writer(&output, "jps");
++        QVERIFY(!writer.write(source));
++        QCOMPARE(data, QByteArray("untouched"));
++    }
++};
++QTEST_GUILESS_MAIN(JpsWriterTest)
++#include "jpswritertest.moc"
+diff --git a/docs/jps.md b/docs/jps.md
+new file mode 100644
+index 0000000..5ef89c7
+--- /dev/null
++++ b/docs/jps.md
+@@ -0,0 +1,36 @@
++# JPS reader and writer metadata
++
++The writer implements VRex's *General Purpose Stereoscopic Data Descriptor* (1997), pages 3 to 6, available from the [2011 archive](https://web.archive.org/web/20111030182549id_/http://www.vrex.com/developer/sterdesc.pdf) and [Paul Bourke's mirror](https://paulbourke.org/stereoscopy/stereoimage/spec.pdf).
++Both copies used for this implementation have SHA-256 `7532f98405731d0d73f1e57d6df8c4641fd41b272c18cc785f40d25d6feff59a`.
++
++Pass a `QImage` to `QImageWriter` with format `jps`.
++`Stereo3DLayout` describes the stored pixels: `mono`, `rowInterleavedLeftFirst` or `RightFirst`, `sideBySideLeftFirst` or `RightFirst`, `topBottomLeftFirst` or `RightFirst`, `anaglyphRedLeft` or `anaglyphRedRight`.
++The two suffix variants are complete names, such as `topBottomRightFirst`.
++An absent layout retains the existing writer convention: canonical left-first side-by-side input is exchanged into right-first storage.
++An explicit layout preserves the input pixel arrangement.
++Unsupported layouts fail before writing and log a refusal translated into ten languages.
++
++Additional QImage text fields, also reported by the reader:
++
++| Field | Values and default |
++|---|---|
++| `Stereo3DJpsHalfHeight` | 0 or 1; default 0 |
++| `Stereo3DJpsHalfWidth` | 0 or 1; default 0 |
++| `Stereo3DJpsSeparation` | 0 to 255 pixels between side-by-side or top/bottom views; otherwise 0 |
++| `Stereo3DJpsDisplay` | Mono: 0 both eyes, 1 left, 2 right; stereo: 0 |
++| `Stereo3DJpsComment` | ASCII; default empty; at most 65517 bytes |
++
++The descriptor's low byte is type, then layout/display, flags, and separation/reserved, in increasing significance.
++Type 0 is mono; type 1 uses layout values 1 rows, 2 side-by-side, 3 top/bottom, 4 anaglyph.
++Bits 16 and 17 mark half height and width; bit 18 marks left first or red-left.
++Other flag bits and the mono reserved byte are written zero.
++The page 4 width description repeats “height”; the width flag's name on pages 3 and 6 establishes its meaning.
++The separation diagram spans bits 24 to 31; the prose's “24-32” is an eight-bit-field typo.
++
++APP3 contains `_JPSJPS_`, a big-endian 16-bit descriptor length of 4, the big-endian 32-bit descriptor, a big-endian 16-bit comment length and its bytes.
++The earlier fixed right-first JPEG comment is removed because it would misdescribe explicit other layouts.
++Readers report fields without changing pixels; half-size flags never trigger resampling.
++The shared picture engine removes a declared separation when taking out the two eyes.
++
++The writer tests inspect each APP3 independently and reopen every successful write.
++They cover both orders, mono display choices, all four half-size flag combinations, separation including 255, comments, and refusals that leave the device bytes untouched.
+diff --git a/src/imageformats/CMakeLists.txt b/src/imageformats/CMakeLists.txt
+index 25dee1a..48f39eb 100644
+--- a/src/imageformats/CMakeLists.txt
++++ b/src/imageformats/CMakeLists.txt
+@@ -111,6 +111,12 @@ endif()
+ ##################################
+ 
+ kimageformats_add_plugin(kimg_stereo SOURCES stereo.cpp depthmark.cpp)
++find_package(Qt6LinguistTools REQUIRED)
++file(GLOB _jps_ts CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/jps-translations/jps_*.ts")
++qt6_add_translation(_jps_qm ${_jps_ts})
++qt6_add_resources(kimg_stereo jps_i18n PREFIX "/kimageformats/jps"
++    BASE "${CMAKE_CURRENT_BINARY_DIR}" FILES ${_jps_qm})
++
+ 
+ ##################################
+ 
+diff --git a/src/imageformats/jps-translations/jps_de.ts b/src/imageformats/jps-translations/jps_de.ts
+new file mode 100644
+index 0000000..431303a
+--- /dev/null
++++ b/src/imageformats/jps-translations/jps_de.ts
+@@ -0,0 +1,3 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="de"><context><name>JpsWriter</name><message><source>Cannot save JPS: the layout or descriptor fields are unsupported or invalid.</source><translation>JPS kann nicht gespeichert werden: Die Anordnung oder die Deskriptorfelder werden nicht unterstützt oder sind ungültig.</translation></message></context></TS>
+diff --git a/src/imageformats/jps-translations/jps_en.ts b/src/imageformats/jps-translations/jps_en.ts
+new file mode 100644
+index 0000000..3182ed4
+--- /dev/null
++++ b/src/imageformats/jps-translations/jps_en.ts
+@@ -0,0 +1,3 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="en"><context><name>JpsWriter</name><message><source>Cannot save JPS: the layout or descriptor fields are unsupported or invalid.</source><translation>Cannot save JPS: the layout or descriptor fields are unsupported or invalid.</translation></message></context></TS>
+diff --git a/src/imageformats/jps-translations/jps_es.ts b/src/imageformats/jps-translations/jps_es.ts
+new file mode 100644
+index 0000000..c723dbc
+--- /dev/null
++++ b/src/imageformats/jps-translations/jps_es.ts
+@@ -0,0 +1,3 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="es"><context><name>JpsWriter</name><message><source>Cannot save JPS: the layout or descriptor fields are unsupported or invalid.</source><translation>No se puede guardar JPS: la disposición o los campos del descriptor no son compatibles o no son válidos.</translation></message></context></TS>
+diff --git a/src/imageformats/jps-translations/jps_fr.ts b/src/imageformats/jps-translations/jps_fr.ts
+new file mode 100644
+index 0000000..8e4626b
+--- /dev/null
++++ b/src/imageformats/jps-translations/jps_fr.ts
+@@ -0,0 +1,3 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="fr"><context><name>JpsWriter</name><message><source>Cannot save JPS: the layout or descriptor fields are unsupported or invalid.</source><translation>Impossible d’enregistrer le JPS : la disposition ou les champs du descripteur ne sont pas pris en charge ou sont invalides.</translation></message></context></TS>
+diff --git a/src/imageformats/jps-translations/jps_ja.ts b/src/imageformats/jps-translations/jps_ja.ts
+new file mode 100644
+index 0000000..648384e
+--- /dev/null
++++ b/src/imageformats/jps-translations/jps_ja.ts
+@@ -0,0 +1,3 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="ja"><context><name>JpsWriter</name><message><source>Cannot save JPS: the layout or descriptor fields are unsupported or invalid.</source><translation>JPS を保存できません。配置または記述子のフィールドが未対応か無効です。</translation></message></context></TS>
+diff --git a/src/imageformats/jps-translations/jps_ko.ts b/src/imageformats/jps-translations/jps_ko.ts
+new file mode 100644
+index 0000000..1eb12f1
+--- /dev/null
++++ b/src/imageformats/jps-translations/jps_ko.ts
+@@ -0,0 +1,3 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="ko"><context><name>JpsWriter</name><message><source>Cannot save JPS: the layout or descriptor fields are unsupported or invalid.</source><translation>JPS를 저장할 수 없습니다. 배치 또는 설명자 필드가 지원되지 않거나 유효하지 않습니다.</translation></message></context></TS>
+diff --git a/src/imageformats/jps-translations/jps_pl.ts b/src/imageformats/jps-translations/jps_pl.ts
+new file mode 100644
+index 0000000..57e8acd
+--- /dev/null
++++ b/src/imageformats/jps-translations/jps_pl.ts
+@@ -0,0 +1,3 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="pl"><context><name>JpsWriter</name><message><source>Cannot save JPS: the layout or descriptor fields are unsupported or invalid.</source><translation>Nie można zapisać JPS: układ lub pola deskryptora są nieobsługiwane albo nieprawidłowe.</translation></message></context></TS>
+diff --git a/src/imageformats/jps-translations/jps_pt_BR.ts b/src/imageformats/jps-translations/jps_pt_BR.ts
+new file mode 100644
+index 0000000..0e870bc
+--- /dev/null
++++ b/src/imageformats/jps-translations/jps_pt_BR.ts
+@@ -0,0 +1,3 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="pt_BR"><context><name>JpsWriter</name><message><source>Cannot save JPS: the layout or descriptor fields are unsupported or invalid.</source><translation>Não foi possível salvar JPS: a disposição ou os campos do descritor não são compatíveis ou são inválidos.</translation></message></context></TS>
+diff --git a/src/imageformats/jps-translations/jps_zh_CN.ts b/src/imageformats/jps-translations/jps_zh_CN.ts
+new file mode 100644
+index 0000000..b7bf37a
+--- /dev/null
++++ b/src/imageformats/jps-translations/jps_zh_CN.ts
+@@ -0,0 +1,3 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="zh_CN"><context><name>JpsWriter</name><message><source>Cannot save JPS: the layout or descriptor fields are unsupported or invalid.</source><translation>无法保存 JPS：布局或描述符字段不受支持或无效。</translation></message></context></TS>
+diff --git a/src/imageformats/jps-translations/jps_zh_TW.ts b/src/imageformats/jps-translations/jps_zh_TW.ts
+new file mode 100644
+index 0000000..51a8ab1
+--- /dev/null
++++ b/src/imageformats/jps-translations/jps_zh_TW.ts
+@@ -0,0 +1,3 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="zh_TW"><context><name>JpsWriter</name><message><source>Cannot save JPS: the layout or descriptor fields are unsupported or invalid.</source><translation>無法儲存 JPS：配置或描述符欄位不受支援或無效。</translation></message></context></TS>
+diff --git a/src/imageformats/stereo.cpp b/src/imageformats/stereo.cpp
+index c5526a9..6215d2f 100644
+--- a/src/imageformats/stereo.cpp
++++ b/src/imageformats/stereo.cpp
+@@ -8,6 +8,11 @@
+ #include "depthmark_p.h"
+ 
+ #include <QBuffer>
++#include <QCoreApplication>
++#include <QDebug>
++#include <QPainter>
++#include <QTranslator>
++#include <QLocale>
+ #include <QImage>
+ #include <QImageIOPlugin>
+ #include <QImageReader>
+@@ -164,6 +169,85 @@ QString jpsStereoLayout(const QByteArray &data)
+     return layout + ((descriptor & 0x40000) ? QStringLiteral("LeftFirst") : QStringLiteral("RightFirst"));
+ }
+ 
++
++// VRex, General Purpose Stereoscopic Data Descriptor (1997), pp.3-6:
++// https://web.archive.org/web/20111030182549id_/http://www.vrex.com/developer/sterdesc.pdf
++// QImage text preserves all descriptor fields; half-size flags never resample reader pixels.
++const QStringList jpsFieldKeys = {QStringLiteral("Stereo3DJpsHalfHeight"), QStringLiteral("Stereo3DJpsHalfWidth"),
++    QStringLiteral("Stereo3DJpsSeparation"), QStringLiteral("Stereo3DJpsDisplay"), QStringLiteral("Stereo3DJpsComment")};
++
++QHash<QString, QString> jpsFields(const QByteArray &data)
++{
++    QHash<QString, QString> fields;
++    if (data.size() < 8)
++        return fields;
++    const int length = qFromBigEndian<quint16>(data.constData());
++    if (length < 4 || length + 4 > data.size())
++        return fields;
++    const int comments = qFromBigEndian<quint16>(data.constData() + 2 + length);
++    if (length + 4 + comments != data.size())
++        return fields;
++    const quint32 value = qFromBigEndian<quint32>(data.constData() + 2);
++    fields.insert(jpsFieldKeys[0], QString::number((value >> 16) & 1));
++    fields.insert(jpsFieldKeys[1], QString::number((value >> 17) & 1));
++    fields.insert(jpsFieldKeys[2], QString::number(value >> 24));
++    fields.insert(jpsFieldKeys[3], QString::number((value & 255) == 0 ? (value >> 8) & 255 : 0));
++    fields.insert(jpsFieldKeys[4], QString::fromLatin1(data.constData() + length + 4, comments));
++    return fields;
++}
++
++QByteArray jpsDescriptor(const QImage &image)
++{
++    const QString mark = image.text(QString::fromLatin1(stereo3DLayoutKey));
++    int layout = 0;
++    bool left = mark.endsWith(QLatin1String("LeftFirst")) || mark == QLatin1String("anaglyphRedLeft");
++    if (mark.isEmpty() || mark == QLatin1String("sideBySideLeftFirst") || mark == QLatin1String("sideBySideRightFirst"))
++        layout = 2;
++    else if (mark == QLatin1String("rowInterleavedLeftFirst") || mark == QLatin1String("rowInterleavedRightFirst"))
++        layout = 1;
++    else if (mark == QLatin1String("topBottomLeftFirst") || mark == QLatin1String("topBottomRightFirst"))
++        layout = 3;
++    else if (mark == QLatin1String("anaglyphRedLeft") || mark == QLatin1String("anaglyphRedRight"))
++        layout = 4;
++    else if (mark != QLatin1String("mono"))
++        return {};
++    int values[4] = {};
++    const int maximum[4] = {1, 1, 255, layout == 0 ? 2 : 0};
++    for (int i = 0; i < 4; ++i) {
++        const QString text = image.text(jpsFieldKeys[i]);
++        if (text.isEmpty())
++            continue;
++        bool ok = false;
++        values[i] = text.toInt(&ok);
++        if (!ok || values[i] < 0 || values[i] > maximum[i])
++            return {};
++    }
++    const int separation = values[2];
++    if ((layout != 2 && layout != 3 && separation != 0)
++        || (layout == 1 && (image.height() < 2 || image.height() % 2))
++        || (layout == 2 && (image.width() - separation < 2 || (image.width() - separation) % 2))
++        || (layout == 3 && (image.height() - separation < 2 || (image.height() - separation) % 2)))
++        return {};
++    const QString comment = image.text(jpsFieldKeys[4]);
++    const QByteArray ascii = comment.toLatin1();
++    if (comment != QString::fromLatin1(ascii) || ascii.size() > 65517)
++        return {};
++    for (const QChar c : comment)
++        if (c.unicode() > 127)
++            return {};
++    const quint32 value = (layout ? 1u | quint32(layout) << 8 | quint32(left) << 18 | quint32(separation) << 24
++                                  : quint32(values[3]) << 8)
++        | quint32(values[0]) << 16 | quint32(values[1]) << 17;
++    QByteArray result("_JPSJPS_", 8);
++    char bytes[8];
++    qToBigEndian<quint16>(4, bytes);
++    qToBigEndian<quint32>(value, bytes + 2);
++    qToBigEndian<quint16>(quint16(ascii.size()), bytes + 6);
++    result.append(bytes, 8);
++    result.append(ascii);
++    return result;
++}
++
+ struct MpfData {
+     qsizetype tiffOffset = -1;
+     QList<MpfEntry> entries;
+@@ -259,10 +343,7 @@ QByteArray encodeJpeg(const QImage &image, int quality)
+     return data;
+ }
+ 
+-QByteArray jpsComment()
+-{
+-    return QByteArrayLiteral("Stereo layout: side-by-side; right eye first");
+-}
++
+ 
+ QByteArray makeMpfSegment(const QList<MpfEntry> &entries)
+ {
+@@ -834,6 +915,8 @@ public:
+         if (!m_stereo3DLayout.isEmpty()) {
+             image->setText(QString::fromLatin1(stereo3DLayoutKey), m_stereo3DLayout);
+         }
++        for (auto it = m_jpsFields.cbegin(); it != m_jpsFields.cend(); ++it)
++            image->setText(it.key(), it.value());
+         if (!m_depthMark.isEmpty()) {
+             image->setText(DepthMark::depthKey, m_depthMark);
+         }
+@@ -847,19 +930,25 @@ public:
+         if (isFormat(format(), mpoFormat)) {
+             data = makeMpo(image, quality);
+         } else {
+-            if (image.width() <= 1 || image.width() % 2 != 0) {
++            const QByteArray descriptor = jpsDescriptor(image);
++            if (descriptor.isEmpty()) {
++                QTranslator translator;
++                translator.load(QLocale(), QStringLiteral("jps"), QStringLiteral("_"), QStringLiteral(":/kimageformats/jps"));
++                const char *message = "Cannot save JPS: the layout or descriptor fields are unsupported or invalid.";
++                const QString translated = translator.translate("JpsWriter", message);
++                qWarning().noquote() << (translated.isEmpty() ? QString::fromLatin1(message) : translated);
+                 return false;
+             }
+-            const int width = image.width() / 2;
+-            QImage jps(image.size(), QImage::Format_RGB888);
+-            for (int y = 0; y < image.height(); ++y) {
+-                for (int x = 0; x < width; ++x) {
+-                    jps.setPixelColor(x, y, image.pixelColor(width + x, y));
+-                    jps.setPixelColor(width + x, y, image.pixelColor(x, y));
+-                }
++            QImage jps = image;
++            if (image.text(QString::fromLatin1(stereo3DLayoutKey)).isEmpty()) {
++                // Preserve the writer's unmarked-input convention: canonical left-first in, right-first on disk.
++                const int separation = image.text(jpsFieldKeys[2]).toInt();
++                const int width = (image.width() - separation) / 2;
++                QPainter painter(&jps);
++                painter.drawImage(0, 0, image.copy(width + separation, 0, width, image.height()));
++                painter.drawImage(width + separation, 0, image.copy(0, 0, width, image.height()));
+             }
+-            data = encodeJpeg(jps, quality);
+-            data = addJpegSegment(data, 0xfe, jpsComment());
++            data = addJpegSegment(encodeJpeg(jps, quality), 0xe3, descriptor);
+         }
+         if (data.isEmpty()) {
+             return false;
+@@ -903,7 +992,10 @@ public:
+     QVariant option(ImageOption option) const override
+     {
+         if (option == Description && scan()) {
+-            return DepthMark::description(m_stereo3DLayout, m_depthMark);
++            QString text = DepthMark::description(m_stereo3DLayout, m_depthMark);
++            for (auto it = m_jpsFields.cbegin(); it != m_jpsFields.cend(); ++it)
++                text += QStringLiteral("\n\n") + it.key() + QStringLiteral(": ") + it.value();
++            return text;
+         }
+         if (option == Size && scan() && !m_images.isEmpty()) {
+             return imageSize(m_currentImage);
+@@ -968,6 +1060,8 @@ private:
+             const JpegHeader header = readJpegHeader(data);
+             if (header.valid) {
+                 m_stereo3DLayout = header.jpsPresent ? jpsStereoLayout(header.jps) : QStringLiteral("sideBySideRightFirst");
++                if (header.jpsPresent && !m_stereo3DLayout.isEmpty())
++                    m_jpsFields = jpsFields(header.jps);
+             }
+         }
+         return !m_images.isEmpty();
+@@ -995,6 +1089,7 @@ private:
+     mutable QList<QByteArray> m_formats;
+     mutable QString m_stereo3DLayout;
+     mutable QString m_depthMark;
++    mutable QHash<QString, QString> m_jpsFields;
+     int m_currentImage = 0;
+     int m_quality = -1;
+ };
