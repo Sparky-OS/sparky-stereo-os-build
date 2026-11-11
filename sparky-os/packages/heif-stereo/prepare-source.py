@@ -7,6 +7,10 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'repo'))
+import reproducible
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('project', choices=['libheif', 'kf6-kimageformats', 'kf6-kfilemetadata', 'gwenview', 'kolourpaint'])
@@ -15,16 +19,17 @@ parser.add_argument('version')
 args = parser.parse_args()
 source = args.source.resolve()
 recipe = Path(__file__).resolve().parent
+stamp = reproducible.recipe_epoch([recipe])
 patch = {'libheif': 'libheif-stem.patch', 'kf6-kimageformats': 'kimageformats-stem.patch', 'kf6-kfilemetadata': 'kfilemetadata-stem.patch', 'gwenview': 'gwenview-reader.patch', 'kolourpaint': 'kolourpaint-reader.patch'}[args.project]
 env = os.environ | {'DEBFULLNAME': 'Daniel Ramos (Capitain Jack)', 'DEBEMAIL': 'Capitain_Jack@yahoo.com', 'QUILT_PATCHES': 'debian/patches'}
 if args.project == 'libheif':
     toolkit = recipe.parents[1]
     subprocess.run(['python3', '-m', 'lean.debian_prepare', str(source), args.version, '--toolkit', str(toolkit)],
-                   env=env | {'PYTHONPATH': str(toolkit)}, check=True)
+                   env=env | {'PYTHONPATH': str(toolkit), 'SOURCE_DATE_EPOCH': str(stamp)}, check=True)
 else:
     if 'lean.source_tree project' not in (source / 'debian/rules').read_text():
         raise ValueError('Use the published native Lean Code source baseline')
-    subprocess.run(['dch', '--newversion', args.version, '--distribution', 'UNRELEASED',
+    subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', args.version, '--distribution', 'UNRELEASED',
                     'Read ster and stem entity groups through libheif, preserving the primary monoscopic fallback and complete stereo views.'], cwd=source, env=env, check=True)
 destination = source / 'debian/patches' / patch
 destination.parent.mkdir(exist_ok=True)
@@ -64,3 +69,4 @@ if args.project in ('kf6-kimageformats', 'kf6-kfilemetadata'):
             paths.append(str((fixtures / asset.name).relative_to(source)))
     with (source / 'debian/source/include-binaries').open('a') as output:
         output.write('\n'.join(paths) + '\n')
+reproducible.normalize_tree(source, stamp)

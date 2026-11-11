@@ -14,11 +14,14 @@ import argparse
 from pathlib import Path
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sparky-os' / 'config'))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sparky-os' / 'release'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sparky-os' / 'repo'))
+import reproducible
 import local_config as cfg
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lean'))
 import upstream
@@ -63,9 +66,12 @@ manifest['packaging_status'] = 'Kernel Lean Code recipe under qualification; exa
 manifest['version'] = version
 manifest['configuration_sha256'] = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (kit / 'config').iterdir() if p.is_file()}
 (source / 'SOURCE.edition.json').write_text(json.dumps(manifest, indent=2) + '\n')
+# the source is dated by its recipe, never by the clock (ORDER 421b): SOURCE_DATE_EPOCH, else the last commit touching kernel/lean;
+# lean/prepare.py reads the same value, and debian/ is normalized before dpkg-source -b
+stamp = reproducible.recipe_epoch([kit / 'lean'])
 subprocess.run(['python3', str(kit / 'lean/prepare.py'), str(source), str(kit), '--counter', args.counter]
                + (['--packaging-revision', args.packaging_revision] if args.packaging_revision else [])
-               + (['--smoke'] if args.smoke else []), check=True)
+               + (['--smoke'] if args.smoke else []), check=True, env={**os.environ, 'SOURCE_DATE_EPOCH': str(stamp)})
 archive = work / f'linux-stereo-{flavour}_{upstream_version}.orig.tar.xz'
 with archive.open('wb') as sink:
     packed = subprocess.Popen(['tar', '-C', str(source), '--exclude=./debian',
@@ -74,5 +80,6 @@ with archive.open('wb') as sink:
     compressed = subprocess.Popen(['xz', '-T2', '-3'], stdin=packed.stdout, stdout=sink)
     packed.stdout.close()
     assert compressed.wait() == 0 and packed.wait() == 0
-subprocess.run(['dpkg-source', '-b', str(source)], cwd=work, check=True)
+reproducible.normalize_tree(source, stamp)
+subprocess.run(['dpkg-source', '-b', str(source)], cwd=work, check=True, env={**os.environ, 'SOURCE_DATE_EPOCH': str(stamp)})
 print(flavour, 'retained source prepared; not a compiled or release-qualified kernel')

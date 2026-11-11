@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """Add the multiview consumer delta to the edition's native source packages."""
-import argparse,os,shutil,subprocess
+import argparse,os,shutil,subprocess,sys
 from control_floors import set_floors
 from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'repo'))
+import reproducible
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('project',choices=['mpv','qt','vlc','gwenview','haruna','dragon']);p.add_argument('source',type=Path);p.add_argument('version')
-a=p.parse_args();source=a.source.resolve();recipe=Path(__file__).resolve().parent
+a=p.parse_args();source=a.source.resolve();recipe=Path(__file__).resolve().parent;stamp=reproducible.recipe_epoch([recipe])
 if 'lean.source_tree project' not in (source/'debian/rules').read_text():
  raise ValueError('Use the recorded published native Lean Code baseline')
 name=a.project+'-mvhevc.patch';target=source/'debian/patches'/name
@@ -22,4 +24,5 @@ if a.project == 'vlc':
  subprocess.run(['quilt','push'],cwd=source,env=env,check=True)
 control=source/'debian/control'
 control.write_text(set_floors(a.project, control.read_text()))
-subprocess.run(['dch','--newversion',a.version,'--distribution','UNRELEASED','Decode and assemble both signalled MV-HEVC views without resizing, retaining presentation metadata, base-view fallback and per-file correction.'],cwd=source,env=env,check=True)
+subprocess.run(['dch','--date',reproducible.rfc2822(stamp),'--newversion',a.version,'--distribution','UNRELEASED','Decode and assemble both signalled MV-HEVC views without resizing, retaining presentation metadata, base-view fallback and per-file correction.'],cwd=source,env=env,check=True)
+reproducible.normalize_tree(source,stamp)

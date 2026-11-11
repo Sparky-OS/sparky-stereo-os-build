@@ -48,6 +48,11 @@ def version_record(cache, records, name, version):
     raise ValueError(f'missing exact metadata: {name}={version}')
 
 
+# The packages rootfs.sh installs first whose pins take effect before the NVIDIA install: the driver lock, and
+# NVIDIA's CUDA repository with its pins (size-probe.sh puts that package's source in place, as the image has it).
+POLICY_PACKAGES = ('sparky-stereo-nvidia-driver-lock', 'sparky-stereo-cuda-repo')
+
+
 def apply_preferences(record, out):
     # This package's conffile takes effect before the NVIDIA install in rootfs.sh.
     # Extract only that conffile, never run package scripts or alter the probe host.
@@ -64,7 +69,7 @@ def apply_preferences(record, out):
                     (out / 'preferences.d' / Path(name).name).write_bytes(payload.extractfile(member).read())
                     count += 1
         if archive.wait() or not count:
-            raise ValueError('NVIDIA driver lock has no readable preferences')
+            raise ValueError(record['Package'] + ' has no readable preferences')
 
 
 def main():
@@ -82,8 +87,8 @@ def main():
     (out / 'preferences.d' / 'beta-build-no-debian-kernel').write_text(
         'Package: /^linux-(image|headers|binary|modules|signed|base)-.*amd64(-unsigned)?$/\n'
         'Pin: release o=Debian\nPin-Priority: -1\n')
-    (out / 'preferences.d' / 'beta-build-no-zfs').write_text(
-        'Package: zfs-dkms zfsutils-linux zfs-zed\nPin: release *\nPin-Priority: -1\n')
+    # rootfs.sh removes this obsolete pin before explicitly installing ZFS.
+    (out / 'preferences.d' / 'beta-build-no-zfs').unlink(missing_ok=True)
     installed = {identity(p): str(p) for p in paragraphs(args.status.read_text())
                  if p.get('Status') == 'install ok installed'}
     initial = dict(installed)
@@ -132,13 +137,18 @@ def main():
                                      'installed_kib': int(removed['Installed-Size']), 'reason': reason})
         for record in selected:
             installed[identity(record)] = str(record).rstrip() + '\nStatus: install ok installed\n'
-            if record['Package'] == 'sparky-stereo-nvidia-driver-lock':
+            if record['Package'] in POLICY_PACKAGES:
                 apply_preferences(record, out)
     (out / 'status').write_text('\n\n'.join(installed.values()) + '\n\n')
     final = {key: apt_pkg.TagSection(value) for key, value in installed.items()}
     if any(re.fullmatch(r'linux-(?:image|headers)-.*amd64(?:-unsigned)?', p['Package'])
            for p in final.values()):
         raise ValueError('Debian kernel/headers in resolved image')
+    # a package that downloads data while it is installed (Sparky-Install-Download-Size in its control file) never belongs on the image:
+    # the games and their data come when the person chooses them while installing (Daniel, 2026-11-04; ORDER 399b)
+    downloaders = sorted(p['Package'] for p in final.values() if 'Sparky-Install-Download-Size' in p)
+    if downloaders:
+        raise ValueError('image packages that download data when installed (Sparky-Install-Download-Size): ' + ' '.join(downloaders))
     rows = ['package\tarchitecture\tversion\tinstalled_kib\tarchive_bytes\tsource\tsha256\tchange']
     for key, record in sorted(final.items()):
         if 'Installed-Size' not in record:

@@ -15,7 +15,7 @@ sys.path.insert(0, str(LISTS))
 import integrations
 
 PKG = ROOT / 'packages' / 'sparky-stereo-integration'
-LANGS = ['en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW']
+LANGS = ['en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW']
 
 
 def spec(**over):

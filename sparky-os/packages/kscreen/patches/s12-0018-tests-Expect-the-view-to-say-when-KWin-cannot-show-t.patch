@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 23:20:16 -0300
+Subject: [PATCH 18/19] tests: Expect the view to say when KWin cannot show the
+ screen names
+
+Show Screen Names asks KWin's OutputLocator effect over D-Bus. When the effect is not there
+the names do not show, and the view must say so, with KWin's reason, instead of showing
+nothing as if it had worked.
+
+Assisted-by: Claude Sonnet 5.5
+---
+ tests/arrangementview.cpp | 41 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 41 insertions(+)
+
+diff --git a/tests/arrangementview.cpp b/tests/arrangementview.cpp
+index 72f7e58d..b6d9a363 100644
+--- a/tests/arrangementview.cpp
++++ b/tests/arrangementview.cpp
+@@ -73,6 +73,7 @@ private Q_SLOTS:
+     void testScreenContentsRefused();
+     void testScreenContentsShowOneEye();
+     void testScreenNamesOverlay();
++    void testScreenNamesSaysWhenKWinCannot();
+     void testFlipReachesKWin();
+     void testPositionFieldsReachKWin();
+     void testPhysicalSizeShown();
+@@ -419,6 +420,46 @@ void ArrangementViewTest::testViewMenuHoldsItsItems()
+     QVERIFY2(count >= 5, qPrintable(u"the View menu holds %1 items"_s.arg(count)));
+ }
+ 
++void ArrangementViewTest::testScreenNamesSaysWhenKWinCannot()
++{
++    // Without KWin's OutputLocator effect nothing can show the names: the view says so, instead of
++    // showing nothing as if it had worked
++    if (qEnvironmentVariableIsEmpty("KSCREEN_TEST_CAPTURE_TOOL")) {
++        QSKIP("Needs a compositor whose effects the test may unload: set KSCREEN_TEST_CAPTURE_TOOL");
++    }
++    QObject *action = findObject(u"showScreenNamesAction"_s);
++    QVERIFY2(action, "no Show Screen Names action in the arrangement view's menu");
++    QObject *options = m_module->property("viewOptions").value<QObject *>();
++    QVERIFY2(options, "no view options");
++    QVERIFY(options->property("errorString").isValid());
++
++    const auto effect = [](const char *method) {
++        QDBusMessage message = QDBusMessage::createMethodCall(u"org.kde.KWin"_s, u"/Effects"_s, u"org.kde.kwin.Effects"_s, QString::fromLatin1(method));
++        message << u"outputlocator"_s;
++        return QDBusConnection::sessionBus().call(message);
++    };
++    QCOMPARE(effect("unloadEffect").type(), QDBusMessage::ReplyMessage);
++
++    QMetaObject::invokeMethod(action, "trigger");
++    QVERIFY(action->property("checked").toBool());
++    QTRY_VERIFY_WITH_TIMEOUT(!options->property("errorString").toString().isEmpty(), 5000);
++    QObject *label = findObject(u"screenNamesErrorLabel"_s);
++    QVERIFY2(label, "the view does not say why the names are not shown");
++    QVERIFY(qobject_cast<QQuickItem *>(label)->isVisible());
++    QVERIFY(label->property("text").toString().contains(options->property("errorString").toString()));
++    capture(u"names-refused"_s, QJsonObject{{u"error"_s, options->property("errorString").toString()}});
++
++    // switched off, nothing to say; and with the effect back the names show again
++    QMetaObject::invokeMethod(action, "trigger");
++    QVERIFY(options->property("errorString").toString().isEmpty());
++    QCOMPARE(effect("loadEffect").type(), QDBusMessage::ReplyMessage);
++    QMetaObject::invokeMethod(action, "trigger");
++    QTest::qWait(3000);
++    QVERIFY2(options->property("errorString").toString().isEmpty(), qPrintable(options->property("errorString").toString()));
++    QMetaObject::invokeMethod(action, "trigger");
++    QVERIFY(!action->property("checked").toBool());
++}
++
+ void ArrangementViewTest::testFlipReachesKWin()
+ {
+     QObject *flip = findObject(u"flipCheckBox"_s);

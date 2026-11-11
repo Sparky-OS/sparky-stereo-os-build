@@ -1,0 +1,12 @@
+kwin (4:6.7.4-2+stereo3d54) unstable;
+
+  * Send kde_stereo_depth_v1.depth_limits only to resources bound at version
+    5 or newer, as the protocol requires. A client built against version 3
+    (including the lock-screen greeter) otherwise rejects the unknown event
+    and loses its Wayland connection. Older clients keep depth_state; version
+    5 clients and the X11 depth limits property keep their existing behaviour.
+  * Add version 3, 4 and 5 depth exchange regression rows, with the legacy
+    event table, initial and changed state, limit changes, and duplicate
+    suppression. Carry the complete accepted +stereo3d53 source.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 09 Nov 2026 21:30:00 +0000

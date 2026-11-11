@@ -7,12 +7,13 @@
 # /prev the earlier +lc1 builds, /patches this recipe's patches, /changelog its entries, /fork the release clone (stereo-layer, stereo-declare).
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 printf 'deb [trusted=yes] file:/new ./\n' > /etc/apt/sources.list.d/edition-new.list
 printf 'deb [trusted=yes] file:/pub mashtabba main\n' > /etc/apt/sources.list.d/edition.list
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
-printf 'deb http://deb.debian.org/debian testing contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian-extra-components.list
+printf 'deb https://deb.debian.org/debian testing contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian-extra-components.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 git config --global safe.directory '*'
 cd /work
@@ -47,6 +48,7 @@ stereo-layer|stereo-declare)
     tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$stamp" -C /work/export -cf - "$PREFIX" | xz -9e > "$ORIG"
     tar -xf "$ORIG"
     cp -a /work/debian-export "$PREFIX/debian"
+    python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" "$PREFIX"
     dpkg-source -b "$PREFIX" >/dev/null
     rm -rf "$PREFIX"
     ;;
@@ -76,19 +78,20 @@ if [ -d t ]; then
         echo "${patchsub:+$patchsub/}$(basename "$p")" >> debian/patches/series
     done
     python3 - "$PKG" "$NEWV" <<'CHANGELOG'
-import email.utils, sys
+import os, sys
 from pathlib import Path
 pkg, version = sys.argv[1:]
 entry = Path('/changelog/' + pkg + '.txt').read_text()
 assert entry.startswith(pkg + ' (' + version + ') unstable;'), entry[:60]
 p = Path('debian/changelog')
-p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + email.utils.formatdate(localtime=True) + '\n\n' + p.read_text())
+p.write_text(entry.rstrip('\n') + '\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n' + p.read_text())
 CHANGELOG
     if [ "$PKG" = kdenlive ]; then
         grep -q 'libmlt7 (>= 7.40.0-1+stereo3d3)' debian/control
         sed -i 's/libmlt7 (>= 7.40.0-1+stereo3d3)/libmlt7 (>= 7.40.0-1+stereo3d4)/' debian/control
     fi
     cd ..
+    python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" t
     dpkg-source -b t >/dev/null
     rm -rf t
     rm -f "${BASE:-none}".dsc "${BASE:-none}".debian.tar.xz
@@ -121,6 +124,7 @@ SPICE_DOCS
 fi
 apt-get -y update >/dev/null 2>&1
 apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.log 2>&1
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /work/lc/source
 useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/lc/source

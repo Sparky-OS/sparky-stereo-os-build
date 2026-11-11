@@ -1,0 +1,141 @@
+From ca89393c327f84951bcb05ddb92ce933d0c08352 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 5 Nov 2026 20:27:06 -0300
+Subject: [PATCH] VideoOutput: the frames of textures do not keep the drawer
+ alive
+
+The first NVDEC run that handed the views to the sink as textures ended in a crash when the video output was destroyed: the frames the sink still
+held kept the drawer, and with it the decoder's CUDA converter made on the drawer's QRhi, alive after the decoder's own state was gone, and the converter
+pushed the decoder's CUDA context (cuCtxPopCurrent in libcuda, "corrupted size vs. prev_size"). The drawer goes with the Renderer again, as in the step before;
+a frame of textures that outlives it looks at it without owning it: it has no texture to give (textureHandle() is 0) and nothing to read back, and is let go
+without harm. Same run, four times: exit 0.
+
+Tests: depthTextureFrameOutlivesTheRenderer (red when the frame keeps the drawer alive: the read back succeeds after the Renderer is gone).
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ src/multimediaquick/qquickvideodepth.cpp      | 23 ++++++++----
+ .../tst_qquickvideostereo.cpp                 | 35 +++++++++++++++++++
+ 2 files changed, 51 insertions(+), 7 deletions(-)
+
+diff --git a/src/multimediaquick/qquickvideodepth.cpp b/src/multimediaquick/qquickvideodepth.cpp
+index 6209ecad1..f3367ea9a 100644
+--- a/src/multimediaquick/qquickvideodepth.cpp
++++ b/src/multimediaquick/qquickvideodepth.cpp
+@@ -1612,13 +1612,20 @@ private:
+ class DrawnViewsBuffer final : public QHwVideoBuffer
+ {
+ public:
+-    DrawnViewsBuffer(std::shared_ptr<GpuDrawer> drawer, const GpuDrawer::Views &views, const QVideoFrameFormat &format,
++    // The frame does not keep the drawer alive: the drawer (its context, its QRhi and the decoder's converters made on it) goes with the
++    // Renderer, before the decoder's own state that the converters use goes (a CUDA converter pushes the decoder's CUDA context when it is
++    // let go). A frame that outlives it has no texture to give and nothing to read back.
++    DrawnViewsBuffer(const std::shared_ptr<GpuDrawer> &drawer, const GpuDrawer::Views &views, const QVideoFrameFormat &format,
+                      std::shared_ptr<std::atomic<int>> readBacks)
+-        : QHwVideoBuffer(QVideoFrame::RhiTextureHandle), m_drawer(std::move(drawer)), m_views(views), m_format(format),
++        : QHwVideoBuffer(QVideoFrame::RhiTextureHandle), m_drawer(drawer), m_views(views), m_format(format),
+           m_readBacks(std::move(readBacks))
+     {
+     }
+-    ~DrawnViewsBuffer() override { m_drawer->recycle(m_views); }
++    ~DrawnViewsBuffer() override
++    {
++        if (const auto drawer = m_drawer.lock())
++            drawer->recycle(m_views);
++    }
+ 
+     MapData map(QVideoFrame::MapMode mode) override
+     {
+@@ -1635,7 +1642,8 @@ public:
+                 dst[i] = reinterpret_cast<uchar *>(m_bytes[i].data());
+                 m_stride[i] = stride[i];
+             }
+-            if (!m_drawer->readBack(m_views, dst, stride))
++            const auto drawer = m_drawer.lock();
++            if (!drawer || !drawer->readBack(m_views, dst, stride))
+                 return {};
+             ++*m_readBacks;
+             m_mapped = true;
+@@ -1653,13 +1661,14 @@ public:
+     QVideoFrameFormat format() const override { return m_format; }
+     quint64 textureHandle(QRhi &rhi, int plane) override
+     {
+-        if (plane < 0 || plane >= m_views.nplanes || m_views.generation != m_drawer->generation() || !m_drawer->takenBy(rhi))
++        const auto drawer = m_drawer.lock();
++        if (!drawer || plane < 0 || plane >= m_views.nplanes || m_views.generation != drawer->generation() || !drawer->takenBy(rhi))
+             return 0;
+         return m_views.plane[plane].id;
+     }
+ 
+ private:
+-    std::shared_ptr<GpuDrawer> m_drawer;
++    std::weak_ptr<GpuDrawer> m_drawer;
+     GpuDrawer::Views m_views;
+     QVideoFrameFormat m_format;
+     std::shared_ptr<std::atomic<int>> m_readBacks;
+@@ -1680,7 +1689,7 @@ struct Renderer::Private
+     std::vector<float> table, layerTable;
+     std::vector<uint16_t> lut;
+ #ifdef QT_MM_DEPTH_GPU
+-    // shared with the frames of textures handed to the sink: the context lives as long as one of them
++    // owned here; the frames of textures handed to the sink look at it without keeping it alive
+     std::shared_ptr<GpuDrawer> gpuOwner = std::make_shared<GpuDrawer>();
+     GpuDrawer &gpu = *gpuOwner;
+ #endif
+diff --git a/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp b/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
+index aa96aa10c..c170abee3 100644
+--- a/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
++++ b/tests/auto/integration/qquickvideostereo/tst_qquickvideostereo.cpp
+@@ -104,6 +104,7 @@ private slots:
+     void depthViewsReachTheSinkAsTextures();
+     void depthTextureFramesConvertLikeTheCopies_data();
+     void depthTextureFramesConvertLikeTheCopies();
++    void depthTextureFrameOutlivesTheRenderer();
+     void depthRotated_data();
+     void depthRotated();
+     void depthRotatedFormats_data();
+@@ -1269,6 +1270,40 @@ void tst_QQuickVideoStereo::depthImportsHardwareFrames()
+ // equivalents of the codes: fewer than one pixel in 500 off by more than 2, a mean under 0.25
+ // A DMA-BUF another GPU accepts and reads as zeros (the first import on the A10, before the filters were set): luma and chroma all zero is
+ // no picture, so the frames are copied from then on and the reason is said; a frame with a picture is imported (the control, above)
++// The drawer (its context, its QRhi and the converters of the decoder made on it) goes with the Renderer, before the decoder's own state: a
++// converter that is let go later pushes a CUDA context that is gone (a crash at the end of the first NVDEC run that handed textures to the sink).
++// A frame of textures that outlives the Renderer has nothing to give and nothing to read back, and is let go without harm.
++void tst_QQuickVideoStereo::depthTextureFrameOutlivesTheRenderer()
++{
++    if (!QQuickVideoDepth::canDraw())
++        QSKIP("built without libstereo-dibr");
++    if (qgetenv("QSG_RHI_BACKEND") != "opengl")
++        QSKIP("QSG_RHI_BACKEND=opengl is not set: the sink must draw with OpenGL");
++    QTemporaryDir cache;
++    qputenv("XDG_CACHE_HOME", cache.path().toLocal8Bit());
++    QQuickWindow window;
++    window.resize(64, 64);
++    window.show();
++    QVERIFY(QTest::qWaitForWindowExposed(&window));
++    QRhi *rhi = nullptr;
++    QTRY_VERIFY((rhi = QQuickWindowPrivate::get(&window)->rhi) != nullptr);
++    const QVideoFrame frame = depthFrame(Mode::DepthSideBySide, false, 128, 64);
++    QVideoFrame drawn;
++    {
++        QQuickVideoDepth::Renderer renderer;
++        renderer.setSinkRhi(rhi);
++        QQuickVideoDepth::Options o = fixedWay();
++        o.gpu = true;
++        for (int i = 0; i < 3; ++i)
++            QCOMPARE(renderer.draw(frame, Mode::DepthSideBySide, false, {}, o, &drawn), QQuickVideoDepth::Renderer::Result::Drawn);
++        QCOMPARE(renderer.lastViewsRoute(), QQuickVideoDepth::Renderer::ViewsRoute::Texture);
++        QVERIFY(drawn.isValid());
++    }
++    // the Renderer is gone: the frame cannot be read back, and is let go without a crash
++    QVERIFY(!drawn.map(QVideoFrame::ReadOnly));
++    drawn = {};
++}
++
+ void tst_QQuickVideoStereo::depthRefusesEmptyImportedPlanes()
+ {
+     if (!QQuickVideoDepth::canDraw())
+-- 
+2.53.0
+

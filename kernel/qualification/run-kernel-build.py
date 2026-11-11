@@ -74,6 +74,7 @@ shutil.copy2(args.archive_config or kit / 'sparky-os/lean/archive.example.json',
 recipe = '''#!/bin/bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
+sh /run/https-only-apt.sh
 apt-get -y update
 apt-get -y --no-install-recommends build-dep /work/source
 apt-get -y --no-install-recommends install bubblewrap
@@ -94,11 +95,13 @@ status = dict(source=name, version=version, architecture='amd64', state='queued'
               signed=False, source_descriptor_sha256=hashlib.sha256(descriptor.read_bytes()).hexdigest())
 (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
 container = 'sparky-lc-kernel-' + flavour
-command = ['docker', 'run', '--rm', '--platform', 'linux/amd64', '--name', container,
+command = ['docker', 'run', '--rm', '--ulimit', 'core=0', '--platform', 'linux/amd64', '--name', container,
            '--cpus', '4', '--memory', args.memory, '--security-opt', 'seccomp=unconfined',
            '--security-opt', 'apparmor=unconfined', '--security-opt', 'systempaths=unconfined',
            '-v', str(work) + ':/work',
            '-v', str(kit / 'sparky-os') + ':/toolkit:ro',
+           '-v', '/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro',
+           '-v', str(Path(__file__).resolve().parents[2] / 'tools' / 'https-only-apt.sh') + ':/run/https-only-apt.sh:ro',
            'sparky-lc-migration:20261020', 'bash', '/work/run.sh']
 with (work / 'build.log').open('w') as log:
     process = start_build(command, container, log)

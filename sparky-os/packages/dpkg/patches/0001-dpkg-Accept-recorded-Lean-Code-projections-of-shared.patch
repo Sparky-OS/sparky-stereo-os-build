@@ -1,0 +1,571 @@
+From b6c1c043abad56fc9d313e51b70a569d2b4b8412 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 00:20:54 -0300
+Subject: [PATCH] dpkg: Accept recorded Lean Code projections of shared files
+
+dpkg-stereo (Sparky Stereo OS) replaces the text files dpkg installs
+with their machine form after each dpkg run, the comments their
+programs never read removed, and records each projection with the
+SHA-256 of the file the package shipped and of the projection.
+
+A shared file of a Multi-Arch: same package set that is such a
+projection differs on disk from what the other instances shipped, and
+the shared file check refused every other instance of the same
+version ("trying to overwrite shared ..., which is different from
+other instances of package ..."), so no second architecture could be
+installed or reinstalled.
+
+When the file on disk is the projection its record names, the file
+being unpacked is now extracted, and it is accepted only when it is
+the file every other instance shipped, as their md5sums record it, and
+the original recorded for the projection. Any other difference is
+refused as before, with or without a record.
+
+Assisted-by: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/main/archives.c        | 379 ++++++++++++++++++++++++++++++++++++-
+ tests/t-multiarch/Makefile |  82 ++++++++
+ 2 files changed, 457 insertions(+), 4 deletions(-)
+
+diff --git a/src/main/archives.c b/src/main/archives.c
+index ff778bc..f94c5ba 100644
+--- a/src/main/archives.c
++++ b/src/main/archives.c
+@@ -37,6 +37,7 @@
+ #include <stdint.h>
+ #include <stdlib.h>
+ #include <stdio.h>
++#include <sha2.h>
+ #include <obstack.h>
+ #define obstack_chunk_alloc m_malloc
+ #define obstack_chunk_free free
+@@ -277,6 +278,360 @@ md5hash_prev_conffile(struct pkginfo *pkg, char *oldhash, const char *oldname,
+ 	}
+ }
+ 
++/*
++ * Lean Code projections of shared files.
++ *
++ * dpkg-stereo (Sparky Stereo OS) projects the text files a package installs
++ * into their machine form after each dpkg run, the comments their programs
++ * never read removed, and records each projection in a table per package
++ * instance, which holds for each pathname the SHA-256 of the file the package
++ * shipped (sha_orig) and of the projection on disk (sha_lean).
++ *
++ * A shared file of a Multi-Arch: same package set that is such a projection
++ * differs on disk from what the other instances shipped, but the other
++ * instances did ship the same file. When the file being unpacked is exactly
++ * that file, as the other instances' md5sums record it and as the projection
++ * recorded its original, it is installed over the projection, and
++ * dpkg-stereo projects it again after the run. In every other case the shared
++ * file is refused, as without the record.
++ */
++
++#define LEANCODE_RECORDS_DIR "/var/lib/dpkg-stereo/records"
++
++enum leancode_index_type {
++	LEANCODE_INDEX_MD5SUMS,
++	LEANCODE_INDEX_RECORDS,
++};
++
++struct leancode_entry {
++	/* The pathname, without its leading slash. */
++	const char *name;
++	/* The MD5 of the md5sums entry, or the recorded SHA-256 of the
++	 * original. */
++	const char *hash;
++	/* The recorded SHA-256 of the projection (records only). */
++	const char *lean;
++};
++
++struct leancode_index {
++	struct leancode_index *next;
++	char *filename;
++	dev_t dev;
++	ino_t ino;
++	off_t size;
++	time_t mtime;
++	struct varbuf buf;
++	struct leancode_entry *entries;
++	size_t entries_used;
++};
++
++static struct leancode_index *leancode_indexes;
++
++static bool
++leancode_is_hash(const char *str, size_t len)
++{
++	size_t i;
++
++	if (strlen(str) != len)
++		return false;
++	for (i = 0; i < len; i++)
++		if (!((str[i] >= '0' && str[i] <= '9') ||
++		      (str[i] >= 'a' && str[i] <= 'f')))
++			return false;
++
++	return true;
++}
++
++static int
++leancode_entry_cmp(const void *a, const void *b)
++{
++	const struct leancode_entry *ea = a;
++	const struct leancode_entry *eb = b;
++
++	return strcmp(ea->name, eb->name);
++}
++
++static void
++leancode_index_add(struct leancode_index *index, size_t *entries_size,
++                   const char *name, const char *hash, const char *lean)
++{
++	if (index->entries_used == *entries_size) {
++		*entries_size = *entries_size ? *entries_size * 2 : 64;
++		index->entries = m_realloc(index->entries,
++		                           *entries_size * sizeof(index->entries[0]));
++	}
++	index->entries[index->entries_used].name = name;
++	index->entries[index->entries_used].hash = hash;
++	index->entries[index->entries_used].lean = lean;
++	index->entries_used++;
++}
++
++/*
++ * Parse an md5sums control file: an MD5, two spaces, and the pathname
++ * without its leading slash, one per line.
++ */
++static void
++leancode_index_parse_md5sums(struct leancode_index *index)
++{
++	char *line, *next, *end = index->buf.buf + index->buf.used;
++	size_t entries_size = 0;
++
++	for (line = index->buf.buf; line < end; line = next) {
++		char *eol = memchr(line, '\n', end - line);
++
++		if (eol == NULL)
++			break;
++		*eol = '\0';
++		next = eol + 1;
++
++		if (eol - line < MD5HASHLEN + 3 ||
++		    line[MD5HASHLEN] != ' ' || line[MD5HASHLEN + 1] != ' ')
++			continue;
++		line[MD5HASHLEN] = '\0';
++		if (!leancode_is_hash(line, MD5HASHLEN))
++			continue;
++		leancode_index_add(index, &entries_size,
++		                   line + MD5HASHLEN + 2, line, NULL);
++	}
++}
++
++/*
++ * Parse a dpkg-stereo record table: a header line starting with ‘#’ naming
++ * the tab-separated columns, then one projection per line.
++ */
++static void
++leancode_index_parse_records(struct leancode_index *index)
++{
++	char *line, *next, *end = index->buf.buf + index->buf.used;
++	int col_path = -1, col_orig = -1, col_lean = -1, cols = 0;
++	size_t entries_size = 0;
++
++	for (line = index->buf.buf; line < end; line = next) {
++		char *eol = memchr(line, '\n', end - line);
++		char *field, *fields[3] = { NULL, NULL, NULL };
++		int col;
++
++		if (eol == NULL)
++			break;
++		*eol = '\0';
++		next = eol + 1;
++
++		if (line[0] == '#') {
++			for (col = 0, field = line + 1; field; col++) {
++				char *tab = strchr(field, '\t');
++
++				if (tab)
++					*tab++ = '\0';
++				if (strcmp(field, "path") == 0)
++					col_path = col;
++				else if (strcmp(field, "sha_orig") == 0)
++					col_orig = col;
++				else if (strcmp(field, "sha_lean") == 0)
++					col_lean = col;
++				field = tab;
++			}
++			cols = col;
++			continue;
++		}
++		if (col_path < 0 || col_orig < 0 || col_lean < 0)
++			continue;
++
++		for (col = 0, field = line; field && col < cols; col++) {
++			char *tab = strchr(field, '\t');
++
++			if (tab)
++				*tab++ = '\0';
++			if (col == col_path)
++				fields[0] = field;
++			else if (col == col_orig)
++				fields[1] = field;
++			else if (col == col_lean)
++				fields[2] = field;
++			field = tab;
++		}
++		if (fields[0] == NULL || fields[0][0] != '/' || fields[0][1] == '\0' ||
++		    fields[1] == NULL || !leancode_is_hash(fields[1], 64) ||
++		    fields[2] == NULL || !leancode_is_hash(fields[2], 64))
++			continue;
++		leancode_index_add(index, &entries_size,
++		                   fields[0] + 1, fields[1], fields[2]);
++	}
++}
++
++/*
++ * Load an index once per run, and again only when the file changes.
++ */
++static struct leancode_index *
++leancode_index_load(const char *filename, enum leancode_index_type type)
++{
++	struct leancode_index *index;
++	struct stat st;
++	int fd;
++
++	for (index = leancode_indexes; index; index = index->next)
++		if (strcmp(index->filename, filename) == 0)
++			break;
++
++	fd = open(filename, O_RDONLY);
++	if (fd < 0)
++		return NULL;
++	if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode)) {
++		close(fd);
++		return NULL;
++	}
++
++	if (index && index->dev == st.st_dev && index->ino == st.st_ino &&
++	    index->size == st.st_size && index->mtime == st.st_mtime) {
++		close(fd);
++		return index;
++	}
++
++	if (index == NULL) {
++		index = m_calloc(1, sizeof(*index));
++		index->filename = m_strdup(filename);
++		varbuf_init(&index->buf, 0);
++		index->next = leancode_indexes;
++		leancode_indexes = index;
++	}
++	index->dev = st.st_dev;
++	index->ino = st.st_ino;
++	index->size = st.st_size;
++	index->mtime = st.st_mtime;
++	index->entries_used = 0;
++
++	varbuf_reset(&index->buf);
++	varbuf_grow(&index->buf, st.st_size + 1);
++	if (fd_read(fd, index->buf.buf, st.st_size) != st.st_size) {
++		close(fd);
++		/* Never match with a partial index. */
++		index->size = -1;
++		return NULL;
++	}
++	varbuf_trunc(&index->buf, st.st_size);
++	close(fd);
++
++	if (type == LEANCODE_INDEX_MD5SUMS)
++		leancode_index_parse_md5sums(index);
++	else
++		leancode_index_parse_records(index);
++
++	if (index->entries_used)
++		qsort(index->entries, index->entries_used,
++		      sizeof(index->entries[0]), leancode_entry_cmp);
++
++	debug(dbg_eachfiledetail, "tarobject leancode loaded %zu entries from %s",
++	      index->entries_used, filename);
++
++	return index;
++}
++
++static const struct leancode_entry *
++leancode_index_find(struct leancode_index *index, const char *name)
++{
++	struct leancode_entry key = { .name = name };
++
++	if (index == NULL || index->entries_used == 0)
++		return NULL;
++
++	return bsearch(&key, index->entries, index->entries_used,
++	               sizeof(index->entries[0]), leancode_entry_cmp);
++}
++
++static bool
++leancode_sha256_is(const char *filename, const char *hash)
++{
++	char digest[SHA256_DIGEST_STRING_LENGTH];
++
++	if (SHA256File(filename, digest) == NULL)
++		return false;
++
++	return strcmp(digest, hash) == 0;
++}
++
++/*
++ * Check whether the shared file on disk is a Lean Code projection of the
++ * file the other instances of the package set shipped.
++ *
++ * On success, oldhash gets the MD5 the other instances shipped the file with,
++ * and origsha the SHA-256 of the original recorded for the projection, which
++ * the file being unpacked must both match.
++ */
++static bool
++leancode_shared_projection(struct pkginfo *pkg, struct fsys_namenode *namenode,
++                           const char *fn, char *oldhash, char *origsha)
++{
++	struct fsys_node_pkgs_iter *iter;
++	struct pkginfo *otherpkg;
++	const struct leancode_entry *record = NULL;
++	const char *name = namenode->name + 1;
++	const char *shipped = NULL;
++	char *recordsdir;
++
++	recordsdir = dpkg_fsys_get_path(LEANCODE_RECORDS_DIR);
++	for (otherpkg = &pkg->set->pkg;
++	     otherpkg;
++	     otherpkg = otherpkg->arch_next) {
++		char *records;
++
++		if (otherpkg->status <= PKG_STAT_CONFIGFILES ||
++		    otherpkg->installed.multiarch != PKG_MULTIARCH_SAME)
++			continue;
++
++		records = str_fmt("%s/%s.tsv", recordsdir,
++		                  pkgbin_name(otherpkg, &otherpkg->installed,
++		                              pnaw_same));
++		record = leancode_index_find(leancode_index_load(records,
++		                             LEANCODE_INDEX_RECORDS), name);
++		free(records);
++		if (record)
++			break;
++	}
++	free(recordsdir);
++	if (record == NULL)
++		return false;
++
++	if (!leancode_sha256_is(fn, record->lean)) {
++		debug(dbg_eachfiledetail,
++		      "tarobject leancode '%s' is not its recorded projection",
++		      namenode->name);
++		return false;
++	}
++
++	iter = fsys_node_pkgs_iter_new(namenode);
++	while ((otherpkg = fsys_node_pkgs_iter_next(iter))) {
++		const struct leancode_entry *sum;
++
++		if (otherpkg == pkg || otherpkg->set != pkg->set ||
++		    otherpkg->status <= PKG_STAT_CONFIGFILES)
++			continue;
++
++		sum = leancode_index_find(leancode_index_load(
++		      pkg_infodb_get_file(otherpkg, &otherpkg->installed, HASHFILE),
++		      LEANCODE_INDEX_MD5SUMS), name);
++		if (sum == NULL || (shipped && strcmp(shipped, sum->hash) != 0)) {
++			shipped = NULL;
++			break;
++		}
++		shipped = sum->hash;
++	}
++	fsys_node_pkgs_iter_free(iter);
++
++	if (shipped == NULL) {
++		debug(dbg_eachfiledetail,
++		      "tarobject leancode '%s' has no single shipped digest",
++		      namenode->name);
++		return false;
++	}
++
++	strcpy(oldhash, shipped);
++	strcpy(origsha, record->hash);
++	debug(dbg_eachfiledetail,
++	      "tarobject leancode '%s' is a projection of digest=%s sha256=%s",
++	      namenode->name, oldhash, origsha);
++
++	return true;
++}
++
+ static int
+ tarobject_describe_type(struct tar_entry *te)
+ {
+@@ -603,7 +958,7 @@ static void
+ tarobject_matches(struct tarcontext *tc,
+                   const char *fn_old, struct stat *stab, char *oldhash,
+                   const char *fn_new, struct tar_entry *te,
+-                  struct fsys_namenode *namenode)
++                  struct fsys_namenode *namenode, const char *leancode)
+ {
+ 	struct varbuf linkname = VARBUF_INIT;
+ 	ssize_t linksize;
+@@ -650,6 +1005,15 @@ tarobject_matches(struct tarcontext *tc,
+ 	case TAR_FILETYPE_HARDLINK:
+ 		/* Fall through. */
+ 	case TAR_FILETYPE_FILE:
++		/* A Lean Code projection has the size of its projection, the
++		 * extracted file must be the one the other instances shipped
++		 * and the original recorded for the projection. */
++		if (leancode) {
++			if (strcmp(oldhash, namenode->newhash) == 0 &&
++			    leancode_sha256_is(fn_new, leancode))
++				return;
++			break;
++		}
+ 		/* Only check metadata for non-conffiles. */
+ 		if (!(namenode->flags & FNNF_NEW_CONFF) &&
+ 		    !(S_ISREG(stab->st_mode) && te->size == stab->st_size))
+@@ -747,6 +1111,8 @@ tarobject(struct tar_archive *tar, struct tar_entry *ti)
+ 	bool existingdir, keepexisting;
+ 	bool refcounting;
+ 	char oldhash[MD5HASHLEN + 1];
++	char leancode_sha[SHA256_DIGEST_STRING_LENGTH];
++	const char *leancode = NULL;
+ 	int statr;
+ 	struct stat stab, stabtmp;
+ 	struct file_stat nodestat;
+@@ -1083,12 +1449,17 @@ tarobject(struct tar_archive *tar, struct tar_entry *ti)
+ 			                      nifd->namenode);
+ 		} else if (S_ISREG(stab.st_mode)) {
+ 			md5hash(tc->pkg, oldhash, fnamevb.buf);
++			if (ti->type == TAR_FILETYPE_FILE &&
++			    leancode_shared_projection(tc->pkg, nifd->namenode,
++			                               fnamevb.buf, oldhash,
++			                               leancode_sha))
++				leancode = leancode_sha;
+ 		} else {
+ 			strcpy(oldhash, EMPTYHASHFLAG);
+ 		}
+ 	}
+ 
+-	if (refcounting && !in_force(FORCE_OVERWRITE)) {
++	if (refcounting && !leancode && !in_force(FORCE_OVERWRITE)) {
+ 		/* If we are not forced to overwrite the path and are
+ 		 * refcounting, just compute the hash w/o extracting
+ 		 * the object. */
+@@ -1119,10 +1490,10 @@ tarobject(struct tar_archive *tar, struct tar_entry *ti)
+ 	/* For shared files, check now if the object matches. */
+ 	if (refcounting)
+ 		tarobject_matches(tc, fnamevb.buf, &stab, oldhash,
+-		                      fnamenewvb.buf, ti, nifd->namenode);
++		                      fnamenewvb.buf, ti, nifd->namenode, leancode);
+ 
+ 	/* If we didn't extract anything, there's nothing else to do. */
+-	if (refcounting && !in_force(FORCE_OVERWRITE))
++	if (refcounting && !leancode && !in_force(FORCE_OVERWRITE))
+ 		return 0;
+ 
+ 	tarobject_set_perms(ti, fnamenewvb.buf, &nodestat);
+diff --git a/tests/t-multiarch/Makefile b/tests/t-multiarch/Makefile
+index 4e8427a..007770a 100644
+--- a/tests/t-multiarch/Makefile
++++ b/tests/t-multiarch/Makefile
+@@ -97,6 +97,7 @@ TEST_CASES += test-coinstall-ma-same
+ TEST_CASES += test-crossgrade
+ TEST_CASES += test-deps
+ TEST_CASES += test-coinstall-shared-files
++TEST_CASES += test-coinstall-shared-files-leancode
+ TEST_CASES += test-coinstall-shared-conffiles
+ TEST_CASES += test-coinstall-triggers
+ TEST_CASES += test-coinstall-diversions
+@@ -577,6 +578,87 @@ ifdef DPKG_SYS_HAS_MKNOD
+ 	$(DPKG_PURGE) pkg-ma-shared-files:$(NATIVE_ARCH) pkg-ma-shared-files:$(FOREIGN_ARCH)
+ endif
+ 
++leancode_records = $(DPKG_INSTDIR)/var/lib/dpkg-stereo/records
++
++# Replace the shared file with a projection of the file with content $(1),
++# as dpkg-stereo does after a dpkg run.
++leancode_lean = $(BEROOT) sh -c 'printf "Lean: %s\n" "$(1)" >"$(DPKG_INSTDIR)$(common_file)"'
++
++# Record the shared file on disk for instance $(1), as dpkg-stereo records
++# its projections, as the projection of a file with content $(2).
++leancode_record = $(BEROOT) sh -c '\
++  orig=$$(printf "%s\n" "$(2)" | sha256sum | cut -d" " -f1); \
++  lean=$$(sha256sum <"$(DPKG_INSTDIR)$(common_file)" | cut -d" " -f1); \
++  mkdir -p "$(leancode_records)"; \
++  printf "\#path\tpackage\tversion\tconffile\tsha_orig\tmd5_orig\tsha_lean\n" \
++    >"$(leancode_records)/$(1).tsv"; \
++  printf "%s\t%s\t\t0\t%s\t\t%s\n" "$(common_file)" "$(1)" "$$orig" "$$lean" \
++    >>"$(leancode_records)/$(1).tsv"'
++
++test-coinstall-shared-files-leancode: ma-setup
++	# Ensure a shared file replaced with its recorded Lean Code projection
++	# does not stop a multi-arch sibling package of the same version
++	$(DPKG_INSTALL) pkg-ma-shared-files_1.0_orig-file_$(NATIVE_ARCH).deb
++	$(call leancode_lean,Variant: orig Version: 1.0)
++	$(call leancode_record,pkg-ma-shared-files:$(NATIVE_ARCH),Variant: orig Version: 1.0)
++	# But that a sibling with a different shared file is still refused
++	! $(DPKG_INSTALL) pkg-ma-shared-files_1.0_alt-file_$(FOREIGN_ARCH).deb
++	grep -qx "Lean: Variant: orig Version: 1.0" "$(DPKG_INSTDIR)$(common_file)"
++	# Even with a record naming the different file as the original
++	$(call leancode_record,pkg-ma-shared-files:$(NATIVE_ARCH),Variant: alt Version: 1.0)
++	! $(DPKG_INSTALL) pkg-ma-shared-files_1.0_alt-file_$(FOREIGN_ARCH).deb
++	grep -qx "Lean: Variant: orig Version: 1.0" "$(DPKG_INSTDIR)$(common_file)"
++	# And that the same sibling is refused when the file on disk is not
++	# the recorded projection, or there is no record
++	$(call leancode_record,pkg-ma-shared-files:$(NATIVE_ARCH),Variant: orig Version: 1.0)
++	$(BEROOT) sh -c "echo 'MODIFIED' >>'$(DPKG_INSTDIR)$(common_file)'"
++	! $(DPKG_INSTALL) pkg-ma-shared-files_1.0_orig-file_$(FOREIGN_ARCH).deb
++	$(call leancode_lean,Variant: orig Version: 1.0)
++	$(BEROOT) rm -f "$(leancode_records)/pkg-ma-shared-files:$(NATIVE_ARCH).tsv"
++	! $(DPKG_INSTALL) pkg-ma-shared-files_1.0_orig-file_$(FOREIGN_ARCH).deb
++	grep -qx "Lean: Variant: orig Version: 1.0" "$(DPKG_INSTDIR)$(common_file)"
++	# With its record, the sibling installs the file it shares
++	$(call leancode_record,pkg-ma-shared-files:$(NATIVE_ARCH),Variant: orig Version: 1.0)
++	$(DPKG_INSTALL) pkg-ma-shared-files_1.0_orig-file_$(FOREIGN_ARCH).deb
++	grep -qx "Variant: orig Version: 1.0" "$(DPKG_INSTDIR)$(common_file)"
++	$(call stdout_is,$(DPKG_VERIFY) pkg-ma-shared-files:$(NATIVE_ARCH) pkg-ma-shared-files:$(FOREIGN_ARCH),)
++	# Ensure either instance can be reinstalled over a projection recorded
++	# for either instance
++	$(call leancode_lean,Variant: orig Version: 1.0)
++	$(BEROOT) rm -f "$(leancode_records)/pkg-ma-shared-files:$(NATIVE_ARCH).tsv"
++	$(call leancode_record,pkg-ma-shared-files:$(FOREIGN_ARCH),Variant: orig Version: 1.0)
++	$(DPKG_INSTALL) pkg-ma-shared-files_1.0_orig-file_$(FOREIGN_ARCH).deb
++	grep -qx "Variant: orig Version: 1.0" "$(DPKG_INSTDIR)$(common_file)"
++	$(call leancode_lean,Variant: orig Version: 1.0)
++	$(call leancode_record,pkg-ma-shared-files:$(FOREIGN_ARCH),Variant: orig Version: 1.0)
++	$(DPKG_INSTALL) pkg-ma-shared-files_1.0_orig-file_$(NATIVE_ARCH).deb
++	grep -qx "Variant: orig Version: 1.0" "$(DPKG_INSTDIR)$(common_file)"
++	$(BEROOT) rm -f "$(leancode_records)/pkg-ma-shared-files:$(FOREIGN_ARCH).tsv"
++	# Ensure both instances can be upgraded in different runs, with the
++	# first one projected in between
++	$(DPKG_UNPACK) pkg-ma-shared-files_2.0_orig-file_$(NATIVE_ARCH).deb
++	grep -qx "Variant: orig Version: 2.0" "$(DPKG_INSTDIR)$(common_file)"
++	$(call leancode_lean,Variant: orig Version: 2.0)
++	# But not with a stale record, of the previous version
++	$(call leancode_record,pkg-ma-shared-files:$(NATIVE_ARCH),Variant: orig Version: 1.0)
++	! $(DPKG_UNPACK) pkg-ma-shared-files_2.0_orig-file_$(FOREIGN_ARCH).deb
++	grep -qx "Lean: Variant: orig Version: 2.0" "$(DPKG_INSTDIR)$(common_file)"
++	$(call leancode_record,pkg-ma-shared-files:$(NATIVE_ARCH),Variant: orig Version: 2.0)
++	! $(DPKG_UNPACK) pkg-ma-shared-files_2.0_alt-file_$(FOREIGN_ARCH).deb
++	$(DPKG_UNPACK) pkg-ma-shared-files_2.0_orig-file_$(FOREIGN_ARCH).deb
++	$(DPKG_CONFIGURE) --pending
++	grep -qx "Variant: orig Version: 2.0" "$(DPKG_INSTDIR)$(common_file)"
++	$(call pkg_is_installed,pkg-ma-shared-files:$(NATIVE_ARCH))
++	$(call pkg_is_installed,pkg-ma-shared-files:$(FOREIGN_ARCH))
++	# Ensure the projection is kept on removal of either instance
++	$(call leancode_lean,Variant: orig Version: 2.0)
++	$(call leancode_record,pkg-ma-shared-files:$(NATIVE_ARCH),Variant: orig Version: 2.0)
++	$(DPKG_PURGE) pkg-ma-shared-files:$(FOREIGN_ARCH)
++	grep -qx "Lean: Variant: orig Version: 2.0" "$(DPKG_INSTDIR)$(common_file)"
++	$(DPKG_PURGE) pkg-ma-shared-files:$(NATIVE_ARCH)
++	test ! -e "$(DPKG_INSTDIR)$(common_file)"
++	$(BEROOT) rm -rf "$(DPKG_INSTDIR)/var/lib/dpkg-stereo"
++
+ # Further customize test packages for test-coinstall-shared-conffiles
+ define customize_shared_conffiles
+ pkg-ma-shared-conffiles_$(1)_$(2)_$(3):: pkg-template
+-- 
+2.53.0
+

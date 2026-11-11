@@ -1,0 +1,326 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 23:02:11 -0300
+Subject: [PATCH 12/19] kcm: Keep the screen names on the screens while the
+ view is open
+
+A Show Screen Names item in the View menu keeps KWin's Identify Screens labels on every
+screen while the arrangement view is on screen, as wdisplays keeps its overlay, by showing
+them again every two seconds before KWin's two and a half seconds end, and hides them when
+the item is switched off or the page closes. The choice is kept in kcm_kscreenrc and is off
+until the person switches it on, as Identify Screens was the only way before.
+
+Assisted-by: Claude Sonnet 5.5
+---
+ kcm/CMakeLists.txt  |   1 +
+ kcm/kcm.cpp         |   8 ++++
+ kcm/kcm.h           |   4 ++
+ kcm/ui/main.qml     |  15 ++++++
+ kcm/viewoptions.cpp | 112 ++++++++++++++++++++++++++++++++++++++++++++
+ kcm/viewoptions.h   |  57 ++++++++++++++++++++++
+ 6 files changed, 197 insertions(+)
+ create mode 100644 kcm/viewoptions.cpp
+ create mode 100644 kcm/viewoptions.h
+
+diff --git a/kcm/CMakeLists.txt b/kcm/CMakeLists.txt
+index b4485288..4b912230 100644
+--- a/kcm/CMakeLists.txt
++++ b/kcm/CMakeLists.txt
+@@ -7,6 +7,7 @@ target_sources(kcm_kscreen PRIVATE
+     kcm.cpp kcm.h
+     output_model.cpp output_model.h
+     screencontents.cpp screencontents.h
++    viewoptions.cpp viewoptions.h
+ )
+ 
+ ecm_qt_declare_logging_category(kcm_kscreen
+diff --git a/kcm/kcm.cpp b/kcm/kcm.cpp
+index 027f200d..8e13222a 100644
+--- a/kcm/kcm.cpp
++++ b/kcm/kcm.cpp
+@@ -13,6 +13,7 @@
+ #include "kcm_screen_debug.h"
+ #include "kwincompositing_setting.h"
+ #include "screencontents.h"
++#include "viewoptions.h"
+ 
+ #include <kscreen/config.h>
+ #include <kscreen/configmonitor.h>
+@@ -55,6 +56,7 @@ KCMKScreen::KCMKScreen(QObject *parent, const KPluginMetaData &data)
+     qmlRegisterUncreatableType<KCMKScreen>("org.kde.private.kcm.kscreen", 1, 0, "KCMKScreen", QStringLiteral("For InvalidConfig enum"));
+     qmlRegisterUncreatableType<ScreenContents>("org.kde.private.kcm.kscreen", 1, 0, "ScreenContents", QStringLiteral("Use kcm.screenContents"));
+     qmlRegisterType<ScreenContentsItem>("org.kde.private.kcm.kscreen", 1, 0, "ScreenContentsItem");
++    qmlRegisterUncreatableType<ViewOptions>("org.kde.private.kcm.kscreen", 1, 0, "ViewOptions", QStringLiteral("Use kcm.viewOptions"));
+     Log::instance();
+ 
+     setButtons(Apply);
+@@ -62,6 +64,7 @@ KCMKScreen::KCMKScreen(QObject *parent, const KPluginMetaData &data)
+ 
+     m_outputProxyModel = new ScreenSortProxyModel(this);
+     m_screenContents = new ScreenContents(this);
++    m_viewOptions = new ViewOptions(this);
+ 
+     m_loadCompressor = new QTimer(this);
+     m_loadCompressor->setInterval(1000);
+@@ -307,6 +310,11 @@ ScreenContents *KCMKScreen::screenContents() const
+     return m_screenContents;
+ }
+ 
++ViewOptions *KCMKScreen::viewOptions() const
++{
++    return m_viewOptions;
++}
++
+ bool KCMKScreen::primaryOutputSupported() const
+ {
+     if (!m_configHandler || !m_configHandler->config()) {
+diff --git a/kcm/kcm.h b/kcm/kcm.h
+index ede171b7..e3c5772e 100644
+--- a/kcm/kcm.h
++++ b/kcm/kcm.h
+@@ -18,6 +18,7 @@ class ConfigOperation;
+ 
+ class ConfigHandler;
+ class ScreenContents;
++class ViewOptions;
+ class OrientationSensor;
+ class OutputIdentifier;
+ 
+@@ -45,6 +46,7 @@ class KCMKScreen : public KQuickManagedConfigModule
+     Q_PROPERTY(bool stereoGlassesSupported READ stereoGlassesSupported CONSTANT)
+     Q_PROPERTY(bool stereoSwapEyesSupported READ stereoSwapEyesSupported CONSTANT)
+     Q_PROPERTY(ScreenContents *screenContents READ screenContents CONSTANT)
++    Q_PROPERTY(ViewOptions *viewOptions READ viewOptions CONSTANT)
+ 
+ public:
+     enum InvalidConfigReason {
+@@ -94,6 +96,7 @@ public:
+     bool stereoSwapEyesSupported() const;
+ 
+     ScreenContents *screenContents() const;
++    ViewOptions *viewOptions() const;
+ 
+     void doSave();
+     Q_INVOKABLE void revertSettings();
+@@ -148,6 +151,7 @@ private:
+ 
+     QSortFilterProxyModel *m_outputProxyModel;
+     ScreenContents *m_screenContents;
++    ViewOptions *m_viewOptions;
+ 
+     QTimer *m_loadCompressor;
+ };
+diff --git a/kcm/ui/main.qml b/kcm/ui/main.qml
+index fdaf0fea..fd59bd80 100644
+--- a/kcm/ui/main.qml
++++ b/kcm/ui/main.qml
+@@ -396,6 +396,12 @@ KCM.AbstractKCM {
+                 value: screenContainer.visible && root.Window.visibility !== Window.Hidden && root.Window.visibility !== Window.Minimized
+             }
+ 
++            Binding {
++                target: kcm.viewOptions
++                property: "active"
++                value: screenContainer.visible && root.Window.visibility !== Window.Hidden && root.Window.visibility !== Window.Minimized
++            }
++
+             QQC2.Label {
+                 anchors.left: parent.left
+                 anchors.right: screenEdit.left
+@@ -453,6 +459,15 @@ KCM.AbstractKCM {
+                         }
+                     }
+                     QQC2.MenuSeparator {}
++                    QQC2.MenuItem {
++                        action: QQC2.Action {
++                            objectName: "showScreenNamesAction"
++                            text: i18nc("@option:check Keep the name of each screen on the screen as long as the arrangement view is open", "Show Screen Names")
++                            checkable: true
++                            checked: kcm.viewOptions.showScreenNames
++                            onTriggered: kcm.viewOptions.showScreenNames = checked
++                        }
++                    }
+                     QQC2.MenuItem {
+                         action: QQC2.Action {
+                             objectName: "showScreenContentsAction"
+diff --git a/kcm/viewoptions.cpp b/kcm/viewoptions.cpp
+new file mode 100644
+index 00000000..c4c0c0ca
+--- /dev/null
++++ b/kcm/viewoptions.cpp
+@@ -0,0 +1,112 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#include "viewoptions.h"
++
++#include <KConfigGroup>
++#include <KSharedConfig>
++
++#include <QDBusConnection>
++#include <QDBusMessage>
++
++using namespace Qt::StringLiterals;
++
++static const QString s_configFile = u"kcm_kscreenrc"_s;
++static const QString s_configGroup = u"ArrangementView"_s;
++static const QString s_namesKey = u"ShowScreenNames"_s;
++static const QString s_wheelKey = u"WheelPans"_s;
++
++static const QString s_locatorService = u"org.kde.KWin"_s;
++static const QString s_locatorPath = u"/org/kde/KWin/Effect/OutputLocator1"_s;
++static const QString s_locatorInterface = u"org.kde.KWin.Effect.OutputLocator1"_s;
++
++ViewOptions::ViewOptions(QObject *parent)
++    : QObject(parent)
++{
++    const KConfigGroup group = KSharedConfig::openConfig(s_configFile)->group(s_configGroup);
++    m_showScreenNames = group.readEntry(s_namesKey, false);
++    m_wheelPans = group.readEntry(s_wheelKey, false);
++
++    m_timer.setInterval(refreshInterval);
++    connect(&m_timer, &QTimer::timeout, this, [this]() {
++        sendToKWin(u"show"_s);
++    });
++}
++
++ViewOptions::~ViewOptions()
++{
++    if (m_shown) {
++        sendToKWin(u"hide"_s);
++    }
++}
++
++bool ViewOptions::showScreenNames() const
++{
++    return m_showScreenNames;
++}
++
++void ViewOptions::setShowScreenNames(bool show)
++{
++    if (m_showScreenNames == show) {
++        return;
++    }
++    m_showScreenNames = show;
++    KConfigGroup group = KSharedConfig::openConfig(s_configFile)->group(s_configGroup);
++    group.writeEntry(s_namesKey, show);
++    group.sync();
++    Q_EMIT showScreenNamesChanged();
++    updateNames();
++}
++
++bool ViewOptions::wheelPans() const
++{
++    return m_wheelPans;
++}
++
++void ViewOptions::setWheelPans(bool pans)
++{
++    if (m_wheelPans == pans) {
++        return;
++    }
++    m_wheelPans = pans;
++    KConfigGroup group = KSharedConfig::openConfig(s_configFile)->group(s_configGroup);
++    group.writeEntry(s_wheelKey, pans);
++    group.sync();
++    Q_EMIT wheelPansChanged();
++}
++
++bool ViewOptions::isActive() const
++{
++    return m_active;
++}
++
++void ViewOptions::setActive(bool active)
++{
++    if (m_active == active) {
++        return;
++    }
++    m_active = active;
++    Q_EMIT activeChanged();
++    updateNames();
++}
++
++void ViewOptions::updateNames()
++{
++    const bool wanted = m_showScreenNames && m_active;
++    if (wanted && !m_timer.isActive()) {
++        m_timer.start();
++        m_shown = true;
++        sendToKWin(u"show"_s);
++    } else if (!wanted && m_timer.isActive()) {
++        m_timer.stop();
++        m_shown = false;
++        sendToKWin(u"hide"_s);
++    }
++}
++
++void ViewOptions::sendToKWin(const QString &method)
++{
++    QDBusConnection::sessionBus().send(QDBusMessage::createMethodCall(s_locatorService, s_locatorPath, s_locatorInterface, method));
++}
+diff --git a/kcm/viewoptions.h b/kcm/viewoptions.h
+new file mode 100644
+index 00000000..b774caf7
+--- /dev/null
++++ b/kcm/viewoptions.h
+@@ -0,0 +1,57 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#pragma once
++
++#include <QObject>
++#include <QTimer>
++
++/*
++ * The choices of the arrangement view that the person keeps, in the group ArrangementView of kcm_kscreenrc.
++ *
++ * Show Screen Names keeps the labels of Identify Screens on every screen as long as the view is on screen.
++ * KWin's OutputLocator effect shows them for two and a half seconds, and showing them again extends that,
++ * so they are shown again every two seconds and hidden when the choice is switched off or the view goes.
++ *
++ * The plain wheel pans the view, as it does in wdisplays, instead of doing nothing over it.
++ */
++class ViewOptions : public QObject
++{
++    Q_OBJECT
++    Q_PROPERTY(bool showScreenNames READ showScreenNames WRITE setShowScreenNames NOTIFY showScreenNamesChanged)
++    Q_PROPERTY(bool wheelPans READ wheelPans WRITE setWheelPans NOTIFY wheelPansChanged)
++    Q_PROPERTY(bool active READ isActive WRITE setActive NOTIFY activeChanged)
++
++public:
++    explicit ViewOptions(QObject *parent = nullptr);
++    ~ViewOptions() override;
++
++    bool showScreenNames() const;
++    void setShowScreenNames(bool show);
++
++    bool wheelPans() const;
++    void setWheelPans(bool pans);
++
++    // Whether the view is on screen
++    bool isActive() const;
++    void setActive(bool active);
++
++    static constexpr int refreshInterval = 2000;
++
++Q_SIGNALS:
++    void showScreenNamesChanged();
++    void wheelPansChanged();
++    void activeChanged();
++
++private:
++    void updateNames();
++    void sendToKWin(const QString &method);
++
++    QTimer m_timer;
++    bool m_showScreenNames = false;
++    bool m_wheelPans = false;
++    bool m_active = false;
++    bool m_shown = false;
++};

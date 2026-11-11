@@ -2,6 +2,7 @@
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/15
 # Copyright 2026 under the GNU GPL3 License
 # Last update 2026/10/15
+. "$(dirname "$0")/installer-common"
 # Runs in the installed system during installation (Calamares, shellprocess@dualboot), before the
 # bootloader step. When os-prober finds Windows:
 #  - the hardware clock stays in local time, as Windows keeps it, so both show the right time;
@@ -11,11 +12,15 @@
 ADJTIME=${ADJTIME:-/etc/adjtime}
 GRUBD=${GRUBD:-/etc/default/grub.d}
 OS_PROBER=${OS_PROBER:-os-prober}
-$OS_PROBER 2>/dev/null | grep -qi ':windows:' || exit 0
-printf '0.0 0 0.0\n0\nLOCAL\n' > "$ADJTIME"
-[ "$ADJTIME" = /etc/adjtime ] && hwclock --systohc --localtime
-mkdir -p "$GRUBD"
-cat > "$GRUBD/sparky-stereo-dual-boot.cfg" <<'EOS'
+if systems=$("$OS_PROBER"); then :; else
+	status=$?
+	fail probe "$OS_PROBER (exit $status)"
+fi
+case "$systems" in *:[Ww][Ii][Nn][Dd][Oo][Ww][Ss]:*) ;; *) exit 0;; esac
+printf '0.0 0 0.0\n0\nLOCAL\n' > "$ADJTIME" || fail write "$ADJTIME"
+if [ "$ADJTIME" = /etc/adjtime ]; then checked hwclock --systohc --localtime; fi
+checked mkdir -p "$GRUBD"
+cat > "$GRUBD/sparky-stereo-dual-boot.cfg" <<'EOS' || fail write "$GRUBD/sparky-stereo-dual-boot.cfg"
 # Sparky Stereo OS: written by the installer because Windows was found beside this system.
 # os-prober adds Windows to the boot menu at every update-grub.
 GRUB_DISABLE_OS_PROBER=false

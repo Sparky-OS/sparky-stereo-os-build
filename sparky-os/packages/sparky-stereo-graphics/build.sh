@@ -1,29 +1,46 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/10/23
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/24
+# Last update 2026/11/02
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.2.2
+VERSION=0.2.7
 PACKAGE=sparky-stereo-graphics
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.graphics.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
+# Build from the same tracked inputs that enter the source archive.
+TOOLKIT=$(cd "$HERE/../.." && pwd)
+COPY="$HERE/build-tools/copy-recipe.py"
+[ -f "$COPY" ] || COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$HERE" "$WORK/inputs"
+mkdir -p "$WORK/inputs/build-tools"
+cp "$COPY" "$WORK/inputs/build-tools/"
+HERE=$WORK/inputs
 D=$WORK/$PACKAGE
 cmake -S "$HERE" -B "$WORK/build" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr -DKDE_INSTALL_LIBDIR=lib/x86_64-linux-gnu -DKDE_INSTALL_LIBEXECDIR=lib/x86_64-linux-gnu/libexec -DBUILD_TESTING=OFF >"$WORK/configure.log"
 cmake --build "$WORK/build" -j"${JOBS:-4}" >"$WORK/build.log"
 DESTDIR=$D cmake --install "$WORK/build" >"$WORK/install.log"
-find "$D" -name '*.so' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/usr/bin/sparky-stereo-gpu-record' | xargs strip --strip-unneeded
+find "$D" -name '*.so' -o -path '*/kauth/sparkystereo_graphics_helper' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/usr/bin/sparky-stereo-gpu-record' | xargs strip --strip-unneeded
 # the boot service is on from the start, as the edition's other services are
 mkdir -p "$D/usr/lib/systemd/system/multi-user.target.wants"
 ln -s ../sparky-stereo-gpu-record.service "$D/usr/lib/systemd/system/multi-user.target.wants/sparky-stereo-gpu-record.service"
+# the problems are kept by the edition's one engine and shown by its session notifier (ORDER 350): the page's own
+# messages, word for word from its .po files, as journal catalogs the engine reads in the person's language
+mkdir -p "$D/usr/lib/systemd/catalog"
+sparky-stereo-problems catalog $PACKAGE "$HERE/po" "$D/usr/lib/systemd/catalog" --domain kcm_sparkystereo_graphics \
+	--context "@info" --context "@item kind of program" --context "@action:button" \
+	--subject "@title notification|A graphics choice cannot be used" \
+	--subject-map '{"@info %1 is a file|The machine'"'"'s GPU record, %1, could not be written. Until it is, Automatic treats this computer as not measured. Run: sudo sparky-stereo-gpu-record --apply-known": "@title notification|Graphics needs a repair", "@info %1 is an exit status|systemd could not reload its units after the Graphics page was installed (exit status %1). The boot service that writes the machine'"'"'s GPU record may not start. Run: sudo systemctl daemon-reload": "@title notification|Graphics needs a repair", "@info %1 is a file|A kept problem of the Graphics page cannot be read: %1.": "@title notification|Graphics needs a repair", "@info %1 is a program, %2 a GPU name, %3 says how it stopped|%1 stopped right after it started on %2: %3.": "@title notification|A program stopped on its GPU"}'
 install -Dm644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
 install -m644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
 mkdir -p "$D/DEBIAN" "$WORK/shlibs/debian"
 printf 'Source: %s\n\nPackage: %s\nArchitecture: amd64\n' "$PACKAGE" "$PACKAGE" >"$WORK/shlibs/debian/control"
-SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -O $(find "$D" -type f \( -name '*.so' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/usr/bin/sparky-stereo-gpu-record' \)) 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
-DEPENDS="$SHLIBS, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami"
+PRIVATE=$(pkg-config --variable=libdir sparky-stereo-problems)
+SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -l"$PRIVATE" --ignore-missing-info -O $(find "$D" -type f \( -name '*.so' -o -path '*/kauth/sparkystereo_graphics_helper' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/usr/bin/sparky-stereo-gpu-record' \)) 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
+DEPENDS="$SHLIBS, sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOS
 Package: $PACKAGE
@@ -32,7 +49,7 @@ Architecture: amd64
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
 Depends: $DEPENDS
-Recommends: hwdata, power-profiles-daemon, switcheroo-control
+Recommends: hwdata, switcheroo-control
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -48,78 +65,130 @@ Description: Graphics page for System Settings
 EOS
 printf '%s\n' /etc/xdg/plasma-workspace/env/sparky-stereo-graphics.sh >"$D/DEBIAN/conffiles"
 # The machine record (/etc/xdg/sparky-stereo-graphicsrc) is written by sparky-stereo-gpu-record, never shipped:
-# at boot from the record of a known model, or by a measurement or an administrator on this machine.
-cat >"$D/DEBIAN/postinst" <<'EOS'
-#!/bin/sh
-# postinst script
-set -e
-if [ "$1" = "configure" ]; then
-	sparky-stereo-gpu-record --apply-known >/dev/null 2>&1 || true
-	if [ -d /run/systemd/system ]; then
-		systemctl daemon-reload || true
-	fi
-fi
-exit 0
-EOS
-cat >"$D/DEBIAN/prerm" <<'EOS'
-#!/bin/sh
-# prerm script
-set -e
-if [ "$1" = "remove" ]; then
-	# a record from a shipped model goes with the shipped records; one made on this machine stays
-	sparky-stereo-gpu-record --apply-known --machines /nonexistent >/dev/null 2>&1 || true
-fi
-exit 0
-EOS
-cat >"$D/DEBIAN/postrm" <<'EOS'
-#!/bin/sh
-# postrm script
-set -e
-f=/etc/xdg/sparky-stereo-graphicsrc
-if [ "$1" = "purge" ] && [ -f "$f" ] && grep -q '^Origin=' "$f"; then
-	# the keys sparky-stereo-gpu-record wrote; anything an administrator added stays
-	awk '
-		/^\[/ { group = $0; held = $0; shown = 0; next }
-		group == "[Measured]" || group == "[Record]" { next }
-		group == "[Decoding]" && /^CopyBack(\[\$i\])?=/ { next }
-		/^[[:space:]]*$/ { next }
-		{ if (!shown && held != "") { print held; shown = 1 } print }
-	' "$f" >"$f.dpkg-new"
-	if [ -s "$f.dpkg-new" ]; then mv "$f.dpkg-new" "$f"; else rm -f "$f" "$f.dpkg-new"; fi
-fi
-if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
-	if [ -d /run/systemd/system ]; then
-		systemctl daemon-reload || true
-	fi
-fi
-exit 0
-EOS
+# at boot from the record of a known model, or by a measurement or an administrator on this machine. The maintainer
+# scripts say and keep what fails (share/debian; autotests/no-fallbacks-test.sh runs them)
+for m in postinst prerm postrm; do
+	install -m 755 "$HERE/share/debian/$m" "$D/DEBIAN/$m"
+done
 chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/prerm" "$D/DEBIAN/postrm"
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
 
 S=$WORK/$PACKAGE-$VERSION
 mkdir -p "$S/debian"
-cp -a "$HERE/." "$S/"
+COPY="$HERE/build-tools/copy-recipe.py"
+[ -f "$COPY" ] || COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$HERE" "$S"
+mkdir -p "$S/build-tools"
+cp "$COPY" "$S/build-tools/"
 cat >"$S/debian/control" <<EOS
 Source: $PACKAGE
 Section: System
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Standards-Version: 4.7.3
-Build-Depends: cmake, dpkg-dev, extra-cmake-modules, g++, gettext, libkf6config-dev, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, libkf6service-dev, qt6-base-dev, qt6-declarative-dev
+Build-Depends: git, python3, cmake, dpkg-dev, extra-cmake-modules, g++, gettext, libkf6auth-dev, libkf6config-dev, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, libkf6service-dev, pkgconf, qt6-base-dev, qt6-declarative-dev, sparky-stereo-problems (>= 0.1.2)
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
 
 Package: $PACKAGE
 Architecture: amd64
-Depends: \${shlibs:Depends}, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami
-Recommends: hwdata, power-profiles-daemon, switcheroo-control
+Depends: \${shlibs:Depends}, sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)
+Recommends: hwdata, switcheroo-control
 Description: Graphics page for System Settings
  Every graphics processor, the main desktop GPU, where programs draw, the GPU
  measured best for players and 3D, and the copy-back choice of video decoding.
 EOS
 cat >"$S/debian/changelog" <<EOS
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * ORDER 467 (Daniel, 2026-11-08: "I could not launch waterfox"): a program
+    this page sent to a GPU that stops right after it starts is told and
+    kept. The session's systemd runs every program KIO starts as
+    app-NAME@ID.service and knows how it ended; a drop-in
+    (/usr/lib/systemd/user/app-.service.d) runs sparky-stereo-gpu-env --died
+    when such a service fails and --survived when it ends cleanly. A death is
+    kept in the problems engine (key died-NAME) only for a program sent to a
+    GPU, that failed within [Launch] DiedWithin (10 seconds, 0 turns it off),
+    with the program's last output, and "Use NAME" for the GPU its desktop
+    entry can name (--use-app, the entry's own PrefersNonDefaultGPU). The
+    program is never started again; a launcher, a hand-over, a person
+    closing it and a crash after the window raise nothing. The Graphics page
+    lists the kept deaths. Nine languages.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 08 Nov 2026 12:00:00 -0300
+
+$PACKAGE (0.2.6) unstable; urgency=medium
+
+  * Add the video memory protection opt-in through KAuth and the package conffile.
+  * Show VRAM problems and their translated actions from the shared engine.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 12:00:00 -0300
+
+$PACKAGE (0.2.4) unstable; urgency=medium
+
+  * ORDER 350 (Daniel, 2026-11-02: "Why machinery to keep a failure for
+    each?"): the problems are kept by the edition's one engine,
+    sparky-stereo-problems, through its C library; the page's own notifier
+    and user units go: the engine's session notifier shows each problem,
+    with "Use NAME" for each GPU that can draw as the record's own actions
+    (sparky-stereo-gpu-env --use KEY GPU) and Open Graphics settings.
+    --problems and the Graphics page read the engine's records; --notify
+    starts the session's notifier. The messages, word for word from the
+    page's .po files, are built into journal catalogs. Decode on another
+    GPU and the page's choices are untouched.
+  * Every line sparky-stereo-gpu-env and sparky-stereo-gpu-record say is in
+    the nine languages (required-languages: "It covers every string we
+    add"): their usage, with the synopsis as it is, and each wrong use;
+    the translations test also finds any translatable string of the
+    sources that the template lacks.
+  * Automatic is a rule, not the person's choice (ORDER 346g): when it
+    cannot place a program now (browsers while the power profile cannot be
+    read), sparky-stereo-gpu-env says and keeps it as before and exits 5,
+    so Plasma's launcher (kf6-kio 6.30.0-1+stereo3d8) starts the program
+    as the session would; a kind the person set to Follow the power profile
+    and every chosen GPU that cannot be used still exit 4, and the launcher
+    then starts nothing. sparky-stereo-gpu-run asks or does not start the
+    program on 4 and on 5 alike.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 12:00:00 -0300
+
+$PACKAGE (0.2.3) unstable; urgency=medium
+
+  * Nothing fails silently (Daniel, 2026-11-01; ORDER 346a): a GPU the
+    person chose (by its PCI address, or Integrated or Discrete) that is not
+    here, has no driver or render node, or that the account may not open,
+    is never replaced by another GPU, also when one GPU is left. What
+    failed, why and what to do are said in the person's language, kept in
+    ~/.local/state/sparky-stereo-graphics/problems until the choice works
+    again, shown as a notification at login with the GPUs that can draw as
+    "Use NAME" choices, and on the Graphics page with the same buttons.
+  * sparky-stereo-gpu-run starts nothing on another GPU: it asks, with a
+    display, on which GPU the program starts this time, and otherwise does
+    not start it (exit status 4); a missing or failing
+    sparky-stereo-gpu-env is said. --choice GPU starts on a named GPU.
+  * The session script says and keeps a saved main GPU that cannot draw;
+    KWin's own order draws that login, and the notification offers the
+    others.
+  * A power profile that cannot be read is said as such, never Balanced:
+    browsers on Automatic and every kind that follows the profile cannot
+    be placed until it is read; an explicit --profile is honoured, a wrong
+    one is a wrong argument.
+  * The machine record that cannot be written fails the configuration (and
+    the removal), said and kept; systemd's reload is said and kept.
+  * Automatic says when the GPU measured best for the computer is not
+    there, instead of "not measured".
+  * Decode on another GPU ([Decoding] OtherGpu), which libmedia-gpu-route
+    0.2.2 reads, is on by default (Daniel, 2026-11-02): a video the
+    players' GPU cannot decode in hardware is decoded on another GPU that
+    can, and that is said; turned off, it is decoded in software, and that
+    is said.
+  * power-profiles-daemon is a dependency, so Follow the power profile
+    works on every system (Daniel, 2026-11-02); tlp-pd (TLP) and tuned-ppd
+    (TuneD) provide it for the people who use those instead.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 06:00:00 -0300
+
+$PACKAGE (0.2.2) unstable; urgency=medium
 
   * Automatic split by kind (Daniel, 2026-10-24): players, games and any
     program started in 3D on the GPU measured best whatever the power
@@ -176,9 +245,13 @@ clean:
 build:
 EOS
 chmod +x "$S/debian/rules"
+# A native package is dated by its own newest changelog entry (ORDER 421b); the tree is normalized so the checkout time and the umask stay out
+SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$REPRO" changelog "$S/debian/changelog")}
+export SOURCE_DATE_EPOCH
+python3 "$REPRO" normalize "$SOURCE_DATE_EPOCH" "$S"
 (cd "$WORK" && dpkg-source -b "$S")
 cp "$WORK/${PACKAGE}_${VERSION}.dsc" "$WORK/${PACKAGE}_${VERSION}.tar.xz" "$OUT/"
 
-"$HERE/../../repo/provenance.sh" --tree "$D"
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$D" "$OUT"
+"$TOOLKIT/repo/provenance.sh" --tree "$D"
+PYTHONPATH="$TOOLKIT${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$D" "$OUT"
 sync

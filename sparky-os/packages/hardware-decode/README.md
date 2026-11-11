@@ -7,6 +7,7 @@ MLT selects CUDA or VA-API automatically for Kdenlive, whose new default selects
 VLC Stereo uses a precision preserving hardware copy path independently of the display importer, when copying back is allowed or the person names a decoder.
 Since ORDER 234 hardware decoding that copies every picture back is the person's choice, or the machine's measured record (`CopyBack` in group `[Decoding]` of `sparky-stereo-graphicsrc`), never the default: on the AMD A10-9600P it dropped many more frames than software decoding. The order is hardware whose pictures the output imports, then software, then copy-back by choice; `tests/copy-back` holds the checks.
 The software choice remains available in every engine.
+Nothing switches its decoding path without telling (ORDER 346a): mpv's switch to software decoding for the CPU conversion of a 3D packing is said on the OSD and as a warning, in the person's language, with how to copy back instead (patch 0060), and `--hwdec-software-fallback=no` keeps hardware decoding there; libmedia-gpu-route 0.2.2 says when the GPU chosen for players cannot be resolved or cannot decode a video, and decodes on another GPU only where the person allows it.
 The FFmpeg patch is required before installing the new MLT and VLC builds because a declined hardware query must clear decoder private state.
 
 `prepare.py PACKAGE SOURCE --version VERSION` adds the patches to freshly extracted plain Debian sources, including the accepted full side by side patches for mpv, MLT and Kdenlive.
@@ -52,4 +53,6 @@ No per-film rule or user configuration file is installed.
 The renderer still owns hardware surface import, copy fallback and transfer to the compositor.
 GL follows the window system's display device; this change does not force a global DRI_PRIME value.
 The routing probes use one fresh private compositor session per case and clear compositor-only device controls before launching clients.
-They measure virtual output presentation and must not be reported as physical connector, HDMI or TV timing proof.
+They measure virtual output presentation and must not be reported as physical connector, [HDMI®](https://www.hdmi.org/resource/brand) or TV timing proof.
+
+HDMI®, HDMI® High-Definition Multimedia Interface and the HDMI® Logo are trademarks or registered trademarks of HDMI Licensing Administrator, Inc.

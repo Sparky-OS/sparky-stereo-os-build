@@ -2,7 +2,7 @@
 #
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/02
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/29
+# Last update 2026/11/06
 
 SHARE=/usr/share/sparky-stereo-locales
 LANGDIR=/usr/share/sparky/sparky-stereo-locales
@@ -12,6 +12,8 @@ STATE=/var/lib/sparky-stereo-locales/removed
 
 DRY_RUN=0
 RESTORE_ALL=0
+ADD_MODE=0
+ADD_SYSTEM=0
 KEEP=()
 EXPLICIT=()
 
@@ -25,6 +27,7 @@ case "${locale_name,,}" in
 	pt_br | pt_br.* | pt_br@*) lang_file=pt_BR ;;
 	fr | fr_* | fr.*) lang_file=fr ;;
 	de | de_* | de.*) lang_file=de ;;
+	es | es_* | es.*) lang_file=es ;;
 	ja | ja_* | ja.*) lang_file=ja ;;
 	ko | ko_* | ko.*) lang_file=ko ;;
 	zh_cn | zh_cn.* | zh_cn@*) lang_file=zh_CN ;;
@@ -102,6 +105,26 @@ split_code() {
 	return 0
 }
 
+# tesseract_key CODE sets P_LANG P_REGION P_VAR for a Tesseract language file of the nine required languages
+# (ISO 639-2 codes, and the two Chinese scripts); every other Tesseract package is not a language of this tool.
+tesseract_key() {
+	P_REGION=""
+	P_VAR=""
+	case "$1" in
+		eng) P_LANG=en ;;
+		pol) P_LANG=pl ;;
+		por) P_LANG=pt ;;
+		fra) P_LANG=fr ;;
+		deu) P_LANG=de ;;
+		spa) P_LANG=es ;;
+		jpn | jpn-vert) P_LANG=ja ;;
+		kor) P_LANG=ko ;;
+		chi-sim | chi-sim-vert) P_LANG=zh P_REGION=CN ;;
+		chi-tra | chi-tra-vert) P_LANG=zh P_REGION=TW ;;
+		*) return 1 ;;
+	esac
+}
+
 # pkg_key PACKAGE sets P_LANG P_REGION P_VAR for a language package and fails for anything else.
 pkg_key() {
 	local suffix
@@ -114,6 +137,8 @@ pkg_key() {
 		hunspell-*) suffix="${1#hunspell-}" ;;
 		hyphen-*) suffix="${1#hyphen-}" ;;
 		mythes-*) suffix="${1#mythes-}" ;;
+		manpages-*) suffix="${1#manpages-}" ;;
+		tesseract-ocr-*) tesseract_key "${1#tesseract-ocr-}"; return ;;
 		fcitx5-chewing) P_LANG=zh P_REGION=TW; return 0 ;;
 		fcitx5-chinese-addons) P_LANG=zh P_REGION=CN; return 0 ;;
 		fcitx5-hangul) P_LANG=ko; return 0 ;;
@@ -210,11 +235,12 @@ default_keep() {
 }
 
 show_help() {
-	echo "$LOCAL21 sparky-stereo-locales [--keep CODE[,CODE]] [--restore] [--list] [--dry-run]"
+	echo "$LOCAL21 sparky-stereo-locales [--keep CODE[,CODE]] [--add CODE[,CODE]|system] [--restore] [--list] [--dry-run]"
 	echo
 	echo "  -h, --help       $LOCAL22"
 	echo "  -l, --list       $LOCAL23"
 	echo "  -k, --keep       $LOCAL24"
+	echo "  -a, --add        $LOCAL34"
 	echo "  -r, --restore    $LOCAL25"
 	echo "  -d, --dry-run    $LOCAL26"
 	echo
@@ -248,6 +274,81 @@ parse_keep() {
 		echo "$LOCAL30" >&2
 		exit 1
 	fi
+}
+
+# parse_add LIST adds the codes to KEEP; "system" is the language of /etc/default/locale (English adds nothing: it is always there).
+parse_add() {
+	local items item entry
+	IFS=', ' read -r -a items <<<"$1"
+	for item in "${items[@]}"; do
+		if [ "$item" = system ]; then
+			entry=$(default_keep | grep -v '^en||$' | head -n 1)
+			[ -z "$entry" ] || KEEP+=("$entry")
+			ADD_SYSTEM=1
+		else
+			parse_keep "$item"
+		fi
+	done
+	ADD_MODE=1
+}
+
+# allow_in_config: a language added again after this tool removed it must not stay excluded in dpkg's configuration.
+allow_in_config() {
+	local entry el er ev name base tmp
+	[ -f "$CONFIG" ] || return 0
+	tmp=$(mktemp)
+	cp "$CONFIG" "$tmp"
+	for entry in "${KEEP[@]}"; do
+		IFS='|' read -r el er ev <<<"$entry"
+		[ "$el" != en ] || continue
+		for name in "${ev:-$el}${er:+_$er}" "${el}"; do
+			[ "$name" != no ] || name="no nb nn"
+			for n in $name; do
+				for base in locale man help; do
+					grep -vxF -e "path-exclude=/usr/share/$base/$n" -e "path-exclude=/usr/share/$base/$n/*" \
+						-e "path-exclude=/usr/share/$base/${n}_*" -e "path-exclude=/usr/share/$base/${n}@*" "$tmp" >"$tmp.new" || true
+					mv "$tmp.new" "$tmp"
+				done
+			done
+		done
+	done
+	cat "$tmp" >"$CONFIG"
+	rm -f "$tmp"
+}
+
+# add_languages: the edition's packages of the languages named, when none of the language is installed; nothing is removed.
+add_languages() {
+	local code
+	EXPLICIT=("${KEEP[@]}")
+	code=$(keep_names | sed 's/ *$//; s/ /,/g')
+	KEEP+=("en||")
+	plan_install
+	if [ "$DRY_RUN" -eq 1 ]; then
+		echo "$LOCAL16"
+		if [ "${#INSTALL[@]}" -gt 0 ]; then
+			apt_plan install "${INSTALL[@]}"
+			echo "$LOCAL19"
+			printf '  %s\n' "${APT_PLAN[@]}"
+			echo "apt-get install -y --no-install-recommends ${INSTALL[*]}"
+		else
+			echo "$LOCAL36"
+		fi
+		return 0
+	fi
+	if [ "${#INSTALL[@]}" -eq 0 ]; then
+		echo "$LOCAL36"
+		return 0
+	fi
+	allow_in_config
+	echo "$LOCAL15"
+	if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${INSTALL[@]}"; then
+		# shellcheck disable=SC2059
+		printf "$LOCAL35\n" "$code" "$code" >&2
+		return 4
+	fi
+	forget_removed "${INSTALL[@]}"
+	echo "$LOCAL29"
+	return 0
 }
 
 # exclude_name NAME: path-exclude lines for one whole locale name (NAME, NAME/*)
@@ -546,6 +647,18 @@ while [ $# -gt 0 ]; do
 			parse_keep "${1#--keep=}"
 			shift
 			;;
+		-a | --add)
+			if [ $# -lt 2 ] || [ "${2#-}" != "$2" ]; then
+				echo "$LOCAL10 $1" >&2
+				exit 1
+			fi
+			parse_add "$2"
+			shift 2
+			;;
+		--add=*)
+			parse_add "${1#--add=}"
+			shift
+			;;
 		-r | --restore)
 			RESTORE_ALL=1
 			shift
@@ -568,6 +681,16 @@ done
 if [ "$DRY_RUN" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
 	echo "$LOCAL7"
 	exit 1
+fi
+
+if [ "$ADD_MODE" -eq 1 ]; then
+	if [ "${#KEEP[@]}" -eq 0 ]; then
+		[ "$ADD_SYSTEM" -eq 1 ] && { echo "$LOCAL36"; exit 0; }
+		echo "$LOCAL30" >&2
+		exit 1
+	fi
+	add_languages
+	exit $?
 fi
 
 if [ "${#KEEP[@]}" -gt 0 ] || [ "$RESTORE_ALL" -eq 1 ]; then

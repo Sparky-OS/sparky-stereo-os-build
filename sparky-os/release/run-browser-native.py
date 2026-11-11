@@ -10,6 +10,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'config'))
 import local_config as cfg
 from build_slots import start_build
+from provenance_args import provenance_args
 
 base = cfg.path('SPARKY_MIGRATION_WORK')
 origin = base / 'browser-source'
@@ -25,6 +26,7 @@ for path in origin.glob('sparky-stereo-browser_*'):
 recipe = '''#!/bin/bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
+sh /run/https-only-apt.sh
 printf 'deb [trusted=yes] file:/repo ./\\n' > /etc/apt/sources.list.d/edition.list
 printf 'Package: *\\nPin: release o=Sparky Stereo OS\\nPin-Priority: 1001\\n' > /etc/apt/preferences.d/edition
 apt-get -y update
@@ -44,12 +46,14 @@ status = {'source': 'sparky-stereo-browser', 'version': '6.7.5-0+stereo3d5+lc1',
           'headless_stereo_bench': 'required after successful package build'}
 (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
 container = 'sparky-lc-browser-amd64'
-command = ['docker', 'run', '--rm', '--platform', 'linux/amd64', '--name', container,
+command = ['docker', 'run', '--rm', *provenance_args('sparky-lc-migration:20261020'), '--platform', 'linux/amd64', '--name', container,
            '--cpus', '4', '--memory', '32g', '-v', str(work) + ':/work',
            '-v', str(source) + ':/work/source',
            '-v', str(cfg.path('SPARKY_BROWSER_WORK') / 'home') + ':/browser-toolchains:ro',
            '-v', str(cfg.path('SPARKY_REPO_DIR')) + ':/repo:ro',
            '-v', str(cfg.TREE / 'sparky-os') + ':/toolkit:ro',
+           '-v', '/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro',
+           '-v', str(Path(__file__).resolve().parents[2] / 'tools' / 'https-only-apt.sh') + ':/run/https-only-apt.sh:ro',
            'sparky-lc-migration:20261020', 'bash', '/work/run.sh']
 stopped = False
 with (work / 'build.log').open('w') as log:

@@ -1,0 +1,46 @@
+sparky-stereo-browser (@DEBVERSION@) unstable; urgency=medium
+
+  * WebXR on the flat stereo display (ORDER 194, 195): three modes the
+    person picks from the page's context menu (3D Display: flat TV or
+    output, flat headset, VR over the phone; dom.vr.flat.mode), the
+    separation from libstereo-policy's display depth (the display's kind and
+    physical size, with the person's strength and screen plane on top:
+    dom.vr.flat.depth-strength, dom.vr.flat.screen-plane-mm), Escape always
+    ends the session (WebXR 4.1), a visible Exit control, the mode's name and
+    an entry hint drawn by the browser, the mouse and keyboard in the flat
+    modes, and the keyboard focus kept across a session.
+  * A session that ends while a frame is in flight no longer leaves the VR
+    submit thread polling for ever: the browser quits. Measured: 100 enters
+    and leaves with the keyboard (ten runs of ten) quit cleanly; before, two
+    runs in eight hung.
+  * CSS depth (ORDER 414): the property depth (sunk | screen | popped |
+    <percentage> | <number>), the words Union, Stereo KWin and SVGStereo share,
+    not inherited. An element with a depth is drawn once per eye, as a whole,
+    its text with it: WebRender draws the tiles that hold it once per eye and
+    shifts each copy by the element's depth. The limits are those KWin tells
+    for the output the window mainly sits on, live (kde_stereo_depth_v1
+    version 5: the person's sunk and popped limits built on the display), and
+    whether the window may show depth now; without that protocol
+    libstereo-policy's default for the display stands in and the page's console
+    says so. A click lands where the element is drawn (a popped element in
+    either copy, a sunk one in both), and scroll frames inside an element move
+    with it in both copies. With no output that shows stereo 3D the page is
+    drawn as without the property. layout.css.depth.enabled is on.
+  * A WebGL canvas on an NVIDIA proprietary driver reaches the compositor with
+    its stereo mode where an output shows stereo 3D (Mozilla's block of DMABuf
+    WebGL on NVIDIA, bug 1924578, does not hold there;
+    widget.dmabuf-webgl.stereo-nvidia.enabled turns it back on), so WebXR's
+    flat display declares its views on NVIDIA.
+  * The VR shared memory is written by one thread at a time: two writers
+    interleaving left its generation counters apart for good, the VR service
+    took no frame, and the page waited (the quit hang, then a three-second
+    wait). The launcher carries German lines.
+  * The 3D Display menu, the overlay and the 3D Video and 3D Canvas menus in
+    the edition's nine languages (German added).
+  * Depends on libstereo-policy1 (>= 1.15.0), which has the display depth.
+  * The source states what it is: browser commit 73841dee65 (Sparky-OS/waterfox,
+    branch stereo3d) in SOURCE.edition.json, debian/browser-build.env and the
+    vendor baseline.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@
+

@@ -63,7 +63,7 @@ What the edition adds around his rules
 - The area. Only one swap area is ever switched by the daemon: AREA= in
   /etc/default/cushion-swap, or the first swap line in /etc/fstab marked
   noauto (the installer writes it so; swapon -a skips noauto lines, so the
-  area stays off at boot). zram and every other swap area are left alone.
+  area stays off at boot). Every other swap area is left alone.
   His host version ran "swapon -a && mount -a"; the edition runs
   "swapon AREA" and "swapoff AREA" only, and no mount -a.
 - An area that holds nothing (Daniel, 2026-10-10: "switch it off after the
@@ -72,11 +72,11 @@ What the edition adds around his rules
   switched off once no deploy condition has been true for the quiet window;
   swapoff then reads nothing back, so his margin has nothing to protect.
   Hibernate stays offered and working with the area off (below). While a
-  hibernation is using the area (the hibernate unit switched it on and the
-  sleep hook has not yet run after resume), nothing is retracted: the hold
-  ends with the sleep hook, or after HIBERNATE_HOLD_SEC (300 s) for a
-  hibernation that never started (systemd-sleep runs no hook when it cannot
-  find its area).
+  hibernation can still use the area, nothing is retracted and no quiet
+  countdown runs. The native sleep service owns this hold from ExecStartPre
+  until ExecStopPost, including intermediate RTC wakes during
+  suspend-then-hibernate. The hold has no timeout. Cleanup resets the quiet
+  window so sleeping time never counts toward retraction.
 - Thresholds for every machine (decided 2026-10-10). At or above 90 GiB of
   MemTotal, his values apply exactly as written (his machine reports
   93.42 GiB; every 96 GB machine reports 92 to 95 GiB). Below that, each
@@ -145,7 +145,10 @@ What the edition adds around his rules
   uninstall.sh, stopping never switches the swap off ("removing the watcher
   is not the same decision as forcing swap off").
 - Where his own /etc/systemd/system/cgm-swap-parachute.service exists, the
-  packaged units and the generator do nothing.
+  packaged pressure daemon and the generator do nothing.
+  The native sleep preparation still checks and deploys the configured resume area.
+  The hold controls the packaged daemon; an independently installed watcher
+  must also respect the native sleep lifecycle.
 
 The log
 -------------
@@ -218,13 +221,24 @@ package:
   checked at boot says otherwise: the area is smaller than RAM, or the swap
   files on that file system are all at other offsets. It logs which source
   decided. HIBERNATE=off in /etc/default/cushion-swap turns it off.
-- cushion-swap-hibernate.service, ordered before systemd-hibernate.service
-  (and hybrid-sleep, suspend-then-hibernate), switches that area on, whether
-  or not it is the Cushion Swap File's area, and says in the journal when the
-  kernel's resume device disagrees with the file.
-- After resume, the system-sleep hook switches it off again if it was
-  switched on only for the image and nothing stayed in it; pages that did
-  stay are left to his retract rules.
+- Each of systemd-hibernate.service, systemd-hybrid-sleep.service and
+  systemd-suspend-then-hibernate.service has an ExecStartPre drop-in that
+  switches the resume area on before systemd-sleep starts. A failed deployment
+  fails the service before sleep, says the error and keeps the problem in the
+  shared engine in nine languages. No failed optional Wants dependency is
+  mistaken for successful preparation.
+- ExecStopPost releases the hold only when the complete service ends, including
+  failure or manual wake. An area activated solely for the image is switched
+  off if empty; pages still in it follow the daemon's normal retraction rules,
+  with a fresh quiet window. A shared lock serializes these actions with the daemon.
+- systemd 262 src/sleep/sleep.c:318-327,347-355 runs pre/post hooks for each
+  internal phase and ignores hook failures. Its execute_s2h at 608-616 calls
+  hibernate in the same process after the suspend wake. user.slice is frozen
+  at 647-651 and thawed at 685-686, but system services can run between phases.
+  The native oneshot unit therefore supplies the full-operation boundary;
+  a post/suspend-then-hibernate hook cannot supply that boundary.
+- systemd.service(5), ExecStartPre and ExecStopPost, documents the failure and
+  cleanup semantics. The generator and initramfs resume-offset hook remain.
 - Retracting an unused area changes none of this: the generator does not look
   at whether the area is on.
 
@@ -293,7 +307,7 @@ runs completed and deployed the own 2 GiB disk swap. Both controls assuming
 only 1 MiB/s lost a worker to the kernel OOM killer (PID checked in dmesg).
 Allocation can slow under reclaim and disk I/O, so the JSON includes each
 worker's actual reached-MiB/time output rather than claiming a sustained
-rate throughout swapping. Zram was runtime-masked for this test and restored.
+rate throughout swapping. Only disk swap participated in this measurement.
 The 2x factor is a safety allowance, not a universal throughput guarantee.
 
 Three forced copytruncate rotations lost zero cycles in the container and
@@ -306,8 +320,50 @@ Status
 -------------
 /run/cushion-swap/status (read by the System Settings page and by
 "cushion-swap --status"): STATE (off, deployed, retracting, disabled,
-no-area), MODE (psi, compatibility), FAST, PACING, MAX_ALLOC_MIB_S, CALIBRATED, AREA and the thresholds in
-use.
+no-area, unknown, stopped), PROTECTION (yes, degraded, no), PROBLEMS,
+REASON, MODE (psi, compatibility), MODE_REASON, CALIBRATION (override,
+measured, pending, failed, unavailable), STARTED, PID, FAST, PACING,
+MAX_ALLOC_MIB_S, CALIBRATED, AREA and the thresholds in use.
+"cushion-swap --status" exits 0 while memory is protected, 1 while it is
+protected with a problem kept, 2 when it is not protected, 3 when the
+daemon is not running and 4 when the state cannot be read.
+
+Nothing fails silently
+-------------
+Daniel, 2026-11-01: "nothing we do should silently fail or have a fall
+back - either it works or not and the user must know". Whatever keeps
+the daemon from protecting memory, or from protecting it the way it was
+set, is a problem: a file in /run/sparky-stereo-problems (the edition's one engine, sparky-stereo-problems) with what, why
+and what to do, named in the status, said once in the journal and shown
+once per session as a notification (cushion-swap-problems.path in the
+person's session runs "cushion-swap --notify"). It clears when it is
+gone. "cushion-swap --problems" lists them in the system's language with
+the English line beside it. The messages are in /usr/share/sparky/
+sparky-stereo-cushion-swap, in the nine languages the edition requires.
+- Memory not protected (EFFECT=no): no swap area configured, an area that
+  is not there, /proc/meminfo or /proc/swaps unreadable (his fail-safe
+  stays: no action without the numbers), swapon failing while memory runs
+  low, a daemon that stopped without being asked to.
+- Protected another way than set (degraded): a kernel with PSI whose
+  helper is missing or whose trigger is refused or lost (the poller keeps
+  watching, as it did before; a restart arms the trigger again; PSI=off
+  makes compatibility mode the person's choice), swapoff failing (the area
+  stays on).
+- Protected, something else did not work (notice): the allocation-rate
+  helper missing, a measurement that failed (tried again as before, a
+  minute later, and cleared by a success), or its result not kept (the
+  conservative pace stays; MAX_ALLOC_MIB_S makes it the person's choice);
+  hibernation unable to switch its area on, a kernel resume device that
+  differs from the one the file names, an area that cannot be switched off
+  after resume (each also fails its command).
+A kernel without PSI, PSI=off and CUSHION_SWAP=off are modes and choices,
+said in MODE_REASON and REASON, never problems.
+The unit keeps the status past the daemon (RuntimeDirectoryPreserve=yes)
+and its ExecStopPost says why the daemon stopped (systemd's
+SERVICE_RESULT, EXIT_CODE and EXIT_STATUS). The package's postinst says
+each failed setup step with its own error, then checks that the restarted
+daemon runs and whether it protects memory ("cushion-swap --wait-ready");
+the package still configures, as debhelper's own scripts do for units.
 
 Tests
 -------------
@@ -366,3 +422,8 @@ settings or the TV's mode.
    above the early-warning floor to below the hard floor between two
    samples; with a load that did, the next step is a faster rate or PSI.
 6. Afterwards: "journalctl -u cushion-swap --since today" shows each action.
+
+A person’s zram remains independent.
+Its capacity and used pages are excluded from Cushion’s disk-swap accounting.
+A zram device is skipped in fstab area selection and rejected as an explicit AREA or resume device, including a symlink to it.
+The daemon never switches that device on or off.

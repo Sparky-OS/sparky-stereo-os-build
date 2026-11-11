@@ -1,3 +1,45 @@
+  Version 20261103~sparky9~0 (2026-11-03)
+  * Say once when a country has neither an official service nor a usable pool, at configuration and --check.
+    Keep Debian’s pool, succeed, and clear the old LOCAL54 problem; unknown timezones remain faults.
+    Restore Debian’s unedited template through ucf when leaving a supported country.
+
+-------------------------------------------------------------------------------
+  Version 20261102.1~sparky9~0 (2026-11-02)
+-------------------------------------------------------------------------------
+  * Use only official servers where listed, with NTS where offered and Brazil's gps first
+  * Use the country's pool where no official service is listed; report unknown countries and unavailable pools
+  * Update Debian's chrony configuration through ucf, preserving and reporting personal edits
+  * Reapply the policy after chrony template updates and restore Debian defaults on removal
+  * Add diagnostics in all nine required languages
+
+-------------------------------------------------------------------------------
+  Version 20261102~sparky9~0 (2026-11-02)
+-------------------------------------------------------------------------------
+  * ORDER 350 (Daniel, 2026-11-02: "Why machinery to keep a failure for each?"): the problems are kept by
+    the edition's one engine, sparky-stereo-problems, and shown by its session notifier; the package's own
+    store, notifier and user units go. --status, --repair and --dismiss keep working through the engine
+    (dismiss is the engine's Hide: yours, kept listed, back when the problem changes); --notify starts the
+    session's notifier. The messages, word for word, are built into journal catalogs; the problems of the
+    package go when it is removed
+  * Nothing fails silently (ORDER 346c; Daniel, 2026-11-01: "either it works or not and the user must know"):
+    what fails is said in the system's language (and in English), kept in /var/lib/sparky-stereo-time/problems
+    with its evidence until it works again (lib/problems.py), and shown in the session as a notification;
+    sparky-stereo-time --status, --repair and --dismiss STEP
+  * A time-server catalogue that cannot be read (missing, unreadable, without rows), timezone tables that cannot be
+    read and a timezone that is not known are said (exit 3); the sources in use are left as they were, never
+    replaced by Debian's pool, which stays the policy only for a country without a service of its own
+  * Sources that cannot be written are said (exit 4) and no longer announced as written
+  * A running chrony that refuses the reload or the restart, and a failed chrony, are said and kept (exit 4); only a
+    chrony that is not running is told that it reads the sources at its start
+  * The sources chosen are said after each run, Debian's pool too where it completes the country's servers
+  * --check and sparky-stereo-time-check.timer (5 minutes after the start, then every hour): when none of the servers
+    chosen answers in chrony's reachability register, that is said and kept with what the clock follows instead
+  * The timezone watcher keeps a monitor that cannot listen; postinst says and keeps a watcher or timer that does not
+    start and a daemon-reload that fails, and the package configures; postrm says a chrony that cannot be told, and a
+    file of ours that cannot be removed stops the removal
+  * 43 new messages, in en, pl, pt_BR, fr, de, ja, ko, zh_CN and zh_TW
+  * Depends: python3, iproute2 and systemd, which the tool and its units use
+
 -------------------------------------------------------------------------------
   Version 20261029~sparky9~0 (2026-10-29)
 -------------------------------------------------------------------------------

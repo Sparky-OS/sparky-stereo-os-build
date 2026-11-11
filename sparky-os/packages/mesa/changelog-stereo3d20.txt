@@ -1,0 +1,23 @@
+mesa (26.1.6-1+stereo3d20) unstable; urgency=medium
+
+  * 64-bit atomics on a storage buffer reach the buffer the program bound
+    (0035): a compute shader that declares a storage block it never reads at
+    the highest binding had its 64-bit atomics land in another buffer, with
+    no error anywhere (StereoVista's point cloud loaded and drew nothing on
+    the RTX 3060 through zink). get_bo_var() reset driver_location to 0 for
+    the 64-bit, 16-bit and 8-bit views of the storage buffers, while the
+    32-bit view and every access started at the first storage buffer the
+    shader uses; the views keep the number they were cloned with.
+  * A sparse buffer's last block keeps what is written to it on NVIDIA's
+    Vulkan driver (0036): buffer_commit_single() cut the last sparse bind to
+    the buffer's size, and the Vulkan specification binds sparse buffers in
+    whole blocks of the memory requirements' alignment; NVIDIA's driver
+    ignores a bind that stops inside a block, so the tail read back as zero.
+    The bind now covers the whole block, and a sparse buffer is created with
+    its size rounded up to the block so that the bind lies inside it (RADV
+    loses the device on a bind past the end of the buffer). Mesa issue 10220,
+    reported by Paulo Zanoni, describes the same bind.
+  * Two zink tests run with the package's own tests (debian/tests):
+    zink-ssbo64 and zink-sparse-tail build the programs against the installed
+    libraries and run them through zink; a machine without a Vulkan device
+    for zink skips them with a message, it never passes them.

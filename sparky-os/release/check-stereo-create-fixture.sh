@@ -1,6 +1,9 @@
 #!/bin/bash
 # Run inside the isolated migration container. The host checkout is read-only.
 set -euo pipefail
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 export DEBIAN_FRONTEND=noninteractive
 printf 'deb [trusted=yes] file:/repo ./\n' > /etc/apt/sources.list.d/edition.list
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list

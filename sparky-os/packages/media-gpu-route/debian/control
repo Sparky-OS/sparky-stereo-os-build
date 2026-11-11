@@ -14,9 +14,11 @@ Description: shared display GPU preference for media engines
  Resolves the graphics driver's default hardware GPU, including the
  compositor's display preference and explicit driver overrides.
  Decoder selection checks codec, component depth and chroma capabilities
- before startup and retains software fallback. Hardware decoding that
- copies every picture back is chosen only where the person or the
- machine's measured record allows it.
+ before startup; a source the GPU cannot decode is decoded in software and
+ said. Hardware decoding that copies every picture back is chosen only
+ where the person or the machine's measured record allows it, and on
+ another GPU than the one chosen for players only where the person allows
+ that too.
  It writes no user settings.
 
 Package: libmedia-gpu-route-dev

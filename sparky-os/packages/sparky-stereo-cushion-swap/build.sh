@@ -1,15 +1,24 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/10
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/10
+# Last update 2026/11/02
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.3.0
+VERSION=0.3.4
 PACKAGE=sparky-stereo-cushion-swap
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.cushion-swap.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
+# Build from the same tracked inputs that enter the source archive.
+TOOLKIT=$(cd "$HERE/../.." && pwd)
+COPY="$HERE/build-tools/copy-recipe.py"
+[ -f "$COPY" ] || COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$HERE" "$WORK/inputs"
+mkdir -p "$WORK/inputs/build-tools"
+cp "$COPY" "$WORK/inputs/build-tools/"
+HERE=$WORK/inputs
 D=$WORK/$PACKAGE
 mkdir -p "$D/DEBIAN" "$D/usr/share/doc/$PACKAGE" "$D/usr/libexec/cushion-swap"
 gcc ${CFLAGS:--O2 -Wall -Wextra -Werror} -o "$D/usr/libexec/cushion-swap/psi-wake" "$HERE/src/psi-wake.c"
@@ -18,16 +27,22 @@ gcc ${CFLAGS:--O2 -Wall -Wextra -Werror} -pthread -o "$D/usr/libexec/cushion-swa
 strip --strip-unneeded "$D/usr/libexec/cushion-swap/alloc-rate"
 install -Dm644 "$HERE/etc/default/cushion-swap" "$D/etc/default/cushion-swap"
 install -Dm755 "$HERE/sbin/cushion-swap" "$D/usr/sbin/cushion-swap"
-install -Dm644 -t "$D/usr/lib/systemd/system" "$HERE/lib/systemd/system/cushion-swap.service" \
-	"$HERE/lib/systemd/system/cushion-swap-hibernate.service"
+install -Dm644 -t "$D/usr/lib/systemd/system" "$HERE/lib/systemd/system/cushion-swap.service"
+for operation in hibernate hybrid-sleep suspend-then-hibernate; do
+	install -Dm644 "$HERE/lib/systemd/system/systemd-$operation.service.d/50-cushion-swap.conf" \
+		"$D/usr/lib/systemd/system/systemd-$operation.service.d/50-cushion-swap.conf"
+done
 install -Dm755 -t "$D/usr/lib/systemd/system-generators" "$HERE/lib/systemd/system-generators/cushion-swap-hibernate-generator"
-install -Dm755 -t "$D/usr/lib/systemd/system-sleep" "$HERE/lib/systemd/system-sleep/cushion-swap"
 install -Dm644 -t "$D/usr/lib/tmpfiles.d" "$HERE/lib/tmpfiles.d/cushion-swap.conf"
 install -Dm755 -t "$D/usr/share/initramfs-tools/hooks" "$HERE/share/initramfs-tools/hooks/cushion-swap-resume-offset"
 install -Dm644 -t "$D/etc/logrotate.d" "$HERE/etc/logrotate.d/sparky-stereo-cushion-swap"
+# what is wrong, why and what to do, in the nine languages (0.3.1); the edition's one engine keeps each problem and
+# its session notifier shows it (ORDER 350), from these messages built word for word into journal catalogs
+install -Dm644 -t "$D/usr/share/sparky/$PACKAGE" "$HERE"/lang/*
+sparky-stereo-problems catalog $PACKAGE "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL16
 install -m644 "$HERE/copyright" "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/"
 GLIBC=$(objdump -T "$D/usr/libexec/cushion-swap/psi-wake" "$D/usr/libexec/cushion-swap/alloc-rate" | sed -n 's/.*GLIBC_\([0-9.]*\).*/\1/p' | sort -V | tail -n 1)
-DEPENDS="bash, libc6 (>= $GLIBC), logrotate, systemd, util-linux"
+DEPENDS="bash, libc6 (>= $GLIBC), logrotate, mount, systemd, util-linux, sparky-stereo-problems (>= 0.1.0)"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOF
 Package: $PACKAGE
@@ -53,22 +68,46 @@ echo 'activate-noawait update-initramfs' >"$D/DEBIAN/triggers"
 cat >"$D/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
+# A step that fails is said with its own error, in the system's language, and the package still configures,
+# as debhelper's own autoscripts do for units ("|| true"). Whether the daemon then runs and protects memory is
+# checked, never assumed (0.3.1): it says when it could not start, and what keeps it from protecting memory.
+say() {
+	/usr/sbin/cushion-swap --say "$@" || echo "cushion-swap: $*" >&2
+}
+step() {
+	key=$(printf '%s-' "$@" | tr -c 'a-zA-Z0-9-' '_')
+	# debhelper 14.5 autoscripts/postinst-systemd-restart completes with
+	# "systemctl --system daemon-reload >/dev/null || true". We complete and
+	# keep the error and repair. This is our behavior, not a Policy exception.
+	if sparky-stereo-problems run sparky-stereo-cushion-swap "setup-$key" LOCAL19 '' -- "$@"; then
+		return 0
+	fi
+	return 0
+}
+
 if [ "$1" = configure ] || [ "$1" = abort-upgrade ] || [ "$1" = abort-deconfigure ] || [ "$1" = abort-remove ]; then
 	# The log folder and file (root:adm, 0750 and 0640) before the unit opens the file.
 	if [ -x /usr/bin/systemd-tmpfiles ]; then
-		systemd-tmpfiles --create cushion-swap.conf >/dev/null || true
+		step systemd-tmpfiles --create cushion-swap.conf
 	fi
-	for unit in cushion-swap.service cushion-swap-hibernate.service; do
-		deb-systemd-helper unmask "$unit" >/dev/null || true
+	# The native sleep units now own preparation and cleanup. Remove only our
+	# old helper links; no administrator sleep-unit configuration is changed.
+	step deb-systemd-helper disable cushion-swap-hibernate.service
+	step deb-systemd-helper purge cushion-swap-hibernate.service
+	for unit in cushion-swap.service; do
+		step deb-systemd-helper unmask "$unit"
 		if deb-systemd-helper --quiet was-enabled "$unit"; then
-			deb-systemd-helper enable "$unit" >/dev/null || true
+			step deb-systemd-helper enable "$unit"
 		else
-			deb-systemd-helper update-state "$unit" >/dev/null || true
+			step deb-systemd-helper update-state "$unit"
 		fi
 	done
 	if [ -d /run/systemd/system ]; then
-		systemctl --system daemon-reload >/dev/null || true
-		deb-systemd-invoke restart cushion-swap.service >/dev/null || true
+		step systemctl --system daemon-reload
+		since=$(date +%s)
+		step deb-systemd-invoke restart cushion-swap.service
+		# the person's own switches (CUSHION_SWAP=off, a disabled or masked unit) are said as their choice
+		/usr/sbin/cushion-swap --wait-ready "$since" || :
 	fi
 fi
 EOF
@@ -93,6 +132,10 @@ if [ "$1" = purge ] && [ -x /usr/bin/deb-systemd-helper ]; then
 	deb-systemd-helper purge cushion-swap.service cushion-swap-hibernate.service >/dev/null || true
 	deb-systemd-helper unmask cushion-swap.service cushion-swap-hibernate.service >/dev/null || true
 fi
+# a problem of a package that is gone cannot be repaired by it (ORDER 350): the engine lets go of them
+if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null; then
+	sparky-stereo-problems clear --all sparky-stereo-cushion-swap || :
+fi
 if [ "$1" = purge ]; then
 	rm -rf /var/log/cushion-swap
 fi
@@ -103,14 +146,18 @@ dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PACKAGE}_${VERSION}_amd64.deb"
 
 S=$WORK/$PACKAGE-$VERSION
 mkdir -p "$S/debian"
-cp -a "$HERE/." "$S/"
+COPY="$HERE/build-tools/copy-recipe.py"
+[ -f "$COPY" ] || COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$HERE" "$S"
+mkdir -p "$S/build-tools"
+cp "$COPY" "$S/build-tools/"
 cat >"$S/debian/control" <<EOF
 Source: $PACKAGE
 Section: System
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Standards-Version: 4.7.3
-Build-Depends: dpkg-dev, gcc, binutils
+Build-Depends: git, python3, dpkg-dev, gcc, binutils, sparky-stereo-problems (>= 0.1.0)
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
 
@@ -122,6 +169,37 @@ Description: Cushion Swap File: swap only under memory pressure
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Hold the resume area for the whole native hibernate, hybrid-sleep or
+    suspend-then-hibernate service, including intermediate RTC wakeups.
+  * Fail preparation before sleep; resume normal pacing when the service ends.
+  * Remove obsolete compressed-memory swap references.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 12:00:00 -0300
+
+$PACKAGE (0.3.1) unstable; urgency=medium
+
+  * Nothing fails silently (ORDER 346b, rows U17, U18 and U54 of ORDER 343's
+    audit): whatever keeps the daemon from protecting memory, or from
+    protecting it the way it was set, is kept as a problem by the edition's
+    one engine, sparky-stereo-problems, for this boot (ORDER 350), named in
+    the status (PROTECTION, PROBLEMS, REASON, CALIBRATION, MODE_REASON), said
+    once in the journal and shown by the engine's session notifier, in the
+    nine languages; the problems go when the package is removed.
+  * The package checks that the restarted daemon runs and says whether it
+    protects memory; each failed setup step is said with its own error.
+  * --status exits 0 only while memory is protected; a stopped, failed or
+    unreadable state is never "stopped" with exit 0. The unit's
+    ExecStopPost says why the daemon stopped.
+  * A kernel with PSI whose trigger is lost, and a failed allocation-rate
+    measurement, are said and kept; the poller and the retry a minute
+    later go on as before.
+  * Hibernation: a failed switch-on, a kernel resume device that differs
+    and a failed switch-off after resume fail their unit and are kept.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 12:00:00 -0300
+
+$PACKAGE (0.3.0) unstable; urgency=medium
 
   * Measure the machine's allocation rate while idle for headroom pacing.
   * Problems only by default; optional cycle logging and weekly rotation.
@@ -147,6 +225,10 @@ clean:
 build:
 EOF
 chmod +x "$S/debian/rules"
+# A native package is dated by its own newest changelog entry (ORDER 421b); the tree is normalized so the checkout time and the umask stay out
+SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$REPRO" changelog "$S/debian/changelog")}
+export SOURCE_DATE_EPOCH
+python3 "$REPRO" normalize "$SOURCE_DATE_EPOCH" "$S"
 (cd "$WORK" && dpkg-source -b "$S")
 cp "$WORK/${PACKAGE}_${VERSION}.dsc" "$WORK/${PACKAGE}_${VERSION}.tar.xz" "$OUT/"
 sync

@@ -1,29 +1,24 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/10/25
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/25
+# Last update 2026/11/04
 #
-# Decides at every boot whether dmemcg-booster and plasma-foreground-booster run, from the hardware and the kernel
-# (Daniel's hardware auto-detection rule), and writes the decision to /run/sparky-stereo-vram-boost: the file enabled
-# when they run, and state with the reason. Their units carry ConditionPathExists=/run/sparky-stereo-vram-boost/enabled.
-#
-#   SPARKY_STEREO_VRAM_BOOST in /etc/default/sparky-stereo-vram-boost:
-#     auto      (default) on whenever any GPU has registered VRAM with the dmem controller
-#     amd-dgpu  on only for amdgpu with its own VRAM (mem_info_vram_vendor present) registered with dmem
-#     yes       same as auto, kept for existing configurations
-#     no        off
-#
-# The dmem regions are the lines of /sys/fs/cgroup/dmem.capacity, "drm/<PCI address>/vram<N> <bytes>"
-# (drmm_cgroup_register_region() and amdgpu_vram_mgr_init() in Linux 7.3).
+# The person's opt-in decides whether dmemcg-booster and plasma-foreground-booster run.
+# no is the default; the retired auto value also means off. yes accepts every registered GPU;
+# amd-dgpu selects amdgpu devices with mem_info_vram_vendor. No mode waits for a driver.
+# The enabled marker gates both boosters. Only an explicit opt-in can keep a hardware problem.
+# Regions have the form <owner>/<PCI address>/<name>; NVIDIA 615.71.09 was measured registering
+# nvidia/00000000:01:00.0/vidmem. Its eight-digit domain names the same sysfs device as 0000:01:00.0.
 set -u
+PACKAGE=sparky-stereo-vram-boost
+ENGINE=${SPARKY_STEREO_VRAM_BOOST_ENGINE:-sparky-stereo-problems}
 RUN=${SPARKY_STEREO_VRAM_BOOST_RUN:-/run/sparky-stereo-vram-boost}
 CGROUP=${SPARKY_STEREO_VRAM_BOOST_CGROUP:-/sys/fs/cgroup}
 PCI=${SPARKY_STEREO_VRAM_BOOST_PCI:-/sys/bus/pci/devices}
 DEFAULTS=${SPARKY_STEREO_VRAM_BOOST_DEFAULTS:-/etc/default/sparky-stereo-vram-boost}
-WAIT=${SPARKY_STEREO_VRAM_BOOST_WAIT:-15}
-SPARKY_STEREO_VRAM_BOOST=auto
+SPARKY_STEREO_VRAM_BOOST=no
 [ -r "$DEFAULTS" ] && . "$DEFAULTS"
-mode=${SPARKY_STEREO_VRAM_BOOST:-auto}
+mode=${SPARKY_STEREO_VRAM_BOOST:-no}
 
 decide() {
 	# decide on|off REASON
@@ -32,7 +27,25 @@ decide() {
 	[ "$1" = on ] && : >"$RUN/enabled"
 	printf 'decision=%s\nmode=%s\nreason=%s\nregions=%s\n' "$1" "$mode" "$2" "${regions:-}" >"$RUN/state"
 	echo "VRAM protection $1: $2"
-	exit 0
+	finish
+}
+
+# finish: clear the problems whose cause is gone and exit; a problem the engine cannot keep fails the unit (systemd's
+# OnFailure handler keeps that), and is said here
+raised=
+problem() { # problem KEY MESSAGE [ARG...]
+	local key=$1; shift
+	raised="$raised $key "
+	echo "VRAM protection problem $key: $*"
+	"$ENGINE" keep --machine "$PACKAGE" "$key" "$@" --action '{"id":"graphics","label":["LOCAL7"],"command":["systemsettings","kcm_sparkystereo_graphics"]}' || failed=1
+}
+failed=0
+finish() {
+	local key
+	for key in mode kernel capacity region; do
+		case "$raised" in *" $key "*) ;; *) "$ENGINE" clear --machine "$PACKAGE" "$key" || failed=1 ;; esac
+	done
+	exit "$failed"
 }
 
 driver_of() {
@@ -43,41 +56,67 @@ driver_of() {
 
 regions=
 case "$mode" in
-	auto|amd-dgpu|yes) ;;
-	no) decide off "SPARKY_STEREO_VRAM_BOOST=no" ;;
-	*) decide off "unknown SPARKY_STEREO_VRAM_BOOST=$mode (auto, amd-dgpu, yes or no)" ;;
+    amd-dgpu|yes) ;;
+    no|auto) decide off "SPARKY_STEREO_VRAM_BOOST=$mode" ;;
+    *) problem mode LOCAL2 "$mode"; decide off "unknown SPARKY_STEREO_VRAM_BOOST=$mode (amd-dgpu, yes or no)" ;;
 esac
-grep -qw dmem "$CGROUP/cgroup.controllers" 2>/dev/null || decide off "the kernel has no dmem cgroup controller"
 
-# amdgpu registers its VRAM at the end of its probe; wait for every bound amdgpu device to appear, a few seconds at most.
-amd=()
+gpus=()
 for dev in "$PCI"/*; do
-	[ "$(driver_of "${dev##*/}")" = amdgpu ] && amd+=("${dev##*/}")
+    [ -e "$dev" ] || continue
+    driver=$(driver_of "${dev##*/}")
+    [ -n "$driver" ] || continue
+    # The PCI display class excludes bound storage and network devices.
+    if [ -r "$dev/class" ]; then
+        read -r class <"$dev/class"
+        case "$class" in 0x03*) ;; *) continue ;; esac
+    else
+        case "$driver" in amdgpu|xe|nouveau|nvidia|i915|virtio_gpu) ;; *) continue ;; esac
+    fi
+    if [ "$mode" = amd-dgpu ]; then
+        [ "$driver" = amdgpu ] && [ -e "$dev/mem_info_vram_vendor" ] || continue
+    fi
+    gpus+=("${dev##*/}:$driver")
 done
-for ((i = 0; i < WAIT; i++)); do
-	missing=0
-	for a in "${amd[@]}"; do
-		grep -q "^drm/$a/" "$CGROUP/dmem.capacity" 2>/dev/null || missing=1
-	done
-	[ "$missing" = 0 ] && break
-	sleep 1
-done
+gpulist=${gpus[*]:-}
+
+if ! grep -qw dmem "$CGROUP/cgroup.controllers" 2>/dev/null; then
+    problem kernel LOCAL3 "$(uname -r)" "${gpulist// /, }"
+    decide off "the kernel has no dmem cgroup controller"
+fi
+if [ ! -r "$CGROUP/dmem.capacity" ]; then
+    problem capacity LOCAL4 "$CGROUP/dmem.capacity"
+    decide off "no readable dmem.capacity in $CGROUP"
+fi
 
 on=
-[ -r "$CGROUP/dmem.capacity" ] || decide off "no dmem.capacity in $CGROUP"
+registered=" "
 while read -r region size; do
-	[ -n "$region" ] || continue
-	regions="${regions:+$regions }$region=$size"
-	address=${region#drm/}
-	address=${address%%/*}
-	driver=$(driver_of "$address")
-	if [ "$mode" = auto ] || [ "$mode" = yes ]; then
-		on="${on:-$region ($driver)}"
-	elif [ "$driver" = amdgpu ] && [ -e "$PCI/$address/mem_info_vram_vendor" ]; then
-		on="${on:-$region (amdgpu, its own VRAM)}"
-	fi
+    [ -n "$region" ] || continue
+    regions="${regions:+$regions }$region=$size"
+    address=${region#*/}
+    address=${address%%/*}
+    domain=${address%%:*}
+    if [ "${#domain}" = 8 ] && [ "${domain:0:4}" = 0000 ]; then
+        address=${address:4}
+    fi
+    registered="$registered$address "
+    driver=$(driver_of "$address")
+    if [ "$mode" = yes ]; then
+        on="${on:-$region ($driver)}"
+    elif [ "$driver" = amdgpu ] && [ -e "$PCI/$address/mem_info_vram_vendor" ]; then
+        on="${on:-$region (amdgpu, its own VRAM)}"
+    fi
 done <"$CGROUP/dmem.capacity"
 
-[ -n "$regions" ] || decide off "no GPU has registered VRAM with the dmem controller (NVIDIA's own driver registers none)"
+for g in "${gpus[@]}"; do
+    case "$registered" in
+        *" ${g%:*} "*) ;;
+        *) problem region LOCAL5 "${g%:*}" "${g##*:}" ;;
+    esac
+done
 [ -n "$on" ] && decide on "$on"
-decide off "no AMD GPU with its own VRAM among the dmem regions (SPARKY_STEREO_VRAM_BOOST=auto turns it on for the others)"
+if [ "${#gpus[@]}" = 0 ]; then
+    problem region LOCAL6
+fi
+decide off "no GPU matching the chosen mode has registered video memory"

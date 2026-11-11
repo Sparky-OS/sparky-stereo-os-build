@@ -1,0 +1,27 @@
+-------------------------------------------------------------------------------
+  Version 0.1.0 (2026-11-06)
+-------------------------------------------------------------------------------
+  * New package, ORDER 415 (Daniel, 2026-11-05, after the station's local mail was cleared: "that cleaning was due
+    long ago - we should include those as a bleech bit option...(clear internal mailing system)"): BleachBit's
+    "System mail" cleaner (id system_mail), unticked in BleachBit's own defaults, with four options: your local mailbox (emptied in
+    place), every local mailbox and root's saved mail (administrator), dead.letter, and the queues of mail programs
+    that are no longer installed
+  * Ticked in Daniel's presets (Daniel, 2026-11-06: "on the choice - ticked in presets"): the user preset ticks
+    the person's own dead.letter and local mailbox, root's preset the dead letters, every mailbox and the queues of
+    removed mail programs; each option's warning stays in its description
+  * A queue is listed only when dpkg says every package of its mail program is gone and the program is not on the
+    system; CleanerML has no such condition, so dpkg runs system_mail.py again whenever one of those programs is
+    installed or removed (trigger on its program) and when bleachbit is installed or upgraded
+  * The cleaner's text is translated in the nine languages: the strings join Debian's bleachbit catalog of each
+    language (bleachbit.mo diverted to .debian, rewritten with Debian's own translation winning); removing this
+    package gives Debian's catalogs back
+  * A failure to write the cleaner is said and kept by the edition's one engine (sparky-stereo-problems), with
+    sparky-stereo-housekeeping repair to try again
+  * Daniel's safe BleachBit presets (ORDER item b of 2026-10-23, "shipped ready"; 2026-10-14: "my default settings apply
+    for root and for the user - safe non removing languages"), taken from his A10 files: the user's (program caches,
+    journald, system cache, rotated logs and tmp) in /etc/skel, so every new person starts with it, and root's (apt
+    clean, autoclean and package lists, deepscan, journald, system cache, memory, rotated logs and tmp, X11 debug logs),
+    written to /root/.config/bleachbit at the first install only when root has no file. An existing bleachbit.ini is
+    never written, nor a deleted one written again. No localizations, no apt.autoremove, no free-space wipe (his
+    shred_drives lists, one personal path each, are not shipped), and none of the system_mail options ticked
+  * Meant for every system: sparky-stereo-system depends on it (lists/make-meta.py)

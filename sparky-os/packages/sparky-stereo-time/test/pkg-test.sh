@@ -3,6 +3,9 @@
 # Copyright 2026 under the GNU GPL3 License
 # Install, use and purge of the .deb in a throwaway debian:testing container (needs root).
 # Last update 2026/10/02
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 DEB=${1:?usage: pkg-test.sh package.deb}
 FAILS=0
 ok() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; FAILS=$((FAILS + 1)); fi; }
@@ -11,7 +14,8 @@ cp $C /tmp/chrony.conf.orig
 ln -sf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime
 dpkg -i "$DEB" >/dev/null 2>&1; apt-get -y -f install >/dev/null 2>&1
 ok "sources file written for BR" "grep -q 'server a.st1.ntp.br iburst nts' /etc/chrony/sources.d/sparky-stereo.sources"
-ok "chrony.conf untouched by install" "cmp -s $C /tmp/chrony.conf.orig"
+ok "Debian pool removed through ucf" "! grep -q '^pool .*debian.pool.ntp.org' $C"
+ok "ucf still registers chrony as owner" "grep -q '^chrony[[:space:]].*/etc/chrony/chrony.conf$' /var/lib/ucf/registry"
 ok "BR: authselectmode prefer snippet" "grep -qx 'authselectmode prefer' /etc/chrony/conf.d/sparky-stereo-auth.conf"
 ok "nocerttimecheck conffile" "grep -qx 'nocerttimecheck 1' /etc/chrony/conf.d/sparky-stereo.conf"
 ok "conffile is registered" "dpkg-query -W -f='\${Conffiles}' sparky-stereo-time | grep -q sparky-stereo.conf"

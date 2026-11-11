@@ -1,6 +1,6 @@
 sparky-stereo-kernel-settings
 Kernel tunables for Sparky Stereo OS as user-space files: sysctl, udev, tmpfiles, modules-load and audio limits.
-zram by hardware (Daniel, 2026-10-10: "auto by hardware is the design"): off on capable machines, where it would hold part of the RAM captive; on only where it pays. The swap is the Cushion Swap File, on only under memory pressure.
+No compressed swap by default; the person may opt in through Stereo APTus. The swap is the Cushion Swap File on disk, on only under memory pressure.
 
 Copyright (C) 2026 Daniel Ramos (Capitain Jack), see copyright file.
 Derived from CachyOS-Settings (GPL-3.0) and the CachyOS kernel patches, and from the value SteamOS uses for vm.max_map_count; authors in the copyright file.
@@ -39,39 +39,44 @@ usr/lib/udev/rules.d/70-sparky-ntsync.rules /dev/ntsync for the logged-in user
 usr/lib/udev/rules.d/60-sparky-block.rules  BFQ on rotating disks, 256 KiB read-ahead
 usr/lib/udev/rules.d/99-sparky-audio.rules  audio group: cpu_dma_latency, rtc0, hpet
 usr/lib/tmpfiles.d/sparky-thp.conf          THP defrag defer+madvise, THP shrinker threshold
-usr/lib/systemd/zram-generator.conf.d/50-sparky-stereo.conf
-                                            zram0 sized min(RAM, 8 GiB), lz4, priority 100, created only
-                                            when usr/libexec/sparky-stereo/zram-auto prints 1
-usr/libexec/sparky-stereo/zram-auto         the decision (see below); --explain prints it with the reason
 etc/security/limits.d/20-sparky-audio.conf  rtprio 99 and nice -11 for @audio (a conffile)
+etc/tmpfiles.d/tmp.conf                     /tmp keeps its files: no boot wipe, no age cleanup; /var/tmp as Debian (a conffile)
 
 /tmp on disk (Daniel: "the dumb /tmp mounted at a ram fs - final result? no ram"): the first install of 20261010.2
-masks tmp.mount, the way Debian's trixie release notes describe it (5.1.6), and usr/lib/tmpfiles.d/sparky-tmp.conf cleans
-/tmp at every boot and of files unused for 10 days (5.2.1 and Debian's pre-trixie default). An administrator's own
-/etc/systemd/system/tmp.mount is left alone; "systemctl unmask tmp.mount" brings /tmp in RAM back and is kept on upgrades.
-Purging the package removes the mask it created. The change applies at the next boot.
+masks tmp.mount, the way Debian's trixie release notes describe it (5.1.6). This package never empties /tmp: Daniel
+never asked for a wipe (2026-11-02), and 20261103.1 removed the boot-wipe rule earlier versions shipped. Debian's own
+usr/lib/tmpfiles.d/tmp.conf still ages /tmp out after 10 days (q /tmp 1777 root root 10d), which is the RAM-disk behaviour
+Daniel moved /tmp to the disk to leave (2026-11-06: "make sure the tmp cleaner is really off"). From 20261106.1 the
+conffile /etc/tmpfiles.d/tmp.conf, which overrides Debian's file of the same name, says "q /tmp 1777 root root -"
+(no age: systemd-tmpfiles --clean never removes from /tmp) and keeps Debian's "q /var/tmp 1777 root root 30d".
+A person's own edit of that file is kept on upgrade (dpkg conffile rules). An administrator's own /etc/systemd/system/tmp.mount is left alone;
+"systemctl unmask tmp.mount" brings /tmp in RAM back and is kept on upgrades. Purging the package removes the mask it
+created. The change applies at the next boot.
 
-Otherwise no maintainer scripts: the settings apply at the next boot (or: sysctl --system, systemd-tmpfiles --create, udevadm control --reload).
+Other settings apply at the next boot (or: sysctl --system, systemd-tmpfiles --create, udevadm control --reload).
 Not taken from CachyOS, on purpose: SATA link power max_performance (costs laptop battery), journald and systemd timeouts (distribution policy),
 kernel.printk and kernel.sysrq (Debian's defaults stay), the NVMe kyber scheduler (no measurement favours it), the HDA power-save script.
 
-zram by hardware:
+Compressed swap is the person's opt-in:
 -------------
-zram-generator runs zram-auto through its own set! directive and multiplies the zram size by what it prints (1 or 0); a
-device of size 0 is not created, so a capable machine gets no zram unit at all. Its own host-memory-limit option can say
-"not above this much RAM" but not "or when the swap area is on slow storage", hence the directive.
-Automatic: on with 8 GB of RAM or less (MemTotal up to 9 GiB: 8 GB machines report 7.6 to 7.8 GiB, 12 GB machines 11.6),
-or when the swap area (the Cushion Swap File's, else the root file system's disk) is eMMC, an SD card, a rotating disk
-or removable storage; off on NVMe and SATA SSDs with more RAM. Through LUKS or LVM, the disks underneath decide.
-Override: ZRAM=on, ZRAM=off or ZRAM=auto in /etc/default/sparky-stereo-zram (System Settings, Memory, writes it).
-Sources: the kernel's Documentation/admin-guide/blockdev/zram.rst (compressed RAM block devices, swap among the uses);
-Fedora's Changes/SwapOnZRAM (Fedora 33, owner Chris Murphy: zram for every machine at 50 % of RAM up to 4 GiB);
-Android's memory management guide (developer.android.com/topic/performance/memory-management: zram instead of swap on
-storage, because frequent writing wears that storage). The edition differs from Fedora: no zram where RAM is plenty.
-Swappiness stays 1 with zram too (Daniel: "ram is fast, while it has it, leverage it"); zram is the last cushion before the
-Cushion Swap File. lz4, not zstd: on the same real desktop memory zstd stored a third less but cost about twice the CPU
-time to compress and to read back (measured, see the edition's power-idle evidence); the machines that get zram are the
-ones with the least CPU to spare.
+Nothing installs or configures zram by default, and there are no Conflicts, Breaks or Replaces against its packages.
+The old edition generator drop-in identifies the migration; other swap areas are not retired.
+Before unpack, an earlier ZRAM=on or a manually installed generator or zram-tools identifies a person's choice and prevents retirement.
+The old configuration file is read for this migration, never written or removed.
+A formerly auto-installed generator without that choice gets a persistent leftover marker.
+The setup service guard blocks only that marker plus an auto-installed generator without ZRAM=on or a manually installed zram-tools.
+No marker, a manually installed generator, ZRAM=on, or manually installed zram-tools passes.
+The guard reads apt's extended_states; it never writes apt's state.
+The generated swap unit runs after setup and checks the guard's runtime marker, so a skipped setup does not cause a futile swapon.
+The generator may create an empty device node before the condition runs; no capacity or active swap is established by the blocked setup.
+Installing the generator explicitly through apt or Stereo APTus marks it manual; the next setup passes without changing a mask or configuration.
+Stereo APTus tells the person to restart for the generator's normal boot setup.
+A kept notice says the leftover is switched off and being removed, in nine languages (since 20261108.1, ORDER 463).
+The leftover is purged once by sparky-stereo-kernel-settings-zram-leftover.service, which waits for apt's and dpkg's locks and purges only when the simulation removes nothing else; a package that needs it keeps it, switched off, with a notice naming them.
+A failed systemd-zram-setup@zram0 is told with no Repair: nothing starts a unit the edition did not set up (the person opts in, and out, from Stereo APTus).
+An earlier ZRAM=on with an automatic generator is protected using our own APT::NeverAutoRemove policy file, not by writing apt's database or running a second apt during configuration.
+The person is told of this protection and can still explicitly uninstall the package.
+An unsuccessful retirement is shown and kept in the problems engine with its repair command.
 
 Your own sysctl values:
 -------------
@@ -84,3 +89,26 @@ gives 10). The package's file is 70, not lower, because 50-default.conf (package
 upstream defaults) sets vm.max_map_count = 1048576, and the edition's value must come after it.
 tests/sysctl-order-test.sh checks the rule with systemd's own file ordering (systemd-analyze cat-config sysctl.d).
 Debian's procps 4.0.7 no longer ships /etc/sysctl.conf.
+
+Swappiness:
+-------------
+Daniel's value is unchanged: "vm.swappiness = 1 always" (2026-10-10).
+Our explanation follows Linux Documentation/admin-guide/sysctl/vm.rst, swappiness:
+https://docs.kernel.org/admin-guide/sysctl/vm.html#swappiness
+The range is 0 to 200 and expresses the relative I/O cost of swapping and filesystem paging.
+A low value treats swap I/O as more expensive; 1 is not the minimum or a promise to retain every page in RAM.
+At 0, swapping waits until free plus file-backed pages fall below a zone's high watermark.
+
+Block-device read-ahead sources (checked 2026-11-02):
+-------------
+Daniel's rule is to follow the main gaming distributions (2026-11-02); this is disk read-ahead, not swap read-ahead.
+The existing 256 KiB rule matches CachyOS/linux tag cachyos-7.3.1-1, include/linux/pagemap.h:1429, VM_READAHEAD_PAGES = SZ_256K / PAGE_SIZE.
+That value initializes the backing device's ra_pages at mm/backing-dev.c:1037.
+https://github.com/CachyOS/linux/blob/cachyos-7.3.1-1/include/linux/pagemap.h#L1429
+Bazzite's Containerfile at 3a46cd99bc7aff9ffc962ec0fb595c2087484d8f:36-40 selects its OGC kernel through the akmods image.
+OGC v7.0.9-ogc3 (dcad54d2480699ac5515a7372a106224d9106acc), matching that file's default kernel version, has SZ_128K at include/linux/pagemap.h:1368.
+The newer OGC v7.3.1-ogc5 (e80cc3e80d31ad5d449d26d84e4a59946173090e) also has SZ_128K, at include/linux/pagemap.h:1429, applied at mm/backing-dev.c:1037.
+https://github.com/OpenGamingCollective/linux/blob/e80cc3e80d31ad5d449d26d84e4a59946173090e/include/linux/pagemap.h#L1429
+Thus their kernel defaults differ: CachyOS 256 KiB and Bazzite's OGC 128 KiB.
+Bazzite additionally inherits tuned profiles, including throughput-performance, so its effective value can depend on the selected profile.
+Our value follows CachyOS and remains 256 KiB; no swap setting is inferred from either distribution.

@@ -1,0 +1,22 @@
+#!/bin/sh
+# postinst script
+# Paths and the record tool follow DPKG_ROOT, dpkg's root for the maintainer scripts.
+# Nothing fails silently (Daniel, 2026-11-01). The machine's record of a known model that cannot be written fails the
+# configuration: sparky-stereo-gpu-record says why in the system's language and keeps it for the Graphics page and the
+# notification at login, and dpkg --configure -a does the step again (Debian Policy 6.1: a maintainer script exits
+# non-zero when it fails). systemd's reload is said and kept and the package configures, as debhelper's own reload does
+# (the record above is written without it).
+set -e
+if [ "$1" = "configure" ]; then
+	sparky-stereo-gpu-record --root "${DPKG_ROOT:-/}" --apply-known >/dev/null
+	if [ -d "${DPKG_ROOT:-}/run/systemd/system" ]; then
+		if out=$(systemctl daemon-reload 2>&1); then
+			sparky-stereo-gpu-record --root "${DPKG_ROOT:-/}" --clear systemd-reload
+		else
+			status=$?
+			[ -z "$out" ] || printf '%s\n' "$out" >&2
+			sparky-stereo-gpu-record --root "${DPKG_ROOT:-/}" --keep systemd-reload --status "$status" --output "$out" || :
+		fi
+	fi
+fi
+exit 0

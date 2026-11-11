@@ -1,0 +1,30 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/31
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/10/31
+# sparky-stereo-apt's files under /etc are conffiles from 20261031.1~sparky9~0 on (Debian Policy 10.7.3, "local changes
+# must be preserved during a package upgrade"); before, dpkg replaced them at every upgrade, a person's edits included.
+# On the first upgrade that makes them conffiles, dpkg has no record of what the old package shipped, so it would ask about
+# every file that differs from the new one, edited or not. A file still byte for byte as the installed package shipped it
+# (its line in that package's md5sums) is moved aside here, so dpkg installs the new one without asking, and postinst
+# removes the old copy. A file a person changed stays where it is, and dpkg asks about it (its default keeps the person's
+# file). dpkg-maintscript-helper's rm_conffile moves an unmodified conffile aside the same way (conffile.dpkg-remove).
+set -e
+# The plain-HTTP block of 20261104.2 to 20261104.3 leaves (ORDER 413): the same call in preinst, postinst and postrm. An unmodified
+# file is removed; one a person changed is kept as FILE.dpkg-bak and said (dpkg-maintscript-helper(1): rm_conffile).
+# prior-version is this version with ~ (20261106.1~sparky9~0~), so a rebuild of 20261104.3 with a local suffix is covered too.
+dpkg-maintscript-helper rm_conffile /etc/apt/apt.conf.d/00sparky-block-plain-http 20261106.1~sparky9~0~ sparky-stereo-apt -- "$@"
+FILES="/etc/apt/sources.list.d/sparky-stereo.sources /etc/apt/sources.list.d/sparky-stereo-deb-multimedia.sources
+/etc/apt/preferences.d/sparky-stereo /etc/apt/preferences.d/sparky-stereo-only-ours"
+if [ "$1" = upgrade ] && [ -n "$2" ] && dpkg --compare-versions "$2" lt 20261031.1~sparky9~0; then
+	sums=$(dpkg-query --control-path sparky-stereo-apt md5sums 2>/dev/null || true)
+	if [ -n "$sums" ] && [ -f "$sums" ]; then
+		for f in $FILES; do
+			[ -f "$f" ] && [ ! -L "$f" ] || continue
+			shipped=$(awk -v path="${f#/}" '$2 == path { print $1 }' "$sums")
+			if [ -n "$shipped" ] && [ "$(md5sum <"$f" | cut -d' ' -f1)" = "$shipped" ]; then
+				mv -f "$f" "$f.dpkg-remove"
+			fi
+		done
+	fi
+fi

@@ -7,16 +7,16 @@ An architecture-constrained script package requires an explicit matching host.
 Native binaries must use their native source build and its pre-compilation proof.
 """
 import argparse
-import email.utils
 import json
 import os
 from pathlib import Path
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 
-from . import package, release
+from . import package, release, tracked
 
 
 def normalize_modes(tree):
@@ -56,19 +56,30 @@ def check_architecture(arch):
             raise ValueError(f"Script package architecture {arch} differs from build host {host}")
 
 
-def build(tree, out, authoring, architecture="all"):
+def build(tree, out, authoring, architecture="all", build_dependencies=()):
     old_umask = os.umask(0o022)
     try:
-        return _build(tree, out, authoring, architecture)
+        return _build(tree, out, authoring, architecture, build_dependencies)
     finally:
         os.umask(old_umask)
 
 
-def _build(tree, out, authoring, architecture):
+def _build(tree, out, authoring, architecture, build_dependencies):
+    if any(not dep or any(c in dep for c in "\n\r") for dep in build_dependencies):
+        raise ValueError("Invalid additional build dependency")
+    extra_build_deps = "".join(", " + dep for dep in build_dependencies)
     tree, out, authoring = (Path(p).resolve() for p in (tree, out, authoring))
+    # The source is dated by its recipe, never by the clock (ORDER 421b): SOURCE_DATE_EPOCH, else the last commit touching the
+    # authoring folder, which must be committed.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "repo"))
+    import reproducible
+    try:
+        stamp = reproducible.epoch([authoring])
+    except reproducible.NoRecipeDate as error:
+        raise ValueError(f"no source date: {error}") from None
     fields = package.control(tree)
     name, version, arch = package.identity(fields)
-    if arch != architecture or "-" in version or ":" in version:
+    if arch != architecture or ":" in version:
         raise ValueError("This adapter requires a native source version and the selected architecture")
     check_architecture(arch)
     if fields.get("source", name) not in (name, f"{name} ({version})"):
@@ -100,14 +111,14 @@ def _build(tree, out, authoring, architecture):
         (source / "tree-modes.json").write_text(
             json.dumps(tree_modes(tree), sort_keys=True, indent=2) + "\n"
         )
-        shutil.copytree(authoring, source / "authoring",
-                        symlinks=True,
-                        ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"))
+        # exactly what the checkout tracks, never an untracked note or cache (ORDER 339's rule, lean/tracked.py)
+        tracked.copy(authoring, source / "authoring")
         kit = source / "release-toolkit"
         (kit / "lean").mkdir(parents=True)
         for path in (toolkit / "lean").glob("*.py"):
             shutil.copy2(path, kit / "lean" / path.name)
         shutil.copy2(toolkit / "lean/JvmLexer.java", kit / "lean/JvmLexer.java")
+        shutil.copy2(toolkit / "lean/ZigTokens.zig", kit / "lean/ZigTokens.zig")
         shutil.copy2(toolkit / "lean/smoke.tsv", kit / "lean/smoke.tsv")
         licence = toolkit / "packages/dpkg-stereo/LICENSE"
         if not licence.exists():
@@ -118,7 +129,7 @@ def _build(tree, out, authoring, architecture):
         (source / "debian/control").write_text(
             f"Source: {name}\nSection: {section}\nPriority: {priority}\n"
             f"Maintainer: {maintainer}\n"
-            "Build-Depends: dpkg-dev, gcc, node-acorn, nodejs, perl, python3, python3-yaml\n"
+            f"Build-Depends: dpkg-dev, gcc, node-acorn, nodejs, perl, python3, python3-yaml{extra_build_deps}\n"
             "Standards-Version: 4.7.4\nRules-Requires-Root: no\n\n"
             f"Package: {name}\nArchitecture: {arch}\nSection: {section}\nPriority: {priority}\n"
             f"Description: {fields['description']}\n"
@@ -127,7 +138,7 @@ def _build(tree, out, authoring, architecture):
             f"{name} ({version}) unstable; urgency=medium\n\n"
             "  * Build from retained authored staging and generator inputs; apply\n"
             "    qualified Lean Code and publish matching HR documentation.\n\n"
-            f" -- {maintainer}  {email.utils.formatdate(localtime=False)}\n"
+            f" -- {maintainer}  {reproducible.rfc2822(stamp)}\n"
         )
         (source / "debian/source/format").write_text("3.0 (native)\n")
         # The source archive is a resolved payload, not an editor checkout.
@@ -178,7 +189,9 @@ with tempfile.TemporaryDirectory(dir=root, prefix=".staging-") as work:
                          f"{other_target} build build-arch build-indep clean:\n"
                          ".PHONY: binary binary-arch binary-indep build build-arch build-indep clean\n")
         rules.chmod(0o755)
-        subprocess.run(["dpkg-source", "-b", str(source)], cwd=work, check=True)
+        reproducible.normalize(source, stamp)
+        subprocess.run(["dpkg-source", "-b", str(source)], cwd=work, check=True,
+                       env=os.environ | {"SOURCE_DATE_EPOCH": str(stamp)})
         release.build_tree(tree, out)
         for suffix in ("dsc", "tar.xz"):
             shutil.copy2(work / f"{name}_{version}.{suffix}", out)
@@ -191,8 +204,10 @@ if __name__ == "__main__":
     parser.add_argument("--authoring", required=True, type=Path)
     parser.add_argument("--architecture", default="all",
                         help="explicit architecture for script/data packages constrained to this build host")
+    parser.add_argument("--build-dependency", action="append", default=[],
+                        help="additional dependency used by the authored recipe")
     args = parser.parse_args()
     try:
-        build(args.tree, args.out, args.authoring, args.architecture)
+        build(args.tree, args.out, args.authoring, args.architecture, args.build_dependency)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, str(error) + "\n")

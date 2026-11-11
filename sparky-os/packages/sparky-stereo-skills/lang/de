@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/16
+# Last update 2026/11/01
 LOCAL1="Skills für KI-Assistenten"
 LOCAL3="Ihren KI-Assistenten die Skills von Sparky Stereo OS geben?"
 LOCAL4="Die Skills bleiben in /usr/share/sparky-stereo-os/skills. Jeder gewählte Ordner erhält einen Link auf jeden Skill; Ihre eigenen Skills bleiben unverändert."
@@ -34,7 +34,21 @@ LOCAL22="%s von %s Skills verknüpft"
 LOCAL23="Gelesen von"
 LOCAL24="Die Skills von Sparky Stereo OS für Ihre KI-Assistenten"
 LOCAL25="Für menschliche Betreuer und lokale Modelle (kein Assistent erforderlich):
+  find [--limit N] TEXT   die Skills, die am besten zu einer Aufgabe oder einem Symptom passen, offline gesucht, mit dem context-Befehl für den nächsten Schritt
   context [SKILL...] [--section SKILL:ÜBERSCHRIFT] [--reference PFAD] [--output DATEI]
             ausgewählte Anleitungen mit Quell-Prüfsummen; context --help zeigt die Optionen
   bundle DATEI.zip   vollständige öffentliche Referenz zum Entpacken und Offline-Lesen"
 LOCAL26="Übersprungen, es ist keines seiner Pakete installiert: %s"
+LOCAL27="Die Skill-Engine fehlt: %s (installieren Sie das Paket sparky-stereo-skills-engine)."
+LOCAL28="Sollen diese Assistenten die Skills auch über MCP (Model Context Protocol) nachschlagen dürfen?"
+LOCAL29="Wer die Befehle freigibt, die ein Skill aufführt"
+LOCAL30="Automatisch: die eigene Freigabe des Assistenten, wenn Sie einen KI-Assistenten nutzen, sonst zuerst mich fragen"
+LOCAL31="Immer zuerst mich fragen"
+LOCAL32="Immer die eigene Freigabe des Assistenten verwenden"
+LOCAL33="Für Assistenten und Befehle (dieselbe Engine beantwortet find und context):
+  sections SKILL   die genauen Überschriften eines Skills
+  commands SKILL   die Befehle, die ein Benutzer-Skill aufführt
+  run SKILL ID [FELD=WERT...]   führt einen aufgeführten Befehl nach Ihrer Bestätigung aus
+  serve   der MCP-Server über stdio, von einem Assistenten gestartet
+  mcp register [ASSISTENT...] | unregister [ASSISTENT...] | status | commands [auto|assistant|ask]
+            meldet den Server nach Ihrer Bestätigung bei einem Assistenten an, entfernt ihn, zeigt den Zustand oder wählt, wer Befehle freigibt"

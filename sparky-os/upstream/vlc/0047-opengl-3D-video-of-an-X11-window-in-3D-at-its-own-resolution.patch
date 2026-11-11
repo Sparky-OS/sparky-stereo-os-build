@@ -1,0 +1,725 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 6 Nov 2026 22:30:00 -0300
+Subject: [PATCH] opengl: show the 3D video of an X11 window in 3D, each view at
+ its own resolution, and say when the desktop does not take the declaration
+
+On X11 (also through Xwayland) the video of the Qt interface is a child
+window of the interface's window, and the video output declared that child
+with stereo_declare_x11(), as if it were a top-level window. Stereo KWin
+shows the two views of a child one for each eye only when its top-level
+window lists it (_KDE_NET_WM_STEREO_CONTENT_CHILDREN, support version 5),
+so the declaration was ignored and a 3D video showed one view in both eyes.
+
+A 3D video is now drawn on a window of the video output's own, made inside
+the video window before the OpenGL surface exists and left to the OpenGL
+modules through the variable gl-x11-window (egl.c and glx.c draw on it, the
+x11-window.h helper is theirs in common). The interface keeps reading the
+size of its own video window, which the new window does not touch. The new
+window holds the two views side by side at the resolution they have, is
+resized with them, and is declared with stereo_declare_x11_child()
+(libstereo-declare 1.7.0) on the nearest ancestor the window manager
+manages (it carries WM_STATE, ICCCM 4.1.3.1), with the size one view is shown
+at, the video window's size (support version 8, CHILD-PLACE.md). The window
+selects no events, so the pointer and the keys go on to the video window.
+Stereo KWin resizes each view once, into the video window's rectangle. When
+the video output closes, which is also when a 3D video gives way to a 2D one
+in the same window, the declaration is taken back with
+stereo_remove_x11_child() and the window destroyed.
+
+Where the desktop announces support version 5 to 7, the video window is
+declared as the child with one view in each half of it, as before, and VLC
+says so: a message in its log and the dialog "3D video shown at reduced
+width". Below 5, or when the declaration fails, the dialog is "3D video shown
+flat" and the log says why, instead of one view shown as if it worked. The
+Wayland path says the same when its declaration fails. Each dialog shows once
+per VLC session, each kind once (Daniel, 2026-11-07: "once per session (your
+choice was right)"); the log line is written for every video.
+
+A video window that the window manager manages itself (VLC without the Qt
+interface's embedded video) keeps stereo_declare_x11() and
+stereo_remove_x11(): the compositor makes such a window hold both views.
+Xlib errors from windows that are already gone are ignored for these calls
+only.
+
+Nothing in VLC upstream declares stereo windows; the change is for VLC
+Stereo only.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+--- a/modules/video_output/opengl/display.c
++++ b/modules/video_output/opengl/display.c
+@@ -34,6 +34,8 @@
+ #include <vlc_opengl.h>
+ #ifdef HAVE_STEREO_DECLARE
+ # include <vlc_xlib.h>
++# include <errno.h>
++# include <vlc_dialog.h>
+ # include <stereo-declare.h>
+ # ifdef VLC_GL_WAYLAND
+ #  include <wayland-client.h>
+@@ -80,6 +82,16 @@ vlc_module_begin ()
+     add_glopts ()
+ vlc_module_end ()
+ 
++#ifdef HAVE_STEREO_DECLARE
++/* how the video window of an X11 window is declared */
++enum {
++    X11_NONE,
++    X11_TOPLEVEL, /* a window of its own, which the compositor makes hold both views */
++    X11_OWN,      /* a window of the video output's own inside the video window, which holds the two views at their resolution */
++    X11_HALVES,   /* the video window, with one view in each half of it */
++};
++#endif
++
+ struct vout_display_sys_t
+ {
+     vout_display_opengl_t *vgl;
+@@ -87,6 +99,10 @@ struct vout_display_sys_t
+     picture_pool_t *pool;
+ #ifdef HAVE_STEREO_DECLARE
+     Display *x11; /* connection the video window is declared with, if any */
++    Window x11_toplevel; /* the window that lists the video window as its child, if it is one */
++    Window x11_view; /* the window of the video output's own inside the video window, if it has one */
++    int x11_mode;
++    unsigned x11_support; /* what the desktop announces */
+ # ifdef VLC_GL_WAYLAND
+     struct wl_event_queue *stereo_queue;
+     struct wp_viewport *viewport;
+@@ -127,6 +143,237 @@ static void SetViewSize(vout_display_sys
+         logical_height > 0 ? logical_height : 1);
+ }
+ #endif
++static bool x11_error;
++
++static int IgnoreX11Error (Display *dpy, XErrorEvent *ev)
++{
++    (void) dpy; (void) ev;
++    x11_error = true;
++    return 0;
++}
++
++/**
++ * The managed top-level window that holds the video window: the video window
++ * itself when the window manager manages it (it carries WM_STATE, ICCCM
++ * 4.1.3.1), else its nearest managed ancestor, else the ancestor just below
++ * the root. None when the tree cannot be read.
++ */
++static Window X11Toplevel (Display *x11, Window window)
++{
++    Atom wm_state = XInternAtom (x11, "WM_STATE", True);
++
++    for (Window w = window;;)
++    {
++        Window root, parent, *children;
++        unsigned count;
++
++        if (wm_state != None)
++        {
++            Atom type;
++            int format;
++            unsigned long n, after;
++            unsigned char *data = NULL;
++            if (XGetWindowProperty (x11, w, wm_state, 0, 2, False, wm_state,
++                                    &type, &format, &n, &after, &data) == Success
++             && data != NULL)
++            {
++                XFree (data);
++                if (type == wm_state)
++                    return w;
++            }
++        }
++        if (!XQueryTree (x11, w, &root, &parent, &children, &count))
++            return None;
++        XFree (children);
++        if (parent == None || parent == root)
++            return w;
++        w = parent;
++    }
++}
++
++static bool StereoMultiview (const video_format_t *fmt)
++{
++    switch (fmt->multiview_mode)
++    {
++        case MULTIVIEW_STEREO_SBS:
++        case MULTIVIEW_STEREO_SBS_RIGHT_FIRST:
++        case MULTIVIEW_STEREO_TB:
++        case MULTIVIEW_STEREO_TB_RIGHT_FIRST:
++        case MULTIVIEW_STEREO_ROW:
++        case MULTIVIEW_STEREO_ROW_RIGHT_FIRST:
++        case MULTIVIEW_STEREO_COL:
++        case MULTIVIEW_STEREO_COL_RIGHT_FIRST:
++        case MULTIVIEW_STEREO_CHECKERBOARD:
++        case MULTIVIEW_STEREO_CHECKERBOARD_RIGHT_FIRST:
++            return true;
++        default:
++            return false;
++    }
++}
++
++/**
++ * Whether this is the first time in this VLC session that the notice of that
++ * name is asked for: the dialogs show once per session (Daniel, 2026-11-07:
++ * "once per session"), each kind once, while the log says it every time.
++ */
++static bool FirstNotice (vout_display_t *vd, const char *name)
++{
++    vlc_object_t *session = VLC_OBJECT(vd->obj.libvlc);
++
++    if (var_Type (session, name) != 0)
++        return false;
++    var_Create (session, name, VLC_VAR_BOOL);
++    msg_Dbg (vd, "showing the notice \"%s\", once for this VLC session", name);
++    return true;
++}
++
++static void FlatNotice (vout_display_t *vd, const char *why)
++{
++    msg_Err (vd, "the desktop did not take the stereo declaration of the "
++                 "video window (%s): this 3D video is not shown in 3D",
++             why);
++    if (FirstNotice (vd, "gl-notice-flat"))
++        vlc_dialog_display_error (vd, _("3D video shown flat"),
++            _("The desktop does not take stereo video windows (Stereo KWin "
++              "does), so this 3D video is not shown in 3D. VLC's messages "
++              "say why."));
++}
++
++static void ReducedNotice (vout_display_t *vd, const char *why)
++{
++    msg_Warn (vd, "the desktop does not place the views of a video window one "
++                  "by one (%s): this 3D video is shown at half its width", why);
++    if (FirstNotice (vd, "gl-notice-reduced"))
++        vlc_dialog_display_error (vd, _("3D video shown at reduced width"),
++            _("The desktop does not place a video window's views one by one "
++              "(Stereo KWin does), so each view of this 3D video is shown at "
++              "half its width. VLC's messages say why."));
++}
++
++/**
++ * Before the OpenGL surface exists: a video window that is a child of the
++ * interface's window gets a window of the video output's own, inside it, to
++ * draw on, when the desktop places the views of a child one by one (support
++ * version 8). The window holds the two views at the resolution they have, and
++ * the video window of the interface, whose size the interface reads, is left
++ * alone. The OpenGL modules draw on it through "gl-x11-window".
++ */
++static void PrepareX11 (vout_display_t *vd, vout_window_t *surface)
++{
++    vout_display_sys_t *sys = vd->sys;
++
++    if (surface->type != VOUT_WINDOW_TYPE_XID || !StereoMultiview (&vd->fmt)
++     || !vlc_xlib_init (VLC_OBJECT(vd)))
++        return;
++
++    Display *x11 = XOpenDisplay (surface->display.x11);
++    if (x11 == NULL)
++        return;
++    sys->x11 = x11;
++
++    XErrorHandler previous = XSetErrorHandler (IgnoreX11Error);
++    x11_error = false;
++    sys->x11_support = stereo_supported_x11 (x11);
++    Window top = X11Toplevel (x11, surface->handle.xid);
++    if (top != None && top != surface->handle.xid && sys->x11_support >= 8)
++    {
++        XSetWindowAttributes swa;
++        swa.event_mask = 0; /* the pointer and keys go on to the video window */
++        unsigned w = __MAX(vd->cfg->display.width, 1u) * 2;
++        unsigned h = __MAX(vd->cfg->display.height, 1u);
++        Window view = XCreateWindow (x11, surface->handle.xid, 0, 0, w, h, 0,
++                                     CopyFromParent, InputOutput,
++                                     CopyFromParent, CWEventMask, &swa);
++        XMapWindow (x11, view);
++        XSync (x11, False);
++        if (!x11_error)
++        {
++            sys->x11_view = view;
++            var_Create (surface, "gl-x11-window", VLC_VAR_INTEGER);
++            var_SetInteger (surface, "gl-x11-window", view);
++        }
++        else
++            XDestroyWindow (x11, view);
++    }
++    XSetErrorHandler (previous);
++}
++
++/**
++ * Declares the video window of an X11 window. A child of the interface's
++ * window is declared as a stereo child of its top-level window, which lists
++ * it, so that the compositor shows its two views, one for each eye, in the
++ * place of the video and everything else the same in both eyes: the window of
++ * the video output's own with the size one view is shown at (support version
++ * 8), else the video window with one view in each half of it; a window of its
++ * own is declared as a stereo window. Returns 0 or a negative errno value.
++ */
++static int DeclareX11 (vout_display_t *vd, vout_window_t *surface)
++{
++    vout_display_sys_t *sys = vd->sys;
++    Display *x11 = sys->x11;
++    const Window video = surface->handle.xid;
++    XErrorHandler previous = XSetErrorHandler (IgnoreX11Error);
++    x11_error = false;
++    int err = 0;
++    Window top = X11Toplevel (x11, video);
++    unsigned w = __MAX(vd->cfg->display.width, 1u);
++    unsigned h = __MAX(vd->cfg->display.height, 1u);
++
++    sys->x11_mode = X11_NONE;
++    sys->x11_toplevel = None;
++    if (top == None)
++        err = -ENOENT;
++    else if (top == video)
++    {
++        /* a window of its own: the compositor makes it hold both views */
++        err = sys->x11_support < 3 ? -ENOTSUP
++            : stereo_declare_x11 (x11, video, STEREO_SBS_FULL,
++                                  STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT);
++        if (err == 0)
++            sys->x11_mode = X11_TOPLEVEL;
++    }
++    else if (sys->x11_view != None)
++    {
++        err = stereo_declare_x11_child (x11, top, sys->x11_view,
++                                        STEREO_SBS_FULL, STEREO_CLASS_VIDEO,
++                                        STEREO_VIDEO_CURRENT, w, h);
++        if (err == 0)
++            sys->x11_mode = X11_OWN;
++    }
++    else if (sys->x11_support < 5)
++        err = -ENOTSUP;
++    else
++    {
++        err = stereo_declare_x11_child (x11, top, video, STEREO_SBS_FULL,
++                                        STEREO_CLASS_VIDEO,
++                                        STEREO_VIDEO_CURRENT, 0, 0);
++        if (err == 0)
++            sys->x11_mode = X11_HALVES;
++    }
++    if (err == 0)
++        sys->x11_toplevel = (sys->x11_mode == X11_TOPLEVEL) ? None : top;
++    XSync (x11, False);
++    if (err == 0 && x11_error)
++        err = -EIO;
++    XSetErrorHandler (previous);
++    return err;
++}
++
++/**
++ * Takes the video window out of the list of its top-level window, if it is a
++ * child, and deletes its declaration. The windows may be gone already.
++ */
++static void RemoveX11 (Display *x11, Window toplevel, Window video)
++{
++    XErrorHandler previous = XSetErrorHandler (IgnoreX11Error);
++    if (toplevel != None)
++        stereo_remove_x11_child (x11, toplevel, video);
++    else
++        stereo_remove_x11 (x11, video);
++    XSync (x11, False);
++    XSetErrorHandler (previous);
++}
++
+ /**
+  * Declares the video window to the compositor as full side by side stereo
+  * content, left eye first, while a stereoscopic video plays. The compositor
+@@ -161,10 +408,14 @@ static void DeclareStereo (vout_display_
+          * ownership of its display and default event queue. */
+         struct wl_event_queue *queue = wl_display_create_queue(surface->display.wl);
+         if (queue == NULL)
++        {
++            FlatNotice(vd, "no event queue");
+             return;
++        }
+         if (stereo_declare_wayland_init(surface->display.wl, queue) != 0)
+         {
+             wl_event_queue_destroy(queue);
++            FlatNotice(vd, "the stereo declaration could not start");
+             return;
+         }
+         struct wp_viewporter *viewporter = NULL;
+@@ -173,6 +424,7 @@ static void DeclareStereo (vout_display_
+         {
+             stereo_declare_wayland_finish();
+             wl_event_queue_destroy(queue);
++            FlatNotice(vd, "no display wrapper");
+             return;
+         }
+         wl_proxy_set_queue((struct wl_proxy *)wrapper, queue);
+@@ -182,6 +434,7 @@ static void DeclareStereo (vout_display_
+         {
+             stereo_declare_wayland_finish();
+             wl_event_queue_destroy(queue);
++            FlatNotice(vd, "no registry");
+             return;
+         }
+         static const struct wl_registry_listener listener = {
+@@ -208,26 +461,31 @@ static void DeclareStereo (vout_display_
+             wp_viewporter_destroy(viewporter);
+         wl_registry_destroy(registry);
+         if (!sys->stereo)
++        {
+             wl_event_queue_destroy(queue);
++            FlatNotice(vd, "the compositor does not announce stereo content "
++                           "and the viewporter, or refused the declaration");
++        }
+         return;
+     }
+ #endif
+-    if (surface->type != VOUT_WINDOW_TYPE_XID || !vlc_xlib_init (VLC_OBJECT(vd)))
+-        return;
+-
+-    Display *x11 = XOpenDisplay (surface->display.x11);
+-    if (x11 == NULL)
++    if (sys->x11 == NULL)
+         return;
+ 
+-    if (stereo_supported_x11 (x11) >= 3
+-     && stereo_declare_x11 (x11, surface->handle.xid, STEREO_SBS_FULL,
+-                            STEREO_CLASS_VIDEO, STEREO_VIDEO_CURRENT) == 0)
++    int err = DeclareX11 (vd, surface);
++    if (err == 0)
+     {
+-        sys->x11 = x11;
+         sys->stereo = true;
++        if (sys->x11_mode == X11_HALVES)
++        {
++            char why[128];
++            snprintf (why, sizeof why, "it announces stereo support version %u, "
++                      "and the places of the views need 8", sys->x11_support);
++            ReducedNotice (vd, why);
++        }
++        return;
+     }
+-    else
+-        XCloseDisplay (x11);
++    FlatNotice (vd, vlc_strerror_c (-err));
+ }
+ 
+ /**
+@@ -235,11 +493,12 @@ static void DeclareStereo (vout_display_
+  */
+ static void RemoveStereo (vout_display_sys_t *sys, vout_window_t *surface)
+ {
+-    if (sys->x11 != NULL)
++    if (sys->x11 != NULL && sys->x11_mode != X11_NONE)
+     {
+-        stereo_remove_x11 (sys->x11, surface->handle.xid);
+-        XCloseDisplay (sys->x11);
+-        sys->x11 = NULL;
++        RemoveX11 (sys->x11, sys->x11_toplevel,
++                   sys->x11_view != None ? sys->x11_view : surface->handle.xid);
++        sys->x11_mode = X11_NONE;
++        sys->x11_toplevel = None;
+     }
+ # ifdef VLC_GL_WAYLAND
+     if (sys->stereo_queue != NULL)
+@@ -254,6 +513,61 @@ static void RemoveStereo (vout_display_s
+ # endif
+     sys->stereo = false;
+ }
++
++/**
++ * After the OpenGL surface is gone: the window of the video output's own and
++ * the connection.
++ */
++static void CloseX11 (vout_display_sys_t *sys, vout_window_t *surface)
++{
++    if (sys->x11 == NULL)
++        return;
++    XErrorHandler previous = XSetErrorHandler (IgnoreX11Error);
++    if (sys->x11_view != None)
++    {
++        XDestroyWindow (sys->x11, sys->x11_view);
++        var_Destroy (surface, "gl-x11-window");
++        sys->x11_view = None;
++    }
++    XSync (sys->x11, False);
++    XSetErrorHandler (previous);
++    XCloseDisplay (sys->x11);
++    sys->x11 = NULL;
++}
++
++/**
++ * The OpenGL surface's size, and the size of the window of the video
++ * output's own, which is the surface on X11.
++ */
++static void ResizeSurface (vout_display_sys_t *sys, unsigned width, unsigned height)
++{
++    vlc_gl_Resize (sys->gl, width, height);
++    if (sys->x11_view != None && width > 0 && height > 0)
++    {
++        XErrorHandler previous = XSetErrorHandler (IgnoreX11Error);
++        XResizeWindow (sys->x11, sys->x11_view, width, height);
++        XSync (sys->x11, False);
++        XSetErrorHandler (previous);
++    }
++}
++
++/**
++ * The size one view is shown at, for the window of the video output's own.
++ */
++static void SetX11ViewSize (vout_display_sys_t *sys, unsigned width, unsigned height)
++{
++    if (sys->x11_mode != X11_OWN || width == 0 || height == 0)
++        return;
++    XErrorHandler previous = XSetErrorHandler (IgnoreX11Error);
++    stereo_declare_x11_one_view_size (sys->x11, sys->x11_view, width, height);
++    XSync (sys->x11, False);
++    XSetErrorHandler (previous);
++}
++#else
++static void ResizeSurface (vout_display_sys_t *sys, unsigned width, unsigned height)
++{
++    vlc_gl_Resize (sys->gl, width, height);
++}
+ #endif
+ 
+ /* Display callbacks */
+@@ -280,6 +594,10 @@ static int Open (vlc_object_t *obj)
+     sys->pool = NULL;
+ #ifdef HAVE_STEREO_DECLARE
+     sys->x11 = NULL;
++    sys->x11_toplevel = None;
++    sys->x11_view = None;
++    sys->x11_mode = X11_NONE;
++    sys->x11_support = 0;
+     sys->stereo = false;
+ # ifdef VLC_GL_WAYLAND
+     sys->stereo_queue = NULL;
+@@ -320,6 +638,10 @@ static int Open (vlc_object_t *obj)
+     }
+ #endif
+ 
++#ifdef HAVE_STEREO_DECLARE
++    vd->sys = sys;
++    PrepareX11 (vd, surface);
++#endif
+     sys->gl = vlc_gl_Create (surface, API, gl_name);
+     if (sys->gl == NULL)
+         goto error;
+@@ -336,7 +658,7 @@ static int Open (vlc_object_t *obj)
+     unsigned width, height;
+     int stride;
+     PlaceOnDisplay (vd, vd->cfg, &place, &aspect, &width, &height, &stride);
+-    vlc_gl_Resize (sys->gl, width, height);
++    ResizeSurface (sys, width, height);
+ 
+     /* Initialize video display */
+     const vlc_fourcc_t *spu_chromas;
+@@ -368,6 +690,10 @@ error:
+ #endif
+     if (sys->gl != NULL)
+         vlc_gl_Release (sys->gl);
++#ifdef HAVE_STEREO_DECLARE
++    if (surface != NULL)
++        CloseX11 (sys, surface);
++#endif
+     if (surface != NULL)
+         vout_display_DeleteWindow (vd, surface);
+     free (sys);
+@@ -393,6 +719,9 @@ static void Close (vlc_object_t *obj)
+     vlc_gl_ReleaseCurrent (gl);
+ 
+     vlc_gl_Release (gl);
++#ifdef HAVE_STEREO_DECLARE
++    CloseX11 (sys, surface);
++#endif
+     vout_display_DeleteWindow (vd, surface);
+     free (sys);
+ }
+@@ -460,11 +789,29 @@ static void PlaceOnSurface(vout_display_
+     *width = cfg->display.width * (sys->stereo ? 2 : 1);
+     *height = cfg->display.height;
+     *stride = sys->stereo ? cfg->display.width : 0;
+-    /* Only a viewport tells the compositor the size the views are shown at:
+-     * an X11 window is its own buffer, at the window's size */
+-    bool viewport = false;
++    if (sys->x11_mode == X11_HALVES)
++    {
++        /* The video window of an X11 window is its own buffer, at the size
++         * the interface gave it, and the compositor shows the two views of a
++         * declared child in the halves of that buffer, each at the place of
++         * the window: draw one view in each half, the compositor stretches
++         * each back once */
++        unsigned half = cfg->display.width / 2;
++        if (half == 0 || cfg->display.width == 0)
++            return;
++        double k = (double)half / cfg->display.width;
++        *width = cfg->display.width;
++        *stride = half;
++        place->x = lround(place->x * k);
++        place->width = __MAX(1u, (unsigned)lround(place->width * k));
++        return;
++    }
++    /* Only a viewport, or the size one view is shown at of the window of the
++     * video output's own, tells the compositor the size the views are shown
++     * at: an X11 window is its own buffer, at the window's size */
++    bool viewport = sys->x11_mode == X11_OWN;
+ # ifdef VLC_GL_WAYLAND
+-    viewport = sys->viewport != NULL;
++    viewport = viewport || sys->viewport != NULL;
+ # endif
+     if (!sys->stereo || !viewport)
+         return;
+@@ -546,7 +893,10 @@ static int ChangeDisplay (vout_display_t
+ #if defined(HAVE_STEREO_DECLARE) && defined(VLC_GL_WAYLAND)
+     SetViewSize(sys, cfg->display.width, cfg->display.height);
+ #endif
+-    vlc_gl_Resize (sys->gl, width, height);
++#ifdef HAVE_STEREO_DECLARE
++    SetX11ViewSize(sys, cfg->display.width, cfg->display.height);
++#endif
++    ResizeSurface (sys, width, height);
+     if (vlc_gl_MakeCurrent (sys->gl) != VLC_SUCCESS)
+         return VLC_EGENERIC;
+     vout_display_opengl_SetWindowAspectRatio(sys->vgl, aspect);
+@@ -589,7 +939,7 @@ static int Control (vout_display_t *vd,
+         unsigned width, height;
+         int stride;
+         PlaceOnSurface(vd, cfg, &place, &width, &height, &stride);
+-        vlc_gl_Resize (sys->gl, width, height);
++        ResizeSurface (sys, width, height);
+ #endif
+         if (vlc_gl_MakeCurrent (sys->gl) != VLC_SUCCESS)
+             return VLC_EGENERIC;
+--- a/modules/video_output/glx.c
++++ b/modules/video_output/glx.c
+@@ -34,11 +34,13 @@
+ #include <vlc_opengl.h>
+ #include <vlc_vout_window.h>
+ #include <vlc_xlib.h>
++#include "opengl/x11-window.h"
+ 
+ typedef struct vlc_gl_sys_t
+ {
+     Display *display;
+     GLXWindow win;
++    Window xid;
+     GLXContext ctx;
+     bool restore_forget_gravity;
+ } vlc_gl_sys_t;
+@@ -140,7 +142,8 @@ static int Open (vlc_object_t *obj)
+ 
+     /* Determine our pixel format */
+     XWindowAttributes wa;
+-    if (!XGetWindowAttributes (dpy, gl->surface->handle.xid, &wa))
++    const Window xid = vlc_gl_x11_window (gl->surface);
++    if (!XGetWindowAttributes (dpy, xid, &wa))
+         goto error;
+ 
+     const int snum = XScreenNumberOfScreen (wa.screen);
+@@ -186,7 +189,8 @@ static int Open (vlc_object_t *obj)
+     }
+ 
+     /* Create a drawing surface */
+-    sys->win = glXCreateWindow (dpy, conf, gl->surface->handle.xid, NULL);
++    sys->xid = xid;
++    sys->win = glXCreateWindow (dpy, conf, xid, NULL);
+     if (sys->win == None)
+     {
+         msg_Err (obj, "cannot create GLX window");
+@@ -206,7 +210,7 @@ static int Open (vlc_object_t *obj)
+     if (wa.bit_gravity == ForgetGravity) {
+         XSetWindowAttributes swa;
+         swa.bit_gravity = NorthWestGravity;
+-        XChangeWindowAttributes (dpy, gl->surface->handle.xid, CWBitGravity,
++        XChangeWindowAttributes (dpy, xid, CWBitGravity,
+                                  &swa);
+         sys->restore_forget_gravity = true;
+     } else
+@@ -277,7 +281,7 @@ static void Close (vlc_object_t *obj)
+     if (sys->restore_forget_gravity) {
+         XSetWindowAttributes swa;
+         swa.bit_gravity = ForgetGravity;
+-        XChangeWindowAttributes (dpy, gl->surface->handle.xid, CWBitGravity,
++        XChangeWindowAttributes (dpy, sys->xid, CWBitGravity,
+                                  &swa);
+     }
+     XCloseDisplay (dpy);
+--- a/modules/video_output/opengl/egl.c
++++ b/modules/video_output/opengl/egl.c
+@@ -34,6 +34,9 @@
+ #include <vlc_opengl.h>
+ #include <vlc_vout_window.h>
+ #ifdef USE_PLATFORM_X11
++# include "x11-window.h"
++#endif
++#ifdef USE_PLATFORM_X11
+ # include <vlc_xlib.h>
+ #endif
+ #ifdef USE_PLATFORM_WAYLAND
+@@ -50,6 +53,7 @@ typedef struct vlc_gl_sys_t
+     EGLContext context;
+ #if defined (USE_PLATFORM_X11)
+     Display *x11;
++    Window xwindow;
+     bool restore_forget_gravity;
+ #endif
+ #if defined (USE_PLATFORM_WAYLAND)
+@@ -231,7 +235,7 @@ static void Close (vlc_object_t *obj)
+         if (sys->restore_forget_gravity) {
+             XSetWindowAttributes swa;
+             swa.bit_gravity = ForgetGravity;
+-            XChangeWindowAttributes (sys->x11, gl->surface->handle.xid,
++            XChangeWindowAttributes (sys->x11, sys->xwindow,
+                                      CWBitGravity, &swa);
+         }
+         XCloseDisplay(sys->x11);
+@@ -276,7 +280,8 @@ static int Open (vlc_object_t *obj, cons
+     if (wnd->type != VOUT_WINDOW_TYPE_XID || !vlc_xlib_init(obj))
+         goto error;
+ 
+-    window = &wnd->handle.xid;
++    sys->xwindow = vlc_gl_x11_window(wnd);
++    window = &sys->xwindow;
+     sys->x11 = XOpenDisplay(wnd->display.x11);
+     if (sys->x11 == NULL)
+         goto error;
+@@ -287,12 +292,12 @@ static int Open (vlc_object_t *obj, cons
+         XSetWindowAttributes swa;
+ 
+         sys->restore_forget_gravity = false;
+-        if (!XGetWindowAttributes(sys->x11, wnd->handle.xid, &wa))
++        if (!XGetWindowAttributes(sys->x11, sys->xwindow, &wa))
+             goto error;
+         snum = XScreenNumberOfScreen(wa.screen);
+         if (wa.bit_gravity == ForgetGravity) {
+             swa.bit_gravity = NorthWestGravity;
+-            XChangeWindowAttributes(sys->x11, wnd->handle.xid, CWBitGravity,
++            XChangeWindowAttributes(sys->x11, sys->xwindow, CWBitGravity,
+                                     &swa);
+             sys->restore_forget_gravity = true;
+         }
+--- /dev/null
++++ b/modules/video_output/opengl/x11-window.h
+@@ -0,0 +1,29 @@
++/**
++ * @file x11-window.h
++ * @brief The X11 window an OpenGL surface is drawn on
++ */
++#ifndef VLC_GL_X11_WINDOW_H
++#define VLC_GL_X11_WINDOW_H 1
++
++#include <vlc_common.h>
++#include <vlc_vout_window.h>
++
++/**
++ * The window the surface is drawn on: the window of its own that the OpenGL
++ * video output made inside the video window and told in "gl-x11-window",
++ * else the video window itself.
++ */
++static inline unsigned long vlc_gl_x11_window(vout_window_t *wnd)
++{
++    vlc_object_t *obj = VLC_OBJECT(wnd);
++
++    if (var_Type(obj, "gl-x11-window") & VLC_VAR_INTEGER)
++    {
++        unsigned long xid = var_GetInteger(obj, "gl-x11-window");
++        if (xid != 0)
++            return xid;
++    }
++    return wnd->handle.xid;
++}
++
++#endif

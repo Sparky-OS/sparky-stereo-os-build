@@ -1,0 +1,126 @@
+Description: Vulkan paths on X11 list their child window
+ The Vulkan stereo layer and the window system integration's own stereo
+ swapchain declared _KDE_NET_WM_STEREO_CONTENT on a child window and never
+ listed it in the owner's _KDE_NET_WM_STEREO_CONTENT_CHILDREN, so the compositor
+ showed the packed images squeezed into the child. Both now list the child with
+ the shared u_x11_stereo_child.h calls when the compositor announces
+ declaration version 5 or later, and the layer writes
+ _KDE_NET_WM_STEREO_CONTENT_VERSION 4 first from version 4 (it never did, so
+ its window was doubled by the compositor's version 3 rule) and halves the
+ surface's width only for version 3, as the integration does (patch 0015). The
+ layer's Xlib surfaces take the same steps through their XCB connection.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-07
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+--- a/src/vulkan/stereo-layer/stereo_layer.c
++++ b/src/vulkan/stereo-layer/stereo_layer.c
+@@ -4,12 +4,15 @@
+ #include <xcb/xcb.h>
+ #include <X11/Xatom.h>
+ #include <X11/Xlib.h>
++#include <X11/Xlib-xcb.h>
+ 
+ #include <stdbool.h>
+ #include <stdint.h>
+ #include <stdlib.h>
+ #include <string.h>
+ 
++#include "util/u_x11_stereo_child.h"
++
+ #define PUBLIC __attribute__((visibility("default")))
+ 
+ struct instance_data;
+@@ -370,6 +373,10 @@
+ static void
+ declare_xcb(struct surface_data *surface)
+ {
++   const uint32_t version = xcb_support_version(surface->u.xcb.connection);
++   /* from declaration version 4 the window stays one eye wide, before the declaration */
++   if (version >= 4)
++      u_x11_stereo_set_version(surface->u.xcb.connection, surface->u.xcb.window, 4);
+    xcb_intern_atom_cookie_t cookie = xcb_intern_atom(
+       surface->u.xcb.connection, 1, strlen("_KDE_NET_WM_STEREO_CONTENT"),
+       "_KDE_NET_WM_STEREO_CONTENT");
+@@ -381,6 +388,9 @@
+                           surface->u.xcb.window, atom->atom, XCB_ATOM_CARDINAL,
+                           32, 1, &layout);
+       free(atom);
++      /* a child window is listed with its owner (version 5 and later) */
++      if (version >= 5)
++         u_x11_stereo_list_child(surface->u.xcb.connection, surface->u.xcb.window);
+       xcb_flush(surface->u.xcb.connection);
+    }
+ }
+@@ -388,12 +398,20 @@
+ static void
+ declare_xlib(struct surface_data *surface)
+ {
++   xcb_connection_t *connection = XGetXCBConnection(surface->u.xlib.display);
++   const uint32_t version = xlib_support_version(surface->u.xlib.display);
++   if (version >= 4 && connection) {
++      u_x11_stereo_set_version(connection, surface->u.xlib.window, 4);
++      xcb_flush(connection);
++   }
+    Atom atom = XInternAtom(surface->u.xlib.display, "_KDE_NET_WM_STEREO_CONTENT", False);
+    unsigned long layout = 3;
+    XChangeProperty(surface->u.xlib.display, surface->u.xlib.window, atom,
+                    XA_CARDINAL, 32, PropModeReplace,
+                    (unsigned char *)&layout, 1);
+    XFlush(surface->u.xlib.display);
++   if (version >= 5 && connection)
++      u_x11_stereo_list_child(connection, surface->u.xlib.window);
+ }
+ 
+ static void
+@@ -600,7 +618,7 @@
+    VkResult result = instance->GetSurfaceCapabilities(physical, surface_handle, caps);
+    if (result == VK_SUCCESS && surface && surface->enabled && caps->maxImageArrayLayers < 2) {
+       caps->maxImageArrayLayers = 2;
+-      if (surface_support_version(surface) >= 3 && surface->stereo_swapchain_created) {
++      if (surface_support_version(surface) == 3 && surface->stereo_swapchain_created) {
+          if (caps->currentExtent.width != UINT32_MAX)
+             caps->currentExtent.width /= 2;
+          if (caps->minImageExtent.width != UINT32_MAX)
+--- a/src/vulkan/stereo-layer/meson.build
++++ b/src/vulkan/stereo-layer/meson.build
+@@ -7,7 +7,7 @@
+   dependencies : [
+     dep_wayland_client, dep_xcb, dep_x11, dep_x11_xcb,
+   ],
+-  include_directories : [inc_include],
++  include_directories : [inc_include, inc_src],
+   link_args : cc.get_supported_link_arguments(['-Wl,-Bsymbolic-functions', '-Wl,-z,relro']),
+   install : true
+ )
+@@ -38,7 +38,7 @@
+       c_args : ['-UNDEBUG', '-DVK_USE_PLATFORM_WAYLAND_KHR', '-DVK_USE_PLATFORM_XCB_KHR',
+                 '-DVK_USE_PLATFORM_XLIB_KHR'],
+       dependencies : [dep_wayland_client, dep_xcb, dep_x11, dep_x11_xcb],
+-      include_directories : [inc_include],
++      include_directories : [inc_include, inc_src],
+     ),
+   )
+ endif
+--- a/src/vulkan/wsi/wsi_common_x11.c
++++ b/src/vulkan/wsi/wsi_common_x11.c
+@@ -34,6 +34,7 @@
+ #include <xcb/present.h>
+ #include <xcb/shm.h>
+ 
++#include "util/u_x11_stereo_child.h"
+ #include "util/macros.h"
+ #include <stdatomic.h>
+ #include <stdlib.h>
+@@ -2814,6 +2815,10 @@
+                              atom->atom, XCB_ATOM_CARDINAL, 32, 1, &layout);
+          free(atom);
+       }
++      /* a child window is listed with its owner, so the compositor shows its
++       * own surface one view per eye (declaration version 5 and later) */
++      if (stereo_version >= 5)
++         u_x11_stereo_list_child(chain->conn, chain->window);
+       surface->stereo_swapchain_created = true;
+    }
+ 

@@ -1,0 +1,18 @@
+dpkg (1.23.11+stereo3d1) mashtabba; urgency=medium
+
+  * Sparky Stereo OS (ORDER 363; Daniel, 2026-11-03: "make it recognize the
+    lc1 mark, it's ours to modify anyways"): a shared file of a Multi-Arch:
+    same package set that dpkg-stereo replaced with its Lean Code projection
+    no longer stops the other instances of the same version. When the file
+    on disk is the projection dpkg-stereo's record names (its SHA-256), the
+    file being unpacked is extracted, and it is accepted only when it is the
+    file every other instance shipped (their md5sums) and the original the
+    record names (its SHA-256); dpkg-stereo projects it again after the run.
+    Every other difference is refused as before ("trying to overwrite shared
+    ..., which is different from other instances of package ..."), with or
+    without a record. Before, no second architecture of a projected package
+    could be installed or reinstalled: libstdc++6:i386, and so Steam and
+    wine32, stopped there. Test: t-multiarch's
+    test-coinstall-shared-files-leancode.
+  * dpkg Provides dpkg-lean-code (= 1), the contract dpkg-stereo depends on.
+  * dpkg --version names this build (.dist-version).

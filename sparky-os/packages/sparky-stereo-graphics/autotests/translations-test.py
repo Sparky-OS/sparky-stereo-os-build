@@ -1,16 +1,16 @@
 #!/usr/bin/python3 -I
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Every required language has every message translated, none fuzzy, and each translation keeps the
-# placeholders of its source (%1, %2) and the plural forms its language needs.
+# Every translatable string of the sources is in the template; every required language has every message translated,
+# none fuzzy, and each translation keeps the placeholders of its source (%1, %2) and the plural forms its language needs.
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 po_dir = Path(sys.argv[1])
-languages = ["pl", "pt_BR", "fr", "de", "ja", "ko", "zh_CN", "zh_TW"]
-nplurals = {"pl": 3, "pt_BR": 2, "fr": 2, "de": 2, "ja": 1, "ko": 1, "zh_CN": 1, "zh_TW": 1}
+languages = ["pl", "pt_BR", "fr", "de", "es", "ja", "ko", "zh_CN", "zh_TW"]
+nplurals = {"pl": 3, "pt_BR": 2, "fr": 2, "de": 2, "es": 2, "ja": 1, "ko": 1, "zh_CN": 1, "zh_TW": 1}
 
 
 def q(text):
@@ -96,6 +96,27 @@ for lang in languages:
             if not set(got) <= set(need) or (("%2" in need) and "%2" not in got) or ("%1" in need and "%1" not in got and "plural" not in src and nplurals[lang] > 1 and False):
                 print("FAIL", lang, "placeholders", got, "vs", need, "in", src["id"])
                 failed += 1
+# every translatable string of the sources is in the template, so none is left in English (required-languages: "It
+# covers every string we add"): i18n(), i18nc(), i18np() and i18ncp() calls of the C++ and QML files, adjacent
+# literals joined
+literal = r'"(?:[^"\\]|\\.)*"'
+calls = re.compile(r'\b(i18nc?p?)\(\s*((?:%s\s*)+)(?:,\s*((?:%s\s*)+))?' % (literal, literal))
+
+
+def joined(text):
+    return "".join(re.findall(r'"((?:[^"\\]|\\.)*)"', text))
+
+
+known = {(e.get("ctxt"), e["id"]) for e in pot}
+sources = sorted(p for ext in ("*.cpp", "*.h", "*.qml") for p in (po_dir.parent / "src").rglob(ext))
+for source in sources:
+    for m in calls.finditer(source.read_text(encoding="utf8")):
+        first = joined(m.group(2))
+        second = joined(m.group(3)) if m.group(3) else None
+        ctxt, text = (first, second) if m.group(1).startswith("i18nc") else (None, first)
+        if (ctxt, text) not in known:
+            print("FAIL not in the template:", source.name, repr(ctxt), repr(text))
+            failed += 1
 import json
 meta = json.loads((po_dir.parent / "src" / "kcm_sparkystereo_graphics.json").read_text(encoding="utf8"))
 for lang in languages:

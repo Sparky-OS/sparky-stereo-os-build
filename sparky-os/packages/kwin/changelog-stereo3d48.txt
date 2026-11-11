@@ -1,0 +1,20 @@
+kwin (4:6.7.4-2+stereo3d48) unstable;
+
+  * Every 3D mode is listed left eye first only. Rows, columns, checkerboard
+    and frame sequential no longer come in a right eye first twin: the eye
+    order of an output is its one "Swap eyes" setting, which applies to every
+    3D mode. For rows, columns and checkerboard a right eye first twin and the
+    left eye first mode with the swap on scan out the same frame, pixel for
+    pixel. Frame sequential sends no stereo signal (its timing is the 2D base
+    mode's, no 3D flag), and the right eye first twin and the left eye first
+    mode with the swap on both start on the right view after a mode set and
+    alternate from there. A right eye first mode saved by an earlier KWin is
+    read as its left eye first mode with the output's swap flipped, the same
+    picture (s48-0001, s48-0002; ORDER 116).
+  * A frame sequential mode saved by the person, KWin's own twin or
+    DisplayPort's, is restored after a restart: the saved-mode check knew no
+    frame sequential layout, so the output came back in the plain 2D mode
+    (s48-0001). Tests: testMockDrmEyeOrder, testVirtualStereo,
+    testMockDrmDisplayPortSequential.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 07 Nov 2026 16:42:20 +0000

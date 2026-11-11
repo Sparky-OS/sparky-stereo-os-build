@@ -40,7 +40,7 @@ apt_in() { chroot $R apt-get -y -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-co
 if [ "$STEP" = base ] || [ "$STEP" = all ]; then
 	echo "== $(date -u +%T) base: minbase from Debian testing"
 	mmdebstrap --mode=root --variant=minbase --components=main,contrib,non-free,non-free-firmware --architectures=amd64 \
-		--include=ca-certificates,curl,gnupg,apt-utils,dpkg-dev testing $R http://deb.debian.org/debian
+		--include=ca-certificates,curl,gnupg,apt-utils,dpkg-dev testing $R https://deb.debian.org/debian
 	mounts
 	# the build's own apt sources (removed before packing), keys and the edition's pins
 	cp /build/apt-setup.sh $R/tmp/
@@ -78,20 +78,23 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 		inr dpkg-divert --list "$f" | grep -q . || inr dpkg-divert --local --rename --add "$f"
 		printf '#!/bin/sh\nexit 0\n' > "$R$f"; chmod 755 "$R$f"
 	done
-	# OpenZFS 2.4.4 supports Linux up to 7.2 (its META) and its configure stops on 7.3 ("iops->create()
-	# passes flags"); with zfs-dkms installed DKMS's hook fails and so does every kernel's postinst.
-	# SparkyLinux's image has no ZFS; here it came with Calamares' Recommends. Kept out while building.
-	printf 'Package: zfs-dkms zfsutils-linux zfs-zed\nPin: release *\nPin-Priority: -1\n' > $R/etc/apt/preferences.d/beta-build-no-zfs
-	inr dpkg --purge zfs-zed zfsutils-linux zfs-dkms 2>/dev/null || true
+	# The edition's ZFS carries upstream Linux 7.3 support. Remove the old build exclusion
+	# on resumed trees too, then upgrade/install ZFS before configuring pending kernels.
+	rm -f $R/etc/apt/preferences.d/beta-build-no-zfs
 	inr apt-get update
+	apt_in install zfs-dkms zfsutils-linux zfs-zed
 	inr dpkg --configure -a
 	# sparky-stereo-nvidia-driver-lock before any other package: its pin keeps NVIDIA's whole driver at the version the
 	# edition's open module is built for (NVIDIA's CUDA repository moves ahead: 615.71.10-1 on 2026-10-25, while the
 	# module is 615.71.09-2). Sparky KDE's set already brings NVIDIA's user space (libhwloc-plugins depends on
 	# libxnvctrl0), and the hardware meta brings nvidia-detect: installed before the lock, they came at CUDA's newest
 	# version, and the image's first full upgrade downgraded libxnvctrl0 to the locked one.
-	echo "== $(date -u +%T) the NVIDIA driver lock, before anything that brings NVIDIA's user space"
-	apt_in install sparky-stereo-nvidia-driver-lock
+	# With it, sparky-stereo-cuda-repo: NVIDIA's CUDA repository (its source and key) and its pins, so CUDA updates and
+	# NVIDIA's builds of Debian's own tools (dkms) do not replace Debian's. Both come from the edition's repository, and apt
+	# reads NVIDIA's only after them, so nothing of NVIDIA's can come in before the lock and the pins.
+	echo "== $(date -u +%T) the NVIDIA driver lock and NVIDIA's CUDA repository with its pins, before anything that brings NVIDIA's user space"
+	apt_in install sparky-stereo-nvidia-driver-lock sparky-stereo-cuda-repo
+	inr apt-get update
 	echo "== $(date -u +%T) Sparky KDE 2026.09's package set"
 	cp /build/base-list.sh /build/sparky-kde-2026.09.names /edition-lists/base-remove.list $R/tmp/
 	inr env NAMES=/tmp/sparky-kde-2026.09.names REMOVE=/tmp/base-remove.list sh /tmp/base-list.sh > /tmp/base
@@ -116,6 +119,19 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	cp /build/boot-kernels.py $R/tmp/
 	inr python3 /tmp/boot-kernels.py / || { echo "rootfs: a kernel that is not the edition's is in the tree" >&2; exit 1; }
 	rm -f $R/tmp/boot-kernels.py
+	cp /build/zfs-check.py $R/tmp/
+	inr python3 /tmp/zfs-check.py / || { echo "rootfs: ZFS is not ready; see validation errors above" >&2; exit 1; }
+	rm -f $R/tmp/zfs-check.py
+	# nothing of zram or zswap of ours in the image, and the zram packages not installed (HOUSE-RULES "zram and zswap:
+	# never ours, never on by default; the person may opt in"): every finding names its file and line
+	cp /build/zram-check.py $R/tmp/
+	inr python3 /tmp/zram-check.py / || { echo "rootfs: zram or zswap is in the tree; see the gate's findings above" >&2; exit 1; }
+	rm -f $R/tmp/zram-check.py
+	# nothing that downloads data while it is installed (a package declaring Sparky-Install-Download-Size, FlightGear's data): the games and
+	# their data come when the person chooses them while installing, never on the ISO (Daniel, 2026-11-04; ORDER 399b)
+	cp /build/check-no-install-downloads.py $R/tmp/
+	inr python3 /tmp/check-no-install-downloads.py / || { echo "rootfs: a package that downloads data while it is installed, or FlightGear's data, is in the tree; see the gate's findings above" >&2; exit 1; }
+	rm -f $R/tmp/check-no-install-downloads.py
 	echo "== $(date -u +%T) command-not-found: its index is filled at build time, so a live session names the package of a missing program before anyone runs apt update"
 	# apt-file's Contents targets are on (50apt-file.conf) and command-not-found's own hook (50command-not-found) builds the index
 	# after every apt update: Debian's and deb-multimedia's files come that way. The build's own sources are flat repositories with
@@ -151,6 +167,6 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	fi
 	echo "   $(grep -c '^Inst ' /tmp/full-upgrade.sim) installs or upgrades, no downgrade, no removal"
 	apt_in clean
+	inr dkms status
 fi
 echo "== $(date -u +%T) installed: $(inr dpkg-query -f '${binary:Package}\n' -W | wc -l) packages, $(du -sxh $R | cut -f1)"
-inr dkms status || true

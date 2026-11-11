@@ -1,0 +1,120 @@
+Description: Hardware video decoding on NVIDIA: the green picture and Vulkan Video on by default (ORDER 471)
+ A decoded YUV picture the compositor cannot import was still pushed as a compositor surface; on the Wayland native
+ compositor WebRender then locked its planes with no GL context (texture 0), so Y, U and V read zero and the picture was
+ solid green (0, 77, 0). It is now pushed as an ordinary image (DMABUFTextureHostOGL::PushDisplayItems).
+ Vulkan Video decoding (Mozilla bug 2021722, sandbox rules bug 2046954) is on by default and proved on the NVIDIA proprietary
+ driver series 615 only: Mesa drivers, other proprietary AMD and Intel drivers and NVIDIA drivers older than 615 are blocked for
+ FEATURE_HARDWARE_VIDEO_DECODING_VULKAN under ids that say so; the RDD sandbox stays on.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+diff --git a/gfx/layers/opengl/DMABUFTextureHostOGL.cpp b/gfx/layers/opengl/DMABUFTextureHostOGL.cpp
+index 8785295bfe..60c90de323 100644
+--- a/gfx/layers/opengl/DMABUFTextureHostOGL.cpp
++++ b/gfx/layers/opengl/DMABUFTextureHostOGL.cpp
+@@ -227,6 +227,15 @@ void DMABUFTextureHostOGL::PushDisplayItems(
+       widget::GetGlobalDMABufFormats()->SupportsDirectComposition(
+           mSurface->GetFormat()) &&
+       (!mSurface->GetAsDMABufSurfaceYUV() || mSurface->CompositorCanImport());
++  // A YUV picture that is not composited directly must not be a compositor
++  // surface at all: WebRender then draws it into a native render surface, and
++  // the Wayland native compositor's lock of an external image passes no GL
++  // context for any compositor surface (wr_renderer_lock_external_image), so
++  // the planes would be texture 0 and the picture solid green (Y, U and V all
++  // zero). As an ordinary image it is drawn by WebRender with textures made
++  // in the renderer's GL context.
++  const bool preferYuvCompositorSurface =
++      preferCompositorSurface && supportsDirectComposition;
+ 
+   switch (mSurface->GetFormat()) {
+     case gfx::SurfaceFormat::R8G8B8X8:
+@@ -253,8 +262,8 @@ void DMABUFTextureHostOGL::PushDisplayItems(
+       aBuilder.PushNV12Image(
+           aBounds, aClip, true, aImageKeys[0], aImageKeys[1],
+           wr::ColorDepth::Color8, wr::ToWrYuvColorSpace(GetYUVColorSpace()),
+-          wr::ToWrColorRange(GetColorRange()), aFilter, preferCompositorSurface,
+-          supportsDirectComposition);
++          wr::ToWrColorRange(GetColorRange()), aFilter,
++          preferYuvCompositorSurface, supportsDirectComposition);
+       break;
+     }
+     case gfx::SurfaceFormat::YUV420: {
+@@ -267,8 +276,8 @@ void DMABUFTextureHostOGL::PushDisplayItems(
+       aBuilder.PushYCbCrPlanarImage(
+           aBounds, aClip, true, aImageKeys[0], aImageKeys[1], aImageKeys[2],
+           wr::ColorDepth::Color8, wr::ToWrYuvColorSpace(GetYUVColorSpace()),
+-          wr::ToWrColorRange(GetColorRange()), aFilter, preferCompositorSurface,
+-          supportsDirectComposition);
++          wr::ToWrColorRange(GetColorRange()), aFilter,
++          preferYuvCompositorSurface, supportsDirectComposition);
+       break;
+     }
+     case gfx::SurfaceFormat::P010:
+@@ -280,8 +289,8 @@ void DMABUFTextureHostOGL::PushDisplayItems(
+       aBuilder.PushP010Image(
+           aBounds, aClip, true, aImageKeys[0], aImageKeys[1],
+           wr::ColorDepth::Color10, wr::ToWrYuvColorSpace(GetYUVColorSpace()),
+-          wr::ToWrColorRange(GetColorRange()), aFilter, preferCompositorSurface,
+-          supportsDirectComposition);
++          wr::ToWrColorRange(GetColorRange()), aFilter,
++          preferYuvCompositorSurface, supportsDirectComposition);
+       break;
+     }
+     default: {
+diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
+index 4b740dcd6e..ab539c88ef 100644
+--- a/modules/libpref/init/StaticPrefList.yaml
++++ b/modules/libpref/init/StaticPrefList.yaml
+@@ -12955,7 +12955,7 @@
+ 
+ - name: media.hardware-video-decoding-vulkan.enabled
+   type: bool
+-  value: false
++  value: true
+   mirror: once
+ 
+ # Whether to map Vulkan decoder output directly to DRM PRIME (zero-copy).
+diff --git a/widget/gtk/GfxInfo.cpp b/widget/gtk/GfxInfo.cpp
+index dd98bc7e64..20f9a2d61f 100644
+--- a/widget/gtk/GfxInfo.cpp
++++ b/widget/gtk/GfxInfo.cpp
+@@ -1296,6 +1296,38 @@ const nsTArray<RefPtr<GfxDriverInfo>>& GfxInfo::GetGfxDriverInfo() {
+         nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_COMPARISON_IGNORED,
+         V(0, 0, 0, 0), "FEATURE_HARDWARE_VIDEO_DECODING_NO_LINUX_NVIDIA", "");
+ 
++    // Vulkan Video decoding (the Vulkan path of FFmpegVideoDecoder, bug 2021722) is
++    // on by default in this build, and it is proved on the NVIDIA proprietary
++    // driver only (615.71.09 on an RTX 3060, the RDD sandbox on, no VA-API
++    // driver). Every other GPU keeps its VA-API or V4L2 route: Mesa drivers,
++    // other proprietary AMD and Intel drivers, and NVIDIA drivers older than the
++    // proved series. media.hardware-video-decoding.force-enabled still overrides.
++    APPEND_TO_DRIVER_BLOCKLIST_EXT(
++        OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
++        WindowProtocol::All, DriverVendor::MesaAll, DeviceFamily::All,
++        nsIGfxInfo::FEATURE_HARDWARE_VIDEO_DECODING_VULKAN,
++        nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_COMPARISON_IGNORED,
++        V(0, 0, 0, 0), "FEATURE_HARDWARE_VIDEO_DECODING_VULKAN_NOT_PROVED", "");
++    APPEND_TO_DRIVER_BLOCKLIST_EXT(
++        OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
++        WindowProtocol::All, DriverVendor::NonMesaAll, DeviceFamily::AtiAll,
++        nsIGfxInfo::FEATURE_HARDWARE_VIDEO_DECODING_VULKAN,
++        nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_COMPARISON_IGNORED,
++        V(0, 0, 0, 0), "FEATURE_HARDWARE_VIDEO_DECODING_VULKAN_NOT_PROVED", "");
++    APPEND_TO_DRIVER_BLOCKLIST_EXT(
++        OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
++        WindowProtocol::All, DriverVendor::NonMesaAll, DeviceFamily::IntelAll,
++        nsIGfxInfo::FEATURE_HARDWARE_VIDEO_DECODING_VULKAN,
++        nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_COMPARISON_IGNORED,
++        V(0, 0, 0, 0), "FEATURE_HARDWARE_VIDEO_DECODING_VULKAN_NOT_PROVED", "");
++    APPEND_TO_DRIVER_BLOCKLIST_EXT(
++        OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
++        WindowProtocol::All, DriverVendor::NonMesaAll, DeviceFamily::NvidiaAll,
++        nsIGfxInfo::FEATURE_HARDWARE_VIDEO_DECODING_VULKAN,
++        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_LESS_THAN,
++        V(615, 0, 0, 0), "FEATURE_HARDWARE_VIDEO_DECODING_VULKAN_NVIDIA_615",
++        "NVIDIA 615");
++
+     // Disable on all AMD devices not using Mesa.
+     APPEND_TO_DRIVER_BLOCKLIST_EXT(
+         OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,

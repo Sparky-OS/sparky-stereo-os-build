@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 22:44:03 -0300
+Subject: [PATCH 01/19] tests: Expect the View menu to hold every item it lists
+
+Show Screen Contents and the separator before it sit inside the Fit All item of the
+View menu, so the menu has three items instead of five.
+
+Assisted-by: Claude Sonnet 5.5
+---
+ tests/arrangementview.cpp | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/tests/arrangementview.cpp b/tests/arrangementview.cpp
+index d513a961..a599e9b7 100644
+--- a/tests/arrangementview.cpp
++++ b/tests/arrangementview.cpp
+@@ -52,6 +52,7 @@ private Q_SLOTS:
+     void init();
+     void cleanupTestCase();
+ 
++    void testViewMenuHoldsItsItems();
+     void testScreenContentsFollowBattery();
+     void testDragSnaps();
+     void testShiftDragDoesNotSnap();
+@@ -318,6 +319,20 @@ void ArrangementViewTest::capture(const QString &name, const QJsonObject &expect
+     file.write(QJsonDocument(record).toJson());
+ }
+ 
++void ArrangementViewTest::testViewMenuHoldsItsItems()
++{
++    // Zoom In, Zoom Out, Fit All, a separator and Show Screen Contents are the menu's own items,
++    // not items nested inside one another
++    QObject *contents = findObject(u"showScreenContentsAction"_s);
++    QVERIFY2(contents, "no Show Screen Contents action in the arrangement view's menu");
++    QObject *item = contents->parent();
++    QVERIFY(item);
++    auto *menu = item->property("menu").value<QObject *>();
++    QVERIFY2(menu, "Show Screen Contents is not an item of the View menu");
++    const int count = menu->property("count").toInt();
++    QVERIFY2(count >= 5, qPrintable(u"the View menu holds %1 items"_s.arg(count)));
++}
++
+ void ArrangementViewTest::testScreenContentsFollowBattery()
+ {
+     if (qEnvironmentVariableIsEmpty("KSCREEN_TEST_UPOWER_MOCK")) {

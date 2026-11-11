@@ -1,0 +1,72 @@
+hid-fanatecff-dkms (0+git20261010.bc2601b-1+stereo3d6) unstable; urgency=medium
+
+  * The udev rule no longer hides a control it could not set (ORDER 346f-1,
+    audit 343 U27, Daniel 2026-11-01: "nothing we do should silently fail"):
+    its "chown -f ... || true" commands run sparky-stereo-wheel-access, which
+    skips a control the wheel's model does not have and says, through
+    sparky-stereo-problems, one the model has and cannot be set for the games
+    group. Depends: sparky-stereo-wheel-access (>= 0.1.0). Upstream has no
+    fix for this: the Fanatec rules keep "|| true" and the other two drivers
+    ship no rules.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 04 Nov 2026 01:30:00 -0300
+
+hid-fanatecff-dkms (0+git20261010.bc2601b-1+stereo3d5) unstable; urgency=medium
+
+  * Wheel-driver builds at install and update time are never capped (Daniel,
+    2026-11-02: "Wheel-driver builds - or any build at update time - DO NEVER
+    CAP EXECUTION"; ORDER 361): dkms.conf takes upstream's form: no MAKE line,
+    so DKMS builds with its own make command and the parallel jobs DKMS gives
+    every module (-j$parallel_jobs: the number of CPUs, or what dkms -j and
+    framework.conf set); the -j4 limit goes.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 22:35:01 -0300
+
+hid-fanatecff-dkms (0+git20261010.bc2601b-1+stereo3d4) unstable; urgency=medium
+
+  * Leave the build's Lean Code records out of /usr/src: the source tree is
+    copied with .sparky-lc excluded, as nvidia-kmod-open does. The earlier
+    builds shipped the folder (the native pass's source report and authored
+    copies, 9 to 20 files), whose report named the toolkit of that build (ORDER
+    311).
+  * Correction to +stereo3d3's second item: its binary packages were built
+    fresh from that source (nothing compiles in this DKMS package), not re-
+    projected from the +stereo3d2 HR companion (ORDER 311).
+  * Built with the Lean Code toolkit 0.1.21 of build-repo main cb9f644: C and
+    C++ files lose their comment-only lines, with no #line directive and no
+    empty line where a comment was; dpkg-stereo --resolve finds a lean line's
+    authored line by its content (ORDER 334).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 00:31:32 -0300
+
+hid-fanatecff-dkms (0+git20261010.bc2601b-1+stereo3d3) unstable; urgency=medium
+
+  * No-change rebuild of 0+git20261010.bc2601b-1+stereo3d2 for the Lean Code
+    toolkit 0.1.18 of build-repo main 9a1a331: C and C++ files keep every
+    authored line with no #line directive, a removed comment leaving the line
+    breaks it held (ORDER 303).
+  * The binary packages of this version are the published
+    0+git20261010.bc2601b-1+stereo3d2+lc1 payload, its authored files taken
+    back from the HR companion and projected again with toolkit 0.1.18, nothing
+    recompiled (ORDER 311).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 31 Oct 2026 21:28:40 -0300
+
+hid-fanatecff-dkms (0+git20261010.bc2601b-1+stereo3d2) unstable; urgency=medium
+
+  * Install an edition udev rule (rules/70-sparky-*.rules) so the driver's
+    sysfs controls are usable by the person at the wheel and no device node
+    is made world-writable. Upstream fanatec.rules sets MODE="0666" on every
+    0eb7 USB device; the edition rule uses uaccess instead and otherwise
+    keeps the upstream file. hid-tmff2 and new-lg4ff ship no rules, their
+    sysfs files were root-only; the edition rule gives them the group
+    "games" convention of hid-fanatecff. Reasons in README.Debian.
+  * Test: study/packages/rigs/check-wheel-udev.py fails on the previous build.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 10 Oct 2026 17:30:00 -0300
+
+hid-fanatecff-dkms (0+git20261010.bc2601b-1+stereo3d1) unstable; urgency=medium
+
+  * Package pinned upstream sources for the edition's simulation rigs.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 10 Oct 2026 10:00:00 -0300

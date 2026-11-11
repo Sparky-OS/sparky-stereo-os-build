@@ -10,6 +10,7 @@
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/../../repo/build-provenance.sh"
 . "$HERE/../../config/local-config.sh"
 sparky_need SPARKY_REPO_DIR
 PKG=$1
@@ -19,9 +20,11 @@ PREV=$(cd "$4" && pwd)
 NEW=$(cd "$5" && pwd)
 FORK=${6:+$(cd "$6" && pwd)}
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
-docker run --rm --name "full-sbs-$PKG" --cpus 4 --platform linux/amd64 -e PKG="$PKG" -v "$WORK":/work \
+sparky_provenance_init sparky-lc-migration:20261020
+docker run "${SPARKY_PROV_ARGS[@]}" --rm --name "full-sbs-$PKG" --cpus 4 --platform linux/amd64 -e PKG="$PKG" -v "$WORK":/work \
 	-v "$SPARKY_REPO_DIR/source":/src:ro -v "$PUB":/pub:ro -v "$NEW":/new:ro -v "$PREV":/prev:ro \
 	-v "$HERE/../..":/toolkit:ro -v "$HERE/patches":/patches:ro -v "$HERE/changelog":/changelog:ro \
 	${FORK:+-v "$FORK":/fork:ro} \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
-	sparky-lc-migration:20261020 bash -c 'bash /toolkit/packages/full-sbs/build-in-container.sh > /work/build.log 2>&1'
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+	sparky-lc-migration:20261020 bash -c 'sh /run/https-only-apt.sh && bash /toolkit/packages/full-sbs/build-in-container.sh > /work/build.log 2>&1'

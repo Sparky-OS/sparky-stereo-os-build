@@ -1,0 +1,83 @@
+-------------------------------------------------------------------------------
+  Version 0.2.1 (2026-11-09)
+-------------------------------------------------------------------------------
+  * A failed hibernation says why (ORDER 446). systemd-hibernate, systemd-suspend-then-hibernate and systemd-hybrid-sleep
+    no longer say only that the service failed with "Repair starts it again": the engine reads the attempt's own
+    journal (systemd-sleep's lines of that invocation with their ERRNO= field and the SLEEP_STOP MESSAGE_ID, then the
+    kernel's lines between the attempt's first and last line, the device from _KERNEL_DEVICE) and names the cause: a
+    device that refused to freeze (virtio_pci_freeze returns -95 with a virtio-fs share, with the share's mount
+    points), programs that would not freeze, a locked-down kernel, no swap area big enough, no resume device, or the
+    kernel's or systemd-sleep's own line. Each says what to do; Repair (a new attempt, which sleeps the computer again)
+    is offered only where the cause can pass
+  * suspend-then-hibernate and hybrid sleep suspend instead when the hibernation fails and end well, so no
+    OnFailure= ran and the person was told nothing: their ExecStopPost runs the new `sleep-attempt UNIT`, which keeps
+    the reason for this boot, or ends the problem of the last attempt when this one worked
+  * New messages LOCAL72 to LOCAL95 in the nine languages; SPARKY_STEREO_PROBLEMS_JOURNAL names a journal folder to
+    read instead of the system's (tests keep a journal's export there)
+
+-------------------------------------------------------------------------------
+  Version 0.2.0 (2026-11-08)
+-------------------------------------------------------------------------------
+  * Dismiss and Bring back (ORDER 468; Daniel, 2026-11-08: "a dismiss on the problems of the computer so the person
+    can choose to not see it anymore, along side a config page with all the dismissed and current ones"). hide and
+    show stay the engine's verbs; the person's words are Dismiss and Bring back, and the engine's texts say
+    dismissed in the nine languages
+  * A failed service (a problem of this boot, new at every boot) stays dismissed when it fails the same way at a
+    later boot: the person's mark keeps a copy of the record and its fingerprint (message and arguments), and the
+    same fingerprint moves the dismissal to the new record; for a failed service the fingerprint is its unit, for every
+    other problem its message and arguments. A repair that failed since shows it again as before. A machine or a person's own problem keeps its dismissal while its message is the same
+  * list --over (ssp_list_over_json): also the dismissed problems of this boot's kind that are not happening now,
+    with "over": true, so the page can list them and Show can end the dismissal; without it nothing else changes
+    for any caller
+
+-------------------------------------------------------------------------------
+  Version 0.1.2 (2026-11-03)
+-------------------------------------------------------------------------------
+  * Keep failures before a package is first unpacked. Remember observed package
+    presence and only collect stale records after it disappears; readers unable
+    to delete a record continue to list it. A dpkg post-invoke hook observes
+    completed installations and clears records after removal.
+  * Say a failed run from the record just kept, without invoking cleanup. Save
+    literal English or a package, step and exit-status explanation when a catalog
+    is not yet available. Add the generic messages in all nine languages.
+  * Serialize collection with keep and repair so it cannot remove a newer record.
+
+-------------------------------------------------------------------------------
+  Version 0.1.1 (2026-11-02)
+-------------------------------------------------------------------------------
+  * Keep post-removal repairs with --after-removal as engine-owned records, with the
+    removed package, step, command and error as evidence; render the generic message
+    in all nine languages even after purge. Ordinary package cleanup is unchanged.
+
+-------------------------------------------------------------------------------
+  Version 0.1.0 (2026-11-02)
+-------------------------------------------------------------------------------
+  * First release (ORDER 350; Daniel, 2026-11-01: "nothing we do should silently fail or have a fall back -
+    either it works or not and the user must know"; 2026-11-02: "Why machinery to keep a failure for each?"):
+    one engine for every package of the edition that has to say what failed, why and what to do, kept until it
+    is repaired, in place of a store, commands and a notifier in each package
+  * sparky-stereo-problems: keep, run, clear, say, list [--json], repair, hide and show; the machine's problems in
+    /var/lib/sparky-stereo-problems, this boot's in /run/sparky-stereo-problems, the person's own in
+    $XDG_STATE_HOME/sparky-stereo-problems; one record per file, written through a dot-file and renamed under a
+    lock; a problem kept again with the same message keeps its first time and its hide
+  * The same engine as a C library (private, with a header and a pkg-config file) and a Python module
+  * Messages are each package's own translations built into journal message catalogs (catalog, used at package
+    build time), so journalctl -x explains each problem too; the engine reads them in gettext's order
+    (LANGUAGE, LC_ALL, LC_MESSAGES, LANG, /etc/default/locale) and mirrors every event to the journal with the
+    message's MESSAGE_ID
+  * Every failed system service is told: a top-level service.d drop-in names sparky-stereo-problems-failed@ in
+    OnFailure= (systemd.unit(5)), which keeps the service's own last lines with systemd's restart as the repair
+  * Repairs of the machine's problems through pkexec and one polkit action,
+    org.sparkylinux.sparkystereo.problems.repair, which runs only repair of what root kept
+  * The record keeps its English text (text_en, shown when no catalog has its message any more), the package's own
+    fields (data) and further sentences (more, what to do); a repair whose command keeps the problem again is not a
+    repair; clear --all PACKAGE at its removal, and the problems of a package that is not installed any more go
+  * The catalog builder reads gettext .po files too (CONTEXT|MSGID, %1..%26 in any order); text, a shell caller's
+    way to say one kept problem; the command's own texts in the nine languages; the command says a kept problem on
+    standard error unless --quiet
+  * Python: Steps, the problems.py commands of the edition's packages answered by the engine, with migrate
+  * Running out of memory is said like every failure (required-languages; ORDER 350 milestone 2c): LOCAL64 from
+    the engine's catalogs, in the person's language and in English, rendered with memory of its own; a wrong call
+    of the library (a scope that is none, a missing name, arguments or details it cannot read) is said too, never
+    a bare return. Steps.migrate keeps a record that cannot move as one problem of the package (old-store), with
+    each record and what failed, until a repair has moved them all

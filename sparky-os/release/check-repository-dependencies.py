@@ -110,6 +110,7 @@ raise SystemExit(not all(r['passed'] for r in results))
 (out / 'inner.py').write_text(inner)
 recipe = '''set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+sh /run/https-only-apt.sh
 dpkg --add-architecture i386
 rm -f /etc/apt/sources.list.d/debian.sources
 printf 'deb https://deb.debian.org/debian testing main contrib non-free non-free-firmware\n' > /etc/apt/sources.list
@@ -127,6 +128,8 @@ command = ['docker', 'run', '--rm', '--name', 'sparky-lc-dependency-preflight', 
            '-v', '/etc/apt/sources.list.d/sparky.sources:/host-sparky.sources:ro',
            '-v', '/etc/apt/trusted.gpg.d/sparky-repo.asc:/etc/apt/trusted.gpg.d/sparky-repo.asc:ro',
            '-v', '/usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro',
+           '-v', '/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro',
+           '-v', str(Path(__file__).resolve().parents[2] / 'tools' / 'https-only-apt.sh') + ':/run/https-only-apt.sh:ro',
            'sparky-lc-migration:20261020', 'bash', '/proof/run.sh']
 with (out / 'driver.log').open('w') as log:
     process = start_build(command, 'sparky-lc-dependency-preflight', log)

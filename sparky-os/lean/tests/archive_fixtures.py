@@ -37,8 +37,12 @@ def deb(base, name, version='1', arch='amd64', depends='', extra='', files=None)
     return out
 
 
-def signed_archive(base, additional=(), transform=None):
-    """Minimal amd64 runtime and packages for solver edge cases."""
+def signed_archive(base, additional=(), transform=None, flat=False):
+    """Minimal amd64 runtime and packages for solver edge cases.
+
+    flat=True publishes it as a flat repository (Packages and Release at the top, the
+    suite "/" with no components, as NVIDIA publishes its CUDA repository).
+    """
     base.mkdir(parents=True, exist_ok=True)
     build = base / 'build'
     build.mkdir()
@@ -61,17 +65,22 @@ def signed_archive(base, additional=(), transform=None):
     pool.mkdir(parents=True)
     for path in packages:
         shutil.copy(path, pool)
-    index = repo / 'dists/fixture/main/binary-amd64/Packages'
-    index.parent.mkdir(parents=True)
+    index = repo / ('Packages' if flat else 'dists/fixture/main/binary-amd64/Packages')
+    index.parent.mkdir(parents=True, exist_ok=True)
     index.write_bytes(subprocess.check_output(['dpkg-scanpackages', '--multiversion', 'pool', '/dev/null'], cwd=repo,
                                              stderr=subprocess.DEVNULL))
     if transform:
         index.write_text(transform(index.read_text()))
-    release = repo / 'dists/fixture/Release'
+    release = index.parent / 'Release' if flat else repo / 'dists/fixture/Release'
     data = index.read_bytes()
-    release.write_text('Origin: Link gate fixture\nLabel: Link gate fixture\nSuite: fixture\nCodename: fixture\n'
-                       'Architectures: amd64\nComponents: main\nDate: Mon, 26 Oct 2026 00:00:00 UTC\n'
-                       f'SHA256:\n {hashlib.sha256(data).hexdigest()} {len(data)} main/binary-amd64/Packages\n')
+    if flat:
+        release.write_text('Origin: Link gate flat fixture\nLabel: Link gate flat fixture\nArchitectures: amd64\n'
+                           'Date: Mon, 26 Oct 2026 00:00:00 UTC\n'
+                           f'SHA256:\n {hashlib.sha256(data).hexdigest()} {len(data)} Packages\n')
+    else:
+        release.write_text('Origin: Link gate fixture\nLabel: Link gate fixture\nSuite: fixture\nCodename: fixture\n'
+                           'Architectures: amd64\nComponents: main\nDate: Mon, 26 Oct 2026 00:00:00 UTC\n'
+                           f'SHA256:\n {hashlib.sha256(data).hexdigest()} {len(data)} main/binary-amd64/Packages\n')
     keywork = tempfile.TemporaryDirectory(prefix='lc-key-', dir='/tmp')
     gnupg = Path(keywork.name)
     env = {'PATH': '/usr/bin:/bin', 'GNUPGHOME': str(gnupg), 'LC_ALL': 'C'}
@@ -86,6 +95,10 @@ def signed_archive(base, additional=(), transform=None):
     subprocess.run(['gpgconf', '--kill', 'gpg-agent'], env=env, check=True)
     keywork.cleanup()
     config = base / 'archive.json'
-    config.write_text(json.dumps([{'uri': repo.as_uri(), 'suite': 'fixture', 'components': ['main'],
-                                  'keyring': str(keyring)}]))
+    if flat:
+        config.write_text(json.dumps([{'uri': repo.as_uri() + '/', 'suite': '/', 'components': [],
+                                      'keyring': str(keyring)}]))
+    else:
+        config.write_text(json.dumps([{'uri': repo.as_uri(), 'suite': 'fixture', 'components': ['main'],
+                                      'keyring': str(keyring)}]))
     return config

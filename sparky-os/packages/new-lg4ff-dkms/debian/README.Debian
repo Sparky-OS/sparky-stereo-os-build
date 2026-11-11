@@ -1,0 +1,32 @@
+new-lg4ff-dkms for Sparky Stereo OS
+===================================
+
+This package builds the unchanged upstream driver (berarma/new-lg4ff, revision
+2092db1), which replaces the kernel's hid-logitech module, and installs an
+edition udev rule:
+
+    /usr/lib/udev/rules.d/70-sparky-new-lg4ff.rules
+
+Upstream ships no udev rules. The driver's sysfs files (range, gain,
+autocenter, the spring, damper and friction levels, peak_ffb_level, ffb_leds,
+alternate_modes, combine_pedals) are created root:root with mode 0664, so only
+root could set them. The edition rule makes them group "games" and
+group-writable, the convention hid-fanatecff's own rules use, only on devices
+that have a "range" file (the wheels). real_id is read-only in the driver and is
+left alone. Nothing is opened to other users. Debian's "games" group is empty by
+default; to allow yourself, once:
+
+    sudo adduser "$USER" games
+
+then log out and in.
+
+The hidraw node of the wheels comes from sparky-sim-hidraw (uaccess).
+
+Test: study/packages/rigs/check-wheel-udev.py (simulated devices; fails on the
+previous build, which shipped no rule). Not verified on a wheel.
+
+A control the wheel's model has and that cannot be set for the games group (a
+read-only /sys, a missing games group) is no longer ignored: the rule runs
+/usr/lib/udev/sparky-stereo-wheel-access (package sparky-stereo-wheel-access),
+which keeps the failure with sparky-stereo-problems, shown in the session with
+Repair. A control the model does not have is skipped, as before.

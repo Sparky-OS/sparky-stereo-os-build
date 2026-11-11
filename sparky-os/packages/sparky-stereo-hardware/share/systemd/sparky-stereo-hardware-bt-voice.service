@@ -1,0 +1,14 @@
+# Created by Daniel Ramos (Capitain Jack) and Paweł "pavroo" Pijanowski 2026/11/07
+# Copyright 2026 under the GNU GPL3 License
+# Tells the person when a Bluetooth adapter cannot carry a headset's microphone or calls (ORDER 133).
+[Unit]
+Description=Check that the Bluetooth adapters can carry voice
+Documentation=file:/usr/share/doc/sparky-stereo-hardware/README.md
+After=bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/sparky-stereo-hardware/bt-voice-check --wait 90
+
+[Install]
+WantedBy=multi-user.target

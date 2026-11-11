@@ -1,0 +1,478 @@
+Description: Start no application whose GPU cannot be applied
+ When the Graphics page's resolver, sparky-stereo-gpu-env, says that the GPU
+ the person chose for an application cannot be used (exit status 4), the
+ application is not started on another GPU: the launch fails through KIO's
+ own launch-failure path (KProcessRunner's error, the ApplicationLauncherJob's
+ errorText, shown by its UI delegate) with the program's name and the
+ resolver's own words, what failed, why and what to do. The resolver keeps
+ the problem and notifies it with a "Use NAME" choice for each GPU that can
+ draw. A resolver that fails, crashes, cannot be started or does not answer
+ within five seconds (longer than its own three-second wait for
+ power-profiles-daemon) is said the same way, and the application is not
+ started either. Automatic is a rule, not the person's choice: when it
+ cannot place the application now (exit status 5, a browser while the power
+ profile cannot be read), the application starts as the session would, as
+ before, and the resolver has said and kept why. Without the resolver, or
+ with its answer (exit status 0), nothing changes. A D-Bus activatable
+ application is neither activated nor started when its GPU cannot be applied.
+ Tests: shouldNotStartWhereItsGpuCannotBeUsed (six rows),
+ shouldRunOnTheGpuOfTheGraphicsSettings (automatic_cannot_place) and
+ shouldStartAnActivatableApplicationOnItsGpu (its_gpu_cannot_be_used).
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Forwarded: not-needed, edition-only (the resolver is Sparky Stereo OS's Graphics page)
+Last-Update: 2026-11-02
+
+diff --git a/autotests/applicationlauncherjobtest.cpp b/autotests/applicationlauncherjobtest.cpp
+index 7014111..552ba6c 100644
+--- a/autotests/applicationlauncherjobtest.cpp
++++ b/autotests/applicationlauncherjobtest.cpp
+@@ -410,18 +410,33 @@ void ApplicationLauncherJobTest::showOpenWithDialog()
+ 
+ // A stand-in for the graphics settings' resolver, sparky-stereo-gpu-env: it logs how it was asked
+ // and answers from a table of "ENTRY PROFILE VARIABLE=value..." lines, as the real one answers for
+-// a kind of program and the power profile.
++// a kind of program and the power profile. As the real one, it says on stderr why the person's
++// choice cannot be used (exit status 4), or why Automatic cannot place the program now (5).
+ static const char s_fakeResolver[] = R"(#!/bin/sh
+ dir=$(dirname "$0")/..
+ printf '%s\n' "$*" >> "$dir/asked"
+ case $(cat "$dir/mode") in
+-fail) exit 1 ;;
+-hang) sleep 10 ;;
++fail) echo "the resolver broke" >&2; exit 3 ;;
++libraries) echo "sparky-stereo-gpu-env: error while loading shared libraries: libKF6ConfigCore.so.6: cannot open shared object file: No such file or directory" >&2; exit 127 ;;
++crash) kill -SEGV $$ ;;
++hang) exec sleep 10 ;;
++refuse) cat "$dir/said" >&2; exit 4 ;;
++rule) cat "$dir/said" >&2; exit 5 ;;
+ esac
+ [ "$1" = --app ] || exit 2
+ profile=$(cat "$dir/profile")
+ grep "^$2 $profile " "$dir/answers" | cut -d' ' -f3- | tr ' ' '\n'
+ )";
++static const char s_unstartableResolver[] = "#!/nonexistent/interpreter\n";
++
++// What the real resolver says when the person's choice cannot be used, and when Automatic cannot place a browser
++static const QByteArray s_choiceCannotBeUsed = QByteArrayLiteral(
++    "The GPU you chose for games, at PCI address 0000:09:00.0, is not in this computer now. Put the GPU back, or choose another GPU in System "
++    "Settings, Graphics.\nGPUs that can draw now:\n  pci-0000:0b:00.0  AMD Radeon Vega Series / Radeon Vega Mobile Series\nTo start a program on one "
++    "of them this time: sparky-stereo-gpu-run --choice ID COMMAND\n");
++static const QByteArray s_automaticCannotPlace = QByteArrayLiteral(
++    "The GPU for browsers follows the power profile, and the power profile could not be read: power-profiles-daemon is not running. Start "
++    "power-profiles-daemon (sudo systemctl start power-profiles-daemon), or choose a GPU in System Settings, Graphics.\n");
+ 
+ void ApplicationLauncherJobTest::shouldRunOnTheGpuOfTheGraphicsSettings_data()
+ {
+@@ -429,13 +444,14 @@ void ApplicationLauncherJobTest::shouldRunOnTheGpuOfTheGraphicsSettings_data()
+     QTest::addColumn<QString>("ownKey"); // the entry's own "Key=value", if any
+     QTest::addColumn<bool>("inMenu");
+     QTest::addColumn<QString>("profile");
+-    QTest::addColumn<QString>("resolverMode"); // answer, fail, hang, absent
++    QTest::addColumn<QString>("resolverMode"); // answer, rule, absent
+     QTest::addColumn<QString>("sessionDriPrime");
+     QTest::addColumn<bool>("expectAsked");
+     QTest::addColumn<QString>("expectedDriPrime"); // empty: not set
+ 
+     const QString player = QStringLiteral("AudioVideo;Video;Player;");
+     const QString game = QStringLiteral("Game;ArcadeGame;");
++    const QString browser = QStringLiteral("Network;WebBrowser;");
+     const QString measured = QStringLiteral("pci-0000_99_00_0");
+     // The resolver sends players to the GPU measured best whatever the power profile, battery included
+     QTest::newRow("player_on_battery") << player << QString() << true << "power-saver" << "answer" << QString() << true << measured;
+@@ -450,10 +466,11 @@ void ApplicationLauncherJobTest::shouldRunOnTheGpuOfTheGraphicsSettings_data()
+     QTest::newRow("own_legacy_key_true") << game << "X-KDE-RunOnDiscreteGpu=true" << true << "power-saver" << "answer" << QString() << false
+                                          << QString();
+     QTest::newRow("session_chooses") << player << QString() << true << "power-saver" << "answer" << "1" << false << "1";
+-    // Without an answer the application starts as it always did
++    // Without the graphics settings the application starts as it always did
+     QTest::newRow("resolver_absent") << player << QString() << true << "power-saver" << "absent" << QString() << false << QString();
+-    QTest::newRow("resolver_fails") << player << QString() << true << "power-saver" << "fail" << QString() << true << QString();
+-    QTest::newRow("resolver_hangs") << player << QString() << true << "power-saver" << "hang" << QString() << true << QString();
++    // Automatic is a rule, not the person's choice: when it cannot place the application now (the power profile a browser
++    // follows cannot be read), the resolver says and keeps why, and the application starts as the session would
++    QTest::newRow("automatic_cannot_place") << browser << QString() << true << "power-saver" << "rule" << QString() << true << QString();
+ }
+ 
+ void ApplicationLauncherJobTest::shouldRunOnTheGpuOfTheGraphicsSettings()
+@@ -485,6 +502,7 @@ void ApplicationLauncherJobTest::shouldRunOnTheGpuOfTheGraphicsSettings()
+     };
+     writeFile(QStringLiteral("mode"), resolverMode.toUtf8());
+     writeFile(QStringLiteral("profile"), profile.toUtf8());
++    writeFile(QStringLiteral("said"), s_automaticCannotPlace);
+ 
+     // Given an application that writes its environment, in the menu or outside it
+     const QString id = QStringLiteral("kiogputest_%1.desktop").arg(QString::fromLatin1(QTest::currentDataTag()));
+@@ -581,17 +599,135 @@ void ApplicationLauncherJobTest::shouldRunOnTheGpuOfTheGraphicsSettings()
+ #endif
+ }
+ 
++void ApplicationLauncherJobTest::shouldNotStartWhereItsGpuCannotBeUsed_data()
++{
++    QTest::addColumn<QString>("resolverMode"); // refuse, fail, libraries, crash, unstartable, hang
++    QTest::addColumn<QStringList>("expectedText"); // the error's text, in these pieces and this order
++
++    const QString notStarted = QStringLiteral("KIOGpuTest was not started.\n");
++    const QString reinstall = QStringLiteral("Reinstall it: sudo apt-get install --reinstall sparky-stereo-graphics");
++    // The person's choice cannot be used: the resolver's own words, what failed, why and what to do
++    QTest::newRow("choice_cannot_be_used") << "refuse" << QStringList{notStarted + QString::fromUtf8(s_choiceCannotBeUsed).trimmed()};
++    // The resolver itself fails: said the same way, with its own words
++    QTest::newRow("resolver_fails") << "fail"
++                                    << QStringList{notStarted,
++                                                   QStringLiteral("sparky-stereo-gpu-env failed (exit status 3), so the GPU chosen in System Settings, "
++                                                                  "Graphics cannot be applied.\nthe resolver broke\n"),
++                                                   reinstall};
++    QTest::newRow("resolver_libraries_missing") << "libraries"
++                                                << QStringList{notStarted,
++                                                               QStringLiteral("sparky-stereo-gpu-env failed (exit status 127), so the GPU chosen in System "
++                                                                              "Settings, Graphics cannot be applied.\n"),
++                                                               QStringLiteral("error while loading shared libraries: libKF6ConfigCore.so.6"),
++                                                               reinstall};
++    QTest::newRow("resolver_crashes") << "crash"
++                                      << QStringList{notStarted,
++                                                     QStringLiteral("sparky-stereo-gpu-env crashed, so the GPU chosen in System Settings, Graphics cannot be "
++                                                                    "applied.\n"),
++                                                     reinstall};
++    QTest::newRow("resolver_cannot_start") << "unstartable"
++                                           << QStringList{notStarted, QStringLiteral("sparky-stereo-gpu-env could not be started ("),
++                                                          QStringLiteral("), so the GPU chosen in System Settings, Graphics cannot be applied.\n"),
++                                                          reinstall};
++    QTest::newRow("resolver_hangs") << "hang"
++                                    << QStringList{notStarted,
++                                                   QStringLiteral("sparky-stereo-gpu-env did not answer within 5 seconds, so the GPU chosen in System "
++                                                                  "Settings, Graphics cannot be applied.\n"),
++                                                   QStringLiteral("Start the program again in a moment.")};
++}
++
++void ApplicationLauncherJobTest::shouldNotStartWhereItsGpuCannotBeUsed()
++{
++#ifdef Q_OS_UNIX
++    QFETCH(QString, resolverMode);
++    QFETCH(QStringList, expectedText);
++
++    // Given the stand-in resolver that refuses the person's choice or fails
++    QTemporaryDir tempDir;
++    const QString dir = tempDir.path();
++    QVERIFY(QDir(dir).mkpath(QStringLiteral("bin")));
++    QFile resolver(dir + QLatin1String("/bin/sparky-stereo-gpu-env"));
++    QVERIFY(resolver.open(QIODevice::WriteOnly));
++    resolver.write(resolverMode == QLatin1String("unstartable") ? s_unstartableResolver : s_fakeResolver);
++    resolver.close();
++    QVERIFY(resolver.setPermissions(resolver.permissions() | QFileDevice::ExeOwner));
++    const auto writeFile = [&dir](const QString &name, const QByteArray &content) {
++        QFile file(dir + QLatin1Char('/') + name);
++        QVERIFY(file.open(QIODevice::WriteOnly));
++        file.write(content);
++    };
++    writeFile(QStringLiteral("mode"), resolverMode.toUtf8());
++    writeFile(QStringLiteral("profile"), "balanced");
++    writeFile(QStringLiteral("said"), s_choiceCannotBeUsed);
++    writeFile(QStringLiteral("answers"), QByteArray());
++
++    // and a game in the menu that writes its environment when it runs
++    const QString id = QStringLiteral("kiogputest_refused_%1.desktop").arg(QString::fromLatin1(QTest::currentDataTag()));
++    const QString desktopFilePath = QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation) + QLatin1Char('/') + id;
++    const QString envFile = dir + QLatin1String("/env");
++    {
++        KDesktopFile file(desktopFilePath);
++        KConfigGroup group = file.desktopGroup();
++        group.writeEntry("Name", "KIOGpuTest");
++        group.writeEntry("Type", "Application");
++        group.writeEntry("Exec", QStringLiteral("sh -c 'env > %1'").arg(envFile));
++        group.writeEntry("Categories", "Game;ArcadeGame;");
++        QVERIFY(file.sync());
++    }
++    m_filesToRemove.append(desktopFilePath);
++    ksycoca_ms_between_checks = 0;
++    KService::Ptr service = KService::serviceByMenuId(id);
++    ksycoca_ms_between_checks = 5000;
++    QVERIFY(service);
++
++    // When starting it
++    const QByteArray oldPath = qgetenv("PATH");
++    qputenv("PATH", QByteArray(QFile::encodeName(dir) + "/bin:" + oldPath));
++    qunsetenv("DRI_PRIME");
++    KIO::ApplicationLauncherJob *job = new KIO::ApplicationLauncherJob(service, this);
++    const bool started = job->exec();
++    qputenv("PATH", oldPath);
++
++    // Then the launch fails with what failed, why and what to do, and the application never runs, on any GPU
++    QVERIFY(!started);
++    QCOMPARE(job->error(), KJob::UserDefinedError);
++    const QString text = job->errorString();
++    qsizetype from = 0;
++    for (const QString &piece : std::as_const(expectedText)) {
++        const qsizetype at = text.indexOf(piece, from);
++        QVERIFY2(at >= from, qPrintable(QStringLiteral("\"%1\" not in \"%2\"").arg(piece, text.mid(from))));
++        from = at + piece.size();
++    }
++    if (expectedText.size() == 1) {
++        QCOMPARE(text, expectedText.first());
++    }
++    if (resolverMode != QLatin1String("unstartable")) {
++        QFile askedLog(dir + QLatin1String("/asked"));
++        QVERIFY(askedLog.open(QIODevice::ReadOnly));
++        QCOMPARE(QString::fromUtf8(askedLog.readAll()).trimmed(), QStringLiteral("--app ") + id);
++    }
++    QTest::qWait(300);
++    QVERIFY(!QFile::exists(envFile));
++    QTRY_COMPARE(KProcessRunner::instanceCount(), 0);
++#else
++    QSKIP("This test is not run on Windows");
++#endif
++}
++
+ void ApplicationLauncherJobTest::shouldStartAnActivatableApplicationOnItsGpu_data()
+ {
+     QTest::addColumn<bool>("gpuEnvironment");
+-    QTest::newRow("runs_on_another_gpu") << true;
+-    QTest::newRow("runs_on_the_desktop_gpu") << false;
++    QTest::addColumn<bool>("refused");
++    QTest::newRow("runs_on_another_gpu") << true << false;
++    QTest::newRow("runs_on_the_desktop_gpu") << false << false;
++    QTest::newRow("its_gpu_cannot_be_used") << false << true;
+ }
+ 
+ void ApplicationLauncherJobTest::shouldStartAnActivatableApplicationOnItsGpu()
+ {
+ #ifdef WITH_QTDBUS
+     QFETCH(bool, gpuEnvironment);
++    QFETCH(bool, refused);
+     QDBusConnection bus = QDBusConnection::sessionBus();
+     if (!bus.isConnected()) {
+         QSKIP("This test needs a session bus");
+@@ -611,11 +747,12 @@ void ApplicationLauncherJobTest::shouldStartAnActivatableApplicationOnItsGpu()
+         QVERIFY(file.open(QIODevice::WriteOnly));
+         file.write(content);
+     };
+-    writeFile(QStringLiteral("mode"), "answer");
++    writeFile(QStringLiteral("mode"), refused ? "refuse" : "answer");
+     writeFile(QStringLiteral("profile"), "balanced");
++    writeFile(QStringLiteral("said"), s_choiceCannotBeUsed);
+ 
+     // and an application in Elisa's form: a reverse-DNS name, DBusActivatable=true and an Exec line
+-    const QString name = gpuEnvironment ? QStringLiteral("org.kde.kiogputest.activatable1") : QStringLiteral("org.kde.kiogputest.activatable2");
++    const QString name = QStringLiteral("org.kde.kiogputest.%1").arg(QString::fromLatin1(QTest::currentDataTag()).remove(QLatin1Char('_')));
+     const QString id = name + QLatin1String(".desktop");
+     const QString desktopFilePath = QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation) + QLatin1Char('/') + id;
+     const QString envFile = dir + QLatin1String("/env");
+@@ -648,10 +785,16 @@ void ApplicationLauncherJobTest::shouldStartAnActivatableApplicationOnItsGpu()
+     KIO::ApplicationLauncherJob *job = new KIO::ApplicationLauncherJob(service, this);
+     const bool started = job->exec();
+     qputenv("PATH", oldPath);
+-    QVERIFY2(started, qPrintable(job->errorString()));
++    QCOMPARE(started, !refused);
+ 
+-    // Then KIO starts it itself with its GPU's variables, which activation would lose; without them it is activated
+-    if (gpuEnvironment) {
++    // Then KIO starts it itself with its GPU's variables, which activation would lose; without them it is activated;
++    // where its GPU cannot be used it is neither activated nor started, and the launch says why
++    if (refused) {
++        QCOMPARE(job->errorString(), QStringLiteral("KIOGpuTestActivatable was not started.\n") + QString::fromUtf8(s_choiceCannotBeUsed).trimmed());
++        QTest::qWait(300);
++        QCOMPARE(application.activated, 0);
++        QVERIFY(!QFile::exists(envFile));
++    } else if (gpuEnvironment) {
+         QTRY_VERIFY(QFileInfo(envFile).size() > 0);
+         QFile envOutput(envFile);
+         QVERIFY(envOutput.open(QIODevice::ReadOnly));
+diff --git a/autotests/applicationlauncherjobtest.h b/autotests/applicationlauncherjobtest.h
+index 34609c0..8d5f853 100644
+--- a/autotests/applicationlauncherjobtest.h
++++ b/autotests/applicationlauncherjobtest.h
+@@ -60,6 +60,9 @@ private Q_SLOTS:
+     void shouldRunOnTheGpuOfTheGraphicsSettings_data();
+     void shouldRunOnTheGpuOfTheGraphicsSettings();
+ 
++    void shouldNotStartWhereItsGpuCannotBeUsed_data();
++    void shouldNotStartWhereItsGpuCannotBeUsed();
++
+     void shouldStartAnActivatableApplicationOnItsGpu_data();
+     void shouldStartAnActivatableApplicationOnItsGpu();
+ 
+diff --git a/src/gui/gpudetection.cpp b/src/gui/gpudetection.cpp
+index 5153937..667b690 100644
+--- a/src/gui/gpudetection.cpp
++++ b/src/gui/gpudetection.cpp
+@@ -21,6 +21,7 @@
+ #include <QStandardPaths>
+ #include <QString>
+ 
++#include <KLocalizedString>
+ #include <KProcess>
+ #include <KService>
+ 
+@@ -152,7 +153,7 @@ QProcessEnvironment discreteGpuEnvironment()
+     return s_gpuEnv;
+ }
+ 
+-QProcessEnvironment graphicsSettingsEnvironment(const KService &service)
++GraphicsSettingsAnswer graphicsSettingsEnvironment(const KService &service)
+ {
+     // An application that says where it runs keeps its own choice
+     if (!service.property<QString>(QStringLiteral("PrefersNonDefaultGPU")).isEmpty()
+@@ -180,23 +181,67 @@ QProcessEnvironment graphicsSettingsEnvironment(const KService &service)
+         return {};
+     }
+ 
++    // Longer than the command's own longest wait, three seconds for power-profiles-daemon, so it says its reason itself
++    constexpr int timeoutSeconds = 5;
+     QProcess process;
+     process.start(resolver, {QStringLiteral("--app"), entry});
+-    if (!process.waitForFinished(2000) || process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+-        qCWarning(KIO_GUI) << "No GPU from" << resolver << "for" << entry << process.readAllStandardError();
+-        return {};
+-    }
+-
+-    QProcessEnvironment env;
+-    const QStringList lines = QString::fromLocal8Bit(process.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+-    for (const QString &line : lines) {
+-        const int equals = line.indexOf(QLatin1Char('='));
+-        if (equals > 0) {
+-            env.insert(line.left(equals), line.mid(equals + 1));
++    const bool finished = process.waitForFinished(timeoutSeconds * 1000);
++    const QString said = QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
++
++    // When the GPU cannot be applied, the application does not start on another one: the launch fails and says why
++    GraphicsSettingsAnswer answer;
++    const QString notStarted = i18nc("@info %1 is the name of a program", "%1 was not started.", service.name());
++    const auto fail = [&](const QString &why, const QString &whatToDo) {
++        QStringList text = {notStarted, why};
++        if (!said.isEmpty()) {
++            text << said;
+         }
++        text << whatToDo;
++        answer.error = text.join(QLatin1Char('\n'));
++    };
++    const QString reinstall = i18nc("@info", "Reinstall it: sudo apt-get install --reinstall sparky-stereo-graphics");
++    if (!finished && process.error() == QProcess::FailedToStart) {
++        fail(i18nc("@info %1 says why",
++                   "sparky-stereo-gpu-env could not be started (%1), so the GPU chosen in System Settings, Graphics cannot be applied.",
++                   process.errorString()),
++             reinstall);
++    } else if (!finished) {
++        process.kill();
++        process.waitForFinished();
++        fail(i18ncp("@info",
++                    "sparky-stereo-gpu-env did not answer within %1 second, so the GPU chosen in System Settings, Graphics cannot be applied.",
++                    "sparky-stereo-gpu-env did not answer within %1 seconds, so the GPU chosen in System Settings, Graphics cannot be applied.",
++                    timeoutSeconds),
++             i18nc("@info", "Start the program again in a moment."));
++    } else if (process.exitStatus() != QProcess::NormalExit) {
++        fail(i18nc("@info", "sparky-stereo-gpu-env crashed, so the GPU chosen in System Settings, Graphics cannot be applied."), reinstall);
++    } else if (process.exitCode() == 4) {
++        // The person's choice cannot be used: the command said what failed, why and what to do, and keeps it for the
++        // notification that offers the GPUs that can draw
++        answer.error = notStarted + QLatin1Char('\n') + said;
++    } else if (process.exitCode() == 5) {
++        // Automatic, a rule and not the person's choice, cannot place the application now: it starts as the session would,
++        // and the command has said and kept why
++        qCWarning(KIO_GUI) << "Automatic cannot place" << entry << "now, so it starts where the session puts it:" << said;
++    } else if (process.exitCode() != 0) {
++        fail(i18nc("@info %1 is an exit status",
++                   "sparky-stereo-gpu-env failed (exit status %1), so the GPU chosen in System Settings, Graphics cannot be applied.",
++                   process.exitCode()),
++             reinstall);
++    } else {
++        const QStringList lines = QString::fromLocal8Bit(process.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
++        for (const QString &line : lines) {
++            const int equals = line.indexOf(QLatin1Char('='));
++            if (equals > 0) {
++                answer.environment.insert(line.left(equals), line.mid(equals + 1));
++            }
++        }
++        qCDebug(KIO_GUI) << "GPU environment from" << resolver << "for" << entry << answer.environment.toStringList();
++    }
++    if (!answer.error.isEmpty()) {
++        qCWarning(KIO_GUI) << answer.error;
+     }
+-    qCDebug(KIO_GUI) << "GPU environment from" << resolver << "for" << entry << env.toStringList();
+-    return env;
++    return answer;
+ }
+ 
+ }
+diff --git a/src/gui/gpudetection_p.h b/src/gui/gpudetection_p.h
+index 10a3756..0c180b9 100644
+--- a/src/gui/gpudetection_p.h
++++ b/src/gui/gpudetection_p.h
+@@ -9,8 +9,10 @@
+ 
+ #include "kiogui_export.h"
+ 
++#include <QProcessEnvironment>
++#include <QString>
++
+ class KService;
+-class QProcessEnvironment;
+ 
+ namespace KIO
+ {
+@@ -26,13 +28,28 @@ KIOGUI_EXPORT bool hasDiscreteGpu();
+ KIOGUI_NO_EXPORT QProcessEnvironment discreteGpuEnvironment();
+ 
+ /*
+- * Environment variables that make an application run on the GPU the system's
+- * graphics settings choose for it, as the sparky-stereo-gpu-env command answers.
+- * Empty when the application's own desktop entry says where it runs, when the
+- * environment of the launch already chooses a GPU, and when the command is not
+- * installed, fails or chooses the default GPU.
++ * What the system's graphics settings answer for an application, as the
++ * sparky-stereo-gpu-env command answers.
+  */
+-KIOGUI_NO_EXPORT QProcessEnvironment graphicsSettingsEnvironment(const KService &service);
++struct GraphicsSettingsAnswer {
++    /*
++     * Environment variables that make the application run on the GPU the
++     * graphics settings choose for it. Empty when the application's own desktop
++     * entry says where it runs, when the environment of the launch already
++     * chooses a GPU, when the command is not installed, when it chooses the
++     * default GPU, and when Automatic cannot place the application now (exit
++     * status 5: the command says and keeps why; the person chose nothing).
++     */
++    QProcessEnvironment environment;
++    /*
++     * Not empty when the application must not start: the GPU the person chose
++     * cannot be used (exit status 4), or the command failed, crashed, could not
++     * be started or did not answer. What failed, why and what to do.
++     */
++    QString error;
++};
++
++KIOGUI_NO_EXPORT GraphicsSettingsAnswer graphicsSettingsEnvironment(const KService &service);
+ }
+ 
+ #endif
+diff --git a/src/gui/kprocessrunner.cpp b/src/gui/kprocessrunner.cpp
+index 8bae56f..c054a33 100644
+--- a/src/gui/kprocessrunner.cpp
++++ b/src/gui/kprocessrunner.cpp
+@@ -98,9 +98,16 @@ KProcessRunner *KProcessRunner::fromApplication(const KService::Ptr &service,
+ {
+     // Where the application runs: its own PrefersNonDefaultGPU, else what the graphics settings choose
+     QProcessEnvironment gpuEnv;
++    QString gpuError;
+ #ifndef Q_OS_ANDROID
+     if (service->isValid()) {
+-        gpuEnv = service->runOnDiscreteGpu() ? KIO::discreteGpuEnvironment() : KIO::graphicsSettingsEnvironment(*service);
++        if (service->runOnDiscreteGpu()) {
++            gpuEnv = KIO::discreteGpuEnvironment();
++        } else {
++            const KIO::GraphicsSettingsAnswer answer = KIO::graphicsSettingsEnvironment(*service);
++            gpuEnv = answer.environment;
++            gpuError = answer.error;
++        }
+     }
+ #endif
+ 
+@@ -135,6 +142,11 @@ KProcessRunner *KProcessRunner::fromApplication(const KService::Ptr &service,
+         instance->emitDelayedError(i18n("The desktop entry file\n%1\nis not valid.", serviceEntryPath));
+         return instance;
+     }
++    // The GPU it runs on cannot be applied: it is not started on another one
++    if (!gpuError.isEmpty()) {
++        instance->emitDelayedError(gpuError);
++        return instance;
++    }
+     instance->m_executable = KIO::DesktopExecParser::executablePath(service->exec());
+ 
+     KIO::DesktopExecParser execParser(*service, urls);

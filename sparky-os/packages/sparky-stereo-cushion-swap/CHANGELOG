@@ -1,3 +1,39 @@
+Version 0.3.4 (2026-11-03)
+  Exclude a person’s zram from disk-swap accounting and area selection.
+  Reject zram as a hibernation target without changing its state.
+
+-------------------------------------------------------------------------------
+  Version 0.3.3 (2026-11-03)
+-------------------------------------------------------------------------------
+  * Hold the resume area across every phase of hibernate, hybrid sleep and
+    suspend-then-hibernate, until the native systemd sleep service ends.
+  * Fail preparation before sleep, retain the error, and reset the quiet window
+    after resume; serialize preparation and cleanup with the daemon's actions.
+  * Remove obsolete compressed-memory swap references.
+-------------------------------------------------------------------------------
+  Version 0.3.2 (2026-11-03)
+-------------------------------------------------------------------------------
+  * Copy only tracked recipe inputs and retain the shared copier in source exports.
+-------------------------------------------------------------------------------
+  Version 0.3.1 (2026-11-02)
+-------------------------------------------------------------------------------
+  * ORDER 350 (Daniel, 2026-11-02: "Why machinery to keep a failure for each?"): each problem is kept by the
+    edition's one engine, sparky-stereo-problems, for this boot, only when it changes, and shown by its
+    session notifier; the package's own store and user units go. The status (PROTECTION, PROBLEMS, REASON)
+    and --problems read the engine's records; --notify starts the session's notifier. The messages, word for
+    word, are built into journal catalogs; the problems go when the package is removed
+
+  * Nothing fails silently (Daniel, 2026-11-01; ORDER 346b, rows U17, U18 and U54 of ORDER 343's audit)
+  * Whatever keeps the daemon from protecting memory, or from protecting it the way it was set, is a problem kept in /run/cushion-swap/problems, said once in the journal and shown once per session as a notification, in the nine languages
+  * The status names it: PROTECTION (yes, degraded, no), PROBLEMS, REASON, MODE_REASON, CALIBRATION, STARTED and PID
+  * No swap area, an area that is not there, an unreadable /proc/meminfo or /proc/swaps and a failed swapon say that memory is not protected; a failed swapoff says the area stays on
+  * --status exits 0 only while memory is protected: 1 with a problem kept, 2 not protecting, 3 not running, 4 unreadable; --problems lists them in the system's language
+  * The unit keeps its status past the daemon (RuntimeDirectoryPreserve=yes), says why it stopped (ExecStopPost) and gives systemctl status a status line (NotifyAccess=all)
+  * The package checks that the restarted daemon runs and says whether it protects memory; each failed setup step is said with its own error, and the package still configures
+  * PSI: a kernel without it, or PSI=off, is a mode; a kernel with PSI whose helper is missing or whose trigger is refused or lost is a problem; the poller keeps watching as before, and PSI=off is offered as a choice
+  * Calibration: a missing helper, a failed fingerprint, a failed measurement (tried again a minute later, as before) or a result that cannot be kept are problems; the conservative pace stays, with MAX_ALLOC_MIB_S offered as a choice
+  * Hibernation: a failed switch-on, a kernel resume device that differs and a failed switch-off after resume fail their command and are kept
+
 -------------------------------------------------------------------------------
   Version 0.3.0 (2026-10-11)
 -------------------------------------------------------------------------------

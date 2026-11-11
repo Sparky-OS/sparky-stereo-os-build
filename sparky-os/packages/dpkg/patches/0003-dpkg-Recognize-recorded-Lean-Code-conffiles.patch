@@ -1,0 +1,296 @@
+From 4c4db8c9a424d749db2e5c4d66408991cff53afa Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 13:11:17 -0300
+Subject: [PATCH] dpkg: Recognize recorded Lean Code conffiles without
+ restoring them
+
+Only normalize the installed conffile digest when the owning package record matches its current bytes and the pristine original matches both the recorded SHA-256 and dpkg Conffiles MD5. Reuse this check for maintscript-helper removals and renames through a private readonly action. Keep incoming file hashes, verification and conflict decisions unchanged.
+
+Assisted-by: gpt-6-astra via Codex
+---
+ src/common/actions.h           |   1 +
+ src/dpkg-maintscript-helper.sh |   4 +-
+ src/main/archives.c            | 159 ++++++++++++++++++++++++++++++++-
+ src/main/configure.c           |   2 +-
+ src/main/main.c                |   1 +
+ src/main/main.h                |   6 ++
+ src/main/unpack.c              |   3 +-
+ 7 files changed, 171 insertions(+), 5 deletions(-)
+
+diff --git a/src/common/actions.h b/src/common/actions.h
+index a78f329..fd73b93 100644
+--- a/src/common/actions.h
++++ b/src/common/actions.h
+@@ -32,6 +32,7 @@ enum action {
+ 	act_remove,
+ 	act_purge,
+ 	act_verify,
++	act_conffile_hash,
+ 	act_commandfd,
+ 
+ 	act_status,
+diff --git a/src/dpkg-maintscript-helper.sh b/src/dpkg-maintscript-helper.sh
+index fee6844..92079b5 100755
+--- a/src/dpkg-maintscript-helper.sh
++++ b/src/dpkg-maintscript-helper.sh
+@@ -102,7 +102,7 @@ prepare_rm_conffile()
+   ensure_package_owns_file "$PACKAGE" "$CONFFILE" || return 0
+ 
+   local md5sum old_md5sum
+-  md5sum="$(md5sum "$DPKG_ROOT$CONFFILE" | sed -e 's/ .*//')"
++  md5sum="$(dpkg --internal-conffile-hash "$PACKAGE" "$CONFFILE")"
+   old_md5sum="$(dpkg-query -W -f='${Conffiles}' "$PACKAGE" \
+     | sed -n -e "\\'^ $CONFFILE ' { s/ obsolete$//; s/.* //; p }")"
+   if [ "$md5sum" != "$old_md5sum" ]; then
+@@ -222,7 +222,7 @@ prepare_mv_conffile()
+   ensure_package_owns_file "$PACKAGE" "$CONFFILE" || return 0
+ 
+   local md5sum old_md5sum
+-  md5sum="$(md5sum "$DPKG_ROOT$CONFFILE" | sed -e 's/ .*//')"
++  md5sum="$(dpkg --internal-conffile-hash "$PACKAGE" "$CONFFILE")"
+   old_md5sum="$(dpkg-query -W -f='${Conffiles}' "$PACKAGE" \
+     | sed -n -e "\\'^ $CONFFILE ' { s/ obsolete$//; s/.* //; p }")"
+   if [ "$md5sum" = "$old_md5sum" ]; then
+diff --git a/src/main/archives.c b/src/main/archives.c
+index f94c5ba..137585d 100644
+--- a/src/main/archives.c
++++ b/src/main/archives.c
+@@ -38,6 +38,10 @@
+ #include <stdlib.h>
+ #include <stdio.h>
+ #include <sha2.h>
++#include <md5.h>
++#ifdef WITH_LIBLZMA
++#include <lzma.h>
++#endif
+ #include <obstack.h>
+ #define obstack_chunk_alloc m_malloc
+ #define obstack_chunk_free free
+@@ -472,7 +476,7 @@ leancode_index_load(const char *filename, enum leancode_index_type type)
+ 		if (strcmp(index->filename, filename) == 0)
+ 			break;
+ 
+-	fd = open(filename, O_RDONLY);
++	fd = open(filename, O_RDONLY | O_NONBLOCK);
+ 	if (fd < 0)
+ 		return NULL;
+ 	if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode)) {
+@@ -548,6 +552,159 @@ leancode_sha256_is(const char *filename, const char *hash)
+ 	return strcmp(digest, hash) == 0;
+ }
+ 
++/*
++ * Bind the recorded SHA-256 original to dpkg's own Conffiles MD5.
++ * A record's md5_orig alone cannot establish that binding.
++ */
++static bool
++leancode_original_matches(const char *original, const char *expected)
++{
++#ifdef WITH_LIBLZMA
++	lzma_stream stream = LZMA_STREAM_INIT;
++	lzma_ret rc;
++	MD5_CTX md5;
++	SHA2_CTX sha256;
++	char md5sum[MD5_DIGEST_STRING_LENGTH];
++	char sha256sum[SHA256_DIGEST_STRING_LENGTH];
++	unsigned char input[32768], output[32768];
++	char *dir, *filename;
++	struct stat st;
++	int fd;
++	FILE *file;
++
++	dir = dpkg_fsys_get_path("/var/lib/dpkg-stereo/pristine");
++	filename = str_fmt("%s/%s.xz", dir, original);
++	free(dir);
++	fd = open(filename, O_RDONLY | O_NONBLOCK);
++	free(filename);
++	if (fd < 0)
++		return false;
++	if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode)) {
++		close(fd);
++		return false;
++	}
++	file = fdopen(fd, "r");
++	if (file == NULL) {
++		close(fd);
++		return false;
++	}
++
++	rc = lzma_stream_decoder(&stream, UINT64_MAX, LZMA_CONCATENATED);
++	MD5Init(&md5);
++	SHA256Init(&sha256);
++	while (rc == LZMA_OK) {
++		size_t size;
++
++		if (stream.avail_in == 0 && !feof(file)) {
++			stream.next_in = input;
++			stream.avail_in = fread(input, 1, sizeof(input), file);
++			if (ferror(file))
++				break;
++		}
++		stream.next_out = output;
++		stream.avail_out = sizeof(output);
++		rc = lzma_code(&stream, feof(file) ? LZMA_FINISH : LZMA_RUN);
++		size = sizeof(output) - stream.avail_out;
++		MD5Update(&md5, output, size);
++		SHA256Update(&sha256, output, size);
++	}
++	lzma_end(&stream);
++	fclose(file);
++	if (rc != LZMA_STREAM_END)
++		return false;
++	MD5End(&md5, md5sum);
++	SHA256End(&sha256, sha256sum);
++	return strcmp(md5sum, expected) == 0 && strcmp(sha256sum, original) == 0;
++#else
++	return false;
++#endif
++}
++
++static bool
++leancode_conffile_projection(struct pkginfo *pkg, const char *fn,
++                             const char *name, const char *expected)
++{
++	const struct conffile *conff;
++	const struct leancode_entry *record;
++	struct leancode_index *index;
++	char *dir, *filename;
++	size_t pos;
++
++	if (name[0] != '/' || !leancode_is_hash(expected, MD5HASHLEN))
++		return false;
++	/* Use this owner's entry, never another package's placeholder. */
++	for (conff = pkg->installed.conffiles; conff; conff = conff->next) {
++		if (!(conff->flags & CONFFILE_REMOVE_ON_UPGRADE) &&
++		    strcmp(conff->name, name) == 0)
++			break;
++	}
++	if (conff == NULL || strcmp(conff->hash, expected) != 0)
++		return false;
++
++	dir = dpkg_fsys_get_path(LEANCODE_RECORDS_DIR);
++	filename = str_fmt("%s/%s.tsv", dir,
++	                   pkgbin_name(pkg, &pkg->installed, pnaw_same));
++	free(dir);
++	index = leancode_index_load(filename, LEANCODE_INDEX_RECORDS);
++	free(filename);
++	record = leancode_index_find(index, name + 1);
++	if (record == NULL)
++		return false;
++	/* Ambiguous duplicate rows are not evidence. */
++	pos = record - index->entries;
++	if ((pos > 0 && strcmp(index->entries[pos - 1].name, record->name) == 0) ||
++	    (pos + 1 < index->entries_used &&
++	     strcmp(index->entries[pos + 1].name, record->name) == 0))
++		return false;
++
++	return leancode_sha256_is(fn, record->lean) &&
++	       leancode_original_matches(record->hash, expected);
++}
++
++/* Only installed conffile decisions use this logical digest. */
++void
++md5hash_conffile(struct pkginfo *pkg, char *hashbuf, const char *fn,
++                 const char *name, const char *expected)
++{
++	if (leancode_conffile_projection(pkg, fn, name, expected)) {
++		strcpy(hashbuf, expected);
++		debug(dbg_conff, "leancode conffile '%s' matches its recorded original", name);
++	} else {
++		md5hash(pkg, hashbuf, fn);
++	}
++}
++
++/* Private interface shared with dpkg-maintscript-helper. */
++const char *leancode_conffile_package;
++
++int
++leancode_conffile_hash(const char *const *argv)
++{
++	const char *name = *argv++;
++	const struct conffile *conff;
++	struct pkginfo *pkg;
++	char hash[MD5HASHLEN + 1];
++	char *filename;
++
++	if (name == NULL || *argv)
++		badusage(_("--%s takes exactly one argument"), cipaction->olong);
++
++	modstatdb_open(msdbrw_readonly);
++	pkg = dpkg_options_parse_pkgname(cipaction, leancode_conffile_package);
++	for (conff = pkg->installed.conffiles; conff; conff = conff->next) {
++		if (!(conff->flags & CONFFILE_REMOVE_ON_UPGRADE) &&
++		    strcmp(conff->name, name) == 0)
++			break;
++	}
++	filename = dpkg_fsys_get_path(name);
++	md5hash_conffile(pkg, hash, filename, name, conff ? conff->hash : "");
++	free(filename);
++	printf("%s\n", hash);
++	m_output(stdout, _("<standard output>"));
++	modstatdb_shutdown();
++	return 0;
++}
++
+ /*
+  * Check whether the shared file on disk is a Lean Code projection of the
+  * file the other instances of the package set shipped.
+diff --git a/src/main/configure.c b/src/main/configure.c
+index b869bea..c1f55d5 100644
+--- a/src/main/configure.c
++++ b/src/main/configure.c
+@@ -398,7 +398,7 @@ deferred_configure_conffile(struct pkginfo *pkg, struct conffile *conff)
+ 		conff->hash = EMPTYHASHFLAG;
+ 		return;
+ 	}
+-	md5hash(pkg, currenthash, cdr.buf);
++	md5hash_conffile(pkg, currenthash, cdr.buf, conff->name, conff->hash);
+ 
+ 	varbuf_set_varbuf(&cdr_new, &cdr);
+ 	varbuf_add_str(&cdr_new, DPKGNEWEXT);
+diff --git a/src/main/main.c b/src/main/main.c
+index da71145..2e5d772 100644
+--- a/src/main/main.c
++++ b/src/main/main.c
+@@ -772,6 +772,7 @@ static const struct cmdinfo cmdinfos[] = {
+ 	ACTION( "remove",                         'r', act_remove,               packages        ),
+ 	ACTION( "purge",                          'P', act_purge,                packages        ),
+ 	ACTION( "triggers-only",                   0,  act_triggers,             packages        ),
++	ACTION_MUX( "internal-conffile-hash",       0,  act_conffile_hash,         leancode_conffile_hash, &leancode_conffile_package),
+ 	ACTION( "verify",                         'V', act_verify,               verify          ),
+ 	ACTIONBACKEND( "listfiles",               'L', DPKGQUERY),
+ 	ACTIONBACKEND( "status",                  's', DPKGQUERY),
+diff --git a/src/main/main.h b/src/main/main.h
+index cb7fa18..5401794 100644
+--- a/src/main/main.h
++++ b/src/main/main.h
+@@ -165,6 +165,12 @@ clearselections(const char *const *argv);
+ void
+ md5hash(struct pkginfo *pkg, char *hashbuf, const char *fn);
+ void
++md5hash_conffile(struct pkginfo *pkg, char *hashbuf, const char *fn,
++                 const char *name, const char *expected);
++extern const char *leancode_conffile_package;
++int
++leancode_conffile_hash(const char *const *argv);
++void
+ enqueue_package(struct pkginfo *pkg);
+ void
+ enqueue_package_mark_seen(struct pkginfo *pkg);
+diff --git a/src/main/unpack.c b/src/main/unpack.c
+index e879f8c..47f91fa 100644
+--- a/src/main/unpack.c
++++ b/src/main/unpack.c
+@@ -682,7 +682,8 @@ pkg_remove_conffile_on_upgrade(struct pkginfo *pkg,
+ 		        pkg_name(pkg, pnaw_nonambig), cdrext.buf,
+ 		        strerror(errno));
+ 
+-	md5hash(pkg, currenthash, cdr.buf);
++	md5hash_conffile(pkg, currenthash, cdr.buf, namenode->name,
++	                 namenode->oldhash);
+ 
+ 	/* Has it been already removed (e.g. by local admin)? */
+ 	if (strcmp(currenthash, NONEXISTENTFLAG) == 0) {
+-- 
+2.53.0
+

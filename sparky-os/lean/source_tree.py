@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 """Source projection for disposable builds, with exact authored recovery.
 
-C/C++ is the default. A retained language plan explicitly opts a Java build in;
-its JDK must be installed before this stage, as for the actual compiler.
+C/C++ is the default. A retained language plan explicitly opts a Java or Zig build in;
+its JDK or zig must be installed before this stage, as for the actual compiler.
 """
 import argparse
 from dataclasses import asdict
@@ -12,14 +12,18 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 
-from . import VERSION, lang_c, project
+from . import VERSION, lang_c, lang_zig, project
 
 EXCLUDED = {'.git', '.pc', 'debian', '.sparky-lc', 'build'}
 PRESERVE_PLAN = 'debian/sparky-lean-preserve.json'
 LANGUAGE_PLAN = 'debian/sparky-lean-languages.json'
 PAYLOAD_SOURCE_PLAN = 'debian/sparky-lean-payload-sources.json'
-EXTENSIONS = {'c': lang_c.EXTS, 'java': {'.java'}}
+# installed files a build step generates in a declared form from a source copy (Zig's install step writes every
+# *test.zig as an empty placeholder): pattern -> {"form": "empty" or "sha256:HEX", "reason": why}
+PAYLOAD_GENERATED_PLAN = 'debian/sparky-lean-payload-generated.json'
+EXTENSIONS = {'c': lang_c.EXTS | lang_c.ASM_EXTS, 'java': {'.java'}, 'zig': lang_zig.EXTS}
 
 
 def sha(data):
@@ -50,7 +54,7 @@ def project_tree(root):
     if (not isinstance(languages, list) or not languages
             or any(not isinstance(name, str) or name not in EXTENSIONS for name in languages)
             or len(languages) != len(set(languages))):
-        raise ValueError('Source language plan must name supported, unique languages: c, java')
+        raise ValueError('Source language plan must name supported, unique languages: ' + ', '.join(sorted(EXTENSIONS)))
     languages = sorted(languages)
     extensions = set().union(*(EXTENSIONS[name] for name in languages))
     if report.exists():
@@ -68,7 +72,8 @@ def project_tree(root):
     paths = []
     for path in sorted(root.rglob('*')):
         rel = path.relative_to(root)
-        if (path.is_symlink() or not path.is_file() or path.suffix.lower() not in extensions
+        suffix = path.suffix if path.suffix in lang_c.ASM_EXTS else path.suffix.lower()   # `.s` is no cpp input
+        if (path.is_symlink() or not path.is_file() or suffix not in extensions
                 or any(p in EXCLUDED or p.startswith('obj-') for p in rel.parts)):
             continue
         paths.append(path)
@@ -78,12 +83,17 @@ def project_tree(root):
             raise ValueError(f'Source preservation pattern matches no eligible file: {pattern}')
     evidence.mkdir(exist_ok=True)
     records = {}
+    # a file another source file reads as data (Zig's @embedFile) is that file's input, not code to project
+    readers = project.read_as_data({'/' + n: p.read_bytes() for p, n in zip(paths, names) if project.reads_others(n)},
+                                   ('/' + n for n in names))
     for path, name in zip(paths, names):
         rel = path.relative_to(root)
         raw = path.read_bytes()
         metadata = path.stat()
         reasons = [reason for pattern, reason in plan.items()
                    if fnmatch.fnmatchcase(name, pattern)]
+        if '/' + name in readers:
+            reasons.append(readers['/' + name])
         if reasons:
             result = project.Result(path='/' + name, status='left',
                                     reason='additional source consumer: ' + '; '.join(reasons),
@@ -101,7 +111,7 @@ def project_tree(root):
             original.write_bytes(raw)
             path.write_bytes(result.lean)
             os.utime(path, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
-        if result.reason.startswith(('check failed:', 'the c reader', 'the java reader', 'not stable')):
+        if result.reason.startswith(('check failed:', 'the c reader', 'the java reader', 'the zig reader', 'not stable')):
             # Retain recovery records even when qualification fails.
             report.write_text(json.dumps({'engine': VERSION, 'files': records}, indent=2) + '\n')
             raise ValueError(f'{rel}: {result.reason}')
@@ -138,11 +148,62 @@ def restore_tree(root):
         os.utime(path, ns=(path.stat().st_atime_ns, row['source_mtime_ns']))
 
 
-def restore_payload(root, staging):
+def form_digest(form):
+    """The SHA-256 a declared generated output must have: "empty", or "sha256:HEX" for any other exact content."""
+    if form == 'empty':
+        return sha(b'')
+    match = re.fullmatch(r'sha256:([0-9a-f]{64})', form or '')
+    if not match:
+        raise ValueError(f'Unknown generated-output form {form!r}: use "empty" or "sha256:HEX"')
+    return match.group(1)
+
+
+def check_generated(plan):
+    """A generated-output plan as debian_prepare writes it: {absolute installed pattern: {"form", "reason"}}."""
+    if not isinstance(plan, dict):
+        raise ValueError('Generated-output plan must map installed patterns to their form and reason')
+    out = {}
+    for pattern, row in plan.items():
+        if (not isinstance(pattern, str) or not pattern.startswith('/') or '\\' in pattern
+                or '..' in Path(pattern).parts or not isinstance(row, dict)
+                or not isinstance(row.get('reason'), str) or not row['reason'].strip()):
+            raise ValueError('A generated output needs an absolute installed pattern, its form and a reason')
+        out[pattern] = {'form': row.get('form'), 'reason': row['reason'], 'sha256': form_digest(row.get('form'))}
+    return out
+
+
+def generated_plan(root):
+    path = root / PAYLOAD_GENERATED_PLAN
+    return check_generated(json.loads(path.read_text())) if path.exists() else {}
+
+
+def installed_files(staging):
+    for path in staging.rglob('*'):
+        if path.is_symlink() or not path.is_file() or 'DEBIAN' in path.relative_to(staging).parts:
+            continue
+        yield path, '/' + path.relative_to(staging).as_posix()
+
+
+def require_generated(root, stagings):
+    """Every declared generated output matches at least one installed file of the build's packages, or the build
+    stops: a declaration that matches nothing explains nothing."""
+    plan = generated_plan(root)
+    if not plan:
+        return
+    paths = [installed for staging in stagings for _, installed in installed_files(staging)]
+    for pattern in plan:
+        if not any(fnmatch.fnmatchcase(installed, pattern) for installed in paths):
+            raise ValueError(f'Declared generated output matches no installed file: {pattern}')
+
+
+def restore_payload(root, staging, check_coverage=True):
     """After installation, restore copied headers before the distinct payload projection.
 
     Do not restore the compilation tree before dh_auto_install: older debhelper
     invokes make/ninja install and may rebuild it. Refuse ambiguous HR mappings.
+    An installed file matching a declared generated output (debian/sparky-lean-payload-generated.json) must be
+    exactly its declared form; it is left as it is and recorded as generated. Any other change is refused.
+    check_coverage=False: the caller checks every declared pattern over all its packages (require_generated).
     """
     by_hash = {}
     by_name = {}
@@ -164,12 +225,21 @@ def restore_payload(root, staging):
     source_report = root / '.sparky-lc/source.json'
     records = json.loads(source_report.read_text())['files'] if mappings else {}
     ordered = sorted(mappings, key=len, reverse=True)
+    generated = generated_plan(root)
+    if check_coverage:
+        require_generated(root, [staging])
     restored = 0
-    for path in staging.rglob('*'):
-        if path.is_symlink() or not path.is_file() or 'DEBIAN' in path.relative_to(staging).parts:
-            continue
+    made = {}
+    for path, installed in installed_files(staging):
         digest = sha(path.read_bytes())
-        installed = '/' + path.relative_to(staging).as_posix()
+        pattern = next((p for p in generated if fnmatch.fnmatchcase(installed, p)), None)
+        if pattern is not None:
+            if digest != generated[pattern]['sha256']:
+                raise ValueError(f'Declared generated output is not its declared form ({generated[pattern]["form"]}): '
+                                 f'{path}')
+            made[installed] = {'pattern': pattern, 'form': generated[pattern]['form'],
+                               'reason': generated[pattern]['reason'], 'sha256': digest}
+            continue
         prefix = next((p for p in ordered if installed.startswith(p.rstrip('/') + '/')), None)
         if prefix is not None:
             relative = installed[len(prefix.rstrip('/')) + 1:]
@@ -194,6 +264,14 @@ def restore_payload(root, staging):
             raise ValueError(f'Ambiguous authored mapping for installed file: {path}')
         path.write_bytes(choices.pop())
         restored += 1
+    if made:
+        record = root / '.sparky-lc/payload-generated.json'
+        known = json.loads(record.read_text()) if record.exists() else {}
+        known.update(made)
+        record.parent.mkdir(exist_ok=True)
+        record.write_text(json.dumps(known, indent=2, sort_keys=True) + '\n')
+        print(f'{len(made)} installed files are declared generated outputs, each in its declared form: '
+              + '; '.join(sorted({f"{r['pattern']} ({r['form']}): {r['reason']}" for r in made.values()})))
     print(f'Restored {restored} installed source files before payload projection')
 
 

@@ -28,7 +28,8 @@ static int capabilities(void)
                routes[i].name);
     }
     free(routes);
-    printf("gpus=%d copy-back=%s\n", count, media_gpu_route_copy_back() ? "allowed" : "not-allowed");
+    printf("gpus=%d copy-back=%s other-gpu=%s\n", count, media_gpu_route_copy_back() ? "allowed" : "not-allowed",
+           media_gpu_route_other_gpu() ? "allowed" : "not-allowed");
     return 0;
 }
 
@@ -50,12 +51,15 @@ static int decoder(char **argv)
     else
         return usage();
     struct media_gpu_decoder choice;
-    int result = media_gpu_route_decoder_frames(&video, frames, &choice);
+    char said[1024];
+    int result = media_gpu_route_decoder_said(&video, frames, &choice, said, sizeof(said));
+    if (said[0])
+        fprintf(stderr, "media-gpu-route: %s\n", said);
     if (result > 0)
         printf("result=hardware backend=%s device=%s gpu=%s\n", choice.backend == MEDIA_GPU_CUDA ? "cuda" : "vaapi",
                choice.device, choice.gpu.name);
     else
-        printf("result=%s\n", result ? "unknown" : "software");
+        printf("result=%s\n", result == -2 ? "unresolved" : result ? "unknown" : "software");
     return 0;
 }
 

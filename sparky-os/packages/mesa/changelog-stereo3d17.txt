@@ -1,0 +1,9 @@
+mesa (26.1.6-1+stereo3d17) unstable; urgency=medium
+
+  * Consume DRI3 size changes before choosing the first resized Present buffer.
+  * Keep stereo identity on the live X window across GLX drawable recreation;
+    maintain child membership through reparenting and destruction.
+  * Keep separate front-eye resources and a packed loader front from the first
+    stereo frame, including multisample attachments.
+  * Declare activated stereo after queued GL commands are flushed and before
+    the packed Present request reaches the server.

@@ -1,0 +1,33 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+include /usr/share/dpkg/pkg-info.mk
+
+%:
+	dh $@
+
+debian/scripts/dh_dkms: debian/scripts/dh_dkms.in
+	sed -r "s,^#VERSION#,our \$$VERSION = \"$(DEB_VERSION)\";," $< > $@
+	chmod +x $@
+
+debian/scripts/dh_dkms.1: debian/scripts/dh_dkms
+	pod2man \
+		--center "DKMS Debhelper" \
+		--release $(DEB_VERSION_UPSTREAM) \
+		$< > $@
+
+override_dh_auto_build: debian/scripts/dh_dkms
+override_dh_auto_build: debian/scripts/dh_dkms.1
+
+override_dh_auto_install:
+	$(MAKE) install-debian DESTDIR=$(CURDIR)/debian/tmp
+
+execute_after_dh_install:
+	DH_AUTOSCRIPTDIR=debian/scripts debian/scripts/dh_dkms
+	# Sparky Stereo OS, ORDER 370: dkms-sign-unsigned's messages as journal catalogs, in the nine languages
+	sparky-stereo-problems catalog dkms debian/problems-lang debian/dkms/usr/lib/systemd/catalog --subject LOCAL1
+
+# Sparky Stereo OS, ORDER 374: dkms-sign-unsigned.service signs, at the installed system's first boot, the modules an
+# image built in a chroot carries unsigned; enabled, never started by the package (the postinst signs on its own)
+override_dh_installsystemd:
+	dh_installsystemd --name=dkms-sign-unsigned --no-start

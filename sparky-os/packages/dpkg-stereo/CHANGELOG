@@ -1,4 +1,607 @@
 -------------------------------------------------------------------------------
+  Version 0.1.39 (2026-11-06)
+-------------------------------------------------------------------------------
+  * debsums is a Depends (ORDER 437). --debsums is a feature of the package,
+    and "a dependency a designed feature needs is a Depends" (Daniel,
+    2026-11-02, memory design-check-every-default); 0.1.38 had it as a
+    Suggests. debsums is 108 KB installed (Depends libdpkg-perl,
+    libfile-fnmatch-perl, perl). --debsums still says what to do when debsums
+    was removed afterwards (LOCAL81, exit 2).
+
+-------------------------------------------------------------------------------
+  Version 0.1.38 (2026-11-06)
+-------------------------------------------------------------------------------
+  * --debsums [PACKAGE...]: Lean Code's front for debsums (ORDER 252c, J16).
+    debsums checks every file against its package's md5sums, and a projected
+    file is not its package's bytes by design, so debsums alone calls every
+    lean file changed. The front checks the projected files by their lean
+    hashes (what --verify does) and sends every other file to debsums; a file
+    debsums names that dpkg-stereo projected is not counted twice. A file
+    debsums finds changed or missing is printed as DEBSUMS and is a problem
+    (exit 1). A package without an md5sums file is information (NOSUMS, not
+    counted). debsums not installed, not finishing or asked for an unknown
+    package is an incomplete check, said with what to do, exit 2, never clean.
+    debsums itself is a Suggests, and a row of the developer task.
+    Messages LOCAL81 to LOCAL85 in the nine languages. Test:
+    test/debsums-front-test.sh (control: debsums alone calls the projected
+    files changed; green; four reds).
+
+-------------------------------------------------------------------------------
+  Version 0.1.37 (2026-11-04)
+-------------------------------------------------------------------------------
+  * --verify --deep exits 0 on a healthy, just-upgraded system (ORDER 398).
+    A check that is red on a healthy system proves nothing (the proof of
+    release r1103a: dist-upgrade exit 0, --verify 0 problems, --deep 27).
+  * A file that is not a conffile, whose installed bytes today's renderer does
+    not reproduce, but which passes restore's own checks (the owner lists the
+    path and is at the recorded version, the owner's md5sums, the original's
+    md5 and sha256, the installed bytes against the recorded projection), is
+    printed as OLDFORM, information, and not counted: an earlier renderer's
+    form, which restore takes back from its original. Any other mismatch
+    stays MISMATCH and counted, a conffile always needs the exact render.
+  * --deep also compares the lc1 manifest rows dpkg-stereo did not project
+    with their build-time payload, to know the package's own files are
+    intact. One that differs is printed as AFTERINST, information, and not
+    counted: depmod rewrites modules.dep at every kernel install, and
+    maintainer scripts rewrite os-release, issue and plymouthd.defaults;
+    dpkg-stereo did not project them and leaves them. A projected row that
+    differs, or a row that is gone, stays LCCHANGED and counted.
+  * The summary line names both information counts, and the exit status
+    follows the problems only (0, 1 for a problem, 2 for an incomplete check).
+    Messages LOCAL77 to LOCAL80 in the nine languages.
+
+-------------------------------------------------------------------------------
+  Version 0.1.36 (2026-11-04)
+-------------------------------------------------------------------------------
+  * Carry lean 0.1.28: every Lean Code build leaves a build record
+    (SOURCE_VERSION_ARCH.sparky-build.json) beside its .deb files, written by
+    lean.release check-debs, with the start noted by lean.debhelper (ORDER 394b).
+
+-------------------------------------------------------------------------------
+  Version 0.1.35 (2026-11-04)
+-------------------------------------------------------------------------------
+  * Carry lean 0.1.27: a case solved under an alternative APT policy (the
+    main or the legacy NVIDIA driver lock) is ordered by that policy's own
+    records, as on an installed system, so the other stack's supplied
+    versions no longer override it; a case whose plan uses a name a policy
+    pins must install under every policy it can be installed with (ORDER 390).
+
+-------------------------------------------------------------------------------
+  Version 0.1.34 (2026-11-04)
+-------------------------------------------------------------------------------
+  * Restore of a file that is not a conffile checks the owner's md5sums, the
+    original's digests and the installed bytes, but no longer demands that
+    today's renderer reproduces them (0.1.32 did, which refused every file
+    an earlier renderer had projected: the `#line` and kept-empty-line C
+    forms and the old GLSL form stayed in their old form for good, and the
+    migrations that restore them could never end). A conffile still needs
+    the exact render. Lean itself is unchanged (0.1.26).
+  * Restore binds a file that is not a conffile to its owner by the owner's
+    md5sums: records written before 0.1.27 hold an empty md5_orig for such
+    files (0.1.32 refused all of them as "not identified by the owning
+    package"); a recorded md5, when there is one, must still agree.
+
+-------------------------------------------------------------------------------
+  Version 0.1.33 (2026-11-04)
+-------------------------------------------------------------------------------
+  * Carry lean 0.1.26: conflicting supplied APT policies apply only with their
+    packages selected in a coinstallable dependency closure; keep strict pins
+    and retain each alternative solve and its policy as qualification evidence
+
+-------------------------------------------------------------------------------
+  Version 0.1.32 (2026-11-04)
+-------------------------------------------------------------------------------
+  * A configure with no pending conffile needs no native-capability subprocess;
+    use the existing package snapshot to return before querying dpkg.
+  * Carry 0.1.31's orphan recovery and removed-conffile restoration. The older-dpkg
+    pre-invoke path and explicit restore also require exact reproduction from the
+    original independently identified by the owning package before writing; a
+    refusal keeps the file and names its reason through the problems engine.
+  * With native dpkg conffile capability 2, pre-invoke restores no conffile.
+    Both the running binary's hook signal and its package's Provides must
+    advertise the capability; older dpkg retains the restore path.
+  * Keep native conffile refusals in the problems engine, naming the package,
+    file, reason and remaining .dpkg-dist/.dpkg-new. Repair only rechecks.
+    Messages ship in all nine edition languages.
+  * Retain conffile records across separate unpack/configure runs, and remove
+    them if the unpacked package is purged before configuration.
+  * Share the exact original-to-projection byte comparison between --verify
+    and /usr/lib/dpkg-stereo/conffile-verify, the read-only verifier for the
+    edition's dpkg. Select the reader from the original and installed path.
+  * Recheck original MD5/SHA-256 and current SHA-256 at the verifier boundary;
+    reject forged lean hashes even when the pristine original is genuine.
+  * Isolate Python imports, require a protected root-owned renderer, and
+    refuse writes and external processes during verification.
+
+-------------------------------------------------------------------------------
+  Version 0.1.31 (2026-11-03)
+-------------------------------------------------------------------------------
+  * ORDER 373: the records dpkg-stereo 0.1.28 and older lost come back. Those versions counted a package as installed
+    only in dpkg's state "installed" (0.1.29 fixed that, ORDER 367): a run that left one with its trigger pending, as
+    apt's --no-triggers runs leave systemd whenever a package ships a file under /usr/lib/systemd/catalog, dropped its
+    records, and the next projection left its lean files as "changed since its package installed it" (a lean conffile
+    as "changed by the person"). --verify did not name them, --restore could not bring their originals back, and dpkg
+    would ask about such a conffile at its package's next upgrade. On the station 378 rows were so (systemd 313, udev
+    50), and /etc/default/nss was a lean conffile called the person's.
+  * A one-time migration (marker orphaned-lean-v1), run by the post-invoke hook at the end of the dpkg run that installs
+    this version (outside the postinst, where dpkg's run is half done, as the conffile owners' migration of 0.1.22) and
+    then by the hooks until it completes, judges each such file of an installed package against its package's own file at the installed version. dpkg's database
+    names the version (a left row names none), and an original is that version's only when its MD5 is the one dpkg
+    records for the file (md5sums, or the conffile's hash). The original comes from the pristine store (a conffile's
+    copy, found by that MD5), then as restore takes it: APT's cache, a configured source, and snapshot.debian.org only
+    for the person's --repair and --repair-consumers, never inside dpkg's hooks.
+      - exactly the projection of that original, checked again by its reader: its record comes back (a conffile's with
+        its pristine copies, so pre-invoke puts it back before dpkg compares it) and its row goes;
+      - anything else stays the person's, as before; a file without the pointer line every projection carries is not
+        one, and its original is not fetched to say so;
+      - a file in its package's own bytes (a stale row) is examined again;
+      - a projection today's check refuses (an older engine's) goes back to its package's bytes, its row saying why.
+  * What came back and what stayed the person's is said once, in the system's language with English beside it. A file
+    whose original is nowhere at hand keeps its row; --verify names it (UNRECORDED; exit 2, the check is not complete),
+    --status counts it, and the step is kept as a problem naming each package version, why, and what gives the records
+    back (sudo dpkg-stereo --repair, which also asks snapshot.debian.org; or the package's next upgrade). A dpkg run
+    tries a version again only when its installed version, APT's lists or APT's cache changed. --restore (and so
+    dpkg-stereo's own removal) names such files too, version by version, as staying lean, with why and what brings
+    them back.
+  * Counted read-only on the station (dpkg-stereo 0.1.16; 401 such rows of installed packages): 375 files get their
+    record back (systemd 313, udev 50, libc-bin 3, man-db 2, cracklib-runtime 2, initramfs-tools 2, install-info,
+    mailcap and menu 1 each); 19 stay the person's, none of them carrying the pointer line (systemd's sleep.conf,
+    system.conf and user.conf among them); 3 rows were files in their package's own bytes (nis, libcufile-13-4,
+    media-types); 4 conffiles of nut, readable by root only, were not read. cracklib-runtime 2.9.6-5.3+b1 is in no
+    configured source any more, so its 2 files wait for the person's --repair.
+  * A removed package's lean conffiles go back to its package's bytes. dpkg keeps a removed package's conffiles, and
+    their hashes, until a purge, and an install of the package again compares each with that hash: a lean one looked
+    changed by the person, so the install kept it lean and --verify called it EDITED (ORDER 367). Post-invoke now writes
+    back the pristine original of each recorded conffile that is still exactly its projection, of a package dpkg lists
+    in "config-files" with that original's hash, and that today's renderer makes byte for byte from that original:
+    hashes alone would trust a record whose lean hash is wrong and overwrite a person's edit (ORDER 376); a file the
+    renderer does not make stays as it is and is said, and installing the package again will ask about it. Installing
+    the package again is quiet, finds the conffile unmodified, and projects and records it again. What the person sees: after removing a package (not purging it), its settings files
+    in /etc are as the package shipped them, comments included, until it is installed again; a settings file the person
+    changed stays as they made it; a purge removes them all, as before.
+  * restore's order for an original (APT's cache, a configured source, snapshot.debian.org) is one function, which
+    restore and the migration share.
+  * Tests: test/orphans-test.sh. 0.1.28 loses systemd's and three fixtures' records through one `dpkg --no-triggers -i`
+    (ORDER 367's probe) and their conffiles' through one `dpkg --no-triggers -r` (pre-invoke puts no conffile back for a
+    removal); the package under test is then installed over it. On 0.1.29 it fails (every control passes, so the
+    loss is reproduced, and the checks of what comes back fail); on 0.1.31 it passes.
+
+-------------------------------------------------------------------------------
+  Version 0.1.30 (2026-11-03)
+-------------------------------------------------------------------------------
+  * Carry Lean Code 0.1.25, whose Perl handler keeps quoted pattern and string
+    contents, including /x comments and literal blank lines (ORDER 372).
+  * Recheck the recorded Perl Deparse refusals once on upgrade, through the
+    normal checksum/hold checks. Keep user edits and already verified local
+    projections; lc1 packages retain their recorded build-time identity.
+
+-------------------------------------------------------------------------------
+  Version 0.1.29 (2026-11-03)
+-------------------------------------------------------------------------------
+  * ORDER 367: a dpkg run that changes nothing costs the hooks almost nothing. On the A10 (run aba2-20261103)
+    `dpkg --configure -a` with nothing to do took 1.4 to 1.8 s lean against 1.0 s with nothing projected. In the
+    lane's container (Debian testing, 3,856 packages, 1,302 record tables, 53,500 records, 105 projected conffiles,
+    a Ryzen 5 5600G) dpkg alone took 65 ms, and 0.1.28's two hooks 368 ms more; 0.1.29's take 64 ms (median of 10;
+    of 20 alternating runs: 380 against 115 ms, and 649 against 171 ms on a busier machine). Where it went: each hook
+    compiled the 2,900-line program (28 ms) and imported modules it rarely needs (64 ms: concurrent.futures alone
+    brings logging, traceback and _colorize); pre-invoke put every lean conffile back in its package's bytes for every
+    run and post-invoke projected each again, reading their packages' record tables; post-invoke parsed dpkg's
+    whole database, looked at every package's file list and read every recorded conffile.
+  * The program is /usr/lib/dpkg-stereo/dpkg_stereo.py, byte-compiled by the postinst (py3compile, removed by the
+    prerm's py3clean, as Debian's Python packages are), and /usr/sbin/dpkg-stereo loads it; a module is imported
+    when it is first needed; the hooks parse no options (dpkg.cfg.d runs them without any); the problems engine is
+    loaded only when the step has a kept record to clear (its clear does nothing when the record's file is not
+    there).
+  * A configure run compares the conffiles only of the packages it configures from "unpacked" (src/main/
+    configure.c, deferred_configure), so pre-invoke gives dpkg back only the conffiles of packages its database
+    does not show installed; an unpack or an install compares those of the packages it unpacks, which no hook is
+    told, so every lean one goes back, as before; a removal or a purge compares none (src/main/remove.c), so
+    nothing goes back.
+  * packages.tsv's second header line keeps the digest of dpkg's database (the bytes of its status file and
+    journal: dpkg writes the status file again at the end of every run, so its time says nothing), the time of
+    dpkg's info directory (dpkg writes every file list through a rename there, so a reinstall of the same version,
+    which leaves the database's bytes as they were, changes it) and the digest of the table's rows. A run that
+    finds all three as they were, with neither the directory nor any row in the second the table was written in
+    (git's racy rule, as before), reads no field of dpkg's database and no file list: no package changed.
+  * A conffile is read for its lean form, or for its package's bytes, only when its size is the one looked for.
+  * Found while measuring: dpkg-stereo counted a package as installed only in dpkg's state "installed". A run with
+    --no-triggers, as each of apt's dpkg runs is, leaves a package whose file trigger it activated in
+    "triggers-pending" until a later run processes it (apt leaves systemd so whenever a package ships a file in
+    /usr/lib/systemd/catalog, binfmt.d or sysctl.d); post-invoke took it for removed and dropped its records, and
+    its lean files stayed lean and unrecorded, called "changed since its package installed it" by the next
+    projection, so --verify did not name them and --restore could not bring them back (313 of systemd's 320
+    projected files after one `dpkg --no-triggers -i` on the lane's image). A package another one's unpack
+    deconfigures went the same way through "half-configured". installed, triggers-pending, triggers-awaited and
+    half-configured now count (dpkg(1), "Package states"), and the lean toolkit's reader of lc1 marks
+    (lean/package.py, installed) counts the same states: it took only "install ok installed", so a marked package
+    on hold, or with its trigger pending, was taken for an unmarked one (the renderer's identity does not move).
+  * A run that changes a package reads dpkg's database once (it read it three times: post-invoke, the projection
+    and the package table each). In the same container, one package of 28 files installed, upgraded, removed and
+    purged, medians of 20: 1,326, 1,276, 905 and 982 ms with 0.1.28; 970, 982, 606 and 616 ms now.
+  * Tests: test/hook-cost-test.sh (red on 0.1.28: every projected conffile written again by a run that changed
+    nothing; four mutants of 0.1.29 fail its other cases: no info directory check, no conffile back for a
+    configure run, no size match, no clear of a kept problem) and test/trigger-states-test.sh (red on 0.1.28: 8
+    of 18).
+
+-------------------------------------------------------------------------------
+  Version 0.1.28 (2026-11-03)
+-------------------------------------------------------------------------------
+  * ORDER 365: --restore brings back every original, fetching the exact version itself. On the A10 (run
+    aba2-20261103) 0.1.24 left 1,597 files lean in 33 packages whose installed version was neither in
+    APT's cache nor in any configured source, and advised `apt-get install --reinstall NAME`, which can
+    only fetch a version a source offers. Now an original without a pristine copy comes from APT's cache
+    (that architecture's .deb, by APT's own name), then the configured sources (apt-get download, as
+    before), then snapshot.debian.org, the Debian Project's archive of every version Debian has published,
+    through its machine-readable interface (/mr/binary/NAME/VERSION/binfiles?fileinfo=1 names the .deb by
+    its SHA-1, /file/SHA1 is the file), downloaded with APT's own apt-helper (APT's proxies and TLS). A
+    fetched .deb waits in APT's partial/ directory; its SHA-1, its control file's Package, Version and
+    Architecture and every file it gives back (against the record's sha_orig) are checked, and only then
+    does it go into APT's cache under APT's own name (NAME_VERSION_ARCH.deb, an epoch's colon as %3a).
+  * Snapshot is asked for a package APT's own data call Debian's: the Origin of the Release file of each
+    source that lists the version, or other versions of the package, with the installed version's
+    Maintainer (dpkg's database) deciding where both Debian and another archive list it; and for a package
+    no list holds any more, once, by its exact name, version and architecture. A package of another
+    archive (deb-multimedia, a vendor) is not asked of snapshot. Once snapshot cannot be reached, it is not
+    asked again in that run. The person's --restore, --hold and --repair and dpkg-stereo's own removal
+    fetch; the hooks' migrations do not (the network in dpkg's hooks stays as it was).
+  * What stays lean is said package version by package version, in the nine languages, with why (no
+    network, not on snapshot, another archive, a refused file, a .deb with other files, APT's own error)
+    and the one thing that brings it back; apt-get's reinstall is named only for a version a configured
+    source offers, and only once dpkg-stereo is removed. The restore problem keeps each package version
+    (dpkg-stereo --problems lists them); a restore of some packages keeps the others an earlier restore
+    kept while their files stay lean.
+  * --restore [PACKAGE...] --deb FILE.deb: a .deb the person hands restore (a vendor's, such as Zoom's,
+    which no archive keeps) is taken only when its control file is exactly an installed version with
+    recorded files and every file it gives back is the recorded original; otherwise nothing is taken from
+    it, and why is said.
+  * Depends on apt: the fetch uses APT's apt-helper (before, apt-get and apt-cache were used undeclared).
+  * A Multi-Arch: same package's .deb is read for its own architecture only: the twin's .deb of the other
+    architecture in APT's cache was taken for it before (any NAME_VERSION_* name matched).
+  * The post-invoke hook gives the same records whichever second dpkg and the hook ran in (found by Opus in
+    ORDER 363's proofs: two runs of one case ended with different --verify output). A package whose file
+    list was written in the second packages.tsv was written in is looked at again (git's racy rule); then a
+    file the person changed after its projection lost its record, so --verify passed silently, and a
+    Multi-Arch: same instance's shared files were examined only when the twin holding their record looked
+    changed too, so a script dpkg put back in its package's bytes after a reinstall could stay so. Now a
+    file whose bytes are neither its projection nor dpkg's (its md5sums or conffile hash) keeps its record,
+    and --verify names it as changed after its projection; a changed instance's examination reads the
+    records its twin holds for the paths its file list shares; and a path recorded for this version is never
+    also "left" for the other instance (a person's edit of a shared conffile is named once, as CHANGED).
+    What a removed package left alone with its reason goes with it too (--verify named a removed instance's
+    conffile as changed by the person). test/post-invoke-seconds-test.sh runs each case with the instance's
+    row made racy and not.
+  * Tests: test/restore-fetch-test.sh (a local server with snapshot's interface; no internet). The three
+    tests that failed with 0.1.26 too are fixed: no-fallbacks-test.sh names the unpacked program's own
+    journal catalogs (the problems engine forgets the problems of a package dpkg does not list and whose
+    catalog it does not find); migrate-test.sh tells a full projection from the one-time migration line
+    0.1.25 added; concurrent-test.sh case D says it needs dpkg-stereo 0.1.4 or older.
+  * Credits: snapshot.debian.org (the Debian Project; hardware and hosting by Glasklar Teknik AB, LeaseWeb
+    Netherlands B.V. and the Wellcome Trust Sanger Institute; its current web frontend by Baptiste
+    Beauplat); APT's apt-helper (the APT team); David Paleino's debsnap (devscripts), whose use of the
+    same interface this follows.
+
+-------------------------------------------------------------------------------
+  Version 0.1.27 (2026-11-03)
+-------------------------------------------------------------------------------
+  * ORDER 363 (Daniel, 2026-11-03: "make it recognize the lc1 mark, it's ours to modify anyways"): the
+    other architecture of a projected Multi-Arch: same package installs, upgrades, reinstalls and is
+    removed. Debian's dpkg refused it ("trying to overwrite shared '/usr/share/gcc/python/libstdcxx/v6/
+    __init__.py', which is different from other instances of package libstdc++6:i386", apt exit 100),
+    so Steam and wine32 could not be installed where dpkg-stereo had projected libstdc++6. The edition's
+    dpkg (1.23.11+stereo3d1+lc1) accepts a shared file that is the projection this package's record
+    names when the file being unpacked is the file every other instance shipped and the recorded
+    original, and refuses every other difference as Debian's dpkg does; this package pre-depends on it
+    (dpkg-lean-code, the contract it provides), so apt unpacks and configures the edition's dpkg in dpkg runs
+    before this package's, and the twins an apt run brings with it are unpacked by the new dpkg even with
+    APT::Immediate-Configure=false (measured on a machine with systemd: with a plain Depends, apt put Debian's
+    dpkg, the edition's and the twins in one dpkg run, which refused libstdc++6:i386). Shared files stay
+    projected, as every other file.
+  * One projection, one record, for a shared file: a run that installs or reinstalls the other
+    architecture's instance reads that instance's record too, so the file our dpkg put back in the
+    package's bytes is projected again from the same checked render, and its record moves to the
+    instance that projected it; a file its twin projected earlier in the same run is no longer kept as
+    "changed since its package installed it".
+  * When dpkg removes the instance a shared file is recorded for, the file stays (another instance still
+    ships it, src/main/remove.c) and so does its projection: the record goes to that instance, at the
+    recorded version, with the recorded original's MD5 in its md5sums. Before, the record went and the
+    file stayed lean with no record, so neither --verify nor --restore knew it.
+  * Every projection records the MD5 of its original (before, only conffiles did).
+  * Upgrades remove once the second records and the false left rows earlier versions kept for shared
+    files (marker shared-twin-records-v1); no file changes.
+
+-------------------------------------------------------------------------------
+  Version 0.1.26 (2026-11-03)
+-------------------------------------------------------------------------------
+  * Use the shared tracked-input copier for source and binary inputs; fail on git errors.
+-------------------------------------------------------------------------------
+  Version 0.1.25 (2026-11-02)
+-------------------------------------------------------------------------------
+  * ORDER 350 (Daniel, 2026-11-02: "Why machinery to keep a failure for each?"): a step that does not complete
+    is kept by the edition's one engine, sparky-stereo-problems, and shown by its session notifier, whose Repair
+    runs dpkg-stereo --repair; the package's own store and user units go. --problems and --repair keep working
+    through the engine; --dismiss is the engine's Hide (yours, kept listed, back when the step fails again);
+    --notify starts the session's notifier. What a step could not do (its items) is the record's data. The
+    messages, word for word, are built into journal catalogs; the problems go when the package is removed
+  * Nothing fails silently (Daniel, 2026-11-01: "either it works or not and
+    the user must know"; ORDER 346b, rows U19, U20, U57 and U58 of ORDER
+    343's audit). A step that cannot do what it is for says what failed, why
+    and what to do, in the system's language with the English line beside
+    it, and keeps it in /var/lib/dpkg-stereo/problems/STEP.json until the
+    step next succeeds. New commands: --problems (exit 1 while any is kept),
+    --repair (runs again what each problem names), --dismiss STEP and
+    --notify (the session's side: dpkg-stereo-problems.path shows each
+    problem once as a notification). The messages ship in the nine
+    languages in /usr/share/sparky/dpkg-stereo.
+  * dpkg's hooks still return 0: dpkg ends its run when a hook fails
+    ("cannot execute hook 'exit 3', exit code 768", measured), and APT's
+    update fails the whole update when its hook fails ("E: Problem executing
+    scripts APT::Update::Post-Invoke-Success", exit 100, measured). The
+    post-invoke and pre-invoke errors are now kept and said, where they were
+    only appended to error.log; the HR hook no longer throws its output away.
+  * --verify --deep never says clean when it did not check: a file whose
+    package's .deb could not be had or read is NODEB with the real reason
+    (apt-get download's own error, dpkg-deb's exit status, the archive
+    reader's error), is not counted as checked, and the command exits 2
+    (dpkg(1): an error interacting with the system) when nothing else is
+    wrong. --restore, --hr and --fetch-hr name the same reasons.
+  * Python bytecode: a cache that cannot be refreshed (a compile error, a
+    cache that cannot be written, an interpreter that is not installed or
+    that fails) is kept with each file and interpreter. A cache that could
+    not be written used to end the projection before its records were
+    saved; the records are now saved first.
+  * The lean toolkit 0.1.23's link gate (linkcheck.py) blocks when readelf
+    or nm cannot read an ELF file's inventory, naming the tool's error: a
+    failed probe gave an empty inventory, so a predecessor whose nm failed
+    hid a stereo import its rebuild lost. Guest firmware (resolve()'s note)
+    is not read.
+  * The lean toolkit 0.1.24 (ORDER 352): one label, one renderer. ORDER
+    346c's Perl rule had moved the renderer's code under the label 0.1.23;
+    that code is released as 0.1.24, with a table of every released identity
+    (lean/identities.py) that the release gate checks each package against.
+  * Zig is qualified: comments go, doc comments and zig fmt directives stay,
+    and Zig's own tokenizer and zig ast-check check every projection (zig
+    needed; without it a Zig file stays as authored, with that reason). A file
+    another Zig file reads with @embedFile stays as authored.
+  * C-family files are checked in the mode their consumer reads them in:
+    assembler sources (.S, .sx) and headers for them with GCC's
+    assembler-with-cpp, and a file whose only GCC refusals are directives in
+    conditional groups other targets take with clang's raw lexer (clang
+    needed for those files).
+  * Upgrades examine once the files 0.1.24 qualifies first (marker
+    renderer-migration-0124-v1): the packages owning Zig or assembler
+    sources, and the files GCC or perl left as "check failed". No earlier
+    projection changes form.
+
+-------------------------------------------------------------------------------
+  Version 0.1.24 (2026-11-01)
+-------------------------------------------------------------------------------
+  * The lean toolkit 0.1.23's link gate (linkcheck.py, carried here with the
+    rest of the toolkit; dpkg-stereo itself does not run it) resolves an
+    ELF file with its package's own Recommends installed where every
+    library the file misses is shipped by a package those Recommends name
+    (ORDER 311 step 4). fltk1.4-games' /usr/games/flpuzzle links
+    libfltk_gl.so.1.4, libGLU.so.1 and libGL.so.1, and Debian's fltk1.4
+    sends those dependencies to Recommends on purpose
+    (dh_shlibdeps -pfltk1.4-games -Xflpuzzle -- -dRecommends ...flpuzzle);
+    Depends-only resolution left them out, so the published
+    1.4.4-4+stereo3d2+lc1 failed as a predecessor and every rebuild with
+    it.
+  * Why Recommends: Debian Policy 7.2 says Recommends "declares a strong,
+    but not absolute, dependency" and "should list packages that would be
+    found together with this one in all but unusual installations";
+    dpkg-shlibdeps(1) -ddependency-field adds a program's library
+    dependencies to that field ("The default dependency-field is Depends"),
+    and the edition installs Recommends by default, so its systems have
+    them.
+  * Narrowly: only the ELF files whose every missing library such a named
+    Recommends ships are resolved again, and each is printed as a note
+    naming the Recommends; the previous build is treated the same way.
+    Depends-only resolution stays the rule for everything else, and a
+    library that no Depends and no such Recommends provides still fails.
+  * dpkg-stereo --status labels the version it prints as the lean
+    toolkit's ("lean 0.1.23: ... files projected"), which it is; it said
+    "dpkg-stereo" before that number (ORDER 339). The renderer identity
+    stays as it was: lean 0.1.23 (collapse-blank,pointer,c-drop-lines).
+  * The source package carries the recipe folder as git tracks it
+    (build-source.sh), so an untracked bin/__pycache__ or *.pyc in a
+    working checkout no longer ships in it; outside a git work tree the
+    folder is copied without __pycache__ folders and *.pyc files
+    (ORDER 339).
+
+-------------------------------------------------------------------------------
+  Version 0.1.23 (2026-11-01)
+-------------------------------------------------------------------------------
+  * The lean toolkit's link gate (linkcheck.py, carried here with the rest
+    of the toolkit; dpkg-stereo itself does not run it) asks first whether
+    an ELF file is the host's (ORDER 340). qemu-system-data
+    (Architecture: all) ships QEMU's guest firmware in /usr/share/qemu,
+    and QEMU's machine models read it with load_elf() into the guest; the
+    gate ran its machine check before deciding how a file is consumed, so
+    the published 1:11.1.2+ds-3+stereo3d6+lc1 failed as a predecessor
+    ("ELF machine does not match amd64") and stopped the build of
+    +stereo3d7. Eight files are foreign: hppa-firmware.img,
+    hppa-firmware64.img (with PT_INTERP /usr/lib/pa20_64/dld.sl and a
+    dynamic section), openbios-ppc, openbios-sparc32, openbios-sparc64,
+    palcode-clipper, s390-ccw.img and u-boot.e500; the message showed
+    five.
+  * An ELF file of another machine, in an Architecture: all package, under
+    /usr/share, is guest data: the gate prints it as a note and never
+    traces it. That is Debian's own line: Lintian's
+    binary-from-other-architecture has no package architecture to compare
+    in an Architecture: all package, arch-independent-package-contains-
+    binary-or-object asks for an override for "binary blobs for other
+    purposes independent of the host architecture (such as BIOS updates or
+    firmware)", /usr/share is for architecture-independent files
+    (arch-dependent-file-in-usr-share), and Debian's qemu-system-data
+    overrides both for usr/share/qemu. Neither the dynamic loader nor
+    dpkg-shlibdeps searches /usr/share for libraries.
+  * An ELF file of the host's machine is still traced wherever it is, an
+    unreadable one is still unusable, and a foreign one in a library,
+    module or program directory, or in an architecture-dependent package,
+    still fails the machine check.
+  * A static-pie program (ET_DYN with DF_1_PIE, no PT_INTERP, no NEEDED)
+    is static to the gate, as it is to file(1), glibc's ldd and Lintian's
+    statically-linked-binary (#1068304). Debian builds qemu-user's 33
+    programs so and the package depends on no libc, so the gate asked for
+    a loader they never name ("qualified interpreter missing:
+    /lib64/ld-linux-x86-64.so.2"); the published +stereo3d6 failed as a
+    predecessor once qemu-system-data passed. A shared library without
+    NEEDED has no DF_1_PIE and is still traced.
+  * With both, the gate passes the 20 archives of QEMU
+    1:11.1.2+ds-3+stereo3d7+lc1 against the published +stereo3d6.
+  * dpkg-stereo, the renderer, projection, restore, --resolve and the dpkg
+    hooks are 0.1.22's, unchanged; the renderer identity names lean
+    0.1.22.
+-------------------------------------------------------------------------------
+  Version 0.1.22 (2026-11-01)
+-------------------------------------------------------------------------------
+  * A conffile in its package's own bytes is never called changed by the
+    person (ORDER 325). dpkg-stereo read every package's Conffiles entries
+    into one map, so a conffile that moved kept the entry of the package it
+    left whenever that package came later in dpkg's status file: on a fresh
+    install Debian's binutils-common records /etc/gprofng.rc as "newconffile
+    remove-on-upgrade" (deb-conffiles(5)) while binutils owns the file, and
+    --verify said "EDITED /etc/gprofng.rc (changed by the person: left as
+    they made it)" of Debian's bytes. Each path is now judged by the
+    conffiles and md5sums of the package whose file list holds it, as dpkg
+    does ("The 'conffiles' data in the status file is ignored when a
+    package is not also listed in the file ownership database as having
+    that file", src/main/unpack.c; dpkg --verify checks each package's own
+    files, src/main/verify.c). The Conffiles field is read as dpkg reads it
+    (lib/dpkg/fields.c): its obsolete and remove-on-upgrade flags, and paths
+    with spaces.
+  * A path a package's conffiles list twice is judged by its first entry,
+    the only one dpkg configures (src/main/configure.c): the second keeps
+    "newconffile" or an older version's hash. On an installed edition that
+    made /etc/default/nis (nis 4.5) and /etc/ld.so.conf.d/gds-13-4.conf
+    (libcufile-13-4) EDITED in their package's bytes, as mime-support's
+    obsolete entry did to the /etc/mime.types media-types owns.
+  * A file taken over through Replaces is judged by its new owner's
+    md5sums: dpkg takes the path out of the old package's file list and
+    leaves the old package's md5sums line behind.
+  * The upgrade corrects what 0.1.21 and older recorded: at the end of the
+    dpkg run that installs it, the post-invoke hook checks each conffile
+    recorded as changed by the person once against its own package's hash
+    (marker conffile-owner-v1). Those in their package's bytes are examined
+    again like any other file; a file the person changed stays EDITED,
+    left as they made it.
+  * The lean toolkit is 0.1.21's, unchanged, and so is the renderer
+    identity.
+-------------------------------------------------------------------------------
+  Version 0.1.21 (2026-11-01)
+-------------------------------------------------------------------------------
+  * The lean toolkit's link gate (archive.py, carried here with the rest of
+    the toolkit; dpkg-stereo itself does not run it) reads a flat source:
+    a suite ending in "/" is an exact path with no components, as
+    sources.list(5) says and as NVIDIA publishes its CUDA repository. A
+    source's optional architectures list limits it as sources.list's
+    Architectures option does (ORDER 329).
+  * The gate applies the APT preferences that the supplied edition packages
+    ship directly in /etc/apt/preferences.d (named by their conffiles and
+    md5sums control members), after its own exact pins, as an installed
+    edition has them before its other packages. With the CUDA repository
+    among its archives, nvidia-kernel-open-dkms-stereo3d
+    615.71.09-2+stereo3d7+lc1 stopped the publication of 1 November
+    (firmware-nvidia-gsp (= 615.71.09-2): CUDA's newer 615.71.10-1 is APT's
+    candidate and APT takes only the candidate for an exact dependency);
+    sparky-stereo-nvidia-driver-lock's pin makes 615.71.09-2 the candidate
+    in the gate, as on an installed edition. Each case records the files
+    it applied in preferences.json and resolution.json.
+  * The renderer, projection, restore, --resolve and the dpkg hooks are
+    0.1.20's (ORDER 334, below), unchanged; 0.1.20 was never published, so
+    an upgrade from 0.1.19 makes 0.1.20's C and C++ migration. The renderer
+    identity names lean 0.1.21.
+-------------------------------------------------------------------------------
+  Version 0.1.20 (2026-11-01)
+-------------------------------------------------------------------------------
+  * C and C++ lose their comment-only lines completely, as every other
+    language does (Daniel's design, ORDER 334): no #line, and no empty line
+    where a comment was; the authored empty lines stay. Their lean line
+    numbers differ from the authored ones, so __LINE__, assert messages,
+    diagnostics and debug line tables name lean lines. A comment that ended
+    a backslash continuation takes that backslash with it. The renderer
+    identity is lean 0.1.20 (collapse-blank,pointer,c-drop-lines).
+  * dpkg-stereo --resolve PATH:LINE[:COL] finds the authored line by the lean
+    line's content in the authored file (the HR companion or the pristine
+    copy): the line's code, its comments and blanks aside; where the same
+    content occurs more than once, the neighbouring lines pick the right
+    one. It reads the forms older engines wrote too. --resolve-render keeps
+    the previous path: render the authored text again, refuse a lean file
+    that is not that render, and read the render's own line map.
+  * The GCC check compares the tokens and directives (-fpreprocessed) and the
+    full preprocessing with __LINE__ pinned; it names a file whose own code
+    expands __LINE__ or calls __builtin_LINE.
+  * The postinst's --repair-consumers projects again, once, every C and C++
+    file an older engine projected locally (#line, or every line kept), from
+    its exact original; a file the person edited stays theirs, and a file
+    whose original is nowhere waits as before.
+  * Measured with ORDER 303's method (instructions:u): against Debian's
+    libstdc++ headers, preprocessing prog.cc costs 2.9% fewer instructions
+    than the authored headers (0.1.19: 1.9% fewer; 0.1.15: 21.5% more), and
+    -fsyntax-only on all of them 0.63% fewer; against the kernel 7.3.1
+    headers, the hid-tmff2 module preprocesses with 0.78% fewer and compiles
+    with 0.52% fewer. Objects without debug information stay the same,
+    except where an enabled assertion passes a header's line
+    (_GLIBCXX_ASSERTIONS: std::__glibcxx_assert_fail gets the lean line).
+
+-------------------------------------------------------------------------------
+  Version 0.1.19 (2026-10-31)
+-------------------------------------------------------------------------------
+  * The lean toolkit's link gate (archive.py, carried here with the rest of
+    the toolkit; dpkg-stereo itself does not run it) asks APT for all the
+    archives a case downloaded in one bounded apt-cache show call, and
+    reuses a record already read for the same identity and SHA-256 under
+    the same local index for the rest of the run (ORDER 320). The first
+    case of round 316 asked APT 1,047 times, one package at a time; now 2
+    calls, and a later case of the same edition snapshot 0 or 1. For 600
+    identities of Debian forky's index, one call took 0.47 s and 600 single
+    calls 278 s, with the same records.
+  * Each record is matched to its own Package, Version and Architecture:
+    with several arguments apt-cache skips an absent one silently (exit 0),
+    and retries an absent name containing '.' as an unanchored regular
+    expression that prints other packages. The checks are unchanged
+    (SHA256, Size, Depends, Pre-Depends, Provides, Conflicts, Breaks,
+    Multi-Arch). A download without a record of its identity is refused
+    by name, also where 0.1.18 said "differs" (a name APT knows, without
+    that version); a disk floor stays a space refusal.
+  * Projection, restore and the dpkg hooks are the same code as in 0.1.18;
+    the renderer identity names lean 0.1.19.
+-------------------------------------------------------------------------------
+  Version 0.1.18 (2026-10-31)
+-------------------------------------------------------------------------------
+  * The C and C++ migration is paid once (ORDER 315, from what ORDER 310
+    measured with 0.1.17). restore() tests the names it is given as a set:
+    with the list the migration passed, its filter took 68.9 s on the
+    station's 90,217 records and 47,360 C and C++ names (55.1 s on a
+    synthetic install of that size; 0.55 s now).
+  * A C or C++ file whose package version neither APT's cache nor its
+    lists hold waits: its version is remembered with the lists and the
+    cache as they were when it was tried, and it is tried again only when
+    its package, the lists or the cache change. With 38 such versions
+    (13,239 files, the station's), every dpkg run read all records and made
+    38 failing downloads, about 80 s a run on the station (2.4 s and 38
+    attempts a run on the synthetic install); now a dpkg run reads one
+    small table (0.001 s, no attempt). One apt-cache madison call says
+    which versions the lists still offer, so no download is tried for one
+    they lack. --repair-consumers tries them all now; --verify names them
+    (PENDING), and they are not problems: their line numbers are the
+    authored ones.
+  * Progress lines on the terminal apt shows: before the long restore and
+    projection, every 1,000 files, and at least once a minute as files are
+    done (in the large proof, 1,000 heavy headers took 8 minutes); standard
+    output is line-buffered.
+  * dpkg's database is read with its journal (/var/lib/dpkg/updates), as
+    dpkg reads it. Inside a dpkg run the status file alone is out of date:
+    during a first install it listed 81 packages as installed where dpkg's
+    database (dpkg-query) listed 154, and the postinst recorded those 81,
+    without libstdc++-16-dev. The hooks are not active in the run
+    that installs this package (their file is a conffile, in place only at
+    its configure), so a trigger (interest-noawait) projects what the run
+    configures after it, at the end of the run.
+  * A migration inside a dpkg hook leaves packages.tsv as it was, so the
+    packages that same run changed are still projected by post-invoke
+    (0.1.17 marked them all as seen when it projected again).
+-------------------------------------------------------------------------------
   Version 0.1.17 (2026-10-31)
 -------------------------------------------------------------------------------
   * C and C++ keep each removed comment's line breaks instead of writing #line

@@ -1,2 +1,4 @@
 FROM debian:testing
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sbsigntool openssl && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=bind,from=https-only-apt,source=https-only-apt.sh,target=/run/https-only-apt.sh \
+    --mount=type=bind,from=host-ca,source=ca-certificates.crt,target=/run/host-ca.crt \
+    sh /run/https-only-apt.sh && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sbsigntool openssl && rm -rf /var/lib/apt/lists/*

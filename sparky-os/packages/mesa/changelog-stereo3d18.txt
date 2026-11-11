@@ -1,0 +1,15 @@
+mesa (26.1.6-1+stereo3d18) unstable; urgency=medium
+
+  * GLX takes zink through DRI3, not kopper, while the compositor announces
+    stereo content (0029): kopper has no second view of a window. The session
+    no longer needs LIBGL_KOPPER_DISABLE=1 for an X11 program to get both
+    views; LIBGL_KOPPER_DISABLE=0 or 1 still decides when set, and the route
+    is named in the log under LIBGL_DEBUG=verbose.
+  * eglExportDMABUFImageMESA gives a real dma-buf for a zink image on NVIDIA's
+    Vulkan driver, and says so when a driver gives none (0030, 0031; ORDER
+    457). zink made the image of an export with the linear modifier alone,
+    which NVIDIA lists without the colour attachment blend feature, so the
+    export failed and the call returned success with no descriptor; GTK then
+    sent uninitialised integers to the compositor and the program lost its
+    connection. The image takes a modifier the driver can render with, and a
+    failed query returns EGL_FALSE with EGL_BAD_MATCH.

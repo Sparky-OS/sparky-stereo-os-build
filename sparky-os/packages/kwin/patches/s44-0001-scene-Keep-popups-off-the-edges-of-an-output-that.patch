@@ -1,0 +1,387 @@
+From 33936dfb7e2ae5d639b89bae44a17fda35d9e720 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 6 Nov 2026 11:55:01 -0300
+Subject: [PATCH 1/2] scene: Keep popups off the edges of an output that shows
+ stereo 3D
+
+A popped thing that touches the edge of its output is flattened to the
+screen's level, because something in front of the screen cut by the screen's
+edge looks wrong. Instead of leaving the gap to the person, the system makes
+it: an invisible border (kwinrc [StereoDepth] PopupBorder, default 10 logical
+pixels, 0 switches it off, a slider in the stereo depth settings) shrinks the
+area popups are placed in, on the sides that are the output's own edge (a
+side next to a panel keeps the panel's edge).
+
+- xdg_popup (menus, sub-menus, tooltips, select lists): the positioner's
+  slide, flip and resize run against the shrunk area; an axis the popup
+  cannot fit in even there keeps stock placement.
+- the panel shell's popups placed by position (notifications, on-screen
+  displays, tooltips, applet popups, and xdg_popups with a position set): moved
+  inside, again when their real size arrives.
+- override-redirect X11 popups (popup, dropdown, combo, tooltip,
+  notification menus): moved inside once, as they are tracked.
+
+Outputs that do not show 3D are unchanged. StereoDepth::popupBorder() is the
+one place that decides which outputs the border applies to.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ .../stereodepth/kwinstereodepthsettings.kcfg  |  5 ++
+ src/kcms/stereodepth/ui/main.qml              | 28 +++++++++
+ src/kwin.kcfg                                 |  4 ++
+ src/options.cpp                               | 14 +++++
+ src/options.h                                 |  7 +++
+ src/scene/stereodepth.cpp                     | 62 +++++++++++++++++++
+ src/scene/stereodepth.h                       | 22 +++++++
+ src/x11window.cpp                             | 14 +++++
+ src/xdgshellwindow.cpp                        | 37 +++++++++--
+ 9 files changed, 189 insertions(+), 4 deletions(-)
+
+diff --git a/src/kcms/stereodepth/kwinstereodepthsettings.kcfg b/src/kcms/stereodepth/kwinstereodepthsettings.kcfg
+index 434ee75..fa74ad3 100644
+--- a/src/kcms/stereodepth/kwinstereodepthsettings.kcfg
++++ b/src/kcms/stereodepth/kwinstereodepthsettings.kcfg
+@@ -15,6 +15,11 @@
+       <min>0</min>
+       <max>12</max>
+     </entry>
++    <entry name="PopupBorder" type="Double">
++      <default>10</default>
++      <min>0</min>
++      <max>60</max>
++    </entry>
+     <entry name="EffectSunkLimit" type="Double">
+       <default>30</default>
+       <min>0</min>
+diff --git a/src/kcms/stereodepth/ui/main.qml b/src/kcms/stereodepth/ui/main.qml
+index b8771c6..348e75c 100644
+--- a/src/kcms/stereodepth/ui/main.qml
++++ b/src/kcms/stereodepth/ui/main.qml
+@@ -102,6 +102,34 @@ KCM.SimpleKCM {
+             text: i18n("Menus, dialogs and tooltips of the active window come forward by up to this much. More pop-out: things near the screen's edges and long reading get harder.")
+         }
+ 
++        RowLayout {
++            Kirigami.FormData.label: i18nc("@label:slider", "Popup border:")
++            QQC2.Slider {
++                id: popupBorderSlider
++                from: 0
++                to: 60
++                stepSize: 1
++                snapMode: QQC2.Slider.SnapAlways
++                value: kcm.settings.popupBorder
++                onMoved: kcm.settings.popupBorder = value
++                KCM.SettingStateBinding {
++                    configObject: kcm.settings
++                    settingName: "PopupBorder"
++                }
++            }
++            QQC2.Label {
++                Layout.minimumWidth: Kirigami.Units.gridUnit * 4
++                text: popupBorderSlider.value === 0 ? i18nc("@label no border", "Off") : i18ncp("@label pixels", "%1 pixel", "%1 pixels", popupBorderSlider.value)
++            }
++        }
++        QQC2.Label {
++            Layout.fillWidth: true
++            Layout.maximumWidth: Kirigami.Units.gridUnit * 30
++            wrapMode: Text.Wrap
++            font: Kirigami.Theme.smallFont
++            text: i18n("Menus, tooltips and notifications on a screen that shows 3D keep at least this far from the screen's edges, so a popped-out menu is never cut by the edge.")
++        }
++
+         QQC2.Label {
+             Kirigami.FormData.isSection: true
+             Layout.fillWidth: true
+diff --git a/src/kwin.kcfg b/src/kwin.kcfg
+index e1cb579..ccb76b7 100644
+--- a/src/kwin.kcfg
++++ b/src/kwin.kcfg
+@@ -281,6 +281,10 @@
+             <default>4</default>
+             <min>0</min>
+         </entry>
++        <entry name="PopupBorder" type="Double">
++            <default>10</default>
++            <min>0</min>
++        </entry>
+         <entry name="EffectSunkLimit" type="Double">
+             <default>30</default>
+             <min>0</min>
+diff --git a/src/options.cpp b/src/options.cpp
+index e9bdb0f..be2a8f2 100644
+--- a/src/options.cpp
++++ b/src/options.cpp
+@@ -623,6 +623,19 @@ void Options::setStereoPoppedLimit(qreal limit)
+     }
+ }
+ 
++qreal Options::stereoPopupBorder() const
++{
++    return m_stereoPopupBorder;
++}
++
++void Options::setStereoPopupBorder(qreal border)
++{
++    if (border != m_stereoPopupBorder) {
++        m_stereoPopupBorder = border;
++        Q_EMIT stereoDepthChanged();
++    }
++}
++
+ qreal Options::stereoEffectSunkLimit() const
+ {
+     return m_stereoEffectSunkLimit;
+@@ -810,6 +823,7 @@ void Options::syncFromKcfgc()
+     setAllowTearing(m_settings->allowTearing());
+     setStereoSunkLimit(m_settings->sunkLimit());
+     setStereoPoppedLimit(m_settings->poppedLimit());
++    setStereoPopupBorder(m_settings->popupBorder());
+     setStereoEffectSunkLimit(m_settings->effectSunkLimit());
+     setStereoEffectPoppedLimit(m_settings->effectPoppedLimit());
+     setInteractiveWindowMoveEnabled(m_settings->interactiveWindowMoveEnabled());
+diff --git a/src/options.h b/src/options.h
+index fa4014b..478c09d 100644
+--- a/src/options.h
++++ b/src/options.h
+@@ -651,6 +651,11 @@ public:
+      */
+     qreal stereoSunkLimit() const;
+     qreal stereoPoppedLimit() const;
++    /**
++     * The invisible border, in logical pixels, that keeps popups away from the edges of an output that shows stereo 3D.
++     * Zero switches it off.
++     */
++    qreal stereoPopupBorder() const;
+     qreal stereoEffectSunkLimit() const;
+     qreal stereoEffectPoppedLimit() const;
+     bool interactiveWindowMoveEnabled() const;
+@@ -717,6 +722,7 @@ public:
+     void setAllowTearing(bool allow);
+     void setStereoSunkLimit(qreal limit);
+     void setStereoPoppedLimit(qreal limit);
++    void setStereoPopupBorder(qreal border);
+     void setStereoEffectSunkLimit(qreal limit);
+     void setStereoEffectPoppedLimit(qreal limit);
+     void setInteractiveWindowMoveEnabled(bool set);
+@@ -971,6 +977,7 @@ private:
+     bool m_allowTearing = true;
+     qreal m_stereoSunkLimit = 10;
+     qreal m_stereoPoppedLimit = 4;
++    qreal m_stereoPopupBorder = 10;
+     qreal m_stereoEffectSunkLimit = 30;
+     qreal m_stereoEffectPoppedLimit = 12;
+     bool m_interactiveWindowMoveEnabled = true;
+diff --git a/src/scene/stereodepth.cpp b/src/scene/stereodepth.cpp
+index c404127..aa3c525 100644
+--- a/src/scene/stereodepth.cpp
++++ b/src/scene/stereodepth.cpp
+@@ -309,6 +309,68 @@ static bool displayDepth(const LogicalOutput *output, stereo_policy_depth *depth
+     return stereo_policy_display_depth(kind, mm.width(), mm.height(), 100, 0, 0, depth) == 0 && depth->size_known;
+ }
+ 
++qreal StereoDepth::popupBorder(const LogicalOutput *output)
++{
++    if (!output || !output->hasStereoEyes()) {
++        return 0;
++    }
++    return std::max<qreal>(0, options->stereoPopupBorder());
++}
++
++RectF StereoDepth::popupArea(const RectF &area, const LogicalOutput *output, const QSizeF &minimum)
++{
++    const qreal border = popupBorder(output);
++    if (border <= 0) {
++        return area;
++    }
++    const RectF screen = output->geometryF();
++    RectF result = area;
++    // only the sides on the output's own edge: a side next to a panel is the panel's edge, not the output's
++    if (area.left() <= screen.left()) {
++        result.setLeft(screen.left() + border);
++    }
++    if (area.right() >= screen.right()) {
++        result.setRight(screen.right() - border);
++    }
++    if (area.top() <= screen.top()) {
++        result.setTop(screen.top() + border);
++    }
++    if (area.bottom() >= screen.bottom()) {
++        result.setBottom(screen.bottom() - border);
++    }
++    if (result.width() < std::max<qreal>(minimum.width(), 1)) {
++        result.setLeft(area.left());
++        result.setRight(area.right());
++    }
++    if (result.height() < std::max<qreal>(minimum.height(), 1)) {
++        result.setTop(area.top());
++        result.setBottom(area.bottom());
++    }
++    return result;
++}
++
++RectF StereoDepth::keepPopupInside(const RectF &geometry, const RectF &area, const LogicalOutput *output)
++{
++    const RectF inside = popupArea(area, output, geometry.size());
++    if (inside == area) {
++        return geometry;
++    }
++    RectF result = geometry;
++    if (result.right() > inside.right()) {
++        result.moveRight(inside.right());
++    }
++    if (result.left() < inside.left()) {
++        result.moveLeft(inside.left());
++    }
++    if (result.bottom() > inside.bottom()) {
++        result.moveBottom(inside.bottom());
++    }
++    if (result.top() < inside.top()) {
++        result.moveTop(inside.top());
++    }
++    return result;
++}
++
+ qreal StereoDepth::sunkFactor(const LogicalOutput *output)
+ {
+     stereo_policy_depth depth{};
+diff --git a/src/scene/stereodepth.h b/src/scene/stereodepth.h
+index d0ee29a..3d54cd9 100644
+--- a/src/scene/stereodepth.h
++++ b/src/scene/stereodepth.h
+@@ -114,6 +114,28 @@ public:
+     static qreal effectPoppedLimit();
+     static qreal effectSunkLimit();
+ 
++    /**
++     * The invisible border that keeps popups off the edges of an output that shows stereo 3D (the person's PopupBorder,
++     * default 10, in logical pixels like every other KWin geometry: on an output of scale 2 it is 20 device pixels). A
++     * popped thing that touches an output's edge is flattened to the screen's level (see above), so the border is the gap
++     * that makes the touch not happen. It is zero on an output that does not show 3D, and when the person set it to zero.
++     * This one function is the scope: change it to change where the border applies.
++     */
++    static qreal popupBorder(const LogicalOutput *output);
++
++    /**
++     * @a area (a placement area, a client area) with the border taken off the sides where @a area meets @a output's own
++     * edge; a side next to a panel keeps the panel's edge. An axis on which the border would leave less than
++     * @a minimum (the size of the popup, when known) keeps @a area as it is, so a popup that cannot fit stays where stock
++     * KWin puts it, and stays at the screen's level by the edge rule.
++     */
++    static RectF popupArea(const RectF &area, const LogicalOutput *output, const QSizeF &minimum = QSizeF());
++
++    /**
++     * @a geometry moved (not resized) into popupArea(@a area, @a output, geometry.size()) as far as needed.
++     */
++    static RectF keepPopupInside(const RectF &geometry, const RectF &area, const LogicalOutput *output);
++
+     /**
+      * The depth of @a window's level in pixels of a view 1920 wide, positive in front of the screen.
+      */
+diff --git a/src/x11window.cpp b/src/x11window.cpp
+index 3ba1351..4c1485b 100644
+--- a/src/x11window.cpp
++++ b/src/x11window.cpp
+@@ -24,6 +24,7 @@
+ #include "killprompt.h"
+ #include "netinfo.h"
+ #include "placement.h"
++#include "scene/stereodepth.h"
+ #include "scene/windowitem.h"
+ #include "shadow.h"
+ #include "utils/envvar.h"
+@@ -338,6 +339,19 @@ bool X11Window::track(xcb_window_t w)
+     getResourceClass();
+     getWmClientLeader();
+     getWmClientMachine();
++    // A menu, tooltip or the like that the program mapped itself (override-redirect) keeps the invisible border of an
++    // output that shows 3D (ORDER 418). The program placed it, so KWin moves it, once, as it is tracked.
++    if (m_output && (isDropdownMenu() || isPopupMenu() || isComboBox() || isTooltip() || isNotification()
++                     || isCriticalNotification() || isOnScreenDisplay() || isAppletPopup())) {
++        const RectF kept = StereoDepth::keepPopupInside(m_frameGeometry, m_output->geometryF(), m_output);
++        if (kept != m_frameGeometry) {
++            Xcb::moveWindow(w, Xcb::toXNative(kept.topLeft()));
++            m_frameGeometry = kept;
++            m_bufferGeometry = kept;
++            m_clientGeometry = kept;
++            checkOutput();
++        }
++    }
+     if (Xcb::Extensions::self()->isShapeAvailable()) {
+         xcb_shape_select_input(kwinApp()->x11Connection(), w, true);
+     }
+diff --git a/src/xdgshellwindow.cpp b/src/xdgshellwindow.cpp
+index d2de994..36932ff 100644
+--- a/src/xdgshellwindow.cpp
++++ b/src/xdgshellwindow.cpp
+@@ -20,6 +20,7 @@
+ #include "input.h"
+ #include "killprompt.h"
+ #include "placement.h"
++#include "scene/stereodepth.h"
+ #include "tiles/tilemanager.h"
+ #include "utils/subsurfacemonitor.h"
+ #include "virtualdesktops.h"
+@@ -339,7 +340,15 @@ void XdgSurfaceWindow::installPlasmaShellSurface(PlasmaShellSurfaceInterface *sh
+ 
+     auto updatePosition = [this, shellSurface] {
+         if (!isInteractiveMoveResize()) {
+-            place(shellSurface->position());
++            QPointF position = shellSurface->position();
++            // a popup of the panel's shell (notification, on-screen display, tooltip, applet popup) keeps the invisible
++            // border of an output that shows 3D (ORDER 418)
++            if (isNotification() || isCriticalNotification() || isOnScreenDisplay() || isTooltip() || isAppletPopup()) {
++                LogicalOutput *const output = workspace()->outputAt(position);
++                const RectF area = workspace()->clientArea(PlacementArea, this, output);
++                position = StereoDepth::keepPopupInside(RectF(position, size()), area, output).topLeft();
++            }
++            place(position);
+         }
+     };
+     auto showUnderCursor = [this] {
+@@ -403,6 +412,12 @@ void XdgSurfaceWindow::installPlasmaShellSurface(PlasmaShellSurfaceInterface *sh
+         }
+     };
+     connect(shellSurface, &PlasmaShellSurfaceInterface::positionChanged, this, updatePosition);
++    // the border is kept for the popup's real size, which arrives with its first buffer
++    connect(this, &Window::frameGeometryChanged, this, [this, shellSurface, updatePosition](const RectF &old) {
++        if (shellSurface->isPositionSet() && old.size() != size()) {
++            updatePosition();
++        }
++    });
+     connect(shellSurface, &PlasmaShellSurfaceInterface::openUnderCursorRequested, this, showUnderCursor);
+     connect(shellSurface, &PlasmaShellSurfaceInterface::roleChanged, this, updateRole);
+     connect(shellSurface, &PlasmaShellSurfaceInterface::panelTakesFocusChanged, this, [this] {
+@@ -1925,13 +1940,27 @@ void XdgPopupWindow::handleRepositionRequested(quint32 token)
+ void XdgPopupWindow::updateRelativePlacement()
+ {
+     const QPointF parentPosition = transientFor()->nextFramePosToClientPos(transientFor()->pos());
+-    const RectF bounds = workspace()->clientArea(transientFor()->isFullScreen() ? FullScreenArea : PlacementArea, transientFor()).translated(-parentPosition);
++    const RectF area = workspace()->clientArea(transientFor()->isFullScreen() ? FullScreenArea : PlacementArea, transientFor());
++    const RectF bounds = area.translated(-parentPosition);
+     const XdgPositioner positioner = m_shellSurface->positioner();
++    // the invisible border of an output that shows 3D (ORDER 418): the popup keeps this far from the output's edges
++    LogicalOutput *const output = transientFor()->output();
++    const RectF inside = StereoDepth::popupArea(area, output).translated(-parentPosition);
+ 
+     if (m_plasmaShellSurface && m_plasmaShellSurface->isPositionSet()) {
+-        m_relativePlacement = RectF(m_plasmaShellSurface->position(), positioner.size()).translated(-parentPosition);
+-    } else {
++        const RectF placed = RectF(m_plasmaShellSurface->position(), positioner.size());
++        m_relativePlacement = StereoDepth::keepPopupInside(placed, area, output).translated(-parentPosition);
++    } else if (inside == bounds) {
+         m_relativePlacement = positioner.placement(bounds);
++    } else {
++        // the positioner's slide, flip and resize work against the border; an axis the popup cannot fit in even
++        // there keeps what stock KWin does, and the edge rule keeps it at the screen's level
++        const RectF shrunk = positioner.placement(inside);
++        const RectF stock = positioner.placement(bounds);
++        const bool fitsX = shrunk.left() >= inside.left() && shrunk.right() <= inside.right();
++        const bool fitsY = shrunk.top() >= inside.top() && shrunk.bottom() <= inside.bottom();
++        m_relativePlacement = RectF(fitsX ? shrunk.left() : stock.left(), fitsY ? shrunk.top() : stock.top(),
++                                    fitsX ? shrunk.width() : stock.width(), fitsY ? shrunk.height() : stock.height());
+     }
+ }
+ 
+-- 
+2.53.0
+

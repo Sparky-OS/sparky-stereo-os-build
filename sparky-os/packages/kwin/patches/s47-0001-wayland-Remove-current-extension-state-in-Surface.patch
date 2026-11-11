@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Zahorodnii
+Date: Tue, 15 Sep 2026 12:09:29 +0000
+Subject: [PATCH] wayland: Remove current extension state in
+ SurfaceInterface::removeExtension as well
+
+The idea was to preserve the current state, that the destructor request
+doesn't affect the current state. On the other hand, the relevant
+extension object will be gone, so that state cannot be accessed.
+
+It should also fix SurfaceState::mergeInto() creating an incompatible
+state object if a destroyed and a newly created RawSurfaceExtension
+objects have the same address.
+
+BUG: 510116
+
+
+(cherry picked from commit 8931793d02ea497d610bd6cb4ccb864ccdfc82b7)
+
+Co-authored-by: Vlad Zahorodnii
+
+Carried unchanged: removeExtension is not touched by any Sparky Stereo patch, the hunk applies with a one-line offset. It is the fix of a KWin crash (BUG 510116): a surface extension
+destroyed and a new one created at the same address gave SurfaceState::mergeInto() a state of the wrong type.
+
+Origin: upstream, https://invent.kde.org/plasma/kwin/-/commit/5f587fb72b5dceaef911aa1ae848afb24f90be6a
+Author: Vlad Zahorodnii
+Applied-Upstream: v6.7.6, 5f587fb72b (Plasma/6.7), 8931793d02 (master); BUG 510116
+Last-Update: 2026-11-07
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ src/wayland/surface.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/wayland/surface.cpp b/src/wayland/surface.cpp
+index a647c9bb58..2a347b4f33 100644
+--- a/src/wayland/surface.cpp
++++ b/src/wayland/surface.cpp
+@@ -500,6 +500,7 @@ RawSurfaceAttachedState *SurfaceInterface::addExtension(RawSurfaceExtension *ext
+ 
+ void SurfaceInterface::removeExtension(RawSurfaceExtension *extension)
+ {
++    d->current->extensions.erase(extension);
+     d->pending->extensions.erase(extension);
+ 
+     if (d->subsurface.transaction) {
+-- 
+2.53.0
+

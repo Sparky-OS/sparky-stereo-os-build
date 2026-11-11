@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/16
+# Last update 2026/11/01
 LOCAL1="Umiejętności asystentów AI"
 LOCAL3="Udostępnić Twoim asystentom AI umiejętności Sparky Stereo OS?"
 LOCAL4="Umiejętności pozostają w /usr/share/sparky-stereo-os/skills. Każdy wybrany folder otrzyma dowiązanie do każdej umiejętności; Twoje własne umiejętności pozostaną bez zmian."
@@ -34,7 +34,21 @@ LOCAL22="Dowiązane: %s z %s"
 LOCAL23="Czytane przez"
 LOCAL24="Umiejętności Sparky Stereo OS dla Twoich asystentów AI"
 LOCAL25="Dla opiekunów projektu i modeli lokalnych (asystent nie jest wymagany):
+  find [--limit N] TEKST   umiejętności najlepiej pasujące do zadania lub objawu, wyszukane bez sieci, z poleceniem context do uruchomienia jako następne
   context [SKILL...] [--section SKILL:NAGŁÓWEK] [--reference ŚCIEŻKA] [--output PLIK]
             wybrane instrukcje z sumami kontrolnymi źródeł; context --help pokazuje opcje
   bundle PLIK.zip   kompletna dokumentacja publiczna do rozpakowania i pracy bez sieci"
 LOCAL26="Pominięto, żaden z jego pakietów nie jest zainstalowany: %s"
+LOCAL27="Brakuje silnika umiejętności: %s (zainstaluj pakiet sparky-stereo-skills-engine)."
+LOCAL28="Czy te asystenty mają też wyszukiwać umiejętności przez MCP (Model Context Protocol)?"
+LOCAL29="Kto zatwierdza polecenia wymienione w umiejętności"
+LOCAL30="Automatycznie: zatwierdzenie samego asystenta, jeśli używasz asystenta AI, w przeciwnym razie najpierw zapytaj mnie"
+LOCAL31="Zawsze najpierw pytaj mnie"
+LOCAL32="Zawsze używaj zatwierdzenia samego asystenta"
+LOCAL33="Dla asystentów i poleceń (ten sam silnik odpowiada na find i context):
+  sections SKILL   dokładne nagłówki umiejętności
+  commands SKILL   polecenia wymienione w umiejętności użytkownika
+  run SKILL ID [SLOT=WARTOŚĆ...]   uruchamia jedno wymienione polecenie po Twoim potwierdzeniu
+  serve   serwer MCP przez stdio, uruchamiany przez asystenta
+  mcp register [ASYSTENT...] | unregister [ASYSTENT...] | status | commands [auto|assistant|ask]
+            rejestruje serwer w asystencie po Twoim potwierdzeniu, usuwa go, pokazuje stan lub wybiera, kto zatwierdza polecenia"

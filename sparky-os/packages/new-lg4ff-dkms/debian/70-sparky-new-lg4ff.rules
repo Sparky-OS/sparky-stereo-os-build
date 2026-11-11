@@ -1,0 +1,14 @@
+# Sparky Stereo OS, an edition of SparkyLinux.
+# new-lg4ff (berarma/new-lg4ff, revision 2092db1) ships no udev rules. Its
+# sysfs files (range, gain, autocenter, effect levels, LEDs) are created
+# root:root with mode 0664, so only root can set them. This edition rule gives
+# them the convention hid-fanatecff's own rules use: group "games", group-
+# writable; nothing is opened to other users. TEST=="range" limits it to the
+# wheels the driver gives force feedback (the replaced hid-logitech module also
+# binds keyboards and mice). real_id is read-only in the driver and is left
+# alone. The hidraw node comes from sparky-sim-hidraw (uaccess). The helper skips a control
+# the model does not have and says, through sparky-stereo-problems, one it has and cannot
+# set (sparky-stereo-wheel-access). See README.Debian.
+ACTION!="add|change|bind", GOTO="sparky_lg4ff_end"
+SUBSYSTEM=="hid", DRIVER=="logitech", TEST=="range", RUN+="/usr/lib/udev/sparky-stereo-wheel-access --mode g+w new-lg4ff %S%p alternate_modes autocenter combine_pedals damper_level ffb_leds friction_level gain peak_ffb_level range spring_level"
+LABEL="sparky_lg4ff_end"

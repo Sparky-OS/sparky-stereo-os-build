@@ -1,3 +1,205 @@
+sparky-stereo-hardware (0.1.25) unstable; urgency=medium
+
+  * A Bluetooth adapter that cannot carry a headset's microphone or calls is
+    told to the person, once, through the engine (sparky-stereo-problems):
+    sparky-stereo-hardware-bt-voice.service runs at boot and when an adapter
+    appears or goes (a udev rule), reads each adapter's state through the HCI
+    socket (no root, no debugfs) and keeps a machine problem for an adapter
+    that is up, BR/EDR capable and reports no SCO buffers (the CSR clone
+    0a12:0001 with HCI revision 0x0810: the kernel's fake-CSR rule leaves it
+    SCO MTU 48:0 and every voice connection is refused). The notice is in the
+    nine languages and is cleared when the adapter is unplugged. ORDER 133.
+  * A newly connected headset or speaker takes the sound and hands it back
+    when it leaves: a WirePlumber hook (scripts/sparky-stereo-new-output.lua,
+    wanted by wireplumber.conf.d/50-sparky-stereo-new-output.conf) selects the
+    newest connected Bluetooth audio sink or USB audio output above the
+    person's chosen sink, without writing the person's choice. Outputs that
+    appear in the first 10 seconds after WirePlumber starts (a desk DAC at
+    boot) are not new and do not move it. The setting
+    sparky.new-output-takes-the-sound turns it off. The script is wanted, not
+    required, by a small virtual component: if it ever fails to load
+    WirePlumber logs it and the sound is unaffected. ORDER 129.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 07 Nov 2026 16:30:00 -0300
+
+sparky-stereo-hardware (0.1.21) unstable; urgency=medium
+
+  * NVIDIA's i386 libraries install by themselves after the apt run that
+    needs them: inside an apt run, dpkg's post-invoke hook starts
+    sparky-stereo-hardware-nvidia-i386.service (systemctl --no-block),
+    which waits until that run has ended (DPkg::Lock::Timeout=-1), then
+    installs nvidia-driver-libs:i386 and libcuda1:i386 at the driver's
+    version under the edition's engine and tells the session; the run's
+    terminal is told. ORDER 363b.
+  * After a dpkg run of its own (dpkg --add-architecture i386) nothing is
+    started; the problem is kept and says the next apt run brings them.
+  * A failure keeps the problem with apt's output and the Repair; where no
+    unit can be started, the problem says why.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 07:40:00 -0300
+
+sparky-stereo-hardware (0.1.20) unstable; urgency=medium
+
+  * NVIDIA's i386 libraries when i386 is enabled after NVIDIA's driver: dpkg's
+    post-invoke hook (/etc/dpkg/dpkg.cfg.d/sparky-stereo-hardware) checks
+    after every dpkg run, dpkg --add-architecture i386 among them, and where
+    nvidia-driver-libs:i386 or libcuda1:i386 is missing at the installed
+    driver's version the edition's engine keeps the problem (shown at login,
+    its Repair installs them) and the terminal is told, in the nine languages;
+    the problem is cleared when they are there. ORDER 363.
+  * sparky-stereo-hardware --nvidia-i386 installs them at the driver's version
+    after apt-get update; it is the problem's Repair.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 00:46:13 -0300
+
+sparky-stereo-hardware (0.1.19) unstable; urgency=medium
+
+  * NVIDIA's 580 path installs NVIDIA's 580 user space from the edition's
+    repository, where the edition carries NVIDIA's own Debian 12 packages at
+    its module's version: nvidia-driver and libnvcuvid1 are named at the
+    module's version (580.196.07-1+sparky2+lc1). ORDER 354 milestone 2.
+  * Where dpkg has i386, both NVIDIA paths install NVIDIA's i386 libraries
+    at the driver's version too (nvidia-driver-libs:i386, libcuda1:i386),
+    for Steam's, Wine's and 32-bit games' OpenGL, Vulkan and CUDA, and the
+    dry run says so. On the 615 path they come from NVIDIA's CUDA
+    repository, which apt already reads for every architecture dpkg has:
+    a flat repository has one index, and its source's Architectures
+    option does not limit it (measured with apt 3.3.3).
+  * The 580 path installs sparky-stereo-cuda-repo with its lock, as the
+    615 path does: NVIDIA's 580 nvidia-driver-libs depends on
+    libnvidia-egl-xcb1 and libnvidia-egl-xlib1 at NVIDIA's epoch
+    (>= 1:1.0.1), which only NVIDIA's repository has (Debian: 1.0.3-1).
+    0.1.18 installed no CUDA repository there, so the path worked only
+    where the image had already installed it.
+  * Supersedes both packages numbered 0.1.18, which can never sit in one
+    repository: ORDER 358's (in the round's cohort until this one is
+    accepted) and ORDER 354's (not published). The changes of both are in
+    this version.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 01:00:00 -0300
+
+sparky-stereo-hardware (0.1.18) unstable; urgency=medium
+
+  * ORDER 358: report unreadable startkderc or failed systemdBoot reads in
+    the shared problems engine. Do not apply the session zink override
+    without a successful read; keep the desktop shell running and explain
+    how to repair and start a new session.
+  * ORDER 354, the lines below.
+  * Maxwell, Pascal and Volta cards get NVIDIA's 580 driver, the last for
+    them, with the edition's build of its kernel modules
+    (nvidia-legacy-580xx-kernel-dkms) and its own driver lock, picked by
+    PCI ID from the legacy_580.xx table of NVIDIA's 615.71.09 README.
+    Before, they got no driver offer. ORDER 354.
+  * The plan window shows both drivers for such a card, in the nine
+    languages: NVIDIA's 580 driver (the default) and nouveau (the
+    edition's HDMI 3D at the card's boot clocks).
+  * The 580 path installs its lock first, then the driver with downgrades
+    allowed; no CUDA repository and no runtime power management on these
+    cards. Every failure says what failed, why and what to do.
+  * The open modules after the 580 driver: its lock and module are purged
+    first.
+  * Kepler and older cards name the NVIDIA legacy branch that last ran
+    them; the edition does not build it, and the card keeps nouveau.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 18:00:00 -0300
+
+sparky-stereo-hardware (0.1.16) unstable; urgency=medium
+
+  * No fallback to nouveau: when the edition's NVIDIA module is missing,
+    its version names no NVIDIA version, the lock and the CUDA repository
+    package cannot be installed, apt update fails or the preflight fails,
+    the NVIDIA setup stops with an ERROR line saying what failed, why and
+    what to do, purges what it installed, and the setup exits non-zero.
+    Before, each case logged "FALLBACK ... nouveau firmware installed" and
+    the setup reported success. ORDER 343.
+  * nouveau on a supported NVIDIA card is the person's own choice: the plan
+    window's button "Install matched support, keep nouveau", or
+    --nvidia nouveau.
+  * Every step says when it fails, and the run ends with the list of errors
+    and exit status 1: package installs, the missing firmware, the
+    power-profiles-daemon actions the machine does not offer (counted as
+    done before), the wheel drivers, the OpenGL stereo default, and any
+    unexpected failure with its line.
+  * When the menu started the setup, the list of errors opens in a window,
+    each error in the person's language: the error messages are numbered
+    strings (LOCAL29 to LOCAL54) in the nine language files, and the log
+    keeps every ERROR line in English for support. The plan window's own
+    failure is said instead of being taken for Cancel.
+  * An unexpected failure inside a step (set -E) is said with its line and
+    command; set -e alone ended the setup there without a word.
+  * Recommends sparky-stereo-cuda-repo, so an installed system takes the
+    narrowed CUDA pin and the edition's dkms with an ordinary upgrade.
+  * A CUDA repository the person set up is kept and named, and
+    sparky-stereo-cuda-repo comes with the lock anyway: from 20261101.2 it
+    writes no source of its own then, and its pins go by origin.
+  * French: the plan window's button reads "Installer la prise en charge
+    correspondante, garder nouveau".
+  * The dry run says what would stop the NVIDIA setup; a loader that does
+    not list its CPU levels is noted; the postinst says when the OpenGL
+    stereo default could not be written; the plan says why an unsupported
+    NVIDIA card keeps nouveau.
+  * Supersedes 0.1.15, which was not published.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 21:30:00 -0300
+
+sparky-stereo-hardware (0.1.15) unstable; urgency=medium
+
+  * NVIDIA's CUDA repository comes from the edition's package
+    sparky-stereo-cuda-repo (its source, NVIDIA's key and the edition's
+    pins), installed with sparky-stereo-nvidia-driver-lock in a transaction
+    of their own before the driver, so the lock and the pins are in force
+    when apt chooses NVIDIA's user space. Before, the setup downloaded
+    NVIDIA's cuda-keyring, wrote the source and a pin of every NVIDIA
+    package at 1002 itself, and the lock came only as the module's
+    dependency, in the driver's own transaction. ORDER 338, ORDER 329's
+    findings.
+  * Keep a CUDA repository the person set up already, such as NVIDIA's own
+    cuda-keyring, and add only the lock: two sources for NVIDIA's URI with
+    different key files stop apt.
+  * Purge what the run installed when the repository package cannot be
+    installed or the preflight fails.
+  * Read the NVIDIA driver version from a module built through Lean Code
+    too: the published nvidia-kernel-open-dkms-stereo3d is
+    615.71.09-2+stereo3d7+lc1, which the old pattern (+stereo3dN at the
+    end) did not match, so the setup fell back to nouveau ("edition
+    NVIDIA module has no NVIDIA version").
+  * share/cuda-key.sh moved to sparky-stereo-cuda-repo's recipe.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 18:00:00 -0300
+
+sparky-stereo-hardware (0.1.14) unstable; urgency=medium
+
+  * Name the Multi-Arch: same libraries in sparky-stereo-gpu-nvidia with
+    :any (libnvidia-container1, libnvidia-egl-wayland1,
+    libnvidia-egl-wayland-dev). apt matches a plain name on the native
+    architecture only (apt_preferences(5)), so NVIDIA's i386 egl-wayland
+    1:1.1.21-1 kept the CUDA repository's 1002 and won over ours where
+    NVIDIA's repository is read for i386 too, and the two architectures of
+    one library had different versions. ORDER 318, found by ORDER 317's
+    installability check.
+  * Complete this changelog with versions 0.1.12 and 0.1.13.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 31 Oct 2026 18:00:00 -0300
+
+sparky-stereo-hardware (0.1.13) unstable; urgency=medium
+
+  * The German, Japanese, Korean, Simplified Chinese and Traditional
+    Chinese name and comment of the hardware setup entry.
+  * The live session graphics entry's name and comment in Polish,
+    Brazilian Portuguese, French, German, Japanese, Korean, Simplified
+    Chinese and Traditional Chinese.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 30 Oct 2026 12:00:00 -0300
+
+sparky-stereo-hardware (0.1.12) unstable; urgency=medium
+
+  * NVIDIA's services (nvidia-persistenced, nvidia-powerd) run only while
+    NVIDIA's driver is loaded, decided at every boot: a machine without an
+    NVIDIA card skips them and is no longer "degraded"; a card added later
+    starts them with no step, when udev loads the driver for it.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 25 Oct 2026 12:00:00 -0300
+
 sparky-stereo-hardware (0.1.11) unstable; urgency=medium
 
   * Install libnvcuvid1 at the NVIDIA graphics module version and the

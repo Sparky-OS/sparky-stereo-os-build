@@ -13,6 +13,7 @@ Each mpv case starts its own headless Weston.
 - `check-matrix.py OUTDIR [--before DIR] [--none DIR]` checks the rule, the left-first side by side declaration without a copy, the software decoding that replaces a copy-back for packings the CPU rearranges, and that every way of decoding gives the same picture (identical pixels and display size), against the published packages too with `--before`.
 - `engines.sh OUTDIR FILM` checks MLT (`melt`) and VLC Stereo (`cvlc-stereo`), which copy every hardware picture back: software by default, hardware where copying back is allowed, hardware whenever the person names a decoder.
 - `qt-route.sh OUTDIR FILM WORK` checks that Qt Multimedia, whose texture converters import decoded surfaces, keeps hardware decoding by default.
+- `mpv-told.py --name NAME --film FILM --out DIR [--lang LANG] [MPV_ARG...]` (ORDER 346a, row U33) plays one film with mpv's terminal OSD forced on and records whether the switch to software decoding for a 3D conversion is told: the OSD's message on the terminal, the log's line and its level, and `hwdec-current` at the end; `--hwdec-software-fallback=no` keeps hardware decoding.
 - `compare-a10.py BEFORE AFTER [--tolerance R]` compares two phases of the A10 bench (`packaging/a10-matrix.py`): drops per minute on the monotonic clock, restarts of a looping film's counters added, and the decoder and the Vulkan device of each case.
 
 The published packages are expected to fail `check-matrix.py`, `engines.sh` and, with libmedia-gpu-route 0.2.0, `qt-route.sh`; the ORDER 234 cohort passes them.

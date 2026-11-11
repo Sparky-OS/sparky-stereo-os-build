@@ -1,19 +1,36 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/10/24
 # Copyright 2026 under the GNU GPL3 License
+# Last update 2026/11/02
 # Build kf6-kio's next edition release from its signed published source, keeping
 # the source's Lean Code integration, with the patches in ./patches.
 # Run as root in a freshly updated Debian testing container whose APT has the
 # published edition repository (pin 1001); the build itself runs as UID 1000.
 #   SPARKY_PUBLISHED_TREE  the signed repository tree with the predecessor source
-#   SPARKY_RELEASE_TOOLKIT the build tree's sparky-os folder (lean.release)
+#   SPARKY_RELEASE_TOOLKIT the build tree's sparky-os folder (lean.release, translations)
 #   SPARKY_LC_PREVIOUS_DIR the predecessor's binary packages (check-link)
+#   SPARKY_LC_ARCHIVE_CONFIG the signed public archive sources, SPARKY_LC_SCRATCH the link gate's own state
+#                          (lean/archive.md): the source's Lean Code hooks run the link and start gate in
+#                          dh_builddeb, and so does check-link below; both need bubblewrap, which runs as the
+#                          build user (a container needs --security-opt seccomp=unconfined, apparmor=unconfined and
+#                          systempaths=unconfined for its namespaces and /proc) and reaches the public archives; the
+#                          source's toolkit 0.1.20 reads no architectures field, so leave out the CUDA source
 #   BUILD_ROOT             disposable scratch, OUT the staged result
 set -euo pipefail
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 HERE=$(cd "$(dirname "$0")" && pwd)
 : "${SPARKY_PUBLISHED_TREE:?}" "${SPARKY_RELEASE_TOOLKIT:?}" "${SPARKY_LC_PREVIOUS_DIR:?}" "${BUILD_ROOT:?}" "${OUT:?}"
-PREDECESSOR=6.30.0-1+stereo3d5+lc1
-VERSION=6.30.0-1+stereo3d6+lc1
+: "${SPARKY_LC_ARCHIVE_CONFIG:?}" "${SPARKY_LC_SCRATCH:?}"
+# The source is dated by its recipe, never by the clock (ORDER 421b): SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch
+# sparky-os/packages/kf6-kio), which the changelog entry, Lean Code and dpkg-source all read.
+REPRO=$SPARKY_RELEASE_TOOLKIT/repo/reproducible.py
+: "${SOURCE_DATE_EPOCH:?export the recipe date: python3 $SPARKY_RELEASE_TOOLKIT/repo/reproducible.py epoch $HERE}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
+PREDECESSOR=6.30.0-1+stereo3d7+lc1
+VERSION=6.30.0-1+stereo3d9+lc1
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
@@ -50,39 +67,69 @@ for patch in "$HERE"/patches/*.patch; do
 	cp "$patch" source/debian/patches/
 	printf '%s\n' "$name" >> source/debian/patches/series
 done
+# the translations of the patches' messages, last (sparky-os/translations, README there)
+for name in kf6-kio-gpu-launch.po.patch; do
+	grep -qx "$name" source/debian/patches/series && continue
+	cp "$SPARKY_RELEASE_TOOLKIT/translations/$name" source/debian/patches/
+	printf '%s\n' "$name" >> source/debian/patches/series
+done
 (cd source && QUILT_PATCHES=debian/patches quilt push -a > ../quilt.log)
 python3 - source "$VERSION" <<'PY'
-import email.utils, sys
+import os, sys
 from pathlib import Path
 source, version = Path(sys.argv[1]), sys.argv[2]
 changelog = source/'debian/changelog'
 old = changelog.read_text()
 entry = (f'kf6-kio ({version}) testing; urgency=medium\n\n'
-         '  * Start an application whose desktop entry does not say where it runs on\n'
-         '    the GPU the Graphics page chooses for its kind (sparky-stereo-gpu-env\n'
-         '    --app): players and games on the GPU measured best, battery included,\n'
-         '    browsers by the power profile, other programs on the GPU that draws\n'
-         '    the desktop. PrefersNonDefaultGPU and a GPU chosen in the launch\n'
-         '    environment keep their precedence; without the command the launch is\n'
-         '    unchanged.\n'
-         '  * Start a D-Bus activatable application itself when a GPU environment\n'
-         '    applies (its own key or the Graphics page) and it has an Exec line, so\n'
-         '    the variables reach it; otherwise activate it as before.\n\n'
-         ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + email.utils.formatdate(localtime=True) + '\n\n')
+         '  * Start no application whose GPU cannot be applied (ORDER 346g): when\n'
+         '    the GPU the person chose on the Graphics page cannot be used\n'
+         '    (sparky-stereo-gpu-env exit status 4), the launch fails with the\n'
+         "    program's name and the resolver's own words, what failed, why and\n"
+         "    what to do, through KIO's own launch-failure path; a resolver that\n"
+         '    fails, crashes, cannot be started or does not answer within five\n'
+         '    seconds is said the same way. Automatic, a rule and not the\n'
+         "    person's choice, never refuses: when it cannot place a program now\n"
+         '    (exit status 5) the program starts as the session would, as\n'
+         '    before. Without the resolver nothing changes.\n'
+         '  * Breaks sparky-stereo-graphics before 0.2.4, whose resolver gives\n'
+         '    exit status 4 also where Automatic cannot place a browser.\n'
+         '  * +stereo3d8 predates two corrections of the French in\n'
+         '    kf6-kio-gpu-launch.po.patch (6b9ec4f, 767eaf9), so its French\n'
+         '    "crashed" message differs from the patch (ORDER 391): this build\n'
+         '    carries the catalogue patch as the build repository has it.\n'
+         '  * The new messages in Polish, Brazilian Portuguese, French, German,\n'
+         '    Japanese, Korean and Chinese (Simplified and Traditional).\n\n'
+         ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n')
 changelog.write_text(entry + old)
 PY
 dpkg-parsechangelog -l source/debian/changelog -S Version | grep -qx "$VERSION"
+# The launcher refuses the resolver's exit status 4, which sparky-stereo-graphics before 0.2.4 also gives where
+# Automatic, which never refuses, cannot place a browser (Debian Policy 7.3, Breaks)
+python3 - source/debian/control <<'PY'
+import sys
+from pathlib import Path
+control = Path(sys.argv[1])
+text = control.read_text()
+stanza = 'Package: libkf6kiogui6\nArchitecture: any\n'
+assert stanza in text and 'sparky-stereo-graphics' not in text
+control.write_text(text.replace(stanza, stanza + 'Breaks: sparky-stereo-graphics (<< 0.2.4~)\n', 1))
+PY
 
 apt-get -y update > apt-update.log 2>&1
 apt-get -y --no-install-recommends build-dep ./source > build-dep.log 2>&1
+apt-get -y --no-install-recommends install bubblewrap >> build-dep.log 2>&1
 id -u builder > /dev/null 2>&1 || useradd --create-home --uid 1000 builder
-chown -R builder:builder "$BUILD_ROOT"
+mkdir -p "$SPARKY_LC_SCRATCH"
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" "$BUILD_ROOT/source"
+chown -R builder:builder "$BUILD_ROOT" "$SPARKY_LC_SCRATCH"
 cd source
-runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR="$SPARKY_LC_PREVIOUS_DIR" DEBFULLNAME="$DEBFULLNAME" DEBEMAIL="$DEBEMAIL" \
+runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR="$SPARKY_LC_PREVIOUS_DIR" SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" \
+	SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" DEBFULLNAME="$DEBFULLNAME" DEBEMAIL="$DEBEMAIL" \
 	dpkg-buildpackage -us -uc -F -j4 > ../build.log 2>&1
 cd ..
 PYTHONPATH="$SPARKY_RELEASE_TOOLKIT" python3 -m lean.release check-debs ./*.deb > check-debs.log 2>&1
-PYTHONPATH="$SPARKY_RELEASE_TOOLKIT" python3 -m lean.release check-link --previous-dir "$SPARKY_LC_PREVIOUS_DIR" ./*.deb > check-link.log 2>&1
+runuser -u builder -- env PYTHONPATH="$SPARKY_RELEASE_TOOLKIT" SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" \
+	python3 -m lean.release check-link --previous-dir "$SPARKY_LC_PREVIOUS_DIR" ./*.deb > check-link.log 2>&1
 cp ./*.deb ./*.changes ./*.buildinfo "kf6-kio_$VERSION.dsc" "kf6-kio_$VERSION.debian.tar.xz" kf6-kio_6.30.0.orig.tar.xz* "$OUT/"
 (cd "$OUT" && sha256sum -- *.deb *.dsc *.tar.* *.changes *.buildinfo > SHA256SUMS)
 chown -R 1000:1000 "$BUILD_ROOT" "$OUT"

@@ -15,7 +15,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from . import archive, linkcheck, package
+from . import VERSION, archive, buildrecord, identities, linkcheck, package, project
 
 
 def projection_hash(path):
@@ -59,12 +59,22 @@ def check_iso(iso):
     print(f'lc1: verified ISO build attestation: {iso.name}')
 
 
-def build_tree(root, out):
+def toolkit_identity():
+    """This toolkit certifies packages only with its VERSION's one released renderer (lean/identities.py)."""
+    why = identities.toolkit_problem(VERSION, project.IDENTITY, project.CODE_SHA256)
+    if why:
+        raise package.Invalid(why)
+
+
+def build_tree(root, out, preserve=None):
+    """preserve: a payload preservation plan ({installed pattern: reason}, package.preservation): those files stay as
+    their authors ship them and the manifest says why."""
+    toolkit_identity()
     root, out = Path(root).resolve(), Path(out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='lc-build-') as work:
         hr = Path(work) / 'hr'
-        obj = package.prepare(root, hr)
+        obj = package.prepare(root, hr, preserve=preserve)
         trees = [root] + ([hr] if obj['hr_package'] else [])
         built = []
         for tree in trees:
@@ -98,15 +108,20 @@ def build_tree(root, out):
 
 def check_debs(paths):
     """Check final archive bytes and require matching, independently marked HR companions."""
-    verified, hr_blobs = {}, {}
+    verified, hr_blobs, copyrights = {}, {}, {}
     for deb in paths:
         with tempfile.TemporaryDirectory(prefix='lc-check-') as work:
             subprocess.run(['dpkg-deb', '--raw-extract', str(deb), work], check=True, stdout=subprocess.DEVNULL)
             obj = package.check_tree(work)
+            why = identities.problem(obj['renderer']['identity'], obj['renderer']['sha256'])
+            if why:
+                raise package.Invalid(f'{deb}: {why}')
             key = (obj['package'], obj['version'], obj['architecture'])
             if key in verified:
                 raise package.Invalid(f'duplicate package identity: {key}')
             verified[key] = obj
+            licence = Path(work) / 'usr/share/doc' / obj['package'] / 'copyright'
+            copyrights[key] = licence.read_bytes() if licence.is_file() and not licence.is_symlink() else None
             if obj['package'].endswith('-lc-hr'):
                 # Decompression is bounded by the projected file size cap.
                 for row in obj['files']:
@@ -122,6 +137,10 @@ def check_debs(paths):
         hr_key = (obj['hr_package'], obj['version'], obj['architecture'])
         if hr_key not in verified:
             raise package.Invalid(f'{key}: matching HR documentation package is missing')
+        # ORDER 451c: the companion says exactly what its base package says about who wrote the packaging; build_tree copies the
+        # base's final copyright (after provenance.sh) into it, and a pair from different builds is refused
+        if copyrights[key] != copyrights[hr_key]:
+            raise package.Invalid(f'{key}: the copyright file of {obj["hr_package"]} is not the copyright file of {obj["package"]}')
         for row in obj['files']:
             if row['status'] != 'projected':
                 continue
@@ -130,6 +149,54 @@ def check_debs(paths):
                 raise package.Invalid(f'{key}: HR missing or corrupt for {row["path"]}')
     print(f'lc1: verified {len(verified)} packages, payload hashes and required HR companions')
     return verified
+
+
+def manifest_of(deb):
+    """(package, version, architecture, manifest) of an lc1 archive, reading only its control and its manifest."""
+    fields = dict(line.split(': ', 1) for line in subprocess.run(
+        ['dpkg-deb', '-f', str(deb), 'Package', 'Version', 'Architecture', package.FIELD], capture_output=True,
+        text=True, check=True).stdout.splitlines() if ': ' in line)
+    p, v, a = fields.get('Package', ''), fields.get('Version', ''), fields.get('Architecture', '')
+    if package.FIELD not in fields:
+        raise package.Invalid(f'{deb}: no {package.FIELD} field')
+    member = '.' + package.manifest_path(p, a)
+    tar = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(deb)], stdout=subprocess.PIPE)
+    try:
+        r = subprocess.run(['tar', '-xO', '--occurrence=1', member], stdin=tar.stdout, capture_output=True)
+    finally:
+        tar.stdout.close()
+        tar.kill()
+        tar.wait()
+    if r.returncode != 0 or not r.stdout:
+        raise package.Invalid(f'{deb}: lc1 manifest {member[1:]} unreadable')
+    return p, v, a, package.load(fields[package.FIELD], r.stdout, p, v, a)
+
+
+def check_identity(paths):
+    """The Part 1 check of a publication round: every staged package's lc1 renderer pairs its label with the
+    digest the version table gives it. Reads each archive's control and manifest only (check-debs, run by
+    publish-tree's check-selection and by sync-to-server's check-repo, makes the same check with the full
+    payload verification). Names every refused package, then refuses the set."""
+    refused, seen = [], {}
+    for deb in paths:
+        try:
+            p, v, a, obj = manifest_of(deb)
+        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            refused.append(f'{deb}: {exc}')
+            continue
+        why = identities.problem(obj['renderer']['identity'], obj['renderer']['sha256'])
+        if why:
+            refused.append(f'{deb}: {why}')
+            continue
+        seen.setdefault(obj['renderer']['identity'], []).append(f'{p}_{v}_{a}')
+    for line in refused:
+        print(f'lc1: refused: {line}')
+    for identity, names in sorted(seen.items()):
+        print(f'lc1: {len(names)} packages: {identity}')
+    if refused:
+        raise package.Invalid(f'{len(refused)} of {len(paths)} packages carry a renderer the version table does not '
+                              f'release (lean/identities.py)')
+    print(f'lc1: verified {len(paths)} renderer identities against the version table')
 
 
 def previous_build(deb, previous_dir=None, previous_debs=(), controls=None):
@@ -204,8 +271,14 @@ def main():
     build = commands.add_parser('build-tree')
     build.add_argument('tree')
     build.add_argument('out')
+    build.add_argument('--preserve-plan', help='JSON {installed pattern: reason}: payload files kept exactly as their '
+                                               'authors ship them (a vendor licence), each with its reason')
     check = commands.add_parser('check-debs')
     check.add_argument('debs', nargs='+')
+    check.add_argument('--no-record', action='store_true',
+                       help='only check; the default also writes the build record beside the .deb files (lean/buildrecord.py)')
+    ident = commands.add_parser('check-identity', help='staged lc1 archives: renderer label and digest match the version table')
+    ident.add_argument('debs', nargs='+')
     link = commands.add_parser('check-link')
     link.add_argument('debs', nargs='+')
     link.add_argument('--previous-dir', help='directory holding the pre-lc1 builds to compare with')
@@ -231,9 +304,14 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == 'build-tree':
-            build_tree(args.tree, args.out)
+            plan = json.loads(Path(args.preserve_plan).read_text()) if args.preserve_plan else None
+            build_tree(args.tree, args.out, plan)
         elif args.command == 'check-debs':
             check_debs(args.debs)
+            if not args.no_record:
+                buildrecord.record(args.debs)
+        elif args.command == 'check-identity':
+            check_identity(args.debs)
         elif args.command == 'check-link':
             check_link(args.debs, args.previous_dir, args.smoke, args.archive_config, args.scratch,
                        Path(args.siblings_file).read_text().splitlines() if args.siblings_file else (),
@@ -256,7 +334,7 @@ def main():
             check_iso(args.iso)
         else:
             package.check_tree(args.tree)
-    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:  # buildrecord.Incomplete is a ValueError
         parser.exit(1, f'lc1: release blocked: {exc}\n')
 
 

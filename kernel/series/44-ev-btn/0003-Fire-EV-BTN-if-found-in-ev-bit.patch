@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tomasz Pakuła <tomasz.pakula.oficjalny@gmail.com>
+Date: Sun, 4 Jan 2026 21:31:38 +0000
+Subject: Input: Fire EV_BTN if found in ev_bit
+
+Passes EV_BTN through to handlers and allows reacting to this event by
+clients.
+
+Signed-off-by: Tomasz Pakuła <tomasz.pakula.oficjalny@gmail.com>
+
+[ORDER 15: carried unchanged from Tomasz Pakuła's "[RFC PATCH n/6] Input: New EV_BTN event for generic buttons", linux-input and LKML, 2026-01-04 (the newest posted version; no v2 by 2026-11-06, not in torvalds/linux master of 2026-11-06).
+Link: https://lore.kernel.org/all/20260104213132.163904-1-tomasz.pakula.oficjalny@gmail.com/
+Archive copy of this patch: https://lkml.iu.edu/2601.0/01925.html
+Review so far: Benjamin Tissoires 2026-01-08 asks for a different shape of patches 3 and 4 (map the HID Button usage page to EV_BTN directly, EV_BTN only for that page, keep the existing EV_KEY mapping without the upper bound); Peter Hutterer 2026-01-08 and Randy Dunlap 2026-01-04 (documentation wording of patch 1); Ivan Gorinov 2026-01-07 (EVIOCGKEY-like read of the initial state). The author has not posted a revision; this group is the text as posted and is replaced by the author's next version when it is posted.
+Applies to v7.3.1 without change of any hunk.
+Drop this group when the series, in the author's or the maintainers' final form, is in the release this kernel moves to.]
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ drivers/hid/hid-input.c | 20 +++++++++++++++-----
+ 1 file changed, 15 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/hid/hid-input.c b/drivers/hid/hid-input.c
+index 2bbb645c2ff4..900a6fc9813e 100644
+--- a/drivers/hid/hid-input.c
++++ b/drivers/hid/hid-input.c
+@@ -1673,7 +1673,8 @@ void hidinput_hid_event(struct hid_device *hid, struct hid_field *field, struct
+ 
+ 	switch (usage->type) {
+ 	case EV_KEY:
+-		if (usage->code == 0) /* Key 0 is "unassigned", not KEY_UNKNOWN */
++		/* Key 0 is "unassigned", not KEY_UNKNOWN */
++		if (usage->code == 0 && !test_bit(EV_BTN, input->evbit))
+ 			return;
+ 		break;
+ 
+@@ -1723,10 +1724,19 @@ void hidinput_hid_event(struct hid_device *hid, struct hid_field *field, struct
+ 	    value == field->value[usage->usage_index])
+ 		return;
+ 
+-	/* report the usage code as scancode if the key status has changed */
+-	if (usage->type == EV_KEY &&
+-	    (!test_bit(usage->code, input->key)) == value)
+-		input_event(input, EV_MSC, MSC_SCAN, usage->hid);
++
++	if (usage->type == EV_KEY) {
++		/* Send out EV_BTN with button number (starts at 1) */
++		if (test_bit(EV_BTN, input->evbit))
++			input_event(input, EV_BTN, usage->hid & HID_USAGE, value);
++
++		if (usage->code == 0)
++			return;
++
++		/* report usage code as scancode if the status has changed */
++		if ((!test_bit(usage->code, input->key)) == value)
++			input_event(input, EV_MSC, MSC_SCAN, usage->hid);
++	}
+ 
+ 	input_event(input, usage->type, usage->code, value);
+ 
+-- 
+2.52.0

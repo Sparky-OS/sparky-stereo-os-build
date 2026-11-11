@@ -1,0 +1,24 @@
+Description: dinput: a HID joystick's button 128 is a button
+ hid_joystick_read_report() ignored HID usage 128 of the Button page as
+ "extraneous" (usages->Usage >= 128), but the button state array holds 128
+ entries, usage 1 to 128 at index 0 to 127, and DIJOYSTATE2 has 128 buttons.
+ A device with 128 buttons never showed the last one: found with the
+ 128-button fixture through winebus' evdev and SDL backends, which both
+ deliver it (FIXME "ignoring extraneous button 128" in the +dinput trace).
+ Wine master (checked 2026-11-07) still has the test with 128.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (ORDER 15), written with Claude Sonnet 5.5
+Forwarded: no
+Last-Update: 2026-11-07
+
+--- a/dlls/dinput/joystick_hid.c
++++ b/dlls/dinput/joystick_hid.c
+@@ -1265,7 +1265,7 @@
+                 usages = impl->usages_buf + count;
+                 if (usages->UsagePage != HID_USAGE_PAGE_BUTTON)
+                     FIXME( "unimplemented usage page %x.\n", usages->UsagePage );
+-                else if (usages->Usage >= 128)
++                else if (usages->Usage > 128)
+                     FIXME( "ignoring extraneous button %d.\n", usages->Usage );
+                 else
+                     params.buttons[usages->Usage - 1] = 0x80;

@@ -1,0 +1,55 @@
+Description: xfs_healer: fail earlier on non-xfs filesystems
+ A Debian user reported that the root filesystem service fails with:
+  systemd[1]: Starting xfs_healer@-.service - Self Healing of XFS Metadata for /...
+  xfs_healer@-[976]: /: Inappropriate ioctl for device
+  systemd[1]: xfs_healer@-.service: Condition check process exited, code=exited, status=255/EXCEPTION
+  systemd[1]: xfs_healer@-.service: Failed with result 'exit-code'.
+  systemd[1]: Failed to start xfs_healer@-.service - Self Healing of XFS Metadata for /.
+ when the root filesystem is not XFS.  It's most likely ext4 given
+ Debian's defaults.  However, the actual service failure here is a result
+ of the ExecCondition program exiting with 255 instead of EXIT_FAILURE.
+ EXIT_FAILURE is what we're supposed to return to mean "do not run
+ service".
+ Note that xfs_healer@- is always started by systemd (and not
+ xfs_healer_start) because the root filesystem is usually mounted before
+ systemd starts.
+ stracing this program a litle further reveals this:
+  # strace -e ioctl /usr/libexec/xfsprogs/xfs_healer --supported /
+  ioctl(3, _IOC(_IOC_READ, 0x58, 0x7e, 0x100), 0x7fffb2c5e6a8) = -1 ENOTTY (Inappropriate ioctl for device)
+  ioctl(3, _IOC(_IOC_READ, 0x58, 0x7c, 0x70), 0x7fffb2c5e6a8) = -1 ENOTTY (Inappropriate ioctl for device)
+  ioctl(3, _IOC(_IOC_READ, 0x58, 0x64, 0x70), 0x7fffb2c5e6a8) = -1 ENOTTY (Inappropriate ioctl for device)
+  /: Inappropriate ioctl for device
+ All three ioctls are XFS_IOC_FSGEOMETRY calls, and they all fail with
+ ENOTTY because this is an ext4 filesystem.  The fsgeometry call occurs
+ under xfd_open(), so fix this error by special-casing the error return
+ handling.
+ [aalbersh]: removed prefixes from commit subject
+Author: Darrick J. Wong <djwong@kernel.org>
+Origin: upstream, https://git.kernel.org/pub/scm/fs/xfs/xfsprogs-dev.git/commit/?id=fde1eeed253a927a922e04ba007a586b7e4f6cde
+Bug-Debian: https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1149571
+Reported-by: Michael Biebl <biebl@debian.org>
+Reviewed-by: Andrey Albershteyn <aalbersh@kernel.org>
+Applied-Upstream: v7.2.1, fde1eeed253a927a922e04ba007a586b7e4f6cde
+Last-Update: 2026-11-02
+---
+diff --git a/healer/xfs_healer.c b/healer/xfs_healer.c
+index 8fa58b7..0a55e3b 100644
+--- a/healer/xfs_healer.c
++++ b/healer/xfs_healer.c
+@@ -317,6 +317,16 @@ setup_monitor(
+ 
+ 	ret = -xfd_open(&ctx->mnt, ctx->mntpoint, O_RDONLY);
+ 	if (ret) {
++		if (ret == ENOTTY) {
++			/*
++			 * If the fsgeometry call returns ENOTTY, this isn't
++			 * even an XFS filesystem.
++			 */
++			fprintf(stderr, "%s: %s\n", ctx->mntpoint,
++ _("XFS health monitoring not supported."));
++			return MON_UNSUPPORTED;
++		}
++
+ 		fprintf(stderr, "%s: %s\n", ctx->mntpoint, strerror(ret));
+ 		return outcome;
+ 	}

@@ -1,0 +1,176 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Antti Savolainen <antti.savo@gmail.com>
+Date: Fri, 31 Jul 2026 17:33:48 +0000
+Subject: [PATCH] kcm: allow moving the displays pixel-by-pixel using arrow
+ keys
+
+Also fade out the badge when the coordinates are shown
+
+BUG: 519347
+BUG: 521731
+
+(cherry picked from commit c7b9b8b5f94f6caf3ff38f61eb9672d6921d8617)
+
+Backported to Plasma 6.7: the hunk that hides the display number badge
+is left out, because the badge (1993fe12) is on master only. The model's
+setPosition() with its snapEnabled argument comes as upstream wrote it.
+
+Origin: backport, https://invent.kde.org/plasma/kscreen/-/commit/c7b9b8b5f94f6caf3ff38f61eb9672d6921d8617
+Bug-KDE: https://bugs.kde.org/519347
+Applied-Upstream: master, c7b9b8b5 (merge request !476), first released in Plasma 6.8
+Last-Update: 2026-11-01
+
+Assisted-by: Claude Opus 5.5
+---
+ kcm/output_model.cpp | 37 +++++++++++++++++++++++++----------
+ kcm/output_model.h   |  1 +
+ kcm/ui/Output.qml    | 46 +++++++++++++++++++++++++++++++++++++++++++-
+ 3 files changed, 73 insertions(+), 11 deletions(-)
+
+diff --git a/kcm/output_model.cpp b/kcm/output_model.cpp
+index fefdbd3c..19bef665 100644
+--- a/kcm/output_model.cpp
++++ b/kcm/output_model.cpp
+@@ -294,6 +294,32 @@ QVariant OutputModel::data(const QModelIndex &index, int role) const
+     return QVariant();
+ }
+ 
++bool OutputModel::setPosition(int outputIndex, const QPoint &valToPoint, bool snapEnabled)
++{
++    if (outputIndex < 0 || outputIndex >= m_outputs.count()) {
++        return false;
++    }
++
++    Output &output = m_outputs[outputIndex];
++    QPoint val = valToPoint;
++
++    if (output.pos == val) {
++        return false;
++    }
++
++    if (snapEnabled) {
++        snap(output, val);
++    }
++
++    output.pos = val;
++    updatePositions();
++
++    Q_EMIT positionChanged();
++    const QModelIndex index = createIndex(outputIndex, 0);
++    Q_EMIT dataChanged(index, index, {PositionRole});
++    return true;
++}
++
+ bool OutputModel::setData(const QModelIndex &index, const QVariant &value, int role)
+ {
+     if (index.row() < 0 || index.row() >= m_outputs.count()) {
+@@ -304,16 +330,7 @@ bool OutputModel::setData(const QModelIndex &index, const QVariant &value, int r
+     switch (role) {
+     case PositionRole:
+         if (value.canConvert<QPoint>()) {
+-            QPoint val = value.toPoint();
+-            if (output.pos == val) {
+-                return false;
+-            }
+-            snap(output, val);
+-            m_outputs[index.row()].pos = val;
+-            updatePositions();
+-            Q_EMIT positionChanged();
+-            Q_EMIT dataChanged(index, index, {role});
+-            return true;
++            return setPosition(index.row(), value.toPoint());
+         }
+         break;
+     case EnabledRole:
+diff --git a/kcm/output_model.h b/kcm/output_model.h
+index 1ec3b3be..17f0c96e 100644
+--- a/kcm/output_model.h
++++ b/kcm/output_model.h
+@@ -118,6 +118,7 @@ public:
+     bool positionsNormalized() const;
+ 
+     bool isMoving() const;
++    Q_INVOKABLE bool setPosition(int outputIndex, const QPoint &valToPoint, bool snapEnabled = true);
+ 
+ Q_SIGNALS:
+     void positionChanged();
+diff --git a/kcm/ui/Output.qml b/kcm/ui/Output.qml
+index 515fa3b3..3dca479c 100644
+--- a/kcm/ui/Output.qml
++++ b/kcm/ui/Output.qml
+@@ -22,6 +22,7 @@ Item {
+                                          model.resolution.width.toString(), model.resolution.height.toString(), Math.round(model.scale * 100.0))
+     property string textWithoutScale: i18nc("Width, height; separated with no-break space", "(%1 × %2)",
+                                             model.resolution.width.toString(), model.resolution.height.toString())
++    property bool arrowKeyHeld: false
+ 
+     onIsSelectedChanged: {
+         if (isSelected) {
+@@ -212,7 +213,7 @@ Item {
+         radius: Kirigami.Units.cornerRadius
+ 
+         opacity: model.enabled &&
+-                 (tapHandler.isLongPressed || dragHandler.active) ? 0.9 : 0.0
++                 (tapHandler.isLongPressed || dragHandler.active || output.arrowKeyHeld) ? 0.9 : 0.0
+ 
+ 
+         color: Kirigami.Theme.disabledTextColor
+@@ -273,6 +274,7 @@ Item {
+         onPressedChanged: {
+             if (pressed) {
+                 root.selectedOutput = model.index;
++                output.forceActiveFocus()
+                 dragStartPosition = Qt.point(output.x, output.y)
+             } else {
+                 isLongPressed = false;
+@@ -300,5 +302,47 @@ Item {
+             }
+         }
+     }
++
++    Timer {
++        id: uiLinger
++        interval: 600
++        onTriggered: {
++            arrowKeyHeld = false
++        }
++    }
++
++    Keys.onPressed: (event) => {
++        if (!output.interactive) {
++            return
++        }
++
++        uiLinger.stop()
++        const delta = Qt.point(0, 0);
++        if (event.key === Qt.Key_Left) {
++            delta.x = -1
++            arrowKeyHeld = true
++            model.interactiveMove = true;
++        } else if (event.key === Qt.Key_Right) {
++            delta.x = 1
++            arrowKeyHeld = true
++            model.interactiveMove = true;
++        } else if (event.key === Qt.Key_Up) {
++            delta.y = -1
++            arrowKeyHeld = true
++            model.interactiveMove = true;
++        } else if (event.key === Qt.Key_Down) {
++            delta.y = 1
++            arrowKeyHeld = true
++            model.interactiveMove = true;
++        }
++        kcm.outputModel.sourceModel.setPosition(model.index, Qt.point(model.position.x + delta.x, model.position.y + delta.y), false)
++    }
++    Keys.onReleased: (event) => {
++        if (event.isAutoRepeat) {
++            return
++        }
++        model.interactiveMove = false
++        uiLinger.start()
++    }
+ }
+ 
+-- 
+2.53.0
+

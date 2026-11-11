@@ -6,37 +6,93 @@
 # FFmpeg than the one the local build was made from, the local build is made again, in the background, with the
 # consent given on the first run. Nothing happens on a computer that never built one. A rebuild that failed is not tried
 # again by itself for the same version (the user is told, and "sparky-stereo-ffmpeg-fdk --rebuild" tries again), and a
-# computer on battery waits for the mains: the build takes a long time.
-# Last update 2026/10/08
+# computer on battery waits for the mains: the build takes a long time. The rebuild runs at normal priority on every
+# processor, as any build at update time does (Daniel, 2026-11-02: "any build at update time - DO NEVER CAP EXECUTION").
+# Exit status: 0 when the check worked (nothing to do, or the rebuild started); KEPT (80) when the check failed and
+# sparky-stereo-problems kept the failure and said it (here, in apt update's output, then in the notification and in
+# sparky-stereo-ffmpeg-fdk --status); any other status when the failure could not be kept (the engine failed, or a
+# clear failed): the apt hook (99sparky-stereo-ffmpeg-fdk) fails apt update for those, and only for those.
+# Last update 2026/11/03
+KEPT=80
 LIBDIR=${SPARKY_FDK_LIBDIR:-/usr/lib/sparky-stereo-ffmpeg-fdk}
 # shellcheck disable=SC1091
-. "$LIBDIR/common.sh" || exit 0
-read_installed && [ -s "$STATE/consent" ] || exit 0
+. "$LIBDIR/common.sh" || {
+	sparky-stereo-problems keep --machine --repair '["/usr/lib/sparky-stereo-ffmpeg-fdk/check-update"]' \
+		sparky-stereo-ffmpeg-fdk update-check LOCAL76 "$LIBDIR/common.sh" && exit "$KEPT"
+	exit 1
+}
+if ! read_installed || [ ! -s "$STATE/consent" ]; then
+	problem_clear update-check
+	exit $?
+fi
 load_strings
+# The update check failed: kept by the engine, which says it, or said here when nothing could keep it.
+keep_failure() {
+	local key=$1
+	sparky-stereo-problems keep --machine --repair '["/usr/lib/sparky-stereo-ffmpeg-fdk/check-update"]' \
+		"$FDK_PACKAGE" update-check "$@" && exit "$KEPT"
+	shift
+	printf "${!key}\n" "$@" >&2
+	exit 1
+}
+check_failed() { keep_failure LOCAL77 "$1"; }
 info=$(repo_source)
+case $? in
+0) ;;
+"$NO_SOURCE_RECORD") keep_failure LOCAL33 "$SRCPKG" ;;
+*) check_failed "repo_source: $SRCPKG" ;;
+esac
 repo=${info%% *}
-[ -n "$repo" ] && dpkg --compare-versions "$repo" gt "$LOCAL_BASE" || exit 0
-if [ "$(cat "$STATE/last-failure" 2>/dev/null)" = "$repo" ]; then
-	printf "$LOCAL70\n" "$repo" "$STATE/last-build.log"
-	exit 0
+dpkg --compare-versions "$repo" gt "$LOCAL_BASE"
+rc=$?
+case "$rc" in
+0) ;;
+1) problem_clear update-check; exit $? ;;
+*) check_failed "dpkg --compare-versions: $rc" ;;
+esac
+failed=$(problem_data build version) || check_failed 'sparky-stereo-problems list'
+failed_helper=$(problem_data build helper) || check_failed 'sparky-stereo-problems list'
+if [ "$failed" = "$repo" ]; then
+	if [ "$failed_helper" = "$(helper_version)" ]; then
+		# the same FFmpeg failed under this very version of the helper: the same cause would stop it again
+		problem_clear update-check || exit 1
+		printf "$LOCAL70\n" "$repo" "$STATE/last-build.log"
+		exit 0
+	fi
+	# the helper has changed since (or the failure came from an older one that did not record it): the cause may have been
+	# the helper's, so it is tried once more; a failure then is recorded under this version and stops the retries
+	printf "$LOCAL86\n" "$repo" "${failed_helper:-?}"
 fi
 # a rebuild already running: nothing to start
-( flock -n 9 ) 9>"$LOCK" || exit 0
+( flock -n -E 75 9 ) 9>"$LOCK"
+rc=$?
+case "$rc" in
+0) ;;
+75) problem_clear update-check; exit $? ;;
+*) check_failed "flock: $rc" ;;
+esac
 if command -v on_ac_power >/dev/null 2>&1; then
 	on_ac_power >/dev/null 2>&1
 	# 0: on the mains, 1: on battery, 255: not known
 	if [ $? -eq 1 ]; then
 		printf '%s\n' "$LOCAL72"
-		exit 0
+		problem_clear update-check
+		exit $?
 	fi
 fi
 printf "$LOCAL71\n" "$repo"
 SELF=${SPARKY_FDK_BIN:-/usr/bin/sparky-stereo-ffmpeg-fdk}
-if [ -d /run/systemd/system ] && command -v systemd-run >/dev/null 2>&1; then
+if [ -d /run/systemd/system ]; then
 	systemd-run --quiet --no-block --collect --unit=sparky-stereo-ffmpeg-fdk-rebuild \
 		--description="Sparky Stereo OS: FFmpeg with Fraunhofer's AAC, rebuilt for $repo" \
-		-p Nice=19 -p IOSchedulingClass=idle -p CPUSchedulingPolicy=batch "$SELF" --auto >/dev/null 2>&1
+		"$SELF" --auto || check_failed "systemd-run: $?"
 else
-	setsid -f nice -n 19 "$SELF" --auto </dev/null >/dev/null 2>&1
+	# Popen reports exec errors before returning; setsid -f reports only the fork.
+	python3 - "$SELF" "$LOG" <<'PYTHON' || check_failed "background launch: $?"
+import subprocess, sys
+with open(sys.argv[2], "ab") as log:
+    subprocess.Popen([sys.argv[1], "--auto"], stdin=subprocess.DEVNULL,
+                     stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+PYTHON
 fi
-exit 0
+problem_clear update-check

@@ -1,0 +1,4 @@
+# Created by Daniel Ramos (Capitain Jack) and Paweł "pavroo" Pijanowski 2026/11/07
+# Copyright 2026 under the GNU GPL3 License
+# A Bluetooth adapter appears or goes: check again whether the adapters can carry voice.
+SUBSYSTEM=="bluetooth", KERNEL=="hci[0-9]*", ACTION=="add|remove", RUN+="/usr/bin/systemctl --no-block start sparky-stereo-hardware-bt-voice.service"

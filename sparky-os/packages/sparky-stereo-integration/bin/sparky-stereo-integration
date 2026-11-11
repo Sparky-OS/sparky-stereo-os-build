@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/24
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/24
+# Last update 2026/11/04
 # Runs the actions of the edition's integration packs (Dolphin right click menus) and keeps their one rule:
 # an action whose program is missing runs command-not-found and offers the package it names, with its own message
 # (Daniel, 2026-10-14, answer 6). Hiding such actions instead is the person's option, HideMissing.
@@ -20,6 +20,7 @@ USERRC=${XDG_CONFIG_HOME:-$HOME/.config}/sparky-stereo-integrationrc
 USERMENUS=${XDG_DATA_HOME:-$HOME/.local/share}/kio/servicemenus
 MARK='X-Sparky-Stereo-Override=true'
 MAP=${SPARKY_STEREO_INTEGRATIONS_MAP:-/usr/share/sparky-stereo/integrations.map}
+RENAMED=/usr/share/command-not-found/renamed-commands
 
 LANGCODE=$(grep -m1 '^LANG=' /etc/default/locale 2>/dev/null | cut -d= -f2 | tr -d '"')
 LANGCODE=${LC_ALL:-${LC_MESSAGES:-${LANG:-$LANGCODE}}}
@@ -94,18 +95,31 @@ say() { # text: a KDE popup when there is a desktop, the terminal otherwise
 }
 
 # --- the offer ---------------------------------------------------------------------------------------
+renamed_order() { # command package: "first" or "after" when the package installs the command under another name
+	[ -r "$RENAMED" ] && awk -v c="$1" -v p="$2" '$1 !~ /^#/ && NF == 4 && $1 == c && $2 == p {print $4; exit}' "$RENAMED"
+}
+
 # command-not-found does the lookup and writes the message; we show its message as it is (Daniel, 2026-10-24).
-# One package named: "Install <package>" or "Cancel". Only after Cancel, or when it names no package, the hide option is
-# offered, as a secondary choice (never the first thing shown).
+# One package named, or a first package that installs the program under another name (`fd` is fd-find's `fdfind`; the
+# packages that have the name itself stay listed in the message), or one package beside those its table names after the
+# others (`ts`: moreutils, with task-spooler's `tsp` listed): "Install <package>" or "Cancel". Only after Cancel, or when
+# it names no package, the hide option is offered, as a secondary choice (never the first thing shown).
 offer() { # program
-	local program=$1 cnf msg pkgs set
+	local program=$1 cnf msg pkgs
 	cnf=/usr/lib/command-not-found
 	[ -x "$cnf" ] || cnf=$(command -v command-not-found 2>/dev/null || true)
 	msg=""
 	[ -n "$cnf" ] && msg=$("$cnf" -- "$program" 2>&1 | sed '/^$/d')
 	[ -n "$msg" ] || msg=$(printf "$LOCAL2" "$program")$'\n'$(printf "$LOCAL8" "$program")
-	pkgs=$(printf '%s\n' "$msg" | sed -n 's/.*apt install \([a-z0-9][a-z0-9.+-]*\).*/\1/p' | sort -u)
-	[ "$(printf '%s' "$pkgs" | grep -c .)" -eq 1 ] || pkgs=""
+	pkgs=$(printf '%s\n' "$msg" | sed -n 's/.*apt install \([a-z0-9][a-z0-9.+-]*\).*/\1/p' | awk '!seen[$1]++')
+	if [ "$(renamed_order "$program" "${pkgs%%$'\n'*}")" = first ]; then
+		pkgs=${pkgs%%$'\n'*}
+	else
+		pkgs=$(printf '%s\n' "$pkgs" | while read -r p; do
+			[ -n "$p" ] && [ "$(renamed_order "$program" "$p")" != after ] && printf '%s\n' "$p"
+		done)
+		[ "$(printf '%s' "$pkgs" | grep -c .)" -eq 1 ] || pkgs=""
+	fi
 	if ! have_ui; then
 		printf '%s\n' "$msg" >&2
 		return 127
@@ -113,8 +127,8 @@ offer() { # program
 	if [ -n "$pkgs" ]; then
 		if kdialog --title "$LOCAL1" --yes-label "$(printf "$LOCAL4" "$pkgs")" --no-label "$LOCAL6" --yesno "$msg"; then
 			# the AppCenter's own call: the program and the stereo packs listed for it, one install, in a terminal, with consent
-			set=$(awk -F'\t' -v p="$pkgs" '$1 == p {print $2}' "$MAP" 2>/dev/null)
-			install_packages "$pkgs" $set && sync_menus && say "$LOCAL9"
+			packs_of "$pkgs" || return 127
+			install_packages "$pkgs" $packs && sync_menus && say "$LOCAL9"
 			return 127
 		fi
 	else
@@ -124,6 +138,36 @@ offer() { # program
 		rc_set HideMissing true; sync_menus; say "$LOCAL7"
 	fi
 	return 127
+}
+
+# The stereo packs listed for PACKAGE in the catalogue (integrations.map, shipped by sparky-stereo-integration-catalogue, which this package Depends on), in $packs.
+# A package the catalogue does not list has no packs: that is an answer. A catalogue that cannot be read is not: nothing is
+# installed then, and the person is told, with the engine keeping it (ORDER 346f-3, U37; Daniel, 2026-11-01: "either it works or
+# not and the user must know").
+packs_of() { # package
+	local out why err
+	packs=""
+	if [ ! -e "$MAP" ]; then why=LOCAL13
+	elif [ ! -f "$MAP" ]; then why=LOCAL15
+	elif [ ! -r "$MAP" ]; then why=LOCAL14
+	else
+		err=$(mktemp)
+		if ! out=$(awk -F'\t' -v p="$1" '$1 == p {print $2}' "$MAP" 2>"$err"); then out=$(cat "$err"); why=""; fi
+		rm -f "$err"
+	fi
+	if [ -z "${why+x}" ]; then
+		sparky-stereo-problems clear --person sparky-stereo-integration catalogue >/dev/null 2>&1 || true
+		packs=$out
+		return 0
+	fi
+	if [ -n "$why" ]; then reason=${!why}; else reason=$out; fi
+	say "$(printf "$LOCAL12" "$MAP" "$reason" "$1")"
+	if [ -n "$why" ]; then
+		sparky-stereo-problems keep --person sparky-stereo-integration catalogue LOCAL12 "$MAP" "@$why" "$1" >/dev/null || true
+	else
+		sparky-stereo-problems keep --person sparky-stereo-integration catalogue LOCAL12 "$MAP" "$reason" "$1" >/dev/null || true
+	fi
+	return 1
 }
 
 install_packages() {
@@ -156,8 +200,8 @@ case "$cmd" in
 		# the install route of the offer, for other callers (KRunner's missing program runner): the package, and the stereo packs
 		# listed for it, one apt call in a terminal; apt asks its own question there, which is the person's consent
 		pkg=${1:?package}
-		set=$(awk -F'\t' -v p="$pkg" '$1 == p {print $2}' "$MAP" 2>/dev/null)
-		install_packages "$pkg" $set && sync_menus
+		packs_of "$pkg" || exit 1
+		install_packages "$pkg" $packs && sync_menus
 		;;
 	hide-missing)
 		case "${1:-status}" in

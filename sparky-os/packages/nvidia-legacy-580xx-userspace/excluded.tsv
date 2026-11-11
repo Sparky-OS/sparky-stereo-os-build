@@ -1,0 +1,30 @@
+# NVIDIA's packages at the carried version that the edition does not carry, one per line: package, architecture, reason.
+# carry.py select refuses a package of NVIDIA's index at that version that is neither in packages.tsv nor here.
+nvidia-kernel-dkms	amd64	NVIDIA's kernel modules: the edition builds them itself (nvidia-legacy-580xx-kernel-dkms, which provides this name at the carried version)
+nvidia-kernel-open-dkms	amd64	NVIDIA's open kernel modules run Turing and newer only; those cards have the edition's open modules with HDMI 3D
+nvidia-open	amd64	meta package for the open kernel modules, which do not run Maxwell, Pascal and Volta
+nvidia-open-580	amd64	meta package for the open kernel modules, which do not run Maxwell, Pascal and Volta
+nvidia-open-580.196.07	amd64	meta package for the open kernel modules, which do not run Maxwell, Pascal and Volta
+firmware-nvidia-gsp	amd64	GSP firmware runs on Turing and newer only
+cuda-compat-13-0	amd64	CUDA 13's forward compatibility for data centre cards; CUDA 13 does not run on Maxwell, Pascal and Volta (CUDA 13.0 release notes)
+nvidia-driver-pinning-580.196.07	all	NVIDIA's own APT pin; the edition's driver lock (sparky-stereo-nvidia-legacy-580xx-driver-lock) is the pin
+nvidia-imex	amd64	IMEX for multi-node NVLink systems of the Blackwell generation, which no Maxwell, Pascal or Volta system has
+nvlink5	amd64	NVLink 5 meta package (Blackwell systems)
+nvlink5-580	amd64	NVLink 5 meta package (Blackwell systems)
+libnvsdm	amd64	telemetry of Quantum InfiniBand switches in NVLink 5 systems (Blackwell)
+libnvsdm-dev	amd64	development files of libnvsdm (Blackwell systems)
+nvidia-egl-icd	i386	Multi-Arch: foreign: the amd64 package serves the i386 libraries (its vendor file names the library by soname) and cannot be installed beside it
+cuda-mps	amd64	transitional, documentation only: no package at the carried version depends on it or provides it
+nvidia-alternative	amd64	transitional, documentation only: nvidia-kernel-support provides, conflicts with and replaces the name
+nvidia-detect	amd64	transitional, documentation only: nvidia-kernel-support provides, conflicts with and replaces the name; carried, it would put Debian's nvidia-detect, the program Hardware Setup depends on, under the edition's block list
+nvidia-egl-common	amd64	transitional, documentation only: nvidia-egl-icd provides, conflicts with and replaces the name
+nvidia-kernel-common	amd64	transitional, documentation only: nvidia-kernel-support provides, conflicts with and replaces the name
+nvidia-kernel-source	amd64	transitional, documentation only: no package at the carried version depends on it or provides it
+nvidia-legacy-check	amd64	transitional, documentation only: nvidia-kernel-support provides, conflicts with and replaces the name
+nvidia-legacy-detect	amd64	transitional, documentation only: no package at the carried version depends on it or provides it
+nvidia-opencl-common	amd64	transitional, documentation only: nvidia-opencl-icd provides, conflicts with and replaces the name
+nvidia-powerd	amd64	transitional, documentation only: nvidia-driver provides, conflicts with and replaces the name
+nvidia-smi	amd64	transitional, documentation only: nvidia-driver-cuda provides, conflicts with and replaces the name
+nvidia-support	amd64	transitional, documentation only: nvidia-kernel-support provides, conflicts with and replaces the name
+nvidia-suspend-common	amd64	transitional, documentation only: nvidia-driver provides, conflicts with and replaces the name
+nvidia-vulkan-common	amd64	transitional, documentation only: nvidia-vulkan-icd provides, conflicts with and replaces the name

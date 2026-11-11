@@ -7,16 +7,22 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dest=${DEST:-${SPARKY_STAGING_DIR:?}/classic-look/m2}
-version=${VERSION:-20261030~sparky9~0+lc1}
-look_version=${LOOK_VERSION:-20261030~sparky9~0+lc1}
+version=${VERSION:-20261104.1~sparky9~0+lc1}
+look_version=${LOOK_VERSION:-20261104.1~sparky9~0+lc1}
 work=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/kubabbar-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
+RECIPE=$repo
+COPY="$RECIPE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$RECIPE" "$work/authoring"
+mkdir -p "$work/authoring/build-tools"
+cp "$COPY" "$work/authoring/build-tools/"
+repo=$work/authoring
 mkdir -p "$dest"
 if compgen -G "$dest/*.deb" >/dev/null; then
 	echo "Use an empty candidate output directory; existing archives are retained." >&2
 	exit 1
 fi
-credit='Sparky Stereo OS, an edition of SparkyLinux, created by Paweł "pavroo" Pijanowski <pavroo@onet.eu> and Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>'
+credit="Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł \"pavroo\" Pijanowski)"
 
 control() { # dir package depends recommends suggests description-lines...
 	local d=$1 p=$2 dep=$3 rec=$4 sug=$5; shift 5
@@ -46,7 +52,7 @@ control() { # dir package depends recommends suggests description-lines...
 build() { # dir package
 	find "$1" -name '*.qmlc' -delete
 	chmod -R go-w "$1"
-	PYTHONPATH="$repo/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$1" "$dest" --authoring "$repo"
+	PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$1" "$dest" --authoring "$repo" --build-dependency sparky-stereo-problems
 }
 doc() { # dir package copyright-body-file
 	mkdir -p "$1/usr/share/doc/$2"
@@ -61,6 +67,16 @@ cp -a "$repo/share/themes/." "$g/usr/share/themes/"
 install -m 644 "$repo/lib/systemd/user/"* "$g/usr/lib/systemd/user/"
 ln -s ../sparky-stereo-gtk-sync.path "$g/usr/lib/systemd/user/graphical-session.target.wants/sparky-stereo-gtk-sync.path"
 install -m 644 "$repo/etc/xdg/autostart/sparky-stereo-gtk-sync.desktop" "$g/etc/xdg/autostart/"
+sparky-stereo-problems catalog sparky-stereo-gtk "$repo/lang/gtk-sync" "$g/usr/lib/systemd/catalog" --subject LOCAL1
+mkdir -p "$g/DEBIAN"
+cat > "$g/DEBIAN/postrm" <<'POSTRM'
+#!/bin/sh
+set -e
+if [ "$1" = remove ]; then
+	sparky-stereo-problems clear --all sparky-stereo-gtk
+fi
+POSTRM
+chmod 755 "$g/DEBIAN/postrm"
 cat > "$work/gtk-copyright" <<COPYRIGHT
 Upstream Author(s):
 
@@ -80,7 +96,7 @@ Free Software Foundation; version 3 of the License.
 On Debian systems, the complete text of the GNU General Public License version 3 can be found in /usr/share/common-licenses/GPL-3.
 COPYRIGHT
 doc "$g" sparky-stereo-gtk "$work/gtk-copyright"
-control "$g" sparky-stereo-gtk "breeze-gtk-theme, kde-config-gtk-style, libglib2.0-bin, libkf6config-bin" "" "" \
+control "$g" sparky-stereo-gtk "breeze-gtk-theme, kde-config-gtk-style, libglib2.0-bin, libkf6config-bin, procps, sparky-stereo-problems" "" "" \
 	"GTK 3 and GTK 4 themes that follow the Sparky Stereo OS looks" \
 	"Kubabbar-Glass and Sparky-Stereo-Oxygen: the Breeze GTK shapes in each look's colours." \
 	"sparky-stereo-gtk-sync picks the theme from the KDE colour scheme at login and whenever kdeglobals changes;" \
@@ -125,8 +141,19 @@ Free Software Foundation; version 3 of the License.
 On Debian systems, the complete text of the GNU General Public License version 3 can be found in /usr/share/common-licenses/GPL-3.
 COPYRIGHT
 doc "$k" sparky-stereo-look-kubabbar-glass "$work/look-copyright"
+# The messages of kubabbar-glass-style for sparky-stereo-problems, in the nine languages (ORDER 346f-5, U39).
+sparky-stereo-problems catalog sparky-stereo-look-kubabbar-glass "$repo/lang/apply" "$k/usr/lib/systemd/catalog" --subject LOCAL1
+mkdir -p "$k/DEBIAN"
+cat > "$k/DEBIAN/postrm" <<'POSTRM'
+#!/bin/sh
+set -e
+if [ "$1" = remove ]; then
+	sparky-stereo-problems clear --all sparky-stereo-look-kubabbar-glass
+fi
+POSTRM
+chmod 755 "$k/DEBIAN/postrm"
 cp "$repo/README.md" "$repo/ABOUT.md" "$k/usr/share/doc/sparky-stereo-look-kubabbar-glass/"
-control "$k" sparky-stereo-look-kubabbar-glass "kde-style-breeze, kwin-style-aurorae, libkf6config-bin, oxygen-icon-theme, sparky-stereo-gtk (= $version), sparky-stereo-look" \
+control "$k" sparky-stereo-look-kubabbar-glass "dbus-bin, kde-style-breeze, kwin-style-aurorae, libkf6config-bin, oxygen-icon-theme, sparky-stereo-gtk (= $version), sparky-stereo-look, sparky-stereo-problems" \
 	"kde-style-oxygen-qt6, qt6-style-kvantum, qt5-style-kvantum, sddm" "" \
 	"Kubabbar Glass, the classic Sparky Stereo OS look" \
 	"Kubabbar Glass is our own name for this look, chosen by Daniel Ramos on 14 October 2026." \

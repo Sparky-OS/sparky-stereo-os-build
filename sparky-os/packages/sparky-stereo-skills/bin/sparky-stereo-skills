@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/29
+# Last update 2026/11/06
 # Gives the person's AI assistants the public skills of Sparky Stereo OS: links each skill in
 # /usr/share/sparky-stereo-os/skills into the folders where the assistants read skills. Run by the person
 # (the package never writes into home directories); offered once at login by its autostart entry.
@@ -26,6 +26,9 @@ SHARE=${SPARKY_STEREO_SKILLS_STRINGS:-/usr/share/sparky/sparky-stereo-skills}
 if [ ! -f "$SHARE/en" ]; then
 	SHARE=$(dirname "$0")/../lang
 fi
+# The engine answers find, list, context, sections, commands, run, mcp and serve (sparky-stereo-skills-engine): one
+# program for the command line and for the AI assistants' MCP door. link, the dialog and export stay here.
+ENGINE=${SPARKY_STEREO_ENGINE:-/usr/libexec/sparky-stereo-skills/engine}
 STATE_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/sparky-stereo-skills
 STATE=$STATE_DIR/state
 
@@ -205,17 +208,62 @@ do_status() {
 	done <<<"$TOOLS"
 }
 
+# The installed skills only (a skill whose packages are absent is not served), "name: what it is for"
 do_list() {
-	local s
-	for s in "$SKILLS"/*/; do
-		s=${s%/}
-		valid "$s" || continue
-		printf '%s: %s\n' "${s##*/}" "$(awk 'NR > 1 && /^---/ {exit}
-			/^description:/ {sub(/^description:[ \t]*/, ""); if ($0 ~ /^[>|][-+]?$/) $0 = ""; d = $0; f = 1; next}
-			f && /^[ \t]/ {sub(/^[ \t]+/, ""); d = (d == "" ? $0 : d " " $0); next}
-			{f = 0}
-			END {print d}' "$s/SKILL.md")"
-	done
+	engine list "$@" | awk -F'\t' '{print $1 ": " $4}'
+}
+
+# Runs the engine; with SPARKY_STEREO_SKILLS or SPARKY_STEREO_REFERENCE set (tests, a checkout) it reads that tree
+engine() {
+	[ -x "$ENGINE" ] || { printf "$LOCAL27\n" "$ENGINE" >&2; exit 1; }
+	if [ -n "${SPARKY_STEREO_SKILLS:-}${SPARKY_STEREO_REFERENCE:-}" ]; then "$ENGINE" --root "$REFERENCE" "$@"; else "$ENGINE" "$@"; fi
+}
+
+# The public reference tree as one ZIP for ordinary offline extraction; never overwrites, never inside the tree
+do_bundle() {
+	python3 - "$REFERENCE" "$1" <<'PY'
+import os, sys, zipfile
+root, dest = os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])
+if dest.startswith(root + os.sep):
+    sys.exit('Place the bundle outside the reference tree')
+top = ('AGENTS.md', 'README.md', 'ATTRIBUTIONS.md', 'CITATION.cff', 'LICENSE', 'LICENSE-GPL-2.0', 'SOURCE', 'MANIFEST.sha256', 'SOURCE-MANIFEST.sha256', 'skills', 'docs', 'tools')
+files = []
+for t in sorted(top):
+    p = os.path.join(root, t)
+    if os.path.isdir(p):
+        for d, _, fs in os.walk(p):
+            for f in sorted(fs):
+                if f.endswith('.pyc') or '__pycache__' in d:
+                    continue
+                q = os.path.join(d, f)
+                files.append((os.path.relpath(q, root), q))
+    elif os.path.isfile(p):
+        files.append((t, p))
+with zipfile.ZipFile(dest, 'x', compression=zipfile.ZIP_DEFLATED) as z:
+    for name, q in files:
+        z.write(q, name)
+print('Bundled %d public files into %s' % (len(files), sys.argv[2]))
+PY
+}
+
+# context keeps its old spellings: --find, --list, --list-sections SKILL, --bundle FILE, --output FILE
+do_context() {
+	case ${1:-} in
+		--find) shift; do_find "$@" ;;
+		--list) engine list | cut -f1 ;;
+		--list-sections) engine sections "${2:?$LOCAL20}" ;;
+		--bundle) do_bundle "${2:?$LOCAL20}" ;;
+		*) local out=
+			if [ "$#" -ge 2 ] && [ "${*: -2:1}" = --output ]; then out=${*: -1}; set -- "${@:1:$#-2}"; fi
+			if [ -n "$out" ]; then (set -o noclobber; engine context "$@" >"$out"); else engine context "$@"; fi ;;
+	esac
+}
+
+do_find() {
+	local limit=3
+	if [ "${1:-}" = --limit ]; then limit=${2:-}; shift 2 || { usage >&2; exit 2; }; fi
+	[ "$#" -ge 1 ] || { usage >&2; exit 2; }
+	engine find "$*" --limit "$limit"
 }
 
 do_export() {
@@ -243,10 +291,32 @@ gui() {
 	rc=${sel[-1]#rc=}; unset 'sel[-1]'
 	set -e
 	case $rc in
-		0) ((${#sel[@]})) && do_link "${sel[@]}" >/dev/null ;;
+		0) ((${#sel[@]})) && do_link "${sel[@]}" >/dev/null; mcp_dialog ;;
 		2) state_set OFFER never ;;
 		*) yad --info --center --title="$LOCAL1" --text="$LOCAL21" --button="OK:0" --timeout=20 || true ;;
 	esac
+}
+
+# After the links: may the assistants also ask the skills through MCP (unchecked: it writes the assistant's own
+# configuration), and who approves the commands a skill lists (Automatic unless the person chooses otherwise)
+mcp_dialog() {
+	local out reg policy
+	[ -x "$ENGINE" ] || return 0
+	set +e
+	out=$(yad --form --center --width=620 --window-icon=applications-development --title="$LOCAL1" --text="$LOCAL28" \
+		--field="$LOCAL28:CHK" FALSE --field="$LOCAL29:CB" "$LOCAL30^$LOCAL31^$LOCAL32" \
+		--button="$LOCAL7:0" --button="$LOCAL8:1" --separator='|')
+	local rc=$?
+	set -e
+	[ "$rc" = 0 ] || return 0
+	IFS='|' read -r reg policy _ <<<"$out"
+	case $policy in
+		"$LOCAL31") "$ENGINE" mcp commands ask >/dev/null ;;
+		"$LOCAL32") "$ENGINE" mcp commands assistant >/dev/null ;;
+		*) "$ENGINE" mcp commands auto >/dev/null ;;
+	esac
+	[ "$reg" = TRUE ] && "$ENGINE" mcp register >/dev/null 2>&1
+	return 0
 }
 
 # At login: keep the person's links current after an upgrade (new skills linked, removed ones unlinked), and offer
@@ -259,7 +329,7 @@ first_login() {
 	return 0
 }
 
-usage() { printf '%s\n\n%s\n' "$LOCAL20" "$LOCAL25"; }
+usage() { printf '%s\n\n%s\n\n%s\n' "$LOCAL20" "$LOCAL25" "$LOCAL33"; }
 
 BASE=$HOME
 cmd=status
@@ -269,24 +339,29 @@ while (($#)); do
 		--first-login) cmd=first-login ;;
 		--gui) cmd=gui ;;
 		-h|--help) usage; exit 0 ;;
-		status|link|unlink|list|tools|export|context|bundle) cmd=$1; shift; break ;;
+		status|link|unlink|list|tools|export|context|find|bundle|sections|commands|run|read|manifest|mcp|serve) cmd=$1; shift; break ;;
 		*) usage >&2; exit 2 ;;
 	esac
 	shift
 done
-if ((EUID == 0)) && [ "$BASE" = "$HOME" ] && [ "$cmd" != list ] && [ "$cmd" != tools ]; then echo "$LOCAL17" >&2; exit 1; fi
+if ((EUID == 0)) && [ "$BASE" = "$HOME" ] && [ "$cmd" != list ] && [ "$cmd" != tools ] && [ "$cmd" != find ] && [ "$cmd" != sections ] && [ "$cmd" != commands ] && [ "$cmd" != manifest ] && [ "$cmd" != read ]; then echo "$LOCAL17" >&2; exit 1; fi
 # a project gets the repository folders the assistants read: .agents/skills and .claude/skills
 if [ "$BASE" != "$HOME" ] && [ "$cmd" = link ] && (($# == 0)); then set -- agents claude; fi
 case $cmd in
 	status) do_status ;;
 	link) do_link "$@" ;;
 	unlink) do_unlink "$@" ;;
-	list) do_list ;;
+	list) do_list "$@" ;;
 	tools) printf '%s\n' "$TOOLS" | awk -F'\t' '{printf "%-9s ~/%-26s %s\n", $1, $2, $3}' ;;
 	export) do_export "$@" ;;
-	context) python3 "$REFERENCE/tools/skills-context.py" "$@" ;;
+	context) do_context "$@" ;;
+	# a task or symptom in the person's words: the skills that fit it best, with the context command for each
+	find) do_find "$@" ;;
 	bundle) [ "$#" -eq 1 ] || { usage >&2; exit 2; }
-		python3 "$REFERENCE/tools/skills-context.py" --bundle "$1" ;;
+		do_bundle "$1" ;;
+	sections|commands|run|read|manifest) engine "$cmd" "$@" ;;
+	mcp) "$ENGINE" mcp "$@" ;;
+	serve) exec "$ENGINE" serve ;;
 	gui) gui ;;
 	first-login) first_login ;;
 esac

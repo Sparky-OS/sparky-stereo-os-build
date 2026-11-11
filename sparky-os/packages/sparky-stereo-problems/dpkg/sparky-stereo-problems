@@ -1,0 +1,3 @@
+# Observe unpacked packages before a later removal, including failures kept by preinst.
+# A transaction in a different root or database must not collect this system's records.
+post-invoke=if [ "${DPKG_ROOT:-/}" = / ] && [ "${DPKG_ADMINDIR:-/var/lib/dpkg}" = /var/lib/dpkg ] && [ -x /usr/bin/sparky-stereo-problems ]; then /usr/bin/sparky-stereo-problems list --json >/dev/null; fi

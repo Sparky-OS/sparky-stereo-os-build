@@ -5,10 +5,13 @@ test -e /.dockerenv
 test "$(id -u)" = 1000
 source=${1:?source checkout or unpacked source package}
 work=/build/installed-tests
-mkdir -p "$work"/{out/bin,out/eligibility,plasma,tests,savers,fixtures}
+mkdir -p "$work"/{out/bin,out/eligibility,plasma,tests,savers,packaging,fixtures}
 cd "$work"
 cp "$source"/{Makefile,run-synthetic-tests.sh,run-shader-tests.sh,run-hack-tests.sh,run-native-tests.sh,measure-hack.py,measure-quads.py} .
 cp "$source"/tests/*.{c,py} tests/
+# build-time files, not installed: the pin writer and the round gate that tests/saver-receipts.py exercises
+cp "$source"/savers/pin.py savers/
+cp "$source"/packaging/check-round-savers.py packaging/
 # Build only test programs. Every production executable is an installed file.
 for name in egl-damage state announce quad quads quads-dlist quads-xform shader-quads draw-commands; do
     make "tests/$name"
@@ -43,6 +46,7 @@ done
 python3 tests/launcher.py
 python3 tests/settings-dialog.py
 python3 tests/saver-preferences.py
+python3 tests/saver-receipts.py
 python3 tests/saver-frames.py
 python3 tests/starfield.py
 python3 tests/rocks.py

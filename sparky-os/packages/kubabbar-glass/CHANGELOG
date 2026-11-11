@@ -1,3 +1,30 @@
+sparky-stereo-look-kubabbar-glass 20261104.1~sparky9~0 (2026-11-04)
+  * kubabbar-glass-minimize and kubabbar-glass-style no longer discard a failure: a setting that cannot be saved, a KWin that does not report the effect loaded, a style plugin that is not installed and a signal that cannot reach the running programs are each said (terminal and journal, in the nine languages) and kept in sparky-stereo-problems until a retry works; "done" is printed only after KWin or the saved value confirms it. The saved setting and the look's values are unchanged
+  * The menu bar package (kubabbar-glass-minimize) and the look package depend on sparky-stereo-problems; sparky-stereo-gtk is unchanged (its failures were already said in 20261102.2)
+
+sparky-stereo-look-kubabbar-glass-menubar 20261103.1~sparky9~0 (2026-11-03)
+  * Pin Stereo APTus first in the new-user panel layout
+
+-------------------------------------------------------------------------------
+  Version 20261102.4~sparky9~0 (2026-11-03)
+-------------------------------------------------------------------------------
+  * Credit the edition in the packages' copyright files with the edition wording, "Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (by Paweł "pavroo" Pijanowski)", without contact addresses (the menu bar package becomes 20261102.1); no settings change
+
+-------------------------------------------------------------------------------
+  Version 20261102.3~sparky9~0 (2026-11-02)
+-------------------------------------------------------------------------------
+  * Map edition and legacy Oxygen scheme names to the light and dark Oxygen GTK themes; keep Kubabbar Glass and other scheme choices
+  * Ship separate light/dark GTK palettes, with the edition dark scheme
+  * Require matching GTK version in the Kubabbar Glass look package
+
+-------------------------------------------------------------------------------
+  Version 20261102.2~sparky9~0 (2026-11-02)
+-------------------------------------------------------------------------------
+  * sparky-stereo-gtk: read back GSettings values in a separate process because a failed dconf commit can exit zero
+  * sparky-stereo-gtk: show and retain failed configuration reads, GTK writes and xsettingsd reloads through sparky-stereo-problems, with messages in all nine languages
+  * sparky-stereo-gtk: report when xsettingsd is absent and signal only the current user's daemon by PID
+  * sparky-stereo-look-kubabbar-glass: require the matching GTK package version
+
 -------------------------------------------------------------------------------
   Version 20261030~sparky9~0 (2026-10-30)
 -------------------------------------------------------------------------------

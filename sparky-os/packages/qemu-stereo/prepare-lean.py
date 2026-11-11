@@ -3,13 +3,16 @@
 # Copyright 2026 Daniel Campos Ramos
 """Integrate QEMU's explicit Debian make graph without replacing its builders."""
 import argparse
+import os
 from pathlib import Path
 import re
 import sys
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1]))
+sys.path.insert(0, str(HERE.parents[1] / 'repo'))
 from lean.debian_prepare import add_build_dependencies, prepare
+import reproducible
 
 
 def main(root, version):
@@ -40,6 +43,8 @@ def main(root, version):
         raise ValueError('Source is already integrated')
     saved.write_text(original)
     path.write_text('#!/usr/bin/make -f\n%:\n\tdh $@\n')
+    # the lean entry is dated by this recipe, never by the clock (ORDER 421b)
+    os.environ['SOURCE_DATE_EPOCH'] = str(reproducible.recipe_epoch([HERE]))
     try:
         prepare(root, version, HERE.parents[1], preserve_sources=[
             ('roms/*', 'Cross-built firmware and its header generators need target-specific qualification'),
@@ -51,6 +56,7 @@ def main(root, version):
     path.write_text(updated)
     edition_dependencies = (
         'libstereo-declare-dev (>= 1.3.0) [amd64]',
+        'libstereo-dibr-dev (>= 1.17.1) [amd64]',
         'libspice-server-dev (>= 0.16.0+git20261010.acb8500-1+stereo3d2~) [amd64]',
     )
     control = root / 'debian/control'

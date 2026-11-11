@@ -11,7 +11,8 @@ A third Look and Feel, `kubabbar-glass-menubar` (Kubabbar Glass, menu bar and do
 
 The look of the Quick Settings window is the look of every application: Breeze controls, flat and quiet, in the Kubabbar Glass colours.
 The other looks that were drawn stay as options: `kubabbar-glass-style fusion`, `kvantum` or `oxygen` (the default is `breeze`).
-GTK 3 and GTK 4 programs follow through the `Kubabbar-Glass` theme, which `sparky-stereo-gtk-sync` selects from the KDE colour scheme; the Sparky Stereo Oxygen look gets the same through `Sparky-Stereo-Oxygen`.
+GTK 3 and GTK 4 programs follow through the `Kubabbar-Glass` theme, which `sparky-stereo-gtk-sync` selects from the KDE colour scheme; the Sparky Stereo Oxygen look gets the same through `Sparky-Stereo-Oxygen` (light) or `Sparky-Stereo-Oxygen-Dark` (dark).
+The sync recognizes `SparkyStereoOxygen`, `SparkyStereoOxygenDark`, the legacy `Oxygen`/`OxygenDark`, and `kubabbar-glass`; other schemes keep the Breeze light/dark selection.
 The window buttons keep KDE’s layout and functions: the window menu and the all-desktops pin on the left; help, minimize, maximize or restore, and close on the right.
 Only their drawing follows the look: square boxes with a small sign, the modernised Platinum form, drawn again from scratch.
 Cursors, the splash, the SDDM login screen and the Look and Feel package are included; the Look and Feel applies everything in one step.

@@ -1,3 +1,106 @@
+sparky-stereo-skills (0.3.0~dev20261107.1) unstable; urgency=medium
+
+  * Three wording corrections after the second-model review (ORDER 447,
+    accepted by Opus as written): the Polish and French approval labels use
+    the word of the other approval label (zatwierdzenie, approbation), and the
+    Japanese mcp help line gives registering and cancelling their own verbs.
+    Nothing else changed in the strings.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 07 Nov 2026 00:20:00 +0000
+
+sparky-stereo-skills (0.3.0~dev20261107) unstable; urgency=medium
+
+  * Rebuilt from build main d877cce7 so that the engine package carries its
+    Source field and the build record is one per source build (ORDER 439).
+  * The dialog and usage texts, reviewed in ORDER 440: the MCP question names
+    the protocol, "after you confirm" replaces "on your yes", the command
+    policy label asks who approves, and the Japanese commands line is plain.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 07 Nov 2026 00:10:00 +0000
+
+sparky-stereo-skills (0.3.0~dev20261106) unstable; urgency=medium
+
+  * Split: the program that finds, reads and serves the skills is the new
+    sparky-stereo-skills-engine (amd64, static, written in cgm-zig); this
+    package keeps link, unlink, the dialog and export and depends on it.
+  * find, list, context, sections, commands, run, mcp and serve go through the
+    engine; list shows only the skills whose packages are installed, as link
+    always did.
+  * /usr/share/agent-skills/paths.d/sparky-stereo-skills.conf names the
+    skills tree: the place any package can use to add skills of its own.
+  * The dialog asks whether the assistants may also ask the skills through MCP
+    (unchecked) and who approves the commands a skill lists.
+  * python3-yaml is no longer needed at run time.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 06 Nov 2026 12:00:00 +0000
+
+sparky-stereo-skills (0.2.18~dev20261102) unstable; urgency=medium
+
+  * Refresh the public skills snapshot to 0df2927 (ORDER 327): each
+    contribution skill starts with its project's rules and code of conduct.
+  * Include the contribution audit's ten reviewed project rows.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 20:00:00 +0000
+
+sparky-stereo-skills (0.2.17~dev20261102) unstable; urgency=medium
+
+  * Copy tracked recipe inputs and keep the shared copier for source rebuilds.
+  * Preserve the reviewed public snapshot and its manifest verification.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 02 Nov 2026 10:00:00 +0000
+
+sparky-stereo-skills (0.2.16~dev20261101) unstable; urgency=medium
+
+  * ORDER 323: refresh the public snapshot through 12b32ce
+    (Sparky-OS/sparky-stereo-os, branch order323-skills on 59fbee1),
+    45 skills:
+    - sparky-stereo-skills find TEXT: the skills that best fit a task or
+      symptom, ranked offline by name, description and the skills index's
+      task table, each with its path and the context command to run
+      next; tools/skills-context.py --find in a checkout, and
+      tools/tests/test-skills-find.py with six symptoms from the October
+      work, each ranking its skill first;
+    - edition-packaging: Debian's and deb-multimedia's i386 builds of what
+      we ship for amd64 only are blocked (I386_FROM_UPSTREAM holds an
+      exception), a person's own pins sort before the block list, shipped
+      /etc files become conffiles with the rm_conffile pattern, Qt's
+      syncqt race and its header test, and what the repository carries;
+    - ai-partners: unattended agent runners, and the reference corpora
+      anyone can rebuild, with publisher, version, licence and URL;
+    - search-upstream-first: searching a mailing list through lore's git
+      mirror; stereo-proof-rig: eyes that differ under a window's opaque
+      region; sparky-stereo: performance is information, not a gate.
+  * The helper's find subcommand, with its help line in the nine
+    languages; tests/helper.sh checks its ranking, its refusal without
+    words and the help in every language.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 00:25:00 -0300
+
+sparky-stereo-skills (0.2.15~dev20261101) unstable; urgency=medium
+
+  * ORDER 323: refresh the public snapshot through 59fbee1
+    (Sparky-OS/sparky-stereo-os), 45 skills, one more than the published
+    0.2.14~dev20261029 (ed4e18f):
+    - search-upstream-first, a new core skill, from Daniel's rule of
+      2026-11-01: before fixing a bug in software the edition did not
+      write, search upstream's default branch, its merge requests and its
+      issues; carry upstream's commit with its author's credit (DEP-3
+      Origin: upstream) when it exists, and write our own fix only when
+      nothing does; sparky-stereo, upstream-outreach and the skills index
+      link to it, and it links always, like every core skill;
+    - edition-packaging and the GPU vendors' page: the edition's apt pins
+      name the architectures each package is shipped for, with
+      apt_preferences(5)'s clause, as ORDER 318 measured;
+    - system-housekeeping: two kernels per flavour, and every boot image
+      written again after every boot change;
+    - lean-code: C and C++ keep each removed comment's line breaks, with no
+      #line directive (toolkit 0.1.17);
+    - new documents: Evidence over authority, and the Lean Code compile
+      cycles proof page (its scripts and measurements stay online); the
+      architecture pages show virtual screens in VR and AR as an output.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 01 Nov 2026 00:00:00 -0300
+
 sparky-stereo-skills (0.2.14~dev20261029) unstable; urgency=medium
 
   * Refresh the public snapshot through ed4e18f (Sparky-OS/sparky-stereo-os),

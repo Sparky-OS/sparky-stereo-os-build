@@ -1,6 +1,8 @@
 FROM gl-stereo-plasma:1
 USER root
-RUN printf '%s\n' 'deb http://deb.debian.org/debian testing main' > /tmp/gl-stereo-sources.list && \
+RUN --mount=type=bind,from=https-only-apt,source=https-only-apt.sh,target=/run/https-only-apt.sh \
+    --mount=type=bind,from=host-ca,source=ca-certificates.crt,target=/run/host-ca.crt \
+    sh /run/https-only-apt.sh && printf '%s\n' 'deb https://deb.debian.org/debian testing main' > /tmp/gl-stereo-sources.list && \
     apt-get -o Dir::Etc::sourcelist=/tmp/gl-stereo-sources.list -o Dir::Etc::sourceparts=- update && \
     DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::sourcelist=/tmp/gl-stereo-sources.list -o Dir::Etc::sourceparts=- -y --no-install-recommends install libkf6bookmarks-dev libkf6completion-dev libkf6jobwidgets-dev libfaketime libkf6solid-dev libpam0g-dev xscreensaver-gl xscreensaver-gl-extra xvfb && \
     mkdir /tmp/gl-stereo-sdk && cd /tmp/gl-stereo-sdk && \

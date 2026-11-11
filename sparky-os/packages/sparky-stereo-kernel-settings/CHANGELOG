@@ -1,4 +1,56 @@
 -------------------------------------------------------------------------------
+  Version 20261108.1~sparky9~0 (2026-11-08)
+-------------------------------------------------------------------------------
+  * ORDER 463: the generator the old edition's automatic dependency left (systemd-zram-generator, marked automatic, not
+    chosen) is purged once, as thermald was settled (ORDER 43): sparky-stereo-kernel-settings-zram-leftover.service waits
+    until no apt or dpkg run holds the locks, simulates the purge, and purges only when nothing else installed needs it;
+    started without waiting by the postinst, and at boot while the leftover is still there. A generator the person chose
+    (apt-mark manual, Stereo APTus, ZRAM=on in the old file, zram-tools by hand) is kept as it is, and the guard
+    (--allow) still holds it off until it is gone. The notice no longer says the leftover "is not used" (Debian's
+    /usr/lib/systemd/zram-generator.conf makes the generator create zram0 at every boot): it says the generator is being
+    removed, and a second message says it was
+  * A failed systemd-zram-setup@zram0 is told by a handler of this package with no Repair: the engine's generic handler
+    (Repair: systemctl restart) is masked by name for that unit, because it offered to start a unit the edition did not set up
+  * tests/leftover.sh (red on 20261106.1, green on this version), in the systemd container
+
+-------------------------------------------------------------------------------
+  Version 20261106.1~sparky9~0 (2026-11-06)
+-------------------------------------------------------------------------------
+  * Ship /etc/tmpfiles.d/tmp.conf as a conffile: "q /tmp 1777 root root -", so
+    /tmp keeps its files on every install (no boot wipe, no age cleanup);
+    /var/tmp keeps Debian's 30 days. It overrides Debian's file of the same name.
+  * tests/tmp-on-disk-test.sh checks the effective rule, that a clean pass removes
+    nothing from /tmp aged 11 days, and that an edited conffile survives an upgrade.
+
+-------------------------------------------------------------------------------
+  Version 20261103.4~sparky9~0 (2026-11-03)
+-------------------------------------------------------------------------------
+  * Allow the person’s zram packages without Conflicts, Breaks or Replaces.
+  * Keep an unchosen generator inherited from the old dependency inactive,
+    with one translated notice, until apt records a manual installation.
+  * Preserve the earlier explicit On choice across upgrade and autoremove.
+  * Retire only the edition’s former automatic zram0.
+
+-------------------------------------------------------------------------------
+  Version 20261103.3~sparky9~0 (2026-11-02)
+-------------------------------------------------------------------------------
+  * Remove compressed RAM swap and its helper/configuration/tests. Conflict with
+    systemd-zram-generator and zram-tools; APT owns their visible removal.
+    Retire only the old edition zram0, reporting and retaining failures.
+  * Verify the retained 256 KiB block-device read-ahead against CachyOS 7.3.1;
+    document the differing Bazzite OGC 128 KiB kernel default.
+  * Correct the swappiness explanation and separate Daniel's value from our explanation; no value changes
+  * Say when udev is absent; show and retain failed rule reloads with repairs in
+    the shared problems engine, in nine languages, while completing configuration.
+
+-------------------------------------------------------------------------------
+  Version 20261103.1~sparky9~0 (2026-11-02)
+-------------------------------------------------------------------------------
+  * No /tmp wipe (Daniel: "I never asked for a wipe"): usr/lib/tmpfiles.d/sparky-tmp.conf, which emptied /tmp at every
+    boot since 20261010.2, is removed; /tmp stays on disk and keeps its files across reboots
+  * tests/tmp-on-disk-test.sh now checks that the package keeps /tmp at boot and ships no /tmp rule
+
+-------------------------------------------------------------------------------
   Version 20261010.3~sparky9~0 (2026-10-10)
 -------------------------------------------------------------------------------
   * The rule for your own sysctl values, in the README and at the top of 70-sparky-stereo.conf (Daniel): name your file
@@ -9,18 +61,15 @@
 -------------------------------------------------------------------------------
   Version 20261010.2~sparky9~0 (2026-10-10)
 -------------------------------------------------------------------------------
-  * zram by hardware (Daniel): off on capable machines, on with 8 GB of RAM or less or a swap area on eMMC, an SD card, a
-    rotating disk or removable storage; decided by zram-auto through zram-generator's set! directive, lz4, priority 100;
-    ZRAM=auto|on|off in /etc/default/sparky-stereo-zram overrides it
-  * README: how your own sysctl value wins over 70-sparky-stereo.conf; the sysctl file's comment says zram by hardware
-  * /tmp on disk (Daniel): tmp.mount masked once at install as Debian's trixie release notes describe; /tmp cleaned at
-    every boot and of files unused for 10 days
+  * /tmp on disk (Daniel): tmp.mount masked once at install as Debian's trixie release notes describe
+  * /tmp cleaned at every boot and of files unused for 10 days: added by the assistant who wrote this version, never
+    asked for by Daniel; removed in 20261103.1
 
 -------------------------------------------------------------------------------
   Version 20261010.1~sparky9~0 (2026-10-10)
 -------------------------------------------------------------------------------
-  * vm.swappiness = 1, the minimum, whether the swap is on or off (Daniel): the swap is the emergency area the swap parachute
-    deploys under memory pressure, never a place to push pages early. 20261010 had left it at the kernel default (60)
+  * vm.swappiness = 1 (Daniel, 2026-10-10: "vm.swappiness = 1 always"). Our explanation: a low value treats swap I/O as
+    more expensive than filesystem paging; 0 is also allowed. 20261010 had left it at the kernel default (60)
 
 -------------------------------------------------------------------------------
   Version 20261010~sparky9~0 (2026-10-10)

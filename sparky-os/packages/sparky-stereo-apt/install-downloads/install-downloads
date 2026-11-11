@@ -1,0 +1,223 @@
+#!/usr/bin/python3
+# Created by Daniel Ramos (Capitain Jack) 2026/11/04
+# Copyright 2026 under the GNU GPL3 License
+"""Tells, before apt asks "Do you want to continue?", which of the packages it is about to install download data while they are
+installed (they declare it: Sparky-Install-Download-Size and Sparky-Install-Download-Source in their control file), with the size and the source,
+when the connection is metered. See sparky_install_downloads.py for the declaration and the words.
+
+  As apt's JSON hook (AptCli::Hooks::Install, /etc/apt/apt.conf.d/61sparky-install-downloads): it answers apt's hello and acts at
+  org.debian.apt.hooks.install.statistics, the call right before the question (apt 1.6 and later; /usr/share/doc/apt/json-hooks-protocol.md).
+  install-downloads check [--json] PACKAGE...   what `apt-get install PACKAGE...` would download, from apt's own simulation.
+(The question is not asked with -y, nor when only the named packages are installed; the notice says which of the three it is.)
+
+Setting (apt configuration): Sparky::Install-Downloads::Announce "metered" (default) | "always" | "never".
+metered: shown when NetworkManager says the connection is metered (yes, guess-yes), and also when it cannot be read, with that said;
+always: shown for every install; never: nothing is shown. A failure to read the declarations is said on the screen and never stops the install.
+"""
+import fnmatch
+import json
+import os
+import re
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import sparky_install_downloads as sid  # noqa: E402
+
+
+def say_error(key, **kw):
+    try:
+        text = sid.messages()[key].format(**kw)
+    except Exception:  # the words themselves could not be read: say it plainly in English
+        text = 'install-downloads: %s %s' % (key, kw)
+    print('install-downloads: ' + text, file=sys.stderr)
+
+
+class Records:
+    """Package records by name, architecture and version, from apt's cache; the first record that carries the fields."""
+
+    def __init__(self):
+        import apt_pkg
+        apt_pkg.init_config()
+        apt_pkg.init_system()
+        self.apt_pkg = apt_pkg
+        self.cache = apt_pkg.Cache(None)
+        self.records = apt_pkg.PackageRecords(self.cache)
+        self.native = apt_pkg.config.find('APT::Architecture')
+
+    def declared(self, name, arch, version):
+        """(declaration or None); ValueError for a malformed one."""
+        if not version:
+            return None
+        for key in ('%s:%s' % (name, arch), name, '%s:%s' % (name, self.native)):
+            try:
+                pkg = self.cache[key]
+                break
+            except KeyError:
+                continue
+        else:
+            return None
+        found = None
+        for ver in pkg.version_list:
+            if ver.ver_str != version:
+                continue
+            for file_entry in ver.file_list:
+                self.records.lookup(file_entry)
+                section = self.apt_pkg.TagSection(self.records.record)
+                found = sid.declaration(section)
+                if found:
+                    return found
+        return found
+
+
+def new_downloads(packages, records):
+    """From apt's list of changed packages: the downloads this install adds. A package whose installed version declares the
+    same download keeps its data (the postinst finds it), so it is not announced again."""
+    out = []
+    for package in packages:
+        if package.get('mode') not in ('install', 'upgrade', 'downgrade'):
+            continue
+        versions = package.get('versions', {})
+        new = (versions.get('install') or versions.get('candidate') or {}).get('version')
+        old = (versions.get('current') or {}).get('version')
+        name, arch = package.get('name'), package.get('architecture', '')
+        try:
+            now = records.declared(name, arch, new)
+        except ValueError as error:
+            say_error('malformed', package=name, why=error)
+            continue
+        if not now:
+            continue
+        if old and old != new:
+            try:
+                before = records.declared(name, arch, old)
+            except ValueError:
+                before = None
+            if before == now:
+                continue
+        elif old == new:
+            continue
+        out.append({'package': name, 'version': new, 'size': now['size'], 'source': now['source']})
+    return out
+
+
+def question_kind(options, params):
+    """Whether apt will ask "Do you want to continue?": not with -y, and not when what it installs is only what was named
+    (private-install.cc: it asks when the number of packages to install or remove differs from the number requested)."""
+    if str(options.get('APT::Get::Assume-Yes', '')).lower() in ('true', '1', 'yes'):
+        return 'unattended'
+    terms = []
+    for term in params.get('search-terms', []):
+        term = re.sub(r'[=/].*$', '', term)
+        terms.append(re.sub(r'[+-]$', '', term).split(':')[0])
+    for package in params.get('packages', []):
+        if package.get('mode') in ('keep',):
+            continue
+        if not any(fnmatch.fnmatchcase(package.get('name', ''), t) for t in terms):
+            return 'asked'
+    return 'not-asked'
+
+
+def show(downloads, mode, question):
+    result = sid.assess(downloads, mode, question)
+    if result['announce']:
+        sys.stdout.write('\n'.join(result['text']) + '\n')
+        sys.stdout.flush()
+        if question == 'unattended':
+            # an install nobody is asked about leaves its notice in the log as well as on the screen
+            try:
+                subprocess.run(['logger', '-t', 'sparky-install-downloads', '-p', 'user.notice', '--', ' '.join(result['text'])],
+                               capture_output=True, timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                pass
+    return result
+
+
+def read_message(stream):
+    buf = b''
+    while True:
+        line = stream.readline()
+        if not line:
+            return None
+        if line == b'\n':
+            if buf:
+                return json.loads(buf)
+            continue
+        buf += line
+
+
+def hook():
+    import socket
+    sock = socket.socket(fileno=int(os.environ['APT_HOOK_SOCKET']))
+    stream = sock.makefile('rwb')
+    options = {}
+    while True:
+        message = read_message(stream)
+        if message is None:
+            return 0
+        method = message.get('method', '')
+        if method == 'org.debian.apt.hooks.hello':
+            for item in message.get('params', {}).get('options', []):
+                options[item.get('name')] = item.get('value')
+            reply = {'jsonrpc': '2.0', 'id': message['id'], 'result': {'version': '0.2'}}
+            stream.write((json.dumps(reply) + '\n\n').encode())
+            stream.flush()
+        elif method == 'org.debian.apt.hooks.bye':
+            return 0
+        elif method == 'org.debian.apt.hooks.install.statistics':
+            try:
+                mode, problem = sid.announce_mode(options.get(sid.OPTION))
+                if problem:
+                    say_error('setting', why=problem)
+                if mode == 'never':
+                    continue
+                packages = message.get('params', {}).get('packages', [])
+                downloads = new_downloads(packages, Records())
+                show(downloads, mode, question_kind(options, message.get('params', {})))
+            except Exception as error:  # the install goes on; the screen says nothing could be checked
+                say_error('hook_error', why='%s: %s' % (type(error).__name__, error))
+
+
+def simulate(names):
+    """apt-get -s install NAMES as the hook's package list."""
+    out = subprocess.run(['apt-get', '-s', 'install'] + names, capture_output=True, text=True)
+    if out.returncode:
+        raise RuntimeError((out.stderr.strip().splitlines() or ['apt-get -s failed'])[-1])
+    packages = []
+    for line in out.stdout.splitlines():
+        m = re.match(r'Inst (\S+?)(?::(\S+))? (?:\[(\S+)\] )?\((\S+) ', line)
+        if m:
+            name, arch, old, new = m.groups()
+            packages.append({'name': name, 'architecture': arch or '', 'mode': 'upgrade' if old else 'install',
+                             'versions': {'install': {'version': new}, **({'current': {'version': old}} if old else {})}})
+    return packages
+
+
+def check(argv):
+    as_json = '--json' in argv
+    names = [a for a in argv if not a.startswith('--')]
+    import apt_pkg
+    apt_pkg.init_config()
+    mode, problem = sid.announce_mode(apt_pkg.config.find(sid.OPTION, ''))
+    if problem:
+        say_error('setting', why=problem)
+    downloads = new_downloads(simulate(names), Records())
+    result = sid.assess(downloads, mode, 'asked')
+    if as_json:
+        print(json.dumps(result, ensure_ascii=False))
+    elif result['announce']:
+        print('\n'.join(result['text']))
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        if 'APT_HOOK_SOCKET' in os.environ:
+            sys.exit(hook())
+        if sys.argv[1:2] == ['check']:
+            sys.exit(check(sys.argv[2:]))
+        print(__doc__.split('\n\n')[0] + '\n' + __doc__.split('\n\n')[1], file=sys.stderr)
+        sys.exit(2)
+    except (OSError, RuntimeError, ValueError) as error:
+        say_error('hook_error', why=str(error))
+        sys.exit(1)

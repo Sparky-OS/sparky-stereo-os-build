@@ -20,8 +20,10 @@ The source bundles the projection engine and preservation plan. Firmware under
 inputs until their respective consumers have independent qualification.
 
 QEMU regenerates `debian/control` from `debian/control-in`. Both must retain the
-checker dependencies, `libstereo-declare-dev` and the edition's minimum SPICE
-version; changing only the generated file can produce a source package that
+checker dependencies, `libstereo-declare-dev`, `libstereo-dibr-dev` (the GTK display
+draws a guest's picture with its depth through libstereo-dibr; its runtime
+`Depends: libstereo-dibr1 (>= 1.17.1)` comes from the library's shlibs file) and the
+edition's minimum SPICE version; changing only the generated file can produce a source package that
 fails its next clean rebuild. The shared preparation function accepts simple
 extra package names; versioned, architecture-qualified relations are added
 through the control-stanza helper to both files.
@@ -45,3 +47,34 @@ staging from the qualified compiled outputs. Debhelper can leave previously
 projected trees in `debian/.debhelper/*/dbgsym-root`; removing just their marker
 would incorrectly project an already projected payload. Retain the failed
 attempt's logs and metadata before discarding that temporary staging.
+
+## CPU refresh series after the published stereo3d6 source
+
+The signed repository already publishes `1:11.1.2+ds-3+stereo3d6+lc1` with
+37 patches, including the native-sample `stereo3d/0008` patch. Do not rebuild
+that version in place or rebase it from the older seven-patch stereo3d4 input.
+For a disposable extraction of this exact source, run:
+
+```sh
+python3 add-refresh-patches.py /path/to/source
+cd /path/to/source
+dpkg-source --before-build .
+```
+
+This appends the three reviewed CPU refresh patches and a history-preserving
+`1:11.1.2+ds-3+stereo3d7+lc1` changelog entry. The allocation-size correction
+is required with the full-frame refresh. No protocol IDs or input admission
+are changed. The old 37 patch bytes and order remain intact.
+
+This step is source integration, not a package qualification or an lc1
+attestation. The source still contains its previously bundled Lean Code
+engine. Before a build, refresh that disposable integration from the current
+shared toolkit through `prepare-lean.py`, retaining its QEMU make graph,
+source-preservation plan and provenance-before-payload order. The preparer
+rejects an already integrated tree; do not run it blindly over the published
+rules or strip their hooks. Retain the original rules and changelog as the
+comparison when preparing that refresh.
+
+Run the full Debian package build, the Lean Code release/link gate and the
+installed-package runtime controls before treating the resulting stage as
+ready. The source integration alone must not be presented as those passes.

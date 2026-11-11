@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+SPDX-License-Identifier: GPL-3.0-or-later
+Copyright (c) 2026 Paweł Pijanowski, Daniel Ramos (Capitain Jack).
+
+This work is licensed under the terms of the GNU GPL, version 3 or
+later.
+
+The mail of a Debian system is /var/mail (Debian Policy 11.6: the mail spool is
+2775 root:mail, so a person can empty a mailbox but not delete it). A queue of a
+mail program that is no longer installed is listed below only when dpkg says
+its packages are gone and its program is not on the system. The part between
+the QUEUES markers is written by sparky-stereo-housekeeping, which writes this
+file again whenever a mail program is installed or removed.
+
+-->
+<cleaner id="system_mail" os="linux">
+  <label>System mail</label>
+  <description>Mail the computer sent to itself and left on the disk</description>
+  <option id="dead_letter">
+    <label>Dead letters</label>
+    <description>Deletes dead.letter in your home folder, the copy a mail program keeps of a message it could not send, such as the alert of a failed security check. As administrator it deletes root's</description>
+    <action command="delete" search="file" path="~/dead.letter"/>
+  </option>
+  <option id="mailbox">
+    <label>Local mailbox</label>
+    <description>Empties your own mailbox in /var/mail. It holds what the system mailed to you: notices from cron, sudo, security and disk checks, and replies to mail the system could not deliver</description>
+    <warning>This empties the whole local mailbox, so mail that people sent to this computer's local account is deleted too. Mail on a mail server, or in the folders of Thunderbird, KMail or Evolution, is not touched.</warning>
+    <action command="truncate" search="file" path="/var/mail/$USER"/>
+  </option>
+  <option id="mailboxes">
+    <label>All local mailboxes (administrator)</label>
+    <description>Empties every mailbox in /var/mail and the saved mail of root (/root/mbox). Run it as administrator</description>
+    <warning>This empties the local mailbox of every account, so mail that people sent to any local account is deleted too. Mail on a mail server, or in the folders of Thunderbird, KMail or Evolution, is not touched.</warning>
+    <action command="truncate" search="walk.files" path="/var/mail" nregex="\.lock$"/>
+    <action command="truncate" search="file" path="/root/mbox"/>
+  </option>
+  <option id="queues">
+    <label>Queues of removed mail programs</label>
+    <description>Deletes the messages still waiting in the queue of a mail program that is no longer installed (exim4, postfix, nullmailer, dma, msmtp). The queue of a mail program that is installed is never touched. Run it as administrator, except for msmtp, whose queue is in your home folder</description>
+    <warning>Messages that never left the computer are deleted. They cannot be sent any more, because their mail program is gone.</warning>
+<!-- QUEUES -->
+<!-- /QUEUES -->
+  </option>
+</cleaner>

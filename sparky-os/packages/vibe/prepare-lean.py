@@ -15,7 +15,9 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1]))
+sys.path.insert(0, str(HERE.parents[1] / 'repo'))
 from lean.debian_prepare import prepare
+import reproducible
 
 
 def main(root, version):
@@ -30,6 +32,8 @@ def main(root, version):
     archive = files[0]
     with archive.open('rb') as stream:
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+    # the lean entry is dated by this recipe, never by the clock (ORDER 421b)
+    os.environ['SOURCE_DATE_EPOCH'] = str(reproducible.recipe_epoch([HERE]))
     os.environ['DEBFULLNAME'] = 'Daniel Ramos (Capitain Jack)'
     os.environ['DEBEMAIL'] = 'Capitain_Jack@yahoo.com'
     prepare(root, version, HERE.parents[1])

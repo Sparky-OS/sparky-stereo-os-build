@@ -1,0 +1,168 @@
+Description: Compile AppStream's catalog caches in a short-lived process, not in Discover
+ A pool that loads a catalog newer than its cache compiles the cache in the process that loads it,
+ and the XML stays in that process's heap for as long as Discover runs.
+ Flathub's catalog is 51 MB of XML: about 1,000 MiB resident in Discover against about 200 MiB when the
+ pools are filled from compiled caches (measured on an AMD A10-9600P, Debian 6.7.4-3).
+ It happens for each user's first launch and again after every change of Flathub's catalog, Discover's
+ own pull included, because Debian's apt hook refreshes the system cache of the operating system only
+ and a user cannot write the system cache.
+ appstreamcli refresh-cache writes the very cache files the pools look for and does nothing when they are
+ current, so run it before the places that load Flatpak catalogs: the per-remote pools of the
+ Flatpak backend (--datapath), the ratings filter default pool (OdrsReviewsBackend) and the PackageKit
+ backend pool.
+ If it cannot run, say so in the log and load as before.
+ Also say how old the catalog in use is when a refresh fails (offline).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor
+Forwarded: no
+Last-Update: 2026-11-03
+Assisted-by: claude-sonnet-5-5 via Claude Code
+
+--- a/libdiscover/appstream/AppStreamUtils.h
++++ b/libdiscover/appstream/AppStreamUtils.h
+@@ -40,4 +40,10 @@
+ componentsByCategoriesTask(AppStream::ConcurrentPool *pool, const std::shared_ptr<Category> &cat, AppStream::Bundle::Kind kind);
+ 
+ DISCOVERCOMMON_EXPORT bool kIconLoaderHasIcon(const QString &name);
++
++/**
++ * Compiles AppStream's cache with appstreamcli refresh-cache and the given arguments, waiting for it.
++ * A pool that loads data newer than its cache compiles the cache in the loading process, and the XML stays in its heap.
++ */
++DISCOVERCOMMON_EXPORT bool compileCache(const QStringList &arguments, const QString &locale = {});
+ }
+--- a/libdiscover/appstream/AppStreamUtils.cpp
++++ b/libdiscover/appstream/AppStreamUtils.cpp
+@@ -6,6 +6,7 @@
+ 
+ #include "AppStreamUtils.h"
+ 
++#include "libdiscover_debug.h"
+ #include "utils.h"
+ #include <AppStreamQt/category.h>
+ #include <AppStreamQt/component.h>
+@@ -22,6 +23,8 @@
+ #include <QJsonArray>
+ #include <QJsonObject>
+ #include <QMetaEnum>
++#include <QProcess>
++#include <QStandardPaths>
+ #include <QUrlQuery>
+ #include <QtConcurrentRun>
+ 
+@@ -235,3 +238,28 @@
+     }();
+     return icons.contains(name);
+ }
++
++bool AppStreamUtils::compileCache(const QStringList &arguments, const QString &locale)
++{
++    const QString appstreamcli = QStandardPaths::findExecutable(QStringLiteral("appstreamcli"));
++    if (appstreamcli.isEmpty()) {
++        qCWarning(LIBDISCOVER_LOG) << "appstreamcli not found, AppStream will compile its cache in this process";
++        return false;
++    }
++
++    QProcess process;
++    process.setProcessChannelMode(QProcess::MergedChannels);
++    if (!locale.isEmpty()) {
++        // the cache files are named after the locale, so the process must use the one of the pool
++        auto environment = QProcessEnvironment::systemEnvironment();
++        environment.insert(QStringLiteral("LANGUAGE"), locale);
++        process.setProcessEnvironment(environment);
++    }
++    process.start(appstreamcli, QStringList{QStringLiteral("refresh-cache")} + arguments);
++    if (!process.waitForFinished(-1) || process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
++        qCWarning(LIBDISCOVER_LOG) << "Could not compile the AppStream cache, AppStream will compile it in this process:" << process.errorString() << process.exitCode()
++                                   << process.readAll().trimmed();
++        return false;
++    }
++    return true;
++}
+--- a/libdiscover/appstream/OdrsReviewsBackend.cpp
++++ b/libdiscover/appstream/OdrsReviewsBackend.cpp
+@@ -7,6 +7,7 @@
+ 
+ #include "OdrsReviewsBackend.h"
+ #include "AppStreamIntegration.h"
++#include "AppStreamUtils.h"
+ #include "CachedNetworkAccessManager.h"
+ #include "OdrsReviewsJob.h"
+ 
+@@ -306,6 +307,7 @@
+         }
+ 
+         // Filter out non-apps, to match behavior of lists backed by ResourcesProxyModel
++        AppStreamUtils::compileCache({});
+         AppStream::Pool appstreamData;
+         appstreamData.load();
+ 
+--- a/libdiscover/backends/FlatpakBackend/FlatpakBackend.cpp
++++ b/libdiscover/backends/FlatpakBackend/FlatpakBackend.cpp
+@@ -1176,7 +1176,15 @@
+             },
+             Qt::QueuedConnection);
+     });
+-    pool->loadAsync();
++    // loading compiles the catalog's cache when it is newer than the cache, and the XML would stay in our heap
++    auto watcher = new QFutureWatcher<bool>(this);
++    connect(watcher, &QFutureWatcher<bool>::finished, this, [watcher, pool] {
++        watcher->deleteLater();
++        pool->loadAsync();
++    });
++    watcher->setFuture(QtConcurrent::run(&m_threadPool, [appstreamDirPath, locale = pool->locale()] {
++        return AppStreamUtils::compileCache({u"--datapath"_s, appstreamDirPath}, locale);
++    }));
+ }
+ 
+ QSharedPointer<FlatpakSource> FlatpakBackend::integrateRemote(GLibHolder<FlatpakInstallation> flatpakInstallation, GLibHolder<FlatpakRemote> remote)
+--- a/libdiscover/backends/FlatpakBackend/FlatpakRefreshAppstreamMetadataJob.cpp
++++ b/libdiscover/backends/FlatpakBackend/FlatpakRefreshAppstreamMetadataJob.cpp
+@@ -8,6 +8,12 @@
+ #include "FlatpakRefreshAppstreamMetadataJob.h"
+ #include "libdiscover_backend_flatpak_debug.h"
+ 
++#include <KFormat>
++
++#include <QDateTime>
++#include <QFile>
++#include <QFileInfo>
++
+ FlatpakRefreshAppstreamMetadataJob::FlatpakRefreshAppstreamMetadataJob(FlatpakInstallation *installation, FlatpakRemote *remote)
+     : QThread()
+     , m_cancellable(g_cancellable_new())
+@@ -52,6 +58,15 @@
+         const QString error = localError ? QString::fromUtf8(localError->message) : QStringLiteral("<no error>");
+         qCWarning(LIBDISCOVER_BACKEND_FLATPAK_LOG).nospace()
+             << "Failed to refresh appstream metadata for " << flatpak_remote_get_name(m_remote.get()) << ": " << error;
++
++        g_autoptr(GFile) timestamp = flatpak_remote_get_appstream_timestamp(m_remote.get(), flatpak_get_default_arch());
++        g_autofree char *timestampPath = g_file_get_path(timestamp);
++        const QFileInfo timestampInfo(QFile::decodeName(timestampPath));
++        if (timestampInfo.exists()) {
++            qCWarning(LIBDISCOVER_BACKEND_FLATPAK_LOG).nospace() << "Using the appstream metadata of " << flatpak_remote_get_name(m_remote.get())
++                                                                  << " last refreshed on " << timestampInfo.lastModified().toString(Qt::ISODate) << " ("
++                                                                  << KFormat().formatSpelloutDuration(timestampInfo.lastModified().msecsTo(QDateTime::currentDateTime())) << " ago)";
++        }
+     }
+     m_hasChanged = changed;
+     Q_EMIT jobRefreshAppstreamMetadataFinished(m_installation, m_remote, changed);
+--- a/libdiscover/backends/PackageKitBackend/PackageKitBackend.cpp
++++ b/libdiscover/backends/PackageKitBackend/PackageKitBackend.cpp
+@@ -386,7 +386,15 @@
+             },
+             Qt::QueuedConnection);
+     });
+-    m_appdata->loadAsync();
++    // loading compiles the catalogs' caches when they are newer than the caches, and the XML would stay in our heap
++    auto watcher = new QFutureWatcher<bool>(this);
++    connect(watcher, &QFutureWatcher<bool>::finished, this, [this, watcher] {
++        watcher->deleteLater();
++        m_appdata->loadAsync();
++    });
++    watcher->setFuture(QtConcurrent::run(&m_threadPool, [] {
++        return AppStreamUtils::compileCache({});
++    }));
+ }
+ 
+ AppPackageKitResource *PackageKitBackend::addComponent(const AppStream::Component &component) const

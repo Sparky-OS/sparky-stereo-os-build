@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 23:04:25 -0300
+Subject: [PATCH 16/19] kcm: Say how large the screens are drawn
+
+A Zoom label beside the View button gives the size of the screens in the arrangement view as
+a percentage of their size in pixels, and follows Zoom In, Zoom Out, the wheel and Fit All.
+wdisplays shows its zoom the same way.
+
+Assisted-by: Claude Sonnet 5.5
+---
+ kcm/ui/main.qml | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/kcm/ui/main.qml b/kcm/ui/main.qml
+index 5ba9ebf0..e9555c38 100644
+--- a/kcm/ui/main.qml
++++ b/kcm/ui/main.qml
+@@ -489,6 +489,18 @@ KCM.AbstractKCM {
+                 }
+             }
+ 
++            QQC2.Label {
++                id: zoomPercentLabel
++                objectName: "zoomPercentLabel"
++                anchors.left: screenViewOptions.right
++                anchors.verticalCenter: screenViewOptions.verticalCenter
++                anchors.leftMargin: Kirigami.Units.smallSpacing
++                visible: screen.relativeFactor > 0
++                font: Kirigami.Theme.smallFont
++                // How large the screens are drawn: the pixels of the view for one pixel of a screen
++                text: i18nc("@info:status Size of the screens in the arrangement view as a percentage of their size in pixels", "Zoom %1%", Math.round(100 / screen.relativeFactor))
++            }
++
+             QQC2.ToolButton {
+                 id: screenEdit
+                 anchors.right: parent.right

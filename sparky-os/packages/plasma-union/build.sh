@@ -14,6 +14,7 @@
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/../../repo/build-provenance.sh"
 . "$HERE/../../config/local-config.sh"
 sparky_need SPARKY_REPO_DIR
 WORK=$(mkdir -p "$1" && cd "$1" && pwd)
@@ -22,7 +23,9 @@ CLONE=$(cd "$3" && pwd)
 STAGED=()
 [ -n "${4:-}" ] && STAGED=(-v "$(cd "$4" && pwd)":/staged:ro)
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
-docker run --rm --cpus 4 --platform linux/amd64 -e UNION_CONTROL="${UNION_CONTROL:-}" -v "$WORK":/work -v "$CLONE":/fork:ro \
+sparky_provenance_init sparky-lc-migration:20261020
+docker run "${SPARKY_PROV_ARGS[@]}" --rm --cpus 4 --platform linux/amd64 -e UNION_CONTROL="${UNION_CONTROL:-}" -v "$WORK":/work -v "$CLONE":/fork:ro \
 	-v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro "${STAGED[@]}" -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
-	sparky-lc-migration:20261020 bash -c 'bash /tools/build-in-container.sh > /work/build.log 2>&1'
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+	sparky-lc-migration:20261020 bash -c 'sh /run/https-only-apt.sh && bash /tools/build-in-container.sh > /work/build.log 2>&1'

@@ -1,0 +1,42 @@
+Description: winebus udev backend: only the eventN nodes of the input subsystem
+ The udev enumeration and monitor take every device of the "input" subsystem
+ that has a device node. With the kernel's joydev (the legacy joystick
+ interface, /dev/input/jsN) or mousedev (/dev/input/mouseN) loaded, those
+ nodes were opened and read as struct input_event, 24 bytes, while joydev
+ sends 8-byte js_event records: the type and code of each "event" were stack
+ garbage ("err:hid:set_report_from_event TODO: Process Report (26696, 65533)"),
+ and the same joystick showed twice. The direct enumeration of winebus
+ (without libudev) already takes only eventN names; this does the same in
+ udev_add_device(). Found with the 128-button fixture in a guest whose kernel
+ had joydev built in; nothing in Wine master (checked 2026-11-07) or its open
+ merge requests skips these nodes.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (ORDER 15), written with Claude Sonnet 5.5
+Forwarded: no
+Last-Update: 2026-11-07
+
+--- a/dlls/winebus.sys/bus_udev.c
++++ b/dlls/winebus.sys/bus_udev.c
+@@ -1216,6 +1216,22 @@
+         return;
+     }
+ 
++    /* The legacy joystick (jsN) and mouse (mouseN) nodes of the input subsystem do not speak struct input_event */
++    if ((subsystem = udev_device_get_subsystem(dev)) && !strcmp(subsystem, "input"))
++    {
++        const char *name = strrchr(devnode, '/');
++        unsigned int n;
++        int len;
++
++        name = name ? name + 1 : devnode;
++        if (sscanf(name, "event%u%n", &n, &len) != 1 || len != (int)strlen(name))
++        {
++            TRACE("ignoring %s, name doesn't match event%%u\n", debugstr_a(devnode));
++            if (fd >= 0) close(fd);
++            return;
++        }
++    }
++
+     if (fd < 0 && (fd = open(devnode, O_RDWR)) == -1)
+     {
+         WARN("Unable to open udev device %s: %s\n", debugstr_a(devnode), strerror(errno));

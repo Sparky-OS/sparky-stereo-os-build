@@ -1,0 +1,4 @@
+# Sparky Stereo OS: sparky-stereo-apt. After every dpkg run, a deb-multimedia package that ships files of the edition's packages under
+# another name (libmlt7-data owns our MLT data) is settled once the apt run has ended: removed and ours installed again when apt installed it
+# by itself and nothing needs it, left and told when the person installed it or a package needs it (ORDER 458)
+post-invoke=if [ -x /usr/lib/sparky-stereo-apt/shadowed-by-dmo ]; then /usr/lib/sparky-stereo-apt/shadowed-by-dmo check || true; fi

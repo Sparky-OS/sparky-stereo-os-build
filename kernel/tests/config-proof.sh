@@ -19,7 +19,7 @@ TAG=${TAG:-v7.3.1}
 TAG_COMMIT=${TAG_COMMIT:-79a907609d53d5cd645b42c11550d295d43abf99}
 SERIES=${SERIES:-$HERE/series}
 IMAGE=${IMAGE:-sparky-kernel-build:1}
-docker image inspect "$IMAGE" >/dev/null 2>&1 || docker build --platform linux/amd64 -t "$IMAGE" "$HERE/docker"
+docker image inspect "$IMAGE" >/dev/null 2>&1 || "$HERE/../tools/https-only-build.sh" --platform linux/amd64 -t "$IMAGE" "$HERE/docker"
 mkdir -p "$OUT"
 GITMOUNT=; [ -n "${KERNEL_GIT:-}" ] && GITMOUNT="-v $KERNEL_GIT:/kernel-git:ro"
 # shellcheck disable=SC2086

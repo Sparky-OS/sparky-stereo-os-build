@@ -1,0 +1,118 @@
+Description: GLX takes zink through DRI3, not kopper, while the compositor announces stereo content
+ Kopper, zink's own window system path, has no second view of a window; zink
+ through DRI3 has (patches 0004, 0027 and 0028). On a desktop where NVIDIA's
+ Vulkan driver runs zink, the session had to set LIBGL_KOPPER_DISABLE=1 for
+ every program, or an X11 program that asked for stereo got one view.
+ .
+ glx_kopper_enabled() decides for a screen: LIBGL_KOPPER_DISABLE set to 0 or 1
+ decides as before, and unset it is no while the root window announces
+ _KDE_NET_WM_STEREO_CONTENT_SUPPORTED 2 or newer. The route is named in the
+ log (LIBGL_DEBUG=verbose). A desktop without a stereo compositor keeps kopper.
+ .
+ The decision is per screen, not per window: a screen is DRI3 or kopper.
+ Kopper with two views (the packed-pixmap series kept outside the recipe,
+ prototypes/kopper-stereo) would let a stereo window and a plain one share a
+ screen; it reads the eyes back and uploads them, so it stays a prototype.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-07
+Assisted-by: Claude Sonnet via Claude Code
+---
+diff --git a/src/glx/dri3_glx.c b/src/glx/dri3_glx.c
+index 5e5391d..604d42c 100644
+--- a/src/glx/dri3_glx.c
++++ b/src/glx/dri3_glx.c
+@@ -80,6 +80,7 @@
+ #include "x11_dri3.h"
+ #include "loader_dri_helper.h"
+ #include "util/u_debug.h"
++#include "util/os_misc.h"
+ #include "dri_util.h"
+ 
+ static struct dri3_drawable *
+@@ -576,9 +577,15 @@ dri3_create_screen(int screen, struct glx_display * priv, bool driver_name_is_in
+    }
+    psc->base.driverName = driverName;
+ 
+-   if (!strcmp(driverName, "zink") && !debug_get_bool_option("LIBGL_KOPPER_DISABLE", false)) {
+-      *return_zink = true;
+-      goto handle_error;
++   if (!strcmp(driverName, "zink")) {
++      if (glx_kopper_enabled(priv->dpy, screen)) {
++         *return_zink = true;
++         goto handle_error;
++      }
++      InfoMessageF("screen %d: zink through DRI3, not kopper: %s\n", screen,
++                   os_get_option("LIBGL_KOPPER_DISABLE") ?
++                   "LIBGL_KOPPER_DISABLE is set" :
++                   "the compositor announces stereo content and kopper has no second view of a window");
+    }
+ 
+    if (psc->fd_render_gpu != psc->fd_display_gpu) {
+diff --git a/src/glx/drisw_glx.c b/src/glx/drisw_glx.c
+index 783b324..b9234b4 100644
+--- a/src/glx/drisw_glx.c
++++ b/src/glx/drisw_glx.c
+@@ -712,7 +712,7 @@ driswCreateScreen(int screen, struct glx_display *priv, enum glx_driver glx_driv
+    __GLXDRIscreen *psp;
+    struct drisw_screen *psc;
+    const __DRIextension **loader_extensions_local;
+-   bool kopper_disable = debug_get_bool_option("LIBGL_KOPPER_DISABLE", false);
++   bool kopper_disable = !glx_kopper_enabled(priv->dpy, screen);
+ 
+    /* this is only relevant if zink bits are set */
+    glx_driver &= (GLX_DRIVER_ZINK_INFER | GLX_DRIVER_ZINK_YES);
+diff --git a/src/glx/glxclient.h b/src/glx/glxclient.h
+index dccec0d..61d7ac7 100644
+--- a/src/glx/glxclient.h
++++ b/src/glx/glxclient.h
+@@ -165,6 +165,7 @@ extern void dri2InvalidateBuffers(Display *dpy, XID drawable);
+ extern unsigned dri2GetSwapEventType(Display *dpy, XID drawable);
+ 
+ extern unsigned long glx_x11_stereo_support_version(Display *dpy, int screen);
++extern bool glx_kopper_enabled(Display *dpy, int screen);
+ 
+ /*
+ ** Functions to obtain driver configuration information from a direct
+diff --git a/src/glx/glxext.c b/src/glx/glxext.c
+index 5d7dc63..a8c8a1e 100644
+--- a/src/glx/glxext.c
++++ b/src/glx/glxext.c
+@@ -125,6 +125,19 @@ glx_x11_stereo_supported(Display *dpy, int screen)
+    return glx_x11_stereo_support_version(dpy, screen) >= 2;
+ }
+ 
++/* Kopper, zink's own window system path, has no second view of a window:
++ * only zink through DRI3 does. While the compositor announces stereo content,
++ * GLX takes that route on its own. LIBGL_KOPPER_DISABLE=0 keeps kopper and
++ * LIBGL_KOPPER_DISABLE=1 drops it, whatever the compositor says.
++ */
++bool
++glx_kopper_enabled(Display *dpy, int screen)
++{
++   if (os_get_option("LIBGL_KOPPER_DISABLE"))
++      return !debug_get_bool_option("LIBGL_KOPPER_DISABLE", false);
++   return !glx_x11_stereo_supported(dpy, screen);
++}
++
+ static void
+ glx_add_stereo_configs(bool stereo_supported, struct glx_config *modes, int count)
+ {
+@@ -1037,7 +1050,7 @@ __glXInitialize(Display * dpy)
+ #if defined(GLX_DIRECT_RENDERING) && (!defined(GLX_USE_APPLEGL) || defined(GLX_USE_APPLE))
+    Bool glx_direct = !debug_get_bool_option("LIBGL_ALWAYS_INDIRECT", false);
+    Bool glx_accel = !debug_get_bool_option("LIBGL_ALWAYS_SOFTWARE", false);
+-   Bool kopper = !debug_get_bool_option("LIBGL_KOPPER_DISABLE", false);
++   Bool kopper = glx_kopper_enabled(dpy, DefaultScreen(dpy));
+ 
+    if (env && !strcmp(env, "zink"))
+       glx_driver |= GLX_DRIVER_ZINK_YES;
+@@ -1062,7 +1075,7 @@ __glXInitialize(Display * dpy)
+       /* dri3 is tried as long as this doesn't error; whether modifiers work is not relevant */
+       glx_driver |= GLX_DRIVER_DRI3;
+       /* nouveau wants to fallback to zink so if we get a screen enable try_zink */
+-      if (!debug_get_bool_option("LIBGL_KOPPER_DISABLE", false))
++      if (kopper)
+          glx_driver |= GLX_DRIVER_ZINK_INFER;
+ #if defined(HAVE_ZINK)
+       if (!(glx_driver & GLX_DRIVER_DRI3))

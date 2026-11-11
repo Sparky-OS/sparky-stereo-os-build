@@ -1,0 +1,28 @@
+-------------------------------------------------------------------------------
+  Version 0.1.3 (2026-11-07)
+-------------------------------------------------------------------------------
+  * Korean LOCAL4 after the second-model review (ORDER 447; gpt-6.1-sol through the Codex CLI, answer accepted by Opus as written):
+    the Korean line omitted what FILE is, which the English and the other languages say. It now ends with
+    "(파일은 해당 파일의 경로입니다)." The other eight languages were reviewed OK and are unchanged. Still a first
+    draft with AI assistance, pending review by native speakers. The tests now check the Korean message.
+
+-------------------------------------------------------------------------------
+  Version 0.1.2 (2026-11-07)
+-------------------------------------------------------------------------------
+  * LOCAL4 after ORDER 440's review (gpt-6.1-sol through the Codex CLI, accepted by Opus): the Korean command line is
+    "다음 명령을 실행하세요: wine start /unix 파일" without the malformed space before 을(를); the English says what FILE
+    is ("FILE is the path of the file") and "exit status"; the other seven languages follow the English, with FILE
+    translated where the language already did. Still a first draft with AI assistance, pending review by native speakers.
+
+-------------------------------------------------------------------------------
+  Version 0.1.1 (2026-11-06)
+-------------------------------------------------------------------------------
+  * A file Wine cannot start is no longer silent (ORDER 437, memory no-silent-fallbacks): the worker reads each Wine
+    process's status, tells the person which file failed and with what status in their language (kdialog, or the
+    terminal when there is none), and exits 1. LOCAL4 in the nine languages, a first draft with AI assistance, pending
+    review by native speakers.
+
+-------------------------------------------------------------------------------
+  Version 0.1.0 (2026-11-06)
+-------------------------------------------------------------------------------
+  * Initial release (ORDER 252c, study item J21): Dolphin entry to run a Windows program or installer with Wine, in the nine required languages

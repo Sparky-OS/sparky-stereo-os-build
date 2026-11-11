@@ -10,18 +10,37 @@ Pin-Priority: 1001
 # Bino comes only from Sparky Stereo OS (Daniel, 2026-10-06): our build decodes any input
 # but always outputs full side by side, the edition's contract with KWin. Debian's and
 # deb-multimedia's Bino have their own output modes (anaglyph, interleaved, half side by
-# side...), which would hand KWin a picture outside the contract, so they never install.
-Package: bino
+# side...), which would hand KWin a picture outside the contract, so they never install, on any
+# architecture: apt_preferences(5) matches a plain name on the native architecture only, ":any" on all
+# of them (ORDER 318).
+Package: bino:any
 Pin: release o=Debian
 Pin-Priority: -1
 
-Package: bino
+Package: bino:any
 Pin: release o=Unofficial Multimedia Packages
 Pin-Priority: -1
 
-# deb-multimedia's keyring: the repository carries deb-multimedia's own package, unmodified, so that sparky-stereo-apt can
-# depend on it before deb-multimedia is in the sources. Once it is, deb-multimedia's own package, which
-# follows its key, is preferred: this one is only the way in.
+# deb-multimedia's keyring: the repository carries deb-multimedia's own package (its 2024.9.1, only repackaged through
+# Lean Code as 2024.9.1+lc1), so that sparky-stereo-apt can depend on it before deb-multimedia is in the sources. Once
+# it is, deb-multimedia's own package, which follows its key, is preferred: this one is only the way in.
+# sparky-stereo-only-ours does not block deb-multimedia's (NOT_OURS in apt/make-only-ours.py, ORDER 321).
 Package: deb-multimedia-keyring
 Pin: release o=Sparky Stereo OS
 Pin-Priority: 400
+
+# NVIDIA's 580 user space, which the edition carries from NVIDIA's own Debian 12 packages for Maxwell, Pascal and Volta
+# (ORDER 354), is a candidate only where one of the two driver locks raises it: sparky-stereo-nvidia-legacy-580xx-driver-lock
+# gives it 1005 in 09sparky-stereo-nvidia-legacy-580xx-driver-lock, and the main lock gives it 100; both files sort before
+# this one, and apt_preferences(5) says "The first specific-form record matching an available package version determines
+# the priority of the package version", so a lock decides first and this record only applies with no lock. Without it the
+# general record above (1001) made these binaries the candidates on every system, and apt 3.3's solver, in a
+# dist-upgrade, treats a package as obsolete when another binary of its source package has a higher source version at an
+# equal or higher priority (apt-pkg/depsolver.cc, ObsoletedByNewerSourceVersion): Debian's nvidia-detect 550 (source
+# nvidia-graphics-drivers) was replaced by our nvidia-kernel-support 580, which Provides, Conflicts and Replaces it, and
+# nvidia-modprobe 580 came with it, on a machine whose hardware setup had chosen no NVIDIA stack (measured, r1103a). The
+# set is the one the locks name (the source packages NVIDIA's own nvidia-driver-pinning package pins, and cuda-drivers*),
+# only from this repository: NVIDIA's CUDA repository and Debian are not matched.
+Package: src:nvidia-graphics-drivers:any src:nvidia-open:any cuda-drivers* src:nvidia-modprobe src:nvidia-persistenced src:nvidia-settings src:nvidia-xconfig src:libnvidia-nscq src:libnvsdm src:nvidia-fabricmanager src:nvidia-imex
+Pin: release o=Sparky Stereo OS
+Pin-Priority: -1

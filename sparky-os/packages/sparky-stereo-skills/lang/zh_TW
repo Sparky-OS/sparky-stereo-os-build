@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/16
+# Last update 2026/11/01
 LOCAL1="AI 助理技能"
 LOCAL3="要讓你的 AI 助理使用 Sparky Stereo OS 的技能嗎？"
 LOCAL4="技能保留在 /usr/share/sparky-stereo-os/skills 中。所選的每個資料夾都會取得指向每項技能的連結；你自己的技能維持不變。"
@@ -34,7 +34,21 @@ LOCAL22="已連結 %s/%s 項技能"
 LOCAL23="讀取它的助理"
 LOCAL24="供你的 AI 助理使用的 Sparky Stereo OS 技能"
 LOCAL25="供維護者和本機模型使用（無須助理）：
+  find [--limit N] 文字   離線尋找最符合某項工作或症狀的技能，並顯示接下來要執行的 context 指令
   context [SKILL...] [--section SKILL:標題] [--reference 路徑] [--output 檔案]
             輸出所選說明及來源檔案雜湊；context --help 顯示選項
   bundle 檔案.zip   完整的公開參考資料，可直接解壓縮後離線閱讀"
 LOCAL26="已略過，其所需套件皆未安裝：%s"
+LOCAL27="找不到技能引擎：%s（請安裝套件 sparky-stereo-skills-engine）。"
+LOCAL28="是否也讓這些助理透過 MCP（Model Context Protocol）查詢技能？"
+LOCAL29="由誰核准技能中列出的指令"
+LOCAL30="自動：若你使用 AI 助理，由助理自己的核准決定；否則先問我"
+LOCAL31="一律先問我"
+LOCAL32="一律使用助理自己的核准"
+LOCAL33="供助理與指令使用（find 與 context 由同一個引擎回答）：
+  sections SKILL   技能的確切標題
+  commands SKILL   使用者技能中列出的指令
+  run SKILL ID [SLOT=值...]   在你確認後執行一條已列出的指令
+  serve   由助理啟動、透過 stdio 的 MCP 伺服器
+  mcp register [ASSISTANT...] | unregister [ASSISTANT...] | status | commands [auto|assistant|ask]
+            經你確認後將伺服器註冊到助理、移除它、檢視狀態，或選擇由誰核准指令"

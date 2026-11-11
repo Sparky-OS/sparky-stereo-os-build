@@ -69,6 +69,7 @@ Path('/evidence/runtime.json').write_text(json.dumps({'passed':True,'version':ve
 (out / 'check.py').write_text(check)
 recipe = '''set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+sh /run/https-only-apt.sh
 apt-get -y update
 dpkg-query -W -f='${Package} ${Version}\n' 'qemu-system-*' > /evidence/prior-qemu-versions.txt
 apt-get -y --allow-downgrades --no-install-recommends install /packages/qemu-system-x86_*+lc1_amd64.deb /packages/qemu-system-common_*+lc1_amd64.deb /packages/qemu-system-data_*+lc1_all.deb /packages/qemu-utils_*+lc1_amd64.deb
@@ -80,6 +81,8 @@ name = 'sparky-lc-qemu-installed-check'
 command = ['docker','run','--name',name,'--cpus','4','--device','/dev/kvm',
     '-v',str(job)+':/packages:ro','-v',str(out)+':/evidence',
     '-v',str(cfg.TREE / 'kernel/qualification/hibernate-bench') + ':/bench:ro',
+    '-v', '/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro',
+    '-v', str(Path(__file__).resolve().parents[2] / 'tools' / 'https-only-apt.sh') + ':/run/https-only-apt.sh:ro',
     original['image'],'bash','-c',recipe]
 with (out / 'check.log').open('w') as log:
     process = start_build(command,name,log)

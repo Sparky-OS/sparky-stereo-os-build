@@ -1,4 +1,31 @@
 -------------------------------------------------------------------------------
+  Version 20261106~sparky9~0 (2026-11-06)
+-------------------------------------------------------------------------------
+  * ORDER 252c, study item J8: a step after the GRUB language step, shellprocess@languagepacks, adds the packages of
+    the language chosen for the new system with the Locale tool (sparky-stereo-locales --add system, chrooted into the
+    new system after apt-get update): the spelling, hyphenation and thesaurus dictionaries, the LibreOffice and Firefox
+    interfaces, the manual pages, the Tesseract files and the input method engine of that language, when none of them
+    is on the system. Nothing is removed. The image already carries the nine required languages, so on the usual
+    image the step finds nothing to add; the developer image (English and German) gets the language here.
+  * A language that cannot be added (no network, the tool missing, apt failing) does not stop the installation: it is
+    said in the installer's log and kept for the new system by the edition's problems engine, with a repair that
+    runs the same command, so the first login shows it. If even that cannot be kept, the installation stops with
+    the message in the nine languages (LANGPACKS_ERROR).
+  * tests/failures.py: the step's contract (host script, 1800 s) and nine cases with stand-ins for chroot and the engine.
+
+-------------------------------------------------------------------------------
+  Version 20261102~sparky9~0 (2026-11-02)
+-------------------------------------------------------------------------------
+  * Copy only tracked recipe inputs into the package and retained source.
+
+-------------------------------------------------------------------------------
+  Version 20261101~sparky9~0 (2026-11-01)
+-------------------------------------------------------------------------------
+  * Stop installation on failed probes, missing boot files and failed writes
+  * Report actionable errors through Calamares in all nine required languages
+  * Require the offline package index and the selected GRUB locale
+
+-------------------------------------------------------------------------------
   Version 20261016.3~sparky9~0 (2026-10-16)
 -------------------------------------------------------------------------------
   * GRUB's menu in the installed system's language: a step after the bootloader writes the menu again with the

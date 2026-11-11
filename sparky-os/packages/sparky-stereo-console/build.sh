@@ -21,7 +21,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=20261024.1~sparky9~0+lc1
+VERSION=20261102~sparky9~0+lc1
 PKG=sparky-stereo-console
 B=$HERE/base
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/console-build.XXXXXX")
@@ -138,18 +138,7 @@ if [ "\$1" = "install" ] || [ "\$1" = "upgrade" ]; then
 fi
 exit 0
 EOF
-cat >"$D/DEBIAN/postrm" <<EOF
-#!/bin/sh
-# postrm script
-set -e
-if [ "\$1" = "remove" ] || [ "\$1" = "purge" ] || [ "\$1" = "abort-install" ]; then
-	for f in $DIVERTED; do
-		dpkg-divert --quiet --package $PKG --remove --rename --divert "\$f.debian" "\$f"
-	done
-	[ -e /etc/motd ] || cp /usr/share/base-files/motd /etc/motd 2>/dev/null || true
-fi
-exit 0
-EOF
+sed "s|@DIVERTED@|$DIVERTED|" "$HERE/postrm.in" >"$D/DEBIAN/postrm"
 chmod 755 "$D/DEBIAN/preinst" "$D/DEBIAN/postrm"
 printf '%s\n' /etc/ssh/sshd_config.d/sparky-stereo-banner.conf /etc/xdg/fastfetch/config.jsonc >"$D/DEBIAN/conffiles"
 
@@ -216,7 +205,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: command-not-found, fastfetch
+Depends: command-not-found, fastfetch, sparky-stereo-problems (>= 0.1.1)
 Conflicts: neofetch
 Section: System
 Priority: optional

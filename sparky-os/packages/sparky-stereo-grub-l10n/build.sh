@@ -12,7 +12,7 @@
 # grub.mo becomes Debian's messages plus the missing ones (Debian's win where both have one).
 # Needs dpkg-deb, gettext (msggrep, msgattrib, msgfmt) and xz; the GRUB release tarball is GRUB_TARBALL
 # (downloaded from ftp.gnu.org when absent, checked against its SHA-256).
-# Last update 2026/10/16
+# Last update 2026/10/30
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -37,17 +37,79 @@ mkdir -p "$D/DEBIAN" "$S" "$D/usr/lib/$PKG" "$D/usr/share/doc/$PKG"
 langs=
 for po in "$P"/*.po; do
 	l=$(basename "$po" .po)
-	msggrep --location='util/*.in' --location='util/grub.d/*.in' "$po" 2>/dev/null \
-		| msgattrib --translated --no-fuzzy --no-obsolete -o "$W/$l.po" - 2>/dev/null || continue
-	grep -q '^msgid "[^"]' "$W/$l.po" || continue
-	msgfmt -o "$S/$l.mo" "$W/$l.po"
+	[ -f "$po" ] || { echo "GRUB translation inputs are missing in $P; repair the source archive and rebuild." >&2; exit 1; }
+	msggrep --location='util/*.in' --location='util/grub.d/*.in' "$po" \
+		| msgattrib --translated --no-fuzzy --no-obsolete -o "$W/$l.po" - || {
+		echo "GRUB translation $l could not be extracted. Repair the catalogue/gettext tools and rebuild." >&2
+		exit 1
+	}
+	if ! grep -q '^msgid "[^"]' "$W/$l.po"; then
+		echo "GRUB catalogue $l has no translated shell messages; no supplemental catalogue generated." >&2
+		continue
+	fi
+	msgfmt -o "$S/$l.mo" "$W/$l.po" || {
+		echo "GRUB translation $l could not be compiled. Repair the catalogue/gettext tools and rebuild." >&2
+		exit 1
+	}
+	[ -s "$S/$l.mo" ] || { echo "GRUB translation $l produced no catalogue; repair msgfmt and rebuild." >&2; exit 1; }
 	langs="$langs $l"
+done
+# English uses GRUB's source strings; all eight translated edition languages must be present.
+for l in pl pt_BR fr de es ja ko zh_CN zh_TW; do
+	[ -s "$S/$l.mo" ] || { echo "Required GRUB translation $l is missing; supply its shell messages and rebuild." >&2; exit 1; }
 done
 langs=${langs# }
 echo "$langs" | tr ' ' '\n' >"$S/languages"
 install -m 755 "$HERE/lib/merge-mo" "$D/usr/lib/$PKG/merge-mo"
+# the package's messages, word for word, as journal catalogs: the edition's one engine says and keeps a failed
+# update-grub of configure and of the trigger in the person's language (ORDER 350)
+mkdir -p "$D/usr/lib/systemd/catalog"
+sparky-stereo-problems catalog $PKG "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL3
 
-cat >"$D/DEBIAN/postinst" <<'EOS'
+# GRUB's menu is written again whenever the catalogues change, in both maintainer scripts
+MENU=$({
+python3 "$HERE/tools/maintainer-messages.py" "$HERE/lang" || exit $?
+cat <<'EOS'
+# GRUB's menu written again with the merged messages, so a translation reaches it at once rather than at the next
+# update-grub of another package; never in a live session, a chroot or a container (as sparky-stereo-boot's kernel
+# keeping), where an image build or the installer writes the menu itself
+menu() {
+	[ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ] || return 0
+	if [ "${SPARKY_STEREO_GRUB_L10N_TEST:-}" != 1 ]; then
+		if grep -qw boot=live /proc/cmdline 2>/dev/null || [ -d /run/live ]; then return 0; fi
+		if command -v systemd-detect-virt >/dev/null; then
+			if systemd-detect-virt --quiet --chroot || systemd-detect-virt --quiet --container; then return 0; fi
+		fi
+		if [ -e /.dockerenv ] || [ -e /run/.containerenv ] || [ ! -d /run/systemd/system ]; then return 0; fi
+	fi
+	# configure and the trigger: the edition's one engine runs update-grub, says a failure with its output and keeps
+	# it until update-grub works again (ORDER 350); the package's catalogs are installed, so it says it in the
+	# person's language. At remove and purge the package's catalogs are gone (and after the engine's own removal,
+	# the engine), so this script's own nine-language diagnostic and dpkg's failed state tell, with the output in
+	# the log below
+	if [ "$1" = configure ] && command -v sparky-stereo-problems >/dev/null; then
+		sparky-stereo-problems run --machine sparky-stereo-grub-l10n update-grub LOCAL21 -- update-grub
+		return
+	fi
+	log=/var/log/sparky-stereo-grub-l10n.log
+	if (umask 077; touch "$log" && chmod 600 "$log"); then :; else
+		say 2 "$log"
+		return 1
+	fi
+	if update-grub >"$log" 2>&1; then
+		cat "$log" >&2
+		rm -f "$log"
+	else
+		rc=$?
+		cat "$log" >&2
+		failure "$1" "$rc"
+		failure "$1" "$rc" 2>>"$log"
+		return "$rc"
+	fi
+}
+EOS
+})
+{ cat <<'EOS'
 #!/bin/sh
 # postinst script
 set -e
@@ -65,26 +127,45 @@ merge() {
 		/usr/lib/$PKG/merge-mo "$f.debian" "$S/$l.mo" "$f" >/dev/null
 	done
 }
+EOS
+printf '%s\n' "$MENU"
+cat <<'EOS'
 case "$1" in
 	configure|triggered)
 		merge
+		menu configure
 	;;
 esac
 exit 0
 EOS
-cat >"$D/DEBIAN/postrm" <<'EOS'
+} >"$D/DEBIAN/postinst"
+{ cat <<'EOS'
 #!/bin/sh
 # postrm script
 set -e
 PKG=sparky-stereo-grub-l10n
+EOS
+printf '%s\n' "$MENU"
+cat <<'EOS'
 if [ "$1" = "remove" ] || [ "$1" = "purge" ] || [ "$1" = "abort-install" ]; then
 	for f in $(dpkg-divert --list "/usr/share/locale/*/LC_MESSAGES/grub.mo" | awk -v p=$PKG '$NF == p {print $3}'); do
 		rm -f "$f"
 		dpkg-divert --quiet --package $PKG --remove --rename --divert "$f.debian" "$f"
 	done
 fi
+# a problem of a package that is gone cannot be repaired by it (ORDER 350): the engine lets go of them first
+if [ "$1" = "remove" ] && command -v sparky-stereo-problems >/dev/null; then
+	sparky-stereo-problems clear --all $PKG || :
+fi
+# Debian's catalogues are back: GRUB's menu in their words at once (ORDER 298c)
+case "$1" in
+	remove|purge)
+		menu "$1"
+	;;
+esac
 exit 0
 EOS
+} >"$D/DEBIAN/postrm"
 chmod 755 "$D/DEBIAN/postinst" "$D/DEBIAN/postrm"
 # grub2-common's catalogues: the path as grub2-common lists it, and the diverted one
 for l in $langs; do
@@ -121,7 +202,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: grub2-common, python3
+Depends: grub2-common, python3, sparky-stereo-problems (>= 0.1.0)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -130,12 +211,17 @@ Description: GRUB's menu in the system's language
   scripts, so the menu that grub-mkconfig writes ("Advanced options for
   ...", "UEFI Firmware Settings" and the others) stays in English. This
   package adds those messages from GNU GRUB's own translations to
-  Debian's catalogues, and adds them again whenever GRUB updates.
+  Debian's catalogues, and adds them again whenever GRUB updates; GRUB's
+  menu is then written again, so the translation reaches it at once.
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
 mkdir -p "$W/authoring"
-cp -a "$HERE/." "$W/authoring/"
+COPY="$HERE/build-tools/copy-recipe.py"
+[ -f "$COPY" ] || COPY="$HERE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$HERE" "$W/authoring"
+mkdir -p "$W/authoring/build-tools"
+cp "$COPY" "$W/authoring/build-tools/"
 cp -a "$P" "$W/authoring/upstream-po"
 cp "$W/grub-$GRUB_VERSION/COPYING" "$W/authoring/COPYING.grub"
 PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$W/authoring"

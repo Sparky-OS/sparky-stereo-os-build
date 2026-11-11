@@ -1,0 +1,197 @@
+#!/usr/bin/python3
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/04
+# Copyright 2026 under the GNU GPL3 License
+# The sources for the link check of a build made on this computer (ORDER 402).
+# The packages of the build are checked by Lean Code's link gate (lean/archive.md), which resolves their dependencies from
+# signed archives it is given as JSON, in an apt of its own that sees nothing of this computer's configuration. Here the
+# archives are this computer's own: the sources of apt that serve the packages the build depends on, with the keys apt trusts
+# for each, the way apt reads them (sources.list(5), apt-secure(8)).
+# Usage: link-config OUTDIR PACKAGE...   writes OUTDIR/archive.json and OUTDIR/key-N.gpg; prints what it chose.
+import base64, glob, json, os, re, subprocess, sys
+
+APT_ETC = os.environ.get('SPARKY_FDK_APT_ETC', '/etc/apt')
+
+
+def die(message):
+    sys.exit(message)
+
+
+def sources():
+    """Enabled `deb` entries of every sources file: dicts with uri, suite, components, architectures, signed_by, trusted."""
+    found = []
+    files = [os.path.join(APT_ETC, 'sources.list')] + sorted(glob.glob(os.path.join(APT_ETC, 'sources.list.d', '*.list')))
+    for path in files:
+        if not os.path.isfile(path):
+            continue
+        for line in open(path, encoding='utf-8', errors='replace'):
+            line = line.split('#', 1)[0].strip()
+            m = re.match(r'deb\s+(?:\[([^\]]*)\]\s+)?(\S+)\s+(\S+)\s*(.*)$', line)
+            if not m:
+                continue
+            opts = dict(o.split('=', 1) for o in (m.group(1) or '').split() if '=' in o)
+            found.append({'uri': m.group(2), 'suite': m.group(3), 'components': m.group(4).split(),
+                          'architectures': opts.get('arch', '').split(',') if opts.get('arch') else None,
+                          'signed_by': opts.get('signed-by', ''), 'trusted': opts.get('trusted', 'no') == 'yes'})
+    for path in sorted(glob.glob(os.path.join(APT_ETC, 'sources.list.d', '*.sources'))):
+        text = open(path, encoding='utf-8', errors='replace').read()
+        for stanza in re.split(r'\n\s*\n', text):
+            fields, key = {}, None
+            for line in stanza.split('\n'):
+                if line.startswith('#'):
+                    continue
+                if line[:1] in (' ', '\t') and key:
+                    fields[key] += '\n' + line.strip()
+                elif ':' in line:
+                    key, value = line.split(':', 1)
+                    fields[key.strip().lower()] = value.strip()
+                    key = key.strip().lower()
+            if not fields or fields.get('enabled', 'yes').lower() in ('no', 'false', '0'):
+                continue
+            if 'deb' not in fields.get('types', '').split():
+                continue
+            for uri in fields.get('uris', '').split():
+                for suite in fields.get('suites', '').split():
+                    found.append({'uri': uri, 'suite': suite, 'components': fields.get('components', '').split(),
+                                  'architectures': fields['architectures'].split() if fields.get('architectures') else None,
+                                  'signed_by': fields.get('signed-by', ''),
+                                  'trusted': fields.get('trusted', 'no').lower() in ('yes', 'true', '1')})
+    return found
+
+
+def dearmor(data):
+    """A binary keyring from ASCII-armored or binary key data (RFC 4880 section 6.2: base64 body, then the =CRC24 line)."""
+    text = data.decode('latin-1')
+    if '-----BEGIN PGP' not in text:
+        return data
+    out = []
+    for block in re.findall(r'-----BEGIN PGP [^-]+-----\n(.*?)-----END PGP [^-]+-----', text, re.S):
+        body = []
+        for line in block.split('\n'):
+            line = line.strip()
+            if not line or ':' in line or line.startswith('='):
+                continue
+            body.append(line)
+        out.append(base64.b64decode(''.join(body)))
+    return b''.join(out)
+
+
+def keyring(entry):
+    """The keys apt trusts for this source: Signed-By files or an inline key, else the trusted keyrings (apt-secure(8))."""
+    spec = entry['signed_by'].strip()
+    if entry['trusted']:
+        die(f"{entry['uri']} {entry['suite']}: the source is trusted=yes, unsigned; the link check needs a signed archive")
+    if not spec:
+        paths = sorted(glob.glob(os.path.join(APT_ETC, 'trusted.gpg.d', '*.gpg')) +
+                       glob.glob(os.path.join(APT_ETC, 'trusted.gpg.d', '*.asc')))
+        if os.path.isfile(os.path.join(APT_ETC, 'trusted.gpg')):
+            paths.append(os.path.join(APT_ETC, 'trusted.gpg'))
+        return b''.join(dearmor(open(p, 'rb').read()) for p in paths)
+    if '-----BEGIN PGP' in spec:
+        return dearmor(spec.encode())
+    data = b''
+    for token in re.split(r'[\s,]+', spec):
+        if not token:
+            continue
+        if not token.startswith('/'):
+            die(f"{entry['uri']} {entry['suite']}: Signed-By names a key fingerprint ({token}), which cannot be turned into a keyring here")
+        try:
+            data += dearmor(open(token, 'rb').read())
+        except OSError as error:
+            die(f"{entry['uri']} {entry['suite']}: the key file {token} cannot be read ({error.strerror})")
+    return data
+
+
+def run(args):
+    return subprocess.run(args, capture_output=True, text=True, env={**os.environ, 'LC_ALL': 'C'})
+
+
+def closure(names):
+    """The packages named, with everything they depend on, as apt sees them (candidate versions)."""
+    r = run(['apt-cache', 'policy'] + sorted(set(names)))
+    names = {m.group(1) for m in re.finditer(r'^(\S+):\n  Installed: .*\n  Candidate: (?!\(none\))', r.stdout, re.M)}
+    if not names:
+        die('apt knows none of the packages of the build')
+    r = run(['apt-cache', 'depends', '--recurse', '--no-recommends', '--no-suggests', '--no-conflicts', '--no-breaks',
+             '--no-replaces', '--no-enhances'] + sorted(names))
+    if r.returncode:
+        die('apt-cache depends: ' + r.stderr.strip())
+    for line in r.stdout.split('\n'):
+        if line and not line[0].isspace() and not line.startswith('<'):
+            names.add(line.split(':')[0])
+    return sorted(names)
+
+
+def origins(names):
+    """(uri, suite, component) of every index that serves the candidate or the installed version of a package."""
+    used = set()
+    for start in range(0, len(names), 200):
+        r = run(['apt-cache', 'policy'] + names[start:start + 200])
+        if r.returncode:
+            die('apt-cache policy: ' + r.stderr.strip())
+        installed = candidate = ''
+        wanted = False
+        for line in r.stdout.split('\n'):
+            m = re.match(r'  (Installed|Candidate): (\S+)', line)
+            if m:
+                if m.group(1) == 'Installed':
+                    installed = m.group(2)
+                else:
+                    candidate = m.group(2)
+                continue
+            m = re.match(r' (?:\*\*\*| {3}) (\S+) (-?\d+)', line)
+            if m:
+                wanted = m.group(1) in (installed, candidate)
+                continue
+            m = re.match(r'\s+-?\d+ (\S+) (\S*?)/(\S*) \S+ Packages', line) if wanted else None
+            if m:
+                used.add((m.group(1).rstrip('/'), m.group(2), m.group(3)))
+            elif wanted:
+                m = re.match(r'\s+-?\d+ (\S+) (/)\s+Packages', line)
+                if m:
+                    used.add((m.group(1).rstrip('/'), '/', ''))
+    return used
+
+
+def main():
+    if len(sys.argv) < 3:
+        die('usage: link-config OUTDIR PACKAGE...')
+    outdir, names = sys.argv[1], sys.argv[2:]
+    used = origins(closure(names))
+    chosen = []
+    for entry in sources():
+        uri = entry['uri'].rstrip('/')
+        if entry['suite'].endswith('/'):
+            if (uri, '/', '') in used or (uri, entry['suite'].rstrip('/') or '/', '') in used:
+                chosen.append((entry, []))
+            continue
+        comps = [c for c in entry['components'] if (uri, entry['suite'], c) in used]
+        if comps:
+            chosen.append((entry, comps))
+    if not chosen:
+        die('none of apt\'s sources serves the packages this build needs')
+    config, merged = [], {}
+    for entry, comps in chosen:
+        key = (entry['uri'].rstrip('/'), entry['suite'], entry['signed_by'])
+        if key in merged:
+            merged[key]['components'] = sorted(set(merged[key]['components']) | set(comps))
+            continue
+        data = keyring(entry)
+        if not data:
+            die(f"{entry['uri']} {entry['suite']}: no key is trusted for this source")
+        path = os.path.join(outdir, f'key-{len(config)}.gpg')
+        with open(path, 'wb') as handle:
+            handle.write(data)
+        item = {'uri': entry['uri'].rstrip('/'), 'suite': entry['suite'], 'components': comps, 'keyring': path}
+        if entry['architectures']:
+            item['architectures'] = entry['architectures']
+        merged[key] = item
+        config.append(item)
+    with open(os.path.join(outdir, 'archive.json'), 'w', encoding='utf-8') as handle:
+        json.dump(config, handle, indent=2)
+        handle.write('\n')
+    for item in config:
+        print(item['uri'], item['suite'], ' '.join(item['components']))
+
+
+if __name__ == '__main__':
+    main()

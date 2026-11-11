@@ -1,3 +1,5 @@
 FROM mdmo-ff:dmo
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update -qq && apt-get -y --no-install-recommends install python3-minimal >/dev/null && rm -rf /var/lib/apt/lists/* && python3 --version
+RUN --mount=type=bind,from=https-only-apt,source=https-only-apt.sh,target=/run/https-only-apt.sh \
+    --mount=type=bind,from=host-ca,source=ca-certificates.crt,target=/run/host-ca.crt \
+    sh /run/https-only-apt.sh && apt-get update -qq && apt-get -y --no-install-recommends install python3-minimal >/dev/null && rm -rf /var/lib/apt/lists/* && python3 --version

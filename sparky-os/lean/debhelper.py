@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from . import package, release, source_tree
+from . import buildrecord, package, release, source_tree
 
 
 def link_gate(built):
@@ -23,7 +23,15 @@ def link_gate(built):
     try:
         if not table.is_file():
             raise ValueError(f'{table}: the toolkit lacks the smoke table')
-        release.check_link(gated, os.environ.get('SPARKY_LC_PREVIOUS_DIR') or None, str(table))
+        siblings_file = os.environ.get('SPARKY_LC_SIBLINGS_FILE')
+        previous_file = os.environ.get('SPARKY_LC_PREVIOUS_SIBLINGS_FILE')
+        release.check_link(
+            gated, os.environ.get('SPARKY_LC_PREVIOUS_DIR') or None, str(table),
+            siblings=Path(siblings_file).read_text().splitlines() if siblings_file else (),
+            previous_siblings=Path(previous_file).read_text().splitlines() if previous_file else (),
+            min_free_gib=int(os.environ.get('SPARKY_LC_MIN_FREE_GIB', '2')),
+            root_min_free_gib=int(os.environ.get('SPARKY_LC_ROOT_MIN_FREE_GIB', '12')),
+        )
     except (ValueError, OSError, subprocess.CalledProcessError):
         for deb in built:
             deb.unlink(missing_ok=True)
@@ -35,13 +43,16 @@ def build(root, provenance):
                       list((root / 'debian/.debhelper').glob('*/dbgsym-root/DEBIAN/control')))
     if not controls:
         raise ValueError('No staged binary controls; run after dh_gencontrol')
+    buildrecord.note_start(root.parent)
+    # every declared generated output matches an installed file of some package, before anything is built
+    source_tree.require_generated(root, [control.parent.parent for control in controls])
     built = []
     for control in controls:
         staging = control.parent.parent
         fields = package.control(staging)
         name, version, arch = package.identity(fields)
-        source_tree.restore_payload(root, staging)
-        subprocess.run(['bash', str(provenance), '--tree', str(staging)], check=True)
+        source_tree.restore_payload(root, staging, check_coverage=False)
+        subprocess.run(['bash', str(provenance), '--tree', str(staging), '--source', str(root)], check=True)
         before = set(root.parent.glob('*.deb'))
         release.build_tree(staging, root.parent)
         outputs = sorted(set(root.parent.glob('*.deb')) - before)

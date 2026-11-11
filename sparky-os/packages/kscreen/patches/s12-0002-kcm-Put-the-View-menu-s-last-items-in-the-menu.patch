@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 22:44:03 -0300
+Subject: [PATCH 02/19] kcm: Put the View menu's last items in the menu
+
+The separator and Show Screen Contents were written inside the Fit All item, so the
+menu held three items instead of five. Close Fit All before them.
+
+Assisted-by: Claude Sonnet 5.5
+---
+ kcm/ui/main.qml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kcm/ui/main.qml b/kcm/ui/main.qml
+index f55f5ed1..fdaf0fea 100644
+--- a/kcm/ui/main.qml
++++ b/kcm/ui/main.qml
+@@ -451,6 +451,7 @@ KCM.AbstractKCM {
+                             enabled: screen.zoomed
+                             onTriggered: screen.fitAll()
+                         }
++                    }
+                     QQC2.MenuSeparator {}
+                     QQC2.MenuItem {
+                         action: QQC2.Action {
+@@ -461,7 +462,6 @@ KCM.AbstractKCM {
+                             onTriggered: kcm.screenContents.shown = checked
+                         }
+                     }
+-                    }
+                 }
+             }
+ 

@@ -1,16 +1,18 @@
 #!/bin/bash
 # Copyright 2026 Daniel Campos Ramos; GPL-3.0-or-later.
 # Mount the candidate at /copy, its matching live baseline at /baseline,
-# the release toolkit at /toolkit, and owned output at /w.
+# the release toolkit at /toolkit, and owned output at /w. Also, read-only, the host's /etc/ssl/certs/ca-certificates.crt
+# at /run/host-ca.crt and tools/https-only-apt.sh at /run/https-only-apt.sh (ORDER 400, CVE-2026-109518).
 set -euo pipefail
 test -f /.dockerenv
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
 export DEBIAN_FRONTEND=noninteractive
 trap 'chown -R 1000:1000 /w' EXIT
+sh /run/https-only-apt.sh
 if ! command -v rsync >/dev/null; then
  mkdir /tmp/order223-apt-sources
  mv /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources /tmp/order223-apt-sources/ 2>/dev/null || true
- printf 'deb http://deb.debian.org/debian testing main\n' > /etc/apt/sources.list
+ printf 'deb https://deb.debian.org/debian testing main\n' > /etc/apt/sources.list
  apt-get -y update > /w/rsync-apt-update.log 2>&1
  apt-get -y --no-install-recommends install rsync > /w/rsync-apt-install.log 2>&1
 fi

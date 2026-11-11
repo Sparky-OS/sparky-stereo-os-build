@@ -102,6 +102,20 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	KV=$(inr dpkg-query -W -f '${Depends}' linux-image-sparky-stereo | sed -n 's/^linux-image-\([^ ,]*\).*/\1/p')
 	[ -n "$KV" ] && [ -f $R/boot/vmlinuz-$KV ] || { echo "!! the edition's kernel release ($KV) is not in /boot"; exit 1; }
 	echo "   the edition's kernel: $KV"
+	# the ISO ships one kernel (ORDER 297): an edition kernel published after the root file system was built comes in
+	# beside the older one through the meta's new Depends, and nothing removes the older one; it goes here with its
+	# module tree (DKMS's own kernel hooks remove its DKMS builds)
+	cp /build/old-kernels.py $R/tmp/
+	old=$(inr python3 /tmp/old-kernels.py / "$KV")
+	rm -f $R/tmp/old-kernels.py
+	if [ -n "$old" ]; then
+		echo "   older edition kernels, purged: $(echo $old)"
+		# shellcheck disable=SC2086
+		apt_in purge $old
+		for d in $R/usr/lib/modules/*; do
+			r=$(basename "$d"); [ "$r" = "$KV" ] || [ -e $R/boot/vmlinuz-$r ] || rm -rf "$d"
+		done
+	fi
 	echo "== $(date -u +%T) the boot chain in 3D (ORDER 138): the stereo Plymouth, sparky-stereo-boot, the stereo splash themes; GRUB's menu translated; Kubabbar Glass for Quick Settings"
 	apt_in install plymouth libplymouth5 plymouth-themes plymouth-label sparky-stereo-boot sparky-stereo-plymouth sparky-stereo-grub-l10n \
 		sparky-stereo-look-kubabbar-glass sparky-stereo-look-kubabbar-glass-menubar
@@ -130,21 +144,50 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 		mkdir -p $R/var/lib/sparkyos-plymouth && echo sparky-stereo-lines > $R/var/lib/sparkyos-plymouth/theme
 	fi
 	echo "== $(date -u +%T) the default boot splash: $(inr plymouth-set-default-theme) (plymouthd.conf: $(sed -n 's/^Theme=//p' $R/etc/plymouth/plymouthd.conf))"
-	# the packages SparkyLinux's securebootinstall asks apt for that the image lacks (an offline install finds the rest)
+	# the packages SparkyLinux's securebootinstall requires, installed with their dependencies
 	for p in libjcat1 grub-efi-amd64-signed-template shim-helpers-amd64-signed-template; do
-		apt_in install --no-install-recommends "$p" || echo "!! $p: not installed"
+		apt_in install --no-install-recommends "$p" || {
+			echo "!! Secure Boot helper $p could not be installed. Repair the package sources and rebuild the image." >&2
+			exit 1
+		}
+		status=$(inr dpkg-query -W -f '${db:Status-Status}' "$p") || {
+			echo "!! Could not check Secure Boot helper $p. Repair the package database and rebuild the image." >&2
+			exit 1
+		}
+		[ "$status" = installed ] || {
+			echo "!! Secure Boot helper $p is not installed (status: $status). Repair the package and rebuild the image." >&2
+			exit 1
+		}
 	done
 	echo "== $(date -u +%T) GRUB's EFI packages for an offline UEFI install (calamares-settings-sparky-stereo's offline step)"
 	O=/usr/share/sparky-stereo/offline-debs
-	rm -rf $R$O; mkdir -p $R$O
-	GV=$(inr dpkg-query -W -f '${Version}' grub-efi-amd64-bin)
-	inr sh -c "cd $O && apt-get download grub-efi=$GV grub-efi-amd64=$GV"
-	for p in libjcat1 grub-efi-amd64-signed-template shim-helpers-amd64-signed-template; do
-		inr dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q installed || inr sh -c "cd $O && apt-get download $p" || true
+	rm -rf "$R$O"; mkdir -p "$R$O/partial"
+	GV=$(inr dpkg-query -W -f '${Version}' grub-efi-amd64-bin) || {
+		echo "!! Cannot read the installed GRUB version. Repair grub-efi-amd64-bin and rebuild the image." >&2
+		exit 1
+	}
+	[ -n "$GV" ] || { echo "!! Installed GRUB version is empty; rebuild the image after repairing GRUB." >&2; exit 1; }
+	# Let APT resolve and download the complete installation transaction, including missing
+	# dependencies, into this repository. Download-only never replaces grub-pc in the live image.
+	apt_in -o "Dir::Cache::archives=$O" --download-only --reinstall install \
+		"grub-efi=$GV" "grub-efi-amd64=$GV" \
+		libjcat1 grub-efi-amd64-signed-template shim-helpers-amd64-signed-template || {
+		echo "!! Offline Secure Boot package download failed. Repair the package sources/network and rebuild the image." >&2
+		exit 1
+	}
+	(cd "$R$O" && dpkg-scanpackages -m . > Packages) || {
+		echo "!! Offline Packages index could not be generated. Check the downloaded packages and rebuild the image." >&2
+		exit 1
+	}
+	for p in grub-efi grub-efi-amd64 libjcat1 grub-efi-amd64-signed-template shim-helpers-amd64-signed-template; do
+		grep -qx "Package: $p" "$R$O/Packages" || {
+			echo "!! Offline installation package $p is missing from Packages. Repair the download and rebuild the image." >&2
+			exit 1
+		}
 	done
-	(cd $R$O && dpkg-scanpackages -m . 2>/dev/null > Packages && ls)
+
 	apt_in clean
-	echo "== $(date -u +%T) the image's apt sources: the build's own sources go; Debian, SparkyLinux (sparky-apt), deb-multimedia and NVIDIA's CUDA repository stay"
+	echo "== $(date -u +%T) the image's apt sources: the build's own sources go; Debian, SparkyLinux (sparky-apt), deb-multimedia and NVIDIA's CUDA repository (sparky-stereo-cuda-repo) stay"
 	rm -f $R/etc/apt/sources.list.d/beta-build-*.sources $R/etc/apt/sources.list.d/sparky-stereo-build.sources $R/etc/apt/preferences.d/beta-build-*
 	rm -f $R/usr/sbin/policy-rc.d $R/etc/dkms/framework.conf.d/beta-build.conf
 	# the real os-prober and grub-mkconfig, stubs while the tree was built (rootfs.sh)
@@ -168,7 +211,28 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	cp /build/boot-kernels.py $R/tmp/
 	inr python3 /tmp/boot-kernels.py / || { echo "!! a kernel that is not the edition's is in the tree"; exit 1; }
 	rm -f $R/tmp/boot-kernels.py
-	# DKMS made its own signing key while building in the chroot; a private key never ships
+	# Missing ZFS or modules for any shipped kernel must stop image packing.
+	cp /build/zfs-check.py $R/tmp/
+	inr python3 /tmp/zfs-check.py / || { echo "!! ZFS is not ready in the image; see validation errors above" >&2; exit 1; }
+	rm -f $R/tmp/zfs-check.py
+	# nothing of zram or zswap of ours in the image, and the zram packages not installed (HOUSE-RULES "zram and zswap:
+	# never ours, never on by default; the person may opt in"): every finding names its file and line
+	cp /build/zram-check.py $R/tmp/
+	inr python3 /tmp/zram-check.py / || { echo "!! zram or zswap is in the image; see the gate's findings above" >&2; exit 1; }
+	rm -f $R/tmp/zram-check.py
+	# nothing that downloads data while it is installed (a package declaring Sparky-Install-Download-Size, FlightGear's data): the games and
+	# their data come when the person chooses them while installing, never on the ISO (Daniel, 2026-11-04; ORDER 399b)
+	cp /build/check-no-install-downloads.py $R/tmp/
+	inr python3 /tmp/check-no-install-downloads.py / || { echo "!! a package that downloads data while it is installed, or FlightGear's data, is in the image; see the gate's findings above" >&2; exit 1; }
+	rm -f $R/tmp/check-no-install-downloads.py
+	# DKMS's signing key never ships: one key in the image would be every installed machine's key (dkms-project/dkms
+	# #574; dkms signs nothing and makes no key in a chroot unless try_sign_modules=true, #575). Each installed system
+	# makes its own and signs the image's DKMS modules at its first boot (dkms-sign-unsigned.service), and GRUB's menu
+	# offers to enroll it (sparky-stereo-boot). Said in the build log, with what was found.
+	found=
+	for f in mok.key mok.pub; do [ -e $R/var/lib/dkms/$f ] && found="$found $f"; done
+	found=${found# }
+	echo "== $(date -u +%T) DKMS signing key of the chroot: ${found:-none}; removed if found, because one key in the image would be every installed machine's key; each installed system makes its own at its first boot, which signs the image's DKMS modules (dkms-sign-unsigned.service), and GRUB's menu offers to enroll it"
 	rm -f $R/var/lib/dkms/mok.key $R/var/lib/dkms/mok.pub
 	# each installed system gets its own identity
 	: > $R/etc/machine-id; rm -f $R/var/lib/dbus/machine-id

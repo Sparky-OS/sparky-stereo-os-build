@@ -1,31 +1,46 @@
 #!/bin/bash
 # Prepare one source package from the published source, retaining its Lean Code pipeline.
 set -euo pipefail
-source_dir=${1:?directory containing the published +stereo3d15+lc1 source package}
+source_dir=${1:?directory containing the published +stereo3d17+lc1 source package}
 work=${2:?empty output directory}
 recipe=$(cd "$(dirname "$0")" && pwd)
+# the date of this source is its recipe's: SOURCE_DATE_EPOCH, else the last commit touching this folder (ORDER 421b)
+REPRO=$recipe/../../repo/reproducible.py
+SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$REPRO" epoch "$recipe")}
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 mkdir -p "$work"
 test -z "$(ls -A "$work")"
 source_dir=$(cd "$source_dir" && pwd)
 work=$(cd "$work" && pwd)
 cd "$work"
-echo '868b9943e6cbe3725c7bee4098da3b5732720117a4d8c6e01eae619278aaa357  '"$source_dir/mesa_26.1.6-1+stereo3d15+lc1.dsc" | sha256sum -c
+echo '0643bf6f934a9c5cf5b459c19f1fc7f4944872c50de3d0cc3e8d7b8e9e2a9394  '"$source_dir/mesa_26.1.6-1+stereo3d17+lc1.dsc" | sha256sum -c
 cp "$source_dir/mesa_26.1.6.orig.tar.xz" .
-dpkg-source -x "$source_dir/mesa_26.1.6-1+stereo3d15+lc1.dsc" source
-cp "$recipe/patches/0024-wayland-stereo-swapchain-lifetime.patch" source/debian/patches/
-printf '%s\n' 0024-wayland-stereo-swapchain-lifetime.patch >> source/debian/patches/series
+dpkg-source -x "$source_dir/mesa_26.1.6-1+stereo3d17+lc1.dsc" source
+for patch in 0029-glx-zink-through-dri3-while-the-compositor-announces-stereo.patch \
+             0030-zink-export-dma-buf-with-a-modifier-the-driver-can-render-with.patch \
+             0031-egl-export-dma-buf-fails-when-the-driver-made-none.patch \
+             0032-egl-x11-list-the-child-window-and-keep-a-stereo-window-one-eye-wide.patch \
+             0033-vulkan-x11-list-the-child-window.patch \
+             0034-egl-x11-zink-through-dri3-while-the-compositor-announces-stereo.patch; do
+    cp "$recipe/patches/$patch" source/debian/patches/
+    printf '%s\n' "$patch" >> source/debian/patches/series
+done
 python3 - "$recipe" <<'PY'
 from pathlib import Path
-from email.utils import formatdate
+import os
 import sys
 recipe = Path(sys.argv[1])
 root = Path('source')
 p = root / 'debian/changelog'
-entry = (recipe / 'changelog-stereo3d16.txt').read_text()
-assert entry.startswith('mesa (26.1.6-1+stereo3d16) unstable;')
-entry += '\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + formatdate(localtime=True) + '\n\n'
-p.write_text(entry + p.read_text())
+# +stereo3d18 was never published: its two entries and +stereo3d19's ship in one source
+entries = ''
+for number in ('19', '18'):
+    entry = (recipe / f'changelog-stereo3d{number}.txt').read_text()
+    assert entry.startswith(f'mesa (26.1.6-1+stereo3d{number}) unstable;')
+    entries += entry + '\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n'
+p.write_text(entries + p.read_text())
 # debian/rules regenerates control from control.in; preserve the pipeline's build dependencies in both.
 sys.path.insert(0, str(root / 'debian/sparky-lean-toolkit'))
 from lean.debian_prepare import add_build_dependencies
@@ -34,8 +49,9 @@ for name in ('control.in', 'control'):
     p.write_text(add_build_dependencies(p.read_text(), ['gcc', 'node-acorn', 'nodejs', 'perl', 'python3', 'python3-yaml']))
 PY
 cd source
-dch --newversion 26.1.6-1+stereo3d16+lc1 --distribution UNRELEASED \
+dch --date "$SOURCE_DATE_RFC2822" --newversion 26.1.6-1+stereo3d19+lc1 --distribution UNRELEASED \
     'Retain the published source-consumer preservation plan and verified native/payload Lean Code pipeline.'
 dpkg-source --before-build .
 cd ..
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" source
 dpkg-source -b source

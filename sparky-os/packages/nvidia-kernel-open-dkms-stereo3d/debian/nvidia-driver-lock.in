@@ -1,3 +1,13 @@
+# Debian's real detector (Hardware Setup chains it). Without this record the
+# src:nvidia-graphics-drivers records below pick NVIDIA's documentation-only
+# nvidia-detect, which has no command. apt_preferences(5): "The first
+# specific-form record matching an available package version determines the
+# priority of the package version"; 1010 is above the 1005 of the NVIDIA
+# dummy, which does not come from Debian's archive and so skips this record.
+Package: nvidia-detect
+Pin: release o=Debian
+Pin-Priority: 1010
+
 Package: nvidia-kernel-open-dkms nvidia-kernel-dkms nvidia-open-kernel-dkms
 Pin: version *
 Pin-Priority: -1

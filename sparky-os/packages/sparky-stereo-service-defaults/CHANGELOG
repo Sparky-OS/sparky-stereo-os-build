@@ -1,4 +1,56 @@
 -------------------------------------------------------------------------------
+  Version 0.1.5 (2026-11-08)
+-------------------------------------------------------------------------------
+  * ClamAV's two updaters (ORDER 460): clamav-freshclam.service (the daemon) and clamav-freshclam-once.service with its
+    timer share /var/log/clamav/freshclam.log, so with all three enabled the once service failed at every boot ("Failed to
+    lock the log file", Debian bug #1134489). Debian's clamav 1.4.4+dfsg-2 (Sebastian Andrzej Siewior) stopped enabling the
+    once pair on a new install; an upgrade keeps what the older package enabled. Once, when this version arrives, the once
+    service and its timer are switched off where the daemon is on and they are on, the notice says so, and the person can
+    switch either one on again. A failure to switch them off is kept by the engine with a Repair
+  * urfkill: Breaks urfkill (<< 0.5.0-8+sparky1~). The edition's urfkill 0.5.0-8+sparky1 (packages/urfkill) passes
+    --with-session-tracking=systemd again, which Debian's 0.5.0-8 lost to a missing backslash (Debian bug #1152866, our
+    report with this patch); urfkilld asks systemd-logind and starts, where Debian's asked ConsoleKit and stopped with
+    "failed to setup session checker". Debian's urfkill maintainers' packaging stays as it is
+  * tests: test/clamav-updaters.sh (red on 0.1.4, green on 0.1.5), in the systemd container
+
+-------------------------------------------------------------------------------
+  Version 0.1.4 (2026-11-03)
+-------------------------------------------------------------------------------
+  * Mask the engine's top-level failure drop-in by name beside each of our five
+    service drop-ins, including the xfs_healer template: one record and notice
+    per failure, with the existing diagnostic and Repair
+  * Keep the service start-up fixes and generic failure reporting for other units
+  * Correct the documentation and regression checks: emptying OnFailure alone
+    does not remove the engine's top-level handler
+
+-------------------------------------------------------------------------------
+  Version 0.1.3 (2026-11-02)
+-------------------------------------------------------------------------------
+  * ORDER 350 (Daniel, 2026-11-02: "Why machinery to keep a failure for each?"): the problems are kept by
+    the edition's one engine, sparky-stereo-problems, and shown by its session notifier; the package's own
+    store, notifier and user units go. status and repair keep working through the engine; dismiss is the
+    engine's Hide (yours, no administrator needed, back when the problem changes); notify starts the
+    session's notifier. Each drop-in empties OnFailure= before naming its own handler, so a failure of these
+    units is told once, with what this package knows of it, instead of the engine's generic handler. The
+    messages, word for word, are built into journal catalogs; the problems go when the package is removed
+  * Nothing fails silently (ORDER 346c; Daniel, 2026-11-01: "either it works or not and the user must know"):
+    each drop-in names sparky-stereo-service-problem@ in OnFailure=, so a service that cannot start is said in the
+    system's language and kept in /var/lib/sparky-stereo-service-defaults/problems with its own last lines;
+    the session shows it as a notification; sparky-stereo-service-defaults status, repair and dismiss
+  * snmptt: no longer skipped without Net::IP; the edition's snmptt 1.5-3+sparky1 depends on libnet-ip-perl
+    (Breaks: snmptt << 1.5-3+sparky1~), and a failure says what is missing
+  * pkcs11-daemon: no longer skipped without its library; the edition's pkcs11-daemon 0.4.1-5+sparky1 depends on
+    libsofthsm2, the library its default names (Breaks: pkcs11-daemon << 0.4.1-5+sparky1~); a library that cannot be
+    loaded is said with where PKCS11_LIB is set
+  * urfkill: no longer skipped behind a ConsoleKit condition; Debian's 0.5.0-8, built for ConsoleKit, fails and that is
+    said with the reason (radio switches work without it)
+  * xfs_healer@: xfsprogs' own --supported check again, now that it skips a file system that is not XFS (upstream
+    fde1eee, carried in xfsprogs 7.2.0-1+sparky1; Breaks: xfsprogs << 7.2.0-1+sparky1~); our findmnt check, which took
+    a failed findmnt for "not XFS", is gone
+  * ipwatchd: a failed address probe is no longer "no address": it is said and kept, and the unit fails; no address is
+    still a skip; NetworkManager's dispatcher says a check or start that fails
+  * Messages in en, pl, pt_BR, fr, de, ja, ko, zh_CN and zh_TW
+-------------------------------------------------------------------------------
   Version 0.1.2 (2026-10-16)
 -------------------------------------------------------------------------------
   * ipwatchd: skipped at boot while no interface has an IPv4 address (it stopped with "No interfaces discovered"), started by NetworkManager when one comes up

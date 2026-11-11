@@ -1,0 +1,107 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] Say when the desktop refuses to show a 3D video in 3D
+Origin: other, Sparky Stereo OS (ORDER 453)
+Forwarded: no
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+
+Qt Multimedia's VideoOutput declares the video to the desktop before it attaches anything. When the declaration is refused it draws the ordinary picture and says why in stereoLayerFailure (qt6-multimedia +stereo3d15, patch 0046); Dragon shows that reason to the person in the window, with the sentence in the nine languages.
+---
+--- a/po/de/dragonplayer.po	2026-11-09 19:13:35.035811811 -0300
++++ b/po/de/dragonplayer.po	2026-11-09 19:13:43.978387066 -0300
+@@ -869,3 +869,7 @@
+ msgctxt "@info"
+ msgid "This build of Dragon cannot write the 3D correction into a file. The correction stays with this video in Dragon."
+ msgstr "Diese Version von Dragon kann die 3D-Korrektur nicht in eine Datei schreiben. Die Korrektur bleibt für dieses Video in Dragon gespeichert."
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "Dieses Video wird flach gezeigt: Der Desktop hat die Darstellung in 3D abgelehnt (%1)."
+--- a/po/fr/dragonplayer.po	2026-11-09 19:13:35.035542400 -0300
++++ b/po/fr/dragonplayer.po	2026-11-09 19:13:43.978175965 -0300
+@@ -892,3 +892,7 @@
+ msgctxt "@info"
+ msgid "This build of Dragon cannot write the 3D correction into a file. The correction stays with this video in Dragon."
+ msgstr "Cette version de Dragon ne peut pas écrire la correction 3D dans un fichier. La correction reste associée à cette vidéo dans Dragon."
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "Cette vidéo est affichée à plat : le bureau a refusé de l’afficher en 3D (%1)."
+--- a/po/ja/dragonplayer.po	2026-11-09 19:13:35.036078081 -0300
++++ b/po/ja/dragonplayer.po	2026-11-09 19:13:43.978678767 -0300
+@@ -792,3 +792,7 @@
+ msgctxt "@info"
+ msgid "This build of Dragon cannot write the 3D correction into a file. The correction stays with this video in Dragon."
+ msgstr "このビルドの Dragon は 3D の補正をファイルに書き込めません。補正はこの動画の設定として Dragon に残ります。"
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "このビデオは平面で表示されています。デスクトップが 3D 表示を拒否しました (%1)。"
+--- a/po/ko/dragonplayer.po	2026-11-09 19:13:35.036346682 -0300
++++ b/po/ko/dragonplayer.po	2026-11-09 19:13:43.978859437 -0300
+@@ -838,3 +838,7 @@
+ msgctxt "@info"
+ msgid "This build of Dragon cannot write the 3D correction into a file. The correction stays with this video in Dragon."
+ msgstr "이 Dragon 빌드는 3D 보정을 파일에 기록할 수 없습니다. 보정은 Dragon에서 이 비디오와 함께 그대로 유지됩니다."
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "이 비디오는 평면으로 표시됩니다. 데스크톱이 3D 표시를 거부했습니다 (%1)."
+--- a/po/pl/dragonplayer.po	2026-11-09 19:13:35.034920018 -0300
++++ b/po/pl/dragonplayer.po	2026-11-09 19:13:43.977656054 -0300
+@@ -848,3 +848,7 @@
+ msgctxt "@info"
+ msgid "This build of Dragon cannot write the 3D correction into a file. The correction stays with this video in Dragon."
+ msgstr "Ta wersja programu Dragon nie potrafi zapisać poprawki 3D w pliku. Poprawka pozostaje przy tym wideo w programie Dragon."
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "To wideo jest pokazywane płasko: pulpit odmówił pokazania go w 3D (%1)."
+--- a/po/pt_BR/dragonplayer.po	2026-11-09 19:13:35.035253489 -0300
++++ b/po/pt_BR/dragonplayer.po	2026-11-09 19:13:43.977961545 -0300
+@@ -812,3 +812,7 @@
+ msgctxt "@info"
+ msgid "This build of Dragon cannot write the 3D correction into a file. The correction stays with this video in Dragon."
+ msgstr "Esta compilação do Dragon não consegue gravar a correção 3D em um arquivo. A correção continua guardada com este vídeo no Dragon."
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "Este vídeo é mostrado em 2D: a área de trabalho recusou mostrá-lo em 3D (%1)."
+--- a/po/zh_CN/dragonplayer.po	2026-11-09 19:13:35.036591573 -0300
++++ b/po/zh_CN/dragonplayer.po	2026-11-09 19:13:43.979076408 -0300
+@@ -482,3 +482,7 @@
+ msgctxt "@info"
+ msgid "This build of Dragon cannot write the 3D correction into a file. The correction stays with this video in Dragon."
+ msgstr "此版本的 Dragon 无法将 3D 校正写入文件。该校正仍保留在 Dragon 中，与此视频关联。"
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "此视频以平面方式显示：桌面拒绝以 3D 显示（%1）。"
+--- a/po/zh_TW/dragonplayer.po	2026-11-09 19:13:35.036824823 -0300
++++ b/po/zh_TW/dragonplayer.po	2026-11-09 19:13:43.979345528 -0300
+@@ -798,3 +798,7 @@
+ msgctxt "@info"
+ msgid "This build of Dragon cannot write the 3D correction into a file. The correction stays with this video in Dragon."
+ msgstr "此版本的 Dragon 無法將 3D 校正寫入檔案。該校正仍保留在 Dragon 中，與此影片相關聯。"
++
++msgctxt "@info %1 is the reason the desktop gave"
++msgid "This video is shown flat: the desktop refused to show it in 3D (%1)."
++msgstr "此影片以平面方式顯示：桌面拒絕以 3D 顯示（%1）。"
+--- a/src/qml/PlayerPage.qml	2026-11-09 19:13:35.032920213 -0300
++++ b/src/qml/PlayerPage.qml	2026-11-09 19:13:43.948206966 -0300
+@@ -115,6 +115,16 @@
+             visible: text.length > 0
+             text: player.errorString
+         }
++
++        Kirigami.InlineMessage {
++            id: stereoLayerFailureMessage
++            Layout.fillWidth: true
++            type: Kirigami.MessageType.Warning
++            showCloseButton: true
++            position: Kirigami.InlineMessage.Position.Header
++            visible: video.stereoLayerFailure.length > 0
++            text: i18nc("@info %1 is the reason the desktop gave", "This video is shown flat: the desktop refused to show it in 3D (%1).", video.stereoLayerFailure)
++        }
+     }
+ 
+     function cancelFullscreen() {

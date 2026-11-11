@@ -12,6 +12,12 @@ workspace, using the lane's Docker proxy. Register the image and each
 container in ../.artifacts before creating them. The current lane-owned
 base tag is gl-stereo-package-base:1.
 
+Every container here that runs apt mounts the host's CA bundle at /run/host-ca.crt and the
+repository's tools/https-only-apt.sh at /run/https-only-apt.sh, both read-only (apt over HTTPS
+only, ORDER 400b): the scripts that run as UID 1000 write the helper's settings to a file of their own
+and point APT_CONFIG at it, the ones that run as root (and under PRoot, whose in-rootfs.sh binds both
+files) run the helper itself.
+
 Run audit-sources.sh from the repository root inside a fresh non-root base
 container, with this workspace mounted read-write and
 /var/local/sparky-stereo-repo mounted at the same path read-only. It uses

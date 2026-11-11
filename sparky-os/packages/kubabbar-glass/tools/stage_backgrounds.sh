@@ -4,11 +4,13 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 lane=$(dirname "$repo")
+COPY="$repo/../../../tools/copy-recipe.py"
 dest=${SPARKY_STAGING_DIR:?}/classic-look/background-alpha
+[ ! -e "$dest" ] || { echo "Use a new staging directory: $dest" >&2; exit 1; }
 printf '%s\n' "$dest" >> "$lane/.artifacts"
 mkdir -p "$dest/usr/share/plasma/desktoptheme" "$dest/integration"
 for theme in kubabbar-glass sparky-stereo-oxygen; do
-    cp -a "$repo/share/plasma/desktoptheme/$theme" "$dest/usr/share/plasma/desktoptheme/"
+    python3 "$COPY" "$repo/share/plasma/desktoptheme/$theme" "$dest/usr/share/plasma/desktoptheme/$theme"
 done
 cp "$repo/LICENSE" "$dest/usr/share/plasma/desktoptheme/kubabbar-glass/COPYING"
 cp "$repo/integration/README.md" "$repo/integration/oxygen-defaults.patch" "$dest/integration/"

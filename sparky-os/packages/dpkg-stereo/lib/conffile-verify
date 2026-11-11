@@ -1,0 +1,89 @@
+#!/usr/bin/python3 -IBS
+# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+# SPDX-License-Identifier: MIT
+"""Private dpkg verifier: pristine xz on stdin, installed bytes on an inherited fd.
+
+Arguments: PACKAGE PATH MD5_ORIGINAL SHA_ORIGINAL SHA_LEAN CURRENT_FD.
+The caller supplies its own Conffiles MD5, not the record's md5_orig.
+Exit 0 accepts; 10..15 refuse with a stable reason, also written to stderr.
+No root pathname, renderer, handler, interpreter or library path comes from the record.
+The native caller checks this executable's ownership and mode before executing it.
+"""
+
+import lzma
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+LIBRARY = Path('/usr/lib/dpkg-stereo')
+LIMIT = 4 << 20                 # dpkg-stereo's maximum projected text size
+EXITS = {'original-mismatch': 10, 'current-mismatch': 11, 'render-refused': 12,
+         'projection-mismatch': 13, 'verifier-untrusted': 14, 'invalid-request': 15}
+
+
+def refuse(reason, detail):
+    print(f'dpkg-stereo conffile verifier: {reason}: {detail}', file=sys.stderr)
+    return EXITS[reason]
+
+
+def trusted(path):
+    info = path.lstat()
+    return (info.st_uid == 0 and not info.st_mode & 0o022
+            and (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)))
+
+
+def library_trusted():
+    # Check importable caches too: -B prevents cache writes, not cache reads.
+    if not all(trusted(p) for p in (Path('/'), Path('/usr'), Path('/usr/lib'), LIBRARY)):
+        return False
+    tree = LIBRARY / 'lean'
+    return trusted(tree) and all(trusted(p) for p in tree.rglob('*'))
+
+
+def read_only(event, args):
+    if event == 'open':
+        _, mode, flags = args
+        if flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
+            raise PermissionError('the conffile verifier cannot write files')
+    if event in ('subprocess.Popen', 'os.system', 'os.exec', 'os.posix_spawn', 'pty.spawn',
+                 'os.remove', 'os.rename', 'os.rmdir', 'os.mkdir', 'os.link', 'os.symlink',
+                 'os.chmod', 'os.chown', 'os.truncate', 'os.utime', 'socket.__new__'):
+        raise PermissionError(f'the conffile verifier refuses {event}')
+
+
+def main():
+    if len(sys.argv) != 7:
+        return refuse('invalid-request', 'expected package, path, three digests and a file descriptor')
+    package, path, md5_original, sha_original, sha_lean, fd = sys.argv[1:]
+    if (not re.fullmatch(r'[a-z0-9][a-z0-9+.-]*(?::[a-z0-9][a-z0-9-]*)?', package)
+            or not path.startswith('/') or '\0' in path
+            or not re.fullmatch('[0-9a-f]{32}', md5_original)
+            or any(not re.fullmatch('[0-9a-f]{64}', h) for h in (sha_original, sha_lean))
+            or not fd.isascii() or not fd.isdecimal() or int(fd) < 3):
+        return refuse('invalid-request', 'invalid package, path, digest or file descriptor')
+    try:
+        if not library_trusted():
+            return refuse('verifier-untrusted', 'the installed renderer is not root-owned and protected')
+        for number in (0, int(fd)):
+            info = os.fstat(number)
+            if not stat.S_ISREG(info.st_mode):
+                return refuse('invalid-request', 'inputs must be regular file descriptors')
+        sys.addaudithook(read_only)
+        sys.path.insert(0, str(LIBRARY))
+        from lean.conffile import validate
+        with lzma.open(sys.stdin.buffer, 'rb') as stream:
+            original = stream.read(LIMIT + 1)
+        with os.fdopen(int(fd), 'rb', closefd=False) as stream:
+            current = stream.read(LIMIT + 1)
+        if len(original) > LIMIT or len(current) > LIMIT:
+            return refuse('render-refused', 'input exceeds the projection size limit')
+        reason, detail = validate(path, original, current, package, md5_original, sha_original, sha_lean)
+        return 0 if reason == 'ok' else refuse(reason, detail)
+    except (OSError, EOFError, lzma.LZMAError, ImportError, ValueError) as error:
+        return refuse('render-refused', f'{type(error).__name__}: {error}')
+
+
+if __name__ == '__main__':
+    sys.exit(main())

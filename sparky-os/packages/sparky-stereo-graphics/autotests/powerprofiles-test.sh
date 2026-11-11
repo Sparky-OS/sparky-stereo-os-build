@@ -28,10 +28,16 @@ export XDG_CONFIG_HOME=$T/c XDG_CONFIG_DIRS=$T/c XDG_DATA_HOME=$T/d XDG_DATA_DIR
 got=$(SPARKY_STEREO_GRAPHICS_ROOT=$T/host "$BIN/sparky-stereo-gpu-env" --category browsers --print gpu)
 [ "$got" = "NVIDIA GeForce RTX 3060 Lite Hash Rate" ] || { echo "FAIL cli profile from the daemon: $got"; exit 1; }
 echo "powerprofiles: cli follows the daemon's performance profile"
-# the daemon gone, on a bus that still runs, and no bus at all: Balanced, the page and the command keep working
+# the daemon gone, on a bus that still runs, and no bus at all: said, never Balanced in its place (ORDER 346a, U24);
+# browsers on Automatic follow the profile, so they cannot be placed, and say why (exit status 5, Automatic's: ORDER 346g); an
+# explicit profile is honoured
 kill $PPD; wait $PPD 2>/dev/null
-got=$(SPARKY_STEREO_GRAPHICS_ROOT=$T/host "$BIN/sparky-stereo-gpu-env" --category browsers --print gpu)
-[ "$got" = "AMD Radeon Vega Series / Radeon Vega Mobile Series" ] || { echo "FAIL cli without the daemon: $got"; exit 1; }
-got=$(DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/bus SPARKY_STEREO_GRAPHICS_ROOT=$T/host "$BIN/sparky-stereo-gpu-env" --category browsers --print gpu)
-[ "$got" = "AMD Radeon Vega Series / Radeon Vega Mobile Series" ] || { echo "FAIL cli without a bus: $got"; exit 1; }
-echo "powerprofiles: without the daemon or the bus the profile is Balanced"
+got=$(SPARKY_STEREO_GRAPHICS_ROOT=$T/host "$BIN/sparky-stereo-gpu-env" --category browsers --print gpu 2>"$T/err"); rc=$?
+[ "$rc" = 5 ] && [ -z "$got" ] && grep -q 'power-profiles-daemon is not running' "$T/err" || { echo "FAIL cli without the daemon: rc=$rc '$got' $(cat "$T/err")"; exit 1; }
+got=$(DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/bus SPARKY_STEREO_GRAPHICS_ROOT=$T/host "$BIN/sparky-stereo-gpu-env" --category browsers --print gpu 2>"$T/err"); rc=$?
+[ "$rc" = 5 ] && grep -q 'the system bus cannot be reached' "$T/err" || { echo "FAIL cli without a bus: rc=$rc '$got' $(cat "$T/err")"; exit 1; }
+got=$(DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/bus SPARKY_STEREO_GRAPHICS_ROOT=$T/host "$BIN/sparky-stereo-gpu-env" --category browsers --profile balanced --print gpu)
+[ "$got" = "AMD Radeon Vega Series / Radeon Vega Mobile Series" ] || { echo "FAIL an explicit profile without a bus: $got"; exit 1; }
+got=$(DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/bus SPARKY_STEREO_GRAPHICS_ROOT=$T/host "$BIN/sparky-stereo-gpu-env" --category other --print gpu)
+[ "$got" = "AMD Radeon Vega Series / Radeon Vega Mobile Series" ] || { echo "FAIL other programs need no profile: $got"; exit 1; }
+echo "powerprofiles: without the daemon or the bus the profile is said, not Balanced; an explicit profile is honoured"

@@ -18,10 +18,16 @@ sparky-stereo-skills link [NAME...]  link every skill into the folders of the as
 sparky-stereo-skills unlink [NAME...] remove only the links this tool made
 sparky-stereo-skills list            the skills and what each is for
 sparky-stereo-skills tools           the folder names: agents, claude, cline, gemini, opencode, copilot, cursor
+sparky-stereo-skills find a SPICE migration that loses the cache
+                                    the skills that best fit a task or symptom (by name, description and the skills index), offline, each with its path and the context command to run next
 sparky-stereo-skills context native-linux --output /tmp/native-linux-context.txt
                                     selected instructions, identity and file hashes, with a character budget
 sparky-stereo-skills context --help  section/reference selection and context limits
 sparky-stereo-skills bundle FILE.zip complete public reference tree for offline extraction
+sparky-stereo-skills sections SKILL  the exact headings of a skill, for context --section
+sparky-stereo-skills commands SKILL  the commands a user skill lists; run SKILL ID [SLOT=VALUE...] runs one, after your yes
+sparky-stereo-skills serve           the MCP server on stdio, started by an AI assistant (sparky-stereo-skills-engine)
+sparky-stereo-skills mcp register|unregister|status|commands   register the server with an assistant on your yes; choose who approves commands (auto, assistant, ask)
 sparky-stereo-skills export FILE.zip one archive for Open WebUI (Workspace, Skills, Import)
 sparky-stereo-skills --project DIR link   link into a project's .agents/skills and .claude/skills
 sparky-stereo-skills --gui           the same choice in a dialog (also in the menu: Development, AI assistant skills)
@@ -55,8 +61,8 @@ Test:
 -------------
 tests/helper.sh   (as an ordinary user, with the package installed, in a container)
 python3 /usr/share/sparky-stereo-os/tools/check-skills.py
-python3 /usr/share/sparky-stereo-os/tools/tests/test-skills-context.py
-The context and complete reference bundle require no model, account or network. Skill-import ZIPs may not carry references outside each skill folder; use bundle for the whole tree.
+tests/dpkg-tests.sh        (in a container, as root: install, upgrade, a second package's skill, a clashing path, the dialog)
+The find and context commands and the complete reference bundle require no model, account or network. Skill-import ZIPs may not carry references outside each skill folder; use bundle for the whole tree.
 
 Install:
 -------------

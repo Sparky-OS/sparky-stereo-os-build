@@ -1,4 +1,22 @@
 -------------------------------------------------------------------------------
+  Version 20261104.1~sparky9~0 (2026-11-04)
+-------------------------------------------------------------------------------
+  * stereo-display-info prints its text in the nine languages (en, pl, pt_BR, fr, de, ja, ko, zh_CN, zh_TW), from the edition's
+    lang/ files in /usr/share/sparky/sparky-stereo-info, found by LANGUAGE, then LC_ALL, LC_MESSAGES and LANG; a string a language
+    lacks is shown in English. What a program reads is not translated and not changed: --keys is byte for byte as before, and so
+    are the "@@ kind name" lines of --sections that the KInfoCenter page parses (ORDER 346f-3b; memory required-languages)
+  * the 346f-3 messages (a probe that could not run, timed out or failed) are in the nine languages too
+
+-------------------------------------------------------------------------------
+  Version 20261104~sparky9~0 (2026-11-04)
+-------------------------------------------------------------------------------
+  * stereo-display-info says when a probe could not be run, timed out or failed, apart from the real answer "not announced"
+    (ORDER 346f-3, U41): the compositor check (wayland-info or xprop: "could not be checked", with the tool and why), the live
+    display state (kscreen-doctor -o and -j), the OpenGL renderer (eglinfo) and the Vulkan device (vulkaninfo) of each card
+    are listed in the stack block as "not read" with the cause (not installed, no answer within N seconds, exit status and its
+    first error line); --keys output, which the KInfoCenter page parses, is unchanged
+
+-------------------------------------------------------------------------------
   Version 20261017~sparky9~0 (2026-10-17)
 -------------------------------------------------------------------------------
   * KInfoCenter's About page names the edition: /etc/xdg/kcm-about-distrorc, which Debian's desktop-base sets to

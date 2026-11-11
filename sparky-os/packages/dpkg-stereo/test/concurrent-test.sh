@@ -9,14 +9,39 @@
 #      projected but which is not upgraded
 #   C. verify tells "restored, not projected" (the package's own bytes) from "changed by the person";
 #      the next dpkg run and --project project such files again; a real edit is left alone
-#   D. (with OLD.deb) the state the A10 was left in, made by the old version, healed by installing this one
+#   D. (with OLD.deb, dpkg-stereo 0.1.4 or older: 0.1.5 fixed it) the state the A10 was left in, made by the old
+#      version, healed by installing this one
 #   E. the same as A with apt as the first run (apt keeps the frontend lock between its dpkg runs)
 #   F. PackageKit's own dpkg runs (packagekitd on the container's system bus): an install through it, and
 #      a second dpkg started while PackageKit's dpkg runs
 # Usage: concurrent-test.sh DPKG-STEREO.deb WORKDIR [OLD.deb]
+#   With OLD.deb the test starts on Debian's dpkg; NEEDS names the .deb files this version needs that OLD did not
+#   (the edition's dpkg and the problems engine, for 0.1.27 and later), and apt brings them with it in one run.
 set -u
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 DEB=$1 W=$2 OLD=${3:-}
 export DEBIAN_FRONTEND=noninteractive
+# case D starts from the state only the versions before 0.1.5 left (a dpkg stopped at the lock made them leave
+# conffiles in their package's bytes): with a later OLD there is nothing to heal, and the case could not fail
+if [ -n "$OLD" ]; then
+	old_version=$(dpkg-deb -f "$OLD" Version 2>/dev/null)
+	dpkg --compare-versions "${old_version:-0}" lt 0.1.5 || {
+		echo "case D needs OLD to be dpkg-stereo 0.1.4 or older, the versions that left conffiles behind; $(basename "$OLD") is ${old_version:-not a .deb}"
+		exit 2
+	}
+	# every lc1 package, the edition's dpkg and the problems engine among them, breaks dpkg-stereo before 0.1.6
+	# (lean/package.py), so the old version installs only beside Debian's dpkg, and the new one comes with them
+	dpkg-query -W -f '${Provides}' dpkg | grep -q dpkg-lean-code && {
+		echo "case D starts on Debian's dpkg: the edition's dpkg, like every lc1 package, breaks dpkg-stereo before 0.1.6"
+		exit 2
+	}
+	dpkg-deb -f "$DEB" Pre-Depends | grep -q dpkg-lean-code && [ -z "${NEEDS:-}" ] && {
+		echo "case D needs NEEDS: the edition's dpkg and the problems engine, which $(basename "$DEB") needs and OLD did not"
+		exit 2
+	}
+fi
 fail=0
 ok() { echo "PASS $*"; }
 bad() { echo "FAIL $*"; fail=1; }
@@ -93,7 +118,23 @@ if [ -n "$OLD" ]; then
 	echo "== D. the old version's state healed by installing this one"
 	n=$(grep -c '^CHANGED' "$W/verifyA.log")
 	[ "$n" -gt 0 ] && ok "the old version reproduces the A10: $n conffiles CHANGED" || bad "the old version did not reproduce it"
-	dpkg -i "$DEB" < /dev/null > "$W/upgrade.log" 2>&1 || bad "upgrade to the new version: $(tail -3 "$W/upgrade.log")"
+	if [ -n "${NEEDS:-}" ]; then
+		# as an upgrade from the old version goes: apt brings the new version and what it needs in one run, and orders
+		# the edition's dpkg (Essential, pre-depended on) first
+		mkdir -p "$W/up"
+		cp "$DEB" $NEEDS "$W/up/"
+		(cd "$W/up" && dpkg-scanpackages . /dev/null > Packages 2> /dev/null)
+		chmod -R a+rX "$W/up"
+		echo "deb [trusted=yes] file:$W/up ./" > /etc/apt/sources.list.d/lean-up.list
+		up="-o Dir::Etc::sourcelist=/etc/apt/sources.list.d/lean-up.list -o Dir::Etc::sourceparts=-"
+		apt-get update $up -o APT::Get::List-Cleanup=0 > "$W/up-update.log" 2>&1 || bad "apt-get update: $(tail -3 "$W/up-update.log")"
+		apt-get install -y -o Dpkg::Use-Pty=0 $up dpkg-stereo < /dev/null > "$W/upgrade.log" 2>&1 \
+			&& ok "upgraded with apt: $(grep -c '^Unpacking' "$W/upgrade.log") packages unpacked" || bad "upgrade to the new version: $(tail -3 "$W/upgrade.log")"
+		rm -f /etc/apt/sources.list.d/lean-up.list
+	else
+		dpkg -i "$DEB" < /dev/null > "$W/upgrade.log" 2>&1 || bad "upgrade to the new version: $(tail -3 "$W/upgrade.log")"
+	fi
+	[ "$(dpkg-query -W -f '${Version}' dpkg-stereo)" = "$(dpkg-deb -f "$DEB" Version)" ] && ok "dpkg-stereo is $(dpkg-query -W -f '${Version}' dpkg-stereo)" || bad "dpkg-stereo is $(dpkg-query -W -f '${Version}' dpkg-stereo)"
 	lean /etc/sysctl.d/90-keep.conf && lean /etc/xdg/keeprc && ok "keep's conffiles projected again by the upgrade's own run" || bad "still in their package's bytes after the upgrade"
 	dpkg-stereo --verify > "$W/verifyD.log" 2>&1 && ok "verify: $(tail -1 "$W/verifyD.log")" || bad "verify after the upgrade: $(tail -3 "$W/verifyD.log")"
 fi

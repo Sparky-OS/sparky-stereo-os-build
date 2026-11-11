@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/16
+# Last update 2026/11/01
 LOCAL1="AI アシスタント用スキル"
 LOCAL3="Sparky Stereo OS のスキルを AI アシスタントで使えるようにしますか？"
 LOCAL4="スキルは /usr/share/sparky-stereo-os/skills に置かれたままです。選んだフォルダーごとに、各スキルへのリンクを作成します。あなた自身のスキルはそのまま残ります。"
@@ -34,7 +34,21 @@ LOCAL22="%s / %s 個のスキルをリンク済み"
 LOCAL23="読み込むアシスタント"
 LOCAL24="AI アシスタント向けの Sparky Stereo OS のスキル"
 LOCAL25="人間の保守担当者とローカルモデル向け（アシスタントは不要）：
+  find [--limit N] テキスト   作業や症状に最も合うスキルをオフラインで探し、次に実行する context コマンドを表示します
   context [SKILL...] [--section SKILL:見出し] [--reference パス] [--output ファイル]
             選択した手順と元ファイルのハッシュを出力します。context --help でオプションを表示します
   bundle ファイル.zip   公開資料一式を通常の ZIP として展開し、オフラインで参照できます"
 LOCAL26="スキップしました。指定パッケージがどれもインストールされていません: %s"
+LOCAL27="スキルエンジンが見つかりません: %s（パッケージ sparky-stereo-skills-engine をインストールしてください）。"
+LOCAL28="これらのアシスタントにも MCP（Model Context Protocol）経由でスキルを参照させますか？"
+LOCAL29="スキルに記載されたコマンドを誰が承認するか"
+LOCAL30="自動: AI アシスタントを使っている場合はアシスタント自身の承認、使っていない場合は先に確認する"
+LOCAL31="常に先に確認する"
+LOCAL32="常にアシスタント自身の承認を使う"
+LOCAL33="アシスタントとコマンド向け（find と context には同じエンジンが答えます）：
+  sections SKILL   スキルの正確な見出し
+  commands SKILL   ユーザーのスキルに記載されたコマンド
+  run SKILL ID [SLOT=値...]   記載された 1 つのコマンドを、あなたが確認した後に実行します
+  serve   アシスタントが起動する、stdio 経由の MCP サーバー
+  mcp register [ASSISTANT...] | unregister [ASSISTANT...] | status | commands [auto|assistant|ask]
+            あなたが確認した後でサーバーをアシスタントに登録したり、登録を解除したり、状態を表示したり、コマンドを誰が承認するかを選んだりします"

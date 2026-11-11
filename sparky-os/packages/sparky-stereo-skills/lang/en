@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/16
+# Last update 2026/11/01
 LOCAL1="AI assistant skills"
 LOCAL3="Give your AI assistants the skills of Sparky Stereo OS?"
 LOCAL4="The skills stay in /usr/share/sparky-stereo-os/skills. Each folder you choose gets a link to every skill; your own skills are left as they are."
@@ -34,7 +34,21 @@ LOCAL22="%s of %s skills linked"
 LOCAL23="Read by"
 LOCAL24="Sparky Stereo OS skills for your AI assistants"
 LOCAL25="For human and local-model maintainers (no assistant required):
+  find [--limit N] TEXT   the skills that best fit a task or symptom, found offline, with the context command to run next
   context [SKILL...] [--section SKILL:HEADING] [--reference PATH] [--output FILE]
             selected instructions with source hashes; context --help lists options
   bundle FILE.zip   complete public reference tree for ordinary offline extraction"
 LOCAL26="Skipped, none of its packages are installed: %s"
+LOCAL27="The skills engine is missing: %s (install the package sparky-stereo-skills-engine)."
+LOCAL28="Also let these assistants look up the skills through MCP (Model Context Protocol)?"
+LOCAL29="Who approves the commands that a skill lists"
+LOCAL30="Automatic: the assistant's own approval if you use an AI assistant, otherwise ask me first"
+LOCAL31="Always ask me first"
+LOCAL32="Always use the assistant's own approval"
+LOCAL33="For assistants and for commands (the same engine answers find and context):
+  sections SKILL   the exact headings of a skill
+  commands SKILL   the commands a user skill lists
+  run SKILL ID [SLOT=VALUE...]   run one listed command, after you confirm
+  serve   the MCP server over stdio, started by an assistant
+  mcp register [ASSISTANT...] | unregister [ASSISTANT...] | status | commands [auto|assistant|ask]
+            register the server with an assistant after you confirm, remove it, see the state, or choose who approves commands"

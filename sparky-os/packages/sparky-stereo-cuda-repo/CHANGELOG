@@ -1,0 +1,29 @@
+-------------------------------------------------------------------------------
+  Version 20261104~sparky9~0 (2026-11-04)
+-------------------------------------------------------------------------------
+  * Accept either NVIDIA driver lock so both driver stacks can use CUDA sources
+
+-------------------------------------------------------------------------------
+  Version 20261101.2~sparky9~0 (2026-11-01)
+-------------------------------------------------------------------------------
+  * A source of the person's own for NVIDIA's repository is kept untouched, and the package then writes none of its own: two sources for one URI with different Signed-By stop apt ("Conflicting values set for option Signed-By"), as on Daniel's host. The pins still apply, since they go by origin. The postinst says which it did. So the source is no longer a conffile: the postinst writes it from /usr/share/sparky-stereo-cuda-repo only when no other source names the repository, and the postrm removes it (ORDER 342, Opus's review)
+  * The byte-identical takeover of the image's hand-written source and pin stays as it was
+  * The install says when a pin file of the person's own (one no package ships) pins NVIDIA's origin, and whether it decides: apt takes the first specific record that matches (apt_preferences(5)) and, for Package: * records of one origin, apt 3.3.3 also takes the first file in name order, not the highest (measured), so a file sorting after 91sparky-stereo-cuda, such as the host's cuda-repository at 1002, no longer decides where both pin a package
+  * The install says when it replaces cuda-keyring's key file that held another key (Debian 12's cuda-keyring holds 3BF863CC)
+  * NVIDIA's cuda-keyring is no longer removed: this package takes over its key file (the same bytes, Replaces) and keeps its source as the person's own (before: Conflicts)
+  * Supersedes 20261101.1~sparky9~0, which was not published; its changes are in this version
+
+-------------------------------------------------------------------------------
+  Version 20261101.1~sparky9~0 (2026-11-01)
+-------------------------------------------------------------------------------
+  * README: the edition now ships its own dkms (3.4.4-1+sparky1, at 1001 from its repository, with the overlay sparky-stereo-dkms-compat needs), so choosing NVIDIA's dkms takes a record at 1002, not 990; the pins are unchanged (ORDER 342)
+  * Supersedes 20261101~sparky9~0 (ORDER 338), which was not published; its changes are in this version
+
+-------------------------------------------------------------------------------
+  Version 20261101~sparky9~0 (2026-11-01)
+-------------------------------------------------------------------------------
+  * First version: NVIDIA's CUDA repository (Debian 13, amd64, flat), its key and its pins in one package, so the image, the hardware setup, the publication's link gate and check-installable all read the same files. Before, the image (iso-build/apt-setup.sh) and the hardware setup (sparky-stereo-hardware's setup_nvidia) wrote them by hand, and the gate and the checker never saw the pin (ORDER 338, ORDER 329's finding)
+  * The pin is narrowed to compute: CUDA by NVIDIA's own patterns (CUDA Installation Guide for Linux 13.4) and the CUDA-X libraries and GPUDirect Storage at 1002, NVIDIA's EGL platform libraries at 1002 (NVIDIA's driver at the locked version needs their NVIDIA versions), and the rest of the repository at 100. Before, every package of the repository stood at 1002 (Package: *), so NVIDIA's rebuilds of Debian's own tools won on every install: dkms 3.4.x over Debian's 3.2.2-1
+  * NVIDIA's driver stays with sparky-stereo-nvidia-driver-lock, unchanged; the package depends on it, so the repository never comes without the lock
+  * NVIDIA's key at NVIDIA's own path, /usr/share/keyrings/cuda-archive-keyring.gpg, byte for byte the file of NVIDIA's cuda-keyring 1.1-1, which this package conflicts with and replaces: a source left by cuda-keyring names the same key and apt accepts both, while two sources with different Signed-By stop apt
+  * The first install takes over the source and the pin the image and the hardware setup wrote, when nobody changed them (preinst), and removes their copy of the key from /etc/apt/keyrings when no source names it any more (postinst)

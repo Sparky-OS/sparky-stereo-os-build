@@ -11,6 +11,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'config'))
 import local_config as cfg
 from build_slots import start_build
+from provenance_args import provenance_args
 
 notes = cfg.path('SPARKY_RUN_RECORD')
 base = cfg.path('SPARKY_MIGRATION_WORK')
@@ -48,6 +49,7 @@ printf 'deb [trusted=yes] file:/repo ./\\n' > /etc/apt/sources.list.d/edition.li
 printf 'Package: *\\nPin: release o=Sparky Stereo OS\\nPin-Priority: 1001\\n' > /etc/apt/preferences.d/edition
 cd /work
 dpkg-source -x "$TASK_DSC" source
+sh /run/https-only-apt.sh
 apt-get -y update
 apt-get -y --no-install-recommends build-dep /work/source
 useradd --create-home --uid 1000 builder
@@ -86,10 +88,12 @@ status = {'source': name, 'version': version, 'architecture': 'amd64',
           'source_descriptor_sha256': hashlib.sha256(descriptor.read_bytes()).hexdigest()}
 (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
 container = 'sparky-lc-' + name + '-amd64'
-command = ['docker', 'run', '--rm', '--platform', 'linux/amd64', '--name', container, '--cpus', '4',
+command = ['docker', 'run', '--rm', *provenance_args('sparky-lc-migration:20261020'), '--platform', 'linux/amd64', '--name', container, '--cpus', '4',
            '-e', 'TASK_DSC=' + descriptor.name, '-v', str(work) + ':/work',
            '-e', 'TASK_KIND=' + ('signed-upstream-release' if vendor_release else 'native'),
            '-v', str(cfg.path('SPARKY_REPO_DIR')) + ':/repo:ro', '-v', str(kit) + ':/toolkit:ro',
+           '-v', '/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro',
+           '-v', str(Path(__file__).resolve().parents[2] / 'tools' / 'https-only-apt.sh') + ':/run/https-only-apt.sh:ro',
            'sparky-lc-migration:20261020', 'bash', '/work/run.sh']
 started, stopped = time.time(), False
 with (work / 'build.log').open('w') as log:

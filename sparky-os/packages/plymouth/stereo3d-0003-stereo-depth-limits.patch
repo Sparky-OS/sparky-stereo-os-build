@@ -1,0 +1,328 @@
+From e56977d3886361b0df003ee56afc633dfff64da1 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 10 Nov 2026 00:10:55 -0300
+Subject: [PATCH 3/3] renderers/drm: Give a stereo theme the depth limits of its
+ output
+
+plymouth.stereo= entries take popped=PIXELS and sunk=PIXELS: how far in front
+of the screen and behind it the splash may put things on that output, pixels of
+an eye 1920 wide, the unit of the desktop's own limits (Stereo KWin's
+PoppedLimit and SunkLimit built on the display). The script plugin gets
+Window.GetStereoPoppedLimit () and Window.GetStereoSunkLimit (), so a theme
+places its levels inside them. An entry without them gets the desktop's
+defaults, 4 and 10, and the renderer says once per output which one is
+missing; a value that is no limit (not a number, negative, over 1000) is said
+and the default stands.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ src/libply-splash-core/ply-pixel-display.c    | 10 +++
+ src/libply-splash-core/ply-pixel-display.h    |  3 +
+ src/libply-splash-core/ply-renderer-plugin.h  |  4 ++
+ src/libply-splash-core/ply-renderer.c         | 24 +++++++
+ src/libply-splash-core/ply-renderer.h         |  4 ++
+ src/plugins/renderers/drm/plugin.c            | 69 +++++++++++++++++++
+ src/plugins/splash/script/script-lib-sprite.c | 66 ++++++++++++++++++
+ 7 files changed, 180 insertions(+)
+
+diff --git a/src/libply-splash-core/ply-pixel-display.c b/src/libply-splash-core/ply-pixel-display.c
+index 6e6b8eb..416a0ca 100644
+--- a/src/libply-splash-core/ply-pixel-display.c
++++ b/src/libply-splash-core/ply-pixel-display.c
+@@ -142,6 +142,16 @@ ply_pixel_display_get_stereo_input (ply_pixel_display_t *display)
+         return display->stereo_input;
+ }
+ 
++/* How far the theme may pop and sink on this display, pixels of an eye 1920 wide: the person's limits
++ * when plymouth.stereo= carries them, the display's default otherwise (false) */
++bool
++ply_pixel_display_get_stereo_depth_limits (ply_pixel_display_t *display,
++                                           double              *popped_px,
++                                           double              *sunk_px)
++{
++        return ply_renderer_get_head_stereo_depth_limits (display->renderer, display->head, popped_px, sunk_px);
++}
++
+ static void
+ ply_pixel_display_flush (ply_pixel_display_t *display)
+ {
+diff --git a/src/libply-splash-core/ply-pixel-display.h b/src/libply-splash-core/ply-pixel-display.h
+index 0b20f43..d5bcdaf 100644
+--- a/src/libply-splash-core/ply-pixel-display.h
++++ b/src/libply-splash-core/ply-pixel-display.h
+@@ -55,6 +55,9 @@ int ply_pixel_display_get_device_scale (ply_pixel_display_t *display);
+ bool ply_pixel_display_set_stereo_input (ply_pixel_display_t *display,
+                                          bool                 stereo_input);
+ bool ply_pixel_display_get_stereo_input (ply_pixel_display_t *display);
++bool ply_pixel_display_get_stereo_depth_limits (ply_pixel_display_t *display,
++                                                double              *popped_px,
++                                                double              *sunk_px);
+ 
+ void ply_pixel_display_set_draw_handler (ply_pixel_display_t             *display,
+                                          ply_pixel_display_draw_handler_t draw_handler,
+diff --git a/src/libply-splash-core/ply-renderer-plugin.h b/src/libply-splash-core/ply-renderer-plugin.h
+index dbcfdb2..78937c4 100644
+--- a/src/libply-splash-core/ply-renderer-plugin.h
++++ b/src/libply-splash-core/ply-renderer-plugin.h
+@@ -87,6 +87,10 @@ typedef struct
+         bool (*set_head_stereo_input)(ply_renderer_backend_t *backend,
+                                       ply_renderer_head_t    *head,
+                                       bool                    stereo_input);
++        bool (*get_head_stereo_depth_limits)(ply_renderer_backend_t *backend,
++                                             ply_renderer_head_t    *head,
++                                             double                 *popped_px,
++                                             double                 *sunk_px);
+ } ply_renderer_plugin_interface_t;
+ 
+ #endif /* PLY_RENDERER_PLUGIN_H */
+diff --git a/src/libply-splash-core/ply-renderer.c b/src/libply-splash-core/ply-renderer.c
+index 5952284..8497335 100644
+--- a/src/libply-splash-core/ply-renderer.c
++++ b/src/libply-splash-core/ply-renderer.c
+@@ -384,6 +384,30 @@ ply_renderer_set_head_stereo_input (ply_renderer_t      *renderer,
+                                                                   stereo_input);
+ }
+ 
++/* The depth limits the person set for this output, pixels of an eye 1920 wide (the unit of the
++ * desktop's own limits); false when the display's default stands in for them */
++bool
++ply_renderer_get_head_stereo_depth_limits (ply_renderer_t      *renderer,
++                                           ply_renderer_head_t *head,
++                                           double              *popped_px,
++                                           double              *sunk_px)
++{
++        assert (renderer != NULL);
++        assert (renderer->plugin_interface != NULL);
++        assert (head != NULL);
++
++        if (renderer->plugin_interface->get_head_stereo_depth_limits == NULL) {
++                *popped_px = 4.0;
++                *sunk_px = 10.0;
++                return false;
++        }
++
++        return renderer->plugin_interface->get_head_stereo_depth_limits (renderer->backend,
++                                                                         head,
++                                                                         popped_px,
++                                                                         sunk_px);
++}
++
+ void
+ ply_renderer_flush_head (ply_renderer_t      *renderer,
+                          ply_renderer_head_t *head)
+diff --git a/src/libply-splash-core/ply-renderer.h b/src/libply-splash-core/ply-renderer.h
+index cf83db9..e9d1c9a 100644
+--- a/src/libply-splash-core/ply-renderer.h
++++ b/src/libply-splash-core/ply-renderer.h
+@@ -73,6 +73,10 @@ ply_pixel_buffer_t *ply_renderer_get_buffer_for_head (ply_renderer_t      *rende
+ bool ply_renderer_set_head_stereo_input (ply_renderer_t      *renderer,
+                                          ply_renderer_head_t *head,
+                                          bool                 stereo_input);
++bool ply_renderer_get_head_stereo_depth_limits (ply_renderer_t      *renderer,
++                                                ply_renderer_head_t *head,
++                                                double              *popped_px,
++                                                double              *sunk_px);
+ void ply_renderer_flush_head (ply_renderer_t      *renderer,
+                               ply_renderer_head_t *head);
+ 
+diff --git a/src/plugins/renderers/drm/plugin.c b/src/plugins/renderers/drm/plugin.c
+index 90beeee..f34b583 100644
+--- a/src/plugins/renderers/drm/plugin.c
++++ b/src/plugins/renderers/drm/plugin.c
+@@ -141,8 +141,18 @@ typedef struct
+         ply_stereo_reflection_t reflection;
+         int                     iz3d_formula;
+         bool                    iz3d_linear;
++        bool                    has_popped;
++        bool                    has_sunk;
++        double                  popped_px;      /* popped=, sunk=: the person's depth limits on this screen, pixels of an eye 1920 wide */
++        double                  sunk_px;
+ } ply_stereo_output_t;
+ 
++/* The display's default depth when plymouth.stereo= carries no limits: the desktop's own defaults (kwin.kcfg
++ * PoppedLimit and SunkLimit, the depth libstereo-policy gives its reference monitor), pixels of an eye 1920 wide */
++#define PLY_STEREO_DEFAULT_POPPED_PX 4.0
++#define PLY_STEREO_DEFAULT_SUNK_PX 10.0
++#define PLY_STEREO_MAX_DEPTH_PX 1000.0
++
+ struct _ply_renderer_head
+ {
+         ply_renderer_backend_t *backend;
+@@ -154,6 +164,7 @@ struct _ply_renderer_head
+         ply_stereo_layout_t     stereo_layout;
+         const ply_stereo_output_t *stereo;
+         bool                    stereo_input;
++        bool                    depth_default_said;
+         unsigned long           eye_width;
+         unsigned long           eye_height;
+         unsigned long           eye_stride_lines;
+@@ -340,6 +351,21 @@ parse_stereo_outputs (ply_renderer_backend_t *backend)
+                         } else if (sscanf (field, "formula=%d", &output.iz3d_formula) == 1) {
+                                 if (output.iz3d_formula < 0 || output.iz3d_formula > 5)
+                                         output.iz3d_formula = 0;
++                        } else if (strncmp (field, "popped=", 7) == 0 || strncmp (field, "sunk=", 5) == 0) {
++                                bool popped = field[0] == 'p';
++                                char *end = NULL;
++                                double limit = strtod (field + (popped ? 7 : 5), &end);
++
++                                if (end == field + (popped ? 7 : 5) || *end != '\0' || !(limit >= 0.0 && limit <= PLY_STEREO_MAX_DEPTH_PX)) {
++                                        ply_error ("'%s' for %s is no depth limit (0 to %.0f pixels), the display's default is used",
++                                                   field, output.connector_name, PLY_STEREO_MAX_DEPTH_PX);
++                                } else if (popped) {
++                                        output.popped_px = limit;
++                                        output.has_popped = true;
++                                } else {
++                                        output.sunk_px = limit;
++                                        output.has_sunk = true;
++                                }
+                         } else if (strcmp (field, "encoded") == 0) {
+                                 output.iz3d_linear = false;
+                         } else if (strncmp (field, "card=", 5) == 0) {
+@@ -352,6 +378,9 @@ parse_stereo_outputs (ply_renderer_backend_t *backend)
+ 
+                 ply_trace ("Stereo output %s: %s%s", output.connector_name,
+                            stereo_layout_name (output.layout), output.swap_eyes ? ", eyes swapped" : "");
++                if (output.has_popped || output.has_sunk)
++                        ply_trace ("Stereo output %s: depth limits popped %s sunk %s", output.connector_name,
++                                   output.has_popped ? "given" : "default", output.has_sunk ? "given" : "default");
+ 
+                 backend->stereo_outputs = realloc (backend->stereo_outputs,
+                                                    (backend->stereo_outputs_len + 1) * sizeof(ply_stereo_output_t));
+@@ -1559,6 +1588,45 @@ set_head_stereo_input (ply_renderer_backend_t *backend,
+         return true;
+ }
+ 
++/* The depth limits of a stereo head, pixels of an eye 1920 wide: what plymouth.stereo= carries for its output
++ * (popped=, sunk=: the person's limits, built on the display), the display's default for what it does not.
++ * Returns false when the default stands in, and says so once per head. */
++static bool
++get_head_stereo_depth_limits (ply_renderer_backend_t *backend,
++                              ply_renderer_head_t    *head,
++                              double                 *popped_px,
++                              double                 *sunk_px)
++{
++        bool given;
++
++        *popped_px = PLY_STEREO_DEFAULT_POPPED_PX;
++        *sunk_px = PLY_STEREO_DEFAULT_SUNK_PX;
++
++        if (head->backend != backend || head->stereo == NULL)
++                return false;
++
++        if (head->stereo->has_popped)
++                *popped_px = head->stereo->popped_px;
++        if (head->stereo->has_sunk)
++                *sunk_px = head->stereo->sunk_px;
++
++        given = head->stereo->has_popped && head->stereo->has_sunk;
++        if (!given && !head->depth_default_said) {
++                head->depth_default_said = true;
++                if (!head->stereo->has_popped && !head->stereo->has_sunk)
++                        ply_error ("no depth limits for %s in plymouth.stereo=, the display's default is used: popped %g px, sunk %g px",
++                                   head->stereo->connector_name, *popped_px, *sunk_px);
++                else if (!head->stereo->has_popped)
++                        ply_error ("no popped= for %s in plymouth.stereo=, the display's default is used: popped %g px",
++                                   head->stereo->connector_name, *popped_px);
++                else
++                        ply_error ("no sunk= for %s in plymouth.stereo=, the display's default is used: sunk %g px",
++                                   head->stereo->connector_name, *sunk_px);
++        }
++
++        return given;
++}
++
+ static void
+ ply_renderer_head_remove (ply_renderer_backend_t *backend,
+                           ply_renderer_head_t    *head)
+@@ -2968,6 +3036,7 @@ ply_renderer_backend_get_interface (void)
+                 .add_input_device             = add_input_device,
+                 .remove_input_device          = remove_input_device,
+                 .set_head_stereo_input        = set_head_stereo_input,
++                .get_head_stereo_depth_limits = get_head_stereo_depth_limits,
+         };
+ 
+         return &plugin_interface;
+diff --git a/src/plugins/splash/script/script-lib-sprite.c b/src/plugins/splash/script/script-lib-sprite.c
+index f1857b7..9a20e64 100644
+--- a/src/plugins/splash/script/script-lib-sprite.c
++++ b/src/plugins/splash/script/script-lib-sprite.c
+@@ -261,6 +261,60 @@ static script_return_t sprite_window_get_stereo (script_state_t *state,
+         return script_return_obj (script_obj_new_number (ply_list_get_length (data->displays) > 0));
+ }
+ 
++/* How far the theme may pop (popped is non-zero) or sink, pixels of an eye 1920 wide: the person's depth
++ * limits on that output (plymouth.stereo= popped=, sunk=), the display's default where it names none. On
++ * all windows the smallest, so that no window is given more than its limit. */
++static script_return_t sprite_window_get_stereo_limit (script_state_t *state,
++                                                       void           *user_data,
++                                                       bool            popped)
++{
++        script_lib_sprite_data_t *data = user_data;
++        ply_list_node_t *node;
++        int index;
++        script_obj_t *index_obj;
++        script_lib_display_t *display;
++        double popped_px, sunk_px, limit = -1.0;
++
++        index_obj = script_obj_hash_peek_element (state->local, "window");
++
++        if (index_obj) {
++                index = script_obj_as_number (index_obj);
++                script_obj_unref (index_obj);
++                if (index < 0)
++                        return script_return_obj_null ();
++                node = ply_list_get_nth_node (data->displays, index);
++                if (node == NULL)
++                        return script_return_obj_null ();
++                display = ply_list_node_get_data (node);
++                ply_pixel_display_get_stereo_depth_limits (display->pixel_display, &popped_px, &sunk_px);
++                return script_return_obj (script_obj_new_number (popped ? popped_px : sunk_px));
++        }
++
++        for (node = ply_list_get_first_node (data->displays); node; node = ply_list_get_next_node (data->displays, node)) {
++                display = ply_list_node_get_data (node);
++                ply_pixel_display_get_stereo_depth_limits (display->pixel_display, &popped_px, &sunk_px);
++                if (limit < 0.0 || (popped ? popped_px : sunk_px) < limit)
++                        limit = popped ? popped_px : sunk_px;
++        }
++
++        if (limit < 0.0)
++                return script_return_obj_null ();
++
++        return script_return_obj (script_obj_new_number (limit));
++}
++
++static script_return_t sprite_window_get_stereo_popped_limit (script_state_t *state,
++                                                              void           *user_data)
++{
++        return sprite_window_get_stereo_limit (state, user_data, true);
++}
++
++static script_return_t sprite_window_get_stereo_sunk_limit (script_state_t *state,
++                                                            void           *user_data)
++{
++        return sprite_window_get_stereo_limit (state, user_data, false);
++}
++
+ static script_return_t sprite_window_get_height (script_state_t *state,
+                                                  void           *user_data)
+ {
+@@ -713,6 +767,18 @@ script_lib_sprite_data_t *script_lib_sprite_setup (script_state_t *state,
+                                     data,
+                                     "window",
+                                     NULL);
++        script_add_native_function (window_hash,
++                                    "GetStereoPoppedLimit",
++                                    sprite_window_get_stereo_popped_limit,
++                                    data,
++                                    "window",
++                                    NULL);
++        script_add_native_function (window_hash,
++                                    "GetStereoSunkLimit",
++                                    sprite_window_get_stereo_sunk_limit,
++                                    data,
++                                    "window",
++                                    NULL);
+         script_add_native_function (window_hash,
+                                     "GetX",
+                                     sprite_window_get_x,

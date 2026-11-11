@@ -1,0 +1,72 @@
+From ef923c2a0721bf313bd60f715f296aaab293ddbf Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 7 Nov 2026 19:19:13 -0300
+Subject: [PATCH] xdgshellwindow: A configure that changes only states
+ keeps the client's size
+
+sendRoleConfigure() fills every configure with the move-resize geometry. When
+a window resizes itself while a configure that only changes its states is
+scheduled (activation again after a popup closed), maybeUpdateMoveResizeGeometry()
+ignored the committed size, so the configure carried the old one, the client
+acknowledged it and lost its resize. Only a configure that asks for a size now
+holds the committed geometry back. moveResizeInternal() records the request in
+m_configureRequestsSize (maximize, fullscreen, tiling, interactive resize and
+any other resize by KWin); sendConfigure() clears it. ConfigurePosition does
+not stand for it: a move after the request clears that flag but the size
+request stands.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ src/xdgshellwindow.cpp | 9 +++++++--
+ src/xdgshellwindow.h   | 1 +
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/src/xdgshellwindow.cpp b/src/xdgshellwindow.cpp
+index 36932fffb3..f8b7ddf7aa 100644
+--- a/src/xdgshellwindow.cpp
++++ b/src/xdgshellwindow.cpp
+@@ -126,6 +126,7 @@ void XdgSurfaceWindow::sendConfigure()
+     configureEvent->flags |= m_configureFlags;
+     configureEvent->scale = m_nextTargetScale;
+     m_configureFlags = {};
++    m_configureRequestsSize = false;
+     if (!isInteractiveMoveResize()) {
+         m_nextGravity = Gravity::None;
+     }
+@@ -181,8 +182,11 @@ void XdgSurfaceWindow::handleRoleCommit()
+ 
+ void XdgSurfaceWindow::maybeUpdateMoveResizeGeometry(const RectF &rect)
+ {
+-    // We are about to send a configure event, ignore the committed window geometry.
+-    if (m_configureTimer->isActive()) {
++    // We are about to send a configure event that asks for a size, ignore the committed window geometry.
++    // A configure that only changes states (a window activated again after its popup closed, say) asks for
++    // none: the client's own size stays the size, or the configure would send it back to the old one.
++    // A move after the request clears ConfigurePosition but leaves the request standing.
++    if (m_configureTimer->isActive() && m_configureRequestsSize) {
+         return;
+     }
+ 
+@@ -277,6 +281,7 @@ void XdgSurfaceWindow::moveResizeInternal(const RectF &rect, MoveResizeMode mode
+             updateGeometry(m_nextGravity.apply(snappedRect, rect));
+         } else {
+             m_configureFlags |= XdgSurfaceConfigure::ConfigurePosition;
++            m_configureRequestsSize = true;
+             scheduleConfigure();
+         }
+     } else {
+diff --git a/src/xdgshellwindow.h b/src/xdgshellwindow.h
+index 0121508fbc..4ff8de8f6a 100644
+--- a/src/xdgshellwindow.h
++++ b/src/xdgshellwindow.h
+@@ -101,6 +101,7 @@ private:
+     XdgSurfaceInterface *m_shellSurface;
+     QTimer *m_configureTimer;
+     XdgSurfaceConfigure::ConfigureFlags m_configureFlags;
++    bool m_configureRequestsSize = false;
+     QQueue<XdgSurfaceConfigure *> m_configureEvents;
+     std::unique_ptr<XdgSurfaceConfigure> m_lastAcknowledgedConfigure;
+     std::optional<quint32> m_lastAcknowledgedConfigureSerial;
+-- 
+2.53.0
+

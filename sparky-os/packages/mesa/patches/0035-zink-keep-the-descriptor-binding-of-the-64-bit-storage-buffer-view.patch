@@ -1,0 +1,42 @@
+Description: zink keeps the descriptor binding of a storage buffer's 64-bit, 16-bit and 8-bit views
+ get_bo_var() makes the 64-bit (16-bit, 8-bit) view of a shader's storage
+ buffers by cloning the 32-bit variable that unbreak_bos() made, then set its
+ driver_location to 0. unbreak_bos() had given the 32-bit variable first_ssbo
+ (first_ubo for uniform buffers), the lowest buffer the shader uses, and the
+ accesses of every view are numbered from first_ssbo. When the shader does not
+ use its buffer 0 the 32-bit view began at binding first_ssbo and the 64-bit
+ view at binding 0, so a 64-bit atomic or store reached the buffer one place
+ below the one the program had bound, and nothing arrived in the right one.
+ No error was raised: the descriptor it reached was valid.
+ .
+ It showed on the RTX 3060 (615.71.09) as a point cloud that loaded and drew
+ nothing: its rasterise shader declares ssRGBA, the highest binding, without
+ reading it, and zink numbers the blocks from the last binding down, so the
+ first buffer used was index 1. The same shader draws on radeonsi, which has
+ no such split. The clone now keeps the driver_location it was cloned with.
+ .
+ Tested by tests/egl-surfaceless-ssbo64.c: red before (four 64-bit atomicMin
+ results left at ~0ull), green after, on zink over NVIDIA's Vulkan driver.
+ Mesa main (zink_compiler.c, 2026-11-09) has the same line; no issue or merge
+ request on gitlab.freedesktop.org/mesa/mesa names it (searched 2026-11-09).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-09
+Assisted-by: Claude Sonnet via Claude Code
+---
+--- a/src/gallium/drivers/zink/zink_compiler.c
++++ b/src/gallium/drivers/zink/zink_compiler.c
+@@ -2288,7 +2288,12 @@
+       fields[0].type = type;
+       fields[1].type = unsized;
+       var->type = glsl_array_type(glsl_struct_type(fields, glsl_get_length(bare_type), "struct", false), array_size, 0);
+-      var->data.driver_location = idx;
++      /* the clone keeps the driver_location of the 32-bit variable it was made from: unbreak_bos() gave that one
++       * first_ssbo or first_ubo, the first buffer the shader reads or writes, and the descriptor binding of the
++       * variable and the buffer index of its array start there. A 0 here moved the whole 64-bit, 16-bit or 8-bit
++       * view of the buffers to the binding of buffer 0 while the accesses were numbered from first_ssbo, so they
++       * reached the wrong buffer whenever the shader did not use its first buffer.
++       */
+    }
+    return var;
+ }

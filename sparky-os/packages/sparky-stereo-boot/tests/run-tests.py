@@ -3,7 +3,7 @@
 # KWin's saved settings in, the files the boot reads out, compared with what each case must give.
 # Run as root in a container with grub-common (grub-editenv), python3:
 #   run-tests.py PATH/TO/sparky-stereo-boot
-import json, os, pwd, shutil, subprocess, sys, tempfile
+import json, os, pwd, re, shutil, subprocess, sys, tempfile
 
 TOOL = os.path.abspath(sys.argv[1])
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -32,8 +32,28 @@ def setup(*entries):
                                             for i, p, e in entries]}
 
 
+def predicted_depth(kind, mm, saved_sunk=10.0, saved_popped=4.0):
+    """libstereo-policy.h's rule, written out here from its comment and not read from the library: the viewing distance
+    0.6 m up to a diagonal of 0.5 m and 1.8 m more per metre of diagonal (a headset: 0.7 m); the scale is the distance
+    over the reference monitor's, times the reference width over the width; the kinds 1.0, 0.7 (anaglyph), 2.5
+    (headset). The person's limits times the display's factor over the reference's 10 and 4 (KWin, StereoDepth)."""
+    import math
+    def distance(diag):
+        return round(600 + (diag - 500) * 1.8) if diag > 500 else 600
+    if not mm[0] or not mm[1]:
+        factor = 1.0
+    else:
+        d = 700 if kind == 2 else distance(math.hypot(*mm))
+        factor = (d / distance(math.hypot(531, 299))) * (531 / mm[0]) * (1.0, 0.7, 2.5)[kind]
+    return round(saved_popped * factor, 2), round(saved_sunk * factor, 2)
+
+
+def num(v):
+    return ('%.2f' % v).rstrip('0').rstrip('.')
+
+
 def run_case(name, screens, data, options='', expect_kernel=None, expect_gfxmode=None, expect_main_layout=None,
-             expect_greeters=None, expect_sddm=None, sddm_dm=False):
+             expect_greeters=None, expect_sddm=None, sddm_dm=False, kwinrc=None, xdg=None, expect_depth=None, expect_record=None):
     root = tempfile.mkdtemp(prefix='ssb-')
     try:
         for card, connector, edid in screens:
@@ -58,7 +78,15 @@ def run_case(name, screens, data, options='', expect_kernel=None, expect_gfxmode
         cfg = os.path.join(root, 'input.json')
         open(cfg, 'wb').write(data)
         env = dict(os.environ, SPARKY_STEREO_ROOT=root, SPARKY_STEREO_NO_UPDATE_GRUB='1')
-        p = subprocess.run([TOOL, 'export-file', cfg, 'tester'], env=env, capture_output=True, text=True)
+        args = [TOOL, 'export-file', cfg, 'tester']
+        if kwinrc is not None:
+            open(os.path.join(root, 'kwinrc'), 'w').write(kwinrc)
+        # the person's kwinrc is a file of the case; without one it is a file that is not there (nothing saved)
+        args.append(os.path.join(root, 'kwinrc'))
+        if xdg is not None:
+            os.makedirs(os.path.join(root, 'etc/xdg'))
+            open(os.path.join(root, 'etc/xdg/kwinrc'), 'w').write(xdg)
+        p = subprocess.run(args, env=env, capture_output=True, text=True)
         if p.returncode != 0:
             report(name, False, 'exit %d: %s' % (p.returncode, p.stderr.strip()[-300:]))
             return
@@ -68,7 +96,16 @@ def run_case(name, screens, data, options='', expect_kernel=None, expect_gfxmode
         grub_vars = open(os.path.join(root, 'var/lib/sparky-stereo-boot/grub.cfg')).read()
         problems = []
         kernel = ' '.join(record['kernelArguments'])
-        if expect_kernel is not None and kernel != expect_kernel:
+        # every stereo output carries the limits of the main screen; the layout cases compare what is before them
+        entries = [e for a in record['kernelArguments'] if a.startswith('plymouth.stereo=') for e in a[16:].split(',')]
+        if not all(re.search(r':popped=[0-9.]+:sunk=[0-9.]+(:card=card[0-9]+)?$', e) for e in entries):
+            problems.append('an entry has no popped= and sunk= at its end: %r' % entries)
+        kernel_layout = re.sub(r':popped=[0-9.]+:sunk=[0-9.]+', '', kernel)
+        if expect_depth is not None:
+            got = ':'.join('%s=%s' % (k, v) for k, v in (f.split('=') for f in entries[0].split(':') if f.startswith(('popped=', 'sunk='))))
+            if got != expect_depth:
+                problems.append('depth %r, expected %r' % (got, expect_depth))
+        if expect_kernel is not None and kernel_layout != expect_kernel:
             problems.append('kernel %r, expected %r' % (kernel, expect_kernel))
         env_value = next((l.split('=', 1)[1] for l in env_list.splitlines() if l.startswith('sparky_stereo_boot=')), '')
         if env_value != kernel:
@@ -89,6 +126,9 @@ def run_case(name, screens, data, options='', expect_kernel=None, expect_gfxmode
                     problems.append('%s copy differs from the input' % account)
         if expect_sddm is not None and os.path.exists(os.path.join(root, 'etc/sddm.conf.d/50-sparky-stereo-boot.conf')) != expect_sddm:
             problems.append('SDDM Wayland file present: %s, expected %s' % (not expect_sddm, expect_sddm))
+        for key, want in (expect_record or {}).items():
+            if record['depth'] is None or record['depth'].get(key) != want:
+                problems.append('depth record %s %r, expected %r' % (key, (record['depth'] or {}).get(key), want))
         report(name, not problems, '; '.join(problems) or 'kernel: %s | gfxmode: %s | layout: %s' % (kernel or '-', gfx or '-', layout))
     finally:
         shutil.rmtree(root)
@@ -195,5 +235,36 @@ def refused(name, data):
         shutil.rmtree(root)
 refused('refuses what is not KWin settings', b'{"x": 1}')
 refused('refuses broken JSON', b'[{"name": "outputs", ')
+
+
+# the splash's depth limits (ORDER 481): the person's kwinrc [StereoDepth] limits, built on the main screen's display
+FP = one(0x80)
+mm_q, mm_t = (487, 274), (1018, 573)
+def want(kind, mm, sunk=10.0, popped=4.0):
+    p, sk = predicted_depth(kind, mm, sunk, popped)
+    return 'popped=%s:sunk=%s' % (num(p), num(sk))
+run_case('depth: nothing saved, the display default', [Q], FP, expect_depth=want(0, mm_q),
+         expect_record={'source': 'display'})
+run_case('depth: PoppedLimit 1 and SunkLimit 3 saved', [Q], FP, kwinrc='[StereoDepth]\nPoppedLimit=1\nSunkLimit=3\n',
+         expect_depth=want(0, mm_q, 3, 1), expect_record={'source': 'choice', 'savedPopped': 1.0})
+run_case('depth: only PoppedLimit saved, the sunk limit is the display default', [Q], FP,
+         kwinrc='[General]\nx=1\n[StereoDepth]\nPoppedLimit=2.5\n', expect_depth=want(0, mm_q, 10, 2.5))
+run_case('depth: a limit of 0 stays 0', [Q], FP, kwinrc='[StereoDepth]\nPoppedLimit=0\n', expect_depth=want(0, mm_q, 10, 0))
+run_case('depth: on a 46 inch television the display takes more', [('card0', 'HDMI-A-1', 'ex725')],
+         config([output('ex725', 'HDMI-A-1', (1920, 1080, 60000, 0x80), 'u1')], [setup((0, 1, True))]),
+         kwinrc='[StereoDepth]\nPoppedLimit=2\n', expect_depth=want(0, mm_t, 10, 2))
+run_case('depth: red/cyan twin, the display takes less', [Q], one(0x20200, (1920, 1080, 74998)),
+         kwinrc='[StereoDepth]\nPoppedLimit=4\n', expect_depth=want(1, mm_q))
+run_case('depth: another virtual twin counts as a headset, as KWin has it', [Q], one(0x20020, (1920, 1080, 74998)),
+         expect_depth=want(2, mm_q))
+run_case('depth: the system default (/etc/xdg/kwinrc) is the base of the person\'s', [Q], FP,
+         xdg='[StereoDepth]\nPoppedLimit=2\nSunkLimit=5\n', kwinrc='[StereoDepth]\nPoppedLimit=1\n',
+         expect_depth=want(0, mm_q, 5, 1))
+run_case('depth: a saved value that is no limit is said, the display default boots', [Q], FP,
+         kwinrc='[StereoDepth]\nPoppedLimit=abc\n', expect_depth=want(0, mm_q),
+         expect_record={'source': 'display-unreadable'})
+run_case('depth: a negative limit is no limit', [Q], FP, kwinrc='[StereoDepth]\nSunkLimit=-3\n',
+         expect_depth=want(0, mm_q), expect_record={'source': 'display-unreadable'})
+
 print('SUMMARY %d of %d pass' % (sum(results), len(results)))
 sys.exit(0 if all(results) else 1)

@@ -5,6 +5,9 @@
 # Clean forky amd64 container. Proves: DKMS builds NVIDIA open, xpadneo, acpi-call, v4l2loopback, vhba and xone against the new headers,
 # for both install orders; the compiler of the headers' Depends is the one the kernel was built with.
 set -uo pipefail
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 REL=$1; ORDER=$2
 export DEBIAN_FRONTEND=noninteractive
 cp /repo/sparky-stereo-repo.asc /usr/share/keyrings/

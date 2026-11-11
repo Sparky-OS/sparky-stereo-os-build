@@ -55,7 +55,7 @@ Where a group exists only when its package is installed (sambashare, scanner, bl
 | dialout | full access to serial ports (base-passwd) | Arduino, ESP32, USB serial adapters |
 | plugdev | access to removable devices and cameras in limited ways (base-passwd) | libgphoto2's rules (60-libgphoto2-6t64.rules), usbmuxd (iPhone over USB, its postinst) |
 | audio | audio devices (base-passwd); the edition's 99-sparky-audio.rules puts cpu_dma_latency, rtc0 and hpet in it | PipeWire real-time work, audio tools |
-| video | video devices: cameras, capture cards, DVB, CEC (udev's 50-udev-default.rules) | cameras, capture, HDMI-CEC |
+| video | video devices: cameras, capture cards, DVB, CEC (udev's 50-udev-default.rules) | cameras, capture, [HDMI®](https://www.hdmi.org/resource/brand)-CEC |
 | bluetooth | talking to bluetoothd on D-Bus (bluez's bluetooth.conf) | Bluedevil, bluez |
 | netdev | network settings without a password (NetworkManager's polkit rule `isInGroup("netdev")`) | NetworkManager |
 | lpadmin | adding and changing printers (CUPS `SystemGroup root lpadmin`) | cups, print-manager |
@@ -90,3 +90,5 @@ Tests
 -------------
 tests/run-tests.sh runs in a throwaway container with accountsservice, polkit, sshd and the calamares package, and creates a user each way.
 It also plants docker in the list and in adduser.conf and must fail (PLANT=docker).
+
+HDMI®, HDMI® High-Definition Multimedia Interface and the HDMI® Logo are trademarks or registered trademarks of HDMI Licensing Administrator, Inc.

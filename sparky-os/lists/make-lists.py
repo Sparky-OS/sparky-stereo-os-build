@@ -97,6 +97,24 @@ group('apps', "Applications beyond the KDE edition (Daniel's, deduplicated)", ap
     'handbrake',   # the video transcoder (Daniel, 2026-10-11: "it will be included, of course"); deb-multimedia's, stereo version planned
 ])
 
+# 1a. On the image from first boot, whatever their roles say: our stereo builds of the programs everyone uses
+# (Daniel, 2026-10-31: "are you kidding we're not shipping our stereo software?"; "if Lutz has to discover how to install
+# anything before looking and demoing, we lost him"; "this is human centric, not machine centric"). Seeing 3D (our browser,
+# PlasmaTube, Marble, the KDAB demonstrator, Haruna), making it (Blender, Kdenlive, Krita, Showfoto, KolourPaint), everyone's
+# photo library (digiKam), serving one's own files (UMS), the hardware's lights (OpenRGB) and KDE's own 3D games (Kubrick;
+# KDE first: the light ones, on KDE's frameworks; other games stay optional on the shipped OpenGL, Wine and DXVK), and our
+# own System Settings pages.
+# make-meta.py puts this list in sparky-stereo-desktop; the role tasks keep their own entries.
+group('image', 'On the image from first boot (our stereo programs everyone uses)', [
+    'sparky-stereo-browser', 'plasmatube', 'marble', 'stereo3ddemo', 'haruna',
+    'blender', 'kdenlive', 'krita', 'showfoto', 'kolourpaint',
+    'digikam', 'ums', 'kcm-ums', 'openrgb',
+    'simple-scan',   # scanning, Daniel 2026-10-31: "simple-scan is a must in our distro"
+    'kubrick',
+    # ours, for everyone: the Graphics page in System Settings (which GPU each program uses) and the locale tool
+    'sparky-stereo-graphics', 'sparky-stereo-locales',
+])
+
 # 1b. Film and visual effects: the studios' own open projects (Daniel, 2026-10-14: "follow those that have repos, orgs
 # and star the open initiatives - map and add to our to include in the distro"). Disney Animation (Ptex, Partio, SeExpr via
 # Krita's KSeExpr), Pixar (OpenUSD, OpenSubdiv) and the Academy Software Foundation (OpenEXR, OpenColorIO, OpenImageIO,
@@ -181,9 +199,10 @@ group('languages', 'Languages (all of Steam\'s)', langs + [
 ])
 
 # 7. Hardware: firmware and the tools the hardware setup uses (DKMS drivers only when found).
+# thermald is not listed: it runs on Intel CPUs only, so sparky-stereo-hardware's detection installs it there (ORDER 43).
 group('hardware', 'Hardware support', [
     'laptop-detect', 'isenkram-cli', 'discover', 'nvidia-detect', 'lm-sensors',   # fans: CoolerControl
-    'thermald', 'power-profiles-daemon', 'fwupd', 'inxi', 'hw-probe', 'bluetooth',
+    'power-profiles-daemon', 'fwupd', 'inxi', 'hw-probe', 'bluetooth',
     'firmware-linux', 'firmware-linux-nonfree', 'firmware-misc-nonfree', 'firmware-amd-graphics',
     'firmware-nvidia-graphics',   # nouveau's firmware, GSP included: without it Turing and newer have no GR engine (VM test 2026-10-02); firmware-nvidia-gsp is NVIDIA's own driver firmware, not this
     'firmware-realtek', 'firmware-iwlwifi', 'firmware-atheros', 'firmware-brcm80211',
@@ -207,6 +226,8 @@ group('hardware', 'Hardware support', [
     'acpi', 'acpid', 'acpitool',   # battery, thermal and ACPI event tools (kacpimon comes with acpid)
     'acpi-call-dkms',   # ACPI method calls: battery thresholds on older ThinkPads, hybrid-graphics power switching
     'acpi-support',   # hotkey scripts; check in the VM that the power button acts once (logind and PowerDevil handle it too)
+    'edid-decode', 'ddcutil',   # read what a display announces (EDID) and talk DDC/CI, on the live image and every
+    # install (Lutz Moehr's XREAL glasses, 2026-10-24); libddcutil5 was already here for PowerDevil
 ])
 
 # 7b. Installed by the hardware setup only when it finds the hardware (not in the base build).
@@ -232,6 +253,7 @@ group('system', 'System', [
     'flatpak', 'plasma-discover-backend-flatpak', 'distrobox', 'waydroid', 'btrfs-progs',
     'timeshift', 'synaptic',   # snapshots: Timeshift (with grub-btrfs)
     'sparky-stereo-boot',   # the boot follows the main screen's saved choice, splash and login in its 3D mode (ORDER 138)
+    'sparky-stereo-firewall-apps',   # KDE Connect's ufw profile allowed from the local network once ufw is on (ORDER 252c, J19)
     'command-not-found', 'apt-file',   # a missing program names its package, in the terminal and on Dolphin's right-click (Daniel's design)
     'grub-btrfs', 'scx-scheds', 'ananicy-cpp', 'sunshine', 'protonup-qt', 'hhd', 'decky-loader',
 ])
@@ -291,7 +313,7 @@ group('developer', 'Developer: code and game engines', kf6_dev + qt6_dev + pysid
     # Rust, Go, Zig
     'rustc', 'cargo', 'rust-src', 'rust-clippy', 'rustfmt', 'rust-gdb', 'rust-lldb', 'rust-analyzer', 'cargo-c',
     'golang', 'gopls', 'delve',
-    'zig',   # not in Debian (2026-10-16): ours to package (Daniel's cgm-zig, Zig 0.16.0 with its frontend fix)
+    'cgm-zig',   # the edition's Zig compiler; roles.tsv places our packaged build in the developer task
     # Python
     'python3-dev', 'python3-venv', 'python3-pip', 'pipx', 'python3-pytest', 'ipython3', 'python3-debugpy', 'black',
     'flake8', 'mypy', 'pylint', 'ruff', 'python3-poetry', 'python3-build', 'python3-setuptools', 'python3-wheel',
@@ -309,6 +331,10 @@ group('developer', 'Developer: code and game engines', kf6_dev + qt6_dev + pysid
     'git', 'git-lfs', 'gitk', 'git-gui', 'tig', 'git-filter-repo', 'git-crypt', 'git-review', 'mercurial', 'subversion',
     'fossil', 'glab', 'tea', 'pre-commit',
     'gh',   # GitHub's CLI: in unstable only (2026-10-16)
+    # The terminal set (ORDER 252c, study item J25): command-not-found offers each by its Debian name, and names the
+    # program Debian installs under another name first (fd-find runs as fdfind, bat as batcat; no alias, ORDER 252b J15).
+    # debsums is the tool behind dpkg-stereo --debsums (J16)
+    'ripgrep', 'fd-find', 'bat', 'fzf', 'tealdeer', 'ncdu', 'btop', 'tmux', 'debsums',
     # Containers and virtual machines (libguestfs-tools: Daniel, 2026-10-16, "you can include that package")
     'docker.io', 'docker-compose', 'docker-buildx', 'podman', 'podman-compose', 'buildah', 'skopeo', 'incus', 'lxc',
     'systemd-container', 'qemu-system', 'qemu-utils', 'libvirt-daemon-system', 'libvirt-clients', 'virt-manager', 'virt-viewer',

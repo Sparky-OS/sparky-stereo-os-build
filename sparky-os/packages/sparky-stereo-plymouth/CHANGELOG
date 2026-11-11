@@ -1,4 +1,30 @@
 -------------------------------------------------------------------------------
+  Version 20261109~sparky9~0 (2026-11-09)
+-------------------------------------------------------------------------------
+  * The splash follows the person's depth limits (ORDER 481; Daniel, 2026-11-05: "read the depth config by, and in this
+    order of importance: 1 - User choice (but based on 2); 2 - Current display"). It had levels fixed at the desktop's
+    default limits, so a person who lowered PoppedLimit still saw the default depth at boot. The theme now asks Plymouth for
+    the main screen's limits (Window.GetStereoPoppedLimit and GetStereoSunkLimit, plymouth stereo3d-0003; the boot passes
+    them in plymouth.stereo= as popped= and sunk=): the base is half the popped limit, the logo and the nearest electron the
+    popped limit, the farthest electron 0.6 of the sunk limit from the base. At the defaults, 4 and 10, the levels are the
+    ones of the previous version (2, 4 and 4 px, the farthest 4 behind), so nothing is raised
+  * Needs plymouth 26.134.222-1+stereo3d3
+  * tests/depth-limits.py takes the limits as arguments and checks the placement against them at five eye widths
+
+-------------------------------------------------------------------------------
+  Version 20261108~sparky9~0 (2026-11-08)
+-------------------------------------------------------------------------------
+  * The splash stays inside the desktop's own depth limits (ORDER 472; Daniel, 2026-11-08: "on plymouth - the separation is
+    huge", on a laptop panel in red/cyan). Scaling by the eye's width was right (the same rule as Stereo KWin's), but the
+    levels were fixed above the desktop's popped limit: the logo 9.08 px, the base 4.54 and a popping electron 8.54 at 1920,
+    against 4 px (kwinrc [StereoDepth] PoppedLimit); at 1366 per eye 5 px against 3. Now the base is half the popped
+    limit, the logo and the nearest electron the popped limit (2, 4 and 4 px at 1920), and the farthest electron sinks 4,
+    inside the sunk limit of 10
+  * A level is placed by its whole disparity, rounded to a pixel with the odd pixel to the left eye; each eye rounded its
+    half before, which made every disparity even and, at a few hundred pixels per eye, put base and logo on one level
+  * tests/depth-limits.py checks the generated script against the desktop's limits at 1280, 1366, 1920, 2560 and 3840
+
+-------------------------------------------------------------------------------
   Version 20261016~sparky9~0 (2026-10-16)
 -------------------------------------------------------------------------------
   * First version: sparky-stereo-lines and sparky-stereo-lines-height

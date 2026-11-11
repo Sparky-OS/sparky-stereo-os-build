@@ -1,0 +1,84 @@
+Description: Remove the AMD texture hack: Dragon Player no longer sets QT_DISABLE_HW_TEXTURES_CONVERSION on AMD GPUs
+ The hack made Qt Multimedia copy every decoded frame through system memory on AMD
+ (QTBUG-138679) instead of using the decoder's textures. Dragon's author cannot reproduce
+ the Qt bug anymore and removed it.
+Author: Harald Sitter
+Origin: upstream, https://invent.kde.org/multimedia/dragon/-/commit/c30754882a0eaf741a1e98548456174a3486d946
+Applied-Upstream: yes, master c30754882a (2026-04-07) and release/26.04 1f2f2942bc (2026-04-21), after v26.04.0; checked 2026-11-10
+Last-Update: 2026-11-10
+
+diff --git a/src/main.cpp b/src/main.cpp
+index 8865838d..bb1666fe 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -13,7 +13,6 @@
+ #include <KLocalizedString>
+ 
+ #include "dragon.h"
+-#include "renderer.h"
+ 
+ using namespace Qt::StringLiterals;
+ 
+@@ -22,15 +21,6 @@ int main(int argc, char **argv)
+     // Needs to be a QApplication rather than QGuiApplication so filedialog actually uses kio.
+     QApplication app(argc, argv);
+ 
+-    if (Renderer::isAMD()) {
+-        // https://bugreports.qt.io/browse/QTBUG-138679
+-#if QT_VERSION >= QT_VERSION_CHECK(6, 12, 0)
+-#error "Reevaluate the use of QT_DISABLE_HW_TEXTURES_CONVERSION at a later point in time"
+-#endif
+-        qWarning() << "Detected AMD GPU, disabling HW Texture Conversion renderer as it is known to cause issues.";
+-        qputenv("QT_DISABLE_HW_TEXTURES_CONVERSION", "1");
+-    }
+-
+     KAboutData aboutData(u"dragonplayer"_s,
+                          i18n("Dragon Player"),
+                          Dragon::version,
+diff --git a/src/renderer.h b/src/renderer.h
+deleted file mode 100644
+index d831f2cf..00000000
+--- a/src/renderer.h
++++ /dev/null
+@@ -1,41 +0,0 @@
+-// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+-// SPDX-FileCopyrightText: 2021 Harald Sitter <sitter@kde.org>
+-
+-#pragma once
+-
+-#include <QOffscreenSurface>
+-#include <QOpenGLContext>
+-#include <QOpenGLFunctions>
+-
+-namespace Renderer
+-{
+-
+-[[nodiscard]] inline QString openGLRenderer()
+-{
+-    QOpenGLContext context;
+-    QOffscreenSurface surface;
+-    surface.create();
+-    if (!context.create()) {
+-        qWarning() << "Failed create QOpenGLContext";
+-        return {};
+-    }
+-
+-    if (!context.makeCurrent(&surface)) {
+-        qWarning() << "Failed to make QOpenGLContext current";
+-        return {};
+-    }
+-
+-    auto renderer = QString::fromUtf8(reinterpret_cast<const char *>(context.functions()->glGetString(GL_RENDERER)));
+-    context.doneCurrent();
+-
+-    return renderer;
+-}
+-
+-[[nodiscard]] inline bool isAMD()
+-{
+-    const auto renderer = openGLRenderer();
+-    qDebug() << "Renderer:" << renderer;
+-    return renderer.startsWith(u"AMD ");
+-}
+-
+-} // namespace Renderer

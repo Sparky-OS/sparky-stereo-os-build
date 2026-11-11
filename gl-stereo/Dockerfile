@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later OR MIT
 FROM debian:testing
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update \
+RUN --mount=type=bind,from=https-only-apt,source=https-only-apt.sh,target=/run/https-only-apt.sh \
+    --mount=type=bind,from=host-ca,source=ca-certificates.crt,target=/run/host-ca.crt \
+    sh /run/https-only-apt.sh && apt-get update \
     && apt-get -y install --no-install-recommends \
         build-essential \
         libgl1-mesa-dev \

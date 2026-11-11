@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 # SPDX-License-Identifier: MIT
-"""Perl: whole comment lines only, outside POD, heredoc bodies and the __END__/__DATA__ section.
+"""Perl: whole comment lines only, outside quotes, POD, heredocs and __END__/__DATA__.
 
 Perl is the hardest language here to read without perl itself (quote-like operators with any
 delimiter, `#` inside /x regular expressions, heredocs), so this handler removes only lines that are a
@@ -27,6 +27,67 @@ MARKER = '#'
 LINE_DIRECTIVE = re.compile(r'#\s*line\s+\d+')
 HEREDOC = re.compile(r'<<(~?)\s*(?:"([^"\n]*)"|\'([^\'\n]*)\'|([A-Za-z_]\w*))')
 keep_empty_after = None
+PAIRS = {'(': ')', '[': ']', '{': '}', '<': '>'}
+QUOTES = frozenset(('q', 'qq', 'qx', 'qw', 'qr', 'm', 's', 'tr', 'y'))
+WORD = re.compile(r'[A-Za-z_]\w*(?:::\w+)*')
+VARIABLE = re.compile(r'[$@%](?:\#?[A-Za-z_]\w*(?:::\w+)*|\d+|[^\w\s])')
+# Unambiguous expression contexts for a bare slash. This is not a Perl parser;
+# prototypes and user-defined functions still need the unchanged Deparse gate.
+TERM_AFTER = frozenset(('return', 'print', 'say', 'split', 'grep', 'map', 'not',
+                        'and', 'or', 'xor', 'if', 'unless', 'while', 'until',
+                        'eq', 'ne', 'lt', 'gt', 'le', 'ge', 'cmp', 'x'))
+
+
+def quote_end(src, start, paired=True):
+    """perlop, 'Finding the end': delimiters first, before interpolation or /x.
+
+    Escaped delimiters and backslashes do not close a section; a backslash
+    delimiter itself is the exception. Only the opening bracket's kind nests.
+    """
+    opening = src[start]
+    closing = PAIRS.get(opening, opening) if paired else opening
+    depth = 1
+    p = start + 1
+    while p < len(src):
+        c = src[p]
+        if c == '\\' and opening != '\\':
+            p += 2
+            continue
+        if c == closing:
+            depth -= 1
+            if not depth:
+                return p + 1
+        elif opening != closing and c == opening:
+            depth += 1
+        p += 1
+    return len(src)
+
+
+def quote_gap(src, start):
+    """A hash is a delimiter unless whitespace precedes it in an operator gap."""
+    p = start
+    while p < len(src) and src[p].isspace():
+        p += 1
+        if p < len(src) and src[p] == '#':
+            end = src.find('\n', p)
+            p = len(src) if end < 0 else end
+    return p
+
+
+def quote_like_end(src, start, operator):
+    p = quote_end(src, start)
+    if operator in ('s', 'tr', 'y') and p < len(src):
+        if src[start] in PAIRS:
+            p = quote_gap(src, p)
+            if p < len(src):
+                p = quote_end(src, p)
+        else:
+            # The middle delimiter closes the pattern and opens the replacement.
+            p = quote_end(src, p - 1, paired=False)
+    if operator in ('qr', 'm', 's', 'tr', 'y', '/'):
+        while p < len(src) and src[p].isalpha():
+            p += 1
+    return p
 
 
 def joiner(src, start, end):
@@ -41,6 +102,9 @@ def lex(src: str) -> list:
     pending = []
     i = 0
     offs = []
+    resume = 0
+    term = True
+    previous = ''
     for ln in lines:
         offs.append(pos)
         pos += len(ln) + 1
@@ -59,19 +123,24 @@ def lex(src: str) -> list:
                 spans.append(Span(offs[i], offs[j - 1] + len(lines[j - 1]), LITERAL, 'heredoc body'))
             i = j + 1
             continue
-        if pod:
+        if resume > a:
+            # A quote begun on an earlier line owns even POD/data-looking text.
+            if resume >= a + len(line):
+                i += 1
+                continue
+        elif pod:
             if line.startswith('=cut'):
                 pod = False
             i += 1
             continue
-        if re.match(r'=[a-zA-Z]', line):
+        elif re.match(r'=[a-zA-Z]', line):
             pod = True
             i += 1
             continue
-        if line.startswith(('__END__', '__DATA__')):
+        elif line.startswith(('__END__', '__DATA__')):
             break
         t = line.lstrip(' \t')
-        if t.startswith('#'):
+        if resume <= a and t.startswith('#'):
             if i == 0 and t.startswith('#!'):
                 spans.append(Span(a, a + len(line), KEEP, 'interpreter line'))
             elif LINE_DIRECTIVE.match(t):
@@ -81,8 +150,60 @@ def lex(src: str) -> list:
             else:
                 spans.append(Span(a + len(line) - len(t), a + len(line), COMMENT))
         else:
-            for m in HEREDOC.finditer(line):
-                pending.append((m.group(2) or m.group(3) or m.group(4), bool(m.group(1))))
+            p = max(a, resume)
+            end = a + len(line)
+            while p < end:
+                c = src[p]
+                if c.isspace():
+                    p += 1
+                    continue
+                if c == '#':
+                    break  # Inline comments stay, but cannot open quotes/heredocs.
+                m = HEREDOC.match(src, p)
+                if m:
+                    pending.append((m.group(2) or m.group(3) or m.group(4), bool(m.group(1))))
+                    p = m.end()
+                    term, previous = False, 'heredoc'
+                    continue
+                m = VARIABLE.match(src, p)
+                if m:
+                    p = m.end()
+                    term, previous = False, 'variable'
+                    continue
+                word = WORD.match(src, p)
+                operator = ''
+                delimiter = p
+                if word:
+                    name = word.group()
+                    delimiter = quote_gap(src, word.end())
+                    if (name in QUOTES and previous not in ('->', '::', 'sub', 'package')
+                            and delimiter < len(src) and not src.startswith('=>', delimiter)
+                            and not (previous == '{' and src[delimiter] == '}')):
+                        operator = name
+                    else:
+                        p = word.end()
+                        term, previous = name in TERM_AFTER, name
+                        continue
+                elif c in "'\"`":
+                    operator = c
+                elif c == '/' and term:
+                    operator = '/'
+                if operator:
+                    stop = quote_like_end(src, delimiter, operator)
+                    spans.append(Span(p, stop, LITERAL, 'quoted construct'))
+                    p = resume = stop
+                    term, previous = False, 'quote'
+                    continue
+                pair = src[p:p + 2]
+                if pair in ('->', '::', '++', '--', '//', '/=', '=>', '=~', '!~'):
+                    p += 2
+                    if pair not in ('++', '--'):
+                        term = True
+                    previous = pair
+                    continue
+                term = c not in ')]}' and not c.isdigit()
+                previous = c
+                p += 1
         i += 1
     return spans
 
@@ -117,6 +238,15 @@ def deparse(text: str):
         if r.returncode != 0:
             return None
         return r.stdout.decode('utf-8', 'surrogateescape').replace(p, 'FILE')
+
+
+def authored_refusal(text: str) -> str | None:
+    """An authored file perl does not compile on its own is retained: B::Deparse, the consumer check, needs it."""
+    if not shutil.which('perl'):
+        return 'perl unavailable; authored script retained'
+    if deparse(text) is None:
+        return 'authored script is not compiled by perl on its own; consumer qualification unavailable'
+    return None
 
 
 def verify(original, lean, interpreter=''):

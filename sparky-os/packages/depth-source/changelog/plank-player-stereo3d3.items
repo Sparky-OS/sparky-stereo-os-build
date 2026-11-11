@@ -1,0 +1,5 @@
+A refused 3D declaration is shown to the person (ORDER 453). Qt Multimedia's Video declares a 3D video to the desktop before it attaches anything and, when the desktop refuses, draws the ordinary picture and says why in stereoLayerFailure (qt6-multimedia +stereo3d15). Plank Player shows that reason in a banner over the video, "This video is shown flat: the desktop refused to show it in 3D (reason).", in the theme's own warning colours, with the sentence in nine languages. The drawing, the declaration and the failure stay Qt Multimedia's.
+
+The 3D menu offers Swap Eyes only for a video shown in 3D (patch 0004): the per-file correction of the eyes is not offered on 2D content, and a video that says nothing about being 3D becomes one when the person picks its Input Format.
+
+debian/control: depends on Qt Multimedia +stereo3d15.

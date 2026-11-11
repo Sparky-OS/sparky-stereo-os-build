@@ -1,0 +1,67 @@
+#!/bin/sh
+# postrm script: dpkg has already removed our files and catalogs.
+set -e
+package=sparky-stereo-console
+key=after-removal:sparky-stereo-console:motd
+
+say_unsaved() {
+    locale=${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}
+    case "$locale" in C|C.*|POSIX) locale=en ;; *) locale=${LANGUAGE:-$locale} ;; esac
+    locale=${locale%%:*}
+    case "$locale" in
+        pl*) format='Nie udało się przywrócić MOTD: %s. Nie można było zapisać problemu. Naprawa: cp /usr/share/base-files/motd /etc/motd (jako administrator).' ;;
+        pt*) format='Falha ao restaurar o MOTD: %s. Não foi possível salvar o problema. Reparo: cp /usr/share/base-files/motd /etc/motd (como administrador).' ;;
+        de*) format='MOTD konnte nicht wiederhergestellt werden: %s. Das Problem konnte nicht gespeichert werden. Behebung: cp /usr/share/base-files/motd /etc/motd (als Administrator).' ;;
+        es*) format='No se pudo restaurar el MOTD: %s. No se pudo guardar el problema. Reparación: cp /usr/share/base-files/motd /etc/motd (como administrador).' ;;
+        fr*) format='La restauration du MOTD a échoué : %s. Le problème n’a pas pu être enregistré. Réparation : cp /usr/share/base-files/motd /etc/motd (en tant qu’administrateur).' ;;
+        ja*) format='MOTD の復元に失敗しました: %s。問題を保存できませんでした。修復: cp /usr/share/base-files/motd /etc/motd（管理者として実行）。' ;;
+        ko*) format='MOTD 복원 실패: %s. 문제를 저장하지 못했습니다. 복구: cp /usr/share/base-files/motd /etc/motd (관리자 권한으로 실행).' ;;
+        zh_CN*|zh_SG*) format='MOTD 恢复失败：%s。无法保存此问题。修复方法：cp /usr/share/base-files/motd /etc/motd（以管理员身份执行）。' ;;
+        zh_TW*|zh_HK*|zh_MO*) format='MOTD 還原失敗：%s。無法儲存此問題。修復方法：cp /usr/share/base-files/motd /etc/motd（以管理員身分執行）。' ;;
+        *) format='MOTD restoration failed: %s. The problem could not be saved. Repair: cp /usr/share/base-files/motd /etc/motd (as administrator).' ;;
+    esac
+    message=$(printf "$format" "$error")
+    printf '%s: %s\n' "$package" "$message" >&2
+    # Policy 6.5: postrm can rely only on Essential packages. The engine may
+    # already be gone; carry our own text and attempt the journal directly.
+    # logger's --socket-errors=on also says when no journal/syslog is reachable.
+    logger --socket-errors=on -t "$package" -- "$message" || :
+}
+
+if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
+    sparky-stereo-problems clear --all "$package"
+fi
+case "$1" in
+remove|purge|abort-install)
+    for f in @DIVERTED@; do
+        dpkg-divert --quiet --package "$package" --remove --rename --divert "$f.debian" "$f"
+    done
+    if [ -e /etc/motd ]; then
+        # An existing MOTD belongs to the administrator; never replace it.
+        if command -v sparky-stereo-problems >/dev/null 2>&1; then
+            sparky-stereo-problems clear --machine sparky-stereo-problems "$key"
+        fi
+    elif error=$(cp /usr/share/base-files/motd /etc/motd 2>&1); then
+        if command -v sparky-stereo-problems >/dev/null 2>&1; then
+            sparky-stereo-problems clear --machine sparky-stereo-problems "$key"
+        fi
+    else
+        status=$?
+        error=${error:-"cp ($status)"}
+        printf '%s\n' "$error" >&2
+        # ORDER 358: finish removal, but retain its unresolved restoration.
+        # Engine ownership survives purge and ordinary package-record cleanup.
+        if command -v sparky-stereo-problems >/dev/null 2>&1 &&
+            sparky-stereo-problems keep --machine --after-removal \
+                --status "$status" --output "$error" \
+                --command '["cp","/usr/share/base-files/motd","/etc/motd"]' \
+                --repair '["sh","-c","[ -e /etc/motd ] || cp /usr/share/base-files/motd /etc/motd"]' \
+                "$package" motd 'cp /usr/share/base-files/motd /etc/motd'; then
+            :
+        else
+            say_unsaved
+        fi
+    fi
+    ;;
+esac
+exit 0

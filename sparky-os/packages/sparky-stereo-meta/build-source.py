@@ -3,6 +3,7 @@
 # Copyright 2026 Daniel Campos Ramos
 """Keep resolved meta-package controls and the generator inputs in a source archive."""
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import sys
@@ -11,18 +12,25 @@ import tempfile
 trees, version, out = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]).resolve()
 root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(root))
+sys.path.insert(0, str(root / 'repo'))
 from lean import package
+import reproducible
 with tempfile.TemporaryDirectory(dir=out, prefix='.meta-source-') as temp:
     work = Path(temp)
     source = work / f'sparky-stereo-meta-{version}'
     (source / 'debian/source').mkdir(parents=True)
     shutil.copytree(trees, source / 'trees')
-    shutil.copytree(root / 'lists', source / 'generator-inputs/lists', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    copier = root.parent / 'tools/copy-recipe.py'
+    subprocess.run([sys.executable, str(copier), str(root / 'lists'),
+                    str(source / 'generator-inputs/lists')], check=True)
+    (source / 'generator-inputs/build-tools').mkdir()
+    shutil.copy2(copier, source / 'generator-inputs/build-tools/copy-recipe.py')
     kit = source / 'release-toolkit'
     (kit / 'lean').mkdir(parents=True)
     for p in (root / 'lean').glob('*.py'):
         shutil.copy2(p, kit / 'lean' / p.name)
     shutil.copy2(root / 'lean/JvmLexer.java', kit / 'lean/JvmLexer.java')
+    shutil.copy2(root / 'lean/ZigTokens.zig', kit / 'lean/ZigTokens.zig')
     shutil.copy2(root / 'lean/smoke.tsv', kit / 'lean/smoke.tsv')
     shutil.copy2(root / 'packages/dpkg-stereo/LICENSE', kit / 'LICENSE')
     shutil.copy2(Path(__file__).parent / 'build.sh', source / 'generator-inputs/build.sh')
@@ -85,6 +93,9 @@ binary-arch build build-arch build-indep clean:
 .PHONY: binary binary-arch binary-indep build build-arch build-indep clean
 ''')
     rules.chmod(0o755)
-    subprocess.run(['dpkg-source', '-b', str(source)], cwd=work, check=True)
+    # a native source: dated by its own changelog entry, the whole tree normalized (ORDER 421b)
+    stamp = reproducible.parse_trailer((source / 'debian/changelog').read_text())
+    reproducible.normalize(source, stamp)
+    subprocess.run(['dpkg-source', '-b', str(source)], cwd=work, check=True, env=os.environ | {'SOURCE_DATE_EPOCH': str(stamp)})
     for suffix in ('dsc', 'tar.xz'):
         shutil.copy2(work / f'sparky-stereo-meta_{version}.{suffix}', out)

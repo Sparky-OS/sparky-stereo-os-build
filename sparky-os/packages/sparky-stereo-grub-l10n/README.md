@@ -20,6 +20,14 @@ How:
 The package carries those messages, and only those, from GNU GRUB 2.14's translations, for every language upstream translates (usr/share/sparky-stereo-grub-l10n/LANG.mo).
 At install, and whenever grub2-common updates a catalogue (a dpkg trigger), Debian's grub.mo is diverted to grub.mo.debian and grub.mo becomes Debian's messages plus the missing ones; Debian's translation wins where both have one.
 Removing the package gives Debian's files back.
-The menu changes at the next update-grub.
+
+After every merge, at install and whenever grub2-common updates a catalogue, and again when the package is removed or purged, the package runs update-grub where /boot/grub/grub.cfg exists, so the menu follows the catalogues at once.
+It does not in a live session, a chroot or a container, where the image build or the installer writes the menu.
 
 Build: OUT=/path/to/output ./build.sh (dpkg-deb, gettext; GRUB_TARBALL=/path/to/grub-2.14.tar.xz, else it is downloaded and checked)
+
+If update-grub fails, configuration or removal fails too. Its output and a diagnostic in the system's language
+(and English for support) are shown and kept in /var/log/sparky-stereo-grub-l10n.log, readable by root.
+After fixing the error, run sudo dpkg --configure -a for configure/trigger failures, or repeat the failed remove
+or purge operation. The next successful update-grub run clears the log. All nine messages are embedded in both
+maintainer scripts, so removal does not need files that dpkg has already deleted.

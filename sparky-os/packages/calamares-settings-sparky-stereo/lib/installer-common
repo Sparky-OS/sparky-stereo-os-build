@@ -1,0 +1,27 @@
+# Created by Daniel Ramos (Capitain Jack) 2026/11/01
+# Copyright 2026 under the GNU GPL3 License
+# Shared diagnostics are captured by Calamares' shellprocess failure page.
+# INSTALLER_LANG is Calamares' interface language, not the target's locale.
+case "${INSTALLER_LANG:-${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}}" in
+	pl*) language=pl;; pt_BR*) language=pt_BR;; fr*) language=fr;; de*) language=de;;
+	ja*) language=ja;; ko*) language=ko;; zh_TW*|zh_HK*) language=zh_TW;; zh_CN*|zh_SG*) language=zh_CN;;
+	es*) language=es;;
+	*) language=en;;
+esac
+. "$(dirname "$0")/lang/$language"
+fail() {
+	case "$1" in
+		probe) message=$PROBE;; esp) message=$ESP_ERROR;; loader) message=$LOADER;;
+		write) message=$WRITE;; offline) message=$OFFLINE_ERROR;; locale) message=$LOCALE_ERROR;; langpacks) message=$LANGPACKS_ERROR;;
+		*) message=$COMMAND;;
+	esac
+	shift
+	printf '%s
+%s
+' "$message" "$*" >&2
+	exit 1
+}
+checked() {
+	if "$@"; then return 0; else status=$?; fi
+	fail write "$* (exit $status)"
+}

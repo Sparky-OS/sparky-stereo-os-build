@@ -3,8 +3,14 @@
 # plank-player 5.27.80+git20261005.f87e775-1+stereo3d2: KDE's master at f87e775 (the orig tarball of +stereo3d1), our two patches
 # (plank-player/*.patch: the 3D menu bound to Qt Multimedia's Video, and the Return key fix), packaging/ from ./plank-player-debian,
 # built in plank-build:1 as the user
+# The orig tarball is the published pool's (pool/main/p/plank-player/plank-player_5.27.80+git20261005.f87e775.orig.tar.xz; its SHA-256 is in the published .dsc), and plank-build:1 is a forky container with the
+# package's Build-Depends. The shipped +lc1 source and build (ORDER 453b) are made by sparky-os/packages/depth-source: next-source.sh plank-player, then build.sh plank-player.
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -e
+REPRO=/run/reproducible.py
+: "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 W=${1:-${SPARKY_SCRATCH:?}/qtmm-lane/pkg-plank}
 H=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p $W/patches $W/home
@@ -21,7 +27,9 @@ mkdir -p debian/source debian/patches
 cp /w/plank-player-debian/{control,rules,copyright,changelog} debian/; cp /w/plank-player-debian/source/format debian/source/
 cp /w/patches/*.patch debian/patches/; ls /w/patches/*.patch | xargs -n1 basename > debian/patches/series
 mkdir -p ../srcpkg && cp -a . ../srcpkg/plank-player-$U && cp ../plank-player_$U.orig.tar.xz ../srcpkg/
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" ../srcpkg/plank-player-$U
 (cd ../srcpkg/plank-player-$U && dpkg-source -b . > ../source.log 2>&1)
+python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -us -uc -d -j4 > ../build.log 2>&1 || { tail -40 ../build.log; exit 1; }
 tail -3 ../build.log; ls ..
 '

@@ -1,5 +1,8 @@
 #!/bin/bash
 set -euo pipefail
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 [[ -e /.dockerenv ]] || { echo "Run in Docker only"; exit 1; }
 exec >evidence/final.log 2>&1
 export LC_ALL=C.UTF-8 DEBIAN_FRONTEND=noninteractive MAKEFLAGS=-j4 TMPDIR=$PWD/out/test-tmp
@@ -9,6 +12,7 @@ bash "$P/sparky-stereo-hardware/tests/container-build.sh"
 apt-get -y --no-install-recommends --reinstall install "$PWD"/out/firmware-creative-stereo_*.deb "$PWD"/out/xpadneo-dkms_*.deb "$PWD"/out/sparky-stereo-hardware_*.deb
 python3 "$P/sparky-stereo-hardware/tests/detection.py"
 bash "$P/sparky-stereo-hardware/tests/actions.sh"
+bash "$P/sparky-stereo-hardware/tests/choices.sh"
 sparky-stereo-hardware --auto --dry-run --fixture "$P/sparky-stereo-hardware/tests/fixtures/creative-nvidia-laptop" >evidence/combined-dry-run.log
 cp /usr/lib/sparky-stereo-hardware/detect.py "$PWD/out/detect.current.py"
 cp evidence/detect-before.py /usr/lib/sparky-stereo-hardware/detect.py

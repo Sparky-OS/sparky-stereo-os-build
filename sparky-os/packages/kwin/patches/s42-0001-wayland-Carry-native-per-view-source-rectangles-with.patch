@@ -1,0 +1,564 @@
+From 92fa871e273805008f538a2c00e84555fd400d42 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 3 Nov 2026 19:49:10 -0300
+Subject: [PATCH] wayland: Carry native per-view source rectangles with stereo
+ content
+
+Add a version-four source rectangle without changing the SBS-left content value. Apply it independently within each view and retain fractional texture coordinates for this explicit geometry.
+
+Assisted-by: gpt-6-astra via Codex
+---
+ CMakeLists.txt                                |  3 +-
+ autotests/integration/stereo_content_test.cpp | 57 ++++++++++++++++++-
+ src/scene/surfaceitem.cpp                     | 32 ++++++++---
+ src/scene/surfaceitem.h                       |  8 ++-
+ src/scene/surfaceitem_wayland.cpp             |  8 ++-
+ .../stereo/kde-stereo-content-v1.xml          | 54 +++++++++++++-----
+ src/wayland/stereocontent_v1.cpp              | 34 ++++++++++-
+ src/wayland/stereocontent_v1.h                |  3 +
+ src/wayland/surface.cpp                       | 28 +++++++--
+ src/wayland/surface.h                         |  1 +
+ src/wayland/surface_p.h                       |  5 +-
+ 11 files changed, 194 insertions(+), 39 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f8d0d3acc3..cba7abb559 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -235,7 +235,8 @@ endif()
+ # kde_stereo_depth_v1 came with version 3 of kde-stereo-content-v1; stereo_glasses with version 29 of kde-output-device-v2,
+ # stereo_sequential_displayport with version 30
+ if(NOT _kwin_output_device_xml MATCHES "stereo_l_depth_graphics" OR NOT _kwin_output_device_xml MATCHES "stereo_glasses"
+-   OR NOT _kwin_output_device_xml MATCHES "stereo_sequential_displayport" OR NOT _kwin_stereo_content_xml MATCHES "kde_stereo_depth_v1")
++   OR NOT _kwin_output_device_xml MATCHES "stereo_sequential_displayport" OR NOT _kwin_stereo_content_xml MATCHES "kde_stereo_depth_v1"
++   OR NOT _kwin_stereo_content_xml MATCHES "set_view_source")
+     set(KWIN_STEREO_PROTOCOLS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/wayland/protocols/stereo)
+     set(KWIN_STEREO_PROTOCOLS_IN_TREE TRUE)
+ endif()
+diff --git a/autotests/integration/stereo_content_test.cpp b/autotests/integration/stereo_content_test.cpp
+index d4b7e2c8d9..e7bcf45b58 100644
+--- a/autotests/integration/stereo_content_test.cpp
++++ b/autotests/integration/stereo_content_test.cpp
+@@ -39,6 +39,7 @@ private Q_SLOTS:
+     void testOneEyeWide();
+     void testOneEyeWideViewportDestination();
+     void testSubsurface();
++    void testFractionalViewSource();
+     void testSetContentInvalidValue();
+     void testRemoveOnDestroy();
+     void testRecreateAfterDestroy();
+@@ -115,7 +116,7 @@ void StereoContentTest::testOneEyeWide_data()
+     QTest::addRow("scale 2") << 2;
+ }
+ 
+-// From version 2, a full side-by-side surface is one eye wide: its buffer holds both eyes.
++// From version 2, a full side-by-side surface is one eye wide: its buffer holds both views.
+ void StereoContentTest::testOneEyeWide()
+ {
+     QFETCH(int, bufferScale);
+@@ -185,6 +186,60 @@ void StereoContentTest::testSubsurface()
+     QCOMPARE(item->stereoContent(), StereoContentNone);
+ }
+ 
++// The two view lattices stay three native pixels apart even when a crop is
++// only 2.5 pixels wide. Source corners must not be rounded to integer pixels.
++void StereoContentTest::testFractionalViewSource()
++{
++    std::unique_ptr<KWayland::Client::Surface> surface(Test::createSurface());
++    std::unique_ptr<Test::XdgToplevel> shell(Test::createXdgToplevelSurface(surface.get()));
++    Window *window = Test::renderAndWaitForShown(surface.get(), QSize(100, 50), Qt::blue);
++    QVERIFY(window);
++    std::unique_ptr<KWayland::Client::Surface> child(Test::createSurface());
++    auto subsurface = Test::createSubSurface(child.get(), surface.get());
++    auto viewport = Test::viewporter()->createViewport(*child);
++    viewport->setDestination(QSize(10, 8));
++    auto declaration = std::make_unique<Test::StereoContentV1>(Test::stereoContentManager()->create(*child));
++    declaration->set_content(3);
++    Test::render(child.get(), QSize(6, 2), Qt::red);
++    QSignalSpy committed(window->surface(), &SurfaceInterface::committed);
++    surface->commit(KWayland::Client::Surface::CommitFlag::None);
++    QVERIFY(committed.wait());
++    const auto children = window->surfaceItem()->childItems();
++    QCOMPARE(children.size(), 1);
++    auto *item = qobject_cast<SurfaceItem *>(children.front());
++    QVERIFY(item);
++
++    declaration->set_view_source(wl_fixed_from_double(0.25), 0,
++                                wl_fixed_from_double(2.5), wl_fixed_from_int(2));
++    QVERIFY(Test::waylandSync());
++    QCOMPARE(item->eyeQuads(StereoEye::Right).front()[0].u(), 3.0);
++    child->commit(KWayland::Client::Surface::CommitFlag::None);
++    surface->commit(KWayland::Client::Surface::CommitFlag::None);
++    QVERIFY(committed.wait());
++    const auto left = item->eyeQuads(StereoEye::Left);
++    const auto right = item->eyeQuads(StereoEye::Right);
++    QCOMPARE(left.size(), 1);
++    QCOMPARE(right.size(), 1);
++    QCOMPARE(left.front()[0].u(), 0.25);
++    QCOMPARE(left.front()[1].u(), 2.75);
++    QCOMPARE(right.front()[0].u(), 3.25);
++    QCOMPARE(right.front()[1].u(), 5.75);
++    QCOMPARE(left.front()[2].v(), 2.0);
++    QCOMPARE(left.front()[1].x(), 10.0);
++
++    declaration->set_content(0);
++    child->commit(KWayland::Client::Surface::CommitFlag::None);
++    surface->commit(KWayland::Client::Surface::CommitFlag::None);
++    QVERIFY(committed.wait());
++    QCOMPARE(item->stereoContent(), StereoContentNone);
++    declaration->set_content(3);
++    child->commit(KWayland::Client::Surface::CommitFlag::None);
++    surface->commit(KWayland::Client::Surface::CommitFlag::None);
++    QVERIFY(committed.wait());
++    QCOMPARE(item->eyeQuads(StereoEye::Right).front()[0].u(), 3.0);
++    QCOMPARE(item->eyeQuads(StereoEye::Left).front()[1].u(), 3.0);
++}
++
+ // A value other than 0 or 3 is read as none.
+ void StereoContentTest::testSetContentInvalidValue()
+ {
+diff --git a/src/scene/surfaceitem.cpp b/src/scene/surfaceitem.cpp
+index d9da134355..f6a8cd7075 100644
+--- a/src/scene/surfaceitem.cpp
++++ b/src/scene/surfaceitem.cpp
+@@ -87,6 +87,15 @@ void SurfaceItem::setStereoContent(StereoContent content)
+     }
+ }
+ 
++void SurfaceItem::setStereoViewSource(const std::optional<RectF> &source)
++{
++    if (m_stereoViewSource != source) {
++        m_stereoViewSource = source;
++        discardQuads();
++        scheduleRepaint(rect());
++    }
++}
++
+ // The eye's view in the surface's orientation (its half of the source box), mapped back
+ // to buffer coordinates.
+ WindowQuadList SurfaceItem::eyeQuads(StereoEye eye) const
+@@ -100,8 +109,12 @@ WindowQuadList SurfaceItem::eyeQuads(StereoEye eye) const
+         if (secondView) {
+             view.translate(sourceBox.width() / 2, 0);
+         }
++        if (m_stereoViewSource) {
++            view = m_stereoViewSource->translated(view.topLeft());
++        }
+     }
+-    return buildSourceQuads(m_surfaceToBufferTransform.map(view, orientedBufferSize));
++    return buildSourceQuads(m_surfaceToBufferTransform.map(view, orientedBufferSize),
++                            isSideBySideStereoContent(m_stereoContent) && m_stereoViewSource.has_value());
+ }
+ 
+ OutputTransform SurfaceItem::bufferTransform() const
+@@ -167,8 +180,8 @@ void SurfaceItem::addDamage(const Region &region)
+ 
+     RectF sourceBox = m_bufferToSurfaceTransform.map(m_bufferSourceBox, m_bufferSize);
+     if (isSideBySideStereoContent(m_stereoContent)) {
+-        // The buffer holds both eyes, each covering the whole surface: the scale of a view is the
+-        // eye's pixels to the surface, not both eyes'. Twice that scale would grow the damage by
++        // The buffer holds both views, each covering the whole surface: the scale of a view is the
++        // view's pixels to the surface, not both views'. Twice that scale would grow the damage by
+         // a pixel on each side and repaint the output next to a full screen stereo window.
+         sourceBox.setWidth(sourceBox.width() / 2);
+     }
+@@ -248,7 +261,7 @@ RegionF SurfaceItem::shapeForSourceBox(const RectF &bufferSourceBox) const
+     return shape();
+ }
+ 
+-WindowQuadList SurfaceItem::buildSourceQuads(const RectF &bufferSourceBox) const
++WindowQuadList SurfaceItem::buildSourceQuads(const RectF &bufferSourceBox, bool fractional) const
+ {
+     const RegionF region = shapeForSourceBox(bufferSourceBox);
+     WindowQuadList quads;
+@@ -258,13 +271,16 @@ WindowQuadList SurfaceItem::buildSourceQuads(const RectF &bufferSourceBox) const
+     const qreal xScale = sourceBox.width() / m_destinationSize.width();
+     const qreal yScale = sourceBox.height() / m_destinationSize.height();
+ 
++    const auto sourcePoint = [fractional](const QPointF &point) {
++        return fractional ? point : snapToPixelGridF(point);
++    };
+     for (const RectF &rect : region.rects()) {
+         WindowQuad quad;
+ 
+-        const QPointF bufferTopLeft = snapToPixelGridF(bufferSourceBox.topLeft() + m_surfaceToBufferTransform.map(QPointF(rect.left() * xScale, rect.top() * yScale), sourceBox.size()));
+-        const QPointF bufferTopRight = snapToPixelGridF(bufferSourceBox.topLeft() + m_surfaceToBufferTransform.map(QPointF(rect.right() * xScale, rect.top() * yScale), sourceBox.size()));
+-        const QPointF bufferBottomRight = snapToPixelGridF(bufferSourceBox.topLeft() + m_surfaceToBufferTransform.map(QPointF(rect.right() * xScale, rect.bottom() * yScale), sourceBox.size()));
+-        const QPointF bufferBottomLeft = snapToPixelGridF(bufferSourceBox.topLeft() + m_surfaceToBufferTransform.map(QPointF(rect.left() * xScale, rect.bottom() * yScale), sourceBox.size()));
++        const QPointF bufferTopLeft = sourcePoint(bufferSourceBox.topLeft() + m_surfaceToBufferTransform.map(QPointF(rect.left() * xScale, rect.top() * yScale), sourceBox.size()));
++        const QPointF bufferTopRight = sourcePoint(bufferSourceBox.topLeft() + m_surfaceToBufferTransform.map(QPointF(rect.right() * xScale, rect.top() * yScale), sourceBox.size()));
++        const QPointF bufferBottomRight = sourcePoint(bufferSourceBox.topLeft() + m_surfaceToBufferTransform.map(QPointF(rect.right() * xScale, rect.bottom() * yScale), sourceBox.size()));
++        const QPointF bufferBottomLeft = sourcePoint(bufferSourceBox.topLeft() + m_surfaceToBufferTransform.map(QPointF(rect.left() * xScale, rect.bottom() * yScale), sourceBox.size()));
+ 
+         quad[0] = WindowVertex(rect.topLeft(), bufferTopLeft);
+         quad[1] = WindowVertex(rect.topRight(), bufferTopRight);
+diff --git a/src/scene/surfaceitem.h b/src/scene/surfaceitem.h
+index bf0fddd86d..c2845ff249 100644
+--- a/src/scene/surfaceitem.h
++++ b/src/scene/surfaceitem.h
+@@ -44,11 +44,12 @@ public:
+     void setBufferSourceBox(const RectF &box);
+ 
+     /**
+-     * How the buffer holds two views, one for each eye. A stereo surface shows one view
+-     * over its whole rect: the view of the eye being rendered, else the left one.
++     * How the buffer holds two views. A stereo surface shows one view
++     * over its whole rect: the view of the output eye being rendered, else the left one.
+      */
+     StereoContent stereoContent() const;
+     void setStereoContent(StereoContent content);
++    void setStereoViewSource(const std::optional<RectF> &source);
+     WindowQuadList eyeQuads(StereoEye eye) const;
+ 
+     OutputTransform bufferTransform() const;
+@@ -88,7 +89,7 @@ protected:
+ 
+     void preprocess() override;
+     WindowQuadList buildQuads() const override;
+-    WindowQuadList buildSourceQuads(const RectF &bufferSourceBox) const;
++    WindowQuadList buildSourceQuads(const RectF &bufferSourceBox, bool fractional = false) const;
+     virtual RegionF shapeForSourceBox(const RectF &bufferSourceBox) const;
+     void releaseResources() override;
+ 
+@@ -98,6 +99,7 @@ protected:
+     GraphicsBufferRef m_bufferRef;
+     RectF m_bufferSourceBox;
+     StereoContent m_stereoContent = StereoContentNone;
++    std::optional<RectF> m_stereoViewSource;
+     QSize m_bufferSize;
+     QSizeF m_destinationSize;
+     bool m_hasAlphaChannel = false;
+diff --git a/src/scene/surfaceitem_wayland.cpp b/src/scene/surfaceitem_wayland.cpp
+index 97c9c32a95..fc60ab5038 100644
+--- a/src/scene/surfaceitem_wayland.cpp
++++ b/src/scene/surfaceitem_wayland.cpp
+@@ -61,8 +61,10 @@ SurfaceItemWayland::SurfaceItemWayland(SurfaceInterface *surface, Item *parent)
+     SubSurfaceInterface *subsurface = surface->subSurface();
+     if (subsurface) {
+         setStereoContent(surface->stereoContent());
++        setStereoViewSource(surface->stereoViewSource());
+         connect(surface, &SurfaceInterface::stereoContentChanged, this, [this, surface] {
+             setStereoContent(surface->stereoContent());
++            setStereoViewSource(surface->stereoViewSource());
+         });
+         connect(subsurface, &SubSurfaceInterface::positionChanged,
+                 this, &SurfaceItemWayland::handleSubSurfacePositionChanged);
+@@ -269,7 +271,7 @@ SurfaceItemXwaylandChild::SurfaceItemXwaylandChild(SurfaceInterface *surface, It
+ }
+ 
+ // The child window's place in its X11 window. Its buffer can be larger than the child, as it is
+-// twice the child's width when it holds both eyes at full size; it is drawn at the child's size.
++// twice the child's width when it holds packed views; it is drawn at the child's size.
+ void SurfaceItemXwaylandChild::setChildGeometry(const RectF &geometry)
+ {
+     setPosition(geometry.topLeft());
+@@ -297,7 +299,7 @@ RegionF SurfaceItemXwaylandChild::shapeForSourceBox(const RectF &sourceBox) cons
+     RegionF nativeShape = m_nativeShape;
+     // The GLX version-4 route keeps a one-eye X window and a twice-wide backing
+     // pixmap. Its X shape applies to both views. A packed-raster child instead
+-    // has native coordinates spanning both eyes, including independent holes.
++    // has native coordinates spanning both views, including independent holes.
+     if (stereoContent() != StereoContentNone
+         && bufferSize() == QSize(2 * m_nativeSize.width(), m_nativeSize.height())) {
+         nativeShape |= m_nativeShape.translated(m_nativeSize.width(), 0);
+@@ -357,7 +359,7 @@ SurfaceItemXwayland::SurfaceItemXwayland(X11Window *window, Item *parent)
+ }
+ 
+ // Declared children keep their native buffers and independent place relative to the parent,
+-// one view for each eye; the rest of the window is the same in both eyes.
++// Each view fills the child; the rest of the window is copied into both output eyes.
+ void SurfaceItemXwayland::updateStereoChildren()
+ {
+     std::vector<std::unique_ptr<SurfaceItemXwaylandChild>> items;
+diff --git a/src/wayland/protocols/stereo/kde-stereo-content-v1.xml b/src/wayland/protocols/stereo/kde-stereo-content-v1.xml
+index 197286803c..b10baef8ff 100644
+--- a/src/wayland/protocols/stereo/kde-stereo-content-v1.xml
++++ b/src/wayland/protocols/stereo/kde-stereo-content-v1.xml
+@@ -6,12 +6,12 @@
+     SPDX-License-Identifier: MIT-CMU
+     ]]></copyright>
+ 
+-<interface name="kde_stereo_content_manager_v1" version="3">
++<interface name="kde_stereo_content_manager_v1" version="4">
+   <description summary="declare stereo content of surfaces">
+     A program tells the compositor that a surface's picture holds two
+-    views, one per eye, packed full side by side, with the left eye first.
+-    The compositor renders the declared surface once per eye with that
+-    eye's view. The global being present announces support.
++    views packed full side by side, with the left view first.
++    The compositor renders the declared surface using each view.
++    The global being present announces support.
+ 
+     Since version 3, a program may also follow a surface's desktop depth
+     with get_depth, to draw the elements inside the surface at their own
+@@ -52,25 +52,27 @@
+   </request>
+ </interface>
+ 
+-<interface name="kde_stereo_content_v1" version="3">
++<interface name="kde_stereo_content_v1" version="4">
+   <description summary="stereo content declaration of one surface">
+     The declaration of one surface, created with
+     kde_stereo_content_manager_v1.create.
+ 
+-    Since version 2, a surface declared side_by_side_full is one eye
+-    wide and its buffer holds both eyes: unless a wp_viewport destination
++    Since version 2, a surface declared side_by_side_full is one view
++    wide and its buffer holds both views: unless a wp_viewport destination
+     is set, the surface's size is half the width the buffer would give it
+     (after the buffer scale, the buffer transform and a viewport source)
+     by the full height. A viewport destination, when set, is the size of
+-    one eye. With version 1 the surface's size follows its buffer as for
++    one view. With version 1 the surface's size follows its buffer as for
+     any other surface, so a client that declares at version 1 maps the
+-    buffer onto one eye's size itself, for example with a viewport.
++    buffer onto one view's size itself, for example with a viewport.
+ 
+     Version 3 changes nothing in this interface.
++    Version 4 adds a double-buffered native source rectangle for each view.
+   </description>
+ 
+   <enum name="error">
+     <entry name="no_surface" value="0" summary="the surface no longer exists"/>
++    <entry name="bad_source" value="1" since="4" summary="invalid per-view source rectangle"/>
+   </enum>
+ 
+   <request name="destroy" type="destructor">
+@@ -85,7 +87,7 @@
+       The value matches the X11 property _KDE_NET_WM_STEREO_CONTENT.
+     </description>
+     <entry name="none" value="0" summary="no stereo content"/>
+-    <entry name="side_by_side_full" value="3" summary="side by side, full width per eye, left first"/>
++    <entry name="side_by_side_full" value="3" summary="side by side, native width per view, left first"/>
+   </enum>
+ 
+   <request name="set_content">
+@@ -94,9 +96,33 @@
+       are treated as none. Declaring none clears the format and does not
+       destroy the declaration object.
+     </description>
+-    <arg name="content" type="uint" enum="content" summary="packing and eye order"/>
++    <arg name="content" type="uint" enum="content" summary="packing and view order"/>
+   </request>
+ 
++  <request name="set_view_source" since="4">
++    <description summary="select the same native source rectangle in both views">
++      Select a rectangle independently within each view of side_by_side_full
++      content. Coordinates are native buffer pixels after the buffer transform,
++      relative to the top left of each half of the viewport source rectangle.
++      The viewport destination remains the logical size of one drawing area.
++      No new packing or view-order value is introduced.
++
++      The rectangle is double buffered with wl_surface.commit. Initially it is
++      unset. Set all four values to -1 to unset it. Otherwise x and y must be
++      nonnegative and width and height strictly positive. The rectangle must
++      fit inside each view when a buffer is committed; otherwise bad_source is
++      raised. With no viewport destination, the rectangle's size divided by
++      buffer scale gives the surface size. Fractional edges are retained.
++
++      Setting content to none or destroying the declaration also unsets the
++      rectangle. This request on a destroyed wl_surface raises no_surface.
++      Existing clients which do not set a view source keep their behavior.
++    </description>
++    <arg name="x" type="fixed"/>
++    <arg name="y" type="fixed"/>
++    <arg name="width" type="fixed"/>
++    <arg name="height" type="fixed"/>
++  </request>
+ </interface>
+ 
+ <interface name="kde_stereo_depth_v1" version="3">
+@@ -105,7 +131,7 @@
+     active window at the screen, the windows lying behind it sunk, menus,
+     tooltips and popups popped. This object lets a client show depth
+     inside a surface as well, by drawing the surface's elements once per
+-    eye at their own depths and handing the two views over full side by
++    view at their own depths and handing the two views over full side by
+     side, declared with kde_stereo_content_v1:
+ 
+     - the compositor tells the client when the elements inside the surface
+@@ -165,11 +191,11 @@
+     <description summary="Mark the surface's pair as the desktop's own depth">
+       Nonzero marks the full side-by-side pair the surface shows, declared
+       with kde_stereo_content_v1 by this client or its graphics library, as
+-      the desktop's own elements drawn once per eye rather than stereo
++      the desktop's own elements drawn once per view rather than stereo
+       content: where the compositor treats stereo content differently, for
+       example in switching a display into a 3D mode, in stereo screenshots
+       or in estimating the depth of content, the surface counts as part of
+-      the desktop. The compositor still shows each view in its eye. Zero
++      the desktop. The compositor still presents each view separately. Zero
+       withdraws the mark.
+ 
+       Takes effect with the next wl_surface commit.
+diff --git a/src/wayland/stereocontent_v1.cpp b/src/wayland/stereocontent_v1.cpp
+index 8f7872be3b..2c63b7d2cc 100644
+--- a/src/wayland/stereocontent_v1.cpp
++++ b/src/wayland/stereocontent_v1.cpp
+@@ -15,7 +15,7 @@
+ namespace KWin
+ {
+ 
+-static constexpr uint32_t s_version = 3;
++static constexpr uint32_t s_version = 4;
+ 
+ static constexpr StereoContent toStereoContent(uint32_t content)
+ {
+@@ -68,7 +68,8 @@ StereoContentSurfaceV1::~StereoContentSurfaceV1()
+         const auto priv = SurfaceInterfacePrivate::get(m_surface);
+         priv->stereoContent = nullptr;
+         priv->pending->stereoContent = StereoContentNone;
+-        priv->pending->stereoContentOneEyeWide = false;
++        priv->pending->stereoContentOneViewWide = false;
++        priv->pending->stereoViewSource.reset();
+         priv->pending->committed |= SurfaceState::Field::StereoContent;
+     }
+ }
+@@ -91,7 +92,34 @@ void StereoContentSurfaceV1::kde_stereo_content_v1_set_content(Resource *resourc
+     }
+     const auto priv = SurfaceInterfacePrivate::get(m_surface);
+     priv->pending->stereoContent = toStereoContent(content);
+-    priv->pending->stereoContentOneEyeWide = resource->version() >= 2;
++    if (priv->pending->stereoContent == StereoContentNone) {
++        priv->pending->stereoViewSource.reset();
++    }
++    priv->pending->stereoContentOneViewWide = resource->version() >= 2;
++    priv->pending->committed |= SurfaceState::Field::StereoContent;
++}
++
++void StereoContentSurfaceV1::postBadSource()
++{
++    wl_resource_post_error(resource()->handle, error_bad_source, "per-view source rectangle is outside the native view");
++}
++
++void StereoContentSurfaceV1::kde_stereo_content_v1_set_view_source(Resource *resource, wl_fixed_t x, wl_fixed_t y, wl_fixed_t width, wl_fixed_t height)
++{
++    if (!m_surface) {
++        wl_resource_post_error(resource->handle, error_no_surface, "wl_surface was destroyed before set_view_source");
++        return;
++    }
++    const auto priv = SurfaceInterfacePrivate::get(m_surface);
++    if (x == wl_fixed_from_int(-1) && y == x && width == x && height == x) {
++        priv->pending->stereoViewSource.reset();
++    } else if (x < 0 || y < 0 || width <= 0 || height <= 0) {
++        postBadSource();
++        return;
++    } else {
++        priv->pending->stereoViewSource = RectF(wl_fixed_to_double(x), wl_fixed_to_double(y),
++                                              wl_fixed_to_double(width), wl_fixed_to_double(height));
++    }
+     priv->pending->committed |= SurfaceState::Field::StereoContent;
+ }
+ 
+diff --git a/src/wayland/stereocontent_v1.h b/src/wayland/stereocontent_v1.h
+index 8f1b63d92d..fe7b9ce921 100644
+--- a/src/wayland/stereocontent_v1.h
++++ b/src/wayland/stereocontent_v1.h
+@@ -35,12 +35,15 @@ class StereoContentSurfaceV1 : private QtWaylandServer::kde_stereo_content_v1
+ public:
+     explicit StereoContentSurfaceV1(wl_client *client, uint32_t id, uint32_t version, SurfaceInterface *surface);
+     ~StereoContentSurfaceV1() override;
++    void postBadSource();
+ 
+ private:
+     void kde_stereo_content_v1_destroy_resource(Resource *resource) override;
+     void kde_stereo_content_v1_destroy(Resource *resource) override;
+     void kde_stereo_content_v1_set_content(Resource *resource, uint32_t content) override;
+ 
++    void kde_stereo_content_v1_set_view_source(Resource *resource, wl_fixed_t x, wl_fixed_t y, wl_fixed_t width, wl_fixed_t height) override;
++
+     const QPointer<SurfaceInterface> m_surface;
+ };
+ 
+diff --git a/src/wayland/surface.cpp b/src/wayland/surface.cpp
+index 9efc0ebf5f..945f6966fb 100644
+--- a/src/wayland/surface.cpp
++++ b/src/wayland/surface.cpp
+@@ -643,7 +643,8 @@ void SurfaceState::mergeInto(SurfaceState *target)
+     target->renderingIntent = renderingIntent;
+     target->alphaMultiplier = alphaMultiplier;
+     target->stereoContent = stereoContent;
+-    target->stereoContentOneEyeWide = stereoContentOneEyeWide;
++    target->stereoContentOneViewWide = stereoContentOneViewWide;
++    target->stereoViewSource = stereoViewSource;
+     target->stereoDesktopDepth = stereoDesktopDepth;
+     target->stereoPlace = stereoPlace;
+     target->yuvCoefficients = yuvCoefficients;
+@@ -703,6 +704,16 @@ void SurfaceInterfacePrivate::applyState(SurfaceState *next)
+ 
+     if (current->buffer) {
+         bufferSourceBox = computeBufferSourceBox();
++        if (current->stereoContent == StereoContentSideBySideFull && current->stereoViewSource) {
++            const RectF source = current->bufferTransform.inverted().map(bufferSourceBox, current->buffer->size());
++            const RectF crop = *current->stereoViewSource;
++            if (crop.right() > source.width() / 2 || crop.bottom() > source.height()) {
++                if (stereoContent) {
++                    stereoContent->postBadSource();
++                }
++                return;
++            }
++        }
+ 
+         if (current->viewport.destinationSize.isValid()) {
+             surfaceSize = current->viewport.destinationSize;
+@@ -711,10 +722,14 @@ void SurfaceInterfacePrivate::applyState(SurfaceState *next)
+         } else {
+             surfaceSize = current->bufferTransform.map(current->buffer->size() / current->bufferScale);
+         }
+-        // the surface is one eye wide, its buffer holds both eyes side by side
+-        if (!current->viewport.destinationSize.isValid() && current->stereoContentOneEyeWide
++        // the surface is one view wide, its buffer holds both views side by side
++        if (!current->viewport.destinationSize.isValid() && current->stereoContentOneViewWide
+             && current->stereoContent == StereoContentSideBySideFull) {
+-            surfaceSize.setWidth(surfaceSize.width() / 2);
++            if (current->stereoViewSource) {
++                surfaceSize = current->stereoViewSource->size() / current->bufferScale;
++            } else {
++                surfaceSize.setWidth(surfaceSize.width() / 2);
++            }
+         }
+         surfaceSize /= serverScale;
+ 
+@@ -1333,6 +1348,11 @@ double SurfaceInterface::alphaMultiplier() const
+     return d->current->alphaMultiplier;
+ }
+ 
++std::optional<RectF> SurfaceInterface::stereoViewSource() const
++{
++    return d->current->stereoViewSource;
++}
++
+ StereoContent SurfaceInterface::stereoContent() const
+ {
+     return d->current->stereoContent;
+diff --git a/src/wayland/surface.h b/src/wayland/surface.h
+index bc59e4b6b5..f3111b048e 100644
+--- a/src/wayland/surface.h
++++ b/src/wayland/surface.h
+@@ -347,6 +347,7 @@ public:
+      * The surface's declared stereo content from kde_stereo_content_v1.
+      */
+     StereoContent stereoContent() const;
++    std::optional<RectF> stereoViewSource() const;
+ 
+     /**
+      * Whether the client marked the surface's pair as the desktop's own depth, its elements drawn
+diff --git a/src/wayland/surface_p.h b/src/wayland/surface_p.h
+index 949a827257..2d88e04290 100644
+--- a/src/wayland/surface_p.h
++++ b/src/wayland/surface_p.h
+@@ -103,8 +103,9 @@ struct SurfaceState
+     std::shared_ptr<SyncObjReleasePoint> releasePoint;
+     double alphaMultiplier = 1;
+     StereoContent stereoContent = StereoContentNone;
+-    // declared with kde_stereo_content_v1 version 2: a full side-by-side buffer is two eyes of the surface
+-    bool stereoContentOneEyeWide = false;
++    // declared with kde_stereo_content_v1 version 2: a full side-by-side buffer holds two views
++    bool stereoContentOneViewWide = false;
++    std::optional<RectF> stereoViewSource;
+     // marked with kde_stereo_depth_v1: the pair is the desktop's own depth, not stereo content
+     bool stereoDesktopDepth = false;
+     // declared with kde_stereo_depth_v1: where a popup surface sits, from -1 to 1 of the user's limits
+-- 
+2.53.0
+

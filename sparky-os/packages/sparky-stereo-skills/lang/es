@@ -1,0 +1,54 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/11/01
+LOCAL1="Habilidades para asistentes de IA"
+LOCAL3="¿Dar a sus asistentes de IA las habilidades de Sparky Stereo OS?"
+LOCAL4="Las habilidades permanecen en /usr/share/sparky-stereo-os/skills. Cada carpeta que elija recibe un enlace a cada habilidad; sus propias habilidades se dejan como están."
+LOCAL5="Nombre"
+LOCAL6="Carpeta"
+LOCAL7="Enlace"
+LOCAL8="Ahora no"
+LOCAL9="No volver a preguntar"
+LOCAL10="%s habilidades enlazadas en %s"
+LOCAL11="Se deja como está, no es un enlace nuestro: %s"
+LOCAL12="Omitida, su SKILL.md no tiene un encabezado válido: %s"
+LOCAL13="%s enlaces eliminados de %s"
+LOCAL14="encontrado"
+LOCAL15="no encontrado"
+LOCAL16="Carpeta de asistente desconocida: %s (sparky-stereo-skills tools las enumera)"
+LOCAL17="Ejecutarlo como usuario normal, no como root: las habilidades se enlazan en su propia carpeta personal."
+LOCAL18="Archivo de habilidades para Open WebUI (Workspace, Skills, Import): %s"
+LOCAL19="No se encontró ningún asistente de IA para esta cuenta; se enlaza en %s, la carpeta que leen la mayoría de los asistentes."
+LOCAL20="Uso: sparky-stereo-skills [--project CARPETA] [status | link [NOMBRE...] | unlink [NOMBRE...] | list | tools | export ARCHIVO.zip]
+  status    cada carpeta de asistente, si se encontró su asistente y cuántas habilidades están enlazadas allí
+  link      enlaza cada habilidad en las carpetas de los asistentes encontrados (o en las carpetas indicadas)
+  unlink    elimina solo los enlaces que creó esta herramienta (de todas las carpetas o de las indicadas)
+  list      las habilidades, con la utilidad de cada una
+  tools     los nombres de carpeta: agents, claude, cline, gemini, opencode, copilot, cursor
+  export    un archivo ZIP de las habilidades, para el Import de Open WebUI
+  --project CARPETA   enlaza en .agents/skills y .claude/skills de un proyecto en lugar de su carpeta personal
+  --gui     la misma elección como cuadro de diálogo"
+LOCAL21="Puede hacerlo más tarde desde el menú: Desarrollo, Habilidades para asistentes de IA."
+LOCAL22="%s de %s habilidades enlazadas"
+LOCAL23="Leído por"
+LOCAL24="Habilidades de Sparky Stereo OS para sus asistentes de IA"
+LOCAL25="Para mantenedores humanos y de modelos locales (no se requiere asistente):
+  find [--limit N] TEXTO   las habilidades que mejor se ajustan a una tarea o un síntoma, encontradas sin conexión, con el comando de contexto que ejecutar a continuación
+  context [HABILIDAD...] [--section HABILIDAD:ENCABEZADO] [--reference RUTA] [--output ARCHIVO]
+            instrucciones seleccionadas con hashes de origen; context --help enumera las opciones
+  bundle ARCHIVO.zip   árbol de referencia público completo para una extracción ordinaria sin conexión"
+LOCAL26="Omitida, ninguno de sus paquetes está instalado: %s"
+LOCAL27="Falta el motor de habilidades: %s (instalar el paquete sparky-stereo-skills-engine)."
+LOCAL28="¿Permitir también que estos asistentes consulten las habilidades mediante MCP (Model Context Protocol)?"
+LOCAL29="Quién aprueba los comandos que enumera una habilidad"
+LOCAL30="Automático: la aprobación propia del asistente si usa un asistente de IA; de lo contrario, preguntarme primero"
+LOCAL31="Preguntarme siempre primero"
+LOCAL32="Usar siempre la aprobación propia del asistente"
+LOCAL33="Para asistentes y para comandos (el mismo motor responde a find y context):
+  sections HABILIDAD   los encabezados exactos de una habilidad
+  commands HABILIDAD   los comandos que enumera una habilidad de usuario
+  run HABILIDAD ID [SLOT=VALOR...]   ejecuta un comando enumerado, tras su confirmación
+  serve   el servidor MCP por stdio, iniciado por un asistente
+  mcp register [ASISTENTE...] | unregister [ASISTENTE...] | status | commands [auto|assistant|ask]
+            registra el servidor en un asistente tras su confirmación, lo elimina, muestra el estado o elige quién aprueba los comandos"

@@ -1,0 +1,31 @@
+0.1.6 (2026-11-06)
+  * ORDER 437 (review of 252c): no Cisco VPNC row (network-manager-vpnc has left Debian testing, so it could never be offered). The rescue entry brings GPart, Partclone, FSArchiver, nwipe and Sparky Chrooter, the tools the image does not install: it named TestDisk and ddrescue, which the system task depends on, so removing the entry would have removed the task (study J23).
+
+0.1.5 (2026-11-06)
+  * ORDER 252c (study items J9, J26, J27): a VPN section offers the plain NetworkManager plugins (OpenVPN, OpenConnect, L2TP/IPsec, strongSwan, PPTP, SSH tunnel), never the GNOME editors; a Tools section offers Syncthing with its Plasma widget, Vorta with Borg, KeePassXC, Solaar, Piper, Yakuake, the rescue tools (TestDisk, ddrescue, Sparky Chrooter) and HPLIP, which shows only while Debian offers it. Paweł's own VPN page is his package's file and stays as it ships.
+  * An entry may name companions (`also`): installed, removed and offered together, and shown only when every package of the entry is offered.
+  * The two section titles in the 21 languages of the page.
+
+0.1.4 (2026-11-04)
+  * Show, beside an entry that is not installed, the install-time downloads it brings (the packages apt would install for it whose control file declares Sparky-Install-Download-Size and Sparky-Install-Download-Source), with size and source, on a metered connection and, said, when NetworkManager cannot be read (ORDER 399b; Daniel, 2026-11-04: "warn the user with current size on stereo aptus interface or apt"). One declaration and one reader, shared with apt's own notice (sparky-stereo-apt 20261104.3, which this version depends on), in the nine languages.
+  * FlightGear joins the catalogue (stereo programs section): its data downloader declares 1.75 GiB.
+
+0.1.3 (2026-11-03)
+  * Follow the installed only-ours policy for edition origin checks; other names use configured signed archives.
+  * Omit entries without archive candidates; retain only-ours failures with Repair.
+  * Depend on sparky-stereo-apt, the owner of the generated policy.
+
+sparky-aptus-stereo-appcenter 0.1.2 (2026-11-03)
+  * Add edition program sections, SlimeVR and the CODESYS Store link
+  * Verify vendor downloads and retain failures with their repair
+  * Pass every unrecognized request unchanged to the original handler
+
+sparky-aptus-stereo-appcenter 0.1.1 (2026-11-03)
+  * Activate zram at opt-in and stop it before removal.
+  * Keep the complete transaction’s failures and repair in the shared engine.
+  * Explain restart only when systemd is absent, in every catalog language.
+
+sparky-aptus-stereo-appcenter 0.1.0 (2026-11-03)
+  First separate package: System's zram opt-in, shared with the Memory page.
+  Link to Paweł's categories and pass his requests to his unchanged handler.
+  Keep action failures through sparky-stereo-problems.

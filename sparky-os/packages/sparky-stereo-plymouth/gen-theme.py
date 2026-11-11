@@ -70,20 +70,27 @@ header = '''\
 ELECTRONS_DISPLAYED = 3;
 SECS_BETWEEN_ANIMS = 2.5;
 
-# Depth of an electron, as parallax between the eyes in pixels at 1920 pixels per eye
-# (scaled to the eye's width). Popped is smaller than sunk: a popped thing that nears
-# the edge breaks the window, a sunk one does not.
+# Depth, as parallax between the eyes in pixels at 1920 pixels per eye (scaled to the eye's width). The splash
+# follows the desktop's own limits on this screen, the person's choice built on the display (Daniel, 2026-11-05: "read
+# the depth config by, and in this order of importance: 1 - User choice (but based on 2); 2 - Current display"): the boot
+# hands Plymouth the main screen's PoppedLimit and SunkLimit as Stereo KWin resolves them (plymouth.stereo= popped=,
+# sunk=, pixels of a view 1920 wide, scaled by the eye's width over 1920 the way KWin scales them), and Plymouth gives them
+# to the theme. Nothing is in front of the screen by more than the popped limit, nothing behind it by more than the sunk
+# limit (ORDER 472, ORDER 481). Where the boot gave none, Plymouth says so and gives the display's default, 4 and 10.
+# Popped is smaller than sunk: a popped thing that nears the edge breaks the window, a sunk one does not.
 DEPTH_FOLLOWS = "%(depth)s";
-POP_PX = 4.0;
-SINK_PX = 6.0;
+POPPED_LIMIT = Window.GetStereoPoppedLimit ();
+SUNK_LIMIT = Window.GetStereoSunkLimit ();
 
-# The levels, as parallax in front of the screen in pixels at 1920 pixels per eye (scaled to the eye's width):
-# the base one step, the logo two. Two steps are the logo's raise in the SparkyOS stereo theme (sparkyos-stereo:
-# 0.00473 of the eye's width, 9.08 px at 1920, measured in front of the background in a real stereo clip), so the
-# logo stands one step above the base as the base stands one step above the screen.
-STEP_PX = 4.54;
+# The levels, as parallax in front of the screen: the base is half the popped limit, the logo the popped limit,
+# so the logo stands one step above the base as the base stands one step above the screen. The electrons ride the base
+# and pop at most to the popped limit (BASE + POP), and sink by 0.6 of the sunk limit from the base at most, so
+# the farthest one stays inside the sunk limit (BASE - SINK is never below minus the sunk limit).
+STEP_PX = POPPED_LIMIT / 2;
 BASE_PX = STEP_PX;
 LOGO_PX = 2 * STEP_PX;
+POP_PX = STEP_PX;
+SINK_PX = SUNK_LIMIT * 0.6;
 
 #------------------------------- Globals -------------------------------------------
 ''' % {'depth': depth}
@@ -107,7 +114,8 @@ BASE = BASE_PX * EYE_W / 1920;
 LOGO = LOGO_PX * EYE_W / 1920;
 
 # A stereo sprite is one sprite per eye. d is the parallax in pixels, positive in front of
-# the screen: the left eye's picture moves right by d / 2 and the right eye's left by d / 2.
+# the screen: the left eye's picture moves right and the right eye's left, together by d rounded to whole
+# pixels (the odd pixel to the left eye), so a screen of a few hundred pixels per eye still tells the levels apart.
 # One eye (a 2D screen) draws every level in its place.
 fun SS_New (image) {
     local.ss;
@@ -119,14 +127,22 @@ fun SS_New (image) {
 
 fun SS_Place (ss, x, y, z, d) {
     local.e;
-    local.half;
+    local.whole;
+    local.left;
+    local.shift;
+    if (EYES == 1)
+        d = 0;
+    if (d >= 0)
+        whole = Math.Int (d + 0.5);
+    else
+        whole = -Math.Int (-d + 0.5);
+    left = Math.Int (whole / 2 + 0.5);
     for (e = 0; e < EYES; e++) {
-        half = d / 2;
-        if (EYES == 1)
-            half = 0;
-        if (e == 1)
-            half = -half;
-        ss.s[e].SetPosition (Math.Int (x + e * EYE_W + half + 0.5), Math.Int (y + 0.5), z);
+        if (e == 0)
+            shift = left;
+        else
+            shift = left - whole;
+        ss.s[e].SetPosition (Math.Int (x + e * EYE_W + shift + 0.5), Math.Int (y + 0.5), z);
     }
 }
 

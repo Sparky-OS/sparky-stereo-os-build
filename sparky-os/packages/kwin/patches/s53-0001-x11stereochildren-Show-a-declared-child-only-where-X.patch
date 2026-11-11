@@ -1,0 +1,549 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 9 Nov 2026 13:27:14 -0300
+Subject: [PATCH 1/2] x11stereochildren: Show a declared child only where X
+ shows it
+
+A declared X11 child is redirected, so Xwayland gives it a surface whose buffer
+is whole, and the scene drew all of it at the child's place. A child larger than
+its window showed outside the window, and a window stacked over the child (a
+sibling mapped after it) was hidden by it, where the X server draws the child
+clipped to its window and the windows between, and hides it under any viewable
+window stacked over it.
+
+X11StereoChild::visible is the X11 window's area, cut to the windows between it
+and the child, less the bounding shapes (SHAPE, border included) of the viewable
+windows stacked over the child or over a window between, found with
+xcb_query_tree. Declared children are left to the scene's order.
+SurfaceItemXwaylandChild::shapeForSourceBox(), which both eyes' quads and
+shape() are built from, is cut to it in the item's own coordinates, so the view
+is cut once whatever the child's place or scale, and a child that fits its
+window with nothing over it is unchanged.
+
+The covering windows are watched, not polled: the X11 window and the windows
+between it and the child select SubstructureNotify (the X11 window's own event
+mask is kept), Workspace::workspaceEvent hands the Create, Destroy, Map, Unmap,
+Reparent, Configure and Circulate events of their children to the child's owner,
+a covering window's ShapeNotify is selected on the window itself, and the area
+follows the X11 window's size.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ src/events.cpp                    |  46 ++++++
+ src/scene/surfaceitem_wayland.cpp |  22 ++-
+ src/scene/surfaceitem_wayland.h   |   3 +
+ src/workspace.cpp                 |  11 ++
+ src/workspace.h                   |   1 +
+ src/x11stereochildren.cpp         | 223 +++++++++++++++++++++++++++++-
+ src/x11stereochildren.h           |  21 +++
+ 7 files changed, 318 insertions(+), 9 deletions(-)
+
+diff --git a/src/events.cpp b/src/events.cpp
+index 76ebff81e6..d5b00641ad 100644
+--- a/src/events.cpp
++++ b/src/events.cpp
+@@ -123,11 +123,57 @@ static Qt::MouseButton x11ToQtMouseButton(int button)
+     return Qt::NoButton;
+ }
+ 
++// The window a window-structure event was sent to when it came because that window's children are
++// watched (SubstructureNotify), or XCB_WINDOW_NONE: the parent of a CreateNotify, the event window of
++// the others when it is not the window the event is about.
++static xcb_window_t findSubstructureParent(xcb_generic_event_t *event)
++{
++    switch (event->response_type & ~0x80) {
++    case XCB_CREATE_NOTIFY:
++        return reinterpret_cast<xcb_create_notify_event_t *>(event)->parent;
++    case XCB_DESTROY_NOTIFY: {
++        const auto *e = reinterpret_cast<xcb_destroy_notify_event_t *>(event);
++        return e->event != e->window ? e->event : XCB_WINDOW_NONE;
++    }
++    case XCB_MAP_NOTIFY: {
++        const auto *e = reinterpret_cast<xcb_map_notify_event_t *>(event);
++        return e->event != e->window ? e->event : XCB_WINDOW_NONE;
++    }
++    case XCB_UNMAP_NOTIFY: {
++        const auto *e = reinterpret_cast<xcb_unmap_notify_event_t *>(event);
++        return e->event != e->window ? e->event : XCB_WINDOW_NONE;
++    }
++    case XCB_REPARENT_NOTIFY: {
++        const auto *e = reinterpret_cast<xcb_reparent_notify_event_t *>(event);
++        return e->event != e->window ? e->event : XCB_WINDOW_NONE;
++    }
++    case XCB_CONFIGURE_NOTIFY: {
++        const auto *e = reinterpret_cast<xcb_configure_notify_event_t *>(event);
++        return e->event != e->window ? e->event : XCB_WINDOW_NONE;
++    }
++    case XCB_CIRCULATE_NOTIFY: {
++        const auto *e = reinterpret_cast<xcb_circulate_notify_event_t *>(event);
++        return e->event != e->window ? e->event : XCB_WINDOW_NONE;
++    }
++    default:
++        return XCB_WINDOW_NONE;
++    }
++}
++
+ /**
+  * Handles workspace specific XCB event
+  */
+ void Workspace::workspaceEvent(xcb_generic_event_t *e)
+ {
++    // a window inside an X11 window with stereo children appeared, moved, was restacked or went
++    // away: it may cover a child
++    if (const xcb_window_t parent = findSubstructureParent(e); parent != XCB_WINDOW_NONE) {
++        if (X11Window *window = findStereoChildParent(parent)) {
++            window->stereoChildren()->handleSubstructureEvent(e);
++            return;
++        }
++    }
++
+     const xcb_window_t eventWindow = findEventWindow(e);
+     if (eventWindow != XCB_WINDOW_NONE) {
+         if (X11Window *window = findClient(eventWindow)) {
+diff --git a/src/scene/surfaceitem_wayland.cpp b/src/scene/surfaceitem_wayland.cpp
+index 049f978a32..14a3cc0117 100644
+--- a/src/scene/surfaceitem_wayland.cpp
++++ b/src/scene/surfaceitem_wayland.cpp
+@@ -293,6 +293,19 @@ void SurfaceItemXwaylandChild::setChildShape(const RegionF &shape, const QSize &
+     scheduleRepaint(rect());
+ }
+ 
++// Where X shows the child, in the X11 window's coordinates: inside its window and the windows
++// between, and without the windows stacked over it.
++void SurfaceItemXwaylandChild::setChildVisible(const RegionF &visible)
++{
++    if (m_clipped && m_visible == visible) {
++        return;
++    }
++    m_clipped = true;
++    m_visible = visible;
++    discardQuads();
++    scheduleRepaint(rect());
++}
++
+ RegionF SurfaceItemXwaylandChild::shapeForSourceBox(const RectF &sourceBox) const
+ {
+     if (sourceBox.isEmpty() || m_nativeSize.isEmpty()) {
+@@ -306,9 +319,11 @@ RegionF SurfaceItemXwaylandChild::shapeForSourceBox(const RectF &sourceBox) cons
+         && bufferSize() == QSize(2 * m_nativeSize.width(), m_nativeSize.height())) {
+         nativeShape |= m_nativeShape.translated(m_nativeSize.width(), 0);
+     }
+-    return nativeShape.intersected(sourceBox)
+-        .translated(-sourceBox.topLeft())
+-        .scaled(destinationSize().width() / sourceBox.width(), destinationSize().height() / sourceBox.height());
++    const RegionF shape = nativeShape.intersected(sourceBox)
++                              .translated(-sourceBox.topLeft())
++                              .scaled(destinationSize().width() / sourceBox.width(), destinationSize().height() / sourceBox.height());
++    // each eye's quads come from this, so the cut is made here, in the item's own coordinates
++    return m_clipped ? shape.intersected(m_visible.translated(-position())) : shape;
+ }
+ 
+ RegionF SurfaceItemXwaylandChild::shape() const
+@@ -382,6 +397,7 @@ void SurfaceItemXwayland::updateStereoChildren()
+             item->setChildGeometry(child->place());
+             item->setStereoContent(child->content);
+             item->setChildShape(child->shape, child->nativeSize);
++            item->setChildVisible(child->visible);
+             item->setMapped(child->mapped);
+             item->setZ(child->belowParent ? int(items.size()) - int(children->children().size()) : int(items.size()) + 1);
+             items.push_back(std::move(item));
+diff --git a/src/scene/surfaceitem_wayland.h b/src/scene/surfaceitem_wayland.h
+index a2ea075eb2..62e46683fa 100644
+--- a/src/scene/surfaceitem_wayland.h
++++ b/src/scene/surfaceitem_wayland.h
+@@ -81,6 +81,7 @@ public:
+ 
+     void setChildGeometry(const RectF &geometry);
+     void setChildShape(const RegionF &shape, const QSize &nativeSize);
++    void setChildVisible(const RegionF &visible);
+     RegionF shape() const override;
+     RegionF opaque() const override;
+     void setMapped(bool mapped);
+@@ -92,6 +93,8 @@ private:
+     RegionF shapeForSourceBox(const RectF &bufferSourceBox) const override;
+ 
+     RegionF m_nativeShape;
++    RegionF m_visible;
++    bool m_clipped = false;
+     QSize m_nativeSize;
+     QSizeF m_childSize;
+     bool m_mapped = false;
+diff --git a/src/workspace.cpp b/src/workspace.cpp
+index 875623c549..0e5f51059c 100644
+--- a/src/workspace.cpp
++++ b/src/workspace.cpp
+@@ -2212,6 +2212,17 @@ X11Window *Workspace::findStereoChildOwner(xcb_window_t w) const
+     }
+     return nullptr;
+ }
++
++X11Window *Workspace::findStereoChildParent(xcb_window_t w) const
++{
++    for (Window *window : std::as_const(m_windows)) {
++        X11Window *x11Window = qobject_cast<X11Window *>(window);
++        if (x11Window && x11Window->stereoChildren() && x11Window->stereoChildren()->isParentOfChild(w)) {
++            return x11Window;
++        }
++    }
++    return nullptr;
++}
+ #endif
+ 
+ Window *Workspace::findWindow(std::function<bool(const Window *)> func) const
+diff --git a/src/workspace.h b/src/workspace.h
+index b5166b6b6b..7c6fa3b7fc 100644
+--- a/src/workspace.h
++++ b/src/workspace.h
+@@ -127,6 +127,7 @@ public:
+      * child and itself.
+      */
+     X11Window *findStereoChildOwner(xcb_window_t w) const;
++    X11Window *findStereoChildParent(xcb_window_t w) const;
+ #endif
+ 
+     Window *findWindow(const QUuid &internalId) const;
+diff --git a/src/x11stereochildren.cpp b/src/x11stereochildren.cpp
+index aac7e863d6..e743fe5698 100644
+--- a/src/x11stereochildren.cpp
++++ b/src/x11stereochildren.cpp
+@@ -19,12 +19,21 @@
+ #include <xcb/composite.h>
+ #include <xcb/shape.h>
+ 
++#include <algorithm>
++#include <span>
++
+ namespace KWin
+ {
+ 
+ X11StereoChildren::X11StereoChildren(X11Window *window)
+     : m_window(window)
+ {
++    // the area X shows a child in follows the X11 window's size
++    connect(window, &Window::bufferGeometryChanged, this, [this](const RectF &old) {
++        if (!m_children.empty() && old.size() != m_window->bufferGeometry().size()) {
++            updateAll();
++        }
++    });
+ }
+ 
+ X11StereoChildren::~X11StereoChildren() = default;
+@@ -47,7 +56,23 @@ X11StereoChild *X11StereoChildren::findChild(xcb_window_t window) const
+ bool X11StereoChildren::owns(xcb_window_t window) const
+ {
+     for (const auto &child : m_children) {
+-        if (child->window == window || child->ancestors.contains(window)) {
++        if (child->window == window || child->ancestors.contains(window) || child->coverers.contains(window)) {
++            return true;
++        }
++    }
++    return false;
++}
++
++bool X11StereoChildren::isParentOfChild(xcb_window_t window) const
++{
++    if (m_children.empty()) {
++        return false;
++    }
++    if (window == m_window->window()) {
++        return true;
++    }
++    for (const auto &child : m_children) {
++        if (child->ancestors.contains(window)) {
+             return true;
+         }
+     }
+@@ -142,10 +167,18 @@ std::unique_ptr<X11StereoChild> X11StereoChildren::watch(xcb_window_t window)
+     if (Xcb::Extensions::self()->isShapeAvailable()) {
+         xcb_shape_select_input(connection, window, true);
+     }
+-    const uint32_t ancestorEvents = XCB_EVENT_MASK_STRUCTURE_NOTIFY;
++    // the windows the child can be covered in: a sibling that appears, moves or goes away is
++    // announced to its parent, which is the X11 window or one between it and the child
++    const uint32_t ancestorEvents = XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
+     for (const xcb_window_t ancestor : std::as_const(child->ancestors)) {
+         xcb_change_window_attributes(connection, ancestor, XCB_CW_EVENT_MASK, &ancestorEvents);
+     }
++    // the X11 window's own mask is the window's: only the bit for its children is added
++    Xcb::WindowAttributes windowAttributes(m_window->window());
++    if (!windowAttributes.isNull()) {
++        const uint32_t windowEvents = windowAttributes->your_event_mask | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
++        xcb_change_window_attributes(connection, m_window->window(), XCB_CW_EVENT_MASK, &windowEvents);
++    }
+     // a redirected child gets a surface of its own from Xwayland, which announces it with
+     // WL_SURFACE_SERIAL as it does for a top-level window
+     xcb_composite_redirect_window(connection, window, XCB_COMPOSITE_REDIRECT_MANUAL);
+@@ -170,6 +203,19 @@ void X11StereoChildren::unwatch(X11StereoChild *child)
+             xcb_change_window_attributes(connection, ancestor, XCB_CW_EVENT_MASK, &noEvents);
+         }
+     }
++    // the covering windows no other child watches, and the X11 window's children once none is left
++    for (const xcb_window_t coverer : std::as_const(child->coverers)) {
++        if (!owns(coverer) && Xcb::Extensions::self()->isShapeAvailable()) {
++            xcb_discard_reply(connection, xcb_shape_select_input_checked(connection, coverer, false).sequence);
++        }
++    }
++    if (m_children.empty()) {
++        Xcb::WindowAttributes windowAttributes(m_window->window());
++        if (!windowAttributes.isNull()) {
++            const uint32_t windowEvents = windowAttributes->your_event_mask & ~uint32_t(XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY);
++            xcb_discard_reply(connection, xcb_change_window_attributes_checked(connection, m_window->window(), XCB_CW_EVENT_MASK, &windowEvents).sequence);
++        }
++    }
+     if (child->surface) {
+         disconnect(child->surface, nullptr, this, nullptr);
+     }
+@@ -212,6 +258,8 @@ void X11StereoChildren::updateGeometry(X11StereoChild *child)
+         }
+     }
+ 
++    updateVisible(child);
++
+     // mapped up to the X11 window: the X11 window's own state is the window's, and a child that
+     // was mapped while the X11 window was not gets no MapNotify when the X11 window is mapped
+     child->mapped = true;
+@@ -248,6 +296,121 @@ void X11StereoChildren::updateShape(X11StereoChild *child)
+     child->shape = shape.intersected(bounds);
+ }
+ 
++// X shows a child inside its window and the windows between, and a viewable sibling stacked over
++// it, or over a window between, hides it where the sibling's bounding shape is. This reads that from
++// the X server, as the stacking is now. A sibling that is a declared child
++// is left to the scene's order. A window that appears, moves or is restacked is announced to its parent,
++// which this watches (SubstructureNotify); a covering window's shape change is watched on the window.
++void X11StereoChildren::updateVisible(X11StereoChild *child)
++{
++    xcb_connection_t *connection = kwinApp()->x11Connection();
++    const xcb_window_t top = m_window->window();
++    const bool shapeAvailable = Xcb::Extensions::self()->isShapeAvailable();
++
++    // the inner area of a window in the X11 window's coordinates
++    const auto innerArea = [connection, top](xcb_window_t window) -> std::optional<RectF> {
++        Xcb::WindowGeometry geometry(window);
++        const xcb_translate_coordinates_cookie_t cookie = xcb_translate_coordinates(connection, window, top, 0, 0);
++        UniqueCPtr<xcb_translate_coordinates_reply_t> position(xcb_translate_coordinates_reply(connection, cookie, nullptr));
++        if (geometry.isNull() || !position) {
++            return std::nullopt;
++        }
++        return Xcb::fromXNative(Rect(position->dst_x, position->dst_y, geometry->width, geometry->height));
++    };
++
++    Xcb::WindowGeometry windowGeometry(top);
++    if (windowGeometry.isNull()) {
++        return;
++    }
++    RegionF visible = Xcb::fromXNative(Rect(0, 0, windowGeometry->width, windowGeometry->height));
++
++    // the windows between the child and the X11 window clip it to their inner areas
++    for (const xcb_window_t ancestor : std::as_const(child->ancestors)) {
++        if (const auto area = innerArea(ancestor)) {
++            visible = visible.intersected(*area);
++        }
++    }
++
++    // the viewable windows stacked over the child, and over each window between, in their parents
++    struct Candidate
++    {
++        xcb_window_t window;
++        xcb_get_window_attributes_cookie_t attributes;
++        xcb_translate_coordinates_cookie_t position;
++        xcb_get_geometry_cookie_t geometry;
++        xcb_shape_get_rectangles_cookie_t shape;
++    };
++    QList<xcb_window_t> chain = child->ancestors;
++    chain.prepend(child->window);
++    std::vector<Candidate> candidates;
++    for (qsizetype i = 0; i < chain.size(); ++i) {
++        Xcb::Tree tree(i + 1 < chain.size() ? chain[i + 1] : top);
++        if (tree.isNull()) {
++            continue;
++        }
++        // xcb_query_tree lists the children from the bottom of the stack to the top
++        const std::span siblings(tree.children(), tree.isNull() ? 0 : size_t(tree->children_len));
++        const auto self = std::ranges::find(siblings, chain[i]);
++        if (self == siblings.end()) {
++            continue;
++        }
++        for (auto it = self + 1; it != siblings.end(); ++it) {
++            if (!findChild(*it)) {
++                candidates.push_back(Candidate{*it,
++                                               xcb_get_window_attributes(connection, *it),
++                                               xcb_translate_coordinates(connection, *it, top, 0, 0),
++                                               xcb_get_geometry(connection, *it),
++                                               shapeAvailable ? xcb_shape_get_rectangles(connection, *it, XCB_SHAPE_SK_BOUNDING) : xcb_shape_get_rectangles_cookie_t{}});
++            }
++        }
++    }
++    QList<xcb_window_t> coverers;
++    for (const Candidate &candidate : candidates) {
++        UniqueCPtr<xcb_get_window_attributes_reply_t> attributes(xcb_get_window_attributes_reply(connection, candidate.attributes, nullptr));
++        UniqueCPtr<xcb_translate_coordinates_reply_t> position(xcb_translate_coordinates_reply(connection, candidate.position, nullptr));
++        UniqueCPtr<xcb_get_geometry_reply_t> geometry(xcb_get_geometry_reply(connection, candidate.geometry, nullptr));
++        UniqueCPtr<xcb_shape_get_rectangles_reply_t> shape;
++        if (shapeAvailable) {
++            shape.reset(xcb_shape_get_rectangles_reply(connection, candidate.shape, nullptr));
++        }
++        if (!attributes || !position || !geometry || attributes->map_state != XCB_MAP_STATE_VIEWABLE || attributes->_class != XCB_WINDOW_CLASS_INPUT_OUTPUT) {
++            continue;
++        }
++        coverers.append(candidate.window);
++        RegionF covered;
++        if (shape) {
++            const std::span rectangles(xcb_shape_get_rectangles_rectangles(shape.get()),
++                                      xcb_shape_get_rectangles_rectangles_length(shape.get()));
++            for (const auto &rect : rectangles) {
++                covered |= Xcb::fromXNative(Rect(position->dst_x + rect.x, position->dst_y + rect.y, rect.width, rect.height));
++            }
++        } else {
++            const int border = geometry->border_width;
++            covered = Xcb::fromXNative(Rect(position->dst_x - border, position->dst_y - border, geometry->width + 2 * border, geometry->height + 2 * border));
++        }
++        visible = visible.subtracted(covered);
++    }
++
++    // its shape changes are announced to the covering window itself
++    if (shapeAvailable) {
++        for (const xcb_window_t coverer : std::as_const(coverers)) {
++            if (!child->coverers.contains(coverer)) {
++                xcb_discard_reply(connection, xcb_shape_select_input_checked(connection, coverer, true).sequence);
++            }
++        }
++        for (const xcb_window_t coverer : std::as_const(child->coverers)) {
++            if (!coverers.contains(coverer)) {
++                child->coverers.removeOne(coverer);
++                if (!owns(coverer)) {
++                    xcb_discard_reply(connection, xcb_shape_select_input_checked(connection, coverer, false).sequence);
++                }
++            }
++        }
++    }
++    child->coverers = coverers;
++    child->visible = visible;
++}
++
+ void X11StereoChildren::updateContent(X11StereoChild *child)
+ {
+     // the child's own _KDE_NET_WM_STEREO_CONTENT, read as for an X11 window: absent, malformed
+@@ -299,6 +462,54 @@ void X11StereoChildren::associate(XwaylandSurfaceV1Interface *surface)
+     }
+ }
+ 
++void X11StereoChildren::updateAll()
++{
++    for (const auto &child : m_children) {
++        updateGeometry(child.get());
++    }
++    Q_EMIT changed();
++}
++
++void X11StereoChildren::handleSubstructureEvent(xcb_generic_event_t *event)
++{
++    xcb_window_t window = XCB_WINDOW_NONE;
++    switch (event->response_type & ~0x80) {
++    case XCB_CREATE_NOTIFY:
++        window = reinterpret_cast<xcb_create_notify_event_t *>(event)->window;
++        break;
++    case XCB_DESTROY_NOTIFY:
++        window = reinterpret_cast<xcb_destroy_notify_event_t *>(event)->window;
++        break;
++    case XCB_MAP_NOTIFY:
++        window = reinterpret_cast<xcb_map_notify_event_t *>(event)->window;
++        break;
++    case XCB_UNMAP_NOTIFY:
++        window = reinterpret_cast<xcb_unmap_notify_event_t *>(event)->window;
++        break;
++    case XCB_REPARENT_NOTIFY:
++        window = reinterpret_cast<xcb_reparent_notify_event_t *>(event)->window;
++        break;
++    case XCB_CONFIGURE_NOTIFY:
++        window = reinterpret_cast<xcb_configure_notify_event_t *>(event)->window;
++        break;
++    case XCB_CIRCULATE_NOTIFY:
++        window = reinterpret_cast<xcb_circulate_notify_event_t *>(event)->window;
++        break;
++    default:
++        return;
++    }
++    // a child, or a window between a child and the X11 window, tells its own events itself
++    if (findChild(window)) {
++        return;
++    }
++    for (const auto &child : m_children) {
++        if (child->ancestors.contains(window)) {
++            return;
++        }
++    }
++    updateAll();
++}
++
+ void X11StereoChildren::handleEvent(xcb_generic_event_t *event)
+ {
+     const uint8_t eventType = event->response_type & ~0x80;
+@@ -308,6 +519,9 @@ void X11StereoChildren::handleEvent(xcb_generic_event_t *event)
+             if (X11StereoChild *child = findChild(shape->affected_window)) {
+                 updateShape(child);
+                 Q_EMIT changed();
++            } else if (owns(shape->affected_window)) {
++                // a window stacked over a child changed what it covers
++                updateAll();
+             }
+         }
+         return;
+@@ -317,10 +531,7 @@ void X11StereoChildren::handleEvent(xcb_generic_event_t *event)
+     case XCB_MAP_NOTIFY:
+     case XCB_UNMAP_NOTIFY: {
+         // a child or a window between it and the X11 window moved, was resized, shown or hidden
+-        for (const auto &child : m_children) {
+-            updateGeometry(child.get());
+-        }
+-        Q_EMIT changed();
++        updateAll();
+         break;
+     }
+     case XCB_REPARENT_NOTIFY: {
+diff --git a/src/x11stereochildren.h b/src/x11stereochildren.h
+index b342dba589..91a71c4761 100644
+--- a/src/x11stereochildren.h
++++ b/src/x11stereochildren.h
+@@ -45,6 +45,14 @@ struct KWIN_EXPORT X11StereoChild
+     RectF geometry;
+     // Bounding shape in native X pixels, independent of the displayed place.
+     RegionF shape;
++    // Where X shows the child, in the X11 window's coordinates as the scene has them: the X11
++    // window's area and those of the windows between it and the child, less the viewable windows
++    // stacked over the child, or over a window between, where their bounding shapes are, that are
++    // not declared children themselves (the scene orders those). The redirected child's buffer is
++    // whole, so the scene cuts the item to this, however large the child's place is.
++    RegionF visible;
++    // the windows stacked over the child, or over a window between, whose bounding shapes went into visible
++    QList<xcb_window_t> coverers;
+     QSize nativeSize;
+     // the child and the windows between it and the X11 window are mapped, so the child is
+     // shown with the X11 window
+@@ -105,6 +113,17 @@ public:
+      * X11 window.
+      */
+     bool owns(xcb_window_t window) const;
++    /**
++     * Whether @p window is the X11 window or one between it and a child: the windows whose
++     * children can cover a child.
++     */
++    bool isParentOfChild(xcb_window_t window) const;
++    /**
++     * Handles a CreateNotify, DestroyNotify, MapNotify, UnmapNotify, ReparentNotify,
++     * ConfigureNotify or CirculateNotify that the X server sent to a window isParentOfChild()
++     * accepts: a window that may cover a child appeared, moved, was restacked or went away.
++     */
++    void handleSubstructureEvent(xcb_generic_event_t *event);
+     bool hasSurfaceSerial(quint64 serial) const;
+     void associate(XwaylandSurfaceV1Interface *surface);
+     /**
+@@ -127,6 +146,8 @@ private:
+     void updateGeometry(X11StereoChild *child);
+     void updateContent(X11StereoChild *child);
+     void updateShape(X11StereoChild *child);
++    void updateVisible(X11StereoChild *child);
++    void updateAll();
+     void setSurface(X11StereoChild *child, SurfaceInterface *surface);
+     X11StereoChild *findChild(xcb_window_t window) const;
+ 

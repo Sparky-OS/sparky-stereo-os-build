@@ -14,6 +14,9 @@ public:
 
 Q_SIGNALS:
     void activeChanged(bool active);
+    // the logind session could not be found or read (the reason), and the lookup that works again
+    void lookupFailed(const QString &reason);
+    void lookupSucceeded();
 
 private Q_SLOTS:
     void propertiesChanged(const QString &interface, const QVariantMap &changed, const QStringList &invalidated);

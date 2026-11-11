@@ -13,8 +13,8 @@ set -eu
 HERE=$(cd "$(dirname "$0")/maint-proof" && pwd)
 IMAGE=$1; DEB=$2; NEW=$3; OLD=$4; R1=$5; R0=$6; R2=$7
 echo "##### Debian reference"
-docker run --rm --platform linux/amd64 -v "$HERE":/proof:ro -v "$DEB":/debs:ro "$IMAGE" sh /proof/ref-debian.sh
+docker run --rm --platform linux/amd64 -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro -v "$HERE":/proof:ro -v "$DEB":/debs:ro "$IMAGE" sh -c 'sh /run/https-only-apt.sh && exec sh /proof/ref-debian.sh'
 echo "##### ours"
-docker run --rm --platform linux/amd64 -v "$HERE":/proof:ro -v "$NEW":/new:ro -v "$OLD":/old:ro "$IMAGE" sh /proof/ours.sh "$R1" "$R0" "$R2"
+docker run --rm --platform linux/amd64 -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro -v "$HERE":/proof:ro -v "$NEW":/new:ro -v "$OLD":/old:ro "$IMAGE" sh -c 'sh /run/https-only-apt.sh && exec sh /proof/ours.sh "$@"' sh "$R1" "$R0" "$R2"
 echo "##### the running kernel is not removed without asking"
-docker run --rm --platform linux/amd64 -v "$HERE":/proof:ro -v "$NEW":/new:ro "$IMAGE" sh /proof/ours-running.sh
+docker run --rm --platform linux/amd64 -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro -v "$HERE":/proof:ro -v "$NEW":/new:ro "$IMAGE" sh -c 'sh /run/https-only-apt.sh && exec sh /proof/ours-running.sh'

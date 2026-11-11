@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Zahorodnii
+Date: Mon, 10 Aug 2026 10:32:47 +0000
+Subject: [PATCH] wayland: use QPointer for the xdg_popup parent surface
+
+This is a defensive fix. parentSurface was a raw pointer that was
+never cleared. Normally the popup is destroyed before its parent
+surface, but an abnormal or malicious client can destroy the parent
+wl_surface first and then send xdg_popup.reposition, which would
+dereference the freed pointer. Use a QPointer so the pointer is
+automatically nulled when the parent surface is destroyed.
+
+
+(cherry picked from commit 72e9cb50465971bda64ee39d06aa18e8cedaf0d5)
+
+Co-authored-by: zhang shoucheng
+
+Carried unchanged: xdgshell_p.h applies without an offset.
+
+Origin: upstream, https://invent.kde.org/plasma/kwin/-/commit/0de99deddbaef66cbc1fa887d8b3bebc5aa55908
+Author: Vlad Zahorodnii
+Applied-Upstream: v6.7.5, 0de99deddb (Plasma/6.7), 72e9cb5046 (master)
+Last-Update: 2026-11-07
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ src/wayland/xdgshell_p.h | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/wayland/xdgshell_p.h b/src/wayland/xdgshell_p.h
+index 38e82eb23e..40113cfcf8 100644
+--- a/src/wayland/xdgshell_p.h
++++ b/src/wayland/xdgshell_p.h
+@@ -7,6 +7,7 @@
+ #pragma once
+ 
+ #include <QIcon>
++#include <QPointer>
+ 
+ #include "qwayland-server-xdg-shell.h"
+ #include "xdgshell.h"
+@@ -193,7 +194,7 @@ public:
+     void reset();
+ 
+     XdgPopupInterface *q;
+-    SurfaceInterface *parentSurface = nullptr;
++    QPointer<SurfaceInterface> parentSurface;
+     XdgSurfaceInterface *xdgSurface;
+     XdgPositioner positioner;
+ 
+-- 
+2.53.0
+

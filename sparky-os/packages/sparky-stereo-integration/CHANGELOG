@@ -1,4 +1,28 @@
 -------------------------------------------------------------------------------
+  Version 0.1.4 (2026-11-04)
+-------------------------------------------------------------------------------
+  * Depends on sparky-stereo-integration-catalogue, the package that holds integrations.map (made by lists/make-meta.py; the file used to be in the meta sparky-stereo-integrations), so "sparky-stereo-integration is installed" always means "the catalogue is there": a person who installs only the runner no longer gets the "catalogue could not be read" message on Install (ORDER 346f-3b). The message tells to reinstall the catalogue package
+-------------------------------------------------------------------------------
+  Version 0.1.3 (2026-11-04)
+-------------------------------------------------------------------------------
+  * An integration catalogue that cannot be read (missing, not a file, not readable, or awk fails on it) is told and kept by the problem engine, and the program is not installed (it used to be installed without its stereo packs, as if the catalogue listed none); a program the catalogue does not list still installs alone (ORDER 346f-3, U37)
+  * A refresh of command-not-found's index that fails, or leaves it empty, is told and kept by the problem engine with a repair that runs it again; the package stays configured (U38)
+  * Depends on sparky-stereo-problems (>= 0.1.2); the messages ship in the nine languages as journal catalogs; the package's problems are cleared when it is removed
+-------------------------------------------------------------------------------
+  Version 0.1.2 (2026-11-02)
+-------------------------------------------------------------------------------
+  * A program Debian installs under another name (command-not-found's renamed-commands table, ORDER 252b J15): KRunner's missing program runner offers each package command-not-found names, in its order, the renamed one before the packages that have the command itself when it is the more installed one (`fd`: fd-find, run as fdfind; `bat`: bat, run as batcat) and after them otherwise (`ts`: moreutils, then task-spooler, run as tsp); Dolphin's packs offer Install for the renamed package when it comes first, and for the one other package when the renamed ones come after, with command-not-found's whole message
+  * A renamed program that is installed is a KRunner match of its own, with command-not-found's line as its text, that runs it with the query's arguments in the person's terminal (found as KIO's KTerminalLauncherJob finds it; when none is found, the runner says so in the nine languages)
+  * When command-not-found cannot read its table, its line that says so is the subtext of every KRunner match
+  * A command with no renamed package is offered as before: one match, or none when command-not-found names several packages
+  * KRunner's runner takes commands of two letters too (it took three or more), so `fd`, `gh` or `rg` typed in KRunner name their package as in the terminal
+  * KRunner's runner is enabled by default (X-KDE-PluginInfo-EnabledByDefault=true): KRunner loads a D-Bus runner only when its metadata or krunnerrc enables it, so 0.1.0 and 0.1.1 never ran in KRunner; it stays switchable in KRunner's settings
+  * Depends on command-not-found 23.04.0-3+sparky1 or later, the build that has the table
+-------------------------------------------------------------------------------
+  Version 0.1.1 (2026-11-02)
+-------------------------------------------------------------------------------
+  * The recipe copies only tracked files (ORDER 341)
+-------------------------------------------------------------------------------
   Version 0.1.0 (2026-10-24)
 -------------------------------------------------------------------------------
   * Initial release: sparky-stereo-integration runs the actions of the integration packs and, when a program is missing, runs command-not-found and shows its message with Install and Cancel (the hide option only after Cancel)

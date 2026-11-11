@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/05
+# Last update 2026/11/07
 import hashlib
 import pathlib
 import subprocess
@@ -18,14 +18,33 @@ cases = [
     ('empty', {}, set(), set()),
     ('intel-laptop', {'laptop': '0', 'cpuinfo': 'vendor_id : GenuineIntel\n'},
      {'task-laptop', 'power-profiles-daemon', 'thermald', 'intel-microcode'}, set()),
+    # thermald exits on any CPU that is not Intel (ORDER 43): only the Intel machines get it, laptop or desktop
+    ('intel-desktop', {'cpuinfo': 'vendor_id : GenuineIntel\n'}, {'intel-microcode', 'thermald'}, set()),
     ('amd-desktop', {'cpuinfo': 'vendor_id : AuthenticAMD\n'}, {'amd64-microcode'}, set()),
+    ('amd-laptop', {'laptop': '0', 'cpuinfo': 'vendor_id : AuthenticAMD\n'},
+     {'task-laptop', 'power-profiles-daemon', 'amd64-microcode'}, set()),
+    ('other-vendor', {'cpuinfo': 'vendor_id : HygonGenuine\n'}, set(), set()),
     ('firmware', {'firmware-packages': 'firmware-iwlwifi firmware-realtek\n'},
      {'firmware-iwlwifi', 'firmware-realtek'}, set()),
     ('turing', {'lspci': '0000:01:00.0 0300: 10de:1e04 (rev a1)\n'},
      {'firmware-nvidia-graphics'}, {'nvidia-open'}),
     ('ampere-named', {'lspci': '0000:01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA106 [GeForce RTX 3060] [10de:2504] (rev a1)\n'},
      {'firmware-nvidia-graphics'}, {'nvidia-open'}),
-    ('pascal', {'lspci': '0000:01:00.0 0300: 10de:1b80\n'}, {'firmware-nvidia-graphics'}, set()),
+    # Maxwell, Pascal and Volta: NVIDIA's 580 driver, the last for them, built by the edition (ORDER 354); no RTD3, which
+    # needs a Turing card or newer, not even on a laptop
+    ('pascal', {'lspci': '0000:01:00.0 0300: 10de:1b80\n'}, {'firmware-nvidia-graphics'}, {'nvidia-legacy-580xx'}),
+    ('maxwell-laptop', {'laptop': '0', 'lspci': '0000:01:00.0 0302: 10de:13c2\n'},
+     {'firmware-nvidia-graphics', 'task-laptop', 'power-profiles-daemon'}, {'nvidia-legacy-580xx'}),
+    ('volta', {'lspci': '0000:01:00.0 0300: 10de:1d81\n'}, {'firmware-nvidia-graphics'}, {'nvidia-legacy-580xx'}),
+    ('kepler', {'lspci': '0000:01:00.0 0300: 10de:1180\n'}, {'firmware-nvidia-graphics'}, set()),
+    ('legacy-subsystem', {'lspci': '0000:01:00.0 0302: 10de:137d\n\tSubsystem: 17aa:3699\n'},
+     {'firmware-nvidia-graphics'}, {'nvidia-legacy-580xx'}),
+    ('legacy-wrong-subsystem', {'lspci': '0000:01:00.0 0302: 10de:137d\n\tSubsystem: 17aa:ffff\n'},
+     {'firmware-nvidia-graphics'}, set()),
+    ('mixed-legacy-turing', {'lspci': '0000:01:00.0 0300: 10de:1b80\n0000:02:00.0 0300: 10de:21c4\n'},
+     {'firmware-nvidia-graphics'}, set()),
+    ('legacy-arm', {'architecture': 'arm64', 'lspci': '0000:01:00.0 0300: 10de:1b80\n'},
+     {'firmware-nvidia-graphics'}, set()),
     ('unknown', {'lspci': '0000:01:00.0 0302: 10de:ffff\n'}, {'firmware-nvidia-graphics'}, set()),
     ('mixed', {'lspci': '0000:01:00.0 0300: 10de:2504\n0000:02:00.0 0302: 10de:1b80\n'},
      {'firmware-nvidia-graphics'}, set()),
@@ -60,7 +79,7 @@ fixture_cases = {
         'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes',
         'fact\tboard\tGigabyte Technology Co., Ltd. / B550 TEST BOARD',
         'fact\tusb-vendors\t1b1c (Corsair) 1d6b'], []),
-    'razer-mt7922-v3': ({'intel-microcode', 'firmware-mediatek'}, [
+    'razer-mt7922-v3': ({'intel-microcode', 'thermald', 'firmware-mediatek'}, [
         'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes',
         'fact\tboard\tASUSTeK COMPUTER INC. / Z370 TEST BOARD',
         'fact\tusb-vendors\t1532 (Razer)',
@@ -69,7 +88,7 @@ fixture_cases = {
     'broadcom-4331-v2': ({'task-laptop', 'power-profiles-daemon', 'thermald', 'intel-microcode'}, [
         'fact\tcpu-level\tv2', 'fact\tx86-64-v3\tno',
         'fact\tnetwork-pci\t14e4:4331'], ['candidate\tbroadcom-sta-dkms\t14e4:4331: closed Broadcom wl driver']),
-    'baseline-cpu': ({'intel-microcode'}, [
+    'baseline-cpu': ({'intel-microcode', 'thermald'}, [
         'fact\tcpu-level\tv1', 'fact\tx86-64-v3\tno'], []),
 }
 for name, (expected_packages, expected_lines, candidate_prefixes) in fixture_cases.items():

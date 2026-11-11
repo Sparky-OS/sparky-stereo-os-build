@@ -1,12 +1,23 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/03
+# Last update 2026/11/03
 set -euo pipefail
 [[ -e /.dockerenv ]] || exit 1
-source "${HARDWARE_ACTIONS:-/usr/lib/sparky-stereo-hardware/actions.sh}"
+HARDWARE_ACTIONS_FILE=${HARDWARE_ACTIONS:-/usr/lib/sparky-stereo-hardware/actions.sh}
+source "$HARDWARE_ACTIONS_FILE"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
+# the strings, error messages included: the source tree's lang/ or the installed package's; neither is a test failure
+if [[ -r $(dirname "$HARDWARE_ACTIONS_FILE")/../lang/en ]]; then
+	SHARE=$(cd "$(dirname "$HARDWARE_ACTIONS_FILE")/../lang" && pwd)
+elif [[ -r /usr/share/sparky/sparky-stereo-hardware/en ]]; then
+	SHARE=/usr/share/sparky/sparky-stereo-hardware
+else
+	echo "FAIL: no strings next to $HARDWARE_ACTIONS_FILE and none installed"
+	exit 1
+fi
+LANGUAGES=(en pl pt_BR fr de es ja ko zh_CN zh_TW)
 ROOT=$T/root
 WORK=$T/work
 mkdir -p "$ROOT" "$WORK"
@@ -58,65 +69,137 @@ grep -Fxq 'options snd_hda_intel enable_msi=1' "$ROOT/etc/modprobe.d/sparky-ster
 echo 'PASS Creative requires four blobs and writes the real kernel parameter'
 
 # The commands below are doubles. No actual repository or driver is changed.
-mkdir -p "$T/key/DEBIAN" "$T/key/usr/share/keyrings"
-printf 'Package: test-cuda-key\nVersion: 1\nArchitecture: all\nMaintainer: Test <test@example.invalid>\nDescription: Fixture\n' >"$T/key/DEBIAN/control"
-printf 'fixture public key\n' >"$T/key/usr/share/keyrings/cuda-archive-keyring.gpg"
-dpkg-deb --root-owner-group -b "$T/key" "$T/key.deb" >/dev/null
-CUDA_KEY_SHA256=$(sha256sum "$T/key.deb" | cut -d' ' -f1)
+LOCK=sparky-stereo-nvidia-driver-lock
+REPO=sparky-stereo-cuda-repo
+LEGACY_LOCK=sparky-stereo-nvidia-legacy-580xx-driver-lock
+LEGACY_MODULE=nvidia-legacy-580xx-kernel-dkms
+DRIVER_LINE='DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install nvidia-driver=615.71.09-2 nvidia-kernel-open-dkms-stereo3d libnvcuvid1=615.71.09-2 nvidia-vaapi-driver'
+installed_packages=
 apt-cache() { [[ ${missing_module:-0} == 0 ]] || return 1; printf '%s\n' 'Package: nvidia-kernel-open-dkms-stereo3d' "Version: ${module_version:-615.71.09-2+stereo3d4}"; }
-curl() {
-	[[ ${bad_download:-0} == 0 ]] || return 22
-	[[ $* == *cuda-keyring_1.1-1_all.deb* ]] || return 1
-	cp "$T/key.deb" "${@: -1}"
+curl() { echo "curl $*" >>"$calls"; return 1; }
+dpkg-query() { [[ " $installed_packages " != *" ${*: -1} "* ]] || printf 'ii '; }
+dpkg() {
+	if [[ $1 == --print-foreign-architectures ]]; then
+		[[ -z ${foreign:-} ]] || printf '%s\n' $foreign
+		return 0
+	fi
+	echo "dpkg $*" >>"$calls"
+	[[ ${fail_purge:-0} == 0 ]]
 }
 env() {
 	echo "$*" >>"$calls"
+	[[ $* != *"install $LOCK"* || ${fail_policy:-0} == 0 ]] || return 1
+	[[ $* != *"install $LEGACY_LOCK"* || ${fail_policy:-0} == 0 ]] || return 1
+	[[ $* != *'apt-get -y purge'* || ${fail_stale:-0} == 0 ]] || return 1
+	[[ $* != *'apt-get -y update'* || ${fail_update:-0} == 0 ]] || return 1
 	[[ $* != *--simulate* || ${fail_preflight:-0} == 0 ]] || return 1
-	[[ $* != *install* || $* == *--simulate* || ${fail_install:-0} == 0 ]] || return 1
+	[[ $* != *install\ nvidia-driver=* || $* == *--simulate* || ${fail_install:-0} == 0 ]] || return 1
 }
+# a check that fails the test when the command succeeds (bash's set -e ignores a command inverted with !)
+refute() { if "$@"; then echo "FAIL: $*"; exit 1; fi; }
+line_of() { grep -nFx "$1" "$calls" | head -n1 | cut -d: -f1; }
+no_hand_files() { [[ ! -e "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources" && ! -e "$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda" && ! -e "$ROOT/etc/apt/keyrings/sparky-stereo-cuda.gpg" ]]; }
+# fails_with PATTERN COMMAND...: the command returns non-zero, prints an ERROR line matching PATTERN, and says nothing of a
+# fallback (since 0.1.16 none exists: Daniel, 2026-11-01, "nothing we do should silently fail or have a fall back")
+fails_with() {
+	local pattern=$1; shift
+	if "$@" >"$T/out"; then echo "FAIL: $* succeeded"; cat "$T/out"; exit 1; fi
+	grep -Eq "^ERROR $pattern" "$T/out" || { echo "FAIL: no ERROR line matching '$pattern' from $*"; cat "$T/out"; exit 1; }
+	refute grep -qiE 'fallback|nouveau firmware installed' "$T/out"
+}
+refute grep -nE 'FALLBACK|UNSUPPORTED' "$HARDWARE_ACTIONS_FILE"
+echo 'PASS no FALLBACK or UNSUPPORTED message is left in actions.sh'
 missing_module=1
-setup_nvidia
-[[ ! -e "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources" ]]
+: >"$calls"
+fails_with 'NVIDIA: apt finds no nvidia-kernel-open-dkms-stereo3d' setup_nvidia
+grep -Fq -- '--nvidia nouveau' "$T/out"
+refute grep -q install "$calls"
 missing_module=0
-bad_download=1
+echo 'PASS NVIDIA: a missing module stops the setup with what failed, why and what to do (nouveau only as the person'"'"'s choice), and installs nothing'
+: >"$calls"
 setup_nvidia
-[[ ! -e "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources" ]]
-bad_download=0
-saved=$CUDA_KEY_SHA256
-CUDA_KEY_SHA256=0000000000000000000000000000000000000000000000000000000000000000
+policy_line=$(line_of "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LOCK $REPO")
+update_line=$(line_of 'DEBIAN_FRONTEND=noninteractive apt-get -y update')
+simulate_line=$(line_of "${DRIVER_LINE/ install / --simulate install }")
+driver_line=$(line_of "$DRIVER_LINE")
+[[ -n $policy_line && -n $update_line && -n $simulate_line && -n $driver_line ]]
+((policy_line < update_line && update_line < simulate_line && simulate_line < driver_line))
+refute grep -q '^curl' "$calls"
+no_hand_files
+echo 'PASS NVIDIA: the driver lock and the CUDA repository package first, in their own transaction, then the index, the preflight and the exact driver; no file written by hand, no download'
+: >"$calls"
+installed_packages="$LOCK $REPO"
 setup_nvidia
-[[ ! -e "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources" ]]
-CUDA_KEY_SHA256=$saved
+refute grep -q "install $LOCK" "$calls"
+grep -Fxq "$DRIVER_LINE" "$calls"
+installed_packages=
+echo 'PASS NVIDIA: an installed lock and repository package are not installed again'
+mkdir -p "$ROOT/etc/apt/sources.list.d"
+printf 'Types: deb\nURIs: https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/\nSuites: /\nArchitectures: amd64\nSigned-By: /etc/apt/keyrings/sparky-stereo-cuda.gpg\n' >"$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources"
+printf '# deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/ /\n' >"$ROOT/etc/apt/sources.list.d/commented.list"
+: >"$calls"
+setup_nvidia >"$T/log"
+grep -Fxq "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LOCK $REPO" "$calls"
+refute grep -q 'already configured' "$T/log"
+echo 'PASS NVIDIA: the source the image or an older setup wrote, and a commented line, are not a repository of the person'"'"'s'
+printf 'deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/ /\n' >"$ROOT/etc/apt/sources.list.d/cuda-debian13-x86_64.list"
+: >"$calls"
+setup_nvidia >"$T/log"
+# sparky-stereo-cuda-repo itself keeps the person's source (its postinst writes none of its own then) and adds its pins,
+# which go by origin; so both policy packages come, and the setup says why the person's source stays
+grep -Fxq "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LOCK $REPO" "$calls"
+grep -Fq "NVIDIA's CUDA repository is already configured in /etc/apt/sources.list.d/cuda-debian13-x86_64.list; sparky-stereo-cuda-repo keeps that source and adds the edition's pins" "$T/log"
+grep -Fxq "$DRIVER_LINE" "$calls"
+rm -f "$ROOT/etc/apt/sources.list.d/cuda-debian13-x86_64.list" "$ROOT/etc/apt/sources.list.d/commented.list" "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources"
+echo 'PASS NVIDIA: a CUDA repository the person set up is kept and named; the lock and the repository package (for its pins) come before the driver'
+fail_policy=1
+: >"$calls"
+fails_with "NVIDIA: $LOCK $REPO could not be installed" setup_nvidia
+grep -Fxq "dpkg --purge $LOCK $REPO" "$calls"
+refute grep -q -- '--simulate' "$calls"
+fail_policy=0
+fail_update=1
+: >"$calls"
+fails_with 'NVIDIA: apt could not read the repositories' setup_nvidia
+grep -Fxq "dpkg --purge $LOCK $REPO" "$calls"
+refute grep -q -- '--simulate' "$calls"
+fail_update=0
 fail_preflight=1
-setup_nvidia
-[[ ! -e "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources" ]]
+: >"$calls"
+fails_with "NVIDIA: apt cannot install NVIDIA's driver 615.71.09-2" setup_nvidia
+grep -Fxq "dpkg --purge $LOCK $REPO" "$calls"
+refute grep -Fxq "$DRIVER_LINE" "$calls"
+installed_packages="$LOCK $REPO"
+: >"$calls"
+fails_with "NVIDIA: apt cannot install NVIDIA's driver" setup_nvidia
+refute grep -q 'dpkg --purge' "$calls"
+installed_packages=
+fail_purge=1
+: >"$calls"
+fails_with "NVIDIA: purging $LOCK $REPO again failed too" setup_nvidia
+fail_purge=0
 fail_preflight=0
-setup_nvidia
-grep -Fxq 'Pin-Priority: 1002' "$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda"
-grep -Fxq 'Pin: origin developer.download.nvidia.com' "$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda"
-grep -Fxq 'Signed-By: /etc/apt/keyrings/sparky-stereo-cuda.gpg' "$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources"
-cmp "$T/key/usr/share/keyrings/cuda-archive-keyring.gpg" "$ROOT/etc/apt/keyrings/sparky-stereo-cuda.gpg"
-grep -Fxq 'DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install nvidia-driver=615.71.09-2 nvidia-kernel-open-dkms-stereo3d libnvcuvid1=615.71.09-2 nvidia-vaapi-driver' "$calls"
-echo 'PASS NVIDIA exact userspace, explicit edition module, key archive verification, Signed-By and origin pin'
+echo 'PASS NVIDIA: a failed policy install, index update or preflight stops the setup, says so, and purges what this run installed and nothing else'
 # The userspace driver follows the module's version, whatever NVIDIA version that is.
 : >"$calls"
 module_version=620.10.01-1+stereo3d1
 setup_nvidia
 grep -Fxq 'DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install nvidia-driver=620.10.01-1 nvidia-kernel-open-dkms-stereo3d libnvcuvid1=620.10.01-1 nvidia-vaapi-driver' "$calls"
-module_version=615.71.09-2
+# The published module carries Lean Code's mark after ours (615.71.09-2+stereo3d7+lc1).
 : >"$calls"
+module_version=615.71.09-2+stereo3d7+lc1
 setup_nvidia
-! grep -q 'install nvidia-driver' "$calls"
+grep -Fxq "$DRIVER_LINE" "$calls"
+for module_version in 615.71.09-2 615.71.09-2+lc1; do
+	: >"$calls"
+	fails_with "NVIDIA: the module's version ${module_version//+/\\+} has no \\+stereo3dN suffix" setup_nvidia
+	refute grep -q 'install' "$calls"
+done
 module_version=615.71.09-2+stereo3d4
-echo 'PASS NVIDIA driver version follows the module (a new version, and a module without the suffix is refused)'
-printf 'previous policy\n' >"$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda"
-fail_preflight=1
-setup_nvidia
-grep -Fxq 'previous policy' "$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda"
-fail_preflight=0
+echo 'PASS NVIDIA driver version follows the module (a new version, a Lean Code build); a module without our suffix stops the setup and says so'
 fail_install=1
-if setup_nvidia; then echo 'FAIL NVIDIA transaction failure hidden'; exit 1; fi
-echo 'PASS missing module, network, checksum, preflight rollback and transaction error paths'
+fails_with 'NVIDIA: the driver.s installation stopped part way' setup_nvidia
+echo 'PASS missing module, policy install, index update, preflight, purge and transaction error paths each fail visibly'
 
 printf 'action\tnvidia-runtime-pm\n' >"$WORK/plan"
 if setup_nvidia; then echo 'FAIL NVIDIA failed transaction accepted for laptop'; exit 1; fi
@@ -130,3 +213,281 @@ cmp "$T/expected-runtime-rules" "$ROOT/etc/udev/rules.d/80-sparky-stereo-nvidia-
 [[ $(grep -c '^ACTION=="bind".*DRIVER=="nvidia"' "$T/expected-runtime-rules") == 2 ]]
 [[ $(grep -c '^ACTION=="unbind"' "$T/expected-runtime-rules") == 2 ]]
 echo 'PASS laptop RTD3 requires a successful driver transaction and repeats without duplicating rules'
+
+# NVIDIA's 580 driver for Maxwell, Pascal and Volta (ORDER 354): its own lock first, in a transaction of its own, then the
+# index, the preflight and the exact driver, downgrades allowed (the image's 615 user space goes back to 580); the CUDA
+# repository package comes with the lock (NVIDIA's EGL platform libraries, which the 580 driver needs at NVIDIA's epoch, are
+# there; milestone 2), and no RTD3 (it needs Turing or newer), even with the plan's laptop line still there from the case above.
+# The edition carries NVIDIA's 580 user space at the module's own version (milestone 2), so the driver is named at it.
+LEGACY_V=580.196.07-1+sparky2+lc1
+LEGACY_LINE="DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install --allow-downgrades nvidia-driver=$LEGACY_V $LEGACY_MODULE libnvcuvid1=$LEGACY_V nvidia-vaapi-driver"
+LEGACY_SIMULATE="DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests --allow-downgrades --simulate install nvidia-driver=$LEGACY_V $LEGACY_MODULE libnvcuvid1=$LEGACY_V nvidia-vaapi-driver"
+rm -f "$ROOT/etc/modprobe.d/sparky-stereo-nvidia-runtime-pm.conf" "$ROOT/etc/udev/rules.d/80-sparky-stereo-nvidia-runtime-pm.rules"
+module_version=$LEGACY_V
+: >"$calls"
+setup_nvidia legacy-580xx >"$T/log"
+lock_line=$(line_of "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LEGACY_LOCK $REPO")
+update_line=$(line_of 'DEBIAN_FRONTEND=noninteractive apt-get -y update')
+simulate_line=$(line_of "$LEGACY_SIMULATE")
+driver_line=$(line_of "$LEGACY_LINE")
+[[ -n $lock_line && -n $update_line && -n $simulate_line && -n $driver_line ]] || { echo 'FAIL the 580 path'; cat "$calls"; exit 1; }
+((lock_line < update_line && update_line < simulate_line && simulate_line < driver_line))
+refute grep -q "install $LOCK" "$calls"
+[[ ! -e "$ROOT/etc/modprobe.d/sparky-stereo-nvidia-runtime-pm.conf" ]]
+grep -Fq "NVIDIA $LEGACY_V userspace and the edition's build of NVIDIA's 580 kernel modules installed" "$T/log"
+refute grep -q ':i386' "$calls"
+echo 'PASS NVIDIA 580: its lock and the CUDA repository package first, then the index, the preflight and the driver at the carried version with downgrades allowed; no RTD3, no i386 package without i386'
+# an installed CUDA repository package is not installed again: only the lock comes
+installed_packages=$REPO
+: >"$calls"
+setup_nvidia legacy-580xx >"$T/log"
+grep -Fxq "DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install $LEGACY_LOCK" "$calls"
+installed_packages=
+echo 'PASS NVIDIA 580: an installed CUDA repository package is not installed again'
+# where dpkg has i386, NVIDIA's i386 libraries come at the same version, in the preflight and the transaction
+foreign=i386
+: >"$calls"
+setup_nvidia legacy-580xx >"$T/log"
+grep -Fxq "${LEGACY_SIMULATE} nvidia-driver-libs:i386=$LEGACY_V libcuda1:i386=$LEGACY_V" "$calls"
+grep -Fxq "${LEGACY_LINE} nvidia-driver-libs:i386=$LEGACY_V libcuda1:i386=$LEGACY_V" "$calls"
+grep -Fq "NVIDIA's i386 libraries $LEGACY_V installed" "$T/log"
+foreign='i386 arm64'
+: >"$calls"
+module_version=615.71.09-2+stereo3d4
+setup_nvidia >"$T/log"
+grep -Fxq "${DRIVER_LINE/ install / --simulate install } nvidia-driver-libs:i386=615.71.09-2 libcuda1:i386=615.71.09-2" "$calls"
+grep -Fxq "$DRIVER_LINE nvidia-driver-libs:i386=615.71.09-2 libcuda1:i386=615.71.09-2" "$calls"
+foreign=arm64
+: >"$calls"
+setup_nvidia >"$T/log"
+grep -Fxq "$DRIVER_LINE" "$calls"
+refute grep -q ':i386' "$calls"
+foreign=
+module_version=$LEGACY_V
+echo 'PASS NVIDIA i386: with i386 in dpkg, nvidia-driver-libs:i386 and libcuda1:i386 at the driver version on the 580 and the 615 path; none without i386'
+# its errors say that nouveau keeps the edition's HDMI 3D on these cards (LOCAL58), never LOCAL29's "without HDMI 3D"
+missing_module=1
+fails_with "NVIDIA: apt finds no $LEGACY_MODULE, the edition's build of NVIDIA's 580 driver" setup_nvidia legacy-580xx
+grep -Fq "or keep nouveau, with the edition's HDMI 3D at the card's boot clocks, as your own choice" "$T/out"
+refute grep -q 'without HDMI 3D' "$T/out"
+missing_module=0
+for module_version in 580.196.07-1 580.196.07-1+lc1 580.196.07-1+stereo3d1+lc1; do
+	: >"$calls"
+	fails_with "NVIDIA: the module's version ${module_version//+/\\+} has no \\+sparkyN suffix" setup_nvidia legacy-580xx
+	refute grep -q 'install' "$calls"
+done
+module_version=$LEGACY_V
+fail_policy=1
+: >"$calls"
+fails_with "NVIDIA: $LEGACY_LOCK $REPO could not be installed" setup_nvidia legacy-580xx
+grep -Fxq "dpkg --purge $LEGACY_LOCK $REPO" "$calls"
+grep -Fq "HDMI 3D at the card's boot clocks" "$T/out"
+fail_policy=0
+fail_preflight=1
+: >"$calls"
+fails_with "NVIDIA: apt cannot install NVIDIA's driver ${LEGACY_V//+/\\+} " setup_nvidia legacy-580xx
+refute grep -Fxq "$LEGACY_LINE" "$calls"
+grep -Fxq "dpkg --purge $LEGACY_LOCK $REPO" "$calls"
+grep -Fq "HDMI 3D at the card's boot clocks" "$T/out"
+fail_preflight=0
+echo 'PASS NVIDIA 580: a missing module, a module without +sparkyN, a failed lock install and a failed preflight stop and say so, with nouveau keeping HDMI 3D as the other choice'
+# the open modules on a machine that had NVIDIA's 580 driver: its lock (which decides first while installed) and its module are
+# purged after the index and before the preflight; a failed purge stops before anything else, and says what holds the driver
+module_version=615.71.09-2+stereo3d4
+installed_packages="$LOCK $REPO $LEGACY_LOCK $LEGACY_MODULE"
+: >"$calls"
+setup_nvidia
+purge_line=$(line_of "DEBIAN_FRONTEND=noninteractive apt-get -y purge $LEGACY_LOCK $LEGACY_MODULE")
+update_line=$(line_of 'DEBIAN_FRONTEND=noninteractive apt-get -y update')
+simulate_line=$(line_of "${DRIVER_LINE/ install / --simulate install }")
+[[ -n $purge_line && -n $update_line && -n $simulate_line ]] || { echo 'FAIL the 580 lock is not purged before the open modules'; cat "$calls"; exit 1; }
+((update_line < purge_line && purge_line < simulate_line))
+grep -Fxq "$DRIVER_LINE" "$calls"
+fail_stale=1
+: >"$calls"
+fails_with "NVIDIA: $LEGACY_LOCK $LEGACY_MODULE, which hold NVIDIA's driver at 580, could not be purged" setup_nvidia
+refute grep -q -- '--simulate' "$calls"
+grep -Fq 'or keep nouveau, without HDMI 3D' "$T/out"
+fail_stale=0
+installed_packages=
+: >"$calls"
+setup_nvidia
+refute grep -q 'apt-get -y purge' "$calls"
+echo 'PASS the open modules after NVIDIA 580: its lock and module purged first (and only when installed); a failed purge stops and says so'
+
+# A switch between the NVIDIA stacks removes the previous stack's own leftovers, never a general autoremove. The doubles stand
+# for apt: what was unneeded before, what the previous stack needed, what is unneeded now, and what a purge would remove.
+unneeded_now=
+unneeded_before_switch=
+stack_closure=
+purge_plan=
+nvidia_stack_closure() { printf '%s\n' $stack_closure | sort -u; }
+unneeded_packages() {
+	if [[ ${unit_phase:-0} == 1 ]] || grep -q 'install nvidia-driver=' "$calls"; then printf '%s\n' $unneeded_now | sort -u; else printf '%s\n' $unneeded_before_switch | sort -u; fi
+}
+apt-get() {
+	echo "apt-get $*" >>"$calls"
+	if [[ $* == *--simulate*purge* ]]; then
+		if [[ -n $purge_plan ]]; then set -- $purge_plan; else set -- "${@:4}"; fi
+		for package; do printf 'Purg %s [1] \n' "$package"; done
+	fi
+}
+module_version=615.71.09-2+stereo3d4
+installed_packages="$LEGACY_LOCK $LEGACY_MODULE $REPO"
+unit_phase=1
+stack_closure="firmware-nvidia-gsp libnvidia-egl-wayland21 libwayland-server0 libc6"
+unneeded_now="firmware-nvidia-gsp libwayland-server0 orphan-before unrelated-orphan"
+before_switch="orphan-before unrelated-orphan-x"
+: >"$calls"
+remove_previous_stack_leftovers "$(printf '%s\n' $before_switch | sort -u)" "$(nvidia_stack_closure)" >"$T/out"
+grep -Fxq 'NVIDIA: removed the previous driver stack'"'"'s leftovers: firmware-nvidia-gsp libwayland-server0' "$T/out"
+grep -Fxq 'DEBIAN_FRONTEND=noninteractive apt-get -y purge firmware-nvidia-gsp libwayland-server0' "$calls"
+refute grep -q 'autoremove' "$calls"
+refute grep -Fq 'orphan-before' "$T/out"
+refute grep -Fq 'unrelated-orphan' "$calls"
+echo 'PASS a switch removes only what the previous stack needed and nothing needs now: not a package that was unneeded before, not an unrelated unneeded package, never autoremove'
+: >"$calls"
+purge_plan="firmware-nvidia-gsp libwayland-server0 something-else"
+fails_with 'NVIDIA: removing the previous driver stack.s leftovers firmware-nvidia-gsp libwayland-server0 would also remove other packages' remove_previous_stack_leftovers "orphan-before" "$(nvidia_stack_closure)"
+refute grep -q 'apt-get -y purge' "$calls"
+purge_plan=
+fail_stale=1
+: >"$calls"
+fails_with 'NVIDIA: the previous driver stack.s leftovers firmware-nvidia-gsp libwayland-server0 could not be removed' remove_previous_stack_leftovers "orphan-before" "$(nvidia_stack_closure)"
+fail_stale=0
+unneeded_now="orphan-before"
+: >"$calls"
+remove_previous_stack_leftovers "orphan-before" "$(nvidia_stack_closure)" >"$T/out"
+grep -Fxq 'NVIDIA: the previous driver stack left nothing behind' "$T/out"
+refute grep -q 'apt-get -y purge' "$calls"
+echo 'PASS a purge that would remove more, a failed purge and a switch with nothing left each say so; nothing is removed unsafely'
+# setup_nvidia ties it together: the record is taken while the other stack is installed, the removal comes after the driver
+unit_phase=0
+unneeded_now="firmware-nvidia-gsp"
+unneeded_before_switch=
+stack_closure="firmware-nvidia-gsp libc6"
+installed_packages="$LOCK $REPO $LEGACY_LOCK $LEGACY_MODULE"
+: >"$calls"
+setup_nvidia >"$T/out"
+install_line=$(line_of "$DRIVER_LINE")
+leftover_line=$(line_of 'DEBIAN_FRONTEND=noninteractive apt-get -y purge firmware-nvidia-gsp')
+[[ -n $install_line && -n $leftover_line ]] && ((install_line < leftover_line))
+installed_packages="$LOCK $REPO"
+unneeded_now="firmware-nvidia-gsp"
+: >"$calls"
+setup_nvidia >"$T/out"
+refute grep -q 'purge firmware-nvidia-gsp' "$calls"
+installed_packages=
+unset -f apt-get nvidia_stack_closure unneeded_packages
+echo 'PASS setup_nvidia removes the leftovers after the new driver is in, and only when it switched from the other stack'
+
+# Rig drivers: every refusal says why.
+uname() { echo "${kernel_name:-7.3.1-stereo3d14}"; }
+fails_with 'Wheel driver evdi-dkms: not one of the wheel drivers' setup_rig_driver evdi-dkms
+kernel_name='bad name'
+fails_with 'Wheel driver hid-tmff2-dkms: the running kernel.s name' setup_rig_driver hid-tmff2-dkms
+kernel_name=
+fail_preflight=1
+fails_with 'Wheel driver hid-tmff2-dkms: apt cannot install it with linux-headers-7.3.1-stereo3d14' setup_rig_driver hid-tmff2-dkms
+fail_preflight=0
+echo 'PASS rig drivers: an unknown package, an unusable kernel name and a failed preflight each fail with their reason'
+# AMD power: an action power-profiles-daemon does not offer is an error, not a quiet skip; the other action still runs.
+powerprofilesctl() {
+	echo "powerprofilesctl $*" >>"$calls"
+	if [[ $1 == list-actions ]]; then
+		printf 'Name: amdgpu_dpm\nEnabled: %s\n\n' "$( [[ -e $T/dpm-on ]] && echo True || echo False)"
+	elif [[ $1 == configure-action ]]; then
+		: >"$T/dpm-on"
+	fi
+}
+: >"$calls"
+fails_with 'AMD power: power-profiles-daemon offers no action amdgpu_panel_power' setup_amdgpu amdgpu_panel_power amdgpu_dpm
+grep -q 'VERIFIED PPD action amdgpu_dpm enabled' "$T/out"
+echo 'PASS AMD power: an action the machine does not offer fails visibly, and the offered one is still enabled'
+# The plan window: only its buttons are answers; its own failure never counts as one.
+[[ $(plan_answer 0) == edition && $(plan_answer 2) == nouveau && $(plan_answer 1) == cancel && $(plan_answer 252) == cancel ]]
+for code in 3 70 127 255; do [[ $(plan_answer $code) == window-failed ]]; done
+echo 'PASS the plan window: install, keep nouveau, cancel, and a failed window told apart'
+# The error messages: every one the code uses exists in the nine languages, with the English message's %s count and no
+# other printf directive, and the window's lines in the person's language.
+code_files=("$HARDWARE_ACTIONS_FILE")
+for f in "$(dirname "$HARDWARE_ACTIONS_FILE")/../bin/sparky-stereo-hardware" /usr/bin/sparky-stereo-hardware; do
+	if [[ -r $f ]]; then code_files+=("$f"); fi
+done
+[[ ${#code_files[@]} -ge 2 ]] || { echo 'FAIL: sparky-stereo-hardware itself not found next to actions.sh or installed'; exit 1; }
+used=$(grep -ohE '\berr "?[0-9]+' "${code_files[@]}" | grep -oE '[0-9]+$' | sort -un)
+[[ -n $used ]] || { echo 'FAIL: no err call found'; exit 1; }
+# setup_nvidia names its module errors by variable (40 and 41 for the open modules, 55 and 56 for the 580 module) and the
+# 580 path's nouveau phrase as @58
+used=$(printf '%s\n' $used 40 41 55 56 58 | sort -un)
+# count_of PATTERN TEXT: how often PATTERN occurs in TEXT
+count_of() { awk -v pattern="$1" -v text="$2" 'BEGIN {print gsub(pattern, "", text)}'; }
+for id in $used 29; do
+	en_text=$(source "$SHARE/en"; v=LOCAL$id; printf '%s' "${!v:-}")
+	[[ -n $en_text ]] || { echo "FAIL: message $id has no English text"; exit 1; }
+	en_count=$(count_of '%s' "$en_text")
+	for language in "${LANGUAGES[@]}"; do
+		text=$(source "$SHARE/$language"; v=LOCAL$id; printf '%s' "${!v:-}")
+		[[ -n $text ]] || { echo "FAIL: message $id is missing in $language"; exit 1; }
+		[[ $language == en || $text != "$en_text" ]] || { echo "FAIL: message $id in $language is the English text"; exit 1; }
+		[[ $(count_of '%s' "$text") == "$en_count" ]] || { echo "FAIL: message $id in $language has another %s count"; exit 1; }
+		[[ $(count_of '%' "$text") == "$en_count" ]] || { echo "FAIL: message $id in $language has a printf directive other than %s"; exit 1; }
+		refute grep -q '\\' <<<"$text"
+	done
+done
+for language in "${LANGUAGES[@]}"; do
+	text=$(source "$SHARE/$language"; printf '%s' "$LOCAL6")
+	refute grep -qi 'english\|anglais\|ingl\|angielsk\|englisch\|英語\|영어\|英文\|英语' <<<"$text"
+done
+echo "PASS the error messages $(tr '\n' ' ' <<<"$used")and the nouveau choices exist in the nine languages with the English %s count"
+# The end of a run: the list of ERROR lines in English and exit 1, and the same list in a window in the person's language
+# when the menu started it.
+yad() {
+	local a
+	echo "yad $*" >>"$calls"
+	for a; do if [[ $a == --filename=* ]]; then cp "${a#--filename=}" "$T/window"; fi; done
+}
+: >"$WORK/errors"
+err 47 'nvidia-settings' >"$T/out"
+grep -Fxq 'ERROR nvidia-settings could not be installed (apt failed, see the log); fix the apt error and run Hardware Setup again' "$T/out"
+log 'NOTE not an error' >/dev/null
+err 40 'nvidia-kernel-open-dkms-stereo3d' >/dev/null
+[[ $(wc -l <"$WORK/errors") == 2 ]]
+: >"$calls"
+if finish_run "$T/run.log" 1 >"$T/out"; then echo 'FAIL a run with errors ended with status 0'; exit 1; fi
+grep -Fxq 'ERROR nvidia-settings could not be installed (apt failed, see the log); fix the apt error and run Hardware Setup again' "$T/out"
+grep -Fq "ERROR NVIDIA: apt finds no nvidia-kernel-open-dkms-stereo3d, the edition's NVIDIA module with HDMI 3D" "$T/out"
+grep -Fq 'or keep nouveau, without HDMI 3D, as your own choice: the plan window'"'"'s button “Install matched support, keep nouveau”, or sparky-stereo-hardware --nvidia nouveau' "$T/out"
+refute grep -q '^yad' "$calls"
+refute grep -q '@NOUVEAU@\|@BUTTON@\|^message ' "$T/out"
+LOCALE_FILE=$T/locale
+printf 'LANG=pt_BR.UTF-8\n' >"$LOCALE_FILE"
+: >"$calls"
+if SPARKY_STEREO_HARDWARE_GUI=1 DISPLAY=:9 finish_run "$T/run.log" 1 >"$T/out"; then echo 'FAIL a GUI run with errors ended with status 0'; exit 1; fi
+grep -q '^yad --text-info' "$calls"
+grep -Fq 'Configuração de hardware: algumas etapas falharam' "$calls"
+grep -Fxq 'Estas etapas não foram feitas, e nada foi colocado no lugar delas. Cada linha diz o que falhou, por que e o que fazer:' "$T/window"
+grep -Fxq 'Não foi possível instalar nvidia-settings (o apt falhou, veja o registro); corrija o erro do apt e rode a Configuração de hardware de novo' "$T/window"
+grep -Fq 'NVIDIA: o apt não encontra nvidia-kernel-open-dkms-stereo3d, o módulo NVIDIA da edição com HDMI 3D' "$T/window"
+grep -Fq 'o botão “Instalar suporte ao hardware detectado, manter o nouveau” da janela do plano' "$T/window"
+refute grep -q 'ERROR\|could not be installed\|@NOUVEAU@\|@BUTTON@' "$T/window"
+# the log keeps English for support, also in a GUI run
+grep -Fxq 'ERROR nvidia-settings could not be installed (apt failed, see the log); fix the apt error and run Hardware Setup again' "$T/out"
+for language in ja zh_TW; do
+	case $language in ja) printf 'LANG=ja_JP.UTF-8\n' ;; zh_TW) printf 'LANG=zh_TW.UTF-8\n' ;; esac >"$LOCALE_FILE"
+	if SPARKY_STEREO_HARDWARE_GUI=1 DISPLAY=:9 finish_run "$T/run.log" 1 >/dev/null; then echo "FAIL a GUI run in $language ended with status 0"; exit 1; fi
+	expected=$(source "$SHARE/$language"; printf "$LOCAL47" nvidia-settings)
+	grep -Fxq "$expected" "$T/window"
+done
+echo 'PASS the end of a run: its errors listed in English with exit 1, and a window in the person'"'"'s language (pt_BR, ja, zh_TW) when the menu started it'
+# a run that failed without a message of its own still says so, in the window too
+: >"$WORK/errors"
+printf 'LANG=de_DE.UTF-8\n' >"$LOCALE_FILE"
+if SPARKY_STEREO_HARDWARE_GUI=1 DISPLAY=:9 finish_run "$T/run.log" 1 >"$T/out"; then echo 'FAIL a failed run without messages ended with status 0'; exit 1; fi
+grep -Fxq "ERROR A step failed without an error message of its own; the log $T/run.log shows which" "$T/out"
+grep -Fxq "Ein Schritt ist ohne eigene Fehlermeldung fehlgeschlagen; das Protokoll $T/run.log zeigt, welcher" "$T/window"
+echo 'PASS a failed run without a message of its own says so, in English and in the window'
+: >"$WORK/errors"
+finish_run "$T/run.log" 0 >"$T/out"
+grep -q 'finished with no errors' "$T/out"
+echo 'PASS a run without errors ends with status 0'

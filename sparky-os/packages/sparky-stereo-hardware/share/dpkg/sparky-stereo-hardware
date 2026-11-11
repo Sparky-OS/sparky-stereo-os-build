@@ -1,0 +1,5 @@
+# Hardware Setup (Sparky Stereo OS): after every dpkg run, among them dpkg --add-architecture i386, NVIDIA's i386 libraries
+# are checked against NVIDIA's driver; a missing one is kept as a problem with its repair (sparky-stereo-hardware --nvidia-i386)
+post-invoke=if [ -x /usr/lib/sparky-stereo-hardware/nvidia-i386 ]; then /usr/lib/sparky-stereo-hardware/nvidia-i386 check || true; fi
+# thermald stays on an Intel machine that has it (ORDER 43): marked manually installed once, after the apt run
+post-invoke=if [ -x /usr/lib/sparky-stereo-hardware/thermald-manual ]; then /usr/lib/sparky-stereo-hardware/thermald-manual check || true; fi

@@ -7,13 +7,21 @@
 # Runs in beta-iso-lutz-build:1 (Debian testing), 4 CPUs, the tree on the build disk.
 # Usage: rebuild-calamares.sh SOURCE.dsc OUTDIR [WORKDIR]
 set -eu
+# The changelog entry is dated by this recipe, never by the clock (ORDER 421b): SOURCE_DATE_EPOCH, else the last commit touching this script.
+REPRO=$(cd "$(dirname "$0")/.." && pwd)/repo/reproducible.py
+SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$REPRO" epoch "$(readlink -f "$0")")}
+SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
+export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 DSC=$(readlink -f "$1"); OUT=$(readlink -f "$2"); WORK=${3:-/mnt/build/beta-iso-lutz/calamares-build}
 OLD=$(sed -n 's/^Version: //p' "$DSC")
 NEW=${OLD%+stereo3d*}+stereo3d$(( ${OLD##*+stereo3d} + 1 ))
 mkdir -p "$OUT" "$WORK"
 cp "$DSC" "$(dirname "$DSC")"/calamares_"${OLD%-*}".orig.tar.xz "$(dirname "$DSC")"/calamares_"$OLD".debian.tar.xz "$WORK/"
 docker run --rm --name beta-iso-lutz-calamares --cpus 4 --memory 12g -v "$WORK:/w" -v "$OUT:/out" \
-	-e OLD="$OLD" -e NEW="$NEW" -e HOSTUID="$(id -u):$(id -g)" beta-iso-lutz-build:1 sh -ec '
+	-e OLD="$OLD" -e NEW="$NEW" -e HOSTUID="$(id -u):$(id -g)" -e SOURCE_DATE_EPOCH -e SOURCE_DATE_RFC2822 -v "$REPRO":/run/reproducible.py:ro \
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(cd "$(dirname "$0")/../.." && pwd)/tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+	beta-iso-lutz-build:1 sh -ec '
+sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends dpkg-dev devscripts equivs >/dev/null
@@ -45,11 +53,12 @@ grep -q "^include /usr/share/dpkg/architecture.mk" debian/rules || \
 	echo "    installer stopped at grubefiinstall with Permission denied (exit"
 	echo "    code 126)."
 	echo
-	echo " -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  $(date -R)"
+	echo " -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  $SOURCE_DATE_RFC2822"
 	echo
 	cat debian/changelog
 } > debian/changelog.new
 mv debian/changelog.new debian/changelog
+python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" .
 mk-build-deps -i -r -t "apt-get -y -qq --no-install-recommends" debian/control >/dev/null
 dpkg-buildpackage -us -uc -j4 -sa >/w/build.log 2>&1 || { tail -40 /w/build.log; exit 1; }
 cd /w

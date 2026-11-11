@@ -1,0 +1,45 @@
+#!/bin/bash
+# Sparky Stereo OS: build kwin 4:6.7.4-2+stereo3d54+lc1 from the accepted +stereo3d53+lc1 source and the s54 versioned-event patches (ORDER 487b).
+# Created by Daniel Ramos (Capitain Jack) 2026/10/22, updated 2026/11/09.
+# Copyright 2026 under the GNU GPL3 License
+# Source package once (the s54 patches after the series, the XREAL EDIDs in the debian tarball, changelog entry), then the
+# Lean Code source, then the build with the link and start gate against the earlier +lc1 builds. Candidates stay in WORK.
+# Usage: build.sh WORK PREVIOUS_DIR SOURCE_DIR EXTRA_DIR   (PREVIOUS_DIR: a folder holding the +stereo3d53+lc1 .deb files;
+#   SOURCE_DIR: the folder holding kwin_6.7.4-2+stereo3d53+lc1.dsc, its debian.tar.xz and the orig tarball with its .asc,
+#   the published +stereo3d53+lc1 source;
+#   EXTRA_DIR: builds this one needs that the repository does not have yet, installed before its build dependencies;
+#   an empty folder when it has them all, as for +stereo3d54)
+# SIBLINGS_DIR / PREVIOUS_SIBLINGS_DIR (optional): a folder with siblings.txt (one /sib or /psib path per line) and the edition builds the
+#   gate must see that the repository does not have yet: the snapshot for this build, and the one the previous build was qualified against.
+# SPARKY_REPO_DIR must be a real apt repository (dists/mashtabba/main/binary-amd64/Packages), not a flat pool: the gate reads it as file:/repo.
+# Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
+# SPARKY_KWIN_RESUME=1 resumes a prepared WORK after interruption. Keep its original SOURCE_DATE_EPOCH.
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/../../repo/build-provenance.sh"
+. "$HERE/../../config/local-config.sh"
+sparky_need SPARKY_REPO_DIR
+: "${SPARKY_LC_ARCHIVE_DIR:?the link gate's folder, mounted at /archive: sources.json (the public archives, and the edition's
+  published tree as file:/repo) and the public keyrings it names; see sparky-os/lean/archive.md}"
+WORK=$(mkdir -p "$1" && cd "$1" && pwd)
+PREV=$(cd "$2" && pwd)
+SRC=$(cd "$3" && pwd)
+EXTRA=$(cd "$4" && pwd)
+if [ "${SPARKY_KWIN_RESUME:-0}" = 1 ]; then
+    : "${SOURCE_DATE_EPOCH:?resume needs the original source date}"
+    [ -f "$WORK/lc/source/obj-x86_64-linux-gnu/Makefile" ]
+    [ -f "$WORK/lc/source-closure.sha256" ]
+else
+    [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
+fi
+sparky_provenance_init "${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}"
+docker run --rm --ulimit core=0 --name kwin-487b-pkg --cpus 4 --platform linux/amd64 \
+	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_KWIN_RESUME="${SPARKY_KWIN_RESUME:-0}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
+	${SIBLINGS_DIR:+-v "$SIBLINGS_DIR":/sib:ro -e SPARKY_LC_SIBLINGS_FILE=/sib/siblings.txt} \
+	${PREVIOUS_SIBLINGS_DIR:+-v "$PREVIOUS_SIBLINGS_DIR":/psib:ro -e SPARKY_LC_PREVIOUS_SIBLINGS_FILE=/psib/siblings.txt} -v "$WORK":/work -v "$SRC":/src:ro -v "$EXTRA":/extra:ro \
+	-v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
+	-v "$HERE/patches":/patches:ro \
+	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
+	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+	"${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}" bash -c 'sh /run/https-only-apt.sh && bash /tools/build-in-container-54.sh >> /work/build.log 2>&1'

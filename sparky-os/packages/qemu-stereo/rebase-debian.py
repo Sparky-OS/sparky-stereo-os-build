@@ -3,8 +3,6 @@
 # Copyright 2026 Daniel Campos Ramos
 """Apply the accepted stereo3d4 patch series to authenticated Debian revision 3."""
 import argparse
-from datetime import datetime, timezone
-from email.utils import format_datetime
 import hashlib
 import json
 from pathlib import Path
@@ -14,6 +12,9 @@ import tarfile
 
 here = Path(__file__).resolve().parent
 sys.path.insert(0, str(here.parents[1]))
+sys.path.insert(0, str(here.parents[1] / 'repo'))
+import reproducible
+stamp = reproducible.recipe_epoch([here])
 from lean.debian_prepare import add_build_dependencies
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -46,6 +47,7 @@ series.write_text(series.read_text().rstrip() + '\n' + '\n'.join(stereo) + '\n')
 subprocess.run(['dpkg-source', '--before-build', str(source)], check=True)
 dependencies = (
     'libstereo-declare-dev (>= 1.3.0) [amd64]',
+    'libstereo-dibr-dev (>= 1.17.1) [amd64]',
     'libspice-server-dev (>= 0.16.0+git20261010.acb8500-1+stereo3d2~) [amd64]',
 )
 for name in ['control', 'control-in']:
@@ -61,11 +63,12 @@ entry = '''qemu (1:11.1.2+ds-3+stereo3d5) unstable; urgency=medium
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  DATE
 
-'''.replace('DATE', format_datetime(datetime.now(timezone.utc)))
+'''.replace('DATE', reproducible.rfc2822(stamp))
 changelog.write_text(entry + changelog.read_text())
 (source / 'debian/stereo-rebase.json').write_text(json.dumps(dict(
     debian_version=version, edition_version='1:11.1.2+ds-3+stereo3d5',
     prior_edition_version='1:11.1.2+ds-1+stereo3d4',
     prior_debian_archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
     unchanged_stereo_patches_sha256=patch_hashes), indent=2) + '\n')
+reproducible.normalize_tree(source, stamp)
 print('Prepared QEMU Debian revision 3 plus the unchanged stereo patch series')

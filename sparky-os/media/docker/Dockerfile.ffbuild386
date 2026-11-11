@@ -2,7 +2,9 @@
 FROM --platform=linux/386 mdmo-debian386:testing
 ENV DEBIAN_FRONTEND=noninteractive
 COPY bin/dmo-setup.sh /usr/local/bin/dmo-setup.sh
-RUN /usr/local/bin/dmo-setup.sh && apt-get -y install --no-install-recommends build-essential devscripts quilt fakeroot git rsync file pkg-config binutils >/dev/null \
+RUN --mount=type=bind,from=https-only-apt,source=https-only-apt.sh,target=/run/https-only-apt.sh \
+    --mount=type=bind,from=host-ca,source=ca-certificates.crt,target=/run/host-ca.crt \
+    sh /run/https-only-apt.sh && /usr/local/bin/dmo-setup.sh && apt-get -y install --no-install-recommends build-essential devscripts quilt fakeroot git rsync file pkg-config binutils >/dev/null \
  && sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources \
  && apt-get update -qq && apt-get -y dist-upgrade >/dev/null && apt-get -y build-dep ffmpeg-dmo > /build-dep-ffmpeg.log 2>&1; tail -3 /build-dep-ffmpeg.log; \
     apt-get -y purge libfdk-aac-dev libfdk-aac2 > /purge-fdk.log 2>&1; tail -2 /purge-fdk.log; \

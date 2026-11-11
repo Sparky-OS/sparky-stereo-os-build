@@ -2,13 +2,13 @@
 #
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/02
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/30
+# Last update 2026/11/06
 
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-"$HERE/../../../../out"}
-VERSION=0.2.4+lc1
+VERSION=0.3.0+lc1
 PKG=sparky-stereo-locales
 SHARE=/usr/share/$PKG
 mkdir -p "$OUT"
@@ -53,7 +53,7 @@ Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Sparky Stereo locale tool
-  Removes and restores language packages, keeping only what you use.
+  Removes and restores language packages, keeping only what you use, and adds the packages of the languages you need.
 EOF
 (
 	cd "$D"

@@ -72,8 +72,11 @@ VM_TO_DOCKER = {
     # builds one from KDE's ci-images/krita-appimage-2204 (Dockerfile + build.sh)
     "krita-appimage-2204": "kde-ci-local/krita-appimage-2204:latest",
 }
+# where the templates of ci-utilities name the VM images: storage.kde.org until October 2026, s3.kde.org after
+VM_IMAGE_PREFIXES = ("storage.kde.org/vm-images/", "s3.kde.org/ci-vm-images/")
 NOT_RUNNABLE = {
     "freebsd150-qt610": "FreeBSD VM (no FreeBSD in Docker)",
+    "freebsd150-qt611": "FreeBSD VM (no FreeBSD in Docker)",
     "alpine-qt611-arm64": "arm64 VM (Alpine/musl); no arm64 here",
     "windows11-base": "Windows VM",
 }
@@ -264,7 +267,7 @@ def classify(job):
     """-> (kind, detail).  kind: docker | proxy | skip"""
     image = job.get("image")
     name, entry = (image, None) if isinstance(image, str) else (image.get("name"), image.get("entrypoint"))
-    if name.startswith("storage.kde.org/vm-images/"):
+    if name.startswith(VM_IMAGE_PREFIXES):
         vm = name.rsplit("/", 1)[1]
         if vm in NOT_RUNNABLE:
             return "skip", NOT_RUNNABLE[vm], None, None

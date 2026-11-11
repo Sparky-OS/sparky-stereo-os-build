@@ -1,7 +1,15 @@
 -------------------------------------------------------------------------------
+  Version 20261103.1~sparky9~0 (2026-11-03)
+-------------------------------------------------------------------------------
+  * Battery Sleep uses PowerDevil suspend-then-hibernate and systemd’s two-hour
+    delay. Require Cushion’s resume area, report missing support at login and
+    keep failed hibernation before systemd returns to sleep.
+  * Separate Daniel's recorded words from implementation details; his 2026-11-02 confirmation decides profile mapping, no lock grace and battery dimming. One power-button press shuts down without a dialog; no setting changes in this credit correction
+
+-------------------------------------------------------------------------------
   Version 20261008.1~sparky9~0 (2026-10-08)
 -------------------------------------------------------------------------------
-  * Add Daniel's idle, locking, power-button and lid settings
+  * Add idle, locking, power-button and lid settings: Daniel's recorded idle, power-button and mains-lid design; see README for Daniel's 2026-11-02 decisions; LockOnResume=true is KScreenLocker's own default
   * Keep desktops awake and let plugged laptops sleep at four hours
   * Require PowerDevil's profile-aware AC policy
 

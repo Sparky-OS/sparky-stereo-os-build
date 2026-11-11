@@ -1,0 +1,464 @@
+From: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Subject: scene: Give each output the depth limits of its display, and tell the programs (ORDER 414)
+
+The person's SunkLimit and PoppedLimit are built on the depth libstereo-policy
+gives the output's display (its kind and physical size): a headset gets more
+separation, a framed 3D screen less. The windows, the wallpaper and the eye
+shifts use the output's limits, and the programs that follow a surface's depth
+(kde_stereo_depth_v1, version 5) are told the limits of the output the surface
+mainly sits on (depth_limits), so a page's popped element and the desktop's
+popped menu agree on the same screen.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index cba7abb..5501750 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -395,6 +395,8 @@ if(KWIN_BUILD_GLOBALSHORTCUTS)
+ endif()
+ 
+ pkg_check_modules(libdisplayinfo REQUIRED IMPORTED_TARGET libdisplay-info>=0.2.0)
++pkg_check_modules(StereoPolicy REQUIRED IMPORTED_TARGET stereo-policy>=1.15.0)
++add_feature_info(StereoPolicy StereoPolicy_FOUND "The depth of a display, one source for the desktop and the browser: libstereo-policy")
+ add_feature_info(libdisplayinfo libdisplayinfo_FOUND "EDID and DisplayID library: https://gitlab.freedesktop.org/emersion/libdisplay-info")
+ if (libdisplayinfo_VERSION VERSION_GREATER_EQUAL 0.4.0)
+     set(HAVE_LIBDISPLAY_INFO_CTA_VIC 1)
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 1b91c3f..3f9dd63 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -292,6 +292,7 @@ target_link_libraries(kwin
+         Threads::Threads
+         lcms2::lcms2
+         PkgConfig::libdisplayinfo
++        PkgConfig::StereoPolicy
+ )
+ 
+ if (TARGET K::KGlobalAccelD)
+diff --git a/src/dbusinterface.cpp b/src/dbusinterface.cpp
+index 3484d03..aaf6429 100644
+--- a/src/dbusinterface.cpp
++++ b/src/dbusinterface.cpp
+@@ -560,7 +560,7 @@ DBusWallpaperCuts StereoDepthDBusInterface::WallpaperCutsAt(double backgroundDep
+     const QList<LogicalOutput *> outputs = workspace()->outputs();
+     for (const LogicalOutput *output : outputs) {
+         if (!output->isPlaceholder()) {
+-            cuts.insert(output->name(), StereoDepth::wallpaperCut(output, backgroundDepth));
++            cuts.insert(output->name(), StereoDepth::wallpaperCut(output, backgroundDepth * StereoDepth::sunkFactor(output)));
+         }
+     }
+     return cuts;
+diff --git a/src/scene/stereodepth.cpp b/src/scene/stereodepth.cpp
+index 1b2a4aa..c404127 100644
+--- a/src/scene/stereodepth.cpp
++++ b/src/scene/stereodepth.cpp
+@@ -6,6 +6,7 @@
+ 
+ #include "scene/stereodepth.h"
+ 
++#include "core/backendoutput.h"
+ #include "core/output.h"
+ #include "effect/effecthandler.h"
+ #include "options.h"
+@@ -13,6 +14,8 @@
+ #include "window.h"
+ #include "workspace.h"
+ 
++#include <stereo-policy.h>
++
+ #include <QEasingCurve>
+ 
+ #include <algorithm>
+@@ -24,6 +27,9 @@ namespace KWin
+ 
+ // the width of the view the limits are given for
+ static constexpr qreal s_referenceWidth = 1920;
++// the defaults of SunkLimit and PoppedLimit in kwin.kcfg: the depth libstereo-policy gives the reference monitor
++static constexpr qreal s_referenceSunk = 10;
++static constexpr qreal s_referencePopped = 4;
+ 
+ // how long a change of level lasts at the default animation speed: towards the viewer quickly, so
+ // that nothing is drawn behind what it is over for more than an instant, and away from it gently
+@@ -278,7 +284,51 @@ qreal StereoDepth::effectSunkLimit()
+ qreal StereoDepth::levelDepth(const Window *window)
+ {
+     const qreal level = StereoDepth::level(window);
+-    return level * (level > 0 ? options->stereoPoppedLimit() : options->stereoSunkLimit());
++    const LogicalOutput *output = window->output();
++    return level * (level > 0 ? poppedLimit(output) : sunkLimit(output));
++}
++
++static bool displayDepth(const LogicalOutput *output, stereo_policy_depth *depth)
++{
++    if (!output || !output->backendOutput() || !output->backendOutput()->currentMode()) {
++        return false;
++    }
++    const QSize mm = output->physicalSize();
++    if (mm.isEmpty()) {
++        return false;
++    }
++    const OutputModeline::Flags flags = output->backendOutput()->currentMode()->flags();
++    int kind = STEREO_POLICY_DISPLAY_FRAMED;
++    if (flags & (OutputModeline::Flag::Stereo3DAnaglyphModern | OutputModeline::Flag::Stereo3DAnaglyphCrt)) {
++        kind = STEREO_POLICY_DISPLAY_ANAGLYPH;
++    } else if (flags & OutputModeline::Flag::VirtualStereo) {
++        kind = STEREO_POLICY_DISPLAY_HEADSET;
++    }
++    // The person's choice is the limits themselves, with the factor on top of them: strength 100 and no override, so
++    // the library returns the display's own depth.
++    return stereo_policy_display_depth(kind, mm.width(), mm.height(), 100, 0, 0, depth) == 0 && depth->size_known;
++}
++
++qreal StereoDepth::sunkFactor(const LogicalOutput *output)
++{
++    stereo_policy_depth depth{};
++    return displayDepth(output, &depth) && depth.sunk_px > 0 ? depth.sunk_px / s_referenceSunk : 1.0;
++}
++
++qreal StereoDepth::poppedFactor(const LogicalOutput *output)
++{
++    stereo_policy_depth depth{};
++    return displayDepth(output, &depth) && depth.popped_px > 0 ? depth.popped_px / s_referencePopped : 1.0;
++}
++
++qreal StereoDepth::sunkLimit(const LogicalOutput *output)
++{
++    return options->stereoSunkLimit() * sunkFactor(output);
++}
++
++qreal StereoDepth::poppedLimit(const LogicalOutput *output)
++{
++    return options->stereoPoppedLimit() * poppedFactor(output);
+ }
+ 
+ qreal StereoDepth::coveredDepth(const RectF &area, const Window *window)
+@@ -349,12 +399,23 @@ int StereoDepth::eyeShift(int parallax, StereoEye eye)
+     }
+ }
+ 
++int StereoDepth::maxEyeShift(int viewWidth, const LogicalOutput *output)
++{
++    const qreal limit = std::max(sunkLimit(output), poppedLimit(output));
++    return (std::lround(limit * viewWidth / s_referenceWidth) + 1) / 2;
++}
++
+ int StereoDepth::maxEyeShift(int viewWidth)
+ {
+     const qreal limit = std::max(options->stereoSunkLimit(), options->stereoPoppedLimit());
+     return (std::lround(limit * viewWidth / s_referenceWidth) + 1) / 2;
+ }
+ 
++qreal StereoDepth::wallpaperDepth(const LogicalOutput *output)
++{
++    return -sunkLimit(output);
++}
++
+ qreal StereoDepth::wallpaperDepth()
+ {
+     return -options->stereoSunkLimit();
+diff --git a/src/scene/stereodepth.h b/src/scene/stereodepth.h
+index 1410934..d0ee29a 100644
+--- a/src/scene/stereodepth.h
++++ b/src/scene/stereodepth.h
+@@ -119,6 +119,23 @@ public:
+      */
+     static qreal levelDepth(const Window *window);
+ 
++    /**
++     * The factor that turns the person's limits (SunkLimit and PoppedLimit, pixels of a view 1920 wide) into the limits that
++     * suit @a output: libstereo-policy's stereo_policy_display_depth() reads the output's kind (a framed screen, an
++     * anaglyph output, a headset: VirtualStereo) and physical size, and returns the depth of that display against the
++     * reference monitor's. The browser asks the same function for its WebXR flat modes, so a page and the desktop agree
++     * on the same screen. The person's choice stays on top: the limits are theirs, the factor builds on the display.
++     * 1 when the output reports no physical size or is not an output of KWin's.
++     */
++    static qreal sunkFactor(const LogicalOutput *output);
++    static qreal poppedFactor(const LogicalOutput *output);
++
++    /**
++     * The limits of @a output in pixels of a view 1920 wide: the person's limits times the output's factor.
++     */
++    static qreal sunkLimit(const LogicalOutput *output);
++    static qreal poppedLimit(const LogicalOutput *output);
++
+     /**
+      * The depth of the nearest thing beneath @a window in the stack that lies under @a area (in
+      * logical coordinates), in pixels of a view 1920 wide, or the lowest qreal when nothing does.
+@@ -162,6 +179,7 @@ public:
+      * The farthest any window's copy moves in one eye on a view that is @a viewWidth pixels wide.
+      */
+     static int maxEyeShift(int viewWidth);
++    static int maxEyeShift(int viewWidth, const LogicalOutput *output);
+ 
+     /**
+      * The depth of a wallpaper in pixels of a view 1920 wide: the sunk limit, the deepest layer,
+@@ -169,6 +187,7 @@ public:
+      * there too.
+      */
+     static qreal wallpaperDepth();
++    static qreal wallpaperDepth(const LogicalOutput *output);
+ 
+     /**
+      * How many columns are cut from each side of a wallpaper whose copies are @a parallax pixels
+diff --git a/src/scene/stereodepthstates.cpp b/src/scene/stereodepthstates.cpp
+index 6e49f00..e0b57cd 100644
+--- a/src/scene/stereodepthstates.cpp
++++ b/src/scene/stereodepthstates.cpp
+@@ -8,6 +8,7 @@
+ 
+ #include "core/backendoutput.h"
+ #include "core/output.h"
++#include "options.h"
+ #include "scene/stereodepth.h"
+ #include "wayland/surface.h"
+ #include "window.h"
+@@ -35,6 +36,8 @@ StereoDepthStates::StereoDepthStates(QObject *parent)
+     };
+     connect(ws, &Workspace::outputAdded, this, watchOutput);
+     connect(ws, &Workspace::outputsChanged, this, &StereoDepthStates::scheduleUpdate);
++    // the person changes the limits
++    connect(options, &Options::stereoDepthChanged, this, &StereoDepthStates::scheduleUpdate);
+     const auto outputs = ws->outputs();
+     for (LogicalOutput *output : outputs) {
+         watchOutput(output);
+@@ -89,9 +92,12 @@ void StereoDepthStates::update()
+         }
+         const bool awake = StereoDepth::isAwake(window);
+         const Qt::Edges edges = StereoDepth::outputEdges(window);
+-        surface->traverseTree([awake, edges](SurfaceInterface *child) {
++        // the limits of the output the window mainly sits on: the person's, built on that display
++        const qreal sunk = StereoDepth::sunkLimit(window->output());
++        const qreal popped = StereoDepth::poppedLimit(window->output());
++        surface->traverseTree([awake, edges, sunk, popped](SurfaceInterface *child) {
+             if (child->followsStereoDepth()) {
+-                child->setStereoDepthState(awake, edges);
++                child->setStereoDepthState(awake, edges, sunk, popped);
+             }
+         });
+     }
+diff --git a/src/scene/workspacescene.cpp b/src/scene/workspacescene.cpp
+index a758484..2c5bd65 100644
+--- a/src/scene/workspacescene.cpp
++++ b/src/scene/workspacescene.cpp
+@@ -759,7 +759,7 @@ Region WorkspaceScene::collectDamage()
+         if (painted_screen && painted_screen->hasStereoEyes() && StereoDepth::isEnabled()) {
+             // what is damaged is drawn at its level in each eye, a little to either side
+             const int width = painted_delegate->deviceRect().width();
+-            const int shift = StereoDepth::maxEyeShift(width);
++            const int shift = StereoDepth::maxEyeShift(width, painted_screen);
+             // the pointer draws at the level of what is under it, which can change while it stays still
+             int &pointerParallax = m_pointerParallax[painted_screen];
+             const int parallax = this->pointerParallax();
+@@ -847,7 +847,7 @@ void WorkspaceScene::paintOverlay(const RenderTarget &renderTarget, const Render
+         const int width = painted_delegate->deviceRect().width();
+         const int shift = StereoDepth::eyeShift(pointerParallax(), eye);
+         data.translate(shift / viewport.scale());
+-        bounds.adjust(-StereoDepth::maxEyeShift(width), 0, StereoDepth::maxEyeShift(width), 0);
++        bounds.adjust(-StereoDepth::maxEyeShift(width, painted_screen), 0, StereoDepth::maxEyeShift(width, painted_screen), 0);
+     }
+     const Region deviceRepaint = deviceRegion & bounds;
+     if (deviceRepaint.isEmpty()) {
+@@ -1248,7 +1248,7 @@ int WorkspaceScene::wallpaperParallax() const
+     if (!painted_screen || !painted_screen->hasStereoEyes() || !StereoDepth::isEnabled()) {
+         return 0;
+     }
+-    return StereoDepth::parallax(StereoDepth::wallpaperDepth(), painted_delegate->deviceRect().width());
++    return StereoDepth::parallax(StereoDepth::wallpaperDepth(painted_screen), painted_delegate->deviceRect().width());
+ }
+ 
+ // Draws @a part of @a windowItem's items on its own, where it lies in the window, with the window's
+diff --git a/src/wayland/protocols/stereo/kde-stereo-content-v1.xml b/src/wayland/protocols/stereo/kde-stereo-content-v1.xml
+index 094d494..c8e9318 100644
+--- a/src/wayland/protocols/stereo/kde-stereo-content-v1.xml
++++ b/src/wayland/protocols/stereo/kde-stereo-content-v1.xml
+@@ -6,7 +6,7 @@
+     SPDX-License-Identifier: MIT-CMU
+     ]]></copyright>
+ 
+-<interface name="kde_stereo_content_manager_v1" version="4">
++<interface name="kde_stereo_content_manager_v1" version="5">
+   <description summary="declare stereo content of surfaces">
+     A program tells the compositor that a surface's picture holds two
+     views packed full side by side, with the left view first.
+@@ -52,7 +52,7 @@
+   </request>
+ </interface>
+ 
+-<interface name="kde_stereo_content_v1" version="4">
++<interface name="kde_stereo_content_v1" version="5">
+   <description summary="stereo content declaration of one surface">
+     The declaration of one surface, created with
+     kde_stereo_content_manager_v1.create.
+@@ -125,7 +125,7 @@
+   </request>
+ </interface>
+ 
+-<interface name="kde_stereo_depth_v1" version="4">
++<interface name="kde_stereo_depth_v1" version="5">
+   <description summary="desktop depth of one surface">
+     The compositor shows the desktop's own surfaces at depth levels: the
+     active window at the screen, the windows lying behind it sunk, menus,
+@@ -141,7 +141,13 @@
+       stereo content;
+     - a popup surface may declare its place.
+ 
+-    The depth limits are the user's settings; the client reads them itself.
++    The depth limits are the user's settings, built on the display they are
++    shown on: since version 5 the compositor tells the client the limits of
++    the output the surface mainly sits on (depth_limits), the same limits it
++    applies to its own surfaces there, so that an element drawn inside the
++    surface at the popped limit and a menu the compositor pops lie at the same
++    depth on the same screen. Before version 5 the client reads the user's
++    settings itself.
+ 
+     A surface may have any number of these objects. The depth state is sent
+     to each of them. The surface is marked as desktop depth while any of
+@@ -187,6 +193,24 @@
+     <arg name="output_edges" type="uint" enum="edge" summary="the surface's edges on its output's edge"/>
+   </event>
+ 
++  <event name="depth_limits" since="5">
++    <description summary="The depth limits on the surface's output">
++      Sent after depth_state once the object is created and again whenever
++      either value changes, such as when the surface moves to another output,
++      the output's mode or kind changes, or the user changes the settings.
++
++      sunk and popped are how far behind and in front of the screen the
++      compositor lets anything go on the output the surface mainly sits on,
++      in pixels of a view 1920 wide. They are the user's limits built on the
++      output's display: a headset gets more separation, a framed 3D screen
++      less (the display's kind and physical size, libstereo-policy). A
++      surface scales them to its own view's width, and nothing it draws
++      reaches beyond them.
++    </description>
++    <arg name="sunk" type="fixed" summary="the sunk limit, pixels of a view 1920 wide"/>
++    <arg name="popped" type="fixed" summary="the popped limit, pixels of a view 1920 wide"/>
++  </event>
++
+   <request name="set_desktop_depth">
+     <description summary="Mark the surface's pair as the desktop's own depth">
+       Nonzero marks the full side-by-side pair the surface shows, declared
+diff --git a/src/wayland/stereocontent_v1.cpp b/src/wayland/stereocontent_v1.cpp
+index 2c63b7d..5d787a2 100644
+--- a/src/wayland/stereocontent_v1.cpp
++++ b/src/wayland/stereocontent_v1.cpp
+@@ -15,7 +15,7 @@
+ namespace KWin
+ {
+ 
+-static constexpr uint32_t s_version = 4;
++static constexpr uint32_t s_version = 5;
+ 
+ static constexpr StereoContent toStereoContent(uint32_t content)
+ {
+@@ -52,7 +52,7 @@ void StereoContentManagerV1::kde_stereo_content_manager_v1_get_depth(Resource *r
+     Q_EMIT surf->stereoDepthFollowed();
+     // a surface whose state is known tells a new follower at once
+     if (const auto state = SurfaceInterfacePrivate::get(surf)->stereoDepthState) {
+-        depth->sendState(state->first, state->second);
++        depth->sendState(state->awake, state->outputEdges, state->sunk, state->popped);
+     }
+ }
+ 
+@@ -161,14 +161,21 @@ quint64 StereoDepthSurfaceV1::placeSerial() const
+     return m_placeSerial;
+ }
+ 
+-void StereoDepthSurfaceV1::sendState(bool awake, uint32_t outputEdges)
++void StereoDepthSurfaceV1::sendState(bool awake, uint32_t outputEdges, qreal sunk, qreal popped)
+ {
+-    const auto state = std::make_pair(awake, outputEdges);
+-    if (!m_surface || m_sent == state) {
++    if (!m_surface) {
+         return;
+     }
+-    m_sent = state;
+-    send_depth_state(awake ? 1 : 0, outputEdges);
++    const auto state = std::make_pair(awake, outputEdges);
++    if (m_sent != state) {
++        m_sent = state;
++        send_depth_state(awake ? 1 : 0, outputEdges);
++    }
++    const auto limits = std::make_pair(sunk, popped);
++    if (m_sentLimits != limits) {
++        m_sentLimits = limits;
++        send_depth_limits(wl_fixed_from_double(sunk), wl_fixed_from_double(popped));
++    }
+ }
+ 
+ void StereoDepthSurfaceV1::kde_stereo_depth_v1_destroy_resource(Resource *resource)
+diff --git a/src/wayland/stereocontent_v1.h b/src/wayland/stereocontent_v1.h
+index fe7b9ce..6982c6e 100644
+--- a/src/wayland/stereocontent_v1.h
++++ b/src/wayland/stereocontent_v1.h
+@@ -63,7 +63,7 @@ public:
+     quint64 placeSerial() const;
+ 
+     // sends the state unless it is the one this object last received
+-    void sendState(bool awake, uint32_t outputEdges);
++    void sendState(bool awake, uint32_t outputEdges, qreal sunk, qreal popped);
+ 
+ private:
+     void kde_stereo_depth_v1_destroy_resource(Resource *resource) override;
+@@ -77,6 +77,7 @@ private:
+     std::optional<qreal> m_place;
+     quint64 m_placeSerial = 0;
+     std::optional<std::pair<bool, uint32_t>> m_sent;
++    std::optional<std::pair<qreal, qreal>> m_sentLimits;
+ };
+ 
+ }
+diff --git a/src/wayland/surface.cpp b/src/wayland/surface.cpp
+index 945f696..34b2587 100644
+--- a/src/wayland/surface.cpp
++++ b/src/wayland/surface.cpp
+@@ -1373,12 +1373,12 @@ bool SurfaceInterface::followsStereoDepth() const
+     return !d->stereoDepths.isEmpty();
+ }
+ 
+-void SurfaceInterface::setStereoDepthState(bool awake, Qt::Edges outputEdges)
++void SurfaceInterface::setStereoDepthState(bool awake, Qt::Edges outputEdges, qreal sunk, qreal popped)
+ {
+-    const auto state = std::make_pair(awake, uint32_t(outputEdges.toInt()));
++    const SurfaceInterfacePrivate::StereoDepthState state{awake, uint32_t(outputEdges.toInt()), sunk, popped};
+     d->stereoDepthState = state;
+     for (StereoDepthSurfaceV1 *depth : std::as_const(d->stereoDepths)) {
+-        depth->sendState(state.first, state.second);
++        depth->sendState(state.awake, state.outputEdges, state.sunk, state.popped);
+     }
+ }
+ 
+diff --git a/src/wayland/surface.h b/src/wayland/surface.h
+index f3111b0..7783342 100644
+--- a/src/wayland/surface.h
++++ b/src/wayland/surface.h
+@@ -371,7 +371,7 @@ public:
+      * shown in depth now (@a awake) and which of its edges lie on its output's edge. Only changes
+      * are sent.
+      */
+-    void setStereoDepthState(bool awake, Qt::Edges outputEdges);
++    void setStereoDepthState(bool awake, Qt::Edges outputEdges, qreal sunk, qreal popped);
+ 
+     /**
+      * Returns the current release point for the buffer on this surface. The buffer keeps the
+diff --git a/src/wayland/surface_p.h b/src/wayland/surface_p.h
+index 2d88e04..8ca6f15 100644
+--- a/src/wayland/surface_p.h
++++ b/src/wayland/surface_p.h
+@@ -220,7 +220,14 @@ public:
+     StereoContentSurfaceV1 *stereoContent = nullptr;
+     QList<StereoDepthSurfaceV1 *> stereoDepths;
+     // the depth state the compositor last gave the surface: awake and the edges on the output's edge
+-    std::optional<std::pair<bool, uint32_t>> stereoDepthState;
++    struct StereoDepthState
++    {
++        bool awake = false;
++        uint32_t outputEdges = 0;
++        qreal sunk = 0;
++        qreal popped = 0;
++    };
++    std::optional<StereoDepthState> stereoDepthState;
+     // takes the desktop depth mark and the place from the surface's kde_stereo_depth_v1 objects
+     void updatePendingStereoDepth();
+     FifoV1Surface *fifoSurface = nullptr;

@@ -57,7 +57,8 @@ check "a desktop file that is not there exits 2" "$(env_for a10 --app "$T/Deskto
 check "shell form quotes the star" "$(env_for host --category games --profile performance --shell | grep VK_LOADER)" "export VK_LOADER_DRIVERS_SELECT='*nvidia*'"
 check "one GPU: nothing to export" "$(env_for one --category games --profile performance | wc -l)" 0
 check "bad category exits 2" "$(env_for host --category nonsense >/dev/null 2>&1; echo $?)" 2
-check "empty machine exits 1" "$(mkdir -p $T/empty; SPARKY_STEREO_GRAPHICS_ROOT=$T/empty "$BIN/sparky-stereo-gpu-env" --category games >/dev/null 2>&1; echo $?)" 1
+check "empty machine: no GPU to name exits 1" "$(mkdir -p $T/empty; SPARKY_STEREO_GRAPHICS_ROOT=$T/empty "$BIN/sparky-stereo-gpu-env" --category games --print gpu >/dev/null 2>&1; echo $?)" 1
+check "empty machine: nothing to choose, no variables" "$(SPARKY_STEREO_GRAPHICS_ROOT=$T/empty "$BIN/sparky-stereo-gpu-env" --category games --profile balanced 2>/dev/null; echo "rc=$?")" "rc=0"
 
 # saved choices
 printf '[General]\nMainGpu=pci-0000:01:00.0\n\n[Render]\nPlayers=integrated\nGames=discrete\n' >"$XDG_CONFIG_HOME/sparky-stereo-graphicsrc"
@@ -138,7 +139,8 @@ check "wrapper: no option, the command runs" "$(wrapped host balanced printf ok)
 check "wrapper: -- ends the options" "$(wrapped host performance -- printf ok)" ok
 check "wrapper: no command exits 2" "$(wrapped host balanced >/dev/null 2>&1; echo $?)" 2
 check "wrapper: option without value exits 2" "$(wrapped host balanced --category >/dev/null 2>&1; echo $?)" 2
-check "wrapper: a broken choice never stops the program" "$( (export PATH=$T/broken:/usr/bin:/bin; mkdir -p $T/broken; printf '#!/bin/sh\nexit 1\n' >$T/broken/sparky-stereo-gpu-env; chmod +x $T/broken/sparky-stereo-gpu-env; sh "$RUN" --category games printf ran) )" ran
-check "wrapper: no sparky-stereo-gpu-env at all" "$( (export PATH=/usr/bin:/bin; sh "$RUN" --category games printf ran) )" ran
+# nothing fails silently (ORDER 346a, U22): a resolver that fails, or none at all, stops the program and says so
+check "wrapper: a resolver that fails stops the program" "$( (export PATH=$T/broken:/usr/bin:/bin; mkdir -p $T/broken; printf '#!/bin/sh\nexit 1\n' >$T/broken/sparky-stereo-gpu-env; chmod +x $T/broken/sparky-stereo-gpu-env; sh "$RUN" --category games printf ran 2>/dev/null; echo " rc=$?") )" " rc=1"
+check "wrapper: no sparky-stereo-gpu-env at all stops the program" "$( (export PATH=/usr/bin:/bin; sh "$RUN" --category games printf ran 2>/dev/null; echo " rc=$?") )" " rc=127"
 echo "cli: $pass passed, $fail failed"
 [ "$fail" = 0 ]

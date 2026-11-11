@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/16
+# Last update 2026/11/09
 #
 # sparky-stereo-boot: the boot follows the saved choice of the main screen.
 #
@@ -15,19 +15,29 @@
 #   - the kernel line, through GRUB's environment block (no update-grub needed):
 #     plymouth.stereo= for the boot splash in the same 3D mode or stereo layout, and video=
 #     when the base mode is not the screen's preferred one, so the console keeps it too;
+#     each stereo output of plymouth.stereo= ends with popped= and sunk=, the main screen's depth limits (the person's
+#     kwinrc [StereoDepth] limits built on the display, as KWin resolves them), so the splash stays inside them;
 #   - the login screen: the settings copied to the greeter accounts of Plasma Login Manager
 #     and SDDM, whose KWin then shows the same output in 3D;
 #   - /var/lib/sparky-stereo-boot/main-output.json, the record of all of it.
 # Options in /etc/default/sparky-stereo-boot.
 #
+# A step of the boot's upkeep that cannot do what it is for says what failed, why and what to do, and the edition's
+# one engine keeps it (sparky-stereo-problems, /var/lib/sparky-stereo-problems) until it is repaired (problems.py); its
+# session notifier shows each kept problem, and status lists them.
+#
 # Commands:
-#   sparky-stereo-boot status              what the next boot shows
+#   sparky-stereo-boot status              what the next boot shows, and the boot's kept problems
+#   sparky-stereo-boot repair              root: run again what each kept problem names
+#   sparky-stereo-boot dismiss STEP        hide a kept problem for you (it comes back if the step fails again)
 #   sparky-stereo-boot export-user USER    root: take USER's saved settings now
 #   sparky-stereo-boot reapply             root: write the boot files again (after an option change)
 #   sparky-stereo-boot client              the session's side: send the saved settings
+#   sparky-stereo-boot notify              the session's side: show the kept problems as notifications
 #   sparky-stereo-boot export-socket       the socket service (stdin is the connection)
 #   sparky-stereo-boot plymouth-quit       plymouth-quit.service: hand the splash over
 #   sparky-stereo-boot plymouth-handover   wait for the compositor's first frame, then quit
+#   sparky-stereo-boot boot-check          at boot: the resolution GRUB showed, against the one it was given
 import ctypes
 import ctypes.util
 import hashlib
@@ -36,6 +46,7 @@ import os
 import pwd
 import shlex
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -52,9 +63,21 @@ GRUBENV = ROOT + '/boot/grub/grubenv'
 DRM_SYSFS = ROOT + '/sys/class/drm'
 SOCKET = '/run/sparky-stereo-boot.socket'
 RUN_DIR = ROOT + '/run/sparky-stereo-boot'
-LANG_DIR = '/usr/share/sparky/sparky-stereo-boot'
+LANG_DIR = os.environ.get('SPARKY_STEREO_LANG_DIR', '/usr/share/sparky/sparky-stereo-boot')
+LIB_DIR = os.environ.get('SPARKY_STEREO_LIB', '/usr/lib/sparky-stereo-boot')
+GRUB_DISPLAY = STATE_DIR + '/grub-display'
+CMDLINE = ROOT + '/proc/cmdline'
+DRI = ROOT + '/dev/dri'
+BOOT_PARAMS = ROOT + '/sys/kernel/boot_params/data'
+HANDOVER_LIMIT = float(os.environ.get('SPARKY_STEREO_HANDOVER_LIMIT', '600'))
 MAX_INPUT = 1024 * 1024
 GREETERS = (('plasmalogin', 'plasma-login-manager'), ('sddm', 'sddm'))
+POLICY_LIB = os.environ.get('SPARKY_STEREO_POLICY_LIB', 'libstereo-policy.so.1')
+KWINRC_SYSTEM = ROOT + '/etc/xdg/kwinrc'
+# the defaults of SunkLimit and PoppedLimit in KWin's kwin.kcfg, pixels of a view 1920 wide: the depth libstereo-policy
+# gives its reference monitor, the one every display's depth is scaled from
+DEPTH_DEFAULTS = {'SunkLimit': 10.0, 'PoppedLimit': 4.0}
+DEPTH_MAX = 1000.0
 SDDM_WAYLAND = ROOT + '/etc/sddm.conf.d/50-sparky-stereo-boot.conf'
 
 DEFAULTS = {
@@ -87,6 +110,19 @@ HDMI_LAYOUTS = ((FRAME_PACKING, 'frame-packing'), (SBS_FULL, 'sbs-full'), (SBS_H
 
 def log(message):
     print('sparky-stereo-boot: ' + message, file=sys.stderr, flush=True)
+
+
+_problems = None
+
+
+def problems():
+    """problems.py, beside the package's other programs."""
+    global _problems
+    if _problems is None:
+        sys.path.insert(0, LIB_DIR)
+        import problems as module
+        _problems = module
+    return _problems
 
 
 # ------------------------------------------------------------------ strings (Paweł's LOCAL files)
@@ -284,9 +320,148 @@ def describe_layout(flags):
     return None, False, False
 
 
-def compute(saved, setups, connected, options):
-    """What the boot shows, from the saved settings and the screens connected now"""
-    result = {'main': None, 'outputs': [], 'kernel': [], 'gfxmode': '', 'connector': '', 'stereo': False}
+
+# ------------------------------------------------------------------ the depth limits of the boot splash
+def read_stereo_depth(path, expect_uid=None):
+    """kwinrc's [StereoDepth] group in PATH: ({key: pixels}, None); ({}, None) when the file or the group is not
+    there; ({}, reason) when it is there and cannot be read or holds a value that is no limit. The two keys are
+    SunkLimit and PoppedLimit (KWin's kwin.kcfg)."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return {}, None
+    except OSError as error:
+        return {}, '%s: %s' % (path, error.strerror or error)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_INPUT:
+            return {}, '%s is not an ordinary file of a sensible size' % path
+        if expect_uid is not None and st.st_uid != expect_uid:
+            return {}, '%s is not owned by the person who saved it' % path
+        with os.fdopen(fd, 'rb', closefd=False) as f:
+            data = f.read(MAX_INPUT + 1).decode('utf-8', errors='replace')
+    except OSError as error:
+        return {}, '%s: %s' % (path, error.strerror or error)
+    finally:
+        os.close(fd)
+    values, group = {}, None
+    for line in data.splitlines():
+        line = line.strip()
+        if line.startswith('[') and line.endswith(']'):
+            group = line[1:-1]
+        elif group == 'StereoDepth' and '=' in line:
+            key, value = line.split('=', 1)
+            key = key.split('[', 1)[0].strip()
+            if key not in DEPTH_DEFAULTS:
+                continue
+            try:
+                number = float(value.strip())
+            except ValueError:
+                return {}, '%s: %s=%s is not a number' % (path, key, value.strip())
+            if not (0 <= number <= DEPTH_MAX):
+                return {}, '%s: %s=%s is not between 0 and %d' % (path, key, value.strip(), DEPTH_MAX)
+            values[key] = number
+    return values, None
+
+
+def depth_choice(source, kwinrc=None):
+    """The person's limits, as KWin reads them (a KConfig cascade: the system's /etc/xdg/kwinrc, then the person's
+    ~/.config/kwinrc): {'sunk': px or None, 'popped': px or None, 'reason': None or why the saved choice cannot be read}.
+    None is no choice saved for that limit: the display's default applies (design: 1 the person's choice, 2 the display)."""
+    values, reason = read_stereo_depth(KWINRC_SYSTEM)
+    own = {}
+    if kwinrc is None:
+        try:
+            entry = pwd.getpwnam(source)
+        except KeyError:
+            entry = None
+            reason = reason or 'there is no account %s to take kwinrc from' % source
+        if entry is not None:
+            own, why = read_stereo_depth(os.path.join(ROOT + entry.pw_dir, '.config', 'kwinrc'),
+                                         None if ROOT else entry.pw_uid)
+            reason = reason or why
+    else:
+        own, why = read_stereo_depth(kwinrc)
+        reason = reason or why
+    values.update(own)
+    return {'sunk': values.get('SunkLimit'), 'popped': values.get('PoppedLimit'), 'reason': reason}
+
+
+def edid_physical_mm(edid):
+    """The screen's size in millimetres as KWin takes it (src/utils/edid.cpp, determineScreenPhysicalSizeMm): the first
+    detailed timing whose image size has the aspect of its mode (within 0.1), else the basic size in centimetres.
+    (0, 0) when the EDID says nothing."""
+    if len(edid) >= 128:
+        for offset in (54, 72, 90, 108):
+            d = edid[offset:offset + 18]
+            if d[0] == 0 and d[1] == 0:
+                continue
+            hv = d[2] | ((d[4] & 0xf0) << 4)
+            vv = d[5] | ((d[7] & 0xf0) << 4)
+            hmm = d[12] | ((d[14] & 0xf0) << 4)
+            vmm = d[13] | ((d[14] & 0x0f) << 8)
+            if hmm > 0 and vmm > 0 and hv > 0 and vv > 0 and abs(hmm / vmm - hv / vv) <= 0.1:
+                return hmm, vmm
+        return edid[21] * 10, edid[22] * 10
+    return 0, 0
+
+
+class PolicyDepth(ctypes.Structure):
+    _fields_ = [('sunk_px', ctypes.c_double), ('popped_px', ctypes.c_double),
+                ('viewing_distance_mm', ctypes.c_int), ('size_known', ctypes.c_int)]
+
+
+def display_factors(flags, edid):
+    """How much more or less depth this display takes than the reference monitor, from libstereo-policy, the one source
+    of a display's depth for the desktop, the browser and the boot, asked as KWin asks it (StereoDepth::displayDepth):
+    the kind from the mode's flags (anaglyph; another virtual stereo twin: a headset; else a framed screen) and the
+    EDID's size, the person's strength 100. Returns (sunk factor, popped factor, kind, size known); an output of no
+    known size has the factor 1, as in KWin. Raises OSError or ValueError when the library cannot answer."""
+    kind = 1 if flags & (ANAGLYPH_MODERN | ANAGLYPH_CRT) else 2 if flags & VIRTUAL else 0
+    width, height = edid_physical_mm(edid)
+    lib = ctypes.CDLL(POLICY_LIB)
+    call = lib.stereo_policy_display_depth
+    call.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_double, ctypes.c_double, ctypes.c_double,
+                     ctypes.POINTER(PolicyDepth)]
+    call.restype = ctypes.c_int
+    depth = PolicyDepth()
+    if call(kind, width, height, 100.0, 0.0, 0.0, ctypes.byref(depth)) != 0:
+        raise ValueError('stereo_policy_display_depth refused kind %d, %dx%d mm' % (kind, width, height))
+    known = bool(width > 0 and height > 0 and depth.size_known)
+    sunk = depth.sunk_px / DEPTH_DEFAULTS['SunkLimit'] if known and depth.sunk_px > 0 else 1.0
+    popped = depth.popped_px / DEPTH_DEFAULTS['PoppedLimit'] if known and depth.popped_px > 0 else 1.0
+    return sunk, popped, kind, known
+
+
+def depth_limits(choice, main_flags, main_edid):
+    """What the splash may sink and pop on the main screen, pixels of a view 1920 wide, as KWin gives that output
+    (StereoDepth::sunkLimit and poppedLimit: the person's limit times the display's factor), and where each came from.
+    Never more than the person's limits allow; a limit nobody saved is the display's default."""
+    source = 'choice' if choice['sunk'] is not None or choice['popped'] is not None else 'display'
+    if choice['reason']:
+        source = 'display-unreadable'
+    problem = None
+    try:
+        sunk_factor, popped_factor, kind, known = display_factors(main_flags, main_edid)
+    except (OSError, ValueError, AttributeError) as error:
+        sunk_factor = popped_factor = 1.0
+        kind, known, problem = None, False, str(error)
+    sunk = (choice['sunk'] if choice['sunk'] is not None else DEPTH_DEFAULTS['SunkLimit']) * sunk_factor
+    popped = (choice['popped'] if choice['popped'] is not None else DEPTH_DEFAULTS['PoppedLimit']) * popped_factor
+    return {'sunkPx': round(sunk, 2), 'poppedPx': round(popped, 2), 'source': source,
+            'savedSunk': choice['sunk'], 'savedPopped': choice['popped'], 'unreadable': choice['reason'],
+            'displayKind': kind, 'sizeKnown': known, 'sunkFactor': round(sunk_factor, 4),
+            'poppedFactor': round(popped_factor, 4), 'policyProblem': problem}
+
+
+def number_text(value):
+    return ('%.2f' % value).rstrip('0').rstrip('.')
+
+
+def compute(saved, setups, connected, options, choice=None):
+    """What the boot shows, from the saved settings and the screens connected now; CHOICE is the person's depth limits
+    (depth_choice): the splash gets the main screen's limits with each stereo output"""
+    result = {'main': None, 'outputs': [], 'kernel': [], 'gfxmode': '', 'connector': '', 'stereo': False, 'depth': None}
     matches = match_outputs(saved, connected)
     if not matches:
         return result
@@ -310,6 +485,8 @@ def compute(saved, setups, connected, options):
     width, height = int(mode.get('width', 0)), int(mode.get('height', 0))
     refresh, flags = int(mode.get('refreshRate', 0)), int(mode.get('flags', 0))
     layout, right_first, hdmi = describe_layout(flags)
+    depth = depth_limits(choice, flags, out['edid']) if choice is not None else None
+    result['depth'] = depth
     swap = bool(main.get('stereoSwapEyes', False)) != right_first
     result['main'] = {'connector': out['connector'], 'card': out['card'], 'edidIdentifier': out['identifier'],
                       'edidHash': out['hash'], 'width': width, 'height': height, 'refreshRate': refresh,
@@ -324,6 +501,8 @@ def compute(saved, setups, connected, options):
         if mode_part:
             fields.append(mode_part)
         fields += options_list
+        if depth is not None:
+            fields += ['popped=' + number_text(depth['poppedPx']), 'sunk=' + number_text(depth['sunkPx'])]
         # two GPUs can both have a connector of that name: then the entry names its card
         if sum(1 for o in connected if o['connector'] == screen_out['connector']) > 1:
             fields.append('card=' + screen_out['card'])
@@ -507,12 +686,31 @@ def write_sddm_wayland(options, stereo):
     return False
 
 
-def apply(data, source):
-    """Takes KWin's saved settings (bytes) and writes everything the boot reads"""
+def say_depth(depth):
+    """Where the splash's depth comes from, said when the person's choice is not what it follows (no silent fallbacks)."""
+    if depth is None:
+        return
+    if depth['source'] == 'display-unreadable':
+        keep_problem('splash-depth', 'LOCAL68', [depth['unreadable']])
+    else:
+        forget_problem('splash-depth')
+        if depth['source'] == 'display':
+            log('no depth limits saved in kwinrc [StereoDepth]: the boot splash takes the display\'s default, popped %s px and '
+                'sunk %s px at 1920 px per eye' % (number_text(depth['poppedPx']), number_text(depth['sunkPx'])))
+    if depth['policyProblem']:
+        keep_problem('splash-depth-display', 'LOCAL69', [depth['policyProblem']])
+    else:
+        forget_problem('splash-depth-display')
+
+
+def apply(data, source, kwinrc=None):
+    """Takes KWin's saved settings (bytes) and writes everything the boot reads; the person's depth limits come from
+    SOURCE's kwinrc (KWINRC names another file, for tests)"""
     options = read_options()
     saved, setups = parse_kwin_config(data)
     connected = connected_outputs()
-    result = compute(saved, setups, connected, options)
+    result = compute(saved, setups, connected, options, depth_choice(source, kwinrc))
+    say_depth(result['depth'])
     if options['SPARKY_STEREO_BOOT'] == 'no':
         result['kernel'] = []
         result['outputs'] = []
@@ -528,6 +726,7 @@ def apply(data, source):
         'main': result['main'],
         'stereoOutputs': result['outputs'],
         'kernelArguments': result['kernel'],
+        'depth': result['depth'],
         'grubGfxmode': result['gfxmode'] if options['SPARKY_STEREO_GRUB'] != 'auto' and options['SPARKY_STEREO_BOOT'] != 'no' else '',
         'greeters': greeters,
         'sddmWayland': sddm_wayland,
@@ -690,27 +889,126 @@ def reapply():
     return 0
 
 
+def grub_display():
+    """What the last update-grub gave GRUB (30-sparky-stereo-boot.cfg writes it): GFXMODE, WANTED, SOURCE, FONT,
+    PAYLOAD, SCREEN."""
+    values = {}
+    try:
+        for line in open(GRUB_DISPLAY, encoding='utf-8'):
+            if '=' in line:
+                key, value = line.rstrip('\n').split('=', 1)
+                values[key.strip()] = value.strip()
+    except OSError:
+        pass
+    return values
+
+
 def status():
     s = strings()
     try:
         record = json.load(open(STATE))
     except (OSError, ValueError):
+        record = None
         print(text(s, 'LOCAL10', 'No saved choice yet: the boot uses the screen\'s own mode.'))
+    if record:
+        main = record.get('main') or {}
+        options = record.get('options', DEFAULTS)
+        layout = main.get('layout', '2d')
+        print('%s: %s' % (text(s, 'LOCAL1', 'Main screen'), main.get('connector', '-')))
+        print('%s: %sx%s @ %.3f Hz' % (text(s, 'LOCAL2', 'Mode'), main.get('width', 0), main.get('height', 0),
+                                       main.get('refreshRate', 0) / 1000.0))
+        print('%s: %s' % (text(s, 'LOCAL3', '3D layout'), layout if layout != '2d' else text(s, 'LOCAL4', 'None (2D)')))
+        if record.get('stereoOutputs'):
+            where = text(s, 'LOCAL6', 'the boot splash') if options.get('SPARKY_STEREO_SPLASH') != '2d' else text(s, 'LOCAL7', 'the login screen')
+            print('%s: %s' % (text(s, 'LOCAL5', '3D switches on at'), where))
+    depth = (record or {}).get('depth')
+    if depth and (record or {}).get('stereoOutputs'):
+        words = {'choice': 'LOCAL71', 'display': 'LOCAL72', 'display-unreadable': 'LOCAL73'}
+        print(text(s, 'LOCAL70', 'Boot splash depth: popped %s px, sunk %s px at 1920 px per eye (%s)') % (
+            number_text(depth['poppedPx']), number_text(depth['sunkPx']), text(s, words[depth['source']], depth['source'])))
+    grub = grub_display()
+    modes = [m for m in grub.get('GFXMODE', '').split(',') if m]
+    if grub.get('WANTED', 'auto') != 'auto' and len(modes) > 1:
+        rest = ', '.join(m for m in modes[1:] if m != 'auto')
+        print(problems().text('LOCAL47', [modes[0], rest]))
+    else:
+        print('%s: %s' % (text(s, 'LOCAL8', 'GRUB resolution'), (modes[0] if modes else '') or
+                          (record or {}).get('grubGfxmode') or 'auto'))
+    if grub:
+        font = os.path.basename(grub.get('FONT', ''))
+        print('%s: %s' % (problems().text('LOCAL48'), font or problems().text('LOCAL49')))
+    if record:
+        print('%s: %s' % (text(s, 'LOCAL9', 'Login screens with these settings'), ', '.join(record.get('greeters', [])) or '-'))
+        print('%s: %s (%s)' % (text(s, 'LOCAL11', 'Saved from the settings of'), record.get('source', '-'), record.get('time', '-')))
+    p = problems()
+    found = p.pending()
+    if not found:
+        print(p.text('LOCAL16'))
         return 0
-    main = record.get('main') or {}
-    options = record.get('options', DEFAULTS)
-    layout = main.get('layout', '2d')
-    print('%s: %s' % (text(s, 'LOCAL1', 'Main screen'), main.get('connector', '-')))
-    print('%s: %sx%s @ %.3f Hz' % (text(s, 'LOCAL2', 'Mode'), main.get('width', 0), main.get('height', 0),
-                                   main.get('refreshRate', 0) / 1000.0))
-    print('%s: %s' % (text(s, 'LOCAL3', '3D layout'), layout if layout != '2d' else text(s, 'LOCAL4', 'None (2D)')))
-    if record.get('stereoOutputs'):
-        where = text(s, 'LOCAL6', 'the boot splash') if options.get('SPARKY_STEREO_SPLASH') != '2d' else text(s, 'LOCAL7', 'the login screen')
-        print('%s: %s' % (text(s, 'LOCAL5', '3D switches on at'), where))
-    print('%s: %s' % (text(s, 'LOCAL8', 'GRUB resolution'), record.get('grubGfxmode') or 'auto'))
-    print('%s: %s' % (text(s, 'LOCAL9', 'Login screens with these settings'), ', '.join(record.get('greeters', [])) or '-'))
-    print('%s: %s (%s)' % (text(s, 'LOCAL11', 'Saved from the settings of'), record.get('source', '-'), record.get('time', '-')))
-    return 0
+    print('%s:' % p.text('LOCAL15'))
+    for entry in found:
+        print('- %s' % p.message(entry))
+        print('  %s: %s' % (p.text('LOCAL17'), entry.get('time') or '-'))
+        if entry.get('output'):
+            print('  %s: %s' % (p.text('LOCAL18'), entry['file']))
+    return 1
+
+
+def repair():
+    """Runs again what each kept problem names, through the engine: a step that succeeds is cleared, one that fails
+    again, or that its own command keeps again, stays with its new output. Problems with nothing to run (the splash's
+    hand-over, older kernels kept) are listed."""
+    p = problems()
+    result = p.repair()
+    try:
+        state = subprocess.run(['dpkg-query', '-W', '-f', '${db:Status-Abbrev}', 'sparky-stereo-boot'],
+                               capture_output=True, text=True).stdout.strip()
+    except OSError:
+        state = ''
+    if state and state != 'ii':
+        print(p.text('LOCAL54'))
+    return result
+
+
+def dismiss(step):
+    """The engine's Hide: the problem stays listed, hidden for you until it changes or a repair fails."""
+    return problems().dismiss(step)
+
+
+def notify():
+    """The session's notifier (sparky-stereo-problems-plasma) shows every kept problem: this starts it."""
+    return problems().notify()
+
+
+def boot_check():
+    """At boot: the resolution GRUB handed to the kernel (gfxpayload=keep keeps GRUB's mode; the kernel's
+    boot_params screen_info has it) against the first one the last update-grub gave GRUB. GRUB takes the next of its
+    list when the firmware does not offer a mode, and nothing else shows which one it took."""
+    grub = grub_display()
+    wanted = grub.get('WANTED', '')
+    numbers = wanted.split('x')
+    if grub.get('SOURCE') not in ('saved', 'native') or grub.get('PAYLOAD') != 'keep' or \
+            len(numbers) != 2 or not all(n.isdigit() for n in numbers):
+        forget_problem('grub-mode')
+        return 0
+    try:
+        data = open(BOOT_PARAMS, 'rb').read(0x18)
+    except OSError:
+        log('no boot_params here (%s): GRUB\'s resolution is not checked' % BOOT_PARAMS)
+        return 0
+    # struct screen_info (include/uapi/linux/screen_info.h): orig_video_isVGA at 0x0f, lfb_width and lfb_height at
+    # 0x12 and 0x14; VIDEO_TYPE_VLFB (0x23, VESA) and VIDEO_TYPE_EFI (0x70) are a linear frame buffer
+    if len(data) < 0x18 or data[0x0f] not in (0x23, 0x70):
+        log('the kernel got no frame buffer from GRUB (video type %s): GRUB\'s resolution is not checked'
+            % (hex(data[0x0f]) if len(data) > 0x0f else '-'))
+        return 0
+    shown = '%dx%d' % struct.unpack_from('<HH', data, 0x12)
+    if shown == wanted:
+        forget_problem('grub-mode')
+        log('GRUB showed %s, as it was given' % shown)
+        return 0
+    keep_problem('grub-mode', 'LOCAL46', [shown, wanted, wanted])
+    return 1
 
 
 # ------------------------------------------------------------------ the splash's hand-over
@@ -745,11 +1043,11 @@ def crtc_buffers():
     drm.drmModeGetCrtc.restype = ctypes.POINTER(_Crtc)
     drm.drmModeGetCrtc.argtypes = [ctypes.c_int, ctypes.c_uint32]
     state = {}
-    for card in sorted(os.listdir('/dev/dri')):
+    for card in sorted(os.listdir(DRI)):
         if not card.startswith('card'):
             continue
         try:
-            fd = os.open('/dev/dri/' + card, os.O_RDWR | os.O_CLOEXEC)
+            fd = os.open(os.path.join(DRI, card), os.O_RDWR | os.O_CLOEXEC)
         except OSError:
             continue
         try:
@@ -770,7 +1068,7 @@ def crtc_buffers():
 
 def stereo_splash_running():
     try:
-        cmdline = open('/proc/cmdline').read().split()
+        cmdline = open(CMDLINE).read().split()
     except OSError:
         return False
     if not any(a.startswith('plymouth.stereo=') for a in cmdline):
@@ -778,22 +1076,70 @@ def stereo_splash_running():
     return subprocess.run(['plymouth', '--ping'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
 
+def keep_problem(step, key, args, **kw):
+    """Keeps a problem of the boot (problems.py), and says it in the journal in English."""
+    try:
+        problems().record(step, key, args, quiet=True, **kw)
+        log(problems().text(key, args, 'en'))
+    except Exception as error:   # noqa: BLE001: the boot goes on; the journal keeps what could not be kept
+        log('%s %s (not kept: %s)' % (key, args, error))
+
+
+def forget_problem(step):
+    try:
+        problems().clear(step)
+    except Exception as error:   # noqa: BLE001
+        log('%s: not cleared: %s' % (step, error))
+
+
+def ordinary_quit():
+    """Every boot without a 3D splash: plymouth quit, as Debian's plymouth-quit.service. Debian's unit ignores the
+    status (ExecStart=-); here it counts while a splash still runs after it, because that splash hides the login
+    screen. With no splash running there was nothing to quit."""
+    status = subprocess.run(['plymouth', 'quit']).returncode
+    if status != 0 and subprocess.run(['plymouth', '--ping'], stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL).returncode == 0:
+        keep_problem('splash-quit', 'LOCAL40', [status])
+        return status
+    forget_problem('splash-quit')
+    return 0
+
+
+def handover_failed(reason, retain=False):
+    """The 3D splash cannot be handed over: it is quit now (keeping its picture until the login screen draws when
+    RETAIN), so the login screen can start, and the reason (KEY, ARG...) is kept for the person. Returns 1: the
+    hand-over failed. A splash that cannot be quit either is kept as a problem of its own."""
+    status = subprocess.run(['plymouth', 'quit'] + (['--retain-splash'] if retain else [])).returncode
+    keep_problem('handover', 'LOCAL32', [list(reason)])
+    if status != 0 and subprocess.run(['plymouth', '--ping'], stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL).returncode == 0:
+        keep_problem('splash-quit', 'LOCAL40', [status])
+    return 1
+
+
 def plymouth_quit():
     """plymouth-quit.service. A stereo splash is not quit here: it is deactivated (it drops the
     DRM master and keeps showing its picture in the 3D mode), the display manager's KWin takes
     the same mode with no new mode set, and plymouth-handover quits it with --retain-splash after
-    KWin's first frame (the boot-chain study, A.4). Any other boot quits as before."""
+    KWin's first frame (the boot-chain study, A.4). Any other boot quits as before.
+    A step of the hand-over that fails quits the splash at once, so the login screen can start, keeps
+    the reason for the person (sparky-stereo-boot status, and a notification after login) and makes
+    the unit fail."""
     if not stereo_splash_running():
-        os.execvp('plymouth', ['plymouth', 'quit'])
+        return ordinary_quit()
     os.makedirs(RUN_DIR, exist_ok=True)
     try:
         before = crtc_buffers()
     except OSError as error:
-        log('cannot read the outputs (%s), quitting the splash as usual' % error)
-        os.execvp('plymouth', ['plymouth', 'quit'])
+        return handover_failed(('LOCAL33', error))
     atomic_write(RUN_DIR + '/splash-buffers.json', json.dumps(before))
-    subprocess.run(['plymouth', 'deactivate'], check=False)
-    subprocess.run(['systemctl', 'start', '--no-block', 'sparky-stereo-boot-handover.service'], check=False)
+    status = subprocess.run(['plymouth', 'deactivate']).returncode
+    if status != 0:
+        return handover_failed(('LOCAL34', status))
+    status = subprocess.run(['systemctl', 'start', '--no-block', 'sparky-stereo-boot-handover.service']).returncode
+    if status != 0:
+        # deactivated, so the login screen can take the screen; quit keeping the picture until it draws
+        return handover_failed(('LOCAL35', status), retain=True)
     log('splash deactivated, buffers %s; the login screen takes the 3D mode' % before)
     return 0
 
@@ -807,25 +1153,31 @@ def display_manager_state():
     return out or 'unknown'
 
 
-def plymouth_handover(limit=600.0):
+def plymouth_handover(limit=HANDOVER_LIMIT):
     """Waits until every output that showed the splash shows a frame of the compositor, then
     quits the splash keeping its picture. While the display manager is starting or running
     there is no hurry (on a loaded machine its KWin can take long to start); when it fails or
-    stops, or after the limit, the splash quits as usual and the console comes back"""
+    stops, or after the limit, the splash quits so the console comes back, and the reason is
+    kept for the person (the hand-over did not happen)"""
     try:
         before = json.load(open(RUN_DIR + '/splash-buffers.json'))
-    except (OSError, ValueError):
-        before = {}
+    except (OSError, ValueError) as error:
+        return handover_failed(('LOCAL33', error), retain=True)
     shown = {k: v for k, v in before.items() if v}
+    if not shown:
+        return handover_failed(('LOCAL39',), retain=True)
     start = time.monotonic()
     down_since = None
     checked = 0.0
     while time.monotonic() - start < limit:
         now = crtc_buffers()
-        if shown and all(now.get(k, 0) != v for k, v in shown.items()):
-            subprocess.run(['plymouth', 'quit', '--retain-splash'], check=False)
+        if all(now.get(k, 0) != v for k, v in shown.items()):
+            status = subprocess.run(['plymouth', 'quit', '--retain-splash']).returncode
+            if status != 0:
+                return handover_failed(('LOCAL36', status))
             log('compositor took over after %.2f s (%s), splash quit keeping its picture' % (
                 time.monotonic() - start, now))
+            forget_problem('handover')
             return 0
         if time.monotonic() - checked > 1.0:
             checked = time.monotonic()
@@ -833,15 +1185,11 @@ def plymouth_handover(limit=600.0):
             if state in ('failed', 'inactive', 'deactivating'):
                 down_since = down_since or checked
                 if checked - down_since > 3.0:
-                    subprocess.run(['plymouth', 'quit'], check=False)
-                    log('the display manager is %s, splash quit as usual' % state)
-                    return 0
+                    return handover_failed(('LOCAL37', state))
             else:
                 down_since = None
         time.sleep(0.02)
-    subprocess.run(['plymouth', 'quit'], check=False)
-    log('no compositor frame in %d s, splash quit as usual' % limit)
-    return 0
+    return handover_failed(('LOCAL38', '%d' % limit))
 
 
 def main(argv):
@@ -854,9 +1202,9 @@ def main(argv):
         return export_socket()
     if command == 'export-user' and len(argv) == 3:
         return export_user(argv[2])
-    if command == 'export-file' and len(argv) == 4:
+    if command == 'export-file' and len(argv) in (4, 5):
         try:
-            apply(open(argv[2], 'rb').read(), argv[3])
+            apply(open(argv[2], 'rb').read(), argv[3], argv[4] if len(argv) == 5 else None)
         except (ValueError, json.JSONDecodeError) as error:
             log('the settings were not read: %s' % error)
             return 1
@@ -864,6 +1212,14 @@ def main(argv):
         return 0
     if command == 'reapply':
         return reapply()
+    if command == 'repair':
+        return repair()
+    if command == 'dismiss' and len(argv) == 3:
+        return dismiss(argv[2])
+    if command == 'notify':
+        return notify()
+    if command == 'boot-check':
+        return boot_check()
     if command == 'plymouth-quit':
         return plymouth_quit()
     if command == 'plymouth-handover':

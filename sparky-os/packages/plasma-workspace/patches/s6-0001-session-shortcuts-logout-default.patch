@@ -1,0 +1,31 @@
+From 7a426bad457c7ed07b62314277707a78714f9078 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 2 Nov 2026 21:39:15 -0300
+Subject: [PATCH] Session shortcuts: use Ctrl+Alt+Esc for the logout screen
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Leave Ctrl+Alt+Del available for the edition’s System Monitor default. Keep the action identity and KGlobalAccel autoloading so saved assignments still win.
+
+Assisted-by: gpt-6-astra via Codex
+---
+ startkde/session-shortcuts/main.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/startkde/session-shortcuts/main.cpp b/startkde/session-shortcuts/main.cpp
+index 946efa3032..ee02fa6b77 100644
+--- a/startkde/session-shortcuts/main.cpp
++++ b/startkde/session-shortcuts/main.cpp
+@@ -37,7 +37,7 @@ SessionShortcutsModule::SessionShortcutsModule(QObject *parent, const KPluginMet
+     // TODO: change ID to "Show Logout Prompt" and migrate settings
+     a = actionCollection->addAction(QStringLiteral("Log Out"));
+     a->setText(i18nc("@action", "Show Logout Screen"));
+-    KGlobalAccel::self()->setGlobalShortcut(a, QList<QKeySequence>() << (Qt::ALT | Qt::CTRL | Qt::Key_Delete));
++    KGlobalAccel::self()->setGlobalShortcut(a, QList<QKeySequence>() << (Qt::ALT | Qt::CTRL | Qt::Key_Escape));
+     connect(a, &QAction::triggered, this, [sessionManagement]() {
+         sessionManagement->requestLogoutPrompt();
+     });
+-- 
+2.53.0
+

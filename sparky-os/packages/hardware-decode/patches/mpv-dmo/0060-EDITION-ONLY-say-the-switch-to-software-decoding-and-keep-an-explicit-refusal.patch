@@ -1,0 +1,107 @@
+Description: EDITION ONLY: say the switch to software decoding, and keep an explicit refusal of it
+ .
+ Patch 0059 lets the automatic stereo filter ask for software decoding when a
+ 3D packing must be rearranged in system memory and copying hardware frames
+ back is not allowed. The switch was told only in mpv's log at info level, so
+ the person did not know the decoding path had changed (ORDER 343, row U33;
+ Daniel, 2026-11-01: "either it works or not and the user must know").
+ .
+ The switch is now told on the OSD, the player's own way of telling the
+ person, for eight seconds, and as a warning in the log, which mpv also uses
+ when it falls back after announcing hardware decoding (force_fallback). The
+ words are libmedia-gpu-route's (media_gpu_route_copy_back_off_text, 0.2.2),
+ in the person's language among the edition's nine, and say how to copy the
+ pictures back instead: Copy decoded video back on the Graphics page, or a
+ copying decoder in the player. The decoding mode stays readable as
+ hwdec-current.
+ .
+ mpv's own choice for refusing software decoding as a fallback,
+ --hwdec-software-fallback=no, is now kept here too: hardware decoding stays
+ and its pictures are copied back for the conversion, as with a decoder the
+ person chose.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-02
+Assisted-by: Claude Opus 5.5
+---
+--- a/video/decode/vd_lavc.c
++++ b/video/decode/vd_lavc.c
+@@ -521,6 +521,18 @@
+ #endif
+ }
+ 
++// What the person is told when a conversion needs the pictures in memory and copying them back is not allowed:
++// libmedia-gpu-route's words, in the person's language, with how to allow copying back
++const char *software_frames_text(void)
++{
++#if HAVE_MEDIA_GPU_ROUTE
++    return media_gpu_route_copy_back_off_text();
++#else
++    return "Decoding in software: this video's conversion needs the decoded pictures in memory, "
++           "and copying them back from the GPU is off.";
++#endif
++}
++
+ static void select_and_set_hwdec(struct mp_filter *vd)
+ {
+     vd_ffmpeg_ctx *ctx = vd->priv;
+@@ -536,9 +548,9 @@
+     char **hwdec_api = ctx->depth_software || ctx->software_frames ? NULL : ctx->hwdec_opts->hwdec_api;
+     if (ctx->depth_software)
+         MP_VERBOSE(vd, "Not using hardware decoding: the depth layer is decoded in software.\n");
++    // said where the person sees the player's messages, in their language (the player shows it on the OSD too)
+     if (ctx->software_frames)
+-        MP_INFO(vd, "Decoding in software: the filters need the pictures in memory, "
+-                "and copying them back is not allowed.\n");
++        MP_WARN(vd, "%s\n", software_frames_text());
+     ctx->hwdec_automatic = false;
+     for (int i = 0; hwdec_api && hwdec_api[i]; i++) {
+         bstr opt = bstr0(hwdec_api[i]);
+@@ -1530,9 +1542,15 @@
+         return CONTROL_TRUE;
+     case VDCTRL_SOFTWARE_FRAMES:
+         // A hardware decoder the person chose stays; so does copying back
+-        // where the person or the machine's record allows it.
++        // where the person or the machine's record allows it, and hardware
++        // decoding where the person refused software decoding as a fallback
++        // (--hwdec-software-fallback=no, mpv's own choice for it).
++        if (ctx->use_hwdec && ctx->hwdec_automatic && !ctx->hwdec.copying &&
++            !copy_back_allowed() && ctx->hwdec_opts->software_fallback == INT_MAX)
++            MP_VERBOSE(vd, "Keeping hardware decoding and copying its pictures back: "
++                       "--hwdec-software-fallback=no.\n");
+         if (ctx->use_hwdec && ctx->hwdec_automatic && !ctx->hwdec.copying &&
+-            !copy_back_allowed())
++            !copy_back_allowed() && ctx->hwdec_opts->software_fallback != INT_MAX)
+         {
+             // not a failure of the hardware decoder: no fallback message
+             ctx->software_frames = true;
+--- a/filters/f_decoder_wrapper.h
++++ b/filters/f_decoder_wrapper.h
+@@ -80,6 +80,9 @@
+     VDCTRL_SOFTWARE_FRAMES,
+ };
+ 
++// What the person is told when VDCTRL_SOFTWARE_FRAMES switched to software decoding
++const char *software_frames_text(void);
++
+ int mp_decoder_wrapper_control(struct mp_decoder_wrapper *d,
+                                enum dec_ctrl cmd, void *arg);
+ 
+--- a/player/video.c
++++ b/player/video.c
+@@ -582,11 +582,14 @@
+     vo_c->filter->software_frames_wanted = false;
+ 
+     // A hardware decoder the person chose keeps its frames, and the filter
+-    // copies them from now on.
++    // copies them from now on. A switch to software decoding is told on the
++    // OSD, the player's own way to tell the person, and in the log (vd_lavc).
+     if (!vo_c->track || !vo_c->track->dec ||
+         mp_decoder_wrapper_control(vo_c->track->dec,
+                             VDCTRL_SOFTWARE_FRAMES, NULL) != CONTROL_OK)
+         vo_c->filter->software_frames_refused = true;
++    else
++        set_osd_msg(mpctx, 1, 8000, "%s", software_frames_text());
+ 
+     double pts = vo_c->filter->software_frames_pts;
+     if (pts == MP_NOPTS_VALUE)

@@ -1,0 +1,37 @@
+# NVIDIA's CUDA repository may update compute, never the display driver, which is the edition's (HDMI 3D); Debian's own
+# tools stay Debian's (Daniel, 2026-10-11; ORDER 338). Installed by sparky-stereo-cuda-repo with the repository's source.
+# apt_preferences(5): "/etc/apt/preferences is parsed first, followed by the files in /etc/apt/preferences.d in
+# lexicographic order", and "The first specific-form record matching an available package version determines the
+# priority of the package version. Failing that, the priority of the package is defined as the maximum of all priorities
+# defined by generic-form records matching the version." So:
+#   10sparky-stereo-nvidia-driver-lock (sorts first) decides every NVIDIA driver package, libcuda1 and cuda-drivers among
+#   them: the version the edition's module is built for at 1005, others at 100, NVIDIA's kernel modules never;
+#   sparky-stereo-gpu-nvidia decides the container toolkit and egl-wayland;
+#   these records decide the rest of the repository.
+
+# CUDA: the toolkit by NVIDIA's own patterns (CUDA Installation Guide for Linux 13.4, the removal of the toolkit:
+# "*cuda*" "*cublas*" "*cufft*" "*cufile*" "*curand*" "*cusolver*" "*cusparse*" "*gds-tools*" "*npp*" "*nvjpeg*"
+# "nsight*" "*nvvm*"), then the CUDA-X libraries and GPUDirect Storage that the repository publishes beside it, by the
+# names of their source packages. NVIDIA's builds of these always win and keep updating.
+Package: *cuda* *cublas* *cufft* *cufile* *curand* *cusolver* *cusparse* *gds-tools* *npp* *nvjpeg* nsight* *nvvm* cccl* *cudnn* *cuobjclient* *cuquantum* *cutensor* *cuvs* *nccl* *nvcomp* *nvfatbin* *nvimgcodec* *nvjitlink* *nvptxcompiler* *nvshmem* *nvtiff* nvidia-fs* nvidia-gds*
+Pin: origin developer.download.nvidia.com
+Pin-Priority: 1002
+
+# NVIDIA's EGL platform libraries: NVIDIA's driver at the locked version needs NVIDIA's versions of them
+# (nvidia-driver-libs 615.71.09-2 depends on libnvidia-egl-gbm1 (>= 1.1.3), libnvidia-egl-xcb1 and libnvidia-egl-xlib1
+# (>= 1:1.0.4) and libnvidia-egl-wayland21; Debian forky has 1.1.2.1-1 and 1.0.3-1, and apt's solver takes only the
+# candidate for a dependency). Both architectures: they are Multi-Arch: same.
+Package: src:nvidia-egl-gbm:any src:egl-x11:any src:egl-wayland2:any
+Pin: origin developer.download.nvidia.com
+Pin-Priority: 1002
+
+# Everything else NVIDIA publishes there, among it NVIDIA's rebuilds of Debian's own tools (dkms, dh-dkms,
+# eglexternalplatform-dev): never chosen over another archive's build ("100 <= P < 500 causes a version to be installed
+# unless there is a version available belonging to some other distribution or the installed version is more recent"),
+# installed when only NVIDIA has the package, and followed to NVIDIA's newer versions once installed from here, as
+# Debian's backports are. Without this record NVIDIA's builds stand at 500 beside Debian's and the higher version wins:
+# dkms 3.4.4-1 over Debian's 3.2.2-1. A person who wants NVIDIA's build of such a package says so in a file of their own
+# (README.md, in /usr/share/doc/sparky-stereo-cuda-repo).
+Package: *
+Pin: origin developer.download.nvidia.com
+Pin-Priority: 100

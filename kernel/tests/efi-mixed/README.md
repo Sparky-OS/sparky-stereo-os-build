@@ -7,7 +7,7 @@ Everything runs in containers (`--device /dev/kvm`); nothing touches a display.
 
 ```
 W=/var/tmp/my-work; R=$PWD/kernel/tests/efi-mixed
-docker build -t efi-mixed-rig $R/docker                        # QEMU, OVMF x64, GRUB 2.14 for i386-efi and x86_64-efi, e2fsprogs, sfdisk
+tools/https-only-build.sh -t efi-mixed-rig $R/docker                        # QEMU, OVMF x64, GRUB 2.14 for i386-efi and x86_64-efi, e2fsprogs, sfdisk
 python3 -I $R/fetch-ovmf32.py $W/fw                            # Debian trixie's ovmf-ia32 (forky has none), checksum checked, unpacked
 RUN="docker run --rm --cpus 4 --memory 16g --user $(id -u):$(id -g) --device /dev/kvm --group-add $(getent group kvm | cut -d: -f3) -v $W:$W -v $W/fw:/fw:ro -v $R:/rig:ro efi-mixed-rig"
 $RUN /rig/mkinitrd.sh $W/initrd-probe.img                       # busybox probe: prints the facts, powers off
@@ -22,7 +22,7 @@ $RUN /rig/matrix.sh $W TAG /boot/vmlinuz-X /boot/System.map-X   # 100 boots via 
 `vmrig/` makes a Debian forky system on one GPT disk (ESP with GRUB i386-efi, ext4 root), installs the given kernel packages and sparky-stereo-boot, boots it once on 32-bit OVMF to run update-grub there (so `31-sparky-stereo-ia32.cfg` sees `fw_platform_size` 32), prints every linux line it wrote, then boots its menu N times.
 
 ```
-docker run --name rootfs debian:forky bash -c 'apt-get update && apt-get -y install --no-install-recommends linux-base initramfs-tools kmod grub-common grub2-common grub-efi-ia32-bin python3 systemd libdrm2 udev e2fsprogs busybox zstd'
+docker run --name rootfs -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v $PWD/tools/https-only-apt.sh:/run/https-only-apt.sh:ro debian:forky bash -c 'sh /run/https-only-apt.sh && apt-get update && apt-get -y install --no-install-recommends linux-base initramfs-tools kmod grub-common grub2-common grub-efi-ia32-bin python3 systemd libdrm2 udev e2fsprogs busybox zstd'
 mkdir -p $W/vmrig && docker export rootfs | zstd -o $W/vmrig/rootfs-base.tar.zst && docker rm rootfs
 W=$W R=$R $R/vmrig/run-scenario.sh NAME 30 7.3.0-rc6-stereo3d12 System.map linux-image-7.3.0-rc6-stereo3d12_*.deb sparky-stereo-boot_*.deb
 IA32_NOKASLR=no W=$W R=$R $R/vmrig/run-scenario.sh ...          # the package option set in the installed system

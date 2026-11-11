@@ -1,4 +1,118 @@
 -------------------------------------------------------------------------------
+  Version 0.1.9 (2026-11-09)
+-------------------------------------------------------------------------------
+  * The boot splash follows the person's depth limits (ORDER 481; Daniel, 2026-11-05: "read the depth config by, and in this
+    order of importance: 1 - User choice (but based on 2); 2 - Current display"). Each stereo output of plymouth.stereo=
+    ends with popped=PIXELS:sunk=PIXELS, the main screen's limits as Stereo KWin resolves them: the person's PoppedLimit
+    and SunkLimit (kwinrc [StereoDepth], the system's /etc/xdg/kwinrc under the person's own file, as KConfig reads them)
+    times the display's factor from libstereo-policy (the kind from the mode's flags, the size from the EDID, as KWin asks
+    it), pixels of an eye 1920 wide. A limit nobody saved is the display's default; a limit of 0 stays 0
+  * The socket service reads the kwinrc of the account that connected (the peer's uid is checked as before), not data the
+    client sends; the session's path unit also watches ~/.config/kwinrc, so a change in 3D Depth reaches the next boot
+  * No silent fallbacks: no limits saved is said in the journal and shown by status ("the display's default"); a saved
+    value that is no limit (not a number, below 0, above 1000) or a kwinrc that cannot be read is kept as a problem
+    (splash-depth), and the display's default boots; a libstereo-policy that cannot answer is kept as a problem
+    (splash-depth-display), and the person's limits are used as they are
+  * Depends on libstereo-policy1 (>= 1.15.0); `sparky-stereo-boot export-file FILE USER [KWINRC]` takes the kwinrc
+    for tests
+  * tests/run-tests.py: ten cases for the limits (nothing saved, both saved, one saved, 0, a television, red/cyan, a
+    headset twin, the system file under the person's, two kinds of value that are no limit), each against libstereo-policy's
+    rule written out in the test
+
+-------------------------------------------------------------------------------
+  Version 0.1.8 (2026-11-03)
+-------------------------------------------------------------------------------
+  * This computer's DKMS key follows the edition key's design (ORDER 374; ORDER 260, Daniel, 2026-10-25: "we never
+    know when the user will migrate the mb or even have to reset it"): DKMS signs the modules it builds on this
+    computer (NVIDIA's open modules among them) with this computer's own key, which Secure Boot accepts only once it
+    is in the MOK list, and no package enrolls it (Debian #1076269; dkms-project/dkms #429, closed as stale). Its
+    certificate (dkms's mok_certificate, /var/lib/dkms/mok.pub by default; DER, a PEM one converted) is kept next to
+    every shim as dkms-this-computer.der, and removed there when the computer has no DKMS key, by the postinst, the
+    kernel hook, the shim and GRUB triggers and repair, as the edition's is
+  * GRUB's menu has a second entry, "Secure Boot: enroll this computer's DKMS key", in the system's language with the
+    steps in the nine languages, starting MokManager as the first does ("Enroll key from disk" asks only for a
+    confirmation). GRUB looks for the certificate on the partition, by its UUID, when it reads the menu, so the entry
+    appears as soon as DKMS has made the key, with no update-grub; update-grub runs once on the upgrade, for the entry
+  * sparky-stereo-boot-dkms-key.path places the certificate when DKMS makes or changes the key (the installed
+    system's first boot signs the modules its image built unsigned, dkms 3.4.4-1+sparky4), and checks the
+    enrolment again when the running kernel's modules.dep is written (depmod, after DKMS installs the modules it
+    signed), through sparky-stereo-boot-secureboot.service, which also runs at every boot
+  * Under Secure Boot, a DKMS key that is not in shim's MOK list while DKMS modules signed with it are installed for
+    the running kernel is said and kept, naming the GRUB entry that enrolls it (no silent fallbacks, Daniel,
+    2026-11-01: "either it works or not and the user must know"); it clears at the first boot after the enrolment
+  * A DKMS certificate that cannot be written or read is said and kept (esp-dkms-certificate), with
+    secureboot.py esp as its repair; the purge removes dkms-this-computer.der from the partition too
+-------------------------------------------------------------------------------
+  Version 0.1.7 (2026-11-03)
+-------------------------------------------------------------------------------
+  * GRUB's menu text has one size on every screen, for a PC at a desk (ORDER 361; Daniel, 2026-11-02: "I sit at 50cm
+    from the screen, I use it as a monitor, and people installing sparky will be installing on a PC, not in a
+    television"): GRUB_STEREO_TEXT_MM (4.2 mm) is no longer enlarged for screens that report a television's size
+    (1.2 times the diagonal for a screen over 32 inches); a 43 inch UHD screen gets GRUB's own font instead of 38 px.
+    GRUB_STEREO_TEXT_MM and GRUB_FONT set by the person still decide. update-grub runs once on the upgrade, so the
+    menu takes the new size
+  * The old-kernel cleanup runs at normal priority, as part of the update (ORDER 361; Daniel, 2026-11-02, after "any
+    build at update time - DO NEVER CAP EXECUTION": "same with kernel removal"): sparky-stereo-kernel-keep.service
+    loses Nice=10
+-------------------------------------------------------------------------------
+  Version 0.1.6 (2026-11-02)
+-------------------------------------------------------------------------------
+  * ORDER 350 (Daniel, 2026-11-02: "Why machinery to keep a failure for each?"): the boot's problems are kept
+    by the edition's one engine, sparky-stereo-problems, and shown by its session notifier; the boot's own
+    store and user units go. status and repair keep working through the engine; dismiss is the engine's Hide
+    (yours, kept listed, back when the step fails again); notify starts the session's notifier. The records
+    0.1.5 kept in /var/lib/sparky-stereo-boot/problems move into the engine once at the upgrade, keeping when
+    each was found. The messages, word for word, are built into journal catalogs; the boot's problems go when
+    the package is removed
+  * A record of 0.1.5 that cannot move (unreadable, or refused by the engine) stays in the old store, which
+    nothing reads any more: it is said once and kept as the boot problem old-store, which names the store and
+    each record with what failed, so the next login tells it; repair tries the move again and the problem is
+    over when every record moved. The package still configures
+-------------------------------------------------------------------------------
+  Version 0.1.5 (2026-11-01)
+-------------------------------------------------------------------------------
+  * Nothing fails silently (ORDER 345; Daniel, 2026-11-01: "either it works or not and the user must know"):
+    a step of the boot's upkeep that cannot do what it is for says what failed, why and what to do in the
+    system's language, keeps it with its command, exit status and output in /var/lib/sparky-stereo-boot/problems
+    until the step succeeds again (lib/problems.py), and the session shows it as a notification;
+    sparky-stereo-boot status lists the problems, repair runs again what each names, dismiss hides one
+  * postinst: a failed update-grub fails the package, as grub2's postinst does; systemd's reload, the units'
+    start and the certificate on the EFI system partition are said and kept, and the package configures;
+    update-grub runs once on the upgrade from 0.1.4, for GRUB's new record
+  * The kernel hooks say and keep a certificate that cannot be placed and a cleanup that cannot be queued;
+    the kernel still installs and zz-update-grub still runs after them
+  * secureboot.py: an EFI system partition named in /etc/fstab but not mounted, a missing certificate and a
+    failed copy are problems; an EFI system partition without shim is said
+  * Removal: failed grub-editenv, rm, update-initramfs and, on purge, update-grub fail the removal, with the
+    messages in the nine languages written into the postrm
+  * Kernel cleanup: update-initramfs and update-grub after a purge are checked; a failed purge, apt's simulation
+    naming more than the plan and any unexpected error make the service fail and are kept (--now runs the
+    cleanup without a queued install, for repair)
+  * The 3D splash's hand-over: a failed deactivate, hand-over service or plymouth quit, a login screen that does
+    not start and no picture before the limit quit the splash, keep the reason and fail the unit; with no
+    recorded splash picture it no longer waits ten minutes; plymouth-quit.service fails when a running splash
+    cannot be quit (Debian's unit ignores that)
+  * GRUB: update-grub's output names the resolution GRUB is given and the ones it takes when the firmware does
+    not offer it; no connected screen with an EDID and a font that cannot be made are kept, with grub-mkfont's
+    error; grub-display records what GRUB was given, and sparky-stereo-boot-check.service compares it at boot
+    with the resolution the kernel got from GRUB
+  * 46 new messages, in en, pl, pt_BR, fr, de, ja, ko, zh_CN and zh_TW
+-------------------------------------------------------------------------------
+  Version 0.1.4 (2026-10-30)
+-------------------------------------------------------------------------------
+  * Two kernels per flavour (ORDER 298): after a new kernel has installed (its image, its boot image and its
+    GRUB entry written), each flavour keeps the running kernel and the newest, or the one before the newest when
+    that is the running one; the others are purged, all their packages (image, binary, modules, headers, the
+    per-release base, their -dbg and Lean Code companions, and the kbuild and headers-common packages nothing
+    else needs), then their module folders and DKMS records, and every kept kernel's boot image and GRUB's menu
+    are written again. Never a general autoremove: only the kernels' own packages, checked against apt's
+    simulation first. A kernel hook records the install and sparky-stereo-kernel-keep.service does the work
+    once apt and dpkg are done; nothing happens in a live session, a chroot or a container
+  * Every boot image, always: update_initramfs=all, so every update-initramfs -u (what Plymouth's, the
+    firmware's and the edition's triggers run) writes the boot image of every installed kernel; initramfs-tools'
+    update-initramfs.conf is kept as update-initramfs.conf.debian and comes back on removal
+  * kernel-keep.py --dry-run prints the plan
+-------------------------------------------------------------------------------
   Version 0.1.3 (2026-10-25)
 -------------------------------------------------------------------------------
   * Secure Boot without the edition's key is never a dead end: a new or reset motherboard, or Secure Boot turned on

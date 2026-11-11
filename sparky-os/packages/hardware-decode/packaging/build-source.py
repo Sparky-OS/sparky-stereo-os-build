@@ -7,6 +7,10 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'repo'))
+import reproducible
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('package')
@@ -29,7 +33,9 @@ if a.package == 'media-gpu-route':
                     ignore=shutil.ignore_patterns('.git', '__pycache__', 'obj-*', '.debhelper', 'files', '*.substvars'))
     subprocess.run(['python3', '-m', 'lean.debian_prepare', str(source), version,
                     '--toolkit', str(a.toolkit)], check=True,
-                   env=os.environ | {'PYTHONPATH': str(a.toolkit)})
+                   env=os.environ | {'PYTHONPATH': str(a.toolkit),
+                                     'SOURCE_DATE_EPOCH': str(reproducible.recipe_epoch([here.parent]))})
+    reproducible.normalize_tree(source, reproducible.recipe_epoch([here.parent]))
 else:
     stanzas = (a.published/'dists/mashtabba/main/source/Sources').read_text().split('\n\n')
     entries = []
@@ -83,4 +89,5 @@ else:
         # prepare.py created the authored entry; the pipeline advances to lc1.
         subprocess.run(['python3', '-m', 'lean.debian_prepare', str(source), version,
                         '--toolkit', str(a.toolkit)], check=True,
-                       env=os.environ | {'PYTHONPATH': str(a.toolkit)})
+                       env=os.environ | {'PYTHONPATH': str(a.toolkit),
+                                         'SOURCE_DATE_EPOCH': str(reproducible.recipe_epoch([here.parent]))})

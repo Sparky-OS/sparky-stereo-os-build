@@ -10,7 +10,7 @@ This library does not write configuration, choose a monitor mode or change a use
 `media_gpu_route_decoder` tries GPUs in that order and checks the source codec, profile, depth, chroma and dimensions against VA-API or NVDEC capabilities.
 NVDEC queries use a temporary CUDA context on the selected PCI device and restore the previous current context.
 Unsupported sources stay in software.
-Unavailable capability information is reported as unknown so the calling engine can retain its normal guarded fallback.
+Unavailable capability information is reported as unknown so the calling engine can try its own guarded open; for the GPU chosen for players it is said instead (below).
 The optional FFmpeg header adapts `AVCodecParameters` fields to the neutral interface without adding a libavcodec ABI dependency to the library.
 
 Select the decoder before opening it.
@@ -39,10 +39,15 @@ A program's own choice of a copying decoder (mpv's `auto-copy` or `vaapi-copy`, 
 ## The Graphics page
 
 Where players draw is the person's choice on the Graphics page (`sparky-stereo-graphics`); Automatic there is the GPU measured best on the machine for playback, whatever the power profile.
-When `sparky-stereo-gpu-env` is installed and copying back is allowed, a copy-back caller decodes first on the render node it names for players (`--category players --print render-node`), with every other GPU behind it in order, so a source that GPU cannot decode still falls back.
+When `sparky-stereo-gpu-env` is installed and copying back is allowed, a copy-back caller decodes on the render node it names for players (`--category players --print render-node`), asked again at each choice.
+Nothing changes GPU without telling (Daniel, 2026-11-01: "either it works or not and the user must know"):
+- A source that GPU cannot decode in hardware is decoded on another GPU that can, and that is said: the page's "Decode on another GPU", on by default. Turned off (`OtherGpu=false` in group `[Decoding]` of `sparky-stereo-graphicsrc`, the person's file over the machine's, or `MEDIA_GPU_ROUTE_OTHER_GPU=false` for one start), such a source is decoded in software, and that is said.
+- A page that fails (it says why itself, on the same stderr), answers nothing, or names a GPU this program cannot open, and a GPU whose VA-API or NVDEC driver does not answer, are said, and nothing decodes on another GPU in their place.
+- `media_gpu_route_decoder_said` gives the reason in the person's language (the edition's nine, chosen from `LANGUAGE`, `LC_ALL`, `LC_MESSAGES` and `LANG` as gettext does) and returns -2 when the GPU chosen for players cannot be resolved. The 0.2 entry points that MLT and VLC call answer software (0) then, since they take another GPU on -1, and write the reason to stderr.
 A caller that imports decoded surfaces, and `media_gpu_route_default`, keep the graphics stack's order: the renderer draws on the GPU the program was started on, and the decoder must be on that GPU for the import to work; the page's launch environment (`sparky-stereo-gpu-run`, KDE's per-program setting) is what moves such a program.
-A GPU chosen at launch (`DRI_PRIME`, `MESA_VK_DEVICE_SELECT`, `VK_LOADER_DRIVERS_SELECT`, an NVIDIA offload) wins over the page, and the page is then not asked; a missing, failing or unknown answer changes nothing.
-`tests/graphics-page.sh` checks this on two real GPUs, `tests/page-order.sh` without any.
+A GPU chosen at launch (`DRI_PRIME`, `MESA_VK_DEVICE_SELECT`, `VK_LOADER_DRIVERS_SELECT`, an NVIDIA offload) wins over the page, and the page is then not asked; a computer without the page has nothing to ask.
+`media_gpu_route_copy_back_off_text` is what a player says when a conversion needs the decoded pictures in memory and copying back is off (mpv's 3D conversion).
+`tests/graphics-page.sh` checks this on two real GPUs (with `AV1=1`, a pair where one decodes AV1 and one does not), `tests/page-order.sh` and `tests/unresolved.sh` without any.
 
 `media_gpu_route_vulkan_import` says whether a Vulkan renderer on a GPU can import decoded surfaces: dma-buf memory (`VK_EXT_external_memory_dma_buf`) laid out by DRM format modifiers (`VK_EXT_image_drm_format_modifier`), which libplacebo requires.
 Mesa's RADV offers the modifier extension from GFX9 on (`radv_physical_device.c`, `gfx_level >= GFX9`), so GFX6 to GFX8 GPUs such as Carrizo, Stoney, Polaris and Hainan are copy-only for Vulkan renderers.

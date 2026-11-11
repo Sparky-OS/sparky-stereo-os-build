@@ -11,11 +11,14 @@
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
+. "$HERE/../../repo/build-provenance.sh"
 WORK=${1:-${SPARKY_WORKSPACES:?}/hand-installed-apps/vibe/build}
 VER=3.2.2
 mkdir -p "$WORK"
-docker run --rm --platform linux/amd64 -e HOST_UID=$(id -u) -e VER=$VER -v "$WORK":/out -v "$HERE/debian":/debian-ours:ro -v "$HERE/../..":/toolkit:ro sparky-pkg-base:amd64 bash -c '
+sparky_provenance_init sparky-pkg-base:amd64
+docker run --rm --platform linux/amd64 "${SPARKY_PROV_ARGS[@]}" -e HOST_UID=$(id -u) -e VER=$VER -v "$WORK":/out -v "$HERE/debian":/debian-ours:ro -v "$HERE/../..":/toolkit:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro sparky-pkg-base:amd64 bash -c '
 set -euo pipefail
+sh /run/https-only-apt.sh
 sed -i "s/^Suites: unstable/Suites: testing testing-updates/" /etc/apt/sources.list.d/debian.sources
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C
 apt-get update -qq >/dev/null; apt-get install -y -qq ca-certificates curl git dpkg-dev devscripts build-essential fakeroot lintian xz-utils minisign node-acorn nodejs perl python3-yaml libayatana-appindicator3-1 libgtk-3-0t64 libwebkit2gtk-4.1-0 libxdo3 >/dev/null

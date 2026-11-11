@@ -26,8 +26,11 @@ private Q_SLOTS:
     void profileMapping_data();
     void profileMapping();
     void explicitChoices();
-    void missingGpuFallsBackAndSaysSo();
+    void missingGpuIsSaidNotReplaced();
+    void oneGpuKeepsTheChoiceVisible();
     void oneGpuHasNothingToChoose();
+    void profileThatCannotBeReadIsNotBalanced();
+    void profileRuleSaysAnAbsentKind();
     void noGpu();
     void bmcNeverRendersTheDesktop();
     void aGpuTheAccountMayNotOpenIsNotOffered();
@@ -54,6 +57,7 @@ private:
 void ResolverTest::initTestCase()
 {
     qputenv("XDG_CONFIG_HOME", m_config.path().toUtf8());
+    qputenv("XDG_STATE_HOME", m_config.path().toUtf8());
     qputenv("XDG_CONFIG_DIRS", m_config.path().toUtf8());
 }
 
@@ -62,8 +66,9 @@ void ResolverTest::profileNames()
     QVERIFY(powerProfileFromString(u"power-saver"_s) == PowerProfile::PowerSaver);
     QVERIFY(powerProfileFromString(u"balanced"_s) == PowerProfile::Balanced);
     QVERIFY(powerProfileFromString(u"performance"_s) == PowerProfile::Performance);
-    QVERIFY(powerProfileFromString(u"something-new"_s) == PowerProfile::Balanced);
-    QVERIFY(powerProfileFromString(QString(), PowerProfile::Performance) == PowerProfile::Performance);
+    // a name that is no profile is no profile, never Balanced in its place
+    QVERIFY(!powerProfileFromString(u"something-new"_s));
+    QVERIFY(!powerProfileFromString(QString()));
     QCOMPARE(powerProfileToString(PowerProfile::PowerSaver), u"power-saver"_s);
     QCOMPARE(powerProfileToString(PowerProfile::Balanced), u"balanced"_s);
     QCOMPARE(powerProfileToString(PowerProfile::Performance), u"performance"_s);
@@ -104,8 +109,8 @@ void ResolverTest::playersOnTheMeasuredGpu_data()
         // a record that names the GPU that draws the desktop keeps players there, even on performance
         QTest::addRow("host record names the APU, %s", qPrintable(profile)) << 2 << u"1002:1638"_s << profile << 0 << u"measured"_s << QString();
         QTest::addRow("three record names the third, %s", qPrintable(profile)) << 4 << u"pci-0000:02:00.0"_s << profile << 2 << u"measured"_s << u"DRI_PRIME=pci-0000_02_00_0"_s;
-        // a record for a GPU that is not here: as if not measured
-        QTest::addRow("a10 record names a missing GPU, %s", qPrintable(profile)) << 1 << u"10de:2504"_s << profile << 1 << u"unmeasured"_s << u"DRI_PRIME=pci-0000_03_00_0"_s;
+        // a record for a GPU that is not here: Automatic's rule gives the discrete GPU, and says the measured GPU is missing
+        QTest::addRow("a10 record names a missing GPU, %s", qPrintable(profile)) << 1 << u"10de:2504"_s << profile << 1 << u"measured-missing"_s << u"DRI_PRIME=pci-0000_03_00_0"_s;
     }
 }
 
@@ -118,7 +123,7 @@ void ResolverTest::playersOnTheMeasuredGpu()
     QFETCH(QString, reason);
     QFETCH(QString, environmentContains);
     const QList<QList<FixtureGpu>> machines = {{SysfsFixture::intel()}, SysfsFixture::a10(), SysfsFixture::host(), {}, SysfsFixture::three()};
-    Resolver resolver(read(machines[machine]), QString(), powerProfileFromString(profile), record);
+    Resolver resolver(read(machines[machine]), QString(), *powerProfileFromString(profile), record);
     GraphicsSettings settings;
     const Resolution r = resolver.resolveCategory(Category::Players, settings);
     QCOMPARE(r.gpuIndex, expected);
@@ -262,7 +267,7 @@ void ResolverTest::profileMapping()
     QFETCH(bool, isMain);
     QFETCH(QString, environmentContains);
     const QList<QList<FixtureGpu>> machines = {{SysfsFixture::intel()}, SysfsFixture::a10(), SysfsFixture::host(), {}, SysfsFixture::three()};
-    Resolver resolver(read(machines[machine]), savedMain, powerProfileFromString(profile));
+    Resolver resolver(read(machines[machine]), savedMain, *powerProfileFromString(profile));
     const Resolution r = resolver.resolveChoice(u"auto"_s, Category(category));
     QCOMPARE(r.gpuIndex, expected);
     QCOMPARE(r.isMain, isMain);
@@ -290,29 +295,94 @@ void ResolverTest::explicitChoices()
     QCOMPARE(performance.resolveChoice(u"integrated"_s).gpuIndex, 0);
 }
 
-void ResolverTest::missingGpuFallsBackAndSaysSo()
+void ResolverTest::missingGpuIsSaidNotReplaced()
 {
+    // ORDER 346a, U52: the chosen GPU is kept or said to be unusable; no other GPU is put in its place
     Resolver resolver(read(SysfsFixture::host()), QString(), PowerProfile::Balanced);
     const Resolution r = resolver.resolveChoice(u"pci-0000:09:00.0"_s);
-    QCOMPARE(r.gpuIndex, 0);
+    QCOMPARE(r.gpuIndex, -1);
     QVERIFY(r.missing);
-    QVERIFY(r.isMain);
-    // a saved main GPU that is not there leaves Automatic in charge
+    QCOMPARE(r.problem, u"gpu-missing"_s);
+    QCOMPARE(r.requested, u"pci-0000:09:00.0"_s);
+    QVERIFY(r.environment.isEmpty());
+    QCOMPARE(resolver.usableIndices(), (QList<int>{0, 1}));
+    // a saved main GPU that is not there is said; KWin's own order is what draws until the person chooses
     Resolver gone(read(SysfsFixture::host()), u"pci-0000:09:00.0"_s, PowerProfile::Balanced);
     QCOMPARE(gone.mainIndex(), 0);
     QCOMPARE(gone.kwinDrmDevices(), QString());
+    QCOMPARE(gone.mainProblem().problem, u"gpu-missing"_s);
+    QCOMPARE(gone.mainProblem().requested, u"pci-0000:09:00.0"_s);
+    Resolver here(read(SysfsFixture::host()), u"pci-0000:01:00.0"_s, PowerProfile::Balanced);
+    QVERIFY(here.mainProblem().problem.isEmpty());
+    QCOMPARE(here.mainProblem().gpuIndex, 1);
+    Resolver automatic(read(SysfsFixture::host()), QString(), PowerProfile::Balanced);
+    QVERIFY(automatic.mainProblem().problem.isEmpty());
+}
+
+void ResolverTest::oneGpuKeepsTheChoiceVisible()
+{
+    // U52: the one-GPU shortcut answered "the only GPU" for a chosen GPU that is gone; now the choice is checked first
+    Resolver one(read({SysfsFixture::intel()}), QString(), PowerProfile::Balanced);
+    const Resolution r = one.resolveChoice(u"pci-0000:01:00.0"_s);
+    QCOMPARE(r.problem, u"gpu-missing"_s);
+    QCOMPARE(r.gpuIndex, -1);
+    // the GPU that is here, chosen by its id, is simply used
+    QCOMPARE(one.resolveChoice(u"pci-0000:00:02.0"_s).gpuIndex, 0);
+    QVERIFY(one.resolveChoice(u"pci-0000:00:02.0"_s).problem.isEmpty());
+    // no GPU at all: a saved GPU is still said, Automatic has nothing to choose
+    Resolver none({}, QString(), PowerProfile::Balanced);
+    QCOMPARE(none.resolveChoice(u"pci-0000:01:00.0"_s).problem, u"gpu-missing"_s);
+    QCOMPARE(none.resolveChoice(u"discrete"_s).problem, u"kind-missing"_s);
+    QVERIFY(none.resolveChoice(u"auto"_s).problem.isEmpty());
 }
 
 void ResolverTest::oneGpuHasNothingToChoose()
 {
     Resolver resolver(read({SysfsFixture::intel()}), QString(), PowerProfile::Performance);
-    for (const QString &choice : {u"auto"_s, u"integrated"_s, u"discrete"_s}) {
+    for (const QString &choice : {u"auto"_s, u"integrated"_s, u"profile"_s}) {
         const Resolution r = resolver.resolveChoice(choice);
         QCOMPARE(r.gpuIndex, 0);
         QVERIFY(r.isMain);
         QVERIFY(r.environment.isEmpty());
+        QVERIFY(r.problem.isEmpty());
     }
+    // a discrete GPU chosen when there was one, and gone: said, not the integrated GPU in its place
+    const Resolution discrete = resolver.resolveChoice(u"discrete"_s);
+    QCOMPARE(discrete.problem, u"kind-missing"_s);
+    QCOMPARE(discrete.requested, u"discrete"_s);
+    QCOMPARE(discrete.gpuIndex, -1);
     QCOMPARE(resolver.kwinDrmDevices(), QString());
+}
+
+void ResolverTest::profileThatCannotBeReadIsNotBalanced()
+{
+    // U24: without the profile, the kinds that follow it cannot be placed; the others are unaffected
+    ProfileReading unread;
+    unread.error = u"not-running"_s;
+    Resolver resolver(read(SysfsFixture::host()), QString(), unread);
+    const Resolution browsers = resolver.resolveChoice(u"auto"_s, Category::Browsers);
+    QCOMPARE(browsers.problem, u"profile-unreadable"_s);
+    QCOMPARE(browsers.gpuIndex, -1);
+    QCOMPARE(resolver.resolveChoice(u"profile"_s, Category::Players).problem, u"profile-unreadable"_s);
+    QCOMPARE(resolver.resolveChoice(u"auto"_s, Category::Other).reason, u"desktop"_s);
+    QCOMPARE(resolver.resolveChoice(u"auto"_s, Category::Players).reason, u"unmeasured"_s);
+    QCOMPARE(resolver.resolveChoice(u"auto"_s, Category::Browsers, true).reason, u"unmeasured"_s); // 3D needs no profile
+    QCOMPARE(resolver.resolveChoice(u"discrete"_s, Category::Browsers).gpuIndex, 1);
+    // one GPU: nothing to choose, the profile is not needed
+    Resolver one(read({SysfsFixture::intel()}), QString(), unread);
+    QCOMPARE(one.resolveChoice(u"profile"_s).reason, u"only-gpu"_s);
+}
+
+void ResolverTest::profileRuleSaysAnAbsentKind()
+{
+    // two discrete GPUs: power saver asks for an integrated GPU there is none of; the rule gives the desktop's GPU and says it
+    QList<FixtureGpu> desktop = SysfsFixture::host();
+    desktop[0].device = 0x7340; // a discrete AMD in place of the APU
+    Resolver resolver(read(desktop), QString(), PowerProfile::PowerSaver);
+    const Resolution r = resolver.resolveChoice(u"profile"_s, Category::Players);
+    QCOMPARE(r.gpuIndex, resolver.mainIndex());
+    QCOMPARE(r.kindAbsent, u"integrated"_s);
+    QVERIFY(r.problem.isEmpty());
 }
 
 void ResolverTest::noGpu()
@@ -327,10 +397,15 @@ void ResolverTest::bmcNeverRendersTheDesktop()
 {
     Resolver resolver(read(SysfsFixture::bmc()), QString(), PowerProfile::PowerSaver);
     QCOMPARE(resolver.mainIndex(), 1);
-    // no integrated GPU that renders: the main GPU
-    QCOMPARE(resolver.resolveChoice(u"integrated"_s).gpuIndex, 1);
-    // the chip that cannot render is not chosen even by its id
-    QCOMPARE(resolver.resolveChoice(u"pci-0000:04:00.0"_s).gpuIndex, 1);
+    // no integrated GPU that renders: said, not the main GPU in its place
+    QCOMPARE(resolver.resolveChoice(u"integrated"_s).problem, u"kind-missing"_s);
+    // the chip that cannot render is never used, and a choice of it says why
+    const Resolution bmc = resolver.resolveChoice(u"pci-0000:04:00.0"_s);
+    QCOMPARE(bmc.problem, u"gpu-cannot-render"_s);
+    QCOMPARE(bmc.requestedIndex, 0);
+    QCOMPARE(bmc.gpuIndex, -1);
+    Resolver mainOnBmc(read(SysfsFixture::bmc()), u"pci-0000:04:00.0"_s, PowerProfile::PowerSaver);
+    QCOMPARE(mainOnBmc.mainProblem().problem, u"gpu-cannot-render"_s);
 }
 
 void ResolverTest::aGpuTheAccountMayNotOpenIsNotOffered()
@@ -338,12 +413,16 @@ void ResolverTest::aGpuTheAccountMayNotOpenIsNotOffered()
     QList<FixtureGpu> machine = SysfsFixture::host();
     machine[1].accessible = false;
     Resolver resolver(read(machine), QString(), PowerProfile::Performance);
-    // Performance would send programs to the discrete GPU, which this account cannot open: the main GPU instead
+    // other programs stay on the desktop's GPU on Automatic
     const Resolution r = resolver.resolveChoice(u"auto"_s);
     QCOMPARE(r.gpuIndex, 0);
     QVERIFY(r.isMain);
-    QCOMPARE(resolver.resolveChoice(u"discrete"_s).gpuIndex, 0);
-    QCOMPARE(resolver.resolveChoice(u"pci-0000:01:00.0"_s).reason, u"only-gpu"_s); // one GPU left to use
+    // the discrete GPU chosen, which this account cannot open: said, never the main GPU in its place
+    const Resolution discrete = resolver.resolveChoice(u"discrete"_s);
+    QCOMPARE(discrete.problem, u"gpu-not-allowed"_s);
+    QCOMPARE(discrete.requestedIndex, 1);
+    QCOMPARE(resolver.resolveChoice(u"pci-0000:01:00.0"_s).problem, u"gpu-not-allowed"_s);
+    QCOMPARE(resolver.usableIndices(), QList<int>{0});
     AppEntry app;
     app.preference = AppPreference::OtherGpu;
     GraphicsSettings settings;

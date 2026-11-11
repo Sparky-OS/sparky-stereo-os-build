@@ -1,0 +1,57 @@
+Description: fate/hevc: test an asymmetric layer inclusion mask
+ Add a two-view sample with layer IDs 0 and 6 and vps_max_layer_id 7.
+ The added layer_id_included_flag[1][7] is zero, so the layer set and
+ coded pictures are unchanged from mv_nuh_layer_id.bit. Use that
+ sample's existing reference to check both views.
+ .
+ The flags are not palindromic, exposing the reversed bit order of the
+ old get_bits64() reader. The test fails on unpatched master with both
+ one and four decoder threads.
+ .
+ Generate the sample with make-hevc-vps-max-layer-id.py from the
+ accompanying sample request. Install it in hevc/mv-vps-max-layer-id.hevc
+ in the FATE sample suite.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Opus via Claude Code
+ Assisted-by: GPT-6 via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/c45cc329408aa91450378deae8e2fc9b4ae9ff87
+Forwarded: no, held by Daniel 2026-11-03 (fork branch hevc-ps-layer-id-mask on code.ffmpeg.org/danielcamposramos/FFmpeg)
+Last-Update: 2026-11-03
+
+diff --git a/tests/fate/hevc.mak b/tests/fate/hevc.mak
+index 7190fb6..48aa85d 100644
+--- a/tests/fate/hevc.mak
++++ b/tests/fate/hevc.mak
+@@ -316,6 +316,9 @@ FATE_HEVC-$(call FRAMECRC, HEVC, HEVC, HEVC_PARSER) += fate-hevc-pir
+ fate-hevc-mv-nuh-layer-id: CMD = framecrc -i $(TARGET_SAMPLES)/hevc/mv_nuh_layer_id.bit -map 0:view:all
+ FATE_HEVC-$(call FRAMECRC, HEVC, HEVC, HEVC_PARSER) += fate-hevc-mv-nuh-layer-id
+ 
++fate-hevc-mv-vps-max-layer-id: CMD = framecrc -i $(TARGET_SAMPLES)/hevc/mv-vps-max-layer-id.hevc -map 0:view:all
++FATE_HEVC-$(call FRAMECRC, HEVC, HEVC, HEVC_PARSER) += fate-hevc-mv-vps-max-layer-id
++
+ # NB: $\ at the end of line joins lines without adding whitespace;
+ # this trick is recommended by GNU make manual
+ fate-hevc-mv-switch: INPUT = \
+diff --git a/tests/ref/fate/hevc-mv-vps-max-layer-id b/tests/ref/fate/hevc-mv-vps-max-layer-id
+new file mode 100644
+index 0000000..3cbefe1
+--- /dev/null
++++ b/tests/ref/fate/hevc-mv-vps-max-layer-id
+@@ -0,0 +1,15 @@
++#tb 0: 1/25
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 128x128
++#sar 0: 0/1
++0,          0,          0,        1,    24576, 0xdfd350a6
++0,          1,          1,        1,    24576, 0xf8f638da
++0,          2,          2,        1,    24576, 0x8ac574d5
++0,          3,          3,        1,    24576, 0xd22675a4
++0,          4,          4,        1,    24576, 0xdd0f4704
++0,          5,          5,        1,    24576, 0x60da42e6
++0,          6,          6,        1,    24576, 0x8bf28fdd
++0,          7,          7,        1,    24576, 0xe0577f6e
++0,          8,          8,        1,    24576, 0x8b3e3c29
++0,          9,          9,        1,    24576, 0x8d9944bd

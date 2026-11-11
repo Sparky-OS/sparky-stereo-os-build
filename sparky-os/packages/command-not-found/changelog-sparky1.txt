@@ -1,0 +1,21 @@
+command-not-found (23.04.0-3+sparky1) mashtabba; urgency=medium
+
+  * Name the programs Debian installs under another name (Sparky Stereo OS,
+    ORDER 252b J15): /usr/share/command-not-found/renamed-commands lists the
+    commands Debian renamed because another package has the name (Debian
+    Policy 10.1). Each is named with the name to run, before the packages
+    that have the command under its own name when Debian's popularity
+    contest counts more installations of it (`fd`: fd-find, run as fdfind,
+    then fdclone; `bat`: bat, run as batcat, then bacula-console-qt), after
+    them otherwise (`ts`: moreutils, then task-spooler, run as tsp). A
+    command with no row is advised as before.
+  * A renamed program that is installed is said to be installed, with its
+    path.
+  * A table that cannot be read is said, with the way to restore it, and the
+    command is advised as without it.
+  * The table is made from Debian forky's Contents, Packages and popularity
+    contest and each package's own README.Debian, NEWS or changelog
+    (make-renamed.py in the Sparky Stereo OS build tree).
+  * The three new messages ship in pl, pt_BR, fr, de, ja, ko, zh_CN and
+    zh_TW, and the messages upstream left untranslated in pt_BR, ja and
+    zh_TW are filled; translated by Claude for Daniel Ramos (Capitain Jack).

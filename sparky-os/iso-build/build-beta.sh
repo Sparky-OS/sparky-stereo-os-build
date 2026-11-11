@@ -38,7 +38,7 @@ flat) REPO=${REPO:-${SPARKY_REPO_DIR:?}} ;;
 *) echo "EDITION_REPO must be live or flat"; exit 2 ;;
 esac
 IMAGE=${IMAGE:-beta-iso-lutz-build:1}; NAME=${NAME:-beta-iso-lutz}
-docker image inspect "$IMAGE" >/dev/null 2>&1 || docker build --platform linux/amd64 -t "$IMAGE" "$HERE"
+docker image inspect "$IMAGE" >/dev/null 2>&1 || "$HERE/../../tools/https-only-build.sh" --platform linux/amd64 -t "$IMAGE" "$HERE"
 mkdir -p "$TREE" "$STAGE" "$CACHE" "$WORK" "$OUT" "$LOGS" "$OVL"
 sm=; [ -n "${SIGNED_MODULES:-}" ] && sm="-v $SIGNED_MODULES:/signed:ro -e SIGNED_MODULES=/signed"
 [ -n "${SIGNED_KERNEL:-}" ] && sm="$sm -v $SIGNED_KERNEL:/signed-kernel.deb:ro -e SIGNED_KERNEL=/signed-kernel.deb"
@@ -49,9 +49,10 @@ run() {
 	# shellcheck disable=SC2086
 	docker run --rm --name "$NAME-$1" --privileged --cpus 4 --memory 16g \
 		-v "$TREE:/rootfs" -v "$CACHE:/cache" -v "$REPO:/repo:ro" -v "$STAGE:/stage" -v "$HERE:/build:ro" \
+		-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$ED/tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
 		-v "$ED/sparky-os/apt:/edition-apt:ro" -v "$ED/sparky-os/lists:/edition-lists:ro" -v "$ED/sparky-os/repo:/edition-repo:ro" -v "$WORK:/work" -v "$OUT:/out" -v "$OVL:/overlay" \
 		-e LABEL="${LABEL:-Sparky Stereo OS 9 Mashtabba beta 2}" -e ISONAME="${ISONAME:-sparky-stereo-os-9-mashtabba-beta2-x86_64.iso}" \
-		$sm "$IMAGE" sh -c "$2"
+		$sm "$IMAGE" sh -c "sh /run/https-only-apt.sh && $2"
 }
 case ${1:-all} in
 rootfs) run rootfs "/build/stage-index.sh >/dev/null; /build/rootfs.sh ${ROOTFSSTEP:-all}" ;;

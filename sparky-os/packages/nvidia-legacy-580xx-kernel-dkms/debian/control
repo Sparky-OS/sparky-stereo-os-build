@@ -1,0 +1,56 @@
+Source: nvidia-kmod-legacy-580xx
+Section: NVIDIA
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+XSBC-Original-Maintainer: NVIDIA <cudatools@nvidia.com>
+Build-Depends: debhelper-compat (= 14), dh-dkms
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+
+Package: nvidia-legacy-580xx-kernel-dkms
+Architecture: amd64
+Multi-Arch: foreign
+Pre-Depends: nvidia-installer-cleanup
+Depends: dkms (>= 3.1.8), gcc, nvidia-kernel-support, sparky-stereo-nvidia-legacy-580xx-driver-lock (>= ${source:Version}), ${misc:Depends}
+Recommends: nvidia-driver (= ${binary:Version}) | nvidia-driver-cuda (= ${binary:Version})
+Conflicts: nvidia-kernel-dkms, nvidia-kernel-open-dkms
+Replaces: nvidia-kernel-dkms
+Provides: nvidia-kernel-dkms (= ${binary:Version}), nvidia-kernel-dkms-any (= ${nvidia:Upstream}), nvidia-kernel-${nvidia:Upstream}
+XB-Original-Maintainer: NVIDIA <cudatools@nvidia.com>
+XB-Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+Description: NVIDIA's 580 kernel modules (DKMS) for Maxwell, Pascal and Volta cards
+ This package builds the NVIDIA binary kernel modules needed by
+ nvidia-driver, using DKMS.
+ Provided that you have the kernel header packages installed, the kernel
+ module will be built for your running kernel and automatically rebuilt for
+ any new kernel headers that are installed.
+ .
+ Sparky Stereo OS: NVIDIA's nvidia-kernel-dkms ${nvidia:Version}, unmodified,
+ for the cards the edition's open modules (Turing and newer) do not run:
+ NVIDIA's 580 branch is the last that supports Maxwell, Pascal and Volta.
+ NVIDIA's display code is closed in this driver, so it has none of the
+ edition's HDMI 3D and deep colour patches; Stereo KWin's other outputs
+ (anaglyph, interleaved, side by side and top and bottom for screens
+ switched by hand, output pairs) work on it. nouveau keeps the edition's
+ HDMI 3D on these cards, at lower speed: Hardware Setup offers both.
+
+Package: sparky-stereo-nvidia-legacy-580xx-driver-lock
+Architecture: all
+Multi-Arch: foreign
+Depends: ${misc:Depends}
+Conflicts: sparky-stereo-nvidia-driver-lock
+XB-Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+Description: Keep NVIDIA's driver at the version of the 580 kernel module
+ An APT preferences file, generated from this package's version, that keeps
+ every NVIDIA driver package at ${nvidia:Version}, the version
+ nvidia-legacy-580xx-kernel-dkms is built for, and never installs another
+ NVIDIA kernel module package. It conflicts with the open driver lock, so
+ only the selected stack's policy is installed. A newer driver from NVIDIA's repositories,
+ which no longer runs Maxwell, Pascal and Volta cards, cannot replace the
+ 580 driver.
+ .
+ NVIDIA's 580 user space for these cards comes from the edition's
+ repository, NVIDIA's own Debian 12 packages carried at this version
+ (NVIDIA publishes it for Debian only in its repository for Debian 12, whose
+ key Debian 14's APT refuses: a SHA-1 binding signature). See README.Debian.

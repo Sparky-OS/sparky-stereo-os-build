@@ -10,11 +10,15 @@ base=cfg.path('SPARKY_MIGRATION_WORK');out=base/'kernel-validation-tools';out.mk
 name='sparky-lc-kernel-tools-prepare';tag='sparky-lc-kernel-checks:20261020'
 recipe='''set -e
 export DEBIAN_FRONTEND=noninteractive
+sh /run/https-only-apt.sh
 apt-get -y update
 apt-get -y --no-install-recommends install qemu-system-x86 ovmf swtpm swtpm-tools tpm2-tools libtss2-tcti-swtpm0 libtss2-tcti-device0 python3-virt-firmware sbsigntool efitools openssl busybox-static cpio kmod gzip xz-utils zstd ca-certificates procps file build-essential bc bison flex libssl-dev libelf-dev dwarves dkms
 rm -rf /var/lib/apt/lists/*
 '''
-command=['docker','run','--name',name,'--cpus','4','sparky-lc-migration:20261020','bash','-c',recipe]
+command=['docker','run','--name',name,'--cpus','4',
+         '-v', '/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro',
+         '-v', str(Path(__file__).resolve().parents[2] / 'tools' / 'https-only-apt.sh') + ':/run/https-only-apt.sh:ro',
+         'sparky-lc-migration:20261020','bash','-c',recipe]
 with (out/'build.log').open('w') as log:
  p=start_build(command,name,log);rc=p.wait()
 if rc:raise SystemExit(f'Tool container failed with {rc}; retained for investigation')

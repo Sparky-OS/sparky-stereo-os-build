@@ -1,0 +1,138 @@
+From cd25d4a2843126e665211ea0bf15a918c6bad599 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 7 Nov 2026 13:41:58 -0300
+Subject: [PATCH] drm: Offer every 3D mode left eye first only
+
+Rows, columns, checkerboard and frame sequential were listed twice, once
+per eye order. The eye order of an output is its one "Swap eyes" setting,
+which applies to every 3D mode. Measured on a VKMS output, a right eye
+first twin and the left eye first mode with the swap on scan out the same
+frame, pixel for pixel, for rows, columns and checkerboard; for frame
+sequential, which sends no stereo signal (its timing is the 2D base mode's,
+no 3D flag), both begin on the right view after a mode set and alternate
+from there, in three runs each. KWin no longer lists the right eye first
+twins.
+
+A right eye first mode saved by an earlier KWin is read as its left eye
+first mode with the output's swap flipped, which draws the same picture.
+
+A saved frame sequential mode, KWin's twin or DisplayPort's, was never
+restored: canRestoreVirtualMode() knew no sequential layout, so the output
+came back in the plain 2D mode after a restart. It restores them now.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ STEREO3D.md                        |  4 +++-
+ src/backends/drm/drm_connector.cpp |  6 ++----
+ src/outputconfigurationstore.cpp   | 31 +++++++++++++++++++++++++++++-
+ 3 files changed, 35 insertions(+), 6 deletions(-)
+
+diff --git a/STEREO3D.md b/STEREO3D.md
+index e16acff..efdd2a3 100644
+--- a/STEREO3D.md
++++ b/STEREO3D.md
+@@ -93,9 +93,11 @@ Two toggles per output, both off by default, so the mode list stays as it is unt
+   - rows, for passive polarised panels;
+   - columns, for parallax-barrier and lenticular panels;
+   - checkerboard, for 3D-ready DLP televisions;
+-  - frame sequential at 100 or 120 Hz, for gear with its own glasses sync: KWin's own twins alternate the eyes in software, one commit per refresh, left or right eye first, with nothing sent to the display (a refresh KWin misses shows one eye twice); DisplayPort's twin above alternates them in the kernel and signals them, and both are offered where both work;
++  - frame sequential at 100 or 120 Hz, for gear with its own glasses sync: KWin's own twins alternate the eyes in software, one commit per refresh, left eye first, with nothing sent to the display (a refresh KWin misses shows one eye twice); DisplayPort's twin above alternates them in the kernel and signals them, and both are offered where both work;
+   - two outputs as one pair, for dual projectors, mirror rigs and dual-panel monitors.
+ 
++Every packing is listed left eye first only. A display that shows the eyes reversed, in any of them, takes the output's "Swap eyes", which applies to every 3D mode of the output; there is no right eye first twin of any mode. A right eye first mode saved by an earlier KWin comes back as its left eye first mode with the swap flipped, the same picture (frame sequential included: both start on the right view after a mode set).
++
+ **VR is one more filter:** each eye goes to the headset through OpenXR, instead of through a colour filter.
+ 
+ Each row of the table "Displays decide the format" in [awesome-stereoscopy](https://github.com/danielcamposramos/awesome-stereoscopy#displays-decide-the-format) is one filter.
+diff --git a/src/backends/drm/drm_connector.cpp b/src/backends/drm/drm_connector.cpp
+index c39dc09..c5486a4 100644
+--- a/src/backends/drm/drm_connector.cpp
++++ b/src/backends/drm/drm_connector.cpp
+@@ -305,6 +305,8 @@ QList<std::shared_ptr<OutputMode>> DrmConnector::withVirtualStereoModes(const QL
+             layouts << OutputModeline::Flag::Stereo3DAnaglyphModern << OutputModeline::Flag::Stereo3DAnaglyphCrt;
+         }
+         if (otherStereoFormats) {
++            // every packing is offered left eye first only: the output's swap eyes setting turns any of them right eye
++            // first, so a twin per eye order would be a second way to set the same thing
+             layouts << OutputModeline::Flag::Stereo3DSideBySideHalf << OutputModeline::Flag::Stereo3DTopAndBottom;
+             // a mode two eyes wide, as USB-C 3D glasses take their 3D picture: one eye copied into each half
+             if (isTwoEyesWide(mode->size())) {
+@@ -314,7 +316,6 @@ QList<std::shared_ptr<OutputMode>> DrmConnector::withVirtualStereoModes(const QL
+             // any size, but the rate per eye is half the refresh
+             if (mode->refreshRate() >= 100000) {
+                 layouts << OutputModeline::Flag::Stereo3DSequentialLeftFirst;
+-                layouts << OutputModeline::Flag::Stereo3DSequentialRightFirst;
+                 // DisplayPort's own frame sequential stereo, where the kernel alternates the eyes and tells
+                 // the display which one each frame carries: where a TEST_ONLY commit took it, and the
+                 // display does not declare it itself (then it is one of its 3D modes)
+@@ -329,11 +330,8 @@ QList<std::shared_ptr<OutputMode>> DrmConnector::withVirtualStereoModes(const QL
+             }
+             if (mode->size() == nativeSize && !base->requiresYcbcr420()) {
+                 layouts << OutputModeline::Flag::Stereo3DRowsLeftFirst;
+-                layouts << OutputModeline::Flag::Stereo3DRowsRightFirst;
+                 layouts << OutputModeline::Flag::Stereo3DColumnsLeftFirst;
+-                layouts << OutputModeline::Flag::Stereo3DColumnsRightFirst;
+                 layouts << OutputModeline::Flag::Stereo3DCheckerboardLeftFirst;
+-                layouts << OutputModeline::Flag::Stereo3DCheckerboardRightFirst;
+             }
+         }
+         for (const auto layout : layouts) {
+diff --git a/src/outputconfigurationstore.cpp b/src/outputconfigurationstore.cpp
+index b3fb99f..b02b297 100644
+--- a/src/outputconfigurationstore.cpp
++++ b/src/outputconfigurationstore.cpp
+@@ -64,6 +64,26 @@ static std::optional<OutputModeline> glassesTwin(const OutputModeline &mode)
+     return OutputModeline(mode.size(), mode.refreshRate(), (mode.flags() & ~OutputModeline::Flags(OutputModeline::Flag::Preferred)) | OutputModeline::Flag::VirtualStereo | OutputModeline::Flag::Stereo3DSideBySideFull);
+ }
+ 
++// The right eye first twins of rows, columns, checkerboard and frame sequential are no longer listed: the eye order
++// of an output is its one swap eyes setting, applied to every 3D mode. A twin saved by an earlier KWin is the left
++// eye first mode with the swap flipped, which draws the same picture.
++static std::optional<OutputModeline> withLeftEyeFirst(const OutputModeline &mode)
++{
++    using Flag = OutputModeline::Flag;
++    static constexpr std::pair<Flag, Flag> twins[] = {
++        {Flag::Stereo3DRowsRightFirst, Flag::Stereo3DRowsLeftFirst},
++        {Flag::Stereo3DColumnsRightFirst, Flag::Stereo3DColumnsLeftFirst},
++        {Flag::Stereo3DCheckerboardRightFirst, Flag::Stereo3DCheckerboardLeftFirst},
++        {Flag::Stereo3DSequentialRightFirst, Flag::Stereo3DSequentialLeftFirst},
++    };
++    for (const auto &[rightFirst, leftFirst] : twins) {
++        if (mode.flags() & rightFirst) {
++            return OutputModeline(mode.size(), mode.refreshRate(), (mode.flags() & ~OutputModeline::Flags(rightFirst)) | leftFirst);
++        }
++    }
++    return std::nullopt;
++}
++
+ static bool canRestoreVirtualMode(BackendOutput *output, const OutputModeline &saved, bool anaglyph, bool otherStereoFormats, const std::optional<QList<CustomModeDefinition>> &customModes)
+ {
+     using Flag = OutputModeline::Flag;
+@@ -77,7 +97,10 @@ static bool canRestoreVirtualMode(BackendOutput *output, const OutputModeline &s
+     const bool spatialLayout = layouts == Flag::Stereo3DRowsLeftFirst || layouts == Flag::Stereo3DRowsRightFirst
+         || layouts == Flag::Stereo3DColumnsLeftFirst || layouts == Flag::Stereo3DColumnsRightFirst
+         || layouts == Flag::Stereo3DCheckerboardLeftFirst || layouts == Flag::Stereo3DCheckerboardRightFirst;
+-    if (!(anaglyph && anaglyphLayout) && !(otherStereoFormats && (halfLayout || spatialLayout))) {
++    // frame sequential: KWin's own twins and DisplayPort's
++    const bool sequentialLayout = layouts == Flag::Stereo3DSequentialLeftFirst || layouts == Flag::Stereo3DSequentialRightFirst
++        || layouts == Flag::Stereo3DSequentialDisplayPort;
++    if (!(anaglyph && anaglyphLayout) && !(otherStereoFormats && (halfLayout || spatialLayout || sequentialLayout))) {
+         return false;
+     }
+     if ((anaglyphLayout || spatialLayout) && output->edid().requiresYcbcr420(saved.size(), saved.refreshRate())) {
+@@ -1420,6 +1443,12 @@ void OutputConfigurationStore::load()
+                 state.abmLevel = level;
+             }
+         }
++        if (state.mode) {
++            if (const auto leftFirst = withLeftEyeFirst(*state.mode)) {
++                state.mode = *leftFirst;
++                state.stereoSwapEyes = !state.stereoSwapEyes.value_or(false);
++            }
++        }
+         outputDatas.push_back(state);
+     }
+ 
+-- 
+2.53.0
+

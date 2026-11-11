@@ -9,6 +9,9 @@ import shutil
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'repo'))
+import reproducible
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -17,8 +20,10 @@ def main():
     args = parser.parse_args()
     source = args.source.resolve()
     recipe = Path(__file__).resolve().parent
+    stamp = reproducible.recipe_epoch([recipe])
     toolkit = recipe.parents[1]
     environment = os.environ | {
+        'SOURCE_DATE_EPOCH': str(stamp),
         'DEBFULLNAME': 'Daniel Ramos (Capitain Jack)',
         'DEBEMAIL': 'Capitain_Jack@yahoo.com',
         'PYTHONPATH': str(toolkit),
@@ -61,11 +66,12 @@ def main():
         'WIDL and WRC also preprocess shared headers and reject filename-less line directives; preserve their exact inputs',
     ], env=environment, check=True)
     subprocess.run([
-        'dch', '--append', '--maintmaint',
+        'dch', '--date', reproducible.rfc2822(stamp), '--append', '--maintmaint',
         'Keep quad-buffer GLX drawables at one view size and describe X11 popup types and menu parents; preserve packed SBS clients.',
     ], cwd=source, env=environment, check=True)
     subprocess.run([sys.executable, str(recipe / 'sync-control.py'), str(source)], env=environment, check=True)
     subprocess.run([sys.executable, str(recipe / 'pin-vulkan-registry.py'), str(source)], env=environment, check=True)
+    reproducible.normalize_tree(source, stamp)
 
 
 if __name__ == '__main__':

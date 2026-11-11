@@ -1,20 +1,134 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/10
+# Last update 2026/11/03
+# Nothing here falls back to something else on its own: a step that cannot do what it is for says what failed, why and
+# what to do on an ERROR line and returns non-zero, and another path (nouveau for an NVIDIA card) is only ever the
+# person's own choice (Daniel, 2026-11-01: "either it works or not and the user must know").
 
 log() { printf '%s\n' "$*"; }
+
+# The error messages are LOCAL29 to LOCAL60 of the language files, numbered, with %s for their arguments; @NOUVEAU@ stands
+# for LOCAL29 (the choice of nouveau) and @BUTTON@ in it for LOCAL4 (the plan window's button), in the same language. An ID
+# written ID@N puts LOCALN in the place of LOCAL29: the NVIDIA 580 path's errors name LOCAL58, since nouveau on those cards
+# keeps the edition's HDMI 3D, which NVIDIA's 580 driver does not have.
+# render_message ID[@N] ARG...: message ID in the strings now loaded, its arguments put in
+render_message() {
+	local id=$1 v text nouveau tail=29
+	shift
+	if [[ $id == *@* ]]; then
+		tail=${id#*@}
+		id=${id%@*}
+	fi
+	v=LOCAL$id
+	text=${!v:-}
+	if [[ -z $text ]]; then
+		printf 'message %s: %s\n' "$id" "$*"
+		return 0
+	fi
+	v=LOCAL$tail
+	nouveau=${!v:-}
+	nouveau=${nouveau//@BUTTON@/${LOCAL4:-}}
+	text=${text//@NOUVEAU@/$nouveau}
+	# shellcheck disable=SC2059
+	printf "$text\n" "$@"
+}
+
+# render_errors FILE: each error kept in FILE (its ID and arguments) in the strings now loaded, one per line
+render_errors() {
+	local line
+	local -a parts
+	[[ -s $1 ]] || return 0
+	while IFS= read -r line; do
+		IFS=$'\x1f' read -r -a parts <<<"$line"
+		render_message "${parts[@]}"
+	done <"$1"
+}
+
+# err ID ARG...: an ERROR line, in English in the output and the run's log (for support), and its ID and arguments kept in
+# WORK/errors, so the end of the run shows it in the person's language
+err() {
+	local text
+	text=$(if [[ -r ${SHARE:-}/en ]]; then source "$SHARE/en"; fi; render_message "$@")
+	log "ERROR $text"
+	if [[ -n ${WORK:-} && -d $WORK ]]; then
+		(IFS=$'\x1f'; printf '%s\n' "$*") >>"$WORK/errors"
+	fi
+}
+
+# load_strings: the window strings in the language of /etc/default/locale (Paweł's way: the whole LANG first, then the
+# bare language; English otherwise), from SHARE
+load_strings() {
+	source "$SHARE/en"
+	local locale_code
+	locale_code=$(sed -nE 's/^LANG=["\x27]?([a-z]{2}_[A-Z]{2})(\.[^"\x27]*)?["\x27]?$/\1/p' "${LOCALE_FILE:-/etc/default/locale}" 2>/dev/null || true)
+	case "$locale_code" in
+		pl_PL) source "$SHARE/pl" ;;
+		pt_BR) source "$SHARE/pt_BR" ;;
+		zh_CN) source "$SHARE/zh_CN" ;;
+		zh_TW) source "$SHARE/zh_TW" ;;
+		fr_*) source "$SHARE/fr" ;;
+		de_*) source "$SHARE/de" ;;
+		es_*) source "$SHARE/es" ;;
+		ja_*) source "$SHARE/ja" ;;
+		ko_*) source "$SHARE/ko" ;;
+	esac
+}
+
+# plan_answer CODE: what the plan window's exit code means. yad gives the number of the button pressed (0 install, 2
+# install but keep nouveau, 1 Cancel) and 252 for a closed window; any other code is the window's own failure, never an
+# answer of the person's.
+plan_answer() {
+	case $1 in
+		0) echo edition ;;
+		2) echo nouveau ;;
+		1|252) echo cancel ;;
+		*) echo window-failed ;;
+	esac
+}
+
+# finish_run LOG FAILED: the end of a run. No errors, or the list of the run's ERROR lines (WORK/errors), and the same list in a window
+# when the menu started the run (SPARKY_STEREO_HARDWARE_GUI=1 and a display), before its terminal closes. Returns the
+# run's exit status: 0, or 1 with errors.
+finish_run() {
+	if (("$2" == 0)); then
+		log 'Hardware Setup finished with no errors. Firmware and driver changes may need a reboot.'
+		return 0
+	fi
+	log 'Hardware Setup finished with errors: these steps were not done, and nothing was put in their place:'
+	[[ -s $WORK/errors ]] || err 51 "${1:-}"
+	(if [[ -r ${SHARE:-}/en ]]; then source "$SHARE/en"; fi; render_errors "$WORK/errors") | sed 's/^/ERROR /'
+	if [[ ${SPARKY_STEREO_HARDWARE_GUI:-} == 1 && ( -n ${DISPLAY:-} || -n ${WAYLAND_DISPLAY:-} ) ]]; then
+		load_strings
+		{ printf '%s\n\n' "$LOCAL6"; render_errors "$WORK/errors"; } >"$WORK/errors-window"
+		yad --text-info --wrap --title="$LOCAL5" --filename="$WORK/errors-window" --width=760 --height=420 --button="$LOCAL7:0" ||
+			log "NOTE the window with these errors could not be shown; they are above and in $1"
+	fi
+	return 1
+}
 run() { printf 'RUN'; printf ' %q' "$@"; printf '\n'; "$@"; }
 apt_install() { run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests install "$@"; }
 
 setup_rig_driver() {
 	local package=$1 kernel headers
-	case "$package" in hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) ;; *) return 1 ;; esac
+	case "$package" in
+		hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) ;;
+		*) err 36 "$package"; return 1 ;;
+	esac
 	kernel=$(uname -r)
-	[[ $kernel =~ ^[a-zA-Z0-9][a-zA-Z0-9.+_-]*$ ]] || return 1
+	if [[ ! $kernel =~ ^[a-zA-Z0-9][a-zA-Z0-9.+_-]*$ ]]; then
+		err 37 "$package" "$kernel"
+		return 1
+	fi
 	headers="linux-headers-$kernel"
-	apt_install --simulate "$headers" "$package" || return 1
-	apt_install "$headers" "$package"
+	if ! apt_install --simulate "$headers" "$package"; then
+		err 38 "$package" "$headers"
+		return 1
+	fi
+	if ! apt_install "$headers" "$package"; then
+		err 39 "$package"
+		return 1
+	fi
 }
 
 sensor_modules() {
@@ -28,7 +142,7 @@ setup_sensors() {
 	output="$WORK/sensors-detect"
 	if ! run sensors-detect --auto >"$output" 2>&1; then
 		cat "$output"
-		log 'ERROR sensors-detect failed'
+		err 30
 		return 1
 	fi
 	cat "$output"
@@ -43,7 +157,7 @@ setup_sensors() {
 			if [[ -d "$ROOT/sys/module/$normalized" ]]; then
 				log "VERIFIED sensor module $module persisted and loaded"
 			else
-				log "ERROR sensor module $module absent from sysfs after modprobe"
+				err 31 "$module"
 				failed=1
 			fi
 		done
@@ -64,7 +178,7 @@ setup_sensors() {
 setup_creative() {
 	local firmware
 	for firmware in ctefx.bin ctefx-desktop.bin ctefx-r3di.bin ctspeq.bin; do
-		[[ -s "$ROOT/usr/lib/firmware/updates/$firmware" ]] || { log "ERROR missing Creative $firmware"; return 1; }
+		[[ -s "$ROOT/usr/lib/firmware/updates/$firmware" ]] || { err 32 "$firmware"; return 1; }
 	done
 	mkdir -p "$ROOT/etc/modprobe.d" || return 1
 	printf '%s\n' 'options snd_hda_intel enable_msi=1' >"$ROOT/etc/modprobe.d/sparky-stereo-creative.conf" || return 1
@@ -81,20 +195,25 @@ ppd_action_enabled() {
 }
 
 setup_amdgpu() {
-	local action
-	run powerprofilesctl list-actions >"$WORK/power-actions" || return 1
+	local action failed=0
+	if ! run powerprofilesctl list-actions >"$WORK/power-actions"; then
+		err 34 "$*"
+		return 1
+	fi
 	for action in "$@"; do
 		if ! grep -Fxq "Name: $action" "$WORK/power-actions"; then
-			log "UNSUPPORTED PPD action $action is not exposed; no replacement GPU tuning applied"
+			err 35 "$action"
+			failed=1
 			continue
 		fi
 		if ! ppd_action_enabled "$action" "$WORK/power-actions"; then
 			run powerprofilesctl configure-action "$action" --enable || return 1
 		fi
 		run powerprofilesctl list-actions >"$WORK/power-actions" || return 1
-		ppd_action_enabled "$action" "$WORK/power-actions" || { log "ERROR PPD action $action not enabled"; return 1; }
+		ppd_action_enabled "$action" "$WORK/power-actions" || { err 33 "$action"; return 1; }
 		log "VERIFIED PPD action $action enabled"
 	done
+	return "$failed"
 }
 
 setup_nvidia_runtime_pm() {
@@ -109,76 +228,203 @@ EOF
 	log 'NVIDIA laptop runtime PM configured for next driver bind/reboot; actual RTD3 support is hardware-dependent'
 }
 
-setup_nvidia() {
-	local base=https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64
-	local key="$ROOT/etc/apt/keyrings/sparky-stereo-cuda.gpg"
-	local source="$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources"
-	local pin="$ROOT/etc/apt/preferences.d/91sparky-stereo-cuda"
-	local driver decoder nvidia_version
-	local module=nvidia-kernel-open-dkms-stereo3d
-	local file
-	# Do not start a repository change if the edition's module is unavailable.
-	if ! apt-cache show --no-all-versions "$module" >"$WORK/nvidia-module" 2>&1 || ! grep -q '^Package:' "$WORK/nvidia-module"; then
-		log 'FALLBACK edition NVIDIA module unavailable; nouveau firmware installed'
-		return 0
-	fi
-	# The userspace driver is NVIDIA's version the module is built for: the module's version
-	# without our +stereo3d suffix (615.71.09-2+stereo3d4 -> 615.71.09-2), so the two cannot drift.
-	nvidia_version=$(sed -n 's/^Version: \(.*\)+stereo3d[0-9]*$/\1/p' "$WORK/nvidia-module" | head -n1)
-	if [[ -z $nvidia_version ]]; then
-		log 'FALLBACK edition NVIDIA module has no NVIDIA version; nouveau firmware installed'
-		return 0
-	fi
-	driver=nvidia-driver=$nvidia_version
-	decoder=libnvcuvid1=$nvidia_version
-	if ! run curl --fail --location --max-time 60 "$base/cuda-keyring_1.1-1_all.deb" -o "$WORK/cuda-keyring.deb"; then
-		log 'FALLBACK CUDA key download failed; nouveau firmware installed'
-		return 0
-	fi
-	if ! printf '%s  %s\n' "$CUDA_KEY_SHA256" "$WORK/cuda-keyring.deb" | sha256sum -c -; then
-		log 'FALLBACK CUDA key checksum mismatch; nouveau firmware installed'
-		return 0
-	fi
-	if ! dpkg-deb --fsys-tarfile "$WORK/cuda-keyring.deb" | tar -xO ./usr/share/keyrings/cuda-archive-keyring.gpg >"$WORK/cuda.gpg"; then
-		log 'FALLBACK CUDA key extraction failed; nouveau firmware installed'
-		return 0
-	fi
-	mkdir -p "${key%/*}" "${source%/*}" "${pin%/*}" || return 1
-	# Back up our previous files so a failed preflight restores the previous policy.
-	for file in "$key" "$source" "$pin"; do
-		[[ ! -e "$file" ]] || cp -p "$file" "$WORK/${file##*/}.previous" || return 1
+# Files of apt's sources, other than the one sparky-stereo-cuda-repo ships, that name NVIDIA's CUDA repository (outside a
+# comment): a repository the person set up themselves, such as NVIDIA's own cuda-keyring.
+cuda_sources_elsewhere() {
+	local file own="$ROOT/etc/apt/sources.list.d/sparky-stereo-cuda.sources"
+	local -a found=()
+	for file in "$ROOT/etc/apt/sources.list" "$ROOT"/etc/apt/sources.list.d/*.list "$ROOT"/etc/apt/sources.list.d/*.sources; do
+		[[ -f $file && $file != "$own" ]] || continue
+		if sed 's/#.*//' "$file" | grep -Fq "$1"; then found+=("${file#"$ROOT"}"); fi
 	done
-	install -m644 "$WORK/cuda.gpg" "$key" || return 1
-	cat >"$source" <<EOF || return 1
-Types: deb
-URIs: $base/
-Suites: /
-Architectures: amd64
-Signed-By: /etc/apt/keyrings/sparky-stereo-cuda.gpg
-EOF
-	cat >"$pin" <<'EOF' || return 1
-Package: *
-Pin: origin developer.download.nvidia.com
-Pin-Priority: 1002
-EOF
-	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y update ||
-		! run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests --simulate install "$driver" "$module" "$decoder" nvidia-vaapi-driver; then
-		for file in "$key" "$source" "$pin"; do
-			if [[ -e "$WORK/${file##*/}.previous" ]]; then
-				cp -p "$WORK/${file##*/}.previous" "$file" || return 1
-			else
-				rm -f "$file" || return 1
-			fi
-		done
-		log 'FALLBACK NVIDIA preflight failed; previous repository policy restored; nouveau firmware installed'
-		return 0
-	fi
-	if ! apt_install "$driver" "$module" "$decoder" nvidia-vaapi-driver; then
-		log 'ERROR NVIDIA transaction failed; inspect apt/dpkg state before reboot; nouveau firmware is present'
+	printf '%s\n' "${found[*]}"
+}
+
+package_installed() {
+	[[ $(dpkg-query -W -f '${db:Status-Abbrev}' "$1" 2>/dev/null) == ii* ]]
+}
+
+# nvidia_version_of MODULE_VERSION [SUFFIX]: NVIDIA's driver version the edition's module is built for, the module's version
+# without our suffix (stereo3d by default, sparky for the 580 module, which carries no patch) and Lean Code's +lc mark after
+# it (615.71.09-2+stereo3d7+lc1 -> 615.71.09-2, 580.196.07-1+sparky1+lc1 -> 580.196.07-1), so the two cannot drift; nothing
+# for a version without that suffix.
+nvidia_version_of() {
+	printf '%s\n' "$1" | sed -n "s/^\\(.*\\)+${2:-stereo3d}[0-9]*\\(+lc[0-9]*\\)\\{0,1\\}\$/\\1/p"
+}
+
+# purge_added PACKAGE...: what this run installed for the NVIDIA setup goes again (a removed package's conffiles, the
+# CUDA source among them, would stay)
+purge_added() {
+	(($#)) || return 0
+	if ! run dpkg --purge "$@"; then
+		err 46 "$*"
 		return 1
 	fi
-	if grep -Fxq $'action\tnvidia-runtime-pm' "$WORK/plan"; then
+}
+
+# foreign_i386: dpkg installs i386 packages beside amd64 ones on this machine (dpkg --add-architecture i386, which Steam's
+# and Wine's 32-bit programs need)
+foreign_i386() {
+	dpkg --print-foreign-architectures 2>/dev/null | grep -qx i386
+}
+
+# The NVIDIA driver stack's own packages, whichever stack is installed: the locks, the modules and the driver.
+nvidia_stack_roots() {
+	local package
+	for package in sparky-stereo-nvidia-driver-lock sparky-stereo-nvidia-legacy-580xx-driver-lock nvidia-kernel-open-dkms-stereo3d nvidia-legacy-580xx-kernel-dkms nvidia-driver; do
+		package_installed "$package" && printf '%s\n' "$package"
+	done
+	return 0
+}
+
+# nvidia_stack_closure: every installed package the NVIDIA stack's own packages need, one name per line. Of these, only what
+# nothing else needs after a switch is the previous stack's leftover.
+nvidia_stack_closure() {
+	local -a roots
+	mapfile -t roots < <(nvidia_stack_roots)
+	((${#roots[@]})) || return 0
+	LC_ALL=C apt-cache depends --installed --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances "${roots[@]}" |
+		sed -n 's/^\([^ <|][^ ]*\)$/\1/p' | sort -u
+}
+
+# unneeded_packages: the packages apt would autoremove (installed as dependencies, needed by nothing now), by name; this only
+# reads the plan, nothing is removed with it
+unneeded_packages() {
+	LC_ALL=C apt-get --simulate --purge autoremove | sed -n 's/^\(Remv\|Purg\) \([^ ]*\).*/\2/p' | sort -u
+}
+
+# remove_previous_stack_leftovers BEFORE CLOSURE: after a switch from one NVIDIA stack to the other, the previous stack's
+# leftovers go: the packages that were unneeded by nothing before the switch and are needed by nothing now, among those the
+# previous stack's packages needed (firmware-nvidia-gsp 615 after a switch to 580, libnvidia-egl-wayland1 after a switch back).
+# Never a general autoremove (system-self-prunes, Daniel 2026-10-07: it would remove what the person installed, CUDA on his
+# own host): a package the person installed, and every unneeded package the NVIDIA stack never needed, stay. The removal is
+# simulated first and must remove exactly these; what is removed is said.
+remove_previous_stack_leftovers() {
+	local before=$1 closure=$2 package
+	local -a leftovers=() planned=()
+	mapfile -t leftovers < <(comm -12 <(unneeded_packages) <(printf '%s\n' "$closure") | comm -23 - <(printf '%s\n' "$before"))
+	((${#leftovers[@]})) || { log "NVIDIA: the previous driver stack left nothing behind"; return 0; }
+	mapfile -t planned < <(LC_ALL=C apt-get --simulate --purge purge "${leftovers[@]}" | sed -n 's/^\(Remv\|Purg\) \([^ ]*\).*/\2/p' | sort -u)
+	if [[ "${planned[*]}" != "$(printf '%s\n' "${leftovers[@]}" | sort -u | tr '\n' ' ' | sed 's/ $//')" ]]; then
+		err 60 "${leftovers[*]}"
+		return 1
+	fi
+	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y purge "${leftovers[@]}"; then
+		err 59 "${leftovers[*]}"
+		return 1
+	fi
+	log "NVIDIA: removed the previous driver stack's leftovers: ${leftovers[*]}"
+}
+
+# setup_nvidia [open|legacy-580xx]: NVIDIA's driver for the plan's NVIDIA branch. open (the default): the edition's open
+# modules with HDMI 3D (Turing and newer) and NVIDIA's user space at their version; legacy-580xx: NVIDIA's 580 driver, the
+# last for Maxwell, Pascal and Volta, with the edition's build of its kernel modules. Each branch has its own driver lock,
+# installed first. Where dpkg has i386, NVIDIA's i386 libraries come too, at the same version, for Steam's, Wine's and 32-bit
+# games' OpenGL, Vulkan and CUDA: nvidia-driver-libs:i386 and libcuda1:i386, which NVIDIA's amd64 nvidia-driver-libs and
+# libcuda1 recommend (named, so they come on a downgrade or a reinstall too, when apt adds no new recommendation).
+setup_nvidia() {
+	local branch=${1:-open}
+	local uri=developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64
+	local driver decoder nvidia_version userspace found_version other package switching=0 unneeded_before old_stack
+	local module=nvidia-kernel-open-dkms-stereo3d suffix=stereo3d missing=40 unsuffixed=41 tail=
+	local -a policy=(sparky-stereo-nvidia-driver-lock sparky-stereo-cuda-repo) added=() stale=() options=() i386=()
+	if [[ $branch == legacy-580xx ]]; then
+		# NVIDIA's 580 user space comes from the edition's repository, NVIDIA's own Debian 12 packages carried at the
+		# module's version, under the 580 lock. Its EGL platform libraries come from NVIDIA's CUDA repository, as on the
+		# 615 path: nvidia-driver-libs 580 depends on libnvidia-egl-xcb1 and libnvidia-egl-xlib1 (>= 1:1.0.1), NVIDIA's
+		# epoch, which Debian's 1.0.3-1 does not have; so the branch takes sparky-stereo-cuda-repo (the repository, its
+		# pins and the 615 lock it depends on, which decides nothing while the 580 lock is installed) with its lock. It
+		# replaces a newer NVIDIA user space (the image's 615) by the older 580, so apt is allowed to downgrade.
+		module=nvidia-legacy-580xx-kernel-dkms suffix=sparky missing=55@58 unsuffixed=56@58 tail=@58
+		policy=(sparky-stereo-nvidia-legacy-580xx-driver-lock sparky-stereo-cuda-repo)
+		options=(--allow-downgrades)
+	else
+		# The 580 lock, while installed, decides NVIDIA's packages before the 615 lock (its file sorts first): it goes, with
+		# the 580 module that depends on it, before the open modules come.
+		for package in sparky-stereo-nvidia-legacy-580xx-driver-lock nvidia-legacy-580xx-kernel-dkms; do
+			package_installed "$package" && stale+=("$package")
+		done
+	fi
+	# Nothing is changed when the edition's module is not there: the setup stops and says so.
+	# Every version the sources offer, not only apt's candidate: the other stack's lock, while it is installed, pins this module
+	# at -1 (never installed), and apt has no candidate for it until that lock is gone, which is the switch this run makes.
+	if ! apt-cache show "$module" >"$WORK/nvidia-module" 2>&1 || ! grep -q '^Package:' "$WORK/nvidia-module"; then
+		err "$missing" "$module"
+		return 1
+	fi
+	found_version=$(sed -n 's/^Version: //p' "$WORK/nvidia-module" | sort -V | tail -n1)
+	nvidia_version=$(nvidia_version_of "$found_version" "$suffix")
+	if [[ -z $nvidia_version ]]; then
+		err "$unsuffixed" "$found_version"
+		return 1
+	fi
+	# the edition carries NVIDIA's 580 user space at its module's own version (580.196.07-1+sparky2+lc1); the 615 user space
+	# is NVIDIA's, at the NVIDIA version the open module is built for (615.71.09-2)
+	userspace=$nvidia_version
+	[[ $branch != legacy-580xx ]] || userspace=$found_version
+	driver=nvidia-driver=$userspace
+	decoder=libnvcuvid1=$userspace
+	if foreign_i386; then
+		i386=("nvidia-driver-libs:i386=$userspace" "libcuda1:i386=$userspace")
+	fi
+	# NVIDIA's CUDA repository comes from the edition's package sparky-stereo-cuda-repo (its source, NVIDIA's key and the
+	# edition's pins: CUDA updates, NVIDIA's driver stays at the module's version, Debian's own tools stay Debian's), with
+	# the driver lock it depends on. Both go in a transaction of their own, so the lock and the pins are in force before
+	# apt chooses any NVIDIA package; installed together with the driver, the lock came too late for NVIDIA's user space.
+	# A source the person set up for NVIDIA's URI is kept: sparky-stereo-cuda-repo then writes none of its own (a second
+	# source for it with another key file stops apt) and its pins apply to the person's source, since they go by origin.
+	# A switch from the other NVIDIA stack: what its packages needed and nothing needs after it is removed at the end. Recorded
+	# now, while that stack is installed, and what was already unneeded is not ours to remove.
+	if [[ $branch == legacy-580xx ]]; then
+		package_installed sparky-stereo-nvidia-driver-lock && switching=1
+	else
+		package_installed sparky-stereo-nvidia-legacy-580xx-driver-lock && switching=1
+	fi
+	if ((switching)); then
+		unneeded_before=$(unneeded_packages)
+		old_stack=$(nvidia_stack_closure)
+	fi
+	other=$(cuda_sources_elsewhere "$uri")
+	if [[ -n $other ]]; then
+		log "NVIDIA's CUDA repository is already configured in $other; sparky-stereo-cuda-repo keeps that source and adds the edition's pins"
+	fi
+	for package in "${policy[@]}"; do
+		package_installed "$package" || added+=("$package")
+	done
+	# On a failure below, what this run installed is purged (a removed package's conffiles, the source among them, stay).
+	if ((${#added[@]})) && ! apt_install "${added[@]}"; then
+		purge_added "${added[@]}" || return 1
+		err "42$tail" "${added[*]}"
+		return 1
+	fi
+	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y update; then
+		purge_added "${added[@]}" || return 1
+		err "43$tail"
+		return 1
+	fi
+	if ((${#stale[@]})) && ! run env DEBIAN_FRONTEND=noninteractive apt-get -y purge "${stale[@]}"; then
+		err 57 "${stale[*]}"
+		return 1
+	fi
+	if ! run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-suggests "${options[@]}" --simulate install "$driver" "$module" "$decoder" nvidia-vaapi-driver "${i386[@]}"; then
+		purge_added "${added[@]}" || return 1
+		err "44$tail" "$userspace"
+		return 1
+	fi
+	if ! apt_install "${options[@]}" "$driver" "$module" "$decoder" nvidia-vaapi-driver "${i386[@]}"; then
+		err 45
+		return 1
+	fi
+	if ((switching)) && ! remove_previous_stack_leftovers "$unneeded_before" "$old_stack"; then
+		return 1
+	fi
+	if [[ $branch == open ]] && grep -Fxq $'action\tnvidia-runtime-pm' "$WORK/plan"; then
 		setup_nvidia_runtime_pm || return 1
 	fi
-	log "NVIDIA $nvidia_version userspace and edition open modules installed; reboot required"
+	((${#i386[@]} == 0)) || log "NVIDIA's i386 libraries $userspace installed, for 32-bit programs"
+	if [[ $branch == legacy-580xx ]]; then
+		log "NVIDIA $userspace userspace and the edition's build of NVIDIA's 580 kernel modules installed; reboot required"
+	else
+		log "NVIDIA $userspace userspace and edition open modules installed; reboot required"
+	fi
 }

@@ -6,16 +6,22 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dest=${DEST:-${SPARKY_STAGING_DIR:?}/classic-look/m3}
-version=${VERSION:-20261014.7~sparky9~1+lc1}
-base=${BASE_VERSION:-20261014.6~sparky9~1+lc1}
+version=${VERSION:-20261104.1~sparky9~0+lc1}
+base=${BASE_VERSION:-20261104.1~sparky9~0+lc1}
 work=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/kubabbar-m3-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
+RECIPE=$repo
+COPY="$RECIPE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$RECIPE" "$work/authoring"
+mkdir -p "$work/authoring/build-tools"
+cp "$COPY" "$work/authoring/build-tools/"
+repo=$work/authoring
 mkdir -p "$dest"
 if compgen -G "$dest/*.deb" >/dev/null; then
 	echo "Use an empty candidate output directory; existing archives are retained." >&2
 	exit 1
 fi
-credit='Sparky Stereo OS, an edition of SparkyLinux, created by Paweł "pavroo" Pijanowski <pavroo@onet.eu> and Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>'
+credit="Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł \"pavroo\" Pijanowski)"
 p=sparky-stereo-look-kubabbar-glass-menubar
 k=$work/$p
 mkdir -p "$k/usr/share/plasma/look-and-feel" "$k/usr/share/icons/hicolor/scalable/apps" "$k/usr/bin" "$k/usr/share/sparky/kubabbar-glass-minimize" "$k/usr/share/doc/$p"
@@ -44,14 +50,24 @@ Free Software Foundation; version 3 of the License.
 On Debian systems, the complete text of the GNU General Public License version 3 can be found in /usr/share/common-licenses/GPL-3.
 COPYRIGHT
 cp "$repo/ABOUT.md" "$repo/README.md" "$k/usr/share/doc/$p/"
+# The messages of kubabbar-glass-minimize for sparky-stereo-problems, in the nine languages (ORDER 346f-5, U39).
+sparky-stereo-problems catalog "$p" "$repo/lang/apply" "$k/usr/lib/systemd/catalog" --subject LOCAL1
 mkdir -p "$k/DEBIAN"
+cat > "$k/DEBIAN/postrm" <<'POSTRM'
+#!/bin/sh
+set -e
+if [ "$1" = remove ]; then
+	sparky-stereo-problems clear --all sparky-stereo-look-kubabbar-glass-menubar
+fi
+POSTRM
+chmod 755 "$k/DEBIAN/postrm"
 {
 	echo "Package: $p"
 	echo "Version: $version"
 	echo "Architecture: all"
 	echo "Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>"
 	echo "Installed-Size: $(du -sk "$k" | cut -f1)"
-	echo "Depends: sparky-stereo-look-kubabbar-glass (>= $base), plasma-workspace, plasma-desktop, kwin-wayland, libkf6config-bin, dbus-bin"
+	echo "Depends: sparky-stereo-look-kubabbar-glass (>= $base), plasma-workspace, plasma-desktop, kwin-wayland, libkf6config-bin, dbus-bin, sparky-stereo-problems"
 	# Earlier base packages accidentally included this optional variant's files.
 	# Allow their ownership to move here in either unpack order.
 	echo "Breaks: sparky-stereo-look-kubabbar-glass (<< 20261014.6~sparky9~1+lc1)"
@@ -67,7 +83,7 @@ mkdir -p "$k/DEBIAN"
 } > "$k/DEBIAN/control"
 (cd "$k" && find . -type f ! -path './DEBIAN/*' -printf '%P\n' | LC_ALL=C sort | xargs -d '\n' md5sum > DEBIAN/md5sums)
 chmod -R go-w "$k"
-PYTHONPATH="$repo/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$k" "$dest" --authoring "$repo"
+PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$k" "$dest" --authoring "$RECIPE" --build-dependency sparky-stereo-problems
 (cd "$dest" && sha256sum ./*.deb | sed 's|\./||' > SHA256SUMS)
 printf "%s\n" "${SOURCE_COMMIT:-unknown}" > "$dest/SOURCE-COMMIT"
 cat "$dest/SHA256SUMS"

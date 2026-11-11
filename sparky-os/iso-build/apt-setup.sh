@@ -1,8 +1,9 @@
 #!/bin/sh
 # Writes the image build's apt sources, keys and pins into a root directory (default /).
 # Sources: Debian testing (all four components), SparkyLinux (core, tiamat), deb-multimedia (forky),
-# the edition's repository, NVIDIA's CUDA repository for the 615 userspace the edition's open modules
-# are built for.
+# the edition's repository. NVIDIA's CUDA repository, for the 615 userspace the edition's open modules are
+# built for, comes from the edition's package sparky-stereo-cuda-repo (its source, NVIDIA's key and the
+# edition's pins), which rootfs.sh installs with the NVIDIA driver lock before any other package.
 # The edition's repository (EDITION_REPO): live (default), the published repository at
 # https://repo.sparkyos.org/ exactly as people get it, written as sparky-stereo-apt writes it; or flat,
 # the development repository mounted at /repo (flat, trusted), the beta lanes' way.
@@ -14,7 +15,6 @@ EDITION_REPO=${EDITION_REPO:-live}
 SPARKY_FPR=2517567C137975AC92300A385CA76B26C40956B8
 EDITION_URI=https://repo.sparkyos.org/
 EDITION_FPR=10DFD38DAD1E4808BC688E5A945E5D079A2A0B9C
-CUDA_KEY_SHA256=d0d4ef986a44400f9db33c600ef33a985175e7cc63d805a10e1839c7a1e78f5f
 W=$(mktemp -d)
 mkdir -p "$R/etc/apt/sources.list.d" "$R/etc/apt/preferences.d" "$R/etc/apt/keyrings" "$R/etc/apt/trusted.gpg.d"
 
@@ -49,13 +49,9 @@ flat)
 *) echo "apt-setup: EDITION_REPO must be live or flat" >&2; exit 1 ;;
 esac
 
-curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/cuda-keyring_1.1-1_all.deb -o "$W/cuda-keyring.deb"
-printf '%s  %s\n' "$CUDA_KEY_SHA256" "$W/cuda-keyring.deb" | sha256sum -c - >/dev/null
-dpkg-deb --fsys-tarfile "$W/cuda-keyring.deb" | tar -xO ./usr/share/keyrings/cuda-archive-keyring.gpg > "$R/etc/apt/keyrings/sparky-stereo-cuda.gpg"
-
 cat > "$R/etc/apt/sources.list.d/debian.sources" <<'EOF'
 Types: deb
-URIs: http://deb.debian.org/debian
+URIs: https://deb.debian.org/debian
 Suites: testing
 Components: main contrib non-free non-free-firmware
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
@@ -82,22 +78,10 @@ Suites: ./
 Trusted: yes
 EOF
 fi
-cat > "$R/etc/apt/sources.list.d/sparky-stereo-cuda.sources" <<'EOF'
-Types: deb
-URIs: https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/
-Suites: /
-Architectures: amd64
-Signed-By: /etc/apt/keyrings/sparky-stereo-cuda.gpg
-EOF
 cat > "$R/etc/apt/preferences.d/sparky" <<'EOF'
 Package: *
 Pin: release o=SparkyLinux
 Pin-Priority: 1001
 EOF
 cp /edition-apt/sparky-stereo /edition-apt/sparky-stereo-only-ours "$R/etc/apt/preferences.d/"
-cat > "$R/etc/apt/preferences.d/91sparky-stereo-cuda" <<'EOF'
-Package: *
-Pin: origin developer.download.nvidia.com
-Pin-Priority: 1002
-EOF
 rm -rf "$W"

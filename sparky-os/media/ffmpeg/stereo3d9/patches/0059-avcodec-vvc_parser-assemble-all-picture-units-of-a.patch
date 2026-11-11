@@ -1,0 +1,304 @@
+Description: avcodec/vvc_parser: assemble all picture units of an access unit
+ The parser appends a picture unit before testing whether it starts an
+ access unit, then outputs at that start. Enhancement-layer pictures
+ therefore end up with the next access unit instead of their own.
+ .
+ Output the preceding access unit before appending a new one's first
+ picture unit, as H.266 7.4.2.4.3 requires. Keep the single-layer fast
+ path and complete an access unit immediately at the highest VPS layer.
+ Otherwise wait for the next access unit or EOF. Queue a second complete
+ access unit when a call already produced output.
+ .
+ Retain the first picture's parameter sets and timestamps until output,
+ including when higher layers are absent. Continue internally across a
+ buffered picture-unit boundary if there is neither input consumption
+ nor an access unit to return.
+ .
+ VPS_A_3 and OPI_B_3 now produce nine and seventeen correctly grouped
+ packets. An OPI_B_3 variant without layer-one TemporalId-four pictures
+ also matches the independently determined access-unit boundaries.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Opus via Claude Code
+ Assisted-by: GPT-6 via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/2453471f0a8485a7561bf98a7eb7e1c66684315d
+Forwarded: no, held by Daniel 2026-11-03 (fork branch vvc-parser-layer1 on code.ffmpeg.org/danielcamposramos/FFmpeg)
+Last-Update: 2026-11-03
+
+diff --git a/libavcodec/vvc_parser.c b/libavcodec/vvc_parser.c
+index 85510ff..6fc84f1 100644
+--- a/libavcodec/vvc_parser.c
++++ b/libavcodec/vvc_parser.c
+@@ -21,6 +21,7 @@
+  */
+ 
+ #include "libavutil/mem.h"
++#include "libavutil/refstruct.h"
+ #include "cbs.h"
+ #include "cbs_h266.h"
+ #include "parser.h"
+@@ -38,6 +39,15 @@ typedef struct PuInfo {
+     int pic_type;
+ } PuInfo;
+ 
++typedef struct AuInfo {
++    const H266RawPPS *pps;
++    const H266RawSPS *sps;
++    int pic_type;
++    int nut;
++    int64_t start;
++    int64_t offset;
++} AuInfo;
++
+ typedef struct AuDetector {
+     uint8_t prev_layer_id;
+     int prev_tid0_poc;
+@@ -52,6 +62,11 @@ typedef struct VVCParserContext {
+ 
+     AVPacket au;
+     AVPacket last_au;
++    AuInfo au_info;
++    int au_complete;
++
++    int pu_start_found;
++    int64_t pu_start, pu_pts, pu_dts, pu_pos, pu_offset;
+ 
+     AuDetector au_detector;
+ 
+@@ -147,7 +162,7 @@ static int get_pict_type(const CodedBitstreamFragment *pu)
+ }
+ 
+ static void set_parser_ctx(AVCodecParserContext *s, AVCodecContext *avctx,
+-                           const PuInfo *pu)
++                           const AuInfo *pu)
+ {
+     static const uint8_t h266_sub_width_c[] = {
+         1, 2, 2, 1
+@@ -157,16 +172,14 @@ static void set_parser_ctx(AVCodecParserContext *s, AVCodecContext *avctx,
+     };
+     const H266RawSPS *sps = pu->sps;
+     const H266RawPPS *pps = pu->pps;
+-    const H266RawNALUnitHeader *nal = &pu->slice->header.nal_unit_header;
++    const int nut = pu->nut;
+ 
+     s->pict_type = pu->pic_type;
+     s->format = get_format(sps);
+     s->picture_structure = AV_PICTURE_STRUCTURE_FRAME;
+ 
+-    s->key_frame = nal->nal_unit_type == VVC_IDR_W_RADL ||
+-                   nal->nal_unit_type == VVC_IDR_N_LP ||
+-                   nal->nal_unit_type == VVC_CRA_NUT ||
+-                   nal->nal_unit_type == VVC_GDR_NUT;
++    s->key_frame = nut == VVC_IDR_W_RADL || nut == VVC_IDR_N_LP ||
++                   nut == VVC_CRA_NUT || nut == VVC_GDR_NUT;
+ 
+     s->coded_width  = pps->pps_pic_width_in_luma_samples;
+     s->coded_height = pps->pps_pic_height_in_luma_samples;
+@@ -331,6 +344,49 @@ end:
+     return ret;
+ }
+ 
++static void output_au(AVCodecParserContext *s, AVCodecContext *avctx)
++{
++    VVCParserContext *ctx = s->priv_data;
++
++    av_packet_move_ref(&ctx->last_au, &ctx->au);
++    set_parser_ctx(s, avctx, &ctx->au_info);
++    s->pts = ctx->last_au.pts;
++    s->dts = ctx->last_au.dts;
++    s->pos = ctx->last_au.pos;
++    s->offset = ctx->au_info.offset;
++    /* The input may already include a PU from the following AU. */
++    s->next_frame_offset = ctx->au_info.start;
++    ctx->au_complete = 0;
++}
++
++static void save_pu_timestamp(AVCodecParserContext *s)
++{
++    VVCParserContext *ctx = s->priv_data;
++    ParseContext *pc = &ctx->pc;
++    int64_t pts = s->pts, dts = s->dts, pos = s->pos, offset = s->offset;
++    int64_t frame_offset = s->frame_offset;
++    int64_t next_frame_offset = s->next_frame_offset;
++    int overread = pc->index + pc->overread;
++
++    ctx->pu_start = s->cur_offset - overread;
++    /* Capture at the PU start before its timestamp leaves the input history.
++     * Exclude timestamps already belonging to the preceding AU. */
++    s->frame_offset = ctx->au_info.start;
++    s->next_frame_offset = ctx->pu_start;
++    ff_fetch_timestamp(s, -overread, 0, 0);
++    ctx->pu_pts = s->pts;
++    ctx->pu_dts = s->dts;
++    ctx->pu_pos = s->pos;
++    ctx->pu_offset = s->offset;
++    s->pts = pts;
++    s->dts = dts;
++    s->pos = pos;
++    s->offset = offset;
++    s->frame_offset = frame_offset;
++    s->next_frame_offset = next_frame_offset;
++    ctx->pu_start_found = 1;
++}
++
+ /**
+  * Parse NAL units of found picture and decode some basic information.
+  *
+@@ -351,11 +407,10 @@ static int parse_nal_units(AVCodecParserContext *s, const uint8_t *buf,
+     PuInfo info;
+ 
+     if (!buf_size) {
+-        if (ctx->au.size) {
+-            av_packet_move_ref(&ctx->last_au, &ctx->au);
+-            return 0;
+-        }
+-        return 1;
++        if (!ctx->au.size)
++            return 1;
++        output_au(s, avctx);
++        return 0;
+     }
+ 
+     if ((ret = ff_cbs_read(ctx->cbc, pu, NULL, buf, buf_size)) < 0) {
+@@ -364,19 +419,44 @@ static int parse_nal_units(AVCodecParserContext *s, const uint8_t *buf,
+     }
+     if ((ret = get_pu_info(&info, h266, pu, avctx)) < 0)
+         goto end;
+-    if (append_au(&ctx->au, buf, buf_size) < 0) {
+-        ret = AVERROR(ENOMEM);
+-        goto end;
++
++    /* 7.4.2.4.3: a new AU starts before this PU, not after it. */
++    if (is_au_start(ctx, &info, avctx) && ctx->au.size)
++        output_au(s, avctx);
++
++    if (!ctx->au.size) {
++        /* Keep the first picture's parameters even if CBS replaces them
++         * while parsing a later PU before this AU can be output. */
++        av_refstruct_replace(&ctx->au_info.sps, info.sps);
++        av_refstruct_replace(&ctx->au_info.pps, info.pps);
++        ctx->au_info.pic_type = info.pic_type;
++        ctx->au_info.nut = info.slice->header.nal_unit_header.nal_unit_type;
++        ctx->au_info.start = ctx->pu_start;
++        ctx->au_info.offset = ctx->pu_offset;
++        ctx->au.pts = ctx->pu_pts;
++        ctx->au.dts = ctx->pu_dts;
++        ctx->au.pos = ctx->pu_pos;
+     }
+-    if (is_au_start(ctx, &info, avctx)) {
+-        set_parser_ctx(s, avctx, &info);
+-        av_packet_move_ref(&ctx->last_au, &ctx->au);
++    if ((ret = append_au(&ctx->au, buf, buf_size)) < 0)
++        goto end;
++
++    /* Layer IDs increase within an AU. The highest VPS layer completes it
++     * without waiting for another PU, including the single-layer case. */
++    if (s->flags & PARSER_FLAG_COMPLETE_FRAMES || !info.sps->sps_video_parameter_set_id) {
++        ctx->au_complete = 1;
+     } else {
+-        ret = 1; //not a completed au
++        const H266RawVPS *vps = h266->vps[info.sps->sps_video_parameter_set_id];
++        ctx->au_complete = vps && info.slice->header.nal_unit_header.nuh_layer_id ==
++                                  vps->vps_layer_id[vps->vps_max_layers_minus1];
+     }
++    /* There can be only one output per parser call. A second complete AU
++     * stays queued for the next call, which will consume no input. */
++    if (ctx->au_complete && !ctx->last_au.size)
++        output_au(s, avctx);
++    ret = 1;
+ end:
+     ff_cbs_fragment_reset(pu);
+-    return ret;
++    return ctx->last_au.size ? 0 : ret;
+ }
+ 
+ /**
+@@ -396,7 +476,6 @@ static int combine_au(AVCodecParserContext *s, AVCodecContext *avctx,
+ 
+     ctx->cbc->log_ctx = avctx;
+ 
+-    av_packet_unref(&ctx->last_au);
+     ret = parse_nal_units(s, *buf, *buf_size, avctx);
+     if (ret == 0) {
+         if (ctx->last_au.size) {
+@@ -419,9 +498,9 @@ static int vvc_parser_parse(AVCodecParserContext *s, AVCodecContext *avctx,
+     ParseContext *pc = &ctx->pc;
+     CodedBitstreamFragment *pu = &ctx->picture_unit;
+ 
+-    int is_dummy_buf = !buf_size;
+     int flush = !buf_size;
+-    const uint8_t *dummy_buf = buf;
++    const uint8_t *input = buf;
++    int input_size = buf_size;
+ 
+     *poutbuf = NULL;
+     *poutbuf_size = 0;
+@@ -436,24 +515,41 @@ static int vvc_parser_parse(AVCodecParserContext *s, AVCodecContext *avctx,
+         ff_cbs_fragment_reset(pu);
+     }
+ 
++    av_packet_unref(&ctx->last_au);
++    if (ctx->au_complete) {
++        output_au(s, avctx);
++        *poutbuf = ctx->last_au.data;
++        *poutbuf_size = ctx->last_au.size;
++        return 0;
++    }
++
++retry:
++    if (!ctx->pu_start_found && (buf_size || pc->index || pc->overread))
++        save_pu_timestamp(s);
++
+     if (s->flags & PARSER_FLAG_COMPLETE_FRAMES) {
+         next = buf_size;
+     } else {
+-        next = find_frame_end(s, buf, buf_size);
++        next = flush ? 0 : find_frame_end(s, buf, buf_size);
+         if (ff_combine_frame(pc, next, &buf, &buf_size) < 0)
+             return buf_size;
+     }
++    ctx->pu_start_found = 0;
+ 
+-    is_dummy_buf &= (dummy_buf == buf);
+-
+-    if (!is_dummy_buf) {
++    ret = combine_au(s, avctx, &buf, &buf_size);
++    if (ret > 0 && flush) {
++        buf_size = 0;
+         ret = combine_au(s, avctx, &buf, &buf_size);
+-        if (ret > 0 && flush) {
+-            buf_size = 0;
+-            ret = combine_au(s, avctx, &buf, &buf_size);
++    }
++    if (ret != 0) {
++        /* A buffered PU boundary may consume no input. Without an AU to
++         * output, continue with the next PU rather than stall the caller. */
++        if (!flush && next <= 0) {
++            buf = input;
++            buf_size = input_size;
++            goto retry;
+         }
+-        if (ret != 0)
+-            return next;
++        return next;
+     }
+ 
+     *poutbuf = buf;
+@@ -487,6 +583,7 @@ static av_cold int vvc_parser_init(AVCodecParserContext *s)
+     if (ret < 0)
+         return ret;
+     au_detector_init(&ctx->au_detector);
++    ctx->au_info.start = AV_NOPTS_VALUE;
+ 
+     ctx->cbc->decompose_unit_types    = decompose_unit_types;
+     ctx->cbc->nb_decompose_unit_types = FF_ARRAY_ELEMS(decompose_unit_types);
+@@ -501,6 +598,8 @@ static av_cold void vvc_parser_close(AVCodecParserContext *s)
+     av_packet_unref(&ctx->au);
+     av_packet_unref(&ctx->last_au);
+     ff_cbs_fragment_free(&ctx->picture_unit);
++    av_refstruct_unref(&ctx->au_info.sps);
++    av_refstruct_unref(&ctx->au_info.pps);
+ 
+     ff_cbs_close(&ctx->cbc);
+     av_freep(&ctx->pc.buffer);

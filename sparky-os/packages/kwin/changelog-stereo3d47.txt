@@ -1,0 +1,27 @@
+kwin (4:6.7.4-2+stereo3d47) unstable;
+
+  * Carry three fixes of KWin's Plasma/6.7 branch that our 6.7.4-based
+    source lacks, each upstream's own commit with its authors (ORDER 449):
+    - Vlad Zahorodnii's 5f587fb72b of 6.7.6 (BUG 510116),
+      SurfaceInterface::removeExtension also removes the extension's
+      state from the current surface state, so a destroyed and a new
+      surface extension at the same address no longer give
+      SurfaceState::mergeInto() a state of the wrong type, a KWin crash
+      (s47-0001).
+    - Xaver Hugl's 37d327ce46 of 6.7.6, with Rafał Domecki, the
+      occlusion pass of WorkspaceScene skips hidden items, so a closed
+      but cached effect view (QuickSceneEffect) no longer culls every
+      window's damage on its output, and windows go on repainting
+      (s47-0002).
+    - Vlad Zahorodnii's 0de99deddb of 6.7.5, with zhang shoucheng, the
+      xdg_popup's parent surface is a QPointer, so a client that destroys
+      the parent wl_surface first and then repositions the popup no
+      longer reaches a freed pointer (s47-0003).
+    The headers of these patches and of the published s41-0001 (Vlad
+    Zahorodnii's 0ea31ae7) keep the authors' names and the invent commit URL
+    and no longer their email addresses. Stereo KWin's own code is
+    untouched. The edition adds an autotest of its own for the first (s47-0004, testSurfaceExtensionInterface): a surface
+    extension recreated at the address of a destroyed one of another type
+    gets a state of its own type.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 07 Nov 2026 14:04:07 +0000

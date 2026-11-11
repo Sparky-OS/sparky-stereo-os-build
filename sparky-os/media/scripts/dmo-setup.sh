@@ -2,6 +2,9 @@
 # Inside a debian:testing container (root): dmo's repository (forky = Debian testing) with deb-src,
 # its keyring installed from the deb-multimedia-keyring package, then switched to Signed-By.
 set -eu
+# apt over HTTPS only (ORDER 400b, CVE-2026-109518): the container mounts the host's CA bundle at /run/host-ca.crt and
+# tools/https-only-apt.sh at /run/https-only-apt.sh (read-only); a missing helper stops the script
+sh /run/https-only-apt.sh || exit 1
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get -y install --no-install-recommends ca-certificates curl gnupg dpkg-dev >/dev/null

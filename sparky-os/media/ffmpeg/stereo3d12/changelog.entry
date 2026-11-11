@@ -1,0 +1,19 @@
+ffmpeg-dmo (@VERSION@) unstable; urgency=medium
+
+  * Carry two of the edition's own FFmpeg pull requests, both approved in
+    review, on top of the frame_packing series of +stereo3d11 (ORDER 425):
+    - FFmpeg pull request 25409 (https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25409),
+      patches 0069 and 0070: the SEI payload type and size read by
+      ff_h264_sei_decode() are bounded before the sum can pass INT_MAX
+      (H.264 7.3.2.3.1: last_payload_type_byte and last_payload_size_byte
+      end the 0xFF runs); a header that overflowed was accepted, and
+      the size wrapped. New FATE test fate-h264-sei-header.
+    - FFmpeg pull request 25377 (https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25377),
+      patches 0071 to 0073: stereo3d keeps the eye order of interleaved
+      columns (icr, icl:icr) and selects the right mono view of interleaved
+      rows (irr:ml, irr:mr). New FATE tests filter-stereo3d-icr-sbsl,
+      -irr-mono, -icr-sbsr and -icl-icr.
+  * The changelog entry of +stereo3d11, which was never published, follows
+    below with the source of +stereo3d9 as its base.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@

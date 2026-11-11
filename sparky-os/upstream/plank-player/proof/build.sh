@@ -1,4 +1,5 @@
 #!/bin/bash
+# SUPERSEDED (ORDER 453b): history of the +stereo3d1 state; the shipped recipe is in sparky-os/upstream/qtmultimedia, see ../README.md
 # usage: build.sh <outdir> <patches dir or ->  : builds plank-player from <outdir>'s orig tarball with packaging/ (+ patches/) in plank-build:1, as the user
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 out=$1; patches=$2

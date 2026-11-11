@@ -10,6 +10,7 @@ HR lives in a separate, exact-version documentation package, never in the runtim
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import functools
 import json
@@ -204,11 +205,38 @@ def load(marker, raw, package, version, arch):
     return obj
 
 
+def dpkg_records(P):
+    """dpkg's package records as dpkg reads them: the status file, then each entry of its journal
+    (/var/lib/dpkg/updates: names of digits, in sorted order). dpkg folds the journal into the status file
+    only at a checkpoint, so inside a dpkg run the status file alone is out of date (ORDER 315)."""
+    texts = [Path(P.real('/var/lib/dpkg/status')).read_text()]
+    updates = Path(P.real('/var/lib/dpkg/updates'))
+    if updates.is_dir():
+        for n in sorted(os.listdir(updates)):
+            if n.isascii() and n.isdigit():
+                try:
+                    texts.append((updates / n).read_text())
+                except FileNotFoundError:      # a dpkg checkpoint removed it meanwhile (another dpkg run)
+                    pass
+    rows = {}
+    for text in texts:
+        for row in stanzas(text):
+            rows[(row.get('package'), row.get('architecture'))] = row
+    return list(rows.values())
+
+
+# The states whose files are the package version's own (dpkg(1), "Package states"), as dpkg-stereo counts installed
+# packages (its INSTALLED_STATES, 0.1.29): a marked package with its trigger pending or awaited, deconfigured, or on
+# hold keeps its build-time projection. Before, only "install ok installed" counted, and dpkg-stereo took such a package
+# for an unmarked one.
+INSTALLED_STATES = ('installed', 'triggers-pending', 'triggers-awaited', 'half-configured')
+
+
 def installed(P, names=None):
     """Only read markers in dpkg's installed control records; never trust a loose JSON file."""
     out = {}
-    for row in stanzas(Path(P.real('/var/lib/dpkg/status')).read_text()):
-        if row.get('status') != 'install ok installed' or FIELD.lower() not in row:
+    for row in dpkg_records(P):
+        if (row.get('status') or '').rsplit(' ', 1)[-1] not in INSTALLED_STATES or FIELD.lower() not in row:
             continue
         p, v, a = identity(row)
         info = f'{p}:{a}' if row.get('multi-arch') == 'same' or Path(P.real(f'/var/lib/dpkg/info/{p}:{a}.list')).exists() else p
@@ -226,11 +254,29 @@ def installed(P, names=None):
     return out
 
 
-def prepare(root, hr_root=None, *, documentation=False):
+PRESERVED = 'preserved as authored: '
+
+
+def preservation(plan):
+    """A payload preservation plan, {installed pattern: reason}: absolute fnmatch patterns of payload files that stay
+    exactly as their authors ship them, each with why (a vendor's licence asks that its files stay unmodified)."""
+    if plan is None:
+        return {}
+    if not isinstance(plan, dict):
+        raise Invalid('a payload preservation plan maps installed patterns to reasons')
+    for pattern, reason in plan.items():
+        if (not isinstance(pattern, str) or not pattern.startswith('/') or '\\' in pattern
+                or '..' in pattern.split('/') or not isinstance(reason, str) or not reason.strip()):
+            raise Invalid('payload preservation needs absolute installed patterns, each with a reason')
+    return plan
+
+
+def prepare(root, hr_root=None, *, documentation=False, preserve=None):
     """Final staging step, before md5sums/dpkg-deb. Never run against an installed root.
 
     Failure leaves an unmarked disposable staging tree. Rebuild the staging tree to retry.
     documentation=True is reserved for our generated HR companion (it contains only docs).
+    preserve: a payload preservation plan (see preservation); every pattern must name a payload file.
     """
     root = Path(root).resolve()
     fields = control(root)
@@ -245,15 +291,30 @@ def prepare(root, hr_root=None, *, documentation=False):
     hr = Path(hr_root).resolve() if hr_root is not None else None
     if hr and (hr == root or root in hr.parents or hr in root.parents or hr.exists()):
         raise Invalid('HR staging directory must be new and separate')
+    plan = preservation(preserve)
+    if plan and documentation:
+        raise Invalid('the HR companion has no preservation plan')
     rows, originals = [], []
-    for real, row in entries(root):
+    items = list(entries(root))
+    unused = sorted(pattern for pattern in plan
+                    if not any(row['kind'] == 'file' and fnmatch.fnmatchcase(row['path'], pattern) for _, row in items))
+    if unused:
+        raise Invalid('payload preservation patterns that name no payload file: ' + ', '.join(unused))
+    # files another payload file reads as data (Zig's @embedFile) stay as authored, whatever their format
+    readers = project.read_as_data({row['path']: real.read_bytes() for real, row in items
+                                    if row['kind'] == 'file' and project.reads_others(row['path'])},
+                                   (row['path'] for _, row in items)) if not documentation else {}
+    for real, row in items:
         path = row['path']
         row.update(status='left', reason='symlink: retained')
         if row['kind'] == 'file':
+            kept = next((pattern for pattern in plan if fnmatch.fnmatchcase(path, pattern)), None)
             if documentation:
                 if not (path.startswith(HR_BASE + '/') or path.startswith('/usr/share/doc/')):
                     raise Invalid('HR companion may contain only documentation')
                 row['reason'] = 'authored documentation: retained'
+            elif kept is not None:
+                row['reason'] = PRESERVED + plan[kept]
             elif real.stat().st_nlink > 1:
                 row['reason'] = 'hardlinked payload: retained'
             elif row['bytes'] == 0 or row['bytes'] > MAX_TEXT:
@@ -262,6 +323,8 @@ def prepare(root, hr_root=None, *, documentation=False):
                 data = real.read_bytes()
                 if b'\0' in data[:8192]:
                     row['reason'] = 'binary'
+                elif path in readers:
+                    row['reason'] = readers[path]
                 else:
                     r = project.project(path, data, p)
                     row.update(status=r.status, reason=r.reason, handler=r.handler, variant=r.variant)

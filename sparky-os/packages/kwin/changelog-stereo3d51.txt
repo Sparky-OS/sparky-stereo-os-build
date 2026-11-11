@@ -1,0 +1,17 @@
+kwin (4:6.7.4-2+stereo3d51) unstable;
+
+  * The first windows of a session open on the screen marked main in
+    Display Settings also when the session's own surfaces come first: Plasma
+    maps one desktop window per output in the order its screens come in, and
+    ksplashqml one overlay layer-shell window per screen with the exclusive
+    keyboard; each is activated as it maps and Workspace::setActiveWindow
+    moved the active output to its output, so the last left it on the screen it
+    served last, and a program mapped next (the KDE Wallet prompt, an autostart
+    program) opened there until the pointer moved. The activation of a desktop
+    or a layer-shell window no longer moves the active output. The pointer, a
+    click, switching to an output and the activation of a program's own window
+    move it as before (s51-0001, ORDER 466; bugs.kde.org 500904, 501527 and
+    489904 describe the same symptom, none has a fix). Test: testSessionStart
+    (s51-0002), which fails on +stereo3d50.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 08 Nov 2026 19:30:00 +0000

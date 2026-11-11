@@ -15,7 +15,7 @@
 # (docs/ENVIRONMENT.md). This generator sets it where a device is named,
 # unless what can be checked now says the image would not fit or the named
 # swap file is not where the offset points.
-# cushion-swap-hibernate.service switches that area on before systemd-sleep
+# The native sleep units' ExecStartPre switches that area on before systemd-sleep
 # looks for it, whether or not the area is the Cushion Swap File's.
 set -u
 out=${1:-/run/systemd/generator}

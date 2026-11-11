@@ -20,7 +20,7 @@ git clone -q --branch "$BRANCH" https://github.com/pixelcluster/kcgroups.git "$W
 git -C "$WORK/up" merge-base --is-ancestor "$COMMIT" HEAD || { echo "$COMMIT is not on $BRANCH" >&2; exit 1; }
 git -C "$WORK/up" archive --format=tar --prefix="plasma-foreground-booster-$UPV/" "$COMMIT" | xz -6 > "$WORK/plasma-foreground-booster_$UPV.orig.tar.xz"
 tar -xJf "$WORK/plasma-foreground-booster_$UPV.orig.tar.xz" -C "$WORK"
-cp -a "$HERE/debian" "$WORK/plasma-foreground-booster-$UPV/"
+python3 "${COPY_RECIPE:-$HERE/../../../tools/copy-recipe.py}" "$HERE/debian" "$WORK/plasma-foreground-booster-$UPV/debian"
 bash "$HERE/../../release/build-dh-lean.sh" "$WORK" "plasma-foreground-booster-$UPV" "$DEBV+lc1" "$REPO"
 mkdir -p "$OUT"
 cp -a "$WORK"/out/. "$OUT"/

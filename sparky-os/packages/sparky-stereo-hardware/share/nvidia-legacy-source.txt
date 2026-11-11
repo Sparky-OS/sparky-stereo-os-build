@@ -1,0 +1,12 @@
+NVIDIA's README for driver 615.71.09, Appendix A, "Supported NVIDIA GPU Products".
+https://download.nvidia.com/XFree86/Linux-x86_64/615.71.09/README/supportedchips.html (read 2026-11-02)
+nvidia-legacy-580xx.ids: every row of its table "The 580.xx driver supports the following set of GPUs" (Maxwell, Pascal and
+Volta), in NVIDIA's order. Columns: device [subsystem-vendor subsystem-device], as in nvidia-open.ids; a row with a subsystem
+matches only that subsystem, as NVIDIA lists it. No device is in both tables: nvidia-open.ids is the same release's table of
+current GPUs, which the open modules run.
+Checked against NVIDIA's README for 580.196.07 (https://download.nvidia.com/XFree86/Linux-x86_64/580.196.07/README/
+supportedchips.html, read 2026-11-02): it names every device of nvidia-legacy-580xx.ids among its current GPUs except 137d
+(listed by 615.71.09 only as 137d 17aa 3699, GeForce 940A) and 1df5 (Tesla V100-SXM2-16GB).
+nvidia-legacy-older.tsv: device, then the legacy branch whose table of that README lists it (470.xx, 390.xx, 367.xx, 340.xx,
+304.xx, 173.14.xx, 96.43.xx, 71.86.xx), one row per device. The edition builds none of these branches; the plan names the
+branch so the person knows why the card keeps nouveau.

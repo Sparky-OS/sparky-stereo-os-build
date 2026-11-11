@@ -15,7 +15,7 @@
 # Every text exists in the nine required languages or the generator stops.
 import json, os, sys
 
-LANGS = ['en', 'pl', 'pt_BR', 'fr', 'de', 'ja', 'ko', 'zh_CN', 'zh_TW']
+LANGS = ['en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW']
 
 def texts(key, d, where):
     miss = [l for l in LANGS if not d.get(l)]

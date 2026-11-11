@@ -14,11 +14,19 @@ VERSION=$(sed -n '2s/^  Version \([^ ]*\) .*/\1/p' "$HERE/CHANGELOG")
 VERSION=${VERSION}+lc1
 W=$(mktemp -d "${TMPDIR:-/tmp}/cal-settings.XXXXXX")
 trap 'rm -rf "$W"' EXIT
+RECIPE=$HERE
+COPY="$RECIPE/../../../tools/copy-recipe.py"
+python3 "$COPY" "$RECIPE" "$W/authoring"
+mkdir -p "$W/authoring/build-tools"
+cp "$COPY" "$W/authoring/build-tools/"
+HERE=$W/authoring
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/etc/calamares/modules" "$D/usr/lib/$PKG" "$D/usr/share/doc/$PKG"
 install -m 644 "$HERE/etc/settings.conf" "$D/etc/calamares/settings.conf"
 install -m 644 "$HERE"/etc/modules/*.conf "$D/etc/calamares/modules/"
-install -m 755 "$HERE/lib/dual-boot" "$HERE/lib/efi-fallback" "$HERE/lib/grub-language" "$HERE/lib/offline-packages" "$D/usr/lib/$PKG/"
+install -m 644 "$HERE/lib/installer-common" "$D/usr/lib/$PKG/"
+cp -r "$HERE/lib/lang" "$D/usr/lib/$PKG/"
+install -m 755 "$HERE/lib/dual-boot" "$HERE/lib/efi-fallback" "$HERE/lib/grub-language" "$HERE/lib/language-packs" "$HERE/lib/offline-packages" "$D/usr/lib/$PKG/"
 (cd "$D" && find etc -type f | sed 's|^|/|' | sort) >"$D/DEBIAN/conffiles"
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
 Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
@@ -79,6 +87,6 @@ Description: Sparky Stereo installer settings
 EOS
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"
-PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone \
+PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone \
     "$D" "$OUT" --authoring "$HERE"
 echo "built $OUT/${PKG}_${VERSION}_all.deb"

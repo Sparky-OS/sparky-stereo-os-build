@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/16
+# Last update 2026/11/01
 LOCAL1="Compétences pour assistants IA"
 LOCAL3="Donner à vos assistants IA les compétences de Sparky Stereo OS ?"
 LOCAL4="Les compétences restent dans /usr/share/sparky-stereo-os/skills. Chaque dossier choisi reçoit un lien vers chaque compétence ; vos propres compétences restent telles quelles."
@@ -34,7 +34,21 @@ LOCAL22="%s compétences liées sur %s"
 LOCAL23="Lu par"
 LOCAL24="Les compétences de Sparky Stereo OS pour vos assistants IA"
 LOCAL25="Pour les responsables du projet et les modèles locaux (sans assistant obligatoire) :
+  find [--limit N] TEXTE   les compétences qui correspondent le mieux à une tâche ou à un symptôme, trouvées hors ligne, avec la commande context à lancer ensuite
   context [SKILL...] [--section SKILL:TITRE] [--reference CHEMIN] [--output FICHIER]
             instructions choisies avec empreintes des sources ; context --help affiche les options
   bundle FICHIER.zip   documentation publique complète à extraire et consulter hors ligne"
 LOCAL26="Passé, aucun de ses paquets n'est installé : %s"
+LOCAL27="Le moteur des compétences est absent : %s (installez le paquet sparky-stereo-skills-engine)."
+LOCAL28="Laisser aussi ces assistants consulter les compétences par MCP (Model Context Protocol) ?"
+LOCAL29="Qui approuve les commandes qu'une compétence liste"
+LOCAL30="Automatique : l'approbation de l'assistant lui-même si vous utilisez un assistant IA, sinon me demander d'abord"
+LOCAL31="Toujours me demander d'abord"
+LOCAL32="Toujours utiliser l'approbation de l'assistant lui-même"
+LOCAL33="Pour les assistants et les commandes (le même moteur répond à find et context) :
+  sections COMPÉTENCE   les titres exacts d'une compétence
+  commands COMPÉTENCE   les commandes que liste une compétence d'utilisateur
+  run COMPÉTENCE ID [CHAMP=VALEUR...]   lance une commande listée, après votre confirmation
+  serve   le serveur MCP sur stdio, lancé par un assistant
+  mcp register [ASSISTANT...] | unregister [ASSISTANT...] | status | commands [auto|assistant|ask]
+            enregistre le serveur auprès d'un assistant après votre confirmation, le retire, montre l'état ou choisit qui approuve les commandes"

@@ -20,11 +20,12 @@ What it does (`sparky-stereo-ffmpeg-fdk`, run as your own user):
 3. As you, in a temporary folder under `/var/tmp`: fetches the edition's source package with `apt-get source` (from the repository's own source index), adds a changelog entry `VERSION+fdkN` that says the build is for this computer only, and builds with `dpkg-buildpackage -B -Ppkg.ffmpeg-dmo.fdk`. The profile is off by default in the source package; it turns `--enable-libfdk-aac --enable-nonfree` and the build dependency `libfdk-aac-dev` on.
 4. Installs `ffmpeg` and the libraries as `VERSION+fdkN`. apt prefers them: after each build the helper writes `/etc/apt/preferences.d/sparky-stereo-ffmpeg-fdk`, a pin at 1002 (the repository's is 1001) for exactly that version of every package it installed, the 32-bit twins included, so an upgrade does not swap them for the build without the encoder. (apt takes a version pin only exact or as a prefix ending in `*`, and a package name alone covers only the native architecture: the file is therefore written for each build, with `name:arch` entries, and not shipped with a pattern.) The pin goes with `--remove` and with the removal of the package.
 5. The 32-bit libraries (Steam and Wine need them) are `Multi-Arch: same`: apt and dpkg want one version for both architectures and identical files under `/usr/share/doc`. The helper takes the edition's own 32-bit packages of the same version, changes only their version (and the strict dependencies between them) and copies the four shared documentation files from the 64-bit build. They keep the edition's code; they are not rebuilt with the encoder.
+   The source's Lean Code link check runs inside the build (lean/archive.md): the rebuilt programs must resolve their libraries like the edition's FFmpeg of the same version and start. It is given this computer's own apt sources, the ones that serve what the build depends on, with the keys apt trusts for them (`link-config`), and the edition's FFmpeg of the same version, downloaded from the repository, as the reference build. It needs `bubblewrap`, unprivileged user namespaces and 12 GB free on `/`; a check that cannot be prepared stops the helper before the build, with the reason.
 6. Checks that `ffmpeg -encoders` lists `libfdk_aac`, then takes the build dependencies out again (only what this run installed, and only if nothing else needs them).
 
 Updates:
 -------------
-`/etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk` runs `/usr/lib/sparky-stereo-ffmpeg-fdk/check-update` after every successful `apt update`. If the edition's repository has a newer FFmpeg than the one the local build was made from, the build runs again in the background (a transient systemd service at the lowest priority, or a detached process), with the consent given at the first run. Nothing happens on a computer that never built one; a rebuild that failed is not tried again by itself for the same version; a computer on battery waits for the mains. Until the rebuild is done the old local build stays (the pin names its exact version), so FFmpeg is never half upgraded.
+`/etc/apt/apt.conf.d/99sparky-stereo-ffmpeg-fdk` runs `/usr/lib/sparky-stereo-ffmpeg-fdk/check-update` after every successful `apt update`. If the edition's repository has a newer FFmpeg than the one the local build was made from, the build runs again in the background (a transient systemd service, or a detached process), at normal priority on every processor, as any build at update time, with the consent given at the first run. Nothing happens on a computer that never built one; a rebuild that failed is not tried again by itself for the same version; a computer on battery waits for the mains. Until the rebuild is done the old local build stays (the pin names its exact version), so FFmpeg is never half upgraded.
 
 Other commands:
 -------------
@@ -36,7 +37,7 @@ Other commands:
 
 Dependencies:
 -------------
-sparky-stereo-apt, apt, dpkg-dev, build-essential, fakeroot, util-linux, python3, sudo | pkexec (recommended: powermgmt-base). `libfdk-aac-dev` and `libfdk-aac2` come from the user's own apt sources (deb-multimedia, which the edition adds, or Debian non-free).
+sparky-stereo-apt (>= 20261104.2~sparky9~0, the one place of the edition's deb-src line), apt, dpkg-dev, build-essential, fakeroot, bubblewrap, util-linux, python3, sudo | pkexec (recommended: powermgmt-base). `libfdk-aac-dev` and `libfdk-aac2` come from the user's own apt sources (deb-multimedia, which the edition adds, or Debian non-free).
 
 Build:
 -------------
@@ -45,3 +46,23 @@ Build:
 Test:
 -------------
 tests/run-tests.sh   (in a debian:testing container with deb-multimedia and a test repository; tests/README.md says how)
+
+Failures from cleanup, the local build and the update check are kept by `sparky-stereo-problems`.
+`--status` reads that engine; a later successful step clears its problem.
+The helper keeps no separate error files.
+Build failures tell the person to use `--rebuild`; there may be no installed local build for `--auto` to retry.
+An upgrade moves the old failure files into the engine before deleting them.
+If migration fails, the upgrade fails visibly and the original evidence remains.
+
+When purging build tools would also remove other packages, the tools stay and the message names those packages.
+`sudo sparky-stereo-ffmpeg-fdk --cleanup` retries a recorded cleanup using a fresh APT simulation and the original package/baseline lists from the engine.
+The engine also offers this command as the problem's repair action.
+A migrated cleanup lacks that old baseline, so it requires manual review; it never guesses a removal plan.
+
+A failed repository query is an error, not an indication that no update exists.
+Dispatch through systemd checks the service launch status.
+Without systemd, a detached Python subprocess reports an execution failure before the checker returns.
+The engine keeps each failed check, with its message printed in apt update's output, until a later successful check.
+check-update then exits 80, and the APT hook lets apt update succeed: the package lists did update, and the failure is already said.
+Any other failure is one nothing could keep (the engine failed, or clearing a problem failed), and it fails apt update.
+A repository without a source record for ffmpeg-dmo is said as such, with the source line to check; an index that cannot be read, or an invalid record, is said apart.

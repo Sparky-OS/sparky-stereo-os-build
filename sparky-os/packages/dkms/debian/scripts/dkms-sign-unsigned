@@ -1,0 +1,350 @@
+#!/bin/bash
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/03
+# Copyright 2026 under the GNU GPL2 License
+# Last update 2026/11/03
+#
+# DKMS modules built without a signature while dkms could not sign them are built again, so DKMS signs them.
+# Before 3.4.4-1+sparky2 the edition's dkms named openssl in no field; without openssl, dkms said "openssl not found,
+# can't generate key and certificate." and installed the modules unsigned, and after openssl arrived they stayed so,
+# because "dkms install --force" copies the module already built. A Secure Boot machine refuses an unsigned module.
+# Upstream has no command that signs installed modules again: dkms-project/dkms #372 was closed as stale on
+# 2026-07-26, Debian #1035707 is open. Sparky Stereo OS, ORDER 370.
+# An image built in a chroot carries its DKMS modules unsigned too: dkms signs nothing and makes no key there
+# (try_sign_modules, dkms-project/dkms #574 and #575), so every machine installed from the image makes its own key. The
+# installed system signs them once, at its first boot (dkms-sign-unsigned.service, ORDER 374).
+#
+# dkms-sign-unsigned
+#     every installed module that has a file without a signature, on a kernel built with module signing, is built
+#     again through "sparky-stereo-problems run": a failure is said and kept with its repair, a success clears it;
+#     then the boot image of each kernel whose modules were signed is written again when it holds a copy of them
+# dkms-sign-unsigned first-boot
+#     the same, once, at the installed system's first boot: then it marks itself done (STAMP), whatever each module's
+#     outcome, since a failure is kept by the engine with its repair (dkms-sign-unsigned.service)
+# dkms-sign-unsigned check
+#     only lists those modules, one per line: MODULE VERSION KERNEL ARCH
+# dkms-sign-unsigned rebuild MODULE VERSION KERNEL ARCH
+#     dkms build --force, then dkms install --force (what signs a module built before, measured by ORDER 369); exits 1
+#     when a file of the module still has no signature; the repair of a kept problem
+# dkms-sign-unsigned boot-image KERNEL
+#     writes the boot image of KERNEL again (update-initramfs -u -k KERNEL) when it holds a copy of a DKMS module
+#     older than the module's installed file; the repair of a kept problem
+set -u
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+PROBLEMS=sparky-stereo-problems
+STORE=/var/lib/sparky-stereo-problems
+SELF=/usr/lib/dkms/dkms-sign-unsigned
+STAMP=/var/lib/dkms/dkms-sign-unsigned.first-boot
+BOOT=${SPARKY_DKMS_BOOT:-/boot}
+
+say() { "$PROBLEMS" say dkms "$@"; }
+
+# The values dkms takes from its framework configuration for kernel $1, as read_framework_conf in dkms reads them
+# (/etc/dkms/framework.conf, then /etc/dkms/framework.conf.d/*.conf; a path may name $kernelver), one per line:
+# dkms_tree, install_tree, try_sign_modules, mok_signing_key, mok_certificate
+framework() {
+	(
+		# shellcheck disable=SC2034
+		kernelver=$1
+		dkms_tree=/var/lib/dkms install_tree=/lib/modules try_sign_modules='' mok_signing_key='' mok_certificate=''
+		for f in /etc/dkms/framework.conf /etc/dkms/framework.conf.d/*.conf; do
+			# shellcheck disable=SC1090
+			[ -e "$f" ] && . "$f" >/dev/null 2>&1
+		done
+		printf '%s\n' "$dkms_tree" "$install_tree" "$try_sign_modules" "${mok_signing_key:-/var/lib/dkms/mok.key}" \
+			"${mok_certificate:-/var/lib/dkms/mok.pub}"
+	)
+}
+
+# dkms's own running_in_chroot (dkms 3.4.4, dkms.in), unchanged: a port of the Linux part of Debian's ischroot.
+# dkms signs nothing in a chroot unless try_sign_modules is "true".
+running_in_chroot() {
+	# shellcheck disable=SC2076
+	[[ "${FAKECHROOT-}" == 'true' && -v FAKECHROOT_BASE && "${LD_PRELOAD-}" =~ 'libfakechroot.so' ]] && return 0
+	if [[ -r /proc/1/mountinfo && -r /proc/self/mountinfo ]]; then
+		local init_mountinfo
+		local our_mountinfo
+		IFS= read -rd '' init_mountinfo < '/proc/1/mountinfo'
+		IFS= read -rd '' our_mountinfo < '/proc/self/mountinfo'
+		[[ "${init_mountinfo}" != "${our_mountinfo}" ]] && return 0
+	fi
+	if [[ "$(id -u)" = 0 ]]; then
+		local init_rootdir_info
+		local our_rootdir_info
+		init_rootdir_info="$(stat -L --format='%d %i' /proc/1/root)"
+		our_rootdir_info="$(stat -L --format='%d %i' /)"
+		[[ "${init_rootdir_info}" != "${our_rootdir_info}" ]] && return 0
+	fi
+	return 1
+}
+
+# The files among the arguments that have no signature, one modinfo per file on every CPU (xargs -P; never slow an
+# update). libkmod reports sig_id only when the file, decompressed, ends with the module signature trailer,
+# "~Module signature appended~\n" (include/linux/module_signature.h).
+without_signature() {
+	[ $# -gt 0 ] || return 0
+	# shellcheck disable=SC2016
+	printf '%s\0' "$@" | xargs -0 -n 1 -P "$(nproc)" /bin/sh -c '[ -n "$(modinfo -F sig_id "$1" 2>/dev/null)" ] || printf "%s\n" "$1"' sh
+}
+
+# The module files of DKMS's built copy $1, one per line
+module_files() {
+	local f
+	for f in "$1"/module/*.ko "$1"/module/*.ko.*; do
+		[ -e "$f" ] && printf '%s\n' "$f"
+	done
+}
+
+# The file kernel $1 loads for each module file of DKMS's built copy $2: the name resolved through that kernel's
+# modules.dep, as modprobe resolves it (modinfo -k), else the built copy. What is checked is what the kernel loads: an
+# image may carry installed copies signed with another key than DKMS's (pack.sh's SIGNED_MODULES, the edition's key)
+# while DKMS's built copies stay unsigned, and those modules load as they are.
+loaded_files() {
+	local f name inst
+	while IFS= read -r f; do
+		name=${f##*/}
+		name=${name%%.ko*}
+		inst=$(modinfo -k "$1" -n "$name" 2>/dev/null) || inst=
+		if [ -n "$inst" ] && [ -f "$inst" ]; then
+			printf '%s\n' "$inst"
+		else
+			printf '%s\n' "$f"
+		fi
+	done < <(module_files "$2")
+}
+
+unsigned_files() {
+	local -a files
+	mapfile -t files < <(loaded_files "$1" "$2")
+	without_signature "${files[@]}" | grep -c .
+}
+
+# Whether kernel $1 checks module signatures at all: dkms signs nothing for a kernel built without
+# CONFIG_MODULE_SIG_HASH ("The kernel is built without module signing facility"). The configuration dkms reads (the
+# headers' include/config/auto.conf, else .config), else the kernel's own /boot/config-$1; without any, yes, and the
+# build says what it finds.
+kernel_signs() {
+	local k=$1 install_tree=$2 c
+	for c in "$install_tree/$k/build/include/config/auto.conf" "$install_tree/$k/build/.config" "$BOOT/config-$k"; do
+		[ -f "$c" ] || continue
+		grep -q '^CONFIG_MODULE_SIG_HASH=' "$c"
+		return
+	done
+	return 0
+}
+
+# The installed DKMS modules, one per line: MODULE VERSION KERNEL ARCH DIR. Installed means DKMS's kernel-KERNEL-ARCH
+# link points at the build (dkms's _is_module_installed).
+installed() {
+	local conf dkms_tree link d rel m v k a
+	mapfile -t conf < <(framework "")
+	dkms_tree=$(readlink -f "${conf[0]}") || return 0
+	for link in "$dkms_tree"/*/kernel-*; do
+		[ -L "$link" ] || continue
+		d=$(readlink -f "$link") || continue
+		[ -d "$d/module" ] || continue
+		rel=${d#"$dkms_tree"/}
+		IFS=/ read -r m v k a <<<"$rel"
+		[ "$link" = "$dkms_tree/$m/kernel-$k-$a" ] || continue
+		echo "$m $v $k $a $d"
+	done
+}
+
+# MODULE VERSION KERNEL ARCH of every installed module with a file the kernel loads that has no signature, on a kernel
+# that checks module signatures.
+check() {
+	local line m v k a d f conf install_tree
+	local -a rows=() files=()
+	local -A owner=() unsigned=()
+	mapfile -t rows < <(installed)
+	for line in "${rows[@]}"; do
+		read -r m v k a d <<<"$line"
+		while IFS= read -r f; do
+			files+=("$f")
+			owner[$f]=$d
+		done < <(loaded_files "$k" "$d")
+	done
+	while IFS= read -r f; do
+		unsigned[${owner[$f]}]=1
+	done < <(without_signature "${files[@]}")
+	for line in "${rows[@]}"; do
+		read -r m v k a d <<<"$line"
+		[ -n "${unsigned[$d]:-}" ] || continue
+		mapfile -t conf < <(framework "$k")
+		install_tree=${conf[1]}
+		kernel_signs "$k" "$install_tree" || continue
+		echo "$m $v $k $a"
+	done
+}
+
+json_string() {
+	local s=${1//\\/\\\\}
+	printf '"%s"' "${s//\"/\\\"}"
+}
+
+rebuild() {
+	local m=$1 v=$2 k=$3 a=$4 conf dkms_tree d n rc keep
+	mapfile -t conf < <(framework "$k")
+	dkms_tree=$(readlink -f "${conf[0]}") || return 1
+	d=$dkms_tree/$m/$v/$k/$a
+	if [ ! -L "$dkms_tree/$m/kernel-$k-$a" ] || [ "$(readlink -f "$dkms_tree/$m/kernel-$k-$a")" != "$d" ] ||
+		[ ! -d "$d/module" ]; then
+		say LOCAL7 "$m/$v" "$k"
+		return 0
+	fi
+	if [ "$(unsigned_files "$k" "$d")" = 0 ]; then
+		say LOCAL8 "$m/$v" "$k"
+		return 0
+	fi
+	# dkms build --force removes DKMS's built copy first (do_unbuild); if the build fails, that copy is put back, so
+	# the module stays installed and dkms status unchanged while the problem is kept
+	keep=$(mktemp -d) || return 1
+	cp -a "$d" "$keep/build" || { rm -rf "$keep"; return 1; }
+	# also when the build is stopped (a shutdown during the first boot's signing): the next run finds the module
+	# installed as it was and signs it then
+	# shellcheck disable=SC2064
+	trap "rm -rf '$d'; mkdir -p '${d%/*}'; cp -a '$keep/build' '$d'; rm -rf '$keep'; exit 143" TERM INT HUP
+	dkms build --force -m "$m" -v "$v" -k "$k" -a "$a"
+	rc=$?
+	trap - TERM INT HUP
+	if [ "$rc" != 0 ]; then
+		rm -rf "$d"
+		mkdir -p "${d%/*}"
+		cp -a "$keep/build" "$d"
+		rm -rf "$keep"
+		return "$rc"
+	fi
+	rm -rf "$keep"
+	dkms install --force -m "$m" -v "$v" -k "$k" -a "$a" || return
+	n=$(unsigned_files "$k" "$d")
+	if [ "$n" != 0 ]; then
+		say LOCAL9 "$m/$v" "$k" "$n" "$(module_files "$d" | grep -c .)"
+		return 1
+	fi
+	return 0
+}
+
+# The files kernel $1 loads for every installed DKMS module of that kernel, one per line
+kernel_files() {
+	local line m v k a d
+	while IFS= read -r line; do
+		read -r m v k a d <<<"$line"
+		[ "$k" = "$1" ] && loaded_files "$k" "$d"
+	done < <(installed)
+}
+
+# Whether kernel $1's boot image holds an older copy of one of the files $2...: initramfs-tools' hooks copy modules into
+# it (sparky-stereo-boot's NVIDIA hook, zfs-initramfs, /etc/initramfs-tools/modules), and dkms writes no boot image
+# (dkms 3.4.4 never runs update-initramfs), so a copy made before the module was signed stays unsigned there, and
+# Secure Boot refuses it while the machine starts. The image is listed (lsinitramfs) only when one of the files is
+# newer than it.
+boot_image_stale() {
+	local img=$BOOT/initrd.img-$1 f newer='' names=''
+	shift
+	[ -f "$img" ] || return 1
+	for f in "$@"; do
+		[ "$f" -nt "$img" ] && newer=1
+	done
+	[ -n "$newer" ] || return 1
+	command -v lsinitramfs >/dev/null 2>&1 || return 1
+	for f in "$@"; do
+		f=${f##*/}
+		names="$names|${f%%.ko*}"
+	done
+	lsinitramfs "$img" 2>/dev/null | grep -q -E "/(${names#|})\.ko(\.[a-z0-9]+)?\$"
+}
+
+boot_image() {
+	local k=$1
+	local -a files
+	mapfile -t files < <(kernel_files "$k")
+	if ! boot_image_stale "$k" "${files[@]}"; then
+		say LOCAL12 "$k"
+		return 0
+	fi
+	update-initramfs -u -k "$k"
+}
+
+# Every module check lists is built again; a module DKMS cannot sign (no key, and no openssl to make one), or any
+# module while dkms's own policy signs nothing (try_sign_modules=false, or a chroot), is said and left as it is. Then
+# the boot image of every kernel whose modules were signed is written again when it holds an older copy of them.
+sign_unsigned() {
+	local todo line m v k a conf policy key cert failed=0 off=0 chroot=0 key_record
+	local -A current=() signed=()
+	local -a files
+	mapfile -t todo < <(check)
+	for line in "${todo[@]}"; do
+		read -r m v k a <<<"$line"
+		mapfile -t conf < <(framework "$k")
+		policy=${conf[2]} key=${conf[3]} cert=${conf[4]}
+		if [ "$policy" = false ]; then
+			off=$((off + 1))
+			continue
+		fi
+		if [ "$policy" != true ] && running_in_chroot; then
+			chroot=$((chroot + 1))
+			continue
+		fi
+		key_record="unsigned:$m/$v/$k/$a"
+		current[$key_record]=1
+		if [[ $key != pkcs11:* ]] && { [ ! -f "$key" ] || [ ! -f "$cert" ]; } && ! command -v openssl >/dev/null; then
+			"$PROBLEMS" keep --machine --repair "[$(json_string "$SELF"),\"rebuild\",$(json_string "$m"),$(json_string "$v"),$(json_string "$k"),$(json_string "$a")]" \
+				dkms "$key_record" LOCAL4 "$m/$v" "$k" "$key" || :
+			failed=$((failed + 1))
+			continue
+		fi
+		say LOCAL3 "$m/$v" "$k"
+		if "$PROBLEMS" run --machine dkms "$key_record" LOCAL2 "$m/$v" "$k" -- "$SELF" rebuild "$m" "$v" "$k" "$a"; then
+			signed[$k]=1
+		else
+			failed=$((failed + 1))
+		fi
+	done
+	for k in "${!signed[@]}"; do
+		mapfile -t files < <(kernel_files "$k")
+		boot_image_stale "$k" "${files[@]}" || continue
+		current["boot-image:$k"]=1
+		say LOCAL10 "$k"
+		"$PROBLEMS" run --machine dkms "boot-image:$k" LOCAL11 "$k" -- "$SELF" boot-image "$k" || failed=$((failed + 1))
+	done
+	[ "$off" = 0 ] || say LOCAL5 "$off"
+	[ "$chroot" = 0 ] || say LOCAL6 "$chroot"
+	# a problem kept before for a module that now has its signature, or is no longer installed, or for a boot image
+	# that now holds the signed copies, is over
+	if [ "$off" = 0 ] && [ "$chroot" = 0 ] && compgen -G "$STORE/dkms_*.json" >/dev/null; then
+		while read -r key_record; do
+			[ -n "${current[$key_record]:-}" ] && continue
+			if [[ $key_record == boot-image:* ]]; then
+				mapfile -t files < <(kernel_files "${key_record#boot-image:}")
+				boot_image_stale "${key_record#boot-image:}" "${files[@]}" && continue
+			fi
+			"$PROBLEMS" clear --machine dkms "$key_record" || :
+		done < <("$PROBLEMS" list --json dkms 2>/dev/null | grep -o '"key":"\(unsigned\|boot-image\):[^"]*"' |
+			sed 's/^"key":"//; s/"$//')
+	fi
+	[ "$failed" = 0 ]
+}
+
+# The installed system's first boot (dkms-sign-unsigned.service): an image built in a chroot carries its DKMS modules
+# unsigned, and no key; this machine makes its own and signs them, once. The step is done whatever each module's
+# outcome: a module that could not be signed is kept by the engine with its repair, and building it again at every boot
+# would only slow every boot.
+first_boot() {
+	sign_unsigned
+	: >"$STAMP"
+}
+
+case ${1:-} in
+"") sign_unsigned ;;
+first-boot) first_boot ;;
+check) check ;;
+rebuild)
+	[ $# = 5 ] || { echo "usage: $SELF rebuild MODULE VERSION KERNEL ARCH" >&2; exit 2; }
+	rebuild "$2" "$3" "$4" "$5"
+	;;
+boot-image)
+	[ $# = 2 ] || { echo "usage: $SELF boot-image KERNEL" >&2; exit 2; }
+	boot_image "$2"
+	;;
+*) echo "usage: $SELF [first-boot | check | rebuild MODULE VERSION KERNEL ARCH | boot-image KERNEL]" >&2; exit 2 ;;
+esac

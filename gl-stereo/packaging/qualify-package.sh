@@ -38,10 +38,16 @@ PY
 
 # The full milestone manifest is produced by installed-file audits. The
 # bootstrap build keeps the accepted five until that manifest exists.
+substvars=$stage/gl-stereo-savers.substvars
 if [ -f "$repo/savers/qualification-6.09.json" ]; then
     python3 "$repo/savers/install-qualified.py" "$repo/savers/qualification-6.09.json" \
         "$stage/gl-stereo-savers/usr/share/gl-stereo/catalogue.json" \
         "$stage/gl-stereo/usr/lib/gl-stereo/libgl-stereo.so"
+    # the pin: the exact packages that own the files the receipts just proved equal (ORDER 146e)
+    python3 "$repo/savers/pin.py" "$stage/gl-stereo-savers/usr/share/gl-stereo/catalogue.json" "$substvars"
+else
+    # bootstrap build (no manifest yet): its layer is qualified, and it is never shipped
+    echo 'receipts:Pin=xscreensaver-gl, xscreensaver-gl-extra, xscreensaver-data-extra' >> "$substvars"
 fi
 python3 "$repo/savers/make-index.py" "$stage/gl-stereo-savers/usr/share/gl-stereo/savers.json" \
     "$stage/gl-stereo-savers/usr/share/gl-stereo/catalogue.json"

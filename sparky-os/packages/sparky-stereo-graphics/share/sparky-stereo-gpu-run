@@ -1,25 +1,78 @@
 #!/bin/sh
 # Created by Daniel Ramos (Capitain Jack) 2026/10/23
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/24
+# Last update 2026/11/02
 # Starts a program on the GPU the Graphics page picked for it:
-#   sparky-stereo-gpu-run [--category players|games|browsers|other | --app ID.desktop] [--3d] COMMAND [ARGUMENT...]
+#   sparky-stereo-gpu-run [--category players|games|browsers|other | --app ID.desktop | --choice GPU] [--3d] COMMAND [ARGUMENT...]
 # --3d: the program presents 3D, so Automatic is the GPU measured best on this computer, on battery too.
+# --choice: this start only, on a GPU the person names (pci-0000:03:00.0, integrated, discrete, auto, profile).
 # Steam: set the launch options of a game to  sparky-stereo-gpu-run --category games %command%
 # (for a game played in 3D:  sparky-stereo-gpu-run --category games --3d %command%)
-# It never stops a program from starting: when the choice cannot be read, the program starts unchanged.
+# Nothing fails silently (Daniel, 2026-11-01): when the chosen GPU cannot be used, the program is not started on another
+# GPU; sparky-stereo-gpu-env says what failed, why and what to do, keeps it for the notification at login, and with a
+# display asks on which of the GPUs that can draw the program starts this time. Without an answer the program does not
+# start (exit status 4). A missing or failing sparky-stereo-gpu-env is said, and the program does not start either.
 # A GPU already chosen in the environment (DRI_PRIME, MESA_VK_DEVICE_SELECT, VK_LOADER_DRIVERS_SELECT,
-# __NV_PRIME_RENDER_OFFLOAD) is kept and the page is not asked.
+# __NV_PRIME_RENDER_OFFLOAD) is the caller's explicit choice: it is kept and the page is not asked.
 set -u
+
+# Said in the system's language when the page's own command cannot answer: the whole LANG, then the bare language,
+# then English; Chinese keeps its territory
+say() { # say KEY [STATUS]
+	lang=${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}
+	lang=${lang%%.*}
+	lang=${lang%%@*}
+	case $lang in
+	zh_TW | zh_HK) lang=zh_TW ;;
+	zh*) lang=zh_CN ;;
+	pt_BR) ;;
+	*) lang=${lang%%_*} ;;
+	esac
+	case $lang:$1 in
+	pl:missing) m='Brakuje sparky-stereo-gpu-env, więc nie można zastosować procesora graficznego wybranego w Ustawieniach systemowych, Grafika. Zainstaluj go ponownie: sudo apt-get install --reinstall sparky-stereo-graphics' ;;
+	pl:failed) m='sparky-stereo-gpu-env zakończył się błędem (kod wyjścia %s), więc nie można zastosować procesora graficznego wybranego w Ustawieniach systemowych, Grafika.' ;;
+	pl:stopped) m='Program nie został uruchomiony.' ;;
+	pt_BR:missing) m='O sparky-stereo-gpu-env não está instalado, então a GPU escolhida em Configurações do Sistema, Gráficos não pode ser aplicada. Reinstale-o: sudo apt-get install --reinstall sparky-stereo-graphics' ;;
+	pt_BR:failed) m='O sparky-stereo-gpu-env falhou (código de saída %s), então a GPU escolhida em Configurações do Sistema, Gráficos não pode ser aplicada.' ;;
+	pt_BR:stopped) m='O programa não foi iniciado.' ;;
+	fr:missing) m="sparky-stereo-gpu-env est absent : le GPU choisi dans Configuration du système, Graphiques ne peut pas être appliqué. Réinstallez-le : sudo apt-get install --reinstall sparky-stereo-graphics" ;;
+	fr:failed) m="sparky-stereo-gpu-env a échoué (code de sortie %s) : le GPU choisi dans Configuration du système, Graphiques ne peut pas être appliqué." ;;
+	fr:stopped) m="Le programme n'a pas été lancé." ;;
+	de:missing) m='sparky-stereo-gpu-env fehlt, daher kann die in den Systemeinstellungen unter Grafik gewählte GPU nicht angewendet werden. Installieren Sie es neu: sudo apt-get install --reinstall sparky-stereo-graphics' ;;
+	es:missing) m='Falta sparky-stereo-gpu-env, así que no se puede aplicar la GPU elegida en Configuración del sistema, Gráficos. Reinstálelo: sudo apt-get install --reinstall sparky-stereo-graphics' ;;
+	de:failed) m='sparky-stereo-gpu-env ist fehlgeschlagen (Exit-Status %s), daher kann die in den Systemeinstellungen unter Grafik gewählte GPU nicht angewendet werden.' ;;
+	es:failed) m='sparky-stereo-gpu-env falló (estado de salida %s), así que no se puede aplicar la GPU elegida en Configuración del sistema, Gráficos.' ;;
+	de:stopped) m='Das Programm wurde nicht gestartet.' ;;
+	es:stopped) m='El programa no se ha iniciado.' ;;
+	ja:missing) m='sparky-stereo-gpu-env が見つからないため、システム設定の「グラフィックス」で選んだ GPU を適用できません。再インストールしてください: sudo apt-get install --reinstall sparky-stereo-graphics' ;;
+	ja:failed) m='sparky-stereo-gpu-env が失敗したため (終了ステータス %s)、システム設定の「グラフィックス」で選んだ GPU を適用できません。' ;;
+	ja:stopped) m='プログラムは起動されませんでした。' ;;
+	ko:missing) m='sparky-stereo-gpu-env가 없어서 시스템 설정의 그래픽에서 선택한 GPU를 적용할 수 없습니다. 다시 설치하십시오: sudo apt-get install --reinstall sparky-stereo-graphics' ;;
+	ko:failed) m='sparky-stereo-gpu-env가 실패해서(종료 상태 %s) 시스템 설정의 그래픽에서 선택한 GPU를 적용할 수 없습니다.' ;;
+	ko:stopped) m='프로그램을 시작하지 않았습니다.' ;;
+	zh_CN:missing) m='缺少 sparky-stereo-gpu-env，因此无法应用在“系统设置 > 图形”中选择的 GPU。请重新安装：sudo apt-get install --reinstall sparky-stereo-graphics' ;;
+	zh_CN:failed) m='sparky-stereo-gpu-env 运行失败（退出状态 %s），因此无法应用在“系统设置 > 图形”中选择的 GPU。' ;;
+	zh_CN:stopped) m='程序未启动。' ;;
+	zh_TW:missing) m='缺少 sparky-stereo-gpu-env，因此無法套用在「系統設定 > 圖形」中選擇的 GPU。請重新安裝：sudo apt-get install --reinstall sparky-stereo-graphics' ;;
+	zh_TW:failed) m='sparky-stereo-gpu-env 執行失敗（結束狀態 %s），因此無法套用在「系統設定 > 圖形」中選擇的 GPU。' ;;
+	zh_TW:stopped) m='程式未啟動。' ;;
+	*:missing) m='sparky-stereo-gpu-env is missing, so the GPU chosen in System Settings, Graphics cannot be applied. Reinstall it: sudo apt-get install --reinstall sparky-stereo-graphics' ;;
+	*:failed) m='sparky-stereo-gpu-env failed (exit status %s), so the GPU chosen in System Settings, Graphics cannot be applied.' ;;
+	*) m='The program was not started.' ;;
+	esac
+	# shellcheck disable=SC2059
+	printf "sparky-stereo-gpu-run: $m\n" "${2:-}" >&2
+}
+
 if [ "$#" -eq 0 ]; then
-	echo "Usage: sparky-stereo-gpu-run [--category CATEGORY | --app ID.desktop] [--3d] COMMAND [ARGUMENT...]" >&2
+	echo "Usage: sparky-stereo-gpu-run [--category CATEGORY | --app ID.desktop | --choice GPU] [--3d] COMMAND [ARGUMENT...]" >&2
 	exit 2
 fi
 choice=
 stereo=
 while [ "$#" -gt 0 ]; do
 	case $1 in
-	--category | --app)
+	--category | --app | --choice)
 		[ "$#" -ge 2 ] || { echo "sparky-stereo-gpu-run: $1 needs a value" >&2; exit 2; }
 		choice="$1 $2"
 		shift 2
@@ -41,10 +94,29 @@ chosen=
 for v in DRI_PRIME MESA_VK_DEVICE_SELECT VK_LOADER_DRIVERS_SELECT __NV_PRIME_RENDER_OFFLOAD; do
 	eval "[ -z \"\${$v+set}\" ]" || chosen=$v
 done
-if [ -z "$chosen" ] && command -v sparky-stereo-gpu-env >/dev/null 2>&1; then
-	# shellcheck disable=SC2086
-	if gpu_env=$(sparky-stereo-gpu-env --shell $choice $stereo 2>/dev/null); then
-		eval "$gpu_env"
+if [ -z "$chosen" ]; then
+	if ! command -v sparky-stereo-gpu-env >/dev/null 2>&1; then
+		say missing
+		say stopped
+		exit 127
 	fi
+	# its message goes to this program's stderr; --ask puts the question on the screen when there is one
+	# shellcheck disable=SC2086
+	gpu_env=$(sparky-stereo-gpu-env --shell --ask $choice $stereo)
+	status=$?
+	case $status in
+	0) eval "$gpu_env" ;;
+	# 5: Automatic cannot place it now (browsers while the power profile cannot be read), said as for 4; this wrapper
+	# was asked to start it on its GPU, so it asks or does not start it, as for 4
+	4 | 5)
+		say stopped
+		exit 4
+		;;
+	*)
+		say failed "$status"
+		say stopped
+		exit "$status"
+		;;
+	esac
 fi
 exec "$@"
