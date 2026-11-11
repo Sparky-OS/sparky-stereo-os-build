@@ -53,7 +53,8 @@ if not case.startswith('retry-'):
     candidate = subprocess.check_output(['apt-cache', 'policy', 'ttf-mscorefonts-installer'], text=True)
     assert 'Candidate: 3.8.1+stereo3d1' in candidate, candidate
 if case.startswith('retry-'):
-    command = ['dpkg-reconfigure', '--force', 'ttf-mscorefonts-installer']
+    command = (['dpkg', '--configure', 'ttf-mscorefonts-installer'] if case == 'retry-download' else
+               ['dpkg-reconfigure', 'ttf-mscorefonts-installer'])
 else:
     announce = 'metered' if case in ('metered', 'unmetered') else 'always'
     command = ['apt-get', '--no-install-recommends', '-o', 'Dpkg::Use-Pty=0', '-o', 'Sparky::Install-Downloads::Announce=' + announce,
@@ -104,7 +105,7 @@ if case in ('refuse', 'noninteractive', 'metered', 'unmetered', 'failed-download
     assert 'dpkg-reconfigure ttf-mscorefonts-installer' in text, 'missing retry command'
     if case == 'failed-download':
         assert status != 0, 'failed download must fail the transaction'
-        assert 'dpkg-reconfigure --force ttf-mscorefonts-installer' in text
+        assert 'dpkg --configure ttf-mscorefonts-installer' in text
     else:
         assert status == 0, 'deliberate refusal must allow the OS installation to continue'
 else:
@@ -112,5 +113,8 @@ else:
     assert (fonts / 'Arial.ttf').is_file()
     result = subprocess.check_output(['fc-match', '-f', '%{family}\n', 'Arial'], text=True).strip()
     assert result == 'Arial', result
+    package_state = subprocess.check_output(['dpkg-query', '-W', '-f', '${db:Status-Status}',
+                                             'ttf-mscorefonts-installer'], text=True).strip()
+    assert package_state == 'installed', 'retry left dpkg state: ' + package_state
     print(f'font files={len(list(fonts.glob("*.ttf")))}, fc-match Arial={result}')
 print('PASS', case)

@@ -14,7 +14,7 @@ case $mode in
     konsole --separate --nofork -e "$0" --terminal "$root" "$result/status" || :
     [[ -f $result/status ]] || fail corefonts 'the installation terminal was closed before completion'
     status=$(cat "$result/status")
-    [[ $status = 0 ]] || fail corefonts "apt exit: $status; dpkg-reconfigure --force ttf-mscorefonts-installer"
+    [[ $status = 0 ]] || fail corefonts "apt exit: $status; dpkg --configure ttf-mscorefonts-installer"
     ;;
 --terminal)
     [[ -t 0 && -t 1 ]] || fail corefonts 'an interactive terminal is required'
