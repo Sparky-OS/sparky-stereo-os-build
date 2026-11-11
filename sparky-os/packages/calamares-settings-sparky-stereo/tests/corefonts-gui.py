@@ -55,7 +55,7 @@ with logfile.open('w') as log:
                     subprocess.run(['python3', os.environ['KWIN_SCRIPT'], '/dev/null',
                                     'workspace.activeWindow.closeWindow();'], check=True)
                 elif choice in ('accept', 'failed-download'):
-                    keys(15, 28)  # Decline has focus; Tab selects Accept.
+                    keys(15, 57)  # Decline has focus; Tab then Space activates Accept.
                 else:
                     keys(28)      # Explicitly submit the false default.
                 answered = True
