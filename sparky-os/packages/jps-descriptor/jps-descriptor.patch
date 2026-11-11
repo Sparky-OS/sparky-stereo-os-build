@@ -13,10 +13,10 @@ index c59f926..4889b26 100644
 +set_tests_properties(kimageformats-jps-writer PROPERTIES ENVIRONMENT "QT_PLUGIN_PATH=${CMAKE_BINARY_DIR}/bin")
 diff --git a/autotests/jpswritertest.cpp b/autotests/jpswritertest.cpp
 new file mode 100644
-index 0000000..01cd18f
+index 0000000..a0f86f6
 --- /dev/null
 +++ b/autotests/jpswritertest.cpp
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,197 @@
 +// SPDX-License-Identifier: LGPL-2.1-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 +#include <QBuffer>
@@ -105,6 +105,28 @@ index 0000000..01cd18f
 +                }
 +            }
 +        }
++    }
++    void legacyAlpha()
++    {
++        QImage source(128, 64, QImage::Format_ARGB32);
++        for (int y = 0; y < source.height(); ++y)
++            for (int x = 0; x < source.width(); ++x)
++                source.setPixelColor(x, y, x < 64 ? QColor(255, 0, 0, 128) : QColor(0, 0, 255, 128));
++        QByteArray data;
++        QBuffer output(&data);
++        QVERIFY(output.open(QIODevice::WriteOnly));
++        QImageWriter writer(&output, "jps");
++        writer.setQuality(100);
++        QVERIFY(writer.write(source));
++        QBuffer input(&data);
++        QVERIFY(input.open(QIODevice::ReadOnly));
++        QImageReader reader(&input, "jps");
++        const auto decoded = reader.read();
++        QVERIFY(!decoded.isNull());
++        QVERIFY(decoded.pixelColor(16, 16).blue() > 240);
++        QVERIFY(decoded.pixelColor(16, 16).red() < 12);
++        QVERIFY(decoded.pixelColor(80, 16).red() > 240);
++        QVERIFY(decoded.pixelColor(80, 16).blue() < 12);
 +    }
 +    void commentLimit()
 +    {
@@ -343,14 +365,13 @@ index 0000000..51a8ab1
 +<!DOCTYPE TS>
 +<TS version="2.1" language="zh_TW"><context><name>JpsWriter</name><message><source>Cannot save JPS: the layout or descriptor fields are unsupported or invalid.</source><translation>無法儲存 JPS：配置或描述符欄位不受支援或無效。</translation></message></context></TS>
 diff --git a/src/imageformats/stereo.cpp b/src/imageformats/stereo.cpp
-index c5526a9..084d88c 100644
+index c5526a9..ca434f9 100644
 --- a/src/imageformats/stereo.cpp
 +++ b/src/imageformats/stereo.cpp
-@@ -8,6 +8,11 @@
+@@ -8,6 +8,10 @@
  #include "depthmark_p.h"
  
  #include <QBuffer>
-+#include <QCoreApplication>
 +#include <QDebug>
 +#include <QPainter>
 +#include <QTranslator>
@@ -358,7 +379,7 @@ index c5526a9..084d88c 100644
  #include <QImage>
  #include <QImageIOPlugin>
  #include <QImageReader>
-@@ -164,6 +169,85 @@ QString jpsStereoLayout(const QByteArray &data)
+@@ -164,6 +168,85 @@ QString jpsStereoLayout(const QByteArray &data)
      return layout + ((descriptor & 0x40000) ? QStringLiteral("LeftFirst") : QStringLiteral("RightFirst"));
  }
  
@@ -444,7 +465,7 @@ index c5526a9..084d88c 100644
  struct MpfData {
      qsizetype tiffOffset = -1;
      QList<MpfEntry> entries;
-@@ -259,10 +343,7 @@ QByteArray encodeJpeg(const QImage &image, int quality)
+@@ -259,10 +342,7 @@ QByteArray encodeJpeg(const QImage &image, int quality)
      return data;
  }
  
@@ -456,7 +477,7 @@ index c5526a9..084d88c 100644
  
  QByteArray makeMpfSegment(const QList<MpfEntry> &entries)
  {
-@@ -834,6 +915,8 @@ public:
+@@ -834,6 +914,8 @@ public:
          if (!m_stereo3DLayout.isEmpty()) {
              image->setText(QString::fromLatin1(stereo3DLayoutKey), m_stereo3DLayout);
          }
@@ -465,7 +486,7 @@ index c5526a9..084d88c 100644
          if (!m_depthMark.isEmpty()) {
              image->setText(DepthMark::depthKey, m_depthMark);
          }
-@@ -847,19 +930,25 @@ public:
+@@ -847,19 +929,26 @@ public:
          if (isFormat(format(), mpoFormat)) {
              data = makeMpo(image, quality);
          } else {
@@ -473,9 +494,9 @@ index c5526a9..084d88c 100644
 +            const QByteArray descriptor = jpsDescriptor(image);
 +            if (descriptor.isEmpty()) {
 +                QTranslator translator;
-+                translator.load(QLocale(), QStringLiteral("jps"), QStringLiteral("_"), QStringLiteral(":/kimageformats/jps"));
++                const bool catalogLoaded = translator.load(QLocale(), QStringLiteral("jps"), QStringLiteral("_"), QStringLiteral(":/kimageformats/jps"));
 +                const char *message = "Cannot save JPS: the layout or descriptor fields are unsupported or invalid.";
-+                const QString translated = translator.translate("JpsWriter", message);
++                const QString translated = catalogLoaded ? translator.translate("JpsWriter", message) : QString();
 +                qWarning().noquote() << (translated.isEmpty() ? QString::fromLatin1(message) : translated);
                  return false;
              }
@@ -486,14 +507,15 @@ index c5526a9..084d88c 100644
 -                    jps.setPixelColor(x, y, image.pixelColor(width + x, y));
 -                    jps.setPixelColor(width + x, y, image.pixelColor(x, y));
 -                }
-+            QImage jps = image;
++            const QImage rgb = image.convertToFormat(QImage::Format_RGB888);
++            QImage jps = rgb;
 +            if (image.text(QString::fromLatin1(stereo3DLayoutKey)).isEmpty()) {
 +                // Preserve the writer's unmarked-input convention: canonical left-first in, right-first on disk.
 +                const int separation = image.text(jpsFieldKeys[2]).toInt();
 +                const int width = (image.width() - separation) / 2;
 +                QPainter painter(&jps);
-+                painter.drawImage(0, 0, image.copy(width + separation, 0, width, image.height()));
-+                painter.drawImage(width + separation, 0, image.copy(0, 0, width, image.height()));
++                painter.drawImage(0, 0, rgb.copy(width + separation, 0, width, image.height()));
++                painter.drawImage(width + separation, 0, rgb.copy(0, 0, width, image.height()));
              }
 -            data = encodeJpeg(jps, quality);
 -            data = addJpegSegment(data, 0xfe, jpsComment());
