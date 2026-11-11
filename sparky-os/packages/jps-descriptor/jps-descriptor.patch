@@ -13,10 +13,10 @@ index c59f926..4889b26 100644
 +set_tests_properties(kimageformats-jps-writer PROPERTIES ENVIRONMENT "QT_PLUGIN_PATH=${CMAKE_BINARY_DIR}/bin")
 diff --git a/autotests/jpswritertest.cpp b/autotests/jpswritertest.cpp
 new file mode 100644
-index 0000000..dcdd383
+index 0000000..01cd18f
 --- /dev/null
 +++ b/autotests/jpswritertest.cpp
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,175 @@
 +// SPDX-License-Identifier: LGPL-2.1-or-later
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 +#include <QBuffer>
@@ -35,6 +35,7 @@ index 0000000..dcdd383
 +        QTest::addColumn<QString>("mark");
 +        QTest::addColumn<int>("descriptor");
 +        QTest::newRow("legacy") << QString() << 0x201;
++        QTest::newRow("legacy-red-cyan") << QStringLiteral("anaglyphCyanRed") << 0x40401;
 +        QTest::newRow("mono") << QStringLiteral("mono") << 0;
 +        for (int layout = 1; layout <= 4; ++layout) {
 +            for (int left = 0; left <= 1; ++left) {
@@ -95,7 +96,7 @@ index 0000000..dcdd383
 +                    const QImage decoded = reader.read();
 +                    QVERIFY(!decoded.isNull());
 +                    QCOMPARE(decoded.size(), source.size());
-+                    QCOMPARE(decoded.text(QStringLiteral("Stereo3DLayout")), mark.isEmpty() ? QStringLiteral("sideBySideRightFirst") : mark);
++                    QCOMPARE(decoded.text(QStringLiteral("Stereo3DLayout")), mark.isEmpty() ? QStringLiteral("sideBySideRightFirst") : mark == QLatin1String("anaglyphCyanRed") ? QStringLiteral("anaglyphRedLeft") : mark);
 +                    QCOMPARE(decoded.text(QStringLiteral("Stereo3DJpsHalfHeight")), QString::number(flags & 1));
 +                    QCOMPARE(decoded.text(QStringLiteral("Stereo3DJpsHalfWidth")), QString::number(flags >> 1));
 +                    QCOMPARE(decoded.text(QStringLiteral("Stereo3DJpsSeparation")), QString::number(separation));
@@ -104,6 +105,24 @@ index 0000000..dcdd383
 +                }
 +            }
 +        }
++    }
++    void commentLimit()
++    {
++        QImage source(128, 64, QImage::Format_RGB32);
++        source.fill(Qt::red);
++        const QString comment(65517, QLatin1Char('a'));
++        source.setText(QStringLiteral("Stereo3DJpsComment"), comment);
++        QByteArray data;
++        QBuffer output(&data);
++        QVERIFY(output.open(QIODevice::WriteOnly));
++        QImageWriter writer(&output, "jps");
++        QVERIFY(writer.write(source));
++        QBuffer input(&data);
++        QVERIFY(input.open(QIODevice::ReadOnly));
++        QImageReader reader(&input, "jps");
++        const QImage decoded = reader.read();
++        QVERIFY(!decoded.isNull());
++        QVERIFY(decoded.text(QStringLiteral("Stereo3DJpsComment")) == comment);
 +    }
 +    void refusalTranslations_data()
 +    {
@@ -145,7 +164,7 @@ index 0000000..dcdd383
 +        QTest::addColumn<QString>("value");
 +        for (const QString &mark : {QStringLiteral("columnInterleavedLeftFirst"), QStringLiteral("checkerboardLeftFirst"),
 +                 QStringLiteral("sideBySideQuincunxLeftFirst"), QStringLiteral("depthSideBySidePictureFirst"), QStringLiteral("depthSeparate"),
-+                 QStringLiteral("multiViewLeftFirst"), QStringLiteral("anaglyphGreenLeft"), QStringLiteral("anaglyphAmberLeft"), QStringLiteral("unknown")})
++                 QStringLiteral("multiViewLeftFirst"), QStringLiteral("anaglyphGreenMagenta"), QStringLiteral("anaglyphYellowBlue"), QStringLiteral("unknown")})
 +            QTest::addRow("%s", qPrintable(mark)) << QStringLiteral("Stereo3DLayout") << mark;
 +        QTest::newRow("bad-half-width") << QStringLiteral("Stereo3DJpsHalfWidth") << QStringLiteral("2");
 +        QTest::newRow("bad-half-height") << QStringLiteral("Stereo3DJpsHalfHeight") << QStringLiteral("-1");
@@ -175,10 +194,10 @@ index 0000000..dcdd383
 +#include "jpswritertest.moc"
 diff --git a/docs/jps.md b/docs/jps.md
 new file mode 100644
-index 0000000..5ef89c7
+index 0000000..f8b0642
 --- /dev/null
 +++ b/docs/jps.md
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,37 @@
 +# JPS reader and writer metadata
 +
 +The writer implements VRex's *General Purpose Stereoscopic Data Descriptor* (1997), pages 3 to 6, available from the [2011 archive](https://web.archive.org/web/20111030182549id_/http://www.vrex.com/developer/sterdesc.pdf) and [Paul Bourke's mirror](https://paulbourke.org/stereoscopy/stereoimage/spec.pdf).
@@ -189,6 +208,7 @@ index 0000000..5ef89c7
 +The two suffix variants are complete names, such as `topBottomRightFirst`.
 +An absent layout retains the existing writer convention: canonical left-first side-by-side input is exchanged into right-first storage.
 +An explicit layout preserves the input pixel arrangement.
++The shared policy’s legacy `anaglyphCyanRed` name is accepted as red-left anaglyph.
 +Unsupported layouts fail before writing and log a refusal translated into ten languages.
 +
 +Additional QImage text fields, also reported by the reader:
@@ -323,7 +343,7 @@ index 0000000..51a8ab1
 +<!DOCTYPE TS>
 +<TS version="2.1" language="zh_TW"><context><name>JpsWriter</name><message><source>Cannot save JPS: the layout or descriptor fields are unsupported or invalid.</source><translation>無法儲存 JPS：配置或描述符欄位不受支援或無效。</translation></message></context></TS>
 diff --git a/src/imageformats/stereo.cpp b/src/imageformats/stereo.cpp
-index c5526a9..6215d2f 100644
+index c5526a9..084d88c 100644
 --- a/src/imageformats/stereo.cpp
 +++ b/src/imageformats/stereo.cpp
 @@ -8,6 +8,11 @@
@@ -373,14 +393,14 @@ index c5526a9..6215d2f 100644
 +{
 +    const QString mark = image.text(QString::fromLatin1(stereo3DLayoutKey));
 +    int layout = 0;
-+    bool left = mark.endsWith(QLatin1String("LeftFirst")) || mark == QLatin1String("anaglyphRedLeft");
++    bool left = mark.endsWith(QLatin1String("LeftFirst")) || (mark == QLatin1String("anaglyphRedLeft") || mark == QLatin1String("anaglyphCyanRed"));
 +    if (mark.isEmpty() || mark == QLatin1String("sideBySideLeftFirst") || mark == QLatin1String("sideBySideRightFirst"))
 +        layout = 2;
 +    else if (mark == QLatin1String("rowInterleavedLeftFirst") || mark == QLatin1String("rowInterleavedRightFirst"))
 +        layout = 1;
 +    else if (mark == QLatin1String("topBottomLeftFirst") || mark == QLatin1String("topBottomRightFirst"))
 +        layout = 3;
-+    else if (mark == QLatin1String("anaglyphRedLeft") || mark == QLatin1String("anaglyphRedRight"))
++    else if (mark == QLatin1String("anaglyphRedLeft") || mark == QLatin1String("anaglyphRedRight") || mark == QLatin1String("anaglyphCyanRed"))
 +        layout = 4;
 +    else if (mark != QLatin1String("mono"))
 +        return {};
