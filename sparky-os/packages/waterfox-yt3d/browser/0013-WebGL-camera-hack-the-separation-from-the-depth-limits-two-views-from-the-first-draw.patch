@@ -716,7 +716,7 @@ index bf46aba491..f3b1f53fab 100644
  ## The access keys for "Show Controls" and "Hide Controls" are the same
  ## because the two context-menu items are mutually exclusive.
 diff --git a/dom/canvas/ClientWebGLContext.cpp b/dom/canvas/ClientWebGLContext.cpp
-index e8c862b808..4d8c9ea61c 100644
+index e8c862b808..eb0daa1c7e 100644
 --- a/dom/canvas/ClientWebGLContext.cpp
 +++ b/dom/canvas/ClientWebGLContext.cpp
 @@ -28,11 +28,14 @@
@@ -801,7 +801,32 @@ index e8c862b808..4d8c9ea61c 100644
  void ClientWebGLContext::SetFlatXR(const bool flatXR, const uvec2 size) {
    if (mFlatXR == flatXR && (!flatXR || mFlatXRSize == size)) return;
    mFlatXR = flatXR;
-@@ -611,6 +660,90 @@ void ClientWebGLContext::LookForStereoCamera(const GLenum target,
+@@ -595,15 +644,22 @@ uvec2 ClientWebGLContext::PresentedSize() {
+ // is looked at, as the block's layout is the program's.
+ void ClientWebGLContext::LookForStereoCamera(const GLenum target,
+                                              const Span<const uint8_t>& aData) {
+-  if (mStereoCamera || target != LOCAL_GL_UNIFORM_BUFFER ||
+-      aData.size() > 64 * 1024 || !gfx::gfxVars::StereoContentDeclaration()) {
++  if (mStereoCamera || mNoStereoLimitsTold || target != LOCAL_GL_UNIFORM_BUFFER ||
++      aData.size() > 64 * 1024) {
+     return;
+   }
++  const bool declared = gfx::gfxVars::StereoContentDeclaration();
+   const float factor = StaticPrefs::webgl_stereo_camera_convergence();
+   for (size_t offset = 0; offset + 64 <= aData.size(); offset += 16) {
+     std::array<float, 16> m;
+     memcpy(m.data(), aData.data() + offset, 64);
+     if (webgl::ClassifyStereoCamera(m.data(), {}, factor)) {
++      if (!declared) {
++        // No Stereo KWin: the scene stays as the page drew it, and the person
++        // is told why (TellNoStereoLimits, once).
++        TellNoStereoLimits();
++        return;
++      }
+       mStereoCamera = true;
+       OnStereoCameraStarted();
+       return;
+@@ -611,6 +667,90 @@ void ClientWebGLContext::LookForStereoCamera(const GLenum target,
    }
  }
  
@@ -892,7 +917,7 @@ index e8c862b808..4d8c9ea61c 100644
  void ClientWebGLContext::OnStereoCameraStarted() {
    // The canvas's frames change size: a new canvas renderer, which only a full
    // paint of the canvas's frame makes.
-@@ -620,6 +753,36 @@ void ClientWebGLContext::OnStereoCameraStarted() {
+@@ -620,6 +760,36 @@ void ClientWebGLContext::OnStereoCameraStarted() {
        frame->InvalidateFrame();
      }
    }
@@ -929,7 +954,7 @@ index e8c862b808..4d8c9ea61c 100644
  }
  
  // Only where the two views are declared on a surface of their own: anywhere
-@@ -630,14 +793,11 @@ bool ClientWebGLContext::StereoCameraPresents() const {
+@@ -630,14 +800,11 @@ bool ClientWebGLContext::StereoCameraPresents() const {
  }
  
  // The 3D Canvas menu sets, for the page's site, whether its WebGL scenes are
@@ -947,7 +972,7 @@ index e8c862b808..4d8c9ea61c 100644
    if (NS_IsMainThread() && mCanvasElement) {
      if (RefPtr<PermissionManager> perms = PermissionManager::GetInstance()) {
        nsIPrincipal* principal = mCanvasElement->NodePrincipal();
-@@ -650,15 +810,19 @@ bool ClientWebGLContext::UpdateStereoCameraSite() {
+@@ -650,15 +817,19 @@ bool ClientWebGLContext::UpdateStereoCameraSite() {
            allowed = false;
          }
        }
