@@ -19,15 +19,15 @@ class Licence : public DebconfKde::DebconfGui
 public:
     explicit Licence(const QString &socket) : DebconfGui(socket)
     {
-        auto actions = new QHBoxLayout;
+        auto actions = findChild<QHBoxLayout *>("horizontalLayout");
+        if (!actions) qFatal("unsupported KDE debconf action layout");
+        if (auto back = findChild<QPushButton *>("backPB")) back->hide();
         decline = new QPushButton(qEnvironmentVariable("CORE_FONTS_DECLINE"), this);
         accept = new QPushButton(qEnvironmentVariable("CORE_FONTS_ACCEPT"), this);
         decline->setObjectName("declineLicence");
         accept->setObjectName("acceptLicence");
-        actions->addStretch();
         actions->addWidget(decline);
         actions->addWidget(accept);
-        qobject_cast<QVBoxLayout *>(layout())->addLayout(actions);
         connect(decline, &QPushButton::clicked, this, [this] { answer(false); });
         connect(accept, &QPushButton::clicked, this, [this] { answer(true); });
         connect(this, &DebconfGui::activated, this, [this] {
