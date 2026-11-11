@@ -23,7 +23,8 @@ apt-get install -y --no-install-recommends build-essential debhelper po-debconf 
 cd /out
 curl --fail --location --proto =https https://deb.debian.org/debian/pool/contrib/m/msttcorefonts/msttcorefonts_3.8.1.tar.xz -o msttcorefonts_3.8.1.tar.xz
 echo "211f86e82b56cf87461da4bb21136b096a57ae70ed9bcb6eb27f34c407295bf3  msttcorefonts_3.8.1.tar.xz" | sha256sum -c -
-tar -xf msttcorefonts_3.8.1.tar.xz
+mkdir msttcorefonts-3.8.1
+tar -xf msttcorefonts_3.8.1.tar.xz --strip-components=1 -C msttcorefonts-3.8.1
 python3 /recipe/prepare.py /out/msttcorefonts-3.8.1
 python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" /out/msttcorefonts-3.8.1
 cd msttcorefonts-3.8.1
