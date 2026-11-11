@@ -5,6 +5,7 @@
 #include <QDBusAbstractAdaptor>
 #include <QDBusContext>
 #include <QDBusObjectPath>
+#include <QDBusMessage>
 #include <QVariantMap>
 #include <functional>
 
@@ -26,7 +27,7 @@ class PlayerAdaptor : public QObject, protected QDBusContext
     Q_PROPERTY(bool CanSeek READ canSeek)
     Q_PROPERTY(bool CanControl READ canControl)
 public:
-    PlayerAdaptor(QObject *object, Backend *backend, std::function<QString(std::function<void()>)> execute);
+    PlayerAdaptor(QObject *object, Backend *backend, std::function<QString(std::function<void()>)> execute, std::function<bool()> busy);
     QString playbackStatus() const
     {
         return b->status;
@@ -88,6 +89,8 @@ Q_SIGNALS:
 
 private:
     void run(std::function<void()> action);
+    void runDbus(std::function<void()> action, const QDBusMessage &request, int attempts);
+    std::function<bool()> busy;
     Backend *b;
     std::function<QString(std::function<void()>)> execute;
 };

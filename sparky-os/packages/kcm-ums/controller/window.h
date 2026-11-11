@@ -18,9 +18,10 @@ public:
     ~Window() override;
     QString execute(std::function<void()> action, bool clearOnSuccess = true);
 public Q_SLOTS:
-    void Open(const QString &target, const QString &url);
+    Q_SCRIPTABLE void Open(const QString &target, const QString &url);
 
 private:
+    void openWhenReady(const QString &target, const QString &url, int attempts);
     void refresh();
     void selected();
     Backend backend;

@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "window.h"
 #include <KLocalizedString>
+#include <Purpose/AlternativesModel>
+#include <Purpose/Configuration>
+#include <Purpose/Job>
+#include <KFileItemActions>
+#include <KFileItemListProperties>
+#include <QMenu>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
 #include <QFile>
@@ -142,8 +148,82 @@ private Q_SLOTS:
         QVERIFY(window.findChild<QLabel *>(QStringLiteral("error"))->text().contains(QLatin1String("701")));
         get(QStringLiteral("/mode/normal"));
     }
+
+    void purposeListsBothActionsAndHandsOffToTheController() {
+        Window window(QUrl(QStringLiteral("http://127.0.0.1:19494")));
+        auto bus = QDBusConnection::sessionBus();
+        QVERIFY(bus.registerService(QStringLiteral("org.sparky.UMS.Controller")));
+        QVERIFY(bus.registerObject(QStringLiteral("/Controller"), &window, QDBusConnection::ExportScriptableSlots));
+        Purpose::AlternativesModel model;
+        model.setPluginType(QStringLiteral("Export"));
+        model.setInputData(QJsonObject{{QStringLiteral("urls"), QJsonArray{QUrl::fromLocalFile(clip).toString()}}, {QStringLiteral("mimeType"), QStringLiteral("video/x-matroska")}});
+        QSet<QString> found;
+        for (int row = 0; row < model.rowCount(); ++row) {
+            const auto id = model.data(model.index(row, 0), Purpose::AlternativesModel::PluginIdRole).toString();
+            if (id != QLatin1String("ums_headset") && id != QLatin1String("ums_tv")) continue;
+            found.insert(id);
+            auto config = model.configureJob(row);
+            QVERIFY(config && config->isReady());
+            auto job = config->createJob();
+            QVERIFY(job);
+            job->setAutoDelete(false);
+            QSignalSpy spy(job, &KJob::result);
+            job->start();
+            QTRY_COMPARE(spy.count(), 1);
+            QCOMPARE(job->error(), 0);
+            auto combo = window.findChild<QComboBox *>(QStringLiteral("devices"));
+            const int expected = id == QLatin1String("ums_headset") ? 1 : 2;
+            QTRY_COMPARE_WITH_TIMEOUT(combo->count(), expected, 5000);
+            QCOMPARE(combo->currentIndex(), -1);
+            delete job;
+        }
+        QCOMPARE(found, QSet<QString>({QStringLiteral("ums_headset"), QStringLiteral("ums_tv")}));
+        model.setInputData(QJsonObject{{QStringLiteral("urls"), QJsonArray{QStringLiteral("file:///test.txt")}}, {QStringLiteral("mimeType"), QStringLiteral("text/plain")}});
+        for (int row = 0; row < model.rowCount(); ++row) QVERIFY(!model.data(model.index(row, 0), Purpose::AlternativesModel::PluginIdRole).toString().startsWith(QLatin1String("ums_")));
+        bus.unregisterObject(QStringLiteral("/Controller"));
+        bus.unregisterService(QStringLiteral("org.sparky.UMS.Controller"));
+    }
+    void kioMenuAndTranslations() {
+        KFileItem item(QUrl::fromLocalFile(clip), QStringLiteral("video/x-matroska"), 0100644);
+        KFileItemActions actions;
+        actions.setItemListProperties(KFileItemListProperties(KFileItemList{item}));
+        QMenu menu;
+        actions.addActionsTo(&menu, KFileItemActions::MenuActionSource::Services);
+        QSet<QString> names;
+        for (auto a : menu.actions()) names.insert(a->text());
+        QVERIFY2(names.contains(QStringLiteral("Play on TV")), qPrintable(QStringList(names.values()).join(QLatin1Char(','))));
+        QVERIFY(names.contains(QStringLiteral("Play on the headset")));
+        const auto output = qEnvironmentVariable("UMS94_CAPTURES");
+        if (!output.isEmpty()) {
+            QDir().mkpath(output);
+            const QStringList languages{QStringLiteral("en"), QStringLiteral("de"), QStringLiteral("es"), QStringLiteral("fr"), QStringLiteral("pl"), QStringLiteral("pt_BR"), QStringLiteral("ja"), QStringLiteral("ko"), QStringLiteral("zh_CN"), QStringLiteral("zh_TW")};
+            for (const auto &language : languages) {
+                KLocalizedString::setLanguages({language});
+                Window window(QUrl(QStringLiteral("http://127.0.0.1:19494")));
+                window.Open(QStringLiteral("headset"), {});
+                QVERIFY(QTest::qWaitForWindowExposed(&window));
+                if (language != QLatin1String("en")) QVERIFY(window.windowTitle() != QLatin1String("Media Devices"));
+                QVERIFY(window.grab().save(output + QLatin1Char('/') + language + QStringLiteral(".png")));
+                if (language == QLatin1String("pt_BR") && !qEnvironmentVariableIsEmpty("UMS94_SCREENSHOT_SCRIPT")) {
+                    QProcess capture;
+                    capture.start(QStringLiteral("python3"), {qEnvironmentVariable("UMS94_SCREENSHOT_SCRIPT"), output + QStringLiteral("/kwin-controller.png")});
+                    QTRY_VERIFY_WITH_TIMEOUT(capture.state() == QProcess::NotRunning, 35000);
+                    QVERIFY2(capture.exitCode() == 0, capture.readAllStandardError().constData());
+                    qInfo().noquote() << capture.readAllStandardOutput();
+                }
+
+                QTest::qWait(100);
+            }
+            KLocalizedString::setLanguages({QStringLiteral("en")});
+        }
+    }
     void cleanupTestCase()
     {
+        const auto records = get(QStringLiteral("/records"));
+        if (!qEnvironmentVariableIsEmpty("UMS94_CAPTURES")) {
+            QFile evidence(qEnvironmentVariable("UMS94_CAPTURES") + QStringLiteral("/wire-records.json"));
+            QVERIFY(evidence.open(QIODevice::WriteOnly)); evidence.write(records);
+        }
         qInfo().noquote() << fixture.readAllStandardError();
         fixture.terminate();
         fixture.waitForFinished(3000);

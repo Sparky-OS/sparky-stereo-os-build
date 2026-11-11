@@ -6,9 +6,11 @@
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <limits>
+#include <QTimer>
 
-PlayerAdaptor::PlayerAdaptor(QObject *object, Backend *backend, std::function<QString(std::function<void()>)> handler)
+PlayerAdaptor::PlayerAdaptor(QObject *object, Backend *backend, std::function<QString(std::function<void()>)> handler, std::function<bool()> isBusy)
     : QObject(object)
+    , busy(std::move(isBusy))
     , b(backend)
     , execute(std::move(handler))
 {
@@ -38,10 +40,24 @@ QVariantMap PlayerAdaptor::metadata() const
 }
 void PlayerAdaptor::run(std::function<void()> action)
 {
-    const auto error = execute(std::move(action));
-    if (!error.isEmpty() && calledFromDBus())
-        sendErrorReply(QStringLiteral("org.mpris.MediaPlayer2.Error.Failed"), error);
+    if (calledFromDBus()) {
+        const auto request = message();
+        request.setDelayedReply(true);
+        runDbus(std::move(action), request, 200);
+    } else {
+        execute(std::move(action));
+    }
 }
+void PlayerAdaptor::runDbus(std::function<void()> action, const QDBusMessage &request, int attempts)
+{
+    if (busy() && attempts > 0) {
+        QTimer::singleShot(50, this, [this, action, request, attempts] { runDbus(action, request, attempts - 1); });
+        return;
+    }
+    const auto error = execute(std::move(action));
+    QDBusConnection::sessionBus().send(error.isEmpty() ? request.createReply() : request.createErrorReply(QStringLiteral("org.mpris.MediaPlayer2.Error.Failed"), error));
+}
+
 void PlayerAdaptor::Play()
 {
     if (canPlay())

@@ -50,7 +50,7 @@ int main(int argc, char **argv)
         server = QStringLiteral("http://127.0.0.1:%1").arg(port);
     }
     Window window{QUrl(server)};
-    if (!bus.registerObject(QStringLiteral("/Controller"), &window, QDBusConnection::ExportAllSlots))
+    if (!bus.registerObject(QStringLiteral("/Controller"), &window, QDBusConnection::ExportScriptableSlots))
         return 1;
     QTimer::singleShot(0, &window, [&] {
         window.Open(parser.value(QStringLiteral("target")), source.toString());

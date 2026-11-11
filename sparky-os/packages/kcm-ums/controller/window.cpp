@@ -134,7 +134,7 @@ Window::Window(const QUrl &server)
     });
     mprisObject = new PlayerAdaptor(this, &backend, [this](std::function<void()> action) {
         return execute(std::move(action));
-    });
+    }, [this] { return busy; });
     new RootAdaptor(mprisObject, &backend, [this] {
         show();
         raise();
@@ -194,8 +194,19 @@ QString Window::execute(std::function<void()> action, bool clearOnSuccess)
 }
 void Window::Open(const QString &target, const QString &url)
 {
-    if (busy)
+    openWhenReady(target, url, 200);
+}
+void Window::openWhenReady(const QString &target, const QString &url, int attempts)
+{
+    if (busy) {
+        if (attempts > 0)
+            QTimer::singleShot(50, this, [this, target, url, attempts] { openWhenReady(target, url, attempts - 1); });
+        else {
+            error->setText(i18n("A device request is still running. Try again shortly."));
+            show();
+        }
         return;
+    }
     kind = target;
     source = QUrl(url);
     file->setText(source.isEmpty() ? i18n("Select a device to control it.") : source.toDisplayString(QUrl::PreferLocalFile));
