@@ -51,7 +51,8 @@ if not case.startswith('retry-'):
     subprocess.run(['apt-get', '-o', 'Dir::Etc::sourcelist=' + str(source), '-o', 'Dir::Etc::sourceparts=-',
                     '-o', 'APT::Get::List-Cleanup=false', 'update'], check=True, stdout=subprocess.DEVNULL)
     candidate = subprocess.check_output(['apt-cache', 'policy', 'ttf-mscorefonts-installer'], text=True)
-    assert 'Candidate: 3.8.1+stereo3d1' in candidate, candidate
+    version = subprocess.check_output(['dpkg-deb', '-f', package, 'Version'], text=True).strip()
+    assert 'Candidate: ' + version in candidate, candidate
 if case.startswith('retry-'):
     command = (['dpkg', '--configure', 'ttf-mscorefonts-installer'] if case == 'retry-download' else
                ['dpkg-reconfigure', 'ttf-mscorefonts-installer'])

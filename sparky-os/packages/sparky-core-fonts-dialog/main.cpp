@@ -3,6 +3,7 @@
 #include <DebconfGui.h>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QDebug>
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QRadioButton>
@@ -33,7 +34,15 @@ public:
             const bool question = yes && no;
             decline->setVisible(question);
             accept->setVisible(question);
-            if (auto next = findChild<QPushButton *>("nextPB")) next->setVisible(!question);
+            if (auto next = findChild<QPushButton *>("nextPB")) {
+                next->setVisible(!question);
+                next->setDefault(!question);
+                if (!question) next->setFocus();
+            }
+            setWindowTitle(qEnvironmentVariable("CORE_FONTS_TITLE"));
+            qInfo() << "core-fonts: KDE debconf" << (question ? "EULA" : "note")
+                    << "platform=" << QGuiApplication::platformName()
+                    << "accepted=" << (question && yes->isChecked());
             if (question) {
                 yes->hide();
                 no->hide();
