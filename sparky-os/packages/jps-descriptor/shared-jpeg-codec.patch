@@ -1,0 +1,301 @@
+Description: Share the JPS and MPF descriptor codec with metadata-only picture saves
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor
+Forwarded: not-needed
+Last-Update: 2026-11-12
+
+diff --git a/docs/jps.md b/docs/jps.md
+index f8b0642..6b8e549 100644
+--- a/docs/jps.md
++++ b/docs/jps.md
+@@ -35,3 +35,8 @@ The shared picture engine removes a declared separation when taking out the two
+ 
+ The writer tests inspect each APP3 independently and reopen every successful write.
+ They cover both orders, mono display choices, all four half-size flag combinations, separation including 255, comments, and refusals that leave the device bytes untouched.
++
++The descriptor codec is supplied by `libstereo-policy >= 1.17.5` (`stereo-jpeg.h`), shared with
++`Stereo::Picture::saveCorrection`. The plugin uses it for JPS payloads and MPF directories;
++metadata-only corrections never re-encode either JPEG image. Applications call the shared save
++entry point after the person's acceptance instead of assembling descriptor bytes themselves.
+diff --git a/src/imageformats/CMakeLists.txt b/src/imageformats/CMakeLists.txt
+index 48f39eb..393d4c2 100644
+--- a/src/imageformats/CMakeLists.txt
++++ b/src/imageformats/CMakeLists.txt
+@@ -111,6 +111,8 @@ endif()
+ ##################################
+ 
+ kimageformats_add_plugin(kimg_stereo SOURCES stereo.cpp depthmark.cpp)
++pkg_check_modules(StereoPolicy REQUIRED IMPORTED_TARGET stereo-policy>=1.17.5)
++target_link_libraries(kimg_stereo PRIVATE PkgConfig::StereoPolicy)
+ find_package(Qt6LinguistTools REQUIRED)
+ file(GLOB _jps_ts CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/jps-translations/jps_*.ts")
+ qt6_add_translation(_jps_qm ${_jps_ts})
+diff --git a/src/imageformats/stereo.cpp b/src/imageformats/stereo.cpp
+index ca434f9..f4145e6 100644
+--- a/src/imageformats/stereo.cpp
++++ b/src/imageformats/stereo.cpp
+@@ -6,6 +6,7 @@
+ */
+ 
+ #include "depthmark_p.h"
++#include <stereo-jpeg.h>
+ 
+ #include <QBuffer>
+ #include <QDebug>
+@@ -134,14 +135,10 @@ JpegHeader readJpegHeader(const QByteArray &data, qsizetype limit = 1024 * 1024)
+ 
+ QString jpsStereoLayout(const QByteArray &data)
+ {
+-    if (data.size() < 6) {
+-        return {};
+-    }
+-    const quint16 length = qFromBigEndian<quint16>(data.constData());
+-    if (length < 4 || length > data.size() - 2) {
+-        return {};
+-    }
+-    const quint32 descriptor = qFromBigEndian<quint32>(data.constData() + 2);
++    const QByteArray payload=QByteArrayLiteral("_JPSJPS_")+data;
++    stereo_jps_descriptor decoded{};
++    if(!stereo_jps_decode(payload.constData(),size_t(payload.size()),&decoded)) return {};
++    const quint32 descriptor=decoded.value;
+     const quint8 type = descriptor & 0xff;
+     if (type == 0) {
+         return QStringLiteral("mono");
+@@ -178,20 +175,15 @@ const QStringList jpsFieldKeys = {QStringLiteral("Stereo3DJpsHalfHeight"), QStri
+ QHash<QString, QString> jpsFields(const QByteArray &data)
+ {
+     QHash<QString, QString> fields;
+-    if (data.size() < 8)
+-        return fields;
+-    const int length = qFromBigEndian<quint16>(data.constData());
+-    if (length < 4 || length + 4 > data.size())
+-        return fields;
+-    const int comments = qFromBigEndian<quint16>(data.constData() + 2 + length);
+-    if (length + 4 + comments != data.size())
+-        return fields;
+-    const quint32 value = qFromBigEndian<quint32>(data.constData() + 2);
++    const QByteArray payload=QByteArrayLiteral("_JPSJPS_")+data;
++    stereo_jps_descriptor decoded{};
++    if(!stereo_jps_decode(payload.constData(),size_t(payload.size()),&decoded)) return fields;
++    const quint32 value=decoded.value;
+     fields.insert(jpsFieldKeys[0], QString::number((value >> 16) & 1));
+     fields.insert(jpsFieldKeys[1], QString::number((value >> 17) & 1));
+     fields.insert(jpsFieldKeys[2], QString::number(value >> 24));
+     fields.insert(jpsFieldKeys[3], QString::number((value & 255) == 0 ? (value >> 8) & 255 : 0));
+-    fields.insert(jpsFieldKeys[4], QString::fromLatin1(data.constData() + length + 4, comments));
++    fields.insert(jpsFieldKeys[4], QString::fromLatin1(reinterpret_cast<const char *>(decoded.comment), decoded.comment_size));
+     return fields;
+ }
+ 
+@@ -237,13 +229,11 @@ QByteArray jpsDescriptor(const QImage &image)
+     const quint32 value = (layout ? 1u | quint32(layout) << 8 | quint32(left) << 18 | quint32(separation) << 24
+                                   : quint32(values[3]) << 8)
+         | quint32(values[0]) << 16 | quint32(values[1]) << 17;
+-    QByteArray result("_JPSJPS_", 8);
+-    char bytes[8];
+-    qToBigEndian<quint16>(4, bytes);
+-    qToBigEndian<quint32>(value, bytes + 2);
+-    qToBigEndian<quint16>(quint16(ascii.size()), bytes + 6);
+-    result.append(bytes, 8);
+-    result.append(ascii);
++    stereo_jps_descriptor descriptor{value, nullptr, reinterpret_cast<const unsigned char *>(ascii.constData()), 0, quint16(ascii.size())};
++    QByteArray result(65533, Qt::Uninitialized);
++    const size_t size=stereo_jps_encode(&descriptor,result.data(),size_t(result.size()));
++    if(!size) return {};
++    result.resize(qsizetype(size));
+     return result;
+ }
+ 
+@@ -252,38 +242,6 @@ struct MpfData {
+     QList<MpfEntry> entries;
+ };
+ 
+-quint16 read16(const QByteArray &data, qsizetype offset, bool littleEndian)
+-{
+-    if (offset < 0 || offset + 2 > data.size()) {
+-        return 0;
+-    }
+-    const auto *p = reinterpret_cast<const uchar *>(data.constData() + offset);
+-    return littleEndian ? qFromLittleEndian<quint16>(p) : qFromBigEndian<quint16>(p);
+-}
+-
+-quint32 read32(const QByteArray &data, qsizetype offset, bool littleEndian)
+-{
+-    if (offset < 0 || offset + 4 > data.size()) {
+-        return 0;
+-    }
+-    const auto *p = reinterpret_cast<const uchar *>(data.constData() + offset);
+-    return littleEndian ? qFromLittleEndian<quint32>(p) : qFromBigEndian<quint32>(p);
+-}
+-
+-void append16(QByteArray &data, quint16 value)
+-{
+-    const auto oldSize = data.size();
+-    data.resize(oldSize + 2);
+-    qToLittleEndian(value, reinterpret_cast<uchar *>(data.data() + oldSize));
+-}
+-
+-void append32(QByteArray &data, quint32 value)
+-{
+-    const auto oldSize = data.size();
+-    data.resize(oldSize + 4);
+-    qToLittleEndian(value, reinterpret_cast<uchar *>(data.data() + oldSize));
+-}
+-
+ qsizetype jpegHeaderInsertionPoint(const QByteArray &jpeg)
+ {
+     if (jpeg.size() < 2 || uchar(jpeg[0]) != 0xff || uchar(jpeg[1]) != 0xd8) {
+@@ -346,55 +304,12 @@ QByteArray encodeJpeg(const QImage &image, int quality)
+ 
+ QByteArray makeMpfSegment(const QList<MpfEntry> &entries)
+ {
+-    QByteArray tiff;
+-    tiff.append("II", 2);
+-    append16(tiff, 42);
+-    append32(tiff, 8);
+-
+-    const quint32 indexOffset = 8;
+-    const quint32 indexSize = 2 + 3 * 12 + 4;
+-    const quint32 attributeOffset = indexOffset + indexSize;
+-    const quint32 entryOffset = attributeOffset + indexSize;
+-
+-    append16(tiff, 3);
+-    append16(tiff, 0xb000);
+-    append16(tiff, 7);
+-    append32(tiff, 4);
+-    tiff.append("0100", 4);
+-    append16(tiff, 0xb001);
+-    append16(tiff, 4);
+-    append32(tiff, 1);
+-    append32(tiff, entries.size());
+-    append16(tiff, 0xb002);
+-    append16(tiff, 7);
+-    append32(tiff, entries.size() * 16);
+-    append32(tiff, entryOffset);
+-    append32(tiff, attributeOffset);
+-
+-    append16(tiff, 3);
+-    append16(tiff, 0xb000);
+-    append16(tiff, 7);
+-    append32(tiff, 4);
+-    tiff.append("0100", 4);
+-    append16(tiff, 0xb101);
+-    append16(tiff, 4);
+-    append32(tiff, 1);
+-    append32(tiff, 1);
+-    append16(tiff, 0xb204);
+-    append16(tiff, 4);
+-    append32(tiff, 1);
+-    append32(tiff, 1);
+-    append32(tiff, 0);
+-
+-    for (const auto &entry : entries) {
+-        append32(tiff, entry.attributes);
+-        append32(tiff, entry.size);
+-        append32(tiff, entry.offset);
+-        append16(tiff, 0);
+-        append16(tiff, 0);
+-    }
+-
+-    return jpegSegment(0xe2, QByteArrayLiteral("MPF\0") + tiff);
++    if(entries.size()!=2) return {};
++    const stereo_mpf_entry records[2]={{entries[0].attributes,entries[0].size,entries[0].offset},
++                                      {entries[1].attributes,entries[1].size,entries[1].offset}};
++    QByteArray tiff(124,Qt::Uninitialized);
++    if(!stereo_mpf_encode_pair(records,tiff.data(),size_t(tiff.size()))) return {};
++    return jpegSegment(0xe2,QByteArrayLiteral("MPF\0")+tiff);
+ }
+ 
+ QByteArray makeMpo(const QImage &image, int quality)
+@@ -409,23 +324,8 @@ QByteArray makeMpo(const QImage &image, int quality)
+     if (left.isEmpty() || right.isEmpty()) {
+         return {};
+     }
+-    QByteArray attributes("II", 2);
+-    append16(attributes, 42);
+-    append32(attributes, 8);
+-    append16(attributes, 3);
+-    append16(attributes, 0xb000);
+-    append16(attributes, 7);
+-    append32(attributes, 4);
+-    attributes.append("0100", 4);
+-    append16(attributes, 0xb101);
+-    append16(attributes, 4);
+-    append32(attributes, 1);
+-    append32(attributes, 2);
+-    append16(attributes, 0xb204);
+-    append16(attributes, 4);
+-    append32(attributes, 1);
+-    append32(attributes, 1);
+-    append32(attributes, 0);
++    QByteArray attributes(50,Qt::Uninitialized);
++    if(!stereo_mpf_encode_pair(nullptr,attributes.data(),size_t(attributes.size()))) return {};
+     right = addJpegSegment(right, 0xe2, QByteArrayLiteral("MPF\0") + attributes);
+     if (right.isEmpty()) {
+         return {};
+@@ -451,56 +351,17 @@ QByteArray makeMpo(const QImage &image, int quality)
+ class MpfReader
+ {
+ public:
+-    explicit MpfReader(const QByteArray &data)
+-        : m_data(data)
+-        , m_little(data.startsWith("II"))
+-    {
+-    }
+-
+-    bool valid() const
+-    {
+-        return m_data.size() >= 8 && (m_data.startsWith("II") || m_data.startsWith("MM")) && read16(m_data, 2, m_little) == 42;
+-    }
+-
+-    quint32 value(qsizetype pos) const
+-    {
+-        return read32(m_data, pos, m_little);
+-    }
+-
+-    qsizetype field(quint32 ifd, quint16 tag, quint16 type, quint32 count) const
+-    {
+-        if (ifd < 8 || ifd > quint32(m_data.size() - 2)) {
+-            return -1;
+-        }
+-        const quint16 fields = read16(m_data, ifd, m_little);
+-        if (qint64(ifd) + 2 + qint64(fields) * 12 + 4 > m_data.size()) {
+-            return -1;
+-        }
+-        for (qsizetype pos = ifd + 2; pos < ifd + 2 + fields * 12; pos += 12) {
+-            if (read16(m_data, pos, m_little) == tag) {
+-                return read16(m_data, pos + 2, m_little) == type && value(pos + 4) == count ? pos + 8 : -1;
+-            }
+-        }
+-        return -1;
+-    }
+-
+-    quint32 nextIfd(quint32 ifd) const
+-    {
+-        if (ifd < 8 || ifd > quint32(m_data.size() - 2)) {
+-            return 0;
+-        }
+-        return value(qsizetype(ifd) + 2 + qsizetype(read16(m_data, ifd, m_little)) * 12);
+-    }
+-
+-    quint32 viewpoint(quint32 ifd) const
+-    {
+-        const qsizetype pos = field(ifd, 0xb101, 4, 1);
+-        return pos < 0 ? 0 : value(pos);
+-    }
+-
++    explicit MpfReader(const QByteArray &data): m_data(data) {}
++    bool valid() const { return stereo_mpf_valid(m_data.constData(),size_t(m_data.size())); }
++    quint32 value(qsizetype pos) const { return pos<0?0:stereo_mpf_u32(m_data.constData(),size_t(m_data.size()),size_t(pos)); }
++    qsizetype field(quint32 ifd,quint16 tag,quint16 type,quint32 count) const {
++        size_t result=stereo_mpf_field(m_data.constData(),size_t(m_data.size()),ifd,tag,type,count);
++        return result?qsizetype(result):-1;
++    }
++    quint32 nextIfd(quint32 ifd) const { return stereo_mpf_next(m_data.constData(),size_t(m_data.size()),ifd); }
++    quint32 viewpoint(quint32 ifd) const { const auto pos=field(ifd,0xb101,4,1); return pos<0?0:value(pos); }
+ private:
+     const QByteArray &m_data;
+-    bool m_little;
+ };
+ 
+ std::optional<MpfData> parseMpf(const QByteArray &data)

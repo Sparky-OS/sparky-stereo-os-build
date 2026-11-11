@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-"""Prepare the published KImageFormats stereo3d5 source as plain stereo3d6."""
+"""Prepare the published KImageFormats stereo3d5 source as plain stereo3d7."""
 import argparse
 import os
 from pathlib import Path
@@ -41,11 +41,15 @@ sys.path.insert(0, str(recipe.parents[1] / 'repo'))
 import reproducible
 plain_control = control[:start] + field[:-len(suffix)] + control[end:]
 plain_control = plain_control.replace('Build-Depends:', 'Build-Depends: qt6-tools-dev, qt6-l10n-tools,', 1)
+plain_control = plain_control.replace('Build-Depends:', 'Build-Depends: libstereo-policy-dev (>= 1.17.5),', 1)
+# The common codec is Qt-free and needs no dependency on the picture library or its image plugins.
+plain_control = re.sub(r'(Package: kimageformat6-plugins\n.*?^Depends:)', r'\1 libstereo-policy1 (>= 1.17.5),', plain_control, flags=re.M | re.S)
 control_path.write_text(plain_control)
-patch = recipe / 'jps-descriptor.patch'
-shutil.copyfile(patch, source / 'debian/patches' / patch.name)
-with (source / 'debian/patches/series').open('a') as stream:
-    stream.write(patch.name + '\n')
+for name in ('jps-descriptor.patch', 'shared-jpeg-codec.patch'):
+    patch = recipe / name
+    shutil.copyfile(patch, source / 'debian/patches' / patch.name)
+    with (source / 'debian/patches/series').open('a') as stream:
+        stream.write(patch.name + '\n')
 subprocess.run(['dpkg-source', '--before-build', str(source)], check=True)
 entry = f'''kf6-kimageformats (6.30.0-1+stereo3d6) unstable; urgency=medium
 
@@ -59,8 +63,17 @@ entry = f'''kf6-kimageformats (6.30.0-1+stereo3d6) unstable; urgency=medium
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  {reproducible.rfc2822(epoch)}
 
 '''
-changelog.write_text(entry + changelog.read_text())
+codec_entry = f'''kf6-kimageformats (6.30.0-1+stereo3d7) unstable; urgency=medium
+
+  * Use libstereo-policy's common JPS and MPF codec for image readers and
+    writers, shared with metadata-only picture correction saves. Preserve
+    the existing writer behavior and complete carried patch series.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  {reproducible.rfc2822(epoch)}
+
+'''
+changelog.write_text(codec_entry + entry + changelog.read_text())
 reproducible.normalize_tree(source, epoch)
 if carried_plan.exists():
     print('Pass to lean.debian_prepare --preserve-plan:', carried_plan)
-print('Prepared plain kf6-kimageformats 6.30.0-1+stereo3d6')
+print('Prepared plain kf6-kimageformats 6.30.0-1+stereo3d7')
