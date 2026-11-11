@@ -133,7 +133,7 @@ try:
         status = 0
 except Exception as error:
     print('Microsoft core fonts: ' + str(error), file=sys.stderr)
-    message(os.environ['CORE_FONTS_ERROR'])
+    message(os.environ['CORE_FONTS_DOWNLOAD_ERROR'])
 finally:
     if frontend is not None:
         frontend.terminate()
