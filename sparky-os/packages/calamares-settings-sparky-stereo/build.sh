@@ -26,7 +26,7 @@ install -m 644 "$HERE/etc/settings.conf" "$D/etc/calamares/settings.conf"
 install -m 644 "$HERE"/etc/modules/*.conf "$D/etc/calamares/modules/"
 install -m 644 "$HERE/lib/installer-common" "$D/usr/lib/$PKG/"
 cp -r "$HERE/lib/lang" "$D/usr/lib/$PKG/"
-install -m 755 "$HERE/lib/dual-boot" "$HERE/lib/efi-fallback" "$HERE/lib/grub-language" "$HERE/lib/language-packs" "$HERE/lib/offline-packages" "$HERE/lib/core-fonts" "$HERE/lib/core-fonts-contrib" "$D/usr/lib/$PKG/"
+install -m 755 "$HERE/lib/dual-boot" "$HERE/lib/efi-fallback" "$HERE/lib/grub-language" "$HERE/lib/language-packs" "$HERE/lib/offline-packages" "$HERE/lib/core-fonts" "$HERE/lib/core-fonts-contrib" "$HERE/lib/core-fonts-window" "$D/usr/lib/$PKG/"
 (cd "$D" && find etc -type f | sed 's|^|/|' | sort) >"$D/DEBIAN/conffiles"
 cat >"$D/usr/share/doc/$PKG/copyright" <<'EOS'
 Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
@@ -73,7 +73,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: calamares, os-prober, util-linux, sparky-stereo-kernel-settings (>= 20261111.1~sparky9~0), konsole, python3, sparky-stereo-apt (>= 20261104.3)
+Depends: calamares, os-prober, util-linux, sparky-stereo-kernel-settings (>= 20261111.1~sparky9~0), python3, python3-pyqt6, qt6-wayland, sparky-core-fonts-dialog (>= 1.0), sparky-stereo-apt (>= 20261104.3)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org

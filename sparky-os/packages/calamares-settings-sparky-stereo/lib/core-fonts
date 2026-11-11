@@ -8,13 +8,10 @@ root=$(realpath -e -- "${2:-}") || fail corefonts 'invalid target directory'
 [[ $root = /* && $root != / && -d $root/etc/apt && -f $root/var/lib/dpkg/status ]] || fail corefonts "invalid target: $root"
 case $mode in
 --window)
-    result=$(mktemp -d)
-    trap 'rm -rf "$result"' EXIT
-    # A terminal's own exit status need not be its child's, so require the child's explicit result.
-    konsole --separate --nofork -e "$0" --terminal "$root" "$result/status" || :
-    [[ -f $result/status ]] || fail corefonts 'the installation terminal was closed before completion'
-    status=$(cat "$result/status")
-    [[ $status = 0 ]] || fail corefonts "apt exit: $status; dpkg --configure ttf-mscorefonts-installer"
+    export LANG=${INSTALLER_LANG:-${LANG:-C.UTF-8}}
+    export LC_ALL=$LANG
+    export CORE_FONTS_TITLE CORE_FONTS_ACCEPT CORE_FONTS_DECLINE CORE_FONTS_CONTINUE CORE_FONTS_REFUSED CORE_FONTS_ERROR
+    exec "$(dirname "$0")/core-fonts-window" "$root"
     ;;
 --terminal)
     [[ -t 0 && -t 1 ]] || fail corefonts 'an interactive terminal is required'
