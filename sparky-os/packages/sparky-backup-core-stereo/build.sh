@@ -17,12 +17,13 @@ OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 PKG=sparky-backup-core-stereo
 SOURCE_VERSION=$(sed -n '2s/^  Version \(.*\) (.*$/\1/p' "$SRC/CHANGELOG")
 [ -n "$SOURCE_VERSION" ] || { echo "no version in $SRC/CHANGELOG" >&2; exit 1; }
-VERSION=${VERSION:-20261102~sparky9~0+lc1}
+VERSION=${VERSION:-20261111~sparky9~0+lc1}
 W=$(mktemp -d "${TMPDIR:-/tmp}/backup-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 COPY="$HERE/../../../tools/copy-recipe.py"
 python3 "$COPY" "$SRC" "$W/input"
 SRC=$W/input
+patch --batch --forward -d "$SRC" -p1 < "$HERE/core-fonts.patch"
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/etc/sparkybackup" "$D/etc/xdg/autostart" "$D/lib/live/config" \
 	"$D/usr/lib/sparkybackup" "$D/usr/share/applications" "$D/usr/share/sparkybackup/idesk" \
@@ -57,14 +58,15 @@ find "$D/usr/lib/sparkybackup" -type d -exec chmod 755 {} + && find "$D/usr/lib/
 (cd "$D" && find etc -type f | sed 's|^|/|' | sort) >"$D/DEBIAN/conffiles"
 
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
+ORIGINAL_MAINTAINER=$(sed -n '2s/^[[:space:]]*//p' "$SRC/copyright")
 cat >"$D/DEBIAN/control" <<EOS
 Package: $PKG
 Version: $VERSION
 Architecture: amd64
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Original-Maintainer: pavroo <pavroo@onet.eu>
+Original-Maintainer: $ORIGINAL_MAINTAINER
 Installed-Size: $SIZE
-Depends: apt, bash, btrfs-progs, console-data, coreutils, dialog, dosfstools, dpkg, findutils, gawk, grep, grub-efi-amd64-signed, grub-efi-ia32-unsigned, hwdata, iputils-ping, isolinux, keyboard-configuration, laptop-detect, live-boot, live-config, live-config-systemd, live-boot-initramfs-tools, locales, memtest86+ (>= 8.10), mount, mtools, nano, os-prober, parted, passwd, python3, rsync, sed, shim-signed, sparky-backup-desktop (>= 20180729) | sparky-server, sparky-info, squashfs-tools, syslinux-common, syslinux-utils, systemd, systemd-sysv, util-linux, x11-utils, xfsprogs, xorriso | genisoimage, xz-utils
+Depends: calamares-settings-sparky-stereo (>= 20261111.1~sparky9~0), apt, bash, btrfs-progs, console-data, coreutils, dialog, dosfstools, dpkg, findutils, gawk, grep, grub-efi-amd64-signed, grub-efi-ia32-unsigned, hwdata, iputils-ping, isolinux, keyboard-configuration, laptop-detect, live-boot, live-config, live-config-systemd, live-boot-initramfs-tools, locales, memtest86+ (>= 8.10), mount, mtools, nano, os-prober, parted, passwd, python3, rsync, sed, shim-signed, sparky-backup-desktop (>= 20180729) | sparky-server, sparky-info, squashfs-tools, syslinux-common, syslinux-utils, systemd, systemd-sysv, util-linux, x11-utils, xfsprogs, xorriso | genisoimage, xz-utils
 Recommends: lvm2, cryptsetup, cryptsetup-initramfs, systemd-cryptsetup
 Conflicts: sparky-backup-core, sparky-remastersys, sparky-backup-sys (<= 20180606)
 Replaces: sparky-backup-core, sparky-backup-sys (<= 20180606)

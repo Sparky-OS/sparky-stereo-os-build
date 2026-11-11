@@ -1,0 +1,13 @@
+Description: Ask for Microsoft font consent in the target installation
+Author: Daniel Campos Ramos
+Forwarded: not-needed
+
+--- a/bin/sparky-installer
++++ b/bin/sparky-installer
+@@ -1713,0 +1714,6 @@
++# Microsoft core fonts belong to the installed system, never the live image.
++# The shared helper asks through apt/debconf on this terminal and never supplies acceptance.
++if ! /usr/lib/calamares-settings-sparky-stereo/core-fonts --terminal /TARGET; then
++    exit 1
++fi
++
