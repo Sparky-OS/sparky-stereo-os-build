@@ -112,3 +112,15 @@ https://github.com/OpenGamingCollective/linux/blob/e80cc3e80d31ad5d449d26d84e4a5
 Thus their kernel defaults differ: CachyOS 256 KiB and Bazzite's OGC 128 KiB.
 Bazzite additionally inherits tuned profiles, including throughput-performance, so its effective value can depend on the selected profile.
 Our value follows CachyOS and remains 256 KiB; no swap setting is inferred from either distribution.
+
+## Inherited tmpfs fstab entries
+
+When tmp.mount is masked, an active tmpfs entry for /tmp makes local-fs.target
+require a masked unit. systemd can discard that target start and omit the ESP
+mount while continuing boot. On configure, tmp-on-disk comments only those
+conflicting entries and keeps the first original in
+/etc/fstab.before-sparky-tmp-on-disk. Other mounts, an administrator unit and
+an unmasked tmp.mount stay unchanged. The installer calls the same helper
+after generating the target fstab. No filesystem is mounted, unmounted or
+cleaned by the helper; the corrected dependency graph applies next boot or
+daemon reload. A person may unmask tmp.mount to choose tmpfs again.
