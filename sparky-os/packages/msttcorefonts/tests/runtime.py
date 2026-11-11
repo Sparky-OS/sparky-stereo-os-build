@@ -63,6 +63,7 @@ if case in ('noninteractive', 'metered', 'unmetered'):
     command.insert(1, '-y')
 
 eula = question = notice = False
+questions = 0
 with (out / (case + '.log')).open('w') as log:
     child = pexpect.spawn(command[0], command[1:], env=environment, encoding='utf-8', timeout=300, dimensions=(50, 120))
     child.logfile_read = log
@@ -75,6 +76,7 @@ with (out / (case + '.log')).open('w') as log:
             eula = True
         elif match == 1:
             question = True
+            questions += 1
             child.sendcontrol('u')  # readline pre-fills the default "no".
             child.sendline('no' if case == 'refuse' else 'yes')
         elif match == 2:
@@ -91,6 +93,7 @@ text = (out / (case + '.log')).read_text()
 print(f'{case}: exit={status}, EULA={eula}, question={question}, shared-notice={notice}')
 if case not in ('noninteractive', 'metered', 'unmetered', 'retry-download'):
     assert eula and question, 'the EULA and actual acceptance question must be presented'
+    assert questions == 1, 'the same installation must not ask for consent twice'
 if case == 'unmetered':
     assert not notice, 'unmetered install must not show the metered notice'
 elif not case.startswith('retry-'):

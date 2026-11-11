@@ -152,18 +152,23 @@ Comment: Ubuntu 3.3ubuntu1 introduced the EULA prompt. Adapt its default-false
 + dpkg-reconfigure ttf-mscorefonts-installer
 --- a/debian/config
 +++ b/debian/config
-@@ -11,0 +12,12 @@
+@@ -11,0 +12,17 @@
 +
 +# EULA presentation adapted from Michael Vogt's Ubuntu preinst (3.3ubuntu1).
 +# No image or installer supplies an answer. Noninteractive keeps the false default.
 +db_get msttcorefonts/accepted-mscorefonts-eula
 +if [ "$RET" != true ]; then
-+    db_fset msttcorefonts/present-mscorefonts-eula seen false
-+    db_fset msttcorefonts/accepted-mscorefonts-eula seen false
-+    db_input critical msttcorefonts/present-mscorefonts-eula || true
-+    db_go || true
-+    db_input critical msttcorefonts/accepted-mscorefonts-eula || true
-+    db_go || true
++    db_fget msttcorefonts/accepted-mscorefonts-eula seen
++    # apt preconfiguration and postinst both invoke config. Honour the first answer.
++    # An explicit reconfiguration after refusal is a new opportunity to accept.
++    if [ "$RET" != true ] || [ "${1:-}" = reconfigure ]; then
++        db_fset msttcorefonts/present-mscorefonts-eula seen false
++        db_fset msttcorefonts/accepted-mscorefonts-eula seen false
++        db_input critical msttcorefonts/present-mscorefonts-eula || true
++        db_go || true
++        db_input critical msttcorefonts/accepted-mscorefonts-eula || true
++        db_go || true
++    fi
 +fi
 --- a/debian/postinst.in
 +++ b/debian/postinst.in
