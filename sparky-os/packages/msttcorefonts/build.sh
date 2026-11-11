@@ -7,7 +7,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=$(realpath "${OUT:?set OUT to an empty output folder}")
 IMAGE=${IMAGE:-debian@sha256:cf15c569a84dfda832e421ab27a8049e962ba8e90571612396cd8db799279e4e}
 sparky_provenance_init "$IMAGE"
-docker run --rm --name fonts-519-build --platform linux/amd64 --ulimit core=0 \
+docker run --rm --name fonts-519-build --platform linux/amd64 --ulimit core=0 --cpus 4 \
     "${SPARKY_PROV_ARGS[@]}" -e OWNER="$(id -u):$(id -g)" \
     -v "$OUT:/out" -v "$HERE:/recipe:ro" \
     -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro \
@@ -17,6 +17,7 @@ set -euo pipefail
 sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive
 export DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com
+export DEB_BUILD_OPTIONS=parallel=4
 trap '\''chown -R "$OWNER" /out'\'' EXIT
 apt-get update -qq
 apt-get install -y --no-install-recommends build-essential debhelper po-debconf curl ca-certificates patch python3 dpkg-dev
