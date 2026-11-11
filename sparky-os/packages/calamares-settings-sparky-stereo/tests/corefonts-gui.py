@@ -3,7 +3,7 @@
 """Real target apt and KDE debconf, in a fresh private KWin Wayland session.
 
 corefonts-gui.py HELPER TARGET EVIDENCE CASE LANGUAGE
-CASE: accept, refuse, close, failed-download.
+CASE: accept, refuse, close, failed-download, skip-download.
 Set WAYLAND_INPUT, KWIN_SCRIPT and KWIN_CAPTURE to the isolated rig tools.
 Never connect this harness to a person's desktop. No Xvfb or terminal is used.
 """
@@ -14,7 +14,7 @@ import sys
 import time
 
 helper, target, evidence, choice, language = sys.argv[1:]
-assert choice in ('accept', 'refuse', 'close', 'failed-download')
+assert choice in ('accept', 'refuse', 'close', 'failed-download', 'skip-download')
 assert os.environ.get('QT_QPA_PLATFORM') == 'wayland'
 out = Path(evidence)
 out.mkdir(parents=True, exist_ok=True)
@@ -44,7 +44,7 @@ with logfile.open('w') as log:
                 time.sleep(0.6)
                 capture('download-notice')
                 # The warning defaults to Decline. Move to Continue explicitly.
-                keys(105, 28)
+                keys(28) if choice == 'skip-download' else keys(105, 28)
                 notice = True
             if 'KDE debconf EULA' in text and not answered:
                 assert 'platform= "wayland" accepted= false' in text, text[-2000:]
@@ -76,8 +76,8 @@ with logfile.open('w') as log:
         if process.poll() is None:
             process.terminate()
             process.wait(timeout=5)
-assert answered, 'the KDE EULA was never presented'
-assert logfile.read_text().count('KDE debconf EULA') == 1, 'licence question repeated'
+assert answered == (choice != 'skip-download'), 'unexpected licence presentation'
+assert logfile.read_text().count('KDE debconf EULA') == (0 if choice == 'skip-download' else 1), 'licence question count'
 fonts = list((Path(target) / 'usr/share/fonts/truetype/msttcorefonts').glob('*.ttf'))
 if choice == 'accept':
     assert status == 0 and fonts, (status, len(fonts))
@@ -88,10 +88,19 @@ if choice == 'accept':
     (out / 'fc-match.txt').write_text(family + '\n')
 else:
     assert not fonts and outcome, (len(fonts), outcome)
-    assert status == (0 if choice in ('refuse', 'close') else 1), status
-answer = subprocess.check_output(['chroot', target, 'debconf-communicate', 'ttf-mscorefonts-installer'],
-                                 input='GET msttcorefonts/accepted-mscorefonts-eula\n', text=True,
-                                 env=dict(os.environ, DEBIAN_FRONTEND='noninteractive'))
-assert answer.strip() == ('0 true' if choice in ('accept', 'failed-download') else '0 false'), answer
-(out / 'debconf-answer.txt').write_text(answer)
+    assert status == (0 if choice in ('refuse', 'close', 'skip-download') else 1), status
+answer = subprocess.run(['chroot', target, 'debconf-communicate', 'ttf-mscorefonts-installer'],
+                        input='GET msttcorefonts/accepted-mscorefonts-eula\n', text=True, capture_output=True,
+                        env=dict(os.environ, DEBIAN_FRONTEND='noninteractive'))
+if choice == 'skip-download':
+    assert notice and answer.returncode == 10, answer.stdout
+    assert not (Path(target) / 'var/lib/dpkg/info/ttf-mscorefonts-installer.list').exists()
+else:
+    assert answer.returncode == 0, answer.stderr
+    assert answer.stdout.strip() == ('0 true' if choice in ('accept', 'failed-download') else '0 false'), answer.stdout
+    state = subprocess.check_output(['chroot', target, 'dpkg-query', '-W', '-f', '${Status}',
+                                     'ttf-mscorefonts-installer'], text=True)
+    assert state == ('install ok half-configured' if choice == 'failed-download' else 'install ok installed'), state
+    (out / 'dpkg-state.txt').write_text(state + '\n')
+(out / 'debconf-answer.txt').write_text(answer.stdout)
 print(f'PASS private KWin Wayland {language} {choice}: exit={status}, fonts={len(fonts)}, notice={notice}')
