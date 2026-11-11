@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jesse Zhang <Jesse.Zhang@amd.com>
+Date: Wed, 28 Oct 2026 16:56:33 +0800
+Subject: drm/amdgpu: complete the guilty fence at the end of a multi ring reset
+
+amdgpu_ring_backup_unprocessed_commands() skips the backup of a ring and
+clears ring->guilty_fence when it sees the same guilty fence again, to
+avoid replay loops. That happens when the IP block soft reset follows a
+failed ring reset of the same job. amdgpu_multi_ring_reset_helper_end()
+then restored the guilty ring with ring->guilty_fence, NULL by then, so
+neither the guilty fence nor the rest of the ring was completed: the hung
+job stayed pending until it timed out again.
+
+Pass the guilty fence to the end helper, and use it for the guilty ring.
+For the other rings, and when the backup didn't drop it, nothing changes.
+
+Signed-off-by: Jesse Zhang <Jesse.Zhang@amd.com>
+
+[ORDER 525: carried from amd-gfx, not merged upstream (v3 02/15 of 2026-10-28).
+Link: https://lore.kernel.org/amd-gfx/20261028085736.3808569-2-Jesse.Zhang@amd.com/
+Why this kernel needs it: on 7.3.1-stereo3d16 the A10's Radeon R5 M430 (Hainan, gfx_v6_0, no wave-kill soft recovery) wedged after a WebGPU compute job ran past the 2000 ms watchdog: the IP block soft reset reported success every 3.5 s for the same fence (signaled 90991, emitted 90992) and never completed it, so the browser, TTM's delayed-delete workers and every waiter on that fence slept in D state until a reboot. The devcoredump of the loop shows the restored ring: init, clear state, two ring tests, then only NOP padding (Rptr == Wptr), no EVENT_WRITE_EOP for 90992. On gfx6 no ring reset precedes the soft reset; the repeat comes from the same fence timing out again after a soft reset (or from a later fence allocated at the address ring->guilty_fence still holds), and the end helper got NULL for it every second cycle.
+Adapted to v7.3.1 only in its hunks: v3 01/15 ("pass the device to the multi ring reset helpers") is not carried, so the end helper keeps taking the device from guilty_ring; the changed lines are the same.
+In v4 of the series (2026-11-05) this patch was replaced by Timur Kristóf's "drm/amdgpu/ring: During multi-queue reset, only call begin helper if needed" (v4 02/13), which keeps the first backup and replays it on every repeat; on gfx6, where the repeat is not a failed ring reset, a replay that does not complete then loops the same way, and a stale ring->guilty_fence makes it replay another job's old backup. This patch completes the fence on a repeat instead (-ETIME for it, -ECANCELED for the rest of the ring), as ce3f23a78085 and 930a915de89c intended ("If we've already seen a fence, don't backup the ring contents since presumably either the previous reset was not successful or there was something wrong with the data").
+Drop this group when either form, or another fix that completes a repeated guilty fence after an IP block soft reset, reaches the release this kernel moves to.]
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_ip.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_ip.c
+index 922f4b1..cee758d 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_ip.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_ip.c
+@@ -511,7 +511,8 @@ int amdgpu_device_ip_soft_reset(struct amdgpu_ring *guilty_ring,
+ 
+ 	r = ip_block->version->funcs->soft_reset(ip_block);
+ 
+-	r = amdgpu_multi_ring_reset_helper_end(ring_type_mask, guilty_ring, r);
++	r = amdgpu_multi_ring_reset_helper_end(ring_type_mask, guilty_ring,
++					       guilty_fence, r);
+ 	amdgpu_device_unlock_reset_domain(adev->reset_domain);
+ 
+ 	if (r) {
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_ring.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_ring.c
+index 5922406..97e09af 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_ring.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_ring.c
+@@ -1055,6 +1055,7 @@ void amdgpu_multi_ring_reset_helper_begin(const u32 ring_type_mask,
+  *
+  * @ring_type_mask: Bitmask of affected ring types
+  * @guilty_ring: The ring which is guilty of causing a reset.
++ * @guilty_fence: The fence which didn't signal on the guilty ring.
+  * @ret: Return code from the reset function.
+  *
+  * After calling amdgpu_multi_ring_reset_helper_begin()
+@@ -1066,7 +1067,8 @@ void amdgpu_multi_ring_reset_helper_begin(const u32 ring_type_mask,
+  * fully restore the ring contents.
+  */
+ int amdgpu_multi_ring_reset_helper_end(const u32 ring_type_mask,
+-				       struct amdgpu_ring *guilty_ring, int ret)
++				       struct amdgpu_ring *guilty_ring,
++				       struct amdgpu_fence *guilty_fence, int ret)
+ {
+ 	struct amdgpu_device *adev = guilty_ring->adev;
+ 	struct amdgpu_ring *ring;
+@@ -1097,8 +1099,13 @@ int amdgpu_multi_ring_reset_helper_end(const u32 ring_type_mask,
+ 		if (!(BIT(ring->funcs->type) & ring_type_mask))
+ 			continue;
+ 
+-		/* Restore contents of the ring */
+-		r = amdgpu_ring_reset_helper_end(ring, ring->guilty_fence);
++		/*
++		 * Restore contents of the ring. The backup of the guilty ring
++		 * may have dropped its guilty fence, eg. after a failed ring
++		 * reset with the same fence: still complete it.
++		 */
++		r = amdgpu_ring_reset_helper_end(ring, ring == guilty_ring ?
++						 guilty_fence : ring->guilty_fence);
+ 		if (r) {
+ 			dev_err(adev->dev,
+ 				"Failed to recover ring %s after soft reset\n",
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_ring.h b/drivers/gpu/drm/amd/amdgpu/amdgpu_ring.h
+index 015623b..ed4fcac 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_ring.h
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_ring.h
+@@ -599,7 +599,8 @@ void amdgpu_multi_ring_reset_helper_begin(const u32 ring_type_mask,
+ 					  struct amdgpu_ring *guilty_ring,
+ 					  struct amdgpu_fence *guilty_fence);
+ int amdgpu_multi_ring_reset_helper_end(const u32 ring_type_mask,
+-				       struct amdgpu_ring *guilty_ring, int ret);
++				       struct amdgpu_ring *guilty_ring,
++				       struct amdgpu_fence *guilty_fence, int ret);
+ bool amdgpu_ring_is_reset_type_supported(struct amdgpu_ring *ring,
+ 					 u32 reset_type);
+ #endif
+-- 
+2.50.1
