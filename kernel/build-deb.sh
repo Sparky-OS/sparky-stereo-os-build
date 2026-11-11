@@ -4,12 +4,14 @@
 # Debian's own configuration for the nearest kernel plus the edition's fragment (kernel/config, kernel/configure.sh). Runs in a
 # container (kernel/docker/Dockerfile, built on first use) as the invoking user; the host is not touched.
 #
-#   kernel/build-deb.sh -b BUILD [-f base|v3|rt] [-o out-dir] [-k] [-t]
+#   kernel/build-deb.sh -b BUILD [-f base|v3|rt] [-s SUFFIX] [-o out-dir] [-k] [-t]
 #
 #   -b BUILD     build counter, part of the release name; a release name is never reused (the script stops if it exists)
 #   -f FLAVOUR   base (default): generic x86-64; v3: x86-64-v3 (AVX2 and newer CPUs); rt: PREEMPT_RT (audio production)
 #   -o OUT       output directory (default ${SPARKY_SCRATCH}/linux-stereo3d-out); packages land in OUT/<release>/
 #   -k           keep the work directory (default: removed after a successful build)
+#   -s SUFFIX    test builds only (lowercase letters and digits, e.g. t525): the release becomes <name>-SUFFIX and the package version
+#                <version>~SUFFIX, so a test kernel installs beside the published build of the same number; a test build is never published
 #   -t           smoke test: a tiny kernel through the same packaging steps (see tests/package-smoke.sh), no series, no Debian configuration
 #
 # Release names (uname -r), chosen so that GRUB's version sort (sort -V, newest first) puts v3 above base above rt:
@@ -21,21 +23,23 @@
 #   SERIES            patch series directory (default kernel/series); SKIP: regular expression of series lines to leave out
 #   CPUS, MEM, JOBS   container limits (default 4, 16g) and make -j (default 4)
 #   WORK              work directory (default ${SPARKY_SCRATCH}/linux-stereo3d-build)
+#   IMAGE, NAME       the build image (default sparky-kernel-build:1) and the container's name (default sparky-kernel-<release>)
 #
 # The packages are NOT signed. The kernel image is signed by whoever holds the Secure Boot key; the modules are already
 # signed with a key that exists only during the build and is deleted before the script ends.
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
-FLAVOUR=base; OUT=${SPARKY_SCRATCH:?}/linux-stereo3d-out; BUILD=; KEEP=0; SMOKE=0
-while getopts b:f:o:kth opt; do
+FLAVOUR=base; OUT=${SPARKY_SCRATCH:?}/linux-stereo3d-out; BUILD=; KEEP=0; SMOKE=0; SUFFIX=
+while getopts b:f:o:s:kth opt; do
     case "$opt" in
-        b) BUILD=$OPTARG;; f) FLAVOUR=$OPTARG;; o) OUT=$OPTARG;; k) KEEP=1;; t) SMOKE=1;;
+        b) BUILD=$OPTARG;; f) FLAVOUR=$OPTARG;; o) OUT=$OPTARG;; s) SUFFIX=$OPTARG;; k) KEEP=1;; t) SMOKE=1;;
         *) sed -n '2,/^set -eu/p' "$0" | sed 's/^# \{0,1\}//; /^set -eu/d'; exit 2;;
     esac
 done
 [ -n "$BUILD" ] || { echo "build-deb.sh: -b BUILD is required (a new number for every build)" >&2; exit 2; }
 case "$BUILD" in *[!0-9]*|'') echo "build-deb.sh: BUILD must be a number" >&2; exit 2;; esac
+case "$SUFFIX" in *[!a-z0-9]*) echo "build-deb.sh: SUFFIX must be lowercase letters and digits" >&2; exit 2;; esac
 TAG=${TAG:-v7.3.1}
 TAG_COMMIT=${TAG_COMMIT:-79a907609d53d5cd645b42c11550d295d43abf99}
 SERIES=${SERIES:-$HERE/series}
@@ -56,8 +60,9 @@ case "$FLAVOUR" in
     rt) LV=-rt-stereo3d$BUILD;;
     *) echo "build-deb.sh: flavour must be base, v3 or rt" >&2; exit 2;;
 esac
+LV=$LV${SUFFIX:+-$SUFFIX}
 case "$KVER" in *-rc*) RELEASE=${KVER%%-rc*}-rc${KVER##*-rc}$LV;; *) RELEASE=$KVER$LV;; esac
-PKGVER=$DVER-$BUILD
+PKGVER=$DVER-$BUILD${SUFFIX:+~$SUFFIX}
 
 [ -d "$SERIES" ] && [ -f "$SERIES/series.txt" ] || { echo "build-deb.sh: no patch series at $SERIES" >&2; exit 2; }
 [ ! -e "$OUT/$RELEASE" ] || { echo "build-deb.sh: $OUT/$RELEASE exists: a release name is never reused, take a new -b" >&2; exit 2; }
@@ -81,7 +86,7 @@ rm -rf "$WORK/$RELEASE"; mkdir -p "$WORK/$RELEASE" "$OUT/$RELEASE"
 echo "== release $RELEASE  package version $PKGVER  flavour $FLAVOUR  tag $TAG  cpus $CPUS  memory $MEM"
 GITMOUNT=; [ -n "${KERNEL_GIT:-}" ] && GITMOUNT="-v $KERNEL_GIT:/kernel-git:ro"
 # shellcheck disable=SC2086
-docker run --rm --name "sparky-kernel-$RELEASE" --platform linux/amd64 --cpus "$CPUS" --memory "$MEM" --user "$(id -u):$(id -g)" \
+docker run --rm --name "${NAME:-sparky-kernel-$RELEASE}" --platform linux/amd64 --cpus "$CPUS" --memory "$MEM" --user "$(id -u):$(id -g)" \
     -v "$WORK/$RELEASE":/work -v "$OUT/$RELEASE":/out -v "$HERE":/kernel:ro -v "$SERIES":/series:ro $GITMOUNT \
     -e FLAVOUR="$FLAVOUR" -e BUILD="$BUILD" -e TAG="$TAG" -e TAG_COMMIT="$TAG_COMMIT" -e RELEASE="$RELEASE" -e LV="$LV" \
     -e PKGVER="$PKGVER" -e JOBS="$JOBS" -e SMOKE="$SMOKE" -e SKIP="${SKIP:-}" -e HAVE_KERNEL_GIT="${KERNEL_GIT:+1}" \

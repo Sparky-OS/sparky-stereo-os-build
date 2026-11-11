@@ -483,3 +483,15 @@
 44-ev-btn/0005-Realign-rest-of-the-HID-UP-BUTTON-cases.patch
 44-ev-btn/0006-Add-EVIOCGBTNCNT.patch
 44-ev-btn/0007-Size-the-evdev-buffer-for-EV-BTN-buttons.patch
+
+# ==== 45-amdgpu-soft-reset-guilty-fence: a GPU job that outlives amdgpu's 2 s watchdog on Southern Islands wedges the GPU until a reboot (ORDER 525)
+#      status: next build (all three flavours). Jesse Zhang's (AMD) "[PATCH v3 02/15] drm/amdgpu: complete the guilty fence at the end of a multi ring reset", amd-gfx 2026-10-28,
+#      not merged; backported to v7.3.1 without its 01/15 (which only passes the device to the helpers). gfx_v6_0 has no wave-kill soft recovery, so every gfx timeout goes to the
+#      IP block soft reset (Timur Kristóf's, 1fc76380c6ce, v7.3-rc1). When the same fence times out again, or a later fence sits at the freed address ring->guilty_fence still holds,
+#      amdgpu_ring_backup_unprocessed_commands drops the backup and sets ring->guilty_fence to NULL, and amdgpu_multi_ring_reset_helper_end passed that NULL on, so the fence was
+#      never completed (Jesse Zhang's own guard of 2026-09-17, b3f73daa1c24, in v7.3, made the NULL case skip the force completion). On the A10's Hainan: "ring gfx timeout,
+#      signaled seq=90991, emitted seq=90992", a "successful" soft reset and "device wedged, but no recovery needed" every 3.5 s, tasks in D state, only a reboot cleared it.
+#      With the patch the repeated fence is completed with -ETIME and the rest of the ring with -ECANCELED: the program gets a lost device, nothing waits for ever.
+#      v4 of the series (2026-11-05) replaced this patch by Timur Kristóf's 02/13, which replays the first backup on every repeat; on gfx6 that can loop the same way (ORDER 525 model).
+#      Drop this group when a fix that completes a repeated guilty fence after an IP block soft reset is in the release this kernel moves to.
+45-amdgpu-soft-reset-guilty-fence/0001-drm-amdgpu-complete-the-guilty-fence-at-the-end-of-a.patch
