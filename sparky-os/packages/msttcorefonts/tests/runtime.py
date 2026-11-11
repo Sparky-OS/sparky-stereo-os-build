@@ -8,8 +8,8 @@ The retry cases use a container kept from the corresponding first case.
 Only test mirror configuration is supplied; EULA acceptance is typed into debconf.
 """
 import os
+import gzip
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -32,12 +32,20 @@ elif case == 'retry-download':
     mirror('')
 
 environment = dict(os.environ, LC_ALL='C.UTF-8', TERM='xterm', DEBIAN_FRONTEND='readline', DEBIAN_PRIORITY='critical')
+if case in ('metered', 'unmetered'):
+    # Only NetworkManager's answer is a stand-in; apt, its hook, metadata and consent gate are real.
+    busctl = Path('/usr/local/bin/busctl')
+    busctl.parent.mkdir(parents=True, exist_ok=True)
+    busctl.write_text('#!/bin/sh\nprintf "u ' + ('1' if case == 'metered' else '2') + '\\n"\n')
+    busctl.chmod(0o755)
+    environment['PATH'] = '/usr/local/bin:/usr/bin:/bin'
 if not case.startswith('retry-'):
     repo = Path('/tmp/fonts-519-repo')
     repo.mkdir(exist_ok=True)
     shutil.copyfile(package, repo / Path(package).name)
     with (repo / 'Packages').open('w') as index:
         subprocess.run(['dpkg-scanpackages', '.', '/dev/null'], cwd=repo, stdout=index, check=True)
+    (repo / 'Packages.gz').write_bytes(gzip.compress((repo / 'Packages').read_bytes(), mtime=0))
     source = Path('/etc/apt/sources.list.d/fonts-519.list')
     source.write_text('deb [trusted=yes] file:/tmp/fonts-519-repo ./\n')
     subprocess.run(['apt-get', '-o', 'Dir::Etc::sourcelist=' + str(source), '-o', 'Dir::Etc::sourceparts=-',
@@ -47,9 +55,10 @@ if not case.startswith('retry-'):
 if case.startswith('retry-'):
     command = ['dpkg-reconfigure', '--force', 'ttf-mscorefonts-installer']
 else:
-    command = ['apt-get', '--no-install-recommends', '-o', 'Dpkg::Use-Pty=0', '-o', 'Sparky::Install-Downloads::Announce=always',
+    announce = 'metered' if case in ('metered', 'unmetered') else 'always'
+    command = ['apt-get', '--no-install-recommends', '-o', 'Dpkg::Use-Pty=0', '-o', 'Sparky::Install-Downloads::Announce=' + announce,
                'install', 'ttf-mscorefonts-installer']
-if case == 'noninteractive':
+if case in ('noninteractive', 'metered', 'unmetered'):
     environment['DEBIAN_FRONTEND'] = 'noninteractive'
     command.insert(1, '-y')
 
@@ -80,11 +89,13 @@ with (out / (case + '.log')).open('w') as log:
     status = child.exitstatus if child.exitstatus is not None else 128 + child.signalstatus
 text = (out / (case + '.log')).read_text()
 print(f'{case}: exit={status}, EULA={eula}, question={question}, shared-notice={notice}')
-if case != 'noninteractive' and case != 'retry-download':
+if case not in ('noninteractive', 'metered', 'unmetered', 'retry-download'):
     assert eula and question, 'the EULA and actual acceptance question must be presented'
-if not case.startswith('retry-'):
+if case == 'unmetered':
+    assert not notice, 'unmetered install must not show the metered notice'
+elif not case.startswith('retry-'):
     assert notice and '3.8 MiB' in text and 'https://downloads.sourceforge.net/corefonts/' in text, 'shared size/source notice missing'
-if case in ('refuse', 'noninteractive', 'failed-download'):
+if case in ('refuse', 'noninteractive', 'metered', 'unmetered', 'failed-download'):
     assert not list(fonts.glob('*.ttf')), 'fonts arrived without acceptance or despite a failed download'
     assert 'not installed' in text.lower(), 'missing visible outcome'
     assert 'dpkg-reconfigure ttf-mscorefonts-installer' in text, 'missing retry command'
