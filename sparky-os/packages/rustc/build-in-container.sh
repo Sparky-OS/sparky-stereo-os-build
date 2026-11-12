@@ -52,8 +52,15 @@ import sys
 from pathlib import Path
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root / 'debian/sparky-lean-toolkit'))
-from lean import debhelper
+from lean import debhelper, release
 debhelper.link_gate = lambda built: print('link gate after the build: lean.release check-link', ' '.join(p.name for p in built))
+# rust-src is the compiler's and the standard library's source, shipped as source: it stays as its authors ship it
+RUST_SRC = {'/usr/src/rustc-*': "the compiler's and the standard library's source, shipped as source: cargo checks "
+            "library/vendor against each crate's .cargo-checksum.json, rust-analyzer and -Zbuild-std read it, and its "
+            'benchmark inputs hold scripts no installed interpreter parses (Python 2)'}
+build_tree = release.build_tree
+release.build_tree = lambda staging, out, preserve=None: build_tree(
+    staging, out, preserve=RUST_SRC if Path(staging).name == 'rust-src' else preserve)
 debhelper.build(root, root / 'debian/sparky-lean-toolkit/provenance.sh')
 PYWRAP
 	sed -i "s|^\tPYTHONPATH=\$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.debhelper --provenance .*\$|\tpython3 \$(CURDIR)/debian/sparky-builddeb.py \$(CURDIR)|" authored/debian/rules
@@ -115,7 +122,7 @@ repackage)
 	rm -rf /work/final-tree-debian && mkdir /work/final-tree-debian
 	tar -C /work/final-tree-debian -xf "/work/source-final/lc/rustc_$VERSION+lc1.debian.tar.xz"
 	cd /work/tree
-	for f in debian/libstd-rust-discover.install debian/libstd-rust-discover.triggers debian/libstd-rust-discover.lintian-overrides; do rm "$f"; done
+	rm -f debian/libstd-rust-discover.install debian/libstd-rust-discover.triggers debian/libstd-rust-discover.lintian-overrides
 	(cd /work/final-tree-debian/debian && find . -type f -print0) | while IFS= read -r -d '' f; do
 		if ! cmp -s "/work/final-tree-debian/debian/$f" "debian/$f"; then
 			echo "debian/$f: taken from the final source" >>/work/repackage-changed.txt
