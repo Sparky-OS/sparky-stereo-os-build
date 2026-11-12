@@ -78,8 +78,9 @@ install.write_text('usr/lib/${DEB_HOST_MULTIARCH}/librustc_driver-*.so\n')
     f'{runtime} binary: shlib-without-versioned-soname\n'
     f'{runtime} binary: dev-pkg-without-shlib-symlink\n')
 (debian / 'sparky-libstd-hash').write_text(std_hash + '\n')
-shutil.copy2(recipe / 'sparky-libstd-runtime', debian / 'sparky-libstd-runtime')
-os.chmod(debian / 'sparky-libstd-runtime', 0o755)
+for helper in ('sparky-libstd-runtime', 'sparky-libstd-symbols'):
+    shutil.copy2(recipe / helper, debian / helper)
+    os.chmod(debian / helper, 0o755)
 
 # rules: keep libstd's shared object, and give the runtime package its symbols file
 rules = (debian / 'rules').read_text()
@@ -87,9 +88,8 @@ rules = once(rules, '\trm $(DEB_DESTDIR)/usr/lib/rustlib/$(DEB_HOST_RUST_TYPE)/l
              '\tdebian/sparky-libstd-runtime $(DEB_DESTDIR) $(DEB_HOST_MULTIARCH) $(DEB_HOST_RUST_TYPE)\n', 'rm of libstd-*.so')
 rules = once(rules, '\tdh_makeshlibs -V -N $(LIBSTD_PKG)\n',
              '\tdh_makeshlibs -V -N $(LIBSTD_PKG) -N $(SPARKY_STD_PKG)\n'
-             '\tif [ -d debian/$(SPARKY_STD_PKG) ]; then mkdir -p debian/$(SPARKY_STD_PKG)/DEBIAN && '
-             'printf \'%s %s (= %s)\\n (regex)"^.*$$" 0\\n\' "libstd-$(SPARKY_STD_HASH).so" "$(SPARKY_STD_PKG)" "$(DEB_VERSION)" '
-             '> debian/$(SPARKY_STD_PKG)/DEBIAN/symbols; fi\n', 'dh_makeshlibs call')
+             '\tif [ -d debian/$(SPARKY_STD_PKG) ]; then debian/sparky-libstd-symbols $(SPARKY_STD_PKG) '
+             '"libstd-$(SPARKY_STD_HASH).so" "$(DEB_VERSION)" $(DEB_HOST_MULTIARCH); fi\n', 'dh_makeshlibs call')
 rules = once(rules, 'LIBSTD_PKG := libstd-rust-$(RUST_VERSION)\n',
              'LIBSTD_PKG := libstd-rust-$(RUST_VERSION)\n'
              'SPARKY_STD_HASH := $(shell cat debian/sparky-libstd-hash)\nSPARKY_STD_PKG := libstd-rust-$(SPARKY_STD_HASH)\n',

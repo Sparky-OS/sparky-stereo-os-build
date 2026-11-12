@@ -12,7 +12,7 @@
 trap 'chown -R 1000:1000 /work/ 2>/dev/null || true' EXIT
 set -euo pipefail
 : "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build.sh (sparky_provenance_init)}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
-: "${VERSION_FILE:?the versions file of the compiler to build}" "${STEP:?deps, build or repackage}"
+: "${VERSION_FILE:?the versions file of the compiler to build}" "${STEP:?deps, source, build, repackage or check}"
 # shellcheck disable=SC1090
 . "$VERSION_FILE"
 STD_HASH=${STD_HASH_FOUND:-$STD_HASH}
@@ -84,6 +84,13 @@ if [ -e /etc/apt/sources.list.d/sparky-seed.list ]; then
 fi
 
 case $STEP in
+source)  # the source packages alone, in the image the deps step made (the reproducible-source proof runs this)
+	make_source "$STD_HASH" /work/source
+	;;
+check)   # the release gate on the finished archives; writes the build record beside them
+	cd /work
+	PYTHONPATH=/toolkit python3 -m lean.release check-debs ./*+lc1_*.deb
+	;;
 deps)    # needs the network (apt); the driver commits the result as the image the build runs in, without network
 	make_source "$STD_HASH" /work/source
 	apt-get -y --no-install-recommends build-dep "/work/source/lc/rustc_$VERSION+lc1.dsc" >/work/build-dep.log 2>&1

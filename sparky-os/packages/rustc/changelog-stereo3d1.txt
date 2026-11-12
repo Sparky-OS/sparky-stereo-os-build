@@ -11,3 +11,5 @@ rustc (@VERSION@) mashtabba; urgency=medium
   * libstd-rust-@STD_HASH@ ships a symbols file with an exact dependency:
     dpkg-shlibdeps cannot read a version from a SONAME whose hash starts
     with a letter, and writes no dependency from a shlibs file then.
+    dpkg-gensymbols lists the library's symbols, so dpkg-shlibdeps finds
+    every symbol a program uses.

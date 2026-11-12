@@ -1,0 +1,25 @@
+#!/bin/sh
+# Sparky Stereo OS: the symbols file of the standard library's runtime package, with an exact dependency.
+# Created by Daniel Ramos (Capitain Jack) 2026/11/12
+# Copyright 2026 under the GNU GPL3 License
+# Usage (from debian/rules, in override_dh_makeshlibs): debian/sparky-libstd-symbols PACKAGE SONAME VERSION MULTIARCH
+# A shlibs file cannot serve: dpkg-shlibdeps reads a version out of a SONAME only when it starts with a digit
+# (NAME-VERSION.so), and a hash that starts with a letter gets a warning and no dependency. A symbols file is found
+# by the SONAME as it is (Debian Policy 8.6.3.2: "library-soname must contain exactly the value of the ELF SONAME
+# attribute"). The dependency is exact, because the library has no stable interface between two builds.
+set -eu
+pkg=$1 soname=$2 version=$3 multiarch=$4
+out=debian/$pkg/DEBIAN/symbols
+mkdir -p "debian/$pkg/DEBIAN"
+dpkg-gensymbols -q -p"$pkg" -P"debian/$pkg" -v"$version" -e"debian/$pkg/usr/lib/$multiarch/$soname" -O"$out"
+if [ "$(head -n 1 "$out")" != "$soname $pkg #MINVER#" ]; then
+	echo "sparky-libstd-symbols: unexpected first line in $out: $(head -n 1 "$out")" >&2
+	exit 1
+fi
+sed -i "1s/.*/$soname $pkg (= $version)/" "$out"
+count=$(($(wc -l <"$out") - 1))
+if [ "$count" -lt 1000 ]; then
+	echo "sparky-libstd-symbols: only $count symbols in $soname: this is not the standard library" >&2
+	exit 1
+fi
+echo "sparky-libstd-symbols: $count symbols, dependency $pkg (= $version)"

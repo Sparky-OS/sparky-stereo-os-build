@@ -84,8 +84,13 @@ else
 	final=$WORK/source
 fi
 date -u +%s >"$WORK/build-done"
+# the release gate (lean.release check-debs) writes the build record beside the archives, from the provenance facts
+name=$SPARKY_CONTAINER_PREFIX-check-$UPSTREAM
+docker run "${SPARKY_PROV_ARGS[@]}" -d --name "$name" --network none "${common[@]}" -e STEP=check \
+	"$image" bash -c 'bash /tools/build-in-container.sh > /work/check-debs.log 2>&1' >/dev/null
+guarded "$name" || { echo "check-debs failed: $WORK/check-debs.log" >&2; exit 1; }
 mkdir -p "$WORK/out/source"
-cp "$WORK"/*.deb "$WORK"/*.buildinfo "$WORK"/*.changes "$WORK/out/"
+cp "$WORK"/*.deb "$WORK"/*.buildinfo "$WORK"/*.changes "$WORK"/*.sparky-build.json "$WORK/out/"
 cp "$final"/lc/*+lc1.dsc "$final"/lc/*+lc1.debian.tar.xz "$final"/lc/*.orig.tar.xz "$WORK/out/source/"
 (cd "$WORK/out" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum >SHA256SUMS)
 echo "done: $WORK/out ($(ls "$WORK/out"/*.deb | wc -l) archives)"
