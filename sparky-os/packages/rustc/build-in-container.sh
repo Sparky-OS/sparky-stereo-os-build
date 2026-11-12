@@ -19,11 +19,14 @@ STD_HASH=${STD_HASH_FOUND:-$STD_HASH}
 VERSION=$DEBIAN_VERSION+$EDITION
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS="parallel=4 ${SPARKY_RUSTC_BUILD_OPTIONS-nocheck}"
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com LC_ALL=C.UTF-8
+# The compiler's own native inputs are the seven files of compiler/rustc_llvm/llvm-wrapper; they go through the C and
+# C++ pass. Every other C-family file of the tree is read by something else than the C compiler of this build:
 PRESERVE=(
 	--preserve-source 'vendor/*' "vendored Cargo crates: each crate's .cargo-checksum.json binds its files' bytes"
-	--preserve-source 'library/vendor/*' "vendored Cargo crates shipped in rust-src with their .cargo-checksum.json"
+	--preserve-source 'library/*' "shipped as source in rust-src: generator and test inputs (stdarch's intrinsics headers are parsed by stdarch-gen and stdarch-verify), an include_str! target (std's SGX entry.S) and a vendored crate"
 	--preserve-source 'tests/*' "test fixtures: the compiler's test suite compares their lines and columns"
-	--preserve-source 'src/doc/*' "documentation examples, shown to people in rust-doc"
+	--preserve-source 'src/*' "benchmark and CI inputs, not compiled in the package build"
+	--preserve-source 'compiler/rustc_codegen_gcc/*' "a test fixture of a backend the package does not build"
 )
 
 make_source() {    # make_source HASH OUT: OUT/s1 gets the +stereo3dN source, OUT/lc the +stereo3dN+lc1 source
