@@ -33,7 +33,7 @@ RECIPE=$HERE
 python3 "$COPY" "$RECIPE" "$W/recipe"
 HERE=$W/recipe
 
-# The snapshot: skills and tools whole, the documents' Markdown and architecture
+# The snapshot: skills, hooks and tools whole, the documents' Markdown and architecture
 # overview image (large screenshot galleries stay online), the front page,
 # the credits, the citation and both licences.
 P=$W/public
@@ -70,14 +70,14 @@ else
 	: "${SKILLS_COMMIT:?Set SKILLS_COMMIT to the reviewed public source commit}"
 	SKILLS_COMMIT=$(git -C "$SKILLS_SRC" rev-parse --verify "$SKILLS_COMMIT^{commit}")
 	mkdir -p "$P"
-	git -C "$SKILLS_SRC" archive --format=tar "$SKILLS_COMMIT" skills tools docs AGENTS.md README.md ATTRIBUTIONS.md CITATION.cff \
+	git -C "$SKILLS_SRC" archive --format=tar "$SKILLS_COMMIT" skills hooks tools docs AGENTS.md README.md ATTRIBUTIONS.md CITATION.cff \
 		LICENSE LICENSE-GPL-2.0 | tar -x -C "$P"
 	find "$P/docs" -type f ! -name '*.md' \
 		! -path "$P/docs/images/spatial-computing-architecture.png" -delete
 	find "$P/docs" -type d -empty -delete
 	find "$P" -name .gitignore -delete
 	# the guest init scripts and the CI scripts are run as programs: they get the executable bit their #! asks for
-	find "$P/tools" "$P/skills" -type f -exec sh -c 'head -c 2 "$1" | grep -q "#!"' _ {} \; -exec chmod 755 {} +
+	find "$P/tools" "$P/skills" "$P/hooks" -type f -exec sh -c 'head -c 2 "$1" | grep -q "#!"' _ {} \; -exec chmod 755 {} +
 	printf 'https://github.com/Sparky-OS/sparky-stereo-os\ncommit %s\ndate %s\n' "$SKILLS_COMMIT" \
 		"$(git -C "$SKILLS_SRC" log -1 --format=%cI "$SKILLS_COMMIT")" >"$P/SOURCE"
 	(cd "$P" && find . -type f ! -path ./MANIFEST.sha256 -print0 | LC_ALL=C sort -z | xargs -0 sha256sum >MANIFEST.sha256)
