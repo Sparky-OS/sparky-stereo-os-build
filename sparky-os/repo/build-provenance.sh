@@ -54,7 +54,7 @@ sparky_provenance_init() {
 	SPARKY_PROV_ARGS=(-e "SPARKY_BUILD_INVOCATION=$invocation" -e "SPARKY_BUILD_STARTED=$started"
 		-e "SPARKY_BUILD_IMAGE_NAME=$image" -e "SPARKY_PROVENANCE_REQUIRED=${SPARKY_PROVENANCE_REQUIRED:-}"
 		-e "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" -e "SOURCE_DATE_RFC2822=$SOURCE_DATE_RFC2822" -e "SPARKY_SOURCE_DATE_BASIS=$basis"
-		-v "$tree/sparky-os/repo/reproducible.py:/run/reproducible.py:ro")
+		--mount "type=bind,src=$tree/sparky-os/repo/reproducible.py,dst=/run/reproducible.py,readonly")
 	[ -z "$commit" ] || SPARKY_PROV_ARGS+=(-e "SPARKY_BUILD_COMMIT=$commit" -e "SPARKY_BUILD_DIRTY=$dirty")
 	[ -z "$id" ] || SPARKY_PROV_ARGS+=(-e "SPARKY_BUILD_IMAGE_ID=$id" -e "SPARKY_BUILD_IMAGE_REPO_DIGESTS=$digests")
 }
