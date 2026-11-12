@@ -76,11 +76,18 @@ if [ "$STEP" = deps ]; then
 		apt-get -y update >>/work/apt-update.log 2>&1
 	fi
 fi
-seed=$(apt-cache policy rustc | awk '/Candidate:/ {print $2}')
-SEED_TEXT="Debian testing's rustc $seed"
-if [ -e /etc/apt/sources.list.d/sparky-seed.list ]; then
-	case $seed in *+stereo3d*) ;; *) echo "the edition's seed compiler is not the candidate (rustc candidate: $seed): refusing to build with Debian's" >&2; exit 1 ;; esac
-	SEED_TEXT="the edition's rustc $seed"
+# The seed compiler is named by the versions file, so the changelog says the same whatever apt offers that day; the
+# deps step stops when apt's candidate is another compiler (never Debian's behind the recipe's back, nor a newer one).
+case $SEED_VERSION in
+*+stereo3d*) SEED_TEXT="the edition's rustc $SEED_VERSION" ;;
+*) SEED_TEXT="Debian testing's rustc $SEED_VERSION" ;;
+esac
+if [ "$STEP" = deps ]; then
+	seed=$(apt-cache policy rustc | awk '/Candidate:/ {print $2}')
+	if [ "$seed" != "$SEED_VERSION" ]; then
+		echo "the seed compiler apt offers is rustc $seed, the versions file names $SEED_VERSION: refusing to build with another compiler (give the seed's packages as SEED_DIR, or record the new seed in $(basename "$VERSION_FILE"))" >&2
+		exit 1
+	fi
 fi
 
 case $STEP in
@@ -95,7 +102,7 @@ deps)    # needs the network (apt); the driver commits the result as the image t
 	make_source "$STD_HASH" /work/source
 	apt-get -y --no-install-recommends build-dep "/work/source/lc/rustc_$VERSION+lc1.dsc" >/work/build-dep.log 2>&1
 	dpkg-query -W -f '${Package} ${Version}\n' rustc cargo libstd-rust-dev llvm-22-dev libllvm22 gcc g++ cmake python3 wasi-libc debhelper dpkg-dev >/work/build-toolchain.txt
-	if [ -e /etc/apt/sources.list.d/sparky-seed.list ]; then grep -q '^rustc .*+stereo3d' /work/build-toolchain.txt || { echo "the installed rustc is not the edition's seed: $(grep '^rustc ' /work/build-toolchain.txt)" >&2; exit 1; }; fi
+	grep -qxF "rustc $SEED_VERSION" /work/build-toolchain.txt || { echo "the installed rustc is not the seed $SEED_VERSION: $(grep '^rustc ' /work/build-toolchain.txt)" >&2; exit 1; }
 	id builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
 	;;
 build)
