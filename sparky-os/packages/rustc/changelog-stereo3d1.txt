@@ -1,0 +1,13 @@
+rustc (@VERSION@) mashtabba; urgency=medium
+
+  * Sparky Stereo OS build of Debian's rustc @DEBIAN_VERSION@, bootstrapped
+    from @SEED@.
+  * New binary package libstd-rust-@STD_HASH@: the standard library's shared
+    object (libstd-@STD_HASH@.so), which Debian's rules delete, installed in
+    the public library folder so that programs built with -C prefer-dynamic
+    start; the package is named after the library's SONAME (Debian Policy
+    8.1), so two compilers' libraries install side by side.
+    libstd-rust-dev depends on it and keeps a link to it in the sysroot.
+  * libstd-rust-@STD_HASH@ ships a symbols file with an exact dependency:
+    dpkg-shlibdeps cannot read a version from a SONAME whose hash starts
+    with a letter, and writes no dependency from a shlibs file then.

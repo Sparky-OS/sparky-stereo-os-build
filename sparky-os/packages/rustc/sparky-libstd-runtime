@@ -1,0 +1,47 @@
+#!/bin/sh
+# Sparky Stereo OS: keep the standard library's shared object (Debian's rules delete it) and put it where programs load it.
+# Created by Daniel Ramos (Capitain Jack) 2026/11/12
+# Copyright 2026 under the GNU GPL3 License
+# Usage (from debian/rules, after the install step): debian/sparky-libstd-runtime DESTDIR MULTIARCH RUST_TYPE
+# It stops when the library's hash is not the one this source package names its runtime package after.
+set -eu
+dest=$1 multiarch=$2 rusttype=$3
+want=$(cat debian/sparky-libstd-hash)
+lib=$dest/usr/lib/rustlib/$rusttype/lib
+set -- "$lib"/libstd-*.so
+if [ $# != 1 ] || [ ! -f "$1" ] || [ -L "$1" ]; then
+	echo "sparky-libstd-runtime: expected exactly one libstd-*.so file in $lib, found: $*" >&2
+	exit 1
+fi
+name=${1##*/}
+got=${name#libstd-}
+got=${got%.so}
+printf '%s\n' "$got" >debian/sparky-libstd-hash.built
+if [ "$got" != "$want" ]; then
+	echo "sparky-libstd-runtime: this build's standard library is $name, but this source package names its runtime package libstd-rust-$want." >&2
+	echo "sparky-libstd-runtime: record STD_HASH=$got in the recipe's versions file, make the source package again and build it (the recipe's README, 'The first build of a version')." >&2
+	exit 1
+fi
+soname=$(objdump -p "$1" | awk '$1 == "SONAME" { print $2 }')
+if [ "$soname" != "$name" ]; then
+	echo "sparky-libstd-runtime: $name has SONAME '$soname'; programs would not find it under its file name" >&2
+	exit 1
+fi
+public=$dest/usr/lib/$multiarch
+if [ -e "$public/$name" ]; then
+	cmp "$1" "$public/$name"
+	rm "$1"
+else
+	mv "$1" "$public/$name"
+fi
+ln -s "../../../$multiarch/$name" "$1"
+for f in "$public"/*; do
+	case ${f##*/} in
+	librustc_driver-*.so | "$name") ;;
+	*)
+		echo "sparky-libstd-runtime: unexpected file in the public library folder, no package of this source installs it: $f" >&2
+		exit 1
+		;;
+	esac
+done
+echo "sparky-libstd-runtime: $name is in libstd-rust-$want"
