@@ -111,8 +111,8 @@ class Side:
                    for k in range(end, stop))
 
 
-def _sides(hr: str, mr: str, path: str):
-    key, variant, why = consumers.choose(path, hr.encode('utf-8'))
+def _sides(hr: str, mr: str, path: str, native: bool = False):
+    key, variant, why = consumers.choose(path, hr.encode('utf-8'), native)
     if key is None:
         raise Unresolved(f'{path}: no handler reads this file ({why})')
     mod = consumers.HANDLERS[key]
@@ -250,12 +250,12 @@ def _column(a: Side, m: Side, j: int, first: int, last: int, col: int):
 class Locator:
     """The authored and the lean text of one file, read once, for any number of lookups."""
 
-    def __init__(self, hr: bytes, mr: bytes, path: str):
+    def __init__(self, hr: bytes, mr: bytes, path: str, native: bool = False):
         try:
             a_text, m_text = hr.decode('utf-8'), mr.decode('utf-8')
         except UnicodeDecodeError as e:
             raise Unresolved(f'{path}: not UTF-8 text') from e
-        self.a, self.m = _sides(a_text, m_text, path)
+        self.a, self.m = _sides(a_text, m_text, path, native)
 
     def find(self, line: int, col: int | None = None, *, limit: int = 4096) -> Found:
         """Lean `line`[:`col`] (1-based) -> its authored line, found by content."""
@@ -294,6 +294,8 @@ class Locator:
                          f'place')
 
 
-def locate(hr: bytes, mr: bytes, path: str, line: int, col: int | None = None, *, limit: int = 4096) -> Found:
-    """Lean `path`:`line`[:`col`] (1-based) -> its authored line in `hr`, found by content."""
-    return Locator(hr, mr, path).find(line, col, limit=limit)
+def locate(hr: bytes, mr: bytes, path: str, line: int, col: int | None = None, *, limit: int = 4096,
+           native: bool = False) -> Found:
+    """Lean `path`:`line`[:`col`] (1-based) -> its authored line in `hr`, found by content. `native`: a build input
+    of a source tree (a Rust file is read only there)."""
+    return Locator(hr, mr, path, native).find(line, col, limit=limit)

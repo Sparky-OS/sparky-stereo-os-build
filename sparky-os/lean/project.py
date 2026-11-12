@@ -133,9 +133,9 @@ def render_text(text: str, key: str, variant: str | None, package: str | None, p
     return out, rendered, spans
 
 
-def project(path: str, data: bytes, package: str | None = None, *, pointer=True, check=True) -> Result:
+def project(path: str, data: bytes, package: str | None = None, *, pointer=True, check=True, native=False) -> Result:
     res = Result(path=path, status='left', reason='', bytes_in=len(data), sha_in=sha256(data))
-    key, variant, why = consumers.choose(path, data)
+    key, variant, why = consumers.choose(path, data, native)
     if key is None:
         res.reason = why
         return res
@@ -158,7 +158,7 @@ def project(path: str, data: bytes, package: str | None = None, *, pointer=True,
         if why:
             res.reason = why
             return res
-    if key in ('perl', 'zig') and check:
+    if key in ('perl', 'zig', 'rust') and check:
         # as for shell: an authored file perl does not compile on its own (a handler that runs inside its host,
         # such as snmptrapd's embedded Perl, which defines its names) has no consumer check, so it is retained;
         # so is a Zig file Zig's tokenizer or `zig ast-check` does not accept, or any Zig file without zig
@@ -197,7 +197,7 @@ def project(path: str, data: bytes, package: str | None = None, *, pointer=True,
 
 def reads_others(path: str) -> bool:
     """True for a file whose text can name other files it reads as data (a Zig file's @embedFile)."""
-    return os.path.splitext(path)[1].lower() in consumers.lang_zig.EXTS
+    return os.path.splitext(path)[1].lower() in consumers.lang_zig.EXTS | consumers.lang_rust.EXTS
 
 
 def read_as_data(texts: dict, paths) -> dict:
@@ -213,7 +213,8 @@ def read_as_data(texts: dict, paths) -> dict:
             text = data.decode('utf-8')
         except UnicodeDecodeError:
             continue
-        for target, why in consumers.lang_zig.embedded(path, text):
+        reader = consumers.lang_rust if os.path.splitext(path)[1].lower() in consumers.lang_rust.EXTS else consumers.lang_zig
+        for target, why in reader.embedded(path, text):
             if target.endswith('/'):
                 for other in paths:
                     if other.startswith(target) and other != path:
@@ -223,11 +224,12 @@ def read_as_data(texts: dict, paths) -> dict:
     return out
 
 
-def resolve(hr: bytes, mr: bytes, path: str, package: str | None, line: int, col: int | None = None, *, pointer=True):
+def resolve(hr: bytes, mr: bytes, path: str, package: str | None, line: int, col: int | None = None, *, pointer=True,
+            native=False):
     """An MR location -> the authored (HR) location, rendering the HR again and refusing a stale MR, then
     reading the render's own line map (dpkg-stereo --resolve-render). dpkg-stereo --resolve finds it by the
     line's content instead (locate.locate), which needs no render by the same engine."""
-    key, variant, why = consumers.choose(path, hr)
+    key, variant, why = consumers.choose(path, hr, native)
     if key is None:
         raise StaleMr(f'{path}: no handler ({why})')
     text = hr.decode('utf-8')

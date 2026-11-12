@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 """Source projection for disposable builds, with exact authored recovery.
 
-C/C++ is the default. A retained language plan explicitly opts a Java or Zig build in;
-its JDK or zig must be installed before this stage, as for the actual compiler.
+C/C++ is the default. A retained language plan explicitly opts a Java, Zig or Rust build in;
+its JDK, zig or rustc must be installed before this stage, as for the actual compiler.
 """
 import argparse
 from dataclasses import asdict
@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 import re
 
-from . import VERSION, lang_c, lang_zig, project
+from . import VERSION, lang_c, lang_rust, lang_zig, project
 
 EXCLUDED = {'.git', '.pc', 'debian', '.sparky-lc', 'build'}
 PRESERVE_PLAN = 'debian/sparky-lean-preserve.json'
@@ -23,7 +23,10 @@ PAYLOAD_SOURCE_PLAN = 'debian/sparky-lean-payload-sources.json'
 # installed files a build step generates in a declared form from a source copy (Zig's install step writes every
 # *test.zig as an empty placeholder): pattern -> {"form": "empty" or "sha256:HEX", "reason": why}
 PAYLOAD_GENERATED_PLAN = 'debian/sparky-lean-payload-generated.json'
-EXTENSIONS = {'c': lang_c.EXTS | lang_c.ASM_EXTS, 'java': {'.java'}, 'zig': lang_zig.EXTS}
+EXTENSIONS = {'c': lang_c.EXTS | lang_c.ASM_EXTS, 'java': {'.java'}, 'zig': lang_zig.EXTS, 'rust': lang_rust.EXTS}
+# procedural-macro crates that read their callers' source text, each with the review that decided what stays authored
+# for it: {"crate folder": "what was reviewed"}; without an entry the projection stops and names the crate
+RUST_READERS_PLAN = 'debian/sparky-lean-rust-readers.json'
 
 
 def sha(data):
@@ -86,6 +89,10 @@ def project_tree(root):
     # a file another source file reads as data (Zig's @embedFile) is that file's input, not code to project
     readers = project.read_as_data({'/' + n: p.read_bytes() for p, n in zip(paths, names) if project.reads_others(n)},
                                    ('/' + n for n in names))
+    rust_left = rust_readers(root, names) if 'rust' in languages else {}
+    if 'rust' in languages:
+        prime_rust(paths, names, plan, readers, rust_left)
+    position_lines = {}
     for path, name in zip(paths, names):
         rel = path.relative_to(root)
         raw = path.read_bytes()
@@ -94,24 +101,31 @@ def project_tree(root):
                    if fnmatch.fnmatchcase(name, pattern)]
         if '/' + name in readers:
             reasons.append(readers['/' + name])
+        if name in rust_left:
+            reasons.append(rust_left[name])
         if reasons:
             result = project.Result(path='/' + name, status='left',
                                     reason='additional source consumer: ' + '; '.join(reasons),
                                     bytes_in=len(raw), bytes_out=len(raw), sha_in=sha(raw))
         else:
-            result = project.project('/' + name, raw, package='native-build', pointer=False)
+            result = project.project('/' + name, raw, package='native-build', pointer=False, native=True)
         row = asdict(result)
         row.pop('lean')
         row['final_sha256'] = sha(result.lean if result.lean is not None else raw)
         row['source_mtime_ns'] = metadata.st_mtime_ns
         records[rel.as_posix()] = row
+        if result.status == 'projected' and result.handler == 'rust':
+            where = lang_rust.lines(raw.decode('utf-8'))
+            if where:
+                position_lines[name] = where
         if result.status == 'projected':
             original = evidence / 'authored' / rel
             original.parent.mkdir(parents=True, exist_ok=True)
             original.write_bytes(raw)
             path.write_bytes(result.lean)
             os.utime(path, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
-        if result.reason.startswith(('check failed:', 'the c reader', 'the java reader', 'the zig reader', 'not stable')):
+        if result.reason.startswith(('check failed:', 'the c reader', 'the java reader', 'the zig reader', 'the rust reader',
+                                     'not stable')):
             # Retain recovery records even when qualification fails.
             report.write_text(json.dumps({'engine': VERSION, 'files': records}, indent=2) + '\n')
             raise ValueError(f'{rel}: {result.reason}')
@@ -119,8 +133,93 @@ def project_tree(root):
                                  'preserve': plan, 'languages': languages,
                                  'options': 'collapse-blank,no-pointer,C/C++ line breaks kept',
                                  'renderer': project.IDENTITY,
+                                 # Rust files whose own code reads its position: these values name lean lines
+                                 'position_lines': position_lines,
                                  'stage': 'before compilation', 'files': records}, indent=2) + '\n')
     print(f'Build-input Lean Code: {sum(r["status"] == "projected" for r in records.values())}/{len(records)} files projected')
+
+
+def _manifest_folders(root, names):
+    folders = set()
+    for name in names:
+        parts = name.split('/')[:-1]
+        for depth in range(len(parts), -1, -1):
+            folder = '/'.join(parts[:depth])
+            if folder in folders:
+                break
+            if (root / folder / 'Cargo.toml').is_file():
+                folders.add(folder)
+                break
+    return folders
+
+
+def rust_readers(root, names):
+    """{file: reason} for the Rust files that stay authored because something reads Rust source text that no
+    compiler check sees. A crate whose build script reads source text stays authored whole. A procedural-macro
+    crate that asks spans for their source text reads its callers' files, which this step cannot list: the
+    projection stops and names the crate until debian/sparky-lean-rust-readers.json records its review."""
+    rust = [n for n in names if n.endswith('.rs')]
+    folders = sorted(_manifest_folders(root, rust), key=len, reverse=True)
+
+    def crate_of(name):
+        return next((f for f in folders if f == '' or name.startswith(f + '/')), None)
+    members = {}
+    for name in rust:
+        members.setdefault(crate_of(name), []).append(name)
+    reviewed_path = root / RUST_READERS_PLAN
+    reviewed = json.loads(reviewed_path.read_text()) if reviewed_path.exists() else {}
+    if not isinstance(reviewed, dict) or any(not isinstance(k, str) or not isinstance(v, str) or not v.strip()
+                                             for k, v in reviewed.items()):
+        raise ValueError('The Rust source-reader plan must map crate folders to the review that decided them')
+    left, unreviewed = {}, []
+    for folder, files in sorted(members.items(), key=lambda kv: kv[0] or ''):
+        if folder is None:
+            continue
+        manifest = (root / folder / 'Cargo.toml').read_text(errors='replace')
+        script = re.search(r'^build\s*=\s*"([^"]+)"', manifest, re.M)
+        script = (folder + '/' if folder else '') + (script.group(1) if script else 'build.rs')
+        if (root / script).is_file():
+            why = lang_rust.source_reader(script, (root / script).read_text(errors='replace'))
+            if why:
+                for name in files:
+                    left[name] = 'its crate\'s build script reads Rust source text: ' + why
+                continue
+        if re.search(r'^proc[-_]macro\s*=\s*true', manifest, re.M):
+            for name in files:
+                why = lang_rust.source_reader(name, (root / name).read_text(errors='replace'), macro=True)
+                if why and folder not in reviewed:
+                    unreviewed.append(f'{folder or "."}: {why}')
+                    break
+    if unreviewed:
+        raise ValueError('Procedural macros that read their callers\' source text, not reviewed in '
+                         + RUST_READERS_PLAN + ' (a macro that reads comments is a consumer no compiler check sees): '
+                         + '; '.join(unreviewed))
+    return left
+
+
+def prime_rust(paths, names, plan, readers, rust_left):
+    """One rustc start per few hundred files instead of two per file: the authored texts and their renders are
+    read ahead; project() then finds each file's token digest remembered."""
+    texts = []
+    for path, name in zip(paths, names):
+        if (not name.endswith('.rs') or '/' + name in readers or name in rust_left
+                or any(fnmatch.fnmatchcase(name, pattern) for pattern in plan)):
+            continue
+        try:
+            text = path.read_bytes().decode('utf-8')
+        except UnicodeDecodeError:
+            continue
+        if '\r' in text or lang_rust.refuse(text):
+            continue
+        texts.append(text)
+        try:
+            lean, rendered, _ = project.render_text(text, 'rust', None, None, None, pointer=False)
+        except Exception:      # project() names it for this file
+            continue
+        if rendered.removed:
+            texts.append(lean)
+    if texts and lang_rust.rustc():
+        lang_rust.prime(texts)
 
 
 def authored(root):

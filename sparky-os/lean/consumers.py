@@ -14,10 +14,10 @@ import fnmatch
 import os
 import re
 
-from . import lang_c, lang_ini, lang_js, lang_json, lang_perl, lang_python, lang_shell, lang_toml, lang_yaml, lang_java, lang_kotlin, lang_zig
+from . import lang_c, lang_ini, lang_js, lang_json, lang_perl, lang_python, lang_shell, lang_toml, lang_yaml, lang_java, lang_kotlin, lang_zig, lang_rust
 
 HANDLERS = {m.KEY: m for m in (lang_shell, lang_python, lang_js, lang_ini, lang_yaml, lang_toml, lang_json,
-                               lang_c, lang_perl, lang_java, lang_kotlin, lang_zig)}
+                               lang_c, lang_perl, lang_java, lang_kotlin, lang_zig, lang_rust)}
 
 # never projected, with the reason recorded in the manifest
 EXCLUDE = [
@@ -74,8 +74,9 @@ def shebang(data: bytes) -> str | None:
     return re.sub(r'[0-9.]+$', '', prog) or prog
 
 
-def choose(path: str, data: bytes):
-    """(handler key, variant or interpreter, None) or (None, None, reason)."""
+def choose(path: str, data: bytes, native: bool = False):
+    """(handler key, variant or interpreter, None) or (None, None, reason). `native` is a build input in a source
+    tree (lean.source_tree), where the build itself answers for every consumer; an installed file has others."""
     for pat, why in EXCLUDE:
         if fnmatch.fnmatchcase(path, pat):
             return None, None, why
@@ -116,6 +117,12 @@ def choose(path: str, data: bytes):
         if any(fnmatch.fnmatchcase(path, p) for p in lang_zig.TEMPLATES):
             return None, None, 'a template: its generator (zig init, tree-sitter init) copies its text into new projects'
         return 'zig', None, None
+    if ext in lang_rust.EXTS:
+        if not native:
+            return None, None, ("installed Rust source: cargo checks a packaged crate's files against its "
+                                '.cargo-checksum.json, and rust-analyzer and -Zbuild-std read rust-src; the Rust '
+                                'adapter projects build inputs only')
+        return 'rust', None, None
     if ext in ('.qml', '.js', '.mjs'):
         return 'js', None, None
     if ext in ('.yaml', '.yml'):

@@ -60,6 +60,9 @@ RELEASED = {
     # ORDER 394b: lean.debhelper and lean.release check-debs write the build record beside the .deb files.
     '0.1.28': {'a79f7be67b527027657a7cb1c3aff678bf5b7ecc042bc9316346468c7e59f046':
                'lean 0.1.28 (collapse-blank,pointer,c-drop-lines) code a79f7be67b527027'},
+    # ORDER 533: the Rust adapter (lang_rust.py), for build inputs under a language plan; installed Rust files stay authored.
+    '0.1.29': {'1c8f4978a3646f2dfc2fae2eed4636e2da1a2dd5bbf44cffbfb60abdbbff30fb':
+               'lean 0.1.29 (collapse-blank,pointer,c-drop-lines) code 1c8f4978a3646f2d'},
 }
 
 # Digests that built under a label without being its released renderer: never accepted.
