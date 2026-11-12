@@ -42,6 +42,14 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * Carry Lean Code 0.1.29: the Rust adapter (ORDER 533), which projects Rust
+    build inputs of a source tree under a language plan. An installed Rust
+    file stays as authored.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 12 Nov 2026 16:00:00 +0000
+
+dpkg-stereo (0.1.39) unstable; urgency=medium
+
   * debsums is a Depends of dpkg-stereo (ORDER 437): dpkg-stereo --debsums is
     one of its commands, and a dependency a designed feature needs is a
     Depends, not a Suggests.
