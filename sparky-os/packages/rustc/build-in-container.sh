@@ -130,6 +130,11 @@ repackage)
 		fi
 	done
 	rm -f debian/sparky-libstd-hash.built
+	# every package is staged again from the compiled outputs: a staging tree an earlier pass sealed with the lc mark is
+	# never projected twice (lean.package: "already marked; use a fresh staging tree")
+	for p in $(dh_listpackages) libstd-rust-discover; do rm -rf "debian/$p" "debian/.debhelper/$p"; done
+	rm -rf debian/.debhelper/generated debian/files debian/tmp debian/dh_auto_install.stamp
+	rm -f debian/*.substvars debian/*.debhelper.log debian/*.debhelper
 	chown -R builder:builder /work/tree /work/source-final
 	rm -f /work/*.deb /work/*.changes /work/*.buildinfo
 	runuser -u builder -- dpkg-buildpackage -us -uc -b -nc -j4 >/work/build-2.log 2>&1
