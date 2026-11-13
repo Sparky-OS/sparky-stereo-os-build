@@ -956,3 +956,118 @@ msgstr "%1이(가) %2에서 시작한 직후 멈췄습니다: %3."
 msgctxt "@info what to do"
 msgid "It was not started again on another GPU. If this GPU is the cause, choose another one for it below, or in System Settings, Graphics."
 msgstr "다른 GPU에서 다시 시작하지 않았습니다. 이 GPU가 원인이라면 아래에서 또는 시스템 설정의 그래픽에서 이 프로그램에 다른 GPU를 선택하십시오."
+
+#: src/ui/main.qml
+msgctxt "@title:group"
+msgid "Paint windows"
+msgstr "창 그리기"
+
+#: src/ui/main.qml
+msgctxt "@info"
+msgid "Programs made with Qt Widgets, such as Konsole, Dolphin and Kate, paint their windows on the processor or on the graphics card. Painting on the graphics card leaves the processor free for other work. A change applies the next time a program starts."
+msgstr "Konsole, Dolphin, Kate처럼 Qt Widgets로 만든 프로그램은 창을 프로세서나 그래픽 카드에서 그립니다. 그래픽 카드에서 그리면 프로세서를 다른 작업에 쓸 수 있습니다. 변경 사항은 프로그램을 다음에 시작할 때부터 적용됩니다."
+
+#: src/ui/main.qml
+msgctxt "@info"
+msgid "QT_WIDGETS_GPU_PAINT is set in this session and is used instead of these choices."
+msgstr "이 세션에 QT_WIDGETS_GPU_PAINT가 설정되어 있어 이 선택 대신 사용됩니다."
+
+#: src/ui/main.qml
+msgctxt "@info"
+msgid "A program started from a terminal or from Steam follows these choices when it is started with sparky-stereo-gpu-run. For any single program, use the list below."
+msgstr "터미널이나 Steam에서 시작하는 프로그램은 sparky-stereo-gpu-run으로 시작할 때 이 선택을 따릅니다. 프로그램 하나만 바꾸려면 아래 목록을 사용하십시오."
+
+#: src/ui/main.qml
+msgctxt "@info %1 is a way of painting windows"
+msgid "Windows painted: %1"
+msgstr "창 그리기: %1"
+
+#: src/graphicskcm.cpp
+msgctxt "@item:inlistbox way of painting windows"
+msgid "On the graphics card (batched)"
+msgstr "그래픽 카드에서 (일괄 처리)"
+
+#: src/graphicskcm.cpp
+msgctxt "@item:inlistbox way of painting windows"
+msgid "On the graphics card, Qt's OpenGL engine"
+msgstr "그래픽 카드에서, Qt의 OpenGL 엔진"
+
+#: src/graphicskcm.cpp
+msgctxt "@item:inlistbox way of painting windows"
+msgid "On the processor"
+msgstr "프로세서에서"
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Now: on the processor, because this computer has no graphics processor that can draw now."
+msgstr "현재: 프로세서에서 그립니다. 이 컴퓨터에 지금 그릴 수 있는 그래픽 프로세서가 없기 때문입니다."
+
+#: src/graphicskcm.cpp
+msgctxt "@info %1 is a way of painting windows, %2 the reason"
+msgid "Now: %1, %2"
+msgstr "현재: %1, %2"
+
+#: src/problems.cpp
+msgctxt "@action:button"
+msgid "Paint on the processor"
+msgstr "프로세서에서 그리기"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card"
+msgid "this computer has no graphics processor that can draw now"
+msgstr "이 컴퓨터에 지금 그릴 수 있는 그래픽 프로세서가 없습니다"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card"
+msgid "the installed Qt cannot paint on the graphics card"
+msgstr "설치된 Qt는 그래픽 카드에서 그릴 수 없습니다"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card"
+msgid "this session has no OpenGL"
+msgstr "이 세션에 OpenGL이 없습니다"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card, %1 is a renderer's name"
+msgid "the OpenGL of this session is drawn by the processor (%1)"
+msgstr "이 세션의 OpenGL은 프로세서가 그립니다 (%1)"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card, %1 is the error"
+msgid "Qt's OpenGL library could not be loaded (%1)"
+msgstr "Qt의 OpenGL 라이브러리를 불러올 수 없습니다 (%1)"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card, %1 is the error"
+msgid "the drawing surface could not be made (%1)"
+msgstr "그리기 표면을 만들 수 없습니다 (%1)"
+
+#: src/problems.cpp
+msgctxt "@info %1 is a program or a kind of program, %2 says why"
+msgid "Painting on the graphics card cannot be used for %1: %2. The windows are painted on the processor."
+msgstr "%1에 그래픽 카드에서 그리기를 사용할 수 없습니다: %2. 창은 프로세서에서 그립니다."
+
+#: src/problems.cpp
+msgctxt "@info what to do"
+msgid "Choose On the processor for it in System Settings, Graphics, or repair the graphics driver and start the program again."
+msgstr "시스템 설정의 그래픽에서 “프로세서에서”를 선택하거나, 그래픽 드라이버를 복구한 뒤 프로그램을 다시 시작하십시오."
+
+#: src/problems.cpp
+msgctxt "@title notification"
+msgid "Painting on the graphics card cannot be used"
+msgstr "그래픽 카드에서 그리기를 사용할 수 없습니다"
+
+#: src/cli/gpuenv.cpp
+msgctxt "@info:shell %1 is what was given; auto, cpu, batch and opengl stay as they are"
+msgid "Not a way of painting: %1 (auto, cpu, batch or opengl)"
+msgstr "그리기 방식이 아닙니다: %1 (auto, cpu, batch 또는 opengl)"
+
+#: src/cli/gpuenv.cpp
+msgctxt "@info:shell --use-paint, TARGET and WAY stay as they are"
+msgid "--use-paint needs TARGET and WAY"
+msgstr "--use-paint에는 TARGET과 WAY가 필요합니다"
+
+#: src/cli/gpurecord.cpp
+msgctxt "@info:shell %1 is what was given; cpu, batch, opengl and unset stay as they are"
+msgid "Not a way of painting: %1 (cpu, batch, opengl or unset)"
+msgstr "그리기 방식이 아닙니다: %1 (cpu, batch, opengl 또는 unset)"

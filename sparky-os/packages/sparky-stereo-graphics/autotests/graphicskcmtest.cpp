@@ -47,6 +47,10 @@ private Q_SLOTS:
     void copyBackWithoutARecord();
     void copyBackSetInTheSessionIsReported();
     void decodeOnAnotherGpuIsTheChoice();
+    void paintWindowsDefaultsToTheProcessor();
+    void paintWindowsRoundTrip();
+    void paintWindowsFollowsTheMeasurement();
+    void paintWindowsSetInTheSessionIsReported();
     void qmlLoads_data();
     void qmlLoads();
 
@@ -153,6 +157,7 @@ void GraphicsKcmTest::init()
     QFile::remove(configFile());
     QFile::remove(MachineRecord::systemFile(m_xdg.path()));
     qunsetenv("MEDIA_GPU_ROUTE_COPY_BACK");
+    qunsetenv("QT_WIDGETS_GPU_PAINT");
     QDir(m_data.path() + u"/applications"_s).removeRecursively();
     QDir(m_config.path() + u"/plasma-workspace"_s).removeRecursively();
     qunsetenv("KWIN_DRM_DEVICES");
@@ -520,6 +525,90 @@ void GraphicsKcmTest::decodeOnAnotherGpuIsTheChoice()
     qunsetenv("MEDIA_GPU_ROUTE_OTHER_GPU");
 }
 
+// ORDER 518, Paint windows: the three ways are the person's choice, by kind of program and by program; Automatic is the
+// measured way for that kind on this machine, and the processor where nothing was measured
+void GraphicsKcmTest::paintWindowsDefaultsToTheProcessor()
+{
+    for (const QString &machine : {u"one"_s, u"host"_s}) {
+        auto kcm = page(machine);
+        QVERIFY(kcm->canPaintOnGpu());
+        const QVariantList kinds = kcm->paintKinds();
+        QCOMPARE(kinds.size(), 4);
+        for (const QVariant &kind : kinds) {
+            QCOMPARE(kind.toMap().value(u"choice"_s).toString(), u"auto"_s);
+            QCOMPARE(kind.toMap().value(u"way"_s).toString(), u"cpu"_s);
+            QCOMPARE(kind.toMap().value(u"nowText"_s).toString(), u"Now: On the processor, not measured on this computer yet"_s);
+        }
+        // Automatic and the three ways, none hidden
+        QCOMPARE(kcm->paintOptions().size(), 4);
+        QCOMPARE(kcm->paintOptions()[3].toMap().value(u"text"_s).toString(), u"On the graphics card, Qt's OpenGL engine"_s);
+        QCOMPARE(kcm->paintProgramOptions().size(), 4);
+        QVERIFY(kcm->representsDefaults());
+        QVERIFY(!kcm->paintSetInSession());
+    }
+}
+
+void GraphicsKcmTest::paintWindowsRoundTrip()
+{
+    auto kcm = page(u"one"_s);
+    kcm->setPaintKind(u"Other"_s, u"batch"_s);
+    kcm->setPaintProgram(u"org.example.game.desktop"_s, u"opengl"_s);
+    QVERIFY(kcm->needsSave());
+    QVERIFY(!kcm->representsDefaults());
+    QCOMPARE(row(kcm->paintKinds(), u"key"_s, u"Other"_s).value(u"nowText"_s).toString(), u"Now: On the graphics card (batched), your choice"_s);
+    QCOMPARE(row(kcm->apps(), u"id"_s, u"org.example.game.desktop"_s).value(u"paintText"_s).toString(), u"On the graphics card, Qt's OpenGL engine"_s);
+    QCOMPARE(row(kcm->apps(), u"id"_s, u"org.example.player.desktop"_s).value(u"paintText"_s).toString(), u"On the processor"_s);
+    // nothing is written before Apply
+    QVERIFY(!configText().contains("Paint"));
+    kcm->save();
+    QVERIFY2(configText().contains("[Paint]\nOther=batch"), configText().constData());
+    QVERIFY2(configText().contains("[PaintPrograms]\norg.example.game.desktop=opengl"), configText().constData());
+    auto fresh = page(u"one"_s);
+    QCOMPARE(row(fresh->paintKinds(), u"key"_s, u"Other"_s).value(u"choice"_s).toString(), u"batch"_s);
+    QCOMPARE(row(fresh->apps(), u"id"_s, u"org.example.game.desktop"_s).value(u"paint"_s).toString(), u"opengl"_s);
+    QVERIFY(!fresh->needsSave());
+    // a wrong word is refused
+    fresh->setPaintKind(u"Other"_s, u"fast"_s);
+    QVERIFY(!fresh->needsSave());
+    // the program goes back to its kind; Defaults clears the rest
+    fresh->setPaintProgram(u"org.example.game.desktop"_s, QString());
+    fresh->save();
+    QVERIFY(!configText().contains("PaintPrograms"));
+    auto again = page(u"one"_s);
+    again->defaults();
+    again->save();
+    QVERIFY(!configText().contains("Paint"));
+    QVERIFY(page(u"one"_s)->representsDefaults());
+}
+
+void GraphicsKcmTest::paintWindowsFollowsTheMeasurement()
+{
+    QDir().mkpath(m_xdg.path() + u"/etc/xdg"_s);
+    {
+        QFile f(MachineRecord::systemFile(m_xdg.path()));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("[MeasuredPaint]\nOther=batch\nMeasurement=test\nOrigin=shipped\n");
+    }
+    auto kcm = page(u"a10"_s);
+    QCOMPARE(row(kcm->paintKinds(), u"key"_s, u"Other"_s).value(u"nowText"_s).toString(), u"Now: On the graphics card (batched), measured best for this model"_s);
+    QCOMPARE(row(kcm->paintKinds(), u"key"_s, u"Players"_s).value(u"way"_s).toString(), u"cpu"_s);
+    QVERIFY(kcm->representsDefaults());
+    // the person's choice wins over the measurement, and is the only thing written
+    kcm->setPaintKind(u"Other"_s, u"cpu"_s);
+    QCOMPARE(row(kcm->paintKinds(), u"key"_s, u"Other"_s).value(u"nowText"_s).toString(), u"Now: On the processor, your choice"_s);
+    kcm->save();
+    QVERIFY(configText().contains("Other=cpu"));
+}
+
+void GraphicsKcmTest::paintWindowsSetInTheSessionIsReported()
+{
+    qputenv("QT_WIDGETS_GPU_PAINT", "batch");
+    auto kcm = page(u"host"_s);
+    QVERIFY(kcm->paintSetInSession());
+    QCOMPARE(row(kcm->paintKinds(), u"key"_s, u"Other"_s).value(u"way"_s).toString(), u"batch"_s);
+    qunsetenv("QT_WIDGETS_GPU_PAINT");
+}
+
 void GraphicsKcmTest::qmlLoads_data()
 {
     QTest::addColumn<QString>("machine");
@@ -568,6 +657,9 @@ void GraphicsKcmTest::qmlLoads()
     QTest::qWait(300);
     // one card per GPU
     QCOMPARE(countCards(view.rootObject()), cards);
+    // ORDER 518: Paint windows is there on every machine, one GPU included, with its four kinds
+    QCOMPARE(countText(view.rootObject(), u"Paint windows"_s), 1);
+    QCOMPARE(countText(view.rootObject(), u"Now: On the processor, not measured on this computer yet"_s), 4);
     if (gone) {
         QVERIFY(countText(view.rootObject(), u"The GPU you chose to draw the desktop, at PCI address 0000:09:00.0, is not in this computer now."_s) >= 1);
         QVERIFY(countText(view.rootObject(), u"The GPU you chose for games, at PCI address 0000:09:00.0, is not in this computer now."_s) >= 1);

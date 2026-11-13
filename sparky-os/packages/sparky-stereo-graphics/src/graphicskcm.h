@@ -7,6 +7,7 @@
 #include "gpuinventory.h"
 #include "graphicssettings.h"
 #include "machinerecord.h"
+#include "paint.h"
 #include "powerprofiles.h"
 #include "problems.h"
 #include "resolver.h"
@@ -42,6 +43,12 @@ class GraphicsKcm : public KQuickConfigModule
     Q_PROPERTY(int hiddenApps READ hiddenApps NOTIFY appsChanged)
     Q_PROPERTY(QVariantList appOptions READ appOptions CONSTANT)
     Q_PROPERTY(QVariantList powerActions READ powerActions NOTIFY changed)
+    // Paint windows (ORDER 518): how programs made with Qt Widgets paint, by kind of program and by program
+    Q_PROPERTY(QVariantList paintKinds READ paintKinds NOTIFY changed)
+    Q_PROPERTY(QVariantList paintOptions READ paintOptions CONSTANT)
+    Q_PROPERTY(QVariantList paintProgramOptions READ paintProgramOptions CONSTANT)
+    Q_PROPERTY(bool paintSetInSession READ paintSetInSession NOTIFY changed)
+    Q_PROPERTY(bool canPaintOnGpu READ canPaintOnGpu NOTIFY changed)
     Q_PROPERTY(QString errorText READ errorText NOTIFY changed)
     // Each saved choice that cannot be used, and each failed step of the package: text, and the GPUs offered instead
     Q_PROPERTY(QVariantList problems READ problems NOTIFY changed)
@@ -77,6 +84,13 @@ public:
     int hiddenApps() const;
     QVariantList appOptions() const;
     QVariantList powerActions() const;
+    QVariantList paintKinds() const;
+    QVariantList paintOptions() const;
+    QVariantList paintProgramOptions() const;
+    bool paintSetInSession() const;
+    bool canPaintOnGpu() const;
+    Q_INVOKABLE void setPaintKind(const QString &key, const QString &choice);
+    Q_INVOKABLE void setPaintProgram(const QString &id, const QString &choice);
     QString errorText() const;
     QVariantList problems() const;
 
@@ -120,6 +134,11 @@ private:
     QMap<QString, int> m_appChanges;
     QList<SparkyGraphics::PowerAction> m_actions;
     QMap<QString, bool> m_actionChanges;
+    SparkyGraphics::PaintSettings m_paint;
+    SparkyGraphics::PaintRecord m_paintRecord;
+    QString wayLabel(SparkyGraphics::PaintWay way) const;
+    QString paintNowText(const SparkyGraphics::PaintResolution &resolution) const;
+    SparkyGraphics::PaintFacts paintFacts() const;
     QString m_appFilter;
     QString m_errorText;
     bool m_vramProtection = false;

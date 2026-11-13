@@ -23,6 +23,7 @@
 
 #include "graphicssettings.h"
 #include "machinerecord.h"
+#include "paint.h"
 #include "problems.h"
 
 #include <KLocalizedString>
@@ -40,7 +41,8 @@ static int usage(const QString &problem)
     err << problem << '\n'
         << i18nc("@info:shell %1 is the command's synopsis, which stays as it is", "Usage: %1",
                  u"sparky-stereo-gpu-record [--root DIR] [--machines DIR] --apply-known | --show | --forget"
-                 " | --set-best GPU [--copy-back true|false] [--model TEXT] [--measurement TEXT] | --copy-back true|false|unset"_s)
+                 " | --set-best GPU [--copy-back true|false] [--model TEXT] [--measurement TEXT] | --copy-back true|false|unset"
+                 " | --set-paint players|games|browsers|other cpu|batch|opengl|unset [--measurement TEXT]"_s)
         << '\n';
     return 2;
 }
@@ -73,6 +75,8 @@ int main(int argc, char **argv)
     QString measurement;
     QString keepKey;
     QString clearKey;
+    QString paintKind;
+    QString paintWay;
     QString status;
     QString output;
     for (int i = 0; i < args.size(); ++i) {
@@ -89,6 +93,10 @@ int main(int argc, char **argv)
         } else if (arg == u"--set-best"_s) {
             action = arg;
             best = value();
+        } else if (arg == u"--set-paint"_s) {
+            action = arg;
+            paintKind = value().toLower();
+            paintWay = value().toLower();
         } else if (arg == u"--copy-back"_s) {
             copyBack = value();
             if (copyBack.isEmpty()) {
@@ -179,6 +187,32 @@ int main(int argc, char **argv)
             << "copy-back=" << (record.copyBack.has_value() ? (*record.copyBack ? u"true"_s : u"false"_s) : u"unset"_s) << '\n'
             << "model=" << record.model << '\n'
             << "measurement=" << record.measurement << '\n';
+        // ORDER 518: the way of painting windows measured for each kind of program
+        const PaintRecord paint = PaintRecord::readFile(file);
+        for (Category category : allCategories()) {
+            out << "paint-" << categoryKey(category).toLower() << '=' << paint.ways.value(categoryKey(category), u"unset"_s) << '\n';
+        }
+        out << "paint-origin=" << (paint.origin.isEmpty() && !paint.isEmpty() ? u"hand"_s : paint.origin) << '\n' << "paint-measurement=" << paint.measurement << '\n';
+        return 0;
+    }
+    if (action == u"--set-paint"_s) {
+        // what a measurement on this machine found for a kind of program: Automatic on the Graphics page follows it
+        std::optional<Category> kind;
+        for (Category category : allCategories()) {
+            if (categoryKey(category).toLower() == paintKind) {
+                kind = category;
+            }
+        }
+        if (!kind) {
+            return usage(i18nc("@info:shell %1 is what was given to --category", "Not a category: %1", paintKind));
+        }
+        if (paintWay != u"unset"_s && !paintWayFromKey(paintWay)) {
+            return usage(i18nc("@info:shell %1 is what was given; cpu, batch, opengl and unset stay as they are", "Not a way of painting: %1 (cpu, batch, opengl or unset)", paintWay));
+        }
+        if (!RecordWriter::writePaint(root, *kind, paintWay == u"unset"_s ? QString() : paintWay, measurement)) {
+            QTextStream(stderr) << "sparky-stereo-gpu-record: " << i18nc("@info:shell %1 is a file", "cannot write %1", MachineRecord::systemFile(root)) << '\n';
+            return 3;
+        }
         return 0;
     }
     if (action == u"--set-best"_s) {

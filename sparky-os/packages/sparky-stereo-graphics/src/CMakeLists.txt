@@ -7,6 +7,7 @@ add_library(sparkystereo_graphics STATIC
     appentries.cpp appentries.h
     launchwatch.cpp launchwatch.h
     resolver.cpp resolver.h
+    paint.cpp paint.h
     powerprofiles.cpp powerprofiles.h
     problems.cpp problems.h
     vramsettings.cpp vramsettings.h

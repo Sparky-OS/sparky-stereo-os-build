@@ -3,6 +3,7 @@
 
 #include "machinerecord.h"
 #include "graphicssettings.h"
+#include "paint.h"
 
 #include <KConfig>
 #include <KConfigGroup>
@@ -244,14 +245,23 @@ Result applyKnown(const QString &root, const QString &folder)
     });
     if (match == known.cend()) {
         if (existing.origin == u"shipped"_s) {
-            return removeOurs(path) ? Result::Removed : Result::Failed;
+            // the model's way of painting windows goes with its record (ORDER 518)
+            return PaintRecord::remove(path, false) && removeOurs(path) ? Result::Removed : Result::Failed;
         }
         return Result::NothingKnown;
     }
     const MachineRecord &wanted = match->record;
+    // the way of painting windows measured for this model, in the same shipped file ([MeasuredPaint], ORDER 518)
+    const PaintRecord wantedPaint = PaintRecord::readFile(QDir(folder).filePath(match->name + u".conf"_s));
+    const PaintRecord existingPaint = PaintRecord::readFile(path);
+    const bool paintOurs = existingPaint.origin == u"shipped"_s || existingPaint.isEmpty();
+    const bool paintSame = !paintOurs || (existingPaint.ways == wantedPaint.ways && existingPaint.measurement == wantedPaint.measurement);
     if (existing.origin == u"shipped"_s && existing.known == match->name && existing.bestGpu == wanted.bestGpu && existing.model == wanted.model
         && existing.measurement == wanted.measurement && existing.copyBack == wanted.copyBack) {
-        return Result::Unchanged;
+        if (paintSame) {
+            return Result::Unchanged;
+        }
+        return prepare(path) && PaintRecord::writeShipped(path, wantedPaint) ? Result::Written : Result::Failed;
     }
     if (!prepare(path)) {
         return Result::Failed;
@@ -265,7 +275,10 @@ Result applyKnown(const QString &root, const QString &folder)
     KConfigGroup origin = config.group(s_record);
     origin.writeEntry("Origin", u"shipped"_s);
     origin.writeEntry("Known", match->name);
-    return finish(config, path) ? Result::Written : Result::Failed;
+    if (!finish(config, path)) {
+        return Result::Failed;
+    }
+    return PaintRecord::writeShipped(path, wantedPaint) ? Result::Written : Result::Failed;
 }
 
 bool writeMeasured(const QString &root, const QString &bestGpu, std::optional<bool> copyBack, const QString &model, const QString &measurement)
@@ -303,7 +316,13 @@ bool writeCopyBack(const QString &root, std::optional<bool> copyBack)
 
 bool forget(const QString &root)
 {
-    return removeOurs(MachineRecord::systemFile(root));
+    return PaintRecord::remove(MachineRecord::systemFile(root), true) && removeOurs(MachineRecord::systemFile(root));
+}
+
+bool writePaint(const QString &root, Category category, const QString &way, const QString &measurement)
+{
+    const QString path = MachineRecord::systemFile(root);
+    return prepare(path) && PaintRecord::writeLocal(path, category, way, measurement);
 }
 
 }
