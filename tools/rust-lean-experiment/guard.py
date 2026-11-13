@@ -36,6 +36,8 @@ def machine(sysroot=Path('/sys'), require_temperature=True):
             label = t.with_name(t.name.replace('_input', '_label'))
             key = name+':'+(label.read_text().strip() if label.exists() else t.stem)
             temperatures[key] = int(t.read_text())/1000
+            if not 0 < temperatures[key] < 125:
+                raise RuntimeError('invalid CPU temperature: '+key)
     if require_temperature and not temperatures:
         raise RuntimeError('CPU temperature unavailable: expected a readable k10temp/coretemp sensor')
     frequencies, governors = {}, {}
@@ -44,6 +46,8 @@ def machine(sysroot=Path('/sys'), require_temperature=True):
             frequencies[p.parent.name] = int((p/'scaling_cur_freq').read_text())
         if (p/'scaling_governor').exists():
             governors[p.parent.name] = (p/'scaling_governor').read_text().strip()
+    if not frequencies or not governors:
+        raise RuntimeError('CPU frequency or governor unavailable')
     return {'unix': time.time(), 'temperatures_c': temperatures, 'frequency_khz': frequencies,
             'governor': governors, 'load': list(os.getloadavg()), 'kernel': os.uname().release,
             'max_temperature_c': max(temperatures.values()) if temperatures else None}
@@ -102,6 +106,8 @@ def guarded(config):
                         if control('pause').returncode:
                             raise RuntimeError('could not pause the hot container')
                         paused, paused_at = True, time.monotonic()
+                    elif paused and time.monotonic()-paused_at > float(config.get('cooldown_timeout_seconds',7200)):
+                        raise RuntimeError('cool-down timeout while thermally paused')
                     elif paused and temperature <= config.get('start_temperature_c', 62):
                         if control('unpause').returncode:
                             raise RuntimeError('could not resume the cooled container')

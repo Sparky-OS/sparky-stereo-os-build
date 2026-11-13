@@ -32,6 +32,7 @@ def seal(source, destination, form, epoch):
     result={'form':form,'tree_sha256':manifest['sha256'],'archive_sha256':digest,'archive_bytes':path.stat().st_size}
     (destination/(form+'.json')).write_text(json.dumps(result,indent=2)+'\n')
     print(json.dumps(result))
+    return result
 
 
 if __name__=='__main__':

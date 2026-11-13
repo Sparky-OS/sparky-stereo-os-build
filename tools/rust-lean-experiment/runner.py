@@ -85,10 +85,12 @@ class Runner:
                         'stop_temperature_c':self.plan['stop_temperature_c']})
 
     def container(self,name,image,mounts,command,user='1000:1000',remove=True):
-        argv=[*self.engine,'run',*(['--rm'] if remove else []),'--name',name,'--network','none','--cpus',self.cpus,
+        argv=[*self.engine,'run',*(['--rm'] if remove else []),'--name',name,'--network','none','--pull=never','--cpus',self.cpus,
               '--memory','8g','--ulimit','core=0','--cap-add','SYS_ADMIN','--cap-add','PERFMON','--user',user,
               '-e','LC_ALL=C','-e','PYTHONDONTWRITEBYTECODE=1','-e','RL541_CPUS='+self.cpus]
-        if self.plan.get('fixture'):argv+=['-e','RL541_FIXTURE=1']
+        if self.plan.get('fixture'):
+            argv+=['-e','RL541_FIXTURE=1']
+            if os.environ.get('RL541_FIXTURE_DELAY'):argv+=['-e','RL541_FIXTURE_DELAY='+os.environ['RL541_FIXTURE_DELAY']]
         for src,dst,ro in mounts:
             if ',' in str(src):raise RuntimeError('commas in bind paths are unsupported')
             argv+=['--mount','type=bind,src='+str(src)+',dst='+dst+(',readonly' if ro else '')]
@@ -151,7 +153,7 @@ class Runner:
             argv=self.container(name,self.base,[(script,'/scripts',True),(packages,'/packages',True)],
                                 ['python3','/scripts/install_step.py'],user='0:0',remove=False)
             extra['guard']=self.guard(name,argv,partial/'guard')
-            image=checked([*self.engine,'commit',name],stdout=subprocess.PIPE,text=True).stdout.strip()
+            image=checked([*self.engine,'commit',name,'rl541-runtime-'+self.digest[:12]+'-'+step['form'].lower()],stdout=subprocess.PIPE,text=True).stdout.strip()
             checked([*self.engine,'image','inspect',image],stdout=subprocess.DEVNULL)
             extra['runtime_image_id']=image;self.state['images'][step['form']]=image
             checked([*self.engine,'rm',name],stdout=subprocess.DEVNULL)

@@ -32,6 +32,12 @@ def classify(name):
 
 
 def sections(a,b):
+    file_differences=0
+    with a.open('rb') as fa,b.open('rb') as fb:
+        while True:
+            x,y=fa.read(1<<20),fb.read(1<<20)
+            if not x and not y:break
+            file_differences+=sum(c!=d for c,d in zip(x,y))+abs(len(x)-len(y))
     with a.open('rb') as fa,b.open('rb') as fb:
         aa=ELFFile(fa);bb=ELFFile(fb)
         sa={s.name:s for s in aa.iter_sections()};sb={s.name:s for s in bb.iter_sections()}
@@ -45,7 +51,8 @@ def sections(a,b):
             rows.append({'section':n,'A_bytes':int(x['sh_size']) if x is not None else 0,
                          'other_bytes':int(y['sh_size']) if y is not None else 0,'different_bytes_at_section_offsets':changed,
                          'class':classify(n)})
-        return rows
+        return {'file_offset_different_bytes':file_differences,'sections':rows,
+                'interpretation':'Section-offset comparisons classify content separately from file-layout shifts. Counts at the two coordinate systems must not be added. Panic locations are established by the runtime resolver; metadata/debug residuals are explicitly unproven.'}
 
 
 def package_files(packages,destination):
@@ -62,7 +69,26 @@ def package_files(packages,destination):
                        'bytes':p.lstat().st_size,'link':str(p.readlink()) if p.is_symlink() else None,
                        'sha256':None if p.is_symlink() else digest(p)}
     if not rows:raise RuntimeError('no package files')
-    return rows
+    identifiers={}
+    for key,row in rows.items():
+        p=Path(row['file'])
+        if row['link'] or '/.build-id/' in key:continue
+        with p.open('rb') as f:
+            if f.read(4)!=b'\x7fELF':continue
+            f.seek(0);elf=ELFFile(f)
+            note=elf.get_section_by_name('.note.gnu.build-id')
+            if note is not None:
+                for n in note.iter_notes():
+                    if n['n_type']=='NT_GNU_BUILD_ID':identifiers[n['n_desc']]=key
+    remapped={}
+    for key,row in rows.items():
+        match=re.search(r'/\.build-id/([0-9a-f]{2})/([0-9a-f]+)\.debug$',key)
+        if match:
+            parent=identifiers.get(''.join(match.groups()))
+            if parent:key='DEBUG-FOR/'+parent
+        if key in remapped:raise RuntimeError('debug file correspondence collision: '+key)
+        remapped[key]=row
+    return remapped
 
 
 def source(form,name):
@@ -93,7 +119,7 @@ def main():
             if x and y and not x['link'] and not y['link']:
                 px,py=Path(x['file']),Path(y['file'])
                 with px.open('rb') as xa,py.open('rb') as ya:elf=xa.read(4)==ya.read(4)==b'\x7fELF'
-                if elf:row['sections']=sections(px,py)
+                if elf:row['ELF']=sections(px,py)
                 elif n.endswith(('.rlib','.a')):row['class']='archive/metadata: member-level causal attribution remains unproven'
                 else:row['class']='non-ELF payload or pathname/content metadata'
             else:row['class']='file added/removed or link/mode change'

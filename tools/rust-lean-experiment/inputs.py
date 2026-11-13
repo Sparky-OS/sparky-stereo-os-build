@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 
 
-def census(tree, output):
+def census(tree, output, reference=None):
     names, depfiles = set(), 0
     for p in (tree/'build').rglob('*.d'):
         depfiles += 1
@@ -27,6 +27,10 @@ def census(tree, output):
         data=p.read_bytes()
         try: rel=p.relative_to(tree).as_posix()
         except ValueError: raise RuntimeError('input outside bound source/build tree: '+str(p))
+        if reference is not None and not rel.startswith('build/'):
+            original=reference/rel
+            if not original.is_file() or original.read_bytes()!=data:
+                raise RuntimeError('compiled Rust input changed after source sealing: '+rel)
         rows[rel]={'bytes':len(data),'lines':data.count(b'\n'),'sha256':hashlib.sha256(data).hexdigest(),
                    'generated':rel.startswith('build/')}
     result={'depfiles':depfiles,'files':rows,'unique_files':len(rows),

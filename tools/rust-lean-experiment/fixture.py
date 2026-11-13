@@ -29,7 +29,7 @@ def build(kind,cpus):
         (out/'rust-src-restored.json').write_text(json.dumps(restored)+'\n')
         (out/'packages').mkdir()
         build_tree(stage,out/'packages',preserve={'/usr/src/rustc-*':'authored fixture sources'})
-    census(tree,out/'inputs.json')
+    census(tree,out/'inputs.json',Path('/form'))
     # A deterministic interrupted-step test kills the worker after this marker.
     (out/'fixture-marker').write_text('metrics done, receipt not committed\n')
     if os.environ.get('RL541_FIXTURE_DELAY'):time.sleep(float(os.environ['RL541_FIXTURE_DELAY']))

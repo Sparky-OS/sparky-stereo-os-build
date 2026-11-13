@@ -2,6 +2,7 @@
 """Measure packaged compilers on a pinned offline regex subject and a std panic."""
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -18,7 +19,17 @@ def main(task):
         run(['rustc','--version'],out/'version')
         run(['rustc','-vV'],out/'verbose-version')
         with (out/'loader-statistics.txt').open('w') as f:
-            subprocess.run(['rustc','--version'],env=dict(env,LD_DEBUG='statistics'),stdout=f,stderr=f,check=True)
+            subprocess.run(['rustc','--version'],env=dict(env,LD_DEBUG='libs,statistics'),stdout=f,stderr=f,check=True)
+        loader=(out/'loader-statistics.txt').read_text()
+        cycles=re.findall(r'total startup time in dynamic loader:\s*([0-9.,]+) clock cycles',loader)
+        if len(cycles)!=1:
+            cycles=re.findall(r'total startup time in dynamic loader:\s*([0-9.,]+) cycles',loader)
+        if len(cycles)!=1:raise RuntimeError('loader did not provide one startup cycle count')
+        from measure import number
+        (out/'loader.json').write_text(json.dumps({'total_startup_cycles':number(cycles[0]),
+            'scope':'total dynamic loader, with librustc_driver in the loaded DSO list; not driver alone'})+'\n')
+        if 'librustc_driver' not in loader:
+            raise RuntimeError('loader log does not show librustc_driver')
     elif task=='hello':
         src=Path('/work/main.rs');src.write_text('fn main() { println!("hello"); }\n')
         run(['rustc','--edition=2024','-O','--remap-path-prefix=/work=/experiment',str(src),'-o','/work/hello'],out/'compile')

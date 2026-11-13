@@ -48,3 +48,21 @@ Keep the toolkit, source descriptor, preparation script, compiler identity and m
 
 The method uses the Rust project's compiler lexer and Debian Rust Maintainers' source packaging.
 See the [Rust adapter reference](https://github.com/Sparky-OS/sparky-stereo-os/blob/main/skills/lean-code/references/rust-adapter.md) for source-consumer rules.
+
+## Offline measurement kit
+
+The runner and collectors now implement the remaining experiment. Qualification status belongs in the preparation hand-back: implementation alone is not a passing dry run.
+
+Apply `overlay.py` identically to A, B and C using the edition recipe and Lean toolkit. Qualify C with `check-c.sh`, retaining failing crates' docs with `retain_docs.py` and the original preparation ledger. Reconstruct a clean C tree after qualification: generated targets, configured checksums and moved lockfiles do not belong in a sealed source. Run `verify_final.py` against all three clean trees, then `seal.py` for each. The final manifest follows the packaging/native overlay and every build-led doc retention.
+
+`image-prepare.sh` records the signed Debian snapshot and exact installed package versions, installs the named edition seed archives, and enables contained perf counters. Its apt container must start with the edition HTTPS-only helper and mounted CA. Export the resulting immutable image as `image.tar.gz`; preserve its image ID and SHA-256. The measured containers never pull images or access the network.
+
+A kit contains `scripts/` (these tools plus the exact Lean module), `sources/` (three archives, manifests and identities), `subject/` (the named offline regex workspace), `image.tar.gz`, a fixed `plan.json`, `SHA256SUMS`, and executable `run.sh`, `status.sh`, `pause.sh`. `make_plan.py` creates the explicit sequence. A completed local sample must justify its repeated subject and total time budget before shipping it.
+
+The driver uses `nohup`, an exclusive lock and atomic whole-step receipts. Rootful Podman is confined to the kit's `runtime/storage` and `runtime/runroot`, with contained perf capabilities and no host compiler installation. Whole builds use the edition's stage-2 configuration. The standard-library hash is discovered from the actual built libstd, substituted only in its packaging metadata, then packages are assembled without a source-clean pass. The package hook verifies/restores authored `rust-src`. Compilation and package assembly have separate counters. Runtime images install the five measured core compiler/runtime archives without a network; runtime workloads use uid 1000.
+
+`measure.py` preserves raw perf and GNU-time output and rejects incomplete measurements. Instructions count inherited user-space tasks. GNU time reports maximum child RSS; `memory.peak` reports the container lifetime peak and can include earlier commands. The dep-info census reports unique source inputs and generated files separately, validating every non-generated input against the sealed form. This is source coverage, not repeated physical I/O.
+
+`analyze.py` compares every packaged installed-file payload, aligns Rust content-hash names and build-ID debug companions, and gives ELF section lengths and differing bytes by section offsets. File-offset differences are separate because section-layout shifts move content. Classification distinguishes debug/line records, Rust metadata, build IDs, symbols, relocations, code and constants. Causal attribution of every machine-code, constant or archive byte is not claimed: residual categories remain explicit next work. The runtime `/dev/full` panic establishes an actual standard-library location and `lean.locate` resolves it to A by content.
+
+The fixture is deliberately smaller: it compiles a forwarding compiler ELF, assembles a real lc1 package and authored source payload, installs it in a throwaway image, then runs every collector and summary path. Its synthetic panic source exercises resolution; it is not a standard-library result. `test_runner.py` injects decimal, receipt, space and temperature failures. The full dry run must additionally interrupt an actual container step and prove whole-step resume without repeating finished work. Keep both red and green evidence.

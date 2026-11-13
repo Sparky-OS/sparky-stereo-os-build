@@ -58,7 +58,7 @@ def main(kind,cpus):
         for p in packages: shutil.move(p,out/'packages'/p.name)
         shutil.copy2(tree/'debian/rl541-restored-rust.json',out/'rust-src-restored.json')
     else: raise ValueError(kind)
-    census(tree,out/'inputs.json')
+    census(tree,out/'inputs.json',Path('/form'))
     (out/'step.json').write_text(json.dumps({'kind':kind,'complete':True,'seed':seed})+'\n')
 
 
