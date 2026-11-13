@@ -29,8 +29,11 @@ make_source() {    # make_source OUT: OUT/s1 gets the +stereo3dN source, OUT/lc 
 	t=$out/s1/craft-suite-$up
 	mkdir -p "$t"
 	cp -a /src/apps /src/vendor /src/fonts /src/i18n "$t/"
-	find "$t" -print0 | xargs -0 touch -h -d "@$SOURCE_DATE_EPOCH"
-	(cd "$out/s1" && tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$SOURCE_DATE_EPOCH" -cf - "craft-suite-$up" | xz -T1 -2 >"craft-suite_$up.orig.tar.xz")
+	# the original archive is dated by the release it names, not by the recipe: a recipe commit that changes only
+	# debian/ leaves it byte for byte the same
+	local origdate; origdate=$(date -u -d "${up:0:4}-${up:4:2}-${up:6:2} 00:00:00" +%s)
+	find "$t" -print0 | xargs -0 touch -h -d "@$origdate"
+	(cd "$out/s1" && tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$origdate" -cf - "craft-suite-$up" | xz -T1 -2 >"craft-suite_$up.orig.tar.xz")
 	mkdir -p "$t/debian"
 	cp -a /tools/debian/. "$t/debian/"
 	cp -a /tools/suite.json /tools/suite-tree.py /tools/suite-source.py /tools/suite-trees.sh /tools/suite-generate.sh /tools/suite-build.sh /tools/suite-fixups.json "$t/debian/"
