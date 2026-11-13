@@ -154,7 +154,8 @@ def inventory(root):
             'files': rows, 'bytes': sum(r.get('bytes', 0) for r in rows)}
 
 
-def checksum_update(root, changes):
+def checksum_update(root, changes, accepted=None):
+    accepted = accepted or {}
     out = []
     for path in sorted(root.rglob('.cargo-checksum.json')):
         if '.pc' in path.relative_to(root).parts:
@@ -166,7 +167,9 @@ def checksum_update(root, changes):
             if rel in changes:
                 old, new = changes[rel]
                 if digest != old:
-                    raise RuntimeError(f'{path}: checksum for {name} does not name the authored bytes')
+                    baseline = accepted.get(rel, {})
+                    if baseline.get('manifest_sha256') != digest or baseline.get('authored_sha256') != old:
+                        raise RuntimeError(f'{path}: checksum for {name} does not name the authored bytes')
                 obj['files'][name] = new
                 count += 1
         if count:
@@ -175,7 +178,10 @@ def checksum_update(root, changes):
     return out
 
 
-def prepare(authored, output, batch=80):
+def prepare(authored, output, batch=80, checksum_baseline=None):
+    authored, output = authored.resolve(), output.resolve()
+    if authored == output or authored in output.parents or output in authored.parents:
+        raise RuntimeError('authored and output trees must be disjoint')
     if VERSION != '0.1.29':
         raise RuntimeError(f'need lean 0.1.29, found {VERSION}')
     compiler = subprocess.check_output([lang_rust.rustc(), '-vV'], text=True)
@@ -187,6 +193,23 @@ def prepare(authored, output, batch=80):
     output.mkdir()
     print('Inventorying authored source', flush=True)
     baseline = inventory(authored)
+    accepted = {}
+    if checksum_baseline is not None:
+        reviewed = json.loads(checksum_baseline.read_text())
+        if reviewed['authored_tree_sha256'] != baseline['sha256']:
+            raise RuntimeError('Cargo baseline names another authored tree; inspect the source before accepting it')
+        patches = (authored / '.pc/applied-patches').read_text().splitlines()
+        for n, row in reviewed['files'].items():
+            if Path(n).is_absolute() or '..' in Path(n).parts:
+                raise RuntimeError('unsafe path in Cargo baseline')
+            if sha((authored / n).read_bytes()) != row['authored_sha256']:
+                raise RuntimeError(f'Cargo baseline source mismatch: {n}')
+            matches = [authored / '.pc' / b['patch'] / n for b in row['quilt_backups']
+                       if b['patch'] in patches and b['sha256'] == row['manifest_sha256']]
+            if not any(p.is_file() and sha(p.read_bytes()) == row['manifest_sha256'] for p in matches):
+                raise RuntimeError(f'Cargo baseline lacks an applied quilt backup: {n}')
+            accepted[n] = row
+        print(f'Accepted {len(accepted)} pinned Debian patch/checksum discrepancies', flush=True)
     names = sorted(entries(authored))
     print(f'Classifying source readers of {len(names)} Rust files', flush=True)
     left = source_tree.rust_readers(authored, names)
@@ -252,7 +275,7 @@ def prepare(authored, output, batch=80):
         print(f'checked {min(offset+batch, len(names))}/{len(names)} files', flush=True)
     forms = {}
     for form in ('B', 'C'):
-        checksums = checksum_update(output / form, changes[form])
+        checksums = checksum_update(output / form, changes[form], accepted)
         forms[form] = inventory(output / form)
         forms[form]['cargo_checksums_updated'] = checksums
         atomic_json(output / (form + '-manifest.json'), forms[form])
@@ -266,6 +289,7 @@ def prepare(authored, output, batch=80):
               'rs_files': len(names), 'changed': {f: len(v) for f, v in changes.items()},
               'left_reasons': dict(Counter(r['left'] for r in rows.values() if 'left' in r)),
               'C_doc_exceptions': doc_reasons, 'files': rows,
+              'authored_checksum_baseline': accepted,
               'build_qualified': False, 'compiler_read_counts': 'pending actual build dep-info'}
     atomic_json(output / 'source-report.json', result)
     print(json.dumps({k: v for k, v in result.items() if k not in ('files', 'C_doc_exceptions', 'left_reasons')}, indent=2))
@@ -276,5 +300,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('authored', type=Path)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--checksum-baseline', type=Path,
+                        help='reviewed exact-tree metadata discrepancies, checked against applied quilt backups')
     args = parser.parse_args()
-    prepare(args.authored.resolve(), args.output.resolve())
+    prepare(args.authored, args.output, checksum_baseline=args.checksum_baseline)

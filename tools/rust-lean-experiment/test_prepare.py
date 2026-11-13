@@ -79,6 +79,24 @@ class SourceControls(unittest.TestCase):
             prepare.checksum_update(root, {'lib.rs': ('a', 'b')})
             self.assertEqual(json.loads(path.read_text()), {'files': {'lib.rs': 'b'}, 'package': 'p'})
 
+    def test_checksum_reconciliation_requires_exact_reviewed_pair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            p = root / '.cargo-checksum.json'
+            p.write_text(json.dumps({'files': {'lib.rs': 'upstream'}, 'package': 'p'}))
+            accepted = {'lib.rs': {'manifest_sha256': 'upstream', 'authored_sha256': 'patched'}}
+            with self.assertRaisesRegex(RuntimeError, 'authored bytes'):
+                prepare.checksum_update(root, {'lib.rs': ('unreviewed', 'lean')}, accepted)
+            prepare.checksum_update(root, {'lib.rs': ('patched', 'lean')}, accepted)
+            self.assertEqual(json.loads(p.read_text())['files']['lib.rs'], 'lean')
+
+    def test_nested_output_is_refused_before_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaisesRegex(RuntimeError, 'disjoint'):
+                prepare.prepare(root, root / 'nested')
+            self.assertFalse((root / 'nested').exists())
+
     def test_guard_refuses_impossible_floor(self):
         with self.assertRaisesRegex(RuntimeError, 'space guard'):
             prepare.space(Path.cwd(), floor_gib=10**9)

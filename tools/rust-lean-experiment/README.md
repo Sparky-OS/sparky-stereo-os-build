@@ -14,6 +14,11 @@ python3 tools/rust-lean-experiment/prepare.py AUTHORED OUTPUT
 python3 tools/rust-lean-experiment/verify.py AUTHORED OUTPUT
 ```
 
+For Debian's pinned 1.99.1+dfsg1-1~exp1 source, add `--checksum-baseline tools/rust-lean-experiment/debian-1.99.1-checksum-baseline.json` to the preparation command.
+Its ten existing Cargo/Rust checksum discrepancies come from Debian's applied patches.
+The exception file binds the complete authored tree and each old checksum to an applied quilt backup; another tree or an unreviewed changed hash is refused.
+These are provenance metadata reconciliations, counted separately from source savings.
+
 Expect the tests to pass, preparation to print its progress, and verification to print the three census rows and `PASS: complete file/mode/link manifests, ledger and preservation checks`.
 `OUTPUT` must not exist before preparation.
 An interrupted preparation has no accepted `source-report.json`; inspect the partial output before explicitly retiring it and starting again.
