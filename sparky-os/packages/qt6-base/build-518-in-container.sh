@@ -11,6 +11,9 @@ BASE=6.11.2+dfsg-5+stereo3d15+lc1
 printf 'deb [trusted=yes] file:/repo mashtabba main\n' > /etc/apt/sources.list.d/edition.list
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
+apt-get -y update > /work/prepare-apt.log 2>&1
+apt-cache policy quilt >> /work/prepare-apt.log
+apt-get -y --no-install-recommends install quilt >> /work/prepare-apt.log 2>&1
 cd /work
 mkdir plain lc
 cp /repo/pool/main/q/qt6-base/qt6-base_"$BASE".dsc \
