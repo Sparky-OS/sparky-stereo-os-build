@@ -60,11 +60,13 @@ make_source() {    # make_source OUT: OUT/s1 gets the +stereo3dN source, OUT/lc 
 	(cd "$out" && sha256sum s1/*.dsc s1/*.debian.tar.xz s1/*.orig.tar.xz lc/*+lc1.dsc lc/*+lc1.debian.tar.xz) | tee "$out/SOURCE-SHA256SUMS"
 }
 
-up=$(j release); VERSION=$up-1+$(j edition)
+version() { up=$(j release); VERSION=$up-1+$(j edition); }    # python3 arrives with the deps step's first install
+[ "$STEP" = deps ] || version
 case $STEP in
 deps)    # needs the network for apt; the driver commits the result as the image the build runs in, without network
 	apt-get -y update >/work/apt-update.log 2>&1
 	apt-get -y --no-install-recommends install devscripts dpkg-dev python3 patch xz-utils >/work/bootstrap.log 2>&1
+	version
 	[ -d /seed ] || { echo "the edition's compiler packages are needed (SEED_DIR): the suite is built with our rustc only" >&2; exit 1; }
 	mkdir -p /var/local/seed && cp /seed/*.deb /var/local/seed/
 	(cd /var/local/seed && dpkg-scanpackages --multiversion . >Packages 2>/dev/null)
