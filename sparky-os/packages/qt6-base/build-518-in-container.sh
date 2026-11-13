@@ -6,7 +6,7 @@ trap 'chown -R 1000:1000 /work' EXIT
 : "${SOURCE_DATE_EPOCH:?}" "${SOURCE_DATE_RFC2822:?}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
-VERSION=6.11.2+dfsg-5+stereo3d17
+VERSION=6.11.2+dfsg-5+stereo3d18
 BASE=6.11.2+dfsg-5+stereo3d15+lc1
 printf 'deb [trusted=yes] file:/repo mashtabba main\n' > /etc/apt/sources.list.d/edition.list
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
@@ -42,12 +42,14 @@ python3 - <<'PY'
 from pathlib import Path
 import os
 p=Path('debian/changelog')
-entry='''qt6-base (6.11.2+dfsg-5+stereo3d17) unstable; urgency=medium
+entry='''qt6-base (6.11.2+dfsg-5+stereo3d18) unstable; urgency=medium
 
   * Paint Widgets on the selected GPU with either Qt's OpenGL engine or
     recorded batches; processor painting remains the default and all three
     ways remain available (ORDER 518).
-  * Keep fractional element shifts and a decorated per-eye pair; report an
+  * Keep fractional element shifts; client-drawn frames retain the existing
+    flat exception while their paired-edge candidate fails qualification.
+  * Report an
     unavailable GPU painting choice through the desktop's problems engine.
   * Carry ORDER 146b's existing stereo EGL configuration patch from this
     recipe. Version +stereo3d16 remains that order's reserved candidate.
