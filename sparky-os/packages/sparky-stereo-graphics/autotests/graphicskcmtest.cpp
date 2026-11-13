@@ -4,6 +4,7 @@
 #include "fixtures.h"
 #include "graphicskcm.h"
 #include "machinerecord.h"
+#include "problems.h"
 
 #include <KConfig>
 #include <KConfigGroup>
@@ -567,6 +568,31 @@ void GraphicsKcmTest::paintWindowsRoundTrip()
     QCOMPARE(row(fresh->paintKinds(), u"key"_s, u"Other"_s).value(u"choice"_s).toString(), u"batch"_s);
     QCOMPARE(row(fresh->apps(), u"id"_s, u"org.example.game.desktop"_s).value(u"paint"_s).toString(), u"opengl"_s);
     QVERIFY(!fresh->needsSave());
+    // a kept failure of a program's painting stays through an Apply that changes nothing about painting,
+    // and ends with one that does
+    QVERIFY(Problems::keep(Problems::fromPaint(u"paint-run-org.example.game"_s, u"org.example.game.desktop"_s, u"Example Game"_s, u"opengl"_s, u"no-opengl"_s, QString()),
+                           Problems::userDir()));
+    const auto kept = [] {
+        int count = 0;
+        for (const Problem &problem : Problems::read(Problems::userDir())) {
+            count += problem.key == u"paint-run-org.example.game"_s;
+        }
+        return count;
+    };
+    QCOMPARE(kept(), 1);
+    fresh->setCategoryChoice(u"Games"_s, u"profile"_s);
+    fresh->save();
+    QCOMPARE(kept(), 1);
+    // the page lists it as the engine keeps it, with the engine's own actions (its words come from the installed
+    // catalogue, which paint-test.sh and the installed-package proof read)
+    const QVariantMap listed = row(fresh->problems(), u"key"_s, u"paint-run-org.example.game"_s);
+    QVERIFY(!listed.isEmpty());
+    QCOMPARE(row(listed.value(u"actions"_s).toList(), u"id"_s, u"paint:cpu"_s).value(u"id"_s).toString(), u"paint:cpu"_s);
+    fresh->setPaintProgram(u"org.example.game.desktop"_s, u"cpu"_s);
+    fresh->save();
+    QCOMPARE(kept(), 0);
+    fresh->setPaintProgram(u"org.example.game.desktop"_s, u"opengl"_s);
+    fresh->save();
     // a wrong word is refused
     fresh->setPaintKind(u"Other"_s, u"fast"_s);
     QVERIFY(!fresh->needsSave());
