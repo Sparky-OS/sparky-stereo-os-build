@@ -10,7 +10,7 @@
     `workspace = true` in the member manifests from that app's own root manifest, drops dev-dependencies and
     lints, and writes OUT/Cargo.toml (members, the union of the [patch] tables, the release
     profile) and OUT/Cargo.lock (the union of the upstream locks, so cargo keeps upstream's
-    versions wherever one resolve allows it). Without APP names, every app of SUITE.json.
+    versions wherever one resolve allows it). Without APP names, the apps SUITE.json lists under "build".
 
 suite-tree.py shared OUT METADATA.json TREEDIR BINPKG[,BINPKG...] [BINPKG,...]...
     Reads `cargo metadata` of OUT and, in TREEDIR, one `cargo tree -e normal --target T
@@ -129,7 +129,7 @@ def cmd_tree(out, suite, appsdir, names):
     suite = json.loads(Path(suite).read_text())
     source_tool = str(Path(__file__).resolve().parent / 'suite-source.py')
     members, patches, locks, bins = [], {}, {}, {}
-    for name in names or list(suite['apps']):
+    for name in names or list(suite['build']):
         app = suite['apps'][name]
         dst = out / name
         shutil.copytree(Path(appsdir) / name, dst, symlinks=True, ignore=shutil.ignore_patterns('.git', 'target', 'xtask'))
@@ -155,6 +155,9 @@ def cmd_tree(out, suite, appsdir, names):
             members.append(str(sub.relative_to(out)))
         for reg, tbl in root.get('patch', {}).items():
             for crate, val in tbl.items():
+                if isinstance(val, dict) and 'path' in val:
+                    # a crate the app carries in its own tree (TextureCraft's vendor/egui-phosphor)
+                    val = {**val, 'path': str((dst / val['path']).resolve())}
                 old = patches.setdefault(reg, {}).setdefault(crate, val)
                 if old != val:
                     sys.exit(f'{name}: [patch.{reg}] {crate} differs between apps: {old} / {val}')
@@ -184,7 +187,8 @@ def cmd_tree(out, suite, appsdir, names):
     used = {n for (n, _v, src) in locks if src.startswith('git+')}
     for reg, tbl in patches.items():
         root.append(f'[patch.{key(reg)}]')
-        root += [f'{key(c)} = {dumps_value(v)}' for c, v in tbl.items() if (v.get('package', c) if isinstance(v, dict) else c) in used]
+        root += [f'{key(c)} = {dumps_value(v)}' for c, v in tbl.items()
+                 if (isinstance(v, dict) and 'path' in v) or (v.get('package', c) if isinstance(v, dict) else c) in used]
         root.append('')
     patch_at = len(root)
     # One resolve holds one version per semver-compatible range: keep the highest of each range, and

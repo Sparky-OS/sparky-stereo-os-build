@@ -5,8 +5,9 @@
 # Copyright 2026 under the GNU GPL3 License
 # Usage: build.sh WORK SOURCES SEED_DIR [STEP]
 #   WORK: a new or empty folder on a disk with 30 GB free; SOURCES: the folder fetch.sh wrote; SEED_DIR: the folder
-#   with the edition's rustc, cargo and libstd-rust packages (out/ of the rustc recipe). STEP: all (default) or
-#   source (the two source packages only, in WORK/source, for the reproducible-source check; needs the deps image).
+#   with the edition's rustc, cargo and libstd-rust packages (out/ of the rustc recipe). STEP: all (default); deps
+#   (stop once the image with the compiler, the build dependencies and the two source packages exists); build (go on
+#   from there); source (the two source packages only, again, in WORK/source: the reproducible-source check).
 # The compile runs in a container without network: a crate, a font or a catalogue that is not in SOURCES stops it.
 # The candidates and their SHA256SUMS land in WORK/out, the logs in WORK. SPARKY_DISK_FLOOR_GIB (default 12) and
 # SPARKY_DISK_PATH (default WORK) set the disk guard: the build is killed 1 GiB above the floor.
@@ -54,6 +55,7 @@ if [ "$STEP" = source ]; then
 	cat "$WORK/source/SOURCE-SHA256SUMS"
 	exit 0
 fi
+if [ "$STEP" != build ]; then
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 sparky_provenance_init "$BASE_IMAGE"
 date -u +%s >"$WORK/started"
@@ -67,6 +69,8 @@ while [ "$(docker inspect -f '{{.State.Running}}' "$name")" = true ]; do sleep 5
 docker commit "$name" "$image" >/dev/null
 docker rm "$name" >/dev/null
 date -u +%s >"$WORK/deps-done"
+[ "$STEP" != deps ] || { echo "deps done: image $image, sources in $WORK/source"; exit 0; }
+fi
 
 sparky_provenance_init "$image"
 name=$SPARKY_CONTAINER_PREFIX-build

@@ -76,7 +76,7 @@ def wrap(prefix, words, width=78):
 def main():
     src, ws, version, date, rustc, std = (Path(sys.argv[1]), Path(sys.argv[2]), *sys.argv[3:7])
     suite = json.loads((src / 'debian/suite.json').read_text())
-    apps = sys.argv[7:] or list(suite['apps'])
+    apps = sys.argv[7:] or list(suite['build'])
     deb = src / 'debian'
     sonames = {'craft-suite': (ws / 'shared/soname.txt').read_text().strip()}
     for a in apps:

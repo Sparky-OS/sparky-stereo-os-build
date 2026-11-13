@@ -13,7 +13,7 @@ set -euo pipefail
 src=$(cd "$1" && pwd); out=$2; shift 2
 tools=${SUITE_TOOLS:-$src/debian}
 json=$tools/suite.json
-apps=("$@"); [ ${#apps[@]} -gt 0 ] || mapfile -t apps < <(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["apps"]))' "$json")
+apps=("$@"); [ ${#apps[@]} -gt 0 ] || mapfile -t apps < <(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["build"]))' "$json")
 python3 "$tools/suite-tree.py" tree "$out" "$json" "$src/apps" "${apps[@]}"
 cd "$out"
 mkdir -p .cargo

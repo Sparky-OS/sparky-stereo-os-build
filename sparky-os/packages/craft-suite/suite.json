@@ -7,6 +7,15 @@
   "i18n_repository": "https://github.com/danielcamposramos/craft-i18n",
   "fork": "https://github.com/danielcamposramos",
   "upstream": "https://github.com/storytold",
+  "build": [
+    "photocraft",
+    "lightcraft",
+    "filmcraft"
+  ],
+  "held": {
+    "texturecraft": "joins the same workspace (the four-app resolve works, 365 shared crates); its build and proofs come after the three media apps",
+    "anicraft": "cannot join this workspace yet: it needs cpal 0.18 (alsa-sys 0.4.0) and FilmCraft cpal 0.16 (alsa-sys 0.3.1), and one resolve holds one crate that links the native library alsa"
+  },
   "apps": {
     "photocraft": {
       "rev": "5fbc36429856ed30ef9f2fe63e68dcc10cbac2ff",

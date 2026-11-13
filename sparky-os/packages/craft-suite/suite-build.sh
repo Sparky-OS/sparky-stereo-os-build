@@ -11,7 +11,7 @@ src=$(cd "$1" && pwd); ws=$(cd "$2" && pwd); shift 2
 tools=${SUITE_TOOLS:-$src/debian}
 json=$tools/suite.json
 : "${SOURCE_DATE_EPOCH:?the build date of the programs is the date of the source, never the clock}"
-apps=("$@"); [ ${#apps[@]} -gt 0 ] || mapfile -t apps < <(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["apps"]))' "$json")
+apps=("$@"); [ ${#apps[@]} -gt 0 ] || mapfile -t apps < <(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["build"]))' "$json")
 # the edition's compiler only: the libraries load libstd by the name this compiler gives it
 ours=$(dpkg-query -W -f '${Version}' rustc 2>/dev/null || true)
 case "$ours" in *+stereo3d*) echo "rustc $ours: $(rustc --version)" ;; *) echo "the compiler is not the edition's build (rustc package version: ${ours:-none}); the suite is built with ours only" >&2; exit 1 ;; esac
