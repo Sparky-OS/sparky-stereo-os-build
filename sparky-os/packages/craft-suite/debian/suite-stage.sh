@@ -10,7 +10,7 @@ libdir=usr/lib/x86_64-linux-gnu
 rel=$ws/built
 : "${SOURCE_DATE_EPOCH:?}"
 date=$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y-%m-%d)
-field() { python3 -c 'import json,sys; v=json.load(open(sys.argv[1]))["apps"][sys.argv[2]][sys.argv[3]]; print("" if v is None else (" ".join(v) if isinstance(v, list) else v))' "$json" "$1" "$2"; }
+field() { python3 -c 'import json,sys; v=json.load(open(sys.argv[1]))["apps"][sys.argv[2]].get(sys.argv[3]); print("" if v is None else (" ".join(v) if isinstance(v, list) else v))' "$json" "$1" "$2"; }
 # the libraries under the names the programs ask for, so upstream's smoke test (PROGRAM --version) can load them
 named=$src/debian/stage/lib; rm -rf "$src/debian/stage"; mkdir -p "$named"
 install -m644 "$rel/libcraft_suite_shared.so" "$named/$(cat "$ws/shared/soname.txt")"
@@ -44,6 +44,15 @@ for a in "$@"; do
 		sed "s/@PROGRAM@/$b/g" "$src/debian/craft-suite-launcher.in" >"$pkg/usr/bin/$b"
 		chmod 755 "$pkg/usr/bin/$b"
 	done
+	# the edition's stereo file types the app opens (shared-mime-info names them; each is a sub-class of a type the
+	# desktop file already lists), added to the desktop file's MimeType so the app is offered for them by name
+	extra=$(field "$a" stereo_mime | tr ' ' ';')
+	if [ -n "$extra" ]; then
+		desktop=$(ls "$pkg"/usr/share/applications/*.desktop)
+		grep -q '^MimeType=.*;$' "$desktop" || { echo "$a: the desktop file has no MimeType line ending in ;" >&2; exit 1; }
+		sed -i "s|^\(MimeType=.*;\)\$|\1$extra;|" "$desktop"
+		desktop-file-validate "$desktop"
+	fi
 	doc=$pkg/usr/share/doc/$a
 	install -m644 "$src/debian/authors/$a.txt" "$doc/AUTHORS"
 	# every crate linked into the app's programs and libraries, with its licence expression
