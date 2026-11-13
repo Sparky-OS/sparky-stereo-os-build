@@ -40,7 +40,7 @@ mkdir -p "$D/DEBIAN" "$WORK/shlibs/debian"
 printf 'Source: %s\n\nPackage: %s\nArchitecture: amd64\n' "$PACKAGE" "$PACKAGE" >"$WORK/shlibs/debian/control"
 PRIVATE=$(pkg-config --variable=libdir sparky-stereo-problems)
 SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -l"$PRIVATE" --ignore-missing-info -O $(find "$D" -type f \( -name '*.so' -o -path '*/kauth/libexec/sparkystereo_graphics_helper' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/usr/bin/sparky-stereo-gpu-record' \)) 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
-DEPENDS="$SHLIBS, libqt6gui6 (= 6.11.2+dfsg-5+stereo3d17+lc1), libqt6widgets6 (= 6.11.2+dfsg-5+stereo3d17+lc1), libqt6opengl6 (= 6.11.2+dfsg-5+stereo3d17+lc1), qt6-qpa-plugins (= 6.11.2+dfsg-5+stereo3d17+lc1), libqt6waylandclient6 (= 6.11.2+dfsg-5+stereo3d17+lc1), sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)"
+DEPENDS="$SHLIBS, libqt6gui6 (= 6.11.2+dfsg-5+stereo3d18+lc1), libqt6widgets6 (= 6.11.2+dfsg-5+stereo3d18+lc1), libqt6opengl6 (= 6.11.2+dfsg-5+stereo3d18+lc1), qt6-qpa-plugins (= 6.11.2+dfsg-5+stereo3d18+lc1), libqt6waylandclient6 (= 6.11.2+dfsg-5+stereo3d18+lc1), sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOS
 Package: $PACKAGE
@@ -92,7 +92,7 @@ Homepage: https://sparkylinux.org
 
 Package: $PACKAGE
 Architecture: amd64
-Depends: \${shlibs:Depends}, libqt6gui6 (= 6.11.2+dfsg-5+stereo3d17+lc1), libqt6widgets6 (= 6.11.2+dfsg-5+stereo3d17+lc1), libqt6opengl6 (= 6.11.2+dfsg-5+stereo3d17+lc1), qt6-qpa-plugins (= 6.11.2+dfsg-5+stereo3d17+lc1), libqt6waylandclient6 (= 6.11.2+dfsg-5+stereo3d17+lc1), sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)
+Depends: \${shlibs:Depends}, libqt6gui6 (= 6.11.2+dfsg-5+stereo3d18+lc1), libqt6widgets6 (= 6.11.2+dfsg-5+stereo3d18+lc1), libqt6opengl6 (= 6.11.2+dfsg-5+stereo3d18+lc1), qt6-qpa-plugins (= 6.11.2+dfsg-5+stereo3d18+lc1), libqt6waylandclient6 (= 6.11.2+dfsg-5+stereo3d18+lc1), sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)
 Recommends: hwdata, switcheroo-control
 Description: Graphics page for System Settings
  Every graphics processor, the main desktop GPU, where programs draw, the GPU
