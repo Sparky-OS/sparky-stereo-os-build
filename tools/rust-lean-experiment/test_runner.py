@@ -191,7 +191,8 @@ class ReceiptTests(unittest.TestCase):
                 (p/'result/compile/metrics.json').write_text(json.dumps(metrics))
             rows=summarize(root,{'version':'fixture','steps':steps})
             self.assertEqual(rows[0]['forms']['A']['mean'],1.25)
-            text=(root/'summary/REPORT.md').read_text();self.assertIn('| A mean',text);self.assertIn('0 (0%)',text)
+            text=(root/'summary/REPORT.md').read_text();self.assertIn('| A mean',text);self.assertEqual(rows[0]['comparison']['B']['percent'],0)
+            self.assertIn('1.25',text)
             self.assertIn('single observation',text);self.assertIn('inside observed spread',text)
 
 
