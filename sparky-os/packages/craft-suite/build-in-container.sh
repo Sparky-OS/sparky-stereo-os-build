@@ -23,7 +23,7 @@ PRESERVE=(
 
 make_source() {    # make_source OUT: OUT/s1 gets the +stereo3dN source, OUT/lc the +stereo3dN+lc1 source
 	local out=$1 up version rustc t
-	up=$(j release); version=$up-1+$(j edition); rustc=$(j rustc)
+	up=$(j release); version=$up-1+${SUITE_EDITION:-$(j edition)}; rustc=${SUITE_RUSTC:-$(j rustc)}
 	[ "$(dpkg-query -W -f '${Version}' rustc)" = "$rustc" ] || { echo "the installed rustc is $(dpkg-query -W -f '${Version}' rustc), suite.json names $rustc" >&2; exit 1; }
 	rm -rf "$out" && mkdir -p "$out/s1" "$out/lc"
 	t=$out/s1/craft-suite-$up
@@ -44,7 +44,7 @@ make_source() {    # make_source OUT: OUT/s1 gets the +stereo3dN source, OUT/lc 
 	runuser -u builder -- env HOME=/work/names CARGO_HOME=/work/names/cargo SUITE_TOOLS="$t/debian" SUITE_LOCK=make \
 		bash "$t/debian/suite-generate.sh" "$t" /work/names/ws >/work/names.log 2>&1 || { tail -30 /work/names.log >&2; exit 1; }
 	cp /work/names/ws/Cargo.lock "$t/debian/suite-Cargo.lock"
-	python3 /tools/suite-debian.py "$t" /work/names/ws "$version" "$SOURCE_DATE_RFC2822" "$rustc" "$(j std_package)"
+	python3 /tools/suite-debian.py "$t" /work/names/ws "$version" "$SOURCE_DATE_RFC2822" "$rustc" "${SUITE_STD_PACKAGE:-$(j std_package)}"
 	rm -rf /work/names/ws /work/names/cargo
 	python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" "$t"
 	(cd "$out/s1" && dpkg-source -b "craft-suite-$up" >/dev/null)
@@ -77,7 +77,7 @@ PYWRAP
 	(cd "$out" && sha256sum s1/*.dsc s1/*.debian.tar.xz s1/*.orig.tar.xz lc/*+lc1.dsc lc/*+lc1.debian.tar.xz) | tee "$out/SOURCE-SHA256SUMS"
 }
 
-version() { up=$(j release); VERSION=$up-1+$(j edition); }    # python3 arrives with the deps step's first install
+version() { up=$(j release); VERSION=$up-1+${SUITE_EDITION:-$(j edition)}; }    # python3 arrives with the deps step's first install
 [ "$STEP" = deps ] || version
 case $STEP in
 deps)    # needs the network for apt; the driver commits the result as the image the build runs in, without network
@@ -91,12 +91,12 @@ deps)    # needs the network for apt; the driver commits the result as the image
 	printf 'Package: *\nPin: origin ""\nPin-Priority: 1001\n' >/etc/apt/preferences.d/sparky-seed
 	apt-get -y update >>/work/apt-update.log 2>&1
 	seed=$(apt-cache policy rustc | awk '/Candidate:/ {print $2}')
-	[ "$seed" = "$(j rustc)" ] || { echo "apt offers rustc $seed, suite.json names $(j rustc): refusing to build with another compiler" >&2; exit 1; }
+	[ "$seed" = "${SUITE_RUSTC:-$(j rustc)}" ] || { echo "apt offers rustc $seed, the recipe names ${SUITE_RUSTC:-$(j rustc)}: refusing to build with another compiler" >&2; exit 1; }
 	apt-get -y --no-install-recommends install rustc cargo libstd-rust-dev >/work/rust-install.log 2>&1
 	id builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
 	make_source /work/source
 	apt-get -y --no-install-recommends build-dep "/work/source/lc/craft-suite_$VERSION+lc1.dsc" >/work/build-dep.log 2>&1
-	dpkg-query -W -f '${Package} ${Version}\n' rustc cargo libstd-rust-dev "$(j std_package)" gcc cmake nasm python3 debhelper dpkg-dev >/work/build-toolchain.txt
+	dpkg-query -W -f '${Package} ${Version}\n' rustc cargo libstd-rust-dev "${SUITE_STD_PACKAGE:-$(j std_package)}" gcc cmake nasm python3 debhelper dpkg-dev >/work/build-toolchain.txt
 	;;
 source)
 	make_source /work/source

@@ -24,7 +24,9 @@ STEP=${4:-all}
 floor=$(( (${SPARKY_DISK_FLOOR_GIB:-12} + 1) * 1024 * 1024 * 1024 ))
 disk=${SPARKY_DISK_PATH:-$WORK}
 image=$SPARKY_CONTAINER_PREFIX-deps:1
-common=(--ulimit core=0 --cpus 4 --memory 24g --platform linux/amd64
+# SUITE_RUSTC, SUITE_STD_PACKAGE and SUITE_EDITION replace suite.json's compiler, its runtime package and the edition
+# suffix for one run: an earlier release for an update rehearsal is built that way (another compiler, a lower suffix).
+common=(--ulimit core=0 --cpus 4 --memory 24g --platform linux/amd64 -e "SUITE_RUSTC=${SUITE_RUSTC:-}" -e "SUITE_STD_PACKAGE=${SUITE_STD_PACKAGE:-}" -e "SUITE_EDITION=${SUITE_EDITION:-}"
 	--mount "type=bind,src=$WORK,dst=/work" --mount "type=bind,src=$SRC,dst=/src,readonly" --mount "type=bind,src=$SEED,dst=/seed,readonly"
 	--mount "type=bind,src=$HERE/../..,dst=/toolkit,readonly" --mount "type=bind,src=$HERE,dst=/tools,readonly")
 
