@@ -49,6 +49,12 @@ struct Problem {
     bool isChoice() const;
     // A program that stopped right after it started on its GPU (ORDER 467), not a saved choice that cannot be used
     bool isDeath() const;
+    // Painting on the graphics card that cannot be used for a program or a kind of program (ORDER 518): kind "paint",
+    // detail the reason ("no-gpu", "qt", and what the program itself told: "no-opengl", "software", "library",
+    // "context"), extra the reason's own words (a renderer, an error), app the program's name (empty for a kind,
+    // whose words come from the key), requested the way asked for, command the program's ID or the kind, for
+    // "Paint on the processor"
+    bool isPaint() const;
 };
 
 // What the edition's one engine keeps of a problem: its message (CONTEXT|MSGID of this package's .po files), the
@@ -74,6 +80,9 @@ Problem fromResolution(const QString &key, const Resolution &resolution, const Q
 // are only those its desktop entry can name (the desktop's GPU, or the discrete one), and only as the person's choice
 Problem fromDeath(const QString &appName, const QString &appId, const QString &app, const QString &how, int number, const QString &word,
                   const QString &output, int gpuIndex, const QList<Gpu> &gpus, const QList<int> &instead);
+// Painting on the graphics card cannot be used (ORDER 518). key: Paint::problemKey() or Paint::runKey(); target: the
+// program's desktop ID, or the kind ("other") when no program is known; app: the program's name, empty for a kind
+Problem fromPaint(const QString &key, const QString &target, const QString &app, const QString &way, const QString &reason, const QString &words);
 // The profile's reading as words, for the messages: "power-profiles-daemon is not running", ...
 QString profileError(const QString &error, const QString &detail);
 

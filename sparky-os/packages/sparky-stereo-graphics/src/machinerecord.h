@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "graphicssettings.h"
+
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -74,6 +76,9 @@ bool writeMeasured(const QString &root, const QString &bestGpu, std::optional<bo
 bool writeCopyBack(const QString &root, std::optional<bool> copyBack);
 // Removes what the tool wrote; the file goes when nothing else is in it
 bool forget(const QString &root);
+// ORDER 518: the way of painting windows measured on this machine for a kind of program ("cpu", "batch", "opengl";
+// empty: not measured any more), in [MeasuredPaint]; Automatic on the Graphics page follows it
+bool writePaint(const QString &root, Category category, const QString &way, const QString &measurement);
 }
 
 }

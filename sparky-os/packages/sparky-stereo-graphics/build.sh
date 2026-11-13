@@ -1,12 +1,12 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/10/23
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/02
+# Last update 2026/11/13
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.2.7
+VERSION=0.2.8
 PACKAGE=sparky-stereo-graphics
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.graphics.XXXXXX")
@@ -33,7 +33,7 @@ mkdir -p "$D/usr/lib/systemd/catalog"
 sparky-stereo-problems catalog $PACKAGE "$HERE/po" "$D/usr/lib/systemd/catalog" --domain kcm_sparkystereo_graphics \
 	--context "@info" --context "@item kind of program" --context "@action:button" \
 	--subject "@title notification|A graphics choice cannot be used" \
-	--subject-map '{"@info %1 is a file|The machine'"'"'s GPU record, %1, could not be written. Until it is, Automatic treats this computer as not measured. Run: sudo sparky-stereo-gpu-record --apply-known": "@title notification|Graphics needs a repair", "@info %1 is an exit status|systemd could not reload its units after the Graphics page was installed (exit status %1). The boot service that writes the machine'"'"'s GPU record may not start. Run: sudo systemctl daemon-reload": "@title notification|Graphics needs a repair", "@info %1 is a file|A kept problem of the Graphics page cannot be read: %1.": "@title notification|Graphics needs a repair", "@info %1 is a program, %2 a GPU name, %3 says how it stopped|%1 stopped right after it started on %2: %3.": "@title notification|A program stopped on its GPU"}'
+	--subject-map '{"@info %1 is a file|The machine'"'"'s GPU record, %1, could not be written. Until it is, Automatic treats this computer as not measured. Run: sudo sparky-stereo-gpu-record --apply-known": "@title notification|Graphics needs a repair", "@info %1 is an exit status|systemd could not reload its units after the Graphics page was installed (exit status %1). The boot service that writes the machine'"'"'s GPU record may not start. Run: sudo systemctl daemon-reload": "@title notification|Graphics needs a repair", "@info %1 is a file|A kept problem of the Graphics page cannot be read: %1.": "@title notification|Graphics needs a repair", "@info %1 is a program, %2 a GPU name, %3 says how it stopped|%1 stopped right after it started on %2: %3.": "@title notification|A program stopped on its GPU", "@info %1 is a program or a kind of program, %2 says why|Painting on the graphics card cannot be used for %1: %2. The windows are painted on the processor.": "@title notification|Painting on the graphics card cannot be used"}'
 install -Dm644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
 install -m644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
 mkdir -p "$D/DEBIAN" "$WORK/shlibs/debian"
@@ -100,6 +100,30 @@ Description: Graphics page for System Settings
 EOS
 cat >"$S/debian/changelog" <<EOS
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * ORDER 518, Paint windows (Daniel, 2026-11-11: "why can't we enhance
+    qwidget to respect our gpu choice?"; 2026-11-12: "keep as a option",
+    "the reason is offload the cpu load"): how programs made with Qt Widgets
+    paint their windows is a choice on the page, for each kind of program
+    and for each program: Automatic, On the processor, On the graphics card
+    (batched), On the graphics card, Qt's OpenGL engine. Automatic is the
+    way measured for that kind on this machine or its model
+    (sparky-stereo-gpu-record --set-paint, [MeasuredPaint] in a shipped
+    record), and the processor where nothing was measured.
+  * sparky-stereo-gpu-env hands the launcher QT_WIDGETS_GPU_PAINT with the
+    GPU's variables (--print paint, paint-reason, paint-env), and
+    sparky-stereo-gpu-run applies it also when its caller chose the GPU. A
+    value set by hand in the session wins, and the page says so.
+  * A way that cannot be had is said and kept, and the program paints on
+    the processor: before the start (no graphics processor that can draw, a
+    Qt without the painting), and after it, told by the program itself
+    through QT_WIDGETS_GPU_PAINT_TELL (--paint-failed, --paint-ok), with
+    "Paint on the processor" (--use-paint) as the person's explicit choice.
+  * Ten languages.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 13 Nov 2026 12:00:00 -0300
+
+$PACKAGE (0.2.7) unstable; urgency=medium
 
   * ORDER 467 (Daniel, 2026-11-08: "I could not launch waterfox"): a program
     this page sent to a GPU that stops right after it starts is told and

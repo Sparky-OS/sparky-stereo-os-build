@@ -20,6 +20,19 @@
 //                                       its GPU ends the kept death of that program
 //   sparky-stereo-gpu-env --use-app ID GPU  "Use NAME" of a kept death: that program's own desktop entry key (the
 //                                       desktop's GPU, or the discrete one), nothing else changes
+//   sparky-stereo-gpu-env --paint-failed PROGRAM CODE [WORDS]  run by a program of the edition's Qt that was asked to
+//                                       paint its windows on the graphics card and could not (ORDER 518): say and keep it
+//   sparky-stereo-gpu-env --paint-ok PROGRAM   run by such a program when the painting did start: its kept failure is over
+//   sparky-stereo-gpu-env --use-paint TARGET WAY  "Paint on the processor" of a kept problem, or any way of painting for a
+//                                       program (ID.desktop) or a kind (players, games, browsers, other): saved as the
+//                                       person's choice; WAY is auto, cpu, batch or opengl
+//
+// Paint windows (ORDER 518): with the GPU's variables the answer carries QT_WIDGETS_GPU_PAINT=batch or =opengl when the
+// program, its kind or the machine's measurement asks for painting on the graphics card, and QT_WIDGETS_GPU_PAINT_TELL,
+// the command the program runs when that painting cannot start. Nothing is added for the processor, which is how every
+// Qt paints. --print paint names the way (cpu, batch, opengl), --print paint-reason why, --print paint-env only the
+// painting's variables. A way that cannot be had (no graphics processor that can draw, a Qt without the painting) is
+// said and kept, and the program starts and paints on the processor: the exit status stays 0.
 //
 // --3d: the program presents 3D, so Automatic is the GPU measured best on this machine (the machine record,
 // sparky-stereo-gpu-record), whatever the power profile, as it always is for players.
@@ -42,6 +55,7 @@
 #include "graphicssettings.h"
 #include "launchwatch.h"
 #include "machinerecord.h"
+#include "paint.h"
 #include "powerprofiles.h"
 #include "problems.h"
 #include "resolver.h"
@@ -74,7 +88,8 @@ static int usage(const QString &problem)
     err << problem << '\n'
         << i18nc("@info:shell %1 is the command's synopsis, which stays as it is", "Usage: %1",
                  u"sparky-stereo-gpu-env [--category C | --app ID | --choice X] [--3d] [--profile P] [--root DIR] [--print what] [--shell] [--ask] | "
-                 "--session | --list [--json] | --problems | --notify | --use KEY GPU | --use-app ID GPU | --died UNIT | --survived UNIT"_s)
+                 "--session | --list [--json] | --problems | --notify | --use KEY GPU | --use-app ID GPU | --died UNIT | --survived UNIT | "
+                 "--paint-failed PROGRAM CODE [WORDS] | --paint-ok PROGRAM | --use-paint TARGET WAY"_s)
         << '\n';
     return 2;
 }
@@ -264,6 +279,61 @@ static int useApp(const QString &id, const QString &gpuId, const QString &root)
     return 4;
 }
 
+// ORDER 518. A program asked to paint on the graphics card that could not start that painting says so itself (the
+// edition's Qt runs this through QT_WIDGETS_GPU_PAINT_TELL), since only the program knows: it painted on the processor,
+// which is said and kept until the painting starts (--paint-ok) or the person chooses another way
+static int paintFailed(const QString &program, const QString &code, const QString &words)
+{
+    static const QStringList known = {u"no-opengl"_s, u"software"_s, u"library"_s, u"context"_s};
+    if (program.isEmpty() || !known.contains(code)) {
+        // "flat-pair" and anything a later Qt tells are the program's own warning, not kept here
+        return 0;
+    }
+    QString id = program.endsWith(u".desktop"_s) ? program : program + u".desktop"_s;
+    const AppEntry entry = AppEntries::fromEnvironment().find(id);
+    const Problem problem = Problems::fromPaint(Paint::runKey(program), entry.id, entry.id.isEmpty() ? program : entry.name,
+                                                qEnvironmentVariable("QT_WIDGETS_GPU_PAINT"), code, words);
+    QTextStream(stderr) << "sparky-stereo-gpu-env: " << Problems::message(problem) << '\n';
+    return Problems::keep(problem, Problems::userDir()) ? 0 : 3;
+}
+
+static int usePaint(const QString &target, const QString &way)
+{
+    PaintSettings settings;
+    QString key;
+    if (target.endsWith(u".desktop"_s)) {
+        if (!PaintSettings::validKindChoice(way)) {
+            return usage(i18nc("@info:shell %1 is what was given; auto, cpu, batch and opengl stay as they are", "Not a way of painting: %1 (auto, cpu, batch or opengl)", way));
+        }
+        settings.setProgramChoice(target, way == u"auto"_s ? QString() : way);
+        key = Paint::problemKey(Category::Other, target);
+    } else {
+        bool found = false;
+        for (Category category : allCategories()) {
+            if (categoryKey(category).toLower() == target.toLower()) {
+                if (!PaintSettings::validKindChoice(way)) {
+                    return usage(i18nc("@info:shell %1 is what was given; auto, cpu, batch and opengl stay as they are", "Not a way of painting: %1 (auto, cpu, batch or opengl)", way));
+                }
+                settings.setKindChoice(category, way);
+                key = Paint::problemKey(category, QString());
+                found = true;
+            }
+        }
+        if (!found) {
+            return usage(i18nc("@info:shell %1 is the KEY given to --use: main-gpu or a kind of program", "Unknown kind %1", target));
+        }
+    }
+    if (!settings.save()) {
+        QTextStream(stderr) << "sparky-stereo-gpu-env: " << i18nc("@info", "The graphics settings could not be saved.") << '\n';
+        return 3;
+    }
+    bool ok = Problems::clear(key, Problems::userDir());
+    if (target.endsWith(u".desktop"_s)) {
+        ok = Problems::clear(Paint::runKey(target), Problems::userDir()) && ok;
+    }
+    return ok ? 0 : 3;
+}
+
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
@@ -289,6 +359,9 @@ int main(int argc, char **argv)
     QString survivedUnit;
     QString useApp_;
     QString useAppGpu;
+    QStringList paintFailedArgs;
+    QString paintOk;
+    QStringList usePaintArgs;
     for (int i = 0; i < args.size(); ++i) {
         const QString &arg = args.at(i);
         const auto value = [&]() -> QString {
@@ -329,6 +402,14 @@ int main(int argc, char **argv)
         } else if (arg == u"--use-app"_s) {
             useApp_ = value();
             useAppGpu = value();
+        } else if (arg == u"--paint-failed"_s) {
+            paintFailedArgs = args.mid(i + 1, 3);
+            i = args.size();
+        } else if (arg == u"--paint-ok"_s) {
+            paintOk = value();
+        } else if (arg == u"--use-paint"_s) {
+            usePaintArgs << value();
+            usePaintArgs << value();
         } else if (arg == u"--use"_s) {
             useKey = value();
             useGpu = value();
@@ -345,6 +426,18 @@ int main(int argc, char **argv)
     }
     if (!useApp_.isEmpty()) {
         return useApp(useApp_, useAppGpu, root);
+    }
+    if (!paintFailedArgs.isEmpty()) {
+        return paintFailed(paintFailedArgs.value(0), paintFailedArgs.value(1), paintFailedArgs.value(2));
+    }
+    if (!paintOk.isEmpty()) {
+        return Problems::clear(Paint::runKey(paintOk), Problems::userDir()) ? 0 : 3;
+    }
+    if (!usePaintArgs.isEmpty()) {
+        if (usePaintArgs.value(0).isEmpty() || usePaintArgs.value(1).isEmpty()) {
+            return usage(i18nc("@info:shell --use-paint, TARGET and WAY stay as they are", "--use-paint needs TARGET and WAY"));
+        }
+        return usePaint(usePaintArgs.at(0), usePaintArgs.at(1));
     }
     if (notify) {
         // the edition's one engine and its session notifier show the kept problems (ORDER 350): this starts it
@@ -448,6 +541,8 @@ int main(int argc, char **argv)
     Resolution resolution;
     QString saved; // the saved choice this answer comes from (its kind of program), whose problem is kept or cleared
     Category asked = Category::Other;
+    QString paintId; // the program whose windows are painted, when one is known
+    QString paintName;
     if (!appId.isEmpty()) {
         const AppEntry entry = QDir::isAbsolutePath(appId) ? AppEntries::fromFile(appId) : AppEntries::fromEnvironment().find(appId);
         if (entry.id.isEmpty()) {
@@ -455,6 +550,8 @@ int main(int argc, char **argv)
         }
         resolution = resolver.resolveApp(entry, settings, stereo);
         asked = entry.category;
+        paintId = entry.id;
+        paintName = entry.name;
         if (entry.preference == AppPreference::Unset) {
             saved = categoryKey(entry.category).toLower();
         }
@@ -480,6 +577,58 @@ int main(int argc, char **argv)
         asked = selected;
         saved = categoryKey(selected).toLower();
     }
+    // Paint windows (ORDER 518): the way this program's Qt Widgets windows are painted, with what names it for the program
+    PaintFacts paintFacts = PaintFacts::read(!resolver.usableIndices().isEmpty());
+    const PaintSettings paintSettings;
+    const PaintRecord paintRecord = PaintRecord::read();
+    PaintResolution paint = Paint::resolve(asked, paintId, paintSettings, paintRecord, paintFacts);
+    if (paint.way != PaintWay::Processor && paint.reason != u"session"_s) {
+        paintFacts.qtPaintsOnGpu = PaintFacts::qtHasPainting();
+        paint = Paint::resolve(asked, paintId, paintSettings, paintRecord, paintFacts);
+    }
+    if (paint.reason != u"session"_s && paint.asked != PaintWay::Processor) {
+        const QString key = Paint::problemKey(asked, paintId);
+        if (!paint.problem.isEmpty()) {
+            // said and kept; the program starts and paints on the processor, which is what it does without this page
+            const Problem problem = Problems::fromPaint(key, paintId.isEmpty() ? categoryKey(asked).toLower() : paintId, paintName, paintWayKey(paint.asked),
+                                                        paint.problem, QString());
+            Problems::keep(problem, Problems::userDir());
+            QTextStream(stderr) << "sparky-stereo-gpu-env: " << Problems::message(problem) << '\n';
+        } else {
+            Problems::clear(key, Problems::userDir());
+            // a failure this program told at an earlier start is kept until it tells that the painting started
+            if (!paintId.isEmpty()) {
+                const QString run = Paint::runKey(paintId);
+                for (const Problem &kept : Problems::read(Problems::userDir())) {
+                    if (kept.key == run) {
+                        paint.environment << u"QT_WIDGETS_GPU_PAINT_TELL_OK=1"_s;
+                    }
+                }
+            }
+        }
+    }
+    const auto printPaint = [&out, &paint, shell]() {
+        for (const QString &line : std::as_const(paint.environment)) {
+            if (shell) {
+                const int eq = line.indexOf(u'=');
+                out << "export " << line.left(eq) << '=' << shellQuote(line.mid(eq + 1)) << '\n';
+            } else {
+                out << line << '\n';
+            }
+        }
+    };
+    if (print == u"paint"_s) {
+        out << paintWayKey(paint.way) << '\n';
+        return 0;
+    }
+    if (print == u"paint-reason"_s) {
+        out << (paint.problem.isEmpty() ? paint.reason : paint.problem) << '\n';
+        return 0;
+    }
+    if (print == u"paint-env"_s) {
+        printPaint();
+        return 0;
+    }
     if (!resolution.problem.isEmpty()) {
         const Problem problem = Problems::fromResolution(saved.isEmpty() ? categoryKey(asked).toLower() : saved, resolution, gpus, root, powerProfile);
         if (!saved.isEmpty()) {
@@ -502,6 +651,7 @@ int main(int argc, char **argv)
     }
     if (resolution.gpuIndex < 0) {
         // no GPU at all and nothing chosen: no variable to set, which is the whole answer; there is no GPU to name
+        // (a way of painting set by hand in the session is the session's, so nothing is printed for it either)
         return print == u"env"_s ? 0 : 1;
     }
     const Gpu &gpu = gpus.at(resolution.gpuIndex);
@@ -514,6 +664,7 @@ int main(int argc, char **argv)
                 out << line << '\n';
             }
         }
+        printPaint();
     } else if (print == u"gpu"_s) {
         out << gpu.name << '\n';
     } else if (print == u"render-node"_s) {

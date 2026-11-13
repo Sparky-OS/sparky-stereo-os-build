@@ -922,3 +922,118 @@ msgstr "%1 在 %2 上启动后立即停止: %3。"
 msgctxt "@info what to do"
 msgid "It was not started again on another GPU. If this GPU is the cause, choose another one for it below, or in System Settings, Graphics."
 msgstr "没有在其他 GPU 上重新启动它。如果原因是这个 GPU，请在下方或在“系统设置 > 图形”中为它选择另一个 GPU。"
+
+#: src/ui/main.qml
+msgctxt "@title:group"
+msgid "Paint windows"
+msgstr "绘制窗口"
+
+#: src/ui/main.qml
+msgctxt "@info"
+msgid "Programs made with Qt Widgets, such as Konsole, Dolphin and Kate, paint their windows on the processor or on the graphics card. Painting on the graphics card leaves the processor free for other work. A change applies the next time a program starts."
+msgstr "用 Qt Widgets 制作的程序（例如 Konsole、Dolphin 和 Kate）可以在处理器上或在显卡上绘制窗口。在显卡上绘制可以让处理器腾出来做其他工作。更改在程序下次启动时生效。"
+
+#: src/ui/main.qml
+msgctxt "@info"
+msgid "QT_WIDGETS_GPU_PAINT is set in this session and is used instead of these choices."
+msgstr "此会话中设置了 QT_WIDGETS_GPU_PAINT，它会代替这些选择。"
+
+#: src/ui/main.qml
+msgctxt "@info"
+msgid "A program started from a terminal or from Steam follows these choices when it is started with sparky-stereo-gpu-run. For any single program, use the list below."
+msgstr "从终端或 Steam 启动的程序，在用 sparky-stereo-gpu-run 启动时遵循这些选择。要单独设置某个程序，请使用下面的列表。"
+
+#: src/ui/main.qml
+msgctxt "@info %1 is a way of painting windows"
+msgid "Windows painted: %1"
+msgstr "窗口绘制：%1"
+
+#: src/graphicskcm.cpp
+msgctxt "@item:inlistbox way of painting windows"
+msgid "On the graphics card (batched)"
+msgstr "在显卡上（批量）"
+
+#: src/graphicskcm.cpp
+msgctxt "@item:inlistbox way of painting windows"
+msgid "On the graphics card, Qt's OpenGL engine"
+msgstr "在显卡上，Qt 的 OpenGL 引擎"
+
+#: src/graphicskcm.cpp
+msgctxt "@item:inlistbox way of painting windows"
+msgid "On the processor"
+msgstr "在处理器上"
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Now: on the processor, because this computer has no graphics processor that can draw now."
+msgstr "当前：在处理器上，因为这台计算机现在没有能绘制的图形处理器。"
+
+#: src/graphicskcm.cpp
+msgctxt "@info %1 is a way of painting windows, %2 the reason"
+msgid "Now: %1, %2"
+msgstr "当前：%1，%2"
+
+#: src/problems.cpp
+msgctxt "@action:button"
+msgid "Paint on the processor"
+msgstr "在处理器上绘制"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card"
+msgid "this computer has no graphics processor that can draw now"
+msgstr "这台计算机现在没有能绘制的图形处理器"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card"
+msgid "the installed Qt cannot paint on the graphics card"
+msgstr "已安装的 Qt 不能在显卡上绘制"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card"
+msgid "this session has no OpenGL"
+msgstr "此会话没有 OpenGL"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card, %1 is a renderer's name"
+msgid "the OpenGL of this session is drawn by the processor (%1)"
+msgstr "此会话的 OpenGL 由处理器绘制（%1）"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card, %1 is the error"
+msgid "Qt's OpenGL library could not be loaded (%1)"
+msgstr "无法加载 Qt 的 OpenGL 库（%1）"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card, %1 is the error"
+msgid "the drawing surface could not be made (%1)"
+msgstr "无法创建绘制表面（%1）"
+
+#: src/problems.cpp
+msgctxt "@info %1 is a program or a kind of program, %2 says why"
+msgid "Painting on the graphics card cannot be used for %1: %2. The windows are painted on the processor."
+msgstr "无法为 %1 使用在显卡上绘制：%2。窗口在处理器上绘制。"
+
+#: src/problems.cpp
+msgctxt "@info what to do"
+msgid "Choose On the processor for it in System Settings, Graphics, or repair the graphics driver and start the program again."
+msgstr "请在“系统设置 > 图形”中为它选择“在处理器上”，或者修复图形驱动程序后重新启动该程序。"
+
+#: src/problems.cpp
+msgctxt "@title notification"
+msgid "Painting on the graphics card cannot be used"
+msgstr "无法使用在显卡上绘制"
+
+#: src/cli/gpuenv.cpp
+msgctxt "@info:shell %1 is what was given; auto, cpu, batch and opengl stay as they are"
+msgid "Not a way of painting: %1 (auto, cpu, batch or opengl)"
+msgstr "不是一种绘制方式：%1（auto、cpu、batch 或 opengl）"
+
+#: src/cli/gpuenv.cpp
+msgctxt "@info:shell --use-paint, TARGET and WAY stay as they are"
+msgid "--use-paint needs TARGET and WAY"
+msgstr "--use-paint 需要 TARGET 和 WAY"
+
+#: src/cli/gpurecord.cpp
+msgctxt "@info:shell %1 is what was given; cpu, batch, opengl and unset stay as they are"
+msgid "Not a way of painting: %1 (cpu, batch, opengl or unset)"
+msgstr "不是一种绘制方式：%1（cpu、batch、opengl 或 unset）"

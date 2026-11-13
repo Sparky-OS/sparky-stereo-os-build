@@ -294,12 +294,66 @@ KCM.SimpleKCM {
 
         Kirigami.Separator {
             Layout.fillWidth: true
-            visible: kcm.multiGpu
+        }
+
+        // ORDER 518: how programs made with Qt Widgets paint their windows. The three ways stay the person's choice;
+        // Automatic is what was measured for that kind of program on this computer, and the processor without a measurement
+        Kirigami.Heading {
+            level: 2
+            text: i18nc("@title:group", "Paint windows")
+        }
+        QQC2.Label {
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            text: i18nc("@info", "Programs made with Qt Widgets, such as Konsole, Dolphin and Kate, paint their windows on the processor or on the graphics card. Painting on the graphics card leaves the processor free for other work. A change applies the next time a program starts.")
+        }
+        Kirigami.InlineMessage {
+            objectName: "paintSessionWarning"
+            Layout.fillWidth: true
+            visible: kcm.paintSetInSession
+            type: Kirigami.MessageType.Warning
+            text: i18nc("@info", "QT_WIDGETS_GPU_PAINT is set in this session and is used instead of these choices.")
+        }
+        Repeater {
+            model: kcm.paintKinds
+            delegate: RowLayout {
+                Layout.fillWidth: true
+                QQC2.Label {
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 8
+                    text: modelData.label
+                }
+                QQC2.ComboBox {
+                    objectName: "paintKind" + modelData.key
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 16
+                    model: kcm.paintOptions
+                    textRole: "text"
+                    valueRole: "value"
+                    currentIndex: count > 0 ? Math.max(0, indexOfValue(modelData.choice)) : -1
+                    onActivated: kcm.setPaintKind(modelData.key, currentValue)
+                }
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    font: Kirigami.Theme.smallFont
+                    text: modelData.nowText
+                }
+            }
+        }
+        QQC2.Label {
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            font: Kirigami.Theme.smallFont
+            text: i18nc("@info", "A program started from a terminal or from Steam follows these choices when it is started with sparky-stereo-gpu-run. For any single program, use the list below.")
+        }
+
+        Kirigami.Separator {
+            Layout.fillWidth: true
+            visible: kcm.multiGpu || kcm.canPaintOnGpu
         }
 
         Kirigami.Heading {
             level: 2
-            visible: kcm.multiGpu
+            visible: kcm.multiGpu || kcm.canPaintOnGpu
             text: i18nc("@title:group", "Programs")
         }
         QQC2.Label {
@@ -310,17 +364,17 @@ KCM.SimpleKCM {
             text: i18nc("@info", "This is the same setting as Run Using Dedicated Graphics in the application menu. The dedicated GPU is the discrete GPU; when the GPU the computer starts with is already discrete, the program stays on it. A change applies the next time the program starts.")
         }
         Kirigami.SearchField {
-            visible: kcm.multiGpu
+            visible: kcm.multiGpu || kcm.canPaintOnGpu
             Layout.fillWidth: true
             onTextChanged: kcm.appFilter = text
         }
         ListView {
             id: appList
-            visible: kcm.multiGpu
+            visible: kcm.multiGpu || kcm.canPaintOnGpu
             Layout.fillWidth: true
             Layout.preferredHeight: Kirigami.Units.gridUnit * 18
             clip: true
-            model: kcm.multiGpu ? kcm.apps : []
+            model: (kcm.multiGpu || kcm.canPaintOnGpu) ? kcm.apps : []
             QQC2.ScrollBar.vertical: QQC2.ScrollBar {}
             delegate: RowLayout {
                 width: appList.width - Kirigami.Units.gridUnit
@@ -340,6 +394,7 @@ KCM.SimpleKCM {
                     }
                     QQC2.Label {
                         Layout.fillWidth: true
+                        visible: kcm.multiGpu
                         text: modelData.systemPrefersOther && modelData.preference === 1
                             ? i18nc("@info %1 is a GPU name", "Now: %1. The program asks for this itself.", modelData.nowText)
                             : i18nc("@info %1 is a GPU name", "Now: %1", modelData.nowText)
@@ -347,8 +402,16 @@ KCM.SimpleKCM {
                         font: Kirigami.Theme.smallFont
                         opacity: 0.8
                     }
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        text: i18nc("@info %1 is a way of painting windows", "Windows painted: %1", modelData.paintText)
+                        elide: Text.ElideRight
+                        font: Kirigami.Theme.smallFont
+                        opacity: 0.8
+                    }
                 }
                 QQC2.ComboBox {
+                    visible: kcm.multiGpu
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 11
                     model: kcm.appOptions
                     textRole: "text"
@@ -356,10 +419,18 @@ KCM.SimpleKCM {
                     currentIndex: count > 0 ? Math.max(0, indexOfValue(modelData.preference)) : -1
                     onActivated: kcm.setAppPreference(modelData.id, currentValue)
                 }
+                QQC2.ComboBox {
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 14
+                    model: kcm.paintProgramOptions
+                    textRole: "text"
+                    valueRole: "value"
+                    currentIndex: count > 0 ? Math.max(0, indexOfValue(modelData.paint)) : -1
+                    onActivated: kcm.setPaintProgram(modelData.id, currentValue)
+                }
             }
         }
         QQC2.Label {
-            visible: kcm.multiGpu && kcm.hiddenApps > 0
+            visible: (kcm.multiGpu || kcm.canPaintOnGpu) && kcm.hiddenApps > 0
             Layout.fillWidth: true
             wrapMode: Text.Wrap
             font: Kirigami.Theme.smallFont

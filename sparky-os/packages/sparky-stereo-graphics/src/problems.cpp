@@ -34,9 +34,14 @@ bool Problem::isDeath() const
     return kind == u"app-died"_s;
 }
 
+bool Problem::isPaint() const
+{
+    return kind == u"paint"_s;
+}
+
 bool Problem::isChoice() const
 {
-    return !system && !kind.isEmpty() && kind != u"record-write"_s && kind != u"systemd-reload"_s && !isDeath();
+    return !system && !kind.isEmpty() && kind != u"record-write"_s && kind != u"systemd-reload"_s && !isDeath() && !isPaint();
 }
 
 namespace Problems
@@ -139,6 +144,19 @@ Problem fromDeath(const QString &appName, const QString &appId, const QString &a
     return problem;
 }
 
+Problem fromPaint(const QString &key, const QString &target, const QString &app, const QString &way, const QString &reason, const QString &words)
+{
+    Problem problem;
+    problem.key = key;
+    problem.kind = u"paint"_s;
+    problem.requested = way;
+    problem.detail = reason;
+    problem.extra = words;
+    problem.app = app;
+    problem.command = target;
+    return problem;
+}
+
 QString profileError(const QString &error, const QString &detail)
 {
     if (error == u"no-bus"_s) {
@@ -205,7 +223,7 @@ static Problem fromJson(const QJsonObject &o)
 // so the .po files the catalogs are built from keep it
 [[maybe_unused]] static QString extractedLabels()
 {
-    return i18nc("@action:button", "Open Graphics settings");
+    return i18nc("@action:button", "Open Graphics settings") + i18nc("@action:button", "Paint on the processor");
 }
 
 static QString ctx(const char *context, const char *text)
@@ -245,6 +263,56 @@ static QJsonArray profileArg(const QString &error, const QString &detail)
     return QJsonArray{ctx(c, "power-profiles-daemon is not running")};
 }
 
+// Why painting on the graphics card cannot be used, as a message inside the sentence
+static QJsonArray paintArg(const Problem &p)
+{
+    const char *c = "@info why windows cannot be painted on the graphics card";
+    if (p.detail == u"no-gpu"_s) {
+        return QJsonArray{ctx(c, "this computer has no graphics processor that can draw now")};
+    }
+    if (p.detail == u"qt"_s) {
+        return QJsonArray{ctx(c, "the installed Qt cannot paint on the graphics card")};
+    }
+    if (p.detail == u"no-opengl"_s) {
+        return QJsonArray{ctx(c, "this session has no OpenGL")};
+    }
+    if (p.detail == u"software"_s) {
+        return QJsonArray{ctx("@info why windows cannot be painted on the graphics card, %1 is a renderer's name", "the OpenGL of this session is drawn by the processor (%1)"),
+                          p.extra};
+    }
+    if (p.detail == u"library"_s) {
+        return QJsonArray{ctx("@info why windows cannot be painted on the graphics card, %1 is the error", "Qt's OpenGL library could not be loaded (%1)"), p.extra};
+    }
+    return QJsonArray{ctx("@info why windows cannot be painted on the graphics card, %1 is the error", "the drawing surface could not be made (%1)"), p.extra};
+}
+
+static QString paintText(const Problem &p)
+{
+    const char *c = "@info why windows cannot be painted on the graphics card";
+    if (p.detail == u"no-gpu"_s) {
+        return i18nc(c, "this computer has no graphics processor that can draw now");
+    }
+    if (p.detail == u"qt"_s) {
+        return i18nc(c, "the installed Qt cannot paint on the graphics card");
+    }
+    if (p.detail == u"no-opengl"_s) {
+        return i18nc(c, "this session has no OpenGL");
+    }
+    if (p.detail == u"software"_s) {
+        return i18nc("@info why windows cannot be painted on the graphics card, %1 is a renderer's name", "the OpenGL of this session is drawn by the processor (%1)", p.extra);
+    }
+    if (p.detail == u"library"_s) {
+        return i18nc("@info why windows cannot be painted on the graphics card, %1 is the error", "Qt's OpenGL library could not be loaded (%1)", p.extra);
+    }
+    return i18nc("@info why windows cannot be painted on the graphics card, %1 is the error", "the drawing surface could not be made (%1)", p.extra);
+}
+
+// The kind a paint problem without a program belongs to, from its key ("paint-other")
+static QString paintKind(const Problem &p)
+{
+    return p.key.mid(6);
+}
+
 // How a program stopped, as a message inside the sentence ([KEY, ARG...], like profileArg)
 static QJsonArray howArg(const Problem &p)
 {
@@ -276,6 +344,15 @@ Sentences sentences(const Problem &p)
         d.args = QJsonArray{p.app, p.gpu, howArg(p)};
         d.more.append(QJsonArray{ctx("@info what to do",
                                      "It was not started again on another GPU. If this GPU is the cause, choose another one for it below, or in System Settings, Graphics.")});
+        return d;
+    }
+    if (p.isPaint()) {
+        Sentences d;
+        d.key = ctx("@info %1 is a program or a kind of program, %2 says why",
+                    "Painting on the graphics card cannot be used for %1: %2. The windows are painted on the processor.");
+        d.args = p.app.isEmpty() ? QJsonArray{kindArg(paintKind(p)), paintArg(p)} : QJsonArray{p.app, paintArg(p)};
+        d.more.append(QJsonArray{ctx("@info what to do",
+                                     "Choose On the processor for it in System Settings, Graphics, or repair the graphics driver and start the program again.")});
         return d;
     }
     // the same sentences as message(), named by their catalog keys (CONTEXT|MSGID of this package's .po files), so the
@@ -358,6 +435,17 @@ bool keep(Problem problem, const QString &dir)
             actions.append(QJsonObject{{u"id"_s, QString(u"use:"_s + gpu.id)},
                                        {u"label"_s, QJsonArray{ctx("@action:button %1 is a GPU name", "Use %1"), gpu.name}},
                                        {u"command"_s, QJsonArray{u"sparky-stereo-gpu-env"_s, u"--use-app"_s, problem.command, gpu.id}}});
+        }
+        actions.append(QJsonObject{{u"id"_s, u"open"_s},
+                                   {u"label"_s, QJsonArray{ctx("@action:button", "Open Graphics settings")}},
+                                   {u"command"_s, QJsonArray{u"systemsettings"_s, u"kcm_sparkystereo_graphics"_s}}});
+    } else if (problem.isPaint()) {
+        // the processor is offered as the person's explicit choice for this program or kind; nothing is changed without it
+        // (a program without a menu entry has no choice of its own to save: the page is where its kind is chosen)
+        if (!problem.command.isEmpty()) {
+            actions.append(QJsonObject{{u"id"_s, u"paint:cpu"_s},
+                                       {u"label"_s, QJsonArray{ctx("@action:button", "Paint on the processor")}},
+                                       {u"command"_s, QJsonArray{u"sparky-stereo-gpu-env"_s, u"--use-paint"_s, problem.command, u"cpu"_s}}});
         }
         actions.append(QJsonObject{{u"id"_s, u"open"_s},
                                    {u"label"_s, QJsonArray{ctx("@action:button", "Open Graphics settings")}},
@@ -482,6 +570,9 @@ QString title(const Problem &problem)
     if (problem.isDeath()) {
         return i18nc("@title notification", "A program stopped on its GPU");
     }
+    if (problem.isPaint()) {
+        return i18nc("@title notification", "Painting on the graphics card cannot be used");
+    }
     if (problem.isChoice()) {
         return i18nc("@title notification", "A graphics choice cannot be used");
     }
@@ -500,6 +591,15 @@ QString message(const Problem &p)
             + u' '
             + i18nc("@info what to do",
                     "It was not started again on another GPU. If this GPU is the cause, choose another one for it below, or in System Settings, Graphics.");
+    }
+    if (p.isPaint()) {
+        return i18nc("@info %1 is a program or a kind of program, %2 says why",
+                     "Painting on the graphics card cannot be used for %1: %2. The windows are painted on the processor.",
+                     p.app.isEmpty() ? kindInSentence(paintKind(p)) : p.app,
+                     paintText(p))
+            + u' '
+            + i18nc("@info what to do",
+                    "Choose On the processor for it in System Settings, Graphics, or repair the graphics driver and start the program again.");
     }
     const bool main = p.key == u"main-gpu"_s;
     const QString kind = kindInSentence(p.key);

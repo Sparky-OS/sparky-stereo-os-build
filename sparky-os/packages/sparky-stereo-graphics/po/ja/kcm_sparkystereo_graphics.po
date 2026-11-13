@@ -968,3 +968,118 @@ msgstr "%1 は %2 で起動した直後に停止しました: %3。"
 msgctxt "@info what to do"
 msgid "It was not started again on another GPU. If this GPU is the cause, choose another one for it below, or in System Settings, Graphics."
 msgstr "別のGPUで再起動はしていません。このGPUが原因なら、下のボタンかシステム設定の「グラフィックス」で、このプログラムに別のGPUを選んでください。"
+
+#: src/ui/main.qml
+msgctxt "@title:group"
+msgid "Paint windows"
+msgstr "ウィンドウの描画"
+
+#: src/ui/main.qml
+msgctxt "@info"
+msgid "Programs made with Qt Widgets, such as Konsole, Dolphin and Kate, paint their windows on the processor or on the graphics card. Painting on the graphics card leaves the processor free for other work. A change applies the next time a program starts."
+msgstr "Konsole、Dolphin、Kate など Qt Widgets で作られたプログラムは、ウィンドウをプロセッサまたはグラフィックスカードで描画します。グラフィックスカードで描画すると、プロセッサをほかの作業に使えます。変更は、プログラムを次に起動したときから有効になります。"
+
+#: src/ui/main.qml
+msgctxt "@info"
+msgid "QT_WIDGETS_GPU_PAINT is set in this session and is used instead of these choices."
+msgstr "このセッションでは QT_WIDGETS_GPU_PAINT が設定されており、これらの選択の代わりに使われます。"
+
+#: src/ui/main.qml
+msgctxt "@info"
+msgid "A program started from a terminal or from Steam follows these choices when it is started with sparky-stereo-gpu-run. For any single program, use the list below."
+msgstr "端末や Steam から起動するプログラムは、sparky-stereo-gpu-run で起動したときにこれらの選択に従います。個々のプログラムについては、下の一覧を使ってください。"
+
+#: src/ui/main.qml
+msgctxt "@info %1 is a way of painting windows"
+msgid "Windows painted: %1"
+msgstr "ウィンドウの描画: %1"
+
+#: src/graphicskcm.cpp
+msgctxt "@item:inlistbox way of painting windows"
+msgid "On the graphics card (batched)"
+msgstr "グラフィックスカードで (バッチ処理)"
+
+#: src/graphicskcm.cpp
+msgctxt "@item:inlistbox way of painting windows"
+msgid "On the graphics card, Qt's OpenGL engine"
+msgstr "グラフィックスカードで、Qt の OpenGL エンジン"
+
+#: src/graphicskcm.cpp
+msgctxt "@item:inlistbox way of painting windows"
+msgid "On the processor"
+msgstr "プロセッサで"
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Now: on the processor, because this computer has no graphics processor that can draw now."
+msgstr "現在: プロセッサで描画しています。このコンピュータには、いま描画できるグラフィックスプロセッサがないためです。"
+
+#: src/graphicskcm.cpp
+msgctxt "@info %1 is a way of painting windows, %2 the reason"
+msgid "Now: %1, %2"
+msgstr "現在: %1、%2"
+
+#: src/problems.cpp
+msgctxt "@action:button"
+msgid "Paint on the processor"
+msgstr "プロセッサで描画する"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card"
+msgid "this computer has no graphics processor that can draw now"
+msgstr "このコンピュータには、いま描画できるグラフィックスプロセッサがありません"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card"
+msgid "the installed Qt cannot paint on the graphics card"
+msgstr "インストールされている Qt はグラフィックスカードで描画できません"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card"
+msgid "this session has no OpenGL"
+msgstr "このセッションには OpenGL がありません"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card, %1 is a renderer's name"
+msgid "the OpenGL of this session is drawn by the processor (%1)"
+msgstr "このセッションの OpenGL はプロセッサが描画しています (%1)"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card, %1 is the error"
+msgid "Qt's OpenGL library could not be loaded (%1)"
+msgstr "Qt の OpenGL ライブラリを読み込めませんでした (%1)"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card, %1 is the error"
+msgid "the drawing surface could not be made (%1)"
+msgstr "描画サーフェスを作成できませんでした (%1)"
+
+#: src/problems.cpp
+msgctxt "@info %1 is a program or a kind of program, %2 says why"
+msgid "Painting on the graphics card cannot be used for %1: %2. The windows are painted on the processor."
+msgstr "%1 ではグラフィックスカードでの描画を使用できません: %2。ウィンドウはプロセッサで描画されます。"
+
+#: src/problems.cpp
+msgctxt "@info what to do"
+msgid "Choose On the processor for it in System Settings, Graphics, or repair the graphics driver and start the program again."
+msgstr "システム設定の「グラフィックス」で「プロセッサで」を選ぶか、グラフィックスドライバを修復してからプログラムを起動し直してください。"
+
+#: src/problems.cpp
+msgctxt "@title notification"
+msgid "Painting on the graphics card cannot be used"
+msgstr "グラフィックスカードでの描画を使用できません"
+
+#: src/cli/gpuenv.cpp
+msgctxt "@info:shell %1 is what was given; auto, cpu, batch and opengl stay as they are"
+msgid "Not a way of painting: %1 (auto, cpu, batch or opengl)"
+msgstr "描画方法ではありません: %1 (auto、cpu、batch、opengl のいずれか)"
+
+#: src/cli/gpuenv.cpp
+msgctxt "@info:shell --use-paint, TARGET and WAY stay as they are"
+msgid "--use-paint needs TARGET and WAY"
+msgstr "--use-paint には TARGET と WAY が必要です"
+
+#: src/cli/gpurecord.cpp
+msgctxt "@info:shell %1 is what was given; cpu, batch, opengl and unset stay as they are"
+msgid "Not a way of painting: %1 (cpu, batch, opengl or unset)"
+msgstr "描画方法ではありません: %1 (cpu、batch、opengl、unset のいずれか)"
