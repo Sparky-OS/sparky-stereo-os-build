@@ -1,0 +1,123 @@
+{
+  "release": "20261113",
+  "edition": "stereo3d1",
+  "rustc": "1.99.1+dfsg1-1~exp1+stereo3d1+lc1",
+  "std_package": "libstd-rust-50ad3f6808d0b589",
+  "fonts_repository": "https://github.com/storytold/craft-fonts",
+  "i18n_repository": "https://github.com/danielcamposramos/craft-i18n",
+  "fork": "https://github.com/danielcamposramos",
+  "upstream": "https://github.com/storytold",
+  "build": [
+    "photocraft",
+    "lightcraft",
+    "filmcraft"
+  ],
+  "held": {
+    "texturecraft": "joins the same workspace (the four-app resolve works, 365 shared crates); its build and proofs come after the three media apps",
+    "anicraft": "cannot join this workspace yet: it needs cpal 0.18 (alsa-sys 0.4.0) and FilmCraft cpal 0.16 (alsa-sys 0.3.1), and one resolve holds one crate that links the native library alsa"
+  },
+  "apps": {
+    "photocraft": {
+      "rev": "5fbc36429856ed30ef9f2fe63e68dcc10cbac2ff",
+      "branch": "o232-edition-main",
+      "version": "0.20.1",
+      "bins": [
+        "photocraft",
+        "photocraft-cli"
+      ],
+      "features": [
+        "photocraft/heif",
+        "photocraft-cli/heif"
+      ],
+      "libs": {
+        "craft-libs": "827fcb4625761f85c65b735147f2da7349c0880b"
+      },
+      "fonts": "b076417b5880bd4154bd22f00695b1d28c6bea83",
+      "i18n": null,
+      "section": "graphics",
+      "stereo_mime": [
+        "image/x-mpo",
+        "image/x-jps",
+        "image/x-pns"
+      ]
+    },
+    "lightcraft": {
+      "rev": "02d1982de96dfa44cec16deee8ebd354e2e648d3",
+      "branch": "o232-joint-main",
+      "version": "0.21.0",
+      "bins": [
+        "lightcraft",
+        "lightcraft-cli"
+      ],
+      "features": [
+        "lightcraft/heif",
+        "lightcraft-cli/heif"
+      ],
+      "libs": {
+        "craft-libs": "827fcb4625761f85c65b735147f2da7349c0880b"
+      },
+      "fonts": "b076417b5880bd4154bd22f00695b1d28c6bea83",
+      "i18n": null,
+      "section": "graphics",
+      "stereo_mime": [
+        "image/x-mpo",
+        "image/x-jps",
+        "image/x-pns"
+      ]
+    },
+    "filmcraft": {
+      "rev": "cbb5574dfcee6c2cc7aaed4c3e2104e72650140b",
+      "branch": "o232-edition-main",
+      "version": "0.17.0",
+      "bins": [
+        "filmcraft",
+        "filmcraft-cli"
+      ],
+      "features": [],
+      "libs": {
+        "craft-libs": "827fcb4625761f85c65b735147f2da7349c0880b"
+      },
+      "fonts": "b076417b5880bd4154bd22f00695b1d28c6bea83",
+      "i18n": null,
+      "section": "video",
+      "stereo_mime": [
+        "video/x-matroska-3d"
+      ]
+    },
+    "anicraft": {
+      "rev": "46ee5923f0cdb025fd5397aacfbd13faa0597ee5",
+      "branch": "o232-edition-main",
+      "version": "0.2.1",
+      "bins": [
+        "anicraft",
+        "anicraft-cli"
+      ],
+      "features": [],
+      "libs": {
+        "craft-libs-depth": "4925751f4f3222c8bcb789b79217421e4878d21e"
+      },
+      "fonts": "b076417b5880bd4154bd22f00695b1d28c6bea83",
+      "i18n": "dbacf6f811fb7e436ae4a1bd9aaffa29d4f1b7ff",
+      "section": "graphics"
+    },
+    "texturecraft": {
+      "rev": "0c6b65a62471644825b60cd5b526488d79ae8295",
+      "branch": "o232-edition-main",
+      "version": "0.6.1",
+      "bins": [
+        "texturecraft",
+        "texturecraft-cli"
+      ],
+      "features": [],
+      "libs": {
+        "craft-libs": "68cffd1a3934986a831aed2f326d8d127e85ed48"
+      },
+      "fonts": "aced4137c022f1f587624d48e81ec77e1914a9cc",
+      "i18n": "ada1c658be5ffd37822f5b581c6bac8e11ef8490",
+      "section": "graphics"
+    }
+  },
+  "not_packaged": {
+    "photocraft-cli man pages and shell completions": "upstream writes them with the example man-and-completions, which needs photocraft-cli's development dependencies (clap_complete, clap_mangen and the test crates); the one workspace drops development dependencies, so the example is not built and upstream's packaging script leaves the pages out, saying so"
+  }
+}

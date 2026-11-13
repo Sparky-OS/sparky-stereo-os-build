@@ -1,0 +1,16 @@
+[
+  {
+    "app": "photocraft",
+    "file": "crates/ui-egui/src/app.rs",
+    "old": "    fn on_exit(&mut self) {",
+    "new": "    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {",
+    "why": "LightCraft turns on eframe's glow feature, which adds a parameter to eframe::App::on_exit; one resolve gives every app the feature, and switching it off would take a renderer from LightCraft"
+  },
+  {
+    "app": "filmcraft",
+    "file": "crates/ui-egui/src/app.rs",
+    "old": "    fn on_exit(&mut self) {",
+    "new": "    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {",
+    "why": "the same signature, for the same reason"
+  }
+]

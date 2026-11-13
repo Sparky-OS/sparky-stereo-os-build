@@ -1,0 +1,10 @@
+#!/bin/sh
+# Sparky Stereo OS: starts @PROGRAM@ from the edition's package.
+# The package manager updates this program. The version choices file tells the app's own update check so: it then
+# offers nothing and asks no server (the app reads the file named by CRAFT_VERSIONS_FILE; a choice other than the
+# stable releases means "kept by someone else"). A person who sets CRAFT_VERSIONS_FILE keeps their own file.
+if [ -z "${CRAFT_VERSIONS_FILE:-}" ]; then
+	CRAFT_VERSIONS_FILE=/usr/share/craft-suite/versions.json
+	export CRAFT_VERSIONS_FILE
+fi
+exec /usr/lib/craft-suite/@PROGRAM@ "$@"
