@@ -50,7 +50,8 @@ make_source() {    # make_source OUT: OUT/s1 gets the +stereo3dN source, OUT/lc 
 	cp "../s1/craft-suite_$version.dsc" "../s1/craft-suite_$version.debian.tar.xz" "../s1/craft-suite_$up.orig.tar.xz" .
 	dpkg-source -x "craft-suite_$version.dsc" authored >/dev/null
 	echo '["c", "rust"]' >authored/debian/sparky-lean-languages.json
-	PYTHONPATH=/toolkit python3 -m lean.debian_prepare authored "$version+lc1" --toolkit /toolkit "${PRESERVE[@]}"
+	# clang: the C check reads assembler headers of vendored crates (aws-lc-sys's s2n-bignum) with clang's raw lexer
+	PYTHONPATH=/toolkit python3 -m lean.debian_prepare authored "$version+lc1" --toolkit /toolkit --build-dependency clang "${PRESERVE[@]}"
 	# the vendored crates' checksum manifests go back to their authored bytes before the projection report is removed
 	sed -i 's|^\trm -rf \.sparky-lc$|\tpython3 debian/cargo-checksums.py restore\n\trm -rf .sparky-lc|' authored/debian/rules
 	grep -q 'cargo-checksums.py restore' authored/debian/rules
