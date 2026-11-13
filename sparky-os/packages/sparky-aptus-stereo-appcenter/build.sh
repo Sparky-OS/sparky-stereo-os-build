@@ -5,7 +5,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT}
 SOURCE=${APTUS_SOURCE:-$HERE/../../sparky-aptus-stereo-appcenter}
-VERSION=0.1.7+lc1
+VERSION=0.1.8+lc1
 PACKAGE=sparky-aptus-stereo-appcenter
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.aptus-stereo.XXXXXX")
@@ -20,6 +20,10 @@ install -m644 "$WORK/source/catalogue.py" "$WORK/source/catalogue.json" "$D/usr/
 install -Dm755 "$WORK/source/actions/entry" "$D/usr/lib/$PACKAGE/actions/entry"
 install -m644 "$WORK/source/common.py" "$D/usr/lib/$PACKAGE/common.py"
 install -m644 "$WORK/source/appimage.py" "$D/usr/lib/$PACKAGE/appimage.py"
+install -m755 "$WORK/source/main-entry" "$D/usr/lib/$PACKAGE/main-entry"
+install -m644 "$WORK/source/mainpages.py" "$WORK/source/main-entries.json" "$D/usr/lib/$PACKAGE/"
+python3 "$HERE/../../../tools/copy-recipe.py" "$SOURCE/9" "$WORK/main-source"
+python3 "$WORK/source/package_main.py" "$WORK/main-source" "$D"
 install -Dm755 "$WORK/source/actions/zram" "$D/usr/lib/$PACKAGE/actions/zram"
 install -m644 "$WORK/source/lang/"*.json "$D/usr/share/sparky/$PACKAGE/"
 printf '#!/bin/sh\nexec /usr/lib/sparky-aptus-stereo-appcenter/appcenter "$@"\n' > "$D/usr/bin/$PACKAGE"
