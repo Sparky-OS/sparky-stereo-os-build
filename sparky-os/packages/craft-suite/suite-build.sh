@@ -31,4 +31,14 @@ for a in "${apps[@]}"; do
 	feats=$(field "$a" features | tr ' ' ,)
 	echo "== $a: cargo build --release --locked --offline ${args[*]} ${feats:+--features $feats} --bins"
 	env "${env[@]}" cargo build --release --locked --offline "${args[@]}" ${feats:+--features "$feats"} --bins
+	# the common library is built by the first run and must be the same file after every other: a later run that
+	# builds it again (a crate in it resolved with other features) would leave the earlier programs linked to a
+	# library that no longer exists
+	now=$(sha256sum "$CARGO_TARGET_DIR/release/libcraft_suite_shared.so" | cut -d' ' -f1)
+	if [ -n "${common:-}" ] && [ "$now" != "$common" ]; then
+		echo "$a: this run rebuilt the common library (was $common, is $now): its crate list is not closed over every app's resolve" >&2
+		exit 1
+	fi
+	common=$now
 done
+echo "the common library is the same file after every app's run: $common"

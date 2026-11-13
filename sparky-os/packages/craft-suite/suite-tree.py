@@ -264,6 +264,7 @@ def read_tree(path, pk):
             continue
         got[i] = feats[i]
         todo.extend(edges.get(i, ()))
+    read_tree.edges = {i: {j for j in edges.get(i, ()) if j in got} for i in got}
     return got
 
 
@@ -296,7 +297,26 @@ def cmd_shared(out, metadata, treedir, apps):
             byname[p['name']] = p['id']
     trees = {b: read_tree(Path(treedir) / f'{b}.txt', pk) for app in apps for b in app.split(',')}
     allf = read_tree(Path(treedir) / 'all.txt', pk)
+    alledges = read_tree.edges
     nodes = {i: {'features': sorted(f)} for i, f in allf.items()}
+
+    def usable(i):
+        kinds = {k for t in pk[i]['targets'] for k in t['kind']}
+        return 'proc-macro' not in kinds and bool(kinds & {'lib', 'rlib'})
+
+    def with_dependencies(listed, already=(), own_members=False, never=()):
+        # A dynamic library holds every crate its crates depend on, listed or not. A crate only one app names, but
+        # that a shared crate needs through a unified feature (half's rand_distr, egui_extras' svg), would be built
+        # with one app's features in that app's cargo run and with another's in the next, and the library rebuilt
+        # under programs already linked to it. So the list is closed over the all-apps resolve, features included.
+        seen, todo = set(listed), list(listed)
+        while todo:
+            for j in alledges.get(todo.pop(), ()):
+                if (j not in seen and j not in already and (own_members or j not in members) and usable(j)
+                        and pk[j]['name'] not in never):
+                    seen.add(j)
+                    todo.append(j)
+        return sorted(seen, key=lambda i: (pk[i]['name'], pk[i]['version'], pk[i].get('source') or ''))
 
     def closure(roots):
         seen = set()
@@ -318,6 +338,9 @@ def cmd_shared(out, metadata, treedir, apps):
         if 'proc-macro' in kinds or not kinds & {'lib', 'rlib'}:
             continue
         shared.append(i)
+    named = len(shared)
+    shared = with_dependencies(shared)
+    print(f'{named} crates two or more apps link, {len(shared) - named} more that those depend on')
     sh = out / 'shared'
     (sh / 'src').mkdir(parents=True, exist_ok=True)
     man = ['[package]', 'name = "craft-suite-shared"', 'version = "0.0.0"', 'edition = "2024"', 'publish = false', '',
@@ -362,6 +385,7 @@ def cmd_shared(out, metadata, treedir, apps):
                 if n < 2 or i in shared or 'proc-macro' in kinds or not kinds & {'lib', 'rlib'} or pk[i]['name'] in binpk:
                     continue
                 own.append(i)
+            own = with_dependencies(own, already=set(shared), own_members=True, never=binpk)
             name = binpk[0] + '-shared'
             d = out / (name)
             (d / 'src').mkdir(parents=True, exist_ok=True)
