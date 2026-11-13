@@ -1,0 +1,63 @@
+From 7941d8f9711a656623beea86aae6b91304cbdfb1 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 11 Nov 2026 11:24:28 -0300
+Subject: [PATCH] widgets: a line for each frame handed to the compositor
+ (QT_WIDGETS_PAINT_STATS=3), for typing latency
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ src/gui/painting/qbatchedpaintengine.cpp     |  2 +-
+ src/widgets/kernel/qwidgetrepaintmanager.cpp | 10 +++++++++-
+ 2 files changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/src/gui/painting/qbatchedpaintengine.cpp b/src/gui/painting/qbatchedpaintengine.cpp
+index 7b3e0fb..f00f767 100644
+--- a/src/gui/painting/qbatchedpaintengine.cpp
++++ b/src/gui/painting/qbatchedpaintengine.cpp
+@@ -1567,7 +1567,7 @@ QBatchedPaintBackingStore::QBatchedPaintBackingStore(QWindow *window)
+     : QPlatformBackingStore(window), m_device(this)
+ {
+     m_stats = qEnvironmentVariableIntValue("QT_WIDGETS_PAINT_STATS");
+-    timeEngine = qEnvironmentVariableIntValue("QT_WIDGETS_PAINT_STATS") >= 2;
++    timeEngine = qEnvironmentVariableIntValue("QT_WIDGETS_PAINT_STATS") == 2;
+     m_translucent = window->requestedFormat().hasAlpha();
+     setGpuTextureProvider([this](QRhi *rhi, QRhiCommandBuffer *cb, TextureFlags *flags) { return realise(rhi, cb, flags); });
+     setPaintSubPixelOffsetSetter([this](qreal dx) { m_device.engine()->setSubPixelOffset(dx); });
+diff --git a/src/widgets/kernel/qwidgetrepaintmanager.cpp b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+index 16ad006..6bd8af5 100644
+--- a/src/widgets/kernel/qwidgetrepaintmanager.cpp
++++ b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+@@ -26,6 +26,8 @@
+ 
+ #include <qpa/qplatformbackingstore.h>
+ 
++#include <chrono>
++
+ QT_BEGIN_NAMESPACE
+ 
+ Q_GLOBAL_STATIC(QPlatformTextureList, qt_dummy_platformTextureList)
+@@ -1029,7 +1031,7 @@ void QWidgetRepaintManager::paintAndFlush()
+         }
+     }
+ 
+-    static const bool stats = qEnvironmentVariableIntValue("QT_WIDGETS_PAINT_STATS");
++    static const int stats = qEnvironmentVariableIntValue("QT_WIDGETS_PAINT_STATS");
+     qint64 painted = 0;
+     if (stats)
+         painted = statsClock.nsecsElapsed();
+@@ -1042,6 +1044,12 @@ void QWidgetRepaintManager::paintAndFlush()
+ 
+     if (stats) {
+         const qint64 flushed = statsClock.nsecsElapsed();
++        if (stats >= 3) {
++            // one line for each frame handed to the compositor, with its time (for typing latency)
++            const auto now = std::chrono::steady_clock::now().time_since_epoch();
++            fprintf(stderr, "QWFRAME t_ms=%.3f paint_ms=%.3f flush_ms=%.3f\n",
++                    std::chrono::duration<double, std::milli>(now).count(), painted / 1e6, (flushed - painted) / 1e6);
++        }
+         if (!statsTime.isValid())
+             statsTime.start();
+         ++statsPaints;
+-- 
+2.53.0
+

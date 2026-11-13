@@ -1,0 +1,60 @@
+From c4e1d569ac9a8834de7e9981062c6a294255604a Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 11 Nov 2026 10:16:55 -0300
+Subject: [PATCH] prototype: a session without OpenGL, or with an OpenGL the
+ CPU draws, is said and painted on the CPU
+
+Measured in the rig: with Mesa's EGL named and the compositor on a GPU Mesa has no driver for, the paint
+context came up on llvmpipe; with no EGL vendor at all Qt Wayland has no OpenGL. Both now say why and
+paint as before (captures identical to CPU painting).
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ src/gui/painting/qbackingstorerhisupport.cpp | 9 ++++++++-
+ src/opengl/qopenglpaintbackingstore.cpp      | 9 +++++++++
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/src/gui/painting/qbackingstorerhisupport.cpp b/src/gui/painting/qbackingstorerhisupport.cpp
+index 4ca0f5b..5491e4a 100644
+--- a/src/gui/painting/qbackingstorerhisupport.cpp
++++ b/src/gui/painting/qbackingstorerhisupport.cpp
+@@ -272,7 +272,14 @@ bool QBackingStoreRhiSupport::checkForceRhi(QPlatformBackingStoreRhiConfig *outC
+         if (highdpiDownscale)
+             qCDebug(lcQpaBackingStore) << "Enabling QT_WIDGETS_RHI due to QT_WIDGETS_HIGHDPI_DOWNSCALE";
+         // GPU painting of widgets (prototype) composes through the OpenGL RHI
+-        const bool gpuPaint = qEnvironmentVariableIntValue("QT_WIDGETS_GPU_PAINT");
++        bool gpuPaint = qEnvironmentVariableIntValue("QT_WIDGETS_GPU_PAINT");
++        // Without OpenGL on this platform (a virtual machine without it, a session whose EGL
++        // did not start) the windows stay as they are, painted on the CPU, and that is said.
++        if (gpuPaint && !QGuiApplicationPrivate::platformIntegration()->hasCapability(QPlatformIntegration::OpenGL)) {
++            gpuPaint = false;
++            qWarning("QT_WIDGETS_GPU_PAINT: painting on the GPU could not start (this session has no OpenGL); "
++                     "this program's widgets are painted on the CPU.");
++        }
+         if (alwaysRhi || highdpiDownscale || gpuPaint)
+             config.setEnabled(true);
+ 
+diff --git a/src/opengl/qopenglpaintbackingstore.cpp b/src/opengl/qopenglpaintbackingstore.cpp
+index f15a6fb..92e3ad0 100644
+--- a/src/opengl/qopenglpaintbackingstore.cpp
++++ b/src/opengl/qopenglpaintbackingstore.cpp
+@@ -82,7 +82,16 @@ PaintContext *paintContext(QString *failure)
+                 } else if (!QOpenGLFramebufferObject::hasOpenGLFramebufferObjects()
+                            || !QOpenGLFramebufferObject::hasOpenGLFramebufferBlit()) {
+                     s_failure = QStringLiteral("this OpenGL has no framebuffer objects with blit");
++                } else if (const QByteArray renderer(reinterpret_cast<const char *>(context->functions()->glGetString(GL_RENDERER)));
++                           renderer.startsWith("llvmpipe") || renderer.startsWith("softpipe")
++                           || renderer.contains("SwiftShader")) {
++                    // An OpenGL that the CPU draws is no GPU painting: it is said, never used quietly
++                    // (QT_WIDGETS_GPU_PAINT_ALLOW_SOFTWARE=1 keeps it, for tests without a GPU).
++                    if (qEnvironmentVariableIntValue("QT_WIDGETS_GPU_PAINT_ALLOW_SOFTWARE"))
++                        goto usable;
++                    s_failure = QStringLiteral("the OpenGL of this program is drawn by the CPU (%1)").arg(QLatin1StringView(renderer));
+                 } else {
++                usable:
+                     bool ok = false;
+                     const int samples = qEnvironmentVariableIntValue("QT_WIDGETS_GPU_PAINT_SAMPLES", &ok);
+                     if (ok)
+-- 
+2.53.0
+

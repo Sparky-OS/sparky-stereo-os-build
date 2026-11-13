@@ -1,0 +1,279 @@
+From d49a4cb5d52e64007da546467ddd5fb8ddb08915 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 13 Nov 2026 01:16:35 -0300
+Subject: [PATCH] widgets on the GPU: the pair where the EGL has no surface
+ with two views
+
+A window painted once per eye on the GPU was shown flat on an EGL without EGL_EXT_multiview_window (NVIDIA's
+own driver), and that was said. Now the Wayland EGL window makes its one buffer twice as wide when the
+widgets' repaint manager composes a pair itself (_q_stereo_pair with _q_stereo_views 2), declares it as the
+shared memory store declares its pair (full side by side, the desktop's own depth, QWaylandStereoDepth::setPair,
+now exported) and says so with _q_stereo_side_by_side_buffer; the OpenGL swapchain takes that width, and the
+backing store compositor draws the pair texture whole and each render-to-texture child into both halves.
+The change happens when the wish changes, on the GUI thread, before the frame that draws the pair.
+A window with a frame the client draws stays flat, as on every path.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+
+A pair that is still shown on a surface with one view (no compositor support for the declaration) is told
+through QT_WIDGETS_GPU_PAINT_TELL as flat-pair.
+---
+ .../qbackingstoredefaultcompositor.cpp        | 80 +++++++++++++------
+ src/gui/rhi/qrhigles2.cpp                     | 10 ++-
+ .../wayland-egl/qwaylandeglwindow.cpp         | 25 ++++++
+ .../wayland-egl/qwaylandeglwindow_p.h         |  9 +++
+ .../platforms/wayland/qwaylandstereodepth_p.h |  2 +-
+ 5 files changed, 98 insertions(+), 28 deletions(-)
+
+diff --git a/src/gui/painting/qbackingstoredefaultcompositor.cpp b/src/gui/painting/qbackingstoredefaultcompositor.cpp
+index def79a0..7b2c516 100644
+--- a/src/gui/painting/qbackingstoredefaultcompositor.cpp
++++ b/src/gui/painting/qbackingstoredefaultcompositor.cpp
+@@ -8,6 +8,8 @@
+ 
+ QT_BEGIN_NAMESPACE
+ 
++Q_GUI_EXPORT void qt_widgets_gpu_paint_tell(const char *code, const QString &detail);
++
+ using namespace Qt::StringLiterals;
+ 
+ QBackingStoreDefaultCompositor::~QBackingStoreDefaultCompositor()
+@@ -582,6 +584,7 @@ QPlatformBackingStore::FlushResult QBackingStoreDefaultCompositor::flush(QPlatfo
+     // A window painted once per eye (_q_stereo_pair): its texture holds the two eyes side by
+     // side, the left eye first, and each eye's target takes its own half.
+     bool pair = false;
++    bool sideBySide = false;
+     if (m_widgetTexture) {
+         // The backingstore is for the entire tlw. In case of native children, offset tells the position
+         // relative to the tlw. The window rect is scaled by the source device pixel ratio to get
+@@ -598,6 +601,16 @@ QPlatformBackingStore::FlushResult QBackingStoreDefaultCompositor::flush(QPlatfo
+ 
+         pair = window->property("_q_stereo_pair").toBool()
+                 && m_widgetTexture->pixelSize().width() == 2 * sourceWindowRect.width();
++        // Where the platform's surface has no second view, its one buffer is twice as wide and takes the
++        // pair whole, the eyes side by side as the texture holds them (_q_stereo_side_by_side_buffer: the
++        // platform window declares it to the compositor).
++        sideBySide = pair && window->property("_q_stereo_side_by_side_buffer").toBool();
++        if (sideBySide) {
++            const QRect bothRect(srcRect.x(), srcRect.y(), 2 * srcRect.width(), srcRect.height());
++            updateUniforms(&m_widgetQuadData, resourceUpdates, target,
++                           sourceTransform(bothRect, m_widgetTexture->pixelSize(), origin), uniformOptions);
++            pair = false;
++        }
+         if (pair) {
+             if (!m_widgetQuadDataRight.isValid())
+                 m_widgetQuadDataRight = createPerQuadData(m_widgetTexture);
+@@ -619,6 +632,7 @@ QPlatformBackingStore::FlushResult QBackingStoreDefaultCompositor::flush(QPlatfo
+                     said = true;
+                     qWarning("QT_WIDGETS_GPU_PAINT: this window is painted once per eye, but its surface "
+                              "has one view only (no EGL_EXT_multiview_window on this driver); it shows the left eye, flat.");
++                    qt_widgets_gpu_paint_tell("flat-pair", QString());
+                 }
+             }
+         }
+@@ -680,20 +694,33 @@ QPlatformBackingStore::FlushResult QBackingStoreDefaultCompositor::flush(QPlatfo
+         QRhiCommandBuffer::VertexInput vbufBinding(m_vbuf.get(), 0);
+         cb->setVertexInput(0, 1, &vbufBinding);
+ 
+-        // Textures for renderToTexture widgets.
+-        for (int i = 0; i < textureWidgetCount; ++i) {
+-            if (!textures->flags(i).testFlag(QPlatformTextureList::StacksOnTop)) {
+-                if (m_textureQuadData[i].isValid()) {
++        // A target that holds both eyes side by side: a render-to-texture widget, placed for one
++        // view, is drawn into each half, the same in both eyes, as it is in each of two views.
++        const int halves = sideBySide ? 2 : 1;
++        const auto halfViewport = [&](int half) {
++            if (sideBySide)
++                cb->setViewport({ half * outputSizeInPixels.width() / 2.0f, 0, outputSizeInPixels.width() / 2.0f, float(outputSizeInPixels.height()) });
++        };
+ 
+-                    QRhiShaderResourceBindings* srb = m_textureQuadData[i].srb;
+-                    if (buffer == QRhiSwapChain::RightBuffer && m_textureQuadData[i].srbExtra)
+-                        srb = m_textureQuadData[i].srbExtra;
+-
+-                    cb->setShaderResources(srb);
+-                    cb->draw(6);
++        // Textures for renderToTexture widgets.
++        for (int half = 0; half < halves; ++half) {
++            halfViewport(half);
++            for (int i = 0; i < textureWidgetCount; ++i) {
++                if (!textures->flags(i).testFlag(QPlatformTextureList::StacksOnTop)) {
++                    if (m_textureQuadData[i].isValid()) {
++
++                        QRhiShaderResourceBindings* srb = m_textureQuadData[i].srb;
++                        if (buffer == QRhiSwapChain::RightBuffer && m_textureQuadData[i].srbExtra)
++                            srb = m_textureQuadData[i].srbExtra;
++
++                        cb->setShaderResources(srb);
++                        cb->draw(6);
++                    }
+                 }
+             }
+         }
++        if (sideBySide)
++            cb->setViewport({ 0, 0, float(outputSizeInPixels.width()), float(outputSizeInPixels.height()) });
+ 
+         cb->setGraphicsPipeline(premultiplied ? m_psPremulBlend.get() : m_psBlend.get());
+ 
+@@ -705,21 +732,24 @@ QPlatformBackingStore::FlushResult QBackingStoreDefaultCompositor::flush(QPlatfo
+         }
+ 
+         // Textures for renderToTexture widgets that have WA_AlwaysStackOnTop set.
+-        for (int i = 0; i < textureWidgetCount; ++i) {
+-            const QPlatformTextureList::Flags flags = textures->flags(i);
+-            if (flags.testFlag(QPlatformTextureList::StacksOnTop)) {
+-                if (m_textureQuadData[i].isValid()) {
+-                    if (flags.testFlag(QPlatformTextureList::NeedsPremultipliedAlphaBlending))
+-                        cb->setGraphicsPipeline(m_psPremulBlend.get());
+-                    else
+-                        cb->setGraphicsPipeline(m_psBlend.get());
+-
+-                    QRhiShaderResourceBindings* srb = m_textureQuadData[i].srb;
+-                    if (buffer == QRhiSwapChain::RightBuffer && m_textureQuadData[i].srbExtra)
+-                        srb = m_textureQuadData[i].srbExtra;
+-
+-                    cb->setShaderResources(srb);
+-                    cb->draw(6);
++        for (int half = 0; half < halves; ++half) {
++            halfViewport(half);
++            for (int i = 0; i < textureWidgetCount; ++i) {
++                const QPlatformTextureList::Flags flags = textures->flags(i);
++                if (flags.testFlag(QPlatformTextureList::StacksOnTop)) {
++                    if (m_textureQuadData[i].isValid()) {
++                        if (flags.testFlag(QPlatformTextureList::NeedsPremultipliedAlphaBlending))
++                            cb->setGraphicsPipeline(m_psPremulBlend.get());
++                        else
++                            cb->setGraphicsPipeline(m_psBlend.get());
++
++                        QRhiShaderResourceBindings* srb = m_textureQuadData[i].srb;
++                        if (buffer == QRhiSwapChain::RightBuffer && m_textureQuadData[i].srbExtra)
++                            srb = m_textureQuadData[i].srbExtra;
++
++                        cb->setShaderResources(srb);
++                        cb->draw(6);
++                    }
+                 }
+             }
+         }
+diff --git a/src/gui/rhi/qrhigles2.cpp b/src/gui/rhi/qrhigles2.cpp
+index 210ea00..58f60b2 100644
+--- a/src/gui/rhi/qrhigles2.cpp
++++ b/src/gui/rhi/qrhigles2.cpp
+@@ -6914,12 +6914,18 @@ QRhiRenderTarget *QGles2SwapChain::currentFrameRenderTarget(StereoTargetBuffer t
+ QSize QGles2SwapChain::surfacePixelSize()
+ {
+     Q_ASSERT(m_window);
++    QSize size;
+     if (QPlatformWindow *platformWindow = m_window->handle())
+         // Prefer using QPlatformWindow geometry and DPR in order to avoid
+         // errors due to rounded QWindow geometry.
+-        return platformWindow->geometry().size() * platformWindow->devicePixelRatio();
++        size = platformWindow->geometry().size() * platformWindow->devicePixelRatio();
+     else
+-        return m_window->size() * m_window->devicePixelRatio();
++        size = m_window->size() * m_window->devicePixelRatio();
++    // A window whose platform surface holds both eyes of a pair side by side in one buffer, where the
++    // EGL has no surface with two views (_q_stereo_side_by_side_buffer, set by the platform window)
++    if (m_window->property("_q_stereo_side_by_side_buffer").toBool())
++        size.rwidth() *= 2;
++    return size;
+ }
+ 
+ bool QGles2SwapChain::isFormatSupported(Format f)
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+index f108f6b..7be5bb7 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+@@ -67,6 +67,9 @@ void QWaylandEglWindow::ensureSize()
+     QRect rect = geometry();
+     QMargins margins = clientSideMargins();
+     QSize sizeWithMargins = (rect.size() + QSize(margins.left() + margins.right(), margins.top() + margins.bottom())) * scale();
++    // both eyes side by side in one buffer (updateSideBySidePair())
++    if (m_sideBySide)
++        sizeWithMargins.rwidth() *= 2;
+     {
+         QWriteLocker lock(&m_bufferSizeLock);
+         m_bufferSize = sizeWithMargins;
+@@ -141,6 +144,9 @@ void QWaylandEglWindow::updateSurface(bool create)
+             // pair is marked, with the same first commit, as the desktop's own depth, unless the window
+             // says its pair is 3D content (_q_stereo_content: two cameras, as a quad-buffer program's).
+             QWaylandStereoDepth::setDesktopDepth(this, pair && !contentPair());
++            // A pair held side by side in one buffer is declared by Qt itself, again for a new surface
++            if (m_sideBySide)
++                QWaylandStereoDepth::setPair(this, true);
+ 
+             EGLSurface eglSurface = eglCreateWindowSurface(m_clientBufferIntegration->eglDisplay(), eglConfig, (EGLNativeWindowType) eglWindow, stereo ? surfaceAttribs : nullptr);
+             if (Q_UNLIKELY(eglSurface == EGL_NO_SURFACE)) {
+@@ -201,10 +207,29 @@ bool QWaylandEglWindow::eventFilter(QObject *watched, QEvent *event)
+     if (watched == window() && event->type() == QEvent::DynamicPropertyChange
+         && static_cast<QDynamicPropertyChangeEvent *>(event)->propertyName() == "_q_stereo_views") {
+         m_pairRequested.store(window()->property("_q_stereo_views").toInt() == 2, std::memory_order_release);
++        updateSideBySidePair();
+     }
+     return QWaylandWindow::eventFilter(watched, event);
+ }
+ 
++void QWaylandEglWindow::updateSideBySidePair()
++{
++    const QSurfaceFormat fmt = window()->requestedFormat();
++    // Only for an engine that composes the pair itself and says so (_q_stereo_pair, set by the widgets'
++    // repaint manager); Qt Quick's renderer draws into two views. A frame the client draws keeps the
++    // window flat, as on every path, and a pair that is 3D content is the program's own.
++    const bool want = m_pairRequested.load(std::memory_order_acquire) && window()->property("_q_stereo_pair").toBool()
++            && !m_clientBufferIntegration->supportsTwoViews(fmt) && !m_clientBufferIntegration->supportsStereo(fmt)
++            && QWaylandStereoDepth::isSupported(mDisplay) && !decoration() && !contentPair();
++    if (want == m_sideBySide)
++        return;
++    m_sideBySide = want;
++    window()->setProperty("_q_stereo_side_by_side_buffer", want);
++    // with the next commit, which is the first frame of the new width
++    QWaylandStereoDepth::setPair(this, want);
++    ensureSize();
++}
++
+ void QWaylandEglWindow::frameSwapped()
+ {
+     QMutexLocker lock(&m_eglSurfaceLock);
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h
+index 80630f2..ca82222 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h
+@@ -58,6 +58,13 @@ private:
+     // window's elements once per eye (the window's _q_stereo_views), and they can be had: the
+     // pair is then the desktop's own depth rather than stereo content.
+     bool pairWanted(const QSurfaceFormat &format) const;
++    // A window whose engine composes its pair itself (Qt Widgets painted on the GPU: _q_stereo_pair with
++    // _q_stereo_views 2) on an EGL that has no surface with two views (NVIDIA's own): the surface's
++    // buffer is made twice as wide and holds the two eyes side by side, left eye first, declared as the
++    // shared memory store declares its pair (full side by side, the desktop's own depth), and the
++    // window says so with _q_stereo_side_by_side_buffer. Called on the GUI thread when the engine's
++    // wish changes, before the frame that draws the pair.
++    void updateSideBySidePair();
+     void destroySurface();
+ 
+     QWaylandEglClientBufferIntegration *m_clientBufferIntegration = nullptr;
+@@ -83,6 +90,8 @@ private:
+     bool m_twoViews = false;
+     bool m_pairSurface = false;
+     bool m_frameSwapped = false;
++    // The surface's buffer holds a pair side by side (updateSideBySidePair())
++    bool m_sideBySide = false;
+ };
+ 
+ }
+diff --git a/src/plugins/platforms/wayland/qwaylandstereodepth_p.h b/src/plugins/platforms/wayland/qwaylandstereodepth_p.h
+index 474cf4d..253382c 100644
+--- a/src/plugins/platforms/wayland/qwaylandstereodepth_p.h
++++ b/src/plugins/platforms/wayland/qwaylandstereodepth_p.h
+@@ -44,7 +44,7 @@ Q_WAYLANDCLIENT_EXPORT bool isSupported(QWaylandDisplay *display);
+ 
+ // Declares, with the window's next commit, that the buffer holds both eyes side by side and is
+ // the desktop's own depth, or withdraws it.
+-void setPair(QWaylandWindow *window, bool pair);
++Q_WAYLANDCLIENT_EXPORT void setPair(QWaylandWindow *window, bool pair);
+ // Marks, with the window's next commit, the pair someone else declares (the EGL implementation
+ // for a surface with two views) as the desktop's own depth, or withdraws the mark. Any thread.
+ Q_WAYLANDCLIENT_EXPORT void setDesktopDepth(QWaylandWindow *window, bool desktopDepth);
+-- 
+2.53.0
+

@@ -1,0 +1,78 @@
+From 7b6354091334f374e5ba8147b461bc73b12b7357 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 11 Nov 2026 09:38:14 -0300
+Subject: [PATCH] prototype: a client-drawn frame keeps the window flat;
+ repaint when the pair starts; say a one-view surface only when it stays
+
+Measured in the rig: with Qt's own frame the Wayland EGL window showed the left eye only, so the pair is
+not painted there. The first pair is flushed before the surface has its second view, so the window is
+painted again, and the warning waits for the third such flush.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ .../qbackingstoredefaultcompositor.cpp         |  7 ++++++-
+ src/widgets/kernel/qwidgetrepaintmanager.cpp   | 18 +++++++++++++-----
+ 2 files changed, 19 insertions(+), 6 deletions(-)
+
+diff --git a/src/gui/painting/qbackingstoredefaultcompositor.cpp b/src/gui/painting/qbackingstoredefaultcompositor.cpp
+index d89345c..b4312a6 100644
+--- a/src/gui/painting/qbackingstoredefaultcompositor.cpp
++++ b/src/gui/painting/qbackingstoredefaultcompositor.cpp
+@@ -608,7 +608,12 @@ QPlatformBackingStore::FlushResult QBackingStoreDefaultCompositor::flush(QPlatfo
+                            sourceTransform(rightRect, m_widgetTexture->pixelSize(), origin), uniformOptions);
+             if (needsLinearSampler)
+                 updatePerQuadData(&m_widgetQuadDataRight, m_widgetTexture, nullptr, NeedsLinearFiltering);
+-            if (!swapchain->window()->format().stereo()) {
++            // The surface takes its second view at the start of the frame after the first pair,
++            // so only a surface that stays with one view is said.
++            static int oneViewFlushes = 0;
++            if (swapchain->window()->format().stereo()) {
++                oneViewFlushes = 0;
++            } else if (++oneViewFlushes >= 3) {
+                 static bool said = false;
+                 if (!said) {
+                     said = true;
+diff --git a/src/widgets/kernel/qwidgetrepaintmanager.cpp b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+index a9c1d7e..ad4dd51 100644
+--- a/src/widgets/kernel/qwidgetrepaintmanager.cpp
++++ b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+@@ -568,14 +568,19 @@ static bool paintsPerEye(QWidget *tlw)
+     const QWindow *window = tlw->windowHandle();
+     if (!window || !window->property("_q_stereo_depth").toBool())
+         return false;
++    // A window with a frame the client draws around it stays flat: measured, the Wayland EGL
++    // window of such a window shows the left eye only, so the pair would cost a second painting
++    // and show nothing.
++    if (!window->frameMargins().isNull())
++        return false;
+     // A store painted on the GPU (prototype) hands the pair to the two views of the window's own
+-    // surface: the platform draws a client-side frame into both views, and the compositor draws
+-    // each render-to-texture widget into both, so neither keeps such a window flat
+-    // (QT_WIDGETS_GPU_PAINT_FLAT_EXCEPTIONS=1 keeps the two exceptions, for comparing).
++    // surface, and the compositor draws each render-to-texture widget into both, so such a
++    // widget no longer keeps the window flat (QT_WIDGETS_GPU_PAINT_FLAT_EXCEPTIONS=1 keeps that
++    // exception, for comparing).
+     static const bool keepExceptions = qEnvironmentVariableIntValue("QT_WIDGETS_GPU_PAINT_FLAT_EXCEPTIONS");
+     if (!keepExceptions && tlw->backingStore() && tlw->backingStore()->handle()->paintsOnGpu())
+         return true;
+-    return !qt_widget_private(tlw)->textureChildSeen && window->frameMargins().isNull();
++    return !qt_widget_private(tlw)->textureChildSeen;
+ }
+ 
+ /*
+@@ -1017,8 +1022,11 @@ void QWidgetRepaintManager::paintAndFlush()
+     if (QWindow *window = tlw->windowHandle(); window && window->property("_q_stereo_pair").toBool() != perEye) {
+         window->setProperty("_q_stereo_pair", perEye);
+         // A pair painted on the GPU goes to the two views of the window's own surface.
+-        if (store->handle()->paintsOnGpu())
++        // The surface follows at the start of its next frame, so the window is painted again.
++        if (store->handle()->paintsOnGpu()) {
+             window->setProperty("_q_stereo_views", perEye ? 2 : 1);
++            QMetaObject::invokeMethod(tlw, "update", Qt::QueuedConnection);
++        }
+     }
+ 
+     static const bool stats = qEnvironmentVariableIntValue("QT_WIDGETS_PAINT_STATS");
+-- 
+2.53.0
+

@@ -1,0 +1,86 @@
+From 20fdd728576b61fff9d74c9880ff057aa9d7d7f0 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 11 Nov 2026 14:47:24 -0300
+Subject: [PATCH] batched painting: raster-drawn parts are uploaded and emptied
+ one by one
+
+A dialog repainted whole still uploaded 6.3 MB a frame after its rounded rectangles were
+split: the parts are packed in rows as wide as the window, a tall side strip makes a tall
+row, and whole rows were uploaded and emptied. Each part is now its own entry of the upload.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ src/gui/painting/qbatchedpaintengine.cpp | 35 +++++++++++++++---------
+ 1 file changed, 22 insertions(+), 13 deletions(-)
+
+diff --git a/src/gui/painting/qbatchedpaintengine.cpp b/src/gui/painting/qbatchedpaintengine.cpp
+index 190c0f2..a613baf 100644
+--- a/src/gui/painting/qbatchedpaintengine.cpp
++++ b/src/gui/painting/qbatchedpaintengine.cpp
+@@ -639,6 +639,8 @@ private:
+ 
+     QImage m_scratch;
+     Shelves m_scratchShelves;
++    // the parts handed out since the last flush: only they are uploaded and emptied
++    std::vector<QRect> m_scratchParts;
+     QBatchedScratchDevice m_scratchDevice { &m_scratch };
+     std::unique_ptr<QPainter> m_scratchPainter;
+     bool m_scratchPainterFresh = true;
+@@ -1938,6 +1940,7 @@ QImage *QBatchedPaintBackingStore::scratchImage(const QSize &size, QPoint *at)
+             return nullptr;
+         }
+     }
++    m_scratchParts.push_back(QRect(*at, size));
+     return &m_scratch;
+ }
+ 
+@@ -2229,16 +2232,20 @@ void QBatchedPaintBackingStore::run(QRhi *rhi, QRhiCommandBuffer *cb)
+         m_imageVersion = images->version;
+         m_imageRow = images->shelves.y;
+     }
+-    // what the raster engine drew for this frame
++    // What the raster engine drew for this frame, part by part: the parts are packed in rows as
++    // wide as the window, and the rows between them hold nothing.
+     const int scratchRows = m_scratch.isNull() ? 0 : m_scratchShelves.used();
+-    if (scratchRows > 0) {
+-        QRhiTextureSubresourceUploadDescription part(m_scratch.constBits(), quint32(m_scratch.bytesPerLine() * scratchRows));
+-        part.setDataStride(quint32(m_scratch.bytesPerLine()));
+-        // only the columns in use: a thin, tall part (a scroll bar's line) is a few kilobytes
+-        const int scratchColumns = qMin(m_scratch.width(), m_scratchShelves.right);
+-        part.setSourceSize(QSize(scratchColumns, scratchRows));
+-        updates->uploadTexture(m_scratchTexture.get(), QRhiTextureUploadDescription({ 0, 0, part }));
+-        m_statUploaded += qint64(scratchColumns) * 4 * scratchRows;
++    if (!m_scratchParts.empty()) {
++        QVarLengthArray<QRhiTextureUploadEntry, 64> entries;
++        for (const QRect &rect : m_scratchParts) {
++            QRhiTextureSubresourceUploadDescription part(m_scratch.copy(rect));
++            part.setDestinationTopLeft(rect.topLeft());
++            entries.append({ 0, 0, part });
++            m_statUploaded += qint64(rect.width()) * rect.height() * 4;
++        }
++        QRhiTextureUploadDescription description;
++        description.setEntries(entries.cbegin(), entries.cend());
++        updates->uploadTexture(m_scratchTexture.get(), description);
+     }
+ 
+     if (scratchRows > 0) {
+@@ -2345,10 +2352,12 @@ void QBatchedPaintBackingStore::run(QRhi *rhi, QRhiCommandBuffer *cb)
+         --storesWithRecords;
+     quads.clear();
+     ops.clear();
+-    if (scratchRows > 0) {
+-        const size_t used = size_t(qMin(m_scratch.width(), m_scratchShelves.right)) * 4;
+-        for (int y = 0; y < scratchRows; ++y)
+-            memset(m_scratch.scanLine(y), 0, used);
++    if (!m_scratchParts.empty()) {
++        for (const QRect &rect : m_scratchParts) {
++            for (int y = rect.top(); y <= rect.bottom(); ++y)
++                memset(m_scratch.scanLine(y) + rect.left() * 4, 0, size_t(rect.width()) * 4);
++        }
++        m_scratchParts.clear();
+         m_scratchShelves.reset(m_scratch.width(), m_scratch.height());
+     }
+ }
+-- 
+2.53.0
+

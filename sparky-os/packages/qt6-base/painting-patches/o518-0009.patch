@@ -1,0 +1,70 @@
+From 344a6c3d72c53ce50cdb47dbd217398bd4977e68 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 11 Nov 2026 12:25:46 -0300
+Subject: [PATCH] batched painting: the scratch image grows wider with the
+ window
+
+A window painted once per eye gets a store twice as wide while records of the frame already
+point into the scratch image; the image was refused ("full") and the right eye lost its
+raster-drawn parts. Found by the Stereo Union captures.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ src/gui/painting/qbatchedpaintengine.cpp | 22 +++++++++++++---------
+ 1 file changed, 13 insertions(+), 9 deletions(-)
+
+diff --git a/src/gui/painting/qbatchedpaintengine.cpp b/src/gui/painting/qbatchedpaintengine.cpp
+index d03519f..0024c53 100644
+--- a/src/gui/painting/qbatchedpaintengine.cpp
++++ b/src/gui/painting/qbatchedpaintengine.cpp
+@@ -1834,25 +1834,25 @@ void QBatchedPaintBackingStore::endScratchPainter()
+ 
+ bool QBatchedPaintBackingStore::growScratch(int height)
+ {
+-    const int width = qMax(1024, (m_pixelSize.width() + 4 + 63) & ~63);
++    // As wide as the window, and never narrower than it was: the records of this frame point
++    // into it by texel, and a taller or wider image keeps every texel where it is.
++    const int width = qMax(m_scratch.isNull() ? 0 : m_scratch.width(), qMax(1024, (m_pixelSize.width() + 4 + 63) & ~63));
+     if (!m_scratch.isNull() && m_scratch.width() == width && m_scratch.height() >= height)
+         return true;
+     endScratchPainter();
+-    int newHeight = qMax(256, m_scratch.isNull() || m_scratch.width() != width ? 0 : m_scratch.height());
++    int newHeight = qMax(256, m_scratch.isNull() ? 0 : m_scratch.height());
+     while (newHeight < height)
+         newHeight *= 2;
+     if (newHeight > 16384)
+         return false;
+     QImage larger(width, newHeight, m_scratchFormat);
+     larger.fill(0);
+-    if (!m_scratch.isNull() && m_scratch.width() == width) {
++    if (!m_scratch.isNull()) {
+         const int used = m_scratchShelves.used();
++        const size_t bytes = size_t(m_scratch.width()) * 4;
+         for (int y = 0; y < used; ++y)
+-            memcpy(larger.scanLine(y), m_scratch.constScanLine(y), size_t(width) * 4);
++            memcpy(larger.scanLine(y), m_scratch.constScanLine(y), bytes);
+     } else {
+-        // another width: nothing recorded may point into the old image
+-        if (!quads.empty() && m_scratchShelves.used() > 0)
+-            return false;
+         m_scratchShelves.reset(width, newHeight);
+     }
+     m_scratch = larger;
+@@ -1866,8 +1866,12 @@ QImage *QBatchedPaintBackingStore::scratchImage(const QSize &size, QPoint *at)
+     if (m_scratch.isNull() && !growScratch(256))
+         return nullptr;
+     while (!m_scratchShelves.place(size.width() + 1, size.height() + 1, at)) {
+-        if (size.width() + 1 > m_scratchShelves.width)
+-            return nullptr;
++        if (size.width() + 1 > m_scratchShelves.width) {
++            // the window got wider since the image was made (a pair is twice as wide)
++            if (!growScratch(m_scratchShelves.height) || size.width() + 1 > m_scratchShelves.width)
++                return nullptr;
++            continue;
++        }
+         if (!growScratch(m_scratchShelves.height * 2)) {
+             static bool said = false;
+             if (!said) {
+-- 
+2.53.0
+

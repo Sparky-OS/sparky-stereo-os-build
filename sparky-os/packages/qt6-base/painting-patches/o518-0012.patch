@@ -1,0 +1,80 @@
+From 9d1e6227619fcea24a99d2caca93fc589b1df9df Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 11 Nov 2026 13:50:38 -0300
+Subject: [PATCH] batched painting: a pattern brush starts in the scratch image
+ where it starts in the window
+
+The raster engine tiles a pattern brush over the device's pixels from the transformation's
+translation divided by its scale; drawn into another place of the scratch image the pattern
+started elsewhere at scale 2 (25,200 pixels of the paint check, once the packing changed).
+The brush origin makes up for the part's place.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ src/gui/painting/qbatchedpaintengine.cpp | 22 ++++++++++++++++++----
+ 1 file changed, 18 insertions(+), 4 deletions(-)
+
+diff --git a/src/gui/painting/qbatchedpaintengine.cpp b/src/gui/painting/qbatchedpaintengine.cpp
+index 1e983bc..190c0f2 100644
+--- a/src/gui/painting/qbatchedpaintengine.cpp
++++ b/src/gui/painting/qbatchedpaintengine.cpp
+@@ -442,7 +442,8 @@ private:
+     void quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1,
+               const quint8 *rgba, Mode mode, Op::Type type = Op::Draw);
+     void push(const Quad &q, Op::Type type);
+-    template <typename Draw> void raster(Kind why, const QRectF &deviceBounds, Draw &&draw, bool textMask = false);
++    template <typename Draw> void raster(Kind why, const QRectF &deviceBounds, Draw &&draw, bool textMask = false,
++                                         const QBrush *brush = nullptr);
+     bool textAsMask(Kind why) const;
+     bool blendsByChannel() const { return int(state()->opacity * 256) == 256; }
+     void outlinedRect(const QRectF &mapped, const std::function<void(QPainter *)> &draw, qreal corner = 0,
+@@ -972,7 +973,7 @@ qreal QBatchedPaintEngine::penReach() const
+     touch.
+ */
+ template <typename Draw>
+-void QBatchedPaintEngine::raster(Kind why, const QRectF &deviceBounds, Draw &&draw, bool textMask)
++void QBatchedPaintEngine::raster(Kind why, const QRectF &deviceBounds, Draw &&draw, bool textMask, const QBrush *brush)
+ {
+     QBatchedPainterState *s = state();
+     Kind kind = why;
+@@ -1044,6 +1045,18 @@ void QBatchedPaintEngine::raster(Kind why, const QRectF &deviceBounds, Draw &&dr
+     painter->setClipRegion((m_clip & bounds).translated(offset));
+     if (m_pathClip)
+         painter->setClipPath(s->userPath.translated(offset), Qt::IntersectClip);
++    // A pattern brush (Dense, Hor, Cross and the like) is tiled over the device's pixels, not
++    // scaled, from a start the raster engine takes as the transformation's translation divided
++    // by its scale (QSpanData::setupMatrix(), BlendTiled). In its part of the scratch image the
++    // pattern would start elsewhere unless the scale is 1; the brush origin makes up for it.
++    const QBrush &used = brush ? *brush : s->brush;
++    if (used.style() >= Qt::Dense1Pattern && used.style() <= Qt::DiagCrossPattern
++        && !(s->renderHints & QPainter::NonCosmeticBrushPatterns) && used.transform().type() == QTransform::TxNone
++        && s->matrix.type() == QTransform::TxScale && s->matrix.m11() != 0 && s->matrix.m22() != 0) {
++        painter->setBrushOrigin(s->brushOrigin + QPointF(offset.x() * (1 - 1 / s->matrix.m11()),
++                                                        offset.y() * (1 - 1 / s->matrix.m22())));
++        m_rasterStateDirty = true;
++    }
+     // an element's part of a pixel goes into what the raster engine draws
+     painter->setTransform(s->matrix * QTransform::fromTranslate(offset.x() + m_dx, offset.y()));
+     draw(painter, offset);
+@@ -1138,7 +1151,7 @@ void QBatchedPaintEngine::fill(const QVectorPath &path, const QBrush &brush)
+     const QPainterPath painterPath = path.convertToPainterPath();
+     raster(why, s->matrix.mapRect(path.controlPointRect()), [&](QPainter *painter, const QPoint &) {
+         painter->fillPath(painterPath, m_maskDrawing ? QBrush(Qt::white) : brush);
+-    });
++    }, false, &brush);
+ }
+ 
+ void QBatchedPaintEngine::stroke(const QVectorPath &path, const QPen &pen)
+@@ -1169,7 +1182,8 @@ void QBatchedPaintEngine::fillRect(const QRectF &rect, const QBrush &brush)
+     if (brush.style() == Qt::SolidPattern && nativeRect(rect, brush.color()))
+         return;
+     raster(brush.style() == Qt::SolidPattern ? RasterTransformedRect : RasterPatternRect, state()->matrix.mapRect(rect),
+-           [&](QPainter *painter, const QPoint &) { painter->fillRect(rect, m_maskDrawing ? QBrush(Qt::white) : brush); });
++           [&](QPainter *painter, const QPoint &) { painter->fillRect(rect, m_maskDrawing ? QBrush(Qt::white) : brush); },
++           false, &brush);
+ }
+ 
+ void QBatchedPaintEngine::fillRect(const QRectF &rect, const QColor &color)
+-- 
+2.53.0
+
