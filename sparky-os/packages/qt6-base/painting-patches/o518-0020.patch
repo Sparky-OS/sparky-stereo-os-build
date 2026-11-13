@@ -1,0 +1,50 @@
+From 59feb1113e0bb08027a7aa2bb06cd34d85c0b89e Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 13 Nov 2026 11:21:18 -0300
+Subject: [PATCH] Widgets: ask the platform before painting a decorated pair
+
+Assisted-by: GPT-6.1-sol via Codex
+---
+ .../wayland-egl/qwaylandeglwindow.cpp                    | 1 +
+ src/widgets/kernel/qwidgetrepaintmanager.cpp             | 9 +++++----
+ 2 files changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+index affbdba..095276d 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+@@ -38,6 +38,7 @@ QWaylandEglWindow::QWaylandEglWindow(QWindow *window, QWaylandDisplay *display)
+                 mDisplay->clientBufferIntegration());
+     });
+     m_pairRequested = window->property("_q_stereo_views").toInt() == 2;
++    window->setProperty("_q_stereo_csd_pair_supported", QWaylandStereoDepth::isSupported(mDisplay));
+     window->installEventFilter(this);
+     ensureSize();
+ }
+diff --git a/src/widgets/kernel/qwidgetrepaintmanager.cpp b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+index 03aa4e2..96c8361 100644
+--- a/src/widgets/kernel/qwidgetrepaintmanager.cpp
++++ b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+@@ -570,14 +570,15 @@ static bool paintsPerEye(QWidget *tlw)
+     const QWindow *window = tlw->windowHandle();
+     if (!window || !window->property("_q_stereo_depth").toBool())
+         return false;
+-    // GPU stores can hand a decorated pair to the Wayland frame blitter as one wide texture.
++    const bool hasFrame = !window->frameMargins().isNull();
++    if (hasFrame && !window->property("_q_stereo_csd_pair_supported").toBool())
++        return false;
++    // GPU stores can hand a decorated pair to a platform that supports the frame blit.
+     static const bool keepExceptions = qEnvironmentVariableIntValue("QT_WIDGETS_GPU_PAINT_FLAT_EXCEPTIONS");
+     if (!keepExceptions && tlw->backingStore() && tlw->backingStore()->handle()->paintsOnGpu())
+         return true;
+     // A window with a frame the client draws around it stays flat on the raster store.
+-    // window of such a window shows the left eye only, so the pair would cost a second painting
+-    // and show nothing.
+-    if (!window->frameMargins().isNull())
++    if (hasFrame)
+         return false;
+     // A store painted on the GPU (prototype) hands the pair to the two views of the window's own
+     // surface, and the compositor draws each render-to-texture widget into both, so such a
+-- 
+2.53.0
+

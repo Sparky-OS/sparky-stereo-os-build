@@ -1,0 +1,620 @@
+From 29704c23ea8c35cfdfce47824c4d7e7f2b27d5d2 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 11 Nov 2026 12:02:25 -0300
+Subject: [PATCH] batched painting: text with LCD antialiasing by dual-source
+ blending, raster-drawn text as coverage, less to upload
+
+Text whose masks have a coverage for each colour channel is blended by channel (OpenGL 3.3,
+OpenGL ES with EXT_blend_func_extended; the OpenGL RHI backend now maps the Src1 factors),
+from the picture texture; where the text is not opaque the green channel alone is the
+coverage, as in the raster engine's span path. Text the raster engine draws is drawn white on
+black on a device that says it is a widget, and its coverage is blended here, so rotated text
+and text under a path clip keep their masks by channel. The scratch image is uploaded by its
+used columns; the picture texture is made when the first picture is there.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ src/gui/painting/qbatchedpaintengine.cpp      | 256 ++++++++++++++----
+ src/gui/painting/shaders/batchpaint_dual.frag |  68 +++++
+ .../painting/shaders/batchpaint_dual.frag.qsb | Bin 0 -> 3029 bytes
+ src/gui/rhi/qrhigles2.cpp                     |   8 +-
+ 4 files changed, 279 insertions(+), 53 deletions(-)
+ create mode 100644 src/gui/painting/shaders/batchpaint_dual.frag
+ create mode 100644 src/gui/painting/shaders/batchpaint_dual.frag.qsb
+
+diff --git a/src/gui/painting/qbatchedpaintengine.cpp b/src/gui/painting/qbatchedpaintengine.cpp
+index f00f767..a7c91a2 100644
+--- a/src/gui/painting/qbatchedpaintengine.cpp
++++ b/src/gui/painting/qbatchedpaintengine.cpp
+@@ -75,7 +75,8 @@ struct Quad
+ };
+ static_assert(sizeof(Quad) == 40);
+ 
+-enum Mode { Solid = 0, Glyph = 1, ImageNearest = 2, ImageLinear = 3, ScratchNearest = 4, ScratchLinear = 5 };
++enum Mode { Solid = 0, Glyph = 1, ImageNearest = 2, ImageLinear = 3, ScratchNearest = 4, ScratchLinear = 5, LcdGlyph = 6, LcdGlyphGreen = 7,
++            ScratchMask = 8, ScratchMaskGreen = 9 };
+ 
+ // What the engine draws itself, and what it hands to the raster engine, by kind.
+ enum Kind {
+@@ -94,7 +95,7 @@ static const char *const kindNames[KindCount] = {
+     "path fills", "path strokes", "lines", "rectangle outlines", "pattern or gradient rectangles",
+     "rotated or sheared rectangles", "ellipses", "polygons", "points", "rounded rectangles",
+     "rotated or sheared text", "text with a pattern pen", "text above the glyph cache size",
+-    "text with coloured-fringe (LCD) antialiasing", "colour glyphs", "text of a font engine without its own glyph store",
++    "text with coloured-fringe (LCD) antialiasing where blending by channel is missing", "colour glyphs", "text of a font engine without its own glyph store",
+     "text while the glyph texture is full", "rotated or sheared pictures", "one-bit pictures", "tiled pictures",
+     "anything under a clip that is not rectangles", "anything in a composition mode other than SourceOver or Source"
+ };
+@@ -112,8 +113,9 @@ struct Shelves
+ {
+     int width = 0, height = 0;
+     int x = 0, y = 0, row = 0;
++    int right = 0;  // the widest any row got
+ 
+-    void reset(int w, int h) { width = w; height = h; x = y = row = 0; }
++    void reset(int w, int h) { width = w; height = h; x = y = row = right = 0; }
+     bool place(int w, int h, QPoint *at)
+     {
+         if (w > width)
+@@ -127,6 +129,7 @@ struct Shelves
+             return false;
+         *at = QPoint(x, y);
+         x += w;
++        right = qMax(right, x);
+         row = qMax(row, h);
+         return true;
+     }
+@@ -174,6 +177,10 @@ struct GlyphEntry
+ {
+     quint16 x = 0, y = 0, w = 0, h = 0;
+     qint16 left = 0, top = 0;
++    // A mask for each colour channel (LCD antialiasing) lies in the picture texture, and is
++    // gone when that texture is emptied (its epoch then).
++    bool lcd = false;
++    quint32 epoch = 0;
+ };
+ 
+ class FontTag : public QFontEngineGlyphCache
+@@ -293,6 +300,10 @@ struct ImageAtlas
+ 
+ Q_GLOBAL_STATIC(ImageAtlas, imageAtlas)
+ 
++// Whether the windows' RHI blends with a weight for each colour channel (dual-source blending),
++// which text with LCD antialiasing needs; found when the first store is made.
++static bool dualSourceBlending = false;
++
+ // Copies \a part of \a source to \a at in \a target with one more pixel around it, the edge repeated.
+ static void copyPadded(const QImage &source, const QRect &part, QImage *target, const QPoint &at)
+ {
+@@ -426,7 +437,9 @@ private:
+     void quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1,
+               const quint8 *rgba, Mode mode, Op::Type type = Op::Draw);
+     void push(const Quad &q, Op::Type type);
+-    template <typename Draw> void raster(Kind why, const QRectF &deviceBounds, Draw &&draw);
++    template <typename Draw> void raster(Kind why, const QRectF &deviceBounds, Draw &&draw, bool textMask = false);
++    bool textAsMask(Kind why) const;
++    bool blendsByChannel() const { return int(state()->opacity * 256) == 256; }
+     void outlinedRect(const QRectF &mapped, const std::function<void(QPainter *)> &draw);
+     qreal penReach() const;
+     template <typename Rect> void rects(const Rect *rects, int rectCount);
+@@ -502,6 +515,63 @@ private:
+     qreal m_dpi = 96;
+ };
+ 
++/*
++    The device the raster engine's painter is begun on: it says it is a widget and hands the
++    scratch image over as where to draw. The raster engine asks a font for its own kind of mask
++    (the masks by colour channel of LCD antialiasing) only when the painter's device is a widget,
++    and for 8-bit masks otherwise; so text the raster engine draws here is the text it draws
++    into a widget's raster store.
++*/
++class QBatchedScratchDevice : public QPaintDevice
++{
++public:
++    explicit QBatchedScratchDevice(QImage *image) : m_image(image) { }
++    int devType() const override { return QInternal::Widget; }
++    QPaintEngine *paintEngine() const override { return m_image->paintEngine(); }
++
++protected:
++    QPaintDevice *redirected(QPoint *offset) const override
++    {
++        if (offset)
++            *offset = QPoint();
++        return m_image;
++    }
++    int metric(PaintDeviceMetric metric) const override
++    {
++        switch (metric) {
++        case PdmWidth:
++            return m_image->width();
++        case PdmHeight:
++            return m_image->height();
++        case PdmWidthMM:
++            return m_image->widthMM();
++        case PdmHeightMM:
++            return m_image->heightMM();
++        case PdmNumColors:
++            return m_image->colorCount();
++        case PdmDepth:
++            return m_image->depth();
++        case PdmDpiX:
++        case PdmPhysicalDpiX:
++            return m_image->logicalDpiX();
++        case PdmDpiY:
++        case PdmPhysicalDpiY:
++            return m_image->logicalDpiY();
++        case PdmDevicePixelRatio:
++            return 1;
++        case PdmDevicePixelRatioScaled:
++            return int(devicePixelRatioFScale());
++        case PdmDevicePixelRatioF_EncodedA:
++        case PdmDevicePixelRatioF_EncodedB:
++            return QPaintDevice::encodeMetricF(metric, 1.0);
++        }
++        return 0;
++    }
++
++private:
++    QImage *m_image;
++};
++
+ class QBatchedPaintBackingStore : public QPlatformBackingStore
+ {
+ public:
+@@ -560,6 +630,7 @@ private:
+ 
+     QImage m_scratch;
+     Shelves m_scratchShelves;
++    QBatchedScratchDevice m_scratchDevice { &m_scratch };
+     std::unique_ptr<QPainter> m_scratchPainter;
+     bool m_scratchPainterFresh = true;
+     QImage::Format m_scratchFormat = QImage::Format_ARGB32_Premultiplied;
+@@ -891,7 +962,7 @@ qreal QBatchedPaintEngine::penReach() const
+     touch.
+ */
+ template <typename Draw>
+-void QBatchedPaintEngine::raster(Kind why, const QRectF &deviceBounds, Draw &&draw)
++void QBatchedPaintEngine::raster(Kind why, const QRectF &deviceBounds, Draw &&draw, bool textMask)
+ {
+     QBatchedPainterState *s = state();
+     Kind kind = why;
+@@ -931,6 +1002,19 @@ void QBatchedPaintEngine::raster(Kind why, const QRectF &deviceBounds, Draw &&dr
+     }
+     const QPoint offset = at - bounds.topLeft();
+     painter->setTransform(QTransform());
++    if (textMask) {
++        // Text the raster engine draws is drawn white on black: what it leaves is the text's
++        // coverage, for each colour channel where the font's masks have one (the raster engine
++        // blends by channel onto an opaque ground only), and the pen's colour is blended through
++        // that coverage as a glyph's is.
++        painter->setClipping(false);
++        painter->setCompositionMode(QPainter::CompositionMode_Source);
++        painter->fillRect(QRect(at, bounds.size()), Qt::black);
++        painter->setCompositionMode(QPainter::CompositionMode_SourceOver);
++        painter->setOpacity(1);
++        painter->setPen(Qt::white);
++        m_rasterStateDirty = true;
++    }
+     painter->setClipRegion((m_clip & bounds).translated(offset));
+     if (m_pathClip)
+         painter->setClipPath(s->userPath.translated(offset), Qt::IntersectClip);
+@@ -938,7 +1022,6 @@ void QBatchedPaintEngine::raster(Kind why, const QRectF &deviceBounds, Draw &&dr
+     painter->setTransform(s->matrix * QTransform::fromTranslate(offset.x() + m_dx, offset.y()));
+     draw(painter, offset);
+ 
+-    static const quint8 white[4] = { 255, 255, 255, 255 };
+     Quad q;
+     q.x0 = bounds.left();
+     q.y0 = bounds.top();
+@@ -948,8 +1031,13 @@ void QBatchedPaintEngine::raster(Kind why, const QRectF &deviceBounds, Draw &&dr
+     q.v0 = at.y();
+     q.u1 = at.x() + bounds.width();
+     q.v1 = at.y() + bounds.height();
+-    memcpy(q.rgba, white, 4);
+-    q.mode = ScratchNearest;
++    if (textMask) {
++        premultiplied(s->pen.color(), s->opacity, q.rgba);
++        q.mode = blendsByChannel() ? ScratchMask : ScratchMaskGreen;
++    } else {
++        q.rgba[0] = q.rgba[1] = q.rgba[2] = q.rgba[3] = 255;
++        q.mode = ScratchNearest;
++    }
+     push(q, Op::Draw);
+ }
+ 
+@@ -1380,6 +1468,13 @@ bool QBatchedPaintEngine::glyphsDrawable(QFontEngine *fontEngine, const QTransfo
+     return true;
+ }
+ 
++// Whether text the raster engine draws (\a why) can be taken as coverage and blended here.
++bool QBatchedPaintEngine::textAsMask(Kind why) const
++{
++    return dualSourceBlending && why != RasterTextColour && why != RasterTextPen && blend() == Over
++            && state()->pen.brush().style() == Qt::SolidPattern;
++}
++
+ static const int glyphAtlasKey = 0;
+ 
+ /*
+@@ -1392,6 +1487,7 @@ bool QBatchedPaintEngine::drawGlyphs(QFontEngine *fontEngine, const glyph_t *gly
+ {
+     const QBatchedPainterState *s = state();
+     GlyphAtlas *atlas = glyphAtlas();
++    ImageAtlas *images = imageAtlas();
+     if (atlas->full) {
+         *why = RasterTextAtlasFull;
+         return false;
+@@ -1401,7 +1497,7 @@ bool QBatchedPaintEngine::drawGlyphs(QFontEngine *fontEngine, const glyph_t *gly
+         tag = new FontTag;
+         fontEngine->setGlyphCache(&glyphAtlasKey, tag);
+     }
+-    if (tag->format == QFontEngine::Format_A32) {
++    if (tag->format == QFontEngine::Format_A32 && !dualSourceBlending) {
+         *why = RasterTextSubpixel;
+         return false;
+     }
+@@ -1422,6 +1518,8 @@ bool QBatchedPaintEngine::drawGlyphs(QFontEngine *fontEngine, const glyph_t *gly
+     if (rgba[3] == 0)
+         return true;
+ 
++    // (text that is not opaque: the raster engine takes one coverage from a mask by channel, its green)
++    const bool byChannel = blendsByChannel();
+     const size_t firstQuad = m_store->quads.size();
+     const size_t firstOp = m_store->ops.size();
+     const int firstOpCount = firstOp ? m_store->ops.back().count : 0;
+@@ -1436,42 +1534,64 @@ bool QBatchedPaintEngine::drawGlyphs(QFontEngine *fontEngine, const glyph_t *gly
+         key.subX = quint8(sub.x.value());
+         key.subY = quint8(sub.y.value());
+         auto it = atlas->glyphs.constFind(key);
+-        if (it == atlas->glyphs.constEnd()) {
++        if (it == atlas->glyphs.constEnd() || (it->lcd && it->epoch != quint32(images->epoch))) {
+             const QFontEngine::Glyph *mask = fontEngine->glyphData(glyphs[i], sub, QFontEngine::Format_None, s->matrix);
+             GlyphEntry entry;
+             if (mask && mask->width && mask->height) {
+                 if (tag->format < 0)
+                     tag->format = mask->format;
+-                if (mask->format != QFontEngine::Format_A8 && mask->format != QFontEngine::Format_Mono) {
++                const bool lcd = mask->format == QFontEngine::Format_A32 && dualSourceBlending;
++                auto giveUp = [&](Kind reason) {
+                     // nothing of this run is kept: the raster engine draws all of it
+                     m_store->quads.resize(firstQuad);
+                     m_store->ops.resize(firstOp);
+                     if (firstOp)
+                         m_store->ops.back().count = firstOpCount;
+-                    *why = mask->format == QFontEngine::Format_A32 ? RasterTextSubpixel : RasterTextColour;
++                    *why = reason;
+                     return false;
+-                }
++                };
++                if (!lcd && mask->format != QFontEngine::Format_A8 && mask->format != QFontEngine::Format_Mono)
++                    return giveUp(mask->format == QFontEngine::Format_A32 ? RasterTextSubpixel : RasterTextColour);
+                 QPoint at;
+-                if (!atlas->place(mask->width, mask->height, &at)) {
+-                    m_store->quads.resize(firstQuad);
+-                    m_store->ops.resize(firstOp);
+-                    if (firstOp)
+-                        m_store->ops.back().count = firstOpCount;
+-                    *why = RasterTextAtlasFull;
+-                    return false;
+-                }
+-                if (mask->format == QFontEngine::Format_A8) {
+-                    const int stride = (mask->width + 3) & ~3;
+-                    for (int y = 0; y < mask->height; ++y)
+-                        memcpy(atlas->image.scanLine(at.y() + y) + at.x(), mask->data + y * stride, mask->width);
+-                } else {
+-                    const int stride = ((mask->width + 31) & ~31) >> 3;
++                if (lcd) {
++                    images->ensure();
++                    if (images->full || !images->shelves.place(mask->width + 1, mask->height + 1, &at)) {
++                        // emptied before the next paint pass
++                        images->full = true;
++                        return giveUp(RasterTextAtlasFull);
++                    }
++                    // 0xffRRGGBB, a coverage for each channel
+                     for (int y = 0; y < mask->height; ++y) {
+-                        const uchar *from = mask->data + y * stride;
+-                        uchar *to = atlas->image.scanLine(at.y() + y) + at.x();
+-                        for (int x = 0; x < mask->width; ++x)
+-                            to[x] = (from[x >> 3] & (0x80 >> (x & 7))) ? 255 : 0;
++                        const quint32 *from = reinterpret_cast<const quint32 *>(mask->data + y * mask->width * 4);
++                        uchar *to = images->image.scanLine(at.y() + y) + at.x() * 4;
++                        for (int x = 0; x < mask->width; ++x) {
++                            const quint32 c = from[x];
++                            to[4 * x] = uchar(c >> 16);
++                            to[4 * x + 1] = uchar(c >> 8);
++                            to[4 * x + 2] = uchar(c);
++                            to[4 * x + 3] = 255;
++                        }
+                     }
++                    ++images->version;
++                    entry.lcd = true;
++                    entry.epoch = quint32(images->epoch);
++                } else {
++                    if (!atlas->place(mask->width, mask->height, &at))
++                        return giveUp(RasterTextAtlasFull);
++                    if (mask->format == QFontEngine::Format_A8) {
++                        const int stride = (mask->width + 3) & ~3;
++                        for (int y = 0; y < mask->height; ++y)
++                            memcpy(atlas->image.scanLine(at.y() + y) + at.x(), mask->data + y * stride, mask->width);
++                    } else {
++                        const int stride = ((mask->width + 31) & ~31) >> 3;
++                        for (int y = 0; y < mask->height; ++y) {
++                            const uchar *from = mask->data + y * stride;
++                            uchar *to = atlas->image.scanLine(at.y() + y) + at.x();
++                            for (int x = 0; x < mask->width; ++x)
++                                to[x] = (from[x >> 3] & (0x80 >> (x & 7))) ? 255 : 0;
++                        }
++                    }
++                    ++atlas->version;
+                 }
+                 entry.x = quint16(at.x());
+                 entry.y = quint16(at.y());
+@@ -1479,7 +1599,6 @@ bool QBatchedPaintEngine::drawGlyphs(QFontEngine *fontEngine, const glyph_t *gly
+                 entry.h = mask->height;
+                 entry.left = mask->x;
+                 entry.top = mask->y;
+-                ++atlas->version;
+             }
+             it = atlas->glyphs.insert(key, entry);
+         }
+@@ -1487,7 +1606,8 @@ bool QBatchedPaintEngine::drawGlyphs(QFontEngine *fontEngine, const glyph_t *gly
+             continue;
+         const int x = qFloor(position.x) + it->left;
+         const int y = (verticalSubPixel ? qFloor(position.y) : qRound(position.y)) - it->top;
+-        quad(x, y, x + it->w, y + it->h, it->x, it->y, it->x + it->w, it->y + it->h, rgba, Glyph);
++        quad(x, y, x + it->w, y + it->h, it->x, it->y, it->x + it->w, it->y + it->h, rgba,
++             it->lcd ? (byChannel ? LcdGlyph : LcdGlyphGreen) : Glyph);
+         ++drawn;
+     }
+     m_store->counts[NativeGlyph] += drawn;
+@@ -1516,7 +1636,7 @@ void QBatchedPaintEngine::drawTextItem(const QPointF &p, const QTextItem &textIt
+                         (ti.ascent + ti.descent).toReal() + 2 * size);
+     raster(why, s->matrix.mapRect(bounds), [&](QPainter *painter, const QPoint &) {
+         static_cast<QPaintEngineEx *>(painter->paintEngine())->drawTextItem(p, textItem);
+-    });
++    }, textAsMask(why));
+ }
+ 
+ void QBatchedPaintEngine::drawStaticTextItem(QStaticTextItem *item)
+@@ -1557,7 +1677,7 @@ void QBatchedPaintEngine::drawStaticTextItem(QStaticTextItem *item)
+         }
+         static_cast<QPaintEngineEx *>(painter->paintEngine())->drawStaticTextItem(item);
+         item->glyphPositions = saved;
+-    });
++    }, textAsMask(why));
+ }
+ 
+ // ---------------------------------------------------------------------------------------------
+@@ -1710,7 +1830,7 @@ QPainter *QBatchedPaintBackingStore::scratch(const QSize &size, QPoint *at)
+     if (!scratchImage(size, at))
+         return nullptr;
+     if (!m_scratchPainter) {
+-        m_scratchPainter = std::make_unique<QPainter>(&m_scratch);
++        m_scratchPainter = std::make_unique<QPainter>(&m_scratchDevice);
+         m_scratchPainterFresh = true;
+     }
+     return m_scratchPainter.get();
+@@ -1829,10 +1949,11 @@ bool QBatchedPaintBackingStore::ensureResources(QRhi *rhi)
+         m_glyphEpoch = ~quint64(0);
+         rebind = true;
+     }
++    // (the picture texture is made at its size when the first picture or LCD glyph is there)
+     ImageAtlas *images = imageAtlas();
+-    images->ensure();
+-    if (!m_imageTexture) {
+-        m_imageTexture.reset(rhi->newTexture(QRhiTexture::RGBA8, images->image.size()));
++    const QSize imageSize = images->image.isNull() ? QSize(64, 64) : images->image.size();
++    if (!m_imageTexture || m_imageTexture->pixelSize() != imageSize) {
++        m_imageTexture.reset(rhi->newTexture(QRhiTexture::RGBA8, imageSize));
+         if (!m_imageTexture->create())
+             return false;
+         m_imageEpoch = ~quint64(0);
+@@ -1862,7 +1983,20 @@ bool QBatchedPaintBackingStore::ensureResources(QRhi *rhi)
+ 
+     if (!m_over) {
+         const QShader vertex = batchShader(u":/qt-project.org/gui/painting/shaders/batchpaint.vert.qsb"_s);
+-        const QShader fragment = batchShader(u":/qt-project.org/gui/painting/shaders/batchpaint.frag.qsb"_s);
++        QShader fragment = batchShader(dualSourceBlending ? u":/qt-project.org/gui/painting/shaders/batchpaint_dual.frag.qsb"_s
++                                                          : u":/qt-project.org/gui/painting/shaders/batchpaint.frag.qsb"_s);
++        if (dualSourceBlending) {
++            // OpenGL ES has the second output through an extension, which its source must ask for
++            const QShaderKey es(QShader::GlslShader, QShaderVersion(300, QShaderVersion::GlslEs));
++            QShaderCode code = fragment.shader(es);
++            QByteArray source = code.shader();
++            const qsizetype line = source.indexOf('\n');
++            if (line > 0 && !source.contains("GL_EXT_blend_func_extended")) {
++                source.insert(line + 1, "#extension GL_EXT_blend_func_extended : require\n");
++                code.setShader(source);
++                fragment.setShader(es, code);
++            }
++        }
+         QRhiVertexInputLayout layout;
+         layout.setBindings({ { 2 * sizeof(float) }, { sizeof(Quad), QRhiVertexInputBinding::PerInstance } });
+         layout.setAttributes({ { 0, 0, QRhiVertexInputAttribute::Float2, 0 },
+@@ -1882,9 +2016,10 @@ bool QBatchedPaintBackingStore::ensureResources(QRhi *rhi)
+                 // premultiplied colour over what is there
+                 target.enable = true;
+                 target.srcColor = QRhiGraphicsPipeline::One;
+-                target.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+                 target.srcAlpha = QRhiGraphicsPipeline::One;
+-                target.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
++                // by its alpha, or by the shader's weight for each channel
++                target.dstColor = dualSourceBlending ? QRhiGraphicsPipeline::OneMinusSrc1Color : QRhiGraphicsPipeline::OneMinusSrcAlpha;
++                target.dstAlpha = dualSourceBlending ? QRhiGraphicsPipeline::OneMinusSrc1Alpha : QRhiGraphicsPipeline::OneMinusSrcAlpha;
+             } else if (type == Op::DrawInvert) {
+                 // white times what is missing to white: the colours inverted, the alpha kept
+                 target.enable = true;
+@@ -1961,7 +2096,7 @@ void QBatchedPaintBackingStore::run(QRhi *rhi, QRhiCommandBuffer *cb)
+         m_glyphRow = glyphs->shelves.y;
+     }
+     ImageAtlas *images = imageAtlas();
+-    if (m_imageEpoch != images->epoch || m_imageVersion != images->version) {
++    if (!images->image.isNull() && (m_imageEpoch != images->epoch || m_imageVersion != images->version)) {
+         const int from = m_imageEpoch != images->epoch ? 0 : m_imageRow;
+         const int to = images->shelves.used();
+         if (to > from) {
+@@ -1982,9 +2117,21 @@ void QBatchedPaintBackingStore::run(QRhi *rhi, QRhiCommandBuffer *cb)
+     if (scratchRows > 0) {
+         QRhiTextureSubresourceUploadDescription part(m_scratch.constBits(), quint32(m_scratch.bytesPerLine() * scratchRows));
+         part.setDataStride(quint32(m_scratch.bytesPerLine()));
+-        part.setSourceSize(QSize(m_scratch.width(), scratchRows));
++        // only the columns in use: a thin, tall part (a scroll bar's line) is a few kilobytes
++        const int scratchColumns = qMin(m_scratch.width(), m_scratchShelves.right);
++        part.setSourceSize(QSize(scratchColumns, scratchRows));
+         updates->uploadTexture(m_scratchTexture.get(), QRhiTextureUploadDescription({ 0, 0, part }));
+-        m_statUploaded += qint64(m_scratch.bytesPerLine()) * scratchRows;
++        m_statUploaded += qint64(scratchColumns) * 4 * scratchRows;
++    }
++
++    if (scratchRows > 0) {
++        // QT_WIDGETS_GPU_PAINT_DUMP=FOLDER: what the raster engine drew for each frame, as pictures
++        static const QByteArray dump = qgetenv("QT_WIDGETS_GPU_PAINT_DUMP");
++        static int frame = 0;
++        if (!dump.isEmpty() && frame < 200) {
++            m_scratch.copy(0, 0, qMin(m_scratch.width(), m_scratchShelves.right), scratchRows)
++                    .save(QString::fromLocal8Bit(dump) + u"/scratch-%1.png"_s.arg(frame++, 4, 10, QLatin1Char('0')));
++        }
+     }
+ 
+     if (!quads.empty())
+@@ -2001,8 +2148,8 @@ void QBatchedPaintBackingStore::run(QRhi *rhi, QRhiCommandBuffer *cb)
+     uniforms[18] = uniforms[19] = 0;
+     uniforms[20] = 1.0f / glyphs->image.width();
+     uniforms[21] = 1.0f / glyphs->image.height();
+-    uniforms[22] = 1.0f / images->image.width();
+-    uniforms[23] = 1.0f / images->image.height();
++    uniforms[22] = 1.0f / m_imageTexture->pixelSize().width();
++    uniforms[23] = 1.0f / m_imageTexture->pixelSize().height();
+     uniforms[24] = 1.0f / m_scratchTexture->pixelSize().width();
+     uniforms[25] = 1.0f / m_scratchTexture->pixelSize().height();
+     uniforms[26] = uniforms[27] = 0;
+@@ -2080,8 +2227,9 @@ void QBatchedPaintBackingStore::run(QRhi *rhi, QRhiCommandBuffer *cb)
+     quads.clear();
+     ops.clear();
+     if (scratchRows > 0) {
++        const size_t used = size_t(qMin(m_scratch.width(), m_scratchShelves.right)) * 4;
+         for (int y = 0; y < scratchRows; ++y)
+-            memset(m_scratch.scanLine(y), 0, size_t(m_scratch.bytesPerLine()));
++            memset(m_scratch.scanLine(y), 0, used);
+         m_scratchShelves.reset(m_scratch.width(), m_scratch.height());
+     }
+ }
+@@ -2181,9 +2329,15 @@ QPlatformBackingStore *qt_create_batched_paint_backingstore(QWindow *window, QSt
+                                && !qEnvironmentVariableIntValue("QT_WIDGETS_GPU_PAINT_ALLOW_SOFTWARE")) {
+                         // An OpenGL that the CPU draws is no GPU painting: it is said, never used quietly.
+                         reason = u"the OpenGL of this program is drawn by the CPU (%1)"_s.arg(QLatin1StringView(renderer));
+-                    } else if (qEnvironmentVariableIntValue("QT_WIDGETS_PAINT_STATS")) {
+-                        qInfo("QT_WIDGETS_GPU_PAINT=batch: painting on \"%s\" (%s)", renderer.constData(),
+-                              reinterpret_cast<const char *>(context.functions()->glGetString(GL_VERSION)));
++                    } else {
++                        // blending by channel: OpenGL 3.3, or OpenGL ES 3 with its extension
++                        dualSourceBlending = (context.isOpenGLES() ? context.hasExtension("GL_EXT_blend_func_extended") : true)
++                                && !qEnvironmentVariableIntValue("QT_WIDGETS_GPU_PAINT_NO_DUAL_SOURCE");
++                        if (qEnvironmentVariableIntValue("QT_WIDGETS_PAINT_STATS")) {
++                            qInfo("QT_WIDGETS_GPU_PAINT=batch: painting on \"%s\" (%s)%s", renderer.constData(),
++                                  reinterpret_cast<const char *>(context.functions()->glGetString(GL_VERSION)),
++                                  dualSourceBlending ? ", blending by channel" : "");
++                        }
+                     }
+                     context.doneCurrent();
+                 }
+diff --git a/src/gui/painting/shaders/batchpaint_dual.frag b/src/gui/painting/shaders/batchpaint_dual.frag
+new file mode 100644
+index 0000000..8309645
+--- /dev/null
++++ b/src/gui/painting/shaders/batchpaint_dual.frag
+@@ -0,0 +1,68 @@
++#version 440
++
++layout(location = 0) in vec2 v_source;
++layout(location = 1) flat in vec4 v_rect;
++layout(location = 2) flat in vec4 v_color;
++layout(location = 3) flat in float v_mode;
++
++// Two outputs for blending with a weight for each colour channel (dual-source blending):
++// what is there is kept by one minus the weights. Text with coloured-fringe (LCD) antialiasing
++// has a mask for each channel; everything else weighs all channels by its alpha.
++layout(location = 0, index = 0) out vec4 fragColor;
++layout(location = 0, index = 1) out vec4 fragWeights;
++
++layout(std140, binding = 0) uniform buf {
++    mat4 deviceToClip;
++    vec4 rowOrder;
++    vec4 glyphsImages;
++    vec4 scratch;
++};
++
++layout(binding = 1) uniform sampler2D glyphTexture;
++layout(binding = 2) uniform sampler2D imageTexture;
++layout(binding = 3) uniform sampler2D scratchTexture;
++
++void main()
++{
++    // The part of this pixel the rectangle covers: all of it for a rectangle on whole pixels,
++    // so such a rectangle is drawn as the raster engine draws it.
++    vec2 pixel = vec2(gl_FragCoord.x, rowOrder.x + rowOrder.y * gl_FragCoord.y);
++    vec2 covered = clamp(min(pixel + 0.5, v_rect.zw) - max(pixel - 0.5, v_rect.xy), 0.0, 1.0);
++    float coverage = covered.x * covered.y;
++
++    vec4 result = v_color;
++    if (v_mode > 5.5) {
++        // modes 6 and 7: a glyph's mask for each colour channel, in the picture texture;
++        // modes 8 and 9: text the raster engine drew as coverage, in its texture.
++        // 7 and 9 weigh all channels by the green one, as the raster engine does for text
++        // that is not opaque.
++        vec3 mask;
++        if (v_mode > 7.5)
++            mask = texture(scratchTexture, (floor(v_source) + 0.5) * scratch.xy).rgb;
++        else
++            mask = texture(imageTexture, (floor(v_source) + 0.5) * glyphsImages.zw).rgb;
++        if ((v_mode > 6.5 && v_mode < 7.5) || v_mode > 8.5)
++            mask = vec3(mask.g);
++        mask *= coverage;
++        float average = (mask.r + mask.g + mask.b) / 3.0;
++        fragColor = vec4(v_color.rgb * mask, v_color.a * average);
++        fragWeights = vec4(v_color.a * mask, v_color.a * average);
++        return;
++    }
++    if (v_mode > 0.5) {
++        // modes 1, 2 and 4 take one texel, unfiltered; 3 and 5 are filtered
++        vec2 texel = v_source;
++        // (where a scaled picture's sample falls between two texels, the raster engine takes the
++        // one before, so the sample is taken a little before its place)
++        if (v_mode < 2.5 || (v_mode > 3.5 && v_mode < 4.5))
++            texel = floor(texel - 0.002) + 0.5;
++        if (v_mode < 1.5)
++            result *= texture(glyphTexture, texel * glyphsImages.xy).r;
++        else if (v_mode < 3.5)
++            result *= texture(imageTexture, texel * glyphsImages.zw);
++        else
++            result *= texture(scratchTexture, texel * scratch.xy);
++    }
++    fragColor = result * coverage;
++    fragWeights = vec4(fragColor.a);
++}
+diff --git a/src/gui/rhi/qrhigles2.cpp b/src/gui/rhi/qrhigles2.cpp
+index c333862..210ea00 100644
+--- a/src/gui/rhi/qrhigles2.cpp
++++ b/src/gui/rhi/qrhigles2.cpp
+@@ -2952,12 +2952,16 @@ static inline GLenum toGlBlendFactor(QRhiGraphicsPipeline::BlendFactor f)
+         return GL_ONE_MINUS_CONSTANT_ALPHA;
+     case QRhiGraphicsPipeline::SrcAlphaSaturate:
+         return GL_SRC_ALPHA_SATURATE;
++    // Dual-source blending: OpenGL 3.3 (ARB_blend_func_extended), OpenGL ES with
++    // EXT_blend_func_extended. A pipeline names these only where the context has it.
+     case QRhiGraphicsPipeline::Src1Color:
++        return 0x88F9; // GL_SRC1_COLOR
+     case QRhiGraphicsPipeline::OneMinusSrc1Color:
++        return 0x88FA; // GL_ONE_MINUS_SRC1_COLOR
+     case QRhiGraphicsPipeline::Src1Alpha:
++        return 0x8589; // GL_SRC1_ALPHA
+     case QRhiGraphicsPipeline::OneMinusSrc1Alpha:
+-        qWarning("Unsupported blend factor %d", f);
+-        return GL_ZERO;
++        return 0x88FB; // GL_ONE_MINUS_SRC1_ALPHA
+     default:
+         Q_UNREACHABLE_RETURN(GL_ZERO);
+     }
+-- 
+2.53.0
+

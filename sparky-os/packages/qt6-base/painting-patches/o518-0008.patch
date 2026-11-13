@@ -1,0 +1,237 @@
+From 1165580497ab0320606be9e16f727e0242b9fba7 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 11 Nov 2026 12:13:24 -0300
+Subject: [PATCH] batched painting: scaled pictures rounded as the raster
+ engine rounds them, inversion through raster-drawn coverage, a dump of
+ raster-drawn parts
+
+Found by the paint check at scale 1.25: a picture scaled without smoothing takes a rounded
+place and size and steps through its source by that size; smoothed, each edge is rounded and
+the unrounded mapping kept. QTextLayout::drawCursor() draws a line in RasterOp_NotDestination
+at a fractional scale: whatever is drawn in that mode is drawn as coverage by the raster
+engine and the window inverted through it.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ src/gui/painting/qbatchedpaintengine.cpp | 101 ++++++++++++++++++-----
+ 1 file changed, 79 insertions(+), 22 deletions(-)
+
+diff --git a/src/gui/painting/qbatchedpaintengine.cpp b/src/gui/painting/qbatchedpaintengine.cpp
+index a7c91a2..d03519f 100644
+--- a/src/gui/painting/qbatchedpaintengine.cpp
++++ b/src/gui/painting/qbatchedpaintengine.cpp
+@@ -97,7 +97,8 @@ static const char *const kindNames[KindCount] = {
+     "rotated or sheared text", "text with a pattern pen", "text above the glyph cache size",
+     "text with coloured-fringe (LCD) antialiasing where blending by channel is missing", "colour glyphs", "text of a font engine without its own glyph store",
+     "text while the glyph texture is full", "rotated or sheared pictures", "one-bit pictures", "tiled pictures",
+-    "anything under a clip that is not rectangles", "anything in a composition mode other than SourceOver or Source"
++    "anything under a clip that is not rectangles",
++    "anything in a composition mode other than SourceOver, Source or the inverting RasterOp_NotDestination"
+ };
+ 
+ struct Op
+@@ -451,6 +452,8 @@ private:
+     bool m_clipIsOneRect = true;
+     bool m_pathClip = false;
+     bool m_rasterStateDirty = true;
++    // while the raster engine draws coverage for an inversion: every colour is white
++    bool m_maskDrawing = false;
+     float m_dx = 0;
+ };
+ 
+@@ -968,7 +971,10 @@ void QBatchedPaintEngine::raster(Kind why, const QRectF &deviceBounds, Draw &&dr
+     Kind kind = why;
+     if (m_pathClip)
+         kind = RasterPathClip;
+-    if (blend() == Other || blend() == Invert)
++    // What inverts the window (RasterOp_NotDestination) is drawn as coverage, white on black,
++    // and the window is inverted through it.
++    const bool inverts = blend() == Invert;
++    if (blend() == Other)
+         kind = RasterComposition;
+     if (m_store->counts[kind]++ == 0) {
+         if (kind == RasterComposition) {
+@@ -1002,7 +1008,20 @@ void QBatchedPaintEngine::raster(Kind why, const QRectF &deviceBounds, Draw &&dr
+     }
+     const QPoint offset = at - bounds.topLeft();
+     painter->setTransform(QTransform());
+-    if (textMask) {
++    if (inverts) {
++        painter->setClipping(false);
++        painter->setCompositionMode(QPainter::CompositionMode_Source);
++        painter->fillRect(QRect(at, bounds.size()), Qt::black);
++        painter->setCompositionMode(QPainter::CompositionMode_SourceOver);
++        painter->setOpacity(1);
++        QPen pen = s->pen;
++        pen.setBrush(Qt::white);
++        painter->setPen(pen);
++        if (s->brush.style() != Qt::NoBrush)
++            painter->setBrush(Qt::white);
++        m_rasterStateDirty = true;
++        m_maskDrawing = true;
++    } else if (textMask) {
+         // Text the raster engine draws is drawn white on black: what it leaves is the text's
+         // coverage, for each colour channel where the font's masks have one (the raster engine
+         // blends by channel onto an opaque ground only), and the pen's colour is blended through
+@@ -1021,6 +1040,7 @@ void QBatchedPaintEngine::raster(Kind why, const QRectF &deviceBounds, Draw &&dr
+     // an element's part of a pixel goes into what the raster engine draws
+     painter->setTransform(s->matrix * QTransform::fromTranslate(offset.x() + m_dx, offset.y()));
+     draw(painter, offset);
++    m_maskDrawing = false;
+ 
+     Quad q;
+     q.x0 = bounds.left();
+@@ -1031,6 +1051,12 @@ void QBatchedPaintEngine::raster(Kind why, const QRectF &deviceBounds, Draw &&dr
+     q.v0 = at.y();
+     q.u1 = at.x() + bounds.width();
+     q.v1 = at.y() + bounds.height();
++    if (inverts) {
++        q.rgba[0] = q.rgba[1] = q.rgba[2] = q.rgba[3] = 255;
++        q.mode = ScratchNearest;
++        push(q, Op::DrawInvert);
++        return;
++    }
+     if (textMask) {
+         premultiplied(s->pen.color(), s->opacity, q.rgba);
+         q.mode = blendsByChannel() ? ScratchMask : ScratchMaskGreen;
+@@ -1102,7 +1128,7 @@ void QBatchedPaintEngine::fill(const QVectorPath &path, const QBrush &brush)
+             ? (brush.style() == Qt::SolidPattern ? RasterTransformedRect : RasterPatternRect) : RasterPath;
+     const QPainterPath painterPath = path.convertToPainterPath();
+     raster(why, s->matrix.mapRect(path.controlPointRect()), [&](QPainter *painter, const QPoint &) {
+-        painter->fillPath(painterPath, brush);
++        painter->fillPath(painterPath, m_maskDrawing ? QBrush(Qt::white) : brush);
+     });
+ }
+ 
+@@ -1115,7 +1141,15 @@ void QBatchedPaintEngine::stroke(const QVectorPath &path, const QPen &pen)
+     const qreal reach = penReach();
+     const QPainterPath painterPath = path.convertToPainterPath();
+     raster(RasterStroke, s->matrix.mapRect(path.controlPointRect()).adjusted(-reach, -reach, reach, reach),
+-           [&](QPainter *painter, const QPoint &) { painter->strokePath(painterPath, pen); });
++           [&](QPainter *painter, const QPoint &) {
++        if (m_maskDrawing) {
++            QPen white = pen;
++            white.setBrush(Qt::white);
++            painter->strokePath(painterPath, white);
++        } else {
++            painter->strokePath(painterPath, pen);
++        }
++    });
+ }
+ 
+ void QBatchedPaintEngine::fillRect(const QRectF &rect, const QBrush &brush)
+@@ -1126,7 +1160,7 @@ void QBatchedPaintEngine::fillRect(const QRectF &rect, const QBrush &brush)
+     if (brush.style() == Qt::SolidPattern && nativeRect(rect, brush.color()))
+         return;
+     raster(brush.style() == Qt::SolidPattern ? RasterTransformedRect : RasterPatternRect, state()->matrix.mapRect(rect),
+-           [&](QPainter *painter, const QPoint &) { painter->fillRect(rect, brush); });
++           [&](QPainter *painter, const QPoint &) { painter->fillRect(rect, m_maskDrawing ? QBrush(Qt::white) : brush); });
+ }
+ 
+ void QBatchedPaintEngine::fillRect(const QRectF &rect, const QColor &color)
+@@ -1135,7 +1169,7 @@ void QBatchedPaintEngine::fillRect(const QRectF &rect, const QColor &color)
+     if (nativeRect(rect, color))
+         return;
+     raster(RasterTransformedRect, state()->matrix.mapRect(rect),
+-           [&](QPainter *painter, const QPoint &) { painter->fillRect(rect, color); });
++           [&](QPainter *painter, const QPoint &) { painter->fillRect(rect, m_maskDrawing ? QColor(Qt::white) : color); });
+ }
+ 
+ void QBatchedPaintEngine::drawRoundedRect(const QRectF &rect, qreal xrad, qreal yrad, Qt::SizeMode mode)
+@@ -1339,17 +1373,39 @@ void QBatchedPaintEngine::drawPicture(const QRectF &r, const QImage &image, cons
+         return;
+ 
+     float x0 = mapped.left(), y0 = mapped.top(), x1 = mapped.right(), y1 = mapped.bottom();
++    // the source rectangle's corners as they lie on the corners of the target
++    qreal u0 = sr.left(), v0 = sr.top(), u1 = sr.right(), v1 = sr.bottom();
+     const bool sameSize = qAbs(mapped.width() - sr.width()) < 0.01 && qAbs(mapped.height() - sr.height()) < 0.01;
+     bool filtered = !sameSize && (s->renderHints & QPainter::SmoothPixmapTransform);
+     const bool replaces = mode == Source && image.hasAlphaChannel();
+-    if (sameSize || replaces) {
++    if (sameSize) {
+         // a picture at its own size lies on whole pixels, as the raster engine blits it
+-        const float w = x1 - x0, h = y1 - y0;
+-        x0 = qRound(x0);
+-        y0 = qRound(y0);
+-        x1 = sameSize ? x0 + float(sr.width()) : float(qRound(x0 + w));
+-        y1 = sameSize ? y0 + float(sr.height()) : float(qRound(y0 + h));
+-    }
++        x0 = qRound(mapped.left());
++        y0 = qRound(mapped.top());
++        x1 = x0 + float(sr.width());
++        y1 = y0 + float(sr.height());
++    } else if (!filtered) {
++        // Scaled without smoothing, the raster engine rounds the place and the size
++        // (QRasterPaintEngine::drawImage(), qt_scale_image_*), and steps through the source
++        // by that rounded size.
++        x0 = qRound(mapped.left());
++        y0 = qRound(mapped.top());
++        x1 = x0 + qRound(mapped.width());
++        y1 = y0 + qRound(mapped.height());
++    } else if (!(s->renderHints & QPainter::Antialiasing) || replaces) {
++        // Smoothed, it rounds each edge and keeps the mapping of the unrounded rectangle.
++        const qreal sx = sr.width() / mapped.width(), sy = sr.height() / mapped.height();
++        x0 = qRound(mapped.left());
++        y0 = qRound(mapped.top());
++        x1 = qRound(mapped.right());
++        y1 = qRound(mapped.bottom());
++        u0 = sr.left() + (x0 - mapped.left()) * sx;
++        u1 = sr.left() + (x1 - mapped.left()) * sx;
++        v0 = sr.top() + (y0 - mapped.top()) * sy;
++        v1 = sr.top() + (y1 - mapped.top()) * sy;
++    }
++    if (x1 <= x0 || y1 <= y0)
++        return;
+     if (m_dx != 0 && !replaces) {
+         x0 += m_dx;
+         x1 += m_dx;
+@@ -1383,8 +1439,8 @@ void QBatchedPaintEngine::drawPicture(const QRectF &r, const QImage &image, cons
+         }
+         if (it != atlas->images.constEnd()) {
+             ++m_store->counts[NativeImage];
+-            quad(x0, y0, x1, y1, it->x + float(sr.left()), it->y + float(sr.top()), it->x + float(sr.right()),
+-                 it->y + float(sr.bottom()), rgba, filtered ? ImageLinear : ImageNearest, type);
++            quad(x0, y0, x1, y1, it->x + float(u0), it->y + float(v0), it->x + float(u1), it->y + float(v1), rgba,
++                 filtered ? ImageLinear : ImageNearest, type);
+             return;
+         }
+     }
+@@ -1393,8 +1449,8 @@ void QBatchedPaintEngine::drawPicture(const QRectF &r, const QImage &image, cons
+     const QRectF shown = QRectF(m_clipBounds).intersected(QRectF(x0, y0, x1 - x0, y1 - y0));
+     if (shown.isEmpty())
+         return;
+-    const qreal sx = sr.width() / (x1 - x0), sy = sr.height() / (y1 - y0);
+-    QRect part = QRectF(sr.left() + (shown.left() - x0) * sx, sr.top() + (shown.top() - y0) * sy,
++    const qreal sx = (u1 - u0) / (x1 - x0), sy = (v1 - v0) / (y1 - y0);
++    QRect part = QRectF(u0 + (shown.left() - x0) * sx, v0 + (shown.top() - y0) * sy,
+                         shown.width() * sx, shown.height() * sy).toAlignedRect().adjusted(-1, -1, 1, 1);
+     part &= image.rect();
+     if (part.isEmpty())
+@@ -1409,8 +1465,8 @@ void QBatchedPaintEngine::drawPicture(const QRectF &r, const QImage &image, cons
+     ++m_store->counts[NativeCopiedImage];
+     // the picture's source rectangle, in the scratch image's texels
+     const float ox = float(at.x() + 1 - part.left()), oy = float(at.y() + 1 - part.top());
+-    quad(x0, y0, x1, y1, ox + float(sr.left()), oy + float(sr.top()), ox + float(sr.right()), oy + float(sr.bottom()),
+-         rgba, filtered ? ScratchLinear : ScratchNearest, type);
++    quad(x0, y0, x1, y1, ox + float(u0), oy + float(v0), ox + float(u1), oy + float(v1), rgba,
++         filtered ? ScratchLinear : ScratchNearest, type);
+ }
+ 
+ // -- text
+@@ -2021,10 +2077,11 @@ bool QBatchedPaintBackingStore::ensureResources(QRhi *rhi)
+                 target.dstColor = dualSourceBlending ? QRhiGraphicsPipeline::OneMinusSrc1Color : QRhiGraphicsPipeline::OneMinusSrcAlpha;
+                 target.dstAlpha = dualSourceBlending ? QRhiGraphicsPipeline::OneMinusSrc1Alpha : QRhiGraphicsPipeline::OneMinusSrcAlpha;
+             } else if (type == Op::DrawInvert) {
+-                // white times what is missing to white: the colours inverted, the alpha kept
++                // coverage times what is missing to white, plus what is there where nothing
++                // covers: the colours inverted through the coverage, the alpha kept
+                 target.enable = true;
+                 target.srcColor = QRhiGraphicsPipeline::OneMinusDstColor;
+-                target.dstColor = QRhiGraphicsPipeline::Zero;
++                target.dstColor = QRhiGraphicsPipeline::OneMinusSrcColor;
+                 target.srcAlpha = QRhiGraphicsPipeline::Zero;
+                 target.dstAlpha = QRhiGraphicsPipeline::One;
+             }
+-- 
+2.53.0
+

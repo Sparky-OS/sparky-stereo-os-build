@@ -1,0 +1,127 @@
+From 4d0fa930eb19483d8821e8d715cb20c9340e76ad Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 11 Nov 2026 15:12:02 -0300
+Subject: [PATCH] batched painting: a translucent window is emptied by the
+ pixels its painting covers; a clip path that is a rectangle is one; the
+ records of a frame can be listed
+
+Dolphin (a translucent window) had black lines one pixel wide between its items at scale 1.25:
+the store emptied each dirty rectangle to the pixels it touches where the painting that
+follows covers the rounded ones. A clip path that is a rectangle without saying so is taken as
+one, and clip rectangles are rounded by their corners, as QRasterPaintEngine::clip() does.
+QT_WIDGETS_GPU_PAINT_DUMP also lists each frame's records; QT_WIDGETS_GPU_PAINT_GROUND gives a
+new texture a colour, to tell a pixel nothing painted from one painted black.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ src/gui/painting/qbatchedpaintengine.cpp | 50 +++++++++++++++++++-----
+ 1 file changed, 41 insertions(+), 9 deletions(-)
+
+diff --git a/src/gui/painting/qbatchedpaintengine.cpp b/src/gui/painting/qbatchedpaintengine.cpp
+index a613baf..58e5ca8 100644
+--- a/src/gui/painting/qbatchedpaintengine.cpp
++++ b/src/gui/painting/qbatchedpaintengine.cpp
+@@ -41,6 +41,7 @@
+ #include <private/qfontengine_p.h>
+ #include <private/qfontengineglyphcache_p.h>
+ #include <private/qguiapplication_p.h>
++#include <private/qmath_p.h>
+ #include <private/qpaintengineex_p.h>
+ #include <private/qpainter_p.h>
+ #include <private/qstatictext_p.h>
+@@ -759,7 +760,8 @@ void QBatchedPaintEngine::clip(const QRect &rect, Qt::ClipOperation op)
+         QPaintEngineEx::clip(rect, op);
+         return;
+     }
+-    const QRegion region(normalizedFillRect(s->matrix.mapRect(QRectF(rect))));
++    // rounded as the raster engine rounds a clip rectangle: its corners, each by itself
++    const QRegion region(qt_mapFillRect(QRectF(rect), s->matrix));
+     if (op == Qt::IntersectClip && s->userClip)
+         s->userRegion &= region;
+     else
+@@ -779,7 +781,7 @@ void QBatchedPaintEngine::clip(const QRegion &region, Qt::ClipOperation op)
+     }
+     QRegion mapped;
+     for (const QRect &rect : region)
+-        mapped += normalizedFillRect(s->matrix.mapRect(QRectF(rect)));
++        mapped += qt_mapFillRect(QRectF(rect), s->matrix);
+     if (op == Qt::IntersectClip && s->userClip)
+         s->userRegion &= mapped;
+     else
+@@ -802,10 +804,11 @@ void QBatchedPaintEngine::clip(const QVectorPath &path, Qt::ClipOperation op)
+         return;
+     }
+     const bool intersect = op == Qt::IntersectClip && s->userClip;
+-    if (path.shape() == QVectorPath::RectangleHint && s->matrix.type() <= QTransform::TxScale
+-        && !(intersect && s->userClipIsPath)) {
++    // (a path that is a rectangle is one, whether or not it says so: QGraphicsView clips each
++    // item to its shape, a rectangle built as a path; QRasterPaintEngine::clip() asks the same)
++    if (path.isRect() && s->matrix.type() <= QTransform::TxScale && !(intersect && s->userClipIsPath)) {
+         const qreal *p = path.points();
+-        const QRegion region(normalizedFillRect(s->matrix.mapRect(QRectF(QPointF(p[0], p[1]), QPointF(p[4], p[5])).normalized())));
++        const QRegion region(qt_mapFillRect(QRectF(p[0], p[1], p[4] - p[0], p[5] - p[1]), s->matrix));
+         if (intersect)
+             s->userRegion &= region;
+         else
+@@ -1868,9 +1871,12 @@ void QBatchedPaintBackingStore::beginPaint(const QRegion &region)
+     }
+     if (m_translucent) {
+         // a translucent window starts from nothing where it paints, as a raster store does
++        // (rounded as the painting that follows is rounded, and as a raster store's own
++        // QPainter rounds this fill: emptied to the pixels outside it, a column or a row at a
++        // fractional scale would stay empty, a line through a translucent window)
+         for (const QRect &rect : region) {
+-            const QRect device = QRectF(rect.x() * m_dpr, rect.y() * m_dpr, rect.width() * m_dpr, rect.height() * m_dpr)
+-                                         .toAlignedRect() & QRect(QPoint(), m_pixelSize);
++            const QRect device = normalizedFillRect(QRectF(rect.x() * m_dpr, rect.y() * m_dpr, rect.width() * m_dpr,
++                                                           rect.height() * m_dpr)) & QRect(QPoint(), m_pixelSize);
+             if (!device.isEmpty())
+                 m_device.engine()->sourceRect(device, Qt::transparent);
+         }
+@@ -2258,6 +2264,28 @@ void QBatchedPaintBackingStore::run(QRhi *rhi, QRhiCommandBuffer *cb)
+         }
+     }
+ 
++    {
++        // QT_WIDGETS_GPU_PAINT_DUMP=FOLDER also lists each frame's records: target, source, colour, kind
++        static const QByteArray dump = qgetenv("QT_WIDGETS_GPU_PAINT_DUMP");
++        static int frame = 0;
++        if (!dump.isEmpty() && !quads.empty() && frame < 200) {
++            QFile list(QString::fromLocal8Bit(dump) + u"/records-%1.txt"_s.arg(frame++, 4, 10, QLatin1Char('0')));
++            if (list.open(QIODevice::WriteOnly)) {
++                for (const Op &op : ops) {
++                    list.write(QByteArray("op ") + QByteArray::number(int(op.type)) + " first " + QByteArray::number(op.first)
++                               + " count " + QByteArray::number(op.count) + '\n');
++                }
++                for (const Quad &q : quads) {
++                    list.write(QByteArray::number(q.x0) + ' ' + QByteArray::number(q.y0) + ' ' + QByteArray::number(q.x1) + ' '
++                               + QByteArray::number(q.y1) + " | " + QByteArray::number(q.u0) + ' ' + QByteArray::number(q.v0) + ' '
++                               + QByteArray::number(q.u1) + ' ' + QByteArray::number(q.v1) + " | " + QByteArray::number(q.rgba[0])
++                               + ' ' + QByteArray::number(q.rgba[1]) + ' ' + QByteArray::number(q.rgba[2]) + ' '
++                               + QByteArray::number(q.rgba[3]) + " | " + QByteArray::number(int(q.mode)) + '\n');
++                }
++            }
++        }
++    }
++
+     if (!quads.empty())
+         updates->updateDynamicBuffer(m_instances.get(), 0, quint32(quads.size() * sizeof(Quad)), quads.data());
+ 
+@@ -2284,8 +2312,12 @@ void QBatchedPaintBackingStore::run(QRhi *rhi, QRhiCommandBuffer *cb)
+         if (inPass)
+             return;
+         // a new texture starts from nothing (a translucent window) or from black
+-        cb->beginPass(m_hasContents ? m_keep.get() : m_clear.get(), m_translucent ? QColor(0, 0, 0, 0) : QColor(0, 0, 0, 255),
+-                      { 1.0f, 0 }, updates);
++        // QT_WIDGETS_GPU_PAINT_GROUND=RRGGBB: the colour a new texture starts with, to tell a pixel
++        // nothing painted from a pixel painted black
++        static const QByteArray ground = qgetenv("QT_WIDGETS_GPU_PAINT_GROUND");
++        const QColor first = !ground.isEmpty() ? QColor::fromString(QLatin1StringView('#' + ground))
++                                               : (m_translucent ? QColor(0, 0, 0, 0) : QColor(0, 0, 0, 255));
++        cb->beginPass(m_hasContents ? m_keep.get() : m_clear.get(), first, { 1.0f, 0 }, updates);
+         updates = nullptr;
+         cb->setViewport(QRhiViewport(0, 0, float(m_pixelSize.width()), float(m_pixelSize.height())));
+         m_hasContents = true;
+-- 
+2.53.0
+

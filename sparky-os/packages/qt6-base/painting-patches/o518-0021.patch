@@ -1,0 +1,28 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] Gui: build and embed the batched paint engine resources
+
+The lane build had this wiring outside its partial Git snapshot.
+Capture it for the source package.
+
+Assisted-by: GPT-6.1-sol via Codex
+
+--- a/src/gui/CMakeLists.txt
++++ b/src/gui/CMakeLists.txt
+@@ -163,6 +163,7 @@
+         painting/qbackingstore.cpp painting/qbackingstore.h
+         painting/qbackingstoredefaultcompositor.cpp painting/qbackingstoredefaultcompositor_p.h
+         painting/qbackingstorerhisupport.cpp painting/qbackingstorerhisupport_p.h
++        painting/qbatchedpaintengine.cpp
+         painting/qbezier.cpp painting/qbezier_p.h
+         painting/qblendfunctions.cpp painting/qblendfunctions_p.h
+         painting/qblittable.cpp painting/qblittable_p.h
+@@ -347,6 +348,9 @@
+     FILES
+         "painting/shaders/backingstorecompose.vert.qsb"
+         "painting/shaders/backingstorecompose.frag.qsb"
++        "painting/shaders/batchpaint.vert.qsb"
++        "painting/shaders/batchpaint.frag.qsb"
++        "painting/shaders/batchpaint_dual.frag.qsb"
+ )
+ 
+ qt_internal_extend_target(Gui CONDITION QT_FEATURE_standarditemmodel

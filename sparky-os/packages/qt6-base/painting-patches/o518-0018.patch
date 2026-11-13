@@ -1,0 +1,94 @@
+From 355d3c42a2f763e77fd16b1948d1d08728970ada Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 13 Nov 2026 01:26:32 -0300
+Subject: [PATCH] widgets: a way of painting a desktop chose for a program is
+ that program's alone
+
+A way that comes with someone to tell (QT_WIDGETS_GPU_PAINT_TELL) was chosen for this program by a desktop's
+settings: it is read when the application starts and taken out of the environment, so the programs this one
+starts (a terminal's shell, a file manager's launches) do not paint by it. A way set by hand, without anyone
+to tell, stays in the environment as any variable does.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ src/gui/painting/qbackingstore.cpp  | 21 +++++++++++++++++++--
+ src/widgets/kernel/qapplication.cpp |  6 ++++++
+ 2 files changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/src/gui/painting/qbackingstore.cpp b/src/gui/painting/qbackingstore.cpp
+index 0c3fda7..8ad9163 100644
+--- a/src/gui/painting/qbackingstore.cpp
++++ b/src/gui/painting/qbackingstore.cpp
+@@ -366,10 +366,26 @@ void Q_GUI_EXPORT qt_scrollRectInImage(QImage &img, const QRect &rect, const QPo
+ 
+     A store that cannot be made is said, with the reason, and the window is painted on the CPU.
+ */
++// The command to tell and whether a start that works is told too: read with the way of painting,
++// before the variables are taken out of the environment.
++Q_CONSTINIT static QString s_gpuPaintTell;
++Q_CONSTINIT static bool s_gpuPaintTellOk = false;
++
+ Q_GUI_EXPORT int qt_widgets_gpu_paint_mode()
+ {
+     static const int mode = [] {
+         const QByteArray value = qgetenv("QT_WIDGETS_GPU_PAINT").trimmed().toLower();
++        // A way that came with someone to tell was chosen for this program by a desktop (its settings
++        // for this program or its kind): it is this program's, so it is taken out of the environment
++        // and the programs this one starts (a terminal's, a file manager's) do not paint by it.
++        // A way set by hand, without anyone to tell, stays for them, as any variable does.
++        s_gpuPaintTell = qEnvironmentVariable("QT_WIDGETS_GPU_PAINT_TELL");
++        s_gpuPaintTellOk = qEnvironmentVariableIsSet("QT_WIDGETS_GPU_PAINT_TELL_OK");
++        if (!s_gpuPaintTell.isEmpty()) {
++            qunsetenv("QT_WIDGETS_GPU_PAINT");
++            qunsetenv("QT_WIDGETS_GPU_PAINT_TELL");
++            qunsetenv("QT_WIDGETS_GPU_PAINT_TELL_OK");
++        }
+         if (value.isEmpty() || value == "0")
+             return 0;
+         if (value == "batch" || value == "2")
+@@ -398,7 +414,8 @@ Q_GUI_EXPORT void qt_widgets_gpu_paint_tell(const char *code, const QString &det
+ {
+ #if QT_CONFIG(process)
+     static QList<QByteArray> told;
+-    const QString command = qEnvironmentVariable("QT_WIDGETS_GPU_PAINT_TELL");
++    qt_widgets_gpu_paint_mode();
++    const QString command = s_gpuPaintTell;
+     if (command.isEmpty() || told.contains(code))
+         return;
+     told.append(code);
+@@ -406,7 +423,7 @@ Q_GUI_EXPORT void qt_widgets_gpu_paint_tell(const char *code, const QString &det
+     if (program.isEmpty())
+         program = QCoreApplication::applicationName();
+     const bool ok = !qstrcmp(code, "ok");
+-    if (ok && !qEnvironmentVariableIsSet("QT_WIDGETS_GPU_PAINT_TELL_OK"))
++    if (ok && !s_gpuPaintTellOk)
+         return;
+     QStringList arguments{ok ? QStringLiteral("--paint-ok") : QStringLiteral("--paint-failed"), program};
+     if (!ok)
+diff --git a/src/widgets/kernel/qapplication.cpp b/src/widgets/kernel/qapplication.cpp
+index f4b1ae0..6a51cc4 100644
+--- a/src/widgets/kernel/qapplication.cpp
++++ b/src/widgets/kernel/qapplication.cpp
+@@ -464,6 +464,8 @@ QApplication::QApplication(int &argc, char **argv, int)
+ /*!
+     \internal
+ */
++Q_GUI_EXPORT int qt_widgets_gpu_paint_mode();
++
+ void QApplicationPrivate::init()
+ {
+ #if defined(Q_OS_MACOS)
+@@ -472,6 +474,10 @@ void QApplicationPrivate::init()
+ 
+     QGuiApplicationPrivate::init();
+ 
++    // The way widgets are painted is read before the program can start another one: a way a desktop
++    // chose for this program is taken out of the environment there (qbackingstore.cpp).
++    qt_widgets_gpu_paint_mode();
++
+     initResources();
+ 
+     qt_is_tty_app = (application_type == QApplicationPrivate::Tty);
+-- 
+2.53.0
+
