@@ -53,30 +53,30 @@ def summarize(root, plan):
     atomic(output/'summary.json',{'kit_version':plan['version'],'plan':plan,'rows':rows,'unique_inputs':inputs,**extras})
     lines=['# Rust toolchain measurements','',
            'Unique dep-info input counts are source coverage, not repeated I/O. Targets start empty; filesystem caches are not reset. Compiler installation preloads --version before startup rounds.',
-           'Thermal pauses and cool-downs are in each receipt; elapsed time includes any pause during the measured command.', '',
+           'Thermal pauses and cool-downs are in each receipt; elapsed time includes any pause during the measured command. Numeric text retains the JSON round-trip precision; percentages are not rounded to a display precision.', '',
            '| Measurement | A mean [min,max], n | B mean [min,max], n | C mean [min,max], n | B−A (percent) | C−A (percent) | Evidence |',
            '|---|---:|---:|---:|---:|---:|---|']
     for row in rows:
         cells=[]
         for f in 'ABC':
             s=row['forms'].get(f)
-            cells.append('—' if s is None else f"{s['mean']:.12g} [{s['min']:.12g},{s['max']:.12g}], {s['n']}")
+            cells.append('—' if s is None else f"{s['mean']} [{s['min']},{s['max']}], {s['n']}")
         comparisons=[]; interpretations=[]
         for f in 'BC':
             c=row['comparison'].get(f)
-            comparisons.append('—' if c is None else f"{c['absolute']:.12g} ({c['percent']:.12g}%)" if c['percent'] is not None else f"{c['absolute']:.12g} (undefined baseline)")
+            comparisons.append('—' if c is None else f"{c['absolute']} ({c['percent']}%)" if c['percent'] is not None else f"{c['absolute']} (undefined baseline)")
             if c:interpretations.append(f+': '+c['interpretation'])
         lines.append('| '+' | '.join([row['measurement'],*cells,*comparisons,'; '.join(interpretations)])+' |')
     if inputs:
         lines+=['','## Unique compiler inputs','','| Count | A | B | C | B−A (%) | C−A (%) |','|---|---:|---:|---:|---:|---:|']
         for key in ('bytes','lines','unique_files'):
             a=inputs['A'][key];b=inputs['B'][key];c=inputs['C'][key]
-            lines.append(f'| {key} | {a} | {b} | {c} | {b-a} ({100*(b-a)/a:.12g}%) | {c-a} ({100*(c-a)/a:.12g}%) |')
+            lines.append(f'| {key} | {a} | {b} | {c} | {b-a} ({100*(b-a)/a}%) | {c-a} ({100*(c-a)/a}%) |')
     if extras:
         totals=extras['installed_bytes'];a=totals['A'];b=totals['B'];c=totals['C']
         lines+=['','## Package payloads','','These are exact archived installed-file lengths; package compression is excluded.',
                 '', '| A bytes | B bytes | C bytes | B−A (%) | C−A (%) |','|---:|---:|---:|---:|---:|',
-                f'| {a} | {b} | {c} | {b-a} ({100*(b-a)/a:.12g}%) | {c-a} ({100*(c-a)/a:.12g}%) |',
+                f'| {a} | {b} | {c} | {b-a} ({100*(b-a)/a}%) | {c-a} ({100*(c-a)/a}%) |',
                 '', 'ELF section/content and layout differences are in `results/analyze/result/size-differences.json`. Unknown causal contributions remain named there.',
                 '', '## Program bytes and panic locations','']
         for name,data in extras['program-bytes'].items():lines.append(f'- {name}: identical across every compiled output = {data["all_same"]}.')
