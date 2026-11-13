@@ -36,6 +36,8 @@ export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 mkdir -p "$BUILD_ROOT" "$OUT"
 [ ! -e "$BUILD_ROOT/source" ] || { echo "Use a fresh BUILD_ROOT" >&2; exit 2; }
+apt-get -y update > "$BUILD_ROOT/prepare-apt.log" 2>&1
+apt-get -y --no-install-recommends install quilt >> "$BUILD_ROOT/prepare-apt.log" 2>&1
 
 # The predecessor source exactly as published: every file the .dsc names, checked against the signed index
 python3 - "$SPARKY_PUBLISHED_TREE" "$BUILD_ROOT" "$PREDECESSOR" <<'PY'
