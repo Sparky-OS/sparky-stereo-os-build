@@ -4,7 +4,7 @@
 # Copyright 2026 under the GNU GPL3 License
 # Usage: suite-generate.sh SOURCE OUT [APP...]
 #   SOURCE holds apps/, vendor/ and this recipe's files (suite.json, suite-tree.py, suite-source.py, suite-trees.sh,
-#   suite-patches/, and suite-Cargo.lock when the source pins the resolve); OUT is the workspace to write, at the path
+#   suite-fixups.json, and suite-Cargo.lock when the source pins the resolve); OUT is the workspace to write, at the path
 #   it is built at (the generated crates name their members by absolute path). Nothing is fetched: every source is
 #   replaced by its folder under SOURCE/vendor, and a crate that is not there stops cargo.
 # The compiler in PATH names the libraries: its `rustc -vV` enters every library's name.
@@ -18,10 +18,24 @@ python3 "$tools/suite-tree.py" tree "$out" "$json" "$src/apps" "${apps[@]}"
 cd "$out"
 mkdir -p .cargo
 python3 "$tools/suite-source.py" config "$src/vendor" "$src/vendor" >.cargo/config.toml
-for p in "$tools"/suite-patches/*.patch; do
-	app=$(basename "$p" | cut -d- -f2)
-	case " ${apps[*]} " in *" $app "*) patch -s -p1 <"$p"; echo "applied $(basename "$p")" ;; esac
-done
+# the few lines one resolve needs changed in the generated copy (never in upstream's files): each names its line
+# whole, so it applies to the authored and to the lean form alike, and stops when the line is not there exactly once
+python3 - "$tools/suite-fixups.json" "$out" "${apps[@]}" <<'PY'
+import json, sys
+from pathlib import Path
+fixups, out, apps = json.loads(Path(sys.argv[1]).read_text()), Path(sys.argv[2]), sys.argv[3:]
+for f in fixups:
+    if f['app'] not in apps:
+        continue
+    path = out / f['app'] / f['file']
+    lines = path.read_text().split('\n')
+    at = [i for i, line in enumerate(lines) if line == f['old']]
+    if len(at) != 1:
+        sys.exit(f"{path}: the line to change is there {len(at)} times, not once: {f['old']!r}")
+    lines[at[0]] = f['new']
+    path.write_text('\n'.join(lines))
+    print(f"changed in the generated copy: {f['app']}/{f['file']}: {f['why']}")
+PY
 bins=(); feats=(); groups=()
 for a in "${apps[@]}"; do
 	mapfile -t b < <(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["apps"][sys.argv[2]]["bins"]))' "$json" "$a")

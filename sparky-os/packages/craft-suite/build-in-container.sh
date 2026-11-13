@@ -33,7 +33,7 @@ make_source() {    # make_source OUT: OUT/s1 gets the +stereo3dN source, OUT/lc 
 	(cd "$out/s1" && tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$SOURCE_DATE_EPOCH" -cf - "craft-suite-$up" | xz -T1 -2 >"craft-suite_$up.orig.tar.xz")
 	mkdir -p "$t/debian"
 	cp -a /tools/debian/. "$t/debian/"
-	cp -a /tools/suite.json /tools/suite-tree.py /tools/suite-source.py /tools/suite-trees.sh /tools/suite-generate.sh /tools/suite-build.sh /tools/suite-patches "$t/debian/"
+	cp -a /tools/suite.json /tools/suite-tree.py /tools/suite-source.py /tools/suite-trees.sh /tools/suite-generate.sh /tools/suite-build.sh /tools/suite-fixups.json "$t/debian/"
 	cp -a /src/authors "$t/debian/authors"
 	# the libraries' names and the pinned resolve, made with the compiler the build will use
 	rm -rf /work/names && install -d -o builder -g builder /work/names
