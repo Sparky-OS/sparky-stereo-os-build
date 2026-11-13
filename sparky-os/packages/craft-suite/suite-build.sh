@@ -26,6 +26,8 @@ declare -A group
 for a in "${apps[@]}"; do
 	for b in $(field "$a" bins); do all+=(-p "$b"); done
 	f=$(field "$a" features); [ -z "$f" ] || allfeats+=($f)
+	# an example an app's own packaging script runs to write its man pages and shell completions
+	for e in $(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["apps"][sys.argv[2]].get("examples", [])))' "$json" "$a"); do all+=(--example "$e"); done
 	ids+=("${a^^}_BUILD_SHA=$(field "$a" rev)" "${a^^}_BUILD_DATE=$date")
 	key="$(field "$a" fonts)|$(field "$a" i18n)"
 	group[$key]="${group[$key]:-} $a"
@@ -57,6 +59,9 @@ for key in $(printf '%s\n' "${!group[@]}" | LC_ALL=C sort); do
 		rm -rf "built/$a"; mkdir -p "built/$a"
 		cp "$CARGO_TARGET_DIR/release/lib${a}_shared.so" "built/$a/"
 		for b in $(field "$a" bins); do cp "$CARGO_TARGET_DIR/release/$b" "built/$a/"; done
+		for e in $(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["apps"][sys.argv[2]].get("examples", [])))' "$json" "$a"); do
+			mkdir -p "built/$a/examples"; cp "$CARGO_TARGET_DIR/release/examples/$e" "built/$a/examples/"
+		done
 	done
 done
 echo "built: $(ls built | tr '\n' ' '); the common library is $common"

@@ -58,6 +58,19 @@ make_source() {    # make_source OUT: OUT/s1 gets the +stereo3dN source, OUT/lc 
 	# the vendored crates' checksum manifests go back to their authored bytes before the projection report is removed
 	sed -i 's|^\trm -rf \.sparky-lc$|\tpython3 debian/cargo-checksums.py restore\n\trm -rf .sparky-lc|' authored/debian/rules
 	grep -q 'cargo-checksums.py restore' authored/debian/rules
+	# The link and start gate runs on the finished packages after the build (lean.release check-link, with the archive):
+	# the compile container has no network to install the packages' run-time dependencies with.
+	cat >authored/debian/sparky-builddeb.py <<'PYWRAP'
+import sys
+from pathlib import Path
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / 'debian/sparky-lean-toolkit'))
+from lean import debhelper
+debhelper.link_gate = lambda built: print('link gate after the build: lean.release check-link', ' '.join(p.name for p in built))
+debhelper.build(root, root / 'debian/sparky-lean-toolkit/provenance.sh')
+PYWRAP
+	sed -i "s|^\tPYTHONPATH=\$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.debhelper --provenance .*\$|\tpython3 \$(CURDIR)/debian/sparky-builddeb.py \$(CURDIR)|" authored/debian/rules
+	grep -q 'sparky-builddeb.py' authored/debian/rules
 	python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" authored
 	(cd authored && dpkg-source -b . >/dev/null)
 	rm -rf authored

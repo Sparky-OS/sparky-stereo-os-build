@@ -21,6 +21,7 @@ for a in "$@"; do
 	fonts=$src/fonts/craft-fonts-$(field "$a" fonts | cut -c1-8)
 	work=$src/debian/stage/$a; mkdir -p "$work/target/release" "$work/dist"
 	for b in $(field "$a" bins); do cp "$rel/$a/$b" "$work/target/release/$b"; done
+	[ ! -d "$rel/$a/examples" ] || cp -a "$rel/$a/examples" "$work/target/release/"
 	# upstream's script reads the version from the app's root manifest, which the generated workspace keeps aside
 	appdir=$ws/$a
 	cp "$appdir/Cargo.toml.upstream-root" "$work/Cargo.toml.root"
