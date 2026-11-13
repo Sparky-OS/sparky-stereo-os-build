@@ -7,7 +7,7 @@ set -euo pipefail
 src=$(cd "$1" && pwd); ws=$(cd "$2" && pwd); libpkg=$3; shift 3
 json=$src/debian/suite.json
 libdir=usr/lib/x86_64-linux-gnu
-rel=$CARGO_TARGET_DIR/release
+rel=$ws/built
 : "${SOURCE_DATE_EPOCH:?}"
 date=$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y-%m-%d)
 field() { python3 -c 'import json,sys; v=json.load(open(sys.argv[1]))["apps"][sys.argv[2]][sys.argv[3]]; print("" if v is None else (" ".join(v) if isinstance(v, list) else v))' "$json" "$1" "$2"; }
@@ -17,10 +17,10 @@ install -m644 "$rel/libcraft_suite_shared.so" "$named/$(cat "$ws/shared/soname.t
 install -D -m644 "$named/$(cat "$ws/shared/soname.txt")" "$src/debian/$libpkg/$libdir/$(cat "$ws/shared/soname.txt")"
 for a in "$@"; do
 	so=$(cat "$ws/$a-shared/soname.txt")
-	install -m644 "$rel/lib${a}_shared.so" "$named/$so"
+	install -m644 "$rel/$a/lib${a}_shared.so" "$named/$so"
 	fonts=$src/fonts/craft-fonts-$(field "$a" fonts | cut -c1-8)
 	work=$src/debian/stage/$a; mkdir -p "$work/target/release" "$work/dist"
-	for b in $(field "$a" bins); do cp "$rel/$b" "$work/target/release/$b"; done
+	for b in $(field "$a" bins); do cp "$rel/$a/$b" "$work/target/release/$b"; done
 	# upstream's script reads the version from the app's root manifest, which the generated workspace keeps aside
 	appdir=$ws/$a
 	cp "$appdir/Cargo.toml.upstream-root" "$work/Cargo.toml.root"
