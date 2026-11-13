@@ -5,7 +5,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT}
 SOURCE=${APTUS_SOURCE:-$HERE/../../sparky-aptus-stereo-appcenter}
-VERSION=0.1.6+lc1
+VERSION=0.1.7+lc1
 PACKAGE=sparky-aptus-stereo-appcenter
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.aptus-stereo.XXXXXX")
@@ -19,6 +19,7 @@ install -m644 "$WORK/source/ATTRIBUTIONS.md" "$D/usr/lib/$PACKAGE/ATTRIBUTIONS.m
 install -m644 "$WORK/source/catalogue.py" "$WORK/source/catalogue.json" "$D/usr/lib/$PACKAGE/"
 install -Dm755 "$WORK/source/actions/entry" "$D/usr/lib/$PACKAGE/actions/entry"
 install -m644 "$WORK/source/common.py" "$D/usr/lib/$PACKAGE/common.py"
+install -m644 "$WORK/source/appimage.py" "$D/usr/lib/$PACKAGE/appimage.py"
 install -Dm755 "$WORK/source/actions/zram" "$D/usr/lib/$PACKAGE/actions/zram"
 install -m644 "$WORK/source/lang/"*.json "$D/usr/share/sparky/$PACKAGE/"
 printf '#!/bin/sh\nexec /usr/lib/sparky-aptus-stereo-appcenter/appcenter "$@"\n' > "$D/usr/bin/$PACKAGE"
@@ -52,7 +53,7 @@ Package: $PACKAGE
 Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Depends: sparky-aptus-appcenter, sparky-stereo-apt (>= 20261104.3~sparky9~0), python3, python3-apt, curl, flatpak, sparky-stereo-hardware, apt, dpkg, systemd, udev, kmod, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
+Depends: distrobox, fuse3, podman, sparky-aptus-appcenter, sparky-stereo-apt (>= 20261104.3~sparky9~0), python3, python3-apt, curl, flatpak, sparky-stereo-hardware, apt, dpkg, systemd, udev, kmod, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
 Section: admin
 Priority: optional
 Homepage: https://sparkylinux.org
