@@ -113,7 +113,7 @@ class SourceDate(unittest.TestCase):
         import os
         from lean.debian_prepare import prepare
         toolkit = Path(__file__).resolve().parents[2]
-        env = {'SOURCE_DATE_EPOCH': '1793974631', 'DEBFULLNAME': 'Example', 'DEBEMAIL': 'example@example.invalid'}
+        env = {'SOURCE_DATE_EPOCH': '1793974631', 'DEBFULLNAME': 'Daniel Ramos (Capitain Jack)', 'DEBEMAIL': 'Capitain_Jack@yahoo.com'}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.tree(root)
