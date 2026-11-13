@@ -23,6 +23,7 @@ def census(tree, output, reference=None):
     for name in sorted(names):
         p=Path(name)
         if not p.is_absolute(): p=tree/p
+        p=p.resolve()
         if not p.is_file(): raise RuntimeError('dep-info input missing: '+str(p))
         data=p.read_bytes()
         try: rel=p.relative_to(tree).as_posix()

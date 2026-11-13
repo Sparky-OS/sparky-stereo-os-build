@@ -1,8 +1,8 @@
 # Preparing Rust compiler sources for a Lean Code comparison
 
-This is the source-preparation part of an experiment on rustc 1.99.1+dfsg1.
-It prepares the files before they go to a measurement machine.
-The build runner and hardware measurements are a later step.
+These tools prepare three source forms and an offline measurement kit for rustc 1.99.1+dfsg1.
+Source projection and kit qualification happen before the measurement machine runs the fixed experiment.
+The hand-back records which checks actually passed; hardware results exist only after the bench run.
 
 Use an extracted Debian source with its patch series applied, the edition's Lean toolkit 0.1.29 on `PYTHONPATH`, and the edition's rustc 1.99.1 installed in an isolated container.
 The 1.99.1 compiler checks lexical equivalence; the eventual toolchain builds use the same pinned 1.98.1 seed for every form.
@@ -23,7 +23,7 @@ Expect the tests to pass, preparation to print its progress, and verification to
 `OUTPUT` must not exist before preparation.
 An interrupted preparation has no accepted `source-report.json`; inspect the partial output before explicitly retiring it and starting again.
 Preparation checks free space before copying and between batches, reserving the configured scratch floor plus 5 GiB.
-The eventual unattended build runner needs its own continuously sampled guard.
+The unattended runner supplies a separate continuously sampled guard.
 
 The authored tree is read and checked again at the end.
 Form B uses the unchanged Rust renderer and source-reader rules from Lean 0.1.29, retaining doc attributes and legal notices.

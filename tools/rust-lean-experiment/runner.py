@@ -57,8 +57,10 @@ class Runner:
         self.root=root.resolve();self.plan=json.loads((root/'plan.json').read_text())
         self.statepath=root/'state.json';self.state=json.loads(self.statepath.read_text()) if self.statepath.exists() else {'completed':{},'images':{}}
         self.digest=sha(root/'plan.json')
+        self.payload=sha(root/'SHA256SUMS')
+        if self.state.get('payload_sha256',self.payload)!=self.payload:raise RuntimeError('kit payload changed since first run')
         if self.state.get('plan_sha256',self.digest)!=self.digest:raise RuntimeError('plan changed since first run')
-        self.state.update(plan_sha256=self.digest,version=self.plan['version'],pid=os.getpid())
+        self.state.update(payload_sha256=self.payload,plan_sha256=self.digest,version=self.plan['version'],pid=os.getpid())
         (root/'runtime').mkdir(exist_ok=True);(root/'results').mkdir(exist_ok=True)
         # The rootful Podman store is confined to this kit; no host compiler or apt writes.
         self.engine=self.plan.get('engine') or ['sudo','-n','podman','--root',str(root/'runtime/storage'),'--runroot',str(root/'runtime/runroot')]
@@ -108,7 +110,7 @@ class Runner:
         dest=self.root/'results'/step['id'];receipt=dest/'receipt.json'
         if not receipt.exists():return False
         r=json.loads(receipt.read_text())
-        if r.get('complete') is not True or r['plan_sha256']!=self.digest or r['step']!=step:
+        if r.get('complete') is not True or r['plan_sha256']!=self.digest or r['payload_sha256']!=self.payload or r['step']!=step:
             raise RuntimeError('result receipt does not match plan: '+step['id'])
         for n,h in r['files'].items():
             if sha(dest/n)!=h:raise RuntimeError('finished result changed: '+step['id']+'/'+n)
@@ -174,7 +176,7 @@ class Runner:
             summarize(self.root,self.plan)
             shutil.copytree(self.root/'summary',partial/'result')
         else:raise RuntimeError('unknown step '+kind)
-        result={'complete':True,'version':self.plan['version'],'plan_sha256':self.digest,'step':step,
+        result={'complete':True,'version':self.plan['version'],'payload_sha256':self.payload,'plan_sha256':self.digest,'step':step,
                 'form_checksum':self.plan.get('forms',{}).get(step.get('form')),
                 'completed_unix':time.time(),'machine':machine(),'files':{},**extra}
         for p in partial.rglob('*'):

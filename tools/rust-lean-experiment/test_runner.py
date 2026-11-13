@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import patch
 import guard
 from measure import number,parse_perf
+from inputs import census
 from package_wrapper import restore
 from runner import Runner,extract,inventory
 from summary import summarize
@@ -44,6 +45,24 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual((s/'main.rs').read_bytes(),(a/'main.rs').read_bytes())
             (s/'main.rs').write_text('unexpected')
             with self.assertRaises(RuntimeError):restore(s,a,b)
+
+
+class InputTests(unittest.TestCase):
+    def test_real_depinfo_alias_and_spaces(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);tree=root/'tree';ref=root/'ref'
+            for p in (tree,ref):
+                (p/'src/nested').mkdir(parents=True)
+                (p/'src/space file.rs').write_text('// source\nfn main() {}\n')
+            (tree/'build').mkdir()
+            path=str(tree/'src/space file.rs').replace(' ','\\ ')
+            alias=str(tree/'src/nested/../space file.rs').replace(' ','\\ ')
+            (tree/'build/unit.d').write_text('output: '+path+' '+alias+'\n')
+            data=census(tree,root/'inputs.json',ref)
+            self.assertEqual(data['unique_files'],1)
+            self.assertEqual(data['lines'],2)
+            (tree/'src/space file.rs').write_text('changed')
+            with self.assertRaisesRegex(RuntimeError,'changed after source sealing'):census(tree,root/'bad.json',ref)
 
 
 class GuardTests(unittest.TestCase):
@@ -98,10 +117,10 @@ class ReceiptTests(unittest.TestCase):
     def test_accept_finished_then_detect_corruption(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);plan={'version':'fixture','image_id':'sha256:fixture','cpus':2}
-            (root/'plan.json').write_text(json.dumps(plan));runner=Runner(root)
+            (root/'plan.json').write_text(json.dumps(plan));(root/'SHA256SUMS').write_text('');runner=Runner(root)
             step={'id':'a','kind':'check','form':'A'};dest=root/'results/a';dest.mkdir();(dest/'value').write_text('whole')
             from runner import sha
-            guard.atomic(dest/'receipt.json',{'complete':True,'plan_sha256':runner.digest,'step':step,
+            guard.atomic(dest/'receipt.json',{'complete':True,'plan_sha256':runner.digest,'payload_sha256':runner.payload,'step':step,
                                               'files':{'value':sha(dest/'value')},'completed_unix':1})
             self.assertTrue(runner.accepted(step));self.assertIn('a',runner.state['completed'])
             (dest/'value').write_text('corrupt')
@@ -109,7 +128,7 @@ class ReceiptTests(unittest.TestCase):
     def test_half_step_not_accepted(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);(root/'plan.json').write_text(json.dumps({'version':'fixture','image_id':'none','cpus':2}))
-            runner=Runner(root);p=root/'results/a';p.mkdir();(p/'metrics.json').write_text('{}')
+            (root/'SHA256SUMS').write_text('');runner=Runner(root);p=root/'results/a';p.mkdir();(p/'metrics.json').write_text('{}')
             self.assertFalse(runner.accepted({'id':'a','kind':'check','form':'A'}))
     def test_comma_summary_tables(self):
         with tempfile.TemporaryDirectory() as d:

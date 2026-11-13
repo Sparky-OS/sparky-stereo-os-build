@@ -18,7 +18,7 @@ def bind_hash(tree):
     # Discovery is the edition recipe's content hash, never a guessed constant.
     libs=list((tree/'build/x86_64-unknown-linux-gnu/stage2/lib/rustlib/x86_64-unknown-linux-gnu/lib').glob('libstd-*.so'))
     if len(libs)!=1: raise RuntimeError('expected exactly one stage2 libstd runtime')
-    found=re.fullmatch(r'libstd-([0-9a-f]+)\.so',libs[0].name).group(1)
+    found=re.fullmatch(r'libstd-([0-9a-f]{16})\.so',libs[0].name).group(1)
     deb=tree/'debian'
     for p in list(deb.iterdir()):
         if p.is_file() and not p.is_symlink() and (p.name in ('control','sparky-libstd-hash') or p.name.startswith('libstd-rust-discover.')):
@@ -28,6 +28,10 @@ def bind_hash(tree):
                 if p.suffix in ('.py','.sh') or p.name in ('sparky-libstd-runtime',): continue
                 p.write_bytes(data.replace(b'discover',found.encode()))
             if 'discover' in p.name: p.rename(p.with_name(p.name.replace('discover',found)))
+    changelog=deb/'changelog';text=changelog.read_text()
+    if text.count('libstd-rust-discover')!=2 or text.count('libstd-discover.so')!=1:
+        raise RuntimeError('edition changelog no longer has the three reviewed discovery placeholders')
+    changelog.write_text(text.replace('libstd-rust-discover','libstd-rust-'+found).replace('libstd-discover.so','libstd-'+found+'.so'))
     (deb/'sparky-libstd-hash').write_text(found+'\n')
     return found
 
@@ -51,6 +55,7 @@ def main(kind,cpus):
         run(['make','-f','debian/rules','build'],out/'compile')
         found=bind_hash(tree)
         (out/'std-hash.txt').write_text(found+'\n')
+        shutil.copytree(tree/'debian',out/'bound-packaging',ignore=shutil.ignore_patterns('sparky-lean-toolkit','patches'))
         run(['dpkg-buildpackage','-us','-uc','-b','-nc','-j'+cpus],out/'package')
         packages=sorted(Path('/work').glob('*.deb'))
         if not packages: raise RuntimeError('no packages assembled')
@@ -58,6 +63,8 @@ def main(kind,cpus):
         for p in packages: shutil.move(p,out/'packages'/p.name)
         shutil.copy2(tree/'debian/rl541-restored-rust.json',out/'rust-src-restored.json')
     else: raise ValueError(kind)
+    shutil.copy2(tree/'debian/config.toml',out/'config.toml')
+    (out/'environment.json').write_text(json.dumps({k:os.environ[k] for k in ('LC_ALL','CARGO_NET_OFFLINE','DEB_BUILD_OPTIONS','SOURCE_DATE_EPOCH')},indent=2)+'\n')
     census(tree,out/'inputs.json',Path('/form'))
     (out/'step.json').write_text(json.dumps({'kind':kind,'complete':True,'seed':seed})+'\n')
 
