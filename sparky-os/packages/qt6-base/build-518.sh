@@ -12,7 +12,7 @@ ARCHIVE=$(cd "$3" && pwd -P)
 sparky_provenance_init sparky-lc-migration:20261020
 docker run --rm --name qt-518-package --cpus 4 --platform linux/amd64 --ulimit core=0 \
     --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-    --add-host repo.sparkyos.org:192.168.0.60 "${SPARKY_PROV_ARGS[@]}" \
+    "${SPARKY_PROV_ARGS[@]}" \
     -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
     -v "$WORK":/work -v "$REPO":/repo:ro -v "$ARCHIVE":/archive:ro \
     -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
