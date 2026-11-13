@@ -21,7 +21,7 @@ if [ "$1" != debian ]; then
 	MOUNTS=(-v "$(cd "$1" && pwd)":/debs:ro -v "$SPARKY_REPO_DIR":/repo:ro)
 fi
 status=0
-docker run --rm --cpus 4 --platform linux/amd64 "${MOUNTS[@]}" -v "$RESULTS":/t -v "$HERE":/tools:ro \
+docker run --rm --name "${QT6_BASE_TEST_CONTAINER_NAME:-qt-518-headers}" --ulimit core=0 --cpus 4 --platform linux/amd64 "${MOUNTS[@]}" -v "$RESULTS":/t -v "$HERE":/tools:ro \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
 	"$IMAGE" bash -c 'sh /run/https-only-apt.sh && bash /tools/test-in-container.sh > /t/test.log 2>&1' || status=$?
 cat "$RESULTS/summary.txt" 2>/dev/null || tail -20 "$RESULTS/test.log"
