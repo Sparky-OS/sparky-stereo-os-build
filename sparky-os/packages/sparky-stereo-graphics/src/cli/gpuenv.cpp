@@ -586,7 +586,10 @@ int main(int argc, char **argv)
         paintFacts.qtPaintsOnGpu = PaintFacts::qtHasPainting();
         paint = Paint::resolve(asked, paintId, paintSettings, paintRecord, paintFacts);
     }
-    if (paint.reason != u"session"_s && paint.asked != PaintWay::Processor) {
+    // said and kept only for a caller that takes the painting's answer (the launcher's lines, or the way itself), not
+    // for one that only asks where a kind of program draws (libmedia-gpu-route's --print render-node)
+    const bool paintAsked = print == u"env"_s || print.startsWith(u"paint"_s);
+    if (paintAsked && paint.reason != u"session"_s && paint.asked != PaintWay::Processor) {
         const QString key = Paint::problemKey(asked, paintId);
         if (!paint.problem.isEmpty()) {
             // said and kept; the program starts and paints on the processor, which is what it does without this page

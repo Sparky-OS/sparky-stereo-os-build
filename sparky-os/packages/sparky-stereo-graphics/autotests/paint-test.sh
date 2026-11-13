@@ -96,6 +96,8 @@ SPARKY_STEREO_QT_PAINT=0 env_for host --category other >/dev/null 2>"$T/err"
 has "a kind without a program: said with the kind's words" "$T/err" "Painting on the graphics card cannot be used for other programs:"
 check "a kind without a program: kept under the kind" "$([ -f "$(rec paint-other)" ] && echo kept)" kept
 rm -rf "$PROBLEMS"
+SPARKY_STEREO_QT_PAINT=0 env_for host --category other --print render-node >/dev/null 2>"$T/err"
+check "a caller that only asks where a kind draws keeps nothing about painting" "$([ -f "$(rec paint-other)" ] || echo none) $(grep -c Painting "$T/err")" "none 0"
 
 # what only the program knows: it tells, the page keeps, and the next good start ends it
 env_for host --paint-failed org.kde.kate software "llvmpipe (LLVM 21.1.8, 256 bits)" 2>"$T/err"
