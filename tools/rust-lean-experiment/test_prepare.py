@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Small compiler-backed controls for source preparation; run in a container."""
+import json
+import os
+from pathlib import Path
+import tempfile
+import unittest
+
+from lean import lang_rust
+import prepare
+
+
+class SourceControls(unittest.TestCase):
+    def test_lexer_rejects_code_changes(self):
+        a, changed = lang_rust.token_streams('fn main() { let a = 1; }', 'fn main() { let a = 2; }')
+        with self.assertRaisesRegex(RuntimeError, 'form B'):
+            prepare.assert_tokens(a, changed, a)
+        with self.assertRaisesRegex(RuntimeError, 'form C'):
+            prepare.assert_tokens(a, a, changed)
+
+    def test_documentation_is_only_permitted_difference_in_c(self):
+        a = '//! inner\n/// outer\nfn f() {}\n'
+        b = a
+        c = prepare.render_c(a)
+        sa, sb, sc = lang_rust.token_streams(a, b, c)
+        prepare.assert_tokens(sa, sb, sc)
+        self.assertEqual(c, 'fn f() {}\n')
+        with self.assertRaisesRegex(RuntimeError, 'form B'):
+            prepare.assert_tokens(sa, sc, sc)
+
+    def test_strings_notices_and_authored_empty_lines(self):
+        a = '// Copyright 2026 Test\n\n// ordinary\n\n/// docs\nfn f() { let _ = r"/// data"; } // tail\n'
+        c = prepare.render_c(a)
+        self.assertEqual(c, '// Copyright 2026 Test\n\n\nfn f() { let _ = r"/// data"; }\n')
+
+    def test_readers_include_sources_under_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'src/build').mkdir(parents=True)
+            (root / 'src/build/input.rs').write_text('fn f() {}')
+            (root / 'debian').mkdir()
+            (root / 'debian/ignored.rs').write_text('not an input')
+            self.assertEqual(list(prepare.entries(root)), ['src/build/input.rs'])
+
+    def test_missing_docs_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'Cargo.toml').write_text('[package]\nname="sample"\nversion="0.1.0"\n')
+            (root / 'lib.rs').write_text('#![deny(missing_docs)]\n/// docs\npub fn f() {}\n')
+            owners, reasons = prepare.doc_policy(root, ['lib.rs'])
+            self.assertEqual(owners['lib.rs'], '.')
+            self.assertIn('deny/forbid(missing_docs)', reasons['.'][0])
+
+    def test_checksum_update_rejects_wrong_original(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / '.cargo-checksum.json'
+            path.write_text(json.dumps({'files': {'lib.rs': 'a'}, 'package': 'p'}))
+            with self.assertRaisesRegex(RuntimeError, 'authored bytes'):
+                prepare.checksum_update(root, {'lib.rs': ('x', 'b')})
+            prepare.checksum_update(root, {'lib.rs': ('a', 'b')})
+            self.assertEqual(json.loads(path.read_text()), {'files': {'lib.rs': 'b'}, 'package': 'p'})
+
+    def test_guard_refuses_impossible_floor(self):
+        with self.assertRaisesRegex(RuntimeError, 'space guard'):
+            prepare.space(Path.cwd(), floor_gib=10**9)
+
+    def test_inventory_detects_tampering(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'input.rs').write_text('original')
+            first = prepare.inventory(root)
+            (root / 'input.rs').write_text('modified')
+            self.assertNotEqual(first['sha256'], prepare.inventory(root)['sha256'])
+
+
+if __name__ == '__main__':
+    os.environ['LC_ALL'] = 'C'
+    unittest.main(verbosity=2)
