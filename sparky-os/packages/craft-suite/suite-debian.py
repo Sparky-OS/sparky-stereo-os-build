@@ -12,12 +12,15 @@
 import json
 import re
 import sys
+import textwrap
 import tomllib
 from pathlib import Path
 
 MAINTAINER = 'Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>'
 CREDIT = ('Sparky Stereo OS, Daniel Ramos\'s (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, '
           'by Paweł "pavroo" Pijanowski)')
+CREDIT_LINES = ('Sparky Stereo OS, Daniel Ramos\'s (Capitain Jack) edition of SparkyLinux\n'
+                ' (https://sparkylinux.org, by Paweł "pavroo" Pijanowski)')
 # Libraries the programs open at run time (winit, wgpu, the file dialogs), which no ELF header names; upstream's own
 # package lists the same ones.
 RUNTIME = ('libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, libwayland-egl1, libx11-6, '
@@ -108,7 +111,7 @@ Description: Craft suite: what the edition's packages of the apps share as data
  package manager: with it an app's own update check offers nothing and asks
  no server.
  .
- {CREDIT}.
+ {CREDIT_LINES}.
 
 Package: {libpkg}
 Architecture: amd64
@@ -120,7 +123,7 @@ Description: Craft suite: the Rust crates the apps have in common, as one shared
  The library's name carries the compiler and every crate, version, source and
  feature in it, so each app depends on exactly the library it was built with.
  .
- {CREDIT}.
+ {CREDIT_LINES}.
 ''']
     for a in apps:
         section, short, long = DESCRIPTIONS[a]
@@ -132,12 +135,11 @@ Section: {section}
 Depends: ${{shlibs:Depends}}, ${{misc:Depends}}, craft-suite-common (= ${{source:Version}}), {RUNTIME}
 Recommends: mesa-vulkan-drivers, libegl-mesa0, xdg-desktop-portal
 Description: {short}
-''' + ''.join(f' {line}\n' for line in long) + f''' {STEREO[a]}
- .
+''' + ''.join(f' {line}\n' for line in textwrap.wrap(' '.join(long) + ' ' + STEREO[a], 76)) + f''' .
  {a} {app['version']}, built from the edition's stereo branch
  {app['branch']} at {app['rev'][:12]}, with the suite's shared libraries.
  .
- {CREDIT}.
+ {CREDIT_LINES}.
 ''')
     (deb / 'control').write_text(''.join(control))
 
@@ -198,13 +200,14 @@ License: MIT or Apache-2.0
     for lic in sorted(by_lic):
         rows = by_lic[lic]
         crates = sorted({f'{n} {v}' + ('' if w == 'crates.io' else f' ({w})') for n, v, w, _ in rows})
-        people = sorted({a for *_, au in rows for a in au}, key=str.casefold)
+        # names that differ only in case sort by their own bytes next: a set's order is not the same in two runs
+        people = sorted({a for *_, au in rows for a in au}, key=lambda a: (a.casefold(), a))
         c.append('Files: vendor/*\n' + '\n'.join(wrap('Copyright: ', people or ['the authors named in each crate'])) + f'\nLicense: {lic}\n'
                  + '\n'.join(wrap('Comment: ' + f'{len(crates)} crates under this licence expression, authors as each crate\'s Cargo.toml names them: ', [x + ',' for x in crates[:-1]] + crates[-1:])) + '\n')
     c.append(f'''Files: debian/*
 Copyright: 2026 Daniel Ramos (Capitain Jack)
 License: GPL-3+
-Comment: {CREDIT}.
+Comment: {CREDIT_LINES}.
  The packaging is by Daniel Ramos with Claude Fable 5.2 (Anthropic) assisting.
 
 License: MIT or Apache-2.0
