@@ -68,7 +68,7 @@ def doc_policy(root, names):
     owners = {n: owner(root, n) for n in names}
     for n in names:
         crate = owners[n]
-        if crate is None:
+        if crate is None or any(p in FIXTURES for p in Path(n).parts):
             continue
         try:
             code = lang_rust.code_text((root / n).read_text(), literals=False)
@@ -84,6 +84,8 @@ def doc_policy(root, names):
             why.append(f'{n}: documentation-consuming derive or macro requires build review')
         if re.search(r'\b(?:doc_comment|docinclude)\s*!', code):
             why.append(f'{n}: documentation macro')
+        if re.search(r'\brustc_queries\s*!', code):
+            why.append(f'{n}: rustc_queries! reads docs and generates replacement attributes when absent')
         if why:
             reasons.setdefault(crate, []).extend(why)
     return owners, reasons
@@ -145,7 +147,8 @@ def inventory(root):
                 rows.append({'path': rel, 'link': os.readlink(p)})
             else:
                 raw = p.read_bytes()
-                rows.append({'path': rel, 'bytes': len(raw), 'sha256': sha(raw)})
+                rows.append({'path': rel, 'mode': p.stat().st_mode & 0o7777,
+                             'bytes': len(raw), 'sha256': sha(raw)})
     rows.sort(key=lambda r: r['path'])
     return {'sha256': sha(json.dumps(rows, sort_keys=True, separators=(',', ':')).encode()),
             'files': rows, 'bytes': sum(r.get('bytes', 0) for r in rows)}
@@ -182,12 +185,17 @@ def prepare(authored, output, batch=80):
         raise RuntimeError('output already exists; inspect or remove the unfinished output explicitly')
     space(authored, sum(p.stat().st_size for p in authored.rglob('*') if p.is_file()) * 2)
     output.mkdir()
+    print('Inventorying authored source', flush=True)
     baseline = inventory(authored)
     names = sorted(entries(authored))
+    print(f'Classifying source readers of {len(names)} Rust files', flush=True)
     left = source_tree.rust_readers(authored, names)
+    print('Classifying include_str!/include_bytes! readers', flush=True)
     read_data = project.read_as_data({'/' + n: (authored / n).read_bytes() for n in names},
                                      ('/' + n for n in names))
+    print('Classifying documentation consumers', flush=True)
     owners, doc_reasons = doc_policy(authored, names)
+    print('Copying disposable B and C sources', flush=True)
     for form in ('B', 'C'):
         shutil.copytree(authored, output / form, symlinks=True)
     rows, changes, last_guard = {}, {'B': {}, 'C': {}}, 0.0
@@ -251,7 +259,8 @@ def prepare(authored, output, batch=80):
     if inventory(authored) != baseline:
         raise RuntimeError('authored input changed during preparation')
     atomic_json(output / 'A-manifest.json', baseline)
-    result = {'version': VERSION_ID, 'lean': VERSION, 'renderer': project.IDENTITY,
+    result = {'version': VERSION_ID, 'preparer_sha256': sha(Path(__file__).read_bytes()),
+              'lean': VERSION, 'renderer': project.IDENTITY,
               'lexer': compiler, 'forms': {f: {k: v for k, v in obj.items() if k != 'files'}
                                          for f, obj in [('A', baseline), *forms.items()]},
               'rs_files': len(names), 'changed': {f: len(v) for f, v in changes.items()},
