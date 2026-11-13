@@ -21,7 +21,7 @@ def plan(image,forms,subject='compiler',fixture=False):
                 steps.append({'id':f'{task}-{r}-{f.lower()}-{i}','kind':'runtime','task':task,'form':f})
     steps += [{'id':'analyze','kind':'analyze'},{'id':'summary','kind':'summary'}]
     return {'version':'order541-kit-1','image_id':image,'seed_version':'1.98.1+dfsg1-1+stereo3d1+lc1',
-            'cpus':2 if fixture else 4,'scratch_floor_gib':2,'start_temperature_c':80 if fixture else 62,
+            'cpus':2 if fixture else 4,'minimum_start_free_gib':7 if fixture else 80,'scratch_floor_gib':2,'start_temperature_c':80 if fixture else 62,
             'stop_temperature_c':90,'forms':forms,'steps':steps,'fixture':fixture}
 
 

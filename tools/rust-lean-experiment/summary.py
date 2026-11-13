@@ -52,7 +52,7 @@ def summarize(root, plan):
         extras['installed_bytes']={f:sum(r['bytes'] for r in v.values() if not r['link']) for f,v in extras['installed-files'].items()}
     atomic(output/'summary.json',{'kit_version':plan['version'],'plan':plan,'rows':rows,'unique_inputs':inputs,**extras})
     lines=['# Rust toolchain measurements','',
-           'Unique dep-info input counts are source coverage, not repeated I/O. All timing is warm-cache unless explicitly marked.',
+           'Unique dep-info input counts are source coverage, not repeated I/O. Targets start empty; filesystem caches are not reset. Compiler installation preloads --version before startup rounds.',
            'Thermal pauses and cool-downs are in each receipt; elapsed time includes any pause during the measured command.', '',
            '| Measurement | A mean [min,max], n | B mean [min,max], n | C mean [min,max], n | B−A (percent) | C−A (percent) | Evidence |',
            '|---|---:|---:|---:|---:|---:|---|']

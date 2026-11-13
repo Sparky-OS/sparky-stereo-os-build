@@ -47,13 +47,14 @@ def run(command, output, expected=0):
     started = time.time()
     with (output/'stdout').open('wb') as out, (output/'stderr').open('wb') as err:
         r = subprocess.run(argv, stdout=out, stderr=err, env=env)
+    ended=time.time()
     if r.returncode != expected:
         raise RuntimeError(f'command exit {r.returncode}, expected {expected}; inspect {output}/stderr')
     metrics = parse_perf((output/'perf.txt').read_text())
     rss = re.findall(r'^maxrss_kib=(\d+)$', (output/'rss.txt').read_text(), re.M)
     if len(rss) != 1:
         raise RuntimeError('GNU time did not provide peak child RSS')
-    metrics.update(max_child_rss_kib=int(rss[0]), command=command, started_unix=started,
+    metrics.update(max_child_rss_kib=int(rss[0]), command=command, started_unix=started, ended_unix=ended,
                    exit_code=r.returncode, cgroup_peak_bytes=int(Path('/sys/fs/cgroup/memory.peak').read_text()))
     tmp = output/'metrics.json.partial'
     tmp.write_text(json.dumps(metrics, indent=2, sort_keys=True)+'\n')

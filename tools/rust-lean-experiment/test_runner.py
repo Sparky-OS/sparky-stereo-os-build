@@ -41,7 +41,12 @@ class CollectorTests(unittest.TestCase):
             for p in (a,b,s):p.mkdir()
             (a/'main.rs').write_text('// authored\nfn main() {}\n')
             for p in (b,s):(p/'main.rs').write_text('fn main() {}\n')
-            self.assertEqual(restore(s,a,b),['main.rs'])
+            import hashlib
+            for p in (a,b,s):
+                meta={'files':{'main.rs':hashlib.sha256((p/'main.rs').read_bytes()).hexdigest()},'package':'fixture'}
+                (p/'.cargo-checksum.json').write_text(json.dumps(meta))
+            self.assertEqual(restore(s,a,b),['main.rs','.cargo-checksum.json'])
+            self.assertEqual((s/'.cargo-checksum.json').read_bytes(),(a/'.cargo-checksum.json').read_bytes())
             self.assertEqual((s/'main.rs').read_bytes(),(a/'main.rs').read_bytes())
             (s/'main.rs').write_text('unexpected')
             with self.assertRaises(RuntimeError):restore(s,a,b)

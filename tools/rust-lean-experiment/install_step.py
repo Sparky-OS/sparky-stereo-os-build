@@ -18,4 +18,4 @@ if len(packages)!=5:raise RuntimeError(f'expected five runtime/compiler packages
 subprocess.run(['dpkg','--auto-deconfigure','-i',*map(str,packages)],check=True)
 version=subprocess.check_output(['rustc','--version'],text=True)
 if not version.startswith('rustc 1.99.1 '):raise RuntimeError('installed compiler is not the named 1.99.1: '+version)
-Path('/installed.json').write_text(json.dumps({'archives':[p.name for p in packages],'version':version})+'\n')
+Path('/installed.json').write_text(json.dumps({'archives':[p.name for p in packages],'version':version,'verbose_version':subprocess.check_output(['rustc','-vV'],text=True),'installed_versions':subprocess.check_output(['dpkg-query','-W','rustc','cargo','libstd-rust-1.99','libstd-rust-dev'],text=True)})+'\n')

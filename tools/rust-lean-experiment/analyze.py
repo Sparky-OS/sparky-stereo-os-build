@@ -8,6 +8,8 @@ import re
 import shutil
 import subprocess
 import tarfile
+import itertools
+import zlib
 from elftools.elf.elffile import ELFFile
 from lean.locate import locate
 
@@ -31,28 +33,69 @@ def classify(name):
     return 'other; residual unclassified'
 
 
-def sections(a,b):
-    file_differences=0
+def differing(a,b):
+    return sum(c!=d for c,d in zip(a,b))+abs(len(a)-len(b))
+
+
+def file_differences(a,b):
+    count=0
     with a.open('rb') as fa,b.open('rb') as fb:
         while True:
             x,y=fa.read(1<<20),fb.read(1<<20)
-            if not x and not y:break
-            file_differences+=sum(c!=d for c,d in zip(x,y))+abs(len(x)-len(y))
+            if not x and not y:return count
+            if x!=y:count+=differing(x,y)
+
+
+def section_chunks(section):
+    if section is None or section['sh_type']=='SHT_NOBITS':return
+    stream=section.stream;offset=section['sh_offset'];remaining=section['sh_size']
+    decoder=None
+    if section.compressed:
+        size=section.structs.Elf_Chdr.sizeof();stream.seek(offset)
+        header=section.structs.Elf_Chdr.parse(stream.read(size))
+        if header['ch_type']!='ELFCOMPRESS_ZLIB':raise RuntimeError('unqualified ELF compression '+str(header['ch_type']))
+        offset+=size;remaining-=size;decoder=zlib.decompressobj()
+    stream.seek(offset);pending=b'';total=0
+    while remaining:
+        block=stream.read(min(1<<20,remaining))
+        if not block:raise RuntimeError('truncated ELF section')
+        remaining-=len(block)
+        while block:
+            data=decoder.decompress(block,1<<20) if decoder else block
+            block=decoder.unconsumed_tail if decoder else b''
+            pending+=data;total+=len(data)
+            while len(pending)>=1<<20:
+                yield pending[:1<<20];pending=pending[1<<20:]
+    if decoder:
+        while True:
+            data=decoder.decompress(b'',1<<20)
+            if not data:break
+            total+=len(data);pending+=data
+            while len(pending)>=1<<20:yield pending[:1<<20];pending=pending[1<<20:]
+        if not decoder.eof:raise RuntimeError('truncated compressed ELF data')
+    if total!=section.data_size:raise RuntimeError('ELF logical section length mismatch')
+    if pending:yield pending
+
+
+def sections(a,b):
     with a.open('rb') as fa,b.open('rb') as fb:
         aa=ELFFile(fa);bb=ELFFile(fb)
         sa={s.name:s for s in aa.iter_sections()};sb={s.name:s for s in bb.iter_sections()}
         rows=[]
         for n in sorted(sa.keys()|sb.keys()):
-            x,y=sa.get(n),sb.get(n)
-            dx=x.data() if x is not None and x['sh_type']!='SHT_NOBITS' else b''
-            dy=y.data() if y is not None and y['sh_type']!='SHT_NOBITS' else b''
-            if dx==dy and (x['sh_size'] if x is not None else 0)==(y['sh_size'] if y is not None else 0):continue
-            changed=sum(c!=d for c,d in zip(dx,dy))+abs(len(dx)-len(dy))
-            rows.append({'section':n,'A_bytes':int(x['sh_size']) if x is not None else 0,
-                         'other_bytes':int(y['sh_size']) if y is not None else 0,'different_bytes_at_section_offsets':changed,
-                         'class':classify(n)})
-        return {'file_offset_different_bytes':file_differences,'sections':rows,
-                'interpretation':'Section-offset comparisons classify content separately from file-layout shifts. Counts at the two coordinate systems must not be added. Panic locations are established by the runtime resolver; metadata/debug residuals are explicitly unproven.'}
+            x,y=sa.get(n),sb.get(n);changed=0;hx=hashlib.sha256();hy=hashlib.sha256()
+            for dx,dy in itertools.zip_longest(section_chunks(x),section_chunks(y),fillvalue=b''):
+                hx.update(dx);hy.update(dy)
+                if dx!=dy:changed+=differing(dx,dy)
+            size=lambda s:int(s['sh_size']) if s is not None else 0
+            logical_size=lambda s:int(s.data_size) if s is not None else 0
+            if not changed and size(x)==size(y) and logical_size(x)==logical_size(y):continue
+            rows.append({'section':n,'A_stored_bytes':0 if x is not None and x['sh_type']=='SHT_NOBITS' else size(x),'other_stored_bytes':0 if y is not None and y['sh_type']=='SHT_NOBITS' else size(y),
+                         'A_logical_bytes':logical_size(x),'other_logical_bytes':logical_size(y),
+                         'different_bytes_at_logical_section_offsets':changed,
+                         'A_logical_sha256':hx.hexdigest(),'other_logical_sha256':hy.hexdigest(),'class':classify(n)})
+        return {'file_offset_different_bytes':file_differences(a,b),'sections':rows,
+                'interpretation':'Logical section content is streamed, including zlib-compressed debug records. File-offset differences also include layout shifts; these coordinate counts must not be added. Panic locations are established by the runtime resolver; remaining causal contributions are explicit residuals.'}
 
 
 def package_files(packages,destination):
@@ -122,6 +165,7 @@ def main():
                 if elf:row['ELF']=sections(px,py)
                 elif n.endswith(('.rlib','.a')):row['class']='archive/metadata: member-level causal attribution remains unproven'
                 else:row['class']='non-ELF payload or pathname/content metadata'
+                if not elf:row['file_offset_different_bytes']=file_differences(px,py)
             else:row['class']='file added/removed or link/mode change'
             differences.append(row)
     (out/'size-differences.json').write_text(json.dumps(differences,indent=2)+'\n')

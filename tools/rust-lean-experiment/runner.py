@@ -63,12 +63,16 @@ class Runner:
         self.state.update(payload_sha256=self.payload,plan_sha256=self.digest,version=self.plan['version'],pid=os.getpid())
         (root/'runtime').mkdir(exist_ok=True);(root/'results').mkdir(exist_ok=True)
         # The rootful Podman store is confined to this kit; no host compiler or apt writes.
-        self.engine=self.plan.get('engine') or ['sudo','-n','podman','--root',str(root/'runtime/storage'),'--runroot',str(root/'runtime/runroot')]
+        (root/'runtime/tmp').mkdir(exist_ok=True)
+        self.engine=self.plan.get('engine') or ['sudo','-n','env','TMPDIR='+str(root/'runtime/tmp'),'podman','--root',str(root/'runtime/storage'),'--runroot',str(root/'runtime/runroot')]
         self.base=self.plan['image_id'];self.cpus=str(self.plan['cpus'])
 
     def save(self,**fields):self.state.update(fields,updated_unix=time.time());atomic(self.statepath,self.state)
 
     def verify_payload(self):
+        required=self.plan['minimum_start_free_gib']*1024**3
+        if shutil.disk_usage(self.root).free<required:
+            raise RuntimeError('kit requires '+str(self.plan['minimum_start_free_gib'])+' GiB free before starting/resuming')
         for line in (self.root/'SHA256SUMS').read_text().splitlines():
             digest,name=line.split('  ',1)
             p=self.root/name
@@ -86,10 +90,11 @@ class Runner:
                         'floors_gib':self.floors(),'start_temperature_c':self.plan['start_temperature_c'],
                         'stop_temperature_c':self.plan['stop_temperature_c']})
 
-    def container(self,name,image,mounts,command,user='1000:1000',remove=True):
+    def container(self,name,image,mounts,command,user=None,remove=True):
+        if user is None:user=str(os.getuid())+':'+str(os.getgid())
         argv=[*self.engine,'run',*(['--rm'] if remove else []),'--name',name,'--network','none','--pull=never','--cpus',self.cpus,
               '--memory','8g','--ulimit','core=0','--cap-add','SYS_ADMIN','--cap-add','PERFMON','--user',user,
-              '-e','LC_ALL=C','-e','PYTHONDONTWRITEBYTECODE=1','-e','RL541_CPUS='+self.cpus]
+              '-e','LC_ALL=C','-e','HOME=/work/home','-e','PYTHONDONTWRITEBYTECODE=1','-e','RL541_CPUS='+self.cpus]
         if self.plan.get('fixture'):
             argv+=['-e','RL541_FIXTURE=1']
             if os.environ.get('RL541_FIXTURE_DELAY'):argv+=['-e','RL541_FIXTURE_DELAY='+os.environ['RL541_FIXTURE_DELAY']]
@@ -128,14 +133,14 @@ class Runner:
         for p in (work,partial):
             if p.exists():shutil.rmtree(p)
             p.mkdir()
+        (work/'home').mkdir()
         kind=step['kind'];script=self.root/'scripts';extra={}
         if kind=='load':
             # Image load happens from a local verified archive; no pull is permitted.
-            with gzip.open(self.root/'image.tar.gz','rb') as f:
-                p=subprocess.Popen([*self.engine,'load'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
-                try:shutil.copyfileobj(f,p.stdin);p.stdin.close();log=p.stdout.read();rc=p.wait()
+            with gzip.open(self.root/'image.tar.gz','rb') as f,(partial/'load.log').open('wb') as log:
+                p=subprocess.Popen([*self.engine,'load'],stdin=subprocess.PIPE,stdout=log,stderr=subprocess.STDOUT)
+                try:shutil.copyfileobj(f,p.stdin);p.stdin.close();rc=p.wait()
                 except BaseException:p.kill();p.wait();raise
-            (partial/'load.log').write_bytes(log)
             if rc:raise RuntimeError('image load failed')
             checked([*self.engine,'image','inspect',self.base],stdout=subprocess.DEVNULL)
         elif kind in ('whole','check'):
@@ -155,6 +160,7 @@ class Runner:
             argv=self.container(name,self.base,[(script,'/scripts',True),(packages,'/packages',True)],
                                 ['python3','/scripts/install_step.py'],user='0:0',remove=False)
             extra['guard']=self.guard(name,argv,partial/'guard')
+            checked([*self.engine,'cp',name+':/installed.json',str(partial/'installed.json')])
             image=checked([*self.engine,'commit',name,'rl541-runtime-'+self.digest[:12]+'-'+step['form'].lower()],stdout=subprocess.PIPE,text=True).stdout.strip()
             checked([*self.engine,'image','inspect',image],stdout=subprocess.DEVNULL)
             extra['runtime_image_id']=image;self.state['images'][step['form']]=image

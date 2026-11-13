@@ -25,6 +25,24 @@ def restore(staging, authored, form):
             restored.append(str(name))
         if target.read_bytes() != want:
             raise RuntimeError('authored restoration failed: '+str(name))
+    # library/vendor is shipped by rust-src; its checksums must follow the
+    # restored authored Rust bytes, rather than the lean build inputs.
+    for original in authored.rglob('.cargo-checksum.json'):
+        name=original.relative_to(authored)
+        if '.pc' in name.parts or original.is_symlink():continue
+        target=staging/name
+        if not target.is_file() or target.is_symlink():continue
+        data,want=target.read_bytes(),original.read_bytes()
+        if data!=want:
+            if data!=(form/name).read_bytes():raise RuntimeError('rust-src checksum changed outside prepared form: '+str(name))
+            target.write_bytes(want);restored.append(str(name))
+        manifest=json.loads(want)
+        for rel,digest in manifest.get('files',{}).items():
+            source=target.parent/rel
+            if source.is_file():
+                import hashlib
+                if hashlib.sha256(source.read_bytes()).hexdigest()!=digest:
+                    raise RuntimeError('authored rust-src checksum does not match payload: '+str(name)+' -> '+rel)
     return restored
 
 
