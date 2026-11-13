@@ -29,8 +29,8 @@ REPRO=$SPARKY_RELEASE_TOOLKIT/repo/reproducible.py
 : "${SOURCE_DATE_EPOCH:?export the recipe date: python3 $SPARKY_RELEASE_TOOLKIT/repo/reproducible.py epoch $HERE}"
 SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
 export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
-PREDECESSOR=6.30.0-1+stereo3d7+lc1
-VERSION=6.30.0-1+stereo3d9+lc1
+PREDECESSOR=6.30.0-1+stereo3d9+lc1
+VERSION=6.30.0-1+stereo3d10+lc1
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
@@ -81,38 +81,24 @@ source, version = Path(sys.argv[1]), sys.argv[2]
 changelog = source/'debian/changelog'
 old = changelog.read_text()
 entry = (f'kf6-kio ({version}) testing; urgency=medium\n\n'
-         '  * Start no application whose GPU cannot be applied (ORDER 346g): when\n'
-         '    the GPU the person chose on the Graphics page cannot be used\n'
-         '    (sparky-stereo-gpu-env exit status 4), the launch fails with the\n'
-         "    program's name and the resolver's own words, what failed, why and\n"
-         "    what to do, through KIO's own launch-failure path; a resolver that\n"
-         '    fails, crashes, cannot be started or does not answer within five\n'
-         '    seconds is said the same way. Automatic, a rule and not the\n'
-         "    person's choice, never refuses: when it cannot place a program now\n"
-         '    (exit status 5) the program starts as the session would, as\n'
-         '    before. Without the resolver nothing changes.\n'
-         '  * Breaks sparky-stereo-graphics before 0.2.4, whose resolver gives\n'
-         '    exit status 4 also where Automatic cannot place a browser.\n'
-         '  * +stereo3d8 predates two corrections of the French in\n'
-         '    kf6-kio-gpu-launch.po.patch (6b9ec4f, 767eaf9), so its French\n'
-         '    "crashed" message differs from the patch (ORDER 391): this build\n'
-         '    carries the catalogue patch as the build repository has it.\n'
-         '  * The new messages in Polish, Brazilian Portuguese, French, German,\n'
-         '    Japanese, Korean and Chinese (Simplified and Traditional).\n\n'
+         '  * Ask the Graphics resolver for paint-env when an entry or its\n'
+         '    launch environment already chooses a GPU. Keep that GPU choice\n'
+         '    and accept only the three painting variables in this path.\n'
+         '  * Require the resolver interface from sparky-stereo-graphics 0.2.8\n'
+         '    when the Graphics page is installed (ORDER 518).\n\n'
          ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n')
 changelog.write_text(entry + old)
 PY
 dpkg-parsechangelog -l source/debian/changelog -S Version | grep -qx "$VERSION"
-# The launcher refuses the resolver's exit status 4, which sparky-stereo-graphics before 0.2.4 also gives where
-# Automatic, which never refuses, cannot place a browser (Debian Policy 7.3, Breaks)
+# The new paint-only query needs the 0.2.8 resolver when it is present (Debian Policy 7.3, Breaks).
 python3 - source/debian/control <<'PY'
 import sys
 from pathlib import Path
 control = Path(sys.argv[1])
 text = control.read_text()
-stanza = 'Package: libkf6kiogui6\nArchitecture: any\n'
-assert stanza in text and 'sparky-stereo-graphics' not in text
-control.write_text(text.replace(stanza, stanza + 'Breaks: sparky-stereo-graphics (<< 0.2.4~)\n', 1))
+old = 'Breaks: sparky-stereo-graphics (<< 0.2.4~)'
+assert text.count(old) == 1, 'the published KIO Graphics interface constraint changed'
+control.write_text(text.replace(old, 'Breaks: sparky-stereo-graphics (<< 0.2.8~)', 1))
 PY
 
 apt-get -y update > apt-update.log 2>&1

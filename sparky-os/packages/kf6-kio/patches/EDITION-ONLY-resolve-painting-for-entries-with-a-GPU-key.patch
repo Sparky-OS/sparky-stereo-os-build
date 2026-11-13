@@ -1,0 +1,145 @@
+From 32b4c4d5f610ad6b552096ddb110b63589324164 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 13 Nov 2026 11:45:58 -0300
+Subject: [PATCH] Resolve painting independently of an application GPU key
+
+Ask for paint-env for explicit desktop or session GPU choices and accept only the three painting variables. Keep the selected GPU environment intact.
+
+Assisted-by: GPT-6.1-sol via Codex
+---
+ autotests/applicationlauncherjobtest.cpp | 19 ++++++++++++++-----
+ src/gui/gpudetection.cpp                 | 21 ++++++++++++++-------
+ src/gui/kprocessrunner.cpp               |  7 +++----
+ 3 files changed, 31 insertions(+), 16 deletions(-)
+
+diff --git a/autotests/applicationlauncherjobtest.cpp b/autotests/applicationlauncherjobtest.cpp
+index 552ba6c..aee1775 100644
+--- a/autotests/applicationlauncherjobtest.cpp
++++ b/autotests/applicationlauncherjobtest.cpp
+@@ -424,6 +424,10 @@ refuse) cat "$dir/said" >&2; exit 4 ;;
+ rule) cat "$dir/said" >&2; exit 5 ;;
+ esac
+ [ "$1" = --app ] || exit 2
++if [ "$3 $4" = '--print paint-env' ]; then
++    printf 'QT_WIDGETS_GPU_PAINT=batch\nDRI_PRIME=wrong-gpu\nVK_LOADER_DRIVERS_SELECT=wrong-driver\n'
++    exit 0
++fi
+ profile=$(cat "$dir/profile")
+ grep "^$2 $profile " "$dir/answers" | cut -d' ' -f3- | tr ' ' '\n'
+ )";
+@@ -461,11 +465,11 @@ void ApplicationLauncherJobTest::shouldRunOnTheGpuOfTheGraphicsSettings_data()
+     QTest::newRow("game_2d_on_ac") << game << QString() << true << "performance" << "answer" << QString() << true << measured;
+     QTest::newRow("outside_the_menu") << player << QString() << false << "power-saver" << "answer" << QString() << true << measured;
+     // The program's own key and a GPU the launch environment chooses keep their precedence
+-    QTest::newRow("own_key_false") << player << "PrefersNonDefaultGPU=false" << true << "power-saver" << "answer" << QString() << false << QString();
+-    QTest::newRow("own_key_true") << game << "PrefersNonDefaultGPU=true" << true << "power-saver" << "answer" << QString() << false << QString();
+-    QTest::newRow("own_legacy_key_true") << game << "X-KDE-RunOnDiscreteGpu=true" << true << "power-saver" << "answer" << QString() << false
++    QTest::newRow("own_key_false") << player << "PrefersNonDefaultGPU=false" << true << "power-saver" << "answer" << QString() << true << QString();
++    QTest::newRow("own_key_true") << game << "PrefersNonDefaultGPU=true" << true << "power-saver" << "answer" << QString() << true << QString();
++    QTest::newRow("own_legacy_key_true") << game << "X-KDE-RunOnDiscreteGpu=true" << true << "power-saver" << "answer" << QString() << true
+                                          << QString();
+-    QTest::newRow("session_chooses") << player << QString() << true << "power-saver" << "answer" << "1" << false << "1";
++    QTest::newRow("session_chooses") << player << QString() << true << "power-saver" << "answer" << "1" << true << "1";
+     // Without the graphics settings the application starts as it always did
+     QTest::newRow("resolver_absent") << player << QString() << true << "power-saver" << "absent" << QString() << false << QString();
+     // Automatic is a rule, not the person's choice: when it cannot place the application now (the power profile a browser
+@@ -565,18 +569,23 @@ void ApplicationLauncherJobTest::shouldRunOnTheGpuOfTheGraphicsSettings()
+     QVERIFY(envOutput.open(QIODevice::ReadOnly));
+     QString driPrime;
+     QString vulkanDrivers;
++    QString paint;
+     const QList<QByteArray> lines = envOutput.readAll().split('\n');
+     for (const QByteArray &line : lines) {
+         if (line.startsWith("DRI_PRIME=")) {
+             driPrime = QString::fromUtf8(line.mid(10));
+         } else if (line.startsWith("VK_LOADER_DRIVERS_SELECT=")) {
+             vulkanDrivers = QString::fromUtf8(line.mid(25));
++        } else if (line.startsWith("QT_WIDGETS_GPU_PAINT=")) {
++            paint = QString::fromUtf8(line.mid(21));
+         }
+     }
+     QFile askedLog(dir + QLatin1String("/asked"));
+     const QString askedWith = askedLog.open(QIODevice::ReadOnly) ? QString::fromUtf8(askedLog.readAll()).trimmed() : QString();
+     if (expectAsked) {
+-        QCOMPARE(askedWith, QStringLiteral("--app ") + asked);
++        const bool paintOnly = !ownKey.isEmpty() || !sessionDriPrime.isEmpty();
++        QCOMPARE(askedWith, QStringLiteral("--app ") + asked + (paintOnly ? QStringLiteral(" --print paint-env") : QString()));
++        QCOMPARE(paint, paintOnly ? QStringLiteral("batch") : QString());
+     } else {
+         QCOMPARE(askedWith, QString());
+     }
+diff --git a/src/gui/gpudetection.cpp b/src/gui/gpudetection.cpp
+index 667b690..ea6ce7a 100644
+--- a/src/gui/gpudetection.cpp
++++ b/src/gui/gpudetection.cpp
+@@ -156,10 +156,8 @@ QProcessEnvironment discreteGpuEnvironment()
+ GraphicsSettingsAnswer graphicsSettingsEnvironment(const KService &service)
+ {
+     // An application that says where it runs keeps its own choice
+-    if (!service.property<QString>(QStringLiteral("PrefersNonDefaultGPU")).isEmpty()
+-        || !service.property<QString>(QStringLiteral("X-KDE-RunOnDiscreteGpu")).isEmpty()) {
+-        return {};
+-    }
++    bool paintOnly = !service.property<QString>(QStringLiteral("PrefersNonDefaultGPU")).isEmpty()
++        || !service.property<QString>(QStringLiteral("X-KDE-RunOnDiscreteGpu")).isEmpty();
+ 
+     const QProcessEnvironment launchEnv = QProcessEnvironment::systemEnvironment();
+     for (const auto &name : {QStringLiteral("DRI_PRIME"),
+@@ -167,7 +165,7 @@ GraphicsSettingsAnswer graphicsSettingsEnvironment(const KService &service)
+                              QStringLiteral("VK_LOADER_DRIVERS_SELECT"),
+                              QStringLiteral("__NV_PRIME_RENDER_OFFLOAD")}) {
+         if (launchEnv.contains(name)) {
+-            return {};
++            paintOnly = true;
+         }
+     }
+ 
+@@ -184,7 +182,11 @@ GraphicsSettingsAnswer graphicsSettingsEnvironment(const KService &service)
+     // Longer than the command's own longest wait, three seconds for power-profiles-daemon, so it says its reason itself
+     constexpr int timeoutSeconds = 5;
+     QProcess process;
+-    process.start(resolver, {QStringLiteral("--app"), entry});
++    QStringList arguments = {QStringLiteral("--app"), entry};
++    if (paintOnly) {
++        arguments << QStringLiteral("--print") << QStringLiteral("paint-env");
++    }
++    process.start(resolver, arguments);
+     const bool finished = process.waitForFinished(timeoutSeconds * 1000);
+     const QString said = QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
+ 
+@@ -233,7 +235,12 @@ GraphicsSettingsAnswer graphicsSettingsEnvironment(const KService &service)
+         for (const QString &line : lines) {
+             const int equals = line.indexOf(QLatin1Char('='));
+             if (equals > 0) {
+-                answer.environment.insert(line.left(equals), line.mid(equals + 1));
++                const QString name = line.left(equals);
++                if (!paintOnly || name == QLatin1String("QT_WIDGETS_GPU_PAINT")
++                    || name == QLatin1String("QT_WIDGETS_GPU_PAINT_TELL")
++                    || name == QLatin1String("QT_WIDGETS_GPU_PAINT_TELL_OK")) {
++                    answer.environment.insert(name, line.mid(equals + 1));
++                }
+             }
+         }
+         qCDebug(KIO_GUI) << "GPU environment from" << resolver << "for" << entry << answer.environment.toStringList();
+diff --git a/src/gui/kprocessrunner.cpp b/src/gui/kprocessrunner.cpp
+index c054a33..a75a408 100644
+--- a/src/gui/kprocessrunner.cpp
++++ b/src/gui/kprocessrunner.cpp
+@@ -103,11 +103,10 @@ KProcessRunner *KProcessRunner::fromApplication(const KService::Ptr &service,
+     if (service->isValid()) {
+         if (service->runOnDiscreteGpu()) {
+             gpuEnv = KIO::discreteGpuEnvironment();
+-        } else {
+-            const KIO::GraphicsSettingsAnswer answer = KIO::graphicsSettingsEnvironment(*service);
+-            gpuEnv = answer.environment;
+-            gpuError = answer.error;
+         }
++        const KIO::GraphicsSettingsAnswer answer = KIO::graphicsSettingsEnvironment(*service);
++        gpuEnv.insert(answer.environment);
++        gpuError = answer.error;
+     }
+ #endif
+ 
+-- 
+2.53.0
+
