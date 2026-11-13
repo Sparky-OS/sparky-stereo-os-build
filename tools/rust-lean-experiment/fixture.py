@@ -48,7 +48,7 @@ def install():
 def panic(out):
     root=Path('/work/library/std/src/io');root.mkdir(parents=True)
     # A clearly labelled fixture, exercising the same location extraction and resolver.
-    (root/'stdio.rs').write_text('pub fn fail() { panic!("failed printing to stdout: fixture"); }\n')
+    (root/'stdio.rs').write_text('#![allow(dead_code)]\npub fn fail() { panic!("failed printing to stdout: fixture"); }\n')
     Path('/work/panic.rs').write_text('#[path="library/std/src/io/stdio.rs"] mod stdio; fn main(){stdio::fail();}\n')
     run(['rustc','/work/panic.rs','-o','/work/panic'],out/'compile')
     run(['/work/panic'],out/'panic',expected=101)

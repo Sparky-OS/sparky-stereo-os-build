@@ -54,6 +54,21 @@ class CollectorTests(unittest.TestCase):
 
 
 class InputTests(unittest.TestCase):
+    def test_nested_cargo_relative_depinfo(self):
+        with tempfile.TemporaryDirectory() as d:
+            tree=Path(d)/'tree';tree.mkdir()
+            staged=tree/'build/parent/out/staging';staged.mkdir(parents=True)
+            (staged/'Cargo.toml').write_text('[package]\nname="nested"\nversion="0.1.0"\n')
+            (staged/'build.rs').write_text('fn main() {}\n')
+            dep=tree/'build/host/debug/build/nested/abc123/out';dep.mkdir(parents=True)
+            (dep/'build_script_build.d').write_text('artifact: build.rs\n')
+            (tree/'build/tmpfiles.d').mkdir()
+            r=census(tree,Path(d)/'inputs.json',tree)
+            self.assertEqual(r['unique_files'],1)
+            (tree/'build/duplicate').mkdir()
+            (tree/'build/duplicate/Cargo.toml').write_text((staged/'Cargo.toml').read_text())
+            (tree/'build/duplicate/build.rs').write_text('fn main() {}\n')
+            with self.assertRaisesRegex(RuntimeError,'ambiguous relative dep-info cwd'):census(tree,Path(d)/'bad.json',tree)
     def test_real_depinfo_alias_and_spaces(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);tree=root/'tree';ref=root/'ref'
@@ -146,6 +161,20 @@ class ReceiptTests(unittest.TestCase):
             self.assertTrue(runner.accepted(step));self.assertIn('a',runner.state['completed'])
             (dest/'value').write_text('corrupt')
             with self.assertRaisesRegex(RuntimeError,'finished result changed'):runner.accepted(step)
+    def test_resume_reclaims_only_disposable_target(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);plan={'version':'fixture','image_id':'none','cpus':2,'fixture':True,
+                'minimum_start_free_gib':80,'seed_version':'1.98.1+dfsg1-1+stereo3d1+lc1'}
+            (root/'plan.json').write_text(json.dumps(plan));(root/'SHA256SUMS').write_text('')
+            runner=Runner(root);target=root/'runtime/work';target.mkdir();(target/'partial-build').write_text('incomplete')
+            kept=root/'results/accepted';kept.mkdir();(kept/'value').write_text('durable')
+            class Space: free=81*1024**3
+            def usage(path):
+                self.assertFalse(target.exists())
+                return Space()
+            with patch('runner.shutil.disk_usage',side_effect=usage),patch('runner.machine',return_value={'online_cpus':2}):
+                runner.verify_payload()
+            self.assertEqual((kept/'value').read_text(),'durable')
     def test_half_step_not_accepted(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);(root/'plan.json').write_text(json.dumps({'version':'fixture','image_id':'none','cpus':2}))

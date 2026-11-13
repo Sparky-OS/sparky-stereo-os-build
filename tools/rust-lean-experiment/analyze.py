@@ -12,7 +12,7 @@ import itertools
 import tempfile
 import zlib
 from elftools.elf.elffile import ELFFile
-from lean.locate import locate
+from rust_location import locate
 
 
 def digest(p):
@@ -239,7 +239,7 @@ def main():
         matches=re.findall(r'(library/std/src/io/stdio\.rs):(\d+):(\d+)',p.read_text())
         if len(matches)!=1:raise RuntimeError('expected one stdio panic location for '+f)
         name,line,col=matches[0];hr=source('A',name);mr=source(f,name)
-        resolved=asdict(locate(hr,mr,name,int(line),int(col),native=True))
+        resolved=asdict(locate(hr,mr,name,int(line),int(col)))
         if b'failed printing to' not in hr.splitlines()[resolved['line']-1]:raise RuntimeError('resolver did not find authored std print panic')
         panic_rows[f]={'reported_path':name,'reported_line':int(line),'reported_column':int(col),'authored':resolved}
     (out/'panic-resolution.json').write_text(json.dumps(panic_rows,indent=2)+'\n')

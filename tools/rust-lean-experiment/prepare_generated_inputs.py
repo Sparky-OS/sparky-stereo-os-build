@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bind Debian's build-owned WIT Rust literals, kept common across all forms."""
+"""Capture Debian's original build-owned WIT literals before their prepared projection."""
 import argparse
 import hashlib
 import json
@@ -19,7 +19,7 @@ def prepare(source,work,output):
             raise RuntimeError('pinned WIT recipe changed: '+p)
     work.mkdir(parents=True,exist_ok=False);(work/'debian/scripts').mkdir(parents=True)
     shutil.copy2(script,work/producer)
-    result={'scope':'build-produced literals, common and unprojected in A/B/C; not authored Rust input savings',
+    result={'scope':'original build-produced literals; form projections are separately token-qualified and bound in each source tree',
             'producer':producer,'producer_sha256':digest,'version':'0.57.1','files':{},'native_outputs':{}}
     for p in paths:
         (work/p).mkdir(parents=True)

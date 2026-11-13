@@ -23,7 +23,7 @@ def fixture(output, scripts, toolkit, subject, image):
 '''
     (source/'main.rs').write_text('// authored fixture\n'+code)
     p=source/'library/std/src/io';p.mkdir(parents=True)
-    (p/'stdio.rs').write_text('pub fn fail() { panic!("failed printing to stdout: fixture"); }\n')
+    (p/'stdio.rs').write_text('#![allow(dead_code)]\npub fn fail() { panic!("failed printing to stdout: fixture"); }\n')
     crate=source/'library/vendor/fixture-source-0.1.0';(crate/'src').mkdir(parents=True)
     (crate/'Cargo.toml').write_text('[package]\nname="fixture-source"\nversion="0.1.0"\nedition="2024"\n')
     forms={}

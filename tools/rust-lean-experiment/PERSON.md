@@ -2,7 +2,9 @@
 
 This folder compares the same Rust 1.99.1 toolchain built from authored sources, Lean Code's ordinary-comment projection, and an experimental form that also removes documentation comments where the build permits it.
 
-Start from a copy on the laptop's root filesystem, with at least 80 GiB free. Run `./run.sh`. Read progress with `./status.sh`; detailed logs are in `runtime/worker.log`, and accepted results are under `results/`. The worker keeps running after the terminal closes. After a reboot by you, run `./run.sh` again. Finished steps are verified and skipped. A step interrupted before its receipt is written starts afresh, with an empty build tree.
+Allow about three days, with a planning range of roughly two to four days (about 50–96 hours), including setup and a six-hour reserve. The scale factor is an unvalidated estimate for this A10, not a timing measured there. A slower machine state or repeated heat pauses can exceed that range; a guard failure stops with its reason. The fixed plan contains three whole toolchain builds and six fresh first-stage compiler/library builds, followed by the compiler workloads and comparisons.
+
+Start from a copy on the laptop's root filesystem, with at least 80 GiB free. Run `./run.sh`. Read progress with `./status.sh`; detailed logs are in `runtime/worker.log`, and accepted results are under `results/`. The worker keeps running after the terminal closes. After a reboot by you, run `./run.sh` again. Finished steps are verified and skipped. The disposable unfinished target is removed before the next-build space check. A step interrupted before its receipt is written starts afresh, with an empty build tree.
 
 `./pause.sh` requests a pause after the current whole step, which can take hours. `./run.sh` resumes it. For an immediate stop, send TERM to the worker PID shown by `./status.sh`; that unfinished step will be discarded on resume. Do not remove the folder while it is running.
 

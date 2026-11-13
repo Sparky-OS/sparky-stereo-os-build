@@ -75,14 +75,19 @@ class Runner:
             ready=json.loads((self.root/'READY.json').read_text())
             if ready.get('status')!='review' or ready.get('C_build_qualified') is not True or ready.get('dry_run')!='green':
                 raise RuntimeError('kit qualification is not complete')
-        required=self.plan['minimum_start_free_gib']*1024**3
-        if shutil.disk_usage(self.root).free<required:
-            raise RuntimeError('kit requires '+str(self.plan['minimum_start_free_gib'])+' GiB free before starting/resuming')
         for line in (self.root/'SHA256SUMS').read_text().splitlines():
             digest,name=line.split('  ',1)
             p=self.root/name
             if Path(name).is_absolute() or '..' in Path(name).parts or not p.is_file() or sha(p)!=digest:
                 raise RuntimeError('kit checksum mismatch: '+name)
+        # The exclusive worker lock and verified payload make this our disposable
+        # unfinished target. Reclaim it before applying the next-build capacity
+        # requirement, so a stopped large build cannot prevent its own resume.
+        unfinished=self.root/'runtime/work'
+        if unfinished.exists():shutil.rmtree(unfinished)
+        required=self.plan['minimum_start_free_gib']*1024**3
+        if shutil.disk_usage(self.root).free<required:
+            raise RuntimeError('kit requires '+str(self.plan['minimum_start_free_gib'])+' GiB free after retiring the unfinished target')
         expected= self.plan['seed_version']
         if expected!='1.98.1+dfsg1-1+stereo3d1+lc1':raise RuntimeError('plan names an unauthorized seed')
         actual=machine()  # fail before starting anything when CPU telemetry is unavailable
