@@ -106,3 +106,25 @@ class SourceDate(unittest.TestCase):
                                              'DEBFULLNAME': 'Example', 'DEBEMAIL': 'example@example.invalid'}):
                 prepare(root, '1+lc1', toolkit)
             self.assertIn('  Fri, 06 Nov 2026 14:17:11 +0000\n', (root / 'debian/changelog').read_text())
+
+    def test_dh_after_one_make_variable_is_conventional_and_a_shell_prefix_is_not(self):
+        # Debian's rustc: `$(SYSTEM_WORKAROUNDS) dh $@ --parallel --with bash-completion`
+        from unittest import mock
+        import os
+        from lean.debian_prepare import prepare
+        toolkit = Path(__file__).resolve().parents[2]
+        env = {'SOURCE_DATE_EPOCH': '1793974631', 'DEBFULLNAME': 'Daniel Ramos (Capitain Jack)', 'DEBEMAIL': 'Capitain_Jack@yahoo.com'}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.tree(root)
+            (root / 'debian/rules').write_text('#!/usr/bin/make -f\n%:\n\t$(SYSTEM_WORKAROUNDS) dh $@ --parallel\n')
+            with mock.patch.dict(os.environ, env):
+                prepare(root, '1+lc1', toolkit)
+            self.assertIn('lean.source_tree project', (root / 'debian/rules').read_text())
+        for prefix in ('env X=1 ', 'cd sub && ', '$(lower) ', '$(A) $(B) '):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.tree(root)
+                (root / 'debian/rules').write_text('#!/usr/bin/make -f\n%:\n\t' + prefix + 'dh $@\n')
+                with mock.patch.dict(os.environ, env), self.assertRaisesRegex(ValueError, 'Not a conventional dh rules file'):
+                    prepare(root, '1+lc1', toolkit)
