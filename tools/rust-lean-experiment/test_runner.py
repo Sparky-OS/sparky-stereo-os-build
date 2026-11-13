@@ -15,6 +15,7 @@ import guard
 from measure import number,parse_perf
 from inputs import census
 from package_wrapper import restore
+from recover_volatile import recover
 from runner import Runner,extract,inventory
 from summary import summarize
 
@@ -161,6 +162,34 @@ class ReceiptTests(unittest.TestCase):
             self.assertTrue(runner.accepted(step));self.assertIn('a',runner.state['completed'])
             (dest/'value').write_text('corrupt')
             with self.assertRaisesRegex(RuntimeError,'finished result changed'):runner.accepted(step)
+    def test_reboot_retires_only_volatile_engine_state(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);(root/'plan.json').write_text(json.dumps({'version':'fixture','image_id':'none','cpus':2}))
+            (root/'SHA256SUMS').write_text('');runner=Runner(root)
+            for n in ['runroot','engine-tmp','storage']:
+                p=root/'runtime'/n;p.mkdir(exist_ok=True);(p/'marker').write_text(n)
+            durable=root/'results/accepted';durable.mkdir();(durable/'marker').write_text('saved')
+            (root/'runtime/host-boot.json').write_text('{"boot_id":"prior-boot"}')
+            actions=[]
+            def checked(argv):
+                self.assertEqual(argv[:3],['sudo','-n','python3'])
+                self.assertEqual(Path(argv[3]).name,'recover_volatile.py')
+                self.assertEqual(argv[4],str(root));actions.append(argv)
+                recover(root)
+            with patch('runner.checked',side_effect=checked):
+                runner.engine_boot();runner.engine_boot()
+            self.assertEqual(len(actions),1)
+            self.assertFalse((root/'runtime/runroot/marker').exists())
+            self.assertFalse((root/'runtime/engine-tmp/marker').exists())
+            self.assertEqual((root/'runtime/storage/marker').read_text(),'storage')
+            self.assertEqual((durable/'marker').read_text(),'saved')
+    def test_reboot_rejects_volatile_symlink(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);(root/'plan.json').write_text('{}');(root/'runtime').mkdir()
+            outside=root/'kept';outside.mkdir();(outside/'marker').write_text('keep')
+            (root/'runtime/runroot').symlink_to(outside,target_is_directory=True)
+            with self.assertRaisesRegex(RuntimeError,'symbolic link'):recover(root)
+            self.assertEqual((outside/'marker').read_text(),'keep')
     def test_resume_reclaims_only_disposable_target(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);plan={'version':'fixture','image_id':'none','cpus':2,'fixture':True,

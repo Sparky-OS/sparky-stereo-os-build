@@ -94,6 +94,18 @@ class Runner:
         if not self.plan.get('fixture') and 'AMD A10-9600P' not in actual['cpu_model']:
             raise RuntimeError('expected the reserved AMD A10-9600P bench, found '+actual['cpu_model'])
         if actual['online_cpus']<int(self.cpus):raise RuntimeError('fewer online CPUs than the fixed plan requires')
+        self.engine_boot()
+
+    def engine_boot(self):
+        current=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+        if len(current)!=36:raise RuntimeError('host boot ID is unavailable')
+        path=self.root/'runtime/host-boot.json'
+        previous=json.loads(path.read_text()) if path.exists() else None
+        if previous is not None and previous['boot_id']!=current and not self.plan.get('fixture'):
+            # Podman explicitly requires its volatile runroot/tmpdir to be
+            # retired after a persistent directory spans a host reboot.
+            checked(['sudo','-n','python3',str(self.root/'scripts/recover_volatile.py'),str(self.root)])
+        atomic(path,{'boot_id':current,'unix':time.time()})
 
     def floors(self):
         return {str(self.root):self.plan['scratch_floor_gib'],'/':12}
