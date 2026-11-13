@@ -305,7 +305,7 @@ KCM.SimpleKCM {
         QQC2.Label {
             Layout.fillWidth: true
             wrapMode: Text.Wrap
-            text: i18nc("@info", "Programs made with Qt Widgets, such as Konsole, Dolphin and Kate, paint their windows on the processor or on the graphics card. Painting on the graphics card leaves the processor free for other work. A change applies the next time a program starts.")
+            text: i18nc("@info", "Programs made with Qt Widgets, such as Konsole, Dolphin and Kate, paint their windows on the processor or on the graphics card. Processor use depends on the program and hardware. A change applies the next time a program starts.")
         }
         Kirigami.InlineMessage {
             objectName: "paintSessionWarning"
