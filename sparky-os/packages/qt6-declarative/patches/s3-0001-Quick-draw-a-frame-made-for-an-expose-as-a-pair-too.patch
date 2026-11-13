@@ -1,0 +1,149 @@
+Description: Quick: draw a frame made for an expose as a pair too
+ A window whose elements show depth is drawn once per eye, but a frame
+ drawn for an expose was drawn once and put into both eye targets, and
+ a still window is not drawn again. So a window that stayed still after
+ an expose kept one picture in both eyes: on Wayland after a frame
+ callback that came later than QtWayland's limit, after the window was
+ hidden, minimized or on another desktop. The Stereo Demonstrator's quad
+ buffer route showed a flat scene on a side by side (full) output in a
+ guest that draws in software, where every late frame ends in an expose.
+ .
+ The threaded render loop now draws an expose's frame as a pair: the
+ left eye is synchronized as in any frame, and the gui thread waits, as
+ an expose does, until the right eye is rendered and both are presented.
+ Asking for one more frame after the expose instead does not settle
+ where that frame's callback is late again: the picture then alternates.
+ The basic render loop draws the pair in every frame and needs nothing.
+ .
+ tst_qquickwindowstereo::drawsThePairAfterAnExpose() exposes a still
+ window and expects every frame presented from then on to hold both
+ eyes.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/qtdeclarative/commit/182862a7b52599e768e3daa403625482f3bfc124
+Forwarded: no
+Last-Update: 2026-11-13
+Assisted-by: Claude Fable 5.2
+---
+diff --git a/src/quick/scenegraph/qsgthreadedrenderloop.cpp b/src/quick/scenegraph/qsgthreadedrenderloop.cpp
+index 0c3bb478..cb9d4edc 100644
+--- a/src/quick/scenegraph/qsgthreadedrenderloop.cpp
++++ b/src/quick/scenegraph/qsgthreadedrenderloop.cpp
+@@ -1708,8 +1708,10 @@ void QSGThreadedRenderLoop::polishAndSync(Window *w, bool inExpose)
+ 
+     // A window whose elements show depth is drawn as a pair once its surface has two views: each
+     // eye is polished and synchronized in turn, and the render thread renders each in a pass of
+-    // its own. A frame drawn while the window is exposed is drawn once.
+-    QQuickWindowStereo *stereo = inExpose ? nullptr : QQuickWindowStereo::of(window);
++    // its own. A frame drawn for an expose is a pair too: its left eye is synchronized as in any
++    // frame, and the gui thread waits, as an expose does, until the right eye is rendered and
++    // both are presented. A still window would otherwise keep one picture in both eyes.
++    QQuickWindowStereo *stereo = QQuickWindowStereo::of(window);
+     const bool pair = stereo && stereo->beginFrame();
+     if (pair)
+         stereo->setEye(QQuickWindowStereo::Eye::Left);
+@@ -1741,7 +1743,7 @@ void QSGThreadedRenderLoop::polishAndSync(Window *w, bool inExpose)
+     qCDebug(QSG_LOG_RENDERLOOP, "- lock for sync");
+     w->thread->mutex.lock();
+     m_lockedForSync = true;
+-    auto *syncEvent = new WMSyncEvent(window, inExpose, w->forceRenderPass, scProxyData);
++    auto *syncEvent = new WMSyncEvent(window, inExpose && !pair, w->forceRenderPass, scProxyData);
+     syncEvent->stereoEye = int(pair ? QQuickWindowStereo::Eye::Left : QQuickWindowStereo::Eye::None);
+     w->thread->postEvent(syncEvent);
+     w->forceRenderPass = false;
+@@ -1772,7 +1774,7 @@ void QSGThreadedRenderLoop::polishAndSync(Window *w, bool inExpose)
+             qCDebug(QSG_LOG_RENDERLOOP, "- lock for the right eye's sync");
+             w->thread->mutex.lock();
+             m_lockedForSync = true;
+-            auto *rightEvent = new WMSyncEvent(window, false, false, scProxyData);
++            auto *rightEvent = new WMSyncEvent(window, inExpose, false, scProxyData);
+             rightEvent->stereoEye = int(QQuickWindowStereo::Eye::Right);
+             w->thread->postEvent(rightEvent);
+             w->thread->waitCondition.wait(&w->thread->mutex);
+diff --git a/tests/auto/quick/qquickwindowstereo/tst_qquickwindowstereo.cpp b/tests/auto/quick/qquickwindowstereo/tst_qquickwindowstereo.cpp
+index 5c52c9af..948aa061 100644
+--- a/tests/auto/quick/qquickwindowstereo/tst_qquickwindowstereo.cpp
++++ b/tests/auto/quick/qquickwindowstereo/tst_qquickwindowstereo.cpp
+@@ -8,6 +8,7 @@
+ #include <QtQuick/QQuickWindow>
+ #include <QtQuick/private/qquickitem_p.h>
+ #include <QtQuick/qsgnode.h>
++#include <qpa/qwindowsysteminterface.h>
+ // Built with TST_STEREO_CONTRACT_ONLY, the test holds only what the window's and the items'
+ // properties say, and runs against any Qt Quick.
+ #ifndef TST_STEREO_CONTRACT_ONLY
+@@ -39,6 +40,7 @@ private slots:
+     void identityWithoutTwoViews();
+     void placesItemsForEachEye();
+     void drawsEachEyeInAPass();
++    void drawsThePairAfterAnExpose();
+ 
+ private:
+     struct Scene
+@@ -310,6 +312,67 @@ void tst_QQuickWindowStereo::drawsEachEyeInAPass()
+         QCOMPARE(frame, QList<qreal>({20}));
+ }
+ 
++// A frame drawn for an expose is a pair like any other: a still window is not drawn again, and
++// would keep one picture in both eyes.
++void tst_QQuickWindowStereo::drawsThePairAfterAnExpose()
++{
++    if (qEnvironmentVariableIntValue("QTEST_STEREO_TWO_VIEWS") != 1)
++        QSKIP("Needs a platform that gives a surface two views (QTEST_STEREO_TWO_VIEWS=1)");
++    if (isSoftware())
++        QSKIP("The software renderer draws a window once");
++
++    Scene scene = makeScene();
++    QVERIFY(scene.window);
++    scene.near->setProperty(ParallaxProperty, 4.0);
++
++    // What each pass drew the red square at, and when a frame was presented (-1).
++    QMutex mutex;
++    QList<qreal> passes;
++    QQuickItemPrivate *nearPrivate = QQuickItemPrivate::get(scene.near);
++    connect(scene.window.get(), &QQuickWindow::beforeRendering, scene.window.get(), [&] {
++        QMutexLocker locker(&mutex);
++        passes.append(nearPrivate->itemNode()->matrix()(0, 3));
++    }, Qt::DirectConnection);
++    connect(scene.window.get(), &QQuickWindow::frameSwapped, scene.window.get(), [&] {
++        QMutexLocker locker(&mutex);
++        passes.append(-1);
++    }, Qt::DirectConnection);
++    // The frames presented from a pass on, each as its passes.
++    const auto framesFrom = [&](qsizetype from) {
++        QMutexLocker locker(&mutex);
++        QList<QList<qreal>> frames(1);
++        for (qsizetype i = from; i < passes.size(); ++i) {
++            if (passes.at(i) < 0)
++                frames.append(QList<qreal>());
++            else
++                frames.last().append(passes.at(i));
++        }
++        frames.removeLast(); // not presented
++        return frames;
++    };
++    const auto passCount = [&] {
++        QMutexLocker locker(&mutex);
++        return passes.size();
++    };
++
++    scene.window->show();
++    QVERIFY(QTest::qWaitForWindowExposed(scene.window.get()));
++    scene.window->setProperty(DepthProperty, true);
++    QTRY_VERIFY_WITH_TIMEOUT(scene.window->property(PairProperty).toBool(), 5000);
++    scene.window->update();
++    QTest::qWait(500);
++
++    // The window is still: nothing but the expose asks for a frame, and that frame stays.
++    const qsizetype from = passCount();
++    QWindowSystemInterface::handleExposeEvent(scene.window.get(), QRect(QPoint(), scene.window->size()));
++    QTRY_VERIFY_WITH_TIMEOUT(!framesFrom(from).isEmpty(), 5000);
++    QTest::qWait(500);
++    const auto frames = framesFrom(from);
++    for (const auto &frame : frames)
++        QCOMPARE(frame, QList<qreal>({22, 18}));
++    QCOMPARE(scene.window->property(EyeProperty).toInt(), 0);
++}
++
+ QTEST_MAIN(tst_QQuickWindowStereo)
+ 
+ #include "tst_qquickwindowstereo.moc"

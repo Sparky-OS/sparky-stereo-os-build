@@ -1,0 +1,14 @@
+qt6-declarative (6.11.2+dfsg-3+stereo3d3) unstable; urgency=medium
+
+  * Quick: a frame made for an expose is drawn as a pair too (s3-0001). A
+    window drawn once per eye showed one picture in both eyes after an expose
+    and kept it while it stayed still: after a frame callback later than
+    QtWayland's 100 ms, or after the window was hidden, minimized or on
+    another desktop. The Stereo Demonstrator's quad buffer route and every
+    Stereo Union window with element depth showed one eye twice on a real
+    3D output of a machine that draws slowly (ORDER 555). The threaded render
+    loop now synchronizes the left eye as in any frame and holds the gui
+    thread, as an expose does, until the right eye is rendered and both are
+    presented.
+  * Test: tst_qquickwindowstereo's drawsThePairAfterAnExpose, which fails on
+    +stereo3d2.
