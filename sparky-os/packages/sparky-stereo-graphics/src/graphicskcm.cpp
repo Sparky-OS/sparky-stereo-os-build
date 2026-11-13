@@ -316,11 +316,17 @@ void GraphicsKcm::save()
         return;
     }
     m_errorText.clear();
+    // what the person's file says about painting before this Apply
+    const PaintSettings paintBefore;
+    bool paintChanged = paintBefore.programChoices() != m_paint.programChoices();
+    for (Category category : allCategories()) {
+        paintChanged = paintChanged || paintBefore.kindChoice(category) != m_paint.kindChoice(category);
+    }
     if (!m_settings.save() || !m_paint.save()) {
         m_errorText = i18nc("@info", "The graphics settings could not be saved.");
-    } else {
+    } else if (paintChanged) {
         // a way of painting the person changed ends what was kept about the old one (ORDER 518): the next start says
-        // again what still cannot be had
+        // again what still cannot be had. An Apply that changes nothing about painting keeps what is kept
         for (const QJsonValue &value : Problems::records({u"sparky-stereo-graphics"_s})) {
             const QString key = value.toObject().value(u"key"_s).toString();
             if (key.startsWith(u"paint-"_s) && value.toObject().value(u"scope"_s).toString() == u"person"_s) {
@@ -689,6 +695,7 @@ AppPreference GraphicsKcm::pendingPreference(const AppEntry &entry) const
 QVariantList GraphicsKcm::apps() const
 {
     const Resolver r = resolver();
+    const PaintFacts facts = paintFacts();
     QVariantList list;
     for (const AppEntry &entry : m_apps) {
         if (!m_appFilter.isEmpty() && !entry.name.contains(m_appFilter, Qt::CaseInsensitive) && !entry.id.contains(m_appFilter, Qt::CaseInsensitive)) {
@@ -700,7 +707,7 @@ QVariantList GraphicsKcm::apps() const
         AppEntry shown = entry;
         shown.preference = pendingPreference(entry);
         const Resolution resolution = r.resolveApp(shown, m_settings);
-        const PaintResolution painted = Paint::resolve(entry.category, entry.id, m_paint, m_paintRecord, paintFacts());
+        const PaintResolution painted = Paint::resolve(entry.category, entry.id, m_paint, m_paintRecord, facts);
         list.append(QVariantMap{
             {u"paint"_s, m_paint.programChoice(entry.id)},
             {u"paintText"_s, wayLabel(painted.way)},
