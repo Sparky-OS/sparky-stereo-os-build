@@ -5,9 +5,9 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../../repo/build-provenance.sh"
-WORK=$(mkdir -p "$1" && cd "$1" && pwd)
-REPO=$(cd "$2" && pwd)
-ARCHIVE=$(cd "$3" && pwd)
+WORK=$(mkdir -p "$1" && cd "$1" && pwd -P)
+REPO=$(cd "$2" && pwd -P)
+ARCHIVE=$(cd "$3" && pwd -P)
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK must be empty" >&2; exit 2; }
 sparky_provenance_init sparky-lc-migration:20261020
 docker run --rm --name qt-518-package --cpus 4 --platform linux/amd64 --ulimit core=0 \
