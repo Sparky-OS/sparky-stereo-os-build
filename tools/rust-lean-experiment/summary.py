@@ -10,7 +10,7 @@ from measure import number
 def summarize(root, plan):
     groups={}
     for step in plan['steps']:
-        if step['kind'] not in ('whole','check','runtime'):continue
+        if step['kind'] not in ('whole','check','stage1','runtime'):continue
         path=root/'results'/step['id']
         receipt=json.loads((path/'receipt.json').read_text())
         if not receipt['complete']:raise RuntimeError('unaccepted step '+step['id'])

@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import tarfile
 from pathlib import Path
 
 
@@ -11,12 +12,20 @@ def retain(target, b_source, ledger_path, crate, reason, record):
         raise ValueError('crate must be a safe source-relative path')
     ledger=json.loads(ledger_path.read_text())['files']
     changed={}
-    for p in (b_source/crate).rglob('*.rs'):
-        name=p.relative_to(b_source).as_posix()
-        if p.is_symlink() or name not in ledger:
-            continue
+    def inputs():
+        if b_source.is_dir():
+            for p in (b_source/crate).rglob('*.rs'):
+                if not p.is_symlink():yield p.relative_to(b_source).as_posix(),p.read_bytes()
+        else:
+            with tarfile.open(b_source,mode='r|gz') as tf:
+                for m in tf:
+                    name=m.name.removeprefix('./')
+                    if m.isfile() and name.startswith(crate+'/') and name.endswith('.rs'):
+                        yield name,tf.extractfile(m).read()
+    for name,new in inputs():
+        if name not in ledger:continue
         dst=target/name
-        old,new=dst.read_bytes(),p.read_bytes()
+        old=dst.read_bytes()
         row=ledger[name]
         if 'left' in row:
             if old!=new:

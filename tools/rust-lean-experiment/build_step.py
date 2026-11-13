@@ -44,11 +44,14 @@ def main(kind,cpus):
     os.chdir(tree)
     seed=subprocess.check_output(['dpkg-query','-W','-f=${Version}','rustc'],text=True)
     if seed!='1.98.1+dfsg1-1+stereo3d1+lc1':raise RuntimeError('seed compiler version mismatch: '+seed)
-    os.environ.update(LC_ALL='C',CARGO_NET_OFFLINE='true',DEB_BUILD_OPTIONS=f'parallel={cpus} nocheck',
+    os.environ.update(CC='cc',CXX='c++',AR='ar',RANLIB='ar s',CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER='x86_64-linux-gnu-gcc',LC_ALL='C',CARGO_NET_OFFLINE='true',DEB_BUILD_OPTIONS=f'parallel={cpus} nocheck',
                       SOURCE_DATE_EPOCH='1794523022',DEBFULLNAME='Daniel Ramos (Capitain Jack)',
                       DEBEMAIL='Capitain_Jack@yahoo.com',RL541_AUTHORED='/authored',RL541_FORM_SOURCE='/form')
     command(['make','-f','debian/rules','debian/dh_auto_configure.stamp'])
-    if kind=='check':
+    if kind=='stage1':
+        run(['make','-f','debian/rules','debian/dh_auto_build.stamp',
+             'RUSTBUILD_FLAGS=--stage 1 --config debian/config.toml --on-fail env compiler library'],out/'compile')
+    elif kind=='check':
         run(['python3','src/bootstrap/bootstrap.py','check','--stage','1','--config','debian/config.toml',
              '-j'+cpus,'compiler','library'],out/'compile')
     elif kind=='whole':
@@ -64,7 +67,7 @@ def main(kind,cpus):
         shutil.copy2(tree/'debian/rl541-restored-rust.json',out/'rust-src-restored.json')
     else: raise ValueError(kind)
     shutil.copy2(tree/'debian/config.toml',out/'config.toml')
-    (out/'environment.json').write_text(json.dumps({k:os.environ[k] for k in ('LC_ALL','CARGO_NET_OFFLINE','DEB_BUILD_OPTIONS','SOURCE_DATE_EPOCH')},indent=2)+'\n')
+    (out/'environment.json').write_text(json.dumps({k:os.environ[k] for k in ('LC_ALL','CARGO_NET_OFFLINE','DEB_BUILD_OPTIONS','SOURCE_DATE_EPOCH','CC','CXX','AR','RANLIB','CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER')},indent=2)+'\n')
     census(tree,out/'inputs.json',Path('/form'))
     (out/'step.json').write_text(json.dumps({'kind':kind,'complete':True,'seed':seed})+'\n')
 

@@ -3,7 +3,7 @@
 from pathlib import Path
 import subprocess
 import tempfile
-from analyze import sections
+from analyze import sections,archive_differences
 
 with tempfile.TemporaryDirectory() as d:
     root=Path(d)
@@ -22,4 +22,12 @@ with tempfile.TemporaryDirectory() as d:
         raise RuntimeError('logical compressed-byte difference was not exactly one: '+repr(rows))
     if rows[0]['A_logical_bytes']!=len(data) or rows[0]['A_stored_bytes']>=len(data):
         raise RuntimeError('fixture did not actually compress its debug section')
+    for name,src in [('A','a'),('B','b')]:
+        import shutil
+        shutil.copy2(root/src,root/'part.o')
+        subprocess.run(['ar','rcsD',str(root/(name+'.a')),str(root/'part.o')],check=True)
+    members=archive_differences(root/'A.a',root/'B.a',workdir=root)
+    objects=[r for r in members if r['member']=='part.o']
+    if len(objects)!=1 or not any(s['different_bytes_at_logical_section_offsets']==1 for s in objects[0]['ELF']['sections']):
+        raise RuntimeError('archive ELF member comparison did not expose the single logical byte')
     print('PASS: real zlib-compressed ELF, equal file and exactly one changed logical byte, 2 MiB streamed payload')

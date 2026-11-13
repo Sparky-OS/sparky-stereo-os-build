@@ -14,7 +14,7 @@ from package_wrapper import restore
 def build(kind,cpus):
     tree=Path('/work/tree');out=Path('/work/result');out.mkdir();os.chdir(tree)
     # The forwarding compiler is a real ELF, compiled separately from each form.
-    argv=['/usr/bin/rustc','--edition=2024','--emit=dep-info,link' if kind=='whole' else '--emit=dep-info,metadata',
+    argv=['/usr/bin/rustc','--edition=2024','--emit=dep-info,link' if kind in ('whole','stage1') else '--emit=dep-info,metadata',
           '-C','debuginfo=2','-C','link-arg=-Wl,--compress-debug-sections=zlib','--remap-path-prefix=/work=/experiment','main.rs','-o','/work/fixture-rustc']
     run(argv,out/'compile')
     # Put real compiler dep-info under build/, as in bootstrap.

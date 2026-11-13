@@ -24,10 +24,15 @@ def fixture(output, scripts, toolkit, subject, image):
     (source/'main.rs').write_text('// authored fixture\n'+code)
     p=source/'library/std/src/io';p.mkdir(parents=True)
     (p/'stdio.rs').write_text('pub fn fail() { panic!("failed printing to stdout: fixture"); }\n')
+    crate=source/'library/vendor/fixture-source-0.1.0';(crate/'src').mkdir(parents=True)
+    (crate/'Cargo.toml').write_text('[package]\nname="fixture-source"\nversion="0.1.0"\nedition="2024"\n')
     forms={}
     for f in 'ABC':
         # B/C have removed source commentary, while the real compiled forwarding code is unchanged.
         (source/'main.rs').write_text(('// authored fixture\n' if f=='A' else '')+code)
+        (crate/'src/lib.rs').write_text(('// ordinary fixture commentary\n' if f=='A' else '')+('/// Documentation for the source fixture.\n' if f!='C' else '')+'pub fn value() -> u32 { 7 }\n')
+        checksum={'files':{n:hashlib.sha256((crate/n).read_bytes()).hexdigest() for n in ('Cargo.toml','src/lib.rs')},'package':None}
+        (crate/'.cargo-checksum.json').write_text(json.dumps(checksum,sort_keys=True)+'\n')
         forms[f]=seal(source,output/'sources',f,1794523022)['tree_sha256']
     shutil.rmtree(source)
     data=plan(image,forms,fixture=True)

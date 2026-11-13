@@ -18,6 +18,9 @@ def main(task):
     if task=='startup':
         run(['rustc','--version'],out/'version')
         run(['rustc','-vV'],out/'verbose-version')
+        expected='1.98.1' if os.environ.get('RL541_FIXTURE') else '1.99.1'
+        if not (out/'version/stdout').read_text().startswith('rustc '+expected+' '):
+            raise RuntimeError('measured rustc version differs from the named compiler')
         with (out/'loader-statistics.txt').open('w') as f:
             subprocess.run(['rustc','--version'],env=dict(env,LD_DEBUG='libs,statistics'),stdout=f,stderr=f,check=True)
         loader=(out/'loader-statistics.txt').read_text()

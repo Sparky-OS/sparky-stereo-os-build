@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tarfile
 import itertools
+import tempfile
 import zlib
 from elftools.elf.elffile import ELFFile
 from lean.locate import locate
@@ -18,7 +19,7 @@ def digest(p):
     with p.open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
 
 
-def logical(s):return re.sub(r'-[0-9a-f]{16}(?=[./]|$)','-HASH',s)
+def logical(s):return re.sub(r'(?<=[./-])[0-9a-f]{16}(?=[./-]|$)','HASH',s)
 
 
 def classify(name):
@@ -98,6 +99,66 @@ def sections(a,b):
                 'interpretation':'Logical section content is streamed, including zlib-compressed debug records. File-offset differences also include layout shifts; these coordinate counts must not be added. Panic locations are established by the runtime resolver; remaining causal contributions are explicit residuals.'}
 
 
+def ar_members(path):
+    rows={};strings=b''
+    with path.open('rb') as f:
+        if f.read(8)!=b'!<arch>\n':raise RuntimeError('unsupported archive format: '+str(path))
+        while True:
+            header=f.read(60)
+            if not header:break
+            if len(header)!=60 or header[58:]!=b'`\n':raise RuntimeError('invalid ar header')
+            size=int(header[48:58]);start=f.tell();offset=start;length=size
+            raw=header[:16].decode('ascii').strip()
+            if raw=='//':strings=f.read(size);name='ARCHIVE_LONG_NAMES'
+            elif raw in ('/','/SYM64/'):name='ARCHIVE_SYMBOL_INDEX'
+            elif raw.startswith('#1/'):
+                n=int(raw[3:]);name=f.read(n).rstrip(b'\0').decode('utf-8');offset+=n;length-=n
+            elif raw.startswith('/'):
+                i=int(raw[1:]);end=strings.find(b'/\n',i)
+                if end<0:raise RuntimeError('invalid GNU ar string table')
+                name=strings[i:end].decode('utf-8')
+            else:name=raw.removesuffix('/')
+            key=logical(name)
+            if key in rows:raise RuntimeError('archive member identity collision: '+key)
+            f.seek(offset);h=hashlib.sha256();remaining=length;magic=f.read(min(4,remaining));h.update(magic);remaining-=len(magic)
+            while remaining:
+                block=f.read(min(1<<20,remaining))
+                if not block:raise RuntimeError('truncated archive member')
+                h.update(block);remaining-=len(block)
+            rows[key]={'name':name,'offset':offset,'bytes':length,'sha256':h.hexdigest(),'ELF':magic==b'\x7fELF','format':'ELF' if magic==b'\x7fELF' else 'WebAssembly' if magic==b'\0asm' else 'LLVM bitcode' if magic in (b'BC\xc0\xde',b'\xde\xc0\x17\x0b') else 'metadata/data'}
+            f.seek(start+size+(size%2))
+    return rows
+
+
+def archive_differences(a,b,workdir=Path('/work')):
+    left,right=ar_members(a),ar_members(b);rows=[]
+    with tempfile.TemporaryDirectory(prefix='rl541-ar-',dir=workdir) as work:
+        for key in sorted(left.keys()|right.keys()):
+            x,y=left.get(key),right.get(key)
+            if x and y and x['sha256']==y['sha256'] and x['bytes']==y['bytes']:continue
+            row={'member':key,'A':x,'other':y}
+            if x and y:
+                paths=[]
+                for source,info,name in ((a,x,'A'),(b,y,'B')):
+                    target=Path(work)/name
+                    with source.open('rb') as f,target.open('wb') as out:
+                        f.seek(info['offset']);remaining=info['bytes']
+                        while remaining:
+                            block=f.read(min(1<<20,remaining))
+                            if not block:raise RuntimeError('truncated archive member copy')
+                            out.write(block);remaining-=len(block)
+                    paths.append(target)
+                row['file_offset_different_bytes']=file_differences(*paths)
+                if x['ELF'] and y['ELF']:row['ELF']=sections(*paths)
+                elif key.endswith('.rmeta') or key.startswith('lib.rmeta'):row['class']='Rust metadata: crate identities, spans and documentation; exact subfield attribution remains open'
+                elif key.startswith('ARCHIVE_'):row['class']='archive index, names and layout metadata'
+                else:row['class']='non-ELF object/bitcode/data; exact causal attribution remains open'
+                for p in paths:p.unlink()
+            else:row['class']='archive member added or removed'
+            rows.append(row)
+    return rows
+
+
 def package_files(packages,destination):
     rows={}
     for pkg in sorted(packages.glob('*.deb')):
@@ -163,7 +224,11 @@ def main():
                 px,py=Path(x['file']),Path(y['file'])
                 with px.open('rb') as xa,py.open('rb') as ya:elf=xa.read(4)==ya.read(4)==b'\x7fELF'
                 if elf:row['ELF']=sections(px,py)
-                elif n.endswith(('.rlib','.a')):row['class']='archive/metadata: member-level causal attribution remains unproven'
+                elif n.endswith(('.rlib','.a')):
+                    row['class']='archive members: Rust metadata, object sections and archive indexes'
+                    row['members']=archive_differences(px,py)
+                elif n.endswith('.rmeta'):row['class']='Rust metadata: crate identities, spans and documentation; exact subfield attribution remains open'
+                elif n.endswith(('.html','.js','.css')):row['class']='generated documentation, source views, indexes and source-line anchors'
                 else:row['class']='non-ELF payload or pathname/content metadata'
                 if not elf:row['file_offset_different_bytes']=file_differences(px,py)
             else:row['class']='file added/removed or link/mode change'

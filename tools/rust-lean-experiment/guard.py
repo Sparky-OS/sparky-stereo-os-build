@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run a named container with bounded disk/CPU-temperature monitoring."""
 import json
+import ctypes
 import os
 from pathlib import Path
 import shutil
@@ -48,9 +49,22 @@ def machine(sysroot=Path('/sys'), require_temperature=True):
             governors[p.parent.name] = (p/'scaling_governor').read_text().strip()
     if not frequencies or not governors:
         raise RuntimeError('CPU frequency or governor unavailable')
-    return {'unix': time.time(), 'temperatures_c': temperatures, 'frequency_khz': frequencies,
+    cpu=Path('/proc/cpuinfo').read_text()
+    models=[line.split(':',1)[1].strip() for line in cpu.splitlines() if line.startswith('model name')]
+    memory={line.split(':',1)[0]:line.split(':',1)[1].strip() for line in Path('/proc/meminfo').read_text().splitlines() if line.split(':',1)[0] in ('MemTotal','MemAvailable','SwapTotal','SwapFree')}
+    return {'cpu_model':models[0] if models else 'unavailable','memory':memory,'online_cpus':os.cpu_count(),'uid':os.getuid(),'gid':os.getgid(),'unix': time.time(), 'temperatures_c': temperatures, 'frequency_khz': frequencies,
             'governor': governors, 'load': list(os.getloadavg()), 'kernel': os.uname().release,
             'max_temperature_c': max(temperatures.values()) if temperatures else None}
+
+
+_libc=ctypes.CDLL(None,use_errno=True)
+
+
+def parent_death(parent):
+    def setup():
+        if _libc.prctl(1,signal.SIGTERM,0,0,0)!=0 or os.getppid()!=parent:
+            os._exit(125)
+    return setup
 
 
 def guarded(config):
@@ -98,7 +112,7 @@ def guarded(config):
             cooldown_seconds = time.monotonic()-cooldown_started
             with (output/'container.log').open('wb') as log:
                 proc = subprocess.Popen(config['argv'], stdout=log, stderr=subprocess.STDOUT,
-                                        env=dict(os.environ, LC_ALL='C'))
+                                        env=dict(os.environ, LC_ALL='C'),preexec_fn=parent_death(os.getpid()))
                 while proc.poll() is None:
                     now = sample(); telemetry.write(json.dumps(now)+'\n'); telemetry.flush()
                     temperature = now['max_temperature_c']

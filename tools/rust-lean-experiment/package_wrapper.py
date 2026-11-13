@@ -25,6 +25,17 @@ def restore(staging, authored, form):
             restored.append(str(name))
         if target.read_bytes() != want:
             raise RuntimeError('authored restoration failed: '+str(name))
+    generated=authored/'debian/sparky-wit-projection.json'
+    if generated.is_file():
+        spec=json.loads(generated.read_text())
+        for name,row in spec['files'].items():
+            target=staging/name
+            if not target.is_file():continue
+            want=(authored/row['authored_asset']).read_bytes()
+            other=json.loads((form/'debian/sparky-wit-projection.json').read_text())['files'][name]
+            expected=(form/other['form_asset']).read_bytes()
+            if target.read_bytes() not in (want,expected):raise RuntimeError('unexpected generated rust-src: '+name)
+            if target.read_bytes()!=want:target.write_bytes(want);restored.append(name)
     # library/vendor is shipped by rust-src; its checksums must follow the
     # restored authored Rust bytes, rather than the lean build inputs.
     for original in authored.rglob('.cargo-checksum.json'):
@@ -39,7 +50,7 @@ def restore(staging, authored, form):
         manifest=json.loads(want)
         for rel,digest in manifest.get('files',{}).items():
             source=target.parent/rel
-            if source.is_file():
+            if source.is_file() and (original.parent/rel).is_file():
                 import hashlib
                 if hashlib.sha256(source.read_bytes()).hexdigest()!=digest:
                     raise RuntimeError('authored rust-src checksum does not match payload: '+str(name)+' -> '+rel)

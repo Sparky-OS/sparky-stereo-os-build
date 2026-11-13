@@ -5,13 +5,16 @@ import json
 from pathlib import Path
 
 
-def plan(image,forms,subject='compiler',fixture=False):
+def plan(image,forms,subject='stage1 compiler and standard library, full code generation',fixture=False):
     steps=[{'id':'load','kind':'load'}]
     # The whole builds give real final compilers. Repetition uses the largest
     # separately budgeted subject, in A,B,A,B,C order, with fresh targets.
-    for f in 'ABC':steps.append({'id':'whole-'+f.lower(),'kind':'whole','form':f})
-    for i,f in enumerate('ABABC'):
-        steps.append({'id':f'check-{i}-{f.lower()}','kind':'check','form':f,'subject':subject})
+    for f in 'AB':steps.append({'id':'whole-'+f.lower(),'kind':'whole','form':f})
+    for i,f in enumerate('ABAB'):
+        steps.append({'id':f'stage1-{i}-{f.lower()}','kind':'stage1','form':f,'subject':subject})
+    steps.append({'id':'whole-c','kind':'whole','form':'C'})
+    for i in range(4,6):
+        steps.append({'id':f'stage1-{i}-c','kind':'stage1','form':'C','subject':subject})
     for f in 'ABC':steps.append({'id':'install-'+f.lower(),'kind':'install','form':f,'build':'whole-'+f.lower()})
     for task,rounds in [('startup',8),('hello',4),('check',3),('release',3),('panic',1)]:
         for r in range(rounds):

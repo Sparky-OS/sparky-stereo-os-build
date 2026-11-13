@@ -32,8 +32,9 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(parse_perf(PERF)['wall_seconds'],1.25)
         self.assertEqual(parse_perf(PERF.replace(',','.'))['user_seconds'],2)
         with self.assertRaises(ValueError):number('1,234.5')
+        with self.assertRaises(ValueError):number('1e999')
     def test_no_empty_perf(self):
-        for text in (PERF.replace('100000','0'),PERF.replace('instructions:u','instructions'),PERF.replace('1,250','0')):
+        for text in (PERF.replace('100000','0'),PERF.replace('instructions:u','instructions'),PERF.replace('1,250','0'),PERF.replace('100000','1,25'),PERF.replace('2,000','-1,00')):
             with self.assertRaises(ValueError):parse_perf(text)
     def test_rust_src_exact_restoration(self):
         with tempfile.TemporaryDirectory() as d:
@@ -68,6 +69,21 @@ class InputTests(unittest.TestCase):
             self.assertEqual(data['lines'],2)
             (tree/'src/space file.rs').write_text('changed')
             with self.assertRaisesRegex(RuntimeError,'changed after source sealing'):census(tree,root/'bad.json',ref)
+
+
+    def test_build_owned_rust_outside_build_is_bound(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);tree=root/'tree';(tree/'build').mkdir(parents=True);(tree/'vendor').mkdir()
+            producer=tree/'generate.sh';producer.write_text('generate the pinned literal')
+            src=tree/'vendor/generated.rs';src.write_text('// generated literal\npub fn f() {}\n')
+            (tree/'build/unit.d').write_text('out: '+str(src)+'\n')
+            import hashlib
+            spec={'files':{'vendor/generated.rs':{'sha256':hashlib.sha256(src.read_bytes()).hexdigest(),
+                         'producer':'generate.sh','producer_sha256':hashlib.sha256(producer.read_bytes()).hexdigest()}}}
+            data=census(tree,root/'input.json',tree,spec)
+            self.assertTrue(data['files']['vendor/generated.rs']['generated'])
+            src.write_text('unexpected generated source')
+            with self.assertRaisesRegex(RuntimeError,'prepared literal'):census(tree,root/'bad.json',tree,spec)
 
 
 class GuardTests(unittest.TestCase):

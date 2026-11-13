@@ -12,7 +12,6 @@ import subprocess
 import sys
 import tarfile
 import signal
-import threading
 import time
 from guard import atomic, guarded, machine
 
@@ -64,12 +63,18 @@ class Runner:
         (root/'runtime').mkdir(exist_ok=True);(root/'results').mkdir(exist_ok=True)
         # The rootful Podman store is confined to this kit; no host compiler or apt writes.
         (root/'runtime/tmp').mkdir(exist_ok=True)
-        self.engine=self.plan.get('engine') or ['sudo','-n','env','TMPDIR='+str(root/'runtime/tmp'),'podman','--root',str(root/'runtime/storage'),'--runroot',str(root/'runtime/runroot')]
+        (root/'runtime/engine-tmp').mkdir(exist_ok=True)
+        (root/'runtime/empty-hooks').mkdir(exist_ok=True)
+        self.engine=self.plan.get('engine') or ['sudo','-n','env','TMPDIR='+str(root/'runtime/tmp'),'podman','--remote=false','--events-backend=file','--tmpdir',str(root/'runtime/engine-tmp'),'--hooks-dir',str(root/'runtime/empty-hooks'),'--root',str(root/'runtime/storage'),'--runroot',str(root/'runtime/runroot')]
         self.base=self.plan['image_id'];self.cpus=str(self.plan['cpus'])
 
     def save(self,**fields):self.state.update(fields,updated_unix=time.time());atomic(self.statepath,self.state)
 
     def verify_payload(self):
+        if not self.plan.get('fixture'):
+            ready=json.loads((self.root/'READY.json').read_text())
+            if ready.get('status')!='review' or ready.get('C_build_qualified') is not True or ready.get('dry_run')!='green':
+                raise RuntimeError('kit qualification is not complete')
         required=self.plan['minimum_start_free_gib']*1024**3
         if shutil.disk_usage(self.root).free<required:
             raise RuntimeError('kit requires '+str(self.plan['minimum_start_free_gib'])+' GiB free before starting/resuming')
@@ -80,7 +85,10 @@ class Runner:
                 raise RuntimeError('kit checksum mismatch: '+name)
         expected= self.plan['seed_version']
         if expected!='1.98.1+dfsg1-1+stereo3d1+lc1':raise RuntimeError('plan names an unauthorized seed')
-        machine()  # fail before starting anything when CPU telemetry is unavailable
+        actual=machine()  # fail before starting anything when CPU telemetry is unavailable
+        if not self.plan.get('fixture') and 'AMD A10-9600P' not in actual['cpu_model']:
+            raise RuntimeError('expected the reserved AMD A10-9600P bench, found '+actual['cpu_model'])
+        if actual['online_cpus']<int(self.cpus):raise RuntimeError('fewer online CPUs than the fixed plan requires')
 
     def floors(self):
         return {str(self.root):self.plan['scratch_floor_gib'],'/':12}
@@ -92,7 +100,7 @@ class Runner:
 
     def container(self,name,image,mounts,command,user=None,remove=True):
         if user is None:user=str(os.getuid())+':'+str(os.getgid())
-        argv=[*self.engine,'run',*(['--rm'] if remove else []),'--name',name,'--network','none','--pull=never','--cpus',self.cpus,
+        argv=[*self.engine,'run',*(['--rm'] if remove else []),'--name',name,'--network','none','--sig-proxy=true','--pull=never','--cpus',self.cpus,
               '--memory','8g','--ulimit','core=0','--cap-add','SYS_ADMIN','--cap-add','PERFMON','--user',user,
               '-e','LC_ALL=C','-e','HOME=/work/home','-e','PYTHONDONTWRITEBYTECODE=1','-e','RL541_CPUS='+self.cpus]
         if self.plan.get('fixture'):
@@ -101,15 +109,15 @@ class Runner:
         for src,dst,ro in mounts:
             if ',' in str(src):raise RuntimeError('commas in bind paths are unsupported')
             argv+=['--mount','type=bind,src='+str(src)+',dst='+dst+(',readonly' if ro else '')]
-        return [*argv,image,*command]
+        return [*argv,image,'python3','/scripts/contain.py',*command]
 
     def remove_owned(self,name):
-        r=subprocess.run([*self.engine,'container','exists',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        r=subprocess.run([*self.engine,'container','exists',name],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
         # Docker's container exists is unsupported; fixture Docker uses inspect.
         if self.plan.get('fixture'):
-            r=subprocess.run([*self.engine,'container','inspect',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            r=subprocess.run([*self.engine,'container','inspect',name],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
         if r.returncode==0:checked([*self.engine,'rm','-f',name],stdout=subprocess.DEVNULL)
-        elif r.returncode not in (1,125):raise RuntimeError('cannot inspect owned container '+name)
+        elif r.returncode!=1:raise RuntimeError('cannot inspect owned container '+name+': '+r.stderr.strip())
 
     def accepted(self,step):
         dest=self.root/'results'/step['id'];receipt=dest/'receipt.json'
@@ -143,7 +151,7 @@ class Runner:
                 except BaseException:p.kill();p.wait();raise
             if rc:raise RuntimeError('image load failed')
             checked([*self.engine,'image','inspect',self.base],stdout=subprocess.DEVNULL)
-        elif kind in ('whole','check'):
+        elif kind in ('whole','check','stage1'):
             form=step['form'];sources=self.root/'sources'
             extract(sources/(form+'.tar.gz'),work/'tree',sources/(form+'.manifest.json'))
             # The readonly reference is independent from the build's configured tree.
@@ -186,11 +194,21 @@ class Runner:
                 'form_checksum':self.plan.get('forms',{}).get(step.get('form')),
                 'completed_unix':time.time(),'machine':machine(),'files':{},**extra}
         for p in partial.rglob('*'):
-            if p.is_file():result['files'][p.relative_to(partial).as_posix()]=sha(p)
+            if p.is_file():
+                result['files'][p.relative_to(partial).as_posix()]=sha(p)
+                with p.open('rb') as data:os.fsync(data.fileno())
+        for directory in sorted([p for p in partial.rglob('*') if p.is_dir()],key=lambda p:len(p.parts),reverse=True):
+            fd=os.open(directory,os.O_RDONLY|os.O_DIRECTORY)
+            try:os.fsync(fd)
+            finally:os.close(fd)
         atomic(partial/'receipt.json',result)
         destination=self.root/'results'/sid
         if destination.exists():shutil.rmtree(destination)
         partial.rename(destination)
+        for parent in (destination.parent,partial.parent):
+            fd=os.open(parent,os.O_RDONLY|os.O_DIRECTORY)
+            try:os.fsync(fd)
+            finally:os.close(fd)
         # A result is made durable before the build tree is retired or the state advances.
         shutil.rmtree(work)
         self.state['completed'][sid]=result['completed_unix'];self.save(active=None)
@@ -199,21 +217,21 @@ class Runner:
         lock=(self.root/'runtime/worker.lock').open('w')
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         self.save(status='verifying',active=None)
-        stopping=threading.Event()
-        def disk_watch():
-            while not stopping.is_set():
-                for path,floor in self.floors().items():
-                    free=shutil.disk_usage(path).free
-                    with (self.root/'runtime/disk.jsonl').open('a') as f:
-                        f.write(json.dumps({'unix':time.time(),'path':path,'free_bytes':free})+'\n')
-                    if free<(floor+5)*1024**3:
-                        (self.root/'runtime/space-stop.txt').write_text('floor plus 5 GiB crossed: '+path)
-                        os.kill(os.getpid(),signal.SIGTERM);return
-                stopping.wait(5)
+        def disk_watch(signum=None,frame=None):
+            for path,floor in self.floors().items():
+                free=shutil.disk_usage(path).free
+                with (self.root/'runtime/disk.jsonl').open('a') as f:
+                    f.write(json.dumps({'unix':time.time(),'path':path,'free_bytes':free})+'\n')
+                if free<(floor+5)*1024**3:
+                    signal.setitimer(signal.ITIMER_REAL,0)
+                    (self.root/'runtime/space-stop.txt').write_text('floor plus 5 GiB crossed: '+path)
+                    raise RuntimeError('disk floor plus 5 GiB crossed: '+path)
         def interrupted(signum,frame):raise RuntimeError('worker interrupted; unfinished step is not counted')
         signal.signal(signal.SIGTERM,interrupted)
-        thread=threading.Thread(target=disk_watch,daemon=True);thread.start()
+        signal.signal(signal.SIGALRM,disk_watch)
+        signal.setitimer(signal.ITIMER_REAL,5,5)
         try:
+            disk_watch()
             self.verify_payload()
             for step in self.plan['steps']:
                 if self.accepted(step):self.save();continue
@@ -224,13 +242,26 @@ class Runner:
         except BaseException as e:
             self.save(status='blocked',error=str(e));raise
         finally:
-            stopping.set();thread.join(timeout=6)
+            signal.setitimer(signal.ITIMER_REAL,0)
 
 
 def status(root):
     path=root/'state.json'
-    if not path.exists():print('not started');return
-    s=json.loads(path.read_text());print(json.dumps(s,indent=2,sort_keys=True))
+    if not path.exists():print('Not started. ./run.sh starts the fixed plan.');return
+    s=json.loads(path.read_text());total=len(json.loads((root/'plan.json').read_text())['steps'])
+    label=s['status'];lock=root/'runtime/worker.lock'
+    if label in ('running','verifying'):
+        with lock.open('a') as f:
+            try:
+                fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                label='interrupted; ./run.sh resumes the unfinished step'
+            except BlockingIOError:pass
+    print('Status: '+label)
+    print(f"Step: {s.get('active') or 'none'}; completed {len(s['completed'])}/{total}; kit {s['version']}")
+    print('Updated: '+time.strftime('%Y-%m-%d %H:%M:%S UTC',time.gmtime(s['updated_unix'])))
+    if s.get('error') and label=='blocked':print('Reason: '+s['error'])
+    print('Log: '+str(root/'runtime/worker.log'))
+    print('Results: '+str(root/('summary/REPORT.md' if label=='complete' else 'results')))
 
 
 if __name__=='__main__':
