@@ -1,0 +1,11 @@
+--- a/photocraft/crates/ui-egui/src/app.rs
++++ b/photocraft/crates/ui-egui/src/app.rs
+@@ -246,7 +246,7 @@
+ }
+ 
+ impl eframe::App for PhotocraftApp {
+-    fn on_exit(&mut self) {
++    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+         if let Err(err) = tool_memory::save_on_exit(self) {
+             log::warn!("Preferences: could not save the final tool state: {err}");
+         }

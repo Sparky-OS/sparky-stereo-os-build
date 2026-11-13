@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
-"""Make one Cargo workspace (one resolve, one lock) out of several Craft app checkouts.
-
-suite-tree.py tree  OUT  NAME=SRCDIR:BIN[,BIN...] [NAME=SRCDIR:BIN...]
-    Copies each checkout to OUT/NAME (no .git, no target), expands every `workspace = true`
-    in the member manifests from that app's own root manifest, drops dev-dependencies and
+# Sparky Stereo OS: one Cargo workspace (one resolve, one lock) out of the Craft apps' checkouts, and the Rust dynamic
+# libraries the apps share. Generated copies only: upstream's files are never changed.
+# Created by Daniel Ramos (Capitain Jack) 2026/11/12
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/11/13
+"""suite-tree.py tree  OUT  SUITE.json  APPSDIR  [APP...]
+    Copies each app's checkout APPSDIR/APP to OUT/APP (no .git, no target, no xtask), turns its dependencies on a
+    sibling checkout into git dependencies on the revision SUITE.json pins (suite-source.py), expands every
+    `workspace = true` in the member manifests from that app's own root manifest, drops dev-dependencies and
     lints, and writes OUT/Cargo.toml (members, the union of the [patch] tables, the release
     profile) and OUT/Cargo.lock (the union of the upstream locks, so cargo keeps upstream's
-    versions wherever one resolve allows it). Upstream's files are not changed: the copy is.
+    versions wherever one resolve allows it). Without APP names, every app of SUITE.json.
 
 suite-tree.py shared OUT METADATA.json TREEDIR BINPKG[,BINPKG...] [BINPKG,...]...
-    Reads `cargo metadata` of OUT and, in TREEDIR, one `cargo tree -e normal --target T --prefix none
+    Reads `cargo metadata` of OUT and, in TREEDIR, one `cargo tree -e normal --target T
     --prefix depth -f '{p}|{f}'` listing per binary package (BINPKG.txt) and one for all of them together (all.txt):
     the listings come from the real feature resolver, the metadata graph does not. Writes the
     umbrella dylib crate OUT/shared (craft-suite-shared): every library crate that two or
     more of the given apps (each a comma list of its binary packages) link, pinned to the
     resolved version and features; then adds it as a dependency of each binary package and
-    appends `extern crate craft_suite_shared;` to each binary's main.rs.
+    appends `extern crate craft_suite_shared;` to each binary's main.rs. With PER_APP=1 one more library per app.
+    SUITE_ABI_SEED (the output of `rustc -vV`) and, per app, SUITE_APP_SEED_<APP> (the app's source revision) enter
+    the libraries' names.
 """
-import json, os, re, shutil, sys, tomllib
+import glob, json, os, re, shutil, subprocess, sys, tomllib
 from pathlib import Path
 
 
@@ -117,25 +123,34 @@ def expand_manifest(path, root, app_root):
     path.write_text(dumps(doc))
 
 
-def cmd_tree(out, specs):
+def cmd_tree(out, suite, appsdir, names):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=False)
+    suite = json.loads(Path(suite).read_text())
+    source_tool = str(Path(__file__).resolve().parent / 'suite-source.py')
     members, patches, locks, bins = [], {}, {}, {}
-    for spec in specs:
-        name, rest = spec.split('=', 1)
-        src, binlist = rest.rsplit(':', 1)
-        src = Path(src)
+    for name in names or list(suite['apps']):
+        app = suite['apps'][name]
         dst = out / name
-        shutil.copytree(src, dst, symlinks=True, ignore=shutil.ignore_patterns('.git', 'target', 'xtask'))
+        shutil.copytree(Path(appsdir) / name, dst, symlinks=True, ignore=shutil.ignore_patterns('.git', 'target', 'xtask'))
+        pins = [f'{k}={v}' for k, v in app['libs'].items()]
+        for step in ('rewrite', 'lock'):
+            subprocess.run([sys.executable, source_tool, step, str(dst), suite['fork'], *pins], check=True,
+                           stdout=subprocess.DEVNULL)
         root = tomllib.loads((dst / 'Cargo.toml').read_text())
-        wanted = set(binlist.split(','))
-        for sub in sorted((dst / 'crates').iterdir()) + sorted((dst / 'apps').iterdir()):
+        wanted = set(app['bins'])
+        subs = []
+        for pattern in root['workspace'].get('members', []):
+            subs += [Path(x) for x in sorted(glob.glob(str(dst / pattern)))]
+        for sub in subs:
             man = sub / 'Cargo.toml'
-            if not man.exists():
+            if not man.exists() or sub.name == 'xtask':
                 continue
             if sub.parent.name == 'apps' and sub.name not in wanted:
                 shutil.rmtree(sub)
                 continue
+            if sub.resolve() == dst.resolve():
+                continue    # the root package: written below, once the workspace tables are out of its manifest
             expand_manifest(man, root, dst)
             members.append(str(sub.relative_to(out)))
         for reg, tbl in root.get('patch', {}).items():
@@ -150,14 +165,28 @@ def cmd_tree(out, specs):
             locks.setdefault((p['name'], p['version'], p.get('source', '')), p)
         (dst / 'Cargo.toml').rename(dst / 'Cargo.toml.upstream-root')
         (dst / 'Cargo.lock').rename(dst / 'Cargo.lock.upstream')
+        if 'package' in root:
+            # an app whose root manifest is also a package (AniCraft): the same manifest without its workspace,
+            # patch and profile tables, expanded like any member
+            text = (dst / 'Cargo.toml.upstream-root').read_text()
+            (dst / 'Cargo.toml').write_text(text)
+            expand_manifest(dst / 'Cargo.toml', root, dst)
+            doc = tomllib.loads((dst / 'Cargo.toml').read_text())
+            for k in ('workspace', 'patch', 'profile'):
+                doc.pop(k, None)
+            (dst / 'Cargo.toml').write_text(dumps(doc))
+            members.append(name)
         bins[name] = sorted(wanted)
     root = ['[workspace]', 'resolver = "3"', 'members = ' + dumps_value(members), '',
             '[profile.release]', 'lto = false', 'codegen-units = 1', 'debug = 0', '']
+    # a patch no app's lock uses (upstream lists it under [[patch.unused]]) is left out: with every source replaced by
+    # a folder, cargo cannot look an unlocked git patch up ("requires a lock file to be present first")
+    used = {n for (n, _v, src) in locks if src.startswith('git+')}
     for reg, tbl in patches.items():
         root.append(f'[patch.{key(reg)}]')
-        root += [f'{key(c)} = {dumps_value(v)}' for c, v in tbl.items()]
+        root += [f'{key(c)} = {dumps_value(v)}' for c, v in tbl.items() if (v.get('package', c) if isinstance(v, dict) else c) in used]
         root.append('')
-    (out / 'Cargo.toml').write_text('\n'.join(root))
+    patch_at = len(root)
     # One resolve holds one version per semver-compatible range: keep the highest of each range, and
     # leave the edges out so cargo rebuilds them (a locked edge to a dropped version stops the resolve).
     def compat(v):
@@ -182,6 +211,7 @@ def cmd_tree(out, specs):
         lock.append('')
     locks = best
     (out / 'Cargo.lock').write_text('\n'.join(lock))
+    (out / 'Cargo.toml').write_text('\n'.join(root[:patch_at]))
     (out / 'suite-bins.json').write_text(json.dumps(bins, indent=1))
     print(f'{len(members)} members, {len(locks)} locked packages')
 
@@ -238,7 +268,8 @@ def write_umbrella(d, out, base, man, lib):
     compiler (SUITE_ABI_SEED, the output of `rustc -vV`) and every crate, version, source and feature in it."""
     import hashlib
     body = '\n'.join(man[man.index('[dependencies]'):]).replace(str(out), '.')
-    abi = hashlib.sha256((os.environ.get('SUITE_ABI_SEED', '') + '\n' + body).encode()).hexdigest()[:8]
+    seed = os.environ.get('SUITE_ABI_SEED', '') + '\n' + os.environ.get('SUITE_APP_SEED_' + base.split('-')[0].upper(), '')
+    abi = hashlib.sha256((seed + '\n' + body).encode()).hexdigest()[:8]
     soname = f'lib{base}-0.{abi}.so'
     man = list(man)
     man.insert(man.index('publish = false') + 1, 'build = "build.rs"')
@@ -382,8 +413,8 @@ def cmd_shared(out, metadata, treedir, apps):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) >= 4 and sys.argv[1] == 'tree':
-        cmd_tree(sys.argv[2], sys.argv[3:])
+    if len(sys.argv) >= 5 and sys.argv[1] == 'tree':
+        cmd_tree(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
     elif len(sys.argv) >= 6 and sys.argv[1] == 'shared':
         cmd_shared(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
     else:

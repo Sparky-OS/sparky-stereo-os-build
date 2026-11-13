@@ -1,0 +1,41 @@
+#!/usr/bin/make -f
+# Sparky Stereo OS: the Craft suite, one workspace for every app, the shared crates as Rust dynamic libraries.
+# Everything is built from the vendored folders with the edition's own rustc; nothing is fetched.
+include /usr/share/dpkg/pkg-info.mk
+export CARGO_HOME := $(CURDIR)/debian/cargo-home
+export CARGO_TARGET_DIR := $(CURDIR)/target
+export CARGO_BUILD_JOBS := $(or $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS))),4)
+export CARGO_NET_OFFLINE := true
+export SUITE_TOOLS := $(CURDIR)/debian
+LIBPKG := $(shell cat debian/suite-libpkg.txt)
+APPS := $(shell cat debian/suite-apps.txt)
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	if [ -f .sparky-lc/source.json ]; then python3 debian/cargo-checksums.py refresh; fi
+	bash debian/suite-generate.sh $(CURDIR) $(CURDIR)/suite $(APPS)
+	bash debian/suite-check-names.sh $(CURDIR)/suite debian/suite-sonames.txt
+
+override_dh_auto_build:
+	bash debian/suite-build.sh $(CURDIR) $(CURDIR)/suite $(APPS)
+
+# Upstream's gates ran on these revisions before they were pinned; the package build runs no test suite.
+override_dh_auto_test:
+
+override_dh_auto_install:
+	bash debian/suite-stage.sh $(CURDIR) $(CURDIR)/suite $(LIBPKG) $(APPS)
+
+override_dh_auto_clean:
+	rm -rf suite target debian/cargo-home debian/stage
+
+# every library names its package at this exact version: a Rust dynamic library loads only with the build it came from
+override_dh_makeshlibs:
+	for p in $(LIBPKG) $(APPS); do dh_makeshlibs -p$$p -V"$$p (= $(DEB_VERSION))"; done
+
+override_dh_dwz:
+
+# Cargo.toml.orig belongs to a checksum-covered vendored crate.
+override_dh_clean:
+	dh_clean -Xvendor/

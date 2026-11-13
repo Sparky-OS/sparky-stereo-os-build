@@ -161,7 +161,7 @@ def cmd_config(out, base):
              f'directory = {json.dumps(base + "/registry")}', '']
     for where, source in sorted(json.loads((out / 'sources.json').read_text()).items()):
         m = GIT.match(source)
-        name = 'suite-' + where.replace('/', '-')
+        name = 'suite-' + re.sub(r'[^A-Za-z0-9-]', '-', where)
         lines += [f'[source.{json.dumps(source.split("#")[0])}]', f'git = {json.dumps(m["url"])}', f'rev = {json.dumps(m["rev"])}',
                   f'replace-with = {json.dumps(name)}', '', f'[source.{name}]', f'directory = {json.dumps(base + "/" + where)}', '']
     print('\n'.join(lines))
