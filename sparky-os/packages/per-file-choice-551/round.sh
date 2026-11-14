@@ -111,7 +111,7 @@ INNER
 		index
 		rm -rf "$W/stereo-layer-src"; mkdir -p "$W/stereo-layer-src"
 		SOURCE_NAME=${BUILD_NAME_PREFIX}-source-stereo-layer "$DEPTH/stereo-layer-source.sh" "$FORK" "$REV" "$W/stereo-layer-src" | tail -3
-		build stereo-layer "$W/stereo-layer-src" 'stereo-layer' nocheck
+		build stereo-layer "$W/stereo-layer-src" 'stereo-layer kf6-kimageformats' nocheck
 		;;
 	kimageformats)
 		rm -rf "$W/kf6-kimageformats-src"; mkdir -p "$W/kf6-kimageformats-src"
