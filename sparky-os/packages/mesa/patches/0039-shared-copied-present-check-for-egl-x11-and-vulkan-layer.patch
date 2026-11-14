@@ -821,10 +821,10 @@ index 0000000..5df2527
 +#endif
 diff --git a/src/util/u_stereo_problem.c b/src/util/u_stereo_problem.c
 new file mode 100644
-index 0000000..5f7dad5
+index 0000000..744fb5e
 --- /dev/null
 +++ b/src/util/u_stereo_problem.c
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,168 @@
 +/* Copyright 2026 Daniel Campos Ramos
 + * SPDX-License-Identifier: MIT
 + */
@@ -993,7 +993,6 @@ index 0000000..5f7dad5
 +}
 +
 +#endif
-+
 diff --git a/src/util/u_stereo_problem.h b/src/util/u_stereo_problem.h
 new file mode 100644
 index 0000000..64a7656
@@ -1114,10 +1113,10 @@ index fdacbb7..da740ee 100644
      ),
    )
 diff --git a/src/vulkan/stereo-layer/passthrough_test.c b/src/vulkan/stereo-layer/passthrough_test.c
-index 030541a..1d7f22a 100644
+index 030541a..707f7be 100644
 --- a/src/vulkan/stereo-layer/passthrough_test.c
 +++ b/src/vulkan/stereo-layer/passthrough_test.c
-@@ -61,8 +61,29 @@ capabilities(VkPhysicalDevice physical, VkSurfaceKHR surface, VkSurfaceCapabilit
+@@ -61,8 +61,33 @@ capabilities(VkPhysicalDevice physical, VkSurfaceKHR surface, VkSurfaceCapabilit
     return VK_SUCCESS;
  }
  
@@ -1127,16 +1126,20 @@ index 030541a..1d7f22a 100644
 +   const uint32_t rgb8[4] = { 0xff0000, 0xff00, 0xff, 0xff000000 };
 +   const uint32_t rgb10[4] = { 0x3ff00000, 0xffc00, 0x3ff, 0 };
 +   uint8_t rgba[4] = { 255, 0, 0, 128 }, bgra[4] = { 0, 0, 255, 128 };
-+   assert(x11_left_pixel(rgba, VK_FORMAT_R8G8B8A8_SRGB, rgb8) == 0x80ff0000);
-+   assert(x11_left_pixel(bgra, VK_FORMAT_B8G8R8A8_UNORM, rgb8) == 0x80ff0000);
++   assert(x11_left_pixel(rgba, VK_FORMAT_R8G8B8A8_SRGB, rgb8, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) == 0x80ff0000);
++   assert(x11_left_pixel(bgra, VK_FORMAT_B8G8R8A8_UNORM, rgb8, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) == 0x80ff0000);
++   assert(x11_left_pixel(rgba, VK_FORMAT_R8G8B8A8_UNORM, rgb8,
++      VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) == 0xffff0000);
++   assert(x11_left_pixel(rgba, VK_FORMAT_R8G8B8A8_UNORM, rgb8,
++      VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR) == 0x80800000);
 +   uint32_t packed = 1023;
-+   assert(x11_left_pixel((uint8_t *)&packed, VK_FORMAT_A2B10G10R10_UNORM_PACK32, rgb10) == 0x3ff00000);
++   assert(x11_left_pixel((uint8_t *)&packed, VK_FORMAT_A2B10G10R10_UNORM_PACK32, rgb10, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) == 0x3ff00000);
 +   packed = 1023u << 20;
-+   assert(x11_left_pixel((uint8_t *)&packed, VK_FORMAT_A2R10G10B10_UNORM_PACK32, rgb10) == 0x3ff00000);
++   assert(x11_left_pixel((uint8_t *)&packed, VK_FORMAT_A2R10G10B10_UNORM_PACK32, rgb10, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) == 0x3ff00000);
 +   uint16_t half[4] = { 0x3c00, 0, 0, 0x3c00 };
-+   assert(x11_left_pixel((uint8_t *)half, VK_FORMAT_R16G16B16A16_SFLOAT, rgb8) == 0xffff0000);
++   assert(x11_left_pixel((uint8_t *)half, VK_FORMAT_R16G16B16A16_SFLOAT, rgb8, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) == 0xffff0000);
 +   uint16_t unorm[4] = { 65535, 0, 0, 65535 };
-+   assert(x11_left_pixel((uint8_t *)unorm, VK_FORMAT_R16G16B16A16_UNORM, rgb10) == 0x3ff00000);
++   assert(x11_left_pixel((uint8_t *)unorm, VK_FORMAT_R16G16B16A16_UNORM, rgb10, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) == 0x3ff00000);
 +   assert(x11_left_pixel_size(VK_FORMAT_R16G16B16A16_SFLOAT) == 8);
 +   assert(!x11_left_pixel_size(VK_FORMAT_UNDEFINED));
 +}
@@ -1148,7 +1151,7 @@ index 030541a..1d7f22a 100644
        .instance = (VkInstance)&dispatch,
        .GetSurfaceCapabilities = capabilities,
 diff --git a/src/vulkan/stereo-layer/stereo_layer.c b/src/vulkan/stereo-layer/stereo_layer.c
-index ffd5544..f9a5594 100644
+index ffd5544..11c6ba0 100644
 --- a/src/vulkan/stereo-layer/stereo_layer.c
 +++ b/src/vulkan/stereo-layer/stereo_layer.c
 @@ -11,7 +11,8 @@
@@ -1188,18 +1191,19 @@ index ffd5544..f9a5594 100644
     PFN_vkCreateImage CreateImage;
     PFN_vkDestroyImage DestroyImage;
     PFN_vkGetImageMemoryRequirements GetImageMemoryRequirements;
-@@ -209,6 +223,10 @@ struct swapchain_data {
+@@ -209,6 +223,11 @@ struct swapchain_data {
     uint32_t width;
     uint32_t height;
     uint32_t image_count;
 +   VkFormat format;
++   VkCompositeAlphaFlagBitsKHR composite_alpha;
 +   VkBuffer left_buffer;
 +   VkDeviceMemory left_memory;
 +   void *left_map;
     VkImage *downstream_images;
     VkImage *images;
     VkDeviceMemory *memory;
-@@ -414,6 +432,90 @@ declare_xlib(struct surface_data *surface)
+@@ -414,6 +433,90 @@ declare_xlib(struct surface_data *surface)
        u_x11_stereo_list_child(connection, surface->u.xlib.window);
  }
  
@@ -1290,7 +1294,7 @@ index ffd5544..f9a5594 100644
  static void
  declare_wayland(struct surface_data *surface, uint32_t width, uint32_t height)
  {
-@@ -451,6 +553,12 @@ destroy_surface_data(struct surface_data *surface)
+@@ -451,6 +554,12 @@ destroy_surface_data(struct surface_data *surface)
                                  NULL, wl_proxy_get_version((struct wl_proxy *)surface->u.wl.viewporter),
                                  WL_MARSHAL_FLAG_DESTROY);
     }
@@ -1303,7 +1307,7 @@ index ffd5544..f9a5594 100644
     free(surface);
  }
  
-@@ -641,6 +749,15 @@ load_device_functions(struct device_data *data)
+@@ -641,6 +750,15 @@ load_device_functions(struct device_data *data)
     LOAD_TO(DestroySwapchain, DestroySwapchainKHR);
     LOAD_TO(GetSwapchainImages, GetSwapchainImagesKHR);
     LOAD_TO(QueuePresent, QueuePresentKHR);
@@ -1319,7 +1323,7 @@ index ffd5544..f9a5594 100644
     LOAD(CreateImage);
     LOAD(DestroyImage);
     LOAD(GetImageMemoryRequirements);
-@@ -821,6 +938,24 @@ stereo_CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR *create_i
+@@ -821,6 +939,24 @@ stereo_CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR *create_i
        return result;
     if (caps.maxImageArrayLayers >= 2)
        return data->CreateSwapchain(device, create_info, allocator, swapchain_handle);
@@ -1344,15 +1348,16 @@ index ffd5544..f9a5594 100644
     bool declared_before_create = surface->stereo_swapchain_created;
     VkSwapchainCreateInfoKHR downstream_info = *create_info;
     downstream_info.imageArrayLayers = 1;
-@@ -844,6 +979,7 @@ stereo_CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR *create_i
+@@ -844,6 +980,8 @@ stereo_CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR *create_i
     }
     swapchain->device = data;
     swapchain->surface = surface;
 +   swapchain->format = create_info->imageFormat;
++   swapchain->composite_alpha = create_info->compositeAlpha;
     swapchain->width = create_info->imageExtent.width;
     swapchain->height = create_info->imageExtent.height;
     if (surface->wayland)
-@@ -942,7 +1078,7 @@ stereo_GetSwapchainImages(VkDevice device, VkSwapchainKHR handle, uint32_t *coun
+@@ -942,7 +1080,7 @@ stereo_GetSwapchainImages(VkDevice device, VkSwapchainKHR handle, uint32_t *coun
  }
  
  static void
@@ -1361,7 +1366,7 @@ index ffd5544..f9a5594 100644
  {
     struct device_data *data = swapchain->device;
     data->ResetCommandBuffer(swapchain->command, 0);
-@@ -970,7 +1106,7 @@ record_pack(struct swapchain_data *swapchain, uint32_t index)
+@@ -970,7 +1108,7 @@ record_pack(struct swapchain_data *swapchain, uint32_t index)
           .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
           .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
           .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -1370,7 +1375,7 @@ index ffd5544..f9a5594 100644
           .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 2 },
        },
     };
-@@ -984,13 +1120,16 @@ record_pack(struct swapchain_data *swapchain, uint32_t index)
+@@ -984,13 +1122,16 @@ record_pack(struct swapchain_data *swapchain, uint32_t index)
           .extent = { swapchain->width, swapchain->height, 1 },
        },
        {
@@ -1389,7 +1394,7 @@ index ffd5544..f9a5594 100644
                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, downstream_image,
                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 2, regions);
     barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-@@ -1033,7 +1172,11 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
+@@ -1033,7 +1174,11 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
        struct swapchain_data *swapchain = find_swapchain(data, present_info->pSwapchains[i]);
        if (!swapchain)
           continue;
@@ -1402,7 +1407,7 @@ index ffd5544..f9a5594 100644
        commands[count] = swapchain->command;
        ready[count++] = swapchain->ready;
     }
-@@ -1058,6 +1201,67 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
+@@ -1058,6 +1203,67 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
        downstream.pWaitSemaphores = ready;
        result = data->QueuePresent(queue, &downstream);
     }
@@ -1470,7 +1475,7 @@ index ffd5544..f9a5594 100644
     free(ready);
     return result;
  }
-@@ -1077,6 +1281,7 @@ stereo_DestroySwapchain(VkDevice device, VkSwapchainKHR handle,
+@@ -1077,6 +1283,7 @@ stereo_DestroySwapchain(VkDevice device, VkSwapchainKHR handle,
     }
     *link = swapchain->next;
     data->QueueWaitIdle(data->first_queue);
@@ -1480,10 +1485,10 @@ index ffd5544..f9a5594 100644
     if (swapchain->command)
 diff --git a/src/vulkan/stereo-layer/x11_left.h b/src/vulkan/stereo-layer/x11_left.h
 new file mode 100644
-index 0000000..ff2645b
+index 0000000..57c4a94
 --- /dev/null
 +++ b/src/vulkan/stereo-layer/x11_left.h
-@@ -0,0 +1,219 @@
+@@ -0,0 +1,224 @@
 +/* Copyright 2026 Daniel Campos Ramos
 + * SPDX-License-Identifier: MIT
 + *
@@ -1517,7 +1522,8 @@ index 0000000..ff2645b
 + * sRGB bytes; this is a transfer, not another colour-space conversion.
 + */
 +static uint32_t
-+x11_left_pixel(const uint8_t *src, VkFormat format, const uint32_t masks[4])
++x11_left_pixel(const uint8_t *src, VkFormat format, const uint32_t masks[4],
++               VkCompositeAlphaFlagBitsKHR alpha)
 +{
 +   uint32_t c[4], max = 255, v;
 +   memcpy(&v, src, 4);
@@ -1550,6 +1556,10 @@ index 0000000..ff2645b
 +      c[0] = src[0]; c[1] = src[1]; c[2] = src[2]; c[3] = src[3];
 +      break;
 +   }
++   if (alpha == VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) c[3] = max;
++   else if (alpha == VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR)
++      for (unsigned i = 0; i < 3; i++)
++         c[i] = ((uint64_t)c[i] * c[3] + max / 2) / max;
 +   uint32_t pixel = 0;
 +   for (unsigned i = 0; i < 4; i++) {
 +      if (!masks[i]) continue;
@@ -1660,7 +1670,7 @@ index 0000000..ff2645b
 +   uint32_t *pixels = malloc((size_t)swapchain->width * swapchain->height * 4);
 +   if (!pixels) { free(g); goto fail; }
 +   for (size_t i = 0, n = (size_t)swapchain->width * swapchain->height; i < n; i++) {
-+      uint32_t pixel = x11_left_pixel((const uint8_t *)swapchain->left_map + i * bpp, swapchain->format, masks);
++      uint32_t pixel = x11_left_pixel((const uint8_t *)swapchain->left_map + i * bpp, swapchain->format, masks, swapchain->composite_alpha);
 +#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 +      if (setup->image_byte_order == XCB_IMAGE_ORDER_MSB_FIRST) pixel = __builtin_bswap32(pixel);
 +#else
