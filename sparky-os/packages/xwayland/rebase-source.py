@@ -82,7 +82,7 @@ def main():
         shutil.copy2(upstream, work / 'xwayland_24.1.15.orig.tar.xz')
         run('dpkg-source', '--before-build', str(tree))
         reproducible.normalize_tree(tree, stamp)
-        run('dpkg-source', '-b', str(tree))
+        run('dpkg-source', '-b', str(tree), cwd=work)
         for path in work.glob('xwayland_24.1.15*'):
             if path.is_file():
                 shutil.move(str(path), out / path.name)
