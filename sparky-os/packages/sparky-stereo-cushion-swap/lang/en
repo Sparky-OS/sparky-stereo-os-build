@@ -22,3 +22,5 @@ LOCAL21="Cushion Swap is switched off by your choice (%s); memory is not protect
 LOCAL22="Cushion Swap protection could not start: %s. What to do: see journalctl -u cushion-swap, fix the cause, then run: sudo systemctl restart cushion-swap"
 LOCAL23="Cushion Swap could not coordinate its swap actions at %s. No swap action or sleep preparation was attempted. Check the directory permissions, then retry."
 LOCAL24="A zram device cannot be a Cushion Swap or hibernation area. Choose a swap area on disk."
+LOCAL25="Cushion Swap takes the swap area the installer made (%s): its line in /etc/fstab now says noauto, so the area stays off until memory runs short; hibernation uses it as before. The file as it was is kept as %s"
+LOCAL26="The swap line of %s in /etc/fstab is not the installer's own, so Cushion Swap leaves it as you made it. To hand that area to Cushion Swap: sudo cushion-swap --adopt mine, then: sudo systemctl restart cushion-swap"

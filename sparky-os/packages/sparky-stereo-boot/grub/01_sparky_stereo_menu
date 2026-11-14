@@ -1,0 +1,73 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/14
+# Copyright 2026 under the GNU GPL3 License
+# GRUB's menu is never drawn without a loaded font (sparky-stereo-boot, ORDER 572).
+# Debian's 00_header writes "if loadfont FONT; then set gfxmode=...; load_video; insmod gfxterm; ...; fi" and then
+# "terminal_output gfxterm" whether the font loaded or not. When GRUB_FONT names a font file (the edition's sized
+# font, or the person's), two things make that loadfont fail: Secure Boot, where Debian's signed GRUB refuses every
+# font outside its own image (grub-core/kern/efi/sb.c: file types it does not list are "prohibited by secure boot
+# policy"), and a font file that is gone. The menu was then drawn with GRUB's built-in ASCII glyphs, 16 pixels high,
+# and a "?" in a box for every other character (the arrows, the frame, accented letters).
+# This adds, right after 00_header: in those two cases GRUB loads its own font by name ("unicode": from the memdisk of
+# the signed image under Secure Boot, grub-core/font/font.c and debian/build-efi-images, else from $prefix/fonts),
+# takes the resolution at which that 16 pixel font has the menu's text height (SPARKY_STEREO_READABLE_GFXMODE, from
+# 30-sparky-stereo-boot.cfg), and starts the graphical terminal again so it uses the font; when even that font cannot
+# be loaded the menu is the firmware's text console. update-grub run under Secure Boot never names a font file
+# (30-sparky-stereo-boot.cfg), so this is for Secure Boot switched on after the menu was written, and for the
+# person's own GRUB_FONT.
+#
+# The menu shown once: a hidden menu with no wait cannot be counted on to open with a key (measured in QEMU under
+# SeaBIOS and OVMF: Shift held and Esc pressed through the start opened nothing; GRUB looks at the keyboard once).
+# "sudo sparky-stereo-boot menu" sets sparky_menu_once in GRUB's environment block, and so does the boot's own check
+# when a Secure Boot key waits for its enrolment: the next start shows the menu for 30 seconds, then the variable goes
+# (save_env here, and the boot check clears it again where GRUB cannot write the block).
+set -e
+cat <<'ONCE'
+if [ "${sparky_menu_once}" = 1 ]; then
+	set timeout_style=menu
+	set timeout=30
+	set sparky_menu_once=
+	save_env sparky_menu_once
+fi
+ONCE
+[ -n "${GRUB_FONT:-}" ] || exit 0
+case "${GRUB_TERMINAL_OUTPUT:-gfxterm}" in gfxterm) ;; *) exit 0 ;; esac
+case "${GRUB_TERMINAL:-gfxterm}" in gfxterm) ;; *) exit 0 ;; esac
+prefix=/usr
+exec_prefix=/usr
+datarootdir=/usr/share
+. "${SPARKY_GRUB_MKCONFIG_LIB:-/usr/share/grub/grub-mkconfig_lib}"
+if [ -r "$GRUB_FONT" ]; then
+	prepare_grub_to_access_device $(${grub_probe:-grub-probe} --target=device "$GRUB_FONT")
+	font=$(make_system_path_relative_to_its_root "$GRUB_FONT")
+else
+	font=$GRUB_FONT
+fi
+mode=${SPARKY_STEREO_READABLE_GFXMODE:-${GRUB_GFXMODE:-auto}}
+lang=$(echo "${LANG:-}" | cut -d . -f 1)
+cat <<MENU
+if [ "\$shim_lock" = y -o ! -f "$font" ]; then
+	if loadfont unicode ; then
+		set gfxmode=$mode
+		load_video
+		insmod gfxterm
+MENU
+if [ -n "$lang" ] && [ "$lang" != C ] && [ "$lang" != POSIX ]; then
+	cat <<MENU
+		set locale_dir=\$prefix/locale
+		set lang=$lang
+		insmod gettext
+MENU
+fi
+cat <<MENU
+		terminal_output console
+		terminal_output gfxterm
+	else
+		terminal_output console
+	fi
+else
+	# the sized font is a Latin one: every glyph it lacks (Chinese, Japanese, Korean) comes from GRUB's own font,
+	# which GRUB looks through when the first font has no glyph for a character
+	loadfont unicode
+fi
+MENU

@@ -6,7 +6,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.3.4
+VERSION=0.3.5
 PACKAGE=sparky-stereo-cushion-swap
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.cushion-swap.XXXXXX")
@@ -102,6 +102,12 @@ if [ "$1" = configure ] || [ "$1" = abort-upgrade ] || [ "$1" = abort-deconfigur
 			step deb-systemd-helper update-state "$unit"
 		fi
 	done
+	# 0.3.5 (ORDER 572): on a system installed before the installer handed its swap area over, the installer's own
+	# always-on swap line (byte for byte what Calamares' fstab step prints) becomes the Cushion Swap area, and that
+	# is said; a line the person wrote or changed is left as they made it, and that is said too
+	if [ "$1" = configure ] && [ -n "$2" ] && dpkg --compare-versions "$2" lt 0.3.5; then
+		/usr/sbin/cushion-swap --adopt upgrade || echo "cushion-swap: the swap line in /etc/fstab was not looked at (exit $?)" >&2
+	fi
 	if [ -d /run/systemd/system ]; then
 		step systemctl --system daemon-reload
 		since=$(date +%s)

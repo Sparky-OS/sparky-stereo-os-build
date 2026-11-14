@@ -1,4 +1,46 @@
 -------------------------------------------------------------------------------
+  Version 0.1.10 (2026-11-14)
+-------------------------------------------------------------------------------
+  * GRUB's menu is hidden, with no wait, when this is the only system on the computer, and shown for 5 seconds when
+    another system is found (ORDER 572; Daniel, 2026-10-07: "dual boot found at install: os-prober on and menu shown;
+    single OS: os-prober off, menu hidden", "users don't sit waiting"; 2026-11-14, after an install on a notebook
+    showed the menu for 5 seconds: "hidden grub, specially when there's only us installed", "if it has windows ok").
+    30-sparky-stereo-boot.cfg sets GRUB_TIMEOUT_STYLE and GRUB_TIMEOUT at every update-grub: os-prober, when the
+    installer (or the person) turned it on, says whether another system is there; an os-prober that fails shows the
+    menu and says so. The person's own GRUB_TIMEOUT_STYLE, GRUB_HIDDEN_TIMEOUT, or a GRUB_TIMEOUT other than Debian's 5
+    in /etc/default/grub are kept; SPARKY_STEREO_MENU=shown always shows the menu
+  * sudo sparky-stereo-boot menu shows a hidden menu once, at the next start, for 30 seconds; the boot does the same
+    by itself when a Secure Boot key waits for its enrolment. Keys are not a way in: with no wait GRUB looks at the
+    keyboard once (in QEMU, Shift held and Esc pressed through the start opened nothing under SeaBIOS and OVMF)
+  * An upgrade of a system installed before this rule looks once for another system (os-prober) and, when it finds
+    one, writes the file the installer writes (/etc/default/grub.d/sparky-stereo-dual-boot.cfg); Depends on os-prober
+  * The menu is never drawn without a loaded font. Under Secure Boot, Debian's signed GRUB refuses every font file
+    outside its own image (GRUB 2.14 grub-core/kern/efi/sb.c: a file type the verifier does not list is "prohibited
+    by secure boot policy"; proved: loadfont of the edition's font answers exactly that), and Debian's 00_header starts
+    the graphical terminal whether its font loaded or not, so the menu had 16 pixel ASCII glyphs, a "?" in a box for the
+    arrows, the frame and every accented letter, and English text. Now update-grub under Secure Boot names no font
+    file: GRUB loads the font bundled in its signed image (debian/build-efi-images puts unicode.pf2 in its memdisk;
+    grub-core/font/font.c looks there first), and since that font has one size, 16 pixels, the menu is shown at the
+    resolution where it has the menu's text height on this screen (the nearest of the screen's own shape, then
+    1024x768, then the firmware's). SPARKY_STEREO_SECUREBOOT_TEXT=native keeps the screen's resolution. A screen on
+    which 16 pixels already is that height keeps its resolution
+  * /etc/grub.d/01_sparky_stereo_menu, right after 00_header: when GRUB runs under shim's lock or the font file is
+    gone, GRUB loads its own font, takes that resolution and starts the graphical terminal again; with no font at
+    all the menu is the firmware's text console. This covers Secure Boot switched on after the menu was written and
+    the person's own GRUB_FONT; the boot check (sparky-stereo-boot-check.service) writes the menu again when Secure
+    Boot is not what it was at the last update-grub
+  * The screen's size comes from both EDID fields: the screen size field (VESA E-EDID Release A2, 3.6.2: "The host
+    (source) is expected to use this data to get a rough idea of the image size to generate properly scaled text and
+    icons"), and the first detailed timing's image size (3.10.2, millimetres) for the millimetres when the two agree;
+    when they differ the screen size field decides and update-grub says so. A notebook panel declared 29 x 17 cm
+    there and 344 x 193 mm in its timing: its menu text was sized for a 15.5 inch panel on a 13.3 inch one
+  * When shim refuses the newest kernel the enrolment entry is still the default, and a hidden menu is shown for it
+    (10 seconds), so the person sees it selected, as before
+  * The file's own exported values, met again when it is sourced inside a process that inherited them, are worked out
+    again and no longer recorded as the person's
+  * tests/grub-hook-tests.sh: 41 cases (the two sizes, Secure Boot, the menu rule, the person's settings)
+
+-------------------------------------------------------------------------------
   Version 0.1.9 (2026-11-09)
 -------------------------------------------------------------------------------
   * The boot splash follows the person's depth limits (ORDER 481; Daniel, 2026-11-05: "read the depth config by, and in this

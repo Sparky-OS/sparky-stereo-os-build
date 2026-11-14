@@ -64,6 +64,11 @@ What the edition adds around his rules
   /etc/default/cushion-swap, or the first swap line in /etc/fstab marked
   noauto (the installer writes it so; swapon -a skips noauto lines, so the
   area stays off at boot). Every other swap area is left alone.
+  The installer hands its swap area over right after it writes /etc/fstab
+  (cushion-swap --adopt installer); on an upgrade only a line that is byte
+  for byte the installer's own is taken (--adopt upgrade), a line made by
+  hand is left and said, and "sudo cushion-swap --adopt mine" is the
+  person's own word. The file as it was: /etc/fstab.before-cushion-swap.
   His host version ran "swapon -a && mount -a"; the edition runs
   "swapon AREA" and "swapoff AREA" only, and no mount -a.
 - An area that holds nothing (Daniel, 2026-10-10: "switch it off after the

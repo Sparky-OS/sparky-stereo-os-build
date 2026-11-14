@@ -22,3 +22,5 @@ LOCAL21="사용자의 선택으로 Cushion Swap이 꺼져 있습니다(%s). Cush
 LOCAL22="Cushion Swap 보호를 시작하지 못했습니다: %s. 해야 할 일: journalctl -u cushion-swap을 확인하고 원인을 고친 뒤 다음을 실행하세요: sudo systemctl restart cushion-swap"
 LOCAL23="Cushion Swap이 %s에서 스왑 작업을 조정하지 못했습니다. 스왑 작업이나 절전 준비를 시도하지 않았습니다. 디렉터리 권한을 확인한 뒤 다시 시도하세요."
 LOCAL24="zram 장치는 Cushion Swap 또는 최대 절전 모드 영역으로 사용할 수 없습니다. 디스크의 스왑 영역을 선택하세요."
+LOCAL25="Cushion Swap이 설치 프로그램이 만든 스왑 영역(%s)을 맡습니다: /etc/fstab의 해당 줄이 이제 noauto이므로 메모리가 부족해질 때까지 영역은 꺼져 있습니다. 최대 절전은 전과 같이 이 영역을 씁니다. 원래 파일은 %s로 보관합니다"
+LOCAL26="/etc/fstab의 %s 스왑 줄은 설치 프로그램이 쓴 것이 아니므로 Cushion Swap은 그대로 둡니다. 이 영역을 Cushion Swap에 맡기려면: sudo cushion-swap --adopt mine, 그다음: sudo systemctl restart cushion-swap"

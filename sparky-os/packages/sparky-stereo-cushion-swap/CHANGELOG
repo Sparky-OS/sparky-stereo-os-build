@@ -1,4 +1,16 @@
-Version 0.3.4 (2026-11-03)
+Version 0.3.5 (2026-11-14)
+  * ORDER 572: the installer's swap area is the Cushion Swap area from the first boot. The edition's installer wrote
+    the swap area it made as an always-on line ("defaults"), so the area was on at every boot and the daemon, which
+    takes AREA= or a swap line marked noauto, had none: "no swap area is configured" on a fresh install (found on a
+    real notebook). cushion-swap --adopt installer, run by the installer right after it writes /etc/fstab, marks
+    that line noauto; hibernation resumes from the same area as before (it never depended on this option).
+  * On an upgrade, --adopt upgrade takes only a swap line that is byte for byte what Calamares' fstab step prints
+    with the options "defaults"; a line written or changed by hand is left as the person made it, and that is said,
+    with the command that hands it over by the person's own word (cushion-swap --adopt mine).
+  * The file as it was is kept as /etc/fstab.before-cushion-swap, what was done in /var/lib/cushion-swap/adopted.
+
+-------------------------------------------------------------------------------
+  Version 0.3.4 (2026-11-03)
   Exclude a person’s zram from disk-swap accounting and area selection.
   Reject zram as a hibernation target without changing its state.
 

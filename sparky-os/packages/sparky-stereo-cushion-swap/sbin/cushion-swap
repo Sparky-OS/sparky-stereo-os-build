@@ -11,6 +11,7 @@
 #
 #   cushion-swap [--dry-run] [--once] [--interval N]   the daemon (his options)
 #   cushion-swap --thresholds        the values for this machine and why
+#   cushion-swap --adopt installer|upgrade|mine   the installer's swap line in /etc/fstab becomes the area (noauto)
 #   cushion-swap --status            the state file the System Settings page reads; exit 0 protecting,
 #                                    1 protecting with a problem kept, 2 not protecting, 3 not running,
 #                                    4 the state cannot be read
@@ -1546,8 +1547,71 @@ notify_session() {
 	"$SYSTEMCTL_BIN" --user start sparky-stereo-problems-notifier.service
 }
 
+# --adopt installer|upgrade|mine (0.3.5, ORDER 572): the installer's swap area becomes the Cushion Swap area.
+# Daniel's design: swap off until memory runs short. The edition's installer (Calamares' fstab step) writes the swap
+# area it made as an always-on line ("defaults"), so swapon -a switched it on at every boot and the daemon, which takes
+# only AREA= or a line marked noauto, had no area ("no swap area is configured").
+#   installer: called by the installer in the new system right after it wrote /etc/fstab: the first swap line is the
+#              installer's own, and is marked noauto;
+#   upgrade:   called when the package is upgraded: only a line that is byte for byte what Calamares' fstab step
+#              prints ("{:41} {:<14} {:<7} {:<10} 0 {}" with the options "defaults") is taken; a line written or
+#              changed by hand never has that form and is left as the person made it, and said;
+#   mine:      the person's own word: the first swap line, whatever its form.
+# Nothing is done when AREA= is set or a noauto swap line exists. The line as it was is kept in FSTAB.before-cushion-swap
+# (the first time), what was done in $CALIBRATION_DIR/adopted, and it is said. Hibernation is not touched: it resumes
+# from the area named in /etc/initramfs-tools/conf.d/resume or resume= on the kernel line, not from this option.
+adopt_swap() {
+	local mode=$1 line spec mount type options dump pass rest expected found="" other="" tmp n=0 hit=0
+	case $mode in installer | upgrade | mine) ;; *) log_err "--adopt needs installer, upgrade or mine"; return 2 ;; esac
+	[[ -r $FSTAB_PATH ]] || { log_err "cannot read $FSTAB_PATH"; return 1; }
+	if [[ -n $AREA ]]; then
+		return 0
+	fi
+	while IFS= read -r line; do
+		n=$((n + 1))
+		read -r spec mount type options dump pass rest <<<"$line"
+		[[ $spec == \#* || $type != swap ]] && continue
+		spec_path "$spec"
+		is_zram "$SPEC_PATH" && continue
+		if [[ ,$options, == *,noauto,* ]]; then
+			return 0
+		fi
+		[[ -n $found ]] && continue
+		if [[ $mode == upgrade ]]; then
+			printf -v expected '%-41s %-14s %-7s %-10s 0 0' "$spec" swap swap defaults
+			if [[ $line != "$expected" ]]; then
+				[[ -n $other ]] || other=$spec
+				continue
+			fi
+		fi
+		found=$spec hit=$n
+	done <"$FSTAB_PATH"
+	if [[ -z $found ]]; then
+		[[ -z $other ]] || say LOCAL26 "$other"
+		return 0
+	fi
+	tmp=$(mktemp "$FSTAB_PATH.cushion-swap.XXXXXX") || { log_err "cannot write beside $FSTAB_PATH"; return 1; }
+	n=0
+	while IFS= read -r line; do
+		n=$((n + 1))
+		if ((n == hit)); then
+			read -r spec mount type options dump pass rest <<<"$line"
+			case $options in defaults | sw) options=noauto ;; *) options=$options,noauto ;; esac
+			printf '%-41s %-14s %-7s %-10s %s %s\n' "$spec" "$mount" "$type" "$options" "${dump:-0}" "${pass:-0}"
+		else
+			printf '%s\n' "$line"
+		fi
+	done <"$FSTAB_PATH" >"$tmp" || { rm -f "$tmp"; log_err "cannot write $tmp"; return 1; }
+	[[ -e $FSTAB_PATH.before-cushion-swap ]] || cp -p "$FSTAB_PATH" "$FSTAB_PATH.before-cushion-swap" || { rm -f "$tmp"; log_err "cannot keep $FSTAB_PATH.before-cushion-swap"; return 1; }
+	chmod --reference="$FSTAB_PATH" "$tmp" && chown --reference="$FSTAB_PATH" "$tmp" && mv -f "$tmp" "$FSTAB_PATH" || { rm -f "$tmp"; log_err "cannot replace $FSTAB_PATH"; return 1; }
+	mkdir -p "$CALIBRATION_DIR" && printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$mode" "$found" >>"$CALIBRATION_DIR/adopted"
+	say LOCAL25 "$found" "$FSTAB_PATH.before-cushion-swap"
+	return 0
+}
+
 while [[ $# -gt 0 ]]; do
 	case $1 in
+	--adopt) adopt_swap "${2:-}"; exit $? ;;
 	--dry-run) DRY_RUN=1; shift ;;
 	--once) RUN_ONCE=1; shift ;;
 	--interval) POLL_INTERVAL_SEC=$2; shift 2 ;;

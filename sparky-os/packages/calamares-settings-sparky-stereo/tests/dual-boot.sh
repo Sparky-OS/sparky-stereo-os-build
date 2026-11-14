@@ -16,7 +16,7 @@ check "Windows beside: local time" "$(sed -n 3p $T/w/adjtime 2>/dev/null)" LOCAL
 check "Windows beside: os-prober on" "$(grep -v '^#' $T/w/grub.d/sparky-stereo-dual-boot.cfg 2>/dev/null)" GRUB_DISABLE_OS_PROBER=false
 probe '/dev/vda3:Debian GNU/Linux forky/sid:Debian:linux\n'; run l
 check "Linux beside: clock unchanged" "$(cat $T/l/adjtime 2>/dev/null || echo none)" none
-check "Linux beside: os-prober as Debian has it" "$(ls $T/l/grub.d 2>/dev/null || echo none)" none
+check "Linux beside: os-prober on, so the menu lists it and is shown (ORDER 572)" "$(grep -v '^#' $T/l/grub.d/sparky-stereo-dual-boot.cfg 2>/dev/null)" GRUB_DISABLE_OS_PROBER=false
 probe ''; run n
 check "nothing beside: unchanged" "$(ls $T/n)" ""
 echo "dual-boot: $pass passed, $fail failed"
