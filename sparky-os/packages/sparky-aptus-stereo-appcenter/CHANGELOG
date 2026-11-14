@@ -1,3 +1,10 @@
+0.1.9 (2026-11-14)
+  * ORDER 565 (Daniel, 2026-11-14: "only when someone install vinci - same for anything that needs this sort of dependancy"): the tools an entry's program needs arrive when the person installs that entry, never as dependencies of this package. An entry declares them once (`tools`); the entry's action reads apt's own simulation, says which tools, how many packages and what they cost to download and on disk before anything starts, joins them to the metered notice of sparky-stereo-apt's reader, downloads every archive first and then installs. Tools already on the system are left as they are: no reinstall, no upgrade, no notice.
+  * Depends no longer names podman, distrobox, fuse3, bsdextrautils (Vinci, KamLynk) or flatpak (SlimeVR): an upgrade from 0.1.6 installs none of them. Vinci declares podman, distrobox, fuse3 and bsdextrautils; KamLynk declares fuse3; a Flatpak entry needs flatpak. 0.1.8, which depended on the four, was never published.
+  * Every failure is said and stops the entry: a tool apt cannot install (with apt's reason, before any download), archives that cannot be downloaded (nothing installed), a failed installation, and a program download that fails. In the ten languages.
+  * When an entry is removed, the tools it brought stay installed and are marked as automatically installed unless another installed entry needs them, so apt's own rule decides when they go; tools that were there before are not touched.
+  * Everything else is 0.1.8: main's pages, Vinci on Multimedia, Video tools, KamLynk on Accessories, Devices, the stereo sections and the catalogue as published.
+
 0.1.8 (2026-11-13)
   * Keep an edition-owned copy of main APTus in step with upstream, in its own namespace.
   * Vinci on Multimedia, Video tools and KamLynk on Accessories, Devices.
