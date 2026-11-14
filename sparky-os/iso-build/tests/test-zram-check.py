@@ -124,6 +124,9 @@ class Packages(Fixtures):
                                            ('link', '/usr/lib/systemd/system/systemd-zram-setup@.service')}), 'a zram unit')
         self.assertRefused(self.deb(files={'/usr/libexec/sparky-stereo/zram-auto': '#!/bin/sh\n'}),
                            "the edition's former zram switch")
+        self.assertRefused(self.deb(files={'/usr/lib/systemd/system-preset/80-x.preset': 'disable a.service\nenable dev-zram0.swap\n'}),
+                           '/usr/lib/systemd/system-preset/80-x.preset:2: enable dev-zram0.swap')
+        self.assertPassed(self.deb(files={'/usr/lib/systemd/system-preset/80-x.preset': 'disable dev-zram0.swap\n'}))
 
     def test_kernel_command_lines(self):
         for value in ('zswap.enabled=1', 'zswap.enabled=Y', 'zswap.enabled=y', 'zswap.enabled=true', 'zswap.enabled=on',
@@ -391,6 +394,9 @@ MORE_SETUPS = (
     'echo 1 > /sys/block/zram0/compact',
     'echo $n > /sys/block/zram0/reset',
     'eval "$ZRAM_COMMAND"',
+    'systemctl mask dev-zram0.swap',
+    'apt-get -y install $PACKAGE',
+    'zramswap restart',
 )
 
 
@@ -462,6 +468,12 @@ class TearDowns(Fixtures):
             (root / path.lstrip('/')).write_text(text)
         (root / WANTS.lstrip('/')).parent.mkdir(parents=True)
         (root / WANTS.lstrip('/')).symlink_to('../' + Path(LEFTOVER).name)
+        # an image has the system's own programs, compiled: a known one is judged by its command line
+        (root / 'usr/bin').mkdir(parents=True)
+        (root / 'usr/bin/sh').write_bytes(b'\x7fELF' + b'\0' * 60)
+        (root / 'bin').symlink_to('usr/bin')
+        (root / (SYSTEM + 'sparky-zram-off.service').lstrip('/')).write_text(
+            "[Service]\nExecStart=/bin/sh -c 'swapoff /dev/zram0'\n")
         result = gate.check_image(root, [])
         self.assertEqual((result[0], result[1]), ([], []))
         self.assertTrue(any(LEFTOVER in n for n in result[3]), result)
