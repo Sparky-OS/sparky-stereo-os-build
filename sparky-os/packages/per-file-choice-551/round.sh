@@ -62,7 +62,8 @@ previous() { # previous SOURCE: the published +lc1 debs of a source, for the lin
 }
 build() { # build SOURCE SOURCE_DIR ROUND_SOURCES [PROFILES]
 	local new=
-	ls "$W"/new/*.deb >/dev/null 2>&1 && new=$W/new
+	# the index follows what the folder holds now (a file taken out by hand between two runs is out of it)
+	ls "$W"/new/*.deb >/dev/null 2>&1 && { index; new=$W/new; }
 	rm -rf "$W/$1-work"
 	ROUND_SOURCES=$3 SPARKY_BUILD_PROFILES=${4:-} "$DEPTH/build.sh" "$1" "$W/$1-work" "$2" "$(previous "$1")" "$TREE" "$ARCHIVE" "$new" "$W/siblings.txt" \
 		|| { echo "== $1: the build failed; the end of its log:"; tail -40 "$W/$1-work/build.log"; exit 1; }
