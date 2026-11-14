@@ -1,0 +1,12 @@
+qt6-declarative (6.11.2+dfsg-3+stereo3d2) unstable; urgency=medium
+
+  * Rebuild of 6.11.2+dfsg-3+stereo3d1 for the Lean Code toolkit 0.1.28 of
+    build-repo main 7628bd5: C and C++ files lose their comment-only lines,
+    with no #line directive and no empty line where a comment was; dpkg-stereo
+    --resolve finds a lean line's authored line by its content (ORDER 334).
+  * Built fresh from this source: its C and C++ sources projected again before
+    compilation and its payload sealed by toolkit 0.1.28 (ORDER 311).
+  * examples: the attachedstyleproperties plugin's run path now reaches
+    libMyStyle.so (s2-0001; QTBUG-129784, QTBUG-135094), so the example can
+    load its style; the link gate finds in this build the library the published
+    one could not (ORDER 311, ORDER 303).
