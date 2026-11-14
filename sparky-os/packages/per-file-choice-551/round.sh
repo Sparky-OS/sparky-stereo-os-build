@@ -80,7 +80,7 @@ for step in $STEPS; do
 	case $step in
 	bootstrap)
 		rm -rf "$W/bootstrap"; mkdir -p "$W/bootstrap"
-		docker run --rm --name "${BUILD_NAME_PREFIX}-bootstrap-policy" --ulimit core=0 --cpus "$THREADS" --platform linux/amd64 -e REV="$REV" -e THREADS="$THREADS" \
+		docker run --rm -i --name "${BUILD_NAME_PREFIX}-bootstrap-policy" --ulimit core=0 --cpus "$THREADS" --platform linux/amd64 -e REV="$REV" -e THREADS="$THREADS" \
 			-v "$FORK":/fork:ro -v "$TREE":/repo:ro -v "$W/bootstrap":/out \
 			-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
 			-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
@@ -93,9 +93,10 @@ printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://w
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 git config --global safe.directory '*'
 mkdir -p /b/source && git -C /fork archive "$REV" | tar -x -C /b/source
-apt-get -y update >/dev/null 2>&1
-apt-get -y --no-install-recommends build-dep -P nocheck /b/source >/out/build-dep.log 2>&1
-cd /b/source && dpkg-buildpackage -b -us -uc -Pnocheck -j"$THREADS" >/out/build.log 2>&1
+# this script arrives on standard input: every command that could read it is given /dev/null, or it eats the lines below
+apt-get -y update </dev/null >/dev/null 2>&1
+apt-get -y --no-install-recommends build-dep -P nocheck /b/source </dev/null >/out/build-dep.log 2>&1
+cd /b/source && dpkg-buildpackage -b -us -uc -Pnocheck -j"$THREADS" </dev/null >/out/build.log 2>&1
 cp /b/libstereo-policy1_*_amd64.deb /b/libstereo-policy-dev_*_amd64.deb /out/
 chown -R 1000:1000 /out
 ls /out/*.deb
