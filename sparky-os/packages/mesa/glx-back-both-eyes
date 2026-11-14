@@ -1,0 +1,35 @@
+#!/bin/sh
+# The package's test of patch 0037: a quad buffer window on a virtual X server that announces stereo content, a core
+# profile shader with its own output drawn under glDrawBuffer(GL_BACK), both back buffers read back before the swap.
+# Exit 77 with NOT RUN where it cannot run: that is not a pass.
+set -eu
+cd "$(dirname "$0")"
+W=${AUTOPKGTEST_TMP:-$(mktemp -d)}
+for tool in Xvfb cc; do
+	command -v "$tool" >/dev/null || { echo "NOT RUN: $tool is missing; this is not a pass"; exit 77; }
+done
+cc -O1 -o "$W/glx-draw-buffers" glx-draw-buffers.c -lGL -lX11
+Xvfb :97 -screen 0 800x600x24 -nolisten tcp > "$W/xvfb.log" 2>&1 &
+X=$!
+trap 'kill $X 2>/dev/null' EXIT
+sleep 2
+export DISPLAY=:97
+export ANNOUNCE_STEREO=1
+status=0
+for c in out mrtwin fragcolor left right; do
+	line=$(CASE=$c "$W/glx-draw-buffers" | tail -n 1)
+	echo "$line"
+	case "$line" in
+	*NO-CONFIG*|*NO-DISPLAY*|*NO-CONTEXT*) echo "NOT RUN: no quad buffer configuration on this display; this is not a pass"; exit 77 ;;
+	esac
+	case "$c" in
+	left) want="left-middle=0,255,0 right-corner=0,0,255 right-middle=0,0,255" ;;
+	right) want="left-middle=255,0,0 right-corner=0,0,255 right-middle=0,255,0" ;;
+	*) want="left-middle=0,255,0 right-corner=0,0,255 right-middle=0,255,0" ;;
+	esac
+	case "$line" in
+	*"error=0x0 left-corner=255,0,0 $want"*) ;;
+	*) echo "FAIL: case $c wants $want"; status=1 ;;
+	esac
+done
+exit $status
