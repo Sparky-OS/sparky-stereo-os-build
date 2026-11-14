@@ -1,0 +1,434 @@
+From cb98f93108e7f2e8c5ddeba01779472e29a8ade4 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 14 Nov 2026 06:20:56 +0000
+Subject: [PATCH 12/12] test: a stereo window's pair reaches the compositor
+ without glamor
+
+stereo-present-pair declares a window full side-by-side stereo (version 4)
+and presents a pixmap twice its width, as a GL library's software path
+does, standing in for the compositor's window manager where none runs.
+xwayland-stereo-pair.sh runs it on Xwayland without glamor under a headless
+weston, for a toplevel and for a child window with its own surface: the
+pixmap must be flipped, a buffer of both eyes must reach the compositor and
+its right eye must be damaged. A window without the declaration is the
+control: its wider pixmap is copied.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ test/meson.build                     |  18 ++
+ test/scripts/xwayland-stereo-pair.sh |  96 ++++++++++
+ test/stereo-present-pair.c           | 270 +++++++++++++++++++++++++++
+ 3 files changed, 384 insertions(+)
+ create mode 100755 test/scripts/xwayland-stereo-pair.sh
+ create mode 100644 test/stereo-present-pair.c
+
+diff --git a/test/meson.build b/test/meson.build
+index 62bcd5f..bf957ba 100644
+--- a/test/meson.build
++++ b/test/meson.build
+@@ -114,6 +114,24 @@ if build_xwayland
+         timeout: 1200,
+         suite: 'xwayland'
+     )
++
++    stereo_xcb_dep = dependency('xcb', required: false)
++    xcb_present_dep = dependency('xcb-present', required: false)
++    xcb_composite_dep = dependency('xcb-composite', required: false)
++    if stereo_xcb_dep.found() and xcb_present_dep.found() and xcb_composite_dep.found()
++        stereo_present_pair = executable(
++            'stereo-present-pair',
++            'stereo-present-pair.c',
++            dependencies: [ stereo_xcb_dep, xcb_present_dep, xcb_composite_dep ],
++        )
++
++        test('stereo pair without glamor',
++            find_program('scripts/xwayland-stereo-pair.sh'),
++            args: [ xwayland_server, stereo_present_pair ],
++            timeout: 120,
++            suite: 'xwayland'
++        )
++    endif
+ endif
+ 
+ subdir('bigreq')
+diff --git a/test/scripts/xwayland-stereo-pair.sh b/test/scripts/xwayland-stereo-pair.sh
+new file mode 100755
+index 0000000..e7353fe
+--- /dev/null
++++ b/test/scripts/xwayland-stereo-pair.sh
+@@ -0,0 +1,96 @@
++#!/bin/bash
++# A window declared full side-by-side stereo (version 4 of the KDE
++# declaration) presents a pixmap twice its width, holding both eyes. Without
++# glamor, Xwayland must flip that pixmap to the window's surface whole and
++# damage both eyes; copied into the window instead, the pixmap is clipped to
++# the left eye.
++#
++# Usage: xwayland-stereo-pair.sh XWAYLAND CLIENT
++# (the Xwayland binary and the stereo-present-pair test client)
++
++xwayland=$1
++client=$2
++
++# Skip if weston isn't available
++weston --version >/dev/null 2>&1 || { echo "weston is not available"; exit 77; }
++
++dir=$(mktemp -d)
++export XDG_RUNTIME_DIR=$dir
++chmod 700 "$dir"
++
++cleanup() {
++    [ -n "$XWAYLAND_PID" ] && kill "$XWAYLAND_PID" 2>/dev/null
++    [ -n "$WESTON_PID" ] && kill "$WESTON_PID" 2>/dev/null
++    wait 2>/dev/null
++    rm -rf "$dir"
++}
++trap cleanup EXIT
++
++weston --no-config --backend=headless --socket=wayland-stereo-$$ \
++    >"$dir/weston.log" 2>&1 &
++WESTON_PID=$!
++export WAYLAND_DISPLAY=wayland-stereo-$$
++for i in $(seq 1 50); do
++    [ -S "$dir/$WAYLAND_DISPLAY" ] && break
++    sleep 0.2
++done
++if ! [ -S "$dir/$WAYLAND_DISPLAY" ]; then
++    cat "$dir/weston.log"
++    echo "weston is installed but did not start"
++    exit 1
++fi
++
++# The shm backend is the one under test; WAYLAND_DEBUG records the requests
++# Xwayland sends
++XWAYLAND_NO_GLAMOR=1 WAYLAND_DEBUG=client "$xwayland" -rootless -noreset \
++    -displayfd 3 3>"$dir/display" 2>"$dir/xwayland.log" &
++XWAYLAND_PID=$!
++for i in $(seq 1 50); do
++    [ -s "$dir/display" ] && break
++    sleep 0.2
++done
++if ! [ -s "$dir/display" ]; then
++    grep -v -e '->' "$dir/xwayland.log" | tail -n 20
++    echo "Xwayland did not start"
++    exit 1
++fi
++export DISPLAY=:$(cat "$dir/display")
++
++# No window manager runs here: the client redirects windows as a compositor
++# does
++export WM=1
++
++status=0
++
++# The control: an undeclared window's wider pixmap is copied
++if ! NODECLARE=1 EXPECT=copy FRAMES=3 SETTLE_MS=200 "$client"; then
++    echo "FAIL: the wider pixmap of an undeclared window was not copied"
++    status=1
++fi
++both_eyes='create_buffer(new id wl_buffer#[0-9]*, 0, 1600, 600,'
++if grep -q "$both_eyes" "$dir/xwayland.log"; then
++    echo "FAIL: a buffer of both eyes was made for an undeclared window"
++    status=1
++fi
++
++for kind in toplevel child; do
++    : >"$dir/xwayland.log"
++    if [ $kind = child ]; then
++        export CHILD=1
++    fi
++    if ! EXPECT=flip FRAMES=6 SETTLE_MS=200 "$client"; then
++        echo "FAIL: the pixmap of both eyes was not flipped ($kind)"
++        status=1
++    fi
++    if ! grep -q "$both_eyes" "$dir/xwayland.log"; then
++        echo "FAIL: no buffer of both eyes reached the compositor ($kind)"
++        status=1
++    fi
++    if ! grep -q -e 'damage_buffer(800, 0, 800, 600)' \
++        -e 'damage(800, 0, 800, 600)' "$dir/xwayland.log"; then
++        echo "FAIL: the right eye of the buffer was not damaged ($kind)"
++        status=1
++    fi
++done
++
++exit $status
+diff --git a/test/stereo-present-pair.c b/test/stereo-present-pair.c
+new file mode 100644
+index 0000000..614091f
+--- /dev/null
++++ b/test/stereo-present-pair.c
+@@ -0,0 +1,270 @@
++/* SPDX-License-Identifier: MIT */
++
++/*
++ * What a GL library's software path does for a stereo window from version 4
++ * of the KDE declaration, without OpenGL: a window W by H, declared full
++ * side-by-side stereo (_KDE_NET_WM_STEREO_CONTENT_VERSION 4, then
++ * _KDE_NET_WM_STEREO_CONTENT 3), and a pixmap 2W by H presented to it. The
++ * left eye is red, the right eye blue, with a green rectangle in the middle
++ * of each and a white square that moves with every present, at the same
++ * place in both eyes.
++ *
++ * Prints how the server completed each present: as a flip, the pixmap went
++ * to the window's surface whole; as a copy, it was copied into the one eye
++ * wide window, which keeps the left eye only.
++ *
++ * Environment:
++ *   NODECLARE=1  no declaration: the control, the server must copy
++ *   CHILD=1      the declared window is a child of a larger plain toplevel,
++ *                which lists it in _KDE_NET_WM_STEREO_CONTENT_CHILDREN
++ *   WM=1         stand in for the compositor's window manager: redirect the
++ *                root's children, which gives a toplevel its surface on a
++ *                rootless Xwayland, and the declared child
++ *   FRAMES=N     presents (200), PERIOD_MS apart (50); W, H: one eye's size
++ *   SETTLE_MS=N  wait after the window is on the screen (500)
++ *   HOLD_S=N     stay N seconds after the last present
++ *   EXPECT=flip|copy  exit 1 unless the last present completed that way
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++#include <xcb/xcb.h>
++#include <xcb/composite.h>
++#include <xcb/present.h>
++
++static int
++env_int(const char *name, int fallback)
++{
++    const char *value = getenv(name);
++
++    return value ? atoi(value) : fallback;
++}
++
++static xcb_atom_t
++intern(xcb_connection_t *c, const char *name)
++{
++    xcb_intern_atom_reply_t *reply =
++        xcb_intern_atom_reply(c, xcb_intern_atom(c, 0, strlen(name), name),
++                              NULL);
++    xcb_atom_t atom = reply ? reply->atom : XCB_ATOM_NONE;
++
++    free(reply);
++    return atom;
++}
++
++static void
++set_property(xcb_connection_t *c, xcb_window_t window, const char *name,
++             xcb_atom_t type, uint32_t value)
++{
++    xcb_change_property(c, XCB_PROP_MODE_REPLACE, window, intern(c, name),
++                        type, 32, 1, &value);
++}
++
++static void
++fill(xcb_connection_t *c, xcb_drawable_t drawable, xcb_gcontext_t gc,
++     uint32_t colour, int16_t x, int16_t y, uint16_t width, uint16_t height)
++{
++    const xcb_rectangle_t rectangle = { x, y, width, height };
++
++    xcb_change_gc(c, gc, XCB_GC_FOREGROUND, &colour);
++    xcb_poly_fill_rectangle(c, drawable, gc, 1, &rectangle);
++}
++
++/* Both eyes side by side: the same picture in two colours */
++static void
++draw_eyes(xcb_connection_t *c, xcb_pixmap_t pixmap, xcb_gcontext_t gc,
++          int width, int height, int frame)
++{
++    static const uint32_t eye_colour[2] = { 0xff0000, 0x0000ff };
++    const int16_t mark = 20 + (frame * 16) % (width - 80);
++    int eye;
++
++    for (eye = 0; eye < 2; eye++) {
++        const int16_t x = eye * width;
++
++        fill(c, pixmap, gc, eye_colour[eye], x, 0, width, height);
++        fill(c, pixmap, gc, 0x00ff00, x + width / 4, height / 4,
++             width / 2, height / 2);
++        fill(c, pixmap, gc, 0xffffff, x + mark, 20, 40, 40);
++    }
++}
++
++/* Wait for the completion of the present with this serial */
++static const char *
++wait_for_completion(xcb_connection_t *c, uint8_t present_opcode,
++                    uint32_t serial)
++{
++    xcb_generic_event_t *event;
++
++    while ((event = xcb_wait_for_event(c))) {
++        xcb_ge_generic_event_t *generic = (xcb_ge_generic_event_t *) event;
++        xcb_present_complete_notify_event_t *complete =
++            (xcb_present_complete_notify_event_t *) event;
++        const char *mode = NULL;
++
++        if ((event->response_type & 0x7f) == XCB_GE_GENERIC &&
++            generic->extension == present_opcode &&
++            generic->event_type == XCB_PRESENT_COMPLETE_NOTIFY &&
++            complete->kind == XCB_PRESENT_COMPLETE_KIND_PIXMAP &&
++            complete->serial == serial) {
++            if (complete->mode == XCB_PRESENT_COMPLETE_MODE_FLIP)
++                mode = "flip";
++            else if (complete->mode == XCB_PRESENT_COMPLETE_MODE_COPY)
++                mode = "copy";
++            else
++                mode = "other";
++        }
++
++        free(event);
++        if (mode)
++            return mode;
++    }
++
++    return NULL;
++}
++
++int
++main(void)
++{
++    const int width = env_int("W", 800), height = env_int("H", 600);
++    const int frames = env_int("FRAMES", 200);
++    const int period = env_int("PERIOD_MS", 50) * 1000;
++    const int child = getenv("CHILD") != NULL;
++    const int declare = getenv("NODECLARE") == NULL;
++    const int wm = getenv("WM") != NULL;
++    const char *expect = getenv("EXPECT");
++    const char *last = "none";
++    int flips = 0, copies = 0, others = 0;
++    const xcb_query_extension_reply_t *present;
++    xcb_connection_t *c;
++    xcb_screen_t *screen;
++    xcb_window_t toplevel, window;
++    xcb_present_event_t event_id;
++    xcb_gcontext_t gc;
++    xcb_generic_event_t *event;
++    uint32_t values[2];
++    int exposed = 0;
++    int frame;
++
++    c = xcb_connect(NULL, NULL);
++    if (!c || xcb_connection_has_error(c)) {
++        printf("stereo-present-pair: NO-DISPLAY\n");
++        return 2;
++    }
++
++    screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
++    present = xcb_get_extension_data(c, &xcb_present_id);
++    if (!present || !present->present) {
++        printf("stereo-present-pair: NO-PRESENT\n");
++        return 2;
++    }
++
++    if (wm)
++        xcb_composite_redirect_subwindows(c, screen->root,
++                                          XCB_COMPOSITE_REDIRECT_MANUAL);
++
++    values[0] = screen->black_pixel;
++    values[1] = XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_EXPOSURE;
++    toplevel = xcb_generate_id(c);
++    xcb_create_window(c, XCB_COPY_FROM_PARENT, toplevel, screen->root,
++                      100, 100, child ? width + 200 : width,
++                      child ? height + 100 : height, 0,
++                      XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual,
++                      XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK, values);
++    xcb_change_property(c, XCB_PROP_MODE_REPLACE, toplevel, XCB_ATOM_WM_NAME,
++                        XCB_ATOM_STRING, 8, strlen("present-pair"),
++                        "present-pair");
++
++    window = toplevel;
++    if (child) {
++        window = xcb_generate_id(c);
++        xcb_create_window(c, XCB_COPY_FROM_PARENT, window, toplevel,
++                          100, 50, width, height, 0,
++                          XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual,
++                          XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK, values);
++    }
++
++    if (declare) {
++        set_property(c, window, "_KDE_NET_WM_STEREO_CONTENT_VERSION",
++                     XCB_ATOM_CARDINAL, 4);
++        set_property(c, window, "_KDE_NET_WM_STEREO_CONTENT",
++                     XCB_ATOM_CARDINAL, 3);
++        if (child)
++            set_property(c, toplevel, "_KDE_NET_WM_STEREO_CONTENT_CHILDREN",
++                         XCB_ATOM_WINDOW, window);
++    }
++
++    if (child) {
++        xcb_map_window(c, window);
++        if (wm && declare)
++            xcb_composite_redirect_window(c, window,
++                                          XCB_COMPOSITE_REDIRECT_MANUAL);
++    }
++    xcb_map_window(c, toplevel);
++    xcb_flush(c);
++
++    /* Until the window is on the screen */
++    while (!exposed && (event = xcb_wait_for_event(c))) {
++        exposed = (event->response_type & 0x7f) == XCB_EXPOSE;
++        free(event);
++    }
++    usleep(env_int("SETTLE_MS", 500) * 1000);
++
++    event_id = xcb_generate_id(c);
++    xcb_present_select_input(c, event_id, window,
++                             XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY);
++    gc = xcb_generate_id(c);
++    xcb_create_gc(c, gc, window, 0, NULL);
++
++    for (frame = 1; frame <= frames; frame++) {
++        xcb_pixmap_t pixmap = xcb_generate_id(c);
++
++        xcb_create_pixmap(c, screen->root_depth, pixmap, window,
++                          2 * width, height);
++        draw_eyes(c, pixmap, gc, width, height, frame);
++        xcb_present_pixmap(c, window, pixmap, frame, 0, 0, 0, 0, 0, 0, 0,
++                           XCB_PRESENT_OPTION_NONE, 0, 0, 0, 0, NULL);
++        xcb_free_pixmap(c, pixmap);
++        xcb_flush(c);
++
++        last = wait_for_completion(c, present->major_opcode, frame);
++        if (!last) {
++            printf("stereo-present-pair: CONNECTION-LOST at present %d\n",
++                   frame);
++            return 3;
++        }
++
++        if (!strcmp(last, "flip"))
++            flips++;
++        else if (!strcmp(last, "copy"))
++            copies++;
++        else
++            others++;
++
++        if (frame <= 3 || frame == frames) {
++            printf("stereo-present-pair: present %d completed as %s\n",
++                   frame, last);
++            fflush(stdout);
++        }
++
++        usleep(period);
++    }
++
++    if (getenv("HOLD_S"))
++        sleep(env_int("HOLD_S", 0));
++
++    printf("stereo-present-pair: %d presents of a %dx%d pixmap to a %dx%d "
++           "window: %d flips, %d copies, %d other; last %s\n",
++           frames, 2 * width, height, width, height, flips, copies, others,
++           last);
++
++    if (expect && strcmp(expect, last)) {
++        printf("stereo-present-pair: FAIL, the last present must complete "
++               "as %s\n", expect);
++        return 1;
++    }
++
++    return 0;
++}
+-- 
+2.53.0
+
