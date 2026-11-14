@@ -1,0 +1,23 @@
+#!/bin/sh
+# A single EGL frame, where Present can only copy: preserve its first left view and tell the person.
+set -eu
+ulimit -c 0
+cd "$(dirname "$0")"
+W=${AUTOPKGTEST_TMP:-$(mktemp -d)}
+for tool in Xvfb cc; do
+ command -v "$tool" >/dev/null || { echo "NOT RUN: $tool is missing; this is not a pass"; exit 77; }
+done
+cc -O1 -Wall -o "$W/egl-covered" egl-covered.c -lEGL -lGL -lX11
+Xvfb -displayfd 3 -screen 0 1024x768x24 -nolisten tcp 3>"$W/display" >"$W/xvfb.log" 2>&1 & X=$!
+trap 'kill $X 2>/dev/null || true' EXIT
+sleep 2
+export DISPLAY=:$(cat "$W/display") LIBGL_ALWAYS_SOFTWARE=1
+out=$(ANNOUNCE_STEREO=5 COVER_AT=-1 FRAMES=1 REPORT=1 READBACK_GLFIRST=1 READBACK=1 "$W/egl-covered" 2>"$W/err") || {
+ echo "$out"; cat "$W/err"; echo 'FAIL: the EGL client did not run'; exit 1;
+}
+echo "$out"; cat "$W/err"
+case "$out" in *"GL_STEREO 1"*"swap 1: declared 0"*"left=ff0000 middle=00ff00 right=ff0000"*) ;; *) echo 'FAIL: the first left view is not shown whole'; exit 1 ;; esac
+grep -q 'first GL eye 0 pixel 255,0,0,255 error 0' "$W/err"
+grep -q 'first GL eye 1 pixel 0,0,255,255 error 0' "$W/err"
+grep -q 'egl-covered is shown flat:' "$W/err"
+echo 'PASS: EGL X11 one-frame copied pair, complete left view and diagnostic'

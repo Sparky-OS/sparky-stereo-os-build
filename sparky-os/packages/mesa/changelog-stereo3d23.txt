@@ -1,0 +1,7 @@
+mesa (26.1.6-1+stereo3d23) forky; urgency=medium
+
+  * EGL X11 and the Vulkan stereo layer read copied-present completions through
+    the same rule as GLX: take back two copied pairs, show the left view whole,
+    and tell the person through their own package's problems engine messages.
+  * Keep EGL DRI3's packed buffer twice the logical view width; exercise the
+    common transition policy in Mesa's util tests.
