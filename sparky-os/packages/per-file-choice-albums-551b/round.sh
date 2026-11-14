@@ -60,15 +60,13 @@ collect() { # collect WORK_DIR: the debs of a finished build into the round's re
 	cp --no-preserve=links "$1"/lc/*.deb "$W/new/"
 	index
 }
-previous() { # previous SOURCE: the +lc1 debs of a source the edition holds before this round, for the link gate
+previous() { # previous SOURCE: the published +lc1 debs of a source, for the link gate
+	# The published build, for stereo-layer too (1.17.1): the gate qualifies the previous build against the previous
+	# edition's snapshot, which is the published tree, and ORDER 551's staged 1.18.0 beside the published 1.17.1 there is
+	# "conflicting supplied package: libstereo-av1; provide one authoritative edition snapshot".
 	local dir=$W/$1-prev
 	mkdir -p "$dir"
-	if [ "$1" = stereo-layer ]; then
-		# ORDER 551's 1.18.0 is the build this one follows (staged for the round before this one)
-		cp --no-preserve=links "$STAGE"/stereo-layer/*+lc1_amd64.deb "$dir/"
-	else
-		cp "$TREE"/pool/main/"${1:0:1}"/"$1"/*+lc1_amd64.deb "$TREE"/pool/main/"${1:0:1}"/"$1"/*+lc1_all.deb "$dir/" 2>/dev/null || true
-	fi
+	cp "$TREE"/pool/main/"${1:0:1}"/"$1"/*+lc1_amd64.deb "$TREE"/pool/main/"${1:0:1}"/"$1"/*+lc1_all.deb "$dir/" 2>/dev/null || true
 	echo "$dir"
 }
 build() { # build SOURCE SOURCE_DIR ROUND_SOURCES [PROFILES]

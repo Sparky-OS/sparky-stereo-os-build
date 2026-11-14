@@ -32,7 +32,7 @@ None of the three kept per-file state of its own (their choices were the session
 
 ## Order, and why
 
-1. stereo-layer 1.19.0 through the gate, under `SPARKY_BUILD_PROFILES=nocheck` as in ORDER 551. `libstereo-layer1` depends on `kimageformat6-plugins (>= 6.30.0-1+stereo3d6)`, and the plugin +stereo3d7 was built and staged by ORDER 551: the round's repository starts with that round's staged packages (copied, never linked), so no bootstrap is needed here. The link gate compares the new layer with ORDER 551's 1.18.0, the build it follows.
+1. stereo-layer 1.19.0 through the gate, under `SPARKY_BUILD_PROFILES=nocheck` as in ORDER 551. `libstereo-layer1` depends on `kimageformat6-plugins (>= 6.30.0-1+stereo3d6)`, and the plugin +stereo3d7 was built and staged by ORDER 551: the round's repository starts with that round's staged packages (copied, never linked), so no bootstrap is needed here. The link gate compares the new layer with the published 1.17.1: the gate qualifies a previous build against the previous edition's snapshot, which is the published tree, and ORDER 551's staged 1.18.0 beside the published 1.17.1 there is refused ("conflicting supplied package: libstereo-av1; provide one authoritative edition snapshot"). When ORDER 551's round is published, the publisher compares with 1.18.0; 1.19.0 calls everything 1.18.0 called.
 2. koko and kphotoalbum, small builds.
 3. digikam, the large one, last.
 
