@@ -1,11 +1,11 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/11/14
 # Copyright 2026 under the GNU GPL3 License
-# Sparky Stereo OS: the next +lc1 source of xwayland, 24.1.15 +stereo3d2 (ORDER 561): the 24.1.15 +stereo3d2+lc1 source
-# (rebase-source.py, ORDER 562) unpacked, patch 0013 appended to its series, and the changelog entry of the plain version
+# Sparky Stereo OS: the next +lc1 source of xwayland, 24.1.15 +stereo3d3 (ORDER 561b): the 24.1.15 +stereo3d2+lc1 source
+# (rebase-source.py, ORDER 562) unpacked, patch 0014 appended to its series, and the changelog entry of the plain version
 # then the Lean Code entry on top of that source's history (repo/lc-successor.py --in-place --overlay), so the old
-# changelog stays a byte identical suffix. No build dependency changes: the suite's test, which 0013 extends, already runs.
-#   next-source-24.1.15-stereo3d2.sh PREVIOUS.dsc OUT
+# changelog stays a byte identical suffix. No build dependency changes: the suite's test, which 0014 extends, already runs.
+#   next-source-24.1.15-stereo3d3.sh PREVIOUS.dsc OUT
 #   PREVIOUS.dsc: the 2:24.1.15-1+stereo3d2+lc1 source (its orig tarball beside it)
 #   OUT: receives the new .dsc, Debian tarball, both changelogs and the successor report
 # The binary package is built from the new .dsc with release/build-from-lc-dsc.sh; its log must show the suite's line
