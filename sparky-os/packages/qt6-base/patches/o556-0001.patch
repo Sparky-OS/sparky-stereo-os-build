@@ -1,0 +1,502 @@
+From a970a7eb1049475bfb6feb2aa0b15b1e95a4d452 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 14 Nov 2026 16:00:00 -0300
+Subject: [PATCH] Wayland: give a Vulkan window two views while an engine draws
+ a pair
+
+An engine that draws a window's elements once per eye, as the edition's
+Qt Quick does for a style that shows depth, asks the platform for two
+views of the window's surface with the window's _q_stereo_views. Only
+the Wayland EGL window honoured the request, so with the Vulkan RHI
+such a window was never drawn as a pair, on any driver, although a
+swapchain with two image layers presents there.
+
+The Wayland Vulkan window now takes the request too. Whoever makes the
+window's swapchain asks the platform how many views it should have (the
+window's "_q_stereo_views" native resource) and says how many it got
+("_q_stereo_surface_views"). The window then reports a stereo format
+and marks the pair, with kde_stereo_depth_v1, as the desktop's own
+depth, while the Vulkan implementation declares the two layers as a
+side-by-side pair. A window that asked for stereo buffers itself keeps
+its two views; only the mark follows the engine.
+
+The Vulkan swapchain took its layers once, from the format the window
+had when it was built. It now follows the wanted number at the start of
+a frame that acquires an image, never between the parts of a frame that
+an engine renders an eye at a time. Building a swapchain again with
+another number of views released the image resources of the old one by
+the new count; they are released by their own.
+
+With one view again the platform also makes the surface again: the
+declaration of a pair belongs to the surface, and the Vulkan stereo
+layer keeps it for as long as the surface lives, so the one picture was
+shown as the two halves of a pair on the drivers that layer serves.
+
+Where the surface offers one image layer the window is shown as one
+picture, and a warning says why, once per window.
+
+QVulkanWindow builds a swapchain of its own and has no way to draw an
+eye; it is unchanged.
+
+Assisted-by: Claude Fable 5.2
+---
+ src/gui/rhi/qrhivulkan.cpp                    | 70 ++++++++++++-
+ src/gui/rhi/qrhivulkan_p.h                    |  2 +
+ .../wayland/qwaylandnativeinterface.cpp       | 20 ++++
+ .../wayland/qwaylandvulkaninstance.cpp        |  3 +
+ .../wayland/qwaylandvulkanwindow.cpp          | 60 ++++++++++++
+ .../wayland/qwaylandvulkanwindow_p.h          | 30 ++++++
+ tests/auto/gui/rhi/qrhi/tst_qrhi.cpp          | 97 +++++++++++++++++++
+ 7 files changed, 279 insertions(+), 3 deletions(-)
+
+diff --git a/src/gui/rhi/qrhivulkan.cpp b/src/gui/rhi/qrhivulkan.cpp
+index b8192d0..eee1691 100644
+--- a/src/gui/rhi/qrhivulkan.cpp
++++ b/src/gui/rhi/qrhivulkan.cpp
+@@ -45,6 +45,9 @@ QT_WARNING_POP
+ #include <qmath.h>
+ #include <QVulkanFunctions>
+ #include <QtGui/qwindow.h>
++#include <QtGui/qguiapplication.h>
++#include <qpa/qplatformnativeinterface.h>
++#include <qpa/qplatformwindow.h>
+ #include <private/qvulkandefaultinstance_p.h>
+ #include <optional>
+ 
+@@ -2229,6 +2232,31 @@ bool QRhiVulkan::createOffscreenRenderPass(QVkRenderPassDescriptor *rpD,
+     return true;
+ }
+ 
++// Whether the window's swapchain should have two views, a left and a right image layer. A
++// platform may know more than the window's format says: the Wayland platform asks for two
++// views also while an engine draws the window's elements once per eye, and for one again when
++// it stops, and answers with the number (the window's "_q_stereo_views" native resource).
++// Elsewhere the format decides, as before. platformAnswers says which of the two it was.
++static bool windowWantsTwoViews(QWindow *window, bool *platformAnswers = nullptr)
++{
++    if (platformAnswers)
++        *platformAnswers = false;
++    if (!window)
++        return false;
++    if (window->handle()) {
++        if (QPlatformNativeInterface *native = QGuiApplication::platformNativeInterface()) {
++            static const QByteArray resource = QByteArrayLiteral("_q_stereo_views");
++            const quintptr views = quintptr(native->nativeResourceForWindow(resource, window));
++            if (views) {
++                if (platformAnswers)
++                    *platformAnswers = true;
++                return views == 2;
++            }
++        }
++    }
++    return window->format().stereo();
++}
++
+ bool QRhiVulkan::recreateSwapChain(QRhiSwapChain *swapChain)
+ {
+     QVkSwapChain *swapChainD = QRHI_RES(QVkSwapChain, swapChain);
+@@ -2310,9 +2338,9 @@ bool QRhiVulkan::recreateSwapChain(QRhiSwapChain *swapChain)
+     if (swapChainD->supportsReadback && swapChainD->m_flags.testFlag(QRhiSwapChain::UsedAsTransferSource))
+         usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+ 
+-    const bool stereo = bool(swapChainD->m_window) && (swapChainD->m_window->format().stereo())
+-            && surfaceCaps.maxImageArrayLayers > 1;
+-    swapChainD->stereo = stereo;
++    bool platformAnswers = false;
++    const bool twoViewsWanted = windowWantsTwoViews(swapChainD->m_window, &platformAnswers);
++    const bool stereo = twoViewsWanted && surfaceCaps.maxImageArrayLayers > 1;
+ 
+     VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
+     if (swapChainD->m_flags.testFlag(QRhiSwapChain::NoVSync)) {
+@@ -2359,12 +2387,23 @@ bool QRhiVulkan::recreateSwapChain(QRhiSwapChain *swapChain)
+         return false;
+     }
+ 
++    // The resources of the swapchain before this one are released with the views it had: only
++    // then does the swapchain take the new number, which may differ.
+     if (swapChainD->sc)
+         releaseSwapChainResources(swapChain);
+ 
++    swapChainD->stereo = stereo;
++    swapChainD->twoViewsWanted = twoViewsWanted;
+     swapChainD->sc = newSwapChain;
+     swapChainD->lastConnectedSurface = swapChainD->surface;
+ 
++    // The platform that asked hears how many views the surface has now, before its first frame:
++    // the window's format follows, and what the platform says about the pair to the compositor.
++    if (platformAnswers && swapChainD->m_window->handle()) {
++        QGuiApplication::platformNativeInterface()->setWindowProperty(
++                swapChainD->m_window->handle(), QStringLiteral("_q_stereo_surface_views"), stereo ? 2 : 1);
++    }
++
+     quint32 actualSwapChainBufferCount = 0;
+     err = vkGetSwapchainImagesKHR(dev, swapChainD->sc, &actualSwapChainBufferCount, nullptr);
+     if (err != VK_SUCCESS || actualSwapChainBufferCount == 0) {
+@@ -2624,6 +2663,31 @@ double QRhiVulkan::elapsedSecondsFromTimestamp(quint64 timestamp[2], bool *ok)
+ QRhi::FrameOpResult QRhiVulkan::beginFrame(QRhiSwapChain *swapChain, QRhi::BeginFrameFlags)
+ {
+     QVkSwapChain *swapChainD = QRHI_RES(QVkSwapChain, swapChain);
++
++    // A platform may ask for the surface's second view, or give it up, while the window is
++    // shown. The swapchain was built with the views the window wanted then, so it is built
++    // again here, at the start of a frame that acquires its image: never between the parts of
++    // one frame, which an engine drawing a pair renders an eye at a time and presents once.
++    if (swapChainD->sc && swapChainD->window
++        && !swapChainD->frameRes[swapChainD->bufferCount > 1 ? swapChainD->currentFrameSlot : 0].imageAcquired) {
++        bool platformAnswers = false;
++        if (windowWantsTwoViews(swapChainD->window, &platformAnswers) != swapChainD->twoViewsWanted) {
++            qCDebug(QRHI_LOG_INFO, "The window now wants %d view(s): building its swapchain again",
++                    swapChainD->twoViewsWanted ? 1 : 2);
++            // What was said to the window system about the two views belongs to the surface: a
++            // Vulkan implementation, or a layer over it, may keep its declaration of a pair for
++            // as long as the surface lives, and the one picture would then be shown as the two
++            // halves of a pair. With one view again the surface is therefore made again as well,
++            // after the swapchain that used it is gone.
++            if (swapChainD->stereo && platformAnswers && swapChainD->window->handle()) {
++                releaseSwapChainResources(swapChain);
++                swapChainD->window->handle()->invalidateSurface();
++            }
++            if (!swapChainD->createOrResize())
++                return QRhi::FrameOpError;
++        }
++    }
++
+     const int frameResIndex = swapChainD->bufferCount > 1 ? swapChainD->currentFrameSlot : 0;
+     QVkSwapChain::FrameResources &frame(swapChainD->frameRes[frameResIndex]);
+ 
+diff --git a/src/gui/rhi/qrhivulkan_p.h b/src/gui/rhi/qrhivulkan_p.h
+index 2c0c741..ef18b38 100644
+--- a/src/gui/rhi/qrhivulkan_p.h
++++ b/src/gui/rhi/qrhivulkan_p.h
+@@ -639,6 +639,8 @@ struct QVkSwapChain : public QRhiSwapChain
+     QSize pixelSize;
+     bool supportsReadback = false;
+     bool stereo = false;
++    // What the window asked for when the swapchain was made: stereo is that, where the surface can
++    bool twoViewsWanted = false;
+     VkSwapchainKHR sc = VK_NULL_HANDLE;
+     int bufferCount = 0;
+     VkSurfaceKHR surface = VK_NULL_HANDLE;
+diff --git a/src/plugins/platforms/wayland/qwaylandnativeinterface.cpp b/src/plugins/platforms/wayland/qwaylandnativeinterface.cpp
+index eb35394..616bece 100644
+--- a/src/plugins/platforms/wayland/qwaylandnativeinterface.cpp
++++ b/src/plugins/platforms/wayland/qwaylandnativeinterface.cpp
+@@ -141,6 +141,17 @@ struct xkb_context *QtWaylandClient::QWaylandNativeInterface::xkbContext() const
+ 
+ void *QWaylandNativeInterface::nativeResourceForWindow(const QByteArray &resourceString, QWindow *window)
+ {
++#if QT_CONFIG(vulkan)
++    // Asked at the start of every frame by whoever makes a Vulkan window's swapchain, on its
++    // thread: how many views the swapchain should have, as a number rather than a pointer.
++    if (resourceString == "_q_stereo_views") {
++        auto *w = static_cast<QWaylandWindow *>(window->handle());
++        if (w && w->windowType() == QWaylandWindow::Vulkan)
++            return reinterpret_cast<void *>(quintptr(static_cast<QWaylandVulkanWindow *>(w)->viewsWanted()));
++        return nullptr;
++    }
++#endif
++
+     QByteArray lowerCaseResource = resourceString.toLower();
+ 
+     if (lowerCaseResource == "display")
+@@ -235,6 +246,15 @@ QVariant QWaylandNativeInterface::windowProperty(QPlatformWindow *window, const
+ void QWaylandNativeInterface::setWindowProperty(QPlatformWindow *window, const QString &name, const QVariant &value)
+ {
+     QWaylandWindow *wlWindow = static_cast<QWaylandWindow*>(window);
++#if QT_CONFIG(vulkan)
++    // Said by whoever made a Vulkan window's swapchain, on its thread: the views it has. It is
++    // not a property of the window for the compositor.
++    if (name == QLatin1String("_q_stereo_surface_views")) {
++        if (wlWindow->windowType() == QWaylandWindow::Vulkan)
++            static_cast<QWaylandVulkanWindow *>(wlWindow)->setSurfaceViews(value.toInt());
++        return;
++    }
++#endif
+     wlWindow->sendProperty(name, value);
+ }
+ 
+diff --git a/src/plugins/platforms/wayland/qwaylandvulkaninstance.cpp b/src/plugins/platforms/wayland/qwaylandvulkaninstance.cpp
+index fec6cfb..9e51b05 100644
+--- a/src/plugins/platforms/wayland/qwaylandvulkaninstance.cpp
++++ b/src/plugins/platforms/wayland/qwaylandvulkaninstance.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include "qwaylandwindow_p.h"
+ #include "qwaylandvulkaninstance_p.h"
++#include "qwaylandvulkanwindow_p.h"
+ #include "qwaylandscreen_p.h"
+ #include "qwaylanddisplay_p.h"
+ 
+@@ -109,6 +110,8 @@ void QWaylandVulkanInstance::beginFrame(QWindow *window)
+         qWarning() << "Attempted to call beginFrame() without a valid platform window";
+         return;
+     }
++    if (w->windowType() == QWaylandWindow::Vulkan)
++        static_cast<QWaylandVulkanWindow *>(w)->beginFrameViews();
+     w->beginFrame();
+ }
+ 
+diff --git a/src/plugins/platforms/wayland/qwaylandvulkanwindow.cpp b/src/plugins/platforms/wayland/qwaylandvulkanwindow.cpp
+index 7853d73..8d7db70 100644
+--- a/src/plugins/platforms/wayland/qwaylandvulkanwindow.cpp
++++ b/src/plugins/platforms/wayland/qwaylandvulkanwindow.cpp
+@@ -3,6 +3,11 @@
+ // Qt-Security score:significant reason:default
+ 
+ #include "qwaylandvulkanwindow_p.h"
++#include "qwaylandstereodepth_p.h"
++#include "qwaylanddisplay_p.h"
++
++#include <QtCore/QEvent>
++#include <QtGui/QWindow>
+ 
+ QT_BEGIN_NAMESPACE
+ 
+@@ -11,10 +16,13 @@ namespace QtWaylandClient {
+ QWaylandVulkanWindow::QWaylandVulkanWindow(QWindow *window, QWaylandDisplay *display)
+     : QWaylandWindow(window, display)
+ {
++    m_pairRequested = window->property("_q_stereo_views").toInt() == 2;
++    window->installEventFilter(this);
+ }
+ 
+ QWaylandVulkanWindow::~QWaylandVulkanWindow()
+ {
++    window()->removeEventFilter(this);
+     invalidateSurface();
+ }
+ 
+@@ -31,6 +39,8 @@ void QWaylandVulkanWindow::invalidateSurface()
+             static_cast<QWaylandVulkanInstance *>(inst->handle())->destroySurface(m_surface);
+     }
+     m_surface = VK_NULL_HANDLE;
++    // The swapchain goes with the surface, and the mark with the surface's declaration.
++    m_twoViews.store(false, std::memory_order_release);
+     QWaylandWindow::invalidateSurface();
+ }
+ 
+@@ -51,6 +61,56 @@ VkSurfaceKHR *QWaylandVulkanWindow::vkSurface()
+     return &m_surface;
+ }
+ 
++QSurfaceFormat QWaylandVulkanWindow::format() const
++{
++    QSurfaceFormat format = QWaylandWindow::format();
++    // Two views make the surface a stereo one, as the left and right buffers of an OpenGL window do.
++    if (m_twoViews.load(std::memory_order_acquire))
++        format.setStereo(true);
++    return format;
++}
++
++bool QWaylandVulkanWindow::pairWanted() const
++{
++    return m_pairRequested.load(std::memory_order_acquire) && QWaylandStereoDepth::isSupported(mDisplay);
++}
++
++int QWaylandVulkanWindow::viewsWanted() const
++{
++    return QWaylandWindow::format().stereo() || pairWanted() ? 2 : 1;
++}
++
++void QWaylandVulkanWindow::setSurfaceViews(int views)
++{
++    const bool twoViews = views == 2;
++    const bool pair = pairWanted();
++    m_twoViews.store(twoViews, std::memory_order_release);
++    QWaylandStereoDepth::setDesktopDepth(this, twoViews && pair);
++    if (pair && !twoViews && !m_toldOneView.exchange(true, std::memory_order_acq_rel)) {
++        qCWarning(lcQpaWayland, "The window \"%ls\" is drawn once per eye, but its Vulkan surface offers one image "
++                  "layer only: it is shown as one picture, without the depth of its elements. The Vulkan "
++                  "driver in use gives a Wayland surface no second view; Mesa's drivers do, and for other "
++                  "drivers the Vulkan stereo layer (VK_LAYER_MESA_stereo) does, unless it is not installed "
++                  "or DISABLE_LAYER_MESA_STEREO is set.",
++                  qUtf16Printable(window()->title()));
++    }
++}
++
++void QWaylandVulkanWindow::beginFrameViews()
++{
++    if (m_twoViews.load(std::memory_order_acquire))
++        QWaylandStereoDepth::setDesktopDepth(this, pairWanted());
++}
++
++bool QWaylandVulkanWindow::eventFilter(QObject *watched, QEvent *event)
++{
++    if (watched == window() && event->type() == QEvent::DynamicPropertyChange
++        && static_cast<QDynamicPropertyChangeEvent *>(event)->propertyName() == "_q_stereo_views") {
++        m_pairRequested.store(window()->property("_q_stereo_views").toInt() == 2, std::memory_order_release);
++    }
++    return QWaylandWindow::eventFilter(watched, event);
++}
++
+ } // namespace QtWaylandClient
+ 
+ QT_END_NAMESPACE
+diff --git a/src/plugins/platforms/wayland/qwaylandvulkanwindow_p.h b/src/plugins/platforms/wayland/qwaylandvulkanwindow_p.h
+index 2c62844..be0e981 100644
+--- a/src/plugins/platforms/wayland/qwaylandvulkanwindow_p.h
++++ b/src/plugins/platforms/wayland/qwaylandvulkanwindow_p.h
+@@ -19,6 +19,8 @@
+ #include "qwaylandwindow_p.h"
+ #include "qwaylandvulkaninstance_p.h"
+ 
++#include <atomic>
++
+ QT_BEGIN_NAMESPACE
+ 
+ namespace QtWaylandClient {
+@@ -34,8 +36,36 @@ public:
+ 
+     VkSurfaceKHR *vkSurface();
+ 
++    QSurfaceFormat format() const override;
++
++    // How many views whoever makes the window's swapchain should give it: two for a window that
++    // asked for stereo buffers itself, and while an engine draws the window's elements once per
++    // eye (the window's _q_stereo_views) and the compositor takes such a pair as the desktop's
++    // own depth; one otherwise. Any thread.
++    int viewsWanted() const;
++    // How many views the swapchain made for the window's surface has, said by whoever made it,
++    // on the thread that presents and before the swapchain's first frame. The Vulkan
++    // implementation declares two layers as a full side-by-side pair; an engine's pair is
++    // marked, with the same commit, as the desktop's own depth rather than stereo content.
++    void setSurfaceViews(int views);
++    // At the start of a frame, on the thread that presents: the mark follows the engine's
++    // request where the views stay, as for a window that asked for stereo buffers itself.
++    void beginFrameViews();
++
++protected:
++    bool eventFilter(QObject *watched, QEvent *event) override;
++
+ private:
++    bool pairWanted() const;
++
+     VkSurfaceKHR m_surface = VK_NULL_HANDLE;
++
++    // Written from the main thread, read from the rendering thread
++    std::atomic<bool> m_pairRequested = false;
++    // Whether the swapchain made for the surface has two views
++    std::atomic<bool> m_twoViews = false;
++    // Whether the person was told that the surface cannot have the two views asked for
++    std::atomic<bool> m_toldOneView = false;
+ };
+ 
+ } // namespace QtWaylandClient
+diff --git a/tests/auto/gui/rhi/qrhi/tst_qrhi.cpp b/tests/auto/gui/rhi/qrhi/tst_qrhi.cpp
+index 0de10a4..d8c69a2 100644
+--- a/tests/auto/gui/rhi/qrhi/tst_qrhi.cpp
++++ b/tests/auto/gui/rhi/qrhi/tst_qrhi.cpp
+@@ -135,6 +135,7 @@ private slots:
+     void renderToTextureScissorChange();
+     void vulkanSwapChainLifetime_data();
+     void vulkanSwapChainLifetime();
++    void vulkanSwapChainFollowsWantedViews();
+     void renderToWindowSimple_data();
+     void renderToWindowSimple();
+     void continuousReadbackFromWindow_data();
+@@ -4497,6 +4498,102 @@ void tst_QRhi::vulkanSwapChainLifetime()
+ #endif
+ }
+ 
++// A platform may ask for a window's second view while the window is shown, and give it up again:
++// the Wayland platform does while an engine draws the window once per eye (the window's
++// _q_stereo_views) and the compositor takes such a pair. The swapchain follows at the start of
++// the next frame that acquires an image, never between the parts of one frame, and the window's
++// format follows the swapchain. QTEST_STEREO_TWO_VIEWS=1 says the platform is one that does.
++void tst_QRhi::vulkanSwapChainFollowsWantedViews()
++{
++#ifndef TST_VK
++    QSKIP("Vulkan is not available");
++#else
++    if (!vulkanInstance.isValid())
++        QSKIP("Vulkan instance could not be created");
++    if (QGuiApplication::platformName().startsWith(QLatin1String("offscreen")))
++        QSKIP("A window surface is required");
++
++    QScopedPointer<QWindow> window(new QWindow);
++    setWindowType(window.data(), QRhi::Vulkan);
++    window->resize(320, 240);
++    window->show();
++    QVERIFY(QTest::qWaitForWindowExposed(window.data()));
++
++    QRhiVulkanInitParams params = initParams.vk;
++    params.window = window.data();
++    QScopedPointer<QRhi> rhi(QRhi::create(QRhi::Vulkan, &params));
++    if (!rhi)
++        QSKIP("Vulkan QRhi could not be created");
++
++    QScopedPointer<QRhiSwapChain> swapChain(rhi->newSwapChain());
++    swapChain->setWindow(window.data());
++    QScopedPointer<QRhiRenderPassDescriptor> rpDesc(swapChain->newCompatibleRenderPassDescriptor());
++    swapChain->setRenderPassDescriptor(rpDesc.data());
++    QVERIFY(swapChain->createOrResize());
++
++    const auto twoViews = [&] {
++        return swapChain->currentFrameRenderTarget(QRhiSwapChain::LeftBuffer)
++                != swapChain->currentFrameRenderTarget(QRhiSwapChain::RightBuffer);
++    };
++    const auto draw = [&](QRhiSwapChain::StereoTargetBuffer buffer, const QColor &color) {
++        QRhiCommandBuffer *cb = swapChain->currentFrameCommandBuffer();
++        cb->beginPass(swapChain->currentFrameRenderTarget(buffer), color, { 1.0f, 0 });
++        cb->endPass();
++    };
++
++    // One view, as the window asked for nothing.
++    QVERIFY(!twoViews());
++    QVERIFY(!window->format().stereo());
++    QVERIFY(rhi->beginFrame(swapChain.data()) == QRhi::FrameOpSuccess);
++    draw(QRhiSwapChain::LeftBuffer, Qt::red);
++    QVERIFY(rhi->endFrame(swapChain.data()) == QRhi::FrameOpSuccess);
++
++    // Two views are asked for: nothing changes until a frame begins.
++    window->setProperty("_q_stereo_views", 2);
++    QVERIFY(!twoViews());
++    QVERIFY(rhi->beginFrame(swapChain.data()) == QRhi::FrameOpSuccess);
++    if (!twoViews()) {
++        QVERIFY(rhi->endFrame(swapChain.data()) == QRhi::FrameOpSuccess);
++        if (qEnvironmentVariableIntValue("QTEST_STEREO_TWO_VIEWS") == 1)
++            QFAIL("The swapchain did not get the two views the window asked for");
++        QSKIP("The platform gives a surface no second view on request (QTEST_STEREO_TWO_VIEWS=1)");
++    }
++    QVERIFY(window->format().stereo());
++
++    // The left eye ends a part of the frame that is not presented. One view is asked for again
++    // before the right eye's part: the frame keeps its two views.
++    draw(QRhiSwapChain::LeftBuffer, Qt::red);
++    QVERIFY(rhi->endFrame(swapChain.data(), QRhi::SkipPresent) == QRhi::FrameOpSuccess);
++    window->setProperty("_q_stereo_views", 1);
++    QVERIFY(rhi->beginFrame(swapChain.data()) == QRhi::FrameOpSuccess);
++    QVERIFY(twoViews());
++    draw(QRhiSwapChain::RightBuffer, Qt::green);
++    QVERIFY(rhi->endFrame(swapChain.data()) == QRhi::FrameOpSuccess);
++
++    // The next frame has one view again, and so has every later one.
++    for (int i = 0; i < 3; ++i) {
++        QVERIFY(rhi->beginFrame(swapChain.data()) == QRhi::FrameOpSuccess);
++        QVERIFY(!twoViews());
++        QVERIFY(!window->format().stereo());
++        draw(QRhiSwapChain::LeftBuffer, Qt::red);
++        QVERIFY(rhi->endFrame(swapChain.data()) == QRhi::FrameOpSuccess);
++    }
++
++    // And two again, over a resize.
++    window->setProperty("_q_stereo_views", 2);
++    window->resize(384, 256);
++    QTRY_COMPARE(window->size(), QSize(384, 256));
++    QVERIFY(swapChain->createOrResize());
++    QVERIFY(twoViews());
++    QVERIFY(rhi->beginFrame(swapChain.data()) == QRhi::FrameOpSuccess);
++    draw(QRhiSwapChain::LeftBuffer, Qt::red);
++    draw(QRhiSwapChain::RightBuffer, Qt::green);
++    QVERIFY(rhi->endFrame(swapChain.data()) == QRhi::FrameOpSuccess);
++    QVERIFY(rhi->finish() == QRhi::FrameOpSuccess);
++    swapChain.reset();
++#endif
++}
++
+ void tst_QRhi::renderToWindowSimple_data()
+ {
+     rhiTestData();
+-- 
+2.53.0
+

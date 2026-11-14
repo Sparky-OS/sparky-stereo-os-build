@@ -1,0 +1,5 @@
+With Qt Quick on Vulkan (QSG_RHI_BACKEND=vulkan) a window whose style shows the depth of its elements is drawn as a pair, as it is on OpenGL (ORDER 556). The Wayland Vulkan window now honours the request for two views that only the Wayland EGL window honoured: its swapchain gets two image layers, which Mesa's drivers, and the Vulkan stereo layer over other drivers, hand to Stereo KWin as a declared side-by-side pair, and Qt marks the pair as the desktop's own depth. The swapchain follows the request at the start of a frame, never between the two eyes of one, and with one view again the Vulkan surface is made again, so that a declaration kept for the surface's life (the Vulkan stereo layer's) ends with it (o556-0001).
+
+Where a Vulkan surface offers one image layer only, such a window is shown as one picture, and a warning in the program's log says why, once for each window.
+
+Programs made with QVulkanWindow are unchanged: that class builds a swapchain of its own and has no drawing per eye.
