@@ -24,6 +24,8 @@ DEPTH=$HERE/../depth-source
 W=$(mkdir -p "$1" && cd "$1" && pwd) FORK=$(cd "$2" && pwd) REV=$3 TREE=$(cd "$4" && pwd) ARCHIVE=$(cd "$5" && pwd)
 shift 5
 STEPS=${*:-bootstrap kimageformats layer kio-extras dolphin ffmpegthumbs gwenview}
+# A caller's own date for the whole round; without one each source takes the date of its own recipe (below)
+ROUND_EPOCH=${SOURCE_DATE_EPOCH:-}
 export BUILD_NAME_PREFIX=${BUILD_NAME_PREFIX:-pf-551-build} THREADS=${THREADS:-4}
 IMAGE=sparky-lc-migration:20261020
 mkdir -p "$W/new"
@@ -78,6 +80,10 @@ in_container() { # in_container NAME SCRIPT ARGS...: a recipe script inside the 
 for step in $STEPS; do
 	[ ! -f "$W/$step.done" ] || { echo "== $step: done before"; continue; }
 	echo "== $step"
+	# The date of a source is its own recipe's (repo/reproducible.py epoch gives the environment's date when there is
+	# one): a date exported for one step must not reach the next, or a round built in one go dates every later source
+	# by the first recipe's commit.
+	if [ -n "$ROUND_EPOCH" ]; then export SOURCE_DATE_EPOCH=$ROUND_EPOCH; else unset SOURCE_DATE_EPOCH; fi
 	case $step in
 	bootstrap)
 		rm -rf "$W/bootstrap"; mkdir -p "$W/bootstrap"
