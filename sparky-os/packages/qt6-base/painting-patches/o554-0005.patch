@@ -1,0 +1,91 @@
+From b858261431c0faf17e5c8275de312363b1701ef2 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 14 Nov 2026 12:27:17 -0300
+Subject: [PATCH] Wayland: the shared memory pair is two eyes of one whole
+ width, each painted into its own half
+
+At a fractional scale the processor-painted pair had the same root as the GPU one: the buffer was the rounded
+double width and the right eye began a part of a pixel off its half (at 125 % and width 941 the fixture's discs
+measured 1.925, -0.708, 2.906, -2.226, 0.139, 1.254 device pixels where 1.25, -1.25, 2.5, -2.5, 0, 1.25 are due).
+The store takes QPlatformBackingStore::setPaintEye(): the buffer is twice the rounded eye, and the painter gets a
+view of the eye's half over the buffer's own bytes. Shifts stay whole pixels of the window, as before.
+
+Assisted-by: Claude Fable 5.2
+---
+ .../wayland/qwaylandshmbackingstore.cpp       | 27 ++++++++++++++++---
+ .../wayland/qwaylandshmbackingstore_p.h       |  3 +++
+ 2 files changed, 27 insertions(+), 3 deletions(-)
+
+diff --git a/src/plugins/platforms/wayland/qwaylandshmbackingstore.cpp b/src/plugins/platforms/wayland/qwaylandshmbackingstore.cpp
+index 0dbdb50..9aef84f 100644
+--- a/src/plugins/platforms/wayland/qwaylandshmbackingstore.cpp
++++ b/src/plugins/platforms/wayland/qwaylandshmbackingstore.cpp
+@@ -164,6 +164,13 @@ QWaylandShmBackingStore::QWaylandShmBackingStore(QWindow *window, QWaylandDispla
+     : QPlatformBackingStore(window)
+     , mDisplay(display)
+ {
++    // A window painted once per eye: the buffer is two eyes of one whole width in device
++    // pixels, and each eye is painted into its own half, from the half's own left edge, so
++    // the two eyes round every edge alike at any scale (QPlatformBackingStore::setPaintEye()).
++    setPaintEyeSetter([this](int eye, int eyeWidth) {
++        mEye = eye;
++        mEyeWidth = eye ? eyeWidth : 0;
++    });
+     mEventQueue = wl_display_create_queue(mDisplay->wl_display());
+     QObject::connect(mDisplay, &QWaylandDisplay::connected, window, [this]() {
+         auto oldEventQueue = mEventQueue;
+@@ -198,7 +205,15 @@ QWaylandShmBackingStore::~QWaylandShmBackingStore()
+ 
+ QPaintDevice *QWaylandShmBackingStore::paintDevice()
+ {
+-    return contentSurface();
++    QImage *image = contentSurface();
++    if (mEyeWidth <= 0 || mEye < 1 || windowDecoration() || image->width() != 2 * mEyeWidth)
++        return image;
++    // a view of the eye's half over the buffer's own bytes
++    const int bytesPerPixel = image->depth() / 8;
++    mEyeImage = QImage(image->bits() + (mEye == 2 ? mEyeWidth * bytesPerPixel : 0), mEyeWidth, image->height(),
++                       image->bytesPerLine(), image->format());
++    mEyeImage.setDevicePixelRatio(image->devicePixelRatio());
++    return &mEyeImage;
+ }
+ 
+ void QWaylandShmBackingStore::updateDirtyStates(const QRegion &region)
+@@ -228,7 +243,10 @@ void QWaylandShmBackingStore::beginPaint(const QRegion &region)
+     // Although undocumented, QBackingStore::beginPaint expects the painted region
+     // to be cleared before use if the window has a surface format with an alpha.
+     // Fresh QWaylandShmBuffer are already cleared, so we don't need to clear those.
+-    if (!bufferWasRecreated && window()->format().hasAlpha()) {
++    if (!bufferWasRecreated && window()->format().hasAlpha() && mEyeWidth > 0) {
++        // a pair is painted whole for each eye
++        entireSurface()->fill(Qt::transparent);
++    } else if (!bufferWasRecreated && window()->format().hasAlpha()) {
+         QPainter p(paintDevice());
+         p.setCompositionMode(QPainter::CompositionMode_Source);
+         const QColor blank = Qt::transparent;
+@@ -420,7 +438,10 @@ bool QWaylandShmBackingStore::recreateBackBufferIfNeeded()
+     bool bufferWasRecreated = false;
+     QMargins margins = windowDecorationMargins();
+     qreal scale = waylandWindow()->scale();
+-    const QSize sizeWithMargins = (mRequestedSize + QSize(margins.left() + margins.right(), margins.top() + margins.bottom())) * scale;
++    QSize sizeWithMargins = (mRequestedSize + QSize(margins.left() + margins.right(), margins.top() + margins.bottom())) * scale;
++    // two eyes of one whole width: twice the window's width times the scale, rounded, is not that
++    if (mEyeWidth > 0 && margins.isNull())
++        sizeWithMargins.setWidth(2 * mEyeWidth);
+ 
+     // We look for a free buffer to draw into. If the buffer is not the last buffer we used,
+     // that is mBackBuffer, and the size is the same we copy the damaged content into the new
+diff --git a/src/plugins/platforms/wayland/qwaylandshmbackingstore_p.h b/src/plugins/platforms/wayland/qwaylandshmbackingstore_p.h
+index 92909ff..c9213e3 100644
+--- a/src/plugins/platforms/wayland/qwaylandshmbackingstore_p.h
++++ b/src/plugins/platforms/wayland/qwaylandshmbackingstore_p.h
+@@ -99,6 +99,9 @@ private:
+     QMutex mMutex;
+ 
+     QSize mRequestedSize;
++    int mEye = 0; // the eye being painted while the window is painted once per eye
++    int mEyeWidth = 0; // one eye in device pixels; 0: one picture
++    QImage mEyeImage; // the eye's half of the back buffer, over the buffer's own bytes
+     Qt::WindowFlags mCurrentWindowFlags;
+     struct wl_event_queue *mEventQueue = nullptr;
+ };

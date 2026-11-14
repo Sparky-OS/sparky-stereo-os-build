@@ -1,14 +1,15 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/11/14
 # Copyright 2026 under the GNU GPL3 License
-# Sparky Stereo OS: the next +lc1 source of qt6-base, +stereo3d19 (ORDER 518 and 554, Widgets painted on the graphics card):
+# Sparky Stereo OS: the next +lc1 source of qt6-base, +stereo3d20 (ORDER 518 and 554, Widgets painted on the graphics card):
 # the published +stereo3d16+lc1 source unpacked, the painting patches appended to its series, the three baked shaders under
 # debian/painting-shaders (a quilt patch cannot carry them; debian/source/include-binaries lists them), the manifest of the
 # patches that are ours, and the changelog entry of the plain version then the Lean Code entry on top of the published
 # history (repo/lc-successor.py --in-place --overlay), so the old changelog stays a byte identical suffix.
-# +stereo3d17 and +stereo3d18 were a lane's local candidates on +stereo3d15 and were never published; their numbers are
+# +stereo3d17 and +stereo3d18 (on +stereo3d15) and +stereo3d19 (this recipe before the zink and shared memory pair fixes)
+# were local candidates and were never published; their numbers are
 # not used again, so that one version names one set of bytes.
-#   next-source-19.sh PUBLISHED.dsc OUT
+#   next-source-20.sh PUBLISHED.dsc OUT
 #   PUBLISHED.dsc: the published +stereo3d16+lc1 source (its orig tarball beside it)
 #   OUT: receives the new .dsc, Debian tarball, both changelogs and the successor report
 # Run it twice into two folders: the .dsc and the Debian tarball must hash the same. The date is this folder's last commit.
@@ -52,7 +53,7 @@ mkdir -p "$W/ours/debian/patches"
 cp "$W/overlay/patches"/o5*.patch "$W/ours/debian/patches/"
 python3 "$REPO/provenance-files.py" "$W/ours" 'o518-*.patch' 'o554-*.patch' >/dev/null
 cp "$W/ours/debian/sparky-provenance-files" "$W/overlay/sparky-provenance-files"
-mapfile -t items < <(python3 - "$HERE/changelog/stereo3d19.items" <<'PY'
+mapfile -t items < <(python3 - "$HERE/changelog/stereo3d20.items" <<'PY'
 import sys
 for para in open(sys.argv[1], encoding='utf-8').read().strip().split('\n\n'):
     print(' '.join(l.strip() for l in para.splitlines()))
@@ -60,4 +61,4 @@ PY
 )
 args=()
 for i in "${items[@]}"; do args+=(--item "$i"); done
-python3 "$REPO/lc-successor.py" --in-place --next 6.11.2+dfsg-5+stereo3d19 "${args[@]}" --overlay "$W/overlay" --work "$W" "$DSC" "$OUT"
+python3 "$REPO/lc-successor.py" --in-place --next 6.11.2+dfsg-5+stereo3d20 "${args[@]}" --overlay "$W/overlay" --work "$W" "$DSC" "$OUT"
