@@ -137,7 +137,7 @@ check "an unknown folder name is refused" '! "$HELPER" link nowhere 2>/dev/null'
 REF=$(dirname "$SYSTEM")
 check "find ranks the skill for a symptom first, with the context command to run next" 'out=$(SPARKY_STEREO_REFERENCE=$REF "$HELPER" find --limit 1 an apt pin that ignores i386 2>&1); grep -q "^1\. edition-packaging " <<<"$out" && grep -q "Next: sparky-stereo-skills context edition-packaging" <<<"$out" && ! grep -q "^2\. " <<<"$out"'
 check "find without words is refused" '! SPARKY_STEREO_REFERENCE=$REF "$HELPER" find >/dev/null 2>&1'
-check "the help names find in all nine languages" '(for l in en_US pl_PL pt_BR fr_FR de_DE es_ES ja_JP ko_KR zh_CN zh_TW; do out=$(LANG=$l.UTF-8 "$HELPER" --help); grep -q "^  find \[--limit N\] " <<<"$out" || exit 1; done)'
+check "the help names find in all ten languages" '(for l in en_US pl_PL pt_BR fr_FR de_DE es_ES ja_JP ko_KR zh_CN zh_TW; do out=$(LANG=$l.UTF-8 "$HELPER" --help); grep -q "^  find \[--limit N\] " <<<"$out" || exit 1; done)'
 # reviewed wording (ORDER 447): the same approval setting has one word inside a language, and a Japanese help line that reads
 STRINGS=${SPARKY_STEREO_SKILLS_STRINGS:-/usr/share/sparky/sparky-stereo-skills}
 # shellcheck disable=SC2329 # called through check's eval

@@ -21,6 +21,10 @@ let through. Any set-up line refuses as before; so does a unit or script that do
 read to its end (a program the package does not ship, a compiled one, text made at run time, a zram device touched
 in a way the gate does not know). WHAT A ZRAM UNIT DOES below has the rules.
 
+Unrun Markdown in documentation or skills folders is noted as "documentation, not run". It must be text with
+Markdown structure, not executable or shebang code, not in a configuration path, and not named by a consumer in
+the package or supplied cohort. Referenced Markdown is scanned as input to a program, including through aliases.
+
   zram-check.py [ROOT] [--also FILE ...]       an image root (default /): its installed packages, the files that
                                                configure boot, swap, modules, units and devices, the maintainer
                                                scripts and the programs; --also adds files outside ROOT (an ISO's
@@ -60,6 +64,13 @@ CAPPING = ('Conflicts', 'Breaks')
 # and dpkg-stereo's compressed authored copies (the package they belong to is checked itself).
 SKIP_PREFIXES = ('usr/share/doc/', 'usr/share/man/', 'usr/share/info/', 'usr/share/locale/', 'usr/share/help/',
                  'usr/share/bash-completion/', 'usr/share/zsh/', 'usr/share/fish/', 'usr/share/dpkg-stereo/hr/')
+DOCUMENT_FOLDERS = {'doc', 'docs', 'documentation', 'skills', 'agent-skills'}
+CONFIG_FOLDERS = {'systemd', 'udev', 'modprobe.d', 'sysctl.d', 'tmpfiles.d', 'modules-load.d',
+                  'system-generators', 'user-generators', 'initramfs-tools'}
+SCRIPT_SUFFIXES = {'.sh', '.bash', '.py', '.pl', '.rb', '.js', '.lua'}
+MARKDOWN_PATH = re.compile(rb'''[^\s\0"'`<>|;=(){}\[\]]+\.(?:md|markdown)\b''', re.I)
+QUOTED_MARKDOWN = re.compile(rb'''["']([^"'\r\n\0]+\.(?:md|markdown))["']''', re.I)
+LITERAL_PATH = re.compile(rb'''/[^\s\0"'`<>|;=(){}\[\]]+''')
 TEXT_LIMIT = 4 << 20
 BINARY_LIMIT = 256 << 20
 MENTION = re.compile(r'zram|zswap', re.I)
@@ -678,6 +689,63 @@ def skipped(path):
     return str(path).lstrip('/').startswith(SKIP_PREFIXES)
 
 
+def markdown(path):
+    return PurePosixPath(path).suffix.lower() in ('.md', '.markdown')
+
+
+def configuration(path):
+    path = str(path).lstrip('/')
+    if path.startswith(('etc/', 'boot/', 'var/lib/dpkg/info/', 'DEBIAN/', 'usr/share/initramfs-tools/')):
+        return True
+    return any(path.startswith(f'{root}/{folder}/') for root in ('usr/lib', 'usr/local/lib', 'lib', 'run')
+               for folder in CONFIG_FOLDERS)
+
+
+def references(path, data, mode):
+    """Markdown paths named by code or configuration, including literal paths in compiled programs."""
+    if data is None:
+        return set()
+    if not (mode & 0o111 or data.startswith((b'#!', b'\x7fELF')) or configuration(path)
+            or PurePosixPath(path).suffix in SCRIPT_SUFFIXES):
+        return set()
+    paths = MARKDOWN_PATH.findall(data) + QUOTED_MARKDOWN.findall(data) + LITERAL_PATH.findall(data)
+    found = {PurePosixPath(p.decode('utf-8', errors='replace')).name.casefold() for p in paths}
+    text = text_of(data) if len(data) <= TEXT_LIMIT else None
+    if text is not None:
+        found.update(word.casefold() for word in re.findall(r'[\w.+%-]+', text))
+    return found
+
+
+def follow_aliases(aliases, referenced):
+    """A link is a consumer reference only when code or configuration names that link."""
+    referenced = set(referenced)
+    for _ in aliases:
+        before = len(referenced)
+        for path, target in aliases:
+            if PurePosixPath(path).name.casefold() in referenced:
+                referenced.add(PurePosixPath(target).name.casefold())
+        if len(referenced) == before:
+            break
+    return referenced
+
+
+def documentation(path, data, mode, referenced):
+    """Unrun Markdown in a documentation folder; an extension alone never establishes this."""
+    if data is None or len(data) > TEXT_LIMIT:
+        return False
+    parts = set(PurePosixPath(path).parts)
+    try:
+        text = data.decode('utf-8') if data is not None else ''
+    except UnicodeDecodeError:
+        return False
+    return bool(markdown(path) and parts & DOCUMENT_FOLDERS and not configuration(path)
+                and not parts & {'bin', 'sbin', 'libexec'} and not mode & 0o111
+                and all(c.isprintable() or c in '\t\r\n' for c in text)
+                and not text.lstrip('\ufeff \t\r\n').startswith('#!')
+                and PurePosixPath(path).name.casefold() not in referenced
+                and re.search(r'(?m)^ {0,3}(?:#{1,6}\s+\S|```|~~~|\|.+\|\s*$)', text))
+
+
 def applies(where, path):
     if where in (None, 'write', 'sysfs'):
         return True
@@ -734,17 +802,24 @@ def text_of(data):
         return data.decode('latin-1')
 
 
-def scan_file(shown, path, data, notes=None):
+def scan_file(shown, path, data, notes=None, document=None):
     """Every finding of one file, by its path, its text lines or, when compiled, its tokens. DATA is None for a
     link or a file too big to read. The tear-down lines it carries go to NOTES as (line number, line, what)."""
     findings = []
-    what = path_rule(path)
     text = text_of(data) if data is not None and len(data) <= TEXT_LIMIT else None
+    if document:
+        if notes is not None and MENTION.search(text or ''):
+            notes.append((0, '', 'documentation, not run'))
+        return findings
+    what = path_rule(path)
     if what:
         section = next(((n, l.strip()) for n, l in enumerate((text or '').splitlines(), 1)
                         if l.strip().startswith('[zram')), None)
         findings.append(f'{shown}:{section[0]}: {section[1]} ({what})' if section else f'{shown}: {what}')
-    if data is None or skipped(path):
+    if document is False and markdown(path) and (data is None or len(data) > TEXT_LIMIT):
+        findings.append(f'{shown}: Markdown cannot be read within the text limit; not classified as unrun documentation')
+        return findings
+    if data is None or (skipped(path) and document is None):
         return findings
     if text is not None:
         findings += [f'{shown}:{n}: {line} ({w})' for n, line, w in scan_text(path, text, notes)]
@@ -789,7 +864,7 @@ def merge(findings, notes, reading, line_notes, shown):
 
 # ---- packages ---------------------------------------------------------------------------------------------------
 
-def members(deb, part):
+def members(deb, part, modes=False):
     """(path, bytes or None, link target or None) of every file and link of DEB's control or data archive, as
     dpkg-deb reads them."""
     flag = '--ctrl-tarfile' if part == 'control' else '--fsys-tarfile'
@@ -799,9 +874,11 @@ def members(deb, part):
             for member in archive:
                 path = member.name.removeprefix('./')
                 if member.isfile():
-                    yield path, archive.extractfile(member).read() if member.size <= BINARY_LIMIT else None, None
+                    row = (path, archive.extractfile(member).read() if member.size <= BINARY_LIMIT else None, None)
+                    yield (*row, member.mode) if modes else row
                 elif member.issym() or member.islnk():
-                    yield path, None, member.linkname
+                    row = (path, None, member.linkname)
+                    yield (*row, member.mode) if modes else row
     finally:
         proc.stdout.read()
         error = proc.stderr.read().decode(errors='replace').strip()
@@ -811,19 +888,27 @@ def members(deb, part):
             raise OSError(f'dpkg-deb {flag} failed: {error or proc.returncode}')
 
 
-def check_deb(deb):
+def check_deb(deb, referenced=()):
     """(findings, notes, error) of one package."""
     name = Path(deb).name
     findings, notes, units, line_notes = [], [], [], {}
+    referenced, documents, aliases = set(referenced), [], []
     try:
         for path, data, _ in members(deb, 'control'):
             if path == 'control':
                 findings += relations(text_of(data) or '', f'{name}: DEBIAN/control')
             elif path != 'md5sums' and (text := text_of(data)) is not None:
+                referenced |= references('DEBIAN/' + path, data, 0o755)
                 down = []
                 findings += [f'{name}: DEBIAN/{path}:{n}: {line} ({w})' for n, line, w in scan_text(path, text, down)]
                 notes += [f'{name}: DEBIAN/{path}:{n}: {line} ({w})' for n, line, w in down]
-        for path, data, target in members(deb, 'data'):
+        for path, data, target, mode in members(deb, 'data', modes=True):
+            referenced |= references(path, data, mode)
+            if target is not None:
+                aliases.append((path, target))
+            if markdown(path) and target is None:
+                documents.append((path, data, mode))
+                continue
             down = []
             findings += [f'{name}: {f}' for f in scan_file('/' + path, path, data, down)]
             if down:
@@ -831,6 +916,16 @@ def check_deb(deb):
             small = data if data is not None and len(data) <= TEXT_LIMIT and unit_folder(path) is not None else None
             if of_zram(path, text_of(small), target):
                 units.append((path, target))
+        referenced = follow_aliases(aliases, referenced)
+        for path, data, mode in documents:
+            down = []
+            document = documentation(path, data, mode, referenced)
+            findings += [f'{name}: {f}' for f in scan_file('/' + path, path, data, down, document=document)]
+            for n, line, what in down:
+                if what == 'documentation, not run':
+                    notes.append(f'{name}: /{path}: {what}')
+                else:
+                    line_notes.setdefault(path, []).append((n, line, what))
         reading = Reading(Tree(files={}), lambda path: f'{name}: /{path}')
         if units:
             # the unit's Exec lines name other files of the package: read them all, once more, to follow them
@@ -851,8 +946,22 @@ def check_debs(debs, jobs):
     package."""
     companions = [d for d in debs if re.search(r'-(?:dbgsym|lc-hr)_', Path(d).name)]
     checked = [d for d in debs if d not in companions]
+    # A consumer may belong to another package in the supplied cohort.
+    referenced, aliases = set(), []
+    for deb in checked:
+        try:
+            for part in ('control', 'data'):
+                for path, data, target, mode in members(deb, part, modes=True):
+                    if part == 'control' and path in ('control', 'md5sums'):
+                        continue
+                    referenced |= references('DEBIAN/' + path if part == 'control' else path, data, mode)
+                    if target is not None:
+                        aliases.append((path, target))
+        except (OSError, tarfile.TarError):
+            pass  # check_deb below retains the unreadable-package refusal.
+    referenced = follow_aliases(aliases, referenced)
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-        results = list(pool.map(check_deb, checked))
+        results = list(pool.map(lambda deb: check_deb(deb, referenced), checked))
     findings = [f for fs, _, _ in results for f in fs]
     notes = [n for _, ns, _ in results for n in ns]
     errors = [e for _, _, e in results if e]
@@ -868,7 +977,7 @@ def check_debs(debs, jobs):
 IMAGE_TREES = ('etc', 'boot', 'usr/lib/systemd', 'usr/lib/udev', 'usr/lib/modprobe.d', 'usr/lib/modules-load.d',
                'usr/lib/tmpfiles.d', 'usr/lib/sysctl.d', 'usr/lib/kernel', 'usr/lib/kf6', 'usr/libexec', 'usr/local',
                'usr/sbin', 'usr/bin', 'usr/share/initramfs-tools', 'var/lib/dpkg/info', 'lib/systemd', 'lib/udev',
-               'lib/modprobe.d', 'lib/modules-load.d', 'sbin', 'bin')
+               'lib/modprobe.d', 'lib/modules-load.d', 'sbin', 'bin', 'usr/share/agent-skills')
 IMAGE_GLOBS = ('usr/lib/sparky*', 'usr/share/sparky*', 'usr/lib/*/qt6/plugins', 'usr/src/*/.config')
 
 
@@ -911,13 +1020,15 @@ def check_image(root, also):
                             'and not installed; the person opts in from Stereo APTus)')
         findings += relations(stanza, f'/var/lib/dpkg/status: {name}')
     count = 0
+    referenced, documents, aliases = set(), [], []
     for path in image_files(root):
         shown = '/' + path.relative_to(root).as_posix()
-        if skipped(shown):
+        if skipped(shown) and not markdown(shown):
             continue
         data = target = None
         if path.is_symlink():
             target = os.readlink(path)
+            aliases.append((shown, target))
         else:
             try:
                 data = path.read_bytes() if path.stat().st_size <= BINARY_LIMIT else None
@@ -925,6 +1036,11 @@ def check_image(root, also):
                 errors.append(f'{shown}: cannot be read: {error}')
                 continue
         count += 1
+        mode = path.stat().st_mode if not path.is_symlink() else 0
+        referenced |= references(shown, data, mode)
+        if markdown(shown) and target is None:
+            documents.append((shown, data, mode))
+            continue
         down = []
         findings += scan_file(shown, shown, data, down)
         if down:
@@ -935,7 +1051,18 @@ def check_image(root, also):
     reading = Reading(Tree(root=root), lambda path: f'/{path}')
     for path, target in units:
         reading.file(path, target)
-    findings, notes = merge(findings, [], reading, line_notes, lambda path: f'/{path}')
+    referenced = follow_aliases(aliases, referenced)
+    document_notes = []
+    for shown, data, mode in documents:
+        down = []
+        findings += scan_file(shown, shown, data, down,
+                              document=documentation(shown, data, mode, referenced))
+        for n, line, what in down:
+            if what == 'documentation, not run':
+                document_notes.append(f'{shown}: {what}')
+            else:
+                line_notes.setdefault(shown.lstrip('/'), []).append((n, line, what))
+    findings, notes = merge(findings, document_notes, reading, line_notes, lambda path: f'/{path}')
     for extra in also:
         try:
             data = Path(extra).read_bytes()
@@ -959,6 +1086,8 @@ LET_THROUGH = ('zram/zswap gate: {count} tear-down(s) let through, each read to 
 
 
 def report(findings, errors, what, notes=()):
+    documents = [n for n in notes if n.endswith(': documentation, not run')]
+    notes = [n for n in notes if n not in documents]
     if not findings and not errors:
         print(f'zram/zswap gate: passed, nothing of zram or zswap of ours in {what} (the person\'s opt-in from Stereo '
               'APTus is allowed).')
@@ -966,6 +1095,8 @@ def report(findings, errors, what, notes=()):
             print(LET_THROUGH.format(count=len(notes)))
             for line in notes:
                 print(f'  note: {line}')
+        for line in documents:
+            print(f'  note: {line}')
         return 0
     print(f'zram/zswap gate: refused, {len(findings)} finding(s) and {len(errors)} unreadable in {what}:',
           file=sys.stderr)
@@ -978,6 +1109,8 @@ def report(findings, errors, what, notes=()):
         print(LET_THROUGH.format(count=len(notes)) + ' (these are not why it is refused)', file=sys.stderr)
         for line in notes:
             print(f'  note: {line}', file=sys.stderr)
+    for line in documents:
+        print(f'  note: {line}', file=sys.stderr)
     return 1
 
 

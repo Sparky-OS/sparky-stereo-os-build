@@ -226,7 +226,7 @@ import os, sys, zipfile
 root, dest = os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])
 if dest.startswith(root + os.sep):
     sys.exit('Place the bundle outside the reference tree')
-top = ('AGENTS.md', 'README.md', 'ATTRIBUTIONS.md', 'CITATION.cff', 'LICENSE', 'LICENSE-GPL-2.0', 'SOURCE', 'MANIFEST.sha256', 'SOURCE-MANIFEST.sha256', 'skills', 'docs', 'tools')
+top = ('AGENTS.md', 'README.md', 'ATTRIBUTIONS.md', 'CITATION.cff', 'LICENSE', 'LICENSE-GPL-2.0', 'SOURCE', 'MANIFEST.sha256', 'SOURCE-MANIFEST.sha256', 'skills', 'docs', 'tools', 'hooks', 'site')
 files = []
 for t in sorted(top):
     p = os.path.join(root, t)
