@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 # Created by Daniel Ramos (Capitain Jack) 2026/11/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/03
+# Last update 2026/11/14 (ORDER 558: a tear-down is told from a set-up by what the unit and its script do)
 """The zram and zswap gate against fixture packages (built with dpkg-deb) and fixture image roots: every rule refuses
 what it is for and names the file and line, and what is allowed (the person's Stereo APTus opt-in, Suggests,
-zswap.enabled=0, comments, listing zram devices, documentation) passes. Needs python3 and dpkg-deb. SUBJECT selects
-another zram-check.py."""
+zswap.enabled=0, comments, listing zram devices, documentation) passes. A unit that only retires zram (stops, resets,
+removes, reports) passes with a note for each file and line; every set-up form inside such a unit or the script it
+runs, a unit that does both and anything the gate cannot read to its end are refused. Needs python3 and dpkg-deb.
+SUBJECT selects another zram-check.py; ZRAM_GATE_PACKAGES names a folder with real sparky-stereo-kernel-settings
+packages (published/ and staged/) to read whole."""
 import importlib.util
 import os
 from pathlib import Path
@@ -49,10 +52,22 @@ class Fixtures(unittest.TestCase):
                        capture_output=True)
         return out
 
+    def read(self, deb):
+        """(findings, notes) of one package; the gate before ORDER 558 had no notes."""
+        result = gate.check_deb(deb)
+        self.assertIsNone(result[-1])
+        return result[0], (result[1] if len(result) == 3 else [])
+
     def findings(self, deb):
-        findings, error = gate.check_deb(deb)
-        self.assertIsNone(error)
-        return findings
+        return self.read(deb)[0]
+
+    def assertNoted(self, deb, *parts):
+        """Passed, and every part is named by a note."""
+        findings, notes = self.read(deb)
+        self.assertEqual(findings, [])
+        for part in parts:
+            self.assertTrue(any(part in n for n in notes), f'{part!r} not in the notes {notes}')
+        return notes
 
     def assertRefused(self, deb, *parts):
         found = self.findings(deb)
@@ -188,7 +203,7 @@ class Packages(Fixtures):
         broken.write_bytes(b'not a package')
         companion = self.dir / 'other-lc-hr_1.0_all.deb'
         companion.write_bytes(b'not read')
-        findings, errors, what = gate.check_debs([str(clean), str(broken), str(companion)], 2)
+        findings, errors, what = gate.check_debs([str(clean), str(broken), str(companion)], 2)[:3]
         self.assertEqual(findings, [])
         self.assertEqual(len(errors), 1)
         self.assertIn('broken_1.0_all.deb: cannot be read', errors[0])
@@ -233,7 +248,7 @@ class Images(Fixtures):
                           {'/etc/default/grub': 'GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"\n',
                            '/boot/config-7.3.1-x': '# CONFIG_ZSWAP_DEFAULT_ON is not set\n',
                            '/usr/sbin/zramctl': '#!/bin/sh\n# stands for util-linux\n'})
-        findings, errors, what = gate.check_image(root, [])
+        findings, errors, what = gate.check_image(root, [])[:3]
         self.assertEqual((findings, errors), ([], []))
         self.assertIn('files read', what)
 
@@ -248,7 +263,7 @@ class Images(Fixtures):
                            '/var/lib/dpkg/info/x.postinst': '#!/bin/sh\nzramctl --find --size 1G\n'})
         menu = self.dir / 'grub.cfg'
         menu.write_text('menuentry x {\n  linux /live/vmlinuz boot=live systemd.zram=1\n}\n')
-        findings, errors, _ = gate.check_image(root, [str(menu)])
+        findings, errors, _ = gate.check_image(root, [str(menu)])[:3]
         self.assertEqual(errors, [])
         for part in ('/var/lib/dpkg/status: systemd-zram-generator is installed', '/var/lib/dpkg/status: x:4: Recommends: zram-tools',
                      '/var/lib/dpkg/status: y:4: Conflicts: zram-tools',
@@ -260,15 +275,318 @@ class Images(Fixtures):
     def test_merged_usr_is_read_once(self):
         root = self.image([('x', '')], {'/usr/lib/systemd/zram-generator.conf': '[zram0]\n'})
         (root / 'lib').symlink_to('usr/lib')
-        findings, errors, _ = gate.check_image(root, [])
+        findings, errors, _ = gate.check_image(root, [])[:3]
         self.assertEqual(findings, ['/usr/lib/systemd/zram-generator.conf:1: [zram0] (a zram-generator configuration)'])
 
     def test_image_without_status_is_refused(self):
         root = self.dir / 'empty'
         root.mkdir()
-        findings, errors, _ = gate.check_image(root, [])
+        findings, errors, _ = gate.check_image(root, [])[:3]
         self.assertEqual(len(errors), 1)
         self.assertEqual(gate.report(findings, errors, 'x'), 1)
+
+
+# ---- ORDER 558: what a zram unit does ------------------------------------------------------------------------------
+
+SYSTEM = '/usr/lib/systemd/system/'
+SCRIPT = '/usr/libexec/sparky-stereo/zram-migration'
+LEFTOVER = SYSTEM + 'sparky-stereo-kernel-settings-zram-leftover.service'
+FAILED = SYSTEM + 'sparky-stereo-kernel-settings-zram-failed@.service'
+WANTS = SYSTEM + 'multi-user.target.wants/sparky-stereo-kernel-settings-zram-leftover.service'
+SETUP_D = SYSTEM + 'systemd-zram-setup@zram0.service.d/'
+SWAP_D = SYSTEM + 'dev-zram0.swap.d/'
+# The files of sparky-stereo-kernel-settings 20261108.1 (ORDER 463), as its build.sh writes them
+LEFTOVER_UNIT = """[Unit]
+Description=Remove the compressed swap generator an older edition left installed (once)
+Documentation=file:/usr/share/doc/sparky-stereo-kernel-settings/README.md
+ConditionPathExists=/var/lib/sparky-stereo-kernel-settings/leftover-zram-generator
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/sparky-stereo/zram-migration --purge-leftover
+TimeoutStartSec=infinity
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+"""
+FAILED_UNIT = """[Unit]
+Description=Say the failure of %i without offering to start it again
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/sparky-stereo/zram-migration --failed %i
+"""
+GUARD = """[Unit]
+RequiresMountsFor=/var/lib/apt /var/lib/sparky-stereo-kernel-settings
+# At boot this unit is started several times; each skipped start counted toward the start limit
+StartLimitIntervalSec=0
+[Service]
+ExecCondition=/usr/libexec/sparky-stereo/zram-migration --allow
+"""
+SWAP_GUARD = """[Unit]
+# The generator orders this swap after its setup service, which evaluates the guard.
+ConditionPathExists=!/run/sparky-stereo-kernel-settings/blocked-zram0
+"""
+FAILURE = """[Unit]
+# The engine's generic handler (Repair: systemctl restart) is masked by name beside this one
+OnFailure=sparky-stereo-kernel-settings-zram-failed@%n.service
+"""
+MIGRATION = Path(__file__).resolve().parents[2] / 'packages/sparky-stereo-kernel-settings' / SCRIPT.lstrip('/')
+# The line of the round's fourth finding, as the installed (lean) script carries it
+LINE_107 = ("""        'if [ -r /sys/block/zram0/disksize ] && [ "$(cat /sys/block/zram0/disksize)" != 0 ]; """
+            """then echo 1 >/sys/block/zram0/reset; fi\\n')""")
+RETIRE = """#!/bin/sh
+set -e
+if awk '$1 == "/dev/zram0" { f=1 } END { exit !f }' /proc/swaps; then
+    systemctl stop dev-zram0.swap || true
+    swapoff /dev/zram0
+fi
+if [ -r /sys/block/zram0/disksize ] && [ "$(cat /sys/block/zram0/disksize)" != 0 ]; then
+    echo 1 >/sys/block/zram0/reset
+fi
+"""
+PYTHON = """#!/usr/bin/python3
+import subprocess
+cleanup = (
+    'set -e\\n'
+    'swapoff /dev/zram0\\n'
+    '{line}\\n')
+subprocess.run(['/bin/sh', '-c', cleanup], check=True)
+"""
+
+# Every set-up form the gate knew before ORDER 558 (zramctl(8); zram.rst: disksize, comp_algorithm, max_comp_streams,
+# mem_limit, backing_dev, algorithm_params, hot_add; mkswap and swapon; the module; zswap.rst: the run-time switch and
+# the kernel command line), as one shell command each
+KNOWN_SETUPS = (
+    'zramctl --find --size 4G',
+    'zramctl -s 4G /dev/zram0',
+    'zramctl --algorithm zstd /dev/zram0',
+    'echo 4G > /sys/block/zram0/disksize',
+    'echo zstd > /sys/block/zram0/comp_algorithm',
+    'echo 2 > /sys/block/zram0/max_comp_streams',
+    'echo 1G > /sys/block/zram0/mem_limit',
+    'echo /dev/sda5 > /sys/block/zram0/backing_dev',
+    'echo "algo=zstd level=9" > /sys/block/zram0/algorithm_params',
+    'cat /sys/class/zram-control/hot_add > /run/n',
+    'mkswap /dev/zram0',
+    'swapon -p 100 /dev/zram0',
+    'modprobe zram num_devices=1',
+    'echo 1 > /sys/module/zswap/parameters/enabled',
+    'echo Y | tee /sys/module/zswap/parameters/enabled',
+    'grub-editenv - set kernelopts="quiet zswap.enabled=1"',
+    'grub-editenv - set kernelopts="quiet systemd.zram=1"',
+)
+# What a retiring unit or its script could also do to set zram up, and what the gate cannot read: refused there
+MORE_SETUPS = (
+    'id=$(cat /sys/class/zram-control/hot_add)',
+    'systemctl start dev-zram0.swap',
+    'systemctl enable --now zramswap.service',
+    'systemctl restart systemd-zram-setup@zram0.service',
+    'apt-get -y install systemd-zram-generator',
+    '/usr/lib/systemd/system-generators/zram-generator --setup-device zram0',
+    'zramswap start',
+    'd=/sys/block/zram0; echo 4G > $d/disksize',
+    'dd if=/dev/zero of=/dev/zram0 bs=1M count=1',
+    'echo 1 > /sys/block/zram0/compact',
+    'echo $n > /sys/block/zram0/reset',
+    'eval "$ZRAM_COMMAND"',
+)
+
+
+class TearDowns(Fixtures):
+    def package(self, **more):
+        files = {LEFTOVER: LEFTOVER_UNIT, FAILED: FAILED_UNIT, WANTS: ('link', '../' + Path(LEFTOVER).name),
+                 SETUP_D + '50-sparky-migration.conf': GUARD, SETUP_D + '60-sparky-zram-failure.conf': FAILURE,
+                 SETUP_D + '50-sparky-stereo-problems.conf': ('link', '/dev/null'),
+                 SWAP_D + '50-sparky-migration.conf': SWAP_GUARD, SCRIPT: MIGRATION.read_text()}
+        files.update(more)
+        return self.deb(name='sparky-stereo-kernel-settings', files={k: v for k, v in files.items() if v is not None})
+
+    def test_the_five_findings_of_round_r1114a_pass_each_with_its_note(self):
+        notes = self.assertNoted(self.package(), FAILED + ':', LEFTOVER + ':', SETUP_D + '60-sparky-zram-failure.conf:',
+                                 WANTS + ':', SCRIPT + ':')
+        reset = [n for n in notes if SCRIPT in n and '/sys/block/zram0/reset' in n]
+        self.assertEqual(len(reset), 1, notes)
+        self.assertIn('a zram device reset', reset[0])
+        for note in notes:
+            self.assertRegex(note, r'^sparky-stereo-kernel-settings_1\.0_all\.deb: /\S+?(:\d+)?: ')
+
+    def test_each_finding_alone_with_the_script_it_runs(self):
+        for path, text in ((FAILED, FAILED_UNIT), (LEFTOVER, LEFTOVER_UNIT),
+                           (SETUP_D + '60-sparky-zram-failure.conf', FAILURE)):
+            with self.subTest(path=path):
+                files = {path: text, SCRIPT: MIGRATION.read_text()}
+                if path.endswith('.conf'):
+                    files[FAILED] = FAILED_UNIT
+                self.assertNoted(self.deb(files=files), path + ':')
+        self.assertNoted(self.deb(files={LEFTOVER: LEFTOVER_UNIT, WANTS: ('link', '../' + Path(LEFTOVER).name),
+                                         SCRIPT: MIGRATION.read_text()}), WANTS + ':')
+        self.assertNoted(self.deb(files={LEFTOVER: LEFTOVER_UNIT, SCRIPT: '#!/usr/bin/python3\ncleanup = (\n' + LINE_107 + '\n'}),
+                         SCRIPT + ':3:', 'a zram device reset')
+
+    def test_the_published_drop_ins_are_read_as_what_they_are(self):
+        # 20261106.1 ships these; the gate before ORDER 558 never read them, their names have no "zram"
+        self.assertNoted(self.deb(files={SETUP_D + '50-sparky-migration.conf': GUARD.replace('StartLimitIntervalSec=0\n', ''),
+                                         SWAP_D + '50-sparky-migration.conf': SWAP_GUARD, SCRIPT: MIGRATION.read_text()}),
+                         SETUP_D + '50-sparky-migration.conf:', SWAP_D + '50-sparky-migration.conf:')
+
+    def test_a_shell_script_that_only_retires(self):
+        unit = LEFTOVER_UNIT.replace('zram-migration --purge-leftover', 'retire')
+        self.assertNoted(self.deb(files={LEFTOVER: unit, '/usr/libexec/sparky-stereo/retire': RETIRE}),
+                         '/usr/libexec/sparky-stereo/retire:4:', '/usr/libexec/sparky-stereo/retire:5:',
+                         '/usr/libexec/sparky-stereo/retire:8:', 'a zram unit stopped', 'swap on a zram device switched off')
+        inline = LEFTOVER_UNIT.replace('/usr/libexec/sparky-stereo/zram-migration --purge-leftover',
+                                       "/bin/sh -c 'swapoff /dev/zram0; echo 1 > /sys/block/zram0/reset'")
+        self.assertNoted(self.deb(files={LEFTOVER: inline}), LEFTOVER + ':8:')
+
+    def test_a_tear_down_outside_a_unit_is_noted_too(self):
+        self.assertNoted(self.deb(scripts={'postinst': '#!/bin/sh\nset -e\nprintf "1\\\\n" >/sys/block/zram0/reset\n'}),
+                         'DEBIAN/postinst:3:', 'a zram device reset')
+
+    def test_the_gate_says_what_it_let_through(self):
+        run = subprocess.run([sys.executable, str(SUBJECT), '--debs', str(self.package())], capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn('passed', run.stdout)
+        self.assertIn('let through', run.stdout)
+        self.assertIn(LEFTOVER, run.stdout)
+        self.assertIn(SCRIPT, run.stdout)
+
+    def test_the_units_in_an_image(self):
+        root = self.dir / 'root'
+        (root / 'var/lib/dpkg').mkdir(parents=True)
+        (root / 'var/lib/dpkg/status').write_text('Package: sparky-stereo-kernel-settings\nStatus: install ok installed\n')
+        for path, text in ((LEFTOVER, LEFTOVER_UNIT), (FAILED, FAILED_UNIT), (SETUP_D + '50-sparky-migration.conf', GUARD),
+                           (SETUP_D + '60-sparky-zram-failure.conf', FAILURE), (SCRIPT, MIGRATION.read_text())):
+            (root / path.lstrip('/')).parent.mkdir(parents=True, exist_ok=True)
+            (root / path.lstrip('/')).write_text(text)
+        (root / WANTS.lstrip('/')).parent.mkdir(parents=True)
+        (root / WANTS.lstrip('/')).symlink_to('../' + Path(LEFTOVER).name)
+        result = gate.check_image(root, [])
+        self.assertEqual((result[0], result[1]), ([], []))
+        self.assertTrue(any(LEFTOVER in n for n in result[3]), result)
+        (root / SCRIPT.lstrip('/')).write_text('#!/bin/sh\necho 4G > /sys/block/zram0/disksize\n')
+        self.assertTrue(any(SCRIPT + ':2:' in f for f in gate.check_image(root, [])[0]))
+
+    @unittest.skipUnless(os.environ.get('ZRAM_GATE_PACKAGES'), 'ZRAM_GATE_PACKAGES is not set')
+    def test_the_real_packages_whole(self):
+        folder = Path(os.environ['ZRAM_GATE_PACKAGES'])
+        for which, version, paths in (
+                ('published', '20261106.1', (SETUP_D + '50-sparky-migration.conf:', SWAP_D + '50-sparky-migration.conf:')),
+                ('staged', '20261108.1', (FAILED + ':', LEFTOVER + ':', SETUP_D + '60-sparky-zram-failure.conf:', WANTS + ':',
+                                          SCRIPT + ':107:', SETUP_D + '50-sparky-migration.conf:',
+                                          SETUP_D + '50-sparky-stereo-problems.conf:', 'DEBIAN/postinst:'))):
+            with self.subTest(which=which):
+                debs = sorted((folder / which).glob(f'sparky-stereo-kernel-settings_{version}*.deb'))
+                self.assertEqual(len(debs), 1, debs)
+                self.assertNoted(debs[0], *paths)
+
+
+class SetUpsStayRefused(Fixtures):
+    """Each form inside a unit named like ours, and inside the script a tear-down unit runs."""
+
+    def in_unit(self, command):
+        quoted = command.replace('\\', '\\\\').replace('"', '\\"').replace('$', '$$')
+        return self.deb(files={LEFTOVER: LEFTOVER_UNIT.replace(
+            '/usr/libexec/sparky-stereo/zram-migration --purge-leftover', f'/bin/sh -c "{quoted}"')})
+
+    def in_script(self, command):
+        return self.deb(files={LEFTOVER: LEFTOVER_UNIT.replace('zram-migration --purge-leftover', 'retire'),
+                               '/usr/libexec/sparky-stereo/retire': RETIRE + command + '\n'})
+
+    def in_python(self, command):
+        return self.deb(files={LEFTOVER: LEFTOVER_UNIT, SCRIPT: PYTHON.format(line=command.replace("'", "\\'"))})
+
+    def test_every_known_set_up_in_a_unit_named_like_ours(self):
+        for command in KNOWN_SETUPS + MORE_SETUPS:
+            with self.subTest(command=command):
+                self.assertRefused(self.in_unit(command), LEFTOVER + ':8:')
+
+    def test_every_known_set_up_in_the_script_a_tear_down_unit_runs(self):
+        for command in KNOWN_SETUPS + MORE_SETUPS:
+            with self.subTest(command=command):
+                self.assertRefused(self.in_script(command), '/usr/libexec/sparky-stereo/retire:10:')
+
+    def test_every_known_set_up_in_the_shell_text_a_python_script_runs(self):
+        for command in KNOWN_SETUPS + MORE_SETUPS:
+            with self.subTest(command=command):
+                self.assertRefused(self.in_python(command), SCRIPT + ':6:')
+
+    def test_a_set_up_run_directly_by_the_unit(self):
+        for command in ('/usr/sbin/zramctl --find --size 4G', '/usr/sbin/swapon /dev/zram0', '/usr/sbin/mkswap /dev/zram0',
+                        '/usr/sbin/modprobe zram', '/usr/bin/systemctl start dev-zram0.swap',
+                        '/usr/lib/systemd/system-generators/zram-generator --setup-device zram0'):
+            with self.subTest(command=command):
+                self.assertRefused(self.deb(files={LEFTOVER: LEFTOVER_UNIT.replace(
+                    '/usr/libexec/sparky-stereo/zram-migration --purge-leftover', command)}), LEFTOVER + ':8:')
+
+    def test_units_that_pull_a_zram_unit_in(self):
+        for line in ('Wants=dev-zram0.swap', 'Requires=systemd-zram-setup@zram0.service', 'Upholds=dev-zram0.swap',
+                     'OnSuccess=systemd-zram-setup@zram0.service'):
+            with self.subTest(line=line):
+                self.assertRefused(self.deb(files={LEFTOVER: LEFTOVER_UNIT.replace('[Unit]\n', '[Unit]\n' + line + '\n'),
+                                                   SCRIPT: MIGRATION.read_text()}), LEFTOVER + ':2: ' + line)
+        self.assertRefused(self.deb(files={LEFTOVER: LEFTOVER_UNIT + 'Also=dev-zram0.swap\n', SCRIPT: MIGRATION.read_text()}),
+                           LEFTOVER + ':14: Also=dev-zram0.swap')
+        self.assertRefused(self.deb(files={SYSTEM + 'sparky-stereo-kernel-settings-zram.swap': '[Swap]\nWhat=/dev/zram0\n'}),
+                           'sparky-stereo-kernel-settings-zram.swap:2: What=/dev/zram0')
+        self.assertRefused(self.deb(files={SYSTEM + 'swap.target.wants/dev-zram0.swap': ('link', '../dev-zram0.swap')}),
+                           'a zram unit')
+
+    def test_drop_ins_that_do_more_than_limit_or_condition(self):
+        for text in ('[Service]\nExecStartPre=/usr/sbin/modprobe zram\n', '[Service]\nEnvironment=ZRAM_SIZE=4G\n',
+                     '[Service]\nExecStart=\nExecStart=/usr/sbin/zramctl --find --size 8G\n', '[Unit]\nWants=dev-zram1.swap\n',
+                     '[Install]\nWantedBy=swap.target\n', '[Swap]\nPriority=100\n'):
+            with self.subTest(text=text):
+                self.assertRefused(self.deb(files={SETUP_D + '50-sparky-migration.conf': text}),
+                                   SETUP_D + '50-sparky-migration.conf:2:')
+
+    def test_a_package_with_a_tear_down_and_a_generator_configuration(self):
+        found = self.assertRefused(self.deb(files={LEFTOVER: LEFTOVER_UNIT, SCRIPT: MIGRATION.read_text(),
+                                                   '/usr/lib/systemd/zram-generator.conf': '[zram0]\n'}),
+                                   '/usr/lib/systemd/zram-generator.conf:1: [zram0] (a zram-generator configuration)')
+        self.assertEqual(len(found), 1, found)
+
+
+class Forged(Fixtures):
+    def test_a_reset_followed_by_a_disksize_write(self):
+        both = 'echo 1 > /sys/block/zram0/reset; echo 4G > /sys/block/zram0/disksize'
+        unit = LEFTOVER_UNIT.replace('/usr/libexec/sparky-stereo/zram-migration --purge-leftover', f"/bin/sh -c '{both}'")
+        found = self.assertRefused(self.deb(files={LEFTOVER: unit}), LEFTOVER + ':8:', 'a zram device set up through sysfs')
+        self.assertTrue(any('does both' in f for f in found), found)
+        script = RETIRE + 'echo 4G > /sys/block/zram0/disksize\n'
+        found = self.assertRefused(self.deb(files={LEFTOVER: LEFTOVER_UNIT.replace('zram-migration --purge-leftover', 'retire'),
+                                                   '/usr/libexec/sparky-stereo/retire': script}),
+                                   '/usr/libexec/sparky-stereo/retire:10: echo 4G > /sys/block/zram0/disksize')
+        self.assertTrue(any('does both' in f for f in found), found)
+        self.assertRefused(self.deb(files={LEFTOVER: LEFTOVER_UNIT, SCRIPT: PYTHON.format(line=both)}), SCRIPT + ':6:')
+        # the same line outside any unit: the reset does not hide the set-up beside it
+        self.assertRefused(self.deb(files={'/usr/sbin/x': '#!/bin/sh\n' + both + '\n'}), '/usr/sbin/x:2:')
+        self.assertRefused(self.deb(files={'/usr/sbin/x': '#!/bin/sh\necho 0 > /run/x; echo 4G > /sys/block/zram0/disksize\n'}),
+                           '/usr/sbin/x:2:')
+
+    def test_a_script_the_gate_cannot_follow(self):
+        self.assertRefused(self.deb(files={LEFTOVER: LEFTOVER_UNIT}), LEFTOVER + ':8:', 'does not ship')
+        self.assertRefused(self.deb(files={LEFTOVER: LEFTOVER_UNIT, SCRIPT: b'\x7fELF' + b'\0' * 60}), LEFTOVER + ':8:',
+                           'cannot read')
+        self.assertRefused(self.deb(files={LEFTOVER: LEFTOVER_UNIT, SCRIPT: ('link', '/usr/bin/elsewhere')}), LEFTOVER + ':8:')
+        self.assertRefused(self.deb(files={LEFTOVER: LEFTOVER_UNIT.replace('/usr/libexec/sparky-stereo/zram-migration',
+                                                                          '/usr/bin/unknown-tool')}), LEFTOVER + ':8:')
+        helper = '/usr/libexec/sparky-stereo/helper'
+        self.assertRefused(self.deb(files={LEFTOVER: LEFTOVER_UNIT, SCRIPT: f'#!/bin/sh\nexec {helper}\n',
+                                           helper: '#!/bin/sh\nzramctl --find --size 2G\n'}), helper + ':2:')
+        self.assertRefused(self.deb(files={LEFTOVER: LEFTOVER_UNIT, SCRIPT: '#!/bin/sh\nzramctl \\\n  --find --size 2G\n'}),
+                           SCRIPT + ':2:')
+
+    def test_what_keeps_the_person_from_zram(self):
+        self.assertRefused(self.deb(files={SETUP_D + '50-x.conf': '[Service]\nExecCondition=/bin/false\n'}),
+                           SETUP_D + '50-x.conf:2:', 'caps')
+        self.assertRefused(self.deb(files={'/etc/systemd/system/dev-zram0.swap': ('link', '/dev/null')}), 'caps')
+        self.assertRefused(self.deb(files={SYSTEM + 'systemd-zram-setup@zram0.service': ('link', '/dev/null')}), 'caps')
+
+    def test_a_zram_file_of_systemd_the_gate_does_not_know(self):
+        self.assertRefused(self.deb(files={SYSTEM + 'sparky-zram.target': '[Unit]\nDescription=x\n'}), 'sparky-zram.target')
+        self.assertRefused(self.deb(files={'/usr/lib/systemd/sparky-zram-helper': '#!/bin/sh\n'}), 'sparky-zram-helper')
 
 
 if __name__ == '__main__':
