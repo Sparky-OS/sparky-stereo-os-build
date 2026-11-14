@@ -26,6 +26,7 @@ def paragraphs(text):
             row[field] += '\n' + line[1:]
         else:
             field, sep, value = line.partition(':')
+            field = field.lower()
             if not sep or field in row:
                 raise ValueError('malformed or duplicate field: ' + line)
             row[field] = value.strip()
@@ -62,13 +63,13 @@ def inside(root, relative):
 
 
 def descriptor_problem(root, source):
-    name, version = source['Package'], source['Version']
-    checks = [line.split() for line in source['Checksums-Sha256'].splitlines() if line.strip()]
+    name, version = source['package'], source['version']
+    checks = [line.split() for line in source['checksums-sha256'].splitlines() if line.strip()]
     descriptors = [r for r in checks if r[2].endswith('.dsc')]
     if len(descriptors) != 1:
         return 'Sources must name exactly one .dsc'
     digest, size, filename = descriptors[0]
-    path = inside(root, source['Directory'] + '/' + filename)
+    path = inside(root, source['directory'] + '/' + filename)
     if not path.is_file():
         return 'missing .dsc: ' + str(path.relative_to(root))
     data = path.read_bytes()
@@ -79,16 +80,16 @@ def descriptor_problem(root, source):
         text = text.split('\n\n', 1)[1].split('\n-----BEGIN PGP SIGNATURE-----', 1)[0]
         text = '\n'.join(line[2:] if line.startswith('- ') else line for line in text.splitlines())
     fields = list(paragraphs(text))
-    if len(fields) != 1 or fields[0].get('Source') != name or fields[0].get('Version') != version:
+    if len(fields) != 1 or fields[0].get('source') != name or fields[0].get('version') != version:
         return '.dsc identity differs from Sources: ' + filename
-    closure = [r.split() for r in fields[0]['Checksums-Sha256'].splitlines() if r.strip()]
+    closure = [r.split() for r in fields[0]['checksums-sha256'].splitlines() if r.strip()]
     if not closure:
         return 'empty .dsc source closure: ' + filename
     indexed = {r[2]: r[:2] for r in checks}
     for sha, length, component in closure:
         if indexed.get(component) != [sha, length]:
             return '.dsc component differs from Sources: ' + component
-        archive = inside(root, source['Directory'] + '/' + component)
+        archive = inside(root, source['directory'] + '/' + component)
         if not archive.is_file() or archive.stat().st_size != int(length):
             return 'missing or wrong-sized source component: ' + str(archive.relative_to(root))
     return None
@@ -99,23 +100,23 @@ def audit(root):
     for index, records in indexes(root, 'Sources'):
         suite = index.relative_to(root / 'dists').parts[0]
         for row in records:
-            key = suite, row['Package'], row['Version']
+            key = suite, row['package'], row['version']
             problem = descriptor_problem(root, row)
             sources.setdefault(key, []).append(problem)
     rows = set()
     for index, records in indexes(root, 'Packages'):
         suite = index.relative_to(root / 'dists').parts[0]
         for binary in records:
-            source = binary.get('Source', binary['Package'])
+            source = binary.get('source', binary['package'])
             match = re.fullmatch(r'([a-z0-9][a-z0-9+.-]*)(?:\s+\(([^()\s]+)\))?', source)
             if not match:
                 raise ValueError('malformed Source: ' + source)
-            name, version = match[1], match[2] or binary['Version']
+            name, version = match[1], match[2] or binary['version']
             key = suite, name, version
             candidates = sources.get(key)
             problem = ('missing from Sources' if candidates is None else
                        '; '.join(sorted(set(p for p in candidates if p))) if all(candidates) else '')
-            rows.add((suite, binary['Package'], binary['Version'], binary['Architecture'],
+            rows.add((suite, binary['package'], binary['version'], binary['architecture'],
                       name, version, 'missing' if problem else 'present', problem))
     if not rows:
         raise ValueError('binary indexes contain zero packages')
