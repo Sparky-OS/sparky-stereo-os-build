@@ -5,7 +5,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT}
 SOURCE=${APTUS_SOURCE:-$HERE/../../sparky-aptus-stereo-appcenter}
-VERSION=0.1.8+lc1
+VERSION=0.1.9+lc1
 PACKAGE=sparky-aptus-stereo-appcenter
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.aptus-stereo.XXXXXX")
@@ -20,6 +20,7 @@ install -m644 "$WORK/source/catalogue.py" "$WORK/source/catalogue.json" "$D/usr/
 install -Dm755 "$WORK/source/actions/entry" "$D/usr/lib/$PACKAGE/actions/entry"
 install -m644 "$WORK/source/common.py" "$D/usr/lib/$PACKAGE/common.py"
 install -m644 "$WORK/source/appimage.py" "$D/usr/lib/$PACKAGE/appimage.py"
+install -m644 "$WORK/source/tools.py" "$D/usr/lib/$PACKAGE/tools.py"
 install -m755 "$WORK/source/main-entry" "$D/usr/lib/$PACKAGE/main-entry"
 install -m644 "$WORK/source/mainpages.py" "$WORK/source/main-entries.json" "$D/usr/lib/$PACKAGE/"
 python3 "$HERE/../../../tools/copy-recipe.py" "$SOURCE/9" "$WORK/main-source"
@@ -62,7 +63,7 @@ Package: $PACKAGE
 Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Depends: bsdextrautils, distrobox, fuse3, podman, sparky-aptus-appcenter, sparky-stereo-apt (>= 20261104.3~sparky9~0), python3, python3-apt, curl, flatpak, sparky-stereo-hardware, apt, dpkg, systemd, udev, kmod, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
+Depends: sparky-aptus-appcenter, sparky-stereo-apt (>= 20261104.3~sparky9~0), python3, python3-apt, curl, sparky-stereo-hardware, apt, dpkg, systemd, udev, kmod, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
 Section: admin
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -75,6 +76,10 @@ cat > "$D/DEBIAN/postrm" <<'EOF'
 set -e
 if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
     sparky-stereo-problems clear --all sparky-aptus-stereo-appcenter
+fi
+if [ "$1" = purge ]; then
+    # which tools each entry brought (tools.py); the tools themselves are apt's
+    rm -rf /var/lib/sparky-aptus-stereo-appcenter
 fi
 EOF
 chmod 755 "$D/DEBIAN/postrm"
