@@ -55,3 +55,8 @@ The main handler and direct entry backends route these two programs to the same 
 Every added entry sentence and label is translated in the ten required languages.
 A sync compares URI inventories per page against the fetched main source and keeps the existing edition additions and stereo tabs.
 The source and installed-payload checks must find every main URI, both new entry keys, and an unchanged published stereo catalogue.
+
+The published sparky-stereo-apt reader has nine language catalogues.
+This package supplies the maintained reader's Spanish catalogue in a locale overlay and links the other nine catalogues to their existing owner.
+The same installed reader still owns metered detection, settings, formatting and messages; no detector or second message set is implemented here.
+An explicit SPARKY_INSTALL_DOWNLOADS_LANG override remains respected.

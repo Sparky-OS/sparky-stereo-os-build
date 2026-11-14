@@ -26,6 +26,11 @@ python3 "$HERE/../../../tools/copy-recipe.py" "$SOURCE/9" "$WORK/main-source"
 python3 "$WORK/source/package_main.py" "$WORK/main-source" "$D"
 install -Dm755 "$WORK/source/actions/zram" "$D/usr/lib/$PACKAGE/actions/zram"
 install -m644 "$WORK/source/lang/"*.json "$D/usr/share/sparky/$PACKAGE/"
+mkdir -p "$D/usr/share/sparky/$PACKAGE/install-downloads"
+for code in en pl pt_BR fr de ja ko zh_CN zh_TW; do
+    ln -s "/usr/share/sparky/sparky-stereo-apt/install-downloads/$code.json" "$D/usr/share/sparky/$PACKAGE/install-downloads/$code.json"
+done
+install -m644 "$HERE/../sparky-stereo-apt/install-downloads/lang/es.json" "$D/usr/share/sparky/$PACKAGE/install-downloads/es.json"
 printf '#!/bin/sh\nexec /usr/lib/sparky-aptus-stereo-appcenter/appcenter "$@"\n' > "$D/usr/bin/$PACKAGE"
 chmod 755 "$D/usr/bin/$PACKAGE"
 install -m644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
