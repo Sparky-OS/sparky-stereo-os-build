@@ -1,0 +1,69 @@
+Description: Read the per-file stereo choice from the stereo layer's store; a hand-chosen anaglyph gives both views (ORDER 512 and 551)
+ The video thumbnailer reads the person's per-file choice (the input packing, Not 3D, the swap) with
+ Stereo::Picture::fileChoice() instead of the file attribute user.stereo-policy.swap-eyes. Needs libstereo-layer-dev
+ (>= 1.18.0).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-14
+---
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 2f91396..0bfcca5 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -32,7 +32,7 @@ find_package(FFmpeg 60.30 REQUIRED COMPONENTS AVCODEC)
+ find_package(FFmpeg 58.7 REQUIRED COMPONENTS AVUTIL)
+ find_package(FFmpeg REQUIRED COMPONENTS AVFILTER AVFORMAT SWSCALE)
+ 
+-find_package(StereoLayer 1.5 CONFIG)
++find_package(StereoLayer 1.18 CONFIG)
+ set_package_properties(StereoLayer PROPERTIES
+     DESCRIPTION "Shared stereo picture and video policy of Sparky Stereo OS"
+     TYPE OPTIONAL
+diff --git a/ffmpegthumbnailer/videothumbnailer.cpp b/ffmpegthumbnailer/videothumbnailer.cpp
+index 6d96c11..2f24f3b 100644
+--- a/ffmpegthumbnailer/videothumbnailer.cpp
++++ b/ffmpegthumbnailer/videothumbnailer.cpp
+@@ -128,13 +128,19 @@ void VideoThumbnailer::generateThumbnail(const QString& videoFile, ImageWriter&
+ bool VideoThumbnailer::generateStereoThumbnail(MovieDecoder& movieDecoder, const QString& stereoMark, const QString& videoFile, ImageWriter& imageWriter, QImage& image)
+ {
+ #ifdef HAVE_STEREO_LAYER
+-    // The video detection order of the shared stereo layer: the stream's mark, then the container's, then the shape;
+-    // the user's correction stored with the file swaps the eyes over all of them
++    // The video detection order of the shared stereo layer: the stream's mark, then the container's, then the shape.
++    // The person's choice for this file comes from the layer's per-file store, which is never the file itself: a
++    // packing chosen by hand or "Not 3D" before the marks, and the swap of the eyes over whatever decided.
+     const QSize shown = movieDecoder.displaySize();
+-    Stereo::Picture::Options options;
+-    options.swapEyes = Stereo::Picture::userSwapEyes(videoFile);
+-    const auto stereo = Stereo::Video::layout(shown, stereoMark, options);
+-    if (stereo.layout == Stereo::Picture::Layout::None || shown.isEmpty()) {
++    const Stereo::Picture::Options options = Stereo::Picture::fileChoice(videoFile);
++    const auto stereo = Stereo::Video::layout(shown, stereoMark, options, options.view == Stereo::Picture::View::Mono);
++    // An anaglyph the person chose for this file by hand (the colour pairs of the layer's per-file menu; Matroska's
++    // StereoMode 10 and 12 are two of them, RFC 9559 section 5.1.4.1.28.3): the two views are taken out of the colours.
++    const Stereo::Picture::AnaglyphColorPair anaglyph =
++        options.view != Stereo::Picture::View::Mono && options.inputLayout == Stereo::Picture::Layout::None ? options.anaglyph
++                                                                                                             : Stereo::Picture::AnaglyphColorPair::None;
++    const bool colours = anaglyph != Stereo::Picture::AnaglyphColorPair::None;
++    if ((stereo.layout == Stereo::Picture::Layout::None && !colours) || shown.isEmpty()) {
+         return false;
+     }
+ 
+@@ -152,10 +158,16 @@ bool VideoThumbnailer::generateStereoThumbnail(MovieDecoder& movieDecoder, const
+     }
+     QImage packed;
+     imageWriter.writeFrame(videoFrame, packed, QImageIOHandler::TransformationNone);
+-    auto picture = Stereo::Picture::fromPackedImage(packed, stereo.layout, stereo.eyeOrder);
++    // Views that come one after the other in time (a frame sequence, both views laced in one block) are not in one
++    // frame: fromPackedImage() gives no pair for them and the thumbnail stays the one view this frame holds, which the
++    // per-file menu says beside those entries.
++    auto picture = colours ? Stereo::Picture::fromAnaglyph(packed, anaglyph) : Stereo::Picture::fromPackedImage(packed, stereo.layout, stereo.eyeOrder);
+     if (!picture.isStereo()) {
+         return false;
+     }
++    if (colours && options.swapEyes) {
++        picture = picture.swapped();
++    }
+     if (interleaved && shown.width() != movieDecoder.getWidth()) {
+         const QSize view(qMax(1, qRound(picture.left.width() * double(shown.width()) / movieDecoder.getWidth())), picture.left.height());
+         picture.left = picture.left.scaled(view, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
