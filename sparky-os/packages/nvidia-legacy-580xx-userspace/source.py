@@ -73,7 +73,7 @@ with tempfile.TemporaryDirectory(prefix='carry-source-', dir=output) as temporar
                     ' Licensed vendor payload preserved byte for byte; see README.source.\n\n')
     (debian / 'control').write_text(control)
     (debian / 'changelog').write_text((source / 'changelog').read_text().replace('@SOURCE@', name))
-    (debian / 'copyright').write_text((source / 'NVIDIA-LICENSE').read_text() + '\nFiles: build.sh carry.py source.py *.tsv *.in changelog README.source vendor-files.json debian/*\nCopyright: 2026 Daniel Campos Ramos\n           2026 Paweł Pijanowski\nLicense: GPL-3+\n On Debian systems the complete GNU GPL version 3 is in /usr/share/common-licenses/GPL-3.\n')
+    (debian / 'copyright').write_text((source / 'NVIDIA-LICENSE').read_text() + '\nFiles: vendor/*.deb\nCopyright: NVIDIA Corporation and the respective package authors\nLicense: NVIDIA-graphics-drivers\nComment: Exact unmodified vendor archive inputs. Individual files retain their own notices and licences inside each archive; see those copyright files.\n\nFiles: build.sh carry.py source.py *.tsv *.in changelog README.source vendor-files.json debian/*\nCopyright: 2026 Daniel Campos Ramos\n           2026 Paweł Pijanowski\nLicense: GPL-3+\n On Debian systems the complete GNU GPL version 3 is in /usr/share/common-licenses/GPL-3.\n')
     kit = debian / 'sparky-lean-toolkit'
     shutil.copytree(toolkit / 'lean', kit / 'lean', ignore=shutil.ignore_patterns('__pycache__', 'tests'))
     (kit / 'repo').mkdir()

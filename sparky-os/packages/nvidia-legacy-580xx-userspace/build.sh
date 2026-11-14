@@ -11,9 +11,9 @@
 #   - NVIDIA's files and maintainer scripts byte for byte (the NVIDIA Software License distributes the binary files only
 #     unmodified, 1.1(d)(i) and 2.3, and asks that a modified file carry a prominent notice of the change, 2.5); Lean Code
 #     keeps each of them as NVIDIA ships it (lean.release build-tree --preserve-plan) and its manifest says why;
-#   - the control file the edition's, at the version of the edition's 580 kernel module (nvidia-legacy-580xx-kernel-dkms's
-#     debian/changelog plus Lean Code's +lc1), with NVIDIA's exact relations among the carried packages at it;
-#   - three files of the edition: README.sparky-stereo, changelog.Debian.ARCH.gz (Debian's name for a binary-only entry,
+#   - the control file the edition's, at the carry changelog version; carried userspace relations advance together,
+#     while nvidia-kernel-dkms stays pinned to the unchanged published module version;
+#   - three files of the edition: README.sparky-stereo, changelog.Debian.ARCH.gz (an architecture-specific carry entry,
 #     so NVIDIA's own changelog stays) and the Lean Code manifest.
 # packages.tsv names what is carried, with the SHA-256 NVIDIA's signed index gave on 2026-11-02 (carry.py select wrote
 # it); excluded.tsv names, with its reason, every other package of the index at that version. The build checks NVIDIA's
@@ -22,15 +22,15 @@
 # NVIDIA's (carry.py verify); it stops on any difference.
 # To move to a new 580 version: rebuild the module at it first (its changelog gives this build's version), then run
 # carry.py select on NVIDIA's new index, review excluded.tsv against it, write this folder's changelog entry and run this.
+# Source packing retains licensed vendor inputs; source builds verify them offline.
 # Needs python3, dpkg-dev, gpgv and curl (the edition's sparky-lc-migration image has them).
 # Usage: build.sh [out-dir]   (default ${SPARKY_STAGING_DIR}/nvidia-legacy-580xx-userspace; NVDEBS, a folder that already
 #                              holds NVIDIA's files, each checked against its recorded hash; SPARKY_SCRATCH, the work folder)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
-# Last update 2026/11/03
+# Last update 2026/11/14
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOOLKIT=${SPARKY_CARRY_TOOLKIT:-$(cd "$HERE/../.." && pwd)}
-MODULE=$HERE/../nvidia-legacy-580xx-kernel-dkms
 OUT=$(realpath -m "${1:-${SPARKY_STAGING_DIR:?}/nvidia-legacy-580xx-userspace}")
 NVREPO=https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64
 # NVIDIA's key for that repository, the file NVIDIA's cuda-keyring 1.1-1 for Debian 12 installs
@@ -41,11 +41,25 @@ COPYRIGHT_SHA256=9a9f6ab4e21ac09ea5a6fbb8a721ae0192220959471fba5d9daeb07a6002225
 MODV=580.196.07-1+sparky2
 VERSION=${CARRY_VERSION:-580.196.07-1+sparky3+lc1}   # CARRY_VERSION: rebuild a carried set at its own version (ONLY names the packages to build)
 NV=${MODV%%+sparky*}
-[ "$(head -n1 "$HERE/changelog" | sed -n 's/^@SOURCE@ (\([^)]*\)) .*binary-only=yes$/\1/p')" = "$VERSION" ] ||
-	{ echo "the first entry of $HERE/changelog is not for $VERSION, the module's version with +lc1" >&2; exit 1; }
+[ "$(head -n1 "$HERE/changelog" | sed -n 's/^@SOURCE@ (\([^)]*\)) .*$/\1/p')" = "$VERSION" ] ||
+	{ echo "the first entry of $HERE/changelog is not for $VERSION, the carry release version" >&2; exit 1; }
 [ -e "$OUT" ] && [ -n "$(ls -A "$OUT")" ] && { echo "$OUT is not empty; never replace a built version" >&2; exit 1; }
 WORK=$(mktemp -d "${SPARKY_SCRATCH:?}/nvidia-legacy-580xx-userspace.XXXXXX")
-trap 'rm -rf "$WORK"' EXIT
+cleanup() {
+    local status=$?
+    if [ "$status" = 0 ]; then
+        python3 -I - "$WORK" "$SPARKY_SCRATCH" <<'PY_CLEAN'
+from pathlib import Path
+import shutil, sys
+work, scratch = map(Path, sys.argv[1:])
+assert work.parent.resolve() == scratch.resolve() and work.name.startswith('nvidia-legacy-580xx-userspace.')
+shutil.rmtree(work)
+PY_CLEAN
+    else
+        echo "carry build failed ($status); work retained for diagnosis: $WORK" >&2
+    fi
+}
+trap cleanup EXIT
 # NVIDIA's key, armored beside the module's recipe, is NVIDIA's file byte for byte once dearmored (RFC 9580 section 6)
 python3 -I - "$HERE/cuda-debian12-archive-keyring.asc" "$WORK/nvidia-debian12.gpg" <<'EOF'
 import base64, sys
@@ -77,6 +91,7 @@ mkdir "$WORK/debs" "$WORK/out" "$WORK/p"
 nvidia_deb() {
 	local deb=${NVDEBS:+$NVDEBS/$1}
 	if [ -z "$deb" ] || [ ! -f "$deb" ]; then
+        [ "${SPARKY_CARRY_SOURCE_BUILD:-0}" != 1 ] || { echo "offline source is missing vendor input: $1" >&2; return 1; }
 		deb=$WORK/debs/$1
 		[ -f "$deb" ] || curl -fsS -o "$deb" "$NVREPO/$1"
 	fi
@@ -103,7 +118,13 @@ while IFS=$'\t' read -r package arch file size digest; do
 	[ ! -e "$WORK/out/$package-lc-hr_${VERSION}_$arch.deb" ] ||
 		{ echo "$package: Lean Code projected a file, so NVIDIA's files were not all kept" >&2; exit 1; }
 	python3 -I "$HERE/carry.py" verify "$built" "$w/nvidia.json" >>"$WORK/nvidia-files.sha256"
-	rm -rf "$w/tree"
+    python3 -I - "$w/tree" "$WORK/p" <<'PY_TREE'
+from pathlib import Path
+import shutil, sys
+root, parent = map(Path, sys.argv[1:])
+assert root.name == 'tree' and root.parent.parent.resolve() == parent.resolve()
+shutil.rmtree(root)
+PY_TREE
 	n=$((n + 1))
 done <"$HERE/packages.tsv"
 if [ "${SPARKY_CARRY_SOURCE_BUILD:-0}" != 1 ]; then
