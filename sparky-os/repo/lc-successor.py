@@ -119,6 +119,8 @@ def in_place(old, new, name, version, nxt, items, depends=(), overlay=None):
             (new / 'debian' / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, new / 'debian' / rel)
             overlaid.add(str(Path('debian') / rel))
+            # a folder the overlay brings (debian/lang) is new with its files
+            overlaid.update(str(Path('debian') / parent) for parent in rel.parents if str(parent) != '.')
     for before, after in depends:
         control = (new / 'debian/control').read_text()
         if control.count(before) != 1:
