@@ -1,0 +1,41 @@
+From 3b39ffcc51bc0549c08945025527a0ef27f09a7a Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 16:55:29 -0300
+Subject: [PATCH 4/4] xwayland: preserve alpha on 32-bit root surfaces
+
+Do not mark a 32-bit rootless surface opaque so its alpha can be composited by the Wayland compositor.
+
+Assisted-by: gpt-reserve via Codex
+
+diff --git a/hw/xwayland/xwayland-window.c b/hw/xwayland/xwayland-window.c
+index ec6ca94..4b811a7 100644
+--- a/hw/xwayland/xwayland-window.c
++++ b/hw/xwayland/xwayland-window.c
+@@ -1349,16 +1349,18 @@ xwl_create_root_surface(struct xwl_window *xwl_window)
+     xwl_window_rootful_set_app_id(xwl_window);
+     wl_surface_commit(xwl_window->surface);
+ 
+-    region = wl_compositor_create_region(xwl_screen->compositor);
+-    if (region == NULL) {
+-        ErrorF("Failed creating region\n");
+-        goto err_surf;
+-    }
++    if (window->drawable.depth != 32) {
++        region = wl_compositor_create_region(xwl_screen->compositor);
++        if (region == NULL) {
++            ErrorF("Failed creating region\n");
++            goto err_surf;
++        }
+ 
+-    wl_region_add(region, 0, 0,
+-                  window->drawable.width, window->drawable.height);
+-    wl_surface_set_opaque_region(xwl_window->surface, region);
+-    wl_region_destroy(region);
++        wl_region_add(region, 0, 0,
++                      window->drawable.width, window->drawable.height);
++        wl_surface_set_opaque_region(xwl_window->surface, region);
++        wl_region_destroy(region);
++    }
+ 
+     return TRUE;
+ 

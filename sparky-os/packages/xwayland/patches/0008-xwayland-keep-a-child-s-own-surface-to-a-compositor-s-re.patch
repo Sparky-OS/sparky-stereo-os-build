@@ -1,0 +1,173 @@
+From d1c6ef69ce1003984e483e412d9ba5b4a18dba1b Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 16 Oct 2026 12:51:14 -0300
+Subject: [PATCH] xwayland: keep a child's own surface to a compositor's
+ redirection
+
+A manually redirected child gets a surface of its own, and leaves it when
+it is no longer redirected. Xwayland's Present also redirects a child
+itself, as the server client, to flip into it; such a child must stay part
+of its toplevel's surface, which then shows it. Give a child its own
+surface only while a client other than the server, a compositor,
+redirects it manually.
+
+A child given back leaves its surface at once, from the pixmap change
+that draws it into its parent's pixmap again, as an unmapped window does,
+with its Present flips stopped first, instead of later from a work
+procedure: in between, the surface still took the child's pixmap, by then
+its parent's, as its own.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ hw/xwayland/xwayland-present.c | 19 +++++++++++
+ hw/xwayland/xwayland-present.h |  1 +
+ hw/xwayland/xwayland-window.c  | 58 ++++++++++++++++++++++++++--------
+ 3 files changed, 65 insertions(+), 13 deletions(-)
+
+diff --git a/hw/xwayland/xwayland-present.c b/hw/xwayland/xwayland-present.c
+index 820c32f..cffaff9 100644
+--- a/hw/xwayland/xwayland-present.c
++++ b/hw/xwayland/xwayland-present.c
+@@ -843,6 +843,25 @@ xwl_present_check_flip(RRCrtcPtr crtc,
+     return TRUE;
+ }
+ 
++/*
++ * 'window' loses the surface its flips go to: abort a pending flip and stop
++ * the active one.
++ */
++void
++xwl_present_stop_flips(WindowPtr window)
++{
++    struct xwl_present_window *xwl_present_window = xwl_present_window_priv(window);
++    present_vblank_ptr flip_pending;
++
++    if (!xwl_present_window || !present_window_priv(window))
++        return;
++
++    flip_pending = xwl_present_get_pending_flip(xwl_present_window);
++    if (flip_pending)
++        flip_pending->abort_flip = TRUE;
++    xwl_present_flips_stop(window);
++}
++
+ /*
+  * 'window' is being reconfigured. Check to see if it is involved
+  * in flipping and clean up as necessary.
+diff --git a/hw/xwayland/xwayland-present.h b/hw/xwayland/xwayland-present.h
+index 808e541..ebf9833 100644
+--- a/hw/xwayland/xwayland-present.h
++++ b/hw/xwayland/xwayland-present.h
+@@ -83,5 +83,6 @@ void xwl_present_cleanup(WindowPtr window);
+ void xwl_present_unrealize_window(struct xwl_present_window *xwl_present_window);
+ Bool xwl_present_maybe_redirect_window(WindowPtr window, PixmapPtr pixmap);
+ Bool xwl_present_maybe_unredirect_window(WindowPtr window);
++void xwl_present_stop_flips(WindowPtr window);
+ 
+ #endif /* XWAYLAND_PRESENT_H */
+diff --git a/hw/xwayland/xwayland-window.c b/hw/xwayland/xwayland-window.c
+index 0f71505..e493a6d 100644
+--- a/hw/xwayland/xwayland-window.c
++++ b/hw/xwayland/xwayland-window.c
+@@ -1458,6 +1458,28 @@ xwl_window_update_surface_window(struct xwl_window *xwl_window)
+     }
+ }
+ 
++/* Whether a client, a compositor, redirects @window manually. Xwayland's
++ * Present redirects a window itself (serverClient) to flip in it; that window
++ * stays part of its toplevel's surface.
++ */
++static Bool
++xwl_window_redirected_by_client(WindowPtr window)
++{
++    CompWindowPtr cw = GetCompWindow(window);
++    CompClientWindowPtr ccw;
++
++    if (window->redirectDraw != RedirectDrawManual || !cw)
++        return FALSE;
++
++    for (ccw = cw->clients; ccw; ccw = ccw->next) {
++        if (ccw->update == CompositeRedirectManual &&
++            CLIENT_ID(ccw->id) != serverClient->index)
++            return TRUE;
++    }
++
++    return FALSE;
++}
++
+ static struct xwl_window *
+ ensure_surface_for_window(WindowPtr window)
+ {
+@@ -1468,7 +1490,8 @@ ensure_surface_for_window(WindowPtr window)
+ 
+     xwl_window = xwl_window_from_window(window);
+     if (xwl_window && (window->redirectDraw != RedirectDrawManual ||
+-                       xwl_window->toplevel == window))
++                       xwl_window->toplevel == window ||
++                       !xwl_window_redirected_by_client(window)))
+         return xwl_window;
+ 
+     xwl_screen = xwl_screen_get(screen);
+@@ -1786,9 +1809,7 @@ xwl_unrealize_window(WindowPtr window)
+ /* A child redirected by a client after it was mapped (a compositor showing
+  * the stereo child windows a window declares) gets its own surface when its
+  * pixmap changes, not in xwl_realize_window(): track its damage and post its
+- * pixmap. A child that its client no longer redirects is drawn into its
+- * parent's pixmap again and leaves its surface, so a later redirection
+- * announces a new one.
++ * pixmap.
+  */
+ static Bool
+ xwl_window_update_child_surface(ClientPtr client, void *closure)
+@@ -1805,13 +1826,9 @@ xwl_window_update_child_surface(ClientPtr client, void *closure)
+         window->parent == window->drawable.pScreen->root)
+         return TRUE;
+ 
+-    if (window->redirectDraw != RedirectDrawManual) {
+-        unregister_damage(window);
+-        xwl_window_dispose(xwl_window);
+-    } else if (window->realized && !window_get_damage(window) &&
+-               register_damage(window)) {
++    if (xwl_window_redirected_by_client(window) && window->realized &&
++        !window_get_damage(window) && register_damage(window))
+         DamageDamageRegion(&window->drawable, &window->winSize);
+-    }
+ 
+     return TRUE;
+ }
+@@ -1836,14 +1853,29 @@ xwl_window_set_window_pixmap(WindowPtr window,
+     if (!RegionNotEmpty(&window->winSize))
+         return;
+ 
++    /* A child that had a surface of its own because a client redirected it,
++     * and is given back: it is drawn into its parent's pixmap again and
++     * leaves its surface now, as an unmapped window does, its flips stopped.
++     */
++    xwl_window = xwl_window_get(window);
++    if (xwl_window && xwl_window->toplevel == window && window->parent &&
++        window->parent != screen->root && !xwl_window_redirected_by_client(window)) {
++#ifdef XWL_HAS_GLAMOR
++        if (xwl_screen->present)
++            xwl_present_stop_flips(window);
++#endif /* XWL_HAS_GLAMOR */
++        unregister_damage(window);
++        xwl_window_dispose(xwl_window);
++        return;
++    }
++
+     xwl_window = ensure_surface_for_window(window);
+     if (!xwl_window)
+         return;
+ 
+     /* A child with a surface of its own, because a client redirects it: its
+-     * damage is tracked, or its surface disposed of when the client gives it
+-     * back, once the pixmap change is complete (the damage layer moves a
+-     * window's damage to its new pixmap around this call).
++     * damage is tracked once the pixmap change is complete (the damage layer
++     * moves a window's damage to its new pixmap around this call).
+      */
+     if (xwl_window->toplevel == window && window->parent &&
+         window->parent != screen->root)
+-- 
+2.53.0
+

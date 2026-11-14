@@ -1,0 +1,33 @@
+From 488d32db79535dce321ac7dc9df54d88097b1ace Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 06:44:24 -0300
+Subject: [PATCH 3/4] xwayland: post damage for redirected child surfaces
+
+Register and seed damage when a manually redirected child gets its own surface, so its existing pixmap is attached and committed.\n\nAssisted-by: gpt-reserve via Codex
+
+diff --git a/hw/xwayland/xwayland-window.c b/hw/xwayland/xwayland-window.c
+index 361954d..ec6ca94 100644
+--- a/hw/xwayland/xwayland-window.c
++++ b/hw/xwayland/xwayland-window.c
+@@ -1610,7 +1610,12 @@ xwl_realize_window(WindowPtr window)
+         unregister_damage(window);
+         return FALSE;
+     }
+-
++    if (xwl_window->toplevel == window && window->parent != screen->root &&
++        !window_get_damage(window)) {
++        if (!register_damage(window))
++            return FALSE;
++        DamageDamageRegion(&window->drawable, &window->winSize);
++    }
+     return TRUE;
+ }
+ 
+@@ -1797,7 +1802,6 @@ xwl_window_set_window_pixmap(WindowPtr window,
+         return;
+ 
+     xwl_window = ensure_surface_for_window(window);
+-
+     if (!xwl_window ||
+         (old_pixmap->drawable.width == pixmap->drawable.width &&
+          old_pixmap->drawable.height == pixmap->drawable.height))

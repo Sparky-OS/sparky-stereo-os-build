@@ -1,0 +1,21 @@
+From 654e8f42b315217b3f6ab1430b30f78dcb5f3c40 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 05:53:55 -0300
+Subject: [PATCH 2/4] xwayland: create surfaces for manually redirected
+ children
+
+Compare a found surface with its toplevel when deciding whether a manually redirected child needs its own surface.\n\nAssisted-by: gpt-reserve via Codex
+
+diff --git a/hw/xwayland/xwayland-window.c b/hw/xwayland/xwayland-window.c
+index 7c1b3b0..361954d 100644
+--- a/hw/xwayland/xwayland-window.c
++++ b/hw/xwayland/xwayland-window.c
+@@ -1466,7 +1466,7 @@ ensure_surface_for_window(WindowPtr window)
+ 
+     xwl_window = xwl_window_from_window(window);
+     if (xwl_window && (window->redirectDraw != RedirectDrawManual ||
+-                       xwl_window->surface_window == window))
++                       xwl_window->toplevel == window))
+         return xwl_window;
+ 
+     xwl_screen = xwl_screen_get(screen);

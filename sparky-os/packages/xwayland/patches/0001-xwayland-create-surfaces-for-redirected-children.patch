@@ -1,0 +1,23 @@
+From a43a7fd4e3810a15632789b3291b1fc00db50f0f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Mon, 5 Oct 2026 05:34:06 -0300
+Subject: [PATCH 1/4] xwayland: create surfaces for redirected children
+
+Let a manually redirected child bypass the ancestor surface lookup when the ancestor surface belongs to another window.
+
+Assisted-by: gpt-reserve via Codex
+
+diff --git a/hw/xwayland/xwayland-window.c b/hw/xwayland/xwayland-window.c
+index 4a9a58a..7c1b3b0 100644
+--- a/hw/xwayland/xwayland-window.c
++++ b/hw/xwayland/xwayland-window.c
+@@ -1465,7 +1465,8 @@ ensure_surface_for_window(WindowPtr window)
+     WindowPtr toplevel;
+ 
+     xwl_window = xwl_window_from_window(window);
+-    if (xwl_window)
++    if (xwl_window && (window->redirectDraw != RedirectDrawManual ||
++                       xwl_window->surface_window == window))
+         return xwl_window;
+ 
+     xwl_screen = xwl_screen_get(screen);

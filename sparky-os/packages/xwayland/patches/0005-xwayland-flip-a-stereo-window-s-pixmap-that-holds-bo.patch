@@ -1,0 +1,93 @@
+From 401a21264c039d6e885663278d08b991cdc8a3ee Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 15 Oct 2026 16:45:01 -0300
+Subject: [PATCH] xwayland: flip a stereo window's pixmap that holds both eyes
+
+A window declared full side-by-side stereo with version 4 of the KDE
+declaration (_KDE_NET_WM_STEREO_CONTENT 3, _KDE_NET_WM_STEREO_CONTENT_VERSION
+4) stays one eye wide, and its program presents pixmaps twice its width
+that hold both eyes side by side. Let such a pixmap flip to the window's
+surface as it is, as a pixmap of the window's own size does, so the
+compositor gets both eyes while X11 programs keep reading the window's
+real size.
+
+Rebased onto 24.1.15: extend the exception to the window-pixmap size check
+added by Michel Dänzer (abb1e9914df8). The backing pixmap may be one eye wide
+before the first flip, or already hold both eyes; unrelated backing widths
+and both height mismatches remain rejected. Other flip checks are unchanged.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+Assisted-by: Codex (OpenAI)
+---
+
+diff --git a/hw/xwayland/xwayland-present.c b/hw/xwayland/xwayland-present.c
+--- a/hw/xwayland/xwayland-present.c
++++ b/hw/xwayland/xwayland-present.c
+@@ -31,6 +31,8 @@
+ #endif
+ #include <windowstr.h>
+ #include <present.h>
++#include <propertyst.h>
++#include <X11/Xatom.h>
+ #ifdef DRI3
+ #include <sys/eventfd.h>
+ #endif /* DRI3 */
+@@ -729,6 +731,38 @@
+ }
+ 
+ static Bool
++xwl_present_window_cardinal_property(WindowPtr window, const char *name,
++                                     CARD32 *value)
++{
++    Atom atom = MakeAtom(name, strlen(name), FALSE);
++    PropertyPtr prop;
++
++    if (atom == None ||
++        dixLookupProperty(&prop, window, atom, serverClient, DixReadAccess) != Success ||
++        prop->type != XA_CARDINAL || prop->format != 32 || prop->size < 1)
++        return FALSE;
++
++    *value = ((CARD32 *) prop->data)[0];
++    return TRUE;
++}
++
++/*
++ * A window declared full side-by-side stereo with version 4 of the declaration
++ * (_KDE_NET_WM_STEREO_CONTENT 3, _KDE_NET_WM_STEREO_CONTENT_VERSION 4) is one
++ * eye wide, and the pixmaps it presents are twice its width: both eyes.
++ */
++static Bool
++xwl_present_window_holds_two_eyes(WindowPtr window)
++{
++    CARD32 content, version;
++
++    return xwl_present_window_cardinal_property(window, "_KDE_NET_WM_STEREO_CONTENT", &content) &&
++           content == 3 &&
++           xwl_present_window_cardinal_property(window, "_KDE_NET_WM_STEREO_CONTENT_VERSION", &version) &&
++           version >= 4;
++}
++
++static Bool
+ xwl_present_check_flip(RRCrtcPtr crtc,
+                        WindowPtr present_window,
+                        PixmapPtr pixmap,
+@@ -762,10 +796,16 @@
+     if (valid)
+         return FALSE;
+ 
+-    /* Flip pixmap must have same dimensions as the window and its pixmap */
+-    if (present_window->drawable.width != pixmap->drawable.width ||
++    /* Flip pixmap must match the window and its pixmap, or hold both eyes of
++     * a stereo window. Before the first flip its window pixmap is one eye wide.
++     */
++    if (((present_window->drawable.width != pixmap->drawable.width ||
++          pixmap->drawable.width != window_pixmap->drawable.width) &&
++         (pixmap->drawable.width != 2 * present_window->drawable.width ||
++          (window_pixmap->drawable.width != present_window->drawable.width &&
++           window_pixmap->drawable.width != pixmap->drawable.width) ||
++          !xwl_present_window_holds_two_eyes(present_window))) ||
+         present_window->drawable.height != pixmap->drawable.height ||
+-        pixmap->drawable.width != window_pixmap->drawable.width ||
+         pixmap->drawable.height != window_pixmap->drawable.height)
+         return FALSE;
+ 
