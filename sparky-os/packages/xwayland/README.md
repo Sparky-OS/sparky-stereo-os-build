@@ -42,3 +42,25 @@ The build runs it; read `stereo pair without glamor OK` in the build log, since 
 The test's build dependencies (weston, three xcb development packages, `x11-xkb-utils` and `xkb-data`, without which no X server starts in a build container) also switch on upstream's own `sync` test.
 To run it against an installed Xwayland: build `stereo-present-pair.c` with `-lxcb -lxcb-present -lxcb-composite` and call
 `xwayland-stereo-pair.sh /usr/bin/Xwayland ./stereo-present-pair`.
+
+## 24.1.15 +stereo3d1: the upstream release rebase (ORDER 562)
+
+`rebase-source.py STAGED.dsc UPSTREAM.tar.xz DEBIAN.tar.xz OUT` consumes the accepted
+`24.1.13-1+stereo3d5+lc1` source, X.Org's `xwayland-24.1.15.tar.xz`, and Debian's
+`24.1.14-1.debian.tar.xz`. Their SHA-256 values are pinned in the recipe.
+It retains all twelve patches, the source-consumer plan when present, the complete
+accepted changelog and Debian's new changelog stanza. Debian's other packaging files
+are unchanged between 24.1.13-1 and 24.1.14-1. The stereo counter restarts at one for
+the new upstream release; the epoch remains two and the Debian revision remains one.
+
+Patch 0005 now covers Michel Dänzer's `abb1e9914df8`: a declared version-four window's
+backing pixmap can be one view wide before its first flip or already hold both views.
+Other backing widths and both height mismatches remain rejected. The ordinary flip
+checks remain upstream's. Patches 0009 and 0011 apply at shifted lines after upstream
+changes, with no semantic change. No stereo patch is supplied by upstream or dropped.
+
+Run the producer in a container with this checkout's `sparky-os` on `PYTHONPATH`.
+Its date is the last clean recipe commit unless `SOURCE_DATE_EPOCH` is provided.
+Build the resulting `.dsc` with `release/build-from-lc-dsc.sh`; read the suite's
+`stereo pair without glamor OK` line. The mechanical rebase without the 0005 extension
+fails that test. Keep the predecessor source closure alongside the inputs for reruns.

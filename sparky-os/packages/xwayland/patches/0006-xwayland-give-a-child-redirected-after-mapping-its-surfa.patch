@@ -1,0 +1,99 @@
+From f573286483cbfd156732e29bc6a0ed215e992585 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 16 Oct 2026 09:45:39 -0300
+Subject: [PATCH] xwayland: give a child redirected after mapping its surface
+ and pixmap
+
+A manually redirected child window gets a surface of its own, and its
+damage is tracked from xwl_realize_window(). A compositor that redirects
+a child that is already mapped (KWin, for the stereo child windows a
+window declares in _KDE_NET_WM_STEREO_CONTENT_CHILDREN) gets the surface
+from xwl_window_set_window_pixmap() instead, with no damage tracked: the
+surface never got a buffer and stayed unmapped.
+
+Track the child's damage and post its whole pixmap once the pixmap
+change is complete, from a work procedure: the damage layer moves a
+window's damage to its new pixmap around SetWindowPixmap, and damage
+registered inside that call was linked into the new pixmap's list twice,
+which made the next damage report loop forever. When the compositor
+stops redirecting the child, the child is drawn into its parent's pixmap
+again: dispose of its surface the same way, so a later redirection
+announces a new one.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ hw/xwayland/xwayland-window.c | 51 ++++++++++++++++++++++++++++++++---
+ 1 file changed, 48 insertions(+), 3 deletions(-)
+
+diff --git a/hw/xwayland/xwayland-window.c b/hw/xwayland/xwayland-window.c
+index 4b811a7..0f71505 100644
+--- a/hw/xwayland/xwayland-window.c
++++ b/hw/xwayland/xwayland-window.c
+@@ -1783,6 +1783,39 @@ xwl_unrealize_window(WindowPtr window)
+     return ret;
+ }
+ 
++/* A child redirected by a client after it was mapped (a compositor showing
++ * the stereo child windows a window declares) gets its own surface when its
++ * pixmap changes, not in xwl_realize_window(): track its damage and post its
++ * pixmap. A child that its client no longer redirects is drawn into its
++ * parent's pixmap again and leaves its surface, so a later redirection
++ * announces a new one.
++ */
++static Bool
++xwl_window_update_child_surface(ClientPtr client, void *closure)
++{
++    WindowPtr window;
++    struct xwl_window *xwl_window;
++
++    if (dixLookupWindow(&window, (XID) (uintptr_t) closure, serverClient,
++                        DixGetAttrAccess) != Success)
++        return TRUE;
++
++    xwl_window = xwl_window_get(window);
++    if (!xwl_window || xwl_window->toplevel != window || !window->parent ||
++        window->parent == window->drawable.pScreen->root)
++        return TRUE;
++
++    if (window->redirectDraw != RedirectDrawManual) {
++        unregister_damage(window);
++        xwl_window_dispose(xwl_window);
++    } else if (window->realized && !window_get_damage(window) &&
++               register_damage(window)) {
++        DamageDamageRegion(&window->drawable, &window->winSize);
++    }
++
++    return TRUE;
++}
++
+ void
+ xwl_window_set_window_pixmap(WindowPtr window,
+                              PixmapPtr pixmap)
+@@ -1804,9 +1837,21 @@ xwl_window_set_window_pixmap(WindowPtr window,
+         return;
+ 
+     xwl_window = ensure_surface_for_window(window);
+-    if (!xwl_window ||
+-        (old_pixmap->drawable.width == pixmap->drawable.width &&
+-         old_pixmap->drawable.height == pixmap->drawable.height))
++    if (!xwl_window)
++        return;
++
++    /* A child with a surface of its own, because a client redirects it: its
++     * damage is tracked, or its surface disposed of when the client gives it
++     * back, once the pixmap change is complete (the damage layer moves a
++     * window's damage to its new pixmap around this call).
++     */
++    if (xwl_window->toplevel == window && window->parent &&
++        window->parent != screen->root)
++        QueueWorkProc(xwl_window_update_child_surface, NULL,
++                      (void *) (uintptr_t) window->drawable.id);
++
++    if (old_pixmap->drawable.width == pixmap->drawable.width &&
++        old_pixmap->drawable.height == pixmap->drawable.height)
+        return;
+ 
+     xwl_window_buffers_dispose(xwl_window, FALSE);
+-- 
+2.53.0
+
