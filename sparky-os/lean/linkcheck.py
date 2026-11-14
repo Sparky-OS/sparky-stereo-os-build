@@ -125,6 +125,35 @@ def stereo_imports(path):
     return found
 
 
+RETIRED_ENV = 'SPARKY_LC_RETIRED_STEREO_IMPORTS'
+
+
+def retired_stereo_imports():
+    """Stereo imports the source being built declares it no longer calls, on purpose: {symbol: reason}. A lost stereo
+    import blocks the gate, because an optional build dependency that switched a stereo feature off links cleanly; a
+    call that moved to another function by design is lost in the same way, and the source says so here, one line a
+    symbol: the name exactly as `nm -D` prints it, white space, the reason. lean.debhelper names the file
+    (debian/sparky-lean-retired-stereo-imports of the source) in the environment when the source has one. Every other
+    lost import still blocks, and each one let through is a note in the build's log. A line without a reason, a name
+    that does not mention stereo, or a file that cannot be read stops the gate: a declaration is never guessed."""
+    name = os.environ.get(RETIRED_ENV)
+    if not name:
+        return {}
+    try:
+        lines = Path(name).read_text(encoding='utf-8').splitlines()
+    except OSError as error:
+        raise package.Invalid(f'{name}: the retired stereo imports cannot be read: {error}') from error
+    retired = {}
+    for number, line in enumerate(lines, 1):
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2 or not parts[1].strip() or not STEREO.search(parts[0]):
+            raise package.Invalid(f'{name}:{number}: a retired stereo import is its symbol, white space and the reason')
+        retired[parts[0]] = parts[1].strip()
+    return retired
+
+
 def extract(deb, dest, check_space=None):
     archive.unpack(deb, Path(dest), check_space)
 
@@ -401,8 +430,12 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
                 findings.append(f'{name}: {len(items)} new {kind}: {shown} (the previous build resolved them)')
             # A stereo feature that an optional build dependency switched off compiles and links
             # cleanly (analitza 4:26.04.0-1+stereo3d2+lc1 lost stereo_declare_wayland this way).
+            retired = retired_stereo_imports()
             for rel in sorted(set(old_stereo) & set(new_stereo)):
                 gone = sorted(old_stereo[rel] - new_stereo[rel])
+                for symbol in [symbol for symbol in gone if symbol in retired]:
+                    notes.append(f'/{rel}: stereo import {symbol} is no longer called, as the source declares: {retired[symbol]}')
+                gone = [symbol for symbol in gone if symbol not in retired]
                 if gone:
                     findings.append(f'/{rel}: stereo imports lost: {", ".join(gone[:4])}'
                                     f'{" and more" if len(gone) > 4 else ""} (the previous build called them)')

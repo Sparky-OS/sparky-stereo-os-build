@@ -120,6 +120,31 @@ def test_lost_stereo_import_still_found(stereo_pair):
 
 
 @needs_gate
+def test_declared_retirement_lets_only_the_named_import_through(stereo_pair, tmp_path, monkeypatch):
+    """A call that moved by design: the source names the symbol and says why; the gate notes it and goes on. Another
+    name declared, a line without a reason, or a file that is not there leave the block as it was or stop the gate."""
+    before, after, context = stereo_pair
+    declared = tmp_path / 'retired'
+    monkeypatch.setenv(linkcheck.RETIRED_ENV, str(declared))
+    declared.write_text('# moved by design\nstereo_declare_x11  the window is declared through the toolkit now\n')
+    assert linkcheck.retired_stereo_imports() == {'stereo_declare_x11': 'the window is declared through the toolkit now'}
+    notes = linkcheck.check(after, previous_deb=before, archive_context=context)
+    assert any('stereo import stereo_declare_x11 is no longer called, as the source declares' in note for note in notes), notes
+    declared.write_text('stereo_declare_wayland  another call\n')
+    with pytest.raises(package.Invalid, match='stereo imports lost: stereo_declare_x11'):
+        linkcheck.check(after, previous_deb=before, archive_context=context)
+    declared.write_text('stereo_declare_x11\n')
+    with pytest.raises(package.Invalid, match='its symbol, white space and the reason'):
+        linkcheck.check(after, previous_deb=before, archive_context=context)
+    declared.write_text('printf  not a stereo call\n')
+    with pytest.raises(package.Invalid, match='its symbol, white space and the reason'):
+        linkcheck.retired_stereo_imports()
+    declared.unlink()
+    with pytest.raises(package.Invalid, match='cannot be read'):
+        linkcheck.check(after, previous_deb=before, archive_context=context)
+
+
+@needs_gate
 def test_predecessor_nm_failure_does_not_hide_a_lost_stereo_import(stereo_pair, monkeypatch):
     """The audit's case: nm fails on the previous build, whose program called stereo_declare_x11; the rebuild lost
     the call. An empty predecessor inventory let the rebuild pass."""

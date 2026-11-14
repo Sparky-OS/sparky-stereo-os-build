@@ -11,15 +11,19 @@ import os
 from pathlib import Path
 import subprocess
 
-from . import buildrecord, package, release, source_tree
+from . import buildrecord, linkcheck, package, release, source_tree
 
 
-def link_gate(built):
+def link_gate(built, root=None):
     """Link and start gate (ORDER 198): the build fails, and its archives are removed, unless every
     rebuilt ELF resolves like its predecessor in SPARKY_LC_PREVIOUS_DIR (when set) and the programs
     of lean/smoke.tsv start. The runtime dependencies are installed in the build environment."""
     gated = [deb for deb in built if not deb.name.split('_')[0].endswith(('-dbgsym', '-lc-hr'))]
     table = Path(release.__file__).with_name('smoke.tsv')
+    declared = root / 'debian/sparky-lean-retired-stereo-imports' if root else None
+    if declared and declared.is_file():
+        # the stereo imports this source stopped calling on purpose (linkcheck.retired_stereo_imports)
+        os.environ[linkcheck.RETIRED_ENV] = str(declared)
     try:
         if not table.is_file():
             raise ValueError(f'{table}: the toolkit lacks the smoke table')
@@ -70,7 +74,7 @@ def build(root, provenance):
             if is_hr or old_auto or name.endswith('-dbgsym'):
                 entries = files.read_text().splitlines()
                 files.write_text(''.join(line + (' automatic=yes' if line.split()[0] == deb.name and 'automatic=yes' not in line else '') + '\n' for line in entries))
-    link_gate(built)
+    link_gate(built, root)
 
 
 if __name__ == '__main__':

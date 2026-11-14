@@ -10,10 +10,10 @@
 #   1. kf6-kimageformats 6.30.0-1+stereo3d7+lc1 (../jps-descriptor, ORDER 526) against the bootstrap libstereo-policy-dev
 #   2. stereo-layer 1.18.0-1+lc1 from the fork clone, with the plugin of step 1 in the round's repository
 #      (SPARKY_BUILD_PROFILES=nocheck: the package build runs no tests, and its test dependencies stay out of the build)
-#   3. kio-extras 4:26.04.0-1+stereo3d5+lc1 as ORDER 504 staged it (KIO_EXTRAS_DIR: its .deb files, copied, not rebuilt)
-#   4. dolphin 4:26.08.0-1+stereo3d7+lc1, ffmpegthumbs 4:26.04.0-1+stereo3d5+lc1, gwenview 4:26.04.0-1+stereo3d10+lc1
-#      (next-source.sh), each built against libstereo-layer-dev 1.18.0
-# Usage: round.sh WORK STEREO_LAYER_CLONE REV PUBLISHED_TREE ARCHIVE_DIR KIO_EXTRAS_DIR [STEP...]
+#   3. kio-extras 4:26.04.0-1+stereo3d5+lc1 (ORDER 504's patch), dolphin 4:26.08.0-1+stereo3d7+lc1, ffmpegthumbs
+#      4:26.04.0-1+stereo3d5+lc1 and gwenview 4:26.04.0-1+stereo3d10+lc1 (next-source.sh), each built against
+#      libstereo-layer-dev 1.18.0
+# Usage: round.sh WORK STEREO_LAYER_CLONE REV PUBLISHED_TREE ARCHIVE_DIR [STEP...]
 #   WORK: the round's folder; a step that left its .done file is not run again
 #   PUBLISHED_TREE: the signed published tree (read only); ARCHIVE_DIR: the link gate's folder (sources.json, keyrings)
 #   STEP: bootstrap kimageformats layer kio-extras dolphin ffmpegthumbs gwenview (all, in that order, when none is named)
@@ -21,8 +21,8 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 DEPTH=$HERE/../depth-source
-W=$(mkdir -p "$1" && cd "$1" && pwd) FORK=$(cd "$2" && pwd) REV=$3 TREE=$(cd "$4" && pwd) ARCHIVE=$(cd "$5" && pwd) KIO=$(cd "$6" && pwd)
-shift 6
+W=$(mkdir -p "$1" && cd "$1" && pwd) FORK=$(cd "$2" && pwd) REV=$3 TREE=$(cd "$4" && pwd) ARCHIVE=$(cd "$5" && pwd)
+shift 5
 STEPS=${*:-bootstrap kimageformats layer kio-extras dolphin ffmpegthumbs gwenview}
 export BUILD_NAME_PREFIX=${BUILD_NAME_PREFIX:-pf-551-build} THREADS=${THREADS:-4}
 IMAGE=sparky-lc-migration:20261020
@@ -121,12 +121,7 @@ INNER
 			--entrypoint bash "$IMAGE" /toolkit/packages/per-file-choice-551/kimageformats-source.sh | tail -4
 		build kf6-kimageformats "$W/kf6-kimageformats-src" 'stereo-layer kf6-kimageformats'
 		;;
-	kio-extras)
-		ls "$KIO"/kio-extras_*+stereo3d5+lc1_amd64.deb "$KIO"/kio-extras-data_*+stereo3d5+lc1_all.deb >/dev/null
-		cp --no-preserve=links "$KIO"/kio-extras_*+stereo3d5+lc1_amd64.deb "$KIO"/kio-extras-data_*+stereo3d5+lc1_all.deb "$W/new/"
-		index
-		;;
-	dolphin|ffmpegthumbs|gwenview)
+	kio-extras|dolphin|ffmpegthumbs|gwenview)
 		rm -rf "$W/$step-src"; mkdir -p "$W/$step-src"
 		export SOURCE_DATE_EPOCH=$(python3 "$HERE/../../repo/reproducible.py" epoch "$HERE")
 		dsc=$(cd "$TREE" && ls pool/main/"${step:0:1}/$step/$step"_*+lc1.dsc)

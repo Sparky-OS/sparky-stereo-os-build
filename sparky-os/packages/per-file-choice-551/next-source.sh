@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/11/14
 # Copyright 2026 under the GNU GPL3 License
-# Sparky Stereo OS, ORDER 551: the next +lc1 source of dolphin, ffmpegthumbs or gwenview with the per-file 3D choice
+# Sparky Stereo OS, ORDER 551: the next +lc1 source of dolphin, ffmpegthumbs, gwenview or kio-extras with the per-file 3D choice
 # (the stereo layer's shared menu and store), after the way of ../depth-source/next-source.sh: the published +lc1 source
 # unpacked; this folder's patches appended to its series; the dependency texts and the rules line the new version
 # changes; and the plain entry, then the Lean Code entry, on top of the published history (repo/lc-successor.py
@@ -37,6 +37,16 @@ ffmpegthumbs)
 	depends=(--depends 'Build-Depends: libstereo-layer-dev (>= 1.5.0),' 'Build-Depends: libstereo-layer-dev (>= 1.18.0),')
 	rules=($'%:\n\tdh $@\n' $'%:\n\tdh $@\n\noverride_dh_auto_configure:\n\tdh_auto_configure -- '"$REQUIRE"$'\n')
 	;;
+kio-extras)
+	# +stereo3d5 (ORDER 504: the thumbnailers' versions go up) was staged and never published, with a changelog Lintian could not
+	# parse; this is the same patch on the published +stereo3d4, built against the layer that holds the per-file store
+	[ "${PUBLISHED_VERSION#*:}" = '26.04.0-1+stereo3d4+lc1' ] || { echo "kio-extras: the successor is made from +stereo3d4+lc1, not $PUBLISHED_VERSION" >&2; exit 2; }
+	NEXT=4:26.04.0-1+stereo3d5
+	PATCHES=(../viewers-504/patches/kio-extras-thumbnailer-versions.patch)
+	depends=(--depends 'Build-Depends: libstereo-layer-dev (>= 1.5.1),' 'Build-Depends: libstereo-layer-dev (>= 1.18.0),'
+		--depends '         libstereo-layer1 (>= 1.5.1),' '         libstereo-layer1 (>= 1.18.0),')
+	rules=('	dh_auto_configure -Skf6 -- -DBUILD_TESTING=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5' "	dh_auto_configure -Skf6 -- -DBUILD_TESTING=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 $REQUIRE")
+	;;
 gwenview)
 	# +stereo3d9 (ORDER 504: the picture area's opaque background) was staged and never published; +stereo3d10 carries its patch too
 	[ "${PUBLISHED_VERSION#*:}" = '26.04.0-1+stereo3d8+lc1' ] || { echo "gwenview: the successor is made from +stereo3d8+lc1, not $PUBLISHED_VERSION" >&2; exit 2; }
@@ -69,6 +79,9 @@ open(target, 'w', encoding='utf-8').write(text.replace(old, new))
 PY
 	chmod --reference="$W/published/debian/rules" "$W/overlay/rules"
 fi
+# The stereo functions this version stops calling on purpose, each with its reason: the link gate blocks a lost stereo
+# import unless the source declares it (lean/archive.md), so a program built without stereo by accident still stops.
+[ ! -f "$HERE/retired-stereo-imports/$PKG" ] || cp "$HERE/retired-stereo-imports/$PKG" "$W/overlay/sparky-lean-retired-stereo-imports"
 mapfile -t items < <(python3 - "$HERE/changelog/$PKG.items" <<'PY'
 import sys
 # one item per paragraph (blank line between), its lines joined by a space
