@@ -33,13 +33,15 @@ for p in 0010-xwayland-shm-give-a-pixmap-that-holds-both-eyes-of-a.patch \
 	cp "$HERE/patches/$p" "$W/overlay/patches/"
 	echo "$p" >> "$W/overlay/patches/series"
 done
-# the test of 0012 runs in the build: its compositor and the three xcb development packages, before the published line
-# that ends the field (wayland-protocols and the Lean Code build dependencies)
+# the test of 0012 runs in the build: its compositor, the three xcb development packages, and the keymap compiler and data
+# an X server needs to start (they also let upstream's own sync test run), before the published line that ends the field
+# (wayland-protocols and the Lean Code build dependencies)
 python3 - "$W/published/debian/control" "$W/overlay/control" <<'PY'
 import sys
 text = open(sys.argv[1], encoding='utf-8').read()
 anchor = ' wayland-protocols, gcc, node-acorn, nodejs, perl, python3, python3-yaml\n'
-added = ' libxcb-composite0-dev <!nocheck>,\n libxcb-present-dev <!nocheck>,\n libxcb1-dev <!nocheck>,\n weston <!nocheck>,\n'
+added = (' libxcb-composite0-dev <!nocheck>,\n libxcb-present-dev <!nocheck>,\n libxcb1-dev <!nocheck>,\n weston <!nocheck>,\n'
+         ' x11-xkb-utils <!nocheck>,\n xkb-data <!nocheck>,\n')
 if text.count(anchor) != 1 or 'weston' in text:
     sys.exit('the published debian/control is not the one this recipe knows')
 open(sys.argv[2], 'w', encoding='utf-8').write(text.replace(anchor, added + anchor))

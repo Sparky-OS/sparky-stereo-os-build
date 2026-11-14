@@ -39,5 +39,6 @@ into the one eye wide window; 0011 damages both eyes of the flipped buffer.
 Xwayland without glamor under a headless weston, a declared toplevel and a declared child window, an undeclared window as
 the control.
 The build runs it; read `stereo pair without glamor OK` in the build log, since a `SKIP` there is not a pass.
+The test's build dependencies (weston, three xcb development packages, `x11-xkb-utils` and `xkb-data`, without which no X server starts in a build container) also switch on upstream's own `sync` test.
 To run it against an installed Xwayland: build `stereo-present-pair.c` with `-lxcb -lxcb-present -lxcb-composite` and call
 `xwayland-stereo-pair.sh /usr/bin/Xwayland ./stereo-present-pair`.
