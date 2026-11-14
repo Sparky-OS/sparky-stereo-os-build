@@ -1,0 +1,731 @@
+From c061ea215e48897e40a135e6d5b0dd5f7ceb62e8 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 14 Nov 2026 09:01:42 -0300
+Subject: [PATCH] xwayland/present: a copied present keeps both eyes of a
+ stereo window
+
+A window that holds two eyes (version 4 of the KDE stereo declaration)
+presents a pixmap twice its width. It can be flipped only where any pixmap
+can: not when a child window clips the window, the present has an offset or
+an update region, the pixmap has another size than the window or its buffer
+cannot go to the compositor as it is. Such a present was copied into the
+window, one eye wide, which keeps the left eye; the compositor, told that
+the window holds two eyes, showed half of the left view to each.
+
+A copy now keeps both. The window's pixmap becomes twice the window wide
+(the picture it had goes to both halves), present_execute_copy() copies the
+left eye as for any window, and the right eye goes to the same place in the
+right half, clipped as the left eye is. What other windows of the surface
+draw (a child over the stereo window) is 2D and drawn into the left half
+only: before the pixmap goes to the compositor, and at every such copy, the
+damage outside the stereo window's own area is copied to the right half.
+Damage is posted for both halves, and the buffers the window's pixmap is
+swapped with are kept in step for both.
+
+The present completes as a flip: for a window that holds two eyes the
+completion mode says whether both eyes reached the window's surface, so a
+client that reads PresentCompleteNotify knows that a copy lost one. Where the
+pair cannot be kept (no surface, a window smaller than its surface, a bordered
+surface window, no memory) the copy and its completion are as before.
+
+A window that no longer declares two eyes, or gets a present without them,
+has its pixmap made one window wide again at once, with the left eye, so the
+compositor never has a buffer of two eyes for a window that declares none.
+
+The stereo pair test of the xwayland suite gains a window covered by a child
+window of its own, a present with an offset and a window that stops
+declaring two eyes. No compositor maps a surface in that test, so the client
+reads the pixmap the server keeps for the window, as a compositor's window
+manager can (CompositeNameWindowPixmap): twice the window wide with the left
+eye red and the right eye blue at the same place, the child's own picture in
+both, and one window wide again after the declaration is deleted.
+
+Assisted-by: Claude Fable 5.2
+---
+ hw/xwayland/xwayland-glamor-gbm.c     |   3 +-
+ hw/xwayland/xwayland-present.c        | 275 ++++++++++++++++++++++++++
+ hw/xwayland/xwayland-present.h        |   4 +
+ hw/xwayland/xwayland-screen.c         |   7 +
+ hw/xwayland/xwayland-window-buffers.c |  12 ++
+ hw/xwayland/xwayland-window.c         |  12 ++
+ hw/xwayland/xwayland-window.h         |   5 +
+ test/scripts/xwayland-stereo-pair.sh  |  25 +++
+ test/stereo-present-pair.c            | 134 ++++++++++++-
+ 9 files changed, 472 insertions(+), 5 deletions(-)
+
+diff --git a/hw/xwayland/xwayland-glamor-gbm.c b/hw/xwayland/xwayland-glamor-gbm.c
+index ca880cb..0a8ba71 100644
+--- a/hw/xwayland/xwayland-glamor-gbm.c
++++ b/hw/xwayland/xwayland-glamor-gbm.c
+@@ -426,7 +426,8 @@ xwl_glamor_create_pixmap_for_window(struct xwl_window *xwl_window)
+      */
+     if (pixmap->drawable.width == 2 * window->drawable.width &&
+         pixmap->drawable.height == window->drawable.height &&
+-        xwl_present_window_holds_two_eyes(window))
++        (xwl_window->two_eyes_window != None ||
++         xwl_present_window_holds_two_eyes(window)))
+         width = pixmap->drawable.width;
+ 
+     if (!xwl_screen->glamor)
+diff --git a/hw/xwayland/xwayland-present.c b/hw/xwayland/xwayland-present.c
+index cd3c2b0..4123b74 100644
+--- a/hw/xwayland/xwayland-present.c
++++ b/hw/xwayland/xwayland-present.c
+@@ -833,6 +833,257 @@ xwl_present_restore_stereo(WindowPtr window)
+     return TRUE;
+ }
+ 
++
++/* The window whose two eyes the pixmap of 'xwl_window' holds, or NULL. */
++static WindowPtr
++xwl_present_two_eyes_window(struct xwl_window *xwl_window)
++{
++    WindowPtr window;
++
++    if (xwl_window->two_eyes_window == None ||
++        dixLookupWindow(&window, xwl_window->two_eyes_window, serverClient,
++                        DixGetAttrAccess) != Success)
++        return NULL;
++
++    return window;
++}
++
++/* Give the tree 'window' draws into a pixmap 'width' wide: the picture of one
++ * window width, repeated for as many window widths as the new pixmap has.
++ */
++static PixmapPtr
++xwl_present_resize_window_pixmap(WindowPtr window, int width)
++{
++    ScreenPtr screen = window->drawable.pScreen;
++    WindowPtr toplvl_window = xwl_present_toplvl_pixmap_window(window);
++    PixmapPtr old = screen->GetWindowPixmap(window);
++    PixmapPtr pixmap;
++    GCPtr gc;
++    int x;
++
++    pixmap = screen->CreatePixmap(screen, width, old->drawable.height,
++                                  old->drawable.depth,
++                                  CREATE_PIXMAP_USAGE_BACKING_PIXMAP);
++    if (!pixmap)
++        return NULL;
++
++    gc = GetScratchGC(pixmap->drawable.depth, screen);
++    if (!gc || !xwl_pixmap_get_wl_buffer(pixmap)) {
++        if (gc)
++            FreeScratchGC(gc);
++        dixDestroyPixmap(pixmap, 0);
++        return NULL;
++    }
++    ValidateGC(&pixmap->drawable, gc);
++    for (x = 0; x < width; x += window->drawable.width)
++        gc->ops->CopyArea(&old->drawable, &pixmap->drawable, gc, 0, 0,
++                          window->drawable.width, old->drawable.height, x, 0);
++    FreeScratchGC(gc);
++
++#ifdef COMPOSITE
++    pixmap->screen_x = old->screen_x;
++    pixmap->screen_y = old->screen_y;
++#endif
++    present_set_tree_pixmap(toplvl_window, old, pixmap);
++    dixDestroyPixmap(old, old->drawable.id);
++
++    return pixmap;
++}
++
++/*
++ * A pixmap presented to a window that holds two eyes is copied when it cannot
++ * be flipped: a child window clips the window, the pixmap has an offset or
++ * another size than the window, or a compositor cannot take its buffer. A
++ * copy into the window alone keeps the left eye. Keep both: the window's
++ * pixmap becomes twice the window wide, present_execute_copy() copies the
++ * left eye as it copies for any window, and the right eye goes to the same
++ * place in the right half, clipped as the left eye is. What other windows
++ * draw there is shown in both eyes by xwl_present_keep_both_eyes().
++ *
++ * Returns FALSE when the pair cannot be kept: the copy then keeps the left
++ * eye only and the present completes as a copy, which tells the client.
++ */
++static Bool
++xwl_present_copy_both_eyes(present_vblank_ptr vblank)
++{
++    WindowPtr window = vblank->window;
++    ScreenPtr screen = window->drawable.pScreen;
++    struct xwl_window *xwl_window = xwl_window_from_window(window);
++    PixmapPtr source = vblank->pixmap;
++    PixmapPtr pixmap;
++    int width = window->drawable.width;
++    int height = window->drawable.height;
++    int eye = source->drawable.width / 2;
++    RegionPtr left, right;
++    RegionRec clip;
++    BoxRec box;
++    GCPtr gc;
++    int x, y;
++
++    if (!xwl_window || !eye || (source->drawable.width & 1) ||
++        !xwl_present_window_holds_two_eyes(window) ||
++        xwl_window->surface_window->borderWidth ||
++        !RegionEqual(&xwl_window->toplevel->winSize, &window->winSize) ||
++        screen->GetWindowPixmap(xwl_window->surface_window) !=
++        screen->GetWindowPixmap(window))
++        return FALSE;
++
++    pixmap = screen->GetWindowPixmap(window);
++    if (pixmap->drawable.height != height)
++        return FALSE;
++    if (pixmap->drawable.width != 2 * width) {
++        if (pixmap->drawable.width != width)
++            return FALSE;
++        pixmap = xwl_present_resize_window_pixmap(window, 2 * width);
++        if (!pixmap)
++            return FALSE;
++        /* All of the new pixmap is new to the compositor */
++        DamageDamageRegion(&window->drawable, &window->winSize);
++    }
++    xwl_window->two_eyes_window = window->drawable.id;
++    /* What other windows drew since the last copy goes to the right eye */
++    xwl_present_keep_both_eyes(xwl_window);
++
++    /* The part of one eye this present updates, in the source's coordinates */
++    box.x1 = 0;
++    box.y1 = 0;
++    box.x2 = eye;
++    box.y2 = source->drawable.height;
++    left = RegionCreate(&box, 1);
++    if (vblank->update) {
++        RegionIntersect(left, left, vblank->update);
++        RegionDestroy(vblank->update);
++    }
++    vblank->update = left;
++
++    /* The right eye: where the left eye may be drawn, one window further */
++    x = window->drawable.x + vblank->x_off + width;
++    y = window->drawable.y + vblank->y_off;
++#ifdef COMPOSITE
++    x -= pixmap->screen_x;
++    y -= pixmap->screen_y;
++#endif
++    right = RegionDuplicate(left);
++    RegionTranslate(right, x, y);
++    RegionNull(&clip);
++    RegionCopy(&clip, &window->clipList);
++    RegionTranslate(&clip, x - vblank->x_off - window->drawable.x,
++                    y - vblank->y_off - window->drawable.y);
++    RegionIntersect(right, right, &clip);
++    RegionUninit(&clip);
++
++    gc = GetScratchGC(pixmap->drawable.depth, screen);
++    if (!gc) {
++        RegionDestroy(right);
++        return FALSE;
++    }
++    (*gc->funcs->ChangeClip) (gc, CT_REGION, right, 0);
++    ValidateGC(&pixmap->drawable, gc);
++    gc->ops->CopyArea(&source->drawable, &pixmap->drawable, gc, eye, 0, eye,
++                      source->drawable.height, x, y);
++    (*gc->funcs->ChangeClip) (gc, CT_NONE, NULL, 0);
++    FreeScratchGC(gc);
++
++    return TRUE;
++}
++
++/*
++ * Called before the pixmap of 'xwl_window' goes to the compositor. When it
++ * holds the two eyes of a window, what changed outside that window's own
++ * area (a child window over it, the frame around it) was drawn into the left
++ * half only: it is 2D, so the same picture goes to the right eye. Returns
++ * whether the pixmap holds two eyes, so that the caller damages both.
++ */
++Bool
++xwl_present_keep_both_eyes(struct xwl_window *xwl_window)
++{
++    ScreenPtr screen = xwl_window->xwl_screen->screen;
++    WindowPtr surface_window = xwl_window->surface_window;
++    WindowPtr window = xwl_present_two_eyes_window(xwl_window);
++    PixmapPtr pixmap = screen->GetWindowPixmap(surface_window);
++    int width = surface_window->drawable.width;
++    RegionRec flat, left;
++    BoxRec box;
++    BoxPtr rect;
++    GCPtr gc;
++    int i, dx = 0, dy = 0;
++
++    if (!window || pixmap->drawable.width != 2 * width ||
++        surface_window->borderWidth ||
++        screen->GetWindowPixmap(window) != pixmap ||
++        !xwl_present_window_holds_two_eyes(window)) {
++        xwl_window->two_eyes_window = None;
++        return FALSE;
++    }
++
++#ifdef COMPOSITE
++    dx = pixmap->screen_x;
++    dy = pixmap->screen_y;
++#endif
++    RegionNull(&flat);
++    RegionCopy(&flat, xwl_window_get_damage_region(xwl_window));
++    RegionTranslate(&flat, surface_window->drawable.x, surface_window->drawable.y);
++    RegionSubtract(&flat, &flat, &window->clipList);
++    RegionTranslate(&flat, -dx, -dy);
++    box.x1 = 0;
++    box.y1 = 0;
++    box.x2 = width;
++    box.y2 = pixmap->drawable.height;
++    RegionInit(&left, &box, 1);
++    RegionIntersect(&flat, &flat, &left);
++    RegionUninit(&left);
++
++    if (RegionNotEmpty(&flat) &&
++        (gc = GetScratchGC(pixmap->drawable.depth, screen))) {
++        ValidateGC(&pixmap->drawable, gc);
++        rect = RegionRects(&flat);
++        for (i = 0; i < RegionNumRects(&flat); i++, rect++)
++            gc->ops->CopyArea(&pixmap->drawable, &pixmap->drawable, gc,
++                              rect->x1, rect->y1, rect->x2 - rect->x1,
++                              rect->y2 - rect->y1, rect->x1 + width, rect->y1);
++        FreeScratchGC(gc);
++    }
++    RegionUninit(&flat);
++
++    return TRUE;
++}
++
++/*
++ * 'window' shows one view: a present without two eyes is copied to it, or its
++ * declaration changed. A pixmap twice the window wide that no window's two
++ * eyes are in any more becomes one window wide again, with the left eye, so
++ * that the compositor never gets two eyes for a window that declares none.
++ */
++void
++xwl_present_one_view(WindowPtr window)
++{
++    ScreenPtr screen = window->drawable.pScreen;
++    struct xwl_window *xwl_window = xwl_window_from_window(window);
++    WindowPtr surface_window, two_eyes_window;
++    PixmapPtr pixmap;
++
++    if (!xwl_window)
++        return;
++
++    surface_window = xwl_window->surface_window;
++    two_eyes_window = xwl_present_two_eyes_window(xwl_window);
++    pixmap = screen->GetWindowPixmap(surface_window);
++    if (surface_window->borderWidth ||
++        pixmap->drawable.width != 2 * surface_window->drawable.width ||
++        xwl_present_window_holds_two_eyes(surface_window) ||
++        xwl_present_window_holds_two_eyes(window) ||
++        (two_eyes_window && xwl_present_window_holds_two_eyes(two_eyes_window)))
++        return;
++
++    xwl_present_stop_flips(surface_window);
++    if (two_eyes_window)
++        xwl_present_stop_flips(two_eyes_window);
++    xwl_window->two_eyes_window = None;
++    if (xwl_present_resize_window_pixmap(surface_window,
++                                         surface_window->drawable.width))
++        DamageDamageRegion(&surface_window->drawable, &surface_window->winSize);
++}
++
+ static Bool
+ xwl_present_check_flip(RRCrtcPtr crtc,
+                        WindowPtr present_window,
+@@ -1273,6 +1524,11 @@ retry:
+                 vblank->pixmap->refcnt++;
+                 dixDestroyPixmap(old_pixmap, old_pixmap->drawable.id);
+ 
++                if (xwl_window)
++                    xwl_window->two_eyes_window =
++                        vblank->pixmap->drawable.width == 2 * window->drawable.width ?
++                        window->drawable.id : None;
++
+                 /* Report damage, let damage_report ignore it though */
+                 xwl_screen->ignore_damage = TRUE;
+                 DamageDamageRegion(&vblank->window->drawable, damage);
+@@ -1308,6 +1564,11 @@ retry:
+         else if (xwl_present_window->flip_active)
+             xwl_present_flips_stop(window);
+ 
++        if (xwl_present_copy_both_eyes(vblank))
++            event->both_eyes = TRUE;
++        else
++            xwl_present_one_view(window);
++
+         present_execute_copy(vblank, crtc_msc);
+         assert(!vblank->queued);
+ 
+@@ -1323,6 +1584,20 @@ retry:
+             return;
+     }
+ 
++    /* Both eyes of the pixmap reached the window's surface, as they do with a
++     * flip. For a window that holds two eyes the completion mode says exactly
++     * that: flip when the pair was kept, copy when only the left eye was.
++     */
++    if (event->both_eyes && vblank->kind == PresentCompleteKindPixmap &&
++        vblank->pixmap && vblank->window &&
++        !(vblank->has_suboptimal &&
++          vblank->reason == PRESENT_FLIP_REASON_BUFFER_FORMAT)) {
++        present_vblank_notify(vblank, vblank->kind, PresentCompleteModeFlip,
++                              ust, crtc_msc);
++        present_vblank_destroy(vblank);
++        return;
++    }
++
+     present_execute_post(vblank, ust, crtc_msc);
+ }
+ 
+diff --git a/hw/xwayland/xwayland-present.h b/hw/xwayland/xwayland-present.h
+index 607ef0f..717708e 100644
+--- a/hw/xwayland/xwayland-present.h
++++ b/hw/xwayland/xwayland-present.h
+@@ -66,6 +66,8 @@ struct xwl_present_event {
+ 
+     PixmapPtr pixmap;
+     Bool copy_executed;
++    /* The copy kept both eyes of a window that holds two */
++    Bool both_eyes;
+ 
+     uint32_t options;
+     uint64_t divisor;
+@@ -88,5 +90,7 @@ void xwl_present_stop_flips(WindowPtr window);
+ Bool xwl_present_window_holds_two_eyes(WindowPtr window);
+ void xwl_present_save_stereo(WindowPtr window, PixmapPtr pixmap);
+ Bool xwl_present_restore_stereo(WindowPtr window);
++Bool xwl_present_keep_both_eyes(struct xwl_window *xwl_window);
++void xwl_present_one_view(WindowPtr window);
+ 
+ #endif /* XWAYLAND_PRESENT_H */
+diff --git a/hw/xwayland/xwayland-screen.c b/hw/xwayland/xwayland-screen.c
+index 9c9addd..ec6ed64 100644
+--- a/hw/xwayland/xwayland-screen.c
++++ b/hw/xwayland/xwayland-screen.c
+@@ -178,6 +178,13 @@ xwl_property_callback(CallbackListPtr *pcbl, void *closure,
+ 
+     if (rec->prop->propertyName == xwl_screen->allow_commits_prop)
+         xwl_window_update_property(xwl_window, rec);
++    else if (xwl_screen->present &&
++             (rec->prop->propertyName ==
++              MakeAtom("_KDE_NET_WM_STEREO_CONTENT", 26, FALSE) ||
++              rec->prop->propertyName ==
++              MakeAtom("_KDE_NET_WM_STEREO_CONTENT_VERSION", 34, FALSE)))
++        /* A window that no longer declares two eyes shows one view at once */
++        xwl_present_one_view(rec->win);
+ }
+ 
+ #ifdef XACE
+diff --git a/hw/xwayland/xwayland-window-buffers.c b/hw/xwayland/xwayland-window-buffers.c
+index a470ef3..76ab4da 100644
+--- a/hw/xwayland/xwayland-window-buffers.c
++++ b/hw/xwayland/xwayland-window-buffers.c
+@@ -419,6 +419,18 @@ xwl_window_swap_pixmap(struct xwl_window *xwl_window, Bool handle_sync)
+                              pBox->y1 + surface_window->borderWidth,
+                              pBox->x2 - pBox->x1,
+                              pBox->y2 - pBox->y1);
++            /* The damage is one eye wide: a pixmap that holds two eyes
++             * changed at the same place in its right eye too.
++             */
++            if (xwl_window->two_eyes_window != None &&
++                window_pixmap->drawable.width ==
++                2 * surface_window->drawable.width)
++                copy_pixmap_area(window_pixmap,
++                                 xwl_window_buffer->pixmap,
++                                 pBox->x1 + surface_window->drawable.width,
++                                 pBox->y1,
++                                 pBox->x2 - pBox->x1,
++                                 pBox->y2 - pBox->y1);
+ 
+             pBox++;
+         }
+diff --git a/hw/xwayland/xwayland-window.c b/hw/xwayland/xwayland-window.c
+index 899bc76..67e4ed0 100644
+--- a/hw/xwayland/xwayland-window.c
++++ b/hw/xwayland/xwayland-window.c
+@@ -2148,8 +2148,10 @@ xwl_window_attach_buffer(struct xwl_window *xwl_window)
+     BoxPtr box;
+     struct wl_buffer *buffer;
+     PixmapPtr pixmap;
++    Bool two_eyes;
+     int i;
+ 
++    two_eyes = xwl_screen->present && xwl_present_keep_both_eyes(xwl_window);
+     pixmap = xwl_window_swap_pixmap(xwl_window, TRUE);
+     buffer = xwl_pixmap_get_wl_buffer(pixmap);
+ 
+@@ -2171,6 +2173,10 @@ xwl_window_attach_buffer(struct xwl_window *xwl_window)
+                            box->x1 + surface_window->borderWidth,
+                            box->y1 + surface_window->borderWidth,
+                            box->x2 - box->x1, box->y2 - box->y1);
++        if (two_eyes)
++            xwl_surface_damage(xwl_screen, xwl_window->surface,
++                               box->x1 + surface_window->drawable.width,
++                               box->y1, box->x2 - box->x1, box->y2 - box->y1);
+     } else {
+         box = RegionRects(region);
+         for (i = 0; i < RegionNumRects(region); i++, box++) {
+@@ -2178,6 +2184,12 @@ xwl_window_attach_buffer(struct xwl_window *xwl_window)
+                                box->x1 + surface_window->borderWidth,
+                                box->y1 + surface_window->borderWidth,
+                                box->x2 - box->x1, box->y2 - box->y1);
++            /* The same place in the right eye of a pixmap that holds two */
++            if (two_eyes)
++                xwl_surface_damage(xwl_screen, xwl_window->surface,
++                                   box->x1 + surface_window->drawable.width,
++                                   box->y1, box->x2 - box->x1,
++                                   box->y2 - box->y1);
+         }
+     }
+ 
+diff --git a/hw/xwayland/xwayland-window.h b/hw/xwayland/xwayland-window.h
+index ac3ce50..8513e9a 100644
+--- a/hw/xwayland/xwayland-window.h
++++ b/hw/xwayland/xwayland-window.h
+@@ -84,6 +84,11 @@ struct xwl_window {
+     WindowPtr surface_window;
+     RegionPtr surface_window_damage;
+ 
++    /* The window whose two eyes the surface's pixmap holds side by side
++     * (xwl_present_window_holds_two_eyes()), or None.
++     */
++    XID two_eyes_window;
++
+     struct xorg_list link_damage;
+     struct xorg_list link_window;
+     struct wl_callback *frame_callback;
+diff --git a/test/scripts/xwayland-stereo-pair.sh b/test/scripts/xwayland-stereo-pair.sh
+index e7353fe..6d2c900 100755
+--- a/test/scripts/xwayland-stereo-pair.sh
++++ b/test/scripts/xwayland-stereo-pair.sh
+@@ -92,5 +92,30 @@ for kind in toplevel child; do
+         status=1
+     fi
+ done
++unset CHILD
++
++# A present that cannot be flipped keeps both eyes all the same: the window
++# is clipped by a child window of its own, or the present has an offset. It
++# completes as a flip, and the pixmap the compositor is handed for the window
++# holds both eyes, with the child's own picture, which is 2D, in both.
++if ! COVER=1 PAINT_COVER=1 EXPECT=flip EXPECT_PIXMAP=pair EXPECT_COVER=yellow \
++    FRAMES=6 SETTLE_MS=200 "$client"; then
++    echo "FAIL: a window covered by a child window of its own lost an eye"
++    status=1
++fi
++if ! X_OFF=16 Y_OFF=8 EXPECT=flip EXPECT_PIXMAP=pair FRAMES=6 SETTLE_MS=200 \
++    "$client"; then
++    echo "FAIL: a present with an offset lost an eye"
++    status=1
++fi
++
++# A window that stops declaring two eyes has a pixmap one window wide at
++# once, with no further present: a compositor never has two eyes for a
++# window that declares none
++if ! UNDECLARE=1 EXPECT=flip EXPECT_PIXMAP=one FRAMES=3 SETTLE_MS=200 \
++    "$client"; then
++    echo "FAIL: the window still holds two eyes after its declaration went"
++    status=1
++fi
+ 
+ exit $status
+diff --git a/test/stereo-present-pair.c b/test/stereo-present-pair.c
+index 614091f..8a0eeb5 100644
+--- a/test/stereo-present-pair.c
++++ b/test/stereo-present-pair.c
+@@ -9,9 +9,9 @@
+  * of each and a white square that moves with every present, at the same
+  * place in both eyes.
+  *
+- * Prints how the server completed each present: as a flip, the pixmap went
+- * to the window's surface whole; as a copy, it was copied into the one eye
+- * wide window, which keeps the left eye only.
++ * Prints how the server completed each present: as a flip, the pixmap of
++ * both eyes reached the window's surface whole; as a copy, it was copied
++ * into the one eye wide window, which keeps the left eye only.
+  *
+  * Environment:
+  *   NODECLARE=1  no declaration: the control, the server must copy
+@@ -20,10 +20,20 @@
+  *   WM=1         stand in for the compositor's window manager: redirect the
+  *                root's children, which gives a toplevel its surface on a
+  *                rootless Xwayland, and the declared child
++ *   COVER=1      a 60x60 plain child window over the declared one, 30 from
++ *                its left and half way down: the server cannot flip a window
++ *                that a child clips, and must still keep both eyes
++ *   PAINT_COVER=1  before the last present that child is painted another
++ *                colour, by the server alone
++ *   X_OFF, Y_OFF the offset of every present, which cannot be flipped either
++ *   UNDECLARE=1  after the last present the declaration is deleted
+  *   FRAMES=N     presents (200), PERIOD_MS apart (50); W, H: one eye's size
+  *   SETTLE_MS=N  wait after the window is on the screen (500)
+  *   HOLD_S=N     stay N seconds after the last present
+  *   EXPECT=flip|copy  exit 1 unless the last present completed that way
++ *   EXPECT_PIXMAP=pair|one  exit 1 unless the window's pixmap holds both
++ *                eyes, or is one window wide; EXPECT_COVER=grey|yellow: and
++ *                the child window's picture is that in both eyes
+  */
+ 
+ #include <stdio.h>
+@@ -62,6 +72,12 @@ set_property(xcb_connection_t *c, xcb_window_t window, const char *name,
+                         type, 32, 1, &value);
+ }
+ 
++static void
++delete_property(xcb_connection_t *c, xcb_window_t window, const char *name)
++{
++    xcb_delete_property(c, window, intern(c, name));
++}
++
+ static void
+ fill(xcb_connection_t *c, xcb_drawable_t drawable, xcb_gcontext_t gc,
+      uint32_t colour, int16_t x, int16_t y, uint16_t width, uint16_t height)
+@@ -125,6 +141,77 @@ wait_for_completion(xcb_connection_t *c, uint8_t present_opcode,
+     return NULL;
+ }
+ 
++static uint32_t
++pixel(xcb_connection_t *c, xcb_drawable_t drawable, int16_t x, int16_t y)
++{
++    xcb_get_image_reply_t *image =
++        xcb_get_image_reply(c, xcb_get_image(c, XCB_IMAGE_FORMAT_Z_PIXMAP,
++                                             drawable, x, y, 1, 1, ~0), NULL);
++    uint32_t value = 0xffffffff;
++
++    if (image && xcb_get_image_data_length(image) >= 4)
++        value = *(uint32_t *) xcb_get_image_data(image) & 0xffffff;
++    free(image);
++
++    return value;
++}
++
++/*
++ * The pixmap the server keeps for the window, which is what a compositor is
++ * handed, read as a compositor's window manager reads it (the window is
++ * redirected). expect "pair": twice the window wide, the left eye red and
++ * the right eye blue at the same place, and with cover the child's picture
++ * (grey or yellow) at the same place in both. expect "one": one window wide.
++ */
++static int
++check_window_pixmap(xcb_connection_t *c, xcb_window_t window, int width,
++                    int height, int x_off, int y_off, const char *expect,
++                    const char *cover)
++{
++    const uint32_t cover_colour = cover && !strcmp(cover, "yellow") ? 0xc0c000 : 0x808080;
++    const int16_t x = width / 8 + x_off, y = height / 8 + y_off;
++    const int16_t cx = 30 + 30, cy = height / 2 + 30;
++    xcb_pixmap_t pixmap = xcb_generate_id(c);
++    xcb_get_geometry_reply_t *geometry;
++    int pixmap_width, ok;
++
++    xcb_composite_name_window_pixmap(c, window, pixmap);
++    geometry = xcb_get_geometry_reply(c, xcb_get_geometry(c, pixmap), NULL);
++    if (!geometry) {
++        printf("stereo-present-pair: FAIL, the window has no pixmap to read\n");
++        return 0;
++    }
++    pixmap_width = geometry->width;
++    free(geometry);
++
++    if (!strcmp(expect, "one")) {
++        ok = pixmap_width == width;
++        printf("stereo-present-pair: the window's pixmap is %d wide: %s\n",
++               pixmap_width, ok ? "one view" : "FAIL, one view was expected");
++        return ok;
++    }
++
++    ok = pixmap_width == 2 * width &&
++         pixel(c, pixmap, x, y) == 0xff0000 &&
++         pixel(c, pixmap, width + x, y) == 0x0000ff;
++    printf("stereo-present-pair: the window's pixmap is %d wide, left eye "
++           "%06x, right eye %06x: %s\n", pixmap_width,
++           pixel(c, pixmap, x, y),
++           pixmap_width > width + x ? pixel(c, pixmap, width + x, y) : 0xffffff,
++           ok ? "both eyes" : "FAIL, both eyes were expected");
++    if (ok && cover) {
++        ok = pixel(c, pixmap, cx, cy) == cover_colour &&
++             pixel(c, pixmap, width + cx, cy) == cover_colour;
++        printf("stereo-present-pair: the child window's picture is %06x in "
++               "the left eye and %06x in the right: %s\n",
++               pixel(c, pixmap, cx, cy), pixel(c, pixmap, width + cx, cy),
++               ok ? "the same" : "FAIL, its own colour was expected in both");
++    }
++    xcb_free_pixmap(c, pixmap);
++
++    return ok;
++}
++
+ int
+ main(void)
+ {
+@@ -134,8 +221,11 @@ main(void)
+     const int child = getenv("CHILD") != NULL;
+     const int declare = getenv("NODECLARE") == NULL;
+     const int wm = getenv("WM") != NULL;
++    const int cover = getenv("COVER") != NULL;
++    const int x_off = env_int("X_OFF", 0), y_off = env_int("Y_OFF", 0);
+     const char *expect = getenv("EXPECT");
+     const char *last = "none";
++    xcb_window_t cover_window = XCB_WINDOW_NONE;
+     int flips = 0, copies = 0, others = 0;
+     const xcb_query_extension_reply_t *present;
+     xcb_connection_t *c;
+@@ -196,6 +286,20 @@ main(void)
+                          XCB_ATOM_WINDOW, window);
+     }
+ 
++    /* A plain child window over the declared one, as a toolkit puts a tool
++     * bar over its 3D area: the server cannot flip a window a child clips
++     */
++    if (cover) {
++        uint32_t grey = 0x808080;
++
++        cover_window = xcb_generate_id(c);
++        xcb_create_window(c, XCB_COPY_FROM_PARENT, cover_window, window,
++                          30, height / 2, 60, 60, 0,
++                          XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual,
++                          XCB_CW_BACK_PIXEL, &grey);
++        xcb_map_window(c, cover_window);
++    }
++
+     if (child) {
+         xcb_map_window(c, window);
+         if (wm && declare)
+@@ -221,10 +325,19 @@ main(void)
+     for (frame = 1; frame <= frames; frame++) {
+         xcb_pixmap_t pixmap = xcb_generate_id(c);
+ 
++        /* The child draws by itself, through the server: its picture is 2D */
++        if (cover && getenv("PAINT_COVER") && frame == frames) {
++            uint32_t yellow = 0xc0c000;
++
++            xcb_change_window_attributes(c, cover_window, XCB_CW_BACK_PIXEL,
++                                         &yellow);
++            xcb_clear_area(c, 0, cover_window, 0, 0, 0, 0);
++        }
++
+         xcb_create_pixmap(c, screen->root_depth, pixmap, window,
+                           2 * width, height);
+         draw_eyes(c, pixmap, gc, width, height, frame);
+-        xcb_present_pixmap(c, window, pixmap, frame, 0, 0, 0, 0, 0, 0, 0,
++        xcb_present_pixmap(c, window, pixmap, frame, 0, 0, x_off, y_off, 0, 0, 0,
+                            XCB_PRESENT_OPTION_NONE, 0, 0, 0, 0, NULL);
+         xcb_free_pixmap(c, pixmap);
+         xcb_flush(c);
+@@ -252,6 +365,19 @@ main(void)
+         usleep(period);
+     }
+ 
++    /* The window stops being stereo and presents nothing more */
++    if (declare && getenv("UNDECLARE")) {
++        delete_property(c, window, "_KDE_NET_WM_STEREO_CONTENT");
++        delete_property(c, window, "_KDE_NET_WM_STEREO_CONTENT_VERSION");
++        xcb_flush(c);
++        usleep(300000);
++    }
++
++    if (getenv("EXPECT_PIXMAP") &&
++        !check_window_pixmap(c, window, width, height, x_off, y_off,
++                             getenv("EXPECT_PIXMAP"), getenv("EXPECT_COVER")))
++        return 1;
++
+     if (getenv("HOLD_S"))
+         sleep(env_int("HOLD_S", 0));
+ 

@@ -1,0 +1,1147 @@
+Description: glx: a stereo window whose two eyes the X server copies is shown flat, and the person is told
+ A stereo window that stays one eye wide (declaration version 4) presents
+ both eyes in one pixmap twice its width.  The X server hands that pixmap to
+ the compositor whole, or copies it into the window, which keeps the left eye
+ only; under the stereo declaration the compositor then shows half of the
+ left view to each eye, and nothing told anyone.  PresentCompleteNotify says
+ which happened (Present extension, PresentCompleteModeFlip and
+ PresentCompleteModeCopy).
+ .
+ GLX now reads it, on DRI3 and on the software path (which selects Present
+ events for a stereo window).  Two presents in a row of the window's own size
+ that complete as copies take the declaration back: the properties are
+ deleted, the window leaves its owner's list of stereo children, and from the
+ next frame the left view alone is presented at the window's size (the
+ program goes on drawing both).  One copy is not enough: a frame the server
+ drops while the window manager unmaps and maps the window completes as a
+ copy too.  A swap waits for its own completion until one pair was flipped
+ and whenever the program's last swap is more than a tenth of a second old,
+ and presents the same pair once more after a first copy, so a program that
+ draws one frame is not left with the wrong picture.  While flat, three
+ flips in a row of the left view bring the declaration back; when the pair is
+ copied at once after two such returns, nothing more is tried at that size.
+ LIBGL_DEBUG=verbose prints each completion until a pair is flipped.
+ .
+ The person is told through the distribution's place for failures: with the
+ meson option sparky-stereo-problems-library (empty by default: the message
+ goes to the log only) the problem is kept by sparky-stereo-problems under
+ the package libglx-mesa0 with the key stereo-pair:PROGRAM, and ended when a
+ pair is flipped again.  The library is opened at run time and never linked;
+ a process that cannot load it (a 32-bit program) runs the engine's command.
+ .
+ MESA_LOADER_DRIVER_OVERRIDE=zink on an X server without DRI3 (Xwayland
+ without glamor) ended GLX initialisation with "DRI3 not available", so every
+ OpenGL program of a session that sets it for the whole desktop got no
+ configuration.  Such a screen now takes the software renderer, as with any
+ other driver on that server, and the person is told (key zink-without-dri3,
+ ended by the next program that finds zink with DRI3).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor, Sparky Stereo OS ORDER 561
+Forwarded: not-needed
+Last-Update: 2026-11-14
+---
+diff --git a/meson.options b/meson.options
+index fc9c6f4..22d7578 100644
+--- a/meson.options
++++ b/meson.options
+@@ -879,3 +879,10 @@ option(
+   value : false,
+   description : 'use experimental virtio backend for intel driver',
+ )
++
++option(
++  'sparky-stereo-problems-library',
++  type : 'string',
++  value : '',
++  description : 'Path of libsparky-stereo-problems.so.0 (Sparky Stereo OS): when set, GLX tells the person through it, or through the sparky-stereo-problems command where the library cannot be loaded, when a stereo window is shown flat. Opened at run time, nothing is linked.'
++)
+diff --git a/src/gallium/frontends/dri/dri2.c b/src/gallium/frontends/dri/dri2.c
+index 451a10b..5677032 100644
+--- a/src/gallium/frontends/dri/dri2.c
++++ b/src/gallium/frontends/dri/dri2.c
+@@ -319,7 +319,7 @@ dri2_allocate_textures(struct dri_context *ctx,
+          &drawable->textures[ST_ATTACHMENT_FRONT_LEFT];
+       struct pipe_resource *texture = images.front->texture;
+ 
+-      drawable->w = stereo ? texture->width0 / 2 : texture->width0;
++      drawable->w = texture->width0 / dri_drawable_presented_views(drawable);
+       drawable->h = texture->height0;
+ 
+       if (stereo)
+@@ -332,7 +332,7 @@ dri2_allocate_textures(struct dri_context *ctx,
+    if (images.image_mask & __DRI_IMAGE_BUFFER_BACK) {
+       struct pipe_resource *texture = images.back->texture;
+ 
+-      drawable->w = stereo ? texture->width0 / 2 : texture->width0;
++      drawable->w = texture->width0 / dri_drawable_presented_views(drawable);
+       drawable->h = texture->height0;
+ 
+       if (stereo)
+@@ -345,7 +345,7 @@ dri2_allocate_textures(struct dri_context *ctx,
+    if (images.image_mask & __DRI_IMAGE_BUFFER_SHARED) {
+       struct pipe_resource *texture = images.back->texture;
+ 
+-      drawable->w = stereo ? texture->width0 / 2 : texture->width0;
++      drawable->w = texture->width0 / dri_drawable_presented_views(drawable);
+       drawable->h = texture->height0;
+ 
+       if (stereo)
+@@ -406,7 +406,8 @@ dri2_allocate_textures(struct dri_context *ctx,
+          enum st_attachment_type statt = eye ? ST_ATTACHMENT_FRONT_RIGHT
+                                              : ST_ATTACHMENT_FRONT_LEFT;
+          dri2_copy_view(ctx->st->pipe, drawable->textures[statt], 0,
+-                        drawable->stereo_front, eye * drawable->w,
++                        drawable->stereo_front,
++                        drawable->stereo_flat ? 0 : eye * drawable->w,
+                         drawable->w, drawable->h);
+       }
+    }
+@@ -550,9 +551,11 @@ dri2_flush_frontbuffer(struct dri_context *ctx,
+ 
+    if (drawable->stereo_front &&
+        (statt == ST_ATTACHMENT_FRONT_LEFT || statt == ST_ATTACHMENT_FRONT_RIGHT)) {
+-      dri2_copy_view(pipe, drawable->stereo_front,
+-                     statt == ST_ATTACHMENT_FRONT_RIGHT ? drawable->w : 0,
+-                     drawable->textures[statt], 0, drawable->w, drawable->h);
++      /* A front that holds the left view alone takes no right view. */
++      if (!drawable->stereo_flat || statt == ST_ATTACHMENT_FRONT_LEFT)
++         dri2_copy_view(pipe, drawable->stereo_front,
++                        statt == ST_ATTACHMENT_FRONT_RIGHT ? drawable->w : 0,
++                        drawable->textures[statt], 0, drawable->w, drawable->h);
+       pipe->flush_resource(pipe, drawable->stereo_front);
+    } else if (drawable->textures[statt]) {
+       pipe->flush_resource(pipe, drawable->textures[statt]);
+diff --git a/src/gallium/frontends/dri/dri_drawable.c b/src/gallium/frontends/dri/dri_drawable.c
+index 26999b2..384a042 100644
+--- a/src/gallium/frontends/dri/dri_drawable.c
++++ b/src/gallium/frontends/dri/dri_drawable.c
+@@ -426,6 +426,10 @@ dri_pack_stereo(struct pipe_context *pipe, struct dri_drawable *drawable)
+    blit.dst.box.depth = 1;
+    pipe->blit(pipe, &blit);
+ 
++   /* The target holds the left view alone. */
++   if (drawable->stereo_flat)
++      return;
++
+    blit.src.resource = right;
+    blit.src.format = right->format;
+    blit.dst.box.x = left->width0;
+diff --git a/src/gallium/frontends/dri/dri_drawable.h b/src/gallium/frontends/dri/dri_drawable.h
+index 1356df9..f59e529 100644
+--- a/src/gallium/frontends/dri/dri_drawable.h
++++ b/src/gallium/frontends/dri/dri_drawable.h
+@@ -74,6 +74,12 @@ struct dri_drawable
+     * declaration version 4).
+     */
+    bool stereo_window_one_eye;
++   /* The window system could not show the two views together (GLX: the X
++    * server copied the presented pair): the window is not declared, and what
++    * is presented holds the left view alone, at the window's size.  The
++    * program goes on drawing both views.
++    */
++   bool stereo_flat;
+    /* The textures were last allocated for two views. */
+    bool stereo_buffers;
+    unsigned int texture_mask, texture_stamp;
+@@ -179,6 +185,13 @@ dri_drawable_has_stereo_buffers(const struct dri_drawable *drawable)
+            !drawable->stereo_on_demand);
+ }
+ 
++/* How many views the buffer handed to the window system holds. */
++static inline int
++dri_drawable_presented_views(const struct dri_drawable *drawable)
++{
++   return dri_drawable_has_stereo_buffers(drawable) && !drawable->stereo_flat ? 2 : 1;
++}
++
+ /* The width of the buffer that holds a window's views.  A window that stays
+  * one eye wide has a buffer twice its width.  Until the window system has
+  * doubled a window that became stereo, the buffer is twice the window too, so
+diff --git a/src/gallium/frontends/dri/drisw.c b/src/gallium/frontends/dri/drisw.c
+index f721d6a..49b733b 100644
+--- a/src/gallium/frontends/dri/drisw.c
++++ b/src/gallium/frontends/dri/drisw.c
+@@ -237,7 +237,8 @@ drisw_swap_buffers_with_damage(struct dri_drawable *drawable, int nrects, const
+    struct dri_context *ctx = dri_get_current();
+    struct dri_screen *screen = drawable->screen;
+    struct pipe_resource *ptex;
+-   const bool stereo = drawable->base.stereo_active;
++   /* Without the pair, the left view is presented as a window's back buffer is. */
++   const bool stereo = drawable->base.stereo_active && !drawable->stereo_flat;
+ 
+    if (!ctx)
+       return;
+diff --git a/src/gallium/frontends/dri/loader_dri3_helper.c b/src/gallium/frontends/dri/loader_dri3_helper.c
+index a844ca8..a37bea8 100644
+--- a/src/gallium/frontends/dri/loader_dri3_helper.c
++++ b/src/gallium/frontends/dri/loader_dri3_helper.c
+@@ -572,6 +572,12 @@ dri3_handle_present_event(struct loader_dri3_drawable *draw,
+ 
+          draw->ust = ce->ust;
+          draw->msc = ce->msc;
++
++         if (draw->vtable->present_completed &&
++             ce->serial == (uint32_t) draw->send_sbc)
++            draw->vtable->present_completed(draw, ce->mode,
++                                            draw->present_width,
++                                            draw->present_height);
+       } else if (ce->serial == draw->eid) {
+          draw->notify_ust = ce->ust;
+          draw->notify_msc = ce->msc;
+@@ -1214,6 +1220,8 @@ loader_dri3_swap_buffers_msc(struct loader_dri3_drawable *draw,
+          xcb_xfixes_set_region(draw->conn, region, n_rects, xcb_rects);
+       }
+ 
++      draw->present_width = back->width;
++      draw->present_height = back->height;
+       xcb_present_pixmap(draw->conn,
+                          draw->drawable,
+                          back->pixmap,
+@@ -1282,6 +1290,35 @@ loader_dri3_swap_buffers_msc(struct loader_dri3_drawable *draw,
+    if (draw->stamp)
+       ++(*draw->stamp);
+ 
++   /* A window whose presents must be seen to reach the screen as they were
++    * sent (GLX: the two views of a stereo window, until the X server has
++    * flipped one pair) learns it in this swap, so that a program that draws
++    * one frame and waits is not left with a wrong picture.
++    */
++   if (draw->type == LOADER_DRI3_DRAWABLE_WINDOW &&
++       draw->vtable->wait_for_present && draw->vtable->wait_for_present(draw)) {
++      for (;;) {
++         while (draw->recv_sbc < draw->send_sbc) {
++            if (!dri3_wait_for_event_locked(draw, NULL))
++               break;
++         }
++         if (draw->recv_sbc < draw->send_sbc ||
++             !draw->vtable->present_again ||
++             !draw->vtable->present_again(draw))
++            break;
++
++         ++draw->send_sbc;
++         back->busy = 1;
++         back->last_swap = draw->send_sbc;
++         xcb_present_pixmap(draw->conn, draw->drawable, back->pixmap,
++                            (uint32_t) draw->send_sbc, 0, 0, 0, 0, None, None,
++                            back->sync_fence, XCB_PRESENT_OPTION_NONE,
++                            0, 0, 0, 0, NULL);
++         xcb_flush(draw->conn);
++      }
++      ret = (int64_t) draw->send_sbc;
++   }
++
+    /* Waiting on a buffer is only sensible if all buffers are in use and the
+     * client doesn't use the buffer age extension. In this case a client is
+     * relying on it receiving back control immediately.
+diff --git a/src/gallium/frontends/dri/loader_dri3_helper.h b/src/gallium/frontends/dri/loader_dri3_helper.h
+index 7d2559c..bc3afc3 100644
+--- a/src/gallium/frontends/dri/loader_dri3_helper.h
++++ b/src/gallium/frontends/dri/loader_dri3_helper.h
+@@ -102,6 +102,16 @@ struct loader_dri3_vtable {
+    struct dri_context *(*get_dri_context)(struct loader_dri3_drawable *);
+    struct dri_screen *(*get_dri_screen)(void);
+    void (*flush_drawable)(struct loader_dri3_drawable *, unsigned);
++   /* Optional. The X server completed the last present sent, of a buffer of
++    * this size, in this mode (xcb_present_complete_mode_t).
++    */
++   void (*present_completed)(struct loader_dri3_drawable *, unsigned mode,
++                             int width, int height);
++   /* Optional. Whether a swap waits for its own present to complete, and
++    * after that wait, whether the same buffer is presented once more.
++    */
++   bool (*wait_for_present)(struct loader_dri3_drawable *);
++   bool (*present_again)(struct loader_dri3_drawable *);
+ };
+ 
+ #define LOADER_DRI3_NUM_BUFFERS (1 + LOADER_DRI3_MAX_BACK)
+@@ -176,6 +186,8 @@ struct loader_dri3_drawable {
+ 
+    unsigned int back_format;
+    xcb_present_complete_mode_t last_present_mode;
++   /* The size of the buffer last presented */
++   int present_width, present_height;
+ 
+    bool is_protected_content;
+ 
+diff --git a/src/glx/dri3_glx.c b/src/glx/dri3_glx.c
+index 604d42c..81850ea 100644
+--- a/src/glx/dri3_glx.c
++++ b/src/glx/dri3_glx.c
+@@ -97,9 +97,57 @@ glx_dri3_set_drawable_size(struct loader_dri3_drawable *draw,
+ {
+    struct dri3_drawable *pdraw = loader_drawable_to_dri3_drawable(draw);
+ 
+-   if (pdraw->base.stereo && pdraw->base.dri_drawable)
+-      draw->width = dri_drawable_stereo_buffer_width(pdraw->base.dri_drawable,
+-                                                     width);
++   if (!pdraw->base.stereo || !pdraw->base.dri_drawable)
++      return;
++
++   /* Without the pair the buffer holds the left view, at the window's size. */
++   draw->width = pdraw->pair.flat ? width :
++      dri_drawable_stereo_buffer_width(pdraw->base.dri_drawable, width);
++}
++
++/* How the X server completed the present of the window's two eyes, or of its
++ * left view while the declaration is taken back (glx_stereo_pair.h).
++ */
++static void
++glx_dri3_present_completed(struct loader_dri3_drawable *draw, unsigned mode,
++                           int width, int height)
++{
++   struct dri3_drawable *pdraw = loader_drawable_to_dri3_drawable(draw);
++
++   if (!pdraw->base.stereo || !pdraw->base.dri_drawable ||
++       !pdraw->base.dri_drawable->stereo_window_one_eye ||
++       (!pdraw->stereo_declared && !pdraw->pair.flat) ||
++       mode == XCB_PRESENT_COMPLETE_MODE_SKIP)
++      return;
++
++   switch (glx_stereo_pair_completed(&pdraw->pair, pdraw->base.psc->dpy,
++                                     pdraw->base.xDrawable,
++                                     mode == XCB_PRESENT_COMPLETE_MODE_FLIP,
++                                     width, height, draw->geometry_width,
++                                     draw->geometry_height)) {
++   case GLX_STEREO_PAIR_TAKEN_BACK:
++      pdraw->base.dri_drawable->stereo_flat = true;
++      dri_invalidate_drawable(pdraw->base.dri_drawable);
++      break;
++   case GLX_STEREO_PAIR_RETURNS:
++      pdraw->base.dri_drawable->stereo_flat = false;
++      pdraw->stereo_declared = false;
++      dri_invalidate_drawable(pdraw->base.dri_drawable);
++      break;
++   default:
++      break;
++   }
++}
++
++static bool
++glx_dri3_wait_for_present(struct loader_dri3_drawable *draw)
++{
++   struct dri3_drawable *pdraw = loader_drawable_to_dri3_drawable(draw);
++
++   return pdraw->base.stereo && pdraw->stereo_declared &&
++          pdraw->base.dri_drawable &&
++          pdraw->base.dri_drawable->stereo_window_one_eye &&
++          glx_stereo_pair_wait(&pdraw->pair);
+ }
+ 
+ static bool
+@@ -133,6 +181,12 @@ glx_dri3_get_dri_screen(void)
+    return (gc != &dummyContext && psc) ? psc->base.frontend_screen : NULL;
+ }
+ 
++static bool
++glx_dri3_present_again(struct loader_dri3_drawable *draw)
++{
++   return glx_stereo_pair_again(&loader_drawable_to_dri3_drawable(draw)->pair);
++}
++
+ static void glx_activate_stereo(struct dri3_drawable *pdraw);
+ 
+ static void
+@@ -151,6 +205,9 @@ static const struct loader_dri3_vtable glx_dri3_vtable = {
+    .get_dri_context = glx_dri3_get_dri_context,
+    .get_dri_screen = glx_dri3_get_dri_screen,
+    .flush_drawable = glx_dri3_flush_drawable,
++   .present_completed = glx_dri3_present_completed,
++   .wait_for_present = glx_dri3_wait_for_present,
++   .present_again = glx_dri3_present_again,
+ };
+ 
+ 
+@@ -205,7 +262,7 @@ glx_activate_stereo(struct dri3_drawable *pdraw)
+ {
+    XWindowAttributes attributes;
+ 
+-   if (pdraw->stereo_declared || !pdraw->base.dri_drawable ||
++   if (pdraw->stereo_declared || pdraw->pair.flat || !pdraw->base.dri_drawable ||
+        !pdraw->base.dri_drawable->base.stereo_active ||
+        !pdraw->base.stereo)
+       return;
+diff --git a/src/glx/dri3_priv.h b/src/glx/dri3_priv.h
+index e2fe7ac..96b9ea1 100644
+--- a/src/glx/dri3_priv.h
++++ b/src/glx/dri3_priv.h
+@@ -61,6 +61,7 @@
+ 
+ #include "loader_dri3_helper.h"
+ #include "mesa_interface.h"
++#include "glx_stereo_pair.h"
+ 
+ struct dri3_screen {
+    struct glx_screen base;
+@@ -90,6 +91,7 @@ struct dri3_drawable {
+    __GLXDRIdrawable base;
+    struct loader_dri3_drawable loader_drawable;
+    bool stereo_declared;
++   struct glx_stereo_pair pair;
+ 
+    /* LIBGL_SHOW_FPS support */
+    uint64_t previous_ust;
+diff --git a/src/glx/dri_common.c b/src/glx/dri_common.c
+index 6c705e8..dd126fc 100644
+--- a/src/glx/dri_common.c
++++ b/src/glx/dri_common.c
+@@ -344,6 +344,31 @@ glx_x11_declare_stereo_child(Display *dpy, Window window)
+       glx_message(_LOADER_WARNING, "Failed to wake stereo window observer\n");
+ }
+ 
++/* The window no longer holds two views: its window stops listing it. */
++void
++glx_x11_undeclare_stereo_child(Display *dpy, Window window)
++{
++   struct glx_display *display = __glXInitialize(dpy);
++   struct glx_stereo_tracker *tracker = display ? display->stereo_tracker : NULL;
++
++   if (!tracker)
++      return;
++   pthread_mutex_lock(&tracker->mutex);
++   for (struct glx_stereo_child **link = &tracker->children; *link; link = &(*link)->next) {
++      struct glx_stereo_child *child = *link;
++
++      if (child->window != window)
++         continue;
++      stereo_update_owner(tracker, child->owner, child->window, false);
++      *link = child->next;
++      free(child);
++      break;
++   }
++   stereo_reconcile(tracker);
++   xcb_flush(tracker->conn);
++   pthread_mutex_unlock(&tracker->mutex);
++}
++
+ void
+ glx_x11_destroy_stereo_tracker(struct glx_display *display)
+ {
+diff --git a/src/glx/dri_common.h b/src/glx/dri_common.h
+index 22afef6..2000892 100644
+--- a/src/glx/dri_common.h
++++ b/src/glx/dri_common.h
+@@ -125,6 +125,8 @@ void
+ glx_x11_destroy_stereo_tracker(struct glx_display *display);
+ void
+ glx_x11_declare_stereo_child(Display *dpy, Window window);
++void
++glx_x11_undeclare_stereo_child(Display *dpy, Window window);
+ #endif /* GLX_DIRECT_RENDERING */
+ 
+ #endif /* _DRI_COMMON_H */
+diff --git a/src/glx/drisw_glx.c b/src/glx/drisw_glx.c
+index b9234b4..b0ab660 100644
+--- a/src/glx/drisw_glx.c
++++ b/src/glx/drisw_glx.c
+@@ -199,6 +199,62 @@ bytes_per_line(unsigned pitch_bits, unsigned mul)
+    return ((pitch_bits + mask) & ~mask) / 8;
+ }
+ 
++#ifdef HAVE_LIBDRM
++/* The Present events of a stereo window: how each present completed, and the
++ * window's size.  wait: until the present sent last has completed.
++ */
++static void
++drisw_present_events(struct drisw_drawable *pdp, bool wait)
++{
++   __GLXDRIdrawable *pdraw = &pdp->base;
++   xcb_connection_t *conn = XGetXCBConnection(pdraw->psc->dpy);
++   xcb_generic_event_t *ev;
++
++   if (!pdp->present_events)
++      return;
++
++   xcb_flush(conn);
++   while ((ev = wait ? xcb_wait_for_special_event(conn, pdp->present_events)
++                     : xcb_poll_for_special_event(conn, pdp->present_events))) {
++      xcb_present_generic_event_t *ge = (void *) ev;
++
++      if (ge->evtype == XCB_PRESENT_EVENT_CONFIGURE_NOTIFY) {
++         xcb_present_configure_notify_event_t *ce = (void *) ev;
++
++         pdp->window_width = ce->width;
++         pdp->window_height = ce->height;
++      } else if (ge->evtype == XCB_PRESENT_EVENT_COMPLETE_NOTIFY) {
++         xcb_present_complete_notify_event_t *ce = (void *) ev;
++
++         if (ce->kind == XCB_PRESENT_COMPLETE_KIND_PIXMAP &&
++             ce->serial == pdp->present_serial) {
++            wait = false;
++            if (ce->mode != XCB_PRESENT_COMPLETE_MODE_SKIP) {
++               switch (glx_stereo_pair_completed(&pdp->pair, pdraw->psc->dpy,
++                                                 pdraw->xDrawable,
++                                                 ce->mode == XCB_PRESENT_COMPLETE_MODE_FLIP,
++                                                 pdp->present_width,
++                                                 pdp->present_height,
++                                                 pdp->window_width,
++                                                 pdp->window_height)) {
++               case GLX_STEREO_PAIR_TAKEN_BACK:
++                  pdraw->dri_drawable->stereo_flat = true;
++                  break;
++               case GLX_STEREO_PAIR_RETURNS:
++                  pdraw->dri_drawable->stereo_flat = false;
++                  pdp->stereo_declared = false;
++                  break;
++               default:
++                  break;
++               }
++            }
++         }
++      }
++      free(ev);
++   }
++}
++#endif
++
+ static void
+ swrastXPutImage(struct dri_drawable * draw, int op,
+                 int srcx, int srcy, int x, int y,
+@@ -226,8 +282,15 @@ swrastXPutImage(struct dri_drawable * draw, int op,
+    Pixmap stereo_pixmap = None;
+    if (op == __DRI_SWRAST_IMAGE_OP_SWAP && x == 0 && y == 0 &&
+        pdraw->dri_drawable && pdraw->dri_drawable->stereo_window_one_eye) {
+-      /* the image is the packed buffer, which may be padded beyond both eyes */
+-      w = MIN2(w, 2 * pdraw->dri_drawable->w);
++      /* the image is the packed buffer, which may be padded beyond both eyes;
++       * without the pair it is the left view, presented the same way so that
++       * its completion tells when the window can show a pair again
++       */
++      /* this image was made before the completions read now change anything */
++      const int views = pdraw->dri_drawable->stereo_flat ? 1 : 2;
++
++      drisw_present_events(pdp, false);
++      w = MIN2(w, views * pdraw->dri_drawable->w);
+       h = MIN2(h, pdraw->dri_drawable->h);
+       stereo_pixmap = XCreatePixmap(dpy, pdraw->xDrawable, w, h, pdp->xDepth);
+       drawable = stereo_pixmap;
+@@ -250,9 +313,25 @@ swrastXPutImage(struct dri_drawable * draw, int op,
+ 
+ #ifdef HAVE_LIBDRM
+    if (stereo_pixmap) {
++      pdp->present_width = w;
++      pdp->present_height = h;
+       xcb_present_pixmap(XGetXCBConnection(dpy), pdraw->xDrawable, stereo_pixmap,
+-                         0, 0, 0, 0, 0, 0, 0, 0, XCB_PRESENT_OPTION_NONE,
+-                         0, 0, 0, 0, NULL);
++                         ++pdp->present_serial, 0, 0, 0, 0, 0, 0, 0,
++                         XCB_PRESENT_OPTION_NONE, 0, 0, 0, 0, NULL);
++      XFlush(dpy);
++      /* Learn in this swap what became of the pair when this may be the
++       * frame that stays, presenting it once more after a first copy; other
++       * completions are read before the next present.
++       */
++      if (glx_stereo_pair_wait(&pdp->pair)) {
++         drisw_present_events(pdp, true);
++         if (glx_stereo_pair_again(&pdp->pair)) {
++            xcb_present_pixmap(XGetXCBConnection(dpy), pdraw->xDrawable, stereo_pixmap,
++                               ++pdp->present_serial, 0, 0, 0, 0, 0, 0, 0,
++                               XCB_PRESENT_OPTION_NONE, 0, 0, 0, 0, NULL);
++            drisw_present_events(pdp, true);
++         }
++      }
+       XFreePixmap(dpy, stereo_pixmap);
+       XFlush(dpy);
+    }
+@@ -504,6 +583,14 @@ driswDestroyDrawable(__GLXDRIdrawable * pdraw)
+ 
+    driDestroyDrawable(pdp->base.dri_drawable);
+ 
++#ifdef HAVE_LIBDRM
++   if (pdp->present_events) {
++      xcb_connection_t *conn = XGetXCBConnection(pdraw->psc->dpy);
++
++      xcb_discard_reply(conn, xcb_present_select_input_checked(conn, pdp->present_eid, pdraw->xDrawable, 0).sequence);
++      xcb_unregister_for_special_event(conn, pdp->present_events);
++   }
++#endif
+    XDestroyDrawable(pdp, pdraw->psc->dpy, pdraw->drawable);
+    free(pdp);
+ }
+@@ -514,7 +601,7 @@ drisw_activate_stereo(struct drisw_drawable *pdraw)
+    XWindowAttributes attributes;
+    Display *dpy = pdraw->base.psc->dpy;
+ 
+-   if (pdraw->stereo_declared || !pdraw->base.dri_drawable ||
++   if (pdraw->stereo_declared || pdraw->pair.flat || !pdraw->base.dri_drawable ||
+        !pdraw->base.dri_drawable->base.stereo_active ||
+        !pdraw->base.stereo)
+       return;
+@@ -543,6 +630,16 @@ drisw_activate_stereo(struct drisw_drawable *pdraw)
+                       PropModeReplace, (unsigned char *)&declared_version, 1);
+       pdraw->base.dri_drawable->stereo_window_one_eye = true;
+       free(present);
++      if (!pdraw->present_events) {
++         pdraw->present_eid = xcb_generate_id(conn);
++         pdraw->present_events =
++            xcb_register_for_special_xge(conn, &xcb_present_id, pdraw->present_eid, NULL);
++         xcb_present_select_input(conn, pdraw->present_eid, pdraw->base.xDrawable,
++                                  XCB_PRESENT_EVENT_MASK_CONFIGURE_NOTIFY |
++                                  XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY);
++         pdraw->window_width = attributes.width;
++         pdraw->window_height = attributes.height;
++      }
+    }
+ #endif
+ 
+diff --git a/src/glx/drisw_priv.h b/src/glx/drisw_priv.h
+index d3e053e..40dc078 100644
+--- a/src/glx/drisw_priv.h
++++ b/src/glx/drisw_priv.h
+@@ -28,6 +28,7 @@
+ 
+ #include <X11/extensions/XShm.h>
+ #include "kopper_interface.h"
++#include "glx_stereo_pair.h"
+ 
+ struct drisw_display
+ {
+@@ -51,6 +52,13 @@ struct drisw_drawable
+    int xDepth;
+    int swapInterval;
+    bool stereo_declared;
++   /* The presents of a stereo window that stays one eye wide (glx_stereo_pair.h) */
++   struct glx_stereo_pair pair;
++   uint32_t present_eid;
++   void *present_events;
++   uint32_t present_serial;
++   int present_width, present_height;
++   int window_width, window_height;
+ };
+ 
+ #endif
+diff --git a/src/glx/glx_stereo_pair.c b/src/glx/glx_stereo_pair.c
+new file mode 100644
+index 0000000..5cd7bf6
+--- /dev/null
++++ b/src/glx/glx_stereo_pair.c
+@@ -0,0 +1,343 @@
++/*
++ * Copyright 2026 Daniel Campos Ramos
++ * SPDX-License-Identifier: MIT
++ */
++
++#include <errno.h>
++#include <dlfcn.h>
++#include <pthread.h>
++#include <spawn.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/wait.h>
++#include <X11/Xatom.h>
++
++#include "glxclient.h"
++#include "dri_common.h"
++#include "glx_stereo_pair.h"
++#include "loader.h"
++#include "util/os_time.h"
++#include "util/u_process.h"
++
++#if defined(GLX_DIRECT_RENDERING) && (!defined(GLX_USE_APPLEGL) || defined(GLX_USE_APPLE))
++
++extern char **environ;
++
++/* The messages of the package that holds this library (debian/lang). */
++#define PROBLEMS_PACKAGE "libglx-mesa0"
++#define PROBLEMS_COMMAND "/usr/bin/sparky-stereo-problems"
++/* sparky-stereo-problems.h: the person's own problems */
++#define SSP_PERSON 2
++
++/* How many flips of the left view in a row bring the declaration back. */
++#define FLIPS_TO_RETURN 3
++
++#ifdef SPARKY_STEREO_PROBLEMS_LIBRARY
++
++typedef int (*ssp_keep_fn)(int, const char *, const char *, const char *,
++                           const char *const *, int, const char *);
++typedef int (*ssp_clear_fn)(int, const char *, const char *);
++typedef const char *(*ssp_error_fn)(void);
++
++static pthread_mutex_t problems_mutex = PTHREAD_MUTEX_INITIALIZER;
++static bool problems_opened;
++static ssp_keep_fn ssp_keep;
++static ssp_clear_fn ssp_clear;
++static ssp_error_fn ssp_error_en;
++
++/* The engine's library is private and of one architecture: it is opened at
++ * the first use, never linked, and a process that cannot load it (a 32-bit
++ * program) runs the engine's command.
++ */
++static bool
++problems_library(void)
++{
++   if (!problems_opened) {
++      void *lib = dlopen(SPARKY_STEREO_PROBLEMS_LIBRARY, RTLD_NOW | RTLD_LOCAL);
++
++      problems_opened = true;
++      if (lib) {
++         ssp_keep_fn keep = (ssp_keep_fn) dlsym(lib, "ssp_keep");
++         ssp_clear_fn clear = (ssp_clear_fn) dlsym(lib, "ssp_clear");
++
++         ssp_error_en = (ssp_error_fn) dlsym(lib, "ssp_error_en");
++         if (keep && clear && ssp_error_en) {
++            ssp_keep = keep;
++            ssp_clear = clear;
++         }
++      }
++   }
++   return ssp_keep != NULL;
++}
++
++/* Returns the command's exit status, or -1 when it could not be run. */
++static int
++problems_command(char *const argv[])
++{
++   pid_t pid;
++   int status;
++
++   if (posix_spawn(&pid, PROBLEMS_COMMAND, NULL, NULL, argv, environ) != 0)
++      return -1;
++   while (waitpid(pid, &status, 0) < 0) {
++      /* A program that reaps every child itself took the status. */
++      if (errno != EINTR)
++         return errno == ECHILD ? 0 : -1;
++   }
++   return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
++}
++
++/* Writes {"severity":"SEVERITY","text_en":"TEXT"} with TEXT escaped; false when it does not fit. */
++static bool
++problems_details(char *out, size_t size, const char *severity, const char *text)
++{
++   size_t n = snprintf(out, size, "{\"severity\":\"%s\",\"text_en\":\"", severity);
++
++   for (; *text; text++) {
++      const unsigned char c = *text;
++
++      if (n + 8 > size)
++         return false;
++      if (c == '"' || c == '\\') {
++         out[n++] = '\\';
++         out[n++] = c;
++      } else {
++         out[n++] = c < 0x20 ? ' ' : c;
++      }
++   }
++   memcpy(out + n, "\"}", 3);
++   return true;
++}
++
++void
++glx_problem_keep(const char *key, const char *severity, const char *message,
++                 const char *arg0, const char *arg1, const char *text_en)
++{
++   const char *args[2] = { arg0, arg1 };
++   const int nargs = arg1 ? 2 : arg0 ? 1 : 0;
++   char details[2048];
++   bool kept = false;
++
++   glx_message(_LOADER_WARNING, "%s\n", text_en);
++   if (!problems_details(details, sizeof(details), severity, text_en)) {
++      glx_message(_LOADER_FATAL, "sparky-stereo-problems: the text of %s does not fit, the person cannot be told\n", key);
++      return;
++   }
++
++   pthread_mutex_lock(&problems_mutex);
++   if (problems_library()) {
++      kept = ssp_keep(SSP_PERSON, PROBLEMS_PACKAGE, key, message, args, nargs, details) == 0;
++      if (!kept)
++         glx_message(_LOADER_FATAL, "sparky-stereo-problems: %s could not be kept, the person cannot be told: %s\n",
++                     key, ssp_error_en());
++   } else {
++      char *argv[] = { (char *) "sparky-stereo-problems", (char *) "keep", (char *) "--person", (char *) "--quiet",
++                       (char *) "--details", details, (char *) PROBLEMS_PACKAGE, (char *) key, (char *) message,
++                       (char *) arg0, (char *) arg1, NULL };
++
++      kept = problems_command(argv) == 0;
++      if (!kept)
++         glx_message(_LOADER_FATAL, "sparky-stereo-problems: neither %s nor %s could keep %s, the person cannot be told\n",
++                     SPARKY_STEREO_PROBLEMS_LIBRARY, PROBLEMS_COMMAND, key);
++   }
++   pthread_mutex_unlock(&problems_mutex);
++}
++
++void
++glx_problem_clear(const char *key)
++{
++   /* The engine ends nothing that is not there, so a problem an earlier run
++    * of the program kept ends here too.
++    */
++   pthread_mutex_lock(&problems_mutex);
++   if (problems_library()) {
++      if (ssp_clear(SSP_PERSON, PROBLEMS_PACKAGE, key) != 0)
++         glx_message(_LOADER_WARNING, "sparky-stereo-problems: the earlier problem %s could not be ended: %s\n",
++                     key, ssp_error_en());
++   } else {
++      char *argv[] = { (char *) "sparky-stereo-problems", (char *) "clear", (char *) "--person",
++                       (char *) PROBLEMS_PACKAGE, (char *) key, NULL };
++
++      if (problems_command(argv) != 0)
++         glx_message(_LOADER_INFO, "sparky-stereo-problems: neither %s nor %s is here, nothing to end for %s\n",
++                     SPARKY_STEREO_PROBLEMS_LIBRARY, PROBLEMS_COMMAND, key);
++   }
++   pthread_mutex_unlock(&problems_mutex);
++}
++
++#else /* !SPARKY_STEREO_PROBLEMS_LIBRARY */
++
++void
++glx_problem_keep(const char *key, const char *severity, const char *message,
++                 const char *arg0, const char *arg1, const char *text_en)
++{
++   glx_message(_LOADER_WARNING, "%s\n", text_en);
++}
++
++void
++glx_problem_clear(const char *key)
++{
++}
++
++#endif
++
++/* The problem's key: one for each program, so that two programs neither hide
++ * nor end each other's.  The engine takes letters, digits and _ @ : + - .
++ */
++static void
++stereo_pair_key(char *key, size_t size, const char **program)
++{
++   const char *name = util_get_process_name();
++   size_t n;
++
++   if (!name || !*name)
++      name = "program";
++   *program = name;
++   n = snprintf(key, size, "stereo-pair:");
++   for (; *name && n + 1 < size; name++)
++      key[n++] = (*name >= '0' && *name <= '9') || (*name >= 'a' && *name <= 'z') ||
++                 (*name >= 'A' && *name <= 'Z') || strchr("_@+-.", *name) ? *name : '_';
++   key[n] = '\0';
++}
++
++static void
++stereo_pair_take_back(struct glx_stereo_pair *pair, Display *dpy, Window window, int width, int height)
++{
++   const char *program;
++   char key[96], detail[160], text[640];
++
++   /* The compositor shows the window's picture as it is from here: the copy
++    * left the left view in it.
++    */
++   XDeleteProperty(dpy, window, XInternAtom(dpy, "_KDE_NET_WM_STEREO_CONTENT", False));
++   XDeleteProperty(dpy, window, XInternAtom(dpy, "_KDE_NET_WM_STEREO_CONTENT_VERSION", False));
++   glx_x11_undeclare_stereo_child(dpy, window);
++   XFlush(dpy);
++
++   stereo_pair_key(key, sizeof(key), &program);
++   snprintf(detail, sizeof(detail),
++            "the X server completed the present of both pictures of window 0x%lx (%dx%d) as a copy%s",
++            (unsigned long) window, width, height,
++            pair->locked ? ", again after its left picture alone was shown whole" : "");
++   snprintf(text, sizeof(text),
++            "%s is shown flat: the desktop's X server could not show the two pictures of its 3D window "
++            "together, so the window shows the left picture alone. 3D returns by itself when the window can "
++            "show both again. Update Sparky Stereo OS and log in again; if the program stays flat, report it "
++            "with the program's name. Mesa says: %s", program, detail);
++   glx_problem_keep(key, "failed", "LOCAL2", program, detail, text);
++}
++
++enum glx_stereo_pair_change
++glx_stereo_pair_completed(struct glx_stereo_pair *pair, Display *dpy,
++                          Window window, bool flipped, int buffer_width,
++                          int buffer_height, int width, int height)
++{
++   if (width != pair->width || height != pair->height) {
++      /* Another size has other buffers: what failed at the old one is not known to fail here. */
++      pair->width = width;
++      pair->height = height;
++      pair->locked = false;
++      pair->failed_returns = 0;
++      pair->flat_flips = 0;
++   }
++
++   if (pair->flat || !pair->confirmed)
++      glx_message(_LOADER_DEBUG, "stereo pair: window 0x%lx %dx%d: a %dx%d buffer was %s (%s)\n",
++                  (unsigned long) window, width, height, buffer_width, buffer_height,
++                  flipped ? "flipped" : "copied", pair->flat ? "left view alone" : "both eyes");
++
++   /* A frame made for the size the window had before says nothing about
++    * the size it has now.
++    */
++   if (buffer_width != (pair->flat ? width : 2 * width) || buffer_height != height)
++      return GLX_STEREO_PAIR_SAME;
++
++   if (!pair->flat) {
++      if (flipped) {
++         pair->copied_once = false;
++         pair->confirmed = true;
++         pair->failed_returns = 0;
++         if (!pair->cleared) {
++            const char *program;
++            char key[96];
++
++            stereo_pair_key(key, sizeof(key), &program);
++            glx_problem_clear(key);
++            pair->cleared = true;
++         }
++         return GLX_STEREO_PAIR_SAME;
++      }
++
++      /* One copy can be a frame the server dropped while the window was
++       * being managed (unmapped and mapped again by the window manager): it
++       * completes as a copy and nothing was copied.  Two presents in a row,
++       * of the window's own size, are certain: the server says what it did
++       * with these very pixmaps.
++       */
++      if (!pair->copied_once) {
++         pair->copied_once = true;
++         pair->again = true;
++         return GLX_STEREO_PAIR_SAME;
++      }
++      pair->copied_once = false;
++      if (pair->returned && !pair->confirmed && ++pair->failed_returns >= 2)
++         pair->locked = true;
++      pair->flat = true;
++      pair->confirmed = false;
++      pair->cleared = false;
++      pair->flat_flips = 0;
++      stereo_pair_take_back(pair, dpy, window, width, height);
++      return GLX_STEREO_PAIR_TAKEN_BACK;
++   }
++
++   if (!flipped) {
++      pair->flat_flips = 0;
++      return GLX_STEREO_PAIR_SAME;
++   }
++   if (pair->locked || ++pair->flat_flips < FLIPS_TO_RETURN)
++      return GLX_STEREO_PAIR_SAME;
++
++   pair->flat = false;
++   pair->returned = true;
++   pair->flat_flips = 0;
++   return GLX_STEREO_PAIR_RETURNS;
++}
++
++bool
++glx_stereo_pair_wait(struct glx_stereo_pair *pair)
++{
++   const int64_t now = os_time_get();
++   const bool still = now - pair->last_swap > 100000;
++
++   pair->last_swap = now;
++   pair->again = false;
++   return !pair->flat && (!pair->confirmed || still);
++}
++
++bool
++glx_stereo_pair_again(struct glx_stereo_pair *pair)
++{
++   const bool again = pair->again && !pair->flat;
++
++   pair->again = false;
++   return again;
++}
++
++void
++glx_problem_zink_without_dri3(bool happening)
++{
++   static const char text[] =
++      "OpenGL programs draw on the processor in this session: OpenGL was set to run on the graphics card's "
++      "Vulkan driver (zink), which needs an X server with DRI3, and the desktop's X server (Xwayland) runs "
++      "without 3D acceleration. Programs work, more slowly. Log out and in again; if it repeats, look at the "
++      "graphics driver on the Graphics page of System Settings. Mesa says: MESA_LOADER_DRIVER_OVERRIDE=zink, "
++      "DRI3 not available";
++
++   if (happening)
++      glx_problem_keep("zink-without-dri3", "degraded", "LOCAL4", "MESA_LOADER_DRIVER_OVERRIDE=zink, DRI3 not available", NULL, text);
++   else
++      glx_problem_clear("zink-without-dri3");
++}
++
++#endif
+diff --git a/src/glx/glx_stereo_pair.h b/src/glx/glx_stereo_pair.h
+new file mode 100644
+index 0000000..c6639b3
+--- /dev/null
++++ b/src/glx/glx_stereo_pair.h
+@@ -0,0 +1,93 @@
++/*
++ * Copyright 2026 Daniel Campos Ramos
++ * SPDX-License-Identifier: MIT
++ */
++
++/* A stereo window that stays one eye wide presents both eyes in one pixmap
++ * twice its width (declaration version 4).  The X server hands that pixmap to
++ * the compositor whole, or copies it into the window, which keeps the left
++ * eye only: under a stereo declaration the compositor would then show half of
++ * the left view to each eye.  PresentCompleteNotify tells which happened; when
++ * the pair was copied the declaration is taken back, the left view is
++ * presented alone at the window's size, and the person is told.
++ */
++
++#ifndef GLX_STEREO_PAIR_H
++#define GLX_STEREO_PAIR_H
++
++#include <stdbool.h>
++#include <stdint.h>
++#include <X11/Xlib.h>
++
++struct glx_stereo_pair {
++   /* The declaration was taken back; the left view is presented alone. */
++   bool flat;
++   /* A pair of the window's size was flipped since it was last declared. */
++   bool confirmed;
++   /* The declaration returned at least once. */
++   bool returned;
++   /* It returned twice and the pair was copied at once each time: the
++    * left view flips and the pair does not, so nothing more is tried at
++    * this size.
++    */
++   bool locked;
++   /* An earlier problem of this program was ended. */
++   bool cleared;
++   /* The last pair was copied, and the one before was not. */
++   bool copied_once;
++   /* A swap that waited may present its pair once more to know for certain. */
++   bool again;
++   unsigned flat_flips;
++   unsigned failed_returns;
++   int width, height;
++   int64_t last_swap;
++};
++
++enum glx_stereo_pair_change {
++   GLX_STEREO_PAIR_SAME,
++   /* Present the left view alone from the next frame on. */
++   GLX_STEREO_PAIR_TAKEN_BACK,
++   /* Declare the window again and present both eyes from the next frame on. */
++   GLX_STEREO_PAIR_RETURNS,
++};
++
++/* The X server completed a present of a buffer buffer_width wide for a window
++ * width by height now; flipped: whole (PresentCompleteModeFlip).
++ */
++enum glx_stereo_pair_change
++glx_stereo_pair_completed(struct glx_stereo_pair *pair, Display *dpy,
++                          Window window, bool flipped, int buffer_width,
++                          int buffer_height, int width, int height);
++
++/* Whether a swap of both eyes waits for its own present to complete: until
++ * one pair was flipped, and whenever the program's last swap is more than a
++ * tenth of a second old, since this frame may then be the one that stays on
++ * the screen.  A program that animates learns of a copy at its next frame.
++ */
++bool
++glx_stereo_pair_wait(struct glx_stereo_pair *pair);
++
++/* After such a wait: whether the pair just presented was the first to be
++ * copied, so that the same pair is presented once more and waited for.  A
++ * program that goes on drawing presents its next frame instead.
++ */
++bool
++glx_stereo_pair_again(struct glx_stereo_pair *pair);
++
++/* The person is told through the distribution's place for failures (Sparky
++ * Stereo OS: sparky-stereo-problems) when Mesa is built with it, and the
++ * message goes to the log in every build.  severity is failed or degraded;
++ * message is one of the package's messages; text_en says the same in English
++ * with the arguments in place.
++ */
++void
++glx_problem_keep(const char *key, const char *severity, const char *message,
++                 const char *arg0, const char *arg1, const char *text_en);
++void
++glx_problem_clear(const char *key);
++
++/* MESA_LOADER_DRIVER_OVERRIDE=zink on an X server without DRI3. */
++void
++glx_problem_zink_without_dri3(bool happening);
++
++#endif
+diff --git a/src/glx/glxext.c b/src/glx/glxext.c
+index a8c8a1e..977e65b 100644
+--- a/src/glx/glxext.c
++++ b/src/glx/glxext.c
+@@ -19,6 +19,7 @@
+ #include <stdarg.h>
+ 
+ #include "glxclient.h"
++#include "glx_stereo_pair.h"
+ #include <X11/extensions/Xext.h>
+ #include <X11/extensions/extutil.h>
+ #include <X11/Xatom.h>
+@@ -1052,6 +1053,8 @@ __glXInitialize(Display * dpy)
+    Bool glx_accel = !debug_get_bool_option("LIBGL_ALWAYS_SOFTWARE", false);
+    Bool kopper = glx_kopper_enabled(dpy, DefaultScreen(dpy));
+ 
++   Bool zink_without_dri3 = False;
++
+    if (env && !strcmp(env, "zink"))
+       glx_driver |= GLX_DRIVER_ZINK_YES;
+ 
+@@ -1090,9 +1093,15 @@ __glXInitialize(Display * dpy)
+ #if !defined(GLX_USE_APPLEGL)
+    if (!dpyPriv->has_multibuffer && glx_accel && !debug_get_bool_option("LIBGL_KOPPER_DRI2", false)) {
+       if (glx_driver & GLX_DRIVER_ZINK_YES) {
+-         /* only print error if zink was explicitly requested */
+-         CriticalErrorMessageF("DRI3 not available\n");
+-         goto init_fail;
++         /* zink was asked for and presents through DRI3 here (kopper is off,
++          * or has it no more than this server): the X server has none, as
++          * Xwayland without glamor.  A program would get no configuration at
++          * all; it draws on the software renderer, as with any other driver
++          * on such a server, and the person is told.
++          */
++         glx_problem_zink_without_dri3(true);
++         glx_driver &= ~GLX_DRIVER_ZINK_YES;
++         zink_without_dri3 = True;
+       }
+       /* if no dri3 and not using dri2, disable zink */
+       glx_driver &= ~GLX_DRIVER_ZINK_INFER;
+@@ -1114,6 +1123,14 @@ __glXInitialize(Display * dpy)
+       goto init_fail;
+ #endif
+ 
++#if defined(GLX_DIRECT_RENDERING) && (!defined(GLX_USE_APPLEGL) || defined(GLX_USE_APPLE))
++   /* zink with DRI3: an earlier session's problem is over */
++   if ((glx_driver & GLX_DRIVER_ZINK_YES) && dpyPriv->has_multibuffer)
++      glx_problem_zink_without_dri3(false);
++   if (zink_without_dri3)
++      env = NULL;
++#endif
++
+    if (!AllocAndFetchScreenConfigs(dpy, dpyPriv, glx_driver, !env)) {
+       Bool fail = True;
+ #if defined(GLX_DIRECT_RENDERING) && (!defined(GLX_USE_APPLEGL) || defined(GLX_USE_APPLE))
+diff --git a/src/glx/meson.build b/src/glx/meson.build
+index 3ba1c48..c752f9f 100644
+--- a/src/glx/meson.build
++++ b/src/glx/meson.build
+@@ -16,6 +16,8 @@ files_libglx = files(
+   'dri_common.c',
+   'dri_common.h',
+   'dri_common_query_renderer.c',
++  'glx_stereo_pair.c',
++  'glx_stereo_pair.h',
+   'drisw_glx.c',
+   'drisw_priv.h',
+   'eval.c',
+@@ -104,9 +106,19 @@ endif
+ if with_platform_windows
+   glx_gallium_link += libgallium_wgl
+ endif
++# A distribution's place for failures (Sparky Stereo OS: sparky-stereo-problems):
++# with its library's path the person is told there when a stereo window is
++# shown flat.  The library is opened at run time; nothing is linked.
++glx_problems_args = []
++if get_option('sparky-stereo-problems-library') != ''
++  glx_problems_args += '-DSPARKY_STEREO_PROBLEMS_LIBRARY="@0@"'.format(
++    get_option('sparky-stereo-problems-library'))
++endif
++
+ libglx = static_library(
+   'glx',
+   [files_libglx, glx_generated, main_dispatch_h],
++  c_args : glx_problems_args,
+   include_directories : [inc_include, inc_src, inc_glapi, inc_loader, inc_loader_x11,
+                          inc_gallium, inc_mesa, inc_st_dri, inc_gallium_aux],
+   gnu_symbol_visibility : 'hidden',

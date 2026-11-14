@@ -1,0 +1,21 @@
+xwayland (2:24.1.15-1+stereo3d2) unstable; urgency=medium
+
+  * A stereo window's two eyes are kept when its present cannot be flipped
+    (0013): a window partly covered by a child window of its own (a tool bar
+    or a button over the 3D area), a present with an offset or an update
+    region, a frame made for the size the window had before a resize. The
+    copy now goes to both halves of a pixmap twice the window wide, what the
+    child windows draw is shown in both eyes, and the present completes as a
+    flip. Before, the copy kept the left eye and the compositor showed half
+    of it to each eye, with glamor and without.
+  * For a window that declares two eyes the completion of a present now says
+    whether both reached its surface: flip when they did, copy when only the
+    left eye did, which Mesa reads to take the declaration back.
+  * A window that stops declaring two eyes gets a buffer one window wide at
+    once, so the compositor never shows two eyes squeezed into a window that
+    declares none.
+  * The suite's stereo pair test covers the covered window, the offset and
+    the declaration that goes, reading the window's pixmap as a compositor's
+    window manager does.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 14 Nov 2026 12:40:00 +0000
