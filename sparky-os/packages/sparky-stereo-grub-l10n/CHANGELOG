@@ -1,4 +1,14 @@
 -------------------------------------------------------------------------------
+  Version 0.1.5 (2026-11-14)
+-------------------------------------------------------------------------------
+  * ORDER 572: update-grub no longer fails on a Korean system that lists another system. GRUB's shell scripts print
+    their messages with the shell's printf (gettext_printf, /bin/sh), which has no reordered arguments; the Korean
+    translations of "Found %s on %s" and "Found %s on %s (%s)" use them (%2$s), so /etc/grub.d/30_os-prober stopped
+    with "printf: %2$: invalid directive" and the menu was not written (found in the fresh-install rig: a Korean
+    system beside Windows). A shell message whose translation reorders its arguments is now left out of the
+    supplemental catalogue (it stays in English); the build stops if one is left.
+
+-------------------------------------------------------------------------------
   Version 0.1.4 (2026-11-03)
 -------------------------------------------------------------------------------
   * Copy only tracked recipe inputs into the authoring archive.

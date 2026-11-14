@@ -38,7 +38,11 @@ langs=
 for po in "$P"/*.po; do
 	l=$(basename "$po" .po)
 	[ -f "$po" ] || { echo "GRUB translation inputs are missing in $P; repair the source archive and rebuild." >&2; exit 1; }
+	# a translation that reorders its arguments (%2$s) is left out: these messages are printed by the shell's printf
+	# (gettext_printf in grub-mkconfig_lib, under /bin/sh), which stops at it ("printf: %2$: invalid directive") and
+	# takes update-grub down with it. The Korean "Found %s on %s" did that on every system with os-prober on (0.1.5)
 	msggrep --location='util/*.in' --location='util/grub.d/*.in' "$po" \
+		| msggrep --invert-match --msgstr -e '%[0-9][0-9]*\$' - \
 		| msgattrib --translated --no-fuzzy --no-obsolete -o "$W/$l.po" - || {
 		echo "GRUB translation $l could not be extracted. Repair the catalogue/gettext tools and rebuild." >&2
 		exit 1
@@ -46,6 +50,9 @@ for po in "$P"/*.po; do
 	if ! grep -q '^msgid "[^"]' "$W/$l.po"; then
 		echo "GRUB catalogue $l has no translated shell messages; no supplemental catalogue generated." >&2
 		continue
+	fi
+	if grep -q '^msgstr.*%[0-9][0-9]*\$' "$W/$l.po"; then
+		echo "GRUB translation $l still has a reordered argument in a shell message; repair the filter and rebuild." >&2; exit 1
 	fi
 	msgfmt -o "$S/$l.mo" "$W/$l.po" || {
 		echo "GRUB translation $l could not be compiled. Repair the catalogue/gettext tools and rebuild." >&2
