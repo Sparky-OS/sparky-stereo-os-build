@@ -1480,10 +1480,10 @@ index ffd5544..f9a5594 100644
     if (swapchain->command)
 diff --git a/src/vulkan/stereo-layer/x11_left.h b/src/vulkan/stereo-layer/x11_left.h
 new file mode 100644
-index 0000000..a1f220b
+index 0000000..ff2645b
 --- /dev/null
 +++ b/src/vulkan/stereo-layer/x11_left.h
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,219 @@
 +/* Copyright 2026 Daniel Campos Ramos
 + * SPDX-License-Identifier: MIT
 + *
@@ -1589,11 +1589,14 @@ index 0000000..a1f220b
 +         goto fail;
 +      VkMemoryRequirements req;
 +      d->GetBufferMemoryRequirements(d->device, swapchain->left_buffer, &req);
-+      unsigned type = 0;
-+      for (; type < d->memory.memoryTypeCount; type++)
-+         if ((req.memoryTypeBits & (1u << type)) &&
-+             (d->memory.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) break;
-+      if (type == d->memory.memoryTypeCount) goto fail;
++      unsigned type = UINT32_MAX;
++      for (unsigned i = 0; i < d->memory.memoryTypeCount; i++) {
++         VkMemoryPropertyFlags flags = d->memory.memoryTypes[i].propertyFlags;
++         if (!(req.memoryTypeBits & (1u << i)) || !(flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) continue;
++         type = i;
++         if (flags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) break;
++      }
++      if (type == UINT32_MAX) goto fail;
 +      VkMemoryAllocateInfo alloc = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
 +         .allocationSize = req.size, .memoryTypeIndex = type };
 +      if (d->AllocateMemory(d->device, &alloc, NULL, &swapchain->left_memory) != VK_SUCCESS ||
@@ -1676,7 +1679,17 @@ index 0000000..a1f220b
 +      xcb_put_image(conn, XCB_IMAGE_FORMAT_Z_PIXMAP, pixmap, gc, swapchain->width, h,
 +         0, y, 0, g->depth, swapchain->width * h * 4, (uint8_t *)(pixels + (size_t)y * swapchain->width));
 +   }
++   uint8_t window_depth = g->depth;
 +   free(pixels); free(g);
++   /* PutImage can leave a CPU pixmap without a compositor buffer. Make
++    * the final pixmap through CopyArea, as the existing mono flip probe did.
++    */
++   xcb_pixmap_t uploaded = pixmap;
++   pixmap = xcb_generate_id(conn);
++   xcb_create_pixmap(conn, window_depth,
++      pixmap, window, swapchain->width, swapchain->height);
++   xcb_copy_area(conn, uploaded, pixmap, gc, 0, 0, 0, 0, swapchain->width, swapchain->height);
++   xcb_free_pixmap(conn, uploaded);
 +   uint32_t serial = ++swapchain->surface->probe_serial;
 +   xcb_present_pixmap(conn, window, pixmap, serial, XCB_NONE, XCB_NONE,
 +      0, 0, XCB_NONE, XCB_NONE, XCB_NONE, XCB_PRESENT_OPTION_NONE, 0, 0, 0, 0, NULL);
