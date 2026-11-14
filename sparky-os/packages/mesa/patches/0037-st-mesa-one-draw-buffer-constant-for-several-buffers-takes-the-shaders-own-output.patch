@@ -1,0 +1,163 @@
+Description: glDrawBuffer(GL_BACK) of a stereo window reaches both eyes with a shader's own output
+ OpenGL 4.6 core, 17.4.1 "Selecting Buffers for Writing": for the default
+ framebuffer one glDrawBuffer constant specifies "zero, one, two, or four
+ buffers", and they are the set "to which fragment color zero is written".
+ GL_BACK of a quad buffer window is the left and the right back buffer.
+ .
+ _mesa_drawbuffers() lists those buffers as color buffers 0 and 1, and the
+ drivers write gl_FragColor to every color buffer, but a shader's own output
+ at location 0 only to the first. So a program that draws each eye into
+ GL_BACK_LEFT and GL_BACK_RIGHT and then its 2D parts with GL_BACK got those
+ parts in the left eye alone when its shaders declare their output (every
+ core profile shader does): Open Cascade's CAD Assistant 1.6.0, a Qt Quick
+ program on a 4.5 core context, showed its tool strip, its panels and its logo
+ in the left eye only, on radeonsi and on zink over NVIDIA's Vulkan driver.
+ glClear, fixed-function drawing and gl_FragColor already reached both.
+ .
+ The state tracker now makes a variant of the fragment shader while one
+ glDrawBuffer constant names several buffers of the window's framebuffer: the
+ output at location 0 becomes the color the drivers write to every buffer,
+ and the other color outputs go, since their draw buffers are GL_NONE in that
+ state. A framebuffer object, glDrawBuffers() with one buffer per output, and
+ a shader that blends from two sources keep the shader as it is.
+ .
+ Measured with tests/glx-back-both-eyes.c under Stereo KWin: red before and
+ green after on radeonsi and on zink over NVIDIA 615.71.09; the modes that
+ already worked (gl_FragColor, glClear, fixed function) stay green; the
+ program's capture with stereo off differs by 0 pixels.
+ .
+ Searched on 2026-11-14 in Mesa's issues and merge requests ("GL_BACK stereo
+ fragment output", "DrawBuffer GL_BACK stereo", "FRONT_AND_BACK fragment
+ output", "WRITES_ALL_CBUFS stereo", "quad buffer stereo right buffer"):
+ nothing on it.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-14
+
+--- a/src/mesa/state_tracker/st_atom_shader.c
++++ b/src/mesa/state_tracker/st_atom_shader.c
+@@ -38,6 +38,7 @@
+ 
+ #include "main/mtypes.h"
+ #include "main/framebuffer.h"
++#include "main/fbobject.h"
+ #include "main/state.h"
+ #include "main/texobj.h"
+ #include "main/teximage.h"
+@@ -108,6 +109,31 @@
+ }
+ 
+ /**
++ * OpenGL 4.6 core, 17.4.1 "Selecting Buffers for Writing": for the default
++ * framebuffer one glDrawBuffer constant specifies "zero, one, two, or four
++ * buffers", the set "to which fragment color zero is written". GL_BACK of a
++ * stereo window is the left and the right back buffer.
++ *
++ * _mesa_drawbuffers() then lists those buffers as color buffers 0..n-1 while
++ * only ColorDrawBuffer[0] holds a constant. The drivers write gl_FragColor to
++ * every color buffer, but a shader's own output at location 0 only to the
++ * first, so such a shader drew in the left eye alone.
++ */
++static bool
++color0_goes_to_several_buffers(const struct gl_context *ctx,
++                               const struct gl_program *fp)
++{
++   const struct gl_framebuffer *fb = ctx->DrawBuffer;
++
++   return fb && _mesa_is_winsys_fbo(fb) &&
++          fb->_NumColorDrawBuffers > 1 &&
++          fb->_ColorDrawBufferIndexes[1] != BUFFER_NONE &&
++          fb->ColorDrawBuffer[1] == GL_NONE &&
++          (fp->info.outputs_written & BITFIELD64_BIT(FRAG_RESULT_DATA0)) &&
++          !fp->info.fs.color_is_dual_source;
++}
++
++/**
+  * Update fragment program state/atom.  This involves translating the
+  * Mesa fragment program into a gallium fragment program and binding it.
+  */
+@@ -125,7 +151,8 @@
+    if (st->shader_has_one_variant[MESA_SHADER_FRAGMENT] &&
+        !fp->ati_fs && /* ATI_fragment_shader always has multiple variants */
+        !fp->ExternalSamplersUsed && /* external samplers need variants */
+-       !(!fp->shader_program && fp->ShadowSamplers)) {
++       !(!fp->shader_program && fp->ShadowSamplers) &&
++       !color0_goes_to_several_buffers(st->ctx, fp)) {
+       shader = fp->variants->driver_shader;
+    } else {
+       struct st_fp_variant_key key;
+@@ -151,6 +178,9 @@
+       key.clamp_color = st->clamp_frag_color_in_shader &&
+                         st->ctx->Color._ClampFragmentColor;
+ 
++      /* _NEW_BUFFERS | _NEW_PROGRAM */
++      key.color0_to_all_cbufs = color0_goes_to_several_buffers(st->ctx, fp);
++
+       /* _NEW_MULTISAMPLE | _NEW_BUFFERS */
+       key.persample_shading =
+          st->force_persample_in_shader &&
+--- a/src/mesa/state_tracker/st_program.c
++++ b/src/mesa/state_tracker/st_program.c
+@@ -1049,6 +1049,35 @@
+    return true;
+ }
+ 
++/**
++ * The shader's output at location 0 becomes the color that the drivers write
++ * to every color buffer (what gl_FragColor is), and its other color outputs
++ * go: with one glDrawBuffer constant their draw buffers are GL_NONE
++ * (OpenGL 4.6 core, 17.4.1).
++ */
++static bool
++color0_to_all_cbufs_instr(nir_builder *b, nir_intrinsic_instr *intr,
++                          void *data)
++{
++   if (intr->intrinsic != nir_intrinsic_store_output)
++      return false;
++
++   nir_io_semantics sem = nir_intrinsic_io_semantics(intr);
++
++   if (sem.location == FRAG_RESULT_DATA0) {
++      sem.location = FRAG_RESULT_COLOR;
++      nir_intrinsic_set_io_semantics(intr, sem);
++      return true;
++   }
++
++   if (sem.location > FRAG_RESULT_DATA0 && sem.location <= FRAG_RESULT_DATA7) {
++      nir_instr_remove(&intr->instr);
++      return true;
++   }
++
++   return false;
++}
++
+ static struct st_fp_variant *
+ st_create_fp_variant(struct st_context *st,
+                      struct gl_program *fp,
+@@ -1092,6 +1121,11 @@
+       finalize = true;
+    }
+ 
++   if (key->color0_to_all_cbufs) {
++      NIR_PASS(finalize, state.ir.nir, nir_shader_intrinsics_pass,
++               color0_to_all_cbufs_instr, nir_metadata_control_flow, NULL);
++   }
++
+    if (key->clamp_color) {
+       NIR_PASS(_, state.ir.nir, nir_lower_clamp_color_outputs);
+    }
+--- a/src/mesa/state_tracker/st_program.h
++++ b/src/mesa/state_tracker/st_program.h
+@@ -271,6 +271,12 @@
+    GLuint lower_flatshade:1;
+    unsigned lower_alpha_func:3;
+ 
++   /** One glDrawBuffer constant of the default framebuffer names several
++    * buffers (GL_BACK of a stereo window): the output at location 0 is
++    * fragment color zero and goes to each of them.
++    */
++   GLuint color0_to_all_cbufs:1;
++
+    /** needed for ATI_fragment_shader */
+    uint8_t texture_index[MAX_NUM_FRAGMENT_REGISTERS_ATI];
+ 

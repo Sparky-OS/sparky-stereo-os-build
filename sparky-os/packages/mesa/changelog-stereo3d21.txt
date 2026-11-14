@@ -1,0 +1,16 @@
+mesa (26.1.6-1+stereo3d21) unstable; urgency=medium
+
+  * glDrawBuffer(GL_BACK) of a quad buffer window reaches both eyes when the
+    shader declares its own output (0037): OpenGL 4.6 core 17.4.1 writes
+    fragment color zero to every buffer one glDrawBuffer constant names, and
+    the drivers did that for gl_FragColor only, so a program that draws its
+    2D parts with GL_BACK after its two eyes showed them in the left eye
+    alone (Open Cascade's CAD Assistant: tool strip, panels and logo). The
+    state tracker gives such a shader a variant whose output at location 0 is
+    written to every buffer, for the window's framebuffer only.
+  * tests/glx-back-both-eyes.c with its check: a quad buffer window, the left
+    eye red, the right eye blue, then one green rectangle drawn with GL_BACK
+    by a core profile shader (MODE=out), a gl_FragColor shader, a scissored
+    clear and fixed function; each must be green in both eyes.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 14 Nov 2026 03:40:00 +0000
