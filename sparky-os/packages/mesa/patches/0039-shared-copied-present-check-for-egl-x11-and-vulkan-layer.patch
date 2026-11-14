@@ -1113,8 +1113,42 @@ index fdacbb7..da740ee 100644
        include_directories : [inc_include, inc_src],
      ),
    )
+diff --git a/src/vulkan/stereo-layer/passthrough_test.c b/src/vulkan/stereo-layer/passthrough_test.c
+index 030541a..1d7f22a 100644
+--- a/src/vulkan/stereo-layer/passthrough_test.c
++++ b/src/vulkan/stereo-layer/passthrough_test.c
+@@ -61,8 +61,29 @@ capabilities(VkPhysicalDevice physical, VkSurfaceKHR surface, VkSurfaceCapabilit
+    return VK_SUCCESS;
+ }
+ 
++static void
++left_pixels(void)
++{
++   const uint32_t rgb8[4] = { 0xff0000, 0xff00, 0xff, 0xff000000 };
++   const uint32_t rgb10[4] = { 0x3ff00000, 0xffc00, 0x3ff, 0 };
++   uint8_t rgba[4] = { 255, 0, 0, 128 }, bgra[4] = { 0, 0, 255, 128 };
++   assert(x11_left_pixel(rgba, VK_FORMAT_R8G8B8A8_SRGB, rgb8) == 0x80ff0000);
++   assert(x11_left_pixel(bgra, VK_FORMAT_B8G8R8A8_UNORM, rgb8) == 0x80ff0000);
++   uint32_t packed = 1023;
++   assert(x11_left_pixel((uint8_t *)&packed, VK_FORMAT_A2B10G10R10_UNORM_PACK32, rgb10) == 0x3ff00000);
++   packed = 1023u << 20;
++   assert(x11_left_pixel((uint8_t *)&packed, VK_FORMAT_A2R10G10B10_UNORM_PACK32, rgb10) == 0x3ff00000);
++   uint16_t half[4] = { 0x3c00, 0, 0, 0x3c00 };
++   assert(x11_left_pixel((uint8_t *)half, VK_FORMAT_R16G16B16A16_SFLOAT, rgb8) == 0xffff0000);
++   uint16_t unorm[4] = { 65535, 0, 0, 65535 };
++   assert(x11_left_pixel((uint8_t *)unorm, VK_FORMAT_R16G16B16A16_UNORM, rgb10) == 0x3ff00000);
++   assert(x11_left_pixel_size(VK_FORMAT_R16G16B16A16_SFLOAT) == 8);
++   assert(!x11_left_pixel_size(VK_FORMAT_UNDEFINED));
++}
++
+ int main(void)
+ {
++   left_pixels();
+    struct instance_data instance = {
+       .instance = (VkInstance)&dispatch,
+       .GetSurfaceCapabilities = capabilities,
 diff --git a/src/vulkan/stereo-layer/stereo_layer.c b/src/vulkan/stereo-layer/stereo_layer.c
-index ffd5544..8987091 100644
+index ffd5544..f9a5594 100644
 --- a/src/vulkan/stereo-layer/stereo_layer.c
 +++ b/src/vulkan/stereo-layer/stereo_layer.c
 @@ -11,7 +11,8 @@
@@ -1138,15 +1172,34 @@ index ffd5544..8987091 100644
     union {
        struct {
           struct wl_display *display;
-@@ -176,6 +181,7 @@ struct device_data {
+@@ -176,6 +181,15 @@ struct device_data {
     PFN_vkDestroySwapchainKHR DestroySwapchain;
     PFN_vkGetSwapchainImagesKHR GetSwapchainImages;
     PFN_vkQueuePresentKHR QueuePresent;
 +   PFN_vkAcquireNextImageKHR AcquireNextImage;
++   PFN_vkCreateBuffer CreateBuffer;
++   PFN_vkDestroyBuffer DestroyBuffer;
++   PFN_vkGetBufferMemoryRequirements GetBufferMemoryRequirements;
++   PFN_vkBindBufferMemory BindBufferMemory;
++   PFN_vkMapMemory MapMemory;
++   PFN_vkUnmapMemory UnmapMemory;
++   PFN_vkInvalidateMappedMemoryRanges InvalidateMappedMemoryRanges;
++   PFN_vkCmdCopyImageToBuffer CmdCopyImageToBuffer;
     PFN_vkCreateImage CreateImage;
     PFN_vkDestroyImage DestroyImage;
     PFN_vkGetImageMemoryRequirements GetImageMemoryRequirements;
-@@ -414,6 +420,121 @@ declare_xlib(struct surface_data *surface)
+@@ -209,6 +223,10 @@ struct swapchain_data {
+    uint32_t width;
+    uint32_t height;
+    uint32_t image_count;
++   VkFormat format;
++   VkBuffer left_buffer;
++   VkDeviceMemory left_memory;
++   void *left_map;
+    VkImage *downstream_images;
+    VkImage *images;
+    VkDeviceMemory *memory;
+@@ -414,6 +432,90 @@ declare_xlib(struct surface_data *surface)
        u_x11_stereo_list_child(connection, surface->u.xlib.window);
  }
  
@@ -1232,43 +1285,12 @@ index ffd5544..8987091 100644
 +   }
 +}
 +
-+/* The downstream WSI owns packed images, including while the declaration is
-+ * taken back. A window-sized Present of its left picture tests whether a
-+ * complete single view can flip, without changing the application's swapchain
-+ * or reading any image back to the CPU.
-+ */
-+static bool
-+x11_flat_probe(struct swapchain_data *swapchain)
-+{
-+   struct surface_data *surface = swapchain->surface;
-+   xcb_window_t window = XCB_NONE;
-+   xcb_connection_t *conn = x11_connection(surface, &window);
-+   xcb_get_geometry_reply_t *g = xcb_get_geometry_reply(conn,
-+      xcb_get_geometry(conn, window), NULL);
-+   if (!g) return false;
-+   xcb_pixmap_t pixmap = xcb_generate_id(conn);
-+   xcb_gcontext_t gc = xcb_generate_id(conn);
-+   xcb_create_pixmap(conn, g->depth, pixmap, window, swapchain->width, swapchain->height);
-+   uint32_t include = XCB_SUBWINDOW_MODE_INCLUDE_INFERIORS;
-+   xcb_create_gc(conn, gc, pixmap, XCB_GC_SUBWINDOW_MODE, &include);
-+   xcb_copy_area(conn, window, pixmap, gc, 0, 0, 0, 0,
-+                 swapchain->width, swapchain->height);
-+   uint32_t serial = ++surface->probe_serial;
-+   xcb_present_pixmap(conn, window, pixmap, serial, XCB_NONE, XCB_NONE,
-+      0, 0, XCB_NONE, XCB_NONE, XCB_NONE, XCB_PRESENT_OPTION_NONE, 0, 0, 0, 0, NULL);
-+   xcb_flush(conn);
-+   int mode = x11_completion(surface, serial, true);
-+   x11_completed(swapchain, mode);
-+   xcb_free_gc(conn, gc);
-+   xcb_free_pixmap(conn, pixmap);
-+   free(g);
-+   return mode >= 0;
-+}
++#include "x11_left.h"
 +
  static void
  declare_wayland(struct surface_data *surface, uint32_t width, uint32_t height)
  {
-@@ -451,6 +572,12 @@ destroy_surface_data(struct surface_data *surface)
+@@ -451,6 +553,12 @@ destroy_surface_data(struct surface_data *surface)
                                  NULL, wl_proxy_get_version((struct wl_proxy *)surface->u.wl.viewporter),
                                  WL_MARSHAL_FLAG_DESTROY);
     }
@@ -1281,15 +1303,23 @@ index ffd5544..8987091 100644
     free(surface);
  }
  
-@@ -641,6 +768,7 @@ load_device_functions(struct device_data *data)
+@@ -641,6 +749,15 @@ load_device_functions(struct device_data *data)
     LOAD_TO(DestroySwapchain, DestroySwapchainKHR);
     LOAD_TO(GetSwapchainImages, GetSwapchainImagesKHR);
     LOAD_TO(QueuePresent, QueuePresentKHR);
 +   LOAD_TO(AcquireNextImage, AcquireNextImageKHR);
++   LOAD(CreateBuffer);
++   LOAD(DestroyBuffer);
++   LOAD(GetBufferMemoryRequirements);
++   LOAD(BindBufferMemory);
++   LOAD(MapMemory);
++   LOAD(UnmapMemory);
++   LOAD(InvalidateMappedMemoryRanges);
++   LOAD(CmdCopyImageToBuffer);
     LOAD(CreateImage);
     LOAD(DestroyImage);
     LOAD(GetImageMemoryRequirements);
-@@ -821,6 +949,24 @@ stereo_CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR *create_i
+@@ -821,6 +938,24 @@ stereo_CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR *create_i
        return result;
     if (caps.maxImageArrayLayers >= 2)
        return data->CreateSwapchain(device, create_info, allocator, swapchain_handle);
@@ -1314,7 +1344,15 @@ index ffd5544..8987091 100644
     bool declared_before_create = surface->stereo_swapchain_created;
     VkSwapchainCreateInfoKHR downstream_info = *create_info;
     downstream_info.imageArrayLayers = 1;
-@@ -942,7 +1088,7 @@ stereo_GetSwapchainImages(VkDevice device, VkSwapchainKHR handle, uint32_t *coun
+@@ -844,6 +979,7 @@ stereo_CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR *create_i
+    }
+    swapchain->device = data;
+    swapchain->surface = surface;
++   swapchain->format = create_info->imageFormat;
+    swapchain->width = create_info->imageExtent.width;
+    swapchain->height = create_info->imageExtent.height;
+    if (surface->wayland)
+@@ -942,7 +1078,7 @@ stereo_GetSwapchainImages(VkDevice device, VkSwapchainKHR handle, uint32_t *coun
  }
  
  static void
@@ -1323,7 +1361,7 @@ index ffd5544..8987091 100644
  {
     struct device_data *data = swapchain->device;
     data->ResetCommandBuffer(swapchain->command, 0);
-@@ -970,7 +1116,7 @@ record_pack(struct swapchain_data *swapchain, uint32_t index)
+@@ -970,7 +1106,7 @@ record_pack(struct swapchain_data *swapchain, uint32_t index)
           .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
           .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
           .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -1332,7 +1370,7 @@ index ffd5544..8987091 100644
           .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 2 },
        },
     };
-@@ -984,13 +1130,16 @@ record_pack(struct swapchain_data *swapchain, uint32_t index)
+@@ -984,13 +1120,16 @@ record_pack(struct swapchain_data *swapchain, uint32_t index)
           .extent = { swapchain->width, swapchain->height, 1 },
        },
        {
@@ -1351,7 +1389,7 @@ index ffd5544..8987091 100644
                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, downstream_image,
                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 2, regions);
     barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-@@ -1033,7 +1182,11 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
+@@ -1033,7 +1172,11 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
        struct swapchain_data *swapchain = find_swapchain(data, present_info->pSwapchains[i]);
        if (!swapchain)
           continue;
@@ -1364,7 +1402,7 @@ index ffd5544..8987091 100644
        commands[count] = swapchain->command;
        ready[count++] = swapchain->ready;
     }
-@@ -1058,6 +1211,57 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
+@@ -1058,6 +1201,67 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
        downstream.pWaitSemaphores = ready;
        result = data->QueuePresent(queue, &downstream);
     }
@@ -1376,11 +1414,16 @@ index ffd5544..8987091 100644
 +         int mode = x11_completion(surface, 0, false);
 +         if (mode < 0) { result = VK_ERROR_SURFACE_LOST_KHR; break; }
 +         if (surface->pair.flat) {
-+            if (!x11_flat_probe(swapchain)) { result = VK_ERROR_SURFACE_LOST_KHR; break; }
++            if (!x11_left(swapchain, queue, present_info->pImageIndices[i])) { result = VK_ERROR_SURFACE_LOST_KHR; break; }
 +            continue;
 +         }
 +         bool wait = u_stereo_pair_wait(&surface->pair);
 +         x11_completed(swapchain, mode);
++         if (surface->pair.flat) {
++            if (!x11_left(swapchain, queue, present_info->pImageIndices[i]))
++               result = VK_ERROR_SURFACE_LOST_KHR;
++            continue;
++         }
 +         if (!wait || !u_stereo_pair_again(&surface->pair)) continue;
 +         /* A still window must know after this call too. Acquire a different
 +          * downstream image; the application's shadow image remains ours to
@@ -1411,7 +1454,12 @@ index ffd5544..8987091 100644
 +            if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
 +               int complete = x11_completion(surface, 0, false);
 +               if (complete < 0) result = VK_ERROR_SURFACE_LOST_KHR;
-+               else x11_completed(swapchain, complete);
++               else {
++                  x11_completed(swapchain, complete);
++                  if (surface->pair.flat &&
++                      !x11_left(swapchain, queue, present_info->pImageIndices[i]))
++                     result = VK_ERROR_SURFACE_LOST_KHR;
++               }
 +            }
 +            data->QueueWaitIdle(queue);
 +         }
@@ -1422,3 +1470,223 @@ index ffd5544..8987091 100644
     free(ready);
     return result;
  }
+@@ -1077,6 +1281,7 @@ stereo_DestroySwapchain(VkDevice device, VkSwapchainKHR handle,
+    }
+    *link = swapchain->next;
+    data->QueueWaitIdle(data->first_queue);
++   x11_left_finish(swapchain);
+    if (swapchain->ready)
+       data->DestroySemaphore(device, swapchain->ready, NULL);
+    if (swapchain->command)
+diff --git a/src/vulkan/stereo-layer/x11_left.h b/src/vulkan/stereo-layer/x11_left.h
+new file mode 100644
+index 0000000..a1f220b
+--- /dev/null
++++ b/src/vulkan/stereo-layer/x11_left.h
+@@ -0,0 +1,206 @@
++/* Copyright 2026 Daniel Campos Ramos
++ * SPDX-License-Identifier: MIT
++ *
++ * An opaque one-layer WSI still presents a packed image after take-back.
++ * Its copied window is not a source of the left view: an offset or a smaller
++ * pixmap may already have replaced part of it with the right view. Read the
++ * retained left image, without resizing it, into an ordinary window-sized
++ * Present pixmap. This transfer runs only while the pair cannot be presented.
++ */
++#include "util/half_float.h"
++
++static unsigned
++x11_left_pixel_size(VkFormat format)
++{
++   switch (format) {
++   case VK_FORMAT_B8G8R8A8_UNORM: case VK_FORMAT_B8G8R8A8_SRGB:
++   case VK_FORMAT_R8G8B8A8_UNORM: case VK_FORMAT_R8G8B8A8_SRGB:
++   case VK_FORMAT_A8B8G8R8_UNORM_PACK32: case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
++   case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
++   case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
++      return 4;
++   case VK_FORMAT_R16G16B16A16_SFLOAT:
++   case VK_FORMAT_R16G16B16A16_UNORM:
++      return 8;
++   default:
++      return 0;
++   }
++}
++
++/* X11's TrueColor channel masks, including 30-bit visuals. Preserve encoded
++ * sRGB bytes; this is a transfer, not another colour-space conversion.
++ */
++static uint32_t
++x11_left_pixel(const uint8_t *src, VkFormat format, const uint32_t masks[4])
++{
++   uint32_t c[4], max = 255, v;
++   memcpy(&v, src, 4);
++   switch (format) {
++   case VK_FORMAT_B8G8R8A8_UNORM: case VK_FORMAT_B8G8R8A8_SRGB:
++      c[0] = src[2]; c[1] = src[1]; c[2] = src[0]; c[3] = src[3];
++      break;
++   case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
++      c[0] = (v >> 20) & 1023; c[1] = (v >> 10) & 1023; c[2] = v & 1023;
++      max = 1023; c[3] = (v >> 30) * 341;
++      break;
++   case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
++      c[0] = v & 1023; c[1] = (v >> 10) & 1023; c[2] = (v >> 20) & 1023;
++      max = 1023; c[3] = (v >> 30) * 341;
++      break;
++   case VK_FORMAT_R16G16B16A16_SFLOAT:
++   case VK_FORMAT_R16G16B16A16_UNORM:
++      max = 65535;
++      for (unsigned i = 0; i < 4; i++) {
++         uint16_t h;
++         memcpy(&h, src + 2 * i, 2);
++         if (format == VK_FORMAT_R16G16B16A16_UNORM) c[i] = h;
++         else {
++            float f = _mesa_half_to_float(h);
++            c[i] = !(f > 0) ? 0 : f >= 1 ? max : (uint32_t)(f * max + 0.5f);
++         }
++      }
++      break;
++   default:
++      c[0] = src[0]; c[1] = src[1]; c[2] = src[2]; c[3] = src[3];
++      break;
++   }
++   uint32_t pixel = 0;
++   for (unsigned i = 0; i < 4; i++) {
++      if (!masks[i]) continue;
++      unsigned shift = __builtin_ctz(masks[i]);
++      uint32_t channel_max = masks[i] >> shift;
++      pixel |= (uint32_t)(((uint64_t)c[i] * channel_max + max / 2) / max) << shift;
++   }
++   return pixel;
++}
++
++static void
++x11_left_finish(struct swapchain_data *swapchain)
++{
++   struct device_data *d = swapchain->device;
++   if (swapchain->left_map) d->UnmapMemory(d->device, swapchain->left_memory);
++   if (swapchain->left_buffer) d->DestroyBuffer(d->device, swapchain->left_buffer, NULL);
++   if (swapchain->left_memory) d->FreeMemory(d->device, swapchain->left_memory, NULL);
++   swapchain->left_map = NULL;
++   swapchain->left_buffer = VK_NULL_HANDLE;
++   swapchain->left_memory = VK_NULL_HANDLE;
++}
++
++static bool
++x11_left(struct swapchain_data *swapchain, VkQueue queue, unsigned image)
++{
++   struct device_data *d = swapchain->device;
++   unsigned bpp = x11_left_pixel_size(swapchain->format);
++   if (!bpp) {
++      fprintf(stderr, "Mesa stereo layer: cannot transfer the left view of X11 format %u\n", swapchain->format);
++      return false;
++   }
++   if (!swapchain->left_buffer) {
++      VkBufferCreateInfo buffer = { .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
++         .size = (VkDeviceSize)swapchain->width * swapchain->height * bpp,
++         .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT };
++      if (d->CreateBuffer(d->device, &buffer, NULL, &swapchain->left_buffer) != VK_SUCCESS)
++         goto fail;
++      VkMemoryRequirements req;
++      d->GetBufferMemoryRequirements(d->device, swapchain->left_buffer, &req);
++      unsigned type = 0;
++      for (; type < d->memory.memoryTypeCount; type++)
++         if ((req.memoryTypeBits & (1u << type)) &&
++             (d->memory.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) break;
++      if (type == d->memory.memoryTypeCount) goto fail;
++      VkMemoryAllocateInfo alloc = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
++         .allocationSize = req.size, .memoryTypeIndex = type };
++      if (d->AllocateMemory(d->device, &alloc, NULL, &swapchain->left_memory) != VK_SUCCESS ||
++          d->BindBufferMemory(d->device, swapchain->left_buffer, swapchain->left_memory, 0) != VK_SUCCESS ||
++          d->MapMemory(d->device, swapchain->left_memory, 0, VK_WHOLE_SIZE, 0, &swapchain->left_map) != VK_SUCCESS)
++         goto fail;
++   }
++   if (d->QueueWaitIdle(queue) != VK_SUCCESS ||
++       d->ResetCommandBuffer(swapchain->command, 0) != VK_SUCCESS) goto fail;
++   VkCommandBufferBeginInfo begin = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
++      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
++   if (d->BeginCommandBuffer(swapchain->command, &begin) != VK_SUCCESS) goto fail;
++   VkImageMemoryBarrier barrier = { .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
++      .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
++      .oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++      .image = swapchain->images[image], .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 } };
++   d->CmdPipelineBarrier(swapchain->command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
++      VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
++   VkBufferImageCopy copy = { .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
++      .imageExtent = { swapchain->width, swapchain->height, 1 } };
++   d->CmdCopyImageToBuffer(swapchain->command, swapchain->images[image],
++      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapchain->left_buffer, 1, &copy);
++   barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
++   barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
++   barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
++   barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
++   VkBufferMemoryBarrier host = { .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
++      .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
++      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++      .buffer = swapchain->left_buffer, .size = VK_WHOLE_SIZE };
++   d->CmdPipelineBarrier(swapchain->command, VK_PIPELINE_STAGE_TRANSFER_BIT,
++      VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 1, &host, 1, &barrier);
++   if (d->EndCommandBuffer(swapchain->command) != VK_SUCCESS) goto fail;
++   VkSubmitInfo submit = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
++      .commandBufferCount = 1, .pCommandBuffers = &swapchain->command };
++   if (d->QueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS ||
++       d->QueueWaitIdle(queue) != VK_SUCCESS) goto fail;
++   VkMappedMemoryRange range = { .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
++      .memory = swapchain->left_memory, .size = VK_WHOLE_SIZE };
++   if (d->InvalidateMappedMemoryRanges(d->device, 1, &range) != VK_SUCCESS) goto fail;
++   xcb_window_t window = XCB_NONE;
++   xcb_connection_t *conn = x11_connection(swapchain->surface, &window);
++   xcb_get_geometry_reply_t *g = xcb_get_geometry_reply(conn, xcb_get_geometry(conn, window), NULL);
++   xcb_get_window_attributes_reply_t *a = xcb_get_window_attributes_reply(conn,
++      xcb_get_window_attributes(conn, window), NULL);
++   uint32_t masks[4] = {0};
++   const xcb_setup_t *setup = xcb_get_setup(conn);
++   for (xcb_screen_iterator_t s = xcb_setup_roots_iterator(setup); s.rem; xcb_screen_next(&s))
++      for (xcb_depth_iterator_t depth = xcb_screen_allowed_depths_iterator(s.data); depth.rem; xcb_depth_next(&depth))
++         for (xcb_visualtype_iterator_t v = xcb_depth_visuals_iterator(depth.data); v.rem; xcb_visualtype_next(&v))
++            if (a && v.data->visual_id == a->visual) {
++               masks[0] = v.data->red_mask; masks[1] = v.data->green_mask; masks[2] = v.data->blue_mask;
++            }
++   free(a);
++   if (g && g->depth == 32) masks[3] = ~(masks[0] | masks[1] | masks[2]);
++   unsigned pixel_bits = 0;
++   for (xcb_format_iterator_t f = xcb_setup_pixmap_formats_iterator(setup); f.rem; xcb_format_next(&f))
++      if (g && f.data->depth == g->depth) pixel_bits = f.data->bits_per_pixel;
++   if (!g || pixel_bits != 32 || !masks[0] || !masks[1] || !masks[2]) { free(g); goto fail; }
++   uint32_t *pixels = malloc((size_t)swapchain->width * swapchain->height * 4);
++   if (!pixels) { free(g); goto fail; }
++   for (size_t i = 0, n = (size_t)swapchain->width * swapchain->height; i < n; i++) {
++      uint32_t pixel = x11_left_pixel((const uint8_t *)swapchain->left_map + i * bpp, swapchain->format, masks);
++#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
++      if (setup->image_byte_order == XCB_IMAGE_ORDER_MSB_FIRST) pixel = __builtin_bswap32(pixel);
++#else
++      if (setup->image_byte_order == XCB_IMAGE_ORDER_LSB_FIRST) pixel = __builtin_bswap32(pixel);
++#endif
++      pixels[i] = pixel;
++   }
++   xcb_pixmap_t pixmap = xcb_generate_id(conn);
++   xcb_gcontext_t gc = xcb_generate_id(conn);
++   xcb_create_pixmap(conn, g->depth, pixmap, window, swapchain->width, swapchain->height);
++   xcb_create_gc(conn, gc, pixmap, 0, NULL);
++   unsigned rows = (xcb_get_maximum_request_length(conn) * 4 - 128) / (swapchain->width * 4);
++   if (!rows) { free(pixels); free(g); xcb_free_gc(conn, gc); xcb_free_pixmap(conn, pixmap); goto fail; }
++   for (unsigned y = 0; y < swapchain->height; y += rows) {
++      unsigned h = MIN2(rows, swapchain->height - y);
++      xcb_put_image(conn, XCB_IMAGE_FORMAT_Z_PIXMAP, pixmap, gc, swapchain->width, h,
++         0, y, 0, g->depth, swapchain->width * h * 4, (uint8_t *)(pixels + (size_t)y * swapchain->width));
++   }
++   free(pixels); free(g);
++   uint32_t serial = ++swapchain->surface->probe_serial;
++   xcb_present_pixmap(conn, window, pixmap, serial, XCB_NONE, XCB_NONE,
++      0, 0, XCB_NONE, XCB_NONE, XCB_NONE, XCB_PRESENT_OPTION_NONE, 0, 0, 0, 0, NULL);
++   xcb_flush(conn);
++   int mode = x11_completion(swapchain->surface, serial, true);
++   x11_completed(swapchain, mode);
++   xcb_free_gc(conn, gc); xcb_free_pixmap(conn, pixmap);
++   return mode >= 0;
++fail:
++   fprintf(stderr, "Mesa stereo layer: could not transfer its complete left image to the X11 window\n");
++   x11_left_finish(swapchain);
++   return false;
++}
