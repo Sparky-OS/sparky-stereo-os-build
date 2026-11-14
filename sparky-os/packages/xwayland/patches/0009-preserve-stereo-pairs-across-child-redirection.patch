@@ -1,3 +1,8 @@
+Description: Preserve stereo pairs across child redirection
+ Keep both child views through first-copy presentation, compositor redirection
+ and backing-pixmap recycling. Carried unchanged from +stereo3d4.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+
 --- a/hw/xwayland/xwayland-glamor-gbm.c
 +++ b/hw/xwayland/xwayland-glamor-gbm.c
 @@ -53,6 +53,7 @@
