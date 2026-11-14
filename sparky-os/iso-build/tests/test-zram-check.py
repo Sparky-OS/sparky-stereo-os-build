@@ -88,7 +88,8 @@ class Documentation(Fixtures):
     path = '/usr/share/agent-skills/developer/example/guide.md'
 
     def test_unrun_markdown_is_noted_in_documentation_and_skills_folders(self):
-        for path in (self.path, '/usr/share/doc/example/guide.md', '/opt/example/docs/guide.markdown'):
+        for path in (self.path, '/usr/share/doc/example/guide.md', '/opt/example/docs/guide.markdown',
+                     '/usr/share/doc/systemd/zram.md', '/usr/share/doc/example/zram-generator.conf.d/guide.md'):
             with self.subTest(path=path):
                 notes = self.assertNoted(self.deb(files={path: self.page}), path + ': documentation, not run')
                 self.assertEqual(len(notes), 1)

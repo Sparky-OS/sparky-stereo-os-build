@@ -695,8 +695,10 @@ def markdown(path):
 
 def configuration(path):
     path = str(path).lstrip('/')
-    parts = set(PurePosixPath(path).parts)
-    return bool(parts & CONFIG_FOLDERS or path.startswith(('etc/', 'boot/', 'var/lib/dpkg/info/', 'DEBIAN/')))
+    if path.startswith(('etc/', 'boot/', 'var/lib/dpkg/info/', 'DEBIAN/', 'usr/share/initramfs-tools/')):
+        return True
+    return any(path.startswith(f'{root}/{folder}/') for root in ('usr/lib', 'usr/local/lib', 'lib', 'run')
+               for folder in CONFIG_FOLDERS)
 
 
 def references(path, data, mode):
@@ -804,16 +806,16 @@ def scan_file(shown, path, data, notes=None, document=None):
     """Every finding of one file, by its path, its text lines or, when compiled, its tokens. DATA is None for a
     link or a file too big to read. The tear-down lines it carries go to NOTES as (line number, line, what)."""
     findings = []
-    what = path_rule(path)
     text = text_of(data) if data is not None and len(data) <= TEXT_LIMIT else None
-    if what:
-        section = next(((n, l.strip()) for n, l in enumerate((text or '').splitlines(), 1)
-                        if l.strip().startswith('[zram')), None)
-        findings.append(f'{shown}:{section[0]}: {section[1]} ({what})' if section else f'{shown}: {what}')
     if document:
         if notes is not None and MENTION.search(text or ''):
             notes.append((0, '', 'documentation, not run'))
         return findings
+    what = path_rule(path)
+    if what:
+        section = next(((n, l.strip()) for n, l in enumerate((text or '').splitlines(), 1)
+                        if l.strip().startswith('[zram')), None)
+        findings.append(f'{shown}:{section[0]}: {section[1]} ({what})' if section else f'{shown}: {what}')
     if document is False and markdown(path) and (data is None or len(data) > TEXT_LIMIT):
         findings.append(f'{shown}: Markdown cannot be read within the text limit; not classified as unrun documentation')
         return findings
