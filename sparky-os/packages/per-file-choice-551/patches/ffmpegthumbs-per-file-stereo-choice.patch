@@ -20,10 +20,10 @@ index 2f91396..0bfcca5 100644
      DESCRIPTION "Shared stereo picture and video policy of Sparky Stereo OS"
      TYPE OPTIONAL
 diff --git a/ffmpegthumbnailer/videothumbnailer.cpp b/ffmpegthumbnailer/videothumbnailer.cpp
-index 6d96c11..2f24f3b 100644
+index 6d96c11..46f6b88 100644
 --- a/ffmpegthumbnailer/videothumbnailer.cpp
 +++ b/ffmpegthumbnailer/videothumbnailer.cpp
-@@ -128,13 +128,19 @@ void VideoThumbnailer::generateThumbnail(const QString& videoFile, ImageWriter&
+@@ -128,13 +128,27 @@ void VideoThumbnailer::generateThumbnail(const QString& videoFile, ImageWriter&
  bool VideoThumbnailer::generateStereoThumbnail(MovieDecoder& movieDecoder, const QString& stereoMark, const QString& videoFile, ImageWriter& imageWriter, QImage& image)
  {
  #ifdef HAVE_STEREO_LAYER
@@ -46,24 +46,36 @@ index 6d96c11..2f24f3b 100644
 +                                                                                                             : Stereo::Picture::AnaglyphColorPair::None;
 +    const bool colours = anaglyph != Stereo::Picture::AnaglyphColorPair::None;
 +    if ((stereo.layout == Stereo::Picture::Layout::None && !colours) || shown.isEmpty()) {
++        return false;
++    }
++    // Views that come one after the other in time (a frame sequence, both views laced in one block), or that are a
++    // layer or a track of their own, are not in one frame: the thumbnail is the frame as it is, one view, made the
++    // ordinary way, and the per-file menu says so beside those entries. The frame is left untouched for that.
++    if (!colours
++        && (stereo.layout == Stereo::Picture::Layout::FrameSequential || stereo.layout == Stereo::Picture::Layout::BlockLaced
++            || stereo.layout == Stereo::Picture::Layout::MultiView || stereo.layout == Stereo::Picture::Layout::DepthSeparate)) {
          return false;
      }
  
-@@ -152,10 +158,16 @@ bool VideoThumbnailer::generateStereoThumbnail(MovieDecoder& movieDecoder, const
+@@ -152,9 +166,19 @@ bool VideoThumbnailer::generateStereoThumbnail(MovieDecoder& movieDecoder, const
      }
      QImage packed;
      imageWriter.writeFrame(videoFrame, packed, QImageIOHandler::TransformationNone);
 -    auto picture = Stereo::Picture::fromPackedImage(packed, stereo.layout, stereo.eyeOrder);
-+    // Views that come one after the other in time (a frame sequence, both views laced in one block) are not in one
-+    // frame: fromPackedImage() gives no pair for them and the thumbnail stays the one view this frame holds, which the
-+    // per-file menu says beside those entries.
 +    auto picture = colours ? Stereo::Picture::fromAnaglyph(packed, anaglyph) : Stereo::Picture::fromPackedImage(packed, stereo.layout, stereo.eyeOrder);
      if (!picture.isStereo()) {
-         return false;
-     }
+-        return false;
++        // No pair could be taken out of this frame. The decoder's frame is already converted, and the ordinary path
++        // would convert it a second time into a dark, broken picture: the flat thumbnail is made here from what was read.
++        applyFilters(videoFrame);
++        imageWriter.writeFrame(videoFrame, image, movieDecoder.transformations());
++        if (image.width() > m_ThumbnailSize || image.height() > m_ThumbnailSize) {
++            image = image.scaled(m_ThumbnailSize, m_ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
++        }
++        return !image.isNull();
++    }
 +    if (colours && options.swapEyes) {
 +        picture = picture.swapped();
-+    }
+     }
      if (interleaved && shown.width() != movieDecoder.getWidth()) {
          const QSize view(qMax(1, qRound(picture.left.width() * double(shown.width()) / movieDecoder.getWidth())), picture.left.height());
-         picture.left = picture.left.scaled(view, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
