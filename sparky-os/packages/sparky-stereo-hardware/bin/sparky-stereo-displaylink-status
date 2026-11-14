@@ -1,0 +1,45 @@
+#!/usr/bin/python3
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/14
+# Copyright 2026 under the GNU GPL3 License
+"""Keep a failed DisplayLink invocation in the shared problems engine."""
+import os
+import subprocess
+import sys
+import sparky_stereo_problems as problems
+
+PACKAGE = 'sparky-stereo-hardware'
+KEY = 'displaylink-start'
+
+
+def main():
+    if sys.argv[1:] == ['ready']:
+        problems.clear(PACKAGE, KEY)
+        return 0
+    if sys.argv[1:] != ['stopped']:
+        raise ValueError('expected ready or stopped')
+    result = os.environ.get('SERVICE_RESULT', 'success')
+    if result == 'success':
+        return 0
+    status = '/'.join([result, os.environ.get('EXIT_CODE', 'unknown'),
+                       os.environ.get('EXIT_STATUS', 'unknown')])
+    invocation = os.environ['INVOCATION_ID']
+    subprocess.run(['journalctl', '--sync'], check=True)
+    log = subprocess.run(['journalctl', '--no-pager', '-o', 'cat',
+                          '_SYSTEMD_INVOCATION_ID=' + invocation],
+                         capture_output=True, text=True, check=True).stdout
+    print('displaylink-driver.service: ' + status +
+          '; automatic retry stopped; see journalctl -u displaylink-driver.service',
+          file=sys.stderr)
+    problems.keep(PACKAGE, KEY, 'LOCAL20', [status], output=log,
+                  command=['systemctl', 'start', 'displaylink-driver.service'],
+                  repair=[])
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError,
+            problems.Failed) as error:
+        print('displaylink-status: ' + str(error), file=sys.stderr)
+        sys.exit(1)

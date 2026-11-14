@@ -1,0 +1,87 @@
+#!/usr/bin/python3
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/14
+# Copyright 2026 under the GNU GPL3 License
+"""Match the documented machine table; print JSON for inspection and the journal."""
+import argparse
+import fnmatch
+import json
+from pathlib import Path
+import re
+import sys
+
+TABLE = Path('/usr/share/sparky/sparky-stereo-hardware/known-machines.json')
+
+
+def read_optional(path):
+    try:
+        return path.read_text().strip()
+    except FileNotFoundError:
+        return ''
+
+
+def identifiers(root):
+    result = {'dmi_product': read_optional(root / 'class/dmi/id/product_name'),
+              'usb': [], 'pci': []}
+    for bus, names in [('usb', ('idVendor', 'idProduct')),
+                       ('pci', ('vendor', 'device'))]:
+        for device in sorted((root / 'bus' / bus / 'devices').glob('*')):
+            pair = [read_optional(device / name).lower().removeprefix('0x')
+                    for name in names]
+            if all(re.fullmatch('[0-9a-f]{4}', item) for item in pair):
+                result[bus].append(':'.join(pair))
+    return result
+
+
+def matches(rule, ids):
+    if not rule or set(rule) - {'dmi_product', 'usb', 'pci'}:
+        raise ValueError('invalid machine match fields')
+    for field, patterns in rule.items():
+        if not isinstance(patterns, list) or not patterns or not all(
+                isinstance(p, str) and p for p in patterns):
+            raise ValueError('machine match needs nonempty string lists')
+        values = [ids[field]] if field == 'dmi_product' else ids[field]
+        if not any(fnmatch.fnmatchcase(value, pattern)
+                   for value in values for pattern in patterns):
+            return False
+    return True
+
+
+def inspect(table, ids):
+    if table.get('version') != 1 or not isinstance(table.get('machines'), list):
+        raise ValueError('unsupported machine table')
+    found = []
+    seen = set()
+    for entry in table['machines']:
+        name = entry.get('id', '')
+        if not re.fullmatch('[a-z0-9]+(?:-[a-z0-9]+)*', name) or name in seen:
+            raise ValueError('invalid or duplicate machine id')
+        seen.add(name)
+        # No machine-specific write is authorised yet. A future action needs
+        # an idempotent handler, a fixture and a problems-engine change record.
+        if entry.get('corrections') != []:
+            raise ValueError('machine correction has no reviewed handler')
+        if matches(entry.get('match'), ids):
+            found.append(entry)
+    return found
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--sysfs-root', type=Path, default=Path('/sys'))
+    parser.add_argument('--table', type=Path, default=TABLE)
+    parser.add_argument('--list', action='store_true')
+    parser.add_argument('--apply', action='store_true')
+    args = parser.parse_args()
+    table = json.loads(args.table.read_text())
+    ids = identifiers(args.sysfs_root)
+    found = inspect(table, ids)
+    print(json.dumps({'matched': found, 'changes': []}, ensure_ascii=False))
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, TypeError) as error:
+        print(f'known-machines: {error}', file=sys.stderr)
+        sys.exit(1)

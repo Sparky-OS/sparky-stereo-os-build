@@ -56,4 +56,13 @@ install -Dm644 "$HERE/share/udev/71-sparky-stereo-nvidia-units.rules" "$D/usr/li
 
 sparky-stereo-problems catalog sparky-stereo-hardware "$HERE/problems-lang" "$D/usr/lib/systemd/catalog" \
 	--subject LOCAL1=LOCAL2,LOCAL3,LOCAL4 --subject LOCAL9=LOCAL5,LOCAL6,LOCAL7,LOCAL8,LOCAL10,LOCAL11,LOCAL12,LOCAL13,LOCAL14,LOCAL15,LOCAL16 \
-	--subject LOCAL17=LOCAL18
+	--subject LOCAL17=LOCAL18 --subject LOCAL19=LOCAL20
+
+# Persistent DisplayLink startup errors are reported once; vendor hotplug stays.
+install -Dm755 "$HERE/bin/sparky-stereo-displaylink-status" "$D/usr/lib/sparky-stereo-hardware/displaylink-status"
+install -Dm644 "$HERE/share/systemd/displaylink-driver.service.d/40-sparky-stereo-hardware.conf" "$D/usr/lib/systemd/system/displaylink-driver.service.d/40-sparky-stereo-hardware.conf"
+# This unit records its own invocation; avoid a second generic failure record.
+ln -s /dev/null "$D/usr/lib/systemd/system/displaylink-driver.service.d/50-sparky-stereo-problems.conf"
+install -Dm755 "$HERE/bin/sparky-stereo-known-machines" "$D/usr/bin/sparky-stereo-known-machines"
+install -Dm644 "$HERE/share/known-machines.json" "$D/usr/share/sparky/sparky-stereo-hardware/known-machines.json"
+install -Dm644 "$HERE/share/systemd/sparky-stereo-known-machines.service" "$D/usr/lib/systemd/system/sparky-stereo-known-machines.service"

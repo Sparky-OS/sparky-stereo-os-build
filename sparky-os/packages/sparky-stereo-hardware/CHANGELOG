@@ -1,4 +1,10 @@
 -------------------------------------------------------------------------------
+  Version 0.1.26 (2026-11-14)
+-------------------------------------------------------------------------------
+  * Stop DisplayLink restart loops after a failed module/driver startup, using a drop-in. Keep the vendor startup steps and USB activation. Keep one failed invocation in the problems engine and clear it after a successful start; ten languages.
+  * Add the known-machines table and a boot inspection command. SVD132 (Sony VAIO Duo 13, including SVD13217CBW) has no userspace correction: the camera fix belongs to the kernel; physical-size policy belongs to ORDER 572.
+
+-------------------------------------------------------------------------------
   Version 0.1.24 (2026-11-07)
 -------------------------------------------------------------------------------
   * thermald is installed by the detection on Intel CPUs only, laptop or desktop (ORDER 43; found on a Ryzen 5 5600G): thermald prints "Unsupported cpu model or platform" and leaves on any other vendor without taking its bus name, so its unit failed at every boot, and sparky-stereo-hardware-support no longer depends on it. Before this version the detection added it for an Intel laptop and the metapackage added it on every machine, so an Intel desktop had it only through the metapackage and keeps it now through the detection (a machine that has it already keeps it: nothing is removed)

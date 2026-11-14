@@ -184,3 +184,36 @@ No new OpenGL exception is enabled by this result.
 `proposals/vinci-launcher-match.py` retains a tested narrow argv match for review if a future runtime changes that behavior.
 It accepts only Vinci's two containers running `/opt/resolve/bin/resolve` after `env`, and rejects shells, other containers and similarly named executables.
 A future exception would need to cover both Vinci's Open button and its per-user desktop launcher, preserve the Graphics-page choice, and pass the CUDA/OpenGL probe again.
+
+## DisplayLink startup failures
+
+The vendor owns `displaylink-driver.service`. Its unit and USB rules are kept.
+Our drop-in changes `Restart=always` to `Restart=on-abnormal`: an unsuccessful
+startup, clean exit or reported daemon error stops; a daemon killed by an
+abnormal signal or watchdog can still restart under systemd's start limit.
+A failed `modprobe evdi` therefore cannot restart every five seconds. The
+vendor's current module-build pre-step is also preserved. The failed invocation
+is kept by `sparky-stereo-problems`, with no automatic repair; its output gives
+the cause. After repairing it, reconnect the USB device or start the service.
+The vendor's existing USB add script starts it again. A successful start clears
+the record. Nothing disables, masks, removes or enables the vendor service.
+
+## Known machines
+
+`sparky-stereo-known-machines --list` prints the matching entries as JSON.
+The boot service runs the same scan with `--apply`. The versioned table is
+`/usr/share/sparky/sparky-stereo-hardware/known-machines.json`. Match fields
+are DMI product patterns, USB vendor:product and PCI vendor:device; fields
+combine with AND, alternatives inside one field with OR. A missing DMI file
+means no DMI match. A read error is reported, not treated as missing hardware.
+`--sysfs-root` and `--table` permit isolated fixtures.
+
+The first entry is the Sony VAIO Duo 13, product family `SVD132*` (including
+`SVD13217CBW`). Its correction list is deliberately empty. UVC bulk decoding
+belongs to the kernel, and ORDER 572 owns the panel-size policy (344 x 193 mm
+in timing blocks versus 29 x 17 cm in the base size field). This table documents
+those owners and does not repeat their work. No setting or file is changed and
+no problem is invented for this machine. Unknown machines remain untouched.
+A nonempty correction list is rejected until a reviewed, idempotent handler
+and a problems-engine record for its actual changes accompany it. The table
+never executes a command supplied by a device or by a string in the table.
