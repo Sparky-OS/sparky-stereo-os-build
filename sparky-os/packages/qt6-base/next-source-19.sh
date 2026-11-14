@@ -39,6 +39,13 @@ for shader in "$HERE"/painting-shaders/*.qsb; do
 	cp "$shader" "$W/overlay/painting-shaders/"
 	echo "debian/painting-shaders/$(basename "$shader")" >> "$W/overlay/source/include-binaries"
 done
+# the symbols the painting exports, at this version without its Lean Code part and with "~" (a symbols file with the
+# whole current version is a lintian error, and a lower version would let a Qt without the painting satisfy a user)
+for add in "$HERE"/painting-symbols/*.symbols.add; do
+	name=$(basename "$add" .add)
+	[ -z "$(tail -c1 "$W/published/debian/$name")" ] || { echo "$name does not end with a newline" >&2; exit 2; }
+	cat "$W/published/debian/$name" "$add" > "$W/overlay/$name"
+done
 # the patches that are ours, for the copyright file (repo/provenance-files.py reads each patch's own header)
 [ ! -e "$W/published/debian/sparky-provenance-files" ] || { echo "the published source has a provenance manifest: merge it here" >&2; exit 2; }
 mkdir -p "$W/ours/debian/patches"
