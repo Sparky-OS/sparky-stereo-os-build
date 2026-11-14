@@ -1,0 +1,1715 @@
+Description: Shared copied-present check for EGL X11 and the Vulkan stereo layer
+ GLX, EGL and the packed Vulkan layer use one transition rule and one
+ problems-engine transport; EGL DRI3 retains packed buffer width and the
+ software path preserves its first left view and excludes row padding.
+Author: Daniel Campos Ramos
+Forwarded: no
+Last-Update: 2026-11-14
+
+diff --git a/src/egl/drivers/dri2/egl_dri2.h b/src/egl/drivers/dri2/egl_dri2.h
+index 97f81e0..a2d5548 100644
+--- a/src/egl/drivers/dri2/egl_dri2.h
++++ b/src/egl/drivers/dri2/egl_dri2.h
+@@ -35,6 +35,7 @@
+ #include <X11/Xlib-xcb.h>
+ #include <xcb/randr.h>
+ #include <xcb/xcb.h>
++#include "util/u_stereo_pair.h"
+ #include <xcb/xfixes.h>
+ 
+ #include "loader_dri_helper.h"
+@@ -322,6 +323,9 @@ struct dri2_egl_surface {
+    bool have_fake_front;
+ 
+ #ifdef HAVE_X11_PLATFORM
++   struct u_stereo_pair x11_pair;
++   xcb_special_event_t *x11_pair_event;
++   uint32_t x11_pair_eid, x11_pair_serial;
+    xcb_drawable_t drawable;
+    xcb_xfixes_region_t region;
+    int depth;
+@@ -649,4 +653,7 @@ combine_u32_into_u64(uint32_t hi, uint32_t lo)
+    return (((uint64_t)hi) << 32) | (((uint64_t)lo) & 0xffffffff);
+ }
+ 
++#ifdef HAVE_X11_PLATFORM
++void dri2_x11_pair_completed(struct dri2_egl_display *, struct dri2_egl_surface *, unsigned, int, int);
++#endif
+ #endif /* EGL_DRI2_INCLUDED */
+diff --git a/src/egl/drivers/dri2/platform_x11.c b/src/egl/drivers/dri2/platform_x11.c
+index 6fd63f6..0a7b908 100644
+--- a/src/egl/drivers/dri2/platform_x11.c
++++ b/src/egl/drivers/dri2/platform_x11.c
+@@ -63,6 +63,7 @@
+ #include "dri_drawable.h"
+ #include "util/u_x11_stereo_child.h"
+ #include <xcb/present.h>
++#include "util/u_x11_stereo_present.h"
+ 
+ /* The version of the stereo content declaration the compositor announces on
+  * the root window, 0 without one; from 3 the compositor itself makes a
+@@ -98,6 +99,28 @@ dri2_x11_stereo_supported(_EGLDisplay *disp)
+    return dri2_x11_stereo_support_version(dri2_egl_display(disp)) >= 1;
+ }
+ 
++void
++dri2_x11_pair_completed(struct dri2_egl_display *dpy, struct dri2_egl_surface *surf,
++                        unsigned mode, int width, int height)
++{
++   if (!surf->x11_stereo_one_eye || mode == XCB_PRESENT_COMPLETE_MODE_SKIP)
++      return;
++   xcb_get_geometry_reply_t *g = xcb_get_geometry_reply(dpy->conn,
++      xcb_get_geometry(dpy->conn, surf->drawable), NULL);
++   if (!g) return;
++   struct dri_drawable *draw = surf->dri_drawable;
++   enum u_stereo_pair_change change = u_x11_stereo_present_completed(&surf->x11_pair,
++      dpy->conn, surf->drawable, "libegl-mesa0", mode == XCB_PRESENT_COMPLETE_MODE_FLIP,
++      width, height, g->width, g->height);
++   free(g);
++   if (change != U_STEREO_PAIR_SAME && draw) {
++      draw->stereo_flat = surf->x11_pair.flat;
++      if (change == U_STEREO_PAIR_RETURNS)
++         dri2_x11_declare_stereo(dpy, surf->drawable, surf->base.Width);
++      dri_invalidate_drawable(draw);
++   }
++}
++
+ static int
+ dri2_x11_eye_width(const _EGLSurface *surf, int width)
+ {
+@@ -110,7 +133,7 @@ dri2_x11_eye_width(const _EGLSurface *surf, int width)
+ static int
+ dri2_x11_buffer_width(const _EGLSurface *surf)
+ {
+-   return surf->Width * (surf->MultiviewViewCount > 1 ? 2 : 1);
++   return surf->Width * (surf->MultiviewViewCount > 1 && !((const struct dri2_egl_surface *)surf)->x11_pair.flat ? 2 : 1);
+ }
+ 
+ /* Declares the window as holding stereo content. Returns whether the window
+@@ -198,6 +221,9 @@ static void
+ swrastDestroyDrawable(struct dri2_egl_display *dri2_dpy,
+                       struct dri2_egl_surface *dri2_surf)
+ {
++   if (dri2_surf->x11_pair_event)
++      xcb_unregister_for_special_event(dri2_dpy->conn, dri2_surf->x11_pair_event);
++
+    xcb_free_gc(dri2_dpy->conn, dri2_surf->gc);
+    xcb_free_gc(dri2_dpy->conn, dri2_surf->swapgc);
+ }
+@@ -258,7 +284,7 @@ swrast_stereo_pixmap(struct dri2_egl_display *dri2_dpy,
+        x != 0 || y != 0)
+       return XCB_NONE;
+    /* the image is the packed buffer, which may be padded beyond both eyes */
+-   *w = MIN2(*w, 2 * dri2_surf->base.Width);
++   *w = MIN2(*w, dri2_x11_buffer_width(&dri2_surf->base));
+    *h = MIN2(*h, dri2_surf->base.Height);
+    xcb_pixmap_t pixmap = xcb_generate_id(dri2_dpy->conn);
+    xcb_create_pixmap(dri2_dpy->conn, dri2_surf->depth, pixmap,
+@@ -267,14 +293,32 @@ swrast_stereo_pixmap(struct dri2_egl_display *dri2_dpy,
+ }
+ 
+ static void
+-swrast_stereo_present(struct dri2_egl_display *dri2_dpy,
+-                      struct dri2_egl_surface *dri2_surf, xcb_pixmap_t pixmap)
++swrast_stereo_present(struct dri2_egl_display *dpy, struct dri2_egl_surface *surf, xcb_pixmap_t pixmap)
+ {
+-   if (!pixmap)
+-      return;
+-   xcb_present_pixmap(dri2_dpy->conn, dri2_surf->drawable, pixmap, 0, 0, 0, 0,
+-                      0, 0, 0, 0, XCB_PRESENT_OPTION_NONE, 0, 0, 0, 0, NULL);
+-   xcb_free_pixmap(dri2_dpy->conn, pixmap);
++   if (!pixmap) return;
++   if (!surf->x11_pair_event) {
++      surf->x11_pair_eid = xcb_generate_id(dpy->conn);
++      surf->x11_pair_event = xcb_register_for_special_xge(dpy->conn, &xcb_present_id, surf->x11_pair_eid, NULL);
++      xcb_present_select_input(dpy->conn, surf->x11_pair_eid, surf->drawable, XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY);
++   }
++   bool wait = u_stereo_pair_wait(&surf->x11_pair);
++   bool again;
++   do {
++      uint32_t serial = ++surf->x11_pair_serial;
++      int width = dri2_x11_buffer_width(&surf->base);
++      xcb_present_pixmap(dpy->conn, surf->drawable, pixmap, serial, 0, 0, 0, 0, 0, 0, 0, XCB_PRESENT_OPTION_NONE, 0, 0, 0, 0, NULL);
++      xcb_flush(dpy->conn);
++      xcb_generic_event_t *ev;
++      while ((ev=xcb_wait_for_special_event(dpy->conn, surf->x11_pair_event))) {
++         xcb_present_complete_notify_event_t *ce=(void*)ev;
++         bool done=ce->event_type==XCB_PRESENT_COMPLETE_NOTIFY && ce->kind==XCB_PRESENT_COMPLETE_KIND_PIXMAP && ce->serial==serial;
++         if (done) dri2_x11_pair_completed(dpy, surf, ce->mode, width, surf->base.Height);
++         free(ev);
++         if (done) break;
++      }
++      again=wait && u_stereo_pair_again(&surf->x11_pair);
++   } while (again);
++   xcb_free_pixmap(dpy->conn, pixmap);
+ }
+ 
+ static void
+@@ -623,8 +667,14 @@ dri2_x11_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
+    if (!dri2_create_drawable(dri2_dpy, config, dri2_surf, dri2_surf))
+       goto cleanup_pixmap;
+ 
+-   if (dri2_surf->x11_stereo_one_eye)
++   if (dri2_surf->x11_stereo_one_eye) {
+       dri2_surf->dri_drawable->stereo_window_one_eye = true;
++      /* As with GLX, the right draw buffer activates stereo. Before that,
++       * getDrawableInfo already returns one complete view, not half of it.
++       * A width change on the first right draw would discard the left view.
++       */
++      dri2_surf->dri_drawable->stereo_on_demand = true;
++   }
+ 
+    if (type == EGL_PBUFFER_BIT) {
+       dri2_surf->depth = conf->BufferSize;
+diff --git a/src/egl/drivers/dri2/platform_x11_dri3.c b/src/egl/drivers/dri2/platform_x11_dri3.c
+index 2e1ff6c..2a97492 100644
+--- a/src/egl/drivers/dri2/platform_x11_dri3.c
++++ b/src/egl/drivers/dri2/platform_x11_dri3.c
+@@ -43,6 +43,7 @@
+ #include "loader.h"
+ #include "x11_dri3.h"
+ #include "loader_dri3_helper.h"
++#include "util/u_stereo_pair.h"
+ 
+ static struct dri3_egl_surface *
+ loader_drawable_to_egl_surface(struct loader_dri3_drawable *draw)
+@@ -62,6 +63,8 @@ egl_dri3_set_drawable_size(struct loader_dri3_drawable *draw, int width,
+       dri3_surf->surf.base.MultiviewViewCount > 1 &&
+       !dri3_surf->surf.x11_stereo_one_eye ? width / 2 : width;
+    dri3_surf->surf.base.Height = height;
++   if (dri3_surf->surf.x11_stereo_one_eye && draw->dri_drawable)
++      draw->width = dri3_surf->surf.x11_pair.flat ? width : 2 * width;
+ }
+ 
+ static bool
+@@ -105,12 +108,35 @@ egl_dri3_flush_drawable(struct loader_dri3_drawable *draw, unsigned flags)
+    dri2_flush_drawable_for_swapbuffers(disp, &dri3_surf->surf.base);
+ }
+ 
++static void
++egl_dri3_pair_completed(struct loader_dri3_drawable *draw, unsigned mode, int width, int height)
++{
++   struct dri2_egl_surface *surf = &loader_drawable_to_egl_surface(draw)->surf;
++   dri2_x11_pair_completed(dri2_egl_display(surf->base.Resource.Display), surf, mode, width, height);
++}
++
++static bool
++egl_dri3_pair_wait(struct loader_dri3_drawable *draw)
++{
++   struct dri2_egl_surface *surf = &loader_drawable_to_egl_surface(draw)->surf;
++   return surf->x11_stereo_one_eye && u_stereo_pair_wait(&surf->x11_pair);
++}
++
++static bool
++egl_dri3_pair_again(struct loader_dri3_drawable *draw)
++{
++   return u_stereo_pair_again(&loader_drawable_to_egl_surface(draw)->surf.x11_pair);
++}
++
+ static const struct loader_dri3_vtable egl_dri3_vtable = {
+    .set_drawable_size = egl_dri3_set_drawable_size,
+    .in_current_context = egl_dri3_in_current_context,
+    .get_dri_context = egl_dri3_get_dri_context,
+    .get_dri_screen = egl_dri3_get_dri_screen,
+    .flush_drawable = egl_dri3_flush_drawable,
++   .present_completed = egl_dri3_pair_completed,
++   .wait_for_present = egl_dri3_pair_wait,
++   .present_again = egl_dri3_pair_again,
+ };
+ 
+ static EGLBoolean
+@@ -222,8 +248,13 @@ dri3_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
+       goto cleanup_pixmap;
+    }
+ 
+-   if (dri3_surf->surf.x11_stereo_one_eye)
++   dri3_surf->surf.drawable = drawable;
++   dri3_surf->surf.dri_drawable = dri3_surf->loader_drawable.dri_drawable;
++   if (dri3_surf->surf.x11_stereo_one_eye) {
+       dri3_surf->loader_drawable.dri_drawable->stereo_window_one_eye = true;
++      egl_dri3_set_drawable_size(&dri3_surf->loader_drawable,
++         dri3_surf->loader_drawable.geometry_width, dri3_surf->loader_drawable.geometry_height);
++   }
+ 
+    if (dri3_surf->surf.base.ProtectedContent &&
+        dri2_dpy->fd_render_gpu != dri2_dpy->fd_display_gpu) {
+diff --git a/src/glx/glx_stereo_pair.c b/src/glx/glx_stereo_pair.c
+index 5cd7bf6..7912e0d 100644
+--- a/src/glx/glx_stereo_pair.c
++++ b/src/glx/glx_stereo_pair.c
+@@ -3,185 +3,34 @@
+  * SPDX-License-Identifier: MIT
+  */
+ 
+-#include <errno.h>
+-#include <dlfcn.h>
+-#include <pthread.h>
+-#include <spawn.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+-#include <sys/wait.h>
+ #include <X11/Xatom.h>
+ 
+ #include "glxclient.h"
+ #include "dri_common.h"
+ #include "glx_stereo_pair.h"
++#include "util/u_stereo_problem.h"
+ #include "loader.h"
+ #include "util/os_time.h"
+ #include "util/u_process.h"
+ 
+ #if defined(GLX_DIRECT_RENDERING) && (!defined(GLX_USE_APPLEGL) || defined(GLX_USE_APPLE))
+ 
+-extern char **environ;
+-
+-/* The messages of the package that holds this library (debian/lang). */
+-#define PROBLEMS_PACKAGE "libglx-mesa0"
+-#define PROBLEMS_COMMAND "/usr/bin/sparky-stereo-problems"
+-/* sparky-stereo-problems.h: the person's own problems */
+-#define SSP_PERSON 2
+-
+-/* How many flips of the left view in a row bring the declaration back. */
+-#define FLIPS_TO_RETURN 3
+-
+-#ifdef SPARKY_STEREO_PROBLEMS_LIBRARY
+-
+-typedef int (*ssp_keep_fn)(int, const char *, const char *, const char *,
+-                           const char *const *, int, const char *);
+-typedef int (*ssp_clear_fn)(int, const char *, const char *);
+-typedef const char *(*ssp_error_fn)(void);
+-
+-static pthread_mutex_t problems_mutex = PTHREAD_MUTEX_INITIALIZER;
+-static bool problems_opened;
+-static ssp_keep_fn ssp_keep;
+-static ssp_clear_fn ssp_clear;
+-static ssp_error_fn ssp_error_en;
+-
+-/* The engine's library is private and of one architecture: it is opened at
+- * the first use, never linked, and a process that cannot load it (a 32-bit
+- * program) runs the engine's command.
+- */
+-static bool
+-problems_library(void)
+-{
+-   if (!problems_opened) {
+-      void *lib = dlopen(SPARKY_STEREO_PROBLEMS_LIBRARY, RTLD_NOW | RTLD_LOCAL);
+-
+-      problems_opened = true;
+-      if (lib) {
+-         ssp_keep_fn keep = (ssp_keep_fn) dlsym(lib, "ssp_keep");
+-         ssp_clear_fn clear = (ssp_clear_fn) dlsym(lib, "ssp_clear");
+-
+-         ssp_error_en = (ssp_error_fn) dlsym(lib, "ssp_error_en");
+-         if (keep && clear && ssp_error_en) {
+-            ssp_keep = keep;
+-            ssp_clear = clear;
+-         }
+-      }
+-   }
+-   return ssp_keep != NULL;
+-}
+-
+-/* Returns the command's exit status, or -1 when it could not be run. */
+-static int
+-problems_command(char *const argv[])
+-{
+-   pid_t pid;
+-   int status;
+-
+-   if (posix_spawn(&pid, PROBLEMS_COMMAND, NULL, NULL, argv, environ) != 0)
+-      return -1;
+-   while (waitpid(pid, &status, 0) < 0) {
+-      /* A program that reaps every child itself took the status. */
+-      if (errno != EINTR)
+-         return errno == ECHILD ? 0 : -1;
+-   }
+-   return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+-}
+-
+-/* Writes {"severity":"SEVERITY","text_en":"TEXT"} with TEXT escaped; false when it does not fit. */
+-static bool
+-problems_details(char *out, size_t size, const char *severity, const char *text)
+-{
+-   size_t n = snprintf(out, size, "{\"severity\":\"%s\",\"text_en\":\"", severity);
+-
+-   for (; *text; text++) {
+-      const unsigned char c = *text;
+-
+-      if (n + 8 > size)
+-         return false;
+-      if (c == '"' || c == '\\') {
+-         out[n++] = '\\';
+-         out[n++] = c;
+-      } else {
+-         out[n++] = c < 0x20 ? ' ' : c;
+-      }
+-   }
+-   memcpy(out + n, "\"}", 3);
+-   return true;
+-}
+-
+-void
+-glx_problem_keep(const char *key, const char *severity, const char *message,
+-                 const char *arg0, const char *arg1, const char *text_en)
+-{
+-   const char *args[2] = { arg0, arg1 };
+-   const int nargs = arg1 ? 2 : arg0 ? 1 : 0;
+-   char details[2048];
+-   bool kept = false;
+-
+-   glx_message(_LOADER_WARNING, "%s\n", text_en);
+-   if (!problems_details(details, sizeof(details), severity, text_en)) {
+-      glx_message(_LOADER_FATAL, "sparky-stereo-problems: the text of %s does not fit, the person cannot be told\n", key);
+-      return;
+-   }
+-
+-   pthread_mutex_lock(&problems_mutex);
+-   if (problems_library()) {
+-      kept = ssp_keep(SSP_PERSON, PROBLEMS_PACKAGE, key, message, args, nargs, details) == 0;
+-      if (!kept)
+-         glx_message(_LOADER_FATAL, "sparky-stereo-problems: %s could not be kept, the person cannot be told: %s\n",
+-                     key, ssp_error_en());
+-   } else {
+-      char *argv[] = { (char *) "sparky-stereo-problems", (char *) "keep", (char *) "--person", (char *) "--quiet",
+-                       (char *) "--details", details, (char *) PROBLEMS_PACKAGE, (char *) key, (char *) message,
+-                       (char *) arg0, (char *) arg1, NULL };
+-
+-      kept = problems_command(argv) == 0;
+-      if (!kept)
+-         glx_message(_LOADER_FATAL, "sparky-stereo-problems: neither %s nor %s could keep %s, the person cannot be told\n",
+-                     SPARKY_STEREO_PROBLEMS_LIBRARY, PROBLEMS_COMMAND, key);
+-   }
+-   pthread_mutex_unlock(&problems_mutex);
+-}
+-
+-void
+-glx_problem_clear(const char *key)
+-{
+-   /* The engine ends nothing that is not there, so a problem an earlier run
+-    * of the program kept ends here too.
+-    */
+-   pthread_mutex_lock(&problems_mutex);
+-   if (problems_library()) {
+-      if (ssp_clear(SSP_PERSON, PROBLEMS_PACKAGE, key) != 0)
+-         glx_message(_LOADER_WARNING, "sparky-stereo-problems: the earlier problem %s could not be ended: %s\n",
+-                     key, ssp_error_en());
+-   } else {
+-      char *argv[] = { (char *) "sparky-stereo-problems", (char *) "clear", (char *) "--person",
+-                       (char *) PROBLEMS_PACKAGE, (char *) key, NULL };
+-
+-      if (problems_command(argv) != 0)
+-         glx_message(_LOADER_INFO, "sparky-stereo-problems: neither %s nor %s is here, nothing to end for %s\n",
+-                     SPARKY_STEREO_PROBLEMS_LIBRARY, PROBLEMS_COMMAND, key);
+-   }
+-   pthread_mutex_unlock(&problems_mutex);
+-}
+-
+-#else /* !SPARKY_STEREO_PROBLEMS_LIBRARY */
+-
+ void
+ glx_problem_keep(const char *key, const char *severity, const char *message,
+                  const char *arg0, const char *arg1, const char *text_en)
+ {
+-   glx_message(_LOADER_WARNING, "%s\n", text_en);
++   u_stereo_problem_keep("libglx-mesa0", key, severity, message, arg0, arg1, text_en);
+ }
+ 
+ void
+ glx_problem_clear(const char *key)
+ {
++   u_stereo_problem_clear("libglx-mesa0", key);
+ }
+ 
+-#endif
+-
+ /* The problem's key: one for each program, so that two programs neither hide
+  * nor end each other's.  The engine takes letters, digits and _ @ : + - .
+  */
+@@ -233,95 +82,30 @@ glx_stereo_pair_completed(struct glx_stereo_pair *pair, Display *dpy,
+                           Window window, bool flipped, int buffer_width,
+                           int buffer_height, int width, int height)
+ {
+-   if (width != pair->width || height != pair->height) {
+-      /* Another size has other buffers: what failed at the old one is not known to fail here. */
+-      pair->width = width;
+-      pair->height = height;
+-      pair->locked = false;
+-      pair->failed_returns = 0;
+-      pair->flat_flips = 0;
+-   }
+-
+-   if (pair->flat || !pair->confirmed)
+-      glx_message(_LOADER_DEBUG, "stereo pair: window 0x%lx %dx%d: a %dx%d buffer was %s (%s)\n",
+-                  (unsigned long) window, width, height, buffer_width, buffer_height,
+-                  flipped ? "flipped" : "copied", pair->flat ? "left view alone" : "both eyes");
+-
+-   /* A frame made for the size the window had before says nothing about
+-    * the size it has now.
+-    */
+-   if (buffer_width != (pair->flat ? width : 2 * width) || buffer_height != height)
+-      return GLX_STEREO_PAIR_SAME;
+-
+-   if (!pair->flat) {
+-      if (flipped) {
+-         pair->copied_once = false;
+-         pair->confirmed = true;
+-         pair->failed_returns = 0;
+-         if (!pair->cleared) {
+-            const char *program;
+-            char key[96];
+-
+-            stereo_pair_key(key, sizeof(key), &program);
+-            glx_problem_clear(key);
+-            pair->cleared = true;
+-         }
+-         return GLX_STEREO_PAIR_SAME;
+-      }
+-
+-      /* One copy can be a frame the server dropped while the window was
+-       * being managed (unmapped and mapped again by the window manager): it
+-       * completes as a copy and nothing was copied.  Two presents in a row,
+-       * of the window's own size, are certain: the server says what it did
+-       * with these very pixmaps.
+-       */
+-      if (!pair->copied_once) {
+-         pair->copied_once = true;
+-         pair->again = true;
+-         return GLX_STEREO_PAIR_SAME;
+-      }
+-      pair->copied_once = false;
+-      if (pair->returned && !pair->confirmed && ++pair->failed_returns >= 2)
+-         pair->locked = true;
+-      pair->flat = true;
+-      pair->confirmed = false;
+-      pair->cleared = false;
+-      pair->flat_flips = 0;
++   bool cleared = pair->cleared;
++   enum u_stereo_pair_change change = u_stereo_pair_completed(pair, flipped,
++      buffer_width, buffer_height, width, height);
++   if (change == U_STEREO_PAIR_TAKEN_BACK)
+       stereo_pair_take_back(pair, dpy, window, width, height);
+-      return GLX_STEREO_PAIR_TAKEN_BACK;
+-   }
+-
+-   if (!flipped) {
+-      pair->flat_flips = 0;
+-      return GLX_STEREO_PAIR_SAME;
++   else if (!cleared && pair->cleared) {
++      const char *program;
++      char key[96];
++      stereo_pair_key(key, sizeof(key), &program);
++      glx_problem_clear(key);
+    }
+-   if (pair->locked || ++pair->flat_flips < FLIPS_TO_RETURN)
+-      return GLX_STEREO_PAIR_SAME;
+-
+-   pair->flat = false;
+-   pair->returned = true;
+-   pair->flat_flips = 0;
+-   return GLX_STEREO_PAIR_RETURNS;
++   return change;
+ }
+ 
+ bool
+ glx_stereo_pair_wait(struct glx_stereo_pair *pair)
+ {
+-   const int64_t now = os_time_get();
+-   const bool still = now - pair->last_swap > 100000;
+-
+-   pair->last_swap = now;
+-   pair->again = false;
+-   return !pair->flat && (!pair->confirmed || still);
++   return u_stereo_pair_wait(pair);
+ }
+ 
+ bool
+ glx_stereo_pair_again(struct glx_stereo_pair *pair)
+ {
+-   const bool again = pair->again && !pair->flat;
+-
+-   pair->again = false;
+-   return again;
++   return u_stereo_pair_again(pair);
+ }
+ 
+ void
+diff --git a/src/glx/glx_stereo_pair.h b/src/glx/glx_stereo_pair.h
+index c6639b3..39bc214 100644
+--- a/src/glx/glx_stereo_pair.h
++++ b/src/glx/glx_stereo_pair.h
+@@ -19,37 +19,12 @@
+ #include <stdint.h>
+ #include <X11/Xlib.h>
+ 
+-struct glx_stereo_pair {
+-   /* The declaration was taken back; the left view is presented alone. */
+-   bool flat;
+-   /* A pair of the window's size was flipped since it was last declared. */
+-   bool confirmed;
+-   /* The declaration returned at least once. */
+-   bool returned;
+-   /* It returned twice and the pair was copied at once each time: the
+-    * left view flips and the pair does not, so nothing more is tried at
+-    * this size.
+-    */
+-   bool locked;
+-   /* An earlier problem of this program was ended. */
+-   bool cleared;
+-   /* The last pair was copied, and the one before was not. */
+-   bool copied_once;
+-   /* A swap that waited may present its pair once more to know for certain. */
+-   bool again;
+-   unsigned flat_flips;
+-   unsigned failed_returns;
+-   int width, height;
+-   int64_t last_swap;
+-};
+-
+-enum glx_stereo_pair_change {
+-   GLX_STEREO_PAIR_SAME,
+-   /* Present the left view alone from the next frame on. */
+-   GLX_STEREO_PAIR_TAKEN_BACK,
+-   /* Declare the window again and present both eyes from the next frame on. */
+-   GLX_STEREO_PAIR_RETURNS,
+-};
++#include "util/u_stereo_pair.h"
++#define glx_stereo_pair u_stereo_pair
++#define glx_stereo_pair_change u_stereo_pair_change
++#define GLX_STEREO_PAIR_SAME U_STEREO_PAIR_SAME
++#define GLX_STEREO_PAIR_TAKEN_BACK U_STEREO_PAIR_TAKEN_BACK
++#define GLX_STEREO_PAIR_RETURNS U_STEREO_PAIR_RETURNS
+ 
+ /* The X server completed a present of a buffer buffer_width wide for a window
+  * width by height now; flipped: whole (PresentCompleteModeFlip).
+diff --git a/src/util/meson.build b/src/util/meson.build
+index 30cf227..d91493f 100644
+--- a/src/util/meson.build
++++ b/src/util/meson.build
+@@ -335,13 +335,21 @@ libmesa_util_simd = static_library(
+ )
+ libmesa_util_links += libmesa_util_simd
+ 
++stereo_problems_args = []
++if with_platform_x11
++  files_mesa_util += files('u_stereo_problem.c')
++  if get_option('sparky-stereo-problems-library') != ''
++    stereo_problems_args += '-DSPARKY_STEREO_PROBLEMS_LIBRARY="@0@"'.format(get_option('sparky-stereo-problems-library'))
++  endif
++endif
++
+ _libmesa_util = static_library(
+   'mesa_util',
+   [files_mesa_util, files_debug_stack, format_srgb],
+   include_directories : [inc_util, include_directories('format')],
+   dependencies : deps_for_libmesa_util,
+   link_with: libmesa_util_links,
+-  c_args : [c_msvc_compat_args],
++  c_args : [c_msvc_compat_args] + stereo_problems_args,
+   gnu_symbol_visibility : 'hidden',
+   build_by_default : false
+ )
+@@ -456,6 +464,7 @@ if with_tests
+     'tests/string_buffer_test.cpp',
+     'tests/timespec_test.cpp',
+     'tests/u_atomic_test.cpp',
++    'tests/stereo_pair_test.cpp',
+     'tests/u_call_once_test.cpp',
+     'tests/u_debug_stack_test.cpp',
+     'tests/u_debug_test.cpp',
+diff --git a/src/util/tests/stereo_pair_test.cpp b/src/util/tests/stereo_pair_test.cpp
+new file mode 100644
+index 0000000..e37e568
+--- /dev/null
++++ b/src/util/tests/stereo_pair_test.cpp
+@@ -0,0 +1,65 @@
++/* Copyright 2026 Daniel Campos Ramos
++ * SPDX-License-Identifier: MIT */
++#include <gtest/gtest.h>
++#include "util/u_stereo_pair.h"
++
++TEST(stereo_pair, copied_pair_and_recovery)
++{
++   u_stereo_pair p = {};
++   EXPECT_TRUE(u_stereo_pair_wait(&p));
++   EXPECT_EQ(U_STEREO_PAIR_SAME, u_stereo_pair_completed(&p, false, 1600,600,800,600));
++   EXPECT_FALSE(p.flat);
++   EXPECT_TRUE(u_stereo_pair_again(&p));
++   EXPECT_FALSE(u_stereo_pair_again(&p));
++   EXPECT_EQ(U_STEREO_PAIR_TAKEN_BACK, u_stereo_pair_completed(&p,false,1600,600,800,600));
++   EXPECT_TRUE(p.flat);
++   EXPECT_FALSE(u_stereo_pair_again(&p));
++   for (int i=0;i<2;i++)
++      EXPECT_EQ(U_STEREO_PAIR_SAME,u_stereo_pair_completed(&p,true,800,600,800,600));
++   EXPECT_EQ(U_STEREO_PAIR_RETURNS,u_stereo_pair_completed(&p,true,800,600,800,600));
++   EXPECT_FALSE(p.flat);
++   EXPECT_EQ(U_STEREO_PAIR_SAME,u_stereo_pair_completed(&p,true,1600,600,800,600));
++   EXPECT_TRUE(p.confirmed);
++   EXPECT_TRUE(p.cleared);
++}
++
++TEST(stereo_pair, dropped_first_frame_and_old_size)
++{
++   u_stereo_pair p = {};
++   u_stereo_pair_completed(&p,false,1600,600,800,600);
++   u_stereo_pair_completed(&p,true,1600,600,800,600);
++   EXPECT_FALSE(p.copied_once);
++   EXPECT_FALSE(p.flat);
++   for(int i=0;i<5;i++)
++      u_stereo_pair_completed(&p,false,1600,600,900,600);
++   EXPECT_FALSE(p.flat);
++   EXPECT_FALSE(p.copied_once);
++}
++
++TEST(stereo_pair, copy_interrupts_recovery)
++{
++   u_stereo_pair p = {};
++   u_stereo_pair_completed(&p,false,1600,600,800,600);
++   u_stereo_pair_completed(&p,false,1600,600,800,600);
++   u_stereo_pair_completed(&p,true,800,600,800,600);
++   u_stereo_pair_completed(&p,true,800,600,800,600);
++   u_stereo_pair_completed(&p,false,800,600,800,600);
++   EXPECT_EQ(0u,p.flat_flips);
++   EXPECT_EQ(U_STEREO_PAIR_SAME,u_stereo_pair_completed(&p,true,800,600,800,600));
++   EXPECT_TRUE(p.flat);
++}
++
++TEST(stereo_pair, repeat_failed_return_locks_only_this_size)
++{
++   u_stereo_pair p = {};
++   for(int attempt=0; attempt<3;attempt++) {
++      u_stereo_pair_completed(&p,false,1600,600,800,600);
++      EXPECT_EQ(U_STEREO_PAIR_TAKEN_BACK,u_stereo_pair_completed(&p,false,1600,600,800,600));
++      for(int i=0;i<3;i++) u_stereo_pair_completed(&p,true,800,600,800,600);
++   }
++   EXPECT_TRUE(p.flat);
++   EXPECT_TRUE(p.locked);
++   u_stereo_pair_completed(&p,true,900,600,900,600);
++   EXPECT_FALSE(p.locked);
++   EXPECT_EQ(0u,p.failed_returns);
++}
+diff --git a/src/util/u_stereo_pair.h b/src/util/u_stereo_pair.h
+new file mode 100644
+index 0000000..5df2527
+--- /dev/null
++++ b/src/util/u_stereo_pair.h
+@@ -0,0 +1,125 @@
++/* Copyright 2026 Daniel Campos Ramos
++ * SPDX-License-Identifier: MIT
++ */
++#ifndef U_STEREO_PAIR_H
++#define U_STEREO_PAIR_H
++#include <stdbool.h>
++#include <stdint.h>
++#include "util/os_time.h"
++struct u_stereo_pair {
++   /* The declaration was taken back; the left view is presented alone. */
++   bool flat;
++   /* A pair of the window's size was flipped since it was last declared. */
++   bool confirmed;
++   /* The declaration returned at least once. */
++   bool returned;
++   /* It returned twice and the pair was copied at once each time: the
++    * left view flips and the pair does not, so nothing more is tried at
++    * this size.
++    */
++   bool locked;
++   /* An earlier problem of this program was ended. */
++   bool cleared;
++   /* The last pair was copied, and the one before was not. */
++   bool copied_once;
++   /* A swap that waited may present its pair once more to know for certain. */
++   bool again;
++   unsigned flat_flips;
++   unsigned failed_returns;
++   int width, height;
++   int64_t last_swap;
++};
++
++enum u_stereo_pair_change {
++   U_STEREO_PAIR_SAME,
++   /* Present the left view alone from the next frame on. */
++   U_STEREO_PAIR_TAKEN_BACK,
++   /* Declare the window again and present both eyes from the next frame on. */
++   U_STEREO_PAIR_RETURNS,
++};
++
++static inline enum u_stereo_pair_change
++u_stereo_pair_completed(struct u_stereo_pair *pair, bool flipped, int buffer_width,
++                          int buffer_height, int width, int height)
++{
++   if (width != pair->width || height != pair->height) {
++      /* Another size has other buffers: what failed at the old one is not known to fail here. */
++      pair->width = width;
++      pair->height = height;
++      pair->locked = false;
++      pair->failed_returns = 0;
++      pair->flat_flips = 0;
++   }
++
++   /* A frame made for the size the window had before says nothing about
++    * the size it has now.
++    */
++   if (buffer_width != (pair->flat ? width : 2 * width) || buffer_height != height)
++      return U_STEREO_PAIR_SAME;
++
++   if (!pair->flat) {
++      if (flipped) {
++         pair->copied_once = false;
++         pair->confirmed = true;
++         pair->failed_returns = 0;
++         if (!pair->cleared) {
++            pair->cleared = true;
++         }
++         return U_STEREO_PAIR_SAME;
++      }
++
++      /* One copy can be a frame the server dropped while the window was
++       * being managed (unmapped and mapped again by the window manager): it
++       * completes as a copy and nothing was copied.  Two presents in a row,
++       * of the window's own size, are certain: the server says what it did
++       * with these very pixmaps.
++       */
++      if (!pair->copied_once) {
++         pair->copied_once = true;
++         pair->again = true;
++         return U_STEREO_PAIR_SAME;
++      }
++      pair->copied_once = false;
++      if (pair->returned && !pair->confirmed && ++pair->failed_returns >= 2)
++         pair->locked = true;
++      pair->flat = true;
++      pair->confirmed = false;
++      pair->cleared = false;
++      pair->flat_flips = 0;
++      return U_STEREO_PAIR_TAKEN_BACK;
++   }
++
++   if (!flipped) {
++      pair->flat_flips = 0;
++      return U_STEREO_PAIR_SAME;
++   }
++   if (pair->locked || ++pair->flat_flips < 3)
++      return U_STEREO_PAIR_SAME;
++
++   pair->flat = false;
++   pair->returned = true;
++   pair->flat_flips = 0;
++   return U_STEREO_PAIR_RETURNS;
++}
++
++static inline bool
++u_stereo_pair_wait(struct u_stereo_pair *pair)
++{
++   const int64_t now = os_time_get();
++   const bool still = now - pair->last_swap > 100000;
++
++   pair->last_swap = now;
++   pair->again = false;
++   return !pair->flat && (!pair->confirmed || still);
++}
++
++static inline bool
++u_stereo_pair_again(struct u_stereo_pair *pair)
++{
++   const bool again = pair->again && !pair->flat;
++
++   pair->again = false;
++   return again;
++}
++
++#endif
+diff --git a/src/util/u_stereo_problem.c b/src/util/u_stereo_problem.c
+new file mode 100644
+index 0000000..744fb5e
+--- /dev/null
++++ b/src/util/u_stereo_problem.c
+@@ -0,0 +1,168 @@
++/* Copyright 2026 Daniel Campos Ramos
++ * SPDX-License-Identifier: MIT
++ */
++#include <errno.h>
++#include <dlfcn.h>
++#include <pthread.h>
++#include <spawn.h>
++#include <stdio.h>
++#include <stdbool.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/wait.h>
++#include "u_stereo_problem.h"
++extern char **environ;
++
++/* The messages of the package that holds this library (debian/lang). */
++#define PROBLEMS_COMMAND "/usr/bin/sparky-stereo-problems"
++/* sparky-stereo-problems.h: the person's own problems */
++#define SSP_PERSON 2
++
++#ifdef SPARKY_STEREO_PROBLEMS_LIBRARY
++
++typedef int (*ssp_keep_fn)(int, const char *, const char *, const char *,
++                           const char *const *, int, const char *);
++typedef int (*ssp_clear_fn)(int, const char *, const char *);
++typedef const char *(*ssp_error_fn)(void);
++
++static pthread_mutex_t problems_mutex = PTHREAD_MUTEX_INITIALIZER;
++static bool problems_opened;
++static ssp_keep_fn ssp_keep;
++static ssp_clear_fn ssp_clear;
++static ssp_error_fn ssp_error_en;
++
++/* The engine's library is private and of one architecture: it is opened at
++ * the first use, never linked, and a process that cannot load it (a 32-bit
++ * program) runs the engine's command.
++ */
++static bool
++problems_library(void)
++{
++   if (!problems_opened) {
++      void *lib = dlopen(SPARKY_STEREO_PROBLEMS_LIBRARY, RTLD_NOW | RTLD_LOCAL);
++
++      problems_opened = true;
++      if (lib) {
++         ssp_keep_fn keep = (ssp_keep_fn) dlsym(lib, "ssp_keep");
++         ssp_clear_fn clear = (ssp_clear_fn) dlsym(lib, "ssp_clear");
++
++         ssp_error_en = (ssp_error_fn) dlsym(lib, "ssp_error_en");
++         if (keep && clear && ssp_error_en) {
++            ssp_keep = keep;
++            ssp_clear = clear;
++         }
++      }
++   }
++   return ssp_keep != NULL;
++}
++
++/* Returns the command's exit status, or -1 when it could not be run. */
++static int
++problems_command(char *const argv[])
++{
++   pid_t pid;
++   int status;
++
++   if (posix_spawn(&pid, PROBLEMS_COMMAND, NULL, NULL, argv, environ) != 0)
++      return -1;
++   while (waitpid(pid, &status, 0) < 0) {
++      /* A program that reaps every child itself took the status. */
++      if (errno != EINTR)
++         return errno == ECHILD ? 0 : -1;
++   }
++   return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
++}
++
++/* Writes {"severity":"SEVERITY","text_en":"TEXT"} with TEXT escaped; false when it does not fit. */
++static bool
++problems_details(char *out, size_t size, const char *severity, const char *text)
++{
++   size_t n = snprintf(out, size, "{\"severity\":\"%s\",\"text_en\":\"", severity);
++
++   for (; *text; text++) {
++      const unsigned char c = *text;
++
++      if (n + 8 > size)
++         return false;
++      if (c == '"' || c == '\\') {
++         out[n++] = '\\';
++         out[n++] = c;
++      } else {
++         out[n++] = c < 0x20 ? ' ' : c;
++      }
++   }
++   memcpy(out + n, "\"}", 3);
++   return true;
++}
++
++void
++u_stereo_problem_keep(const char *package, const char *key, const char *severity, const char *message,
++                 const char *arg0, const char *arg1, const char *text_en)
++{
++   const char *args[2] = { arg0, arg1 };
++   const int nargs = arg1 ? 2 : arg0 ? 1 : 0;
++   char details[2048];
++   bool kept = false;
++
++   fprintf(stderr, "%s\n", text_en);
++   if (!problems_details(details, sizeof(details), severity, text_en)) {
++      fprintf(stderr, "sparky-stereo-problems: the text of %s does not fit, the person cannot be told\n", key);
++      return;
++   }
++
++   pthread_mutex_lock(&problems_mutex);
++   if (problems_library()) {
++      kept = ssp_keep(SSP_PERSON, package, key, message, args, nargs, details) == 0;
++      if (!kept)
++         fprintf(stderr, "sparky-stereo-problems: %s could not be kept, the person cannot be told: %s\n",
++                     key, ssp_error_en());
++   } else {
++      char *argv[] = { (char *) "sparky-stereo-problems", (char *) "keep", (char *) "--person", (char *) "--quiet",
++                       (char *) "--details", details, (char *) package, (char *) key, (char *) message,
++                       (char *) arg0, (char *) arg1, NULL };
++
++      kept = problems_command(argv) == 0;
++      if (!kept)
++         fprintf(stderr, "sparky-stereo-problems: neither %s nor %s could keep %s, the person cannot be told\n",
++                     SPARKY_STEREO_PROBLEMS_LIBRARY, PROBLEMS_COMMAND, key);
++   }
++   pthread_mutex_unlock(&problems_mutex);
++}
++
++void
++u_stereo_problem_clear(const char *package, const char *key)
++{
++   /* The engine ends nothing that is not there, so a problem an earlier run
++    * of the program kept ends here too.
++    */
++   pthread_mutex_lock(&problems_mutex);
++   if (problems_library()) {
++      if (ssp_clear(SSP_PERSON, package, key) != 0)
++         fprintf(stderr, "sparky-stereo-problems: the earlier problem %s could not be ended: %s\n",
++                     key, ssp_error_en());
++   } else {
++      char *argv[] = { (char *) "sparky-stereo-problems", (char *) "clear", (char *) "--person",
++                       (char *) package, (char *) key, NULL };
++
++      if (problems_command(argv) != 0)
++         fprintf(stderr, "sparky-stereo-problems: neither %s nor %s is here, nothing to end for %s\n",
++                     SPARKY_STEREO_PROBLEMS_LIBRARY, PROBLEMS_COMMAND, key);
++   }
++   pthread_mutex_unlock(&problems_mutex);
++}
++
++#else /* !SPARKY_STEREO_PROBLEMS_LIBRARY */
++
++void
++u_stereo_problem_keep(const char *package, const char *key, const char *severity, const char *message,
++                 const char *arg0, const char *arg1, const char *text_en)
++{
++   fprintf(stderr, "%s\n", text_en);
++}
++
++void
++u_stereo_problem_clear(const char *package, const char *key)
++{
++}
++
++#endif
+diff --git a/src/util/u_stereo_problem.h b/src/util/u_stereo_problem.h
+new file mode 100644
+index 0000000..64a7656
+--- /dev/null
++++ b/src/util/u_stereo_problem.h
+@@ -0,0 +1,9 @@
++/* Copyright 2026 Daniel Campos Ramos
++ * SPDX-License-Identifier: MIT
++ */
++#ifndef U_STEREO_PROBLEM_H
++#define U_STEREO_PROBLEM_H
++void u_stereo_problem_keep(const char *package, const char *key, const char *severity,
++ const char *message, const char *arg0, const char *arg1, const char *text_en);
++void u_stereo_problem_clear(const char *package, const char *key);
++#endif
+diff --git a/src/util/u_x11_stereo_present.h b/src/util/u_x11_stereo_present.h
+new file mode 100644
+index 0000000..3e0cf34
+--- /dev/null
++++ b/src/util/u_x11_stereo_present.h
+@@ -0,0 +1,76 @@
++/* Copyright 2026 Daniel Campos Ramos
++ * SPDX-License-Identifier: MIT
++ */
++#ifndef U_X11_STEREO_PRESENT_H
++#define U_X11_STEREO_PRESENT_H
++#include <stdio.h>
++#include "u_stereo_pair.h"
++#include "u_stereo_problem.h"
++#include "u_process.h"
++#include "u_x11_stereo_child.h"
++
++static inline void
++u_x11_stereo_unlist_child(xcb_connection_t *conn, xcb_window_t window)
++{
++   xcb_window_t owner = u_x11_stereo_owner(conn, window);
++   if (!owner)
++      return;
++   xcb_atom_t atom = u_x11_stereo_atom(conn, "_KDE_NET_WM_STEREO_CONTENT_CHILDREN", false);
++   xcb_grab_server(conn);
++   xcb_get_property_reply_t *r = xcb_get_property_reply(conn,
++      xcb_get_property(conn, false, owner, atom, XCB_ATOM_WINDOW, 0, UINT32_MAX / 4), NULL);
++   if (r && r->type == XCB_ATOM_WINDOW && r->format == 32) {
++      unsigned n = xcb_get_property_value_length(r) / 4, count = 0;
++      xcb_window_t *ids = xcb_get_property_value(r);
++      for (unsigned i=0; i<n; i++)
++         if (ids[i] != window) ids[count++] = ids[i];
++      if (count)
++         xcb_change_property(conn, XCB_PROP_MODE_REPLACE, owner, atom, XCB_ATOM_WINDOW, 32, count, ids);
++      else
++         xcb_delete_property(conn, owner, atom);
++   }
++   free(r);
++   xcb_ungrab_server(conn);
++}
++
++static inline enum u_stereo_pair_change
++u_x11_stereo_present_completed(struct u_stereo_pair *pair, xcb_connection_t *conn,
++ xcb_window_t window, const char *package, bool flipped, int buffer_width,
++ int buffer_height, int width, int height)
++{
++   if (getenv("LIBGL_DEBUG") && strstr(getenv("LIBGL_DEBUG"), "verbose"))
++      fprintf(stderr, "%s stereo Present %s: buffer %dx%d window %dx%d flat=%d\n",
++         package, flipped ? "flip" : "copy", buffer_width, buffer_height, width, height, pair->flat);
++   bool cleared = pair->cleared;
++   enum u_stereo_pair_change change = u_stereo_pair_completed(pair, flipped,
++      buffer_width, buffer_height, width, height);
++   char key[96];
++   const char *program = util_get_process_name();
++   if (!program || !*program) program = "program";
++   unsigned n = snprintf(key, sizeof key, "stereo-pair:");
++   for (const char *s=program; *s && n+1<sizeof key; s++)
++      key[n++] = (*s>='0' && *s<='9') || (*s>='a' && *s<='z') ||
++                  (*s>='A' && *s<='Z') || strchr("_@+-.", *s) ? *s : '_';
++   key[n] = 0;
++   if (change == U_STEREO_PAIR_TAKEN_BACK) {
++      xcb_delete_property(conn, window, u_x11_stereo_atom(conn, "_KDE_NET_WM_STEREO_CONTENT", false));
++      xcb_delete_property(conn, window, u_x11_stereo_atom(conn, "_KDE_NET_WM_STEREO_CONTENT_VERSION", false));
++      u_x11_stereo_unlist_child(conn, window);
++      xcb_flush(conn);
++      char detail[160], text[640];
++      snprintf(detail, sizeof detail,
++         "the X server completed the present of both pictures of window 0x%lx (%dx%d) as a copy%s",
++         (unsigned long)window, width, height,
++         pair->locked ? ", again after its left picture alone was shown whole" : "");
++      snprintf(text, sizeof text,
++         "%s is shown flat: the desktop's X server could not show the two pictures of its 3D window "
++         "together, so the window shows the left picture alone. 3D returns by itself when the window can "
++         "show both again. Update Sparky Stereo OS and log in again; if the program stays flat, report it "
++         "with the program's name. Mesa says: %s", program, detail);
++      u_stereo_problem_keep(package, key, "failed", "LOCAL2", program, detail, text);
++   } else if (!cleared && pair->cleared) {
++      u_stereo_problem_clear(package, key);
++   }
++   return change;
++}
++#endif
+diff --git a/src/vulkan/stereo-layer/meson.build b/src/vulkan/stereo-layer/meson.build
+index fdacbb7..da740ee 100644
+--- a/src/vulkan/stereo-layer/meson.build
++++ b/src/vulkan/stereo-layer/meson.build
+@@ -5,7 +5,7 @@ vklayer_mesa_stereo = shared_library(
+             '-DVK_USE_PLATFORM_XCB_KHR', '-DVK_USE_PLATFORM_XLIB_KHR'],
+   gnu_symbol_visibility : 'hidden',
+   dependencies : [
+-    dep_wayland_client, dep_xcb, dep_x11, dep_x11_xcb,
++    dep_wayland_client, dep_xcb, dep_x11, dep_x11_xcb, dep_xcb_present, idep_mesautil,
+   ],
+   include_directories : [inc_include, inc_src],
+   link_args : cc.get_supported_link_arguments(['-Wl,-Bsymbolic-functions', '-Wl,-z,relro']),
+@@ -37,7 +37,7 @@ if with_tests
+       'passthrough_test.c',
+       c_args : ['-UNDEBUG', '-DVK_USE_PLATFORM_WAYLAND_KHR', '-DVK_USE_PLATFORM_XCB_KHR',
+                 '-DVK_USE_PLATFORM_XLIB_KHR'],
+-      dependencies : [dep_wayland_client, dep_xcb, dep_x11, dep_x11_xcb],
++      dependencies : [dep_wayland_client, dep_xcb, dep_x11, dep_x11_xcb, dep_xcb_present, idep_mesautil],
+       include_directories : [inc_include, inc_src],
+     ),
+   )
+diff --git a/src/vulkan/stereo-layer/passthrough_test.c b/src/vulkan/stereo-layer/passthrough_test.c
+index 030541a..707f7be 100644
+--- a/src/vulkan/stereo-layer/passthrough_test.c
++++ b/src/vulkan/stereo-layer/passthrough_test.c
+@@ -61,8 +61,33 @@ capabilities(VkPhysicalDevice physical, VkSurfaceKHR surface, VkSurfaceCapabilit
+    return VK_SUCCESS;
+ }
+ 
++static void
++left_pixels(void)
++{
++   const uint32_t rgb8[4] = { 0xff0000, 0xff00, 0xff, 0xff000000 };
++   const uint32_t rgb10[4] = { 0x3ff00000, 0xffc00, 0x3ff, 0 };
++   uint8_t rgba[4] = { 255, 0, 0, 128 }, bgra[4] = { 0, 0, 255, 128 };
++   assert(x11_left_pixel(rgba, VK_FORMAT_R8G8B8A8_SRGB, rgb8, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) == 0x80ff0000);
++   assert(x11_left_pixel(bgra, VK_FORMAT_B8G8R8A8_UNORM, rgb8, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) == 0x80ff0000);
++   assert(x11_left_pixel(rgba, VK_FORMAT_R8G8B8A8_UNORM, rgb8,
++      VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) == 0xffff0000);
++   assert(x11_left_pixel(rgba, VK_FORMAT_R8G8B8A8_UNORM, rgb8,
++      VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR) == 0x80800000);
++   uint32_t packed = 1023;
++   assert(x11_left_pixel((uint8_t *)&packed, VK_FORMAT_A2B10G10R10_UNORM_PACK32, rgb10, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) == 0x3ff00000);
++   packed = 1023u << 20;
++   assert(x11_left_pixel((uint8_t *)&packed, VK_FORMAT_A2R10G10B10_UNORM_PACK32, rgb10, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) == 0x3ff00000);
++   uint16_t half[4] = { 0x3c00, 0, 0, 0x3c00 };
++   assert(x11_left_pixel((uint8_t *)half, VK_FORMAT_R16G16B16A16_SFLOAT, rgb8, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) == 0xffff0000);
++   uint16_t unorm[4] = { 65535, 0, 0, 65535 };
++   assert(x11_left_pixel((uint8_t *)unorm, VK_FORMAT_R16G16B16A16_UNORM, rgb10, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) == 0x3ff00000);
++   assert(x11_left_pixel_size(VK_FORMAT_R16G16B16A16_SFLOAT) == 8);
++   assert(!x11_left_pixel_size(VK_FORMAT_UNDEFINED));
++}
++
+ int main(void)
+ {
++   left_pixels();
+    struct instance_data instance = {
+       .instance = (VkInstance)&dispatch,
+       .GetSurfaceCapabilities = capabilities,
+diff --git a/src/vulkan/stereo-layer/stereo_layer.c b/src/vulkan/stereo-layer/stereo_layer.c
+index ffd5544..11c6ba0 100644
+--- a/src/vulkan/stereo-layer/stereo_layer.c
++++ b/src/vulkan/stereo-layer/stereo_layer.c
+@@ -11,7 +11,8 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
+-#include "util/u_x11_stereo_child.h"
++#include "util/u_x11_stereo_present.h"
++#include <xcb/present.h>
+ 
+ #define PUBLIC __attribute__((visibility("default")))
+ 
+@@ -125,6 +126,10 @@ struct surface_data {
+    bool xlib;
+    bool enabled;
+    bool stereo_swapchain_created;
++   struct u_stereo_pair pair;
++   xcb_special_event_t *present_event;
++   xcb_present_event_t present_eid;
++   uint32_t probe_serial;
+    union {
+       struct {
+          struct wl_display *display;
+@@ -176,6 +181,15 @@ struct device_data {
+    PFN_vkDestroySwapchainKHR DestroySwapchain;
+    PFN_vkGetSwapchainImagesKHR GetSwapchainImages;
+    PFN_vkQueuePresentKHR QueuePresent;
++   PFN_vkAcquireNextImageKHR AcquireNextImage;
++   PFN_vkCreateBuffer CreateBuffer;
++   PFN_vkDestroyBuffer DestroyBuffer;
++   PFN_vkGetBufferMemoryRequirements GetBufferMemoryRequirements;
++   PFN_vkBindBufferMemory BindBufferMemory;
++   PFN_vkMapMemory MapMemory;
++   PFN_vkUnmapMemory UnmapMemory;
++   PFN_vkInvalidateMappedMemoryRanges InvalidateMappedMemoryRanges;
++   PFN_vkCmdCopyImageToBuffer CmdCopyImageToBuffer;
+    PFN_vkCreateImage CreateImage;
+    PFN_vkDestroyImage DestroyImage;
+    PFN_vkGetImageMemoryRequirements GetImageMemoryRequirements;
+@@ -209,6 +223,11 @@ struct swapchain_data {
+    uint32_t width;
+    uint32_t height;
+    uint32_t image_count;
++   VkFormat format;
++   VkCompositeAlphaFlagBitsKHR composite_alpha;
++   VkBuffer left_buffer;
++   VkDeviceMemory left_memory;
++   void *left_map;
+    VkImage *downstream_images;
+    VkImage *images;
+    VkDeviceMemory *memory;
+@@ -414,6 +433,90 @@ declare_xlib(struct surface_data *surface)
+       u_x11_stereo_list_child(connection, surface->u.xlib.window);
+ }
+ 
++/* Each subscriber has its own Present event id. Register it as a special
++ * queue, so neither the application nor the driver's WSI consumes our events.
++ */
++static xcb_connection_t *
++x11_connection(struct surface_data *surface, xcb_window_t *window)
++{
++   if (surface->xcb) {
++      *window = surface->u.xcb.window;
++      return surface->u.xcb.connection;
++   }
++   if (surface->xlib) {
++      *window = surface->u.xlib.window;
++      return XGetXCBConnection(surface->u.xlib.display);
++   }
++   return NULL;
++}
++
++static bool
++x11_watch(struct surface_data *surface)
++{
++   xcb_window_t window = XCB_NONE;
++   xcb_connection_t *conn = x11_connection(surface, &window);
++   if (!conn || surface->wayland)
++      return false;
++   if (surface->present_event)
++      return true;
++   surface->present_eid = xcb_generate_id(conn);
++   surface->present_event = xcb_register_for_special_xge(conn, &xcb_present_id,
++                                                       surface->present_eid, NULL);
++   xcb_void_cookie_t cookie = xcb_present_select_input_checked(conn,
++      surface->present_eid, window, XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY);
++   xcb_generic_error_t *error = xcb_request_check(conn, cookie);
++   if (error) {
++      free(error);
++      xcb_unregister_for_special_event(conn, surface->present_event);
++      surface->present_event = NULL;
++   }
++   return surface->present_event != NULL;
++}
++
++static int
++x11_completion(struct surface_data *surface, uint32_t serial, bool own)
++{
++   xcb_window_t window = XCB_NONE;
++   xcb_connection_t *conn = x11_connection(surface, &window);
++   xcb_generic_event_t *event;
++   while ((event = xcb_wait_for_special_event(conn, surface->present_event))) {
++      xcb_present_complete_notify_event_t *complete = (void *)event;
++      bool wanted = complete->event_type == XCB_PRESENT_COMPLETE_NOTIFY &&
++         complete->kind == XCB_PRESENT_COMPLETE_KIND_PIXMAP &&
++         (!own || complete->serial == serial);
++      int mode = complete->mode;
++      free(event);
++      if (wanted)
++         return mode;
++   }
++   return -1;
++}
++
++static void
++x11_completed(struct swapchain_data *swapchain, int mode)
++{
++   if (mode < 0 || mode == XCB_PRESENT_COMPLETE_MODE_SKIP)
++      return;
++   struct surface_data *surface = swapchain->surface;
++   xcb_window_t window = XCB_NONE;
++   xcb_connection_t *conn = x11_connection(surface, &window);
++   xcb_get_geometry_reply_t *geometry = xcb_get_geometry_reply(conn,
++      xcb_get_geometry(conn, window), NULL);
++   if (!geometry)
++      return;
++   enum u_stereo_pair_change change = u_x11_stereo_present_completed(
++      &surface->pair, conn, window, "mesa-vulkan-layer-stereo", mode == XCB_PRESENT_COMPLETE_MODE_FLIP,
++      (surface->pair.flat ? 1 : 2) * swapchain->width, swapchain->height,
++      geometry->width, geometry->height);
++   free(geometry);
++   if (change == U_STEREO_PAIR_RETURNS) {
++      if (surface->xcb) declare_xcb(surface);
++      else declare_xlib(surface);
++   }
++}
++
++#include "x11_left.h"
++
+ static void
+ declare_wayland(struct surface_data *surface, uint32_t width, uint32_t height)
+ {
+@@ -451,6 +554,12 @@ destroy_surface_data(struct surface_data *surface)
+                                 NULL, wl_proxy_get_version((struct wl_proxy *)surface->u.wl.viewporter),
+                                 WL_MARSHAL_FLAG_DESTROY);
+    }
++   if (surface->present_event) {
++      xcb_window_t window = XCB_NONE;
++      xcb_connection_t *conn = x11_connection(surface, &window);
++      xcb_present_select_input(conn, surface->present_eid, window, 0);
++      xcb_unregister_for_special_event(conn, surface->present_event);
++   }
+    free(surface);
+ }
+ 
+@@ -641,6 +750,15 @@ load_device_functions(struct device_data *data)
+    LOAD_TO(DestroySwapchain, DestroySwapchainKHR);
+    LOAD_TO(GetSwapchainImages, GetSwapchainImagesKHR);
+    LOAD_TO(QueuePresent, QueuePresentKHR);
++   LOAD_TO(AcquireNextImage, AcquireNextImageKHR);
++   LOAD(CreateBuffer);
++   LOAD(DestroyBuffer);
++   LOAD(GetBufferMemoryRequirements);
++   LOAD(BindBufferMemory);
++   LOAD(MapMemory);
++   LOAD(UnmapMemory);
++   LOAD(InvalidateMappedMemoryRanges);
++   LOAD(CmdCopyImageToBuffer);
+    LOAD(CreateImage);
+    LOAD(DestroyImage);
+    LOAD(GetImageMemoryRequirements);
+@@ -821,6 +939,24 @@ stereo_CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR *create_i
+       return result;
+    if (caps.maxImageArrayLayers >= 2)
+       return data->CreateSwapchain(device, create_info, allocator, swapchain_handle);
++   if (!surface->wayland) {
++      xcb_window_t window = XCB_NONE;
++      xcb_connection_t *conn = x11_connection(surface, &window);
++      xcb_query_extension_reply_t *dri3 = xcb_query_extension_reply(conn,
++         xcb_query_extension(conn, 4, "DRI3"), NULL);
++      bool present = dri3 && dri3->present;
++      free(dri3);
++      if (!present) {
++         /* A one-layer WSI may use PutImage without DRI3. Its packed buffer
++          * is clipped to the left view, and there is no Present completion
++          * to observe. It cannot provide this two-view swapchain.
++          */
++         fprintf(stderr, "Mesa stereo layer: this X11 server has no DRI3; "
++                         "the one-layer WSI cannot present a complete pair. "
++                         "The two-view swapchain request was refused.\n");
++         return VK_ERROR_FEATURE_NOT_PRESENT;
++      }
++   }
+    bool declared_before_create = surface->stereo_swapchain_created;
+    VkSwapchainCreateInfoKHR downstream_info = *create_info;
+    downstream_info.imageArrayLayers = 1;
+@@ -844,6 +980,8 @@ stereo_CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR *create_i
+    }
+    swapchain->device = data;
+    swapchain->surface = surface;
++   swapchain->format = create_info->imageFormat;
++   swapchain->composite_alpha = create_info->compositeAlpha;
+    swapchain->width = create_info->imageExtent.width;
+    swapchain->height = create_info->imageExtent.height;
+    if (surface->wayland)
+@@ -942,7 +1080,7 @@ stereo_GetSwapchainImages(VkDevice device, VkSwapchainKHR handle, uint32_t *coun
+ }
+ 
+ static void
+-record_pack(struct swapchain_data *swapchain, uint32_t index)
++record_pack(struct swapchain_data *swapchain, uint32_t source, uint32_t index)
+ {
+    struct device_data *data = swapchain->device;
+    data->ResetCommandBuffer(swapchain->command, 0);
+@@ -970,7 +1108,7 @@ record_pack(struct swapchain_data *swapchain, uint32_t index)
+          .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+          .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+          .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+-         .image = swapchain->images[index],
++         .image = swapchain->images[source],
+          .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 2 },
+       },
+    };
+@@ -984,13 +1122,16 @@ record_pack(struct swapchain_data *swapchain, uint32_t index)
+          .extent = { swapchain->width, swapchain->height, 1 },
+       },
+       {
+-         .srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 1 },
++         /* While flat, even a copied or differently sized downstream image
++          * must contain no pixels from the right view.
++          */
++         .srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, swapchain->surface->pair.flat ? 0 : 1, 1 },
+          .dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+          .dstOffset = { (int32_t)swapchain->width, 0, 0 },
+          .extent = { swapchain->width, swapchain->height, 1 },
+       },
+    };
+-   data->CmdCopyImage(swapchain->command, swapchain->images[index],
++   data->CmdCopyImage(swapchain->command, swapchain->images[source],
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, downstream_image,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 2, regions);
+    barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+@@ -1033,7 +1174,11 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
+       struct swapchain_data *swapchain = find_swapchain(data, present_info->pSwapchains[i]);
+       if (!swapchain)
+          continue;
+-      record_pack(swapchain, present_info->pImageIndices[i]);
++      record_pack(swapchain, present_info->pImageIndices[i], present_info->pImageIndices[i]);
++      if (!swapchain->surface->wayland && !x11_watch(swapchain->surface)) {
++         free(commands); free(ready); free(stages);
++         return VK_ERROR_SURFACE_LOST_KHR;
++      }
+       commands[count] = swapchain->command;
+       ready[count++] = swapchain->ready;
+    }
+@@ -1058,6 +1203,67 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
+       downstream.pWaitSemaphores = ready;
+       result = data->QueuePresent(queue, &downstream);
+    }
++   if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
++      for (uint32_t i = 0; i < present_info->swapchainCount; i++) {
++         struct swapchain_data *swapchain = find_swapchain(data, present_info->pSwapchains[i]);
++         if (!swapchain || swapchain->surface->wayland) continue;
++         struct surface_data *surface = swapchain->surface;
++         int mode = x11_completion(surface, 0, false);
++         if (mode < 0) { result = VK_ERROR_SURFACE_LOST_KHR; break; }
++         if (surface->pair.flat) {
++            if (!x11_left(swapchain, queue, present_info->pImageIndices[i])) { result = VK_ERROR_SURFACE_LOST_KHR; break; }
++            continue;
++         }
++         bool wait = u_stereo_pair_wait(&surface->pair);
++         x11_completed(swapchain, mode);
++         if (surface->pair.flat) {
++            if (!x11_left(swapchain, queue, present_info->pImageIndices[i]))
++               result = VK_ERROR_SURFACE_LOST_KHR;
++            continue;
++         }
++         if (!wait || !u_stereo_pair_again(&surface->pair)) continue;
++         /* A still window must know after this call too. Acquire a different
++          * downstream image; the application's shadow image remains ours to
++          * read until QueuePresent returns.
++          */
++         VkSemaphore acquired;
++         VkSemaphoreCreateInfo sem = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
++         result = data->CreateSemaphore(data->device, &sem, NULL, &acquired);
++         if (result != VK_SUCCESS) break;
++         uint32_t index;
++         result = data->AcquireNextImage(data->device, swapchain->handle, UINT64_MAX,
++                                        acquired, VK_NULL_HANDLE, &index);
++         if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
++            data->QueueWaitIdle(queue);
++            record_pack(swapchain, present_info->pImageIndices[i], index);
++            VkPipelineStageFlags stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
++            VkSubmitInfo repeat = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
++               .waitSemaphoreCount = 1, .pWaitSemaphores = &acquired,
++               .pWaitDstStageMask = &stage, .commandBufferCount = 1,
++               .pCommandBuffers = &swapchain->command, .signalSemaphoreCount = 1,
++               .pSignalSemaphores = &swapchain->ready };
++            result = data->QueueSubmit(queue, 1, &repeat, VK_NULL_HANDLE);
++            VkPresentInfoKHR one = { .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
++               .waitSemaphoreCount = 1, .pWaitSemaphores = &swapchain->ready,
++               .swapchainCount = 1, .pSwapchains = &swapchain->handle,
++               .pImageIndices = &index };
++            if (result == VK_SUCCESS) result = data->QueuePresent(queue, &one);
++            if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
++               int complete = x11_completion(surface, 0, false);
++               if (complete < 0) result = VK_ERROR_SURFACE_LOST_KHR;
++               else {
++                  x11_completed(swapchain, complete);
++                  if (surface->pair.flat &&
++                      !x11_left(swapchain, queue, present_info->pImageIndices[i]))
++                     result = VK_ERROR_SURFACE_LOST_KHR;
++               }
++            }
++            data->QueueWaitIdle(queue);
++         }
++         data->DestroySemaphore(data->device, acquired, NULL);
++         if (result < 0) break;
++      }
++   }
+    free(ready);
+    return result;
+ }
+@@ -1077,6 +1283,7 @@ stereo_DestroySwapchain(VkDevice device, VkSwapchainKHR handle,
+    }
+    *link = swapchain->next;
+    data->QueueWaitIdle(data->first_queue);
++   x11_left_finish(swapchain);
+    if (swapchain->ready)
+       data->DestroySemaphore(device, swapchain->ready, NULL);
+    if (swapchain->command)
+diff --git a/src/vulkan/stereo-layer/x11_left.h b/src/vulkan/stereo-layer/x11_left.h
+new file mode 100644
+index 0000000..57c4a94
+--- /dev/null
++++ b/src/vulkan/stereo-layer/x11_left.h
+@@ -0,0 +1,224 @@
++/* Copyright 2026 Daniel Campos Ramos
++ * SPDX-License-Identifier: MIT
++ *
++ * An opaque one-layer WSI still presents a packed image after take-back.
++ * Its copied window is not a source of the left view: an offset or a smaller
++ * pixmap may already have replaced part of it with the right view. Read the
++ * retained left image, without resizing it, into an ordinary window-sized
++ * Present pixmap. This transfer runs only while the pair cannot be presented.
++ */
++#include "util/half_float.h"
++
++static unsigned
++x11_left_pixel_size(VkFormat format)
++{
++   switch (format) {
++   case VK_FORMAT_B8G8R8A8_UNORM: case VK_FORMAT_B8G8R8A8_SRGB:
++   case VK_FORMAT_R8G8B8A8_UNORM: case VK_FORMAT_R8G8B8A8_SRGB:
++   case VK_FORMAT_A8B8G8R8_UNORM_PACK32: case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
++   case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
++   case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
++      return 4;
++   case VK_FORMAT_R16G16B16A16_SFLOAT:
++   case VK_FORMAT_R16G16B16A16_UNORM:
++      return 8;
++   default:
++      return 0;
++   }
++}
++
++/* X11's TrueColor channel masks, including 30-bit visuals. Preserve encoded
++ * sRGB bytes; this is a transfer, not another colour-space conversion.
++ */
++static uint32_t
++x11_left_pixel(const uint8_t *src, VkFormat format, const uint32_t masks[4],
++               VkCompositeAlphaFlagBitsKHR alpha)
++{
++   uint32_t c[4], max = 255, v;
++   memcpy(&v, src, 4);
++   switch (format) {
++   case VK_FORMAT_B8G8R8A8_UNORM: case VK_FORMAT_B8G8R8A8_SRGB:
++      c[0] = src[2]; c[1] = src[1]; c[2] = src[0]; c[3] = src[3];
++      break;
++   case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
++      c[0] = (v >> 20) & 1023; c[1] = (v >> 10) & 1023; c[2] = v & 1023;
++      max = 1023; c[3] = (v >> 30) * 341;
++      break;
++   case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
++      c[0] = v & 1023; c[1] = (v >> 10) & 1023; c[2] = (v >> 20) & 1023;
++      max = 1023; c[3] = (v >> 30) * 341;
++      break;
++   case VK_FORMAT_R16G16B16A16_SFLOAT:
++   case VK_FORMAT_R16G16B16A16_UNORM:
++      max = 65535;
++      for (unsigned i = 0; i < 4; i++) {
++         uint16_t h;
++         memcpy(&h, src + 2 * i, 2);
++         if (format == VK_FORMAT_R16G16B16A16_UNORM) c[i] = h;
++         else {
++            float f = _mesa_half_to_float(h);
++            c[i] = !(f > 0) ? 0 : f >= 1 ? max : (uint32_t)(f * max + 0.5f);
++         }
++      }
++      break;
++   default:
++      c[0] = src[0]; c[1] = src[1]; c[2] = src[2]; c[3] = src[3];
++      break;
++   }
++   if (alpha == VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) c[3] = max;
++   else if (alpha == VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR)
++      for (unsigned i = 0; i < 3; i++)
++         c[i] = ((uint64_t)c[i] * c[3] + max / 2) / max;
++   uint32_t pixel = 0;
++   for (unsigned i = 0; i < 4; i++) {
++      if (!masks[i]) continue;
++      unsigned shift = __builtin_ctz(masks[i]);
++      uint32_t channel_max = masks[i] >> shift;
++      pixel |= (uint32_t)(((uint64_t)c[i] * channel_max + max / 2) / max) << shift;
++   }
++   return pixel;
++}
++
++static void
++x11_left_finish(struct swapchain_data *swapchain)
++{
++   struct device_data *d = swapchain->device;
++   if (swapchain->left_map) d->UnmapMemory(d->device, swapchain->left_memory);
++   if (swapchain->left_buffer) d->DestroyBuffer(d->device, swapchain->left_buffer, NULL);
++   if (swapchain->left_memory) d->FreeMemory(d->device, swapchain->left_memory, NULL);
++   swapchain->left_map = NULL;
++   swapchain->left_buffer = VK_NULL_HANDLE;
++   swapchain->left_memory = VK_NULL_HANDLE;
++}
++
++static bool
++x11_left(struct swapchain_data *swapchain, VkQueue queue, unsigned image)
++{
++   struct device_data *d = swapchain->device;
++   unsigned bpp = x11_left_pixel_size(swapchain->format);
++   if (!bpp) {
++      fprintf(stderr, "Mesa stereo layer: cannot transfer the left view of X11 format %u\n", swapchain->format);
++      return false;
++   }
++   if (!swapchain->left_buffer) {
++      VkBufferCreateInfo buffer = { .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
++         .size = (VkDeviceSize)swapchain->width * swapchain->height * bpp,
++         .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT };
++      if (d->CreateBuffer(d->device, &buffer, NULL, &swapchain->left_buffer) != VK_SUCCESS)
++         goto fail;
++      VkMemoryRequirements req;
++      d->GetBufferMemoryRequirements(d->device, swapchain->left_buffer, &req);
++      unsigned type = UINT32_MAX;
++      for (unsigned i = 0; i < d->memory.memoryTypeCount; i++) {
++         VkMemoryPropertyFlags flags = d->memory.memoryTypes[i].propertyFlags;
++         if (!(req.memoryTypeBits & (1u << i)) || !(flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) continue;
++         type = i;
++         if (flags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) break;
++      }
++      if (type == UINT32_MAX) goto fail;
++      VkMemoryAllocateInfo alloc = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
++         .allocationSize = req.size, .memoryTypeIndex = type };
++      if (d->AllocateMemory(d->device, &alloc, NULL, &swapchain->left_memory) != VK_SUCCESS ||
++          d->BindBufferMemory(d->device, swapchain->left_buffer, swapchain->left_memory, 0) != VK_SUCCESS ||
++          d->MapMemory(d->device, swapchain->left_memory, 0, VK_WHOLE_SIZE, 0, &swapchain->left_map) != VK_SUCCESS)
++         goto fail;
++   }
++   if (d->QueueWaitIdle(queue) != VK_SUCCESS ||
++       d->ResetCommandBuffer(swapchain->command, 0) != VK_SUCCESS) goto fail;
++   VkCommandBufferBeginInfo begin = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
++      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
++   if (d->BeginCommandBuffer(swapchain->command, &begin) != VK_SUCCESS) goto fail;
++   VkImageMemoryBarrier barrier = { .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
++      .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
++      .oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++      .image = swapchain->images[image], .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 } };
++   d->CmdPipelineBarrier(swapchain->command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
++      VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
++   VkBufferImageCopy copy = { .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
++      .imageExtent = { swapchain->width, swapchain->height, 1 } };
++   d->CmdCopyImageToBuffer(swapchain->command, swapchain->images[image],
++      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapchain->left_buffer, 1, &copy);
++   barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
++   barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
++   barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
++   barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
++   VkBufferMemoryBarrier host = { .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
++      .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
++      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++      .buffer = swapchain->left_buffer, .size = VK_WHOLE_SIZE };
++   d->CmdPipelineBarrier(swapchain->command, VK_PIPELINE_STAGE_TRANSFER_BIT,
++      VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 1, &host, 1, &barrier);
++   if (d->EndCommandBuffer(swapchain->command) != VK_SUCCESS) goto fail;
++   VkSubmitInfo submit = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
++      .commandBufferCount = 1, .pCommandBuffers = &swapchain->command };
++   if (d->QueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS ||
++       d->QueueWaitIdle(queue) != VK_SUCCESS) goto fail;
++   VkMappedMemoryRange range = { .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
++      .memory = swapchain->left_memory, .size = VK_WHOLE_SIZE };
++   if (d->InvalidateMappedMemoryRanges(d->device, 1, &range) != VK_SUCCESS) goto fail;
++   xcb_window_t window = XCB_NONE;
++   xcb_connection_t *conn = x11_connection(swapchain->surface, &window);
++   xcb_get_geometry_reply_t *g = xcb_get_geometry_reply(conn, xcb_get_geometry(conn, window), NULL);
++   xcb_get_window_attributes_reply_t *a = xcb_get_window_attributes_reply(conn,
++      xcb_get_window_attributes(conn, window), NULL);
++   uint32_t masks[4] = {0};
++   const xcb_setup_t *setup = xcb_get_setup(conn);
++   for (xcb_screen_iterator_t s = xcb_setup_roots_iterator(setup); s.rem; xcb_screen_next(&s))
++      for (xcb_depth_iterator_t depth = xcb_screen_allowed_depths_iterator(s.data); depth.rem; xcb_depth_next(&depth))
++         for (xcb_visualtype_iterator_t v = xcb_depth_visuals_iterator(depth.data); v.rem; xcb_visualtype_next(&v))
++            if (a && v.data->visual_id == a->visual) {
++               masks[0] = v.data->red_mask; masks[1] = v.data->green_mask; masks[2] = v.data->blue_mask;
++            }
++   free(a);
++   if (g && g->depth == 32) masks[3] = ~(masks[0] | masks[1] | masks[2]);
++   unsigned pixel_bits = 0;
++   for (xcb_format_iterator_t f = xcb_setup_pixmap_formats_iterator(setup); f.rem; xcb_format_next(&f))
++      if (g && f.data->depth == g->depth) pixel_bits = f.data->bits_per_pixel;
++   if (!g || pixel_bits != 32 || !masks[0] || !masks[1] || !masks[2]) { free(g); goto fail; }
++   uint32_t *pixels = malloc((size_t)swapchain->width * swapchain->height * 4);
++   if (!pixels) { free(g); goto fail; }
++   for (size_t i = 0, n = (size_t)swapchain->width * swapchain->height; i < n; i++) {
++      uint32_t pixel = x11_left_pixel((const uint8_t *)swapchain->left_map + i * bpp, swapchain->format, masks, swapchain->composite_alpha);
++#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
++      if (setup->image_byte_order == XCB_IMAGE_ORDER_MSB_FIRST) pixel = __builtin_bswap32(pixel);
++#else
++      if (setup->image_byte_order == XCB_IMAGE_ORDER_LSB_FIRST) pixel = __builtin_bswap32(pixel);
++#endif
++      pixels[i] = pixel;
++   }
++   xcb_pixmap_t pixmap = xcb_generate_id(conn);
++   xcb_gcontext_t gc = xcb_generate_id(conn);
++   xcb_create_pixmap(conn, g->depth, pixmap, window, swapchain->width, swapchain->height);
++   xcb_create_gc(conn, gc, pixmap, 0, NULL);
++   unsigned rows = (xcb_get_maximum_request_length(conn) * 4 - 128) / (swapchain->width * 4);
++   if (!rows) { free(pixels); free(g); xcb_free_gc(conn, gc); xcb_free_pixmap(conn, pixmap); goto fail; }
++   for (unsigned y = 0; y < swapchain->height; y += rows) {
++      unsigned h = MIN2(rows, swapchain->height - y);
++      xcb_put_image(conn, XCB_IMAGE_FORMAT_Z_PIXMAP, pixmap, gc, swapchain->width, h,
++         0, y, 0, g->depth, swapchain->width * h * 4, (uint8_t *)(pixels + (size_t)y * swapchain->width));
++   }
++   uint8_t window_depth = g->depth;
++   free(pixels); free(g);
++   /* PutImage can leave a CPU pixmap without a compositor buffer. Make
++    * the final pixmap through CopyArea, as the existing mono flip probe did.
++    */
++   xcb_pixmap_t uploaded = pixmap;
++   pixmap = xcb_generate_id(conn);
++   xcb_create_pixmap(conn, window_depth,
++      pixmap, window, swapchain->width, swapchain->height);
++   xcb_copy_area(conn, uploaded, pixmap, gc, 0, 0, 0, 0, swapchain->width, swapchain->height);
++   xcb_free_pixmap(conn, uploaded);
++   uint32_t serial = ++swapchain->surface->probe_serial;
++   xcb_present_pixmap(conn, window, pixmap, serial, XCB_NONE, XCB_NONE,
++      0, 0, XCB_NONE, XCB_NONE, XCB_NONE, XCB_PRESENT_OPTION_NONE, 0, 0, 0, 0, NULL);
++   xcb_flush(conn);
++   int mode = x11_completion(swapchain->surface, serial, true);
++   x11_completed(swapchain, mode);
++   xcb_free_gc(conn, gc); xcb_free_pixmap(conn, pixmap);
++   return mode >= 0;
++fail:
++   fprintf(stderr, "Mesa stereo layer: could not transfer its complete left image to the X11 window\n");
++   x11_left_finish(swapchain);
++   return false;
++}

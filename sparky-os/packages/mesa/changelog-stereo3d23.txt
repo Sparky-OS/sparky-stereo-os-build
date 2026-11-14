@@ -1,0 +1,13 @@
+mesa (26.1.6-1+stereo3d23) forky; urgency=medium
+
+  * EGL X11 and the Vulkan stereo layer read copied-present completions through
+    the same rule as GLX: take back two copied pairs, show the left view whole,
+    and tell the person through their own package's problems engine messages.
+  * Keep EGL DRI3's packed buffer twice the logical view width; exercise the
+    common transition policy in Mesa's util tests.
+  * While the Vulkan layer is flat, keep right-eye pixels out of both halves
+    of its downstream buffer, including a copied frame of another size.
+
+  * On a copied Vulkan present, transfer the retained complete left image
+    before returning, including a program that presents only one wrong-size
+    frame. Preserve the X11 visual's channel masks; no eye is resized.
