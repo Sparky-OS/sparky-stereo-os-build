@@ -31,7 +31,7 @@ class Fixtures(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.dir = Path(self.tmp.name)
 
-    def deb(self, name='fixture', fields='', files=None, scripts=None):
+    def deb(self, name='fixture', fields='', files=None, scripts=None, modes=None):
         root = self.dir / f'tree-{name}-{len(list(self.dir.iterdir()))}'
         (root / 'DEBIAN').mkdir(parents=True)
         (root / 'DEBIAN/control').write_text(CONTROL.format(name=name, fields=fields))
@@ -47,6 +47,8 @@ class Fixtures(unittest.TestCase):
                 target.write_bytes(content)
             else:
                 target.write_text(content)
+            if path in (modes or {}):
+                target.chmod(modes[path])
         out = self.dir / f'{name}_1.0_all.deb'
         subprocess.run(['dpkg-deb', '--root-owner-group', '-Zxz', '-b', str(root), str(out)], check=True,
                        capture_output=True)
@@ -78,6 +80,94 @@ class Fixtures(unittest.TestCase):
 
     def assertPassed(self, deb):
         self.assertEqual(self.findings(deb), [])
+
+
+class Documentation(Fixtures):
+    page = '# Forbidden setup examples\n\n```sh\nmodprobe zram\nzramctl --find --size 4G\n' \
+           'echo 4G > /sys/block/zram0/disksize\nswapon /dev/zram0\n```\n'
+    path = '/usr/share/agent-skills/developer/example/guide.md'
+
+    def test_unrun_markdown_is_noted_in_documentation_and_skills_folders(self):
+        for path in (self.path, '/usr/share/doc/example/guide.md', '/opt/example/docs/guide.markdown'):
+            with self.subTest(path=path):
+                notes = self.assertNoted(self.deb(files={path: self.page}), path + ': documentation, not run')
+                self.assertEqual(len(notes), 1)
+
+    def test_shell_scripts_and_executable_or_shebang_markdown_refuse(self):
+        for path, text, mode in (('/usr/libexec/example/setup.sh', self.page, 0o644),
+                                 (self.path, self.page, 0o755),
+                                 (self.path, '#!/bin/sh\n' + self.page, 0o644),
+                                 ('/usr/share/doc/example/guide.md', self.page, 0o755),
+                                 ('/usr/share/doc/example/guide.md', '#!/bin/sh\n' + self.page, 0o644)):
+            with self.subTest(path=path, mode=mode, shebang=text.startswith('#!')):
+                self.assertRefused(self.deb(files={path: text}, modes={path: mode}), 'zram')
+
+    def test_extension_alone_does_not_make_a_document(self):
+        for text in ('zramctl --find --size 4G\n', b'\x7fELF\0# Page\nzswap.enabled=1',
+                     b'# Page\n\xff\nzramctl --find --size 4G\n'):
+            with self.subTest(text=text):
+                self.assertRefused(self.deb(files={self.path: text}), 'zram' if 'ELF' not in str(text) else 'zswap')
+
+    def test_markdown_in_configuration_paths_and_generator_configuration_refuse(self):
+        for folder in ('/etc/sysctl.d', '/usr/lib/systemd/system', '/usr/lib/udev/rules.d',
+                       '/usr/lib/modprobe.d', '/usr/lib/tmpfiles.d', '/usr/lib/modules-load.d',
+                       '/var/lib/dpkg/info'):
+            with self.subTest(folder=folder):
+                self.assertRefused(self.deb(files={folder + '/docs/guide.md': self.page}), 'zram')
+        self.assertRefused(self.deb(files={'/usr/lib/systemd/zram-generator.conf.d/guide.md':
+                                           '# Configuration\n[zram0]\nzram-size = ram / 2\n'}),
+                           'a zram-generator configuration')
+
+    def test_unit_commands_sources_and_configuration_references_refuse(self):
+        for setting in (f'ExecStart=/bin/sh {self.path}',
+                        f'ExecStart=/bin/sh -c ". {self.path}"',
+                        f'EnvironmentFile={self.path}'):
+            with self.subTest(setting=setting):
+                self.assertRefused(self.deb(files={self.path: self.page,
+                    '/usr/lib/systemd/system/example.service': '[Service]\n' + setting + '\n'}), self.path)
+        self.assertRefused(self.deb(files={self.path: self.page,
+            '/usr/libexec/example/runner': '#!/bin/sh\n. ' + self.path + '\n'}), self.path)
+        self.assertRefused(self.deb(files={self.path: self.page},
+                                   scripts={'postinst': '#!/bin/sh\n. ' + self.path + '\n'}), self.path)
+        self.assertRefused(self.deb(scripts={'postinst': '#!/bin/sh\nmodprobe zram\n'}), 'DEBIAN/postinst')
+
+    def test_consumers_in_other_packages_and_compiled_references_refuse(self):
+        doc = self.deb(name='documentation', files={self.path: self.page})
+        consumer = self.deb(name='consumer', files={'/usr/bin/reader': b'\x7fELF\0' + self.path.encode() + b'\0'})
+        findings, errors, _, notes = gate.check_debs([doc, consumer], 2)
+        self.assertEqual(errors, [])
+        self.assertTrue(any(self.path in f for f in findings), findings)
+        self.assertFalse(any('documentation, not run' in n for n in notes), notes)
+
+    def test_alias_and_relative_uppercase_references_refuse(self):
+        self.assertRefused(self.deb(files={self.path: self.page,
+            '/usr/libexec/example/alias': ('link', self.path),
+            '/usr/lib/systemd/system/example.service': '[Service]\nExecStart=/bin/sh /usr/libexec/example/alias\n'}), self.path)
+        path = self.path.replace('guide.md', 'GUIDE.MD')
+        self.assertRefused(self.deb(files={path: self.page,
+            '/usr/bin/reader.py': 'from pathlib import Path\nPath("GUIDE.MD").read_text()\n'}), path)
+
+    def test_image_documentation_and_its_consumer(self):
+        root = self.dir / 'root'
+        (root / 'var/lib/dpkg').mkdir(parents=True)
+        (root / 'var/lib/dpkg/status').write_text('')
+        path = root / self.path.lstrip('/')
+        path.parent.mkdir(parents=True)
+        path.write_text(self.page)
+        findings, errors, _, notes = gate.check_image(root, [])
+        self.assertEqual((findings, errors), ([], []))
+        self.assertTrue(any('documentation, not run' in n for n in notes), notes)
+        unit = root / 'usr/lib/systemd/system/example.service'
+        unit.parent.mkdir(parents=True)
+        unit.write_text('[Service]\nExecStart=/bin/sh ' + self.path + '\n')
+        self.assertTrue(gate.check_image(root, [])[0])
+
+    def test_report_names_documentation_without_calling_it_a_teardown(self):
+        deb = self.deb(files={self.path: self.page})
+        run = subprocess.run([sys.executable, str(SUBJECT), '--debs', str(deb)], capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn('documentation, not run', run.stdout)
+        self.assertNotIn('tear-down(s) let through', run.stdout)
 
 
 class Packages(Fixtures):
