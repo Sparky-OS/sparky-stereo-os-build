@@ -92,6 +92,8 @@ class Documentation(Fixtures):
             with self.subTest(path=path):
                 notes = self.assertNoted(self.deb(files={path: self.page}), path + ': documentation, not run')
                 self.assertEqual(len(notes), 1)
+        self.assertNoted(self.deb(files={self.path: self.page,
+            '/usr/share/doc/example/alias.md': ('link', self.path)}), 'documentation, not run')
 
     def test_shell_scripts_and_executable_or_shebang_markdown_refuse(self):
         for path, text, mode in (('/usr/libexec/example/setup.sh', self.page, 0o644),

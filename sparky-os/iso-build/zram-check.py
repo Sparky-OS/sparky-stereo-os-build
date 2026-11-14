@@ -70,6 +70,7 @@ CONFIG_FOLDERS = {'systemd', 'udev', 'modprobe.d', 'sysctl.d', 'tmpfiles.d', 'mo
 SCRIPT_SUFFIXES = {'.sh', '.bash', '.py', '.pl', '.rb', '.js', '.lua'}
 MARKDOWN_PATH = re.compile(rb'''[^\s\0"'`<>|;=(){}\[\]]+\.(?:md|markdown)\b''', re.I)
 QUOTED_MARKDOWN = re.compile(rb'''["']([^"'\r\n\0]+\.(?:md|markdown))["']''', re.I)
+LITERAL_PATH = re.compile(rb'''/[^\s\0"'`<>|;=(){}\[\]]+''')
 TEXT_LIMIT = 4 << 20
 BINARY_LIMIT = 256 << 20
 MENTION = re.compile(r'zram|zswap', re.I)
@@ -705,8 +706,25 @@ def references(path, data, mode):
     if not (mode & 0o111 or data.startswith((b'#!', b'\x7fELF')) or configuration(path)
             or PurePosixPath(path).suffix in SCRIPT_SUFFIXES):
         return set()
-    paths = MARKDOWN_PATH.findall(data) + QUOTED_MARKDOWN.findall(data)
-    return {PurePosixPath(p.decode('utf-8', errors='replace')).name.casefold() for p in paths}
+    paths = MARKDOWN_PATH.findall(data) + QUOTED_MARKDOWN.findall(data) + LITERAL_PATH.findall(data)
+    found = {PurePosixPath(p.decode('utf-8', errors='replace')).name.casefold() for p in paths}
+    text = text_of(data) if len(data) <= TEXT_LIMIT else None
+    if text is not None:
+        found.update(word.casefold() for word in re.findall(r'[\w.+%-]+', text))
+    return found
+
+
+def follow_aliases(aliases, referenced):
+    """A link is a consumer reference only when code or configuration names that link."""
+    referenced = set(referenced)
+    for _ in aliases:
+        before = len(referenced)
+        for path, target in aliases:
+            if PurePosixPath(path).name.casefold() in referenced:
+                referenced.add(PurePosixPath(target).name.casefold())
+        if len(referenced) == before:
+            break
+    return referenced
 
 
 def documentation(path, data, mode, referenced):
@@ -868,7 +886,7 @@ def check_deb(deb, referenced=()):
     """(findings, notes, error) of one package."""
     name = Path(deb).name
     findings, notes, units, line_notes = [], [], [], {}
-    referenced, documents = set(referenced), []
+    referenced, documents, aliases = set(referenced), [], []
     try:
         for path, data, _ in members(deb, 'control'):
             if path == 'control':
@@ -880,8 +898,8 @@ def check_deb(deb, referenced=()):
                 notes += [f'{name}: DEBIAN/{path}:{n}: {line} ({w})' for n, line, w in down]
         for path, data, target, mode in members(deb, 'data', modes=True):
             referenced |= references(path, data, mode)
-            if target is not None and markdown(target):
-                referenced.add(PurePosixPath(target).name.casefold())
+            if target is not None:
+                aliases.append((path, target))
             if markdown(path) and target is None:
                 documents.append((path, data, mode))
                 continue
@@ -892,6 +910,7 @@ def check_deb(deb, referenced=()):
             small = data if data is not None and len(data) <= TEXT_LIMIT and unit_folder(path) is not None else None
             if of_zram(path, text_of(small), target):
                 units.append((path, target))
+        referenced = follow_aliases(aliases, referenced)
         for path, data, mode in documents:
             down = []
             document = documentation(path, data, mode, referenced)
@@ -922,7 +941,7 @@ def check_debs(debs, jobs):
     companions = [d for d in debs if re.search(r'-(?:dbgsym|lc-hr)_', Path(d).name)]
     checked = [d for d in debs if d not in companions]
     # A consumer may belong to another package in the supplied cohort.
-    referenced = set()
+    referenced, aliases = set(), []
     for deb in checked:
         try:
             for part in ('control', 'data'):
@@ -930,10 +949,11 @@ def check_debs(debs, jobs):
                     if part == 'control' and path in ('control', 'md5sums'):
                         continue
                     referenced |= references('DEBIAN/' + path if part == 'control' else path, data, mode)
-                    if target is not None and markdown(target):
-                        referenced.add(PurePosixPath(target).name.casefold())
+                    if target is not None:
+                        aliases.append((path, target))
         except (OSError, tarfile.TarError):
             pass  # check_deb below retains the unreadable-package refusal.
+    referenced = follow_aliases(aliases, referenced)
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
         results = list(pool.map(lambda deb: check_deb(deb, referenced), checked))
     findings = [f for fs, _, _ in results for f in fs]
@@ -994,7 +1014,7 @@ def check_image(root, also):
                             'and not installed; the person opts in from Stereo APTus)')
         findings += relations(stanza, f'/var/lib/dpkg/status: {name}')
     count = 0
-    referenced, documents = set(), []
+    referenced, documents, aliases = set(), [], []
     for path in image_files(root):
         shown = '/' + path.relative_to(root).as_posix()
         if skipped(shown) and not markdown(shown):
@@ -1002,8 +1022,7 @@ def check_image(root, also):
         data = target = None
         if path.is_symlink():
             target = os.readlink(path)
-            if markdown(target):
-                referenced.add(PurePosixPath(target).name.casefold())
+            aliases.append((shown, target))
         else:
             try:
                 data = path.read_bytes() if path.stat().st_size <= BINARY_LIMIT else None
@@ -1026,6 +1045,7 @@ def check_image(root, also):
     reading = Reading(Tree(root=root), lambda path: f'/{path}')
     for path, target in units:
         reading.file(path, target)
+    referenced = follow_aliases(aliases, referenced)
     document_notes = []
     for shown, data, mode in documents:
         down = []
