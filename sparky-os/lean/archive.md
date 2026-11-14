@@ -133,7 +133,10 @@ Loader tracing with `LD_WARN` and `LD_BIND_NOW` retains unresolved-symbol checks
 Smoke programs also use immediate binding.
 Library-only imports legitimately supplied by their application remain informational without a predecessor.
 Lost stereo imports still block and lost NEEDED entries remain informational when resolution succeeds.
-A source that stopped calling a stereo function on purpose (the call moved to another function by design) declares it in `debian/sparky-lean-retired-stereo-imports`, one line a symbol: the name exactly as `nm -D` prints it, white space, the reason; that import is then a note in the build's log and every other lost import still blocks.
+A stereo call retired on purpose: a source that stopped calling a stereo function by design (the call moved to another function) declares it in `debian/sparky-lean-retired-stereo-imports`, one line a symbol: the name exactly as `nm -D` prints it, white space, the reason.
+`lean.debhelper` writes the declaration into the lc1 manifest of every archive of the source (`retired_stereo_imports`, a table of symbol and reason), which the control marker binds like the rest of the manifest.
+The link gate never reads the source's file: at the build and at publication alike it asks the archive, notes each recorded import in the log and blocks every other lost import.
+A manifest whose record has a row without a reason, or a name that is no stereo symbol, is refused wherever it is loaded, and a record edited after the build no longer matches its marker.
 Static ELF files are inspected without requiring a dynamic loader, independently of locale.
 A static-pie executable (no interpreter, no NEEDED, `DF_1_PIE`; qemu-user's programs) is static too; a library without NEEDED is still traced.
 An ELF file of another machine in an `Architecture: all` package under `/usr/share` is guest data (QEMU's firmware), recorded as a note and never traced (ORDER 340).

@@ -66,7 +66,7 @@ def toolkit_identity():
         raise package.Invalid(why)
 
 
-def build_tree(root, out, preserve=None):
+def build_tree(root, out, preserve=None, retired=None):
     """preserve: a payload preservation plan ({installed pattern: reason}, package.preservation): those files stay as
     their authors ship them and the manifest says why."""
     toolkit_identity()
@@ -74,7 +74,7 @@ def build_tree(root, out, preserve=None):
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='lc-build-') as work:
         hr = Path(work) / 'hr'
-        obj = package.prepare(root, hr, preserve=preserve)
+        obj = package.prepare(root, hr, preserve=preserve, retired=retired)
         trees = [root] + ([hr] if obj['hr_package'] else [])
         built = []
         for tree in trees:
@@ -153,23 +153,7 @@ def check_debs(paths):
 
 def manifest_of(deb):
     """(package, version, architecture, manifest) of an lc1 archive, reading only its control and its manifest."""
-    fields = dict(line.split(': ', 1) for line in subprocess.run(
-        ['dpkg-deb', '-f', str(deb), 'Package', 'Version', 'Architecture', package.FIELD], capture_output=True,
-        text=True, check=True).stdout.splitlines() if ': ' in line)
-    p, v, a = fields.get('Package', ''), fields.get('Version', ''), fields.get('Architecture', '')
-    if package.FIELD not in fields:
-        raise package.Invalid(f'{deb}: no {package.FIELD} field')
-    member = '.' + package.manifest_path(p, a)
-    tar = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(deb)], stdout=subprocess.PIPE)
-    try:
-        r = subprocess.run(['tar', '-xO', '--occurrence=1', member], stdin=tar.stdout, capture_output=True)
-    finally:
-        tar.stdout.close()
-        tar.kill()
-        tar.wait()
-    if r.returncode != 0 or not r.stdout:
-        raise package.Invalid(f'{deb}: lc1 manifest {member[1:]} unreadable')
-    return p, v, a, package.load(fields[package.FIELD], r.stdout, p, v, a)
+    return package.deb_manifest(deb)
 
 
 def check_identity(paths):

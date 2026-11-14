@@ -20,6 +20,7 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import stat
+import subprocess
 
 from . import project
 
@@ -161,6 +162,46 @@ def entries(root):
             yield real, row
 
 
+RETIRED = 'retired_stereo_imports'
+RETIRED_SYMBOL = re.compile(r'[A-Za-z0-9_.$@]*stereo[A-Za-z0-9_.$@]*', re.I)
+
+
+def retired_imports(value):
+    """The stereo imports a package's build declared it no longer calls, on purpose: {symbol: reason}, as the manifest
+    carries them under RETIRED (lean/archive.md, "A stereo call retired on purpose"). The link gate lets exactly these
+    through; so the record is a claim, and a claim without its reason, or about a symbol that is no stereo symbol, is
+    refused wherever the manifest is written or read."""
+    if not isinstance(value, dict) or not value:
+        raise Invalid('retired stereo imports: a table of symbol and reason with at least one row')
+    for symbol, reason in value.items():
+        if not isinstance(symbol, str) or not RETIRED_SYMBOL.fullmatch(symbol):
+            raise Invalid(f'retired stereo imports: {symbol!r} is not the name of a stereo symbol')
+        if not isinstance(reason, str) or len(reason.strip()) < 8 or len(reason) > 1000 or '\n' in reason:
+            raise Invalid(f'retired stereo imports: {symbol} has no reason')
+    return dict(sorted(value.items()))
+
+
+def deb_manifest(deb):
+    """(package, version, architecture, manifest) of an lc1 archive, reading only its control and its manifest."""
+    fields = dict(line.split(': ', 1) for line in subprocess.run(
+        ['dpkg-deb', '-f', str(deb), 'Package', 'Version', 'Architecture', FIELD], capture_output=True,
+        text=True, check=True).stdout.splitlines() if ': ' in line)
+    p, v, a = fields.get('Package', ''), fields.get('Version', ''), fields.get('Architecture', '')
+    if FIELD not in fields:
+        raise Invalid(f'{deb}: no {FIELD} field')
+    member = '.' + manifest_path(p, a)
+    tar = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(deb)], stdout=subprocess.PIPE)
+    try:
+        r = subprocess.run(['tar', '-xO', '--occurrence=1', member], stdin=tar.stdout, capture_output=True)
+    finally:
+        tar.stdout.close()
+        tar.kill()
+        tar.wait()
+    if r.returncode != 0 or not r.stdout:
+        raise Invalid(f'{deb}: lc1 manifest {member[1:]} unreadable')
+    return p, v, a, load(fields[FIELD], r.stdout, p, v, a)
+
+
 def load(marker, raw, package, version, arch):
     match = re.fullmatch(r'lc1 ([0-9a-f]{64})', marker)
     if not match or len(raw) > MAX_MANIFEST or digest(raw) != match[1]:
@@ -200,6 +241,8 @@ def load(marker, raw, package, version, arch):
                     raise Invalid('projection lacks consumer check')
                 if obj['hr_package'] is None or not 0 <= row['bytes'] < row['bytes_hr'] <= MAX_TEXT:
                     raise Invalid('invalid projection sizes or missing HR companion')
+        if RETIRED in obj:
+            retired_imports(obj[RETIRED])
     except (KeyError, TypeError, json.JSONDecodeError) as exc:
         raise Invalid('malformed lc manifest') from exc
     return obj
@@ -271,12 +314,15 @@ def preservation(plan):
     return plan
 
 
-def prepare(root, hr_root=None, *, documentation=False, preserve=None):
+def prepare(root, hr_root=None, *, documentation=False, preserve=None, retired=None):
     """Final staging step, before md5sums/dpkg-deb. Never run against an installed root.
 
     Failure leaves an unmarked disposable staging tree. Rebuild the staging tree to retry.
     documentation=True is reserved for our generated HR companion (it contains only docs).
     preserve: a payload preservation plan (see preservation); every pattern must name a payload file.
+    retired: the stereo imports the source declares it stopped calling on purpose ({symbol: reason}, retired_imports):
+    they go into the manifest, which the control marker binds, so the link gate of the build and the publisher's
+    read one and the same record from the archive itself.
     """
     root = Path(root).resolve()
     fields = control(root)
@@ -363,6 +409,8 @@ def prepare(root, hr_root=None, *, documentation=False, preserve=None):
         prepare(hr, documentation=True)
     obj = {'format': FORMAT, 'scope': SCOPE, 'package': p, 'version': v, 'architecture': a,
            'renderer': renderer(), 'files': rows, 'hr_package': f'{p}-lc-hr' if originals else None}
+    if retired and not documentation:
+        obj[RETIRED] = retired_imports(retired)
     raw = encode(obj)
     mp.parent.mkdir(parents=True, exist_ok=True)
     mp.write_bytes(raw)

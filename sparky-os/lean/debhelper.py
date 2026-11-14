@@ -14,16 +14,12 @@ import subprocess
 from . import buildrecord, linkcheck, package, release, source_tree
 
 
-def link_gate(built, root=None):
+def link_gate(built):
     """Link and start gate (ORDER 198): the build fails, and its archives are removed, unless every
     rebuilt ELF resolves like its predecessor in SPARKY_LC_PREVIOUS_DIR (when set) and the programs
     of lean/smoke.tsv start. The runtime dependencies are installed in the build environment."""
     gated = [deb for deb in built if not deb.name.split('_')[0].endswith(('-dbgsym', '-lc-hr'))]
     table = Path(release.__file__).with_name('smoke.tsv')
-    declared = root / 'debian/sparky-lean-retired-stereo-imports' if root else None
-    if declared and declared.is_file():
-        # the stereo imports this source stopped calling on purpose (linkcheck.retired_stereo_imports)
-        os.environ[linkcheck.RETIRED_ENV] = str(declared)
     try:
         if not table.is_file():
             raise ValueError(f'{table}: the toolkit lacks the smoke table')
@@ -50,6 +46,8 @@ def build(root, provenance):
     buildrecord.note_start(root.parent)
     # every declared generated output matches an installed file of some package, before anything is built
     source_tree.require_generated(root, [control.parent.parent for control in controls])
+    # the stereo imports this source stopped calling on purpose go into every archive's lc1 record, where the gates read them
+    retired = linkcheck.declared_retirements(root)
     built = []
     for control in controls:
         staging = control.parent.parent
@@ -58,7 +56,7 @@ def build(root, provenance):
         source_tree.restore_payload(root, staging, check_coverage=False)
         subprocess.run(['bash', str(provenance), '--tree', str(staging), '--source', str(root)], check=True)
         before = set(root.parent.glob('*.deb'))
-        release.build_tree(staging, root.parent)
+        release.build_tree(staging, root.parent, retired=None if name.endswith('-dbgsym') else retired)
         outputs = sorted(set(root.parent.glob('*.deb')) - before)
         built += outputs
         files = root / 'debian/files'
@@ -74,7 +72,7 @@ def build(root, provenance):
             if is_hr or old_auto or name.endswith('-dbgsym'):
                 entries = files.read_text().splitlines()
                 files.write_text(''.join(line + (' automatic=yes' if line.split()[0] == deb.name and 'automatic=yes' not in line else '') + '\n' for line in entries))
-    link_gate(built, root)
+    link_gate(built)
 
 
 if __name__ == '__main__':
