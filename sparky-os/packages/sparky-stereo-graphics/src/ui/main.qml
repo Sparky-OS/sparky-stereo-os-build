@@ -409,6 +409,14 @@ KCM.SimpleKCM {
                         font: Kirigami.Theme.smallFont
                         opacity: 0.8
                     }
+                    QQC2.Label {
+                        // ORDER 554: why, for each program (measured on this hardware, not measured here, the person's choice)
+                        Layout.fillWidth: true
+                        text: modelData.paintWhy
+                        wrapMode: Text.WordWrap
+                        font: Kirigami.Theme.smallFont
+                        opacity: 0.8
+                    }
                 }
                 QQC2.ComboBox {
                     visible: kcm.multiGpu

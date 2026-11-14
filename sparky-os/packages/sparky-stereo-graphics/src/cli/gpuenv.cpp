@@ -581,10 +581,14 @@ int main(int argc, char **argv)
     PaintFacts paintFacts = PaintFacts::read(!resolver.usableIndices().isEmpty());
     const PaintSettings paintSettings;
     const PaintRecord paintRecord = PaintRecord::read();
-    PaintResolution paint = Paint::resolve(asked, paintId, paintSettings, paintRecord, paintFacts);
+    // the card the program is drawn on: Automatic follows what was measured for the program on that card (ORDER 554)
+    const QString paintGpu = resolution.gpuIndex >= 0 && resolution.gpuIndex < gpus.size()
+        ? PaintRecord::gpuKey(gpus.at(resolution.gpuIndex).vendorId, gpus.at(resolution.gpuIndex).deviceId)
+        : QString();
+    PaintResolution paint = Paint::resolve(asked, paintId, paintGpu, paintSettings, paintRecord, paintFacts);
     if (paint.way != PaintWay::Processor && paint.reason != u"session"_s) {
         paintFacts.qtPaintsOnGpu = PaintFacts::qtHasPainting();
-        paint = Paint::resolve(asked, paintId, paintSettings, paintRecord, paintFacts);
+        paint = Paint::resolve(asked, paintId, paintGpu, paintSettings, paintRecord, paintFacts);
     }
     // said and kept only for a caller that takes the painting's answer (the launcher's lines, or the way itself), not
     // for one that only asks where a kind of program draws (libmedia-gpu-route's --print render-node)

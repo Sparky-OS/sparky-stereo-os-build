@@ -138,6 +138,7 @@ private:
     SparkyGraphics::PaintRecord m_paintRecord;
     QString wayLabel(SparkyGraphics::PaintWay way) const;
     QString paintNowText(const SparkyGraphics::PaintResolution &resolution) const;
+    QString paintWhyText(const SparkyGraphics::PaintResolution &resolution) const;
     SparkyGraphics::PaintFacts paintFacts() const;
     QString m_appFilter;
     QString m_errorText;

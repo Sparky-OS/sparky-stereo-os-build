@@ -707,10 +707,14 @@ QVariantList GraphicsKcm::apps() const
         AppEntry shown = entry;
         shown.preference = pendingPreference(entry);
         const Resolution resolution = r.resolveApp(shown, m_settings);
-        const PaintResolution painted = Paint::resolve(entry.category, entry.id, m_paint, m_paintRecord, facts);
+        const QString card = resolution.gpuIndex >= 0 && resolution.gpuIndex < m_gpus.size()
+            ? PaintRecord::gpuKey(m_gpus.at(resolution.gpuIndex).vendorId, m_gpus.at(resolution.gpuIndex).deviceId)
+            : QString();
+        const PaintResolution painted = Paint::resolve(entry.category, entry.id, card, m_paint, m_paintRecord, facts);
         list.append(QVariantMap{
             {u"paint"_s, m_paint.programChoice(entry.id)},
             {u"paintText"_s, wayLabel(painted.way)},
+            {u"paintWhy"_s, paintWhyText(painted)},
             {u"id"_s, entry.id},
             {u"name"_s, entry.name},
             {u"icon"_s, entry.icon},
@@ -798,15 +802,35 @@ QString GraphicsKcm::paintNowText(const PaintResolution &resolution) const
     if (resolution.problem == u"no-gpu"_s) {
         return i18nc("@info", "Now: on the processor, because this computer has no graphics processor that can draw now.");
     }
-    QString reason;
-    if (resolution.reason == u"measured"_s) {
-        reason = m_paintRecord.origin == u"shipped"_s ? i18nc("@info", "measured best for this model") : i18nc("@info", "measured best on this computer");
-    } else if (resolution.reason == u"unmeasured"_s) {
-        reason = i18nc("@info", "not measured on this computer yet");
-    } else {
-        reason = i18nc("@info", "your choice");
+    if (resolution.chosen) {
+        return i18nc("@info %1 is a way of painting windows, %2 the reason", "Now: %1, %2", wayLabel(resolution.way), i18nc("@info", "your choice"));
     }
-    return i18nc("@info %1 is a way of painting windows, %2 the reason", "Now: %1, %2", wayLabel(resolution.way), reason);
+    // Automatic for a kind is each program's own (Daniel, 2026-11-13: "I want the automatic per program for sure")
+    return i18nc("@info", "Now: each program as it was measured on this hardware. A program not measured here is painted by the processor.");
+}
+
+// Why a program's windows are painted the way they are, said for each program (ORDER 554)
+QString GraphicsKcm::paintWhyText(const PaintResolution &resolution) const
+{
+    if (!resolution.problem.isEmpty()) {
+        return i18nc("@info", "Painting on the graphics card cannot be used now: painted by the processor.");
+    }
+    if (resolution.reason == u"session"_s) {
+        return i18nc("@info", "QT_WIDGETS_GPU_PAINT is set in this session and is used instead of these choices.");
+    }
+    if (resolution.reason == u"program"_s) {
+        return i18nc("@info", "Your choice for this program.");
+    }
+    if (resolution.reason == u"choice"_s) {
+        return i18nc("@info", "Your choice for this kind of program.");
+    }
+    if (resolution.reason == u"measured"_s) {
+        return i18nc("@info", "Measured on this hardware: batched painting takes less processor.");
+    }
+    if (resolution.reason == u"measured-processor"_s) {
+        return i18nc("@info", "Measured on this hardware: batched painting takes no less processor.");
+    }
+    return i18nc("@info", "Not measured here: painted by the processor.");
 }
 
 QVariantList GraphicsKcm::paintOptions() const
@@ -834,7 +858,7 @@ QVariantList GraphicsKcm::paintKinds() const
     QVariantList list;
     const PaintFacts facts = paintFacts();
     for (Category category : allCategories()) {
-        const PaintResolution resolution = Paint::resolve(category, QString(), m_paint, m_paintRecord, facts);
+        const PaintResolution resolution = Paint::resolve(category, QString(), QString(), m_paint, m_paintRecord, facts);
         list.append(QVariantMap{
             {u"key"_s, categoryKey(category)},
             {u"label"_s, categoryLabel(category)},

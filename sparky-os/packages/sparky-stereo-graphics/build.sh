@@ -6,7 +6,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.2.8
+VERSION=0.2.9
 PACKAGE=sparky-stereo-graphics
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.graphics.XXXXXX")
@@ -40,7 +40,7 @@ mkdir -p "$D/DEBIAN" "$WORK/shlibs/debian"
 printf 'Source: %s\n\nPackage: %s\nArchitecture: amd64\n' "$PACKAGE" "$PACKAGE" >"$WORK/shlibs/debian/control"
 PRIVATE=$(pkg-config --variable=libdir sparky-stereo-problems)
 SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -l"$PRIVATE" --ignore-missing-info -O $(find "$D" -type f \( -name '*.so' -o -path '*/kauth/libexec/sparkystereo_graphics_helper' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/usr/bin/sparky-stereo-gpu-record' \)) 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
-DEPENDS="$SHLIBS, libqt6gui6 (= 6.11.2+dfsg-5+stereo3d18+lc1), libqt6widgets6 (= 6.11.2+dfsg-5+stereo3d18+lc1), libqt6opengl6 (= 6.11.2+dfsg-5+stereo3d18+lc1), qt6-qpa-plugins (= 6.11.2+dfsg-5+stereo3d18+lc1), libqt6waylandclient6 (= 6.11.2+dfsg-5+stereo3d18+lc1), sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)"
+DEPENDS="$SHLIBS, libqt6gui6 (= 6.11.2+dfsg-5+stereo3d19+lc1), libqt6widgets6 (= 6.11.2+dfsg-5+stereo3d19+lc1), libqt6opengl6 (= 6.11.2+dfsg-5+stereo3d19+lc1), qt6-qpa-plugins (= 6.11.2+dfsg-5+stereo3d19+lc1), libqt6waylandclient6 (= 6.11.2+dfsg-5+stereo3d19+lc1), sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOS
 Package: $PACKAGE
@@ -92,7 +92,7 @@ Homepage: https://sparkylinux.org
 
 Package: $PACKAGE
 Architecture: amd64
-Depends: \${shlibs:Depends}, libqt6gui6 (= 6.11.2+dfsg-5+stereo3d18+lc1), libqt6widgets6 (= 6.11.2+dfsg-5+stereo3d18+lc1), libqt6opengl6 (= 6.11.2+dfsg-5+stereo3d18+lc1), qt6-qpa-plugins (= 6.11.2+dfsg-5+stereo3d18+lc1), libqt6waylandclient6 (= 6.11.2+dfsg-5+stereo3d18+lc1), sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)
+Depends: \${shlibs:Depends}, libqt6gui6 (= 6.11.2+dfsg-5+stereo3d19+lc1), libqt6widgets6 (= 6.11.2+dfsg-5+stereo3d19+lc1), libqt6opengl6 (= 6.11.2+dfsg-5+stereo3d19+lc1), qt6-qpa-plugins (= 6.11.2+dfsg-5+stereo3d19+lc1), libqt6waylandclient6 (= 6.11.2+dfsg-5+stereo3d19+lc1), sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)
 Recommends: hwdata, switcheroo-control
 Description: Graphics page for System Settings
  Every graphics processor, the main desktop GPU, where programs draw, the GPU
@@ -106,10 +106,18 @@ $PACKAGE ($VERSION) unstable; urgency=medium
     "the reason is offload the cpu load"): how programs made with Qt Widgets
     paint their windows is a choice on the page, for each kind of program
     and for each program: Automatic, On the processor, On the graphics card
-    (batched), On the graphics card, Qt's OpenGL engine. Automatic is the
-    way measured for that kind on this machine or its model
-    (sparky-stereo-gpu-record --set-paint, [MeasuredPaint] in a shipped
-    record), and the processor where nothing was measured.
+    (batched), On the graphics card, Qt's OpenGL engine.
+  * ORDER 554, Automatic for each program (Daniel, 2026-11-13: "I want the
+    automatic per program for sure"): a program measured on this hardware to
+    take at least a fifth less processor batched, in every fixed work, is
+    painted batched under Automatic; a program not measured, or measured no
+    better, is painted by the processor, and the page says which for each
+    program. The measured record ships for the hardware that was measured
+    (share/machines: a Ryzen 5 5600G with its Radeon and an RTX 3060, and
+    the Lenovo ideapad 310-15ABR), one row for each program and card with
+    its loads and their source ([MeasuredPaintPrograms]); nothing is guessed
+    for another machine. sparky-stereo-gpu-record --set-paint PROGRAM CARD
+    WAY writes a row measured on this machine.
   * sparky-stereo-gpu-env hands the launcher QT_WIDGETS_GPU_PAINT with the
     GPU's variables (--print paint, paint-reason, paint-env), and
     sparky-stereo-gpu-run applies it also when its caller chose the GPU. A
@@ -121,7 +129,7 @@ $PACKAGE ($VERSION) unstable; urgency=medium
     "Paint on the processor" (--use-paint) as the person's explicit choice.
   * Ten languages.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 13 Nov 2026 12:00:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 14 Nov 2026 12:00:00 +0000
 
 $PACKAGE (0.2.7) unstable; urgency=medium
 

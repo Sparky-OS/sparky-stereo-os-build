@@ -123,13 +123,27 @@ MachineIdentity MachineIdentity::read(const QString &root)
         identity.gpus << QStringLiteral("%1:%2").arg(vendor, 4, 16, QLatin1Char('0')).arg(id, 4, 16, QLatin1Char('0'));
     }
     identity.gpus.sort();
+    // the first processor's name: a machine has one model of processor
+    QFile cpuinfo(root + u"/proc/cpuinfo"_s);
+    if (cpuinfo.open(QIODevice::ReadOnly)) {
+        while (!cpuinfo.atEnd()) {
+            const QString line = QString::fromUtf8(cpuinfo.readLine());
+            if (line.startsWith(u"model name"_s)) {
+                identity.cpu = line.section(u':', 1).simplified();
+                break;
+            }
+        }
+    }
     return identity;
 }
 
 bool KnownMachine::matches(const MachineIdentity &machine) const
 {
-    if (vendor.isEmpty() && product.isEmpty() && gpus.isEmpty()) {
+    if (vendor.isEmpty() && product.isEmpty() && gpus.isEmpty() && cpu.isEmpty()) {
         return false; // a record that says nothing about its machine is for none
+    }
+    if (!cpu.isEmpty() && cpu.compare(machine.cpu, Qt::CaseInsensitive) != 0) {
+        return false;
     }
     if (!vendor.isEmpty() && vendor.compare(machine.vendor, Qt::CaseInsensitive) != 0) {
         return false;
@@ -159,6 +173,7 @@ QList<KnownMachine> KnownMachine::readAll(const QString &folder)
         known.product = match.readEntry("Product", QString()).trimmed();
         known.gpus = match.readEntry("Gpus", QString()).toLower().split(separators, Qt::SkipEmptyParts);
         known.gpus.sort();
+        known.cpu = match.readEntry("Cpu", QString()).simplified();
         merge(path, known.record);
         known.record.origin.clear();
         known.record.known.clear();
@@ -251,11 +266,12 @@ Result applyKnown(const QString &root, const QString &folder)
         return Result::NothingKnown;
     }
     const MachineRecord &wanted = match->record;
-    // the way of painting windows measured for this model, in the same shipped file ([MeasuredPaint], ORDER 518)
+    // the way of painting windows measured for each program on this model, in the same shipped file
+    // ([MeasuredPaintPrograms], ORDER 554)
     const PaintRecord wantedPaint = PaintRecord::readFile(QDir(folder).filePath(match->name + u".conf"_s));
     const PaintRecord existingPaint = PaintRecord::readFile(path);
     const bool paintOurs = existingPaint.origin == u"shipped"_s || existingPaint.isEmpty();
-    const bool paintSame = !paintOurs || (existingPaint.ways == wantedPaint.ways && existingPaint.measurement == wantedPaint.measurement);
+    const bool paintSame = !paintOurs || existingPaint.programs == wantedPaint.programs;
     if (existing.origin == u"shipped"_s && existing.known == match->name && existing.bestGpu == wanted.bestGpu && existing.model == wanted.model
         && existing.measurement == wanted.measurement && existing.copyBack == wanted.copyBack) {
         if (paintSame) {
@@ -319,10 +335,10 @@ bool forget(const QString &root)
     return PaintRecord::remove(MachineRecord::systemFile(root), true) && removeOurs(MachineRecord::systemFile(root));
 }
 
-bool writePaint(const QString &root, Category category, const QString &way, const QString &measurement)
+bool writePaint(const QString &root, const QString &program, const QString &gpu, const QString &way, const QString &source)
 {
     const QString path = MachineRecord::systemFile(root);
-    return prepare(path) && PaintRecord::writeLocal(path, category, way, measurement);
+    return prepare(path) && PaintRecord::writeLocal(path, program, gpu, way, source);
 }
 
 }
