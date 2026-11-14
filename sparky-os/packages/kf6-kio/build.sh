@@ -30,7 +30,7 @@ REPRO=$SPARKY_RELEASE_TOOLKIT/repo/reproducible.py
 SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
 export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 PREDECESSOR=6.30.0-1+stereo3d9+lc1
-VERSION=6.30.0-1+stereo3d10+lc1
+VERSION=6.30.0-1+stereo3d11+lc1
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
@@ -86,13 +86,15 @@ entry = (f'kf6-kio ({version}) testing; urgency=medium\n\n'
          '  * Ask the Graphics resolver for paint-env when an entry or its\n'
          '    launch environment already chooses a GPU. Keep that GPU choice\n'
          '    and accept only the three painting variables in this path.\n'
-         '  * Require the resolver interface from sparky-stereo-graphics 0.2.8\n'
-         '    when the Graphics page is installed (ORDER 518).\n\n'
+         '  * Require the resolver interface from sparky-stereo-graphics 0.2.9\n'
+         '    when the Graphics page is installed (ORDER 518 and 554). Versions\n'
+         '    +stereo3d10 and sparky-stereo-graphics 0.2.8 were local candidates\n'
+         '    and were never published.\n\n'
          ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n')
 changelog.write_text(entry + old)
 PY
 dpkg-parsechangelog -l source/debian/changelog -S Version | grep -qx "$VERSION"
-# The new paint-only query needs the 0.2.8 resolver when it is present (Debian Policy 7.3, Breaks).
+# The new paint-only query needs the 0.2.9 resolver when it is present (Debian Policy 7.3, Breaks).
 python3 - source/debian/control <<'PY'
 import sys
 from pathlib import Path
@@ -100,7 +102,7 @@ control = Path(sys.argv[1])
 text = control.read_text()
 old = 'Breaks: sparky-stereo-graphics (<< 0.2.4~)'
 assert text.count(old) == 1, 'the published KIO Graphics interface constraint changed'
-control.write_text(text.replace(old, 'Breaks: sparky-stereo-graphics (<< 0.2.8~)', 1))
+control.write_text(text.replace(old, 'Breaks: sparky-stereo-graphics (<< 0.2.9~)', 1))
 PY
 
 apt-get -y update > apt-update.log 2>&1
