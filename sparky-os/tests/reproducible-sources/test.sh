@@ -144,7 +144,7 @@ want=$(date -u -d '2026-10-01 10:00:00' +%s)
 out=$(env -u SOURCE_DATE_EPOCH TZ=Asia/Tokyo bash "$E/sparky-os/packages/demo/build.sh" 2>&1)
 grep -qx "EPOCH=$want" <<<"$out" && ok "sparky_provenance_init: the recipe date is the last commit touching the recipe's folder, not the newer commit elsewhere" || bad "engine date: $out"
 grep -qx "RFC=Thu, 01 Oct 2026 10:00:00 +0000" <<<"$out" && ok "the changelog date is UTC whatever the zone" || bad "engine rfc: $out"
-grep -qx "ARG SOURCE_DATE_EPOCH=$want" <<<"$out" && grep -q "ARG SOURCE_DATE_RFC2822=Thu, 01 Oct 2026" <<<"$out" && grep -q "ARG $E/sparky-os/repo/reproducible.py:/run/reproducible.py:ro" <<<"$out" && grep -q 'ARG SPARKY_SOURCE_DATE_BASIS=the last commit touching sparky-os/packages/demo' <<<"$out" && ok "the container arguments carry the date, its basis and reproducible.py" || bad "engine args: $out"
+grep -qx "ARG SOURCE_DATE_EPOCH=$want" <<<"$out" && grep -q "ARG SOURCE_DATE_RFC2822=Thu, 01 Oct 2026" <<<"$out" && grep -q "ARG type=bind,src=$E/sparky-os/repo/reproducible.py,dst=/run/reproducible.py,readonly" <<<"$out" && grep -q 'ARG SPARKY_SOURCE_DATE_BASIS=the last commit touching sparky-os/packages/demo' <<<"$out" && ok "the container arguments carry the date, its basis and reproducible.py" || bad "engine args: $out"
 out=$(SOURCE_DATE_EPOCH=$STAMP bash "$E/sparky-os/packages/demo/build.sh" 2>&1)
 grep -qx "EPOCH=$STAMP" <<<"$out" && grep -q 'ARG SPARKY_SOURCE_DATE_BASIS=environment' <<<"$out" && ok "SOURCE_DATE_EPOCH set by the caller wins and the basis says so" || bad "engine env: $out"
 echo dirty >> "$E/sparky-os/packages/demo/a"
