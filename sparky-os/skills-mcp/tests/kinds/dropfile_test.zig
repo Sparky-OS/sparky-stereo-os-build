@@ -80,5 +80,12 @@ test "a missing registry is empty, an unreadable one is an error" {
 test "the real registries are the ones the plan names" {
     try std.testing.expectEqual(@as(usize, 2), @import("kinds_era").names.len);
     try std.testing.expectEqual(@as(usize, 2), @import("kinds_skill_kind").names.len);
-    try std.testing.expectEqual(@as(usize, 9), @import("kinds_lang").names.len);
+    const a = std.testing.allocator;
+    const names = try scan.list(a, std.testing.io, std.Io.Dir.cwd(), "data/_kinds/lang");
+    defer scan.free(a, names);
+    try std.testing.expect(names.len > 0);
+    try std.testing.expectEqual(names.len, @import("kinds_lang").names.len);
+    for (names, @import("kinds_lang").names) |name, compiled_name| {
+        try std.testing.expectEqualStrings(name, compiled_name);
+    }
 }
