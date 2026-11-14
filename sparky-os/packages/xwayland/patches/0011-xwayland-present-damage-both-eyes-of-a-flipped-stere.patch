@@ -1,0 +1,44 @@
+From 105b839202ec668b449c56ca54b928403420cf64 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 14 Nov 2026 06:20:56 +0000
+Subject: [PATCH 11/12] xwayland/present: damage both eyes of a flipped stereo
+ pixmap
+
+The damage of a flip is the window's, one eye wide, so for a pixmap that
+holds both eyes of a stereo window only the left eye was damaged. A
+compositor reads only the damaged part of a wl_shm buffer: the right eye
+kept an old frame.
+
+Damage the same place in the right eye as well.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ hw/xwayland/xwayland-present.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/hw/xwayland/xwayland-present.c b/hw/xwayland/xwayland-present.c
+index 9e1db94..c5a62aa 100644
+--- a/hw/xwayland/xwayland-present.c
++++ b/hw/xwayland/xwayland-present.c
+@@ -1058,6 +1058,18 @@ xwl_present_flip(present_vblank_ptr vblank, RegionPtr damage)
+                        damage_box->x2 - damage_box->x1,
+                        damage_box->y2 - damage_box->y1);
+ 
++    /* The damage is in the window's coordinates, one eye wide. A pixmap that
++     * holds both eyes changed at the same place in its right eye too: a
++     * compositor reads only the damaged part of a wl_shm buffer.
++     */
++    if (pixmap->drawable.width == 2 * present_window->drawable.width)
++        xwl_surface_damage(xwl_window->xwl_screen, xwl_window->surface,
++                           damage_box->x1 - present_window->drawable.x +
++                           present_window->drawable.width,
++                           damage_box->y1 - present_window->drawable.y,
++                           damage_box->x2 - damage_box->x1,
++                           damage_box->y2 - damage_box->y1);
++
+     if (xwl_window->tearing_control) {
+         uint32_t hint;
+         if (event->options & PresentOptionAsyncMayTear)
+-- 
+2.53.0
+

@@ -1,0 +1,100 @@
+From be42798251e3e5ed7fc5071920879f69f2e59f27 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 14 Nov 2026 06:20:56 +0000
+Subject: [PATCH 10/12] xwayland/shm: give a pixmap that holds both eyes of a
+ stereo window a wl_buffer
+
+A window declared full side-by-side stereo with version 4 of the KDE
+declaration (_KDE_NET_WM_STEREO_CONTENT 3, _KDE_NET_WM_STEREO_CONTENT_VERSION
+4) stays one eye wide, and its program presents pixmaps twice its width
+that hold both eyes. Present flips such a pixmap to the window's surface
+as it is, but only if it has a wl_buffer.
+
+Without glamor, a client's pixmap gets shared memory and a wl_buffer only
+when its size is a toplevel window's, so the pixmap of both eyes was a
+plain fb pixmap: xwl_present_check_flip() refused it and Present copied it
+into the window, which keeps the left eye only. The compositor then showed
+half of the left eye to each eye for a toplevel, and a right eye that never
+changed for a child window with its own surface.
+
+Give a pixmap twice the width of a window that holds two eyes, toplevel or
+child, shared memory too. The window tree is only walked once a client has
+declared version 4.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ hw/xwayland/xwayland-shm.c | 44 +++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 43 insertions(+), 1 deletion(-)
+
+diff --git a/hw/xwayland/xwayland-shm.c b/hw/xwayland/xwayland-shm.c
+index faca522..5f686a8 100644
+--- a/hw/xwayland/xwayland-shm.c
++++ b/hw/xwayland/xwayland-shm.c
+@@ -42,6 +42,7 @@
+ #include "pixmapstr.h"
+ 
+ #include "xwayland-pixmap.h"
++#include "xwayland-present.h"
+ #include "xwayland-screen.h"
+ #include "xwayland-shm.h"
+ 
+@@ -215,6 +216,46 @@ shm_format_for_depth(int depth)
+     }
+ }
+ 
++struct two_eyes_size {
++    int width;
++    int height;
++};
++
++static int
++window_holds_two_eyes_of_size(WindowPtr window, void *data)
++{
++    const struct two_eyes_size *size = data;
++
++    if (size->width == 2 * window->drawable.width &&
++        size->height == window->drawable.height &&
++        xwl_present_window_holds_two_eyes(window))
++        return WT_STOPWALKING;
++
++    return WT_WALKCHILDREN;
++}
++
++/*
++ * A window declared full side-by-side stereo with version 4 of the KDE
++ * declaration stays one eye wide, and the pixmaps its program presents are
++ * twice its width (see xwl_present_window_holds_two_eyes()). Present can only
++ * flip such a pixmap to the window's surface if it has a wl_buffer; copied
++ * into the window instead, it is clipped to the left eye. The window is a
++ * toplevel or, for a 3D area inside a window, a child of one.
++ */
++static Bool
++dimensions_match_two_eyes_window(ScreenPtr screen, int width, int height)
++{
++    static const char version[] = "_KDE_NET_WM_STEREO_CONTENT_VERSION";
++    struct two_eyes_size size = { width, height };
++
++    /* No client has declared one yet */
++    if (width % 2 || MakeAtom(version, strlen(version), FALSE) == None)
++        return FALSE;
++
++    return TraverseTree(screen->root, window_holds_two_eyes_of_size,
++                        &size) == WT_STOPWALKING;
++}
++
+ static Bool
+ dimensions_match_toplevel_window(ScreenPtr screen, int width, int height)
+ {
+@@ -256,7 +297,8 @@ xwl_shm_create_pixmap(ScreenPtr screen,
+     if (hint == CREATE_PIXMAP_USAGE_GLYPH_PICTURE ||
+         (width == 0 && height == 0) || depth < 15 ||
+         (hint != CREATE_PIXMAP_USAGE_BACKING_PIXMAP &&
+-         !dimensions_match_toplevel_window(screen, width, height)))
++         !dimensions_match_toplevel_window(screen, width, height) &&
++         !dimensions_match_two_eyes_window(screen, width, height)))
+         return fbCreatePixmap(screen, width, height, depth, hint);
+ 
+     stride = PixmapBytePad(width, depth);
+-- 
+2.53.0
+

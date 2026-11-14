@@ -1,0 +1,19 @@
+xwayland (2:24.1.13-1+stereo3d5) unstable; urgency=medium
+
+  * Without glamor (a machine or a virtual machine with no 3D acceleration,
+    or XWAYLAND_NO_GLAMOR=1), a window declared full side-by-side stereo with
+    version 4 of the KDE declaration is a pair again. The pixmap its program
+    presents, twice the window's width, gets shared memory and a wl_buffer as
+    a pixmap of a toplevel's size does, so Present flips it to the window's
+    surface whole (0010). Before, it was copied into the one eye wide window,
+    which keeps the left eye: an OpenGL quad buffer program showed half of
+    its left eye to each eye, and a stereo child window with its own surface
+    showed a right eye that never changed (ORDER 560).
+  * The damage of such a flip covers both eyes: a compositor reads only the
+    damaged part of a wl_shm buffer, and the right eye kept an old frame
+    (0011).
+  * Test, in the source's own xwayland suite: stereo-present-pair on Xwayland
+    without glamor under a headless weston, for a toplevel and for a child
+    window, with an undeclared window as the control (0012). It fails on
+    +stereo3d4. The build runs it: weston, libxcb-present-dev,
+    libxcb-composite0-dev and libxcb1-dev join the build dependencies.
