@@ -1,0 +1,445 @@
+From 911fcdaf05318c309d0210709d85ec5bcab51fe6 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 14 Nov 2026 20:40:14 -0300
+Subject: [PATCH] media: uvcvideo: test bulk boundaries through the actual
+ decoder
+
+Feed the reported transfer shape and trailer controls in KUnit. Keep a
+stopped test USB controller and a real clock ring so the unpatched
+decoder can misread image bytes without a fixture fault.
+
+The test file is included alongside the static decoder and already
+covered by the UVC directory entry in MAINTAINERS.
+
+Assisted-by: LLM [OpenAI Codex]
+---
+ drivers/media/usb/uvc/Kconfig          |  10 +
+ drivers/media/usb/uvc/uvc_video.c      |   3 +
+ drivers/media/usb/uvc/uvc_video_test.c | 386 +++++++++++++++++++++++++
+ 3 files changed, 399 insertions(+)
+ create mode 100644 drivers/media/usb/uvc/uvc_video_test.c
+
+diff --git a/drivers/media/usb/uvc/Kconfig b/drivers/media/usb/uvc/Kconfig
+index 5795322..9b05b70 100644
+--- a/drivers/media/usb/uvc/Kconfig
++++ b/drivers/media/usb/uvc/Kconfig
+@@ -20,3 +20,13 @@ config USB_VIDEO_CLASS_INPUT_EVDEV
+ 	  to report button events.
+ 
+ 	  If you are in doubt, say Y.
++
++config USB_VIDEO_CLASS_KUNIT_TEST
++	bool "KUnit tests for UVC payload decoding" if !KUNIT_ALL_TESTS
++	depends on USB_VIDEO_CLASS=y && KUNIT=y
++	default KUNIT_ALL_TESTS
++	help
++	  Exercise the UVC bulk and isochronous decoding paths with synthetic
++	  transfers, without a camera. Tests include unaligned bulk payloads
++	  and controls for short packets, trailers and malformed headers.
++	  Run these tests in a virtual machine with no attached USB camera.
+diff --git a/drivers/media/usb/uvc/uvc_video.c b/drivers/media/usb/uvc/uvc_video.c
+index 63f4842..72b5a4d 100644
+--- a/drivers/media/usb/uvc/uvc_video.c
++++ b/drivers/media/usb/uvc/uvc_video.c
+@@ -2434,3 +2434,6 @@ void uvc_video_stop_streaming(struct uvc_streaming *stream)
+ 	uvc_video_clock_cleanup(&stream->clock);
+ }
+ 
++#if IS_ENABLED(CONFIG_USB_VIDEO_CLASS_KUNIT_TEST)
++#include "uvc_video_test.c"
++#endif
+diff --git a/drivers/media/usb/uvc/uvc_video_test.c b/drivers/media/usb/uvc/uvc_video_test.c
+new file mode 100644
+index 0000000..81637b1
+--- /dev/null
++++ b/drivers/media/usb/uvc/uvc_video_test.c
+@@ -0,0 +1,386 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/* Synthetic transfers through the real UVC bulk and isochronous decoders. */
++#include <kunit/test.h>
++#include <linux/usb/hcd.h>
++
++#ifndef UVC_QUIRK_BULK_UNALIGNED_PAYLOAD
++#define UVC_QUIRK_BULK_UNALIGNED_PAYLOAD 0x00080000
++#define UVC_TEST_LEGACY_BULK
++#endif
++
++#define UVC_TEST_FRAME_SIZE 614400
++#define UVC_TEST_URB_SIZE 16384
++
++struct uvc_bulk_test {
++	struct uvc_streaming stream;
++	struct uvc_device dev;
++	struct usb_interface intf;
++	struct usb_device usb;
++	struct usb_hcd hcd;
++	struct uvc_format format;
++	struct uvc_buffer buf[3];
++	struct uvc_urb transfer;
++};
++
++static void uvc_bulk_test_clock_cleanup(void *data)
++{
++	struct uvc_bulk_test *ctx = data;
++
++	uvc_video_clock_cleanup(&ctx->stream.clock);
++}
++
++static int uvc_bulk_test_init(struct kunit *test)
++{
++	struct uvc_bulk_test *ctx;
++
++	ctx = kunit_kzalloc(test, sizeof(*ctx), GFP_KERNEL);
++	if (!ctx)
++		return -ENOMEM;
++	test->priv = ctx;
++	ctx->intf.dev.init_name = "uvc-bulk-kunit";
++	ctx->dev.intf = &ctx->intf;
++	/* A stopped test controller also handles SCR in misdecoded image bytes. */
++	ctx->usb.bus = &ctx->hcd.self;
++	ctx->dev.udev = &ctx->usb;
++	ctx->stream.dev = &ctx->dev;
++	ctx->stream.cur_format = &ctx->format;
++	ctx->stream.last_fid = -1;
++	ctx->stream.sequence = -1;
++	ctx->stream.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
++	ctx->stream.queue.stream = &ctx->stream;
++	spin_lock_init(&ctx->stream.queue.irqlock);
++	INIT_LIST_HEAD(&ctx->stream.queue.irqqueue);
++	ctx->transfer.stream = &ctx->stream;
++	if (uvc_video_clock_init(&ctx->stream.clock))
++		return -ENOMEM;
++	return kunit_add_action_or_reset(test, uvc_bulk_test_clock_cleanup, ctx);
++}
++
++static void uvc_bulk_test_setup(struct kunit *test, unsigned int size,
++				unsigned int frames, unsigned int max_payload,
++				bool quirk)
++{
++	struct uvc_bulk_test *ctx = test->priv;
++	unsigned int i;
++
++	ctx->stream.ctrl.dwMaxVideoFrameSize = size;
++	ctx->stream.bulk.max_payload_size = max_payload;
++	ctx->dev.quirks = quirk ? UVC_QUIRK_BULK_UNALIGNED_PAYLOAD : 0;
++	for (i = 0; i < frames; i++) {
++		struct uvc_buffer *buf = &ctx->buf[i];
++
++		buf->mem = kunit_kzalloc(test, size + 64, GFP_KERNEL);
++		KUNIT_ASSERT_NOT_NULL(test, buf->mem);
++		buf->length = size;
++		buf->state = UVC_BUF_STATE_QUEUED;
++		kref_init(&buf->ref);
++		/* Keep completion local, without creating a userspace VB2 queue. */
++		kref_get(&buf->ref);
++		list_add_tail(&buf->queue, &ctx->stream.queue.irqqueue);
++	}
++}
++
++static void uvc_bulk_test_header(u8 *data, u8 flags)
++{
++	memset(data, 0, 12);
++	data[0] = 12;
++	data[1] = UVC_STREAM_EOH | UVC_STREAM_PTS | UVC_STREAM_SCR | flags;
++	put_unaligned_le32(0x11223344, data + 2);
++	/* Constant zero SCR; the fixture supplies a stopped host controller. */
++}
++
++static u8 uvc_bulk_test_pixel(unsigned int pos, unsigned int frame)
++{
++	return (pos * 13 + frame * 37) % 251;
++}
++
++static u8 *uvc_bulk_test_wire(struct kunit *test, unsigned int size,
++			      unsigned int max_payload, unsigned int frame,
++			      unsigned int *wire_size)
++{
++	unsigned int count = DIV_ROUND_UP(size, max_payload - 12);
++	unsigned int pos = 0, written = 0;
++	u8 *wire;
++
++	*wire_size = size + count * 12;
++	wire = kunit_kmalloc(test, *wire_size, GFP_KERNEL);
++	if (!wire)
++		return NULL;
++	while (pos < size) {
++		unsigned int bytes = min(size - pos, max_payload - 12);
++		unsigned int i;
++		u8 flags = frame & 1;
++
++		if (pos + bytes == size)
++			flags |= UVC_STREAM_EOF;
++		uvc_bulk_test_header(wire + written, flags);
++		written += 12;
++		for (i = 0; i < bytes; i++)
++			wire[written++] = uvc_bulk_test_pixel(pos++, frame);
++	}
++	return wire;
++}
++
++static void uvc_bulk_test_flush(struct kunit *test)
++{
++	struct uvc_bulk_test *ctx = test->priv;
++	unsigned int i;
++
++	KUNIT_ASSERT_LE(test, ctx->transfer.async_operations,
++			ARRAY_SIZE(ctx->transfer.copy_operations));
++	for (i = 0; i < ctx->transfer.async_operations; i++) {
++		struct uvc_copy_op *op = &ctx->transfer.copy_operations[i];
++
++		memcpy(op->dst, op->src, op->len);
++		uvc_queue_buffer_release(op->buf);
++	}
++	ctx->transfer.async_operations = 0;
++}
++
++static void uvc_bulk_test_feed(struct kunit *test, u8 *data,
++			       unsigned int length, unsigned int capacity,
++			       bool isoc)
++{
++	struct uvc_bulk_test *ctx = test->priv;
++	struct uvc_buffer *buf;
++	struct urb *urb;
++
++	urb = kunit_kzalloc(test, struct_size(urb, iso_frame_desc, 1),
++			    GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, urb);
++	urb->transfer_buffer = data;
++	urb->actual_length = length;
++	urb->transfer_buffer_length = capacity;
++	ctx->transfer.urb = urb;
++	buf = uvc_queue_get_current_buffer(&ctx->stream.queue);
++	if (isoc) {
++		urb->number_of_packets = 1;
++		urb->iso_frame_desc[0].actual_length = length;
++		uvc_video_decode_isoc(&ctx->transfer, buf, NULL);
++	} else {
++		uvc_video_decode_bulk(&ctx->transfer, buf, NULL);
++	}
++	uvc_bulk_test_flush(test);
++}
++
++static void uvc_bulk_test_image(struct kunit *test, unsigned int frame,
++				unsigned int size)
++{
++	struct uvc_bulk_test *ctx = test->priv;
++	struct uvc_buffer *buf = &ctx->buf[frame];
++	unsigned int i;
++	u8 *expected;
++
++	expected = kunit_kmalloc(test, size, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, expected);
++	for (i = 0; i < size; i++)
++		expected[i] = uvc_bulk_test_pixel(i, frame);
++	KUNIT_EXPECT_EQ(test, buf->bytesused, size);
++	KUNIT_EXPECT_EQ(test, buf->error, 0);
++	KUNIT_EXPECT_EQ(test, memcmp(buf->mem, expected, size), 0);
++	KUNIT_EXPECT_EQ(test, buf->state, UVC_BUF_STATE_READY);
++	KUNIT_EXPECT_EQ(test, kref_read(&buf->ref), 1);
++	kunit_info(test, "frame %u: %u bytes, error %u\n", frame,
++		   buf->bytesused, buf->error);
++}
++
++static void uvc_bulk_back_to_back_test(struct kunit *test)
++{
++	unsigned int frame;
++
++	uvc_bulk_test_setup(test, UVC_TEST_FRAME_SIZE, 2, 119296, true);
++	for (frame = 0; frame < 2; frame++) {
++		unsigned int wire_size, pos;
++		u8 *wire;
++
++		wire = uvc_bulk_test_wire(test, UVC_TEST_FRAME_SIZE, 119296,
++					  frame, &wire_size);
++		KUNIT_ASSERT_NOT_NULL(test, wire);
++		KUNIT_ASSERT_EQ(test, wire_size, 614472);
++		for (pos = 0; pos < wire_size; pos += UVC_TEST_URB_SIZE)
++			uvc_bulk_test_feed(test, wire + pos,
++					   min(wire_size - pos, UVC_TEST_URB_SIZE),
++					   UVC_TEST_URB_SIZE, false);
++		uvc_bulk_test_image(test, frame, UVC_TEST_FRAME_SIZE);
++	}
++}
++
++static void uvc_bulk_short_packet_test(struct kunit *test)
++{
++	unsigned int size;
++	u8 *wire;
++
++	uvc_bulk_test_setup(test, 20000, 1, 119296, true);
++	wire = uvc_bulk_test_wire(test, 20000, 119296, 0, &size);
++	KUNIT_ASSERT_NOT_NULL(test, wire);
++	uvc_bulk_test_feed(test, wire, 16384, 16384, false);
++	uvc_bulk_test_feed(test, wire + 16384, size - 16384, 16384, false);
++	uvc_bulk_test_image(test, 0, 20000);
++}
++
++static void uvc_bulk_multiple_test(struct kunit *test)
++{
++	unsigned int size;
++	u8 *wire;
++
++	uvc_bulk_test_setup(test, 32744, 1, 16384, true);
++	wire = uvc_bulk_test_wire(test, 32744, 16384, 0, &size);
++	KUNIT_ASSERT_NOT_NULL(test, wire);
++	KUNIT_ASSERT_EQ(test, size, 32768);
++	uvc_bulk_test_feed(test, wire, 16384, 16384, false);
++	uvc_bulk_test_feed(test, wire + 16384, 16384, 16384, false);
++	uvc_bulk_test_image(test, 0, 32744);
++}
++
++static void uvc_bulk_zero_max_test(struct kunit *test)
++{
++	unsigned int size;
++	u8 *wire;
++
++	uvc_bulk_test_setup(test, 80, 1, 0, true);
++	wire = uvc_bulk_test_wire(test, 80, 1024, 0, &size);
++	KUNIT_ASSERT_NOT_NULL(test, wire);
++	uvc_bulk_test_feed(test, wire, size, 16384, false);
++	uvc_bulk_test_image(test, 0, 80);
++}
++
++static void uvc_bulk_mjpeg_test(struct kunit *test)
++{
++	struct uvc_bulk_test *ctx = test->priv;
++	unsigned int size;
++	u8 *wire;
++
++	uvc_bulk_test_setup(test, 32000, 1, 119296, true);
++	ctx->format.flags = UVC_FMT_FLAG_COMPRESSED;
++	ctx->format.fcc = V4L2_PIX_FMT_MJPEG;
++	wire = uvc_bulk_test_wire(test, 400, 119296, 0, &size);
++	KUNIT_ASSERT_NOT_NULL(test, wire);
++	uvc_bulk_test_feed(test, wire, size, 16384, false);
++	uvc_bulk_test_image(test, 0, 400);
++}
++
++static void uvc_bulk_isoc_test(struct kunit *test)
++{
++	unsigned int size;
++	u8 *wire;
++
++	uvc_bulk_test_setup(test, 400, 1, 119296, true);
++	wire = uvc_bulk_test_wire(test, 400, 119296, 0, &size);
++	KUNIT_ASSERT_NOT_NULL(test, wire);
++	uvc_bulk_test_feed(test, wire, size, size, true);
++	uvc_bulk_test_image(test, 0, 400);
++}
++
++static void uvc_bulk_trailer_test(struct kunit *test)
++{
++	struct uvc_bulk_test *ctx = test->priv;
++	u8 wire[64];
++	unsigned int i;
++
++	uvc_bulk_test_setup(test, 52, 1, 32, true);
++	uvc_bulk_test_header(wire, UVC_STREAM_EOF);
++	for (i = 0; i < 52; i++)
++		wire[12 + i] = uvc_bulk_test_pixel(i, 0);
++	/* The apparent next payload is trailer data, without EOH. */
++	wire[32] = 12;
++	wire[33] = 0;
++	uvc_bulk_test_feed(test, wire, sizeof(wire), sizeof(wire), false);
++	KUNIT_EXPECT_EQ(test, ctx->buf[0].bytesused, 52);
++	KUNIT_EXPECT_EQ(test, ctx->buf[0].error, 0);
++	KUNIT_EXPECT_EQ(test, memcmp(ctx->buf[0].mem, wire + 12, 52), 0);
++}
++
++static void uvc_bulk_quirk_off_test(struct kunit *test)
++{
++	struct uvc_bulk_test *ctx = test->priv;
++	u8 wire[64];
++
++	uvc_bulk_test_setup(test, 52, 1, 32, false);
++	uvc_bulk_test_header(wire, UVC_STREAM_EOF);
++	memset(wire + 12, 0x31, 52);
++	uvc_bulk_test_header(wire + 32, UVC_STREAM_EOF);
++	uvc_bulk_test_feed(test, wire, sizeof(wire), sizeof(wire), false);
++	KUNIT_EXPECT_EQ(test, ctx->buf[0].bytesused, 52);
++	KUNIT_EXPECT_EQ(test, ctx->buf[0].error, 0);
++	KUNIT_EXPECT_EQ(test, memcmp(ctx->buf[0].mem, wire + 12, 52), 0);
++}
++
++static void uvc_bulk_malformed_header_test(struct kunit *test)
++{
++	struct uvc_bulk_test *ctx = test->priv;
++	u8 wire[64];
++
++	uvc_bulk_test_setup(test, 52, 1, 32, true);
++	uvc_bulk_test_header(wire, UVC_STREAM_EOF);
++	memset(wire + 12, 0x31, 52);
++	wire[32] = 2;
++	wire[33] = UVC_STREAM_EOH | UVC_STREAM_PTS | UVC_STREAM_SCR;
++	uvc_bulk_test_feed(test, wire, sizeof(wire), sizeof(wire), false);
++	KUNIT_EXPECT_EQ(test, ctx->buf[0].bytesused, 52);
++	KUNIT_EXPECT_EQ(test, memcmp(ctx->buf[0].mem, wire + 12, 52), 0);
++}
++
++static void uvc_bulk_oversize_counter_test(struct kunit *test)
++{
++	struct uvc_bulk_test *ctx = test->priv;
++	unsigned int size;
++	u8 *wire;
++
++	uvc_bulk_test_setup(test, 80, 1, 32, true);
++	ctx->stream.bulk.payload_size = 64;
++	wire = uvc_bulk_test_wire(test, 80, 1024, 0, &size);
++	KUNIT_ASSERT_NOT_NULL(test, wire);
++	uvc_bulk_test_feed(test, wire, size, 16384, false);
++	uvc_bulk_test_image(test, 0, 80);
++}
++
++static void uvc_bulk_copy_limit_test(struct kunit *test)
++{
++	struct uvc_bulk_test *ctx = test->priv;
++	unsigned int size;
++	u8 *wire;
++
++	uvc_bulk_test_setup(test, 80, 1, 0, true);
++	wire = uvc_bulk_test_wire(test, 80, 1024, 0, &size);
++	KUNIT_ASSERT_NOT_NULL(test, wire);
++#ifdef UVC_TEST_LEGACY_BULK
++	kunit_skip(test, "The original decoder only schedules one copy per URB");
++	return;
++#endif
++	/* A dense URB may reach the fixed array's limit before it ends. */
++	ctx->transfer.async_operations = ARRAY_SIZE(ctx->transfer.copy_operations);
++	ctx->transfer.urb = kunit_kzalloc(test, sizeof(struct urb), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, ctx->transfer.urb);
++	ctx->transfer.urb->transfer_buffer = wire;
++	ctx->transfer.urb->actual_length = size;
++	ctx->transfer.urb->transfer_buffer_length = 16384;
++	uvc_video_decode_bulk(&ctx->transfer, &ctx->buf[0], NULL);
++	KUNIT_EXPECT_EQ(test, ctx->transfer.async_operations, UVC_MAX_PACKETS);
++	KUNIT_EXPECT_EQ(test, ctx->buf[0].bytesused, 0);
++	KUNIT_EXPECT_EQ(test, ctx->buf[0].error, 1);
++	/* No real copy operations were scheduled by this fixture. */
++	ctx->transfer.async_operations = 0;
++}
++
++static struct kunit_case uvc_bulk_test_cases[] = {
++	KUNIT_CASE(uvc_bulk_back_to_back_test),
++	KUNIT_CASE(uvc_bulk_short_packet_test),
++	KUNIT_CASE(uvc_bulk_multiple_test),
++	KUNIT_CASE(uvc_bulk_zero_max_test),
++	KUNIT_CASE(uvc_bulk_isoc_test),
++	KUNIT_CASE(uvc_bulk_mjpeg_test),
++	KUNIT_CASE(uvc_bulk_trailer_test),
++	KUNIT_CASE(uvc_bulk_quirk_off_test),
++	KUNIT_CASE(uvc_bulk_malformed_header_test),
++	KUNIT_CASE(uvc_bulk_oversize_counter_test),
++	KUNIT_CASE(uvc_bulk_copy_limit_test),
++	{}
++};
++
++static struct kunit_suite uvc_bulk_test_suite = {
++	.name = "uvc-bulk-payload",
++	.init = uvc_bulk_test_init,
++	.test_cases = uvc_bulk_test_cases,
++};
++
++kunit_test_suite(uvc_bulk_test_suite);
+-- 
+2.53.0
+

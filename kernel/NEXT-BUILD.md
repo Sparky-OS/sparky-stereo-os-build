@@ -186,3 +186,23 @@ The cause: when the same fence times out again, or a later fence sits at the add
 Applies strictly after the 250 files of the series on the signed v7.3.1 tarball; `amdgpu_ring.o`, `amdgpu_ip.o`, `amdgpu_job.o` and `gfx_v6_0.o` compile with W=1 and no warning in the base configuration.
 Check after the build: the ORDER 525 kit on the A10 (`run-kit.sh all`): the control silent, the wedge case RECOVERED (at most two timeouts per long job, the program ends with a lost device, nothing in D state), against WEDGED on build 16.
 Drop the group when a fix that completes a repeated guilty fence after an IP block soft reset is in the release this kernel moves to; v4 of the series replaced this patch by Timur Kristóf's begin-helper skip (02/13), which on gfx6 can loop the same way (the lane's model), so the replacement is to be checked on gfx6 before the group goes.
+
+## ORDER 569: UVC bulk payload boundaries (queued)
+
+Group 02 gains independent patches 0010 (the Realtek bulk quirk) and 0011
+(KUnit controls), common to all flavours. USB IDs 0bda:5722 and 0bda:579f
+can start a payload inside a full URB; other devices keep the original path.
+The prospective header is checked before splitting; unrecognised trailer
+bytes stay in the current transfer with a once-only warning. Copy bounds and
+positive progress are enforced. Julian Meyer identified the defect in 2020;
+Muhammad Waleed Badar's 2026 v3 supplies the reviewed quirk technique.
+
+The QEMU KUnit test reconstructs two byte-exact 614400-byte frames from the
+119296-byte payload shape. Unpatched fails; the supplied generic reference
+and quirk pass that shape. All eleven quirk cases pass, including short
+packets, aligned and zero maximum sizes, isochronous, MJPEG, trailer data,
+quirk-off, malformed headers, stale counters and copy capacity. Instructions:
+`tests/uvc-bulk/README.md`. The new test is disabled in normal kernel builds.
+The module builds against published 7.3.1-stereo3d16 headers. The restricted
+quirk still needs the notebook test; no new whole-kernel package is claimed.
+The measured 22.4 GB recipe peak exceeds this lane's 15 GB scratch limit.
