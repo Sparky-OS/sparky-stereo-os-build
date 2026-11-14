@@ -341,6 +341,14 @@ def enrolment():
         problems.clear(ENROL_STEP)
         return
     problems.record(ENROL_STEP, 'LOCAL66', [', '.join(modules), ['LOCAL62']])
+    # the menu is hidden when this is the only system: the next start shows it, so the entry can be chosen (0.1.10)
+    grubenv = os.environ.get('SPARKY_STEREO_ROOT', '') + '/boot/grub/grubenv'
+    if os.path.exists(grubenv):
+        try:
+            subprocess.run(['grub-editenv', grubenv, 'set', 'sparky_menu_once=1'], check=True, stdin=subprocess.DEVNULL,
+                           capture_output=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as error:
+            print('sparky-stereo-boot: grub-editenv failed: %s' % error, file=sys.stderr)
 
 
 def dkms_key():

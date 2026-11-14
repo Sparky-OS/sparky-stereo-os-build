@@ -605,6 +605,28 @@ def write_grubenv(args):
         return False
 
 
+def menu_once(on):
+    """GRUB's menu at the next start (0.1.10): sparky_menu_once in GRUB's environment block, read by
+    /etc/grub.d/01_sparky_stereo_menu; off clears what GRUB could not clear itself."""
+    if not os.path.exists(GRUBENV):
+        if on:
+            print('sparky-stereo-boot: no GRUB environment block at %s' % GRUBENV, file=sys.stderr)
+        return 1 if on else 0
+    try:
+        if not on:
+            listed = subprocess.run(['grub-editenv', GRUBENV, 'list'], capture_output=True, text=True, timeout=30).stdout
+            if 'sparky_menu_once=' not in listed:
+                return 0
+        subprocess.run(['grub-editenv', GRUBENV] + (['set', 'sparky_menu_once=1'] if on else ['unset', 'sparky_menu_once']),
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=30)
+    except (OSError, subprocess.SubprocessError) as error:
+        print('sparky-stereo-boot: grub-editenv failed: %s' % error, file=sys.stderr)
+        return 1
+    if on:
+        problems().main(['say', 'LOCAL83'])
+    return 0
+
+
 def write_grub_vars(result, options):
     lines = ['# Written by sparky-stereo-boot from the saved choice of the main screen; read by',
              '# /etc/default/grub.d/30-sparky-stereo-boot.cfg at update-grub.']
@@ -997,6 +1019,7 @@ def boot_check():
     """At boot: the resolution GRUB handed to the kernel (gfxpayload=keep keeps GRUB's mode; the kernel's
     boot_params screen_info has it) against the first one the last update-grub gave GRUB. GRUB takes the next of its
     list when the firmware does not offer a mode, and nothing else shows which one it took."""
+    menu_once(False)   # this start has happened: a menu asked for once is not shown again
     grub = grub_display()
     # Secure Boot switched on or off since the menu was written (0.1.10): the menu's font and resolution depend on it
     # (Debian's signed GRUB refuses a font file under Secure Boot), so the menu is written again for the state found
@@ -1235,6 +1258,8 @@ def main(argv):
             return 1
         print(open(STATE).read(), end='')
         return 0
+    if command == 'menu':
+        return menu_once(True)
     if command == 'reapply':
         return reapply()
     if command == 'repair':

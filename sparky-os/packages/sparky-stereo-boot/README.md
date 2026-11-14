@@ -41,7 +41,7 @@ Under Secure Boot, a DKMS key that is not enrolled while modules signed with it 
 
 GRUB's menu: hidden, and the system starts at once, when this is the only system on the computer; shown for 5 seconds when another system (Windows, another Linux) is found.
 The installer looks for another system and turns os-prober on when it finds one; at every update-grub os-prober then says whether one is still there.
-Hold Shift or press Esc while the computer starts to open a hidden menu.
+A hidden menu with no wait cannot be counted on to open with a key (GRUB looks at the keyboard once): `sudo sparky-stereo-boot menu` shows it at the next start, for 30 seconds, and the boot does that by itself when a Secure Boot key waits for its enrolment or shim refuses the newest kernel.
 Your own GRUB_TIMEOUT_STYLE, GRUB_HIDDEN_TIMEOUT, or a GRUB_TIMEOUT other than Debian's 5 in /etc/default/grub are kept as they are; SPARKY_STEREO_MENU=shown in /etc/default/sparky-stereo-boot always shows the menu.
 
 The menu's text: one height on every screen (4.2 mm, for a monitor at a desk), from the screen's size as its EDID gives it.

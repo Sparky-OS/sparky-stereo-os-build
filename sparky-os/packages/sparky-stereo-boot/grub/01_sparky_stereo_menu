@@ -15,7 +15,21 @@
 # be loaded the menu is the firmware's text console. update-grub run under Secure Boot never names a font file
 # (30-sparky-stereo-boot.cfg), so this is for Secure Boot switched on after the menu was written, and for the
 # person's own GRUB_FONT.
+#
+# The menu shown once: a hidden menu with no wait cannot be counted on to open with a key (measured in QEMU under
+# SeaBIOS and OVMF: Shift held and Esc pressed through the start opened nothing; GRUB looks at the keyboard once).
+# "sudo sparky-stereo-boot menu" sets sparky_menu_once in GRUB's environment block, and so does the boot's own check
+# when a Secure Boot key waits for its enrolment: the next start shows the menu for 30 seconds, then the variable goes
+# (save_env here, and the boot check clears it again where GRUB cannot write the block).
 set -e
+cat <<'ONCE'
+if [ "${sparky_menu_once}" = 1 ]; then
+	set timeout_style=menu
+	set timeout=30
+	set sparky_menu_once=
+	save_env sparky_menu_once
+fi
+ONCE
 [ -n "${GRUB_FONT:-}" ] || exit 0
 case "${GRUB_TERMINAL_OUTPUT:-gfxterm}" in gfxterm) ;; *) exit 0 ;; esac
 case "${GRUB_TERMINAL:-gfxterm}" in gfxterm) ;; *) exit 0 ;; esac
@@ -51,5 +65,9 @@ cat <<MENU
 	else
 		terminal_output console
 	fi
+else
+	# the sized font is a Latin one: every glyph it lacks (Chinese, Japanese, Korean) comes from GRUB's own font,
+	# which GRUB looks through when the first font has no glyph for a character
+	loadfont unicode
 fi
 MENU

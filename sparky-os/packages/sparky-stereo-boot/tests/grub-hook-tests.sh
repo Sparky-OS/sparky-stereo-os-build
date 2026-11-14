@@ -208,6 +208,9 @@ menu 'the only system (os-prober off, as Debian ships it): hidden, no wait' "$(m
 	'hidden|0' 'menu is hidden and the system starts at once' 'MENU=hidden'
 menu 'os-prober on and Windows found: shown, 5 seconds' "$(mkroot HDMI-A-1 $FIX/hx855.edid)" 'GRUB_DISABLE_OS_PROBER=false' "$WIN" \
 	'menu|5' 'shown for 5 seconds: another system is on this computer \(Windows Boot Manager\)' 'MENU=shown'
+R=$(mkroot HDMI-A-1 $FIX/hx855.edid); mkdir -p "$R/etc/default/grub.d"; printf '# the installer wrote this\nGRUB_DISABLE_OS_PROBER=false\n' > "$R/etc/default/grub.d/sparky-stereo-dual-boot.cfg"
+menu 'os-prober turned on by the installer file, which grub-mkconfig sources after this one: shown' "$R" '' "$WIN" \
+	'menu|5' 'another system is on this computer \(Windows Boot Manager\)' 'MENU=shown'
 menu 'os-prober on and another Linux found: shown' "$(mkroot HDMI-A-1 $FIX/hx855.edid)" 'GRUB_DISABLE_OS_PROBER=false' '/dev/sda4:Other Linux 1:other:linux\n' \
 	'menu|5' 'another system is on this computer \(Other Linux 1\)' 'MENU=shown'
 menu 'os-prober on and nothing found (the other system is gone): hidden again' "$(mkroot HDMI-A-1 $FIX/hx855.edid)" 'GRUB_DISABLE_OS_PROBER=false' '' \
