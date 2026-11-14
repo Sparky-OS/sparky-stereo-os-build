@@ -61,7 +61,7 @@ with tempfile.TemporaryDirectory(prefix='carry-source-', dir=output) as temporar
                     ' Licensed vendor payload preserved byte for byte; see README.source.\n\n')
     (debian / 'control').write_text(control)
     (debian / 'changelog').write_text((source / 'changelog').read_text().replace('@SOURCE@', name))
-    shutil.copy2(source / 'NVIDIA-LICENSE', debian / 'copyright')
+    (debian / 'copyright').write_text((source / 'NVIDIA-LICENSE').read_text() + '\nFiles: build.sh carry.py source.py *.tsv *.in changelog README.source vendor-files.json debian/*\nCopyright: 2026 Daniel Campos Ramos\n           2026 Paweł Pijanowski\nLicense: GPL-3+\n On Debian systems the complete GNU GPL version 3 is in /usr/share/common-licenses/GPL-3.\n')
     kit = debian / 'sparky-lean-toolkit'
     shutil.copytree(toolkit / 'lean', kit / 'lean', ignore=shutil.ignore_patterns('__pycache__', 'tests'))
     (kit / 'repo').mkdir()
