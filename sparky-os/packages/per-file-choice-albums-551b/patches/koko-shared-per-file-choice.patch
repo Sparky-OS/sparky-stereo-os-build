@@ -312,7 +312,7 @@ index f08f60f..f88c8aa 100644
  
 diff --git a/src/qml/mediaview/StereoMenu.qml b/src/qml/mediaview/StereoMenu.qml
 new file mode 100644
-index 0000000..5f2758f
+index 0000000..78e3226
 --- /dev/null
 +++ b/src/qml/mediaview/StereoMenu.qml
 @@ -0,0 +1,108 @@
@@ -358,11 +358,11 @@ index 0000000..5f2758f
 +    }
 +
 +    function toggleNotThreeD() {
-+        fileChoice.choose(fileChoice.chosen === "not-3d" ? "automatic" : "not-3d");
++        fileChoice.choose(fileChoice.chosen === "mono" ? "automatic" : "mono");
 +    }
 +
 +    function chooseAnaglyph(pair: int) {
-+        fileChoice.choose(["anaglyph-red-cyan", "anaglyph-green-magenta", "anaglyph-amber-blue"][pair]);
++        fileChoice.choose(["anaglyphCyanRed", "anaglyphGreenMagenta", "anaglyphAmberBlue"][pair]);
 +    }
 +
 +    title: i18nc("@action:inmenu Stereoscopic 3D pictures", "3D")
