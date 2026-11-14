@@ -92,10 +92,11 @@ FILE_TEST = re.compile(r'(?:\[\[?|\btest)\s+(?:!\s+)?-[a-zA-Z]\s+["\']?$')
 READ = re.compile(r'''(?:(?:\[\[?|\btest)\s+(?:!\s+)?-[a-zA-Z]\s+["']?
                         |(?:\[\[?|\btest)\s[^\];|&]*\s(?:=|==|!=)\s+["']?
                         |(?:==|!=|=~)\s*["']?
-                        |\b(?:cat|head|tail|wc|stat|ls|readlink|lsblk|blkid|findmnt|grep|awk)\b[^;|&<>]*?\s["']?
+                        |\b(?:cat|head|tail|wc|stat|ls|readlink|lsblk|blkid|findmnt|grep|awk|zramctl)\b[^;|&<>]*?\s["']?
                         |(?<!<)<\s*["']?
                         |\b(?:startswith|endswith|exists|isfile|isdir|islink)\(\s*["']
                         |\b(Path|open)\(\s*["'])$''', re.X)
+COMPARED = re.compile(r'''^["']?\s*(?:==|!=|\s(?:not\s+)?in\s)''')
 PYTHON_READ = re.compile(r'''^["']\s*(?:,\s*["']r[bt]?["']\s*)?\)\s*(?:\.(?:read\w*|exists|is_\w+|stat|resolve)\(|\s+as\b|[:)\s,]|$)''')
 
 
@@ -121,7 +122,9 @@ def writes_are_placed(line):
 def is_read(line, m):
     """True when the path matched by M is only read by LINE."""
     how = READ.search(line[:m.start()])
-    return bool(how) and (not how.group(1) or bool(PYTHON_READ.match(line[m.end():])))
+    if how:
+        return not how.group(1) or bool(PYTHON_READ.match(line[m.end():]))
+    return bool(COMPARED.match(line[m.end():])) and line[:m.start()].rstrip()[-1:] in ('"', "'", ' ', '(', '')
 
 
 def sets_up_through_sysfs(line):
@@ -288,7 +291,7 @@ def judge(line, ships):
             unknown.append(f'systemctl {verb} on {units[0]} is not a tear-down the gate knows (a mask keeps the '
                            'person\'s zram from starting)')
     setups += [what for what, pattern in UNIT_SETUPS if pattern.search(line) and what not in setups
-               and not ('attribute written' in what and setups)]
+               and not ('attribute written' in what and (setups or SYSFS_SETUP.search(line)))]
     down = tear_downs(line)
     if setups:
         unknown = []
