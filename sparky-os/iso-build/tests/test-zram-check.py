@@ -109,6 +109,7 @@ class Documentation(Fixtures):
                      b'# Page\n\xff\nzramctl --find --size 4G\n'):
             with self.subTest(text=text):
                 self.assertRefused(self.deb(files={self.path: text}), 'zram' if 'ELF' not in str(text) else 'zswap')
+        self.assertRefused(self.deb(files={self.path: '# Page\n' + 'x' * gate.TEXT_LIMIT}), 'text limit')
 
     def test_markdown_in_configuration_paths_and_generator_configuration_refuse(self):
         for folder in ('/etc/sysctl.d', '/usr/lib/systemd/system', '/usr/lib/udev/rules.d',

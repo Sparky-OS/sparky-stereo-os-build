@@ -729,6 +729,8 @@ def follow_aliases(aliases, referenced):
 
 def documentation(path, data, mode, referenced):
     """Unrun Markdown in a documentation folder; an extension alone never establishes this."""
+    if data is None or len(data) > TEXT_LIMIT:
+        return False
     parts = set(PurePosixPath(path).parts)
     try:
         text = data.decode('utf-8') if data is not None else ''
@@ -736,7 +738,6 @@ def documentation(path, data, mode, referenced):
         return False
     return bool(markdown(path) and parts & DOCUMENT_FOLDERS and not configuration(path)
                 and not parts & {'bin', 'sbin', 'libexec'} and not mode & 0o111
-                and data is not None and len(data) <= TEXT_LIMIT
                 and all(c.isprintable() or c in '\t\r\n' for c in text)
                 and not text.lstrip('\ufeff \t\r\n').startswith('#!')
                 and PurePosixPath(path).name.casefold() not in referenced
@@ -812,6 +813,9 @@ def scan_file(shown, path, data, notes=None, document=None):
     if document:
         if notes is not None and MENTION.search(text or ''):
             notes.append((0, '', 'documentation, not run'))
+        return findings
+    if document is False and markdown(path) and (data is None or len(data) > TEXT_LIMIT):
+        findings.append(f'{shown}: Markdown cannot be read within the text limit; not classified as unrun documentation')
         return findings
     if data is None or (skipped(path) and document is None):
         return findings
