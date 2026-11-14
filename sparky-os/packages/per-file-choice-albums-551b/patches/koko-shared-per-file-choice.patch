@@ -1,0 +1,613 @@
+Description: Koko's per-file 3D entries are the stereo layer's menu and store (ORDER 551b)
+ For a local picture the 3D menu shows the layer's QML menu (Stereo.FileChoiceMenu), and the choices (the input packing,
+ Not 3D, the swap) are kept in the layer's per-file store, which Dolphin, the thumbnailers and Gwenview read; the page keeps
+ which eye is shown. The file is not written unless the person chooses the layer's save.
+ Needs libstereo-layer-dev (>= 1.19.0).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-14
+---
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f071e67..8e265c4 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -88,7 +88,7 @@ set_package_properties(KF6KirigamiAddons PROPERTIES
+     PURPOSE "Required runtime dependency"
+ )
+ 
+-find_package(StereoLayer 1.4)
++find_package(StereoLayer 1.19)
+ set_package_properties(StereoLayer PROPERTIES
+     TYPE OPTIONAL
+     DESCRIPTION "Stereo picture policy and presentation for Qt"
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 11a8e83..ded0ce1 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -138,7 +138,7 @@ ecm_target_qml_sources(koko_static SOURCES
+ 
+ if(StereoLayer_FOUND)
+     target_sources(koko_static PRIVATE stereoinfo.cpp)
+-    ecm_target_qml_sources(koko_static SOURCES qml/mediaview/imagedelegate/StereoPresenter.qml)
++    ecm_target_qml_sources(koko_static SOURCES qml/mediaview/imagedelegate/StereoPresenter.qml qml/mediaview/StereoMenu.qml)
+     target_compile_definitions(koko_static PRIVATE KOKO_HAVE_STEREO_LAYER)
+     target_link_libraries(koko_static PUBLIC Stereo::Layer Qt::Concurrent)
+ endif()
+diff --git a/src/qml/mediaview/MediaViewPage.qml b/src/qml/mediaview/MediaViewPage.qml
+index f08f60f..f88c8aa 100644
+--- a/src/qml/mediaview/MediaViewPage.qml
++++ b/src/qml/mediaview/MediaViewPage.qml
+@@ -34,25 +34,30 @@ Kirigami.Page {
+     // A model that is still populating might not yet contain the index we want to show
+     property bool modelReady: false
+ 
+-    // The 3D choices of this view, for every stereo picture shown in it (stereo-layer's picture options)
++    // This view's own 3D choice, for every stereo picture shown in it: which eye is shown. What corrects one file (its
++    // input packing, Not 3D, the swap of its eyes) is that file's own choice, kept in the stereo layer's per-file store
++    // and changed through the layer's menu (StereoMenu.qml); revision counts those changes, so the pictures shown are
++    // decoded again.
+     QtObject {
+         id: stereoChoices
+ 
+-        property int inputLayout: 0 // 0 automatic, 1 side by side, 2 top and bottom
+-        property int inputOrder: 0 // 0 left first, 1 right first
+-        property bool swapEyes: false
+-        property int view: 0 // 0 stereo, 1 left eye only, 2 right eye only, 3 not 3D
+-        property int anaglyph: 0 // 0 none, 1 red/cyan, 2 green/magenta, 3 amber/blue
++        property int view: 0 // 0 stereo, 1 left eye only, 2 right eye only
++        property int revision: 0
+     }
+ 
+     readonly property bool stereoMenuAvailable: Koko.StereoSupport.available
+         && ((listView.currentItem && listView.currentItem.type === Koko.FileInfo.RasterImageType)
+             || (imagePlaceholder && imagePlaceholder.type === Koko.FileInfo.RasterImageType))
+ 
+-    function setStereoInput(layout, order) {
+-        stereoChoices.anaglyph = 0;
+-        stereoChoices.inputLayout = layout;
+-        stereoChoices.inputOrder = order;
++    // The picture the 3D menu acts on, and whether it is shown as a pair now (no swap is offered on a flat picture)
++    readonly property url stereoSource: listView.currentItem && listView.currentItem.type === Koko.FileInfo.RasterImageType ? listView.currentItem.url : ""
++    readonly property bool stereoPresenting: listView.currentItem !== null && listView.currentItem.item !== null
++        && listView.currentItem.item.stereoPresenting === true
++
++    function openStereoMenu() {
++        if (stereoMenuLoader.item) {
++            stereoMenuLoader.item.popup(listView, listView.width / 2, listView.height / 2);
++        }
+     }
+ 
+     function updateModelReady() {
+@@ -210,126 +215,7 @@ Kirigami.Page {
+             text: i18nc("@action:inmenu Stereoscopic 3D pictures", "3D")
+             tooltip: i18nc("@info:tooltip", "How stereo pictures are shown")
+             visible: root.stereoMenuAvailable
+-
+-            Kirigami.Action {
+-                id: stereoInputAction
+-
+-                text: i18nc("@action:inmenu Stereo picture input format", "Input format")
+-
+-                Kirigami.Action {
+-                    id: stereoAutomaticAction
+-                    text: i18nc("@action:inmenu Stereo picture input format", "Automatic")
+-                    checkable: true
+-                    checked: stereoChoices.inputLayout === 0
+-                    onTriggered: {
+-                        root.setStereoInput(0, 0);
+-                        checked = Qt.binding(() => stereoChoices.inputLayout === 0);
+-                    }
+-                }
+-                Kirigami.Action {
+-                    id: stereoSideBySideLeftAction
+-                    text: i18nc("@action:inmenu Stereo picture input format", "Side by side, left first")
+-                    checkable: true
+-                    checked: stereoChoices.inputLayout === 1 && stereoChoices.inputOrder === 0
+-                    onTriggered: {
+-                        root.setStereoInput(1, 0);
+-                        checked = Qt.binding(() => stereoChoices.inputLayout === 1 && stereoChoices.inputOrder === 0);
+-                    }
+-                }
+-                Kirigami.Action {
+-                    id: stereoSideBySideRightAction
+-                    text: i18nc("@action:inmenu Stereo picture input format", "Side by side, right first")
+-                    checkable: true
+-                    checked: stereoChoices.inputLayout === 1 && stereoChoices.inputOrder === 1
+-                    onTriggered: {
+-                        root.setStereoInput(1, 1);
+-                        checked = Qt.binding(() => stereoChoices.inputLayout === 1 && stereoChoices.inputOrder === 1);
+-                    }
+-                }
+-                Kirigami.Action {
+-                    id: stereoTopBottomLeftAction
+-                    text: i18nc("@action:inmenu Stereo picture input format", "Top and bottom, left first")
+-                    checkable: true
+-                    checked: stereoChoices.inputLayout === 2 && stereoChoices.inputOrder === 0
+-                    onTriggered: {
+-                        root.setStereoInput(2, 0);
+-                        checked = Qt.binding(() => stereoChoices.inputLayout === 2 && stereoChoices.inputOrder === 0);
+-                    }
+-                }
+-                Kirigami.Action {
+-                    id: stereoTopBottomRightAction
+-                    text: i18nc("@action:inmenu Stereo picture input format", "Top and bottom, right first")
+-                    checkable: true
+-                    checked: stereoChoices.inputLayout === 2 && stereoChoices.inputOrder === 1
+-                    onTriggered: {
+-                        root.setStereoInput(2, 1);
+-                        checked = Qt.binding(() => stereoChoices.inputLayout === 2 && stereoChoices.inputOrder === 1);
+-                    }
+-                }
+-            }
+-            Kirigami.Action {
+-                id: stereoSwapAction
+-                text: i18nc("@action:inmenu Stereo picture", "Swap eyes")
+-                shortcut: "Alt+Shift+W"
+-                checkable: true
+-                checked: stereoChoices.swapEyes
+-                onTriggered: {
+-                    stereoChoices.swapEyes = !stereoChoices.swapEyes;
+-                    checked = Qt.binding(() => stereoChoices.swapEyes);
+-                }
+-            }
+-            Kirigami.Action {
+-                id: stereoAnaglyphAction
+-                text: i18nc("@action:inmenu Stereo picture", "&Anaglyph to side by side")
+-                onTriggered: anaglyphPrompt.open()
+-            }
+-            Kirigami.Action {
+-                separator: true
+-            }
+-            Kirigami.Action {
+-                id: stereoViewAction
+-                text: i18nc("@action:inmenu Stereo picture view", "Stereo")
+-                shortcut: "Alt+Shift+D"
+-                checkable: true
+-                checked: stereoChoices.view === 0
+-                onTriggered: {
+-                    stereoChoices.view = 0;
+-                    checked = Qt.binding(() => stereoChoices.view === 0);
+-                }
+-            }
+-            Kirigami.Action {
+-                id: stereoLeftAction
+-                text: i18nc("@action:inmenu Stereo picture view", "Left eye only")
+-                shortcut: "Alt+Shift+L"
+-                checkable: true
+-                checked: stereoChoices.view === 1
+-                onTriggered: {
+-                    stereoChoices.view = 1;
+-                    checked = Qt.binding(() => stereoChoices.view === 1);
+-                }
+-            }
+-            Kirigami.Action {
+-                id: stereoRightAction
+-                text: i18nc("@action:inmenu Stereo picture view", "Right eye only")
+-                shortcut: "Alt+Shift+O"
+-                checkable: true
+-                checked: stereoChoices.view === 2
+-                onTriggered: {
+-                    stereoChoices.view = 2;
+-                    checked = Qt.binding(() => stereoChoices.view === 2);
+-                }
+-            }
+-            Kirigami.Action {
+-                id: stereoMonoAction
+-                text: i18nc("@action:inmenu Stereo picture view", "Not 3D")
+-                shortcut: "Alt+Shift+N"
+-                checkable: true
+-                checked: stereoChoices.view === 3
+-                onTriggered: {
+-                    stereoChoices.view = 3;
+-                    checked = Qt.binding(() => stereoChoices.view === 3);
+-                }
+-            }
++            onTriggered: root.openStereoMenu()
+         }
+     ]
+ 
+@@ -1389,34 +1275,73 @@ Kirigami.Page {
+         }
+     }
+ 
+-    QQC2.Menu {
+-        id: stereoMenu
++    // The 3D menu: the stereo layer's per-file menu for the current picture and this view's eye choice. It is a file of
++    // its own because it needs the stereo layer's QML module, which a build without the layer does not have.
++    Loader {
++        id: stereoMenuLoader
+ 
+-        title: stereoAction.text
++        active: Koko.StereoSupport.available
+ 
+-        QQC2.Menu {
+-            title: stereoInputAction.text
++        Component.onCompleted: setSource(Qt.resolvedUrl("StereoMenu.qml"), {
++            source: Qt.binding(() => root.stereoSource),
++            presenting: Qt.binding(() => root.stereoPresenting),
++            choices: stereoChoices
++        })
++    }
++
++    Connections {
++        target: stereoMenuLoader.item
+ 
+-            QQC2.MenuItem { action: stereoAutomaticAction }
+-            QQC2.MenuItem { action: stereoSideBySideLeftAction }
+-            QQC2.MenuItem { action: stereoSideBySideRightAction }
+-            QQC2.MenuItem { action: stereoTopBottomLeftAction }
+-            QQC2.MenuItem { action: stereoTopBottomRightAction }
++        function onFailed(message) {
++            root.mainWindow.showPassiveNotification(message, "long");
++        }
++
++        function onAnaglyphRequested() {
++            anaglyphPrompt.open();
+         }
+-        QQC2.MenuItem { action: stereoSwapAction }
+-        QQC2.MenuItem { action: stereoAnaglyphAction }
+-        QQC2.MenuSeparator {}
+-        QQC2.MenuItem { action: stereoViewAction }
+-        QQC2.MenuItem { action: stereoLeftAction }
+-        QQC2.MenuItem { action: stereoRightAction }
+-        QQC2.MenuItem { action: stereoMonoAction }
+     }
+ 
+     Shortcut {
+         sequence: "Alt+Shift+3"
+         context: Qt.WindowShortcut
+         enabled: root.visible && root.stereoMenuAvailable
+-        onActivated: stereoMenu.popup(listView, listView.width / 2, listView.height / 2)
++        onActivated: root.openStereoMenu()
++    }
++
++    // The shortcuts the 3D entries had before the per-file ones became the layer's menu; they act on the same store
++    Shortcut {
++        sequence: "Alt+Shift+W"
++        context: Qt.WindowShortcut
++        enabled: root.visible && root.stereoMenuAvailable && stereoMenuLoader.item !== null
++        onActivated: stereoMenuLoader.item.toggleSwap()
++    }
++
++    Shortcut {
++        sequence: "Alt+Shift+N"
++        context: Qt.WindowShortcut
++        enabled: root.visible && root.stereoMenuAvailable && stereoMenuLoader.item !== null
++        onActivated: stereoMenuLoader.item.toggleNotThreeD()
++    }
++
++    Shortcut {
++        sequence: "Alt+Shift+D"
++        context: Qt.WindowShortcut
++        enabled: root.visible && root.stereoMenuAvailable
++        onActivated: stereoChoices.view = 0
++    }
++
++    Shortcut {
++        sequence: "Alt+Shift+L"
++        context: Qt.WindowShortcut
++        enabled: root.visible && root.stereoMenuAvailable
++        onActivated: stereoChoices.view = 1
++    }
++
++    Shortcut {
++        sequence: "Alt+Shift+O"
++        context: Qt.WindowShortcut
++        enabled: root.visible && root.stereoMenuAvailable
++        onActivated: stereoChoices.view = 2
+     }
+ 
+     Kirigami.PromptDialog {
+@@ -1437,7 +1362,10 @@ Kirigami.Page {
+         standardButtons: QQC2.Dialog.Ok | QQC2.Dialog.Cancel
+ 
+         onAccepted: {
+-            stereoChoices.anaglyph = colorPair.currentIndex + 1;
++            // kept for the file, like every other input correction
++            if (stereoMenuLoader.item) {
++                stereoMenuLoader.item.chooseAnaglyph(colorPair.currentIndex);
++            }
+             stereoChoices.view = 0;
+         }
+ 
+diff --git a/src/qml/mediaview/StereoMenu.qml b/src/qml/mediaview/StereoMenu.qml
+new file mode 100644
+index 0000000..5f2758f
+--- /dev/null
++++ b/src/qml/mediaview/StereoMenu.qml
+@@ -0,0 +1,108 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ *
++ * SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++ */
++
++pragma ComponentBehavior: Bound
++
++import QtQuick
++import QtQuick.Controls as QQC2
++import org.sparky.stereo as Stereo
++
++/**
++ * The 3D menu of the image view.
++ *
++ * What corrects one file (its input packing, Not 3D, the swap of its eyes, and
++ * saving the correction into the file) is the stereo layer's own menu, and the
++ * choice is kept in the layer's per-file store, which the file manager, the
++ * thumbnailers and the other viewers read; the file is not written unless the
++ * person chooses the save. Which eye is shown is this view's own choice.
++ */
++QQC2.Menu {
++    id: menu
++
++    // The picture shown, and whether it is shown as a pair now
++    required property url source
++    required property bool presenting
++    // The view's own choices: view (0 stereo, 1 left eye only, 2 right eye only) and revision
++    required property QtObject choices
++
++    // A choice could not be kept, or a save into the file was refused
++    signal failed(string message)
++    // The person asked to take an anaglyph apart: the page asks for the colour pair
++    signal anaglyphRequested()
++
++    function toggleSwap() {
++        if (fileChoice.swapEnabled) {
++            fileChoice.swapEyes = !fileChoice.swapEyes;
++        }
++    }
++
++    function toggleNotThreeD() {
++        fileChoice.choose(fileChoice.chosen === "not-3d" ? "automatic" : "not-3d");
++    }
++
++    function chooseAnaglyph(pair: int) {
++        fileChoice.choose(["anaglyph-red-cyan", "anaglyph-green-magenta", "anaglyph-amber-blue"][pair]);
++    }
++
++    title: i18nc("@action:inmenu Stereoscopic 3D pictures", "3D")
++
++    Stereo.FileChoice {
++        id: fileChoice
++
++        sources: [menu.source]
++        shownAsPair: menu.presenting
++        onChanged: menu.choices.revision += 1
++        onFailed: message => menu.failed(message)
++    }
++
++    Stereo.FileChoiceMenu {
++        choice: fileChoice
++    }
++
++    QQC2.MenuItem {
++        text: i18nc("@action:inmenu Stereo picture", "&Anaglyph to side by side")
++        enabled: fileChoice.available
++        onTriggered: menu.anaglyphRequested()
++    }
++
++    QQC2.MenuSeparator {}
++
++    QQC2.MenuItem {
++        id: stereoItem
++
++        text: i18nc("@action:inmenu Stereo picture view", "Stereo")
++        checkable: true
++        checked: menu.choices.view === 0
++        onTriggered: {
++            menu.choices.view = 0;
++            checked = Qt.binding(() => menu.choices.view === 0);
++        }
++    }
++
++    QQC2.MenuItem {
++        id: leftItem
++
++        text: i18nc("@action:inmenu Stereo picture view", "Left eye only")
++        checkable: true
++        checked: menu.choices.view === 1
++        onTriggered: {
++            menu.choices.view = 1;
++            checked = Qt.binding(() => menu.choices.view === 1);
++        }
++    }
++
++    QQC2.MenuItem {
++        id: rightItem
++
++        text: i18nc("@action:inmenu Stereo picture view", "Right eye only")
++        checkable: true
++        checked: menu.choices.view === 2
++        onTriggered: {
++            menu.choices.view = 2;
++            checked = Qt.binding(() => menu.choices.view === 2);
++        }
++    }
++}
+diff --git a/src/qml/mediaview/imagedelegate/StereoPresenter.qml b/src/qml/mediaview/imagedelegate/StereoPresenter.qml
+index 957941c..6f18c5e 100644
+--- a/src/qml/mediaview/imagedelegate/StereoPresenter.qml
++++ b/src/qml/mediaview/imagedelegate/StereoPresenter.qml
+@@ -13,8 +13,10 @@ import org.sparky.stereo as Stereo
+ /**
+  * A stereo picture over the zoom area of an image delegate: both views on a
+  * surface of their own, at the zoom and position of the delegate's content.
+- * It shows while the picture is a pair (or one view of a pair) and the view is
+- * not Not 3D; the delegate shows its ordinary image otherwise.
++ * It shows while the picture is a pair (or one view of a pair); the delegate
++ * shows its ordinary image otherwise. Whether a file is a pair, in which
++ * packing and with which eye first is the stereo layer's decision, the
++ * person's stored choice for that file included ("Not 3D" is one).
+  */
+ Item {
+     id: presenter
+@@ -25,16 +27,23 @@ Item {
+     // The delegate's content rectangle, in this item's coordinates
+     required property rect contentRect
+ 
+-    readonly property bool presenting: info.pair && choices.view !== 3
++    readonly property bool presenting: info.pair
+     readonly property size viewSize: info.viewSize
+ 
+     Koko.StereoInfo {
+         id: info
+ 
+         source: presenter.source
+-        inputLayout: presenter.choices.inputLayout
+-        inputOrder: presenter.choices.inputOrder
+-        anaglyph: presenter.choices.anaglyph
++    }
++
++    // The person's choice for a file changed in the per-file store: decide and decode again
++    Connections {
++        target: presenter.choices
++
++        function onRevisionChanged() {
++            info.refresh();
++            picture.refresh();
++        }
+     }
+ 
+     Stereo.StereoPicture {
+@@ -53,10 +62,6 @@ Item {
+         visible: presenter.presenting
+ 
+         source: presenter.presenting ? presenter.source : ""
+-        inputLayout: presenter.choices.inputLayout
+-        inputOrder: presenter.choices.inputOrder
+-        anaglyph: presenter.choices.anaglyph
+-        swapEyes: presenter.choices.swapEyes
+         view: presenter.choices.view
+ 
+         zoom: fittedWidth > 0 && presenter.contentRect.width > 0 ? presenter.contentRect.width / fittedWidth : 1
+diff --git a/src/stereoinfo.cpp b/src/stereoinfo.cpp
+index af3994e..c866e42 100644
+--- a/src/stereoinfo.cpp
++++ b/src/stereoinfo.cpp
+@@ -39,48 +39,8 @@ void StereoInfo::setSource(const QUrl &source)
+     evaluate();
+ }
+ 
+-int StereoInfo::inputLayout() const
++void StereoInfo::refresh()
+ {
+-    return int(m_options.inputLayout);
+-}
+-
+-void StereoInfo::setInputLayout(int layout)
+-{
+-    if (layout == inputLayout() || layout < 0 || layout > int(Stereo::Picture::Layout::SideBySideQuincunx)) {
+-        return;
+-    }
+-    m_options.inputLayout = Stereo::Picture::Layout(layout);
+-    Q_EMIT optionsChanged();
+-    evaluate();
+-}
+-
+-int StereoInfo::inputOrder() const
+-{
+-    return int(m_options.inputOrder);
+-}
+-
+-void StereoInfo::setInputOrder(int order)
+-{
+-    if (order == inputOrder() || order < 0 || order > 1) {
+-        return;
+-    }
+-    m_options.inputOrder = Stereo::Picture::EyeOrder(order);
+-    Q_EMIT optionsChanged();
+-    evaluate();
+-}
+-
+-int StereoInfo::anaglyph() const
+-{
+-    return int(m_options.anaglyph);
+-}
+-
+-void StereoInfo::setAnaglyph(int pair)
+-{
+-    if (pair == anaglyph() || pair < 0 || pair > int(Stereo::Picture::AnaglyphColorPair::AmberBlue)) {
+-        return;
+-    }
+-    m_options.anaglyph = Stereo::Picture::AnaglyphColorPair(pair);
+-    Q_EMIT optionsChanged();
+     evaluate();
+ }
+ 
+@@ -116,16 +76,15 @@ void StereoInfo::evaluate()
+     }
+     const QString path = m_source.toLocalFile();
+     const Stereo::OutputMode output = m_output.mode();
+-    Stereo::Picture::Options options = m_options;
+-    // The size of the views does not depend on which of them is shown, or on their order
+-    options.view = Stereo::Picture::View::Stereo;
+-    options.swapEyes = false;
++    // The view has no packing of its own: the layer applies the person's stored choice for the file (its packing,
++    // Not 3D, the swap) with the file's marks, as it does for the file manager and the thumbnailers
++    const Stereo::Picture::Options options;
+     m_watcher.setFuture(QtConcurrent::run([path, options, output, generation]() {
+         Result result;
+         result.generation = generation;
+-        // A picture that cannot be a pair is not decoded; an anaglyph is a pair on a stereo screen or by the user's choice
++        // A picture that cannot be a pair is not decoded; an anaglyph is a pair on a stereo screen or by the stored choice
+         if (Stereo::Picture::loadPair(path, QSize(256, 256), options).isStereo() || output == Stereo::OutputMode::Stereo
+-            || options.anaglyph != Stereo::Picture::AnaglyphColorPair::None) {
++            || Stereo::Picture::fileChoice(path).anaglyph != Stereo::Picture::AnaglyphColorPair::None) {
+             const Stereo::Picture picture = Stereo::Picture::load(path, options, output);
+             if (picture.isStereo()) {
+                 result.pair = true;
+diff --git a/src/stereoinfo.h b/src/stereoinfo.h
+index e833ed5..6db8e13 100644
+--- a/src/stereoinfo.h
++++ b/src/stereoinfo.h
+@@ -19,8 +19,8 @@
+ /**
+  * Whether a picture is shown as a stereo pair, and the size of one of its views.
+  *
+- * The decision is stereo-layer's (the file's marks, the user's choice, the
+- * picture's shape, and an anaglyph on a stereo screen), made in a background
++ * The decision is stereo-layer's (the person's stored choice for the file, the
++ * file's marks, the picture's shape, and an anaglyph on a stereo screen), made in a background
+  * thread for the screen this item is on. A picture that cannot be a pair is
+  * not decoded on a screen that is not stereo.
+  */
+@@ -30,9 +30,6 @@ class StereoInfo : public QQuickItem
+     QML_ELEMENT
+ 
+     Q_PROPERTY(QUrl source READ source WRITE setSource NOTIFY sourceChanged)
+-    Q_PROPERTY(int inputLayout READ inputLayout WRITE setInputLayout NOTIFY optionsChanged)
+-    Q_PROPERTY(int inputOrder READ inputOrder WRITE setInputOrder NOTIFY optionsChanged)
+-    Q_PROPERTY(int anaglyph READ anaglyph WRITE setAnaglyph NOTIFY optionsChanged)
+     Q_PROPERTY(bool pair READ pair NOTIFY resultChanged)
+     Q_PROPERTY(QSize viewSize READ viewSize NOTIFY resultChanged)
+ 
+@@ -41,19 +38,14 @@ public:
+ 
+     QUrl source() const;
+     void setSource(const QUrl &source);
+-    int inputLayout() const;
+-    void setInputLayout(int layout);
+-    int inputOrder() const;
+-    void setInputOrder(int order);
+-    int anaglyph() const;
+-    void setAnaglyph(int pair);
++    // Decides again: the person's stored choice for the file changed (the stereo layer's per-file store)
++    Q_INVOKABLE void refresh();
+ 
+     bool pair() const;
+     QSize viewSize() const;
+ 
+ Q_SIGNALS:
+     void sourceChanged();
+-    void optionsChanged();
+     void resultChanged();
+ 
+ private:
+@@ -68,7 +60,6 @@ private:
+     void setResult(const Result &result);
+ 
+     QUrl m_source;
+-    Stereo::Picture::Options m_options;
+     Stereo::ScreenMode m_output;
+     QPointer<QQuickWindow> m_window;
+     QFutureWatcher<Result> m_watcher;

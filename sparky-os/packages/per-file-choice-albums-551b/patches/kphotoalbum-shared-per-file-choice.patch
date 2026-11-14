@@ -1,0 +1,363 @@
+Description: KPhotoAlbum's per-file 3D entries are the stereo layer's menu and store (ORDER 551b)
+ The viewer's 3D menu shows Stereo::FileChoiceMenu, and the choices (the input packing, Not 3D, the swap) are kept in the
+ layer's per-file store, which Dolphin, the thumbnailers and Gwenview read; the viewer keeps which eye is shown, and the
+ choice follows a renamed or moved file. Needs libstereo-layer-dev (>= 1.19.0).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-14
+---
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8143585..dcdecae 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -71,7 +71,7 @@ find_package(Phonon4Qt6)
+ find_package(LIBVLC)
+ find_package(KF6 ${MINIMUM_KF6_VERSION} REQUIRED COMPONENTS Archive Completion Config CoreAddons I18n IconThemes JobWidgets KIO TextWidgets XmlGui WidgetsAddons ColorScheme DocTools)
+ 
+-find_package(StereoLayer 1.4 QUIET)
++find_package(StereoLayer 1.19 QUIET)
+ 
+ find_package(JPEG REQUIRED)
+ if(JPEG_FOUND)
+diff --git a/Viewer/README-stereo.md b/Viewer/README-stereo.md
+index a7f3a9f..05882ee 100644
+--- a/Viewer/README-stereo.md
++++ b/Viewer/README-stereo.md
+@@ -14,12 +14,16 @@ chosen input format and finally the picture's shape. Its policy also recognises
+ marked Photo Sphere panoramas. KPhotoAlbum keeps its view adapter and 3D menu;
+ format policy, conversion and the compositor layer belong to stereo-layer.
+ 
+-The viewer's context menu includes 3D. Alt+Shift+3 opens it directly. Choose an
+-input format for unmarked photographs, swap the eyes, show either eye alone, or
+-choose Not 3D to use the ordinary image path. The original file is never changed.
+-A swap-eyes correction kept with the file (Dolphin's Swap Eyes, stored as the
+-user.stereo-policy.swap-eyes extended attribute) applies over the file's mark, and
+-the menu's Swap eyes over both.
++The viewer's context menu includes 3D. Alt+Shift+3 opens it directly. Its "3D
++Input Format" entry is the stereo layer's own menu: choose the input packing of a
++photograph (every packing, in either order), Not 3D, or swap its left and right
++eyes. That choice is the photograph's: it is kept in the layer's per-file store,
++which the file manager, the thumbnailers and the other viewers read, so the
++photograph shows the same everywhere, and it follows the photograph when a
++program renames or moves it. The file itself is never changed, unless you choose
++"Save the correction into the file". Showing either eye alone is this viewer's
++own choice and lasts for the session. Alt+Shift+W swaps the eyes and Alt+Shift+N
++switches Not 3D, as before.
+ 
+ Anaglyph photographs can be converted to side by side. The colour is reconstructed
+ and approximate because an anaglyph retains only part of each eye's colour. A
+diff --git a/Viewer/StereoPictureMenu.cpp b/Viewer/StereoPictureMenu.cpp
+index a0de2e1..432a232 100644
+--- a/Viewer/StereoPictureMenu.cpp
++++ b/Viewer/StereoPictureMenu.cpp
+@@ -6,7 +6,10 @@
+ #include <QActionGroup>
+ #include <QInputDialog>
+ #include <QMessageBox>
++#include <QUrl>
+ 
++#include <KDirNotify>
++#include <filechoicemenu.h>
+ #include <klocalizedstring.h>
+ 
+ namespace Viewer
+@@ -14,46 +17,36 @@ namespace Viewer
+ 
+ StereoPictureMenu::StereoPictureMenu(QWidget *parent)
+     : QMenu(i18n("&3D"), parent)
+-    , m_formats(new QActionGroup(this))
++    , m_fileChoice(new Stereo::FileChoiceMenu(this))
+     , m_views(new QActionGroup(this))
+ {
+-    QMenu *const input = addMenu(i18n("Input format"));
+-    const QStringList labels = { i18n("Automatic"), i18n("Side by side, left first"),
+-                                 i18n("Side by side, right first"), i18n("Top and bottom, left first"),
+-                                 i18n("Top and bottom, right first") };
+-
+-    for (int index = 0; index < labels.size(); ++index) {
+-        QAction *const action = input->addAction(labels[index]);
+-        action->setCheckable(true);
+-        m_formats->addAction(action);
+-
+-        connect(action, &QAction::triggered, this, [this, index]() {
+-            m_options.anaglyph = Stereo::Picture::AnaglyphColorPair::None;
+-            m_options.inputLayout = (index == 0) ? Stereo::Picture::Layout::None
+-                : (index <= 2)                   ? Stereo::Picture::Layout::SideBySide
+-                                                 : Stereo::Picture::Layout::TopAndBottom;
+-            m_options.inputOrder = ((index == 2) || (index == 4)) ? Stereo::Picture::EyeOrder::RightFirst
+-                                                                  : Stereo::Picture::EyeOrder::LeftFirst;
+-            Q_EMIT optionsChanged();
+-        });
+-    }
+-
+-    m_swap = addAction(i18n("Swap eyes"));
+-    m_swap->setCheckable(true);
+-    m_swap->setShortcut(QKeySequence(QLatin1String("Alt+Shift+W")));
+-    parent->window()->addAction(m_swap);
+-    connect(m_swap, &QAction::triggered, this, [this](bool checked) {
+-        m_options.swapEyes = checked;
+-        Q_EMIT optionsChanged();
++    // The per-file entries are the stereo layer's one menu: every packing, Not 3D, the swap and the save into the file
++    addMenu(m_fileChoice);
++    connect(m_fileChoice, &Stereo::FileChoiceMenu::changed, this, &StereoPictureMenu::fileChanged);
++    connect(m_fileChoice, &Stereo::FileChoiceMenu::failed, this, &StereoPictureMenu::failed);
++
++    // The shortcuts the entries had before they became the layer's: they act on the same per-file store. A shortcut
++    // works on an action its window holds.
++    auto *const swap = new QAction(this);
++    swap->setShortcut(QKeySequence(QLatin1String("Alt+Shift+W")));
++    parent->window()->addAction(swap);
++    connect(swap, &QAction::triggered, this, [this]() {
++        QAction *const layerSwap = m_fileChoice->swapEyesAction();
++        if (layerSwap->isEnabled()) {
++            layerSwap->trigger();
++        }
+     });
++    auto *const notThreeD = new QAction(this);
++    notThreeD->setShortcut(QKeySequence(QLatin1String("Alt+Shift+N")));
++    parent->window()->addAction(notThreeD);
++    connect(notThreeD, &QAction::triggered, this, &StereoPictureMenu::toggleNotThreeD);
+ 
+-    QAction *const conversion = addAction(i18n("&Anaglyph to side by side"));
+-    connect(conversion, &QAction::triggered, this, &StereoPictureMenu::convert);
++    m_conversion = addAction(i18n("&Anaglyph to side by side"));
++    connect(m_conversion, &QAction::triggered, this, &StereoPictureMenu::convert);
+ 
+     addSeparator();
+-    const QStringList viewLabels = { i18n("Stereo"), i18n("Left eye only"), i18n("Right eye only"), i18n("Not 3D") };
+-    const QStringList shortcuts = { QLatin1String("Alt+Shift+D"), QLatin1String("Alt+Shift+L"),
+-                                    QLatin1String("Alt+Shift+O"), QLatin1String("Alt+Shift+N") };
++    const QStringList viewLabels = { i18n("Stereo"), i18n("Left eye only"), i18n("Right eye only") };
++    const QStringList shortcuts = { QLatin1String("Alt+Shift+D"), QLatin1String("Alt+Shift+L"), QLatin1String("Alt+Shift+O") };
+ 
+     for (int index = 0; index < viewLabels.size(); ++index) {
+         QAction *const action = addAction(viewLabels[index]);
+@@ -68,7 +61,8 @@ StereoPictureMenu::StereoPictureMenu(QWidget *parent)
+         });
+     }
+ 
+-    setOptions(m_options);
++    m_views->actions().constFirst()->setChecked(true);
++    setFile({}, false);
+ }
+ 
+ Stereo::Picture::Options StereoPictureMenu::options() const
+@@ -76,19 +70,55 @@ Stereo::Picture::Options StereoPictureMenu::options() const
+     return m_options;
+ }
+ 
+-void StereoPictureMenu::setOptions(const Stereo::Picture::Options &options)
++void StereoPictureMenu::setFile(const QString &path, bool shownAsPair)
++{
++    m_path = path;
++    m_fileChoice->setShownAsPair(shownAsPair);
++    m_fileChoice->setFiles(path.isEmpty() ? QStringList() : QStringList { path });
++    m_fileChoice->menuAction()->setEnabled(!path.isEmpty());
++    m_conversion->setEnabled(!path.isEmpty());
++}
++
++void StereoPictureMenu::fileChanged(const QStringList &paths)
+ {
+-    m_options = options;
+-    const int layout = (options.inputLayout == Stereo::Picture::Layout::None) ? 0
+-                                                                              : ((options.inputLayout == Stereo::Picture::Layout::SideBySide) ? 1 : 3)
+-            + ((options.inputOrder == Stereo::Picture::EyeOrder::RightFirst) ? 1 : 0);
+-    m_formats->actions()[layout]->setChecked(true);
+-    m_views->actions()[static_cast<int>(options.view)]->setChecked(true);
+-    m_swap->setChecked(options.swapEyes);
++    QList<QUrl> urls;
++    for (const QString &path : paths) {
++        urls.append(QUrl::fromLocalFile(path));
++    }
++    Q_EMIT fileChoiceChanged();
++    // the file manager and the other viewers show the file again
++    org::kde::KDirNotify::emitFilesChanged(urls);
++}
++
++void StereoPictureMenu::failed(const QString &message)
++{
++    QMessageBox::warning(parentWidget(), i18n("3D"), message);
++}
++
++void StereoPictureMenu::toggleNotThreeD()
++{
++    if (m_path.isEmpty()) {
++        return;
++    }
++    Stereo::Picture::Options choice = Stereo::Picture::fileChoice(m_path);
++    const bool flat = (choice.view == Stereo::Picture::View::Mono);
++    choice.view = flat ? Stereo::Picture::View::Stereo : Stereo::Picture::View::Mono;
++    choice.inputLayout = Stereo::Picture::Layout::None;
++    choice.anaglyph = Stereo::Picture::AnaglyphColorPair::None;
++    QString error;
++    if (Stereo::Picture::setFileChoice(m_path, choice, &error)) {
++        fileChanged({ m_path });
++    } else {
++        failed(error);
++    }
++    m_fileChoice->setFiles({ m_path });
+ }
+ 
+ void StereoPictureMenu::convert()
+ {
++    if (m_path.isEmpty()) {
++        return;
++    }
+     if (QMessageBox::warning(parentWidget(), i18n("Anaglyph to side by side"), Stereo::Picture::colorDisclaimer(),
+                              QMessageBox::Ok | QMessageBox::Cancel)
+         != QMessageBox::Ok) {
+@@ -97,12 +127,23 @@ void StereoPictureMenu::convert()
+ 
+     bool ok = false;
+     const QStringList pairs = { i18n("Red/cyan"), i18n("Green/magenta"), i18n("Amber/blue") };
+-    const QString choice = QInputDialog::getItem(parentWidget(), i18n("Anaglyph to side by side"), i18n("Colour pair"), pairs, 0, false, &ok);
++    const QString pair = QInputDialog::getItem(parentWidget(), i18n("Anaglyph to side by side"), i18n("Colour pair"), pairs, 0, false, &ok);
+ 
+     if (ok) {
+-        m_options.anaglyph = static_cast<Stereo::Picture::AnaglyphColorPair>(pairs.indexOf(choice) + 1);
+-        m_options.view = Stereo::Picture::View::Stereo;
+-        Q_EMIT optionsChanged();
++        // kept for the file, like every other input correction
++        Stereo::Picture::Options choice = Stereo::Picture::fileChoice(m_path);
++        choice.inputLayout = Stereo::Picture::Layout::None;
++        choice.anaglyph = static_cast<Stereo::Picture::AnaglyphColorPair>(pairs.indexOf(pair) + 1);
++        choice.view = Stereo::Picture::View::Stereo;
++        QString error;
++        if (Stereo::Picture::setFileChoice(m_path, choice, &error)) {
++            m_options.view = Stereo::Picture::View::Stereo;
++            m_views->actions().constFirst()->setChecked(true);
++            fileChanged({ m_path });
++        } else {
++            failed(error);
++        }
++        m_fileChoice->setFiles({ m_path });
+     }
+ }
+ 
+diff --git a/Viewer/StereoPictureMenu.h b/Viewer/StereoPictureMenu.h
+index 1917980..62c9e33 100644
+--- a/Viewer/StereoPictureMenu.h
++++ b/Viewer/StereoPictureMenu.h
+@@ -9,28 +9,58 @@
+ 
+ class QActionGroup;
+ 
++namespace Stereo
++{
++class FileChoiceMenu;
++}
++
+ namespace Viewer
+ {
+ 
++/**
++ * The viewer's 3D menu.
++ *
++ * What corrects one file (its input packing, Not 3D, the swap of its eyes, and
++ * saving the correction into the file) is the stereo layer's menu, and the
++ * choice is kept in the layer's per-file store, the one the file manager, the
++ * thumbnailers and the other viewers read; the photograph is not written unless
++ * the person chooses the save. Which eye is shown is this viewer's own choice.
++ */
+ class StereoPictureMenu : public QMenu
+ {
+     Q_OBJECT
+ 
+ public:
+     explicit StereoPictureMenu(QWidget *parent);
+-    void setOptions(const Stereo::Picture::Options &options);
++    /**
++     * The photograph shown, and whether it is shown as a pair now: a flat one is offered no swap.
++     */
++    void setFile(const QString &path, bool shownAsPair);
++    /**
++     * This viewer's own choice: which eye is shown (Stereo, LeftOnly or RightOnly).
++     */
+     Stereo::Picture::Options options() const;
+ 
+ Q_SIGNALS:
+-
++    /**
++     * The viewer's own choice changed.
++     */
+     void optionsChanged();
++    /**
++     * The file's stored choice changed (or was saved into the file): decode it again.
++     */
++    void fileChoiceChanged();
+ 
+ private:
+     void convert();
++    void toggleNotThreeD();
++    void fileChanged(const QStringList &paths);
++    void failed(const QString &message);
+     Stereo::Picture::Options m_options;
+-    QActionGroup *m_formats;
++    Stereo::FileChoiceMenu *m_fileChoice;
+     QActionGroup *m_views;
+-    QAction *m_swap;
++    QAction *m_conversion;
++    QString m_path;
+ };
+ 
+ } // namespace Viewer
+diff --git a/Viewer/StereoViewAdapter.cpp b/Viewer/StereoViewAdapter.cpp
+index 3acbb90..b981fde 100644
+--- a/Viewer/StereoViewAdapter.cpp
++++ b/Viewer/StereoViewAdapter.cpp
+@@ -28,6 +28,17 @@ Viewer::StereoViewAdapter::StereoViewAdapter(QWidget *area)
+         reload();
+         Q_EMIT imageChanged();
+     });
++    // the person's stored choice for the file changed, here or by a rename or move another program did
++    connect(m_menu, &StereoPictureMenu::fileChoiceChanged, this, [this] {
++        reload();
++        Q_EMIT imageChanged();
++    });
++    connect(&m_moves, &Stereo::FileChoiceMoves::carried, this, [this](const QStringList &paths) {
++        if (paths.contains(m_path)) {
++            reload();
++            Q_EMIT imageChanged();
++        }
++    });
+ }
+ 
+ void Viewer::StereoViewAdapter::setSource(const QString &path, int angle)
+@@ -40,7 +51,16 @@ void Viewer::StereoViewAdapter::setSource(const QString &path, int angle)
+ 
+ void Viewer::StereoViewAdapter::reload()
+ {
+-    m_picture = m_path.isEmpty() ? Stereo::Picture() : Stereo::Picture::load(m_path, m_options, m_output.mode());
++    // The layer applies the person's stored choice for the file (its packing, Not 3D, the swap) with the file's marks,
++    // as it does for the file manager and the thumbnailers; this viewer adds only which eye is shown. A file kept as
++    // Not 3D is flat whichever eye the viewer shows of the others.
++    Stereo::Picture::Options options = m_options;
++    if (!m_path.isEmpty() && Stereo::Picture::fileChoice(m_path).view == Stereo::Picture::View::Mono)
++        options.view = Stereo::Picture::View::Stereo;
++    m_picture = m_path.isEmpty() ? Stereo::Picture() : Stereo::Picture::load(m_path, options, m_output.mode());
++    // one eye of a pair is still a pair to correct: the layer names where its decision came from
++    const bool oneEye = options.view == Stereo::Picture::View::LeftOnly || options.view == Stereo::Picture::View::RightOnly;
++    m_menu->setFile(m_path, m_picture.isStereo() || (oneEye && m_picture.source != Stereo::Picture::Source::None));
+     if (m_angle != 0 && !image().isNull()) {
+         QTransform rotation;
+         rotation.rotate(m_angle);
+diff --git a/Viewer/StereoViewAdapter.h b/Viewer/StereoViewAdapter.h
+index d06e963..72f97d2 100644
+--- a/Viewer/StereoViewAdapter.h
++++ b/Viewer/StereoViewAdapter.h
+@@ -5,6 +5,7 @@
+ 
+ #include <QObject>
+ #include <QPointer>
++#include <filechoicemoves.h>
+ #include <picture.h>
+ #include <screenmode.h>
+ #include <widgetlayer.h>
+@@ -50,5 +51,7 @@ private:
+     int m_angle = 0;
+     QPointer<QWindow> m_window;
+     StereoPictureMenu *m_menu;
++    // keeps a file's stored choice with it when a program renames or moves it
++    Stereo::FileChoiceMoves m_moves;
+ };
+ }
