@@ -67,5 +67,5 @@ A program an entry offers may need packages to run (Vinci: podman, distrobox, fu
 The entry declares them (`tools` in its row, or its kind's list in tools.py), and this package never depends on them.
 Before the person installs, the entry's page says which tools are missing, how many packages apt would install for them and their download and disk sizes, read from `apt-get -s`; on a metered connection they join the program's own download in the shared notice.
 The action refuses, with apt's reason, a tool that cannot be installed, before anything is downloaded; it downloads the program and verifies it, downloads the tools' archives, and only then installs.
-Tools already installed are not reinstalled, upgraded or mentioned.
-Removing the entry removes no tool: those the entry brought are marked as automatically installed unless another installed entry declares them, and apt decides from there.
+Tools already installed are not reinstalled, upgraded or mentioned; one that apt had installed automatically is marked manual while the entry is installed, so apt's autoremove cannot take it from under the program.
+Removing the entry removes no tool: those the entry brought or marked are marked as automatically installed unless another installed entry declares them, and apt decides from there.
