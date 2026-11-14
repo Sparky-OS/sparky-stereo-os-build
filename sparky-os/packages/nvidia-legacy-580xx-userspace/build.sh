@@ -55,10 +55,19 @@ open(sys.argv[2], 'wb').write(base64.b64decode(''.join(l for l in body if l and 
 EOF
 [ "$(sha256sum <"$WORK/nvidia-debian12.gpg" | cut -d' ' -f1)" = "$KEY_SHA256" ] ||
 	{ echo "cuda-debian12-archive-keyring.asc is not NVIDIA's Debian 12 key" >&2; exit 1; }
-curl -fsS -o "$WORK/Release" "$NVREPO/Release"
-curl -fsS -o "$WORK/Release.gpg" "$NVREPO/Release.gpg"
+if [ "${SPARKY_CARRY_SOURCE_BUILD:-0}" = 1 ]; then
+    NVDEBS=$HERE/vendor
+    cp "$HERE/vendor/Release" "$HERE/vendor/Release.gpg" "$WORK/"
+else
+    curl -fsS -o "$WORK/Release" "$NVREPO/Release"
+    curl -fsS -o "$WORK/Release.gpg" "$NVREPO/Release.gpg"
+fi
 gpgv --keyring "$WORK/nvidia-debian12.gpg" "$WORK/Release.gpg" "$WORK/Release"
-curl -fsS -o "$WORK/Packages.gz" "$NVREPO/Packages.gz"
+if [ "${SPARKY_CARRY_SOURCE_BUILD:-0}" = 1 ]; then
+    cp "$HERE/vendor/Packages.gz" "$WORK/Packages.gz"
+else
+    curl -fsS -o "$WORK/Packages.gz" "$NVREPO/Packages.gz"
+fi
 grep -q "^ $(sha256sum <"$WORK/Packages.gz" | cut -d' ' -f1) .* Packages.gz$" "$WORK/Release" ||
 	{ echo "NVIDIA's Packages.gz does not match its signed Release" >&2; exit 1; }
 python3 -I "$HERE/carry.py" check-index "$WORK/Packages.gz" "$NV" "$HERE/packages.tsv" "$HERE/excluded.tsv"
@@ -98,7 +107,7 @@ while IFS=$'\t' read -r package arch file size digest; do
 	n=$((n + 1))
 done <"$HERE/packages.tsv"
 if [ "${SPARKY_CARRY_SOURCE_BUILD:-0}" != 1 ]; then
-    python3 "$HERE/source.py" "$TOOLKIT" "$WORK/out"
+    python3 "$HERE/source.py" "$TOOLKIT" "$WORK/out" "$WORK"
 fi
 PYTHONPATH=$TOOLKIT python3 -m lean.release check-debs "$WORK"/out/*.deb
 mkdir -p "$OUT"

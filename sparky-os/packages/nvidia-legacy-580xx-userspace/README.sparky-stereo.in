@@ -56,8 +56,8 @@ Source of the carry
 
 The edition source package is nvidia-graphics-drivers at @VERSION@.
 It contains this carry recipe, the vendor file manifest with hashes and HTTPS
-origins, the verification key and the licence. It contains no vendor binaries
-and does not claim to contain the proprietary driver source. The build fetches
-the exact licensed vendor packages and refuses a checksum mismatch.
+origins, the verification key and the licence. It retains the exact licensed vendor package inputs for offline rebuilding,
+without claiming to contain the proprietary driver source. The build verifies
+each retained archive and refuses a checksum mismatch.
 The existing driver lock selects this source name; the unchanged DKMS provider
 remains at 580.196.07-1+sparky2+lc1.

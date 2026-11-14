@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pack the carry recipe, manifests and licence, without proprietary vendor binaries."""
+"""Pack the carry recipe, manifests and licence, with unchanged licensed vendor inputs for offline rebuilds."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ import sys
 import tempfile
 
 HERE = Path(__file__).resolve().parent
-toolkit, output = map(Path, sys.argv[1:])
+toolkit, output, snapshot = map(Path, sys.argv[1:])
 sys.path.insert(0, str(toolkit / 'repo'))
 import reproducible
 
@@ -36,12 +37,23 @@ with tempfile.TemporaryDirectory(prefix='carry-source-', dir=output) as temporar
         package, arch, filename, size, sha = line.split('\t')
         vendors.append(dict(package=package, architecture=arch, url=origin + filename, size=int(size), sha256=sha))
         binaries.setdefault(package, set()).add(arch)
+    vendor = source / 'vendor'
+    vendor.mkdir()
+    for row in vendors:
+        filename = row['url'].rsplit('/', 1)[1]
+        cached = Path(os.environ.get('NVDEBS', str(snapshot / 'debs'))) / filename
+        archive = cached if cached.is_file() else snapshot / 'debs' / filename
+        assert archive.stat().st_size == row['size']
+        assert hashlib.sha256(archive.read_bytes()).hexdigest() == row['sha256']
+        shutil.copyfile(archive, vendor / filename)
+    for filename in ['Release', 'Release.gpg', 'Packages.gz']:
+        shutil.copyfile(snapshot / filename, vendor / filename)
     (source / 'vendor-files.json').write_text(json.dumps(vendors, indent=2, sort_keys=True) + '\n')
     (source / 'README.source').write_text(
         'This is the edition carry recipe, not NVIDIA proprietary driver source.\n'
-        'No vendor binary is embedded. vendor-files.json names the exact HTTPS inputs and hashes.\n'
+        'vendor/ holds the exact unmodified vendor package inputs and signed index. vendor-files.json names their HTTPS origins and hashes.\n'
         'NVIDIA-LICENSE is the verbatim distribution licence shipped in the carried packages.\n'
-        'Rebuild with dpkg-buildpackage -b -us -uc in a container with HTTPS access.\n'
+        'Rebuild with dpkg-buildpackage -b -us -uc offline in a container; the default binary target uses only the retained vendor inputs.\n'
         'The recipe verifies the vendor Release, index and each archive, then checks unchanged payloads.\n')
     reproducible.normalize(source, stamp)
     orig = output / f'{name}_{upstream}.orig.tar.xz'
@@ -92,4 +104,4 @@ clean:
     for path in work.iterdir():
         if path.suffix == '.dsc' or path.name.endswith('.debian.tar.xz'):
             shutil.copy2(path, output / path.name)
-print(name, version, 'recipe-only source packaged; no vendor binary embedded')
+print(name, version, 'carry source packaged with hash-pinned licensed vendor inputs for offline builds')
