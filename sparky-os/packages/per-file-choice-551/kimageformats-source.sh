@@ -23,7 +23,8 @@ cd source
 [ ! -e "$W/source.preserve.json" ] || { echo "a preserve plan was carried: pass it with --preserve-plan" >&2; exit 1; }
 PYTHONPATH=/toolkit python3 -m lean.debian_prepare . 6.30.0-1+stereo3d7+lc1 --toolkit /toolkit
 python3 /toolkit/repo/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" .
-dpkg-buildpackage -S -us -uc -d >/dev/null
+# the tree was never built: no clean (debian/rules clean needs the kf6 debhelper sequence, which this container has not)
+dpkg-buildpackage -S -us -uc -d -nc >/dev/null
 cd ..
 cp kf6-kimageformats_6.30.0.orig.tar.xz kf6-kimageformats_6.30.0-1+stereo3d7+lc1.dsc kf6-kimageformats_6.30.0-1+stereo3d7+lc1.debian.tar.xz /out/
 chown -R 1000:1000 /out
