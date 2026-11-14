@@ -142,7 +142,7 @@ def main():
         print(f'{len(rows)} binaries checked; {len(missing)} missing; '
               f'{len(set((r[4], r[5]) for r in missing))} missing source versions')
         return int(bool(missing))
-    except (OSError, ValueError, KeyError, IndexError, EOFError) as error:
+    except (OSError, ValueError, KeyError, IndexError, EOFError, lzma.LZMAError) as error:
         print('source gate could not check: ' + str(error), file=sys.stderr)
         return 2
 
