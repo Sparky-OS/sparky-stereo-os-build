@@ -20,7 +20,7 @@ cp /src/*+lc1.dsc /src/*+lc1.debian.tar.xz /src/*.orig.tar.* .
 [ ! -f /src/"$(ls /src/*.orig.tar.* | head -1 | xargs basename)".asc ] || cp /src/*.orig.tar.*.asc .
 dpkg-source -x "$(basename "$dsc")" /work/lc/source >/dev/null
 apt-get -y update >/dev/null 2>&1
-apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.log 2>&1
+apt-get -y --no-install-recommends build-dep ${SPARKY_BUILD_PROFILES:+-P "$SPARKY_BUILD_PROFILES"} /work/lc/source >/work/build-dep.log 2>&1
 # the link and start gate of lean.debhelper runs the rebuilt programs in a bubblewrap root
 apt-get -y --no-install-recommends install bubblewrap >>/work/build-dep.log 2>&1
 mkdir -p "$SPARKY_LC_SCRATCH"
@@ -28,6 +28,6 @@ useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/lc/source
 runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev SPARKY_LC_PREVIOUS_SIBLINGS_FILE="${SPARKY_LC_PREVIOUS_SIBLINGS_FILE:-}" SPARKY_LC_SIBLINGS_FILE="${SPARKY_LC_SIBLINGS_FILE:-}" SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" \
-	DEB_BUILD_OPTIONS="$DEB_BUILD_OPTIONS" dpkg-buildpackage -us -uc -j"${THREADS:-4}"
+	DEB_BUILD_OPTIONS="$DEB_BUILD_OPTIONS" dpkg-buildpackage -us -uc -j"${THREADS:-4}" ${SPARKY_BUILD_PROFILES:+-P"$SPARKY_BUILD_PROFILES"}
 cd /work/lc
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/lc/*+lc1_*.deb

@@ -1,0 +1,524 @@
+Description: Gwenview's per-file 3D entries are the stereo layer's menu and store (ORDER 551)
+ For a local file the 3D menu shows Stereo::FileChoiceMenu, and the choices (the input packing, Not 3D, the swap) are
+ kept in the layer's per-file store, which Dolphin and the thumbnailers read. The adapter decodes through the layer with
+ the file's path. The session keeps which eye is shown. The swaps kept in gwenviewstereorc are taken into the store
+ once. Needs libstereo-layer-dev (>= 1.18.0).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-14
+---
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9060580..7ee25ec 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -75,7 +75,7 @@ if(NOT GWENVIEW_NO_WAYLAND_GESTURES)
+ 
+ endif()
+ 
+-find_package(StereoLayer 1.4 QUIET)
++find_package(StereoLayer 1.18 QUIET)
+ if(StereoLayer_FOUND)
+     add_compile_definitions(GWENVIEW_STEREO=1)
+ endif()
+diff --git a/app/gwenviewui.rc b/app/gwenviewui.rc
+index 9550eb6..c5ff250 100644
+--- a/app/gwenviewui.rc
++++ b/app/gwenviewui.rc
+@@ -1,6 +1,6 @@
+ <?xml version="1.0"?>
+ <!DOCTYPE gui SYSTEM "kpartgui.dtd">
+-<gui name="gwenview" version="72">
++<gui name="gwenview" version="73">
+ 
+ <MenuBar>
+     <Menu name="file" >
+@@ -24,21 +24,11 @@
+         <Action name="view_toggle_spotlightmode" />
+         <Menu name="stereo3d">
+             <text>3D</text>
+-            <Menu name="stereo_input">
+-                <text>Input format</text>
+-                <Action name="stereo_input_auto" />
+-                <Action name="stereo_input_sbs_left" />
+-                <Action name="stereo_input_sbs_right" />
+-                <Action name="stereo_input_tab_left" />
+-                <Action name="stereo_input_tab_right" />
+-            </Menu>
+-            <Action name="stereo_swap_eyes" />
+-            <Action name="stereo_anaglyph_to_sbs" />
++            <Action name="stereo_file_choice" />
+             <Separator />
+             <Action name="stereo_both_eyes" />
+             <Action name="stereo_left_only" />
+             <Action name="stereo_right_only" />
+-            <Action name="stereo_not_3d" />
+         </Menu>
+         <Separator/>
+         <Action name="fullscreen" />
+diff --git a/app/mainwindow.cpp b/app/mainwindow.cpp
+index f563c50..4423914 100644
+--- a/app/mainwindow.cpp
++++ b/app/mainwindow.cpp
+@@ -425,7 +425,7 @@ struct MainWindow::Private {
+         swapEyes->setText(i18n("Swap eyes"));
+         swapEyes->setCheckable(true);
+         actionCollection->setDefaultShortcut(swapEyes, Qt::ALT | Qt::SHIFT | Qt::Key_W);
+-        connect(swapEyes, &QAction::toggled, q, [this](bool) {
++        connect(swapEyes, &QAction::triggered, q, [this](bool) {
+             mViewMainPage->toggleStereoSwap();
+         });
+ 
+@@ -466,6 +466,13 @@ struct MainWindow::Private {
+         addStereoEyeMode(QStringLiteral("stereo_right_only"), i18n("Right eye only"), ViewMainPage::StereoEyeMode::RightOnly, Qt::ALT | Qt::SHIFT | Qt::Key_O);
+         addStereoEyeMode(QStringLiteral("stereo_not_3d"), i18n("Not 3D"), ViewMainPage::StereoEyeMode::Not3D, Qt::ALT | Qt::SHIFT | Qt::Key_N);
+         stereoBoth->setChecked(true);
++        // For a local file the 3D menu's per-file entries are the stereo layer's menu (stereo_file_choice, made by the
++        // view page). The actions above that it replaces in the menu stay for their shortcuts, and act on the same
++        // per-file store: a shortcut works on an action its window holds.
++        for (const char *name : {"stereo_input_auto", "stereo_input_sbs_left", "stereo_input_sbs_right", "stereo_input_tab_left", "stereo_input_tab_right",
++                 "stereo_swap_eyes", "stereo_anaglyph_to_sbs", "stereo_not_3d"}) {
++            q->addAction(actionCollection->action(QLatin1String(name)));
++        }
+ #endif
+ 
+         file->addAction(KStandardActions::Save, q, &MainWindow::saveCurrent);
+diff --git a/app/stereo/stereoviewadapter.cpp b/app/stereo/stereoviewadapter.cpp
+index 1710421..e0f6595 100644
+--- a/app/stereo/stereoviewadapter.cpp
++++ b/app/stereo/stereoviewadapter.cpp
+@@ -92,6 +92,17 @@ void StereoViewAdapter::setView(DocumentView *view)
+     update();
+ }
+ 
++void StereoViewAdapter::refresh()
++{
++    mDirty = true;
++    update();
++}
++
++bool StereoViewAdapter::showsPair() const
++{
++    return mPicture.isStereo();
++}
++
+ void StereoViewAdapter::setOptions(const Stereo::Picture::Options &options)
+ {
+     mOptions = options;
+@@ -132,12 +143,16 @@ void StereoViewAdapter::update()
+                 mVideoFrameTime = frame.startTime();
+                 const QImage left = qImageFromVideoFrameView(frame, 0, QVideoFrameImageDepth::Float32);
+                 const QImage right = qImageFromVideoFrameView(frame, 1, QVideoFrameImageDepth::Float32);
+-                mPicture = Stereo::Picture::fromImages(left, right, QStringLiteral("multiViewLeftFirst"), {}, {}, mOptions, mOutput.mode());
++                // a local file's choice in the shared per-file store (the swap, Not 3D) is applied by the layer
++                mPicture = document->url().isLocalFile()
++                    ? Stereo::Picture::fromImages(document->url().toLocalFile(), left, right, QStringLiteral("multiViewLeftFirst"), {}, {}, mOptions, mOutput.mode())
++                    : Stereo::Picture::fromImages(left, right, QStringLiteral("multiViewLeftFirst"), {}, {}, mOptions, mOutput.mode());
+                 if (mOptions.view == Stereo::Picture::View::Mono
+                     || mOptions.view == Stereo::Picture::View::Stereo) {
+                     mPicture.original = format.stereoFlags().testFlag(QVideoFrameFormat::StereoFlag::BaseViewRight) ? right : left;
+                 }
+                 mLayer.setPicture(mPicture);
++                Q_EMIT pictureChanged();
+             }
+             mLayer.setTransform(1, {});
+             mContainer->setStereoLayerActive(mLayer.isActive());
+@@ -175,7 +190,11 @@ void StereoViewAdapter::update()
+             metadata = image.text(QStringLiteral("Stereo3DLayout"));
+         }
+         Stereo::Picture::Options options = mOptions;
+-        mPicture = Stereo::Picture::fromReader(reader, image, metadata, format, mData.left(1024 * 1024), options, mOutput.mode());
++        // The person's choice for a local file comes from the layer's per-file store, the one Dolphin and the
++        // thumbnailers read: the layer applies it with this session's options, as it does for a file it loads itself.
++        mPicture = document->url().isLocalFile()
++            ? Stereo::Picture::fromReader(document->url().toLocalFile(), reader, image, metadata, format, mData.left(1024 * 1024), options, mOutput.mode())
++            : Stereo::Picture::fromReader(reader, image, metadata, format, mData.left(1024 * 1024), options, mOutput.mode());
+         imageView->clearStereoMonoImage();
+         if (mPicture.isStereo()) {
+             imageView->setDocumentSizeOverride(mPicture.left.size());
+@@ -188,6 +207,7 @@ void StereoViewAdapter::update()
+         mLayer.setPicture(mPicture);
+         mContainer->setStereoLayerActive(mLayer.isActive());
+         mZoom = 0;
++        Q_EMIT pictureChanged();
+     }
+     if (!mPicture.isStereo()) {
+         mTimer.stop();
+diff --git a/app/stereo/stereoviewadapter.h b/app/stereo/stereoviewadapter.h
+index 31f408a..139dd00 100644
+--- a/app/stereo/stereoviewadapter.h
++++ b/app/stereo/stereoviewadapter.h
+@@ -21,10 +21,19 @@ class DocumentViewContainer;
+ 
+ class StereoViewAdapter : public QObject
+ {
++    Q_OBJECT
+ public:
+     explicit StereoViewAdapter(DocumentViewContainer *container, QObject *parent);
+     void setView(DocumentView *view);
+     void setOptions(const Stereo::Picture::Options &options);
++    // Decodes the document again: the person's stored choice for its file changed (the shared per-file store)
++    void refresh();
++    // Whether the document is shown as a pair now
++    bool showsPair() const;
++
++Q_SIGNALS:
++    // The document was decoded again: showsPair() may have changed
++    void pictureChanged();
+ 
+ protected:
+     bool eventFilter(QObject *object, QEvent *event) override;
+diff --git a/app/viewmainpage.cpp b/app/viewmainpage.cpp
+index 3e40640..0349810 100644
+--- a/app/viewmainpage.cpp
++++ b/app/viewmainpage.cpp
+@@ -71,6 +71,12 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ #include <lib/zoomwidget.h>
+ #ifdef GWENVIEW_STEREO
+ #include "stereo/stereoviewadapter.h"
++#include <KDirNotify>
++#include <QFileInfo>
++#include <QSignalBlocker>
++#include <QTimer>
++#include <filechoicemenu.h>
++#include <filechoicemoves.h>
+ #endif
+ 
+ namespace Gwenview
+@@ -143,12 +149,25 @@ struct ViewMainPagePrivate {
+     ViewMainPage::StereoEyeMode mStereoEyeMode = ViewMainPage::StereoEyeMode::Stereo;
+     KConfig mStereoState{QStringLiteral("gwenviewstereorc"), KConfig::SimpleConfig};
+     Stereo::Picture::AnaglyphColorPair mAnaglyphPair = Stereo::Picture::AnaglyphColorPair::None;
++    Stereo::FileChoiceMenu *mStereoChoiceMenu = nullptr;
++    QString mStereoError;
+ #endif
+ 
+     bool mCompareMode;
+     ZoomMode::Enum mZoomMode;
+ 
+ #ifdef GWENVIEW_STEREO
++    // The current document's file, when the shared per-file store can name it: a local file. The person's choice for
++    // such a file (the input packing, Not 3D, the swap) is the stereo layer's, in the store Dolphin and the thumbnailers
++    // read, and the 3D menu's entries for it are the layer's menu. A document that is not a local file has no place in
++    // that store and keeps this program's own state, as before: the input for the session, and its swap in
++    // gwenviewstereorc.
++    QString stereoLocalPath() const
++    {
++        const auto *view = currentView();
++        return view && view->url().isLocalFile() ? view->url().toLocalFile() : QString();
++    }
++
+     KConfigGroup stereoFileState()
+     {
+         const auto *view = currentView();
+@@ -161,51 +180,152 @@ struct ViewMainPagePrivate {
+         if (!view) {
+             return false;
+         }
+-        const bool previousChoice = view->url().isLocalFile() && Stereo::Picture::userSwapEyes(view->url().toLocalFile());
+-        return stereoFileState().readEntry("SwapEyes", previousChoice);
++        const QString path = stereoLocalPath();
++        return path.isEmpty() ? stereoFileState().readEntry("SwapEyes", false) : Stereo::Picture::fileChoice(path).swapEyes;
+     }
+ 
+-    void updateStereo()
++    // Once: the swaps this program kept for local files in gwenviewstereorc go into the shared store, so every program
++    // shows those files alike; the files are not touched. Afterwards the old entries of local files are not read again.
++    // When the store cannot be written they stay where they are, the person is told, and the next start tries again.
++    void carryStereoStateToStore()
+     {
+-        Stereo::Picture::Options options;
+-        options.swapEyes = stereoSwap();
+-        if (auto *action = mActionCollection->action(QStringLiteral("stereo_swap_eyes"))) {
+-            const QSignalBlocker blocker(action);
+-            action->setChecked(options.swapEyes);
++        KConfigGroup carry(&mStereoState, QStringLiteral("SharedStore"));
++        if (carry.readEntry("SwapsCarried", false)) {
++            return;
+         }
+-        if (!mStereoAdapter) {
++        int carried = 0;
++        const QStringList groups = mStereoState.groupList();
++        for (const QString &name : groups) {
++            const QUrl url(name);
++            const KConfigGroup group(&mStereoState, name);
++            if (!url.isLocalFile() || !group.hasKey("SwapEyes") || !QFileInfo::exists(url.toLocalFile())) {
++                continue;
++            }
++            QString error;
++            if (!Stereo::Picture::adoptSwapEyes(url.toLocalFile(), group.readEntry("SwapEyes", false), &error)) {
++                mStereoError = error;
++                return;
++            }
++            ++carried;
++        }
++        carry.writeEntry("SwapsCarried", true);
++        carry.writeEntry("Files", carried);
++        mStereoState.sync();
++    }
++
++    void stereoFailed(const QString &message)
++    {
++        KMessageBox::error(q, message);
++    }
++
++    // Keeps choice for the current local file and shows the file again, here and wherever else it is shown
++    void setStereoFileChoice(const Stereo::Picture::Options &choice)
++    {
++        const QString path = stereoLocalPath();
++        QString error;
++        if (path.isEmpty()) {
+             return;
+         }
+-        options.anaglyph = mAnaglyphPair;
+-        switch (mStereoInput) {
+-        case ViewMainPage::StereoInput::Automatic:
+-            break;
+-        case ViewMainPage::StereoInput::SideBySideLeftFirst:
+-        case ViewMainPage::StereoInput::SideBySideRightFirst:
+-            options.inputLayout = Stereo::Picture::Layout::SideBySide;
+-            break;
+-        case ViewMainPage::StereoInput::TopAndBottomLeftFirst:
+-        case ViewMainPage::StereoInput::TopAndBottomRightFirst:
+-            options.inputLayout = Stereo::Picture::Layout::TopAndBottom;
+-            break;
++        if (!Stereo::Picture::setFileChoice(path, choice, &error)) {
++            // not kept: the marks below show what the store holds
++            stereoFailed(error);
+         }
+-        if (mStereoInput == ViewMainPage::StereoInput::SideBySideRightFirst || mStereoInput == ViewMainPage::StereoInput::TopAndBottomRightFirst) {
+-            options.inputOrder = Stereo::Picture::EyeOrder::RightFirst;
++        stereoFilesChanged({path});
++    }
++
++    void stereoFilesChanged(const QStringList &paths)
++    {
++        QList<QUrl> urls;
++        for (const QString &path : paths) {
++            urls.append(QUrl::fromLocalFile(path));
+         }
+-        switch (mStereoEyeMode) {
+-        case ViewMainPage::StereoEyeMode::Stereo:
+-            options.view = Stereo::Picture::View::Stereo;
+-            break;
++        if (mStereoAdapter) {
++            mStereoAdapter->refresh();
++        }
++        updateStereo();
++        org::kde::KDirNotify::emitFilesChanged(urls);
++    }
++
++    void checkStereoAction(const QString &name, bool checked, bool enabled = true)
++    {
++        if (auto *action = mActionCollection->action(name)) {
++            const QSignalBlocker blocker(action);
++            action->setChecked(checked);
++            action->setEnabled(enabled);
++        }
++    }
++
++    void updateStereo()
++    {
++        using Layout = Stereo::Picture::Layout;
++        using Order = Stereo::Picture::EyeOrder;
++        const QString path = stereoLocalPath();
++        const bool local = !path.isEmpty();
++        // what this session adds to the file's own choice
++        Stereo::Picture::Options options;
++        const Stereo::Picture::Options kept = local ? Stereo::Picture::fileChoice(path) : Stereo::Picture::Options();
++        ViewMainPage::StereoInput input = mStereoInput;
++        bool notThreeD = mStereoEyeMode == ViewMainPage::StereoEyeMode::Not3D;
++        if (local) {
++            // the layer applies the stored choice; the actions kept for their shortcuts show what the store holds
++            notThreeD = kept.view == Stereo::Picture::View::Mono;
++            const bool right = kept.inputOrder == Order::RightFirst;
++            input = kept.inputLayout == Layout::SideBySide ? (right ? ViewMainPage::StereoInput::SideBySideRightFirst : ViewMainPage::StereoInput::SideBySideLeftFirst)
++                : kept.inputLayout == Layout::TopAndBottom ? (right ? ViewMainPage::StereoInput::TopAndBottomRightFirst : ViewMainPage::StereoInput::TopAndBottomLeftFirst)
++                                                           : ViewMainPage::StereoInput::Automatic;
++            const bool listed = kept.inputLayout == Layout::None || kept.inputLayout == Layout::SideBySide || kept.inputLayout == Layout::TopAndBottom;
++            const bool automatic = kept.inputLayout == Layout::None && kept.anaglyph == Stereo::Picture::AnaglyphColorPair::None;
++            checkStereoAction(QStringLiteral("stereo_input_auto"), automatic && !notThreeD);
++            checkStereoAction(QStringLiteral("stereo_input_sbs_left"), listed && !notThreeD && input == ViewMainPage::StereoInput::SideBySideLeftFirst);
++            checkStereoAction(QStringLiteral("stereo_input_sbs_right"), listed && !notThreeD && input == ViewMainPage::StereoInput::SideBySideRightFirst);
++            checkStereoAction(QStringLiteral("stereo_input_tab_left"), listed && !notThreeD && input == ViewMainPage::StereoInput::TopAndBottomLeftFirst);
++            checkStereoAction(QStringLiteral("stereo_input_tab_right"), listed && !notThreeD && input == ViewMainPage::StereoInput::TopAndBottomRightFirst);
++        } else {
++            options.swapEyes = stereoSwap();
++            options.anaglyph = mAnaglyphPair;
++            switch (mStereoInput) {
++            case ViewMainPage::StereoInput::Automatic:
++                break;
++            case ViewMainPage::StereoInput::SideBySideLeftFirst:
++            case ViewMainPage::StereoInput::SideBySideRightFirst:
++                options.inputLayout = Layout::SideBySide;
++                break;
++            case ViewMainPage::StereoInput::TopAndBottomLeftFirst:
++            case ViewMainPage::StereoInput::TopAndBottomRightFirst:
++                options.inputLayout = Layout::TopAndBottom;
++                break;
++            }
++            if (mStereoInput == ViewMainPage::StereoInput::SideBySideRightFirst || mStereoInput == ViewMainPage::StereoInput::TopAndBottomRightFirst) {
++                options.inputOrder = Order::RightFirst;
++            }
++        }
++        checkStereoAction(QStringLiteral("stereo_swap_eyes"), local ? kept.swapEyes : options.swapEyes, currentView() && !notThreeD);
++        const ViewMainPage::StereoEyeMode eyes =
++            mStereoEyeMode == ViewMainPage::StereoEyeMode::Not3D ? ViewMainPage::StereoEyeMode::Stereo : mStereoEyeMode;
++        switch (eyes) {
+         case ViewMainPage::StereoEyeMode::LeftOnly:
+             options.view = Stereo::Picture::View::LeftOnly;
+             break;
+         case ViewMainPage::StereoEyeMode::RightOnly:
+             options.view = Stereo::Picture::View::RightOnly;
+             break;
+-        case ViewMainPage::StereoEyeMode::Not3D:
+-            options.view = Stereo::Picture::View::Mono;
++        default:
++            options.view = !local && notThreeD ? Stereo::Picture::View::Mono : Stereo::Picture::View::Stereo;
+             break;
+         }
++        checkStereoAction(QStringLiteral("stereo_not_3d"), notThreeD);
++        checkStereoAction(QStringLiteral("stereo_both_eyes"), !notThreeD && eyes == ViewMainPage::StereoEyeMode::Stereo);
++        checkStereoAction(QStringLiteral("stereo_left_only"), !notThreeD && eyes == ViewMainPage::StereoEyeMode::LeftOnly);
++        checkStereoAction(QStringLiteral("stereo_right_only"), !notThreeD && eyes == ViewMainPage::StereoEyeMode::RightOnly);
++        if (mStereoChoiceMenu) {
++            // the per-file menu is the layer's, for the file the store can name; it shows what the store holds
++            mStereoChoiceMenu->setShownAsPair(mStereoAdapter && mStereoAdapter->showsPair());
++            mStereoChoiceMenu->setFiles(local ? QStringList{path} : QStringList());
++            mStereoChoiceMenu->menuAction()->setEnabled(local);
++        }
++        if (!mStereoAdapter) {
++            return;
++        }
+         mStereoAdapter->setOptions(options);
+         mStereoAdapter->setView(mCompareMode ? nullptr : mDocumentViewController->view());
+     }
+@@ -262,6 +382,40 @@ struct ViewMainPagePrivate {
+ #ifdef GWENVIEW_STEREO
+         if (Stereo::WidgetLayer::isSupported()) {
+             mStereoAdapter = new StereoViewAdapter(mDocumentViewContainer, q);
++            QObject::connect(mStereoAdapter, &StereoViewAdapter::pictureChanged, q, [this] {
++                if (mStereoChoiceMenu) {
++                    mStereoChoiceMenu->setShownAsPair(mStereoAdapter->showsPair());
++                }
++            });
++        }
++        // The per-file corrections of a local file's input are the stereo layer's menu: the same entries, words and
++        // per-file store as in the file manager, and nothing kept in the file.
++        mStereoChoiceMenu = new Stereo::FileChoiceMenu(q);
++        mStereoChoiceMenu->menuAction()->setEnabled(false);
++        mActionCollection->addAction(QStringLiteral("stereo_file_choice"), mStereoChoiceMenu->menuAction());
++        QObject::connect(mStereoChoiceMenu, &Stereo::FileChoiceMenu::changed, q, [this](const QStringList &paths) {
++            stereoFilesChanged(paths);
++        });
++        QObject::connect(mStereoChoiceMenu, &Stereo::FileChoiceMenu::failed, q, [this](const QString &message) {
++            stereoFailed(message);
++        });
++        // a file's choice follows it when this program, or any other, renames or moves it
++        auto stereoChoiceMoves = new Stereo::FileChoiceMoves(q);
++        QObject::connect(stereoChoiceMoves, &Stereo::FileChoiceMoves::carried, q, [this](const QStringList &) {
++            if (mStereoAdapter) {
++                mStereoAdapter->refresh();
++            }
++            updateStereo();
++        });
++        QObject::connect(stereoChoiceMoves, &Stereo::FileChoiceMoves::failed, q, [this](const QString &message) {
++            stereoFailed(message);
++        });
++        carryStereoStateToStore();
++        if (!mStereoError.isEmpty()) {
++            // after the window is up: the swaps kept by this program could not be taken into the shared store
++            QTimer::singleShot(0, q, [this] {
++                stereoFailed(mStereoError);
++            });
+         }
+ #endif
+         adapterContainerLayout->addWidget(mDocumentViewContainer);
+@@ -546,9 +700,22 @@ ViewMainPage::ViewMainPage(QWidget *parent, SlideShow *slideShow, KActionCollect
+ #ifdef GWENVIEW_STEREO
+ void ViewMainPage::setStereoInput(StereoInput input)
+ {
+-    d->mStereoInput = input;
+-    d->mAnaglyphPair = Stereo::Picture::AnaglyphColorPair::None;
+-    d->updateStereo();
++    const QString path = d->stereoLocalPath();
++    if (path.isEmpty()) {
++        d->mStereoInput = input;
++        d->mAnaglyphPair = Stereo::Picture::AnaglyphColorPair::None;
++        d->updateStereo();
++        return;
++    }
++    // a local file: the choice is this file's, kept in the shared store
++    Stereo::Picture::Options choice = Stereo::Picture::fileChoice(path);
++    const bool tab = input == StereoInput::TopAndBottomLeftFirst || input == StereoInput::TopAndBottomRightFirst;
++    choice.inputLayout = input == StereoInput::Automatic ? Stereo::Picture::Layout::None : tab ? Stereo::Picture::Layout::TopAndBottom : Stereo::Picture::Layout::SideBySide;
++    choice.inputOrder = input == StereoInput::SideBySideRightFirst || input == StereoInput::TopAndBottomRightFirst ? Stereo::Picture::EyeOrder::RightFirst
++                                                                                                                 : Stereo::Picture::EyeOrder::LeftFirst;
++    choice.anaglyph = Stereo::Picture::AnaglyphColorPair::None;
++    choice.view = Stereo::Picture::View::Stereo;
++    d->setStereoFileChoice(choice);
+ }
+ 
+ void ViewMainPage::toggleStereoSwap()
+@@ -556,22 +723,54 @@ void ViewMainPage::toggleStereoSwap()
+     if (!d->currentView()) {
+         return;
+     }
+-    d->stereoFileState().writeEntry("SwapEyes", !d->stereoSwap());
+-    d->mStereoState.sync();
+-    d->updateStereo();
++    const QString path = d->stereoLocalPath();
++    if (path.isEmpty()) {
++        d->stereoFileState().writeEntry("SwapEyes", !d->stereoSwap());
++        d->mStereoState.sync();
++        d->updateStereo();
++        return;
++    }
++    Stereo::Picture::Options choice = Stereo::Picture::fileChoice(path);
++    choice.swapEyes = !choice.swapEyes;
++    d->setStereoFileChoice(choice);
+ }
+ 
+ void ViewMainPage::setStereoEyeMode(StereoEyeMode mode)
+ {
+-    d->mStereoEyeMode = mode;
+-    d->updateStereo();
++    const QString path = d->stereoLocalPath();
++    if (path.isEmpty()) {
++        d->mStereoEyeMode = mode;
++        d->updateStereo();
++        return;
++    }
++    // Not 3D is the file's, in the shared store; which eye is shown stays this session's
++    Stereo::Picture::Options choice = Stereo::Picture::fileChoice(path);
++    const bool flat = mode == StereoEyeMode::Not3D;
++    if (!flat) {
++        d->mStereoEyeMode = mode;
++    }
++    if ((choice.view == Stereo::Picture::View::Mono) != flat) {
++        choice.view = flat ? Stereo::Picture::View::Mono : Stereo::Picture::View::Stereo;
++        d->setStereoFileChoice(choice);
++    } else {
++        d->updateStereo();
++    }
+ }
+ 
+ void ViewMainPage::convertAnaglyph(Stereo::Picture::AnaglyphColorPair pair)
+ {
+-    d->mAnaglyphPair = pair;
+-    d->mStereoInput = StereoInput::Automatic;
+-    d->updateStereo();
++    const QString path = d->stereoLocalPath();
++    if (path.isEmpty()) {
++        d->mAnaglyphPair = pair;
++        d->mStereoInput = StereoInput::Automatic;
++        d->updateStereo();
++        return;
++    }
++    Stereo::Picture::Options choice = Stereo::Picture::fileChoice(path);
++    choice.inputLayout = Stereo::Picture::Layout::None;
++    choice.anaglyph = pair;
++    choice.view = Stereo::Picture::View::Stereo;
++    d->setStereoFileChoice(choice);
+ }
+ #endif
+ 

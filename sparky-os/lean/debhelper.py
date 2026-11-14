@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from . import buildrecord, package, release, source_tree
+from . import buildrecord, linkcheck, package, release, source_tree
 
 
 def link_gate(built):
@@ -46,6 +46,8 @@ def build(root, provenance):
     buildrecord.note_start(root.parent)
     # every declared generated output matches an installed file of some package, before anything is built
     source_tree.require_generated(root, [control.parent.parent for control in controls])
+    # the stereo imports this source stopped calling on purpose go into every archive's lc1 record, where the gates read them
+    retired = linkcheck.declared_retirements(root)
     built = []
     for control in controls:
         staging = control.parent.parent
@@ -54,7 +56,7 @@ def build(root, provenance):
         source_tree.restore_payload(root, staging, check_coverage=False)
         subprocess.run(['bash', str(provenance), '--tree', str(staging), '--source', str(root)], check=True)
         before = set(root.parent.glob('*.deb'))
-        release.build_tree(staging, root.parent)
+        release.build_tree(staging, root.parent, retired=None if name.endswith('-dbgsym') else retired)
         outputs = sorted(set(root.parent.glob('*.deb')) - before)
         built += outputs
         files = root / 'debian/files'

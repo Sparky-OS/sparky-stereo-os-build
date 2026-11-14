@@ -125,6 +125,44 @@ def stereo_imports(path):
     return found
 
 
+RETIRED_FILE = 'debian/sparky-lean-retired-stereo-imports'
+
+
+def declared_retirements(root):
+    """What a source declares in RETIRED_FILE: the stereo imports it stopped calling on purpose, {symbol: reason}, or
+    {} when it has no such file. One line a symbol: the name exactly as `nm -D` prints it, white space, the reason.
+    lean.debhelper reads it once and writes it into every archive's lc1 manifest (package.RETIRED); the link gate
+    never reads this file, only the archive. A line without a reason, or a name that is no stereo symbol, stops the
+    build: a declaration is never guessed."""
+    path = Path(root) / RETIRED_FILE
+    if not path.is_file():
+        return {}
+    retired = {}
+    for number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2 or parts[0] in retired:
+            raise package.Invalid(f'{path}:{number}: a retired stereo import is its symbol, white space and the reason, once')
+        retired[parts[0]] = parts[1].strip()
+    if not retired:
+        raise package.Invalid(f'{path}: declares nothing; remove the file')
+    try:
+        return package.retired_imports(retired)
+    except package.Invalid as error:
+        raise package.Invalid(f'{path}: {error}') from error
+
+
+def retired_stereo_imports(deb):
+    """The stereo imports the archive itself records as retired on purpose (its lc1 manifest, bound by the control
+    marker): {symbol: reason}. An archive without the lc1 mark records none. The build's gate and the publisher's
+    both ask the archive, so neither can let through what the other refuses."""
+    fields = subprocess.run(['dpkg-deb', '-f', str(deb), package.FIELD], capture_output=True, text=True, check=True).stdout
+    if not fields.strip():
+        return {}
+    return package.deb_manifest(deb)[3].get(package.RETIRED, {})
+
+
 def extract(deb, dest, check_space=None):
     archive.unpack(deb, Path(dest), check_space)
 
@@ -401,8 +439,12 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
                 findings.append(f'{name}: {len(items)} new {kind}: {shown} (the previous build resolved them)')
             # A stereo feature that an optional build dependency switched off compiles and links
             # cleanly (analitza 4:26.04.0-1+stereo3d2+lc1 lost stereo_declare_wayland this way).
+            retired = retired_stereo_imports(new_deb)
             for rel in sorted(set(old_stereo) & set(new_stereo)):
                 gone = sorted(old_stereo[rel] - new_stereo[rel])
+                for symbol in [symbol for symbol in gone if symbol in retired]:
+                    notes.append(f"/{rel}: stereo import {symbol} is no longer called, as the package's lc1 record declares: {retired[symbol]}")
+                gone = [symbol for symbol in gone if symbol not in retired]
                 if gone:
                     findings.append(f'/{rel}: stereo imports lost: {", ".join(gone[:4])}'
                                     f'{" and more" if len(gone) > 4 else ""} (the previous build called them)')

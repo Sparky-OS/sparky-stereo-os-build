@@ -1,0 +1,23 @@
+The 3D menu's per-file entries for a local file are the stereo layer's menu, "3D Input Format", and its choices are
+kept in the layer's per-file store, the one Dolphin and the thumbnailers read (ORDER 551; Daniel, 2026-10-07: "Each
+viewer keeps only its view adapter and its 3D menu"; 2026-10-23: "never touch the user file"). A picture set to Not 3D
+or given a packing in Dolphin opens that way here, the menu shows what the store holds, and a choice made here shows
+in Dolphin. The input packing and Not 3D, which were this session's, are now the file's.
+
+Nothing Gwenview offered is gone: the layer's menu holds Automatic, Not 3D, side by side and top and bottom in
+either order, the anaglyph pairs and the swap, and adds the interleaved packings, picture and depth and Save the
+correction into the file. Stereo, Left eye only and Right eye only stay in the 3D menu as this session's view. The
+shortcuts of the entries the layer's menu replaces (Alt+Shift+A, S, R, T, B, W, C and N) keep working and act on the
+same store. A file that is not local has no place in the store and keeps the session's input and its swap in
+gwenviewstereorc, as before, by those shortcuts.
+
+The swaps Gwenview kept for local files in gwenviewstereorc are taken into the store once, at the first start, the
+files untouched; a file that already has a choice in the store keeps it. Afterwards those entries are not read
+again. When the store cannot be written the person is told and the next start tries again.
+
+A file's choice follows it when it is renamed or moved (Stereo::FileChoiceMoves).
+
+The picture area is opaque around the picture: the window's hole is the rectangle where the stereo picture shows,
+the view's own background around it (ORDER 504, staged as +stereo3d9 and never published; this version carries it).
+
+Built against libstereo-layer-dev 1.18.0.

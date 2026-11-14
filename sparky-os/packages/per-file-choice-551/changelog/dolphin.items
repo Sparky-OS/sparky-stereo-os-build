@@ -1,0 +1,23 @@
+The per-file corrections of a stereo file's input are the stereo layer's menu, "3D Input Format" in the context
+menu (ORDER 512 and 551; Daniel, 2026-10-23: "never touch the user file"): Automatic, Not 3D, every packing in
+either order, the anaglyph pairs, picture and depth, Swap left and right eyes, and Save the correction into the
+file. The choice is kept in the layer's per-file store, $XDG_STATE_HOME/stereo-policy/files, which the thumbnailers,
+the information panel and the viewers read too, so a wide screenshot set to Not 3D is flat everywhere. Nothing is
+written into the file unless the person chooses the save.
+
+Videos get the menu with a video's list: every packing of the frame packing SEI of H.264 and H.265, of Matroska's
+StereoMode and of st3d, frames in turn and both views in one block included. A thumbnail is one frame, so those two
+show one view there; their entries stay in the list and say so.
+
+Swap Eyes (the menu and Alt+Shift+W) keeps its choice in that store and no longer writes the file attribute
+user.stereo-policy.swap-eyes. An attribute an earlier version wrote is still read, and is taken out of the file when
+the person next changes that file's choice.
+
+A file's choice follows it when it is renamed or moved, here or by any other program's file job
+(Stereo::FileChoiceMoves); a copy carries nothing.
+
+A store that cannot be written, a save the file's format cannot carry and a choice that could not follow its file
+are said in the view's message bar with the reason; the choice is then not shown as kept.
+
+Built against libstereo-layer-dev 1.18.0, and the build stops with CMake's message when the layer is older
+(CMAKE_REQUIRE_FIND_PACKAGE_StereoLayer): before, an older layer gave a Dolphin without stereo and no error.

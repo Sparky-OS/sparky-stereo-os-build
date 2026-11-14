@@ -12,6 +12,9 @@
 #   NEW_DIR: a flat repository (Packages, Release) of debs built earlier in the round (dragon needs qt6-multimedia's)
 #   PREVIOUS_SIBLINGS_FILE (also the siblings of the candidate side, as the publisher supplies the destination pool): the published edition's .deb files, one path per line as the container sees them (/repo/pool/...),
 #   the previous edition snapshot the link gate resolves edition libraries from (publish-tree.sh makes it from the indexes); without
+#   SPARKY_BUILD_PROFILES (environment): Debian build profiles for the build dependencies and the build, for a source whose test
+#   dependencies need a package built later in the same round (stereo-layer's tests need the KImageFormats plugin, which needs
+#   stereo-layer's policy library: SPARKY_BUILD_PROFILES=nocheck). The package build runs no tests either way (DEB_BUILD_OPTIONS=nocheck).
 #   it a library only the edition ships (libavutil61 +stereo3d, which Debian and deb-multimedia version higher) resolves from
 #   the public archives and the gate fails
 set -euo pipefail
@@ -37,7 +40,7 @@ fi
 [ -z "$SIBS" ] || [ -z "$NEW" ] || for d in "$NEW"/*.deb; do case $d in *-dbgsym_*|*-lc-hr_*) ;; *) echo "/new/$(basename "$d")" >> "$WORK/siblings-current.txt" ;; esac; done
 docker run --rm --name "${BUILD_NAME_PREFIX:-d411-build}-$PKG" --ulimit core=0 --cpus "${THREADS:-4}" --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-	"${SPARKY_PROV_ARGS[@]}" -e PKG="$PKG" -e THREADS="${THREADS:-4}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
+	"${SPARKY_PROV_ARGS[@]}" -e PKG="$PKG" -e THREADS="${THREADS:-4}" -e SPARKY_BUILD_PROFILES="${SPARKY_BUILD_PROFILES:-}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
 	-v "$ARCHIVE":/archive:ro -v "$WORK":/work -v "$SRC":/src:ro -v "$REPO":/repo:ro -v "$PREV":/prev:ro \
 	-v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro ${NEW:+-v "$NEW":/new:ro} ${SIBS:+-v "$SIBS":/previous-siblings.txt:ro -e SPARKY_LC_PREVIOUS_SIBLINGS_FILE=/previous-siblings.txt -v "$WORK/siblings-current.txt":/siblings.txt:ro -e SPARKY_LC_SIBLINGS_FILE=/siblings.txt} \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \

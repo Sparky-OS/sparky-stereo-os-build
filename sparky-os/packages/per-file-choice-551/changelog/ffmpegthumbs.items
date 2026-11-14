@@ -1,0 +1,10 @@
+The person's per-file choice for a video (the input packing chosen by hand, Not 3D, the swap of the eyes) is read
+from the stereo layer's per-file store, where Dolphin's "3D Input Format" menu keeps it, and no longer from the file
+attribute user.stereo-policy.swap-eyes (ORDER 512 and 551; Daniel, 2026-10-23: "never touch the user file").
+
+An anaglyph the person chose by hand for a video gives a thumbnail with both views, taken out of the colours.
+Views that come one after the other in time (a frame sequence, both views in one block) are not in one frame: the
+thumbnail shows the view its frame holds, and the menu says so.
+
+Built against libstereo-layer-dev 1.18.0, and the build stops with CMake's message when the layer is older
+(CMAKE_REQUIRE_FIND_PACKAGE_StereoLayer): before, an older layer gave a thumbnailer without stereo and no error.

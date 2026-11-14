@@ -1,0 +1,399 @@
+Description: The stereo layer's per-file 3D input menu for pictures and videos, kept in the shared store (ORDER 512 and 551)
+ The context menu's "3D Input Format" is Stereo::FileChoiceMenu of the shared stereo layer: Automatic, Not 3D, every
+ packing in either order, the anaglyph pairs, picture and depth, Swap left and right eyes, Save the correction into the
+ file. The choice is kept in the layer's per-file store and never in the file; the swap (Alt+Shift+W) moves there and no
+ longer writes a file attribute. Videos get the menu with a video's list. A file's choice follows it when it is renamed
+ or moved (Stereo::FileChoiceMoves). Needs libstereo-layer-dev (>= 1.18.0).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-14
+---
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9f37d4a..be225da 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -118,7 +118,7 @@ if(PackageKitQt6_FOUND)
+     set(HAVE_PACKAGEKIT TRUE)
+ endif()
+ 
+-find_package(StereoLayer 1.4 CONFIG)
++find_package(StereoLayer 1.18 CONFIG)
+ set_package_properties(StereoLayer PROPERTIES
+     DESCRIPTION "Shared stereo picture layer of Sparky Stereo OS"
+     TYPE OPTIONAL
+diff --git a/src/dolphincontextmenu.cpp b/src/dolphincontextmenu.cpp
+index aeb4184..77b7a7c 100644
+--- a/src/dolphincontextmenu.cpp
++++ b/src/dolphincontextmenu.cpp
+@@ -270,9 +270,16 @@ void DolphinContextMenu::addOpenParentFolderActions()
+ 
+ void DolphinContextMenu::addStereoSwapEyesAction()
+ {
+-    // The eyes of stereo files, swapped by the user when a file has them the wrong way round
++    // The person's corrections of a stereo file's input, per file: for pictures and videos the stereo layer's menu (the
++    // input packing, Not 3D, the swap, saving into the file), for other stereo files the swap alone
+     const DolphinView *view = m_mainWindow->activeViewContainer() ? m_mainWindow->activeViewContainer()->view() : nullptr;
+-    if (view && view->hasStereoPreview(m_selectedItems)) {
++    if (!view) {
++        return;
++    }
++    QAction *choice = m_mainWindow->actionCollection()->action(QStringLiteral("stereo_file_choice"));
++    if (choice && !view->stereoChoiceFiles(m_selectedItems).isEmpty()) {
++        addAction(choice);
++    } else if (view->hasStereoPreview(m_selectedItems)) {
+         addAction(m_mainWindow->actionCollection()->action(QStringLiteral("stereo_swap_eyes")));
+     }
+ }
+diff --git a/src/views/dolphinview.cpp b/src/views/dolphinview.cpp
+index b0df167..b57379d 100644
+--- a/src/views/dolphinview.cpp
++++ b/src/views/dolphinview.cpp
+@@ -234,6 +234,11 @@ DolphinView::DolphinView(const QUrl &url, QWidget *parent)
+     connect(m_model, &KFileItemModel::directoryLoadingProgress, this, &DolphinView::directoryLoadingProgress);
+     connect(m_model, &KFileItemModel::directorySortingProgress, this, &DolphinView::directorySortingProgress);
+     connect(m_model, &KFileItemModel::itemsChanged, this, &DolphinView::slotItemsChanged);
++    connect(m_model, &KFileItemModel::itemsChanged, this, [this](const KItemRangeList &, const QSet<QByteArray> &roles) {
++        if (roles.contains("iconPixmapRight") || roles.contains("iconPixmap")) {
++            Q_EMIT stereoPreviewsChanged();
++        }
++    });
+     connect(m_model, &KFileItemModel::itemsRemoved, this, &DolphinView::itemCountChanged);
+     connect(m_model, &KFileItemModel::itemsInserted, this, &DolphinView::itemCountChanged);
+     connect(m_model, &KFileItemModel::infoMessage, this, &DolphinView::infoMessage);
+@@ -2744,44 +2749,91 @@ bool DolphinView::hasStereoPreview(const KFileItemList &items) const
+ bool DolphinView::stereoEyesSwapped(const KFileItem &item) const
+ {
+ #if HAVE_STEREO_LAYER
+-    return item.isLocalFile() && Stereo::Picture::userSwapEyes(item.localPath());
++    return item.isLocalFile() && Stereo::Picture::fileChoice(item.localPath()).swapEyes;
+ #else
+     Q_UNUSED(item)
+     return false;
+ #endif
+ }
+ 
+-void DolphinView::setStereoEyesSwapped(const KFileItemList &items, bool swapped)
++QStringList DolphinView::stereoChoiceFiles(const KFileItemList &items, bool *videos) const
+ {
++    QStringList paths;
++    bool video = false;
+ #if HAVE_STEREO_LAYER
+-    const QString thumbnails = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + QLatin1String("/thumbnails/");
+-    QList<QUrl> changed;
+     for (const KFileItem &item : items) {
+-        const int index = m_model->index(item);
+-        if (!hasStereoPreview({item}) || stereoEyesSwapped(item) == swapped) {
++        if (!item.isLocalFile() || item.isDir()) {
+             continue;
+         }
+-        if (!Stereo::Picture::setUserSwapEyes(item.localPath(), swapped)) {
+-            Q_EMIT errorMessage(
+-                xi18nc("@info", "The eyes of <filename>%1</filename> cannot be swapped: its file system keeps no extended attributes.", item.text()),
+-                KIO::ERR_CANNOT_WRITE);
++        const QString type = item.mimetype();
++        const bool isVideo = type.startsWith(QLatin1String("video/"));
++        if (!isVideo && !type.startsWith(QLatin1String("image/"))) {
+             continue;
+         }
+-        // The cached thumbnails were made before the correction: they are made again (Thumbnail Managing Standard,
+-        // thumbnails named by the MD5 of the file's URI in each size folder)
+-        const QByteArray name =
+-            QCryptographicHash::hash(item.mostLocalUrl().toEncoded(QUrl::RemovePassword | QUrl::FullyEncoded), QCryptographicHash::Md5).toHex();
+-        const QStringList sizes = QDir(thumbnails).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+-        for (const QString &size : sizes) {
+-            QFile::remove(thumbnails + size + QLatin1Char('/') + QString::fromLatin1(name) + QLatin1String(".png"));
++        if (!hasStereoPreview({item}) && !Stereo::Picture::hasFileChoice(item.localPath())) {
++            continue;
++        }
++        if (paths.isEmpty()) {
++            video = isVideo;
++        }
++        if (isVideo == video) {
++            paths.append(item.localPath());
++        }
++    }
++#else
++    Q_UNUSED(items)
++#endif
++    if (videos) {
++        *videos = video;
++    }
++    return paths;
++}
++
++void DolphinView::refreshStereoPreviews(const QStringList &paths)
++{
++#if HAVE_STEREO_LAYER
++    QList<QUrl> changed;
++    for (const QString &path : paths) {
++        const QUrl url = QUrl::fromLocalFile(path);
++        const int index = m_model->index(url);
++        if (index >= 0) {
++            // a changed value makes the model report the item, and its preview is asked again
++            m_model->setData(index, {{"stereoEyesSwapped", Stereo::Picture::fileChoice(path).swapEyes}, {"stereoChoiceSerial", ++m_stereoChoiceSerial}});
+         }
+-        m_model->setData(index, {{"stereoEyesSwapped", swapped}});
+-        changed.append(item.url());
++        changed.append(url);
+     }
+     // Whatever shows these files (the information panel, other windows, other programs) shows them again
+     if (!changed.isEmpty()) {
+         org::kde::KDirNotify::emitFilesChanged(changed);
+     }
++#else
++    Q_UNUSED(paths)
++#endif
++}
++
++void DolphinView::setStereoEyesSwapped(const KFileItemList &items, bool swapped)
++{
++#if HAVE_STEREO_LAYER
++    // The correction goes into the stereo layer's per-file store and the file is left as it is; the layer drops the
++    // file's cached thumbnails, so they are made again, and says why when the store cannot be written.
++    QStringList changed;
++    for (const KFileItem &item : items) {
++        if (!item.isLocalFile() || !(hasStereoPreview({item}) || Stereo::Picture::hasFileChoice(item.localPath()))) {
++            continue;
++        }
++        Stereo::Picture::Options choice = Stereo::Picture::fileChoice(item.localPath());
++        if (choice.swapEyes == swapped) {
++            continue;
++        }
++        choice.swapEyes = swapped;
++        QString error;
++        if (!Stereo::Picture::setFileChoice(item.localPath(), choice, &error)) {
++            Q_EMIT errorMessage(item.text() + QLatin1String(": ") + error, KIO::ERR_CANNOT_WRITE);
++            continue;
++        }
++        changed.append(item.localPath());
++    }
++    refreshStereoPreviews(changed);
+ #else
+     Q_UNUSED(items)
+     Q_UNUSED(swapped)
+diff --git a/src/views/dolphinview.h b/src/views/dolphinview.h
+index ef3c1b5..0ed3152 100644
+--- a/src/views/dolphinview.h
++++ b/src/views/dolphinview.h
+@@ -411,11 +411,30 @@ public:
+ 
+     /**
+      * Swaps the eyes of the stereo files \a items, or swaps them back: a
+-     * correction for files whose mark has the eyes the wrong way round, kept
+-     * with each file (Stereo::Picture::setUserSwapEyes()).
++     * correction for files whose mark has the eyes the wrong way round. It is
++     * kept in the stereo layer's per-file store, never in the file
++     * (Stereo::Picture::setFileChoice()).
+      */
+     void setStereoEyesSwapped(const KFileItemList &items, bool swapped);
+ 
++    /**
++     * @return The local paths of the picture or video files among \a items
++     *         whose input the user can correct per file: those shown as a
++     *         stereo pair, and those the user already made a choice for (a
++     *         file set to "Not 3D" shows no pair, and must stay reachable).
++     *         Pictures and videos have different lists of packings, so the
++     *         files are those of the kind of the first one; \a videos, when
++     *         given, says which kind that is.
++     */
++    QStringList stereoChoiceFiles(const KFileItemList &items, bool *videos = nullptr) const;
++
++    /**
++     * Shows the files \a paths again after their per-file stereo choice
++     * changed: their thumbnails here, and whatever else shows them (the
++     * information panel, tooltips, other windows).
++     */
++    void refreshStereoPreviews(const QStringList &paths);
++
+     /**
+      * @returns the height of the scrollbar at the bottom of the view or zero if no such scroll bar is visible.
+      */
+@@ -644,6 +663,13 @@ Q_SIGNALS:
+      */
+     void selectionChanged(const KFileItemList &selection);
+ 
++    /**
++     * Is emitted when an item's preview became a stereo pair or stopped
++     * being one: what the user can do with the selected stereo files may
++     * have changed although the selection did not.
++     */
++    void stereoPreviewsChanged();
++
+     /**
+      * Is emitted if a context menu is requested for the item \a item,
+      * which is part of \a url. If the item is null, the context menu
+@@ -1041,6 +1067,7 @@ private:
+     bool m_tabsForFiles;
+     bool m_assureVisibleCurrentIndex;
+     bool m_isFolderWritable;
++    int m_stereoChoiceSerial = 0;
+     bool m_dragging; // True if a dragging is done. Required to be able to decide whether a
+                      // tooltip may be shown when hovering an item.
+     bool m_selectNextItem;
+diff --git a/src/views/dolphinviewactionhandler.cpp b/src/views/dolphinviewactionhandler.cpp
+index 6436621..4126899 100644
+--- a/src/views/dolphinviewactionhandler.cpp
++++ b/src/views/dolphinviewactionhandler.cpp
+@@ -7,6 +7,8 @@
+ 
+ #include "dolphinviewactionhandler.h"
+ 
++#include "config-dolphin.h"
++
+ #include "kitemviews/kfileitemlisttostring.h"
+ #include "kitemviews/kfileitemmodel.h"
+ #include "selectionmode/actiontexthelper.h"
+@@ -21,6 +23,7 @@
+ #include <KActionCollection>
+ #include <KActionMenu>
+ #include <KFileItemListProperties>
++#include <KIO/Global>
+ #include <KLocalizedString>
+ #include <KNewFileMenu>
+ #include <KPropertiesDialog>
+@@ -30,6 +33,12 @@
+ #include <QApplication>
+ #include <QMenu>
+ #include <QPointer>
++#include <QTimer>
++
++#if HAVE_STEREO_LAYER
++#include <filechoicemenu.h>
++#include <filechoicemoves.h>
++#endif
+ 
+ DolphinViewActionHandler::DolphinViewActionHandler(KActionCollection *collection, SelectionMode::ActionTextHelper *actionTextHelper, QObject *parent)
+     : QObject(parent)
+@@ -70,6 +79,19 @@ void DolphinViewActionHandler::setCurrentView(DolphinView *view)
+         Q_EMIT selectionModeChangeTriggered(enabled);
+     });
+     connect(view, &DolphinView::selectionChanged, this, &DolphinViewActionHandler::slotSelectionChanged);
++    connect(view, &DolphinView::stereoPreviewsChanged, this, [this, view] {
++        // A preview that arrives later decides whether a selected file is a stereo file. Previews arrive in bursts
++        // while a folder loads, so the actions are updated once after them.
++        if (view == m_currentView && view->selectedItemsCount() > 0 && !m_stereoActionsPending) {
++            m_stereoActionsPending = true;
++            QTimer::singleShot(150, this, [this] {
++                m_stereoActionsPending = false;
++                if (m_currentView) {
++                    updateStereoActions(m_currentView->selectedItems());
++                }
++            });
++        }
++    });
+     slotSelectionChanged(m_currentView->selectedItems());
+ }
+ 
+@@ -284,15 +306,48 @@ void DolphinViewActionHandler::createActions(SelectionMode::ActionTextHelper *ac
+     KToggleAction *stereoSwapEyes = m_actionCollection->add<KToggleAction>(QStringLiteral("stereo_swap_eyes"));
+     stereoSwapEyes->setText(i18nc("@action:inmenu", "Swap Eyes"));
+     stereoSwapEyes->setToolTip(i18nc("@info", "Show each eye the other view of the selected stereo files"));
+-    stereoSwapEyes->setWhatsThis(xi18nc("@info:whatsthis",
+-                                        "A stereo picture or video holds a view for each eye. When a file has "
+-                                        "them the wrong way round, this swaps them, and the file keeps the "
+-                                        "correction."));
+     m_actionCollection->setDefaultShortcut(stereoSwapEyes, QKeySequence(Qt::ALT | Qt::SHIFT | Qt::Key_W));
+     stereoSwapEyes->setEnabled(false);
+     connect(stereoSwapEyes, &KToggleAction::triggered, this, [this](bool checked) {
+         m_currentView->setStereoEyesSwapped(m_currentView->selectedItems(), checked);
+     });
++#if HAVE_STEREO_LAYER
++    // The per-file corrections of a stereo picture's input are the stereo layer's menu: the same entries, words and
++    // per-file store in every program, and nothing kept in the file. The swap carries the layer's words too.
++    m_stereoChoiceMenu = new Stereo::FileChoiceMenu(qobject_cast<QWidget *>(parent()));
++    connect(this, &QObject::destroyed, m_stereoChoiceMenu, &QObject::deleteLater);
++    stereoSwapEyes->setText(m_stereoChoiceMenu->swapEyesAction()->text());
++    stereoSwapEyes->setToolTip(m_stereoChoiceMenu->swapEyesAction()->toolTip());
++    stereoSwapEyes->setWhatsThis(m_stereoChoiceMenu->swapEyesAction()->whatsThis());
++    m_stereoChoiceMenu->menuAction()->setEnabled(false);
++    m_actionCollection->addAction(QStringLiteral("stereo_file_choice"), m_stereoChoiceMenu->menuAction());
++    connect(m_stereoChoiceMenu, &Stereo::FileChoiceMenu::changed, this, [this](const QStringList &paths) {
++        if (m_currentView) {
++            m_currentView->refreshStereoPreviews(paths);
++            updateStereoActions(m_currentView->selectedItems());
++        }
++    });
++    connect(m_stereoChoiceMenu, &Stereo::FileChoiceMenu::failed, this, [this](const QString &message) {
++        if (m_currentView) {
++            Q_EMIT m_currentView->errorMessage(message, KIO::ERR_CANNOT_WRITE);
++        }
++    });
++    // A thumbnail is one frame of a video: where the views come one after the other in time it shows one of them. The
++    // entries stay in the list and say so, and the choice is kept for the players.
++    m_stereoChoiceMenu->setShownAsOneView({Stereo::Picture::Layout::FrameSequential, Stereo::Picture::Layout::BlockLaced});
++    // A file's choice follows it when it is renamed or moved, here or by any other program's file job
++    auto stereoChoiceMoves = new Stereo::FileChoiceMoves(this);
++    connect(stereoChoiceMoves, &Stereo::FileChoiceMoves::carried, this, [this](const QStringList &paths) {
++        if (m_currentView) {
++            m_currentView->refreshStereoPreviews(paths);
++        }
++    });
++    connect(stereoChoiceMoves, &Stereo::FileChoiceMoves::failed, this, [this](const QString &message) {
++        if (m_currentView) {
++            Q_EMIT m_currentView->errorMessage(message, KIO::ERR_CANNOT_WRITE);
++        }
++    });
++#endif
+ 
+     KToggleAction *sortFoldersFirst = m_actionCollection->add<KToggleAction>(QStringLiteral("folders_first"));
+     sortFoldersFirst->setText(i18nc("@action:inmenu Sort", "Folders First"));
+@@ -943,15 +998,27 @@ void DolphinViewActionHandler::slotCopyPath()
+     }
+ }
+ 
+-void DolphinViewActionHandler::slotSelectionChanged(const KFileItemList &selection)
++void DolphinViewActionHandler::updateStereoActions(const KFileItemList &selection)
+ {
+-    // The selected stereo files' eyes, as the first of them has them
++    // The selected stereo files' eyes, as the first of them has them; the pictures among them get the per-file menu
+     QAction *stereoSwapEyes = m_actionCollection->action(QStringLiteral("stereo_swap_eyes"));
+-    const bool stereo = m_currentView && m_currentView->hasStereoPreview(selection);
++    bool stereoChoiceVideos = false;
++    const QStringList stereoChoiceFiles = m_currentView ? m_currentView->stereoChoiceFiles(selection, &stereoChoiceVideos) : QStringList();
++    const bool stereo = m_currentView && (m_currentView->hasStereoPreview(selection) || !stereoChoiceFiles.isEmpty());
+     stereoSwapEyes->setEnabled(stereo);
+     stereoSwapEyes->setChecked(stereo && std::any_of(selection.cbegin(), selection.cend(), [this](const KFileItem &item) {
+-                                   return m_currentView->hasStereoPreview({item}) && m_currentView->stereoEyesSwapped(item);
++                                   return m_currentView->stereoEyesSwapped(item);
+                                }));
++#if HAVE_STEREO_LAYER
++    m_stereoChoiceMenu->setContent(stereoChoiceVideos ? Stereo::FileChoiceMenu::Content::Video : Stereo::FileChoiceMenu::Content::Picture);
++    m_stereoChoiceMenu->setFiles(stereoChoiceFiles);
++    m_stereoChoiceMenu->menuAction()->setEnabled(!stereoChoiceFiles.isEmpty());
++#endif
++}
++
++void DolphinViewActionHandler::slotSelectionChanged(const KFileItemList &selection)
++{
++    updateStereoActions(selection);
+ 
+     QString basicActionsMenuText;
+     if (selection.isEmpty()) {
+diff --git a/src/views/dolphinviewactionhandler.h b/src/views/dolphinviewactionhandler.h
+index 20aa689..01bfc6b 100644
+--- a/src/views/dolphinviewactionhandler.h
++++ b/src/views/dolphinviewactionhandler.h
+@@ -15,6 +15,10 @@
+ #include <QObject>
+ 
+ class KToggleAction;
++namespace Stereo
++{
++class FileChoiceMenu;
++}
+ class QAction;
+ class QActionGroup;
+ class DolphinView;
+@@ -288,7 +292,12 @@ private:
+     void updateGroupByActions();
+ 
+     KActionCollection *m_actionCollection;
++    /** Updates the stereo actions (the swap, the per-file input menu) for \a selection. */
++    void updateStereoActions(const KFileItemList &selection);
++
+     DolphinView *m_currentView;
++    Stereo::FileChoiceMenu *m_stereoChoiceMenu = nullptr;
++    bool m_stereoActionsPending = false;
+ 
+     QHash<QByteArray, KToggleAction *> m_sortByActions;
+     QHash<QByteArray, KToggleAction *> m_visibleRoles;
