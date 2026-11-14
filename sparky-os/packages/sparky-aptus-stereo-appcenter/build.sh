@@ -5,7 +5,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT}
 SOURCE=${APTUS_SOURCE:-$HERE/../../sparky-aptus-stereo-appcenter}
-VERSION=0.1.6+lc1
+VERSION=0.1.8+lc1
 PACKAGE=sparky-aptus-stereo-appcenter
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.aptus-stereo.XXXXXX")
@@ -19,8 +19,18 @@ install -m644 "$WORK/source/ATTRIBUTIONS.md" "$D/usr/lib/$PACKAGE/ATTRIBUTIONS.m
 install -m644 "$WORK/source/catalogue.py" "$WORK/source/catalogue.json" "$D/usr/lib/$PACKAGE/"
 install -Dm755 "$WORK/source/actions/entry" "$D/usr/lib/$PACKAGE/actions/entry"
 install -m644 "$WORK/source/common.py" "$D/usr/lib/$PACKAGE/common.py"
+install -m644 "$WORK/source/appimage.py" "$D/usr/lib/$PACKAGE/appimage.py"
+install -m755 "$WORK/source/main-entry" "$D/usr/lib/$PACKAGE/main-entry"
+install -m644 "$WORK/source/mainpages.py" "$WORK/source/main-entries.json" "$D/usr/lib/$PACKAGE/"
+python3 "$HERE/../../../tools/copy-recipe.py" "$SOURCE/9" "$WORK/main-source"
+python3 "$WORK/source/package_main.py" "$WORK/main-source" "$D"
 install -Dm755 "$WORK/source/actions/zram" "$D/usr/lib/$PACKAGE/actions/zram"
 install -m644 "$WORK/source/lang/"*.json "$D/usr/share/sparky/$PACKAGE/"
+mkdir -p "$D/usr/share/sparky/$PACKAGE/install-downloads"
+for code in en pl pt_BR fr de ja ko zh_CN zh_TW; do
+    ln -s "/usr/share/sparky/sparky-stereo-apt/install-downloads/$code.json" "$D/usr/share/sparky/$PACKAGE/install-downloads/$code.json"
+done
+install -m644 "$HERE/../sparky-stereo-apt/install-downloads/lang/es.json" "$D/usr/share/sparky/$PACKAGE/install-downloads/es.json"
 printf '#!/bin/sh\nexec /usr/lib/sparky-aptus-stereo-appcenter/appcenter "$@"\n' > "$D/usr/bin/$PACKAGE"
 chmod 755 "$D/usr/bin/$PACKAGE"
 install -m644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
@@ -52,7 +62,7 @@ Package: $PACKAGE
 Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Depends: sparky-aptus-appcenter, sparky-stereo-apt (>= 20261104.3~sparky9~0), python3, python3-apt, curl, flatpak, sparky-stereo-hardware, apt, dpkg, systemd, udev, kmod, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
+Depends: bsdextrautils, distrobox, fuse3, podman, sparky-aptus-appcenter, sparky-stereo-apt (>= 20261104.3~sparky9~0), python3, python3-apt, curl, flatpak, sparky-stereo-hardware, apt, dpkg, systemd, udev, kmod, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
 Section: admin
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -68,5 +78,7 @@ if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
 fi
 EOF
 chmod 755 "$D/DEBIAN/postrm"
+package_epoch=${SOURCE_DATE_EPOCH:-$(python3 "$HERE/../../repo/reproducible.py" epoch "$HERE")}
+python3 "$HERE/../../repo/reproducible.py" normalize "$package_epoch" "$D"
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum > DEBIAN/md5sums)
 PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE" --build-dependency sparky-stereo-problems

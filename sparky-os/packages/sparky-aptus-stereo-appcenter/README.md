@@ -3,11 +3,14 @@ Stereo APTus
 
 Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo" Pijanowski).
 
-This package sits beside Paweł Pijanowski's sparky-aptus-appcenter, on which it depends.
-It owns only paths named sparky-aptus-stereo-appcenter and its own polkit actions.
+This package keeps Paweł Pijanowski’s main APTus pages alongside the edition’s stereo tabs.
+It depends on sparky-aptus-appcenter for the shared system helper programs.
+The main tree is copied from the source checkout’s 9/ directory and its absolute internal paths are relocated into this package’s namespace at build time.
+The installed original package is never overwritten.
+It owns paths named sparky-aptus-stereo-appcenter and its own polkit actions.
 It never replaces or diverts the original's files.
-The start page reads the original category links at runtime and shows them below our edition sections.
-Unrecognized requests go unchanged to the original handler, from its working directory.
+The start page reads its own main/index.html category links and shows them below the unchanged edition sections.
+Unrecognized requests go to the copied main handler, from its own working directory.
 
 System offers compressed RAM swap (zram), absent and off in the edition by default.
 The action /usr/lib/sparky-aptus-stereo-appcenter/actions/zram supports status, install and remove.
@@ -43,3 +46,17 @@ The recipe uses the shared Lean Code standalone pipeline and retains the authore
 An entry that is not installed shows, beside its button, the install-time downloads it brings: the packages apt would install for it whose control file declares Sparky-Install-Download-Size and Sparky-Install-Download-Source, with the size and the source, on a metered connection (NetworkManager says yes or guess-yes) and, said, when NetworkManager cannot be read (ORDER 399b; Daniel, 2026-11-04: "warn the user with current size on stereo aptus interface or apt depending from where the user came").
 The declaration, the metered test, the setting Sparky::Install-Downloads::Announce and the nine languages belong to sparky-stereo-apt (its reader, /usr/lib/sparky-stereo-apt/sparky_install_downloads.py), which apt's own notice uses too: one declaration, one reader, two front ends. This package depends on the version that has it.
 FlightGear is an entry since 0.1.4; its data downloader, flightgear-data-installer, declares 1.75 GiB from SourceForge.
+
+Vinci belongs to Multimedia, Video tools, alongside Kdenlive.
+KamLynk belongs to Accessories, Devices, with the same accdev_kamlynk key as main.
+Neither belongs to a stereo tab.
+main-entries.json holds their publisher URLs, hashes, sizes and runtime requirements; catalogue.json remains the stereo catalogue.
+The main handler and direct entry backends route these two programs to the same verified action and shared download notice.
+Every added entry sentence and label is translated in the ten required languages.
+A sync compares URI inventories per page against the fetched main source and keeps the existing edition additions and stereo tabs.
+The source and installed-payload checks must find every main URI, both new entry keys, and an unchanged published stereo catalogue.
+
+The published sparky-stereo-apt reader has nine language catalogues.
+This package supplies the maintained reader's Spanish catalogue in a locale overlay and links the other nine catalogues to their existing owner.
+The same installed reader still owns metered detection, settings, formatting and messages; no detector or second message set is implemented here.
+An explicit SPARKY_INSTALL_DOWNLOADS_LANG override remains respected.

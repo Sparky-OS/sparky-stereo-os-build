@@ -175,3 +175,12 @@ Only a newly connected output moves the default: a sink that appears in the firs
 Off for one person: a file in `~/.config/wireplumber/wireplumber.conf.d` with `wireplumber.settings = { sparky.new-output-takes-the-sound = false }`.
 The script is an optional extra and cannot take the sound away: the profile requires only a small virtual component (`policy.sparky-new-output`) that `wants` the script. A feature set `optional` alone loads nothing, and `required` would stop WirePlumber if the script failed to load (a WirePlumber upgrade that changes the Lua API). Measured on the A10: with a script that does not parse, one that fails when it runs, or a missing file, WirePlumber starts, the sinks are there, a test sound plays, and WirePlumber logs `optional component 'hooks.sparky.new-output-takes-the-sound [script/lua: sparky-stereo-new-output.lua]' failed to load` (user journal: `journalctl --user -u wireplumber`). With the profile requiring the script itself, the same broken script made WirePlumber exit with status 78/CONFIG and left no sinks.
 WirePlumber's own `bluetooth.autoswitch-to-headset-profile` (headset profile while a program records, back to music afterwards) is on by default and is not changed.
+
+Vinci's per-user Resolve launcher enters `vinci-free` or `vinci-studio` through distrobox.
+It is outside the system desktop-entry matcher above, and the host PATH shim does not intercept the absolute executable inside its container.
+The ORDER 553 rootless Ubuntu 24.04 test passed NVIDIA CUDA/OpenGL buffer registration through Vinci's launch environment, including with the inherited edition zink variables.
+Distrobox filters inherited variable names beginning with an underscore; Vinci supplies the NVIDIA GLX vendor on a hybrid machine.
+No new OpenGL exception is enabled by this result.
+`proposals/vinci-launcher-match.py` retains a tested narrow argv match for review if a future runtime changes that behavior.
+It accepts only Vinci's two containers running `/opt/resolve/bin/resolve` after `env`, and rejects shells, other containers and similarly named executables.
+A future exception would need to cover both Vinci's Open button and its per-user desktop launcher, preserve the Graphics-page choice, and pass the CUDA/OpenGL probe again.
