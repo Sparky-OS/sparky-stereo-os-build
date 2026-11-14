@@ -22,3 +22,5 @@ LOCAL21="Cushion Swap 已依您的選擇關閉（%s）；它不保護記憶體�
 LOCAL22="Cushion Swap 保護無法啟動：%s。處理方式：查看 journalctl -u cushion-swap，修正原因，然後執行：sudo systemctl restart cushion-swap"
 LOCAL23="Cushion Swap 無法在 %s 協調交換操作。未嘗試交換操作或睡眠準備。請檢查目錄權限後重試。"
 LOCAL24="zram 裝置不能用作 Cushion Swap 或休眠區域。請選擇磁碟上的交換區域。"
+LOCAL25="Cushion Swap 接管安裝程式建立的交換區 (%s)：它在 /etc/fstab 中的那一行現在是 noauto，因此在記憶體不足之前交換區保持關閉；休眠照舊使用它。原來的檔案保存為 %s"
+LOCAL26="/etc/fstab 中 %s 的交換行不是安裝程式寫的，因此 Cushion Swap 保持您所寫的樣子。要把這個交換區交給 Cushion Swap：sudo cushion-swap --adopt mine，然後：sudo systemctl restart cushion-swap"

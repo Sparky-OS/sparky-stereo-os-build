@@ -22,3 +22,5 @@ LOCAL21="Cushion Swap はあなたの選択により無効になっています 
 LOCAL22="Cushion Swap の保護を開始できませんでした: %s。対処方法: journalctl -u cushion-swap を確認し、原因を直してから、次を実行してください: sudo systemctl restart cushion-swap"
 LOCAL23="Cushion Swap は %s でスワップ操作を調整できませんでした。スワップ操作やスリープの準備は行っていません。ディレクトリの権限を確認して再試行してください。"
 LOCAL24="zram デバイスは Cushion Swap や休止状態の保存領域には使用できません。ディスク上のスワップ領域を選択してください。"
+LOCAL25="Cushion Swap はインストーラーが作ったスワップ領域 (%s) を引き受けます: /etc/fstab のその行は noauto になり、メモリーが不足するまで領域はオフのままです。ハイバネートはこれまでどおりこの領域を使います。元のファイルは %s として残します"
+LOCAL26="/etc/fstab の %s のスワップ行はインストーラーのものではないため、Cushion Swap はそのままにします。この領域を Cushion Swap に任せるには: sudo cushion-swap --adopt mine、その後: sudo systemctl restart cushion-swap"

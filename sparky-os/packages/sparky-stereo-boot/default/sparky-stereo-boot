@@ -30,3 +30,15 @@ SPARKY_STEREO_NVIDIA_EARLY=auto
 # (the edition's kernels from build 12 on have it). yes: always on 32-bit UEFI. no: never.
 # Then: sudo update-grub
 SPARKY_STEREO_IA32_NOKASLR=auto
+
+# GRUB's menu. auto: hidden, and the system starts at once, when this is the only system on the
+# computer (hold Shift or press Esc while the computer starts to open it); shown for 5 seconds
+# when another system (Windows, another Linux) is found. shown: always shown. Your own
+# GRUB_TIMEOUT_STYLE or GRUB_TIMEOUT in /etc/default/grub are kept as they are.
+# Then: sudo update-grub
+SPARKY_STEREO_MENU=auto
+
+# Under Secure Boot, Debian's signed GRUB loads only its own 16 pixel font. readable: the menu is
+# shown at a lower resolution, where that text has the height the menu has elsewhere. native:
+# the screen's resolution and small text. Then: sudo update-grub
+SPARKY_STEREO_SECUREBOOT_TEXT=readable

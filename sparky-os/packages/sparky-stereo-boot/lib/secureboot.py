@@ -493,6 +493,11 @@ def grub():
                 '                true',
                 '            else',
                 '                set default=sparky-enroll',
+                # a hidden menu is shown for this: the person sees the entry selected before it starts (0.1.10)
+                '                set timeout_style=menu',
+                '                if [ "${timeout}" = 0 ]; then',
+                '                    set timeout=10',
+                '                fi',
                 '            fi',
                 '            set root="$sparky_root"',
                 '        fi']

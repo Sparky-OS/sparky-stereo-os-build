@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/09
+# Last update 2026/11/14
 #
 # Builds the sparky-stereo-boot package (hand assembled, Paweł's formula).
 #   build.sh OUTDIR
@@ -9,7 +9,7 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-boot
-VERSION=0.1.9+lc1
+VERSION=0.1.10+lc1
 # the host's facts for the build record, and the source date from the recipe's last commit (ORDER 394b, ORDER 421b)
 . "$HERE/../../repo/build-provenance.sh"
 sparky_provenance_init "${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}" "$HERE"
@@ -57,6 +57,8 @@ install -D -m 644 "$HERE/lib/secureboot.py" "$D/usr/lib/sparky-stereo-boot/secur
 # what failed, why and what to do, kept until it is repaired (0.1.5)
 install -D -m 644 "$HERE/lib/problems.py" "$D/usr/lib/sparky-stereo-boot/problems.py"
 install -D -m 755 "$HERE/grub/35_sparky_stereo_secureboot" "$D/etc/grub.d/35_sparky_stereo_secureboot"
+# the menu is never drawn without a loaded font (0.1.10, ORDER 572): right after Debian's 00_header
+install -D -m 755 "$HERE/grub/01_sparky_stereo_menu" "$D/etc/grub.d/01_sparky_stereo_menu"
 install -D -m 755 "$HERE/kernel/zz-sparky-stereo-secureboot" "$D/etc/kernel/postinst.d/zz-sparky-stereo-secureboot"
 # two kernels per flavour (0.1.4): the kernel hook records an install, the service waits for apt and dpkg and purges
 install -D -m 755 "$HERE/lib/kernel-keep.py" "$D/usr/lib/sparky-stereo-boot/kernel-keep.py"
@@ -79,7 +81,7 @@ install -D -m 644 "$HERE/copyright" "$D/usr/share/doc/$PKG/copyright"
 install -D -m 644 "$HERE/README.md" "$D/usr/share/doc/$PKG/README.md"
 mkdir -p "$D/DEBIAN"
 printf '%s\n' /etc/default/sparky-stereo-boot /etc/default/grub.d/30-sparky-stereo-boot.cfg /etc/default/grub.d/31-sparky-stereo-ia32.cfg \
-	/etc/grub.d/35_sparky_stereo_secureboot /etc/kernel/postinst.d/zz-sparky-stereo-secureboot \
+	/etc/grub.d/35_sparky_stereo_secureboot /etc/grub.d/01_sparky_stereo_menu /etc/kernel/postinst.d/zz-sparky-stereo-secureboot \
 	/etc/kernel/postinst.d/zz-sparky-stereo-kernel-keep /etc/initramfs-tools/update-initramfs.conf.sparky-stereo > "$D/DEBIAN/conffiles"
 cat > "$D/DEBIAN/preinst" <<'SCRIPT'
 #!/bin/sh
@@ -124,9 +126,33 @@ if [ "$1" = configure ]; then
 	python3 /usr/lib/sparky-stereo-boot/secureboot.py esp || :
 	# the kernel line takes ${sparky_stereo_boot} from GRUB's environment block (0.1.0), the menu the Secure Boot
 	# enrolment entry (0.1.3), 30-sparky-stereo-boot.cfg says what GRUB is given and keeps it (0.1.5), the menu's
-	# text has one size for every screen (0.1.7) and the menu has the entry for this computer's DKMS key (0.1.8); a
+	# text has one size for every screen (0.1.7), the menu has the entry for this computer's DKMS key (0.1.8), and it is
+	# hidden when this is the only system, with a font the signed GRUB loads under Secure Boot (0.1.10); a
 	# failed update-grub fails the package, as grub2's postinst does
-	if { [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.8; } && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
+	# 0.1.10 (ORDER 572): the menu is hidden when this is the only system and shown when another one is found. The
+	# installer looks for another system and turns os-prober on (sparky-stereo-dual-boot.cfg); a system installed
+	# before that rule was never looked at for another Linux, so an upgrade looks once, on the running system only
+	# (not while an image is built), and writes the same file when it finds one. A failed os-prober is said; the
+	# menu then follows what the files say
+	if [ -n "$2" ] && dpkg --compare-versions "$2" lt 0.1.10 && [ -d /run/systemd/system ] && \
+		[ ! -e /etc/default/grub.d/sparky-stereo-dual-boot.cfg ] && [ ! -e /var/lib/sparky-stereo-boot/menu-probed ] && \
+		command -v os-prober >/dev/null 2>&1 && ! grep -qs '^GRUB_DISABLE_OS_PROBER=' /etc/default/grub; then
+		mkdir -p /var/lib/sparky-stereo-boot
+		if others=$(os-prober 2>/dev/null); then
+			name=$(printf '%s\n' "$others" | awk -F: 'NF >= 2 && $2 != "" { print $2; exit }')
+			if [ -n "$name" ]; then
+				mkdir -p /etc/default/grub.d
+				printf '%s\n' '# Sparky Stereo OS: written by sparky-stereo-boot at an upgrade because another system was found beside this one.' \
+					'# os-prober adds it to the boot menu at every update-grub.' 'GRUB_DISABLE_OS_PROBER=false' \
+					> /etc/default/grub.d/sparky-stereo-dual-boot.cfg
+				python3 $P say LOCAL81 "$name"
+			fi
+			: > /var/lib/sparky-stereo-boot/menu-probed
+		else
+			echo "sparky-stereo-boot: os-prober failed (exit $?); whether another system is on this computer was not checked" >&2
+		fi
+	fi
+	if { [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.10; } && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
 		python3 $P run update-grub LOCAL21 -- update-grub || failed=1
 	fi
 	[ -z "$failed" ] || exit 1
@@ -229,7 +255,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: grub-common, libdrm2, libstereo-policy1 (>= 1.15.0), python3, systemd, sparky-stereo-problems (>= 0.1.0)
+Depends: grub-common, os-prober, libdrm2, libstereo-policy1 (>= 1.15.0), python3, systemd, sparky-stereo-problems (>= 0.1.0)
 Recommends: plymouth (>= 26.134.222-1+stereo3d3), sparky-stereo-plymouth (>= 20261109~sparky9~0)
 Section: System
 Priority: optional

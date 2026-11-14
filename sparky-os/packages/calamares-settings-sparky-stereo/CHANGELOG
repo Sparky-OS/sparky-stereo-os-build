@@ -1,4 +1,16 @@
 -------------------------------------------------------------------------------
+  Version 20261114~sparky9~0 (2026-11-14)
+-------------------------------------------------------------------------------
+  * ORDER 572: a fresh install boots clean. A step right after the fstab step, shellprocess@cushionswap, hands the
+    swap area the installer made to Cushion Swap (cushion-swap --adopt installer, in the new system): its line in
+    /etc/fstab is marked noauto, so the area is off at boot and Cushion Swap has its area from the first boot
+    (Daniel's design: swap off until memory runs short). An install on a real notebook had reported "no swap area is
+    configured". Hibernation resumes from the same area as before.
+  * The dual-boot step turns os-prober on for any other system it finds, Windows or another Linux, so GRUB lists it
+    and sparky-stereo-boot shows the menu (Daniel, 2026-10-07: "dual boot found at install: os-prober on and menu
+    shown; single OS: os-prober off, menu hidden"); the local-time clock stays for Windows only.
+
+-------------------------------------------------------------------------------
   Version 20261111.2~sparky9~0 (2026-11-11)
 -------------------------------------------------------------------------------
   * Show the target EULA through KDE debconf in a graphical window, with Accept

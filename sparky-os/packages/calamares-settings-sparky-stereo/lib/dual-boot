@@ -1,13 +1,16 @@
 #!/bin/sh
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/15
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/15
+# Last update 2026/11/14
 . "$(dirname "$0")/installer-common"
 # Runs in the installed system during installation (Calamares, shellprocess@dualboot), before the
-# bootloader step. When os-prober finds Windows:
-#  - the hardware clock stays in local time, as Windows keeps it, so both show the right time;
-#  - GRUB runs os-prober, so Windows is in the boot menu. Debian turns os-prober off by default
-#    (GRUB_DISABLE_OS_PROBER) because it mounts other partitions; systems without Windows keep that.
+# bootloader step. When os-prober finds another system on the computer (Windows, another Linux):
+#  - GRUB runs os-prober at every update-grub, so the other system is in the boot menu, and sparky-stereo-boot
+#    shows the menu instead of hiding it (Daniel, 2026-10-07: "dual boot found at install: os-prober on and
+#    menu shown; single OS: os-prober off, menu hidden"; 2026-11-14: "if it has windows ok"). Debian turns
+#    os-prober off by default (GRUB_DISABLE_OS_PROBER) because it mounts other partitions; a computer with
+#    no other system keeps that;
+#  - with Windows, the hardware clock also stays in local time, as Windows keeps it, so both show the right time.
 # ADJTIME, GRUBD and OS_PROBER can be set for tests.
 ADJTIME=${ADJTIME:-/etc/adjtime}
 GRUBD=${GRUBD:-/etc/default/grub.d}
@@ -16,13 +19,17 @@ if systems=$("$OS_PROBER"); then :; else
 	status=$?
 	fail probe "$OS_PROBER (exit $status)"
 fi
-case "$systems" in *:[Ww][Ii][Nn][Dd][Oo][Ww][Ss]:*) ;; *) exit 0;; esac
-printf '0.0 0 0.0\n0\nLOCAL\n' > "$ADJTIME" || fail write "$ADJTIME"
-if [ "$ADJTIME" = /etc/adjtime ]; then checked hwclock --systohc --localtime; fi
+# a line of os-prober names a system: device:long name:short name:type
+others=$(printf '%s\n' "$systems" | awk -F: 'NF >= 3 && $2 != ""') || fail probe os-prober
+[ -n "$others" ] || exit 0
+case "$systems" in *:[Ww][Ii][Nn][Dd][Oo][Ww][Ss]:*)
+	printf '0.0 0 0.0\n0\nLOCAL\n' > "$ADJTIME" || fail write "$ADJTIME"
+	if [ "$ADJTIME" = /etc/adjtime ]; then checked hwclock --systohc --localtime; fi ;;
+esac
 checked mkdir -p "$GRUBD"
 cat > "$GRUBD/sparky-stereo-dual-boot.cfg" <<'EOS' || fail write "$GRUBD/sparky-stereo-dual-boot.cfg"
-# Sparky Stereo OS: written by the installer because Windows was found beside this system.
-# os-prober adds Windows to the boot menu at every update-grub.
+# Sparky Stereo OS: written by the installer because another system was found beside this one.
+# os-prober adds it to the boot menu at every update-grub, and the menu is shown.
 GRUB_DISABLE_OS_PROBER=false
 EOS
 exit 0

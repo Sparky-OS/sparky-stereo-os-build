@@ -22,3 +22,5 @@ LOCAL21="Cushion Swap est désactivé par votre choix (%s) ; il ne protège pas 
 LOCAL22="La protection Cushion Swap n'a pas pu démarrer : %s. Que faire : consultez journalctl -u cushion-swap, corrigez la cause, puis lancez : sudo systemctl restart cushion-swap"
 LOCAL23="Cushion Swap n’a pas pu coordonner ses opérations d’échange dans %s. Aucune opération d’échange ni préparation de veille n’a été tentée. Vérifiez les droits du répertoire, puis réessayez."
 LOCAL24="Un périphérique zram ne peut pas servir à Cushion Swap ni à l’hibernation. Choisissez une zone d’échange sur disque."
+LOCAL25="Cushion Swap prend la zone d'échange créée par l'installateur (%s) : sa ligne dans /etc/fstab dit maintenant noauto, donc la zone reste éteinte tant que la mémoire ne manque pas ; l'hibernation l'utilise comme avant. Le fichier tel qu'il était est gardé sous %s"
+LOCAL26="La ligne d'échange de %s dans /etc/fstab n'est pas celle de l'installateur, donc Cushion Swap la laisse telle que vous l'avez faite. Pour confier cette zone à Cushion Swap : sudo cushion-swap --adopt mine, puis : sudo systemctl restart cushion-swap"

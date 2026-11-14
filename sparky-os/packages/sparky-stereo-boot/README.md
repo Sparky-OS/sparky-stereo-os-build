@@ -39,6 +39,16 @@ So its certificate is kept next to every shim as dkms-this-computer.der (removed
 GRUB's menu has "Secure Boot: enroll this computer's DKMS key", with the steps in the nine languages, as soon as the certificate is on the partition: GRUB looks for it there when it reads the menu.
 Under Secure Boot, a DKMS key that is not enrolled while modules signed with it are installed for the running kernel is said at every boot and kept, naming that entry, until it is enrolled (sparky-stereo-boot-secureboot.service).
 
+GRUB's menu: hidden, and the system starts at once, when this is the only system on the computer; shown for 5 seconds when another system (Windows, another Linux) is found.
+The installer looks for another system and turns os-prober on when it finds one; at every update-grub os-prober then says whether one is still there.
+Hold Shift or press Esc while the computer starts to open a hidden menu.
+Your own GRUB_TIMEOUT_STYLE, GRUB_HIDDEN_TIMEOUT, or a GRUB_TIMEOUT other than Debian's 5 in /etc/default/grub are kept as they are; SPARKY_STEREO_MENU=shown in /etc/default/sparky-stereo-boot always shows the menu.
+
+The menu's text: one height on every screen (4.2 mm, for a monitor at a desk), from the screen's size as its EDID gives it.
+The screen size field decides (VESA E-EDID Release A2, 3.6.2: "The host (source) is expected to use this data to get a rough idea of the image size to generate properly scaled text and icons"); the first detailed timing's image size (3.10.2) gives the millimetres when it agrees with it.
+Under Secure Boot, Debian's signed GRUB loads only the font inside its own image, 16 pixels high (a font file is "prohibited by secure boot policy", grub-core/kern/efi/sb.c), so update-grub names no font file there and gives GRUB the resolution at which that font has the menu's height on this screen; SPARKY_STEREO_SECUREBOOT_TEXT=native keeps the screen's resolution and small text.
+The menu is never drawn without a loaded font (/etc/grub.d/01_sparky_stereo_menu): when the font cannot be loaded GRUB takes its own, and with none at all the firmware's text console.
+
 Options: /etc/default/sparky-stereo-boot (then: sudo sparky-stereo-boot reapply).
 Status: sparky-stereo-boot status
 
@@ -59,6 +69,7 @@ When a step of the boot's upkeep cannot do what it is for, it says what failed, 
 Dependencies:
 - python3
 - grub-common
+- os-prober
 - systemd
 - plymouth (>= 26.134.222-1+stereo3d1), recommended, for the boot splash in 3D
 

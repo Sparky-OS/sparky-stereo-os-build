@@ -52,6 +52,7 @@ w, h, wm, hm = 3840, 2160, 344, 193
 e[56] = w & 0xff; e[58] = (e[58] & 0x0f) | ((w >> 8) << 4)
 e[59] = h & 0xff; e[61] = (e[61] & 0x0f) | ((h >> 8) << 4)
 e[66] = wm & 0xff; e[67] = hm & 0xff; e[68] = ((wm >> 8) << 4) | (hm >> 8)
+e[21] = round(wm / 10); e[22] = round(hm / 10)   # the screen size field, centimetres (E-EDID 3.6.2)
 e[127] = (-sum(e[:127])) & 0xff
 open(sys.argv[2], 'wb').write(bytes(e))
 PY
@@ -71,6 +72,7 @@ w, h, wm, hm = (int(v) for v in sys.argv[3:7])
 e[56] = w & 0xff; e[58] = (e[58] & 0x0f) | ((w >> 8) << 4)
 e[59] = h & 0xff; e[61] = (e[61] & 0x0f) | ((h >> 8) << 4)
 e[66] = wm & 0xff; e[67] = hm & 0xff; e[68] = ((wm >> 8) << 4) | (hm >> 8)
+e[21] = round(wm / 10); e[22] = round(hm / 10)   # the screen size field, centimetres (E-EDID 3.6.2)
 e[127] = (-sum(e[:127])) & 0xff
 open(sys.argv[2], 'wb').write(bytes(e))
 PY
@@ -131,11 +133,103 @@ python3 - "$FIX/hx855.edid" /tmp/nosize.edid <<'PY2'
 import sys
 e = bytearray(open(sys.argv[1], 'rb').read()[:128])
 e[66] = e[67] = e[68] = 0
+e[21] = e[22] = 0   # a projector: the screen size field undefined too (E-EDID 3.6.2)
 e[127] = (-sum(e[:127])) & 0xff
 open(sys.argv[2], 'wb').write(bytes(e))
 PY2
 told 'a projector with no physical size: said, not kept (nothing to repair)' "$(mkroot HDMI-A-1 /tmp/nosize.edid)" '' '' \
 	'1920x1080,1280x720,1024x768,auto|' 'the screen card0-HDMI-A-1 gave no physical size in its EDID' -grub-display 'SOURCE=native'
-rm -rf /tmp/grub-hook-fake-$$ /tmp/nosize.edid
+# 0.1.10 (ORDER 572): the screen's size from both EDID fields. A 13.3 inch full HD panel whose screen size field says
+# 29 x 17 cm (right) and whose first timing says 344 x 193 mm (a 15.5 inch panel): the screen size field decides
+# (VESA E-EDID 3.6.2: "The host (source) is expected to use this data to get a rough idea of the image size to generate
+# properly scaled text and icons"), 4.2 mm is 28 px there (the timing's size gave 24), and update-grub says so.
+sizes() {    # sizes FILE WIDTH HEIGHT SCREEN_CM_W SCREEN_CM_H TIMING_MM_W TIMING_MM_H
+	python3 - "$FIX/hx855.edid" "$@" <<'PY3'
+import sys
+e = bytearray(open(sys.argv[1], 'rb').read()[:128])
+w, h, cw, ch, wm, hm = (int(v) for v in sys.argv[3:9])
+e[56] = w & 0xff; e[58] = (e[58] & 0x0f) | ((w >> 8) << 4)
+e[59] = h & 0xff; e[61] = (e[61] & 0x0f) | ((h >> 8) << 4)
+e[21] = cw; e[22] = ch
+e[66] = wm & 0xff; e[67] = hm & 0xff; e[68] = ((wm >> 8) << 4) | (hm >> 8)
+e[127] = (-sum(e[:127])) & 0xff
+open(sys.argv[2], 'wb').write(bytes(e))
+PY3
+}
+sizes /tmp/two-sizes.edid 1920 1080 29 17 344 193
+sizes /tmp/screen-only.edid 1920 1080 29 17 0 0
+sizes /tmp/agree.edid 1920 1080 29 17 294 165
+sizes /tmp/desk-24.edid 1920 1080 53 30 531 299
+told 'two sizes in the EDID: the screen size field decides, 28 px, said' "$(mkroot eDP-1 /tmp/two-sizes.edid)" '' '' \
+	'1920x1080,1280x720,1024x768,auto|sparky-28.pf2' 'gives two sizes in its EDID: 290 x 170 mm as the screen.s size and 344 x 193 mm for its first timing' -grub-display 'TEXT=sized'
+told 'only the screen size field: 28 px' "$(mkroot eDP-1 /tmp/screen-only.edid)" '' '' \
+	'1920x1080,1280x720,1024x768,auto|sparky-28.pf2' "GRUB's resolution: 1920x1080" -grub-display 'FONT=.*sparky-28.pf2'
+total=$((total + 1)); R=$(mkroot eDP-1 /tmp/agree.edid)
+if env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin SPARKY_STEREO_ROOT="$R" SPARKY_FONT_DIR="$R/fonts" SPARKY_STEREO_LIB="$PKG/lib" SPARKY_STEREO_LANG_DIR="$PKG/lang" \
+	SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" LANG=C.UTF-8 bash -c ". '$HOOK'" 2>&1 | grep -q 'two sizes'; then
+	echo 'FAIL  the two fields agree (294 x 165 mm, 29 x 17 cm): nothing to say'
+else pass=$((pass + 1)); echo 'PASS  the two fields agree (294 x 165 mm, 29 x 17 cm): nothing said about two sizes'; fi
+rm -rf "$R"
+# Secure Boot: no font file is named (Debian's signed GRUB refuses it: grub-core/kern/efi/sb.c, "prohibited by secure
+# boot policy"); on a dense panel the menu is given the resolutions at which GRUB's own 16 px font has the text height
+sb() { mkdir -p "$1/sys/firmware/efi/efivars"; printf '\006\000\000\000\00'"$2" > "$1/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"; echo "$1"; }
+told 'Secure Boot on, dense panel: no font file, the readable resolutions, said' "$(sb "$(mkroot eDP-1 /tmp/two-sizes.edid)" 1)" '' '' \
+	'1280x720,1366x768,1600x900,1024x768,auto|' 'Secure Boot is on: Debian.s signed GRUB loads only the font inside it \(16 pixels\), so GRUB.s menu is shown at 1280x720, where its text is about 3.6 mm high' -grub-display 'SOURCE=readable'
+told 'Secure Boot on, recorded' "$(sb "$(mkroot eDP-1 /tmp/two-sizes.edid)" 1)" '' '' \
+	'1280x720,1366x768,1600x900,1024x768,auto|' 'SPARKY_STEREO_SECUREBOOT_TEXT=native' -grub-display 'SECUREBOOT=on'
+told 'Secure Boot off in the firmware (variable 0): the sized font as before' "$(sb "$(mkroot eDP-1 /tmp/two-sizes.edid)" 0)" '' '' \
+	'1920x1080,1280x720,1024x768,auto|sparky-28.pf2' "GRUB's resolution: 1920x1080" -grub-display 'SECUREBOOT=off'
+told 'Secure Boot on, SPARKY_STEREO_SECUREBOOT_TEXT=native: the screen resolution, no font file, said' \
+	"$(sb "$(mkroot eDP-1 /tmp/two-sizes.edid 'SPARKY_STEREO_SECUREBOOT_TEXT=native\n')" 1)" '' '' \
+	'1920x1080,1280x720,1024x768,auto|' 'so GRUB.s menu has small text at 1920x1080 on this screen' -grub-display 'TEXT=grub'
+told 'Secure Boot on, a 24 inch full HD monitor: GRUB font at the screen resolution (16 px is the size there)' "$(sb "$(mkroot DP-1 /tmp/desk-24.edid)" 1)" '' '' \
+	'1920x1080,1280x720,1024x768,auto|' "GRUB's resolution: 1920x1080" -grub-display 'TEXT=grub'
+told 'Secure Boot on, the person set GRUB_GFXMODE: kept, no font file' "$(sb "$(mkroot eDP-1 /tmp/two-sizes.edid)" 1)" 'GRUB_GFXMODE=1920x1080' '' \
+	'1920x1080|' 'small text at 1920x1080' -grub-display 'SOURCE=person'
+# the menu: hidden with no wait when this is the only system, shown when another is found; the person's settings win
+menu() {     # menu NAME ROOT PRESET OS_PROBER_OUTPUT_OR_fail WANT(style|timeout) SAID RECORDED
+	total=$((total + 1)); R=$2
+	mkdir -p "$R/bin"
+	if [ "$4" = fail ]; then printf '#!/bin/sh\nexit 1\n' > "$R/bin/prober"; else printf '#!/bin/sh\nprintf "%%s" "%s"\n' "$4" > "$R/bin/prober"; fi
+	chmod 755 "$R/bin/prober"
+	out=$(env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin SPARKY_STEREO_ROOT="$R" SPARKY_FONT_DIR="$R/fonts" SPARKY_OS_PROBER="$R/bin/prober" \
+		SPARKY_STEREO_LIB="$PKG/lib" SPARKY_STEREO_LANG_DIR="$PKG/lang" SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" LANG=C.UTF-8 bash -c "
+		GRUB_TIMEOUT=5; $3
+		. '$HOOK'
+		printf '%s|%s' \"\$GRUB_TIMEOUT_STYLE\" \"\$GRUB_TIMEOUT\"" 2> "$R/stderr")
+	said=$(grep -c -E "$6" "$R/stderr"); decided=$(grep -c -E "$7" "$R/var/lib/sparky-stereo-boot/grub-display" 2>/dev/null)
+	if [ "$6" = - ]; then said=1; [ -s "$R/stderr" ] && said=0; fi   # -: nothing may be said
+	if [ "$out" = "$5" ] && [ "$said" -ge 1 ] && [ "${decided:-0}" -ge 1 ]; then pass=$((pass + 1)); echo "PASS  $1: $out; said; recorded"
+	else echo "FAIL  $1: got [$out] want [$5]; said $said ($6); recorded ${decided:-0} ($7)"; sed 's/^/      stderr: /' "$R/stderr"; fi
+	rm -rf "$R"
+}
+WIN='/dev/sda1@/efi/Microsoft/Boot/bootmgfw.efi:Windows Boot Manager:Windows:efi\n'
+menu 'the only system (os-prober off, as Debian ships it): hidden, no wait' "$(mkroot HDMI-A-1 $FIX/hx855.edid)" '' "$WIN" \
+	'hidden|0' 'menu is hidden and the system starts at once' 'MENU=hidden'
+menu 'os-prober on and Windows found: shown, 5 seconds' "$(mkroot HDMI-A-1 $FIX/hx855.edid)" 'GRUB_DISABLE_OS_PROBER=false' "$WIN" \
+	'menu|5' 'shown for 5 seconds: another system is on this computer \(Windows Boot Manager\)' 'MENU=shown'
+menu 'os-prober on and another Linux found: shown' "$(mkroot HDMI-A-1 $FIX/hx855.edid)" 'GRUB_DISABLE_OS_PROBER=false' '/dev/sda4:Other Linux 1:other:linux\n' \
+	'menu|5' 'another system is on this computer \(Other Linux 1\)' 'MENU=shown'
+menu 'os-prober on and nothing found (the other system is gone): hidden again' "$(mkroot HDMI-A-1 $FIX/hx855.edid)" 'GRUB_DISABLE_OS_PROBER=false' '' \
+	'hidden|0' 'menu is hidden' 'MENU=hidden'
+menu 'os-prober fails: shown, and said (never hidden on a guess)' "$(mkroot HDMI-A-1 $FIX/hx855.edid)" 'GRUB_DISABLE_OS_PROBER=false' fail \
+	'menu|5' 'os-prober failed, so GRUB.s menu is shown for 5 seconds' 'MENU=shown'
+menu 'the person set GRUB_TIMEOUT_STYLE and GRUB_TIMEOUT: kept' "$(mkroot HDMI-A-1 $FIX/hx855.edid)" 'GRUB_TIMEOUT_STYLE=countdown; GRUB_TIMEOUT=3' "$WIN" \
+	'countdown|3' 'your own settings are kept \(GRUB_TIMEOUT_STYLE=countdown, GRUB_TIMEOUT=3\)' 'MENU=person'
+menu 'the person set GRUB_TIMEOUT=10 alone: kept, shown as GRUB shows it' "$(mkroot HDMI-A-1 $FIX/hx855.edid)" 'GRUB_TIMEOUT=10' '' \
+	'|10' 'your own settings are kept' 'MENU=person'
+menu 'a hand-made hidden menu (GRUB_TIMEOUT_STYLE=hidden, GRUB_TIMEOUT=0): the same two keys, kept' "$(mkroot HDMI-A-1 $FIX/hx855.edid)" 'GRUB_TIMEOUT_STYLE=hidden; GRUB_TIMEOUT=0' "$WIN" \
+	'hidden|0' 'your own settings are kept' 'MENU=person'
+menu 'SPARKY_STEREO_MENU=shown: always shown' "$(mkroot HDMI-A-1 $FIX/hx855.edid 'SPARKY_STEREO_MENU=shown\n')" '' '' \
+	'menu|5' 'shown for 5 seconds: SPARKY_STEREO_MENU=shown' 'MENU=shown'
+menu 'SPARKY_STEREO_BOOT=no: the menu as the system left it' "$(mkroot HDMI-A-1 $FIX/hx855.edid 'SPARKY_STEREO_BOOT=no\n')" '' "$WIN" \
+	'|5' - 'SOURCE=off'
+# sourced a second time in a process that inherited the first run's exports: still the screen's own values, not "the person's"
+total=$((total + 1)); R=$(mkroot eDP-1 /tmp/two-sizes.edid)
+out=$(env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin SPARKY_STEREO_ROOT="$R" SPARKY_FONT_DIR="$R/fonts" SPARKY_STEREO_LIB="$PKG/lib" SPARKY_STEREO_LANG_DIR="$PKG/lang" \
+	SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" LANG=C.UTF-8 bash -c "GRUB_TIMEOUT=5; . '$HOOK'; bash -c \". '$HOOK'\"; grep -E '^(SOURCE|MENU)=' '$R/var/lib/sparky-stereo-boot/grub-display' | tr '\n' ' '" 2>/dev/null)
+if [ "$out" = 'SOURCE=native MENU=hidden ' ]; then pass=$((pass + 1)); echo "PASS  sourced again with its own exported values: $out"; else echo "FAIL  sourced again with its own exported values: got [$out] want [SOURCE=native MENU=hidden ]"; fi
+rm -rf "$R"
+rm -rf /tmp/grub-hook-fake-$$ /tmp/nosize.edid /tmp/two-sizes.edid /tmp/screen-only.edid /tmp/agree.edid /tmp/desk-24.edid
 echo "SUMMARY $pass of $total pass"
 [ "$pass" = "$total" ]

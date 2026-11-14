@@ -66,6 +66,7 @@ RUN_DIR = ROOT + '/run/sparky-stereo-boot'
 LANG_DIR = os.environ.get('SPARKY_STEREO_LANG_DIR', '/usr/share/sparky/sparky-stereo-boot')
 LIB_DIR = os.environ.get('SPARKY_STEREO_LIB', '/usr/lib/sparky-stereo-boot')
 GRUB_DISPLAY = STATE_DIR + '/grub-display'
+EFIVARS = ROOT + '/sys/firmware/efi/efivars'
 CMDLINE = ROOT + '/proc/cmdline'
 DRI = ROOT + '/dev/dri'
 BOOT_PARAMS = ROOT + '/sys/kernel/boot_params/data'
@@ -889,6 +890,18 @@ def reapply():
     return 0
 
 
+def secure_boot_on():
+    """The firmware's SecureBoot variable (four attribute bytes, then 1 for on)."""
+    try:
+        for name in os.listdir(EFIVARS):
+            if name.startswith('SecureBoot-'):
+                data = open(os.path.join(EFIVARS, name), 'rb').read()
+                return len(data) >= 5 and data[4] == 1
+    except OSError:
+        pass
+    return False
+
+
 def grub_display():
     """What the last update-grub gave GRUB (30-sparky-stereo-boot.cfg writes it): GFXMODE, WANTED, SOURCE, FONT,
     PAYLOAD, SCREEN."""
@@ -985,9 +998,17 @@ def boot_check():
     boot_params screen_info has it) against the first one the last update-grub gave GRUB. GRUB takes the next of its
     list when the firmware does not offer a mode, and nothing else shows which one it took."""
     grub = grub_display()
+    # Secure Boot switched on or off since the menu was written (0.1.10): the menu's font and resolution depend on it
+    # (Debian's signed GRUB refuses a font file under Secure Boot), so the menu is written again for the state found
+    recorded = grub.get('SECUREBOOT')
+    now = 'on' if secure_boot_on() else 'off'
+    if recorded in ('on', 'off') and recorded != now:
+        log('Secure Boot is %s and GRUB\'s menu was written with it %s: writing the menu again' % (now, recorded))
+        run_update_grub()
+        grub = grub_display()
     wanted = grub.get('WANTED', '')
     numbers = wanted.split('x')
-    if grub.get('SOURCE') not in ('saved', 'native') or grub.get('PAYLOAD') != 'keep' or \
+    if grub.get('SOURCE') not in ('saved', 'native', 'readable') or grub.get('PAYLOAD') != 'keep' or \
             len(numbers) != 2 or not all(n.isdigit() for n in numbers):
         forget_problem('grub-mode')
         return 0
@@ -1003,6 +1024,10 @@ def boot_check():
             % (hex(data[0x0f]) if len(data) > 0x0f else '-'))
         return 0
     shown = '%dx%d' % struct.unpack_from('<HH', data, 0x12)
+    # under Secure Boot the menu is given the resolutions at which GRUB's own font is readable, nearest first: any of
+    # them is what was asked for
+    if grub.get('SOURCE') == 'readable' and shown in grub.get('GFXMODE', '').split(','):
+        wanted = shown
     if shown == wanted:
         forget_problem('grub-mode')
         log('GRUB showed %s, as it was given' % shown)
