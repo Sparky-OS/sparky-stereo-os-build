@@ -1,0 +1,332 @@
+From 8e47a462ed2fcd7bd311a75c813b13ee630d6eb6 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 14 Nov 2026 04:01:25 -0300
+Subject: [PATCH] Widgets on the GPU: each eye of a pair is painted from its
+ own left edge and placed whole device pixels apart
+
+At a fractional scale twice the window's width times the ratio, rounded, is not twice the rounded width of one
+view (941 at 1.25: 2353 against 2352), so the compositor did not take the store's texture for a pair and showed
+the window flat, and where it did (a width that is whole at that scale) the right eye started a part of a pixel
+off its half. A GPU store now holds a pair as two eyes of one whole width in device pixels
+(QPlatformBackingStore::setPaintEye): the batched engine adds the eye's origin to each record after it was
+rounded and cut, and the OpenGL engine's store paints each eye into a framebuffer of the eye's size and copies
+it into its half. The repaint manager paints both eyes from the same origin.
+
+Assisted-by: Claude Fable 5.2
+---
+ src/gui/painting/qbatchedpaintengine.cpp     | 31 +++++++-
+ src/gui/painting/qplatformbackingstore.cpp   | 22 ++++++
+ src/gui/painting/qplatformbackingstore.h     |  3 +
+ src/opengl/qopenglpaintbackingstore.cpp      | 79 ++++++++++++++++++--
+ src/widgets/kernel/qwidgetrepaintmanager.cpp | 13 +++-
+ 5 files changed, 137 insertions(+), 11 deletions(-)
+
+diff --git a/src/gui/painting/qbatchedpaintengine.cpp b/src/gui/painting/qbatchedpaintengine.cpp
+index 813ab36..a5dc410 100644
+--- a/src/gui/painting/qbatchedpaintengine.cpp
++++ b/src/gui/painting/qbatchedpaintengine.cpp
+@@ -428,6 +428,8 @@ public:
+ 
+     void setDeviceRect(const QRect &rect) { m_deviceRect = rect; updateClip(); }
+     void setSubPixelOffset(qreal dx) { m_dx = float(dx); }
++    // the eye being painted starts at this column of the target (whole device pixels)
++    void setEyeOrigin(int x) { m_eyeOrigin = float(x); }
+     void updateClip();
+ 
+     // A rectangle of one colour on whole pixels, taking the place of what is there.
+@@ -463,6 +465,7 @@ private:
+     // while the raster engine draws coverage for an inversion: every colour is white
+     bool m_maskDrawing = false;
+     float m_dx = 0;
++    float m_eyeOrigin = 0;
+ };
+ 
+ class QBatchedPaintEnginePrivate : public QPaintEngineExPrivate
+@@ -635,6 +638,8 @@ private:
+ 
+     QSize m_size;
+     QSize m_pixelSize;
++    QSize m_deviceSize; // what a painter sees: one eye of a pair, else the whole store
++    int m_eyeWidth = 0; // device pixels of one eye while the window is painted once per eye
+     qreal m_dpr = 1;
+     QBatchedPaintDevice m_device;
+     bool m_translucent = false;
+@@ -860,6 +865,12 @@ void QBatchedPaintEngine::push(const Quad &q, Op::Type type)
+     if (m_store->quads.empty())
+         ++storesWithRecords;
+     m_store->quads.push_back(q);
++    if (m_eyeOrigin != 0) {
++        // An eye is painted from its own left edge and placed whole pixels to the right, after
++        // every edge was rounded and cut: the two eyes then round alike at any scale.
++        m_store->quads.back().x0 += m_eyeOrigin;
++        m_store->quads.back().x1 += m_eyeOrigin;
++    }
+ }
+ 
+ // Records one rectangle, cut to the clip; its source rectangle is cut with it.
+@@ -1797,6 +1808,11 @@ QBatchedPaintBackingStore::QBatchedPaintBackingStore(QWindow *window)
+     m_translucent = window->requestedFormat().hasAlpha();
+     setGpuTextureProvider([this](QRhi *rhi, QRhiCommandBuffer *cb, TextureFlags *flags) { return realise(rhi, cb, flags); });
+     setPaintSubPixelOffsetSetter([this](qreal dx) { m_device.engine()->setSubPixelOffset(dx); });
++    setPaintEyeSetter([this](int eye, int eyeWidth) {
++        m_eyeWidth = eye ? eyeWidth : 0;
++        syncDevice();
++        m_device.engine()->setEyeOrigin(eye == 2 ? eyeWidth : 0);
++    });
+     setRhiAboutToGo([this] {
+         // the textures go with their RHI; the window is painted again on the next one
+         if (m_hasContents)
+@@ -1843,14 +1859,23 @@ void QBatchedPaintBackingStore::syncDevice()
+     const qreal dpr = window()->devicePixelRatio();
+     // rounded, as the window's surface and a raster store are (QSize times a ratio): a store one
+     // pixel larger than the surface is drawn onto it a pixel off
+-    const QSize pixelSize = m_size * dpr;
+-    if (pixelSize != m_pixelSize || dpr != m_dpr) {
++    QSize pixelSize = m_size * dpr;
++    QSize deviceSize = pixelSize;
++    if (m_eyeWidth > 0) {
++        // a pair: two eyes of one whole width side by side, each painted as a device of its own.
++        // Twice the window's width times the ratio, rounded, is not twice the rounded eye (941
++        // at 1.25: 2353 against 2352), and the compositor takes a pair by the eye's width.
++        pixelSize.setWidth(2 * m_eyeWidth);
++        deviceSize.setWidth(m_eyeWidth);
++    }
++    if (pixelSize != m_pixelSize || deviceSize != m_deviceSize || dpr != m_dpr) {
+         m_pixelSize = pixelSize;
++        m_deviceSize = deviceSize;
+         m_dpr = dpr;
+         qreal dpi = 96;
+         if (const QScreen *screen = window()->screen())
+             dpi = screen->logicalDotsPerInchY();
+-        m_device.set(pixelSize, dpr, dpi * dpr);
++        m_device.set(deviceSize, dpr, dpi * dpr);
+     }
+ }
+ 
+diff --git a/src/gui/painting/qplatformbackingstore.cpp b/src/gui/painting/qplatformbackingstore.cpp
+index 281d07c..0d467ef 100644
+--- a/src/gui/painting/qplatformbackingstore.cpp
++++ b/src/gui/painting/qplatformbackingstore.cpp
+@@ -39,6 +39,7 @@ public:
+ 
+     QPlatformBackingStore::GpuTextureProvider gpuTextureProvider;
+     QPlatformBackingStore::PaintSubPixelOffsetSetter paintSubPixelOffsetSetter;
++    QPlatformBackingStore::PaintEyeSetter paintEyeSetter;
+     bool paintContentsLost = false;
+     std::function<void()> rhiAboutToGo;
+ };
+@@ -463,6 +464,27 @@ bool QPlatformBackingStore::setPaintSubPixelOffset(qreal dx)
+     return true;
+ }
+ 
++void QPlatformBackingStore::setPaintEyeSetter(PaintEyeSetter setter)
++{
++    d_ptr->paintEyeSetter = std::move(setter);
++}
++
++/*
++    A window painted once per eye: what is painted next is the picture of \a eye (1 the left,
++    2 the right), each eye \a eyeWidth device pixels wide; 0 ends the pair. A store that
++    returns true holds the eyes side by side in device pixels, the right eye at \a eyeWidth,
++    and is painted for each eye from the eye's own left edge, so the two eyes round every edge
++    alike at any scale. A store that returns false is twice as wide in the window's own units
++    and is painted for the right eye from the window's width.
++*/
++bool QPlatformBackingStore::setPaintEye(int eye, int eyeWidth)
++{
++    if (!d_ptr->paintEyeSetter)
++        return false;
++    d_ptr->paintEyeSetter(eye, eyeWidth);
++    return true;
++}
++
+ QRhi *QPlatformBackingStore::rhi(QWindow *window) const
+ {
+     // Returning null is valid, and means this is not a QRhi-capable backingstore.
+diff --git a/src/gui/painting/qplatformbackingstore.h b/src/gui/painting/qplatformbackingstore.h
+index 1bef246..ce5732e 100644
+--- a/src/gui/painting/qplatformbackingstore.h
++++ b/src/gui/painting/qplatformbackingstore.h
+@@ -199,6 +199,9 @@ public:
+     using PaintSubPixelOffsetSetter = std::function<void(qreal)>;
+     void setPaintSubPixelOffsetSetter(PaintSubPixelOffsetSetter setter);
+     bool setPaintSubPixelOffset(qreal dx);
++    using PaintEyeSetter = std::function<void(int, int)>;
++    void setPaintEyeSetter(PaintEyeSetter setter);
++    bool setPaintEye(int eye, int eyeWidth);
+     void surfaceAboutToBeDestroyed();
+     void graphicsDeviceReportedLost(QWindow *window);
+ 
+diff --git a/src/opengl/qopenglpaintbackingstore.cpp b/src/opengl/qopenglpaintbackingstore.cpp
+index 5ced085..03e3caa 100644
+--- a/src/opengl/qopenglpaintbackingstore.cpp
++++ b/src/opengl/qopenglpaintbackingstore.cpp
+@@ -135,6 +135,7 @@ public:
+     {
+         setGpuTextureProvider([this](QRhi *rhi, QRhiCommandBuffer *, TextureFlags *flags) { return texture(rhi, flags); });
+         setPaintSubPixelOffsetSetter([](qreal dx) { qt_gl_paint_subpixel_offset = dx; });
++        setPaintEyeSetter([this](int eye, int eyeWidth) { setEye(eye, eyeWidth); });
+         setRhiAboutToGo([this] {
+             delete m_rhiTexture;
+             m_rhiTexture = nullptr;
+@@ -162,9 +163,59 @@ public:
+ 
+     void resize(const QSize &size, const QRegion &) override { m_size = size; }
+ 
++    /*
++        A window painted once per eye. The engine paints one eye at a time into a framebuffer of
++        the eye's own size, from the eye's own left edge, and each eye is then copied whole
++        pixels into its half of the pair: the two eyes round every edge alike at any scale. A
++        pair is always painted whole, so the framebuffer keeps nothing between the eyes.
++    */
++    void setEye(int eye, int eyeWidth)
++    {
++        const int width = eye ? eyeWidth : 0;
++        if (width != m_eyeWidth) {
++            m_eyeWidth = width;
++            m_eye = 0;
++        }
++        if (eye == m_eye)
++            return;
++        if (m_painting && m_eyeWidth && m_eye)
++            resolveEye();
++        m_eye = eye;
++        if (m_painting && m_eyeWidth && m_eye) {
++            activate();
++            clearEye();
++        }
++    }
++
++    void clearEye()
++    {
++        auto *f = m_context->context->functions();
++        f->glDisable(GL_SCISSOR_TEST);
++        f->glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
++        f->glClearColor(0, 0, 0, window()->requestedFormat().hasAlpha() ? 0 : 1);
++        f->glClear(GL_COLOR_BUFFER_BIT);
++    }
++
++    void resolveEye()
++    {
++        if (!m_paintFbo || !m_textureFbo || !m_context->context->makeCurrent(m_context->surface))
++            return;
++        const QRect from(QPoint(), m_paintFbo->size());
++        const QRect to(QPoint(m_eye == 2 ? m_eyeWidth : 0, 0), m_paintFbo->size());
++        QOpenGLFramebufferObject::blitFramebuffer(m_textureFbo.get(), to, m_paintFbo.get(), from, GL_COLOR_BUFFER_BIT, GL_NEAREST);
++    }
++
+     void beginPaint(const QRegion &region) override
+     {
+         ensureTargets();
++        if (m_eyeWidth) {
++            m_painting = true;
++            m_dirty = QRect(QPoint(), m_pixelSize);
++            activate();
++            if (m_eye)
++                clearEye();
++            return;
++        }
+         m_dirty = QRect();
+         for (const QRect &rect : region)
+             m_dirty |= deviceRect(rect);
+@@ -187,7 +238,11 @@ public:
+             return;
+         if (!m_context->context->makeCurrent(m_context->surface))
+             return;
+-        if (m_textureFbo != m_paintFbo && !m_dirty.isEmpty()) {
++        if (m_eyeWidth) {
++            if (m_painting && m_eye)
++                resolveEye();
++            m_painting = false;
++        } else if (m_textureFbo != m_paintFbo && !m_dirty.isEmpty()) {
+             // resolve the samples of what was painted
+             const QRect r = glRect(m_dirty);
+             QOpenGLFramebufferObject::blitFramebuffer(m_textureFbo.get(), r, m_paintFbo.get(), r,
+@@ -205,7 +260,8 @@ public:
+ 
+     bool scroll(const QRegion &area, int dx, int dy) override
+     {
+-        if (!m_paintFbo || !m_context->context->makeCurrent(m_context->surface))
++        // a pair is painted whole for each eye
++        if (m_eyeWidth || !m_paintFbo || !m_context->context->makeCurrent(m_context->surface))
+             return false;
+         const qreal dpr = m_dpr;
+         if (!qFuzzyCompare(dx * dpr, qRound(dx * dpr)) || !qFuzzyCompare(dy * dpr, qRound(dy * dpr)))
+@@ -273,8 +329,14 @@ private:
+     void ensureTargets()
+     {
+         const qreal dpr = window()->devicePixelRatio();
+-        const QSize pixelSize(qCeil(m_size.width() * dpr), qCeil(m_size.height() * dpr));
+-        if (m_paintFbo && pixelSize == m_pixelSize && dpr == m_dpr)
++        QSize pixelSize(qCeil(m_size.width() * dpr), qCeil(m_size.height() * dpr));
++        QSize paintSize = pixelSize;
++        if (m_eyeWidth) {
++            // two eyes of one whole width; twice the window's width times the ratio is not that
++            pixelSize.setWidth(2 * m_eyeWidth);
++            paintSize.setWidth(m_eyeWidth);
++        }
++        if (m_paintFbo && pixelSize == m_pixelSize && paintSize == m_paintFbo->size() && dpr == m_dpr)
+             return;
+         if (pixelSize.isEmpty() || !m_context->context->makeCurrent(m_context->surface))
+             return;
+@@ -287,8 +349,8 @@ private:
+         paintFormat.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
+         paintFormat.setSamples(m_context->samples);
+ 
+-        m_paintFbo = std::make_shared<QOpenGLFramebufferObject>(pixelSize, paintFormat);
+-        if (m_paintFbo->format().samples() > 0)
++        m_paintFbo = std::make_shared<QOpenGLFramebufferObject>(paintSize, paintFormat);
++        if (m_paintFbo->format().samples() > 0 || paintSize != pixelSize)
+             m_textureFbo = std::make_shared<QOpenGLFramebufferObject>(pixelSize, textureFormat);
+         else
+             m_textureFbo = m_paintFbo;
+@@ -305,7 +367,7 @@ private:
+ 
+         if (!m_device)
+             m_device = std::make_unique<BackingStorePaintDevice>(this);
+-        m_device->setSize(pixelSize);
++        m_device->setSize(paintSize);
+         m_device->setDevicePixelRatio(dpr);
+         m_paintFbo->bind();
+     }
+@@ -335,6 +397,9 @@ private:
+     QSize m_pixelSize;
+     qreal m_dpr = 1;
+     QRect m_dirty;
++    int m_eye = 0; // the eye being painted, while the window is painted once per eye
++    int m_eyeWidth = 0; // its width in device pixels; 0: one picture
++    bool m_painting = false;
+     std::shared_ptr<QOpenGLFramebufferObject> m_paintFbo;
+     std::shared_ptr<QOpenGLFramebufferObject> m_textureFbo;
+     std::unique_ptr<QOpenGLFramebufferObject> m_scratchFbo;
+diff --git a/src/widgets/kernel/qwidgetrepaintmanager.cpp b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+index 6bd8af5..90dbd6c 100644
+--- a/src/widgets/kernel/qwidgetrepaintmanager.cpp
++++ b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+@@ -810,6 +810,14 @@ void QWidgetRepaintManager::paintAndFlush()
+     if (store->size() != storeSize)
+         store->resize(storeSize);
+ 
++    // A store painted on the GPU holds a pair as two eyes of one whole width in device pixels
++    // and is painted for each eye from the eye's own left edge; the width is the one the
++    // window's surface and the compositor give one view (the window's size times its ratio).
++    int eyeWidth = 0;
++    if (QWindow *window = perEye ? tlw->windowHandle() : nullptr)
++        eyeWidth = (tlwRect.size() * window->devicePixelRatio()).width();
++    const bool eyeLocal = store->handle()->setPaintEye(eyeWidth > 0 ? 1 : 0, eyeWidth) && eyeWidth > 0;
++
+     if (updatesDisabled)
+         return;
+ 
+@@ -1005,7 +1013,10 @@ void QWidgetRepaintManager::paintAndFlush()
+             for (const int eye : {1, 2}) {
+                 s_stereoEye = eye;
+                 window->setProperty("_q_stereo_eye", eye);
+-                tlw->d_func()->drawWidget(store->paintDevice(), dirtyCopy, QPoint(eye == 2 ? tlwRect.width() : 0, 0),
++                if (eyeLocal)
++                    store->handle()->setPaintEye(eye, eyeWidth);
++                tlw->d_func()->drawWidget(store->paintDevice(), dirtyCopy,
++                                          QPoint(eye == 2 && !eyeLocal ? tlwRect.width() : 0, 0),
+                                           flags | QWidgetPrivate::DontSubtractOpaqueChildren, nullptr, this);
+             }
+             s_stereoEye = 0;

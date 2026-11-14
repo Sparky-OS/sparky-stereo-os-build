@@ -14,7 +14,7 @@ Assisted-by: Claude Fable 5.2
 
 --- a/src/gui/CMakeLists.txt
 +++ b/src/gui/CMakeLists.txt
-@@ -348,9 +348,19 @@
+@@ -348,9 +348,22 @@ qt_internal_add_resource(Gui "gui_shaders"
      FILES
          "painting/shaders/backingstorecompose.vert.qsb"
          "painting/shaders/backingstorecompose.frag.qsb"
@@ -23,6 +23,8 @@ Assisted-by: Claude Fable 5.2
 -        "painting/shaders/batchpaint_dual.frag.qsb"
 +)
 +
++# The batched paint engine's baked shaders come from debian/painting-shaders (the source package
++# carries them there: a quilt patch cannot hold them); the resource keeps the names the engine asks for.
 +set(batchpaint_shader_files)
 +foreach(batchpaint_shader IN ITEMS batchpaint.vert.qsb batchpaint.frag.qsb batchpaint_dual.frag.qsb)
 +    set(batchpaint_shader_file "${QtBase_SOURCE_DIR}/debian/painting-shaders/${batchpaint_shader}")
