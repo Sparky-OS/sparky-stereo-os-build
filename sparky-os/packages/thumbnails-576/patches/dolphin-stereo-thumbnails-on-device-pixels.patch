@@ -1,0 +1,331 @@
+Description: Stereo thumbnails at a scale that is not whole: each eye on the window's own pixels
+ At 125 % (and every scale that is not whole) the icon view's stereo thumbnails showed a strip of each picture and the
+ desktop behind the window through the rest of the cell. The cause was in the stereo layer (stereo-layer 1.18.1 fixes
+ it for this version of Dolphin too); this patch makes Dolphin exact to the device pixel on top of it: the view, the
+ information panel and the tooltip draw each eye on the layer's canvas, which is the window's own device pixels
+ (Stereo::WidgetLayer::eyeCanvas(), eyeOffset(), setEyes()), the pictures kept in the view's eyes are read from the
+ window's own pass, and a picture's hole is the pixels its pixmap is drawn on (at 125 % the pixmap has a whole number
+ of device pixels, which is not its size in the window's pixels times the scale).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor, Sparky Stereo OS (ORDER 576)
+Forwarded: no
+Last-Update: 2026-11-14
+---
+diff --git a/src/kitemviews/kstandarditemlistwidget.cpp b/src/kitemviews/kstandarditemlistwidget.cpp
+index e4bc405..ac0af76 100644
+--- a/src/kitemviews/kstandarditemlistwidget.cpp
++++ b/src/kitemviews/kstandarditemlistwidget.cpp
+@@ -342,7 +342,14 @@ bool KStandardItemListWidget::hasStereoPicture() const
+ 
+ QRectF KStandardItemListWidget::stereoPictureRect() const
+ {
+-    return hasStereoPicture() ? QRectF(m_pixmapPos, QSizeF(m_scaledPixmapSize)) : QRectF();
++    if (!hasStereoPicture()) {
++        return QRectF();
++    }
++    // The pixels drawPixmap() covers: at a scale that is not whole the pixmap is drawn with a whole number of device
++    // pixels, which is not m_scaledPixmapSize times the scale but that product rounded
++    const qreal dpr = KItemViewsUtils::devicePixelRatio(this);
++    const QSize pixels = m_scaledPixmapSize != m_pixmap.size() / m_pixmap.devicePixelRatio() ? m_scaledPixmapSize * dpr : m_pixmap.size();
++    return QRectF(m_pixmapPos, QSizeF(pixels) / dpr);
+ }
+ 
+ void KStandardItemListWidget::paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget)
+@@ -373,7 +380,7 @@ void KStandardItemListWidget::paint(QPainter *painter, const QStyleOptionGraphic
+     if (stereoPass == KItemListView::StereoPass::Window) {
+         painter->save();
+         painter->setCompositionMode(QPainter::CompositionMode_Source);
+-        painter->fillRect(QRectF(m_pixmapPos, QSizeF(m_scaledPixmapSize)), Qt::transparent);
++        painter->fillRect(stereoPictureRect(), Qt::transparent);
+         painter->restore();
+     } else if (isHovered() && !pixmap.isNull()) {
+         if (hoverOpacity() < 1.0) {
+diff --git a/src/kitemviews/private/kitemliststereosurface.cpp b/src/kitemviews/private/kitemliststereosurface.cpp
+index 5b0a20b..18648d0 100644
+--- a/src/kitemviews/private/kitemliststereosurface.cpp
++++ b/src/kitemviews/private/kitemliststereosurface.cpp
+@@ -15,6 +15,7 @@
+ #include <QGraphicsScene>
+ #include <QGraphicsView>
+ #include <QPainter>
++#include <QtMath>
+ #include <QWindow>
+ 
+ KItemListStereoSurface::KItemListStereoSurface(QGraphicsView *graphicsView, KItemListController *controller)
+@@ -33,6 +34,8 @@ KItemListStereoSurface::KItemListStereoSurface(QGraphicsView *graphicsView, KIte
+     m_layer->setKeepTransparency(true);
+     viewport->setAutoFillBackground(autoFillBackground);
+     connect(m_layer, &Stereo::WidgetLayer::activeChanged, this, &KItemListStereoSurface::updateStereoPass);
++    // The eyes are drawn for the viewport's place, size and scale: when one changes the layer is flat until new ones come
++    connect(m_layer, &Stereo::WidgetLayer::eyesWanted, this, &KItemListStereoSurface::scheduleUpdate);
+ 
+     m_updateTimer.setSingleShot(true);
+     m_updateTimer.setInterval(10);
+@@ -116,15 +119,23 @@ void KItemListStereoSurface::update()
+         return;
+     }
+ 
+-    const qreal devicePixelRatio = viewport->devicePixelRatioF();
+-    const QSize pixels = (QSizeF(viewport->size()) * devicePixelRatio).toSize();
+-    Stereo::Picture picture;
+-    picture.layout = Stereo::Picture::Layout::SideBySide;
+-    picture.left = render(KItemListView::StereoPass::LeftEye, pixels, devicePixelRatio);
+-    picture.right = render(KItemListView::StereoPass::RightEye, pixels, devicePixelRatio);
+-    picture.original = picture.left;
++    // Each eye is drawn on the window's own device pixels (the layer's canvas), and what the window leaves clear for
++    // the pictures is read from the window's own pass: at any scale, whole or not, each picture lies under its hole
++    // to the pixel.
++    const QImage holes = render(KItemListView::StereoPass::Window);
++    QImage left = render(KItemListView::StereoPass::LeftEye);
++    QImage right = render(KItemListView::StereoPass::RightEye);
++    if (holes.isNull() || left.isNull() || right.isNull()) {
++        if (m_hasPicture) {
++            m_layer->setPicture({});
++            m_hasPicture = false;
++        }
++        updateStereoPass();
++        return;
++    }
++    keepPictures(holes, &left, &right);
+     updateStereoPass();
+-    m_layer->setPicture(picture);
++    m_layer->setEyes(left, right);
+     m_hasPicture = true;
+ }
+ 
+@@ -143,17 +154,23 @@ void KItemListStereoSurface::updateStereoPass()
+     }
+ }
+ 
+-QImage KItemListStereoSurface::render(KItemListView::StereoPass pass, const QSize &pixels, qreal devicePixelRatio)
++QImage KItemListStereoSurface::render(KItemListView::StereoPass pass)
+ {
+     QWidget *viewport = m_graphicsView->viewport();
+-    QImage image(pixels, QImage::Format_ARGB32_Premultiplied);
+-    image.setDevicePixelRatio(devicePixelRatio);
+-    // The viewport as the window draws it: its own background over the window's (rendered as
+-    // the root, the viewport gets the window background under its own), or over nothing where
+-    // the view goes without the window background
++    // From the corner of the window to the far corner of the viewport, in the window's device pixels: the viewport
++    // is drawn where the window draws it, so every edge falls on the same pixel as in the window
++    QImage image = m_layer->eyeCanvas();
++    if (image.isNull()) {
++        return image;
++    }
+     QWidget::RenderFlags flags = QWidget::DrawChildren;
+-    image.fill(Qt::transparent);
+-    if (m_windowBackgroundBehind) {
++    if (pass == KItemListView::StereoPass::Window) {
++        // The window's own pass over an opaque ground: the only clear pixels left are the holes it cuts
++        image.fill(Qt::black);
++    } else if (m_windowBackgroundBehind) {
++        // The viewport as the window draws it: its own background over the window's (rendered as the root, the
++        // viewport gets the window background under its own), or over nothing where the view goes without the
++        // window background
+         if (viewport->autoFillBackground()) {
+             flags |= QWidget::DrawWindowBackground;
+         } else {
+@@ -164,29 +181,67 @@ QImage KItemListStereoSurface::render(KItemListView::StereoPass pass, const QSiz
+     KItemListView *view = m_controller->view();
+     const auto previous = view->stereoPass();
+     view->setStereoPass(pass);
+-    viewport->render(&image, QPoint(), QRegion(), flags);
++    viewport->render(&image, m_layer->eyeOffset(), QRegion(), flags);
+     view->setStereoPass(previous);
++    return image;
++}
+ 
+-    // Only the stereo pictures show through the window: elsewhere the surface stays
+-    // clear, so that where the window itself is clear (its rounded corners) whatever
+-    // is behind it shows, as without stereo.
+-    // A pixel more around each picture covers its edges where the window is opaque; where
+-    // the view goes without the window background, the window's own pixels there would be
+-    // drawn over the surface's, so the surface keeps the pictures alone.
+-    const int margin = m_windowBackgroundBehind ? 1 : 0;
++void KItemListStereoSurface::keepPictures(const QImage &holes, QImage *left, QImage *right) const
++{
++    // Only the stereo pictures show through the window: elsewhere the surface stays clear, so that where the window
++    // itself is clear (its rounded corners) whatever is behind it shows, as without stereo.
++    // The holes are the pixels the window's pass left clear, row by row; rows with the same holes make one band.
++    QList<QRect> rects;
++    QList<QPair<int, int>> last;
++    int lastTop = 0;
++    const auto flush = [&rects, &last, &lastTop](int bottom) {
++        for (const auto &run : std::as_const(last)) {
++            rects.append(QRect(run.first, lastTop, run.second - run.first, bottom - lastTop));
++        }
++    };
++    for (int y = 0; y < holes.height(); ++y) {
++        const QRgb *line = reinterpret_cast<const QRgb *>(holes.constScanLine(y));
++        QList<QPair<int, int>> runs;
++        for (int x = 0; x < holes.width(); ++x) {
++            if (qAlpha(line[x]) == 0) {
++                const int start = x;
++                while (x < holes.width() && qAlpha(line[x]) == 0) {
++                    ++x;
++                }
++                runs.append({start, x});
++            }
++        }
++        if (runs != last) {
++            flush(y);
++            last = runs;
++            lastTop = y;
++        }
++    }
++    flush(holes.height());
+     QRegion pictures;
+-    const auto rects = view->stereoPictureRects();
+-    for (const QRectF &rect : rects) {
+-        // The pixels the window clears for the picture: its edges rounded, as QPainter fills a rectangle
+-        const QRectF mapped = m_graphicsView->viewportTransform().mapRect(rect);
+-        const QRect pixels(QPoint(qRound(mapped.left()), qRound(mapped.top())), QPoint(qRound(mapped.right()) - 1, qRound(mapped.bottom()) - 1));
+-        pictures += pixels.adjusted(-margin, -margin, margin, margin);
++    pictures.setRects(rects.constData(), rects.size());
++    // A pixel of the window more around each picture covers its edges where the window is opaque; where the view
++    // goes without the window background, the window's own pixels there would be drawn over the surface's, so the
++    // surface keeps the pictures alone.
++    if (m_windowBackgroundBehind) {
++        const int margin = qCeil(holes.devicePixelRatio());
++        QRegion grown;
++        for (const QRect &rect : pictures) {
++            grown += rect.adjusted(-margin, -margin, margin, margin);
++        }
++        pictures = grown;
++    }
++    for (QImage *eye : {left, right}) {
++        // in device pixels
++        const qreal ratio = eye->devicePixelRatio();
++        eye->setDevicePixelRatio(1);
++        QPainter painter(eye);
++        painter.setClipRegion(QRegion(eye->rect()).subtracted(pictures));
++        painter.setCompositionMode(QPainter::CompositionMode_Clear);
++        painter.fillRect(eye->rect(), Qt::transparent);
++        painter.end();
++        eye->setDevicePixelRatio(ratio);
+     }
+-    QPainter painter(&image);
+-    painter.setClipRegion(QRegion(viewport->rect()).subtracted(pictures));
+-    painter.setCompositionMode(QPainter::CompositionMode_Clear);
+-    painter.fillRect(viewport->rect(), Qt::transparent);
+-    return image;
+ }
+ 
+ #include "moc_kitemliststereosurface.cpp"
+diff --git a/src/kitemviews/private/kitemliststereosurface.h b/src/kitemviews/private/kitemliststereosurface.h
+index d11d463..a030afd 100644
+--- a/src/kitemviews/private/kitemliststereosurface.h
++++ b/src/kitemviews/private/kitemliststereosurface.h
+@@ -56,7 +56,8 @@ private:
+     void scheduleUpdate();
+     void update();
+     void updateStereoPass();
+-    QImage render(KItemListView::StereoPass pass, const QSize &pixels, qreal devicePixelRatio);
++    QImage render(KItemListView::StereoPass pass);
++    void keepPictures(const QImage &holes, QImage *left, QImage *right) const;
+ 
+     QPointer<QGraphicsView> m_graphicsView;
+     // The container deletes its controller before its viewport, and so before this
+diff --git a/src/panels/information/pixmapviewer.cpp b/src/panels/information/pixmapviewer.cpp
+index 6a92301..b739ea6 100644
+--- a/src/panels/information/pixmapviewer.cpp
++++ b/src/panels/information/pixmapviewer.cpp
+@@ -82,6 +82,7 @@ void PixmapViewer::updateStereoPixmap()
+         m_screenMode = std::make_unique<Stereo::ScreenMode>();
+         connect(m_screenMode.get(), &Stereo::ScreenMode::modeChanged, this, &PixmapViewer::updateStereoPixmap);
+         connect(m_stereoLayer, &Stereo::WidgetLayer::activeChanged, this, qOverload<>(&PixmapViewer::update));
++        connect(m_stereoLayer, &Stereo::WidgetLayer::eyesWanted, this, &PixmapViewer::updateStereoPixmap);
+     }
+ 
+     // The window's screen decides: only a screen that shows two eyes shows the views in 3D
+@@ -97,23 +98,28 @@ void PixmapViewer::updateStereoPixmap()
+         m_screenMode->setScreen(window ? window->screen() : nullptr);
+     }
+     const Stereo::OutputMode mode = m_screenMode->mode();
+-    Stereo::Picture picture;
+     if (!m_rightPixmap.isNull() && GeneralSettings::stereoPreviews() && (mode == Stereo::OutputMode::Stereo || mode == Stereo::OutputMode::Anaglyph)) {
+-        // Each eye sees the viewer as it is drawn flat, with that eye's view in place of the picture
++        // Each eye sees the viewer as it is drawn flat, with that eye's view in place of the picture, on the window's
++        // own device pixels (the layer's canvas): no resize at any scale
+         const auto render = [this](const QPixmap &view) {
+-            QImage image(size() * devicePixelRatioF(), QImage::Format_ARGB32_Premultiplied);
+-            image.setDevicePixelRatio(devicePixelRatioF());
+-            image.fill(palette().color(QPalette::Window));
++            QImage image = m_stereoLayer->eyeCanvas();
++            if (image.isNull()) {
++                return image;
++            }
+             QPainter painter(&image);
++            painter.translate(m_stereoLayer->eyeOffset());
++            painter.fillRect(rect(), palette().color(QPalette::Window));
+             style()->drawItemPixmap(&painter, rect(), Qt::AlignCenter, view);
+             return image;
+         };
+-        picture.layout = Stereo::Picture::Layout::SideBySide;
+-        picture.left = render(m_pixmap);
+-        picture.right = render(m_rightPixmap);
+-        picture.original = picture.left;
++        const QImage left = render(m_pixmap);
++        const QImage right = render(m_rightPixmap);
++        if (!left.isNull() && !right.isNull()) {
++            m_stereoLayer->setEyes(left, right);
++            return;
++        }
+     }
+-    m_stereoLayer->setPicture(picture);
++    m_stereoLayer->setPicture({});
+ #endif
+ }
+ 
+diff --git a/src/views/tooltips/dolphinfilemetadatawidget.cpp b/src/views/tooltips/dolphinfilemetadatawidget.cpp
+index 25dfc47..d99407f 100644
+--- a/src/views/tooltips/dolphinfilemetadatawidget.cpp
++++ b/src/views/tooltips/dolphinfilemetadatawidget.cpp
+@@ -105,31 +105,36 @@ void DolphinFileMetaDataWidget::updateStereoLayer()
+         // Below the preview, in a window prepared for a stereo layer; the label shows the left view
+         m_stereoLayer = new Stereo::WidgetLayer(m_preview, this);
+         m_stereoLayer->setPaintArea(false);
++        connect(m_stereoLayer, &Stereo::WidgetLayer::eyesWanted, this, &DolphinFileMetaDataWidget::updateStereoLayer);
+         m_preview->installEventFilter(this);
+     }
+     if (m_stereoLayer) {
+-        Stereo::Picture picture;
+         if (stereo && m_preview->isVisible()) {
+             // Each eye sees the tooltip as it is drawn flat, with that eye's view in place of the preview
+-            picture.layout = Stereo::Picture::Layout::SideBySide;
+-            picture.left = renderPreview(m_preview->pixmap());
+-            picture.right = renderPreview(m_rightPreview);
+-            picture.original = picture.left;
++            const QImage left = renderPreview(m_preview->pixmap());
++            const QImage right = renderPreview(m_rightPreview);
++            if (!left.isNull() && !right.isNull()) {
++                m_stereoLayer->setEyes(left, right);
++                return;
++            }
+         }
+-        m_stereoLayer->setPicture(picture);
++        m_stereoLayer->setPicture({});
+     }
+ #endif
+ }
+ 
+ QImage DolphinFileMetaDataWidget::renderPreview(const QPixmap &view)
+ {
++    // On the window's own device pixels (the layer's canvas), the preview drawn where the window draws it: no resize
++    // at any scale
+     QWidget *window = m_preview->window();
+-    const QRect area(m_preview->mapTo(window, QPoint()), m_preview->size());
+-    QImage image(area.size() * m_preview->devicePixelRatioF(), QImage::Format_ARGB32_Premultiplied);
+-    image.setDevicePixelRatio(m_preview->devicePixelRatioF());
+-    image.fill(Qt::transparent);
++    const QRect area(m_stereoLayer->eyeOffset(), m_preview->size());
++    QImage image = m_stereoLayer->eyeCanvas();
++    if (image.isNull()) {
++        return image;
++    }
+     m_renderedView = view;
+-    window->render(&image, QPoint(), QRegion(area), QWidget::DrawChildren);
++    window->render(&image, area.topLeft(), QRegion(area), QWidget::DrawChildren);
+     m_renderedView = QPixmap();
+     return image;
+ }
