@@ -78,7 +78,7 @@ def main():
         args = ['--preserve-plan', str(plan)] if plan.exists() else []
         run('python3', '-m', 'lean.debian_prepare', str(tree), '2:24.1.15-1+stereo3d1+lc1',
             '--toolkit', str(TOOLKIT), *args, cwd=TOOLKIT)
-        run('python3', str(TOOLKIT / 'repo/provenance-files.py'), str(tree), 'debian/patches/*.patch')
+        run('python3', str(TOOLKIT / 'repo/provenance-files.py'), str(tree), '*.patch')
         shutil.copy2(upstream, work / 'xwayland_24.1.15.orig.tar.xz')
         run('dpkg-source', '--before-build', str(tree))
         reproducible.normalize_tree(tree, stamp)
