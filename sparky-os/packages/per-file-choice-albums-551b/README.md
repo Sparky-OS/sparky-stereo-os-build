@@ -15,8 +15,8 @@ Design followed (Daniel's words, as recorded):
 ## What changed in each
 
 - **stereo-layer 1.19.0**: the QML form of the per-file menu, in the layer itself, so any QML program can use it: the types `FileChoice` and `FileChoiceMenu` of `org.sparky.stereo`. The widgets' `Stereo::FileChoiceMenu` and the QML type are two faces of one private list (the entries, their words, the writes to the store), so both offer every packing in the same words, from the same catalogues. `StereoPicture.refresh()` decodes again on `changed()`; a program with a `FileChoice` also keeps a file's choice with it on a rename or move.
-- **koko**: the image view's 3D menu shows the layer's QML menu; the page keeps which eye is shown. The page's own list (five packings), its anaglyph pair and its swap, which applied to every picture, are gone into the file's choice.
-- **kphotoalbum**: the viewer's 3D menu shows `Stereo::FileChoiceMenu`; the viewer keeps which eye is shown.
+- **koko**: the image view's 3D menu shows the layer's QML menu; the page keeps its own view for the session (Stereo, one eye, Not 3D for every picture). The page's own list (five packings), its anaglyph pair and its swap, which applied to every picture, are gone into the file's choice.
+- **kphotoalbum**: the viewer's 3D menu shows `Stereo::FileChoiceMenu`; the viewer keeps its own view for the session (Stereo, one eye, Not 3D for every photograph).
 - **digikam**, **showfoto**: the 3D menu of the album preview, the light table, the editor and the slide show shows `Stereo::FileChoiceMenu`; the program keeps its own lasting view (Stereo, one eye, Not 3D for every picture, in digikamrc). The editor decodes through the layer with the file's path. digiKam's own rename and move of files, folders and albums tell the store.
 
 None of the three kept per-file state of its own (their choices were the session's, digiKam's view is the program's), so there is nothing to carry into the store.
@@ -24,7 +24,7 @@ None of the three kept per-file state of its own (their choices were the session
 ## Files
 
 - `patches/koko-shared-per-file-choice.patch`, `patches/kphotoalbum-shared-per-file-choice.patch`, `patches/digikam-shared-per-file-choice.patch`: the code, appended to each published series.
-- `patches/koko-stereo-translations-de-es.patch`, `patches/kphotoalbum-stereo-translations-de-es.patch`: German and Spanish for the eleven sentences each 3D menu keeps (the published `stereo-translations.patch` of each has the other seven languages); last in the series. The per-file entries are the layer's and come from its catalogues, so these programs add no sentence.
+- `patches/koko-stereo-translations-de-es.patch`, `patches/kphotoalbum-stereo-translations-de-es.patch`: German and Spanish for the twelve sentences each 3D menu keeps (the published `stereo-translations.patch` of each has the other seven languages); last in the series. The per-file entries are the layer's and come from its catalogues, so these programs add no sentence.
 - `changelog/*.items`: the changelog items, one paragraph per item.
 - `retired-stereo-imports/PACKAGE`: the stereo functions a new version stops calling on purpose, each with its reason, installed as `debian/sparky-lean-retired-stereo-imports` (`lean/archive.md`).
 - `next-source.sh PACKAGE PUBLISHED.dsc OUT`: the next +lc1 source (`repo/lc-successor.py --in-place --overlay`): the published history stays a byte identical suffix of the new changelog, and nothing else of debian/ changes but the patches, the series and the layer's version in Build-Depends. The published rules of all three already pass `-DCMAKE_REQUIRE_FIND_PACKAGE_StereoLayer=ON`; the script stops if they do not.

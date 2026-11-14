@@ -34,7 +34,7 @@ index 11a8e83..ded0ce1 100644
      target_link_libraries(koko_static PUBLIC Stereo::Layer Qt::Concurrent)
  endif()
 diff --git a/src/qml/mediaview/MediaViewPage.qml b/src/qml/mediaview/MediaViewPage.qml
-index f08f60f..f88c8aa 100644
+index f08f60f..00f8eb5 100644
 --- a/src/qml/mediaview/MediaViewPage.qml
 +++ b/src/qml/mediaview/MediaViewPage.qml
 @@ -34,25 +34,30 @@ Kirigami.Page {
@@ -42,7 +42,7 @@ index f08f60f..f88c8aa 100644
      property bool modelReady: false
  
 -    // The 3D choices of this view, for every stereo picture shown in it (stereo-layer's picture options)
-+    // This view's own 3D choice, for every stereo picture shown in it: which eye is shown. What corrects one file (its
++    // This view's own 3D choice, for every stereo picture shown in it: which view is shown. What corrects one file (its
 +    // input packing, Not 3D, the swap of its eyes) is that file's own choice, kept in the stereo layer's per-file store
 +    // and changed through the layer's menu (StereoMenu.qml); revision counts those changes, so the pictures shown are
 +    // decoded again.
@@ -52,9 +52,8 @@ index f08f60f..f88c8aa 100644
 -        property int inputLayout: 0 // 0 automatic, 1 side by side, 2 top and bottom
 -        property int inputOrder: 0 // 0 left first, 1 right first
 -        property bool swapEyes: false
--        property int view: 0 // 0 stereo, 1 left eye only, 2 right eye only, 3 not 3D
+         property int view: 0 // 0 stereo, 1 left eye only, 2 right eye only, 3 not 3D
 -        property int anaglyph: 0 // 0 none, 1 red/cyan, 2 green/magenta, 3 amber/blue
-+        property int view: 0 // 0 stereo, 1 left eye only, 2 right eye only
 +        property int revision: 0
      }
  
@@ -206,7 +205,7 @@ index f08f60f..f88c8aa 100644
          }
      ]
  
-@@ -1389,34 +1275,73 @@ Kirigami.Page {
+@@ -1389,34 +1275,74 @@ Kirigami.Page {
          }
      }
  
@@ -219,9 +218,7 @@ index f08f60f..f88c8aa 100644
  
 -        title: stereoAction.text
 +        active: Koko.StereoSupport.available
- 
--        QQC2.Menu {
--            title: stereoInputAction.text
++
 +        Component.onCompleted: setSource(Qt.resolvedUrl("StereoMenu.qml"), {
 +            source: Qt.binding(() => root.stereoSource),
 +            presenting: Qt.binding(() => root.stereoPresenting),
@@ -232,15 +229,17 @@ index f08f60f..f88c8aa 100644
 +    Connections {
 +        target: stereoMenuLoader.item
  
+-        QQC2.Menu {
+-            title: stereoInputAction.text
++        function onFailed(message) {
++            root.mainWindow.showPassiveNotification(message, "long");
++        }
+ 
 -            QQC2.MenuItem { action: stereoAutomaticAction }
 -            QQC2.MenuItem { action: stereoSideBySideLeftAction }
 -            QQC2.MenuItem { action: stereoSideBySideRightAction }
 -            QQC2.MenuItem { action: stereoTopBottomLeftAction }
 -            QQC2.MenuItem { action: stereoTopBottomRightAction }
-+        function onFailed(message) {
-+            root.mainWindow.showPassiveNotification(message, "long");
-+        }
-+
 +        function onAnaglyphRequested() {
 +            anaglyphPrompt.open();
          }
@@ -261,7 +260,8 @@ index f08f60f..f88c8aa 100644
 +        onActivated: root.openStereoMenu()
 +    }
 +
-+    // The shortcuts the 3D entries had before the per-file ones became the layer's menu; they act on the same store
++    // The shortcuts the 3D entries had before the per-file ones became the layer's menu: the swap acts on the file's
++    // choice in the store, the four views on this view as before
 +    Shortcut {
 +        sequence: "Alt+Shift+W"
 +        context: Qt.WindowShortcut
@@ -272,8 +272,8 @@ index f08f60f..f88c8aa 100644
 +    Shortcut {
 +        sequence: "Alt+Shift+N"
 +        context: Qt.WindowShortcut
-+        enabled: root.visible && root.stereoMenuAvailable && stereoMenuLoader.item !== null
-+        onActivated: stereoMenuLoader.item.toggleNotThreeD()
++        enabled: root.visible && root.stereoMenuAvailable
++        onActivated: stereoChoices.view = 3
 +    }
 +
 +    Shortcut {
@@ -298,7 +298,7 @@ index f08f60f..f88c8aa 100644
      }
  
      Kirigami.PromptDialog {
-@@ -1437,7 +1362,10 @@ Kirigami.Page {
+@@ -1437,7 +1363,10 @@ Kirigami.Page {
          standardButtons: QQC2.Dialog.Ok | QQC2.Dialog.Cancel
  
          onAccepted: {
@@ -312,10 +312,10 @@ index f08f60f..f88c8aa 100644
  
 diff --git a/src/qml/mediaview/StereoMenu.qml b/src/qml/mediaview/StereoMenu.qml
 new file mode 100644
-index 0000000..78e3226
+index 0000000..d5902b1
 --- /dev/null
 +++ b/src/qml/mediaview/StereoMenu.qml
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,118 @@
 +/*
 + * SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 + *
@@ -335,7 +335,8 @@ index 0000000..78e3226
 + * saving the correction into the file) is the stereo layer's own menu, and the
 + * choice is kept in the layer's per-file store, which the file manager, the
 + * thumbnailers and the other viewers read; the file is not written unless the
-+ * person chooses the save. Which eye is shown is this view's own choice.
++ * person chooses the save. Which view is shown (both eyes, one eye, or every
++ * picture flat) is this view's own choice, for the session, as before.
 + */
 +QQC2.Menu {
 +    id: menu
@@ -343,7 +344,7 @@ index 0000000..78e3226
 +    // The picture shown, and whether it is shown as a pair now
 +    required property url source
 +    required property bool presenting
-+    // The view's own choices: view (0 stereo, 1 left eye only, 2 right eye only) and revision
++    // The view's own choices: view (0 stereo, 1 left eye only, 2 right eye only, 3 not 3D) and revision
 +    required property QtObject choices
 +
 +    // A choice could not be kept, or a save into the file was refused
@@ -355,10 +356,6 @@ index 0000000..78e3226
 +        if (fileChoice.swapEnabled) {
 +            fileChoice.swapEyes = !fileChoice.swapEyes;
 +        }
-+    }
-+
-+    function toggleNotThreeD() {
-+        fileChoice.choose(fileChoice.chosen === "mono" ? "automatic" : "mono");
 +    }
 +
 +    function chooseAnaglyph(pair: int) {
@@ -423,33 +420,37 @@ index 0000000..78e3226
 +            checked = Qt.binding(() => menu.choices.view === 2);
 +        }
 +    }
++
++    // Every picture of this view flat, for the session; "Not 3D" for one file is in the layer's menu above
++    QQC2.MenuItem {
++        id: flatItem
++
++        text: i18nc("@action:inmenu Stereo picture view", "Not 3D")
++        checkable: true
++        checked: menu.choices.view === 3
++        onTriggered: {
++            menu.choices.view = 3;
++            checked = Qt.binding(() => menu.choices.view === 3);
++        }
++    }
 +}
 diff --git a/src/qml/mediaview/imagedelegate/StereoPresenter.qml b/src/qml/mediaview/imagedelegate/StereoPresenter.qml
-index 957941c..6f18c5e 100644
+index 957941c..69f2bec 100644
 --- a/src/qml/mediaview/imagedelegate/StereoPresenter.qml
 +++ b/src/qml/mediaview/imagedelegate/StereoPresenter.qml
-@@ -13,8 +13,10 @@ import org.sparky.stereo as Stereo
- /**
+@@ -14,7 +14,10 @@ import org.sparky.stereo as Stereo
   * A stereo picture over the zoom area of an image delegate: both views on a
   * surface of their own, at the zoom and position of the delegate's content.
-- * It shows while the picture is a pair (or one view of a pair) and the view is
+  * It shows while the picture is a pair (or one view of a pair) and the view is
 - * not Not 3D; the delegate shows its ordinary image otherwise.
-+ * It shows while the picture is a pair (or one view of a pair); the delegate
-+ * shows its ordinary image otherwise. Whether a file is a pair, in which
-+ * packing and with which eye first is the stereo layer's decision, the
-+ * person's stored choice for that file included ("Not 3D" is one).
++ * not Not 3D; the delegate shows its ordinary image otherwise. Whether a file
++ * is a pair, in which packing and with which eye first is the stereo layer's
++ * decision, the person's stored choice for that file included ("Not 3D" for
++ * one file is one).
   */
  Item {
      id: presenter
-@@ -25,16 +27,23 @@ Item {
-     // The delegate's content rectangle, in this item's coordinates
-     required property rect contentRect
- 
--    readonly property bool presenting: info.pair && choices.view !== 3
-+    readonly property bool presenting: info.pair
-     readonly property size viewSize: info.viewSize
- 
-     Koko.StereoInfo {
+@@ -32,9 +35,16 @@ Item {
          id: info
  
          source: presenter.source
@@ -469,7 +470,7 @@ index 957941c..6f18c5e 100644
      }
  
      Stereo.StereoPicture {
-@@ -53,10 +62,6 @@ Item {
+@@ -53,10 +63,6 @@ Item {
          visible: presenter.presenting
  
          source: presenter.presenting ? presenter.source : ""
