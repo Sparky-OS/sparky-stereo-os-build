@@ -1114,7 +1114,7 @@ index fdacbb7..da740ee 100644
      ),
    )
 diff --git a/src/vulkan/stereo-layer/stereo_layer.c b/src/vulkan/stereo-layer/stereo_layer.c
-index ffd5544..a08154b 100644
+index ffd5544..8987091 100644
 --- a/src/vulkan/stereo-layer/stereo_layer.c
 +++ b/src/vulkan/stereo-layer/stereo_layer.c
 @@ -11,7 +11,8 @@
@@ -1332,7 +1332,17 @@ index ffd5544..a08154b 100644
           .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 2 },
        },
     };
-@@ -990,7 +1136,7 @@ record_pack(struct swapchain_data *swapchain, uint32_t index)
+@@ -984,13 +1130,16 @@ record_pack(struct swapchain_data *swapchain, uint32_t index)
+          .extent = { swapchain->width, swapchain->height, 1 },
+       },
+       {
+-         .srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 1 },
++         /* While flat, even a copied or differently sized downstream image
++          * must contain no pixels from the right view.
++          */
++         .srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, swapchain->surface->pair.flat ? 0 : 1, 1 },
+          .dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+          .dstOffset = { (int32_t)swapchain->width, 0, 0 },
           .extent = { swapchain->width, swapchain->height, 1 },
        },
     };
@@ -1341,7 +1351,7 @@ index ffd5544..a08154b 100644
                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, downstream_image,
                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 2, regions);
     barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-@@ -1033,7 +1179,11 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
+@@ -1033,7 +1182,11 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
        struct swapchain_data *swapchain = find_swapchain(data, present_info->pSwapchains[i]);
        if (!swapchain)
           continue;
@@ -1354,7 +1364,7 @@ index ffd5544..a08154b 100644
        commands[count] = swapchain->command;
        ready[count++] = swapchain->ready;
     }
-@@ -1058,6 +1208,57 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
+@@ -1058,6 +1211,57 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
        downstream.pWaitSemaphores = ready;
        result = data->QueuePresent(queue, &downstream);
     }
