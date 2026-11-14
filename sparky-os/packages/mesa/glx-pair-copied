@@ -1,0 +1,33 @@
+#!/bin/sh
+# The package's test of patch 0038: a quad buffer window on a virtual X server that announces stereo content. Xvfb copies
+# every present, so the window's two eyes never reach a screen whole: Mesa must take the declaration back, leave the left
+# view alone in the window (one correct flat picture) and say so. The engine that tells the person is not needed here: the
+# message on standard error is read. Exit 77 with NOT RUN where it cannot run: that is not a pass.
+set -eu
+cd "$(dirname "$0")"
+W=${AUTOPKGTEST_TMP:-$(mktemp -d)}
+for tool in Xvfb cc; do
+	command -v "$tool" >/dev/null || { echo "NOT RUN: $tool is missing; this is not a pass"; exit 77; }
+done
+cc -O1 -o "$W/glx-covered" glx-covered.c -lGL -lX11
+Xvfb :96 -screen 0 1024x768x24 -nolisten tcp > "$W/xvfb.log" 2>&1 &
+X=$!
+trap 'kill $X 2>/dev/null' EXIT
+sleep 2
+export DISPLAY=:96
+if ! out=$(ANNOUNCE_STEREO=5 COVER_AT=-1 FRAMES=8 REPORT=1,8 READBACK=1 "$W/glx-covered" 2> "$W/err"); then
+	echo "$out"
+	cat "$W/err"
+	case "$out$(cat "$W/err")" in
+	*"no stereo framebuffer configuration"*|*"no display"*) echo "NOT RUN: no quad buffer configuration on this display; this is not a pass"; exit 77 ;;
+	esac
+	echo "FAIL: the client did not run"
+	exit 1
+fi
+echo "$out"
+status=0
+case "$out" in *"GL_STEREO 1"*) ;; *) echo "NOT RUN: the window is not stereo; this is not a pass"; exit 77 ;; esac
+case "$out" in *"swap 1: declared 0"*"end: declared 0"*) ;; *) echo "FAIL: the declaration was not taken back after two copied presents"; status=1 ;; esac
+case "$out" in *"left=ff0000 middle=00ff00 right=ff0000"*) ;; *) echo "FAIL: the window does not hold the left view alone"; status=1 ;; esac
+grep -q "glx-covered is shown flat: " "$W/err" || { echo "FAIL: nothing said that the program is shown flat"; status=1; }
+exit $status

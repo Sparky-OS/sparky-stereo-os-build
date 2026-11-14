@@ -1,0 +1,28 @@
+mesa (26.1.6-1+stereo3d22) unstable; urgency=medium
+
+  * A stereo X11 window whose two eyes the X server copies instead of handing
+    them to the compositor whole is no longer shown as a split picture
+    (0038): GLX reads how each present completed, on DRI3 and on the software
+    path; after two copied presents in a row of the window's own size it
+    takes the declaration back and presents the left view alone at the
+    window's size, one correct flat picture, and the person is told through
+    sparky-stereo-problems (libglx-mesa0, stereo-pair:PROGRAM) in the ten
+    languages. A program that draws one frame learns it in that swap. Three
+    flips in a row of the left view bring the declaration back, and a pair
+    that is flipped ends the problem.
+  * MESA_LOADER_DRIVER_OVERRIDE=zink on an X server without DRI3 (Xwayland
+    without glamor, where the session of a machine on NVIDIA's driver sets
+    zink for every program) no longer leaves every OpenGL program without a
+    configuration: the screen takes the software renderer, as with any other
+    driver on such a server, and the person is told (zink-without-dri3).
+  * libglx-mesa0 depends on sparky-stereo-problems on amd64 and carries the
+    two problems' messages as journal catalogs; a 32-bit program runs the
+    engine's command. It breaks xwayland before 2:24.1.15-1+stereo3d2, whose
+    copy of a pair kept the left eye only.
+  * glx-pair-copied runs with the package's own tests (debian/tests): a quad
+    buffer window on a virtual X server, which copies every present; the
+    declaration must go, the window must hold the left view, and the message
+    must be said. Where no quad buffer configuration exists it is skipped
+    with a message, never passed.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 14 Nov 2026 12:30:00 +0000
