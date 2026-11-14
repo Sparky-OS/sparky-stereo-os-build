@@ -3,23 +3,27 @@
 # Copyright 2026 under the GNU GPL3 License
 # Sparky Stereo OS, ORDER 551: builds the per-file 3D choice as packages, in the order their dependencies need, each through
 # Lean Code with the link and start gate (../depth-source/build.sh), and collects them in a flat repository for the next one:
-#   1. stereo-layer 1.18.0-1+lc1 from the fork clone (SPARKY_BUILD_PROFILES=nocheck: its tests need the KImageFormats plugin
-#      of step 2, which needs this step's policy library; the package build runs no tests either way)
-#   2. kf6-kimageformats 6.30.0-1+stereo3d7+lc1 (../jps-descriptor, ORDER 526) against libstereo-policy-dev 1.18.0
+#   0. a bootstrap of libstereo-policy1 and libstereo-policy-dev: a plain build of the layer's source, used for step 1 only.
+#      libstereo-layer1 depends on the KImageFormats plugin of step 1 (>= +stereo3d6), and that plugin is built against the
+#      layer's policy library, so neither passes the link gate before the other exists; the policy library depends on
+#      neither. The bootstrap debs leave the round's repository when step 1 is done and are never published.
+#   1. kf6-kimageformats 6.30.0-1+stereo3d7+lc1 (../jps-descriptor, ORDER 526) against the bootstrap libstereo-policy-dev
+#   2. stereo-layer 1.18.0-1+lc1 from the fork clone, with the plugin of step 1 in the round's repository
+#      (SPARKY_BUILD_PROFILES=nocheck: the package build runs no tests, and its test dependencies stay out of the build)
 #   3. kio-extras 4:26.04.0-1+stereo3d5+lc1 as ORDER 504 staged it (KIO_EXTRAS_DIR: its .deb files, copied, not rebuilt)
 #   4. dolphin 4:26.08.0-1+stereo3d7+lc1, ffmpegthumbs 4:26.04.0-1+stereo3d5+lc1, gwenview 4:26.04.0-1+stereo3d10+lc1
 #      (next-source.sh), each built against libstereo-layer-dev 1.18.0
 # Usage: round.sh WORK STEREO_LAYER_CLONE REV PUBLISHED_TREE ARCHIVE_DIR KIO_EXTRAS_DIR [STEP...]
 #   WORK: the round's folder; a step that left its .done file is not run again
 #   PUBLISHED_TREE: the signed published tree (read only); ARCHIVE_DIR: the link gate's folder (sources.json, keyrings)
-#   STEP: layer kimageformats kio-extras dolphin ffmpegthumbs gwenview (all, in that order, when none is named)
+#   STEP: bootstrap kimageformats layer kio-extras dolphin ffmpegthumbs gwenview (all, in that order, when none is named)
 # Environment: BUILD_NAME_PREFIX (container names, default pf-551-build), THREADS (default 4)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 DEPTH=$HERE/../depth-source
 W=$(mkdir -p "$1" && cd "$1" && pwd) FORK=$(cd "$2" && pwd) REV=$3 TREE=$(cd "$4" && pwd) ARCHIVE=$(cd "$5" && pwd) KIO=$(cd "$6" && pwd)
 shift 6
-STEPS=${*:-layer kimageformats kio-extras dolphin ffmpegthumbs gwenview}
+STEPS=${*:-bootstrap kimageformats layer kio-extras dolphin ffmpegthumbs gwenview}
 export BUILD_NAME_PREFIX=${BUILD_NAME_PREFIX:-pf-551-build} THREADS=${THREADS:-4}
 IMAGE=sparky-lc-migration:20261020
 mkdir -p "$W/new"
@@ -74,7 +78,36 @@ for step in $STEPS; do
 	[ ! -f "$W/$step.done" ] || { echo "== $step: done before"; continue; }
 	echo "== $step"
 	case $step in
+	bootstrap)
+		rm -rf "$W/bootstrap"; mkdir -p "$W/bootstrap"
+		docker run --rm --name "${BUILD_NAME_PREFIX}-bootstrap-policy" --ulimit core=0 --cpus "$THREADS" --platform linux/amd64 -e REV="$REV" -e THREADS="$THREADS" \
+			-v "$FORK":/fork:ro -v "$TREE":/repo:ro -v "$W/bootstrap":/out \
+			-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
+			-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
+			--entrypoint bash "$IMAGE" -c 'sh /run/https-only-apt.sh && bash -s' > "$W/bootstrap.log" 2>&1 <<'INNER' || { tail -30 "$W/bootstrap.log"; exit 1; }
+set -euo pipefail
+ulimit -c 0
+export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS="nocheck parallel=$THREADS" DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
+printf 'deb [trusted=yes] file:/repo mashtabba main\n' > /etc/apt/sources.list.d/edition.list
+printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list
+printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
+git config --global safe.directory '*'
+mkdir -p /b/source && git -C /fork archive "$REV" | tar -x -C /b/source
+apt-get -y update >/dev/null 2>&1
+apt-get -y --no-install-recommends build-dep -P nocheck /b/source >/out/build-dep.log 2>&1
+cd /b/source && dpkg-buildpackage -b -us -uc -Pnocheck -j"$THREADS" >/out/build.log 2>&1
+cp /b/libstereo-policy1_*_amd64.deb /b/libstereo-policy-dev_*_amd64.deb /out/
+chown -R 1000:1000 /out
+ls /out/*.deb
+INNER
+		tail -2 "$W/bootstrap.log"
+		cp --no-preserve=links "$W"/bootstrap/*.deb "$W/new/"
+		index
+		;;
 	layer)
+		# the bootstrap policy library has done its work: the round's repository holds only what is built through the gate
+		for deb in "$W"/bootstrap/*.deb; do [ ! -e "$deb" ] || rm -f "$W/new/$(basename "$deb")"; done
+		index
 		rm -rf "$W/stereo-layer-src"; mkdir -p "$W/stereo-layer-src"
 		SOURCE_NAME=${BUILD_NAME_PREFIX}-source-stereo-layer "$DEPTH/stereo-layer-source.sh" "$FORK" "$REV" "$W/stereo-layer-src" | tail -3
 		build stereo-layer "$W/stereo-layer-src" 'stereo-layer' nocheck
