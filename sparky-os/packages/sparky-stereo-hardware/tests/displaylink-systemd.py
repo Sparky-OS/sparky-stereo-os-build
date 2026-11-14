@@ -16,7 +16,8 @@ import subprocess
 import sys
 import time
 
-vendor, recipe, out = map(Path, sys.argv[1:])
+vendor, recipe, out = map(Path, sys.argv[1:4])
+installed = sys.argv[4:] == ['--installed']
 assert Path('/run/systemd/system').is_dir() and os.environ.get('container') == 'docker'
 unit = 'displaylink-driver.service'
 
@@ -55,6 +56,11 @@ def records():
 
 vendor_unit = vendor / 'usr/lib/systemd/system' / unit
 installed_unit = Path('/usr/lib/systemd/system') / unit
+dest = Path('/usr/lib/systemd/system') / (unit + '.d')
+helper = Path('/usr/lib/sparky-stereo-hardware/displaylink-status')
+if installed:
+    installed_dropin = (dest / '40-sparky-stereo-hardware.conf').read_bytes()
+    installed_helper = helper.read_bytes()
 for name in ['40-sparky-stereo-hardware.conf', '50-sparky-stereo-problems.conf']:
     (Path('/usr/lib/systemd/system') / (unit + '.d') / name).unlink(missing_ok=True)
 Path('/run/uv569-module-ready').unlink(missing_ok=True)
@@ -81,18 +87,21 @@ try:
     call(['systemctl', 'stop', unit])
     (out / 'displaylink-red-state.json').write_text(json.dumps(red, indent=2))
 
-    dest = Path('/usr/lib/systemd/system') / (unit + '.d')
     dest.mkdir(exist_ok=True)
-    shutil.copyfile(recipe / 'share/systemd/displaylink-driver.service.d/40-sparky-stereo-hardware.conf',
-                    dest / '40-sparky-stereo-hardware.conf')
+    if installed:
+        (dest / '40-sparky-stereo-hardware.conf').write_bytes(installed_dropin)
+        assert helper.read_bytes() == installed_helper
+    else:
+        shutil.copyfile(recipe / 'share/systemd/displaylink-driver.service.d/40-sparky-stereo-hardware.conf',
+                        dest / '40-sparky-stereo-hardware.conf')
     (dest / '50-sparky-stereo-problems.conf').symlink_to('/dev/null')
-    helper = Path('/usr/lib/sparky-stereo-hardware/displaylink-status')
     helper.parent.mkdir(exist_ok=True)
-    shutil.copyfile(recipe / 'bin/sparky-stereo-displaylink-status', helper)
-    helper.chmod(0o755)
-    call(['sparky-stereo-problems', 'catalog', 'sparky-stereo-hardware',
-          str(recipe / 'problems-lang'), '/usr/lib/systemd/catalog',
-          '--subject', 'LOCAL19=LOCAL20'])
+    if not installed:
+        shutil.copyfile(recipe / 'bin/sparky-stereo-displaylink-status', helper)
+        helper.chmod(0o755)
+        call(['sparky-stereo-problems', 'catalog', 'sparky-stereo-hardware',
+              str(recipe / 'problems-lang'), '/usr/lib/systemd/catalog',
+              '--subject', 'LOCAL19=LOCAL20'])
     call(['systemctl', 'daemon-reload'])
     before = attempts()
     call(['systemctl', 'start', unit], check=False)
