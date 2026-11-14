@@ -1,0 +1,468 @@
+Description: Preserve the 2D cover of a declared stereo child
+ Restore the saved pair once per new child surface and retain the current
+ covered area in both views. Exercise real buffer recycling in the suite.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no, edition stereo child surface path
+Last-Update: 2026-11-14
+
+diff --git a/hw/xwayland/xwayland-present.c b/hw/xwayland/xwayland-present.c
+index 4123b74..35fbbbe 100644
+--- a/hw/xwayland/xwayland-present.c
++++ b/hw/xwayland/xwayland-present.c
+@@ -814,6 +814,10 @@ xwl_present_restore_stereo(WindowPtr window)
+     struct xwl_present_window *present = xwl_present_window_priv(window);
+     ScreenPtr screen = window->drawable.pScreen;
+     PixmapPtr snapshot, old;
++    RegionRec covered;
++    BoxPtr rect;
++    GCPtr gc;
++    int i;
+ 
+     if (!present || !present->stereo_snapshot)
+         return FALSE;
+@@ -826,6 +830,37 @@ xwl_present_restore_stereo(WindowPtr window)
+         return FALSE;
+     }
+     old = screen->GetWindowPixmap(window);
++    /* The saved pair predates redirection. Keep what the children have
++     * drawn into the new window pixmap, in both views of that pair.
++     */
++    RegionNull(&covered);
++    RegionSubtract(&covered, &window->winSize, &window->clipList);
++    if (RegionNotEmpty(&covered)) {
++        gc = GetScratchGC(snapshot->drawable.depth, screen);
++        if (!gc) {
++            RegionUninit(&covered);
++            dixDestroyPixmap(snapshot, 0);
++            return FALSE;
++        }
++        ValidateGC(&snapshot->drawable, gc);
++        rect = RegionRects(&covered);
++        for (i = 0; i < RegionNumRects(&covered); i++, rect++) {
++            int x = rect->x1 - window->drawable.x;
++            int y = rect->y1 - window->drawable.y;
++
++            gc->ops->CopyArea(&old->drawable, &snapshot->drawable, gc,
++                              rect->x1 - old->screen_x,
++                              rect->y1 - old->screen_y,
++                              rect->x2 - rect->x1, rect->y2 - rect->y1, x, y);
++            gc->ops->CopyArea(&old->drawable, &snapshot->drawable, gc,
++                              rect->x1 - old->screen_x,
++                              rect->y1 - old->screen_y,
++                              rect->x2 - rect->x1, rect->y2 - rect->y1,
++                              x + window->drawable.width, y);
++        }
++        FreeScratchGC(gc);
++    }
++    RegionUninit(&covered);
+     snapshot->screen_x = old->screen_x;
+     snapshot->screen_y = old->screen_y;
+     present_set_tree_pixmap(window, old, snapshot);
+diff --git a/hw/xwayland/xwayland-window.c b/hw/xwayland/xwayland-window.c
+index 67e4ed0..2eb68a4 100644
+--- a/hw/xwayland/xwayland-window.c
++++ b/hw/xwayland/xwayland-window.c
+@@ -1512,6 +1512,7 @@ ensure_surface_for_window(WindowPtr window)
+     xwl_window->xwl_screen = xwl_screen;
+     xwl_window->toplevel = window;
+     xwl_window->surface_window = window;
++    xwl_window->restore_stereo_snapshot = window->parent != screen->root;
+     xwl_window->fractional_scale_numerator = FRACTIONAL_SCALE_DENOMINATOR;
+     xwl_window->viewport_scale_x = 1.0;
+     xwl_window->viewport_scale_y = 1.0;
+@@ -1837,8 +1838,11 @@ xwl_window_update_child_surface(ClientPtr client, void *closure)
+         if (changed && !register_damage(window))
+             return TRUE;
+ #ifdef XWL_HAS_GLAMOR
+-        if (xwl_window->xwl_screen->present && xwl_present_restore_stereo(window))
+-            changed = TRUE;
++        if (xwl_window->restore_stereo_snapshot) {
++            xwl_window->restore_stereo_snapshot = FALSE;
++            if (xwl_window->xwl_screen->present && xwl_present_restore_stereo(window))
++                changed = TRUE;
++        }
+ #endif
+         if (changed)
+             DamageDamageRegion(&window->drawable, &window->winSize);
+diff --git a/hw/xwayland/xwayland-window.h b/hw/xwayland/xwayland-window.h
+index 8513e9a..891f1cc 100644
+--- a/hw/xwayland/xwayland-window.h
++++ b/hw/xwayland/xwayland-window.h
+@@ -88,6 +88,7 @@ struct xwl_window {
+      * (xwl_present_window_holds_two_eyes()), or None.
+      */
+     XID two_eyes_window;
++    Bool restore_stereo_snapshot;
+ 
+     struct xorg_list link_damage;
+     struct xorg_list link_window;
+diff --git a/test/meson.build b/test/meson.build
+index bf957ba..8d17009 100644
+--- a/test/meson.build
++++ b/test/meson.build
+@@ -131,6 +131,18 @@ if build_xwayland
+             timeout: 120,
+             suite: 'xwayland'
+         )
++        wayland_server_dep = dependency('wayland-server')
++        stereo_compositor = executable(
++            'stereo-compositor',
++            'stereo-compositor.c',
++            dependencies: wayland_server_dep,
++        )
++        test('stereo child cover with buffer recycling',
++            find_program('scripts/xwayland-stereo-pair.sh'),
++            args: [ xwayland_server, stereo_present_pair, stereo_compositor ],
++            timeout: 120,
++            suite: 'xwayland'
++        )
+     endif
+ endif
+ 
+diff --git a/test/scripts/xwayland-stereo-pair.sh b/test/scripts/xwayland-stereo-pair.sh
+index 6d2c900..3e1eedc 100755
+--- a/test/scripts/xwayland-stereo-pair.sh
++++ b/test/scripts/xwayland-stereo-pair.sh
+@@ -11,8 +11,11 @@
+ xwayland=$1
+ client=$2
+ 
+-# Skip if weston isn't available
+-weston --version >/dev/null 2>&1 || { echo "weston is not available"; exit 77; }
++# The recycling case consumes buffers even without shell roles.
++consumer=${3:-}
++if [ -z "$consumer" ]; then
++    weston --version >/dev/null 2>&1 || { echo "weston is not available"; exit 77; }
++fi
+ 
+ dir=$(mktemp -d)
+ export XDG_RUNTIME_DIR=$dir
+@@ -26,10 +29,20 @@ cleanup() {
+ }
+ trap cleanup EXIT
+ 
+-weston --no-config --backend=headless --socket=wayland-stereo-$$ \
+-    >"$dir/weston.log" 2>&1 &
+-WESTON_PID=$!
+-export WAYLAND_DISPLAY=wayland-stereo-$$
++if [ -n "$consumer" ]; then
++    "$consumer" >"$dir/socket" 2>"$dir/weston.log" &
++    WESTON_PID=$!
++    for i in $(seq 1 50); do
++        [ -s "$dir/socket" ] && break
++        sleep 0.2
++    done
++    export WAYLAND_DISPLAY=$(cat "$dir/socket")
++else
++    weston --no-config --backend=headless --socket=wayland-stereo-$$ \
++        >"$dir/weston.log" 2>&1 &
++    WESTON_PID=$!
++    export WAYLAND_DISPLAY=wayland-stereo-$$
++fi
+ for i in $(seq 1 50); do
+     [ -S "$dir/$WAYLAND_DISPLAY" ] && break
+     sleep 0.2
+@@ -109,6 +122,29 @@ if ! X_OFF=16 Y_OFF=8 EXPECT=flip EXPECT_PIXMAP=pair FRAMES=6 SETTLE_MS=200 \
+     status=1
+ fi
+ 
++# The child needs its own cover in the initial picture and after repaint.
++# Delayed redirection also exercises the saved pair from before its surface.
++for redirect in 0 4; do
++    for colour in grey yellow; do
++        paint=()
++        [ "$colour" = yellow ] && paint=(PAINT_COVER=1)
++        late=()
++        [ "$redirect" != 0 ] && late=(REDIRECT_AT=$redirect)
++        if ! env CHILD=1 COVER=1 "${paint[@]}" "${late[@]}" EXPECT=flip \
++            EXPECT_PIXMAP=pair EXPECT_COVER=$colour FRAMES=6 SETTLE_MS=200 "$client"; then
++            echo "FAIL: covered declared child ($colour, redirect $redirect)"
++            status=1
++        fi
++    done
++done
++
++# A child remapped without another present keeps the pair it already drew.
++if ! CHILD=1 COVER=1 REMAP=1 EXPECT=flip EXPECT_PIXMAP=pair \
++    EXPECT_COVER=grey FRAMES=6 SETTLE_MS=200 "$client"; then
++    echo "FAIL: a remapped covered declared child lost its last pair"
++    status=1
++fi
++
+ # A window that stops declaring two eyes has a pixmap one window wide at
+ # once, with no further present: a compositor never has two eyes for a
+ # window that declares none
+diff --git a/test/stereo-compositor.c b/test/stereo-compositor.c
+new file mode 100644
+index 0000000..c97f10f
+--- /dev/null
++++ b/test/stereo-compositor.c
+@@ -0,0 +1,227 @@
++/* SPDX-License-Identifier: MIT */
++/* A buffer consumer for the stereo Present test. Rootless Xwayland surfaces
++ * have no shell role in the test; still release their buffers and answer
++ * frame callbacks so that the window's backing buffers are recycled.
++ */
++#include <signal.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <time.h>
++#include <wayland-server.h>
++
++struct surface {
++    struct wl_resource *buffer;
++    struct wl_list callbacks;
++};
++
++struct callback {
++    struct wl_resource *resource;
++    struct wl_list link;
++};
++
++static void
++destroy_callback(struct wl_resource *resource)
++{
++    struct callback *callback = wl_resource_get_user_data(resource);
++
++    wl_list_remove(&callback->link);
++    free(callback);
++}
++
++static void
++destroy(struct wl_client *client, struct wl_resource *resource)
++{
++    wl_resource_destroy(resource);
++}
++
++static void
++rectangle(struct wl_client *client, struct wl_resource *resource,
++          int32_t x, int32_t y, int32_t width, int32_t height)
++{
++}
++
++static void
++region(struct wl_client *client, struct wl_resource *resource,
++       struct wl_resource *value)
++{
++}
++
++static void
++integer(struct wl_client *client, struct wl_resource *resource, int32_t value)
++{
++}
++
++static void
++attach(struct wl_client *client, struct wl_resource *resource,
++       struct wl_resource *buffer, int32_t x, int32_t y)
++{
++    struct surface *surface = wl_resource_get_user_data(resource);
++
++    surface->buffer = buffer;
++}
++
++static void
++frame(struct wl_client *client, struct wl_resource *resource, uint32_t id)
++{
++    struct surface *surface = wl_resource_get_user_data(resource);
++    struct callback *callback = calloc(1, sizeof *callback);
++
++    if (!callback) {
++        wl_client_post_no_memory(client);
++        return;
++    }
++    callback->resource = wl_resource_create(client, &wl_callback_interface, 1, id);
++    if (!callback->resource) {
++        free(callback);
++        wl_client_post_no_memory(client);
++        return;
++    }
++    wl_resource_set_implementation(callback->resource, NULL, callback,
++                                    destroy_callback);
++    wl_list_insert(surface->callbacks.prev, &callback->link);
++}
++
++static void
++commit(struct wl_client *client, struct wl_resource *resource)
++{
++    struct surface *surface = wl_resource_get_user_data(resource);
++    struct callback *callback, *next;
++    struct timespec now;
++
++    clock_gettime(CLOCK_MONOTONIC, &now);
++    if (surface->buffer) {
++        wl_buffer_send_release(surface->buffer);
++        surface->buffer = NULL;
++    }
++    wl_list_for_each_safe(callback, next, &surface->callbacks, link) {
++        wl_callback_send_done(callback->resource,
++                              now.tv_sec * 1000 + now.tv_nsec / 1000000);
++        wl_resource_destroy(callback->resource);
++    }
++}
++
++static const struct wl_surface_interface surface_interface = {
++    .destroy = destroy,
++    .attach = attach,
++    .damage = rectangle,
++    .frame = frame,
++    .set_opaque_region = region,
++    .set_input_region = region,
++    .commit = commit,
++    .set_buffer_transform = integer,
++    .set_buffer_scale = integer,
++    .damage_buffer = rectangle,
++};
++
++static void
++destroy_surface(struct wl_resource *resource)
++{
++    struct surface *surface = wl_resource_get_user_data(resource);
++    struct callback *callback, *next;
++
++    wl_list_for_each_safe(callback, next, &surface->callbacks, link) {
++        wl_resource_destroy(callback->resource);
++    }
++    free(surface);
++}
++
++static void
++create_surface(struct wl_client *client, struct wl_resource *resource, uint32_t id)
++{
++    struct wl_resource *created;
++    struct surface *surface = calloc(1, sizeof *surface);
++
++    if (!surface) {
++        wl_client_post_no_memory(client);
++        return;
++    }
++    wl_list_init(&surface->callbacks);
++    created = wl_resource_create(client, &wl_surface_interface,
++                                 wl_resource_get_version(resource), id);
++    wl_resource_set_implementation(created, &surface_interface, surface,
++                                    destroy_surface);
++}
++
++static const struct wl_region_interface region_interface = {
++    .destroy = destroy,
++    .add = rectangle,
++    .subtract = rectangle,
++};
++
++static void
++create_region(struct wl_client *client, struct wl_resource *resource, uint32_t id)
++{
++    struct wl_resource *created;
++
++    created = wl_resource_create(client, &wl_region_interface, 1, id);
++    wl_resource_set_implementation(created, &region_interface, NULL, NULL);
++}
++
++static const struct wl_compositor_interface compositor_interface = {
++    .create_surface = create_surface,
++    .create_region = create_region,
++};
++
++static void
++bind_compositor(struct wl_client *client, void *data, uint32_t version, uint32_t id)
++{
++    struct wl_resource *resource;
++
++    resource = wl_resource_create(client, &wl_compositor_interface, version, id);
++    wl_resource_set_implementation(resource, &compositor_interface, NULL, NULL);
++}
++
++static const struct wl_output_interface output_interface = {
++    .release = destroy,
++};
++
++static void
++bind_output(struct wl_client *client, void *data, uint32_t version, uint32_t id)
++{
++    struct wl_resource *resource;
++
++    resource = wl_resource_create(client, &wl_output_interface, version, id);
++    wl_resource_set_implementation(resource, &output_interface, NULL, NULL);
++    wl_output_send_geometry(resource, 0, 0, 500, 300,
++                             WL_OUTPUT_SUBPIXEL_UNKNOWN, "Test", "Stereo",
++                             WL_OUTPUT_TRANSFORM_NORMAL);
++    wl_output_send_mode(resource, WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED,
++                         1920, 1080, 60000);
++    if (version >= 2) {
++        wl_output_send_scale(resource, 1);
++        wl_output_send_done(resource);
++    }
++}
++
++static int
++terminate(int signal, void *data)
++{
++    wl_display_terminate(data);
++    return 0;
++}
++
++int
++main(void)
++{
++    struct wl_display *display = wl_display_create();
++    struct wl_event_loop *loop;
++    const char *socket;
++
++    if (!display || wl_display_init_shm(display) < 0)
++        return 1;
++    wl_global_create(display, &wl_compositor_interface, 4, NULL, bind_compositor);
++    wl_global_create(display, &wl_output_interface, 3, NULL, bind_output);
++    socket = wl_display_add_socket_auto(display);
++    if (!socket)
++        return 1;
++    puts(socket);
++    fflush(stdout);
++    loop = wl_display_get_event_loop(display);
++    wl_event_loop_add_signal(loop, SIGTERM, terminate, display);
++    wl_event_loop_add_signal(loop, SIGINT, terminate, display);
++    wl_display_run(display);
++    wl_display_destroy_clients(display);
++    wl_display_destroy(display);
++    return 0;
++}
+diff --git a/test/stereo-present-pair.c b/test/stereo-present-pair.c
+index 8a0eeb5..86143ba 100644
+--- a/test/stereo-present-pair.c
++++ b/test/stereo-present-pair.c
+@@ -302,7 +302,7 @@ main(void)
+ 
+     if (child) {
+         xcb_map_window(c, window);
+-        if (wm && declare)
++        if (wm && declare && !getenv("REDIRECT_AT"))
+             xcb_composite_redirect_window(c, window,
+                                           XCB_COMPOSITE_REDIRECT_MANUAL);
+     }
+@@ -325,6 +325,13 @@ main(void)
+     for (frame = 1; frame <= frames; frame++) {
+         xcb_pixmap_t pixmap = xcb_generate_id(c);
+ 
++        if (child && wm && frame == env_int("REDIRECT_AT", -1)) {
++            xcb_composite_redirect_window(c, window,
++                                          XCB_COMPOSITE_REDIRECT_MANUAL);
++            xcb_flush(c);
++            usleep(200000);
++        }
++
+         /* The child draws by itself, through the server: its picture is 2D */
+         if (cover && getenv("PAINT_COVER") && frame == frames) {
+             uint32_t yellow = 0xc0c000;
+@@ -365,6 +372,13 @@ main(void)
+         usleep(period);
+     }
+ 
++    if (child && getenv("REMAP")) {
++        xcb_unmap_window(c, window);
++        xcb_map_window(c, window);
++        xcb_flush(c);
++        usleep(200000);
++    }
++
+     /* The window stops being stereo and presents nothing more */
+     if (declare && getenv("UNDECLARE")) {
+         delete_property(c, window, "_KDE_NET_WM_STEREO_CONTENT");
