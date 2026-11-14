@@ -43,6 +43,8 @@ BUGS = 'https://github.com/Sparky-OS/sparky-stereo-os/issues'
 RELATIONS = ('Pre-Depends', 'Depends', 'Recommends', 'Suggests', 'Enhances', 'Breaks', 'Conflicts', 'Replaces', 'Provides')
 # The kernel module NVIDIA's packages depend on at their exact version: the edition's module provides it at the carried one.
 MODULE_NAMES = {'nvidia-kernel-dkms'}
+CARRY_SOURCE = 'nvidia-graphics-drivers'
+MODULE_VERSION = '580.196.07-1+sparky2+lc1'
 # Lean Code's own bound on the client, which it adds to every package it marks (package.prepare)
 LEAN_BREAKS = 'dpkg-stereo (<< 0.1.6)'
 CHANGED = {'version', 'source', 'maintainer', 'original-maintainer', 'homepage', 'bugs', 'description', 'installed-size',
@@ -137,7 +139,8 @@ def rewrite_relation(value, names, nv_version, version):
     def one(match):
         name = match.group(1)
         if name.split(':')[0] in names and match.group(3) == nv_version:
-            return f'{name} ({match.group(2)} {version})'
+            target = MODULE_VERSION if name.split(':')[0] in MODULE_NAMES else version
+            return f'{name} ({match.group(2)} {target})'
         return match.group(0)
     return re.sub(r'([a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?)\s*\(\s*(=)\s*([^)\s]+)\s*\)', one, value)
 
@@ -231,7 +234,7 @@ def stage(deb, nv_version, version, packages_path, changelog, readme, copyright_
         sys.exit(f'{deb}: NVIDIA ships {taken}')
     if doc in files and files[doc][0] != 'dir':
         sys.exit(f'{deb}: {doc} is a {files[doc][0]}, not a folder')
-    source = fields.get('source', package).split()[0]
+    source = CARRY_SOURCE
     out = []
     for key, value in pairs:
         low = key.lower()
@@ -252,7 +255,7 @@ def stage(deb, nv_version, version, packages_path, changelog, readme, copyright_
                       '\n cards the edition\'s open modules do not run. See README.sparky-stereo.')
         out.append([key, value])
     position = next(i for i, (k, _) in enumerate(out) if k.lower() == 'version')
-    out.insert(position + 1, ['Source', f'{source} ({nv_version})'])
+    out.insert(position + 1, ['Source', f'{source} ({version})'])
     # NVIDIA ships libnvidia-nscq, a library, with no dependency at all (not even libc6); a package that ships ELF files
     # and declares none gets the one dpkg-shlibdeps derives, in the control file, which is the edition's
     added_depends = None
@@ -355,7 +358,7 @@ def verify(built, nvidia_json):
             problems.append(f'control {key}: {control.get(key)!r}, expected {want!r}')
     if not control.get('Description', '').startswith(nvidia['Description'] + '\n .\n Sparky Stereo OS: '):
         problems.append('control Description: NVIDIA\'s text is not kept before the edition\'s note')
-    if control.get('Version') != ref['version'] or control.get('Source', '').split()[1:] != [f'({ref["nv_version"]})']:
+    if control.get('Version') != ref['version'] or control.get('Source') != f'{CARRY_SOURCE} ({ref["version"]})':
         problems.append(f'control version or source: {control.get("Version")} {control.get("Source")}')
     if problems:
         sys.exit(f'{built}:\n  ' + '\n  '.join(problems))

@@ -29,7 +29,7 @@
 # Last update 2026/11/03
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-TOOLKIT=$(cd "$HERE/../.." && pwd)
+TOOLKIT=${SPARKY_CARRY_TOOLKIT:-$(cd "$HERE/../.." && pwd)}
 MODULE=$HERE/../nvidia-legacy-580xx-kernel-dkms
 OUT=$(realpath -m "${1:-${SPARKY_STAGING_DIR:?}/nvidia-legacy-580xx-userspace}")
 NVREPO=https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64
@@ -38,8 +38,8 @@ KEY_SHA256=25100d6f2eccaee7d6719a70e3c0c6145064aa9edc2c32148f693ac4c524a376
 # NVIDIA's copyright file (the NVIDIA Software License), the same in every amd64 package of the set; the packages NVIDIA
 # ships without one (its i386 packages, cuda-drivers) get it, byte for byte (carry.py stage)
 COPYRIGHT_SHA256=9a9f6ab4e21ac09ea5a6fbb8a721ae0192220959471fba5d9daeb07a60022253
-MODV=$(dpkg-parsechangelog -l "$MODULE/debian/changelog" -S Version)
-VERSION=${CARRY_VERSION:-$MODV+lc1}   # CARRY_VERSION: rebuild a carried set at its own version (ONLY names the packages to build)
+MODV=580.196.07-1+sparky2
+VERSION=${CARRY_VERSION:-580.196.07-1+sparky3+lc1}   # CARRY_VERSION: rebuild a carried set at its own version (ONLY names the packages to build)
 NV=${MODV%%+sparky*}
 [ "$(head -n1 "$HERE/changelog" | sed -n 's/^@SOURCE@ (\([^)]*\)) .*binary-only=yes$/\1/p')" = "$VERSION" ] ||
 	{ echo "the first entry of $HERE/changelog is not for $VERSION, the module's version with +lc1" >&2; exit 1; }
@@ -47,7 +47,7 @@ NV=${MODV%%+sparky*}
 WORK=$(mktemp -d "${SPARKY_SCRATCH:?}/nvidia-legacy-580xx-userspace.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 # NVIDIA's key, armored beside the module's recipe, is NVIDIA's file byte for byte once dearmored (RFC 9580 section 6)
-python3 -I - "$MODULE/cuda-debian12-archive-keyring.asc" "$WORK/nvidia-debian12.gpg" <<'EOF'
+python3 -I - "$HERE/cuda-debian12-archive-keyring.asc" "$WORK/nvidia-debian12.gpg" <<'EOF'
 import base64, sys
 lines = open(sys.argv[1]).read().splitlines()
 body = lines[lines.index('-----BEGIN PGP PUBLIC KEY BLOCK-----') + 1:lines.index('-----END PGP PUBLIC KEY BLOCK-----')]
@@ -97,9 +97,14 @@ while IFS=$'\t' read -r package arch file size digest; do
 	rm -rf "$w/tree"
 	n=$((n + 1))
 done <"$HERE/packages.tsv"
+if [ "${SPARKY_CARRY_SOURCE_BUILD:-0}" != 1 ]; then
+    python3 "$HERE/source.py" "$TOOLKIT" "$WORK/out"
+fi
 PYTHONPATH=$TOOLKIT python3 -m lean.release check-debs "$WORK"/out/*.deb
 mkdir -p "$OUT"
 cp -a "$WORK"/out/*.deb "$OUT"/
+if [ "${SPARKY_CARRY_SOURCE_BUILD:-0}" != 1 ]; then cp -a "$WORK"/out/*.dsc "$WORK"/out/*.tar.xz "$OUT"/; fi
+cp -a "$WORK"/out/*.sparky-build.json "$OUT"/ 2>/dev/null || { echo "no build records copied" >&2; exit 1; }
 cp "$WORK/nvidia-files.sha256" "$OUT/nvidia-files.sha256"
 sync
 echo "built $n packages at $VERSION in $OUT; NVIDIA's files and their SHA-256: $OUT/nvidia-files.sha256"
