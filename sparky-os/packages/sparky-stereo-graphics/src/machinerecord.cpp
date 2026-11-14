@@ -126,8 +126,9 @@ MachineIdentity MachineIdentity::read(const QString &root)
     // the first processor's name: a machine has one model of processor
     QFile cpuinfo(root + u"/proc/cpuinfo"_s);
     if (cpuinfo.open(QIODevice::ReadOnly)) {
-        while (!cpuinfo.atEnd()) {
-            const QString line = QString::fromUtf8(cpuinfo.readLine());
+        // read whole: a file of /proc has no size, so atEnd() is true before the first line
+        const QStringList lines = QString::fromUtf8(cpuinfo.readAll()).split(u'\n');
+        for (const QString &line : lines) {
             if (line.startsWith(u"model name"_s)) {
                 identity.cpu = line.section(u':', 1).simplified();
                 break;
