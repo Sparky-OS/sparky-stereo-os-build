@@ -5,3 +5,5 @@ A program asked to paint on the graphics card that cannot start that painting sa
 Element depth on the graphics card moves each item by its exact share, parts of a pixel included; where the EGL has no surface with two views (NVIDIA's own) the pair is one buffer twice as wide, declared full side by side (o518-0017).
 
 The frame Qt draws around a window is placed and sized as its buffers are rounded at a fractional scale (o518-0016; QTBUG-149635 is related and open).
+
+At a fractional scale the pair on the graphics card is two eyes of one whole width in device pixels, each painted from its own left edge and placed whole pixels apart (o554-0002). Before, twice the rounded width of one view was not the rounded width of two, so the window was shown flat at every width that is not whole at that scale. A window whose frame Qt draws itself gets the pair too (o554-0003, o554-0004).
