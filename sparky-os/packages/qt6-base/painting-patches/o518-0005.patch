@@ -1,0 +1,582 @@
+From 09eb529c0bc96a24a7678071147411fef072741b Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 11 Nov 2026 11:20:31 -0300
+Subject: [PATCH] batched painting: outlined rectangles tile exactly, the
+ inverting text cursor, the raster engine's choice of texel, engine time in
+ the statistics
+
+Found by scripts/paintcheck.cpp (24 kinds of painter call, CPU against batched): a one-pixel
+gap between an outlined rectangle's inside and its sides; a dashed outline whose dashes start
+elsewhere under a narrower clip; a scaled picture taking the next texel where the raster
+engine takes the one before; QTextLayout::drawCursor()'s RasterOp_NotDestination.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ src/gui/painting/qbatchedpaintengine.cpp     | 221 ++++++++++++-------
+ src/gui/painting/shaders/batchpaint.frag     |   4 +-
+ src/gui/painting/shaders/batchpaint.frag.qsb | Bin 3032 -> 3159 bytes
+ src/gui/painting/shaders/batchpaint.vert.qsb | Bin 2124 -> 2160 bytes
+ 4 files changed, 139 insertions(+), 86 deletions(-)
+
+diff --git a/src/gui/painting/qbatchedpaintengine.cpp b/src/gui/painting/qbatchedpaintengine.cpp
+index e12776e..7b3e0fb 100644
+--- a/src/gui/painting/qbatchedpaintengine.cpp
++++ b/src/gui/painting/qbatchedpaintengine.cpp
+@@ -58,7 +58,8 @@
+ 
+ QT_BEGIN_NAMESPACE
+ 
+-Q_STATIC_LOGGING_CATEGORY(lcBatchPaint, "qt.gui.batchpaint")
++// what the raster engine draws is named on request (qt.gui.batchpaint.info=true)
++Q_STATIC_LOGGING_CATEGORY(lcBatchPaint, "qt.gui.batchpaint", QtWarningMsg)
+ 
+ using namespace Qt::StringLiterals;
+ 
+@@ -100,7 +101,7 @@ static const char *const kindNames[KindCount] = {
+ 
+ struct Op
+ {
+-    enum Type { Draw, DrawSource, Scroll } type;
++    enum Type { Draw, DrawSource, DrawInvert, Scroll } type;
+     int first = 0;
+     int count = 0;
+     QRect rect;
+@@ -310,6 +311,26 @@ static void copyPadded(const QImage &source, const QRect &part, QImage *target,
+ 
+ using namespace QBatchPaint;
+ 
++// Adds the time of one call of the engine to its store's count (QT_WIDGETS_PAINT_STATS=2); calls
++// the engine makes from inside another are part of that one.
++template <typename Store>
++struct EngineTime
++{
++    explicit EngineTime(Store *store) : store(store)
++    {
++        if (store->timeEngine && store->engineDepth++ == 0)
++            clock.start();
++    }
++    ~EngineTime()
++    {
++        if (store->timeEngine && --store->engineDepth == 0)
++            store->engineNs += clock.nsecsElapsed();
++    }
++    Store *store;
++    QElapsedTimer clock;
++};
++#define QBATCH_TIME EngineTime<QBatchedPaintBackingStore> engineTime(m_store)
++
+ class QBatchedPaintBackingStore;
+ class QBatchedPaintEngine;
+ 
+@@ -395,7 +416,7 @@ public:
+     void sourceRect(const QRect &rect, const QColor &color);
+ 
+ private:
+-    enum Blend { Over, Source, Other };
++    enum Blend { Over, Source, Invert, Other };
+     Blend blend() const;
+     bool nativeRect(const QRectF &rect, const QColor &color);
+     bool glyphsDrawable(QFontEngine *fontEngine, const QTransform &m, Kind *why) const;
+@@ -406,8 +427,9 @@ private:
+               const quint8 *rgba, Mode mode, Op::Type type = Op::Draw);
+     void push(const Quad &q, Op::Type type);
+     template <typename Draw> void raster(Kind why, const QRectF &deviceBounds, Draw &&draw);
+-    void outline(const QRectF &rect, qreal penWidth, const std::function<void(QPainter *)> &draw);
++    void outlinedRect(const QRectF &mapped, const std::function<void(QPainter *)> &draw);
+     qreal penReach() const;
++    template <typename Rect> void rects(const Rect *rects, int rectCount);
+ 
+     QBatchedPaintBackingStore *m_store;
+     QRect m_deviceRect;
+@@ -501,6 +523,10 @@ public:
+     std::vector<Quad> quads;
+     std::vector<Op> ops;
+     qint64 counts[KindCount] = {};
++    // QT_WIDGETS_PAINT_STATS=2: the time spent inside the engine's own calls
++    bool timeEngine = false;
++    qint64 engineNs = 0;
++    int engineDepth = 0;
+ 
+     // A part of the scratch image for the raster engine to draw into, and the painter on it.
+     QPainter *scratch(const QSize &size, QPoint *at);
+@@ -554,6 +580,7 @@ private:
+     std::unique_ptr<QRhiShaderResourceBindings> m_bindings;
+     std::unique_ptr<QRhiGraphicsPipeline> m_over;
+     std::unique_ptr<QRhiGraphicsPipeline> m_source;
++    std::unique_ptr<QRhiGraphicsPipeline> m_invert;
+     bool m_cornersUploaded = false;
+     bool m_hasContents = false;
+     quint64 m_glyphVersion = 0, m_glyphEpoch = ~quint64(0);
+@@ -611,6 +638,7 @@ void QBatchedPaintEngine::setState(QPainterState *s)
+ 
+ void QBatchedPaintEngine::updateClip()
+ {
++    QBATCH_TIME;
+     Q_D(QBatchedPaintEngine);
+     QRegion clip(m_deviceRect);
+     if (!d->systemClip.isEmpty())
+@@ -643,6 +671,7 @@ static inline QRect normalizedFillRect(const QRectF &rect)
+ 
+ void QBatchedPaintEngine::clip(const QRect &rect, Qt::ClipOperation op)
+ {
++    QBATCH_TIME;
+     QBatchedPainterState *s = state();
+     if (op == Qt::NoClip || s->matrix.type() > QTransform::TxScale || (op == Qt::IntersectClip && s->userClip && s->userClipIsPath)) {
+         QPaintEngineEx::clip(rect, op);
+@@ -660,6 +689,7 @@ void QBatchedPaintEngine::clip(const QRect &rect, Qt::ClipOperation op)
+ 
+ void QBatchedPaintEngine::clip(const QRegion &region, Qt::ClipOperation op)
+ {
++    QBATCH_TIME;
+     QBatchedPainterState *s = state();
+     if (op == Qt::NoClip || s->matrix.type() > QTransform::TxScale || (op == Qt::IntersectClip && s->userClip && s->userClipIsPath)) {
+         QPaintEngineEx::clip(region, op);
+@@ -679,6 +709,7 @@ void QBatchedPaintEngine::clip(const QRegion &region, Qt::ClipOperation op)
+ 
+ void QBatchedPaintEngine::clip(const QVectorPath &path, Qt::ClipOperation op)
+ {
++    QBATCH_TIME;
+     QBatchedPainterState *s = state();
+     if (op == Qt::NoClip) {
+         s->userClip = false;
+@@ -722,6 +753,9 @@ QBatchedPaintEngine::Blend QBatchedPaintEngine::blend() const
+         return Over;
+     case QPainter::CompositionMode_Source:
+         return Source;
++    case QPainter::RasterOp_NotDestination:
++        // a text cursor: QTextLayout::drawCursor() inverts what is under it
++        return Invert;
+     default:
+         return Other;
+     }
+@@ -800,6 +834,15 @@ bool QBatchedPaintEngine::nativeRect(const QRectF &rect, const QColor &color)
+     if (mode == Over && rgba[3] == 0)
+         return true;
+     const QRectF mapped = s->matrix.mapRect(rect);
++    if (mode == Invert) {
++        // whatever the colour, what is there is inverted, on whole pixels
++        const QRect whole = normalizedFillRect(mapped);
++        static const quint8 white[4] = { 255, 255, 255, 255 };
++        ++m_store->counts[NativeRect];
++        quad(whole.left(), whole.top(), whole.left() + whole.width(), whole.top() + whole.height(), 0, 0, 0, 0, white,
++             Solid, Op::DrawInvert);
++        return true;
++    }
+     float x0, y0, x1, y1;
+     const bool replaces = mode == Source && rgba[3] != 255;
+     if (!(s->renderHints & QPainter::Antialiasing) || replaces) {
+@@ -854,7 +897,7 @@ void QBatchedPaintEngine::raster(Kind why, const QRectF &deviceBounds, Draw &&dr
+     Kind kind = why;
+     if (m_pathClip)
+         kind = RasterPathClip;
+-    if (blend() == Other)
++    if (blend() == Other || blend() == Invert)
+         kind = RasterComposition;
+     if (m_store->counts[kind]++ == 0) {
+         if (kind == RasterComposition) {
+@@ -911,39 +954,54 @@ void QBatchedPaintEngine::raster(Kind why, const QRectF &deviceBounds, Draw &&dr
+ }
+ 
+ /*
+-    A thin outline around \a rect in device pixels: the raster engine draws the call once for
+-    each side, into four narrow parts, instead of into one part as large as the rectangle.
++    A rectangle with a pen's line around it, \a mapped in device pixels: the inside, which the
++    line does not reach, is a rectangle of the brush; the raster engine draws the call once for
++    each side, into four narrow parts that meet the inside exactly, instead of into one part as
++    large as the rectangle.
+ */
+-void QBatchedPaintEngine::outline(const QRectF &rect, qreal reach, const std::function<void(QPainter *)> &draw)
++void QBatchedPaintEngine::outlinedRect(const QRectF &mapped, const std::function<void(QPainter *)> &draw)
+ {
+-    const QRectF outer = rect.adjusted(-reach, -reach, reach, reach);
+-    if (rect.width() <= 4 * reach + 8 || rect.height() <= 4 * reach + 8) {
+-        raster(RasterRectOutline, outer, [&](QPainter *painter, const QPoint &) { draw(painter); });
++    const QBatchedPainterState *s = state();
++    const qreal reach = penReach();
++    const QRectF bounds = mapped.adjusted(-reach, -reach, reach, reach);
++    const QRect outer = bounds.toAlignedRect();
++    const int left = qCeil(mapped.left() + reach), top = qCeil(mapped.top() + reach);
++    const int right = qFloor(mapped.right() - reach), bottom = qFloor(mapped.bottom() - reach);
++    quint8 rgba[4] = { 0, 0, 0, 0 };
++    const bool brush = s->brush.style() == Qt::SolidPattern;
++    if (brush)
++        premultiplied(s->brush.color(), s->opacity, rgba);
++    if (right - left < 8 || bottom - top < 8 || (brush && blend() == Source && rgba[3] != 255)) {
++        raster(RasterRectOutline, bounds, [&](QPainter *painter, const QPoint &) { draw(painter); });
+         return;
+     }
+-    const QRectF inner = rect.adjusted(reach, reach, -reach, -reach);
+-    const QRectF sides[4] = {
+-        QRectF(outer.left(), outer.top(), outer.width(), inner.top() - outer.top()),
+-        QRectF(outer.left(), inner.bottom(), outer.width(), outer.bottom() - inner.bottom()),
+-        QRectF(outer.left(), inner.top(), inner.left() - outer.left(), inner.height()),
+-        QRectF(inner.right(), inner.top(), outer.right() - inner.right(), inner.height())
++    if (brush && rgba[3]) {
++        // one colour all over: the same wherever the element's part of a pixel puts it
++        ++m_store->counts[NativeRect];
++        quad(left, top, right, bottom, 0, 0, 0, 0, rgba, Solid);
++    }
++    const QRect sides[4] = {
++        QRect(outer.left(), outer.top(), outer.width(), top - outer.top()),
++        QRect(outer.left(), bottom, outer.width(), outer.bottom() + 1 - bottom),
++        QRect(outer.left(), top, left - outer.left(), bottom - top),
++        QRect(right, top, outer.right() + 1 - right, bottom - top)
+     };
+-    const QRect saved = m_clipBounds;
++    const QRect savedBounds = m_clipBounds;
+     const QRegion savedClip = m_clip;
+-    for (const QRectF &side : sides) {
++    for (const QRect &side : sides) {
+         // the same call under a narrower clip: nothing else of it is drawn into this part
+-        const QRect strip = side.toAlignedRect();
+-        m_clip = savedClip & strip;
++        m_clip = savedClip & side;
+         m_clipBounds = m_clip.boundingRect();
+         if (!m_clip.isEmpty())
+-            raster(RasterRectOutline, QRectF(strip).adjusted(1, 1, -1, -1), [&](QPainter *painter, const QPoint &) { draw(painter); });
++            raster(RasterRectOutline, QRectF(side), [&](QPainter *painter, const QPoint &) { draw(painter); });
+     }
+     m_clip = savedClip;
+-    m_clipBounds = saved;
++    m_clipBounds = savedBounds;
+ }
+ 
+ void QBatchedPaintEngine::fill(const QVectorPath &path, const QBrush &brush)
+ {
++    QBATCH_TIME;
+     if (path.isEmpty() || brush.style() == Qt::NoBrush)
+         return;
+     const QBatchedPainterState *s = state();
+@@ -962,6 +1020,7 @@ void QBatchedPaintEngine::fill(const QVectorPath &path, const QBrush &brush)
+ 
+ void QBatchedPaintEngine::stroke(const QVectorPath &path, const QPen &pen)
+ {
++    QBATCH_TIME;
+     if (path.isEmpty() || pen.style() == Qt::NoPen)
+         return;
+     const QBatchedPainterState *s = state();
+@@ -973,6 +1032,7 @@ void QBatchedPaintEngine::stroke(const QVectorPath &path, const QPen &pen)
+ 
+ void QBatchedPaintEngine::fillRect(const QRectF &rect, const QBrush &brush)
+ {
++    QBATCH_TIME;
+     if (brush.style() == Qt::NoBrush)
+         return;
+     if (brush.style() == Qt::SolidPattern && nativeRect(rect, brush.color()))
+@@ -983,6 +1043,7 @@ void QBatchedPaintEngine::fillRect(const QRectF &rect, const QBrush &brush)
+ 
+ void QBatchedPaintEngine::fillRect(const QRectF &rect, const QColor &color)
+ {
++    QBATCH_TIME;
+     if (nativeRect(rect, color))
+         return;
+     raster(RasterTransformedRect, state()->matrix.mapRect(rect),
+@@ -991,84 +1052,52 @@ void QBatchedPaintEngine::fillRect(const QRectF &rect, const QColor &color)
+ 
+ void QBatchedPaintEngine::drawRoundedRect(const QRectF &rect, qreal xrad, qreal yrad, Qt::SizeMode mode)
+ {
++    QBATCH_TIME;
+     const qreal reach = penReach();
+     raster(RasterRoundedRect, state()->matrix.mapRect(rect).adjusted(-reach, -reach, reach, reach),
+            [&](QPainter *painter, const QPoint &) { painter->drawRoundedRect(rect, xrad, yrad, mode); });
+ }
+ 
+-void QBatchedPaintEngine::drawRects(const QRectF *rects, int rectCount)
++template <typename Rect>
++void QBatchedPaintEngine::rects(const Rect *rects, int rectCount)
+ {
++    QBATCH_TIME;
+     const QBatchedPainterState *s = state();
+     const bool pen = s->pen.style() != Qt::NoPen;
+-    const bool solid = s->brush.style() == Qt::SolidPattern;
+-    const bool straight = s->matrix.type() <= QTransform::TxScale && !m_pathClip && blend() != Other;
++    const Qt::BrushStyle brush = s->brush.style();
++    const bool straight = s->matrix.type() <= QTransform::TxScale && !m_pathClip && (blend() == Over || blend() == Source);
+     for (int i = 0; i < rectCount; ++i) {
+-        const QRectF &rect = rects[i];
+-        if (!pen && solid && nativeRect(rect, s->brush.color()))
++        const Rect &rect = rects[i];
++        if (!pen && brush == Qt::NoBrush)
+             continue;
+-        if (!pen && s->brush.style() == Qt::NoBrush)
++        if (!pen && brush == Qt::SolidPattern && nativeRect(QRectF(rect), s->brush.color()))
+             continue;
+-        if (pen && straight && (solid || s->brush.style() == Qt::NoBrush)) {
+-            // the inside as a rectangle, the pen's line by the raster engine, side by side
+-            const qreal reach = penReach();
+-            const QRectF mapped = s->matrix.mapRect(rect);
+-            if (solid && mapped.width() > 4 * reach + 8 && mapped.height() > 4 * reach + 8) {
+-                const QRect whole = normalizedFillRect(mapped).adjusted(int(reach) + 1, int(reach) + 1, -int(reach) - 1, -int(reach) - 1);
+-                quint8 rgba[4];
+-                premultiplied(s->brush.color(), s->opacity, rgba);
+-                if (blend() == Over || rgba[3] == 255) {
+-                    ++m_store->counts[NativeRect];
+-                    quad(whole.left() + m_dx, whole.top(), whole.left() + whole.width() + m_dx, whole.top() + whole.height(),
+-                         0, 0, 0, 0, rgba, Solid);
+-                }
+-            }
+-            outline(mapped, reach, [&](QPainter *painter) { painter->drawRects(&rect, 1); });
++        const QRectF mapped = s->matrix.mapRect(QRectF(rect));
++        // (a dashed line is drawn whole: under a narrower clip the raster engine's dashes start elsewhere)
++        if (pen && straight && s->pen.style() == Qt::SolidLine && (brush == Qt::SolidPattern || brush == Qt::NoBrush)) {
++            outlinedRect(mapped, [&](QPainter *painter) { painter->drawRects(&rect, 1); });
+             continue;
+         }
+         const qreal reach = penReach();
+-        raster(RasterPatternRect, s->matrix.mapRect(rect).adjusted(-reach, -reach, reach, reach),
++        raster(brush == Qt::SolidPattern || brush == Qt::NoBrush ? RasterTransformedRect : RasterPatternRect,
++               mapped.adjusted(-reach, -reach, reach, reach),
+                [&](QPainter *painter, const QPoint &) { painter->drawRects(&rect, 1); });
+     }
+ }
+ 
+-void QBatchedPaintEngine::drawRects(const QRect *rects, int rectCount)
++void QBatchedPaintEngine::drawRects(const QRectF *r, int rectCount)
+ {
+-    QVarLengthArray<QRectF, 32> converted(rectCount);
+-    for (int i = 0; i < rectCount; ++i)
+-        converted[i] = QRectF(rects[i]);
+-    // as the raster engine sees whole-number rectangles: the same corners
+-    const QBatchedPainterState *s = state();
+-    if (s->pen.style() == Qt::NoPen) {
+-        drawRects(converted.constData(), rectCount);
+-        return;
+-    }
+-    const bool solid = s->brush.style() == Qt::SolidPattern;
+-    const bool straight = s->matrix.type() <= QTransform::TxScale && !m_pathClip && blend() != Other;
+-    for (int i = 0; i < rectCount; ++i) {
+-        const QRect &rect = rects[i];
+-        const qreal reach = penReach();
+-        const QRectF mapped = s->matrix.mapRect(QRectF(rect));
+-        if (straight && (solid || s->brush.style() == Qt::NoBrush)) {
+-            if (solid && mapped.width() > 4 * reach + 8 && mapped.height() > 4 * reach + 8) {
+-                const QRect whole = normalizedFillRect(mapped).adjusted(int(reach) + 1, int(reach) + 1, -int(reach) - 1, -int(reach) - 1);
+-                quint8 rgba[4];
+-                premultiplied(s->brush.color(), s->opacity, rgba);
+-                if (blend() == Over || rgba[3] == 255) {
+-                    ++m_store->counts[NativeRect];
+-                    quad(whole.left() + m_dx, whole.top(), whole.left() + whole.width() + m_dx, whole.top() + whole.height(),
+-                         0, 0, 0, 0, rgba, Solid);
+-                }
+-            }
+-            outline(mapped, reach, [&](QPainter *painter) { painter->drawRects(&rect, 1); });
+-        } else {
+-            raster(RasterPatternRect, mapped.adjusted(-reach, -reach, reach, reach),
+-                   [&](QPainter *painter, const QPoint &) { painter->drawRects(&rect, 1); });
+-        }
+-    }
++    rects(r, rectCount);
++}
++
++void QBatchedPaintEngine::drawRects(const QRect *r, int rectCount)
++{
++    rects(r, rectCount);
+ }
+ 
+ void QBatchedPaintEngine::drawLines(const QLineF *lines, int lineCount)
+ {
++    QBATCH_TIME;
+     const QBatchedPainterState *s = state();
+     if (s->pen.style() == Qt::NoPen)
+         return;
+@@ -1082,6 +1111,7 @@ void QBatchedPaintEngine::drawLines(const QLineF *lines, int lineCount)
+ 
+ void QBatchedPaintEngine::drawLines(const QLine *lines, int lineCount)
+ {
++    QBATCH_TIME;
+     const QBatchedPainterState *s = state();
+     if (s->pen.style() == Qt::NoPen)
+         return;
+@@ -1095,6 +1125,7 @@ void QBatchedPaintEngine::drawLines(const QLine *lines, int lineCount)
+ 
+ void QBatchedPaintEngine::drawEllipse(const QRectF &r)
+ {
++    QBATCH_TIME;
+     const qreal reach = penReach();
+     raster(RasterEllipse, state()->matrix.mapRect(r).adjusted(-reach, -reach, reach, reach),
+            [&](QPainter *painter, const QPoint &) { painter->drawEllipse(r); });
+@@ -1102,6 +1133,7 @@ void QBatchedPaintEngine::drawEllipse(const QRectF &r)
+ 
+ void QBatchedPaintEngine::drawEllipse(const QRect &r)
+ {
++    QBATCH_TIME;
+     const qreal reach = penReach();
+     raster(RasterEllipse, state()->matrix.mapRect(QRectF(r)).adjusted(-reach, -reach, reach, reach),
+            [&](QPainter *painter, const QPoint &) { painter->drawEllipse(r); });
+@@ -1122,6 +1154,7 @@ static QRectF pointBounds(const Point *points, int count)
+ 
+ void QBatchedPaintEngine::drawPoints(const QPointF *points, int pointCount)
+ {
++    QBATCH_TIME;
+     if (pointCount <= 0)
+         return;
+     const qreal reach = penReach();
+@@ -1131,6 +1164,7 @@ void QBatchedPaintEngine::drawPoints(const QPointF *points, int pointCount)
+ 
+ void QBatchedPaintEngine::drawPoints(const QPoint *points, int pointCount)
+ {
++    QBATCH_TIME;
+     if (pointCount <= 0)
+         return;
+     const qreal reach = penReach();
+@@ -1140,6 +1174,7 @@ void QBatchedPaintEngine::drawPoints(const QPoint *points, int pointCount)
+ 
+ void QBatchedPaintEngine::drawPolygon(const QPointF *points, int pointCount, PolygonDrawMode mode)
+ {
++    QBATCH_TIME;
+     if (pointCount <= 0)
+         return;
+     const qreal reach = penReach();
+@@ -1156,6 +1191,7 @@ void QBatchedPaintEngine::drawPolygon(const QPointF *points, int pointCount, Pol
+ 
+ void QBatchedPaintEngine::drawPolygon(const QPoint *points, int pointCount, PolygonDrawMode mode)
+ {
++    QBATCH_TIME;
+     if (pointCount <= 0)
+         return;
+     const qreal reach = penReach();
+@@ -1193,17 +1229,19 @@ void QBatchedPaintEngine::drawImage(const QRectF &r, const QImage &image, const
+ 
+ void QBatchedPaintEngine::drawTiledPixmap(const QRectF &r, const QPixmap &pixmap, const QPointF &s)
+ {
++    QBATCH_TIME;
+     raster(RasterTiledPixmap, state()->matrix.mapRect(r),
+            [&](QPainter *painter, const QPoint &) { painter->drawTiledPixmap(r, pixmap, s); });
+ }
+ 
+ void QBatchedPaintEngine::drawPicture(const QRectF &r, const QImage &image, const QRectF &sr, Qt::ImageConversionFlags flags)
+ {
++    QBATCH_TIME;
+     const QBatchedPainterState *s = state();
+     const QTransform &m = s->matrix;
+     const Blend mode = blend();
+     const QRectF mapped = m.mapRect(r);
+-    if (m_pathClip || mode == Other || m.type() > QTransform::TxScale || m.m11() < 0 || m.m22() < 0 || image.depth() == 1
++    if (m_pathClip || mode == Other || mode == Invert || m.type() > QTransform::TxScale || m.m11() < 0 || m.m22() < 0 || image.depth() == 1
+         || r.width() <= 0 || r.height() <= 0 || sr.width() <= 0 || sr.height() <= 0) {
+         raster(image.depth() == 1 ? RasterBitmap : RasterImageTransformed, mapped,
+                [&](QPainter *painter, const QPoint &) { painter->drawImage(r, image, sr, flags); });
+@@ -1458,6 +1496,7 @@ bool QBatchedPaintEngine::drawGlyphs(QFontEngine *fontEngine, const glyph_t *gly
+ 
+ void QBatchedPaintEngine::drawTextItem(const QPointF &p, const QTextItem &textItem)
+ {
++    QBATCH_TIME;
+     const QTextItemInt &ti = static_cast<const QTextItemInt &>(textItem);
+     if (ti.glyphs.numGlyphs == 0)
+         return;
+@@ -1482,6 +1521,7 @@ void QBatchedPaintEngine::drawTextItem(const QPointF &p, const QTextItem &textIt
+ 
+ void QBatchedPaintEngine::drawStaticTextItem(QStaticTextItem *item)
+ {
++    QBATCH_TIME;
+     if (item->numGlyphs == 0)
+         return;
+     const QBatchedPainterState *s = state();
+@@ -1527,6 +1567,7 @@ QBatchedPaintBackingStore::QBatchedPaintBackingStore(QWindow *window)
+     : QPlatformBackingStore(window), m_device(this)
+ {
+     m_stats = qEnvironmentVariableIntValue("QT_WIDGETS_PAINT_STATS");
++    timeEngine = qEnvironmentVariableIntValue("QT_WIDGETS_PAINT_STATS") >= 2;
+     m_translucent = window->requestedFormat().hasAlpha();
+     setGpuTextureProvider([this](QRhi *rhi, QRhiCommandBuffer *cb, TextureFlags *flags) { return realise(rhi, cb, flags); });
+     setPaintSubPixelOffsetSetter([this](qreal dx) { m_device.engine()->setSubPixelOffset(dx); });
+@@ -1543,6 +1584,7 @@ void QBatchedPaintBackingStore::releaseResources()
+ {
+     m_over.reset();
+     m_source.reset();
++    m_invert.reset();
+     m_bindings.reset();
+     m_uniforms.reset();
+     m_instances.reset();
+@@ -1744,6 +1786,7 @@ bool QBatchedPaintBackingStore::ensureResources(QRhi *rhi)
+             m_pass.reset(m_keep->newCompatibleRenderPassDescriptor());
+             m_over.reset();
+             m_source.reset();
++            m_invert.reset();
+         }
+         m_keep->setRenderPassDescriptor(m_pass.get());
+         m_clear->setRenderPassDescriptor(m_pass.get());
+@@ -1827,7 +1870,7 @@ bool QBatchedPaintBackingStore::ensureResources(QRhi *rhi)
+                                { 1, 2, QRhiVertexInputAttribute::Float4, 16 },
+                                { 1, 3, QRhiVertexInputAttribute::UNormByte4, 32 },
+                                { 1, 4, QRhiVertexInputAttribute::Float, 36 } });
+-        for (const bool blended : { true, false }) {
++        for (const Op::Type type : { Op::Draw, Op::DrawSource, Op::DrawInvert }) {
+             std::unique_ptr<QRhiGraphicsPipeline> pipeline(rhi->newGraphicsPipeline());
+             pipeline->setTopology(QRhiGraphicsPipeline::TriangleStrip);
+             pipeline->setShaderStages({ { QRhiShaderStage::Vertex, vertex }, { QRhiShaderStage::Fragment, fragment } });
+@@ -1835,18 +1878,25 @@ bool QBatchedPaintBackingStore::ensureResources(QRhi *rhi)
+             pipeline->setShaderResourceBindings(m_bindings.get());
+             pipeline->setRenderPassDescriptor(m_pass.get());
+             QRhiGraphicsPipeline::TargetBlend target;
+-            if (blended) {
++            if (type == Op::Draw) {
+                 // premultiplied colour over what is there
+                 target.enable = true;
+                 target.srcColor = QRhiGraphicsPipeline::One;
+                 target.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+                 target.srcAlpha = QRhiGraphicsPipeline::One;
+                 target.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
++            } else if (type == Op::DrawInvert) {
++                // white times what is missing to white: the colours inverted, the alpha kept
++                target.enable = true;
++                target.srcColor = QRhiGraphicsPipeline::OneMinusDstColor;
++                target.dstColor = QRhiGraphicsPipeline::Zero;
++                target.srcAlpha = QRhiGraphicsPipeline::Zero;
++                target.dstAlpha = QRhiGraphicsPipeline::One;
+             }
+             pipeline->setTargetBlends({ target });
+             if (!pipeline->create())
+                 return false;
+-            (blended ? m_over : m_source) = std::move(pipeline);
++            (type == Op::Draw ? m_over : type == Op::DrawSource ? m_source : m_invert) = std::move(pipeline);
+         }
+     }
+     return true;
+@@ -2012,7 +2062,7 @@ void QBatchedPaintBackingStore::run(QRhi *rhi, QRhiCommandBuffer *cb)
+         if (!updates && !inPass)
+             updates = rhi->nextResourceUpdateBatch();
+         beginPass();
+-        cb->setGraphicsPipeline(op.type == Op::Draw ? m_over.get() : m_source.get());
++        cb->setGraphicsPipeline(op.type == Op::Draw ? m_over.get() : op.type == Op::DrawSource ? m_source.get() : m_invert.get());
+         cb->setShaderResources(m_bindings.get());
+         const QRhiCommandBuffer::VertexInput inputs[2] = {
+             { m_corners.get(), 0 }, { m_instances.get(), quint32(op.first * sizeof(Quad)) }
+@@ -2079,18 +2129,19 @@ void QBatchedPaintBackingStore::report()
+         }
+     }
+     fprintf(stderr, "QWBATCH flushes=%lld per_flush: draw_calls=%.2f records=%lld rectangles=%lld glyphs=%lld pictures=%lld "
+-                    "copied_pictures=%lld raster_drawn=%lld uploaded_kB=%lld run_ms=%.3f raster_kinds:%s\n",
++                    "copied_pictures=%lld raster_drawn=%lld uploaded_kB=%lld run_ms=%.3f engine_ms=%.3f raster_kinds:%s\n",
+             static_cast<long long>(m_statFlushes), double(m_statDraws) / m_statFlushes,
+             static_cast<long long>(m_statQuads / m_statFlushes), static_cast<long long>(counts[NativeRect] / m_statFlushes),
+             static_cast<long long>(counts[NativeGlyph] / m_statFlushes), static_cast<long long>(counts[NativeImage] / m_statFlushes),
+             static_cast<long long>(counts[NativeCopiedImage] / m_statFlushes), static_cast<long long>(byRaster / m_statFlushes),
+-            static_cast<long long>(m_statUploaded / 1024 / m_statFlushes), m_statRunNs / 1e6 / m_statFlushes,
++            static_cast<long long>(m_statUploaded / 1024 / m_statFlushes), m_statRunNs / 1e6 / m_statFlushes, engineNs / 1e6 / m_statFlushes,
+             rastered.isEmpty() ? " none" : rastered.constData());
+     Q_UNUSED(native);
+     // the kinds keep their "named once" memory; the counts start again
+     for (qint64 &count : counts)
+         count = count ? 1 : 0;
+     m_statFlushes = m_statDraws = m_statQuads = m_statUploaded = m_statRunNs = 0;
++    engineNs = 0;
+ }
+ 
+ /*
+diff --git a/src/gui/painting/shaders/batchpaint.frag b/src/gui/painting/shaders/batchpaint.frag
+index 406660e..ef1336b 100644
+--- a/src/gui/painting/shaders/batchpaint.frag
++++ b/src/gui/painting/shaders/batchpaint.frag
+@@ -30,8 +30,10 @@ void main()
+     if (v_mode > 0.5) {
+         // modes 1, 2 and 4 take one texel, unfiltered; 3 and 5 are filtered
+         vec2 texel = v_source;
++        // (where a scaled picture's sample falls between two texels, the raster engine takes the
++        // one before, so the sample is taken a little before its place)
+         if (v_mode < 2.5 || (v_mode > 3.5 && v_mode < 4.5))
+-            texel = floor(texel) + 0.5;
++            texel = floor(texel - 0.002) + 0.5;
+         if (v_mode < 1.5)
+             result *= texture(glyphTexture, texel * glyphsImages.xy).r;
+         else if (v_mode < 3.5)

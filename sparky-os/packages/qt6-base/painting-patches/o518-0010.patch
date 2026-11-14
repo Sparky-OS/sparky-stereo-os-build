@@ -1,0 +1,170 @@
+From 1820dd2d46f21ed605d61190683e5d7ee54a7f69 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 11 Nov 2026 13:06:10 -0300
+Subject: [PATCH] batched painting: the store lets its RHI resources go before
+ the RHI does; the shared images are emptied only when no window has records
+ waiting
+
+QPlatformBackingStore deletes its RHI when it is remade with a stereo format or after a
+lost device; a store that keeps textures and buffers of it is told first (setRhiAboutToGo).
+The glyph and picture images are shared by every window of the process, so they are emptied
+only between paint passes while no store has records that point into them.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ src/gui/painting/qbatchedpaintengine.cpp   | 24 ++++++++++++++++++++--
+ src/gui/painting/qplatformbackingstore.cpp | 10 +++++++++
+ src/gui/painting/qplatformbackingstore.h   |  3 +++
+ src/opengl/qopenglpaintbackingstore.cpp    |  5 +++++
+ 4 files changed, 40 insertions(+), 2 deletions(-)
+
+diff --git a/src/gui/painting/qbatchedpaintengine.cpp b/src/gui/painting/qbatchedpaintengine.cpp
+index 0024c53..9fb7fc4 100644
+--- a/src/gui/painting/qbatchedpaintengine.cpp
++++ b/src/gui/painting/qbatchedpaintengine.cpp
+@@ -301,6 +301,10 @@ struct ImageAtlas
+ 
+ Q_GLOBAL_STATIC(ImageAtlas, imageAtlas)
+ 
++// How many stores have records that are not drawn yet: the shared images are emptied only
++// when none has, since records point into them.
++static int storesWithRecords = 0;
++
+ // Whether the windows' RHI blends with a weight for each colour channel (dual-source blending),
+ // which text with LCD antialiasing needs; found when the first store is made.
+ static bool dualSourceBlending = false;
+@@ -845,6 +849,8 @@ void QBatchedPaintEngine::push(const Quad &q, Op::Type type)
+         ops.push_back(op);
+     }
+     ++ops.back().count;
++    if (m_store->quads.empty())
++        ++storesWithRecords;
+     m_store->quads.push_back(q);
+ }
+ 
+@@ -1599,6 +1605,8 @@ bool QBatchedPaintEngine::drawGlyphs(QFontEngine *fontEngine, const glyph_t *gly
+                 const bool lcd = mask->format == QFontEngine::Format_A32 && dualSourceBlending;
+                 auto giveUp = [&](Kind reason) {
+                     // nothing of this run is kept: the raster engine draws all of it
++                    if (firstQuad == 0 && !m_store->quads.empty())
++                        --storesWithRecords;
+                     m_store->quads.resize(firstQuad);
+                     m_store->ops.resize(firstOp);
+                     if (firstOp)
+@@ -1747,11 +1755,21 @@ QBatchedPaintBackingStore::QBatchedPaintBackingStore(QWindow *window)
+     m_translucent = window->requestedFormat().hasAlpha();
+     setGpuTextureProvider([this](QRhi *rhi, QRhiCommandBuffer *cb, TextureFlags *flags) { return realise(rhi, cb, flags); });
+     setPaintSubPixelOffsetSetter([this](qreal dx) { m_device.engine()->setSubPixelOffset(dx); });
++    setRhiAboutToGo([this] {
++        // the textures go with their RHI; the window is painted again on the next one
++        if (m_hasContents)
++            setPaintContentsLost();
++        releaseResources();
++        m_rhi = nullptr;
++        m_hasContents = false;
++    });
+     quads.reserve(16384);
+ }
+ 
+ QBatchedPaintBackingStore::~QBatchedPaintBackingStore()
+ {
++    if (!quads.empty())
++        --storesWithRecords;
+     endScratchPainter();
+     releaseResources();
+ }
+@@ -1801,8 +1819,8 @@ QPaintDevice *QBatchedPaintBackingStore::paintDevice()
+ void QBatchedPaintBackingStore::beginPaint(const QRegion &region)
+ {
+     syncDevice();
+-    // between paint passes nothing recorded points into the shared images
+-    if (quads.empty()) {
++    // between paint passes, when no window has records waiting, nothing points into the shared images
++    if (storesWithRecords == 0) {
+         if (glyphAtlas()->full)
+             glyphAtlas()->clear();
+         if (imageAtlas()->full)
+@@ -2285,6 +2303,8 @@ void QBatchedPaintBackingStore::run(QRhi *rhi, QRhiCommandBuffer *cb)
+ 
+     m_statQuads += qint64(quads.size());
+     ++m_statFlushes;
++    if (!quads.empty())
++        --storesWithRecords;
+     quads.clear();
+     ops.clear();
+     if (scratchRows > 0) {
+diff --git a/src/gui/painting/qplatformbackingstore.cpp b/src/gui/painting/qplatformbackingstore.cpp
+index dd5e584..281d07c 100644
+--- a/src/gui/painting/qplatformbackingstore.cpp
++++ b/src/gui/painting/qplatformbackingstore.cpp
+@@ -40,6 +40,7 @@ public:
+     QPlatformBackingStore::GpuTextureProvider gpuTextureProvider;
+     QPlatformBackingStore::PaintSubPixelOffsetSetter paintSubPixelOffsetSetter;
+     bool paintContentsLost = false;
++    std::function<void()> rhiAboutToGo;
+ };
+ 
+ struct QBackingstoreTextureInfo
+@@ -396,6 +397,8 @@ void QPlatformBackingStore::createRhi(QWindow *window, QPlatformBackingStoreRhiC
+         qCDebug(lcQpaBackingStore) << "Recreating RHI support with a stereo format for" << window;
+         QSurfaceFormat format = support.rhiSupport.format();
+         format.setStereo(true);
++        if (d_ptr->rhiAboutToGo)
++            d_ptr->rhiAboutToGo();
+         support.compositor.reset();
+         support.rhiSupport.reset();
+         support.rhiSupport.setFormat(format);
+@@ -426,6 +429,11 @@ void QPlatformBackingStore::setPaintContentsLost()
+     d_ptr->paintContentsLost = true;
+ }
+ 
++void QPlatformBackingStore::setRhiAboutToGo(std::function<void()> release)
++{
++    d_ptr->rhiAboutToGo = std::move(release);
++}
++
+ bool QPlatformBackingStore::takePaintContentsLost()
+ {
+     const bool lost = d_ptr->paintContentsLost;
+@@ -468,6 +476,8 @@ void QPlatformBackingStore::graphicsDeviceReportedLost(QWindow *window)
+         return;
+ 
+     qWarning("Rhi backingstore: graphics device lost, attempting to reinitialize");
++    if (d_ptr->rhiAboutToGo)
++        d_ptr->rhiAboutToGo();
+     surfaceSupport.compositor.reset();
+     surfaceSupport.rhiSupport.reset();
+     surfaceSupport.rhiSupport.create();
+diff --git a/src/gui/painting/qplatformbackingstore.h b/src/gui/painting/qplatformbackingstore.h
+index 104e39f..1bef246 100644
+--- a/src/gui/painting/qplatformbackingstore.h
++++ b/src/gui/painting/qplatformbackingstore.h
+@@ -192,6 +192,9 @@ public:
+     // the widgets paint the window again.
+     void setPaintContentsLost();
+     bool takePaintContentsLost();
++    // Called before the store's RHI is deleted (remade with another format, or lost), so that
++    // a store that keeps textures and buffers of it lets them go first.
++    void setRhiAboutToGo(std::function<void()> release);
+     bool paintsOnGpu() const;
+     using PaintSubPixelOffsetSetter = std::function<void(qreal)>;
+     void setPaintSubPixelOffsetSetter(PaintSubPixelOffsetSetter setter);
+diff --git a/src/opengl/qopenglpaintbackingstore.cpp b/src/opengl/qopenglpaintbackingstore.cpp
+index a4cd956..5ced085 100644
+--- a/src/opengl/qopenglpaintbackingstore.cpp
++++ b/src/opengl/qopenglpaintbackingstore.cpp
+@@ -135,6 +135,11 @@ public:
+     {
+         setGpuTextureProvider([this](QRhi *rhi, QRhiCommandBuffer *, TextureFlags *flags) { return texture(rhi, flags); });
+         setPaintSubPixelOffsetSetter([](qreal dx) { qt_gl_paint_subpixel_offset = dx; });
++        setRhiAboutToGo([this] {
++            delete m_rhiTexture;
++            m_rhiTexture = nullptr;
++            m_rhi = nullptr;
++        });
+     }
+ 
+     ~QOpenGLPaintBackingStore() override
+-- 
+2.53.0
+

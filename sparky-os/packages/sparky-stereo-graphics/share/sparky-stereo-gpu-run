@@ -1,7 +1,7 @@
 #!/bin/sh
 # Created by Daniel Ramos (Capitain Jack) 2026/10/23
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/02
+# Last update 2026/11/13
 # Starts a program on the GPU the Graphics page picked for it:
 #   sparky-stereo-gpu-run [--category players|games|browsers|other | --app ID.desktop | --choice GPU] [--3d] COMMAND [ARGUMENT...]
 # --3d: the program presents 3D, so Automatic is the GPU measured best on this computer, on battery too.
@@ -118,5 +118,11 @@ if [ -z "$chosen" ]; then
 		exit "$status"
 		;;
 	esac
+elif command -v sparky-stereo-gpu-env >/dev/null 2>&1; then
+	# the caller chose the GPU; how the program paints its windows is still the page's (Paint windows, ORDER 518)
+	# shellcheck disable=SC2086
+	if paint_env=$(sparky-stereo-gpu-env --shell --print paint-env $choice); then
+		eval "$paint_env"
+	fi
 fi
 exec "$@"

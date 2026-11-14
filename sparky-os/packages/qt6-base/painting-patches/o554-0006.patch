@@ -1,0 +1,52 @@
+From e961cc3867c1b75a18903a789b36ff7cf6819ae7 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 14 Nov 2026 12:27:17 -0300
+Subject: [PATCH] Wayland EGL: zink asked for by name without Mesa's own
+ presentation path gets the pair in one buffer
+
+zink's swapchain path (kopper) lists two views of a window surface, answers two when the surface is asked, and
+presents one, so an engine's pair was shown at half width with identical eyes. With LIBGL_KOPPER_DISABLE=1 the two
+views are carried and nothing changes. Otherwise the pair goes side by side into one buffer, declared, as on an EGL
+without two views.
+
+Assisted-by: Claude Fable 5.2
+---
+ .../wayland-egl/qwaylandeglwindow.cpp            | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+index 095276d..28e9e71 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+@@ -196,8 +196,22 @@ void QWaylandEglWindow::destroySurface()
+     m_pairSurface = false;
+ }
+ 
++// zink's own swapchain path (kopper) lists two views of a window surface, answers two when asked,
++// and presents one: an engine's pair drawn into the two views is shown squeezed into one. Mesa's
++// own presentation path (LIBGL_KOPPER_DISABLE=1, which the edition's session sets with zink)
++// carries both. Where zink is asked for by name without it, the pair goes side by side into one
++// buffer, as on an EGL without two views.
++static bool rendererPresentsOneView()
++{
++    static const bool oneView = qgetenv("MESA_LOADER_DRIVER_OVERRIDE") == "zink"
++            && qEnvironmentVariableIntValue("LIBGL_KOPPER_DISABLE") != 1;
++    return oneView;
++}
++
+ bool QWaylandEglWindow::pairWanted(const QSurfaceFormat &format) const
+ {
++    if (rendererPresentsOneView())
++        return false;
+     return !m_sideBySide && m_pairRequested.load(std::memory_order_acquire)
+             && m_clientBufferIntegration->supportsTwoViews(format)
+             && QWaylandStereoDepth::isSupported(mDisplay);
+@@ -221,7 +235,7 @@ void QWaylandEglWindow::updateSideBySidePair()
+     // content in one double-width FBO and blit each half with the same frame. A pair that is 3D
+     // content is the program's own.
+     const bool want = m_pairRequested.load(std::memory_order_acquire) && window()->property("_q_stereo_pair").toBool()
+-            && (decoration() || (!m_clientBufferIntegration->supportsTwoViews(fmt)
++            && (decoration() || rendererPresentsOneView() || (!m_clientBufferIntegration->supportsTwoViews(fmt)
+                                   && !m_clientBufferIntegration->supportsStereo(fmt)))
+             && QWaylandStereoDepth::isSupported(mDisplay) && !contentPair();
+     if (want == m_sideBySide)

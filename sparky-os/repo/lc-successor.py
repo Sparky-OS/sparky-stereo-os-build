@@ -140,6 +140,8 @@ def in_place(old, new, name, version, nxt, items, depends=(), overlay=None):
     kit_rel = str(kit.relative_to(new)) + '/'
     toolkit = [p for p in changed if p.startswith(kit_rel)]
     allowed = {'debian/changelog'} | ({'debian/control'} if depends else set()) | overlaid
+    # a folder the overlay brings whole is named once, by its own name (a new folder has no file on the other side)
+    allowed |= {p for p in changed if any(o.startswith(p + '/') for o in overlaid)}
     other = [p for p in changed if p not in allowed and p not in toolkit]
     if other:
         raise ValueError(f'the new source differs beyond its changelog and toolkit: {other}')

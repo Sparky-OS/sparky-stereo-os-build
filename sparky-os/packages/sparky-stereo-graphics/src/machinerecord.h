@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "graphicssettings.h"
+
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -39,6 +41,7 @@ struct MachineIdentity {
     QString vendor; // DMI sys_vendor, "LENOVO"
     QString product; // DMI product_name, "80ST"
     QStringList gpus; // "1002:6660" for every display controller, sorted
+    QString cpu; // the processor's model name as the kernel reports it, "AMD Ryzen 5 5600G with Radeon Graphics"
 
     static MachineIdentity read(const QString &root);
 };
@@ -49,6 +52,7 @@ struct KnownMachine {
     QString vendor; // equal to DMI sys_vendor, ignoring case
     QString product; // DMI product_name, a wildcard pattern ("80ST*")
     QStringList gpus; // exactly the display controllers of the machine
+    QString cpu; // equal to the processor's model name, ignoring case; for a machine its firmware does not name (ORDER 554)
     MachineRecord record;
 
     bool matches(const MachineIdentity &machine) const;
@@ -74,6 +78,9 @@ bool writeMeasured(const QString &root, const QString &bestGpu, std::optional<bo
 bool writeCopyBack(const QString &root, std::optional<bool> copyBack);
 // Removes what the tool wrote; the file goes when nothing else is in it
 bool forget(const QString &root);
+// ORDER 554: the way of painting windows measured on this machine for a program on a card ("cpu", "batch";
+// empty: not measured any more), in [MeasuredPaintPrograms]; Automatic on the Graphics page follows it
+bool writePaint(const QString &root, const QString &program, const QString &gpu, const QString &way, const QString &source);
 }
 
 }

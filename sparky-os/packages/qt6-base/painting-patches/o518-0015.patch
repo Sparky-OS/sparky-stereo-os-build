@@ -1,0 +1,117 @@
+From 3cb64e0e094a889dc0450f687ad1482f2b4dd25e Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 13 Nov 2026 01:16:35 -0300
+Subject: [PATCH] widgets: a program asked to paint on the GPU tells a named
+ command when it cannot (QT_WIDGETS_GPU_PAINT_TELL)
+
+A desktop that chose GPU painting for a program names a command; the program runs it once for each thing told:
+COMMAND --paint-failed PROGRAM CODE DETAIL, with the codes no-opengl (the session has none), software (an OpenGL
+the CPU draws; DETAIL is the renderer's name, its own parentheses kept), library (Qt OpenGL could not be loaded)
+and context (the store could not be made). With QT_WIDGETS_GPU_PAINT_TELL_OK set, the first window that does
+paint on the GPU runs COMMAND --paint-ok PROGRAM, so a kept failure can end. The warning on stderr stays.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ src/gui/painting/qbackingstore.cpp           | 50 ++++++++++++++++++++
+ src/gui/painting/qbackingstorerhisupport.cpp |  2 +
+ 2 files changed, 52 insertions(+)
+
+diff --git a/src/gui/painting/qbackingstore.cpp b/src/gui/painting/qbackingstore.cpp
+index d633874..0c3fda7 100644
+--- a/src/gui/painting/qbackingstore.cpp
++++ b/src/gui/painting/qbackingstore.cpp
+@@ -16,6 +16,9 @@
+ #include <private/qhighdpiscaling_p.h>
+ 
+ #include <QtCore/qlibrary.h>
++#if QT_CONFIG(process)
++#include <QtCore/qprocess.h>
++#endif
+ #include <QtCore/qloggingcategory.h>
+ 
+ QT_BEGIN_NAMESPACE
+@@ -380,6 +383,42 @@ Q_GUI_EXPORT int qt_widgets_gpu_paint_mode()
+     return mode;
+ }
+ 
++/*
++    Telling the person (QT_WIDGETS_GPU_PAINT_TELL): a desktop that chose GPU painting for a program
++    names a command here, and the program runs it, once for each thing told, when the painting it
++    was asked for cannot be had: COMMAND --paint-failed PROGRAM CODE DETAIL. The codes: "no-opengl"
++    (the session has none), "software" (an OpenGL the CPU draws; DETAIL is its renderer), "library"
++    (Qt OpenGL could not be loaded), "context" (the store could not be made; DETAIL says why),
++    "flat-pair" (a window painted once per eye on a surface with one view). With
++    QT_WIDGETS_GPU_PAINT_TELL_OK set, the first window that does paint on the GPU runs
++    COMMAND --paint-ok PROGRAM, so a kept failure can end. PROGRAM is the desktop file name, or the
++    application's name without one. The warning on stderr is printed whether or not anyone is told.
++*/
++Q_GUI_EXPORT void qt_widgets_gpu_paint_tell(const char *code, const QString &detail)
++{
++#if QT_CONFIG(process)
++    static QList<QByteArray> told;
++    const QString command = qEnvironmentVariable("QT_WIDGETS_GPU_PAINT_TELL");
++    if (command.isEmpty() || told.contains(code))
++        return;
++    told.append(code);
++    QString program = QGuiApplication::desktopFileName();
++    if (program.isEmpty())
++        program = QCoreApplication::applicationName();
++    const bool ok = !qstrcmp(code, "ok");
++    if (ok && !qEnvironmentVariableIsSet("QT_WIDGETS_GPU_PAINT_TELL_OK"))
++        return;
++    QStringList arguments{ok ? QStringLiteral("--paint-ok") : QStringLiteral("--paint-failed"), program};
++    if (!ok)
++        arguments << QString::fromLatin1(code) << detail;
++    if (!QProcess::startDetached(command, arguments))
++        qWarning("QT_WIDGETS_GPU_PAINT_TELL: %s could not be started.", qPrintable(command));
++#else
++    Q_UNUSED(code);
++    Q_UNUSED(detail);
++#endif
++}
++
+ QPlatformBackingStore *qt_create_batched_paint_backingstore(QWindow *window, QString *failure);
+ 
+ static QPlatformBackingStore *createGpuPaintBackingStore(QWindow *window)
+@@ -414,7 +453,18 @@ static QPlatformBackingStore *createGpuPaintBackingStore(QWindow *window)
+             said = true;
+             qWarning("QT_WIDGETS_GPU_PAINT: painting on the GPU could not start (%s); "
+                      "this program's widgets are painted on the CPU.", qPrintable(failure));
++            // the renderer's name is what stands in the parentheses after these words, parentheses of its own included
++            const QLatin1StringView software("drawn by the CPU (");
++            const qsizetype open = failure.indexOf(software);
++            if (open >= 0)
++                qt_widgets_gpu_paint_tell("software", failure.mid(open + software.size()).chopped(1));
++            else if (mode != 2 && failure.contains(QLatin1StringView("Qt6OpenGL")))
++                qt_widgets_gpu_paint_tell("library", failure);
++            else
++                qt_widgets_gpu_paint_tell("context", failure);
+         }
++    } else {
++        qt_widgets_gpu_paint_tell("ok", QString());
+     }
+     return store;
+ }
+diff --git a/src/gui/painting/qbackingstorerhisupport.cpp b/src/gui/painting/qbackingstorerhisupport.cpp
+index a9533ff..7f3e70c 100644
+--- a/src/gui/painting/qbackingstorerhisupport.cpp
++++ b/src/gui/painting/qbackingstorerhisupport.cpp
+@@ -18,6 +18,7 @@ QT_BEGIN_NAMESPACE
+ 
+ // qbackingstore.cpp
+ Q_GUI_EXPORT int qt_widgets_gpu_paint_mode();
++Q_GUI_EXPORT void qt_widgets_gpu_paint_tell(const char *code, const QString &detail);
+ 
+ QBackingStoreRhiSupport::~QBackingStoreRhiSupport()
+ {
+@@ -282,6 +283,7 @@ bool QBackingStoreRhiSupport::checkForceRhi(QPlatformBackingStoreRhiConfig *outC
+             gpuPaint = false;
+             qWarning("QT_WIDGETS_GPU_PAINT: painting on the GPU could not start (this session has no OpenGL); "
+                      "this program's widgets are painted on the CPU.");
++            qt_widgets_gpu_paint_tell("no-opengl", QString());
+         }
+         if (alwaysRhi || highdpiDownscale || gpuPaint)
+             config.setEnabled(true);
+-- 
+2.53.0
+

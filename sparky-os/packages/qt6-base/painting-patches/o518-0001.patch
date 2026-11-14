@@ -1,0 +1,1061 @@
+From bec4a898081d24f534e709275061d8a5b40c987a Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 11 Nov 2026 09:19:37 -0300
+Subject: [PATCH] prototype: widgets painted by the OpenGL paint engine behind
+ QT_WIDGETS_GPU_PAINT (state inherited from the first run)
+
+The first run of ORDER 518 milestone 1 was cut off; this is its working tree as found.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ src/gui/painting/qbackingstore.cpp            |  41 +-
+ .../qbackingstoredefaultcompositor.cpp        |  49 ++-
+ .../qbackingstoredefaultcompositor_p.h        |   4 +
+ src/gui/painting/qbackingstorerhisupport.cpp  |  14 +-
+ src/gui/painting/qplatformbackingstore.cpp    |  39 ++
+ src/gui/painting/qplatformbackingstore.h      |  14 +
+ src/opengl/CMakeLists.txt                     |   1 +
+ src/opengl/qopenglpaintbackingstore.cpp       | 352 ++++++++++++++++++
+ src/opengl/qopenglpaintengine.cpp             |  21 +-
+ src/widgets/kernel/qwidget.cpp                |  73 +++-
+ src/widgets/kernel/qwidget_p.h                |   1 +
+ src/widgets/kernel/qwidgetrepaintmanager.cpp  |  81 +++-
+ src/widgets/kernel/qwidgetrepaintmanager_p.h  |  16 +
+ 13 files changed, 684 insertions(+), 22 deletions(-)
+ create mode 100644 src/opengl/qopenglpaintbackingstore.cpp
+
+diff --git a/src/gui/painting/qbackingstore.cpp b/src/gui/painting/qbackingstore.cpp
+index 3b709ec..1c20e0f 100644
+--- a/src/gui/painting/qbackingstore.cpp
++++ b/src/gui/painting/qbackingstore.cpp
+@@ -15,6 +15,9 @@
+ 
+ #include <private/qhighdpiscaling_p.h>
+ 
++#include <QtCore/qlibrary.h>
++#include <QtCore/qloggingcategory.h>
++
+ QT_BEGIN_NAMESPACE
+ 
+ class QBackingStorePrivate
+@@ -349,10 +352,46 @@ void Q_GUI_EXPORT qt_scrollRectInImage(QImage &img, const QRect &rect, const QPo
+ /*!
+     Returns a pointer to the QPlatformBackingStore implementation
+ */
++/*
++    GPU painting of widgets (prototype, behind QT_WIDGETS_GPU_PAINT=1): the backing store of a
++    widget window that is flushed through the OpenGL RHI is made by Qt OpenGL, whose paint engine
++    draws the widgets into a texture. Qt Gui cannot link Qt OpenGL, so the library is opened here.
++    A store that cannot be made is said, with the reason, and the window is painted on the CPU.
++*/
++static QPlatformBackingStore *createGpuPaintBackingStore(QWindow *window)
++{
++    static const bool wanted = qEnvironmentVariableIntValue("QT_WIDGETS_GPU_PAINT");
++    if (!wanted || window->surfaceType() != QSurface::OpenGLSurface || !window->inherits("QWidgetWindow"))
++        return nullptr;
++    typedef QPlatformBackingStore *(*Factory)(QWindow *, QString *);
++    static Factory factory = nullptr;
++    static QString failure;
++    static bool resolved = false;
++    if (!resolved) {
++        resolved = true;
++        QLibrary library(QStringLiteral("Qt6OpenGL"), 6);
++        factory = Factory(library.resolve("qt_create_opengl_paint_backingstore"));
++        if (!factory)
++            failure = library.errorString();
++    }
++    QPlatformBackingStore *store = factory ? factory(window, &failure) : nullptr;
++    if (!store) {
++        static bool said = false;
++        if (!said) {
++            said = true;
++            qWarning("QT_WIDGETS_GPU_PAINT: painting on the GPU could not start (%s); "
++                     "this program's widgets are painted on the CPU.", qPrintable(failure));
++        }
++    }
++    return store;
++}
++
+ QPlatformBackingStore *QBackingStore::handle() const
+ {
+     if (!d_ptr->platformBackingStore) {
+-        d_ptr->platformBackingStore = QGuiApplicationPrivate::platformIntegration()->createPlatformBackingStore(d_ptr->window);
++        d_ptr->platformBackingStore = createGpuPaintBackingStore(d_ptr->window);
++        if (!d_ptr->platformBackingStore)
++            d_ptr->platformBackingStore = QGuiApplicationPrivate::platformIntegration()->createPlatformBackingStore(d_ptr->window);
+         d_ptr->platformBackingStore->setBackingStore(const_cast<QBackingStore*>(this));
+     }
+     return d_ptr->platformBackingStore;
+diff --git a/src/gui/painting/qbackingstoredefaultcompositor.cpp b/src/gui/painting/qbackingstoredefaultcompositor.cpp
+index 9b87782..d89345c 100644
+--- a/src/gui/painting/qbackingstoredefaultcompositor.cpp
++++ b/src/gui/painting/qbackingstoredefaultcompositor.cpp
+@@ -25,7 +25,9 @@ void QBackingStoreDefaultCompositor::reset()
+     m_samplerLinear.reset();
+     m_vbuf.reset();
+     m_texture.reset();
++    m_widgetTexture = nullptr;
+     m_widgetQuadData.reset();
++    m_widgetQuadDataRight.reset();
+     for (PerQuadData &d : m_textureQuadData)
+         d.reset();
+ }
+@@ -458,7 +460,9 @@ void QBackingStoreDefaultCompositor::ensureResources(QRhiResourceUpdateBatch *re
+     }
+ 
+     if (!m_widgetQuadData.isValid())
+-        m_widgetQuadData = createPerQuadData(m_texture.get());
++        m_widgetQuadData = createPerQuadData(m_widgetTexture);
++    else
++        updatePerQuadData(&m_widgetQuadData, m_widgetTexture);
+ 
+     QRhiShaderResourceBindings *srb = m_widgetQuadData.srb; // just for the layout
+     if (!m_psNoBlend)
+@@ -542,8 +546,11 @@ QPlatformBackingStore::FlushResult QBackingStoreDefaultCompositor::flush(QPlatfo
+                 flags |= QPlatformBackingStore::TextureFlip;
+         }
+     }
+-    if (!gotTextureFromGraphicsBuffer)
++    // A store painted on the GPU hands its texture over; nothing is uploaded.
++    QRhiTexture *gpuTexture = gotTextureFromGraphicsBuffer ? nullptr : backingStore->gpuTexture(rhi, &flags);
++    if (!gotTextureFromGraphicsBuffer && !gpuTexture)
+         toTexture(backingStore, rhi, resourceUpdates, dirtyRegion, &flags);
++    m_widgetTexture = gpuTexture ? gpuTexture : m_texture.get();
+ 
+     ensureResources(resourceUpdates, swapchain->renderPassDescriptor());
+ 
+@@ -572,19 +579,44 @@ QPlatformBackingStore::FlushResult QBackingStoreDefaultCompositor::flush(QPlatfo
+     const bool invertTargetY = !rhi->isYUpInNDC();
+     const bool invertSource = !rhi->isYUpInFramebuffer();
+ 
+-    if (m_texture) {
++    // A window painted once per eye (_q_stereo_pair): its texture holds the two eyes side by
++    // side, the left eye first, and each eye's target takes its own half.
++    bool pair = false;
++    if (m_widgetTexture) {
+         // The backingstore is for the entire tlw. In case of native children, offset tells the position
+         // relative to the tlw. The window rect is scaled by the source device pixel ratio to get
+         // the source rect.
+         const QPoint sourceWindowOffset = scaledOffset(offset, sourceTransformFactor);
+-        const QRect srcRect = toBottomLeftRect(sourceWindowRect.translated(sourceWindowOffset), m_texture->pixelSize().height());
+-        const QMatrix3x3 source = sourceTransform(srcRect, m_texture->pixelSize(), origin);
++        const QRect srcRect = toBottomLeftRect(sourceWindowRect.translated(sourceWindowOffset), m_widgetTexture->pixelSize().height());
++        const QMatrix3x3 source = sourceTransform(srcRect, m_widgetTexture->pixelSize(), origin);
+         QMatrix4x4 target; // identity
+         if (invertTargetY)
+             target.data()[5] = -1.0f;
+         updateUniforms(&m_widgetQuadData, resourceUpdates, target, source, uniformOptions);
+         if (needsLinearSampler)
+-            updatePerQuadData(&m_widgetQuadData, m_texture.get(), nullptr, NeedsLinearFiltering);
++            updatePerQuadData(&m_widgetQuadData, m_widgetTexture, nullptr, NeedsLinearFiltering);
++
++        pair = window->property("_q_stereo_pair").toBool()
++                && m_widgetTexture->pixelSize().width() == 2 * sourceWindowRect.width();
++        if (pair) {
++            if (!m_widgetQuadDataRight.isValid())
++                m_widgetQuadDataRight = createPerQuadData(m_widgetTexture);
++            else
++                updatePerQuadData(&m_widgetQuadDataRight, m_widgetTexture);
++            const QRect rightRect = srcRect.translated(sourceWindowRect.width(), 0);
++            updateUniforms(&m_widgetQuadDataRight, resourceUpdates, target,
++                           sourceTransform(rightRect, m_widgetTexture->pixelSize(), origin), uniformOptions);
++            if (needsLinearSampler)
++                updatePerQuadData(&m_widgetQuadDataRight, m_widgetTexture, nullptr, NeedsLinearFiltering);
++            if (!swapchain->window()->format().stereo()) {
++                static bool said = false;
++                if (!said) {
++                    said = true;
++                    qWarning("QT_WIDGETS_GPU_PAINT: this window is painted once per eye, but its surface "
++                             "has one view only (no EGL_EXT_multiview_window on this driver); it shows the left eye, flat.");
++                }
++            }
++        }
+     }
+ 
+     const int textureWidgetCount = textures->count();
+@@ -661,8 +693,9 @@ QPlatformBackingStore::FlushResult QBackingStoreDefaultCompositor::flush(QPlatfo
+         cb->setGraphicsPipeline(premultiplied ? m_psPremulBlend.get() : m_psBlend.get());
+ 
+         // Backingstore texture with the normal widgets.
+-        if (m_texture) {
+-            cb->setShaderResources(m_widgetQuadData.srb);
++        if (m_widgetTexture) {
++            cb->setShaderResources(pair && buffer == QRhiSwapChain::RightBuffer ? m_widgetQuadDataRight.srb
++                                                                                 : m_widgetQuadData.srb);
+             cb->draw(6);
+         }
+ 
+diff --git a/src/gui/painting/qbackingstoredefaultcompositor_p.h b/src/gui/painting/qbackingstoredefaultcompositor_p.h
+index cdc9d09..d945c9b 100644
+--- a/src/gui/painting/qbackingstoredefaultcompositor_p.h
++++ b/src/gui/painting/qbackingstoredefaultcompositor_p.h
+@@ -96,6 +96,10 @@ private:
+         }
+     };
+     PerQuadData m_widgetQuadData;
++    // The widgets' texture of this flush: m_texture, or the texture a store painted on the GPU
++    // hands over (not owned); and the right eye's quad of a window painted once per eye.
++    QRhiTexture *m_widgetTexture = nullptr;
++    PerQuadData m_widgetQuadDataRight;
+     QVarLengthArray<PerQuadData, 8> m_textureQuadData;
+ 
+     PerQuadData createPerQuadData(QRhiTexture *texture, QRhiTexture *textureExtra = nullptr);
+diff --git a/src/gui/painting/qbackingstorerhisupport.cpp b/src/gui/painting/qbackingstorerhisupport.cpp
+index 8136424..4ca0f5b 100644
+--- a/src/gui/painting/qbackingstorerhisupport.cpp
++++ b/src/gui/painting/qbackingstorerhisupport.cpp
+@@ -69,6 +69,11 @@ bool QBackingStoreRhiSupport::create()
+ 
+ #if QT_CONFIG(opengl)
+     if (!rhi && m_config.api() == QPlatformBackingStoreRhiConfig::OpenGL) {
++        // Widgets painted on the GPU (prototype) are painted and flushed on the GUI thread, which
++        // a swap that waits for the compositor's frame would hold (a terminal reads its program's
++        // output on that thread); QT_WIDGETS_GPU_PAINT_VSYNC=1 keeps the waiting swap, for comparing.
++        if (qEnvironmentVariableIntValue("QT_WIDGETS_GPU_PAINT") && !qEnvironmentVariableIntValue("QT_WIDGETS_GPU_PAINT_VSYNC"))
++            m_format.setSwapInterval(0);
+         surface = QRhiGles2InitParams::newFallbackSurface(m_format);
+         QRhiGles2InitParams params;
+         params.fallbackSurface = surface;
+@@ -266,7 +271,9 @@ bool QBackingStoreRhiSupport::checkForceRhi(QPlatformBackingStoreRhiConfig *outC
+         const bool highdpiDownscale = qEnvironmentVariableIntValue("QT_WIDGETS_HIGHDPI_DOWNSCALE");
+         if (highdpiDownscale)
+             qCDebug(lcQpaBackingStore) << "Enabling QT_WIDGETS_RHI due to QT_WIDGETS_HIGHDPI_DOWNSCALE";
+-        if (alwaysRhi || highdpiDownscale)
++        // GPU painting of widgets (prototype) composes through the OpenGL RHI
++        const bool gpuPaint = qEnvironmentVariableIntValue("QT_WIDGETS_GPU_PAINT");
++        if (alwaysRhi || highdpiDownscale || gpuPaint)
+             config.setEnabled(true);
+ 
+         // if enabled, choose an api
+@@ -307,6 +314,11 @@ bool QBackingStoreRhiSupport::checkForceRhi(QPlatformBackingStoreRhiConfig *outC
+ #endif
+             }
+ 
++#if QT_CONFIG(opengl)
++            if (gpuPaint)
++                config.setApi(QPlatformBackingStoreRhiConfig::OpenGL);
++#endif
++
+             if (qEnvironmentVariableIntValue("QT_WIDGETS_RHI_DEBUG_LAYER"))
+                 config.setDebugLayer(true);
+         }
+diff --git a/src/gui/painting/qplatformbackingstore.cpp b/src/gui/painting/qplatformbackingstore.cpp
+index cf9666f..7d743d7 100644
+--- a/src/gui/painting/qplatformbackingstore.cpp
++++ b/src/gui/painting/qplatformbackingstore.cpp
+@@ -36,6 +36,9 @@ public:
+         QBackingStoreDefaultCompositor compositor;
+     };
+     std::unordered_map<QSurface::SurfaceType, SurfaceSupport> surfaceSupport;
++
++    QPlatformBackingStore::GpuTextureProvider gpuTextureProvider;
++    QPlatformBackingStore::PaintSubPixelOffsetSetter paintSubPixelOffsetSetter;
+ };
+ 
+ struct QBackingstoreTextureInfo
+@@ -402,6 +405,42 @@ void QPlatformBackingStore::createRhi(QWindow *window, QPlatformBackingStoreRhiC
+     }
+ }
+ 
++void QPlatformBackingStore::setGpuTextureProvider(GpuTextureProvider provider)
++{
++    d_ptr->gpuTextureProvider = std::move(provider);
++}
++
++/*
++    The texture the store's paint device draws into, for \a rhi, or null for a store painted on
++    the CPU, whose image the compositor uploads.
++*/
++QRhiTexture *QPlatformBackingStore::gpuTexture(QRhi *rhi, TextureFlags *flags) const
++{
++    return d_ptr->gpuTextureProvider ? d_ptr->gpuTextureProvider(rhi, flags) : nullptr;
++}
++
++bool QPlatformBackingStore::paintsOnGpu() const
++{
++    return bool(d_ptr->gpuTextureProvider);
++}
++
++void QPlatformBackingStore::setPaintSubPixelOffsetSetter(PaintSubPixelOffsetSetter setter)
++{
++    d_ptr->paintSubPixelOffsetSetter = std::move(setter);
++}
++
++/*
++    Moves what is painted next by \a dx device pixels to the right, a part of a pixel. Returns
++    false for a store that paints in whole pixels only.
++*/
++bool QPlatformBackingStore::setPaintSubPixelOffset(qreal dx)
++{
++    if (!d_ptr->paintSubPixelOffsetSetter)
++        return false;
++    d_ptr->paintSubPixelOffsetSetter(dx);
++    return true;
++}
++
+ QRhi *QPlatformBackingStore::rhi(QWindow *window) const
+ {
+     // Returning null is valid, and means this is not a QRhi-capable backingstore.
+diff --git a/src/gui/painting/qplatformbackingstore.h b/src/gui/painting/qplatformbackingstore.h
+index 86035b9..f377541 100644
+--- a/src/gui/painting/qplatformbackingstore.h
++++ b/src/gui/painting/qplatformbackingstore.h
+@@ -19,6 +19,8 @@
+ #include <QtCore/qobject.h>
+ 
+ #include <QtGui/qwindow.h>
++
++#include <functional>
+ #include <QtGui/qregion.h>
+ 
+ QT_BEGIN_NAMESPACE
+@@ -177,6 +179,18 @@ public:
+ 
+     void createRhi(QWindow *window, QPlatformBackingStoreRhiConfig config);
+     QRhi *rhi(QWindow *window) const;
++
++    // GPU painting (prototype, QT_WIDGETS_GPU_PAINT): a backing store whose paint device draws
++    // into a texture hands that texture to the RHI flush, instead of an image to upload, and may
++    // take a horizontal offset of less than a pixel for what is painted next (an element's eye
++    // shift). Both are functions of the store, set by it, so the virtual table is unchanged.
++    using GpuTextureProvider = std::function<QRhiTexture *(QRhi *, TextureFlags *)>;
++    void setGpuTextureProvider(GpuTextureProvider provider);
++    QRhiTexture *gpuTexture(QRhi *rhi, TextureFlags *flags) const;
++    bool paintsOnGpu() const;
++    using PaintSubPixelOffsetSetter = std::function<void(qreal)>;
++    void setPaintSubPixelOffsetSetter(PaintSubPixelOffsetSetter setter);
++    bool setPaintSubPixelOffset(qreal dx);
+     void surfaceAboutToBeDestroyed();
+     void graphicsDeviceReportedLost(QWindow *window);
+ 
+diff --git a/src/opengl/CMakeLists.txt b/src/opengl/CMakeLists.txt
+index de034de..f435a7a 100644
+--- a/src/opengl/CMakeLists.txt
++++ b/src/opengl/CMakeLists.txt
+@@ -16,6 +16,7 @@ qt_internal_add_module(OpenGL
+         qopenglengineshadersource_p.h
+         qopenglframebufferobject.cpp qopenglframebufferobject.h qopenglframebufferobject_p.h
+         qopenglgradientcache.cpp qopenglgradientcache_p.h
++        qopenglpaintbackingstore.cpp
+         qopenglpaintdevice.cpp qopenglpaintdevice.h qopenglpaintdevice_p.h
+         qopenglpaintengine.cpp qopenglpaintengine_p.h
+         qopenglpixeltransferoptions.cpp qopenglpixeltransferoptions.h
+diff --git a/src/opengl/qopenglpaintbackingstore.cpp b/src/opengl/qopenglpaintbackingstore.cpp
+new file mode 100644
+index 0000000..f15a6fb
+--- /dev/null
++++ b/src/opengl/qopenglpaintbackingstore.cpp
+@@ -0,0 +1,352 @@
++// Copyright (C) 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++/*
++    A backing store whose widgets are painted by the OpenGL paint engine (prototype, behind
++    QT_WIDGETS_GPU_PAINT=1).
++
++    The window's widgets are painted into a framebuffer object, multisampled since the engine
++    antialiases by samples only, on a context of its own that shares with the context the window's
++    RHI composes with. The resolved texture is handed to the RHI flush
++    (QPlatformBackingStore::gpuTexture()), so no image is uploaded, and the frame reaches the
++    window's own EGL surface on the GPU the process draws with.
++
++    The contents are kept between paints, as a raster store's are, so a partial update paints
++    its own region only; scroll() moves a region on the GPU.
++*/
++
++#include <QtOpenGL/qopenglframebufferobject.h>
++#include <QtOpenGL/qopenglpaintdevice.h>
++#include <QtOpenGL/private/qopenglpaintdevice_p.h>
++
++#include <QtGui/qoffscreensurface.h>
++#include <QtGui/qopenglcontext.h>
++#include <QtGui/qopenglextrafunctions.h>
++#include <QtGui/qwindow.h>
++#include <QtGui/private/qopenglcontext_p.h>
++#include <qpa/qplatformbackingstore.h>
++#include <rhi/qrhi.h>
++
++#include <QtCore/qdebug.h>
++#include <QtCore/qmath.h>
++
++#include <memory>
++
++QT_BEGIN_NAMESPACE
++
++// The part of a pixel that everything the paint engine draws is moved to the right by
++// (qopenglpaintengine.cpp): an element's eye shift, set by the widgets' repaint manager through
++// QPlatformBackingStore::setPaintSubPixelOffset().
++Q_OPENGL_EXPORT qreal qt_gl_paint_subpixel_offset = 0;
++
++namespace {
++
++struct PaintContext
++{
++    QOpenGLContext *context = nullptr;
++    QOffscreenSurface *surface = nullptr;
++    int samples = 4;
++};
++
++PaintContext *paintContext(QString *failure)
++{
++    static PaintContext s_context;
++    static QString s_failure;
++    static bool s_tried = false;
++    if (!s_tried) {
++        s_tried = true;
++        // Every window's RHI shares with the global share context; the paint context joins it,
++        // so each window's compositor can sample what is painted here.
++        if (!QOpenGLContext::globalShareContext()) {
++            auto *share = new QOpenGLContext;
++            share->setFormat(QSurfaceFormat::defaultFormat());
++            if (!share->create()) {
++                delete share;
++                s_failure = QStringLiteral("no OpenGL context could be created");
++            } else {
++                qt_gl_set_global_share_context(share);
++            }
++        }
++        if (s_failure.isEmpty()) {
++            auto context = std::make_unique<QOpenGLContext>();
++            context->setFormat(QSurfaceFormat::defaultFormat());
++            context->setShareContext(QOpenGLContext::globalShareContext());
++            auto surface = std::make_unique<QOffscreenSurface>();
++            if (!context->create()) {
++                s_failure = QStringLiteral("no OpenGL context could be created");
++            } else {
++                surface->setFormat(context->format());
++                surface->create();
++                if (!context->makeCurrent(surface.get())) {
++                    s_failure = QStringLiteral("the OpenGL context could not be made current");
++                } else if (!QOpenGLFramebufferObject::hasOpenGLFramebufferObjects()
++                           || !QOpenGLFramebufferObject::hasOpenGLFramebufferBlit()) {
++                    s_failure = QStringLiteral("this OpenGL has no framebuffer objects with blit");
++                } else {
++                    bool ok = false;
++                    const int samples = qEnvironmentVariableIntValue("QT_WIDGETS_GPU_PAINT_SAMPLES", &ok);
++                    if (ok)
++                        s_context.samples = qMax(0, samples);
++                    if (qEnvironmentVariableIntValue("QT_WIDGETS_PAINT_STATS")) {
++                        auto *f = context->functions();
++                        qInfo("QT_WIDGETS_GPU_PAINT: OpenGL painting on \"%s\" (%s), %d samples",
++                              reinterpret_cast<const char *>(f->glGetString(GL_RENDERER)),
++                              reinterpret_cast<const char *>(f->glGetString(GL_VERSION)), s_context.samples);
++                    }
++                    s_context.context = context.release();
++                    s_context.surface = surface.release();
++                }
++            }
++        }
++    }
++    if (!s_context.context) {
++        *failure = s_failure;
++        return nullptr;
++    }
++    return &s_context;
++}
++
++class QOpenGLPaintBackingStore;
++
++class BackingStorePaintDevice : public QOpenGLPaintDevice
++{
++public:
++    explicit BackingStorePaintDevice(QOpenGLPaintBackingStore *store) : m_store(store) { }
++    void ensureActiveTarget() override;
++
++private:
++    QOpenGLPaintBackingStore *m_store;
++};
++
++class QOpenGLPaintBackingStore : public QPlatformBackingStore
++{
++public:
++    QOpenGLPaintBackingStore(QWindow *window, PaintContext *context)
++        : QPlatformBackingStore(window), m_context(context)
++    {
++        setGpuTextureProvider([this](QRhi *rhi, TextureFlags *flags) { return texture(rhi, flags); });
++        setPaintSubPixelOffsetSetter([](qreal dx) { qt_gl_paint_subpixel_offset = dx; });
++    }
++
++    ~QOpenGLPaintBackingStore() override
++    {
++        delete m_rhiTexture;
++        if (m_context->context->makeCurrent(m_context->surface)) {
++            m_device.reset();
++            m_paintFbo.reset();
++            m_textureFbo.reset();
++            m_scratchFbo.reset();
++            m_context->context->doneCurrent();
++        }
++    }
++
++    QPaintDevice *paintDevice() override
++    {
++        ensureTargets();
++        return m_device.get();
++    }
++
++    void resize(const QSize &size, const QRegion &) override { m_size = size; }
++
++    void beginPaint(const QRegion &region) override
++    {
++        ensureTargets();
++        m_dirty = QRect();
++        for (const QRect &rect : region)
++            m_dirty |= deviceRect(rect);
++        m_dirty &= QRect(QPoint(), m_pixelSize);
++        activate();
++        // A translucent window starts from nothing where it paints, as a raster store does.
++        if (window()->requestedFormat().hasAlpha() && !m_dirty.isEmpty()) {
++            auto *f = m_context->context->functions();
++            f->glEnable(GL_SCISSOR_TEST);
++            f->glScissor(m_dirty.x(), m_pixelSize.height() - m_dirty.y() - m_dirty.height(), m_dirty.width(), m_dirty.height());
++            f->glClearColor(0, 0, 0, 0);
++            f->glClear(GL_COLOR_BUFFER_BIT);
++            f->glDisable(GL_SCISSOR_TEST);
++        }
++    }
++
++    void endPaint() override
++    {
++        if (!m_paintFbo)
++            return;
++        if (!m_context->context->makeCurrent(m_context->surface))
++            return;
++        if (m_textureFbo != m_paintFbo && !m_dirty.isEmpty()) {
++            // resolve the samples of what was painted
++            const QRect r = glRect(m_dirty);
++            QOpenGLFramebufferObject::blitFramebuffer(m_textureFbo.get(), r, m_paintFbo.get(), r,
++                                                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
++        }
++        // the window's context samples the texture next
++        m_context->context->functions()->glFlush();
++        m_context->context->doneCurrent();
++    }
++
++    void flush(QWindow *, const QRegion &, const QPoint &) override
++    {
++        qWarning("QOpenGLPaintBackingStore: flushed without the RHI; nothing is shown");
++    }
++
++    bool scroll(const QRegion &area, int dx, int dy) override
++    {
++        if (!m_paintFbo || !m_context->context->makeCurrent(m_context->surface))
++            return false;
++        const qreal dpr = m_dpr;
++        if (!qFuzzyCompare(dx * dpr, qRound(dx * dpr)) || !qFuzzyCompare(dy * dpr, qRound(dy * dpr)))
++            return false;
++        const QPoint delta(qRound(dx * dpr), qRound(dy * dpr));
++        if (!m_scratchFbo || m_scratchFbo->size() != m_pixelSize) {
++            QOpenGLFramebufferObjectFormat format;
++            format.setInternalTextureFormat(GL_RGBA8);
++            m_scratchFbo = std::make_unique<QOpenGLFramebufferObject>(m_pixelSize, format);
++        }
++        const QRect bounds(QPoint(), m_pixelSize);
++        for (const QRect &rect : area) {
++            const QRect source = deviceRect(rect) & bounds;
++            const QRect target = source.translated(delta) & bounds;
++            const QRect from = target.translated(-delta);
++            if (from.isEmpty())
++                continue;
++            // a blit within one framebuffer must not overlap itself (OpenGL 4.6, 18.3.1), so the
++            // region goes through a copy
++            QOpenGLFramebufferObject::blitFramebuffer(m_scratchFbo.get(), glRect(from), m_textureFbo.get(), glRect(from),
++                                                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
++            QOpenGLFramebufferObject::blitFramebuffer(m_textureFbo.get(), glRect(target), m_scratchFbo.get(), glRect(from),
++                                                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
++            if (m_textureFbo != m_paintFbo) {
++                QOpenGLFramebufferObject::blitFramebuffer(m_paintFbo.get(), glRect(target), m_scratchFbo.get(), glRect(from),
++                                                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
++            }
++        }
++        m_context->context->functions()->glFlush();
++        m_context->context->doneCurrent();
++        return true;
++    }
++
++    QImage toImage() const override
++    {
++        if (!m_textureFbo || !m_context->context->makeCurrent(m_context->surface))
++            return QImage();
++        QImage image = m_textureFbo->toImage();
++        image.setDevicePixelRatio(m_dpr);
++        m_context->context->doneCurrent();
++        return image;
++    }
++
++    // Makes the paint context current with the framebuffer the widgets are painted into.
++    void activate()
++    {
++        if (QOpenGLContext::currentContext() != m_context->context)
++            m_context->context->makeCurrent(m_context->surface);
++        if (m_paintFbo)
++            m_paintFbo->bind();
++    }
++
++private:
++    QRect deviceRect(const QRect &rect) const
++    {
++        return QRectF(rect.x() * m_dpr, rect.y() * m_dpr, rect.width() * m_dpr, rect.height() * m_dpr).toAlignedRect();
++    }
++
++    // OpenGL counts rows from the bottom.
++    QRect glRect(const QRect &rect) const
++    {
++        return QRect(rect.x(), m_pixelSize.height() - rect.y() - rect.height(), rect.width(), rect.height());
++    }
++
++    void ensureTargets()
++    {
++        const qreal dpr = window()->devicePixelRatio();
++        const QSize pixelSize(qCeil(m_size.width() * dpr), qCeil(m_size.height() * dpr));
++        if (m_paintFbo && pixelSize == m_pixelSize && dpr == m_dpr)
++            return;
++        if (pixelSize.isEmpty() || !m_context->context->makeCurrent(m_context->surface))
++            return;
++        m_pixelSize = pixelSize;
++        m_dpr = dpr;
++
++        QOpenGLFramebufferObjectFormat textureFormat;
++        textureFormat.setInternalTextureFormat(GL_RGBA8);
++        QOpenGLFramebufferObjectFormat paintFormat = textureFormat;
++        paintFormat.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
++        paintFormat.setSamples(m_context->samples);
++
++        m_paintFbo = std::make_shared<QOpenGLFramebufferObject>(pixelSize, paintFormat);
++        if (m_paintFbo->format().samples() > 0)
++            m_textureFbo = std::make_shared<QOpenGLFramebufferObject>(pixelSize, textureFormat);
++        else
++            m_textureFbo = m_paintFbo;
++        m_scratchFbo.reset();
++        delete m_rhiTexture;
++        m_rhiTexture = nullptr;
++
++        auto *f = m_context->context->functions();
++        for (QOpenGLFramebufferObject *fbo : { m_paintFbo.get(), m_textureFbo.get() }) {
++            fbo->bind();
++            f->glClearColor(0, 0, 0, window()->requestedFormat().hasAlpha() ? 0 : 1);
++            f->glClear(GL_COLOR_BUFFER_BIT);
++        }
++
++        if (!m_device)
++            m_device = std::make_unique<BackingStorePaintDevice>(this);
++        m_device->setSize(pixelSize);
++        m_device->setDevicePixelRatio(dpr);
++        m_paintFbo->bind();
++    }
++
++    QRhiTexture *texture(QRhi *rhi, TextureFlags *flags)
++    {
++        if (!m_textureFbo)
++            return nullptr;
++        if (!m_rhiTexture || m_rhi != rhi) {
++            delete m_rhiTexture;
++            m_rhi = rhi;
++            m_rhiTexture = rhi->newTexture(QRhiTexture::RGBA8, m_pixelSize);
++            if (!m_rhiTexture->createFrom({ quint64(m_textureFbo->texture()), 0 })) {
++                delete m_rhiTexture;
++                m_rhiTexture = nullptr;
++                return nullptr;
++            }
++        }
++        // a framebuffer's texture has its first row at the bottom; the engine writes
++        // premultiplied colour
++        *flags = TextureFlip | TexturePremultiplied;
++        return m_rhiTexture;
++    }
++
++    PaintContext *m_context;
++    QSize m_size;
++    QSize m_pixelSize;
++    qreal m_dpr = 1;
++    QRect m_dirty;
++    std::shared_ptr<QOpenGLFramebufferObject> m_paintFbo;
++    std::shared_ptr<QOpenGLFramebufferObject> m_textureFbo;
++    std::unique_ptr<QOpenGLFramebufferObject> m_scratchFbo;
++    std::unique_ptr<BackingStorePaintDevice> m_device;
++    QRhi *m_rhi = nullptr;
++    QRhiTexture *m_rhiTexture = nullptr;
++};
++
++void BackingStorePaintDevice::ensureActiveTarget()
++{
++    m_store->activate();
++}
++
++} // namespace
++
++/*
++    Makes the backing store of \a window, a widget window flushed through the OpenGL RHI. Returns
++    null, with the reason in \a failure, when OpenGL painting cannot start; QBackingStore then
++    says so and paints on the CPU.
++*/
++extern "C" Q_OPENGL_EXPORT QPlatformBackingStore *qt_create_opengl_paint_backingstore(QWindow *window, QString *failure)
++{
++    PaintContext *context = paintContext(failure);
++    if (!context)
++        return nullptr;
++    return new QOpenGLPaintBackingStore(window, context);
++}
++
++QT_END_NAMESPACE
+diff --git a/src/opengl/qopenglpaintengine.cpp b/src/opengl/qopenglpaintengine.cpp
+index ad1249b..d98a2a0 100644
+--- a/src/opengl/qopenglpaintengine.cpp
++++ b/src/opengl/qopenglpaintengine.cpp
+@@ -75,6 +75,10 @@
+ 
+ QT_BEGIN_NAMESPACE
+ 
++// qopenglpaintbackingstore.cpp
++Q_OPENGL_EXPORT extern qreal qt_gl_paint_subpixel_offset;
++
++
+ 
+ Q_GUI_EXPORT QImage qt_imageForBrush(int brushStyle, bool invert);
+ 
+@@ -269,7 +273,7 @@ void QOpenGL2PaintEngineExPrivate::updateBrushTexture()
+     Qt::BrushStyle style = currentBrush.style();
+ 
+     bool smoothPixmapTransform = q->state()->renderHints & QPainter::SmoothPixmapTransform;
+-    GLenum filterMode = smoothPixmapTransform ? GL_LINEAR : GL_NEAREST;
++    GLenum filterMode = smoothPixmapTransform || qt_gl_paint_subpixel_offset != 0 ? GL_LINEAR : GL_NEAREST;
+ 
+     if ( (style >= Qt::Dense1Pattern) && (style <= Qt::DiagCrossPattern) ) {
+         // Get the image data for the pattern
+@@ -481,6 +485,10 @@ void QOpenGL2PaintEngineExPrivate::updateMatrix()
+         dx = std::ceil(dx - 0.5f);
+         dy = std::ceil(dy - 0.5f);
+     }
++
++    // An element's eye shift of less than a pixel (a window painted once per eye on the GPU),
++    // added after the snap, so that text moves by it too.
++    dx += GLfloat(qt_gl_paint_subpixel_offset);
+     pmvMatrix[0][0] = (wfactor * transform.m11())  - transform.m13();
+     pmvMatrix[1][0] = (wfactor * transform.m21())  - transform.m23();
+     pmvMatrix[2][0] = (wfactor * dx) - transform.m33();
+@@ -1536,7 +1544,7 @@ void QOpenGL2PaintEngineEx::drawPixmap(const QRectF& dest, const QPixmap & pixma
+     ensureActive();
+     d->transferMode(ImageDrawingMode);
+ 
+-    GLenum filterMode = state()->renderHints & QPainter::SmoothPixmapTransform ? GL_LINEAR : GL_NEAREST;
++    GLenum filterMode = (state()->renderHints & QPainter::SmoothPixmapTransform) || qt_gl_paint_subpixel_offset != 0 ? GL_LINEAR : GL_NEAREST;
+     d->updateTexture(QT_IMAGE_TEXTURE_UNIT, pixmap, GL_CLAMP_TO_EDGE, filterMode);
+ 
+     bool isBitmap = pixmap.isQBitmap();
+@@ -1600,7 +1608,7 @@ void QOpenGL2PaintEngineEx::drawImage(const QRectF& dest, const QImage& image, c
+     }
+ 
+     ImageWithBindOptions imageWithOptions = { image, bindOption };
+-    GLenum filterMode = state()->renderHints & QPainter::SmoothPixmapTransform ? GL_LINEAR : GL_NEAREST;
++    GLenum filterMode = (state()->renderHints & QPainter::SmoothPixmapTransform) || qt_gl_paint_subpixel_offset != 0 ? GL_LINEAR : GL_NEAREST;
+     d->updateTexture(QT_IMAGE_TEXTURE_UNIT, imageWithOptions, GL_CLAMP_TO_EDGE, filterMode);
+ 
+     d->drawTexture(dest, src, image.size(), !image.hasAlphaChannel());
+@@ -1642,7 +1650,7 @@ bool QOpenGL2PaintEngineEx::drawTexture(const QRectF &dest, GLuint textureId, co
+     ensureActive();
+     d->transferMode(ImageDrawingMode);
+ 
+-    GLenum filterMode = state()->renderHints & QPainter::SmoothPixmapTransform ? GL_LINEAR : GL_NEAREST;
++    GLenum filterMode = (state()->renderHints & QPainter::SmoothPixmapTransform) || qt_gl_paint_subpixel_offset != 0 ? GL_LINEAR : GL_NEAREST;
+     d->updateTexture(QT_IMAGE_TEXTURE_UNIT, textureId, GL_CLAMP_TO_EDGE, filterMode);
+ 
+     d->shaderManager->setSrcPixelType(QOpenGLEngineShaderManager::ImageSrc);
+@@ -2059,7 +2067,8 @@ void QOpenGL2PaintEngineExPrivate::drawCachedGlyphs(QFontEngine::GlyphFormat gly
+     if (glyphFormat == QFontEngine::Format_ARGB)
+         textureUnit = QT_IMAGE_TEXTURE_UNIT;
+ 
+-    QOpenGLTextureGlyphCache::FilterMode filterMode = (s->matrix.type() > QTransform::TxTranslate) ?
++    QOpenGLTextureGlyphCache::FilterMode filterMode = (s->matrix.type() > QTransform::TxTranslate
++                                                       || qt_gl_paint_subpixel_offset != 0) ?
+         QOpenGLTextureGlyphCache::Linear : QOpenGLTextureGlyphCache::Nearest;
+ 
+     GLenum glFilterMode = filterMode == QOpenGLTextureGlyphCache::Linear ? GL_LINEAR : GL_NEAREST;
+@@ -2164,7 +2173,7 @@ void QOpenGL2PaintEngineExPrivate::drawPixmapFragments(const QPainter::PixmapFra
+     uploadData(QT_TEXTURE_COORDS_ATTR, (GLfloat*)textureCoordinateArray.data(), textureCoordinateArray.vertexCount() * 2);
+     uploadData(QT_OPACITY_ATTR, (GLfloat*)opacityArray.data(), opacityArray.size());
+ 
+-    GLenum filterMode = q->state()->renderHints & QPainter::SmoothPixmapTransform ? GL_LINEAR : GL_NEAREST;
++    GLenum filterMode = (q->state()->renderHints & QPainter::SmoothPixmapTransform) || qt_gl_paint_subpixel_offset != 0 ? GL_LINEAR : GL_NEAREST;
+     updateTexture(QT_IMAGE_TEXTURE_UNIT, pixmap, GL_CLAMP_TO_EDGE, filterMode);
+ 
+     bool isBitmap = pixmap.isQBitmap();
+diff --git a/src/widgets/kernel/qwidget.cpp b/src/widgets/kernel/qwidget.cpp
+index 773d584..ea0dce3 100644
+--- a/src/widgets/kernel/qwidget.cpp
++++ b/src/widgets/kernel/qwidget.cpp
+@@ -5640,8 +5640,17 @@ void QWidgetPrivate::drawWidget(QPaintDevice *pdev, const QRegion &rgn, const QP
+                     endBackingStorePainting();
+                 }
+ 
+-                if (!sharedPainter)
+-                    setSystemClip(pdev->paintEngine(), pdev->devicePixelRatio(), toBePainted.translated(offset));
++                if (!sharedPainter) {
++                    QRegion clip = toBePainted.translated(offset);
++                    // A widget moved by a part of a pixel reaches into the next column.
++                    if (const int slack = repaintManager ? qt_widget_stereo_clip_slack() : 0) {
++                        QRegion grown;
++                        for (const QRect &rect : clip)
++                            grown += slack > 0 ? rect.adjusted(0, 0, 1, 0) : rect.adjusted(-1, 0, 0, 0);
++                        clip = grown;
++                    }
++                    setSystemClip(pdev->paintEngine(), pdev->devicePixelRatio(), clip);
++                }
+ 
+                 if (!onScreen && !asRoot && !isOpaque && q->testAttribute(Qt::WA_TintedBackground)) {
+                     beginBackingStorePainting();
+@@ -5871,7 +5880,50 @@ void QWidgetPrivate::paintSiblingsRecursive(QPaintDevice *pdev, const QObjectLis
+         if (hasMask)
+             wRegion &= wd->extra->mask;
+         QPoint shift;
+-        if (eye) {
++        const qreal parentSubPixel = qt_widget_stereo_subpixel();
++        const int parentSlack = qt_widget_stereo_clip_slack();
++        bool fractional = false;
++        if (eye && qt_widget_stereo_fractional()) {
++            // On a store that paints parts of a pixel (GPU painting), each widget moves by its
++            // exact eye shift: whole logical pixels through its offset, as below, and the rest
++            // through the store, for it and what is in it. The eyes take their shares as below,
++            // so a whole parallax gives the same picture as whole-pixel painting.
++            fractional = true;
++            const qreal parallax = stereoParallaxF(w);
++            const qreal parentParallax = stereoParallaxF(w->parentWidget());
++            const qreal rootParallax = stereoParallaxF(w->window());
++            auto eyeShift = [eye](qreal p) {
++                const qreal half = std::trunc(p / 2);
++                return eye == 1 ? p - half : -half;
++            };
++            const qreal dpr = pdev->devicePixelRatio() > 0 ? pdev->devicePixelRatio() : 1;
++            const qreal absolute = eyeShift(parallax) - eyeShift(rootParallax);
++            const qreal parentAbsolute = eyeShift(parentParallax) - eyeShift(rootParallax);
++            const int whole = qRound(absolute / dpr);
++            const int parentWhole = qRound(parentAbsolute / dpr);
++            const qreal subPixel = absolute - whole * dpr;
++            shift.setX(whole - parentWhole);
++            const bool moved = !qFuzzyCompare(absolute + 1, parentAbsolute + 1);
++            int slack = subPixel > 0 ? 1 : (subPixel < 0 ? -1 : 0);
++            if (moved) {
++                if (parallax >= parentParallax) {
++                    // drawn whole: the column its part of a pixel reaches into is open to it
++                    QRect moved = w->data->crect.translated(shift);
++                    if (slack > 0)
++                        moved.adjust(0, 0, 1, 0);
++                    else if (slack < 0)
++                        moved.adjust(-1, 0, 0, 0);
++                    wRegion = QRegion(rgn & wd->effectiveRectFor(moved)).translated(-widgetPos - shift) & w->rect();
++                } else {
++                    // cut to its own rectangle
++                    wRegion = wRegion.translated(-shift) & w->rect();
++                    slack = 0;
++                }
++                if (hasMask)
++                    wRegion &= wd->extra->mask;
++            }
++            qt_widget_set_stereo_subpixel(repaintManager, subPixel, slack);
++        } else if (eye) {
+             // The widget's parallax (_q_stereo_parallax, in device pixels, positive when nearer than
+             // the screen), which the style gives it; without one it moves with the widget it is in.
+             // Each eye takes its share as Stereo KWin splits a parallax, the left eye the larger
+@@ -5894,9 +5946,24 @@ void QWidgetPrivate::paintSiblingsRecursive(QPaintDevice *pdev, const QObjectLis
+             }
+         }
+         wd->drawWidget(pdev, wRegion, offset + widgetPos + shift, flags, sharedPainter, repaintManager);
++        if (fractional)
++            qt_widget_set_stereo_subpixel(repaintManager, parentSubPixel, parentSlack);
+     }
+ }
+ 
++/*
++    As stereoParallax(), with the parts of a pixel the style gave.
++*/
++qreal QWidgetPrivate::stereoParallaxF(const QWidget *widget)
++{
++    for (; widget; widget = widget->isWindow() ? nullptr : widget->parentWidget()) {
++        const QVariant parallax = widget->property("_q_stereo_parallax");
++        if (parallax.isValid())
++            return parallax.toReal();
++    }
++    return 0;
++}
++
+ /*
+     The parallax a style gave \a widget for a window painted once per eye (_q_stereo_parallax),
+     or the parallax of the nearest widget around it that has one; 0 for none.
+diff --git a/src/widgets/kernel/qwidget_p.h b/src/widgets/kernel/qwidget_p.h
+index a6b1c52..a1218d5 100644
+--- a/src/widgets/kernel/qwidget_p.h
++++ b/src/widgets/kernel/qwidget_p.h
+@@ -311,6 +311,7 @@ public:
+ 
+ 
+     static int stereoParallax(const QWidget *widget);
++    static qreal stereoParallaxF(const QWidget *widget);
+     void paintSiblingsRecursive(QPaintDevice *pdev, const QObjectList& children, int index,
+                                 const QRegion &rgn, const QPoint &offset, DrawWidgetFlags flags,
+                                 QPainter *sharedPainter, QWidgetRepaintManager *repaintManager);
+diff --git a/src/widgets/kernel/qwidgetrepaintmanager.cpp b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+index 369b4a3..a9c1d7e 100644
+--- a/src/widgets/kernel/qwidgetrepaintmanager.cpp
++++ b/src/widgets/kernel/qwidgetrepaintmanager.cpp
+@@ -527,6 +527,33 @@ int qt_widget_stereo_eye()
+     return s_stereoEye;
+ }
+ 
++static bool s_stereoFractional = false;
++static qreal s_stereoSubPixel = 0;
++static int s_stereoClipSlack = 0;
++
++bool qt_widget_stereo_fractional()
++{
++    return s_stereoFractional;
++}
++
++qreal qt_widget_stereo_subpixel()
++{
++    return s_stereoSubPixel;
++}
++
++int qt_widget_stereo_clip_slack()
++{
++    return s_stereoClipSlack;
++}
++
++void qt_widget_set_stereo_subpixel(QWidgetRepaintManager *manager, qreal subPixel, int slack)
++{
++    s_stereoSubPixel = subPixel;
++    s_stereoClipSlack = slack;
++    if (manager && manager->store)
++        manager->store->handle()->setPaintSubPixelOffset(subPixel);
++}
++
+ /*
+     Whether the window's style draws its elements in depth now: the style sets the window's
+     _q_stereo_depth while the compositor shows depth inside the window (it is on a stereo output
+@@ -539,8 +566,16 @@ int qt_widget_stereo_eye()
+ static bool paintsPerEye(QWidget *tlw)
+ {
+     const QWindow *window = tlw->windowHandle();
+-    return window && window->property("_q_stereo_depth").toBool() && !qt_widget_private(tlw)->textureChildSeen
+-            && window->frameMargins().isNull();
++    if (!window || !window->property("_q_stereo_depth").toBool())
++        return false;
++    // A store painted on the GPU (prototype) hands the pair to the two views of the window's own
++    // surface: the platform draws a client-side frame into both views, and the compositor draws
++    // each render-to-texture widget into both, so neither keeps such a window flat
++    // (QT_WIDGETS_GPU_PAINT_FLAT_EXCEPTIONS=1 keeps the two exceptions, for comparing).
++    static const bool keepExceptions = qEnvironmentVariableIntValue("QT_WIDGETS_GPU_PAINT_FLAT_EXCEPTIONS");
++    if (!keepExceptions && tlw->backingStore() && tlw->backingStore()->handle()->paintsOnGpu())
++        return true;
++    return !qt_widget_private(tlw)->textureChildSeen && window->frameMargins().isNull();
+ }
+ 
+ /*
+@@ -914,6 +949,9 @@ void QWidgetRepaintManager::paintAndFlush()
+     }
+ #endif
+ 
++    QElapsedTimer statsClock;
++    statsClock.start();
++    const qint64 statsStart = 0;
+     store->beginPaint(perEye ? QRegion(0, 0, storeSize.width(), storeSize.height()) : toClean);
+ 
+     // Must do this before sending any paint events because
+@@ -953,6 +991,10 @@ void QWidgetRepaintManager::paintAndFlush()
+             // _q_stereo_eye for the parts it moves itself; a widget that moves may leave what is
+             // beneath it uncovered, so everything beneath is painted.
+             QWindow *window = tlw->windowHandle();
++            // A store painted on the GPU moves each widget by its exact eye shift, parts of a
++            // pixel included (QT_WIDGETS_STEREO_WHOLE_PIXELS=1 keeps whole pixels, for comparing).
++            static const bool wholePixels = qEnvironmentVariableIntValue("QT_WIDGETS_STEREO_WHOLE_PIXELS");
++            s_stereoFractional = !wholePixels && store->handle()->setPaintSubPixelOffset(0);
+             for (const int eye : {1, 2}) {
+                 s_stereoEye = eye;
+                 window->setProperty("_q_stereo_eye", eye);
+@@ -960,6 +1002,9 @@ void QWidgetRepaintManager::paintAndFlush()
+                                           flags | QWidgetPrivate::DontSubtractOpaqueChildren, nullptr, this);
+             }
+             s_stereoEye = 0;
++            if (s_stereoFractional)
++                qt_widget_set_stereo_subpixel(this, 0, 0);
++            s_stereoFractional = false;
+             window->setProperty("_q_stereo_eye", 0);
+         } else {
+             tlw->d_func()->drawWidget(store->paintDevice(), dirtyCopy, QPoint(), flags, nullptr, this);
+@@ -969,10 +1014,40 @@ void QWidgetRepaintManager::paintAndFlush()
+     store->endPaint();
+ 
+     // The platform hands a pair over as such.
+-    if (QWindow *window = tlw->windowHandle(); window && window->property("_q_stereo_pair").toBool() != perEye)
++    if (QWindow *window = tlw->windowHandle(); window && window->property("_q_stereo_pair").toBool() != perEye) {
+         window->setProperty("_q_stereo_pair", perEye);
++        // A pair painted on the GPU goes to the two views of the window's own surface.
++        if (store->handle()->paintsOnGpu())
++            window->setProperty("_q_stereo_views", perEye ? 2 : 1);
++    }
++
++    static const bool stats = qEnvironmentVariableIntValue("QT_WIDGETS_PAINT_STATS");
++    qint64 painted = 0;
++    if (stats)
++        painted = statsClock.nsecsElapsed();
+ 
+     flush();
++
++    if (stats) {
++        const qint64 flushed = statsClock.nsecsElapsed();
++        if (!statsTime.isValid())
++            statsTime.start();
++        ++statsPaints;
++        statsPaintNs += painted - statsStart;
++        statsFlushNs += flushed - painted;
++        for (const QRect &rect : toClean)
++            statsPixels += qint64(rect.width()) * rect.height();
++        if (statsTime.elapsed() >= 1000) {
++            const qreal seconds = statsTime.restart() / 1000.0;
++            fprintf(stderr, "QWSTATS window=%s gpu=%d eyes=%d paints_per_s=%.1f paint_ms=%.3f flush_ms=%.3f painted_px=%lld\n",
++                    qPrintable(tlw->objectName().isEmpty() ? QString::fromLatin1(tlw->metaObject()->className()) : tlw->objectName()),
++                    int(store->handle()->paintsOnGpu()), perEye ? 2 : 1, statsPaints / seconds,
++                    statsPaintNs / 1e6 / statsPaints, statsFlushNs / 1e6 / statsPaints,
++                    static_cast<long long>(statsPixels / statsPaints));
++            statsPaints = 0;
++            statsPaintNs = statsFlushNs = statsPixels = 0;
++        }
++    }
+ }
+ 
+ /*!
+diff --git a/src/widgets/kernel/qwidgetrepaintmanager_p.h b/src/widgets/kernel/qwidgetrepaintmanager_p.h
+index da9cc1a..e6cbfff 100644
+--- a/src/widgets/kernel/qwidgetrepaintmanager_p.h
++++ b/src/widgets/kernel/qwidgetrepaintmanager_p.h
+@@ -110,6 +110,14 @@ private:
+     QElapsedTimer perfTime;
+     int perfFrames = 0;
+ 
++    // QT_WIDGETS_PAINT_STATS: paints, and the time painting and flushing took, per second
++    QElapsedTimer statsTime;
++    int statsPaints = 0;
++    qint64 statsPaintNs = 0;
++    qint64 statsFlushNs = 0;
++    qint64 statsPixels = 0;
++    friend void qt_widget_set_stereo_subpixel(QWidgetRepaintManager *manager, qreal subPixel, int slack);
++
+     Q_DISABLE_COPY_MOVE(QWidgetRepaintManager)
+ };
+ 
+@@ -117,6 +125,14 @@ private:
+ // right eye, else 0.
+ int qt_widget_stereo_eye();
+ 
++// GPU painting (prototype): whether the window being painted once per eye moves its widgets by
++// parts of a pixel, the part the widget being painted is moved by (device pixels), and the side
++// its clip is open by one column on (-1 left, 1 right, 0 none).
++bool qt_widget_stereo_fractional();
++qreal qt_widget_stereo_subpixel();
++int qt_widget_stereo_clip_slack();
++void qt_widget_set_stereo_subpixel(QWidgetRepaintManager *manager, qreal subPixel, int slack);
++
+ QT_END_NAMESPACE
+ 
+ #endif // QWIDGETREPAINTMANAGER_P_H
+-- 
+2.53.0
+

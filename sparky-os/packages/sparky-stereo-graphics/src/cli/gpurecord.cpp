@@ -23,6 +23,7 @@
 
 #include "graphicssettings.h"
 #include "machinerecord.h"
+#include "paint.h"
 #include "problems.h"
 
 #include <KLocalizedString>
@@ -40,7 +41,8 @@ static int usage(const QString &problem)
     err << problem << '\n'
         << i18nc("@info:shell %1 is the command's synopsis, which stays as it is", "Usage: %1",
                  u"sparky-stereo-gpu-record [--root DIR] [--machines DIR] --apply-known | --show | --forget"
-                 " | --set-best GPU [--copy-back true|false] [--model TEXT] [--measurement TEXT] | --copy-back true|false|unset"_s)
+                 " | --set-best GPU [--copy-back true|false] [--model TEXT] [--measurement TEXT] | --copy-back true|false|unset"
+                 " | --set-paint PROGRAM.desktop CARD cpu|batch|unset [--measurement TEXT]"_s)
         << '\n';
     return 2;
 }
@@ -73,6 +75,9 @@ int main(int argc, char **argv)
     QString measurement;
     QString keepKey;
     QString clearKey;
+    QString paintProgram;
+    QString paintGpu;
+    QString paintWay;
     QString status;
     QString output;
     for (int i = 0; i < args.size(); ++i) {
@@ -89,6 +94,11 @@ int main(int argc, char **argv)
         } else if (arg == u"--set-best"_s) {
             action = arg;
             best = value();
+        } else if (arg == u"--set-paint"_s) {
+            action = arg;
+            paintProgram = value();
+            paintGpu = value().toLower();
+            paintWay = value().toLower();
         } else if (arg == u"--copy-back"_s) {
             copyBack = value();
             if (copyBack.isEmpty()) {
@@ -179,6 +189,29 @@ int main(int argc, char **argv)
             << "copy-back=" << (record.copyBack.has_value() ? (*record.copyBack ? u"true"_s : u"false"_s) : u"unset"_s) << '\n'
             << "model=" << record.model << '\n'
             << "measurement=" << record.measurement << '\n';
+        // ORDER 554: the way of painting windows measured for each program on each card
+        const PaintRecord paint = PaintRecord::readFile(file);
+        for (const PaintProgramRow &row : paint.programs) {
+            out << "paint " << row.program << ' ' << row.gpu << ' ' << row.way << '\n';
+        }
+        out << "paint-origin=" << (paint.origin.isEmpty() && !paint.isEmpty() ? u"hand"_s : paint.origin) << '\n';
+        return 0;
+    }
+    if (action == u"--set-paint"_s) {
+        // what a measurement on this machine found for a program on a card: Automatic on the Graphics page follows it
+        if (!paintProgram.endsWith(u".desktop"_s) || paintProgram.size() < 9 || paintProgram.contains(u'/')) {
+            return usage(i18nc("@info:shell %1 is what was given; the example stays as it is", "Not a program's desktop entry: %1 (as org.kde.konsole.desktop)", paintProgram));
+        }
+        if (!PaintRecord::validGpuKey(paintGpu)) {
+            return usage(i18nc("@info:shell %1 is what was given; the example stays as it is", "Not a graphics card: %1 (as 1002:6660)", paintGpu));
+        }
+        if (paintWay != u"unset"_s && paintWay != u"cpu"_s && paintWay != u"batch"_s) {
+            return usage(i18nc("@info:shell %1 is what was given; cpu, batch and unset stay as they are", "Not a way of painting: %1 (cpu, batch or unset)", paintWay));
+        }
+        if (!RecordWriter::writePaint(root, paintProgram, paintGpu, paintWay == u"unset"_s ? QString() : paintWay, measurement)) {
+            QTextStream(stderr) << "sparky-stereo-gpu-record: " << i18nc("@info:shell %1 is a file", "cannot write %1", MachineRecord::systemFile(root)) << '\n';
+            return 3;
+        }
         return 0;
     }
     if (action == u"--set-best"_s) {

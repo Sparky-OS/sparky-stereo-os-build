@@ -1,0 +1,59 @@
+From 1170b85932350319bc57174280316ae5ebd0ac3f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 13 Nov 2026 01:16:35 -0300
+Subject: [PATCH] wayland: the frame blitter's viewports are rounded as the
+ buffers are
+
+DecorationsBlitter::blit() passed products of logical sizes and the scale to glViewport(), which truncates
+them, while the surface's buffer and the content framebuffer are sized with QSize times the scale (rounded)
+and the shared memory store rounds the frame's margins. At 125 % a window with Qt's own frame on an EGL
+surface (every window flushed through the RHI) lay one pixel left of the same window as a shared memory
+buffer, and its content was drawn one pixel smaller than its framebuffer, which displaced a row.
+The content is now placed from the buffer's top by the rounded margins and drawn at its framebuffer's size.
+Upstream's dev branch no longer has this code (94f96210518d, decorations in subsurfaces); 6.11 and 6.12 do.
+Related: QTBUG-149635.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ .../wayland-egl/qwaylandglcontext.cpp          | 18 +++++++++++++-----
+ 1 file changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp
+index c0728b1..9041347 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp
+@@ -209,9 +209,15 @@ public:
+     {
+         QOpenGLTextureCache *cache = QOpenGLTextureCache::cacheForContext(m_context->context());
+ 
+-        QSize surfaceSize = window->surfaceSize();
+-        qreal scale = window->scale() ;
+-        glViewport(0, 0, surfaceSize.width() * scale, surfaceSize.height() * scale);
++        // Sizes and places in device pixels are rounded here as they are rounded where the buffers are
++        // made: the surface's buffer in QWaylandEglWindow::ensureSize() and the content framebuffer in
++        // contentFBO() (QSize times the scale), the frame's margins as QWaylandShmBuffer rounds them
++        // (QMargins times the scale). Truncating them, as passing the products to glViewport() did, put the
++        // content one pixel left and low at a fractional scale and drew it one pixel smaller than its
++        // framebuffer, which displaced a row and a column of it.
++        const qreal scale = window->scale();
++        const QSize bufferSize = window->surfaceSize() * scale;
++        glViewport(0, 0, bufferSize.width(), bufferSize.height());
+ 
+         //Draw Decoration
+         if (auto *decoration = window->decoration()) {
+@@ -228,8 +234,10 @@ public:
+         //Draw Content
+         m_blitProgram->setAttributeBuffer(0, GL_FLOAT, m_squareVerticesOffset, 2);
+         glBindTexture(GL_TEXTURE_2D, window->contentTexture(eye));
+-        QRect r = window->contentsRect();
+-        glViewport(r.x() * scale, r.y() * scale, r.width() * scale, r.height() * scale);
++        const QMargins margins = window->clientSideMargins() * scale;
++        const QSize contentSize = window->geometry().size() * scale;
++        // from the buffer's top, as the shared memory store places the content; OpenGL counts from the bottom
++        glViewport(margins.left(), bufferSize.height() - margins.top() - contentSize.height(), contentSize.width(), contentSize.height());
+         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+     }
+ 
+-- 
+2.53.0
+

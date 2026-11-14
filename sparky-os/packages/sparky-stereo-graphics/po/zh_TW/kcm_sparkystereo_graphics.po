@@ -922,3 +922,163 @@ msgstr "%1 在 %2 上啟動後立即停止: %3。"
 msgctxt "@info what to do"
 msgid "It was not started again on another GPU. If this GPU is the cause, choose another one for it below, or in System Settings, Graphics."
 msgstr "沒有在其他 GPU 上重新啟動它。如果原因是這個 GPU，請在下方或在「系統設定 > 圖形」中為它選擇另一個 GPU。"
+
+#: src/ui/main.qml
+msgctxt "@title:group"
+msgid "Paint windows"
+msgstr "繪製視窗"
+
+#: src/ui/main.qml
+msgctxt "@info"
+msgid "Programs made with Qt Widgets, such as Konsole, Dolphin and Kate, paint their windows on the processor or on the graphics card. Processor use depends on the program and hardware. A change applies the next time a program starts."
+msgstr "以 Qt Widgets 製作的程式（例如 Konsole、Dolphin 和 Kate）可以在處理器上或在顯示卡上繪製視窗。處理器使用率取決於程式和硬體。變更會在程式下次啟動時生效。"
+
+#: src/ui/main.qml
+msgctxt "@info"
+msgid "QT_WIDGETS_GPU_PAINT is set in this session and is used instead of these choices."
+msgstr "此工作階段已設定 QT_WIDGETS_GPU_PAINT，它會取代這些選擇。"
+
+#: src/ui/main.qml
+msgctxt "@info"
+msgid "A program started from a terminal or from Steam follows these choices when it is started with sparky-stereo-gpu-run. For any single program, use the list below."
+msgstr "從終端機或 Steam 啟動的程式，以 sparky-stereo-gpu-run 啟動時會遵循這些選擇。要單獨設定某個程式，請使用下面的清單。"
+
+#: src/ui/main.qml
+msgctxt "@info %1 is a way of painting windows"
+msgid "Windows painted: %1"
+msgstr "視窗繪製：%1"
+
+#: src/graphicskcm.cpp
+msgctxt "@item:inlistbox way of painting windows"
+msgid "On the graphics card (batched)"
+msgstr "在顯示卡上（批次）"
+
+#: src/graphicskcm.cpp
+msgctxt "@item:inlistbox way of painting windows"
+msgid "On the graphics card, Qt's OpenGL engine"
+msgstr "在顯示卡上，Qt 的 OpenGL 引擎"
+
+#: src/graphicskcm.cpp
+msgctxt "@item:inlistbox way of painting windows"
+msgid "On the processor"
+msgstr "在處理器上"
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Now: on the processor, because this computer has no graphics processor that can draw now."
+msgstr "目前：在處理器上，因為這台電腦現在沒有能繪製的圖形處理器。"
+
+#: src/graphicskcm.cpp
+msgctxt "@info %1 is a way of painting windows, %2 the reason"
+msgid "Now: %1, %2"
+msgstr "目前：%1，%2"
+
+#: src/problems.cpp
+msgctxt "@action:button"
+msgid "Paint on the processor"
+msgstr "在處理器上繪製"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card"
+msgid "this computer has no graphics processor that can draw now"
+msgstr "這台電腦現在沒有能繪製的圖形處理器"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card"
+msgid "the installed Qt cannot paint on the graphics card"
+msgstr "已安裝的 Qt 無法在顯示卡上繪製"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card"
+msgid "this session has no OpenGL"
+msgstr "此工作階段沒有 OpenGL"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card, %1 is a renderer's name"
+msgid "the OpenGL of this session is drawn by the processor (%1)"
+msgstr "此工作階段的 OpenGL 由處理器繪製（%1）"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card, %1 is the error"
+msgid "Qt's OpenGL library could not be loaded (%1)"
+msgstr "無法載入 Qt 的 OpenGL 函式庫（%1）"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card, %1 is the error"
+msgid "the drawing surface could not be made (%1)"
+msgstr "無法建立繪製表面（%1）"
+
+#: src/problems.cpp
+msgctxt "@info %1 is a program or a kind of program, %2 says why"
+msgid "Painting on the graphics card cannot be used for %1: %2. The windows are painted on the processor."
+msgstr "無法為 %1 使用在顯示卡上繪製：%2。視窗在處理器上繪製。"
+
+#: src/problems.cpp
+msgctxt "@info what to do"
+msgid "Choose On the processor for it in System Settings, Graphics, or repair the graphics driver and start the program again."
+msgstr "請在「系統設定 > 圖形」中為它選擇「在處理器上」，或修復圖形驅動程式後重新啟動該程式。"
+
+#: src/problems.cpp
+msgctxt "@title notification"
+msgid "Painting on the graphics card cannot be used"
+msgstr "無法使用在顯示卡上繪製"
+
+#: src/cli/gpuenv.cpp
+msgctxt "@info:shell %1 is what was given; auto, cpu, batch and opengl stay as they are"
+msgid "Not a way of painting: %1 (auto, cpu, batch or opengl)"
+msgstr "不是一種繪製方式：%1（auto、cpu、batch 或 opengl）"
+
+#: src/cli/gpuenv.cpp
+msgctxt "@info:shell --use-paint, TARGET and WAY stay as they are"
+msgid "--use-paint needs TARGET and WAY"
+msgstr "--use-paint 需要 TARGET 和 WAY"
+
+#: src/cli/gpurecord.cpp
+msgctxt "@info:shell %1 is what was given; cpu, batch and unset stay as they are"
+msgid "Not a way of painting: %1 (cpu, batch or unset)"
+msgstr "不是一種繪製方式：%1（cpu、batch 或 unset）"
+
+#: src/cli/gpurecord.cpp
+msgctxt "@info:shell %1 is what was given; the example stays as it is"
+msgid "Not a program's desktop entry: %1 (as org.kde.konsole.desktop)"
+msgstr "不是程式的桌面項目：%1（例如 org.kde.konsole.desktop）"
+
+#: src/cli/gpurecord.cpp
+msgctxt "@info:shell %1 is what was given; the example stays as it is"
+msgid "Not a graphics card: %1 (as 1002:6660)"
+msgstr "不是顯示卡：%1（例如 1002:6660）"
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Now: each program as it was measured on this hardware. A program not measured here is painted by the processor."
+msgstr "目前：每個程式依照在此硬體上測量的結果繪製。未在此處測量的程式由處理器繪製。"
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Painting on the graphics card cannot be used now: painted by the processor."
+msgstr "目前無法在顯示卡上繪製：由處理器繪製。"
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Your choice for this program."
+msgstr "您為此程式所做的選擇。"
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Your choice for this kind of program."
+msgstr "您為此類程式所做的選擇。"
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Measured on this hardware: batched painting takes less processor."
+msgstr "已在此硬體上測量：批次繪製使用的處理器較少。"
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Measured on this hardware: batched painting takes no less processor."
+msgstr "已在此硬體上測量：批次繪製使用的處理器並未較少。"
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Not measured here: painted by the processor."
+msgstr "未在此處測量：由處理器繪製。"

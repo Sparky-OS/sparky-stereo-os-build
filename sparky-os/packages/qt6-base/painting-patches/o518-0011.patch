@@ -1,0 +1,107 @@
+From a47c5e1a93a5062dca9568f2be473f3e4b26eca9 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 11 Nov 2026 13:39:22 -0300
+Subject: [PATCH] batched painting: a rounded rectangle's inside is a
+ rectangle; the store's size is rounded as the surface's is
+
+Every widget of a window repainted (a dialog in the Breeze style) uploaded 5.9 MB a frame:
+each rounded rectangle went to the raster engine whole, the frame around a text view with
+all its inside. Only the sides and corners do now. A store one pixel larger than the window's
+surface (a size that is not whole at scale 1.25, rounded up where the surface is rounded) was
+drawn onto it a pixel off.
+
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+ src/gui/painting/qbatchedpaintengine.cpp | 38 +++++++++++++++++++-----
+ 1 file changed, 31 insertions(+), 7 deletions(-)
+
+diff --git a/src/gui/painting/qbatchedpaintengine.cpp b/src/gui/painting/qbatchedpaintengine.cpp
+index 9fb7fc4..1e983bc 100644
+--- a/src/gui/painting/qbatchedpaintengine.cpp
++++ b/src/gui/painting/qbatchedpaintengine.cpp
+@@ -445,7 +445,8 @@ private:
+     template <typename Draw> void raster(Kind why, const QRectF &deviceBounds, Draw &&draw, bool textMask = false);
+     bool textAsMask(Kind why) const;
+     bool blendsByChannel() const { return int(state()->opacity * 256) == 256; }
+-    void outlinedRect(const QRectF &mapped, const std::function<void(QPainter *)> &draw);
++    void outlinedRect(const QRectF &mapped, const std::function<void(QPainter *)> &draw, qreal corner = 0,
++                      Kind kind = RasterRectOutline);
+     qreal penReach() const;
+     template <typename Rect> void rects(const Rect *rects, int rectCount);
+ 
+@@ -1079,10 +1080,12 @@ void QBatchedPaintEngine::raster(Kind why, const QRectF &deviceBounds, Draw &&dr
+     each side, into four narrow parts that meet the inside exactly, instead of into one part as
+     large as the rectangle.
+ */
+-void QBatchedPaintEngine::outlinedRect(const QRectF &mapped, const std::function<void(QPainter *)> &draw)
++void QBatchedPaintEngine::outlinedRect(const QRectF &mapped, const std::function<void(QPainter *)> &draw, qreal corner,
++                                       Kind kind)
+ {
+     const QBatchedPainterState *s = state();
+-    const qreal reach = penReach();
++    // (a rounded rectangle's corners reach further in than its pen)
++    const qreal reach = penReach() + corner;
+     const QRectF bounds = mapped.adjusted(-reach, -reach, reach, reach);
+     const QRect outer = bounds.toAlignedRect();
+     const int left = qCeil(mapped.left() + reach), top = qCeil(mapped.top() + reach);
+@@ -1092,7 +1095,7 @@ void QBatchedPaintEngine::outlinedRect(const QRectF &mapped, const std::function
+     if (brush)
+         premultiplied(s->brush.color(), s->opacity, rgba);
+     if (right - left < 8 || bottom - top < 8 || (brush && blend() == Source && rgba[3] != 255)) {
+-        raster(RasterRectOutline, bounds, [&](QPainter *painter, const QPoint &) { draw(painter); });
++        raster(kind, bounds, [&](QPainter *painter, const QPoint &) { draw(painter); });
+         return;
+     }
+     if (brush && rgba[3]) {
+@@ -1113,7 +1116,7 @@ void QBatchedPaintEngine::outlinedRect(const QRectF &mapped, const std::function
+         m_clip = savedClip & side;
+         m_clipBounds = m_clip.boundingRect();
+         if (!m_clip.isEmpty())
+-            raster(RasterRectOutline, QRectF(side), [&](QPainter *painter, const QPoint &) { draw(painter); });
++            raster(kind, QRectF(side), [&](QPainter *painter, const QPoint &) { draw(painter); });
+     }
+     m_clip = savedClip;
+     m_clipBounds = savedBounds;
+@@ -1181,8 +1184,27 @@ void QBatchedPaintEngine::fillRect(const QRectF &rect, const QColor &color)
+ void QBatchedPaintEngine::drawRoundedRect(const QRectF &rect, qreal xrad, qreal yrad, Qt::SizeMode mode)
+ {
+     QBATCH_TIME;
++    const QBatchedPainterState *s = state();
++    const QRectF mapped = s->matrix.mapRect(rect);
++    const Qt::BrushStyle brush = s->brush.style();
++    const Qt::PenStyle pen = s->pen.style();
++    if (s->matrix.type() <= QTransform::TxScale && !m_pathClip && (blend() == Over || blend() == Source)
++        && (brush == Qt::SolidPattern || brush == Qt::NoBrush) && (pen == Qt::SolidLine || pen == Qt::NoPen)) {
++        // The inside of a rounded rectangle is a rectangle of one colour: only its sides and
++        // corners are the raster engine's, so a frame around a large view costs its outline,
++        // not its area.
++        qreal rx = xrad, ry = yrad;
++        if (mode == Qt::RelativeSize) {
++            rx = rect.width() / 2 * xrad / 100;
++            ry = rect.height() / 2 * yrad / 100;
++        }
++        const qreal corner = qMax(rx * qAbs(s->matrix.m11()), ry * qAbs(s->matrix.m22())) + 1;
++        outlinedRect(mapped, [&](QPainter *painter) { painter->drawRoundedRect(rect, xrad, yrad, mode); }, corner,
++                     RasterRoundedRect);
++        return;
++    }
+     const qreal reach = penReach();
+-    raster(RasterRoundedRect, state()->matrix.mapRect(rect).adjusted(-reach, -reach, reach, reach),
++    raster(RasterRoundedRect, mapped.adjusted(-reach, -reach, reach, reach),
+            [&](QPainter *painter, const QPoint &) { painter->drawRoundedRect(rect, xrad, yrad, mode); });
+ }
+ 
+@@ -1799,7 +1821,9 @@ void QBatchedPaintBackingStore::releaseResources()
+ void QBatchedPaintBackingStore::syncDevice()
+ {
+     const qreal dpr = window()->devicePixelRatio();
+-    const QSize pixelSize(qCeil(m_size.width() * dpr), qCeil(m_size.height() * dpr));
++    // rounded, as the window's surface and a raster store are (QSize times a ratio): a store one
++    // pixel larger than the surface is drawn onto it a pixel off
++    const QSize pixelSize = m_size * dpr;
+     if (pixelSize != m_pixelSize || dpr != m_dpr) {
+         m_pixelSize = pixelSize;
+         m_dpr = dpr;
+-- 
+2.53.0
+

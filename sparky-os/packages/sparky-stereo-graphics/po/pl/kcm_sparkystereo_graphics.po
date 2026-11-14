@@ -989,3 +989,163 @@ msgstr "%1 zatrzymał się tuż po uruchomieniu na %2: %3."
 msgctxt "@info what to do"
 msgid "It was not started again on another GPU. If this GPU is the cause, choose another one for it below, or in System Settings, Graphics."
 msgstr "Nie uruchomiono go ponownie na innym procesorze graficznym. Jeśli przyczyną jest ten procesor, wybierz dla niego inny poniżej albo w Ustawieniach systemowych, Grafika."
+
+#: src/ui/main.qml
+msgctxt "@title:group"
+msgid "Paint windows"
+msgstr "Malowanie okien"
+
+#: src/ui/main.qml
+msgctxt "@info"
+msgid "Programs made with Qt Widgets, such as Konsole, Dolphin and Kate, paint their windows on the processor or on the graphics card. Processor use depends on the program and hardware. A change applies the next time a program starts."
+msgstr "Programy zbudowane na Qt Widgets, takie jak Konsole, Dolphin i Kate, malują swoje okna na procesorze albo na karcie graficznej. Obciążenie procesora zależy od programu i sprzętu. Zmiana działa od następnego uruchomienia programu."
+
+#: src/ui/main.qml
+msgctxt "@info"
+msgid "QT_WIDGETS_GPU_PAINT is set in this session and is used instead of these choices."
+msgstr "W tej sesji ustawiono QT_WIDGETS_GPU_PAINT i to ono jest używane zamiast tych ustawień."
+
+#: src/ui/main.qml
+msgctxt "@info"
+msgid "A program started from a terminal or from Steam follows these choices when it is started with sparky-stereo-gpu-run. For any single program, use the list below."
+msgstr "Program uruchomiony z terminala albo ze Steama stosuje te ustawienia, gdy jest uruchamiany przez sparky-stereo-gpu-run. Dla pojedynczego programu użyj listy poniżej."
+
+#: src/ui/main.qml
+msgctxt "@info %1 is a way of painting windows"
+msgid "Windows painted: %1"
+msgstr "Okna malowane: %1"
+
+#: src/graphicskcm.cpp
+msgctxt "@item:inlistbox way of painting windows"
+msgid "On the graphics card (batched)"
+msgstr "Na karcie graficznej (wsadowo)"
+
+#: src/graphicskcm.cpp
+msgctxt "@item:inlistbox way of painting windows"
+msgid "On the graphics card, Qt's OpenGL engine"
+msgstr "Na karcie graficznej, silnik OpenGL Qt"
+
+#: src/graphicskcm.cpp
+msgctxt "@item:inlistbox way of painting windows"
+msgid "On the processor"
+msgstr "Na procesorze"
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Now: on the processor, because this computer has no graphics processor that can draw now."
+msgstr "Teraz: na procesorze, bo ten komputer nie ma teraz procesora graficznego, który potrafi rysować."
+
+#: src/graphicskcm.cpp
+msgctxt "@info %1 is a way of painting windows, %2 the reason"
+msgid "Now: %1, %2"
+msgstr "Teraz: %1, %2"
+
+#: src/problems.cpp
+msgctxt "@action:button"
+msgid "Paint on the processor"
+msgstr "Maluj na procesorze"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card"
+msgid "this computer has no graphics processor that can draw now"
+msgstr "ten komputer nie ma teraz procesora graficznego, który potrafi rysować"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card"
+msgid "the installed Qt cannot paint on the graphics card"
+msgstr "zainstalowane Qt nie potrafi malować na karcie graficznej"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card"
+msgid "this session has no OpenGL"
+msgstr "ta sesja nie ma OpenGL"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card, %1 is a renderer's name"
+msgid "the OpenGL of this session is drawn by the processor (%1)"
+msgstr "OpenGL tej sesji jest rysowane przez procesor (%1)"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card, %1 is the error"
+msgid "Qt's OpenGL library could not be loaded (%1)"
+msgstr "nie udało się wczytać biblioteki OpenGL Qt (%1)"
+
+#: src/problems.cpp
+msgctxt "@info why windows cannot be painted on the graphics card, %1 is the error"
+msgid "the drawing surface could not be made (%1)"
+msgstr "nie udało się utworzyć powierzchni do rysowania (%1)"
+
+#: src/problems.cpp
+msgctxt "@info %1 is a program or a kind of program, %2 says why"
+msgid "Painting on the graphics card cannot be used for %1: %2. The windows are painted on the processor."
+msgstr "Malowania na karcie graficznej nie można użyć dla: %1, ponieważ %2. Okna są malowane na procesorze."
+
+#: src/problems.cpp
+msgctxt "@info what to do"
+msgid "Choose On the processor for it in System Settings, Graphics, or repair the graphics driver and start the program again."
+msgstr "Wybierz dla niego „Na procesorze” w Ustawieniach systemowych, Grafika, albo napraw sterownik grafiki i uruchom program ponownie."
+
+#: src/problems.cpp
+msgctxt "@title notification"
+msgid "Painting on the graphics card cannot be used"
+msgstr "Nie można użyć malowania na karcie graficznej"
+
+#: src/cli/gpuenv.cpp
+msgctxt "@info:shell %1 is what was given; auto, cpu, batch and opengl stay as they are"
+msgid "Not a way of painting: %1 (auto, cpu, batch or opengl)"
+msgstr "To nie jest sposób malowania: %1 (auto, cpu, batch lub opengl)"
+
+#: src/cli/gpuenv.cpp
+msgctxt "@info:shell --use-paint, TARGET and WAY stay as they are"
+msgid "--use-paint needs TARGET and WAY"
+msgstr "--use-paint wymaga TARGET i WAY"
+
+#: src/cli/gpurecord.cpp
+msgctxt "@info:shell %1 is what was given; cpu, batch and unset stay as they are"
+msgid "Not a way of painting: %1 (cpu, batch or unset)"
+msgstr "To nie jest sposób malowania: %1 (cpu, batch lub unset)"
+
+#: src/cli/gpurecord.cpp
+msgctxt "@info:shell %1 is what was given; the example stays as it is"
+msgid "Not a program's desktop entry: %1 (as org.kde.konsole.desktop)"
+msgstr "To nie jest wpis pulpitu programu: %1 (na przykład org.kde.konsole.desktop)"
+
+#: src/cli/gpurecord.cpp
+msgctxt "@info:shell %1 is what was given; the example stays as it is"
+msgid "Not a graphics card: %1 (as 1002:6660)"
+msgstr "To nie jest karta graficzna: %1 (na przykład 1002:6660)"
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Now: each program as it was measured on this hardware. A program not measured here is painted by the processor."
+msgstr "Teraz: każdy program tak, jak został zmierzony na tym sprzęcie. Program, którego tu nie zmierzono, maluje procesor."
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Painting on the graphics card cannot be used now: painted by the processor."
+msgstr "Malowania na karcie graficznej nie można teraz użyć: maluje procesor."
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Your choice for this program."
+msgstr "Twój wybór dla tego programu."
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Your choice for this kind of program."
+msgstr "Twój wybór dla tego rodzaju programów."
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Measured on this hardware: batched painting takes less processor."
+msgstr "Zmierzono na tym sprzęcie: malowanie wsadowe obciąża procesor mniej."
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Measured on this hardware: batched painting takes no less processor."
+msgstr "Zmierzono na tym sprzęcie: malowanie wsadowe nie obciąża procesora mniej."
+
+#: src/graphicskcm.cpp
+msgctxt "@info"
+msgid "Not measured here: painted by the processor."
+msgstr "Nie zmierzono tutaj: maluje procesor."

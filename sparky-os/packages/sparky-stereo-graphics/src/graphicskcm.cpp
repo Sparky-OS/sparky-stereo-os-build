@@ -122,6 +122,8 @@ void GraphicsKcm::load()
     m_vramProtection = m_savedVramProtection = VramSettings::enabled();
     m_gpus = GpuInventory::read(m_root);
     m_settings = GraphicsSettings();
+    m_paint = PaintSettings();
+    m_paintRecord = PaintRecord::read();
     m_record = MachineRecord::read();
     m_profile = PowerProfiles::read();
     m_actions = PowerProfiles::gpuActions();
@@ -132,9 +134,9 @@ void GraphicsKcm::load()
     AppEntries entries = AppEntries::fromEnvironment();
     entries.refreshCopies();
     m_apps = entries.list();
-    std::sort(m_apps.begin(), m_apps.end(), [](const AppEntry &a, const AppEntry &b) {
-        const bool aSet = a.preference != AppPreference::Unset || a.fromUserCopy;
-        const bool bSet = b.preference != AppPreference::Unset || b.fromUserCopy;
+    std::sort(m_apps.begin(), m_apps.end(), [this](const AppEntry &a, const AppEntry &b) {
+        const bool aSet = a.preference != AppPreference::Unset || a.fromUserCopy || !m_paint.programChoice(a.id).isEmpty();
+        const bool bSet = b.preference != AppPreference::Unset || b.fromUserCopy || !m_paint.programChoice(b.id).isEmpty();
         if (aSet != bSet) {
             return aSet;
         }
@@ -162,7 +164,7 @@ void GraphicsKcm::load()
     syncKept();
     updateState();
     setNeedsSave(false);
-    setRepresentsDefaults(m_settings.isDefault() && !m_vramProtection);
+    setRepresentsDefaults(m_settings.isDefault() && m_paint.isDefault() && !m_vramProtection);
 }
 
 QList<Problem> GraphicsKcm::liveProblems(const GraphicsSettings &settings) const
@@ -230,7 +232,9 @@ QVariantList GraphicsKcm::problems() const
     // right after it started on its GPU, with the engine's own labels and commands
     QJsonArray kept = Problems::records({u"sparky-stereo-vram-boost"_s});
     for (const QJsonValue &value : Problems::records({u"sparky-stereo-graphics"_s})) {
-        if (value.toObject().value(u"key"_s).toString().startsWith(u"died-"_s)) {
+        const QString key = value.toObject().value(u"key"_s).toString();
+        // (ORDER 518) and painting on the graphics card that cannot be used for a program
+        if (key.startsWith(u"died-"_s) || key.startsWith(u"paint-"_s)) {
             kept.append(value);
         }
     }
@@ -253,7 +257,8 @@ QVariantList GraphicsKcm::problems() const
 
 void GraphicsKcm::runProblemAction(const QString &package, const QString &key, const QString &id)
 {
-    if (package != u"sparky-stereo-vram-boost"_s && !(package == u"sparky-stereo-graphics"_s && key.startsWith(u"died-"_s))) {
+    if (package != u"sparky-stereo-vram-boost"_s
+        && !(package == u"sparky-stereo-graphics"_s && (key.startsWith(u"died-"_s) || key.startsWith(u"paint-"_s)))) {
         return;
     }
     for (const QJsonValue &value : Problems::records({package})) {
@@ -311,8 +316,23 @@ void GraphicsKcm::save()
         return;
     }
     m_errorText.clear();
-    if (!m_settings.save()) {
+    // what the person's file says about painting before this Apply
+    const PaintSettings paintBefore;
+    bool paintChanged = paintBefore.programChoices() != m_paint.programChoices();
+    for (Category category : allCategories()) {
+        paintChanged = paintChanged || paintBefore.kindChoice(category) != m_paint.kindChoice(category);
+    }
+    if (!m_settings.save() || !m_paint.save()) {
         m_errorText = i18nc("@info", "The graphics settings could not be saved.");
+    } else if (paintChanged) {
+        // a way of painting the person changed ends what was kept about the old one (ORDER 518): the next start says
+        // again what still cannot be had. An Apply that changes nothing about painting keeps what is kept
+        for (const QJsonValue &value : Problems::records({u"sparky-stereo-graphics"_s})) {
+            const QString key = value.toObject().value(u"key"_s).toString();
+            if (key.startsWith(u"paint-"_s) && value.toObject().value(u"scope"_s).toString() == u"person"_s) {
+                Problems::clear(key, Problems::userDir());
+            }
+        }
     }
     AppEntries entries = AppEntries::fromEnvironment();
     for (auto it = m_appChanges.cbegin(); it != m_appChanges.cend(); ++it) {
@@ -356,6 +376,7 @@ void GraphicsKcm::defaults()
 {
     m_vramProtection = false;
     m_settings.resetToDefaults();
+    m_paint.resetToDefaults();
     updateState();
     setNeedsSave(true);
 }
@@ -364,7 +385,7 @@ void GraphicsKcm::updateState()
 {
     Q_EMIT changed();
     Q_EMIT appsChanged();
-    setRepresentsDefaults(m_settings.isDefault() && !m_vramProtection);
+    setRepresentsDefaults(m_settings.isDefault() && m_paint.isDefault() && !m_vramProtection);
 }
 
 QVariantList GraphicsKcm::gpus() const
@@ -674,6 +695,7 @@ AppPreference GraphicsKcm::pendingPreference(const AppEntry &entry) const
 QVariantList GraphicsKcm::apps() const
 {
     const Resolver r = resolver();
+    const PaintFacts facts = paintFacts();
     QVariantList list;
     for (const AppEntry &entry : m_apps) {
         if (!m_appFilter.isEmpty() && !entry.name.contains(m_appFilter, Qt::CaseInsensitive) && !entry.id.contains(m_appFilter, Qt::CaseInsensitive)) {
@@ -685,7 +707,14 @@ QVariantList GraphicsKcm::apps() const
         AppEntry shown = entry;
         shown.preference = pendingPreference(entry);
         const Resolution resolution = r.resolveApp(shown, m_settings);
+        const QString card = resolution.gpuIndex >= 0 && resolution.gpuIndex < m_gpus.size()
+            ? PaintRecord::gpuKey(m_gpus.at(resolution.gpuIndex).vendorId, m_gpus.at(resolution.gpuIndex).deviceId)
+            : QString();
+        const PaintResolution painted = Paint::resolve(entry.category, entry.id, card, m_paint, m_paintRecord, facts);
         list.append(QVariantMap{
+            {u"paint"_s, m_paint.programChoice(entry.id)},
+            {u"paintText"_s, wayLabel(painted.way)},
+            {u"paintWhy"_s, paintWhyText(painted)},
             {u"id"_s, entry.id},
             {u"name"_s, entry.name},
             {u"icon"_s, entry.icon},
@@ -733,6 +762,131 @@ void GraphicsKcm::setAppPreference(const QString &id, int preference)
         Q_EMIT appsChanged();
         setNeedsSave(true);
         return;
+    }
+}
+
+// Paint windows (ORDER 518). The three ways stay the person's choice (Daniel, 2026-11-12: "keep as a option"); Automatic is
+// the way measured for that kind of program on this machine (Daniel, 2026-10-23: "our measured defaults out of the box,
+// every choice the user's"), and the processor where nothing was measured, which is how every Qt paints
+QString GraphicsKcm::wayLabel(PaintWay way) const
+{
+    switch (way) {
+    case PaintWay::Batched:
+        return i18nc("@item:inlistbox way of painting windows", "On the graphics card (batched)");
+    case PaintWay::OpenGL:
+        return i18nc("@item:inlistbox way of painting windows", "On the graphics card, Qt's OpenGL engine");
+    case PaintWay::Processor:
+        break;
+    }
+    return i18nc("@item:inlistbox way of painting windows", "On the processor");
+}
+
+PaintFacts GraphicsKcm::paintFacts() const
+{
+    PaintFacts facts = PaintFacts::read(canPaintOnGpu());
+    return facts;
+}
+
+bool GraphicsKcm::canPaintOnGpu() const
+{
+    return !resolver().usableIndices().isEmpty();
+}
+
+bool GraphicsKcm::paintSetInSession() const
+{
+    return !qEnvironmentVariableIsEmpty("QT_WIDGETS_GPU_PAINT");
+}
+
+QString GraphicsKcm::paintNowText(const PaintResolution &resolution) const
+{
+    if (resolution.problem == u"no-gpu"_s) {
+        return i18nc("@info", "Now: on the processor, because this computer has no graphics processor that can draw now.");
+    }
+    if (resolution.chosen) {
+        return i18nc("@info %1 is a way of painting windows, %2 the reason", "Now: %1, %2", wayLabel(resolution.way), i18nc("@info", "your choice"));
+    }
+    // Automatic for a kind is each program's own (Daniel, 2026-11-13: "I want the automatic per program for sure")
+    return i18nc("@info", "Now: each program as it was measured on this hardware. A program not measured here is painted by the processor.");
+}
+
+// Why a program's windows are painted the way they are, said for each program (ORDER 554)
+QString GraphicsKcm::paintWhyText(const PaintResolution &resolution) const
+{
+    if (!resolution.problem.isEmpty()) {
+        return i18nc("@info", "Painting on the graphics card cannot be used now: painted by the processor.");
+    }
+    if (resolution.reason == u"session"_s) {
+        return i18nc("@info", "QT_WIDGETS_GPU_PAINT is set in this session and is used instead of these choices.");
+    }
+    if (resolution.reason == u"program"_s) {
+        return i18nc("@info", "Your choice for this program.");
+    }
+    if (resolution.reason == u"choice"_s) {
+        return i18nc("@info", "Your choice for this kind of program.");
+    }
+    if (resolution.reason == u"measured"_s) {
+        return i18nc("@info", "Measured on this hardware: batched painting takes less processor.");
+    }
+    if (resolution.reason == u"measured-processor"_s) {
+        return i18nc("@info", "Measured on this hardware: batched painting takes no less processor.");
+    }
+    return i18nc("@info", "Not measured here: painted by the processor.");
+}
+
+QVariantList GraphicsKcm::paintOptions() const
+{
+    return {
+        QVariantMap{{u"value"_s, u"auto"_s}, {u"text"_s, i18nc("@item:inlistbox", "Automatic")}},
+        QVariantMap{{u"value"_s, u"cpu"_s}, {u"text"_s, wayLabel(PaintWay::Processor)}},
+        QVariantMap{{u"value"_s, u"batch"_s}, {u"text"_s, wayLabel(PaintWay::Batched)}},
+        QVariantMap{{u"value"_s, u"opengl"_s}, {u"text"_s, wayLabel(PaintWay::OpenGL)}},
+    };
+}
+
+QVariantList GraphicsKcm::paintProgramOptions() const
+{
+    return {
+        QVariantMap{{u"value"_s, QString()}, {u"text"_s, i18nc("@item:inlistbox", "Same as its group")}},
+        QVariantMap{{u"value"_s, u"cpu"_s}, {u"text"_s, wayLabel(PaintWay::Processor)}},
+        QVariantMap{{u"value"_s, u"batch"_s}, {u"text"_s, wayLabel(PaintWay::Batched)}},
+        QVariantMap{{u"value"_s, u"opengl"_s}, {u"text"_s, wayLabel(PaintWay::OpenGL)}},
+    };
+}
+
+QVariantList GraphicsKcm::paintKinds() const
+{
+    QVariantList list;
+    const PaintFacts facts = paintFacts();
+    for (Category category : allCategories()) {
+        const PaintResolution resolution = Paint::resolve(category, QString(), QString(), m_paint, m_paintRecord, facts);
+        list.append(QVariantMap{
+            {u"key"_s, categoryKey(category)},
+            {u"label"_s, categoryLabel(category)},
+            {u"choice"_s, m_paint.kindChoice(category)},
+            {u"nowText"_s, paintNowText(resolution)},
+            {u"way"_s, paintWayKey(resolution.way)},
+        });
+    }
+    return list;
+}
+
+void GraphicsKcm::setPaintKind(const QString &key, const QString &choice)
+{
+    for (Category category : allCategories()) {
+        if (categoryKey(category) == key && m_paint.kindChoice(category) != choice && PaintSettings::validKindChoice(choice)) {
+            m_paint.setKindChoice(category, choice);
+            updateState();
+            setNeedsSave(true);
+        }
+    }
+}
+
+void GraphicsKcm::setPaintProgram(const QString &id, const QString &choice)
+{
+    if (m_paint.programChoice(id) != choice && PaintSettings::validProgramChoice(choice)) {
+        m_paint.setProgramChoice(id, choice);
+        updateState();
+        setNeedsSave(true);
     }
 }
 

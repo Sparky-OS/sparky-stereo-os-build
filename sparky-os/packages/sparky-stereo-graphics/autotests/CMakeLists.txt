@@ -42,6 +42,9 @@ set_tests_properties(powerprofilestest PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINAR
 add_test(NAME nofallbackstest COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/no-fallbacks-test.sh)
 set_tests_properties(nofallbackstest PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINARY_DIR}/bin;SRC=${CMAKE_CURRENT_SOURCE_DIR}/..")
 
+add_test(NAME painttest COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/paint-test.sh)
+set_tests_properties(painttest PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINARY_DIR}/bin;SRC=${CMAKE_CURRENT_SOURCE_DIR}/..")
+
 add_test(NAME diedtest COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/died-test.sh)
 set_tests_properties(diedtest PROPERTIES ENVIRONMENT "BIN=${CMAKE_BINARY_DIR}/bin;SRC=${CMAKE_CURRENT_SOURCE_DIR}/..")
 

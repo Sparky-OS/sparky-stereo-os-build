@@ -1,12 +1,12 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/10/23
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/02
+# Last update 2026/11/13
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.2.7
+VERSION=0.2.10
 PACKAGE=sparky-stereo-graphics
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.graphics.XXXXXX")
@@ -23,7 +23,7 @@ D=$WORK/$PACKAGE
 cmake -S "$HERE" -B "$WORK/build" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr -DKDE_INSTALL_LIBDIR=lib/x86_64-linux-gnu -DKDE_INSTALL_LIBEXECDIR=lib/x86_64-linux-gnu/libexec -DBUILD_TESTING=OFF >"$WORK/configure.log"
 cmake --build "$WORK/build" -j"${JOBS:-4}" >"$WORK/build.log"
 DESTDIR=$D cmake --install "$WORK/build" >"$WORK/install.log"
-find "$D" -name '*.so' -o -path '*/kauth/sparkystereo_graphics_helper' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/usr/bin/sparky-stereo-gpu-record' | xargs strip --strip-unneeded
+find "$D" -name '*.so' -o -path '*/kauth/libexec/sparkystereo_graphics_helper' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/usr/bin/sparky-stereo-gpu-record' | xargs strip --strip-unneeded
 # the boot service is on from the start, as the edition's other services are
 mkdir -p "$D/usr/lib/systemd/system/multi-user.target.wants"
 ln -s ../sparky-stereo-gpu-record.service "$D/usr/lib/systemd/system/multi-user.target.wants/sparky-stereo-gpu-record.service"
@@ -33,14 +33,14 @@ mkdir -p "$D/usr/lib/systemd/catalog"
 sparky-stereo-problems catalog $PACKAGE "$HERE/po" "$D/usr/lib/systemd/catalog" --domain kcm_sparkystereo_graphics \
 	--context "@info" --context "@item kind of program" --context "@action:button" \
 	--subject "@title notification|A graphics choice cannot be used" \
-	--subject-map '{"@info %1 is a file|The machine'"'"'s GPU record, %1, could not be written. Until it is, Automatic treats this computer as not measured. Run: sudo sparky-stereo-gpu-record --apply-known": "@title notification|Graphics needs a repair", "@info %1 is an exit status|systemd could not reload its units after the Graphics page was installed (exit status %1). The boot service that writes the machine'"'"'s GPU record may not start. Run: sudo systemctl daemon-reload": "@title notification|Graphics needs a repair", "@info %1 is a file|A kept problem of the Graphics page cannot be read: %1.": "@title notification|Graphics needs a repair", "@info %1 is a program, %2 a GPU name, %3 says how it stopped|%1 stopped right after it started on %2: %3.": "@title notification|A program stopped on its GPU"}'
+	--subject-map '{"@info %1 is a file|The machine'"'"'s GPU record, %1, could not be written. Until it is, Automatic treats this computer as not measured. Run: sudo sparky-stereo-gpu-record --apply-known": "@title notification|Graphics needs a repair", "@info %1 is an exit status|systemd could not reload its units after the Graphics page was installed (exit status %1). The boot service that writes the machine'"'"'s GPU record may not start. Run: sudo systemctl daemon-reload": "@title notification|Graphics needs a repair", "@info %1 is a file|A kept problem of the Graphics page cannot be read: %1.": "@title notification|Graphics needs a repair", "@info %1 is a program, %2 a GPU name, %3 says how it stopped|%1 stopped right after it started on %2: %3.": "@title notification|A program stopped on its GPU", "@info %1 is a program or a kind of program, %2 says why|Painting on the graphics card cannot be used for %1: %2. The windows are painted on the processor.": "@title notification|Painting on the graphics card cannot be used"}'
 install -Dm644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
 install -m644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
 mkdir -p "$D/DEBIAN" "$WORK/shlibs/debian"
 printf 'Source: %s\n\nPackage: %s\nArchitecture: amd64\n' "$PACKAGE" "$PACKAGE" >"$WORK/shlibs/debian/control"
 PRIVATE=$(pkg-config --variable=libdir sparky-stereo-problems)
-SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -l"$PRIVATE" --ignore-missing-info -O $(find "$D" -type f \( -name '*.so' -o -path '*/kauth/sparkystereo_graphics_helper' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/usr/bin/sparky-stereo-gpu-record' \)) 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
-DEPENDS="$SHLIBS, sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)"
+SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -l"$PRIVATE" --ignore-missing-info -O $(find "$D" -type f \( -name '*.so' -o -path '*/kauth/libexec/sparkystereo_graphics_helper' -o -path '*/usr/bin/sparky-stereo-gpu-env' -o -path '*/usr/bin/sparky-stereo-gpu-record' \)) 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
+DEPENDS="$SHLIBS, libqt6gui6 (= 6.11.2+dfsg-5+stereo3d20+lc1), libqt6widgets6 (= 6.11.2+dfsg-5+stereo3d20+lc1), libqt6opengl6 (= 6.11.2+dfsg-5+stereo3d20+lc1), qt6-qpa-plugins (= 6.11.2+dfsg-5+stereo3d20+lc1), libqt6waylandclient6 (= 6.11.2+dfsg-5+stereo3d20+lc1), sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOS
 Package: $PACKAGE
@@ -54,7 +54,7 @@ Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
 Description: Graphics page for System Settings
-  Lists every graphics processor, lets the person choose which one draws the
+ Lists every graphics processor, lets the person choose which one draws the
   desktop and where players, games, browsers and other programs draw, and
   edits KDE's own per-program setting. Automatic puts players, games and any
   program started in 3D on the GPU measured best on the machine whatever the
@@ -86,13 +86,13 @@ Section: System
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Standards-Version: 4.7.3
-Build-Depends: git, python3, cmake, dpkg-dev, extra-cmake-modules, g++, gettext, libkf6auth-dev, libkf6config-dev, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, libkf6service-dev, pkgconf, qt6-base-dev, qt6-declarative-dev, sparky-stereo-problems (>= 0.1.2)
+Build-Depends: git, python3, cmake, extra-cmake-modules, gettext, libkf6auth-dev, libkf6config-dev, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, libkf6service-dev, pkgconf, qt6-base-dev, qt6-declarative-dev, sparky-stereo-problems (>= 0.1.2)
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
 
 Package: $PACKAGE
 Architecture: amd64
-Depends: \${shlibs:Depends}, sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)
+Depends: \${shlibs:Depends}, libqt6gui6 (= 6.11.2+dfsg-5+stereo3d20+lc1), libqt6widgets6 (= 6.11.2+dfsg-5+stereo3d20+lc1), libqt6opengl6 (= 6.11.2+dfsg-5+stereo3d20+lc1), qt6-qpa-plugins (= 6.11.2+dfsg-5+stereo3d20+lc1), libqt6waylandclient6 (= 6.11.2+dfsg-5+stereo3d20+lc1), sparky-stereo-vram-boost (>= 0.1.3), kdialog, power-profiles-daemon | tlp-pd | tuned-ppd, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-problems (>= 0.1.2), sparky-stereo-problems-plasma (>= 0.1.0)
 Recommends: hwdata, switcheroo-control
 Description: Graphics page for System Settings
  Every graphics processor, the main desktop GPU, where programs draw, the GPU
@@ -100,6 +100,38 @@ Description: Graphics page for System Settings
 EOS
 cat >"$S/debian/changelog" <<EOS
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * ORDER 518, Paint windows (Daniel, 2026-11-11: "why can't we enhance
+    qwidget to respect our gpu choice?"; 2026-11-12: "keep as a option",
+    "the reason is offload the cpu load"): how programs made with Qt Widgets
+    paint their windows is a choice on the page, for each kind of program
+    and for each program: Automatic, On the processor, On the graphics card
+    (batched), On the graphics card, Qt's OpenGL engine.
+  * ORDER 554, Automatic for each program (Daniel, 2026-11-13: "I want the
+    automatic per program for sure"): a program measured on this hardware to
+    take at least a fifth less processor batched, in every fixed work, is
+    painted batched under Automatic; a program not measured, or measured no
+    better, is painted by the processor, and the page says which for each
+    program. The measured record ships for the hardware that was measured
+    (share/machines: a Ryzen 5 5600G with its Radeon and an RTX 3060, and
+    the Lenovo ideapad 310-15ABR), one row for each program and card with
+    its loads and their source ([MeasuredPaintPrograms]); nothing is guessed
+    for another machine. sparky-stereo-gpu-record --set-paint PROGRAM CARD
+    WAY writes a row measured on this machine.
+  * sparky-stereo-gpu-env hands the launcher QT_WIDGETS_GPU_PAINT with the
+    GPU's variables (--print paint, paint-reason, paint-env), and
+    sparky-stereo-gpu-run applies it also when its caller chose the GPU. A
+    value set by hand in the session wins, and the page says so.
+  * A way that cannot be had is said and kept, and the program paints on
+    the processor: before the start (no graphics processor that can draw, a
+    Qt without the painting), and after it, told by the program itself
+    through QT_WIDGETS_GPU_PAINT_TELL (--paint-failed, --paint-ok), with
+    "Paint on the processor" (--use-paint) as the person's explicit choice.
+  * Ten languages.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sat, 14 Nov 2026 12:00:00 +0000
+
+$PACKAGE (0.2.7) unstable; urgency=medium
 
   * ORDER 467 (Daniel, 2026-11-08: "I could not launch waterfox"): a program
     this page sent to a GPU that stops right after it starts is told and
@@ -238,11 +270,11 @@ mkdir -p "$S/debian/source"
 echo '3.0 (native)' >"$S/debian/source/format"
 cat >"$S/debian/rules" <<'EOS'
 #!/usr/bin/make -f
-binary:
+binary binary-arch:
 	OUT=$(CURDIR)/.. bash ./build.sh
 	dpkg-distaddfile $$(dpkg-parsechangelog -S Source)_$$(dpkg-parsechangelog -S Version)_amd64.deb System optional
 clean:
-build:
+build build-arch build-indep binary-indep:
 EOS
 chmod +x "$S/debian/rules"
 # A native package is dated by its own newest changelog entry (ORDER 421b); the tree is normalized so the checkout time and the umask stay out
@@ -251,6 +283,7 @@ export SOURCE_DATE_EPOCH
 python3 "$REPRO" normalize "$SOURCE_DATE_EPOCH" "$S"
 (cd "$WORK" && dpkg-source -b "$S")
 cp "$WORK/${PACKAGE}_${VERSION}.dsc" "$WORK/${PACKAGE}_${VERSION}.tar.xz" "$OUT/"
+gzip -9n -c "$S/debian/changelog" > "$D/usr/share/doc/$PACKAGE/changelog.gz"
 
 "$TOOLKIT/repo/provenance.sh" --tree "$D"
 PYTHONPATH="$TOOLKIT${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$D" "$OUT"
