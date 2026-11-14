@@ -96,3 +96,12 @@ missing/changed/duplicate declarations, wrong buffer width, a changed pixel,
 swapped eyes and a frozen right eye. This gate covers those native Wayland EGL
 behaviors only; it does not establish input/DPI, clipping/overlap, NVIDIA,
 Wine or Vulkan behavior.
+
+## glx-back-both-eyes.c (patch 0037)
+
+A GLX quad buffer window under Stereo KWin: the left eye is cleared red, the right eye blue, then `glDrawBuffer(GL_BACK)` and one green rectangle, which OpenGL 4.6 core 17.4.1 sends to both back buffers.
+`MODE=out` draws it with a core profile shader that declares its output at location 0 (red before 0037: the rectangle is in the left eye only), `MODE=fragcolor` with `gl_FragColor`, `MODE=clear` with a scissored `glClear`, `MODE=fixed` with `glBegin`.
+Build with `cc -o glx-back-both-eyes glx-back-both-eyes.c -lGL -lX11`, start it in a Stereo KWin session through Xwayland, capture the screen with ScreenShot2 and run `check-glx-back-both-eyes.py SHOT.png X Y W H` with the window's place and one eye's size: it exits 0 only when the corner of each eye holds its own colour and the middle of both is green.
+`NOBACK=1` draws the rectangle with `GL_BACK_LEFT` and must fail the check.
+`glx-draw-buffers.c` reads both back buffers back with `glReadPixels` instead of a capture, and with `ANNOUNCE_STEREO=1` it sets the root property a stereo compositor sets, so it runs on a plain virtual X server: `next-source.sh` puts it in debian/tests as `glx-back-both-eyes` (cases out, mrtwin, fragcolor, left, right; exit 77 with a message where no quad buffer configuration exists).
+Its other cases (clear, fixed, dualsrc, mrtfbo, mono, es2, es3) are the regression set for a change to the state tracker's shader variants: the lines of two Mesa builds must be equal except where the change is meant.
