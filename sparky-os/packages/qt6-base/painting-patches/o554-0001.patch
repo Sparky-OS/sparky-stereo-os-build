@@ -1,0 +1,40 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] Gui: take the batched paint engine's baked shaders from
+ debian/painting-shaders
+
+A quilt patch cannot carry the three baked shader files, and qtbase keeps
+its .qsb files baked in the source because the baker is built from qtbase.
+The source package carries them in debian/painting-shaders, listed in
+debian/source/include-binaries, and the resource keeps the names the
+engine asks for (QT_RESOURCE_ALIAS). Packaging only; a change offered to
+Qt adds the files beside backingstorecompose.*.qsb instead.
+
+Forwarded: not-needed
+Assisted-by: Claude Fable 5.2
+
+--- a/src/gui/CMakeLists.txt
++++ b/src/gui/CMakeLists.txt
+@@ -348,9 +348,19 @@
+     FILES
+         "painting/shaders/backingstorecompose.vert.qsb"
+         "painting/shaders/backingstorecompose.frag.qsb"
+-        "painting/shaders/batchpaint.vert.qsb"
+-        "painting/shaders/batchpaint.frag.qsb"
+-        "painting/shaders/batchpaint_dual.frag.qsb"
++)
++
++set(batchpaint_shader_files)
++foreach(batchpaint_shader IN ITEMS batchpaint.vert.qsb batchpaint.frag.qsb batchpaint_dual.frag.qsb)
++    set(batchpaint_shader_file "${QtBase_SOURCE_DIR}/debian/painting-shaders/${batchpaint_shader}")
++    set_source_files_properties("${batchpaint_shader_file}"
++        PROPERTIES QT_RESOURCE_ALIAS "painting/shaders/${batchpaint_shader}")
++    list(APPEND batchpaint_shader_files "${batchpaint_shader_file}")
++endforeach()
++qt_internal_add_resource(Gui "gui_batchpaint_shaders"
++    PREFIX
++        "/qt-project.org/gui"
++    FILES
++        ${batchpaint_shader_files}
+ )
+ 
+ qt_internal_extend_target(Gui CONDITION QT_FEATURE_standarditemmodel

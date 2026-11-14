@@ -73,7 +73,10 @@ struct PaintProgramRow {
     QMap<QString, QString> runs; // "animation" -> "1 2 1"
     QString source;
 
-    bool operator==(const PaintProgramRow &other) const = default;
+    bool operator==(const PaintProgramRow &other) const
+    {
+        return program == other.program && gpu == other.gpu && way == other.way && loads == other.loads && runs == other.runs && source == other.source;
+    }
     // The rule a row's way follows (README, "Automatic for each program"): batched only when every fixed work
     // took at least a fifth less processor batched than on the processor. False for a row that says batch
     // against its own numbers, or that has no numbers; a row that says cpu is not judged

@@ -526,8 +526,8 @@ void GraphicsKcmTest::decodeOnAnotherGpuIsTheChoice()
     qunsetenv("MEDIA_GPU_ROUTE_OTHER_GPU");
 }
 
-// ORDER 518, Paint windows: the three ways are the person's choice, by kind of program and by program; Automatic is the
-// measured way for that kind on this machine, and the processor where nothing was measured
+// ORDER 518 and 554, Paint windows: the three ways are the person's choice, by kind of program and by program; Automatic
+// is each program's own, the way measured for it on this hardware, and the processor where it was not measured
 void GraphicsKcmTest::paintWindowsDefaultsToTheProcessor()
 {
     for (const QString &machine : {u"one"_s, u"host"_s}) {
@@ -538,7 +538,11 @@ void GraphicsKcmTest::paintWindowsDefaultsToTheProcessor()
         for (const QVariant &kind : kinds) {
             QCOMPARE(kind.toMap().value(u"choice"_s).toString(), u"auto"_s);
             QCOMPARE(kind.toMap().value(u"way"_s).toString(), u"cpu"_s);
-            QCOMPARE(kind.toMap().value(u"nowText"_s).toString(), u"Now: On the processor, not measured on this computer yet"_s);
+            QCOMPARE(kind.toMap().value(u"nowText"_s).toString(), u"Now: each program as it was measured on this hardware. A program not measured here is painted by the processor."_s);
+        }
+        for (const QVariant &app : kcm->apps()) {
+            QCOMPARE(app.toMap().value(u"paintText"_s).toString(), u"On the processor"_s);
+            QCOMPARE(app.toMap().value(u"paintWhy"_s).toString(), u"Not measured here: painted by the processor."_s);
         }
         // Automatic and the three ways, none hidden
         QCOMPARE(kcm->paintOptions().size(), 4);
@@ -613,17 +617,43 @@ void GraphicsKcmTest::paintWindowsFollowsTheMeasurement()
     {
         QFile f(MachineRecord::systemFile(m_xdg.path()));
         QVERIFY(f.open(QIODevice::WriteOnly));
-        f.write("[MeasuredPaint]\nOther=batch\nMeasurement=test\nOrigin=shipped\n");
+        for (const char *card : {"1002:1638", "10de:2504"}) {
+            f.write(QByteArray("[MeasuredPaintPrograms][org.example.player.desktop][") + card + "]\nWay=batch\nLoad.film=10 7 12\nRuns.film=3 3 3\nSource=test\n\n");
+            f.write(QByteArray("[MeasuredPaintPrograms][org.example.game.desktop][") + card + "]\nWay=cpu\nLoad.level=10 10 12\nRuns.level=3 3 3\nSource=test\n\n");
+        }
+        f.write("[MeasuredPaintPrograms]\nOrigin=shipped\n");
     }
-    auto kcm = page(u"a10"_s);
-    QCOMPARE(row(kcm->paintKinds(), u"key"_s, u"Other"_s).value(u"nowText"_s).toString(), u"Now: On the graphics card (batched), measured best for this model"_s);
+    // the measured machine: each program as it was measured, and the page says which
+    auto kcm = page(u"host"_s);
+    const QString automatic = u"Now: each program as it was measured on this hardware. A program not measured here is painted by the processor."_s;
+    QCOMPARE(row(kcm->paintKinds(), u"key"_s, u"Players"_s).value(u"nowText"_s).toString(), automatic);
     QCOMPARE(row(kcm->paintKinds(), u"key"_s, u"Players"_s).value(u"way"_s).toString(), u"cpu"_s);
+    QVariantMap player = row(kcm->apps(), u"id"_s, u"org.example.player.desktop"_s);
+    QCOMPARE(player.value(u"paintText"_s).toString(), u"On the graphics card (batched)"_s);
+    QCOMPARE(player.value(u"paintWhy"_s).toString(), u"Measured on this hardware: batched painting takes less processor."_s);
+    QVariantMap game = row(kcm->apps(), u"id"_s, u"org.example.game.desktop"_s);
+    QCOMPARE(game.value(u"paintText"_s).toString(), u"On the processor"_s);
+    QCOMPARE(game.value(u"paintWhy"_s).toString(), u"Measured on this hardware: batched painting takes no less processor."_s);
     QVERIFY(kcm->representsDefaults());
-    // the person's choice wins over the measurement, and is the only thing written
-    kcm->setPaintKind(u"Other"_s, u"cpu"_s);
-    QCOMPARE(row(kcm->paintKinds(), u"key"_s, u"Other"_s).value(u"nowText"_s).toString(), u"Now: On the processor, your choice"_s);
+    // an unmeasured machine reads the same file and finds no row for its card
+    auto other = page(u"one"_s);
+    player = row(other->apps(), u"id"_s, u"org.example.player.desktop"_s);
+    QCOMPARE(player.value(u"paintText"_s).toString(), u"On the processor"_s);
+    QCOMPARE(player.value(u"paintWhy"_s).toString(), u"Not measured here: painted by the processor."_s);
+    // the person's choice wins over the measurement, for a program and for a kind, and is the only thing written
+    kcm->setPaintProgram(u"org.example.player.desktop"_s, u"cpu"_s);
+    player = row(kcm->apps(), u"id"_s, u"org.example.player.desktop"_s);
+    QCOMPARE(player.value(u"paintText"_s).toString(), u"On the processor"_s);
+    QCOMPARE(player.value(u"paintWhy"_s).toString(), u"Your choice for this program."_s);
+    kcm->setPaintKind(u"Games"_s, u"batch"_s);
+    game = row(kcm->apps(), u"id"_s, u"org.example.game.desktop"_s);
+    QCOMPARE(game.value(u"paintText"_s).toString(), u"On the graphics card (batched)"_s);
+    QCOMPARE(game.value(u"paintWhy"_s).toString(), u"Your choice for this kind of program."_s);
+    QCOMPARE(row(kcm->paintKinds(), u"key"_s, u"Games"_s).value(u"nowText"_s).toString(), u"Now: On the graphics card (batched), your choice"_s);
     kcm->save();
-    QVERIFY(configText().contains("Other=cpu"));
+    QVERIFY(configText().contains("org.example.player.desktop=cpu"));
+    QVERIFY(configText().contains("Games=batch"));
+    QVERIFY(!configText().contains("MeasuredPaintPrograms"));
 }
 
 void GraphicsKcmTest::paintWindowsSetInTheSessionIsReported()
@@ -685,7 +715,7 @@ void GraphicsKcmTest::qmlLoads()
     QCOMPARE(countCards(view.rootObject()), cards);
     // ORDER 518: Paint windows is there on every machine, one GPU included, with its four kinds
     QCOMPARE(countText(view.rootObject(), u"Paint windows"_s), 1);
-    QCOMPARE(countText(view.rootObject(), u"Now: On the processor, not measured on this computer yet"_s), 4);
+    QCOMPARE(countText(view.rootObject(), u"Now: each program as it was measured on this hardware. A program not measured here is painted by the processor."_s), 4);
     if (gone) {
         QVERIFY(countText(view.rootObject(), u"The GPU you chose to draw the desktop, at PCI address 0000:09:00.0, is not in this computer now."_s) >= 1);
         QVERIFY(countText(view.rootObject(), u"The GPU you chose for games, at PCI address 0000:09:00.0, is not in this computer now."_s) >= 1);

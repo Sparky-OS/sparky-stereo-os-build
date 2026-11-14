@@ -60,11 +60,52 @@ printf '[Paint]\nBrowsers=batch\n' >"$RC"
 check "the GPU variables first, then the painting" "$(env_for host --app browser.desktop --profile performance | tr '\n' ' ' | cut -d' ' -f1,2,5)" "__GLX_VENDOR_LIBRARY_NAME=nvidia __NV_PRIME_RENDER_OFFLOAD=1 QT_WIDGETS_GPU_PAINT=batch"
 rm -f "$RC"
 
-# Automatic follows what was measured on this machine for that kind (the machine's record, [MeasuredPaint])
-printf '[MeasuredPaint]\nOther=batch\nMeasurement=test\nOrigin=local\n' >"$T/etc/sparky-stereo-graphicsrc"
+# ORDER 554. Automatic is each program's own (Daniel, 2026-11-13: "I want the automatic per program for sure"): the way
+# measured for the program on the card it is drawn on; a program or a machine that was not measured stays on the processor
+printf '[Desktop Entry]\nType=Application\nName=Konsole\nExec=true\nCategories=Qt;KDE;System;TerminalEmulator;\n' >"$T/usr/applications/org.kde.konsole.desktop"
+row() { printf '[MeasuredPaintPrograms][%s][%s]\nWay=%s\n%s\nSource=test\n\n' "$@"; }
+{ row org.kde.konsole.desktop 1002:1638 batch 'Load.animation=14.8 8.6 35.9
+Load.text=6.9 5.3 11.3'; row org.kde.dolphin.desktop 1002:1638 cpu 'Load.scrolling=4.2 4.3 5.2'; printf '[MeasuredPaintPrograms]\nOrigin=shipped\n'; } >"$T/etc/sparky-stereo-graphicsrc"
+check "measured machine: the program measured better is batched" "$(paint host --app org.kde.konsole.desktop)" "QT_WIDGETS_GPU_PAINT=batch "
+check "measured machine: the reason" "$(env_for host --app org.kde.konsole.desktop --print paint-reason)" measured
+check "measured no better: the processor" "$(paint host --app org.kde.dolphin.desktop)" ""
+check "measured no better: the reason" "$(env_for host --app org.kde.dolphin.desktop --print paint-reason)" measured-processor
+check "a program not in the record: the processor" "$(paint host --app org.kde.kate.desktop)" ""
+check "a program not in the record: the reason" "$(env_for host --app org.kde.kate.desktop --print paint-reason)" unmeasured
+check "a kind alone has no program: the processor" "$(env_for host --category other --print paint-reason)" unmeasured
+check "an unmeasured machine (another card): the processor" "$(paint one --app org.kde.konsole.desktop)" ""
+check "an unmeasured machine: the reason" "$(env_for one --app org.kde.konsole.desktop --print paint-reason)" unmeasured
+check "an unmeasured machine (the A10's cards): the reason" "$(env_for a10 --app org.kde.konsole.desktop --print paint-reason)" unmeasured
+# the person's own choice wins over the record, either way
+printf '[PaintPrograms]\norg.kde.konsole.desktop=cpu\norg.kde.dolphin.desktop=batch\n' >"$RC"
+check "override: the measured program on the processor" "$(paint host --app org.kde.konsole.desktop)" ""
+check "override: its reason" "$(env_for host --app org.kde.konsole.desktop --print paint-reason)" program
+check "override: the program measured no better, batched" "$(paint host --app org.kde.dolphin.desktop)" "QT_WIDGETS_GPU_PAINT=batch "
+printf '[Paint]\nOther=opengl\n' >"$RC"
+check "override by kind: Qt's OpenGL engine for the measured program" "$(paint host --app org.kde.konsole.desktop)" "QT_WIDGETS_GPU_PAINT=opengl "
+rm -f "$RC"
+# a record that names a way that cannot start: said and kept, and the program is painted by the processor
+SPARKY_STEREO_QT_PAINT=0 env_for host --app org.kde.konsole.desktop >"$T/out" 2>"$T/err"
+check "record's way cannot start: exit 0" "$?" 0
+check "record's way cannot start: no painting variable" "$(grep -c QT_WIDGETS "$T/out")" 0
+has "record's way cannot start: said" "$T/err" "Painting on the graphics card cannot be used for Konsole: the installed Qt cannot paint on the graphics card. The windows are painted on the processor."
+check "record's way cannot start: kept" "$([ -s "$(rec paint-org.kde.konsole)" ] && echo kept)" kept
+check "record's way cannot start: the reason said" "$(SPARKY_STEREO_QT_PAINT=0 env_for host --app org.kde.konsole.desktop --print paint-reason 2>/dev/null)" qt
+env_for host --app org.kde.konsole.desktop >/dev/null 2>&1
+check "record's way starts again: the kept problem ends" "$([ -e "$(rec paint-org.kde.konsole)" ] || echo gone)" gone
+# a row that says batch against its own numbers is not followed (the rule: a fifth less in every work)
+{ row org.kde.konsole.desktop 1002:1638 batch 'Load.animation=14.8 8.6 35.9
+Load.text=6.9 6.5 11.3'; } >"$T/etc/sparky-stereo-graphicsrc"
+check "a row against its numbers: the processor" "$(paint host --app org.kde.konsole.desktop)" ""
+check "a row against its numbers: the reason" "$(env_for host --app org.kde.konsole.desktop --print paint-reason)" measured-processor
+{ row org.kde.konsole.desktop 1002:1638 batch ''; } >"$T/etc/sparky-stereo-graphicsrc"
+check "a row without numbers: the processor" "$(paint host --app org.kde.konsole.desktop)" ""
+{ row org.kde.konsole.desktop 1002:1638 opengl 'Load.text=6.9 5.3 4.0'; } >"$T/etc/sparky-stereo-graphicsrc"
+check "a row that names another way says nothing" "$(env_for host --app org.kde.konsole.desktop --print paint-reason)" unmeasured
+{ row org.kde.kate.desktop 1002:1638 batch 'Load.typing=10 7 12'; printf '[MeasuredPaintPrograms]\nOrigin=local\n'; } >"$T/etc/sparky-stereo-graphicsrc"
 check "measured: batched" "$(paint host --app org.kde.kate.desktop)" "QT_WIDGETS_GPU_PAINT=batch "
 check "measured: the reason" "$(env_for host --app org.kde.kate.desktop --print paint-reason)" measured
-check "measured: a kind that was not measured stays on the processor" "$(paint host --app browser.desktop)" ""
+check "measured: another kind's program stays on the processor" "$(paint host --app browser.desktop)" ""
 printf '[Paint]\nOther=cpu\n' >"$RC"
 check "the person's choice wins over the measurement" "$(paint host --app org.kde.kate.desktop)" ""
 check "the person's choice: the reason" "$(env_for host --app org.kde.kate.desktop --print paint-reason)" choice
@@ -149,15 +190,21 @@ rm -f "$RC"
 # the machine's record: a measurement on this machine, and the record shipped for a model
 R=$T/root; mkdir -p "$R"
 rec_() { "$BIN/sparky-stereo-gpu-record" --root "$R" "$@"; }
-rec_ --set-paint other batch --measurement "ORDER 518 fixed work, test"
+rec_ --set-paint org.kde.kate.desktop 1002:1638 batch --measurement "fixed work, test"
 check "record: written" "$?" 0
-check "record: shown" "$(rec_ --show | grep -E '^paint-(other|origin|measurement)=' | tr '\n' ' ')" "paint-other=batch paint-origin=local paint-measurement=ORDER 518 fixed work, test "
+check "record: shown" "$(rec_ --show | grep -E '^paint' | tr '\n' ' ')" "paint org.kde.kate.desktop 1002:1638 batch paint-origin=local "
 check "record: readable by everyone" "$(stat -c %a "$R/etc/xdg/sparky-stereo-graphicsrc")" 644
-check "record: read by the page's resolver" "$(XDG_CONFIG_DIRS=$R/etc/xdg paint host --app org.kde.kate.desktop)" "QT_WIDGETS_GPU_PAINT=batch "
-rec_ --set-paint other unset
+# a row written by hand has no numbers, so Automatic does not follow it: the tool writes what was measured, the
+# numbers are the measurement's (Load.WORK), added to the row
+check "record: a row without numbers is not followed" "$(XDG_CONFIG_DIRS=$R/etc/xdg env_for host --app org.kde.kate.desktop --print paint-reason)" measured-processor
+printf 'Load.typing=10 7 12\n' >>"$R/etc/xdg/sparky-stereo-graphicsrc"
+check "record: with its numbers, read by the page's resolver" "$(XDG_CONFIG_DIRS=$R/etc/xdg paint host --app org.kde.kate.desktop)" "QT_WIDGETS_GPU_PAINT=batch "
+rec_ --set-paint org.kde.kate.desktop 1002:1638 unset
 check "record: unset removes it, and the empty file" "$([ -e "$R/etc/xdg/sparky-stereo-graphicsrc" ] || echo gone)" gone
-check "record: not a way" "$(rec_ --set-paint other fast >/dev/null 2>&1; echo $?)" 2
-check "record: not a kind" "$(rec_ --set-paint nothing cpu >/dev/null 2>&1; echo $?)" 2
+check "record: not a way" "$(rec_ --set-paint org.kde.kate.desktop 1002:1638 fast >/dev/null 2>&1; echo $?)" 2
+check "record: Qt's OpenGL engine is not a row's way" "$(rec_ --set-paint org.kde.kate.desktop 1002:1638 opengl >/dev/null 2>&1; echo $?)" 2
+check "record: not a program" "$(rec_ --set-paint other 1002:1638 cpu >/dev/null 2>&1; echo $?)" 2
+check "record: not a card" "$(rec_ --set-paint org.kde.kate.desktop pci-0000:0b:00.0 cpu >/dev/null 2>&1; echo $?)" 2
 mkdir -p "$T/machines"
 cat >"$T/machines/test-a10.conf" <<'M'
 [Match]
@@ -169,27 +216,74 @@ Gpus=1002:9874,1002:6660
 BestGpu=1002:6660
 Model=Test model
 
-[MeasuredPaint]
-Other=batch
-Measurement=shipped test
+[MeasuredPaintPrograms][org.kde.kate.desktop][1002:6660]
+Way=batch
+Load.typing=10 7 12
+Source=shipped test
 M
 A=$T/a10
 "$BIN/sparky-stereo-gpu-record" --root "$A" --machines "$T/machines" --apply-known >"$T/out" 2>&1
 check "shipped: applied on its model" "$(cat "$T/out")" written
-check "shipped: the way and its origin" "$("$BIN/sparky-stereo-gpu-record" --root "$A" --show | grep -E '^paint-(other|origin)=' | tr '\n' ' ')" "paint-other=batch paint-origin=shipped "
+check "shipped: the row and its origin" "$("$BIN/sparky-stereo-gpu-record" --root "$A" --show | grep -E '^paint' | tr '\n' ' ')" "paint org.kde.kate.desktop 1002:6660 batch paint-origin=shipped "
+check "shipped: the numbers and the source travel with the row" "$(grep -c -E '^(Load.typing=10 7 12|Source=shipped test)$' "$A/etc/xdg/sparky-stereo-graphicsrc")" 2
 check "shipped: applied again changes nothing" "$("$BIN/sparky-stereo-gpu-record" --root "$A" --machines "$T/machines" --apply-known)" unchanged
-sed -i 's/^Other=batch/Other=opengl/' "$T/machines/test-a10.conf"
+sed -i 's/^Way=batch/Way=cpu/' "$T/machines/test-a10.conf"
 check "shipped: a new record for the model is written" "$("$BIN/sparky-stereo-gpu-record" --root "$A" --machines "$T/machines" --apply-known)" written
-check "shipped: the new way" "$("$BIN/sparky-stereo-gpu-record" --root "$A" --show | grep '^paint-other=')" "paint-other=opengl"
-"$BIN/sparky-stereo-gpu-record" --root "$A" --set-paint other cpu --measurement "measured here"
+check "shipped: the new way" "$("$BIN/sparky-stereo-gpu-record" --root "$A" --show | grep '^paint ')" "paint org.kde.kate.desktop 1002:6660 cpu"
+"$BIN/sparky-stereo-gpu-record" --root "$A" --set-paint org.kde.dolphin.desktop 1002:6660 cpu --measurement "measured here"
 "$BIN/sparky-stereo-gpu-record" --root "$A" --machines "$T/machines" --apply-known >/dev/null
-check "a measurement on the machine is never replaced by the model's" "$("$BIN/sparky-stereo-gpu-record" --root "$A" --show | grep -E '^paint-(other|origin)=' | tr '\n' ' ')" "paint-other=cpu paint-origin=local "
+check "a measurement on the machine is never replaced by the model's" "$("$BIN/sparky-stereo-gpu-record" --root "$A" --show | grep -E '^paint' | tr '\n' ' ')" "paint org.kde.dolphin.desktop 1002:6660 cpu paint-origin=local "
 H=$T/host
 "$BIN/sparky-stereo-gpu-record" --root "$H" --machines "$T/machines" --apply-known >"$T/out" 2>&1
 check "shipped: not applied on another model" "$(cat "$T/out"; [ -e "$H/etc/xdg/sparky-stereo-graphicsrc" ] || echo no-file)" "nothing-known
 no-file"
 "$BIN/sparky-stereo-gpu-record" --root "$A" --forget
 check "forget removes the painting's record too" "$([ -e "$A/etc/xdg/sparky-stereo-graphicsrc" ] || echo gone)" gone
+
+# the records that ship (share/machines): each is for the hardware it was measured on and for no other
+mkdir -p "$H/proc"
+printf 'processor\t: 0\nmodel name\t: AMD Ryzen 5 5600G with Radeon Graphics\n' >"$H/proc/cpuinfo"
+check "shipped records: the measured desktop gets its record" "$("$BIN/sparky-stereo-gpu-record" --root "$H" --machines "$SRC/share/machines" --apply-known)" written
+check "shipped records: the terminal is batched on both its cards, the file manager is not" "$("$BIN/sparky-stereo-gpu-record" --root "$H" --show | grep '^paint ' | sort | tr '\n' ' ')" "paint org.kde.dolphin.desktop 1002:1638 cpu paint org.kde.dolphin.desktop 10de:2504 cpu paint org.kde.konsole.desktop 1002:1638 batch paint org.kde.konsole.desktop 10de:2504 batch "
+check "shipped records: read by the resolver on that machine" "$(XDG_CONFIG_DIRS=$H/etc/xdg env_for host --app org.kde.konsole.desktop --print paint-reason)" measured
+check "shipped records: the editor has no row there" "$(XDG_CONFIG_DIRS=$H/etc/xdg env_for host --app org.kde.kate.desktop --print paint-reason)" unmeasured
+printf 'processor\t: 0\nmodel name\t: AMD Ryzen 7 5700G with Radeon Graphics\n' >"$H/proc/cpuinfo"
+check "shipped records: the same cards with another processor are another machine" "$("$BIN/sparky-stereo-gpu-record" --root "$H" --machines "$SRC/share/machines" --apply-known)" removed
+check "shipped records: its record is gone" "$([ -e "$H/etc/xdg/sparky-stereo-graphicsrc" ] || echo gone)" gone
+"$BIN/makefixture" a10 "$T/a10b"
+check "shipped records: the measured laptop gets its record" "$("$BIN/sparky-stereo-gpu-record" --root "$T/a10b" --machines "$SRC/share/machines" --apply-known)" written
+check "shipped records: no program is batched on the laptop" "$("$BIN/sparky-stereo-gpu-record" --root "$T/a10b" --show | grep '^paint ' | grep -vc ' cpu$')" 0
+check "shipped records: six rows for the laptop" "$("$BIN/sparky-stereo-gpu-record" --root "$T/a10b" --show | grep -c '^paint ')" 6
+check "shipped records: said as measured, the processor" "$(XDG_CONFIG_DIRS=$T/a10b/etc/xdg env_for a10 --app org.kde.kate.desktop --print paint-reason)" measured-processor
+"$BIN/makefixture" one "$T/oneb"
+check "shipped records: nothing for a machine that was not measured" "$("$BIN/sparky-stereo-gpu-record" --root "$T/oneb" --machines "$SRC/share/machines" --apply-known)" nothing-known
+# every shipped row follows the rule both ways: batch exactly when every work took a fifth less processor batched
+python3 - "$SRC/share/machines" >"$T/rows" <<'P'
+import configparser, pathlib, sys
+bad = n = 0
+for path in sorted(pathlib.Path(sys.argv[1]).glob('*.conf')):
+    program = None
+    rows = {}
+    for line in path.read_text().splitlines():
+        if line.startswith('[MeasuredPaintPrograms]['):
+            program = line
+            rows[program] = {}
+        elif line.startswith('['):
+            program = None
+        elif program and '=' in line:
+            key, value = line.split('=', 1)
+            rows[program][key] = value
+    for name, row in rows.items():
+        n += 1
+        loads = [[float(x) for x in v.split()] for k, v in row.items() if k.startswith('Load.')]
+        runs = [k for k in row if k.startswith('Runs.')]
+        better = bool(loads) and all(l[1] <= 0.8 * l[0] for l in loads)
+        if not loads or len(runs) != len(loads) or not row.get('Source') or (row.get('Way') == 'batch') != better or row.get('Way') not in ('cpu', 'batch'):
+            bad += 1
+            print('BAD', path.name, name, row)
+print(f'{n} rows, {bad} bad')
+P
+check "shipped records: every row has its loads, runs and source and follows the rule" "$(tail -1 "$T/rows")" "10 rows, 0 bad"
 
 # in the person's language (the engine's catalogue is built from the same .po files)
 mkdir -p "$T/usr/locale/pt_BR/LC_MESSAGES"
