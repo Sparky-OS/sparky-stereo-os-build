@@ -73,5 +73,7 @@ if [ "$1" = remove ] && command -v sparky-stereo-problems >/dev/null 2>&1; then
 fi
 EOF
 chmod 755 "$D/DEBIAN/postrm"
+package_epoch=${SOURCE_DATE_EPOCH:-$(python3 "$HERE/../../repo/reproducible.py" epoch "$HERE")}
+python3 "$HERE/../../repo/reproducible.py" normalize "$package_epoch" "$D"
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum > DEBIAN/md5sums)
 PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE" --build-dependency sparky-stereo-problems
