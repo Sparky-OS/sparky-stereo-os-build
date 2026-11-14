@@ -51,7 +51,7 @@
 # SPARKY_APPSTREAM_MAX_BYTES (optional) bounds the generator's workspace.
 # zram and zswap never ours, the person may opt in (ORDER 361): iso-build/zram-check.py refuses the selection before anything
 # is copied or signed.
-# Last update 2026/11/03 (the zram and zswap gate, ORDER 361; AppStream catalogues, ORDER 252b; installability report, ORDER 317)
+# Last update 2026/11/14 (the zram and zswap gate, ORDER 361, its tear-down notes, ORDER 558; AppStream catalogues, ORDER 252b; installability report, ORDER 317)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -260,7 +260,8 @@ PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-s
 # zram and zswap: never ours, never on by default; the person may opt in (Daniel, 2026-11-02 and 2026-11-03; ORDER 361):
 # no selected package, the ones already in DEST too, sets them up, pulls a zram package in or Conflicts with or Breaks
 # one; the Stereo APTus entry the person picks passes. Checked before anything is copied or signed; a finding names the
-# package, the file and the line, and stops the publication.
+# package, the file and the line, and stops the publication. A unit or a line that only retires zram (stops, resets,
+# removes, reports) is let through, and the gate prints a note for each one here, in the round's log (ORDER 558).
 awk -F'\t' '$5 != "source" { print $1 }' "$W/selection.tsv" >"$W/zram-debs.txt"
 python3 "$HERE/../iso-build/zram-check.py" --debs-file "$W/zram-debs.txt"
 
