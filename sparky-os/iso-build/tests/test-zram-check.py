@@ -146,6 +146,11 @@ class Documentation(Fixtures):
         path = self.path.replace('guide.md', 'GUIDE.MD')
         self.assertRefused(self.deb(files={path: self.page,
             '/usr/bin/reader.py': 'from pathlib import Path\nPath("GUIDE.MD").read_text()\n'}), path)
+        for name in ('guide with spaces.md', 'guía.md'):
+            path = str(Path(self.path).with_name(name))
+            with self.subTest(name=name):
+                self.assertRefused(self.deb(files={path: self.page,
+                    '/usr/libexec/example/reader': '#!/bin/sh\n. "' + path + '"\n'}), path)
 
     def test_image_documentation_and_its_consumer(self):
         root = self.dir / 'root'

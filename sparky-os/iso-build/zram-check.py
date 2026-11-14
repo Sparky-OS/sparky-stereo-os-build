@@ -68,7 +68,8 @@ DOCUMENT_FOLDERS = {'doc', 'docs', 'documentation', 'skills', 'agent-skills'}
 CONFIG_FOLDERS = {'systemd', 'udev', 'modprobe.d', 'sysctl.d', 'tmpfiles.d', 'modules-load.d',
                   'system-generators', 'user-generators', 'initramfs-tools'}
 SCRIPT_SUFFIXES = {'.sh', '.bash', '.py', '.pl', '.rb', '.js', '.lua'}
-MARKDOWN_PATH = re.compile(rb'[A-Za-z0-9_./+%-]+\.(?:md|markdown)\b', re.I)
+MARKDOWN_PATH = re.compile(rb'''[^\s\0"'`<>|;=(){}\[\]]+\.(?:md|markdown)\b''', re.I)
+QUOTED_MARKDOWN = re.compile(rb'''["']([^"'\r\n\0]+\.(?:md|markdown))["']''', re.I)
 TEXT_LIMIT = 4 << 20
 BINARY_LIMIT = 256 << 20
 MENTION = re.compile(r'zram|zswap', re.I)
@@ -704,7 +705,8 @@ def references(path, data, mode):
     if not (mode & 0o111 or data.startswith((b'#!', b'\x7fELF')) or configuration(path)
             or PurePosixPath(path).suffix in SCRIPT_SUFFIXES):
         return set()
-    return {PurePosixPath(p.decode('ascii')).name.casefold() for p in MARKDOWN_PATH.findall(data)}
+    paths = MARKDOWN_PATH.findall(data) + QUOTED_MARKDOWN.findall(data)
+    return {PurePosixPath(p.decode('utf-8', errors='replace')).name.casefold() for p in paths}
 
 
 def documentation(path, data, mode, referenced):
