@@ -34,8 +34,8 @@ What is the edition's
 ---------------------
 
 - The control file: the version, NVIDIA's exact relations among the carried
-  packages at that version (with nvidia-kernel-dkms, which the edition's
-  nvidia-legacy-580xx-kernel-dkms provides at it), the maintainer (NVIDIA
+  packages at that version; the kernel dependency stays at the published
+  nvidia-legacy-580xx-kernel-dkms provider's version. Also the maintainer (NVIDIA
   stays as Original-Maintainer), the homepage, the bug tracker and a note in
   the description; and, where NVIDIA's package ships programs or libraries
   but declares no dependency at all (libnvidia-nscq), the dependency
@@ -50,3 +50,14 @@ Packaging: Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of
 SparkyLinux (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
 Problems with this package go to the edition's tracker,
 https://github.com/Sparky-OS/sparky-stereo-os/issues, not to NVIDIA.
+
+Source of the carry
+-------------------
+
+The edition source package is nvidia-graphics-drivers at @VERSION@.
+It contains this carry recipe, the vendor file manifest with hashes and HTTPS
+origins, the verification key and the licence. It retains the exact licensed vendor package inputs for offline rebuilding,
+without claiming to contain the proprietary driver source. The build verifies
+each retained archive and refuses a checksum mismatch.
+The existing driver lock selects this source name; the unchanged DKMS provider
+remains at 580.196.07-1+sparky2+lc1.
