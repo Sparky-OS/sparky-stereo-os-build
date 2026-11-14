@@ -99,7 +99,8 @@ for step in $STEPS; do
 		rm -rf "${W:?}/${step:?}-src"; mkdir -p "$W/$step-src"
 		export SOURCE_DATE_EPOCH=$(python3 "$HERE/../../repo/reproducible.py" epoch "$HERE")
 		dsc=$(cd "$TREE" && ls pool/main/"${step:0:1}/$step/$step"_*+lc1.dsc)
-		in_container "${BUILD_NAME_PREFIX}-source-$step" bash -c "export TMPDIR=/work/tmp-$step; mkdir -p /work/tmp-$step; /toolkit/packages/per-file-choice-albums-551b/next-source.sh $step /repo/$dsc /work/$step-src; rmdir /work/tmp-$step 2>/dev/null || true; cp /repo/pool/main/${step:0:1}/$step/${step}_*.orig.tar.* /work/$step-src/" | tail -6
+		# every command of the step must succeed: a source that was not made stops the round here, not in the build
+		in_container "${BUILD_NAME_PREFIX}-source-$step" bash -c "set -e; export TMPDIR=/work/tmp-$step; mkdir -p /work/tmp-$step; bash /toolkit/packages/per-file-choice-albums-551b/next-source.sh $step /repo/$dsc /work/$step-src; rmdir /work/tmp-$step 2>/dev/null || true; cp /repo/pool/main/${step:0:1}/$step/${step}_*.orig.tar.* /work/$step-src/; ls /work/$step-src/*+lc1.dsc" | tail -6
 		build "$step" "$W/$step-src" "$ROUND_551 koko kphotoalbum digikam"
 		;;
 	*) echo "unknown step $step" >&2; exit 2 ;;
