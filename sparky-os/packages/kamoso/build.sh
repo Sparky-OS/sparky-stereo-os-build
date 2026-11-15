@@ -12,6 +12,7 @@ mkdir -p "$OUT"
 cd "$OUT"
 apt-get source --download-only kamoso=26.04.0-1
 dpkg-source -x kamoso_26.04.0-1.dsc source
+mkdir -p source/debian/patches
 install -m644 "$HERE/patches/0001-follow-the-session-default-camera.patch" source/debian/patches/
 printf '%s\n' 0001-follow-the-session-default-camera.patch >>source/debian/patches/series
 python3 - "$OUT/source/debian/changelog" <<'PY'

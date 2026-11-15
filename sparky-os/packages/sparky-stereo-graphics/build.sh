@@ -304,6 +304,7 @@ gzip -9n -c "$S/debian/changelog" > "$D/usr/share/doc/$PACKAGE/changelog.gz"
 
 "$TOOLKIT/repo/provenance.sh" --tree "$D"
 PYTHONPATH="$TOOLKIT${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$D" "$OUT"
+cp "$OUT/${PACKAGE}_${VERSION}_amd64.deb" "$OUT/${PACKAGE}-lc-hr_${VERSION}_amd64.deb" "$WORK/"
 # These are the final archive bytes. Record metadata after the one source build,
 # so neither the descriptor nor the HR companion can change behind the record.
 (
