@@ -302,17 +302,15 @@ Description: Sparky Stereo OS boot that follows the main screen
   It keeps two kernels per flavour, the running one and one more, and
   removes the older ones after a new kernel has installed; every boot
   image is written again whenever the boot changes, the older kernel's
-  too.
+  too. GRUB's menu is hidden when this is the only system; after a start
+  that did not finish it shows by itself at the next start, with the
+  older kernel in it, the file systems are checked at that start, and
+  the person is told at login what the check found.
   .
   Under Secure Boot, the edition's key and this computer's DKMS key are
   kept next to shim on the EFI system partition, with a GRUB entry that
   enrolls each one; a DKMS key that is not enrolled while modules signed
   with it are installed is said.
-  .
-  GRUB's menu is hidden when this is the only system. After a start that
-  did not finish it shows by itself at the next start, with the older
-  kernel in it, the file systems are checked at that start, and the
-  person is told at login what the check found.
   .
   Nothing in the boot's upkeep fails silently: a failed update-grub,
   boot image, Secure Boot certificate, kernel cleanup or 3D splash
