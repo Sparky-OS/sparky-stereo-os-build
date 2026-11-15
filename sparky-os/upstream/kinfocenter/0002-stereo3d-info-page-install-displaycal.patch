@@ -11,8 +11,8 @@ Forwarded: no
 Assisted-by: Claude Sonnet via Claude Code
 
 diff -ruN a/kcms/stereo3d/main.cpp b/kcms/stereo3d/main.cpp
---- a/kcms/stereo3d/main.cpp	2026-11-15 08:29:45.074386946 -0300
-+++ b/kcms/stereo3d/main.cpp	2026-11-15 08:29:45.084113231 -0300
+--- a/kcms/stereo3d/main.cpp	2026-11-15 09:37:55.296943296 -0300
++++ b/kcms/stereo3d/main.cpp	2026-11-15 09:37:55.305840637 -0300
 @@ -1,12 +1,18 @@
  // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
  // SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
@@ -177,8 +177,8 @@ diff -ruN a/kcms/stereo3d/main.cpp b/kcms/stereo3d/main.cpp
      QVariantList m_displays;
      QVariantList m_sections;
 diff -ruN a/kcms/stereo3d/ui/main.qml b/kcms/stereo3d/ui/main.qml
---- a/kcms/stereo3d/ui/main.qml	2026-11-15 08:29:45.074446697 -0300
-+++ b/kcms/stereo3d/ui/main.qml	2026-11-15 08:29:45.084168391 -0300
+--- a/kcms/stereo3d/ui/main.qml	2026-11-15 09:37:55.297014147 -0300
++++ b/kcms/stereo3d/ui/main.qml	2026-11-15 09:37:55.305897887 -0300
 @@ -136,10 +136,38 @@
                              url: ""
                              onClicked: kcm.measureDisplay()
@@ -195,7 +195,7 @@ diff -ruN a/kcms/stereo3d/ui/main.qml b/kcms/stereo3d/ui/main.qml
 +                        QQC2.Label {
 +                            Layout.fillWidth: true
 +                            wrapMode: Text.Wrap
-+                            text: KI18n.i18nc("@info", "DisplayCAL requires calibrator hardware: a colorimeter or a spectrophotometer to measure the display.")
++                            text: KI18n.i18ndc("kcm_stereo3d", "@info", "DisplayCAL requires calibrator hardware: a colorimeter or a spectrophotometer to measure the display.")
 +                        }
                          QQC2.Label {
 -                            visible: !kcm.displayCalInstalled
@@ -216,7 +216,7 @@ diff -ruN a/kcms/stereo3d/ui/main.qml b/kcms/stereo3d/ui/main.qml
 +                            visible: kcm.displayCalState === "absent" || kcm.displayCalState === "installing"
 +                            enabled: kcm.displayCalState === "absent"
 +                            icon.name: "install"
-+                            text: KI18n.i18nc("@action:button installs DisplayCAL", "Install DisplayCAL")
++                            text: KI18n.i18ndc("kcm_stereo3d", "@action:button installs DisplayCAL", "Install DisplayCAL")
 +                            onClicked: kcm.installDisplayCal()
                          }
                      }
