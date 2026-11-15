@@ -1,0 +1,489 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 15 Nov 2026 14:22:13 +0000
+Subject: [PATCH] qt: on Wayland, draw the video on a surface of its own, so
+ that hiding a window of the interface does not end the connection
+
+On Wayland the video output drew on the wl_surface of a QWindow that the
+video widget held in a window container. Qt 5's Wayland platform destroys a
+window's wl_surface whenever it hides the window (QWaylandWindow::setVisible
+calls reset()), and Qt hides the container's window whenever the container
+is hidden: the page that holds the video is turned or the video widget gets
+a new parent (Ctrl+L, the playlist, moves the playing video into the
+playlist's panel and back), the main window is made again (its flags
+changed). The video output thread went on drawing: Mesa attached its next
+picture to the destroyed surface, or the video output resized its viewport,
+and the compositor ended the connection ("wl_display#1: error 0: invalid
+object N" or "wp_viewport#N: error 3: the wl_surface for this viewport no
+longer exists"), so VLC closed. In the rig 15 of 15 runs with Ctrl+L during
+playback ended so, 4 to 41 ms after Qt destroyed the surface, at 100, 125 and
+150 %, on 2D and 3D outputs, with 2D and 3D films, on two GPUs.
+
+As VLC 4's Wayland compositor does (modules/gui/qt/maininterface/
+compositor_wayland_module.c), the video surface is now the video output's
+own: the interface creates it with a wl_compositor and a wl_subcompositor
+of its own, on an event queue of its own, with an empty input region, and
+gives it to the video output in place of a Qt window's. A plain widget holds
+its place in the layout and takes the mouse and the keys, as on X11 (the
+native window's cursor mirroring and event forwarding of 3d-0046 go with
+the window). While that widget is shown, the video surface is a
+desynchronized sub-surface of the main window's surface, at the widget's
+place (plus the frame of a client-side decoration, as Qt places its own
+sub-surfaces), with the buffer scale Qt gives its own surfaces; the role is
+destroyed when the widget is hidden and made again when it is shown or when
+the main window, shown again, has a new surface. The surface itself is
+destroyed only when the video output has released the window, so the video
+output never names a destroyed object. The stereo declaration and the
+viewport stay the video output's, on the same surface.
+
+VLC 3.0.x upstream removed its Qt Wayland video window (04d8fcb9, "qt: remove
+dysfunctional Wayland window"); VLC 4 already draws on a surface of its own,
+and its 84e7e017 ("qt: do not hide window on close on Wayland") records the
+same behaviour of Qt before 6.9. The change is for VLC Stereo only.
+
+Forwarded: not-needed
+Last-Update: 2026-11-15
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+diff --git a/modules/gui/qt/Makefile.am b/modules/gui/qt/Makefile.am
+index f4c1aa6..0b6d085 100644
+--- a/modules/gui/qt/Makefile.am
++++ b/modules/gui/qt/Makefile.am
+@@ -44,7 +44,8 @@ endif
+ if HAVE_QT_GUI_PRIVATE
+ libqt_plugin_la_CPPFLAGS += -DQT_GUI_PRIVATE $(QT_GUI_PRIVATE_CFLAGS)
+ if HAVE_WAYLAND
+-libqt_plugin_la_CPPFLAGS += -DQT_VLC_WAYLAND
++libqt_plugin_la_CPPFLAGS += -DQT_VLC_WAYLAND $(WAYLAND_CLIENT_CFLAGS)
++libqt_plugin_la_LIBADD += $(WAYLAND_CLIENT_LIBS)
+ endif
+ endif
+ 
+diff --git a/modules/gui/qt/components/interface_widgets.cpp b/modules/gui/qt/components/interface_widgets.cpp
+index c5ac1bf..83376f4 100644
+--- a/modules/gui/qt/components/interface_widgets.cpp
++++ b/modules/gui/qt/components/interface_widgets.cpp
+@@ -56,6 +56,7 @@ static inline int qrand() {
+ # include <X11/Xlib.h>
+ # undef KeyPress
+ # undef KeyRelease
++# undef Expose
+ # include "qt_x11.hpp"
+ # if defined(QT_HAS_XCB)
+ #  include <xcb/xproto.h>
+@@ -67,12 +68,142 @@ static inline int qrand() {
+ #include <qpa/qplatformnativeinterface.h>
+ #endif
+ 
++#ifdef QT_VLC_WAYLAND
++#include <qpa/qplatformwindow.h>
++#include <wayland-client.h>
++#include <string.h>
++#endif
++
+ #include <math.h>
+ #include <cassert>
+ 
+ #include <vlc_vout.h>
+ #include <vlc_vout_window.h>
+ 
++#ifdef QT_VLC_WAYLAND
++/* The video output draws on a wl_surface of its own, never on a Qt window's:
++ * Qt 5 destroys a window's wl_surface whenever it hides the window (its
++ * container hidden, a new parent, the page that holds it turned), while the
++ * video output thread goes on drawing on it, and the compositor ends the
++ * connection ("invalid object"). As VLC 4's Wayland compositor does, the
++ * surface is made here, and is a sub-surface of the main window's surface
++ * while the video widget is shown; only that role follows Qt's windows. */
++struct WaylandVideo
++{
++    struct wl_display *display;
++    struct wl_event_queue *queue;
++    struct wl_compositor *compositor;
++    struct wl_subcompositor *subcompositor;
++    struct wl_surface *surface;
++    struct wl_subsurface *subsurface;
++    int scale;
++};
++
++static void WaylandGlobal(void *data, struct wl_registry *registry, uint32_t name,
++                          const char *interface, uint32_t version)
++{
++    WaylandVideo *wl = static_cast<WaylandVideo *>(data);
++
++    /* version 4: damage_buffer, and no preferred scale events to dispatch */
++    if (!strcmp(interface, "wl_compositor") && version >= 4)
++        wl->compositor = static_cast<struct wl_compositor *>(
++            wl_registry_bind(registry, name, &wl_compositor_interface, 4));
++    else if (!strcmp(interface, "wl_subcompositor"))
++        wl->subcompositor = static_cast<struct wl_subcompositor *>(
++            wl_registry_bind(registry, name, &wl_subcompositor_interface, 1));
++}
++
++static void WaylandGlobalRemove(void *, struct wl_registry *, uint32_t)
++{
++}
++
++static void WaylandVideoClose(WaylandVideo *wl, bool surface_done)
++{
++    if (wl->subsurface)
++        wl_subsurface_destroy(wl->subsurface);
++    wl->subsurface = NULL;
++    /* An orphaned video output may still draw: then its surface, and the
++     * queue the surface belongs to, stay until the connection ends. */
++    if (!surface_done)
++        return;
++    if (wl->surface)
++        wl_surface_destroy(wl->surface);
++    if (wl->subcompositor)
++        wl_subcompositor_destroy(wl->subcompositor);
++    if (wl->compositor)
++        wl_compositor_destroy(wl->compositor);
++    wl_event_queue_destroy(wl->queue);
++    delete wl;
++}
++
++static WaylandVideo *WaylandVideoOpen(struct wl_display *display, int scale)
++{
++    WaylandVideo *wl = new WaylandVideo();
++    wl->display = display;
++    wl->scale = scale;
++    wl->queue = wl_display_create_queue(display);
++    if (!wl->queue)
++    {
++        delete wl;
++        return NULL;
++    }
++
++    struct wl_display *wrapper = static_cast<struct wl_display *>(
++        wl_proxy_create_wrapper(display));
++    if (!wrapper)
++    {
++        WaylandVideoClose(wl, true);
++        return NULL;
++    }
++    wl_proxy_set_queue(reinterpret_cast<struct wl_proxy *>(wrapper), wl->queue);
++    struct wl_registry *registry = wl_display_get_registry(wrapper);
++    wl_proxy_wrapper_destroy(wrapper);
++    if (!registry)
++    {
++        WaylandVideoClose(wl, true);
++        return NULL;
++    }
++    static const struct wl_registry_listener listener = {
++        WaylandGlobal, WaylandGlobalRemove
++    };
++    wl_registry_add_listener(registry, &listener, wl);
++    wl_display_roundtrip_queue(display, wl->queue);
++    wl_registry_destroy(registry);
++    if (!wl->compositor || !wl->subcompositor)
++    {
++        WaylandVideoClose(wl, true);
++        return NULL;
++    }
++
++    wl->surface = wl_compositor_create_surface(wl->compositor);
++    if (!wl->surface)
++    {
++        WaylandVideoClose(wl, true);
++        return NULL;
++    }
++    /* The pointer goes through to the main window, where the video widget
++     * takes it as on X11. */
++    struct wl_region *none = wl_compositor_create_region(wl->compositor);
++    if (none)
++    {
++        wl_surface_set_input_region(wl->surface, none);
++        wl_region_destroy(none);
++    }
++    wl_surface_set_buffer_scale(wl->surface, scale);
++    wl_surface_commit(wl->surface);
++    return wl;
++}
++
++/* the buffer scale Qt gives the surfaces of the window that holds the widget */
++static int WaylandScale(const QWidget *widget)
++{
++    const QWindow *top = widget->window()->windowHandle();
++    const QPlatformWindow *platform = top ? top->handle() : NULL;
++    return qMax(1, qRound(platform ? platform->devicePixelRatio()
++                                   : widget->devicePixelRatioF()));
++}
++#endif
++
+ /**********************************************************************
+  * Video Widget. A simple frame on which video is drawn
+  * This class handles resize issues
+@@ -88,7 +219,7 @@ VideoWidget::VideoWidget( intf_thread_t *_p_i, QWidget* p_parent )
+     layout->setContentsMargins( 0, 0, 0, 0 );
+     stable = NULL;
+     p_window = NULL;
+-    videoWindowHovered = false;
++    wlVideo = NULL;
+     qApp->installNativeEventFilter(this);
+     show();
+ }
+@@ -127,36 +258,36 @@ bool VideoWidget::request( struct vout_window_t *p_wnd )
+ #ifdef QT_VLC_WAYLAND
+     if( p_intf->p_sys->voutWindowType == VOUT_WINDOW_TYPE_WAYLAND )
+     {
+-        /* A native child surface lets the compositor select each eye while
+-         * keeping the surrounding Qt controls on their ordinary 2D surface.
+-         * Qt owns the subsurface and its geometry, VLC owns its EGL buffers. */
+-        QWindow *video = new QWindow;
+-        video->setSurfaceType(QSurface::OpenGLSurface);
+-        video->installEventFilter(this);
+-        video->setCursor(cursor());
+-        videoWindow = video;
+-        videoWindowHovered = false;
+-        stable = QWidget::createWindowContainer(video, this);
+-        stable->setFocusPolicy(Qt::StrongFocus);
+-        /* The native window's mouse moves reach this widget through the event
+-         * filter: as on X11, track them, or Qt drops those with no button and
+-         * the full screen controls never come back */
+-        stable->setMouseTracking(true);
+-        setMouseTracking(true);
+-        layout->addWidget(stable);
+-        stable->show();
+-        video->create();
++        /* A surface of the video output's own, which no Qt window owns, lets
++         * the compositor select each eye while the surrounding Qt controls stay
++         * on their ordinary 2D surface (see WaylandVideo above). The widget
++         * that holds its place takes the mouse and the keys, as on X11. */
+         QPlatformNativeInterface *native = QGuiApplication::platformNativeInterface();
+-        p_wnd->display.wl = static_cast<wl_display *>(
++        struct wl_display *display = static_cast<struct wl_display *>(
+             native->nativeResourceForIntegration("display"));
+-        p_wnd->handle.wl = static_cast<wl_surface *>(
+-            native->nativeResourceForWindow("surface", video));
+-        if( !p_wnd->display.wl || !p_wnd->handle.wl )
++        wlVideo = display ? WaylandVideoOpen( display, WaylandScale( this ) ) : NULL;
++        if( !wlVideo )
+         {
+-            delete stable;
+-            stable = NULL;
++            msg_Err( p_intf, "no Wayland surface for the video" );
+             return false;
+         }
++        stable = new QWidget();
++        stable->setContextMenuPolicy( Qt::PreventContextMenu );
++        QPalette plt = palette();
++        plt.setColor( QPalette::Window, Qt::black );
++        stable->setPalette( plt );
++        stable->setAutoFillBackground( true );
++        stable->setFocusPolicy( Qt::StrongFocus );
++        /* as on X11, track the mouse, or Qt drops the moves with no button
++         * and the full screen controls never come back */
++        stable->setMouseTracking( true );
++        setMouseTracking( true );
++        stable->installEventFilter( this );
++        layout->addWidget( stable );
++        stable->show();
++        p_wnd->display.wl = display;
++        p_wnd->handle.wl = wlVideo->surface;
++        wlAttach();
+         p_wnd->type = VOUT_WINDOW_TYPE_WAYLAND;
+         var_Create(p_wnd, "qt-wayland-scale", VLC_VAR_FLOAT);
+         var_SetFloat(p_wnd, "qt-wayland-scale", devicePixelRatioF());
+@@ -264,11 +395,78 @@ void VideoWidget::reportSize()
+     QSize size = physicalSize();
+ #ifdef QT_VLC_WAYLAND
+     if( p_window->type == VOUT_WINDOW_TYPE_WAYLAND )
++    {
+         var_SetFloat(p_window, "qt-wayland-scale", devicePixelRatioF());
++        /* the buffer scale Qt gives its own surfaces, taken with the video
++         * output's next frame */
++        const int scale = WaylandScale( this );
++        if( wlVideo && scale != wlVideo->scale )
++        {
++            wlVideo->scale = scale;
++            wl_surface_set_buffer_scale( wlVideo->surface, scale );
++        }
++    }
+ #endif
+     WindowResized(p_window, size);
+ }
+ 
++#ifdef QT_VLC_WAYLAND
++/* Gives the video surface its place on the main window's surface, while the
++ * widget that holds its place is shown and the main window has a surface. */
++void VideoWidget::wlAttach()
++{
++    if( !wlVideo || wlVideo->subsurface || !stable || !stable->isVisible() )
++        return;
++    QWindow *top = stable->window()->windowHandle();
++    if( !top )
++        return;
++    if( top != wlTopWindow )
++    {
++        /* a main window made again (its flags changed) is a new QWindow */
++        if( wlTopWindow )
++            wlTopWindow->removeEventFilter( this );
++        wlTopWindow = top;
++        top->installEventFilter( this );
++    }
++    struct wl_surface *parent = static_cast<struct wl_surface *>(
++        QGuiApplication::platformNativeInterface()->nativeResourceForWindow( "surface", top ) );
++    if( !parent )
++        return; /* hidden: Qt makes its surface again before the next expose */
++    wlVideo->subsurface = wl_subcompositor_get_subsurface( wlVideo->subcompositor,
++                                                           wlVideo->surface, parent );
++    if( !wlVideo->subsurface )
++        return;
++    wl_subsurface_set_desync( wlVideo->subsurface );
++    wlPlace();
++}
++
++/* Takes the video surface off the main window: the widget that holds its place
++ * is hidden, and the main window may destroy its surface next. The surface
++ * stays the video output's, which may draw on it meanwhile. */
++void VideoWidget::wlDetach()
++{
++    if( !wlVideo || !wlVideo->subsurface )
++        return;
++    wl_subsurface_destroy( wlVideo->subsurface );
++    wlVideo->subsurface = NULL;
++}
++
++void VideoWidget::wlPlace()
++{
++    if( !wlVideo || !wlVideo->subsurface || !stable || !stable->isVisible() )
++        return;
++    QWidget *top = stable->window();
++    /* where Qt places its own sub-surfaces: the frame of a client-side
++     * decoration lies in the surface too */
++    const QPoint at = stable->mapTo( top, QPoint( 0, 0 ) );
++    const QMargins frame = top->windowHandle() ? top->windowHandle()->frameMargins() : QMargins();
++    wl_subsurface_set_position( wlVideo->subsurface, at.x() + frame.left(), at.y() + frame.top() );
++    wl_display_dispatch_queue_pending( wlVideo->display, wlVideo->queue );
++    /* a sub-surface's position applies with its parent's next commit */
++    stable->update();
++}
++#endif
++
+ /* Set the Widget to the correct Size */
+ /* Function has to be called by the parent
+    Parent has to care about resizing itself */
+@@ -334,45 +532,35 @@ void VideoWidget::resizeEvent( QResizeEvent *event )
+     reportSize();
+ }
+ 
+-bool VideoWidget::event(QEvent *event)
+-{
+-    /* The native video window shows a cursor of its own: give it the one set
+-     * on this widget, the cursor VLC hides over the video when the mouse rests.
+-     * Qt on Wayland sets a window's cursor for the whole seat, so only while
+-     * the pointer is over the video: the full screen controls keep theirs. */
+-    if( event->type() == QEvent::CursorChange && videoWindow && videoWindowHovered )
+-        videoWindow->setCursor( cursor() );
+-    return QFrame::event( event );
+-}
+-
+ bool VideoWidget::eventFilter(QObject *watched, QEvent *event)
+ {
+-    switch(event->type())
++#ifdef QT_VLC_WAYLAND
++    if( wlVideo && watched == stable )
+     {
+-        case QEvent::MouseButtonPress:
+-            /* As QWidgetWindow does for widgets (QTBUG-25831): skip the press
+-             * that Qt follows with the double click event itself, which the
+-             * video output would take for a second double click */
+-            if( static_cast<QMouseEvent *>(event)->flags()
+-                & Qt::MouseEventCreatedDoubleClick )
+-                return true;
+-            /* fall through */
+-        case QEvent::MouseButtonRelease:
+-        case QEvent::MouseButtonDblClick:
+-        case QEvent::MouseMove:
+-        case QEvent::KeyPress:
+-        case QEvent::KeyRelease:
+-        case QEvent::Wheel:
+-            return QCoreApplication::sendEvent(this, event);
+-        case QEvent::Enter:
+-        case QEvent::Leave:
+-            videoWindowHovered = event->type() == QEvent::Enter;
+-            if( videoWindowHovered && videoWindow )
+-                videoWindow->setCursor( cursor() );
+-            return QFrame::eventFilter(watched, event);
+-        default:
+-            return QFrame::eventFilter(watched, event);
++        switch( event->type() )
++        {
++            case QEvent::Show:
++                wlAttach();
++                break;
++            case QEvent::Hide:
++                wlDetach();
++                break;
++            case QEvent::Move:
++            case QEvent::Resize:
++                wlPlace();
++                break;
++            default:
++                break;
++        }
+     }
++    else if( wlVideo && watched == wlTopWindow )
++    {
++        /* the main window shown again has a new surface */
++        if( event->type() == QEvent::Expose && wlTopWindow->isExposed() )
++            wlAttach();
++    }
++#endif
++    return QFrame::eventFilter( watched, event );
+ }
+ 
+ int VideoWidget::qtMouseButton2VLC( Qt::MouseButton qtButton )
+@@ -482,10 +670,21 @@ void VideoWidget::release( bool forced )
+     {
+         if( forced )
+             WindowOrphaned(p_window);
++#ifdef QT_VLC_WAYLAND
++        if( wlVideo )
++        {
++            stable->removeEventFilter( this );
++            if( wlTopWindow )
++                wlTopWindow->removeEventFilter( this );
++            wlTopWindow = NULL;
++            /* released: the video output is done with the surface */
++            WaylandVideoClose( wlVideo, !forced );
++            wlVideo = NULL;
++        }
++#endif
+         layout->removeWidget( stable );
+         stable->deleteLater();
+         stable = NULL;
+-        videoWindow = NULL;
+         p_window = NULL;
+     }
+ 
+diff --git a/modules/gui/qt/components/interface_widgets.hpp b/modules/gui/qt/components/interface_widgets.hpp
+index 3935571..b6a6729 100644
+--- a/modules/gui/qt/components/interface_widgets.hpp
++++ b/modules/gui/qt/components/interface_widgets.hpp
+@@ -65,7 +65,6 @@ public:
+     void sync( void );
+ 
+ protected:
+-    bool event(QEvent *) Q_DECL_OVERRIDE;
+     bool eventFilter(QObject *, QEvent *) Q_DECL_OVERRIDE;
+     QPaintEngine *paintEngine() const Q_DECL_OVERRIDE
+     {
+@@ -90,9 +89,15 @@ private:
+     vout_window_t *p_window;
+ 
+     QWidget *stable;
+-    QPointer<QWindow> videoWindow;
+-    bool videoWindowHovered;
+     QLayout *layout;
++    /* the video surface of our own on Wayland, and the main window it lies on */
++    struct WaylandVideo *wlVideo;
++    QPointer<QWindow> wlTopWindow;
++#ifdef QT_VLC_WAYLAND
++    void wlAttach();
++    void wlDetach();
++    void wlPlace();
++#endif
+ 
+     bool enable_mouse_events;
+ 
