@@ -2,7 +2,7 @@
 # Created by Daniel Ramos (Capitain Jack) 2026/11/14
 # Copyright 2026 under the GNU GPL3 License
 # Tests bin/sparky-stereo-has-tablet-mode and share/plasma-env/sparky-stereo-tablet-mode.sh on fixture sysfs trees, and
-# what KConfig then reads (kreadconfig6, when installed): the default on a convertible, the person's own choice over it,
+# what KConfig then reads (kreadconfig6, when installed): the default on a computer with a touch screen of its own, the person's own choice over it,
 # nothing on a computer without a tablet mode.
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
@@ -15,6 +15,7 @@ input() {
 	echo "$3" > "$d/properties"; echo "$4" > "$d/capabilities/abs"; echo "$5" > "$d/capabilities/key"; echo "$6" > "$d/capabilities/sw"
 }
 chassis() { mkdir -p "$1/class/dmi/id"; echo "$2" > "$1/class/dmi/id/chassis_type"; }
+screen() { mkdir -p "$1/class/drm/card0-$2"; echo "${3:-connected}" > "$1/class/drm/card0-$2/status"; }   # screen SYS CONNECTOR [STATUS]
 # devices shaped as the kernel describes them (the bit numbers are linux/input-event-codes.h's)
 touchscreen() { input "$1" "$2" 2 '260800000000003' '400 0 0 0 0 0' 0; }            # multitouch screen: direct, ABS_X ABS_Y, ABS_MT_POSITION_*, BTN_TOUCH
 touchpad() { input "$1" "$2" 5 '260800000000003' 'e520 10000 0 0 0 0' 0; }           # pointer and buttonpad: not direct
@@ -23,34 +24,41 @@ keyboard() { input "$1" "$2" 0 0 '402000000 3803078f800d001 feffffdfffefffff fff
 lid() { input "$1" "$2" 0 0 0 1; }                                                    # SW_LID only
 tablet_switch() { input "$1" "$2" 0 0 0 2; }                                          # SW_TABLET_MODE
 lid_and_tablet_switch() { input "$1" "$2" 0 0 0 3; }
+audio_jack() { input "$1" "$2" 0 0 0 14; }                                            # SW_HEADPHONE_INSERT and SW_MICROPHONE_INSERT
 has() { SPARKY_STEREO_SYSFS=$1 "$HERE/bin/sparky-stereo-has-tablet-mode"; echo $?; }
 why() { SPARKY_STEREO_SYSFS=$1 "$HERE/bin/sparky-stereo-has-tablet-mode" --why; }
 
-s=$T/convertible; keyboard $s 0; touchpad $s 1; touchscreen $s 2; lid_and_tablet_switch $s 3; chassis $s 10
-check "a notebook with a touch screen and a tablet-mode switch" "$(has $s)" 0
-check "and why" "$(why $s)" "touch screen: yes; tablet-mode switch: yes; chassis type: 10"
-s=$T/slider; keyboard $s 0; touchpad $s 1; touchscreen $s 2; tablet_switch $s 3; chassis $s 31
-check "a convertible chassis with the switch" "$(has $s)" 0
-s=$T/tablet; touchscreen $s 0; chassis $s 30
-check "a tablet: a touch screen and a tablet chassis, no switch" "$(has $s)" 0
-check "and why" "$(why $s)" "touch screen: yes; tablet-mode switch: no; chassis type: 30 (tablet)"
-s=$T/detachable; touchscreen $s 0; keyboard $s 1; chassis $s 32
+s=$T/convertible; keyboard $s 0; touchpad $s 1; touchscreen $s 2; lid_and_tablet_switch $s 3; chassis $s 31; screen $s eDP-1
+check "a convertible with a touch screen and a tablet-mode switch" "$(has $s)" 0
+check "and why" "$(why $s)" "touch screen: yes; built-in panel: eDP-1; tablet-mode switch: yes; chassis type: 31 (convertible)"
+# a slider convertible that reports itself as a notebook: no lid switch, no tablet-mode switch, the only switches are
+# the sound card's jacks; a touch screen and its pen as two devices
+s=$T/slider; keyboard $s 0; touchpad $s 1; touchscreen $s 2; pen_display $s 3; audio_jack $s 4; audio_jack $s 5; chassis $s 10; screen $s eDP-1; screen $s HDMI-A-1 disconnected
+check "a slider convertible that reports itself as a notebook" "$(has $s)" 0
+check "and why" "$(why $s)" "touch screen: yes; built-in panel: eDP-1; tablet-mode switch: no; chassis type: 10"
+s=$T/tablet; touchscreen $s 0; chassis $s 30; screen $s DSI-1
+check "a tablet" "$(has $s)" 0
+s=$T/detachable; touchscreen $s 0; keyboard $s 1; chassis $s 32; screen $s eDP-1
 check "a detachable" "$(has $s)" 0
-s=$T/touch-laptop; keyboard $s 0; touchpad $s 1; touchscreen $s 2; lid $s 3; chassis $s 10
-check "a notebook with a touch screen, a lid and no tablet mode" "$(has $s)" 1
-s=$T/laptop; keyboard $s 0; touchpad $s 1; lid $s 2; chassis $s 10
+s=$T/touch-laptop; keyboard $s 0; touchpad $s 1; touchscreen $s 2; lid $s 3; chassis $s 10; screen $s LVDS-1
+check "a notebook with a touch screen and only a lid switch" "$(has $s)" 0
+s=$T/laptop; keyboard $s 0; touchpad $s 1; lid $s 2; chassis $s 10; screen $s eDP-1
 check "a notebook without a touch screen" "$(has $s)" 1
-s=$T/switch-no-touch; keyboard $s 0; touchpad $s 1; lid_and_tablet_switch $s 2; chassis $s 31
+check "and why" "$(why $s)" "touch screen: no; built-in panel: eDP-1; tablet-mode switch: no; chassis type: 10"
+s=$T/switch-no-touch; keyboard $s 0; touchpad $s 1; lid_and_tablet_switch $s 2; chassis $s 31; screen $s eDP-1
 check "a switch and a convertible chassis, no touch screen" "$(has $s)" 1
-s=$T/desktop-touch; keyboard $s 0; touchscreen $s 1; chassis $s 3
-check "a desktop with a touch monitor" "$(has $s)" 1
-s=$T/pen; keyboard $s 0; pen_display $s 1; tablet_switch $s 2; chassis $s 31
-check "a pen display is not a touch screen" "$(has $s)" 1
-s=$T/desktop; keyboard $s 0; chassis $s 3
+s=$T/desktop-touch; keyboard $s 0; touchscreen $s 1; chassis $s 3; screen $s HDMI-A-1; screen $s DP-1
+check "a desktop with a touch monitor: no built-in panel" "$(has $s)" 1
+check "and why" "$(why $s)" "touch screen: yes; built-in panel: no; tablet-mode switch: no; chassis type: 3"
+s=$T/panel-off; keyboard $s 0; touchscreen $s 1; chassis $s 10; screen $s eDP-1 disconnected; screen $s HDMI-A-1
+check "a touch screen and a built-in connector with no panel on it" "$(has $s)" 1
+s=$T/pen; keyboard $s 0; pen_display $s 1; chassis $s 10; screen $s eDP-1
+check "a pen's surface alone is not a touch screen" "$(has $s)" 1
+s=$T/desktop; keyboard $s 0; chassis $s 3; screen $s DP-1
 check "a desktop" "$(has $s)" 1
 s=$T/empty; mkdir -p $s
 check "a /sys with nothing to read" "$(has $s)" 1
-check "and why" "$(why $s)" "touch screen: no; tablet-mode switch: no; chassis type: unknown"
+check "and why" "$(why $s)" "touch screen: no; built-in panel: no; tablet-mode switch: no; chassis type: unknown"
 
 # the env script: the folder of defaults goes first, once, and only on a computer with a tablet mode
 D=$HERE/share/tablet-mode/xdg
@@ -73,6 +81,7 @@ if command -v kreadconfig6 >/dev/null 2>&1; then
 		kreadconfig6 --file kwinrc --group Wayland --key InputMethod --default none); }
 	export HOME=$T/home XDG_CONFIG_HOME=$T/home/.config; mkdir -p "$XDG_CONFIG_HOME"
 	check "convertible, a new person" "$(read_im $T/convertible)" "$K"
+	check "the slider that reports itself as a notebook, a new person" "$(read_im $T/slider)" "$K"
 	check "notebook, a new person" "$(read_im $T/laptop)" none
 	printf '[Wayland]\nInputMethod=/usr/share/applications/org.fcitx.Fcitx5.desktop\n' > "$XDG_CONFIG_HOME/kwinrc"
 	check "convertible, the person chose another keyboard" "$(read_im $T/convertible)" /usr/share/applications/org.fcitx.Fcitx5.desktop

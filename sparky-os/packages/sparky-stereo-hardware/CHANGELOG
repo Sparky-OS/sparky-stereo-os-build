@@ -1,4 +1,12 @@
 -------------------------------------------------------------------------------
+  Version 0.1.27 (2026-11-15)
+-------------------------------------------------------------------------------
+  * A computer with a touch screen of its own gets KDE's on-screen keyboard by itself (ORDER 567; Daniel, 2026-11-14, after an install on a convertible notebook: "addition to our script is detect this type of thing to enable on screen keyboard on tablet mode"). usr/lib/sparky-stereo-hardware/has-tablet-mode reads the kernel's description of the input devices and the graphics connectors: a touch screen and a built-in panel (eDP, LVDS or DSI). The tablet-mode switch and the chassis type decide nothing: a slider convertible reports itself as a notebook, has no such switch, and KWin still puts it in tablet mode. On such a computer the session's environment script (/etc/xdg/plasma-workspace/env/sparky-stereo-tablet-mode.sh) puts a folder of system defaults in front of XDG_CONFIG_DIRS, whose kwinrc names Plasma Keyboard as the virtual keyboard, so KWin starts it and shows it on a text field touched in tablet mode
+  * The default is a system default, never a line in the person's files: a keyboard chosen in System Settings, Virtual Keyboard, or None, is written to the person's own kwinrc and wins (KConfig writes a choice explicitly when a system default exists). The layout is the session's language: Plasma Keyboard takes the locale when no language was chosen in its own page. A desktop with a touch monitor, and any computer without a touch screen, gets nothing of this
+  * Depends on plasma-keyboard, so the keyboard the default names is always there
+  * Tests: tests/tablet-mode.sh, fourteen machines as fixture sysfs trees (the slider among them), the environment script, and what KConfig reads for a new person, for a person who chose another keyboard and for one who chose None
+
+-------------------------------------------------------------------------------
   Version 0.1.26 (2026-11-14)
 -------------------------------------------------------------------------------
   * Stop DisplayLink restart loops after a failed module/driver startup, using a drop-in. Keep the vendor startup steps and USB activation. Keep one failed invocation in the problems engine and clear it after a successful start; ten languages.
