@@ -1,0 +1,27 @@
+Description: a plain read of an image the stereo layer did not make a pair is not announced as a pair (ORDER 581)
+ A marked picture (a PNG with an sTER chunk, or any file whose reader reports its own stereo mark) set to "Not 3D" in the
+ shared per-file store gets a pair thumbnail in Dolphin: the layer's loadPair() answers "not a pair", the image
+ thumbnailer reads the file plainly, the edition's Qt (and KImageFormats' readers) put the file's own Stereo3DLayout text
+ on that image, and the thumbnail worker (thumbnail.cpp, stereoLayout()) sends it as stereo3dLayout and the job caches it
+ as X-KDE::Stereo3DLayout. The text is cleared on the image the layer did not make a pair. The JPEG thumbnailer reads with
+ the plain JPEG reader (QImageReader(path, "jpeg")), which reports no such text, and needs no change.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-15
+---
+--- a/thumbnail/imagecreator.cpp
++++ b/thumbnail/imagecreator.cpp
+@@ -94,6 +94,13 @@
+     ir.read(&img);
+ 
+     if (!img.isNull()) {
++#if HAVE_STEREO_LAYER
++        // The stereo layer decided above that this file is not a pair (the person's "Not 3D" for it, or a view of one eye,
++        // or no pair at all), so the reader's own stereo mark (the edition's Qt reports a PNG's sTER chunk, and
++        // KImageFormats' readers theirs, as the text Stereo3DLayout) must not reach the thumbnail worker, which announces
++        // and caches any such text as a pair
++        img.setText(QStringLiteral("Stereo3DLayout"), QString());
++#endif
+         return KIO::ThumbnailResult::pass(img);
+     }
+ 
