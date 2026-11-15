@@ -498,7 +498,23 @@ def grub():
                 '            set sparky_root="$root"',
                 *['            ' + l for l in access],
                 '            if linux %s; then' % path,
-                '                true',
+                # 0.1.11: this test leaves the kernel loaded, and GRUB starts whatever is loaded when Enter is pressed
+                # on a submenu or on an entry that loads nothing (grub-core/normal/menu.c, grub_menu_execute_entry:
+                # "Implicit execution of boot, only if something is loaded", before the submenu is shown). So under
+                # Secure Boot "Advanced options" started the newest kernel with no boot image and never opened: the
+                # older kernel could not be reached. GRUB has no command that unloads; its EFI loader unloads when
+                # it is given a file shim accepts (grub-core/loader/efi/linux.c: grub_loader_unset() right after the
+                # file opens) and then finds that it is no kernel. MokManager beside shim is such a file. The line
+                # that load prints is on the screen only until the menu is drawn, so this is done only when the
+                # menu will be shown; a hidden menu with no wait starts the first entry, which loads its own.
+                '                if [ "${timeout_style}" = hidden -a "${timeout}" = 0 ]; then',
+                '                    true',
+                '                else',
+                *['        ' + l for l in find],
+                '                    if [ -n "$sparky_mm" ]; then',
+                '                        if linux ($sparky_mm)%s; then true; fi' % mm,
+                '                    fi',
+                '                fi',
                 '            else',
                 '                set default=sparky-enroll',
                 # a hidden menu is shown for this: the person sees the entry selected before it starts (0.1.10)

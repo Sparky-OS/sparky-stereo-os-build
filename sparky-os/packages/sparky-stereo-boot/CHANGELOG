@@ -31,6 +31,13 @@
     the flag is kept in a block on the EFI system partition, which GRUB can write, and update-grub says so; on a BIOS
     start there is no such place, update-grub says that the menu cannot show by itself there, and the way to always
     show it (SPARKY_STEREO_MENU=shown)
+  * Under Secure Boot, "Advanced options" opens again. The check of 0.1.3 that asks shim about the newest kernel when
+    GRUB reads the menu (linux KERNEL) left that kernel loaded, and GRUB starts whatever is loaded when Enter is
+    pressed on a submenu (grub-core/normal/menu.c, grub_menu_execute_entry: "Implicit execution of boot, only if
+    something is loaded", before the submenu is shown): Enter on "Advanced options" started the newest kernel with no
+    boot image, which stopped in a kernel panic, and the older kernel could not be reached. Found in the rig. When the
+    menu will be shown, the kernel is now unloaded after the check: GRUB's EFI loader is given MokManager, a file shim
+    accepts and no kernel (grub-core/loader/efi/linux.c unloads right after the file opens)
   * SPARKY_STEREO_UNFINISHED_START=no in /etc/default/sparky-stereo-boot turns all of it off; sparky-stereo-boot status
     says where a start is recorded
   * tests/unfinished-start-tests.sh: 84 cases (the rule with a stand-in for grub-probe, what the menu's files write
