@@ -21,6 +21,7 @@ The main session's reading, told to Daniel on 2026-11-15 and not his words: the 
 
 - `patches/gwenview-enable-3d.patch`, `patches/koko-enable-3d.patch`, `patches/kphotoalbum-enable-3d.patch`: each program's switch on the layer's Enable 3D.
 - `patches/digikam-enable-3d-and-told-carry.patch`: the same for digiKam and Showfoto; a carry that fails told from the main thread; a folder moved to another device carries its files' choices.
+- `patches/digikam-stereo-hole-on-the-layers-rectangle.patch`: the canvas item's stereo hole on the layer's own rectangle, in device pixels: Showfoto's row of desktop at 125 % (ORDER 576's finding) is gone.
 - `../../translations/digikam-stereo3d.po.patch`: digiKam's twelve 3D sentences in nine languages, last in its series.
 - `changelog/*.items`: the changelog items, one paragraph per item.
 - `next-source.sh PACKAGE GIVEN.dsc OUT`: the next +lc1 source (`repo/lc-successor.py --in-place --overlay`) of gwenview's published +10 or of ORDER 551b's staged koko +2, kphotoalbum +2 and digikam +4.
@@ -28,7 +29,7 @@ The main session's reading, told to Daniel on 2026-11-15 and not his words: the 
 
 ## Order, and why
 
-1. stereo-layer 1.19.2 through the gate (`SPARKY_BUILD_PROFILES=nocheck`, as in ORDER 551 and 551b). It replaces both staged layers, 1.19.0 (ORDER 551b) and 1.18.1 (ORDER 576), and is 1.19.1 of the stereo-layer main branch with Enable3DAction.
+1. stereo-layer 1.19.2 through the gate (`SPARKY_BUILD_PROFILES=nocheck`, as in ORDER 551 and 551b). It replaces both staged layers, 1.19.0 (ORDER 551b) and 1.18.1 (ORDER 576), and is 1.19.1 of the stereo-layer main branch with Enable3DAction and the QML StereoPicture's hole on whole device pixels (Koko's column of desktop at 125 %, ORDER 576's finding).
 2. gwenview, koko and kphotoalbum against it.
 3. digikam, the large one, last: it needs the floor plus about 35 GB free at its start (ORDER 551b's measurement).
 

@@ -10,6 +10,10 @@ told to the person, from the main thread whatever thread the job ran in, one win
 was only written to the log. A folder digiKam moves to another device, by a copy and a removal, now carries the
 choices of its files too.
 
+At 125 % Showfoto no longer leaves a device row of the desktop along its canvas (two window sizes of four): the canvas
+item clears its stereo hole on the rectangle the stereo layer shows the picture in (Stereo::WidgetLayer::shownRect()),
+in the viewport's own pixels, instead of on its own rectangle, which lies on parts of a pixel there.
+
 The eleven sentences the 3D menu keeps and the new one are in Polish, Brazilian Portuguese, French, German, Spanish,
 Japanese, Korean and Chinese (../../translations/digikam-stereo3d.po.patch, last in the series); they were English in
 every language since +stereo3d1. Enable 3D and the per-file entries are the layer's and come from its catalogues.

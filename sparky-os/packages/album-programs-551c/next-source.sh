@@ -46,7 +46,8 @@ digikam)
 	[ "${GIVEN_VERSION#*:}" = '9.1.0-1+stereo3d4+lc1' ] || { echo "digikam: the successor is made from +stereo3d4+lc1, not $GIVEN_VERSION" >&2; exit 2; }
 	NEXT=4:9.1.0-1+stereo3d5
 	# the catalogue patch last in the series (../../translations/README.md, "Which package carries each patch")
-	PATCHES=("$HERE/patches/digikam-enable-3d-and-told-carry.patch" "$TRANSLATIONS/digikam-stereo3d.po.patch")
+	PATCHES=("$HERE/patches/digikam-enable-3d-and-told-carry.patch" "$HERE/patches/digikam-stereo-hole-on-the-layers-rectangle.patch"
+		"$TRANSLATIONS/digikam-stereo3d.po.patch")
 	depends=(--depends 'libstereo-layer-dev (>= 1.19.0),' 'libstereo-layer-dev (>= 1.19.2),')
 	;;
 *) echo "unknown package $PKG" >&2; exit 2 ;;
