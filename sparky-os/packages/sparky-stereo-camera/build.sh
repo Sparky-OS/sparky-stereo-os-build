@@ -19,6 +19,8 @@ SRC=$WORK/$PACKAGE-$VERSION
 python3 "$TOOLKIT/../tools/copy-recipe.py" "$HERE" "$SRC"
 python3 "$TOOLKIT/repo/reproducible.py" normalize "$SOURCE_DATE_EPOCH" "$SRC"
 (cd "$SRC" && PYTHONPATH="$TOOLKIT" python3 -m lean.debian_prepare . "$VERSION+lc1" --build-dependency sparky-stereo-problems)
+# dch renames a native source folder to its new version
+SRC=$WORK/$PACKAGE-$VERSION+lc1
 (cd "$SRC" && PYTHONPATH="$TOOLKIT" dpkg-buildpackage -us -uc -sa -j"${JOBS:-4}" >"$WORK/build.log" 2>&1) || { tail -40 "$WORK/build.log"; exit 1; }
 cp "$WORK"/*.deb "$WORK"/*.dsc "$WORK"/*.tar.xz "$WORK"/*.buildinfo "$WORK"/*.changes "$WORK"/*.json "$OUT/" 2>/dev/null || true
 cp "$WORK/build.log" "$OUT/build.log"
