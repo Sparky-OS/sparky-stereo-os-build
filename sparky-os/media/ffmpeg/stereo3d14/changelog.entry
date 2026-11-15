@@ -1,0 +1,17 @@
+ffmpeg-dmo (@VERSION@) unstable; urgency=medium
+
+  * Show a side by side or top and bottom Matroska track whose display
+    size is the whole frame at the shape the file declares (ORDER 577).
+    The Matroska demuxer doubled the display width of every side by side
+    and column interleaved track, and the height of every top and bottom
+    and row interleaved one (FFmpeg ec83efd4d3, 2015), so a film whose
+    two views are whole pictures, 2560x720 declared 2560x720, showed
+    views of 32:9. The display size is now read as one plane (RFC 9559
+    section 18.10) only when a view of the frame as declared cannot be a
+    whole picture: narrower than 4:3 side by side, 8:3 or wider stacked.
+    Patch 0074; patch 0075 adds the FATE test
+    fate-matroska-stereo-display-size, which needs no sample.
+  * Built on +stereo3d12. +stereo3d13 (ORDER 61c) was never published
+    and is not in this version.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@
