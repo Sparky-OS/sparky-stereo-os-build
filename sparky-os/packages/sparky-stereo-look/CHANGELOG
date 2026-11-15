@@ -1,3 +1,16 @@
+20261115~sparky9~0 (2026-11-15)
+  * The loading screen after the login is ours (ORDER 571; Daniel, 2026-11-08: "on KDE - splash screen is not ours", and
+    2026-11-14: "one more detail, kde loading is the deault KDE one, not ours, why?"). The theme's splash was KDE's 2014
+    splash (Marco Martin), copied from Oxygen's global theme with its KDE gear, bar and background; now it is the boot
+    splash's picture (sparky-stereo-plymouth's sparky-stereo-lines: its background, the swirl with its orbits and electrons,
+    the SparkyOS logo), placed as that theme places it, so the screen is one picture from power-on to the desktop.
+  * On a screen in a 3D mode each part stands at the boot splash's level inside the person's limits for that screen, which
+    Stereo KWin sends: the background on the screen, the swirl at half the popped limit, the logo at the popped limit, the
+    electrons popping where their curve rises and sinking where it falls; the same numbers the boot splash shows for the
+    same limits. On a 2D screen it is plain. The depth comes from org.sparky.stereo's StereoDepth (stereo-layer 1.20.0),
+    and on more than one screen from Stereo KWin +stereo3d58, which keeps each screen's loading screen at the screen and
+    awake. The chooser's preview is a capture of it. Oxygen's splash stays selectable; a Theme the person chose stays.
+
 20261108~sparky9~0 (2026-11-08)
   * The KDE splash is ours by default (ORDER 472; Daniel, 2026-11-08: "on KDE - splash screen is not ours"): /etc/xdg/ksplashrc
     names the Sparky Stereo Oxygen splash. KSplash takes Breeze when no ksplashrc says otherwise, and a global theme's defaults
