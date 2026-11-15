@@ -6,23 +6,23 @@ Last-Update: 2026-11-14
 Assisted-by: GPT-6 (OpenAI)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index b04cd64..d8f5eac 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -39,6 +39,13 @@ find_package(WaylandScanner)
- 
- find_package(PlasmaWaylandProtocols 1.21 CONFIG)
- set_package_properties(PlasmaWaylandProtocols PROPERTIES TYPE REQUIRED)
+@@ -48,6 +48,14 @@
+     set_package_properties(Wayland PROPERTIES
+                            TYPE REQUIRED
+                           )
++endif()
++
 +option(REQUIRE_KSCREEN_INTERLACED "Require the interlaced mode protocol" OFF)
 +if(REQUIRE_KSCREEN_INTERLACED)
 +    file(READ "${PLASMA_WAYLAND_PROTOCOLS_DIR}/kde-output-device-v2.xml" output_device_protocol)
 +    if(NOT output_device_protocol MATCHES "name=\"interlaced\" value=\"0x2000000\"")
 +        message(FATAL_ERROR "Interlaced mode protocol unavailable")
 +    endif()
-+endif()
+ endif()
  
- find_package(Wayland 1.24 COMPONENTS Client)
- set_package_properties(Wayland PROPERTIES
+ # xrandr backend
 diff --git a/autotests/testconfigserializer.cpp b/autotests/testconfigserializer.cpp
 index acd8518..3392a63 100644
 --- a/autotests/testconfigserializer.cpp
