@@ -8,6 +8,8 @@ import re, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from translations import LANGS, T
+from translations_standard import S
+T = {**T, **S}
 
 po_dir, layer_dir = Path(sys.argv[1]), Path(sys.argv[2])
 
@@ -34,16 +36,20 @@ def read_po(path):
 
 
 def msgids(pot):
-    ids, cur, collecting = [], "", False
+    ids, cur, ctx, collecting = [], "", "", False
     for line in pot.read_text(encoding="utf-8").splitlines():
-        if line.startswith("msgid "):
+        if line.startswith("msgctxt "):
+            ctx = line[8:].strip()[1:-1]
+        elif line.startswith("msgid "):
             cur, collecting = line[6:].strip()[1:-1], True
         elif line.startswith("msgstr"):
             collecting = False
-            ids.append(cur)
+            if cur:
+                ids.append((ctx, cur.replace('\\"', '"').replace("\\n", "\n")))
+            ctx = ""
         elif collecting and line.startswith('"'):
             cur += line.strip()[1:-1]
-    return [i.replace('\\"', '"').replace("\\n", "\n") for i in ids if i]
+    return ids
 
 
 def esc(s):
@@ -58,16 +64,17 @@ missing = []
 for index, lang in enumerate(LANGS + ["en"]):
     layer = read_po(layer_dir / lang / "stereo-layer_qt.po") if lang != "en" else {}
     out = [header(lang)]
-    for msgid in ids:
+    for ctx, msgid in ids:
+        key = ctx + "|" + msgid if ctx else msgid
         if lang == "en":
             text = msgid
-        elif msgid in T:
-            text = T[msgid][index]
+        elif key in T:
+            text = T[key][index]
         elif msgid in layer and layer[msgid]:
             text = layer[msgid]
         else:
-            missing.append((lang, msgid)); continue
-        out.append('msgid "%s"\nmsgstr "%s"\n\n' % (esc(msgid), esc(text)))
+            missing.append((lang, key)); continue
+        out.append(('msgctxt "%s"\n' % esc(ctx) if ctx else "") + 'msgid "%s"\nmsgstr "%s"\n\n' % (esc(msgid), esc(text)))
     (po_dir / lang).mkdir(exist_ok=True)
     (po_dir / lang / "kcm_sparkystereo_camera.po").write_text("".join(out), encoding="utf-8")
 if missing:

@@ -5,6 +5,7 @@
 
 #include "packings.h"
 #include "previewsource.h"
+#include "standardnames.h"
 
 #include <KLocalizedString>
 #include <KPluginFactory>
@@ -157,7 +158,7 @@ void CameraKcm::readDetails()
                     }
                     sizes.append(m);
                 }
-                m_formats.append(QVariantMap{{QStringLiteral("fourcc"), f.fourcc}, {QStringLiteral("description"), f.description}, {QStringLiteral("compressed"), f.compressed}, {QStringLiteral("sizes"), sizes}});
+                m_formats.append(QVariantMap{{QStringLiteral("fourcc"), f.fourcc}, {QStringLiteral("description"), formatLabel(f.fourcc, f.description)}, {QStringLiteral("compressed"), f.compressed}, {QStringLiteral("sizes"), sizes}});
             }
             const Mode mode = dev.currentMode();
             m_mode = {{QStringLiteral("fourcc"), mode.fourcc}, {QStringLiteral("width"), mode.size.width}, {QStringLiteral("height"), mode.size.height}, {QStringLiteral("fps"), mode.fps}};
@@ -165,7 +166,7 @@ void CameraKcm::readDetails()
                 static const char *kinds[] = {"integer", "boolean", "menu", "integer-menu", "button", "other"};
                 QVariantList menu;
                 for (const auto &m : c.menu) {
-                    menu.append(QVariantMap{{QStringLiteral("index"), m.index}, {QStringLiteral("text"), m.text}});
+                    menu.append(QVariantMap{{QStringLiteral("index"), m.index}, {QStringLiteral("text"), menuLabel(c.id, m.index, m.text)}});
                 }
                 QString note;
                 if (c.kind == Control::Other) {
@@ -175,7 +176,7 @@ void CameraKcm::readDetails()
                 } else if (c.inactive) {
                     note = i18n("The camera is not using this control now. Another setting turns it on.");
                 }
-                m_controls.append(QVariantMap{{QStringLiteral("id"), c.id}, {QStringLiteral("name"), c.name}, {QStringLiteral("kind"), QString::fromLatin1(kinds[c.kind])},
+                m_controls.append(QVariantMap{{QStringLiteral("id"), c.id}, {QStringLiteral("name"), c.name}, {QStringLiteral("label"), controlLabel(c.id, c.name)}, {QStringLiteral("kind"), QString::fromLatin1(kinds[c.kind])},
                                               {QStringLiteral("min"), c.minimum}, {QStringLiteral("max"), c.maximum}, {QStringLiteral("step"), c.step},
                                               {QStringLiteral("default"), c.defaultValue}, {QStringLiteral("value"), c.value}, {QStringLiteral("inactive"), c.inactive},
                                               {QStringLiteral("readOnly"), c.readOnly}, {QStringLiteral("editable"), c.kind != Control::Other && !c.readOnly}, {QStringLiteral("menu"), menu},
@@ -257,8 +258,9 @@ void CameraKcm::load()
     m_defaultChoice = m_defaultInStore;
     refresh();
     // what the person changed and did not save goes back to what was saved
+    m_savedNotes.clear();
     for (const CameraInfo &c : m_infos) {
-        applyChoice(c);
+        m_savedNotes << applyChoice(c).messages;
     }
     readDetails();
     Q_EMIT defaultCameraChanged();

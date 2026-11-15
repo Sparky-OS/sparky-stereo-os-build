@@ -27,6 +27,7 @@ class CameraKcm : public KQuickConfigModule
     Q_PROPERTY(QVariantList packings READ packings CONSTANT)
     Q_PROPERTY(QString packing READ packing WRITE setPacking NOTIFY detailsChanged)
     Q_PROPERTY(QVariantMap packingInfo READ packingInfo NOTIFY detailsChanged)
+    Q_PROPERTY(QStringList savedNotes READ savedNotes NOTIFY detailsChanged)
     Q_PROPERTY(QString modeError READ modeError NOTIFY detailsChanged)
 
 public:
@@ -48,6 +49,7 @@ public:
     QString packing() const { return m_packing; }
     void setPacking(const QString &id);
     QVariantMap packingInfo() const;
+    QStringList savedNotes() const { return m_savedNotes; }
     QString modeError() const { return m_modeError; }
 
     Q_INVOKABLE QVariantList frameRates(const QString &fourcc, int width, int height);
@@ -85,6 +87,7 @@ private:
     QVariantList m_packings;
     QString m_packing;
     QString m_modeError;
+    QStringList m_savedNotes;
     QSet<QString> m_touched; // cameras whose device state the person changed here: saved with Apply
     QTimer m_poll;
 };

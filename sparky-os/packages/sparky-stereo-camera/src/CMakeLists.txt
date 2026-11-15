@@ -5,6 +5,7 @@ add_library(sparkystereocamera STATIC
     pipewirecameras.cpp pipewirecameras.h
     camerastore.cpp camerastore.h
     packings.cpp packings.h
+    standardnames.cpp standardnames.h
     cameraservice.cpp cameraservice.h)
 set_target_properties(sparkystereocamera PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(sparkystereocamera PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

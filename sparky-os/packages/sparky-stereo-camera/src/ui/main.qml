@@ -35,6 +35,13 @@ KCM.SimpleKCM {
 
         Kirigami.InlineMessage {
             Layout.fillWidth: true
+            visible: kcm.savedNotes.length > 0
+            type: Kirigami.MessageType.Warning
+            text: kcm.savedNotes.join(" ")
+        }
+
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
             visible: kcm.machineNotes.length > 0
             type: Kirigami.MessageType.Information
             text: kcm.machineNotes.join(" ")
@@ -254,7 +261,7 @@ KCM.SimpleKCM {
                     id: ctl
                     required property var modelData
                     property string failure: ""
-                    Kirigami.FormData.label: modelData.kind === "button" ? "" : root.prettyName(modelData.name) + ":"
+                    Kirigami.FormData.label: modelData.kind === "button" ? "" : modelData.label + ":"
                     spacing: 0
 
                     function apply(v) {
@@ -298,13 +305,13 @@ KCM.SimpleKCM {
                     // button
                     QQC2.Button {
                         visible: ctl.modelData.kind === "button"
-                        text: root.prettyName(ctl.modelData.name)
+                        text: ctl.modelData.label
                         onClicked: ctl.apply(1)
                     }
                     // a kind this page cannot change
                     QQC2.Label {
                         visible: ctl.modelData.kind === "other"
-                        text: root.prettyName(ctl.modelData.name)
+                        text: ctl.modelData.label
                         opacity: 0.6
                     }
                     QQC2.Label {

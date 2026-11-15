@@ -51,6 +51,33 @@ CameraInfo Sparky::Camera::findCamera(const QString &nodeName, QString *error)
     return {};
 }
 
+namespace
+{
+// One problem for each camera and cause (Daniel 2026-11-02: a failure that must be kept goes to the one engine). The key is the
+// cause and the camera; the engine keeps it once, however often the choice fails, and the next successful apply clears it.
+QString problemKey(const QString &cause, const QString &cameraKey)
+{
+    QString key = cause + QLatin1Char(':') + cameraKey;
+    for (QChar &c : key) {
+        if (!c.isLetterOrNumber() && QStringLiteral("_@+-.:").indexOf(c) < 0) {
+            c = QLatin1Char('_');
+        }
+    }
+    return key.left(120);
+}
+
+void keepProblem(const QString &key, const QString &message, const QStringList &arguments)
+{
+    QProcess::execute(QStringLiteral("sparky-stereo-problems"),
+                      QStringList{QStringLiteral("keep"), QStringLiteral("--person"), QStringLiteral("--quiet"), QStringLiteral("sparky-stereo-camera"), key, message} + arguments);
+}
+
+void clearProblem(const QString &key)
+{
+    QProcess::execute(QStringLiteral("sparky-stereo-problems"), {QStringLiteral("clear"), QStringLiteral("sparky-stereo-camera"), key});
+}
+}
+
 ApplyReport Sparky::Camera::applyChoice(const CameraInfo &camera)
 {
     ApplyReport report;
@@ -60,36 +87,47 @@ ApplyReport Sparky::Camera::applyChoice(const CameraInfo &camera)
     const CameraChoice choice = loadChoice(camera.key);
     V4l2Camera device(camera.node.v4l2Path);
     if (!device.isOpen()) {
+        // The camera is not there to be set (plugged out, held open elsewhere): not a saved choice that fails
         report.messages << V4l2Camera::explain({false, device.openError(), QStringLiteral("open")}, camera.node.description);
         return report;
     }
+    const QString name = camera.node.description;
     if (choice.hasMode) {
+        const QString key = problemKey(QStringLiteral("format"), camera.key);
         const Result r = device.setMode(choice.mode);
         if (r.ok) {
             ++report.applied;
+            clearProblem(key);
         } else {
-            report.messages << i18n("%1: the saved size and format were not applied. ", camera.node.description) + V4l2Camera::explain(r, camera.node.description);
+            const QString why = V4l2Camera::explain(r, name);
+            report.messages << i18n("%1: the saved size and format were not applied. ", name) + why;
+            keepProblem(key, QStringLiteral("LOCAL2"), {name, why});
         }
     }
     const QList<Control> known = device.controls();
     for (auto it = choice.controls.cbegin(); it != choice.controls.cend(); ++it) {
-        QString name = choice.controlNames.value(it.key());
+        QString controlName = choice.controlNames.value(it.key());
         bool present = false;
         for (const Control &c : known) {
             if (c.id == it.key()) {
                 present = true;
-                name = c.name;
+                controlName = c.name;
             }
         }
+        const QString key = problemKey(QStringLiteral("control-%1").arg(it.key()), camera.key);
         if (!present) {
-            report.messages << i18n("%1: the camera no longer lists the control %2.", camera.node.description, name);
+            report.messages << i18n("%1: the camera no longer lists the control %2.", name, controlName);
+            keepProblem(key, QStringLiteral("LOCAL4"), {name, controlName});
             continue;
         }
         const Result r = device.setControl(it.key(), it.value());
         if (r.ok) {
             ++report.applied;
+            clearProblem(key);
         } else {
-            report.messages << i18n("%1: the saved value of %2 was not applied. ", camera.node.description, name) + V4l2Camera::explain(r, camera.node.description);
+            const QString why = V4l2Camera::explain(r, name);
+            report.messages << i18n("%1: the saved value of %2 was not applied. ", name, controlName) + why;
+            keepProblem(key, QStringLiteral("LOCAL3"), {name, controlName, why});
         }
     }
     return report;
