@@ -1,0 +1,85 @@
+#!/usr/bin/python3
+# Created by Daniel Ramos (Capitain Jack) 2026/11/14
+# Copyright 2026 under the GNU GPL3 License
+# Says whether this computer can be used as a tablet: it has a touch screen of its own, that is a touch screen and a
+# built-in panel. KWin can put any such computer in tablet mode: by a tablet-mode switch where the hinge or the dock
+# has one, by itself when no mouse or touchpad is left beside the touch screen (tabletmodemanager.cpp), or by the
+# Touch Mode setting of General Behavior. One slider convertible reports itself as a notebook (chassis type 10) and
+# has no switch at all, and is a tablet when its keyboard is covered: the chassis and the switch decide nothing here.
+#   has-tablet-mode          exit 0 when it has one, 1 when it has not
+#   has-tablet-mode --why    the same, and one line with what was found
+# It reads the kernel's own description of each input device (Linux input subsystem, sysfs: properties and
+# capabilities/abs, key and sw are bitmaps of the codes in linux/input-event-codes.h), the connectors of the graphics
+# cards (DRM, /sys/class/drm: eDP, LVDS and DSI are the built-in ones) and, to say it only, the firmware's chassis type
+# (DMI: 30 Tablet, 31 Convertible, 32 Detachable). SPARKY_STEREO_SYSFS names another /sys, for the tests.
+import glob
+import os
+import struct
+import sys
+
+SYS = os.environ.get('SPARKY_STEREO_SYSFS', '/sys')
+INPUT_PROP_DIRECT = 0x01
+ABS_X, ABS_Y, ABS_MT_POSITION_X, ABS_MT_POSITION_Y = 0x00, 0x01, 0x35, 0x36
+BTN_TOOL_PEN, BTN_STYLUS = 0x140, 0x14b
+SW_TABLET_MODE = 0x01
+TABLET_CHASSIS = {30: 'tablet', 31: 'convertible', 32: 'detachable'}
+
+
+def bitmap(path):
+    """A sysfs bitmap: hexadecimal words without leading zeros, the most significant first, each one long wide."""
+    try:
+        words = open(path, encoding='ascii').read().split()
+    except OSError:
+        return 0
+    width = 8 * struct.calcsize('l')
+    value = 0
+    try:
+        for word in words:
+            value = value << width | int(word, 16)
+    except ValueError:
+        return 0
+    return value
+
+
+def has(bits, code):
+    return bits >> code & 1 == 1
+
+
+def main():
+    touch = switch = False
+    for device in sorted(glob.glob(os.path.join(SYS, 'class/input/input*'))):
+        if has(bitmap(os.path.join(device, 'capabilities/sw')), SW_TABLET_MODE):
+            switch = True
+        absolute = bitmap(os.path.join(device, 'capabilities/abs'))
+        keys = bitmap(os.path.join(device, 'capabilities/key'))
+        position = has(absolute, ABS_X) and has(absolute, ABS_Y) or has(absolute, ABS_MT_POSITION_X) and has(absolute, ABS_MT_POSITION_Y)
+        pen = has(keys, BTN_TOOL_PEN) or has(keys, BTN_STYLUS)
+        # a touch screen is drawn on directly and is not a pen's surface (udev's input_id tells them apart the same way)
+        if has(bitmap(os.path.join(device, 'properties')), INPUT_PROP_DIRECT) and position and not pen:
+            touch = True
+    panel = None
+    for connector in sorted(glob.glob(os.path.join(SYS, 'class/drm/card*-*'))):
+        name = os.path.basename(connector).split('-', 1)[1]
+        if not name.startswith(('eDP', 'LVDS', 'DSI')):
+            continue
+        try:
+            status = open(os.path.join(connector, 'status'), encoding='ascii').read().strip()
+        except OSError:
+            status = 'unknown'
+        if status != 'disconnected':
+            panel = name
+            break
+    chassis = None
+    try:
+        chassis = int(open(os.path.join(SYS, 'class/dmi/id/chassis_type'), encoding='ascii').read().strip())
+    except (OSError, ValueError):
+        pass
+    answer = touch and panel is not None
+    if '--why' in sys.argv[1:]:
+        print('touch screen: %s; built-in panel: %s; tablet-mode switch: %s; chassis type: %s%s' % (
+            'yes' if touch else 'no', panel or 'no', 'yes' if switch else 'no', 'unknown' if chassis is None else chassis,
+            ' (%s)' % TABLET_CHASSIS[chassis] if chassis in TABLET_CHASSIS else ''))
+    return 0 if answer else 1
+
+
+sys.exit(main())

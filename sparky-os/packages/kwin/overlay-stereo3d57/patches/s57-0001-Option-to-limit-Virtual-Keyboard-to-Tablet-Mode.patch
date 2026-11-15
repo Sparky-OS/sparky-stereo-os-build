@@ -1,0 +1,215 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Luca Tramonti
+Date: Sun, 26 Apr 2026 00:00:00 +0000
+Subject: [PATCH] Option to limit Virtual Keyboard to Tablet Mode
+
+Adds an option to the Virtual Keyboard page that makes the virtual keyboard
+appear only when the device is in Tablet Mode (a convertible flipped back, or
+Tablet Mode enabled in the General Behavior page). The option is hidden and
+not honored if the device doesn't support Tablet Mode.
+
+This is KWin merge request 8592 by Luca Tramonti, "Option to limit Virtual
+Keyboard to Tablet Mode", as it stood on 2026-11-15: open, not a draft, eight
+commits ending in bef58762b9, needing a rebase on master. It is carried here
+on 6.7.4, where it does not apply as written:
+- the key, its default and its meaning are the merge request's: kwinrc,
+  [Wayland] InputMethodTabletOnly, true, honored only while tablet mode is
+  available, read through a KConfigWatcher;
+- InputMethod::shouldShowOnActive() of 6.7.4 has the visibility modes of merge
+  request 8509 (Never, touch and tablet, any input), so the condition is put
+  in front of them: outside tablet mode nothing is shown, in tablet mode the
+  chosen visibility mode decides;
+- the page's footer has the merge request's form, "Show automatically: Only when
+  in Tablet Mode"; its "Manage Tablet Mode" button is left out;
+- the page shows the form when KWin itself says tablet mode is available
+  (org.kde.KWin.TabletModeManager, tabletModeAvailable), read by the page's own
+  class: Kirigami.Settings.tabletModeAvailable, which the merge request uses,
+  answered false in the settings program while KWin answered true.
+
+Origin: other, https://invent.kde.org/plasma/kwin/-/merge_requests/8592
+Author: Luca Tramonti
+Forwarded: not-needed
+Applied-Upstream: no, an open merge request
+Last-Update: 2026-11-15
+
+Assisted-by: Claude:claude-fable-5-2
+---
+ src/inputmethod.cpp                           | 17 ++++++++++++++
+ src/inputmethod.h                             |  9 ++++++++
+ .../virtualkeyboard/kcmvirtualkeyboard.cpp    |  7 ++++++
+ src/kcms/virtualkeyboard/kcmvirtualkeyboard.h |  4 ++++
+ src/kcms/virtualkeyboard/ui/main.qml          | 23 +++++++++++++++++++
+ .../virtualkeyboardsettings.kcfg              |  4 ++++
+ 6 files changed, 64 insertions(+)
+
+diff --git a/src/inputmethod.cpp b/src/inputmethod.cpp
+index f380597..675490a 100644
+--- a/src/inputmethod.cpp
++++ b/src/inputmethod.cpp
+@@ -26,6 +26,7 @@
+ #include "internalinputmethodcontext.h"
+ #include "pointer_input.h"
+ #include "tablet_input.h"
++#include "tabletmodemanager.h"
+ #include "touch_input.h"
+ #include "wayland/display.h"
+ #include "wayland/inputmethod_v1.h"
+@@ -132,6 +133,10 @@ void InputMethod::init()
+     connect(input()->keyboard()->xkb(), &Xkb::modifierStateChanged, this, [this]() {
+         m_hasPendingModifiers = true;
+     });
++
++    m_configWatcher = KConfigWatcher::create(kwinApp()->config());
++    connect(m_configWatcher.data(), &KConfigWatcher::configChanged, this, &InputMethod::handleTabletOnlyChanged);
++    handleTabletOnlyChanged(kwinApp()->config()->group(QStringLiteral("Wayland")));
+ }
+ 
+ void InputMethod::show()
+@@ -167,8 +172,20 @@ void InputMethod::hide()
+     }
+ }
+ 
++void InputMethod::handleTabletOnlyChanged(const KConfigGroup &group)
++{
++    if (group.name() == "Wayland") {
++        m_imTabletOnly = group.readEntry("InputMethodTabletOnly", true);
++    }
++}
++
+ bool InputMethod::shouldShowOnActive() const
+ {
++    /* If Tablet Mode is available and the option to only show in Tablet Mode is on, add an additional condition */
++    if (m_imTabletOnly && kwinApp()->tabletModeManager()->isTabletModeAvailable() && !kwinApp()->tabletModeManager()->effectiveTabletMode()) {
++        return false;
++    }
++
+     switch (m_virtualKeyboardVisibility) {
+     case VirtualKeyboardVisibility::Never:
+         return false;
+diff --git a/src/inputmethod.h b/src/inputmethod.h
+index fa6806b..702ab97 100644
+--- a/src/inputmethod.h
++++ b/src/inputmethod.h
+@@ -18,6 +18,9 @@
+ #include <utility>
+ #include <vector>
+ 
++#include <KConfigGroup>
++#include <KConfigWatcher>
++
+ class QProcess;
+ 
+ namespace KWin
+@@ -119,6 +122,9 @@ private Q_SLOTS:
+     void key(quint32 serial, quint32 time, quint32 key, KWin::KeyboardKeyState state);
+     void modifiers(quint32 serial, quint32 mods_depressed, quint32 mods_latched, quint32 mods_locked, quint32 group);
+ 
++    // KConfigWatcher slot
++    void handleTabletOnlyChanged(const KConfigGroup &group);
++
+ private:
+     void updateInputPanelState();
+     void adoptInputMethodContext();
+@@ -166,6 +172,9 @@ private:
+     bool m_hasPendingModifiers = false;
+     bool m_activeClientSupportsTextInput = false;
+     bool m_shouldShowPanel = false;
++
++    KConfigWatcher::Ptr m_configWatcher;
++    bool m_imTabletOnly = true;
+ };
+ 
+ }
+diff --git a/src/kcms/virtualkeyboard/kcmvirtualkeyboard.cpp b/src/kcms/virtualkeyboard/kcmvirtualkeyboard.cpp
+index 0941ec8..a621cf4 100644
+--- a/src/kcms/virtualkeyboard/kcmvirtualkeyboard.cpp
++++ b/src/kcms/virtualkeyboard/kcmvirtualkeyboard.cpp
+@@ -8,6 +8,7 @@
+ 
+ #include "kcmvirtualkeyboard.h"
+ 
++#include <QDBusInterface>
+ #include <qqml.h>
+ 
+ #include <KApplicationTrader>
+@@ -39,6 +40,12 @@ VirtualKeyboardSettings *KcmVirtualKeyboard::settings() const
+     return m_data->settings();
+ }
+ 
++bool KcmVirtualKeyboard::tabletModeAvailable() const
++{
++    QDBusInterface tabletModeManager(QStringLiteral("org.kde.KWin"), QStringLiteral("/org/kde/KWin"), QStringLiteral("org.kde.KWin.TabletModeManager"));
++    return tabletModeManager.property("tabletModeAvailable").toBool();
++}
++
+ void KcmVirtualKeyboard::setMode(KWinVirtualKeyboard::VirtualKeyboardMode mode)
+ {
+     if (m_mode == mode) {
+diff --git a/src/kcms/virtualkeyboard/kcmvirtualkeyboard.h b/src/kcms/virtualkeyboard/kcmvirtualkeyboard.h
+index 9f8a050..442d52a 100644
+--- a/src/kcms/virtualkeyboard/kcmvirtualkeyboard.h
++++ b/src/kcms/virtualkeyboard/kcmvirtualkeyboard.h
+@@ -46,6 +46,7 @@ class KcmVirtualKeyboard : public KQuickManagedConfigModule
+     Q_PROPERTY(QAbstractItemModel *model READ keyboardsModel CONSTANT)
+     Q_PROPERTY(KWinVirtualKeyboard *dbusInterface READ dbusInterface CONSTANT)
+     Q_PROPERTY(KWinVirtualKeyboard::VirtualKeyboardMode mode READ mode WRITE setMode NOTIFY modeChanged)
++    Q_PROPERTY(bool tabletModeAvailable READ tabletModeAvailable CONSTANT)
+ 
+ public:
+     explicit KcmVirtualKeyboard(QObject *parent, const KPluginMetaData &metaData);
+@@ -69,6 +70,9 @@ public:
+     }
+     void setMode(KWinVirtualKeyboard::VirtualKeyboardMode mode);
+ 
++    // whether the compositor says this computer has a tablet mode
++    bool tabletModeAvailable() const;
++
+ Q_SIGNALS:
+     void modeChanged(KWinVirtualKeyboard::VirtualKeyboardMode mode);
+ 
+diff --git a/src/kcms/virtualkeyboard/ui/main.qml b/src/kcms/virtualkeyboard/ui/main.qml
+index 4ea1827..54f7e75 100644
+--- a/src/kcms/virtualkeyboard/ui/main.qml
++++ b/src/kcms/virtualkeyboard/ui/main.qml
+@@ -70,4 +70,27 @@ KCM.GridViewKCM {
+             kcm.save();
+         }
+     }
++
++    footer: Kirigami.FormLayout {
++        id: footerFormLayout
++
++        visible: kcm.tabletModeAvailable
++
++        RowLayout {
++            Kirigami.FormData.label: i18n("Show automatically:")
++
++            QQC2.CheckBox {
++                id: tabletModeOnlyCheckBox
++                text: i18n("Only when in Tablet Mode")
++
++                checked: kcm.settings.inputMethodTabletOnly
++                onToggled: kcm.settings.inputMethodTabletOnly = checked
++            }
++
++            KCM.SettingStateBinding {
++                configObject: kcm.settings
++                settingName: "InputMethodTabletOnly"
++            }
++        }
++    }
+ }
+diff --git a/src/kcms/virtualkeyboard/virtualkeyboardsettings.kcfg b/src/kcms/virtualkeyboard/virtualkeyboardsettings.kcfg
+index 63203a7..6cc0a75 100644
+--- a/src/kcms/virtualkeyboard/virtualkeyboardsettings.kcfg
++++ b/src/kcms/virtualkeyboard/virtualkeyboardsettings.kcfg
+@@ -6,5 +6,9 @@
+   <kcfgfile name="kwinrc"/>
+   <group name="Wayland">
+     <entry name="InputMethod" type="Path" />
++    <entry name="InputMethodTabletOnly" type="Bool">
++      <label>Show Virtual Keyboard only in Touch Mode</label>
++      <default>true</default>
++    </entry>
+   </group>
+ </kcfg>

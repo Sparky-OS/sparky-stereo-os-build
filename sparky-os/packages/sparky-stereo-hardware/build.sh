@@ -1,11 +1,11 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/07
+# Last update 2026/11/14
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.26+lc1
+VERSION=0.1.27+lc1
 PACKAGE=sparky-stereo-hardware
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.sparky-stereo-hardware.XXXXXX")
@@ -28,7 +28,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: sparky-stereo-problems, libkf6config-bin, apt, bash, ca-certificates, coreutils, curl, grep, isenkram-cli, kmod, laptop-detect, libnotify-bin, lm-sensors, nvidia-detect, pciutils, power-profiles-daemon (>= 0.30), python3, sed, sparky-remsu, sparky-xterm, udev, usbutils, util-linux, yad
+Depends: sparky-stereo-problems, libkf6config-bin, apt, bash, ca-certificates, coreutils, curl, grep, isenkram-cli, kmod, laptop-detect, libnotify-bin, lm-sensors, nvidia-detect, pciutils, plasma-keyboard, power-profiles-daemon (>= 0.30), python3, sed, sparky-remsu, sparky-xterm, udev, usbutils, util-linux, yad
 Recommends: sparky-stereo-cuda-repo
 Section: System
 Priority: optional
@@ -42,7 +42,8 @@ Description: Detect and configure matched hardware for Sparky Stereo OS
 EOF
 printf '%s\n' /etc/apt/preferences.d/sparky-stereo-gpu-nvidia /etc/apt/preferences.d/sparky-stereo-gpu-amd \
 	/etc/xdg/autostart/sparky-stereo-live-gpu.desktop /etc/xdg/plasma-workspace/env/sparky-stereo-primary-gpu.sh \
-	/etc/xdg/plasma-workspace/env/sparky-stereo-opengl.sh /etc/dpkg/dpkg.cfg.d/sparky-stereo-hardware >"$D/DEBIAN/conffiles"
+	/etc/xdg/plasma-workspace/env/sparky-stereo-opengl.sh /etc/xdg/plasma-workspace/env/sparky-stereo-tablet-mode.sh\
+	/etc/dpkg/dpkg.cfg.d/sparky-stereo-hardware >"$D/DEBIAN/conffiles"
 # the OpenGL stereo default: written at install, at boot (the service) and by udev on GPU changes
 install -m755 "$HERE/debian-scripts/postinst" "$HERE/debian-scripts/postrm" "$D/DEBIAN/"
 # the initramfs carries the live session's NVIDIA choice

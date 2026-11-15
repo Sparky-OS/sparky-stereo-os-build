@@ -217,3 +217,18 @@ no problem is invented for this machine. Unknown machines remain untouched.
 A nonempty correction list is rejected until a reviewed, idempotent handler
 and a problems-engine record for its actual changes accompany it. The table
 never executes a command supplied by a device or by a string in the table.
+## A computer with a touch screen of its own gets its on-screen keyboard (ORDER 567)
+
+Daniel, 2026-11-14, after an install on a convertible notebook: "addition to our script is detect this type of thing to enable on screen keyboard on tablet mode".
+`/usr/lib/sparky-stereo-hardware/has-tablet-mode` answers whether the computer can be used as a tablet: it has a touch screen (an input device drawn on directly, with positions and no pen tool) and a built-in panel (an eDP, LVDS or DSI connector that is not disconnected).
+`--why` prints what it found, with the tablet-mode switch and the chassis type for the record.
+The switch and the chassis decide nothing: a slider convertible reports itself as a notebook (chassis type 10) and has no tablet-mode switch and no lid switch, and KWin still puts it in tablet mode, because KWin does that for any computer whose touch screen is left without a mouse or touchpad, and the Touch Mode setting of General Behavior does it by hand.
+On such a computer `/etc/xdg/plasma-workspace/env/sparky-stereo-tablet-mode.sh`, which `startplasma` sources before KWin starts, puts `/usr/share/sparky-stereo-hardware/tablet-mode/xdg` in front of `XDG_CONFIG_DIRS`; its `kwinrc` names Plasma Keyboard as `[Wayland] InputMethod`.
+KWin then starts the keyboard and shows it on a text field that is touched while the computer is in tablet mode (kwin 4:6.7.4-2+stereo3d57: "Only when in Tablet Mode" on the Virtual Keyboard page, on by default; switched off, any touch shows it).
+It is a system default, below the person's own `~/.config/kwinrc`: System Settings, Virtual Keyboard shows it as the default, and another keyboard or None chosen there is written to the person's file and wins.
+A default written into the person's own file would not do: KConfig removes a key set back to "no value" when no system default exists, so a person's None would be undone at the next login.
+The layout follows the session's language (Plasma Keyboard takes the locale when no language is ticked in its own page).
+The package depends on `plasma-keyboard`.
+A Japanese, Korean or Chinese session keeps Fcitx 5, which the look package writes at the first login.
+A desktop with a touch monitor has no built-in panel and gets nothing.
+`tests/tablet-mode.sh` runs the detection on fixture sysfs trees, the slider among them, and reads the result through KConfig.

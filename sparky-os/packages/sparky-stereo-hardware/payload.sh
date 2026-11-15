@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/07
+# Last update 2026/11/14
 set -euo pipefail
 # Both system units name this installed documentation.
 install -Dm644 "$HERE/README.md" "$D/usr/share/doc/sparky-stereo-hardware/README.md"
@@ -41,6 +41,11 @@ install -Dm755 "$HERE/share/initramfs/scripts/init-top/sparky-stereo-live-gpu" "
 install -Dm755 "$HERE/share/initramfs/scripts/init-bottom/sparky-stereo-live-gpu" "$D/usr/share/initramfs-tools/scripts/init-bottom/sparky-stereo-live-gpu"
 install -Dm644 "$HERE/share/autostart/sparky-stereo-live-gpu.desktop" "$D/etc/xdg/autostart/sparky-stereo-live-gpu.desktop"
 install -Dm644 "$HERE/share/plasma-env/sparky-stereo-primary-gpu.sh" "$D/etc/xdg/plasma-workspace/env/sparky-stereo-primary-gpu.sh"
+# a computer with a tablet mode gets KDE's on-screen keyboard as its default virtual keyboard, as a system default
+# the person's own choice stays above (ORDER 567)
+install -Dm755 "$HERE/bin/sparky-stereo-has-tablet-mode" "$D/usr/lib/sparky-stereo-hardware/has-tablet-mode"
+install -Dm644 "$HERE/share/plasma-env/sparky-stereo-tablet-mode.sh" "$D/etc/xdg/plasma-workspace/env/sparky-stereo-tablet-mode.sh"
+install -Dm644 "$HERE/share/tablet-mode/xdg/kwinrc" "$D/usr/share/sparky-stereo-hardware/tablet-mode/xdg/kwinrc"
 install -Dm755 "$HERE/bin/sparky-stereo-opengl-default" "$D/usr/bin/sparky-stereo-opengl-default"
 install -Dm755 "$HERE/bin/sparky-stereo-nvidia-opengl" "$D/usr/bin/sparky-stereo-nvidia-opengl"
 install -m644 "$HERE/share/nvidia-opengl-programs" "$D/usr/share/sparky/sparky-stereo-hardware/"

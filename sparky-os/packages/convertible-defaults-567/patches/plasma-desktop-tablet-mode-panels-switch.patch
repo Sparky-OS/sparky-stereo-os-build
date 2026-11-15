@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 14 Nov 2026 21:13:41 -0300
+Subject: [PATCH] kcms/workspaceoptions: A switch for hiding panels in tablet
+ mode
+
+The Touch group of General Behavior gains "In Tablet Mode: Hide panels
+automatically", on by default (plasmarc, [TabletMode] HidePanels). The shell
+reads it: while KWin reports tablet mode every panel is on automatic hide,
+and each goes back to the person's own setting afterwards.
+
+Assisted-by: Claude:claude-fable-5-2
+---
+ kcms/workspaceoptions/ui/main.qml             | 19 +++++++++++++++++++
+ .../workspaceoptions_plasmasettings.kcfg      |  5 +++++
+ 2 files changed, 24 insertions(+)
+
+diff --git a/kcms/workspaceoptions/ui/main.qml b/kcms/workspaceoptions/ui/main.qml
+index 5d99a02..2c28359 100644
+--- a/kcms/workspaceoptions/ui/main.qml
++++ b/kcms/workspaceoptions/ui/main.qml
+@@ -404,6 +404,25 @@ KCM.SimpleKCM {
+                     }
+                 }
+             }
++
++            Kirigami.FormEntry {
++                title: i18nc("@title:group prefix checkbox", "In Tablet Mode:")
++                visible: KWindowSystem.isPlatformWayland
++                contentItem: QQC2.CheckBox {
++                    text: i18nc("@option:check part of the sentence 'In Tablet Mode: hide panels automatically'", "Hide panels automatically")
++                    checked: kcm.plasmaSettings.hidePanelsInTabletMode
++                    onToggled: kcm.plasmaSettings.hidePanelsInTabletMode = checked
++
++                    KCM.SettingStateBinding {
++                        configObject: kcm.plasmaSettings
++                        settingName: "hidePanelsInTabletMode"
++                    }
++                }
++                trailingItems: Kirigami.ContextualHelpButton {
++                    Layout.alignment: Qt.AlignRight
++                    toolTipText: i18nc("@info:whatsthis contextualhelpbutton tooltip", "While Tablet Mode is on, every panel hides itself and comes back when you swipe in from its screen edge. When Tablet Mode ends, each panel goes back to its own setting.")
++                }
++            }
+         }
+     }
+ }
+diff --git a/kcms/workspaceoptions/workspaceoptions_plasmasettings.kcfg b/kcms/workspaceoptions/workspaceoptions_plasmasettings.kcfg
+index 253d25e..3c70335 100644
+--- a/kcms/workspaceoptions/workspaceoptions_plasmasettings.kcfg
++++ b/kcms/workspaceoptions/workspaceoptions_plasmasettings.kcfg
+@@ -23,4 +23,9 @@
+       <default>true</default>
+     </entry>
+   </group>
++  <group name="TabletMode">
++    <entry name="hidePanelsInTabletMode" key="HidePanels" type="Bool">
++      <default>true</default>
++    </entry>
++  </group>
+ </kcfg>

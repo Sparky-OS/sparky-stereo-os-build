@@ -1,0 +1,280 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 14 Nov 2026 21:08:10 -0300
+Subject: [PATCH] shell: Panels hide automatically while in tablet mode
+
+While KWin reports tablet mode (org.kde.KWin.TabletModeManager), every panel
+is on automatic hide, and each goes back to the person's own setting when
+tablet mode ends. A panel keeps two things apart: the visibility mode in
+force, which is what the views, the struts and the screen edge use, and the
+person's own choice, which is the one that is saved, the one scripting
+reads, and the one a change made while in tablet mode goes to. Nothing is
+written to the panel's configuration for tablet mode, so a session that ends
+in tablet mode leaves every panel as the person set it.
+
+The behaviour is on unless plasmarc says [TabletMode] HidePanels=false; the
+General Behavior page has the switch. Without a compositor that answers, or
+without a tablet mode, nothing changes.
+
+Assisted-by: Claude:claude-fable-5-2
+---
+ shell/panelview.cpp       | 41 +++++++++++++++++++++++++------
+ shell/panelview.h         | 20 +++++++++++++++
+ shell/scripting/panel.cpp |  3 ++-
+ shell/shellcorona.cpp     | 51 +++++++++++++++++++++++++++++++++++++++
+ shell/shellcorona.h       |  4 +++
+ 5 files changed, 111 insertions(+), 8 deletions(-)
+
+diff --git a/shell/panelview.cpp b/shell/panelview.cpp
+index e5bf1c7..12ad106 100644
+--- a/shell/panelview.cpp
++++ b/shell/panelview.cpp
+@@ -62,6 +62,7 @@ PanelView::PanelView(ShellCorona *corona, QScreen *targetScreen, QWindow *parent
+     , m_alignment(Qt::AlignCenter)
+     , m_corona(corona)
+     , m_visibilityMode(NormalPanel)
++    , m_userVisibilityMode(NormalPanel)
+     , m_opacityMode(Adaptive)
+     , m_lengthMode(FillAvailable)
+     , m_backgroundHints(Plasma::Types::StandardBackground)
+@@ -511,6 +512,23 @@ KSvg::FrameSvg::EnabledBorders PanelView::enabledBorders() const
+ }
+ 
+ void PanelView::setVisibilityMode(PanelView::VisibilityMode mode)
++{
++    // This is the person's own choice. It is kept, and written, also while tablet mode
++    // hides the panel, and it is what the panel goes back to when tablet mode ends.
++    if (m_userVisibilityMode != mode) {
++        m_userVisibilityMode = mode;
++
++        if (config().isValid() && config().parent().isValid()) {
++            // panelVisibility is not resolution dependent, don't write to Defaults
++            config().parent().writeEntry("panelVisibility", (int)mode);
++            m_corona->requestApplicationConfigSync();
++        }
++    }
++
++    applyVisibilityMode(m_hiddenForTabletMode ? AutoHide : mode);
++}
++
++void PanelView::applyVisibilityMode(PanelView::VisibilityMode mode)
+ {
+     if (m_visibilityMode == mode) {
+         return;
+@@ -523,12 +541,6 @@ void PanelView::setVisibilityMode(PanelView::VisibilityMode mode)
+         connect(containment(), &Plasma::Applet::activated, this, &PanelView::showTemporarily);
+     }
+ 
+-    if (config().isValid() && config().parent().isValid()) {
+-        // panelVisibility is not resolution dependent, don't write to Defaults
+-        config().parent().writeEntry("panelVisibility", (int)mode);
+-        m_corona->requestApplicationConfigSync();
+-    }
+-
+     updateExclusiveZone();
+ 
+     Q_EMIT visibilityModeChanged();
+@@ -541,6 +553,21 @@ PanelView::VisibilityMode PanelView::visibilityMode() const
+     return m_visibilityMode;
+ }
+ 
++PanelView::VisibilityMode PanelView::userVisibilityMode() const
++{
++    return m_userVisibilityMode;
++}
++
++void PanelView::setHiddenForTabletMode(bool hidden)
++{
++    if (m_hiddenForTabletMode == hidden) {
++        return;
++    }
++
++    m_hiddenForTabletMode = hidden;
++    applyVisibilityMode(hidden ? AutoHide : m_userVisibilityMode);
++}
++
+ PanelView::OpacityMode PanelView::opacityMode() const
+ {
+     if (!m_theme.adaptiveTransparencyEnabled()) {
+@@ -1128,7 +1155,7 @@ void PanelView::integrateScreen()
+         }
+     }
+ #endif
+-    setVisibilityMode(m_visibilityMode);
++    setVisibilityMode(m_userVisibilityMode);
+ 
+     if (containment()) {
+         containment()->reactToScreenChange();
+diff --git a/shell/panelview.h b/shell/panelview.h
+index 19c5b67..b41aec1 100644
+--- a/shell/panelview.h
++++ b/shell/panelview.h
+@@ -224,8 +224,25 @@ public:
+ 
+     KSvg::FrameSvg::EnabledBorders enabledBorders() const;
+ 
++    /**
++     * The mode in force. While tablet mode hides the panel this is AutoHide,
++     * whatever the person chose.
++     */
+     VisibilityMode visibilityMode() const;
++    /**
++     * Sets the person's own choice. It takes effect at once, or when tablet mode
++     * ends if the panel is hidden for tablet mode.
++     */
+     void setVisibilityMode(PanelView::VisibilityMode mode);
++    /**
++     * The person's own choice, the one that is saved.
++     */
++    VisibilityMode userVisibilityMode() const;
++    /**
++     * Puts the panel on automatic hide while @p hidden is true, without
++     * changing the person's choice, and gives that choice back afterwards.
++     */
++    void setHiddenForTabletMode(bool hidden);
+ 
+     PanelView::OpacityMode opacityMode() const;
+     bool adaptiveOpacityEnabled();
+@@ -322,6 +339,7 @@ private Q_SLOTS:
+     void updateTouchingWindow();
+ 
+ private:
++    void applyVisibilityMode(PanelView::VisibilityMode mode);
+     bool isUnsupportedEnvironment() const;
+     bool defaultFloating() const;
+     OpacityMode defaultOpacityMode() const;
+@@ -368,6 +386,8 @@ private:
+     ShellCorona *m_corona;
+     QTimer m_strutsTimer;
+     VisibilityMode m_visibilityMode;
++    VisibilityMode m_userVisibilityMode;
++    bool m_hiddenForTabletMode = false;
+     OpacityMode m_opacityMode;
+     LengthMode m_lengthMode;
+     Plasma::Theme m_theme;
+diff --git a/shell/scripting/panel.cpp b/shell/scripting/panel.cpp
+index 7a3376a..c14a0e5 100644
+--- a/shell/scripting/panel.cpp
++++ b/shell/scripting/panel.cpp
+@@ -302,7 +302,8 @@ QString Panel::hiding() const
+ {
+     int visibility;
+     if (panel()) {
+-        visibility = panel()->visibilityMode();
++        // the person's own setting, also while tablet mode hides the panel
++        visibility = panel()->userVisibilityMode();
+     } else {
+         visibility = panelConfig().parent().readEntry("panelVisibility", 0);
+     }
+diff --git a/shell/shellcorona.cpp b/shell/shellcorona.cpp
+index c33387b..365f996 100644
+--- a/shell/shellcorona.cpp
++++ b/shell/shellcorona.cpp
+@@ -15,6 +15,11 @@
+ 
+ #include <QApplication>
+ #include <QDBusConnection>
++#include <QDBusMessage>
++#include <QDBusPendingCallWatcher>
++#include <QDBusReply>
++#include <QDBusServiceWatcher>
++#include <QDBusVariant>
+ #include <QDebug>
+ #include <QJsonDocument>
+ #include <QJsonObject>
+@@ -82,6 +87,7 @@ using namespace std::chrono_literals;
+ using namespace Qt::StringLiterals;
+ 
+ static const int s_configSyncDelay = 10000; // 10 seconds
++static const QString s_kwinService = u"org.kde.KWin"_s;
+ 
+ Q_DECLARE_METATYPE(QColor)
+ 
+@@ -244,6 +250,19 @@ void ShellCorona::init()
+     connect(KDirWatch::self(), &KDirWatch::dirty, this, &ShellCorona::configurationChanged);
+     connect(KDirWatch::self(), &KDirWatch::created, this, &ShellCorona::configurationChanged);
+ 
++    // In tablet mode every panel is on automatic hide (plasmarc, [TabletMode] HidePanels,
++    // on unless the person turns it off), and goes back to its own setting afterwards.
++    // KWin is the one that knows the mode.
++    QDBusConnection::sessionBus().connect(s_kwinService,
++                                          u"/org/kde/KWin"_s,
++                                          u"org.kde.KWin.TabletModeManager"_s,
++                                          u"tabletModeChanged"_s,
++                                          this,
++                                          SLOT(setTabletMode(bool)));
++    auto kwinWatcher = new QDBusServiceWatcher(s_kwinService, QDBusConnection::sessionBus(), QDBusServiceWatcher::WatchForRegistration, this);
++    connect(kwinWatcher, &QDBusServiceWatcher::serviceRegistered, this, &ShellCorona::queryTabletMode);
++    queryTabletMode();
++
+     connect(qApp, &QGuiApplication::focusWindowChanged, this, [this](QWindow *focusWindow) {
+         if (!focusWindow) {
+             setEditMode(false);
+@@ -1643,6 +1662,7 @@ void ShellCorona::createWaitingPanels()
+ 
+         m_panelViews[cont] = panel;
+         panel->setContainment(cont);
++        panel->setHiddenForTabletMode(m_tabletMode && m_config->group(u"TabletMode"_s).readEntry("HidePanels", true));
+         cont->reactToScreenChange();
+         Q_EMIT cont->screenGeometryChanged(cont->screenGeometry());
+ 
+@@ -2994,6 +3014,37 @@ void ShellCorona::configurationChanged(const QString &path)
+ {
+     if (path == m_configPath) {
+         m_config->reparseConfiguration();
++        updatePanelsForTabletMode();
++    }
++}
++
++void ShellCorona::queryTabletMode()
++{
++    auto message = QDBusMessage::createMethodCall(s_kwinService, u"/org/kde/KWin"_s, u"org.freedesktop.DBus.Properties"_s, u"Get"_s);
++    message.setArguments({u"org.kde.KWin.TabletModeManager"_s, u"tabletMode"_s});
++    auto watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(message), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, watcher] {
++        watcher->deleteLater();
++        const QDBusReply<QDBusVariant> reply = *watcher;
++        // no answer: a compositor without a tablet mode, so no tablet mode
++        setTabletMode(reply.isValid() && reply.value().variant().toBool());
++    });
++}
++
++void ShellCorona::setTabletMode(bool tabletMode)
++{
++    if (m_tabletMode == tabletMode) {
++        return;
++    }
++    m_tabletMode = tabletMode;
++    updatePanelsForTabletMode();
++}
++
++void ShellCorona::updatePanelsForTabletMode()
++{
++    const bool hide = m_tabletMode && m_config->group(u"TabletMode"_s).readEntry("HidePanels", true);
++    for (PanelView *panel : std::as_const(m_panelViews)) {
++        panel->setHiddenForTabletMode(hide);
+     }
+ }
+ 
+diff --git a/shell/shellcorona.h b/shell/shellcorona.h
+index c75f288..8127edc 100644
+--- a/shell/shellcorona.h
++++ b/shell/shellcorona.h
+@@ -265,6 +265,7 @@ protected Q_SLOTS:
+     void showAlternativesForApplet(Plasma::Applet *applet);
+ 
+ private Q_SLOTS:
++    void setTabletMode(bool tabletMode);
+     void createWaitingPanels();
+     void handleContainmentAdded(Plasma::Containment *c);
+     void syncAppConfig();
+@@ -306,6 +307,9 @@ private:
+ 
+     KSharedConfig::Ptr m_config;
+     QString m_configPath;
++    void queryTabletMode();
++    void updatePanelsForTabletMode();
++    bool m_tabletMode = false;
+ 
+     // Accent color setting
+     KConfigWatcher::Ptr m_kdeGlobalsConfigWatcher;

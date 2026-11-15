@@ -1,0 +1,9 @@
+While the computer is in tablet mode every panel is on automatic hide, and each goes back to the person's own
+setting when tablet mode ends (ORDER 567; Daniel, 2026-11-14: "when in tablet mode only, can we make the taskbar
+autohide?"). The shell follows KWin's org.kde.KWin.TabletModeManager. A panel keeps the visibility mode in force
+apart from the person's own choice: the choice is the one that is saved and the one scripting reads, nothing is
+written for tablet mode, and a panel already on automatic hide stays so
+(plasma-workspace-panels-hide-in-tablet-mode.patch).
+
+On unless plasmarc says [TabletMode] HidePanels=false, the switch of General Behavior in plasma-desktop
+4:6.7.4-1+stereo3d4. A computer without a tablet mode, or a compositor that does not answer, changes nothing.
