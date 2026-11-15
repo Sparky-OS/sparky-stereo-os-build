@@ -1,0 +1,136 @@
+Description: Say that a film has no sound when it has a picture and no audio track: the OSD message when the film is loaded and the tooltips of the volume slider and mute button, with the sentence and the rule of the stereo layer's QML module (org.sparky.stereo NoSound). The volume control stays usable.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (ORDER 579)
+Forwarded: not-needed
+Last-Update: 2026-11-15
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+
+--- a/src/mpv/mpvitem.cpp
++++ b/src/mpv/mpvitem.cpp
+@@ -646,8 +646,12 @@
+ 
+     uint ar = 0;
+     uint sr = 0;
++    bool hasPicture = false;
+     for (const auto &item : tracks) {
+         const auto map = item.toMap();
++        if (map.value(u"type"_s).toString() == u"video"_s && !map.value(u"albumart"_s).toBool()) {
++            hasPicture = true;
++        }
+         Track track = {
+             map.value(u"id"_s).toInt(),
+             map.value(u"lang"_s).toString(),
+@@ -673,6 +677,20 @@
+ 
+     Q_EMIT audioTracksModelChanged();
+     Q_EMIT subtitleTracksModelChanged();
++    Q_EMIT tracksLoaded(hasPicture, int(ar));
++}
++
++bool MpvItem::filmHasNoSound() const
++{
++    return m_filmHasNoSound;
++}
++
++void MpvItem::setFilmHasNoSound(bool noSound)
++{
++    if (m_filmHasNoSound != noSound) {
++        m_filmHasNoSound = noSound;
++        Q_EMIT filmHasNoSoundChanged();
++    }
+ }
+ 
+ void MpvItem::onAsyncReply(const QVariant &data, mpv_event event)
+--- a/src/mpv/mpvitem.h
++++ b/src/mpv/mpvitem.h
+@@ -72,6 +72,12 @@
+     Q_PROPERTY(TracksModel *audioTracksModel READ audioTracksModel NOTIFY audioTracksModelChanged)
+     TracksModel *audioTracksModel() const;
+ 
++    // The film has a picture and no audio track (ORDER 579). The tracks are read here from mpv's track list; the rule and the sentence
++    // are the stereo layer's Stereo.NoSound (QML), which sets this when the tracks are loaded
++    Q_PROPERTY(bool filmHasNoSound READ filmHasNoSound WRITE setFilmHasNoSound NOTIFY filmHasNoSoundChanged)
++    bool filmHasNoSound() const;
++    void setFilmHasNoSound(bool noSound);
++
+     Q_PROPERTY(TracksModel *subtitleTracksModel READ subtitleTracksModel NOTIFY subtitleTracksModelChanged)
+     TracksModel *subtitleTracksModel() const;
+ 
+@@ -182,6 +188,9 @@
+ 
+ Q_SIGNALS:
+     void audioTracksModelChanged();
++    void filmHasNoSoundChanged();
++    // the tracks of the loaded file: whether it has a picture and how many audio tracks
++    void tracksLoaded(bool hasPicture, int audioTracks);
+     void subtitleTracksModelChanged();
+     void activeFilterProxyModelChanged();
+     void visibleFilterProxyModelChanged();
+@@ -270,6 +279,7 @@
+     double m_watchLaterPosition{0.0};
+     bool m_isReady{false};
+     QUrl m_currentUrl;
++    bool m_filmHasNoSound{false};
+     std::unique_ptr<ChaptersModel> m_chaptersModel;
+     bool m_finishedLoading{false};
+     std::unique_ptr<QTimer> m_saveTimePositionTimer;
+--- a/src/qml/Footer.qml
++++ b/src/qml/Footer.qml
+@@ -13,6 +13,7 @@
+ import org.kde.kirigami as Kirigami
+ import org.kde.haruna
+ import org.kde.haruna.settings
++import org.sparky.stereo as Stereo
+ 
+ Item {
+     id: root
+@@ -219,7 +220,8 @@
+                     focusPolicy: Qt.NoFocus
+ 
+                     ToolTip {
+-                        text: HarunaApp.actions.muteAction.text
++                        text: root.m_mpv.filmHasNoSound ? HarunaApp.actions.muteAction.text + "\n" + Stereo.NoSound.text
++                                                       : HarunaApp.actions.muteAction.text
+                     }
+                 }
+ 
+@@ -232,6 +234,10 @@
+ 
+                     Layout.preferredWidth: root.isSmallSize ? 60 : 100
+                     Layout.preferredHeight: 20
++
++                    // the film has no audio track: the slider stays usable and says so
++                    ToolTip.text: Stereo.NoSound.text
++                    ToolTip.visible: hovered && root.m_mpv.filmHasNoSound
+                 }
+ 
+                 Loader {
+--- a/src/qml/MpvVideo.qml
++++ b/src/qml/MpvVideo.qml
+@@ -16,6 +16,7 @@
+ import org.kde.haruna.playlist
+ import org.kde.haruna.utilities
+ import org.kde.haruna.settings
++import org.sparky.stereo as Stereo
+ 
+ import org.kde.kirigami as Kirigami
+ 
+@@ -60,6 +61,18 @@
+         osd.message(text);
+     }
+ 
++    // A film with a picture and no audio track says so once when it is loaded (ORDER 579): the stereo layer's rule and sentence
++    property url noSoundToldFor
++    onCurrentUrlChanged: noSoundToldFor = ""
++    onTracksLoaded: function(hasPicture, audioTracks) {
++        const noSound = Stereo.NoSound.saysFor(true, hasPicture, audioTracks)
++        root.filmHasNoSound = noSound
++        if (noSound && noSoundToldFor !== root.currentUrl) {
++            noSoundToldFor = root.currentUrl
++            osd.message(Stereo.NoSound.text)
++        }
++    }
++
+     onRaise: { HarunaApp.raiseWindow() }
+     onPlayNext: { HarunaApp.actions.playNextAction.trigger() }
+     onPlayPrevious: { HarunaApp.actions.playPreviousAction.trigger() }

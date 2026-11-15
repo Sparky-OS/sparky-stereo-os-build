@@ -1,0 +1,102 @@
+Description: Say that a film has no sound when it has a picture and no audio track: a message in the window for a few seconds and the volume button's tooltip, with the sentence and the rule of the stereo layer. The volume control stays usable.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (ORDER 579)
+Forwarded: not-needed
+Last-Update: 2026-11-15
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+
+--- a/src/qml/ControlsBar.qml
++++ b/src/qml/ControlsBar.qml
+@@ -11,6 +11,7 @@
+ import org.kde.dragon as Dragon
+ 
+ import org.kde.dragon
++import org.sparky.stereo as Stereo
+ 
+ OverlayPopup {
+     id: toolbar
+@@ -95,6 +96,12 @@
+             VolumeButton {
+                 id: volumeButton
+                 audioOutput: toolbar.player.audioOutput
++                noSound: Stereo.NoSound.saysFor(
++                    toolbar.player.mediaStatus === Multimedia.MediaPlayer.LoadedMedia
++                        || toolbar.player.mediaStatus === Multimedia.MediaPlayer.BufferingMedia
++                        || toolbar.player.mediaStatus === Multimedia.MediaPlayer.BufferedMedia
++                        || toolbar.player.mediaStatus === Multimedia.MediaPlayer.StalledMedia,
++                    toolbar.player.hasVideo, toolbar.player.audioTracks.length)
+             }
+         }
+     }
+--- a/src/qml/PlayerPage.qml
++++ b/src/qml/PlayerPage.qml
+@@ -125,6 +125,35 @@
+             visible: video.stereoLayerFailure.length > 0
+             text: i18nc("@info %1 is the reason the desktop gave", "This video is shown flat: the desktop refused to show it in 3D (%1).", video.stereoLayerFailure)
+         }
++
++        Kirigami.InlineMessage {
++            id: noSoundMessage
++            Layout.fillWidth: true
++            type: Kirigami.MessageType.Information
++            showCloseButton: true
++            position: Kirigami.InlineMessage.Position.Header
++            text: Stereo.NoSound.text
++
++            // Said when the film is loaded and has a picture and no audio track (the layer's rule), for a while, and gone when the next film has sound
++            readonly property bool filmHasNoSound: Stereo.NoSound.saysFor(
++                player.mediaStatus === Multimedia.MediaPlayer.LoadedMedia
++                    || player.mediaStatus === Multimedia.MediaPlayer.BufferingMedia
++                    || player.mediaStatus === Multimedia.MediaPlayer.BufferedMedia
++                    || player.mediaStatus === Multimedia.MediaPlayer.StalledMedia,
++                player.hasVideo, player.audioTracks.length)
++            onFilmHasNoSoundChanged: {
++                visible = filmHasNoSound
++                if (filmHasNoSound) {
++                    noSoundTimer.restart()
++                }
++            }
++
++            Timer {
++                id: noSoundTimer
++                interval: 8000
++                onTriggered: noSoundMessage.visible = false
++            }
++        }
+     }
+ 
+     function cancelFullscreen() {
+--- a/src/qml/VolumeButton.qml
++++ b/src/qml/VolumeButton.qml
+@@ -6,11 +6,14 @@
+ import QtMultimedia as Multimedia
+ 
+ import org.kde.kirigami as Kirigami
++import org.sparky.stereo as Stereo
+ 
+ IconToolButton {
+     id: volumeButton
+ 
+     required property Multimedia.AudioOutput audioOutput
++    // the film has a picture and no audio track: the control stays usable and says so (ORDER 579)
++    property bool noSound: false
+ 
+     icon.name: {
+         if (volumeButton.audioOutput.muted || volumeButton.audioOutput.volume == 0.0) {
+@@ -29,7 +32,7 @@
+     }
+ 
+     text: i18nc("@action:button open volume slider popup", "Show volume controls")
+-    QQC2.ToolTip.text: text
++    QQC2.ToolTip.text: noSound ? Stereo.NoSound.text : text
+     QQC2.ToolTip.visible: hovered
+                        && text.length > 0
+                        && display === QQC2.AbstractButton.IconOnly
+@@ -38,6 +41,7 @@
+ 
+     down: pressed || popup.visible
+     Accessible.role: Accessible.ButtonMenu
++    Accessible.description: noSound ? Stereo.NoSound.text : ""
+ 
+     onPressed: {
+         if (!popup.visible) {
