@@ -1,0 +1,50 @@
+From 605ee2c4fe19591ebbcaa0eae40a433fbfdc41f9 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 15 Nov 2026 12:10:00 -0300
+Subject: [PATCH 3/3] rhi: vulkan: keep the surface when a window drops to one
+ view
+
+With one view again Qt released the swapchain and made the window's
+Vulkan surface again, because the Vulkan stereo layer kept its
+declaration of a pair for the surface's life, and a one-view swapchain on
+that surface was shown as two halves of a pair.
+
+The layer now withdraws its declaration when the surface's pair is no
+longer the swapchain presented there (Mesa 26.1.6-1+stereo3d24, ORDER
+573), as Mesa's own presentation always did, so the swapchain is built
+again on the same surface, naming the old one as oldSwapchain, as for
+any other change. Measured on NVIDIA's driver with that layer: a window
+that goes from two views to one for good is shown flat (0 pixels differ
+between the eyes), two views, one, two ends as the pair, and sixty
+changes in six seconds end alive and as the pair, as with the surface
+made again; the surface made again cost a new Wayland surface for the
+layer and its registry round trip at each change (30 bindings of the
+stereo content manager in the sixty changes, 2 without). With the older
+layer the window is shown as two halves (244,232 pixels differ), so
+libqt6gui6 breaks a layer older than that.
+
+Assisted-by: Claude Opus 5.5
+---
+ src/gui/rhi/qrhivulkan.cpp | 9 ---------
+ 1 file changed, 9 deletions(-)
+
+diff --git a/src/gui/rhi/qrhivulkan.cpp b/src/gui/rhi/qrhivulkan.cpp
+index 73e65e08..5e4ffc8e 100644
+--- a/src/gui/rhi/qrhivulkan.cpp
++++ b/src/gui/rhi/qrhivulkan.cpp
+@@ -2678,15 +2678,6 @@ QRhi::FrameOpResult QRhiVulkan::beginFrame(QRhiSwapChain *swapChain, QRhi::Begin
+         if (windowWantsTwoViews(swapChainD->window, &platformAnswers) != swapChainD->twoViewsWanted) {
+             qCDebug(QRHI_LOG_INFO, "The window now wants %d view(s): building its swapchain again",
+                     swapChainD->twoViewsWanted ? 1 : 2);
+-            // What was said to the window system about the two views belongs to the surface: a
+-            // Vulkan implementation, or a layer over it, may keep its declaration of a pair for
+-            // as long as the surface lives, and the one picture would then be shown as the two
+-            // halves of a pair. With one view again the surface is therefore made again as well,
+-            // after the swapchain that used it is gone.
+-            if (swapChainD->stereo && platformAnswers && swapChainD->window->handle()) {
+-                releaseSwapChainResources(swapChain);
+-                swapChainD->window->handle()->invalidateSurface();
+-            }
+             if (!swapChainD->createOrResize())
+                 return QRhi::FrameOpError;
+         }

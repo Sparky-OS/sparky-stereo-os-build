@@ -1,0 +1,4 @@
+LOCAL1="視窗以平面顯示"
+LOCAL2="%s 為其視窗要求了兩幅畫面，每隻眼睛一幅，但 Vulkan 驅動程式 %s 只給視窗一幅畫面，因此視窗以平面顯示。在此驅動程式上，要求 3D 的程式都以平面顯示，直到它給出兩幅。Mesa 的 Vulkan 驅動程式會給出兩幅；對於其他驅動程式，由套件 mesa-vulkan-layer-stereo 給出：請確認它已安裝，並且沒有設定 DISABLE_LAYER_MESA_STEREO。"
+LOCAL3="%s 為其視窗要求了兩幅畫面，每隻眼睛一幅，但 OpenGL 驅動程式 %s 只給視窗一幅畫面，因此視窗以平面顯示。在此驅動程式上，要求 3D 的程式都以平面顯示，直到它給出兩幅。Mesa 的 OpenGL 會給出兩幅，依照桌面工作階段的設定，在 NVIDIA 顯示卡上也透過 zink 給出；在 NVIDIA 自己的 OpenGL 上啟動的程式從 gl-stereo 層取得。"
+LOCAL4="%s 為其視窗要求了兩幅畫面，每隻眼睛一幅，但 OpenGL 透過 zink 自己的交換鏈執行，它只顯示一幅畫面，因此視窗以平面顯示。桌面工作階段在使用 zink 時設定 LIBGL_KOPPER_DISABLE=1；請也用它啟動該程式。"

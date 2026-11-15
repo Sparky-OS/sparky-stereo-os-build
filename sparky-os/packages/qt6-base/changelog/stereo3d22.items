@@ -1,0 +1,20 @@
+A window that asked for two views of its surface, one per eye (its own stereo
+buffers, or an engine drawing the depth of its elements), and was given one is
+shown flat, and the person is now told through the problems engine
+(sparky-stereo-problems), on the Vulkan and the OpenGL path alike: once, as
+the problem of the driver that gives one view, naming the first program that
+met it, in the ten languages; the problem ends when a window gets its two
+views from the same driver. Nothing is told when the pair works or when the
+window never asked (ORDER 574).
+
+QVulkanWindow gets two views: a window that asks for stereo buffers gets a
+swapchain with two image layers where the surface offers them, a framebuffer
+and an image view per eye (QVulkanWindow::currentFramebuffer(RightBuffer)),
+and the platform hears its views, as Qt's own Vulkan swapchain does (ORDER
+573). The Wayland Vulkan window's format says what its surface has once the
+swapchain's maker said it.
+
+Qt's own Vulkan swapchain keeps the window's surface when the window drops
+to one view: the Vulkan stereo layer of Mesa +stereo3d24 withdraws its
+declaration with the pair, so making the surface again (o556-0001) is no
+longer needed, and libqt6gui6 breaks an older layer (o574-0003).

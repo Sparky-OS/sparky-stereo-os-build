@@ -1,0 +1,689 @@
+From 21da50a63393d5cefb05e0ab22b69a0631dcbb70 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 15 Nov 2026 12:05:00 -0300
+Subject: [PATCH 2/3] QVulkanWindow: give a window that asks for stereo buffers
+ two views
+
+QVulkanWindow built its swapchain with one image layer and gave its
+renderer one framebuffer a frame, so a program asking for stereo buffers
+(QSurfaceFormat::StereoBuffers) was shown flat even where the surface
+offers two image layers ("imageArrayLayers must be greater than 0 and
+less than or equal to the maxImageArrayLayers member of the
+VkSurfaceCapabilitiesKHR structure",
+VUID-VkSwapchainCreateInfoKHR-imageArrayLayers-01275).
+
+It now asks for two views as Qt's own Vulkan swapchain does: the platform
+answers with the window's "_q_stereo_views" native resource where it
+knows more, the requested format decides elsewhere. Where the surface
+offers them the swapchain has two image layers, each image a view and a
+framebuffer per eye with the default render pass, a multisample color
+image per eye and the depth-stencil buffer shared, and the platform hears
+the views and the device it got. currentFramebuffer(), swapChainImageView(),
+msaaColorImage() and msaaColorImageView() take a StereoTargetBuffer; with
+one view they return the left eye's for both, so a renderer draws the
+right eye when its framebuffer differs. The right eye's resources are
+released by their own handles, whatever the next swapchain has.
+
+A renderer that never asks for the right eye's framebuffer or image view
+gets its left eye copied into the right one at the end of each frame, as
+an OpenGL program drawing to GL_BACK on a stereo window fills both, so a
+program that asked for stereo buffers without drawing an eye is shown
+flat, not with an undefined right eye.
+
+The Wayland Vulkan window's format says what its surface has once the
+swapchain's maker said it, also when one view was given.
+
+A test row, vulkanWindowTwoViews, checks the two framebuffers and image
+views where the surface offers two layers (QTEST_STEREO_TWO_VIEWS=1 makes
+a surface that does not a failure), the left eye's for both without the
+request, and the grab's left eye.
+
+Assisted-by: Claude Opus 5.5
+---
+ src/gui/vulkan/qvulkanwindow.cpp              | 256 +++++++++++++++++-
+ src/gui/vulkan/qvulkanwindow.h                |   9 +
+ src/gui/vulkan/qvulkanwindow_p.h              |  18 ++
+ .../wayland/qwaylandvulkanwindow.cpp          |  10 +-
+ .../wayland/qwaylandvulkanwindow_p.h          |   2 +
+ tests/auto/gui/qvulkan/tst_qvulkan.cpp        |  99 +++++++
+ 6 files changed, 384 insertions(+), 10 deletions(-)
+
+diff --git a/src/gui/vulkan/qvulkanwindow.cpp b/src/gui/vulkan/qvulkanwindow.cpp
+index f311a0e9..98a98655 100644
+--- a/src/gui/vulkan/qvulkanwindow.cpp
++++ b/src/gui/vulkan/qvulkanwindow.cpp
+@@ -8,7 +8,10 @@
+ #include <QTimer>
+ #include <QThread>
+ #include <QCoreApplication>
++#include <QGuiApplication>
+ #include <qevent.h>
++#include <qpa/qplatformnativeinterface.h>
++#include <qpa/qplatformwindow.h>
+ 
+ QT_BEGIN_NAMESPACE
+ 
+@@ -1037,6 +1040,27 @@ bool QVulkanWindowPrivate::createDefaultRenderPass()
+     return true;
+ }
+ 
++// Whether the swapchain should have two views, a left and a right image layer. The platform may know more than
++// the window's format (the Wayland platform also asks for them while an engine draws the window's elements once
++// per eye, and only where the compositor takes such a pair) and answers with the number, the window's
++// "_q_stereo_views" native resource, as it does for QRhi's swapchains; elsewhere the window's requested format
++// decides. platformAnswers says which of the two it was.
++bool QVulkanWindowPrivate::wantsTwoViews(bool *platformAnswers)
++{
++    Q_Q(QVulkanWindow);
++    *platformAnswers = false;
++    if (q->handle()) {
++        if (QPlatformNativeInterface *native = QGuiApplication::platformNativeInterface()) {
++            const quintptr views = quintptr(native->nativeResourceForWindow(QByteArrayLiteral("_q_stereo_views"), q));
++            if (views) {
++                *platformAnswers = true;
++                return views == 2;
++            }
++        }
++    }
++    return q->requestedFormat().stereo();
++}
++
+ void QVulkanWindowPrivate::recreateSwapChain()
+ {
+     Q_Q(QVulkanWindow);
+@@ -1099,6 +1123,12 @@ void QVulkanWindowPrivate::recreateSwapChain()
+     if (swapChainSupportsReadBack)
+         usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+ 
++    // Two views, a left and a right image layer, where the window asks for them and the surface offers them:
++    // "imageArrayLayers must be greater than 0 and less than or equal to the maxImageArrayLayers member of the
++    // VkSurfaceCapabilitiesKHR structure" (VUID-VkSwapchainCreateInfoKHR-imageArrayLayers-01275).
++    bool platformAnswers = false;
++    const bool twoViews = wantsTwoViews(&platformAnswers) && surfaceCaps.maxImageArrayLayers > 1;
++
+     VkSwapchainKHR oldSwapChain = swapChain;
+     VkSwapchainCreateInfoKHR swapChainInfo;
+     memset(&swapChainInfo, 0, sizeof(swapChainInfo));
+@@ -1108,7 +1138,11 @@ void QVulkanWindowPrivate::recreateSwapChain()
+     swapChainInfo.imageFormat = colorFormat;
+     swapChainInfo.imageColorSpace = colorSpace;
+     swapChainInfo.imageExtent = bufferSize;
+-    swapChainInfo.imageArrayLayers = 1;
++    swapChainInfo.imageArrayLayers = twoViews ? 2 : 1;
++    // with two views the left eye can be copied into the right one, for a renderer that draws one eye only
++    const VkImageUsageFlags copyUsage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
++    if (twoViews && (surfaceCaps.supportedUsageFlags & copyUsage) == copyUsage)
++        usage |= copyUsage;
+     swapChainInfo.imageUsage = usage;
+     swapChainInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+     swapChainInfo.preTransform = preTransform;
+@@ -1117,7 +1151,8 @@ void QVulkanWindowPrivate::recreateSwapChain()
+     swapChainInfo.clipped = true;
+     swapChainInfo.oldSwapchain = oldSwapChain;
+ 
+-    qCDebug(lcGuiVk, "Creating new swap chain of %d buffers, size %dx%d", reqBufferCount, bufferSize.width, bufferSize.height);
++    qCDebug(lcGuiVk, "Creating new swap chain of %d buffers, size %dx%d, %d view(s)", reqBufferCount, bufferSize.width,
++            bufferSize.height, twoViews ? 2 : 1);
+ 
+     VkSwapchainKHR newSwapChain;
+     VkResult err = vkCreateSwapchainKHR(dev, &swapChainInfo, nullptr, &newSwapChain);
+@@ -1126,10 +1161,23 @@ void QVulkanWindowPrivate::recreateSwapChain()
+         return;
+     }
+ 
++    // The resources of the swapchain before this one are released with the views it had: only then does the
++    // window take the new number, which may differ.
+     if (oldSwapChain)
+         releaseSwapChain();
+ 
+     swapChain = newSwapChain;
++    stereo = twoViews;
++    rightEyeUsed = !twoViews || (usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) == 0;
++
++    // The platform that asked hears how many views the surface has now, before its first frame, and on which
++    // device: a window shown flat is told with the driver that gave one view.
++    if (platformAnswers && q->handle()) {
++        QPlatformNativeInterface *native = QGuiApplication::platformNativeInterface();
++        native->setWindowProperty(q->handle(), QStringLiteral("_q_stereo_surface_device"),
++                                  QString::fromUtf8(physDevProps[physDevIndex].deviceName));
++        native->setWindowProperty(q->handle(), QStringLiteral("_q_stereo_surface_views"), stereo ? 2 : 1);
++    }
+ 
+     uint32_t actualSwapChainBufferCount = 0;
+     err = vkGetSwapchainImagesKHR(dev, swapChain, &actualSwapChainBufferCount, nullptr);
+@@ -1165,8 +1213,9 @@ void QVulkanWindowPrivate::recreateSwapChain()
+     }
+ 
+     const bool msaa = sampleCount > VK_SAMPLE_COUNT_1_BIT;
+-    VkImage msaaImages[MAX_SWAPCHAIN_BUFFER_COUNT];
+-    VkImageView msaaViews[MAX_SWAPCHAIN_BUFFER_COUNT];
++    // with two views, a multisample color image per eye: the right eye's follow the left eye's
++    VkImage msaaImages[MAX_SWAPCHAIN_BUFFER_COUNT * 2];
++    VkImageView msaaViews[MAX_SWAPCHAIN_BUFFER_COUNT * 2];
+ 
+     if (msaa) {
+         if (!createTransientImage(colorFormat,
+@@ -1175,7 +1224,7 @@ void QVulkanWindowPrivate::recreateSwapChain()
+                                   msaaImages,
+                                   &msaaImageMem,
+                                   msaaViews,
+-                                  swapChainBufferCount))
++                                  swapChainBufferCount * (stereo ? 2 : 1)))
+         {
+             return;
+         }
+@@ -1228,6 +1277,30 @@ void QVulkanWindowPrivate::recreateSwapChain()
+             return;
+         }
+ 
++        if (stereo) {
++            // the right eye: the image's second layer, with the same depth-stencil buffer
++            RightEyeResources &right(rightRes[i]);
++            if (msaa) {
++                right.msaaImage = msaaImages[i + swapChainBufferCount];
++                right.msaaImageView = msaaViews[i + swapChainBufferCount];
++            }
++            imgViewInfo.subresourceRange.baseArrayLayer = 1;
++            err = devFuncs->vkCreateImageView(dev, &imgViewInfo, nullptr, &right.imageView);
++            if (err != VK_SUCCESS) {
++                qWarning("QVulkanWindow: Failed to create the right eye's swapchain image view %d: %d", i, err);
++                return;
++            }
++            VkImageView rightViews[3] = { right.imageView,
++                                          dsView,
++                                          msaa ? right.msaaImageView : VK_NULL_HANDLE };
++            fbInfo.pAttachments = rightViews;
++            err = devFuncs->vkCreateFramebuffer(dev, &fbInfo, nullptr, &right.fb);
++            if (err != VK_SUCCESS) {
++                qWarning("QVulkanWindow: Failed to create the right eye's framebuffer: %d", err);
++                return;
++            }
++        }
++
+         if (gfxQueueFamilyIdx != presQueueFamilyIdx) {
+             // pre-build the static image-acquire-on-present-queue command buffer
+             VkCommandBufferAllocateInfo cmdBufInfo = {
+@@ -1254,7 +1327,8 @@ void QVulkanWindowPrivate::recreateSwapChain()
+             presTrans.dstQueueFamilyIndex = presQueueFamilyIdx;
+             presTrans.image = image.image;
+             presTrans.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+-            presTrans.subresourceRange.levelCount = presTrans.subresourceRange.layerCount = 1;
++            presTrans.subresourceRange.levelCount = 1;
++            presTrans.subresourceRange.layerCount = stereo ? 2 : 1;
+             devFuncs->vkCmdPipelineBarrier(image.presTransCmdBuf,
+                                            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+@@ -1490,6 +1564,23 @@ void QVulkanWindowPrivate::releaseSwapChain()
+             devFuncs->vkDestroyImage(dev, image.msaaImage, nullptr);
+             image.msaaImage = VK_NULL_HANDLE;
+         }
++        RightEyeResources &right(rightRes[i]);
++        if (right.fb) {
++            devFuncs->vkDestroyFramebuffer(dev, right.fb, nullptr);
++            right.fb = VK_NULL_HANDLE;
++        }
++        if (right.imageView) {
++            devFuncs->vkDestroyImageView(dev, right.imageView, nullptr);
++            right.imageView = VK_NULL_HANDLE;
++        }
++        if (right.msaaImageView) {
++            devFuncs->vkDestroyImageView(dev, right.msaaImageView, nullptr);
++            right.msaaImageView = VK_NULL_HANDLE;
++        }
++        if (right.msaaImage) {
++            devFuncs->vkDestroyImage(dev, right.msaaImage, nullptr);
++            right.msaaImage = VK_NULL_HANDLE;
++        }
+     }
+ 
+     if (msaaImageMem) {
+@@ -2003,6 +2094,11 @@ void QVulkanWindowPrivate::beginFrame()
+         rpBeginInfo.pClearValues = clearValues;
+         devFuncs->vkCmdBeginRenderPass(frame.cmdBuf, &rpBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+         devFuncs->vkCmdEndRenderPass(frame.cmdBuf);
++        if (stereo) {
++            rpBeginInfo.framebuffer = rightRes[currentImage].fb;
++            devFuncs->vkCmdBeginRenderPass(frame.cmdBuf, &rpBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
++            devFuncs->vkCmdEndRenderPass(frame.cmdBuf);
++        }
+ 
+         endFrame();
+     }
+@@ -2015,6 +2111,11 @@ void QVulkanWindowPrivate::endFrame()
+     FrameResources &frame(frameRes[currentFrame]);
+     ImageResources &image(imageRes[currentImage]);
+ 
++    // A renderer that did not draw the right eye shows its picture in both, as an OpenGL program drawing to
++    // GL_BACK does on a stereo window.
++    if (stereo && !rightEyeUsed && !frameGrabbing)
++        copyLeftToRight(frame.cmdBuf, image.image);
++
+     if (gfxQueueFamilyIdx != presQueueFamilyIdx && !frameGrabbing) {
+         // Add the swapchain image release to the command buffer that will be
+         // submitted to the graphics queue.
+@@ -2027,7 +2128,8 @@ void QVulkanWindowPrivate::endFrame()
+         presTrans.dstQueueFamilyIndex = presQueueFamilyIdx;
+         presTrans.image = image.image;
+         presTrans.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+-        presTrans.subresourceRange.levelCount = presTrans.subresourceRange.layerCount = 1;
++        presTrans.subresourceRange.levelCount = 1;
++        presTrans.subresourceRange.layerCount = stereo ? 2 : 1;
+         devFuncs->vkCmdPipelineBarrier(frame.cmdBuf,
+                                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+@@ -2178,6 +2280,49 @@ bool QVulkanWindowPrivate::checkDeviceLost(VkResult err)
+     return false;
+ }
+ 
++void QVulkanWindowPrivate::copyLeftToRight(VkCommandBuffer cb, VkImage image)
++{
++    VkImageMemoryBarrier barriers[2];
++    memset(barriers, 0, sizeof(barriers));
++    for (int eye = 0; eye < 2; ++eye) {
++        barriers[eye].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
++        barriers[eye].srcQueueFamilyIndex = barriers[eye].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++        barriers[eye].image = image;
++        barriers[eye].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
++        barriers[eye].subresourceRange.baseArrayLayer = eye;
++        barriers[eye].subresourceRange.levelCount = barriers[eye].subresourceRange.layerCount = 1;
++    }
++    barriers[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
++    barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
++    barriers[0].oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
++    barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
++    barriers[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
++    barriers[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
++    barriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
++    devFuncs->vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
++                                   0, 0, nullptr, 0, nullptr, 2, barriers);
++    VkImageCopy region;
++    memset(&region, 0, sizeof(region));
++    region.srcSubresource.aspectMask = region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
++    region.srcSubresource.layerCount = region.dstSubresource.layerCount = 1;
++    region.dstSubresource.baseArrayLayer = 1;
++    region.extent.width = uint32_t(swapChainImageSize.width());
++    region.extent.height = uint32_t(swapChainImageSize.height());
++    region.extent.depth = 1;
++    devFuncs->vkCmdCopyImage(cb, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++                             image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
++    barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
++    barriers[0].dstAccessMask = 0;
++    barriers[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
++    barriers[0].newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
++    barriers[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
++    barriers[1].dstAccessMask = 0;
++    barriers[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
++    barriers[1].newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
++    devFuncs->vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
++                                   0, 0, nullptr, 0, nullptr, 2, barriers);
++}
++
+ void QVulkanWindowPrivate::addReadback()
+ {
+     VkImageCreateInfo imageInfo;
+@@ -2565,6 +2710,57 @@ VkFramebuffer QVulkanWindow::currentFramebuffer() const
+     return d->imageRes[d->currentImage].fb;
+ }
+ 
++/*!
++    \enum QVulkanWindow::StereoTargetBuffer
++
++    Selects the eye a framebuffer or an image view of a swapchain with two
++    views belongs to.
++
++    \value LeftBuffer The left eye's, the first image layer. A swapchain with
++    one view has only this one.
++    \value RightBuffer The right eye's, the second image layer.
++ */
++
++/*!
++    Returns a VkFramebuffer for \a targetBuffer, the left or the right eye,
++    of the current swapchain image, using the default render pass.
++
++    A window gets a swapchain with two views, an image layer per eye, when its
++    requested format asks for stereo buffers (QSurfaceFormat::StereoBuffers)
++    and the surface offers two image layers. A renderer then records the
++    default render pass twice in startNextFrame(), once with each eye's
++    framebuffer. When the swapchain has one view, the left eye's framebuffer is
++    returned for both, so a renderer draws the right eye only when this
++    differs from currentFramebuffer().
++
++    The two framebuffers share the depth-stencil buffer; each has its own
++    multisample color image.
++
++    A renderer that never asks for the right eye's framebuffer, or for the
++    right eye's image view with swapChainImageView(), gets its left eye copied
++    into the right one at the end of each frame, so the window shows its
++    picture in both eyes, as an OpenGL program drawing to \c GL_BACK does on a
++    stereo window.
++
++    \note This function must only be called from within startNextFrame() and, in
++    case of asynchronous command generation, up until the call to frameReady().
++
++    \sa currentFramebuffer(), defaultRenderPass()
++ */
++VkFramebuffer QVulkanWindow::currentFramebuffer(StereoTargetBuffer targetBuffer) const
++{
++    Q_D(const QVulkanWindow);
++    if (!d->framePending) {
++        qWarning("QVulkanWindow: Attempted to call currentFramebuffer() without an active frame");
++        return VK_NULL_HANDLE;
++    }
++    if (targetBuffer == RightBuffer && d->stereo) {
++        d->rightEyeUsed = true;
++        return d->rightRes[d->currentImage].fb;
++    }
++    return d->imageRes[d->currentImage].fb;
++}
++
+ /*!
+     Returns the current frame index in the range [0, concurrentFrameCount() - 1].
+ 
+@@ -2671,6 +2867,22 @@ VkImage QVulkanWindow::swapChainImage(int idx) const
+     QVulkanWindowRenderer::initSwapChainResources() up until
+     QVulkanWindowRenderer::releaseSwapChainResources().
+  */
++/*!
++    Returns the view of swapchain image \a idx for \a targetBuffer, the left or
++    the right eye. With one view the left eye's is returned for both.
++
++    \sa swapChainImageView(), currentFramebuffer()
++ */
++VkImageView QVulkanWindow::swapChainImageView(int idx, StereoTargetBuffer targetBuffer) const
++{
++    Q_D(const QVulkanWindow);
++    if (targetBuffer == RightBuffer && d->stereo) {
++        d->rightEyeUsed = true;
++        return idx >= 0 && idx < d->swapChainBufferCount ? d->rightRes[idx].imageView : VK_NULL_HANDLE;
++    }
++    return swapChainImageView(idx);
++}
++
+ VkImageView QVulkanWindow::swapChainImageView(int idx) const
+ {
+     Q_D(const QVulkanWindow);
+@@ -2727,6 +2939,21 @@ VkSampleCountFlagBits QVulkanWindow::sampleCountFlagBits() const
+     QVulkanWindowRenderer::initSwapChainResources() up until
+     QVulkanWindowRenderer::releaseSwapChainResources().
+  */
++/*!
++    Returns the multisample color image of swapchain image \a idx for \a
++    targetBuffer, the left or the right eye. With one view the left eye's is
++    returned for both.
++
++    \sa msaaColorImage()
++ */
++VkImage QVulkanWindow::msaaColorImage(int idx, StereoTargetBuffer targetBuffer) const
++{
++    Q_D(const QVulkanWindow);
++    if (targetBuffer == RightBuffer && d->stereo)
++        return idx >= 0 && idx < d->swapChainBufferCount ? d->rightRes[idx].msaaImage : VK_NULL_HANDLE;
++    return msaaColorImage(idx);
++}
++
+ VkImage QVulkanWindow::msaaColorImage(int idx) const
+ {
+     Q_D(const QVulkanWindow);
+@@ -2743,6 +2970,21 @@ VkImage QVulkanWindow::msaaColorImage(int idx) const
+     QVulkanWindowRenderer::initSwapChainResources() up until
+     QVulkanWindowRenderer::releaseSwapChainResources().
+  */
++/*!
++    Returns the view of the multisample color image of swapchain image \a idx
++    for \a targetBuffer, the left or the right eye. With one view the left
++    eye's is returned for both.
++
++    \sa msaaColorImageView()
++ */
++VkImageView QVulkanWindow::msaaColorImageView(int idx, StereoTargetBuffer targetBuffer) const
++{
++    Q_D(const QVulkanWindow);
++    if (targetBuffer == RightBuffer && d->stereo)
++        return idx >= 0 && idx < d->swapChainBufferCount ? d->rightRes[idx].msaaImageView : VK_NULL_HANDLE;
++    return msaaColorImageView(idx);
++}
++
+ VkImageView QVulkanWindow::msaaColorImageView(int idx) const
+ {
+     Q_D(const QVulkanWindow);
+diff --git a/src/gui/vulkan/qvulkanwindow.h b/src/gui/vulkan/qvulkanwindow.h
+index 537dbc4a..73761daf 100644
+--- a/src/gui/vulkan/qvulkanwindow.h
++++ b/src/gui/vulkan/qvulkanwindow.h
+@@ -73,6 +73,11 @@ public:
+     };
+     Q_DECLARE_FLAGS(Flags, Flag)
+ 
++    enum StereoTargetBuffer {
++        LeftBuffer,
++        RightBuffer
++    };
++
+     explicit QVulkanWindow(QWindow *parent = nullptr);
+     ~QVulkanWindow();
+ 
+@@ -121,6 +126,7 @@ public:
+ 
+     VkCommandBuffer currentCommandBuffer() const;
+     VkFramebuffer currentFramebuffer() const;
++    VkFramebuffer currentFramebuffer(StereoTargetBuffer targetBuffer) const;
+     int currentFrame() const;
+ 
+     static const int MAX_CONCURRENT_FRAME_COUNT = 3;
+@@ -130,12 +136,15 @@ public:
+     int currentSwapChainImageIndex() const;
+     VkImage swapChainImage(int idx) const;
+     VkImageView swapChainImageView(int idx) const;
++    VkImageView swapChainImageView(int idx, StereoTargetBuffer targetBuffer) const;
+     VkImage depthStencilImage() const;
+     VkImageView depthStencilImageView() const;
+ 
+     VkSampleCountFlagBits sampleCountFlagBits() const;
+     VkImage msaaColorImage(int idx) const;
++    VkImage msaaColorImage(int idx, StereoTargetBuffer targetBuffer) const;
+     VkImageView msaaColorImageView(int idx) const;
++    VkImageView msaaColorImageView(int idx, StereoTargetBuffer targetBuffer) const;
+ 
+     bool supportsGrab() const;
+     QImage grab();
+diff --git a/src/gui/vulkan/qvulkanwindow_p.h b/src/gui/vulkan/qvulkanwindow_p.h
+index 8c32461f..5ab789df 100644
+--- a/src/gui/vulkan/qvulkanwindow_p.h
++++ b/src/gui/vulkan/qvulkanwindow_p.h
+@@ -47,6 +47,7 @@ public:
+     bool checkDeviceLost(VkResult err);
+     void addReadback();
+     void finishBlockingReadback();
++    bool wantsTwoViews(bool *platformAnswers);
+ 
+     enum Status {
+         StatusUninitialized,
+@@ -145,6 +146,23 @@ public:
+     VkDeviceMemory frameGrabImageMem = VK_NULL_HANDLE;
+ 
+     QMatrix4x4 m_clipCorrect;
++
++    // The swapchain has two image layers, a view per eye: the window asked for stereo buffers (or its platform
++    // asked for two views) and the surface offers them. The right eye's view of each swapchain image (layer 1),
++    // its framebuffer with the default render pass and its multisample color image; the depth-stencil buffer is
++    // shared, the eyes being drawn one after the other.
++    bool stereo = false;
++    // The renderer asked for the right eye's framebuffer or image view since the swapchain was made; until it does,
++    // the left eye is copied into the right one at the end of each frame, so a renderer that does not draw the right
++    // eye shows its picture in both
++    mutable bool rightEyeUsed = false;
++    void copyLeftToRight(VkCommandBuffer cb, VkImage image);
++    struct RightEyeResources {
++        VkImageView imageView = VK_NULL_HANDLE;
++        VkFramebuffer fb = VK_NULL_HANDLE;
++        VkImage msaaImage = VK_NULL_HANDLE;
++        VkImageView msaaImageView = VK_NULL_HANDLE;
++    } rightRes[MAX_SWAPCHAIN_BUFFER_COUNT];
+ };
+ 
+ QT_END_NAMESPACE
+diff --git a/src/plugins/platforms/wayland/qwaylandvulkanwindow.cpp b/src/plugins/platforms/wayland/qwaylandvulkanwindow.cpp
+index 46ab960f..8e547bca 100644
+--- a/src/plugins/platforms/wayland/qwaylandvulkanwindow.cpp
++++ b/src/plugins/platforms/wayland/qwaylandvulkanwindow.cpp
+@@ -42,6 +42,7 @@ void QWaylandVulkanWindow::invalidateSurface()
+     m_surface = VK_NULL_HANDLE;
+     // The swapchain goes with the surface, and the mark with the surface's declaration.
+     m_twoViews.store(false, std::memory_order_release);
++    m_surfaceViews.store(0, std::memory_order_release);
+     QWaylandWindow::invalidateSurface();
+ }
+ 
+@@ -65,9 +66,11 @@ VkSurfaceKHR *QWaylandVulkanWindow::vkSurface()
+ QSurfaceFormat QWaylandVulkanWindow::format() const
+ {
+     QSurfaceFormat format = QWaylandWindow::format();
+-    // Two views make the surface a stereo one, as the left and right buffers of an OpenGL window do.
+-    if (m_twoViews.load(std::memory_order_acquire))
+-        format.setStereo(true);
++    // Two views make the surface a stereo one, as the left and right buffers of an OpenGL window do; once the
++    // swapchain's maker said what the surface has, the format says it, also when one view was given.
++    const int views = m_surfaceViews.load(std::memory_order_acquire);
++    if (views)
++        format.setStereo(views == 2);
+     return format;
+ }
+ 
+@@ -91,6 +94,7 @@ void QWaylandVulkanWindow::setSurfaceViews(int views)
+     const bool twoViews = views == 2;
+     const bool pair = pairWanted();
+     m_twoViews.store(twoViews, std::memory_order_release);
++    m_surfaceViews.store(twoViews ? 2 : 1, std::memory_order_release);
+     QWaylandStereoDepth::setDesktopDepth(this, twoViews && pair);
+     // Two views were asked for where the compositor takes a pair: the window asked for stereo buffers itself, or
+     // an engine draws the depth of its elements. One view given is a window shown flat, and the person is told;
+diff --git a/src/plugins/platforms/wayland/qwaylandvulkanwindow_p.h b/src/plugins/platforms/wayland/qwaylandvulkanwindow_p.h
+index 9fc1ef92..2064de7d 100644
+--- a/src/plugins/platforms/wayland/qwaylandvulkanwindow_p.h
++++ b/src/plugins/platforms/wayland/qwaylandvulkanwindow_p.h
+@@ -67,6 +67,8 @@ private:
+     std::atomic<bool> m_pairRequested = false;
+     // Whether the swapchain made for the surface has two views
+     std::atomic<bool> m_twoViews = false;
++    // The views the swapchain's maker said the surface has: 0 not said yet, 1 or 2
++    std::atomic<int> m_surfaceViews = 0;
+     // Written and read on the thread that presents
+     QString m_surfaceDevice;
+ };
+diff --git a/tests/auto/gui/qvulkan/tst_qvulkan.cpp b/tests/auto/gui/qvulkan/tst_qvulkan.cpp
+index 71d67928..23241497 100644
+--- a/tests/auto/gui/qvulkan/tst_qvulkan.cpp
++++ b/tests/auto/gui/qvulkan/tst_qvulkan.cpp
+@@ -29,6 +29,7 @@ private slots:
+     void vulkanWindow();
+     void vulkanWindowRenderer();
+     void vulkanWindowGrab();
++    void vulkanWindowTwoViews();
+ };
+ 
+ void tst_QVulkan::init()
+@@ -531,6 +532,104 @@ void tst_QVulkan::vulkanWindowGrab()
+     w.destroy();
+ }
+ 
++// A window that asks for stereo buffers gets a swapchain with two views, an image layer per eye, where the surface
++// offers them: a framebuffer and an image view per eye, the left eye's where it has one view.
++class TwoViewsRenderer : public QVulkanWindowRenderer
++{
++public:
++    explicit TwoViewsRenderer(QVulkanWindow *w) : m_window(w) { }
++    void startNextFrame() override
++    {
++        QVulkanDeviceFunctions *df = m_window->vulkanInstance()->deviceFunctions(m_window->device());
++        const VkFramebuffer left = m_window->currentFramebuffer(QVulkanWindow::LeftBuffer);
++        const VkFramebuffer right = m_window->currentFramebuffer(QVulkanWindow::RightBuffer);
++        leftIsCurrent = left == m_window->currentFramebuffer();
++        twoFramebuffers = right != left;
++        for (int eye = 0; eye < (twoFramebuffers ? 2 : 1); ++eye) {
++            VkClearValue clear[3] = {};
++            clear[0].color = eye ? VkClearColorValue{{0, 0, 1, 1}} : VkClearColorValue{{1, 0, 0, 1}};
++            clear[1].depthStencil = {1, 0};
++            clear[2].color = clear[0].color;
++            VkRenderPassBeginInfo rp = {};
++            rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
++            rp.renderPass = m_window->defaultRenderPass();
++            rp.framebuffer = eye ? right : left;
++            const QSize size = m_window->swapChainImageSize();
++            rp.renderArea.extent = {uint32_t(size.width()), uint32_t(size.height())};
++            rp.clearValueCount = m_window->sampleCountFlagBits() > VK_SAMPLE_COUNT_1_BIT ? 3 : 2;
++            rp.pClearValues = clear;
++            df->vkCmdBeginRenderPass(m_window->currentCommandBuffer(), &rp, VK_SUBPASS_CONTENTS_INLINE);
++            df->vkCmdEndRenderPass(m_window->currentCommandBuffer());
++        }
++        ++frames;
++        m_window->frameReady();
++    }
++    QVulkanWindow *m_window;
++    bool leftIsCurrent = false;
++    bool twoFramebuffers = false;
++    int frames = 0;
++};
++
++class TwoViewsWindow : public QVulkanWindow
++{
++public:
++    QVulkanWindowRenderer *createRenderer() override { return renderer = new TwoViewsRenderer(this); }
++    TwoViewsRenderer *renderer = nullptr;
++};
++
++void tst_QVulkan::vulkanWindowTwoViews()
++{
++    QVulkanInstance inst;
++    if (!inst.create())
++        QSKIP("Vulkan init failed; skip");
++
++    for (const bool asked : {false, true}) {
++        TwoViewsWindow w;
++        w.setVulkanInstance(&inst);
++        // grab() swaps red and blue for VK_FORMAT_B8G8R8A8_UNORM only
++        w.setPreferredColorFormats({VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM});
++        if (asked) {
++            QSurfaceFormat format = w.requestedFormat();
++            format.setStereo(true);
++            w.setFormat(format);
++        }
++        w.resize(320, 240);
++        w.show();
++        QVERIFY(QTest::qWaitForWindowExposed(&w));
++        if (w.availablePhysicalDevices().isEmpty())
++            QSKIP("No Vulkan physical devices; skip");
++        QTRY_VERIFY(w.renderer && w.renderer->frames >= 1);
++
++        VkSurfaceCapabilitiesKHR caps = {};
++        auto getCaps = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>(
++                inst.getInstanceProcAddr("vkGetPhysicalDeviceSurfaceCapabilitiesKHR"));
++        QVERIFY(getCaps);
++        QCOMPARE(getCaps(w.physicalDevice(), QVulkanInstance::surfaceForWindow(&w), &caps), VK_SUCCESS);
++        const bool offered = caps.maxImageArrayLayers > 1;
++        if (asked && !offered) {
++            if (qEnvironmentVariableIntValue("QTEST_STEREO_TWO_VIEWS") == 1)
++                QFAIL("The surface offers one image layer; QTEST_STEREO_TWO_VIEWS=1 asks for two");
++            QSKIP("The surface offers one image layer; skip");
++        }
++
++        QVERIFY(w.renderer->leftIsCurrent);
++        QCOMPARE(w.renderer->twoFramebuffers, asked);
++        const bool twoViews = w.swapChainImageView(0, QVulkanWindow::RightBuffer)
++                != w.swapChainImageView(0, QVulkanWindow::LeftBuffer);
++        QCOMPARE(twoViews, asked);
++        QCOMPARE(w.swapChainImageView(0, QVulkanWindow::LeftBuffer), w.swapChainImageView(0));
++
++        if (w.supportsGrab()) {
++            // the left eye is the window's picture
++            const QImage image = w.grab();
++            QVERIFY(!image.isNull());
++            QCOMPARE_LE(qAbs(qRed(image.pixel(10, 10)) - 255), 1);
++            QCOMPARE_LE(qBlue(image.pixel(10, 10)), 1);
++        }
++        w.destroy();
++    }
++}
++
+ QTEST_MAIN(tst_QVulkan)
+ 
+ #include "tst_qvulkan.moc"
