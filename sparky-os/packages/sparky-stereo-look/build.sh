@@ -60,11 +60,11 @@ control() { # dir package depends recommends description...
 build() { # dir package: the Lean Code package and its source, then the gate that writes the build record, in the build image
 	find "$1" -name '*.qmlc' -delete
 	chmod -R go-w "$1"
-	docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lean-standalone-$2" --ulimit core=0 --network none --platform linux/amd64 \
+	docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lean-standalone-$2" --ulimit core=0 --cpus 4 --network none --platform linux/amd64 \
 		--user "$(id -u):$(id -g)" "${SPARKY_PROV_ARGS[@]}" -e HOME=/tmp -e PYTHONPATH="$TREE/sparky-os" \
 		-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
 		-v "$TREE":"$TREE":ro -v "$1":"$1" -v "$OUT":"$OUT" "$IMAGE" \
-		sh -c 'python3 -m lean.standalone "$1" "$2" --authoring "$3" && cd "$2" && python3 -m lean.release check-debs "./$4_$5_all.deb" "./$4-lc-hr_$5_all.deb"' \
+		sh -c 'python3 -m lean.standalone "$1" "$2" --authoring "$3" && python3 "$PYTHONPATH/repo/rebuild-script-source.py" "$2/$4_$5.dsc" && cd "$2" && python3 -m lean.release check-debs "./$4_$5_all.deb" "./$4-lc-hr_$5_all.deb"' \
 		sh "$1" "$OUT" "$RECIPE" "$2" "$VERSION"
 }
 
