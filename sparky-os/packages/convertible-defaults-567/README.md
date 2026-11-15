@@ -18,7 +18,7 @@ Design followed (Daniel's words, as recorded):
 - `patches/plasma-desktop-tablet-mode-panels-switch.patch`: General Behavior, Touch, "In Tablet Mode: Hide panels automatically" (`plasmarc`, `[TabletMode] HidePanels`, on by default).
 - `../../translations/plasma-desktop-tablet-mode-panels.po.patch`: the switch in the nine translated languages, last in plasma-desktop's series.
 - `changelog/*.items`: the changelog items, one paragraph per item.
-- `next-source.sh PACKAGE PUBLISHED.dsc OUT`: the next +lc1 source of plasma-workspace or plasma-desktop (`repo/lc-successor.py --in-place --overlay`): the code patch before the series' translation patches, the new translation patch last.
+- `next-source.sh PACKAGE PUBLISHED.dsc OUT`: the next +lc1 source of plasma-workspace or plasma-desktop (`repo/lc-successor.py --in-place --overlay`): the code patch appended to the published series, the new translation patch last.
 - `round.sh WORK PUBLISHED_TREE ARCHIVE_DIR [STEP...]`: both builds through `../depth-source/build.sh` (Lean Code, the link and start gate, `lean.release check-debs`).
 
 ## Why each piece is where it is

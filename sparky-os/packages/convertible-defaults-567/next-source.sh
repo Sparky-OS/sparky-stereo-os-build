@@ -3,8 +3,7 @@
 # Copyright 2026 under the GNU GPL3 License
 # Sparky Stereo OS, ORDER 567: the next +lc1 source of plasma-workspace or plasma-desktop with the panels that hide by
 # themselves in tablet mode, after the way of ../per-file-choice-551/next-source.sh: the published +lc1 source unpacked;
-# this folder's patch placed before the translation patches of its series, and plasma-desktop's new translation patch
-# last; the plain entry, then the Lean Code entry, on top of the published history (repo/lc-successor.py --in-place
+# this folder's patch appended to its series, and plasma-desktop's new translation patch last; the plain entry, then the Lean Code entry, on top of the published history (repo/lc-successor.py --in-place
 # --overlay), so the old changelog stays a byte identical suffix of the new one.
 #   next-source.sh PACKAGE PUBLISHED.dsc OUT
 # Run it where dpkg-source is (the Lean Code migration container; round.sh does).
@@ -38,23 +37,15 @@ dpkg-source --skip-patches -x "$DSC" "$W/published" >/dev/null
 mkdir -p "$W/overlay/patches"
 for p in "${PATCHES[@]}"; do cp "$HERE/patches/$p" "$W/overlay/patches/"; done
 for p in "${PO[@]}"; do cp "$HERE/../../translations/$p" "$W/overlay/patches/"; done
-# the code patch goes before the first translation patch of the published series (a translation patch is named
-# last, ORDER 391), the new translation patch after them all
-python3 - "$W/published/debian/patches/series" "$W/overlay/patches/series" "${#PATCHES[@]}" "${PATCHES[@]}" "${PO[@]}" <<'PY'
-import sys
-source, target, count = sys.argv[1], sys.argv[2], int(sys.argv[3])
-code, po = sys.argv[4:4 + count], sys.argv[4 + count:]
-lines = open(source, encoding='utf-8').read().split('\n')
-while lines and lines[-1] == '':
-    lines.pop()
-for name in code + po:
-    if name in lines:
-        sys.exit(f'{source}: {name} is in the published series already')
-first = next((i for i, line in enumerate(lines) if line.endswith('.po.patch')), len(lines))
-lines[first:first] = code
-lines += po
-open(target, 'w', encoding='utf-8').write('\n'.join(lines) + '\n')
-PY
+# The patches join the end of the published series, the code patch first and the new translation patch last. A patch
+# placed inside the series stops dpkg-source -b ("aborting due to unexpected upstream changes"): the published tree
+# is unpacked with every patch of the old series applied, and a new one is applied on top of them.
+cp "$W/published/debian/patches/series" "$W/overlay/patches/series"
+[ "$(tail -c1 "$W/overlay/patches/series" | od -An -tx1 | tr -d ' ')" = 0a ] || echo >> "$W/overlay/patches/series"
+for p in "${PATCHES[@]}" "${PO[@]}"; do
+	! grep -qx "$p" "$W/overlay/patches/series" || { echo "$p is in the published series already" >&2; exit 2; }
+	echo "$p" >> "$W/overlay/patches/series"
+done
 mapfile -t items < <(python3 - "$HERE/changelog/$PKG.items" <<'PY'
 import sys
 # one item per paragraph (blank line between), its lines joined by a space
