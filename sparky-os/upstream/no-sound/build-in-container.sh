@@ -25,6 +25,11 @@ apt-get -y --no-install-recommends build-dep ./source >/work/build-dep.log 2>&1 
 apt-get -y --no-install-recommends install bubblewrap >>/work/build-dep.log 2>&1
 export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(dpkg-parsechangelog -l source/debian/changelog -S Timestamp)}
 mkdir -p "${SPARKY_LC_SCRATCH:=/work/link-scratch}"
+# the link gate's siblings: the lane's own unpublished libraries (the stereo layer) the package was built against
+if ls /stage/libstereo-*1_*.deb >/dev/null 2>&1; then
+	ls /stage/libstereo-*1_*_amd64.deb > /work/siblings.txt
+	export SPARKY_LC_SIBLINGS_FILE=/work/siblings.txt
+fi
 id builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd source
