@@ -1,0 +1,439 @@
+Description: Carry scan type through the display mode list and preserve selection
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, ORDER 568
+Forwarded: no
+Last-Update: 2026-11-14
+Assisted-by: GPT-6 (OpenAI)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 5501750..bc96727 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -235,7 +235,7 @@ endif()
+ # kde_stereo_depth_v1 came with version 3 of kde-stereo-content-v1; stereo_glasses with version 29 of kde-output-device-v2,
+ # stereo_sequential_displayport with version 30
+ if(NOT _kwin_output_device_xml MATCHES "stereo_l_depth_graphics" OR NOT _kwin_output_device_xml MATCHES "stereo_glasses"
+-   OR NOT _kwin_output_device_xml MATCHES "stereo_sequential_displayport" OR NOT _kwin_stereo_content_xml MATCHES "kde_stereo_depth_v1"
++   OR NOT _kwin_output_device_xml MATCHES "name=\"interlaced\" value=\"0x2000000\"" OR NOT _kwin_output_device_xml MATCHES "stereo_sequential_displayport" OR NOT _kwin_stereo_content_xml MATCHES "kde_stereo_depth_v1"
+    OR NOT _kwin_stereo_content_xml MATCHES "set_view_source")
+     set(KWIN_STEREO_PROTOCOLS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/wayland/protocols/stereo)
+     set(KWIN_STEREO_PROTOCOLS_IN_TREE TRUE)
+diff --git a/autotests/drm/virtualStereoTest.cpp b/autotests/drm/virtualStereoTest.cpp
+index e6b2cbd..357dcac 100644
+--- a/autotests/drm/virtualStereoTest.cpp
++++ b/autotests/drm/virtualStereoTest.cpp
+@@ -24,6 +24,43 @@ class VirtualStereoTest : public QObject
+ {
+     Q_OBJECT
+ private Q_SLOTS:
++    void interlacedModes_data()
++    {
++        QTest::addColumn<uint32_t>("clock");
++        QTest::addColumn<uint16_t>("htotal");
++        QTest::addColumn<uint32_t>("nativeFlags");
++        QTest::addColumn<uint32_t>("rate");
++        // CTA VICs 5 and 20, also declared with frame packing by the fixture EDID.
++        for (const auto stereo : {0U, uint32_t(DRM_MODE_FLAG_3D_FRAME_PACKING)}) {
++            const QByteArray suffix = stereo ? "-fp" : "-2d";
++            QTest::newRow(("1080i60" + suffix).constData()) << 74250U << uint16_t(2200) << (uint32_t(DRM_MODE_FLAG_INTERLACE) | stereo) << 60000U;
++            QTest::newRow(("1080i50" + suffix).constData()) << 74250U << uint16_t(2640) << (uint32_t(DRM_MODE_FLAG_INTERLACE) | stereo) << 50000U;
++            QTest::newRow(("1080p60" + suffix).constData()) << 148500U << uint16_t(2200) << stereo << 60000U;
++        }
++    }
++
++    void interlacedModes()
++    {
++        QFETCH(uint32_t, clock);
++        QFETCH(uint16_t, htotal);
++        QFETCH(uint32_t, nativeFlags);
++        QFETCH(uint32_t, rate);
++        drmModeModeInfo timing{};
++        timing.clock = clock;
++        timing.hdisplay = 1920;
++        timing.htotal = htotal;
++        timing.vdisplay = 1080;
++        timing.vtotal = 1125;
++        timing.flags = nativeFlags;
++        DrmConnectorMode mode(nullptr, timing, {});
++        QCOMPARE(mode.size(), QSize(1920, 1080));
++        QCOMPARE(mode.refreshRate(), rate);
++        QCOMPARE(mode.name(), QStringLiteral("1920x1080%1@%2.00").arg(nativeFlags & DRM_MODE_FLAG_INTERLACE ? QStringLiteral("i") : QString()).arg(rate / 1000));
++        QCOMPARE(mode.nativeMode()->flags, nativeFlags);
++        QCOMPARE(bool(mode.flags() & OutputModeline::Flag::Interlaced), bool(nativeFlags & DRM_MODE_FLAG_INTERLACE));
++        QCOMPARE(bool(mode.flags() & OutputModeline::Flag::Stereo3DFramePacking), bool(nativeFlags & DRM_MODE_FLAG_3D_FRAME_PACKING));
++    }
++
+     void modes_data()
+     {
+         QTest::addColumn<bool>("anaglyph");
+diff --git a/autotests/integration/outputchanges_test.cpp b/autotests/integration/outputchanges_test.cpp
+index 1ce54bd..2e16429 100644
+--- a/autotests/integration/outputchanges_test.cpp
++++ b/autotests/integration/outputchanges_test.cpp
+@@ -27,6 +27,9 @@
+ #include <xcb/xcb_icccm.h>
+ #endif
+ 
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
+ #include <ranges>
+ 
+ using namespace std::chrono_literals;
+@@ -136,6 +139,8 @@ private Q_SLOTS:
+     void testGeneratePartialConfigs();
+     void testColorPowerTradeoffDefault();
+     void testVirtualStereoRestore();
++    void testInterlacedRestore_data();
++    void testInterlacedRestore();
+     void testVirtualStereoAutomaticPicks();
+     void testAutorotate_data();
+     void testAutorotate();
+@@ -1739,6 +1744,76 @@ void OutputChangesTest::testVirtualStereoRestore()
+     QCOMPARE(*fallback->first.constChangeSet(outputs[0])->currentMode, base);
+ }
+ 
++void OutputChangesTest::testInterlacedRestore_data()
++{
++    using Flag = OutputModeline::Flag;
++    QTest::addColumn<OutputModeline::Flags>("layout");
++    QTest::addColumn<bool>("legacy");
++    for (const auto legacy : {false, true}) {
++        const QByteArray suffix = legacy ? "-legacy" : "-new";
++        QTest::newRow(("2d" + suffix).constData()) << OutputModeline::Flags(Flag::Preferred) << legacy;
++        QTest::newRow(("frame-packing" + suffix).constData()) << OutputModeline::Flags(Flag::Stereo3DFramePacking) << legacy;
++        QTest::newRow(("virtual" + suffix).constData()) << (Flag::VirtualStereo | Flag::Stereo3DAnaglyphModern) << legacy;
++    }
++}
++
++void OutputChangesTest::testInterlacedRestore()
++{
++    using Flag = OutputModeline::Flag;
++    QFETCH(OutputModeline::Flags, layout);
++    QFETCH(bool, legacy);
++    const OutputModeline base(QSize(1920, 1080), 60000, Flag::Preferred | Flag::Interlaced);
++    const OutputModeline hdmi(base.size(), base.refreshRate(), Flag::Stereo3DFramePacking | Flag::Interlaced);
++    const OutputModeline selected(base.size(), base.refreshRate(), layout | Flag::Interlaced);
++    const auto backend = qobject_cast<VirtualBackend *>(kwinApp()->outputBackend());
++    backend->setVirtualOutputs({VirtualBackend::OutputInfo{
++        .size = base.size(),
++        .modes = {base, hdmi},
++        .edidIdentifierOverride = QByteArrayLiteral("InterlacedRestore"),
++    }});
++    const auto outputs = backend->outputs();
++    auto store = workspace()->outputConfigureStore();
++    store->clear();
++    QVERIFY(store->queryConfig(outputs, false, AccelerometerOrientation::Undefined, false));
++    OutputConfiguration choice;
++    choice.changeSet(outputs[0])->desiredMode = selected;
++    choice.changeSet(outputs[0])->anaglyph = true;
++    outputs[0]->applyChanges(choice);
++    store->storeConfig(outputs, false);
++
++    if (legacy) {
++        QFile file(QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + QStringLiteral("/kwinoutputconfig.json"));
++        QVERIFY(file.open(QIODevice::ReadOnly));
++        auto document = QJsonDocument::fromJson(file.readAll());
++        file.close();
++        auto sections = document.array();
++        for (qsizetype i = 0; i < sections.size(); ++i) {
++            auto section = sections[i].toObject();
++            if (section["name"] != "outputs") {
++                continue;
++            }
++            auto entries = section["data"].toArray();
++            for (qsizetype j = 0; j < entries.size(); ++j) {
++                auto entry = entries[j].toObject();
++                auto mode = entry["mode"].toObject();
++                mode.remove("interlaced");
++                mode["flags"] = mode["flags"].toInt() & ~int(Flag::Interlaced);
++                entry["mode"] = mode;
++                entries[j] = entry;
++            }
++            section["data"] = entries;
++            sections[i] = section;
++        }
++        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
++        QVERIFY(file.write(QJsonDocument(sections).toJson()) > 0);
++    }
++    OutputConfigurationStore reloaded;
++    const auto restored = reloaded.queryConfig(outputs, false, AccelerometerOrientation::Undefined, false);
++    QVERIFY(restored);
++    QCOMPARE(*restored->first.constChangeSet(outputs[0])->currentMode, selected);
++    QCOMPARE(*restored->first.constChangeSet(outputs[0])->desiredMode, selected);
++}
++
+ void OutputChangesTest::testColorPowerTradeoffDefault()
+ {
+     // A new output prefers colour accuracy (max bpc 16), but a stored choice must win.
+diff --git a/src/backends/drm/drm_connector.cpp b/src/backends/drm/drm_connector.cpp
+index c5486a4..e0aebb8 100644
+--- a/src/backends/drm/drm_connector.cpp
++++ b/src/backends/drm/drm_connector.cpp
+@@ -51,6 +51,9 @@ uint32_t DrmConnector::refreshRateForMode(_drmModeModeInfo *m)
+ static OutputModeline::Flags flagsForMode(const drmModeModeInfo *info, OutputModeline::Flags additionalFlags)
+ {
+     OutputModeline::Flags flags = additionalFlags | stereoFlagsForDrmMode(info->flags);
++    if (info->flags & DRM_MODE_FLAG_INTERLACE) {
++        flags |= OutputModeline::Flag::Interlaced;
++    }
+     if (info->type & DRM_MODE_TYPE_PREFERRED) {
+         flags |= OutputModeline::Flag::Preferred;
+     }
+diff --git a/src/backends/drm/drm_gpu.cpp b/src/backends/drm/drm_gpu.cpp
+index 2bac2bd..e0e839c 100644
+--- a/src/backends/drm/drm_gpu.cpp
++++ b/src/backends/drm/drm_gpu.cpp
+@@ -426,7 +426,7 @@ void DrmGpu::probeFrameSequential(DrmConnector *connector)
+         const auto twin = std::make_shared<DrmConnectorMode>(mode, OutputModeline::Flag::Stereo3DSequentialDisplayPort);
+         const bool accepted = connector->testFrameSequential(crtc, twin, framebuffer);
+         mode->setFrameSequentialAccepted(accepted);
+-        qCDebug(KWIN_DRM) << "Frame sequential stereo on" << connector->connectorName() << mode->size() << mode->refreshRate()
++        qCDebug(KWIN_DRM) << "Frame sequential stereo on" << connector->connectorName() << mode->name()
+                           << (accepted ? "accepted" : "refused");
+     }
+ }
+diff --git a/src/core/output.cpp b/src/core/output.cpp
+index f5226bf..641463b 100644
+--- a/src/core/output.cpp
++++ b/src/core/output.cpp
+@@ -65,6 +65,14 @@ OutputModeline::OutputModeline(const QSize &size, uint32_t refreshRate, OutputMo
+ {
+ }
+ 
++QString OutputModeline::name() const
++{
++    return QStringLiteral("%1x%2%3@%4")
++        .arg(m_size.width()).arg(m_size.height())
++        .arg(m_flags & Flag::Interlaced ? QStringLiteral("i") : QString())
++        .arg(m_refreshRate / 1000.0, 0, 'f', 2);
++}
++
+ bool OutputModeline::isEmpty() const
+ {
+     return m_size.isEmpty();
+@@ -142,6 +150,11 @@ uint32_t OutputMode::refreshRate() const
+     return m_modeline.refreshRate();
+ }
+ 
++QString OutputMode::name() const
++{
++    return m_modeline.name();
++}
++
+ OutputModeline::Flags OutputMode::flags() const
+ {
+     return m_modeline.flags();
+diff --git a/src/core/output.h b/src/core/output.h
+index 846d64e..e1ca145 100644
+--- a/src/core/output.h
++++ b/src/core/output.h
+@@ -147,6 +147,7 @@ public:
+         // mode's 2D timing, left eye first, and tells the display which eye each frame carries;
+         // a display 3D mode when the display declares it, else a twin of a 2D mode at 100 Hz or more
+         Stereo3DSequentialDisplayPort = 0x1000000,
++        Interlaced = 0x2000000,
+     };
+     Q_DECLARE_FLAGS(Flags, Flag)
+ 
+@@ -179,6 +180,7 @@ public:
+     bool isEmpty() const;
+     QSize size() const;
+     uint32_t refreshRate() const;
++    QString name() const;
+     Flags flags() const;
+ 
+     std::shared_ptr<OutputMode> match(const QList<std::shared_ptr<OutputMode>> &modes) const;
+@@ -207,6 +209,7 @@ public:
+ 
+     QSize size() const;
+     uint32_t refreshRate() const;
++    QString name() const;
+     OutputModeline::Flags flags() const;
+     OutputModeline modeline() const;
+ 
+diff --git a/src/outputconfigurationstore.cpp b/src/outputconfigurationstore.cpp
+index b02b297..59d2851 100644
+--- a/src/outputconfigurationstore.cpp
++++ b/src/outputconfigurationstore.cpp
+@@ -90,7 +90,7 @@ static bool canRestoreVirtualMode(BackendOutput *output, const OutputModeline &s
+     if (!(saved.flags() & Flag::VirtualStereo)) {
+         return false;
+     }
+-    const auto layouts = saved.flags() & ~(Flag::Preferred | Flag::Generated | Flag::Custom | Flag::ReducedBlanking | Flag::VirtualStereo);
++    const auto layouts = saved.flags() & ~(Flag::Preferred | Flag::Generated | Flag::Custom | Flag::ReducedBlanking | Flag::VirtualStereo | Flag::Interlaced);
+     const bool anaglyphLayout = layouts == Flag::Stereo3DAnaglyphModern || layouts == Flag::Stereo3DAnaglyphCrt;
+     // the hand-switched packings, and the side by side (full) twin of a mode two eyes wide
+     const bool halfLayout = layouts == Flag::Stereo3DSideBySideHalf || layouts == Flag::Stereo3DTopAndBottom || layouts == Flag::Stereo3DSideBySideFull;
+@@ -126,6 +126,23 @@ static bool canRestoreVirtualMode(BackendOutput *output, const OutputModeline &s
+     return baseExists && (!spatialLayout || nativeSize);
+ }
+ 
++// Older configurations did not carry scan type. Prefer an exact match, then recover
++// an interlaced mode only when its progressive counterpart cannot be restored.
++static std::optional<OutputModeline> restoreScanType(BackendOutput *output, const std::optional<OutputModeline> &saved, bool scanTypeKnown, bool anaglyph, bool otherStereoFormats, const std::optional<QList<CustomModeDefinition>> &customModes)
++{
++    if (!saved || scanTypeKnown || (saved->flags() & OutputModeline::Flag::Custom)) {
++        return saved;
++    }
++    const auto exists = [&](const OutputModeline &mode) {
++        return mode.match(output->modes()) || canRestoreVirtualMode(output, mode, anaglyph, otherStereoFormats, customModes);
++    };
++    if (exists(*saved)) {
++        return saved;
++    }
++    const OutputModeline interlaced(saved->size(), saved->refreshRate(), saved->flags() | OutputModeline::Flag::Interlaced);
++    return exists(interlaced) ? std::make_optional(interlaced) : saved;
++}
++
+ OutputConfigurationStore::OutputConfigurationStore()
+ {
+     load();
+@@ -497,7 +514,8 @@ OutputConfiguration OutputConfigurationStore::setupToConfig(Setup *setup, const
+     OutputConfiguration ret;
+     QList<std::pair<BackendOutput *, size_t>> priorities;
+     for (const auto &[output, outputIndex] : outputMap) {
+-        const OutputState &state = m_outputs[outputIndex];
++        OutputState state = m_outputs[outputIndex];
++        state.mode = restoreScanType(output, state.mode, state.modeScanTypeKnown, state.anaglyph.value_or(false), state.otherStereoFormats.value_or(false), state.customModes);
+         const auto &setupState = *std::find_if(setup->outputs.begin(), setup->outputs.end(), [outputIndex = outputIndex](const auto &state) {
+             return state.outputIndex == outputIndex;
+         });
+@@ -523,7 +541,8 @@ OutputConfiguration OutputConfigurationStore::setupToConfig(Setup *setup, const
+                 // This is fallback for output configs prior to 6.6.5, which didn't have flags.
+                 if (!effectiveMode) {
+                     for (const auto &mode : availableModes) {
+-                        if (mode->isRemoved() || isStereo3D(mode->flags())) {
++                        if (mode->isRemoved() || isStereo3D(mode->flags())
++                            || mode->flags().testFlag(OutputModeline::Flag::Interlaced) != state.mode->flags().testFlag(OutputModeline::Flag::Interlaced)) {
+                             continue;
+                         }
+                         if (state.mode->size() == mode->size() && state.mode->refreshRate() == mode->refreshRate()) {
+@@ -542,8 +561,8 @@ OutputConfiguration OutputConfigurationStore::setupToConfig(Setup *setup, const
+                 effectiveMode = twin;
+                 glassesTwinChosen = true;
+             }
+-            qCDebug(KWIN_OUTPUT_CONFIG, "Chose new mode for output %s: %dx%d@%u%s",
+-                    qPrintable(state.edidIdentifier), effectiveMode->size().width(), effectiveMode->size().height(), effectiveMode->refreshRate(),
++            qCDebug(KWIN_OUTPUT_CONFIG, "Chose new mode for output %s: %s%s",
++                    qPrintable(state.edidIdentifier), qPrintable(effectiveMode->name()),
+                     glassesTwinChosen ? " side by side (full), for glasses" : "");
+         }
+ 
+@@ -703,7 +722,8 @@ OutputConfiguration OutputConfigurationStore::generateConfig(const QList<Backend
+ 
+         const auto outputIndex = findOutputIndex(output, outputs);
+         const bool enable = kscreenChangeSet.enabled.value_or(!isLidClosed || !output->isInternal() || outputs.size() == 1);
+-        const OutputState existingData = outputIndex ? m_outputs[*outputIndex] : OutputState{};
++        OutputState existingData = outputIndex ? m_outputs[*outputIndex] : OutputState{};
++        existingData.mode = restoreScanType(output, existingData.mode, existingData.modeScanTypeKnown, existingData.anaglyph.value_or(false), existingData.otherStereoFormats.value_or(false), existingData.customModes);
+ 
+         std::optional<OutputModeline> modeline = output->initialVirtualMode();
+         if (!modeline && existingData.mode && canRestoreVirtualMode(output, *existingData.mode, existingData.anaglyph.value_or(false), existingData.otherStereoFormats.value_or(false), existingData.customModes)) {
+@@ -726,7 +746,8 @@ OutputConfiguration OutputConfigurationStore::generateConfig(const QList<Backend
+                 // This is fallback for output configs prior to 6.6.5, which didn't have flags.
+                 if (!modeline) {
+                     for (const auto &mode : availableModes) {
+-                        if (mode->isRemoved() || isStereo3D(mode->flags())) {
++                        if (mode->isRemoved() || isStereo3D(mode->flags())
++                            || mode->flags().testFlag(OutputModeline::Flag::Interlaced) != existingData.mode->flags().testFlag(OutputModeline::Flag::Interlaced)) {
+                             continue;
+                         }
+                         if (existingData.mode->size() == mode->size() && existingData.mode->refreshRate() == mode->refreshRate()) {
+@@ -1189,7 +1210,8 @@ void OutputConfigurationStore::load()
+             const auto flags = OutputModeline::Flags(obj["flags"].toInt(0));
+             if (width > 0 && height > 0 && refreshRate > 0) {
+                 state.mode = OutputModeline(QSize(width, height), refreshRate, flags);
+-                qCDebug(KWIN_OUTPUT_CONFIG, "Read mode %dx%d@%u for output %s", width, height, refreshRate, qPrintable(state.edidIdentifier));
++                state.modeScanTypeKnown = obj["interlaced"].isBool() || flags.testFlag(OutputModeline::Flag::Interlaced);
++                qCDebug(KWIN_OUTPUT_CONFIG, "Read mode %s for output %s", qPrintable(state.mode->name()), qPrintable(state.edidIdentifier));
+             }
+         }
+         if (const auto it = data.find("scale"); it != data.end()) {
+@@ -1610,6 +1632,7 @@ void OutputConfigurationStore::save()
+             mode["height"] = output.mode->size().height();
+             mode["refreshRate"] = int(output.mode->refreshRate());
+             mode["flags"] = int(output.mode->flags());
++            mode["interlaced"] = output.mode->flags().testFlag(OutputModeline::Flag::Interlaced);
+             o["mode"] = mode;
+         }
+         if (output.scaleSetting) {
+diff --git a/src/outputconfigurationstore.h b/src/outputconfigurationstore.h
+index 927d574..bb5975e 100644
+--- a/src/outputconfigurationstore.h
++++ b/src/outputconfigurationstore.h
+@@ -62,6 +62,7 @@ private:
+         QString mstPath;
+         // actual state
+         std::optional<OutputModeline> mode;
++        bool modeScanTypeKnown = true;
+         std::optional<double> scaleSetting;
+         std::optional<OutputTransform> transform;
+         std::optional<OutputTransform> manualTransform;
+diff --git a/src/wayland/outputdevice_v2.cpp b/src/wayland/outputdevice_v2.cpp
+index b1407e9..1b566be 100644
+--- a/src/wayland/outputdevice_v2.cpp
++++ b/src/wayland/outputdevice_v2.cpp
+@@ -1531,6 +1531,9 @@ void OutputDeviceModeV2InterfacePrivate::bindResource(Resource *resource)
+     }
+     if (resource->version() >= KDE_OUTPUT_DEVICE_MODE_V2_FLAGS_CUSTOM) {
+         uint32_t flags = 0;
++        if (resource->version() >= 31 && (m_flags & OutputModeline::Flag::Interlaced)) {
++            flags |= 0x2000000;
++        }
+         if (m_flags & OutputModeline::Flag::Custom) {
+             flags |= KDE_OUTPUT_DEVICE_MODE_V2_FLAGS_CUSTOM;
+         }
+diff --git a/src/wayland/protocols/stereo/kde-output-device-v2.xml b/src/wayland/protocols/stereo/kde-output-device-v2.xml
+index a9a7741..69c495c 100644
+--- a/src/wayland/protocols/stereo/kde-output-device-v2.xml
++++ b/src/wayland/protocols/stereo/kde-output-device-v2.xml
+@@ -10,7 +10,7 @@
+     SPDX-License-Identifier: MIT-CMU
+     ]]></copyright>
+ 
+-  <interface name="kde_output_device_registry_v2" version="30">
++  <interface name="kde_output_device_registry_v2" version="31">
+     <description summary="output devices">
+       This interface can be used to list output devices.
+ 
+@@ -52,7 +52,7 @@
+     </event>
+   </interface>
+ 
+-  <interface name="kde_output_device_v2" version="30">
++  <interface name="kde_output_device_v2" version="31">
+     <description summary="output configuration representation">
+       An output device describes a display device available to the compositor.
+       output_device is similar to wl_output, but focuses on output
+@@ -709,7 +709,7 @@
+     </event>
+   </interface>
+ 
+-  <interface name="kde_output_device_mode_v2" version="30">
++  <interface name="kde_output_device_mode_v2" version="31">
+     <description summary="output mode">
+       This object describes an output mode.
+ 
+@@ -778,6 +778,7 @@
+       <entry name="stereo_l_depth" value="0x400000" since="28" summary="HDMI 1.4a 3D, L + depth"/>
+       <entry name="stereo_l_depth_graphics" value="0x800000" since="28" summary="HDMI 1.4a 3D, L + depth + graphics + graphics-depth"/>
+       <entry name="stereo_sequential_displayport" value="0x1000000" since="30" summary="DisplayPort frame sequential stereo, signalled by the source"/>
++      <entry name="interlaced" value="0x2000000" since="31" summary="interlaced scan; refresh is the field rate"/>
+ 
+     </enum>
+ 
+diff --git a/src/workspace.cpp b/src/workspace.cpp
+index 0e5f510..391bebf 100644
+--- a/src/workspace.cpp
++++ b/src/workspace.cpp
+@@ -2021,6 +2021,9 @@ QString Workspace::supportInformation() const
+                                .arg(output->physicalSize().width())
+                                .arg(output->physicalSize().height()));
+             support.append(QStringLiteral("Scale: %1\n").arg(output->scale()));
++            if (const auto mode = output->currentMode()) {
++                support.append(QStringLiteral("Mode: %1\n").arg(mode->name()));
++            }
+             support.append(QStringLiteral("Refresh Rate: %1\n").arg(output->refreshRate()));
+             QString vrr = QStringLiteral("incapable");
+             if (output->capabilities() & BackendOutput::Capability::Vrr) {

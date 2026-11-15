@@ -1,0 +1,70 @@
+Description: Carry scan type through the display mode list and preserve selection
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, ORDER 568
+Forwarded: no
+Last-Update: 2026-11-14
+Assisted-by: GPT-6 (OpenAI)
+
+diff --git a/src/protocols/kde-output-device-v2.xml b/src/protocols/kde-output-device-v2.xml
+index a9a7741..69c495c 100644
+--- a/src/protocols/kde-output-device-v2.xml
++++ b/src/protocols/kde-output-device-v2.xml
+@@ -10,7 +10,7 @@
+     SPDX-License-Identifier: MIT-CMU
+     ]]></copyright>
+ 
+-  <interface name="kde_output_device_registry_v2" version="30">
++  <interface name="kde_output_device_registry_v2" version="31">
+     <description summary="output devices">
+       This interface can be used to list output devices.
+ 
+@@ -52,7 +52,7 @@
+     </event>
+   </interface>
+ 
+-  <interface name="kde_output_device_v2" version="30">
++  <interface name="kde_output_device_v2" version="31">
+     <description summary="output configuration representation">
+       An output device describes a display device available to the compositor.
+       output_device is similar to wl_output, but focuses on output
+@@ -709,7 +709,7 @@
+     </event>
+   </interface>
+ 
+-  <interface name="kde_output_device_mode_v2" version="30">
++  <interface name="kde_output_device_mode_v2" version="31">
+     <description summary="output mode">
+       This object describes an output mode.
+ 
+@@ -778,6 +778,7 @@
+       <entry name="stereo_l_depth" value="0x400000" since="28" summary="HDMI 1.4a 3D, L + depth"/>
+       <entry name="stereo_l_depth_graphics" value="0x800000" since="28" summary="HDMI 1.4a 3D, L + depth + graphics + graphics-depth"/>
+       <entry name="stereo_sequential_displayport" value="0x1000000" since="30" summary="DisplayPort frame sequential stereo, signalled by the source"/>
++      <entry name="interlaced" value="0x2000000" since="31" summary="interlaced scan; refresh is the field rate"/>
+ 
+     </enum>
+ 
+diff --git a/tests/virtual-stereo-contract.py b/tests/virtual-stereo-contract.py
+index e0b850d..36646a1 100644
+--- a/tests/virtual-stereo-contract.py
++++ b/tests/virtual-stereo-contract.py
+@@ -40,7 +40,7 @@ class VirtualStereoContract(unittest.TestCase):
+     def test_device(self):
+         protocol = ET.parse(ROOT / 'kde-output-device-v2.xml')
+         for name in ('kde_output_device_registry_v2', 'kde_output_device_v2', 'kde_output_device_mode_v2'):
+-            self.assertEqual(protocol.find(f"interface[@name='{name}']").get('version'), '30')
++            self.assertEqual(protocol.find(f"interface[@name='{name}']").get('version'), '31')
+         capability = protocol.find("interface[@name='kde_output_device_v2']/enum[@name='capability']/entry[@name='virtual_stereo']")
+         self.assertEqual(int(capability.get('value'), 0), 0x20000)
+         self.assertEqual(capability.get('since'), '24')
+@@ -60,8 +60,9 @@ class VirtualStereoContract(unittest.TestCase):
+                     'stereo_sequential_right_first': 524288,
+                     'stereo_field_alternative': 0x100000, 'stereo_line_alternative': 0x200000,
+                     'stereo_l_depth': 0x400000, 'stereo_l_depth_graphics': 0x800000,
+-                    'stereo_sequential_displayport': 0x1000000}
++                    'stereo_sequential_displayport': 0x1000000, 'interlaced': 0x2000000}
+         self.assertEqual(values, expected)
++        self.assertEqual(next(entry for entry in entries if entry.get('name') == 'interlaced').get('since'), '31')
+         pair_event = protocol.find("interface[@name='kde_output_device_v2']/event[@name='stereo_pair']")
+         self.assertEqual(pair_event.get('since'), '24')
+         self.assertEqual([(a.get('name'), a.get('type')) for a in pair_event.findall('arg')],

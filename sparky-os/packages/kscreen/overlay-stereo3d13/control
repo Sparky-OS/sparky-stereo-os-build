@@ -1,0 +1,62 @@
+Source: kscreen
+Section: kde
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+XSBC-Original-Maintainer: Debian Qt/KDE Maintainers <debian-qt-kde@lists.debian.org>
+Uploaders: Aurélien COUDERC <coucouf@debian.org>,
+           Patrick Franz <deltaone@debian.org>,
+           Scarlett Moore <sgmoore@kde.org>,
+Build-Depends: gcc, node-acorn, nodejs, perl, python3, python3-yaml, debhelper-compat (= 13),
+               dh-sequence-kf6,
+               dh-sequence-pkgkde-symbolshelper,
+               dh-sequence-plasma,
+               dh-sequence-qmldeps,
+               cmake (>= 3.16~),
+               extra-cmake-modules (>= 6.26.0~),
+               gettext,
+               libkf6config-dev (>= 6.26.0~),
+               libkf6crash-dev (>= 6.26.0~),
+               libkf6dbusaddons-dev (>= 6.26.0~),
+               libkf6i18n-dev (>= 6.26.0~),
+               libkf6kcmutils-dev (>= 6.26.0~),
+               libkf6svg-dev (>= 6.26.0~),
+               libkf6xmlgui-dev (>= 6.26.0~),
+               libkscreen-dev (>= 4:6.7.4-1+stereo3d12~),
+               liblayershellqtinterface-dev (>= 6.6~),
+               libplasma-dev (>= 6.7.0~),
+               libx11-xcb-dev,
+               libxcb-util-dev,
+               libxcb1-dev,
+               libxi-dev,
+               libxkbcommon-dev,
+               qml6-module-org-kde-kitemmodels,
+               qml6-module-org-kde-plasma-plasma5support,
+               qt6-base-dev (>= 6.10.0~),
+               qt6-base-private-dev (>= 6.10.0~),
+               qt6-declarative-dev (>= 6.10.0~),
+               qt6-sensors-dev (>= 6.7.0~),
+               wayland-protocols (>= 1.41~),
+Standards-Version: 4.7.4
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+Vcs-Browser: https://salsa.debian.org/qt-kde-team/kde/kscreen
+Vcs-Git: https://salsa.debian.org/qt-kde-team/kde/kscreen.git
+
+Package: kscreen
+Architecture: any
+Depends: kde-cli-tools (>= 4:6.2.90~),
+         libkf6screen8 (>= 4:6.7.4-1+stereo3d10),
+         plasma-desktoptheme,
+         ${misc:Depends},
+         ${plasma-version:Depends},
+         ${qml6:Depends},
+         ${shlibs:Depends},
+Recommends: systemsettings,
+            upower,
+Description: KDE monitor hotplug and screen handling
+ KScreen provides multiple monitor support.  This support tries to be
+ as smart as possible adapting the behavior of it to each use case
+ making the configuration of monitors as simple as plugging them into
+ your computer.
+ .
+ This package contains the modules and plugins for monitor hotplug and
+ automatic screen handling.

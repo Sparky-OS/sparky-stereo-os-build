@@ -1,0 +1,275 @@
+Description: Carry scan type through the display mode list and preserve selection
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, ORDER 568
+Forwarded: no
+Last-Update: 2026-11-14
+Assisted-by: GPT-6 (OpenAI)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index b04cd64..d8f5eac 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -39,6 +39,13 @@ find_package(WaylandScanner)
+ 
+ find_package(PlasmaWaylandProtocols 1.21 CONFIG)
+ set_package_properties(PlasmaWaylandProtocols PROPERTIES TYPE REQUIRED)
++option(REQUIRE_KSCREEN_INTERLACED "Require the interlaced mode protocol" OFF)
++if(REQUIRE_KSCREEN_INTERLACED)
++    file(READ "${PLASMA_WAYLAND_PROTOCOLS_DIR}/kde-output-device-v2.xml" output_device_protocol)
++    if(NOT output_device_protocol MATCHES "name=\"interlaced\" value=\"0x2000000\"")
++        message(FATAL_ERROR "Interlaced mode protocol unavailable")
++    endif()
++endif()
+ 
+ find_package(Wayland 1.24 COMPONENTS Client)
+ set_package_properties(Wayland PROPERTIES
+diff --git a/autotests/testconfigserializer.cpp b/autotests/testconfigserializer.cpp
+index acd8518..3392a63 100644
+--- a/autotests/testconfigserializer.cpp
++++ b/autotests/testconfigserializer.cpp
+@@ -119,6 +119,25 @@ private Q_SLOTS:
+         QCOMPARE(output->preferredModeId(), base->id());
+     }
+ 
++    void testInterlacedMode()
++    {
++        KScreen::ModePtr mode(new KScreen::Mode);
++        mode->setSize(QSize(1920, 1080));
++        mode->setRefreshRate(60);
++        const auto progressive = mode->clone();
++        QVERIFY(!mode->interlaced());
++        QSignalSpy spy(mode.data(), &KScreen::Mode::modeChanged);
++        mode->setInterlaced(true);
++        QCOMPARE(spy.count(), 1);
++        mode->setInterlaced(true);
++        QCOMPARE(spy.count(), 1);
++        QVERIFY(!(*mode == *progressive));
++        QVERIFY(mode->clone()->interlaced());
++        QCOMPARE(KScreen::ConfigSerializer::serializeMode(mode)[QStringLiteral("interlaced")].toBool(), true);
++        mode->setStereo3D(KScreen::Mode::Stereo3D::FramePacking);
++        QVERIFY(mode->clone()->interlaced());
++    }
++
+     void testVirtualStereo()
+     {
+         KScreen::ModePtr mode(new KScreen::Mode);
+diff --git a/backends/kwayland/waylandoutputdevice.cpp b/backends/kwayland/waylandoutputdevice.cpp
+index f336772..f5f20cd 100644
+--- a/backends/kwayland/waylandoutputdevice.cpp
++++ b/backends/kwayland/waylandoutputdevice.cpp
+@@ -23,7 +23,9 @@
+ using namespace KScreen;
+ 
+ WaylandOutputDeviceRegistry::WaylandOutputDeviceRegistry()
+-#if defined(KDE_OUTPUT_DEVICE_MODE_V2_FLAGS_STEREO_SEQUENTIAL_DISPLAYPORT_SINCE_VERSION)
++#if defined(KDE_OUTPUT_DEVICE_MODE_V2_FLAGS_INTERLACED_SINCE_VERSION)
++    : QWaylandClientExtensionTemplate<WaylandOutputDeviceRegistry>(31)
++#elif defined(KDE_OUTPUT_DEVICE_MODE_V2_FLAGS_STEREO_SEQUENTIAL_DISPLAYPORT_SINCE_VERSION)
+     : QWaylandClientExtensionTemplate<WaylandOutputDeviceRegistry>(30)
+ #elif defined(KDE_OUTPUT_DEVICE_V2_STEREO_GLASSES_SINCE_VERSION)
+     : QWaylandClientExtensionTemplate<WaylandOutputDeviceRegistry>(29)
+@@ -203,6 +205,7 @@ void KScreen::WaylandOutputDevice::updateKScreenModes(OutputPtr &output)
+         mode->setSize(wlMode->size());
+         mode->setViewSize(wlMode->viewSize());
+         mode->setName(modeName(wlMode));
++        mode->setInterlaced(wlMode->flags() & ModeInfo::Flag::Interlaced);
+         if (wlMode->flags() & ModeInfo::Flag::Stereo3DSideBySideHalf) {
+             mode->setStereo3D(Mode::Stereo3D::SideBySideHalf);
+         } else if (wlMode->flags() & ModeInfo::Flag::Stereo3DTopAndBottom) {
+@@ -599,7 +602,7 @@ bool WaylandOutputDevice::setWlConfig(WaylandOutputManagement *management,
+ 
+ QString WaylandOutputDevice::modeName(const WaylandOutputDeviceMode *m) const
+ {
+-    return QString::number(m->size().width()) + QLatin1Char('x') + QString::number(m->size().height()) + QLatin1Char('@')
++    return QString::number(m->size().width()) + QLatin1Char('x') + QString::number(m->size().height()) + (m->flags() & ModeInfo::Flag::Interlaced ? QStringLiteral("i") : QString()) + QLatin1Char('@')
+         + QString::number(qRound(m->refreshRate()));
+ }
+ 
+diff --git a/backends/kwayland/waylandoutputdevicemode.cpp b/backends/kwayland/waylandoutputdevicemode.cpp
+index 862eb2a..9532538 100644
+--- a/backends/kwayland/waylandoutputdevicemode.cpp
++++ b/backends/kwayland/waylandoutputdevicemode.cpp
+@@ -63,6 +63,11 @@ void WaylandOutputDeviceMode::kde_output_device_mode_v2_removed()
+ void WaylandOutputDeviceMode::kde_output_device_mode_v2_flags(uint32_t flags)
+ {
+     m_flags = {};
++#ifdef KDE_OUTPUT_DEVICE_MODE_V2_FLAGS_INTERLACED_SINCE_VERSION
++    if (flags & KDE_OUTPUT_DEVICE_MODE_V2_FLAGS_INTERLACED) {
++        m_flags |= ModeInfo::Flag::Interlaced;
++    }
++#endif
+     if (flags & 0x40) {
+         m_flags |= ModeInfo::Flag::Stereo3DAnaglyphModern;
+     }
+diff --git a/backends/xrandr/xrandrmode.cpp b/backends/xrandr/xrandrmode.cpp
+index 2a21bd9..af15868 100644
+--- a/backends/xrandr/xrandrmode.cpp
++++ b/backends/xrandr/xrandrmode.cpp
+@@ -13,6 +13,7 @@ XRandRMode::XRandRMode(const xcb_randr_mode_info_t &modeInfo, XRandROutput *outp
+     : QObject(output)
+ {
+     m_id = modeInfo.id;
++    m_interlaced = modeInfo.mode_flags & XCB_RANDR_MODE_FLAG_INTERLACE;
+     // FIXME XCB
+     // m_name = QString::fromUtf8(modeInfo->name);
+     m_size = QSize(modeInfo.width, modeInfo.height);
+@@ -44,6 +45,7 @@ KScreen::ModePtr XRandRMode::toKScreenMode()
+     kscreenMode->setName(m_name);
+     kscreenMode->setSize(m_size);
+     kscreenMode->setRefreshRate(m_refreshRate);
++    kscreenMode->setInterlaced(m_interlaced);
+ 
+     return kscreenMode;
+ }
+diff --git a/backends/xrandr/xrandrmode.h b/backends/xrandr/xrandrmode.h
+index 8f013b6..e9d8634 100644
+--- a/backends/xrandr/xrandrmode.h
++++ b/backends/xrandr/xrandrmode.h
+@@ -44,4 +44,5 @@ private:
+     QString m_name;
+     QSize m_size;
+     float m_refreshRate;
++    bool m_interlaced = false;
+ };
+diff --git a/src/configserializer.cpp b/src/configserializer.cpp
+index c815309..7207057 100644
+--- a/src/configserializer.cpp
++++ b/src/configserializer.cpp
+@@ -155,6 +155,7 @@ QJsonObject ConfigSerializer::serializeMode(const ModePtr &mode)
+     obj[QLatin1String("viewSize")] = serializeSize(mode->viewSize());
+     obj[QLatin1String("refreshRate")] = mode->refreshRate();
+     obj[QLatin1String("virtualStereo")] = mode->virtualStereo();
++    obj[QLatin1String("interlaced")] = mode->interlaced();
+     obj[QLatin1String("stereo3D")] = static_cast<int>(mode->stereo3D());
+ 
+     return obj;
+@@ -404,6 +405,8 @@ ModePtr ConfigSerializer::deserializeMode(const QDBusArgument &arg)
+             mode->setRefreshRate(value.toFloat());
+         } else if (key == QLatin1String("virtualStereo")) {
+             mode->setVirtualStereo(value.toBool());
++        } else if (key == QLatin1String("interlaced")) {
++            mode->setInterlaced(value.toBool());
+         } else if (key == QLatin1String("stereo3D")) {
+             mode->setStereo3D(static_cast<Mode::Stereo3D>(value.toInt()));
+         } else {
+diff --git a/src/doctor/doctor.cpp b/src/doctor/doctor.cpp
+index 1a93ecf..bf66b73 100644
+--- a/src/doctor/doctor.cpp
++++ b/src/doctor/doctor.cpp
+@@ -783,7 +783,7 @@ void Doctor::showOutputs() const
+             auto mode = *modes.find(key);
+ 
+             auto name = QStringLiteral("%1x%2@%3")
+-                            .arg(QString::number(mode->size().width()), QString::number(mode->size().height()), QString::number(mode->refreshRate(), 'f', 2));
++                            .arg(QString::number(mode->size().width()), QString::number(mode->size().height()) + (mode->interlaced() ? QStringLiteral("i") : QString()), QString::number(mode->refreshRate(), 'f', 2));
+             if (mode == output->currentMode()) {
+                 name = green + name + QLatin1Char('*') + cr;
+             }
+@@ -824,7 +824,7 @@ void Doctor::showOutputs() const
+             cout << endl;
+             for (const auto &[info, index] : std::views::zip(customModes, std::views::iota(0))) {
+                 cout << "\t\t" << index << ": ";
+-                cout << std::format("{}x{}@{:.2f}", info.size.width(), info.size.height(), info.refreshRate).c_str();
++                cout << std::format("{}x{}{}@{:.2f}", info.size.width(), info.size.height(), (info.flags & ModeInfo::Flag::Interlaced) ? "i" : "", info.refreshRate).c_str();
+                 if (info.flags & ModeInfo::Flag::ReducedBlanking) {
+                     cout << " (reduced blanking)";
+                 }
+@@ -1099,7 +1099,7 @@ KScreen::ModePtr Doctor::findMode(OutputPtr output, const QString &query)
+ {
+     for (const KScreen::ModePtr &mode : output->modes()) {
+         auto name = QStringLiteral("%1x%2@%3")
+-                        .arg(QString::number(mode->size().width()), QString::number(mode->size().height()), QString::number(qRound(mode->refreshRate())));
++                        .arg(QString::number(mode->size().width()), QString::number(mode->size().height()) + (mode->interlaced() ? QStringLiteral("i") : QString()), QString::number(qRound(mode->refreshRate())));
+         if (mode->id() == query || name == query) {
+             qCDebug(KSCREEN_DOCTOR) << "Taddaaa! Found mode" << mode->id() << name;
+             return mode;
+diff --git a/src/mode.cpp b/src/mode.cpp
+index 3b45492..b895d1c 100644
+--- a/src/mode.cpp
++++ b/src/mode.cpp
+@@ -24,6 +24,7 @@ public:
+         , rate(other.rate)
+         , stereo3D(other.stereo3D)
+         , virtualStereo(other.virtualStereo)
++        , interlaced(other.interlaced)
+     {
+     }
+ 
+@@ -34,6 +35,7 @@ public:
+     float rate;
+     Mode::Stereo3D stereo3D = Mode::Stereo3D::None;
+     bool virtualStereo = false;
++    bool interlaced = false;
+ };
+ 
+ Mode::Mode()
+@@ -136,6 +138,19 @@ void Mode::setRefreshRate(float refresh)
+     Q_EMIT modeChanged();
+ }
+ 
++bool Mode::interlaced() const
++{
++    return d->interlaced;
++}
++
++void Mode::setInterlaced(bool value)
++{
++    if (d->interlaced != value) {
++        d->interlaced = value;
++        Q_EMIT modeChanged();
++    }
++}
++
+ bool Mode::virtualStereo() const
+ {
+     return d->virtualStereo;
+@@ -167,13 +182,13 @@ void Mode::setStereo3D(Stereo3D stereo3D)
+ 
+ bool Mode::operator==(const Mode &other) const
+ {
+-    return d->size == other.d->size && viewSize() == other.viewSize() && d->rate == other.d->rate && d->stereo3D == other.d->stereo3D && d->virtualStereo == other.d->virtualStereo;
++    return d->size == other.d->size && viewSize() == other.viewSize() && d->rate == other.d->rate && d->stereo3D == other.d->stereo3D && d->virtualStereo == other.d->virtualStereo && d->interlaced == other.d->interlaced;
+ }
+ 
+ QDebug operator<<(QDebug dbg, const KScreen::ModePtr &mode)
+ {
+     if (mode) {
+-        dbg << "KScreen::Mode(Id:" << mode->id() << ", Size:" << mode->size() << "@" << mode->refreshRate() << ", 3D:" << mode->stereo3D() << ")";
++        dbg << "KScreen::Mode(Id:" << mode->id() << ", Size:" << QStringLiteral("%1x%2%3").arg(mode->size().width()).arg(mode->size().height()).arg(mode->interlaced() ? QStringLiteral("i") : QString()) << "@" << mode->refreshRate() << ", 3D:" << mode->stereo3D() << ")";
+     } else {
+         dbg << "KScreen::Mode(NULL)";
+     }
+diff --git a/src/mode.h b/src/mode.h
+index 1539c6c..64c376c 100644
+--- a/src/mode.h
++++ b/src/mode.h
+@@ -25,6 +25,7 @@ class KSCREEN_EXPORT Mode : public QObject
+     Q_PROPERTY(QSize size READ size WRITE setSize NOTIFY modeChanged)
+     Q_PROPERTY(QSize viewSize READ viewSize WRITE setViewSize NOTIFY modeChanged)
+     Q_PROPERTY(float refreshRate READ refreshRate WRITE setRefreshRate NOTIFY modeChanged)
++    Q_PROPERTY(bool interlaced READ interlaced WRITE setInterlaced NOTIFY modeChanged)
+     Q_PROPERTY(bool virtualStereo READ virtualStereo WRITE setVirtualStereo NOTIFY modeChanged)
+     Q_PROPERTY(Stereo3D stereo3D READ stereo3D WRITE setStereo3D NOTIFY modeChanged)
+ 
+@@ -81,6 +82,9 @@ public:
+     float refreshRate() const;
+     void setRefreshRate(float refresh);
+ 
++    bool interlaced() const;
++    void setInterlaced(bool value);
++
+     bool virtualStereo() const;
+     void setVirtualStereo(bool value);
+     Stereo3D stereo3D() const;
+diff --git a/src/output.h b/src/output.h
+index 84c6ca9..f54adc3 100755
+--- a/src/output.h
++++ b/src/output.h
+@@ -54,6 +54,7 @@ public:
+         // DisplayPort's frame sequential stereo, the eyes alternated and signalled by the source
+         // (kde_output_device_mode_v2.flags since version 30)
+         Stereo3DSequentialDisplayPort = 0x1000000,
++        Interlaced = 0x2000000,
+     };
+     Q_ENUM(Flag);
+     Q_DECLARE_FLAGS(Flags, Flag)

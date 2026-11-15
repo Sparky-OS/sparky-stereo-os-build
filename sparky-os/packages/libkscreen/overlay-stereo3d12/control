@@ -1,0 +1,126 @@
+Source: libkscreen
+Section: libs
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+XSBC-Original-Maintainer: Debian Qt/KDE Maintainers <debian-qt-kde@lists.debian.org>
+Uploaders: Aurélien COUDERC <coucouf@debian.org>,
+           Patrick Franz <deltaone@debian.org>,
+Build-Depends: gcc, node-acorn, nodejs, perl, python3, python3-yaml, debhelper-compat (= 13),
+               dh-sequence-kf6,
+               dh-sequence-pkgkde-symbolshelper,
+               dh-sequence-plasma,
+               cmake (>= 3.16~),
+               doxygen,
+               extra-cmake-modules (>= 6.26.0~),
+               libx11-dev,
+               libx11-xcb-dev,
+               libxcb-dpms0-dev,
+               libxcb-randr0-dev,
+               libxcb1-dev,
+               libxkbcommon-dev,
+               libxrandr-dev,
+               pkgconf,
+               plasma-wayland-protocols (>= 1.21.0-1+stereo3d11~) [linux-any],
+               qt6-base-dev (>= 6.10.0~),
+               qt6-base-private-dev (>= 6.6.0+dfsg~),
+               qt6-tools-dev (>= 6.6.0~),
+               qt6-wayland-dev (>= 6.10.0~) [linux-any],
+Standards-Version: 4.7.4
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+Vcs-Browser: https://salsa.debian.org/qt-kde-team/kde/libkscreen
+Vcs-Git: https://salsa.debian.org/qt-kde-team/kde/libkscreen.git
+
+Package: libkscreen-bin
+Architecture: any
+Multi-Arch: foreign
+Depends: ${misc:Depends},
+         ${plasma-version:Depends},
+         ${shlibs:Depends},
+Breaks: kwin-wayland (<< 4:6.7.4-2+stereo3d20~),
+        libkf5screen-bin,
+        libkf6screen-bin,
+Replaces: libkf5screen-bin,
+          libkf6screen-bin,
+Description: library for screen management - helpers
+ The KDE multiple monitor support is trying be as smart as possible
+ adapting the behavior of it to each use case making the configuration
+ of monitors as simple as plugging them to your computer.
+ .
+ This package contains the library helpers and the corresponding D-Bus service.
+
+Package: libkf6screen8
+Architecture: any
+Multi-Arch: same
+Depends: libkscreen-data (= ${source:Version}),
+         ${misc:Depends},
+         ${plasma-version:Depends},
+         ${shlibs:Depends},
+Recommends: pnp.ids,
+Description: library for screen management - shared library
+ The KDE multiple monitor support is trying be as smart as possible
+ adapting the behavior of it to each use case making the configuration
+ of monitors as simple as plugging them to your computer.
+ .
+ This package contains the shared library
+
+Package: libkf6screendpms8
+Architecture: any
+Multi-Arch: same
+Depends: libkscreen-data (= ${source:Version}),
+         ${misc:Depends},
+         ${plasma-version:Depends},
+         ${shlibs:Depends},
+Description: library for screen management - dpms support library
+ The KDE multiple monitor support is trying be as smart as possible
+ adapting the behavior of it to each use case making the configuration
+ of monitors as simple as plugging them to your computer.
+ .
+ This package contains the dpms support shared library
+
+Package: libkscreen-data
+Architecture: all
+Multi-Arch: foreign
+Depends: ${misc:Depends},
+         ${plasma-version:Depends},
+Breaks: libkf6screen-data,
+Replaces: libkf6screen-data,
+Description: library for screen management - data files
+ The KDE multiple monitor support is trying be as smart as possible
+ adapting the behavior of it to each use case making the configuration
+ of monitors as simple as plugging them to your computer.
+ .
+ This package contains data files.
+
+Package: libkscreen-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Depends: libkf6screen8 (= ${binary:Version}),
+         libkf6screendpms8 (= ${binary:Version}),
+         qt6-base-dev (>= 6.10.0~),
+         ${misc:Depends},
+         ${plasma-version:Depends},
+Recommends: libkscreen-doc (= ${source:Version}),
+Breaks: libkf6screen-dev,
+Replaces: libkf6screen-dev,
+Description: library for screen management - development files
+ The KDE multiple monitor support is trying be as smart as possible
+ adapting the behavior of it to each use case making the configuration
+ of monitors as simple as plugging them to your computer.
+ .
+ This package contains the files necessary for development.
+
+Package: libkscreen-doc
+Section: doc
+Architecture: all
+Multi-Arch: foreign
+Depends: ${misc:Depends},
+         ${plasma-version:Depends},
+Breaks: libkf6screen-doc,
+Replaces: libkf6screen-doc,
+Description: library for screen management - documentation
+ The KDE multiple monitor support is trying be as smart as possible
+ adapting the behavior of it to each use case making the configuration
+ of monitors as simple as plugging them to your computer.
+ .
+ This package contains the QCH documentation files.
