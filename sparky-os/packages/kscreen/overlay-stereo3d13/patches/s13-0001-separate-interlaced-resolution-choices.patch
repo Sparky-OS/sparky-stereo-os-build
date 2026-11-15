@@ -1,0 +1,249 @@
+Description: Carry scan type through the display mode list and preserve selection
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, ORDER 568
+Forwarded: no
+Last-Update: 2026-11-14
+Assisted-by: GPT-6 (OpenAI)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index df23acc..3fde4ea 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -108,7 +108,15 @@ int main()
+     return mode.stereo3D() == KScreen::Mode::Stereo3D::SequentialDisplayPort;
+ }
+ " HAVE_KSCREEN_STEREO_SEQUENTIAL_DISPLAYPORT)
++check_cxx_source_compiles("
++#include <KScreen/Mode>
++int main() { KScreen::Mode mode; return mode.interlaced(); }
++" HAVE_KSCREEN_INTERLACED)
+ cmake_pop_check_state()
++option(REQUIRE_KSCREEN_INTERLACED "Require the interlaced mode API" OFF)
++if(REQUIRE_KSCREEN_INTERLACED AND NOT HAVE_KSCREEN_INTERLACED)
++    message(FATAL_ERROR "Interlaced mode API unavailable")
++endif()
+ configure_file(config-stereo.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/config-stereo.h)
+ add_feature_info(Stereo HAVE_KSCREEN_STEREO "Stereo output settings from libkscreen")
+ add_feature_info(StereoDepth HAVE_KSCREEN_STEREO_DEPTH "Every HDMI 1.4a 3D structure, the side by side (full) timing and the stereo depth settings from libkscreen")
+diff --git a/config-stereo.h.cmake b/config-stereo.h.cmake
+index 9b7f091..6d821a1 100644
+--- a/config-stereo.h.cmake
++++ b/config-stereo.h.cmake
+@@ -3,3 +3,4 @@
+ #cmakedefine01 HAVE_KSCREEN_STEREO_GLASSES
+ #cmakedefine01 HAVE_KSCREEN_STEREO_SWAP_EYES
+ #cmakedefine01 HAVE_KSCREEN_STEREO_SEQUENTIAL_DISPLAYPORT
++#cmakedefine01 HAVE_KSCREEN_INTERLACED
+diff --git a/kcm/output_model.cpp b/kcm/output_model.cpp
+index c447d2e..51ff837 100644
+--- a/kcm/output_model.cpp
++++ b/kcm/output_model.cpp
+@@ -22,6 +22,15 @@
+ #include <numeric>
+ #include <ranges>
+ 
++static bool isInterlaced(const KScreen::ModePtr &mode)
++{
++#if HAVE_KSCREEN_INTERLACED
++    return mode && mode->interlaced();
++#else
++    return false;
++#endif
++}
++
+ // The flipped transforms of wl_output mirror the picture about the vertical axis, then turn it
+ static bool isFlipped(KScreen::Output::Rotation rotation)
+ {
+@@ -63,8 +72,14 @@ static KScreen::Output::Rotation flipped(KScreen::Output::Rotation rotation)
+ 
+ static QString customModeLabel(const KScreen::ModeInfo &info)
+ {
++    QString height = QString::number(info.size.height());
++#if HAVE_KSCREEN_INTERLACED
++    if (info.flags & KScreen::ModeInfo::Flag::Interlaced) {
++        height += QLatin1Char('i');
++    }
++#endif
+     const QString mode = i18nc("@item:inlistbox Width, height and refresh rate of a custom mode", "%1 × %2 at %3 Hz",
+-                               QString::number(info.size.width()), QString::number(info.size.height()), QString::number(info.refreshRate, 'f', 2));
++                               QString::number(info.size.width()), height, QString::number(info.refreshRate, 'f', 2));
+     if (info.flags & KScreen::ModeInfo::Flag::ReducedBlanking) {
+         return i18nc("@item:inlistbox A custom mode, and that it uses reduced blanking timings", "%1, reduced blanking", mode);
+     }
+@@ -987,7 +1002,14 @@ bool OutputModel::setResolution(int outputIndex, int resIndex)
+     const QSize size = entry.size;
+ 
+     const float oldRate = output.ptr->currentMode() ? output.ptr->currentMode()->refreshRate() : -1;
+-    const auto modes = output.ptr->modes();
++    auto modes = output.ptr->modes();
++    for (auto it = modes.begin(); it != modes.end();) {
++        if (isInterlaced(*it) != entry.interlaced) {
++            it = modes.erase(it);
++        } else {
++            ++it;
++        }
++    }
+ #if HAVE_KSCREEN_STEREO
+     const bool oldVirtualStereo = output.ptr->currentMode() && output.ptr->currentMode()->virtualStereo();
+     const auto oldStereo3D = output.ptr->currentMode() ? output.ptr->currentMode()->stereo3D() : KScreen::Mode::Stereo3D::None;
+@@ -1078,9 +1100,9 @@ bool OutputModel::setRefreshRate(int outputIndex, int refIndex)
+         // TODO: we don't want to compare against old refresh rate if
+         //       refresh rate selection is auto.
+ #if HAVE_KSCREEN_STEREO
+-        return mode->size() == oldMode->size() && refreshRateCompare(mode->refreshRate(), entry.rate) && mode->stereo3D() == entry.stereo3D && mode->virtualStereo() == entry.virtualStereo;
++        return mode->size() == oldMode->size() && isInterlaced(mode) == isInterlaced(oldMode) && refreshRateCompare(mode->refreshRate(), entry.rate) && mode->stereo3D() == entry.stereo3D && mode->virtualStereo() == entry.virtualStereo;
+ #else
+-        return mode->size() == oldMode->size() && refreshRateCompare(mode->refreshRate(), entry.rate);
++        return mode->size() == oldMode->size() && isInterlaced(mode) == isInterlaced(oldMode) && refreshRateCompare(mode->refreshRate(), entry.rate);
+ #endif
+     });
+     Q_ASSERT(modeIt != modes.end());
+@@ -1154,12 +1176,12 @@ int OutputModel::resolutionIndex(const KScreen::OutputPtr &output) const
+     const auto layout = output->currentMode() ? output->currentMode()->stereo3D() : KScreen::Mode::Stereo3D::None;
+     const auto anaglyph = isAnaglyph(layout) ? layout : KScreen::Mode::Stereo3D::None;
+ 
+-    const auto it = std::ranges::find_if(sizes, [currentResolution, anaglyph](const ResolutionEntry &entry) {
+-        return entry.size == currentResolution && entry.anaglyph == anaglyph;
++    const auto it = std::ranges::find_if(sizes, [currentResolution, anaglyph, output](const ResolutionEntry &entry) {
++        return entry.size == currentResolution && entry.interlaced == isInterlaced(output->currentMode()) && entry.anaglyph == anaglyph;
+     });
+ #else
+-    const auto it = std::ranges::find_if(sizes, [currentResolution](const ResolutionEntry &entry) {
+-        return entry.size == currentResolution;
++    const auto it = std::ranges::find_if(sizes, [currentResolution, output](const ResolutionEntry &entry) {
++        return entry.size == currentResolution && entry.interlaced == isInterlaced(output->currentMode());
+     });
+ #endif
+     if (it == sizes.end()) {
+@@ -1218,13 +1240,14 @@ QVariantList OutputModel::resolutionsStrings(const KScreen::OutputPtr &output) c
+     const auto resolutionList = resolutions(output);
+     for (const auto &entry : resolutionList) {
+         const QSize size = entry.size;
++        const QString height = QString::number(size.height()) + (entry.interlaced ? QStringLiteral("i") : QString());
+         QString text;
+         if (size.isEmpty()) {
+             text = i18nc("Width x height",
+                                        "%1 × %2",
+                                        // Explicitly not have it add thousand-separators.
+                                        QString::number(size.width()),
+-                                       QString::number(size.height()));
++                                       height);
+         } else {
+             int divisor = greatestCommonDivisor(size.width(), size.height());
+ 
+@@ -1242,7 +1265,7 @@ QVariantList OutputModel::resolutionsStrings(const KScreen::OutputPtr &output) c
+                                        "%1 × %2 (%3:%4)",
+                                        // Explicitly not have it add thousand-separators.
+                                        QString::number(size.width()),
+-                                       QString::number(size.height()),
++                                       height,
+                                        size.width() / divisor,
+                                        size.height() / divisor);
+         }
+@@ -1266,15 +1289,15 @@ QList<OutputModel::ResolutionEntry> OutputModel::resolutions(const KScreen::Outp
+     for (const auto &mode : modes) {
+ #if HAVE_KSCREEN_STEREO
+         const auto layout = mode->stereo3D();
+-        const ResolutionEntry entry{mode->size(), isAnaglyph(layout) ? layout : KScreen::Mode::Stereo3D::None};
++        const ResolutionEntry entry{mode->size(), isInterlaced(mode), isAnaglyph(layout) ? layout : KScreen::Mode::Stereo3D::None};
+ #else
+-        const ResolutionEntry entry{mode->size()};
++        const ResolutionEntry entry{mode->size(), isInterlaced(mode)};
+ #endif
+         if (!hits.contains(entry)) {
+             hits << entry;
+         }
+     }
+-    std::ranges::sort(hits, [](const ResolutionEntry &a, const ResolutionEntry &b) {
++    std::ranges::stable_sort(hits, [](const ResolutionEntry &a, const ResolutionEntry &b) {
+         if (a.size.width() != b.size.width()) {
+             return a.size.width() > b.size.width();
+         }
+@@ -1334,9 +1357,10 @@ QList<OutputModel::RefreshEntry> OutputModel::refreshRates(const KScreen::Output
+     const auto currentLayout = output->currentMode() ? output->currentMode()->stereo3D() : KScreen::Mode::Stereo3D::None;
+ #endif
+ 
++    const auto baseMode = output->currentMode() ? output->currentMode() : output->preferredMode();
+     const auto modes = output->modes();
+     for (const auto &mode : modes) {
+-        if (mode->size() != baseSize) {
++        if (mode->size() != baseSize || isInterlaced(mode) != isInterlaced(baseMode)) {
+             continue;
+         }
+         const float rate = mode->refreshRate();
+diff --git a/kcm/output_model.h b/kcm/output_model.h
+index 2408ba7..204646d 100644
+--- a/kcm/output_model.h
++++ b/kcm/output_model.h
+@@ -213,6 +213,7 @@ private:
+     QVariantList resolutionsStrings(const KScreen::OutputPtr &output) const;
+     struct ResolutionEntry {
+         QSize size;
++        bool interlaced = false;
+ #if HAVE_KSCREEN_STEREO
+         // Anaglyph is a colour conversion at this size, independent of refresh rate.
+         // None groups the ordinary and display-specific stereo timings.
+diff --git a/tests/anaglyphselection.cpp b/tests/anaglyphselection.cpp
+index 09626da..b7bf748 100644
+--- a/tests/anaglyphselection.cpp
++++ b/tests/anaglyphselection.cpp
+@@ -71,6 +71,59 @@ private Q_SLOTS:
+         KLocalizedString::setLanguages({QStringLiteral("en_US")});
+     }
+ 
++#if HAVE_KSCREEN_INTERLACED
++    void interlacedResolutionAndSelection()
++    {
++        const auto progressive = mode("p60", Layout::None, 60, {1920, 1080}, false);
++        const auto interlaced60 = mode("i60", Layout::None, 60, {1920, 1080}, false);
++        interlaced60->setInterlaced(true);
++        const auto interlaced50 = mode("i50", Layout::None, 50, {1920, 1080}, false);
++        interlaced50->setInterlaced(true);
++        const auto packed60 = mode("ifp60", Layout::FramePacking, 60, {1920, 1080}, false);
++        packed60->setInterlaced(true);
++        const auto packed50 = mode("ifp50", Layout::FramePacking, 50, {1920, 1080}, false);
++        packed50->setInterlaced(true);
++        ConfigHandler handler;
++        const auto output = configure(handler, {progressive, interlaced60, interlaced50, packed60, packed50});
++        auto model = handler.outputModel();
++        const auto index = model->indexForOutput(output);
++        const auto resolutions = entries(model, OutputModel::ResolutionsRole);
++        QCOMPARE(resolutions.size(), 2);
++        int interlacedIndex = -1;
++        int progressiveIndex = -1;
++        for (int i = 0; i < resolutions.size(); ++i) {
++            if (resolutions[i].toString().contains(QStringLiteral("1080i"))) {
++                interlacedIndex = i;
++            } else {
++                progressiveIndex = i;
++            }
++        }
++        QVERIFY(interlacedIndex >= 0);
++        QVERIFY(progressiveIndex >= 0);
++        QCOMPARE(model->data(index, OutputModel::ResolutionIndexRole).toInt(), progressiveIndex);
++        QCOMPARE(entries(model, OutputModel::RefreshRatesRole).size(), 1);
++        QVERIFY(model->setData(index, interlacedIndex, OutputModel::ResolutionIndexRole));
++        QVERIFY(output->currentMode()->interlaced());
++        QCOMPARE(model->data(index, OutputModel::ResolutionIndexRole).toInt(), interlacedIndex);
++        const auto rates = entries(model, OutputModel::RefreshRatesRole);
++        QCOMPARE(rates.size(), 4);
++        int packedIndex = -1;
++        for (int i = 0; i < rates.size(); ++i) {
++            const auto text = rates[i].toString();
++            if (text.startsWith(QStringLiteral("60")) && text.contains(QStringLiteral("frame packing"))) {
++                packedIndex = i;
++            }
++        }
++        QVERIFY(packedIndex >= 0);
++        QVERIFY(model->setData(index, packedIndex, OutputModel::RefreshRateIndexRole));
++        QCOMPARE(output->currentModeId(), packed60->id());
++        QVERIFY(output->currentMode()->interlaced());
++        QVERIFY(model->setData(index, progressiveIndex, OutputModel::ResolutionIndexRole));
++        QCOMPARE(output->currentModeId(), progressive->id());
++        QVERIFY(!output->currentMode()->interlaced());
++    }
++#endif
++
+     void togglesArePerOutput()
+     {
+         ConfigHandler handler;

@@ -1,0 +1,32 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DBUILD_TESTING=OFF -DREQUIRE_KSCREEN_INTERLACED=ON
+	grep -q "define HAVE_KSCREEN_STEREO_DEPTH 1" obj-*/config-stereo.h
+	grep -q "define HAVE_KSCREEN_STEREO_GLASSES 1" obj-*/config-stereo.h
+	grep -q "define HAVE_KSCREEN_STEREO_SWAP_EYES 1" obj-*/config-stereo.h
+	grep -q "define HAVE_KSCREEN_STEREO_SEQUENTIAL_DISPLAYPORT 1" obj-*/config-stereo.h
+
+override_dh_auto_test:
+	# Disable dh_auto_test at build time
+	:
+
+execute_after_dh_fixperms-arch:
+	chmod -x $(CURDIR)/debian/kscreen/usr/share/kglobalaccel/org.kde.kscreen.desktop
+
+# Distribution-only processing; authored source remains in the source archive.
+execute_before_dh_auto_configure:
+	PYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.source_tree project $(CURDIR)
+
+execute_before_dh_auto_clean:
+	PYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.source_tree restore $(CURDIR)
+	rm -rf .sparky-lc
+
+override_dh_builddeb:
+	PYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.debhelper --provenance $(CURDIR)/debian/sparky-lean-toolkit/provenance.sh
