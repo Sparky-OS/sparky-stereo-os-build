@@ -1,0 +1,9 @@
+mesa (26.1.6-1+stereo3d24) forky; urgency=medium
+
+  * The stereo declaration follows the Vulkan swapchain that is current on the
+    surface (ORDER 573): the Vulkan stereo layer withdraws its declaration of
+    a Wayland surface or an X11 window when a swapchain it does not pack is
+    made there, and when its pair swapchain that is current is destroyed with
+    nothing after it, so a window that goes from two views to one is shown as
+    one picture instead of two halves. Mesa's own X11 presentation does the
+    same for the window, and its surface's stereo fields start initialised.

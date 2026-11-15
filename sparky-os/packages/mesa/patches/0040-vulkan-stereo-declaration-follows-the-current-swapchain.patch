@@ -1,0 +1,285 @@
+Description: The stereo declaration follows the Vulkan swapchain current on the surface
+ A surface whose two-view swapchain was replaced by a one-view one kept its
+ declaration of a pair, so the compositor showed the one picture as two
+ halves, one per eye. The Vulkan stereo layer declared a Wayland surface or
+ an X11 window when it made a two-layer swapchain and withdrew only when
+ the surface was destroyed; Mesa's own X11 presentation never withdrew.
+ .
+ Measured with a client that presents two layers, then one, then two on one
+ surface: through the layer on NVIDIA's driver each eye showed one half of
+ the one-layer picture on Wayland; on X11, through the layer and through
+ radv's and lavapipe's own presentation, the one-layer picture was mixed
+ with the last pair and the window still declared two views. Mesa's own
+ Wayland presentation was right: it destroys its declaration with the
+ swapchain, and the retired one's when a new swapchain replaces it.
+ .
+ The layer now withdraws its declaration when a swapchain it does not pack
+ is made on the surface, and when its pair swapchain that is current there
+ is destroyed with nothing after it. A pair retired by a newer swapchain
+ ("Upon calling vkCreateSwapchainKHR with an oldSwapchain that is not
+ VK_NULL_HANDLE, oldSwapchain is retired", VkSwapchainCreateInfoKHR) leaves
+ the declaration as the newer one has it. On Wayland the withdrawal takes
+ effect with the surface's next commit, the first picture of what comes
+ next; on X11 the window shows one picture from its next frame on. A
+ surface is destroyed after its swapchains
+ (VUID-vkDestroySurfaceKHR-surface-01266); one destroyed before is no
+ longer looked at.
+ .
+ Mesa's X11 presentation follows the same rule for the window, and its
+ surface's stereo fields start initialised: vk_alloc2 does not clear them.
+ The X11 withdrawal is one helper, shared with the take-back of a pair the
+ X server copies.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed, the stereo declaration and the Vulkan stereo layer are the edition's own
+Assisted-by: Claude Opus 5.5
+Last-Update: 2026-11-15
+
+diff --git a/src/util/u_x11_stereo_present.h b/src/util/u_x11_stereo_present.h
+index 3e0cf34..d223fae 100644
+--- a/src/util/u_x11_stereo_present.h
++++ b/src/util/u_x11_stereo_present.h
+@@ -33,6 +33,18 @@ u_x11_stereo_unlist_child(xcb_connection_t *conn, xcb_window_t window)
+    xcb_ungrab_server(conn);
+ }
+ 
++/* The window no longer declares two views: its declaration, the declaration's
++ * version and its place in its owner's list of stereo children go, so the
++ * compositor shows it as one picture from its next frame on. */
++static inline void
++u_x11_stereo_withdraw(xcb_connection_t *conn, xcb_window_t window)
++{
++   xcb_delete_property(conn, window, u_x11_stereo_atom(conn, "_KDE_NET_WM_STEREO_CONTENT", false));
++   xcb_delete_property(conn, window, u_x11_stereo_atom(conn, "_KDE_NET_WM_STEREO_CONTENT_VERSION", false));
++   u_x11_stereo_unlist_child(conn, window);
++   xcb_flush(conn);
++}
++
+ static inline enum u_stereo_pair_change
+ u_x11_stereo_present_completed(struct u_stereo_pair *pair, xcb_connection_t *conn,
+  xcb_window_t window, const char *package, bool flipped, int buffer_width,
+@@ -53,10 +65,7 @@ u_x11_stereo_present_completed(struct u_stereo_pair *pair, xcb_connection_t *con
+                   (*s>='A' && *s<='Z') || strchr("_@+-.", *s) ? *s : '_';
+    key[n] = 0;
+    if (change == U_STEREO_PAIR_TAKEN_BACK) {
+-      xcb_delete_property(conn, window, u_x11_stereo_atom(conn, "_KDE_NET_WM_STEREO_CONTENT", false));
+-      xcb_delete_property(conn, window, u_x11_stereo_atom(conn, "_KDE_NET_WM_STEREO_CONTENT_VERSION", false));
+-      u_x11_stereo_unlist_child(conn, window);
+-      xcb_flush(conn);
++      u_x11_stereo_withdraw(conn, window);
+       char detail[160], text[640];
+       snprintf(detail, sizeof detail,
+          "the X server completed the present of both pictures of window 0x%lx (%dx%d) as a copy%s",
+diff --git a/src/vulkan/stereo-layer/stereo_layer.c b/src/vulkan/stereo-layer/stereo_layer.c
+index 11c6ba0..a7674f6 100644
+--- a/src/vulkan/stereo-layer/stereo_layer.c
++++ b/src/vulkan/stereo-layer/stereo_layer.c
+@@ -126,6 +126,11 @@ struct surface_data {
+    bool xlib;
+    bool enabled;
+    bool stereo_swapchain_created;
++   /* The X11 window carries the layer's declaration. */
++   bool declared;
++   /* The layer's two-view swapchain that is the surface's current one: the
++    * declaration lives as long as it does. */
++   struct swapchain_data *current;
+    struct u_stereo_pair pair;
+    xcb_special_event_t *present_event;
+    xcb_present_event_t present_eid;
+@@ -407,6 +412,7 @@ declare_xcb(struct surface_data *surface)
+                           surface->u.xcb.window, atom->atom, XCB_ATOM_CARDINAL,
+                           32, 1, &layout);
+       free(atom);
++      surface->declared = true;
+       /* a child window is listed with its owner (version 5 and later) */
+       if (version >= 5)
+          u_x11_stereo_list_child(surface->u.xcb.connection, surface->u.xcb.window);
+@@ -429,6 +435,7 @@ declare_xlib(struct surface_data *surface)
+                    XA_CARDINAL, 32, PropModeReplace,
+                    (unsigned char *)&layout, 1);
+    XFlush(surface->u.xlib.display);
++   surface->declared = true;
+    if (version >= 5 && connection)
+       u_x11_stereo_list_child(connection, surface->u.xlib.window);
+ }
+@@ -509,6 +516,8 @@ x11_completed(struct swapchain_data *swapchain, int mode)
+       (surface->pair.flat ? 1 : 2) * swapchain->width, swapchain->height,
+       geometry->width, geometry->height);
+    free(geometry);
++   if (change == U_STEREO_PAIR_TAKEN_BACK)
++      surface->declared = false;
+    if (change == U_STEREO_PAIR_RETURNS) {
+       if (surface->xcb) declare_xcb(surface);
+       else declare_xlib(surface);
+@@ -539,6 +548,49 @@ declare_wayland(struct surface_data *surface, uint32_t width, uint32_t height)
+    wl_display_flush(surface->u.wl.display);
+ }
+ 
++/* The declaration follows the swapchain that is current on the surface: when
++ * the layer's pair is no longer the one presented there (a swapchain the layer
++ * does not pack took its place, or it was destroyed with nothing after it),
++ * the surface no longer declares two views. On Wayland the declaration ends
++ * with the surface's next commit, the first picture of what comes next; on
++ * X11 the window shows one picture from its next frame on. A later pair on the
++ * surface declares it again, from the start.
++ */
++static void
++withdraw(struct surface_data *surface)
++{
++   if (surface->wayland) {
++      stereo_content_destroy(surface->u.wl.content);
++      surface->u.wl.content = NULL;
++      stereo_viewport_destroy(surface->u.wl.viewport);
++      surface->u.wl.viewport = NULL;
++      wl_display_flush(surface->u.wl.display);
++   } else if (surface->declared) {
++      xcb_window_t window = XCB_NONE;
++      xcb_connection_t *conn = x11_connection(surface, &window);
++      if (conn)
++         u_x11_stereo_withdraw(conn, window);
++   }
++   surface->declared = false;
++   surface->stereo_swapchain_created = false;
++   surface->current = NULL;
++   memset(&surface->pair, 0, sizeof(surface->pair));
++}
++
++/* A swapchain the layer does not pack becomes the one presented on the
++ * surface, and a declaration the layer made for an earlier pair there goes.
++ */
++static VkResult
++create_passed_through(struct device_data *data, struct surface_data *surface, VkDevice device,
++                      const VkSwapchainCreateInfoKHR *create_info,
++                      const VkAllocationCallbacks *allocator, VkSwapchainKHR *swapchain_handle)
++{
++   VkResult result = data->CreateSwapchain(device, create_info, allocator, swapchain_handle);
++   if (result == VK_SUCCESS && surface && surface->stereo_swapchain_created)
++      withdraw(surface);
++   return result;
++}
++
+ static void
+ destroy_surface_data(struct surface_data *surface)
+ {
+@@ -931,14 +983,14 @@ stereo_CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR *create_i
+    struct surface_data *surface = find_surface(create_info->surface);
+    if (create_info->imageArrayLayers != 2 || !enabled() ||
+        !surface || !surface->enabled)
+-      return data->CreateSwapchain(device, create_info, allocator, swapchain_handle);
++      return create_passed_through(data, surface, device, create_info, allocator, swapchain_handle);
+    VkSurfaceCapabilitiesKHR caps;
+    VkResult result = surface->instance->GetSurfaceCapabilities(
+       data->physical, create_info->surface, &caps);
+    if (result != VK_SUCCESS)
+       return result;
+    if (caps.maxImageArrayLayers >= 2)
+-      return data->CreateSwapchain(device, create_info, allocator, swapchain_handle);
++      return create_passed_through(data, surface, device, create_info, allocator, swapchain_handle);
+    if (!surface->wayland) {
+       xcb_window_t window = XCB_NONE;
+       xcb_connection_t *conn = x11_connection(surface, &window);
+@@ -1031,6 +1083,7 @@ stereo_CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR *create_i
+    if (result != VK_SUCCESS)
+       goto fail;
+    surface->stereo_swapchain_created = true;
++   surface->current = swapchain;
+    swapchain->next = swapchains;
+    swapchains = swapchain;
+    *swapchain_handle = swapchain->handle;
+@@ -1284,6 +1337,16 @@ stereo_DestroySwapchain(VkDevice device, VkSwapchainKHR handle,
+    *link = swapchain->next;
+    data->QueueWaitIdle(data->first_queue);
+    x11_left_finish(swapchain);
++   /* The surface's current pair goes with nothing after it. A pair retired by
++    * a newer swapchain on the surface leaves the declaration as that one has
++    * it. A surface is destroyed after its swapchains
++    * (VUID-vkDestroySurfaceKHR-surface-01266), and one that was not is no
++    * longer looked at.
++    */
++   for (struct surface_data *surface = surfaces; surface; surface = surface->next) {
++      if (surface == swapchain->surface && surface->current == swapchain)
++         withdraw(surface);
++   }
+    if (swapchain->ready)
+       data->DestroySemaphore(device, swapchain->ready, NULL);
+    if (swapchain->command)
+diff --git a/src/vulkan/wsi/wsi_common_x11.c b/src/vulkan/wsi/wsi_common_x11.c
+index d219acf..a25bad4 100644
+--- a/src/vulkan/wsi/wsi_common_x11.c
++++ b/src/vulkan/wsi/wsi_common_x11.c
+@@ -35,6 +35,7 @@
+ #include <xcb/shm.h>
+ 
+ #include "util/u_x11_stereo_child.h"
++#include "util/u_x11_stereo_present.h"
+ #include "util/macros.h"
+ #include <stdatomic.h>
+ #include <stdlib.h>
+@@ -106,6 +107,9 @@ struct wsi_x11_vk_surface {
+    };
+    bool has_alpha;
+    bool stereo_swapchain_created;
++   /* The two-view swapchain that is the window's current one: the window's
++    * declaration lives as long as it does. */
++   struct x11_swapchain *stereo_chain;
+ };
+ 
+ static uint32_t
+@@ -1076,6 +1080,8 @@ wsi_CreateXcbSurfaceKHR(VkInstance _instance,
+    surface->xcb.window = pCreateInfo->window;
+ 
+    surface->has_alpha = visual_has_alpha(visual, visual_depth);
++   surface->stereo_swapchain_created = false;
++   surface->stereo_chain = NULL;
+ 
+    *pSurface = VkIcdSurfaceBase_to_handle(&surface->xcb.base);
+    return VK_SUCCESS;
+@@ -1108,6 +1114,8 @@ wsi_CreateXlibSurfaceKHR(VkInstance _instance,
+    surface->xlib.window = pCreateInfo->window;
+ 
+    surface->has_alpha = visual_has_alpha(visual, visual_depth);
++   surface->stereo_swapchain_created = false;
++   surface->stereo_chain = NULL;
+ 
+    *pSurface = VkIcdSurfaceBase_to_handle(&surface->xlib.base);
+    return VK_SUCCESS;
+@@ -1158,6 +1166,8 @@ struct x11_swapchain {
+ 
+    xcb_connection_t *                           conn;
+    xcb_window_t                                 window;
++   /* The surface whose window this two-view swapchain declared */
++   struct wsi_x11_vk_surface *                  stereo_surface;
+    xcb_gc_t                                     gc;
+    uint32_t                                     depth;
+    VkExtent2D                                   extent;
+@@ -2480,6 +2490,15 @@ x11_swapchain_destroy(struct wsi_swapchain *wsi_chain,
+ {
+    struct x11_swapchain *chain = (struct x11_swapchain *)wsi_chain;
+ 
++   /* The window's current pair goes with nothing after it: the window no
++    * longer declares two views. A pair retired by a newer swapchain on the
++    * window leaves the declaration as that one has it. */
++   if (chain->stereo_surface && chain->stereo_surface->stereo_chain == chain) {
++      u_x11_stereo_withdraw(chain->conn, chain->window);
++      chain->stereo_surface->stereo_swapchain_created = false;
++      chain->stereo_surface->stereo_chain = NULL;
++   }
++
+    mtx_lock(&chain->thread_state_lock);
+    chain->status = VK_ERROR_OUT_OF_DATE_KHR;
+    u_cnd_monotonic_broadcast(&chain->thread_state_cond);
+@@ -2820,6 +2839,15 @@ x11_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
+       if (stereo_version >= 5)
+          u_x11_stereo_list_child(chain->conn, chain->window);
+       surface->stereo_swapchain_created = true;
++      surface->stereo_chain = chain;
++      chain->stereo_surface = surface;
++   } else if (surface->stereo_swapchain_created) {
++      /* The declaration follows the swapchain that is current on the window:
++       * a swapchain of one view after a pair there makes the window one
++       * picture again from its next frame on. */
++      u_x11_stereo_withdraw(chain->conn, chain->window);
++      surface->stereo_swapchain_created = false;
++      surface->stereo_chain = NULL;
+    }
+ 
+    /* When images in the swapchain don't fit the window, X can still present them, but it won't
