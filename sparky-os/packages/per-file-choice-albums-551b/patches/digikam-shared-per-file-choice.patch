@@ -1,0 +1,683 @@
+Description: digiKam's per-file 3D entries are the stereo layer's menu and store (ORDER 551b)
+ The 3D menu of the album preview, the light table, the editor (Showfoto too) and the slide show shows
+ Stereo::FileChoiceMenu, and the choices (the input packing, Not 3D for the file, the swap) are kept in the layer's per-file
+ store, which Dolphin, the thumbnailers and Gwenview read; the program keeps its own lasting view. The editor decodes
+ through the layer with the file's path, and a file's choice follows it when digiKam renames or moves it.
+ Needs libstereo-layer-dev (>= 1.19.0).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-14
+---
+diff --git a/core/CMakeLists.txt b/core/CMakeLists.txt
+index a4e31e2..825581b 100644
+--- a/core/CMakeLists.txt
++++ b/core/CMakeLists.txt
+@@ -37,7 +37,7 @@ include(RulesOptionDefinitions)
+ include(RulesQtFramework)
+ 
+ if(Qt6_FOUND)
+-    find_package(StereoLayer 1.0.1 QUIET)
++    find_package(StereoLayer 1.19 QUIET)
+ endif()
+ 
+ # KDE frameworks dependencies
+diff --git a/core/dplugins/generic/view/slideshow/widgets/slideimage.cpp b/core/dplugins/generic/view/slideshow/widgets/slideimage.cpp
+index 24c6167..2ca0099 100644
+--- a/core/dplugins/generic/view/slideshow/widgets/slideimage.cpp
++++ b/core/dplugins/generic/view/slideshow/widgets/slideimage.cpp
+@@ -82,6 +82,10 @@ SlideImage::SlideImage(QWidget* const parent)
+     setContextMenuPolicy(Qt::DefaultContextMenu);
+ 
+     connect(d->stereoMenu, &StereoPictureMenu::optionsChanged, this, &SlideImage::updateStereo);
++
++    // The stored choice of the file shown changed (the stereo layer's per-file store): show it again
++
++    connect(d->stereoMenu, &StereoPictureMenu::fileChoiceChanged, this, &SlideImage::updateStereo);
+     QAction* const openMenu = new QAction(this);
+     openMenu->setShortcut(QKeySequence(QLatin1String("Alt+Shift+3")));
+     window()->addAction(openMenu);
+@@ -215,10 +219,22 @@ void SlideImage::updateStereo()
+     if (!d->stereoSupported)
+     {
+         d->stereo->setPicture({});
++        d->stereoMenu->setFile(QString(), false);
+     }
+     else
+     {
+-        d->stereo->setSource(path, d->stereoMenu->options());
++        // The layer applies the person's stored choice for the file with the file's marks; the slide show adds only
++        // which view it shows. A file kept as Not 3D is flat whichever eye is shown of the others.
++
++        Stereo::Picture::Options options = d->stereoMenu->options();
++
++        if (Stereo::Picture::fileChoice(path).view == Stereo::Picture::View::Mono)
++        {
++            options.view = Stereo::Picture::View::Stereo;
++        }
++
++        d->stereo->setSource(path, options);
++        d->stereoMenu->setFile(path, Stereo::Picture::loadPair(path, QSize(256, 256), Stereo::Picture::Options()).isStereo());
+     }
+ 
+     update();
+diff --git a/core/libs/album/manager/albummanager_p.h b/core/libs/album/manager/albummanager_p.h
+index 1600f59..566b678 100644
+--- a/core/libs/album/manager/albummanager_p.h
++++ b/core/libs/album/manager/albummanager_p.h
+@@ -108,6 +108,7 @@ extern "C"
+ #include "dbjobsthread.h"
+ #include "similaritydb.h"
+ #include "similaritydbaccess.h"
++#include "stereofilechoice.h"
+ 
+ namespace Digikam
+ {
+diff --git a/core/libs/album/manager/albummanager_palbum.cpp b/core/libs/album/manager/albummanager_palbum.cpp
+index 51045b2..0a87ffd 100644
+--- a/core/libs/album/manager/albummanager_palbum.cpp
++++ b/core/libs/album/manager/albummanager_palbum.cpp
+@@ -508,6 +508,10 @@ bool AlbumManager::renamePAlbum(PAlbum* album, const QString& newName,
+         return false;
+     }
+ 
++    // The stored 3D choices of the album's files follow them to the renamed folder
++
++    stereoFileMoved(dir.filePath(album->title()), dir.filePath(newName));
++
+     QString oldAlbumPath = album->albumPath();
+     album->setTitle(newName);
+     album->m_path        = newName;
+diff --git a/core/libs/iojobs/iojob.cpp b/core/libs/iojobs/iojob.cpp
+index 1faffbd..4f95bff 100644
+--- a/core/libs/iojobs/iojob.cpp
++++ b/core/libs/iojobs/iojob.cpp
+@@ -35,6 +35,7 @@
+ #include "dfileoperations.h"
+ #include "collectionmanager.h"
+ #include "coredboperationgroup.h"
++#include "stereofilechoice.h"
+ 
+ namespace Digikam
+ {
+@@ -149,7 +150,13 @@ void CopyOrMoveJob::run()
+             {
+                 QDir srcDir(srcInfo.filePath());
+ 
+-                if (!srcDir.rename(srcDir.path(), destenation))
++                if (srcDir.rename(srcDir.path(), destenation))
++                {
++                    // The stored 3D choices of the files below the folder follow them
++
++                    stereoFileMoved(srcInfo.filePath(), destenation);
++                }
++                else
+                 {
+                     if (destenation.startsWith(srcDir.path() + QLatin1Char('/')))
+                     {
+diff --git a/core/libs/threadimageio/engine/dfileoperations.cpp b/core/libs/threadimageio/engine/dfileoperations.cpp
+index f4cdaef..376b7fe 100644
+--- a/core/libs/threadimageio/engine/dfileoperations.cpp
++++ b/core/libs/threadimageio/engine/dfileoperations.cpp
+@@ -50,6 +50,7 @@
+ #include "dservicemenu.h"
+ #include "progressmanager.h"
+ #include "metaenginesettings.h"
++#include "stereofilechoice.h"
+ 
+ namespace Digikam
+ {
+@@ -508,6 +509,10 @@ bool DFileOperations::renameFile(const QString& srcFile,
+ 
+     if (QFile::rename(srcFile, dstFile))
+     {
++        // The person's stored 3D choice for the file follows it to its new name or folder
++
++        stereoFileMoved(srcFile, dstFile);
++
+         QFile modFile(dstFile);
+ 
+         if (modFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::ExistingOnly))
+diff --git a/core/libs/widgets/CMakeLists.txt b/core/libs/widgets/CMakeLists.txt
+index fbb34d4..9b861c8 100644
+--- a/core/libs/widgets/CMakeLists.txt
++++ b/core/libs/widgets/CMakeLists.txt
+@@ -213,6 +213,9 @@ if(Gphoto2_FOUND)
+ endif()
+ 
+ # Used by digikamcore
++list(APPEND libgraphicsviewwidgets_SRCS
++     ${CMAKE_CURRENT_SOURCE_DIR}/graphicsview/stereo/stereofilechoice.cpp)
++
+ if(StereoLayer_FOUND)
+     list(APPEND libgraphicsviewwidgets_SRCS
+          ${CMAKE_CURRENT_SOURCE_DIR}/graphicsview/stereo/stereoviewadapter.cpp
+diff --git a/core/libs/widgets/graphicsview/stereo/README.md b/core/libs/widgets/graphicsview/stereo/README.md
+index 8c481f1..5ab6a0f 100644
+--- a/core/libs/widgets/graphicsview/stereo/README.md
++++ b/core/libs/widgets/graphicsview/stereo/README.md
+@@ -6,11 +6,18 @@ the installed Qt image readers' stereo metadata and applies the shared input
+ policy. The picture has its own full side-by-side surface; the window controls
+ remain 2D.
+ 
+-The View menu's 3D submenu offers automatic input, side by side or top and
+-bottom in either eye order, Swap eyes, one eye and Not 3D. The slideshow offers
+-the same menu with Alt+Shift+3 or its image context menu. Zoom and pan apply to both
+-eyes. Source files are not changed by presentation. The chosen view is
+-remembered: after Not 3D, pictures open flat until Stereo is chosen again.
++The View menu's 3D submenu holds "3D Input Format", the stereo layer's own menu
++for the picture shown: its input packing (every packing, in either order), Not
++3D for that file, and the swap of its left and right eyes. That choice is the
++file's: it is kept in the layer's per-file store, which the file manager, the
++thumbnailers and the other viewers read, so the picture shows the same
++everywhere, and it follows the file when a program renames or moves it through
++the desktop's file jobs. The file itself is never changed, unless you choose
++"Save the correction into the file". Below it are the program's own views:
++Stereo, one eye, and Not 3D for every picture. The chosen view is remembered:
++after Not 3D, pictures open flat until Stereo is chosen again. The slideshow
++offers the same menu with Alt+Shift+3 or its image context menu. Zoom and pan
++apply to both eyes.
+ 
+ The editor shows edits in 3D while the picture keeps its size. A selection
+ covers the view that is shown, in the image's own coordinates. Pictures whose
+@@ -26,6 +33,6 @@ and asks for the source colour pair.
+ 
+ Reconstructed colours are identified in the preview status bar and slideshow.
+ 
+-Edition builds require libstereo-layer-dev 1.0.1 or newer. A build without the
++Edition builds require libstereo-layer-dev 1.19.0 or newer. A build without the
+ library retains the ordinary image path. Animated slideshow images retain
+ their existing presentation.
+diff --git a/core/libs/widgets/graphicsview/stereo/stereofilechoice.cpp b/core/libs/widgets/graphicsview/stereo/stereofilechoice.cpp
+new file mode 100644
+index 0000000..1e562b4
+--- /dev/null
++++ b/core/libs/widgets/graphicsview/stereo/stereofilechoice.cpp
+@@ -0,0 +1,47 @@
++/* ============================================================
++ *
++ * This file is a part of digiKam project
++ * https://www.digikam.org
++ *
++ * SPDX-FileCopyrightText: 2026 by Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ *
++ * ============================================================ */
++
++#include "stereofilechoice.h"
++
++// Local includes
++
++#include "digikam_debug.h"
++
++#ifdef HAVE_STEREO_LAYER
++#   include <picture.h>
++#endif
++
++namespace Digikam
++{
++
++void stereoFileMoved(const QString& from, const QString& to)
++{
++#ifdef HAVE_STEREO_LAYER
++
++    QString error;
++    bool failed = false;
++    Stereo::Picture::moveFileChoice(from, to, &error, &failed);
++
++    if (failed)
++    {
++        // The choice is still kept under the old path; the file shows as its own marks say until it is chosen again
++
++        qCWarning(DIGIKAM_WIDGETS_LOG) << "The 3D choice of" << from << "could not follow it to" << to << ":" << error;
++    }
++
++#else
++
++    Q_UNUSED(from);
++    Q_UNUSED(to);
++
++#endif
++}
++
++} // namespace Digikam
+diff --git a/core/libs/widgets/graphicsview/stereo/stereofilechoice.h b/core/libs/widgets/graphicsview/stereo/stereofilechoice.h
+new file mode 100644
+index 0000000..bceab99
+--- /dev/null
++++ b/core/libs/widgets/graphicsview/stereo/stereofilechoice.h
+@@ -0,0 +1,32 @@
++/* ============================================================
++ *
++ * This file is a part of digiKam project
++ * https://www.digikam.org
++ *
++ * SPDX-FileCopyrightText: 2026 by Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ *
++ * ============================================================ */
++
++#pragma once
++
++// Qt includes
++
++#include <QString>
++
++// Local includes
++
++#include "digikam_export.h"
++
++namespace Digikam
++{
++
++/**
++ * A file or a folder was renamed or moved by this program, from one local path to another:
++ * the person's stored 3D choice of the file, or of every file below the folder, follows it
++ * (the stereo layer's per-file store; the files themselves are not touched). A copy carries
++ * nothing and needs no call. Does nothing in a build without the stereo layer.
++ */
++DIGIKAM_EXPORT void stereoFileMoved(const QString& from, const QString& to);
++
++} // namespace Digikam
+diff --git a/core/libs/widgets/graphicsview/stereo/stereopicturemenu.cpp b/core/libs/widgets/graphicsview/stereo/stereopicturemenu.cpp
+index 15c2e9d..c860b32 100644
+--- a/core/libs/widgets/graphicsview/stereo/stereopicturemenu.cpp
++++ b/core/libs/widgets/graphicsview/stereo/stereopicturemenu.cpp
+@@ -13,8 +13,11 @@
+ // Qt includes
+ 
+ #include <QActionGroup>
++#include <QDBusConnection>
++#include <QDBusMessage>
+ #include <QInputDialog>
+ #include <QMessageBox>
++#include <QUrl>
+ 
+ // KDE includes
+ 
+@@ -22,49 +25,48 @@
+ #include <klocalizedstring.h>
+ #include <ksharedconfig.h>
+ 
++// Local includes
++
++#include <filechoicemenu.h>
++#include <filechoicemoves.h>
++
+ namespace Digikam
+ {
+ 
+ StereoPictureMenu::StereoPictureMenu(QWidget* const parent)
+-    : QMenu    (i18n("&3D"), parent),
+-      m_formats(new QActionGroup(this)),
+-      m_views  (new QActionGroup(this))
++    : QMenu       (i18n("&3D"), parent),
++      m_fileChoice(new Stereo::FileChoiceMenu(this)),
++      m_moves     (new Stereo::FileChoiceMoves(this)),
++      m_views     (new QActionGroup(this))
+ {
+-    QMenu* const input = addMenu(i18n("Input format"));
+-    const QStringList labels = {i18n("Automatic"), i18n("Side by side, left first"),
+-                                i18n("Side by side, right first"), i18n("Top and bottom, left first"),
+-                                i18n("Top and bottom, right first")};
++    // The per-file entries are the stereo layer's one menu: every packing, Not 3D for the file, the swap and the save
+ 
+-    for (int index = 0 ; index < labels.size() ; ++index)
+-    {
+-        QAction* const action = input->addAction(labels[index]);
+-        action->setCheckable(true);
+-        m_formats->addAction(action);
++    addMenu(m_fileChoice);
++    connect(m_fileChoice, &Stereo::FileChoiceMenu::changed, this, &StereoPictureMenu::fileChanged);
++    connect(m_fileChoice, &Stereo::FileChoiceMenu::failed, this, &StereoPictureMenu::failed);
+ 
+-        connect(action, &QAction::triggered, this, [this, index]()
+-        {
+-            m_options.anaglyph = Stereo::Picture::AnaglyphColorPair::None;
+-            m_options.inputLayout = (index == 0) ? Stereo::Picture::Layout::None
+-                                    : (index <= 2) ? Stereo::Picture::Layout::SideBySide
+-                                                   : Stereo::Picture::Layout::TopAndBottom;
+-            m_options.inputOrder = ((index == 2) || (index == 4)) ? Stereo::Picture::EyeOrder::RightFirst
+-                                                                : Stereo::Picture::EyeOrder::LeftFirst;
+-            Q_EMIT optionsChanged();
+-        });
+-    }
++    // A file's stored choice follows it when a program renames or moves it
++
++    connect(m_moves, &Stereo::FileChoiceMoves::carried, this, &StereoPictureMenu::fileChoiceChanged);
+ 
+-    m_swap = addAction(i18n("Swap eyes"));
+-    m_swap->setCheckable(true);
+-    m_swap->setShortcut(QKeySequence(QLatin1String("Alt+Shift+W")));
+-    parent->window()->addAction(m_swap);
+-    connect(m_swap, &QAction::triggered, this, [this](bool checked)
++    // The swap's shortcut from before the entry became the layer's: it acts on the same per-file store.
++    // A shortcut works on an action its window holds.
++
++    QAction* const swap = new QAction(this);
++    swap->setShortcut(QKeySequence(QLatin1String("Alt+Shift+W")));
++    parent->window()->addAction(swap);
++    connect(swap, &QAction::triggered, this, [this]()
+     {
+-        m_options.swapEyes = checked;
+-        Q_EMIT optionsChanged();
++        QAction* const layerSwap = m_fileChoice->swapEyesAction();
++
++        if (layerSwap->isEnabled())
++        {
++            layerSwap->trigger();
++        }
+     });
+ 
+-    QAction* const conversion = addAction(i18n("&Anaglyph to side by side"));
+-    connect(conversion, &QAction::triggered, this, &StereoPictureMenu::convert);
++    m_conversion = addAction(i18n("&Anaglyph to side by side"));
++    connect(m_conversion, &QAction::triggered, this, &StereoPictureMenu::convert);
+ 
+     addSeparator();
+     const QStringList viewLabels = {i18n("Stereo"), i18n("Left eye only"), i18n("Right eye only"), i18n("Not 3D")};
+@@ -88,6 +90,7 @@ StereoPictureMenu::StereoPictureMenu(QWidget* const parent)
+     }
+ 
+     setOptions(m_options);
++    setFile(QString(), false);
+ }
+ 
+ int StereoPictureMenu::savedView()
+@@ -102,17 +105,52 @@ Stereo::Picture::Options StereoPictureMenu::options() const
+ 
+ void StereoPictureMenu::setOptions(const Stereo::Picture::Options& options)
+ {
+-    m_options = options;
+-    const int layout = (options.inputLayout == Stereo::Picture::Layout::None) ? 0
+-                       : ((options.inputLayout == Stereo::Picture::Layout::SideBySide) ? 1 : 3)
+-                         + ((options.inputOrder == Stereo::Picture::EyeOrder::RightFirst) ? 1 : 0);
+-    m_formats->actions()[layout]->setChecked(true);
+-    m_views->actions()[static_cast<int>(options.view)]->setChecked(true);
+-    m_swap->setChecked(options.swapEyes);
++    // Only the view is the program's: a file's packing, its swap and its Not 3D are the file's own, in the store
++
++    m_options      = Stereo::Picture::Options();
++    m_options.view = options.view;
++    m_views->actions()[static_cast<int>(m_options.view)]->setChecked(true);
++}
++
++void StereoPictureMenu::setFile(const QString& path, bool shownAsPair)
++{
++    m_path = path;
++    m_fileChoice->setShownAsPair(shownAsPair);
++    m_fileChoice->setFiles(path.isEmpty() ? QStringList() : QStringList{path});
++    m_fileChoice->menuAction()->setEnabled(!path.isEmpty());
++    m_conversion->setEnabled(!path.isEmpty());
++}
++
++void StereoPictureMenu::fileChanged(const QStringList& paths)
++{
++    Q_EMIT fileChoiceChanged(paths);
++
++    // The file manager and the other viewers show the files again: the desktop's own notice of changed files
++
++    QStringList urls;
++
++    for (const QString& path : paths)
++    {
++        urls.append(QUrl::fromLocalFile(path).toString());
++    }
++
++    QDBusMessage notice = QDBusMessage::createSignal(QLatin1String("/"), QLatin1String("org.kde.KDirNotify"), QLatin1String("FilesChanged"));
++    notice << urls;
++    QDBusConnection::sessionBus().send(notice);
++}
++
++void StereoPictureMenu::failed(const QString& message)
++{
++    QMessageBox::warning(parentWidget(), i18n("3D"), message);
+ }
+ 
+ void StereoPictureMenu::convert()
+ {
++    if (m_path.isEmpty())
++    {
++        return;
++    }
++
+     if (QMessageBox::warning(parentWidget(), i18n("Anaglyph to side by side"), Stereo::Picture::colorDisclaimer(),
+                             QMessageBox::Ok | QMessageBox::Cancel) != QMessageBox::Ok)
+     {
+@@ -121,13 +159,28 @@ void StereoPictureMenu::convert()
+ 
+     bool ok = false;
+     const QStringList pairs = {i18n("Red/cyan"), i18n("Green/magenta"), i18n("Amber/blue")};
+-    const QString choice = QInputDialog::getItem(parentWidget(), i18n("Anaglyph to side by side"), i18n("Colour pair"), pairs, 0, false, &ok);
++    const QString pair = QInputDialog::getItem(parentWidget(), i18n("Anaglyph to side by side"), i18n("Colour pair"), pairs, 0, false, &ok);
+ 
+     if (ok)
+     {
+-        m_options.anaglyph = static_cast<Stereo::Picture::AnaglyphColorPair>(pairs.indexOf(choice) + 1);
+-        m_options.view     = Stereo::Picture::View::Stereo;
+-        Q_EMIT optionsChanged();
++        // Kept for the file, like every other input correction
++
++        Stereo::Picture::Options choice = Stereo::Picture::fileChoice(m_path);
++        choice.inputLayout              = Stereo::Picture::Layout::None;
++        choice.anaglyph                 = static_cast<Stereo::Picture::AnaglyphColorPair>(pairs.indexOf(pair) + 1);
++        choice.view                     = Stereo::Picture::View::Stereo;
++        QString error;
++
++        if (Stereo::Picture::setFileChoice(m_path, choice, &error))
++        {
++            fileChanged({m_path});
++        }
++        else
++        {
++            failed(error);
++        }
++
++        m_fileChoice->setFiles({m_path});
+     }
+ }
+ 
+diff --git a/core/libs/widgets/graphicsview/stereo/stereopicturemenu.h b/core/libs/widgets/graphicsview/stereo/stereopicturemenu.h
+index f571cea..1333178 100644
+--- a/core/libs/widgets/graphicsview/stereo/stereopicturemenu.h
++++ b/core/libs/widgets/graphicsview/stereo/stereopicturemenu.h
+@@ -21,9 +21,25 @@
+ 
+ class QActionGroup;
+ 
++namespace Stereo
++{
++class FileChoiceMenu;
++class FileChoiceMoves;
++}
++
+ namespace Digikam
+ {
+ 
++/**
++ * The 3D menu of a picture area.
++ *
++ * What corrects one file (its input packing, Not 3D for that file, the swap of
++ * its eyes, and saving the correction into the file) is the stereo layer's own
++ * menu, and the choice is kept in the layer's per-file store, the one the file
++ * manager, the thumbnailers and the other viewers read; the picture is not
++ * written unless the person chooses the save. How this program shows stereo
++ * pictures (both eyes, one eye, or all of them flat) is its own lasting choice.
++ */
+ class DIGIKAM_EXPORT StereoPictureMenu : public QMenu
+ {
+     Q_OBJECT
+@@ -37,20 +53,43 @@ public:
+      */
+     static int savedView();
+ 
++    /**
++     * The picture shown, and whether it is shown as a pair now: a flat one is offered no swap.
++     */
++    void setFile(const QString& path, bool shownAsPair);
++
++    /**
++     * The program's own choice: which view is shown.
++     */
+     void setOptions(const Stereo::Picture::Options& options);
+     Stereo::Picture::Options options() const;
+ 
+ Q_SIGNALS:
+ 
++    /**
++     * The program's own choice changed.
++     */
+     void optionsChanged();
+ 
++    /**
++     * The stored choice of these files changed (or was saved into them): decode them again.
++     */
++    void fileChoiceChanged(const QStringList& paths);
++
+ private:
+ 
+     void convert();
++    void fileChanged(const QStringList& paths);
++    void failed(const QString& message);
++
++private:
++
+     Stereo::Picture::Options m_options;
+-    QActionGroup*            m_formats;
++    Stereo::FileChoiceMenu*  m_fileChoice;
++    Stereo::FileChoiceMoves* m_moves;
+     QActionGroup*            m_views;
+-    QAction*                 m_swap;
++    QAction*                 m_conversion;
++    QString                  m_path;
+ };
+ 
+ } // namespace Digikam
+diff --git a/core/libs/widgets/graphicsview/stereo/stereoviewadapter.cpp b/core/libs/widgets/graphicsview/stereo/stereoviewadapter.cpp
+index ff9193e..fe91fe5 100644
+--- a/core/libs/widgets/graphicsview/stereo/stereoviewadapter.cpp
++++ b/core/libs/widgets/graphicsview/stereo/stereoviewadapter.cpp
+@@ -79,11 +79,23 @@ public:
+                 current->setOptions(m_menu->options());
+             }
+         });
++        connect(m_menu, &StereoPictureMenu::fileChoiceChanged, this, [window](const QStringList& paths)
++        {
++            // Every picture area of the window that shows one of these files decodes it again
++
++            for (StereoViewAdapter* const adapter : window->findChildren<StereoViewAdapter*>())
++            {
++                if (paths.contains(adapter->path()) || paths.contains(QFileInfo(adapter->path()).canonicalFilePath()))
++                {
++                    adapter->refresh();
++                }
++            }
++        });
+         connect(m_menu, &QMenu::aboutToShow, this, [this]()
+         {
+             if (current)
+             {
+-                m_menu->setOptions(current->options());
++                show(current);
+             }
+         });
+     }
+@@ -93,7 +105,16 @@ public:
+     void setCurrent(StereoViewAdapter* const adapter)
+     {
+         current = adapter;
++        show(adapter);
++    }
++
++    /**
++     * The menu shows the adapter's own view and the stored choice of its file.
++     */
++    void show(StereoViewAdapter* const adapter)
++    {
+         m_menu->setOptions(adapter->options());
++        m_menu->setFile(adapter->path(), adapter->showsPair());
+     }
+ 
+ private:
+@@ -215,12 +236,12 @@ void StereoViewAdapter::reload()
+ 
+     const bool oneEye                = ((m_options.view == Stereo::Picture::View::LeftOnly) ||
+                                         (m_options.view == Stereo::Picture::View::RightOnly));
+-    Stereo::Picture::Options options = m_options;
+ 
+-    if (oneEye)
+-    {
+-        options.view = Stereo::Picture::View::Stereo;
+-    }
++    // The layer applies the person's stored choice for the file (its packing, Not 3D, the swap) with the file's marks,
++    // as it does for the file manager and the thumbnailers; this program adds only which view it shows.
++
++    Stereo::Picture::Options options;
++    options.view = oneEye ? Stereo::Picture::View::Stereo : m_options.view;
+ 
+     if      (m_path.isEmpty() || (!m_edited.isNull() && (m_edited.size() != m_sourceSize)))
+     {
+@@ -232,9 +253,11 @@ void StereoViewAdapter::reload()
+     }
+     else
+     {
+-        m_picture = Stereo::Picture::fromImages(m_edited, QImage(), m_metadata, m_format, m_header, options, m_output.mode());
++        m_picture = Stereo::Picture::fromImages(m_path, m_edited, QImage(), m_metadata, m_format, m_header, options, m_output.mode());
+     }
+ 
++    m_pair = m_picture.isStereo();
++
+     if (m_picture.isStereo())
+     {
+         const bool left = (m_options.view != Stereo::Picture::View::RightOnly);
+@@ -266,6 +289,21 @@ void StereoViewAdapter::reload()
+     }
+ }
+ 
++void StereoViewAdapter::refresh()
++{
++    reload();
++}
++
++QString StereoViewAdapter::path() const
++{
++    return m_path;
++}
++
++bool StereoViewAdapter::showsPair() const
++{
++    return m_pair;
++}
++
+ Stereo::Picture::Options StereoViewAdapter::options() const
+ {
+     return m_options;
+diff --git a/core/libs/widgets/graphicsview/stereo/stereoviewadapter.h b/core/libs/widgets/graphicsview/stereo/stereoviewadapter.h
+index bbe739f..0e43b2a 100644
+--- a/core/libs/widgets/graphicsview/stereo/stereoviewadapter.h
++++ b/core/libs/widgets/graphicsview/stereo/stereoviewadapter.h
+@@ -49,6 +49,17 @@ public:
+     void setOptions(const Stereo::Picture::Options& options);
+     Stereo::Picture::Options options() const;
+ 
++    /**
++     * Decodes the file again: the person's stored choice for it changed (the stereo layer's per-file store).
++     */
++    void refresh();
++
++    /**
++     * The file shown, and whether it is a pair as the layer decides it (also while one eye of it, or none, is shown).
++     */
++    QString path() const;
++    bool showsPair() const;
++
+ protected:
+ 
+     bool eventFilter(QObject* object, QEvent* event) override;
+@@ -74,6 +85,7 @@ private:
+     QSize                     m_sourceSize;
+     QRect                     m_area;
+     bool                      m_editable = false;
++    bool                      m_pair     = false;
+     Stereo::Picture::Options  m_options;
+     Stereo::Picture           m_picture;
+     bool                      m_autoFillBackground;
