@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 15 Nov 2026 09:30:00 -0300
+Subject: [PATCH] stereodepth: A surface over its whole output in the overlay
+ layer lies at the screen and is awake
+
+After a login KSplash shows its loading screen on every screen: one layer-shell
+surface per output, in the overlay layer, over the whole output, each taking the
+keyboard as it maps. Stereo KWin gave a layer-shell surface of an ordinary scope
+the role of a window: the one with the focus was the active window, at the
+screen, and every other one a window of the pile, drawn whole behind the screen
+(a fifth of the sunk limit, 2 px at the default) and asleep, so its elements
+could not show depth. With two 3D screens the loading screen of one of them sank
+and stayed flat (measured in a login on two virtual 3D outputs: the unfocused
+screen's whole picture 2 px behind, the focused one at 0).
+
+Nothing of the pile can lie over a surface of the overlay layer that covers its
+output, so it is never a window of the pile: it is Fixed, at the screen, and
+awake, as the lock screen is. A surface of the overlay layer that does not cover
+its output keeps the role it had.
+
+Assisted-by: Claude Opus 5.5
+---
+Index: kwin-6.7.4/src/scene/stereodepth.cpp
+===================================================================
+--- kwin-6.7.4.orig/src/scene/stereodepth.cpp
++++ kwin-6.7.4/src/scene/stereodepth.cpp
+@@ -9,6 +9,7 @@
+ #include "core/backendoutput.h"
+ #include "core/output.h"
+ #include "effect/effecthandler.h"
++#include "layershellv1window.h"
+ #include "options.h"
+ #include "wayland/surface.h"
+ #include "window.h"
+@@ -92,6 +93,16 @@ static bool isAlert(const Window *window
+ 
+ static Role roleOf(const Window *window);
+ 
++// A layer-shell surface over the whole of its output in the overlay layer, as the loading screen KSplash maps on each screen
++// after a login: nothing of the pile can lie over it, so it is never a window of the pile, whether it has the focus or not. It lies
++// at the screen and shows the depth of its elements, as the lock screen does.
++static bool coversOutputOnTop(const Window *window)
++{
++    const LogicalOutput *output = window->output();
++    return output && qobject_cast<const LayerShellV1Window *>(window) && window->layer() == OverlayLayer
++        && window->frameGeometry().contains(output->geometryF());
++}
++
+ static bool isOnStage(const Window *window, const LogicalOutput *output)
+ {
+     return window->output() == output && window->isShown() && window->isOnCurrentDesktop() && window->isOnCurrentActivity();
+@@ -115,7 +126,8 @@ static bool isCovered(const Window *wind
+ static Role roleOf(const Window *window)
+ {
+     if (window->isDeleted() || window->isFullScreen() || window->isLockScreen() || window->isInternal()
+-        || window->isOutline() || window->isInputMethod() || window->isDNDIcon() || window->isPictureInPicture()) {
++        || window->isOutline() || window->isInputMethod() || window->isDNDIcon() || window->isPictureInPicture()
++        || coversOutputOnTop(window)) {
+         return Role::Fixed;
+     }
+     if (window->isDesktop()) {
+@@ -333,7 +345,7 @@ bool StereoDepth::isAwake(const Window *
+     case Role::Fixed: {
+         // a panel is never in the pile; a fullscreen window is awake while it is the active one
+         const Window *active = workspace()->activeWindow();
+-        return window->isDock() || window->isLockScreen() || window->isInternal()
++        return window->isDock() || window->isLockScreen() || window->isInternal() || coversOutputOnTop(window)
+             || (window->isFullScreen() && active && mainWindow(active) == mainWindow(window));
+     }
+     case Role::Sunk:
