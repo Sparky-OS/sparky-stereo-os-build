@@ -33,6 +33,11 @@ if compgen -G '/extra/*.deb' > /dev/null; then
 fi
 apt-get -y --no-install-recommends build-dep "$job/lc/source" > "$job/build-dep.log" 2>&1
 dpkg-query -W qt6-base-dev libkf6coreaddons-dev plasma-wayland-protocols > "$job/build-versions.txt"
+if [ "${SPARKY_KWIN_RESUME:-0}" = 1 ]; then
+    # Lean Code marks each package's staging tree once and refuses to project it again ("already marked; use a fresh staging
+    # tree"): the staging trees and debhelper's per-package logs go, the compiled tree and its build stamp stay
+    (cd "$job/lc/source" && for p in $(dh_listpackages); do rm -rf "debian/$p" "debian/$p.debhelper.log" "debian/$p.substvars"; done && rm -rf debian/.debhelper debian/tmp debian/files)
+fi
 mkdir -p "$SPARKY_LC_SCRATCH"
 id builder > /dev/null 2>&1 || useradd --create-home --uid 1000 builder
 chown -R builder:builder "$job" "$SPARKY_LC_SCRATCH"
