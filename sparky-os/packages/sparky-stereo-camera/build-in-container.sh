@@ -20,4 +20,4 @@ docker run --rm --ulimit core=0 --cpus 4 --user "$(id -u):$(id -g)" -e HOME="$SC
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH="$SCRATCH/link" \
 	-v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro -v "$REPO":/repo:ro -v /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro \
 	-v "$TREE":"$TREE" -v "$OUT":"$OUT" -v "$SCRATCH":"$SCRATCH" -v /etc/passwd:/etc/passwd:ro \
-	"$IMAGE" sh -c "git config --global --add safe.directory '*'; mkdir -p $SCRATCH/home $SCRATCH/link; cd '$HERE' && bash ./build.sh"
+	"$IMAGE" sh -c "mkdir -p $SCRATCH/home $SCRATCH/link; git config --global --add safe.directory '*'; cd '$HERE' && bash ./build.sh"

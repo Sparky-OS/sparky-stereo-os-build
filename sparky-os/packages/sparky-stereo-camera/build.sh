@@ -10,7 +10,7 @@ TOOLKIT=$(cd "$HERE/../.." && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
 PACKAGE=sparky-stereo-camera
 VERSION=0.1.0
-export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:?the host passes the recipe's date (build-provenance.sh)}
+export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:?the host passes the date of the recipe: build-provenance.sh}
 export DEBEMAIL=Capitain_Jack@yahoo.com DEBFULLNAME="Daniel Ramos (Capitain Jack)"
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.camera.XXXXXX")
