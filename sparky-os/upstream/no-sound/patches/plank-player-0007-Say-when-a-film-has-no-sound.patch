@@ -1,4 +1,4 @@
-Description: Say that a film has no sound when it has a picture and no audio track: a banner for a few seconds and a line in the OSD, in the ten languages.
+Description: Say that a film has no sound when it has a picture and no audio track: a banner for a few seconds and a line in the OSD, with the sentence and the rule of the stereo layer's QML module (org.sparky.stereo NoSound).
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Origin: other, Sparky Stereo OS (ORDER 579)
 Forwarded: not-needed
@@ -7,18 +7,26 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
 
 --- a/app/qml/main.qml
 +++ b/app/qml/main.qml
-@@ -114,11 +114,50 @@
+@@ -8,6 +8,7 @@
+ import org.kde.kirigami 2.19 as Kirigami
+ import QtQuick.Controls 2.15 as Controls
+ import QtMultimedia
++import org.sparky.stereo as Stereo
+ 
+ Kirigami.AbstractApplicationWindow {
+     id: window
+@@ -114,11 +115,50 @@
              }
          }
  
 +        Rectangle {
 +            id: noSoundBanner
-+            // the film is loaded, has a picture and no audio track (Stereo::NoSound::applies in the edition's stereo layer, ORDER 579)
-+            readonly property bool filmHasNoSound: (video.mediaStatus === MediaPlayer.LoadedMedia
-+                                                    || video.mediaStatus === MediaPlayer.BufferedMedia
-+                                                    || video.mediaStatus === MediaPlayer.BufferingMedia
-+                                                    || video.mediaStatus === MediaPlayer.StalledMedia)
-+                                                   && video.hasVideo && !video.hasAudio
++            // the film is loaded, has a picture and no audio track: the rule and the sentence are the stereo layer's (ORDER 579)
++            readonly property bool filmHasNoSound: Stereo.NoSound.saysFor(video.mediaStatus === MediaPlayer.LoadedMedia
++                                                                   || video.mediaStatus === MediaPlayer.BufferedMedia
++                                                                   || video.mediaStatus === MediaPlayer.BufferingMedia
++                                                                   || video.mediaStatus === MediaPlayer.StalledMedia,
++                                                                   video.hasVideo, video.hasAudio ? 1 : 0)
 +            property bool told: false
 +            onFilmHasNoSoundChanged: {
 +                told = filmHasNoSound
@@ -45,7 +53,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
 +                anchors.margins: 8
 +                wrapMode: Text.WordWrap
 +                color: Kirigami.Theme.textColor
-+                text: i18nc("@info", "This film has no sound.")
++                text: Stereo.NoSound.text
 +            }
 +        }
 +
@@ -60,7 +68,15 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
      }
 --- a/app/qml/PlayerOSD.qml
 +++ b/app/qml/PlayerOSD.qml
-@@ -16,6 +16,8 @@
+@@ -7,6 +7,7 @@
+ import org.kde.kirigami 2.15 as Kirigami
+ import QtQuick.Controls 2.15 as Controls
+ import QtMultimedia
++import org.sparky.stereo as Stereo
+ 
+ Item {
+     id: osdControlsArea
+@@ -16,6 +17,8 @@
      property bool menuOpened
      property var videoItem
      property bool pinned: false
@@ -69,14 +85,14 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
  
      onOpenedChanged: {
          if(opened){
-@@ -106,6 +108,15 @@
+@@ -106,6 +109,15 @@
                  }
              }
  
 +            Controls.Label {
 +                id: noSoundLabel
 +                visible: osdControlsArea.noSound
-+                text: i18nc("@info", "This film has no sound.")
++                text: Stereo.NoSound.text
 +                color: Kirigami.Theme.textColor
 +                elide: Text.ElideRight
 +                Layout.maximumWidth: parent.width * 0.3
@@ -85,93 +101,3 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
              SeekBar {
                  id: osdSeekBar
                  Layout.fillWidth: true
---- a/po/de/plank-player.po
-+++ b/po/de/plank-player.po
-@@ -35,3 +35,7 @@
- msgctxt "@info %1 is the settings file"
- msgid "The 3D correction settings could not be read or saved in %1. Check the file's permissions and contents."
- msgstr "Die Einstellungen zur 3D-Korrektur konnten nicht aus %1 gelesen oder darin gespeichert werden. Prüfen Sie die Zugriffsrechte und den Inhalt der Datei."
-+
-+msgctxt "@info"
-+msgid "This film has no sound."
-+msgstr "Dieser Film hat keinen Ton."
---- a/po/es/plank-player.po
-+++ b/po/es/plank-player.po
-@@ -28,3 +28,7 @@
- #, kde-format
- msgid "Press 'esc' or the [←] Back button to close"
- msgstr "Pulse «Esc» o el botón «Retroceso» [←] para cerrar"
-+
-+msgctxt "@info"
-+msgid "This film has no sound."
-+msgstr "Esta película no tiene sonido."
---- a/po/fr/plank-player.po
-+++ b/po/fr/plank-player.po
-@@ -34,3 +34,7 @@
- msgctxt "@info %1 is the settings file"
- msgid "The 3D correction settings could not be read or saved in %1. Check the file's permissions and contents."
- msgstr "Impossible de lire ou d’enregistrer les paramètres de correction 3D dans %1. Vérifiez les permissions et le contenu du fichier."
-+
-+msgctxt "@info"
-+msgid "This film has no sound."
-+msgstr "Ce film n’a pas de son."
---- a/po/ja/plank-player.po
-+++ b/po/ja/plank-player.po
-@@ -31,3 +31,7 @@
- msgctxt "@info %1 is the settings file"
- msgid "The 3D correction settings could not be read or saved in %1. Check the file's permissions and contents."
- msgstr "3D補正の設定を %1 から読み込むか、保存することができませんでした。ファイルのアクセス権と内容を確認してください。"
-+
-+msgctxt "@info"
-+msgid "This film has no sound."
-+msgstr "この映像には音声がありません。"
---- a/po/ko/plank-player.po
-+++ b/po/ko/plank-player.po
-@@ -34,3 +34,7 @@
- msgctxt "@info %1 is the settings file"
- msgid "The 3D correction settings could not be read or saved in %1. Check the file's permissions and contents."
- msgstr "%1에서 3D 보정 설정을 읽거나 저장할 수 없습니다. 파일의 권한과 내용을 확인하십시오."
-+
-+msgctxt "@info"
-+msgid "This film has no sound."
-+msgstr "이 영상에는 소리가 없습니다."
---- a/po/pl/plank-player.po
-+++ b/po/pl/plank-player.po
-@@ -34,3 +34,7 @@
- msgctxt "@info %1 is the settings file"
- msgid "The 3D correction settings could not be read or saved in %1. Check the file's permissions and contents."
- msgstr "Nie można odczytać ani zapisać ustawień korekcji 3D w pliku %1. Sprawdź uprawnienia i zawartość pliku."
-+
-+msgctxt "@info"
-+msgid "This film has no sound."
-+msgstr "Ten film nie ma dźwięku."
---- a/po/pt_BR/plank-player.po
-+++ b/po/pt_BR/plank-player.po
-@@ -34,3 +34,7 @@
- msgctxt "@info %1 is the settings file"
- msgid "The 3D correction settings could not be read or saved in %1. Check the file's permissions and contents."
- msgstr "Não foi possível ler ou salvar as configurações de correção 3D em %1. Verifique as permissões e o conteúdo do arquivo."
-+
-+msgctxt "@info"
-+msgid "This film has no sound."
-+msgstr "Este filme não tem som."
---- a/po/zh_CN/plank-player.po
-+++ b/po/zh_CN/plank-player.po
-@@ -34,3 +34,7 @@
- msgctxt "@info %1 is the settings file"
- msgid "The 3D correction settings could not be read or saved in %1. Check the file's permissions and contents."
- msgstr "无法从 %1 读取或保存 3D 校正设置。请检查文件的权限和内容。"
-+
-+msgctxt "@info"
-+msgid "This film has no sound."
-+msgstr "此影片没有声音。"
---- a/po/zh_TW/plank-player.po
-+++ b/po/zh_TW/plank-player.po
-@@ -34,3 +34,7 @@
- msgctxt "@info %1 is the settings file"
- msgid "The 3D correction settings could not be read or saved in %1. Check the file's permissions and contents."
- msgstr "無法從 %1 讀取或儲存 3D 校正設定。請檢查檔案的權限與內容。"
-+
-+msgctxt "@info"
-+msgid "This film has no sound."
-+msgstr "此影片沒有聲音。"
