@@ -23,10 +23,10 @@ reads the whole chain from the EDID's bytes.
 
 Assisted-by: Claude:claude-fable-5-2
 ---
- autotests/integration/outputchanges_test.cpp | 32 ++++++++++
- src/backends/virtual/virtual_output.cpp      |  6 +-
- src/utils/edid.cpp                           | 67 ++++++++++++--------
- 3 files changed, 76 insertions(+), 29 deletions(-)
+ autotests/integration/outputchanges_test.cpp | 32 ++++++++++++++
+ src/backends/virtual/virtual_output.cpp      |  6 ++-
+ src/utils/edid.cpp                           | 44 ++++++++++++++++++--
+ 3 files changed, 76 insertions(+), 6 deletions(-)
 
 diff --git a/autotests/integration/outputchanges_test.cpp b/autotests/integration/outputchanges_test.cpp
 index 3f6b8c6..15f94c6 100644
@@ -98,7 +98,7 @@ index d5917d2..ada3d87 100644
          .panelOrientation = panelOrientation,
          .internal = internal,
 diff --git a/src/utils/edid.cpp b/src/utils/edid.cpp
-index f71ce5b..6b2009b 100644
+index f71ce5b..9bce922 100644
 --- a/src/utils/edid.cpp
 +++ b/src/utils/edid.cpp
 @@ -95,12 +95,28 @@ static QByteArray parseVendor(const uint8_t *data)
@@ -132,7 +132,7 @@ index f71ce5b..6b2009b 100644
      const struct di_edid_detailed_timing_def *const *detailedTimings = di_edid_get_detailed_timing_defs(edid);
      // detailedTimings is a null-terminated array.
      for (int i = 0; detailedTimings[i] != nullptr; i++) {
-@@ -115,36 +131,33 @@ static QSize determineScreenPhysicalSizeMm(const di_edid *edid)
+@@ -115,12 +131,32 @@ static QSize determineScreenPhysicalSizeMm(const di_edid *edid)
              const double modeAspectRatio = double(timing->horiz_video) / double(timing->vert_video);
  
              if (std::abs(physicalAspectRatio - modeAspectRatio) <= 0.1) {
@@ -144,28 +144,6 @@ index f71ce5b..6b2009b 100644
      }
      const di_edid_screen_size *screenSize = di_edid_get_screen_size(edid);
 -    return QSize(screenSize->width_cm, screenSize->height_cm) * 10;
--}
--
--// libdisplay-info 0.4 wraps the VIC in a struct and renames the video format lookup
--#if HAVE_LIBDISPLAY_INFO_CTA_VIC
--static uint8_t vicCode(const di_cta_svd &svd)
--{
--    return svd.vic.code;
--}
--
--static const di_cta_vic_video_format *videoFormatFromVic(uint8_t vic)
--{
--    return di_cta_vic_video_format_from_vic(di_cta_vic{.code = vic});
--}
--#else
--static uint8_t vicCode(const di_cta_svd &svd)
--{
--    return svd.vic;
--}
--
--static const di_cta_video_format *videoFormatFromVic(uint8_t vic)
--{
--    return di_cta_video_format_from_vic(vic);
 +    const QSize basicSize = QSize(screenSize->width_cm, screenSize->height_cm) * 10;
 +    if (timingSize.isEmpty()) {
 +        return basicSize;
@@ -187,7 +165,5 @@ index f71ce5b..6b2009b 100644
 +                                   << " mm in its first detailed timing; using the screen size";
 +    return basicSize;
  }
--#endif
  
- Edid::Edid()
- {
+ // libdisplay-info 0.4 wraps the VIC in a struct and renames the video format lookup
