@@ -29,7 +29,7 @@ Index: kwin-6.7.4/autotests/integration/stereo_depth_loading_screen_test.cpp
 ===================================================================
 --- /dev/null
 +++ kwin-6.7.4/autotests/integration/stereo_depth_loading_screen_test.cpp
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,234 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 +
@@ -126,7 +126,8 @@ Index: kwin-6.7.4/autotests/integration/stereo_depth_loading_screen_test.cpp
 +    // the client's wl_output by index: looking it up by position gives the first one before the position events arrive
 +    result.shellSurface = Test::createLayerSurfaceV1(result.surface.get(), QStringLiteral("ksplashqml"), Test::waylandOutputs().value(output),
 +                                                     Test::LayerShellV1::layer_overlay);
-+    result.shellSurface->set_size(size.width(), size.height());
++    // a size of 0 on an axis anchored to both edges is the output's (an empty QSize is -1 x -1)
++    result.shellSurface->set_size(size.isEmpty() ? 0 : size.width(), size.isEmpty() ? 0 : size.height());
 +    result.shellSurface->set_exclusive_zone(-1);
 +    result.shellSurface->set_keyboard_interactivity(1);
 +    if (size.isEmpty()) {
