@@ -1,0 +1,31 @@
+kwin (4:6.7.4-2+stereo3d55) unstable;
+
+  * A notebook's built-in panel gets its first scale from its real size
+    (ORDER 567). Three causes made a 13.3 inch full HD convertible and a 14
+    inch full HD notebook start at 100 %:
+    - KWin generated its first output configuration before libinput had
+      listed any device, so no notebook had a lid and every built-in panel
+      was sized as a phone's. Carried: Xaver Hugl's 4e6a1ea8af of master,
+      "backends/libinput: list devices during setup" (s55-0001), and his
+      c8a2cb4611, which gives tablets and handhelds a target of their own
+      (s55-0002, the phone target left as 6.7.4 has it).
+    - The physical size came from the first detailed timing whenever its
+      aspect matched the mode's. One panel declares 29 x 17 cm as its screen
+      size and 344 x 193 mm in its timing, a 15.5 inch panel's. The screen
+      size field now decides when it can be a screen, and the timing's
+      millimetres are used when they agree with it within a centimetre
+      (VESA E-EDID Release A2, 3.6.2 and 3.10.2; the rule the boot menu's
+      text is sized with since sparky-stereo-boot 0.1.10) (s55-0003).
+    - The formula's own rounding: 120 % for a 14.6 inch full HD notebook,
+      100 % for a 14.5 inch tablet. A built-in panel of full HD or more
+      that is at least as dense as a 14 inch full HD one (150 dpi) never
+      starts below 125 % (s55-0004).
+    A saved scale is kept; monitors and televisions keep the formula's
+    result. The output configuration test gains the panel's EDID and rows
+    for each case.
+  * For headless proofs, KWIN_VIRTUAL_OUTPUT_EDIDS and
+    KWIN_VIRTUAL_OUTPUT_INTERNAL give --virtual outputs an EDID and make
+    them built-in panels (s55-0005). Carry the complete accepted
+    +stereo3d54 source.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 15 Nov 2026 00:11:33 +0000

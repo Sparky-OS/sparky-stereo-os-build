@@ -1,0 +1,193 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 14 Nov 2026 21:05:45 -0300
+Subject: [PATCH] utils/edid: The screen size field decides the physical size
+
+determineScreenPhysicalSizeMm() took the first detailed timing's image size
+whenever its aspect matched the mode's. A 13.3 inch full HD notebook panel
+declares 29 x 17 cm in the screen size field and 344 x 193 mm in its first
+detailed timing: KWin sized it as a 15.5 inch panel and its first scale was
+100 %.
+
+The screen size field is the one a source is meant to size text with (VESA
+E-EDID Release A2, 3.6.2). When it can be a screen (at least 10 cm by 6 cm,
+an aspect between 1.2 and 2.6, not the 160 x 90 mm placeholder) it decides;
+the detailed timing's millimetres (3.10.2) are used when they say the same
+screen, within the centimetre the field is rounded to. A field that cannot
+be a screen leaves the choice as it was. This is the rule the edition's boot
+menu sizes its text with.
+
+A virtual output that is given an EDID and no physical size takes the
+EDID's size, as a DRM connector does, so that the output configuration test
+reads the whole chain from the EDID's bytes.
+
+Assisted-by: Claude:claude-fable-5-2
+---
+ autotests/integration/outputchanges_test.cpp | 32 ++++++++++
+ src/backends/virtual/virtual_output.cpp      |  6 +-
+ src/utils/edid.cpp                           | 67 ++++++++++++--------
+ 3 files changed, 76 insertions(+), 29 deletions(-)
+
+diff --git a/autotests/integration/outputchanges_test.cpp b/autotests/integration/outputchanges_test.cpp
+index 3f6b8c6..15f94c6 100644
+--- a/autotests/integration/outputchanges_test.cpp
++++ b/autotests/integration/outputchanges_test.cpp
+@@ -1393,6 +1393,18 @@ static QByteArray readEdid(const QString &path)
+     return file.readAll();
+ }
+ 
++// A 13.3 inch full HD notebook panel whose EDID gives two sizes: 29 x 17 cm in the screen size
++// field, which is the panel, and 344 x 193 mm in its first detailed timing, which is a 15.5 inch one.
++static QByteArray denseNotebookPanelEdid()
++{
++    return QByteArray::fromHex(
++        "00ffffffffffff0034a9a29600000000ff170104a51d1178029521a653539825"
++        "0b505400000001010101010101010101010101010101023a805871380d402c06"
++        "920058c11000001e023a8058713830422c06920058c11000001e000000fd0026"
++        "3e40430f010a202020202020000000fc005656593133463030314731300a0010"
++    );
++}
++
+ void OutputChangesTest::testGenerateConfigs_data()
+ {
+     QTest::addColumn<DeviceType>("deviceType");
+@@ -1543,6 +1555,26 @@ void OutputChangesTest::testGenerateConfigs_data()
+            }
+         << OutputModeline(QSize(800, 1280), 90000ul, OutputModeline::Flag::Preferred) << 1.0 << true;
+ 
++    QTest::addRow("13.3\" full HD convertible, two sizes in the EDID")
++        << DeviceType::Handheld
++        << Test::OutputInfo{
++               .geometry = Rect(0, 0, 1920, 1080),
++               .internal = true,
++               .modes = {OutputModeline(QSize(1920, 1080), 60000, OutputModeline::Flag::Preferred)},
++               .edid = denseNotebookPanelEdid(),
++           }
++        << OutputModeline(QSize(1920, 1080), 60000ul, OutputModeline::Flag::Preferred) << 1.25 << true;
++
++    QTest::addRow("13.3\" full HD notebook with a lid, two sizes in the EDID")
++        << DeviceType::Laptop
++        << Test::OutputInfo{
++               .geometry = Rect(0, 0, 1920, 1080),
++               .internal = true,
++               .modes = {OutputModeline(QSize(1920, 1080), 60000, OutputModeline::Flag::Preferred)},
++               .edid = denseNotebookPanelEdid(),
++           }
++        << OutputModeline(QSize(1920, 1080), 60000ul, OutputModeline::Flag::Preferred) << 1.3 << true;
++
+     QTest::addRow("Legion Go S")
+         << DeviceType::Handheld
+         << Test::OutputInfo{
+diff --git a/src/backends/virtual/virtual_output.cpp b/src/backends/virtual/virtual_output.cpp
+index d5917d2..ada3d87 100644
+--- a/src/backends/virtual/virtual_output.cpp
++++ b/src/backends/virtual/virtual_output.cpp
+@@ -29,10 +29,12 @@ VirtualOutput::VirtualOutput(VirtualBackend *parent, bool internal, const QSize
+ 
+     static int identifier = -1;
+     m_identifier = ++identifier;
++    // like a connector, an output that is given an EDID and no size has the EDID's size
++    const Edid parsedEdid{edid, edidIdentifierOverride};
+     setInformation(Information{
+         .name = connectorName.value_or(QStringLiteral("Virtual-%1").arg(identifier)),
+-        .physicalSize = physicalSizeInMM,
+-        .edid = Edid{edid, edidIdentifierOverride},
++        .physicalSize = physicalSizeInMM.isEmpty() && parsedEdid.isValid() ? parsedEdid.physicalSize() : physicalSizeInMM,
++        .edid = parsedEdid,
+         .capabilities = Capability::CustomModes,
+         .panelOrientation = panelOrientation,
+         .internal = internal,
+diff --git a/src/utils/edid.cpp b/src/utils/edid.cpp
+index f71ce5b..6b2009b 100644
+--- a/src/utils/edid.cpp
++++ b/src/utils/edid.cpp
+@@ -95,12 +95,28 @@ static QByteArray parseVendor(const uint8_t *data)
+     return {};
+ }
+ 
++// A size a screen can have, in either orientation: at least 10 cm by 6 cm, an aspect
++// between 1.2 and 2.6, and not the 16:9 placeholder some displays put there (160 x 90 mm).
++static bool isPlausibleScreenSize(const QSize &mm)
++{
++    const int longSide = std::max(mm.width(), mm.height());
++    const int shortSide = std::min(mm.width(), mm.height());
++    if (longSide < 100 || shortSide < 60) {
++        return false;
++    }
++    if (longSide == 160 && shortSide == 90) {
++        return false;
++    }
++    const int aspect = longSide * 100 / shortSide;
++    return aspect >= 120 && aspect <= 260;
++}
++
+ static QSize determineScreenPhysicalSizeMm(const di_edid *edid)
+ {
+     // An EDID can contain zero or more detailed timing definitions, which can
+     // contain more precise physical dimensions (in millimeters, as opposed to
+-    // centimeters). Pick the first sane physical dimension from detailed timings
+-    // and fall back to the basic dimensions.
++    // centimeters). Pick the first sane physical dimension from detailed timings.
++    QSize timingSize;
+     const struct di_edid_detailed_timing_def *const *detailedTimings = di_edid_get_detailed_timing_defs(edid);
+     // detailedTimings is a null-terminated array.
+     for (int i = 0; detailedTimings[i] != nullptr; i++) {
+@@ -115,36 +131,33 @@ static QSize determineScreenPhysicalSizeMm(const di_edid *edid)
+             const double modeAspectRatio = double(timing->horiz_video) / double(timing->vert_video);
+ 
+             if (std::abs(physicalAspectRatio - modeAspectRatio) <= 0.1) {
+-                return QSize(timing->horiz_image_mm, timing->vert_image_mm);
++                timingSize = QSize(timing->horiz_image_mm, timing->vert_image_mm);
++                break;
+             }
+         }
+     }
+     const di_edid_screen_size *screenSize = di_edid_get_screen_size(edid);
+-    return QSize(screenSize->width_cm, screenSize->height_cm) * 10;
+-}
+-
+-// libdisplay-info 0.4 wraps the VIC in a struct and renames the video format lookup
+-#if HAVE_LIBDISPLAY_INFO_CTA_VIC
+-static uint8_t vicCode(const di_cta_svd &svd)
+-{
+-    return svd.vic.code;
+-}
+-
+-static const di_cta_vic_video_format *videoFormatFromVic(uint8_t vic)
+-{
+-    return di_cta_vic_video_format_from_vic(di_cta_vic{.code = vic});
+-}
+-#else
+-static uint8_t vicCode(const di_cta_svd &svd)
+-{
+-    return svd.vic;
+-}
+-
+-static const di_cta_video_format *videoFormatFromVic(uint8_t vic)
+-{
+-    return di_cta_video_format_from_vic(vic);
++    const QSize basicSize = QSize(screenSize->width_cm, screenSize->height_cm) * 10;
++    if (timingSize.isEmpty()) {
++        return basicSize;
++    }
++    // The screen size field is the one a source is meant to size text with (VESA E-EDID
++    // Release A2, 3.6.2: "The host (source) is expected to use this data to get a rough idea
++    // of the image size to generate properly scaled text and icons"). When it can be a
++    // screen, it decides: the detailed timing's millimeters (3.10.2) are only used when they
++    // say the same screen, that is within the centimeter the field is rounded to. Some
++    // panels put another panel's size in their timing.
++    if (!isPlausibleScreenSize(basicSize)) {
++        return timingSize;
++    }
++    if (std::abs(timingSize.width() - basicSize.width()) <= 10 && std::abs(timingSize.height() - basicSize.height()) <= 10) {
++        return timingSize;
++    }
++    qCWarning(KWIN_CORE).nospace() << "EDID gives two screen sizes: " << basicSize.width() << "x" << basicSize.height()
++                                   << " mm as the screen size and " << timingSize.width() << "x" << timingSize.height()
++                                   << " mm in its first detailed timing; using the screen size";
++    return basicSize;
+ }
+-#endif
+ 
+ Edid::Edid()
+ {
