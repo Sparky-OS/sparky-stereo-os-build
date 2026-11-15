@@ -13,9 +13,9 @@ FORK=$(cd "$1" && pwd)
 REV=$2
 OUT=$(mkdir -p "$3" && cd "$3" && pwd)
 [ -z "$(ls -A "$OUT")" ] || { echo "$OUT is not empty" >&2; exit 1; }
-docker run --rm -i --name "${SOURCE_NAME:-stereo-layer-source}" --ulimit core=0 --cpus "${THREADS:-4}" --platform linux/amd64 -e REV="$REV" -v "$FORK":/fork:ro -v "$OUT":/out -v "$HERE/../..":/toolkit:ro \
-	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
-	--entrypoint bash sparky-lc-migration:20261020 -c 'sh /run/https-only-apt.sh && bash -s' <<'INNER'
+docker run --rm -i --name "${SOURCE_NAME:-stereo-layer-source}" --ulimit core=0 --cpus "${THREADS:-4}" --platform linux/amd64 -e REV="$REV" --mount type=bind,src="$FORK",dst=/fork,readonly --mount type=bind,src="$OUT",dst=/out --mount type=bind,src="$HERE/../..",dst=/toolkit,readonly \
+	--mount type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/host-ca.crt,readonly --mount type=bind,src="$HERE/../../../tools/https-only-apt.sh",dst=/run/https-only-apt.sh,readonly \
+	--entrypoint bash "${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}" -c 'sh /run/https-only-apt.sh && bash -s' <<'INNER'
 set -euo pipefail
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 git config --global safe.directory '*'
