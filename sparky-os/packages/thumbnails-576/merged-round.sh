@@ -11,6 +11,7 @@ FORK=$(cd "$2" && pwd) REV=$3 TREE=$(cd "$4" && pwd) ARCHIVE=$(cd "$5" && pwd)
 STAGE_551=$(cd "$6" && pwd) STAGE_551B=$(cd "$7" && pwd) DOLPHIN=$(cd "$8" && pwd)
 export BUILD_NAME_PREFIX=${BUILD_NAME_PREFIX:-rp-580-build} THREADS=${THREADS:-4}
 export SPARKY_BUILD_IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}
+export SPARKY_BINARY_ONLY=1
 ROUND='stereo-layer dolphin kf6-kimageformats kio-extras ffmpegthumbs gwenview koko kphotoalbum digikam'
 mkdir -p "$W/new"
 disk() {

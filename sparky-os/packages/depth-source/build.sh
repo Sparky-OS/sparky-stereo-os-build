@@ -40,7 +40,7 @@ fi
 [ -z "$SIBS" ] || [ -z "$NEW" ] || for d in "$NEW"/*.deb; do case $d in *-dbgsym_*|*-lc-hr_*) ;; *) echo "/new/$(basename "$d")" >> "$WORK/siblings-current.txt" ;; esac; done
 docker run --rm --name "${BUILD_NAME_PREFIX:-d411-build}-$PKG" --ulimit core=0 --cpus "${THREADS:-4}" --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-	"${SPARKY_PROV_ARGS[@]}" -e PKG="$PKG" -e THREADS="${THREADS:-4}" -e SPARKY_BUILD_PROFILES="${SPARKY_BUILD_PROFILES:-}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
+	"${SPARKY_PROV_ARGS[@]}" -e PKG="$PKG" -e THREADS="${THREADS:-4}" -e SPARKY_BUILD_PROFILES="${SPARKY_BUILD_PROFILES:-}" -e SPARKY_BINARY_ONLY="${SPARKY_BINARY_ONLY:-}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
 	--mount type=bind,src="$ARCHIVE",dst=/archive,readonly --mount type=bind,src="$WORK",dst=/work --mount type=bind,src="$SRC",dst=/src,readonly --mount type=bind,src="$REPO",dst=/repo,readonly --mount type=bind,src="$PREV",dst=/prev,readonly \
 	--mount type=bind,src="$HERE/../..",dst=/toolkit,readonly --mount type=bind,src="$HERE",dst=/tools,readonly ${NEW:+--mount type=bind,src="$NEW",dst=/new,readonly} ${SIBS:+--mount type=bind,src="$SIBS",dst=/previous-siblings.txt,readonly -e SPARKY_LC_PREVIOUS_SIBLINGS_FILE=/previous-siblings.txt --mount type=bind,src="$WORK/siblings-current.txt",dst=/siblings.txt,readonly -e SPARKY_LC_SIBLINGS_FILE=/siblings.txt} \
 	--mount type=bind,src=/usr/share/keyrings/deb-multimedia-keyring.pgp,dst=/usr/share/keyrings/deb-multimedia-keyring.pgp,readonly \

@@ -14,6 +14,8 @@ Install the combined set and qualify the dependants before deciding which need r
 
 `DOLPHIN_SOURCE` is the accepted Dolphin +stereo3d8 source folder.
 Its descriptor and tarballs are copied without rewriting a date or bundling a different toolkit.
+This round sets `SPARKY_BINARY_ONLY=1`: the builder uses `dpkg-buildpackage -b` on the extracted source.
+It retains the supplied descriptor instead of generating another source archive after the clean step changes directory timestamps.
 Reusing that binary version requires confirming it was never published.
 `SPARKY_BUILD_IMAGE` optionally names a local tag of the migration image; its actual image ID is recorded.
 The generic depth-source recipe uses explicit bind mounts, so an absent input fails rather than becoming an empty directory.
