@@ -15,18 +15,14 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
  
  Kirigami.AbstractApplicationWindow {
      id: window
-@@ -114,11 +115,50 @@
+@@ -114,11 +115,46 @@
              }
          }
  
 +        Rectangle {
 +            id: noSoundBanner
 +            // the film is loaded, has a picture and no audio track: the rule and the sentence are the stereo layer's (ORDER 579)
-+            readonly property bool filmHasNoSound: Stereo.NoSound.saysFor(video.mediaStatus === MediaPlayer.LoadedMedia
-+                                                                   || video.mediaStatus === MediaPlayer.BufferedMedia
-+                                                                   || video.mediaStatus === MediaPlayer.BufferingMedia
-+                                                                   || video.mediaStatus === MediaPlayer.StalledMedia,
-+                                                                   video.hasVideo, video.hasAudio ? 1 : 0)
++            readonly property bool filmHasNoSound: Stereo.NoSound.saysFor(video.duration > 0, video.hasVideo, video.hasAudio ? 1 : 0)
 +            property bool told: false
 +            onFilmHasNoSoundChanged: {
 +                told = filmHasNoSound

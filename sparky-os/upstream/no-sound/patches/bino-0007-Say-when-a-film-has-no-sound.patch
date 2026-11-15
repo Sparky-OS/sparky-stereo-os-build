@@ -49,29 +49,61 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
          if (metaData.videoTracks.isEmpty()) {
              _overlayAudio.updateParameters(metaData);
          } else if (entry.videoTrack >= 0) {
-@@ -1441,7 +1449,13 @@
+@@ -1301,6 +1309,18 @@
+ #endif
+ }
+ 
++// The subtitle of the frame; in the first seconds of a film with a picture and no audio track, when it has none, the sentence that
++// says so (ORDER 579)
++QString Bino::subtitleText() const
++{
++    QString subtitle = _frame.subtitle;
++#ifdef HAVE_STEREO_LAYER
++    if (subtitle.isEmpty() && QDateTime::currentMSecsSinceEpoch() < _noSoundUntil)
++        subtitle = Stereo::NoSound::sentence();
++#endif
++    return subtitle;
++}
++
+ void Bino::overlayToTexture(const QImage& img, unsigned int tex)
+ {
+     glBindTexture(GL_TEXTURE_2D, tex);
+@@ -1316,7 +1336,7 @@
+         _overlayAudio.redraw(size.width(), size.height());
+         painter.drawImage(QPoint(), _overlayAudio.image());
+     }
+-    if (!_frame.subtitle.isEmpty()) {
++    if (!subtitleText().isEmpty()) {
+         _overlaySubtitle.redraw(size.width(), size.height());
+         painter.drawImage(QPoint(), _overlaySubtitle.image());
+     }
+@@ -1441,7 +1461,7 @@
                  convertFrameToTexture(_extFrame, _extFrameTex);
          }
          // Render the subtitle
 -        _overlaySubtitle.updateParameters(_frame.subtitle);
-+        QString subtitle = _frame.subtitle;
-+#ifdef HAVE_STEREO_LAYER
-+        // the film's first seconds say that it has no sound, in the place of its subtitle when it has none
-+        if (subtitle.isEmpty() && QDateTime::currentMSecsSinceEpoch() < _noSoundUntil)
-+            subtitle = Stereo::NoSound::sentence();
-+#endif
-+        _overlaySubtitle.updateParameters(subtitle);
++        _overlaySubtitle.updateParameters(subtitleText());
          if (!separateOverlays && _overlaySubtitle.redraw(viewWidth, viewHeight)) {
              overlayToTexture(_overlaySubtitle.image(), _overlayTexs[1]);
          }
+@@ -1643,7 +1663,7 @@
+     _viewPrg.setUniformValue("overlayTex1", 2);
+     _viewPrg.setUniformValue("overlayTex2", 3);
+     _viewPrg.setUniformValue("showOverlayAudio", !_separateOverlays && !_frame.isValid());
+-    _viewPrg.setUniformValue("showOverlaySubtitle", !_separateOverlays && !_frame.subtitle.isEmpty());
++    _viewPrg.setUniformValue("showOverlaySubtitle", !_separateOverlays && !subtitleText().isEmpty());
+     _viewPrg.setUniformValue("showOverlayUI", !_separateOverlays && _overlayUIShow);
+     const int textureWidth = _frame.width * (inputAnaglyphPair(_frame.inputMode) ? 2 : 1);
+     QSize storedView(qRound(textureWidth * viewFactorX), qRound(_frame.height * viewFactorY));
 --- a/src/bino.hpp
 +++ b/src/bino.hpp
-@@ -76,6 +76,8 @@
+@@ -76,6 +76,9 @@
      // for managing the overlay UI:
      bool _overlayUILocked;
      qint64 _overlayUILastTrigger;
 +    // a film with a picture and no audio track says so on its picture until this moment (ORDER 579)
 +    qint64 _noSoundUntil;
++    QString subtitleText() const;
      QPointF _overlayUIPointerInView;
      bool _overlayUIPointerShow;
      // for updating the GUI if necessary
