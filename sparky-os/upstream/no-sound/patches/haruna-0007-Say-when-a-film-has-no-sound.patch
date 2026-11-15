@@ -1,0 +1,205 @@
+Description: Say that a film has no sound when it has a picture and no audio track: the OSD message when the film is loaded and the tooltip of the volume slider and mute button, in the ten languages. The volume control stays usable.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (ORDER 579)
+Forwarded: not-needed
+Last-Update: 2026-11-15
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+
+--- a/po/de/haruna.po
++++ b/po/de/haruna.po
+@@ -3908,3 +3908,7 @@
+ msgctxt "@info"
+ msgid "Changes apply at once to a picture packed with its depth map and to a depth layer, and from the next video to a depth stream of its own."
+ msgstr "Änderungen gelten sofort für ein mit seiner Tiefenkarte gepacktes Bild und für eine Tiefenebene, für einen eigenen Tiefenstrom ab dem nächsten Video."
++
++msgctxt "@info:tooltip osd; a film that has a picture and no audio track"
++msgid "This film has no sound."
++msgstr "Dieser Film hat keinen Ton."
+--- a/po/es/haruna.po
++++ b/po/es/haruna.po
+@@ -3165,3 +3165,7 @@
+ "No se ha podido obtener la lista de reproducción con el id: %1\n"
+ "\n"
+ "%2"
++
++msgctxt "@info:tooltip osd; a film that has a picture and no audio track"
++msgid "This film has no sound."
++msgstr "Esta película no tiene sonido."
+--- a/po/fr/haruna.po
++++ b/po/fr/haruna.po
+@@ -4081,3 +4081,7 @@
+ msgctxt "@info"
+ msgid "Changes apply at once to a picture packed with its depth map and to a depth layer, and from the next video to a depth stream of its own."
+ msgstr "Les changements s’appliquent tout de suite à une image accompagnée de sa carte de profondeur dans la même trame et à une couche de profondeur, et à partir de la vidéo suivante à un flux de profondeur séparé."
++
++msgctxt "@info:tooltip osd; a film that has a picture and no audio track"
++msgid "This film has no sound."
++msgstr "Ce film n’a pas de son."
+--- a/po/ja/haruna.po
++++ b/po/ja/haruna.po
+@@ -3356,3 +3356,7 @@
+ msgctxt "@info"
+ msgid "Changes apply at once to a picture packed with its depth map and to a depth layer, and from the next video to a depth stream of its own."
+ msgstr "変更は、深度マップと一緒にパックされた画像と深度レイヤーにはすぐに、独立した深度ストリームには次の動画から適用されます。"
++
++msgctxt "@info:tooltip osd; a film that has a picture and no audio track"
++msgid "This film has no sound."
++msgstr "この映像には音声がありません。"
+--- a/po/ko/haruna.po
++++ b/po/ko/haruna.po
+@@ -4121,3 +4121,7 @@
+ msgctxt "@info"
+ msgid "Changes apply at once to a picture packed with its depth map and to a depth layer, and from the next video to a depth stream of its own."
+ msgstr "변경 사항은 깊이 맵과 함께 담긴 이미지와 깊이 레이어에는 바로, 별도의 깊이 스트림에는 다음 비디오부터 적용됩니다."
++
++msgctxt "@info:tooltip osd; a film that has a picture and no audio track"
++msgid "This film has no sound."
++msgstr "이 영상에는 소리가 없습니다."
+--- a/po/pl/haruna.po
++++ b/po/pl/haruna.po
+@@ -4046,3 +4046,7 @@
+ msgctxt "@info"
+ msgid "Changes apply at once to a picture packed with its depth map and to a depth layer, and from the next video to a depth stream of its own."
+ msgstr "Zmiany działają od razu dla obrazu spakowanego z mapą głębi i dla warstwy głębi, a dla osobnego strumienia głębi od następnego filmu."
++
++msgctxt "@info:tooltip osd; a film that has a picture and no audio track"
++msgid "This film has no sound."
++msgstr "Ten film nie ma dźwięku."
+--- a/po/pt_BR/haruna.po
++++ b/po/pt_BR/haruna.po
+@@ -3986,3 +3986,7 @@
+ msgctxt "@info"
+ msgid "Changes apply at once to a picture packed with its depth map and to a depth layer, and from the next video to a depth stream of its own."
+ msgstr "As mudanças valem na hora para uma imagem empacotada com o seu mapa de profundidade e para uma camada de profundidade, e a partir do próximo vídeo para um fluxo de profundidade separado."
++
++msgctxt "@info:tooltip osd; a film that has a picture and no audio track"
++msgid "This film has no sound."
++msgstr "Este filme não tem som."
+--- a/po/zh_CN/haruna.po
++++ b/po/zh_CN/haruna.po
+@@ -3464,3 +3464,7 @@
+ msgctxt "@info"
+ msgid "Changes apply at once to a picture packed with its depth map and to a depth layer, and from the next video to a depth stream of its own."
+ msgstr "更改会立即应用于与深度图打包在一起的画面和深度层，对于单独的深度流则从下一个视频开始应用。"
++
++msgctxt "@info:tooltip osd; a film that has a picture and no audio track"
++msgid "This film has no sound."
++msgstr "此影片没有声音。"
+--- a/po/zh_TW/haruna.po
++++ b/po/zh_TW/haruna.po
+@@ -3840,3 +3840,7 @@
+ msgctxt "@info"
+ msgid "Changes apply at once to a picture packed with its depth map and to a depth layer, and from the next video to a depth stream of its own."
+ msgstr "變更會立即套用於與深度圖打包在一起的畫面和深度層，對於獨立的深度串流則從下一部影片開始套用。"
++
++msgctxt "@info:tooltip osd; a film that has a picture and no audio track"
++msgid "This film has no sound."
++msgstr "此影片沒有聲音。"
+--- a/src/mpv/mpvitem.cpp
++++ b/src/mpv/mpvitem.cpp
+@@ -585,6 +585,7 @@
+     Q_EMIT setProperty(MpvProperties::self()->KeepOpen, u"always"_s);
+ 
+     auto url = QUrl::fromUserInput(file);
++    m_noSoundToldFor.clear();
+     if (m_currentUrl != url) {
+         m_currentUrl = url;
+         Q_EMIT currentUrlChanged();
+@@ -646,8 +647,12 @@
+ 
+     uint ar = 0;
+     uint sr = 0;
++    bool hasPicture = false;
+     for (const auto &item : tracks) {
+         const auto map = item.toMap();
++        if (map.value(u"type"_s).toString() == u"video"_s && !map.value(u"albumart"_s).toBool()) {
++            hasPicture = true;
++        }
+         Track track = {
+             map.value(u"id"_s).toInt(),
+             map.value(u"lang"_s).toString(),
+@@ -673,6 +678,29 @@
+ 
+     Q_EMIT audioTracksModelChanged();
+     Q_EMIT subtitleTracksModelChanged();
++
++    // A film with a picture and no audio track says so, once when it is loaded (ORDER 579)
++    const bool noSound = hasPicture && ar == 0;
++    if (noSound != m_filmHasNoSound) {
++        m_filmHasNoSound = noSound;
++        Q_EMIT filmHasNoSoundChanged();
++    }
++    if (noSound && m_noSoundToldFor != m_currentUrl) {
++        m_noSoundToldFor = m_currentUrl;
++        Q_EMIT osdMessage(noSoundText());
++    } else if (!noSound) {
++        m_noSoundToldFor.clear();
++    }
++}
++
++bool MpvItem::filmHasNoSound() const
++{
++    return m_filmHasNoSound;
++}
++
++QString MpvItem::noSoundText() const
++{
++    return i18nc("@info:tooltip osd; a film that has a picture and no audio track", "This film has no sound.");
+ }
+ 
+ void MpvItem::onAsyncReply(const QVariant &data, mpv_event event)
+--- a/src/mpv/mpvitem.h
++++ b/src/mpv/mpvitem.h
+@@ -72,6 +72,12 @@
+     Q_PROPERTY(TracksModel *audioTracksModel READ audioTracksModel NOTIFY audioTracksModelChanged)
+     TracksModel *audioTracksModel() const;
+ 
++    // The film has a picture and no audio track (ORDER 579; the rule of Stereo::NoSound::applies in the edition's stereo layer)
++    Q_PROPERTY(bool filmHasNoSound READ filmHasNoSound NOTIFY filmHasNoSoundChanged)
++    bool filmHasNoSound() const;
++    Q_PROPERTY(QString noSoundText READ noSoundText CONSTANT)
++    QString noSoundText() const;
++
+     Q_PROPERTY(TracksModel *subtitleTracksModel READ subtitleTracksModel NOTIFY subtitleTracksModelChanged)
+     TracksModel *subtitleTracksModel() const;
+ 
+@@ -182,6 +188,7 @@
+ 
+ Q_SIGNALS:
+     void audioTracksModelChanged();
++    void filmHasNoSoundChanged();
+     void subtitleTracksModelChanged();
+     void activeFilterProxyModelChanged();
+     void visibleFilterProxyModelChanged();
+@@ -270,6 +277,8 @@
+     double m_watchLaterPosition{0.0};
+     bool m_isReady{false};
+     QUrl m_currentUrl;
++    bool m_filmHasNoSound{false};
++    QUrl m_noSoundToldFor;
+     std::unique_ptr<ChaptersModel> m_chaptersModel;
+     bool m_finishedLoading{false};
+     std::unique_ptr<QTimer> m_saveTimePositionTimer;
+--- a/src/qml/Footer.qml
++++ b/src/qml/Footer.qml
+@@ -219,7 +219,8 @@
+                     focusPolicy: Qt.NoFocus
+ 
+                     ToolTip {
+-                        text: HarunaApp.actions.muteAction.text
++                        text: root.m_mpv.filmHasNoSound ? HarunaApp.actions.muteAction.text + "\n" + root.m_mpv.noSoundText
++                                                       : HarunaApp.actions.muteAction.text
+                     }
+                 }
+ 
+@@ -232,6 +233,10 @@
+ 
+                     Layout.preferredWidth: root.isSmallSize ? 60 : 100
+                     Layout.preferredHeight: 20
++
++                    // the film has no audio track: the slider stays usable and says so
++                    ToolTip.text: root.m_mpv.noSoundText
++                    ToolTip.visible: hovered && root.m_mpv.filmHasNoSound
+                 }
+ 
+                 Loader {

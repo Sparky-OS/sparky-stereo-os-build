@@ -1,0 +1,127 @@
+Description: Say that a film has no sound when it has a picture and no audio track: on the picture for six seconds, in place of a missing subtitle, and in the Media menu beside the volume controls, with the sentence of the stereo layer in ten languages. The volume controls stay usable.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (ORDER 579)
+Forwarded: not-needed
+Last-Update: 2026-11-15
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -18,8 +18,8 @@
+ # Required: Qt6
+ find_package(Qt6 6.7.0 REQUIRED COMPONENTS OpenGLWidgets Multimedia LinguistTools)
+ include(cmake/StereoDesktop.cmake)
+-# Optional: Sparky Stereo OS's stereo layer, the rule that the players of the edition share to tell what a 3D video is
+-find_package(StereoLayer 1.5 CONFIG QUIET)
++# Optional: Sparky Stereo OS's stereo layer, the rule that the players of the edition share to tell what a 3D video is, and the sentence of a film without sound (ORDER 579)
++find_package(StereoLayer 1.21 CONFIG QUIET)
+ bino_anaglyph_input()
+ if(StereoLayer_FOUND)
+     add_definitions(-DHAVE_STEREO_LAYER)
+--- a/src/bino.cpp
++++ b/src/bino.cpp
+@@ -37,6 +37,9 @@
+ #ifdef HAVE_ANAGLYPH_INPUT
+ #include <picture.h>
+ #endif
++#ifdef HAVE_STEREO_LAYER
++#include <nosound.h>
++#endif
+ 
+ 
+ static Bino* binoSingleton = nullptr;
+@@ -61,6 +64,7 @@
+     _captureSession(nullptr),
+     _overlayUILocked(false),
+     _overlayUILastTrigger(0),
++    _noSoundUntil(0),
+     _overlayUIPointerShow(false),
+     _lastFrameInputMode(Input_Unknown),
+     _lastFrameSurroundMode(Surround_Unknown),
+@@ -312,6 +316,10 @@
+         while (!_playerFailure && !_playerAvailable);
+         if (_playerFailure)
+             return;
++#ifdef HAVE_STEREO_LAYER
++        _noSoundUntil = Stereo::NoSound::applies(true, !metaData.videoTracks.isEmpty(), int(metaData.audioTracks.size()))
++            ? QDateTime::currentMSecsSinceEpoch() + 6000 : 0;
++#endif
+         if (metaData.videoTracks.isEmpty()) {
+             _overlayAudio.updateParameters(metaData);
+         } else if (entry.videoTrack >= 0) {
+@@ -1441,7 +1449,13 @@
+                 convertFrameToTexture(_extFrame, _extFrameTex);
+         }
+         // Render the subtitle
+-        _overlaySubtitle.updateParameters(_frame.subtitle);
++        QString subtitle = _frame.subtitle;
++#ifdef HAVE_STEREO_LAYER
++        // the film's first seconds say that it has no sound, in the place of its subtitle when it has none
++        if (subtitle.isEmpty() && QDateTime::currentMSecsSinceEpoch() < _noSoundUntil)
++            subtitle = Stereo::NoSound::sentence();
++#endif
++        _overlaySubtitle.updateParameters(subtitle);
+         if (!separateOverlays && _overlaySubtitle.redraw(viewWidth, viewHeight)) {
+             overlayToTexture(_overlaySubtitle.image(), _overlayTexs[1]);
+         }
+--- a/src/bino.hpp
++++ b/src/bino.hpp
+@@ -76,6 +76,8 @@
+     // for managing the overlay UI:
+     bool _overlayUILocked;
+     qint64 _overlayUILastTrigger;
++    // a film with a picture and no audio track says so on its picture until this moment (ORDER 579)
++    qint64 _noSoundUntil;
+     QPointF _overlayUIPointerInView;
+     bool _overlayUIPointerShow;
+     // for updating the GUI if necessary
+--- a/src/gui.cpp
++++ b/src/gui.cpp
+@@ -23,6 +23,9 @@
+ #include <QMenu>
+ #include <QMenuBar>
+ #include <QMessageBox>
++#ifdef HAVE_STEREO_LAYER
++#include <nosound.h>
++#endif
+ #include <QContextMenuEvent>
+ #include <QFileDialog>
+ #include <QFileInfo>
+@@ -418,6 +421,11 @@
+     _mediaVolumeDecAction->setShortcuts({ Qt::Key_VolumeDown });
+     connect(_mediaVolumeDecAction, SIGNAL(triggered()), this, SLOT(mediaVolumeDec()));
+     addBinoAction(_mediaVolumeDecAction, mediaMenu);
++    // beside the volume controls, which stay usable: the film has a picture and no audio track (ORDER 579)
++    _mediaNoSoundAction = new QAction(this);
++    _mediaNoSoundAction->setEnabled(false);
++    _mediaNoSoundAction->setVisible(false);
++    addBinoAction(_mediaNoSoundAction, mediaMenu);
+     mediaMenu->addSeparator();
+     _mediaTogglePauseAction = new QAction(tr("Pause"), this);
+     _mediaTogglePauseAction->setShortcuts({ Qt::Key_Space });
+@@ -1127,10 +1135,15 @@
+     _mediaTogglePauseAction->setChecked(Bino::instance()->paused());
+     _mediaToggleVolumeMuteAction->setChecked(Bino::instance()->muted());
+ 
++    _mediaNoSoundAction->setVisible(false);
+     _trackMenu->clear();
+     QUrl url = Bino::instance()->url();
+     MetaData metaData;
+     if (!url.isEmpty() && metaData.detectCached(url)) {
++#ifdef HAVE_STEREO_LAYER
++        _mediaNoSoundAction->setText(Stereo::NoSound::sentence());
++        _mediaNoSoundAction->setVisible(Stereo::NoSound::applies(true, !metaData.videoTracks.isEmpty(), int(metaData.audioTracks.size())));
++#endif
+         for (int i = 0; i < metaData.videoTracks.size(); i++) {
+             QString s = QString(tr("Video track %1")).arg(i + 1);
+             QLocale::Language l = static_cast<QLocale::Language>(metaData.videoTracks[i].value(QMediaMetaData::Language).toInt());
+--- a/src/gui.hpp
++++ b/src/gui.hpp
+@@ -53,6 +53,7 @@
+     QAction* _mediaToggleVolumeMuteAction;
+     QAction* _mediaVolumeIncAction;
+     QAction* _mediaVolumeDecAction;
++    QAction* _mediaNoSoundAction;
+     QAction* _mediaSeekFwd1SecAction;
+     QAction* _mediaSeekBwd1SecAction;
+     QAction* _mediaSeekFwd10SecsAction;
