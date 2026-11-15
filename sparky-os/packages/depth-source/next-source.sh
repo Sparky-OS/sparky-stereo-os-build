@@ -29,6 +29,12 @@ qt6-multimedia)
 		depends=()
 		ITEMS=$HERE/changelog/qt6-multimedia-stereo3d15.items
 		[ -z "$SYM" ] || { echo "the +stereo3d14 symbols are in the published source: no SYMBOLS_ADD" >&2; exit 2; }
+	elif [ "$PUBLISHED_VERSION" = '6.11.2-3+stereo3d15+lc1' ]; then
+		# a successor of the published +stereo3d15+lc1 (ORDER 582): patch 0049 only, control and symbols are +15's (the monitor is a private API symbol)
+		NEXT=6.11.2-3+stereo3d16
+		depends=()
+		ITEMS=$HERE/changelog/qt6-multimedia-stereo3d16.items
+		[ -z "$SYM" ] || { echo "the +stereo3d15 symbols are in the published source: no SYMBOLS_ADD" >&2; exit 2; }
 	else
 	NEXT=6.11.2-3+stereo3d14
 	depends=(--depends $'               libstereo-policy-dev (>= 1.5.0),' $'               libstereo-dibr-dev (>= 1.17.1),\n               libstereo-policy-dev (>= 1.5.0),'
@@ -101,7 +107,7 @@ if [ -n "$SYM" ]; then
 	cat "$SYM" >> "$W/overlay/libqt6multimedia6.symbols"
 fi
 # The vendored ffnvcodec header of patch 0032 (Qt dev 2506a582c8, MIT) gets its entry in debian/copyright (Opus, ORDER 411 2h review).
-if [ "$PKG" = qt6-multimedia ] && [ "$PUBLISHED_VERSION" != 6.11.2-3+stereo3d14+lc1 ] && [ -f "$HERE/patches/$PKG/0032-3rdparty-import-ffnvcodec-dynlink_cuda.h.patch" ]; then
+if [ "$PKG" = qt6-multimedia ] && [ "$PUBLISHED_VERSION" != 6.11.2-3+stereo3d14+lc1 ] && [ "$PUBLISHED_VERSION" != 6.11.2-3+stereo3d15+lc1 ] && [ -f "$HERE/patches/$PKG/0032-3rdparty-import-ffnvcodec-dynlink_cuda.h.patch" ]; then
 	cp "$W/published/debian/copyright" "$W/overlay/copyright"
 	grep -q '^Files: src/3rdparty/nv-codec-headers/' "$W/overlay/copyright" || cat >> "$W/overlay/copyright" <<'COPYRIGHT'
 
