@@ -1,0 +1,188 @@
+Description: With no camera chosen in Kamoso, use the camera the session names as its default
+ Kamoso took the first camera of GStreamer's device list and then the camera saved at its last exit,
+ which Kamoso wrote on every exit, chosen or not. It never read PipeWire's default video source, so
+ the Camera page of System Settings (sparky-stereo-camera) had no effect on it. Now a camera the
+ person picks in Kamoso's own list stays theirs (kamosorc, DeviceChosen); otherwise the camera
+ named by default.video.source in PipeWire's "default" metadata is used, then the first as before.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Origin: other, written for Sparky Stereo OS (ORDER 570); upstream search 2026-11-15: no merged or open change for this (open MR 62 "Remember the chosen camera across restarts and add a camera switcher" is related and not carried)
+Forwarded: no
+Last-Update: 2026-11-15
+---
+diff -ruN src.orig/src/device.cpp src/src/device.cpp
+--- src.orig/src/device.cpp	2026-11-15 07:56:47.363517892 -0300
++++ src/src/device.cpp	2026-11-15 07:56:47.381768430 -0300
+@@ -39,6 +39,7 @@
+ {
+     auto st = gst_device_get_properties(device);
+     m_objectId = objectIdFromProperties(st);
++    m_nodeName = structureValue(st, "node.name");
+     gst_structure_free(st);
+     setObjectName(m_objectId);
+ }
+@@ -53,6 +54,11 @@
+     Q_EMIT filtersChanged(m_filters);
+ }
+ 
++QString Device::nodeName() const
++{
++    return m_nodeName;
++}
++
+ QString Device::objectId() const
+ {
+     return m_objectId;
+diff -ruN src.orig/src/device.h src/src/device.h
+--- src.orig/src/device.h	2026-11-15 07:56:47.362989470 -0300
++++ src/src/device.h	2026-11-15 07:56:58.724914918 -0300
+@@ -26,6 +26,8 @@
+         ~Device();
+         QString description() const { return m_description; }
+         QString objectId() const;
++    /// The PipeWire node.name of the camera, empty when the camera does not come from PipeWire
++    QString nodeName() const;
+         void setFilters(const QString &filters);
+         QString filters() const { return m_filters; }
+ 
+@@ -40,6 +42,7 @@
+         const QString m_description;
+         GstDevice *const m_device;
+         QString m_objectId;
++        QString m_nodeName;
+         QString m_filters;
+ };
+ 
+diff -ruN src.orig/src/devicemanager.cpp src/src/devicemanager.cpp
+--- src.orig/src/devicemanager.cpp	2026-11-15 07:56:47.363231071 -0300
++++ src/src/devicemanager.cpp	2026-11-15 07:56:47.382458752 -0300
+@@ -10,6 +10,8 @@
+ #include "device.h"
+ #include "kamosoSettings.h"
+ #include <QDebug>
++#include <QProcess>
++#include <QRegularExpression>
+ 
+ #include <gst/gststructure.h>
+ #include <gst/gstdevice.h>
+@@ -66,11 +68,14 @@
+     g_list_free (devices);
+ 
+     if (!m_deviceList.isEmpty()) {
+-        setPlayingDevice(m_deviceList.constFirst());
+-        // Override if set in configuration
+-        for (auto d : m_deviceList){
+-            if (d->objectId() == Settings::self()->deviceObjectId()) {
+-                setPlayingDevice(d);
++        setPlayingDevice(preferredDevice());
++        // A camera the person chose in Kamoso stays theirs
++        if (Settings::self()->deviceChosen()) {
++            for (auto d : m_deviceList){
++                if (d->objectId() == Settings::self()->deviceObjectId()) {
++                    setPlayingDevice(d);
++                    m_chosenByPerson = true;
++                }
+             }
+         }
+     }
+@@ -96,6 +101,7 @@
+     }
+ 
+     Settings::self()->setDeviceObjectId(m_playingDevice->objectId());
++    Settings::self()->setDeviceChosen(m_chosenByPerson);
+ }
+ 
+ /*
+@@ -156,10 +162,44 @@
+     endInsertRows();
+ 
+     if (!m_playingDevice) {
+-        setPlayingDevice(m_deviceList.constFirst());
++        setPlayingDevice(preferredDevice());
+     }
+ }
+ 
++void DeviceManager::chooseDevice(int row)
++{
++    m_chosenByPerson = true;
++    setPlayingDevice(deviceAt(row));
++}
++
++// The camera the session's default video source names (PipeWire's metadata "default", key default.video.source, which WirePlumber
++// keeps), when it is one of ours
++Device *DeviceManager::sessionDefaultDevice() const
++{
++    QProcess p;
++    p.start(QStringLiteral("pw-metadata"), {QStringLiteral("-n"), QStringLiteral("default"), QStringLiteral("0"), QStringLiteral("default.video.source")});
++    if (!p.waitForStarted(1000) || !p.waitForFinished(2000) || p.exitCode() != 0) {
++        return nullptr;
++    }
++    static const QRegularExpression name(QStringLiteral("\"name\"\\s*:\\s*\"([^\"]+)\""));
++    const auto match = name.match(QString::fromUtf8(p.readAllStandardOutput()));
++    if (!match.hasMatch()) {
++        return nullptr;
++    }
++    for (auto d : m_deviceList) {
++        if (d->nodeName() == match.captured(1)) {
++            return d;
++        }
++    }
++    return nullptr;
++}
++
++Device *DeviceManager::preferredDevice() const
++{
++    Device *d = sessionDefaultDevice();
++    return d ? d : m_deviceList.constFirst();
++}
++
+ void DeviceManager::deviceRemoved(GstDevice* device)
+ {
+     auto st = gst_device_get_properties(device);
+diff -ruN src.orig/src/devicemanager.h src/src/devicemanager.h
+--- src.orig/src/devicemanager.h	2026-11-15 07:56:47.363179561 -0300
++++ src/src/devicemanager.h	2026-11-15 07:56:47.382352902 -0300
+@@ -38,6 +38,8 @@
+         void deviceAdded(_GstDevice *device);
+ 
+         Q_SCRIPTABLE Device* deviceAt(int i) const;
++        /// The camera the person picks in Kamoso: it stays theirs from now on
++        Q_INVOKABLE void chooseDevice(int row);
+ 
+     public Q_SLOTS:
+         void save();
+@@ -54,6 +56,9 @@
+ 
+         QVector<Device*> m_deviceList;
+         Device *m_playingDevice;
++        bool m_chosenByPerson = false;
++        Device *sessionDefaultDevice() const;
++        Device *preferredDevice() const;
+         _GstDeviceMonitor *m_monitor;
+ };
+ 
+diff -ruN src.orig/src/kamosoSettings.kcfg src/src/kamosoSettings.kcfg
+--- src.orig/src/kamosoSettings.kcfg	2026-11-15 07:56:47.363621242 -0300
++++ src/src/kamosoSettings.kcfg	2026-11-15 07:56:47.382228162 -0300
+@@ -21,6 +21,10 @@
+             <default>true</default>
+             <label>Vertically mirror the camera view.</label>
+         </entry>
++        <entry name="DeviceChosen" type="Bool" key="deviceChosen">
++            <default>false</default>
++            <label>True when the person chose the camera in Kamoso; otherwise Kamoso uses the camera the session names as its default.</label>
++        </entry>
+         <entry name="DeviceObjectId" type="String" key="deviceObjectId">
+             <label>Points to the last used webcam.</label>
+         </entry>
+diff -ruN src.orig/src/qml/ImagesView.qml src/src/qml/ImagesView.qml
+--- src.orig/src/qml/ImagesView.qml	2026-11-15 07:56:47.363338591 -0300
++++ src/src/qml/ImagesView.qml	2026-11-15 07:56:47.382583203 -0300
+@@ -272,7 +272,7 @@
+                     textRole: "display"
+                     visible: count>1
+                     onActivated: (row) => {
+-                        DeviceManager.playingDevice = DeviceManager.deviceAt(row);
++                        DeviceManager.chooseDevice(row);
+                     }
+                 }
+ 
