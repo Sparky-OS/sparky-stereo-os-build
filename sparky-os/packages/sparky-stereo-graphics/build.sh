@@ -314,7 +314,7 @@ cp "$OUT/${PACKAGE}_${VERSION}_amd64.deb" "$OUT/${PACKAGE}-lc-hr_${VERSION}_amd6
 		dpkg-distaddfile "$(basename "$archive")" System optional
 	done
 	sed -i '/-lc-hr_/ s/$/ automatic=yes/' debian/files
-	dpkg-genbuildinfo -b -O"$OUT/${PACKAGE}_${VERSION}_amd64.buildinfo"
+	dpkg-genbuildinfo --build=binary -O"$OUT/${PACKAGE}_${VERSION}_amd64.buildinfo"
 	dpkg-genchanges -b -O"$OUT/${PACKAGE}_${VERSION}_amd64.changes"
 )
 PYTHONPATH="$TOOLKIT${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-debs \
