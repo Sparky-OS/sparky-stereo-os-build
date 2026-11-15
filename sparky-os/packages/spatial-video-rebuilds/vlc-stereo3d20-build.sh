@@ -16,7 +16,7 @@ mkdir -p /out/lc && cd /out/lc && cp /in/* .
 dpkg-source -x vlc_3.0.24-1+stereo3d19+lc1.dsc src >/dev/null 2>&1
 # back to the authored +stereo3d19: the checked inverse of lean.debian_prepare (the toolkit, its six build
 # dependencies at the front of Build-Depends, its changelog entry and its rules targets; this source has no preserve plan)
-python3 /toolkit/repo/plain-from-lc.py src
+python3 /toolkit/repo/plain-from-lc.py --drop-plan src
 cd src
 cp /toolkit/upstream/vlc/${P#3d-} debian/patches/$P
 echo $P >> debian/patches/series
