@@ -1,0 +1,3 @@
+mpv-dmo (1:0.41.0-dmo9+stereo3d10) unstable; urgency=medium
+
+  * Read the display size of a side by side or top and bottom Matroska track as the size of one plane (RFC 9559 section 18.10) only when a view of the frame as declared could not be a whole picture: narrower than 4:3 side by side, 8:3 or wider stacked (ORDER 577, the rule of FFmpeg +stereo3d14). Patch 0061 replaces the doubling of every display size that differs from the frame (patch 0040), which showed 854x480 declared 1707x480 and 1920x540 declared 1920x544 as views of 32:9, and hands the filters the shape one view is shown at.
