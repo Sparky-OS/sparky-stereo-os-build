@@ -1,0 +1,197 @@
+Description: Koko's Enable 3D is the stereo layer's, in place of a second Not 3D (ORDER 551c)
+ The view's switch that shows every picture flat, for the session, is the layer's Enable3DAction (org.sparky.stereo), the
+ same words in every program on the layer; Alt+Shift+N switches it. A file's own Not 3D stays in the layer's per-file menu.
+ Needs libstereo-layer-dev (>= 1.19.2).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-15
+---
+diff --git a/src/qml/mediaview/MediaViewPage.qml b/src/qml/mediaview/MediaViewPage.qml
+index 00f8eb5..cad05f5 100644
+--- a/src/qml/mediaview/MediaViewPage.qml
++++ b/src/qml/mediaview/MediaViewPage.qml
+@@ -41,7 +41,8 @@ Kirigami.Page {
+     QtObject {
+         id: stereoChoices
+ 
+-        property int view: 0 // 0 stereo, 1 left eye only, 2 right eye only, 3 not 3D
++        property int view: 0 // 0 stereo, 1 left eye only, 2 right eye only, 3 every picture flat (3D not enabled)
++        property int eyeView: 0 // the view of a pair shown while 3D is enabled
+         property int revision: 0
+     }
+ 
+@@ -1309,7 +1310,8 @@ Kirigami.Page {
+     }
+ 
+     // The shortcuts the 3D entries had before the per-file ones became the layer's menu: the swap acts on the file's
+-    // choice in the store, the four views on this view as before
++    // choice in the store; Alt+Shift+N switches "Enable 3D" for this view, and the three views choose the eyes and
++    // enable 3D, as before
+     Shortcut {
+         sequence: "Alt+Shift+W"
+         context: Qt.WindowShortcut
+@@ -1321,28 +1323,37 @@ Kirigami.Page {
+         sequence: "Alt+Shift+N"
+         context: Qt.WindowShortcut
+         enabled: root.visible && root.stereoMenuAvailable
+-        onActivated: stereoChoices.view = 3
++        onActivated: stereoChoices.view = stereoChoices.view === 3 ? stereoChoices.eyeView : 3
+     }
+ 
+     Shortcut {
+         sequence: "Alt+Shift+D"
+         context: Qt.WindowShortcut
+         enabled: root.visible && root.stereoMenuAvailable
+-        onActivated: stereoChoices.view = 0
++        onActivated: {
++            stereoChoices.eyeView = 0;
++            stereoChoices.view = 0;
++        }
+     }
+ 
+     Shortcut {
+         sequence: "Alt+Shift+L"
+         context: Qt.WindowShortcut
+         enabled: root.visible && root.stereoMenuAvailable
+-        onActivated: stereoChoices.view = 1
++        onActivated: {
++            stereoChoices.eyeView = 1;
++            stereoChoices.view = 1;
++        }
+     }
+ 
+     Shortcut {
+         sequence: "Alt+Shift+O"
+         context: Qt.WindowShortcut
+         enabled: root.visible && root.stereoMenuAvailable
+-        onActivated: stereoChoices.view = 2
++        onActivated: {
++            stereoChoices.eyeView = 2;
++            stereoChoices.view = 2;
++        }
+     }
+ 
+     Kirigami.PromptDialog {
+@@ -1367,6 +1378,7 @@ Kirigami.Page {
+             if (stereoMenuLoader.item) {
+                 stereoMenuLoader.item.chooseAnaglyph(colorPair.currentIndex);
+             }
++            stereoChoices.eyeView = 0;
+             stereoChoices.view = 0;
+         }
+ 
+diff --git a/src/qml/mediaview/StereoMenu.qml b/src/qml/mediaview/StereoMenu.qml
+index d5902b1..079a911 100644
+--- a/src/qml/mediaview/StereoMenu.qml
++++ b/src/qml/mediaview/StereoMenu.qml
+@@ -17,8 +17,9 @@ import org.sparky.stereo as Stereo
+  * saving the correction into the file) is the stereo layer's own menu, and the
+  * choice is kept in the layer's per-file store, which the file manager, the
+  * thumbnailers and the other viewers read; the file is not written unless the
+- * person chooses the save. Which view is shown (both eyes, one eye, or every
+- * picture flat) is this view's own choice, for the session, as before.
++ * person chooses the save. Whether this view shows stereo pictures in 3D at all
++ * (the stereo layer's "Enable 3D") and with which eyes is this view's own
++ * choice, for the session, as before.
+  */
+ QQC2.Menu {
+     id: menu
+@@ -26,7 +27,8 @@ QQC2.Menu {
+     // The picture shown, and whether it is shown as a pair now
+     required property url source
+     required property bool presenting
+-    // The view's own choices: view (0 stereo, 1 left eye only, 2 right eye only, 3 not 3D) and revision
++    // The view's own choices: view (0 stereo, 1 left eye only, 2 right eye only, 3 every picture flat while 3D is not
++    // enabled), eyeView (the view of a pair shown while 3D is enabled) and revision
+     required property QtObject choices
+ 
+     // A choice could not be kept, or a save into the file was refused
+@@ -46,6 +48,33 @@ QQC2.Menu {
+ 
+     title: i18nc("@action:inmenu Stereoscopic 3D pictures", "3D")
+ 
++    function chooseView(view: int) {
++        menu.choices.eyeView = view;
++        menu.choices.view = view;
++    }
++
++    // The view's own switch for every picture, for the session, as before: the stereo layer's "Enable 3D", in the same
++    // words as every program on the layer. Off, every picture is flat; "Not 3D" for one file is in the layer's menu
++    // below. Alt+Shift+N stays its shortcut (MediaViewPage.qml).
++    QQC2.MenuItem {
++        id: enableItem
++
++        action: Stereo.Enable3DAction {
++            id: enable3D
++
++            checked: menu.choices.view !== 3
++            onTriggered: {
++                menu.choices.view = checked ? menu.choices.eyeView : 3;
++                checked = Qt.binding(() => menu.choices.view !== 3);
++            }
++        }
++        QQC2.ToolTip.text: enable3D.toolTip
++        QQC2.ToolTip.visible: hovered
++        QQC2.ToolTip.delay: 1000
++    }
++
++    QQC2.MenuSeparator {}
++
+     Stereo.FileChoice {
+         id: fileChoice
+ 
+@@ -72,10 +101,10 @@ QQC2.Menu {
+ 
+         text: i18nc("@action:inmenu Stereo picture view", "Stereo")
+         checkable: true
+-        checked: menu.choices.view === 0
++        checked: menu.choices.eyeView === 0
+         onTriggered: {
+-            menu.choices.view = 0;
+-            checked = Qt.binding(() => menu.choices.view === 0);
++            menu.chooseView(0);
++            checked = Qt.binding(() => menu.choices.eyeView === 0);
+         }
+     }
+ 
+@@ -84,10 +113,10 @@ QQC2.Menu {
+ 
+         text: i18nc("@action:inmenu Stereo picture view", "Left eye only")
+         checkable: true
+-        checked: menu.choices.view === 1
++        checked: menu.choices.eyeView === 1
+         onTriggered: {
+-            menu.choices.view = 1;
+-            checked = Qt.binding(() => menu.choices.view === 1);
++            menu.chooseView(1);
++            checked = Qt.binding(() => menu.choices.eyeView === 1);
+         }
+     }
+ 
+@@ -96,23 +125,10 @@ QQC2.Menu {
+ 
+         text: i18nc("@action:inmenu Stereo picture view", "Right eye only")
+         checkable: true
+-        checked: menu.choices.view === 2
+-        onTriggered: {
+-            menu.choices.view = 2;
+-            checked = Qt.binding(() => menu.choices.view === 2);
+-        }
+-    }
+-
+-    // Every picture of this view flat, for the session; "Not 3D" for one file is in the layer's menu above
+-    QQC2.MenuItem {
+-        id: flatItem
+-
+-        text: i18nc("@action:inmenu Stereo picture view", "Not 3D")
+-        checkable: true
+-        checked: menu.choices.view === 3
++        checked: menu.choices.eyeView === 2
+         onTriggered: {
+-            menu.choices.view = 3;
+-            checked = Qt.binding(() => menu.choices.view === 3);
++            menu.chooseView(2);
++            checked = Qt.binding(() => menu.choices.eyeView === 2);
+         }
+     }
+ }

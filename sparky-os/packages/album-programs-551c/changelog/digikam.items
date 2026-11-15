@@ -1,0 +1,22 @@
+The program's own lasting switch for every picture is the stereo layer's "Enable 3D" (Stereo::Enable3DAction), in the
+same words as every program on the layer, at the top of the 3D menu of the album preview, the light table, the editor
+and the slide show, in place of a second entry called "Not 3D" (ORDER 551c). Off, every picture is shown flat, and it
+stays off after a restart as before (the settings' View is 3); "Not 3D" for one file stays in the layer's menu.
+Alt+Shift+N switches it; choosing Stereo, Left eye only or Right eye only shows the pictures in 3D again. The slide
+show now starts with the program's lasting view, as the other picture areas do.
+
+A stored 3D choice that cannot follow a file digiKam itself renamed or moved (the per-file store cannot be written) is
+told to the person, from the main thread whatever thread the job ran in, one window for a burst of files, over the
+program's main window (the active window can be the renaming dialog that is just closing); before, it was only written to
+the log. A folder digiKam moves to another device, by a copy and a removal, now carries the
+choices of its files too.
+
+At 125 % Showfoto no longer leaves a device row of the desktop along its canvas (two window sizes of four): the canvas
+item clears its stereo hole on the rectangle the stereo layer shows the picture in (Stereo::WidgetLayer::shownRect()),
+in the viewport's own pixels, instead of on its own rectangle, which lies on parts of a pixel there.
+
+The eleven sentences the 3D menu keeps and the new one are in Polish, Brazilian Portuguese, French, German, Spanish,
+Japanese, Korean and Chinese (../../translations/digikam-stereo3d.po.patch, last in the series); they were English in
+every language since +stereo3d1. Enable 3D and the per-file entries are the layer's and come from its catalogues.
+
+Built against libstereo-layer-dev 1.19.2.

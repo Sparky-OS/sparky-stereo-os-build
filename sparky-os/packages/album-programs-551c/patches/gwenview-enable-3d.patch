@@ -1,0 +1,181 @@
+Description: Gwenview's own Enable 3D for every picture, beside the file's corrections (ORDER 551c)
+ The view's switch that shows every picture flat comes back, as the stereo layer's Enable3DAction (the same words in
+ every program on the layer), for the session as before +stereo3d10; Alt+Shift+N is that switch again. A file's own Not 3D
+ stays in the layer's per-file menu. Needs libstereo-layer-dev (>= 1.19.2).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-15
+---
+diff --git a/app/gwenviewui.rc b/app/gwenviewui.rc
+index c5ff250..0e3f00f 100644
+--- a/app/gwenviewui.rc
++++ b/app/gwenviewui.rc
+@@ -1,6 +1,6 @@
+ <?xml version="1.0"?>
+ <!DOCTYPE gui SYSTEM "kpartgui.dtd">
+-<gui name="gwenview" version="73">
++<gui name="gwenview" version="74">
+ 
+ <MenuBar>
+     <Menu name="file" >
+@@ -24,6 +24,7 @@
+         <Action name="view_toggle_spotlightmode" />
+         <Menu name="stereo3d">
+             <text>3D</text>
++            <Action name="stereo_enable_3d" />
+             <Action name="stereo_file_choice" />
+             <Separator />
+             <Action name="stereo_both_eyes" />
+diff --git a/app/mainwindow.cpp b/app/mainwindow.cpp
+index 4423914..7fa2a51 100644
+--- a/app/mainwindow.cpp
++++ b/app/mainwindow.cpp
+@@ -96,6 +96,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ #include "infocontextmanageritem.h"
+ #include "viewmainpage.h"
+ #ifdef GWENVIEW_STEREO
++#include <filechoicemenu.h>
+ #include <widgetlayer.h>
+ #endif
+ #ifndef GWENVIEW_SEMANTICINFO_BACKEND_NONE
+@@ -464,13 +465,21 @@ struct MainWindow::Private {
+             addStereoEyeMode(QStringLiteral("stereo_both_eyes"), i18n("Stereo"), ViewMainPage::StereoEyeMode::Stereo, Qt::ALT | Qt::SHIFT | Qt::Key_D);
+         addStereoEyeMode(QStringLiteral("stereo_left_only"), i18n("Left eye only"), ViewMainPage::StereoEyeMode::LeftOnly, Qt::ALT | Qt::SHIFT | Qt::Key_L);
+         addStereoEyeMode(QStringLiteral("stereo_right_only"), i18n("Right eye only"), ViewMainPage::StereoEyeMode::RightOnly, Qt::ALT | Qt::SHIFT | Qt::Key_O);
+-        addStereoEyeMode(QStringLiteral("stereo_not_3d"), i18n("Not 3D"), ViewMainPage::StereoEyeMode::Not3D, Qt::ALT | Qt::SHIFT | Qt::Key_N);
+         stereoBoth->setChecked(true);
++        // The program's own switch for every picture it shows, for the session: the stereo layer's "Enable 3D", in the
++        // same words as every program on the layer, beside the file's own corrections ("Not 3D" for one file is in the
++        // layer's menu). Alt+Shift+N is this switch again, as before the file's entries became the layer's.
++        auto enable3D = new Stereo::Enable3DAction(q);
++        stereo->addAction(enable3D->objectName(), enable3D);
++        actionCollection->setDefaultShortcut(enable3D, Qt::ALT | Qt::SHIFT | Qt::Key_N);
++        connect(enable3D, &QAction::triggered, q, [this](bool enabled) {
++            mViewMainPage->setStereoEnabled(enabled);
++        });
+         // For a local file the 3D menu's per-file entries are the stereo layer's menu (stereo_file_choice, made by the
+         // view page). The actions above that it replaces in the menu stay for their shortcuts, and act on the same
+         // per-file store: a shortcut works on an action its window holds.
+         for (const char *name : {"stereo_input_auto", "stereo_input_sbs_left", "stereo_input_sbs_right", "stereo_input_tab_left", "stereo_input_tab_right",
+-                 "stereo_swap_eyes", "stereo_anaglyph_to_sbs", "stereo_not_3d"}) {
++                 "stereo_swap_eyes", "stereo_anaglyph_to_sbs"}) {
+             q->addAction(actionCollection->action(QLatin1String(name)));
+         }
+ #endif
+diff --git a/app/viewmainpage.cpp b/app/viewmainpage.cpp
+index 0349810..064bd9a 100644
+--- a/app/viewmainpage.cpp
++++ b/app/viewmainpage.cpp
+@@ -147,6 +147,8 @@ struct ViewMainPagePrivate {
+     StereoViewAdapter *mStereoAdapter = nullptr;
+     ViewMainPage::StereoInput mStereoInput = ViewMainPage::StereoInput::Automatic;
+     ViewMainPage::StereoEyeMode mStereoEyeMode = ViewMainPage::StereoEyeMode::Stereo;
++    // The program's own "Enable 3D", for the session: off, every picture is flat
++    bool mStereoEnabled = true;
+     KConfig mStereoState{QStringLiteral("gwenviewstereorc"), KConfig::SimpleConfig};
+     Stereo::Picture::AnaglyphColorPair mAnaglyphPair = Stereo::Picture::AnaglyphColorPair::None;
+     Stereo::FileChoiceMenu *mStereoChoiceMenu = nullptr;
+@@ -265,10 +267,11 @@ struct ViewMainPagePrivate {
+         Stereo::Picture::Options options;
+         const Stereo::Picture::Options kept = local ? Stereo::Picture::fileChoice(path) : Stereo::Picture::Options();
+         ViewMainPage::StereoInput input = mStereoInput;
+-        bool notThreeD = mStereoEyeMode == ViewMainPage::StereoEyeMode::Not3D;
++        // every picture flat (the program's switch), or this file flat (its own Not 3D, in the store)
++        const bool fileFlat = local && kept.view == Stereo::Picture::View::Mono;
++        const bool notThreeD = !mStereoEnabled || fileFlat;
+         if (local) {
+             // the layer applies the stored choice; the actions kept for their shortcuts show what the store holds
+-            notThreeD = kept.view == Stereo::Picture::View::Mono;
+             const bool right = kept.inputOrder == Order::RightFirst;
+             input = kept.inputLayout == Layout::SideBySide ? (right ? ViewMainPage::StereoInput::SideBySideRightFirst : ViewMainPage::StereoInput::SideBySideLeftFirst)
+                 : kept.inputLayout == Layout::TopAndBottom ? (right ? ViewMainPage::StereoInput::TopAndBottomRightFirst : ViewMainPage::StereoInput::TopAndBottomLeftFirst)
+@@ -300,23 +303,24 @@ struct ViewMainPagePrivate {
+             }
+         }
+         checkStereoAction(QStringLiteral("stereo_swap_eyes"), local ? kept.swapEyes : options.swapEyes, currentView() && !notThreeD);
+-        const ViewMainPage::StereoEyeMode eyes =
+-            mStereoEyeMode == ViewMainPage::StereoEyeMode::Not3D ? ViewMainPage::StereoEyeMode::Stereo : mStereoEyeMode;
+-        switch (eyes) {
+-        case ViewMainPage::StereoEyeMode::LeftOnly:
++        const ViewMainPage::StereoEyeMode eyes = mStereoEyeMode;
++        if (!mStereoEnabled) {
++            // a field the caller sets wins over the stored one: every picture flat
++            options.view = Stereo::Picture::View::Mono;
++        } else if (fileFlat) {
++            // the file's own Not 3D wins over this session's one-eye view, which would otherwise cut it in half
++            options.view = Stereo::Picture::View::Stereo;
++        } else if (eyes == ViewMainPage::StereoEyeMode::LeftOnly) {
+             options.view = Stereo::Picture::View::LeftOnly;
+-            break;
+-        case ViewMainPage::StereoEyeMode::RightOnly:
++        } else if (eyes == ViewMainPage::StereoEyeMode::RightOnly) {
+             options.view = Stereo::Picture::View::RightOnly;
+-            break;
+-        default:
+-            options.view = !local && notThreeD ? Stereo::Picture::View::Mono : Stereo::Picture::View::Stereo;
+-            break;
++        } else {
++            options.view = Stereo::Picture::View::Stereo;
+         }
+-        checkStereoAction(QStringLiteral("stereo_not_3d"), notThreeD);
+-        checkStereoAction(QStringLiteral("stereo_both_eyes"), !notThreeD && eyes == ViewMainPage::StereoEyeMode::Stereo);
+-        checkStereoAction(QStringLiteral("stereo_left_only"), !notThreeD && eyes == ViewMainPage::StereoEyeMode::LeftOnly);
+-        checkStereoAction(QStringLiteral("stereo_right_only"), !notThreeD && eyes == ViewMainPage::StereoEyeMode::RightOnly);
++        checkStereoAction(QStringLiteral("stereo_enable_3d"), mStereoEnabled);
++        checkStereoAction(QStringLiteral("stereo_both_eyes"), eyes == ViewMainPage::StereoEyeMode::Stereo);
++        checkStereoAction(QStringLiteral("stereo_left_only"), eyes == ViewMainPage::StereoEyeMode::LeftOnly);
++        checkStereoAction(QStringLiteral("stereo_right_only"), eyes == ViewMainPage::StereoEyeMode::RightOnly);
+         if (mStereoChoiceMenu) {
+             // the per-file menu is the layer's, for the file the store can name; it shows what the store holds
+             mStereoChoiceMenu->setShownAsPair(mStereoAdapter && mStereoAdapter->showsPair());
+@@ -737,24 +741,21 @@ void ViewMainPage::toggleStereoSwap()
+ 
+ void ViewMainPage::setStereoEyeMode(StereoEyeMode mode)
+ {
+-    const QString path = d->stereoLocalPath();
+-    if (path.isEmpty()) {
+-        d->mStereoEyeMode = mode;
+-        d->updateStereo();
++    // Which eye is shown is this session's, as is every picture flat; a file's own Not 3D is the layer's per-file menu.
++    // Choosing an eye shows the pictures in 3D again, as choosing Stereo did when every picture was flat.
++    if (mode == StereoEyeMode::Not3D) {
++        setStereoEnabled(false);
+         return;
+     }
+-    // Not 3D is the file's, in the shared store; which eye is shown stays this session's
+-    Stereo::Picture::Options choice = Stereo::Picture::fileChoice(path);
+-    const bool flat = mode == StereoEyeMode::Not3D;
+-    if (!flat) {
+-        d->mStereoEyeMode = mode;
+-    }
+-    if ((choice.view == Stereo::Picture::View::Mono) != flat) {
+-        choice.view = flat ? Stereo::Picture::View::Mono : Stereo::Picture::View::Stereo;
+-        d->setStereoFileChoice(choice);
+-    } else {
+-        d->updateStereo();
+-    }
++    d->mStereoEyeMode = mode;
++    d->mStereoEnabled = true;
++    d->updateStereo();
++}
++
++void ViewMainPage::setStereoEnabled(bool enabled)
++{
++    d->mStereoEnabled = enabled;
++    d->updateStereo();
+ }
+ 
+ void ViewMainPage::convertAnaglyph(Stereo::Picture::AnaglyphColorPair pair)
+diff --git a/app/viewmainpage.h b/app/viewmainpage.h
+index 80c9b38..5d86219 100644
+--- a/app/viewmainpage.h
++++ b/app/viewmainpage.h
+@@ -133,6 +133,8 @@ public:
+     void setStereoInput(StereoInput input);
+     void toggleStereoSwap();
+     void setStereoEyeMode(StereoEyeMode mode);
++    // The program's own "Enable 3D" for every picture it shows, for the session; off, every picture is flat
++    void setStereoEnabled(bool enabled);
+     void convertAnaglyph(Stereo::Picture::AnaglyphColorPair pair);
+ #endif
+ 

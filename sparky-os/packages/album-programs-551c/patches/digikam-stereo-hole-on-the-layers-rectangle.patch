@@ -1,0 +1,51 @@
+Description: the stereo hole of digiKam's and Showfoto's picture areas on the layer's own rectangle (ORDER 551c)
+ At 125 % Showfoto left one device row of the desktop along its canvas at two window sizes of four: the canvas item
+ cleared its hole from its own rectangle, which lies on parts of a pixel there, while the stereo layer lays the picture's
+ surface under the rectangle it shows the picture in (Stereo::WidgetLayer::shownRect(), the viewport's property
+ "stereoLayerShown"). The item now clears that rectangle, in the viewport's own pixels, as the layer paints a hole itself.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-15
+---
+diff --git a/core/libs/widgets/graphicsview/graphicsdimgitem.cpp b/core/libs/widgets/graphicsview/graphicsdimgitem.cpp
+index ffef204..377416f 100644
+--- a/core/libs/widgets/graphicsview/graphicsdimgitem.cpp
++++ b/core/libs/widgets/graphicsview/graphicsdimgitem.cpp
+@@ -24,6 +24,9 @@
+ 
+ #include <QStyleOptionGraphicsItem>
+ #include <QPainter>
++#include <QTransform>
++#include <QVariant>
++#include <QWidget>
+ #include <QPoint>
+ #include <QRect>
+ 
+@@ -189,7 +192,26 @@ bool GraphicsDImgItem::paintStereoPresentation(QPainter* const painter, const QR
+     {
+         painter->save();
+         painter->setCompositionMode(QPainter::CompositionMode_Source);
+-        painter->fillRect(drawRect, Qt::transparent);
++
++        // The hole is where the stereo layer shows the picture's surface, in the viewport's own pixels (the
++        // viewport's property "stereoLayerShown", Stereo::WidgetLayer::shownRect()), as the layer paints a hole
++        // itself. The item's own rectangle lies on parts of a pixel at a scale that is not whole (125 %), and a hole
++        // painted from it was a device row wider than the surface: the desktop showed through that row.
++
++        QWidget* const area     = dynamic_cast<QWidget*>(painter->device());
++        const QVariant shown    = area ? area->property("stereoLayerShown") : QVariant();
++
++        if (shown.isValid())
++        {
++            const QRect exposed = painter->worldTransform().mapRect(QRectF(drawRect)).toAlignedRect();
++            painter->setWorldTransform(QTransform());
++            painter->fillRect(shown.toRect().intersected(exposed), Qt::transparent);
++        }
++        else
++        {
++            painter->fillRect(drawRect, Qt::transparent);
++        }
++
+         painter->restore();
+ 
+         return true;

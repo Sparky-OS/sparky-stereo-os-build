@@ -25,6 +25,7 @@ Upstream, the same strings go to each language's KDE translation team once the f
 - `kscreen-wdisplays-menus.po.patch` (ORDER 331): the 28 strings of Display Settings' extra menus (Flip horizontally, the X and Y position, the physical size, custom modes, Show Screen Names, Wheel Pans the View and the zoom percentage) in the eight translated languages, for the `kcm_kscreen` catalogs; code half is `sparky-os/packages/kscreen/patches/s12-*`. Every catalog passes `msgfmt -c` and `sparky-os/tests/validate-po-patches.py` (given the plain +stereo3d11 source). A first draft with AI assistance, pending review by native speakers (fr, ja, ko, zh_CN and zh_TW also lack a second-model check). Carried last in kscreen's series, after `kscreen-arrangement-view.po.patch`, by its build.
 - `plasma-desktop-tablet-mode-panels.po.patch` (ORDER 567): the switch "In Tablet Mode: Hide panels automatically" of General Behavior, its label and its help text, in the nine translated languages, for the `kcm_workspace` catalogs; code half is `sparky-os/packages/convertible-defaults-567/patches/plasma-desktop-tablet-mode-panels-switch.patch`. A first draft with AI assistance, pending review by native speakers.
 - `kwin-keyboard-tablet-mode-only.po.patch` (ORDER 567): the check box "Only when in Tablet Mode" of the Virtual Keyboard page, in the nine translated languages, for the `kcm_virtualkeyboard` catalogs; code half is `sparky-os/packages/kwin/overlay-stereo3d57/patches/s57-0001-*` (KWin merge request 8592). A first draft with AI assistance, pending review by native speakers.
+- `digikam-stereo3d.po.patch` (ORDER 551c): the twelve sentences of digiKam's and Showfoto's 3D menu that stay in the program (the menu's title, the anaglyph conversion and its colour pairs, the three eye views) and the sentence that tells a 3D choice could not follow a file digiKam moved, in Polish, Brazilian Portuguese, French, German, Spanish, Japanese, Korean and Chinese, for the `digikam` catalogs; the eleven menu sentences are KPhotoAlbum's translations of the same msgids, word for word. Code half is `sparky-os/packages/album-programs-551c/patches/digikam-enable-3d-and-told-carry.patch`. Every catalog passes `msgfmt -c`. A first draft with AI assistance, pending review by native speakers. Carried last in digikam's series by that recipe.
 
 ## Which package carries each patch (ORDER 391)
 
@@ -40,6 +41,7 @@ Six of these patches were made "for the next package" and no build applied them.
 | `kubrick-stereo3d.po.patch` | kubrick | 4:26.04.0-1+stereo3d3 |
 | `kinfocenter-stereo3d.po.patch` | kinfocenter | 4:6.7.4-1+stereo3d2 |
 | `kf6-kfilemetadata-stereo3d.po.patch` | kf6-kfilemetadata | 6.30.0-1+stereo3d5 |
+| `digikam-stereo3d.po.patch` | digikam | 4:9.1.0-1+stereo3d5 |
 | `plasma-workspace-recovery.po.patch` | plasma-workspace | 4:6.7.4-2+stereo3d7 |
 | `powerdevil-graphics-link.po.patch` | powerdevil | 4:6.7.4-1+stereo3d2 (with the code half graphics-page-link.patch) |
 | `vlc-spatial-video.po.patch` | vlc (binary vlc-stereo) | 3.0.24-1+stereo3d16, already: debian/patches/vlc-spatial-video-translations.patch, catalogues in /usr/share/vlc-stereo/locale |

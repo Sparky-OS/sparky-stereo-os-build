@@ -39,6 +39,7 @@ TRANSLATIONS = Path(__file__).resolve().parent.parent / 'translations'
 # when it is not usr/share/locale: VLC Stereo keeps its own under usr/share/vlc-stereo/locale])
 SOURCES = {
     'command-not-found-messages.po.patch': ('command-not-found', 'command-not-found'),
+    'digikam-stereo3d.po.patch': ('digikam', None),
     'discover-backend-split.po.patch': ('plasma-discover', None),
     'dragon-3d-video.po.patch': ('dragon', None),
     'kalgebra-stereo3d.po.patch': ('kalgebra', None),
