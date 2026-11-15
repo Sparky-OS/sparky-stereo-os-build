@@ -83,7 +83,7 @@ KCM.SimpleKCM {
                 Layout.maximumWidth: Kirigami.Units.gridUnit * 28
                 wrapMode: Text.WordWrap
                 opacity: 0.7
-                text: i18n("Programs that let you choose a camera, such as Kamoso, keep their own choice.")
+                text: i18n("A program in which you chose a camera keeps your choice. Programs that open the camera themselves, such as those built on Qt Multimedia, do not follow this default yet.")
             }
         }
 

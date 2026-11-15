@@ -125,10 +125,16 @@ T = {
  "Programme, die eine Kamera anfordern, ohne eine zu wählen, bekommen diese Kamera.", "Los programas que piden una cámara sin elegir ninguna reciben esta cámara.", "Les programmes qui demandent une caméra sans en choisir une reçoivent celle-ci.",
  "カメラを指定せずに要求したプログラムには、このカメラが使われます。", "카메라를 고르지 않고 요청하는 프로그램은 이 카메라를 받습니다.", "Programy, które proszą o kamerę bez wybierania jej, dostają tę kamerę.",
  "Os programas que pedem uma câmera sem escolher uma recebem esta câmera.", "未指定摄像头就请求摄像头的程序会使用这个摄像头。", "未指定相機就請求相機的程式會使用這個相機。"),
-"Programs that let you choose a camera, such as Kamoso, keep their own choice.": (
- "Programme, in denen Sie eine Kamera wählen können, etwa Kamoso, behalten ihre eigene Wahl.", "Los programas que permiten elegir una cámara, como Kamoso, conservan su propia elección.", "Les programmes qui permettent de choisir une caméra, comme Kamoso, gardent leur propre choix.",
- "Kamoso のようにカメラを選べるプログラムは、それぞれの選択を保持します。", "Kamoso처럼 카메라를 직접 고르는 프로그램은 자체 선택을 유지합니다.", "Programy, w których można wybrać kamerę, jak Kamoso, zachowują własny wybór.",
- "Os programas que permitem escolher uma câmera, como o Kamoso, mantêm a própria escolha.", "像 Kamoso 这样可以自行选择摄像头的程序会保留各自的选择。", "像 Kamoso 這樣可以自行選擇相機的程式會保留各自的選擇。"),
+"A program in which you chose a camera keeps your choice. Programs that open the camera themselves, such as those built on Qt Multimedia, do not follow this default yet.": (
+ "Ein Programm, in dem Sie eine Kamera gewählt haben, behält Ihre Wahl. Programme, die die Kamera selbst öffnen, etwa mit Qt Multimedia, folgen dieser Standardkamera noch nicht.",
+ "Un programa en el que eligió una cámara conserva su elección. Los programas que abren la cámara por sí mismos, como los basados en Qt Multimedia, todavía no siguen esta cámara predeterminada.",
+ "Un programme dans lequel vous avez choisi une caméra garde votre choix. Les programmes qui ouvrent eux-mêmes la caméra, comme ceux construits sur Qt Multimedia, ne suivent pas encore cette caméra par défaut.",
+ "プログラム内でカメラを選んだ場合は、その選択が保たれます。Qt Multimedia を使うプログラムなど、カメラを自分で開くプログラムは、まだこの既定のカメラに従いません。",
+ "프로그램에서 직접 카메라를 고른 경우 그 선택이 유지됩니다. Qt Multimedia를 쓰는 프로그램처럼 카메라를 직접 여는 프로그램은 아직 이 기본 카메라를 따르지 않습니다.",
+ "Program, w którym wybrano kamerę, zachowuje ten wybór. Programy otwierające kamerę samodzielnie, na przykład oparte na Qt Multimedia, jeszcze nie stosują tej kamery domyślnej.",
+ "Um programa em que você escolheu uma câmera mantém a sua escolha. Programas que abrem a câmera por conta própria, como os baseados no Qt Multimedia, ainda não seguem esta câmera padrão.",
+ "在某个程序中选择过摄像头时，该程序保留您的选择。自行打开摄像头的程序（例如基于 Qt Multimedia 的程序）暂时不会遵循此默认摄像头。",
+ "在某個程式中選擇過相機時，該程式會保留您的選擇。自行開啟相機的程式（例如以 Qt Multimedia 為基礎的程式）目前尚不會遵循此預設相機。"),
 "Settings for:": ("Einstellungen für:", "Ajustes de:", "Réglages de :", "設定の対象:", "설정 대상:", "Ustawienia dla:", "Configurações de:", "设置对象：", "設定對象："),
 "This preview cannot show that packing. Other programs can.": (
  "Diese Vorschau kann diese Anordnung nicht zeigen. Andere Programme können es.", "Esta vista previa no puede mostrar esa disposición. Otros programas sí.", "Cet aperçu ne peut pas montrer cet agencement. D’autres programmes le peuvent.",
