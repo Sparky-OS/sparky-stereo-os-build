@@ -114,8 +114,9 @@ fin() {   # fin CMDLINE ROOTLOG FSTAB RECORD -> exit status; the kept problems i
 }
 FST='UUID=aaaa / ext4 defaults 0 1\nUUID=bbbb /home btrfs defaults 0 2\nUUID=cccc swap swap noauto 0 0\nUUID=dddd /data xfs defaults 0 0\n'
 LOGCLEAN='Log of fsck -C -f -a -T -t ext4 /dev/sda3\nsparky: 100/200 files (0.1% non-contiguous), 300/400 blocks\n'
-LOGFIX='Log of fsck -C -f -a -T -t ext4 /dev/sda3\nsparky: Inode 12 ref count is 3, should be 1.  FIXED.\nfsck died with exit status 1\n'
-LOGBAD='Log of fsck -C -f -a -T -t ext4 /dev/sda3\nsparky: UNEXPECTED INCONSISTENCY; RUN fsck MANUALLY.\nfsck died with exit status 4\n'
+LOGFIX='Log of fsck -C -f -a -T -t ext4 /dev/sda3\nsparky: Inode 12 ref count is 3, should be 1.  FIXED.\nfsck exited with status code 1\n'
+LOGFIX2='Log of fsck -C -f -a -T -t ext4 /dev/sda3\nsparky: 100/200 files, 300/400 blocks\nfsck exited with status code 1\n'
+LOGBAD='Log of fsck -C -f -a -T -t ext4 /dev/sda3\nsparky: UNEXPECTED INCONSISTENCY; RUN fsck MANUALLY.\nfsck exited with status code 4\n'
 MARK='BOOT_IMAGE=/boot/vmlinuz root=UUID=aaaa ro fsck.mode=force sparky_stereo.start=unfinished quiet'
 fin "$MARK" "$LOGCLEAN" "$FST" grubenv; ok 'a finished start after an unfinished one: exit 0' $? 0
 ok 'the flag is cleared, the other variables stay' "$(grub-editenv $T/boot/grub/grubenv list | tr '\n' ' ')" 'sparky_stereo_boot=x '
@@ -125,6 +126,7 @@ has 'btrfs checks itself' "$(cat $W/list)" 'UUID=bbbb (btrfs): not checked, this
 hasnot 'a file system with pass 0 is not listed' "$(cat $W/list)" 'UUID=dddd'
 hasnot 'swap is not listed' "$(cat $W/list)" 'UUID=cccc'
 fin "$MARK" "$LOGFIX" "$FST" grubenv; has 'a repaired root is said' "$(cat $W/list)" 'UUID=aaaa (ext4): errors were repaired'
+fin "$MARK" "$LOGFIX2" "$FST" grubenv; has 'the exit status alone says repaired (the real words of logsave 1.47)' "$(cat $W/list)" 'UUID=aaaa (ext4): errors were repaired'
 fin "$MARK" "$LOGBAD" "$FST" grubenv; has 'errors that remain are said, with what to do' "$(cat $W/list)" 'UUID=aaaa (ext4): errors remain. Check it from another system: sudo fsck UUID=aaaa'
 fin "$MARK" '' "$FST" grubenv; has 'no trace of a check is said' "$(cat $W/list)" 'UUID=aaaa (ext4): no trace of a check was found'
 fin "$MARK" "$LOGCLEAN" 'UUID=aaaa / ext4 defaults 0 1\nUUID=eeee /old reiserfs defaults 0 2\n' grubenv; has 'a type with no checker installed is said' "$(cat $W/list)" 'UUID=eeee (reiserfs): not checked, no checker for this type is installed'

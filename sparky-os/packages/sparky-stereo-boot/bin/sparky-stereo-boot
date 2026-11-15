@@ -1182,7 +1182,7 @@ def check_results():
     """What the forced check of this start found, per file system: (device, mount point, type, verdict), the verdict
     one of clean, repaired, errors, self, none (no checker), unknown (no trace of a check). The root is checked in
     the boot image (initramfs-tools: its log is /run/initramfs/fsck.log, written by logsave, which names an exit
-    status other than 0), the others by systemd-fsck@.service; fsck(8): exit status 1 is "Filesystem errors
+    status other than 0: "fsck exited with status code 1"), the others by systemd-fsck@.service; fsck(8): exit status 1 is "Filesystem errors
     corrected", 4 "Filesystem errors left uncorrected"."""
     results = []
     try:
@@ -1202,7 +1202,9 @@ def check_results():
         if where == '/' and root_log is not None:
             lines = root_log
             for line in root_log.splitlines():
-                if 'died with exit status' in line:
+                # logsave(8) names a status other than 0: "fsck exited with status code 1" (e2fsprogs 1.47; older
+                # ones wrote "died with exit status")
+                if 'exited with status code' in line or 'died with exit status' in line:
                     try:
                         status = int(line.rsplit(None, 1)[1])
                     except (ValueError, IndexError):
