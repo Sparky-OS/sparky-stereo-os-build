@@ -4,6 +4,7 @@
 # Last update 2026/11/15
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+RECIPE=$HERE
 REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
 VERSION=0.2.12
@@ -77,7 +78,7 @@ S=$WORK/$PACKAGE-$VERSION
 mkdir -p "$S/debian"
 COPY="$HERE/build-tools/copy-recipe.py"
 [ -f "$COPY" ] || COPY="$HERE/../../../tools/copy-recipe.py"
-python3 "$COPY" "$HERE" "$S"
+python3 "$COPY" "$RECIPE" "$S"
 mkdir -p "$S/build-tools"
 cp "$COPY" "$S/build-tools/"
 cat >"$S/debian/control" <<EOS
