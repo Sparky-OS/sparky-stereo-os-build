@@ -1,0 +1,8 @@
+kinfocenter (4:6.7.4-1+stereo3d3) unstable; urgency=medium
+
+  * Stereo 3D and Deep Colour page: where it said "DisplayCAL is not installed" and offered nothing, it now says that DisplayCAL requires
+    calibrator hardware (a colorimeter or a spectrophotometer), shows apt's sizes for installing it and offers "Install DisplayCAL", which
+    runs Stereo APTus' own entry action through pkexec (ORDER 575). Nothing is installed until the person presses the button, and the
+    page does not detect a measuring device. Failures are said with their reason (Stereo APTus missing, no source offering DisplayCAL,
+    authorization cancelled, apt busy, no network). The new strings are in the nine translated languages
+    (translations/kinfocenter-displaycal.po.patch). No dependency changes: DisplayCAL is not a Depends or a Recommends of anything.

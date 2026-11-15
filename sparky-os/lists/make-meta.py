@@ -194,6 +194,17 @@ def available(pkgs):
     return [p for p in pkgs if p in known]
 
 RB = read_roles()
+
+def read_suggests():
+    # roles.tsv places a program in a task's Recommends; suggests.tsv names one the task only suggests (nothing installs it)
+    out = {}
+    for l in open(os.path.join(HERE, 'suggests.tsv')):
+        if l.strip() and not l.startswith('#'):
+            role, pkg = l.rstrip('\n').split('\t')[:2]
+            out.setdefault('task-sparky-stereo-' + role, []).append(pkg)
+    return out
+
+SUGGESTS = read_suggests()
 ROLED = set().union(*[RB[r]['3d'] | RB[r]['2d'] for r in RB])
 GAMING_LISTS = sorted(set(lst('runtimes')) - {'ffmpeg', 'libvulkan1', 'python3'}) + lst('gaming') + lst('games')
 
@@ -404,6 +415,9 @@ def main():
             f.append(('Depends', ', '.join(dep)))
         if rec:
             f.append(('Recommends', ', '.join(rec)))
+        suggested = sorted(set(available(SUGGESTS.get(pkg, []))) - set(dep) - set(rec))
+        if suggested:
+            f.append(('Suggests', ', '.join(suggested)))
         if pkg in BREAKS:
             f.append(('Breaks', ', '.join(BREAKS[pkg]).replace('@VERSION@', v)))
         if pkg in REPLACES:
