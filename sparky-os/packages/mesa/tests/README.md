@@ -105,3 +105,10 @@ Build with `cc -o glx-back-both-eyes glx-back-both-eyes.c -lGL -lX11`, start it 
 `NOBACK=1` draws the rectangle with `GL_BACK_LEFT` and must fail the check.
 `glx-draw-buffers.c` reads both back buffers back with `glReadPixels` instead of a capture, and with `ANNOUNCE_STEREO=1` it sets the root property a stereo compositor sets, so it runs on a plain virtual X server: `next-source.sh` puts it in debian/tests as `glx-back-both-eyes` (cases out, mrtwin, fragcolor, left, right; exit 77 with a message where no quad buffer configuration exists).
 Its other cases (clear, fixed, dualsrc, mrtfbo, mono, es2, es3) are the regression set for a change to the state tracker's shader variants: the lines of two Mesa builds must be equal except where the change is meant.
+
+## vk-views.c (patch 0040)
+
+One window and one `VkSurfaceKHR`, and a timed sequence of swapchains with two image layers or one, as a program that turns its 3D off and on again presents: `PHASES="2:4,1:4,2:4,1:0"` (views and seconds; the last phase lasts until the program is stopped), `OLD=0` destroys the previous swapchain before the next instead of naming it as `oldSwapchain`, `X11=1` uses an X11 window through Xwayland, `VK_VENDOR=0x10de` picks NVIDIA's device.
+A pair shows layer 0 red and layer 1 blue; a one-layer swapchain shows its picture's left half green and its right half yellow, so a flat window has both halves in each eye and a picture shown as a pair has one colour per eye (green left, yellow right).
+Build with `wayland-scanner client-header` and `private-code` of `stable/xdg-shell/xdg-shell.xml` beside it and `cc -o vk-views vk-views.c xdg-shell-protocol.c -lvulkan -lwayland-client -lxcb`; in X11 mode it prints the window's `_KDE_NET_WM_STEREO_CONTENT` every second.
+Before 0040, through the Vulkan stereo layer on NVIDIA every one-layer phase shows one half per eye on Wayland, and on X11 (the layer, radv and lavapipe) the window keeps declaring 3 and shows the one-layer picture mixed with the last pair; with 0040 every phase is the right picture and the X11 declaration goes 3, 0, 3, 0 with the phases.

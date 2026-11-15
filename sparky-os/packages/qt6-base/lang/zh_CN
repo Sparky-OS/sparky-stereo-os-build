@@ -1,0 +1,4 @@
+LOCAL1="窗口以平面显示"
+LOCAL2="%s 为其窗口请求了两幅画面，每只眼睛一幅，但 Vulkan 驱动 %s 只给窗口一幅画面，因此窗口以平面显示。在此驱动上，请求 3D 的程序都以平面显示，直到它给出两幅。Mesa 的 Vulkan 驱动会给出两幅；对于其他驱动，由软件包 mesa-vulkan-layer-stereo 给出：请确认它已安装，并且没有设置 DISABLE_LAYER_MESA_STEREO。"
+LOCAL3="%s 为其窗口请求了两幅画面，每只眼睛一幅，但 OpenGL 驱动 %s 只给窗口一幅画面，因此窗口以平面显示。在此驱动上，请求 3D 的程序都以平面显示，直到它给出两幅。Mesa 的 OpenGL 会给出两幅，按照桌面会话的设置，在 NVIDIA 显卡上也通过 zink 给出；在 NVIDIA 自己的 OpenGL 上启动的程序从 gl-stereo 层获得。"
+LOCAL4="%s 为其窗口请求了两幅画面，每只眼睛一幅，但 OpenGL 通过 zink 自己的交换链运行，它只显示一幅画面，因此窗口以平面显示。桌面会话在使用 zink 时设置 LIBGL_KOPPER_DISABLE=1；请也用它启动该程序。"

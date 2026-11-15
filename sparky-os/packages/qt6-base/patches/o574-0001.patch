@@ -1,0 +1,557 @@
+From 43a81800b8ed69568a1141a8793b88f0718a59bb Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 15 Nov 2026 12:00:00 -0300
+Subject: [PATCH 1/3] Wayland: tell the person when a window asked for two
+ views and got one
+
+A window that asks for two views of its surface, one per eye (its own
+stereo buffers, or an engine drawing the depth of its elements), and is
+given one is shown flat. Until now that was a warning in the program's
+log on the Vulkan path and nothing on the OpenGL path, which reaches no
+one on a desktop.
+
+Where the platform knows both what was asked and what the surface has,
+it now hands the failure to the edition's problems engine
+(sparky-stereo-problems): the Wayland Vulkan window when the swapchain's
+maker says the views it got, and the Wayland EGL window when it makes its
+surface or the request changes at the start of a frame. A driver that
+cannot give a second view gives none to any program, so the problem is
+the driver's, one for the person: kept once, naming the first program
+that met it and the driver as its API names it (the Vulkan physical
+device, which the swapchain's maker now says before the views with
+"_q_stereo_surface_device"; the EGL vendor, or zink when the session
+asks for it by name), and ended when a window gets its two views from
+the same driver. Nothing is said when the pair works or when the window
+never asked, and only where the compositor takes such a pair.
+
+The engine's library is opened at run time, never linked, from the path
+the build gives (QT_SPARKY_STEREO_PROBLEMS_LIBRARY); where it cannot be
+loaded the engine's command keeps the same record. Without that path the
+problem stays a warning in the program's log, as before. The messages
+are the package's own, in the ten languages of its catalog.
+
+Assisted-by: Claude Opus 5.5
+---
+ src/gui/rhi/qrhivulkan.cpp                    |   8 +-
+ src/plugins/platforms/wayland/CMakeLists.txt  |   9 +
+ .../wayland-egl/qwaylandeglwindow.cpp         |  38 +++-
+ .../wayland-egl/qwaylandeglwindow_p.h         |   7 +
+ .../wayland/qwaylandnativeinterface.cpp       |   6 +
+ .../wayland/qwaylandstereoproblem.cpp         | 212 ++++++++++++++++++
+ .../wayland/qwaylandstereoproblem_p.h         |  53 +++++
+ .../wayland/qwaylandvulkanwindow.cpp          |  25 ++-
+ .../wayland/qwaylandvulkanwindow_p.h          |   7 +-
+ 9 files changed, 352 insertions(+), 13 deletions(-)
+ create mode 100644 src/plugins/platforms/wayland/qwaylandstereoproblem.cpp
+ create mode 100644 src/plugins/platforms/wayland/qwaylandstereoproblem_p.h
+
+diff --git a/src/gui/rhi/qrhivulkan.cpp b/src/gui/rhi/qrhivulkan.cpp
+index eee16914..73e65e08 100644
+--- a/src/gui/rhi/qrhivulkan.cpp
++++ b/src/gui/rhi/qrhivulkan.cpp
+@@ -2400,8 +2400,12 @@ bool QRhiVulkan::recreateSwapChain(QRhiSwapChain *swapChain)
+     // The platform that asked hears how many views the surface has now, before its first frame:
+     // the window's format follows, and what the platform says about the pair to the compositor.
+     if (platformAnswers && swapChainD->m_window->handle()) {
+-        QGuiApplication::platformNativeInterface()->setWindowProperty(
+-                swapChainD->m_window->handle(), QStringLiteral("_q_stereo_surface_views"), stereo ? 2 : 1);
++        QPlatformNativeInterface *native = QGuiApplication::platformNativeInterface();
++        // The device first: where the surface offers one view, the platform names the driver that gives it.
++        native->setWindowProperty(swapChainD->m_window->handle(), QStringLiteral("_q_stereo_surface_device"),
++                                  QString::fromUtf8(physDevProperties.deviceName));
++        native->setWindowProperty(swapChainD->m_window->handle(), QStringLiteral("_q_stereo_surface_views"),
++                                  stereo ? 2 : 1);
+     }
+ 
+     quint32 actualSwapChainBufferCount = 0;
+diff --git a/src/plugins/platforms/wayland/CMakeLists.txt b/src/plugins/platforms/wayland/CMakeLists.txt
+index bb0bf2bd..0fc66593 100644
+--- a/src/plugins/platforms/wayland/CMakeLists.txt
++++ b/src/plugins/platforms/wayland/CMakeLists.txt
+@@ -73,6 +73,7 @@ qt_internal_add_module(WaylandClient
+         qwaylandshm.cpp qwaylandshm_p.h
+         qwaylandshmbackingstore.cpp qwaylandshmbackingstore_p.h
+         qwaylandstereodepth.cpp qwaylandstereodepth_p.h
++        qwaylandstereoproblem.cpp qwaylandstereoproblem_p.h
+         qwaylandshmwindow.cpp qwaylandshmwindow_p.h
+         qwaylandsubsurface.cpp qwaylandsubsurface_p.h
+         qwaylandsurface.cpp qwaylandsurface_p.h
+@@ -186,6 +187,14 @@ qt_internal_extend_target(WaylandClient CONDITION QT_FEATURE_tabletevent
+         qwaylandtabletv2.cpp qwaylandtabletv2_p.h
+ )
+ 
++# A window that asked for two views and was given one is told through the problems engine whose library this
++# names (the Sparky Stereo OS build); without it, it is a warning in the program's log.
++set(QT_SPARKY_STEREO_PROBLEMS_LIBRARY "" CACHE STRING "Path of libsparky-stereo-problems, opened at run time")
++if(QT_SPARKY_STEREO_PROBLEMS_LIBRARY)
++    target_compile_definitions(WaylandClient PRIVATE
++        "QT_SPARKY_STEREO_PROBLEMS_LIBRARY=\"${QT_SPARKY_STEREO_PROBLEMS_LIBRARY}\"")
++endif()
++
+ qt_internal_extend_target(WaylandClient CONDITION QT_FEATURE_clipboard
+     SOURCES
+         qwaylandclipboard.cpp qwaylandclipboard_p.h
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+index 28e9e71f..d9a76270 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+@@ -7,6 +7,7 @@
+ #include <QtWaylandClient/private/qwaylandscreen_p.h>
+ #include <QtWaylandClient/private/qwaylandsurface_p.h>
+ #include <QtWaylandClient/private/qwaylandstereodepth_p.h>
++#include <QtWaylandClient/private/qwaylandstereoproblem_p.h>
+ #include "qwaylandglcontext_p.h"
+ 
+ #include <QtGui/private/qeglconvenience_p.h>
+@@ -161,6 +162,7 @@ void QWaylandEglWindow::updateSurface(bool create)
+             m_requestedSize = sizeWithMargins;
+             m_twoViews = stereo;
+             m_pairSurface = pair;
++            tellViews(fmt, stereo);
+         }
+     }
+ }
+@@ -217,6 +219,37 @@ bool QWaylandEglWindow::pairWanted(const QSurfaceFormat &format) const
+             && QWaylandStereoDepth::isSupported(mDisplay);
+ }
+ 
++// The OpenGL driver that gives one view, as the person would name it: zink when the session asks for it by name,
++// otherwise the EGL implementation's vendor.
++static QString openGLDriver(EGLDisplay display)
++{
++    if (qgetenv("MESA_LOADER_DRIVER_OVERRIDE") == "zink")
++        return QStringLiteral("zink");
++    const char *vendor = eglQueryString(display, EGL_VENDOR);
++    return vendor && *vendor ? QString::fromUtf8(vendor) : QStringLiteral("(unknown)");
++}
++
++void QWaylandEglWindow::tellViews(const QSurfaceFormat &format, bool twoViews)
++{
++    const bool asked = (format.stereo() || (m_pairRequested.load(std::memory_order_acquire) && !m_sideBySide))
++            && QWaylandStereoDepth::isSupported(mDisplay);
++    const int told = !asked ? 0 : twoViews ? 2 : 1;
++    if (told == m_toldViews)
++        return;
++    m_toldViews = told;
++    if (told == 0)
++        return;
++    const QString driver = openGLDriver(m_clientBufferIntegration->eglDisplay());
++    if (told == 2) {
++        QWaylandStereoProblem::twoViewsGiven(QWaylandStereoProblem::Api::OpenGL, driver);
++    } else {
++        QWaylandStereoProblem::oneViewGiven(QWaylandStereoProblem::Api::OpenGL, driver,
++                                            rendererPresentsOneView()
++                                                    ? QWaylandStereoProblem::Reason::ZinkOwnSwapchain
++                                                    : QWaylandStereoProblem::Reason::DriverGivesOneView);
++    }
++}
++
+ bool QWaylandEglWindow::eventFilter(QObject *watched, QEvent *event)
+ {
+     if (watched == window() && event->type() == QEvent::DynamicPropertyChange
+@@ -265,8 +298,11 @@ void QWaylandEglWindow::beginFrameViews()
+ 
+     const QSurfaceFormat fmt = window()->requestedFormat();
+     const bool pair = pairWanted(fmt);
+-    if (pair == m_pairSurface)
++    if (pair == m_pairSurface) {
++        // the request may have changed while the surface could not change with it
++        tellViews(fmt, m_twoViews);
+         return;
++    }
+ 
+     if (m_clientBufferIntegration->supportsStereo(fmt)) {
+         // A stereo window has two views either way: only the mark changes, and a window whose pair is
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h
+index fa5f5dcd..cd1d86cf 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h
+@@ -67,6 +67,11 @@ private:
+     // wish changes, before the frame that draws the pair.
+     void updateSideBySidePair();
+     void destroySurface();
++    // Two views asked for where the compositor takes a pair (the window's own stereo buffers, or an engine
++    // drawing the depth of its elements with no side-by-side buffer holding the pair) and one given is a window
++    // shown flat: the person is told, through the problems engine. Two given end what was told for the same
++    // driver. Said when it changes only, on the thread that makes the surface.
++    void tellViews(const QSurfaceFormat &format, bool twoViews);
+ 
+     QWaylandEglClientBufferIntegration *m_clientBufferIntegration = nullptr;
+     struct wl_egl_window *m_waylandEglWindow = nullptr;
+@@ -93,6 +98,8 @@ private:
+     bool m_frameSwapped = false;
+     // The surface's buffer holds a pair side by side (updateSideBySidePair())
+     bool m_sideBySide = false;
++    // What tellViews() said last: 0 nothing asked, 1 one view given, 2 two
++    int m_toldViews = 0;
+ };
+ 
+ }
+diff --git a/src/plugins/platforms/wayland/qwaylandnativeinterface.cpp b/src/plugins/platforms/wayland/qwaylandnativeinterface.cpp
+index 616beceb..f4cc3015 100644
+--- a/src/plugins/platforms/wayland/qwaylandnativeinterface.cpp
++++ b/src/plugins/platforms/wayland/qwaylandnativeinterface.cpp
+@@ -254,6 +254,12 @@ void QWaylandNativeInterface::setWindowProperty(QPlatformWindow *window, const Q
+             static_cast<QWaylandVulkanWindow *>(wlWindow)->setSurfaceViews(value.toInt());
+         return;
+     }
++    // Said just before the views: the physical device the swapchain was made on.
++    if (name == QLatin1String("_q_stereo_surface_device")) {
++        if (wlWindow->windowType() == QWaylandWindow::Vulkan)
++            static_cast<QWaylandVulkanWindow *>(wlWindow)->setSurfaceDevice(value.toString());
++        return;
++    }
+ #endif
+     wlWindow->sendProperty(name, value);
+ }
+diff --git a/src/plugins/platforms/wayland/qwaylandstereoproblem.cpp b/src/plugins/platforms/wayland/qwaylandstereoproblem.cpp
+new file mode 100644
+index 00000000..80b6822e
+--- /dev/null
++++ b/src/plugins/platforms/wayland/qwaylandstereoproblem.cpp
+@@ -0,0 +1,212 @@
++// Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++// Qt-Security score:significant reason:default
++
++#include "qwaylandstereoproblem_p.h"
++
++#include "qwaylanddisplay_p.h"
++
++#include <QtCore/qjsonarray.h>
++#include <QtCore/qjsondocument.h>
++#include <QtCore/qjsonobject.h>
++#include <QtCore/qlibrary.h>
++#include <QtCore/qmutex.h>
++#include <QtCore/qprocess.h>
++#include <QtCore/qset.h>
++#include <QtGui/qguiapplication.h>
++
++QT_BEGIN_NAMESPACE
++
++namespace QtWaylandClient {
++
++namespace QWaylandStereoProblem {
++
++namespace {
++
++// The package whose catalog holds the messages (debian/lang, built into journal catalogs at package build time)
++constexpr char Package[] = "libqt6waylandclient6";
++// sparky-stereo-problems.h: the person's own problems
++constexpr int ScopePerson = 2;
++
++using KeepFn = int (*)(int, const char *, const char *, const char *, const char *const *, int, const char *);
++using ClearFn = int (*)(int, const char *, const char *);
++using ListFn = char *(*)(const char *, const char *);
++using FreeFn = void (*)(void *);
++using ErrorFn = const char *(*)();
++
++struct Engine
++{
++    bool opened = false;
++    KeepFn keep = nullptr;
++    ClearFn clear = nullptr;
++    ListFn list = nullptr;
++    FreeFn free = nullptr;
++    ErrorFn errorEn = nullptr;
++};
++
++QBasicMutex s_mutex;
++Engine s_engine;
++QSet<QString> s_told;
++QSet<QString> s_ended;
++
++// The engine's library is private and of one architecture: it is opened at the first use, never linked, and a
++// process that cannot load it runs the engine's command.
++Engine &engine()
++{
++    if (!s_engine.opened) {
++        s_engine.opened = true;
++#ifdef QT_SPARKY_STEREO_PROBLEMS_LIBRARY
++        QLibrary library(QStringLiteral(QT_SPARKY_STEREO_PROBLEMS_LIBRARY));
++        if (library.load()) {
++            const auto keep = reinterpret_cast<KeepFn>(library.resolve("ssp_keep"));
++            const auto clear = reinterpret_cast<ClearFn>(library.resolve("ssp_clear"));
++            const auto list = reinterpret_cast<ListFn>(library.resolve("ssp_list_json"));
++            const auto free = reinterpret_cast<FreeFn>(library.resolve("ssp_free"));
++            const auto errorEn = reinterpret_cast<ErrorFn>(library.resolve("ssp_error_en"));
++            if (keep && clear && list && free && errorEn)
++                s_engine = Engine{true, keep, clear, list, free, errorEn};
++        }
++#endif
++    }
++    return s_engine;
++}
++
++QString programName()
++{
++    QString name = QGuiApplication::applicationDisplayName();
++    if (name.isEmpty())
++        name = QCoreApplication::applicationName();
++    return name.isEmpty() ? QStringLiteral("A program") : name;
++}
++
++// One key for each driver that gives one view, the API's own name of it; printable, as the engine's keys are.
++QString key(Api api, const QString &driver)
++{
++    QString name = driver.left(160);
++    for (QChar &c : name) {
++        if (c.unicode() < 0x20 || c.unicode() == 0x7f)
++            c = u'_';
++    }
++    return QStringLiteral("one-view:%1:%2").arg(api == Api::Vulkan ? QStringLiteral("vulkan") : QStringLiteral("opengl"), name);
++}
++
++// The same words as the catalog's English messages, for the program's log and where no catalog is installed.
++QString textEn(Api api, Reason reason, const QString &program, const QString &driver)
++{
++    if (reason == Reason::ZinkOwnSwapchain) {
++        return QStringLiteral("%1 asked for two pictures of its window, one for each eye, and OpenGL runs on zink through "
++                              "its own swapchain, which shows one picture, so the window is shown flat. The desktop "
++                              "session sets LIBGL_KOPPER_DISABLE=1 with zink; start the program with it too.").arg(program);
++    }
++    if (api == Api::Vulkan) {
++        return QStringLiteral("%1 asked for two pictures of its window, one for each eye, and the Vulkan driver %2 gives a "
++                              "window one picture only, so the window is shown flat. Programs that ask for 3D are shown "
++                              "flat on this driver until it gives two. Mesa's Vulkan drivers give two; for other drivers "
++                              "the package mesa-vulkan-layer-stereo gives them: check that it is installed and that "
++                              "DISABLE_LAYER_MESA_STEREO is not set.").arg(program, driver);
++    }
++    return QStringLiteral("%1 asked for two pictures of its window, one for each eye, and the OpenGL driver %2 gives a "
++                          "window one picture only, so the window is shown flat. Programs that ask for 3D are shown flat "
++                          "on this driver until it gives two. Mesa's OpenGL gives two, also on an NVIDIA card through "
++                          "zink, as the desktop session sets it; a program started on NVIDIA's own OpenGL gets them from "
++                          "the gl-stereo layer.").arg(program, driver);
++}
++
++bool isKept(Engine &e, const QByteArray &key)
++{
++    char *text = e.list(Package, nullptr);
++    if (!text)
++        return false;
++    const QJsonArray all = QJsonDocument::fromJson(QByteArray(text)).array();
++    e.free(text);
++    for (const QJsonValue &v : all) {
++        if (v.toObject().value(QLatin1StringView("key")).toString().toUtf8() == key)
++            return true;
++    }
++    return false;
++}
++
++} // namespace
++
++void oneViewGiven(Api api, const QString &driver, Reason reason)
++{
++    const QString k = key(api, driver);
++    QMutexLocker locker(&s_mutex);
++    if (s_told.contains(k))
++        return;
++    s_told.insert(k);
++    s_ended.remove(k);
++
++    const QString program = programName();
++    const QString text = textEn(api, reason, program, driver);
++    qCWarning(lcQpaWayland, "%ls", qUtf16Printable(text));
++
++    const QByteArray message = reason == Reason::ZinkOwnSwapchain ? "LOCAL4"
++            : api == Api::Vulkan ? "LOCAL2" : "LOCAL3";
++    QJsonArray args{program};
++    if (reason != Reason::ZinkOwnSwapchain)
++        args.append(driver);
++    const QJsonObject data{{QStringLiteral("api"), api == Api::Vulkan ? QStringLiteral("vulkan") : QStringLiteral("opengl")},
++                           {QStringLiteral("driver"), driver},
++                           {QStringLiteral("program"), program}};
++    const QByteArray details = QJsonDocument(QJsonObject{{QStringLiteral("severity"), QStringLiteral("failed")},
++                                                         {QStringLiteral("text_en"), text},
++                                                         {QStringLiteral("data"), data}})
++                                       .toJson(QJsonDocument::Compact);
++    const QByteArray keyUtf8 = k.toUtf8();
++
++    Engine &e = engine();
++    if (e.keep) {
++        // One problem for the driver: a program that meets it after the first does not make it new again.
++        if (isKept(e, keyUtf8))
++            return;
++        QList<QByteArray> argsUtf8;
++        for (const QJsonValue &v : std::as_const(args))
++            argsUtf8.append(v.toString().toUtf8());
++        const char *argv[2] = {argsUtf8.at(0).constData(), argsUtf8.size() > 1 ? argsUtf8.at(1).constData() : nullptr};
++        if (e.keep(ScopePerson, Package, keyUtf8.constData(), message.constData(), argv, argsUtf8.size(),
++                   details.constData()) != 0) {
++            qCWarning(lcQpaWayland, "sparky-stereo-problems: %s could not be kept, the person cannot be told: %s",
++                      keyUtf8.constData(), e.errorEn());
++        }
++        return;
++    }
++#ifdef QT_SPARKY_STEREO_PROBLEMS_LIBRARY
++    QStringList command{QStringLiteral("keep"), QStringLiteral("--person"), QStringLiteral("--quiet"),
++                        QStringLiteral("--details"), QString::fromUtf8(details), QLatin1StringView(Package), k,
++                        QString::fromLatin1(message)};
++    for (const QJsonValue &v : std::as_const(args))
++        command.append(v.toString());
++    if (QProcess::execute(QStringLiteral("/usr/bin/sparky-stereo-problems"), command) != 0)
++        qCWarning(lcQpaWayland, "sparky-stereo-problems could not keep %s: the person cannot be told", keyUtf8.constData());
++#endif
++}
++
++void twoViewsGiven(Api api, const QString &driver)
++{
++    const QString k = key(api, driver);
++    QMutexLocker locker(&s_mutex);
++    if (s_ended.contains(k))
++        return;
++    s_ended.insert(k);
++    s_told.remove(k);
++
++    // The engine ends nothing that is not there, so a problem an earlier program kept for this driver ends here.
++    const QByteArray keyUtf8 = k.toUtf8();
++    Engine &e = engine();
++    if (e.clear) {
++        if (e.clear(ScopePerson, Package, keyUtf8.constData()) != 0)
++            qCWarning(lcQpaWayland, "sparky-stereo-problems: %s could not be ended: %s", keyUtf8.constData(), e.errorEn());
++        return;
++    }
++#ifdef QT_SPARKY_STEREO_PROBLEMS_LIBRARY
++    QProcess::execute(QStringLiteral("/usr/bin/sparky-stereo-problems"),
++                      {QStringLiteral("clear"), QStringLiteral("--person"), QLatin1StringView(Package), k});
++#endif
++}
++
++} // namespace QWaylandStereoProblem
++
++} // namespace QtWaylandClient
++
++QT_END_NAMESPACE
+diff --git a/src/plugins/platforms/wayland/qwaylandstereoproblem_p.h b/src/plugins/platforms/wayland/qwaylandstereoproblem_p.h
+new file mode 100644
+index 00000000..2369d718
+--- /dev/null
++++ b/src/plugins/platforms/wayland/qwaylandstereoproblem_p.h
+@@ -0,0 +1,53 @@
++// Copyright (C) 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++#ifndef QWAYLANDSTEREOPROBLEM_P_H
++#define QWAYLANDSTEREOPROBLEM_P_H
++
++//
++//  W A R N I N G
++//  -------------
++//
++// This file is not part of the Qt API.  It exists purely as an
++// implementation detail.  This header file may change from version to
++// version without notice, or even be removed.
++//
++// We mean it.
++//
++
++#include <QtWaylandClient/qtwaylandclientglobal.h>
++
++QT_BEGIN_NAMESPACE
++
++class QString;
++
++namespace QtWaylandClient {
++
++// A window that asked for two views of its surface, one per eye (its own stereo buffers, or an engine drawing
++// the depth of its elements), and was given one is shown flat. The person is told once, as the desktop's own
++// problem for the driver that gives one view (a driver that cannot give a second view gives none to any
++// program), naming the first program that met it; the problem ends when a window gets its two views from the
++// same driver. Where the build names the edition's problems engine (QT_SPARKY_STEREO_PROBLEMS_LIBRARY), the
++// problem goes to it; otherwise, or when it cannot be kept, it is a warning in the program's log.
++namespace QWaylandStereoProblem {
++
++enum class Api { Vulkan, OpenGL };
++
++enum class Reason {
++    // The driver gives a surface one view (Vulkan: one image layer; OpenGL: no EGL_EXT_multiview_window).
++    DriverGivesOneView,
++    // zink presents through its own swapchain (kopper), which shows one view.
++    ZinkOwnSwapchain,
++};
++
++// Any thread; once per driver and program, whatever the number of windows and frames.
++Q_WAYLANDCLIENT_EXPORT void oneViewGiven(Api api, const QString &driver, Reason reason);
++Q_WAYLANDCLIENT_EXPORT void twoViewsGiven(Api api, const QString &driver);
++
++} // namespace QWaylandStereoProblem
++
++} // namespace QtWaylandClient
++
++QT_END_NAMESPACE
++
++#endif // QWAYLANDSTEREOPROBLEM_P_H
+diff --git a/src/plugins/platforms/wayland/qwaylandvulkanwindow.cpp b/src/plugins/platforms/wayland/qwaylandvulkanwindow.cpp
+index 8d7db706..46ab960f 100644
+--- a/src/plugins/platforms/wayland/qwaylandvulkanwindow.cpp
++++ b/src/plugins/platforms/wayland/qwaylandvulkanwindow.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include "qwaylandvulkanwindow_p.h"
+ #include "qwaylandstereodepth_p.h"
++#include "qwaylandstereoproblem_p.h"
+ #include "qwaylanddisplay_p.h"
+ 
+ #include <QtCore/QEvent>
+@@ -80,20 +81,28 @@ int QWaylandVulkanWindow::viewsWanted() const
+     return QWaylandWindow::format().stereo() || pairWanted() ? 2 : 1;
+ }
+ 
++void QWaylandVulkanWindow::setSurfaceDevice(const QString &device)
++{
++    m_surfaceDevice = device;
++}
++
+ void QWaylandVulkanWindow::setSurfaceViews(int views)
+ {
+     const bool twoViews = views == 2;
+     const bool pair = pairWanted();
+     m_twoViews.store(twoViews, std::memory_order_release);
+     QWaylandStereoDepth::setDesktopDepth(this, twoViews && pair);
+-    if (pair && !twoViews && !m_toldOneView.exchange(true, std::memory_order_acq_rel)) {
+-        qCWarning(lcQpaWayland, "The window \"%ls\" is drawn once per eye, but its Vulkan surface offers one image "
+-                  "layer only: it is shown as one picture, without the depth of its elements. The Vulkan "
+-                  "driver in use gives a Wayland surface no second view; Mesa's drivers do, and for other "
+-                  "drivers the Vulkan stereo layer (VK_LAYER_MESA_stereo) does, unless it is not installed "
+-                  "or DISABLE_LAYER_MESA_STEREO is set.",
+-                  qUtf16Printable(window()->title()));
+-    }
++    // Two views were asked for where the compositor takes a pair: the window asked for stereo buffers itself, or
++    // an engine draws the depth of its elements. One view given is a window shown flat, and the person is told;
++    // two views given end what was told for the same driver.
++    if (!(QWaylandWindow::format().stereo() || pair) || !QWaylandStereoDepth::isSupported(mDisplay))
++        return;
++    const QString device = m_surfaceDevice.isEmpty() ? QStringLiteral("(unknown)") : m_surfaceDevice;
++    if (twoViews)
++        QWaylandStereoProblem::twoViewsGiven(QWaylandStereoProblem::Api::Vulkan, device);
++    else
++        QWaylandStereoProblem::oneViewGiven(QWaylandStereoProblem::Api::Vulkan, device,
++                                            QWaylandStereoProblem::Reason::DriverGivesOneView);
+ }
+ 
+ void QWaylandVulkanWindow::beginFrameViews()
+diff --git a/src/plugins/platforms/wayland/qwaylandvulkanwindow_p.h b/src/plugins/platforms/wayland/qwaylandvulkanwindow_p.h
+index be0e9818..9fc1ef92 100644
+--- a/src/plugins/platforms/wayland/qwaylandvulkanwindow_p.h
++++ b/src/plugins/platforms/wayland/qwaylandvulkanwindow_p.h
+@@ -48,6 +48,9 @@ public:
+     // implementation declares two layers as a full side-by-side pair; an engine's pair is
+     // marked, with the same commit, as the desktop's own depth rather than stereo content.
+     void setSurfaceViews(int views);
++    // The physical device whoever made the window's swapchain made it on, as the Vulkan driver names it, said
++    // before the views: the driver that gives one view is named when the window is shown flat.
++    void setSurfaceDevice(const QString &device);
+     // At the start of a frame, on the thread that presents: the mark follows the engine's
+     // request where the views stay, as for a window that asked for stereo buffers itself.
+     void beginFrameViews();
+@@ -64,8 +67,8 @@ private:
+     std::atomic<bool> m_pairRequested = false;
+     // Whether the swapchain made for the surface has two views
+     std::atomic<bool> m_twoViews = false;
+-    // Whether the person was told that the surface cannot have the two views asked for
+-    std::atomic<bool> m_toldOneView = false;
++    // Written and read on the thread that presents
++    QString m_surfaceDevice;
+ };
+ 
+ } // namespace QtWaylandClient
