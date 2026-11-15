@@ -15,9 +15,17 @@ printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://w
 printf 'deb https://deb.debian.org/debian testing contrib non-free non-free-firmware\n' > /etc/apt/sources.list.d/debian-extra-components.list
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
 mkdir -p "$job/lc" && cd "$job/lc"
-cp /src/kwin_6.7.4-2+stereo3d58+lc1.dsc /src/kwin_6.7.4-2+stereo3d58+lc1.debian.tar.xz /src/kwin_6.7.4.orig.tar.xz /src/kwin_6.7.4.orig.tar.xz.asc .
-sha256sum kwin_6.7.4-2+stereo3d58+lc1.dsc kwin_6.7.4-2+stereo3d58+lc1.debian.tar.xz kwin_6.7.4.orig.tar.xz > source-closure.sha256
-dpkg-source -x kwin_6.7.4-2+stereo3d58+lc1.dsc source > /dev/null
+build_args=()
+if [ "${SPARKY_KWIN_RESUME:-0}" = 1 ]; then
+    # the source is the one already unpacked and built: its archives must be the ones it was unpacked from
+    sha256sum -c source-closure.sha256
+    [ "$(dpkg-parsechangelog -l source/debian/changelog -S Version)" = '4:6.7.4-2+stereo3d58+lc1' ]
+    build_args=(-nc)
+else
+    cp /src/kwin_6.7.4-2+stereo3d58+lc1.dsc /src/kwin_6.7.4-2+stereo3d58+lc1.debian.tar.xz /src/kwin_6.7.4.orig.tar.xz /src/kwin_6.7.4.orig.tar.xz.asc .
+    sha256sum kwin_6.7.4-2+stereo3d58+lc1.dsc kwin_6.7.4-2+stereo3d58+lc1.debian.tar.xz kwin_6.7.4.orig.tar.xz > source-closure.sha256
+    dpkg-source -x kwin_6.7.4-2+stereo3d58+lc1.dsc source > /dev/null
+fi
 apt-get -y update > "$job/apt-update.log" 2>&1
 apt-get -y --no-install-recommends install devscripts quilt bubblewrap > "$job/setup.log" 2>&1
 if compgen -G '/extra/*.deb' > /dev/null; then
@@ -31,6 +39,6 @@ chown -R builder:builder "$job" "$SPARKY_LC_SCRATCH"
 cd "$job/lc/source"
 runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev ${SPARKY_LC_PREVIOUS_SIBLINGS_FILE:+SPARKY_LC_PREVIOUS_SIBLINGS_FILE=$SPARKY_LC_PREVIOUS_SIBLINGS_FILE} \
     SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" \
-    dpkg-buildpackage -b -us -uc -j4
+    dpkg-buildpackage -b "${build_args[@]}" -us -uc -j4
 cd "$job/lc"
 PYTHONPATH=/toolkit python3 -m lean.release check-debs "$job/lc/"*.deb
