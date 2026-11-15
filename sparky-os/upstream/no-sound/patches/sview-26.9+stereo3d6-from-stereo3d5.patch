@@ -1,0 +1,241 @@
+Description: sView 26.9+stereo3d6: a film with a picture and no audio track says so (ORDER 579); the change of fork commits 7f45740 and 54469b1 on 41bddfc6 (ORDER 529, 26.9+stereo3d5), for reading; the source is built from the fork commit, not by applying this file
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+
+diff --git a/StMoviePlayer/StMoviePlayerGUI.cpp b/StMoviePlayer/StMoviePlayerGUI.cpp
+index 68e82eb..ca35fda 100644
+--- a/StMoviePlayer/StMoviePlayerGUI.cpp
++++ b/StMoviePlayer/StMoviePlayerGUI.cpp
+@@ -34,6 +34,7 @@
+ #include <StGLWidgets/StGLButton.h>
+ #include <StGLWidgets/StGLCombobox.h>
+ #include <StGLWidgets/StGLCheckboxTextured.h>
++#include <chrono>
+ #include <StGLWidgets/StGLDescription.h>
+ #include <StGLWidgets/StGLFpsLabel.h>
+ #include <StGLWidgets/StGLImageRegion.h>
+@@ -88,6 +89,8 @@ void StMoviePlayerGUI::createDesktopUI(const std::shared_ptr<StPlayList>& thePla
+     myTimeBox->changeRectPx().bottom() = myTimeBox->getRectPx().top()  + scale(64);
+ 
+     myDescr = new StGLDescription(this);
++    myNoSound = new StGLDescription(this);
++    myNoSound->setOpacity(0.0f, false);
+ 
+     myPlayList = new StGLPlayList(this, thePlayList);
+     myPlayList->setCorner(StGLCorner(ST_VCORNER_TOP, ST_HCORNER_RIGHT));
+@@ -1797,6 +1800,9 @@ StMoviePlayerGUI::StMoviePlayerGUI(StMoviePlayer* thePlugin,
+   mySubtitles1(NULL),
+   mySubtitles2(NULL),
+   myDescr(NULL),
++  myNoSound(NULL),
++  myNoSoundLast(false),
++  myNoSoundUntil(0.0),
+   myMsgStack(NULL),
+   myPlayList(NULL),
+   // main menu
+@@ -1932,6 +1938,27 @@ void StMoviePlayerGUI::stglUpdate(const StPointD_t& thePointZo,
+         myVolumeBar->setProgress(myPlugin->gainToVolume(myPlugin->params.AudioGain));
+         myVolumeLab->setText(aBuff);
+     }
++    // A film with a picture and no audio track says so for a few seconds when it is loaded (the volume control stays usable
++    // and says so under the cursor), ORDER 579
++    if(myNoSound != NULL) {
++        const bool aNoSound = myPlugin->myVideo.get() != NULL
++                           && myPlugin->myVideo->hasVideoStream()
++                           && !myPlugin->myVideo->hasAudioStream();
++        const double aNow = double(std::chrono::duration_cast<std::chrono::milliseconds>(
++                                       std::chrono::steady_clock::now().time_since_epoch()).count());
++        if(aNoSound != myNoSoundLast) {
++            myNoSoundLast  = aNoSound;
++            myNoSoundUntil = aNoSound ? aNow + 6000.0 : 0.0;
++        }
++        if(aNoSound && aNow < myNoSoundUntil) {
++            myNoSound->setText(tr(NO_SOUND));
++            myNoSound->setPoint(StPointD_t(0.97, 0.9));
++            myNoSound->setOpacity(1.0f, false);
++        } else {
++            myNoSound->setText("");
++            myNoSound->setOpacity(0.0f, false);
++        }
++    }
+     if(myDescr != NULL) {
+         myDescr->setPoint(thePointZo);
+     }
+@@ -2333,7 +2360,9 @@ void StMoviePlayerGUI::updateDescLabel(const StPointD_t& theCursor, StFormat the
+     } else if (::isPointIn(myBtnSubs2, theCursor)) {
+         myDescr->setText(tr(MENU_SUBTITLES) + " (2)");
+     } else if (::isPointIn(myBtnVolume, theCursor)) {
+-        myDescr->setText("Mute");
++        myDescr->setText(myNoSoundLast ? StString("Mute\n") + tr(NO_SOUND) : StString("Mute"));
++    } else if (myNoSoundLast && ::isPointIn(myVolumeBar, theCursor)) {
++        myDescr->setText(tr(NO_SOUND));
+     } else if (::isPointIn(myBtnPlay, theCursor)) {
+         myDescr->setText(tr(VIDEO_PLAYPAUSE));
+     } else if (::isPointIn(myBtnPrev, theCursor)) {
+diff --git a/StMoviePlayer/StMoviePlayerGUI.h b/StMoviePlayer/StMoviePlayerGUI.h
+index 9f990be..fea6478 100644
+--- a/StMoviePlayer/StMoviePlayerGUI.h
++++ b/StMoviePlayer/StMoviePlayerGUI.h
+@@ -244,6 +244,9 @@ class StMoviePlayerGUI : public StGLRootWidget {
+     StGLSubtitles*      mySubtitles1;       //!< the subtitles
+     StGLSubtitles*      mySubtitles2;       //!< the subtitles
+     StGLDescription*    myDescr;            //!< description text shown near mouse cursor
++    StGLDescription*    myNoSound;          //!< says for a few seconds that the film has a picture and no audio track
++    bool                myNoSoundLast;      //!< the film had no audio track at the last update
++    double              myNoSoundUntil;     //!< the moment (milliseconds of a steady clock) the notice ends
+     StGLMsgStack*       myMsgStack;         //!< messages stack
+     StGLPlayList*       myPlayList;
+ 
+diff --git a/StMoviePlayer/StMoviePlayerStrings.cpp b/StMoviePlayer/StMoviePlayerStrings.cpp
+index f5acbeb..c5cbddb 100644
+--- a/StMoviePlayer/StMoviePlayerStrings.cpp
++++ b/StMoviePlayer/StMoviePlayerStrings.cpp
+@@ -426,6 +426,8 @@ void loadDefaults(StLangMap& theStrings) {
+                "Saving the 3D layout into the file");
+     theStrings(SAVE_VIDEO_QUESTION,
+                "Save the 3D layout {0} into this file?");
++    theStrings(NO_SOUND,
++               "This film has no sound.");
+     theStrings(DIALOG_NO_SNAPSHOT,
+                "Snapshot not available!");
+     theStrings(DIALOG_SAVE_SNAPSHOT,
+diff --git a/StMoviePlayer/StMoviePlayerStrings.h b/StMoviePlayer/StMoviePlayerStrings.h
+index 0561e90..974f449 100644
+--- a/StMoviePlayer/StMoviePlayerStrings.h
++++ b/StMoviePlayer/StMoviePlayerStrings.h
+@@ -257,6 +257,7 @@ namespace StMoviePlayerStrings {
+         SAVE_VIDEO_SAVED           = 2112,
+         SAVE_VIDEO_TITLE           = 2113,
+         SAVE_VIDEO_QUESTION        = 2114,
++        NO_SOUND                   = 2115,
+ 
+         // About dialog
+         ABOUT_DPLUGIN_NAME     = 3000,
+diff --git a/StMoviePlayer/lang/chinese/StMoviePlayer.lng b/StMoviePlayer/lang/chinese/StMoviePlayer.lng
+index 4ae9e18..d280124 100644
+--- a/StMoviePlayer/lang/chinese/StMoviePlayer.lng
++++ b/StMoviePlayer/lang/chinese/StMoviePlayer.lng
+@@ -301,3 +301,4 @@
+ 2113=将 3D 排列方式保存到文件
+ 2114=要将 3D 排列方式 {0} 保存到此文件吗？
+ 6067=将 3D 排列方式保存到文件
++2115=此影片没有声音。
+diff --git a/StMoviePlayer/lang/chineset/StMoviePlayer.lng b/StMoviePlayer/lang/chineset/StMoviePlayer.lng
+index 6b08741..210fbda 100644
+--- a/StMoviePlayer/lang/chineset/StMoviePlayer.lng
++++ b/StMoviePlayer/lang/chineset/StMoviePlayer.lng
+@@ -301,3 +301,4 @@
+ 2113=將 3D 排列方式儲存到檔案
+ 2114=要將 3D 排列方式 {0} 儲存到此檔案嗎？
+ 6067=將 3D 排列方式儲存到檔案
++2115=此影片沒有聲音。
+diff --git a/StMoviePlayer/lang/czech/StMoviePlayer.lng b/StMoviePlayer/lang/czech/StMoviePlayer.lng
+index c710600..b321e0a 100644
+--- a/StMoviePlayer/lang/czech/StMoviePlayer.lng
++++ b/StMoviePlayer/lang/czech/StMoviePlayer.lng
+@@ -269,3 +269,4 @@
+ ?6059=Enable/disable panorama mode
+ ?6060=Enable/disable theater mode
+ ?6061=Show/hide GUI
++2115=Tento film nemá zvuk.
+diff --git a/StMoviePlayer/lang/english/StMoviePlayer.lng b/StMoviePlayer/lang/english/StMoviePlayer.lng
+index e4c6051..4aa4355 100644
+--- a/StMoviePlayer/lang/english/StMoviePlayer.lng
++++ b/StMoviePlayer/lang/english/StMoviePlayer.lng
+@@ -301,3 +301,4 @@
+ 2113=Saving the 3D layout into the file
+ 2114=Save the 3D layout {0} into this file?
+ 6067=Save the 3D layout into the file
++2115=This film has no sound.
+diff --git a/StMoviePlayer/lang/french/StMoviePlayer.lng b/StMoviePlayer/lang/french/StMoviePlayer.lng
+index cb540ec..7f9d0e5 100644
+--- a/StMoviePlayer/lang/french/StMoviePlayer.lng
++++ b/StMoviePlayer/lang/french/StMoviePlayer.lng
+@@ -301,3 +301,4 @@
+ 2113=Enregistrement de la disposition 3D dans le fichier
+ 2114=Enregistrer la disposition 3D {0} dans ce fichier ?
+ 6067=Enregistrer la disposition 3D dans le fichier
++2115=Ce film n’a pas de son.
+diff --git a/StMoviePlayer/lang/german/StMoviePlayer.lng b/StMoviePlayer/lang/german/StMoviePlayer.lng
+index 1c495e6..679e5c4 100644
+--- a/StMoviePlayer/lang/german/StMoviePlayer.lng
++++ b/StMoviePlayer/lang/german/StMoviePlayer.lng
+@@ -301,3 +301,4 @@
+ 2113=3D-Anordnung in die Datei schreiben
+ 2114=Die 3D-Anordnung {0} in diese Datei schreiben?
+ 6067=3D-Anordnung in die Datei schreiben
++2115=Dieser Film hat keinen Ton.
+diff --git a/StMoviePlayer/lang/japanese/StMoviePlayer.lng b/StMoviePlayer/lang/japanese/StMoviePlayer.lng
+index 9a9050f..2ec8c94 100644
+--- a/StMoviePlayer/lang/japanese/StMoviePlayer.lng
++++ b/StMoviePlayer/lang/japanese/StMoviePlayer.lng
+@@ -44,3 +44,4 @@
+ 1141=1080p に 2x720p をタイル配置
+ 1142=2 ストリーム
+ 2011=保存するものはありません!
++2115=この映像には音声がありません。
+diff --git a/StMoviePlayer/lang/korean/StMoviePlayer.lng b/StMoviePlayer/lang/korean/StMoviePlayer.lng
+index 0e52c5e..d2d3ebc 100644
+--- a/StMoviePlayer/lang/korean/StMoviePlayer.lng
++++ b/StMoviePlayer/lang/korean/StMoviePlayer.lng
+@@ -302,3 +302,4 @@
+ 2113=3D 배치를 파일에 저장
+ 2114=3D 배치 {0}을(를) 이 파일에 저장할까요?
+ 6067=3D 배치를 파일에 저장
++2115=이 영상에는 소리가 없습니다.
+diff --git a/StMoviePlayer/lang/polish/StMoviePlayer.lng b/StMoviePlayer/lang/polish/StMoviePlayer.lng
+index c0d9f21..0c0adf8 100644
+--- a/StMoviePlayer/lang/polish/StMoviePlayer.lng
++++ b/StMoviePlayer/lang/polish/StMoviePlayer.lng
+@@ -44,3 +44,4 @@
+ 1141=2x720p w kafelkach 1080p
+ 1142=2 strumienie
+ 2011=Nie ma nic do zapisania!
++2115=Ten film nie ma dźwięku.
+diff --git a/StMoviePlayer/lang/portuguesebr/StMoviePlayer.lng b/StMoviePlayer/lang/portuguesebr/StMoviePlayer.lng
+index e49a309..64c480b 100644
+--- a/StMoviePlayer/lang/portuguesebr/StMoviePlayer.lng
++++ b/StMoviePlayer/lang/portuguesebr/StMoviePlayer.lng
+@@ -44,3 +44,4 @@
+ 1141=2x720p em mosaico 1080p
+ 1142=2 fluxos
+ 2011=Nada para salvar!
++2115=Este filme não tem som.
+diff --git a/StMoviePlayer/lang/russian/StMoviePlayer.lng b/StMoviePlayer/lang/russian/StMoviePlayer.lng
+index e375e53..6419554 100644
+--- a/StMoviePlayer/lang/russian/StMoviePlayer.lng
++++ b/StMoviePlayer/lang/russian/StMoviePlayer.lng
+@@ -269,3 +269,4 @@
+ 6059=Включить/выключить панорамный режим
+ 6060=Включить/выключить театральный режим
+ 6061=Скрыть интерфейс
++2115=В этом фильме нет звука.
+diff --git a/StMoviePlayer/lang/spanish/StMoviePlayer.lng b/StMoviePlayer/lang/spanish/StMoviePlayer.lng
+index c311386..2a8c03f 100644
+--- a/StMoviePlayer/lang/spanish/StMoviePlayer.lng
++++ b/StMoviePlayer/lang/spanish/StMoviePlayer.lng
+@@ -283,3 +283,4 @@
+ 2112=El archivo ahora contiene la disposición 3D {0}.
+ 2113=Guardar la disposición 3D en el archivo
+ 2114=¿Guardar la disposición 3D {0} en este archivo?
++2115=Esta película no tiene sonido.
+diff --git a/debian/changelog b/debian/changelog
+index 59dfaa7..4852111 100644
+--- a/debian/changelog
++++ b/debian/changelog
+@@ -1,3 +1,15 @@
++sview (26.9+stereo3d6) UNRELEASED; urgency=medium
++
++  * ORDER 579: a film with a picture and no audio track says so. The movie
++    player shows "This film has no sound." for six seconds when it has
++    loaded the film, and as a line under the cursor on the volume button
++    and bar (string 2115, in the ten languages of the edition and in Czech
++    and Russian). The volume control stays usable.
++  * This version carries ORDER 529's 26.9+stereo3d5 (the shared correction
++    codec) and so supersedes it.
++
++ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 15 Nov 2026 12:00:00 +0000
++
+ sview (26.9+stereo3d5) UNRELEASED; urgency=medium
+ 
+   * Save JPEG/JPS corrections through libstereo-policy's Qt-free JPEG

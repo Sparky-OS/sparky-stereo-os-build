@@ -1,0 +1,99 @@
+Description: Say that a film has no sound when it has a picture and no audio track: a banner for a few seconds and a line in the OSD, with the sentence and the rule of the stereo layer's QML module (org.sparky.stereo NoSound).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (ORDER 579)
+Forwarded: not-needed
+Last-Update: 2026-11-15
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+
+--- a/app/qml/main.qml
++++ b/app/qml/main.qml
+@@ -8,6 +8,7 @@
+ import org.kde.kirigami 2.19 as Kirigami
+ import QtQuick.Controls 2.15 as Controls
+ import QtMultimedia
++import org.sparky.stereo as Stereo
+ 
+ Kirigami.AbstractApplicationWindow {
+     id: window
+@@ -114,11 +115,46 @@
+             }
+         }
+ 
++        Rectangle {
++            id: noSoundBanner
++            // the film is loaded, has a picture and no audio track: the rule and the sentence are the stereo layer's (ORDER 579)
++            readonly property bool filmHasNoSound: Stereo.NoSound.saysFor(video.duration > 0, video.hasVideo, video.hasAudio ? 1 : 0)
++            property bool told: false
++            onFilmHasNoSoundChanged: {
++                told = filmHasNoSound
++                if (filmHasNoSound) {
++                    noSoundTimer.restart()
++                }
++            }
++            visible: told
++            anchors.top: stereoLayerFailureBanner.visible ? stereoLayerFailureBanner.bottom : parent.top
++            anchors.left: parent.left
++            anchors.right: parent.right
++            height: noSoundText.implicitHeight + 16
++            color: Kirigami.Theme.neutralBackgroundColor
++            border.color: Kirigami.Theme.neutralTextColor
++            border.width: 1
++            Timer {
++                id: noSoundTimer
++                interval: 8000
++                onTriggered: noSoundBanner.told = false
++            }
++            Controls.Label {
++                id: noSoundText
++                anchors.fill: parent
++                anchors.margins: 8
++                wrapMode: Text.WordWrap
++                color: Kirigami.Theme.textColor
++                text: Stereo.NoSound.text
++            }
++        }
++
+         PlayerOSD {
+             id: playerOSDItem
+             anchors.bottom: parent.bottom
+             height: parent.height * 0.10
+             videoItem: video
++            noSound: noSoundBanner.filmHasNoSound
+             menuOpened: mainMenu.opened || stereoMenu.opened
+         }
+     }
+--- a/app/qml/PlayerOSD.qml
++++ b/app/qml/PlayerOSD.qml
+@@ -7,6 +7,7 @@
+ import org.kde.kirigami 2.15 as Kirigami
+ import QtQuick.Controls 2.15 as Controls
+ import QtMultimedia
++import org.sparky.stereo as Stereo
+ 
+ Item {
+     id: osdControlsArea
+@@ -16,6 +17,8 @@
+     property bool menuOpened
+     property var videoItem
+     property bool pinned: false
++    // the film has a picture and no audio track: the OSD says so beside its buttons (ORDER 579)
++    property bool noSound: false
+ 
+     onOpenedChanged: {
+         if(opened){
+@@ -106,6 +109,15 @@
+                 }
+             }
+ 
++            Controls.Label {
++                id: noSoundLabel
++                visible: osdControlsArea.noSound
++                text: Stereo.NoSound.text
++                color: Kirigami.Theme.textColor
++                elide: Text.ElideRight
++                Layout.maximumWidth: parent.width * 0.3
++            }
++
+             SeekBar {
+                 id: osdSeekBar
+                 Layout.fillWidth: true
