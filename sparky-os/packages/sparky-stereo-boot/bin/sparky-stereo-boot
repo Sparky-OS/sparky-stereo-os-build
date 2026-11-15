@@ -38,7 +38,6 @@
 #   sparky-stereo-boot plymouth-quit       plymouth-quit.service: hand the splash over
 #   sparky-stereo-boot plymouth-handover   wait for the compositor's first frame, then quit
 #   sparky-stereo-boot boot-check          at boot: the resolution GRUB showed, against the one it was given
-#   sparky-stereo-boot login-check         before boot-complete.target: the login screen's service started
 #   sparky-stereo-boot start-finished      after boot-complete.target: the start is recorded as finished, and after
 #                                          one that did not finish the person is told what the check found
 #   sparky-stereo-boot grub-unfinished     update-grub: the menu's entry that says why it is shown
@@ -1072,31 +1071,14 @@ def boot_check():
 # /etc/grub.d/10_linux switch it on): a Linux entry sets it before it starts the kernel, and it is cleared once the
 # start has finished. "Finished" is systemd's boot-complete.target (systemd.special(7): "Order units that are required
 # to succeed for a boot process to be considered successful before this unit"): Debian's grub2-common.service clears
-# the flag after it, and sparky-stereo-boot-login.service, ordered before it, adds the login screen: a start whose
-# display manager failed to start has not finished.
+# the flag after it, and sparky-stereo-boot-login.service (/usr/lib/sparky-stereo-boot/login-check), ordered before
+# it, adds the login screen: a start whose display manager failed to start has not finished.
 ESP_BLOCK = ROOT + os.environ.get('SPARKY_STEREO_ESP', '/boot/efi') + '/EFI/sparky-stereo-boot/grubenv'
 UNFINISHED_MARK = 'sparky_stereo.start=unfinished'
 SELF_CHECKING = ('btrfs', 'xfs', 'zfs', 'bcachefs', 'nilfs2')   # fsck.btrfs(8) and fsck.xfs(8) do nothing: the type checks itself when mounted
 FSTAB = ROOT + '/etc/fstab'
 INITRAMFS_FSCK_LOG = ROOT + '/run/initramfs/fsck.log'
 REPAIRED_WORDS = ('FIXED', 'FILE SYSTEM WAS MODIFIED', 'recovering journal', 'Performing changes', 'Automatically removing dirty bit')
-
-
-def login_check():
-    """sparky-stereo-boot-login.service, before boot-complete.target and after display-manager.service: a display
-    manager that is part of this start and failed to start means the start did not finish."""
-    try:
-        shown = subprocess.run(['systemctl', 'show', '-p', 'LoadState', '-p', 'ActiveState', 'display-manager.service'],
-                               capture_output=True, text=True, timeout=30).stdout
-    except (OSError, subprocess.SubprocessError) as error:
-        log('the login screen\'s service could not be asked about (%s): the start counts as finished' % error)
-        return 0
-    state = dict(line.split('=', 1) for line in shown.splitlines() if '=' in line)
-    if state.get('LoadState') == 'loaded' and state.get('ActiveState') == 'failed':
-        log('the login screen\'s service (display-manager.service) failed to start: this start is not recorded as '
-            'finished, and GRUB\'s menu shows at the next start')
-        return 1
-    return 0
 
 
 def _editenv(block, *words):
@@ -1161,21 +1143,39 @@ def _resolve(spec):
     return spec
 
 
-def _fsck_unit(device):
-    """systemd-fsck's unit for DEVICE, its result and its lines of this boot."""
+def _fstab_node(spec):
+    """The device node systemd's fstab generator derives from an fstab field (fstab_node_to_udev_node): UUID=x is
+    /dev/disk/by-uuid/x, and so on; systemd-fsck@.service is named after that node."""
+    for tag, folder in (('UUID=', 'by-uuid'), ('LABEL=', 'by-label'), ('PARTUUID=', 'by-partuuid'),
+                        ('PARTLABEL=', 'by-partlabel')):
+        if spec.startswith(tag):
+            return '/dev/disk/%s/%s' % (folder, spec[len(tag):].strip('"'))
+    return spec
+
+
+def _fsck_unit(names):
+    """The first of NAMES (systemd-fsck units) that ran in this boot: its name, its state and its lines."""
+    for name in names:
+        try:
+            shown = subprocess.run(['systemctl', 'show', '-p', 'ActiveState', '-p', 'Result', name],
+                                   capture_output=True, text=True, timeout=30).stdout
+            state = dict(line.split('=', 1) for line in shown.splitlines() if '=' in line)
+            if state.get('ActiveState') not in ('active', 'failed'):
+                continue
+            lines = subprocess.run(['journalctl', '-b', '-o', 'cat', '--no-pager', '-u', name],
+                                   capture_output=True, text=True, timeout=60).stdout
+            return name, state, lines
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return None, {}, ''
+
+
+def _escape(node):
     try:
-        name = subprocess.run(['systemd-escape', '--path', '--template=systemd-fsck@.service', device],
+        return subprocess.run(['systemd-escape', '--path', '--template=systemd-fsck@.service', node],
                               capture_output=True, text=True, timeout=30).stdout.strip()
-        if not name:
-            return None, '', ''
-        shown = subprocess.run(['systemctl', 'show', '-p', 'ActiveState', '-p', 'Result', '-p', 'ExecMainStatus',
-                                '-p', 'ConditionResult', name], capture_output=True, text=True, timeout=30).stdout
-        state = dict(line.split('=', 1) for line in shown.splitlines() if '=' in line)
-        lines = subprocess.run(['journalctl', '-b', '-o', 'cat', '--no-pager', '-u', name],
-                               capture_output=True, text=True, timeout=60).stdout
-        return name, state, lines
     except (OSError, subprocess.SubprocessError):
-        return None, '', ''
+        return ''
 
 
 def check_results():
@@ -1210,10 +1210,14 @@ def check_results():
                     except (ValueError, IndexError):
                         status = 4
         else:
-            name, state, text_ = _fsck_unit(device)
-            if name and state and state.get('ActiveState') in ('active', 'failed'):
+            # a root the boot image did not check is checked by systemd-fsck-root.service; every other file system by
+            # systemd-fsck@NODE.service
+            names = ['systemd-fsck-root.service'] if where == '/' else []
+            names += [n for n in (_escape(_fstab_node(spec)), _escape(device)) if n]
+            name, state, text_ = _fsck_unit(names)
+            if name:
                 lines = text_
-                failed = state.get('ActiveState') == 'failed' or state.get('Result') not in ('success', None)
+                failed = state.get('ActiveState') == 'failed' or state.get('Result', 'success') != 'success'
                 for line in text_.splitlines():
                     if 'fsck failed with exit status' in line:
                         try:
@@ -1515,8 +1519,6 @@ def main(argv):
         return notify()
     if command == 'boot-check':
         return boot_check()
-    if command == 'login-check':
-        return login_check()
     if command == 'start-finished':
         return start_finished()
     if command == 'grub-unfinished':

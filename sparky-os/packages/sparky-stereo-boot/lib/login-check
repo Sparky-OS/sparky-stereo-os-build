@@ -1,0 +1,17 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/15
+# Copyright 2026 under the GNU GPL3 License
+# sparky-stereo-boot-login.service, before boot-complete.target and after display-manager.service (0.1.11, ORDER 572b):
+# a login screen that is part of this start and failed to start means the start did not finish, so GRUB's flag is not
+# cleared and the menu shows at the next start. A system with no login screen, or one that started, has finished.
+# A shell program, so that nothing waits for an interpreter before boot-complete.target.
+state=$(systemctl show -p LoadState -p ActiveState display-manager.service 2>/dev/null) || exit 0
+case $state in
+*LoadState=loaded*)
+	case $state in
+	*ActiveState=failed*)
+		echo "sparky-stereo-boot: the login screen's service (display-manager.service) failed to start: this start is not recorded as finished, and GRUB's menu shows at the next start" >&2
+		exit 1 ;;
+	esac ;;
+esac
+exit 0

@@ -97,9 +97,11 @@ ok '90_sparky_stereo_start writes nothing when a start cannot be recorded' "$(SP
 # login-check: a display manager that failed to start means the start did not finish
 mkdir -p "$W/bin"
 dm() { printf '#!/bin/sh\nprintf "LoadState=%s\\nActiveState=%s\\n"\n' "$1" "$2" > "$W/bin/systemctl"; chmod +x "$W/bin/systemctl"; }
-dm loaded failed; tool login-check 2>/dev/null; ok 'the login screen failed to start: not finished' $? 1
-dm loaded active; tool login-check; ok 'the login screen started: finished' $? 0
-dm not-found inactive; tool login-check; ok 'no login screen on this system: finished' $? 0
+lc() { env -i PATH="$W/bin:/usr/sbin:/usr/bin:/sbin:/bin" sh "$PKG/lib/login-check"; }
+dm loaded failed; lc 2>/dev/null; ok 'the login screen failed to start: not finished' $? 1
+dm loaded active; lc; ok 'the login screen started: finished' $? 0
+dm not-found inactive; lc; ok 'no login screen on this system: finished' $? 0
+printf '#!/bin/sh\nexit 1\n' > "$W/bin/systemctl"; lc; ok 'systemd cannot be asked: finished, never a guess of failure' $? 0
 # start-finished
 fin() {   # fin CMDLINE ROOTLOG FSTAB RECORD -> exit status; the kept problems in $W/list
 	T=$(mktemp -d -p "$W"); mkdir -p $T/proc $T/run/initramfs $T/etc $T/boot/grub $T/var/lib/sparky-stereo-boot $T/usr/sbin
@@ -107,7 +109,8 @@ fin() {   # fin CMDLINE ROOTLOG FSTAB RECORD -> exit status; the kept problems i
 	: > $T/usr/sbin/fsck.ext4; : > $T/usr/sbin/fsck.vfat
 	printf 'RECORD=%s\n' "$4" > $T/var/lib/sparky-stereo-boot/grub-display
 	grub-editenv $T/boot/grub/grubenv create; grub-editenv $T/boot/grub/grubenv set recordfail=1 sparky_stereo_boot=x
-	rm -f "$W/bin/systemctl"
+	rm -f "$W/bin/systemctl" "$W/bin/journalctl" "$W/bin/systemd-escape"
+	[ -z "${UNITS:-}" ] || units
 	tool start-finished 2>"$W/err"; rc=$?
 	SPARKY_STEREO_ROOT=$T SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" LANG=C.UTF-8 sparky-stereo-problems list > "$W/list" 2>&1
 	return $rc
@@ -129,6 +132,19 @@ fin "$MARK" "$LOGFIX" "$FST" grubenv; has 'a repaired root is said' "$(cat $W/li
 fin "$MARK" "$LOGFIX2" "$FST" grubenv; has 'the exit status alone says repaired (the real words of logsave 1.47)' "$(cat $W/list)" 'UUID=aaaa (ext4): errors were repaired'
 fin "$MARK" "$LOGBAD" "$FST" grubenv; has 'errors that remain are said, with what to do' "$(cat $W/list)" 'UUID=aaaa (ext4): errors remain. Check it from another system: sudo fsck UUID=aaaa'
 fin "$MARK" '' "$FST" grubenv; has 'no trace of a check is said' "$(cat $W/list)" 'UUID=aaaa (ext4): no trace of a check was found'
+# a root the boot image did not check (no log): systemd-fsck-root.service; the other file systems: systemd-fsck@NODE.service,
+# the node as systemd derives it from the fstab field
+units() {
+	printf '#!/bin/sh\nfor a in "$@"; do u=$a; done\ncase $u in systemd-fsck-root.service|*by-uuid-ffff*) printf "ActiveState=active\\nResult=success\\n" ;; *by-uuid-gggg*) printf "ActiveState=failed\\nResult=exit-code\\n" ;; *) printf "ActiveState=inactive\\nResult=success\\n" ;; esac\n' > "$W/bin/systemctl"
+	printf '#!/bin/sh\nfor a in "$@"; do u=$a; done\ncase $u in systemd-fsck-root.service) echo "sparky: Inode 7 ref count is 2, should be 1.  FIXED." ;; *by-uuid-ffff*) echo "/dev/sda1: 24 files, 29248/604874 clusters" ;; *by-uuid-gggg*) echo "fsck failed with exit status 4." ;; esac\n' > "$W/bin/journalctl"
+	printf '#!/bin/sh\nfor a in "$@"; do p=$a; done\necho "systemd-fsck@$(echo "$p" | tr / -).service"\n' > "$W/bin/systemd-escape"
+	chmod +x "$W/bin/systemctl" "$W/bin/journalctl" "$W/bin/systemd-escape"
+}
+UNITS=1 fin "$MARK" '' 'UUID=aaaa / ext4 defaults 0 1\nUUID=ffff /boot/efi vfat umask=0077 0 2\nUUID=gggg /home ext4 defaults 0 2\n' grubenv
+has 'a root checked by systemd-fsck-root.service: repaired' "$(cat $W/list)" 'UUID=aaaa (ext4): errors were repaired'
+has 'the EFI system partition, found by the node of its fstab field: no errors' "$(cat $W/list)" 'UUID=ffff (vfat): no errors'
+has 'a file system whose check failed: errors remain' "$(cat $W/list)" 'UUID=gggg (ext4): errors remain'
+rm -f "$W/bin/systemctl" "$W/bin/journalctl" "$W/bin/systemd-escape"
 fin "$MARK" "$LOGCLEAN" 'UUID=aaaa / ext4 defaults 0 1\nUUID=eeee /old reiserfs defaults 0 2\n' grubenv; has 'a type with no checker installed is said' "$(cat $W/list)" 'UUID=eeee (reiserfs): not checked, no checker for this type is installed'
 fin 'BOOT_IMAGE=/boot/vmlinuz root=UUID=aaaa ro quiet' "$LOGCLEAN" "$FST" grubenv; hasnot 'a start after a finished one tells nothing' "$(cat $W/list)" 'did not finish'
 ok 'and the flag is cleared there too' "$(grub-editenv $T/boot/grub/grubenv list | grep -c recordfail)" 0

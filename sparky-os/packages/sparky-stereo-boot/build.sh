@@ -73,6 +73,7 @@ install -D -m 755 "$HERE/grub/01_sparky_stereo_menu" "$D/etc/grub.d/01_sparky_st
 # to the program that runs it and writes GRUB's recordfail call into each Linux entry; the menu's last entry says why
 # the menu is shown
 install -D -m 755 "$HERE/grub/10_linux" "$D/usr/lib/sparky-stereo-boot/10_linux"
+install -D -m 755 "$HERE/lib/login-check" "$D/usr/lib/sparky-stereo-boot/login-check"
 ln -s /usr/lib/sparky-stereo-boot/10_linux "$D/etc/grub.d/10_linux"
 mkdir -p "$D/etc/sparky-stereo-boot"
 install -D -m 755 "$HERE/grub/90_sparky_stereo_start" "$D/etc/grub.d/90_sparky_stereo_start"
