@@ -69,3 +69,5 @@ Before the person installs, the entry's page says which tools are missing, how m
 The action refuses, with apt's reason, a tool that cannot be installed, before anything is downloaded; it downloads the program and verifies it, downloads the tools' archives, and only then installs.
 Tools already installed are not reinstalled, upgraded or mentioned; one that apt had installed automatically is marked manual while the entry is installed, so apt's autoremove cannot take it from under the program.
 Removing the entry removes no tool: those the entry brought or marked are marked as automatically installed unless another installed entry declares them, and apt decides from there.
+
+DisplayCAL (0.1.10): an entry of Tools and utilities that is offered and not installed by default, with the sentence that it requires calibrator hardware and apt's sizes before the button; `actions/entry status ID` answers for one entry, which the Info Centre's Stereo 3D and Deep Colour page uses to offer "Install DisplayCAL" (ORDER 575).

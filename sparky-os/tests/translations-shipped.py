@@ -47,6 +47,7 @@ SOURCES = {
     'kf6-kfilemetadata-stereo3d.po.patch': ('kf6-kfilemetadata', None),
     'kf6-kio-gpu-launch.po.patch': ('kf6-kio', None),
     'kinfocenter-stereo3d.po.patch': ('kinfocenter', None),
+    'kinfocenter-displaycal.po.patch': ('kinfocenter', None),
     'kscreen-arrangement-view.po.patch': ('kscreen', None),
     'kscreen-dp-frame-sequential.po.patch': ('kscreen', None),
     'kscreen-wdisplays-menus.po.patch': ('kscreen', None),

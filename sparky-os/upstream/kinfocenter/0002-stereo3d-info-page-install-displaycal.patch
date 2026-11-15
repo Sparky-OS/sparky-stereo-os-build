@@ -1,0 +1,245 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: Stereo 3D and Deep Colour page: install DisplayCAL from the page through Stereo APTus
+ DisplayCAL stays off the image because it needs a measuring device. The page said
+ "DisplayCAL is not installed" and offered nothing. Now it says what DisplayCAL
+ requires (calibrator hardware), shows apt's sizes first and offers "Install DisplayCAL",
+ which runs Stereo APTus' own entry action (pkexec, the problems engine, apt's sizes and
+ failures said in the person's language). Nothing is installed until the button is pressed.
+ The requirement, the sizes and the button appear once on the page, not once for each display; each display's colour-profile row keeps "Measure this display". The page does not detect a measuring device.
+Origin: other, edition (ORDER 575)
+Forwarded: no
+Assisted-by: Claude Sonnet via Claude Code
+
+diff -ruN a/kcms/stereo3d/main.cpp b/kcms/stereo3d/main.cpp
+--- a/kcms/stereo3d/main.cpp	2026-11-15 10:51:48.747080134 -0300
++++ b/kcms/stereo3d/main.cpp	2026-11-15 10:51:48.759414473 -0300
+@@ -1,12 +1,18 @@
+ // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+ // SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
+ 
++#include <QFile>
++#include <QJsonDocument>
++#include <QJsonArray>
++#include <QJsonObject>
+ #include <QProcess>
++#include <QStringList>
+ #include <QVariantMap>
+ 
+ #include <KIO/ApplicationLauncherJob>
+ #include <KPluginFactory>
+ #include <KQuickConfigModule>
++#include <KLocalizedString>
+ #include <KService>
+ 
+ #include "CommandOutputContext.h"
+@@ -16,7 +22,11 @@
+     Q_OBJECT
+     Q_PROPERTY(CommandOutputContext *infoOutputContext READ outputContext CONSTANT FINAL)
+     Q_PROPERTY(QVariantList sections READ sections CONSTANT FINAL)
+-    Q_PROPERTY(bool displayCalInstalled READ displayCalInstalled CONSTANT FINAL)
++    Q_PROPERTY(bool displayCalInstalled READ displayCalInstalled NOTIFY displayCalChanged FINAL)
++    // "installed", "absent" (can be installed from here), "installing" or "unavailable" (with the reason in displayCalMessage)
++    Q_PROPERTY(QString displayCalState READ displayCalState NOTIFY displayCalChanged FINAL)
++    Q_PROPERTY(QStringList displayCalLines READ displayCalLines NOTIFY displayCalChanged FINAL)
++    Q_PROPERTY(QString displayCalMessage READ displayCalMessage NOTIFY displayCalChanged FINAL)
+ public:
+     explicit KCMStereo3D(QObject *parent, const KPluginMetaData &data)
+         : KQuickConfigModule(parent, data)
+@@ -64,6 +74,8 @@
+                                           {QStringLiteral("manufacturer"), fields[3]},
+                                           {QStringLiteral("profile"), fields[4]}});
+         }
++
++        refreshDisplayCal();
+     }
+     [[nodiscard]] CommandOutputContext *outputContext() const
+     {
+@@ -85,7 +97,19 @@
+     }
+     [[nodiscard]] bool displayCalInstalled() const
+     {
+-        return KService::serviceByDesktopName(QStringLiteral("displaycal")) != nullptr;
++        return m_displayCalState == QLatin1String("installed");
++    }
++    [[nodiscard]] QString displayCalState() const
++    {
++        return m_displayCalState;
++    }
++    [[nodiscard]] QStringList displayCalLines() const
++    {
++        return m_displayCalLines;
++    }
++    [[nodiscard]] QString displayCalMessage() const
++    {
++        return m_displayCalMessage;
+     }
+ 
+     // Opens Display settings, with the output's name as the argument
+@@ -98,10 +122,112 @@
+         if (const KService::Ptr service = KService::serviceByDesktopName(QStringLiteral("displaycal"))) {
+             auto *job = new KIO::ApplicationLauncherJob(service);
+             job->start();
++        } else {
++            QProcess::startDetached(QStringLiteral("displaycal"), {});
+         }
+     }
++    // Installs DisplayCAL through Stereo APTus' own entry action, which says apt's sizes first and every failure with its reason
++    Q_INVOKABLE void installDisplayCal()
++    {
++        if (m_displayCalState != QLatin1String("absent")) {
++            return;
++        }
++        setDisplayCal(QStringLiteral("installing"), m_displayCalLines, i18nc("@info:status", "Installing DisplayCAL…"));
++        auto *install = new QProcess(this);
++        install->setProcessChannelMode(QProcess::MergedChannels);
++        connect(install, &QProcess::finished, this, [this, install](int code, QProcess::ExitStatus status) {
++            const QString output = QString::fromUtf8(install->readAll()).trimmed();
++            install->deleteLater();
++            if (status == QProcess::NormalExit && code == 0) {
++                refreshDisplayCal();
++                return;
++            }
++            const QString reason = (code == 126 || code == 127) && output.isEmpty()
++                ? i18nc("@info", "Authorization was cancelled. Nothing was installed.")
++                : lastLines(output, 1);
++            setDisplayCal(QStringLiteral("absent"), m_displayCalLines, i18nc("@info %1 is the reason", "Installing DisplayCAL failed. %1", reason));
++        });
++        connect(install, &QProcess::errorOccurred, this, [this, install](QProcess::ProcessError) {
++            const QString reason = install->errorString();
++            install->deleteLater();
++            setDisplayCal(QStringLiteral("absent"), m_displayCalLines, i18nc("@info %1 is the reason", "Installing DisplayCAL failed. %1", reason));
++        });
++        install->start(QStringLiteral("pkexec"), {QString::fromLatin1(s_entryAction), QStringLiteral("displaycal"), QStringLiteral("install")});
++    }
++
++Q_SIGNALS:
++    void displayCalChanged();
+ 
+ private:
++    // The action's own sentence is the last line that is not the problems engine's: the engine adds its generic lines after it (two in
++    // a translated session, one of them an English copy), each starting with the package's name, in every language
++    static QString lastLines(const QString &output, int)
++    {
++        const QStringList lines = output.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
++        for (qsizetype i = lines.size() - 1; i >= 0; --i) {
++            if (!lines.at(i).startsWith(QLatin1String("sparky-aptus-stereo-appcenter:"))) {
++                return lines.at(i).trimmed();
++            }
++        }
++        return lines.isEmpty() ? QString() : lines.last().trimmed();
++    }
++    static constexpr const char *s_entryAction = "/usr/lib/sparky-aptus-stereo-appcenter/actions/entry";
++
++    void setDisplayCal(const QString &state, const QStringList &lines, const QString &message)
++    {
++        m_displayCalState = state;
++        m_displayCalLines = lines;
++        m_displayCalMessage = message;
++        Q_EMIT displayCalChanged();
++    }
++    // Installed: nothing else is asked. Otherwise Stereo APTus is asked for the entry's state and apt's sizes (a simulation, nothing changes).
++    void refreshDisplayCal()
++    {
++        if (KService::serviceByDesktopName(QStringLiteral("displaycal"))) {
++            setDisplayCal(QStringLiteral("installed"), {}, {});
++            return;
++        }
++        if (!QFile::exists(QString::fromLatin1(s_entryAction))) {
++            setDisplayCal(QStringLiteral("unavailable"),
++                          {},
++                          i18nc("@info", "Stereo APTus is not installed, so DisplayCAL cannot be offered from here. Install the package sparky-aptus-stereo-appcenter, or run: apt install displaycal"));
++            return;
++        }
++        setDisplayCal(QStringLiteral("unavailable"), {}, i18nc("@info:status", "Checking what DisplayCAL needs…"));
++        auto *status = new QProcess(this);
++        status->setProcessChannelMode(QProcess::SeparateChannels);
++        connect(status, &QProcess::finished, this, [this, status](int code) {
++            const QByteArray out = status->readAllStandardOutput();
++            const QString err = QString::fromUtf8(status->readAllStandardError()).trimmed();
++            status->deleteLater();
++            const QJsonObject entry = QJsonDocument::fromJson(out).object();
++            if (code != 0 || entry.isEmpty()) {
++                setDisplayCal(QStringLiteral("unavailable"), {}, i18nc("@info %1 is the reason", "Could not read what installing DisplayCAL needs: %1", err.isEmpty() ? QString::number(code) : err));
++                return;
++            }
++            if (entry.value(QStringLiteral("installed")).toBool()) {
++                setDisplayCal(QStringLiteral("installed"), {}, {});
++                return;
++            }
++            const QJsonObject tools = entry.value(QStringLiteral("tools")).toObject();
++            if (!entry.value(QStringLiteral("visible")).toBool()) {
++                setDisplayCal(QStringLiteral("unavailable"), {}, i18nc("@info", "No enabled package source offers DisplayCAL. Update the package lists (apt update) and open this page again."));
++            } else if (tools.contains(QStringLiteral("error"))) {
++                setDisplayCal(QStringLiteral("unavailable"), {}, tools.value(QStringLiteral("error")).toString());
++            } else {
++                QStringList lines;
++                for (const QJsonValue &line : tools.value(QStringLiteral("text")).toArray()) {
++                    lines << line.toString();
++                }
++                setDisplayCal(QStringLiteral("absent"), lines, {});
++            }
++        });
++        status->start(QString::fromLatin1(s_entryAction), {QStringLiteral("status"), QStringLiteral("displaycal")});
++    }
++
++    QString m_displayCalState;
++    QStringList m_displayCalLines;
++    QString m_displayCalMessage;
+     CommandOutputContext *m_outputContext;
+     QVariantList m_displays;
+     QVariantList m_sections;
+diff -ruN a/kcms/stereo3d/ui/main.qml b/kcms/stereo3d/ui/main.qml
+--- a/kcms/stereo3d/ui/main.qml	2026-11-15 10:51:48.747140404 -0300
++++ b/kcms/stereo3d/ui/main.qml	2026-11-15 10:51:48.759635623 -0300
+@@ -136,14 +136,46 @@
+                             url: ""
+                             onClicked: kcm.measureDisplay()
+                         }
+-                        QQC2.Label {
+-                            visible: !kcm.displayCalInstalled
+-                            enabled: false
+-                            text: KI18n.i18nc("@info", "DisplayCAL is not installed")
+-                        }
+                     }
+                 }
+             }
+         }
++
++        // DisplayCAL is not installed by default, and it needs a measuring device: said once for the page, beside the action, which is Stereo APTus' own.
++        ColumnLayout {
++            id: displayCal
++
++            Layout.fillWidth: true
++            Layout.leftMargin: Kirigami.Units.largeSpacing
++            Layout.rightMargin: Kirigami.Units.largeSpacing
++            Layout.bottomMargin: Kirigami.Units.largeSpacing
++            visible: root.output.error === ""
++            spacing: Kirigami.Units.smallSpacing
++
++            QQC2.Label {
++                Layout.fillWidth: true
++                wrapMode: Text.Wrap
++                text: KI18n.i18ndc("kcm_stereo3d", "@info", "DisplayCAL requires calibrator hardware: a colorimeter or a spectrophotometer to measure the display.")
++            }
++            QQC2.Label {
++                Layout.fillWidth: true
++                visible: kcm.displayCalState === "absent" || kcm.displayCalState === "installing"
++                wrapMode: Text.Wrap
++                text: kcm.displayCalLines.join("\n")
++            }
++            QQC2.Label {
++                Layout.fillWidth: true
++                visible: kcm.displayCalMessage !== ""
++                wrapMode: Text.Wrap
++                text: kcm.displayCalMessage
++            }
++            QQC2.Button {
++                visible: kcm.displayCalState === "absent" || kcm.displayCalState === "installing"
++                enabled: kcm.displayCalState === "absent"
++                icon.name: "install"
++                text: KI18n.i18ndc("kcm_stereo3d", "@action:button installs DisplayCAL", "Install DisplayCAL")
++                onClicked: kcm.installDisplayCal()
++            }
++        }
+     }
+ }

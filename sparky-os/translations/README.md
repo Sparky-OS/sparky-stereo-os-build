@@ -6,6 +6,7 @@ KDE takes translations only through its translation teams, never as commits to a
 
 - `kwin-virtual-3d-modes.po.patch`: KWin's virtual 3D mode strings.
 - `kinfocenter-stereo3d.po.patch`: KInfoCenter's Stereo 3D and Deep Colour page, in French.
+- `kinfocenter-displaycal.po.patch` (ORDER 575): the nine sentences of the page's DisplayCAL line (what DisplayCAL requires, the install button and its failures), in the nine translated languages, appended to the page's `kcm_stereo3d` catalogues (and creating the Spanish one, which the published package lacks); code half is `sparky-os/upstream/kinfocenter/0002-stereo3d-info-page-install-displaycal.patch`. Every catalog passes `msgfmt -c`. A first draft with AI assistance, pending review by native speakers. Carried last in kinfocenter's series by `sparky-os/packages/catalogue-rebuilds`.
 - `krdc-catch.po.patch`: KRDC's Catch receiver (the Kirigami frontend that catches a Throw on Plasma Mobile and the desktop, ORDER 124): its eight messages and translated launcher entries in eight languages; from the phone lane, on invent danielcamposramos/krdc stereo3d b3cd02d484.
 - `krdp-throw.po.patch`: KRdp's headset discovery and approval named Throw: its strings in eight languages (po/, with a new Japanese catalog) and the discovery entry's and notification's translated names; from the phone lane's commits 24465ba and 646fb0b, whose code half is invent danielcamposramos/krdp phone-throw 8a3a79dbfc.
 - `kwin-stereo-depth.po.patch`: KWin's 3D Depth page in System Settings (the eased level changes and the linked focus and raise delays, ORDER 145), in all eight translated languages; from the kwin-stereo-effects lane (KWin +stereo3d26).
@@ -40,6 +41,7 @@ Six of these patches were made "for the next package" and no build applied them.
 | `kalzium-stereo3d.po.patch` | kalzium | 4:26.04.3-1+stereo3d5 |
 | `kubrick-stereo3d.po.patch` | kubrick | 4:26.04.0-1+stereo3d3 |
 | `kinfocenter-stereo3d.po.patch` | kinfocenter | 4:6.7.4-1+stereo3d2 |
+| `kinfocenter-displaycal.po.patch` | kinfocenter | 4:6.7.4-1+stereo3d3 (with the code half 0002-stereo3d-info-page-install-displaycal.patch) |
 | `kf6-kfilemetadata-stereo3d.po.patch` | kf6-kfilemetadata | 6.30.0-1+stereo3d5 |
 | `digikam-stereo3d.po.patch` | digikam | 4:9.1.0-1+stereo3d5 |
 | `plasma-workspace-recovery.po.patch` | plasma-workspace | 4:6.7.4-2+stereo3d7 |
