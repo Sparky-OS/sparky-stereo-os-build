@@ -11,8 +11,8 @@ Forwarded: no
 Assisted-by: Claude Sonnet via Claude Code
 
 diff -ruN a/kcms/stereo3d/main.cpp b/kcms/stereo3d/main.cpp
---- a/kcms/stereo3d/main.cpp	2026-11-15 09:37:55.296943296 -0300
-+++ b/kcms/stereo3d/main.cpp	2026-11-15 09:37:55.305840637 -0300
+--- a/kcms/stereo3d/main.cpp	2026-11-15 09:42:20.721699092 -0300
++++ b/kcms/stereo3d/main.cpp	2026-11-15 09:42:20.730710712 -0300
 @@ -1,12 +1,18 @@
  // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
  // SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
@@ -75,20 +75,20 @@ diff -ruN a/kcms/stereo3d/main.cpp b/kcms/stereo3d/main.cpp
      }
  
      // Opens Display settings, with the output's name as the argument
-@@ -98,10 +122,100 @@
+@@ -98,10 +122,106 @@
          if (const KService::Ptr service = KService::serviceByDesktopName(QStringLiteral("displaycal"))) {
              auto *job = new KIO::ApplicationLauncherJob(service);
              job->start();
 +        } else {
 +            QProcess::startDetached(QStringLiteral("displaycal"), {});
-+        }
-+    }
+         }
+     }
 +    // Installs DisplayCAL through Stereo APTus' own entry action, which says apt's sizes first and every failure with its reason
 +    Q_INVOKABLE void installDisplayCal()
 +    {
 +        if (m_displayCalState != QLatin1String("absent")) {
 +            return;
-         }
++        }
 +        setDisplayCal(QStringLiteral("installing"), m_displayCalLines, i18nc("@info:status", "Installing DisplayCAL…"));
 +        auto *install = new QProcess(this);
 +        install->setProcessChannelMode(QProcess::MergedChannels);
@@ -101,7 +101,7 @@ diff -ruN a/kcms/stereo3d/main.cpp b/kcms/stereo3d/main.cpp
 +            }
 +            const QString reason = (code == 126 || code == 127) && output.isEmpty()
 +                ? i18nc("@info", "Authorization was cancelled. Nothing was installed.")
-+                : output.split(QLatin1Char('\n')).last().trimmed();
++                : lastLines(output, 6);
 +            setDisplayCal(QStringLiteral("absent"), m_displayCalLines, i18nc("@info %1 is the reason", "Installing DisplayCAL failed. %1", reason));
 +        });
 +        connect(install, &QProcess::errorOccurred, this, [this, install](QProcess::ProcessError) {
@@ -110,12 +110,18 @@ diff -ruN a/kcms/stereo3d/main.cpp b/kcms/stereo3d/main.cpp
 +            setDisplayCal(QStringLiteral("absent"), m_displayCalLines, i18nc("@info %1 is the reason", "Installing DisplayCAL failed. %1", reason));
 +        });
 +        install->start(QStringLiteral("pkexec"), {QString::fromLatin1(s_entryAction), QStringLiteral("displaycal"), QStringLiteral("install")});
-     }
- 
++    }
++
 +Q_SIGNALS:
 +    void displayCalChanged();
-+
+ 
  private:
++    // The action says what failed as its own sentence, and the engine may add lines after it: the last few lines are the reason
++    static QString lastLines(const QString &output, int count)
++    {
++        const QStringList lines = output.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
++        return lines.mid(qMax(0, lines.size() - count)).join(QLatin1Char('\n'));
++    }
 +    static constexpr const char *s_entryAction = "/usr/lib/sparky-aptus-stereo-appcenter/actions/entry";
 +
 +    void setDisplayCal(const QString &state, const QStringList &lines, const QString &message)
@@ -177,8 +183,8 @@ diff -ruN a/kcms/stereo3d/main.cpp b/kcms/stereo3d/main.cpp
      QVariantList m_displays;
      QVariantList m_sections;
 diff -ruN a/kcms/stereo3d/ui/main.qml b/kcms/stereo3d/ui/main.qml
---- a/kcms/stereo3d/ui/main.qml	2026-11-15 09:37:55.297014147 -0300
-+++ b/kcms/stereo3d/ui/main.qml	2026-11-15 09:37:55.305897887 -0300
+--- a/kcms/stereo3d/ui/main.qml	2026-11-15 09:42:20.721766442 -0300
++++ b/kcms/stereo3d/ui/main.qml	2026-11-15 09:42:20.730775542 -0300
 @@ -136,10 +136,38 @@
                              url: ""
                              onClicked: kcm.measureDisplay()
