@@ -17,8 +17,13 @@
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=${VERSION:-20261108~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+OUT=$(mkdir -p "${OUT:-${SPARKY_REPO_DIR:?}}" && cd "${OUT:-${SPARKY_REPO_DIR:?}}" && pwd)
+# the host's facts for the build record, and the source date from the recipe's last commit (ORDER 394b, ORDER 421b)
+. "$HERE/../../repo/build-provenance.sh"
+IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}
+sparky_provenance_init "$IMAGE" "$HERE"
+TREE=$(cd "$HERE/../../.." && pwd)
+VERSION=${VERSION:-20261115~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 case ${1:-all} in all|default) ;; *) echo 'Usage: build.sh [all|default]' >&2; exit 2 ;; esac
 WORK=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -52,10 +57,15 @@ control() { # dir package depends recommends description...
 		for l in "$@"; do echo " $l"; done
 	} >"$d/DEBIAN/control"
 }
-build() { # dir package
+build() { # dir package: the Lean Code package and its source, then the gate that writes the build record, in the build image
 	find "$1" -name '*.qmlc' -delete
 	chmod -R go-w "$1"
-	PYTHONPATH="$RECIPE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$1" "$OUT" --authoring "$RECIPE"
+	docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lean-standalone-$2" --ulimit core=0 --network none --platform linux/amd64 \
+		--user "$(id -u):$(id -g)" "${SPARKY_PROV_ARGS[@]}" -e HOME=/tmp -e PYTHONPATH="$TREE/sparky-os" \
+		-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+		-v "$TREE":"$TREE":ro -v "$1":"$1" -v "$OUT":"$OUT" "$IMAGE" \
+		sh -c 'python3 -m lean.standalone "$1" "$2" --authoring "$3" && cd "$2" && python3 -m lean.release check-debs "./$4_$5_all.deb" "./$4-lc-hr_$5_all.deb"' \
+		sh "$1" "$OUT" "$RECIPE" "$2" "$VERSION"
 }
 
 # 1. The default look.
@@ -69,9 +79,12 @@ cp "$HERE/default/kglobalaccel/org.sparkystereo.systemmonitor.desktop" "$D/usr/s
 cp "$HERE/default/org.sparkystereo.desktop/metadata.json" "$T/"
 cp "$HERE/default/org.sparkystereo.desktop/contents/defaults" "$T/contents/"
 cp -a "$HERE/default/org.sparkystereo.desktop/contents/layouts" "$T/contents/"
-cp -a "$OXYGEN/contents/splash" "$OXYGEN/contents/previews" "$T/contents/"
-# Oxygen's Splash.qml animates a bottomRect that does not exist: our fixed copy (see upstream-patches/)
-cp "$HERE/default/splash/Splash.qml" "$T/contents/splash/Splash.qml"
+# the global theme's previews are Oxygen's; the splash's preview is ours, a capture of our loading screen
+cp -a "$OXYGEN/contents/previews" "$T/contents/"
+cp "$HERE/default/previews/splash.png" "$T/contents/previews/splash.png"
+# the loading screen is ours (ORDER 571): the boot splash's picture, its pictures the same files as sparky-stereo-plymouth's
+# (tests/splash-pictures.sh), each part at the boot splash's level inside the person's limits through org.sparky.stereo
+cp -a "$HERE/default/splash" "$T/contents/"
 cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$HERE/default/xdg/krunnerrc" "$HERE/default/xdg/konsolerc" "$HERE/default/xdg/dolphinrc" "$HERE/default/xdg/ksplashrc" "$D/etc/xdg/"
 install -D -m 755 "$HERE/default/first-login-input-method" "$D/usr/lib/sparky-stereo-look/first-login-input-method"
 install -D -m 644 "$HERE/default/xdg/plasma-workspace/env/10-sparky-stereo-input-method.sh" \
@@ -79,13 +92,13 @@ install -D -m 644 "$HERE/default/xdg/plasma-workspace/env/10-sparky-stereo-input
 install -D -m 644 "$HERE/default/needrestart.conf" "$D/etc/needrestart/conf.d/90-sparky-stereo.conf"
 install -D -m 644 "$HERE/default/flathub.flatpakrepo" "$D/usr/share/flatpak/remotes.d/flathub.flatpakrepo"
 control "$D" sparky-stereo-look \
-	"plasma-workspace (>= 4:6.7.4-2+stereo3d6), plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, kwin-style-aurorae, libkf6config-bin, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk" \
+	"plasma-workspace (>= 4:6.7.4-2+stereo3d6), plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, kwin-style-aurorae, libkf6config-bin, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk, qml6-module-qtquick, libstereo-layer1 (>= 1.20.0)" \
 	"kde-style-oxygen-qt5, sparkyos-artwork, sparky-stereo-look-kubabbar-glass" \
 	"Sparky Stereo OS default look: Oxygen dark" \
 	"The edition's default global theme: Oxygen, whole, in its dark colours:" \
 	"Plasma style (Sparky Stereo Oxygen: Oxygen's, with widget, panel, tooltip and" \
 	"dialog backgrounds at 91 % alpha, the background only, blur and contrast off)," \
-	"Plasma style, icons, cursor, splash (/etc/xdg/ksplashrc: a person who chose another splash keeps it) and the Oxygen application style, with" \
+	"Plasma style, icons, cursor and the Oxygen application style, with" \
 	"Plastik's square, Windows-like window buttons. Also sets the default KWin effects: translucency" \
 	"with Daniel Ramos's values, glide and wobbly windows, and makes VLC Stereo the" \
 	"default video player (/etc/xdg/kde-mimeapps.list; a user's own choice still wins)." \
@@ -96,15 +109,29 @@ control "$D" sparky-stereo-look \
 	"Web search and the online dictionary are off by default." \
 	"Ctrl+Alt+Del, Ctrl+Shift+Esc and Ctrl+Esc open System Monitor; existing shortcuts remain available." \
 	"Japanese, Korean and Chinese sessions default to the installed Fcitx5 input" \
-	"method before KWin starts, preserving an existing or explicitly disabled choice."
+	"method before KWin starts, preserving an existing or explicitly disabled choice." \
+	"The loading screen after the login is the boot splash's picture, so the" \
+	"screen is one picture from power-on to the desktop. On a screen in a 3D" \
+	"mode each part stands at the boot splash's depth, inside the person's" \
+	"limits for that screen; on a 2D screen it is plain. /etc/xdg/ksplashrc" \
+	"names it, and a person who chose another splash keeps it."
 printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc /etc/xdg/kde-mimeapps.list /etc/xdg/krunnerrc /etc/xdg/konsolerc /etc/xdg/dolphinrc /etc/xdg/ksplashrc \
 	/etc/xdg/plasma-workspace/env/10-sparky-stereo-input-method.sh \
 	/etc/needrestart/conf.d/90-sparky-stereo.conf >"$D/DEBIAN/conffiles"
 cat >"$D/usr/share/doc/sparky-stereo-look/copyright" <<'EOF'
 Sparky Stereo OS default look.
 Theme definition and defaults: Copyright 2026 Daniel Ramos (Capitain Jack), GPL-2.0-or-later.
-Splash screen and previews: copied from KDE's Oxygen global theme (plasma-theme-oxygen),
-Copyright the Oxygen team, under its own licence (see /usr/share/doc/plasma-theme-oxygen/copyright).
+Global theme previews (preview.png, fullscreenpreview.jpg): copied from KDE's Oxygen global theme
+(plasma-theme-oxygen), Copyright the Oxygen team, under its own licence (see
+/usr/share/doc/plasma-theme-oxygen/copyright).
+Loading screen (contents/splash/Splash.qml, contents/previews/splash.png): Copyright 2026 Daniel Ramos
+(Capitain Jack), GPL-2.0-or-later; KSplash, which shows it, is KDE's (plasma-workspace, Marco Martin and KDE).
+Its pictures (contents/splash/images) are those of sparky-stereo-plymouth's boot splash, with the credits
+its copyright file gives them: background.png, logo.png and electron.png from Sparky's lines theme,
+Copyright 2014 Juliette Taka Belin and Aurelien Couderc (Debian 8 "Jessie" lines theme), Copyright
+2018-2020 Pawel "pavroo" Pijanowski and Daniel Ramos (sparky-lines, the Sparky black set), GPL-2+;
+wordmark.png, the SparkyOS logo (SPARKYOS / POWERED BY DEBIAN / STEREO 3D EDITION), Copyright 2026
+Daniel Ramos (Capitain Jack), GPL-2+.
 Sparky Stereo Oxygen Plasma style: derived from KDE's Oxygen Plasma style (plasma-theme-oxygen),
 Copyright The Oxygen Project, GPL; only its background SVGs are changed (91 % alpha), its
 foreground artwork is inherited; licence texts in /usr/share/plasma/desktoptheme/sparky-stereo-oxygen/.
