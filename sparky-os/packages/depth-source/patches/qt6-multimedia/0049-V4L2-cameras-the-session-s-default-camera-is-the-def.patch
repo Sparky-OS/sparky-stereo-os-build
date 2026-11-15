@@ -1,0 +1,995 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 15 Nov 2026 22:00:00 -0300
+Subject: [PATCH] V4L2 cameras: the camera chosen in the session is the default
+ camera
+
+QMediaDevices::defaultVideoInput(), a QML MediaDevices and a QCamera made
+without a device took the first camera of the kernel's list as the default
+(qv4l2cameradevices.cpp, "first camera is default"), whatever camera the
+person had chosen as the default in the session.
+
+The session's default camera is the one the person chose (WirePlumber keeps it
+as default.configured.video.source in the "default" metadata of PipeWire).
+QDefaultCameraMonitor follows that key and the camera nodes (Video/Source,
+whose api.v4l2.path is the /dev/videoN the V4L2 backend lists) through a
+connection to PipeWire of its own, and QV4L2CameraDevices marks the camera of
+that path as the default. Every camera stays listed, in the same order; only
+isDefault moves, and videoInputsChanged is emitted when the choice changes
+while the program runs. A camera a program was given or chose by itself is
+never touched.
+
+When the session's default cannot be found among the cameras (no PipeWire
+session, the chosen camera unplugged or not a V4L2 device, a name that matches
+none of them), the first camera stays the default as before and the reason is
+said once in qt.multimedia.ffmpeg.v4l2cameradevices, not at every scan of /dev.
+Nobody having chosen is not a failure: the first camera is the default, and
+nothing is said.
+
+tst_qpipewiredefaultcamera checks the choice from the session's events, the
+pick among the devices, every reason, and the monitor without a session.
+
+AI was leveraged.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+diff --git a/src/multimedia/CMakeLists.txt b/src/multimedia/CMakeLists.txt
+index d699d7a..71dc1c6 100644
+--- a/src/multimedia/CMakeLists.txt
++++ b/src/multimedia/CMakeLists.txt
+@@ -209,6 +209,7 @@ if (QT_FEATURE_pipewire)
+             pipewire/qpipewire_audiosink.cpp           pipewire/qpipewire_audiosink_p.h
+             pipewire/qpipewire_audiosource.cpp         pipewire/qpipewire_audiosource_p.h
+             pipewire/qpipewire_audiostream.cpp         pipewire/qpipewire_audiostream_p.h
++            pipewire/qpipewire_defaultcamera.cpp       pipewire/qpipewire_defaultcamera_p.h
+             pipewire/qpipewire_instance.cpp            pipewire/qpipewire_instance_p.h
+             pipewire/qpipewire_propertydict.cpp        pipewire/qpipewire_propertydict_p.h
+             pipewire/qpipewire_registry_support.cpp    pipewire/qpipewire_registry_support_p.h
+@@ -239,6 +240,7 @@ if (QT_FEATURE_pipewire)
+             pipewire/qpipewire_audiodevicemonitor.cpp
+             pipewire/qpipewire_audiodevices.cpp
+             pipewire/qpipewire_audiosink.cpp
++            pipewire/qpipewire_defaultcamera.cpp
+             pipewire/qpipewire_instance.cpp
+             pipewire/qpipewire_screencapture.cpp
+             pipewire/qpipewire_screencapturehelper.cpp
+diff --git a/src/multimedia/pipewire/qpipewire_defaultcamera.cpp b/src/multimedia/pipewire/qpipewire_defaultcamera.cpp
+new file mode 100644
+index 0000000..108cc5f
+--- /dev/null
++++ b/src/multimedia/pipewire/qpipewire_defaultcamera.cpp
+@@ -0,0 +1,454 @@
++// Copyright (C) 2026 The Qt Company Ltd.
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++#include "qpipewire_defaultcamera_p.h"
++
++#include <QtMultimedia/private/qpipewire_instance_p.h>
++#include <QtMultimedia/private/qpipewire_support_p.h>
++#include <QtCore/qloggingcategory.h>
++
++#include <pipewire/extensions/metadata.h>
++
++#if __has_include(<spa/utils/json.h>)
++#  include <spa/utils/json.h>
++#else
++#  include <QtCore/qjsondocument.h>
++#  include <QtCore/qjsonvalue.h>
++#endif
++
++#include <algorithm>
++#include <cerrno>
++#include <cstring>
++
++QT_BEGIN_NAMESPACE
++
++namespace QtPipeWire {
++
++Q_STATIC_LOGGING_CATEGORY(lcDefaultCamera, "qt.multimedia.pipewire.defaultcamera")
++
++using namespace std::string_view_literals;
++
++namespace {
++
++constexpr std::string_view configuredVideoSourceKey = "default.configured.video.source"sv;
++constexpr std::string_view v4l2PathKey = "api.v4l2.path"sv;
++constexpr std::string_view videoSourceClass = "Video/Source"sv;
++constexpr std::string_view v4l2ObjectPathPrefix = "v4l2:"sv;
++
++std::string_view lookup(const spa_dict &dict, const char *key)
++{
++    const char *value = spa_dict_lookup(&dict, key);
++    return value ? std::string_view{ value } : std::string_view{};
++}
++
++} // namespace
++
++std::optional<QByteArray> parseDefaultSourceName(const char *json_str)
++{
++    if (!json_str)
++        return std::nullopt;
++
++#if __has_include(<spa/utils/json.h>)
++    struct spa_json json;
++    spa_json_init(&json, json_str, strlen(json_str));
++
++    struct spa_json it;
++    if (spa_json_enter_object(&json, &it) > 0) {
++        char key[256];
++        while (spa_json_get_string(&it, key, sizeof(key)) > 0) {
++            if (key == "name"sv) {
++                char value[16384];
++                if (spa_json_get_string(&it, value, sizeof(value)) >= 0)
++                    return QByteArray{ value };
++            } else {
++                const char *skipped = nullptr;
++                spa_json_next(&it, &skipped);
++            }
++        }
++    }
++
++    return std::nullopt;
++#else
++    using namespace Qt::Literals;
++
++    QJsonDocument doc = QJsonDocument::fromJson(QByteArray{ json_str });
++    if (doc.isNull())
++        return std::nullopt;
++
++    QJsonValue name = doc[u"name"_s];
++    if (!name.isString())
++        return std::nullopt;
++    return name.toString().toUtf8();
++#endif
++}
++
++// QDefaultCameraState
++
++void QDefaultCameraState::nodeAdded(uint32_t id, std::string_view nodeName,
++                                    std::string_view mediaClass, std::string_view v4l2Path)
++{
++    if (mediaClass != videoSourceClass || nodeName.empty())
++        return;
++    m_nodes[id] = Node{ std::string{ nodeName }, std::string{ v4l2Path } };
++}
++
++void QDefaultCameraState::nodeRemoved(uint32_t id)
++{
++    m_nodes.erase(id);
++}
++
++void QDefaultCameraState::setConfiguredName(std::optional<QByteArray> nodeName)
++{
++    m_configuredName = std::move(nodeName);
++}
++
++QDefaultCameraState::Choice QDefaultCameraState::choice() const
++{
++    Choice result;
++    if (!m_configuredName || m_configuredName->isEmpty())
++        return result;
++
++    result.nodeName = *m_configuredName;
++    result.kind = Choice::Kind::NotConnected;
++
++    const std::string_view wanted{ m_configuredName->constData(),
++                                   size_t(m_configuredName->size()) };
++    for (const auto &[id, node] : m_nodes) {
++        if (node.name != wanted)
++            continue;
++        if (node.v4l2Path.empty()) {
++            result.kind = Choice::Kind::NoDevicePath;
++        } else {
++            result.kind = Choice::Kind::Device;
++            result.devicePath = QByteArray::fromStdString(node.v4l2Path);
++        }
++        break;
++    }
++    return result;
++}
++
++QDefaultCameraPick pickDefaultCamera(QSpan<const QByteArray> devicePaths, bool sessionKnown,
++                                     const QDefaultCameraState::Choice &choice)
++{
++    using Kind = QDefaultCameraState::Choice::Kind;
++
++    // as before the session was asked: the first camera is the default
++    QDefaultCameraPick pick;
++
++    if (!sessionKnown) {
++        pick.problem = QStringLiteral("There is no PipeWire session to ask, so the session's "
++                                      "default camera is not known");
++        return pick;
++    }
++
++    const QString name = QString::fromUtf8(choice.nodeName);
++    switch (choice.kind) {
++    case Kind::NoChoice:
++        return pick;
++    case Kind::NotConnected:
++        pick.problem = QStringLiteral("The camera chosen as the default (%1) is not connected")
++                               .arg(name);
++        return pick;
++    case Kind::NoDevicePath:
++        pick.problem = QStringLiteral("The camera chosen as the default (%1) is not a V4L2 "
++                                      "device, which this backend reads")
++                               .arg(name);
++        return pick;
++    case Kind::Device:
++        break;
++    }
++
++    const auto it = std::find(devicePaths.begin(), devicePaths.end(), choice.devicePath);
++    if (it == devicePaths.end()) {
++        pick.problem = QStringLiteral("The camera chosen as the default (%1, %2) is not among "
++                                      "the cameras that can be used")
++                               .arg(name, QString::fromUtf8(choice.devicePath));
++        return pick;
++    }
++
++    pick.index = it - devicePaths.begin();
++    return pick;
++}
++
++// QDefaultCameraMonitor
++
++struct QDefaultCameraMonitor::Impl
++{
++    explicit Impl(QDefaultCameraMonitor *owner) : owner(owner) { }
++    ~Impl();
++
++    bool start();
++    void stop();
++
++    static void onGlobal(void *data, uint32_t id, uint32_t permissions, const char *type,
++                         uint32_t version, const spa_dict *props);
++    static void onGlobalRemove(void *data, uint32_t id);
++    static void onDone(void *data, uint32_t id, int seq);
++    static int onMetadataProperty(void *data, uint32_t subject, const char *key, const char *type,
++                                  const char *value);
++
++    void bindDefaultMetadata(uint32_t id, uint32_t version);
++    template <typename Closure>
++    void update(Closure &&closure);
++
++    QDefaultCameraMonitor *owner;
++
++    std::shared_ptr<QPipeWireInstance> library;
++    PwThreadLoopHandle loop;
++    PwContextHandle context;
++    PwCoreConnectionHandle core;
++    PwRegistryHandle registry;
++    PwMetadataHandle metadata;
++    spa_hook coreListener{};
++    spa_hook registryListener{};
++    spa_hook metadataListener{};
++    bool loopStarted = false;
++
++    // the first two roundtrips tell the connection when the session has said what it has
++    int pendingSync = -1;
++    int syncPhase = 0;
++    bool initialStateKnown = false;
++
++    mutable QMutex mutex;
++    QDefaultCameraState state;
++    QDefaultCameraState::Choice lastChoice;
++    bool connected = false;
++};
++
++template <typename Closure>
++void QDefaultCameraMonitor::Impl::update(Closure &&closure)
++{
++    bool changed = false;
++    {
++        QMutexLocker locker(&mutex);
++        closure(state);
++        QDefaultCameraState::Choice now = state.choice();
++        changed = now != lastChoice;
++        lastChoice = std::move(now);
++    }
++    if (changed)
++        emit owner->choiceChanged();
++}
++
++void QDefaultCameraMonitor::Impl::onGlobal(void *data, uint32_t id, uint32_t, const char *type,
++                                           uint32_t version, const spa_dict *props)
++{
++    auto *self = static_cast<Impl *>(data);
++    if (!props || !type)
++        return;
++
++    const std::string_view typeName{ type };
++    if (typeName == PW_TYPE_INTERFACE_Node) {
++        const std::string_view mediaClass = lookup(*props, PW_KEY_MEDIA_CLASS);
++        const std::string_view nodeName = lookup(*props, PW_KEY_NODE_NAME);
++        // The registry carries only some of a node's properties. PipeWire's V4L2 source gives its nodes
++        // object.path "v4l2:/dev/videoN", and the full property api.v4l2.path comes with the node's info.
++        std::string_view path = lookup(*props, v4l2PathKey.data());
++        if (path.empty()) {
++            const std::string_view objectPath = lookup(*props, PW_KEY_OBJECT_PATH);
++            if (objectPath.substr(0, v4l2ObjectPathPrefix.size()) == v4l2ObjectPathPrefix)
++                path = objectPath.substr(v4l2ObjectPathPrefix.size());
++        }
++        if (mediaClass == videoSourceClass) {
++            qCDebug(lcDefaultCamera) << "camera node" << id << QByteArray(nodeName.data(), qsizetype(nodeName.size()))
++                                     << QByteArray(path.data(), qsizetype(path.size()));
++            self->update([&](QDefaultCameraState &s) { s.nodeAdded(id, nodeName, mediaClass, path); });
++        }
++    } else if (typeName == PW_TYPE_INTERFACE_Metadata) {
++        if (lookup(*props, PW_KEY_METADATA_NAME) == "default"sv)
++            self->bindDefaultMetadata(id, version);
++    }
++}
++
++void QDefaultCameraMonitor::Impl::onGlobalRemove(void *data, uint32_t id)
++{
++    auto *self = static_cast<Impl *>(data);
++    self->update([&](QDefaultCameraState &s) { s.nodeRemoved(id); });
++}
++
++void QDefaultCameraMonitor::Impl::onDone(void *data, uint32_t id, int seq)
++{
++    auto *self = static_cast<Impl *>(data);
++    if (id != PW_ID_CORE || seq != self->pendingSync)
++        return;
++
++    if (self->syncPhase == 0) {
++        // the globals have arrived and the default metadata is bound: ask once more for its first values
++        self->syncPhase = 1;
++        self->pendingSync = pw_core_sync(self->core.get(), PW_ID_CORE, 0);
++        return;
++    }
++
++    self->initialStateKnown = true;
++    pw_thread_loop_signal(self->loop.get(), false);
++}
++
++int QDefaultCameraMonitor::Impl::onMetadataProperty(void *data, uint32_t subject, const char *key,
++                                                    const char *type, const char *value)
++{
++    auto *self = static_cast<Impl *>(data);
++    if (subject != PW_ID_CORE)
++        return 0;
++
++    // a null key clears every property of the subject
++    if (!key) {
++        self->update([](QDefaultCameraState &s) { s.setConfiguredName(std::nullopt); });
++        return 0;
++    }
++    if (std::string_view{ key } != configuredVideoSourceKey)
++        return 0;
++
++    std::optional<QByteArray> name;
++    if (value) {
++        if (type && std::string_view{ type } == "Spa:String:JSON"sv)
++            name = parseDefaultSourceName(value);
++        if (!name)
++            qCWarning(lcDefaultCamera) << "Cannot read the default camera from the session's"
++                                       << key << "=" << value;
++    }
++    self->update([&](QDefaultCameraState &s) { s.setConfiguredName(std::move(name)); });
++    return 0;
++}
++
++void QDefaultCameraMonitor::Impl::bindDefaultMetadata(uint32_t id, uint32_t version)
++{
++    if (metadata || version < PW_VERSION_METADATA)
++        return;
++
++    static constexpr pw_metadata_events metadataEvents = {
++        .version = PW_VERSION_METADATA_EVENTS,
++        .property = &Impl::onMetadataProperty,
++    };
++
++    metadata = PwMetadataHandle{
++        reinterpret_cast<pw_metadata *>(pw_registry_bind(registry.get(), id,
++                                                         PW_TYPE_INTERFACE_Metadata,
++                                                         PW_VERSION_METADATA, 0)),
++    };
++    if (!metadata) {
++        qCWarning(lcDefaultCamera) << "Cannot bind the session's default metadata";
++        return;
++    }
++    pw_metadata_add_listener(metadata.get(), &metadataListener, &metadataEvents, this);
++}
++
++bool QDefaultCameraMonitor::Impl::start()
++{
++    library = QPipeWireInstance::instance();
++
++    loop = PwThreadLoopHandle{ pw_thread_loop_new("QDefaultCamera", nullptr) };
++    if (!loop)
++        return false;
++
++    context = PwContextHandle{ pw_context_new(pw_thread_loop_get_loop(loop.get()), nullptr, 0) };
++    if (!context)
++        return false;
++
++    core = PwCoreConnectionHandle{ pw_context_connect(context.get(), nullptr, 0) };
++    if (!core) {
++        qCDebug(lcDefaultCamera) << "No PipeWire session:" << make_error_code().message();
++        return false;
++    }
++
++    static constexpr pw_core_events coreEvents = {
++        .version = PW_VERSION_CORE_EVENTS,
++        .done = &Impl::onDone,
++    };
++    pw_core_add_listener(core.get(), &coreListener, &coreEvents, this);
++
++    registry = PwRegistryHandle{
++        pw_core_get_registry(core.get(), PW_VERSION_REGISTRY, 0),
++    };
++    if (!registry)
++        return false;
++
++    static constexpr pw_registry_events registryEvents = {
++        .version = PW_VERSION_REGISTRY_EVENTS,
++        .global = &Impl::onGlobal,
++        .global_remove = &Impl::onGlobalRemove,
++    };
++    pw_registry_add_listener(registry.get(), &registryListener, &registryEvents, this);
++
++    pendingSync = pw_core_sync(core.get(), PW_ID_CORE, 0);
++    if (pw_thread_loop_start(loop.get()) < 0)
++        return false;
++    loopStarted = true;
++
++    // wait for what the session has to say about its cameras, but never for long
++    pw_thread_loop_lock(loop.get());
++    for (int attempt = 0; !initialStateKnown && attempt < 2; ++attempt)
++        pw_thread_loop_timed_wait(loop.get(), 1);
++    const bool known = initialStateKnown;
++    pw_thread_loop_unlock(loop.get());
++
++    if (!known)
++        qCWarning(lcDefaultCamera) << "The PipeWire session did not answer in two seconds";
++    return true;
++}
++
++void QDefaultCameraMonitor::Impl::stop()
++{
++    if (loopStarted)
++        pw_thread_loop_lock(loop.get());
++
++    if (metadata) {
++        spa_hook_remove(&metadataListener);
++        metadata.reset();
++    }
++    if (registry) {
++        spa_hook_remove(&registryListener);
++        registry.reset();
++    }
++    if (core)
++        spa_hook_remove(&coreListener);
++
++    if (loopStarted) {
++        pw_thread_loop_unlock(loop.get());
++        pw_thread_loop_stop(loop.get());
++        loopStarted = false;
++    }
++}
++
++QDefaultCameraMonitor::Impl::~Impl()
++{
++    stop();
++    core.reset();
++    context.reset();
++    loop.reset();
++}
++
++QDefaultCameraMonitor::QDefaultCameraMonitor(QObject *parent)
++    : QObject(parent), m_impl(std::make_unique<Impl>(this))
++{
++    Q_ASSERT(isSupported());
++
++    const bool connected = m_impl->start();
++    QMutexLocker locker(&m_impl->mutex);
++    m_impl->connected = connected;
++    m_impl->lastChoice = m_impl->state.choice();
++}
++
++QDefaultCameraMonitor::~QDefaultCameraMonitor() = default;
++
++bool QDefaultCameraMonitor::isSupported()
++{
++    return QPipeWireInstance::isLoaded() && pw_check_library_version(0, 3, 44);
++}
++
++bool QDefaultCameraMonitor::isConnected() const
++{
++    QMutexLocker locker(&m_impl->mutex);
++    return m_impl->connected;
++}
++
++QDefaultCameraState::Choice QDefaultCameraMonitor::choice() const
++{
++    QMutexLocker locker(&m_impl->mutex);
++    return m_impl->state.choice();
++}
++
++} // namespace QtPipeWire
++
++QT_END_NAMESPACE
++
++#include "moc_qpipewire_defaultcamera_p.cpp"
+diff --git a/src/multimedia/pipewire/qpipewire_defaultcamera_p.h b/src/multimedia/pipewire/qpipewire_defaultcamera_p.h
+new file mode 100644
+index 0000000..e79b9f8
+--- /dev/null
++++ b/src/multimedia/pipewire/qpipewire_defaultcamera_p.h
+@@ -0,0 +1,127 @@
++// Copyright (C) 2026 The Qt Company Ltd.
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++#ifndef QPIPEWIRE_DEFAULTCAMERA_P_H
++#define QPIPEWIRE_DEFAULTCAMERA_P_H
++
++//
++//  W A R N I N G
++//  -------------
++//
++// This file is not part of the Qt API. It exists purely as an
++// implementation detail. This header file may change from version to
++// version without notice, or even be removed.
++//
++// We mean it.
++//
++
++#include <QtMultimedia/private/qtmultimediaglobal_p.h>
++#include <QtCore/qbytearray.h>
++#include <QtCore/qmutex.h>
++#include <QtCore/qobject.h>
++#include <QtCore/qspan.h>
++#include <QtCore/qstring.h>
++
++#include <map>
++#include <memory>
++#include <optional>
++#include <string>
++#include <string_view>
++
++QT_BEGIN_NAMESPACE
++
++namespace QtPipeWire {
++
++class QPipeWireInstance;
++
++// Parses the value of a default metadata key, a JSON object with a "name" member,
++// for example { "name": "v4l2_input.pci-0000_00_14.0-usb-0_1_1.0" }.
++Q_MULTIMEDIA_EXPORT std::optional<QByteArray> parseDefaultSourceName(const char *json);
++
++// What the session says about the default camera, and what that means for a list of V4L2 devices.
++// The session's default is the person's choice in WirePlumber ("default.configured.video.source").
++// Not thread safe: the owner serialises the calls.
++class Q_MULTIMEDIA_EXPORT QDefaultCameraState
++{
++public:
++    struct Choice
++    {
++        enum class Kind : uint8_t {
++            NoChoice, // nobody has chosen a default camera
++            Device, // the chosen camera is a V4L2 device: devicePath
++            NotConnected, // the chosen camera is not (or no longer) a node of the session
++            NoDevicePath, // the chosen camera is a node without a V4L2 device (libcamera, a stream)
++        };
++
++        Kind kind = Kind::NoChoice;
++        QByteArray nodeName;
++        QByteArray devicePath;
++
++        friend bool operator==(const Choice &a, const Choice &b)
++        {
++            return a.kind == b.kind && a.nodeName == b.nodeName && a.devicePath == b.devicePath;
++        }
++        friend bool operator!=(const Choice &a, const Choice &b) { return !(a == b); }
++    };
++
++    void nodeAdded(uint32_t id, std::string_view nodeName, std::string_view mediaClass,
++                   std::string_view v4l2Path);
++    void nodeRemoved(uint32_t id);
++    void setConfiguredName(std::optional<QByteArray> nodeName);
++
++    Choice choice() const;
++
++private:
++    struct Node
++    {
++        std::string name;
++        std::string v4l2Path;
++    };
++
++    std::map<uint32_t, Node> m_nodes; // the camera nodes (Video/Source)
++    std::optional<QByteArray> m_configuredName;
++};
++
++struct QDefaultCameraPick
++{
++    // the index of the default camera in the list the caller gave
++    qsizetype index = 0;
++    // empty when the session's default was found; otherwise why the list's first camera stays the default
++    QString problem;
++};
++
++// Which of the V4L2 devices (their /dev/videoN paths, in the order Qt lists them) is the session's default.
++// sessionKnown is false when there is no PipeWire session to ask. The first device is the default as long as nobody
++// chose another, and when the choice cannot be found among the devices, problem says why.
++Q_MULTIMEDIA_EXPORT QDefaultCameraPick pickDefaultCamera(QSpan<const QByteArray> devicePaths,
++                                                          bool sessionKnown,
++                                                          const QDefaultCameraState::Choice &choice);
++
++// Follows the session's default camera through a connection to PipeWire of its own.
++class Q_MULTIMEDIA_EXPORT QDefaultCameraMonitor : public QObject
++{
++    Q_OBJECT
++public:
++    explicit QDefaultCameraMonitor(QObject *parent = nullptr);
++    ~QDefaultCameraMonitor() override;
++
++    static bool isSupported();
++
++    // false when no PipeWire session answered: the default is then unknown
++    bool isConnected() const;
++    QDefaultCameraState::Choice choice() const;
++
++Q_SIGNALS:
++    // emitted from the PipeWire thread: connect it with a queued or automatic connection
++    void choiceChanged();
++
++private:
++    struct Impl;
++    std::unique_ptr<Impl> m_impl;
++};
++
++} // namespace QtPipeWire
++
++QT_END_NAMESPACE
++
++#endif // QPIPEWIRE_DEFAULTCAMERA_P_H
+diff --git a/src/plugins/multimedia/ffmpeg/qv4l2cameradevices.cpp b/src/plugins/multimedia/ffmpeg/qv4l2cameradevices.cpp
+index 89bdbee..27ac788 100644
+--- a/src/plugins/multimedia/ffmpeg/qv4l2cameradevices.cpp
++++ b/src/plugins/multimedia/ffmpeg/qv4l2cameradevices.cpp
+@@ -36,6 +36,15 @@ QV4L2CameraDevices::QV4L2CameraDevices(QPlatformMediaIntegration *integration)
+     m_deviceWatcher.addPath(QLatin1String("/dev"));
+     connect(&m_deviceWatcher, &QFileSystemWatcher::directoryChanged, this,
+             &QV4L2CameraDevices::checkCameras);
++
++#if QT_CONFIG(pipewire)
++    if (QtPipeWire::QDefaultCameraMonitor::isSupported()) {
++        m_defaultCamera = std::make_unique<QtPipeWire::QDefaultCameraMonitor>();
++        connect(m_defaultCamera.get(), &QtPipeWire::QDefaultCameraMonitor::choiceChanged, this,
++                &QV4L2CameraDevices::checkCameras);
++    }
++#endif
++
+     doCheckCameras();
+ }
+ 
+@@ -52,13 +61,12 @@ void QV4L2CameraDevices::checkCameras()
+ 
+ bool QV4L2CameraDevices::doCheckCameras()
+ {
+-    QList<QCameraDevice> newCameras;
++    // the cameras in the order Qt lists them; the default is chosen once all are known
++    std::vector<std::unique_ptr<QCameraDevicePrivate>> found;
+ 
+     QDir dir(QLatin1String("/dev"));
+     const auto devices = dir.entryList(QDir::System);
+ 
+-    bool first = true;
+-
+     for (auto device : devices) {
+         //        qCDebug(qLcV4L2Camera) << "device:" << device;
+         if (!device.startsWith(QLatin1String("video")))
+@@ -164,9 +172,35 @@ bool QV4L2CameraDevices::doCheckCameras()
+         if (camera->videoFormats.empty())
+             continue;
+ 
+-        // first camera is default
+-        camera->isDefault = std::exchange(first, false);
++        found.push_back(std::move(camera));
++    }
+ 
++    // The first camera is the default, as long as the session's default camera cannot be told.
++    qsizetype defaultIndex = 0;
++#if QT_CONFIG(pipewire)
++    if (m_defaultCamera) {
++        QList<QByteArray> paths;
++        for (const auto &camera : found)
++            paths.append(camera->id);
++
++        const QtPipeWire::QDefaultCameraPick pick =
++                QtPipeWire::pickDefaultCamera(paths, m_defaultCamera->isConnected(),
++                                              m_defaultCamera->choice());
++        defaultIndex = pick.index;
++
++        // say it once, not at every scan of /dev
++        if (pick.problem != m_reportedDefaultProblem) {
++            m_reportedDefaultProblem = pick.problem;
++            if (!pick.problem.isEmpty())
++                qCInfo(qLcV4L2CameraDevices).noquote()
++                        << pick.problem << "- the first camera is the default";
++        }
++    }
++#endif
++
++    QList<QCameraDevice> newCameras;
++    for (auto &camera : found) {
++        camera->isDefault = newCameras.size() == defaultIndex;
+         newCameras.append(camera.release()->create());
+     }
+ 
+diff --git a/src/plugins/multimedia/ffmpeg/qv4l2cameradevices_p.h b/src/plugins/multimedia/ffmpeg/qv4l2cameradevices_p.h
+index de0dd2c..afcc603 100644
+--- a/src/plugins/multimedia/ffmpeg/qv4l2cameradevices_p.h
++++ b/src/plugins/multimedia/ffmpeg/qv4l2cameradevices_p.h
+@@ -18,8 +18,16 @@
+ #include <QtMultimedia/private/qplatformvideodevices_p.h>
+ #include <QtMultimedia/private/qplatformmediaintegration_p.h>
+ 
++#include <QtMultimedia/private/qtmultimediaglobal_p.h>
++
+ #include <qfilesystemwatcher.h>
+ 
++#include <memory>
++
++#if QT_CONFIG(pipewire)
++#  include <QtMultimedia/private/qpipewire_defaultcamera_p.h>
++#endif
++
+ QT_BEGIN_NAMESPACE
+ 
+ class QV4L2CameraDevices : public QPlatformVideoDevices
+@@ -40,6 +48,12 @@ private:
+ private:
+     QList<QCameraDevice> m_cameras;
+     QFileSystemWatcher m_deviceWatcher;
++
++#if QT_CONFIG(pipewire)
++    // the session's default camera: the first camera stays the default until the person chose another
++    std::unique_ptr<QtPipeWire::QDefaultCameraMonitor> m_defaultCamera;
++    QString m_reportedDefaultProblem;
++#endif
+ };
+ 
+ QT_END_NAMESPACE
+diff --git a/tests/auto/unit/multimedia/CMakeLists.txt b/tests/auto/unit/multimedia/CMakeLists.txt
+index 85defa8..7a8110e 100644
+--- a/tests/auto/unit/multimedia/CMakeLists.txt
++++ b/tests/auto/unit/multimedia/CMakeLists.txt
+@@ -43,6 +43,9 @@ if(QT_FEATURE_network)
+ endif()
+ add_subdirectory(qvideotransformation)
+ add_subdirectory(qrhivaluemapper)
++if(QT_FEATURE_pipewire)
++    add_subdirectory(qpipewiredefaultcamera)
++endif()
+ 
+ if(WIN32)
+     add_subdirectory(qwindowsresampler)
+diff --git a/tests/auto/unit/multimedia/qpipewiredefaultcamera/CMakeLists.txt b/tests/auto/unit/multimedia/qpipewiredefaultcamera/CMakeLists.txt
+new file mode 100644
+index 0000000..ed584fb
+--- /dev/null
++++ b/tests/auto/unit/multimedia/qpipewiredefaultcamera/CMakeLists.txt
+@@ -0,0 +1,10 @@
++# Copyright (C) 2026 The Qt Company Ltd.
++# SPDX-License-Identifier: BSD-3-Clause
++
++qt_internal_add_test(tst_qpipewiredefaultcamera
++    SOURCES
++        tst_qpipewiredefaultcamera.cpp
++    LIBRARIES
++        Qt::Core
++        Qt::MultimediaPrivate
++)
+diff --git a/tests/auto/unit/multimedia/qpipewiredefaultcamera/tst_qpipewiredefaultcamera.cpp b/tests/auto/unit/multimedia/qpipewiredefaultcamera/tst_qpipewiredefaultcamera.cpp
+new file mode 100644
+index 0000000..ff5c66a
+--- /dev/null
++++ b/tests/auto/unit/multimedia/qpipewiredefaultcamera/tst_qpipewiredefaultcamera.cpp
+@@ -0,0 +1,202 @@
++// Copyright (C) 2026 The Qt Company Ltd.
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
++
++#include <QtMultimedia/private/qpipewire_defaultcamera_p.h>
++#include <QtTest/QtTest>
++
++using namespace QtPipeWire;
++using Kind = QDefaultCameraState::Choice::Kind;
++
++Q_DECLARE_METATYPE(QtPipeWire::QDefaultCameraState::Choice)
++
++class tst_QPipeWireDefaultCamera : public QObject
++{
++    Q_OBJECT
++
++private slots:
++    void parseDefaultSourceName_data();
++    void parseDefaultSourceName();
++    void parseDefaultSourceName_nullPointer();
++
++    void state_noChoiceWithoutConfiguredName();
++    void state_findsTheChosenCamera();
++    void state_followsTheCameraBeingUnplugged();
++    void state_ignoresNodesThatAreNotCameras();
++    void state_saysWhenTheChosenCameraHasNoV4L2Device();
++
++    void pickDefaultCamera_noSession();
++    void pickDefaultCamera_noChoiceKeepsTheFirstCamera();
++    void pickDefaultCamera_findsTheChosenCamera();
++    void pickDefaultCamera_saysWhyTheFirstCameraStays_data();
++    void pickDefaultCamera_saysWhyTheFirstCameraStays();
++
++    void monitor_withoutSession();
++};
++
++void tst_QPipeWireDefaultCamera::parseDefaultSourceName_data()
++{
++    QTest::addColumn<QByteArray>("json");
++    QTest::addColumn<QByteArray>("expected"); // null: not parsed
++
++    QTest::newRow("name") << QByteArray(R"({ "name": "v4l2_input.usb-1" })")
++                          << QByteArray("v4l2_input.usb-1");
++    QTest::newRow("other members first")
++            << QByteArray(R"({ "x": 1, "name": "cam" })") << QByteArray("cam");
++    QTest::newRow("no name") << QByteArray(R"({ "x": 1 })") << QByteArray();
++    QTest::newRow("not an object") << QByteArray(R"("cam")") << QByteArray();
++    QTest::newRow("empty") << QByteArray("") << QByteArray();
++}
++
++void tst_QPipeWireDefaultCamera::parseDefaultSourceName()
++{
++    QFETCH(QByteArray, json);
++    QFETCH(QByteArray, expected);
++
++    const auto name = QtPipeWire::parseDefaultSourceName(json.constData());
++    if (expected.isNull())
++        QVERIFY(!name);
++    else
++        QCOMPARE(name, expected);
++}
++
++void tst_QPipeWireDefaultCamera::parseDefaultSourceName_nullPointer()
++{
++    QVERIFY(!QtPipeWire::parseDefaultSourceName(nullptr));
++}
++
++void tst_QPipeWireDefaultCamera::state_noChoiceWithoutConfiguredName()
++{
++    QDefaultCameraState state;
++    state.nodeAdded(40, "cam-a", "Video/Source", "/dev/video0");
++    QCOMPARE(state.choice().kind, Kind::NoChoice);
++
++    state.setConfiguredName(QByteArray("cam-a"));
++    state.setConfiguredName(std::nullopt);
++    QCOMPARE(state.choice().kind, Kind::NoChoice);
++}
++
++void tst_QPipeWireDefaultCamera::state_findsTheChosenCamera()
++{
++    QDefaultCameraState state;
++    state.nodeAdded(40, "cam-a", "Video/Source", "/dev/video0");
++    state.nodeAdded(41, "cam-b", "Video/Source", "/dev/video2");
++    state.setConfiguredName(QByteArray("cam-b"));
++
++    const auto choice = state.choice();
++    QCOMPARE(choice.kind, Kind::Device);
++    QCOMPARE(choice.nodeName, QByteArray("cam-b"));
++    QCOMPARE(choice.devicePath, QByteArray("/dev/video2"));
++}
++
++void tst_QPipeWireDefaultCamera::state_followsTheCameraBeingUnplugged()
++{
++    QDefaultCameraState state;
++    state.setConfiguredName(QByteArray("cam-b"));
++    // the choice is saved before the camera is seen (the session's start), and the camera may go and come
++    QCOMPARE(state.choice().kind, Kind::NotConnected);
++
++    state.nodeAdded(41, "cam-b", "Video/Source", "/dev/video2");
++    QCOMPARE(state.choice().kind, Kind::Device);
++
++    state.nodeRemoved(41);
++    QCOMPARE(state.choice().kind, Kind::NotConnected);
++
++    state.nodeAdded(52, "cam-b", "Video/Source", "/dev/video4"); // plugged in again, another node
++    QCOMPARE(state.choice().devicePath, QByteArray("/dev/video4"));
++}
++
++void tst_QPipeWireDefaultCamera::state_ignoresNodesThatAreNotCameras()
++{
++    QDefaultCameraState state;
++    state.setConfiguredName(QByteArray("alsa_input.pci"));
++    state.nodeAdded(30, "alsa_input.pci", "Audio/Source", "");
++    QCOMPARE(state.choice().kind, Kind::NotConnected);
++}
++
++void tst_QPipeWireDefaultCamera::state_saysWhenTheChosenCameraHasNoV4L2Device()
++{
++    QDefaultCameraState state;
++    state.nodeAdded(60, "libcamera_input.ov5640", "Video/Source", "");
++    state.setConfiguredName(QByteArray("libcamera_input.ov5640"));
++    QCOMPARE(state.choice().kind, Kind::NoDevicePath);
++}
++
++static QDefaultCameraState::Choice deviceChoice(const QByteArray &path)
++{
++    QDefaultCameraState::Choice choice;
++    choice.kind = Kind::Device;
++    choice.nodeName = "cam";
++    choice.devicePath = path;
++    return choice;
++}
++
++void tst_QPipeWireDefaultCamera::pickDefaultCamera_noSession()
++{
++    const QList<QByteArray> paths{ "/dev/video0", "/dev/video2" };
++    const auto pick = pickDefaultCamera(paths, /*sessionKnown=*/false, {});
++    QCOMPARE(pick.index, 0);
++    QVERIFY(!pick.problem.isEmpty());
++}
++
++void tst_QPipeWireDefaultCamera::pickDefaultCamera_noChoiceKeepsTheFirstCamera()
++{
++    const QList<QByteArray> paths{ "/dev/video0", "/dev/video2" };
++    const auto pick = pickDefaultCamera(paths, true, {});
++    QCOMPARE(pick.index, 0);
++    QVERIFY(pick.problem.isEmpty());
++}
++
++void tst_QPipeWireDefaultCamera::pickDefaultCamera_findsTheChosenCamera()
++{
++    const QList<QByteArray> paths{ "/dev/video0", "/dev/video2", "/dev/video4" };
++    const auto pick = pickDefaultCamera(paths, true, deviceChoice("/dev/video4"));
++    QCOMPARE(pick.index, 2);
++    QVERIFY(pick.problem.isEmpty());
++}
++
++void tst_QPipeWireDefaultCamera::pickDefaultCamera_saysWhyTheFirstCameraStays_data()
++{
++    QTest::addColumn<QDefaultCameraState::Choice>("choice");
++
++    QDefaultCameraState::Choice notConnected;
++    notConnected.kind = Kind::NotConnected;
++    notConnected.nodeName = "cam";
++    QTest::newRow("not connected") << notConnected;
++
++    QDefaultCameraState::Choice noPath;
++    noPath.kind = Kind::NoDevicePath;
++    noPath.nodeName = "cam";
++    QTest::newRow("no V4L2 device") << noPath;
++
++    QTest::newRow("not among the cameras") << deviceChoice("/dev/video9");
++}
++
++void tst_QPipeWireDefaultCamera::pickDefaultCamera_saysWhyTheFirstCameraStays()
++{
++    QFETCH(QDefaultCameraState::Choice, choice);
++
++    const QList<QByteArray> paths{ "/dev/video0", "/dev/video2" };
++    const auto pick = pickDefaultCamera(paths, true, choice);
++    QCOMPARE(pick.index, 0);
++    QVERIFY(pick.problem.contains(QStringLiteral("cam")));
++}
++
++void tst_QPipeWireDefaultCamera::monitor_withoutSession()
++{
++    if (!QDefaultCameraMonitor::isSupported())
++        QSKIP("PipeWire is not available");
++
++    QTemporaryDir emptyRuntimeDir; // no PipeWire socket in it
++    QVERIFY(emptyRuntimeDir.isValid());
++    qputenv("PIPEWIRE_RUNTIME_DIR", emptyRuntimeDir.path().toUtf8());
++    qputenv("XDG_RUNTIME_DIR", emptyRuntimeDir.path().toUtf8());
++    qunsetenv("PIPEWIRE_REMOTE");
++
++    QDefaultCameraMonitor monitor;
++    QVERIFY(!monitor.isConnected());
++    QCOMPARE(monitor.choice().kind, Kind::NoChoice);
++}
++
++QTEST_GUILESS_MAIN(tst_QPipeWireDefaultCamera)
++
++#include "tst_qpipewiredefaultcamera.moc"
