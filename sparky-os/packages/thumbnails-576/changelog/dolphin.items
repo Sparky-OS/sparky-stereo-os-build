@@ -1,0 +1,12 @@
+Stereo thumbnails at a scale that is not whole (125 %, 150 %, 175 %) lie under
+their holes to the device pixel (ORDER 576; Daniel, 2026-11-14, on a 13.3 inch
+full HD notebook at 125 %: "in 3D they are alpha to the desktop background";
+"in 100% it works"): the icon view, the information panel and the tooltip draw
+each eye on the stereo layer's canvas, the window's own device pixels, and the
+layer shows it one to one. The fault itself was the layer's and is fixed in
+stereo-layer 1.18.1.
+
+A stereo picture's hole is the pixels its pixmap is drawn on: at 125 % the
+window kept one row or column of a thumbnail's edge for itself.
+
+Built against libstereo-layer-dev 1.18.1.
