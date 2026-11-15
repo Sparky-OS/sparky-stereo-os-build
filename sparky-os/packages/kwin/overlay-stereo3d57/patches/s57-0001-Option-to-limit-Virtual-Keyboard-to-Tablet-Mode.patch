@@ -19,9 +19,12 @@ on 6.7.4, where it does not apply as written:
   request 8509 (Never, touch and tablet, any input), so the condition is put
   in front of them: outside tablet mode nothing is shown, in tablet mode the
   chosen visibility mode decides;
-- the check box "Only when in Tablet Mode" joins the page's header beside
-  6.7.4's "Show Virtual Keyboard" selector; the merge request's footer form and
-  its "Manage Tablet Mode" button are left out.
+- the page's footer has the merge request's form, "Show automatically: Only when
+  in Tablet Mode"; its "Manage Tablet Mode" button is left out;
+- the page shows the form when KWin itself says tablet mode is available
+  (org.kde.KWin.TabletModeManager, tabletModeAvailable), read by the page's own
+  class: Kirigami.Settings.tabletModeAvailable, which the merge request uses,
+  answered false in the settings program while KWin answered true.
 
 Origin: other, https://invent.kde.org/plasma/kwin/-/merge_requests/8592
 Author: Luca Tramonti
@@ -31,11 +34,13 @@ Last-Update: 2026-11-15
 
 Assisted-by: Claude:claude-fable-5-2
 ---
- src/inputmethod.cpp                             | 17 +++++++++++++++++
- src/inputmethod.h                               |  9 +++++++++
- src/kcms/virtualkeyboard/ui/main.qml            | 15 +++++++++++++++
- .../virtualkeyboardsettings.kcfg                |  4 ++++
- 4 files changed, 45 insertions(+)
+ src/inputmethod.cpp                           | 17 ++++++++++++++
+ src/inputmethod.h                             |  9 ++++++++
+ .../virtualkeyboard/kcmvirtualkeyboard.cpp    |  7 ++++++
+ src/kcms/virtualkeyboard/kcmvirtualkeyboard.h |  4 ++++
+ src/kcms/virtualkeyboard/ui/main.qml          | 23 +++++++++++++++++++
+ .../virtualkeyboardsettings.kcfg              |  4 ++++
+ 6 files changed, 64 insertions(+)
 
 diff --git a/src/inputmethod.cpp b/src/inputmethod.cpp
 index f380597..675490a 100644
@@ -115,32 +120,85 @@ index fa6806b..702ab97 100644
  };
  
  }
+diff --git a/src/kcms/virtualkeyboard/kcmvirtualkeyboard.cpp b/src/kcms/virtualkeyboard/kcmvirtualkeyboard.cpp
+index 0941ec8..a621cf4 100644
+--- a/src/kcms/virtualkeyboard/kcmvirtualkeyboard.cpp
++++ b/src/kcms/virtualkeyboard/kcmvirtualkeyboard.cpp
+@@ -8,6 +8,7 @@
+ 
+ #include "kcmvirtualkeyboard.h"
+ 
++#include <QDBusInterface>
+ #include <qqml.h>
+ 
+ #include <KApplicationTrader>
+@@ -39,6 +40,12 @@ VirtualKeyboardSettings *KcmVirtualKeyboard::settings() const
+     return m_data->settings();
+ }
+ 
++bool KcmVirtualKeyboard::tabletModeAvailable() const
++{
++    QDBusInterface tabletModeManager(QStringLiteral("org.kde.KWin"), QStringLiteral("/org/kde/KWin"), QStringLiteral("org.kde.KWin.TabletModeManager"));
++    return tabletModeManager.property("tabletModeAvailable").toBool();
++}
++
+ void KcmVirtualKeyboard::setMode(KWinVirtualKeyboard::VirtualKeyboardMode mode)
+ {
+     if (m_mode == mode) {
+diff --git a/src/kcms/virtualkeyboard/kcmvirtualkeyboard.h b/src/kcms/virtualkeyboard/kcmvirtualkeyboard.h
+index 9f8a050..442d52a 100644
+--- a/src/kcms/virtualkeyboard/kcmvirtualkeyboard.h
++++ b/src/kcms/virtualkeyboard/kcmvirtualkeyboard.h
+@@ -46,6 +46,7 @@ class KcmVirtualKeyboard : public KQuickManagedConfigModule
+     Q_PROPERTY(QAbstractItemModel *model READ keyboardsModel CONSTANT)
+     Q_PROPERTY(KWinVirtualKeyboard *dbusInterface READ dbusInterface CONSTANT)
+     Q_PROPERTY(KWinVirtualKeyboard::VirtualKeyboardMode mode READ mode WRITE setMode NOTIFY modeChanged)
++    Q_PROPERTY(bool tabletModeAvailable READ tabletModeAvailable CONSTANT)
+ 
+ public:
+     explicit KcmVirtualKeyboard(QObject *parent, const KPluginMetaData &metaData);
+@@ -69,6 +70,9 @@ public:
+     }
+     void setMode(KWinVirtualKeyboard::VirtualKeyboardMode mode);
+ 
++    // whether the compositor says this computer has a tablet mode
++    bool tabletModeAvailable() const;
++
+ Q_SIGNALS:
+     void modeChanged(KWinVirtualKeyboard::VirtualKeyboardMode mode);
+ 
 diff --git a/src/kcms/virtualkeyboard/ui/main.qml b/src/kcms/virtualkeyboard/ui/main.qml
-index 4ea1827..1d7a02e 100644
+index 4ea1827..54f7e75 100644
 --- a/src/kcms/virtualkeyboard/ui/main.qml
 +++ b/src/kcms/virtualkeyboard/ui/main.qml
-@@ -44,6 +44,21 @@ KCM.GridViewKCM {
-                 }
-             }
-         },
-+        Kirigami.Action {
-+            visible: Kirigami.Settings.tabletModeAvailable
-+            displayComponent: QQC2.CheckBox {
+@@ -70,4 +70,27 @@ KCM.GridViewKCM {
+             kcm.save();
+         }
+     }
++
++    footer: Kirigami.FormLayout {
++        id: footerFormLayout
++
++        visible: kcm.tabletModeAvailable
++
++        RowLayout {
++            Kirigami.FormData.label: i18n("Show automatically:")
++
++            QQC2.CheckBox {
 +                id: tabletModeOnlyCheckBox
 +                text: i18n("Only when in Tablet Mode")
 +
 +                checked: kcm.settings.inputMethodTabletOnly
 +                onToggled: kcm.settings.inputMethodTabletOnly = checked
-+
-+                KCM.SettingStateBinding {
-+                    configObject: kcm.settings
-+                    settingName: "InputMethodTabletOnly"
-+                }
 +            }
-+        },
-     ]
- 
-     view.model: kcm.model
++
++            KCM.SettingStateBinding {
++                configObject: kcm.settings
++                settingName: "InputMethodTabletOnly"
++            }
++        }
++    }
+ }
 diff --git a/src/kcms/virtualkeyboard/virtualkeyboardsettings.kcfg b/src/kcms/virtualkeyboard/virtualkeyboardsettings.kcfg
 index 63203a7..6cc0a75 100644
 --- a/src/kcms/virtualkeyboard/virtualkeyboardsettings.kcfg
