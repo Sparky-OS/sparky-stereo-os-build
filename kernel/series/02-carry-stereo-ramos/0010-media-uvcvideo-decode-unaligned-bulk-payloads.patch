@@ -1,6 +1,6 @@
-From f90e135083f2e465b8599ba2ef2b2ba773a73294 Mon Sep 17 00:00:00 2001
+From 9741376bfba2b20c7ff77a76d464ab7bae6f9ae5 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Date: Sat, 14 Nov 2026 20:40:14 -0300
+Date: Sat, 14 Nov 2026 21:22:43 -0300
 Subject: [PATCH] media: uvcvideo: decode unaligned bulk payloads on known
  Realtek cameras
 
@@ -36,9 +36,9 @@ Link: https://lkml.iu.edu/hypermail/linux/kernel/2611.0/04453.html
 Assisted-by: LLM [OpenAI Codex]
 ---
  drivers/media/usb/uvc/uvc_driver.c |  18 ++++
- drivers/media/usb/uvc/uvc_video.c  | 129 ++++++++++++++++++++---------
+ drivers/media/usb/uvc/uvc_video.c  | 128 ++++++++++++++++++++---------
  drivers/media/usb/uvc/uvcvideo.h   |   4 +
- 3 files changed, 111 insertions(+), 40 deletions(-)
+ 3 files changed, 110 insertions(+), 40 deletions(-)
 
 diff --git a/drivers/media/usb/uvc/uvc_driver.c b/drivers/media/usb/uvc/uvc_driver.c
 index e289cc7..361944d 100644
@@ -70,7 +70,7 @@ index e289cc7..361944d 100644
  	{ .match_flags		= USB_DEVICE_ID_MATCH_DEVICE
  				| USB_DEVICE_ID_MATCH_INT_INFO,
 diff --git a/drivers/media/usb/uvc/uvc_video.c b/drivers/media/usb/uvc/uvc_video.c
-index fc3536a..63f4842 100644
+index fc3536a..4d19248 100644
 --- a/drivers/media/usb/uvc/uvc_video.c
 +++ b/drivers/media/usb/uvc/uvc_video.c
 @@ -1612,29 +1612,19 @@ static void uvc_video_decode_isoc(struct uvc_urb *uvc_urb,
@@ -239,11 +239,6 @@ index fc3536a..63f4842 100644
  }
  
  static void uvc_video_encode_bulk(struct uvc_urb *uvc_urb,
-@@ -2385,3 +2433,4 @@ void uvc_video_stop_streaming(struct uvc_streaming *stream)
- 
- 	uvc_video_clock_cleanup(&stream->clock);
- }
-+
 diff --git a/drivers/media/usb/uvc/uvcvideo.h b/drivers/media/usb/uvc/uvcvideo.h
 index b6bcee4..f475129 100644
 --- a/drivers/media/usb/uvc/uvcvideo.h

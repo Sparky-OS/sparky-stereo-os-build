@@ -1,6 +1,6 @@
-From 911fcdaf05318c309d0210709d85ec5bcab51fe6 Mon Sep 17 00:00:00 2001
+From 9a5d4e6837a1160bd80b41063e4a249e1478ea76 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Date: Sat, 14 Nov 2026 20:40:14 -0300
+Date: Sat, 14 Nov 2026 21:22:43 -0300
 Subject: [PATCH] media: uvcvideo: test bulk boundaries through the actual
  decoder
 
@@ -14,9 +14,9 @@ covered by the UVC directory entry in MAINTAINERS.
 Assisted-by: LLM [OpenAI Codex]
 ---
  drivers/media/usb/uvc/Kconfig          |  10 +
- drivers/media/usb/uvc/uvc_video.c      |   3 +
+ drivers/media/usb/uvc/uvc_video.c      |   4 +
  drivers/media/usb/uvc/uvc_video_test.c | 386 +++++++++++++++++++++++++
- 3 files changed, 399 insertions(+)
+ 3 files changed, 400 insertions(+)
  create mode 100644 drivers/media/usb/uvc/uvc_video_test.c
 
 diff --git a/drivers/media/usb/uvc/Kconfig b/drivers/media/usb/uvc/Kconfig
@@ -38,13 +38,14 @@ index 5795322..9b05b70 100644
 +	  and controls for short packets, trailers and malformed headers.
 +	  Run these tests in a virtual machine with no attached USB camera.
 diff --git a/drivers/media/usb/uvc/uvc_video.c b/drivers/media/usb/uvc/uvc_video.c
-index 63f4842..72b5a4d 100644
+index 4d19248..72b5a4d 100644
 --- a/drivers/media/usb/uvc/uvc_video.c
 +++ b/drivers/media/usb/uvc/uvc_video.c
-@@ -2434,3 +2434,6 @@ void uvc_video_stop_streaming(struct uvc_streaming *stream)
+@@ -2433,3 +2433,7 @@ void uvc_video_stop_streaming(struct uvc_streaming *stream)
+ 
  	uvc_video_clock_cleanup(&stream->clock);
  }
- 
++
 +#if IS_ENABLED(CONFIG_USB_VIDEO_CLASS_KUNIT_TEST)
 +#include "uvc_video_test.c"
 +#endif
