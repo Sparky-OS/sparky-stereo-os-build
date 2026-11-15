@@ -1,4 +1,42 @@
 -------------------------------------------------------------------------------
+  Version 0.1.11 (2026-11-15)
+-------------------------------------------------------------------------------
+  * After a start that did not finish, GRUB's menu shows by itself at the next start, with the older kernel under
+    "Advanced options", and the file systems are checked at that start (ORDER 572b; Daniel, 2026-11-15: "I agree with
+    your idea after a failed start, alongside the check filesystem"). Every start that follows a finished one keeps the
+    hidden menu and no wait (Daniel, 2026-10-07: "users don't sit waiting"). 0.1.10 measured that a hidden menu with no
+    wait opens with no key, so a newest kernel that no longer started left no way to the older one
+  * The mechanism is GRUB's own recordfail, which Debian's grub2 carries switched off: debian/patches/quick-boot.patch
+    (Colin Watson, with Richard Laager and Robie Basak) writes the function in 00_header and the call in 10_linux only
+    when GRUB was configured with --enable-quick-boot, which debian/rules gives Ubuntu's build alone; 00_header's test
+    of the flag and grub2-common.service, which clears it after systemd's boot-complete.target and after a resume, are
+    there on Debian as they are. So 01_sparky_stereo_menu writes the function, and /etc/grub.d/10_linux becomes a link
+    to a program that runs Debian's 10_linux (moved aside with dpkg-divert to /etc/sparky-stereo-boot/10_linux.debian)
+    and writes the call after each "menuentry ... {" of its output; nothing else of Debian's output changes
+  * The time the menu waits is GRUB's GRUB_RECORDFAIL_TIMEOUT when the person set it; otherwise a menu that is shown
+    anyway (another system on the computer, the person's own timeout) keeps its time, and a hidden one is shown for 30
+    seconds, GRUB's default for it
+  * The menu says why it is shown: its last entry, there only while the flag is set, has the reason as its title in
+    the system's language and shows the longer text when chosen (/etc/grub.d/90_sparky_stereo_start)
+  * The check: GRUB puts fsck.mode=force on the kernel line of that start, in every Linux entry (systemd-fsck(8):
+    "force unconditionally results in full file system checks"; initramfs-tools checks the root file system with it).
+    btrfs and xfs check themselves when mounted (fsck.btrfs(8), fsck.xfs(8) do nothing) and are named as such
+  * At login the person is told that the previous start did not finish, that the menu was shown, and what the check
+    found for each file system (no errors, errors repaired, errors that remain with what to do), through the
+    edition's one engine; the note goes at the start after that
+  * A start has finished when systemd reaches boot-complete.target (systemd.special(7)), as Debian's
+    grub2-common.service has it; sparky-stereo-boot-login.service, ordered before that target and after
+    display-manager.service, adds the login screen: a start whose login screen failed to start has not finished
+  * Where GRUB cannot write its environment block (Debian's own check_writable: LVM or RAID under /boot, btrfs, zfs),
+    the flag is kept in a block on the EFI system partition, which GRUB can write, and update-grub says so; on a BIOS
+    start there is no such place, update-grub says that the menu cannot show by itself there, and the way to always
+    show it (SPARKY_STEREO_MENU=shown)
+  * SPARKY_STEREO_UNFINISHED_START=no in /etc/default/sparky-stereo-boot turns all of it off; sparky-stereo-boot status
+    says where a start is recorded
+  * tests/unfinished-start-tests.sh: 79 cases (the rule with a stand-in for grub-probe, what the menu's files write
+    checked by grub-script-check, the login check, the check's verdicts, the ten languages)
+
+-------------------------------------------------------------------------------
   Version 0.1.10 (2026-11-14)
 -------------------------------------------------------------------------------
   * GRUB's menu is hidden, with no wait, when this is the only system on the computer, and shown for 5 seconds when

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/15
+# Copyright 2026 under the GNU GPL3 License
+# The menu says why it is shown after a start that did not finish (sparky-stereo-boot 0.1.11, ORDER 572b): a last
+# entry, there only while GRUB's recordfail flag is set, whose title is the reason in the system's language and which
+# shows the longer text when chosen. It is the last entry so that no other entry changes its place in the menu.
+set -e
+case "${SPARKY_STEREO_RECORD:-off}" in off|none) exit 0 ;; esac
+[ -x /usr/bin/python3 ] && [ -f "${SPARKY_STEREO_BIN:-/usr/bin/sparky-stereo-boot}" ] || exit 0
+exec /usr/bin/python3 "${SPARKY_STEREO_BIN:-/usr/bin/sparky-stereo-boot}" grub-unfinished

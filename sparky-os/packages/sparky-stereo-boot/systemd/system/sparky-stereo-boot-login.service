@@ -1,0 +1,14 @@
+[Unit]
+Description=Sparky Stereo OS: the login screen's service started, so this start counts as finished
+Documentation=file:/usr/share/doc/sparky-stereo-boot/README.md man:systemd.special(7)
+ConditionVirtualization=!container
+After=display-manager.service
+Before=boot-complete.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/sparky-stereo-boot login-check
+
+[Install]
+RequiredBy=boot-complete.target

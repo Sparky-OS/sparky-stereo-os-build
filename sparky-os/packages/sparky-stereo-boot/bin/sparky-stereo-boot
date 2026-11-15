@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/09
+# Last update 2026/11/15
 #
 # sparky-stereo-boot: the boot follows the saved choice of the main screen.
 #
@@ -38,6 +38,10 @@
 #   sparky-stereo-boot plymouth-quit       plymouth-quit.service: hand the splash over
 #   sparky-stereo-boot plymouth-handover   wait for the compositor's first frame, then quit
 #   sparky-stereo-boot boot-check          at boot: the resolution GRUB showed, against the one it was given
+#   sparky-stereo-boot login-check         before boot-complete.target: the login screen's service started
+#   sparky-stereo-boot start-finished      after boot-complete.target: the start is recorded as finished, and after
+#                                          one that did not finish the person is told what the check found
+#   sparky-stereo-boot grub-unfinished     update-grub: the menu's entry that says why it is shown
 import ctypes
 import ctypes.util
 import hashlib
@@ -972,6 +976,10 @@ def status():
     if grub:
         font = os.path.basename(grub.get('FONT', ''))
         print('%s: %s' % (problems().text('LOCAL48'), font or problems().text('LOCAL49')))
+    where = grub.get('RECORD', '')
+    if where:
+        key = {'off': 'LOCAL99', 'none': 'LOCAL100'}.get(where, 'LOCAL101')
+        print(problems().text(key, [GRUBENV if where == 'grubenv' else ESP_BLOCK] if key == 'LOCAL101' else []))
     if record:
         print('%s: %s' % (text(s, 'LOCAL9', 'Login screens with these settings'), ', '.join(record.get('greeters', [])) or '-'))
         print('%s: %s (%s)' % (text(s, 'LOCAL11', 'Saved from the settings of'), record.get('source', '-'), record.get('time', '-')))
@@ -1057,6 +1065,241 @@ def boot_check():
         return 0
     keep_problem('grub-mode', 'LOCAL46', [shown, wanted, wanted])
     return 1
+
+
+# ------------------------------------------------------------------ after a start that did not finish (0.1.11)
+# GRUB's recordfail flag (Debian's grub2 carries the mechanism switched off; 01_sparky_stereo_menu and
+# /etc/grub.d/10_linux switch it on): a Linux entry sets it before it starts the kernel, and it is cleared once the
+# start has finished. "Finished" is systemd's boot-complete.target (systemd.special(7): "Order units that are required
+# to succeed for a boot process to be considered successful before this unit"): Debian's grub2-common.service clears
+# the flag after it, and sparky-stereo-boot-login.service, ordered before it, adds the login screen: a start whose
+# display manager failed to start has not finished.
+ESP_BLOCK = ROOT + os.environ.get('SPARKY_STEREO_ESP', '/boot/efi') + '/EFI/sparky-stereo-boot/grubenv'
+UNFINISHED_MARK = 'sparky_stereo.start=unfinished'
+SELF_CHECKING = ('btrfs', 'xfs', 'zfs', 'bcachefs', 'nilfs2')   # fsck.btrfs(8) and fsck.xfs(8) do nothing: the type checks itself when mounted
+FSTAB = ROOT + '/etc/fstab'
+INITRAMFS_FSCK_LOG = ROOT + '/run/initramfs/fsck.log'
+REPAIRED_WORDS = ('FIXED', 'FILE SYSTEM WAS MODIFIED', 'recovering journal', 'Performing changes', 'Automatically removing dirty bit')
+
+
+def login_check():
+    """sparky-stereo-boot-login.service, before boot-complete.target and after display-manager.service: a display
+    manager that is part of this start and failed to start means the start did not finish."""
+    try:
+        shown = subprocess.run(['systemctl', 'show', '-p', 'LoadState', '-p', 'ActiveState', 'display-manager.service'],
+                               capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError) as error:
+        log('the login screen\'s service could not be asked about (%s): the start counts as finished' % error)
+        return 0
+    state = dict(line.split('=', 1) for line in shown.splitlines() if '=' in line)
+    if state.get('LoadState') == 'loaded' and state.get('ActiveState') == 'failed':
+        log('the login screen\'s service (display-manager.service) failed to start: this start is not recorded as '
+            'finished, and GRUB\'s menu shows at the next start')
+        return 1
+    return 0
+
+
+def _editenv(block, *words):
+    return subprocess.run([os.environ.get('SPARKY_GRUB_EDITENV', 'grub-editenv'), block] + list(words),
+                          capture_output=True, text=True, timeout=30)
+
+
+def _clear_recordfail(block, create=False):
+    """None when BLOCK has no recordfail (any more), else why it could not be cleared."""
+    try:
+        if not os.path.exists(block) or os.path.getsize(block) == 0:
+            if create:
+                os.makedirs(os.path.dirname(block), exist_ok=True)
+                if os.path.exists(block):
+                    os.remove(block)
+                done = _editenv(block, 'create')
+                if done.returncode:
+                    return '%s: %s' % (block, done.stderr.strip() or 'exit %d' % done.returncode)
+            return None
+        listed = _editenv(block, 'list')
+        if listed.returncode:
+            return '%s: %s' % (block, listed.stderr.strip() or 'exit %d' % listed.returncode)
+        if not any(line.startswith('recordfail=') for line in listed.stdout.splitlines()):
+            return None
+        done = _editenv(block, 'unset', 'recordfail')
+        if done.returncode:
+            return '%s: %s' % (block, done.stderr.strip() or 'exit %d' % done.returncode)
+    except (OSError, subprocess.SubprocessError) as error:
+        return '%s: %s' % (block, error)
+    return None
+
+
+def fstab_checked():
+    """The system's own file systems that a start checks: the root, and every fstab line with a pass number above 0
+    that is mounted at boot (systemd-fsck@.service(8): "started at boot if passno in /etc/fstab for the file system
+    is set to a value greater than zero, but only if it is also configured to be mounted at boot")."""
+    found = []
+    try:
+        lines = open(FSTAB, encoding='utf-8', errors='replace').read().splitlines()
+    except OSError:
+        return found
+    for line in lines:
+        fields = line.split('#', 1)[0].split()
+        if len(fields) < 3 or fields[2] in ('swap', 'tmpfs', 'proc', 'sysfs', 'devpts'):
+            continue
+        options = fields[3].split(',') if len(fields) > 3 else []
+        passno = fields[5] if len(fields) > 5 else '0'
+        if 'noauto' in options:
+            continue
+        if fields[1] == '/' or (passno.isdigit() and int(passno) > 0):
+            found.append((fields[0], fields[1], fields[2]))
+    return found
+
+
+def _resolve(spec):
+    try:
+        out = subprocess.run(['findfs', spec], capture_output=True, text=True, timeout=30)
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return spec
+
+
+def _fsck_unit(device):
+    """systemd-fsck's unit for DEVICE, its result and its lines of this boot."""
+    try:
+        name = subprocess.run(['systemd-escape', '--path', '--template=systemd-fsck@.service', device],
+                              capture_output=True, text=True, timeout=30).stdout.strip()
+        if not name:
+            return None, '', ''
+        shown = subprocess.run(['systemctl', 'show', '-p', 'ActiveState', '-p', 'Result', '-p', 'ExecMainStatus',
+                                '-p', 'ConditionResult', name], capture_output=True, text=True, timeout=30).stdout
+        state = dict(line.split('=', 1) for line in shown.splitlines() if '=' in line)
+        lines = subprocess.run(['journalctl', '-b', '-o', 'cat', '--no-pager', '-u', name],
+                               capture_output=True, text=True, timeout=60).stdout
+        return name, state, lines
+    except (OSError, subprocess.SubprocessError):
+        return None, '', ''
+
+
+def check_results():
+    """What the forced check of this start found, per file system: (device, mount point, type, verdict), the verdict
+    one of clean, repaired, errors, self, none (no checker), unknown (no trace of a check). The root is checked in
+    the boot image (initramfs-tools: its log is /run/initramfs/fsck.log, written by logsave, which names an exit
+    status other than 0), the others by systemd-fsck@.service; fsck(8): exit status 1 is "Filesystem errors
+    corrected", 4 "Filesystem errors left uncorrected"."""
+    results = []
+    try:
+        root_log = open(INITRAMFS_FSCK_LOG, encoding='utf-8', errors='replace').read()
+    except OSError:
+        root_log = None
+    for spec, where, kind in fstab_checked():
+        device = _resolve(spec)
+        if kind in SELF_CHECKING:
+            results.append((device, where, kind, 'self'))
+            continue
+        checker = any(os.path.exists(ROOT + d + '/fsck.' + kind) for d in ('/usr/sbin', '/sbin', '/usr/bin'))
+        if not checker and kind != 'auto':
+            results.append((device, where, kind, 'none'))
+            continue
+        lines, failed, status = None, False, 0
+        if where == '/' and root_log is not None:
+            lines = root_log
+            for line in root_log.splitlines():
+                if 'died with exit status' in line:
+                    try:
+                        status = int(line.rsplit(None, 1)[1])
+                    except (ValueError, IndexError):
+                        status = 4
+        else:
+            name, state, text_ = _fsck_unit(device)
+            if name and state and state.get('ActiveState') in ('active', 'failed'):
+                lines = text_
+                failed = state.get('ActiveState') == 'failed' or state.get('Result') not in ('success', None)
+                for line in text_.splitlines():
+                    if 'fsck failed with exit status' in line:
+                        try:
+                            status = int(line.rstrip('.').rsplit(None, 1)[1])
+                        except (ValueError, IndexError):
+                            status = 4
+        if lines is None:
+            verdict = 'unknown'
+        elif failed or status & 4 or status > 3:
+            verdict = 'errors'
+        elif status & 1 or status & 2 or any(word in lines for word in REPAIRED_WORDS):
+            verdict = 'repaired'
+        else:
+            verdict = 'clean'
+        results.append((device, where, kind, verdict))
+    return results
+
+
+VERDICT_KEYS = {'clean': 'LOCAL91', 'repaired': 'LOCAL92', 'errors': 'LOCAL93', 'self': 'LOCAL94', 'none': 'LOCAL95',
+                'unknown': 'LOCAL96'}
+
+
+def start_finished():
+    """sparky-stereo-boot-finished.service, after boot-complete.target (and after a resume, as Debian's
+    grub2-common.service): the start has finished. The flag is cleared wherever it is kept; a flag that cannot be
+    cleared is said and kept, because the menu then shows at the next start too. Once per boot: when this start
+    followed one that did not finish (GRUB wrote sparky_stereo.start=unfinished on the kernel line), the person is
+    told at login what happened and what the check found; the start after that takes the note away."""
+    grub = grub_display()
+    record = grub.get('RECORD', 'off')
+    failed = []
+    if record == 'grubenv' or os.path.exists(GRUBENV):
+        why = _clear_recordfail(GRUBENV, create=(record == 'grubenv'))
+        if why:
+            failed.append(why)
+    if record.startswith('esp:') or os.path.exists(ESP_BLOCK):
+        why = _clear_recordfail(ESP_BLOCK, create=record.startswith('esp:'))
+        if why:
+            failed.append(why)
+    if failed:
+        keep_problem('start-clear', 'LOCAL98', ['; '.join(failed)], repair=[['sparky-stereo-boot', 'start-finished']])
+    else:
+        forget_problem('start-clear')
+    stamp = RUN_DIR + '/start-finished'
+    if os.path.exists(stamp):
+        return 1 if failed else 0   # after a resume: the flag only
+    try:
+        os.makedirs(RUN_DIR, exist_ok=True)
+        open(stamp, 'w').close()
+    except OSError as error:
+        log('%s: %s' % (stamp, error))
+    try:
+        cmdline = open(CMDLINE).read().split()
+    except OSError:
+        cmdline = []
+    if UNFINISHED_MARK not in cmdline:
+        forget_problem('unfinished-start')
+        return 1 if failed else 0
+    results = check_results()
+    parts = [[VERDICT_KEYS[verdict], device, kind] + ([device] if verdict == 'errors' else [])
+             for device, where, kind, verdict in results]
+    p = problems()
+    listed = '; '.join(p.text(part[0], part[1:]) for part in parts) or '-'
+    english = '; '.join(p.text(part[0], part[1:], 'en') for part in parts) or '-'
+    try:
+        p.record('unfinished-start', 'LOCAL90', [listed], quiet=True,
+                 output='\n'.join('%s %s %s %s' % r for r in results))
+        log(p.text('LOCAL90', [english], 'en'))
+    except Exception as error:   # noqa: BLE001: the journal keeps what could not be kept
+        log('LOCAL90 %s (not kept: %s)' % (english, error))
+    return 1 if failed else 0
+
+
+def grub_unfinished():
+    """/etc/grub.d/90_sparky_stereo_start: the menu's last entry while the flag is set, the reason as its title."""
+    s = strings()
+    title = text(s, 'LOCAL88', 'The last start did not finish. Older kernel: under Advanced options')
+    body = text(s, 'LOCAL89', 'The last start of this computer did not finish, so this menu is shown and the file '
+                'systems are checked at this start. If the system does not start again, choose the older kernel under '
+                'Advanced options. After a start that finishes, everything is as before.')
+    quote = lambda value: "'" + value.replace("'", "'\\''") + "'"
+    print('\n'.join(['if [ "${recordfail}" = 1 ]; then',
+                     '\tmenuentry %s --id sparky-unfinished-start {' % quote(title),
+                     '\t\techo %s' % quote(body),
+                     '\t\tsleep --interruptible --verbose 60',
+                     '\t}',
+                     'fi']))
+    return 0
 
 
 # ------------------------------------------------------------------ the splash's hand-over
@@ -1270,6 +1513,12 @@ def main(argv):
         return notify()
     if command == 'boot-check':
         return boot_check()
+    if command == 'login-check':
+        return login_check()
+    if command == 'start-finished':
+        return start_finished()
+    if command == 'grub-unfinished':
+        return grub_unfinished()
     if command == 'plymouth-quit':
         return plymouth_quit()
     if command == 'plymouth-handover':

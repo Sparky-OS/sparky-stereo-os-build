@@ -1,0 +1,13 @@
+[Unit]
+Description=Sparky Stereo OS: this start finished; after one that did not, what the file system check found
+Documentation=file:/usr/share/doc/sparky-stereo-boot/README.md
+ConditionVirtualization=!container
+Requires=boot-complete.target
+After=boot-complete.target grub2-common.service systemd-fsck-root.service local-fs.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sparky-stereo-boot start-finished
+
+[Install]
+WantedBy=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
