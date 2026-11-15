@@ -217,3 +217,16 @@ no problem is invented for this machine. Unknown machines remain untouched.
 A nonempty correction list is rejected until a reviewed, idempotent handler
 and a problems-engine record for its actual changes accompany it. The table
 never executes a command supplied by a device or by a string in the table.
+## A computer with a tablet mode gets its on-screen keyboard (ORDER 567)
+
+Daniel, 2026-11-14, after an install on a convertible notebook: "addition to our script is detect this type of thing to enable on screen keyboard on tablet mode".
+`/usr/lib/sparky-stereo-hardware/has-tablet-mode` answers whether the computer has a tablet mode: a touch screen, and either a tablet-mode switch (`SW_TABLET_MODE`, a convertible's hinge or slider, a detachable's dock) or a chassis the firmware calls a tablet, a convertible or a detachable (DMI chassis types 30, 31 and 32).
+`--why` prints what it found.
+On such a computer `/etc/xdg/plasma-workspace/env/sparky-stereo-tablet-mode.sh`, which `startplasma` sources before KWin starts, puts `/usr/share/sparky-stereo-hardware/tablet-mode/xdg` in front of `XDG_CONFIG_DIRS`; its `kwinrc` names Plasma Keyboard as `[Wayland] InputMethod`.
+KWin then starts the keyboard and shows it on a text field that is touched.
+It is a system default, below the person's own `~/.config/kwinrc`: System Settings, Virtual Keyboard shows it as the default, and another keyboard or None chosen there is written to the person's file and wins.
+A default written into the person's own file would not do: KConfig removes a key set back to "no value" when no system default exists, so a person's None would be undone at the next login.
+The layout follows the session's language (Plasma Keyboard takes the locale when no language is ticked in its own page).
+The package depends on `plasma-keyboard`.
+A Japanese, Korean or Chinese session keeps Fcitx 5, which the look package writes at the first login.
+`tests/tablet-mode.sh` runs the detection on fixture sysfs trees and reads the result through KConfig.
