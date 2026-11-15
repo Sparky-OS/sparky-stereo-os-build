@@ -8,6 +8,8 @@ REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
 VERSION=0.1.0
 PACKAGE=sparky-stereo-camera
+# the date of the changelog entry (06:00 at -0300), so the archive and the source carry the same moment
+export SOURCE_DATE_EPOCH=$(date -u -d "2026-11-15 09:00:00" +%s)
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.camera.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -20,7 +22,7 @@ mkdir -p "$WORK/inputs/build-tools"
 cp "$COPY" "$WORK/inputs/build-tools/"
 HERE=$WORK/inputs
 D=$WORK/$PACKAGE
-cmake -S "$HERE" -B "$WORK/build" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr -DKDE_INSTALL_LIBDIR=lib/x86_64-linux-gnu -DKDE_INSTALL_LIBEXECDIR=lib/x86_64-linux-gnu/libexec -DBUILD_TESTING=OFF -DKDE_INSTALL_USE_QT_SYS_PATHS=ON >"$WORK/configure.log"
+cmake -S "$HERE" -B "$WORK/build" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr -DKDE_INSTALL_LIBDIR=lib/x86_64-linux-gnu -DKDE_INSTALL_LIBEXECDIR=lib/x86_64-linux-gnu/libexec -DBUILD_TESTING=OFF -DKDE_INSTALL_USE_QT_SYS_PATHS=ON "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$WORK=." >"$WORK/configure.log"
 cmake --build "$WORK/build" -j"${JOBS:-4}" >"$WORK/build.log"
 DESTDIR=$D cmake --install "$WORK/build" >"$WORK/install.log"
 find "$D" -name '*.so' -o -path '*/bin/sparky-stereo-camera' | xargs strip --strip-unneeded
@@ -96,7 +98,7 @@ build build-arch build-indep:
 EOF
 chmod +x "$S/debian/rules"
 # A native package is dated by its own newest changelog entry (ORDER 421b); the tree is normalized so the checkout time and the umask stay out
-SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$REPRO" changelog "$S/debian/changelog")}
+SOURCE_DATE_EPOCH=$(python3 "$REPRO" changelog "$S/debian/changelog")
 export SOURCE_DATE_EPOCH
 python3 "$REPRO" normalize "$SOURCE_DATE_EPOCH" "$S"
 (cd "$WORK" && dpkg-source -b "$S")
