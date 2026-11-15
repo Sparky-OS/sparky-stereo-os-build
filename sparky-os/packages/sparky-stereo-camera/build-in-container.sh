@@ -9,8 +9,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 TREE=$(cd "$HERE/../../.." && pwd)
 . "$HERE/../../repo/build-provenance.sh"
 OUT=${OUT:?Set OUT to the workspace output directory}
-: "${SPARKY_LC_ARCHIVE_DIR:?the link gate's folder, mounted at /archive: see sparky-os/lean/archive.md}"
-REPO=${REPO:?the edition's published tree, mounted read-only at /repo}
+: "${SPARKY_LC_ARCHIVE_DIR:?the folder of the link gate, mounted at /archive: see sparky-os/lean/archive.md}"
+REPO=${REPO:?the published tree of the edition, mounted read-only at /repo}
 IMAGE=${IMAGE:?a builder image with the packages named in debian/control}
 SCRATCH=${SCRATCH:?a folder with room for the link gate}
 mkdir -p "$OUT" "$SCRATCH"
