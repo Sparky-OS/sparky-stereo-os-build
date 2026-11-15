@@ -5,14 +5,14 @@ Subject: Stereo 3D and Deep Colour page: install DisplayCAL from the page throug
  requires (calibrator hardware), shows apt's sizes first and offers "Install DisplayCAL",
  which runs Stereo APTus' own entry action (pkexec, the problems engine, apt's sizes and
  failures said in the person's language). Nothing is installed until the button is pressed.
- The page does not detect a measuring device.
+ The requirement, the sizes and the button appear once on the page, not once for each display; each display's colour-profile row keeps "Measure this display". The page does not detect a measuring device.
 Origin: other, edition (ORDER 575)
 Forwarded: no
 Assisted-by: Claude Sonnet via Claude Code
 
 diff -ruN a/kcms/stereo3d/main.cpp b/kcms/stereo3d/main.cpp
---- a/kcms/stereo3d/main.cpp	2026-11-15 09:51:12.403797297 -0300
-+++ b/kcms/stereo3d/main.cpp	2026-11-15 09:51:12.412179127 -0300
+--- a/kcms/stereo3d/main.cpp	2026-11-15 10:27:05.880369222 -0300
++++ b/kcms/stereo3d/main.cpp	2026-11-15 10:27:05.888832362 -0300
 @@ -1,12 +1,18 @@
  // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
  // SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
@@ -183,47 +183,57 @@ diff -ruN a/kcms/stereo3d/main.cpp b/kcms/stereo3d/main.cpp
      QVariantList m_displays;
      QVariantList m_sections;
 diff -ruN a/kcms/stereo3d/ui/main.qml b/kcms/stereo3d/ui/main.qml
---- a/kcms/stereo3d/ui/main.qml	2026-11-15 09:51:12.403849687 -0300
-+++ b/kcms/stereo3d/ui/main.qml	2026-11-15 09:51:12.412330897 -0300
-@@ -136,10 +136,38 @@
+--- a/kcms/stereo3d/ui/main.qml	2026-11-15 10:27:05.880430102 -0300
++++ b/kcms/stereo3d/ui/main.qml	2026-11-15 10:27:05.888973842 -0300
+@@ -136,14 +136,46 @@
                              url: ""
                              onClicked: kcm.measureDisplay()
                          }
-+                    }
-+
-+                    // DisplayCAL is not installed by default. It needs a measuring device, said beside the action, and the action is Stereo APTus' own.
-+                    ColumnLayout {
-+                        id: displayCal
-+
-+                        Layout.fillWidth: true
-+                        spacing: Kirigami.Units.smallSpacing
-+
-+                        QQC2.Label {
-+                            Layout.fillWidth: true
-+                            wrapMode: Text.Wrap
-+                            text: KI18n.i18ndc("kcm_stereo3d", "@info", "DisplayCAL requires calibrator hardware: a colorimeter or a spectrophotometer to measure the display.")
-+                        }
-                         QQC2.Label {
+-                        QQC2.Label {
 -                            visible: !kcm.displayCalInstalled
 -                            enabled: false
 -                            text: KI18n.i18nc("@info", "DisplayCAL is not installed")
-+                            Layout.fillWidth: true
-+                            visible: kcm.displayCalState === "absent" || kcm.displayCalState === "installing"
-+                            wrapMode: Text.Wrap
-+                            text: kcm.displayCalLines.join("\n")
-+                        }
-+                        QQC2.Label {
-+                            Layout.fillWidth: true
-+                            visible: kcm.displayCalMessage !== ""
-+                            wrapMode: Text.Wrap
-+                            text: kcm.displayCalMessage
-+                        }
-+                        QQC2.Button {
-+                            visible: kcm.displayCalState === "absent" || kcm.displayCalState === "installing"
-+                            enabled: kcm.displayCalState === "absent"
-+                            icon.name: "install"
-+                            text: KI18n.i18ndc("kcm_stereo3d", "@action:button installs DisplayCAL", "Install DisplayCAL")
-+                            onClicked: kcm.installDisplayCal()
-                         }
+-                        }
                      }
                  }
+             }
+         }
++
++        // DisplayCAL is not installed by default, and it needs a measuring device: said once for the page, beside the action, which is Stereo APTus' own.
++        ColumnLayout {
++            id: displayCal
++
++            Layout.fillWidth: true
++            Layout.leftMargin: Kirigami.Units.largeSpacing
++            Layout.rightMargin: Kirigami.Units.largeSpacing
++            Layout.bottomMargin: Kirigami.Units.largeSpacing
++            visible: root.output.error === ""
++            spacing: Kirigami.Units.smallSpacing
++
++            QQC2.Label {
++                Layout.fillWidth: true
++                wrapMode: Text.Wrap
++                text: KI18n.i18ndc("kcm_stereo3d", "@info", "DisplayCAL requires calibrator hardware: a colorimeter or a spectrophotometer to measure the display.")
++            }
++            QQC2.Label {
++                Layout.fillWidth: true
++                visible: kcm.displayCalState === "absent" || kcm.displayCalState === "installing"
++                wrapMode: Text.Wrap
++                text: kcm.displayCalLines.join("\n")
++            }
++            QQC2.Label {
++                Layout.fillWidth: true
++                visible: kcm.displayCalMessage !== ""
++                wrapMode: Text.Wrap
++                text: kcm.displayCalMessage
++            }
++            QQC2.Button {
++                visible: kcm.displayCalState === "absent" || kcm.displayCalState === "installing"
++                enabled: kcm.displayCalState === "absent"
++                icon.name: "install"
++                text: KI18n.i18ndc("kcm_stereo3d", "@action:button installs DisplayCAL", "Install DisplayCAL")
++                onClicked: kcm.installDisplayCal()
++            }
++        }
+     }
+ }
