@@ -32,9 +32,11 @@ if [ "${DSC#stereo-layer_}" = "$DSC" ] && ls /stage/libstereo-*1_*.deb >/dev/nul
 fi
 id builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
+# binaries only (also the architecture-independent ones) from the supplied descriptor: a plain dpkg-buildpackage packs the source again, with timestamps
+# the build moved, so the staged .dsc and tarballs would not be the ones the source script made (lessons-2026-11, "Two staged works on one library")
 cd source
 runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" \
-	${SPARKY_LC_SIBLINGS_FILE:+SPARKY_LC_SIBLINGS_FILE=$SPARKY_LC_SIBLINGS_FILE} PATH="$PATH" dpkg-buildpackage -us -uc -j4
+	${SPARKY_LC_SIBLINGS_FILE:+SPARKY_LC_SIBLINGS_FILE=$SPARKY_LC_SIBLINGS_FILE} PATH="$PATH" dpkg-buildpackage -b -us -uc -j4
 cd /work/build
 PYTHONPATH=/toolkit python3 -m lean.release check-debs ./*+lc1_*.deb
 PYTHONPATH=/toolkit python3 -m lean.release check-identity ./*+lc1_*.deb
