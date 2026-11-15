@@ -1,0 +1,10 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DBUILD_TESTING=OFF -DKDE_INSTALL_USE_QT_SYS_PATHS=ON "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$(CURDIR)=."
+
+override_dh_auto_install:
+	dh_auto_install
+	sparky-stereo-problems catalog sparky-stereo-camera lang debian/sparky-stereo-camera/usr/lib/systemd/catalog --subject LOCAL1=LOCAL2,LOCAL3,LOCAL4
