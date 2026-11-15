@@ -257,17 +257,17 @@ index c33387b..365f996 100644
  }
  
 diff --git a/shell/shellcorona.h b/shell/shellcorona.h
-index c75f288..4158808 100644
+index c75f288..8127edc 100644
 --- a/shell/shellcorona.h
 +++ b/shell/shellcorona.h
-@@ -291,6 +291,7 @@ private:
-     void destroyDesktopsAndPanels();
-     void updateStruts();
-     void configurationChanged(const QString &path);
+@@ -265,6 +265,7 @@ protected Q_SLOTS:
+     void showAlternativesForApplet(Plasma::Applet *applet);
+ 
+ private Q_SLOTS:
 +    void setTabletMode(bool tabletMode);
-     DesktopView *desktopForScreen(QScreen *screen) const;
-     void setupWaylandIntegration();
-     void executeSetupPlasmoidScript(Plasma::Containment *containment, Plasma::Applet *applet);
+     void createWaitingPanels();
+     void handleContainmentAdded(Plasma::Containment *c);
+     void syncAppConfig();
 @@ -306,6 +307,9 @@ private:
  
      KSharedConfig::Ptr m_config;
