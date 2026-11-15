@@ -389,13 +389,21 @@ def static_diversions(deb, obj):
     direct = re.fullmatch(
         r'set -e\nif \[ "\$1" = (?:install|"install") \] \|\| '
         r'\[ "\$1" = (?:upgrade|"upgrade") \]; then\n'
-        r'(?P<commands>(?:dpkg-divert [^\n]+\n)+)fi\nexit 0', text)
+        r'(?P<commands>(?:(?:dpkg-divert [^\n]+|mkdir -p ' + literal + r')\n)+)fi\nexit 0', text)
     declarations = []
     if loop:
         declarations = [(loop['owner'], source, source + loop['suffix'])
                         for source in loop['paths'].split(' ')]
     elif direct:
+        directories, used_parents = set(), set()
         for command in direct['commands'].splitlines():
+            if command.startswith('mkdir -p '):
+                directory = command[len('mkdir -p '):]
+                if (directory.startswith('//') or str(PurePosixPath(directory)) != directory
+                        or '..' in PurePosixPath(directory).parts or directory in used_parents):
+                    raise UnmodeledDiversion(f'{deb}: unsafe or late diversion parent directory')
+                directories.add(directory)
+                continue
             match = re.fullmatch(
                 r'dpkg-divert (?:--quiet )?--package (?P<owner>[a-z0-9][a-z0-9+.-]*) '
                 r'--add --rename --divert (?P<target>' + literal + r') (?P<source>' + literal + r')'
@@ -403,6 +411,9 @@ def static_diversions(deb, obj):
             if not match:
                 raise UnmodeledDiversion(f'{deb}: unsupported direct diversion command')
             declarations.append((match['owner'], match['source'], match['target']))
+            used_parents.add(str(PurePosixPath(match['target']).parent))
+        if directories - used_parents:
+            raise UnmodeledDiversion(f'{deb}: directory is not a literal diversion destination parent')
     if not declarations or not script.startswith('#!/bin/sh\n'):
         raise UnmodeledDiversion(f'{deb}: unsupported dynamic or unrecognized diversion preinst')
     result = []
