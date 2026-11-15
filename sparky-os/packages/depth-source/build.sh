@@ -30,7 +30,7 @@ NEW=${7:+$(cd "$7" && pwd)}
 SIBS=${8:+$(readlink -f "$8")}
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 mkdir -p "$WORK/home"
-sparky_provenance_init sparky-lc-migration:20261020
+sparky_provenance_init "${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}"
 # the candidate side supplies the edition without this package's own earlier binaries and those of ROUND_SOURCES (the sources built earlier in the round) (the gate refuses two versions of one supplied package)
 if [ -n "$SIBS" ]; then
 	cp "$SIBS" "$WORK/siblings-current.txt"
@@ -41,8 +41,8 @@ fi
 docker run --rm --name "${BUILD_NAME_PREFIX:-d411-build}-$PKG" --ulimit core=0 --cpus "${THREADS:-4}" --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e PKG="$PKG" -e THREADS="${THREADS:-4}" -e SPARKY_BUILD_PROFILES="${SPARKY_BUILD_PROFILES:-}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
-	-v "$ARCHIVE":/archive:ro -v "$WORK":/work -v "$SRC":/src:ro -v "$REPO":/repo:ro -v "$PREV":/prev:ro \
-	-v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro ${NEW:+-v "$NEW":/new:ro} ${SIBS:+-v "$SIBS":/previous-siblings.txt:ro -e SPARKY_LC_PREVIOUS_SIBLINGS_FILE=/previous-siblings.txt -v "$WORK/siblings-current.txt":/siblings.txt:ro -e SPARKY_LC_SIBLINGS_FILE=/siblings.txt} \
-	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
-	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
-	--entrypoint bash sparky-lc-migration:20261020 -c 'sh /run/https-only-apt.sh && bash /tools/build-in-container.sh > /work/build.log 2>&1'
+	--mount type=bind,src="$ARCHIVE",dst=/archive,readonly --mount type=bind,src="$WORK",dst=/work --mount type=bind,src="$SRC",dst=/src,readonly --mount type=bind,src="$REPO",dst=/repo,readonly --mount type=bind,src="$PREV",dst=/prev,readonly \
+	--mount type=bind,src="$HERE/../..",dst=/toolkit,readonly --mount type=bind,src="$HERE",dst=/tools,readonly ${NEW:+--mount type=bind,src="$NEW",dst=/new,readonly} ${SIBS:+--mount type=bind,src="$SIBS",dst=/previous-siblings.txt,readonly -e SPARKY_LC_PREVIOUS_SIBLINGS_FILE=/previous-siblings.txt --mount type=bind,src="$WORK/siblings-current.txt",dst=/siblings.txt,readonly -e SPARKY_LC_SIBLINGS_FILE=/siblings.txt} \
+	--mount type=bind,src=/usr/share/keyrings/deb-multimedia-keyring.pgp,dst=/usr/share/keyrings/deb-multimedia-keyring.pgp,readonly \
+	--mount type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/host-ca.crt,readonly --mount type=bind,src="$HERE/../../../tools/https-only-apt.sh",dst=/run/https-only-apt.sh,readonly \
+	--entrypoint bash "${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}" -c 'sh /run/https-only-apt.sh && bash /tools/build-in-container.sh > /work/build.log 2>&1'
