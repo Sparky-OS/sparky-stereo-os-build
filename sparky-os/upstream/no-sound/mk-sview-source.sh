@@ -5,6 +5,8 @@
 # Copyright 2026 under the GNU GPL3 License
 # Usage: mk-sview-source.sh OUT FORK_CLONE COMMIT
 set -euo pipefail
+# the sources are the same bytes under any umask: extraction by tar and dpkg-source follows it, so the recipe fixes it
+umask 022
 export DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE=$(cd "$HERE/../../.." && pwd)
