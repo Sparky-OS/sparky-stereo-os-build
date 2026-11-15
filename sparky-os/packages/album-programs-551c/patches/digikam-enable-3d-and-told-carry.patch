@@ -26,16 +26,17 @@ index 4f95bff..0c78f54 100644
              }
              else
 diff --git a/core/libs/widgets/graphicsview/stereo/stereofilechoice.cpp b/core/libs/widgets/graphicsview/stereo/stereofilechoice.cpp
-index 1e562b4..a002a1e 100644
+index 1e562b4..391f475 100644
 --- a/core/libs/widgets/graphicsview/stereo/stereofilechoice.cpp
 +++ b/core/libs/widgets/graphicsview/stereo/stereofilechoice.cpp
-@@ -10,6 +10,17 @@
+@@ -10,6 +10,18 @@
  
  #include "stereofilechoice.h"
  
 +// Qt includes
 +
 +#include <QApplication>
++#include <QMainWindow>
 +#include <QMessageBox>
 +#include <QStringList>
 +#include <QTimer>
@@ -47,7 +48,7 @@ index 1e562b4..a002a1e 100644
  // Local includes
  
  #include "digikam_debug.h"
-@@ -21,6 +32,47 @@
+@@ -21,6 +33,66 @@
  namespace Digikam
  {
  
@@ -64,6 +65,25 @@ index 1e562b4..a002a1e 100644
 +    static QStringList messages;
 +
 +    return messages;
++}
++
++/**
++ * A window that stays open for the message: the program's main window. The active window when the message comes can
++ * be the dialog of the job that is just closing (digiKam's renaming progress), which would take the message with it.
++ */
++QWidget* carryMessageParent()
++{
++    const auto widgets = QApplication::topLevelWidgets();
++
++    for (QWidget* const widget : widgets)
++    {
++        if (qobject_cast<QMainWindow*>(widget) && widget->isVisible())
++        {
++            return widget;
++        }
++    }
++
++    return nullptr;
 +}
 +
 +/**
@@ -84,7 +104,7 @@ index 1e562b4..a002a1e 100644
 +    {
 +        const QStringList shown = unshownCarryFailures();
 +        unshownCarryFailures().clear();
-+        QMessageBox::warning(qApp->activeWindow(), i18n("3D"), shown.join(QLatin1Char('\n')));
++        QMessageBox::warning(carryMessageParent(), i18n("3D"), shown.join(QLatin1Char('\n')));
 +    });
 +}
 +
@@ -95,7 +115,7 @@ index 1e562b4..a002a1e 100644
  void stereoFileMoved(const QString& from, const QString& to)
  {
  #ifdef HAVE_STEREO_LAYER
-@@ -31,9 +83,20 @@ void stereoFileMoved(const QString& from, const QString& to)
+@@ -31,9 +103,20 @@ void stereoFileMoved(const QString& from, const QString& to)
  
      if (failed)
      {
