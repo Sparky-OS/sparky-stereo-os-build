@@ -9,7 +9,7 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-boot
-VERSION=0.1.10+lc1
+VERSION=0.1.11+lc1
 # the host's facts for the build record, and the source date from the recipe's last commit (ORDER 394b, ORDER 421b)
 . "$HERE/../../repo/build-provenance.sh"
 sparky_provenance_init "${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}" "$HERE"
@@ -23,6 +23,7 @@ trap 'rm -rf "$D"' EXIT
 chmod 755 "$D"
 install -D -m 755 "$HERE/bin/sparky-stereo-boot" "$D/usr/bin/sparky-stereo-boot"
 for u in sparky-stereo-boot.socket sparky-stereo-boot@.service sparky-stereo-boot-handover.service sparky-stereo-boot-check.service \
+	sparky-stereo-boot-login.service sparky-stereo-boot-finished.service \
 	sparky-stereo-boot-secureboot.service sparky-stereo-boot-dkms-key.path; do
 	install -D -m 644 "$HERE/systemd/system/$u" "$D/usr/lib/systemd/system/$u"
 done
@@ -32,6 +33,15 @@ mkdir -p "$D/usr/lib/systemd/system/sockets.target.wants" "$D/usr/lib/systemd/sy
 	"$D/usr/lib/systemd/user/default.target.wants" "$D/usr/lib/systemd/catalog"
 ln -s ../sparky-stereo-boot.socket "$D/usr/lib/systemd/system/sockets.target.wants/sparky-stereo-boot.socket"
 ln -s ../sparky-stereo-boot-check.service "$D/usr/lib/systemd/system/multi-user.target.wants/sparky-stereo-boot-check.service"
+# after a start that did not finish (0.1.11, ORDER 572b): the login screen's service counts for systemd's
+# boot-complete.target, and once that is reached (and after a resume from hibernation, as Debian's grub2-common.service)
+# the start is recorded as finished wherever GRUB's flag is kept
+mkdir -p "$D/usr/lib/systemd/system/boot-complete.target.requires"
+ln -s ../sparky-stereo-boot-login.service "$D/usr/lib/systemd/system/boot-complete.target.requires/sparky-stereo-boot-login.service"
+for t in multi-user hibernate hybrid-sleep suspend-then-hibernate; do
+	mkdir -p "$D/usr/lib/systemd/system/$t.target.wants"
+	ln -s ../sparky-stereo-boot-finished.service "$D/usr/lib/systemd/system/$t.target.wants/sparky-stereo-boot-finished.service"
+done
 # this computer's DKMS key (0.1.8, ORDER 374): beside shim and checked against the MOK list at every boot, and placed
 # when DKMS makes it (the first boot's signing)
 ln -s ../sparky-stereo-boot-secureboot.service "$D/usr/lib/systemd/system/multi-user.target.wants/sparky-stereo-boot-secureboot.service"
@@ -59,6 +69,14 @@ install -D -m 644 "$HERE/lib/problems.py" "$D/usr/lib/sparky-stereo-boot/problem
 install -D -m 755 "$HERE/grub/35_sparky_stereo_secureboot" "$D/etc/grub.d/35_sparky_stereo_secureboot"
 # the menu is never drawn without a loaded font (0.1.10, ORDER 572): right after Debian's 00_header
 install -D -m 755 "$HERE/grub/01_sparky_stereo_menu" "$D/etc/grub.d/01_sparky_stereo_menu"
+# after a start that did not finish (0.1.11, ORDER 572b): Debian's 10_linux is diverted (preinst) and its name is a link
+# to the program that runs it and writes GRUB's recordfail call into each Linux entry; the menu's last entry says why
+# the menu is shown
+install -D -m 755 "$HERE/grub/10_linux" "$D/usr/lib/sparky-stereo-boot/10_linux"
+install -D -m 755 "$HERE/lib/login-check" "$D/usr/lib/sparky-stereo-boot/login-check"
+ln -s /usr/lib/sparky-stereo-boot/10_linux "$D/etc/grub.d/10_linux"
+mkdir -p "$D/etc/sparky-stereo-boot"
+install -D -m 755 "$HERE/grub/90_sparky_stereo_start" "$D/etc/grub.d/90_sparky_stereo_start"
 install -D -m 755 "$HERE/kernel/zz-sparky-stereo-secureboot" "$D/etc/kernel/postinst.d/zz-sparky-stereo-secureboot"
 # two kernels per flavour (0.1.4): the kernel hook records an install, the service waits for apt and dpkg and purges
 install -D -m 755 "$HERE/lib/kernel-keep.py" "$D/usr/lib/sparky-stereo-boot/kernel-keep.py"
@@ -81,7 +99,7 @@ install -D -m 644 "$HERE/copyright" "$D/usr/share/doc/$PKG/copyright"
 install -D -m 644 "$HERE/README.md" "$D/usr/share/doc/$PKG/README.md"
 mkdir -p "$D/DEBIAN"
 printf '%s\n' /etc/default/sparky-stereo-boot /etc/default/grub.d/30-sparky-stereo-boot.cfg /etc/default/grub.d/31-sparky-stereo-ia32.cfg \
-	/etc/grub.d/35_sparky_stereo_secureboot /etc/grub.d/01_sparky_stereo_menu /etc/kernel/postinst.d/zz-sparky-stereo-secureboot \
+	/etc/grub.d/35_sparky_stereo_secureboot /etc/grub.d/01_sparky_stereo_menu /etc/grub.d/90_sparky_stereo_start /etc/kernel/postinst.d/zz-sparky-stereo-secureboot \
 	/etc/kernel/postinst.d/zz-sparky-stereo-kernel-keep /etc/initramfs-tools/update-initramfs.conf.sparky-stereo > "$D/DEBIAN/conffiles"
 cat > "$D/DEBIAN/preinst" <<'SCRIPT'
 #!/bin/sh
@@ -90,6 +108,10 @@ set -e
 if [ "$1" = install ] || [ "$1" = upgrade ]; then
 	dpkg-divert --package sparky-stereo-boot --add --rename \
 		--divert /etc/initramfs-tools/update-initramfs.conf.debian /etc/initramfs-tools/update-initramfs.conf >/dev/null
+	# Debian's /etc/grub.d/10_linux moves aside for the program that adds GRUB's recordfail call to its entries (0.1.11)
+	mkdir -p /etc/sparky-stereo-boot
+	dpkg-divert --package sparky-stereo-boot --add --rename \
+		--divert /etc/sparky-stereo-boot/10_linux.debian /etc/grub.d/10_linux >/dev/null
 fi
 exit 0
 SCRIPT
@@ -152,7 +174,8 @@ if [ "$1" = configure ]; then
 			echo "sparky-stereo-boot: os-prober failed (exit $?); whether another system is on this computer was not checked" >&2
 		fi
 	fi
-	if { [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.10; } && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
+	# 0.1.11 (ORDER 572b): the Linux entries record each start and the menu shows by itself after one that did not finish
+	if { [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.11; } && [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then
 		python3 $P run update-grub LOCAL21 -- update-grub || failed=1
 	fi
 	[ -z "$failed" ] || exit 1
@@ -215,6 +238,15 @@ remove|abort-install|abort-upgrade)
 		dpkg-divert --package sparky-stereo-boot --remove --rename \
 			--divert /etc/initramfs-tools/update-initramfs.conf.debian /etc/initramfs-tools/update-initramfs.conf >/dev/null
 	fi
+	# Debian's /etc/grub.d/10_linux comes back (0.1.11)
+	if [ "$1" = remove ] || [ -z "$2" ] || dpkg --compare-versions "$2" lt 0.1.11; then
+		if [ "$(readlink /etc/grub.d/10_linux)" = /usr/lib/sparky-stereo-boot/10_linux ]; then
+			rm -f /etc/grub.d/10_linux
+		fi
+		dpkg-divert --package sparky-stereo-boot --remove --rename \
+			--divert /etc/sparky-stereo-boot/10_linux.debian /etc/grub.d/10_linux >/dev/null
+		rmdir /etc/sparky-stereo-boot 2>/dev/null || :
+	fi
 	;;
 esac
 case "$1" in
@@ -235,10 +267,11 @@ remove)
 purge)
 	must rm -rf /var/lib/sparky-stereo-boot
 	# said; a certificate left on the partition does not change any boot
-	for f in /boot/efi/EFI/*/sparky-stereo-secureboot-2026.der /boot/efi/EFI/*/dkms-this-computer.der; do
+	for f in /boot/efi/EFI/*/sparky-stereo-secureboot-2026.der /boot/efi/EFI/*/dkms-this-computer.der /boot/efi/EFI/sparky-stereo-boot/grubenv; do
 		[ -e "$f" ] || continue
 		rm -f "$f" || say 58 "$f"
 	done
+	rmdir /boot/efi/EFI/sparky-stereo-boot 2>/dev/null || :
 	if [ -x /usr/sbin/update-grub ] && [ -e /boot/grub/grub.cfg ]; then must update-grub; fi
 	;;
 esac
@@ -270,7 +303,10 @@ Description: Sparky Stereo OS boot that follows the main screen
   It keeps two kernels per flavour, the running one and one more, and
   removes the older ones after a new kernel has installed; every boot
   image is written again whenever the boot changes, the older kernel's
-  too.
+  too. GRUB's menu is hidden when this is the only system; after a start
+  that did not finish it shows by itself at the next start, with the
+  older kernel in it, the file systems are checked at that start, and
+  the person is told at login what the check found.
   .
   Under Secure Boot, the edition's key and this computer's DKMS key are
   kept next to shim on the EFI system partition, with a GRUB entry that

@@ -30,6 +30,69 @@ if [ "${sparky_menu_once}" = 1 ]; then
 	save_env sparky_menu_once
 fi
 ONCE
+# After a start that did not finish (0.1.11, ORDER 572b): GRUB's recordfail, which Debian's grub2 carries switched off
+# (debian/patches/quick-boot.patch by Colin Watson, Richard Laager and Robie Basak: 00_header writes the function and
+# 10_linux the call only when GRUB was configured with --enable-quick-boot, which debian/rules gives Ubuntu's build
+# alone). The function is written here, as 00_header would write it, when 30-sparky-stereo-boot.cfg found a place
+# GRUB can write (SPARKY_STEREO_RECORD); /etc/grub.d/10_linux puts the call in each Linux entry. What 00_header's
+# function tests (have_grubenv, boot_once) is kept in an exported variable, because the entries of a submenu
+# ("Advanced options") see exported variables only. While the flag is set the menu is shown for the time
+# 30-sparky-stereo-boot.cfg worked out, and the kernel line of that start carries fsck.mode=force (systemd-fsck(8);
+# initramfs-tools checks the root file system with it) and sparky_stereo.start=unfinished, which tells the started
+# system why (sparky-stereo-boot start-finished).
+record=${SPARKY_STEREO_RECORD:-off}
+if grep -qs '^quick_boot="1"' "${SPARKY_GRUB_00_HEADER:-/etc/grub.d/00_header}"; then
+	case $record in grubenv) record=debian ;; esac   # a GRUB built with it writes the function itself
+fi
+case $record in
+grubenv)
+	cat <<'RECORD'
+set sparky_record_ok="${have_grubenv}"
+if [ -n "${boot_once}" ]; then
+	set sparky_record_ok=
+fi
+export sparky_record_ok
+function recordfail {
+	set recordfail=1
+	if [ -n "${sparky_record_ok}" ]; then save_env recordfail; fi
+}
+RECORD
+	;;
+esp:*)
+	rest=${record#esp:}
+	cat <<RECORD
+set sparky_record=
+search --no-floppy --fs-uuid --set=sparky_record ${rest%%:*}
+if [ -n "\${sparky_record}" ]; then
+	if [ -s "(\${sparky_record})${rest#*:}" ]; then
+		load_env -f "(\${sparky_record})${rest#*:}" recordfail
+	else
+		set sparky_record=
+	fi
+fi
+if [ -n "\${boot_once}" ]; then
+	set sparky_record=
+fi
+export sparky_record
+function recordfail {
+	set recordfail=1
+	if [ -n "\${sparky_record}" ]; then save_env -f "(\${sparky_record})${rest#*:}" recordfail; fi
+}
+RECORD
+	;;
+esac
+case $record in
+grubenv|debian|esp:*)
+	cat <<CHECK
+if [ "\${recordfail}" = 1 ]; then
+	set sparky_stereo_check="fsck.mode=force sparky_stereo.start=unfinished"
+	set timeout_style=menu
+	set timeout=${SPARKY_STEREO_RECORD_TIMEOUT:-30}
+fi
+export sparky_stereo_check
+CHECK
+	;;
+esac
 [ -n "${GRUB_FONT:-}" ] || exit 0
 case "${GRUB_TERMINAL_OUTPUT:-gfxterm}" in gfxterm) ;; *) exit 0 ;; esac
 case "${GRUB_TERMINAL:-gfxterm}" in gfxterm) ;; *) exit 0 ;; esac

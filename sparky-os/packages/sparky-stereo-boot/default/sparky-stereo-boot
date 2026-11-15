@@ -42,3 +42,10 @@ SPARKY_STEREO_MENU=auto
 # shown at a lower resolution, where that text has the height the menu has elsewhere. native:
 # the screen's resolution and small text. Then: sudo update-grub
 SPARKY_STEREO_SECUREBOOT_TEXT=readable
+
+# After a start that did not finish (a kernel that stops, a start that hangs, a power cut on the
+# way), GRUB's menu shows by itself at the next start, with the older kernel under "Advanced
+# options", the file systems are checked at that start, and you are told at login. yes or no.
+# The time the menu waits is GRUB's own GRUB_RECORDFAIL_TIMEOUT in /etc/default/grub (30 seconds
+# when the menu is otherwise hidden). Then: sudo update-grub
+SPARKY_STEREO_UNFINISHED_START=yes
