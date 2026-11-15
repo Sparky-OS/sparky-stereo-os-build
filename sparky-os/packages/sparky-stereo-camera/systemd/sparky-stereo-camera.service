@@ -1,0 +1,14 @@
+[Unit]
+Description=Apply the saved settings of each camera when it is plugged in
+Documentation=man:sparky-stereo-camera(1)
+After=pipewire.service wireplumber.service
+Wants=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sparky-stereo-camera watch
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
