@@ -1,0 +1,74 @@
+Description: avformat/matroskadec: keep a stereo display size that is the whole frame
+ Since ec83efd4d3 the display size of every side by side, top and bottom
+ and interleaved track is multiplied by two along the stacked axis. That
+ undoes what matroskaenc writes, the size of one plane, as RFC 9559
+ section 18.10 describes it. But DisplayWidth and DisplayHeight default
+ to the whole frame (RFC 9559 5.1.4.1.28.12 and 5.1.4.1.28.13), and
+ mkvmerge writes the whole frame unless told otherwise, so a film whose
+ two views are whole pictures, 2560x720 side by side declared 2560x720,
+ gets a sample aspect ratio of 2:1 and views of 32:9.
+ .
+ Apply the multiplier only when a view of the frame as declared cannot
+ be a whole picture: narrower than 4:3 side by side, 8:3 or wider when
+ stacked. A view between 4:3 and 8:3 is now read at its shape whichever
+ of the two sizes the muxer wrote; a view of 8:3 or wider written as one
+ plane is read at half its width.
+ .
+ Assisted-by: Claude Opus 5.5 via Claude Code
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: no
+Last-Update: 2026-11-15
+
+diff --git a/libavformat/matroskadec.c b/libavformat/matroskadec.c
+index 18849af..e227709 100644
+--- a/libavformat/matroskadec.c
++++ b/libavformat/matroskadec.c
+@@ -2231,8 +2231,21 @@ static int mkv_field_order(const MatroskaDemuxContext *matroska, uint64_t field_
+ }
+ 
+ static void mkv_stereo_mode_display_mul(int stereo_mode,
++                                        uint64_t display_width,
++                                        uint64_t display_height,
+                                         int *h_width, int *h_height)
+ {
++    AVRational dar = { 0, 1 };
++
++    /* RFC 9559 section 18.10 gives the display size of a stereo track as the
++     * size of one plane, but DisplayWidth and DisplayHeight default to the
++     * whole frame and muxers commonly write the whole frame. Read them as one
++     * plane only when a view of the frame as declared could not be a whole
++     * picture: narrower than 4:3 side by side, 8:3 or wider stacked. */
++    if (display_width  && display_width  <= INT64_MAX &&
++        display_height && display_height <= INT64_MAX)
++        av_reduce(&dar.num, &dar.den, display_width, display_height, INT_MAX);
++
+     switch (stereo_mode) {
+         case MATROSKA_VIDEO_STEREOMODE_TYPE_MONO:
+         case MATROSKA_VIDEO_STEREOMODE_TYPE_CHECKERBOARD_RL:
+@@ -2244,13 +2257,15 @@ static void mkv_stereo_mode_display_mul(int stereo_mode,
+         case MATROSKA_VIDEO_STEREOMODE_TYPE_LEFT_RIGHT:
+         case MATROSKA_VIDEO_STEREOMODE_TYPE_COL_INTERLEAVED_RL:
+         case MATROSKA_VIDEO_STEREOMODE_TYPE_COL_INTERLEAVED_LR:
+-            *h_width = 2;
++            if (!dar.num || av_cmp_q(dar, (AVRational){ 8, 3 }) < 0)
++                *h_width = 2;
+             break;
+         case MATROSKA_VIDEO_STEREOMODE_TYPE_BOTTOM_TOP:
+         case MATROSKA_VIDEO_STEREOMODE_TYPE_TOP_BOTTOM:
+         case MATROSKA_VIDEO_STEREOMODE_TYPE_ROW_INTERLEAVED_RL:
+         case MATROSKA_VIDEO_STEREOMODE_TYPE_ROW_INTERLEAVED_LR:
+-            *h_height = 2;
++            if (!dar.num || av_cmp_q(dar, (AVRational){ 4, 3 }) >= 0)
++                *h_height = 2;
+             break;
+     }
+ }
+@@ -3013,6 +3028,8 @@ static int mkv_parse_video(MatroskaTrack *track, AVStream *st,
+ 
+     if (track->video.stereo_mode && track->video.stereo_mode < MATROSKA_VIDEO_STEREOMODE_TYPE_NB)
+         mkv_stereo_mode_display_mul(track->video.stereo_mode,
++                                    track->video.display_width,
++                                    track->video.display_height,
+                                     &display_width_mul, &display_height_mul);
+ 
+     if (track->video.display_unit < MATROSKA_VIDEO_DISPLAYUNIT_UNKNOWN) {

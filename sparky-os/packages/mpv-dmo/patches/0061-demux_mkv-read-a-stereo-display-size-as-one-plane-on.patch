@@ -1,0 +1,74 @@
+From bd58b5803b78ec3fa4117e7e1e26f838d443bdcb Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 15 Nov 2026 17:00:00 -0300
+Subject: [PATCH] demux_mkv: read a stereo display size as one plane only when
+ it must be
+
+The display size of a side by side or top and bottom track is the size
+of one plane (RFC 9559 section 18.10), but DisplayWidth and
+DisplayHeight default to the whole frame and muxers commonly write the
+whole frame. Doubling every size that differs from the frame showed
+full views with a display size of their own as strips: 854x480 declared
+1707x480 and 1920x540 declared 1920x544 both came out at 32:9, and the
+filters took the size given for one view, so the views kept that shape.
+
+Read it as one plane only when a view of the frame as declared could
+not be a whole picture: narrower than 4:3 side by side, 8:3 or wider
+stacked, the rule FFmpeg's demuxer applies in the edition. The filters
+get the shape one view is shown at either way.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ demux/demux_mkv.c | 26 ++++++++++++++++----------
+ 1 file changed, 16 insertions(+), 10 deletions(-)
+
+diff --git a/demux/demux_mkv.c b/demux/demux_mkv.c
+index ed3e2d4..1c941fa 100644
+--- a/demux/demux_mkv.c
++++ b/demux/demux_mkv.c
+@@ -1749,20 +1749,26 @@ static int demux_mkv_open_video(demuxer_t *demuxer, mkv_track_t *track)
+ 
+     int dw = track->v_dwidth_set ? track->v_dwidth : crop_compat_w;
+     int dh = track->v_dheight_set ? track->v_dheight : crop_compat_h;
+-    // The display size of a side by side or top and bottom track is the size of one plane (RFC 9559 section 18.10);
+-    // the frame holds two of them, as FFmpeg's demuxer takes it. A display size as large as the frame is the default
+-    // that muxers write and says nothing about the planes.
+-    if (track->stereo_mode_set && track->v_dwidth_set && track->v_dheight_set &&
+-        !(dw == crop_compat_w && dh == crop_compat_h))
+-    {
++    // The display size of a side by side or top and bottom track is the size of one plane (RFC 9559 section 18.10),
++    // but the elements default to the whole frame and muxers commonly write the whole frame. Read it as one plane only
++    // when a view of the frame as declared could not be a whole picture: narrower than 4:3 side by side, 8:3 or wider
++    // stacked, as FFmpeg's demuxer does. plane_w:plane_h is then the shape one view is shown at.
++    int plane_w = dw, plane_h = dh;
++    if (track->stereo_mode_set && dw > 0 && dh > 0) {
+         switch (track->stereo_mode) {
+         case MP_STEREO3D_SBS2L:
+         case MP_STEREO3D_SBS2R:
+-            dw *= 2;
++            if (3LL * dw < 8LL * dh)
++                dw *= 2;
++            else
++                plane_h = 2 * dh;
+             break;
+         case MP_STEREO3D_AB2L:
+         case MP_STEREO3D_AB2R:
+-            dh *= 2;
++            if (3LL * dw >= 4LL * dh)
++                dh *= 2;
++            else
++                plane_w = 2 * dw;
+             break;
+         }
+     }
+@@ -1774,8 +1780,8 @@ static int demux_mkv_open_video(demuxer_t *demuxer, mkv_track_t *track)
+     sh_v->stereo_mode = track->stereo_mode;
+     sh_v->stereo_mode_set = track->stereo_mode_set;
+     if (track->stereo_mode_set && track->v_dwidth_set && track->v_dheight_set) {
+-        sh_v->stereo_plane_w = track->v_dwidth;
+-        sh_v->stereo_plane_h = track->v_dheight;
++        sh_v->stereo_plane_w = plane_w;
++        sh_v->stereo_plane_h = plane_h;
+     }
+     sh_v->projection = track->v_projection_type;
+     sh_v->repr = track->repr;
