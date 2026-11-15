@@ -1,0 +1,106 @@
+Description: KPhotoAlbum's Enable 3D is the stereo layer's, in place of a second Not 3D (ORDER 551c)
+ The viewer's switch that shows every photograph flat, for the session, is the layer's Stereo::Enable3DAction, the same
+ words in every program on the layer; Alt+Shift+N switches it. A file's own Not 3D stays in the layer's per-file menu.
+ Needs libstereo-layer-dev (>= 1.19.2).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-15
+---
+diff --git a/Viewer/StereoPictureMenu.cpp b/Viewer/StereoPictureMenu.cpp
+index f151ef5..84ad24a 100644
+--- a/Viewer/StereoPictureMenu.cpp
++++ b/Viewer/StereoPictureMenu.cpp
+@@ -17,9 +17,22 @@ namespace Viewer
+ 
+ StereoPictureMenu::StereoPictureMenu(QWidget *parent)
+     : QMenu(i18n("&3D"), parent)
++    , m_enable(new Stereo::Enable3DAction(this))
+     , m_fileChoice(new Stereo::FileChoiceMenu(this))
+     , m_views(new QActionGroup(this))
+ {
++    // The viewer's own switch for every photograph it shows, for the session, as before: the stereo layer's "Enable 3D",
++    // in the same words as every program on the layer. Off, every photograph is flat; "Not 3D" for one file is the
++    // layer's per-file menu below. Alt+Shift+N stays this switch's shortcut.
++    m_enable->setShortcut(QKeySequence(QLatin1String("Alt+Shift+N")));
++    addAction(m_enable);
++    parent->window()->addAction(m_enable);
++    connect(m_enable, &QAction::triggered, this, [this](bool enabled) {
++        m_options.view = enabled ? m_eyeView : Stereo::Picture::View::Mono;
++        Q_EMIT optionsChanged();
++    });
++    addSeparator();
++
+     // The per-file entries are the stereo layer's one menu: every packing, Not 3D, the swap and the save into the file
+     addMenu(m_fileChoice);
+     connect(m_fileChoice, &Stereo::FileChoiceMenu::changed, this, &StereoPictureMenu::fileChanged);
+@@ -40,11 +53,10 @@ StereoPictureMenu::StereoPictureMenu(QWidget *parent)
+     connect(m_conversion, &QAction::triggered, this, &StereoPictureMenu::convert);
+ 
+     addSeparator();
+-    // The viewer's own view, for the session, as before: both eyes, one eye, or every photograph flat ("Not 3D" for
+-    // one file is in the layer's menu above)
+-    const QStringList viewLabels = { i18n("Stereo"), i18n("Left eye only"), i18n("Right eye only"), i18n("Not 3D") };
+-    const QStringList shortcuts = { QLatin1String("Alt+Shift+D"), QLatin1String("Alt+Shift+L"),
+-                                    QLatin1String("Alt+Shift+O"), QLatin1String("Alt+Shift+N") };
++    // The viewer's own view of a pair, for the session, as before: both eyes or one eye. Choosing one shows the
++    // photographs in 3D again, as choosing Stereo did when every photograph was flat.
++    const QStringList viewLabels = { i18n("Stereo"), i18n("Left eye only"), i18n("Right eye only") };
++    const QStringList shortcuts = { QLatin1String("Alt+Shift+D"), QLatin1String("Alt+Shift+L"), QLatin1String("Alt+Shift+O") };
+ 
+     for (int index = 0; index < viewLabels.size(); ++index) {
+         QAction *const action = addAction(viewLabels[index]);
+@@ -54,7 +66,9 @@ StereoPictureMenu::StereoPictureMenu(QWidget *parent)
+         m_views->addAction(action);
+ 
+         connect(action, &QAction::triggered, this, [this, index]() {
+-            m_options.view = static_cast<Stereo::Picture::View>(index);
++            m_eyeView = static_cast<Stereo::Picture::View>(index);
++            m_options.view = m_eyeView;
++            m_enable->setChecked(true);
+             Q_EMIT optionsChanged();
+         });
+     }
+@@ -116,8 +130,10 @@ void StereoPictureMenu::convert()
+         choice.view = Stereo::Picture::View::Stereo;
+         QString error;
+         if (Stereo::Picture::setFileChoice(m_path, choice, &error)) {
+-            m_options.view = Stereo::Picture::View::Stereo;
++            m_eyeView = Stereo::Picture::View::Stereo;
++            m_options.view = m_eyeView;
+             m_views->actions().constFirst()->setChecked(true);
++            m_enable->setChecked(true);
+             fileChanged({ m_path });
+         } else {
+             failed(error);
+diff --git a/Viewer/StereoPictureMenu.h b/Viewer/StereoPictureMenu.h
+index 19cce74..3601ee2 100644
+--- a/Viewer/StereoPictureMenu.h
++++ b/Viewer/StereoPictureMenu.h
+@@ -11,6 +11,7 @@ class QActionGroup;
+ 
+ namespace Stereo
+ {
++class Enable3DAction;
+ class FileChoiceMenu;
+ }
+ 
+@@ -38,7 +39,8 @@ public:
+      */
+     void setFile(const QString &path, bool shownAsPair);
+     /**
+-     * This viewer's own choice: which view is shown (Stereo, LeftOnly, RightOnly, or Mono for every photograph flat).
++     * This viewer's own choice: which view is shown (Stereo, LeftOnly, RightOnly, or Mono for every photograph flat
++     * while "Enable 3D" is off).
+      */
+     Stereo::Picture::Options options() const;
+ 
+@@ -57,6 +59,9 @@ private:
+     void fileChanged(const QStringList &paths);
+     void failed(const QString &message);
+     Stereo::Picture::Options m_options;
++    // the view of a pair chosen last, shown again when 3D is enabled
++    Stereo::Picture::View m_eyeView = Stereo::Picture::View::Stereo;
++    Stereo::Enable3DAction *m_enable;
+     Stereo::FileChoiceMenu *m_fileChoice;
+     QActionGroup *m_views;
+     QAction *m_conversion;

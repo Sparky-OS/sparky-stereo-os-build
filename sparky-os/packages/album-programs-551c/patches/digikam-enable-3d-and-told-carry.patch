@@ -1,0 +1,263 @@
+Description: digiKam's Enable 3D is the stereo layer's; a 3D choice that cannot follow a moved file is told (ORDER 551c)
+ The program's lasting switch that shows every picture flat is the layer's Stereo::Enable3DAction, the same words in every
+ program on the layer, in place of a second Not 3D; Alt+Shift+N switches it and the slide show starts with it too. A
+ stored 3D choice that cannot follow a file digiKam itself renamed or moved is told to the person from the main thread,
+ one window for a burst; a folder moved to another device by a copy carries its files' choices. Needs
+ libstereo-layer-dev (>= 1.19.2).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-15
+---
+diff --git a/core/libs/iojobs/iojob.cpp b/core/libs/iojobs/iojob.cpp
+index 4f95bff..0c78f54 100644
+--- a/core/libs/iojobs/iojob.cpp
++++ b/core/libs/iojobs/iojob.cpp
+@@ -190,6 +190,12 @@ void CopyOrMoveJob::run()
+                                                 "The folder %1 was copied as well to album %2",
+                                                 srcName, QDir::toNativeSeparators(dstDir.path())));
+                     }
++                    else
++                    {
++                        // Moved to another device by a copy: the stored 3D choices of its files follow them too
++
++                        stereoFileMoved(srcInfo.filePath(), destenation);
++                    }
+                 }
+             }
+             else
+diff --git a/core/libs/widgets/graphicsview/stereo/stereofilechoice.cpp b/core/libs/widgets/graphicsview/stereo/stereofilechoice.cpp
+index 1e562b4..a002a1e 100644
+--- a/core/libs/widgets/graphicsview/stereo/stereofilechoice.cpp
++++ b/core/libs/widgets/graphicsview/stereo/stereofilechoice.cpp
+@@ -10,6 +10,17 @@
+ 
+ #include "stereofilechoice.h"
+ 
++// Qt includes
++
++#include <QApplication>
++#include <QMessageBox>
++#include <QStringList>
++#include <QTimer>
++
++// KDE includes
++
++#include <klocalizedstring.h>
++
+ // Local includes
+ 
+ #include "digikam_debug.h"
+@@ -21,6 +32,47 @@
+ namespace Digikam
+ {
+ 
++#ifdef HAVE_STEREO_LAYER
++
++namespace
++{
++
++/**
++ * The carries that failed and are not shown yet. Touched in the main thread only.
++ */
++QStringList& unshownCarryFailures()
++{
++    static QStringList messages;
++
++    return messages;
++}
++
++/**
++ * In the main thread: one message for every carry that failed since the last one was shown, so a job that moves
++ * many files gives the person one window, not one per file.
++ */
++void tellCarryFailure(const QString& error)
++{
++    QStringList& messages = unshownCarryFailures();
++    messages.append(i18n("%1 Until its 3D choice is made again in the 3D menu, the file is shown as its own marks say.", error));
++
++    if (messages.size() > 1)
++    {
++        return;     // already on its way to the screen
++    }
++
++    QTimer::singleShot(0, qApp, []()
++    {
++        const QStringList shown = unshownCarryFailures();
++        unshownCarryFailures().clear();
++        QMessageBox::warning(qApp->activeWindow(), i18n("3D"), shown.join(QLatin1Char('\n')));
++    });
++}
++
++} // namespace
++
++#endif
++
+ void stereoFileMoved(const QString& from, const QString& to)
+ {
+ #ifdef HAVE_STEREO_LAYER
+@@ -31,9 +83,20 @@ void stereoFileMoved(const QString& from, const QString& to)
+ 
+     if (failed)
+     {
+-        // The choice is still kept under the old path; the file shows as its own marks say until it is chosen again
++        // The choice is still kept under the old path; the file shows as its own marks say until it is chosen again.
++        // The person is told, whatever thread the move ran in (digiKam's file jobs run in worker threads): the
++        // message is shown from the main thread.
+ 
+         qCWarning(DIGIKAM_WIDGETS_LOG) << "The 3D choice of" << from << "could not follow it to" << to << ":" << error;
++
++        if (qApp)
++        {
++            QMetaObject::invokeMethod(qApp, [error]()
++                {
++                    tellCarryFailure(error);
++                },
++                Qt::QueuedConnection);
++        }
+     }
+ 
+ #else
+diff --git a/core/libs/widgets/graphicsview/stereo/stereofilechoice.h b/core/libs/widgets/graphicsview/stereo/stereofilechoice.h
+index bceab99..3b8a999 100644
+--- a/core/libs/widgets/graphicsview/stereo/stereofilechoice.h
++++ b/core/libs/widgets/graphicsview/stereo/stereofilechoice.h
+@@ -25,7 +25,8 @@ namespace Digikam
+  * A file or a folder was renamed or moved by this program, from one local path to another:
+  * the person's stored 3D choice of the file, or of every file below the folder, follows it
+  * (the stereo layer's per-file store; the files themselves are not touched). A copy carries
+- * nothing and needs no call. Does nothing in a build without the stereo layer.
++ * nothing and needs no call. When the store cannot be changed the person is told, in the main
++ * thread, whatever thread calls this. Does nothing in a build without the stereo layer.
+  */
+ DIGIKAM_EXPORT void stereoFileMoved(const QString& from, const QString& to);
+ 
+diff --git a/core/libs/widgets/graphicsview/stereo/stereopicturemenu.cpp b/core/libs/widgets/graphicsview/stereo/stereopicturemenu.cpp
+index c860b32..b6152d3 100644
+--- a/core/libs/widgets/graphicsview/stereo/stereopicturemenu.cpp
++++ b/core/libs/widgets/graphicsview/stereo/stereopicturemenu.cpp
+@@ -35,10 +35,28 @@ namespace Digikam
+ 
+ StereoPictureMenu::StereoPictureMenu(QWidget* const parent)
+     : QMenu       (i18n("&3D"), parent),
++      m_enable    (new Stereo::Enable3DAction(this)),
+       m_fileChoice(new Stereo::FileChoiceMenu(this)),
+       m_moves     (new Stereo::FileChoiceMoves(this)),
+       m_views     (new QActionGroup(this))
+ {
++    // The program's own switch for every picture it shows, lasting as before (its settings' View is 3 while it is
++    // off): the stereo layer's "Enable 3D", in the same words as every program on the layer. "Not 3D" for one file is
++    // the layer's per-file menu below. Alt+Shift+N stays this switch's shortcut.
++
++    m_enable->setShortcut(QKeySequence(QLatin1String("Alt+Shift+N")));
++    addAction(m_enable);
++    parent->window()->addAction(m_enable);
++
++    connect(m_enable, &QAction::triggered, this, [this](bool enabled)
++    {
++        m_options.view = enabled ? m_eyeView : Stereo::Picture::View::Mono;
++        KSharedConfig::openConfig()->group(QLatin1String("Stereo 3D")).writeEntry("View", static_cast<int>(m_options.view));
++        Q_EMIT optionsChanged();
++    });
++
++    addSeparator();
++
+     // The per-file entries are the stereo layer's one menu: every packing, Not 3D for the file, the swap and the save
+ 
+     addMenu(m_fileChoice);
+@@ -69,9 +87,12 @@ StereoPictureMenu::StereoPictureMenu(QWidget* const parent)
+     connect(m_conversion, &QAction::triggered, this, &StereoPictureMenu::convert);
+ 
+     addSeparator();
+-    const QStringList viewLabels = {i18n("Stereo"), i18n("Left eye only"), i18n("Right eye only"), i18n("Not 3D")};
+-    const QStringList shortcuts = {QLatin1String("Alt+Shift+D"), QLatin1String("Alt+Shift+L"),
+-                                   QLatin1String("Alt+Shift+O"), QLatin1String("Alt+Shift+N")};
++
++    // The program's own view of a pair, lasting as before: both eyes or one eye. Choosing one shows the pictures in 3D
++    // again, as choosing Stereo did when every picture was flat.
++
++    const QStringList viewLabels = {i18n("Stereo"), i18n("Left eye only"), i18n("Right eye only")};
++    const QStringList shortcuts  = {QLatin1String("Alt+Shift+D"), QLatin1String("Alt+Shift+L"), QLatin1String("Alt+Shift+O")};
+ 
+     for (int index = 0 ; index < viewLabels.size() ; ++index)
+     {
+@@ -83,13 +104,19 @@ StereoPictureMenu::StereoPictureMenu(QWidget* const parent)
+ 
+         connect(action, &QAction::triggered, this, [this, index]()
+         {
+-            m_options.view = static_cast<Stereo::Picture::View>(index);
++            m_eyeView      = static_cast<Stereo::Picture::View>(index);
++            m_options.view = m_eyeView;
++            m_enable->setChecked(true);
+             KSharedConfig::openConfig()->group(QLatin1String("Stereo 3D")).writeEntry("View", index);
+             Q_EMIT optionsChanged();
+         });
+     }
+ 
+-    setOptions(m_options);
++    // Every picture area starts with the program's lasting view, the slide show's included
++
++    Stereo::Picture::Options saved;
++    saved.view = static_cast<Stereo::Picture::View>(qBound(0, savedView(), 3));
++    setOptions(saved);
+     setFile(QString(), false);
+ }
+ 
+@@ -109,7 +136,15 @@ void StereoPictureMenu::setOptions(const Stereo::Picture::Options& options)
+ 
+     m_options      = Stereo::Picture::Options();
+     m_options.view = options.view;
+-    m_views->actions()[static_cast<int>(m_options.view)]->setChecked(true);
++    const bool flat = (m_options.view == Stereo::Picture::View::Mono);
++
++    if (!flat)
++    {
++        m_eyeView = m_options.view;
++    }
++
++    m_enable->setChecked(!flat);
++    m_views->actions()[static_cast<int>(m_eyeView)]->setChecked(true);
+ }
+ 
+ void StereoPictureMenu::setFile(const QString& path, bool shownAsPair)
+diff --git a/core/libs/widgets/graphicsview/stereo/stereopicturemenu.h b/core/libs/widgets/graphicsview/stereo/stereopicturemenu.h
+index 1333178..5fc5ec9 100644
+--- a/core/libs/widgets/graphicsview/stereo/stereopicturemenu.h
++++ b/core/libs/widgets/graphicsview/stereo/stereopicturemenu.h
+@@ -23,6 +23,7 @@ class QActionGroup;
+ 
+ namespace Stereo
+ {
++class Enable3DAction;
+ class FileChoiceMenu;
+ class FileChoiceMoves;
+ }
+@@ -37,8 +38,9 @@ namespace Digikam
+  * its eyes, and saving the correction into the file) is the stereo layer's own
+  * menu, and the choice is kept in the layer's per-file store, the one the file
+  * manager, the thumbnailers and the other viewers read; the picture is not
+- * written unless the person chooses the save. How this program shows stereo
+- * pictures (both eyes, one eye, or all of them flat) is its own lasting choice.
++ * written unless the person chooses the save. Whether this program shows stereo
++ * pictures in 3D at all (the stereo layer's "Enable 3D") and with which eyes is
++ * its own lasting choice.
+  */
+ class DIGIKAM_EXPORT StereoPictureMenu : public QMenu
+ {
+@@ -49,7 +51,7 @@ public:
+     explicit StereoPictureMenu(QWidget* const parent);
+ 
+     /**
+-     * The view chosen last, so a flat choice stays until the user picks Stereo again.
++     * The view chosen last (3, Mono, while "Enable 3D" is off), so a flat choice stays until the user enables 3D again.
+      */
+     static int savedView();
+ 
+@@ -85,6 +87,8 @@ private:
+ private:
+ 
+     Stereo::Picture::Options m_options;
++    Stereo::Picture::View    m_eyeView = Stereo::Picture::View::Stereo;   ///< the view of a pair shown while 3D is enabled
++    Stereo::Enable3DAction*  m_enable;
+     Stereo::FileChoiceMenu*  m_fileChoice;
+     Stereo::FileChoiceMoves* m_moves;
+     QActionGroup*            m_views;
