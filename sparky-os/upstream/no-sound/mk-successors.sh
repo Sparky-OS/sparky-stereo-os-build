@@ -7,6 +7,7 @@
 #   OUT: receives one folder per source (the new .dsc and Debian tarball); PUBLISHED_POOL: the repository's pool/main folder;
 #   LAYER_VERSION: the stereo layer's version the players need (1.21.0-1+lc1).
 set -euo pipefail
+export DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE=$(cd "$HERE/../../.." && pwd)
 OUT=$(mkdir -p "$1" && cd "$1" && pwd)

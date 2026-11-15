@@ -7,6 +7,7 @@
 # The orig tarball is the commit's tree without debian/ (git archive), as for every earlier version; the plain source is packed
 # next to it, then lean.debian_prepare adds the toolkit at 1.21.0-1+lc1 with the earlier source's preserve plan.
 set -euo pipefail
+export DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE=$(cd "$HERE/../../.." && pwd)
 OUT=$(mkdir -p "$1" && cd "$1" && pwd)
