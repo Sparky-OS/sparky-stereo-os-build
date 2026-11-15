@@ -24,6 +24,7 @@ cmake -S "$HERE" -B "$WORK/build" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INST
 cmake --build "$WORK/build" -j"${JOBS:-4}" >"$WORK/build.log"
 DESTDIR=$D cmake --install "$WORK/build" >"$WORK/install.log"
 find "$D" -name '*.so' -o -path '*/bin/sparky-stereo-camera' | xargs strip --strip-unneeded
+gzip -9n "$D/usr/share/man/man1/sparky-stereo-camera.1"
 install -Dm644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
 install -m644 "$HERE/CHANGELOG" "$D/usr/share/doc/$PACKAGE/CHANGELOG"
 install -m644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
@@ -79,18 +80,19 @@ $PACKAGE ($VERSION) unstable; urgency=medium
 
   * First release (ORDER 570): the Camera page of System Settings, its command and the user service that applies the saved choices.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 15 Nov 2026 12:00:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 15 Nov 2026 06:00:00 -0300
 EOF
 cp "$HERE/copyright" "$S/debian/copyright"
 mkdir -p "$S/debian/source"
 echo '3.0 (native)' >"$S/debian/source/format"
 cat >"$S/debian/rules" <<'EOF'
 #!/usr/bin/make -f
-binary:
+binary binary-arch:
 	OUT=$(CURDIR)/.. bash ./build.sh
 	dpkg-distaddfile $$(dpkg-parsechangelog -S Source)_$$(dpkg-parsechangelog -S Version)_amd64.deb System optional
+binary-indep:
 clean:
-build:
+build build-arch build-indep:
 EOF
 chmod +x "$S/debian/rules"
 # A native package is dated by its own newest changelog entry (ORDER 421b); the tree is normalized so the checkout time and the umask stay out

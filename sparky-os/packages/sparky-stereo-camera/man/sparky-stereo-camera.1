@@ -1,0 +1,24 @@
+.TH SPARKY-STEREO-CAMERA 1 "November 2026" "sparky-stereo-camera 0.1.0" "Sparky Stereo OS"
+.SH NAME
+sparky-stereo-camera \- the Camera page of System Settings, as a command
+.SH SYNOPSIS
+.B sparky-stereo-camera
+[\fB\-\-no\-save\fR] \fBlist\fR | \fBdefault\fR [\fINAME\fR] | \fBformats\fR \fINAME\fR | \fBmode\fR \fINAME\fR [\fIFOURCC WxH FPS\fR] | \fBcontrols\fR \fINAME\fR | \fBcontrol\fR \fINAME CONTROL\fR [\fIVALUE\fR] | \fBreset\fR \fINAME\fR | \fBpacking\fR \fINAME\fR [\fIID\fR|\fBlist\fR] | \fBsave\fR \fINAME\fR | \fBapply\fR [\fINAME\fR] | \fBwatch\fR
+.SH DESCRIPTION
+A camera is named by its PipeWire node name (see \fBlist\fR). \fBdefault\fR reads or sets the session's default video source
+(WirePlumber's default.configured.video.source), which every program that asks PipeWire for a camera follows.
+\fBmode\fR and \fBcontrol\fR set the camera's format, size, frame rate or one control on the V4L2 device and keep the choice in
+~/.config/sparky-stereo-camera/cameras.ini unless \fB\-\-no\-save\fR comes first.
+\fBapply\fR sets the saved choices again; \fBwatch\fR does so whenever a camera appears, and is what the user service sparky-stereo-camera.service runs.
+\fBpacking\fR keeps how a two-lens camera packs its two pictures, by the stereo layer's input list (\fBpacking NAME list\fR prints it).
+.PP
+Output is JSON. Exit status 0 is success, 1 a failure the command says, 2 a wrong command line, 3 no default camera.
+.SH FILES
+.TP
+~/.config/sparky-stereo-camera/cameras.ini
+What the person chose for each camera.
+.TP
+~/.local/state/wireplumber/default-nodes
+Where WirePlumber keeps the default camera.
+.SH SEE ALSO
+\fBpw-dump\fR(1), \fBpw-metadata\fR(1), \fBwireplumber\fR(1)

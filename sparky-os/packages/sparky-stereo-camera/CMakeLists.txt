@@ -30,5 +30,6 @@ endif()
 
 ki18n_install(po)
 install(FILES systemd/sparky-stereo-camera.service DESTINATION lib/systemd/user)
+install(FILES man/sparky-stereo-camera.1 DESTINATION share/man/man1)
 install(CODE "file(MAKE_DIRECTORY \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/lib/systemd/user/default.target.wants\")
 execute_process(COMMAND ln -sf ../sparky-stereo-camera.service \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/lib/systemd/user/default.target.wants/sparky-stereo-camera.service\")")
