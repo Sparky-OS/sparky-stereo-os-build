@@ -2,7 +2,7 @@
 # The page's engine against the rig: a PipeWire and WirePlumber of their own, virtual cameras (PipeWire Video/Source nodes carrying
 # api.v4l2.path) and a user-space V4L2 device behind /dev/videoN (rig/vcam-shim.c). Each row prints PASS or FAIL and the value read.
 # Usage (inside the rig container, session started, cameras a, b and sbs up):  sh tests/rig-proof.sh ROW...   (rows: default persist modes controls two held norefuse replug)
-. /var/tmp/camera-settings-page-570/work/env-rig.sh
+. "${SPARKY_PROOF_ENV:-/var/tmp/camera-settings-page-570/work/env-rig.sh}"
 unset LD_PRELOAD
 CLI() { LD_PRELOAD=$VCAM_ROOT/vcam-shim.so sparky-stereo-camera "$@"; }
 fails=0
