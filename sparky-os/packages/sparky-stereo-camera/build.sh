@@ -10,7 +10,7 @@ TOOLKIT=$(cd "$HERE/../.." && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
 PACKAGE=sparky-stereo-camera
 VERSION=0.1.0
-export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(date -u -d "2026-11-15 09:00:00" +%s)}
+export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:?the host passes the recipe's date (build-provenance.sh)}
 export DEBEMAIL=Capitain_Jack@yahoo.com DEBFULLNAME="Daniel Ramos (Capitain Jack)"
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.camera.XXXXXX")
@@ -22,3 +22,5 @@ python3 "$TOOLKIT/repo/reproducible.py" normalize "$SOURCE_DATE_EPOCH" "$SRC"
 (cd "$SRC" && PYTHONPATH="$TOOLKIT" dpkg-buildpackage -us -uc -sa -j"${JOBS:-4}" >"$WORK/build.log" 2>&1) || { tail -40 "$WORK/build.log"; exit 1; }
 cp "$WORK"/*.deb "$WORK"/*.dsc "$WORK"/*.tar.xz "$WORK"/*.buildinfo "$WORK"/*.changes "$WORK"/*.json "$OUT/" 2>/dev/null || true
 cp "$WORK/build.log" "$OUT/build.log"
+# the release gate: every archive and its HR companions carry a valid lc1 record, and the build record is written beside them
+(cd "$OUT" && PYTHONPATH="$TOOLKIT" python3 -m lean.release check-debs ./*.deb)
