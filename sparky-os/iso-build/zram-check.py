@@ -71,6 +71,12 @@ SCRIPT_SUFFIXES = {'.sh', '.bash', '.py', '.pl', '.rb', '.js', '.lua'}
 MARKDOWN_PATH = re.compile(rb'''[^\s\0"'`<>|;=(){}\[\]]+\.(?:md|markdown)\b''', re.I)
 QUOTED_MARKDOWN = re.compile(rb'''["']([^"'\r\n\0]+\.(?:md|markdown))["']''', re.I)
 LITERAL_PATH = re.compile(rb'''/[^\s\0"'`<>|;=(){}\[\]]+''')
+# MARKDOWN_PATH read alone is quadratic in a long run of bytes with no separator (a compiled library's tables:
+# NVIDIA's 66 MB libnvidia-present held the round for hours). markdown_paths() gives the same matches in one pass:
+# the endings are found first, then each one's run of path bytes.
+MARKDOWN_END = re.compile(rb'\.(?:md|markdown)\b', re.I)
+PATH_STOP = re.compile(rb'''[\s\0"'`<>|;=(){}\[\]]''')
+PATH_STOP_BYTES = frozenset(b' \t\n\r\f\v\0"\'`<>|;=(){}[]')
 TEXT_LIMIT = 4 << 20
 BINARY_LIMIT = 256 << 20
 MENTION = re.compile(r'zram|zswap', re.I)
@@ -701,6 +707,27 @@ def configuration(path):
                for folder in CONFIG_FOLDERS)
 
 
+def markdown_paths(data):
+    """What MARKDOWN_PATH.findall(data) returns, in time linear in the data: per run of path bytes, the run from
+    its start to its last Markdown ending (an ending needs a byte of the run before its dot)."""
+    out, start, end, scanned = [], None, None, 0
+    for hit in MARKDOWN_END.finditer(data):
+        dot = hit.start()
+        if start is not None and not PATH_STOP.search(data, scanned, dot):
+            end, scanned = hit.end(), hit.end()  # the same run: the match grows to this ending
+            continue
+        if start is not None and end is not None:
+            out.append(data[start:end])
+        start = dot
+        while start > 0 and data[start - 1] not in PATH_STOP_BYTES:
+            start -= 1
+        end = hit.end() if dot > start else None
+        scanned = hit.end()
+    if start is not None and end is not None:
+        out.append(data[start:end])
+    return out
+
+
 def references(path, data, mode):
     """Markdown paths named by code or configuration, including literal paths in compiled programs."""
     if data is None:
@@ -708,7 +735,7 @@ def references(path, data, mode):
     if not (mode & 0o111 or data.startswith((b'#!', b'\x7fELF')) or configuration(path)
             or PurePosixPath(path).suffix in SCRIPT_SUFFIXES):
         return set()
-    paths = MARKDOWN_PATH.findall(data) + QUOTED_MARKDOWN.findall(data) + LITERAL_PATH.findall(data)
+    paths = markdown_paths(data) + QUOTED_MARKDOWN.findall(data) + LITERAL_PATH.findall(data)
     found = {PurePosixPath(p.decode('utf-8', errors='replace')).name.casefold() for p in paths}
     text = text_of(data) if len(data) <= TEXT_LIMIT else None
     if text is not None:
