@@ -11,7 +11,7 @@ mkpkg() { # name version variant text
 	local d=$W/$1-$3
 	mkdir -p "$d/DEBIAN" "$d/usr/bin"
 	{
-		printf 'Package: %s\nVersion: %s\nArchitecture: amd64\nMaintainer: test <test@example.invalid>\nDescription: toy %s\n' "$1" "$2" "$1"
+		printf 'Package: %s\nVersion: %s\nArchitecture: amd64\nMaintainer: test\nDescription: toy %s\n' "$1" "$2" "$1"
 		[ "$3" = base ] || printf 'Architecture-Variant: %s\n' "$3"
 	} >"$d/DEBIAN/control"
 	printf '#!/bin/sh\necho "%s"\n' "$4" >"$d/usr/bin/$1"
