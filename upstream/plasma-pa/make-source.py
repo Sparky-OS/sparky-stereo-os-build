@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Prepare the accepted stream-visibility change on Debian's source, then add Lean Code."""
 import os
+import hashlib
 from pathlib import Path
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ recipe=Path(__file__).resolve().parent
 repo=recipe.parents[1]
 toolkit=repo/'sparky-os'
 base=Path(sys.argv[1]).resolve()
+assert hashlib.sha256(base.read_bytes()).hexdigest() == '9217c853f0916f31ee7922d5b53271a4af572a602c9ee81f9f31142c88f2d09b'
 work=Path(sys.argv[2]).resolve()
 assert os.environ['SOURCE_DATE_EPOCH'].isdigit()
 assert not work.exists(), work
@@ -37,6 +39,13 @@ assert 'override_dh_auto_test:\n\t:\n' in text
 text=text.replace('override_dh_auto_test:\n\t:\n',
     'override_dh_auto_test:\n\t@printf "%s\\n" "Debian disables build-time tests. The upstream applettest requires selenium-webdriver-at-spi-run, Appium, its Python driver, a private compositor and accessibility session; run the native and installed UI proofs separately."\n')
 rules.write_text(text)
+control=source/'debian/control'
+text=control.read_text()
+old=next(line for line in text.splitlines() if line.startswith('Maintainer: '))
+text=text.replace(old, 'Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\nXSBC-Original-'+old,1)
+text=text.replace('Homepage: https://invent.kde.org/plasma/plasma-pa',
+                  'Homepage: https://sparkylinux.org\nBugs: https://github.com/Sparky-OS/sparky-stereo-os/issues',1)
+control.write_text(text)
 subprocess.run(['dch','--date',os.environ['SOURCE_DATE_RFC2822'],'--newversion',version,'--distribution','mashtabba',
     'Expose optional virtual streams in the Sound page and volume widget; repair null-client handling and recording-device selection.'],cwd=source,check=True)
 subprocess.run(['python3',str(toolkit/'repo/provenance-files.py'),str(source),'virtual-streams.patch','plasma-pa-virtual-streams.po.patch'],check=True)

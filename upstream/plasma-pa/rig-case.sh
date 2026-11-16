@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -euo pipefail
 ulimit -c 0
-case_name=${1:?published or candidate}
+case_name=${1:?published, candidate or installed}
 scale=${2:-1}
 phase=${3:-page}
 result=/lane/evidence/${case_name}-${scale}
@@ -65,11 +65,13 @@ if [[ $phase == hotplug ]]; then
     python3 /lane/src/sparky-stereo-os-build/upstream/plasma-pa/rig-hotplug.py "$result"
 else
     gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.a11y.Bus.GetAddress >"$result/a11y.txt"
+    ui_mode=$case_name
+    if [[ $case_name == installed ]]; then ui_mode=candidate; fi
     if [[ $phase == applet ]]; then
-        python3 /lane/src/sparky-stereo-os-build/upstream/plasma-pa/rig-applet.py "$result" "$case_name"
+        python3 /lane/src/sparky-stereo-os-build/upstream/plasma-pa/rig-applet.py "$result" "$ui_mode"
     else
         kcmshell6 kcm_pulseaudio >"$result/kcm.log" 2>&1 & pids+=($!)
         sleep 5
-        python3 /lane/src/sparky-stereo-os-build/upstream/plasma-pa/rig-ui.py "$result" "$case_name"
+        python3 /lane/src/sparky-stereo-os-build/upstream/plasma-pa/rig-ui.py "$result" "$ui_mode"
     fi
 fi
