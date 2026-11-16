@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
+#include <QCoreApplication>
 #include <QDomDocument>
 #include <QImage>
 #include <QMap>
@@ -7,17 +8,21 @@
 
 class Drawing
 {
+    Q_DECLARE_TR_FUNCTIONS(Drawing)
 public:
-    void open(const QString &path);
+    void open(const QString &path, bool square = true);
+    int height(int width) const;
     QStringList groups() const;
-    void setPlace(const QString &id, int place);
+    void setPlace(const QString &id, qreal place);
+    int disparity(const QString &id, int size) const;
+    QString groupLabel(const QString &id) const;
     void readLimits();
     qreal sunk() const { return sunkLimit; }
     qreal popped() const { return poppedLimit; }
     QImage eye(int size, bool right, QString only = {}) const;
     QByteArray viewSvg(int size, bool right, QString only = {}) const;
     QByteArray pairSvg(int size) const;
-    QMap<QString, int> places;
+    QMap<QString, qreal> places;
     QByteArray original;
     QString source;
 private:
