@@ -76,6 +76,12 @@ try:
         before=state()
         assert before['listen']['mic-a']['output']=='out-a'
         item=next(obj for obj,depth in walk(pyatspi.Registry.getDesktop(0)) if obj.getRoleName()=='list item' and 'Listen:' in obj.name and not any('Listen:' in c.name for c in obj if c.getRoleName()=='list item'))
+        if os.environ.get('PA19_CHECK_NAMES')=='1':
+            expected='Listen: '+before['listen']['mic-a']['sourceLabel']
+            assert item.name==expected,(item.name,expected)
+            combined=[obj.name for obj,depth in walk(pyatspi.Registry.getDesktop(0)) if obj.getRoleName()=='list item' and 'Combined Recording' in obj.name]
+            assert len(combined)==2 and all(n.startswith('Combined Recording: ') for n in combined),combined
+            assert all('pw-cli' not in n for n in combined),combined
         button=next(c for c in item if c.name=='Additional Options' and c.getRoleName()=='push button menu')
         click(button)
         snapshot('owned-route-menu')

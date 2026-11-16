@@ -56,7 +56,7 @@ text=text.replace('Homepage: https://invent.kde.org/plasma/plasma-pa',
 assert '\nDepends: ' in text
 text=text.replace('\nDepends: ', '\nDepends: kded6, pulseaudio-utils, pipewire-bin (>= 1.6.9) | pulseaudio, ',1)
 control.write_text(text)
-subprocess.run(['dch','--date',os.environ['SOURCE_DATE_RFC2822'],'--newversion',version,'--distribution','mashtabba',
+subprocess.run(['dch','--force-distribution','--date',os.environ['SOURCE_DATE_RFC2822'],'--newversion',version,'--distribution','mashtabba',
     'Add opt-in input monitoring and combined recording, with explicit targets, owned routes and translated failures; retain virtual stream controls.'],cwd=source,check=True)
 subprocess.run(['python3',str(toolkit/'repo/provenance-files.py'),str(source),'virtual-streams.patch','plasma-pa-virtual-streams.po.patch','audio-routes.patch','plasma-pa-audio-routes.po.patch'],check=True)
 repro=toolkit/'repo/reproducible.py'
