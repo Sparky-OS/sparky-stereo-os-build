@@ -21,7 +21,8 @@ import json
 from pathlib import Path
 import sys
 tree, out = map(Path, sys.argv[1:])
-targets = (out / 'targets.txt').read_text().splitlines()
+targets = [line for line in (out / 'targets.txt').read_text().splitlines()
+           if line.startswith('fate-')]
 records = []
 for target in targets:
     rep = tree / 'tests/data/fate' / (target.removeprefix('fate-') + '.rep')
