@@ -108,7 +108,7 @@ def build_tree(root, out, preserve=None, retired=None):
 
 def check_debs(paths):
     """Check final archive bytes and require matching, independently marked HR companions."""
-    verified, hr_blobs, copyrights = {}, {}, {}
+    verified, hr_blobs, copyrights, variants = {}, {}, {}, {}
     for deb in paths:
         with tempfile.TemporaryDirectory(prefix='lc-check-') as work:
             subprocess.run(['dpkg-deb', '--raw-extract', str(deb), work], check=True, stdout=subprocess.DEVNULL)
@@ -116,10 +116,14 @@ def check_debs(paths):
             why = identities.problem(obj['renderer']['identity'], obj['renderer']['sha256'])
             if why:
                 raise package.Invalid(f'{deb}: {why}')
-            key = (obj['package'], obj['version'], obj['architecture'])
+            # An apt architecture variant (Architecture-Variant: amd64v3 in the control file, ORDER 108) shares its package, version and
+            # architecture with its baseline twin; the variant is the rest of its identity, and its HR companion carries the same one.
+            variant = package.control(Path(work)).get('architecture-variant', '')
+            key = (obj['package'], obj['version'], obj['architecture'] + (':' + variant if variant else ''))
             if key in verified:
                 raise package.Invalid(f'duplicate package identity: {key}')
             verified[key] = obj
+            variants[key] = variant
             licence = Path(work) / 'usr/share/doc' / obj['package'] / 'copyright'
             copyrights[key] = licence.read_bytes() if licence.is_file() and not licence.is_symlink() else None
             if obj['package'].endswith('-lc-hr'):
@@ -134,7 +138,7 @@ def check_debs(paths):
     for key, obj in verified.items():
         if not obj['hr_package']:
             continue
-        hr_key = (obj['hr_package'], obj['version'], obj['architecture'])
+        hr_key = (obj['hr_package'], obj['version'], obj['architecture'] + (':' + variants[key] if variants[key] else ''))
         if hr_key not in verified:
             raise package.Invalid(f'{key}: matching HR documentation package is missing')
         # ORDER 451c: the companion says exactly what its base package says about who wrote the packaging; build_tree copies the
