@@ -486,24 +486,29 @@ def run_job_locked(name, job, cfg, args, ctx):
 
     d = env["CI_PROJECT_DIR"]
     cmd = ["docker", "run", "--rm", "--platform", "linux/amd64", "--user", "1000:1000",
+           "--ulimit", "core=0",
            "--cpus", CPUS, "--shm-size", "1g", "--init",
            "-v", f"{jobdir}:{d}", "-w", d,
            "-v", f"{scriptfile}:/job.sh:ro",
            "-v", f"{sitedir}:/kdecilocal-site:ro",
            "-e", "PYTHONPATH=/kdecilocal-site"]
+    prefix = os.environ.get("KDE_CI_LOCAL_CONTAINER_PREFIX")
+    if prefix:
+        cmd += ["--name", prefix + "-" + re.sub(r"[^a-zA-Z0-9_.-]", "-", name)]
     if vm or proxy_mode:
         # what the VM image gives a job: a user runtime directory (the pipeline's DBUS_SESSION_BUS_ADDRESS
         # is unix:path=/run/user/1000/bus) and a render node (KWin's integration tests need one)
         cmd += ["--tmpfs", "/run/user/1000:uid=1000,gid=1000,mode=700", "-e", "XDG_RUNTIME_DIR=/run/user/1000"]
-        if os.path.exists("/sys/class/drm/renderD128") and dri_gid("/dev/dri/renderD128"):
+        devices = os.environ.get("KDE_CI_LOCAL_NO_DEVICES") != "1"
+        if devices and os.path.exists("/sys/class/drm/renderD128") and dri_gid("/dev/dri/renderD128"):
             cmd += ["--device", "/dev/dri/renderD128", "--group-add", dri_gid("/dev/dri/renderD128")]
         # KWin's DMA-BUF tests make real buffers with /dev/udmabuf, which the VM images have;
         # without it they skip here and pass, while the pipeline runs them
-        if os.path.exists("/dev/udmabuf"):
+        if devices and os.path.exists("/dev/udmabuf"):
             cmd += ["--device", "/dev/udmabuf", "--group-add", str(os.stat("/dev/udmabuf").st_gid)]
         # KWin's DRM tests open /dev/dri/card1 when CI is set: a vkms device on KDE's runners.
         # When the host has vkms loaded, its card goes in under that name.
-        card = vkms_card()
+        card = vkms_card() if devices else None
         if card and dri_gid(card):
             cmd += ["--device", f"{card}:/dev/dri/card1", "--group-add", dri_gid(card)]
     for e in args.job_env:
