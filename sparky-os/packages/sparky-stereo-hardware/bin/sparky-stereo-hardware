@@ -20,6 +20,7 @@ auto=false
 rig_driver=
 nvidia_choice=edition
 wl_option=
+kernel_choice=
 while (($#)); do
 	case "$1" in
 		--auto) auto=true ;;
@@ -27,11 +28,16 @@ while (($#)); do
 		--fixture) shift; fixture=${1:?Missing fixture directory} ;;
 		--rig-driver) shift; rig_driver=${1:?Missing rig driver package} ;;
 		--broadcom-wl) shift; wl_option=${1:?Missing --broadcom-wl value: ask, yes, no, repair or reset} ;;
+		--kernel) shift; kernel_choice=${1:?Missing --kernel value: v3 or base} ;;
 		--nvidia) shift; nvidia_choice=${1:?Missing NVIDIA choice: edition or nouveau} ;;
 		# NVIDIA's i386 libraries at the installed driver's version, for i386 enabled after the driver (the Repair of the
 		# problem dpkg's hook keeps; ORDER 363)
 		--nvidia-i386) exec "$LIB/nvidia-i386" install ;;
-		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY] [--rig-driver PACKAGE] [--nvidia edition|nouveau] [--nvidia-i386] [--broadcom-wl ask|yes|no|repair|reset]'
+		# packages built for a processor level above this one's, installed again so apt takes the baseline build (the Repair of the notice, ORDER 108)
+		--variants) exec "$LIB/variant-check" repair ;;
+		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY] [--rig-driver PACKAGE] [--nvidia edition|nouveau] [--nvidia-i386] [--broadcom-wl ask|yes|no|repair|reset] [--kernel v3|base] [--variants]'
+			echo '  --variants: install again the packages built for an x86-64 level above this processor, so apt takes the baseline build'
+			echo '  --kernel base: keep the baseline kernel only on an x86-64-v3 processor (the choice is kept for this machine; nothing is removed); --kernel v3: install the x86-64-v3 kernel again, the default on such a processor'
 			echo '  --nvidia edition (the default): the edition'"'"'s NVIDIA driver for the card: its open modules with HDMI 3D on Turing and newer, NVIDIA'"'"'s 580 driver on Maxwell, Pascal and Volta'
 			echo '  --nvidia nouveau: keep nouveau'
 			echo '  --nvidia-i386: only NVIDIA'"'"'s 32-bit libraries (nvidia-driver-libs:i386, libcuda1:i386) at the installed driver'"'"'s version, where dpkg has i386'
@@ -46,6 +52,7 @@ done
 # Detection and plan parsing use stable output; Repair above keeps the person's language.
 export LC_ALL=C.UTF-8
 case "$wl_option" in ''|ask|yes|no|repair|reset) ;; *) echo 'The Broadcom Wi-Fi choice is ask, yes, no, repair or reset' >&2; exit 2 ;; esac
+case "$kernel_choice" in ''|v3|base) ;; *) echo 'The kernel choice is v3 (the default on an x86-64-v3 processor) or base' >&2; exit 2 ;; esac
 case "$rig_driver" in ''|hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) ;; *) echo 'Unknown rig driver' >&2; exit 2 ;; esac
 case "$nvidia_choice" in edition|nouveau) ;; *) echo 'The NVIDIA choice is edition (the default: the edition'"'"'s driver with HDMI 3D) or nouveau' >&2; exit 2 ;; esac
 if [[ -n "$fixture" ]] && ! $dry; then echo 'Fixtures require --dry-run' >&2; exit 2; fi
@@ -86,6 +93,18 @@ if ! $dry; then
 	exec > >(tee -a "$LOG") 2>&1
 	log "Log: $LOG"
 fi
+KERNEL_MARK=/var/lib/sparky-stereo-hardware/kernel-base
+if [[ -n $kernel_choice ]] && ! $dry; then
+	# the person's choice for this machine: base keeps only the baseline kernel from now on (nothing installed is removed)
+	if [[ $kernel_choice == base ]]; then
+		mkdir -p "${KERNEL_MARK%/*}" && : >"$KERNEL_MARK"
+		log 'Kernel: the baseline kernel only, as chosen; the x86-64-v3 kernel is not installed again. An installed one stays until you remove it (apt remove linux-image-sparky-stereo-v3). --kernel v3 undoes this'
+	else
+		rm -f "$KERNEL_MARK"
+		log 'Kernel: the x86-64-v3 kernel is installed again on an x86-64-v3 processor by the next Hardware Setup'
+	fi
+	$auto || exit 0
+fi
 if [[ -n "$fixture" ]]; then
 	FACTS=$fixture
 else
@@ -99,6 +118,7 @@ else
 		echo 1 >"$FACTS/laptop"
 	fi
 	dpkg --print-architecture >"$FACTS/architecture"
+	[[ ! -e $KERNEL_MARK ]] || echo base >"$FACTS/kernel-choice"
 	# CPU level: the loader's own list (lines marked "supported, searched"); board: DMI
 	if [[ -x /lib64/ld-linux-x86-64.so.2 ]] && ! /lib64/ld-linux-x86-64.so.2 --help >"$FACTS/ldso-help" 2>&1; then
 		rm -f "$FACTS/ldso-help"
@@ -140,6 +160,11 @@ if $dry; then
 	if [[ -f "$FACTS/sensors-detect" ]]; then
 		log 'Fixture sensor module recommendations:'
 		sensor_modules "$FACTS/sensors-detect"
+	fi
+	if grep -Fxq $'package\tlinux-image-sparky-stereo-v3' "$WORK/plan"; then
+		log "Would install linux-image-sparky-stereo-v3 and linux-headers-sparky-stereo-v3 (the kernel built for this x86-64-v3 processor); the baseline kernel stays installed and in GRUB, and the newer release boots first"
+	elif grep -Fxq $'fact\tx86-64-v3\tyes' "$WORK/plan"; then
+		log "Would not install the x86-64-v3 kernel: the baseline kernel was chosen for this machine (--kernel v3 undoes it)"
 	fi
 	if grep -Fxq $'action\tbroadcom-wl' "$WORK/plan"; then
 		if wl_declined; then
@@ -248,6 +273,7 @@ for package in "${packages[@]}"; do
 	case "$package" in
 		task-laptop) install_step --install-recommends "$package" ;;
 		power-profiles-daemon|thermald) install_step "$package" ;;
+		linux-image-sparky-stereo-v3|linux-headers-sparky-stereo-v3) install_step "$package" ;;
 	esac
 done
 if [[ -s "$FACTS/firmware-packages" ]]; then

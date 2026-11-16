@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/03
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/07
+# Last update 2026/11/16
 """Turn captured hardware facts into a deterministic installation plan."""
 import pathlib
 import json
@@ -207,6 +207,17 @@ if new_facts:
             break
     emit("fact", f"cpu-level\tv{loader_level}")
     emit("fact", f"x86-64-v3\t{'yes' if loader_level >= 3 else 'no'}")
+    # The kernel built for the processor's level (ORDER 108; Daniel, 2026-10-05: "no optional, v3", automatic, "The baseline must
+    # always stay installed and bootable; optimised parts only add to it"). linux-image-sparky-stereo stays (the ISO installs it and
+    # nothing here removes it), so GRUB lists both; the v3 release sorts above the base release of the same build, so it boots first
+    # (tests/kernel-v3.sh). The person's own choice, --kernel base, is kept for the machine (the fact file kernel-choice).
+    if loader_level >= 3 and read("architecture").strip() == "amd64":
+        choice = (read_optional("kernel-choice") or "").strip()
+        if choice == "base":
+            emit("found", "x86-64-v3 processor: the baseline kernel was chosen for this machine (sparky-stereo-hardware --kernel v3 undoes it)")
+        else:
+            match("x86-64-v3 processor: the kernel built for x86-64-v3 (the baseline kernel stays installed and in GRUB)",
+                  "linux-image-sparky-stereo-v3", "linux-headers-sparky-stereo-v3")
     if flag_level != loader_level:
         emit("fact", f"cpu-level-disagreement\tloader v{loader_level}, cpuinfo flags v{flag_level}; the loader's answer is used")
 

@@ -23,6 +23,9 @@ ln -s /dev/null "$D/usr/lib/systemd/system/sparky-stereo-hardware-nvidia-i386.se
 install -Dm755 "$HERE/bin/sparky-stereo-bt-voice-check" "$D/usr/lib/sparky-stereo-hardware/bt-voice-check"
 install -Dm644 "$HERE/share/systemd/sparky-stereo-hardware-bt-voice.service" "$D/usr/lib/systemd/system/sparky-stereo-hardware-bt-voice.service"
 install -Dm644 "$HERE/share/udev/71-sparky-stereo-bt-voice.rules" "$D/usr/lib/udev/rules.d/71-sparky-stereo-bt-voice.rules"
+# packages built for a higher processor level than the machine's are told to the person: after every dpkg run (the hook) and at boot (ORDER 108)
+install -Dm755 "$HERE/bin/sparky-stereo-variant-check" "$D/usr/lib/sparky-stereo-hardware/variant-check"
+install -Dm644 "$HERE/share/systemd/sparky-stereo-hardware-variant-check.service" "$D/usr/lib/systemd/system/sparky-stereo-hardware-variant-check.service"
 # a newly connected headset or speaker (Bluetooth, or USB) takes the sound and hands it back when it leaves; the script is wanted, not required (ORDER 129)
 install -Dm644 "$HERE/share/wireplumber/50-sparky-stereo-new-output.conf" "$D/usr/share/wireplumber/wireplumber.conf.d/50-sparky-stereo-new-output.conf"
 install -Dm644 "$HERE/share/wireplumber/sparky-stereo-new-output.lua" "$D/usr/share/wireplumber/scripts/sparky-stereo-new-output.lua"
@@ -61,7 +64,7 @@ install -Dm644 "$HERE/share/udev/71-sparky-stereo-nvidia-units.rules" "$D/usr/li
 
 sparky-stereo-problems catalog sparky-stereo-hardware "$HERE/problems-lang" "$D/usr/lib/systemd/catalog" \
 	--subject LOCAL1=LOCAL2,LOCAL3,LOCAL4 --subject LOCAL9=LOCAL5,LOCAL6,LOCAL7,LOCAL8,LOCAL10,LOCAL11,LOCAL12,LOCAL13,LOCAL14,LOCAL15,LOCAL16 \
-	--subject LOCAL17=LOCAL18 --subject LOCAL19=LOCAL20 \
+	--subject LOCAL17=LOCAL18 --subject LOCAL19=LOCAL20 --subject LOCAL84=LOCAL85 \
 	--subject LOCAL61=LOCAL73,LOCAL74,LOCAL75,LOCAL76,LOCAL77,LOCAL78,LOCAL79,LOCAL80,LOCAL81,LOCAL82,LOCAL83
 
 # Persistent DisplayLink startup errors are reported once; vendor hotplug stays.

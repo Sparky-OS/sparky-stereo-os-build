@@ -1,0 +1,129 @@
+#!/usr/bin/python3
+# Created by Daniel Ramos (Capitain Jack) and Paweł "pavroo" Pijanowski 2026/11/16
+# Copyright 2026 under the GNU GPL3 License
+# sparky-stereo-variant-check [check | list | repair] [--dry-run]
+# A package built for a processor level (the amd64v3 builds the repository publishes as apt architecture variants) installed on a
+# processor below that level may stop on an illegal instruction: apt chooses a build when it runs and never looks at what is
+# installed (ORDER 108; sparky-stereo-apt 20261116.1). This tells the person, through the engine, instead of leaving it to a crash
+# (Daniel, 2026-11-01: "either it works or not and the user must know").
+#   check   (default) keep the notice when a package of a level above the processor's is installed, clear it when none is.
+#           Run after every dpkg run (dpkg's post-invoke hook) and at boot (a disk moves between machines while powered off).
+#   list    print the processor's level and the packages, keep nothing
+#   repair  install those packages again: apt takes the baseline build on this processor (the Repair of the notice)
+#   --dry-run  print the engine commands instead of running them
+# The level is the loader's own list, the lines marked "supported, searched", as detect.py reads it. The packages are the
+# installed ones whose dpkg status carries Architecture-Variant: amd64vN (dpkg keeps the field as the repository wrote it).
+# SPARKY_VARIANT_FIXTURE=DIR (tests): DIR/ldso-help and DIR/status replace the loader and /var/lib/dpkg/status.
+import os, re, subprocess, sys
+
+PKG = "sparky-stereo-hardware"
+KEY = "variant-mismatch"
+REPAIR = '["sparky-stereo-hardware","--variants"]'
+ROOT = os.environ.get("SPARKY_STEREO_ROOT", "")
+STORE = ROOT + "/var/lib/sparky-stereo-problems"
+LOADER = "/lib64/ld-linux-x86-64.so.2"
+FIXTURE = os.environ.get("SPARKY_VARIANT_FIXTURE")
+
+
+def say(text):
+    print("sparky-stereo-variant-check: " + text, file=sys.stderr)
+
+
+def cpu_level():
+    if FIXTURE:
+        with open(os.path.join(FIXTURE, "ldso-help")) as f:
+            text = f.read()
+    else:
+        if not os.path.exists(LOADER):
+            return None  # not an x86-64 system: there are no variants to mismatch
+        out = subprocess.run([LOADER, "--help"], capture_output=True, text=True)
+        if out.returncode != 0:
+            say("the loader did not list its CPU levels (%s --help exited %d), so the packages cannot be checked" % (LOADER, out.returncode))
+            raise SystemExit(1)
+        text = out.stdout + out.stderr
+    level = 1
+    for n in (2, 3, 4):
+        if re.search(r"^\s*x86-64-v%d \(supported, searched\)" % n, text, re.M):
+            level = n
+    return level
+
+
+def variant_packages():
+    path = os.path.join(FIXTURE, "status") if FIXTURE else ROOT + "/var/lib/dpkg/status"
+    found = {}
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for stanza in f.read().split("\n\n"):
+            if "Architecture-Variant:" not in stanza:
+                continue
+            fields = dict(re.findall(r"^([A-Za-z-]+): (.*)$", stanza, re.M))
+            if not fields.get("Status", "").endswith(" installed"):
+                continue
+            m = re.fullmatch(r"amd64v([1-9])", fields.get("Architecture-Variant", "").strip())
+            if m:
+                found[fields["Package"]] = int(m.group(1))
+    return found
+
+
+def mismatched():
+    level = cpu_level()
+    if level is None:
+        return None, {}
+    return level, {p: v for p, v in variant_packages().items() if v > level}
+
+
+def engine(args, dry):
+    cmd = ["sparky-stereo-problems"] + args
+    if dry:
+        print(" ".join(cmd))
+        return
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def main(argv):
+    dry = "--dry-run" in argv
+    words = [a for a in argv if not a.startswith("--")]
+    mode = words[0] if words else "check"
+    level, bad = mismatched()
+    if mode == "list":
+        print("cpu-level v%s" % level if level else "no x86-64 loader")
+        for p, v in sorted(bad.items()):
+            print("mismatch %s amd64v%d" % (p, v))
+        return 0
+    if mode == "repair":
+        if not bad:
+            say("no installed package is built for a level above this processor's: nothing to do")
+            return 0
+        # the package lists on the disk were read for the other processor (apt chooses its index by the processor it runs on)
+        update = ["apt-get", "-y", "-o", "DPkg::Lock::Timeout=-1", "update"]
+        cmd = ["apt-get", "-y", "-o", "DPkg::Lock::Timeout=-1", "--reinstall", "install"] + sorted(bad)
+        if dry:
+            print(" ".join(update))
+            print(" ".join(cmd))
+            return 0
+        env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
+        r = subprocess.run(update, env=env)
+        if r.returncode != 0:
+            say("apt-get update failed (exit status %d), so the baseline builds cannot be found; connect to the network and repair again; the notice stays" % r.returncode)
+            return r.returncode
+        r = subprocess.run(cmd, env=env)
+        if r.returncode != 0:
+            say("apt-get could not install %s again (exit status %d); the notice stays" % (", ".join(sorted(bad)), r.returncode))
+            return r.returncode
+        level, bad = mismatched()
+        if bad:
+            say("%s still carry a build for a higher level after the reinstall: the repository publishes no baseline build of them for this processor; the notice stays" % ", ".join(sorted(bad)))
+            engine(["keep", "--repair", REPAIR, PKG, KEY, "LOCAL85", ", ".join(sorted(bad)), "v%d" % level], dry)
+            return 1
+        engine(["clear", PKG, KEY], dry)
+        return 0
+    if level is None:
+        return 0
+    if bad:
+        engine(["keep", "--repair", REPAIR, PKG, KEY, "LOCAL85", ", ".join(sorted(bad)), "v%d" % level], dry)
+    elif os.path.exists("%s/%s_%s.json" % (STORE, PKG, KEY)):
+        engine(["clear", PKG, KEY], dry)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

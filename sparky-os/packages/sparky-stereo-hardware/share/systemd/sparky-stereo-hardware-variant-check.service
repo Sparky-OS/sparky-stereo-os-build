@@ -1,0 +1,14 @@
+# Created by Daniel Ramos (Capitain Jack) and Paweł "pavroo" Pijanowski 2026/11/16
+# Copyright 2026 under the GNU GPL3 License
+# Tells the person when a package built for a higher processor level than this machine's is installed (ORDER 108): at boot,
+# because a disk can move to another computer while it is off; dpkg's post-invoke hook does the same after every package change.
+[Unit]
+Description=Check that the installed packages fit this processor's level
+Documentation=file:/usr/share/doc/sparky-stereo-hardware/README.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/sparky-stereo-hardware/variant-check check
+
+[Install]
+WantedBy=multi-user.target
