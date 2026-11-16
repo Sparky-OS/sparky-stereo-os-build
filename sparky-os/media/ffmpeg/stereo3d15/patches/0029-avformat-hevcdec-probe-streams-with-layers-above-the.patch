@@ -1,0 +1,44 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/7f4def59f2d5f2d02d105b67904c339461ec8790
+From 7f4def59f2d5f2d02d105b67904c339461ec8790 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:19:06 -0300
+Subject: [PATCH 29/48] avformat/hevcdec: probe streams with layers above the
+ base layer
+
+nuh_layer_id was reserved in the first version of H.265; multilayer
+streams (MV-HEVC, auxiliary alpha and depth layers) use it, 0 to 62
+(F.7.4.2.2), so a raw stream with any of their parameter sets or
+pictures was not recognized. Reject only the reserved nuh_layer_id 63
+and a zero nuh_temporal_id_plus1.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ libavformat/hevcdec.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/libavformat/hevcdec.c b/libavformat/hevcdec.c
+index 4fc4068c..ee5ba9a7 100644
+--- a/libavformat/hevcdec.c
++++ b/libavformat/hevcdec.c
+@@ -36,10 +36,15 @@ static int hevc_probe(const AVProbeData *p)
+             uint8_t nal2 = p->buf[i + 1];
+             int type = (code & 0x7E) >> 1;
+ 
+-            if (code & 0x81) // forbidden and reserved zero bits
++            if (code & 0x80) // forbidden zero bit
+                 return 0;
+ 
+-            if (nal2 & 0xf8) // reserved zero
++            // nuh_layer_id, 0 for the base layer and up to 62 for the layers
++            // of multilayer streams (F.7.4.2.2); 63 is reserved
++            if ((code & 0x01) && (nal2 & 0xf8) == 0xf8)
++                return 0;
++
++            if (!(nal2 & 0x07)) // nuh_temporal_id_plus1
+                 return 0;
+ 
+             switch (type) {
+-- 
+2.53.0
+

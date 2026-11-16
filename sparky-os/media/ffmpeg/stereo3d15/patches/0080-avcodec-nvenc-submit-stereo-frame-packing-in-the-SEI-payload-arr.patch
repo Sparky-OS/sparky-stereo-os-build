@@ -1,0 +1,127 @@
+Description: avcodec/nvenc: submit stereo frame packing in the SEI payload array
+ .
+ Put the mandatory frame packing payload first so the HEVC 512-byte SEI
+ budget cannot discard it. Follow the configured and forced keyframe
+ cadence, and submit temporal identity for every frame. Add a default-on
+ frame_packing option following the existing SEI option conventions.
+ .
+ RTX 3060 tests cover all supported packings and orders, FFmpeg/mpv decode,
+ B-frame temporal identity, forced IDR cadence and oversized unregistered
+ SEI. HEVC constraints remain zero. Both plain 2D and explicitly disabled
+ marked sources are byte-identical to the unpatched encoder.
+ .
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/65f7b77fb49b01d9a1ebe0bd77c802e7b7b5ebaa
+Forwarded: no
+Last-Update: 2026-11-09
+
+diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
+index 9203fb65c05..3af73ce7ee2 100644
+--- a/libavcodec/nvenc.c
++++ b/libavcodec/nvenc.c
+@@ -2098,6 +2098,12 @@ av_cold int ff_nvenc_encode_init(AVCodecContext *avctx)
+     NvencContext *ctx = avctx->priv_data;
+     int ret;
+ 
++    ret = ff_frame_packing_init(avctx, &ctx->frame_packing_state,
++                                ctx->extra_sei && ctx->frame_packing,
++                                "-frame_packing 0", 0);
++    if (ret < 0)
++        return ret;
++
+     if (avctx->pix_fmt == AV_PIX_FMT_CUDA || avctx->pix_fmt == AV_PIX_FMT_D3D11) {
+         AVHWFramesContext *frames_ctx;
+         if (!avctx->hw_frames_ctx) {
+@@ -2681,6 +2687,43 @@ static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
+     int sei_count = 0;
+     int i, res;
+ 
++    if (ctx->frame_packing_state.enabled) {
++        FFFramePackingParams packing;
++        uint8_t data[16];
++        int64_t order = ctx->frame_idx_counter - 1;
++        int idr = !order ||
++                  (ctx->encode_config.gopLength != NVENC_INFINITE_GOPLENGTH &&
++                   order - ctx->frame_packing_last_idr >= ctx->encode_config.gopLength) ||
++                  (ctx->forced_idr == 1 && frame->pict_type == AV_PICTURE_TYPE_I);
++        int keyframe = idr || (ctx->forced_idr >= 0 && frame->pict_type == AV_PICTURE_TYPE_I);
++
++        if (idr)
++            ctx->frame_packing_last_idr = order;
++        res = ff_frame_packing_prepare(avctx, &ctx->frame_packing_state, frame,
++                                       keyframe, order, &packing);
++        if (res < 0)
++            return res;
++        if (res) {
++            NV_ENC_SEI_PAYLOAD *tmp;
++            int size = ff_frame_packing_payload(avctx->codec_id, &packing, data);
++
++            tmp = av_fast_realloc(ctx->sei_data, &ctx->sei_data_size, sizeof(*tmp));
++            if (!tmp)
++                return AVERROR(ENOMEM);
++            ctx->sei_data = tmp;
++            ctx->sei_data[0] = (NV_ENC_SEI_PAYLOAD) {
++                .payloadType = SEI_TYPE_FRAME_PACKING_ARRANGEMENT,
++                .payloadSize = size,
++                .payload = av_memdup(data, size),
++            };
++            if (!ctx->sei_data[0].payload)
++                return AVERROR(ENOMEM);
++            /* The mandatory payload is first and at most 16 bytes, so
++             * the HEVC 512-byte budget cannot discard it. */
++            sei_count = 1;
++        }
++    }
++
+     if (ctx->a53_cc && av_frame_get_side_data(frame, AV_FRAME_DATA_A53_CC)) {
+         void *a53_data = NULL;
+         size_t a53_size = 0;
+diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
+index ad6ddaa4347..2834d554994 100644
+--- a/libavcodec/nvenc.h
++++ b/libavcodec/nvenc.h
+@@ -37,6 +37,7 @@ typedef void ID3D11Device;
+ #include "hwconfig.h"
+ 
+ #include "avcodec.h"
++#include "frame_packing.h"
+ 
+ #define MAX_REGISTERED_FRAMES 64
+ 
+@@ -259,6 +260,9 @@ typedef struct NvencContext
+     int multipass;
+     int ldkfs;
+     int extra_sei;
++    int frame_packing;
++    FFFramePacking frame_packing_state;
++    int64_t frame_packing_last_idr;
+     int intra_refresh;
+     int single_slice_intra_refresh;
+     int constrained_encoding;
+diff --git a/libavcodec/nvenc_h264.c b/libavcodec/nvenc_h264.c
+index 103c9a95fda..6bce584cbb0 100644
+--- a/libavcodec/nvenc_h264.c
++++ b/libavcodec/nvenc_h264.c
+@@ -162,6 +162,8 @@ static const AVOption options[] = {
+ #endif
+     { "ldkfs",        "Low delay key frame scale; Specifies the Scene Change frame size increase allowed in case of single frame VBV and CBR",
+                                                             OFFSET(ldkfs),        AV_OPT_TYPE_INT,   { .i64 = 0 }, 0, UCHAR_MAX, VE },
++    { "frame_packing", "Include stereo frame packing",
++      OFFSET(frame_packing), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, VE },
+     { "extra_sei",    "Pass on extra SEI data (e.g. a53 cc) to be included in the bitstream",
+                                                             OFFSET(extra_sei),    AV_OPT_TYPE_BOOL,  { .i64 = 1 }, 0, 1, VE },
+     { "udu_sei",      "Pass on user data unregistered SEI if available",
+diff --git a/libavcodec/nvenc_hevc.c b/libavcodec/nvenc_hevc.c
+index 94ba34c48b4..9e43fb00c24 100644
+--- a/libavcodec/nvenc_hevc.c
++++ b/libavcodec/nvenc_hevc.c
+@@ -148,6 +148,8 @@ static const AVOption options[] = {
+ #endif
+     { "ldkfs",        "Low delay key frame scale; Specifies the Scene Change frame size increase allowed in case of single frame VBV and CBR",
+                                                             OFFSET(ldkfs),        AV_OPT_TYPE_INT,   { .i64 = 0 }, 0, UCHAR_MAX, VE },
++    { "frame_packing", "Include stereo frame packing",
++      OFFSET(frame_packing), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, VE },
+     { "extra_sei",    "Pass on extra SEI data (e.g. a53 cc) to be included in the bitstream",
+                                                             OFFSET(extra_sei),    AV_OPT_TYPE_BOOL,  { .i64 = 1 }, 0, 1, VE },
+     { "udu_sei",      "Pass on user data unregistered SEI if available",

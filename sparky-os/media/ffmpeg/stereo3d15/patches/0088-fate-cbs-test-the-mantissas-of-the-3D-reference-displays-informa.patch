@@ -1,0 +1,35 @@
+Description: fate/cbs: test the mantissas of the 3D reference displays information
+ .
+ Rewrite a stream whose 3D reference displays information SEI message
+ (payloadType 176) has mantissas of 20, 30, 40 and 45 bits through
+ hevc_metadata, which decomposes the stream and recomposes it, and check
+ that the result is the input.
+ .
+ The sample is the conformance stream ipcm_A_NEC_3.bit with the prefix
+ SEI NAL unit added before its first slice, made by the script attached
+ to the pull request.
+ .
+ Assisted-by: Claude Sonnet 5.5 via Claude Code
+ .
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/7f3f568e891d7a9396633c8d9c4ffc798ca78edf
+Forwarded: no
+Last-Update: 2026-11-09
+
+diff --git a/tests/fate/cbs.mak b/tests/fate/cbs.mak
+index eb602fa6723..c0700876992 100644
+--- a/tests/fate/cbs.mak
++++ b/tests/fate/cbs.mak
+@@ -145,6 +145,11 @@ fate-cbs-hevc-metadata-set-color: CMP = oneline
+ fate-cbs-hevc-metadata-set-color: REF = d073124fca9e30a46c173292f948967c
+ FATE_CBS_HEVC-$(call ALLYES, HEVC_DEMUXER HEVC_METADATA_BSF HEVC_MUXER) += fate-cbs-hevc-metadata-set-color
+ 
++fate-cbs-hevc-tdrdi-mantissa: CMD = md5 -i $(TARGET_SAMPLES)/hevc/tdrdi-mantissa.hevc -c:v copy -bsf:v hevc_metadata -f hevc
++fate-cbs-hevc-tdrdi-mantissa: CMP = oneline
++fate-cbs-hevc-tdrdi-mantissa: REF = 0e46bcc080a5d0f1cf8cd814dbe90b55
++FATE_CBS_HEVC-$(call ALLYES, HEVC_DEMUXER HEVC_METADATA_BSF HEVC_MUXER) += fate-cbs-hevc-tdrdi-mantissa
++
+ FATE_SAMPLES_AVCONV += $(FATE_CBS_HEVC-yes)
+ fate-cbs-hevc: $(FATE_CBS_HEVC-yes)
+ 

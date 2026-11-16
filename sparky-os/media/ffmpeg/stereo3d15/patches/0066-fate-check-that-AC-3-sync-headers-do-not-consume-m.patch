@@ -1,0 +1,119 @@
+Description: fate: check that AC-3 sync headers do not consume metadata
+ Feed AC-3, dual-mono AC-3, independent E-AC-3 and dependent E-AC-3
+ prefixes followed by two different metadata tails. Compare the parsed
+ fields and bit counts against fixed references derived from the syntax.
+ .
+ Master consumes metadata in every case and rejects the dependent header
+ with an all-ones tail. The bounded header reader returns identical basic
+ fields for both tails. All input buffers have zeroed bitreader padding.
+ No external sample or probabilistic repetition is needed.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Opus via Claude Code
+ Assisted-by: GPT-6 via Codex
+ .
+ Port to 9.0.2: libavcodec/Makefile and tests/fate/libavcodec.mak: placed by 9.0.2 context (no ac3 bit allocation test).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/8681d86afc73cbd19fa78d910901d2fbf9e6ee5a
+Forwarded: no, held by Daniel 2026-11-03 (fork branch ac3-parser-short-header on code.ffmpeg.org/danielcamposramos/FFmpeg)
+Last-Update: 2026-11-03
+
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index 63410b7..55b9f26 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -1369,6 +1369,7 @@ TESTPROGS = avcodec                                                     \
+             jpeg2000dwt                                                 \
+             mathops                                                    \
+ 
++TESTPROGS-$(CONFIG_AC3_PARSER)            += ac3_parser
+ TESTPROGS-$(CONFIG_APV_DECODER)           += apv
+ TESTPROGS-$(CONFIG_AV1_VAAPI_ENCODER)     += av1_levels
+ TESTPROGS-$(CONFIG_CABAC)                 += cabac
+diff --git a/libavcodec/tests/ac3_parser.c b/libavcodec/tests/ac3_parser.c
+new file mode 100644
+index 0000000..2a312d6
+--- /dev/null
++++ b/libavcodec/tests/ac3_parser.c
+@@ -0,0 +1,55 @@
++/*
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include <stdio.h>
++#include <string.h>
++
++#include "libavcodec/ac3_parser_internal.h"
++#include "libavcodec/defs.h"
++
++int main(void)
++{
++    static const uint8_t headers[][7] = {
++        { 0x0b, 0x77, 0x00, 0x00, 0x22, 0x30, 0xe0 },
++        { 0x0b, 0x77, 0x00, 0x00, 0x22, 0x40, 0x00 },
++        { 0x0b, 0x77, 0x04, 0x7f, 0x3a, 0x87, 0xe1 },
++        { 0x0b, 0x77, 0x44, 0x7f, 0x3a, 0x87, 0xe1 },
++    };
++    uint8_t buf[64 + AV_INPUT_BUFFER_PADDING_SIZE];
++
++    /* The basic header must not depend on the following metadata. */
++    for (int i = 0; i < FF_ARRAY_ELEMS(headers); i++) {
++        for (int fill = 0; fill <= 255; fill += 255) {
++            AC3HeaderInfo hdr;
++            GetBitContext gb;
++            int ret;
++
++            memset(buf, fill, 64);
++            memset(buf + 64, 0, AV_INPUT_BUFFER_PADDING_SIZE);
++            memcpy(buf, headers[i], sizeof(headers[i]));
++            init_get_bits8(&gb, buf, 64);
++            ret = ff_ac3_parse_header(&gb, &hdr);
++            printf("header %d tail %02x: ret %d bits %d bsid %d "
++                   "type %d size %d rate %d channels %d blocks %d\n",
++                   i, fill, ret, get_bits_count(&gb), hdr.bitstream_id,
++                   hdr.frame_type, hdr.frame_size, hdr.sample_rate,
++                   hdr.channels, hdr.num_blocks);
++        }
++    }
++    return 0;
++}
+diff --git a/tests/fate/libavcodec.mak b/tests/fate/libavcodec.mak
+index e2d616e..b09f13a 100644
+--- a/tests/fate/libavcodec.mak
++++ b/tests/fate/libavcodec.mak
+@@ -1,3 +1,7 @@
++FATE_LIBAVCODEC-$(CONFIG_AC3_PARSER) += fate-ac3-parser
++fate-ac3-parser: libavcodec/tests/ac3_parser$(EXESUF)
++fate-ac3-parser: CMD = run libavcodec/tests/ac3_parser$(EXESUF)
++
+ FATE_LIBAVCODEC-$(CONFIG_AV1_VAAPI_ENCODER) += fate-av1-levels
+ fate-av1-levels: libavcodec/tests/av1_levels$(EXESUF)
+ fate-av1-levels: CMD = run libavcodec/tests/av1_levels$(EXESUF)
+diff --git a/tests/ref/fate/ac3-parser b/tests/ref/fate/ac3-parser
+new file mode 100644
+index 0000000..a97abb0
+--- /dev/null
++++ b/tests/ref/fate/ac3-parser
+@@ -0,0 +1,8 @@
++header 0 tail 00: ret 0 bits 56 bsid 6 type 2 size 2304 rate 48000 channels 5 blocks 6
++header 0 tail ff: ret 0 bits 56 bsid 6 type 2 size 2304 rate 48000 channels 5 blocks 6
++header 1 tail 00: ret 0 bits 52 bsid 8 type 2 size 2304 rate 48000 channels 2 blocks 6
++header 1 tail ff: ret 0 bits 52 bsid 8 type 2 size 2304 rate 48000 channels 2 blocks 6
++header 2 tail 00: ret 0 bits 40 bsid 16 type 0 size 2304 rate 48000 channels 4 blocks 6
++header 2 tail ff: ret 0 bits 40 bsid 16 type 0 size 2304 rate 48000 channels 4 blocks 6
++header 3 tail 00: ret 0 bits 40 bsid 16 type 1 size 2304 rate 48000 channels 4 blocks 6
++header 3 tail ff: ret 0 bits 40 bsid 16 type 1 size 2304 rate 48000 channels 4 blocks 6

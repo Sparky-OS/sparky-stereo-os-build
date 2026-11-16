@@ -1,0 +1,158 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/9d1aff7dc9ea8e04ed4a920ed6d67998487c3836
+From 9d1aff7dc9ea8e04ed4a920ed6d67998487c3836 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 10:19:41 -0300
+Subject: [PATCH 49/51] avfilter/vf_dibr: add the Dynamic Depth and sensor
+ meanings and a mark
+
+libstereo-dibr 1.7.0 reads three more kinds of depth samples: the
+RangeLinear and RangeInverse depth maps of Google's Dynamic Depth 1.0,
+and a depth sensor's distances, where 0 is no measurement. The depth
+option now offers them, with z_near and z_far as their near and far
+distances.
+
+The new mark option takes what a sample means as a Stereo3DDepth mark
+of Sparky Stereo OS (stereo-layer's docs/depth-marks.md), which gives
+every parameter of every kind: DMin, DMax and the view width of
+disparity, the model of non-linear disparity, the parallax map's zero,
+scale and reference screen. It comes before the depth option and the
+side data, as the user's choice.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ configure             |  2 +-
+ doc/filters.texi      | 20 +++++++++++++++++---
+ libavfilter/vf_dibr.c | 34 +++++++++++++++++++++++++++++++---
+ 3 files changed, 49 insertions(+), 7 deletions(-)
+
+diff --git a/configure b/configure
+index dcd416e3..d7d0d7ea 100755
+--- a/configure
++++ b/configure
+@@ -7347,7 +7347,7 @@ enabled libsmbclient      && { check_pkg_config libsmbclient smbclient libsmbcli
+ enabled libsnappy         && require libsnappy snappy-c.h snappy_compress -lsnappy -lstdc++
+ enabled libsoxr           && require libsoxr soxr.h soxr_create -lsoxr
+ enabled libssh            && require_pkg_config libssh "libssh >= 0.6.0" libssh/sftp.h sftp_init
+-enabled libstereodibr     && require_pkg_config libstereodibr stereo-dibr stereo-dibr.h stereo_dibr_render
++enabled libstereodibr     && require_pkg_config libstereodibr "stereo-dibr >= 1.7.0" stereo-dibr.h stereo_dibr_render
+ enabled libspeex          && require_pkg_config libspeex speex speex/speex.h speex_decoder_init
+ enabled libsrt            && require_pkg_config libsrt "srt >= 1.3.0" srt/srt.h srt_socket
+ enabled libsvtav1         && require_pkg_config libsvtav1 "SvtAv1Enc >= 0.9.0" EbSvtAv1Enc.h svt_av1_enc_init_handle
+diff --git a/doc/filters.texi b/doc/filters.texi
+index 6ef994b7..a5f7c5cf 100644
+--- a/doc/filters.texi
++++ b/doc/filters.texi
+@@ -12137,8 +12137,11 @@ The neighbourhood of the depth and telea fills, in pixels. Default is 5.
+ What a depth sample means: @samp{auto} (the default), @samp{nearness}
+ (larger samples nearer), @samp{farness} (larger samples farther),
+ @samp{inverse_z}, @samp{disparity}, @samp{z} and @samp{nonlinear} (the
+-depth representation types 0 to 3), or @samp{parallax} (an ISO/IEC 23002-3
+-parallax map).
++depth representation types 0 to 3), @samp{parallax} (an ISO/IEC 23002-3
++parallax map), @samp{range_linear} and @samp{range_inverse} (the depth map
++formats of Google's Dynamic Depth 1.0, uniform in distance or in its inverse
++from @option{z_near} to @option{z_far}), or @samp{metric} (a depth sensor's
++distances, a sample of 0 being no measurement).
+ 
+ @item range
+ For depth without absolute values, the largest parallax either side of the
+@@ -12156,7 +12159,18 @@ is 0.
+ 
+ @item z_near
+ @item z_far
+-ZNear and ZFar for depth of type @samp{z} that carries none.
++ZNear and ZFar for depth of type @samp{z} that carries none; Near and Far
++of @samp{range_linear} depth, and the distances between which the inverse
++of @samp{metric} depth is spread, in the sensor's unit.
++
++@item mark
++What a depth sample means as a @code{Stereo3DDepth} mark of Sparky Stereo
++OS (stereo-layer's docs/depth-marks.md): a word for the kind, then
++key=value pairs separated by spaces, for example
++@samp{nonlinearDisparity min=2 max=40 width=1920 model=0,20,7,0}. It gives
++every parameter of a kind, and comes before @option{depth} and the side
++data; @option{range}, @option{zero} and @option{shift} apply where it has
++none.
+ @end table
+ 
+ @subsection Examples
+diff --git a/libavfilter/vf_dibr.c b/libavfilter/vf_dibr.c
+index 6460ae44..3d265f76 100644
+--- a/libavfilter/vf_dibr.c
++++ b/libavfilter/vf_dibr.c
+@@ -52,6 +52,7 @@ typedef struct DibrContext {
+     int depth;
+     double range, zero, shift;
+     double z_near, z_far;
++    char *mark;
+ 
+     stereo_dibr *dibr;
+     float *table;
+@@ -124,6 +125,21 @@ static int convention(AVFilterContext *ctx, const AVFrame *picture, const AVFram
+         c->z_near    = s->z_near;
+         c->z_far     = s->z_far;
+     }
++    if (s->mark) {
++        /* the user's Stereo3DDepth mark, over range, zero and shift */
++        uint16_t model[65];
++        int nb_model = 0;
++
++        if (stereo_depth_read_mark(s->mark, c, model, &nb_model) != 1)
++            return AVERROR(EINVAL);
++        c->bits = bits;
++        if (nb_model) {
++            if (stereo_depth_nonlinear_lut(model, nb_model, bits, s->lut) < 0)
++                return AVERROR(EINVAL);
++            c->lut = s->lut;
++        }
++        return 0;
++    }
+     if (s->depth != DEPTH_AUTO)
+         return 0;
+ 
+@@ -339,6 +355,14 @@ static av_cold int init(AVFilterContext *ctx)
+     s->lut   = av_malloc_array(1 << 16, sizeof(*s->lut));
+     if (!s->dibr || !s->table || !s->lut)
+         return AVERROR(ENOMEM);
++    if (s->mark) {
++        struct stereo_depth_convention c = { 0 };
++
++        if (stereo_depth_read_mark(s->mark, &c, NULL, NULL) != 1) {
++            av_log(ctx, AV_LOG_ERROR, "Depth mark not understood: %s\n", s->mark);
++            return AVERROR(EINVAL);
++        }
++    }
+     s->last_kind = -1;
+     s->fs.on_event = do_dibr;
+     return 0;
+@@ -425,7 +449,7 @@ static const AVOption dibr_options[] = {
+     { "sigma_h", "horizontal standard deviation of the smoothing, pixels at 1920", OFFSET(sigma_h), AV_OPT_TYPE_DOUBLE, { .dbl = 10 }, 0, 1000, FLAGS },
+     { "sigma_v", "vertical standard deviation of the smoothing, pixels at 1920",   OFFSET(sigma_v), AV_OPT_TYPE_DOUBLE, { .dbl = 30 }, 0, 1000, FLAGS },
+     { "radius", "neighbourhood of the depth-aided and Telea fills, pixels", OFFSET(radius), AV_OPT_TYPE_INT, { .i64 = 5 }, 1, 100, FLAGS },
+-    { "depth", "what a depth sample means", OFFSET(depth), AV_OPT_TYPE_INT, { .i64 = DEPTH_AUTO }, -1, STEREO_DEPTH_PARALLAX, FLAGS, .unit = "depth" },
++    { "depth", "what a depth sample means", OFFSET(depth), AV_OPT_TYPE_INT, { .i64 = DEPTH_AUTO }, -1, STEREO_DEPTH_METRIC, FLAGS, .unit = "depth" },
+         { "auto",      "from the side data, else nearness",          0, AV_OPT_TYPE_CONST, { .i64 = DEPTH_AUTO },                       0, 0, FLAGS, .unit = "depth" },
+         { "nearness",  "larger samples nearer (2D-plus-depth)",      0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DEPTH_NEARNESS },            0, 0, FLAGS, .unit = "depth" },
+         { "farness",   "larger samples farther",                     0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DEPTH_FARNESS },             0, 0, FLAGS, .unit = "depth" },
+@@ -434,11 +458,15 @@ static const AVOption dibr_options[] = {
+         { "z",         "uniform in Z (type 2)",                      0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DEPTH_Z },                   0, 0, FLAGS, .unit = "depth" },
+         { "nonlinear", "non-linear disparity (type 3)",              0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DEPTH_NONLINEAR_DISPARITY }, 0, 0, FLAGS, .unit = "depth" },
+         { "parallax",  "an ISO/IEC 23002-3 parallax map",            0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DEPTH_PARALLAX },            0, 0, FLAGS, .unit = "depth" },
++        { "range_linear",  "uniform in distance, 0 near (Dynamic Depth)",   0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DEPTH_RANGE_LINEAR },  0, 0, FLAGS, .unit = "depth" },
++        { "range_inverse", "uniform in 1/distance, 0 near (Dynamic Depth)", 0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DEPTH_RANGE_INVERSE }, 0, 0, FLAGS, .unit = "depth" },
++        { "metric",        "a depth sensor's distances, 0 for none",        0, AV_OPT_TYPE_CONST, { .i64 = STEREO_DEPTH_METRIC },        0, 0, FLAGS, .unit = "depth" },
+     { "range", "largest parallax either side of the screen, pixels at 1920", OFFSET(range), AV_OPT_TYPE_DOUBLE, { .dbl = 58 }, -INT_MAX, INT_MAX, FLAGS },
+     { "zero",  "where the screen is in nearness, 0 to 1",                    OFFSET(zero),  AV_OPT_TYPE_DOUBLE, { .dbl = 0.5 }, 0, 1, FLAGS },
+     { "shift", "parallax added to all, pixels at 1920",                      OFFSET(shift), AV_OPT_TYPE_DOUBLE, { .dbl = 0 }, -INT_MAX, INT_MAX, FLAGS },
+-    { "z_near", "ZNear for Z depth without one",                             OFFSET(z_near), AV_OPT_TYPE_DOUBLE, { .dbl = 0 }, 0, DBL_MAX, FLAGS },
+-    { "z_far",  "ZFar for Z depth without one",                              OFFSET(z_far),  AV_OPT_TYPE_DOUBLE, { .dbl = 0 }, 0, DBL_MAX, FLAGS },
++    { "z_near", "ZNear for Z depth without one, Near of range and metric depth", OFFSET(z_near), AV_OPT_TYPE_DOUBLE, { .dbl = 0 }, 0, DBL_MAX, FLAGS },
++    { "z_far",  "ZFar for Z depth without one, Far of range and metric depth",   OFFSET(z_far),  AV_OPT_TYPE_DOUBLE, { .dbl = 0 }, 0, DBL_MAX, FLAGS },
++    { "mark",   "what a depth sample means, as a Stereo3DDepth mark",            OFFSET(mark),   AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, FLAGS },
+     { NULL }
+ };
+ 
+-- 
+2.53.0
+

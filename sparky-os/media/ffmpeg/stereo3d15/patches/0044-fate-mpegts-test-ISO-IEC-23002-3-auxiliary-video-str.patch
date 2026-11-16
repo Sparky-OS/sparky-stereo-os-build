@@ -1,0 +1,223 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/715f46a7a2ad646e190b37a8401edf82e54862a8
+From 715f46a7a2ad646e190b37a8401edf82e54862a8 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:55:29 -0300
+Subject: [PATCH 44/48] fate/mpegts: test ISO/IEC 23002-3 auxiliary video
+ streams
+
+A transport stream with a texture, a depth map and a parallax map, the
+maps as auxiliary video streams (stream type 0x1E) with an auxiliary
+video stream descriptor each, the parallax map's without
+rbsp_trailing_bits(): the streams and the frames, and the stream remuxed
+with and without rbsp_trailing_bits().
+
+The sample, mpegts/depth-aux.ts, needs to be uploaded to the FATE suite.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ tests/fate/mpegts.mak                         | 22 +++++++++
+ tests/ref/fate/mpegts-auxiliary-video         | 43 ++++++++++++++++++
+ tests/ref/fate/mpegts-auxiliary-video-frame   |  1 +
+ tests/ref/fate/mpegts-auxiliary-video-remux   | 45 +++++++++++++++++++
+ .../fate/mpegts-auxiliary-video-remux-tsduck  | 45 +++++++++++++++++++
+ 5 files changed, 156 insertions(+)
+ create mode 100644 tests/ref/fate/mpegts-auxiliary-video
+ create mode 100644 tests/ref/fate/mpegts-auxiliary-video-frame
+ create mode 100644 tests/ref/fate/mpegts-auxiliary-video-remux
+ create mode 100644 tests/ref/fate/mpegts-auxiliary-video-remux-tsduck
+
+diff --git a/tests/fate/mpegts.mak b/tests/fate/mpegts.mak
+index e2b978e0..f700e708 100644
+--- a/tests/fate/mpegts.mak
++++ b/tests/fate/mpegts.mak
+@@ -49,6 +49,28 @@ fate-mpegts-lcevc-vvc-dual-track: CMD = stream_demux mpegts $(TARGET_SAMPLES)/lc
+   "" "-c:v copy -map 0" \
+   "-show_entries stream_group=index,id,nb_streams,type:stream=index,id,codec_name"
+ 
++# ISO/IEC 23002-3 auxiliary video streams (stream type 0x1E): a depth map, and
++# a parallax map without rbsp_trailing_bits(), each with an auxiliary video
++# stream descriptor (ISO/IEC 13818-1 2.6.74)
++FATE_MPEGTS_FFMPEG_FFPROBE-$(call FRAMECRC, MPEGTS, H264, H264_PARSER) += fate-mpegts-auxiliary-video
++fate-mpegts-auxiliary-video: CMD = stream_demux mpegts $(TARGET_SAMPLES)/mpegts/depth-aux.ts "" "-c:v copy -map 0" \
++  "-of compact -show_entries stream=index,codec_name,codec_tag_string:stream_side_data_list"
++
++# the supplemental information as decoded frames carry it
++FATE_MPEGTS_PROBE-$(call DEMDEC, MPEGTS, H264) += fate-mpegts-auxiliary-video-frame
++fate-mpegts-auxiliary-video-frame: SRC = $(TARGET_SAMPLES)/mpegts/depth-aux.ts
++fate-mpegts-auxiliary-video-frame: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -v 0 -bitexact -of compact \
++    -select_streams 1 -show_entries frame=stream_index,pix_fmt:frame_side_data_list -read_intervals "%+\#1" -i "$(SRC)"
++
++# remuxed: both descriptors written with rbsp_trailing_bits(), then without
++FATE_MPEGTS_FFMPEG_FFPROBE-$(call REMUX, MPEGTS, H264_DECODER H264_PARSER) += fate-mpegts-auxiliary-video-remux
++fate-mpegts-auxiliary-video-remux: CMD = transcode mpegts $(TARGET_SAMPLES)/mpegts/depth-aux.ts mpegts \
++  "-map 0 -c copy" "-map 0 -c copy" "-of compact -show_entries stream=index,codec_tag_string:stream_side_data_list"
++
++FATE_MPEGTS_FFMPEG_FFPROBE-$(call REMUX, MPEGTS, H264_DECODER H264_PARSER) += fate-mpegts-auxiliary-video-remux-tsduck
++fate-mpegts-auxiliary-video-remux-tsduck: CMD = transcode mpegts $(TARGET_SAMPLES)/mpegts/depth-aux.ts mpegts \
++  "-map 0 -c copy -mpegts_flags omit_si_trailing_bits" "-map 0 -c copy" "-of compact -show_entries stream=index,codec_tag_string:stream_side_data_list"
++
+ FATE_SAMPLES_FFPROBE += $(FATE_MPEGTS_PROBE-yes)
+ FATE_SAMPLES_FFMPEG_FFPROBE += $(FATE_MPEGTS_FFMPEG_FFPROBE-yes)
+ 
+diff --git a/tests/ref/fate/mpegts-auxiliary-video b/tests/ref/fate/mpegts-auxiliary-video
+new file mode 100644
+index 00000000..308c89f7
+--- /dev/null
++++ b/tests/ref/fate/mpegts-auxiliary-video
+@@ -0,0 +1,43 @@
++#extradata 0:       39, 0x9bc3097b
++#extradata 1:       39, 0x91b50921
++#extradata 2:       39, 0x91b50921
++#tb 0: 1/90000
++#media_type 0: video
++#codec_id 0: h264
++#dimensions 0: 128x72
++#sar 0: 0/1
++#tb 1: 1/90000
++#media_type 1: video
++#codec_id 1: h264
++#dimensions 1: 128x72
++#sar 1: 0/1
++#tb 2: 1/90000
++#media_type 2: video
++#codec_id 2: h264
++#dimensions 2: 128x72
++#sar 2: 0/1
++0,      -7200,          0,     3600,     2337, 0xb98f1239, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,      -7200,          0,     3600,      953, 0xc8035fc3, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,      -7200,          0,     3600,      876, 0xec433d42, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++0,      -3600,       7200,     3600,      363, 0xcb4eb649, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,      -3600,       7200,     3600,       49, 0xb6ea15a6, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,      -3600,       7200,     3600,       44, 0x500b1250, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++0,          0,       3600,     3600,      262, 0xbbee7f93, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,          0,       3600,     3600,       44, 0x4a911154, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,          0,       3600,     3600,       35, 0xb08b0c1a, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++0,       3600,      10800,     3600,     1827, 0x44cd8fd1, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,       3600,      10800,     3600,      301, 0xab118d2f, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,       3600,      10800,     3600,      220, 0x2d5265a7, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++0,       7200,      18000,     3600,      539, 0x02880d8c, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,       7200,      14400,     3600,       49, 0xca2b1651, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,       7200,      18000,     3600,       53, 0x2dde18f2, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++0,      10800,      14400,     3600,      299, 0x8cbb9226, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,      10800,      18000,     3600,       64, 0xf3be1c9b, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,      10800,      14400,     3600,       33, 0x84cd0b43, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++program|stream|index=0|codec_name=h264|codec_tag_string=[27][0][0][0]
++stream|index=1|codec_name=h264|codec_tag_string=[30][0][0][0]|side_datum/mpeg_c_part_3_auxiliary_video_information:side_data_type=MPEG-C Part 3 Auxiliary Video Information|side_datum/mpeg_c_part_3_auxiliary_video_information:type=depth|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_one_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_bottom_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_interlaced=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_h=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_v=0|side_datum/mpeg_c_part_3_auxiliary_video_information:nkfar=32|side_datum/mpeg_c_part_3_auxiliary_video_information:nknear=16|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary Picture Type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2
++stream|index=2|codec_name=h264|codec_tag_string=[30][0][0][0]|side_datum/mpeg_c_part_3_auxiliary_video_information:side_data_type=MPEG-C Part 3 Auxiliary Video Information|side_datum/mpeg_c_part_3_auxiliary_video_information:type=parallax|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_one_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_bottom_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_interlaced=1|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_h=8|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_v=4|side_datum/mpeg_c_part_3_auxiliary_video_information:parallax_zero=128|side_datum/mpeg_c_part_3_auxiliary_video_information:parallax_scale=64|side_datum/mpeg_c_part_3_auxiliary_video_information:dref=300|side_datum/mpeg_c_part_3_auxiliary_video_information:wref=100
++
++stream|index=0|codec_name=h264|codec_tag_string=[27][0][0][0]
++stream|index=1|codec_name=h264|codec_tag_string=[30][0][0][0]|side_datum/mpeg_c_part_3_auxiliary_video_information:side_data_type=MPEG-C Part 3 Auxiliary Video Information|side_datum/mpeg_c_part_3_auxiliary_video_information:type=depth|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_one_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_bottom_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_interlaced=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_h=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_v=0|side_datum/mpeg_c_part_3_auxiliary_video_information:nkfar=32|side_datum/mpeg_c_part_3_auxiliary_video_information:nknear=16|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary Picture Type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2
++stream|index=2|codec_name=h264|codec_tag_string=[30][0][0][0]|side_datum/mpeg_c_part_3_auxiliary_video_information:side_data_type=MPEG-C Part 3 Auxiliary Video Information|side_datum/mpeg_c_part_3_auxiliary_video_information:type=parallax|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_one_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_bottom_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_interlaced=1|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_h=8|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_v=4|side_datum/mpeg_c_part_3_auxiliary_video_information:parallax_zero=128|side_datum/mpeg_c_part_3_auxiliary_video_information:parallax_scale=64|side_datum/mpeg_c_part_3_auxiliary_video_information:dref=300|side_datum/mpeg_c_part_3_auxiliary_video_information:wref=100
+diff --git a/tests/ref/fate/mpegts-auxiliary-video-frame b/tests/ref/fate/mpegts-auxiliary-video-frame
+new file mode 100644
+index 00000000..400f708e
+--- /dev/null
++++ b/tests/ref/fate/mpegts-auxiliary-video-frame
+@@ -0,0 +1 @@
++frame|stream_index=1|pix_fmt=yuv420p|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary picture type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2|side_datum/mpeg_c_part_3_auxiliary_video_information:side_data_type=MPEG-C Part 3 auxiliary video information|side_datum/mpeg_c_part_3_auxiliary_video_information:type=depth|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_one_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_bottom_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_interlaced=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_h=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_v=0|side_datum/mpeg_c_part_3_auxiliary_video_information:nkfar=32|side_datum/mpeg_c_part_3_auxiliary_video_information:nknear=16|side_datum/h_26_45__user_data_unregistered_sei_message:side_data_type=H.26[45] User Data Unregistered SEI message
+diff --git a/tests/ref/fate/mpegts-auxiliary-video-remux b/tests/ref/fate/mpegts-auxiliary-video-remux
+new file mode 100644
+index 00000000..dc42279e
+--- /dev/null
++++ b/tests/ref/fate/mpegts-auxiliary-video-remux
+@@ -0,0 +1,45 @@
++0c90452fa117e325885ad2ff23a3449d *tests/data/fate/mpegts-auxiliary-video-remux.mpegts
++13348 tests/data/fate/mpegts-auxiliary-video-remux.mpegts
++#extradata 0:       39, 0x9bc3097b
++#extradata 1:       39, 0x91b50921
++#extradata 2:       39, 0x91b50921
++#tb 0: 1/90000
++#media_type 0: video
++#codec_id 0: h264
++#dimensions 0: 128x72
++#sar 0: 0/1
++#tb 1: 1/90000
++#media_type 1: video
++#codec_id 1: h264
++#dimensions 1: 128x72
++#sar 1: 0/1
++#tb 2: 1/90000
++#media_type 2: video
++#codec_id 2: h264
++#dimensions 2: 128x72
++#sar 2: 0/1
++0,      -7200,          0,     3600,     2337, 0xb98f1239, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,      -7200,          0,     3600,      953, 0xc8035fc3, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,      -7200,          0,     3600,      876, 0xec433d42, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++0,      -3600,       7200,     3600,      363, 0xcb4eb649, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,      -3600,       7200,     3600,       49, 0xb6ea15a6, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,      -3600,       7200,     3600,       44, 0x500b1250, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++0,          0,       3600,     3600,      262, 0xbbee7f93, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,          0,       3600,     3600,       44, 0x4a911154, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,          0,       3600,     3600,       35, 0xb08b0c1a, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++0,       3600,      10800,     3600,     1827, 0x44cd8fd1, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,       3600,      10800,     3600,      301, 0xab118d2f, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,       3600,      10800,     3600,      220, 0x2d5265a7, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++0,       7200,      18000,     3600,      539, 0x02880d8c, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,       7200,      14400,     3600,       49, 0xca2b1651, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,       7200,      18000,     3600,       53, 0x2dde18f2, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++0,      10800,      14400,     3600,      299, 0x8cbb9226, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,      10800,      18000,     3600,       64, 0xf3be1c9b, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,      10800,      14400,     3600,       33, 0x84cd0b43, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++program|stream|index=0|codec_tag_string=[27][0][0][0]
++stream|index=1|codec_tag_string=[30][0][0][0]|side_datum/mpeg_c_part_3_auxiliary_video_information:side_data_type=MPEG-C Part 3 Auxiliary Video Information|side_datum/mpeg_c_part_3_auxiliary_video_information:type=depth|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_one_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_bottom_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_interlaced=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_h=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_v=0|side_datum/mpeg_c_part_3_auxiliary_video_information:nkfar=32|side_datum/mpeg_c_part_3_auxiliary_video_information:nknear=16|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary Picture Type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2
++stream|index=2|codec_tag_string=[30][0][0][0]|side_datum/mpeg_c_part_3_auxiliary_video_information:side_data_type=MPEG-C Part 3 Auxiliary Video Information|side_datum/mpeg_c_part_3_auxiliary_video_information:type=parallax|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_one_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_bottom_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_interlaced=1|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_h=8|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_v=4|side_datum/mpeg_c_part_3_auxiliary_video_information:parallax_zero=128|side_datum/mpeg_c_part_3_auxiliary_video_information:parallax_scale=64|side_datum/mpeg_c_part_3_auxiliary_video_information:dref=300|side_datum/mpeg_c_part_3_auxiliary_video_information:wref=100
++
++stream|index=0|codec_tag_string=[27][0][0][0]
++stream|index=1|codec_tag_string=[30][0][0][0]|side_datum/mpeg_c_part_3_auxiliary_video_information:side_data_type=MPEG-C Part 3 Auxiliary Video Information|side_datum/mpeg_c_part_3_auxiliary_video_information:type=depth|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_one_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_bottom_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_interlaced=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_h=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_v=0|side_datum/mpeg_c_part_3_auxiliary_video_information:nkfar=32|side_datum/mpeg_c_part_3_auxiliary_video_information:nknear=16|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary Picture Type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2
++stream|index=2|codec_tag_string=[30][0][0][0]|side_datum/mpeg_c_part_3_auxiliary_video_information:side_data_type=MPEG-C Part 3 Auxiliary Video Information|side_datum/mpeg_c_part_3_auxiliary_video_information:type=parallax|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_one_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_bottom_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_interlaced=1|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_h=8|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_v=4|side_datum/mpeg_c_part_3_auxiliary_video_information:parallax_zero=128|side_datum/mpeg_c_part_3_auxiliary_video_information:parallax_scale=64|side_datum/mpeg_c_part_3_auxiliary_video_information:dref=300|side_datum/mpeg_c_part_3_auxiliary_video_information:wref=100
+diff --git a/tests/ref/fate/mpegts-auxiliary-video-remux-tsduck b/tests/ref/fate/mpegts-auxiliary-video-remux-tsduck
+new file mode 100644
+index 00000000..d6ddd4dd
+--- /dev/null
++++ b/tests/ref/fate/mpegts-auxiliary-video-remux-tsduck
+@@ -0,0 +1,45 @@
++3faa6185532dd30798356dbe99b073ef *tests/data/fate/mpegts-auxiliary-video-remux-tsduck.mpegts
++13348 tests/data/fate/mpegts-auxiliary-video-remux-tsduck.mpegts
++#extradata 0:       39, 0x9bc3097b
++#extradata 1:       39, 0x91b50921
++#extradata 2:       39, 0x91b50921
++#tb 0: 1/90000
++#media_type 0: video
++#codec_id 0: h264
++#dimensions 0: 128x72
++#sar 0: 0/1
++#tb 1: 1/90000
++#media_type 1: video
++#codec_id 1: h264
++#dimensions 1: 128x72
++#sar 1: 0/1
++#tb 2: 1/90000
++#media_type 2: video
++#codec_id 2: h264
++#dimensions 2: 128x72
++#sar 2: 0/1
++0,      -7200,          0,     3600,     2337, 0xb98f1239, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,      -7200,          0,     3600,      953, 0xc8035fc3, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,      -7200,          0,     3600,      876, 0xec433d42, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++0,      -3600,       7200,     3600,      363, 0xcb4eb649, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,      -3600,       7200,     3600,       49, 0xb6ea15a6, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,      -3600,       7200,     3600,       44, 0x500b1250, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++0,          0,       3600,     3600,      262, 0xbbee7f93, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,          0,       3600,     3600,       44, 0x4a911154, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,          0,       3600,     3600,       35, 0xb08b0c1a, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++0,       3600,      10800,     3600,     1827, 0x44cd8fd1, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,       3600,      10800,     3600,      301, 0xab118d2f, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,       3600,      10800,     3600,      220, 0x2d5265a7, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++0,       7200,      18000,     3600,      539, 0x02880d8c, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,       7200,      14400,     3600,       49, 0xca2b1651, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,       7200,      18000,     3600,       53, 0x2dde18f2, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++0,      10800,      14400,     3600,      299, 0x8cbb9226, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++1,      10800,      18000,     3600,       64, 0xf3be1c9b, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++2,      10800,      14400,     3600,       33, 0x84cd0b43, F=0x0, S=1, MPEGTS Stream ID,        1, 0x00e000e0
++program|stream|index=0|codec_tag_string=[27][0][0][0]
++stream|index=1|codec_tag_string=[30][0][0][0]|side_datum/mpeg_c_part_3_auxiliary_video_information:side_data_type=MPEG-C Part 3 Auxiliary Video Information|side_datum/mpeg_c_part_3_auxiliary_video_information:type=depth|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_one_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_bottom_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_interlaced=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_h=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_v=0|side_datum/mpeg_c_part_3_auxiliary_video_information:nkfar=32|side_datum/mpeg_c_part_3_auxiliary_video_information:nknear=16|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary Picture Type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2
++stream|index=2|codec_tag_string=[30][0][0][0]|side_datum/mpeg_c_part_3_auxiliary_video_information:side_data_type=MPEG-C Part 3 Auxiliary Video Information|side_datum/mpeg_c_part_3_auxiliary_video_information:type=parallax|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_one_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_bottom_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_interlaced=1|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_h=8|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_v=4|side_datum/mpeg_c_part_3_auxiliary_video_information:parallax_zero=128|side_datum/mpeg_c_part_3_auxiliary_video_information:parallax_scale=64|side_datum/mpeg_c_part_3_auxiliary_video_information:dref=300|side_datum/mpeg_c_part_3_auxiliary_video_information:wref=100
++
++stream|index=0|codec_tag_string=[27][0][0][0]
++stream|index=1|codec_tag_string=[30][0][0][0]|side_datum/mpeg_c_part_3_auxiliary_video_information:side_data_type=MPEG-C Part 3 Auxiliary Video Information|side_datum/mpeg_c_part_3_auxiliary_video_information:type=depth|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_one_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_bottom_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_interlaced=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_h=0|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_v=0|side_datum/mpeg_c_part_3_auxiliary_video_information:nkfar=32|side_datum/mpeg_c_part_3_auxiliary_video_information:nknear=16|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary Picture Type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2
++stream|index=2|codec_tag_string=[30][0][0][0]|side_datum/mpeg_c_part_3_auxiliary_video_information:side_data_type=MPEG-C Part 3 Auxiliary Video Information|side_datum/mpeg_c_part_3_auxiliary_video_information:type=parallax|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_one_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_bottom_field=0|side_datum/mpeg_c_part_3_auxiliary_video_information:aux_is_interlaced=1|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_h=8|side_datum/mpeg_c_part_3_auxiliary_video_information:position_offset_v=4|side_datum/mpeg_c_part_3_auxiliary_video_information:parallax_zero=128|side_datum/mpeg_c_part_3_auxiliary_video_information:parallax_scale=64|side_datum/mpeg_c_part_3_auxiliary_video_information:dref=300|side_datum/mpeg_c_part_3_auxiliary_video_information:wref=100
+-- 
+2.53.0
+

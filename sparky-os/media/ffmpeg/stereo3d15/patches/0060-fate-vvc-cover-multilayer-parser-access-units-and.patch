@@ -1,0 +1,371 @@
+Description: fate/vvc: cover multilayer parser access units and timestamps
+ Check the packet boundaries of VPS_A_3 and OPI_B_3, and of a derived
+ OPI_B_3 stream with the highest layer removed from temporal ID 4.
+ The latter exercises delayed AU output when a layer is absent.
+ .
+ Check timestamps, stream offsets and picture metadata through the
+ public parser API with fragmented and shared input packets. Keep
+ expected results in FATE references, separate from the probe.
+ .
+ Update the CBS remux references for the corrected AU start codes and
+ container references for complete first-AU parameter sets. The NAL
+ payloads and the container round-trip elementary-stream CRC do not
+ change.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Opus via Claude Code
+ Assisted-by: GPT-6 via Codex
+ .
+ Port to 9.0.2: tests/api/Makefile and tests/fate/api.mak: placed by 9.0.2 context (no api-enc-parser entries).
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/5cdd521364ca0e585954411b451625892ca2996c
+Forwarded: no, held by Daniel 2026-11-03 (fork branch vvc-parser-layer1 on code.ffmpeg.org/danielcamposramos/FFmpeg)
+Last-Update: 2026-11-03
+
+diff --git a/tests/api/Makefile b/tests/api/Makefile
+index 900e7d0..ed111af 100644
+--- a/tests/api/Makefile
++++ b/tests/api/Makefile
+@@ -2,6 +2,7 @@ APITESTPROGS-$(call ENCDEC, FLAC, FLAC) += api-flac
+ APITESTPROGS-$(call DEMDEC, H264, H264) += api-h264
+ APITESTPROGS-$(call DEMDEC, H264, H264) += api-h264-slice
+ APITESTPROGS-$(CONFIG_HEVC_PARSER) += api-hevc-parser
++APITESTPROGS-$(CONFIG_VVC_PARSER) += api-vvc-parser
+ APITESTPROGS-yes += api-seek api-dump-stream-meta
+ APITESTPROGS-$(call DEMDEC, H263, H263) += api-band
+ APITESTPROGS-$(HAVE_THREADS) += api-threadmessage
+diff --git a/tests/api/api-vvc-parser-test.c b/tests/api/api-vvc-parser-test.c
+new file mode 100644
+index 0000000..ad8a4c9
+--- /dev/null
++++ b/tests/api/api-vvc-parser-test.c
+@@ -0,0 +1,137 @@
++/*
++ * VVC parser packet boundary and timestamp test
++ * Copyright (c) 2026 Daniel Campos Ramos
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include <errno.h>
++#include <inttypes.h>
++#include <limits.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "libavcodec/avcodec.h"
++#include "libavutil/file.h"
++#include "libavutil/mem.h"
++#include "libavutil/pixdesc.h"
++
++static int positive_int(const char *arg)
++{
++    char *end;
++    long value;
++
++    errno = 0;
++    value = strtol(arg, &end, 10);
++    if (errno || !*arg || *end || value <= 0 ||
++        value > INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE)
++        return -1;
++    return value;
++}
++
++static void show(const AVCodecParserContext *parser, int size)
++{
++    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(parser->format);
++    printf("%"PRId64" %d %"PRId64" %"PRId64" %"PRId64" %"PRId64
++           " %c %d %d %d %d %d %d\n",
++           parser->frame_offset, size, parser->pts, parser->dts,
++           parser->pos, parser->offset, av_get_picture_type_char(parser->pict_type),
++           parser->key_frame, desc ? desc->comp[0].depth : 0,
++           parser->width, parser->height, parser->coded_width, parser->coded_height);
++}
++
++int main(int argc, char **argv)
++{
++    AVCodecParserContext *parser = NULL;
++    AVCodecContext *ctx = NULL;
++    uint8_t *data = NULL, *buf = NULL, *out;
++    size_t size = 0, pos = 0;
++    int chunk, out_size, ret = 1, complete;
++
++    complete = argc >= 3 && !strcmp(argv[2], "complete");
++    if (argc < 4 || (chunk = complete ? 1 : positive_int(argv[2])) < 0) {
++        fprintf(stderr, "Usage: %s sample chunk_size|complete input_packet_sizes...\n",
++                argv[0]);
++        return 1;
++    }
++    if (av_file_map(argv[1], &data, &size, 0, NULL) < 0)
++        return 1;
++    if (complete) {
++        if (!size || size > INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE)
++            goto end;
++        chunk = size;
++    }
++    buf = av_mallocz(chunk + AV_INPUT_BUFFER_PADDING_SIZE);
++    parser = av_parser_init(AV_CODEC_ID_VVC);
++    ctx = avcodec_alloc_context3(NULL);
++    if (!buf || !parser || !ctx)
++        goto end;
++    ctx->codec_id = AV_CODEC_ID_VVC;
++    ctx->codec_type = AVMEDIA_TYPE_VIDEO;
++    if (complete)
++        parser->flags |= PARSER_FLAG_COMPLETE_FRAMES;
++
++    /* The arguments describe input packets, not expected parser output.
++     * Only the first chunk of each input packet carries its timestamps. */
++    for (int i = 3; i < argc; i++) {
++        int length = positive_int(argv[i]);
++        size_t packet_end, start = pos;
++
++        if (length < 0 || length > size - pos)
++            goto end;
++        packet_end = pos + length;
++        while (pos < packet_end) {
++            int n = packet_end - pos < chunk ? packet_end - pos : chunk;
++            int off = 0;
++            int64_t pts = pos == start ? (int64_t)(i - 3) * 100 : AV_NOPTS_VALUE;
++            int64_t dts = pos == start ? (int64_t)(i - 3) * 100 - 50 : AV_NOPTS_VALUE;
++
++            memcpy(buf, data + pos, n);
++            memset(buf + n, 0, AV_INPUT_BUFFER_PADDING_SIZE);
++            while (off < n) {
++                int used = av_parser_parse2(parser, ctx, &out, &out_size,
++                                            buf + off, n - off, pts, dts, pos);
++                if (used < 0 || (!used && !out_size))
++                    goto end;
++                if (out_size)
++                    show(parser, out_size);
++                off += used;
++            }
++            pos += n;
++        }
++    }
++    if (pos != size)
++        goto end;
++    do {
++        if (av_parser_parse2(parser, ctx, &out, &out_size, NULL, 0,
++                             AV_NOPTS_VALUE, AV_NOPTS_VALUE, pos) < 0)
++            goto end;
++        if (out_size)
++            show(parser, out_size);
++    } while (out_size);
++    ret = 0;
++
++end:
++    if (ret)
++        fprintf(stderr, "VVC parser probe failed at input offset %zu\n", pos);
++    av_parser_close(parser);
++    avcodec_free_context(&ctx);
++    av_free(buf);
++    av_file_unmap(data, size);
++    return ret;
++}
+diff --git a/tests/fate/api.mak b/tests/fate/api.mak
+index 16a0cf3..381c6f8 100644
+--- a/tests/fate/api.mak
++++ b/tests/fate/api.mak
+@@ -17,6 +17,12 @@ fate-api-hevc-parser: CMD = run $(APITESTSDIR)/api-hevc-parser-test$(EXESUF) $(T
+ fate-api-hevc-parser-shared-input: $(APITESTSDIR)/api-hevc-parser-test$(EXESUF)
+ fate-api-hevc-parser-shared-input: CMD = run $(APITESTSDIR)/api-hevc-parser-test$(EXESUF) $(TARGET_SAMPLES)/hevc/mv-au-boundaries-buffered.hevc 19590 9559 10031
+ 
++FATE_API_SAMPLES-$(CONFIG_VVC_PARSER) += fate-api-vvc-parser fate-api-vvc-parser-shared-input
++fate-api-vvc-parser: $(APITESTSDIR)/api-vvc-parser-test$(EXESUF)
++fate-api-vvc-parser: CMD = run $(APITESTSDIR)/api-vvc-parser-test$(EXESUF) $(TARGET_SAMPLES)/vvc/opi-missing-top-layer.vvc 16 3037 1215 599 373 281 111 115 247 110 98 358 255 103 95 274 98 104
++fate-api-vvc-parser-shared-input: $(APITESTSDIR)/api-vvc-parser-test$(EXESUF)
++fate-api-vvc-parser-shared-input: CMD = run $(APITESTSDIR)/api-vvc-parser-test$(EXESUF) $(TARGET_SAMPLES)/vvc/opi-missing-top-layer.vvc 7473 7473
++
+ FATE_API_SAMPLES_LIBAVFORMAT-$(call DEMDEC, FLV, FLV) += fate-api-band
+ fate-api-band: $(APITESTSDIR)/api-band-test$(EXESUF)
+ fate-api-band: CMD = run $(APITESTSDIR)/api-band-test$(EXESUF) $(TARGET_SAMPLES)/mpeg4/resize_down-up.h263
+diff --git a/tests/fate/vvc.mak b/tests/fate/vvc.mak
+index 8892da2..0449378 100644
+--- a/tests/fate/vvc.mak
++++ b/tests/fate/vvc.mak
+@@ -101,3 +101,11 @@ FATE_VVC-$(call ALLYES, FILE_PROTOCOL VVC_DEMUXER VVC_PARSER VVC_DECODER \
+ FATE_SAMPLES_FFMPEG += $(FATE_VVC-yes)
+ 
+ fate-vvc: $(FATE_VVC-yes)
++
++# Keep all PUs in their own AU, including AUs without the highest VPS layer.
++fate-vvc-parser-multilayer-vps: CMD = framecrc -i $(TARGET_SAMPLES)/vvc-conformance/VPS_A_3.bit -c copy
++fate-vvc-parser-multilayer-opi: CMD = framecrc -i $(TARGET_SAMPLES)/vvc-conformance/OPI_B_3.bit -c copy
++fate-vvc-parser-missing-top-layer: CMD = framecrc -raw_packet_size 1 -i $(TARGET_SAMPLES)/vvc/opi-missing-top-layer.vvc -c copy
++FATE_VVC_PARSER-$(call FRAMECRC, VVC, VVC, VVC_PARSER) += fate-vvc-parser-multilayer-vps fate-vvc-parser-multilayer-opi fate-vvc-parser-missing-top-layer
++FATE_SAMPLES_FFMPEG += $(FATE_VVC_PARSER-yes)
++fate-vvc: $(FATE_VVC_PARSER-yes)
+diff --git a/tests/ref/fate/api-vvc-parser b/tests/ref/fate/api-vvc-parser
+new file mode 100644
+index 0000000..7503a67
+--- /dev/null
++++ b/tests/ref/fate/api-vvc-parser
+@@ -0,0 +1,17 @@
++0 3037 0 -50 0 0 I 1 10 416 240 416 240
++3037 1215 100 50 3037 0 B 0 10 416 240 416 240
++4252 599 200 150 4252 0 B 0 10 416 240 416 240
++4851 373 300 250 4851 0 B 0 10 416 240 416 240
++5224 281 400 350 5224 0 B 0 10 416 240 416 240
++5505 111 500 450 5505 0 B 0 10 416 240 416 240
++5616 115 600 550 5616 0 B 0 10 416 240 416 240
++5731 247 700 650 5731 0 B 0 10 416 240 416 240
++5978 110 800 750 5978 0 B 0 10 416 240 416 240
++6088 98 900 850 6088 0 B 0 10 416 240 416 240
++6186 358 1000 950 6186 0 B 0 10 416 240 416 240
++6544 255 1100 1050 6544 0 B 0 10 416 240 416 240
++6799 103 1200 1150 6799 0 B 0 10 416 240 416 240
++6902 95 1300 1250 6902 0 B 0 10 416 240 416 240
++6997 274 1400 1350 6997 0 B 0 10 416 240 416 240
++7271 98 1500 1450 7271 0 B 0 10 416 240 416 240
++7369 104 1600 1550 7369 0 B 0 10 416 240 416 240
+diff --git a/tests/ref/fate/api-vvc-parser-shared-input b/tests/ref/fate/api-vvc-parser-shared-input
+new file mode 100644
+index 0000000..081c022
+--- /dev/null
++++ b/tests/ref/fate/api-vvc-parser-shared-input
+@@ -0,0 +1,17 @@
++0 3037 0 -50 0 0 I 1 10 416 240 416 240
++3037 1215 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
++4252 599 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
++4851 373 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
++5224 281 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
++5505 111 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
++5616 115 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
++5731 247 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
++5978 110 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
++6088 98 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
++6186 358 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
++6544 255 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
++6799 103 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
++6902 95 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
++6997 274 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
++7271 98 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
++7369 104 -9223372036854775808 -9223372036854775808 -1 0 B 0 10 416 240 416 240
+diff --git a/tests/ref/fate/cbs-vvc-OPI_B_3 b/tests/ref/fate/cbs-vvc-OPI_B_3
+index 99c8516..6f99d3b 100644
+--- a/tests/ref/fate/cbs-vvc-OPI_B_3
++++ b/tests/ref/fate/cbs-vvc-OPI_B_3
+@@ -1 +1 @@
+-c35066104c7cf9be0e7b9aad5b576256
++27baef7052678b58f3d718c84117e4dc
+diff --git a/tests/ref/fate/cbs-vvc-VPS_A_3 b/tests/ref/fate/cbs-vvc-VPS_A_3
+index 62e9565..fbf3f1a 100644
+--- a/tests/ref/fate/cbs-vvc-VPS_A_3
++++ b/tests/ref/fate/cbs-vvc-VPS_A_3
+@@ -1 +1 @@
+-40c6750868d27bba165a1553c519cee5
++4aa23247aa320e54810ea093dadd0716
+diff --git a/tests/ref/fate/vvc-parser-missing-top-layer b/tests/ref/fate/vvc-parser-missing-top-layer
+new file mode 100644
+index 0000000..125e7eb
+--- /dev/null
++++ b/tests/ref/fate/vvc-parser-missing-top-layer
+@@ -0,0 +1,23 @@
++#extradata 0:      338, 0x2b795f7d
++#tb 0: 1/1200000
++#media_type 0: video
++#codec_id 0: vvc
++#dimensions 0: 416x240
++#sar 0: 0/1
++0,     -48000, -9223372036854775808,    48000,     3037, 0xbece8feb
++0,          0, -9223372036854775808,    48000,     1215, 0xc5725c1b, F=0x0
++0,      48000, -9223372036854775808,    48000,      599, 0xe23b2ba2, F=0x0
++0,      96000, -9223372036854775808,    48000,      373, 0x1f81aa42, F=0x0
++0,     144000, -9223372036854775808,    48000,      281, 0xb6777a1c, F=0x0
++0,     192000, -9223372036854775808,    48000,      111, 0x03383280, F=0x0
++0,     240000, -9223372036854775808,    48000,      115, 0x759d32ab, F=0x0
++0,     288000, -9223372036854775808,    48000,      247, 0x622f6c0e, F=0x0
++0,     336000, -9223372036854775808,    48000,      110, 0x2a613251, F=0x0
++0,     384000, -9223372036854775808,    48000,       98, 0x6ed52a14, F=0x0
++0,     432000, -9223372036854775808,    48000,      358, 0x4569a2ca, F=0x0
++0,     480000, -9223372036854775808,    48000,      255, 0xe49f68c3, F=0x0
++0,     528000, -9223372036854775808,    48000,      103, 0x6eab2a9d, F=0x0
++0,     576000, -9223372036854775808,    48000,       95, 0x6f2b28a7, F=0x0
++0,     624000, -9223372036854775808,    48000,      274, 0x4158800b, F=0x0
++0,     672000, -9223372036854775808,    48000,       98, 0xf2292793, F=0x0
++0,     720000, -9223372036854775808,    48000,      104, 0x91e82bbb, F=0x0
+diff --git a/tests/ref/fate/vvc-parser-multilayer-opi b/tests/ref/fate/vvc-parser-multilayer-opi
+new file mode 100644
+index 0000000..f2913d2
+--- /dev/null
++++ b/tests/ref/fate/vvc-parser-multilayer-opi
+@@ -0,0 +1,23 @@
++#extradata 0:      338, 0x2b795f7d
++#tb 0: 1/1200000
++#media_type 0: video
++#codec_id 0: vvc
++#dimensions 0: 416x240
++#sar 0: 0/1
++0,     -48000, -9223372036854775808,    48000,     3037, 0xbece8feb
++0,          0, -9223372036854775808,    48000,     1215, 0xc5725c1b, F=0x0
++0,      48000, -9223372036854775808,    48000,      599, 0xe23b2ba2, F=0x0
++0,      96000, -9223372036854775808,    48000,      373, 0x1f81aa42, F=0x0
++0,     144000, -9223372036854775808,    48000,      281, 0xb6777a1c, F=0x0
++0,     192000, -9223372036854775808,    48000,      197, 0xf6e45b20, F=0x0
++0,     240000, -9223372036854775808,    48000,      203, 0x348454b4, F=0x0
++0,     288000, -9223372036854775808,    48000,      247, 0x622f6c0e, F=0x0
++0,     336000, -9223372036854775808,    48000,      190, 0x7265541b, F=0x0
++0,     384000, -9223372036854775808,    48000,      179, 0x5f3e4bb4, F=0x0
++0,     432000, -9223372036854775808,    48000,      358, 0x4569a2ca, F=0x0
++0,     480000, -9223372036854775808,    48000,      255, 0xe49f68c3, F=0x0
++0,     528000, -9223372036854775808,    48000,      187, 0xc09e5072, F=0x0
++0,     576000, -9223372036854775808,    48000,      175, 0xcd8a4902, F=0x0
++0,     624000, -9223372036854775808,    48000,      274, 0x4158800b, F=0x0
++0,     672000, -9223372036854775808,    48000,      182, 0xfd1b48b6, F=0x0
++0,     720000, -9223372036854775808,    48000,      194, 0xaf2e4f6b, F=0x0
+diff --git a/tests/ref/fate/vvc-parser-multilayer-vps b/tests/ref/fate/vvc-parser-multilayer-vps
+new file mode 100644
+index 0000000..7dc1f2e
+--- /dev/null
++++ b/tests/ref/fate/vvc-parser-multilayer-vps
+@@ -0,0 +1,15 @@
++#extradata 0:      290, 0x44fb5ea8
++#tb 0: 1/1200000
++#media_type 0: video
++#codec_id 0: vvc
++#dimensions 0: 208x120
++#sar 0: 0/1
++0,     -48000, -9223372036854775808,    48000,     9793, 0x5322a615
++0,          0, -9223372036854775808,    48000,      149, 0x09893cc9, F=0x0
++0,      48000, -9223372036854775808,    48000,      554, 0xe1bd12b6, F=0x0
++0,      96000, -9223372036854775808,    48000,      551, 0x0b11022b, F=0x0
++0,     144000, -9223372036854775808,    48000,      684, 0x4b28486b, F=0x0
++0,     192000, -9223372036854775808,    48000,      525, 0xf155f9d3, F=0x0
++0,     240000, -9223372036854775808,    48000,      682, 0xfe884d67, F=0x0
++0,     288000, -9223372036854775808,    48000,      525, 0xb6c3f1bd, F=0x0
++0,     336000, -9223372036854775808,    48000,     2138, 0xcdf30b1a, F=0x0
+diff --git a/tests/ref/lavf-fate/vvc.mkv b/tests/ref/lavf-fate/vvc.mkv
+index 679370c..999ce28 100644
+--- a/tests/ref/lavf-fate/vvc.mkv
++++ b/tests/ref/lavf-fate/vvc.mkv
+@@ -1,3 +1,3 @@
+-88113d8aa98b2cac4a25c7228814ea9a *tests/data/lavf-fate/lavf.vvc.mkv
+-16350 tests/data/lavf-fate/lavf.vvc.mkv
++6ab129440443a5ed2a3775cb99102113 *tests/data/lavf-fate/lavf.vvc.mkv
++16475 tests/data/lavf-fate/lavf.vvc.mkv
+ tests/data/lavf-fate/lavf.vvc.mkv CRC=0x895790b1
+diff --git a/tests/ref/lavf-fate/vvc.mp4 b/tests/ref/lavf-fate/vvc.mp4
+index 8134b70..cc76e0a 100644
+--- a/tests/ref/lavf-fate/vvc.mp4
++++ b/tests/ref/lavf-fate/vvc.mp4
+@@ -1,3 +1,3 @@
+-408ca7a9ce75787f0b544911c423d410 *tests/data/lavf-fate/lavf.vvc.mp4
+-16624 tests/data/lavf-fate/lavf.vvc.mp4
++6d9c7d906864cc77e0835f2831502cca *tests/data/lavf-fate/lavf.vvc.mp4
++16752 tests/data/lavf-fate/lavf.vvc.mp4
+ tests/data/lavf-fate/lavf.vvc.mp4 CRC=0x895790b1

@@ -1,0 +1,85 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/0b46cc3bd292ad00fdfa23283ef2d9dad959031b
+From 0b46cc3bd292ad00fdfa23283ef2d9dad959031b Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 03:58:55 -0300
+Subject: [PATCH 25/48] cbs_h265: keep the whole mantissas of the 3D reference
+ displays information
+
+The mantissas of the reference display width and viewing distance are up
+to 62 bits long (H.265 G.14.3.3: Max(0, exponent + prec - 31)), but they
+were kept in 8 bits, so writing a message with a longer mantissa changed
+it, and mantissas longer than 32 bits were refused. Keep them in 64 bits
+and read and write the longer ones in two parts.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ libavcodec/cbs_h265.h                 |  4 ++--
+ libavcodec/cbs_h265_syntax_template.c | 26 ++++++++++++++++----------
+ 2 files changed, 18 insertions(+), 12 deletions(-)
+
+diff --git a/libavcodec/cbs_h265.h b/libavcodec/cbs_h265.h
+index cd84b7b5..c5b437b2 100644
+--- a/libavcodec/cbs_h265.h
++++ b/libavcodec/cbs_h265.h
+@@ -729,9 +729,9 @@ typedef struct H265RawSEI3DReferenceDisplaysInfo {
+     uint16_t left_view_id[32];
+     uint16_t right_view_id[32];
+     uint8_t exponent_ref_display_width[32];
+-    uint8_t mantissa_ref_display_width[32];
++    uint64_t mantissa_ref_display_width[32];
+     uint8_t exponent_ref_viewing_distance[32];
+-    uint8_t mantissa_ref_viewing_distance[32];
++    uint64_t mantissa_ref_viewing_distance[32];
+     uint8_t additional_shift_present_flag[32];
+     uint16_t num_sample_shift_plus512[32];
+     uint8_t three_dimensional_reference_displays_extension_flag;
+diff --git a/libavcodec/cbs_h265_syntax_template.c b/libavcodec/cbs_h265_syntax_template.c
+index c97b7ed3..2ce6759b 100644
+--- a/libavcodec/cbs_h265_syntax_template.c
++++ b/libavcodec/cbs_h265_syntax_template.c
+@@ -2312,12 +2312,15 @@ SEI_FUNC(sei_3d_reference_displays_info, (CodedBitstreamContext *ctx, RWContext
+             length = FFMAX(0, (int)current->exponent_ref_display_width[i] +
+                               (int)current->prec_ref_display_width - 31);
+ 
++        /* up to 62 bits: Max(0, exponent + prec - 31), G.14.3.3 */
+         if (length > 32) {
+-            av_log(ctx->log_ctx, AV_LOG_ERROR, "refDispWidthBits > 32 is not supported\n");
+-            return AVERROR_PATCHWELCOME;
+-        }
+-
+-        if (length)
++            uint32_t high = current->mantissa_ref_display_width[i] >> 32;
++            uint32_t low  = current->mantissa_ref_display_width[i];
++            xu(length - 32, mantissa_ref_display_width_high[i], high,
++               0, MAX_UINT_BITS(length - 32), 1, i);
++            xu(32, mantissa_ref_display_width_low[i], low, 0, UINT32_MAX, 1, i);
++            current->mantissa_ref_display_width[i] = (uint64_t)high << 32 | low;
++        } else if (length)
+             ubs(length, mantissa_ref_display_width[i], 1, i);
+         else
+             infer(mantissa_ref_display_width[i], 0);
+@@ -2329,12 +2332,15 @@ SEI_FUNC(sei_3d_reference_displays_info, (CodedBitstreamContext *ctx, RWContext
+                 length = FFMAX(0, (int)current->exponent_ref_viewing_distance[i] +
+                                   (int)current->prec_ref_viewing_dist - 31);
+ 
++            /* up to 62 bits: Max(0, exponent + prec - 31), G.14.3.3 */
+             if (length > 32) {
+-                av_log(ctx->log_ctx, AV_LOG_ERROR, "refViewDistBits > 32 is not supported\n");
+-                return AVERROR_PATCHWELCOME;
+-            }
+-
+-            if (length)
++                uint32_t high = current->mantissa_ref_viewing_distance[i] >> 32;
++                uint32_t low  = current->mantissa_ref_viewing_distance[i];
++                xu(length - 32, mantissa_ref_viewing_distance_high[i], high,
++                   0, MAX_UINT_BITS(length - 32), 1, i);
++                xu(32, mantissa_ref_viewing_distance_low[i], low, 0, UINT32_MAX, 1, i);
++                current->mantissa_ref_viewing_distance[i] = (uint64_t)high << 32 | low;
++            } else if (length)
+                 ubs(length, mantissa_ref_viewing_distance[i], 1, i);
+             else
+                 infer(mantissa_ref_viewing_distance[i], 0);
+-- 
+2.53.0
+

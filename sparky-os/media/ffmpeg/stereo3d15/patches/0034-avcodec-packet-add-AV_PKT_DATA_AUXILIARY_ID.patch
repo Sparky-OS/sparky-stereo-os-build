@@ -1,0 +1,77 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/01f1d48c63c39dbf020aa96d9fbf126ed5b4c532
+From 01f1d48c63c39dbf020aa96d9fbf126ed5b4c532 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:21:14 -0300
+Subject: [PATCH 34/48] avcodec/packet: add AV_PKT_DATA_AUXILIARY_ID
+
+The stream twin of AV_FRAME_DATA_AUXILIARY_ID, for the auxiliary type an
+ISOBMFF track or HEIF item signals, which then holds for every frame of
+the stream.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ libavcodec/avcodec.c  | 1 +
+ libavcodec/packet.c   | 1 +
+ libavcodec/packet.h   | 7 +++++++
+ libavutil/side_data.c | 2 +-
+ 4 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/libavcodec/avcodec.c b/libavcodec/avcodec.c
+index e7709207..45e0a002 100644
+--- a/libavcodec/avcodec.c
++++ b/libavcodec/avcodec.c
+@@ -74,6 +74,7 @@ const SideDataMap ff_sd_global_map[] = {
+     { AV_PKT_DATA_DEPTH_SAMPLING_INFO,        AV_FRAME_DATA_DEPTH_SAMPLING_INFO },
+     { AV_PKT_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID, AV_FRAME_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID },
+     { AV_PKT_DATA_ALTERNATIVE_DEPTH_INFO,     AV_FRAME_DATA_ALTERNATIVE_DEPTH_INFO },
++    { AV_PKT_DATA_AUXILIARY_ID,               AV_FRAME_DATA_AUXILIARY_ID },
+     { AV_PKT_DATA_NB },
+ };
+ 
+diff --git a/libavcodec/packet.c b/libavcodec/packet.c
+index bebcf77d..a3a97322 100644
+--- a/libavcodec/packet.c
++++ b/libavcodec/packet.c
+@@ -320,6 +320,7 @@ const char *av_packet_side_data_name(enum AVPacketSideDataType type)
+     case AV_PKT_DATA_DEPTH_SAMPLING_INFO:        return "Depth Sampling Information";
+     case AV_PKT_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID: return "Constrained Depth Parameter Set Identifier";
+     case AV_PKT_DATA_ALTERNATIVE_DEPTH_INFO:     return "Alternative Depth Information";
++    case AV_PKT_DATA_AUXILIARY_ID:               return "Auxiliary Picture Type (AuxId)";
+     }
+     return NULL;
+ }
+diff --git a/libavcodec/packet.h b/libavcodec/packet.h
+index 57c22131..7ef1442a 100644
+--- a/libavcodec/packet.h
++++ b/libavcodec/packet.h
+@@ -431,6 +431,13 @@ enum AVPacketSideDataType {
+      */
+     AV_PKT_DATA_ALTERNATIVE_DEPTH_INFO,
+ 
++    /**
++     * The stream is an auxiliary picture stream: the data is an int, its AuxId
++     * (ITU-T H.265 Table F.2), 1 for alpha, 2 for depth, as the auxiliary type
++     * of an ISOBMFF track or HEIF item signals it.
++     */
++    AV_PKT_DATA_AUXILIARY_ID,
++
+     /**
+      * The number of side data types.
+      * This is not part of the public API/ABI in the sense that it may
+diff --git a/libavutil/side_data.c b/libavutil/side_data.c
+index 08dff729..eaffa128 100644
+--- a/libavutil/side_data.c
++++ b/libavutil/side_data.c
+@@ -70,7 +70,7 @@ static const AVSideDataDescriptor sd_props[] = {
+     [AV_FRAME_DATA_DEPTH_SAMPLING_INFO]         = { "Depth sampling information",                   AV_SIDE_DATA_PROP_GLOBAL },
+     [AV_FRAME_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID] = { "Constrained depth parameter set identifier", AV_SIDE_DATA_PROP_GLOBAL },
+     [AV_FRAME_DATA_ALTERNATIVE_DEPTH_INFO]      = { "Alternative depth information",                AV_SIDE_DATA_PROP_GLOBAL },
+-    [AV_FRAME_DATA_AUXILIARY_ID]                = { "Auxiliary picture type (AuxId)" },
++    [AV_FRAME_DATA_AUXILIARY_ID]                = { "Auxiliary picture type (AuxId)",               AV_SIDE_DATA_PROP_GLOBAL },
+ };
+ 
+ const AVSideDataDescriptor *av_frame_side_data_desc(enum AVFrameSideDataType type)
+-- 
+2.53.0
+

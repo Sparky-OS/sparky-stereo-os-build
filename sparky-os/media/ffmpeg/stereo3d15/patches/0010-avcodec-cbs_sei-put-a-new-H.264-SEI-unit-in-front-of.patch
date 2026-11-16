@@ -1,0 +1,34 @@
+Description: avcodec/cbs_sei: put a new H.264 SEI unit in front of the IDR slice
+ A new prefix SEI unit belongs before the first VCL NAL unit. The H.264
+ search excluded the IDR slice type, so an access unit containing an IDR
+ slice and no SEI received its new SEI after the slice. A decoder then
+ associates the message with the next picture.
+ .
+ The expected output of fate-cbs-h264-metadata-sei changes with it: its
+ reference was made with the SEI behind the IDR slice. The new stream has
+ it in front of the slice: AUD, SPS, PPS, SEI, IDR.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Sonnet via Claude Code
+ Assisted-by: gpt-6-astra via Codex
+ Assisted-by: Claude Sonnet 5.5 via Claude Code
+ .
+ Port to 9.0.2: tests/fate/cbs.mak: the reference line of cbs-h264-metadata-sei is left out, 9.0.2 has no such test.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/f77f96779bf4b5a94e0152a9ccd36d266ab8ee51
+Forwarded: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25395
+Last-Update: 2026-11-06
+
+diff --git a/libavcodec/cbs_sei.c b/libavcodec/cbs_sei.c
+index f354a10..e3544d3 100644
+--- a/libavcodec/cbs_sei.c
++++ b/libavcodec/cbs_sei.c
+@@ -311,7 +311,7 @@ static int cbs_sei_get_unit(CodedBitstreamContext *ctx,
+         // (We can ignore auxiliary slices because we only have prefix
+         // SEI in H.264 and an auxiliary picture must always follow a
+         // primary picture.)
+-        highest_vcl_type = H264_NAL_IDR_SLICE;
++        highest_vcl_type = H264_NAL_IDR_SLICE + 1;
+         if (prefix)
+             sei_type = H264_NAL_SEI;
+         else

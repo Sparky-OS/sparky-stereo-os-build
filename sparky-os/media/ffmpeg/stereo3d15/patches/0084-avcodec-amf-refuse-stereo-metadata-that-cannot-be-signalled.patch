@@ -1,0 +1,122 @@
+Description: avcodec/amf: refuse stereo metadata that cannot be signalled
+ .
+ AMF has no general SEI payload insertion route in the current encoder API.
+ Reject marked frames and initial decoded side data with a diagnostic that
+ names the packing and explains the frame_packing=0 opt-out. Keep ordinary
+ 2D unchanged and expose the option with the same default as other encoders.
+ .
+ Both encoder guards and their explicit opt-outs were exercised before
+ runtime initialization. The encoders compile; AMF runtime encoding is
+ not qualified by these guard tests.
+ .
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/f29f5a9a9b57021776e0f0dc20ef3cd5deca43dd
+Forwarded: no
+Last-Update: 2026-11-09
+
+diff --git a/libavcodec/amfenc.c b/libavcodec/amfenc.c
+index 3ffca750d80..66ad4d7882b 100644
+--- a/libavcodec/amfenc.c
++++ b/libavcodec/amfenc.c
+@@ -34,6 +34,7 @@
+ #include "libavutil/time.h"
+ 
+ #include "amfenc.h"
++#include "libavutil/stereo3d.h"
+ #include "encode.h"
+ 
+ #define AMF_AV_FRAME_REF    L"av_frame_ref"
+@@ -279,12 +280,39 @@ static int amf_copy_buffer(AVCodecContext *avctx, AVPacket *pkt, AMFBuffer *buff
+ }
+ 
+ // amfenc API implementation
++static int amf_check_frame_packing(AVCodecContext *avctx, const AVFrame *frame)
++{
++    AMFEncoderContext *ctx = avctx->priv_data;
++    const AVFrameSideData *sd;
++    const AVStereo3D *stereo;
++
++    if (!ctx->frame_packing)
++        return 0;
++    sd = frame ? av_frame_get_side_data(frame, AV_FRAME_DATA_STEREO3D) : NULL;
++    if (!sd)
++        sd = av_frame_side_data_get(avctx->decoded_side_data,
++                                   avctx->nb_decoded_side_data, AV_FRAME_DATA_STEREO3D);
++    if (!sd)
++        return 0;
++    stereo = (const AVStereo3D *)sd->data;
++    if (avctx->codec_id == AV_CODEC_ID_HEVC && stereo->type == AV_STEREO3D_2D)
++        return 0;
++    av_log(avctx, AV_LOG_ERROR, "Cannot signal %s frame packing: AMF exposes no "
++           "general SEI payload path; use another encoder or -frame_packing 0 "
++           "to disable the mark.\n", av_stereo3d_type_name(stereo->type));
++    return AVERROR(ENOSYS);
++}
++
+ int ff_amf_encode_init(AVCodecContext *avctx)
+ {
+     int ret;
+     AMFEncoderContext *ctx = avctx->priv_data;
+     AVHWDeviceContext   *hwdev_ctx = NULL;
+ 
++    ret = amf_check_frame_packing(avctx, NULL);
++    if (ret < 0)
++        return ret;
++
+     // hardcoded to current HW queue size - will auto-realloc if too small
+     ctx->timestamp_list = av_fifo_alloc2(avctx->max_b_frames + 16, sizeof(int64_t),
+                                          AV_FIFO_FLAG_AUTO_GROW);
+@@ -602,6 +630,13 @@ int ff_amf_receive_packet(AVCodecContext *avctx, AVPacket *avpkt)
+     }
+ 
+     ret = ff_encode_get_frame(avctx, frame);
++    if (ret >= 0) {
++        ret = amf_check_frame_packing(avctx, frame);
++        if (ret < 0) {
++            av_frame_free(&frame);
++            return ret;
++        }
++    }
+     if(ret < 0){
+         if(ret != AVERROR_EOF){
+             av_frame_free(&frame);
+diff --git a/libavcodec/amfenc.h b/libavcodec/amfenc.h
+index 1571541b9b1..4d53f77d001 100644
+--- a/libavcodec/amfenc.h
++++ b/libavcodec/amfenc.h
+@@ -63,6 +63,8 @@ typedef struct AMFEncoderContext {
+     int64_t             encoded_frame;
+     AVFifo             *output_list;
+ 
++    int                 frame_packing;
++
+     // common encoder options
+ 
+     // Static options, have to be set before Init() call
+diff --git a/libavcodec/amfenc_h264.c b/libavcodec/amfenc_h264.c
+index 650a9bc7e9a..21ac8c88421 100644
+--- a/libavcodec/amfenc_h264.c
++++ b/libavcodec/amfenc_h264.c
+@@ -30,6 +30,8 @@
+ #define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
+ 
+ static const AVOption options[] = {
++    { "frame_packing", "Require stereo frame packing signaling",
++      OFFSET(frame_packing), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, VE },
+     // Static
+     /// Usage
+     { "usage",          "Encoder Usage",        OFFSET(usage),  AV_OPT_TYPE_INT,   { .i64 = -1 }, -1, AMF_VIDEO_ENCODER_USAGE_LOW_LATENCY_HIGH_QUALITY, VE, .unit = "usage" },
+diff --git a/libavcodec/amfenc_hevc.c b/libavcodec/amfenc_hevc.c
+index 6fa20d172e6..f228f537c12 100644
+--- a/libavcodec/amfenc_hevc.c
++++ b/libavcodec/amfenc_hevc.c
+@@ -30,6 +30,8 @@
+ #define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
+ 
+ static const AVOption options[] = {
++    { "frame_packing", "Require stereo frame packing signaling",
++      OFFSET(frame_packing), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, VE },
+     { "usage",                   "Set the encoding usage",       OFFSET(usage), AV_OPT_TYPE_INT,   {.i64 = -1 }, -1, AMF_VIDEO_ENCODER_HEVC_USAGE_LOW_LATENCY_HIGH_QUALITY, VE, .unit = "usage" },
+     { "transcoding",             "Generic Transcoding",                      0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_HEVC_USAGE_TRANSCODING               }, 0, 0, VE, .unit = "usage" },
+     { "ultralowlatency",         "Ultra low latency usecase",                0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_HEVC_USAGE_ULTRA_LOW_LATENCY         }, 0, 0, VE, .unit = "usage" },

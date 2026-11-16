@@ -1,0 +1,22 @@
+ffmpeg-dmo (@VERSION@) unstable; urgency=medium
+
+  * Preserve the complete +stereo3d14 series, including Matroska eye shape, and its Lean Code source plan.
+  * Keep carried patch authors as names only, with Origin links to the
+    full upstream record; apply the same rewrite to patches inherited
+    from the published source.
+  * Write H.264 and HEVC frame packing during hardware encoding through
+    VA-API packed headers, NVENC payloads, Vulkan units and QSV payloads.
+    Enable marking by default, with explicit packing errors and opt-outs;
+    AMF refuses marked input because its API has no general SEI route.
+  * Represent tiled and all defined quincunx layouts in AVStereo3D and
+    export them from the decoder. Preserve temporal frame identity
+    independently of eye order, and clear HEVC non-packed constraints
+    when the encoder writes a mark.
+  * Carry upstream NVENC's HEVC SEI budget fix with its original credit;
+    reserve the mandatory packing payload before optional SEI.
+  * Carry the nine ORDER 174 changes and regression tests, preserving
+    the AuxId and CBS mantissa implementations already present in +12.
+    Append full-width reference-display fields and retain the edition's
+    existing multiview representation and ffprobe output fields.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@

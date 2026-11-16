@@ -1,0 +1,269 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/990b68b1478605394d882833e490f84c15448b4f
+From 990b68b1478605394d882833e490f84c15448b4f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 03:40:22 -0300
+Subject: [PATCH 22/48] avcodec/h2645_sei: export the 3D reference displays
+ information on frames
+
+Decode the 3D reference displays information of H.264 (H.13.2.4,
+payloadType 51) and H.265 (G.14.3.3, payloadType 176) as frame side data
+of the access units it applies to: until the next IDR access unit or
+access unit with multiview acquisition information in H.264, and until
+the next IRAP access unit in H.265. HEVC keeps exporting it as stream
+side data from the extradata too.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ libavcodec/h2645_sei.h           | 13 ++++-
+ libavcodec/h2645_sei_multiview.c | 83 +++++++++++++++++++++++++++++++-
+ libavcodec/h264_slice.c          |  2 +
+ libavcodec/hevc/hevcdec.c        | 12 +++--
+ libavcodec/hevc/sei.c            | 11 ++++-
+ 5 files changed, 111 insertions(+), 10 deletions(-)
+
+diff --git a/libavcodec/h2645_sei.h b/libavcodec/h2645_sei.h
+index 43884542..0e68857b 100644
+--- a/libavcodec/h2645_sei.h
++++ b/libavcodec/h2645_sei.h
+@@ -141,6 +141,7 @@ enum {
+     H2645_SEI_DEPTH_SAMPLING_INFO,
+     H2645_SEI_CONSTRAINED_DEPTH_PARAMETER_SET_ID,
+     H2645_SEI_ALTERNATIVE_DEPTH_INFO,
++    H2645_SEI_3D_REFERENCE_DISPLAYS,
+     H2645_SEI_MULTIVIEW_NB,
+ };
+ 
+@@ -221,10 +222,18 @@ void ff_h2645_sei_multiview_reset(H2645SEIMultiview *m);
+ /**
+  * Apply the decoded messages to the information a picture carries: each
+  * replaces the one of its type, and at the start of a coded video sequence
+- * the information of the types not received ends.
++ * the information of the types not received ends. The 3D reference displays
++ * information also ends at an IRAP access unit (H.265 G.14.3.3) or, in
++ * H.264, with new multiview acquisition information (H.13.2.4).
++ *
++ * @param new_sequence whether the picture starts a coded (layer-wise) video
++ *                     sequence
++ * @param irap         whether the picture is an IRAP (H.265) or IDR (H.264)
++ *                     picture
+  */
+ int ff_h2645_sei_multiview_update(AVBufferRef *state[H2645_SEI_MULTIVIEW_NB],
+-                                  H2645SEIMultiview *m, int new_sequence);
++                                  H2645SEIMultiview *m, enum AVCodecID codec_id,
++                                  int new_sequence, int irap);
+ 
+ /**
+  * Attach the information a picture carries to its frame.
+diff --git a/libavcodec/h2645_sei_multiview.c b/libavcodec/h2645_sei_multiview.c
+index 2387143d..2406e719 100644
+--- a/libavcodec/h2645_sei_multiview.c
++++ b/libavcodec/h2645_sei_multiview.c
+@@ -23,6 +23,7 @@
+ #include "libavutil/frame.h"
+ #include "libavutil/mem.h"
+ #include "libavutil/multiview.h"
++#include "libavutil/tdrdi.h"
+ 
+ #include "codec_id.h"
+ #include "decode.h"
+@@ -40,6 +41,7 @@ const enum AVFrameSideDataType ff_h2645_sei_multiview_types[H2645_SEI_MULTIVIEW_
+     [H2645_SEI_DEPTH_SAMPLING_INFO]                     = AV_FRAME_DATA_DEPTH_SAMPLING_INFO,
+     [H2645_SEI_CONSTRAINED_DEPTH_PARAMETER_SET_ID]      = AV_FRAME_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID,
+     [H2645_SEI_ALTERNATIVE_DEPTH_INFO]                  = AV_FRAME_DATA_ALTERNATIVE_DEPTH_INFO,
++    [H2645_SEI_3D_REFERENCE_DISPLAYS]                   = AV_FRAME_DATA_3D_REFERENCE_DISPLAYS,
+ };
+ 
+ /* the largest view_id and number of views of H.264 (G.7.4.1.2.4), and the
+@@ -583,6 +585,73 @@ invalid:
+     return AVERROR_INVALIDDATA;
+ }
+ 
++/* 3D reference displays information: H.264 H.13.2.4 (payloadType 51), with
++ * a reference baseline per display, and H.265 G.14.3.3 (payloadType 176),
++ * with a pair of views per display */
++static int decode_3d_reference_displays_info(H2645SEIMultiview *m, GetBitContext *gb,
++                                             enum AVCodecID codec_id)
++{
++    AV3DReferenceDisplaysInfo *tdrdi;
++    uint8_t prec_baseline = 0, prec_width, prec_dist = 0;
++    unsigned num_minus1;
++    int dist_flag;
++    size_t size;
++
++    if (codec_id == AV_CODEC_ID_H264 && read_prec(gb, &prec_baseline) < 0)
++        return AVERROR_INVALIDDATA;
++    if (read_prec(gb, &prec_width) < 0)
++        return AVERROR_INVALIDDATA;
++    dist_flag = get_bits1(gb);
++    if (dist_flag && read_prec(gb, &prec_dist) < 0)
++        return AVERROR_INVALIDDATA;
++    num_minus1 = get_ue_golomb_long(gb);
++    if (num_minus1 > 31)
++        return AVERROR_INVALIDDATA;
++
++    tdrdi = av_tdrdi_alloc(num_minus1 + 1, &size);
++    if (!tdrdi)
++        return AVERROR(ENOMEM);
++    tdrdi->prec_ref_display_width    = prec_width;
++    tdrdi->ref_viewing_distance_flag = dist_flag;
++    tdrdi->prec_ref_viewing_dist     = prec_dist;
++    tdrdi->ref_baseline_present      = codec_id == AV_CODEC_ID_H264;
++    tdrdi->prec_ref_baseline         = prec_baseline;
++
++    for (unsigned i = 0; i <= num_minus1; i++) {
++        AV3DReferenceDisplay *d = av_tdrdi_get_display(tdrdi, i);
++
++        if (codec_id == AV_CODEC_ID_HEVC) {
++            unsigned left = get_ue_golomb_long(gb), right = get_ue_golomb_long(gb);
++            if (left > 1023 || right > 1023)
++                goto invalid;
++            d->left_view_id  = left;
++            d->right_view_id = right;
++        } else {
++            read_camera_real(gb, &d->ref_baseline, prec_baseline);
++        }
++        read_camera_real(gb, &d->ref_display_width, prec_width);
++        d->exponent_ref_display_width = d->ref_display_width.exponent;
++        d->mantissa_ref_display_width = d->ref_display_width.mantissa;
++        if (dist_flag) {
++            read_camera_real(gb, &d->ref_viewing_distance, prec_dist);
++            d->exponent_ref_viewing_distance = d->ref_viewing_distance.exponent;
++            d->mantissa_ref_viewing_distance = d->ref_viewing_distance.mantissa;
++        }
++        d->additional_shift_present_flag = get_bits1(gb);
++        if (d->additional_shift_present_flag)
++            d->num_sample_shift = (int)get_bits(gb, 10) - 512;
++        if (get_bits_left(gb) < 0)
++            goto invalid;
++    }
++    /* three_dimensional_reference_displays_extension_flag: what follows a 1
++     * is ignored */
++
++    return wrap(m, H2645_SEI_3D_REFERENCE_DISPLAYS, tdrdi, size);
++invalid:
++    av_free(tdrdi);
++    return AVERROR_INVALIDDATA;
++}
++
+ int ff_h2645_sei_multiview_decode(H2645SEIMultiview *m, enum SEIType type,
+                                   enum AVCodecID codec_id, GetBitContext *gb,
+                                   void *logctx)
+@@ -597,6 +666,8 @@ int ff_h2645_sei_multiview_decode(H2645SEIMultiview *m, enum SEIType type,
+             return decode_multiview_view_position(m, gb, codec_id);
+         case SEI_TYPE_DEPTH_REPRESENTATION_INFO_4:
+             return decode_depth_representation_info(m, gb, codec_id, logctx);
++        case SEI_TYPE_THREE_DIMENSIONAL_REFERENCE_DISPLAYS_INFO_4:
++            return decode_3d_reference_displays_info(m, gb, codec_id);
+         case SEI_TYPE_DEPTH_TIMING:
+             return decode_depth_timing(m, gb);
+         case SEI_TYPE_DEPTH_SAMPLING_INFO:
+@@ -608,6 +679,8 @@ int ff_h2645_sei_multiview_decode(H2645SEIMultiview *m, enum SEIType type,
+         }
+     } else if (codec_id == AV_CODEC_ID_HEVC) {
+         switch (type) {
++        case SEI_TYPE_THREE_DIMENSIONAL_REFERENCE_DISPLAYS_INFO:
++            return decode_3d_reference_displays_info(m, gb, codec_id);
+         case SEI_TYPE_DEPTH_REPRESENTATION_INFO_5:
+             return decode_depth_representation_info(m, gb, codec_id, logctx);
+         case SEI_TYPE_MULTIVIEW_SCENE_INFO_5:
+@@ -631,8 +704,16 @@ void ff_h2645_sei_multiview_reset(H2645SEIMultiview *m)
+ }
+ 
+ int ff_h2645_sei_multiview_update(AVBufferRef *state[H2645_SEI_MULTIVIEW_NB],
+-                                  H2645SEIMultiview *m, int new_sequence)
++                                  H2645SEIMultiview *m, enum AVCodecID codec_id,
++                                  int new_sequence, int irap)
+ {
++    /* the 3D reference displays information ends at the next IRAP access
++     * unit (H.265 G.14.3.3), or IDR access unit or access unit with
++     * multiview acquisition information (H.264 H.13.2.4) */
++    if (!m->info[H2645_SEI_3D_REFERENCE_DISPLAYS] &&
++        (irap || (codec_id == AV_CODEC_ID_H264 && m->info[H2645_SEI_MULTIVIEW_ACQUISITION_INFO])))
++        av_buffer_unref(&state[H2645_SEI_3D_REFERENCE_DISPLAYS]);
++
+     for (int i = 0; i < H2645_SEI_MULTIVIEW_NB; i++) {
+         if (m->info[i]) {
+             av_buffer_unref(&state[i]);
+diff --git a/libavcodec/h264_slice.c b/libavcodec/h264_slice.c
+index 16d97971..ad1b55f7 100644
+--- a/libavcodec/h264_slice.c
++++ b/libavcodec/h264_slice.c
+@@ -1276,6 +1276,7 @@ static int h264_export_frame_props(H264Context *h)
+      * in decoding order, until the next message of its type or the end of
+      * the coded video sequence (H.264 G.13.2, H.13.2 and I.13.2). */
+     ret = ff_h2645_sei_multiview_update(h->multiview, &h->sei.common.multiview,
++                                        AV_CODEC_ID_H264, !!(out->flags & AV_FRAME_FLAG_KEY),
+                                         !!(out->flags & AV_FRAME_FLAG_KEY));
+     if (ret < 0)
+         return ret;
+@@ -2173,6 +2174,7 @@ int ff_h264_queue_decode_slice(H264Context *h, const H2645NAL *nal)
+             /* a skipped picture still starts the information it carries */
+             if (!sl->first_mb_addr)
+                 ff_h2645_sei_multiview_update(h->multiview, &h->sei.common.multiview,
++                                              AV_CODEC_ID_H264, nal->type == H264_NAL_IDR_SLICE,
+                                               nal->type == H264_NAL_IDR_SLICE);
+             return 0;
+         }
+diff --git a/libavcodec/hevc/hevcdec.c b/libavcodec/hevc/hevcdec.c
+index 2b24b49f..9f0cfb53 100644
+--- a/libavcodec/hevc/hevcdec.c
++++ b/libavcodec/hevc/hevcdec.c
+@@ -3078,8 +3078,9 @@ static void multiview_unref(HEVCContext *s)
+  * the layers they apply to: depth representation and multiview acquisition
+  * information to the layer of the NAL unit (G.14.3.4, G.14.3.6), multiview
+  * scene information to it and the layers above (G.14.3.5), and multiview
+- * view position and alternative depth information to the whole coded video
+- * sequence (G.14.3.7, I.14.3.3). */
++ * view position, alternative depth information and 3D reference displays
++ * information to the access units of all layers (G.14.3.7, I.14.3.3,
++ * G.14.3.3). */
+ static int multiview_distribute(HEVCContext *s)
+ {
+     H2645SEIMultiview *m = &s->sei.common.multiview;
+@@ -3092,7 +3093,8 @@ static int multiview_distribute(HEVCContext *s)
+         if (i == H2645_SEI_MULTIVIEW_SCENE_INFO)
+             last = HEVC_MAX_NUH_LAYER_ID;
+         else if (i == H2645_SEI_MULTIVIEW_VIEW_POSITION ||
+-                 i == H2645_SEI_ALTERNATIVE_DEPTH_INFO) {
++                 i == H2645_SEI_ALTERNATIVE_DEPTH_INFO ||
++                 i == H2645_SEI_3D_REFERENCE_DISPLAYS) {
+             first = 0;
+             last  = HEVC_MAX_NUH_LAYER_ID;
+         }
+@@ -3135,8 +3137,8 @@ static int set_side_data(HEVCContext *s)
+      * unit on in decoding order, until the next message or the end of the
+      * coded layer-wise video sequence. */
+     ret = ff_h2645_sei_multiview_update(s->multiview[s->nuh_layer_id],
+-                                        &s->multiview_pending[s->nuh_layer_id],
+-                                        IS_IRAP(s) && s->no_rasl_output_flag);
++                                        &s->multiview_pending[s->nuh_layer_id], AV_CODEC_ID_HEVC,
++                                        IS_IRAP(s) && s->no_rasl_output_flag, IS_IRAP(s));
+     if (ret < 0)
+         return ret;
+     ret = ff_h2645_sei_multiview_to_frame(s->avctx, out, s->multiview[s->nuh_layer_id]);
+diff --git a/libavcodec/hevc/sei.c b/libavcodec/hevc/sei.c
+index 83c726a2..7a8cb99c 100644
+--- a/libavcodec/hevc/sei.c
++++ b/libavcodec/hevc/sei.c
+@@ -237,8 +237,15 @@ static int decode_nal_sei_prefix(GetBitContext *gb, GetByteContext *gbyte,
+         return decode_nal_sei_active_parameter_sets(s, gb, logctx);
+     case SEI_TYPE_TIME_CODE:
+         return decode_nal_sei_timecode(&s->timecode, gb);
+-    case SEI_TYPE_THREE_DIMENSIONAL_REFERENCE_DISPLAYS_INFO:
+-        return decode_nal_sei_3d_reference_displays_info(&s->tdrdi, gb);
++    case SEI_TYPE_THREE_DIMENSIONAL_REFERENCE_DISPLAYS_INFO: {
++        /* also as the frame side data of the access units it applies to */
++        GetBitContext gb_frame = *gb;
++        int ret = decode_nal_sei_3d_reference_displays_info(&s->tdrdi, gb);
++        if (ret < 0)
++            return ret;
++        return ff_h2645_sei_multiview_decode(&s->common.multiview, type, AV_CODEC_ID_HEVC,
++                                             &gb_frame, logctx);
++    }
+     default: {
+         int ret = ff_h2645_sei_message_decode(&s->common, type, AV_CODEC_ID_HEVC,
+                                               gb, gbyte, logctx);
+-- 
+2.53.0
+

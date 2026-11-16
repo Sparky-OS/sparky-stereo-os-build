@@ -1,0 +1,64 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/b01902019e8eaed5791f14ee9021952f532d7079
+From b01902019e8eaed5791f14ee9021952f532d7079 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:35:41 -0300
+Subject: [PATCH 40/48] avcodec/packet: add AV_PKT_DATA_AUXILIARY_VIDEO_INFO
+
+The stream twin of AV_FRAME_DATA_AUXILIARY_VIDEO_INFO, for the
+supplemental information an MPEG-2 transport stream signals for an
+auxiliary video stream in its program map table.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ libavcodec/avcodec.c | 1 +
+ libavcodec/packet.c  | 1 +
+ libavcodec/packet.h  | 8 ++++++++
+ 3 files changed, 10 insertions(+)
+
+diff --git a/libavcodec/avcodec.c b/libavcodec/avcodec.c
+index 45e0a002..b04489d5 100644
+--- a/libavcodec/avcodec.c
++++ b/libavcodec/avcodec.c
+@@ -75,6 +75,7 @@ const SideDataMap ff_sd_global_map[] = {
+     { AV_PKT_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID, AV_FRAME_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID },
+     { AV_PKT_DATA_ALTERNATIVE_DEPTH_INFO,     AV_FRAME_DATA_ALTERNATIVE_DEPTH_INFO },
+     { AV_PKT_DATA_AUXILIARY_ID,               AV_FRAME_DATA_AUXILIARY_ID },
++    { AV_PKT_DATA_AUXILIARY_VIDEO_INFO,       AV_FRAME_DATA_AUXILIARY_VIDEO_INFO },
+     { AV_PKT_DATA_NB },
+ };
+ 
+diff --git a/libavcodec/packet.c b/libavcodec/packet.c
+index a3a97322..8bd41ba2 100644
+--- a/libavcodec/packet.c
++++ b/libavcodec/packet.c
+@@ -321,6 +321,7 @@ const char *av_packet_side_data_name(enum AVPacketSideDataType type)
+     case AV_PKT_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID: return "Constrained Depth Parameter Set Identifier";
+     case AV_PKT_DATA_ALTERNATIVE_DEPTH_INFO:     return "Alternative Depth Information";
+     case AV_PKT_DATA_AUXILIARY_ID:               return "Auxiliary Picture Type (AuxId)";
++    case AV_PKT_DATA_AUXILIARY_VIDEO_INFO:       return "MPEG-C Part 3 Auxiliary Video Information";
+     }
+     return NULL;
+ }
+diff --git a/libavcodec/packet.h b/libavcodec/packet.h
+index 7ef1442a..44cab285 100644
+--- a/libavcodec/packet.h
++++ b/libavcodec/packet.h
+@@ -438,6 +438,14 @@ enum AVPacketSideDataType {
+      */
+     AV_PKT_DATA_AUXILIARY_ID,
+ 
++    /**
++     * The supplemental information of an ISO/IEC 23002-3 (MPEG-C Part 3)
++     * auxiliary video stream, as the auxiliary video stream descriptor of an
++     * MPEG-2 transport stream carries it. The data is the AVAuxiliaryVideoInfo
++     * struct defined in libavutil/multiview.h.
++     */
++    AV_PKT_DATA_AUXILIARY_VIDEO_INFO,
++
+     /**
+      * The number of side data types.
+      * This is not part of the public API/ABI in the sense that it may
+-- 
+2.53.0
+

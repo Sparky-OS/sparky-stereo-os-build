@@ -1,0 +1,1287 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/989975c32db3b547ffc721c53ad35d5089d1e4d1
+From 989975c32db3b547ffc721c53ad35d5089d1e4d1 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 03:20:45 -0300
+Subject: [PATCH 14/48] avutil: add multiview and depth information side data
+
+ITU-T H.264 (Annexes G, H and I) and H.265 (Annexes G and I) carry the
+information a 3D display or a view synthesizer needs about the views of
+a 3D video and the depth pictures that come with them in SEI messages:
+multiview scene information (the disparity range), multiview
+acquisition information (the intrinsic and extrinsic parameters of the
+cameras), multiview view position (the order of the views from left to
+right), depth representation information (how depth samples map to Z or
+disparity, with the non-linear model of equation G-10), depth timing,
+depth sampling information, the constrained depth parameter set
+identifier and alternative depth information.
+
+Add a structure for each in multiview.h, keeping the syntax elements as
+the messages code them, real numbers included, with a conversion to
+double and the table of equation G-10, and a frame side data type for
+each.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ libavutil/Makefile          |   3 +
+ libavutil/frame.h           |  54 +++
+ libavutil/multiview.c       | 247 +++++++++++++
+ libavutil/multiview.h       | 686 ++++++++++++++++++++++++++++++++++++
+ libavutil/side_data.c       |   8 +
+ libavutil/tests/multiview.c | 141 ++++++++
+ tests/fate/libavutil.mak    |   4 +
+ tests/ref/fate/multiview    |  20 ++
+ 8 files changed, 1163 insertions(+)
+ create mode 100644 libavutil/multiview.c
+ create mode 100644 libavutil/multiview.h
+ create mode 100644 libavutil/tests/multiview.c
+ create mode 100644 tests/ref/fate/multiview
+
+diff --git a/libavutil/Makefile b/libavutil/Makefile
+index 39481226..aec74ed3 100644
+--- a/libavutil/Makefile
++++ b/libavutil/Makefile
+@@ -69,6 +69,7 @@ HEADERS = adler32.h                                                     \
+           md5.h                                                         \
+           mem.h                                                         \
+           motion_vector.h                                               \
++          multiview.h                                                   \
+           murmur3.h                                                     \
+           opt.h                                                         \
+           parseutils.h                                                  \
+@@ -164,6 +165,7 @@ OBJS = adler32.o                                                        \
+        mastering_display_metadata.o                                     \
+        md5.o                                                            \
+        mem.o                                                            \
++       multiview.o                                                      \
+        murmur3.o                                                        \
+        opt.o                                                            \
+        parseutils.o                                                     \
+@@ -293,6 +295,7 @@ TESTPROGS = adler32                                                     \
+             log                                                         \
+             mathematics                                                 \
+             md5                                                         \
++            multiview                                                   \
+             murmur3                                                     \
+             opt                                                         \
+             pca                                                         \
+diff --git a/libavutil/frame.h b/libavutil/frame.h
+index 52adbc62..eb9cd557 100644
+--- a/libavutil/frame.h
++++ b/libavutil/frame.h
+@@ -299,6 +299,60 @@ enum AVFrameSideDataType {
+      * libavutil/raw_color_params.h.
+      */
+     AV_FRAME_DATA_RAW_COLOR_PARAMS,
++
++    /**
++     * Multiview scene information: the range of the disparities between
++     * adjacent views. The data is the AVMultiviewSceneInfo struct defined in
++     * libavutil/multiview.h.
++     */
++    AV_FRAME_DATA_MULTIVIEW_SCENE_INFO,
++
++    /**
++     * Multiview acquisition information: the cameras the views were taken
++     * with. The data is the AVMultiviewAcquisitionInfo struct defined in
++     * libavutil/multiview.h.
++     */
++    AV_FRAME_DATA_MULTIVIEW_ACQUISITION_INFO,
++
++    /**
++     * Multiview view position: the order of the views from left to right.
++     * The data is the AVMultiviewViewPosition struct defined in
++     * libavutil/multiview.h.
++     */
++    AV_FRAME_DATA_MULTIVIEW_VIEW_POSITION,
++
++    /**
++     * Depth representation information: how the samples of depth pictures
++     * map to depth or disparity. The data is the AVDepthRepresentationInfo
++     * struct defined in libavutil/multiview.h.
++     */
++    AV_FRAME_DATA_DEPTH_REPRESENTATION_INFO,
++
++    /**
++     * Depth timing: the acquisition time of depth views. The data is the
++     * AVDepthTiming struct defined in libavutil/multiview.h.
++     */
++    AV_FRAME_DATA_DEPTH_TIMING,
++
++    /**
++     * Depth sampling information: the sample size and grid position of depth
++     * views. The data is the AVDepthSamplingInfo struct defined in
++     * libavutil/multiview.h.
++     */
++    AV_FRAME_DATA_DEPTH_SAMPLING_INFO,
++
++    /**
++     * Constrained depth parameter set identifier. The data is the
++     * AVConstrainedDepthParameterSetId struct defined in libavutil/multiview.h.
++     */
++    AV_FRAME_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID,
++
++    /**
++     * Alternative depth information: the views hold packed constituent
++     * pictures or warp maps. The data is the AVAlternativeDepthInfo struct
++     * defined in libavutil/multiview.h.
++     */
++    AV_FRAME_DATA_ALTERNATIVE_DEPTH_INFO,
+ };
+ 
+ enum AVActiveFormatDescription {
+diff --git a/libavutil/multiview.c b/libavutil/multiview.c
+new file mode 100644
+index 00000000..b205ec5f
+--- /dev/null
++++ b/libavutil/multiview.c
+@@ -0,0 +1,247 @@
++/*
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include <math.h>
++#include <stddef.h>
++#include <stdint.h>
++
++#include "error.h"
++#include "common.h"
++#include "macros.h"
++#include "mem.h"
++#include "multiview.h"
++
++double av_multiview_real_to_double(const AVMultiviewReal *r)
++{
++    double x;
++
++    if (!r->exponent_bits || r->exponent_bits > 8 ||
++        r->exponent == (1 << r->exponent_bits) - 1 || r->mantissa_bits > 64)
++        return NAN;
++
++    /* H.265 G.14.3.4.2 and G.14.3.6, H.264 H.13.2.3.1 and G.13.2.5 */
++    if (r->exponent > 0)
++        x = ldexp(1.0 + ldexp((double)r->mantissa, -r->mantissa_bits), r->exponent - 31);
++    else
++        x = ldexp((double)r->mantissa, -(30 + r->mantissa_bits));
++
++    return r->sign ? -x : x;
++}
++
++/* A structure followed by an array of entries, with the offset and the size
++ * of an entry stored in the structure. */
++static void *alloc_with_entries(size_t entries_offset, size_t entry_size,
++                                unsigned int nb_entries, size_t *out_size)
++{
++    size_t size = entries_offset;
++    void *ret;
++
++    if (nb_entries > (SIZE_MAX - size) / entry_size)
++        return NULL;
++    size += entry_size * nb_entries;
++
++    ret = av_mallocz(size);
++    if (!ret)
++        return NULL;
++
++    if (out_size)
++        *out_size = size;
++
++    return ret;
++}
++
++AVMultiviewSceneInfo *av_multiview_scene_info_alloc(size_t *size)
++{
++    AVMultiviewSceneInfo *info = av_mallocz(sizeof(*info));
++
++    if (info && size)
++        *size = sizeof(*info);
++
++    return info;
++}
++
++AVMultiviewAcquisitionInfo *av_multiview_acquisition_info_alloc(unsigned int nb_cameras, size_t *size)
++{
++    struct TestStruct {
++        AVMultiviewAcquisitionInfo p;
++        AVMultiviewCamera          c;
++    };
++    const size_t offset = offsetof(struct TestStruct, c);
++    AVMultiviewAcquisitionInfo *info = alloc_with_entries(offset, sizeof(AVMultiviewCamera),
++                                                          nb_cameras, size);
++
++    if (!info)
++        return NULL;
++
++    info->nb_cameras     = nb_cameras;
++    info->cameras_offset = offset;
++    info->camera_size    = sizeof(AVMultiviewCamera);
++
++    return info;
++}
++
++AVMultiviewViewPosition *av_multiview_view_position_alloc(unsigned int nb_views, size_t *size)
++{
++    struct TestStruct {
++        AVMultiviewViewPosition p;
++        uint16_t                v;
++    };
++    const size_t offset = offsetof(struct TestStruct, v);
++    AVMultiviewViewPosition *pos = alloc_with_entries(offset, sizeof(uint16_t), nb_views, size);
++
++    if (!pos)
++        return NULL;
++
++    pos->nb_views         = nb_views;
++    pos->positions_offset = offset;
++
++    return pos;
++}
++
++AVDepthRepresentationInfo *av_depth_representation_info_alloc(unsigned int nb_views, size_t *size)
++{
++    struct TestStruct {
++        AVDepthRepresentationInfo p;
++        AVDepthRepresentationView v;
++    };
++    const size_t offset = offsetof(struct TestStruct, v);
++    AVDepthRepresentationInfo *info = alloc_with_entries(offset, sizeof(AVDepthRepresentationView),
++                                                         nb_views, size);
++
++    if (!info)
++        return NULL;
++
++    info->all_views_equal = 1;
++    info->nb_views        = nb_views;
++    info->views_offset    = offset;
++    info->view_size       = sizeof(AVDepthRepresentationView);
++
++    return info;
++}
++
++int av_depth_representation_nonlinear_lut(const AVDepthRepresentationInfo *info,
++                                          int bit_depth, uint16_t *lut)
++{
++    const int max_val = (1 << bit_depth) - 1;
++    int segments;
++
++    if (bit_depth < 8 || bit_depth > 16 ||
++        info->type != AV_DEPTH_REPRESENTATION_NONLINEAR_DISPARITY ||
++        info->nb_nonlinear_model < 3 || info->nb_nonlinear_model > AV_DEPTH_NONLINEAR_MODEL_MAX)
++        return AVERROR(EINVAL);
++
++    /* depth_nonlinear_representation_num_minus1 + 2 segments */
++    segments = info->nb_nonlinear_model - 1;
++
++    /* the nodes the deviations are taken from lie on the identity */
++    for (int x = 0; x <= max_val; x++)
++        lut[x] = x;
++
++    /* H.265 G.14.3.4.1, equation G-10 */
++    for (int k = 0; k < segments; k++) {
++        const int64_t pos1 = (int64_t)max_val * k / segments;
++        const int64_t dev1 = info->nonlinear_model[k];
++        const int64_t pos2 = (int64_t)max_val * (k + 1) / segments;
++        const int64_t dev2 = info->nonlinear_model[k + 1];
++        const int64_t x1 = pos1 - dev1, y1 = pos1 + dev1;
++        const int64_t x2 = pos2 - dev2, y2 = pos2 + dev2;
++
++        if (x2 <= x1)
++            continue;
++
++        for (int64_t x = FFMAX(x1, 0); x <= FFMIN(x2, max_val); x++) {
++            const double v = (double)((x - x1) * (y2 - y1)) / (x2 - x1) + y1;
++            const int64_t r = v < 0 ? -(int64_t)floor(-v + 0.5) : (int64_t)floor(v + 0.5);
++            lut[x] = av_clip64(r, 0, max_val);
++        }
++    }
++
++    return 0;
++}
++
++AVDepthTiming *av_depth_timing_alloc(unsigned int nb_offsets, size_t *size)
++{
++    struct TestStruct {
++        AVDepthTiming       p;
++        AVDepthTimingOffset o;
++    };
++    const size_t offset = offsetof(struct TestStruct, o);
++    AVDepthTiming *t = alloc_with_entries(offset, sizeof(AVDepthTimingOffset), nb_offsets, size);
++
++    if (!t)
++        return NULL;
++
++    t->nb_offsets     = nb_offsets;
++    t->offsets_offset = offset;
++    t->offset_size    = sizeof(AVDepthTimingOffset);
++
++    return t;
++}
++
++AVDepthSamplingInfo *av_depth_sampling_info_alloc(unsigned int nb_positions, size_t *size)
++{
++    struct TestStruct {
++        AVDepthSamplingInfo p;
++        AVDepthGridPosition g;
++    };
++    const size_t offset = offsetof(struct TestStruct, g);
++    AVDepthSamplingInfo *info = alloc_with_entries(offset, sizeof(AVDepthGridPosition),
++                                                   nb_positions, size);
++
++    if (!info)
++        return NULL;
++
++    /* H.264 H.13.2.7: inferred when not present */
++    info->dttsr_x_mul      = 1;
++    info->dttsr_y_mul      = 1;
++    info->nb_positions     = nb_positions;
++    info->positions_offset = offset;
++    info->position_size    = sizeof(AVDepthGridPosition);
++
++    return info;
++}
++
++AVConstrainedDepthParameterSetId *av_constrained_depth_parameter_set_id_alloc(size_t *size)
++{
++    AVConstrainedDepthParameterSetId *id = av_mallocz(sizeof(*id));
++
++    if (id && size)
++        *size = sizeof(*id);
++
++    return id;
++}
++
++AVAlternativeDepthInfo *av_alternative_depth_info_alloc(unsigned int nb_views, size_t *size)
++{
++    struct TestStruct {
++        AVAlternativeDepthInfo p;
++        AVAlternativeDepthView v;
++    };
++    const size_t offset = offsetof(struct TestStruct, v);
++    AVAlternativeDepthInfo *info = alloc_with_entries(offset, sizeof(AVAlternativeDepthView),
++                                                      nb_views, size);
++
++    if (!info)
++        return NULL;
++
++    info->nb_views     = nb_views;
++    info->views_offset = offset;
++    info->view_size    = sizeof(AVAlternativeDepthView);
++
++    return info;
++}
+diff --git a/libavutil/multiview.h b/libavutil/multiview.h
+new file mode 100644
+index 00000000..554ddd89
+--- /dev/null
++++ b/libavutil/multiview.h
+@@ -0,0 +1,686 @@
++/*
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file
++ * @ingroup lavu_video_multiview
++ * Multiview and depth information of 3D video
++ */
++
++#ifndef AVUTIL_MULTIVIEW_H
++#define AVUTIL_MULTIVIEW_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++/**
++ * @defgroup lavu_video_multiview Multiview and depth information
++ * @ingroup lavu_video
++ *
++ * The information that ITU-T H.264 (Annexes G, H and I) and ITU-T H.265
++ * (Annexes G and I) carry in SEI messages about the views of a 3D video and
++ * about the depth pictures that come with them: the cameras the views were
++ * taken with, the range of their disparities, their order from left to
++ * right, and how the samples of a depth picture map to depth or disparity.
++ *
++ * Each structure keeps the syntax elements as the message codes them, so
++ * that the message can be written again as it was; the real numbers are
++ * kept in AVMultiviewReal and converted with av_multiview_real_to_double().
++ *
++ * Structures that hold an array are allocated with their av_..._alloc()
++ * function, and their size is not part of the public ABI.
++ * @{
++ */
++
++/**
++ * A real number as ITU-T H.264 and H.265 code camera, depth and disparity
++ * parameters: a sign, an exponent and a mantissa of a given length
++ * (H.265 G.14.3.4.2 and Table G.4, G.14.3.6 and Table G.5; H.264 H.13.2.3.1
++ * and G.13.2.5).
++ *
++ * With s the sign, e the exponent, n the mantissa and v its length in bits,
++ * the value is (-1)^s * 2^(e - 31) * (1 + n / 2^v) when e is greater than 0,
++ * and (-1)^s * 2^-(30 + v) * n when e is 0. The exponent with all of its
++ * bits set is reserved and means that the value is unspecified.
++ */
++typedef struct AVMultiviewReal {
++    /**
++     * 0 for a positive value, 1 for a negative one.
++     */
++    uint8_t sign;
++
++    /**
++     * The exponent part.
++     */
++    uint8_t exponent;
++
++    /**
++     * The length of the exponent in bits: 7 in the depth representation
++     * information and the alternative depth information (depths), 6
++     * elsewhere.
++     */
++    uint8_t exponent_bits;
++
++    /**
++     * The length of the mantissa in bits, 0 to 64.
++     */
++    uint8_t mantissa_bits;
++
++    /**
++     * The mantissa part.
++     */
++    uint64_t mantissa;
++} AVMultiviewReal;
++
++/**
++ * Convert a coded real number to a double.
++ *
++ * @return the value, or NAN when the exponent is the reserved one, which
++ *         means that the value is unspecified
++ */
++double av_multiview_real_to_double(const AVMultiviewReal *r);
++
++/**
++ * Multiview scene information: the range of the disparities between
++ * spatially adjacent views (H.264 G.13.2.4, payloadType 39; H.265 G.14.3.5,
++ * payloadType 178).
++ *
++ * The information applies to the coded video sequence.
++ */
++typedef struct AVMultiviewSceneInfo {
++    /**
++     * Whether min_disparity and max_disparity_range are set (H.265). When
++     * it is 0, max_disparity is (H.264).
++     */
++    uint8_t min_disparity_present;
++
++    /**
++     * The minimum disparity, in luma samples, between pictures of
++     * spatially adjacent views (H.265 only), -1024 to 1023.
++     */
++    int16_t min_disparity;
++
++    /**
++     * The maximum disparity range, in luma samples (H.265 only), 0 to 2047.
++     */
++    uint16_t max_disparity_range;
++
++    /**
++     * The maximum disparity, in luma samples, between spatially adjacent
++     * view components (H.264 only), 0 to 1023.
++     */
++    uint16_t max_disparity;
++} AVMultiviewSceneInfo;
++
++/**
++ * Allocate an AVMultiviewSceneInfo and set its fields to their defaults.
++ *
++ * @param size if not NULL, the size of the structure in bytes
++ * @return the structure, to be freed with av_free(), or NULL on failure
++ */
++AVMultiviewSceneInfo *av_multiview_scene_info_alloc(size_t *size);
++
++/**
++ * The parameters of one camera in AVMultiviewAcquisitionInfo.
++ * sizeof(AVMultiviewCamera) is not a part of the public ABI.
++ */
++typedef struct AVMultiviewCamera {
++    /**
++     * The intrinsic parameters (equation G-12 of H.265): the focal lengths
++     * and the principal point in the horizontal and vertical direction and
++     * the skew factor. Set when intrinsic_param is.
++     */
++    AVMultiviewReal focal_length_x;
++    AVMultiviewReal focal_length_y;
++    AVMultiviewReal principal_point_x;
++    AVMultiviewReal principal_point_y;
++    AVMultiviewReal skew_factor;
++
++    /**
++     * The extrinsic parameters: the rotation matrix, row by row (equation
++     * G-13 of H.265), and the translation vector (G-14). Set when
++     * extrinsic_param is.
++     */
++    AVMultiviewReal rotation[3][3];
++    AVMultiviewReal translation[3];
++} AVMultiviewCamera;
++
++/**
++ * Multiview acquisition information: the intrinsic and extrinsic parameters
++ * of the cameras the views were acquired with (H.264 G.13.2.5, payloadType
++ * 40; H.265 G.14.3.6, payloadType 179). A world point wP is mapped to the
++ * camera point cP of camera i by s * cP = A * R^-1 * (wP - T) (G-11).
++ *
++ * The information applies to the coded video sequence.
++ */
++typedef struct AVMultiviewAcquisitionInfo {
++    /**
++     * Whether the intrinsic parameters are present.
++     */
++    uint8_t intrinsic_param;
++
++    /**
++     * Whether the extrinsic parameters are present.
++     */
++    uint8_t extrinsic_param;
++
++    /**
++     * Whether one set of intrinsic parameters, that of the first camera,
++     * applies to all cameras.
++     */
++    uint8_t intrinsic_params_equal;
++
++    /**
++     * The exponents of the maximum allowable truncation errors, 2^-prec, of
++     * the focal lengths, the principal point, the skew factor, the rotation
++     * and the translation, 0 to 31.
++     */
++    uint8_t prec_focal_length;
++    uint8_t prec_principal_point;
++    uint8_t prec_skew_factor;
++    uint8_t prec_rotation_param;
++    uint8_t prec_translation_param;
++
++    /**
++     * The number of cameras.
++     */
++    unsigned nb_cameras;
++
++    /**
++     * Offset in bytes from the beginning of this structure at which the array
++     * of cameras starts.
++     */
++    size_t cameras_offset;
++
++    /**
++     * Size of each camera in bytes. May not match sizeof(AVMultiviewCamera).
++     */
++    size_t camera_size;
++} AVMultiviewAcquisitionInfo;
++
++/**
++ * Allocate an AVMultiviewAcquisitionInfo with the given number of cameras.
++ *
++ * @param nb_cameras the number of cameras
++ * @param size if not NULL, the size of the structure in bytes
++ * @return the structure, to be freed with av_free(), or NULL on failure
++ */
++AVMultiviewAcquisitionInfo *av_multiview_acquisition_info_alloc(unsigned int nb_cameras, size_t *size);
++
++/**
++ * Get the camera at the given index.
++ */
++static inline AVMultiviewCamera *
++av_multiview_acquisition_info_get_camera(const AVMultiviewAcquisitionInfo *info, unsigned int idx)
++{
++    return (AVMultiviewCamera *)((uint8_t *)info + info->cameras_offset +
++                                 idx * info->camera_size);
++}
++
++/**
++ * Multiview view position: the order of the views from left to right
++ * (H.264 G.13.2.10, payloadType 46; H.265 G.14.3.7, payloadType 180).
++ *
++ * The information applies to the coded video sequence.
++ */
++typedef struct AVMultiviewViewPosition {
++    /**
++     * The number of views.
++     */
++    unsigned nb_views;
++
++    /**
++     * Offset in bytes from the beginning of this structure at which the array
++     * of positions starts. The array holds one uint16_t per view, in view
++     * order index order: the position of that view from the left, 0 for the
++     * leftmost.
++     */
++    size_t positions_offset;
++} AVMultiviewViewPosition;
++
++/**
++ * Allocate an AVMultiviewViewPosition with the given number of views.
++ *
++ * @param nb_views the number of views
++ * @param size if not NULL, the size of the structure in bytes
++ * @return the structure, to be freed with av_free(), or NULL on failure
++ */
++AVMultiviewViewPosition *av_multiview_view_position_alloc(unsigned int nb_views, size_t *size);
++
++/**
++ * Get the array of positions, one per view.
++ */
++static inline uint16_t *av_multiview_view_position_get(const AVMultiviewViewPosition *pos)
++{
++    return (uint16_t *)((uint8_t *)pos + pos->positions_offset);
++}
++
++/**
++ * The representation of the samples of a depth picture (H.264 Table H-1,
++ * H.265 Table G.3).
++ */
++enum AVDepthRepresentationType {
++    /**
++     * Each sample is an inverse of Z uniformly quantized from 0 to the
++     * maximum sample value: 0 is 1/ZFar, the maximum is 1/ZNear.
++     */
++    AV_DEPTH_REPRESENTATION_INVERSE_Z = 0,
++
++    /**
++     * Each sample is a disparity uniformly quantized from 0 to the maximum
++     * sample value: 0 is DMin, the maximum is DMax.
++     */
++    AV_DEPTH_REPRESENTATION_DISPARITY = 1,
++
++    /**
++     * Each sample is a Z value uniformly quantized from 0 to the maximum
++     * sample value: 0 is ZFar, the maximum is ZNear.
++     */
++    AV_DEPTH_REPRESENTATION_Z = 2,
++
++    /**
++     * Each sample is a disparity mapped non-linearly from 0 to the maximum
++     * sample value by the piece-wise linear model in nonlinear_model
++     * (equation G-10 of H.265): 0 is DMin, the maximum is DMax.
++     */
++    AV_DEPTH_REPRESENTATION_NONLINEAR_DISPARITY = 3,
++};
++
++/**
++ * The depth parameters of one view in AVDepthRepresentationInfo.
++ * sizeof(AVDepthRepresentationView) is not a part of the public ABI.
++ */
++typedef struct AVDepthRepresentationView {
++    /**
++     * The view_id of the depth view (H.264 depth_info_view_id). In H.265
++     * the information applies to the layer of the message, and this is 0.
++     */
++    uint16_t view_id;
++
++    /**
++     * The view_id of the depth view whose Z-axis ZNear and ZFar refer to
++     * (H.264, when z_axis_equal is 0).
++     */
++    uint16_t z_axis_reference_view;
++
++    /**
++     * The view the disparities are derived for (H.264
++     * disparity_reference_view, H.265 disparity_ref_view_id), when
++     * d_min_present or d_max_present is set.
++     */
++    uint16_t disparity_reference_view;
++
++    /**
++     * The nearest depth, the farthest depth, the minimum disparity and the
++     * maximum disparity, each when its present flag is set. Disparities
++     * are in luma samples of the view; the unit of the depths is the same
++     * for both and unspecified.
++     */
++    AVMultiviewReal z_near;
++    AVMultiviewReal z_far;
++    AVMultiviewReal d_min;
++    AVMultiviewReal d_max;
++} AVDepthRepresentationView;
++
++#define AV_DEPTH_NONLINEAR_MODEL_MAX 65
++
++/**
++ * Depth representation information: how the samples of depth pictures map
++ * to depth or disparity (H.264 H.13.2.3, payloadType 50; H.265 G.14.3.4,
++ * payloadType 177).
++ *
++ * In H.265 the information applies to pictures of an auxiliary layer of
++ * depth (AuxId 2); in H.264 to depth views. It applies until the next such
++ * message or the end of the coded video sequence, whichever is earlier in
++ * decoding order.
++ */
++typedef struct AVDepthRepresentationInfo {
++    /**
++     * The representation of the samples, an enum AVDepthRepresentationType,
++     * or a reserved value from 4 to 15: then nothing else of the message
++     * is set, as the specifications require.
++     */
++    uint8_t type;
++
++    uint8_t z_near_present;
++    uint8_t z_far_present;
++    uint8_t d_min_present;
++    uint8_t d_max_present;
++
++    /**
++     * Whether one set of parameters applies to all depth views (H.264
++     * all_views_equal_flag). Always 1 in H.265.
++     */
++    uint8_t all_views_equal;
++
++    /**
++     * Whether the depths of all views share the Z-axis of
++     * common_z_axis_reference_view (H.264 only).
++     */
++    uint8_t z_axis_equal;
++    uint16_t common_z_axis_reference_view;
++
++    /**
++     * The piece-wise linear model of the non-linear disparity (type 3):
++     * nb_nonlinear_model values, depth_nonlinear_representation_model[0]
++     * to [depth_nonlinear_representation_num_minus1 + 2], the first and the
++     * last being 0.
++     */
++    uint8_t nb_nonlinear_model;
++    uint16_t nonlinear_model[AV_DEPTH_NONLINEAR_MODEL_MAX];
++
++    /**
++     * The number of views, 1 when all_views_equal is set.
++     */
++    unsigned nb_views;
++
++    /**
++     * Offset in bytes from the beginning of this structure at which the array
++     * of views starts.
++     */
++    size_t views_offset;
++
++    /**
++     * Size of each view in bytes. May not match
++     * sizeof(AVDepthRepresentationView).
++     */
++    size_t view_size;
++} AVDepthRepresentationInfo;
++
++/**
++ * Allocate an AVDepthRepresentationInfo with the given number of views.
++ *
++ * @param nb_views the number of views
++ * @param size if not NULL, the size of the structure in bytes
++ * @return the structure, to be freed with av_free(), or NULL on failure
++ */
++AVDepthRepresentationInfo *av_depth_representation_info_alloc(unsigned int nb_views, size_t *size);
++
++/**
++ * Get the view at the given index.
++ */
++static inline AVDepthRepresentationView *
++av_depth_representation_info_get_view(const AVDepthRepresentationInfo *info, unsigned int idx)
++{
++    return (AVDepthRepresentationView *)((uint8_t *)info + info->views_offset +
++                                         idx * info->view_size);
++}
++
++/**
++ * Fill the table of equation G-10 of H.265 that maps the samples of a depth
++ * picture of type AV_DEPTH_REPRESENTATION_NONLINEAR_DISPARITY to uniformly
++ * quantized disparity.
++ *
++ * @param info the depth representation information, of type 3
++ * @param bit_depth the bit depth of the depth samples, 8 to 16
++ * @param lut a table of 1 << bit_depth entries
++ * @return 0 on success, a negative AVERROR on invalid arguments
++ */
++int av_depth_representation_nonlinear_lut(const AVDepthRepresentationInfo *info,
++                                          int bit_depth, uint16_t *lut);
++
++/**
++ * One acquisition time offset of AVDepthTiming: depth_disp_delay_offset_fp
++ * / 2^depth_disp_delay_offset_dp clock ticks.
++ */
++typedef struct AVDepthTimingOffset {
++    uint8_t  offset_bits; ///< offset_len_minus1 + 1, the length of offset_fp
++    uint32_t offset_fp;
++    uint8_t  offset_dp;
++} AVDepthTimingOffset;
++
++/**
++ * Depth timing: the acquisition time of the depth view components relative
++ * to the output time of their access unit (H.264 H.13.2.5, payloadType 52).
++ *
++ * The information applies until the next such message or the end of the
++ * coded video sequence, whichever is earlier in decoding order.
++ */
++typedef struct AVDepthTiming {
++    /**
++     * Whether there is one offset per depth view, in view order index order.
++     * Otherwise one offset applies to all depth views.
++     */
++    uint8_t per_view;
++
++    unsigned nb_offsets;
++
++    /**
++     * Offset in bytes from the beginning of this structure at which the array
++     * of AVDepthTimingOffset starts.
++     */
++    size_t offsets_offset;
++
++    /**
++     * Size of each offset in bytes. May not match sizeof(AVDepthTimingOffset).
++     */
++    size_t offset_size;
++} AVDepthTiming;
++
++/**
++ * Allocate an AVDepthTiming with the given number of offsets.
++ */
++AVDepthTiming *av_depth_timing_alloc(unsigned int nb_offsets, size_t *size);
++
++static inline AVDepthTimingOffset *av_depth_timing_get_offset(const AVDepthTiming *t, unsigned int idx)
++{
++    return (AVDepthTimingOffset *)((uint8_t *)t + t->offsets_offset + idx * t->offset_size);
++}
++
++/**
++ * The position of the sampling grid of a depth view relative to the luma
++ * grid of the texture view of the same view_id: (1 - 2 * sign) * fp / 2^dp
++ * samples horizontally and vertically (H.264 H.13.2.7.1).
++ */
++typedef struct AVDepthGridPosition {
++    uint16_t view_id; ///< depth_grid_view_id, when per_view is set
++    uint32_t x_fp;
++    uint8_t  x_dp;
++    uint8_t  x_sign;
++    uint32_t y_fp;
++    uint8_t  y_dp;
++    uint8_t  y_sign;
++} AVDepthGridPosition;
++
++/**
++ * Depth sampling information: the size of a depth sample relative to a
++ * luma texture sample and the position of the depth sampling grid (H.264
++ * H.13.2.7, payloadType 53).
++ *
++ * The information applies to the coded video sequence.
++ */
++typedef struct AVDepthSamplingInfo {
++    /**
++     * The width of a depth sample is about dttsr_x_mul / 2^dttsr_x_dp luma
++     * texture samples, and its height dttsr_y_mul / 2^dttsr_y_dp.
++     */
++    uint16_t dttsr_x_mul;
++    uint8_t  dttsr_x_dp;
++    uint16_t dttsr_y_mul;
++    uint8_t  dttsr_y_dp;
++
++    /**
++     * Whether there is one grid position per view, with its view_id.
++     * Otherwise one position applies to all depth views.
++     */
++    uint8_t per_view;
++
++    unsigned nb_positions;
++
++    /**
++     * Offset in bytes from the beginning of this structure at which the array
++     * of AVDepthGridPosition starts.
++     */
++    size_t positions_offset;
++
++    /**
++     * Size of each position in bytes. May not match
++     * sizeof(AVDepthGridPosition).
++     */
++    size_t position_size;
++} AVDepthSamplingInfo;
++
++/**
++ * Allocate an AVDepthSamplingInfo with the given number of grid positions.
++ */
++AVDepthSamplingInfo *av_depth_sampling_info_alloc(unsigned int nb_positions, size_t *size);
++
++static inline AVDepthGridPosition *
++av_depth_sampling_info_get_position(const AVDepthSamplingInfo *info, unsigned int idx)
++{
++    return (AVDepthGridPosition *)((uint8_t *)info + info->positions_offset +
++                                   idx * info->position_size);
++}
++
++/**
++ * Constrained depth parameter set identifier: the range of the depth
++ * parameter set identifiers of the coded video sequence (H.264 I.13.2.1,
++ * payloadType 54).
++ */
++typedef struct AVConstrainedDepthParameterSetId {
++    unsigned max_dps_id;
++    unsigned max_dps_id_diff;
++} AVConstrainedDepthParameterSetId;
++
++/**
++ * Allocate an AVConstrainedDepthParameterSetId.
++ */
++AVConstrainedDepthParameterSetId *av_constrained_depth_parameter_set_id_alloc(size_t *size);
++
++/**
++ * The type of alternative depth (H.264 H.13.2.6, H.265 I.14.3.3).
++ */
++enum AVAlternativeDepthType {
++    /**
++     * The non-base view packs 1 to 4 constituent pictures of half the
++     * width and height of the base view, with their own depth and camera
++     * parameters (global view and depth, GVD).
++     */
++    AV_ALTERNATIVE_DEPTH_GVD = 0,
++
++    /**
++     * The auxiliary pictures are warp maps (H.265 only).
++     */
++    AV_ALTERNATIVE_DEPTH_WARP_MAP = 1,
++};
++
++/**
++ * The parameters of one constituent view of the global view and depth
++ * alternative depth in AVAlternativeDepthInfo.
++ * sizeof(AVAlternativeDepthView) is not a part of the public ABI.
++ */
++typedef struct AVAlternativeDepthView {
++    AVMultiviewReal z_near;
++    AVMultiviewReal z_far;
++    AVMultiviewReal focal_length_x;
++    AVMultiviewReal focal_length_y;
++    AVMultiviewReal principal_point_x;
++    AVMultiviewReal principal_point_y;
++    AVMultiviewReal rotation[3][3];
++    AVMultiviewReal translation_x;
++} AVAlternativeDepthView;
++
++/**
++ * Alternative depth information (H.264 H.13.2.6 and H.265 I.14.3.3,
++ * payloadType 181): the output views hold packed constituent pictures or
++ * warp maps, and are not meant to be shown as they are.
++ *
++ * The information applies to the coded video sequence (H.264) or until it
++ * is cancelled (H.265).
++ */
++typedef struct AVAlternativeDepthInfo {
++    /**
++     * Whether the message cancels the persistence of a previous one (H.265
++     * only); then nothing else is set.
++     */
++    uint8_t cancel;
++
++    /**
++     * An enum AVAlternativeDepthType.
++     */
++    uint8_t depth_type;
++
++    /**
++     * For depth_type AV_ALTERNATIVE_DEPTH_GVD: whether the constituent
++     * pictures carry depth, and which parameters are present.
++     */
++    uint8_t depth_present;
++    uint8_t z_present;
++    uint8_t intrinsic_param;
++    uint8_t rotation_param;
++    uint8_t translation_param;
++
++    uint8_t prec_focal_length;
++    uint8_t prec_principal_point;
++    uint8_t prec_rotation_param;
++    uint8_t prec_translation_param;
++
++    /**
++     * For depth_type AV_ALTERNATIVE_DEPTH_WARP_MAP: the minimum and maximum
++     * horizontal (and, when offset_y_present, vertical) offsets of the warp
++     * map, each an integer part and a fraction in 1/256, and its size when
++     * warp_map_size_present.
++     */
++    int32_t  min_offset_x_int;
++    uint8_t  min_offset_x_frac;
++    int32_t  max_offset_x_int;
++    uint8_t  max_offset_x_frac;
++    uint8_t  offset_y_present;
++    int32_t  min_offset_y_int;
++    uint8_t  min_offset_y_frac;
++    int32_t  max_offset_y_int;
++    uint8_t  max_offset_y_frac;
++    uint8_t  warp_map_size_present;
++    unsigned warp_map_width;
++    unsigned warp_map_height;
++
++    /**
++     * For depth_type AV_ALTERNATIVE_DEPTH_GVD: the number of views,
++     * num_constituent_views_gvd_minus1 + 2.
++     */
++    unsigned nb_views;
++
++    /**
++     * Offset in bytes from the beginning of this structure at which the array
++     * of views starts.
++     */
++    size_t views_offset;
++
++    /**
++     * Size of each view in bytes. May not match sizeof(AVAlternativeDepthView).
++     */
++    size_t view_size;
++} AVAlternativeDepthInfo;
++
++/**
++ * Allocate an AVAlternativeDepthInfo with the given number of views.
++ */
++AVAlternativeDepthInfo *av_alternative_depth_info_alloc(unsigned int nb_views, size_t *size);
++
++static inline AVAlternativeDepthView *
++av_alternative_depth_info_get_view(const AVAlternativeDepthInfo *info, unsigned int idx)
++{
++    return (AVAlternativeDepthView *)((uint8_t *)info + info->views_offset +
++                                      idx * info->view_size);
++}
++
++/**
++ * @}
++ */
++
++#endif /* AVUTIL_MULTIVIEW_H */
+diff --git a/libavutil/side_data.c b/libavutil/side_data.c
+index 762bc59d..f5c6bacd 100644
+--- a/libavutil/side_data.c
++++ b/libavutil/side_data.c
+@@ -62,6 +62,14 @@ static const AVSideDataDescriptor sd_props[] = {
+     [AV_FRAME_DATA_IAMF_DEMIXING_INFO_PARAM]    = { "IAMF Demixing Info Parameter Data",            AV_SIDE_DATA_PROP_CHANNEL_DEPENDENT },
+     [AV_FRAME_DATA_IAMF_RECON_GAIN_INFO_PARAM]  = { "IAMF Recon Gain Info Parameter Data" },
+     [AV_FRAME_DATA_RAW_COLOR_PARAMS]            = { "RAW camera color parameters",                  AV_SIDE_DATA_PROP_GLOBAL | AV_SIDE_DATA_PROP_COLOR_DEPENDENT },
++    [AV_FRAME_DATA_MULTIVIEW_SCENE_INFO]        = { "Multiview scene information",                  AV_SIDE_DATA_PROP_GLOBAL },
++    [AV_FRAME_DATA_MULTIVIEW_ACQUISITION_INFO]  = { "Multiview acquisition information",            AV_SIDE_DATA_PROP_GLOBAL },
++    [AV_FRAME_DATA_MULTIVIEW_VIEW_POSITION]     = { "Multiview view position",                      AV_SIDE_DATA_PROP_GLOBAL },
++    [AV_FRAME_DATA_DEPTH_REPRESENTATION_INFO]   = { "Depth representation information",             AV_SIDE_DATA_PROP_GLOBAL },
++    [AV_FRAME_DATA_DEPTH_TIMING]                = { "Depth timing",                                 AV_SIDE_DATA_PROP_GLOBAL },
++    [AV_FRAME_DATA_DEPTH_SAMPLING_INFO]         = { "Depth sampling information",                   AV_SIDE_DATA_PROP_GLOBAL },
++    [AV_FRAME_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID] = { "Constrained depth parameter set identifier", AV_SIDE_DATA_PROP_GLOBAL },
++    [AV_FRAME_DATA_ALTERNATIVE_DEPTH_INFO]      = { "Alternative depth information",                AV_SIDE_DATA_PROP_GLOBAL },
+ };
+ 
+ const AVSideDataDescriptor *av_frame_side_data_desc(enum AVFrameSideDataType type)
+diff --git a/libavutil/tests/multiview.c b/libavutil/tests/multiview.c
+new file mode 100644
+index 00000000..4e18453c
+--- /dev/null
++++ b/libavutil/tests/multiview.c
+@@ -0,0 +1,141 @@
++/*
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include <inttypes.h>
++#include <math.h>
++#include <stdint.h>
++#include <stdio.h>
++
++#include "libavutil/mem.h"
++#include "libavutil/multiview.h"
++
++static void print_real(uint8_t sign, uint8_t exponent, uint8_t exponent_bits,
++                       uint8_t mantissa_bits, uint64_t mantissa)
++{
++    const AVMultiviewReal r = {
++        .sign          = sign,
++        .exponent      = exponent,
++        .exponent_bits = exponent_bits,
++        .mantissa_bits = mantissa_bits,
++        .mantissa      = mantissa,
++    };
++    const double x = av_multiview_real_to_double(&r);
++
++    if (isnan(x))
++        printf("s=%d e=%d/%d v=%d n=%"PRIu64": unspecified\n",
++               sign, exponent, exponent_bits, mantissa_bits, mantissa);
++    else
++        printf("s=%d e=%d/%d v=%d n=%"PRIu64": %.17g\n",
++               sign, exponent, exponent_bits, mantissa_bits, mantissa, x);
++}
++
++int main(void)
++{
++    AVMultiviewAcquisitionInfo *acq;
++    AVMultiviewViewPosition *pos;
++    AVDepthRepresentationInfo *dri;
++    AVDepthTiming *timing;
++    AVDepthSamplingInfo *sampling;
++    AVAlternativeDepthInfo *alt;
++    uint16_t lut[256];
++    size_t size;
++
++    printf("Testing av_multiview_real_to_double()\n");
++    print_real(0, 31, 6, 0, 0);
++    print_real(0, 32, 6, 1, 1);
++    print_real(1, 30, 7, 3, 4);
++    print_real(0, 0, 6, 2, 3);
++    print_real(1, 0, 7, 0, 0);
++    print_real(0, 62, 6, 62, (1ULL << 62) - 1);
++    print_real(0, 1, 7, 32, 0xffffffff);
++    print_real(0, 63, 6, 4, 1);
++    print_real(0, 127, 7, 4, 1);
++    print_real(0, 63, 7, 4, 1);
++
++    printf("Testing the allocators\n");
++    acq = av_multiview_acquisition_info_alloc(3, &size);
++    if (acq) {
++        printf("acquisition: cameras=%u size>=3=%s\n", acq->nb_cameras,
++               size >= 3 * acq->camera_size ? "yes" : "no");
++        for (unsigned i = 0; i < acq->nb_cameras; i++) {
++            AVMultiviewCamera *c = av_multiview_acquisition_info_get_camera(acq, i);
++            if ((uint8_t *)c != (uint8_t *)acq + acq->cameras_offset + i * acq->camera_size)
++                printf("camera %u: wrong offset\n", i);
++            c->translation[0].exponent = i;
++        }
++        av_free(acq);
++    }
++
++    pos = av_multiview_view_position_alloc(4, &size);
++    if (pos) {
++        uint16_t *p = av_multiview_view_position_get(pos);
++        for (unsigned i = 0; i < pos->nb_views; i++)
++            p[i] = pos->nb_views - 1 - i;
++        printf("view position: views=%u last=%u\n", pos->nb_views, p[pos->nb_views - 1]);
++        av_free(pos);
++    }
++
++    dri = av_depth_representation_info_alloc(2, &size);
++    if (dri) {
++        printf("depth representation: views=%u all_views_equal=%d\n",
++               dri->nb_views, dri->all_views_equal);
++        av_depth_representation_info_get_view(dri, 1)->view_id = 7;
++
++        /* one segment boundary moved by 20: the curve of equation G-10 of
++         * H.265 through (0, 0), (107, 147) and (255, 255) */
++        dri->type               = AV_DEPTH_REPRESENTATION_NONLINEAR_DISPARITY;
++        dri->nb_nonlinear_model = 3;
++        dri->nonlinear_model[0] = 0;
++        dri->nonlinear_model[1] = 20;
++        dri->nonlinear_model[2] = 0;
++        if (!av_depth_representation_nonlinear_lut(dri, 8, lut)) {
++            printf("nonlinear lut:");
++            for (int i = 0; i < 256; i += 15)
++                printf(" %d:%d", i, lut[i]);
++            printf("\n");
++        }
++        dri->type = AV_DEPTH_REPRESENTATION_DISPARITY;
++        printf("nonlinear lut for type 1: %s\n",
++               av_depth_representation_nonlinear_lut(dri, 8, lut) < 0 ? "refused" : "made");
++        av_free(dri);
++    }
++
++    timing = av_depth_timing_alloc(2, &size);
++    if (timing) {
++        av_depth_timing_get_offset(timing, 1)->offset_fp = 5;
++        printf("depth timing: offsets=%u\n", timing->nb_offsets);
++        av_free(timing);
++    }
++
++    sampling = av_depth_sampling_info_alloc(1, &size);
++    if (sampling) {
++        printf("depth sampling: positions=%u dttsr=%u/%u\n", sampling->nb_positions,
++               sampling->dttsr_x_mul, sampling->dttsr_y_mul);
++        av_depth_sampling_info_get_position(sampling, 0)->x_fp = 1;
++        av_free(sampling);
++    }
++
++    alt = av_alternative_depth_info_alloc(5, &size);
++    if (alt) {
++        av_alternative_depth_info_get_view(alt, 4)->z_near.exponent = 1;
++        printf("alternative depth: views=%u\n", alt->nb_views);
++        av_free(alt);
++    }
++
++    return 0;
++}
+diff --git a/tests/fate/libavutil.mak b/tests/fate/libavutil.mak
+index a2ea57d9..5dbef74f 100644
+--- a/tests/fate/libavutil.mak
++++ b/tests/fate/libavutil.mak
+@@ -196,6 +196,10 @@ FATE_LIBAVUTIL += fate-stereo3d
+ fate-stereo3d: libavutil/tests/stereo3d$(EXESUF)
+ fate-stereo3d: CMD = run libavutil/tests/stereo3d$(EXESUF)
+ 
++FATE_LIBAVUTIL += fate-multiview
++fate-multiview: libavutil/tests/multiview$(EXESUF)
++fate-multiview: CMD = run libavutil/tests/multiview$(EXESUF)
++
+ FATE_LIBAVUTIL += fate-tdrdi
+ fate-tdrdi: libavutil/tests/tdrdi$(EXESUF)
+ fate-tdrdi: CMD = run libavutil/tests/tdrdi$(EXESUF)
+diff --git a/tests/ref/fate/multiview b/tests/ref/fate/multiview
+new file mode 100644
+index 00000000..9cb1cc85
+--- /dev/null
++++ b/tests/ref/fate/multiview
+@@ -0,0 +1,20 @@
++Testing av_multiview_real_to_double()
++s=0 e=31/6 v=0 n=0: 1
++s=0 e=32/6 v=1 n=1: 3
++s=1 e=30/7 v=3 n=4: -0.75
++s=0 e=0/6 v=2 n=3: 6.9849193096160889e-10
++s=1 e=0/7 v=0 n=0: -0
++s=0 e=62/6 v=62 n=4611686018427387903: 4294967296
++s=0 e=1/7 v=32 n=4294967295: 1.8626451490141166e-09
++s=0 e=63/6 v=4 n=1: unspecified
++s=0 e=127/7 v=4 n=1: unspecified
++s=0 e=63/7 v=4 n=1: 4563402752
++Testing the allocators
++acquisition: cameras=3 size>=3=yes
++view position: views=4 last=0
++depth representation: views=2 all_views_equal=1
++nonlinear lut: 0:0 15:21 30:41 45:62 60:82 75:103 90:124 105:144 120:156 135:167 150:178 165:189 180:200 195:211 210:222 225:233 240:244 255:255
++nonlinear lut for type 1: refused
++depth timing: offsets=2
++depth sampling: positions=1 dttsr=1/1
++alternative depth: views=5
+-- 
+2.53.0
+

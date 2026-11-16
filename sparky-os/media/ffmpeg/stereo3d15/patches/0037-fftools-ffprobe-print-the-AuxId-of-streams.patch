@@ -1,0 +1,28 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/3c5077413191395374c1ad6c808c7714d62b7261
+From 3c5077413191395374c1ad6c808c7714d62b7261 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:32:16 -0300
+Subject: [PATCH 37/48] fftools/ffprobe: print the AuxId of streams
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ fftools/ffprobe.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/fftools/ffprobe.c b/fftools/ffprobe.c
+index ced27767..181a8df0 100644
+--- a/fftools/ffprobe.c
++++ b/fftools/ffprobe.c
+@@ -1364,6 +1364,8 @@ static void print_pkt_side_data(AVTextFormatContext *tfc,
+         print_q("horizontal_disparity_adjustment", stereo->horizontal_disparity_adjustment, '/');
+         print_q("horizontal_field_of_view", stereo->horizontal_field_of_view, '/');
+     } else if (print_multiview_side_data(tfc, 0, sd->type, sd->data)) {
++    } else if (sd->type == AV_PKT_DATA_AUXILIARY_ID && sd->size >= sizeof(int)) {
++        print_int("aux_id", *(const int *)sd->data);
+     } else if (sd->type == AV_PKT_DATA_SPHERICAL) {
+         const AVSphericalMapping *spherical = (AVSphericalMapping *)sd->data;
+         print_str("projection", av_spherical_projection_name(spherical->projection));
+-- 
+2.53.0
+

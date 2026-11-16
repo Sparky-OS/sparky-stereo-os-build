@@ -1,0 +1,40 @@
+Description: fftools/ffprobe: print the 3D reference displays information
+ .
+ Print the 3D reference displays information frame side data, so the
+ values the decoders export can be tested.
+ .
+ Assisted-by: Claude Sonnet 5.5 via Claude Code
+ .
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/947924317c6d4c89a640da9b9509ead416b56ae9
+Forwarded: no
+Last-Update: 2026-11-09
+
+diff --git a/fftools/ffprobe.c b/fftools/ffprobe.c
+index 8e490063b54..bc09502466a 100644
+--- a/fftools/ffprobe.c
++++ b/fftools/ffprobe.c
+@@ -763,6 +763,10 @@ static void print_alternative_depth_info(AVTextFormatContext *tfc, const AVAlter
+ 
+ static void print_tdrdi(AVTextFormatContext *tfc, const AV3DReferenceDisplaysInfo *tdrdi)
+ {
++    print_int("prec_ref_display_width", tdrdi->prec_ref_display_width);
++    print_int("ref_viewing_distance_flag", tdrdi->ref_viewing_distance_flag);
++    print_int("prec_ref_viewing_dist", tdrdi->prec_ref_viewing_dist);
++    print_int("num_ref_displays", tdrdi->num_ref_displays);
+     print_int("nb_ref_displays", tdrdi->num_ref_displays);
+     for (unsigned i = 0; i < tdrdi->num_ref_displays; i++) {
+         const AV3DReferenceDisplay *d = av_tdrdi_get_display((AV3DReferenceDisplaysInfo *)tdrdi, i);
+@@ -773,6 +777,11 @@ static void print_tdrdi(AVTextFormatContext *tfc, const AV3DReferenceDisplaysInf
+             print_int_key_fmt("display%u_left_view_id", d->left_view_id, i);
+             print_int_key_fmt("display%u_right_view_id", d->right_view_id, i);
+         }
++        print_int_key_fmt("display%u_exponent_ref_display_width", d->exponent_ref_display_width, i);
++        print_int_key_fmt("display%u_mantissa_ref_display_width", d->whole_mantissa_ref_display_width, i);
++        print_int_key_fmt("display%u_exponent_ref_viewing_distance", d->exponent_ref_viewing_distance, i);
++        print_int_key_fmt("display%u_mantissa_ref_viewing_distance", d->whole_mantissa_ref_viewing_distance, i);
++        print_int_key_fmt("display%u_additional_shift_present_flag", d->additional_shift_present_flag, i);
+         print_multiview_real_fmt("display%u_ref_display_width", &d->ref_display_width, i);
+         if (tdrdi->ref_viewing_distance_flag)
+             print_multiview_real_fmt("display%u_ref_viewing_distance", &d->ref_viewing_distance, i);

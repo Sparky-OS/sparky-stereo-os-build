@@ -1,0 +1,33 @@
+Description: avcodec/hevc/ps: read layer inclusion flags in layer ID order
+ H.265 7.3.2.1 signals layer_id_included_flag in increasing layer ID
+ order, and 7.4.3.1 associates flag j with nuh_layer_id j. Reading the
+ flags with get_bits64() instead places the first flag in the highest
+ bit, while decode_vps_ext() checks bit j for layer ID j.
+ .
+ Read each flag into its corresponding mask bit. This avoids rejecting
+ a two-view stream with layer IDs 0 and 6 and vps_max_layer_id 7 as
+ having a missing dependent layer. Both views then match the original
+ mv_nuh_layer_id.bit sample, with one and four decoder threads.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Opus via Claude Code
+ Assisted-by: GPT-6 via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/0130f1f4e256b2e4424967b971012e7912957fab
+Forwarded: no, held by Daniel 2026-11-03 (fork branch hevc-ps-layer-id-mask on code.ffmpeg.org/danielcamposramos/FFmpeg)
+Last-Update: 2026-11-03
+
+diff --git a/libavcodec/hevc/ps.c b/libavcodec/hevc/ps.c
+index 688de0a..ff34614 100644
+--- a/libavcodec/hevc/ps.c
++++ b/libavcodec/hevc/ps.c
+@@ -889,7 +889,8 @@ int ff_hevc_decode_nal_vps(GetBitContext *gb, AVCodecContext *avctx,
+ 
+     // we support at most 2 layers, so ignore the others
+     if (vps->vps_num_layer_sets > 1)
+-        layer1_id_included = get_bits64(gb, vps->vps_max_layer_id + 1); // layer_id_included_flag
++        for (int j = 0; j <= vps->vps_max_layer_id; j++)
++            layer1_id_included |= (uint64_t)get_bits1(gb) << j; // layer_id_included_flag[1][j]
+     if (vps->vps_num_layer_sets > 2)
+         skip_bits_long(gb, (vps->vps_num_layer_sets - 2) * (vps->vps_max_layer_id + 1));
+ 
