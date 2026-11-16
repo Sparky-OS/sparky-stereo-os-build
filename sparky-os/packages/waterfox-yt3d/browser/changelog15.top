@@ -1,11 +1,12 @@
 sparky-stereo-browser (@DEBVERSION@) unstable; urgency=medium
 
-  * Where the browser draws its window without the graphics card (a software
-    compositor), it cannot hand a page's two views to the desktop: the 3D
-    Canvas camera and the flat WebXR display are off for that session, pages
-    show their ordinary picture, and the window's notification bar says so
-    once, with the reason the graphics layer gives. Before, the two views
-    were shown squeezed side by side as one flat picture, with nothing said.
+  * Where the browser draws its window without the graphics card (its own
+    compositor in software: a computer or virtual machine without 3D, a
+    blocked driver), the 3D Canvas camera and the flat WebXR display still
+    reach the desktop in 3D: the page's two views are declared to Stereo
+    KWin as one full side-by-side picture on the canvas's own surface,
+    through shared memory. Before, both views were shown squeezed side by
+    side in the canvas's place, the same in each eye. Pages without 3D and
+    the hardware route are unchanged.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@
-

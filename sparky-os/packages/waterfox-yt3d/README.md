@@ -60,18 +60,17 @@ ORDER 473u round 3 (2026-11-10): the edition's browser has no setting for the de
 
 ORDER 473u round 3b: `browser/0013` runs to Gecko 5f618506a2 and no longer carries the branding folder (it stays an untracked folder of the tree, as the build expects it). The browser makes up no separation: canvases in workers get the limits the process was told, a scene with no known limits stays flat, and the notification bar says why where the desktop has no Stereo KWin. The Display Configuration item runs `systemsettings kcm_kscreen` only and is labelled with KDE's own name for the page in KDE's own translations; `0015` carries the strings of eight languages, `0016` Spanish for es-ES, es-MX, es-AR and es-CL, and the recipe adds those four locales to `package-multi-locale` (German was already in it). The package then ships the locales en-US, pl, pt-BR, fr, de, ja, ko, zh-CN, zh-TW, es-ES, es-MX, es-AR and es-CL.
 
-## ORDER 546 milestone 2 (2026-11-13): a software compositor, 3D off and said
+## ORDER 546 milestone 2 (2026-11-13), superseded by ORDER 616
 
-`browser/0017` and `browser/0018` are for the release after +stereo3d14: where a window's compositor runs in software the two routes that draw two views are off for the session and the notification bar says why (`changelog15.top` is the entry).
-They are not in `build-browser-in-container.sh` yet: the recipe names the fork's commit (`COMMIT`, `SOURCE.edition.json`), and the change has no commit on the fork until the main session makes one from `0017`.
-Then the step is the usual one: `OLD=6.7.5-0+stereo3d14+lc1 NEW=6.7.5-0+stereo3d15`, the new `COMMIT` and `OLDCOMMIT`, the two patches copied and added to the series, a `SOURCE.edition.json` patch, `changelog15.top`.
-`0017` applies to the tree after `0013`; `0018` to the locale files after `0016`.
-Open: a site whose 3D Canvas is set On still gets two views there, which is one condition in `dom/canvas/ClientWebGLContext.cpp` and needs a compile.
+Milestone 2 of ORDER 546 wrote `browser/0017` and `0018`: where the browser's own compositor runs in software, the camera hack and the flat WebXR display were turned off for the session and the notification bar said so.
+They were never in a built series, and ORDER 616 replaced them (they stay in this repository's history, merged as e5960ea8).
+Daniel, on reading them: "what software compositor, partner? our kwin works with sotware composition, something is off there..".
+The software compositor there is the browser's own (software WebRender), not Stereo KWin, and turning 3D off accepted a limit; a piece without stereo is work to build.
 
-**Not the answer, and not to be built as it is (main session, 2026-11-16).**
-Daniel, on reading this: "our kwin works with sotware composition, something is off there".
-The software compositor here is the browser's own (its software WebRender), not Stereo KWin, which composes in software without losing the pair.
-Turning 3D off where the browser draws in software accepts a limit; the edition's rule is that a piece without stereo is work to plan and build.
-ORDER 616 is therefore the real fix: with its own compositor in software the browser still hands the page's two views to Stereo KWin, declared as full side by side.
-`0017`'s notice is kept only for a case measured as impossible, and then it says so.
+## ORDER 616 (2026-11-16): browser +stereo3d15, the two views declared under software WebRender
 
+Under software WebRender (a computer or virtual machine without usable 3D, a blocklisted driver, `gfx.webrender.software`) the browser still uses its native Wayland compositor (`RenderCompositorNativeSWGL`, shared memory buffers), so a WebGL canvas keeps a surface of its own.
+What was lost was the canvas's stereo mark: WebGL swaps through `SurfaceFactory_Basic` there (`TexTypeForWebgl` answers `Unknown` under software WebRender), and `SetStereoMode` wrote the mark only into a DMABuf, so the pair was read back into an RGB buffer without a mark and its surface was never declared.
+`browser/0017` (Gecko 150684b3a7 and 5787349248, branch order616 of Sparky-OS/waterfox) carries the mark with the buffer read back into the remote texture's `BufferTextureHost` and its RGB image descriptor, which WebRender already passes to the compositor surface it draws the picture into; and, for a canvas WebRender draws into the page's tiles once per eye (a rounded clip), `brush_image`'s bounds for a rectangle texture start at the eye's part, so the right eye's view is not clamped to the canvas's background. `0018` states the commit and the version, `changelog15.top` the entry.
+Nothing was measured impossible, so the package has no notice for this case: the camera hack and the flat WebXR display are declared full side by side on the canvas's own shared memory surface.
+The recipe starts from the published +stereo3d14+lc1 source (its pool folder), with `BROWSER_JOBS`, `BROWSER_CONTAINER`, `SIBLINGS_DIR`, `SPARKY_LC_ARCHIVE_DIR` and `SPARKY_REPO_DIR` as for +stereo3d14, and the compiler bundle rebuilt with `debian/fetch-toolchains.py` when the earlier one is gone.
