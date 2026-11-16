@@ -16,6 +16,19 @@ index 0e0effe2..330b82e1 100644
          }
      }
  
+diff --git a/applet/StreamListItem.qml b/applet/StreamListItem.qml
+index b3df1899..f25a8387 100644
+--- a/applet/StreamListItem.qml
++++ b/applet/StreamListItem.qml
+@@ -16,7 +16,7 @@ ListItemBase {
+ 
+     Accessible.onToggleAction: toggleMuteItem()
+     Keys.onSpacePressed: toggleMuteItem()
+-    draggable: devicesModel && devicesModel.count > 1
++    draggable: devicesModel && devicesModel.count > 1 && model.Properties["plasma.pa.route"] !== "CombinedRecording"
+     label: {
+         let parts = []
+         if (model.Client && model.Client.name && model.Client.name != "pipewire-media-session") {
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
 index a92f3e9d..89e9dbed 100644
 --- a/src/CMakeLists.txt
@@ -184,25 +197,36 @@ index 00000000..3dfb18ed
 +    }
 +}
 diff --git a/src/kcm/ui/StreamListItem.qml b/src/kcm/ui/StreamListItem.qml
-index 2aa655f0..6ba68364 100644
+index 2aa655f0..5285ce49 100644
 --- a/src/kcm/ui/StreamListItem.qml
 +++ b/src/kcm/ui/StreamListItem.qml
-@@ -18,6 +18,7 @@ ColumnLayout {
+@@ -18,6 +18,8 @@ ColumnLayout {
      property alias deviceModel: deviceComboBox.model
      readonly property bool isEventStream: Name == "sink-input-by-media-role:event"
      property bool isPlayback
 +    property var pulseStream: model.PulseObject
++    readonly property bool isCombinedRoute: !!pulseStream && pulseStream.properties["plasma.pa.route"] === "CombinedRecording"
  
      width: parent ? parent.width : undefined
  
-@@ -83,6 +84,7 @@ ColumnLayout {
+@@ -83,8 +85,16 @@ ColumnLayout {
  
                  DeviceComboBox {
                      id: deviceComboBox
 +                    streamObject: delegate.pulseStream
                      Layout.minimumWidth: Kirigami.Units.gridUnit * 12
-                     visible: !isEventStream && count > 1
+-                    visible: !isEventStream && count > 1
++                    visible: !isEventStream && count > 1 && !delegate.isCombinedRoute
++                }
++
++                Label {
++                    visible: delegate.isCombinedRoute
++                    Layout.preferredWidth: Kirigami.Units.gridUnit * 12
++                    text: i18nd("kcm_pulseaudio", "Choose the microphone and output in Combined Recording.")
++                    wrapMode: Text.WordWrap
                  }
+             }
+ 
 diff --git a/src/kcm/ui/main.qml b/src/kcm/ui/main.qml
 index ac81d5b2..e3c3471c 100644
 --- a/src/kcm/ui/main.qml
@@ -285,10 +309,10 @@ index 47736611..5278398a 100644
          KDBusPropertiesChangedAdaptor.cpp
 diff --git a/src/kded/audioroutes.cpp b/src/kded/audioroutes.cpp
 new file mode 100644
-index 00000000..9067fdf5
+index 00000000..a350e7ac
 --- /dev/null
 +++ b/src/kded/audioroutes.cpp
-@@ -0,0 +1,684 @@
+@@ -0,0 +1,690 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
@@ -780,8 +804,9 @@ index 00000000..9067fdf5
 +                                                      + m_owner + u" plasma.pa.route="_s + r.key),
 +                               u"format=float32le"_s,
 +                               u"rate="_s + rate});
-+            r.commands.append(loopback(r.input, combinedName + u"_bus"_s, u"plasma-pa-combined-microphone"_s));
-+            r.commands.append(loopback(r.output + u".monitor"_s, combinedName + u"_bus"_s, u"plasma-pa-combined-output"_s));
++            r.commands.append(loopback(r.input, combinedName + u"_bus"_s, i18nd("kcm_pulseaudio", "Combined Recording") + u": "_s + a->description()));
++            r.commands.append(
++                loopback(r.output + u".monitor"_s, combinedName + u"_bus"_s, i18nd("kcm_pulseaudio", "Combined Recording") + u": "_s + b->description()));
 +            r.commands.append({u"load-module"_s,
 +                               u"module-remap-source"_s,
 +                               u"master="_s + combinedName + u"_bus.monitor"_s,
@@ -790,7 +815,7 @@ index 00000000..9067fdf5
 +                                   + propertyArgument(u"device.description="_s + quoted(i18nd("kcm_pulseaudio", "Combined Recording")) + u" plasma.pa.owner="_s
 +                                                      + m_owner + u" plasma.pa.route="_s + r.key)});
 +        } else
-+            r.commands.append(loopback(r.input, r.output, u"plasma-pa-"_s + r.key));
++            r.commands.append(loopback(r.input, r.output, i18nd("kcm_pulseaudio", "Listen: %1", a->description())));
 +        p->disconnect(this);
 +        delete p;
 +        r.process = nullptr;
@@ -827,7 +852,12 @@ index 00000000..9067fdf5
 +            {u"node.name"_s, combinedName},
 +            {u"node.description"_s, i18nd("kcm_pulseaudio", "Combined Recording")},
 +            {u"combine.props"_s, QJsonObject{{u"audio.position"_s, QJsonArray{u"FL"_s, u"FR"_s}}, {u"node.virtual"_s, false}, {u"priority.session"_s, 0}}},
-+            {u"stream.props"_s, QJsonObject{{u"node.virtual"_s, false}, {u"node.dont-fallback"_s, true}, {u"node.passive"_s, true}}},
++            {u"stream.props"_s,
++             QJsonObject{{u"node.virtual"_s, false},
++                         {u"node.dont-fallback"_s, true},
++                         {u"node.passive"_s, true},
++                         {u"plasma.pa.owner"_s, m_owner},
++                         {u"plasma.pa.route"_s, r.key}}},
 +            {u"stream.rules"_s, rules}};
 +        p->start(u"pw-cli"_s, {u"-m"_s, u"load-module"_s, u"libpipewire-module-combine-stream"_s, json(args)});
 +    } else {
@@ -1091,7 +1121,7 @@ index 18cff1c3..7cbfb151 100644
      static void globalMuteSources();
      static void volumeUp();
 diff --git a/src/qml/listitemmenu.cpp b/src/qml/listitemmenu.cpp
-index 9a1e3840..ac8ca2fe 100644
+index 9a1e3840..c129b869 100644
 --- a/src/qml/listitemmenu.cpp
 +++ b/src/qml/listitemmenu.cpp
 @@ -24,6 +24,7 @@
@@ -1102,15 +1132,62 @@ index 9a1e3840..ac8ca2fe 100644
  
  using namespace PulseAudioQt;
  
-@@ -480,7 +481,7 @@ QMenu *ListItemMenu::createMenu()
-                 item->setCheckable(true);
-                 item->setChecked(index == stream->deviceIndex());
-                 connect(item, &QAction::triggered, stream, [stream, index] {
--                    stream->setDeviceIndex(index);
-+                    if (!GlobalService::routeStream(stream,index)) stream->setDeviceIndex(index);
-                 });
+@@ -459,31 +460,36 @@ QMenu *ListItemMenu::createMenu()
+     auto *stream = qobject_cast<PulseAudioQt::Stream *>(m_pulseObject.data());
+     if (stream && m_sourceModel && m_sourceModel->rowCount() > 1) {
+         if (m_itemType == SinkInput || m_itemType == SourceOutput) {
+-            if (m_itemType == SinkInput) {
+-                menu->addSection(i18nc("Heading for a list of possible output devices (speakers, headphones, ...) to choose", "Play audio using"));
++            if (stream->properties().value(QStringLiteral("plasma.pa.route")).toString() == QStringLiteral("CombinedRecording")) {
++                menu->addAction(i18nd("kcm_pulseaudio", "Choose the microphone and output in Combined Recording."))->setEnabled(false);
+             } else {
+-                menu->addSection(i18nc("Heading for a list of possible input devices (built-in microphone, headset, ...) to choose", "Record audio using"));
+-            }
++                if (m_itemType == SinkInput) {
++                    menu->addSection(i18nc("Heading for a list of possible output devices (speakers, headphones, ...) to choose", "Play audio using"));
++                } else {
++                    menu->addSection(i18nc("Heading for a list of possible input devices (built-in microphone, headset, ...) to choose", "Record audio using"));
++                }
  
-                 deviceGroup->addAction(item);
+-            const int indexRole = m_sourceModel->roleNames().key("Index", -1);
+-            Q_ASSERT(indexRole != -1);
+-            const int descriptionRole = m_sourceModel->roleNames().key("Description", -1);
+-            Q_ASSERT(descriptionRole != -1);
++                const int indexRole = m_sourceModel->roleNames().key("Index", -1);
++                Q_ASSERT(indexRole != -1);
++                const int descriptionRole = m_sourceModel->roleNames().key("Description", -1);
++                Q_ASSERT(descriptionRole != -1);
+ 
+-            auto *deviceGroup = new QActionGroup(menu);
++                auto *deviceGroup = new QActionGroup(menu);
+ 
+-            for (int i = 0; i < m_sourceModel->rowCount(); ++i) {
+-                const QModelIndex idx = m_sourceModel->index(i, 0);
+-                const auto index = idx.data(indexRole).toUInt();
++                for (int i = 0; i < m_sourceModel->rowCount(); ++i) {
++                    const QModelIndex idx = m_sourceModel->index(i, 0);
++                    const auto index = idx.data(indexRole).toUInt();
+ 
+-                auto *item = menu->addAction(idx.data(descriptionRole).toString());
+-                item->setCheckable(true);
+-                item->setChecked(index == stream->deviceIndex());
+-                connect(item, &QAction::triggered, stream, [stream, index] {
+-                    stream->setDeviceIndex(index);
+-                });
++                    auto *item = menu->addAction(idx.data(descriptionRole).toString());
++                    item->setCheckable(true);
++                    item->setChecked(index == stream->deviceIndex());
++                    connect(item, &QAction::triggered, stream, [stream, index] {
++                        if (!GlobalService::routeStream(stream, index))
++                            stream->setDeviceIndex(index);
++                    });
+ 
+-                deviceGroup->addAction(item);
++                    deviceGroup->addAction(item);
++                }
+             }
+         }
+     }
 diff --git a/src/qml/plugin.cpp b/src/qml/plugin.cpp
 index e7cc138e..c4aa9a82 100644
 --- a/src/qml/plugin.cpp

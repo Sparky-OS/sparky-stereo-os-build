@@ -25,8 +25,10 @@ os.environ.update(HOME=str(work/'home'), XDG_RUNTIME_DIR=str(work/'run'),
                   LC_ALL='C.UTF-8', QT_PLUGIN_PATH=prefix+'/lib/x86_64-linux-gnu/plugins',
                   LD_LIBRARY_PATH=prefix+'/lib/x86_64-linux-gnu',
                   XDG_DATA_DIRS=prefix+'/share:/usr/share')
+if os.environ.get('PA19_INSTALLED')=='1':
+    for key in ('QT_PLUGIN_PATH','QML_IMPORT_PATH','LD_LIBRARY_PATH'): os.environ.pop(key,None)
 if native:
-    os.environ['LD_LIBRARY_PATH']+=':/work19/native/root/usr/lib/x86_64-linux-gnu/pulseaudio:/work19/native/root/usr/lib/pulse-17.0+dfsg1/modules'
+    os.environ['LD_LIBRARY_PATH']=os.environ.get('LD_LIBRARY_PATH','')+':/work19/native/root/usr/lib/x86_64-linux-gnu/pulseaudio:/work19/native/root/usr/lib/pulse-17.0+dfsg1/modules'
 for p in ('home', 'home/config', 'run'):
     (work/p).mkdir(mode=0o700, parents=True, exist_ok=True)
 person_files=[]

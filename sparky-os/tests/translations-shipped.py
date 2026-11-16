@@ -58,6 +58,7 @@ SOURCES = {
     'plasma-desktop-wallpaper-cost.po.patch': ('plasma-desktop', None),
     'plasma-nm-connectivity-check.po.patch': ('plasma-nm', None),
     'plasma-pa-virtual-streams.po.patch': ('plasma-pa', None),
+    'plasma-pa-audio-routes.po.patch': ('plasma-pa', None),
     'plasma-workspace-recovery.po.patch': ('plasma-workspace', None),
     'plasma-workspace-wallpaper-cost.po.patch': ('plasma-workspace', None),
     'powerdevil-graphics-link.po.patch': ('powerdevil', None),
