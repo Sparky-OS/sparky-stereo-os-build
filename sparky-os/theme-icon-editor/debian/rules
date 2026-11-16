@@ -7,3 +7,6 @@ export QT_QPA_PLATFORM = offscreen
 
 override_dh_auto_configure:
 	dh_auto_configure -- -DBUILD_TESTING=ON
+
+execute_after_dh_strip:
+	install -Dm644 debian/sparky-stereo-theme-editor-dbgsym.lintian-overrides debian/.debhelper/sparky-stereo-theme-editor/dbgsym-root/usr/share/lintian/overrides/sparky-stereo-theme-editor-dbgsym

@@ -17,6 +17,14 @@ cd /build/output/sparky-stereo-theme-editor-0.1.0+lc1
 PYTHONPATH=/source/sparky-os python3 -m lean.debian_prepare . 0.1.0+lc1 --toolkit /source/sparky-os \
  --preserve-source geometry/kwin/src/scene/stereodepth.cpp 'The depth adapter extracts these exact source bytes and records their hash' \
  --preserve-source geometry/kwin/src/effect/globals.h 'The depth adapter extracts the exact enum and records this source hash'
+# gcc is already guaranteed by Debian's implicit build-essential set.
+python3 - <<'CONTROL'
+from pathlib import Path
+p=Path('debian/control')
+s=p.read_text()
+assert 'Build-Depends: gcc, ' in s, 'Review the shared preparation dependency shape'
+p.write_text(s.replace('Build-Depends: gcc, ', 'Build-Depends: ', 1))
+CONTROL
 python3 /source/sparky-os/repo/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" .
 dpkg-buildpackage -us -uc
 cd /build/output
