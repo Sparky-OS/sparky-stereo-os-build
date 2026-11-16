@@ -65,7 +65,7 @@ Containers always disable core dumps.
 Check the registry digest when a cached image lacks a library required by a newly downloaded runtime artifact; the local image may predate that artifact even though its tag still says latest.
 `--build-setup SCRIPT` sources a read-only mounted session setup script in runnable Linux VM-twin build jobs, before their normal commands.
 It does not run for lint jobs or the FreeBSD build proxy.
-This lets a device-free UI job start a private software compositor while leaving the project's test suite intact; `upstream/plasma-pa/ci-headless.sh` is one example, with its limits documented in that recipe.
+This lets a device-free UI job start a private software compositor while leaving the project's test suite intact; `sparky-os/upstream/plasma-pa/ci-headless.sh` is one example, with its limits documented in that recipe.
 
 What cannot run here, and what is done instead:
 

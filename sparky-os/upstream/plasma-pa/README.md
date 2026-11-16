@@ -8,14 +8,14 @@ From a lane folder with `src/plasma-pa` on the candidate and this build-tree clo
 
 ```sh
 export DOCKER_HOST=unix:///path/to/lane/docker.sock
-bash src/sparky-stereo-os-build/upstream/plasma-pa/rig-setup.sh "$PWD"
-bash src/sparky-stereo-os-build/upstream/plasma-pa/rig-build.sh
+bash src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-setup.sh "$PWD"
+bash src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-build.sh
 
-docker exec --user 1000:1000 pa19-rig dbus-run-session -- bash /lane/src/sparky-stereo-os-build/upstream/plasma-pa/rig-case.sh published 1
-docker exec --user 1000:1000 pa19-rig dbus-run-session -- bash /lane/src/sparky-stereo-os-build/upstream/plasma-pa/rig-case.sh candidate 1
-docker exec --user 1000:1000 pa19-rig dbus-run-session -- bash /lane/src/sparky-stereo-os-build/upstream/plasma-pa/rig-case.sh candidate 1.25
-docker exec --user 1000:1000 pa19-rig dbus-run-session -- bash /lane/src/sparky-stereo-os-build/upstream/plasma-pa/rig-case.sh candidate 1 applet
-docker exec --user 1000:1000 pa19-rig dbus-run-session -- bash /lane/src/sparky-stereo-os-build/upstream/plasma-pa/rig-case.sh candidate 1 hotplug
+docker exec --user 1000:1000 pa19-rig dbus-run-session -- bash /lane/src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-case.sh published 1
+docker exec --user 1000:1000 pa19-rig dbus-run-session -- bash /lane/src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-case.sh candidate 1
+docker exec --user 1000:1000 pa19-rig dbus-run-session -- bash /lane/src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-case.sh candidate 1.25
+docker exec --user 1000:1000 pa19-rig dbus-run-session -- bash /lane/src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-case.sh candidate 1 applet
+docker exec --user 1000:1000 pa19-rig dbus-run-session -- bash /lane/src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-case.sh candidate 1 hotplug
 docker stop pa19-rig
 docker rm pa19-rig
 ```

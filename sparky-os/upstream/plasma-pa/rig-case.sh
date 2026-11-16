@@ -50,7 +50,7 @@ pw-loopback --name=pa19-bridge --capture-props='node.virtual=false target.object
     --playback-props='node.virtual=false target.object=out-b node.dont-fallback=true media.name=pa19-bridge-playback' \
     >"$result/bridge.log" 2>&1 & pids+=($!)
 # Real filter-chain module, hosted in its own client process.
-pipewire -c /lane/src/sparky-stereo-os-build/upstream/plasma-pa/rig-filter.conf >"$result/filter.log" 2>&1 & pids+=($!)
+pipewire -c /lane/src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-filter.conf >"$result/filter.log" 2>&1 & pids+=($!)
 sleep 3
 pactl -f json list sink-inputs >"$result/sink-inputs.json"
 pactl -f json list source-outputs >"$result/source-outputs.json"
@@ -62,16 +62,16 @@ if [[ $case_name == candidate ]]; then
     export XDG_DATA_DIRS=/opt/order19/share:/usr/share
 fi
 if [[ $phase == hotplug ]]; then
-    python3 /lane/src/sparky-stereo-os-build/upstream/plasma-pa/rig-hotplug.py "$result"
+    python3 /lane/src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-hotplug.py "$result"
 else
     gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.a11y.Bus.GetAddress >"$result/a11y.txt"
     ui_mode=$case_name
     if [[ $case_name == installed ]]; then ui_mode=candidate; fi
     if [[ $phase == applet ]]; then
-        python3 /lane/src/sparky-stereo-os-build/upstream/plasma-pa/rig-applet.py "$result" "$ui_mode"
+        python3 /lane/src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-applet.py "$result" "$ui_mode"
     else
         kcmshell6 kcm_pulseaudio >"$result/kcm.log" 2>&1 & pids+=($!)
         sleep 5
-        python3 /lane/src/sparky-stereo-os-build/upstream/plasma-pa/rig-ui.py "$result" "$ui_mode"
+        python3 /lane/src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-ui.py "$result" "$ui_mode"
     fi
 fi

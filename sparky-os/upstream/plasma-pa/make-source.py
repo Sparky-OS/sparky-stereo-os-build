@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 recipe=Path(__file__).resolve().parent
-repo=recipe.parents[1]
+repo=recipe.parents[2]
 toolkit=repo/'sparky-os'
 base=Path(sys.argv[1]).resolve()
 assert hashlib.sha256(base.read_bytes()).hexdigest() == '9217c853f0916f31ee7922d5b53271a4af572a602c9ee81f9f31142c88f2d09b'
