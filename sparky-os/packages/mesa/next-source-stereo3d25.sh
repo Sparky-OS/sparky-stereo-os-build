@@ -4,7 +4,8 @@
 # +stereo3d25 from the one +24+lc1 source, preserving its history and Lean Code toolkit.
 # ORDER 623: the Vulkan stereo layer gives an X11 window its pair where the X server has no DRI3 (patch 0041); the
 # layer's catalogs take its own messages (debian/lang-layer: LOCAL1 and LOCAL2 from lang/, LOCAL3 and LOCAL4 from
-# lang-layer/; debian-stereo3d25.py changes the layer's catalog line in debian/rules).
+# lang-layer/; debian-stereo3d25.py changes the layer's catalog line in debian/rules), and upstream's c963b6c8 (patch 0042)
+# so the d3d12 video encoder builds against DirectX-Headers 1.620.
 # Usage: next-source-stereo3d25.sh PREVIOUS.dsc OUT
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -19,10 +20,12 @@ dpkg-source --skip-patches -x "$DSC" "$W/published" >/dev/null
 mkdir -p "$W/overlay/patches" "$W/overlay/lang-layer"
 cp "$W/published/debian/patches/series" "$W/overlay/patches/series"
 [ -z "$(tail -c1 "$W/overlay/patches/series")" ] || echo >> "$W/overlay/patches/series"
-p=0041-vulkan-stereo-layer-x11-pair-without-dri3.patch
-if grep -qxF "$p" "$W/overlay/patches/series"; then echo "$p is already in the previous series" >&2; exit 2; fi
-cp "$HERE/patches/$p" "$W/overlay/patches/"
-echo "$p" >> "$W/overlay/patches/series"
+for p in 0041-vulkan-stereo-layer-x11-pair-without-dri3.patch \
+	0042-d3d12-do-not-use-picture-control-codec-data1-as-in-out-param-arg.patch; do
+	if grep -qxF "$p" "$W/overlay/patches/series"; then echo "$p is already in the previous series" >&2; exit 2; fi
+	cp "$HERE/patches/$p" "$W/overlay/patches/"
+	echo "$p" >> "$W/overlay/patches/series"
+done
 for l in en pl pt_BR fr de es ja ko zh_CN zh_TW; do
 	{ sed -n '/^LOCAL[12]=/p' "$HERE/lang/$l"; cat "$HERE/lang-layer/$l"; } > "$W/overlay/lang-layer/$l"
 done
