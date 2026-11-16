@@ -40,7 +40,8 @@ public:
     QByteArray colourBytes;
     bool membersDirty = false;
     QLabel *colourLabel = nullptr;
-    std::unique_ptr<QTemporaryDir> peerWork;
+    QLabel *projectLocation = nullptr;
+    std::unique_ptr<QTemporaryDir> peerWork, plasmaWork;
     QProcess *peer = nullptr;
     void populateGroups();
     void addPlasma(const QString &root, const QString &path);
@@ -50,7 +51,7 @@ public:
     void saveParts(const QString &stage, QJsonObject &project);
     void loadParts(const QString &path, const QJsonObject &project);
     void setupParts(QVBoxLayout *layout);
-    void startPeer(const QString &program, const QStringList &arguments, bool colour);
+    void startPeer(const QString &program, const QStringList &arguments, bool colour, const QString &workingTheme = {});
     QString makePeerWork();
     bool allClean() const;
     void ensurePeerClosed() const;

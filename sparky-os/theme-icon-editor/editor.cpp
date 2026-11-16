@@ -50,6 +50,7 @@ Editor::Editor(bool part)
     auto *files = new QHBoxLayout;
     auto *open = new QPushButton(tr("Open icon theme…"));
     auto *save = new QPushButton(tr("Save a project copy…"));
+    open->setShortcut(QKeySequence::Open); save->setShortcut(QKeySequence::Save);
     auto *undo = new QPushButton(tr("Undo"));
     auto *redo = new QPushButton(tr("Redo"));
     undo->setObjectName("undo"); redo->setObjectName("redo");
@@ -146,6 +147,7 @@ void Editor::load(QString root, QString icon)
     history->clear();
     populateGroups();
     location->setText(tr("Read only source: %1. Save creates a separate project copy.").arg(root));
+    if (projectLocation) projectLocation->setText(location->text());
     refresh();
 }
 
@@ -341,6 +343,7 @@ void Editor::loadProject(const QString &path)
     applyPlaces(project.value("groups").toObject());
     loadParts(path, project);
     location->setText(tr("Project copy: %1").arg(path));
+    if (projectLocation) projectLocation->setText(location->text());
 }
 void Editor::saveProject(const QString &destination)
 {
@@ -417,6 +420,7 @@ void Editor::saveProject(const QString &destination)
     stage.setAutoRemove(false);
     history->setClean();
     if (plasmaEditor) plasmaEditor->history->setClean();
-    membersDirty = false;
+    membersDirty = false; setWindowModified(false);
     location->setText(tr("Saved project copy: %1").arg(destination));
+    if (projectLocation) projectLocation->setText(location->text());
 }

@@ -3,6 +3,8 @@
 #include <KConfig>
 #include <KConfigGroup>
 #include <QFileDialog>
+#include <QCryptographicHash>
+#include <QDirIterator>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -27,6 +29,8 @@ bool Editor::allClean() const
 
 void Editor::setupParts(QVBoxLayout *layout)
 {
+    projectLocation = new QLabel(tr("Open a theme. Save creates a separate project copy."));
+    projectLocation->setWordWrap(true); layout->addWidget(projectLocation);
     auto *row = new QHBoxLayout;
     auto *colours = new QPushButton(tr("Open colour scheme…"));
     auto *edit = new QPushButton(tr("Edit colours in KDE…"));
@@ -61,6 +65,9 @@ void Editor::addPlasma(const QString &root, const QString &path)
     Drawing candidate; candidate.open(canonicalPath, false);
     if (!plasmaEditor) {
         plasmaEditor = new Editor(true);
+        plasmaEditor->stereo->setChecked(stereo->isChecked());
+        connect(stereo, &QCheckBox::toggled, plasmaEditor->stereo, &QCheckBox::setChecked);
+        connect(plasmaEditor->stereo, &QCheckBox::toggled, stereo, &QCheckBox::setChecked);
         pages->addTab(plasmaEditor, tr("Plasma parts"));
         connect(plasmaEditor->history, &QUndoStack::cleanChanged, this, [this] { setWindowModified(!allClean()); });
         auto *open = new QPushButton(tr("Open Plasma SVG part…"));
@@ -108,8 +115,29 @@ QString Editor::makePeerWork()
     return peerWork->path();
 }
 
-void Editor::startPeer(const QString &program, const QStringList &arguments, bool colour)
+static QMap<QString, QByteArray> themeDigest(const QString &root)
 {
+    QMap<QString, QByteArray> result;
+    QDirIterator files(root, QDir::Files | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    while (files.hasNext()) {
+        const auto path = files.next();
+        const auto key = QDir(root).relativeFilePath(path);
+        if (files.fileInfo().isSymLink()) {
+            result[key] = QByteArray("link:") + QByteArray::fromStdString(std::filesystem::read_symlink(path.toStdString()).string());
+        } else {
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error(file.errorString().toStdString());
+            QCryptographicHash hash(QCryptographicHash::Sha256);
+            if (!hash.addData(&file)) throw std::runtime_error(file.errorString().toStdString());
+            result[key] = hash.result();
+        }
+    }
+    return result;
+}
+
+void Editor::startPeer(const QString &program, const QStringList &arguments, bool colour, const QString &workingTheme)
+{
+    const auto before = colour ? QMap<QString, QByteArray>() : themeDigest(plasmaRoot);
     if (peer) peer->deleteLater();
     peer = new QProcess(this);
     auto env = QProcessEnvironment::systemEnvironment();
@@ -117,7 +145,7 @@ void Editor::startPeer(const QString &program, const QStringList &arguments, boo
     env.insert("XDG_CONFIG_HOME", peerWork->path() + "/config");
     env.insert("XDG_CACHE_HOME", peerWork->path() + "/cache");
     peer->setProcessEnvironment(env);
-    connect(peer, &QProcess::finished, this, [this, colour](int code, QProcess::ExitStatus status) { guarded([&] {
+    connect(peer, &QProcess::finished, this, [this, colour, before, workingTheme](int code, QProcess::ExitStatus status) { guarded([&] {
         if (code || status != QProcess::NormalExit)
             throw std::runtime_error(tr("The KDE tool failed: %1").arg(QString::fromUtf8(peer->readAllStandardError())).toStdString());
         if (colour) {
@@ -128,6 +156,16 @@ void Editor::startPeer(const QString &program, const QStringList &arguments, boo
                 const auto bytes = readPart(peerWork->path() + "/data/color-schemes/" + stem + ".colors");
                 if (bytes != colourBytes) importColour(bytes);
             }
+        }
+        if (!colour && themeDigest(workingTheme) != before) {
+            Drawing next; next.open(workingTheme + "/" + plasmaPath, false);
+            for (auto it = plasmaEditor->drawing.places.cbegin(); it != plasmaEditor->drawing.places.cend(); ++it)
+                if (it.value()) next.setPlace(it.key(), it.value());
+            plasmaWork = std::move(peerWork);
+            plasmaRoot = workingTheme;
+            plasmaEditor->drawing = next;
+            plasmaEditor->populateGroups(); plasmaEditor->restorePlaces(next.places);
+            membersDirty = true; setWindowModified(true);
         }
         peerWork.reset();
     }); });
@@ -156,7 +194,7 @@ void Editor::explorePlasma()
     std::filesystem::copy(plasmaRoot.toStdString(), (path + "/data/plasma/desktoptheme/" + id).toStdString(),
         std::filesystem::copy_options::recursive | std::filesystem::copy_options::copy_symlinks);
     // The explorer receives the ordinary source; paired exports remain separate until Plasma consumes them.
-    startPeer("plasmathemeexplorer", {"--theme", id}, false);
+    startPeer("plasmathemeexplorer", {"--theme", id}, false, path + "/data/plasma/desktoptheme/" + id);
 }
 
 void Editor::saveParts(const QString &stage, QJsonObject &project)
@@ -186,6 +224,7 @@ void Editor::saveParts(const QString &stage, QJsonObject &project)
 void Editor::loadParts(const QString &path, const QJsonObject &project)
 {
     if (plasmaEditor) { pages->removeTab(pages->indexOf(plasmaEditor)); delete plasmaEditor; plasmaEditor = nullptr; }
+    plasmaWork.reset();
     colourBytes.clear(); colourName.clear();
     colourLabel->setText(tr("No colour scheme in this project"));
     if (project.contains("colour")) {

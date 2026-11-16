@@ -8,6 +8,7 @@
 #include <QSvgRenderer>
 #include <QTemporaryDir>
 #include <iostream>
+#include <filesystem>
 
 static void require(bool value, const char *message)
 {
@@ -38,9 +39,13 @@ int main(int argc, char **argv)
         const auto original = bytes(path), colour = bytes(fixtures + "/Project.colors");
         Editor editor;
         editor.loadProject(fixtures + "/project");
+        editor.stereo->setChecked(false);
         const auto iconPlaces = editor.drawing.places;
         editor.addPlasma(fixtures + "/plasma", path);
         editor.addColour(fixtures + "/Project.colors");
+        require(!editor.plasmaEditor->stereo->isChecked(), "Flat mode did not reach the Plasma preview");
+        editor.plasmaEditor->stereo->setChecked(true);
+        require(editor.stereo->isChecked(), "Enable 3D differs between document tabs");
         auto &part = editor.plasmaEditor->drawing;
         const auto zero = part.eye(256, false);
         require(zero.size() == QSize(256, 163), "Plasma canvas aspect ratio lost");
@@ -64,8 +69,17 @@ int main(int argc, char **argv)
         editor.plasmaEditor->history->undo(); require(part.eye(256, false) == zero, "Plasma undo lost artwork");
         editor.plasmaEditor->history->redo(); require(part.eye(256, false) == a, "Plasma redo lost depth");
         require(editor.drawing.places == iconPlaces, "Plasma editing changed icon depths");
+        const auto working = editor.makePeerWork() + "/data/plasma/desktoptheme/test";
+        QDir().mkpath(QFileInfo(working).absolutePath());
+        std::filesystem::copy((fixtures + "/plasma").toStdString(), working.toStdString(), std::filesystem::copy_options::recursive);
+        editor.startPeer("/bin/sh", {"-c", "printf '[General]\\nName=RoundTrip\\n' > \"$XDG_DATA_HOME/plasma/desktoptheme/test/colors\""}, false, working);
+        require(editor.peer->waitForFinished(5000), "External editor did not finish");
+        require(editor.plasmaRoot == working && bytes(editor.plasmaRoot + "/colors").contains("RoundTrip"), "External Plasma edits were discarded");
+        require(part.places.value("south-center") == -1, "External round trip lost authored depth");
+        require(!QFile::exists(fixtures + "/plasma/colors"), "External editor wrote to the original theme");
         QTemporaryDir output;
         editor.saveProject(output.path() + "/shared");
+        require(!editor.isWindowModified(), "Saved project still displays unsaved changes");
         require(bytes(output.path() + "/shared/plasma/widgets/panel-background.svg") == original, "Saved ordinary Plasma source changed");
         require(bytes(output.path() + "/shared/color-schemes/Project.colors") == colour, "Saved colour scheme changed");
         Editor reopened; reopened.loadProject(output.path() + "/shared");
