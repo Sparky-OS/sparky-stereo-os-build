@@ -1,0 +1,172 @@
+Description: Quick: draw a framed window as a pair where its platform draws the frame
+ A window whose style shows the depth of its elements asks for two views
+ of its surface and, once the surface has them, is drawn once per eye. A
+ window with a frame drawn by the client around it (client-side
+ decorations: a compositor without server-side decorations, or a program
+ that asks for its own frame) was always drawn once, since the frame is no
+ part of the pair; but it asked for the two views all the same, got them,
+ and showed the window's one picture in both eyes while the platform
+ marked it as the desktop's own depth.
+ .
+ A platform that draws such a frame into both eyes, the same picture at
+ the screen's plane, says so with the window's
+ _q_stereo_csd_pair_supported, as the Wayland EGL platform does; such a
+ window is now drawn as a pair. Where the platform does not say so it is
+ drawn once, as before.
+ .
+ The pair now also ends before the request for views changes with the
+ depth. The Wayland EGL platform reads the window's _q_stereo_pair when
+ that request changes, as the mark of an engine that composes its pair
+ into one picture (Qt Widgets, whose framed pair goes side by side into
+ one buffer). A framed window turned flat and back quickly could carry
+ the pair of its last frame into a new request, and the platform then
+ declared the surface a second time while the EGL implementation had
+ declared it: a protocol error that ended the program.
+ .
+ tst_qquickwindowstereo::drawsAFramedWindowAsAPair() shows a window
+ inside a frame the client draws and expects its pair, and the pair's end
+ at once when its depth changes; it fails on +stereo3d3 and on the first
+ form of this change.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor
+Forwarded: no
+Last-Update: 2026-11-16
+Assisted-by: Claude Opus 5.5
+---
+diff --git a/src/quick/items/qquickwindowstereo.cpp b/src/quick/items/qquickwindowstereo.cpp
+index f0dbcc8..83a0fcd 100644
+--- a/src/quick/items/qquickwindowstereo.cpp
++++ b/src/quick/items/qquickwindowstereo.cpp
+@@ -104,6 +104,14 @@ void QQuickWindowStereo::windowPropertyChanged(QQuickWindow *window, const QByte
+ void QQuickWindowStereo::depthChanged()
+ {
+     m_depth = m_window->property(DepthProperty).toBool();
++    // The window is drawn as a pair again only once its surface has two views (beginFrame()). The pair
++    // ends before the request changes: a platform reads the window's _q_stereo_pair with it, as the
++    // mark of an engine that composes its pair into one picture (the Wayland EGL window, for Qt
++    // Widgets), which a window that draws into two views is not.
++    if (m_pair.load(std::memory_order_relaxed)) {
++        m_pair.store(false, std::memory_order_release);
++        m_window->setProperty(PairProperty, false);
++    }
+     // The platform gives the surface its views at the start of a frame.
+     m_window->setProperty(ViewsProperty, m_depth ? QVariant(2) : QVariant());
+     m_window->update();
+@@ -166,8 +174,10 @@ void QQuickWindowStereo::removeItem(QQuickItem *item)
+ 
+ bool QQuickWindowStereo::beginFrame()
+ {
+-    // A window with client-side decorations is drawn once: its frame is no part of the pair.
+-    const bool pair = m_depth && m_twoViews.load(std::memory_order_acquire) && m_window->frameMargins().isNull();
++    // A frame the client draws around the window (client-side decorations) is no part of the pair: the
++    // platform draws it into both eyes when it says so, and otherwise the window is drawn once.
++    const bool pair = m_depth && m_twoViews.load(std::memory_order_acquire)
++            && (m_window->frameMargins().isNull() || m_window->property(FramedPairProperty).toBool());
+     if (pair != m_pair.load(std::memory_order_relaxed)) {
+         m_pair.store(pair, std::memory_order_release);
+         m_window->setProperty(PairProperty, pair);
+diff --git a/src/quick/items/qquickwindowstereo_p.h b/src/quick/items/qquickwindowstereo_p.h
+index 35363a5..e1865d0 100644
+--- a/src/quick/items/qquickwindowstereo_p.h
++++ b/src/quick/items/qquickwindowstereo_p.h
+@@ -66,6 +66,9 @@ public:
+     static constexpr char PairProperty[] = "_q_stereo_pair";
+     static constexpr char ViewsProperty[] = "_q_stereo_views";
+     static constexpr char ParallaxProperty[] = "_q_stereo_parallax";
++    // Set by a platform that draws a frame the client draws (client-side decorations) into both eyes
++    // of a window drawn as a pair, the same picture at the screen's plane.
++    static constexpr char FramedPairProperty[] = "_q_stereo_csd_pair_supported";
+ 
+     // The window's state once it ever showed depth, otherwise nullptr. Any thread.
+     static QQuickWindowStereo *of(const QQuickWindow *window);
+diff --git a/tests/auto/quick/qquickwindowstereo/tst_qquickwindowstereo.cpp b/tests/auto/quick/qquickwindowstereo/tst_qquickwindowstereo.cpp
+index 948aa06..2daaea2 100644
+--- a/tests/auto/quick/qquickwindowstereo/tst_qquickwindowstereo.cpp
++++ b/tests/auto/quick/qquickwindowstereo/tst_qquickwindowstereo.cpp
+@@ -41,6 +41,7 @@ private slots:
+     void placesItemsForEachEye();
+     void drawsEachEyeInAPass();
+     void drawsThePairAfterAnExpose();
++    void drawsAFramedWindowAsAPair();
+ 
+ private:
+     struct Scene
+@@ -50,7 +51,7 @@ private:
+         QQuickItem *deep = nullptr;
+         QQuickItem *deepChild = nullptr;
+     };
+-    Scene makeScene();
++    Scene makeScene(const char *source = nullptr);
+ 
+     QQmlEngine m_engine;
+ };
+@@ -71,11 +72,25 @@ Window {
+ }
+ )";
+ 
+-tst_QQuickWindowStereo::Scene tst_QQuickWindowStereo::makeScene()
++// The same window inside the frame the client draws around it, where the compositor draws none.
++static const char s_framedScene[] = R"(
++import QtQuick
++Window {
++    width: 200; height: 100
++    color: "white"
++    Rectangle { objectName: "near"; x: 20; y: 20; width: 40; height: 40; color: "#ff0000" }
++    Rectangle {
++        objectName: "deep"; x: 100; y: 20; width: 60; height: 60; color: "#0000ff"
++        Rectangle { objectName: "deepChild"; width: 20; height: 20; color: "#00ff00" }
++    }
++}
++)";
++
++tst_QQuickWindowStereo::Scene tst_QQuickWindowStereo::makeScene(const char *source)
+ {
+     Scene scene;
+     QQmlComponent component(&m_engine);
+-    component.setData(s_scene, QUrl());
++    component.setData(source ? source : s_scene, QUrl());
+     scene.window.reset(qobject_cast<QQuickWindow *>(component.create()));
+     if (!scene.window) {
+         qWarning() << component.errors();
+@@ -373,6 +388,41 @@ void tst_QQuickWindowStereo::drawsThePairAfterAnExpose()
+     QCOMPARE(scene.window->property(EyeProperty).toInt(), 0);
+ }
+ 
++// A window inside the frame the client draws around it is drawn as a pair where the platform draws that frame into
++// both eyes (_q_stereo_csd_pair_supported). Its pair ends with any change of its depth, before the request for views
++// changes: the platform reads _q_stereo_pair with that request, as the mark of an engine that composes its pair into
++// one picture.
++void tst_QQuickWindowStereo::drawsAFramedWindowAsAPair()
++{
++    if (qEnvironmentVariableIntValue("QTEST_STEREO_TWO_VIEWS") != 1)
++        QSKIP("Needs a platform that gives a surface two views (QTEST_STEREO_TWO_VIEWS=1)");
++    if (isSoftware())
++        QSKIP("The software renderer draws a window once");
++
++    Scene scene = makeScene(s_framedScene);
++    QVERIFY(scene.window);
++    scene.near->setProperty(ParallaxProperty, 4.0);
++    scene.deep->setProperty(ParallaxProperty, -4.0);
++    scene.window->show();
++    QVERIFY(QTest::qWaitForWindowExposed(scene.window.get()));
++    if (scene.window->frameMargins().isNull())
++        QSKIP("Needs a frame the client draws around the window (a compositor without server-side decorations)");
++    if (!scene.window->property("_q_stereo_csd_pair_supported").toBool())
++        QSKIP("Needs a platform that draws the frame into both eyes");
++
++    scene.window->setProperty(DepthProperty, true);
++    QTRY_VERIFY_WITH_TIMEOUT(scene.window->property(PairProperty).toBool(), 5000);
++
++    // Flat and back in one turn of the event loop.
++    scene.window->setProperty(DepthProperty, false);
++    QVERIFY(!scene.window->property(PairProperty).toBool());
++    scene.window->setProperty(DepthProperty, true);
++    QVERIFY(!scene.window->property(PairProperty).toBool());
++    QTRY_VERIFY_WITH_TIMEOUT(scene.window->property(PairProperty).toBool(), 5000);
++    QTest::qWait(200);
++    QVERIFY(scene.window->isExposed());
++}
++
+ QTEST_MAIN(tst_QQuickWindowStereo)
+ 
+ #include "tst_qquickwindowstereo.moc"
