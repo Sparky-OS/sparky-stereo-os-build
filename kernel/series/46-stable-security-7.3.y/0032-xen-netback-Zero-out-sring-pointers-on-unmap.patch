@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tu Dinh <ngoc-tu.dinh@vates.tech>
+Date: Sat, 7 Nov 2026 12:35:51 +0100
+Subject: xen-netback: Zero out sring pointers on unmap
+
+commit f96f16592a32430a0582309d73a873b6d3ee2bdb upstream.
+
+If xenvif_map_frontend_data_rings() fails when a ring is already mapped,
+it unmaps them via xenvif_unmap_frontend_data_rings() which keeps the
+ring pointers unchanged. xenvif_connect_data()'s cleanup path calls
+xenvif_disconnect_queue() which in turn calls
+xenvif_unmap_frontend_data_rings() again, which will attempt to unmap the
+pointers a second time.
+
+Zero out the ring pointers after they are unmapped to avoid this issue.
+
+This is XSA-532
+
+Fixes: 2ac061ce97f4 ("xen/netback: cleanup init and deinit code")
+Signed-off-by: Tu Dinh <ngoc-tu.dinh@vates.tech>
+Reviewed-by: Juergen Gross <jgross@suse.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+[ORDER 627: CVE-2026-99287 (kernel CVE record, vulns.git 40859ff8f); linux-7.3.y stable commit e7ba61734d6a (v7.3.4), carried in stable's form; applies unchanged on v7.3.1 + groups 01-45 and the patches of this group before it.]
+---
+ drivers/net/xen-netback/netback.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/xen-netback/netback.c b/drivers/net/xen-netback/netback.c
+index 3cdb7fd65..dc229756b 100644
+--- a/drivers/net/xen-netback/netback.c
++++ b/drivers/net/xen-netback/netback.c
+@@ -1530,12 +1530,17 @@ static inline bool tx_dealloc_work_todo(struct xenvif_queue *queue)
+ 
+ void xenvif_unmap_frontend_data_rings(struct xenvif_queue *queue)
+ {
+-	if (queue->tx.sring)
++	if (queue->tx.sring) {
+ 		xenbus_unmap_ring_vfree(xenvif_to_xenbus_device(queue->vif),
+ 					queue->tx.sring);
+-	if (queue->rx.sring)
++		queue->tx.sring = NULL;
++	}
++
++	if (queue->rx.sring) {
+ 		xenbus_unmap_ring_vfree(xenvif_to_xenbus_device(queue->vif),
+ 					queue->rx.sring);
++		queue->rx.sring = NULL;
++	}
+ }
+ 
+ int xenvif_map_frontend_data_rings(struct xenvif_queue *queue,
