@@ -1,0 +1,124 @@
+Description: A software compositor cannot hand over a page's two views: 3D is off for the session and the person is told (ORDER 546 milestone 2)
+ A page's two views reach Stereo KWin as one declared layer of the browser's compositor (kde_stereo_content_v1 on the canvas's
+ surface). With the compositor in software (no usable GPU: a virtual machine without 3D, a blocklisted driver, a forced
+ gfx.webrender.software) there is no such layer: +stereo3d9, +12 and +14 all drew two views and painted them into the page as one
+ flat picture, squeezed side by side, the same in both eyes, with nothing said (measured in the rig: no create, no set_content, a
+ 31 px marker 16 px wide twice in each eye, empty notification bars).
+ Now, when a window's layer manager is a software one, webgl.stereo-camera.enabled and dom.vr.flat.enabled are false and locked
+ for the session, so a page draws its own one picture and is told that no immersive session is offered, and the window's
+ notification bar says once that 3D is off, with the compositor's name and the graphics layer's own failure id and message.
+ On a GPU nothing changes (declared, plain page +0.65 px, WebXR +10.25 px against +10.27 predicted, before and after).
+ Proved by putting these files into the +stereo3d14 package's browser/omni.ja (the two script files are byte-identical in the
+ fork's source and the package); not compiled as a package in the lane.
+ Not covered: a site whose 3D Canvas permission is On still gets two views (ClientWebGLContext::UpdateStereoCameraSite lets
+ the permission win over the preference); that needs gfx::gfxVars::UseSoftwareWebRender() checked there, in C++.
+ Upstream: none to search, the camera, the flat display and the declaration are the edition's own (fork Sparky-OS/waterfox);
+ the staged +12, +13 and +14 patches and changelogs were read for the declaration path first, none tells the person.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+diff -ruN a/browser/actors/StereoNoticeParent.sys.mjs b/browser/actors/StereoNoticeParent.sys.mjs
+--- a/browser/actors/StereoNoticeParent.sys.mjs
++++ b/browser/actors/StereoNoticeParent.sys.mjs
+@@ -26,3 +26,67 @@
+     );
+   }
+ }
++
++// Sparky Stereo OS: a page's two views reach the desktop as one declared
++// layer of the browser's compositor (kde_stereo_content_v1 on the canvas's
++// own surface). A compositor that runs in software makes no such layer, so
++// the pair would be painted into the page as one flat picture, both views
++// squeezed side by side. Where the window's compositor is a software one, the
++// two routes that draw two views (the 3D Canvas camera and the flat WebXR
++// display) are off for the session, pages show their ordinary picture, and
++// the person is told what failed and why, once, in the window's notification
++// bar and on the console.
++let gSoftwareCompositorTold = false;
++
++export const StereoSoftwareCompositor = {
++  // Why this window cannot hand over two views, or null when it can.
++  reason(win) {
++    const type = win.windowUtils.layerManagerType;
++    if (!type.includes("Software")) {
++      return null;
++    }
++    let why = "";
++    try {
++      const features = Cc["@mozilla.org/gfx/info;1"]
++        .getService(Ci.nsIGfxInfo)
++        .getFeatureLog().features;
++      const entry = features.find(f => f.name == "WEBRENDER")?.log?.at(-1);
++      why = [entry?.failureId, entry?.message].filter(Boolean).join(", ");
++    } catch (e) {
++      console.error(e);
++    }
++    return why ? `${type}: ${why}` : type;
++  },
++
++  check(win) {
++    const reason = this.reason(win);
++    if (!reason) {
++      return;
++    }
++    const defaults = Services.prefs.getDefaultBranch("");
++    for (const pref of ["webgl.stereo-camera.enabled", "dom.vr.flat.enabled"]) {
++      if (!Services.prefs.prefIsLocked(pref)) {
++        defaults.setBoolPref(pref, false);
++        Services.prefs.lockPref(pref);
++      }
++    }
++    if (gSoftwareCompositorTold) {
++      return;
++    }
++    gSoftwareCompositorTold = true;
++    console.error(
++      `Stereo: 3D is off in this session: the browser's compositor runs in software (${reason}), so a page's two views cannot be handed to the desktop.`
++    );
++    win.gNotificationBox.appendNotification(
++      "stereo-software-compositor",
++      {
++        label: {
++          "l10n-id": "stereo-software-compositor",
++          "l10n-args": { reason },
++        },
++        priority: win.gNotificationBox.PRIORITY_WARNING_MEDIUM,
++      },
++      []
++    );
++  },
++};
+diff -ruN a/browser/base/content/browser-init.js b/browser/base/content/browser-init.js
+--- a/browser/base/content/browser-init.js
++++ b/browser/base/content/browser-init.js
+@@ -496,6 +496,16 @@
+       true
+     );
+ 
++    // Sparky Stereo OS: a software compositor cannot hand a page's two views
++    // to the desktop; 3D is then off for the session and the person is told.
++    try {
++      ChromeUtils.importESModule(
++        "resource:///actors/StereoNoticeParent.sys.mjs"
++      ).StereoSoftwareCompositor.check(window);
++    } catch (e) {
++      console.error(e);
++    }
++
+     this._handleURIToLoad();
+ 
+     Services.obs.addObserver(gIdentityHandler, "perm-changed");
+diff -ruN a/browser/locales/en-US/browser/browserContext.ftl b/browser/locales/en-US/browser/browserContext.ftl
+--- a/browser/locales/en-US/browser/browserContext.ftl
++++ b/browser/locales/en-US/browser/browserContext.ftl
+@@ -297,6 +297,9 @@
+ 
+ stereo-canvas-no-limits = This page's 3D scene stays flat: the desktop does not tell the browser your depth limits (Stereo KWin is missing).
+ stereo-display-settings-failed = KDE's Display Configuration could not be opened: systemsettings was not found or did not start.
++# Shown once per session in the window's notification bar when the browser draws its window without the graphics card.
++# $reason (string) - the compositor's name and the graphics layer's own failure id and message, in English.
++stereo-software-compositor = 3D is off in this session: the browser is drawing without the graphics card, so it cannot hand a page's two views to the desktop. Pages show their ordinary picture. Reason: { $reason }
+ 
+ stereo-xr-exit = Exit 3D
+ stereo-xr-hint-flat = Esc leaves 3D. Drag with the mouse to look; W, A, S, D or the arrow keys and the wheel move you.

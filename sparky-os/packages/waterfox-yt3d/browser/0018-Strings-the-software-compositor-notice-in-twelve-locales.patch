@@ -1,0 +1,140 @@
+Description: The software compositor notice in the other twelve locales (ORDER 546 milestone 2)
+ stereo-software-compositor in de, fr, ja, ko, pl, pt-BR, zh-CN, zh-TW and the four Spanish locales (the same Spanish text):
+ waterfox/browser/locales/LOCALE/browser/browser/browserContext.ftl. First drafts, not reviewed by native speakers.
+ Applies after the Spanish strings.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Assisted-by: Claude Fable 5.2 via Claude Code
+---
+diff -ruN a/waterfox/browser/locales/de/browser/browser/browserContext.ftl b/waterfox/browser/locales/de/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/de/browser/browser/browserContext.ftl
++++ b/waterfox/browser/locales/de/browser/browser/browserContext.ftl
+@@ -251,6 +251,7 @@
+ 
+ stereo-canvas-no-limits = Die 3D-Szene dieser Seite bleibt flach: Der Desktop teilt dem Browser Ihre Tiefengrenzen nicht mit (Stereo KWin fehlt).
+ stereo-display-settings-failed = Die Anzeige-Einrichtung von KDE konnte nicht geöffnet werden: systemsettings wurde nicht gefunden oder startete nicht.
++stereo-software-compositor = 3D ist in dieser Sitzung aus: Der Browser zeichnet ohne die Grafikkarte und kann die zwei Ansichten einer Seite deshalb nicht an den Desktop übergeben. Seiten zeigen ihr gewöhnliches Bild. Grund: { $reason }
+ 
+ stereo-xr-exit = 3D beenden
+ 
+diff -ruN a/waterfox/browser/locales/es-AR/browser/browser/browserContext.ftl b/waterfox/browser/locales/es-AR/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/es-AR/browser/browser/browserContext.ftl
++++ b/waterfox/browser/locales/es-AR/browser/browser/browserContext.ftl
+@@ -251,6 +251,7 @@
+ 
+ stereo-canvas-no-limits = La escena 3D de esta página sigue plana: el escritorio no informa al navegador de tus límites de profundidad (falta Stereo KWin).
+ stereo-display-settings-failed = No se pudo abrir la configuración de la pantalla de KDE: no se encontró systemsettings o no se inició.
++stereo-software-compositor = El 3D está desactivado en esta sesión: el navegador dibuja sin la tarjeta gráfica, por lo que no puede entregar al escritorio las dos vistas de una página. Las páginas muestran su imagen normal. Motivo: { $reason }
+ 
+ stereo-xr-exit = Salir de 3D
+ stereo-xr-hint-flat = Esc sale de 3D. Arrastra con el ratón para mirar; W, A, S, D o las flechas y la rueda te mueven.
+diff -ruN a/waterfox/browser/locales/es-CL/browser/browser/browserContext.ftl b/waterfox/browser/locales/es-CL/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/es-CL/browser/browser/browserContext.ftl
++++ b/waterfox/browser/locales/es-CL/browser/browser/browserContext.ftl
+@@ -251,6 +251,7 @@
+ 
+ stereo-canvas-no-limits = La escena 3D de esta página sigue plana: el escritorio no informa al navegador de tus límites de profundidad (falta Stereo KWin).
+ stereo-display-settings-failed = No se pudo abrir la configuración de la pantalla de KDE: no se encontró systemsettings o no se inició.
++stereo-software-compositor = El 3D está desactivado en esta sesión: el navegador dibuja sin la tarjeta gráfica, por lo que no puede entregar al escritorio las dos vistas de una página. Las páginas muestran su imagen normal. Motivo: { $reason }
+ 
+ stereo-xr-exit = Salir de 3D
+ stereo-xr-hint-flat = Esc sale de 3D. Arrastra con el ratón para mirar; W, A, S, D o las flechas y la rueda te mueven.
+diff -ruN a/waterfox/browser/locales/es-ES/browser/browser/browserContext.ftl b/waterfox/browser/locales/es-ES/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/es-ES/browser/browser/browserContext.ftl
++++ b/waterfox/browser/locales/es-ES/browser/browser/browserContext.ftl
+@@ -251,6 +251,7 @@
+ 
+ stereo-canvas-no-limits = La escena 3D de esta página sigue plana: el escritorio no informa al navegador de tus límites de profundidad (falta Stereo KWin).
+ stereo-display-settings-failed = No se pudo abrir la configuración de la pantalla de KDE: no se encontró systemsettings o no se inició.
++stereo-software-compositor = El 3D está desactivado en esta sesión: el navegador dibuja sin la tarjeta gráfica, por lo que no puede entregar al escritorio las dos vistas de una página. Las páginas muestran su imagen normal. Motivo: { $reason }
+ 
+ stereo-xr-exit = Salir de 3D
+ stereo-xr-hint-flat = Esc sale de 3D. Arrastra con el ratón para mirar; W, A, S, D o las flechas y la rueda te mueven.
+diff -ruN a/waterfox/browser/locales/es-MX/browser/browser/browserContext.ftl b/waterfox/browser/locales/es-MX/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/es-MX/browser/browser/browserContext.ftl
++++ b/waterfox/browser/locales/es-MX/browser/browser/browserContext.ftl
+@@ -251,6 +251,7 @@
+ 
+ stereo-canvas-no-limits = La escena 3D de esta página sigue plana: el escritorio no informa al navegador de tus límites de profundidad (falta Stereo KWin).
+ stereo-display-settings-failed = No se pudo abrir la configuración de la pantalla de KDE: no se encontró systemsettings o no se inició.
++stereo-software-compositor = El 3D está desactivado en esta sesión: el navegador dibuja sin la tarjeta gráfica, por lo que no puede entregar al escritorio las dos vistas de una página. Las páginas muestran su imagen normal. Motivo: { $reason }
+ 
+ stereo-xr-exit = Salir de 3D
+ stereo-xr-hint-flat = Esc sale de 3D. Arrastra con el ratón para mirar; W, A, S, D o las flechas y la rueda te mueven.
+diff -ruN a/waterfox/browser/locales/fr/browser/browser/browserContext.ftl b/waterfox/browser/locales/fr/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/fr/browser/browser/browserContext.ftl
++++ b/waterfox/browser/locales/fr/browser/browser/browserContext.ftl
+@@ -251,6 +251,7 @@
+ 
+ stereo-canvas-no-limits = La scène 3D de cette page reste plate : le bureau ne transmet pas au navigateur vos limites de profondeur (Stereo KWin est absent).
+ stereo-display-settings-failed = La configuration de l'affichage de KDE n'a pas pu être ouverte : systemsettings est introuvable ou n'a pas démarré.
++stereo-software-compositor = La 3D est désactivée pour cette session : le navigateur dessine sans la carte graphique et ne peut donc pas transmettre au bureau les deux vues d'une page. Les pages affichent leur image ordinaire. Raison : { $reason }
+ 
+ stereo-xr-exit = Quitter la 3D
+ 
+diff -ruN a/waterfox/browser/locales/ja/browser/browser/browserContext.ftl b/waterfox/browser/locales/ja/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/ja/browser/browser/browserContext.ftl
++++ b/waterfox/browser/locales/ja/browser/browser/browserContext.ftl
+@@ -251,6 +251,7 @@
+ 
+ stereo-canvas-no-limits = このページの 3D シーンは平面のままです。デスクトップが奥行きの限界をブラウザーに伝えていません (Stereo KWin がありません)。
+ stereo-display-settings-failed = KDE のディスプレイ設定を開けませんでした。systemsettings が見つからないか、起動しませんでした。
++stereo-software-compositor = このセッションでは 3D はオフです。ブラウザーがグラフィックカードを使わずに描画しているため、ページの 2 つのビューをデスクトップに渡せません。ページは通常の画像を表示します。理由: { $reason }
+ 
+ stereo-xr-exit = 3D を終了
+ 
+diff -ruN a/waterfox/browser/locales/ko/browser/browser/browserContext.ftl b/waterfox/browser/locales/ko/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/ko/browser/browser/browserContext.ftl
++++ b/waterfox/browser/locales/ko/browser/browser/browserContext.ftl
+@@ -251,6 +251,7 @@
+ 
+ stereo-canvas-no-limits = 이 페이지의 3D 장면은 평면으로 유지됩니다. 데스크톱이 브라우저에 깊이 한계를 알려 주지 않습니다(Stereo KWin이 없음).
+ stereo-display-settings-failed = KDE 디스플레이 설정을 열 수 없습니다. systemsettings를 찾지 못했거나 시작되지 않았습니다.
++stereo-software-compositor = 이 세션에서는 3D가 꺼져 있습니다. 브라우저가 그래픽 카드 없이 그리고 있어 페이지의 두 시점을 데스크톱에 전달할 수 없습니다. 페이지는 일반 화면을 표시합니다. 이유: { $reason }
+ 
+ stereo-xr-exit = 3D 종료
+ 
+diff -ruN a/waterfox/browser/locales/pl/browser/browser/browserContext.ftl b/waterfox/browser/locales/pl/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/pl/browser/browser/browserContext.ftl
++++ b/waterfox/browser/locales/pl/browser/browser/browserContext.ftl
+@@ -251,6 +251,7 @@
+ 
+ stereo-canvas-no-limits = Scena 3D tej strony pozostaje płaska: pulpit nie przekazuje przeglądarce Twoich limitów głębi (brak Stereo KWin).
+ stereo-display-settings-failed = Nie udało się otworzyć ustawień wyświetlania KDE: nie znaleziono programu systemsettings lub nie uruchomił się.
++stereo-software-compositor = 3D jest wyłączone w tej sesji: przeglądarka rysuje bez karty graficznej, więc nie może przekazać pulpitowi dwóch widoków strony. Strony pokazują zwykły obraz. Powód: { $reason }
+ 
+ stereo-xr-exit = Wyjdź z 3D
+ 
+diff -ruN a/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl b/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl
++++ b/waterfox/browser/locales/pt-BR/browser/browser/browserContext.ftl
+@@ -251,6 +251,7 @@
+ 
+ stereo-canvas-no-limits = A cena 3D desta página continua plana: o desktop não informa ao navegador os seus limites de profundidade (falta o Stereo KWin).
+ stereo-display-settings-failed = Não foi possível abrir as configurações da tela do KDE: o systemsettings não foi encontrado ou não iniciou.
++stereo-software-compositor = O 3D está desligado nesta sessão: o navegador está desenhando sem a placa de vídeo e por isso não consegue entregar ao desktop as duas vistas de uma página. As páginas mostram a imagem comum. Motivo: { $reason }
+ 
+ stereo-xr-exit = Sair do 3D
+ 
+diff -ruN a/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl b/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl
++++ b/waterfox/browser/locales/zh-CN/browser/browser/browserContext.ftl
+@@ -251,6 +251,7 @@
+ 
+ stereo-canvas-no-limits = 此页面的 3D 场景保持平面：桌面没有把您的深度限制告知浏览器（缺少 Stereo KWin）。
+ stereo-display-settings-failed = 无法打开 KDE 的显示器配置：未找到 systemsettings 或其未能启动。
++stereo-software-compositor = 本次会话中 3D 已关闭：浏览器没有使用显卡绘制，因此无法把页面的两个视图交给桌面。页面显示其普通画面。原因：{ $reason }
+ 
+ stereo-xr-exit = 退出 3D
+ 
+diff -ruN a/waterfox/browser/locales/zh-TW/browser/browser/browserContext.ftl b/waterfox/browser/locales/zh-TW/browser/browser/browserContext.ftl
+--- a/waterfox/browser/locales/zh-TW/browser/browser/browserContext.ftl
++++ b/waterfox/browser/locales/zh-TW/browser/browser/browserContext.ftl
+@@ -251,6 +251,7 @@
+ 
+ stereo-canvas-no-limits = 此頁面的 3D 場景維持平面：桌面沒有將您的深度限制告知瀏覽器（缺少 Stereo KWin）。
+ stereo-display-settings-failed = 無法開啟 KDE 的顯示器設定：找不到 systemsettings 或其無法啟動。
++stereo-software-compositor = 本次工作階段中 3D 已關閉：瀏覽器未使用顯示卡繪製，因此無法將頁面的兩個視圖交給桌面。頁面顯示其一般畫面。原因：{ $reason }
+ 
+ stereo-xr-exit = 結束 3D
+ 
