@@ -7,5 +7,5 @@ CLONE=${1:?the ananicy-cpp clone (sparky-os/upstream/ananicy-cpp)}; OUT=${2:?out
 COMMIT=3554447c1ca495478bd00e002078847dfd2205d6
 [ "$(git -C "$CLONE" rev-parse --verify "$COMMIT^{commit}")" = "$COMMIT" ]
 mkdir -p "$OUT"
-git -C "$CLONE" archive --format=tar --prefix=ananicy-cpp-1.1.1+git20260818/ "$COMMIT" | xz -9e -T1 >"$OUT/ananicy-cpp_1.1.1+git20260818.orig.tar.xz"
-sha256sum "$OUT/ananicy-cpp_1.1.1+git20260818.orig.tar.xz"
+git -C "$CLONE" archive --format=tar --prefix=ananicy-cpp-1.2.0+git20260818/ "$COMMIT" | xz -9e -T1 >"$OUT/ananicy-cpp_1.2.0+git20260818.orig.tar.xz"
+sha256sum "$OUT/ananicy-cpp_1.2.0+git20260818.orig.tar.xz"

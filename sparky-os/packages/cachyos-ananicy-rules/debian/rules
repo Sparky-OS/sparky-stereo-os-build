@@ -1,0 +1,20 @@
+#!/usr/bin/make -f
+# Created by Daniel Ramos (Capitain Jack) 2026/11/16
+# Copyright 2026 under the GNU GPL3 License
+%:
+	dh $@
+
+# CachyOS's package: the tree into /etc/ananicy.d, less the files that are not rules
+override_dh_auto_build:
+override_dh_auto_install:
+	install -d debian/cachyos-ananicy-rules/etc/ananicy.d
+	tar --exclude=./debian --exclude=./README.md --exclude=./sort-games.sh --exclude=./ananicy-cgroups.schema.json \
+		--exclude=./ananicy.schema.json --exclude=./lint.py --exclude=./Makefile --exclude=./.gitattributes --exclude=./.github -cf - . | \
+		tar -xf - -C debian/cachyos-ananicy-rules/etc/ananicy.d
+	chmod -R u=rwX,go=rX debian/cachyos-ananicy-rules/etc/ananicy.d
+
+override_dh_auto_test:
+	test -f debian/cachyos-ananicy-rules/etc/ananicy.d/ananicy.conf
+	test -d debian/cachyos-ananicy-rules/etc/ananicy.d/00-default
+	test -f debian/cachyos-ananicy-rules/etc/ananicy.d/00-types.types
+	test ! -e debian/cachyos-ananicy-rules/etc/ananicy.d/Makefile
