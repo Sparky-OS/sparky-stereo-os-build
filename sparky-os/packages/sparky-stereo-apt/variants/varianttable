@@ -1,0 +1,7 @@
+# <variant> <arch> <flags>
+# The edition's level is x86-64-v3 (Daniel, 2026-10-05: "no optional, v3"), so this table names one variant. apt (Architecture-Variants "auto")
+# enables a variant when /proc/cpuinfo lists every flag of its row; a machine without them keeps the baseline amd64 packages.
+# The row is apt's own: apt 3.3.7, test/integration/varianttable (https://deb.debian.org/debian/pool/main/a/apt/apt_3.3.7.tar.xz, sha256
+# d760ef0db7578a790886747f4d5b2945395e47d2e06fcca8a95e547d43d501ba, read 2026-11-16). apt is GPL-2 or later, by the APT team;
+# the feature is apt 3.1.10's "Implement architecture variants" (its changelog), used by Ubuntu 25.10 for amd64v3.
+amd64v3     amd64  lm,cmov,cx8,fpu,fxsr,mmx,syscall,sse2,cx16,lahf_lm,popcnt,sse4_1,sse4_2,ssse3,avx,avx2,bmi1,bmi2,f16c,fma,abm,movbe,xsave

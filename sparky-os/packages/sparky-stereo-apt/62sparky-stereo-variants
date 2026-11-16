@@ -1,0 +1,10 @@
+// The edition's packages built for x86-64-v3 are chosen by the machine, not by a question (Daniel, 2026-10-05: "extra packages when the processor
+// has it ... uppon detecion on install"; "no optional, v3"). apt reads /proc/cpuinfo at every run: on a processor that has every flag of the
+// amd64v3 row of the table below it takes the amd64v3 build of a package that the repository publishes in that variant, and the baseline amd64
+// build of every other package. The baseline always stays published and installable; a processor without the flags never sees a variant.
+APT::Architecture-Variants "auto";
+// Our own table, so that a dpkg that one day ships /usr/share/dpkg/varianttable does not collide with this package's file.
+Dir::dpkg::varianttable "/usr/share/sparky-stereo-apt/varianttable";
+// To turn it off, put this line in a file of your own that sorts after this one (for example /etc/apt/apt.conf.d/99local):
+//   APT::Architecture-Variants "";
+// The next apt update then reads the baseline index again.

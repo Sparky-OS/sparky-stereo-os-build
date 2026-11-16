@@ -30,7 +30,10 @@
 # The plain-HTTP block of 20261104.2 to 20261104.3 (/etc/apt/apt.conf.d/00sparky-block-plain-http, ORDER 400) is gone: apt 3.3.6,
 # the fix for CVE-2026-109518, is in Debian testing, so this version Depends on it and removes the file (dpkg-maintscript-helper
 # rm_conffile in preinst, postinst and postrm, ORDER 413). The conversion of http:// sources to https:// stays (postinst).
-# All seven are conffiles (the original four since 20261031.1~sparky9~0, the dpkg hook since 20261109.2; Debian Policy 10.7.3: "local changes must be
+#   /etc/apt/apt.conf.d/62sparky-stereo-variants and /usr/share/sparky-stereo-apt/varianttable (apt's architecture variants: on a processor with every
+#                                                     flag of the amd64v3 row, apt takes the amd64v3 build of what the repository publishes in that variant;
+#                                                     the table is ours, named by Dir::dpkg::varianttable; ORDER 108)
+# All eight are conffiles (the original four since 20261031.1~sparky9~0, the dpkg hook since 20261109.2; Debian Policy 10.7.3: "local changes must be
 # preserved during a package upgrade"); the preinst lets the first upgrade that makes them conffiles replace the files
 # nobody changed without a question (debian-scripts/preinst). README.md, shipped in /usr/share/doc, says how a person keeps
 # pins of their own without editing these files.
@@ -44,12 +47,12 @@
 # Needs dpkg-deb, python3 and sparky-stereo-problems (its catalog command builds the journal catalogs of shadowed-by-dmo's messages).
 # REPO names what make-only-ours.py reads: a flat repository, a published tree (its dists) or a Packages file.
 # Usage: build.sh   (output goes to $OUT, default the current folder)
-# Last update 2026/11/09 (ORDER 458)
+# Last update 2026/11/16 (ORDER 108)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-$PWD}
-VERSION=${VERSION:-20261110.1~sparky9~0+lc1}
+VERSION=${VERSION:-20261116.1~sparky9~0+lc1}
 # the oldest sparky-stereo-keyring with the repository's one key (the key has not changed since; 20261016 is published)
 KEYRING_VERSION=${KEYRING_VERSION:-20261008.1~sparky9~0+lc1}
 PKG=sparky-stereo-apt
@@ -59,7 +62,8 @@ W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/apt-build.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/etc/apt/sources.list.d" "$D/etc/apt/preferences.d" "$D/etc/apt/apt.conf.d" "$D/usr/share/doc/$PKG"
-install -m644 "$HERE/60sparky-stereo-appstream-icons" "$HERE/61sparky-install-downloads" "$D/etc/apt/apt.conf.d/"
+install -m644 "$HERE/60sparky-stereo-appstream-icons" "$HERE/61sparky-install-downloads" "$HERE/62sparky-stereo-variants" "$D/etc/apt/apt.conf.d/"
+install -Dm644 "$HERE/variants/varianttable" "$D/usr/share/$PKG/varianttable"
 mkdir -p "$D/usr/lib/$PKG" "$D/usr/share/sparky/$PKG/install-downloads" "$D/usr/bin"
 install -m755 "$HERE/install-downloads/install-downloads" "$D/usr/lib/$PKG/install-downloads"
 install -m644 "$HERE/install-downloads/sparky_install_downloads.py" "$D/usr/lib/$PKG/sparky_install_downloads.py"
@@ -115,6 +119,10 @@ Files: *
     Copyright (C) 2026 Paweł "pavroo" Pijanowski, Daniel Ramos (Capitain Jack)
     License: GPL-3
 
+Files: /usr/share/sparky-stereo-apt/varianttable
+    Copyright: the APT Development Team (the amd64v3 row of apt 3.3.7's test/integration/varianttable)
+    License: GPL-2+
+
 License:
 
     This package is free software; you can redistribute it and/or modify
@@ -159,7 +167,7 @@ EOS
 printf '%s\n' /etc/apt/sources.list.d/sparky-stereo.sources /etc/apt/sources.list.d/sparky-stereo-deb-multimedia.sources \
 	/etc/apt/preferences.d/sparky-stereo /etc/apt/preferences.d/sparky-stereo-only-ours \
 	/etc/apt/apt.conf.d/60sparky-stereo-appstream-icons \
-	/etc/apt/apt.conf.d/61sparky-install-downloads /etc/dpkg/dpkg.cfg.d/sparky-stereo-apt >"$D/DEBIAN/conffiles"
+	/etc/apt/apt.conf.d/61sparky-install-downloads /etc/apt/apt.conf.d/62sparky-stereo-variants /etc/dpkg/dpkg.cfg.d/sparky-stereo-apt >"$D/DEBIAN/conffiles"
 install -m755 "$HERE/debian-scripts/preinst" "$HERE/debian-scripts/postinst" "$HERE/debian-scripts/postrm" "$D/DEBIAN/"
 (cd "$D" && find . -path ./DEBIAN -prune -o -type f -print | sed 's|^\./||' | sort | tr '\n' '\0' | xargs -0 md5sum >DEBIAN/md5sums)
 mkdir -p "$OUT"

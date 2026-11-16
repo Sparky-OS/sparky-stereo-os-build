@@ -83,6 +83,15 @@ apt-cache policy krdc shows the priorities apt gives each version.
 Remove your file to go back to the edition's builds.
 Debian's and deb-multimedia's builds have none of the edition's stereo 3D changes.
 
+Packages built for your processor:
+-------------
+- On a processor that has every flag of the x86-64-v3 level (Intel Haswell, AMD Excavator and newer), apt takes the amd64v3 build of each package the edition's repository publishes in that variant, and the baseline build of every other package. apt reads /proc/cpuinfo at each run (APT::Architecture-Variants "auto", apt 3.1.10 and later); nothing is asked and nothing is installed by a detection of ours.
+- The table that names the flags is /usr/share/sparky-stereo-apt/varianttable (Dir::dpkg::varianttable); its row is the amd64v3 row of apt's own test table. Debian's dpkg ships no table, so this one is ours.
+- The baseline build stays in the repository and installable. On a processor without the flags apt never sees the variant.
+- To turn it off, put APT::Architecture-Variants ""; in a file of your own that sorts after 62sparky-stereo-variants, for example /etc/apt/apt.conf.d/99local.
+- apt acts when it runs: a package of the v3 build that stays installed on a disk you then boot on an older processor stays as it is until apt installs that package again; apt does not check installed packages against the processor.
+- Debian's own repository has no amd64v3 index and is not changed by any of this.
+
 Dependencies:
 -------------
 - apt (>= 3.3.6)
