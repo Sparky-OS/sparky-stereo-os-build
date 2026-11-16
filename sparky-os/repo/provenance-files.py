@@ -4,7 +4,7 @@
 # Writes debian/sparky-provenance-files for a rebuilt Debian source (ORDER 451): the patches of the series that are ours, so that
 # provenance.sh names them in the copyright file after Debian's own debian/* paragraph. Credit goes to whoever wrote the work, so
 # a patch is ours only when its header says so:
-#   - it has a From: or Author: line with Daniel's address, and
+#   - it has a From: or Author: line with Daniel's address or exact project name, and
 #   - it has no DEP-3 Origin: of upstream or backport (a carried commit stays its author's, whoever carries it); "vendor" means a
 #     distribution made it, so it is ours only by the From:/Author: line, like a patch with no Origin:.
 # A patch with no From:, Author: or Origin: line stops the run and is named; nothing is guessed.
@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 MINE = {'capitain_jack@yahoo.com'}
+MINE_NAMES = {'Daniel Campos Ramos'}
 CARRIED = ('upstream', 'backport')
 END = re.compile(r'^(---|Index: |diff |@@ |\+\+\+ )')
 
@@ -41,7 +42,7 @@ def classify(text):
         return 'other', 'Origin: ' + f['origin']
     if who is None:
         return 'unknown', 'Origin: without a From: or Author: line'
-    if any(a in who.lower() for a in MINE):
+    if who.strip() in MINE_NAMES or any(a in who.lower() for a in MINE):
         return 'ours', who
     return 'other', 'by ' + who
 

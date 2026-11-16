@@ -289,6 +289,17 @@ multiprocessing.cpu_count = lambda: _n
 os.cpu_count = lambda: _n
 """
 
+# Selenium's runner supports a private bus/compositor without user systemd.
+MANUAL_SESSION = """python3 - <<'KDECI_LOCAL_SESSION'
+import pathlib, yaml
+p = pathlib.Path('ci-utilities/config/global.yml')
+cfg = yaml.safe_load(p.read_text())
+cfg.setdefault('Environment', {}).update(KDECI_BUILD='FALSE', USE_CUSTOM_BUS='1')
+p.write_text(yaml.safe_dump(cfg, sort_keys=False))
+print('## Local manual session: no user systemd; Selenium starts a private bus and compositor; tests remain enabled')
+KDECI_LOCAL_SESSION
+"""
+
 # FreeBSD proxy: the pipeline's first step is to resolve the project's
 # dependencies and fetch them from the FreeBSD package registry; do the
 # resolution and check that every package exists there.
@@ -321,6 +332,8 @@ def job_script(job, cfg, env, extra_pre=None):
     for k, v in sorted(env.items()):
         lines.append(f"export {k}={shq(v)}")
     lines.append("main() {")
+    if extra_pre:
+        lines.extend(extra_pre)
     for key in ("before_script", "script"):
         for l in flat_script(job.get(key), cfg):
             lines.append(f"echo {shq('$ ' + l.splitlines()[0][:200])}")
@@ -414,6 +427,8 @@ def run_job(name, job, cfg, args, ctx):
 
 def run_job_locked(name, job, cfg, args, ctx):
     kind, image, entry, vm = classify(job)
+    if kind == "docker":
+        image = dict(item.split("=", 1) for item in args.job_image).get(name, image)
     log = os.path.join(ctx["logs"], f"{ctx['project']}-{ctx['ci_name'].replace('/', '-')}-{name}.log")
     if kind == "skip":
         proxy = None
@@ -469,6 +484,9 @@ def run_job_locked(name, job, cfg, args, ctx):
         plat = "suse-qt6.11"
     if args.only_build or ctx.get("only_build"):
         script_job["script"] = [l + " --only-build" if "run-ci-build" in l else l for l in flat_script(script_job.get("script"), cfg)]
+    if args.manual_session and vm and not proxy_mode:
+        script_job["script"] = [MANUAL_SESSION + l if "run-ci-build" in l else l
+                                for l in flat_script(script_job.get("script"), cfg)]
     stack_dir = ctx.get("stack_dir") if any("run-ci-build" in l for l in flat_script(script_job.get("script"), cfg)) else None
     if stack_dir:
         # KDE's script runs unchanged; the wrapper lays our stack over what it unpacked from KDE's registry
@@ -476,7 +494,8 @@ def run_job_locked(name, job, cfg, args, ctx):
             return ("SKIP", f"the stack {ctx['stack']['name']} is built for {ctx['stack']['platform']}, this job is {plat or 'not a build job'}", log, 0)
         script_job["script"] = [l.replace("ci-utilities/run-ci-build.py", "/kdecilocal-tools/stack-run-ci-build ci-utilities/run-ci-build.py")
                                 for l in flat_script(script_job.get("script"), cfg)]
-    script = job_script(script_job, cfg, env)
+    setup = args.build_setup if vm and not proxy_mode else None
+    script = job_script(script_job, cfg, env, [". /kdecilocal-build-setup.sh"] if setup else None)
     os.makedirs(ctx["logs"], exist_ok=True)
     scriptfile = os.path.join(jobdir + ".sh")
     open(scriptfile, "w").write(script)
@@ -486,24 +505,31 @@ def run_job_locked(name, job, cfg, args, ctx):
 
     d = env["CI_PROJECT_DIR"]
     cmd = ["docker", "run", "--rm", "--platform", "linux/amd64", "--user", "1000:1000",
+           "--ulimit", "core=0",
            "--cpus", CPUS, "--shm-size", "1g", "--init",
            "-v", f"{jobdir}:{d}", "-w", d,
            "-v", f"{scriptfile}:/job.sh:ro",
            "-v", f"{sitedir}:/kdecilocal-site:ro",
            "-e", "PYTHONPATH=/kdecilocal-site"]
+    prefix = os.environ.get("KDE_CI_LOCAL_CONTAINER_PREFIX")
+    if prefix:
+        cmd += ["--name", prefix + "-" + re.sub(r"[^a-zA-Z0-9_.-]", "-", name)]
+    if setup:
+        cmd += ["-v", f"{os.path.abspath(setup)}:/kdecilocal-build-setup.sh:ro"]
     if vm or proxy_mode:
         # what the VM image gives a job: a user runtime directory (the pipeline's DBUS_SESSION_BUS_ADDRESS
         # is unix:path=/run/user/1000/bus) and a render node (KWin's integration tests need one)
         cmd += ["--tmpfs", "/run/user/1000:uid=1000,gid=1000,mode=700", "-e", "XDG_RUNTIME_DIR=/run/user/1000"]
-        if os.path.exists("/sys/class/drm/renderD128") and dri_gid("/dev/dri/renderD128"):
+        devices = os.environ.get("KDE_CI_LOCAL_NO_DEVICES") != "1"
+        if devices and os.path.exists("/sys/class/drm/renderD128") and dri_gid("/dev/dri/renderD128"):
             cmd += ["--device", "/dev/dri/renderD128", "--group-add", dri_gid("/dev/dri/renderD128")]
         # KWin's DMA-BUF tests make real buffers with /dev/udmabuf, which the VM images have;
         # without it they skip here and pass, while the pipeline runs them
-        if os.path.exists("/dev/udmabuf"):
+        if devices and os.path.exists("/dev/udmabuf"):
             cmd += ["--device", "/dev/udmabuf", "--group-add", str(os.stat("/dev/udmabuf").st_gid)]
         # KWin's DRM tests open /dev/dri/card1 when CI is set: a vkms device on KDE's runners.
         # When the host has vkms loaded, its card goes in under that name.
-        card = vkms_card()
+        card = vkms_card() if devices else None
         if card and dri_gid(card):
             cmd += ["--device", f"{card}:/dev/dri/card1", "--group-add", dri_gid(card)]
     for e in args.job_env:
@@ -687,11 +713,17 @@ def main():
     ap.add_argument("--only-build", action="store_true",
                     help="give run-ci-build.py its own --only-build: build and install, no tests (to look into a failure with --keep)")
     ap.add_argument("--no-refresh", action="store_true", help="do not update the KDE sources (ci-utilities, repo-metadata)")
+    ap.add_argument("--manual-session", action="store_true",
+                    help="in Linux VM-twin containers without user systemd, use Selenium's private session mode; keep all tests")
     ap.add_argument("--build-qt613-image", action="store_true",
                     help="build the Qt 6.13 job image from KDE's ci-images/suse-qt613/build.sh (once, ~12 GB)")
     ap.add_argument("--build-krita-image", action="store_true",
                     help="build Krita's job image from KDE's ci-images/krita-appimage-2204 (once, Ubuntu 22.04)")
     ap.add_argument("--job-env", action="append", default=[], metavar="NAME=VALUE", help="an extra environment variable for the job container (repeatable)")
+    ap.add_argument("--job-image", action="append", default=[], metavar="JOB=IMAGE",
+                    help="explicit local image or digest for a runnable job; leaves shared tags unchanged (repeatable)")
+    ap.add_argument("--build-setup", metavar="SCRIPT",
+                    help="source a local session setup script in Linux VM-twin build jobs (read-only mount)")
     ap.add_argument("--job-mount", action="append", default=[], metavar="SRC:DST[:ro]", help="an extra bind mount for the job container (repeatable)")
     ap.add_argument("--stack", metavar="FILE", help="a stack file (stacks/*.yml): lay the stack over KDE's packages in build jobs; "
                     "members that are not built yet are built first")
@@ -699,6 +731,10 @@ def main():
     ap.add_argument("--stack-build", action="store_true", help="with --stack: build the members that are not built yet (new commit or new key), then stop")
     ap.add_argument("--stack-prune", action="store_true", help="with --stack: remove the prefixes of superseded keys, then stop")
     args = ap.parse_args()
+    if any("=" not in item or not all(item.split("=", 1)) for item in args.job_image):
+        ap.error("--job-image requires JOB=IMAGE")
+    if args.build_setup and not os.path.isfile(args.build_setup):
+        ap.error("--build-setup must name a readable file")
 
     work = os.environ.get("KDE_CI_LOCAL_WORK") or default_work()
     os.makedirs(work, exist_ok=True)

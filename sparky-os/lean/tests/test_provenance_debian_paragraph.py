@@ -250,6 +250,19 @@ class PatchHeaders(unittest.TestCase):
         root = self.tree(**{'s42-0001-ours.patch': self.OURS_PATCH})
         self.assertNotEqual(self.run_helper(root, 'x*.patch').returncode, 0)
 
+    def test_name_only_credit_requires_the_exact_identity_and_keeps_upstream_credit(self):
+        root = self.tree(**{
+            'ours.patch': 'Author: Daniel Campos Ramos\nOrigin: vendor\n\n--- a/x\n',
+            'different.patch': 'Author: Daniel Campos Ramos Junior\nOrigin: vendor\n\n--- a/x\n',
+            'carried.patch': 'Author: Daniel Campos Ramos\nOrigin: upstream, https://example.org/c/1\n\n--- a/x\n',
+        })
+        r = self.run_helper(root, '*.patch')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        names = (root / 'debian/sparky-provenance-files').read_text()
+        self.assertIn('debian/patches/ours.patch', names)
+        self.assertNotIn('different.patch', names)
+        self.assertNotIn('carried.patch', names)
+
 
 if __name__ == '__main__':
     unittest.main()

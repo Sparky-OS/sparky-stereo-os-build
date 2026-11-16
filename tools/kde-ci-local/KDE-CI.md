@@ -54,13 +54,26 @@ The package cache is kept between runs (`$KDE_CI_LOCAL_WORK/cache`, default `$SP
 Build-job trees are deleted after the run (`--keep` keeps them); logs stay in `$KDE_CI_LOCAL_WORK/logs`.
 Exit status 0 only when every job that can run passed; the last lines say GREEN or RED.
 
+`--manual-session` is an explicit adaptation for Linux VM-twin containers without a user systemd manager.
+The local copy of `ci-utilities/config/global.yml` sets `KDECI_BUILD=FALSE` and `USE_CUSTOM_BUS=1`, selecting Selenium's supported private bus and compositor startup.
+The fork's configuration, test assertions and required-test policy stay intact; the log names this adaptation.
+Use it after a runner fails to start `at-spi-dbus-bus.service` through `systemctl --user` in a container.
+KDE's own VM runners continue to use their normal systemd-managed services.
+`KDE_CI_LOCAL_NO_DEVICES=1` omits all host render, VKMS and DMA-buffer nodes; `KDE_CI_LOCAL_CONTAINER_PREFIX` names the containers for lane cleanup.
+Containers always disable core dumps.
+`--job-image JOB=IMAGE` pins a runnable job to a chosen image or digest without replacing a shared local tag.
+Check the registry digest when a cached image lacks a library required by a newly downloaded runtime artifact; the local image may predate that artifact even though its tag still says latest.
+`--build-setup SCRIPT` sources a read-only mounted session setup script in runnable Linux VM-twin build jobs, before their normal commands.
+It does not run for lint jobs or the FreeBSD build proxy.
+This lets a device-free UI job start a private software compositor while leaving the project's test suite intact; `upstream/plasma-pa/ci-headless.sh` is one example, with its limits documented in that recipe.
+
 What cannot run here, and what is done instead:
 
 - `freebsd150_qt611` (FreeBSD VM): the dependency resolution is run against the **FreeBSD** package registry (every package of the pair list must exist: this reproduces the `@same` failures exactly), then the same build with the same flags and clang on the SUSE image, without sanitizers and without the tests (those are the SUSE jobs').
   Not covered: libc++ headers, FreeBSD's own packages and paths.
 - `suse_tumbleweed_qt613`: needs `kde-ci-local --build-qt613-image` once (KDE's own `suse-qt613/build.sh` on `opensuse/tumbleweed`, about 12 GB, 15 minutes); until then it is listed as skipped. Manual jobs (`when: manual`, oss-fuzz) run only when named with `--jobs`.
 - `alpine_qt611` (arm64 VM), Windows, Android, macOS, flatpak, snap, craft, oss-fuzz: skipped, listed with the reason.
-- Accessibility UI tests (`selenium-webdriver-at-spi-run`: KInfoCenter's `kinfocenter_appiumtests`, kdeplasma-addons' `calculatortest`, and tests that start KWin on a private bus such as `alternatecalendartest`) need a systemd user instance to start `at-spi-dbus-bus.service`; the containers have none, so they fail here on unpatched code too (measured on KInfoCenter master, 2026-10-08: "Failed to start at-spi-dbus-bus.service via systemd!"). Read them against a run of the unpatched tag or branch, never as ours by default.
+- Without `--manual-session`, accessibility UI tests using `selenium-webdriver-at-spi-run` expect a systemd user instance to start `at-spi-dbus-bus.service`; simple containers have none (measured on KInfoCenter master, 2026-10-08: "Failed to start at-spi-dbus-bus.service via systemd!"). Use the runner's supported private-session mode above and then run the real test; other runtime dependencies must still be complete. Read a remaining failure against the unpatched tag or branch before attributing it to our change.
 - Pipelines on invent also see packages published after a local run; the registry is read live each time, so a local run and the pipeline an hour apart agree (checked on Dragon: the two logs differ only in the order of stdout and stderr lines).
 - What the VM gives a job and Docker does not, added to the SUSE containers: a user runtime directory (`/run/user/1000` as tmpfs, `XDG_RUNTIME_DIR`; the pipeline's `DBUS_SESSION_BUS_ADDRESS` is `unix:path=/run/user/1000/bus`) the host's render node (KWin's integration tests skip without one), and `/dev/udmabuf` when the host has it (KWin's DMA-BUF format switch test skips without it, so before 2026-10-22 it passed here and failed on KDE's runners on a KWayland assertion).
   Still missing, so these KWin tests fail here with or without our change: `kwin-testGameController` (needs `/dev/uinput`), `kwin-testDrm`, `-testDrmLegacy`, `-testDrmNoModifiers` (need a KMS device; they skip in `initTestCase` and then crash in teardown).

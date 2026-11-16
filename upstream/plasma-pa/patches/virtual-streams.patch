@@ -1,0 +1,131 @@
+Description: Make virtual streams visible and routable by explicit choice
+Author: Daniel Campos Ramos
+Forwarded: no
+Origin: vendor
+
+diff --git a/applet/main.qml b/applet/main.qml
+index a67de1b8..6bd1f813 100644
+--- a/applet/main.qml
++++ b/applet/main.qml
+@@ -171,20 +171,20 @@ PlasmoidItem {
+         sourceModel: paSourceModel
+     }
+ 
+-    // non-virtual streams going to output devices
++    // Streams going to output devices
+     readonly property PulseObjectFilterModel paSinkInputFilterModel: PulseObjectFilterModel {
+         id: paSinkInputFilterModel
++        filterVirtualStreams: !main.showVirtualDevices
+         filters: [
+-            { role: "VirtualStream", value: false },
+-            { role: "Client", value: (client) => client.name !== "libcanberra" },
++            { role: "Client", value: (client) => !client || client.name !== "libcanberra" },
+         ]
+         sourceModel: paSinkInputModel
+     }
+ 
+-    // non-virtual streams coming from input devices
++    // Streams coming from input devices
+     readonly property PulseObjectFilterModel paSourceOutputFilterModel: PulseObjectFilterModel {
+         id: paSourceOutputFilterModel
+-        filters: [ { role: "VirtualStream", value: false } ]
++        filterVirtualStreams: !main.showVirtualDevices
+         sourceModel: paSourceOutputModel
+     }
+ 
+@@ -772,7 +772,7 @@ PlasmoidItem {
+             }
+         },
+         PlasmaCore.Action {
+-            text: i18n("Show virtual devices")
++            text: i18n("Show virtual devices and streams")
+             icon.name: "audio-card"
+             checkable: true
+             checked: plasmoid.configuration.showVirtualDevices
+diff --git a/src/globalconfig.kcfg b/src/globalconfig.kcfg
+index 29dd8626..f1b05406 100644
+--- a/src/globalconfig.kcfg
++++ b/src/globalconfig.kcfg
+@@ -10,6 +10,9 @@
+       http://www.kde.org/standards/kcfg/1.0/kcfg.xsd" >
+     <kcfgfile name="plasmaparc" />
+     <group name="General">
++        <entry name="ShowVirtualStreams" type="Bool">
++            <default>false</default>
++        </entry>
+         <entry name="VolumeStep" type="Int">
+             <label>Percent step for changing volume.</label>
+             <default>5</default>
+diff --git a/src/kcm/ui/main.qml b/src/kcm/ui/main.qml
+index b2a6e0e4..ac81d5b2 100644
+--- a/src/kcm/ui/main.qml
++++ b/src/kcm/ui/main.qml
+@@ -65,6 +65,13 @@ KCM.ScrollViewKCM {
+     }
+ 
+     actions: [
++        Kirigami.Action {
++            text: i18nd("kcm_pulseaudio", "Show Virtual Streams")
++            icon.name: "audio-card"
++            checkable: true
++            checked: config.showVirtualStreams
++            onTriggered: { config.showVirtualStreams = !config.showVirtualStreams; config.save() }
++        },
+         Kirigami.Action {
+             id: inactiveDevicesSwitch
+             icon.name: "view-visible"
+@@ -260,9 +267,9 @@ KCM.ScrollViewKCM {
+                 interactive: false
+                 spacing: Kirigami.Units.largeSpacing
+                 model: PulseObjectFilterModel {
++                    filterVirtualStreams: !config.showVirtualStreams
+                     filters: [
+-                        { role: "VirtualStream", value: false },
+-                        { role: "Client", value: (client) => client.name !== "libcanberra" },
++                        { role: "Client", value: (client) => !client || client.name !== "libcanberra" },
+                     ]
+                     sourceModel: SinkInputModel {}
+                 }
+@@ -290,12 +297,12 @@ KCM.ScrollViewKCM {
+                 interactive: false
+                 spacing: Kirigami.Units.largeSpacing
+                 model: PulseObjectFilterModel {
+-                    filters: [ { role: "VirtualStream", value: false } ]
++                    filterVirtualStreams: !config.showVirtualStreams
+                     sourceModel: SourceOutputModel {}
+                 }
+ 
+                 delegate: StreamListItem {
+-                    deviceModel: sourceModel
++                    deviceModel: paSourceModel
+                     isPlayback: false
+                 }
+             }
+diff --git a/src/qml/PulseObjectFilterModel.qml b/src/qml/PulseObjectFilterModel.qml
+index bda3bf5c..2c5f462e 100644
+--- a/src/qml/PulseObjectFilterModel.qml
++++ b/src/qml/PulseObjectFilterModel.qml
+@@ -6,10 +6,12 @@ KItemModels.KSortFilterProxyModel {
+     property /*[{ role: string, value: var }]*/ var filters: []
+     property bool filterOutInactiveDevices: false
+     property bool filterVirtualDevices: false
++    property bool filterVirtualStreams: false
+ 
+     onFiltersChanged: invalidate()
+     onFilterOutInactiveDevicesChanged: invalidate()
+     onFilterVirtualDevicesChanged: invalidate()
++    onFilterVirtualStreamsChanged: invalidate()
+ 
+     filterRowCallback: function(source_row, source_parent) {
+         const idx = sourceModel.index(source_row, 0, source_parent);
+@@ -48,6 +50,10 @@ KItemModels.KSortFilterProxyModel {
+             return false;
+         }
+ 
++        if (filterVirtualStreams && sourceModel.data(idx, sourceModel.KItemModels.KRoleNames.role("VirtualStream"))) {
++            return false;
++        }
++
+         return true;
+     }
+ }
