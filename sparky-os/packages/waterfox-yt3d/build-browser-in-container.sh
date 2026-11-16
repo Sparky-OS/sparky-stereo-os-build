@@ -49,7 +49,10 @@ ls -la
 # 2. The build, from the new source package.
 mkdir -p /work/build && cd /work/build
 cp /work/plain/sparky-stereo-browser_6.7.5.orig.tar.xz /work/plain/sparky-stereo-browser_$NEW+lc1.* .
-dpkg-source -x "sparky-stereo-browser_$NEW+lc1.dsc" source >/dev/null
+# On a first run with BROWSER_OBJ_DIR or BROWSER_RUST_DIR, Docker has already made source/ for the mount points, and dpkg-source
+# refuses an existing target ("unpack target exists"): unpack beside it and move the tree in.
+dpkg-source -x "sparky-stereo-browser_$NEW+lc1.dsc" source.unpacked >/dev/null
+mkdir -p source && find source.unpacked -mindepth 1 -maxdepth 1 -exec mv -t source {} + && rmdir source.unpacked
 test "$(cat source/SOURCE.edition.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["browser_commit"])')" = "$COMMIT"
 
 fi
