@@ -10,6 +10,7 @@ import sys
 import tempfile
 
 DSC_MAP = {
+    "plasma-pa-virtual-streams.po.patch": "plasma-pa_6.7.4-1.dsc",
     "kalgebra-stereo3d.po.patch": "kalgebra_26.04.0-1+stereo3d2.dsc",
     "kalzium-stereo3d.po.patch": "kalzium_26.04.3-1+stereo3d4.dsc",
     "kf6-kfilemetadata-stereo3d.po.patch": "kf6-kfilemetadata_6.30.0-1+stereo3d2.dsc",
@@ -295,6 +296,8 @@ def main():
     parser.add_argument("--build-root", type=pathlib.Path, default=pathlib.Path.cwd())
     parser.add_argument("--translations-root", type=pathlib.Path,
                         help="read patches from this directory instead of build/sparky-os/translations")
+    parser.add_argument("--source-root", type=pathlib.Path, default=PATCH_ROOT,
+                        help="directory containing the mapped Debian source descriptors")
     parser.add_argument("--only", default=None, help="comma-separated patch file names")
     parser.add_argument("--tsv", type=pathlib.Path, help="append TSV result to this file")
     args = parser.parse_args()
@@ -329,7 +332,7 @@ def main():
             else:
                 dsc_path = pathlib.Path(dsc_name)
                 if not dsc_path.is_absolute():
-                    dsc_path = PATCH_ROOT / dsc_name
+                    dsc_path = args.source_root / dsc_name
                 with tempfile.TemporaryDirectory(prefix="validate-po-") as temporary:
                     temporary_path = pathlib.Path(temporary)
                     source_path = temporary_path / "source"

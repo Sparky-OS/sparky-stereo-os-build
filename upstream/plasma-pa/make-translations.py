@@ -29,5 +29,6 @@ for language, strings in translations.items():
         assert f'msgid {json.dumps(message)}' not in old
         new = old.rstrip('\n') + '\n\n#. Show client-less loopback and filter streams as well.\n'
         new += f'msgid {json.dumps(message)}\nmsgstr {json.dumps(translated,ensure_ascii=False)}\n'
+        patch.append(f'diff --git a/{relative} b/{relative}\n')
         patch.extend(difflib.unified_diff(old.splitlines(True),new.splitlines(True),fromfile='a/'+relative,tofile='b/'+relative))
 output.write_text(''.join(patch))
