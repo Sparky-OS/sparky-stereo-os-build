@@ -47,3 +47,16 @@ The native validator is run separately, as are the actual page and applet routin
 After installing the built .deb, use `rig-case.sh installed SCALE [applet|hotplug]`; this mode uses the system plugin and QML paths and never the prototype /opt prefix.
 Remove the prototype prefix in that container before testing, so a stray import path cannot mask an installation error.
 `rig-compare.py EVIDENCE installed` checks unchanged page content against the published control at both scales.
+
+## CI without station devices
+
+The current Selenium runtime pulls master KWin and plasma-workspace transitively, even when this branch declares Plasma/6.7 directly.
+That workspace requires Wayland, while its KWin renderer requires a render device.
+For this two-dimensional applet test, `ci-headless.sh` starts Weston headless with Pixman and software Qt Quick; it selects Selenium's supported external-compositor mode and disables its optional video recorder.
+`ci-app-launch.sh` starts the archive's desktop services at their actual test prefix and warms the portal before execing the exact original app command.
+The app keeps `QT_FATAL_WARNINGS=1`; no assertion or test is removed.
+
+Run kde-ci-local with `--manual-session --build-setup PATH/ci-headless.sh --job-mount PATH:/pa19-ci:ro`, where PATH is this recipe's absolute directory.
+Use `--job-image JOB=IMAGE` for refreshed images; a stale Qt Next image can lack symbols its downloaded Frameworks libraries require.
+The images must contain Weston and the distribution's runtime libraries required by the KDE artifacts.
+This proves the widget under a private software Wayland compositor; it does not test KWin-specific protocols or a hardware renderer.

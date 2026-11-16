@@ -332,6 +332,8 @@ def job_script(job, cfg, env, extra_pre=None):
     for k, v in sorted(env.items()):
         lines.append(f"export {k}={shq(v)}")
     lines.append("main() {")
+    if extra_pre:
+        lines.extend(extra_pre)
     for key in ("before_script", "script"):
         for l in flat_script(job.get(key), cfg):
             lines.append(f"echo {shq('$ ' + l.splitlines()[0][:200])}")
@@ -492,7 +494,8 @@ def run_job_locked(name, job, cfg, args, ctx):
             return ("SKIP", f"the stack {ctx['stack']['name']} is built for {ctx['stack']['platform']}, this job is {plat or 'not a build job'}", log, 0)
         script_job["script"] = [l.replace("ci-utilities/run-ci-build.py", "/kdecilocal-tools/stack-run-ci-build ci-utilities/run-ci-build.py")
                                 for l in flat_script(script_job.get("script"), cfg)]
-    script = job_script(script_job, cfg, env)
+    setup = args.build_setup if vm and not proxy_mode else None
+    script = job_script(script_job, cfg, env, [". /kdecilocal-build-setup.sh"] if setup else None)
     os.makedirs(ctx["logs"], exist_ok=True)
     scriptfile = os.path.join(jobdir + ".sh")
     open(scriptfile, "w").write(script)
@@ -511,6 +514,8 @@ def run_job_locked(name, job, cfg, args, ctx):
     prefix = os.environ.get("KDE_CI_LOCAL_CONTAINER_PREFIX")
     if prefix:
         cmd += ["--name", prefix + "-" + re.sub(r"[^a-zA-Z0-9_.-]", "-", name)]
+    if setup:
+        cmd += ["-v", f"{os.path.abspath(setup)}:/kdecilocal-build-setup.sh:ro"]
     if vm or proxy_mode:
         # what the VM image gives a job: a user runtime directory (the pipeline's DBUS_SESSION_BUS_ADDRESS
         # is unix:path=/run/user/1000/bus) and a render node (KWin's integration tests need one)
@@ -717,6 +722,8 @@ def main():
     ap.add_argument("--job-env", action="append", default=[], metavar="NAME=VALUE", help="an extra environment variable for the job container (repeatable)")
     ap.add_argument("--job-image", action="append", default=[], metavar="JOB=IMAGE",
                     help="explicit local image or digest for a runnable job; leaves shared tags unchanged (repeatable)")
+    ap.add_argument("--build-setup", metavar="SCRIPT",
+                    help="source a local session setup script in Linux VM-twin build jobs (read-only mount)")
     ap.add_argument("--job-mount", action="append", default=[], metavar="SRC:DST[:ro]", help="an extra bind mount for the job container (repeatable)")
     ap.add_argument("--stack", metavar="FILE", help="a stack file (stacks/*.yml): lay the stack over KDE's packages in build jobs; "
                     "members that are not built yet are built first")
@@ -726,6 +733,8 @@ def main():
     args = ap.parse_args()
     if any("=" not in item or not all(item.split("=", 1)) for item in args.job_image):
         ap.error("--job-image requires JOB=IMAGE")
+    if args.build_setup and not os.path.isfile(args.build_setup):
+        ap.error("--build-setup must name a readable file")
 
     work = os.environ.get("KDE_CI_LOCAL_WORK") or default_work()
     os.makedirs(work, exist_ok=True)
