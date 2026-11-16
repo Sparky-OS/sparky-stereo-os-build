@@ -4,6 +4,7 @@
 # Last update 2026/11/15
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+RECIPE=$HERE
 REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
 VERSION=0.2.12
@@ -77,7 +78,7 @@ S=$WORK/$PACKAGE-$VERSION
 mkdir -p "$S/debian"
 COPY="$HERE/build-tools/copy-recipe.py"
 [ -f "$COPY" ] || COPY="$HERE/../../../tools/copy-recipe.py"
-python3 "$COPY" "$HERE" "$S"
+python3 "$COPY" "$RECIPE" "$S"
 mkdir -p "$S/build-tools"
 cp "$COPY" "$S/build-tools/"
 cat >"$S/debian/control" <<EOS
@@ -304,4 +305,19 @@ gzip -9n -c "$S/debian/changelog" > "$D/usr/share/doc/$PACKAGE/changelog.gz"
 
 "$TOOLKIT/repo/provenance.sh" --tree "$D"
 PYTHONPATH="$TOOLKIT${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$D" "$OUT"
+cp "$OUT/${PACKAGE}_${VERSION}_amd64.deb" "$OUT/${PACKAGE}-lc-hr_${VERSION}_amd64.deb" "$WORK/"
+# These are the final archive bytes. Record metadata after the one source build,
+# so neither the descriptor nor the HR companion can change behind the record.
+(
+	cd "$S"
+	for archive in "$OUT/${PACKAGE}_${VERSION}_amd64.deb" "$OUT/${PACKAGE}-lc-hr_${VERSION}_amd64.deb"; do
+		dpkg-distaddfile "$(basename "$archive")" System optional
+	done
+	sed -i '/-lc-hr_/ s/$/ automatic=yes/' debian/files
+	dpkg-genbuildinfo --build=binary -O"$WORK/${PACKAGE}_${VERSION}_amd64.buildinfo"
+	dpkg-genchanges -b -O"$WORK/${PACKAGE}_${VERSION}_amd64.changes"
+)
+cp "$WORK/${PACKAGE}_${VERSION}_amd64.buildinfo" "$WORK/${PACKAGE}_${VERSION}_amd64.changes" "$OUT/"
+PYTHONPATH="$TOOLKIT${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-debs \
+	"$OUT/${PACKAGE}_${VERSION}_amd64.deb" "$OUT/${PACKAGE}-lc-hr_${VERSION}_amd64.deb"
 sync

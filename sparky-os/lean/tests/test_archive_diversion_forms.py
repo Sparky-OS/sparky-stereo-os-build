@@ -58,6 +58,55 @@ def test_direct_actual_dpkg_payloads(tmp_path, reverse):
         assert (root/'usr/share/fixture'/name).read_bytes()==(oracle/'usr/share/fixture'/name).read_bytes()
 
 
+def directory_preinst():
+    return (b'#!/bin/sh\nset -e\n'
+            b'if [ "$1" = install ] || [ "$1" = upgrade ]; then\n'
+            b'dpkg-divert --package wrapper --add --rename --divert /etc/fixture.conf.debian /etc/fixture.conf >/dev/null\n'
+            b'mkdir -p /etc/wrapper\n'
+            b'dpkg-divert --package wrapper --add --rename --divert /etc/wrapper/10_linux.debian /etc/grub.d/10_linux >/dev/null\n'
+            b'fi\nexit 0\n')
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_literal_diversion_parent_directory_matches_dpkg(tmp_path, reverse):
+    old=deb(tmp_path,'original',files={'etc/fixture.conf':b'config','etc/grub.d/10_linux':b'linux'})
+    new=deb(tmp_path,'wrapper',depends='original',files={
+        'etc/fixture.conf':('/etc/wrapper/fixture.conf',),
+        'etc/wrapper/fixture.conf':b'new config',
+        'etc/grub.d/10_linux':('/usr/lib/wrapper/10_linux',),
+        'usr/lib/wrapper/10_linux':b'new linux',
+        'DEBIAN/preinst':directory_preinst()})
+    oracle=tmp_path/'oracle';(oracle/'var/lib/dpkg').mkdir(parents=True)
+    subprocess.run(['dpkg-deb','-x',str(old),str(oracle)],check=True)
+    for source,target in [('/etc/fixture.conf','/etc/fixture.conf.debian'),
+                          ('/etc/grub.d/10_linux','/etc/wrapper/10_linux.debian')]:
+        (oracle/target.lstrip('/')).parent.mkdir(parents=True,exist_ok=True)
+        subprocess.run(['dpkg-divert','--root',str(oracle),'--package','wrapper','--add','--rename',
+                        '--divert',target,source],check=True,capture_output=True)
+    subprocess.run(['dpkg-deb','-x',str(new),str(oracle)],check=True)
+    root=tmp_path/'root';extract([new,old] if reverse else [old,new],root)
+    for name in ['etc/fixture.conf.debian','etc/wrapper/10_linux.debian',
+                 'etc/wrapper/fixture.conf','usr/lib/wrapper/10_linux']:
+        assert (root/name).read_bytes()==(oracle/name).read_bytes()
+    for name in ['etc/fixture.conf','etc/grub.d/10_linux']:
+        assert os.readlink(root/name)==os.readlink(oracle/name)
+
+
+@pytest.mark.parametrize('command', [b'mkdir -p /unrelated', b'mkdir -p /etc/../etc/wrapper',
+                                    b'mkdir -p /etc//wrapper', b'mkdir -p "$directory"',
+                                    b'mkdir -p /etc/wrapper; echo extra', b'mkdir -m 777 -p /etc/wrapper'])
+def test_directory_command_does_not_expand_preinst_language(tmp_path, command):
+    _,new=pair(tmp_path,script=directory_preinst().replace(b'mkdir -p /etc/wrapper',command))
+    with pytest.raises(package.Invalid):archive.static_diversions(new,archive.control(new))
+
+
+def test_diversion_parent_directory_must_precede_its_use(tmp_path):
+    script=directory_preinst().replace(b'mkdir -p /etc/wrapper\n',b'')
+    script=script.replace(b'fi\n',b'mkdir -p /etc/wrapper\nfi\n')
+    _,new=pair(tmp_path,script=script)
+    with pytest.raises(package.Invalid):archive.static_diversions(new,archive.control(new))
+
+
 @pytest.mark.parametrize('script',[
     direct().replace(b'--package', '—package'.encode()),
     direct().replace(b'--rename', '--rename\u00a0'.encode()),

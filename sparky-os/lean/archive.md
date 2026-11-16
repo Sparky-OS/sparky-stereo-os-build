@@ -110,10 +110,13 @@ Metadata grows with the number of comparisons, while offered archive payloads an
 
 The extractor reads package data only and resolves absolute symlinks relative to the new root.
 It rejects path escapes, differing overlapping files and special files.
-It also recognizes one bounded static package-diversion form in authenticated `preinst` bytes, without executing the script.
-The complete script must be `/bin/sh`, `set -e`, an install-or-upgrade guard, a loop over literal absolute paths, one `dpkg-divert [--quiet] --package NAME --add --rename --divert "$variable.suffix" "$variable"` command, and `exit 0`.
+It also recognizes bounded static package-diversion forms in authenticated `preinst` bytes, without executing the script.
+The complete script must be `/bin/sh`, `set -e`, an install-or-upgrade guard, the supported commands and `exit 0`.
+One form loops over literal absolute paths with `dpkg-divert [--quiet] --package NAME --add --rename --divert "$variable.suffix" "$variable"`.
 The loop variable is lowercase, the suffix is literal, and `NAME` must equal the archive's package identity.
-Blank lines and whole-line comments are allowed; extra commands, dynamic paths and other shell forms cannot authorize a redirection.
+The other form contains consecutive literal `dpkg-divert` commands, optionally preceded by `mkdir -p DIRECTORY` for an exact literal destination parent.
+A directory command must precede its diversion; unrelated directories, unsafe paths, variables, options and additional shell operations are refused.
+Blank lines, whole-line comments and the supported indented continuations are allowed; other commands, dynamic paths and shell forms cannot authorize a redirection.
 All selected declarations are collected before extraction, so package ordering does not decide which payload wins.
 As in dpkg, the declaring package keeps the original path and other packages' files go to the diversion target.
 Both payloads retain their bytes and modes; hardlinks within another package follow that package's diverted file.

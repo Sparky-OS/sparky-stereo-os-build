@@ -1,4 +1,13 @@
 -------------------------------------------------------------------------------
+  Version 0.1.41 (2026-11-15)
+-------------------------------------------------------------------------------
+  * Qualify literal diversion destination directories without running preinst.
+    A mkdir is accepted only for the exact parent of a declared destination,
+    before that diversion; dynamic and unrelated commands remain refused.
+  * Retain the standalone source rebuild, buildinfo and changes before recording
+    the package group. Install-time projection is unchanged.
+
+-------------------------------------------------------------------------------
   Version 0.1.40 (2026-11-12)
 -------------------------------------------------------------------------------
   * Carry lean 0.1.29: the Rust adapter (ORDER 533). It projects Rust build
