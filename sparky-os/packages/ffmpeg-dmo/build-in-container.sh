@@ -19,7 +19,7 @@ mkdir -p /work/link-scratch
 chown -R builder:builder /work
 cd tree
 runuser -u builder -- dpkg-buildpackage "$FLAGS" -us -uc -j4
-runuser -u builder -- bash /tools/fate.sh /work/tree /work/fate
+runuser -u builder -- bash /work/fate.sh /work/tree /work/fate
 cd /work
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/*.deb
 sha256sum ./*.deb ./*.changes ./*.buildinfo > SHA256SUMS

@@ -14,6 +14,7 @@ WORK=$(realpath -m "$8")
 case $ARCH in amd64) PLATFORM=linux/amd64; FLAGS=-b ;; i386) PLATFORM=linux/386; FLAGS=-B ;; *) exit 2 ;; esac
 [ ! -e "$WORK" ] || [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 2; }
 mkdir -p "$WORK"
+cp "$HERE/build-in-container.sh" "$HERE/fate.sh" "$WORK/"
 sparky_provenance_init "$IMAGE" "$HERE/../../media/ffmpeg/stereo3d15"
 docker run --rm --name "${SPARKY_CONTAINER_PREFIX:-ffmpeg}-build-$ARCH" --ulimit core=0 --cpus 4 --memory 12g --platform "$PLATFORM" \
     --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
@@ -23,4 +24,4 @@ docker run --rm --name "${SPARKY_CONTAINER_PREFIX:-ffmpeg}-build-$ARCH" --ulimit
     -v "$SRC":/src:ro -v "$REPO":/repo:ro -v "$PREVIOUS":/previous:ro -v "$ARCHIVE":/archive:ro \
     -v "$SIBLINGS":/siblings.txt:ro -v "$WORK":/work -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
     -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
-    "$IMAGE" bash -c 'sh /run/https-only-apt.sh && bash /tools/build-in-container.sh' > "$WORK/build.log" 2>&1
+    "$IMAGE" bash -c 'sh /run/https-only-apt.sh && bash /work/build-in-container.sh' > "$WORK/build.log" 2>&1
