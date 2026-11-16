@@ -14,7 +14,7 @@ import sys
 
 base, reference, work, record=map(Path,sys.argv[1:])
 epoch=json.loads(record.read_text())['sourceDateEpoch']
-producer=Path(__file__).parent/'make-source.py'
+producer=Path(__file__).resolve().parents[1]/'make-source.py'
 env=dict(os.environ,SOURCE_DATE_EPOCH=str(epoch),
          SOURCE_DATE_RFC2822=email.utils.format_datetime(datetime.datetime.fromtimestamp(epoch,datetime.timezone.utc)),
          DEBFULLNAME='Daniel Ramos (Capitain Jack)',DEBEMAIL='Capitain_Jack@yahoo.com',LC_ALL='C.UTF-8',

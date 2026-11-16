@@ -1,8 +1,3 @@
-Description: Add explicit input monitoring and combined recording
-Author: Daniel Campos Ramos
-Origin: vendor
-Forwarded: no
-
 diff --git a/applet/ListItemBase.qml b/applet/ListItemBase.qml
 index 0e0effe2..330b82e1 100644
 --- a/applet/ListItemBase.qml
@@ -17,18 +12,22 @@ index 0e0effe2..330b82e1 100644
      }
  
 diff --git a/applet/StreamListItem.qml b/applet/StreamListItem.qml
-index b3df1899..f25a8387 100644
+index b3df1899..e035ee78 100644
 --- a/applet/StreamListItem.qml
 +++ b/applet/StreamListItem.qml
-@@ -16,7 +16,7 @@ ListItemBase {
+@@ -16,8 +16,11 @@ ListItemBase {
  
      Accessible.onToggleAction: toggleMuteItem()
      Keys.onSpacePressed: toggleMuteItem()
 -    draggable: devicesModel && devicesModel.count > 1
 +    draggable: devicesModel && devicesModel.count > 1 && model.Properties["plasma.pa.route"] !== "CombinedRecording"
      label: {
++        if (model.Properties["plasma.pa.owner"] && model.Properties["application.description"]) {
++            return model.Properties["application.description"];
++        }
          let parts = []
          if (model.Client && model.Client.name && model.Client.name != "pipewire-media-session") {
+             parts.push(model.Client.name);
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
 index a92f3e9d..89e9dbed 100644
 --- a/src/CMakeLists.txt
@@ -206,7 +205,7 @@ index 00000000..45198c09
 +    }
 +}
 diff --git a/src/kcm/ui/StreamListItem.qml b/src/kcm/ui/StreamListItem.qml
-index 2aa655f0..5285ce49 100644
+index 2aa655f0..108676fd 100644
 --- a/src/kcm/ui/StreamListItem.qml
 +++ b/src/kcm/ui/StreamListItem.qml
 @@ -18,6 +18,8 @@ ColumnLayout {
@@ -218,7 +217,16 @@ index 2aa655f0..5285ce49 100644
  
      width: parent ? parent.width : undefined
  
-@@ -83,8 +85,16 @@ ColumnLayout {
+@@ -57,6 +59,8 @@ ColumnLayout {
+                     text: {
+                         if (isEventStream) {
+                             return i18nd("kcm_pulseaudio", "Notification Sounds");
++                        } else if (Properties["plasma.pa.owner"] && Properties["application.description"]) {
++                            return Properties["application.description"];
+                         } else if (Client) {
+                             if (Client.name === "pipewire-media-session") {
+                                 return Name;
+@@ -83,8 +87,16 @@ ColumnLayout {
  
                  DeviceComboBox {
                      id: deviceComboBox
@@ -318,10 +326,10 @@ index 47736611..5278398a 100644
          KDBusPropertiesChangedAdaptor.cpp
 diff --git a/src/kded/audioroutes.cpp b/src/kded/audioroutes.cpp
 new file mode 100644
-index 00000000..a350e7ac
+index 00000000..1b56d0b8
 --- /dev/null
 +++ b/src/kded/audioroutes.cpp
-@@ -0,0 +1,690 @@
+@@ -0,0 +1,698 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
@@ -783,9 +791,11 @@ index 00000000..a350e7ac
 +                               u"source_dont_move=true"_s,
 +                               u"sink_dont_move=true"_s,
 +                               u"sink_input_properties="_s
-+                                   + propertyArgument(u"media.name="_s + quoted(label) + u" plasma.pa.owner="_s + m_owner + u" plasma.pa.route="_s + r.key),
++                                   + propertyArgument(u"media.name="_s + quoted(label) + u" application.name="_s + quoted(label) + u" application.description="_s + quoted(label)
++                                                      + u" plasma.pa.owner="_s + m_owner + u" plasma.pa.route="_s + r.key),
 +                               u"source_output_properties="_s
-+                                   + propertyArgument(u"media.name="_s + quoted(label) + u" plasma.pa.owner="_s + m_owner + u" plasma.pa.route="_s + r.key)};
++                                   + propertyArgument(u"media.name="_s + quoted(label) + u" application.name="_s + quoted(label) + u" application.description="_s + quoted(label)
++                                                      + u" plasma.pa.owner="_s + m_owner + u" plasma.pa.route="_s + r.key)};
 +        };
 +        if (r.mix) {
 +            QProcess query;
@@ -851,6 +861,8 @@ index 00000000..a350e7ac
 +            QJsonObject props{{u"stream.capture.sink"_s, isMonitor},
 +                              {u"node.name"_s, name + (device == a ? u".microphone"_s : u".output"_s)},
 +                              {u"media.name"_s, i18nd("kcm_pulseaudio", "Combined Recording") + u": "_s + device->description()},
++                              {u"application.name"_s, i18nd("kcm_pulseaudio", "Combined Recording") + u": "_s + device->description()},
++                              {u"application.description"_s, i18nd("kcm_pulseaudio", "Combined Recording") + u": "_s + device->description()},
 +                              {u"audio.position"_s, QJsonArray{u"FL"_s, u"FR"_s}},
 +                              {u"combine.audio.position"_s, QJsonArray{u"FL"_s, u"FR"_s}}};
 +            rules.append(QJsonObject{{u"matches"_s, QJsonArray{QJsonObject{{u"object.serial"_s, serial(device)}}}},
@@ -877,6 +889,8 @@ index 00000000..a350e7ac
 +                            {u"node.virtual"_s, false},
 +                            {u"node.dont-fallback"_s, true},
 +                            {u"node.name"_s, name + u".capture"_s},
++                            {u"application.name"_s, i18nd("kcm_pulseaudio", "Listen: %1", a->description())},
++                            {u"application.description"_s, i18nd("kcm_pulseaudio", "Listen: %1", a->description())},
 +                            {u"media.name"_s, i18nd("kcm_pulseaudio", "Listen: %1", a->description())}};
 +        QJsonObject playback{{u"target.object"_s, sinkSerial},
 +                             {u"plasma.pa.owner"_s, m_owner},
@@ -884,7 +898,9 @@ index 00000000..a350e7ac
 +                             {u"node.virtual"_s, false},
 +                             {u"node.dont-fallback"_s, true},
 +                             {u"node.name"_s, name + u".playback"_s},
-+                             {u"media.name"_s, i18nd("kcm_pulseaudio", "Listen: %1", a->description())}};
++                             {u"application.name"_s, i18nd("kcm_pulseaudio", "Listen: %1", a->description())},
++                            {u"application.description"_s, i18nd("kcm_pulseaudio", "Listen: %1", a->description())},
++                            {u"media.name"_s, i18nd("kcm_pulseaudio", "Listen: %1", a->description())}};
 +        const QMap<QString, QString> positions{{u"front-left"_s, u"FL"_s},
 +                                               {u"front-right"_s, u"FR"_s},
 +                                               {u"front-center"_s, u"FC"_s},

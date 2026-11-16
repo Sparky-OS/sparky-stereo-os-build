@@ -103,6 +103,11 @@ try:
     assert snapshot()['combined']['source']=='mic-a' and snapshot()['combined']['output']=='out-a'
     capture('active')
     assert find(T('Choose the microphone and output in Combined Recording.'))
+    if os.environ.get('PA19_CHECK_NAMES')=='1':
+        text=(work/'active.txt').read_text()
+        assert 'pw-loopback:' not in text and 'pw-cli:' not in text, 'Helper names are visible in stream labels'
+        expected=T('Listen: %1').replace('%1',snapshot()['listen']['mic-a']['sourceLabel'])
+        assert expected in text,expected
     # Move the owned playback stream using the page's ordinary stream selector.
     def owned_playback_combo():
         for obj in nodes(pyatspi.Registry.getDesktop(0)):

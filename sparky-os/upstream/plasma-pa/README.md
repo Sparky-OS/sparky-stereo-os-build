@@ -4,49 +4,47 @@ This recipe prepares the edition's plasma-pa 4:6.7.4-1+stereo3d2+lc1 and holds i
 The package exposes optional virtual streams, repairs null-client handling and the recording selector, and adds optional input monitoring and a combined recording source. Both routing features start off. Their controls, failures and shared-microphone warning have English messages and nine translated catalogues.
 No system PipeWire or WirePlumber default is supplied here.
 
-From a lane folder with `src/plasma-pa` on the candidate and this build-tree clone at `src/sparky-stereo-os-build`:
+## Build from Debian's source
+
+The two producers start their own disposable containers from a pinned public Debian image. They require no retained lane image or running container. The image can be overridden with IMAGE; CONTAINER_NAME selects each container's name and CPUS defaults to two. Both forward the full build-provenance argument array, including the reproducible-source helper mount.
+
+Supply Debian's plasma-pa_6.7.4-1.dsc and the archives it names in SOURCE_DIR. The descriptor is pinned by SHA-256; dpkg-source verifies the archive checksums. Use a fresh work directory for each producer:
 
 ```sh
-export DOCKER_HOST=unix:///path/to/lane/docker.sock
-bash src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-setup.sh "$PWD"
-bash src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-build.sh
-
-docker exec --user 1000:1000 pa19-rig dbus-run-session -- bash /lane/src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-case.sh published 1
-docker exec --user 1000:1000 pa19-rig dbus-run-session -- bash /lane/src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-case.sh candidate 1
-docker exec --user 1000:1000 pa19-rig dbus-run-session -- bash /lane/src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-case.sh candidate 1.25
-docker exec --user 1000:1000 pa19-rig dbus-run-session -- bash /lane/src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-case.sh candidate 1 applet
-docker exec --user 1000:1000 pa19-rig dbus-run-session -- bash /lane/src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-case.sh candidate 1 hotplug
-docker stop pa19-rig
-docker rm pa19-rig
+bash RECIPE/package.sh SOURCE_WORK SOURCE_DIR
+SPARKY_REPO_DIR=SIGNED_REPO SPARKY_LC_ARCHIVE_DIR=ARCHIVE_DIR \
+  bash RECIPE/build.sh BINARY_WORK SOURCE_WORK/prepared/lc PREVIOUS_DEBS_DIR
 ```
 
-Run one case at a time; each gets a private bus, Xvfb server and audio session.
-The published branch uses installed Debian plugins; the candidate uses the `/opt/order19` manifest paths.
-The UI scripts operate the actual settings page and applet and independently read selected server routes.
-Set `EXPECT_VISIBLE=1` in the published page case for a negative assertion that must fail on the missing virtual playback row.
-The hotplug case uses only synthetic null devices and the existing edition hook from this checkout.
-It verifies USB headset, USB speaker and Bluetooth output defaults, and preserves an explicitly targeted client bridge.
-Captures and logs go to the lane's `evidence/`, never this repository.
-Use a fresh container for a clean rebuild; each case gets a fresh home, and the page test copies its saved enabled key into the evidence.
+SOURCE_WORK/prepared contains both authored and Lean Code sources. BINARY_WORK/build contains binaries, buildinfo, changes and the complete build record. The binary producer reads the supplied source's changelog date, builds from its DSC without repacking it, runs the native validator, verifies all LC payloads/HR companions and runs the archive-qualified link gate. It installs its own build tools and the source's Build-Depends. Inputs, build tree and signed archives are mounted read-only; only the named output is writable, and outputs are returned to the caller's UID/GID.
 
-`make-translations.py SOURCE PATCH` generates `sparky-os/translations/plasma-pa-virtual-streams.po.patch` for the nine translated locales beside English.
-The source producer applies this patch last in its Debian series.
-Run `sparky-os/tests/translations-shipped.py --only plasma-pa-virtual-streams.po.patch STAGE` to read the built package's catalogues, then its `--gettext` mode with the absolute patch path in the installed rig with the nine real locales generated.
+ARCHIVE_DIR/sources.json names the public signed APT archives and their public keyrings as described in sparky-os/lean/archive.md. The edition's signed snapshot is available at /repo. Keyrings supplied in ARCHIVE_DIR use /archive paths inside the container; the base image supplies Debian's keyring. The binary container enables the namespace operations needed by the nested bubblewrap gate, whose own root is isolated and capabilities dropped. No desktop session or sound device is mounted.
 
-## Debian successor
+Reproduce the source with tests/repro-source.py BASE_DSC PREPARED WORK BUILD_RECORD inside a disposable container carrying fakeroot, libfaketime, devscripts and the producer's tools. This is a proof driver, not a producer: it compares authored and LC descriptors/archives across clocks, time zones and umasks, then checks an actual dpkg-buildpackage -S repack. Its source date comes from the build record. The static supply-chain/test-wiring.sh must finish ALL PASS before hand-back.
 
-`make-source.py DSC WORK` prepares Debian's signed 4:6.7.4-1 descriptor (pinned by SHA-256), the accepted product patch, and the translation patch, then creates an authored source and a +stereo3d2+lc1 source through Lean Code.
-It takes SOURCE_DATE_EPOCH and SOURCE_DATE_RFC2822 from the committed recipe.
-`package.sh` supplies these dates and host provenance to the lane's prepared container; `build.sh` builds the resulting descriptor and runs the native unit test and archive-backed package checks.
-The container must provide the lane at /lane, disposable work at /work19, the signed edition repository at /repo, the HTTPS-only APT helper and CA bundle, with two CPUs and core dumps disabled.
-Its /work19/archive/sources.json explicitly names the signed Debian, deb-multimedia and edition sources and their public keyrings.
+## Installed audio and GUI proofs
 
-Debian's rules disable build-time tests; the successor retains that policy and prints the missing Appium prerequisites instead of silently treating the suite as run.
-The real upstream applettest needs selenium-webdriver-at-spi-run, Appium and its Python bindings, a private compositor and an accessibility bus with the service startup expected by the runner.
-The native validator is run separately, as are the actual page and applet routing checks.
-After installing the built .deb, use `rig-case.sh installed SCALE [applet|hotplug]`; this mode uses the system plugin and QML paths and never the prototype /opt prefix.
-Remove the prototype prefix in that container before testing, so a stray import path cannot mask an installation error.
-`rig-compare.py EVIDENCE installed` checks unchanged page content against the published control at both scales.
+Use a throwaway container with Plasma, PipeWire, pipewire-pulse, WirePlumber, null devices, Xvfb, a private D-Bus/accessibility bus, Python's GI/AT-SPI/Pillow modules and xdotool. Disable core dumps; do not mount a person's display, audio runtime or hardware devices. Run probes as an unprivileged user. Each WORK must be new.
+
+After installing the built runtime and HR packages, remove prototype prefixes /opt/order19 and /opt/order19b and set PA19_INSTALLED=1. Otherwise prototype probes use /opt/order19b. Run one desktop case at a time:
+
+```sh
+PA19_INSTALLED=1 PA19_CHECK_NAMES=1 dbus-run-session -- python3 RECIPE/rig-route-ui.py WORK 1
+PA19_INSTALLED=1 PA19_CHECK_NAMES=1 dbus-run-session -- python3 RECIPE/rig-route-ui.py WORK 1.25
+PA19_INSTALLED=1 PA19_RATE=96000 dbus-run-session -- python3 RECIPE/rig-routes.py WORK
+```
+
+The page probe checks actual controls, ordinary stream routing, window lifetime, missing targets and the shared-microphone warning. CHECK_NAMES rejects the helper names in visible labels. Streams supply translated application.name, application.description and media.name; owned stream delegates use their supplied description on both the page and widget, instead of prepending the process's client name.
+
+Install the accepted system-audio-defaults package before the 96 kHz row. Read PipeWire Format and pw-top rather than PulseAudio's nominal stream rate. PA19_CHANNELS=1 checks a mono microphone. PA19_FAILURE_MODE=missing or exit tests missing/exiting helpers. PA19_LATENCY_MODE=1 measures a simultaneous four-channel synthetic graph, not physical latency. PA19_NATIVE=1 uses an extracted PulseAudio server/modules under /work19/native/root for a private native-server case.
+
+rig-case.sh installed SCALE [applet|hotplug] checks the original virtual streams and routing. PA19_RESULT selects fresh evidence, and PA19_SCREEN_HEIGHT=2800 PA19_WINDOW_HEIGHT=2600 gives a tall full-page capture. PA19_ENABLE_ROUTES=1 keeps owned routes active in the hotplug case; with PA19_APPLET_OWNED=1 it checks the actual widget's owned Listen menu. The new output takes the default while explicitly targeted bridge/Listen/combined routes stay selected.
+
+Combined Recording literally adds the output mix and microphone. If Listen sends that microphone to the same output, both paths include it; the translated warning explains this. Internal combined capture controls point to their combined-source settings. The source has low session priority and keeps the established default input.
+
+make-translations.py and make-route-translations.py generate the virtual-stream and audio-routing PO patches. The routing generator consumes the source after the virtual-stream patch. check-route-catalogues.py reads all routing keys from the built MO files. Run translations-shipped.py with both patch names against the binaries and its --gettext mode under all nine generated translated locales in the installed rig.
+
+Debian disables build-time Appium tests; the successor prints that policy and the missing prerequisites rather than silently calling the suite tested. The real upstream applettest runs in KDE CI as described below.
 
 ## CI without station devices
 
@@ -61,21 +59,3 @@ Use `--job-image JOB=IMAGE` for refreshed images; a stale Qt Next image can lack
 The images must contain Weston and the distribution's runtime libraries required by the KDE artifacts.
 This proves the widget under a private software Wayland compositor; it does not test KWin-specific protocols or a hardware renderer.
 
-## Input monitoring and combined recording
-
-`rig-routes.py WORK` checks the KDED interface and actual audio content in a private bus/session. `rig-route-ui.py WORK SCALE` drives the installed Sound page, ordinary stream routing, close/reopen, missing targets and the shared-microphone warning. Run both with `PA19_INSTALLED=1` after removing `/opt/order19` and `/opt/order19b`; otherwise they use the prototype prefix. Each WORK must be new.
-
-```sh
-PA19_INSTALLED=1 PA19_RATE=96000 dbus-run-session -- python3 RECIPE/rig-routes.py WORK
-PA19_INSTALLED=1 dbus-run-session -- python3 RECIPE/rig-route-ui.py WORK 1.25
-```
-
-Run these commands only inside the device-free rig, as its unprivileged test user. Install the accepted system-audio-defaults package before the 96 kHz case. The native-server case uses `PA19_NATIVE=1` and the extracted PulseAudio 17.0 binary and modules under `/work19/native/root`; `PA19_CHANNELS=1` checks a mono microphone. `PA19_FAILURE_MODE=missing` or `exit` tests missing/exiting PipeWire helpers. `PA19_LATENCY_MODE=1` measures the synthetic graph with a simultaneous four-channel capture; it does not measure hardware latency. Inspect the actual PipeWire Format and pw-top rows rather than PulseAudio's nominal stream sample specification.
-
-Combined Recording literally adds the selected output mix and microphone. If Listen sends that microphone to the same output, both paths include it; the page warns about this in the selected language. Internal combined capture streams direct their routing controls to the combined-source settings, where all contributors stay consistent. The new source has low session priority and keeps the established default input.
-
-Set `PA19_ENABLE_ROUTES=1 PA19_APPLET_OWNED=1` for the applet case to check its actual owned Listen menu updates both saved preferences and the server target. Set `PA19_ENABLE_ROUTES=1` for the hotplug case to keep explicit monitoring and combined routes active while the synthetic newly connected outputs take the default. `PA19_RESULT` selects a fresh evidence directory. For a taller full-page virtual-stream capture use `PA19_SCREEN_HEIGHT=2800 PA19_WINDOW_HEIGHT=2600`.
-
-`make-route-translations.py SOURCE PATCH` generates `plasma-pa-audio-routes.po.patch` after the virtual-stream patch. `check-route-catalogues.py DEB OUTPUT_JSON` reads all 29 routing keys in each built translated catalogue. The shared translations-shipped gate also compares every added translation with the generated patch; run its real `--gettext` mode under generated locales in the installed rig.
-
-`repro-source.py BASE_DSC PREPARED WORK BUILD_RECORD` freezes the build record's source date and compares authored and Lean Code descriptors/archives across clocks, time zones and umasks, then checks an actual `dpkg-buildpackage -S` repack. Retain that build record's recipe commit even when later documentation commits update this recipe.
