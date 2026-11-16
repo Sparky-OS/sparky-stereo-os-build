@@ -12,8 +12,7 @@ override_dh_auto_install:
 		--exclude=./ananicy.schema.json --exclude=./lint.py --exclude=./Makefile --exclude=./.gitattributes --exclude=./.github -cf - . | \
 		tar -xf - -C debian/cachyos-ananicy-rules/etc/ananicy.d
 	chmod -R u=rwX,go=rX debian/cachyos-ananicy-rules/etc/ananicy.d
-
-override_dh_auto_test:
+	# the recipe's checks (dh runs its test step before the install, so they sit here)
 	test -f debian/cachyos-ananicy-rules/etc/ananicy.d/ananicy.conf
 	test -d debian/cachyos-ananicy-rules/etc/ananicy.d/00-default
 	test -f debian/cachyos-ananicy-rules/etc/ananicy.d/00-types.types
