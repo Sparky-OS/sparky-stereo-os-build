@@ -8,7 +8,7 @@ export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=2
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com LC_ALL=C.UTF-8
 export SPARKY_LC_ARCHIVE_CONFIG=/work19/archive/sources.json SPARKY_LC_SCRATCH=/work19/link-scratch
 export SPARKY_LC_PREVIOUS_DIR=/work19/previous
-trap 'chown -R 1000:1000 /work19' EXIT
+trap 'for dir in /work19/build /work19/prepared /work19/link-scratch; do if [[ -d $dir ]]; then chown -R 1000:1000 "$dir"; fi; done' EXIT
 apt-get -y --no-install-recommends build-dep /work19/prepared/lc/source
 mkdir /work19/build
 chown 1000:1000 /work19/build

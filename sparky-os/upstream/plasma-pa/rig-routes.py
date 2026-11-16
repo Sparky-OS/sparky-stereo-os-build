@@ -122,6 +122,7 @@ try:
     for target in ('out-a','out-b','mic-bus'):
         pactl('load-module','module-null-sink','sink_name='+target,'rate='+str(rate))
     mic = create_mic('mic-a')
+    wait_for(lambda: pactl('get-default-source').strip()=='mic-a','WirePlumber settles the initial default input')
     defaults={kind:pactl('get-default-'+kind).strip() for kind in ('source','sink')}
     failure_mode=os.environ.get('PA19_FAILURE_MODE','')
     service_env=dict(os.environ)
@@ -240,6 +241,7 @@ finally:
     (work/'person-files.json').write_text(json.dumps(person_hashes,indent=2)+'\n')
     if service_ready():
         (work/'final-state.json').write_text(json.dumps(snapshot(),indent=2)+'\n')
+        (work/'final-defaults.json').write_text(json.dumps({kind:pactl('get-default-'+kind).strip() for kind in ('source','sink')},indent=2)+'\n')
     for p in reversed(children):
         if p.poll() is None: p.terminate()
     for p in children:
