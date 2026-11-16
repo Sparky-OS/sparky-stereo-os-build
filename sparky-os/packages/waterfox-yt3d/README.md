@@ -67,3 +67,11 @@ They are not in `build-browser-in-container.sh` yet: the recipe names the fork's
 Then the step is the usual one: `OLD=6.7.5-0+stereo3d14+lc1 NEW=6.7.5-0+stereo3d15`, the new `COMMIT` and `OLDCOMMIT`, the two patches copied and added to the series, a `SOURCE.edition.json` patch, `changelog15.top`.
 `0017` applies to the tree after `0013`; `0018` to the locale files after `0016`.
 Open: a site whose 3D Canvas is set On still gets two views there, which is one condition in `dom/canvas/ClientWebGLContext.cpp` and needs a compile.
+
+**Not the answer, and not to be built as it is (main session, 2026-11-16).**
+Daniel, on reading this: "our kwin works with sotware composition, something is off there".
+The software compositor here is the browser's own (its software WebRender), not Stereo KWin, which composes in software without losing the pair.
+Turning 3D off where the browser draws in software accepts a limit; the edition's rule is that a piece without stereo is work to plan and build.
+ORDER 616 is therefore the real fix: with its own compositor in software the browser still hands the page's two views to Stereo KWin, declared as full side by side.
+`0017`'s notice is kept only for a case measured as impossible, and then it says so.
+
