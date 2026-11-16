@@ -334,7 +334,8 @@ void Editor::saveProject(const QString &destination)
         throw std::runtime_error(tr("Cannot make the copied index writable").toStdString());
     fs::permissions((stage.path() + "/icons").toStdString(), fs::perms::owner_write | fs::perms::owner_exec, fs::perm_options::add);
     QString outputRoot = "stereo-authored";
-    for (int generation = 2; QFileInfo::exists(stage.path() + "/icons/" + outputRoot); ++generation)
+    for (int generation = 2; QFileInfo::exists(stage.path() + "/icons/" + outputRoot)
+        || QFileInfo(stage.path() + "/icons/" + outputRoot).isSymLink(); ++generation)
         outputRoot = QString("stereo-authored-%1").arg(generation);
     KConfig sourceIndex(themeRoot + "/index.theme", KConfig::SimpleConfig);
     QSet<int> sizes;
