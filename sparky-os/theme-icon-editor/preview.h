@@ -16,6 +16,7 @@ public:
         stereo = false;
 #endif
         left = a;
+        setFixedSize(QSize(256, qMax(1, qRound(256.0 * a.height() / a.width()))));
         if (stereo) {
             QImage pair(a.width() * 2, a.height(), a.format());
             pair.fill(Qt::transparent);

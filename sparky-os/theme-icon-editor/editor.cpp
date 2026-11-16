@@ -39,7 +39,8 @@
 #include <QCloseEvent>
 #include <algorithm>
 #include <QJsonArray>
-Editor::Editor()
+Editor::Editor(bool part)
+    : partMode(part)
 {
     Stereo::WidgetLayer::prepareWindow(this);
     setWindowTitle(tr("Theme editor") + "[*]");
@@ -56,6 +57,15 @@ Editor::Editor()
     undo->setEnabled(false); redo->setEnabled(false);
     for (auto *w : {open, save, undo, redo}) files->addWidget(w);
     layout->addLayout(files);
+    if (partMode) { open->hide(); save->hide(); }
+    if (!partMode) {
+        setupParts(layout);
+        pages = new QTabWidget;
+        layout->addWidget(pages);
+        auto *iconPage = new QWidget;
+        pages->addTab(iconPage, tr("Icons"));
+        layout = new QVBoxLayout(iconPage);
+    }
     auto *actions = new QHBoxLayout;
     stereo = new QCheckBox(tr("Enable 3D"));
     stereo->setChecked(true);
@@ -104,7 +114,7 @@ Editor::Editor()
     connect(redo, &QPushButton::clicked, history, &QUndoStack::redo);
     connect(history, &QUndoStack::canUndoChanged, undo, &QPushButton::setEnabled);
     connect(history, &QUndoStack::canRedoChanged, redo, &QPushButton::setEnabled);
-    connect(history, &QUndoStack::cleanChanged, this, [this](bool clean) { setWindowModified(!clean); });
+    connect(history, &QUndoStack::cleanChanged, this, [this](bool) { setWindowModified(!allClean()); });
     connect(groups, &QTreeWidget::currentItemChanged, this, [this] { guarded([&] { refresh(); }); });
     connect(stereo, &QCheckBox::toggled, this, [this] { guarded([&] { refresh(); }); });
     connect(size, &QSpinBox::valueChanged, this, [this] { guarded([&] { refresh(); }); });
@@ -126,6 +136,7 @@ void Editor::guarded(const std::function<void()> &f)
 
 void Editor::load(QString root, QString icon)
 {
+    ensurePeerClosed();
     root = QFileInfo(root).canonicalFilePath();
     icon = QFileInfo(icon).canonicalFilePath();
     if (root.isEmpty() || !QFile::exists(root + "/index.theme") || !icon.startsWith(root + "/"))
@@ -133,12 +144,25 @@ void Editor::load(QString root, QString icon)
     Drawing next; next.open(icon);
     drawing = next; themeRoot = root; iconPath = QDir(root).relativeFilePath(icon);
     history->clear();
+    populateGroups();
+    location->setText(tr("Read only source: %1. Save creates a separate project copy.").arg(root));
+    refresh();
+}
+
+void Editor::populateGroups()
+{
     { QSignalBlocker block(groups); groups->clear(); }
     for (const QString &id : drawing.groups()) {
         auto *item = new QTreeWidgetItem(groups, {drawing.groupLabel(id)});
         item->setData(0, Qt::UserRole, id);
         item->setToolTip(0, id);
-        item->setIcon(0, QPixmap::fromImage(drawing.eye(40, false, id)));
+        auto thumbnail = drawing.eye(128, false, id);
+        QRect bounds;
+        for (int y = 0; y < thumbnail.height(); ++y)
+            for (int x = 0; x < thumbnail.width(); ++x)
+                if (qAlpha(thumbnail.pixel(x, y))) bounds |= QRect(x, y, 1, 1);
+        if (!bounds.isEmpty()) thumbnail = thumbnail.copy(bounds).scaled(40, 40, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        item->setIcon(0, QPixmap::fromImage(thumbnail));
         auto *depth = new QDoubleSpinBox;
         depth->setRange(-100, 100); depth->setDecimals(1); depth->setSingleStep(5);
         depth->setSuffix(tr(" %"));
@@ -150,7 +174,6 @@ void Editor::load(QString root, QString icon)
             restorePlaces(drawing.places);
         });
     }
-    location->setText(tr("Read only source: %1. Save creates a separate project copy.").arg(root));
     if (groups->topLevelItemCount()) groups->setCurrentItem(groups->topLevelItem(0));
     refresh();
 }
@@ -163,6 +186,7 @@ QString Editor::selectedGroup() const
 
 QList<int> Editor::themeSizes() const
 {
+    if (partMode) return {size->value()};
     KConfig index(themeRoot + "/index.theme", KConfig::SimpleConfig);
     QSet<int> values;
     for (const auto &name : index.groupList()) {
@@ -253,13 +277,16 @@ void Editor::applyPlaces(const QJsonObject &object)
 
 bool Editor::mayDiscard()
 {
-    return history->isClean() || QMessageBox::question(this, tr("Unsaved changes"),
+    return allClean() || QMessageBox::question(this, tr("Unsaved changes"),
         tr("Discard unsaved changes?"), QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel) == QMessageBox::Discard;
 }
 
 void Editor::closeEvent(QCloseEvent *event)
 {
-    if (mayDiscard()) event->accept(); else event->ignore();
+    if (peer && peer->state() != QProcess::NotRunning) {
+        QMessageBox::information(this, tr("Theme editor"), tr("Close the KDE tool before closing this project."));
+        event->ignore();
+    } else if (mayDiscard()) event->accept(); else event->ignore();
 }
 
 bool Editor::selectPart(const QString &id)
@@ -312,10 +339,12 @@ void Editor::loadProject(const QString &path)
         throw std::runtime_error(tr("Invalid or unsupported theme project").toStdString());
     load(path + "/icons", path + "/icons/" + project.value("icon").toString());
     applyPlaces(project.value("groups").toObject());
+    loadParts(path, project);
     location->setText(tr("Project copy: %1").arg(path));
 }
 void Editor::saveProject(const QString &destination)
 {
+    ensurePeerClosed();
     if (drawing.source.isEmpty()) throw std::runtime_error(tr("Open a source first").toStdString());
     drawing.readLimits();
     if (QFileInfo::exists(destination)) throw std::runtime_error(tr("The project destination already exists; choose a new folder").toStdString());
@@ -382,9 +411,12 @@ void Editor::saveProject(const QString &destination)
         }
         if (!index.sync()) throw std::runtime_error(tr("Cannot save the copied theme index").toStdString());
     }
+    saveParts(stage.path(), project);
     saveBytes(stage.path() + "/project.json", QJsonDocument(project).toJson());
     if (!QDir().rename(stage.path(), destination)) throw std::runtime_error(tr("Cannot commit the project folder").toStdString());
     stage.setAutoRemove(false);
     history->setClean();
+    if (plasmaEditor) plasmaEditor->history->setClean();
+    membersDirty = false;
     location->setText(tr("Saved project copy: %1").arg(destination));
 }

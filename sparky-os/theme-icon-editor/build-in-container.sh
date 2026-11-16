@@ -12,9 +12,9 @@ export DEB_BUILD_OPTIONS=parallel=2
 export HOME=/build/home
 export TMPDIR=/build/tmp
 mkdir -p "$HOME" "$TMPDIR" /build/output
-python3 /source/tools/copy-recipe.py /source/sparky-os/theme-icon-editor /build/output/sparky-stereo-theme-editor-0.1.0+lc1
-cd /build/output/sparky-stereo-theme-editor-0.1.0+lc1
-PYTHONPATH=/source/sparky-os python3 -m lean.debian_prepare . 0.1.0+lc1 --toolkit /source/sparky-os \
+python3 /source/tools/copy-recipe.py /source/sparky-os/theme-icon-editor /build/output/sparky-stereo-theme-editor-0.1.1+lc1
+cd /build/output/sparky-stereo-theme-editor-0.1.1+lc1
+PYTHONPATH=/source/sparky-os python3 -m lean.debian_prepare . 0.1.1+lc1 --toolkit /source/sparky-os \
  --preserve-source geometry/kwin/src/scene/stereodepth.cpp 'The depth adapter extracts these exact source bytes and records their hash' \
  --preserve-source geometry/kwin/src/effect/globals.h 'The depth adapter extracts the exact enum and records this source hash'
 # gcc is already guaranteed by Debian's implicit build-essential set.

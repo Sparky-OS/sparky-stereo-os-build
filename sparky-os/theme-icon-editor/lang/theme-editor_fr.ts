@@ -138,6 +138,10 @@
       <translation>Rétablir</translation>
     </message>
     <message>
+      <source>Icons</source>
+      <translation>Icônes</translation>
+    </message>
+    <message>
       <source>Enable 3D</source>
       <translation>Activer la 3D</translation>
     </message>
@@ -254,6 +258,10 @@
       <translation>Abandonner les modifications non enregistrées ?</translation>
     </message>
     <message>
+      <source>Close the KDE tool before closing this project.</source>
+      <translation>Fermez l’outil KDE avant de fermer ce projet.</translation>
+    </message>
+    <message>
       <source>Invalid group or place</source>
       <translation>Groupe ou position non valide</translation>
     </message>
@@ -316,6 +324,94 @@
     <message>
       <source>Saved project copy: %1</source>
       <translation>Copie du projet enregistrée : %1</translation>
+    </message>
+    <message>
+      <source>The colour scheme is too large</source>
+      <translation>Le schéma de couleurs est trop volumineux</translation>
+    </message>
+    <message>
+      <source>Open colour scheme…</source>
+      <translation>Ouvrir un schéma de couleurs…</translation>
+    </message>
+    <message>
+      <source>Edit colours in KDE…</source>
+      <translation>Modifier les couleurs dans KDE…</translation>
+    </message>
+    <message>
+      <source>Open Plasma SVG part…</source>
+      <translation>Ouvrir un élément SVG de Plasma…</translation>
+    </message>
+    <message>
+      <source>Explore Plasma theme…</source>
+      <translation>Explorer le thème Plasma…</translation>
+    </message>
+    <message>
+      <source>No colour scheme in this project</source>
+      <translation>Ce projet ne contient aucun schéma de couleurs</translation>
+    </message>
+    <message>
+      <source>Colour scheme</source>
+      <translation>Schéma de couleurs</translation>
+    </message>
+    <message>
+      <source>Plasma theme folder</source>
+      <translation>Dossier du thème Plasma</translation>
+    </message>
+    <message>
+      <source>Choose an SVG inside a Plasma theme with metadata.json</source>
+      <translation>Choisissez un SVG dans un thème Plasma contenant metadata.json</translation>
+    </message>
+    <message>
+      <source>Plasma parts</source>
+      <translation>Éléments Plasma</translation>
+    </message>
+    <message>
+      <source>Cannot inspect the colour scheme</source>
+      <translation>Impossible d’examiner le schéma de couleurs</translation>
+    </message>
+    <message>
+      <source>Not a KDE colour scheme</source>
+      <translation>Ce n’est pas un schéma de couleurs KDE</translation>
+    </message>
+    <message>
+      <source>The colour scheme has no name</source>
+      <translation>Le schéma de couleurs n’a pas de nom</translation>
+    </message>
+    <message>
+      <source>Colour scheme: %1. KDE edits a private copy; Save keeps it in this project.</source>
+      <translation>Schéma de couleurs : %1. KDE modifie une copie privée ; Enregistrer la conserve dans ce projet.</translation>
+    </message>
+    <message>
+      <source>Close the KDE tool before opening another one.</source>
+      <translation>Fermez l’outil KDE avant d’en ouvrir un autre.</translation>
+    </message>
+    <message>
+      <source>Cannot create a private working copy</source>
+      <translation>Impossible de créer une copie de travail privée</translation>
+    </message>
+    <message>
+      <source>The KDE tool failed: %1</source>
+      <translation>L’outil KDE a échoué : %1</translation>
+    </message>
+    <message>
+      <source>The KDE tool returned an invalid file name</source>
+      <translation>L’outil KDE a renvoyé un nom de fichier non valide</translation>
+    </message>
+    <message>
+      <source>Cannot start %1: %2</source>
+      <translation>Impossible de lancer %1 : %2</translation>
+    </message>
+    <message>
+      <source>Open a colour scheme first</source>
+      <translation>Ouvrez d’abord un schéma de couleurs</translation>
+    </message>
+    <message>
+      <source>Open a Plasma theme part first</source>
+      <translation>Ouvrez d’abord un élément de thème Plasma</translation>
+    </message>
+    <message>
+      <source>The Plasma theme has no valid identifier</source>
+      <translation>Le thème Plasma n’a pas d’identifiant valide</translation>
     </message>
   </context>
 </TS>

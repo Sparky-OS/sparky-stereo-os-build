@@ -1,0 +1,78 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "editor.h"
+#include <QApplication>
+#include <QCryptographicHash>
+#include <QDirIterator>
+#include <QJsonDocument>
+#include <QPainter>
+#include <QSvgRenderer>
+#include <QTemporaryDir>
+#include <iostream>
+
+static void require(bool value, const char *message)
+{
+    if (!value) throw std::runtime_error(message);
+}
+static QByteArray bytes(const QString &path)
+{
+    QFile f(path); require(f.open(QIODevice::ReadOnly), "Cannot read test input"); return f.readAll();
+}
+static int difference(const QImage &a, const QImage &b)
+{
+    require(a.size() == b.size(), "Image sizes differ");
+    int maximum = 0;
+    for (int y = 0; y < a.height(); ++y)
+        for (int x = 0; x < a.width(); ++x) {
+            const QRgb p = a.pixel(x, y), q = b.pixel(x, y);
+            for (int shift : {0, 8, 16, 24}) maximum = qMax(maximum, qAbs(int((p >> shift) & 255) - int((q >> shift) & 255)));
+        }
+    return maximum;
+}
+int main(int argc, char **argv)
+{
+    QApplication app(argc, argv);
+    if (argc != 2) return 2;
+    try {
+        const QString fixtures = QString::fromLocal8Bit(argv[1]);
+        const QString path = fixtures + "/plasma/widgets/panel-background.svg";
+        const auto original = bytes(path), colour = bytes(fixtures + "/Project.colors");
+        Editor editor;
+        editor.loadProject(fixtures + "/project");
+        const auto iconPlaces = editor.drawing.places;
+        editor.addPlasma(fixtures + "/plasma", path);
+        editor.addColour(fixtures + "/Project.colors");
+        auto &part = editor.plasmaEditor->drawing;
+        const auto zero = part.eye(256, false);
+        require(zero.size() == QSize(256, 163), "Plasma canvas aspect ratio lost");
+        QImage reference(zero.size(), zero.format()); reference.fill(Qt::transparent);
+        { QPainter painter(&reference); QSvgRenderer renderer(original); renderer.render(&painter); }
+        require(difference(zero, reference) <= 1, "Plasma zero-depth differs from original KDE artwork");
+        require(editor.setPlasmaDepth("south-center", -1).isEmpty(), "Cannot edit real Plasma group");
+        const auto a = part.eye(256, false), b = part.eye(256, true);
+        require(a != b, "Plasma group has no measured disparity");
+        const auto isolatedA = part.eye(256, false, "south-center"), isolatedB = part.eye(256, true, "south-center");
+        int minA = 256, minB = 256;
+        for (int y = 0; y < a.height(); ++y)
+            for (int x = 0; x < a.width(); ++x) {
+                if (qAlpha(isolatedA.pixel(x, y)) > 128) minA = qMin(minA, x);
+                if (qAlpha(isolatedB.pixel(x, y)) > 128) minB = qMin(minB, x);
+            }
+        require(minA - minB == part.disparity("south-center", 256), "Plasma disparity does not match KWin operation");
+        QImage pair(512, 163, a.format()); pair.fill(Qt::transparent);
+        { QPainter painter(&pair); QSvgRenderer renderer(part.pairSvg(256)); renderer.render(&painter); }
+        require(difference(pair.copy(0, 0, 256, 163), a) <= 1 && difference(pair.copy(256, 0, 256, 163), b) <= 1, "Plasma SVG pair does not reproduce both views");
+        editor.plasmaEditor->history->undo(); require(part.eye(256, false) == zero, "Plasma undo lost artwork");
+        editor.plasmaEditor->history->redo(); require(part.eye(256, false) == a, "Plasma redo lost depth");
+        require(editor.drawing.places == iconPlaces, "Plasma editing changed icon depths");
+        QTemporaryDir output;
+        editor.saveProject(output.path() + "/shared");
+        require(bytes(output.path() + "/shared/plasma/widgets/panel-background.svg") == original, "Saved ordinary Plasma source changed");
+        require(bytes(output.path() + "/shared/color-schemes/Project.colors") == colour, "Saved colour scheme changed");
+        Editor reopened; reopened.loadProject(output.path() + "/shared");
+        require(reopened.plasmaEditor && reopened.plasmaEditor->drawing.places == part.places, "Plasma depths did not round trip");
+        require(reopened.colourBytes == colour && reopened.drawing.places == iconPlaces && reopened.allClean(), "Shared project did not round trip cleanly");
+        require(bytes(path) == original && bytes(fixtures + "/Project.colors") == colour, "Input was modified");
+        require(!reopened.addPlasmaFile(fixtures + "/Project.colors").isEmpty(), "Invalid Plasma input accepted");
+        std::cout << "PASS: shared icon/colour/Plasma project; original aspect and pixels; measured disparity=" << minA-minB << "; undo/redo; paired SVG; save/reopen; sources unchanged\n";
+    } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
+}

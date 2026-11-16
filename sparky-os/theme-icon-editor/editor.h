@@ -10,6 +10,11 @@
 #include <QTableWidget>
 #include <QUndoStack>
 #include <functional>
+#include <QTabWidget>
+#include <QVBoxLayout>
+#include <QTemporaryDir>
+#include <QProcess>
+#include <memory>
 
 class Editor : public QWidget
 {
@@ -27,7 +32,29 @@ public:
     QCheckBox *stereo;
     QTableWidget *disparities;
     QUndoStack *history;
-    Editor();
+    explicit Editor(bool part = false);
+    bool partMode;
+    Editor *plasmaEditor = nullptr;
+    QTabWidget *pages = nullptr;
+    QString plasmaRoot, plasmaPath, colourName;
+    QByteArray colourBytes;
+    bool membersDirty = false;
+    QLabel *colourLabel = nullptr;
+    std::unique_ptr<QTemporaryDir> peerWork;
+    QProcess *peer = nullptr;
+    void populateGroups();
+    void addPlasma(const QString &root, const QString &path);
+    void addColour(const QString &path);
+    void editColour();
+    void explorePlasma();
+    void saveParts(const QString &stage, QJsonObject &project);
+    void loadParts(const QString &path, const QJsonObject &project);
+    void setupParts(QVBoxLayout *layout);
+    void startPeer(const QString &program, const QStringList &arguments, bool colour);
+    QString makePeerWork();
+    bool allClean() const;
+    void ensurePeerClosed() const;
+    QString importColour(const QByteArray &bytes);
     void guarded(const std::function<void()> &f);
     void load(QString root, QString icon);
     void refresh();
@@ -41,6 +68,12 @@ public:
     bool mayDiscard();
 public slots:
     bool selectPart(const QString &id);
+    QString addColourFile(const QString &path);
+    QString addPlasmaFile(const QString &path);
+    QString peerState() const;
+    QString setPlasmaDepth(const QString &id, double value);
+    QString launchColourEditor();
+    QString launchThemeExplorer();
     QString setGroupDepth(const QString &id, double value);
     QString sessionState() const;
     void undoDepth() { history->undo(); }

@@ -138,6 +138,10 @@
       <translation>다시 실행</translation>
     </message>
     <message>
+      <source>Icons</source>
+      <translation>아이콘</translation>
+    </message>
+    <message>
       <source>Enable 3D</source>
       <translation>3D 사용</translation>
     </message>
@@ -254,6 +258,10 @@
       <translation>저장하지 않은 변경 사항을 버릴까요?</translation>
     </message>
     <message>
+      <source>Close the KDE tool before closing this project.</source>
+      <translation>프로젝트를 닫기 전에 KDE 도구를 닫으세요.</translation>
+    </message>
+    <message>
       <source>Invalid group or place</source>
       <translation>잘못된 그룹 또는 위치</translation>
     </message>
@@ -316,6 +324,94 @@
     <message>
       <source>Saved project copy: %1</source>
       <translation>저장한 프로젝트 사본: %1</translation>
+    </message>
+    <message>
+      <source>The colour scheme is too large</source>
+      <translation>색 구성표가 너무 큽니다</translation>
+    </message>
+    <message>
+      <source>Open colour scheme…</source>
+      <translation>색 구성표 열기…</translation>
+    </message>
+    <message>
+      <source>Edit colours in KDE…</source>
+      <translation>KDE에서 색 편집…</translation>
+    </message>
+    <message>
+      <source>Open Plasma SVG part…</source>
+      <translation>Plasma SVG 부분 열기…</translation>
+    </message>
+    <message>
+      <source>Explore Plasma theme…</source>
+      <translation>Plasma 테마 탐색…</translation>
+    </message>
+    <message>
+      <source>No colour scheme in this project</source>
+      <translation>이 프로젝트에 색 구성표가 없습니다</translation>
+    </message>
+    <message>
+      <source>Colour scheme</source>
+      <translation>색 구성표</translation>
+    </message>
+    <message>
+      <source>Plasma theme folder</source>
+      <translation>Plasma 테마 폴더</translation>
+    </message>
+    <message>
+      <source>Choose an SVG inside a Plasma theme with metadata.json</source>
+      <translation>metadata.json이 있는 Plasma 테마 안의 SVG를 선택하세요</translation>
+    </message>
+    <message>
+      <source>Plasma parts</source>
+      <translation>Plasma 부분</translation>
+    </message>
+    <message>
+      <source>Cannot inspect the colour scheme</source>
+      <translation>색 구성표를 확인할 수 없습니다</translation>
+    </message>
+    <message>
+      <source>Not a KDE colour scheme</source>
+      <translation>KDE 색 구성표가 아닙니다</translation>
+    </message>
+    <message>
+      <source>The colour scheme has no name</source>
+      <translation>색 구성표에 이름이 없습니다</translation>
+    </message>
+    <message>
+      <source>Colour scheme: %1. KDE edits a private copy; Save keeps it in this project.</source>
+      <translation>색 구성표: %1. KDE는 전용 사본을 편집하며, 저장하면 이 프로젝트에 보관됩니다.</translation>
+    </message>
+    <message>
+      <source>Close the KDE tool before opening another one.</source>
+      <translation>다른 KDE 도구를 열기 전에 현재 도구를 닫으세요.</translation>
+    </message>
+    <message>
+      <source>Cannot create a private working copy</source>
+      <translation>전용 작업 사본을 만들 수 없습니다</translation>
+    </message>
+    <message>
+      <source>The KDE tool failed: %1</source>
+      <translation>KDE 도구 실패: %1</translation>
+    </message>
+    <message>
+      <source>The KDE tool returned an invalid file name</source>
+      <translation>KDE 도구가 잘못된 파일 이름을 반환했습니다</translation>
+    </message>
+    <message>
+      <source>Cannot start %1: %2</source>
+      <translation>%1 시작 실패: %2</translation>
+    </message>
+    <message>
+      <source>Open a colour scheme first</source>
+      <translation>먼저 색 구성표를 여세요</translation>
+    </message>
+    <message>
+      <source>Open a Plasma theme part first</source>
+      <translation>먼저 Plasma 테마 부분을 여세요</translation>
+    </message>
+    <message>
+      <source>The Plasma theme has no valid identifier</source>
+      <translation>Plasma 테마에 유효한 식별자가 없습니다</translation>
     </message>
   </context>
 </TS>

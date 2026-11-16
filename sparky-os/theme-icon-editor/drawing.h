@@ -10,7 +10,8 @@ class Drawing
 {
     Q_DECLARE_TR_FUNCTIONS(Drawing)
 public:
-    void open(const QString &path);
+    void open(const QString &path, bool square = true);
+    int height(int width) const;
     QStringList groups() const;
     void setPlace(const QString &id, qreal place);
     int disparity(const QString &id, int size) const;

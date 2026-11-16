@@ -20,7 +20,7 @@ static void check(bool ok, const QString &reason)
     if (!ok) throw std::runtime_error(reason.toStdString());
 }
 
-void Drawing::open(const QString &path)
+void Drawing::open(const QString &path, bool square)
 {
     QFile file(path);
     check(file.open(QIODevice::ReadOnly), file.errorString());
@@ -39,7 +39,7 @@ void Drawing::open(const QString &path)
     QSvgRenderer renderer(bytes);
     check(renderer.isValid(), Drawing::tr("SVG renderer rejected the drawing"));
     check(renderer.viewBoxF().width() > 0 && renderer.viewBoxF().height() > 0, Drawing::tr("The SVG has no usable view box"));
-    check(qAbs(renderer.viewBoxF().width() - renderer.viewBoxF().height()) < 0.001,
+    check(!square || qAbs(renderer.viewBoxF().width() - renderer.viewBoxF().height()) < 0.001,
           Drawing::tr("Choose a square, single-view SVG source"));
     QMap<QString, qreal> nextPlaces;
     const auto groups = next.elementsByTagName("g");
@@ -66,6 +66,12 @@ void Drawing::readLimits()
     check(std::isfinite(sunk) && std::isfinite(popped) && sunk >= 0 && popped >= 0, Drawing::tr("Invalid desktop depth limits"));
     sunkLimit = sunk;
     poppedLimit = popped;
+}
+
+int Drawing::height(int width) const
+{
+    QSvgRenderer renderer(original);
+    return qMax(1, qRound(width * renderer.viewBoxF().height() / renderer.viewBoxF().width()));
 }
 
 QStringList Drawing::groups() const { return places.keys(); }
@@ -146,7 +152,7 @@ QByteArray Drawing::viewSvg(int size, bool right, QString only) const
     const QRectF box = sourceRenderer.viewBoxF();
     root.setAttribute("viewBox", QString("%1 %2 %3 %4").arg(box.x(), 0, 'g', 17).arg(box.y(), 0, 'g', 17).arg(box.width(), 0, 'g', 17).arg(box.height(), 0, 'g', 17));
     root.setAttribute("width", size);
-    root.setAttribute("height", size);
+    root.setAttribute("height", height(size));
     return view.toByteArray();
 }
 
@@ -154,7 +160,7 @@ QImage Drawing::eye(int size, bool right, QString only) const
 {
     QSvgRenderer renderer(viewSvg(size, right, only));
     check(renderer.isValid(), Drawing::tr("Cannot render the authored view"));
-    QImage image(size, size, QImage::Format_ARGB32_Premultiplied);
+    QImage image(size, height(size), QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
     QPainter painter(&image);
     renderer.render(&painter);
@@ -171,16 +177,16 @@ QByteArray Drawing::pairSvg(int size) const
     root.setAttribute("xmlns", "http://www.w3.org/2000/svg");
     root.setAttribute("xmlns:svgstereo", "https://github.com/Sparky-OS/svgstereo");
     root.setAttribute("svgstereo:layout", "sideBySideLeftFirst");
-    root.setAttribute("viewBox", QString("0 0 %1 %2").arg(size * 2).arg(size));
+    root.setAttribute("viewBox", QString("0 0 %1 %2").arg(size * 2).arg(height(size)));
     root.setAttribute("width", size * 2);
-    root.setAttribute("height", size);
+    root.setAttribute("height", height(size));
     pair.appendChild(root);
     auto defs = pair.createElement("defs");
     auto clip = pair.createElement("clipPath");
     clip.setAttribute("id", "eye-bound");
     auto clipRect = pair.createElement("rect");
     clipRect.setAttribute("width", size);
-    clipRect.setAttribute("height", size);
+    clipRect.setAttribute("height", height(size));
     clip.appendChild(clipRect);
     defs.appendChild(clip);
     root.appendChild(defs);
@@ -221,7 +227,7 @@ QByteArray Drawing::pairSvg(int size) const
         imported.removeAttribute("height");
         imported.removeAttribute("viewBox");
         imported.setAttribute("transform", QString("scale(%1 %2) translate(%3 %4)")
-            .arg(size / box.width(), 0, 'g', 17).arg(size / box.height(), 0, 'g', 17)
+            .arg(size / box.width(), 0, 'g', 17).arg(height(size) / box.height(), 0, 'g', 17)
             .arg(-box.x(), 0, 'g', 17).arg(-box.y(), 0, 'g', 17));
         auto eye = pair.createElement("g");
         eye.setAttribute("transform", QString("translate(%1 0)").arg(i * size));

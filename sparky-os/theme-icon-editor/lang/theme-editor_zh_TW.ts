@@ -138,6 +138,10 @@
       <translation>重做</translation>
     </message>
     <message>
+      <source>Icons</source>
+      <translation>圖示</translation>
+    </message>
+    <message>
       <source>Enable 3D</source>
       <translation>啟用 3D</translation>
     </message>
@@ -254,6 +258,10 @@
       <translation>要放棄未儲存的變更嗎？</translation>
     </message>
     <message>
+      <source>Close the KDE tool before closing this project.</source>
+      <translation>關閉此專案前請先關閉 KDE 工具。</translation>
+    </message>
+    <message>
       <source>Invalid group or place</source>
       <translation>無效的群組或位置</translation>
     </message>
@@ -316,6 +324,94 @@
     <message>
       <source>Saved project copy: %1</source>
       <translation>已儲存專案副本：%1</translation>
+    </message>
+    <message>
+      <source>The colour scheme is too large</source>
+      <translation>配色方案過大</translation>
+    </message>
+    <message>
+      <source>Open colour scheme…</source>
+      <translation>開啟配色方案…</translation>
+    </message>
+    <message>
+      <source>Edit colours in KDE…</source>
+      <translation>在 KDE 中編輯顏色…</translation>
+    </message>
+    <message>
+      <source>Open Plasma SVG part…</source>
+      <translation>開啟 Plasma SVG 部件…</translation>
+    </message>
+    <message>
+      <source>Explore Plasma theme…</source>
+      <translation>瀏覽 Plasma 主題…</translation>
+    </message>
+    <message>
+      <source>No colour scheme in this project</source>
+      <translation>此專案沒有配色方案</translation>
+    </message>
+    <message>
+      <source>Colour scheme</source>
+      <translation>配色方案</translation>
+    </message>
+    <message>
+      <source>Plasma theme folder</source>
+      <translation>Plasma 主題資料夾</translation>
+    </message>
+    <message>
+      <source>Choose an SVG inside a Plasma theme with metadata.json</source>
+      <translation>請選擇含 metadata.json 的 Plasma 主題內的 SVG</translation>
+    </message>
+    <message>
+      <source>Plasma parts</source>
+      <translation>Plasma 部件</translation>
+    </message>
+    <message>
+      <source>Cannot inspect the colour scheme</source>
+      <translation>無法檢查配色方案</translation>
+    </message>
+    <message>
+      <source>Not a KDE colour scheme</source>
+      <translation>這不是 KDE 配色方案</translation>
+    </message>
+    <message>
+      <source>The colour scheme has no name</source>
+      <translation>配色方案沒有名稱</translation>
+    </message>
+    <message>
+      <source>Colour scheme: %1. KDE edits a private copy; Save keeps it in this project.</source>
+      <translation>配色方案：%1。KDE 編輯私有副本；儲存會將其保留在此專案中。</translation>
+    </message>
+    <message>
+      <source>Close the KDE tool before opening another one.</source>
+      <translation>開啟其他工具前請先關閉目前的 KDE 工具。</translation>
+    </message>
+    <message>
+      <source>Cannot create a private working copy</source>
+      <translation>無法建立私有工作副本</translation>
+    </message>
+    <message>
+      <source>The KDE tool failed: %1</source>
+      <translation>KDE 工具失敗：%1</translation>
+    </message>
+    <message>
+      <source>The KDE tool returned an invalid file name</source>
+      <translation>KDE 工具傳回了無效的檔案名稱</translation>
+    </message>
+    <message>
+      <source>Cannot start %1: %2</source>
+      <translation>無法啟動 %1：%2</translation>
+    </message>
+    <message>
+      <source>Open a colour scheme first</source>
+      <translation>請先開啟配色方案</translation>
+    </message>
+    <message>
+      <source>Open a Plasma theme part first</source>
+      <translation>請先開啟 Plasma 主題部件</translation>
+    </message>
+    <message>
+      <source>The Plasma theme has no valid identifier</source>
+      <translation>Plasma 主題沒有有效的識別碼</translation>
     </message>
   </context>
 </TS>

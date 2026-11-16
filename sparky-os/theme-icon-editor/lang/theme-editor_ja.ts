@@ -138,6 +138,10 @@
       <translation>やり直す</translation>
     </message>
     <message>
+      <source>Icons</source>
+      <translation>アイコン</translation>
+    </message>
+    <message>
       <source>Enable 3D</source>
       <translation>3D を有効にする</translation>
     </message>
@@ -254,6 +258,10 @@
       <translation>未保存の変更を破棄しますか？</translation>
     </message>
     <message>
+      <source>Close the KDE tool before closing this project.</source>
+      <translation>このプロジェクトを閉じる前に KDE ツールを閉じてください。</translation>
+    </message>
+    <message>
       <source>Invalid group or place</source>
       <translation>グループまたは位置が無効です</translation>
     </message>
@@ -316,6 +324,94 @@
     <message>
       <source>Saved project copy: %1</source>
       <translation>プロジェクトのコピーを保存しました: %1</translation>
+    </message>
+    <message>
+      <source>The colour scheme is too large</source>
+      <translation>配色のサイズが大きすぎます</translation>
+    </message>
+    <message>
+      <source>Open colour scheme…</source>
+      <translation>配色を開く…</translation>
+    </message>
+    <message>
+      <source>Edit colours in KDE…</source>
+      <translation>KDE で色を編集…</translation>
+    </message>
+    <message>
+      <source>Open Plasma SVG part…</source>
+      <translation>Plasma の SVG パーツを開く…</translation>
+    </message>
+    <message>
+      <source>Explore Plasma theme…</source>
+      <translation>Plasma テーマを閲覧…</translation>
+    </message>
+    <message>
+      <source>No colour scheme in this project</source>
+      <translation>このプロジェクトに配色はありません</translation>
+    </message>
+    <message>
+      <source>Colour scheme</source>
+      <translation>配色</translation>
+    </message>
+    <message>
+      <source>Plasma theme folder</source>
+      <translation>Plasma テーマのフォルダー</translation>
+    </message>
+    <message>
+      <source>Choose an SVG inside a Plasma theme with metadata.json</source>
+      <translation>metadata.json がある Plasma テーマ内の SVG を選んでください</translation>
+    </message>
+    <message>
+      <source>Plasma parts</source>
+      <translation>Plasma パーツ</translation>
+    </message>
+    <message>
+      <source>Cannot inspect the colour scheme</source>
+      <translation>配色を確認できません</translation>
+    </message>
+    <message>
+      <source>Not a KDE colour scheme</source>
+      <translation>KDE の配色ではありません</translation>
+    </message>
+    <message>
+      <source>The colour scheme has no name</source>
+      <translation>配色に名前がありません</translation>
+    </message>
+    <message>
+      <source>Colour scheme: %1. KDE edits a private copy; Save keeps it in this project.</source>
+      <translation>配色: %1。KDE で専用コピーを編集し、保存するとこのプロジェクトに保持されます。</translation>
+    </message>
+    <message>
+      <source>Close the KDE tool before opening another one.</source>
+      <translation>別の KDE ツールを開く前に、現在のツールを閉じてください。</translation>
+    </message>
+    <message>
+      <source>Cannot create a private working copy</source>
+      <translation>専用の作業コピーを作成できません</translation>
+    </message>
+    <message>
+      <source>The KDE tool failed: %1</source>
+      <translation>KDE ツールが失敗しました: %1</translation>
+    </message>
+    <message>
+      <source>The KDE tool returned an invalid file name</source>
+      <translation>KDE ツールが無効なファイル名を返しました</translation>
+    </message>
+    <message>
+      <source>Cannot start %1: %2</source>
+      <translation>%1 を起動できません: %2</translation>
+    </message>
+    <message>
+      <source>Open a colour scheme first</source>
+      <translation>最初に配色を開いてください</translation>
+    </message>
+    <message>
+      <source>Open a Plasma theme part first</source>
+      <translation>最初に Plasma テーマのパーツを開いてください</translation>
+    </message>
+    <message>
+      <source>The Plasma theme has no valid identifier</source>
+      <translation>Plasma テーマに有効な識別子がありません</translation>
     </message>
   </context>
 </TS>
