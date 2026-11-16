@@ -1,0 +1,33 @@
+#!/usr/bin/make -f
+# Created by Daniel Ramos (Capitain Jack) 2026/11/16
+# Copyright 2026 under the GNU GPL3 License
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export CARGO_HOME = $(CURDIR)/debian/.cargo-home
+export CARGO_TARGET_DIR = $(CURDIR)/target
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+
+# CachyOS's build(): the whole workspace, from the vendored crates, offline
+override_dh_auto_build:
+	cargo build --release --frozen --offline --workspace --jobs $(or $(DEB_BUILD_OPTION_PARALLEL),2)
+
+override_dh_auto_test:
+	target/release/scx_loader --version || target/release/scx_loader --help
+
+# CachyOS's package(): every built executable but xtask, then upstream's own installer for units, D-Bus file, polkit policy and configuration
+override_dh_auto_install:
+	install -d debian/scx-tools/usr/bin
+	find target/release -maxdepth 1 -type f -executable ! -name '*.so' ! -name xtask -exec install -m755 -t debian/scx-tools/usr/bin/ {} +
+	target/release/xtask install --destdir debian/scx-tools
+	test -x debian/scx-tools/usr/bin/scx_loader
+
+# the unit is upstream's, installed and never enabled or started
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start --name=scx_loader
+
+override_dh_dwz:
+override_dh_strip:
+	dh_strip --no-automatic-dbgsym
