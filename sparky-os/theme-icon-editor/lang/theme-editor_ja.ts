@@ -406,6 +406,10 @@
       <translation>最初に配色を開いてください</translation>
     </message>
     <message>
+      <source>The Plasma working copy contains an outside or cyclic link: %1</source>
+      <translation>Plasma の作業コピーにテーマ外へのリンクまたは循環リンクがあります: %1</translation>
+    </message>
+    <message>
       <source>Open a Plasma theme part first</source>
       <translation>最初に Plasma テーマのパーツを開いてください</translation>
     </message>

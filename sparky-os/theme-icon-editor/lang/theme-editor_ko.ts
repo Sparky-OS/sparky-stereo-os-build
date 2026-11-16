@@ -406,6 +406,10 @@
       <translation>먼저 색 구성표를 여세요</translation>
     </message>
     <message>
+      <source>The Plasma working copy contains an outside or cyclic link: %1</source>
+      <translation>Plasma 작업 사본에 테마 외부 또는 순환 링크가 있습니다: %1</translation>
+    </message>
+    <message>
       <source>Open a Plasma theme part first</source>
       <translation>먼저 Plasma 테마 부분을 여세요</translation>
     </message>

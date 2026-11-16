@@ -87,6 +87,35 @@ int main(int argc, char **argv)
         require(reopened.colourBytes == colour && reopened.drawing.places == iconPlaces && reopened.allClean(), "Shared project did not round trip cleanly");
         require(bytes(path) == original && bytes(fixtures + "/Project.colors") == colour, "Input was modified");
         require(!reopened.addPlasmaFile(fixtures + "/Project.colors").isEmpty(), "Invalid Plasma input accepted");
+        QTemporaryDir linked;
+        const auto linkedRoot = linked.path() + "/source";
+        std::filesystem::copy((fixtures + "/plasma").toStdString(), linkedRoot.toStdString(), std::filesystem::copy_options::recursive);
+        saveBytes(linkedRoot + "/palette", "original");
+        std::filesystem::create_symlink("palette", (linkedRoot + "/colors").toStdString());
+        const auto tools = linked.path() + "/tools"; QDir().mkpath(tools);
+        saveBytes(tools + "/plasmathemeexplorer", "#!/bin/sh\nsleep 1\n");
+        QFile::setPermissions(tools + "/plasmathemeexplorer", QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+        const auto savedPath = qgetenv("PATH"); qputenv("PATH", tools.toUtf8() + ":" + savedPath);
+        Editor safe;
+        safe.loadProject(fixtures + "/project"); safe.addPlasma(linkedRoot, linkedRoot + "/widgets/panel-background.svg");
+        safe.explorePlasma();
+        const auto copy = safe.peerWork->path() + "/data/plasma/desktoptheme/sparky-stereo-oxygen";
+        require(!QFileInfo(copy + "/colors").isSymLink(), "Native tool receives a source symlink");
+        saveBytes(copy + "/colors", "changed");
+        require(safe.peer->waitForFinished(5000), "Native-tool bridge did not finish");
+        require(bytes(linkedRoot + "/palette") == "original" && bytes(safe.plasmaRoot + "/colors") == "changed", "Native tool changed the original alias target");
+        saveBytes(linked.path() + "/outside", "private");
+        std::filesystem::create_symlink((linked.path() + "/outside").toStdString(), (linkedRoot + "/outside-link").toStdString());
+        Editor refused; refused.loadProject(fixtures + "/project"); refused.addPlasma(linkedRoot, linkedRoot + "/widgets/panel-background.svg");
+        bool rejected = false;
+        try { refused.explorePlasma(); } catch (const std::exception &e) { rejected = QString::fromUtf8(e.what()).contains("outside or cyclic link"); }
+        require(rejected && bytes(linked.path() + "/outside") == "private", "Outside theme link was followed");
+        QFile::remove(linkedRoot + "/outside-link");
+        std::filesystem::create_directory_symlink(linkedRoot.toStdString(), (linkedRoot + "/cycle").toStdString());
+        rejected = false;
+        try { refused.explorePlasma(); } catch (const std::exception &e) { rejected = QString::fromUtf8(e.what()).contains("outside or cyclic link"); }
+        require(rejected, "Cyclic theme link was followed");
+        qputenv("PATH", savedPath);
         std::cout << "PASS: shared icon/colour/Plasma project; original aspect and pixels; measured disparity=" << minA-minB << "; undo/redo; paired SVG; save/reopen; sources unchanged\n";
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }

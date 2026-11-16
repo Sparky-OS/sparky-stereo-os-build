@@ -406,6 +406,10 @@
       <translation>Öffnen Sie zuerst ein Farbschema</translation>
     </message>
     <message>
+      <source>The Plasma working copy contains an outside or cyclic link: %1</source>
+      <translation>Die Plasma-Arbeitskopie enthält einen externen oder zyklischen Link: %1</translation>
+    </message>
+    <message>
       <source>Open a Plasma theme part first</source>
       <translation>Öffnen Sie zuerst einen Plasma-Designteil</translation>
     </message>

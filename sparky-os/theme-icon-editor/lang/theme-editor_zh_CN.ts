@@ -406,6 +406,10 @@
       <translation>请先打开配色方案</translation>
     </message>
     <message>
+      <source>The Plasma working copy contains an outside or cyclic link: %1</source>
+      <translation>Plasma 工作副本包含指向主题外部或循环的链接：%1</translation>
+    </message>
+    <message>
       <source>Open a Plasma theme part first</source>
       <translation>请先打开 Plasma 主题部件</translation>
     </message>

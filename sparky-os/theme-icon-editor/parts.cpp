@@ -5,6 +5,7 @@
 #include <QFileDialog>
 #include <QCryptographicHash>
 #include <QDirIterator>
+#include <QSet>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -182,6 +183,32 @@ void Editor::editColour()
     startPeer("kcolorschemeeditor", {"ThemeEditorWorkingCopy", "--overwrite"}, true);
 }
 
+static void copyEditableTheme(const QString &source, const QString &destination)
+{
+    const auto root = QFileInfo(source).canonicalFilePath();
+    QSet<QString> ancestors;
+    std::function<void(const QString &, const QString &)> copy = [&](const QString &from, const QString &to) {
+        QFileInfo info(from);
+        const auto resolved = info.canonicalFilePath();
+        if (resolved.isEmpty() || (resolved != root && !resolved.startsWith(root + "/")) || ancestors.contains(resolved))
+            throw std::runtime_error(Editor::tr("The Plasma working copy contains an outside or cyclic link: %1").arg(from).toStdString());
+        if (info.isDir()) {
+            ancestors.insert(resolved);
+            if (!QDir().mkpath(to)) throw std::runtime_error(Editor::tr("Cannot create a private working copy").toStdString());
+            for (const auto &entry : QDir(from).entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System))
+                copy(entry.filePath(), to + "/" + entry.fileName());
+            ancestors.remove(resolved);
+        } else if (info.isFile()) {
+            QFile file(resolved);
+            if (!file.copy(to) || !QFile::setPermissions(to, info.permissions() | QFileDevice::ReadOwner | QFileDevice::WriteOwner))
+                throw std::runtime_error(file.errorString().toStdString());
+        } else {
+            throw std::runtime_error(Editor::tr("Invalid or unsupported theme project").toStdString());
+        }
+    };
+    copy(root, destination);
+}
+
 void Editor::explorePlasma()
 {
     if (!plasmaEditor) throw std::runtime_error(tr("Open a Plasma theme part first").toStdString());
@@ -191,8 +218,7 @@ void Editor::explorePlasma()
     if (id.isEmpty() || QFileInfo(id).fileName() != id || id == "." || id == "..")
         throw std::runtime_error(tr("The Plasma theme has no valid identifier").toStdString());
     QDir().mkpath(path + "/data/plasma/desktoptheme");
-    std::filesystem::copy(plasmaRoot.toStdString(), (path + "/data/plasma/desktoptheme/" + id).toStdString(),
-        std::filesystem::copy_options::recursive | std::filesystem::copy_options::copy_symlinks);
+    copyEditableTheme(plasmaRoot, path + "/data/plasma/desktoptheme/" + id);
     // The explorer receives the ordinary source; paired exports remain separate until Plasma consumes them.
     startPeer("plasmathemeexplorer", {"--theme", id}, false, path + "/data/plasma/desktoptheme/" + id);
 }

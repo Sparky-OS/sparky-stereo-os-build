@@ -33,7 +33,7 @@ static void configureParser(QCommandLineParser &parser)
 
 int main(int argc, char **argv)
 {
-    QCoreApplication::setApplicationVersion("0.1.2");
+    QCoreApplication::setApplicationVersion("0.1.3");
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
         if (arg != "--help" && arg != "-h" && arg != "--version" && arg != "-v") continue;
