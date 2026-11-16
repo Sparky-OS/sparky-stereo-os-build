@@ -1,0 +1,24 @@
+Description: virtio-gpu-rutabaga: clear stereo metadata before scanout disable
+ .
+ Match the simple and virgl disable paths so display callbacks cannot retain the previous stereo layout after resource zero.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/qemu/commit/c84402631a1fcf85c30870cbd3907f938ef3ef81
+Forwarded: no
+Last-Update: 2026-10-27
+Assisted-by: gpt-6-astra via Codex
+---
+ hw/display/virtio-gpu-rutabaga.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hw/display/virtio-gpu-rutabaga.c b/hw/display/virtio-gpu-rutabaga.c
+index 6f7b5c151cc5fefa9de30a1fde58c988b0afd48b..2c1873916c937322cd6c50a5964106e6f073366e 100644
+--- a/hw/display/virtio-gpu-rutabaga.c
++++ b/hw/display/virtio-gpu-rutabaga.c
+@@ -307,6 +307,7 @@ rutabaga_cmd_set_scanout(VirtIOGPU *g, struct virtio_gpu_ctrl_command *cmd)
+     scanout = &vb->scanout[ss.scanout_id];
+ 
+     if (ss.resource_id == 0) {
++        qemu_console_set_stereo(scanout->con, NULL);
+         qemu_console_set_surface(scanout->con, NULL);
+         qemu_console_gl_scanout_disable(scanout->con);
+         return;

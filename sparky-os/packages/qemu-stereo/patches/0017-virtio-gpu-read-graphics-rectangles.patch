@@ -1,0 +1,182 @@
+Description: virtio-gpu: read the graphics rectangles of the stereo scanout command
+ .
+ VIRTIO_GPU_CMD_SET_SCANOUT_STEREO gives the host a rectangle for each
+ picture of the frame. For L + depth (HDMI 1.4a, Appendix H, Figure H-5)
+ @left is the picture and @right its depth; for L + depth + graphics +
+ graphics-depth (Figure H-6) the guest also sends @graphics and
+ @graphics_depth. The guest kernel sends all four since the edition
+ kernel's group 34/0013, and QEMU read only the first two.
+ .
+ Read the whole command (104 bytes) into QemuStereo, still accepting the
+ 88 bytes of a guest that knows only the two eyes. The second layout
+ without its graphics rectangles is refused with a guest error: it has
+ not said where its pictures are. The trace event prints the new
+ rectangles.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/qemu/commit/da2463e982b9546e489358c46260badb5e219301
+Forwarded: no
+Last-Update: 2026-11-09
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ hw/display/trace-events                     |  2 +-
+ hw/display/virtio-gpu.c                     | 50 +++++++++++++++++++--
+ include/standard-headers/linux/virtio_gpu.h | 14 +++++-
+ include/ui/console.h                        |  6 +++
+ 4 files changed, 66 insertions(+), 6 deletions(-)
+
+diff --git a/hw/display/trace-events b/hw/display/trace-events
+index 8f4537bd8c935cf429798b44f2b93f41df76a478..3291118fe364938c00114b5104065039121a6f8e 100644
+--- a/hw/display/trace-events
++++ b/hw/display/trace-events
+@@ -35,7 +35,7 @@ virtio_gpu_cmd_get_display_info(void) ""
+ virtio_gpu_cmd_get_edid(uint32_t scanout) "scanout %d"
+ virtio_gpu_cmd_set_scanout(uint32_t id, uint32_t res, uint32_t w, uint32_t h, uint32_t x, uint32_t y) "id %d, res 0x%x, w %d, h %d, x %d, y %d"
+ virtio_gpu_cmd_set_scanout_blob(uint32_t id, uint32_t res, uint32_t w, uint32_t h, uint32_t x, uint32_t y) "id %d, res 0x%x, w %d, h %d, x %d, y %d"
+-virtio_gpu_cmd_set_scanout_stereo(uint32_t id, uint32_t layout, uint32_t w, uint32_t h, uint32_t rx, uint32_t ry) "id %d, layout %d, view %dx%d, right view at %d,%d"
++virtio_gpu_cmd_set_scanout_stereo(uint32_t id, uint32_t layout, uint32_t w, uint32_t h, uint32_t rx, uint32_t ry, uint32_t gx, uint32_t gy, uint32_t gdx, uint32_t gdy) "id %d, layout %d, view %dx%d, right view at %d,%d, graphics at %d,%d, graphics depth at %d,%d"
+ virtio_gpu_cmd_res_create_2d(uint32_t res, uint32_t fmt, uint32_t w, uint32_t h) "res 0x%x, fmt 0x%x, w %d, h %d"
+ virtio_gpu_cmd_res_create_3d(uint32_t res, uint32_t fmt, uint32_t w, uint32_t h, uint32_t d) "res 0x%x, fmt 0x%x, w %d, h %d, d %d"
+ virtio_gpu_cmd_res_create_blob(uint32_t res, uint64_t size) "res 0x%x, size %" PRId64
+diff --git a/hw/display/virtio-gpu.c b/hw/display/virtio-gpu.c
+index cfabd8bc3d3669c80594c9ea199d35b3c795026d..0d09ef35d561a1f6029d46900fa8c5b8b431e2ed 100644
+--- a/hw/display/virtio-gpu.c
++++ b/hw/display/virtio-gpu.c
+@@ -238,14 +238,31 @@ void virtio_gpu_get_edid(VirtIOGPU *g,
+ void virtio_gpu_set_scanout_stereo(VirtIOGPU *g,
+                                    struct virtio_gpu_ctrl_command *cmd)
+ {
+-    struct virtio_gpu_set_scanout_stereo ss;
++    struct virtio_gpu_set_scanout_stereo ss = { 0 };
+     QemuStereo stereo;
++    size_t size;
+ 
+-    VIRTIO_GPU_FILL_CMD(ss);
++    /*
++     * A guest that knows only the two eyes sends the command up to them; a
++     * guest that tells where the graphics pictures of L + depth + graphics +
++     * graphics-depth are sends the whole command.
++     */
++    size = iov_to_buf(cmd->elem.out_sg, cmd->elem.out_num, 0, &ss, sizeof(ss));
++    if (size != sizeof(ss) &&
++        size != VIRTIO_GPU_SET_SCANOUT_STEREO_EYES_SIZE) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "%s: command size incorrect %zu vs %zu\n",
++                      __func__, size, sizeof(ss));
++        cmd->error = VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER;
++        return;
++    }
+     virtio_gpu_bswap_32(&ss, sizeof(ss));
+     trace_virtio_gpu_cmd_set_scanout_stereo(ss.scanout_id, ss.layout,
+                                             ss.view_width, ss.view_height,
+-                                            ss.right.x, ss.right.y);
++                                            ss.right.x, ss.right.y,
++                                            ss.graphics.x, ss.graphics.y,
++                                            ss.graphics_depth.x,
++                                            ss.graphics_depth.y);
+ 
+     if (!virtio_gpu_stereo_enabled(g->parent_obj.conf)) {
+         cmd->error = VIRTIO_GPU_RESP_ERR_UNSPEC;
+@@ -262,12 +279,32 @@ void virtio_gpu_set_scanout_stereo(VirtIOGPU *g,
+         ss.left.x > INT16_MAX || ss.left.y > INT16_MAX ||
+         ss.left.width > UINT16_MAX || ss.left.height > UINT16_MAX ||
+         ss.right.x > INT16_MAX || ss.right.y > INT16_MAX ||
+-        ss.right.width > UINT16_MAX || ss.right.height > UINT16_MAX) {
++        ss.right.width > UINT16_MAX || ss.right.height > UINT16_MAX ||
++        ss.graphics.x > INT16_MAX || ss.graphics.y > INT16_MAX ||
++        ss.graphics.width > UINT16_MAX || ss.graphics.height > UINT16_MAX ||
++        ss.graphics_depth.x > INT16_MAX || ss.graphics_depth.y > INT16_MAX ||
++        ss.graphics_depth.width > UINT16_MAX ||
++        ss.graphics_depth.height > UINT16_MAX) {
+         qemu_log_mask(LOG_GUEST_ERROR, "%s: illegal stereo layout %d",
+                       __func__, ss.layout);
+         cmd->error = VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER;
+         return;
+     }
++    /*
++     * HDMI 1.4a, Appendix H, Figure H-6: the second layout has four pictures,
++     * so a guest that sends only the two eyes (or empty rectangles) for it
++     * has not told where the graphics are.
++     */
++    if (ss.layout == VIRTIO_GPU_STEREO_L_DEPTH_GFX_GFX_DEPTH &&
++        (!ss.graphics.width || !ss.graphics.height ||
++         !ss.graphics_depth.width || !ss.graphics_depth.height)) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "%s: L + depth + graphics + graphics-depth without the"
++                      " rectangles of the graphics and their depth",
++                      __func__);
++        cmd->error = VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER;
++        return;
++    }
+ 
+     stereo = (QemuStereo) {
+         .layout = ss.layout,
+@@ -278,6 +315,11 @@ void virtio_gpu_set_scanout_stereo(VirtIOGPU *g,
+                    ss.left.width, ss.left.height);
+     qemu_rect_init(&stereo.right, ss.right.x, ss.right.y,
+                    ss.right.width, ss.right.height);
++    qemu_rect_init(&stereo.graphics, ss.graphics.x, ss.graphics.y,
++                   ss.graphics.width, ss.graphics.height);
++    qemu_rect_init(&stereo.graphics_depth, ss.graphics_depth.x,
++                   ss.graphics_depth.y, ss.graphics_depth.width,
++                   ss.graphics_depth.height);
+     qemu_console_set_stereo(g->parent_obj.scanout[ss.scanout_id].con, &stereo);
+ }
+ 
+diff --git a/include/standard-headers/linux/virtio_gpu.h b/include/standard-headers/linux/virtio_gpu.h
+index 3ab00fcc2bbd92c395f3fa96c66a6a44811d135c..84b411b9494059b299105ee072aa3280752c4d69 100644
+--- a/include/standard-headers/linux/virtio_gpu.h
++++ b/include/standard-headers/linux/virtio_gpu.h
+@@ -460,7 +460,13 @@ struct virtio_gpu_set_scanout_blob {
+ 
+ /*
+  * VIRTIO_GPU_CMD_SET_SCANOUT_STEREO: the layout of the following scanouts,
+- * with each view's place in the scanout rectangle and the size it is shown at.
++ * with each picture's place in the scanout rectangle and the size it is
++ * shown at.  @left and @right are the eyes; for L + depth and L + depth +
++ * graphics + graphics-depth they are the 2D picture and its depth, and
++ * @graphics and @graphics_depth the other two pictures of the second (HDMI
++ * 1.4a, Appendix H, Figures H-5 and H-6).  Pictures that are not rectangles
++ * of the frame are all zero.  A guest that knows only @left and @right sends
++ * the command up to them (VIRTIO_GPU_SET_SCANOUT_STEREO_EYES_SIZE bytes).
+  */
+ struct virtio_gpu_set_scanout_stereo {
+ 	struct virtio_gpu_ctrl_hdr hdr;
+@@ -470,8 +476,14 @@ struct virtio_gpu_set_scanout_stereo {
+ 	uint32_t view_height;
+ 	struct virtio_gpu_rect left;
+ 	struct virtio_gpu_rect right;
++	struct virtio_gpu_rect graphics;
++	struct virtio_gpu_rect graphics_depth;
+ };
+ 
++/* The command of a guest that sends only the two eyes. */
++#define VIRTIO_GPU_SET_SCANOUT_STEREO_EYES_SIZE \
++	offsetof(struct virtio_gpu_set_scanout_stereo, graphics)
++
+ /* VIRTIO_GPU_CMD_RESOURCE_MAP_BLOB */
+ struct virtio_gpu_resource_map_blob {
+ 	struct virtio_gpu_ctrl_hdr hdr;
+diff --git a/include/ui/console.h b/include/ui/console.h
+index 692fe9598344b1d527e5f4187c9d830c6e939f16..91141fcf561a19ad5aeaca3f367c44411050a83a 100644
+--- a/include/ui/console.h
++++ b/include/ui/console.h
+@@ -124,6 +124,10 @@ typedef struct QemuUIInfo {
+  * (the HDMI 1.4b 3D structures, 0 for 2D). Zero rectangles do not mean 2D:
+  * line alternative has a width by 2 * height raster with left samples on
+  * even rows and right samples on odd rows (row zero first).
++ * For the layouts of a picture with its depth (L + depth, and L + depth +
++ * graphics + graphics-depth; HDMI 1.4a, Appendix H, Figures H-5 and H-6)
++ * @left is the 2D picture and @right its depth; the second layout also has
++ * the graphics picture and its depth in @graphics and @graphics_depth.
+  */
+ typedef struct QemuStereo {
+     uint32_t layout;
+@@ -131,6 +135,8 @@ typedef struct QemuStereo {
+     uint32_t height;
+     QemuRect left;
+     QemuRect right;
++    QemuRect graphics;
++    QemuRect graphics_depth;
+ } QemuStereo;
+ 
+ /* cursor data format is 32bit RGBA */

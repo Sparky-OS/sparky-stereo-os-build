@@ -1,0 +1,108 @@
+Description: ui/gtk: select native line views for CPU and GL presentation
+ .
+ Retain bounded line metadata and select its left rows in the mono
+ fallback. The declared surface still receives native samples. GL helper
+ orientation is tested with captured calls, not a driver.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/qemu/commit/ab6149389e93b560f320c6ef2348028c6b3febc5
+Forwarded: no
+Last-Update: 2026-10-27
+Assisted-by: gpt-6-astra via Codex
+---
+ ui/gtk-gl-area.c | 19 ++++++++++++++++---
+ ui/gtk.c         | 40 ++++++++++++++++++++++++++++++++--------
+ 2 files changed, 48 insertions(+), 11 deletions(-)
+
+diff --git a/ui/gtk-gl-area.c b/ui/gtk-gl-area.c
+index dbf6a876546df93218a83e021a073b17e6a6e7eb..280a6cb15d650ce77e7727bd34a25dbddf109db5 100644
+--- a/ui/gtk-gl-area.c
++++ b/ui/gtk-gl-area.c
+@@ -57,9 +57,22 @@ static void gd_gl_area_draw_stereo(VirtualConsole *vc, int gs,
+         sy0 = left->y + left->height;
+         sy1 = left->y;
+     }
+-    glBlitFramebuffer(left->x, sy0, left->x + left->width, sy1,
+-                      x * gs, y * gs, (x + w) * gs, (y + h) * gs,
+-                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
++    if (vc->gfx.stereo.layout == 3) {
++        int rows = vc->gfx.stereo.height;
++        for (int row = 0; row < rows; row++) {
++            int src0 = vc->gfx.y0_top ? vc->gfx.h - 2 * row - 1 : 2 * row + 1;
++            int src1 = vc->gfx.y0_top ? src0 + 1 : src0 - 1;
++            int dst0 = y * gs + (int)((int64_t)h * gs * (rows - row - 1) / rows);
++            int dst1 = y * gs + (int)((int64_t)h * gs * (rows - row) / rows);
++            glBlitFramebuffer(0, src0, vc->gfx.stereo.width, src1,
++                              x * gs, dst0, (x + w) * gs, dst1,
++                              GL_COLOR_BUFFER_BIT, GL_NEAREST);
++        }
++    } else {
++        glBlitFramebuffer(left->x, sy0, left->x + left->width, sy1,
++                          x * gs, y * gs, (x + w) * gs, (y + h) * gs,
++                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
++    }
+ 
+     data = g_malloc((size_t)stride * vc->gfx.h);
+     glPixelStorei(GL_PACK_ALIGNMENT, 4);
+diff --git a/ui/gtk.c b/ui/gtk.c
+index 78113d0b7daf1966b810d38f7dd11c640a92ebb7..5bb557e7f4bf9e8a0f2028bfba08438c9d6b4765 100644
+--- a/ui/gtk.c
++++ b/ui/gtk.c
+@@ -291,9 +291,18 @@ void gd_update_stereo(VirtualConsole *vc, int w, int h)
+ {
+     const QemuStereo *stereo = qemu_console_get_stereo(vc->gfx.dcl.con);
+ 
+-    if (stereo && stereo->width && stereo->height &&
++    bool lines = stereo && stereo->layout == 3 &&
++                 stereo->width && stereo->height && w > 0 && h > 0 &&
++                 stereo->width <= (unsigned)w &&
++                 stereo->height <= (unsigned)h / 2 &&
++                 !stereo->left.x && !stereo->left.y &&
++                 !stereo->left.width && !stereo->left.height &&
++                 !stereo->right.x && !stereo->right.y &&
++                 !stereo->right.width && !stereo->right.height;
++
++    if (lines || (stereo && stereo->width && stereo->height &&
+         gd_stereo_view_valid(&stereo->left, w, h) &&
+-        gd_stereo_view_valid(&stereo->right, w, h)) {
++        gd_stereo_view_valid(&stereo->right, w, h))) {
+         vc->gfx.stereo = *stereo;
+     } else {
+         vc->gfx.stereo = (QemuStereo) { 0 };
+@@ -1056,16 +1065,31 @@ static gboolean gd_draw_event(GtkWidget *widget, cairo_t *cr, void *opaque)
+     if (vc->gfx.stereo.layout) {
+         const QemuRect *left = &vc->gfx.stereo.left;
+         cairo_surface_t *view;
++        int sample_width = left->width, sample_height = left->height;
+ 
+-        /* the left view alone, so scaling never reaches into the right one */
+-        view = cairo_surface_create_for_rectangle(vc->gfx.surface,
+-                                                  left->x, left->y,
+-                                                  left->width, left->height);
++        /* A strided view skips right rows without interpolating either eye. */
++        if (vc->gfx.stereo.layout == 3) {
++            int stride = cairo_image_surface_get_stride(vc->gfx.surface);
++            if (stride <= 0 || stride > INT_MAX / 2) {
++                return TRUE;
++            }
++            sample_width = vc->gfx.stereo.width;
++            sample_height = vc->gfx.stereo.height;
++            cairo_surface_flush(vc->gfx.surface);
++            view = cairo_image_surface_create_for_data(
++                cairo_image_surface_get_data(vc->gfx.surface),
++                cairo_image_surface_get_format(vc->gfx.surface),
++                sample_width, sample_height, stride * 2);
++        } else {
++            view = cairo_surface_create_for_rectangle(vc->gfx.surface,
++                                                      left->x, left->y,
++                                                      left->width, left->height);
++        }
+         cairo_rectangle(cr, wx_offset, wy_offset, ww_surface, wh_surface);
+         cairo_clip(cr);
+         cairo_translate(cr, wx_offset, wy_offset);
+-        cairo_scale(cr, vc->gfx.scale_x * fbw / left->width,
+-                    vc->gfx.scale_y * fbh / left->height);
++        cairo_scale(cr, vc->gfx.scale_x * fbw / sample_width,
++                    vc->gfx.scale_y * fbh / sample_height);
+         cairo_set_source_surface(cr, view, 0, 0);
+         cairo_pattern_set_extend(cairo_get_source(cr), CAIRO_EXTEND_PAD);
+         cairo_paint(cr);

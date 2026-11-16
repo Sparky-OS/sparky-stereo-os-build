@@ -1,0 +1,26 @@
+qemu (1:11.1.2+ds-3+stereo3d8) unstable; urgency=medium
+
+  * A guest in an HDMI 3D "L + depth" or "L + depth + graphics +
+    graphics-depth" mode (HDMI 1.4a Appendix H, 3D_Structure_X 0100 and
+    0101) is shown as two views. virtio-gpu reads the graphics and graphics
+    depth rectangles of the stereo scanout command (104 bytes; a guest that
+    sends 88 still works, a second layout without its graphics rectangles is
+    refused with a guest error) (0017); the EDID declares both structures
+    at 1080p60 (0018); the GTK display on Wayland draws the second view from
+    the picture and its depth through libstereo-dibr and hands the
+    compositor full side by side, declared once, each view at the picture's
+    size (0019, 0020). Before, the EDID listed neither structure, and the
+    viewer took the second picture of such a scanout for the right eye.
+  * A stereo declaration the compositor refuses is said once and the stereo
+    surface is hidden, instead of a flat, squeezed pair (0021).
+  * The five Sparky-OS/qemu commits the depth work stands on are carried
+    with it, so the stereo files equal the fork's order156-depth branch:
+    line-alternative scanouts keep their metadata and their native line
+    samples are copied (0012 to 0014), a rutabaga scanout disable clears
+    the stereo metadata (0015), and the GL readback allocation is bounded
+    (0016).
+  * Build-Depends on libstereo-dibr-dev (>= 1.17.1) [amd64] in the control
+    file and its template; the runtime dependency on libstereo-dibr1 comes
+    from the library's shlibs file.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 16 Nov 2026 12:00:00 +0000

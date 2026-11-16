@@ -19,7 +19,11 @@ Four checks, none installs anything and none needs a display:
            private library directories inside the qualified root. Every "not found" and every
            "undefined symbol" must already exist in the previous build's result; a package
            without a previous build must have no missing library and no undefined symbol in
-           an executable (a library alone reports what its program supplies). An ELF file of
+           an executable (a library alone reports what its program supplies). A plugin outside the
+           system library directories whose previous build already left symbols to its program may
+           leave it new ones when every executable of this build that supplies the old ones (with the
+           build's shared objects in the plugin's directory) supplies the new ones too (a note; QEMU's
+           ui-gtk.so with qemu-system-x86_64 and ui-opengl.so, ORDER 156b). An ELF file of
            another machine is guest data only where Debian keeps it (GUEST_DATA); it is noted.
   smoke    start the programs named in a smoke table with LD_BIND_NOW=1 (every symbol is bound
            at load, which is exactly what failed for torcs) and no display; a dynamic-loader
@@ -169,6 +173,56 @@ def extract(deb, dest, check_space=None):
 
 def control_field(deb, field):
     return subprocess.run(['dpkg-deb', '-f', str(deb), field], capture_output=True, text=True, check=True).stdout.strip()
+
+
+def system_library_dir(rel_dir):
+    """A directory the dynamic loader searches by itself (/lib, /usr/lib and the multiarch ones): an object there is a
+    library any program may link, never a plugin of one program."""
+    return rel_dir in ('/usr/lib', '/lib', '/usr/lib64', '/lib64') or rel_dir.endswith('-linux-gnu')
+
+
+def program_exports(debs, directory, check_space=None):
+    """({(package file, program path): its defined dynamic symbols}, {private directory: the defined dynamic symbols
+    of the shared objects there}) for the packages. A plugin in a private directory takes the symbols it leaves
+    undefined from the program that loads it and from the plugins loaded before it: QEMU's ui-gtk.so from
+    qemu-system-x86_64 (linked with --export-dynamic) and from ui-opengl.so of the same directory, which QEMU's
+    module loader opens first; the loader trace of the plugin alone cannot see either."""
+    programs, plugins = {}, {}
+    for deb in debs:
+        with tempfile.TemporaryDirectory(prefix='programs-', dir=directory) as root:
+            extract(deb, root, check_space)
+            for path in elf_files(root):
+                rel = '/' + str(path.relative_to(root))
+                library = re.search(r'\.so(\.|$)', path.name)
+                if library and system_library_dir(str(Path(rel).parent)):
+                    continue
+                out = probe(['nm', '-D', '--defined-only', str(path)], 'exported symbols', path, 60)
+                symbols = {line.split()[-1] for line in out.splitlines() if len(line.split()) >= 3}
+                if not symbols:
+                    continue
+                if library:
+                    plugins.setdefault(str(Path(rel).parent), set()).update(symbols)
+                else:
+                    programs[(Path(deb).name, rel)] = symbols
+    return programs, plugins
+
+
+def supplied_by_programs(name, items, before, programs, plugins):
+    """The programs of this build that supply the plugin `name` its new undefined `items`, or [] (ORDER 156b).
+    Only a shared object outside the system library directories, whose previous build already left symbols to its
+    program, counts as a plugin. What a program supplies it is its own exports and those of this build's shared
+    objects in the plugin's directory; its programs are the executables that, so counted, supply every symbol the
+    previous build left undefined, and each of them must supply every new one too. Anything else stays a finding."""
+    if not re.search(r'\.so(\.|$)', Path(name).name) or system_library_dir(str(Path(name).parent)):
+        return []
+    earlier = {item for (rel, kind, item) in before if rel == name and kind == 'undefined'}
+    if not earlier:
+        return []
+    neighbours = plugins.get(str(Path(name).parent), set())
+    hosts = sorted(key for key, symbols in programs.items() if earlier <= symbols | neighbours)
+    if hosts and all(set(items) <= programs[key] | neighbours for key in hosts):
+        return hosts
+    return []
 
 
 def private_dirs(root):
@@ -434,9 +488,23 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
             for key in sorted(now):
                 if key not in before:
                     grouped.setdefault((key[0], key[1]), []).append(key[2])
+            programs = plugins = None
             for (name, kind), items in sorted(grouped.items()):
                 shown = ', '.join(items[:3]) + (f' and {len(items) - 3} more' if len(items) > 3 else '')
-                findings.append(f'{name}: {len(items)} new {kind}: {shown} (the previous build resolved them)')
+                hosts = []
+                if kind == 'undefined':
+                    if programs is None and any(k == 'undefined' and rel == name for (rel, k, _) in before):
+                        programs, plugins = program_exports(dict.fromkeys([Path(new_deb)] + [Path(d) for d in siblings]),
+                                                            qualified.directory, qualified.owner.ensure_space)
+                    hosts = supplied_by_programs(name, items, before, programs or {}, plugins or {})
+                if hosts:
+                    named = ', '.join(f'{program} ({deb})' for deb, program in hosts[:2]) + \
+                        (f' and {len(hosts) - 2} more' if len(hosts) > 2 else '')
+                    notes.append(f'{name}: {len(items)} new symbols left to the programs that load it, each of which '
+                                 f'supplies them, with the shared objects of its directory, as it supplies every symbol '
+                                 f'the previous build left to them: {shown}; {named}')
+                else:
+                    findings.append(f'{name}: {len(items)} new {kind}: {shown} (the previous build resolved them)')
             # A stereo feature that an optional build dependency switched off compiles and links
             # cleanly (analitza 4:26.04.0-1+stereo3d2+lc1 lost stereo_declare_wayland this way).
             retired = retired_stereo_imports(new_deb)

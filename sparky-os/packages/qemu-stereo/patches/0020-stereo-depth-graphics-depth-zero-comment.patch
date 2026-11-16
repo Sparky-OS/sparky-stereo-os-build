@@ -1,0 +1,26 @@
+Description: ui/stereo-depth: say that a graphics depth of 0 meaning no graphics is our choice
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/qemu/commit/9d5a049ff5ac11208e281ff61fddd051ffda7a0f
+Forwarded: no
+Last-Update: 2026-11-09
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ ui/stereo-depth.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/ui/stereo-depth.c b/ui/stereo-depth.c
+index 4264732bf85e45d997f129f5759c3df01adb3dac..642d009008ce8358c747a2b5e6031e0232a13f5c 100644
+--- a/ui/stereo-depth.c
++++ b/ui/stereo-depth.c
+@@ -255,8 +255,9 @@ bool qemu_stereo_depth_render(pixman_image_t *frame, const QemuStereo *stereo,
+         layer_gray = depth_gray(frame, &stereo->graphics_depth);
+         /*
+          * A graphics depth of 0 holds no graphics: the picture shows there.
+-         * Appendix H gives the graphics no other transparency, so this is
+-         * our reading (unverified, HDMI 1.4a Appendix H being a draft).
++         * This is an implementation choice, not a clause: Appendix H (a draft)
++         * gives the graphics no transparency of their own, and a graphics layer
++         * that is opaque everywhere would hide the picture altogether.
+          */
+         layer_table = g_memdup2(table, sizeof(float) << DEPTH_BITS);
+         layer_table[0] = NAN;

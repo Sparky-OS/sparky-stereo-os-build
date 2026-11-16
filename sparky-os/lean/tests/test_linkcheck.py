@@ -461,3 +461,72 @@ def test_a_file_the_new_build_no_longer_ships_is_said_so_not_found(tmp_path):
     assert any('/usr/bin/libplug.so: the previous build could not find libdemoown.so; this build no longer ships the file'
                in n for n in notes), notes
     assert not any('this build finds it' in n for n in notes), notes
+
+
+def _plugin_case(tmp_path):
+    """QEMU's shape (ORDER 156b): ui-gtk.so, a module in a private directory, calls QEMU functions that the
+    qemu-system program loading it exports (--export-dynamic) and functions of ui-opengl.so, a module of another
+    package in the same directory that QEMU loads first; the new build calls one more function of the program."""
+    from lean.tests.archive_fixtures import signed_archive, deb
+    (tmp_path / 'host.c').write_text('int host_old(void) { return 1; }\nint host_new(void) { return 2; }\n'
+                                     'int main(void) { return 0; }\n')
+    (tmp_path / 'host-old.c').write_text('int host_old(void) { return 1; }\nint main(void) { return 0; }\n')
+    (tmp_path / 'gl.c').write_text('int gl_old(void) { return 3; }\n')
+    (tmp_path / 'ui1.c').write_text('int host_old(void);\nint gl_old(void);\nint ui(void) { return host_old() + gl_old(); }\n')
+    (tmp_path / 'ui2.c').write_text('int host_old(void);\nint host_new(void);\nint gl_old(void);\n'
+                                    'int ui(void) { return host_old() + host_new() + gl_old(); }\n')
+    for out, src, flags in (('host', 'host.c', ['-rdynamic']), ('host-old', 'host-old.c', ['-rdynamic']),
+                            ('ui1.so', 'ui1.c', ['-shared', '-fPIC']), ('ui2.so', 'ui2.c', ['-shared', '-fPIC']),
+                            ('gl.so', 'gl.c', ['-shared', '-fPIC'])):
+        subprocess.run(['gcc'] + flags + ['-o', str(tmp_path / out), str(tmp_path / src)], check=True)
+    context = archive.Archive(signed_archive(tmp_path / 'archive'), tmp_path / 'scratch', 'amd64')
+
+    def gui(version, module, where='usr/lib/x86_64-linux-gnu/demo/ui-gtk.so'):
+        return deb(tmp_path / f'gui-{version}-{where.count("/")}', 'demo-gui', version, depends='libc6',
+                   files={where: tmp_path / module})
+
+    def host(version, program='host'):
+        return deb(tmp_path / f'host-{version}-{program}', 'demo-system', version, depends='libc6',
+                   files={'usr/bin/demo-system': tmp_path / program})
+
+    def gl(version):
+        return deb(tmp_path / f'gl-{version}', 'demo-modules-gl', version, depends='libc6',
+                   files={'usr/lib/x86_64-linux-gnu/demo/ui-opengl.so': tmp_path / 'gl.so'})
+    return context, gui, host, gl
+
+
+def test_a_plugin_new_import_its_program_exports_is_a_note(tmp_path):
+    context, gui, host, gl = _plugin_case(tmp_path)
+    notes = linkcheck.check(gui('1+lc1', 'ui2.so'), previous_deb=gui('1', 'ui1.so'), archive_context=context,
+                            siblings=[host('1+lc1'), gl('1+lc1')], previous_siblings=[gl('1')])
+    assert any('/usr/lib/x86_64-linux-gnu/demo/ui-gtk.so: 1 new symbols left to the programs that load it' in n
+               and 'host_new' in n and '/usr/bin/demo-system' in n for n in notes), notes
+
+
+def test_a_plugin_new_import_without_its_program_still_blocks(tmp_path):
+    context, gui, host, gl = _plugin_case(tmp_path)
+    with pytest.raises(package.Invalid, match='1 new undefined: host_new'):
+        linkcheck.check(gui('1+lc1', 'ui2.so'), previous_deb=gui('1', 'ui1.so'), archive_context=context)
+
+
+def test_a_plugin_new_import_its_program_does_not_export_still_blocks(tmp_path):
+    context, gui, host, gl = _plugin_case(tmp_path)
+    with pytest.raises(package.Invalid, match='1 new undefined: host_new'):
+        linkcheck.check(gui('1+lc1', 'ui2.so'), previous_deb=gui('1', 'ui1.so'), archive_context=context,
+                        siblings=[host('1+lc1', 'host-old'), gl('1+lc1')], previous_siblings=[gl('1')])
+
+
+def test_a_plugin_whose_old_imports_no_program_supplies_still_blocks(tmp_path):
+    """Without the sibling module the program does not supply the plugin's earlier imports: it is not their host."""
+    context, gui, host, gl = _plugin_case(tmp_path)
+    with pytest.raises(package.Invalid, match='1 new undefined: host_new'):
+        linkcheck.check(gui('1+lc1', 'ui2.so'), previous_deb=gui('1', 'ui1.so'), archive_context=context,
+                        siblings=[host('1+lc1')])
+
+
+def test_a_system_library_new_import_still_blocks_with_a_program(tmp_path):
+    context, gui, host, gl = _plugin_case(tmp_path)
+    where = 'usr/lib/x86_64-linux-gnu/libdemoui.so'
+    with pytest.raises(package.Invalid, match='1 new undefined: host_new'):
+        linkcheck.check(gui('1+lc1', 'ui2.so', where), previous_deb=gui('1', 'ui1.so', where), archive_context=context,
+                        siblings=[host('1+lc1'), gl('1+lc1')], previous_siblings=[gl('1')])
