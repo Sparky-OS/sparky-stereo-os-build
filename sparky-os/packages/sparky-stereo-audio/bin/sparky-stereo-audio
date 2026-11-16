@@ -235,7 +235,7 @@ def cpu_key():
     return '%s x%d' % (model or 'unknown processor', cores)
 
 
-def run_cost(quality, src=192000, dst=48000, seconds=10, wav=None):
+def run_cost(quality, src=192000, dst=48000, seconds=5, wav=None):
     """CPU seconds the PipeWire resampler takes for `seconds` of stereo float audio, best of three runs."""
     best = None
     for _ in range(3):
@@ -250,15 +250,17 @@ def run_cost(quality, src=192000, dst=48000, seconds=10, wav=None):
     return best
 
 
-def make_noise_wav(path, rate=192000, seconds=10):
-    """A stereo 32-bit float WAV of deterministic noise: the heaviest ordinary conversion's input."""
+def make_noise_wav(path, rate=192000, seconds=5):
+    """A stereo 32-bit float WAV of noise (a pseudo-random pattern repeated): the heaviest ordinary conversion's input."""
     import struct
-    n = rate * seconds
     x = 123456789
-    data = bytearray()
-    for _ in range(n * 2):
+    pat = []
+    for _ in range(16384):
         x = (x * 1664525 + 1013904223) & 0xFFFFFFFF
-        data += struct.pack('<f', ((x >> 8) / 8388608.0 - 1.0) * 0.5)
+        pat.append(((x >> 8) / 8388608.0 - 1.0) * 0.5)
+    block = struct.pack('<16384f', *pat)
+    size = rate * seconds * 8
+    data = (block * (size // len(block) + 1))[:size]
     hdr = b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt ' + struct.pack('<IHHIIHH', 16, 3, 2, rate, rate * 8, 8, 32)
     hdr += b'data' + struct.pack('<I', len(data))
     with open(path, 'wb') as f:
@@ -290,7 +292,7 @@ def choose_quality(measure=True):
             wav = d + '/noise.wav'
             make_noise_wav(wav)
             for q in QUALITIES:
-                cost[q] = round(100.0 * run_cost(q, wav=wav) / 10.0, 2)
+                cost[q] = round(100.0 * run_cost(q, wav=wav) / 5.0, 2)
                 if cost[q] <= CPU_LIMIT:
                     break
         finally:
