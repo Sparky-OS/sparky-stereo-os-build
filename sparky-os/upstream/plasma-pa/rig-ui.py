@@ -68,7 +68,7 @@ def pulse_check():
             row = next(x for x in data if x['properties'].get('media.name')==name)
             assert row[field] == expected, (name,row[field],expected)
 
-subprocess.run(['xdotool','search','--class','kcmshell6','windowsize','1560','1700','windowmove','0','0','windowfocus'], check=False)
+subprocess.run(['xdotool','search','--class','kcmshell6','windowsize','1560',os.environ.get('PA19_WINDOW_HEIGHT','1700'),'windowmove','0','0','windowfocus'], check=False)
 time.sleep(2)
 snapshot('off')
 off = (result/'off.txt').read_text()

@@ -86,6 +86,14 @@ try:
     assert not snapshot()['combined']['enabled'] and not snapshot()['listen']
     click(T('Listening output')); keys(['Home','Down','Return'])
     click(T('Listen to this device'))
+    if os.environ.get('PA19_UI_FAILURE')=='missing':
+        wait(lambda: snapshot()['listen']['mic-a']['reason']==4,'missing helper')
+        time.sleep(1); capture('helper-unavailable')
+        message=T('Could not start %1. Install the audio backend tools and try again.').replace('%1','pw-loopback')
+        assert message in (work/'helper-unavailable.txt').read_text(),message
+        click(T('Listen to this device'))
+        print('PASS: localized missing-helper failure in the real page',language)
+        raise SystemExit(0)
     wait(lambda: snapshot()['listen'].get('mic-a',{}).get('running'),'Listen active')
     assert snapshot()['listen']['mic-a']['output']=='out-b',snapshot()
     click(T('Combined recording input')); keys(['Home','Return'])
@@ -109,6 +117,12 @@ try:
         subprocess.run(['xdotool','mousemove',str(round((rect.x+rect.width/2)*scale)),str(round((rect.y+rect.height/2)*scale)),'click','1'],check=True)
         keys(['Home']+(['Down'] if index else [])+['Return'])
         wait(lambda: snapshot()['listen']['mic-a']['output']==target and snapshot()['listen']['mic-a']['running'],'stream selector changes saved target')
+        warning=T('This microphone is also being sent to this output. The combined recording captures it twice, which can cause an echo.')
+        if target=='out-a':
+            wait(lambda: find(warning),'same microphone/output warning')
+            capture('same-output-warning')
+        else:
+            wait(lambda: not find(warning),'warning clears for separate output')
     capture('stream-routed')
     window.terminate(); window.wait(timeout=5)
     time.sleep(1)

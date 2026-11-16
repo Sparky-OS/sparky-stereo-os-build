@@ -164,6 +164,12 @@ try:
         idle=json.loads((work/'idle-listen-graph.json').read_text())
         route_nodes=[n for n in idle if n.get('info',{}).get('props',{}).get('node.name','').startswith('plasma-pa-Listen-')]
         assert len(route_nodes)==2 and all(n['info']['state']=='running' for n in route_nodes), [(n['info']['props']['node.name'],n['info']['state']) for n in route_nodes]
+    if os.environ.get('PA19_LATENCY_MODE')=='1':
+        assert not native,'The shared capture probe requires PipeWire'
+        import latency_probe
+        latency_probe.run(work,spawn,pactl,wait_for,rate)
+        listen(False); wait_for(lambda: not owned(),'latency route teardown')
+        raise SystemExit(0)
     for freq in (440,880):
         with wave.open(str(work/f'{freq}.wav'),'w') as f:
             f.setparams((2,2,rate,0,'NONE','not compressed'))

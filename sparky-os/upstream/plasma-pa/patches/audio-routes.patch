@@ -101,10 +101,10 @@ index 937d478e..49e0856e 100644
          Layout.topMargin: Kirigami.Units.smallSpacing
 diff --git a/src/kcm/ui/RouteControls.qml b/src/kcm/ui/RouteControls.qml
 new file mode 100644
-index 00000000..3dfb18ed
+index 00000000..45198c09
 --- /dev/null
 +++ b/src/kcm/ui/RouteControls.qml
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,100 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
@@ -180,6 +180,15 @@ index 00000000..3dfb18ed
 +            Accessible.name: root.combined ? i18nd("kcm_pulseaudio", "Combined recording output") : i18nd("kcm_pulseaudio", "Listening output")
 +            onActivated: root.configure(root.input, currentValue, root.wanted)
 +        }
++    }
++
++    Kirigami.InlineMessage {
++        Layout.fillWidth: true
++        visible: root.combined && root.wanted && (root.state.reason || 0) === 0
++            && Object.values(root.controller.listens).some(route => route.enabled && (route.reason || 0) === 0
++                && route.source === root.input && route.output === root.output)
++        type: Kirigami.MessageType.Warning
++        text: i18nd("kcm_pulseaudio", "This microphone is also being sent to this output. The combined recording captures it twice, which can cause an echo.")
 +    }
 +
 +    Kirigami.InlineMessage {
