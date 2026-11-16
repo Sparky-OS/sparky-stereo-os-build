@@ -1,0 +1,11 @@
+# Created by Daniel Ramos (Capitain Jack) and Paweł "pavroo" Pijanowski 2026/11/16
+# Copyright 2026 under the GNU GPL3 License
+# Gives the running sound system of this session the current list of rates (ORDER 631), at login and whenever the
+# system service has rewritten it, so a device plugged in during the session is followed without a restart.
+[Unit]
+Description=Give the running sound system the current list of rates
+After=pipewire.socket
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sparky-stereo-audio apply

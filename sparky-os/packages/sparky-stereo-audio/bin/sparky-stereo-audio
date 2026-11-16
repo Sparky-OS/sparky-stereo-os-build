@@ -1,0 +1,639 @@
+#!/usr/bin/python3
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/16
+# Copyright 2026 under the GNU GPL3 License
+# Last update 2026/11/16
+"""High fidelity sound out of the box (ORDER 631): the sound system follows the rate of what plays, a file is converted
+only when the device cannot take its rate, and then at the highest quality this processor carries.
+
+  sparky-stereo-audio detect [--write]  read the sound devices (/proc/asound), measure the processor, say the choices;
+                                        with --write (root) write the drop-ins for PipeWire and WirePlumber
+  sparky-stereo-audio show              the choices made on this computer, in plain words and in your language
+  sparky-stereo-audio apply             in a session: give the running sound system the current list of rates, adding
+                                        what PipeWire itself reports for the devices connected now
+
+The drop-ins are named 00-sparky-stereo-audio.conf, so every file of yours sorts after them and wins, as do the files
+in ~/.config. A file of that name that this program did not write is left alone and said. Environment, for tests:
+SPARKY_STEREO_AUDIO_ROOT prefixes every path, SPARKY_STEREO_AUDIO_PROC replaces /proc/asound,
+SPARKY_STEREO_AUDIO_CPU_COST gives the processor cost (percent of one core of the heaviest conversion at the
+highest quality) instead of measuring it.
+"""
+import glob
+import json
+import os
+import re
+import resource
+import subprocess
+import sys
+import tempfile
+
+TAG = 'sparky-stereo-audio'
+NAME = '00-sparky-stereo-audio.conf'
+MARK = '# sparky-stereo-audio: written by sparky-stereo-audio, regenerated when a sound device comes or goes'
+ROOT = os.environ.get('SPARKY_STEREO_AUDIO_ROOT', '')
+PROC = os.environ.get('SPARKY_STEREO_AUDIO_PROC', '/proc/asound')
+STATE = ROOT + '/var/lib/sparky-stereo-audio'
+LANGDIR = ROOT + '/usr/share/sparky/sparky-stereo-audio'
+
+# AES5 (48 kHz, the professional rate) and the audio CD (44.1 kHz) are the floor every computer gets
+FLOOR = (44100, 48000)
+# the rates of the standards (AES5, Red Book, Blu-ray, CTA-861) that the devices are asked about when none can be read
+STANDARD = (32000, 44100, 48000, 88200, 96000, 176400, 192000)
+QUALITIES = (14, 13, 12, 10, 8, 6, 4)
+QUALITY_FLOOR = 4          # PipeWire's own default: the package never goes below it
+CPU_LIMIT = 20.0           # percent of one core the heaviest conversion may take: a fifth, so five at once would fill a core
+MAX_RATES = 32             # PipeWire's list of allowed rates holds 32
+
+
+def conf_dirs():
+    return {
+        'pipewire': ROOT + '/etc/pipewire/pipewire.conf.d',
+        'client': ROOT + '/etc/pipewire/client.conf.d',
+        'pulse': ROOT + '/etc/pipewire/pipewire-pulse.conf.d',
+        'wireplumber': ROOT + '/etc/wireplumber/wireplumber.conf.d',
+    }
+
+
+# ---------------------------------------------------------------- reading the devices (kernel's /proc/asound)
+
+def read(path):
+    try:
+        with open(path, errors='replace') as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def ints(text):
+    return [int(x) for x in re.findall(r'\d+', text or '')]
+
+
+def parse_codec(text):
+    """HDA codec file -> (codec name, [ {name, type, rates, bits} ]) for the Audio Output converters that carry a PCM."""
+    name = ''
+    m = re.search(r'^Codec:\s*(.+)$', text, re.M)
+    if m:
+        name = m.group(1).strip()
+    default = {'rates': [], 'bits': []}
+    head = text.split('\nNode ', 1)[0]
+    dm = re.search(r'Default PCM:\s*\n\s*rates \[[^\]]*\]:([^\n]*)\n\s*bits \[[^\]]*\]:([^\n]*)', head)
+    if dm:
+        default = {'rates': ints(dm.group(1)), 'bits': ints(dm.group(2))}
+    outs = []
+    for block in re.split(r'\n(?=Node 0x)', text)[1:]:
+        if '[Audio Output]' not in block.split('\n', 1)[0]:
+            continue
+        dev = re.search(r'Device: name="([^"]*)", type="([^"]*)"', block)
+        if not dev:
+            continue
+        pm = re.search(r'PCM:\s*\n\s*rates \[[^\]]*\]:([^\n]*)\n\s*bits \[[^\]]*\]:([^\n]*)', block)
+        rates, bits = (ints(pm.group(1)), ints(pm.group(2))) if pm else ([], [])
+        outs.append({'name': dev.group(1), 'type': dev.group(2), 'rates': rates or default['rates'], 'bits': bits or default['bits']})
+    return name, outs
+
+
+def parse_eld(text):
+    """ELD file (the kernel's reading of the display's CTA-861 audio data blocks) -> None or {name, rates, bits}.
+    Only the LPCM short audio descriptors count: the rest are encoded formats (AC-3, DTS) for passthrough."""
+    if not text or not re.search(r'^monitor_present\s+1', text, re.M) or not re.search(r'^eld_valid\s+1', text, re.M):
+        return None
+    mon = re.search(r'^monitor_name\s+(.*)$', text, re.M)
+    rates, bits = set(), set()
+    for i in range(16):
+        ct = re.search(r'^sad%d_coding_type\s+\[0x1\]' % i, text, re.M)
+        if not ct:
+            continue
+        r = re.search(r'^sad%d_rates\s+\[[^\]]*\]([^\n]*)' % i, text, re.M)
+        b = re.search(r'^sad%d_bits\s+\[[^\]]*\]([^\n]*)' % i, text, re.M)
+        rates |= set(ints(r.group(1))) if r else set()
+        bits |= set(ints(b.group(1))) if b else set()
+    return {'name': (mon.group(1).strip() if mon else 'display'), 'rates': sorted(rates), 'bits': sorted(bits)}
+
+
+def parse_usb_stream(text):
+    """USB audio stream file (sound/usb/proc.c) -> [ {rates, bits} ] for the Playback altsettings. A Rates line is a list,
+    or "LOW - HIGH (continuous)", which stands for the rates of the standards between the two."""
+    out = []
+    for part in re.split(r'\n(?=Playback:|Capture:)', text):
+        if not part.startswith('Playback:'):
+            continue
+        for alt in re.split(r'\n(?=  Interface )', part)[1:]:
+            rates, bits = set(), set()
+            for m in re.finditer(r'^\s*Rates:\s*(.*)$', alt, re.M):
+                line = m.group(1)
+                if 'continuous' in line:
+                    lo, hi = (ints(line) + [0, 0])[:2]
+                    rates |= {r for r in STANDARD if lo <= r <= hi}
+                else:
+                    rates |= set(ints(line))
+            for m in re.finditer(r'^\s*Format:(.*)$', alt, re.M):
+                for tok in m.group(1).split():
+                    fm = re.match(r'S(\d+)_', tok) or re.match(r'FLOAT', tok)
+                    if fm and fm.groups():
+                        bits.add(int(fm.group(1)) if fm.group(1) != '32' else 32)
+                    elif fm:
+                        bits.add(32)
+            for m in re.finditer(r'^\s*Bits:\s*(\d+)', alt, re.M):
+                bits.add(int(m.group(1)))
+            if rates:
+                out.append({'rates': sorted(rates), 'bits': sorted(bits)})
+    return out
+
+
+def scan(proc=None):
+    """Every sound card in /proc/asound -> list of {card, id, name, kind, outputs:[{label, rates, bits}], readable}."""
+    proc = proc or PROC
+    cards = []
+    for cdir in sorted(glob.glob(proc + '/card[0-9]*'), key=lambda p: int(re.sub(r'\D', '', os.path.basename(p)))):
+        num = int(re.sub(r'\D', '', os.path.basename(cdir)))
+        ident = (read(cdir + '/id') or 'card%d' % num).strip()
+        card = {'card': num, 'id': ident, 'name': ident, 'kind': 'unknown', 'outputs': [], 'readable': False}
+        codecs = sorted(glob.glob(cdir + '/codec#*'))
+        streams = sorted(glob.glob(cdir + '/stream[0-9]*'))
+        if codecs:
+            card['kind'] = 'hda'
+            elds = [parse_eld(read(p)) for p in sorted(glob.glob(cdir + '/eld#*'))]
+            elds = [e for e in elds if e]
+            for cp in codecs:
+                cname, outs = parse_codec(read(cp) or '')
+                if cname:
+                    card['name'] = cname
+                for o in outs:
+                    if o['type'] == 'HDMI':
+                        continue
+                    if o['rates']:
+                        card['outputs'].append({'label': o['name'], 'rates': sorted(o['rates']), 'bits': sorted(o['bits'])})
+                        card['readable'] = True
+                hdmi = [o for o in outs if o['type'] == 'HDMI']
+                if hdmi:
+                    card['readable'] = True      # a graphics card's audio: nothing to play until a display is connected
+                    conv = set()
+                    for o in hdmi:
+                        conv |= set(o['rates'])
+                    for e in elds:
+                        rates = sorted(set(e['rates']) & conv) if conv else e['rates']
+                        bits = e['bits']
+                        if rates:
+                            card['outputs'].append({'label': e['name'], 'rates': rates, 'bits': bits})
+        elif streams:
+            card['kind'] = 'usb'
+            for sp in streams:
+                for s in parse_usb_stream(read(sp) or ''):
+                    card['outputs'].append({'label': ident, 'rates': s['rates'], 'bits': s['bits']})
+                    card['readable'] = True
+        cards.append(card)
+    return cards
+
+
+# ---------------------------------------------------------------- the choices
+
+def choose_rates(cards):
+    """The list of rates the graph may take and the rate when nothing plays. Returns (rates, default, notes)."""
+    found = set()
+    unreadable = [c for c in cards if not c['readable']]
+    for c in cards:
+        for o in c['outputs']:
+            found |= {r for r in o['rates'] if 8000 <= r <= 768000}
+    rates = set(FLOOR) | found
+    if unreadable or not cards:
+        rates |= set(STANDARD)
+    rates = sorted(rates)
+    if len(rates) > MAX_RATES:
+        rates = rates[:MAX_RATES]
+    if 48000 in found or not found:
+        default = 48000
+    elif 44100 in found:
+        default = 44100
+    else:
+        default = max(found)
+    return rates, default, unreadable
+
+
+def bits_note(o):
+    """The best resolution an output takes, as the number of bits PipeWire will open it in."""
+    b = [x for x in o['bits'] if x] or [16]
+    return max(b)
+
+
+def sixteen_only(cards):
+    for c in cards:
+        for o in c['outputs']:
+            if o['bits'] and max(o['bits']) <= 16:
+                return True
+    return False
+
+
+def cpu_key():
+    model = ''
+    cores = 0
+    txt = read(ROOT + '/proc/cpuinfo') or read('/proc/cpuinfo') or ''
+    for line in txt.splitlines():
+        if line.startswith('model name') and not model:
+            model = line.split(':', 1)[1].strip()
+        if line.startswith('processor'):
+            cores += 1
+    return '%s x%d' % (model or 'unknown processor', cores)
+
+
+def run_cost(quality, src=192000, dst=48000, seconds=5, wav=None):
+    """CPU seconds the PipeWire resampler takes for `seconds` of stereo float audio, best of three runs."""
+    best = None
+    for _ in range(3):
+        before = resource.getrusage(resource.RUSAGE_CHILDREN)
+        r = subprocess.run(['spa-resample', '-q', str(quality), '-r', str(dst), '-f', 'f32', wav, os.devnull],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if r.returncode != 0:
+            raise RuntimeError('spa-resample: ' + r.stderr.decode(errors='replace').strip()[-200:])
+        after = resource.getrusage(resource.RUSAGE_CHILDREN)
+        cpu = (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime)
+        best = cpu if best is None else min(best, cpu)
+    return best
+
+
+def make_noise_wav(path, rate=192000, seconds=5):
+    """A stereo 32-bit float WAV of noise (a pseudo-random pattern repeated): the heaviest ordinary conversion's input."""
+    import struct
+    x = 123456789
+    pat = []
+    for _ in range(16384):
+        x = (x * 1664525 + 1013904223) & 0xFFFFFFFF
+        pat.append(((x >> 8) / 8388608.0 - 1.0) * 0.5)
+    block = struct.pack('<16384f', *pat)
+    size = rate * seconds * 8
+    data = (block * (size // len(block) + 1))[:size]
+    hdr = b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt ' + struct.pack('<IHHIIHH', 16, 3, 2, rate, rate * 8, 8, 32)
+    hdr += b'data' + struct.pack('<I', len(data))
+    with open(path, 'wb') as f:
+        f.write(hdr)
+        f.write(data)
+
+
+def choose_quality(measure=True):
+    """The highest resampler quality whose heaviest conversion (192000 to 48000 Hz, stereo) stays under CPU_LIMIT percent
+    of one core. Returns (quality, {quality: percent}, key, how). The measurement is kept per processor."""
+    key = cpu_key()
+    state_file = STATE + '/cpu.json'
+    try:
+        saved = json.load(open(state_file))
+        if saved.get('key') == key and saved.get('limit') == CPU_LIMIT:
+            return saved['quality'], saved['cost'], key, 'kept'
+    except (OSError, ValueError, KeyError):
+        pass
+    env = os.environ.get('SPARKY_STEREO_AUDIO_CPU_COST')
+    cost = {}
+    if env is not None:
+        top = float(env)
+        scale = {14: 1.0, 13: 0.9, 12: 0.27, 10: 0.17, 8: 0.14, 6: 0.085, 4: 0.056}   # measured shape, ORDER 631 notes
+        cost = {q: round(top * scale[q], 2) for q in QUALITIES}
+        how = 'given'
+    else:
+        d = tempfile.mkdtemp(prefix='sparky-stereo-audio.')
+        try:
+            wav = d + '/noise.wav'
+            make_noise_wav(wav)
+            for q in QUALITIES:
+                cost[q] = round(100.0 * run_cost(q, wav=wav) / 5.0, 2)
+                if cost[q] <= CPU_LIMIT:
+                    break
+        finally:
+            for f in glob.glob(d + '/*'):
+                os.unlink(f)
+            os.rmdir(d)
+        how = 'measured'
+    quality = QUALITY_FLOOR
+    for q in QUALITIES:
+        if q in cost and cost[q] <= CPU_LIMIT:
+            quality = q
+            break
+    return quality, cost, key, how
+
+
+# ---------------------------------------------------------------- the files
+
+def pipewire_file(rates, default):
+    return '\n'.join([
+        MARK,
+        '# Which rates the sound system may use. It switches to the rate of what plays, when the device takes it,',
+        '# so the music or film is not converted. Read them in your language: sparky-stereo-audio show',
+        '# Your own file wins: put it in ~/.config/pipewire/pipewire.conf.d, or in /etc/pipewire/pipewire.conf.d with a',
+        '# name that sorts after this one (it starts with 00).',
+        'context.properties = {',
+        '    default.clock.rate = %d' % default,
+        '    default.clock.allowed-rates = [ %s ]' % ' '.join(str(r) for r in rates),
+        '}', ''])
+
+
+def stream_file(quality):
+    return '\n'.join([
+        MARK,
+        '# The quality of the sample rate conversion, 0 to 14 (PipeWire\'s own is 4): the highest this processor carries.',
+        '# Your own file wins, as for the rates.',
+        'stream.properties = {',
+        '    resample.quality = %d' % quality,
+        '}', ''])
+
+
+def wireplumber_file(quality):
+    return '\n'.join([
+        MARK,
+        '# What goes to the sound devices. The quality is for the conversion a device does when it cannot take the rate',
+        '# of the file; the dither is added only when a device takes 16 bit and is off for 24 bit and more (PipeWire',
+        '# disables it there). To switch the dither off, put in a file of yours that sorts after this one:',
+        '#   monitor.alsa.rules = [ { matches = [ { node.name = "~alsa_output.*" } ]',
+        '#       actions = { update-props = { dither.method = none } } } ]',
+        'monitor.alsa.rules = [',
+        '    {',
+        '        matches = [ { node.name = "~alsa_output.*" } ]',
+        '        actions = { update-props = { resample.quality = %d, dither.method = triangular } }' % quality,
+        '    }',
+        ']',
+        'monitor.bluez.rules = [',
+        '    {',
+        '        matches = [ { node.name = "~bluez_output.*" } ]',
+        '        actions = { update-props = { resample.quality = %d } }' % quality,
+        '    }',
+        ']', ''])
+
+
+def write_if_changed(path, text):
+    """Returns 'written', 'same' or raises OSError. A file that does not carry the mark is not ours: 'foreign'."""
+    old = read(path)
+    if old is not None and MARK.split(':')[0] not in old.split('\n', 1)[0]:
+        return 'foreign'
+    if old == text:
+        return 'same'
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.' + NAME)
+    try:
+        with os.fdopen(fd, 'w') as f:
+            f.write(text)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except OSError:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    return 'written'
+
+
+# ---------------------------------------------------------------- language and problems
+
+def language():
+    for var in ('LANGUAGE', 'LC_ALL', 'LC_MESSAGES', 'LANG'):
+        v = os.environ.get(var, '')
+        for part in v.split(':'):
+            if part and part not in ('C', 'POSIX') and not part.startswith('C.'):
+                return part.split('.')[0].split('@')[0]
+    txt = read(ROOT + '/etc/default/locale') or ''
+    m = re.search(r'^LANG="?([^"\n.@]+)', txt, re.M)
+    return m.group(1) if m else 'en'
+
+
+def lang_files():
+    lg = language()
+    order = [lg]
+    if lg.startswith('zh'):
+        order.append('zh_CN' if lg not in ('zh_CN', 'zh_TW') else lg)
+    else:
+        order.append(lg.split('_')[0])
+    order.append('en')
+    return [LANGDIR + '/' + o for o in order]
+
+
+def load_messages():
+    msgs = {}
+    for path in reversed(lang_files()):
+        txt = read(path)
+        if txt:
+            for m in re.finditer(r'^LOCAL(\d+)="(.*)"$', txt, re.M):
+                msgs[int(m.group(1))] = m.group(2).replace('\\"', '"')
+    return msgs
+
+
+def say(n, *args):
+    msgs = load_messages()
+    text = msgs.get(n, 'sparky-stereo-audio message %d: %s' % (n, ' '.join(str(a) for a in args)))
+    try:
+        return text % args
+    except (TypeError, ValueError):
+        return text
+
+
+def keep_problem(key, n, *args):
+    """A failure is kept by the edition's one engine and said (ORDER 350); the engine's absence is said on the terminal."""
+    text = say(n, *args)
+    print('%s: %s' % (TAG, text), file=sys.stderr)
+    if ROOT:
+        return
+    try:
+        subprocess.run(['sparky-stereo-problems', 'keep', '--machine', '--severity', 'degraded', TAG, key, 'LOCAL%d' % n]
+                       + [str(a) for a in args], check=False, stdout=subprocess.DEVNULL)
+    except OSError as e:
+        print('%s: the problems engine could not be started (%s)' % (TAG, e), file=sys.stderr)
+
+
+def clear_problem(key):
+    if ROOT:
+        return
+    try:
+        subprocess.run(['sparky-stereo-problems', 'clear', '--machine', TAG, key], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+# ---------------------------------------------------------------- commands
+
+def decide(measure=True):
+    cards = scan()
+    rates, default, unreadable = choose_rates(cards)
+    quality, cost, key, how = choose_quality(measure)
+    return {'cards': cards, 'rates': rates, 'default': default, 'unreadable': [c['id'] for c in unreadable],
+            'sixteen': sixteen_only(cards), 'quality': quality, 'cost': cost, 'cpu': key, 'cpu_how': how,
+            'limit': CPU_LIMIT, 'files': {'pipewire': conf_dirs()['pipewire'] + '/' + NAME}}
+
+
+def cmd_detect(write):
+    try:
+        d = decide()
+    except (RuntimeError, OSError) as e:
+        keep_problem('measure', 23, e)
+        d = {'cards': scan()}
+        d['rates'], d['default'], un = choose_rates(d['cards'])
+        d.update({'unreadable': [c['id'] for c in un], 'sixteen': sixteen_only(d['cards']), 'quality': QUALITY_FLOOR,
+                  'cost': {}, 'cpu': cpu_key(), 'cpu_how': 'not measured', 'limit': CPU_LIMIT,
+                  'files': {'pipewire': conf_dirs()['pipewire'] + '/' + NAME}})
+    else:
+        clear_problem('measure')
+    show(d)
+    if not write:
+        return 0
+    if ROOT == '' and os.geteuid() != 0:
+        print('%s: run as root to write the drop-ins' % TAG, file=sys.stderr)
+        return 1
+    dirs = conf_dirs()
+    plan = [(dirs['pipewire'], pipewire_file(d['rates'], d['default'])),
+            (dirs['client'], stream_file(d['quality'])),
+            (dirs['pulse'], stream_file(d['quality'])),
+            (dirs['wireplumber'], wireplumber_file(d['quality']))]
+    rc = 0
+    for folder, text in plan:
+        path = folder + '/' + NAME
+        key = 'file:' + path
+        try:
+            r = write_if_changed(path, text)
+        except OSError as e:
+            keep_problem('write-' + re.sub(r'\W', '-', folder), 21, path, e)
+            rc = 1
+            continue
+        if r == 'foreign':
+            keep_problem('foreign-' + re.sub(r'\W', '-', folder), 22, path)
+        else:
+            clear_problem('write-' + re.sub(r'\W', '-', folder))
+            clear_problem('foreign-' + re.sub(r'\W', '-', folder))
+    if d['unreadable']:
+        keep_problem('read', 20, ', '.join(d['unreadable']))
+    else:
+        clear_problem('read')
+    try:
+        os.makedirs(STATE, exist_ok=True)
+        with open(STATE + '/choices.json', 'w') as f:
+            json.dump({k: d[k] for k in ('rates', 'default', 'quality', 'cost', 'cpu', 'cpu_how', 'limit', 'unreadable', 'sixteen')} |
+                      {'cards': [{k: c[k] for k in ('card', 'id', 'name', 'kind', 'outputs', 'readable')} for c in d['cards']]}, f, indent=1)
+        if d['cpu_how'] != 'not measured':
+            with open(STATE + '/cpu.json', 'w') as f:
+                json.dump({'key': d['cpu'], 'quality': d['quality'], 'cost': d['cost'], 'limit': CPU_LIMIT}, f)
+    except OSError as e:
+        keep_problem('write-state', 21, STATE, e)
+        rc = 1
+    return rc
+
+
+def fmt_rates(rates):
+    return ' '.join(str(r) for r in rates)
+
+
+def show(d=None):
+    if d is None:
+        try:
+            d = json.load(open(STATE + '/choices.json'))
+        except (OSError, ValueError):
+            print(say(16))
+            return 1
+    print(say(1))
+    print()
+    print(say(2, fmt_rates(d['rates'])))
+    print(say(3, d['default']))
+    print(say(4))
+    any_dev = False
+    for c in d['cards']:
+        for o in c['outputs']:
+            any_dev = True
+            bits = say(6, bits_note(o)) if o['bits'] and max(o['bits']) > 16 else say(7)
+            print(say(5, '%s (%s)' % (o['label'], c['name']), fmt_rates(o['rates']), bits))
+    if not any_dev:
+        print(say(15))
+    for cid in d['unreadable']:
+        print(say(8, cid))
+    print()
+    print(say(9))
+    if d['quality'] and d.get('cost'):
+        top = d['cost'].get(str(d['quality']), d['cost'].get(d['quality']))
+        print(say(10, d['quality'], top, d['limit']))
+    else:
+        print(say(17, d['quality']))
+    print(say(11))
+    if d['sixteen']:
+        print(say(12))
+    print()
+    print(say(13))
+    print(say(14, d['cpu'], conf_dirs()['pipewire'] + '/' + NAME))
+    return 0
+
+
+def person_sets(key):
+    """True when a file that is not ours sets `key` for PipeWire (the person's own setting wins, ORDER 631)."""
+    home = os.environ.get('HOME', '')
+    pats = [ROOT + '/etc/pipewire/pipewire.conf', ROOT + '/etc/pipewire/pipewire.conf.d/*.conf',
+            home + '/.config/pipewire/pipewire.conf', home + '/.config/pipewire/pipewire.conf.d/*.conf']
+    for pat in pats:
+        for p in glob.glob(pat):
+            if os.path.basename(p) == NAME:
+                continue
+            txt = read(p) or ''
+            if re.search(r'^\s*' + re.escape(key) + r'\s*=', txt, re.M):
+                return True
+    return False
+
+
+def parse_file_list(text):
+    m = re.search(r'default\.clock\.allowed-rates\s*=\s*\[([^\]]*)\]', text or '')
+    return ints(m.group(1)) if m else []
+
+
+def pipewire_ranges():
+    """Rates the connected sound devices take, as PipeWire reports them (the sinks' format ranges)."""
+    try:
+        r = subprocess.run(['pw-dump'], capture_output=True, text=True, timeout=10)
+        objs = json.loads(r.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    found = set()
+    for o in objs:
+        if o.get('type') != 'PipeWire:Interface:Node':
+            continue
+        p = o['info']['props']
+        if p.get('media.class') != 'Audio/Sink' or p.get('node.virtual') in (True, 'true'):
+            continue
+        for f in o['info'].get('params', {}).get('EnumFormat', []):
+            rate = f.get('rate')
+            if isinstance(rate, int):
+                found.add(rate)
+            elif isinstance(rate, dict):
+                lo, hi = rate.get('min', 0), rate.get('max', 0)
+                found |= {r for r in STANDARD if lo <= r <= hi}
+                found |= {rate.get('default')} - {None}
+    return found
+
+
+def cmd_apply():
+    filetext = read(conf_dirs()['pipewire'] + '/' + NAME)
+    rates = set(parse_file_list(filetext))
+    if not rates:
+        print(say(18), file=sys.stderr)
+        return 1
+    live = pipewire_ranges()
+    if live is None:
+        print(say(19), file=sys.stderr)
+        return 1
+    rates |= {r for r in live if 8000 <= r <= 768000}
+    rates = sorted(rates)[:MAX_RATES]
+    done = []
+    if not person_sets('default.clock.allowed-rates'):
+        subprocess.run(['pw-metadata', '-n', 'settings', '0', 'clock.allowed-rates', '[ %s ]' % fmt_rates(rates)],
+                       check=True, stdout=subprocess.DEVNULL)
+        done.append(rates)
+        m = re.search(r'default\.clock\.rate\s*=\s*(\d+)', filetext or '')
+        if m and not person_sets('default.clock.rate'):
+            subprocess.run(['pw-metadata', '-n', 'settings', '0', 'clock.rate', m.group(1)], check=True, stdout=subprocess.DEVNULL)
+    if done:
+        print(say(2, fmt_rates(rates)))
+    return 0
+
+
+def main(argv):
+    if not argv or argv[0] in ('-h', '--help'):
+        print(__doc__)
+        return 0
+    cmd = argv[0]
+    if cmd == 'detect':
+        return cmd_detect('--write' in argv[1:])
+    if cmd == 'show':
+        return show()
+    if cmd == 'apply':
+        return cmd_apply()
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

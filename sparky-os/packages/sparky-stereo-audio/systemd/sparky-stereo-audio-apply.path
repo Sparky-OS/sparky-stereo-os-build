@@ -1,0 +1,11 @@
+# Created by Daniel Ramos (Capitain Jack) and Paweł "pavroo" Pijanowski 2026/11/16
+# Copyright 2026 under the GNU GPL3 License
+[Unit]
+Description=Watch the list of rates the system service writes
+
+[Path]
+PathChanged=/etc/pipewire/pipewire.conf.d/00-sparky-stereo-audio.conf
+Unit=sparky-stereo-audio-apply.service
+
+[Install]
+WantedBy=default.target

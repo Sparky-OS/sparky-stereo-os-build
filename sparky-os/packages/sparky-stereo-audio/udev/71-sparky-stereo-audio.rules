@@ -1,0 +1,5 @@
+# Created by Daniel Ramos (Capitain Jack) and Paweł "pavroo" Pijanowski 2026/11/16
+# Copyright 2026 under the GNU GPL3 License
+# A sound card appears or goes, or a display's audio changes (HDMI or DisplayPort connected): read the sound devices again.
+# The program only reads /proc/asound; it touches no device and no display mode.
+SUBSYSTEM=="sound", KERNEL=="card[0-9]*", ACTION=="add|remove|change", RUN+="/usr/bin/systemctl --no-block start sparky-stereo-audio.service"
