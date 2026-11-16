@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Prepare the accepted stream-visibility change on Debian's source, then add Lean Code."""
+"""Prepare stream visibility and explicit audio routing on Debian's source, then add Lean Code."""
 import os
 import hashlib
 from pathlib import Path
@@ -18,7 +18,7 @@ work=Path(sys.argv[2]).resolve()
 assert os.environ['SOURCE_DATE_EPOCH'].isdigit()
 assert not work.exists(), work
 work.mkdir(parents=True)
-version='4:6.7.4-1+stereo3d1'
+version='4:6.7.4-1+stereo3d2'
 source=work/'source'
 subprocess.run(['dpkg-source','-x',str(base),str(source)],check=True)
 for p in base.parent.glob('plasma-pa_6.7.4.orig.tar.*'):
@@ -33,6 +33,12 @@ translation_diff=''.join(line for line in translation.read_text().splitlines(Tru
 series=patches/'series'
 with series.open('a') as f:
     f.write('virtual-streams.patch\nplasma-pa-virtual-streams.po.patch\n')
+shutil.copy2(recipe/'patches/audio-routes.patch',patches)
+route_translation=toolkit/'translations/plasma-pa-audio-routes.po.patch'
+route_diff=''.join(line for line in route_translation.read_text().splitlines(True) if not line.startswith('diff --git '))
+(patches/route_translation.name).write_text('Description: Translate explicit audio routing controls and failures\nAuthor: Daniel Campos Ramos\nOrigin: vendor\nForwarded: no\n\n'+route_diff)
+with series.open('a') as f:
+    f.write('audio-routes.patch\nplasma-pa-audio-routes.po.patch\n')
 subprocess.run(['dpkg-source','--before-build','.'],cwd=source,check=True)
 # Debian's test policy stays explicit; its GUI suite needs the separate Appium rig.
 rules=source/'debian/rules'
@@ -47,10 +53,12 @@ old=next(line for line in text.splitlines() if line.startswith('Maintainer: '))
 text=text.replace(old, 'Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>\nXSBC-Original-'+old,1)
 text=text.replace('Homepage: https://invent.kde.org/plasma/plasma-pa',
                   'Homepage: https://sparkylinux.org\nBugs: https://github.com/Sparky-OS/sparky-stereo-os/issues',1)
+assert '\nDepends: ' in text
+text=text.replace('\nDepends: ', '\nDepends: kded6, pulseaudio-utils, pipewire-bin (>= 1.6.9) | pulseaudio, ',1)
 control.write_text(text)
 subprocess.run(['dch','--date',os.environ['SOURCE_DATE_RFC2822'],'--newversion',version,'--distribution','mashtabba',
-    'Expose optional virtual streams in the Sound page and volume widget; repair null-client handling and recording-device selection.'],cwd=source,check=True)
-subprocess.run(['python3',str(toolkit/'repo/provenance-files.py'),str(source),'virtual-streams.patch','plasma-pa-virtual-streams.po.patch'],check=True)
+    'Add opt-in input monitoring and combined recording, with explicit targets, owned routes and translated failures; retain virtual stream controls.'],cwd=source,check=True)
+subprocess.run(['python3',str(toolkit/'repo/provenance-files.py'),str(source),'virtual-streams.patch','plasma-pa-virtual-streams.po.patch','audio-routes.patch','plasma-pa-audio-routes.po.patch'],check=True)
 repro=toolkit/'repo/reproducible.py'
 subprocess.run(['python3',str(repro),'normalize-tree',os.environ['SOURCE_DATE_EPOCH'],str(source)],check=True)
 subprocess.run(['dpkg-source','-b','source'],cwd=work,check=True)
@@ -61,9 +69,9 @@ for p in work.glob('plasma-pa_*'):
 lc=work/'lc'
 lc.mkdir()
 for p in authored.iterdir(): shutil.copy2(p,lc/p.name)
-subprocess.run(['dpkg-source','-x',str(authored/'plasma-pa_6.7.4-1+stereo3d1.dsc'),str(lc/'source')],check=True)
+subprocess.run(['dpkg-source','-x',str(authored/'plasma-pa_6.7.4-1+stereo3d2.dsc'),str(lc/'source')],check=True)
 env=dict(os.environ,PYTHONPATH=str(toolkit))
 subprocess.run(['python3','-m','lean.debian_prepare',str(lc/'source'),version+'+lc1','--toolkit',str(toolkit)],env=env,check=True)
 subprocess.run(['python3',str(repro),'normalize-tree',os.environ['SOURCE_DATE_EPOCH'],str(lc/'source')],check=True)
 subprocess.run(['dpkg-source','-b','source'],cwd=lc,check=True)
-print(lc/'plasma-pa_6.7.4-1+stereo3d1+lc1.dsc')
+print(lc/'plasma-pa_6.7.4-1+stereo3d2+lc1.dsc')

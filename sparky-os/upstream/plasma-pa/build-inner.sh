@@ -12,7 +12,7 @@ trap 'chown -R 1000:1000 /work19' EXIT
 apt-get -y --no-install-recommends build-dep /work19/prepared/lc/source
 mkdir /work19/build
 chown 1000:1000 /work19/build
-runuser -u rig -- dpkg-source -x /work19/prepared/lc/plasma-pa_6.7.4-1+stereo3d1+lc1.dsc /work19/build/source
+runuser -u rig -- dpkg-source -x /work19/prepared/lc/plasma-pa_6.7.4-1+stereo3d2+lc1.dsc /work19/build/source
 cd /work19/build/source
 runuser -u rig -- env DEB_BUILD_OPTIONS=parallel=2 dpkg-buildpackage -b -us -uc -j2
 # Debian disables its build-time suite. Run the native unit test explicitly;

@@ -13,11 +13,12 @@ from PIL import ImageGrab
 
 work=Path(sys.argv[1]); work.mkdir(parents=True,exist_ok=True)
 scale=float(sys.argv[2])
+prefix='/usr' if os.environ.get('PA19_INSTALLED')=='1' else '/opt/order19b'
 os.environ.update(HOME=str(work/'home'),XDG_RUNTIME_DIR=str(work/'run'),XDG_CONFIG_HOME=str(work/'home/config'),
     DISPLAY=':19',QT_QPA_PLATFORM='xcb',QT_SCALE_FACTOR=str(scale),LC_ALL='C.UTF-8',
     QT_QUICK_BACKEND='software',LIBGL_ALWAYS_SOFTWARE='1',QT_LINUX_ACCESSIBILITY_ALWAYS_ON='1',QT_ACCESSIBILITY='1',
-    QT_PLUGIN_PATH='/opt/order19b/lib/x86_64-linux-gnu/plugins',QML_IMPORT_PATH='/opt/order19b/lib/x86_64-linux-gnu/qml',
-    LD_LIBRARY_PATH='/opt/order19b/lib/x86_64-linux-gnu',XDG_DATA_DIRS='/opt/order19b/share:/usr/share')
+    QT_PLUGIN_PATH=prefix+'/lib/x86_64-linux-gnu/plugins',QML_IMPORT_PATH=prefix+'/lib/x86_64-linux-gnu/qml',
+    LD_LIBRARY_PATH=prefix+'/lib/x86_64-linux-gnu',XDG_DATA_DIRS=prefix+'/share:/usr/share')
 for part in ('home/config','run'): (work/part).mkdir(mode=0o700,parents=True,exist_ok=True)
 children=[]; logs=[]
 def spawn(args):
@@ -82,6 +83,21 @@ try:
     wait(lambda: snapshot()['combined']['running'],'Combined active')
     assert snapshot()['combined']['source']=='mic-a' and snapshot()['combined']['output']=='out-a'
     capture('active')
+    # Move the owned playback stream using the page's ordinary stream selector.
+    def owned_playback_combo():
+        for obj in nodes(pyatspi.Registry.getDesktop(0)):
+            if obj.getRoleName()!='label' or 'Listen:' not in obj.name: continue
+            for sibling in obj.parent:
+                if sibling.getRoleName()=='combo box' and sibling.name.startswith('out-'):
+                    return sibling
+        return None
+    for index,target in ((0,'out-a'),(1,'out-b')):
+        obj=wait(owned_playback_combo,'owned stream selector')
+        rect=obj.queryComponent().getExtents(pyatspi.DESKTOP_COORDS)
+        subprocess.run(['xdotool','mousemove',str(round((rect.x+rect.width/2)*scale)),str(round((rect.y+rect.height/2)*scale)),'click','1'],check=True)
+        keys(['Home']+(['Down'] if index else [])+['Return'])
+        wait(lambda: snapshot()['listen']['mic-a']['output']==target and snapshot()['listen']['mic-a']['running'],'stream selector changes saved target')
+    capture('stream-routed')
     pactl('unload-module',modules['out-b'])
     wait(lambda: snapshot()['listen']['mic-a']['reason']==3,'Missing output')
     time.sleep(1); capture('missing-output')
