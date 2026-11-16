@@ -75,11 +75,11 @@ for device in ('0010', '0011', '0012'):
 # must be present. The new facts are read-only; the packages named are ones the lists install.
 here = pathlib.Path(__file__).resolve().parent / 'fixtures'
 fixture_cases = {
-    'gigabyte-corsair-v3': ({'amd64-microcode'}, [
+    'gigabyte-corsair-v3': ({'amd64-microcode', 'linux-image-sparky-stereo-v3', 'linux-headers-sparky-stereo-v3'}, [
         'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes',
         'fact\tboard\tGigabyte Technology Co., Ltd. / B550 TEST BOARD',
         'fact\tusb-vendors\t1b1c (Corsair) 1d6b'], []),
-    'razer-mt7922-v3': ({'intel-microcode', 'thermald', 'firmware-mediatek'}, [
+    'razer-mt7922-v3': ({'intel-microcode', 'thermald', 'firmware-mediatek', 'linux-image-sparky-stereo-v3', 'linux-headers-sparky-stereo-v3'}, [
         'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes',
         'fact\tboard\tASUSTeK COMPUTER INC. / Z370 TEST BOARD',
         'fact\tusb-vendors\t1532 (Razer)',
@@ -90,7 +90,7 @@ fixture_cases = {
         'fact\tnetwork-pci\t14e4:4331'], ['candidate\tbroadcom-sta-dkms\t14e4:4331: closed Broadcom wl driver']),
     # An Intel iMac 21.5-inch, Late 2013 (iMac14,1): the Wi-Fi is a BCM4360, which no driver of our kernel drives, so wl
     # is the plan's candidate with its licence line; the wired Broadcom card (tg3) is not in the table and is left alone
-    'imac14-1-bcm4360': ({'intel-microcode', 'thermald'}, [
+    'imac14-1-bcm4360': ({'intel-microcode', 'thermald', 'linux-image-sparky-stereo-v3', 'linux-headers-sparky-stereo-v3'}, [
         'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes',
         'fact\tboard\tApple Inc. / Mac-031B6874CF7F642A',
         'fact\tusb-vendors\t05ac 1d6b',
@@ -128,6 +128,26 @@ bad = subprocess.run([tool, '--broadcom-wl', 'bogus', '--dry-run', '--fixture', 
 assert bad.returncode == 2 and 'ask, yes, no, repair or reset' in bad.stderr, bad
 assert '--broadcom-wl ask|yes|no|repair|reset' in subprocess.run([tool, '--help'], text=True, capture_output=True, check=True).stdout
 print('PASS --broadcom-wl takes only ask, yes, no, repair or reset')
+# The x86-64-v3 kernel (ORDER 108): both flavours of the processor, the person's own choice, and a processor that is not v3 or not amd64
+import shutil
+with tempfile.TemporaryDirectory() as tmp:
+    for name, level_from, change, want in (
+            ('v3 processor', 'gigabyte-corsair-v3', {}, True),
+            ('v3 processor, the baseline kernel chosen', 'gigabyte-corsair-v3', {'kernel-choice': 'base\n'}, False),
+            ('v2 processor', 'broadcom-4331-v2', {}, False),
+            ('baseline processor', 'baseline-cpu', {}, False),
+            ('v3 processor on arm64', 'gigabyte-corsair-v3', {'architecture': 'arm64\n'}, False)):
+        d = pathlib.Path(tmp) / name.replace(' ', '-').replace(',', '')
+        shutil.copytree(here / level_from, d)
+        for k, v in change.items():
+            (d / k).write_text(v)
+        out = subprocess.run([tool, '--auto', '--dry-run', '--fixture', str(d)], text=True, capture_output=True, check=True).stdout
+        got = {l.split('\t')[1] for l in out.splitlines() if l.startswith('package\t') and 'sparky-stereo-v3' in l}
+        assert got == ({'linux-image-sparky-stereo-v3', 'linux-headers-sparky-stereo-v3'} if want else set()), (name, got, out)
+        assert ('Would install linux-image-sparky-stereo-v3' in out) == want, (name, out)
+        print(f'PASS kernel selection, {name}: x86-64-v3 kernel {"planned" if want else "not planned"}')
+bad = subprocess.run([tool, '--kernel', 'bogus', '--dry-run', '--fixture', str(here / 'baseline-cpu')], text=True, capture_output=True)
+assert bad.returncode == 2 and 'v3 (the default' in bad.stderr, bad
 old = subprocess.run([tool, '--auto', '--dry-run', '--fixture', str(here / 'creative-nvidia-laptop')], text=True,
                      capture_output=True, check=True).stdout
 assert not any(l.startswith(('fact\t', 'candidate\t')) for l in old.splitlines()), old

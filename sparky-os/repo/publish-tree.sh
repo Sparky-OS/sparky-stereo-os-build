@@ -51,7 +51,7 @@
 # SPARKY_APPSTREAM_MAX_BYTES (optional) bounds the generator's workspace.
 # zram and zswap never ours, the person may opt in (ORDER 361): iso-build/zram-check.py refuses the selection before anything
 # is copied or signed.
-# Last update 2026/11/14 (the zram and zswap gate, ORDER 361, its tear-down notes, ORDER 558; AppStream catalogues, ORDER 252b; installability report, ORDER 317)
+# Last update 2026/11/16 (the amd64v3 variant index, ORDER 108; the zram and zswap gate, ORDER 361, its tear-down notes, ORDER 558; AppStream catalogues, ORDER 252b; installability report, ORDER 317)
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -115,7 +115,7 @@ trap 'rm -rf "${W:?}"' EXIT
 SOURCES_DIR=${SPARKY_REPO_SOURCES:-$SRC/source}
 export SOURCES_DIR
 python3 - "$SRC" "$W/selection.tsv" "$W/leftout.txt" "${EXTRA[@]}" <<'PY'
-import hashlib, os, sys, subprocess
+import hashlib, os, re, sys, subprocess
 
 src, out_sel, out_left = sys.argv[1:4]
 extra = sys.argv[4:]
@@ -175,7 +175,7 @@ best = {}
 allv = {}
 identities = {}
 for path, nested in debs:
-    r = subprocess.run(['dpkg-deb', '-f', path, 'Package', 'Version', 'Architecture', 'Source'],
+    r = subprocess.run(['dpkg-deb', '-f', path, 'Package', 'Version', 'Architecture', 'Source', 'Architecture-Variant'],
                        capture_output=True, text=True, check=True).stdout
     f = {}
     for line in r.splitlines():
@@ -185,6 +185,15 @@ for path, nested in debs:
     pkg, ver, arch = f['Package'], f['Version'], f['Architecture']
     if arch not in ('amd64', 'i386', 'arm64', 'all'):
         raise SystemExit('unsupported repository architecture: ' + arch)
+    # An apt architecture variant (ORDER 108): a build of an amd64 package for a processor level, Architecture: amd64 with an extra
+    # Architecture-Variant: amd64v3, named NAME_VERSION_amd64v3.deb. It is selected next to the baseline build, under the variant's name.
+    variant = f.get('Architecture-Variant')
+    if variant:
+        if arch != 'amd64' or variant != 'amd64v3':
+            raise SystemExit('unsupported architecture variant %s of %s (%s): only amd64v3 builds of amd64 packages' % (variant, arch, path))
+        if not os.path.basename(path).endswith('_amd64v3.deb'):
+            raise SystemExit('a variant build must be named NAME_VERSION_amd64v3.deb, or it takes the baseline build\'s pool path: ' + path)
+        arch = variant
     identity = (pkg, ver, arch)
     with open(path, 'rb') as stream:
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -277,6 +286,7 @@ while IFS=$'\t' read -r from to _ _ arch; do
 	case "$arch" in
 		"$HOST_ARCH"|all) ;;
 		source) continue ;;
+		amd64v3) continue ;;
 		*) echo "lc1 link: unsupported execution gate for $arch on $HOST_ARCH; foreign package not runtime-qualified: $from" >&2; continue ;;
 	esac
 	case $from in *-dbgsym_*|*-lc-hr_*) continue ;; esac
@@ -397,6 +407,8 @@ selected = {}
 with open(selection) as stream:
     for line in stream:
         path, relative, *_ = line.rstrip('\n').split('\t')
+        if _[-1:] == ['amd64v3']:
+            continue    # a variant build is the baseline package again for the catalogues
         real = os.path.realpath(path)
         if relative in selected:
             if selected[relative] != real:
@@ -600,12 +612,43 @@ for arch in $ARCHES; do
 	# Selection already chose one version per architecture. Keep architecture
 	# siblings until the filter; scanpackages otherwise collapses by name alone.
 	(cd "$DEST" && dpkg-scanpackages --multiversion --arch "$arch" pool /dev/null 2>"$W/scan-$arch.log") |
-		awk -v RS= -v ORS='\n\n' -v a="Architecture: $arch" 'index($0, "\n" a "\n") || $0 ~ ("\n" a "$")' |
+		awk -v RS= -v ORS='\n\n' -v a="Architecture: $arch" '(index($0, "\n" a "\n") || $0 ~ ("\n" a "$")) && $0 !~ /\nArchitecture-Variant: /' |
 		sed '$d' >"$dir/Packages.new"
 	grep -v -e '^dpkg-scanpackages: info:' -e '^dpkg-scanpackages: warning:' "$W/scan-$arch.log" >&2 || true
 	mv -f "$dir/Packages.new" "$dir/Packages"
 	index_done "$dir" "$COMPONENT/binary-$arch" Packages
 done
+# The amd64v3 variant (ORDER 108): only when a variant build is selected. apt takes this index instead of binary-amd64 on a processor
+# with the x86-64-v3 flags and drops the baseline index of the repository, so it is a complete copy: every amd64 package of the
+# baseline index, a package that has a variant build replaced by it.
+RELEASE_ARCHES=$ARCHES
+dir=$D/$COMPONENT/binary-amd64v3
+if grep -q $'\tamd64v3$' "$W/selection.tsv"; then
+	# dpkg-scanpackages takes the files named *_ARCH.deb, so the variant builds are scanned as their own architecture name
+	(cd "$DEST" && dpkg-scanpackages --multiversion --arch amd64v3 pool /dev/null 2>"$W/scan-amd64v3.log") >"$W/records-variant"
+	(cd "$DEST" && dpkg-scanpackages --multiversion --arch amd64 pool /dev/null 2>>"$W/scan-amd64v3.log") >"$W/records-baseline"
+	python3 - "$W/records-baseline" "$W/records-variant" >"$W/Packages-amd64v3" <<'PYV'
+import re, sys
+def records(path):
+    return [r.strip('\n') for r in re.split(r'\n\n+', open(path).read()) if r.strip()]
+def field(record, name):
+    m = re.search(r'^' + name + r': (.*)$', record, re.M)
+    return m.group(1) if m else None
+variants = [r for r in records(sys.argv[2]) if field(r, 'Architecture-Variant') == 'amd64v3']
+replaced = {field(r, 'Package') for r in variants}
+baseline = [r for r in records(sys.argv[1]) if field(r, 'Architecture') == 'amd64' and not field(r, 'Architecture-Variant')
+            and field(r, 'Package') not in replaced]
+for r in sorted(baseline + variants, key=lambda r: (field(r, 'Package'), field(r, 'Version'))):
+    print(r + '\n')
+PYV
+	grep -v -e '^dpkg-scanpackages: info:' -e '^dpkg-scanpackages: warning:' "$W/scan-amd64v3.log" >&2 || true
+	mkdir -p "$dir"
+	mv -f "$W/Packages-amd64v3" "$dir/Packages"
+	index_done "$dir" "$COMPONENT/binary-amd64v3" Packages
+	RELEASE_ARCHES="$ARCHES amd64v3"
+else
+	rm -rf "${dir:?}"
+fi
 dir=$D/$COMPONENT/source
 if grep -q $'\tsource$' "$W/selection.tsv"; then
 	mkdir -p "$dir"
@@ -621,7 +664,7 @@ fi
 # format: "path<tab>section/package[,section/package]", sorted by path; Architecture: all packages are listed in
 # every architecture's file and in Contents-all, as the archive does. Deterministic, so a run that changes
 # nothing leaves the signed Release as it was.
-mapfile -t CONTENTS_DEBS < <(awk -F'\t' '$5 != "source" {print $1}' "$W/selection.tsv")
+mapfile -t CONTENTS_DEBS < <(awk -F'\t' '$5 != "source" && $5 != "amd64v3" {print $1}' "$W/selection.tsv")
 python3 "$HERE/make-contents.py" "$W" "$ARCHES" "${CONTENTS_DEBS[@]}"
 for arch in $ARCHES; do
 	cp -f "$W/Contents-$arch" "$D/$COMPONENT/Contents-$arch"
@@ -697,7 +740,7 @@ fi
 	echo "Codename: $CODENAME"
 	echo "Version: $EDITION_VERSION"
 	echo "Date: @DATE@"
-	echo "Architectures: $ARCHES"
+	echo "Architectures: $RELEASE_ARCHES"
 	echo "Components: $COMPONENT"
 	echo "Description: $DESCRIPTION"
 	echo "Acquire-By-Hash: yes"

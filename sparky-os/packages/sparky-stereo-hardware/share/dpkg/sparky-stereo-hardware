@@ -3,3 +3,5 @@
 post-invoke=if [ -x /usr/lib/sparky-stereo-hardware/nvidia-i386 ]; then /usr/lib/sparky-stereo-hardware/nvidia-i386 check || true; fi
 # thermald stays on an Intel machine that has it (ORDER 43): marked manually installed once, after the apt run
 post-invoke=if [ -x /usr/lib/sparky-stereo-hardware/thermald-manual ]; then /usr/lib/sparky-stereo-hardware/thermald-manual check || true; fi
+# A package built for a higher processor level than this one's (an amd64v3 build on an older processor) is told to the person (ORDER 108): looked for only when dpkg's status carries such a package or a notice is kept
+post-invoke=if [ -x /usr/lib/sparky-stereo-hardware/variant-check ] && { grep -qs '^Architecture-Variant:' /var/lib/dpkg/status || [ -e /var/lib/sparky-stereo-problems/sparky-stereo-hardware_variant-mismatch.json ]; }; then /usr/lib/sparky-stereo-hardware/variant-check check || true; fi
