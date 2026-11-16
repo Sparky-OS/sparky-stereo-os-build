@@ -71,3 +71,5 @@ Tools already installed are not reinstalled, upgraded or mentioned; one that apt
 Removing the entry removes no tool: those the entry brought or marked are marked as automatically installed unless another installed entry declares them, and apt decides from there.
 
 DisplayCAL (0.1.10): an entry of Tools and utilities that is offered and not installed by default, with the sentence that it requires calibrator hardware and apt's sizes before the button; `actions/entry status ID` answers for one entry, which the Info Centre's Stereo 3D and Deep Colour page uses to offer "Install DisplayCAL" (ORDER 575).
+
+Vinci (0.1.11): the entry pins Vinci 0.4.9, its release address, its size and its SHA-256; the download is refused and said when the bytes do not match (ORDER 589).
