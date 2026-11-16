@@ -9,10 +9,15 @@ Description: With the browser's own compositor in software, the page's two views
  BufferTextureHost, whose RGB image descriptor carries it), so WebRender passes it to the compositor surface it draws the
  picture into, as it already did for video, and that surface is declared full side by side. One picture keeps mark 0: 2D
  canvases and the hardware route reach the compositor as before.
+ With the mark, a canvas WebRender does not give a surface of its own (a rounded clip) is drawn into the page's tiles once
+ per eye, as on the GPU route; under software WebRender the right eye then showed only the canvas's background, because
+ brush_image's bounds for a rectangle texture started at the texture's origin instead of the eye's part (min_uv). They now
+ start at min_uv for both kinds of texture; a whole image (min_uv 0) is drawn as before.
  Upstream: the stereo mark, the camera hack and the flat WebXR display are the edition's own (fork Sparky-OS/waterfox);
- Mozilla's software path on Wayland is RenderCompositorNativeSWGL (bug 1711224), unchanged here.
+ Mozilla's software path on Wayland is RenderCompositorNativeSWGL (bug 1711224), unchanged here. Mozilla's current tree no
+ longer has brush_image.glsl (images moved to the quad shaders), and no Bugzilla bug names this bound.
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
-Origin: vendor, https://github.com/Sparky-OS/waterfox/commit/150684b3a7044ec1be2fc72328935a0d573502d0
+Origin: vendor, https://github.com/Sparky-OS/waterfox/compare/4ed7888140abc8f4ab6e68a4166eeea88d2871d7...5787349248e08d7b8f5538c16d6a38cdbfacd0d7
 Forwarded: not-needed
 Assisted-by: Claude Opus 5.5 via Claude Code
 ---
@@ -199,3 +204,24 @@ index 290bb15224..04bf63aad2 100644
  
    class DataTextureSourceYCbCrBasic;
  };
+diff --git a/gfx/wr/webrender/res/brush_image.glsl b/gfx/wr/webrender/res/brush_image.glsl
+index 53f1c21fd9..bb6994c8da 100644
+--- a/gfx/wr/webrender/res/brush_image.glsl
++++ b/gfx/wr/webrender/res/brush_image.glsl
+@@ -259,11 +259,12 @@ void brush_vs(
+         v_uv *= vi.world_pos.w;
+     }
+ 
+-#ifdef WR_FEATURE_TEXTURE_RECT
+-    v_uv_bounds = vec4(0.0, 0.0, vec2(textureSize(sColor0)));
+-#else
++    // The bounds start at min_uv, which v_uv was made relative to above, for a
++    // rectangle texture too (texture_size is 1 there): a part of the image that
++    // does not start at its origin, such as the right eye's view of a stereo
++    // picture drawn per eye, otherwise samples from the texture's origin and is
++    // clamped to the part's first column. For a whole image min_uv is 0.
+     v_uv_bounds = vec4(min_uv, max_uv) / texture_size.xyxy;
+-#endif
+ 
+ #ifdef WR_FEATURE_REPETITION
+     // Normalize UV to 0..1 scale only if using repetition. Otherwise, leave
