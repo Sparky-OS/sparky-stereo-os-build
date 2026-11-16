@@ -1,0 +1,67 @@
+Description: ui: retain non-rectangular stereo scanout metadata
+ .
+ Line alternative already arrives with a layout and logical view size,
+ but no eye rectangles. Keep that metadata for SPICE consumers. The GTK
+ rectangle renderer must reject empty views until it supports row
+ sampling.
+ .
+ This is a downstream metadata fix, not line-alternative rendering
+ qualification.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/qemu/commit/1c08d7b9c19c9292bff4b2fbba658796fbc89db5
+Forwarded: no
+Last-Update: 2026-10-26
+Assisted-by: gpt-6-astra via Codex
+---
+ include/ui/console.h | 4 +++-
+ ui/console.c         | 6 +++---
+ ui/gtk.c             | 1 +
+ 3 files changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/include/ui/console.h b/include/ui/console.h
+index 1cbb7953af320eb11d2281f5b3912656ae6b8f62..692fe9598344b1d527e5f4187c9d830c6e939f16 100644
+--- a/include/ui/console.h
++++ b/include/ui/console.h
+@@ -121,7 +121,9 @@ typedef struct QemuUIInfo {
+ /*
+  * A stereo scanout: each view's place in the surface (or scanout) and the
+  * size a view is shown at.  Layout numbers follow the virtio-gpu protocol
+- * (the HDMI 1.4b 3D structures, 0 for 2D).
++ * (the HDMI 1.4b 3D structures, 0 for 2D). Zero rectangles do not mean 2D:
++ * line alternative has a width by 2 * height raster with left samples on
++ * even rows and right samples on odd rows (row zero first).
+  */
+ typedef struct QemuStereo {
+     uint32_t layout;
+diff --git a/ui/console.c b/ui/console.c
+index ea7bbfdae04fa940a088881126be5a76c762eab1..bf48cf03232bccf9699d1191f7121d9773aa7c93 100644
+--- a/ui/console.c
++++ b/ui/console.c
+@@ -733,12 +733,12 @@ int qemu_console_set_ui_info(QemuConsole *con, QemuUIInfo *info, bool delay)
+  * @stereo: the views of the following scanouts, or NULL for 2D
+  *
+  * Displays read it with qemu_console_get_stereo() when the next surface
+- * or GL scanout arrives.
++ * or GL scanout arrives. Non-rectangular layouts still carry their layout
++ * and logical view size; each display validates how it can present them.
+  */
+ void qemu_console_set_stereo(QemuConsole *con, const QemuStereo *stereo)
+ {
+-    if (stereo && stereo->left.width && stereo->left.height &&
+-        stereo->right.width && stereo->right.height) {
++    if (stereo && stereo->layout && stereo->width && stereo->height) {
+         con->stereo = *stereo;
+     } else {
+         con->stereo = (QemuStereo) { 0 };
+diff --git a/ui/gtk.c b/ui/gtk.c
+index 1369cee2f7a4759d0279c9cce2f1d8296436b814..78113d0b7daf1966b810d38f7dd11c640a92ebb7 100644
+--- a/ui/gtk.c
++++ b/ui/gtk.c
+@@ -282,6 +282,7 @@ void gd_fb_size(VirtualConsole *vc, int *fbw, int *fbh)
+ static bool gd_stereo_view_valid(const QemuRect *view, int w, int h)
+ {
+     return view->x >= 0 && view->y >= 0 &&
++           view->width > 0 && view->height > 0 &&
+            view->x + view->width <= w && view->y + view->height <= h;
+ }
+ 

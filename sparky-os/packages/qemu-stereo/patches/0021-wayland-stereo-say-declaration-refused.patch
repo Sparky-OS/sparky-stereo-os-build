@@ -1,0 +1,40 @@
+Description: ui/wayland-stereo: say when the compositor refuses the stereo declaration
+ .
+ The return value of stereo_declare_wayland() was ignored, so a refused
+ declaration left the buffer attached, flat and with both views squeezed
+ side by side, with nothing said. Warn once and hide the surface: the
+ scanout then shows its left view, as it does on a compositor that takes
+ no stereo surfaces.
+ .
+ Tested at KWin with the declaration refused: no set_content, one warning,
+ the left view alone in the window; the declared case unchanged.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/qemu/commit/713846bba034fde981815a3a3674d040cf2cf2ff
+Forwarded: no
+Last-Update: 2026-11-09
+Assisted-by: Claude:claude-opus-5-5
+---
+ ui/wayland-stereo.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/ui/wayland-stereo.c b/ui/wayland-stereo.c
+index 9eccb2ab41e9b9b708f549dfedaf936dc49e4c08..a6bd79ff7b62c8a9d6c0620bdbb57bdd82a9fbea 100644
+--- a/ui/wayland-stereo.c
++++ b/ui/wayland-stereo.c
+@@ -348,8 +348,14 @@ void qemu_wayland_stereo_show(QemuWaylandStereo *ws, pixman_image_t *frame,
+     }
+ 
+     if (!ws->declared) {
+-        stereo_declare_wayland(ws->surface, STEREO_SBS_FULL,
+-                               STEREO_CLASS_NONE, STEREO_SUBCLASS_UNSPECIFIED);
++        if (stereo_declare_wayland(ws->surface, STEREO_SBS_FULL,
++                                   STEREO_CLASS_NONE,
++                                   STEREO_SUBCLASS_UNSPECIFIED) < 0) {
++            warn_report_once("wayland: the compositor refused the stereo "
++                             "declaration, this scanout shows its left view");
++            qemu_wayland_stereo_hide(ws);
++            return;
++        }
+         ws->declared = true;
+     }
+     wl_subsurface_set_position(ws->subsurface, x, y);

@@ -78,3 +78,32 @@ comparison when preparing that refresh.
 Run the full Debian package build, the Lean Code release/link gate and the
 installed-package runtime controls before treating the resulting stage as
 ready. The source integration alone must not be presented as those passes.
+
+## The depth series after the published stereo3d7 source (ORDER 156b)
+
+`next-source.sh PUBLISHED.dsc OUT` makes `1:11.1.2+ds-3+stereo3d8+lc1` from the
+published `+stereo3d7+lc1` source the way the edition's other successors are made
+(`repo/lc-successor.py --in-place --overlay`): the published `debian/` stays as it
+is but for the current Lean Code toolkit, the changelog (the plain `+stereo3d8`
+entry, then the Lean Code entry, on top of the published history), ten patches
+appended to the series, and `libstereo-dibr-dev (>= 1.17.1) [amd64]` in
+`debian/control` and in the `debian/control-in` template it is regenerated from.
+The changelog text is `changelog-stereo3d8.txt`.
+
+The patches are the commits of Sparky-OS/qemu branch `order156-depth` that
+`+stereo3d7` lacks, one DEP-3 patch per commit with its URL in `Origin`:
+`0012` to `0016` are the five commits the depth work stands on (line-alternative
+metadata and native line samples, the rutabaga disable, the GL readback bound),
+`0017` to `0021` the depth work itself (the graphics rectangles of the 104-byte
+command, L + depth in the EDID, the GTK display drawing the second view through
+libstereo-dibr, and saying a refused declaration).
+The fork's `7a3e688`, `c7f34e4` and `c1aec2d` are `0009` to `0011` already
+(same patch-id). The published `+stereo3d7` tree with `0012` to `0021` applied
+at fuzz 0 equals the fork's `713846b` in all 66 files the fork records.
+
+Build the binaries with `release/build-from-lc-dsc.sh DSC amd64
+sparky-lc-migration:20261020 REPO OUT`, `SPARKY_LC_ARCHIVE_DIR` holding
+`gate-sources.json` as `sources.json` (sha256
+`3a7f9f166ce0fab70409fa8ede675be33204526abb750ace3d34306fc85cc379`)
+and the three keyrings it names under `keyrings/`, and
+`SPARKY_LC_PREVIOUS_DIR` holding the published `+stereo3d7` binaries.

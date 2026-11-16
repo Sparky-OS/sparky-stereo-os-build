@@ -1,0 +1,35 @@
+Description: ui/gtk: bound stereo GL readback allocation
+ .
+ Reject dimensions whose row stride or readback size exceeds a signed
+ image allocation before multiplying or reading pixels.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: https://github.com/Sparky-OS/qemu/commit/7127486def3cee19088dd0e5594f1eeb24dd606a
+Forwarded: no
+Last-Update: 2026-10-27
+Assisted-by: gpt-6-astra via Codex
+---
+ ui/gtk-gl-area.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/ui/gtk-gl-area.c b/ui/gtk-gl-area.c
+index 280a6cb15d650ce77e7727bd34a25dbddf109db5..ee1b6d7926ed90b9fd7967a85f4b3cd7674e97e1 100644
+--- a/ui/gtk-gl-area.c
++++ b/ui/gtk-gl-area.c
+@@ -46,9 +46,16 @@ static void gd_gl_area_draw_stereo(VirtualConsole *vc, int gs,
+     const QemuRect *left = &vc->gfx.stereo.left;
+     pixman_image_t *frame;
+     uint32_t *data;
+-    int stride = vc->gfx.w * 4;
++    int stride;
+     int sy0, sy1;
+ 
++    if (vc->gfx.w <= 0 || vc->gfx.h <= 0 ||
++        vc->gfx.w > INT_MAX / 4 ||
++        vc->gfx.h > INT_MAX / (4 * vc->gfx.w)) {
++        return;
++    }
++    stride = vc->gfx.w * 4;
++
+     /* the blit below draws the frame's last row first, as the 2D path does */
+     if (vc->gfx.y0_top) {
+         sy0 = vc->gfx.h - left->y - left->height;
