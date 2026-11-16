@@ -24,7 +24,10 @@ done
 check "the rates come from the devices of the rig" "grep -q 'allowed-rates = \[ 32000 44100 48000 88200 96000 176400 192000 \]' $PW"
 check "show names the devices" "LANG=C sparky-stereo-audio show | grep -q 'RIG TV'"
 check "dpkg --verify finds the package's files unchanged" "[ -z \"\$(dpkg --verify sparky-stereo-audio 2>&1)\" ]"
-check "systemd: the system service verifies" "systemd-analyze verify /usr/lib/systemd/system/sparky-stereo-audio.service 2>&1 | grep -v 'Failed to\|Protocol error' | grep -q ^$ || ! systemd-analyze verify /usr/lib/systemd/system/sparky-stereo-audio.service 2>&1 | grep -q 'sparky-stereo-audio.service:'"
+check "systemd: the system service verifies (exit status 0)" "systemd-analyze verify /usr/lib/systemd/system/sparky-stereo-audio.service"
+check "systemd: the user units verify (exit status 0)" "(cd /usr/lib/systemd/user && systemd-analyze --root=/ verify sparky-stereo-audio-apply.service sparky-stereo-audio-apply.path)"
+printf '[Unit]\n[Service]\nExecStart=/nonexistent\n' > /tmp/bad.service
+check "systemd: the control, a unit that must fail, fails" "! systemd-analyze verify /tmp/bad.service"
 apt-get -y install udev >/dev/null 2>&1
 check "udev: the rule verifies" "udevadm verify /usr/lib/udev/rules.d/71-sparky-stereo-audio.rules"
 before=$(stat -c %Y $PW)
