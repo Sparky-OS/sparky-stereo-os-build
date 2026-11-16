@@ -1,0 +1,12 @@
+scx-scheds (1.1.4+ds-1+sparky1) unstable; urgency=medium
+
+  * sched_ext schedulers for the edition (ORDER 108; Daniel, 2026-10-05: "processor governance"): sched-ext/scx at the tag v1.1.4 (commit
+    e7b3a2196174, 2026-10-15, signed by Tejun Heo), the release CachyOS packages (CachyOS-PKGBUILDS scx/scx-scheds PKGBUILD, 0c7ddbc13573,
+    2026-11-16), with its crates vendored by cargo vendor --locked so the build needs no network. The build tree's earlier copy (ef88a007,
+    2026-10-01) is 149 commits older than this tag and is not used.
+  * The workspace is built as CachyOS builds it, less scx_rlfifo, scx_mitosis, scx_characterize, xtask, vmlinux_docify and the two arena self-test
+    crates. The units and /etc/default/scx are upstream's (services/scx.service, services/scx), installed and not enabled: CachyOS's packages enable
+    nothing and Bazzite installs the schedulers and disables scx_loader.service (build_files/bazzite/12-finalize.sh:161), so both ship them off.
+    The person's switch is systemctl enable --now scx.service, with the scheduler named in /etc/default/scx.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 16 Nov 2026 12:00:00 -0300
