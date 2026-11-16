@@ -74,7 +74,7 @@ Run these commands only inside the device-free rig, as its unprivileged test use
 
 Combined Recording literally adds the selected output mix and microphone. If Listen sends that microphone to the same output, both paths include it; the page warns about this in the selected language. Internal combined capture streams direct their routing controls to the combined-source settings, where all contributors stay consistent. The new source has low session priority and keeps the established default input.
 
-Set `PA19_ENABLE_ROUTES=1` for the hotplug case to keep explicit monitoring and combined routes active while the synthetic newly connected outputs take the default. `PA19_RESULT` selects a fresh evidence directory. For a taller full-page virtual-stream capture use `PA19_SCREEN_HEIGHT=2800 PA19_WINDOW_HEIGHT=2600`.
+Set `PA19_ENABLE_ROUTES=1 PA19_APPLET_OWNED=1` for the applet case to check its actual owned Listen menu updates both saved preferences and the server target. Set `PA19_ENABLE_ROUTES=1` for the hotplug case to keep explicit monitoring and combined routes active while the synthetic newly connected outputs take the default. `PA19_RESULT` selects a fresh evidence directory. For a taller full-page virtual-stream capture use `PA19_SCREEN_HEIGHT=2800 PA19_WINDOW_HEIGHT=2600`.
 
 `make-route-translations.py SOURCE PATCH` generates `plasma-pa-audio-routes.po.patch` after the virtual-stream patch. `check-route-catalogues.py DEB OUTPUT_JSON` reads all 29 routing keys in each built translated catalogue. The shared translations-shipped gate also compares every added translation with the generated patch; run its real `--gettext` mode under generated locales in the installed rig.
 

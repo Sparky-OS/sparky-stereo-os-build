@@ -62,7 +62,7 @@ if [[ $case_name == candidate ]]; then
     export LD_LIBRARY_PATH=/opt/order19/lib/x86_64-linux-gnu
     export XDG_DATA_DIRS=/opt/order19/share:/usr/share
 fi
-if [[ $phase == hotplug ]]; then
+if [[ $phase == hotplug || ${PA19_APPLET_OWNED:-0} == 1 ]]; then
     if [[ ${PA19_ENABLE_ROUTES:-0} == 1 ]]; then
         cat >"$XDG_CONFIG_HOME/plasmaparc" <<'EOF'
 [AudioRoutes][Listen-hotplug-check]
@@ -89,6 +89,8 @@ for _ in range(100):
 else: raise AssertionError(state)
 PY
     fi
+fi
+if [[ $phase == hotplug ]]; then
     python3 /lane/src/sparky-stereo-os-build/sparky-os/upstream/plasma-pa/rig-hotplug.py "$result"
     if [[ ${PA19_ENABLE_ROUTES:-0} == 1 ]]; then
         python3 - "$result" <<'PY'
