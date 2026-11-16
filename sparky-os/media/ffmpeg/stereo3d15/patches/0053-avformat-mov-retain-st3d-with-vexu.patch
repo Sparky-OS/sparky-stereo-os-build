@@ -1,0 +1,89 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] avformat/mov: retain st3d packing when merging vexu metadata
+
+st3d describes the packing, while vexu/eyes describes the views and
+camera metadata. Rejecting st3d when eyes already allocated stereo
+side data makes the result depend on the box order. A later eyes box
+also loses st3d's explicit monoscopic type and right-first flag.
+
+Track accepted st3d boxes separately from the shared side data. Merge
+complementary fields without overwriting the packing or inversion, and
+keep rejecting duplicate st3d declarations. Read the custom and
+right-first modes defined by Spherical Video V2 as well.
+
+The generated MOV metadata regression fails on the parent and passes
+with this change, including both box orders and reserved/duplicate
+controls.
+
+https://github.com/google/spatial-media/blob/master/docs/spherical-video-v2-rfc.md#stereoscopic-3d-video-box-st3d
+https://developer.apple.com/av-foundation/Stereo-Video-ISOBMFF-Extensions.pdf
+Assisted-by: gpt-6 (Codex)
+
+Backport of ca5dbc9 from upstream base d31915e9dce4.
+The published 9.0.2 source predates the partial eyes packing check.
+
+--- a/libavformat/isom.h
++++ b/libavformat/isom.h
+@@ -266,6 +266,7 @@
+     int32_t *display_matrix;
+     AVStereo3D *stereo3d;
+     size_t stereo3d_size;
++    int st3d_present;
+     AVSphericalMapping *spherical;
+     size_t spherical_size;
+     AVMasteringDisplayMetadata *mastering;
+--- a/libavformat/mov.c
++++ b/libavformat/mov.c
+@@ -6843,7 +6843,7 @@
+         return AVERROR_INVALIDDATA;
+     }
+ 
+-    if (sc->stereo3d)
++    if (sc->st3d_present)
+         return AVERROR_INVALIDDATA;
+ 
+     avio_skip(pb, 4); /* version + flags */
+@@ -6859,16 +6859,27 @@
+     case 2:
+         type = AV_STEREO3D_SIDEBYSIDE;
+         break;
++    case 3:
++        type = AV_STEREO3D_UNSPEC;
++        break;
++    case 4:
++        type = AV_STEREO3D_SIDEBYSIDE;
++        break;
+     default:
+         av_log(c->fc, AV_LOG_WARNING, "Unknown st3d mode value %d\n", mode);
+         return 0;
+     }
+ 
+-    sc->stereo3d = av_stereo3d_alloc_size(&sc->stereo3d_size);
+-    if (!sc->stereo3d)
+-        return AVERROR(ENOMEM);
++    if (!sc->stereo3d) {
++        sc->stereo3d = av_stereo3d_alloc_size(&sc->stereo3d_size);
++        if (!sc->stereo3d)
++            return AVERROR(ENOMEM);
++    }
+ 
+     sc->stereo3d->type = type;
++    if (mode == 4)
++        sc->stereo3d->flags |= AV_STEREO3D_FLAG_INVERT;
++    sc->st3d_present = 1;
+     return 0;
+ }
+ 
+@@ -7330,8 +7341,10 @@
+             return AVERROR(ENOMEM);
+     }
+ 
+-    sc->stereo3d->flags                           = flags;
+-    sc->stereo3d->type                            = type;
++    sc->stereo3d->flags                          |= flags;
++    /* stri declares the views, not their packing. Keep a preceding st3d/pack. */
++    if (!sc->st3d_present && sc->stereo3d->type == AV_STEREO3D_2D)
++        sc->stereo3d->type = type;
+     sc->stereo3d->view                            = view;
+     sc->stereo3d->primary_eye                     = primary_eye;
+     sc->stereo3d->baseline                        = baseline;

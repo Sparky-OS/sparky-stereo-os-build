@@ -1,0 +1,35 @@
+Description: avcodec/h264_sei: bound payload header accumulation
+ Reject header additions before the payload type or size exceeds INT_MAX.
+ Compare the limit with the next byte so representable terminal sums
+ remain valid. Synthetic type overflow and unsigned size wrap headers
+ were accepted before this change.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/056a18af675dcb9bbd28651216c0d0d3d3a5c34f
+Forwarded: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25409
+Last-Update: 2026-11-06
+
+diff --git a/libavcodec/h264_sei.c b/libavcodec/h264_sei.c
+index 2fa7b60..aaaed86 100644
+--- a/libavcodec/h264_sei.c
++++ b/libavcodec/h264_sei.c
+@@ -245,13 +245,15 @@ int ff_h264_sei_decode(H264SEIContext *h, GetBitContext *gb,
+         int ret  = 0;
+ 
+         do {
+-            if (bytestream2_get_bytes_left(&gbyte) <= 0)
++            if (bytestream2_get_bytes_left(&gbyte) <= 0 ||
++                type > INT_MAX - bytestream2_peek_byteu(&gbyte))
+                 return AVERROR_INVALIDDATA;
+             type += bytestream2_peek_byteu(&gbyte);
+         } while (bytestream2_get_byteu(&gbyte) == 255);
+ 
+         do {
+-            if (bytestream2_get_bytes_left(&gbyte) <= 0)
++            if (bytestream2_get_bytes_left(&gbyte) <= 0 ||
++                size > INT_MAX - bytestream2_peek_byteu(&gbyte))
+                 return AVERROR_INVALIDDATA;
+             size += bytestream2_peek_byteu(&gbyte);
+         } while (bytestream2_get_byteu(&gbyte) == 255);

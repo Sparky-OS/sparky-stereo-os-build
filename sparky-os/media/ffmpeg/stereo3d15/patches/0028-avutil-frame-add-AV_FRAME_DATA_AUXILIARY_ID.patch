@@ -1,0 +1,50 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/8d0f5127755a30dc2328c09bc9a4997b5fb15a1f
+From 8d0f5127755a30dc2328c09bc9a4997b5fb15a1f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:01:54 -0300
+Subject: [PATCH 28/48] avutil/frame: add AV_FRAME_DATA_AUXILIARY_ID
+
+A decoder that outputs the pictures of an auxiliary layer, such as an
+H.265 depth layer (AuxId 2, F.7.4.3.1.1 and Table F.2), along with those
+of its primary layer marks them with their AuxId.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ libavutil/frame.h     | 7 +++++++
+ libavutil/side_data.c | 1 +
+ 2 files changed, 8 insertions(+)
+
+diff --git a/libavutil/frame.h b/libavutil/frame.h
+index eb9cd557..b46fb88d 100644
+--- a/libavutil/frame.h
++++ b/libavutil/frame.h
+@@ -353,6 +353,13 @@ enum AVFrameSideDataType {
+      * defined in libavutil/multiview.h.
+      */
+     AV_FRAME_DATA_ALTERNATIVE_DEPTH_INFO,
++
++    /**
++     * The frame is an auxiliary picture: the data is an int, its AuxId (ITU-T
++     * H.265 F.7.4.3.1.1, Table F.2), 1 for alpha, 2 for depth. The frame holds
++     * the auxiliary picture in the luma plane.
++     */
++    AV_FRAME_DATA_AUXILIARY_ID,
+ };
+ 
+ enum AVActiveFormatDescription {
+diff --git a/libavutil/side_data.c b/libavutil/side_data.c
+index f5c6bacd..08dff729 100644
+--- a/libavutil/side_data.c
++++ b/libavutil/side_data.c
+@@ -70,6 +70,7 @@ static const AVSideDataDescriptor sd_props[] = {
+     [AV_FRAME_DATA_DEPTH_SAMPLING_INFO]         = { "Depth sampling information",                   AV_SIDE_DATA_PROP_GLOBAL },
+     [AV_FRAME_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID] = { "Constrained depth parameter set identifier", AV_SIDE_DATA_PROP_GLOBAL },
+     [AV_FRAME_DATA_ALTERNATIVE_DEPTH_INFO]      = { "Alternative depth information",                AV_SIDE_DATA_PROP_GLOBAL },
++    [AV_FRAME_DATA_AUXILIARY_ID]                = { "Auxiliary picture type (AuxId)" },
+ };
+ 
+ const AVSideDataDescriptor *av_frame_side_data_desc(enum AVFrameSideDataType type)
+-- 
+2.53.0
+

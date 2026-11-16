@@ -1,0 +1,338 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/87b32e3d8102c2da79d711afd8e7bf200fbb201a
+From 87b32e3d8102c2da79d711afd8e7bf200fbb201a Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:55:21 -0300
+Subject: [PATCH 41/48] avformat/mpegts: read ISO/IEC 23002-3 auxiliary video
+ streams
+
+An auxiliary video stream (ISO/IEC 13818-1 2.16), a depth or parallax
+map for a primary video stream, has stream type 0x1E (Table 2-34) and an
+auxiliary video stream descriptor (tag 0x2F, 2.6.74), which names its
+coding with a stream type (aux_video_codedstreamtype) and carries its
+supplemental information (si_rbsp() of ISO/IEC 23002-3).
+
+Set the stream's codec from aux_video_codedstreamtype, probing it when
+the descriptor is missing, and export the auxiliary video SI message as
+AV_PKT_DATA_AUXILIARY_VIDEO_INFO, with an AV_PKT_DATA_AUXILIARY_ID of 2
+for a depth map. The si_rbsp() reader goes in a file of its own, for the
+program stream demuxer to share.
+
+ISO/IEC 23002-3 is not freely available: si_rbsp() is read as TSDuck
+reads it, and with an rbsp_trailing_bits() after the messages too, since
+an RBSP ends with one.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ libavformat/Makefile       |   2 +-
+ libavformat/mpegauxvideo.c | 162 +++++++++++++++++++++++++++++++++++++
+ libavformat/mpegauxvideo.h |  41 ++++++++++
+ libavformat/mpegts.c       |  27 +++++++
+ libavformat/mpegts.h       |   2 +
+ 5 files changed, 233 insertions(+), 1 deletion(-)
+ create mode 100644 libavformat/mpegauxvideo.c
+ create mode 100644 libavformat/mpegauxvideo.h
+
+diff --git a/libavformat/Makefile b/libavformat/Makefile
+index 0d2e757b..1168618d 100644
+--- a/libavformat/Makefile
++++ b/libavformat/Makefile
+@@ -407,7 +407,7 @@ OBJS-$(CONFIG_MPEG2SVCD_MUXER)           += mpegenc.o
+ OBJS-$(CONFIG_MPEG2VIDEO_MUXER)          += rawenc.o
+ OBJS-$(CONFIG_MPEG2VOB_MUXER)            += mpegenc.o
+ OBJS-$(CONFIG_MPEGPS_DEMUXER)            += mpeg.o
+-OBJS-$(CONFIG_MPEGTS_DEMUXER)            += mpegts.o
++OBJS-$(CONFIG_MPEGTS_DEMUXER)            += mpegts.o mpegauxvideo.o
+ OBJS-$(CONFIG_MPEGTS_MUXER)              += mpegtsenc.o
+ OBJS-$(CONFIG_MPEGVIDEO_DEMUXER)         += mpegvideodec.o rawdec.o
+ OBJS-$(CONFIG_MPJPEG_DEMUXER)            += mpjpegdec.o
+diff --git a/libavformat/mpegauxvideo.c b/libavformat/mpegauxvideo.c
+new file mode 100644
+index 00000000..60514a43
+--- /dev/null
++++ b/libavformat/mpegauxvideo.c
+@@ -0,0 +1,162 @@
++/*
++ * ISO/IEC 23002-3 auxiliary video supplemental information
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/*
++ * si_rbsp() holds SI messages, each a payload type and a payload size (coded
++ * as SEI messages code them, with 0xFF bytes for each 255), then the
++ * payload. Payload type 0 is a depth map and 1 a parallax map, each with
++ * generic_params() (3 bytes) and then depth_params() (2 bytes) or
++ * parallax_params() (8 bytes); other payload types are reserved and skipped.
++ *
++ * ISO/IEC 23002-3 (6.1 syntax, 6.2 semantics) is not freely available: this
++ * is the syntax as TSDuck reads it (AuxiliaryVideoStreamDescriptor), whose
++ * parallax_params() HDMI 1.4a (Table H-4) confirms. An RBSP ends with
++ * rbsp_trailing_bits() (ITU-T H.264 3.129), which TSDuck neither reads nor
++ * writes: the reader accepts the messages with or without it.
++ */
++
++#include "libavutil/intreadwrite.h"
++#include "libavutil/log.h"
++#include "libavutil/mem.h"
++#include "libavcodec/packet.h"
++
++#include "mpegauxvideo.h"
++
++static int read_value(const uint8_t **p, const uint8_t *end, unsigned *value)
++{
++    int byte;
++
++    *value = 0;
++    do {
++        if (*p >= end)
++            return AVERROR_INVALIDDATA;
++        byte    = *(*p)++;
++        *value += byte;
++    } while (byte == 0xff);
++
++    return 0;
++}
++
++int ff_aux_video_si_parse(void *logctx, AVCodecParameters *par,
++                          const uint8_t *buf, int size)
++{
++    const uint8_t *p = buf, *end = buf + size;
++    AVAuxiliaryVideoInfo *info = NULL;
++    size_t info_size;
++    int ret;
++
++    while (end - p >= 2) {
++        const uint8_t *msg;
++        unsigned payload_type, payload_size;
++
++        /* rbsp_trailing_bits() */
++        if (*p == 0x80) {
++            const uint8_t *q = p + 1;
++
++            while (q < end && !*q)
++                q++;
++            if (q == end)
++                break;
++        }
++
++        if ((ret = read_value(&p, end, &payload_type)) < 0 ||
++            (ret = read_value(&p, end, &payload_size)) < 0)
++            goto fail;
++        if (payload_size > end - p) {
++            av_log(logctx, AV_LOG_WARNING, "SI message of type %u overreads "
++                   "the supplemental information\n", payload_type);
++            break;
++        }
++        msg = p;
++        p  += payload_size;
++
++        if (payload_type != AV_AUXILIARY_VIDEO_DEPTH &&
++            payload_type != AV_AUXILIARY_VIDEO_PARALLAX)
++            continue;
++        if (info) {
++            av_log(logctx, AV_LOG_WARNING, "More than one auxiliary video SI "
++                   "message, keeping the first\n");
++            continue;
++        }
++        if (payload_size < (payload_type == AV_AUXILIARY_VIDEO_DEPTH ? 5 : 11)) {
++            av_log(logctx, AV_LOG_WARNING, "Auxiliary video SI message of type "
++                   "%u too short (%u bytes)\n", payload_type, payload_size);
++            continue;
++        }
++
++        info = av_auxiliary_video_info_alloc(&info_size);
++        if (!info)
++            return AVERROR(ENOMEM);
++        info->type = payload_type;
++
++        /* generic_params() */
++        info->aux_is_one_field = msg[0] >> 7;
++        if (info->aux_is_one_field) {
++            info->aux_is_bottom_field = msg[0] >> 6 & 1;
++            info->aux_is_interlaced   = 1;
++        } else {
++            info->aux_is_interlaced   = msg[0] >> 6 & 1;
++        }
++        info->position_offset_h = msg[1];
++        info->position_offset_v = msg[2];
++
++        if (payload_type == AV_AUXILIARY_VIDEO_DEPTH) {
++            /* depth_params() */
++            info->nkfar  = msg[3];
++            info->nknear = msg[4];
++        } else {
++            /* parallax_params() */
++            info->parallax_zero  = AV_RB16(msg + 3);
++            info->parallax_scale = AV_RB16(msg + 5);
++            info->dref           = AV_RB16(msg + 7);
++            info->wref           = AV_RB16(msg + 9);
++        }
++    }
++
++    if (!info) {
++        av_log(logctx, AV_LOG_WARNING, "Auxiliary video supplemental "
++               "information without an auxiliary video SI message\n");
++        return 0;
++    }
++
++    if (!av_packet_side_data_add(&par->coded_side_data, &par->nb_coded_side_data,
++                                 AV_PKT_DATA_AUXILIARY_VIDEO_INFO,
++                                 (uint8_t *)info, info_size, 0)) {
++        av_free(info);
++        return AVERROR(ENOMEM);
++    }
++
++    /* A depth map is a depth auxiliary picture (AuxId 2, H.265 Table F.2). */
++    if (info->type == AV_AUXILIARY_VIDEO_DEPTH) {
++        AVPacketSideData *sd = av_packet_side_data_new(&par->coded_side_data,
++                                                       &par->nb_coded_side_data,
++                                                       AV_PKT_DATA_AUXILIARY_ID,
++                                                       sizeof(int), 0);
++        if (!sd)
++            return AVERROR(ENOMEM);
++        *(int *)sd->data = 2;
++    }
++
++    return 0;
++
++fail:
++    av_log(logctx, AV_LOG_ERROR, "Truncated auxiliary video supplemental information\n");
++    return ret;
++}
+diff --git a/libavformat/mpegauxvideo.h b/libavformat/mpegauxvideo.h
+new file mode 100644
+index 00000000..466f78c1
+--- /dev/null
++++ b/libavformat/mpegauxvideo.h
+@@ -0,0 +1,41 @@
++/*
++ * ISO/IEC 23002-3 auxiliary video supplemental information
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#ifndef AVFORMAT_MPEGAUXVIDEO_H
++#define AVFORMAT_MPEGAUXVIDEO_H
++
++#include <stdint.h>
++
++#include "libavutil/multiview.h"
++#include "libavcodec/codec_par.h"
++
++/**
++ * Read the si_rbsp() of an auxiliary video stream descriptor (ISO/IEC 13818-1
++ * 2.6.74 and 2.6.75) and export its auxiliary video SI message as the
++ * AV_PKT_DATA_AUXILIARY_VIDEO_INFO of par, with an AV_PKT_DATA_AUXILIARY_ID
++ * of 2 for a depth map.
++ *
++ * @return 0 on success (also when the messages hold no auxiliary video SI
++ *         message), a negative AVERROR code on failure
++ */
++int ff_aux_video_si_parse(void *logctx, AVCodecParameters *par,
++                          const uint8_t *buf, int size);
++
++#endif /* AVFORMAT_MPEGAUXVIDEO_H */
+diff --git a/libavformat/mpegts.c b/libavformat/mpegts.c
+index cde8f46c..ae1182f0 100644
+--- a/libavformat/mpegts.c
++++ b/libavformat/mpegts.c
+@@ -42,6 +42,7 @@
+ #include "avio_internal.h"
+ #include "demux.h"
+ #include "mpeg.h"
++#include "mpegauxvideo.h"
+ #include "isom.h"
+ #include "id3v2.h"
+ #if CONFIG_ICONV
+@@ -1009,6 +1010,13 @@ static int mpegts_set_stream_info(AVStream *st, PESContext *pes,
+         st->codecpar->codec_id  = old_codec_id;
+         st->codecpar->codec_type = old_codec_type;
+     }
++    if (pes->stream_type == STREAM_TYPE_AUXILIARY_VIDEO &&
++        st->codecpar->codec_id == AV_CODEC_ID_NONE) {
++        /* The auxiliary video stream descriptor names the coding; probe it
++         * when the descriptor is missing. */
++        st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
++        sti->request_probe = AVPROBE_SCORE_STREAM_RETRY;
++    }
+     if ((st->codecpar->codec_id == AV_CODEC_ID_NONE ||
+             (sti->request_probe > 0 && sti->request_probe < AVPROBE_SCORE_STREAM_RETRY / 5)) &&
+         sti->probe_packets > 0 &&
+@@ -2529,6 +2537,25 @@ int ff_parse_mpeg2_descriptor(AVFormatContext *fc, AVStream *st, int stream_type
+             }
+         }
+         break;
++    case AUXILIARY_VIDEO_STREAM_DESCRIPTOR: /* ISO/IEC 13818-1 2.6.74 */
++        {
++            int coded_stream_type = get8(pp, desc_end);
++            int ret;
++
++            if (coded_stream_type < 0)
++                return AVERROR_INVALIDDATA;
++            if (stream_type == STREAM_TYPE_AUXILIARY_VIDEO) {
++                mpegts_find_stream_type(st, coded_stream_type, ISO_types);
++                if (st->codecpar->codec_type != AVMEDIA_TYPE_VIDEO)
++                    av_log(fc, AV_LOG_WARNING, "Auxiliary video stream of "
++                           "stream type 0x%02x, which is not video\n",
++                           coded_stream_type);
++            }
++            ret = ff_aux_video_si_parse(fc, st->codecpar, *pp, desc_end - *pp);
++            if (ret < 0)
++                return ret;
++        }
++        break;
+     case EXTENSION_DESCRIPTOR: /* descriptor extension */
+         {
+             int ret = parse_mpeg2_extension_descriptor(fc, st, prg_id, pp, desc_end, ts);
+diff --git a/libavformat/mpegts.h b/libavformat/mpegts.h
+index 58ef2484..bdc300f7 100644
+--- a/libavformat/mpegts.h
++++ b/libavformat/mpegts.h
+@@ -142,6 +142,7 @@
+ /** ISO/IEC 14496-3 Audio, without using any additional transport syntax,
+     such as DST, ALS and SLS */
+ #define STREAM_TYPE_AUDIO_MPEG4     0x1c
++#define STREAM_TYPE_AUXILIARY_VIDEO 0x1e /* ISO/IEC 23002-3 auxiliary video */
+ #define STREAM_TYPE_VIDEO_MVC       0x20
+ #define STREAM_TYPE_VIDEO_JPEG2000  0x21
+ #define STREAM_TYPE_VIDEO_HEVC      0x24
+@@ -205,6 +206,7 @@ https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/
+ #define FMC_DESCRIPTOR               0x1f
+ #define METADATA_DESCRIPTOR          0x26
+ #define METADATA_STD_DESCRIPTOR      0x27
++#define AUXILIARY_VIDEO_STREAM_DESCRIPTOR 0x2f
+ #define EXTENSION_DESCRIPTOR         0x3f
+ /* descriptor_tag values [0x40, 0xff] are User Private */
+ 
+-- 
+2.53.0
+

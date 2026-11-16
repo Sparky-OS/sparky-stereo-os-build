@@ -1,0 +1,232 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/e75c73c04753cc29a1df1d177322b2ade6d19b34
+From e75c73c04753cc29a1df1d177322b2ade6d19b34 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 05:26:27 -0300
+Subject: [PATCH 48/48] fate/filter-video: test the dibr filter
+
+A test picture with a near disc that moves over a far ramp: the default
+path, the middle view with backward warping and the depth-aided fill,
+layered warping with Telea's fill, the smoothing with no fill, 12-bit
+4:4:4 with a 16-bit depth map at half the size, and the Stereo 3D side
+data of the output; and the samples: the depth map and the parallax map
+of mpegts/depth-aux.ts read from their supplemental information, and the
+depth auxiliary layer of hevc/depth-layer.hevc with its depth
+representation information.
+
+The tests need FFmpeg configured with --enable-libstereodibr.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ tests/fate/filter-video.mak                   | 36 +++++++++++++++++++
+ tests/ref/fate/filter-dibr                    | 10 ++++++
+ tests/ref/fate/filter-dibr-12bit              | 10 ++++++
+ .../fate/filter-dibr-center-backward-depth    | 10 ++++++
+ tests/ref/fate/filter-dibr-gaussian-none      | 10 ++++++
+ tests/ref/fate/filter-dibr-hevc-depth-layer   | 13 +++++++
+ tests/ref/fate/filter-dibr-layered-telea      | 10 ++++++
+ tests/ref/fate/filter-dibr-mpegts-depth       | 11 ++++++
+ tests/ref/fate/filter-dibr-mpegts-parallax    | 11 ++++++
+ tests/ref/fate/filter-dibr-side-data          |  2 ++
+ 10 files changed, 123 insertions(+)
+ create mode 100644 tests/ref/fate/filter-dibr
+ create mode 100644 tests/ref/fate/filter-dibr-12bit
+ create mode 100644 tests/ref/fate/filter-dibr-center-backward-depth
+ create mode 100644 tests/ref/fate/filter-dibr-gaussian-none
+ create mode 100644 tests/ref/fate/filter-dibr-hevc-depth-layer
+ create mode 100644 tests/ref/fate/filter-dibr-layered-telea
+ create mode 100644 tests/ref/fate/filter-dibr-mpegts-depth
+ create mode 100644 tests/ref/fate/filter-dibr-mpegts-parallax
+ create mode 100644 tests/ref/fate/filter-dibr-side-data
+
+diff --git a/tests/fate/filter-video.mak b/tests/fate/filter-video.mak
+index 1b04816f..42cd3653 100644
+--- a/tests/fate/filter-video.mak
++++ b/tests/fate/filter-video.mak
+@@ -872,6 +872,42 @@ FATE_FILTER-$(call ALLYES, TESTSRC2_FILTER SPLIT_FILTER AVGBLUR_FILTER        \
+ FATE_FILTER-$(call FILTERFRAMECRC, TESTSRC SCALE PREMULTIPLY, LAVFI_INDEV) += fate-filter-scale-premultiply
+ fate-filter-scale-premultiply: CMD = framecrc -auto_conversion_filters -lavfi "testsrc,format=rgba,setparams=alpha_mode=premultiplied,format=rgba:alpha_modes=straight" -frames:v 10
+ 
++# dibr: a picture and its depth map to full side by side (libstereo-dibr). A
++# test picture with a near disc that moves over a far ramp, 2D-plus-depth: the
++# default (the picture as the left eye, forward warping, background
++# extension), then every other view, warp, fill and the smoothing
++DIBR_PICTURE = testsrc2=s=128x72:r=5:d=1,format=yuv420p
++DIBR_DEPTH = color=black:s=128x72:r=5:d=1,format=gray,geq=lum=if(lt(hypot(X-50-6*N\,Y-36)\,18)\,230\,20+X)
++FATE_DIBR-$(call FILTERFRAMECRC, TESTSRC2 COLOR GEQ FORMAT DIBR) += fate-filter-dibr fate-filter-dibr-center-backward-depth \
++    fate-filter-dibr-layered-telea fate-filter-dibr-gaussian-none
++fate-filter-dibr: CMD = framecrc -filter_complex "$(DIBR_PICTURE)[p];$(DIBR_DEPTH)[d];[p][d]dibr"
++fate-filter-dibr-center-backward-depth: CMD = framecrc -filter_complex "$(DIBR_PICTURE)[p];$(DIBR_DEPTH)[d];[p][d]dibr=view=center:warp=backward:fill=depth"
++fate-filter-dibr-layered-telea: CMD = framecrc -filter_complex "$(DIBR_PICTURE)[p];$(DIBR_DEPTH)[d];[p][d]dibr=warp=layered:fill=telea"
++fate-filter-dibr-gaussian-none: CMD = framecrc -filter_complex "$(DIBR_PICTURE)[p];$(DIBR_DEPTH)[d];[p][d]dibr=smooth=gaussian:fill=none:range=80:shift=-10"
++
++# 12-bit 4:4:4 with a 16-bit depth map at half the size, read the other way
++# round (larger samples farther)
++FATE_DIBR-$(call FILTERFRAMECRC, TESTSRC2 COLOR GEQ FORMAT DIBR) += fate-filter-dibr-12bit
++fate-filter-dibr-12bit: CMD = framecrc -filter_complex "testsrc2=s=128x72:r=5:d=1,format=yuv444p12[p];color=black:s=64x36:r=5:d=1,format=gray16,geq=lum=if(lt(hypot(X-25-3*N\,Y-18)\,9)\,4000\,60000-X*500)[d];[p][d]dibr=depth=farness" -pix_fmt yuv444p12
++
++# full side by side, marked as such
++FATE_FILTER_FFPROBE-$(call ALLYES, FFPROBE LAVFI_INDEV TESTSRC2_FILTER COLOR_FILTER FORMAT_FILTER DIBR_FILTER) += fate-filter-dibr-side-data
++fate-filter-dibr-side-data: CMD = probe -show_entries frame=width,height:frame_side_data_list -of compact -f lavfi "testsrc2=s=128x72:r=5:d=0.4[p];color=gray:s=128x72:r=5:d=0.4,format=gray[d];[p][d]dibr[out0]"
++
++# a transport stream's depth map and parallax map (ISO/IEC 23002-3), read
++# from their supplemental information, and an H.265 depth auxiliary layer
++# (AuxId 2) with its depth representation information, the picture as the
++# middle
++FATE_DIBR_SAMPLES-$(call FILTERDEMDEC, DIBR, MPEGTS, H264) += fate-filter-dibr-mpegts-depth fate-filter-dibr-mpegts-parallax
++fate-filter-dibr-mpegts-depth: CMD = framecrc -i $(TARGET_SAMPLES)/mpegts/depth-aux.ts -filter_complex "[0:v:0][0:v:1]dibr"
++fate-filter-dibr-mpegts-parallax: CMD = framecrc -i $(TARGET_SAMPLES)/mpegts/depth-aux.ts -filter_complex "[0:v:0][0:v:2]dibr"
++FATE_DIBR_SAMPLES-$(call FILTERDEMDEC, DIBR, HEVC, HEVC) += fate-filter-dibr-hevc-depth-layer
++fate-filter-dibr-hevc-depth-layer: CMD = framecrc -i $(TARGET_SAMPLES)/hevc/depth-layer.hevc -depth_output depth -i $(TARGET_SAMPLES)/hevc/depth-layer.hevc -filter_complex "[0:v][1:v]dibr=view=center"
++
++FATE_FILTER-yes += $(FATE_DIBR-yes)
++FATE_FILTER_SAMPLES-yes += $(FATE_DIBR_SAMPLES-yes)
++fate-filter-dibr-all: $(FATE_DIBR-yes) $(FATE_DIBR_SAMPLES-yes) $(filter fate-filter-dibr-%, $(FATE_FILTER_FFPROBE-yes))
++
+ FATE_SAMPLES_FFPROBE += $(FATE_METADATA_FILTER-yes)
+ FATE_SAMPLES_FFMPEG += $(FATE_FILTER_SAMPLES-yes)
+ FATE_FFPROBE += $(FATE_FILTER_FFPROBE-yes)
+diff --git a/tests/ref/fate/filter-dibr b/tests/ref/fate/filter-dibr
+new file mode 100644
+index 00000000..0f6123ef
+--- /dev/null
++++ b/tests/ref/fate/filter-dibr
+@@ -0,0 +1,10 @@
++#tb 0: 1/5
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 256x72
++#sar 0: 1/1
++0,          0,          0,        1,    27648, 0xc271a9bd
++0,          1,          1,        1,    27648, 0x08fca501
++0,          2,          2,        1,    27648, 0x6fb78c21
++0,          3,          3,        1,    27648, 0x79348f9c
++0,          4,          4,        1,    27648, 0x7d3cb65d
+diff --git a/tests/ref/fate/filter-dibr-12bit b/tests/ref/fate/filter-dibr-12bit
+new file mode 100644
+index 00000000..12c9d2e7
+--- /dev/null
++++ b/tests/ref/fate/filter-dibr-12bit
+@@ -0,0 +1,10 @@
++#tb 0: 1/5
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 256x72
++#sar 0: 1/1
++0,          0,          0,        1,   110592, 0x8d846119
++0,          1,          1,        1,   110592, 0x5eae8067
++0,          2,          2,        1,   110592, 0xbcc50fab
++0,          3,          3,        1,   110592, 0xc637a3b0
++0,          4,          4,        1,   110592, 0x5347ebdd
+diff --git a/tests/ref/fate/filter-dibr-center-backward-depth b/tests/ref/fate/filter-dibr-center-backward-depth
+new file mode 100644
+index 00000000..3c621a9d
+--- /dev/null
++++ b/tests/ref/fate/filter-dibr-center-backward-depth
+@@ -0,0 +1,10 @@
++#tb 0: 1/5
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 256x72
++#sar 0: 1/1
++0,          0,          0,        1,    27648, 0xbd779b8d
++0,          1,          1,        1,    27648, 0x9ad8a440
++0,          2,          2,        1,    27648, 0x5a629542
++0,          3,          3,        1,    27648, 0xbb7c9109
++0,          4,          4,        1,    27648, 0x1587a89b
+diff --git a/tests/ref/fate/filter-dibr-gaussian-none b/tests/ref/fate/filter-dibr-gaussian-none
+new file mode 100644
+index 00000000..9ef99249
+--- /dev/null
++++ b/tests/ref/fate/filter-dibr-gaussian-none
+@@ -0,0 +1,10 @@
++#tb 0: 1/5
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 256x72
++#sar 0: 1/1
++0,          0,          0,        1,    27648, 0x5c8a3918
++0,          1,          1,        1,    27648, 0x80a92aa9
++0,          2,          2,        1,    27648, 0xbd1f07ba
++0,          3,          3,        1,    27648, 0xf4bd04bd
++0,          4,          4,        1,    27648, 0x8af934cf
+diff --git a/tests/ref/fate/filter-dibr-hevc-depth-layer b/tests/ref/fate/filter-dibr-hevc-depth-layer
+new file mode 100644
+index 00000000..1745b9e8
+--- /dev/null
++++ b/tests/ref/fate/filter-dibr-hevc-depth-layer
+@@ -0,0 +1,13 @@
++#tb 0: 1/25
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 128x64
++#sar 0: 0/1
++0,          0,          0,        1,    12288, 0x32ea6b84
++0,          1,          1,        1,    12288, 0xd1e869b1
++0,          2,          2,        1,    12288, 0xfacb66f5
++0,          3,          3,        1,    12288, 0x9c0a6898
++0,          4,          4,        1,    12288, 0xe01c6ec8
++0,          5,          5,        1,    12288, 0xfce06a6c
++0,          6,          6,        1,    12288, 0x26be6b06
++0,          7,          7,        1,    12288, 0xdf2a68ef
+diff --git a/tests/ref/fate/filter-dibr-layered-telea b/tests/ref/fate/filter-dibr-layered-telea
+new file mode 100644
+index 00000000..f85bfc4f
+--- /dev/null
++++ b/tests/ref/fate/filter-dibr-layered-telea
+@@ -0,0 +1,10 @@
++#tb 0: 1/5
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 256x72
++#sar 0: 1/1
++0,          0,          0,        1,    27648, 0xa218ac07
++0,          1,          1,        1,    27648, 0xdb5dab05
++0,          2,          2,        1,    27648, 0x5e089066
++0,          3,          3,        1,    27648, 0x2799927d
++0,          4,          4,        1,    27648, 0x313fb991
+diff --git a/tests/ref/fate/filter-dibr-mpegts-depth b/tests/ref/fate/filter-dibr-mpegts-depth
+new file mode 100644
+index 00000000..e1ac4f6b
+--- /dev/null
++++ b/tests/ref/fate/filter-dibr-mpegts-depth
+@@ -0,0 +1,11 @@
++#tb 0: 1/25
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 256x72
++#sar 0: 0/1
++0,          0,          0,        1,    27648, 0x56559f6f
++0,          1,          1,        1,    27648, 0x42eb7ce4
++0,          2,          2,        1,    27648, 0xe1ac7c22
++0,          3,          3,        1,    27648, 0x855a5250
++0,          4,          4,        1,    27648, 0x7eb263ca
++0,          5,          5,        1,    27648, 0x892d90f3
+diff --git a/tests/ref/fate/filter-dibr-mpegts-parallax b/tests/ref/fate/filter-dibr-mpegts-parallax
+new file mode 100644
+index 00000000..24f7fc69
+--- /dev/null
++++ b/tests/ref/fate/filter-dibr-mpegts-parallax
+@@ -0,0 +1,11 @@
++#tb 0: 1/25
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 256x72
++#sar 0: 0/1
++0,          0,          0,        1,    27648, 0xe9d0abe4
++0,          1,          1,        1,    27648, 0x03ee943f
++0,          2,          2,        1,    27648, 0xd5cd99da
++0,          3,          3,        1,    27648, 0x84d97d5b
++0,          4,          4,        1,    27648, 0x285c8896
++0,          5,          5,        1,    27648, 0x3dd8a725
+diff --git a/tests/ref/fate/filter-dibr-side-data b/tests/ref/fate/filter-dibr-side-data
+new file mode 100644
+index 00000000..745e68ea
+--- /dev/null
++++ b/tests/ref/fate/filter-dibr-side-data
+@@ -0,0 +1,2 @@
++frame|width=256|height=72|side_datum/stereo_3d:side_data_type=Stereo 3D
++frame|width=256|height=72|side_datum/stereo_3d:side_data_type=Stereo 3D
+-- 
+2.53.0
+

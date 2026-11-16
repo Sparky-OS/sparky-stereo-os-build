@@ -1,0 +1,515 @@
+Description: avcodec: share encoder frame packing conversion and payload writing
+ .
+ Adapt Mark Thompson’s AVStereo3D conversion proposal to current CBS
+ structures and the NVENC/QSV payload interfaces. Extend its mapping
+ through every defined H.264 packing and the HEVC subset, preserving
+ frame identity independently of eye order.
+ .
+ Validate layouts before submission, emit at keyframes and changes,
+ emit temporal packing for each picture, and cancel a departed layout.
+ Reject late HEVC metadata where sequence constraints forbid the mark.
+ The helper leaves unmarked or disabled streams untouched.
+ .
+ The unit test checks independent expected payload bytes, both orders,
+ temporal identity, cadence, cancellation and explicit refusals.
+ .
+ Based on https://ffmpeg.org/pipermail/ffmpeg-devel/2019-October/250967.html
+ .
+ Co-authored-by: Mark Thompson
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/e36025744c1d05ab393e27581ebccdd243be3cac
+Forwarded: no
+Last-Update: 2026-11-09
+
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index 0152e030915..0b8641af847 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -64,6 +64,8 @@ OBJS = ac3_parser.o                                                     \
+        vorbis_parser.o                                                  \
+        xiph.o                                                           \
+ 
++OBJS-$(CONFIG_ENCODERS) += frame_packing.o
++
+ SHLIBOBJS = float_scalarproduct.o                                       \
+             timecode_internal.o                                         \
+ 
+@@ -1375,6 +1377,7 @@ TESTPROGS-$(CONFIG_AV1_VAAPI_ENCODER)     += av1_levels
+ TESTPROGS-$(CONFIG_CABAC)                 += cabac
+ TESTPROGS-$(CONFIG_CELP_MATH)             += celp_math
+ TESTPROGS-$(CONFIG_H264_SEI)             += h264_sei
++TESTPROGS-$(CONFIG_ENCODERS)              += frame_packing
+ TESTPROGS-$(CONFIG_GOLOMB)                += golomb
+ TESTPROGS-$(CONFIG_IDCTDSP)               += dct
+ TESTPROGS-$(CONFIG_DXV_ENCODER)           += hashtable
+diff --git a/libavcodec/frame_packing.c b/libavcodec/frame_packing.c
+new file mode 100644
+index 00000000000..1a9fb629a0d
+--- /dev/null
++++ b/libavcodec/frame_packing.c
+@@ -0,0 +1,197 @@
++/*
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include "libavutil/stereo3d.h"
++#include "frame_packing.h"
++#include "put_bits.h"
++
++static const AVStereo3D *get_stereo(const AVCodecContext *avctx, const AVFrame *frame)
++{
++    const AVFrameSideData *sd = frame ? av_frame_get_side_data(frame, AV_FRAME_DATA_STEREO3D) : NULL;
++
++    if (!sd)
++        sd = av_frame_side_data_get(avctx->decoded_side_data, avctx->nb_decoded_side_data,
++                                   AV_FRAME_DATA_STEREO3D);
++    return sd ? (const AVStereo3D *)sd->data : NULL;
++}
++
++static int packing_params(AVCodecContext *avctx, const FFFramePacking *state,
++                          const AVStereo3D *st, FFFramePackingParams *p)
++{
++    /* Adapted from Mark Thompson's 2019 CBS frame packing helper. */
++    static const int type_map[] = {
++        [AV_STEREO3D_2D]                  = 6,
++        [AV_STEREO3D_SIDEBYSIDE]          = 3,
++        [AV_STEREO3D_TOPBOTTOM]           = 4,
++        [AV_STEREO3D_FRAMESEQUENCE]       = 5,
++        [AV_STEREO3D_CHECKERBOARD]        = 0,
++        [AV_STEREO3D_SIDEBYSIDE_QUINCUNX] = 3,
++        [AV_STEREO3D_LINES]               = 2,
++        [AV_STEREO3D_COLUMNS]             = 1,
++        [AV_STEREO3D_UNSPEC]              = -1,
++        [AV_STEREO3D_TILED]               = 7,
++        [AV_STEREO3D_TOPBOTTOM_QUINCUNX]   = 4,
++        [AV_STEREO3D_LINES_QUINCUNX]       = 2,
++        [AV_STEREO3D_COLUMNS_QUINCUNX]     = 1,
++    };
++
++    *p = (FFFramePackingParams) { 0 };
++    if (!st || (avctx->codec_id == AV_CODEC_ID_HEVC && st->type == AV_STEREO3D_2D))
++        return 0;
++    if ((unsigned)st->type >= FF_ARRAY_ELEMS(type_map) || type_map[st->type] < 0)
++        goto unsupported;
++    p->type = type_map[st->type];
++    if (avctx->codec_id == AV_CODEC_ID_HEVC && (p->type < 3 || p->type > 5))
++        goto unsupported;
++    if (p->type == 7 && (avctx->width % 3 || avctx->height % 3)) {
++        av_log(avctx, AV_LOG_ERROR, "Tiled frame packing requires cropped width and height "
++               "divisible by 3; use a compatible size or %s to disable the mark.\n",
++               state->disable_option);
++        return AVERROR(EINVAL);
++    }
++    p->quincunx = st->type == AV_STEREO3D_CHECKERBOARD ||
++                  st->type == AV_STEREO3D_SIDEBYSIDE_QUINCUNX ||
++                  st->type == AV_STEREO3D_TOPBOTTOM_QUINCUNX ||
++                  st->type == AV_STEREO3D_LINES_QUINCUNX ||
++                  st->type == AV_STEREO3D_COLUMNS_QUINCUNX;
++    p->content = st->type == AV_STEREO3D_2D ? 0 :
++                 st->flags & AV_STEREO3D_FLAG_INVERT ? 2 : 1;
++    p->frame0 = st->type == AV_STEREO3D_FRAMESEQUENCE && st->view == AV_STEREO3D_VIEW_LEFT;
++    return 1;
++
++unsupported:
++    av_log(avctx, AV_LOG_ERROR, "Cannot signal %s frame packing in %s; "
++           "choose a supported packing or %s to disable the mark.\n",
++           av_stereo3d_type_name(st->type), avcodec_get_name(avctx->codec_id),
++           state->disable_option);
++    return AVERROR(EINVAL);
++}
++
++int ff_frame_packing_init(AVCodecContext *avctx, FFFramePacking *s,
++                         int enabled, const char *disable_option,
++                         int require_initial_layout)
++{
++    FFFramePackingParams p;
++    int ret;
++
++    *s = (FFFramePacking) {
++        .enabled = enabled,
++        .disable_option = disable_option,
++        .require_initial_layout = require_initial_layout,
++    };
++    if (!enabled)
++        return 0;
++    ret = packing_params(avctx, s, get_stereo(avctx, NULL), &p);
++    if (ret < 0)
++        return ret;
++    s->initial_layout = ret;
++    return ret;
++}
++
++int ff_frame_packing_prepare(AVCodecContext *avctx, FFFramePacking *s,
++                            const AVFrame *frame, int keyframe,
++                            int64_t display_order, FFFramePackingParams *p)
++{
++    const AVStereo3D *st;
++    int ret, changed;
++
++    if (!s->enabled)
++        return 0;
++    st = get_stereo(avctx, frame);
++    ret = packing_params(avctx, s, st, p);
++    if (ret < 0)
++        return ret;
++    if (!ret) {
++        p->cancel = 1;
++        ret = s->active;
++        s->active = 0;
++        return ret;
++    }
++    if (s->require_initial_layout && !s->initial_layout) {
++        av_log(avctx, AV_LOG_ERROR, "%s frame packing arrived after HEVC parameter sets "
++               "declaring non-packed content; supply Stereo 3D decoded side data before "
++               "opening the encoder or %s to disable the mark.\n",
++               av_stereo3d_type_name(st->type), s->disable_option);
++        return AVERROR(EINVAL);
++    }
++    if (p->type == 5 && st->view != AV_STEREO3D_VIEW_LEFT && st->view != AV_STEREO3D_VIEW_RIGHT)
++        p->frame0 = !(display_order & 1);
++    changed = !s->active || p->type != s->last_type ||
++              p->quincunx != s->last_quincunx || p->content != s->last_content;
++    s->active = 1;
++    s->last_type = p->type;
++    s->last_quincunx = p->quincunx;
++    s->last_content = p->content;
++    return keyframe || changed || p->type == 5;
++}
++
++void ff_frame_packing_h264(const FFFramePackingParams *p,
++                           H264RawSEIFramePackingArrangement *sei)
++{
++    *sei = (H264RawSEIFramePackingArrangement) {
++        .frame_packing_arrangement_cancel_flag = p->cancel,
++        .frame_packing_arrangement_type = p->type,
++        .quincunx_sampling_flag = p->quincunx,
++        .content_interpretation_type = p->content,
++        .current_frame_is_frame0_flag = p->frame0,
++        .frame_packing_arrangement_repetition_period = p->type != 5,
++    };
++}
++
++void ff_frame_packing_hevc(const FFFramePackingParams *p,
++                           SEIRawFramePackingArrangement *sei)
++{
++    *sei = (SEIRawFramePackingArrangement) {
++        .fp_arrangement_cancel_flag = p->cancel,
++        .fp_arrangement_type = p->type,
++        .fp_quincunx_sampling_flag = p->quincunx,
++        .fp_content_interpretation_type = p->content,
++        .fp_current_frame_is_frame0_flag = p->frame0,
++        .fp_arrangement_persistence_flag = p->type != 5,
++    };
++}
++
++int ff_frame_packing_payload(enum AVCodecID codec, const FFFramePackingParams *p,
++                            uint8_t data[16])
++{
++    PutBitContext pb;
++
++    init_put_bits(&pb, data, 16);
++    put_bits(&pb, 1, 1); /* arrangement_id = 0, ue(v) */
++    put_bits(&pb, 1, p->cancel);
++    if (!p->cancel) {
++        put_bits(&pb, 7, p->type);
++        put_bits(&pb, 1, p->quincunx);
++        put_bits(&pb, 6, p->content);
++        put_bits(&pb, 3, 0); /* spatial flipping, frame 0 flipped, field views */
++        put_bits(&pb, 1, p->frame0);
++        put_bits(&pb, 2, 0); /* self-contained flags */
++        if (!p->quincunx && p->type != 5)
++            put_bits(&pb, 16, 0); /* grid positions */
++        put_bits(&pb, 8, 0); /* reserved byte */
++        if (codec == AV_CODEC_ID_H264)
++            put_bits(&pb, p->type == 5 ? 1 : 3, p->type == 5 ? 1 : 2);
++        else
++            put_bits(&pb, 1, p->type != 5);
++    }
++    put_bits(&pb, 1, 0); /* extension / upsampled aspect ratio */
++    if (put_bits_count(&pb) & 7)
++        put_bits(&pb, 1, 1); /* payload_bit_equal_to_one */
++    flush_put_bits(&pb);
++    return put_bytes_output(&pb);
++}
+diff --git a/libavcodec/frame_packing.h b/libavcodec/frame_packing.h
+new file mode 100644
+index 00000000000..b01f96dd0a5
+--- /dev/null
++++ b/libavcodec/frame_packing.h
+@@ -0,0 +1,64 @@
++/*
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#ifndef AVCODEC_FRAME_PACKING_H
++#define AVCODEC_FRAME_PACKING_H
++
++#include "avcodec.h"
++#include "cbs_h264.h"
++#include "cbs_sei.h"
++
++typedef struct FFFramePacking {
++    int enabled;
++    int require_initial_layout;
++    int initial_layout;
++    int active;
++    int last_type;
++    int last_quincunx;
++    int last_content;
++    const char *disable_option;
++} FFFramePacking;
++
++typedef struct FFFramePackingParams {
++    int cancel;
++    int type;
++    int quincunx;
++    int content;
++    int frame0;
++} FFFramePackingParams;
++
++/* Return 1 if the sequence will carry frame packing, 0 if not, or an error. */
++int ff_frame_packing_init(AVCodecContext *avctx, FFFramePacking *state,
++                         int enabled, const char *disable_option,
++                         int require_initial_layout);
++
++/* Return 1 for a message, 0 for no message, or an error. */
++int ff_frame_packing_prepare(AVCodecContext *avctx, FFFramePacking *state,
++                            const AVFrame *frame, int keyframe,
++                            int64_t display_order, FFFramePackingParams *params);
++
++void ff_frame_packing_h264(const FFFramePackingParams *params,
++                           H264RawSEIFramePackingArrangement *sei);
++void ff_frame_packing_hevc(const FFFramePackingParams *params,
++                           SEIRawFramePackingArrangement *sei);
++
++/* Serialize the SEI payload only (no type/size header, NAL or escaping). */
++int ff_frame_packing_payload(enum AVCodecID codec, const FFFramePackingParams *p,
++                            uint8_t data[16]);
++
++#endif
+diff --git a/libavcodec/tests/frame_packing.c b/libavcodec/tests/frame_packing.c
+new file mode 100644
+index 00000000000..115a973c27a
+--- /dev/null
++++ b/libavcodec/tests/frame_packing.c
+@@ -0,0 +1,107 @@
++/*
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include <stdio.h>
++
++#include "libavutil/stereo3d.h"
++#include "libavcodec/frame_packing.h"
++
++int main(void)
++{
++    AVCodecContext *ctx = avcodec_alloc_context3(NULL);
++    AVFrame *frame = av_frame_alloc();
++    FFFramePacking state;
++    FFFramePackingParams p;
++    AVStereo3D *st;
++    int ret;
++
++    if (!ctx || !frame)
++        return 1;
++    ctx->width = ctx->height = 192;
++    av_log_set_level(AV_LOG_QUIET);
++    st = av_stereo3d_create_side_data(frame);
++    if (!st)
++        return 1;
++    for (int hevc = 0; hevc < 2; hevc++) {
++        ctx->codec_id = hevc ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264;
++        for (int type = 0; type <= AV_STEREO3D_COLUMNS_QUINCUNX; type++) {
++            for (int invert = 0; invert < 2; invert++) {
++                st->type = type;
++                st->flags = invert ? AV_STEREO3D_FLAG_INVERT : 0;
++                st->view = AV_STEREO3D_VIEW_LEFT;
++                ret = ff_frame_packing_init(ctx, &state, 1, "-frame_packing 0", 0);
++                if (ret < 0)
++                    return 1;
++                ret = ff_frame_packing_prepare(ctx, &state, frame, 1, 0, &p);
++                printf("%s %s invert=%d: ", hevc ? "HEVC" : "H264",
++                       av_stereo3d_type_name(type), invert);
++                if (ret < 0) {
++                    printf("unsupported\n");
++                } else if (!ret) {
++                    printf("none\n");
++                } else {
++                    uint8_t bytes[16];
++                    int size = ff_frame_packing_payload(ctx->codec_id, &p, bytes);
++                    for (int i = 0; i < size; i++)
++                        printf("%02x", bytes[i]);
++                    printf("\n");
++                }
++            }
++        }
++        st->type = AV_STEREO3D_FRAMESEQUENCE;
++        st->flags = AV_STEREO3D_FLAG_INVERT;
++        ff_frame_packing_init(ctx, &state, 1, "-frame_packing 0", 0);
++        for (int n = 0; n < 4; n++) {
++            st->view = n & 1 ? AV_STEREO3D_VIEW_RIGHT : AV_STEREO3D_VIEW_LEFT;
++            ret = ff_frame_packing_prepare(ctx, &state, frame, !n, n, &p);
++            printf("%s temporal %d: message=%d frame0=%d content=%d\n",
++                   hevc ? "HEVC" : "H264", n, ret, p.frame0, p.content);
++        }
++    }
++    ctx->codec_id = AV_CODEC_ID_H264;
++    st->type = AV_STEREO3D_SIDEBYSIDE;
++    ff_frame_packing_init(ctx, &state, 1, "-frame_packing 0", 0);
++    printf("H264 cadence:");
++    for (int n = 0; n < 25; n++) {
++        ret = ff_frame_packing_prepare(ctx, &state, frame, n % 12 == 0, n, &p);
++        if (ret)
++            printf(" %d", n);
++    }
++    printf("\n");
++    av_frame_remove_side_data(frame, AV_FRAME_DATA_STEREO3D);
++    ret = ff_frame_packing_prepare(ctx, &state, frame, 0, 25, &p);
++    printf("H264 missing layout: message=%d cancel=%d\n", ret, p.cancel);
++    ret = ff_frame_packing_prepare(ctx, &state, frame, 0, 26, &p);
++    printf("H264 next unmarked frame: message=%d\n", ret);
++    st = av_stereo3d_create_side_data(frame);
++    st->type = AV_STEREO3D_TILED;
++    ctx->width = 190;
++    ret = ff_frame_packing_prepare(ctx, &state, frame, 1, 0, &p);
++    printf("Tiled invalid size: %s\n", ret < 0 ? "rejected" : "accepted");
++    ff_frame_packing_init(ctx, &state, 0, "-frame_packing 0", 0);
++    ret = ff_frame_packing_prepare(ctx, &state, frame, 1, 0, &p);
++    printf("Disabled tiled invalid size: message=%d\n", ret);
++    ctx->codec_id = AV_CODEC_ID_HEVC;
++    st->type = AV_STEREO3D_SIDEBYSIDE;
++    ff_frame_packing_init(ctx, &state, 1, "-frame_packing 0", 1);
++    ret = ff_frame_packing_prepare(ctx, &state, frame, 1, 0, &p);
++    printf("HEVC late layout: %s\n", ret < 0 ? "rejected" : "accepted");
++    av_frame_free(&frame);
++    avcodec_free_context(&ctx);
++    return 0;
++}
+diff --git a/tests/fate/libavcodec.mak b/tests/fate/libavcodec.mak
+index 78a564ee37a..15549f380fd 100644
+--- a/tests/fate/libavcodec.mak
++++ b/tests/fate/libavcodec.mak
+@@ -128,3 +128,7 @@ fate-libavcodec: $(FATE_LIBAVCODEC-yes)
+ FATE_LIBAVCODEC-$(call ALLYES, H264_DECODER HEVC_DECODER) += fate-h2645-stereo3d
+ fate-h2645-stereo3d: libavcodec/tests/h2645_stereo3d$(EXESUF)
+ fate-h2645-stereo3d: CMD = run libavcodec/tests/h2645_stereo3d$(EXESUF)
++
++FATE_LIBAVCODEC-$(CONFIG_ENCODERS) += fate-frame-packing
++fate-frame-packing: libavcodec/tests/frame_packing$(EXESUF)
++fate-frame-packing: CMD = run libavcodec/tests/frame_packing$(EXESUF)
+diff --git a/tests/ref/fate/frame-packing b/tests/ref/fate/frame-packing
+new file mode 100644
+index 00000000000..9473a8e9709
+--- /dev/null
++++ b/tests/ref/fate/frame-packing
+@@ -0,0 +1,66 @@
++H264 2D invert=0: 83000000000120
++H264 2D invert=1: 83000000000120
++H264 side by side invert=0: 81810000000120
++H264 side by side invert=1: 81820000000120
++H264 top and bottom invert=0: 82010000000120
++H264 top and bottom invert=1: 82020000000120
++H264 frame alternate invert=0: 82811002
++H264 frame alternate invert=1: 82821002
++H264 checkerboard invert=0: 8041000120
++H264 checkerboard invert=1: 8042000120
++H264 side by side (quincunx subsampling) invert=0: 81c1000120
++H264 side by side (quincunx subsampling) invert=1: 81c2000120
++H264 interleaved lines invert=0: 81010000000120
++H264 interleaved lines invert=1: 81020000000120
++H264 interleaved columns invert=0: 80810000000120
++H264 interleaved columns invert=1: 80820000000120
++H264 unspecified invert=0: unsupported
++H264 unspecified invert=1: unsupported
++H264 tiled invert=0: 83810000000120
++H264 tiled invert=1: 83820000000120
++H264 top and bottom (quincunx subsampling) invert=0: 8241000120
++H264 top and bottom (quincunx subsampling) invert=1: 8242000120
++H264 interleaved lines (quincunx subsampling) invert=0: 8141000120
++H264 interleaved lines (quincunx subsampling) invert=1: 8142000120
++H264 interleaved columns (quincunx subsampling) invert=0: 80c1000120
++H264 interleaved columns (quincunx subsampling) invert=1: 80c2000120
++H264 temporal 0: message=1 frame0=1 content=2
++H264 temporal 1: message=1 frame0=0 content=2
++H264 temporal 2: message=1 frame0=1 content=2
++H264 temporal 3: message=1 frame0=0 content=2
++HEVC 2D invert=0: none
++HEVC 2D invert=1: none
++HEVC side by side invert=0: 818100000002
++HEVC side by side invert=1: 818200000002
++HEVC top and bottom invert=0: 820100000002
++HEVC top and bottom invert=1: 820200000002
++HEVC frame alternate invert=0: 82811000
++HEVC frame alternate invert=1: 82821000
++HEVC checkerboard invert=0: unsupported
++HEVC checkerboard invert=1: unsupported
++HEVC side by side (quincunx subsampling) invert=0: 81c10002
++HEVC side by side (quincunx subsampling) invert=1: 81c20002
++HEVC interleaved lines invert=0: unsupported
++HEVC interleaved lines invert=1: unsupported
++HEVC interleaved columns invert=0: unsupported
++HEVC interleaved columns invert=1: unsupported
++HEVC unspecified invert=0: unsupported
++HEVC unspecified invert=1: unsupported
++HEVC tiled invert=0: unsupported
++HEVC tiled invert=1: unsupported
++HEVC top and bottom (quincunx subsampling) invert=0: 82410002
++HEVC top and bottom (quincunx subsampling) invert=1: 82420002
++HEVC interleaved lines (quincunx subsampling) invert=0: unsupported
++HEVC interleaved lines (quincunx subsampling) invert=1: unsupported
++HEVC interleaved columns (quincunx subsampling) invert=0: unsupported
++HEVC interleaved columns (quincunx subsampling) invert=1: unsupported
++HEVC temporal 0: message=1 frame0=1 content=2
++HEVC temporal 1: message=1 frame0=0 content=2
++HEVC temporal 2: message=1 frame0=1 content=2
++HEVC temporal 3: message=1 frame0=0 content=2
++H264 cadence: 0 12 24
++H264 missing layout: message=1 cancel=1
++H264 next unmarked frame: message=0
++Tiled invalid size: rejected
++Disabled tiled invalid size: message=0
++HEVC late layout: rejected

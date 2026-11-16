@@ -1,0 +1,275 @@
+Description: avcodec/vaapi: encode stereo frame packing through packed SEI
+ .
+ Adapt Mark Thompson's 2019 VA-API proposal to current CBS and the shared
+ encoder frame packing helper. Enable frame_packing in the existing sei
+ flags, validate the layout, and fail visibly when packed SEI is unavailable.
+ Clear HEVC non-packed constraints only when initial decoded side data
+ establishes that a mark will be written. Reject late HEVC metadata that
+ would contradict the already emitted parameter sets.
+ .
+ AMD VA-API proof covers every supported packing and eye order, independent
+ NAL and trace_headers read-back, FFmpeg/mpv decoding, B-frame temporal
+ identity, invalid tiled geometry and late-layout refusals. Plain 2D and
+ explicitly disabled streams are byte-identical to the unpatched encoder.
+ .
+ Adapted-from: https://ffmpeg.org/pipermail/ffmpeg-devel/2019-October/250966.html
+ Co-authored-by: Mark Thompson
+ .
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/abc484fce08c460f9ffa430bdff24a1f1c859f56
+Forwarded: no
+Last-Update: 2026-11-09
+
+diff --git a/libavcodec/hw_base_encode_h265.c b/libavcodec/hw_base_encode_h265.c
+index dceec8aba92..ae3b7afca08 100644
+--- a/libavcodec/hw_base_encode_h265.c
++++ b/libavcodec/hw_base_encode_h265.c
+@@ -93,7 +93,7 @@ int ff_hw_base_encode_init_params_h265(FFHWBaseEncodeContext *base_ctx,
+ 
+     ptl->general_progressive_source_flag    = 1;
+     ptl->general_interlaced_source_flag     = 0;
+-    ptl->general_non_packed_constraint_flag = 1;
++    ptl->general_non_packed_constraint_flag = !opts->frame_packing;
+     ptl->general_frame_only_constraint_flag = 1;
+ 
+     ptl->general_max_14bit_constraint_flag = bit_depth <= 14;
+@@ -167,6 +167,11 @@ int ff_hw_base_encode_init_params_h265(FFHWBaseEncodeContext *base_ctx,
+     sps->sps_max_sub_layers_minus1    = vps->vps_max_sub_layers_minus1;
+     sps->sps_temporal_id_nesting_flag = vps->vps_temporal_id_nesting_flag;
+ 
++    if (opts->frame_packing) {
++        ptl->general_non_packed_constraint_flag = 0;
++        for (int i = 0; i < vps->vps_max_sub_layers_minus1; i++)
++            ptl->sub_layer_non_packed_constraint_flag[i] = 0;
++    }
+     sps->profile_tier_level = vps->profile_tier_level;
+ 
+     sps->sps_seq_parameter_set_id = 0;
+diff --git a/libavcodec/hw_base_encode_h265.h b/libavcodec/hw_base_encode_h265.h
+index 468f91c9b64..7b28858d8d4 100644
+--- a/libavcodec/hw_base_encode_h265.h
++++ b/libavcodec/hw_base_encode_h265.h
+@@ -32,6 +32,7 @@ typedef struct FFHWBaseEncodeH265 {
+ 
+ typedef struct FFHWBaseEncodeH265Opts {
+     int tier;
++    int frame_packing;
+     int fixed_qp_idr;
+     int cu_qp_delta_enabled_flag;
+ 
+diff --git a/libavcodec/vaapi_encode_h264.c b/libavcodec/vaapi_encode_h264.c
+index 27f6551719a..bf3e4d60453 100644
+--- a/libavcodec/vaapi_encode_h264.c
++++ b/libavcodec/vaapi_encode_h264.c
+@@ -32,6 +32,7 @@
+ #include "cbs.h"
+ #include "cbs_h264.h"
+ #include "codec_internal.h"
++#include "frame_packing.h"
+ #include "h264.h"
+ #include "hw_base_encode_h264.h"
+ #include "h264_levels.h"
+@@ -40,6 +41,7 @@
+ #include "version.h"
+ 
+ enum {
++    SEI_FRAME_PACKING = 0x40,
+     SEI_TIMING         = 0x01,
+     SEI_IDENTIFIER     = 0x02,
+     SEI_RECOVERY_POINT = 0x04,
+@@ -76,6 +78,7 @@ typedef struct VAAPIEncodeH264Context {
+     int coder;
+     int aud;
+     int sei;
++    FFFramePacking frame_packing;
+     int profile;
+     int level;
+ 
+@@ -103,6 +106,7 @@ typedef struct VAAPIEncodeH264Context {
+ 
+     int aud_needed;
+     int sei_needed;
++    H264RawSEIFramePackingArrangement sei_frame_packing;
+     int sei_cbr_workaround_needed;
+ } VAAPIEncodeH264Context;
+ 
+@@ -258,6 +262,14 @@ static int vaapi_encode_h264_write_extra_header(AVCodecContext *avctx,
+                 goto fail;
+         }
+ 
++        if (priv->sei_needed & SEI_FRAME_PACKING) {
++            err = ff_cbs_sei_add_message(priv->cbc, au, 1,
++                                         SEI_TYPE_FRAME_PACKING_ARRANGEMENT,
++                                         &priv->sei_frame_packing, NULL);
++            if (err < 0)
++                goto fail;
++        }
++
+         priv->sei_needed = 0;
+ 
+         err = vaapi_encode_h264_write_access_unit(avctx, data, data_len, au);
+@@ -467,6 +479,27 @@ static int vaapi_encode_h264_init_picture_params(AVCodecContext *avctx,
+ 
+     priv->sei_needed = 0;
+ 
++    if (priv->frame_packing.enabled) {
++        FFFramePackingParams packing;
++        int err = ff_frame_packing_prepare(avctx, &priv->frame_packing,
++                                           pic->input_image,
++                                           pic->type == FF_HW_PICTURE_TYPE_IDR ||
++                                           pic->type == FF_HW_PICTURE_TYPE_I,
++                                           pic->display_order, &packing);
++        if (err < 0)
++            return err;
++        if (err) {
++            if (!(priv->common.va_packed_headers & VA_ENC_PACKED_HEADER_MISC)) {
++                av_log(avctx, AV_LOG_ERROR, "Cannot write frame packing type %d: "
++                       "the VA-API driver lacks packed SEI support; use "
++                       "-sei -frame_packing to disable the mark.\n", packing.type);
++                return AVERROR(ENOSYS);
++            }
++            ff_frame_packing_h264(&packing, &priv->sei_frame_packing);
++            priv->sei_needed |= SEI_FRAME_PACKING;
++        }
++    }
++
+     if (priv->sei & SEI_IDENTIFIER && pic->encode_order == 0)
+         priv->sei_needed |= SEI_IDENTIFIER;
+ #if !CONFIG_VAAPI_1
+@@ -993,6 +1026,13 @@ static av_cold int vaapi_encode_h264_init(AVCodecContext *avctx)
+     FFHWBaseEncodeContext *base_ctx = avctx->priv_data;
+     VAAPIEncodeContext         *ctx = avctx->priv_data;
+     VAAPIEncodeH264Context    *priv = avctx->priv_data;
++    int err;
++
++    err = ff_frame_packing_init(avctx, &priv->frame_packing,
++                                !!(priv->sei & SEI_FRAME_PACKING),
++                                "-sei -frame_packing", 0);
++    if (err < 0)
++        return err;
+ 
+     ctx->codec = &vaapi_encode_type_h264;
+ 
+@@ -1084,9 +1124,12 @@ static const AVOption vaapi_encode_h264_options[] = {
+     { "aud", "Include AUD",
+       OFFSET(aud), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
+ 
++    { "frame_packing", "Include stereo frame packing",
++      0, AV_OPT_TYPE_CONST, { .i64 = SEI_FRAME_PACKING },
++      INT_MIN, INT_MAX, FLAGS, .unit = "sei" },
+     { "sei", "Set SEI to include",
+       OFFSET(sei), AV_OPT_TYPE_FLAGS,
+-      { .i64 = SEI_IDENTIFIER | SEI_TIMING | SEI_RECOVERY_POINT | SEI_A53_CC },
++      { .i64 = SEI_IDENTIFIER | SEI_TIMING | SEI_RECOVERY_POINT | SEI_A53_CC | SEI_FRAME_PACKING },
+       0, INT_MAX, FLAGS, .unit = "sei" },
+     { "identifier", "Include encoder version identifier",
+       0, AV_OPT_TYPE_CONST, { .i64 = SEI_IDENTIFIER },
+diff --git a/libavcodec/vaapi_encode_h265.c b/libavcodec/vaapi_encode_h265.c
+index baf0d77c8aa..836e7c83a71 100644
+--- a/libavcodec/vaapi_encode_h265.c
++++ b/libavcodec/vaapi_encode_h265.c
+@@ -34,6 +34,7 @@
+ #include "cbs_h265.h"
+ #include "hw_base_encode_h265.h"
+ #include "codec_internal.h"
++#include "frame_packing.h"
+ #include "h2645data.h"
+ #include "h265_profile_level.h"
+ #include "vaapi_encode.h"
+@@ -41,6 +42,7 @@
+ #include "hevc/hevc.h"
+ 
+ enum {
++    SEI_FRAME_PACKING = 0x40,
+     SEI_MASTERING_DISPLAY       = 0x08,
+     SEI_CONTENT_LIGHT_LEVEL     = 0x10,
+     SEI_A53_CC                  = 0x20,
+@@ -72,6 +74,7 @@ typedef struct VAAPIEncodeH265Context {
+     int profile;
+     int level;
+     int sei;
++    FFFramePacking frame_packing;
+ 
+     // Derived settings.
+     int fixed_qp_p;
+@@ -92,6 +95,7 @@ typedef struct VAAPIEncodeH265Context {
+     CodedBitstreamFragment current_access_unit;
+     int aud_needed;
+     int sei_needed;
++    SEIRawFramePackingArrangement sei_frame_packing;
+ } VAAPIEncodeH265Context;
+ 
+ 
+@@ -237,6 +241,14 @@ static int vaapi_encode_h265_write_extra_header(AVCodecContext *avctx,
+                 goto fail;
+         }
+ 
++        if (priv->sei_needed & SEI_FRAME_PACKING) {
++            err = ff_cbs_sei_add_message(priv->cbc, au, 1,
++                                         SEI_TYPE_FRAME_PACKING_ARRANGEMENT,
++                                         &priv->sei_frame_packing, NULL);
++            if (err < 0)
++                goto fail;
++        }
++
+         priv->sei_needed = 0;
+ 
+         err = vaapi_encode_h265_write_access_unit(avctx, data, data_len, au);
+@@ -525,6 +537,27 @@ static int vaapi_encode_h265_init_picture_params(AVCodecContext *avctx,
+ 
+     priv->sei_needed = 0;
+ 
++    if (priv->frame_packing.enabled) {
++        FFFramePackingParams packing;
++        int err = ff_frame_packing_prepare(avctx, &priv->frame_packing,
++                                           pic->input_image,
++                                           pic->type == FF_HW_PICTURE_TYPE_IDR ||
++                                           pic->type == FF_HW_PICTURE_TYPE_I,
++                                           pic->display_order, &packing);
++        if (err < 0)
++            return err;
++        if (err) {
++            if (!(priv->common.va_packed_headers & VA_ENC_PACKED_HEADER_MISC)) {
++                av_log(avctx, AV_LOG_ERROR, "Cannot write frame packing type %d: "
++                       "the VA-API driver lacks packed SEI support; use "
++                       "-sei -frame_packing to disable the mark.\n", packing.type);
++                return AVERROR(ENOSYS);
++            }
++            ff_frame_packing_hevc(&packing, &priv->sei_frame_packing);
++            priv->sei_needed |= SEI_FRAME_PACKING;
++        }
++    }
++
+     // Only look for the metadata on I/IDR frame on the output. We
+     // may force an IDR frame on the output where the metadata gets
+     // changed on the input frame.
+@@ -1062,6 +1095,14 @@ static av_cold int vaapi_encode_h265_init(AVCodecContext *avctx)
+ {
+     VAAPIEncodeContext      *ctx = avctx->priv_data;
+     VAAPIEncodeH265Context *priv = avctx->priv_data;
++    int err;
++
++    err = ff_frame_packing_init(avctx, &priv->frame_packing,
++                                !!(priv->sei & SEI_FRAME_PACKING),
++                                "-sei -frame_packing", 1);
++    if (err < 0)
++        return err;
++    priv->unit_opts.frame_packing = err;
+ 
+     ctx->codec = &vaapi_encode_type_h265;
+ 
+@@ -1151,9 +1192,12 @@ static const AVOption vaapi_encode_h265_options[] = {
+     { LEVEL("6.2", 186) },
+ #undef LEVEL
+ 
++    { "frame_packing", "Include stereo frame packing",
++      0, AV_OPT_TYPE_CONST, { .i64 = SEI_FRAME_PACKING },
++      INT_MIN, INT_MAX, FLAGS, .unit = "sei" },
+     { "sei", "Set SEI to include",
+       OFFSET(sei), AV_OPT_TYPE_FLAGS,
+-      { .i64 = SEI_MASTERING_DISPLAY | SEI_CONTENT_LIGHT_LEVEL | SEI_A53_CC },
++      { .i64 = SEI_MASTERING_DISPLAY | SEI_CONTENT_LIGHT_LEVEL | SEI_A53_CC | SEI_FRAME_PACKING },
+       0, INT_MAX, FLAGS, .unit = "sei" },
+     { "hdr",
+       "Include HDR metadata for mastering display colour volume "

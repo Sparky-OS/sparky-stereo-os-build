@@ -1,0 +1,113 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/7e23611a850428711aafb247356870c5a7a0e108
+From 7e23611a850428711aafb247356870c5a7a0e108 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:19:06 -0300
+Subject: [PATCH 33/48] fate/hevc: test a depth auxiliary layer
+
+A 64x64 texture layer with a depth layer (AuxId 2), encoded by x265's
+alpha path with the auxiliary type set to depth, and a depth
+representation information message for the depth layer in the first
+access unit: the texture pictures, the depth pictures as gray frames,
+and both with their side data, the depth representation information on
+the depth pictures until the IDR access unit of the second coded video
+sequence. The depth pictures decode to the alpha planes of the same
+coded pictures with AuxId 1.
+
+The sample, hevc/depth-layer.hevc, needs to be uploaded to the FATE
+suite.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ tests/fate/hevc.mak                     |  9 +++++++++
+ tests/ref/fate/hevc-depth-layer         | 13 +++++++++++++
+ tests/ref/fate/hevc-depth-layer-both    | 16 ++++++++++++++++
+ tests/ref/fate/hevc-depth-layer-texture | 13 +++++++++++++
+ 4 files changed, 51 insertions(+)
+ create mode 100644 tests/ref/fate/hevc-depth-layer
+ create mode 100644 tests/ref/fate/hevc-depth-layer-both
+ create mode 100644 tests/ref/fate/hevc-depth-layer-texture
+
+diff --git a/tests/fate/hevc.mak b/tests/fate/hevc.mak
+index 9d8821b1..7190fb67 100644
+--- a/tests/fate/hevc.mak
++++ b/tests/fate/hevc.mak
+@@ -279,6 +279,15 @@ FATE_HEVC_FFPROBE-$(call PARSERDEMDEC, HEVC, HEVC, HEVC, EXTRACT_EXTRADATA_BSF)
+ fate-hevc-depth-sei: CMD = threads=4 probeframes -show_entries frame=key_frame,side_data_list:frame_tags= -of compact $(TARGET_SAMPLES)/hevc/depth-sei.hevc
+ FATE_HEVC_FFPROBE-$(call PARSERDEMDEC, HEVC, HEVC, HEVC) += fate-hevc-depth-sei
+ 
++# a texture layer with a depth auxiliary layer (AuxId 2): the texture, the
++# depth pictures as gray frames, and both with their side data, the depth
++# representation information on the depth pictures until the second IDR
++fate-hevc-depth-layer-texture: CMD = framecrc -i $(TARGET_SAMPLES)/hevc/depth-layer.hevc
++fate-hevc-depth-layer: CMD = framecrc -depth_output depth -i $(TARGET_SAMPLES)/hevc/depth-layer.hevc
++FATE_HEVC-$(call FRAMECRC, HEVC, HEVC) += fate-hevc-depth-layer-texture fate-hevc-depth-layer
++fate-hevc-depth-layer-both: CMD = probeframes -depth_output both -show_entries frame=key_frame,pix_fmt,width,height,side_data_list:frame_tags= -of compact $(TARGET_SAMPLES)/hevc/depth-layer.hevc
++FATE_HEVC_FFPROBE-$(call PARSERDEMDEC, HEVC, HEVC, HEVC) += fate-hevc-depth-layer-both
++
+ fate-hevc-frame-packing-persistence: CMD = threads=4 probeframes -show_entries frame=side_data_list:frame_tags= -of compact $(TARGET_SAMPLES)/hevc/frame-packing-persistence.hevc
+ FATE_HEVC_FFPROBE-$(call PARSERDEMDEC, HEVC, HEVC, HEVC) += fate-hevc-frame-packing-persistence
+ 
+diff --git a/tests/ref/fate/hevc-depth-layer b/tests/ref/fate/hevc-depth-layer
+new file mode 100644
+index 00000000..e740afd2
+--- /dev/null
++++ b/tests/ref/fate/hevc-depth-layer
+@@ -0,0 +1,13 @@
++#tb 0: 1/25
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 64x64
++#sar 0: 0/1
++0,          0,          0,        1,     4096, 0xa0c64811
++0,          1,          1,        1,     4096, 0x0587367d
++0,          2,          2,        1,     4096, 0x9ad025b7
++0,          3,          3,        1,     4096, 0x540a1558
++0,          4,          4,        1,     4096, 0x8d4204f1
++0,          5,          5,        1,     4096, 0x0fe8f2b3
++0,          6,          6,        1,     4096, 0x3b07e1c0
++0,          7,          7,        1,     4096, 0xc431d0d4
+diff --git a/tests/ref/fate/hevc-depth-layer-both b/tests/ref/fate/hevc-depth-layer-both
+new file mode 100644
+index 00000000..9ffb7139
+--- /dev/null
++++ b/tests/ref/fate/hevc-depth-layer-both
+@@ -0,0 +1,16 @@
++frame|key_frame=1|width=64|height=64|pix_fmt=yuv420p|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0
++frame|key_frame=1|width=64|height=64|pix_fmt=gray|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary picture type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2|side_datum/depth_representation_information:side_data_type=Depth representation information|side_datum/depth_representation_information:depth_representation_type=0|side_datum/depth_representation_information:all_views_equal=1|side_datum/depth_representation_information:z_axis_equal=0|side_datum/depth_representation_information:nb_views=1|side_datum/depth_representation_information:view0_view_id=0|side_datum/depth_representation_information:view0_z_axis_reference_view=0|side_datum/depth_representation_information:view0_z_near=0.5|side_datum/depth_representation_information:view0_z_far=64
++frame|key_frame=0|width=64|height=64|pix_fmt=yuv420p|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0
++frame|key_frame=0|width=64|height=64|pix_fmt=gray|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary picture type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2|side_datum/depth_representation_information:side_data_type=Depth representation information|side_datum/depth_representation_information:depth_representation_type=0|side_datum/depth_representation_information:all_views_equal=1|side_datum/depth_representation_information:z_axis_equal=0|side_datum/depth_representation_information:nb_views=1|side_datum/depth_representation_information:view0_view_id=0|side_datum/depth_representation_information:view0_z_axis_reference_view=0|side_datum/depth_representation_information:view0_z_near=0.5|side_datum/depth_representation_information:view0_z_far=64
++frame|key_frame=0|width=64|height=64|pix_fmt=yuv420p|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0
++frame|key_frame=0|width=64|height=64|pix_fmt=gray|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary picture type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2|side_datum/depth_representation_information:side_data_type=Depth representation information|side_datum/depth_representation_information:depth_representation_type=0|side_datum/depth_representation_information:all_views_equal=1|side_datum/depth_representation_information:z_axis_equal=0|side_datum/depth_representation_information:nb_views=1|side_datum/depth_representation_information:view0_view_id=0|side_datum/depth_representation_information:view0_z_axis_reference_view=0|side_datum/depth_representation_information:view0_z_near=0.5|side_datum/depth_representation_information:view0_z_far=64
++frame|key_frame=0|width=64|height=64|pix_fmt=yuv420p|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0
++frame|key_frame=0|width=64|height=64|pix_fmt=gray|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary picture type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2|side_datum/depth_representation_information:side_data_type=Depth representation information|side_datum/depth_representation_information:depth_representation_type=0|side_datum/depth_representation_information:all_views_equal=1|side_datum/depth_representation_information:z_axis_equal=0|side_datum/depth_representation_information:nb_views=1|side_datum/depth_representation_information:view0_view_id=0|side_datum/depth_representation_information:view0_z_axis_reference_view=0|side_datum/depth_representation_information:view0_z_near=0.5|side_datum/depth_representation_information:view0_z_far=64
++frame|key_frame=1|width=64|height=64|pix_fmt=yuv420p|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0
++frame|key_frame=1|width=64|height=64|pix_fmt=gray|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary picture type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2
++frame|key_frame=0|width=64|height=64|pix_fmt=yuv420p|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0
++frame|key_frame=0|width=64|height=64|pix_fmt=gray|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary picture type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2
++frame|key_frame=0|width=64|height=64|pix_fmt=yuv420p|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0
++frame|key_frame=0|width=64|height=64|pix_fmt=gray|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary picture type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2
++frame|key_frame=0|width=64|height=64|pix_fmt=yuv420p|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0
++frame|key_frame=0|width=64|height=64|pix_fmt=gray|side_datum/view_id:side_data_type=View ID|side_datum/view_id:view_id=0|side_datum/auxiliary_picture_type__auxid_:side_data_type=Auxiliary picture type (AuxId)|side_datum/auxiliary_picture_type__auxid_:aux_id=2
+diff --git a/tests/ref/fate/hevc-depth-layer-texture b/tests/ref/fate/hevc-depth-layer-texture
+new file mode 100644
+index 00000000..457bf345
+--- /dev/null
++++ b/tests/ref/fate/hevc-depth-layer-texture
+@@ -0,0 +1,13 @@
++#tb 0: 1/25
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 64x64
++#sar 0: 0/1
++0,          0,          0,        1,     6144, 0xe65db656
++0,          1,          1,        1,     6144, 0x518db669
++0,          2,          2,        1,     6144, 0xf50cb51a
++0,          3,          3,        1,     6144, 0x01eeb57e
++0,          4,          4,        1,     6144, 0x8f90b6ed
++0,          5,          5,        1,     6144, 0x5c16b6bd
++0,          6,          6,        1,     6144, 0x1012b711
++0,          7,          7,        1,     6144, 0x7635b60e
+-- 
+2.53.0
+

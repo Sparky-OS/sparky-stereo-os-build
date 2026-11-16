@@ -1,0 +1,220 @@
+Description: avcodec/hevc/parser: defer access unit boundaries until the next VCL
+ A prefix SEI in a nonzero layer can begin an access unit, while a PPS
+ between pictures of the same access unit does not begin another one.
+ Splitting immediately on layer-zero non-VCL NAL units gets both cases
+ wrong and can separate dependent pictures from their base pictures.
+ .
+ Keep the first eligible non-VCL boundary until the next VCL NAL unit.
+ Use the increasing picture layer order required by H.265 F.7.4.2.4.4
+ to keep pictures together and recognize a new access unit when the
+ layer ID does not increase. This does not add POC-based detection for
+ access units that omit lower layers.
+ .
+ Retain buffered lookahead explicitly, since a deferred boundary can
+ coincide with END_NOT_FOUND, and save its timestamp before the input
+ timestamp history expires. Bound lookahead to the parser API's offset
+ range. Keep the existing layer-zero EOS/EOB splitting behavior.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Opus via Claude Code
+ Assisted-by: GPT-6 via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/48747cff5d0680650f4fc6eaf8342a61b3835548
+Forwarded: no, held by Daniel 2026-11-03 (fork branch hevc-parser-au-split on code.ffmpeg.org/danielcamposramos/FFmpeg)
+Last-Update: 2026-11-03
+
+diff --git a/libavcodec/hevc/parser.c b/libavcodec/hevc/parser.c
+index 47a1ac7..aa0be8b 100644
+--- a/libavcodec/hevc/parser.c
++++ b/libavcodec/hevc/parser.c
+@@ -51,6 +51,12 @@ typedef struct HEVCParserContext {
+ 
+     int poc;
+     int pocTid0;
++
++    int last_layer_id;
++    int64_t au_start;
++    int au_start_found;
++    int au_timestamp_pending;
++    int64_t au_pts, au_dts, au_pos, au_offset;
+ } HEVCParserContext;
+ 
+ static int hevc_parse_slice_header(AVCodecParserContext *s, H2645NAL *nal,
+@@ -253,18 +259,22 @@ static int parse_nal_units(AVCodecParserContext *s, const uint8_t *buf,
+ }
+ 
+ /**
+- * Find the end of the current frame in the bitstream.
+- * @return the position of the first byte of the next frame, or END_NOT_FOUND
++ * Find the end of the current access unit in the bitstream.
++ * @return 1 if an end was found, with its buffer-relative position in end
+  */
+ static int hevc_find_frame_end(AVCodecParserContext *s, const uint8_t *buf,
+-                               int buf_size)
++                               int buf_size, int64_t *end)
+ {
+     HEVCParserContext *ctx = s->priv_data;
+     ParseContext       *pc = &ctx->pc;
+-    int i;
+ 
+-    for (i = 0; i < buf_size; i++) {
+-        int nut, layer_id;
++    if (!buf_size) {
++        *end = ctx->au_start_found ? ctx->au_start : 0;
++        goto found;
++    }
++
++    for (int i = 0; i < buf_size; i++) {
++        int nut, layer_id, nal_start;
+ 
+         pc->state64 = (pc->state64 << 8) | buf[i];
+ 
+@@ -272,37 +282,72 @@ static int hevc_find_frame_end(AVCodecParserContext *s, const uint8_t *buf,
+             continue;
+ 
+         nut = (pc->state64 >> 2 * 8 + 1) & 0x3F;
+-
+         layer_id = (pc->state64 >> 11) & 0x3F;
+-        if (layer_id > 0)
++        if (layer_id == 63)
+             continue;
+ 
+-        // Beginning of access unit
+-        if ((nut >= HEVC_NAL_VPS && nut <= HEVC_NAL_EOB_NUT) || nut == HEVC_NAL_SEI_PREFIX ||
++        nal_start = i - 5 - !((pc->state64 >> 6 * 8) & 0xFF);
++
++        if (pc->frame_start_found &&
++            (nut == HEVC_NAL_AUD ||
++             (!layer_id && (nut == HEVC_NAL_EOS_NUT || nut == HEVC_NAL_EOB_NUT)))) {
++            *end = ctx->au_start_found ? ctx->au_start : nal_start;
++            goto found;
++        }
++
++        if ((nut >= HEVC_NAL_VPS && nut <= HEVC_NAL_PPS) || nut == HEVC_NAL_SEI_PREFIX ||
+             (nut >= 41 && nut <= 44) || (nut >= 48 && nut <= 55)) {
+-            if (pc->frame_start_found) {
+-                pc->frame_start_found = 0;
+-                if (!((pc->state64 >> 6 * 8) & 0xFF))
+-                    return i - 6;
+-                return i - 5;
++            /* F.7.4.2.4.4: these NAL units start an AU only if they precede
++             * its first VCL NAL unit, not another picture or slice of this AU. */
++            if (pc->frame_start_found && !ctx->au_start_found) {
++                int64_t pts = s->pts, dts = s->dts;
++                int64_t pos = s->pos, offset = s->offset;
++                int64_t frame_offset = s->frame_offset;
++                int64_t next_frame_offset = s->next_frame_offset;
++
++                ctx->au_start = nal_start;
++                ctx->au_start_found = 1;
++                /* The input timestamp history may expire before the next VCL. */
++                /* Use the frame offsets the next parser call will have,
++                 * excluding timestamps belonging to this access unit. */
++                s->frame_offset = s->next_frame_offset;
++                s->next_frame_offset = s->cur_offset + nal_start;
++                ff_fetch_timestamp(s, nal_start, 0, 0);
++                ctx->au_pts = s->pts;
++                ctx->au_dts = s->dts;
++                ctx->au_pos = s->pos;
++                ctx->au_offset = s->offset;
++                s->pts = pts;
++                s->dts = dts;
++                s->pos = pos;
++                s->offset = offset;
++                s->frame_offset = frame_offset;
++                s->next_frame_offset = next_frame_offset;
+             }
+         } else if (nut <= HEVC_NAL_RASL_R ||
+                    (nut >= HEVC_NAL_BLA_W_LP && nut <= HEVC_NAL_CRA_NUT)) {
+             int first_slice_segment_in_pic_flag = buf[i] >> 7;
+             if (first_slice_segment_in_pic_flag) {
+-                if (!pc->frame_start_found) {
+-                    pc->frame_start_found = 1;
+-                } else { // First slice of next frame found
+-                    pc->frame_start_found = 0;
+-                    if (!((pc->state64 >> 6 * 8) & 0xFF))
+-                        return i - 6;
+-                    return i - 5;
++                if (pc->frame_start_found && layer_id <= ctx->last_layer_id) {
++                    *end = ctx->au_start_found ? ctx->au_start : nal_start;
++                    goto found;
+                 }
++                pc->frame_start_found = 1;
++                ctx->last_layer_id = layer_id;
+             }
++            ctx->au_start_found = 0;
+         }
+     }
+ 
+-    return END_NOT_FOUND;
++    if (ctx->au_start_found)
++        ctx->au_start -= buf_size;
++    return 0;
++
++found:
++    ctx->au_timestamp_pending = ctx->au_start_found;
++    pc->frame_start_found = 0;
++    ctx->au_start_found = 0;
++    return 1;
+ }
+ 
+ static int hevc_parse(AVCodecParserContext *s, AVCodecContext *avctx,
+@@ -315,6 +360,14 @@ static int hevc_parse(AVCodecParserContext *s, AVCodecContext *avctx,
+     int is_dummy_buf = !buf_size;
+     const uint8_t *dummy_buf = buf;
+ 
++    if (ctx->au_timestamp_pending) {
++        s->pts = ctx->au_pts;
++        s->dts = ctx->au_dts;
++        s->pos = ctx->au_pos;
++        s->offset = ctx->au_offset;
++        ctx->au_timestamp_pending = 0;
++    }
++
+     if (avctx->extradata && !ctx->parsed_extradata) {
+         ff_hevc_decode_extradata(avctx->extradata, avctx->extradata_size, &ctx->ps, &ctx->sei,
+                                  &ctx->is_avc, &ctx->nal_length_size, avctx->err_recognition,
+@@ -325,12 +378,41 @@ static int hevc_parse(AVCodecParserContext *s, AVCodecContext *avctx,
+     if (s->flags & PARSER_FLAG_COMPLETE_FRAMES) {
+         next = buf_size;
+     } else {
+-        next = hevc_find_frame_end(s, buf, buf_size);
+-        if (ff_combine_frame(pc, next, &buf, &buf_size) < 0) {
++        uint64_t state64 = pc->state64;
++        int64_t end;
++        int found = hevc_find_frame_end(s, buf, buf_size, &end);
++        int overread;
++
++        /* av_parser_parse2() requires a return greater than -0x20000000. */
++        if ((found && end <= -0x20000000) ||
++            (ctx->au_start_found && ctx->au_start <= -0x20000000)) {
++            av_log(avctx, AV_LOG_ERROR, "HEVC access unit lookahead is too large\n");
++            pc->index = pc->overread = pc->frame_start_found = 0;
++            pc->state64 = 0;
++            ctx->au_start_found = ctx->au_timestamp_pending = 0;
++            s->next_frame_offset = s->cur_offset + buf_size;
++            s->fetch_timestamp = 1;
++            *poutbuf = NULL;
++            *poutbuf_size = 0;
++            return buf_size;
++        }
++        next = found ? end : END_NOT_FOUND;
++        overread = found && next < 0 ? -next : 0;
++
++        if (ff_combine_frame(pc, found ? FFMAX(next, 0) : END_NOT_FOUND,
++                             &buf, &buf_size) < 0) {
+             *poutbuf      = NULL;
+             *poutbuf_size = 0;
+             return buf_size;
+         }
++        if (overread) {
++            /* A buffered boundary may equal ff_combine_frame's negative
++             * sentinel. Keep the tail explicitly and rescan the current input. */
++            buf_size -= overread;
++            pc->overread = overread;
++            pc->overread_index = buf_size;
++            pc->state64 = state64;
++        }
+     }
+ 
+     is_dummy_buf &= (dummy_buf == buf);

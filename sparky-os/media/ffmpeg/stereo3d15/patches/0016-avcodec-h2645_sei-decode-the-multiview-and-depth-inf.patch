@@ -1,0 +1,846 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/67241d1128c88269a3a3af378eaac165d0156187
+From 67241d1128c88269a3a3af378eaac165d0156187 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 03:36:08 -0300
+Subject: [PATCH 16/48] avcodec/h2645_sei: decode the multiview and depth
+ information SEI messages
+
+Decode every multiview and depth information SEI message of H.264
+(multiview scene information 39, multiview acquisition information 40,
+multiview view position 46, depth representation information 50, depth
+timing 52, depth sampling information 53, constrained depth parameter set
+identifier 54, alternative depth information 181; Annexes G, H and I)
+and H.265 (depth representation information 177, multiview scene
+information 178, multiview acquisition information 179, multiview view
+position 180, alternative depth information 181; Annexes G and I) into
+the frame side data of libavutil/multiview.h, with the checks of their
+semantics. A reserved depth_representation_type keeps only the type, as
+decoders ignore the data that follows it (G.14.3.4, H.13.2.3), and an
+alternative depth information message with a reserved depth_type is
+ignored (I.14.3.3).
+
+With per_view_depth_timing_flag, a depth timing message holds one offset
+for each of the NumDepthViews depth views of the MVCD sequence parameter
+set, which the decoder does not read: the offsets the payload holds are
+taken.
+
+Add the functions the decoders keep the information in force with: each
+message replaces the information of its type, and the information of the
+types not received ends with its coded video sequence.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ libavcodec/Makefile              |   6 +-
+ libavcodec/h2645_sei.c           |   3 +-
+ libavcodec/h2645_sei.h           |  54 +++
+ libavcodec/h2645_sei_multiview.c | 674 +++++++++++++++++++++++++++++++
+ 4 files changed, 733 insertions(+), 4 deletions(-)
+ create mode 100644 libavcodec/h2645_sei_multiview.c
+
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index 95ba3085..63410b70 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -115,9 +115,9 @@ OBJS-$(CONFIG_H264PARSE)               += h264_parse.o h264_ps.o h264data.o \
+                                           h2645data.o h2645_parse.o h2645_vui.o
+ OBJS-$(CONFIG_H264PRED)                += h264pred.o
+ OBJS-$(CONFIG_H264QPEL)                += h264qpel.o
+-OBJS-$(CONFIG_H264_SEI)                += h264_sei.o h2645_sei.o
++OBJS-$(CONFIG_H264_SEI)                += h264_sei.o h2645_sei.o h2645_sei_multiview.o
+ OBJS-$(CONFIG_HEVCPARSE)               += h2645data.o h2645_parse.o h2645_vui.o
+-OBJS-$(CONFIG_HEVC_SEI)                += h2645_sei.o
++OBJS-$(CONFIG_HEVC_SEI)                += h2645_sei.o h2645_sei_multiview.o
+ OBJS-$(CONFIG_HPELDSP)                 += hpeldsp.o
+ OBJS-$(CONFIG_HUFFMAN)                 += huffman.o
+ OBJS-$(CONFIG_HUFFYUVDSP)              += huffyuvdsp.o
+@@ -832,7 +832,7 @@ OBJS-$(CONFIG_VP9_V4L2M2M_DECODER)     += v4l2_m2m_dec.o
+ OBJS-$(CONFIG_VQA_DECODER)             += vqavideo.o
+ OBJS-$(CONFIG_VQC_DECODER)             += vqcdec.o
+ OBJS-$(CONFIG_VVC_DECODER)             += executor.o h2645data.o
+-OBJS-$(CONFIG_VVC_SEI)                 += h2645_sei.o h274.o
++OBJS-$(CONFIG_VVC_SEI)                 += h2645_sei.o h2645_sei_multiview.o h274.o
+ OBJS-$(CONFIG_WADY_DPCM_DECODER)       += dpcm.o
+ OBJS-$(CONFIG_WAVARC_DECODER)          += wavarc.o
+ OBJS-$(CONFIG_WAVPACK_DECODER)         += wavpack.o wavpackdata.o dsd.o
+diff --git a/libavcodec/h2645_sei.c b/libavcodec/h2645_sei.c
+index b6fa437a..e856a6af 100644
+--- a/libavcodec/h2645_sei.c
++++ b/libavcodec/h2645_sei.c
+@@ -314,7 +314,7 @@ int ff_h2645_sei_message_decode(H2645SEI *h, enum SEIType type,
+     case SEI_TYPE_CONTENT_LIGHT_LEVEL_INFO:
+         return decode_nal_sei_content_light_info(&h->content_light, gbyte);
+     default:
+-        return FF_H2645_SEI_MESSAGE_UNHANDLED;
++        return ff_h2645_sei_multiview_decode(&h->multiview, type, codec_id, gb, logctx);
+     }
+ }
+ 
+@@ -725,6 +725,7 @@ void ff_h2645_sei_reset(H2645SEI *s)
+     s->ambient_viewing_environment.present = 0;
+     s->mastering_display.present = 0;
+     s->content_light.present = 0;
++    ff_h2645_sei_multiview_reset(&s->multiview);
+ 
+     av_refstruct_unref(&s->film_grain_characteristics);
+ }
+diff --git a/libavcodec/h2645_sei.h b/libavcodec/h2645_sei.h
+index 153deae7..43884542 100644
+--- a/libavcodec/h2645_sei.h
++++ b/libavcodec/h2645_sei.h
+@@ -127,6 +127,33 @@ typedef struct H2645SEIContentLight {
+     uint16_t max_pic_average_light_level;
+ } H2645SEIContentLight;
+ 
++/**
++ * The multiview and depth information SEI messages of H.264 (Annexes G, H
++ * and I) and H.265 (Annexes G and I), in the order of
++ * ff_h2645_sei_multiview_types.
++ */
++enum {
++    H2645_SEI_MULTIVIEW_SCENE_INFO,
++    H2645_SEI_MULTIVIEW_ACQUISITION_INFO,
++    H2645_SEI_MULTIVIEW_VIEW_POSITION,
++    H2645_SEI_DEPTH_REPRESENTATION_INFO,
++    H2645_SEI_DEPTH_TIMING,
++    H2645_SEI_DEPTH_SAMPLING_INFO,
++    H2645_SEI_CONSTRAINED_DEPTH_PARAMETER_SET_ID,
++    H2645_SEI_ALTERNATIVE_DEPTH_INFO,
++    H2645_SEI_MULTIVIEW_NB,
++};
++
++/**
++ * The multiview and depth information messages decoded since the decoder
++ * last took them, each as its frame side data.
++ */
++typedef struct H2645SEIMultiview {
++    AVBufferRef *info[H2645_SEI_MULTIVIEW_NB];
++} H2645SEIMultiview;
++
++extern const enum AVFrameSideDataType ff_h2645_sei_multiview_types[H2645_SEI_MULTIVIEW_NB];
++
+ typedef struct H2645SEI {
+     FFITUTT35Meta itut_t35;
+     H2645SEIUnregistered unregistered;
+@@ -136,6 +163,7 @@ typedef struct H2645SEI {
+     H2645SEIAmbientViewingEnvironment ambient_viewing_environment;
+     H2645SEIMasteringDisplay mastering_display;
+     H2645SEIContentLight content_light;
++    H2645SEIMultiview multiview;
+ 
+     // Dynamic allocations due to large size.
+     H2645SEIFilmGrainCharacteristics *film_grain_characteristics;
+@@ -178,4 +206,30 @@ int ff_h2645_sei_frame_packing_to_frame(AVCodecContext *avctx, AVFrame *frame,
+ 
+ int ff_h2645_sei_to_context(AVCodecContext *avctx, H2645SEI *sei);
+ 
++/**
++ * Decode a multiview or depth information SEI message.
++ *
++ * @return FF_H2645_SEI_MESSAGE_UNHANDLED when type is not one of them for
++ *         codec_id, a negative error code on failure, 0 otherwise
++ */
++int ff_h2645_sei_multiview_decode(H2645SEIMultiview *m, enum SEIType type,
++                                  enum AVCodecID codec_id, GetBitContext *gb,
++                                  void *logctx);
++
++void ff_h2645_sei_multiview_reset(H2645SEIMultiview *m);
++
++/**
++ * Apply the decoded messages to the information a picture carries: each
++ * replaces the one of its type, and at the start of a coded video sequence
++ * the information of the types not received ends.
++ */
++int ff_h2645_sei_multiview_update(AVBufferRef *state[H2645_SEI_MULTIVIEW_NB],
++                                  H2645SEIMultiview *m, int new_sequence);
++
++/**
++ * Attach the information a picture carries to its frame.
++ */
++int ff_h2645_sei_multiview_to_frame(const AVCodecContext *avctx, AVFrame *frame,
++                                    AVBufferRef *const state[H2645_SEI_MULTIVIEW_NB]);
++
+ #endif /* AVCODEC_H2645_SEI_H */
+diff --git a/libavcodec/h2645_sei_multiview.c b/libavcodec/h2645_sei_multiview.c
+new file mode 100644
+index 00000000..2387143d
+--- /dev/null
++++ b/libavcodec/h2645_sei_multiview.c
+@@ -0,0 +1,674 @@
++/*
++ * H.264 and H.265 multiview and depth information SEI messages
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include "libavutil/buffer.h"
++#include "libavutil/common.h"
++#include "libavutil/frame.h"
++#include "libavutil/mem.h"
++#include "libavutil/multiview.h"
++
++#include "codec_id.h"
++#include "decode.h"
++#include "get_bits.h"
++#include "golomb.h"
++#include "h2645_sei.h"
++#include "sei.h"
++
++const enum AVFrameSideDataType ff_h2645_sei_multiview_types[H2645_SEI_MULTIVIEW_NB] = {
++    [H2645_SEI_MULTIVIEW_SCENE_INFO]                    = AV_FRAME_DATA_MULTIVIEW_SCENE_INFO,
++    [H2645_SEI_MULTIVIEW_ACQUISITION_INFO]              = AV_FRAME_DATA_MULTIVIEW_ACQUISITION_INFO,
++    [H2645_SEI_MULTIVIEW_VIEW_POSITION]                 = AV_FRAME_DATA_MULTIVIEW_VIEW_POSITION,
++    [H2645_SEI_DEPTH_REPRESENTATION_INFO]               = AV_FRAME_DATA_DEPTH_REPRESENTATION_INFO,
++    [H2645_SEI_DEPTH_TIMING]                            = AV_FRAME_DATA_DEPTH_TIMING,
++    [H2645_SEI_DEPTH_SAMPLING_INFO]                     = AV_FRAME_DATA_DEPTH_SAMPLING_INFO,
++    [H2645_SEI_CONSTRAINED_DEPTH_PARAMETER_SET_ID]      = AV_FRAME_DATA_CONSTRAINED_DEPTH_PARAMETER_SET_ID,
++    [H2645_SEI_ALTERNATIVE_DEPTH_INFO]                  = AV_FRAME_DATA_ALTERNATIVE_DEPTH_INFO,
++};
++
++/* the largest view_id and number of views of H.264 (G.7.4.1.2.4), and the
++ * largest number of views of H.265 (G.14.3.7) */
++#define MAX_VIEW_ID_264 1023
++#define MAX_VIEWS_265   63
++
++/* A camera or display parameter: H.265 G.14.3.6, H.264 G.13.2.5. The length
++ * of the mantissa follows from its exponent and the precision. */
++static void read_camera_real(GetBitContext *gb, AVMultiviewReal *r, int prec)
++{
++    int len;
++
++    r->sign          = get_bits1(gb);
++    r->exponent      = get_bits(gb, 6);
++    r->exponent_bits = 6;
++    len = r->exponent ? r->exponent + prec - 31 : prec - 30;
++    r->mantissa_bits = FFMAX(len, 0);
++    r->mantissa      = r->mantissa_bits ? get_bits64(gb, r->mantissa_bits) : 0;
++}
++
++/* A depth or disparity: depth_rep_info_element(), H.265 G.14.3.4.2, H.264
++ * H.13.2.3.1, and the depths of the alternative depth information. */
++static void read_depth_real(GetBitContext *gb, AVMultiviewReal *r)
++{
++    r->sign          = get_bits1(gb);
++    r->exponent      = get_bits(gb, 7);
++    r->exponent_bits = 7;
++    r->mantissa_bits = get_bits(gb, 5) + 1;
++    r->mantissa      = get_bits64(gb, r->mantissa_bits);
++}
++
++/* A precision of camera parameters, 0 to 31 (H.265 G.14.3.6) */
++static int read_prec(GetBitContext *gb, uint8_t *prec)
++{
++    unsigned v = get_ue_golomb_long(gb);
++
++    if (v > 31)
++        return AVERROR_INVALIDDATA;
++    *prec = v;
++    return 0;
++}
++
++static int wrap(H2645SEIMultiview *m, int idx, void *data, size_t size)
++{
++    AVBufferRef *buf = av_buffer_create(data, size, NULL, NULL, 0);
++
++    if (!buf) {
++        av_free(data);
++        return AVERROR(ENOMEM);
++    }
++    av_buffer_unref(&m->info[idx]);
++    m->info[idx] = buf;
++    return 0;
++}
++
++static int decode_multiview_scene_info(H2645SEIMultiview *m, GetBitContext *gb,
++                                       enum AVCodecID codec_id)
++{
++    AVMultiviewSceneInfo *info;
++    size_t size;
++
++    info = av_multiview_scene_info_alloc(&size);
++    if (!info)
++        return AVERROR(ENOMEM);
++
++    if (codec_id == AV_CODEC_ID_HEVC) {
++        /* H.265 G.14.3.5 */
++        int min_disparity = get_se_golomb_long(gb);
++        unsigned range    = get_ue_golomb_long(gb);
++
++        if (min_disparity < -1024 || min_disparity > 1023 || range > 2047)
++            goto invalid;
++        info->min_disparity_present = 1;
++        info->min_disparity         = min_disparity;
++        info->max_disparity_range   = range;
++    } else {
++        /* H.264 G.13.2.4 */
++        unsigned max_disparity = get_ue_golomb_long(gb);
++
++        if (max_disparity > 1023)
++            goto invalid;
++        info->max_disparity = max_disparity;
++    }
++    if (get_bits_left(gb) < 0)
++        goto invalid;
++
++    return wrap(m, H2645_SEI_MULTIVIEW_SCENE_INFO, info, size);
++invalid:
++    av_free(info);
++    return AVERROR_INVALIDDATA;
++}
++
++static int decode_multiview_acquisition_info(H2645SEIMultiview *m, GetBitContext *gb,
++                                             enum AVCodecID codec_id)
++{
++    AVMultiviewAcquisitionInfo *info;
++    unsigned nb_cameras = 1, nb_intrinsic;
++    int intrinsic_param, extrinsic_param, intrinsic_params_equal = 0;
++    size_t size;
++
++    /* H.264 G.13.2.5 carries the number of views; for H.265 G.14.3.6 it is
++     * that of the nesting layers, 1 outside of a scalable nesting message */
++    if (codec_id == AV_CODEC_ID_H264) {
++        unsigned num_views_minus1 = get_ue_golomb_long(gb);
++        if (num_views_minus1 > MAX_VIEW_ID_264)
++            return AVERROR_INVALIDDATA;
++        nb_cameras = num_views_minus1 + 1;
++    }
++
++    intrinsic_param = get_bits1(gb);
++    extrinsic_param = get_bits1(gb);
++
++    info = av_multiview_acquisition_info_alloc(nb_cameras, &size);
++    if (!info)
++        return AVERROR(ENOMEM);
++    info->intrinsic_param = intrinsic_param;
++    info->extrinsic_param = extrinsic_param;
++
++    if (intrinsic_param) {
++        intrinsic_params_equal = get_bits1(gb);
++        info->intrinsic_params_equal = intrinsic_params_equal;
++        if (read_prec(gb, &info->prec_focal_length) < 0 ||
++            read_prec(gb, &info->prec_principal_point) < 0 ||
++            read_prec(gb, &info->prec_skew_factor) < 0)
++            goto invalid;
++
++        nb_intrinsic = intrinsic_params_equal ? 1 : nb_cameras;
++        for (unsigned i = 0; i < nb_intrinsic; i++) {
++            AVMultiviewCamera *c = av_multiview_acquisition_info_get_camera(info, i);
++            read_camera_real(gb, &c->focal_length_x,    info->prec_focal_length);
++            read_camera_real(gb, &c->focal_length_y,    info->prec_focal_length);
++            read_camera_real(gb, &c->principal_point_x, info->prec_principal_point);
++            read_camera_real(gb, &c->principal_point_y, info->prec_principal_point);
++            read_camera_real(gb, &c->skew_factor,       info->prec_skew_factor);
++            if (get_bits_left(gb) < 0)
++                goto invalid;
++        }
++        /* one set for all cameras */
++        for (unsigned i = nb_intrinsic; i < nb_cameras; i++) {
++            const AVMultiviewCamera *c0 = av_multiview_acquisition_info_get_camera(info, 0);
++            AVMultiviewCamera *c = av_multiview_acquisition_info_get_camera(info, i);
++            c->focal_length_x    = c0->focal_length_x;
++            c->focal_length_y    = c0->focal_length_y;
++            c->principal_point_x = c0->principal_point_x;
++            c->principal_point_y = c0->principal_point_y;
++            c->skew_factor       = c0->skew_factor;
++        }
++    }
++
++    if (extrinsic_param) {
++        if (read_prec(gb, &info->prec_rotation_param) < 0 ||
++            read_prec(gb, &info->prec_translation_param) < 0)
++            goto invalid;
++
++        for (unsigned i = 0; i < nb_cameras; i++) {
++            AVMultiviewCamera *c = av_multiview_acquisition_info_get_camera(info, i);
++            for (int j = 0; j < 3; j++) {
++                for (int k = 0; k < 3; k++)
++                    read_camera_real(gb, &c->rotation[j][k], info->prec_rotation_param);
++                read_camera_real(gb, &c->translation[j], info->prec_translation_param);
++            }
++            if (get_bits_left(gb) < 0)
++                goto invalid;
++        }
++    }
++
++    return wrap(m, H2645_SEI_MULTIVIEW_ACQUISITION_INFO, info, size);
++invalid:
++    av_free(info);
++    return AVERROR_INVALIDDATA;
++}
++
++static int decode_multiview_view_position(H2645SEIMultiview *m, GetBitContext *gb,
++                                          enum AVCodecID codec_id)
++{
++    /* H.264 G.13.2.10: up to 1024 views; H.265 G.14.3.7: up to 63 */
++    const unsigned max = codec_id == AV_CODEC_ID_H264 ? MAX_VIEW_ID_264 : MAX_VIEWS_265 - 1;
++    unsigned num_views_minus1 = get_ue_golomb_long(gb);
++    AVMultiviewViewPosition *pos;
++    uint16_t *p;
++    size_t size;
++
++    if (num_views_minus1 > max)
++        return AVERROR_INVALIDDATA;
++
++    pos = av_multiview_view_position_alloc(num_views_minus1 + 1, &size);
++    if (!pos)
++        return AVERROR(ENOMEM);
++    p = av_multiview_view_position_get(pos);
++
++    for (unsigned i = 0; i <= num_views_minus1; i++) {
++        unsigned position = get_ue_golomb_long(gb);
++        if (position > max || get_bits_left(gb) < 0) {
++            av_free(pos);
++            return AVERROR_INVALIDDATA;
++        }
++        p[i] = position;
++    }
++    /* H.264: multiview_view_position_extension_flag, whose data is ignored */
++
++    return wrap(m, H2645_SEI_MULTIVIEW_VIEW_POSITION, pos, size);
++}
++
++static int decode_depth_representation_info(H2645SEIMultiview *m, GetBitContext *gb,
++                                            enum AVCodecID codec_id, void *logctx)
++{
++    AVDepthRepresentationInfo *info;
++    unsigned nb_views = 1, type;
++    int all_views_equal = 1, z_axis_equal = 0;
++    unsigned common_z_axis_reference_view = 0;
++    int z_near, z_far, d_min, d_max;
++    size_t size;
++
++    if (codec_id == AV_CODEC_ID_H264) {
++        /* H.264 H.13.2.3 */
++        all_views_equal = get_bits1(gb);
++        if (!all_views_equal) {
++            unsigned num_views_minus1 = get_ue_golomb_long(gb);
++            if (num_views_minus1 > MAX_VIEW_ID_264)
++                return AVERROR_INVALIDDATA;
++            nb_views = num_views_minus1 + 1;
++        }
++        z_near = get_bits1(gb);
++        z_far  = get_bits1(gb);
++        if (z_near || z_far) {
++            z_axis_equal = get_bits1(gb);
++            if (z_axis_equal) {
++                common_z_axis_reference_view = get_ue_golomb_long(gb);
++                if (common_z_axis_reference_view > MAX_VIEW_ID_264)
++                    return AVERROR_INVALIDDATA;
++            }
++        }
++        d_min = get_bits1(gb);
++        d_max = get_bits1(gb);
++    } else {
++        /* H.265 G.14.3.4 */
++        z_near = get_bits1(gb);
++        z_far  = get_bits1(gb);
++        d_min  = get_bits1(gb);
++        d_max  = get_bits1(gb);
++    }
++    type = get_ue_golomb_long(gb);
++    if (type > 15 || get_bits_left(gb) < 0)
++        return AVERROR_INVALIDDATA;
++
++    /* decoders ignore all data that follow a reserved depth_representation_type */
++    info = av_depth_representation_info_alloc(type <= 3 ? nb_views : 0, &size);
++    if (!info)
++        return AVERROR(ENOMEM);
++    info->type = type;
++    if (type > AV_DEPTH_REPRESENTATION_NONLINEAR_DISPARITY) {
++        av_log(logctx, AV_LOG_DEBUG, "Reserved depth_representation_type %u\n", type);
++        return wrap(m, H2645_SEI_DEPTH_REPRESENTATION_INFO, info, size);
++    }
++
++    info->z_near_present               = z_near;
++    info->z_far_present                = z_far;
++    info->d_min_present                = d_min;
++    info->d_max_present                = d_max;
++    info->all_views_equal              = all_views_equal;
++    info->z_axis_equal                 = z_axis_equal;
++    info->common_z_axis_reference_view = common_z_axis_reference_view;
++
++    for (unsigned i = 0; i < nb_views; i++) {
++        AVDepthRepresentationView *v = av_depth_representation_info_get_view(info, i);
++
++        if (codec_id == AV_CODEC_ID_H264) {
++            unsigned view_id = get_ue_golomb_long(gb);
++            if (view_id > MAX_VIEW_ID_264)
++                goto invalid;
++            v->view_id = view_id;
++            if ((z_near || z_far) && !z_axis_equal) {
++                unsigned ref = get_ue_golomb_long(gb);
++                if (ref > MAX_VIEW_ID_264)
++                    goto invalid;
++                v->z_axis_reference_view = ref;
++            }
++        }
++        if (d_min || d_max) {
++            unsigned ref = get_ue_golomb_long(gb);
++            if (ref > MAX_VIEW_ID_264)
++                goto invalid;
++            v->disparity_reference_view = ref;
++        }
++        if (z_near)
++            read_depth_real(gb, &v->z_near);
++        if (z_far)
++            read_depth_real(gb, &v->z_far);
++        if (d_min)
++            read_depth_real(gb, &v->d_min);
++        if (d_max)
++            read_depth_real(gb, &v->d_max);
++        if (get_bits_left(gb) < 0)
++            goto invalid;
++    }
++
++    if (type == AV_DEPTH_REPRESENTATION_NONLINEAR_DISPARITY) {
++        unsigned num_minus1 = get_ue_golomb_long(gb);
++
++        if (num_minus1 > 62)
++            goto invalid;
++        /* model[0] and model[num_minus1 + 2] are inferred to be 0 */
++        info->nb_nonlinear_model = num_minus1 + 3;
++        for (unsigned i = 1; i <= num_minus1 + 1; i++) {
++            unsigned model = get_ue_golomb_long(gb);
++            if (model > 65535)
++                goto invalid;
++            info->nonlinear_model[i] = model;
++        }
++        if (get_bits_left(gb) < 0)
++            goto invalid;
++    }
++
++    return wrap(m, H2645_SEI_DEPTH_REPRESENTATION_INFO, info, size);
++invalid:
++    av_free(info);
++    return AVERROR_INVALIDDATA;
++}
++
++/* H.264 H.13.2.5 */
++static int decode_depth_timing(H2645SEIMultiview *m, GetBitContext *gb)
++{
++    AVDepthTimingOffset offsets[MAX_VIEW_ID_264 + 1];
++    AVDepthTiming *t;
++    int per_view = get_bits1(gb);
++    unsigned nb = 0;
++    size_t size;
++
++    /* With per_view_depth_timing_flag, one offset follows for each of the
++     * NumDepthViews depth views, a number of the MVCD sequence parameter set:
++     * read the offsets the payload holds. An offset takes 12 bits at least. */
++    do {
++        AVDepthTimingOffset *o = &offsets[nb];
++
++        o->offset_bits = get_bits(gb, 5) + 1;
++        o->offset_fp   = get_bits_long(gb, o->offset_bits);
++        o->offset_dp   = get_bits(gb, 6);
++        if (get_bits_left(gb) < 0)
++            return AVERROR_INVALIDDATA;
++        nb++;
++    } while (per_view && nb < FF_ARRAY_ELEMS(offsets) && get_bits_left(gb) >= 12);
++
++    t = av_depth_timing_alloc(nb, &size);
++    if (!t)
++        return AVERROR(ENOMEM);
++    t->per_view = per_view;
++    for (unsigned i = 0; i < nb; i++)
++        *av_depth_timing_get_offset(t, i) = offsets[i];
++
++    return wrap(m, H2645_SEI_DEPTH_TIMING, t, size);
++}
++
++static void read_depth_grid_position(GetBitContext *gb, AVDepthGridPosition *g)
++{
++    g->x_fp   = get_bits(gb, 20);
++    g->x_dp   = get_bits(gb, 4);
++    g->x_sign = get_bits1(gb);
++    g->y_fp   = get_bits(gb, 20);
++    g->y_dp   = get_bits(gb, 4);
++    g->y_sign = get_bits1(gb);
++}
++
++/* H.264 H.13.2.7 */
++static int decode_depth_sampling_info(H2645SEIMultiview *m, GetBitContext *gb)
++{
++    AVDepthSamplingInfo *info;
++    unsigned x_mul, x_dp, y_mul, y_dp, nb = 1;
++    int per_view;
++    size_t size;
++
++    x_mul    = get_bits(gb, 16);
++    x_dp     = get_bits(gb, 4);
++    y_mul    = get_bits(gb, 16);
++    y_dp     = get_bits(gb, 4);
++    per_view = get_bits1(gb);
++    if (per_view) {
++        unsigned num_minus1 = get_ue_golomb_long(gb);
++        if (num_minus1 > MAX_VIEW_ID_264)
++            return AVERROR_INVALIDDATA;
++        nb = num_minus1 + 1;
++    }
++
++    info = av_depth_sampling_info_alloc(nb, &size);
++    if (!info)
++        return AVERROR(ENOMEM);
++    info->dttsr_x_mul = x_mul;
++    info->dttsr_x_dp  = x_dp;
++    info->dttsr_y_mul = y_mul;
++    info->dttsr_y_dp  = y_dp;
++    info->per_view    = per_view;
++
++    for (unsigned i = 0; i < nb; i++) {
++        AVDepthGridPosition *g = av_depth_sampling_info_get_position(info, i);
++
++        if (per_view) {
++            unsigned view_id = get_ue_golomb_long(gb);
++            if (view_id > MAX_VIEW_ID_264)
++                goto invalid;
++            g->view_id = view_id;
++        }
++        read_depth_grid_position(gb, g);
++        if (get_bits_left(gb) < 0)
++            goto invalid;
++    }
++
++    return wrap(m, H2645_SEI_DEPTH_SAMPLING_INFO, info, size);
++invalid:
++    av_free(info);
++    return AVERROR_INVALIDDATA;
++}
++
++/* H.264 I.13.2.1 */
++static int decode_constrained_depth_parameter_set_id(H2645SEIMultiview *m, GetBitContext *gb)
++{
++    AVConstrainedDepthParameterSetId *id;
++    unsigned max_dps_id      = get_ue_golomb_long(gb);
++    unsigned max_dps_id_diff = get_ue_golomb_long(gb);
++    size_t size;
++
++    if (get_bits_left(gb) < 0)
++        return AVERROR_INVALIDDATA;
++
++    id = av_constrained_depth_parameter_set_id_alloc(&size);
++    if (!id)
++        return AVERROR(ENOMEM);
++    id->max_dps_id      = max_dps_id;
++    id->max_dps_id_diff = max_dps_id_diff;
++
++    return wrap(m, H2645_SEI_CONSTRAINED_DEPTH_PARAMETER_SET_ID, id, size);
++}
++
++/* H.264 H.13.2.6, H.265 I.14.3.3 */
++static int decode_alternative_depth_info(H2645SEIMultiview *m, GetBitContext *gb,
++                                         enum AVCodecID codec_id, void *logctx)
++{
++    AVAlternativeDepthInfo *info;
++    unsigned depth_type, nb_views = 0;
++    size_t size;
++
++    if (codec_id == AV_CODEC_ID_HEVC && get_bits1(gb)) {
++        /* alternative_depth_info_cancel_flag */
++        info = av_alternative_depth_info_alloc(0, &size);
++        if (!info)
++            return AVERROR(ENOMEM);
++        info->cancel = 1;
++        return wrap(m, H2645_SEI_ALTERNATIVE_DEPTH_INFO, info, size);
++    }
++
++    depth_type = codec_id == AV_CODEC_ID_HEVC ? get_bits(gb, 2) : get_ue_golomb_long(gb);
++    if (depth_type > AV_ALTERNATIVE_DEPTH_WARP_MAP ||
++        (codec_id == AV_CODEC_ID_H264 && depth_type != AV_ALTERNATIVE_DEPTH_GVD)) {
++        /* decoders ignore messages with a reserved depth_type */
++        av_log(logctx, AV_LOG_DEBUG, "Reserved alternative depth_type %u\n", depth_type);
++        return 0;
++    }
++
++    if (depth_type == AV_ALTERNATIVE_DEPTH_GVD) {
++        unsigned num_minus1 = get_ue_golomb_long(gb);
++        /* 1 to 4 constituent pictures */
++        if (num_minus1 > 3)
++            return AVERROR_INVALIDDATA;
++        nb_views = num_minus1 + 2;
++    }
++
++    info = av_alternative_depth_info_alloc(nb_views, &size);
++    if (!info)
++        return AVERROR(ENOMEM);
++    info->depth_type = depth_type;
++
++    if (depth_type == AV_ALTERNATIVE_DEPTH_GVD) {
++        info->depth_present     = get_bits1(gb);
++        info->z_present         = get_bits1(gb);
++        info->intrinsic_param   = get_bits1(gb);
++        info->rotation_param    = get_bits1(gb);
++        info->translation_param = get_bits1(gb);
++        if (info->z_present) {
++            for (unsigned i = 0; i < nb_views; i++) {
++                AVAlternativeDepthView *v = av_alternative_depth_info_get_view(info, i);
++                read_depth_real(gb, &v->z_near);
++                read_depth_real(gb, &v->z_far);
++            }
++        }
++        if (info->intrinsic_param &&
++            (read_prec(gb, &info->prec_focal_length) < 0 ||
++             read_prec(gb, &info->prec_principal_point) < 0))
++            goto invalid;
++        if (info->rotation_param && read_prec(gb, &info->prec_rotation_param) < 0)
++            goto invalid;
++        if (info->translation_param && read_prec(gb, &info->prec_translation_param) < 0)
++            goto invalid;
++
++        for (unsigned i = 0; i < nb_views; i++) {
++            AVAlternativeDepthView *v = av_alternative_depth_info_get_view(info, i);
++
++            if (info->intrinsic_param) {
++                read_camera_real(gb, &v->focal_length_x,    info->prec_focal_length);
++                read_camera_real(gb, &v->focal_length_y,    info->prec_focal_length);
++                read_camera_real(gb, &v->principal_point_x, info->prec_principal_point);
++                read_camera_real(gb, &v->principal_point_y, info->prec_principal_point);
++            }
++            if (info->rotation_param)
++                for (int j = 0; j < 3; j++)
++                    for (int k = 0; k < 3; k++)
++                        read_camera_real(gb, &v->rotation[j][k], info->prec_rotation_param);
++            if (info->translation_param)
++                read_camera_real(gb, &v->translation_x, info->prec_translation_param);
++            if (get_bits_left(gb) < 0)
++                goto invalid;
++        }
++    } else {
++        unsigned width_minus2, height_minus2;
++
++        info->min_offset_x_int  = get_se_golomb_long(gb);
++        info->min_offset_x_frac = get_bits(gb, 8);
++        info->max_offset_x_int  = get_se_golomb_long(gb);
++        info->max_offset_x_frac = get_bits(gb, 8);
++        info->offset_y_present  = get_bits1(gb);
++        if (info->offset_y_present) {
++            info->min_offset_y_int  = get_se_golomb_long(gb);
++            info->min_offset_y_frac = get_bits(gb, 8);
++            info->max_offset_y_int  = get_se_golomb_long(gb);
++            info->max_offset_y_frac = get_bits(gb, 8);
++        }
++        info->warp_map_size_present = get_bits1(gb);
++        if (info->warp_map_size_present) {
++            width_minus2  = get_ue_golomb_long(gb);
++            height_minus2 = get_ue_golomb_long(gb);
++            if (width_minus2 > INT_MAX - 2 || height_minus2 > INT_MAX - 2)
++                goto invalid;
++            info->warp_map_width  = width_minus2 + 2;
++            info->warp_map_height = height_minus2 + 2;
++        }
++        if (get_bits_left(gb) < 0)
++            goto invalid;
++    }
++
++    return wrap(m, H2645_SEI_ALTERNATIVE_DEPTH_INFO, info, size);
++invalid:
++    av_free(info);
++    return AVERROR_INVALIDDATA;
++}
++
++int ff_h2645_sei_multiview_decode(H2645SEIMultiview *m, enum SEIType type,
++                                  enum AVCodecID codec_id, GetBitContext *gb,
++                                  void *logctx)
++{
++    if (codec_id == AV_CODEC_ID_H264) {
++        switch (type) {
++        case SEI_TYPE_MULTIVIEW_SCENE_INFO_4:
++            return decode_multiview_scene_info(m, gb, codec_id);
++        case SEI_TYPE_MULTIVIEW_ACQUISITION_INFO_4:
++            return decode_multiview_acquisition_info(m, gb, codec_id);
++        case SEI_TYPE_MULTIVIEW_VIEW_POSITION_4:
++            return decode_multiview_view_position(m, gb, codec_id);
++        case SEI_TYPE_DEPTH_REPRESENTATION_INFO_4:
++            return decode_depth_representation_info(m, gb, codec_id, logctx);
++        case SEI_TYPE_DEPTH_TIMING:
++            return decode_depth_timing(m, gb);
++        case SEI_TYPE_DEPTH_SAMPLING_INFO:
++            return decode_depth_sampling_info(m, gb);
++        case SEI_TYPE_CONSTRAINED_DEPTH_PARAMETER_SET_IDENTIFIER:
++            return decode_constrained_depth_parameter_set_id(m, gb);
++        case SEI_TYPE_ALTERNATIVE_DEPTH_INFO:
++            return decode_alternative_depth_info(m, gb, codec_id, logctx);
++        }
++    } else if (codec_id == AV_CODEC_ID_HEVC) {
++        switch (type) {
++        case SEI_TYPE_DEPTH_REPRESENTATION_INFO_5:
++            return decode_depth_representation_info(m, gb, codec_id, logctx);
++        case SEI_TYPE_MULTIVIEW_SCENE_INFO_5:
++            return decode_multiview_scene_info(m, gb, codec_id);
++        case SEI_TYPE_MULTIVIEW_ACQUISITION_INFO_5:
++            return decode_multiview_acquisition_info(m, gb, codec_id);
++        case SEI_TYPE_MULTIVIEW_VIEW_POSITION_5:
++            return decode_multiview_view_position(m, gb, codec_id);
++        case SEI_TYPE_ALTERNATIVE_DEPTH_INFO:
++            return decode_alternative_depth_info(m, gb, codec_id, logctx);
++        }
++    }
++
++    return FF_H2645_SEI_MESSAGE_UNHANDLED;
++}
++
++void ff_h2645_sei_multiview_reset(H2645SEIMultiview *m)
++{
++    for (int i = 0; i < H2645_SEI_MULTIVIEW_NB; i++)
++        av_buffer_unref(&m->info[i]);
++}
++
++int ff_h2645_sei_multiview_update(AVBufferRef *state[H2645_SEI_MULTIVIEW_NB],
++                                  H2645SEIMultiview *m, int new_sequence)
++{
++    for (int i = 0; i < H2645_SEI_MULTIVIEW_NB; i++) {
++        if (m->info[i]) {
++            av_buffer_unref(&state[i]);
++            state[i] = m->info[i];
++            m->info[i] = NULL;
++        } else if (new_sequence) {
++            /* the information ends with its coded video sequence */
++            av_buffer_unref(&state[i]);
++        }
++    }
++
++    /* a cancelled alternative depth information (H.265 I.14.3.3) ends */
++    if (state[H2645_SEI_ALTERNATIVE_DEPTH_INFO] &&
++        ((const AVAlternativeDepthInfo *)state[H2645_SEI_ALTERNATIVE_DEPTH_INFO]->data)->cancel)
++        av_buffer_unref(&state[H2645_SEI_ALTERNATIVE_DEPTH_INFO]);
++
++    return 0;
++}
++
++int ff_h2645_sei_multiview_to_frame(const AVCodecContext *avctx, AVFrame *frame,
++                                    AVBufferRef *const state[H2645_SEI_MULTIVIEW_NB])
++{
++    for (int i = 0; i < H2645_SEI_MULTIVIEW_NB; i++) {
++        AVBufferRef *buf;
++        int ret;
++
++        if (!state[i])
++            continue;
++        buf = av_buffer_ref(state[i]);
++        if (!buf)
++            return AVERROR(ENOMEM);
++        ret = ff_frame_new_side_data_from_buf(avctx, frame, ff_h2645_sei_multiview_types[i], &buf);
++        av_buffer_unref(&buf);
++        if (ret < 0)
++            return ret;
++    }
++
++    return 0;
++}
+-- 
+2.53.0
+

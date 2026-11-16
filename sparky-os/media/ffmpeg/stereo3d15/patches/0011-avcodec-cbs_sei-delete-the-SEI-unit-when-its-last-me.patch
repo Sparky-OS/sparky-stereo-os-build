@@ -1,0 +1,31 @@
+Description: avcodec/cbs_sei: delete the SEI unit when its last message is deleted
+ Deleting the last message left a NAL unit containing only its header and
+ trailing bits. CBS rejects that empty SEI, so a second bitstream filter
+ could not read the output of h264_metadata=display_orientation=remove.
+ Delete the unit when it has no messages left.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: Claude Sonnet via Claude Code
+ Assisted-by: gpt-6-astra via Codex
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/3dd71847cf2c614d3a3b489ea146e5c8637ca5a3
+Forwarded: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25395
+Last-Update: 2026-11-06
+
+diff --git a/libavcodec/cbs_sei.c b/libavcodec/cbs_sei.c
+index e3544d3..70c18b4 100644
+--- a/libavcodec/cbs_sei.c
++++ b/libavcodec/cbs_sei.c
+@@ -582,6 +582,12 @@ void ff_cbs_sei_delete_message_type(CodedBitstreamContext *ctx,
+             if (list->messages[j].payload_type == payload_type)
+                 cbs_sei_delete_message(list, j);
+         }
++
++        // An SEI unit needs at least one message.
++        if (!list->nb_messages) {
++            ff_cbs_delete_unit(au, i);
++            i--;
++        }
+     }
+ }
+ 

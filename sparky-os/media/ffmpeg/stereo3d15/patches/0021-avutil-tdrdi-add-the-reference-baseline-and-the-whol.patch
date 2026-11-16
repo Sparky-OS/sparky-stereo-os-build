@@ -1,0 +1,77 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/82037b9c775202a512e33332308b292ba051b1d7
+From 82037b9c775202a512e33332308b292ba051b1d7 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 03:40:22 -0300
+Subject: [PATCH 21/48] avutil/tdrdi: add the reference baseline and the whole
+ parameter values
+
+H.264 signals a reference baseline for each reference display
+(H.13.2.4) where H.265 signals a pair of views (G.14.3.3). Add it, with
+its precision.
+
+The mantissas of the reference display width and viewing distance are up
+to 62 bits long (G.14.3.3: Max(0, exponent + prec - 31)), but
+AV3DReferenceDisplay keeps only 8 bits of them. Add the whole values as
+AVMultiviewReal, which av_multiview_real_to_double() converts.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ libavutil/tdrdi.h | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/libavutil/tdrdi.h b/libavutil/tdrdi.h
+index 8629775a..9a9db209 100644
+--- a/libavutil/tdrdi.h
++++ b/libavutil/tdrdi.h
+@@ -29,6 +29,7 @@
+ #include <stdint.h>
+ 
+ #include "libavutil/avassert.h"
++#include "libavutil/multiview.h"
+ 
+ /**
+  * @defgroup lavu_video_3d_reference_displays_info 3D Reference Displays Information
+@@ -87,6 +88,18 @@ typedef struct AV3DReferenceDisplaysInfo {
+      * Size of each entry in bytes. May not match sizeof(AV3DReferenceDisplay).
+      */
+     size_t entry_size;
++
++    /**
++     * Whether the reference baselines are present (H.264 H.13.2.4, which
++     * signals a baseline for each display instead of a pair of views).
++     */
++    uint8_t ref_baseline_present;
++
++    /**
++     * The exponent of the maximum allowable truncation error for the reference
++     * baselines, 2^-prec_ref_baseline, 0 to 31.
++     */
++    uint8_t prec_ref_baseline;
+ } AV3DReferenceDisplaysInfo;
+ 
+ /**
+@@ -139,6 +152,20 @@ typedef struct AV3DReferenceDisplay {
+      * reference baseline and the n-th reference display.
+      */
+     int16_t num_sample_shift;
++
++    /**
++     * The reference display width and viewing distance in centimetres, whole:
++     * mantissa_ref_display_width and mantissa_ref_viewing_distance hold only
++     * the low 8 bits of mantissas that can be up to 62 bits long.
++     */
++    AVMultiviewReal ref_display_width;
++    AVMultiviewReal ref_viewing_distance;
++
++    /**
++     * The reference baseline, in the units of the translation of the multiview
++     * acquisition information (H.264 only, when ref_baseline_present is set).
++     */
++    AVMultiviewReal ref_baseline;
+ } AV3DReferenceDisplay;
+ 
+ static av_always_inline AV3DReferenceDisplay*
+-- 
+2.53.0
+

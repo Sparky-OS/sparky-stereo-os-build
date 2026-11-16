@@ -1,0 +1,108 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/e41bbc82d102ab23f003268c512cddf3fe17b69a
+From e41bbc82d102ab23f003268c512cddf3fe17b69a Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 10:19:41 -0300
+Subject: [PATCH 50/51] fate/filter-video: test the dibr filter's sensor, range
+ and mark depth
+
+A 16-bit depth map of distances with no measurement at the left edge,
+read as a sensor's between 500 and 8000; the 2D-plus-depth map read as
+Dynamic Depth's RangeLinear between 1 and 10; and the same map read
+through a Stereo3DDepth mark of non-linear disparity with its model,
+from a filtergraph file since the mark holds spaces.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ tests/fate/filter-video.mak             | 10 ++++++++++
+ tests/filtergraphs/dibr-mark            |  3 +++
+ tests/ref/fate/filter-dibr-mark         | 10 ++++++++++
+ tests/ref/fate/filter-dibr-metric       | 10 ++++++++++
+ tests/ref/fate/filter-dibr-range-linear | 10 ++++++++++
+ 5 files changed, 43 insertions(+)
+ create mode 100644 tests/filtergraphs/dibr-mark
+ create mode 100644 tests/ref/fate/filter-dibr-mark
+ create mode 100644 tests/ref/fate/filter-dibr-metric
+ create mode 100644 tests/ref/fate/filter-dibr-range-linear
+
+diff --git a/tests/fate/filter-video.mak b/tests/fate/filter-video.mak
+index 49bbb3c4..8b8d345c 100644
+--- a/tests/fate/filter-video.mak
++++ b/tests/fate/filter-video.mak
+@@ -1027,6 +1027,16 @@ fate-filter-dibr-gaussian-none: CMD = framecrc -filter_complex "$(DIBR_PICTURE)[
+ FATE_DIBR-$(call FILTERFRAMECRC, TESTSRC2 COLOR GEQ FORMAT DIBR) += fate-filter-dibr-12bit
+ fate-filter-dibr-12bit: CMD = framecrc -filter_complex "testsrc2=s=128x72:r=5:d=1,format=yuv444p12[p];color=black:s=64x36:r=5:d=1,format=gray16,geq=lum=if(lt(hypot(X-25-3*N\,Y-18)\,9)\,4000\,60000-X*500)[d];[p][d]dibr=depth=farness" -pix_fmt yuv444p12
+ 
++# the distances of a depth sensor (0 for none, at the left edge) and Dynamic
++# Depth's RangeLinear format, each between its near and far distances, and
++# a Stereo3DDepth mark: a non-linear disparity with its model
++FATE_DIBR-$(call FILTERFRAMECRC, TESTSRC2 COLOR GEQ FORMAT DIBR) += fate-filter-dibr-metric fate-filter-dibr-range-linear \
++    fate-filter-dibr-mark
++fate-filter-dibr-metric: CMD = framecrc -filter_complex "$(DIBR_PICTURE)[p];color=black:s=128x72:r=5:d=1,format=gray16,geq=lum=if(lt(X\,8)\,0\,if(lt(hypot(X-50-6*N\,Y-36)\,18)\,800\,6000-X*30))[d];[p][d]dibr=depth=metric:z_near=500:z_far=8000"
++fate-filter-dibr-range-linear: CMD = framecrc -filter_complex "$(DIBR_PICTURE)[p];$(DIBR_DEPTH)[d];[p][d]dibr=depth=range_linear:z_near=1:z_far=10"
++fate-filter-dibr-mark: tests/data/filtergraphs/dibr-mark
++fate-filter-dibr-mark: CMD = framecrc -/filter_complex $(TARGET_PATH)/tests/data/filtergraphs/dibr-mark
++
+ # full side by side, marked as such
+ FATE_FILTER_FFPROBE-$(call ALLYES, FFPROBE LAVFI_INDEV TESTSRC2_FILTER COLOR_FILTER FORMAT_FILTER DIBR_FILTER) += fate-filter-dibr-side-data
+ fate-filter-dibr-side-data: CMD = probe -show_entries frame=width,height:frame_side_data_list -of compact -f lavfi "testsrc2=s=128x72:r=5:d=0.4[p];color=gray:s=128x72:r=5:d=0.4,format=gray[d];[p][d]dibr[out0]"
+diff --git a/tests/filtergraphs/dibr-mark b/tests/filtergraphs/dibr-mark
+new file mode 100644
+index 00000000..2e1ca6c2
+--- /dev/null
++++ b/tests/filtergraphs/dibr-mark
+@@ -0,0 +1,3 @@
++testsrc2=s=128x72:r=5:d=1,format=yuv420p[p];
++color=black:s=128x72:r=5:d=1,format=gray,geq=lum=if(lt(hypot(X-50-6*N\,Y-36)\,18)\,230\,20+X)[d];
++[p][d]dibr=mark='nonlinearDisparity min=2 max=40 width=1920 model=0,20,7,0'
+diff --git a/tests/ref/fate/filter-dibr-mark b/tests/ref/fate/filter-dibr-mark
+new file mode 100644
+index 00000000..0f8cdf37
+--- /dev/null
++++ b/tests/ref/fate/filter-dibr-mark
+@@ -0,0 +1,10 @@
++#tb 0: 1/5
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 256x72
++#sar 0: 1/1
++0,          0,          0,        1,    27648, 0x864bb7ed
++0,          1,          1,        1,    27648, 0x269ebb8a
++0,          2,          2,        1,    27648, 0x0999a98f
++0,          3,          3,        1,    27648, 0x0745a9fc
++0,          4,          4,        1,    27648, 0x6034c88e
+diff --git a/tests/ref/fate/filter-dibr-metric b/tests/ref/fate/filter-dibr-metric
+new file mode 100644
+index 00000000..5b26728c
+--- /dev/null
++++ b/tests/ref/fate/filter-dibr-metric
+@@ -0,0 +1,10 @@
++#tb 0: 1/5
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 256x72
++#sar 0: 1/1
++0,          0,          0,        1,    27648, 0x7d72801f
++0,          1,          1,        1,    27648, 0xb6867ddf
++0,          2,          2,        1,    27648, 0x8bd46555
++0,          3,          3,        1,    27648, 0x7bf46710
++0,          4,          4,        1,    27648, 0xea068e2b
+diff --git a/tests/ref/fate/filter-dibr-range-linear b/tests/ref/fate/filter-dibr-range-linear
+new file mode 100644
+index 00000000..7660b062
+--- /dev/null
++++ b/tests/ref/fate/filter-dibr-range-linear
+@@ -0,0 +1,10 @@
++#tb 0: 1/5
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 256x72
++#sar 0: 1/1
++0,          0,          0,        1,    27648, 0x115166a3
++0,          1,          1,        1,    27648, 0xa4ed766d
++0,          2,          2,        1,    27648, 0x6ed370dc
++0,          3,          3,        1,    27648, 0xf1d86b6a
++0,          4,          4,        1,    27648, 0x33aa7de0
+-- 
+2.53.0
+

@@ -1,0 +1,139 @@
+Description: fate/h264: test SEI payload header bounds
+ Add a FATE reference covering those failures, the maximum signed type,
+ ordinary extended headers and truncation.
+ .
+ Signed-off-by: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+ Assisted-by: gpt-6-astra via Codex
+ .
+ Port to 9.0.2: libavcodec/Makefile and tests/fate/libavcodec.mak: the lines are added at the same place in the list, 9.0.2 has other neighbours there.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, https://code.ffmpeg.org/danielcamposramos/FFmpeg/commit/6d27d57821102f2df4e8d1659d27a14ef4d9c1ea
+Forwarded: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/25409
+Last-Update: 2026-11-06
+
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index 55b9f26..f0c7987 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -1374,6 +1374,7 @@ TESTPROGS-$(CONFIG_APV_DECODER)           += apv
+ TESTPROGS-$(CONFIG_AV1_VAAPI_ENCODER)     += av1_levels
+ TESTPROGS-$(CONFIG_CABAC)                 += cabac
+ TESTPROGS-$(CONFIG_CELP_MATH)             += celp_math
++TESTPROGS-$(CONFIG_H264_SEI)             += h264_sei
+ TESTPROGS-$(CONFIG_GOLOMB)                += golomb
+ TESTPROGS-$(CONFIG_IDCTDSP)               += dct
+ TESTPROGS-$(CONFIG_DXV_ENCODER)           += hashtable
+diff --git a/libavcodec/tests/h264_sei.c b/libavcodec/tests/h264_sei.c
+new file mode 100644
+index 0000000..4fe4049
+--- /dev/null
++++ b/libavcodec/tests/h264_sei.c
+@@ -0,0 +1,80 @@
++/*
++ * Copyright (c) 2026 Daniel Campos Ramos
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include <limits.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <string.h>
++
++#include "libavutil/log.h"
++#include "libavutil/mem.h"
++#include "libavcodec/h264_sei.h"
++
++static uint8_t *put_header(uint8_t *p, uint64_t value)
++{
++    size_t count = value / 255;
++
++    memset(p, 255, count);
++    p += count;
++    *p++ = value % 255;
++    return p;
++}
++
++static int check(const char *name, uint64_t type, uint64_t size,
++                 int truncate)
++{
++    size_t capacity = type / 255 + size / 255 + 3;
++    uint8_t *buf = av_mallocz(capacity + AV_INPUT_BUFFER_PADDING_SIZE);
++    H264SEIContext sei = { 0 };
++    H264ParamSets ps = { 0 };
++    GetBitContext gb;
++    uint8_t *p;
++    int ret;
++
++    if (!buf)
++        return 1;
++    p = put_header(buf, type);
++    p = put_header(p, size);
++    *p++ = 0x80;
++    if (truncate) {
++        memset(buf, 255, 3);
++        p = buf + 3;
++    }
++    ret = init_get_bits8(&gb, buf, p - buf);
++    if (ret >= 0)
++        ret = ff_h264_sei_decode(&sei, &gb, &ps, NULL);
++    printf("%s: %d\n", name, ret);
++    ff_h264_sei_uninit(&sei);
++    av_free(buf);
++    return 0;
++}
++
++int main(void)
++{
++    av_log_set_level(AV_LOG_QUIET);
++    return check("empty unknown message", 200, 0, 0) ||
++           check("extended type", 511, 0, 0) ||
++           check("maximum signed type", INT_MAX, 0, 0) ||
++           check("type overflow", (uint64_t)INT_MAX + 1, 0, 0) ||
++           check("size overflow", 200, (uint64_t)INT_MAX + 1, 0) ||
++           check("size wrap", 200, (uint64_t)UINT_MAX + 1, 0) ||
++           check("truncated payload", 200, 2, 0) ||
++           check("unterminated type", 200, 0, 1);
++}
+diff --git a/tests/fate/libavcodec.mak b/tests/fate/libavcodec.mak
+index b09f13a..5c220f1 100644
+--- a/tests/fate/libavcodec.mak
++++ b/tests/fate/libavcodec.mak
+@@ -118,5 +118,9 @@ FATE_LIBAVCODEC-yes += fate-libavcodec-htmlsubtitles
+ fate-libavcodec-htmlsubtitles: libavcodec/tests/htmlsubtitles$(EXESUF)
+ fate-libavcodec-htmlsubtitles: CMD = run libavcodec/tests/htmlsubtitles$(EXESUF)
+ 
++FATE_LIBAVCODEC-$(CONFIG_H264_SEI) += fate-h264-sei-header
++fate-h264-sei-header: libavcodec/tests/h264_sei$(EXESUF)
++fate-h264-sei-header: CMD = run libavcodec/tests/h264_sei$(EXESUF)
++
+ FATE-$(CONFIG_AVCODEC) += $(FATE_LIBAVCODEC-yes)
+ fate-libavcodec: $(FATE_LIBAVCODEC-yes)
+diff --git a/tests/ref/fate/h264-sei-header b/tests/ref/fate/h264-sei-header
+new file mode 100644
+index 0000000..5d7534f
+--- /dev/null
++++ b/tests/ref/fate/h264-sei-header
+@@ -0,0 +1,8 @@
++empty unknown message: 0
++extended type: 0
++maximum signed type: 0
++type overflow: -1094995529
++size overflow: -1094995529
++size wrap: -1094995529
++truncated payload: -1094995529
++unterminated type: -1094995529

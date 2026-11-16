@@ -1,0 +1,44 @@
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: upstream, https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/43fe08263776548dce1bdf7a836bfacee527a027
+From 43fe08263776548dce1bdf7a836bfacee527a027 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sat, 17 Oct 2026 04:19:06 -0300
+Subject: [PATCH 32/48] fftools/ffprobe, avfilter/vf_showinfo: print the AuxId
+ of auxiliary pictures
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ fftools/ffprobe.c         | 2 ++
+ libavfilter/vf_showinfo.c | 3 +++
+ 2 files changed, 5 insertions(+)
+
+diff --git a/fftools/ffprobe.c b/fftools/ffprobe.c
+index d911a1d4..ced27767 100644
+--- a/fftools/ffprobe.c
++++ b/fftools/ffprobe.c
+@@ -1743,6 +1743,8 @@ static void print_frame_side_data(AVTextFormatContext *tfc,
+             print_film_grain_params(tfc, fgp);
+         } else if (sd->type == AV_FRAME_DATA_VIEW_ID) {
+             print_int("view_id", *(int*)sd->data);
++        } else if (sd->type == AV_FRAME_DATA_AUXILIARY_ID) {
++            print_int("aux_id", *(int*)sd->data);
+         } else if (print_multiview_side_data(tfc, 1, sd->type, sd->data)) {
+         } else if (sd->type == AV_FRAME_DATA_EXIF) {
+             print_int("size", sd->size);
+diff --git a/libavfilter/vf_showinfo.c b/libavfilter/vf_showinfo.c
+index 96360c73..a1c3602d 100644
+--- a/libavfilter/vf_showinfo.c
++++ b/libavfilter/vf_showinfo.c
+@@ -898,6 +898,9 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
+         case AV_FRAME_DATA_VIEW_ID:
+             av_log(ctx, AV_LOG_INFO, "view id: %d\n", *(int*)sd->data);
+             break;
++        case AV_FRAME_DATA_AUXILIARY_ID:
++            av_log(ctx, AV_LOG_INFO, "AuxId: %d\n", *(int*)sd->data);
++            break;
+         case AV_FRAME_DATA_3D_REFERENCE_DISPLAYS:
+             dump_tdrdi(ctx, sd);
+             break;
+-- 
+2.53.0
+
