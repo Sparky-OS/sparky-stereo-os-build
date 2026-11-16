@@ -23,7 +23,9 @@ SOURCE=$WORK/scx-tools-1.1.3+ds
 python3 "$HERE/../../../tools/copy-recipe.py" "$HERE/debian" "$SOURCE/debian"
 VERSION=$(dpkg-parsechangelog -l "$SOURCE/debian/changelog" -S Version)
 export PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}"
-python3 -m lean.debian_prepare "$SOURCE" "$VERSION+lc1" --toolkit "$HERE/../.."
+python3 -m lean.debian_prepare "$SOURCE" "$VERSION+lc1" --toolkit "$HERE/../.." \
+	--preserve-source 'vendor/*' 'The vendored crates keep their own bytes: cargo checks each file against the SHA-256 in its .cargo-checksum.json.' \
+	--preserve-source '.cargo/*' 'The vendored-source configuration is read by cargo as written.'
 export DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL='Capitain_Jack@yahoo.com'
 python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" "$SOURCE"
