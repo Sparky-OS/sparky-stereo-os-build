@@ -106,7 +106,14 @@ apt-get() {
 dpkg() { echo "dpkg $*" >>"$calls"; dbl_status=installed; }
 dkms() { echo "dkms $*" >>"$calls"; [[ $dkms_state == installed ]] && echo "broadcom-sta/6.30.223.271, $KERNEL, x86_64: installed" || echo "broadcom-sta/6.30.223.271, $KERNEL, x86_64: built"; }
 modinfo() { echo "modinfo $*" >>"$calls"; [[ $signed == yes ]] && echo 'Sparky Test Signer'; return 0; }
-mokutil() { echo "mokutil $*" >>"$calls"; return "$mok"; }
+mokutil() {
+	echo "mokutil $*" >>"$calls"
+	case $mok in
+		0) echo "$2 is already enrolled" ;;
+		1) echo "$2 is not enrolled"; return 1 ;;
+		*) echo "EFI variables are not supported on this system"; return 1 ;;
+	esac
+}
 modprobe() {
 	echo "modprobe $*" >>"$calls"
 	if [[ $1 == -r ]]; then rm -rf "$ROOT/sys/module/$2"; return 0; fi
@@ -276,9 +283,13 @@ setup_broadcom_wl yes >"$T/out" 2>&1
 expect_failure 'Secure Boot on, signed, the key not enrolled' 80
 check 'key not enrolled: wl is never loaded' lacks 'modprobe wl'
 
+scenario; pool_with "$T/broadcom-sta-dkms_${VERSION_FULL}_amd64.deb"; sb_on; mok=2
+setup_broadcom_wl yes >"$T/out" 2>&1
+expect_failure 'Secure Boot on and mokutil itself fails (no EFI variables): its own words are said, not a guess' 83
+check "mokutil's own words reach the person" grep -q 'EFI variables are not supported' "$T/out"
 scenario; pool_with "$T/broadcom-sta-dkms_${VERSION_FULL}_amd64.deb"; sb_on; mokutil_missing=1
 setup_broadcom_wl yes >"$T/out" 2>&1
-expect_failure 'Secure Boot on and mokutil missing: the key cannot be checked' 80
+expect_failure 'Secure Boot on and mokutil missing: the key cannot be checked' 83
 unset mokutil_missing
 
 scenario; pool_with "$T/broadcom-sta-dkms_${VERSION_FULL}_amd64.deb"; sb_on
@@ -319,7 +330,7 @@ setup_broadcom_wl repair >"$T/out" 2>&1
 check 'a licence that is not the one accepted needs a new yes' bash -c "! grep -q 'install broadcom-sta-dkms' '$calls' && grep -q 'needs your yes' '$T/out'"
 
 echo '== the strings: ten languages, the same arguments, the dialog and an error in pt_BR and ja'
-for n in $(seq 61 82); do
+for n in $(seq 61 83); do
 	counts=
 	for l in en pt_BR es fr de pl ja ko zh_CN zh_TW; do
 		text=$(source "$PKG/lang/$l"; v=LOCAL$n; echo "${!v:-}")
@@ -328,9 +339,9 @@ for n in $(seq 61 82); do
 	done
 	[[ $(tr ' ' '\n' <<<"$counts" | sort -u | grep -c .) == 1 ]] || fail "LOCAL$n: different number of %s across languages ($counts)"
 done
-pass 'LOCAL61..82 in ten languages with the same number of arguments'
+pass 'LOCAL61..83 in ten languages with the same number of arguments'
 for l in en pt_BR es fr de pl ja ko zh_CN zh_TW; do
-	for n in 61 $(seq 73 82); do
+	for n in 61 $(seq 73 83); do
 		a=$(source "$PKG/lang/$l"; v=LOCAL$n; echo "${!v}")
 		b=$(source "$PKG/problems-lang/$l"; v=LOCAL$n; echo "${!v:-MISSING}")
 		[[ $a == "$b" ]] || fail "LOCAL$n differs between lang/$l and problems-lang/$l"

@@ -52,7 +52,7 @@ done''')
     def pack(self, mode='', omit=''):
         self.env.update(MODE=mode, OMIT=omit)
         source=(SUBJECT/'pack.sh').read_text()
-        block=source[source.index("\t# the packages SparkyLinux's securebootinstall"):source.index('\n\tapt_in clean',source.index("\t# the packages SparkyLinux's securebootinstall"))]
+        block=source[source.index("\t# the packages SparkyLinux's securebootinstall"):source.index('\n\t# the driver pool (ORDER 614',source.index("\t# the packages SparkyLinux's securebootinstall"))]
         harness='''set -eu
 R=$FIXTURE/rootfs
 apt_in() {
@@ -107,6 +107,72 @@ inr() {
         self.assertIn('--download-only --reinstall install', (self.root/'apt-calls').read_text())
         index=self.root/'rootfs/usr/share/sparky-stereo/offline-debs/Packages'
         for p in PACKAGES:self.assertIn(f'Package: {p}\n',index.read_text())
+
+    def pool(self, mode='', omit='', lists='broadcom-sta-dkms\ndkms\n'):
+        """The packer's driver pool block (ORDER 614) with stubbed image commands and a stubbed index."""
+        self.env.update(MODE=mode, OMIT=omit)
+        (self.root/'driver-pool.list').write_text('# Debian packages carried in the ISO driver pool\n'+lists)
+        self.mock('dpkg-scanpackages', '''
+[ "$MODE" != index-fail ] || { echo 'index write failed' >&2; exit 1; }
+for p in broadcom-sta-dkms dkms linux-headers-7.3.1-stereo3d16; do
+ [ "$p" = "$OMIT" ] || printf 'Package: %s\\nVersion: 1.0\\n\\n' "$p"
+done''')
+        source=(SUBJECT/'pack.sh').read_text()
+        start=source.index('\t# the driver pool (ORDER 614')
+        block=source[start:source.index('\n\tapt_in clean',start)]
+        block=block.replace('/edition-lists/driver-pool.list',str(self.root/'driver-pool.list'))
+        harness='''set -eu
+R=$FIXTURE/rootfs
+inr() {
+ case "$1" in
+ sh)
+  printf '%s\\n' "$*" >> "$FIXTURE/apt-calls"
+  [ "$MODE" != download-fail ] || { echo 'network unavailable' >&2; return 100; };;
+ dpkg-query)
+  case "$MODE" in
+   kernels-fail) echo 'package database unreadable' >&2; return 2;;
+   no-kernels) return 0;;
+  esac
+  printf 'linux-image-7.3.1-stereo3d16\\nlinux-image-7.3.1-stereo3d16-lc-hr\\n';;
+ *) echo "unexpected command $*" >&2; return 99;;
+ esac
+}
+'''
+        return subprocess.run(['sh','-c',harness+block], env=self.env,text=True,capture_output=True)
+
+    def test_U08_pool_success(self):
+        r=self.pool(); self.assertEqual(r.returncode,0,r.stderr)
+        calls=(self.root/'apt-calls').read_text()
+        self.assertIn('apt-get -o Dpkg::Use-Pty=0 download "$@" sh /usr/share/sparky-stereo/driver-debs broadcom-sta-dkms dkms linux-headers-7.3.1-stereo3d16',calls)
+        self.assertNotIn('-lc-hr',calls)
+        folder=self.root/'rootfs/usr/share/sparky-stereo/driver-debs'
+        index=(folder/'Packages').read_text()
+        for p in ('broadcom-sta-dkms','dkms','linux-headers-7.3.1-stereo3d16'):self.assertIn(f'Package: {p}\n',index)
+        self.assertTrue((folder/'README').is_file())
+
+    def test_U08_pool_is_not_the_installers_offline_folder(self):
+        r=self.pool(); self.assertEqual(r.returncode,0,r.stderr)
+        self.assertFalse((self.root/'rootfs/usr/share/sparky-stereo/offline-debs').exists())
+
+    def test_U08_pool_empty_list(self):
+        self.assert_failure(self.pool(lists=''),'driver-pool.list is empty')
+
+    def test_U08_pool_kernels_unreadable(self):
+        self.assert_failure(self.pool('kernels-fail'),'Could not list the image')
+
+    def test_U08_pool_no_kernel(self):
+        self.assert_failure(self.pool('no-kernels'),'has no kernel')
+
+    def test_U08_pool_download_failure(self):
+        self.assert_failure(self.pool('download-fail'),'driver pool download failed')
+
+    def test_U08_pool_index_failure(self):
+        self.assert_failure(self.pool('index-fail'),"Packages index could not be generated")
+
+    def test_U08_pool_missing_package(self):
+        for package in ('broadcom-sta-dkms','dkms','linux-headers-7.3.1-stereo3d16'):
+            with self.subTest(package=package):
+                self.assert_failure(self.pool(omit=package),f'package {package} is missing')
 
     def test_U07_failed_apt_cache(self):
         r=self.base('apt-fail');self.assert_failure(r,'APT cache unreadable');self.assertEqual(r.stdout,'')

@@ -358,18 +358,21 @@ wl_verify() {
 			return 1
 		fi
 		if ! command -v mokutil >/dev/null 2>&1; then
-			wl_fail 80 "$module_key" 'mokutil is not installed, so the key cannot be checked' "/var/lib/dkms/mok.pub"
+			wl_fail 83 "$module_key" 'mokutil is not installed' "/var/lib/dkms/mok.pub"
 			return 1
 		fi
 		rc=0
 		out=$(mokutil --test-key "$ROOT/var/lib/dkms/mok.pub" 2>&1) || rc=$?
-		case $rc in
-			0) log "VERIFIED Secure Boot is on, wl is signed by $module_key and the key is enrolled" ;;
-			1) wl_fail 80 "$module_key" 'it is not in the firmware list of enrolled keys' "/var/lib/dkms/mok.pub"
-				return 1 ;;
-			*) wl_fail 80 "$module_key" "mokutil exited $rc: $out" "/var/lib/dkms/mok.pub"
-				return 1 ;;
-		esac
+		# mokutil prints "... is already enrolled" or "... is not enrolled"; anything else is its own error, said as it is
+		if ((rc == 0)) && grep -q 'already enrolled' <<<"$out"; then
+			log "VERIFIED Secure Boot is on, wl is signed by $module_key and the key is enrolled"
+		elif grep -q 'is not enrolled' <<<"$out"; then
+			wl_fail 80 "$module_key" "mokutil: $(head -n1 <<<"$out")" "/var/lib/dkms/mok.pub"
+			return 1
+		else
+			wl_fail 83 "$module_key" "mokutil exited $rc and said: $(head -n1 <<<"$out")" "/var/lib/dkms/mok.pub"
+			return 1
+		fi
 	else
 		log 'VERIFIED Secure Boot is off, so the module needs no signature'
 	fi
