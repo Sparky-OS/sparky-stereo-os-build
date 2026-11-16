@@ -1,0 +1,164 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 16 Oct 2026 08:36:02 -0300
+Subject: [PATCH 1/2] lib/igt_fb: Lay out stereo framebuffers for every HDMI 3D
+ structure
+
+stereo_fb_layout_from_mode() knew frame packing, top-and-bottom and side
+by side (half), and asserted on the other 3D structures of HDMI 1.4a
+(Appendix H, Table H-2) that a kernel may list: field alternative, line
+alternative, side by side (full), L + depth and L + depth + graphics +
+graphics-depth. kms_3d sets every 3D mode a connector lists, so it
+aborted on such a kernel.
+
+Lay them out as the DRM core times them: field alternative and L +
+depth as frame packing (the second picture one vtotal down), L + depth +
+graphics + graphics-depth as four pictures one vtotal apart, side by
+side (full) as two pictures side by side, and line alternative with the
+left eye on the even lines and the right eye on the odd ones.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ lib/igt_fb.c | 84 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 84 insertions(+)
+
+diff --git a/lib/igt_fb.c b/lib/igt_fb.c
+index 6c3b9b0b9..ed4c60623 100644
+--- a/lib/igt_fb.c
++++ b/lib/igt_fb.c
+@@ -2491,9 +2491,18 @@ struct box {
+ 	int x, y, width, height;
+ };
+ 
++/*
++ * Where each picture of a stereo mode sits in its framebuffer (HDMI 1.4a,
++ * section 8.2.3.2 and Appendix H): the left and right eyes, or for L + depth
++ * the 2D picture and its depth, and for L + depth + graphics +
++ * graphics-depth also the graphics and their depth. Line alternative has
++ * the eyes on alternate lines, left first.
++ */
+ struct stereo_fb_layout {
+ 	int fb_width, fb_height;
+ 	struct box left, right;
++	struct box graphics, graphics_depth;
++	bool interleaved_lines;
+ };
+ 
+ static void box_init(struct box *box, int x, int y, int bwidth, int bheight)
+@@ -2512,6 +2521,8 @@ static void stereo_fb_layout_from_mode(struct stereo_fb_layout *layout,
+ 	const int hdisplay = mode->hdisplay, vdisplay = mode->vdisplay;
+ 	int middle;
+ 
++	memset(layout, 0, sizeof(*layout));
++
+ 	switch (format) {
+ 	case DRM_MODE_FLAG_3D_TOP_AND_BOTTOM:
+ 		layout->fb_width = hdisplay;
+@@ -2532,6 +2543,8 @@ static void stereo_fb_layout_from_mode(struct stereo_fb_layout *layout,
+ 			 middle, 0, hdisplay - middle, vdisplay);
+ 		break;
+ 	case DRM_MODE_FLAG_3D_FRAME_PACKING:
++	case DRM_MODE_FLAG_3D_FIELD_ALTERNATIVE:
++	case DRM_MODE_FLAG_3D_L_DEPTH:
+ 	{
+ 		int vactive_space = mode->vtotal - vdisplay;
+ 
+@@ -2544,11 +2557,66 @@ static void stereo_fb_layout_from_mode(struct stereo_fb_layout *layout,
+ 			 0, vdisplay + vactive_space, hdisplay, vdisplay);
+ 		break;
+ 	}
++	case DRM_MODE_FLAG_3D_L_DEPTH_GFX_GFX_DEPTH:
++		layout->fb_width = hdisplay;
++		layout->fb_height = vdisplay + 3 * mode->vtotal;
++
++		box_init(&layout->left, 0, 0, hdisplay, vdisplay);
++		box_init(&layout->right, 0, mode->vtotal, hdisplay, vdisplay);
++		box_init(&layout->graphics, 0, 2 * mode->vtotal,
++			 hdisplay, vdisplay);
++		box_init(&layout->graphics_depth, 0, 3 * mode->vtotal,
++			 hdisplay, vdisplay);
++		break;
++	case DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL:
++		layout->fb_width = 2 * hdisplay;
++		layout->fb_height = vdisplay;
++
++		box_init(&layout->left, 0, 0, hdisplay, vdisplay);
++		box_init(&layout->right, hdisplay, 0, hdisplay, vdisplay);
++		break;
++	case DRM_MODE_FLAG_3D_LINE_ALTERNATIVE:
++		layout->fb_width = hdisplay;
++		layout->fb_height = 2 * vdisplay;
++		layout->interleaved_lines = true;
++
++		box_init(&layout->left, 0, 0, hdisplay, vdisplay);
++		box_init(&layout->right, 0, 0, hdisplay, vdisplay);
++		break;
+ 	default:
+ 		igt_assert(0);
+ 	}
+ }
+ 
++/* Line alternative: the left eye on the even lines, the right on the odd. */
++static void paint_interleaved_lines(cairo_t *cr,
++				    const struct stereo_fb_layout *layout)
++{
++	const char *const images[] = { "1080p-left.png", "1080p-right.png" };
++	int w = layout->left.width, h = layout->left.height;
++
++	for (int eye = 0; eye < 2; eye++) {
++		cairo_surface_t *surface;
++		cairo_t *eye_cr;
++
++		surface = cairo_image_surface_create(CAIRO_FORMAT_RGB24, w, h);
++		eye_cr = cairo_create(surface);
++		igt_paint_image(eye_cr, images[eye], 0, 0, w, h);
++		cairo_destroy(eye_cr);
++
++		for (int y = 0; y < h; y++) {
++			cairo_save(cr);
++			cairo_rectangle(cr, 0, 2 * y + eye, w, 1);
++			cairo_clip(cr);
++			cairo_set_source_surface(cr, surface, 0, 2 * y + eye - y);
++			cairo_paint(cr);
++			cairo_restore(cr);
++		}
++
++		cairo_surface_destroy(surface);
++	}
++}
++
+ /**
+  * igt_create_stereo_fb:
+  * @drm_fd: open i915 drm file descriptor
+@@ -2575,12 +2643,28 @@ unsigned int igt_create_stereo_fb(int drm_fd, drmModeModeInfo *mode,
+ 			      modifier, &fb);
+ 	cr = igt_get_cairo_ctx(drm_fd, &fb);
+ 
++	if (layout.interleaved_lines) {
++		paint_interleaved_lines(cr, &layout);
++		igt_put_cairo_ctx(cr);
++
++		return fb_id;
++	}
++
+ 	igt_paint_image(cr, "1080p-left.png",
+ 			layout.left.x, layout.left.y,
+ 			layout.left.width, layout.left.height);
+ 	igt_paint_image(cr, "1080p-right.png",
+ 			layout.right.x, layout.right.y,
+ 			layout.right.width, layout.right.height);
++	if (layout.graphics.width) {
++		igt_paint_image(cr, "1080p-left.png",
++				layout.graphics.x, layout.graphics.y,
++				layout.graphics.width, layout.graphics.height);
++		igt_paint_image(cr, "1080p-right.png",
++				layout.graphics_depth.x, layout.graphics_depth.y,
++				layout.graphics_depth.width,
++				layout.graphics_depth.height);
++	}
+ 
+ 	igt_put_cairo_ctx(cr);
+ 
+-- 
+2.53.0
+
