@@ -317,8 +317,9 @@ check 'modules that are not loaded are not touched' lacks 'modprobe -r (b44|ssb|
 
 echo '== the repair continues what was accepted, never what was not'
 scenario; pool_with "$T/broadcom-sta-dkms_${VERSION_FULL}_amd64.deb"
-setup_broadcom_wl repair >"$T/out" 2>&1
+setup_broadcom_wl repair >"$T/out" 2>&1; rc=$?
 check 'repair without an earlier yes installs nothing' lacks 'install'
+check 'repair without an earlier yes fails (the kept problem stays) and says why' bash -c "[[ $rc -ne 0 ]] && grep -q 'needs your yes' '$T/out'"
 setup_broadcom_wl yes >"$T/out" 2>&1
 rm -rf "$ROOT/sys/module/wl" "$ROOT/sys/class/net/wlan0" "$ROOT/sys/devices/pci0000:00/$ADDRESS/driver"
 : >"$calls"
@@ -326,8 +327,8 @@ setup_broadcom_wl repair >"$T/out" 2>&1
 check 'package installed, wl not loaded: repair checks and loads again' bash -c "grep -q 'modprobe wl' '$calls' && ! grep -q 'install' '$calls' && grep -q 'VERIFIED the card' '$T/out'" 
 scenario; pool_with "$T/broadcom-sta-dkms_${VERSION_FULL}_amd64.deb"
 mkdir -p "$ROOT/var/lib/sparky-stereo-hardware"; printf 'broadcom-sta-dkms\t6.30.223.271-32\tdeadbeef\n' >"$ROOT/var/lib/sparky-stereo-hardware/broadcom-wl-accepted"
-setup_broadcom_wl repair >"$T/out" 2>&1
-check 'a licence that is not the one accepted needs a new yes' bash -c "! grep -q 'install broadcom-sta-dkms' '$calls' && grep -q 'needs your yes' '$T/out'"
+setup_broadcom_wl repair >"$T/out" 2>&1; rc=$?
+check 'a licence that is not the one accepted needs a new yes, and the repair fails' bash -c "[[ $rc -ne 0 ]] && ! grep -q 'install broadcom-sta-dkms' '$calls' && grep -q 'needs your yes' '$T/out'"
 
 echo '== the strings: ten languages, the same arguments, the dialog and an error in pt_BR and ja'
 for n in $(seq 61 83); do

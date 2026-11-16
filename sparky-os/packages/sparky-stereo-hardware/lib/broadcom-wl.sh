@@ -81,7 +81,7 @@ wl_secure_boot() {
 wl_fetch() {
 	local dir=$1 deb want have bytes size
 	local -x DEBIAN_FRONTEND=noninteractive
-	WL_DEB= WL_SOURCE=
+	WL_DEB='' WL_SOURCE='' WL_SIZE=''
 	mkdir -p "$dir" || return 1
 	deb=$(find "$WL_POOL" -maxdepth 1 -name "${WL_PACKAGE}_*_amd64.deb" 2>/dev/null | sort -V | tail -n1)
 	if [[ -n $deb ]]; then
@@ -131,7 +131,7 @@ wl_fetch() {
 
 # wl_licence DEB OUT: Broadcom's agreement as the package carries it (its copyright file, unchanged), into OUT
 wl_licence() {
-	if ! dpkg-deb --fsys-tarfile "$1" 2>/dev/null | tar -xO "./$WL_LICENCE_FILE" >"$2" 2>/dev/null || ! grep -q 'SOFTWARE LICENSE AGREEMENT' "$2"; then
+	if ! dpkg-deb --fsys-tarfile "$1" 2>/dev/null | tar -xO "./$WL_LICENCE_FILE" >"$2" 2>/dev/null || ! grep -qi 'license agreement' "$2"; then
 		wl_fail 73 "$1"
 		return 1
 	fi
@@ -176,7 +176,7 @@ wl_note() {
 # already accepted), or empty (not asked: told, nothing installed). Returns 1 when a step failed (kept and told).
 setup_broadcom_wl() {
 	local option=${1:-} id address driver iface kernel pkg_status deb_version licence source_text answer=0
-	local ids=() addresses=() working=true card_text accepted_version accepted_sum sum
+	local ids=() addresses=() working=true card_text accepted_sum sum
 	while IFS= read -r id; do [[ -z $id ]] || ids+=("$id"); done < <(wl_cards "$WORK/plan")
 	((${#ids[@]})) || return 0
 	for id in "${ids[@]}"; do
@@ -219,8 +219,9 @@ setup_broadcom_wl() {
 				return 0 ;;
 		esac
 		if [[ $option == repair && ! -s $ROOT/$WL_STATE/broadcom-wl-accepted ]]; then
+			# a repair that needs the person's yes has not repaired anything: it says so and fails, so the kept problem stays
 			wl_note 69 "$card_text"
-			return 0
+			return 1
 		fi
 		wl_fetch "$WL_WORK" || return 1
 		licence=$WORK/wl-licence.txt
@@ -252,10 +253,10 @@ setup_broadcom_wl() {
 				cat "$licence" ;;
 			repair)
 				# the licence the person accepted is the one that applies; another one needs a new yes
-				IFS=$'\t' read -r _ accepted_version accepted_sum <"$ROOT/$WL_STATE/broadcom-wl-accepted" || true
+				IFS=$'\t' read -r _ _ accepted_sum <"$ROOT/$WL_STATE/broadcom-wl-accepted" || true
 				if [[ ${accepted_sum:-} != "$sum" ]]; then
 					wl_note 69 "$card_text"
-					return 0
+					return 1
 				fi ;;
 		esac
 		log "LICENCE shown: $WL_PACKAGE $deb_version ($WL_SOURCE), copyright file sha256 $sum; accepted"
@@ -338,7 +339,7 @@ wl_install_package() {
 
 # wl_verify KERNEL ADDRESS ID: the checks after the install, each stopping the rest when it fails
 wl_verify() {
-	local kernel=$1 address=$2 id=$3 version dkms_status module_key key_reason waited=0 iface out rc module unloaded=()
+	local kernel=$1 address=$2 id=$3 version dkms_status module_key waited=0 iface out rc module unloaded=()
 	version=$(dpkg-query -W -f '${Version}' "$WL_PACKAGE" 2>/dev/null) || version=
 	version=${version%-*}
 	# 1. DKMS built it for the running kernel

@@ -119,9 +119,15 @@ for name, (expected_packages, expected_lines, candidate_prefixes) in fixture_cas
         assert any(l.startswith('licence\tbroadcom-sta-dkms\t') and l.endswith('usr/share/doc/broadcom-sta-dkms/copyright') for l in lines), (name, out)
     for prefix in absent_lines.get(name, []):
         assert not any(l.startswith(prefix) for l in lines), (name, prefix, out)
+    # the dry run says what it would do about the Wi-Fi driver, only for the card no kernel driver drives
+    assert ('Would show the licence of broadcom-sta-dkms' in out) == (name == 'imac14-1-bcm4360'), (name, out)
     assert not any('broadcom-sta' in p for p in packages), name
     assert not any('disagreement' in l for l in lines), (name, out)
     print(f'PASS fixture {name}: packages={sorted(packages)}')
+bad = subprocess.run([tool, '--broadcom-wl', 'bogus', '--dry-run', '--fixture', str(here / 'imac14-1-bcm4360')], text=True, capture_output=True)
+assert bad.returncode == 2 and 'ask, yes, no, repair or reset' in bad.stderr, bad
+assert '--broadcom-wl ask|yes|no|repair|reset' in subprocess.run([tool, '--help'], text=True, capture_output=True, check=True).stdout
+print('PASS --broadcom-wl takes only ask, yes, no, repair or reset')
 old = subprocess.run([tool, '--auto', '--dry-run', '--fixture', str(here / 'creative-nvidia-laptop')], text=True,
                      capture_output=True, check=True).stdout
 assert not any(l.startswith(('fact\t', 'candidate\t')) for l in old.splitlines()), old
