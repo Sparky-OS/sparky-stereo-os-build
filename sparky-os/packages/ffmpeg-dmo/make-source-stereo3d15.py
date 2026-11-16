@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Make +stereo3d15 from plain +stereo3d15.
+"""Make +stereo3d15 from plain +stereo3d14.
 
 Usage: make-source-stereo3d15.py PLAIN14 ORIGTARBALL OUTDIR PLAN
 Extract +14 with --skip-patches, then use plain-from-lc.py --save-plan PLAN.
