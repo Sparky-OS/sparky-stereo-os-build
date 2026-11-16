@@ -1,0 +1,201 @@
+Description: With the browser's own compositor in software, the page's two views are still declared to the desktop (ORDER 616)
+ Under software WebRender (a machine or virtual machine without usable 3D, a blocklisted driver, gfx.webrender.software) the
+ native Wayland compositor still gives a WebGL canvas a surface of its own (RenderCompositorNativeSWGL, shared memory buffers),
+ but WebGL swaps through SurfaceFactory_Basic there (TexTypeForWebgl answers Unknown under software WebRender), and
+ SetStereoMode wrote the mark only into a DMABuf. The pair was read back into an RGB buffer without a mark, WebRender gave the
+ compositor surface no stereo mark, and Stereo KWin showed both views squeezed into the canvas's place, the same in each eye
+ (+stereo3d14 in the rig: 604 commits of a 1600x450 shared memory buffer on the canvas's own subsurface, no kde_stereo_content).
+ The mark now travels with the buffer read back (SetStereoMode returns it, PushRemoteTexture hands it to the remote texture's
+ BufferTextureHost, whose RGB image descriptor carries it), so WebRender passes it to the compositor surface it draws the
+ picture into, as it already did for video, and that surface is declared full side by side. One picture keeps mark 0: 2D
+ canvases and the hardware route reach the compositor as before.
+ Upstream: the stereo mark, the camera hack and the flat WebXR display are the edition's own (fork Sparky-OS/waterfox);
+ Mozilla's software path on Wayland is RenderCompositorNativeSWGL (bug 1711224), unchanged here.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor, https://github.com/Sparky-OS/waterfox/commit/150684b3a7044ec1be2fc72328935a0d573502d0
+Forwarded: not-needed
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+diff --git a/dom/canvas/WebGLContext.cpp b/dom/canvas/WebGLContext.cpp
+index 4803b00e10..b5392665f0 100644
+--- a/dom/canvas/WebGLContext.cpp
++++ b/dom/canvas/WebGLContext.cpp
+@@ -1730,19 +1730,25 @@ GLuint GLNameOrZero(const T& t) {
+ 
+ #ifdef MOZ_WIDGET_GTK
+ // The front buffer carries the canvas's stereo mode to the compositor, which
+-// declares it on the canvas's own surface.
+-static void SetStereoMode(gl::SharedSurface* const surf,
+-                          const uint8_t stereoMode, const bool camera) {
+-  if (!surf || surf->mDesc.type != gl::SharedSurfaceType::EGLSurfaceDMABUF) {
+-    return;
+-  }
++// declares it on the canvas's own surface. A DMABuf holds the mode itself.
++// Any other front buffer (software WebRender's, which is read back into a
++// buffer for the compositor) has the returned mark carried with that buffer:
++// 0 for one picture, so a 2D canvas reaches the compositor as before.
++static uint32_t SetStereoMode(gl::SharedSurface* const surf,
++                              const uint8_t stereoMode, const bool camera) {
+   const auto mode = stereoMode < uint8_t(StereoMode::MAX)
+                         ? StereoMode(stereoMode)
+                         : StereoMode::MONO;
+-  static_cast<gl::SharedSurface_DMABUF*>(surf)->mSurface->SetStereoMode(
+-      mode, mode == StereoMode::MONO ? StereoSource::NONE
+-            : camera                 ? StereoSource::CAMERA
+-                                     : StereoSource::XR);
++  const auto source = mode == StereoMode::MONO ? StereoSource::NONE
++                      : camera                 ? StereoSource::CAMERA
++                                               : StereoSource::XR;
++  if (surf && surf->mDesc.type == gl::SharedSurfaceType::EGLSurfaceDMABUF) {
++    static_cast<gl::SharedSurface_DMABUF*>(surf)->mSurface->SetStereoMode(
++        mode, source);
++  }
++  return mode == StereoMode::MONO
++             ? 0
++             : EncodeStereoMark(mode, source, /* aIsVideo */ false);
+ }
+ #endif
+ 
+@@ -2279,15 +2285,17 @@ void WebGLContext::Present(WebGLFramebuffer* const xrFb,
+     EnsureContextLostRemoteTextureOwner(options);
+     return;
+   }
++  uint32_t stereoMark = 0;
+ #ifdef MOZ_WIDGET_GTK
+   if (!maybeFB) {
+-    SetStereoMode(swapChain->FrontBuffer().get(), options.stereoMode,
+-                  options.stereoCamera);
++    stereoMark = SetStereoMode(swapChain->FrontBuffer().get(),
++                               options.stereoMode, options.stereoCamera);
+   }
+ #endif
+ 
+   if (useAsync) {
+-    PushRemoteTexture(nullptr, *swapChain, swapChain->FrontBuffer(), options);
++    PushRemoteTexture(nullptr, *swapChain, swapChain->FrontBuffer(), options,
++                      nullptr, stereoMark);
+   }
+ }
+ 
+@@ -2414,7 +2422,7 @@ bool WebGLContext::PushRemoteTexture(
+     WebGLFramebuffer* fb, gl::SwapChain& swapChain,
+     std::shared_ptr<gl::SharedSurface> surf,
+     const webgl::SwapChainOptions& options,
+-    layers::RemoteTextureOwnerClient* ownerClient) {
++    layers::RemoteTextureOwnerClient* ownerClient, uint32_t aStereoMark) {
+   const auto onFailure = [&]() -> bool {
+     GenerateWarning("Remote texture creation failed.");
+     LoseContext();
+@@ -2511,7 +2519,9 @@ bool WebGLContext::PushRemoteTexture(
+       MOZ_RELEASE_ASSERT(rv, "SwizzleData failed!");
+     }
+ 
+-    ownerClient->PushTexture(textureId, ownerId, std::move(data));
++    // The buffer read back holds what the front buffer holds: two views side
++    // by side when the canvas presents both eyes, so their mark goes with it.
++    ownerClient->PushTexture(textureId, ownerId, std::move(data), aStereoMark);
+     return true;
+   }
+ 
+diff --git a/dom/canvas/WebGLContext.h b/dom/canvas/WebGLContext.h
+index a6ea9a0274..6e47cd984a 100644
+--- a/dom/canvas/WebGLContext.h
++++ b/dom/canvas/WebGLContext.h
+@@ -1435,7 +1435,8 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
+   bool PushRemoteTexture(
+       WebGLFramebuffer*, gl::SwapChain&, std::shared_ptr<gl::SharedSurface>,
+       const webgl::SwapChainOptions& options,
+-      layers::RemoteTextureOwnerClient* ownerClient = nullptr);
++      layers::RemoteTextureOwnerClient* ownerClient = nullptr,
++      uint32_t aStereoMark = 0);
+ 
+   void EnsureContextLostRemoteTextureOwner(
+       const webgl::SwapChainOptions& options);
+diff --git a/gfx/layers/RemoteTextureMap.cpp b/gfx/layers/RemoteTextureMap.cpp
+index ae65668d34..73ca414f35 100644
+--- a/gfx/layers/RemoteTextureMap.cpp
++++ b/gfx/layers/RemoteTextureMap.cpp
+@@ -133,7 +133,7 @@ void RemoteTextureOwnerClient::NotifyContextRestored(
+ 
+ void RemoteTextureOwnerClient::PushTexture(
+     const RemoteTextureId aTextureId, const RemoteTextureOwnerId aOwnerId,
+-    UniquePtr<TextureData>&& aTextureData) {
++    UniquePtr<TextureData>&& aTextureData, uint32_t aStereoMark) {
+   MOZ_ASSERT(IsRegistered(aOwnerId));
+ 
+   RefPtr<TextureHost> textureHost = RemoteTextureMap::CreateRemoteTexture(
+@@ -142,6 +142,9 @@ void RemoteTextureOwnerClient::PushTexture(
+     MOZ_ASSERT_UNREACHABLE("unexpected to be called");
+     return;
+   }
++  if (aStereoMark) {
++    textureHost->SetStereoMark(aStereoMark);
++  }
+ 
+   RemoteTextureMap::Get()->PushTexture(aTextureId, aOwnerId, mForPid,
+                                        std::move(aTextureData), textureHost,
+diff --git a/gfx/layers/RemoteTextureMap.h b/gfx/layers/RemoteTextureMap.h
+index abac9adb3d..cecaac361e 100644
+--- a/gfx/layers/RemoteTextureMap.h
++++ b/gfx/layers/RemoteTextureMap.h
+@@ -220,9 +220,11 @@ class RemoteTextureOwnerClient final {
+   void NotifyContextLost(const RemoteTextureOwnerIdSet* aOwnerIds = nullptr);
+   void NotifyContextRestored(
+       const RemoteTextureOwnerIdSet* aOwnerIds = nullptr);
++  // aStereoMark: the picture's stereo mark (EncodeStereoMark), 0 for none.
+   void PushTexture(const RemoteTextureId aTextureId,
+                    const RemoteTextureOwnerId aOwnerId,
+-                   UniquePtr<TextureData>&& aTextureData);
++                   UniquePtr<TextureData>&& aTextureData,
++                   uint32_t aStereoMark = 0);
+   void PushTexture(const RemoteTextureId aTextureId,
+                    const RemoteTextureOwnerId aOwnerId,
+                    const std::shared_ptr<gl::SharedSurface>& aSharedSurface,
+diff --git a/gfx/layers/composite/TextureHost.cpp b/gfx/layers/composite/TextureHost.cpp
+index 97b7ce66c2..6c743b0fbb 100644
+--- a/gfx/layers/composite/TextureHost.cpp
++++ b/gfx/layers/composite/TextureHost.cpp
+@@ -580,6 +580,11 @@ void BufferTextureHost::PushResourceUpdates(
+     }
+     wr::ImageDescriptor descriptor(GetSize(), stride.value(), *format,
+                                    wr::ToOpacityType(GetFormat()));
++    // Two views the browser drew side by side (WebXR's flat display, the
++    // camera hack) read back from WebGL for software WebRender: the mark goes
++    // to the compositor surface WebRender draws the picture into, as a
++    // DMABuf's does, so that surface is declared to the desktop.
++    descriptor.stereo = mStereoMark;
+     (aResources.*method)(aImageKeys[0], descriptor, aExtID, imageType, 0,
+                          /* aNormalizedUvs */ false);
+   } else {
+diff --git a/gfx/layers/composite/TextureHost.h b/gfx/layers/composite/TextureHost.h
+index 290bb15224..04bf63aad2 100644
+--- a/gfx/layers/composite/TextureHost.h
++++ b/gfx/layers/composite/TextureHost.h
+@@ -617,6 +617,10 @@ class TextureHost : public AtomicRefCountedWithFinalize<TextureHost> {
+   // video pictures (DMABuf and YCbCr buffers) carry stereo modes.
+   virtual void ApplyStereoChoice(StereoMode aChoice) {}
+   virtual void ApplyStereoSwap(bool aSwap) {}
++  // The stereo mark (EncodeStereoMark) of a picture the browser drew with
++  // both views in it (WebXR's flat display, the camera hack), for a texture
++  // that cannot hold the mark itself: an RGB buffer read back from WebGL.
++  virtual void SetStereoMark(uint32_t aMark) {}
+ 
+   virtual BufferTextureHost* AsBufferTextureHost() { return nullptr; }
+   virtual ShmemTextureHost* AsShmemTextureHost() { return nullptr; }
+@@ -870,6 +874,7 @@ class BufferTextureHost : public TextureHost {
+     mStereoChoice = Some(aChoice);
+   }
+   void ApplyStereoSwap(bool aSwap) override { mStereoSwap = aSwap; }
++  void SetStereoMark(uint32_t aMark) override { mStereoMark = aMark; }
+ 
+   uint8_t* GetYChannel();
+   uint8_t* GetCbChannel();
+@@ -892,6 +897,8 @@ class BufferTextureHost : public TextureHost {
+   // The user's choice for a picture without a mark, and "Swap eyes".
+   Maybe<StereoMode> mStereoChoice;
+   bool mStereoSwap = false;
++  // The mark of an RGB picture holding both views (SetStereoMark), 0 for none.
++  uint32_t mStereoMark = 0;
+ 
+   class DataTextureSourceYCbCrBasic;
+ };
