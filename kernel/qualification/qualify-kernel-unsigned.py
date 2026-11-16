@@ -6,10 +6,13 @@
 DEBS_DIR holds the flavour's linux-image and linux-headers packages (not the -lc-hr companion). The guest is the one
 qualify-kernel-boot.py uses; the bench signs the image with its own throw-away key (inner script, SPARKY_UNSIGNED=1).
 This does not replace the run with the edition-signed image: the coordinator repeats qualify-kernel-boot.py after signing.
+SPARKY_QUALIFY_NAME names the container (default sparky-212-boot-FLAVOUR); SPARKY_DOCKER_DETACH=1 runs it detached, waits for it and
+writes its docker logs to driver.log (a lane's Docker socket proxy can cut attached output; ORDER 627).
 """
 from pathlib import Path
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -41,11 +44,19 @@ for kind in ('image', 'headers'):
 release = next((out / 'image/boot').glob('vmlinuz-*')).name.removeprefix('vmlinuz-')
 (out / 'inputs.json').write_text(json.dumps(dict(release=release, archives=archives, unsigned=True,
     settings=str(settings), image=IMAGE), indent=2) + '\n')
-command = ['docker', 'run', '--rm', '--ulimit', 'core=0', '--name', 'sparky-212-boot-' + flavour, '--cpus', '4', '--memory', '8g',
+name = os.environ.get('SPARKY_QUALIFY_NAME', 'sparky-212-boot-' + flavour)
+detach = os.environ.get('SPARKY_DOCKER_DETACH') == '1'
+command = ['docker', 'run', '-d' if detach else '--rm', '--ulimit', 'core=0', '--name', name, '--cpus', '4', '--memory', '8g',
            '--device', '/dev/kvm', '-e', 'SPARKY_UNSIGNED=1', '-v', f'{out}:/validation', '-v', f'{inputs}:/inputs:ro',
            IMAGE, 'python3', '/inputs/run.py', release]
 with (out / 'driver.log').open('w') as log:
-    rc = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT).returncode
+    if detach:
+        subprocess.run(command, stdout=subprocess.DEVNULL, check=True)
+        rc = int(subprocess.run(['docker', 'wait', name], capture_output=True, text=True, check=True).stdout.strip())
+        subprocess.run(['docker', 'logs', name], stdout=log, stderr=subprocess.STDOUT, check=True)
+        subprocess.run(['docker', 'rm', name], stdout=subprocess.DEVNULL, check=True)
+    else:
+        rc = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT).returncode
 (out / 'status.json').write_text(json.dumps(dict(state='passed' if rc == 0 else 'needs-repair', exit_code=rc,
     release=release, scope='isolated boot with the bench key; unsigned build; no host installation'), indent=2) + '\n')
 print(flavour, 'passed' if rc == 0 else 'FAILED', 'exit', rc)
