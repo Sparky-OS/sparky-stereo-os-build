@@ -1,0 +1,183 @@
+From 9aeb45d89d3603a0b0ac7134aa6b19b7240531e0 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Sun, 15 Nov 2026 21:04:47 -0300
+Subject: [PATCH 2/2] Wayland: tell the person when Qt's frame keeps a window
+ with two views flat
+
+The frame Qt draws around a window (client-side decorations) is drawn
+into both views of a surface with two views by a desktop OpenGL context.
+Where none can be made (an EGL implementation without desktop OpenGL, or
+a context that will not share the content's textures), the window has
+its two views and is shown flat, the left eye in both, with a warning in
+the program's log only.
+
+That is now handed to the edition's problems engine as the other
+windows given one view are: one problem for the driver, under its own
+key ("one-view:opengl-frame:DRIVER", so the driver's own one-view
+problem is neither made nor ended by it), naming the first program and
+the driver, with a message that says how to show the window in 3D (a
+window decoration drawn by the desktop). It ends when a window inside
+Qt's frame gets the frame into both views from the same driver.
+
+Assisted-by: Claude Opus 5.5
+---
+ .../wayland-egl/qwaylandeglwindow.cpp         | 17 +++++++++++++
+ .../wayland-egl/qwaylandeglwindow_p.h         |  4 ++++
+ .../wayland-egl/qwaylandglcontext.cpp         |  6 +++--
+ .../wayland/qwaylandstereoproblem.cpp         | 24 +++++++++++++++++--
+ .../wayland/qwaylandstereoproblem_p.h         |  6 ++++-
+ 5 files changed, 52 insertions(+), 5 deletions(-)
+
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+index 39a3c73..294ab07 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow.cpp
+@@ -250,6 +250,23 @@ void QWaylandEglWindow::tellViews(const QSurfaceFormat &format, bool twoViews)
+     }
+ }
+ 
++// The frame Qt draws around a window whose surface has two views is drawn into both by a desktop OpenGL context. Where
++// none can be made the window is shown flat although it has its two views: that is the person's to know, as the problem
++// of the driver for windows inside Qt's frame, ended when such a window of the driver gets its frame into both.
++void QWaylandEglWindow::tellFramedPair(bool drawn)
++{
++    const int told = drawn ? 2 : 1;
++    if (told == m_toldFramedPair)
++        return;
++    m_toldFramedPair = told;
++    const QString driver = openGLDriver(m_clientBufferIntegration->eglDisplay());
++    if (drawn)
++        QWaylandStereoProblem::twoViewsGiven(QWaylandStereoProblem::Api::OpenGLFrame, driver);
++    else
++        QWaylandStereoProblem::oneViewGiven(QWaylandStereoProblem::Api::OpenGLFrame, driver,
++                                            QWaylandStereoProblem::Reason::FrameOneView);
++}
++
+ bool QWaylandEglWindow::eventFilter(QObject *watched, QEvent *event)
+ {
+     if (watched == window() && event->type() == QEvent::DynamicPropertyChange
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h
+index cd1d86c..bbd0577 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandeglwindow_p.h
+@@ -34,6 +34,8 @@ public:
+     GLuint contentFBO() const;
+     GLuint contentTexture(int eye = 0) const;
+     int contentEyes() const;
++    // Whether the frame Qt draws around the window could be drawn into both views of its surface
++    void tellFramedPair(bool drawn);
+     bool sideBySidePair() const { return m_sideBySide; }
+     bool needToUpdateContentFBO() const { return decoration() && (m_resize || !m_contentFBO); }
+ 
+@@ -100,6 +102,8 @@ private:
+     bool m_sideBySide = false;
+     // What tellViews() said last: 0 nothing asked, 1 one view given, 2 two
+     int m_toldViews = 0;
++    // What tellFramedPair() said last: 0 nothing, 1 not drawn, 2 drawn
++    int m_toldFramedPair = 0;
+ };
+ 
+ }
+diff --git a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp
+index f3c55f3..600ddaf 100644
+--- a/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp
++++ b/src/plugins/platforms/wayland/plugins/hardwareintegration/wayland-egl/qwaylandglcontext.cpp
+@@ -548,8 +548,10 @@ void QWaylandGLContext::swapBuffers(QPlatformSurface *surface)
+         // A window whose surface has two views is blitted eye by eye, which needs desktop OpenGL; its format
+         // may not have asked for stereo when an engine asks for the pair (Qt Quick drawing the depth of its
+         // elements), and then a desktop OpenGL context is made for its decorations.
+-        const bool pair = !m_stereo && !window->sideBySidePair() && window->contentEyes() == 2
+-                && pairDecorationsContext() != EGL_NO_CONTEXT;
++        const bool twoSlots = !m_stereo && !window->sideBySidePair() && window->contentEyes() == 2;
++        const bool pair = twoSlots && pairDecorationsContext() != EGL_NO_CONTEXT;
++        if (twoSlots)
++            window->tellFramedPair(pair);
+         const bool desktopGL = m_stereo || pair;
+         const EGLContext decorationsContext = pair ? m_pairDecorationsContext : m_decorationsContext;
+         DecorationsBlitter *&blitter = pair ? m_pairBlitter : m_blitter;
+diff --git a/src/plugins/platforms/wayland/qwaylandstereoproblem.cpp b/src/plugins/platforms/wayland/qwaylandstereoproblem.cpp
+index 80b6822..e5fa796 100644
+--- a/src/plugins/platforms/wayland/qwaylandstereoproblem.cpp
++++ b/src/plugins/platforms/wayland/qwaylandstereoproblem.cpp
+@@ -79,6 +79,19 @@ QString programName()
+     return name.isEmpty() ? QStringLiteral("A program") : name;
+ }
+ 
++QString apiName(Api api)
++{
++    switch (api) {
++    case Api::Vulkan:
++        return QStringLiteral("vulkan");
++    case Api::OpenGL:
++        break;
++    case Api::OpenGLFrame:
++        return QStringLiteral("opengl-frame");
++    }
++    return QStringLiteral("opengl");
++}
++
+ // One key for each driver that gives one view, the API's own name of it; printable, as the engine's keys are.
+ QString key(Api api, const QString &driver)
+ {
+@@ -87,7 +100,7 @@ QString key(Api api, const QString &driver)
+         if (c.unicode() < 0x20 || c.unicode() == 0x7f)
+             c = u'_';
+     }
+-    return QStringLiteral("one-view:%1:%2").arg(api == Api::Vulkan ? QStringLiteral("vulkan") : QStringLiteral("opengl"), name);
++    return QStringLiteral("one-view:%1:%2").arg(apiName(api), name);
+ }
+ 
+ // The same words as the catalog's English messages, for the program's log and where no catalog is installed.
+@@ -98,6 +111,12 @@ QString textEn(Api api, Reason reason, const QString &program, const QString &dr
+                               "its own swapchain, which shows one picture, so the window is shown flat. The desktop "
+                               "session sets LIBGL_KOPPER_DISABLE=1 with zink; start the program with it too.").arg(program);
+     }
++    if (reason == Reason::FrameOneView) {
++        return QStringLiteral("%1 asked for two pictures of its window, one for each eye, and got them, but Qt draws its own "
++                              "frame around this window, and with the OpenGL driver %2 it cannot draw that frame into both "
++                              "pictures, so the window is shown flat. The window shows its 3D when the desktop draws the "
++                              "window frames: choose a window decoration in System Settings.").arg(program, driver);
++    }
+     if (api == Api::Vulkan) {
+         return QStringLiteral("%1 asked for two pictures of its window, one for each eye, and the Vulkan driver %2 gives a "
+                               "window one picture only, so the window is shown flat. Programs that ask for 3D are shown "
+@@ -142,11 +161,12 @@ void oneViewGiven(Api api, const QString &driver, Reason reason)
+     qCWarning(lcQpaWayland, "%ls", qUtf16Printable(text));
+ 
+     const QByteArray message = reason == Reason::ZinkOwnSwapchain ? "LOCAL4"
++            : reason == Reason::FrameOneView ? "LOCAL5"
+             : api == Api::Vulkan ? "LOCAL2" : "LOCAL3";
+     QJsonArray args{program};
+     if (reason != Reason::ZinkOwnSwapchain)
+         args.append(driver);
+-    const QJsonObject data{{QStringLiteral("api"), api == Api::Vulkan ? QStringLiteral("vulkan") : QStringLiteral("opengl")},
++    const QJsonObject data{{QStringLiteral("api"), apiName(api)},
+                            {QStringLiteral("driver"), driver},
+                            {QStringLiteral("program"), program}};
+     const QByteArray details = QJsonDocument(QJsonObject{{QStringLiteral("severity"), QStringLiteral("failed")},
+diff --git a/src/plugins/platforms/wayland/qwaylandstereoproblem_p.h b/src/plugins/platforms/wayland/qwaylandstereoproblem_p.h
+index 2369d71..0781fd6 100644
+--- a/src/plugins/platforms/wayland/qwaylandstereoproblem_p.h
++++ b/src/plugins/platforms/wayland/qwaylandstereoproblem_p.h
+@@ -31,13 +31,17 @@ namespace QtWaylandClient {
+ // problem goes to it; otherwise, or when it cannot be kept, it is a warning in the program's log.
+ namespace QWaylandStereoProblem {
+ 
+-enum class Api { Vulkan, OpenGL };
++// OpenGLFrame: the OpenGL path of a window inside the frame Qt draws around it (client-side decorations)
++enum class Api { Vulkan, OpenGL, OpenGLFrame };
+ 
+ enum class Reason {
+     // The driver gives a surface one view (Vulkan: one image layer; OpenGL: no EGL_EXT_multiview_window).
+     DriverGivesOneView,
+     // zink presents through its own swapchain (kopper), which shows one view.
+     ZinkOwnSwapchain,
++    // The surface has two views, but the frame Qt draws around the window cannot be drawn into both (no desktop
++    // OpenGL context for it), so one picture is shown in both.
++    FrameOneView,
+ };
+ 
+ // Any thread; once per driver and program, whatever the number of windows and frames.
+-- 
+2.53.0
+

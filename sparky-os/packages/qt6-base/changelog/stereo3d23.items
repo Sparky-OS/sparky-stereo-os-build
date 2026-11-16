@@ -1,0 +1,16 @@
+A window inside the frame Qt draws around it (client-side decorations, where
+the desktop draws no frame) that an engine draws as a pair is shown as a pair
+(ORDER 583). Qt Quick asks for the two views of such a window on a format that
+did not ask for stereo, and the frame's blit took its number of eyes and its
+OpenGL API from that format, so it drew the left eye alone from an OpenGL ES
+context and the EGL implementation presented one view. The blit now follows the
+window: a window with a slot per eye is blitted eye by eye from a desktop
+OpenGL context, made the first time it is needed, and the slots follow the
+surface's views when the surface is made again (o583-0001). Every other window
+is blitted as before.
+
+Where no desktop OpenGL context can be made for that frame, the window is shown
+flat and the person is told through the problems engine, once for the driver
+(key one-view:opengl-frame:DRIVER), in the ten languages; the problem ends when
+a window inside Qt's frame gets its frame into both views from that driver
+(o583-0002).
