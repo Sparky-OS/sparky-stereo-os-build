@@ -28,4 +28,4 @@ docker run --rm --pull never --name "${CONTAINER_NAME:-theme-editor-build}" --pl
  -v "${SPARKY_PUBLISHED_REPO:?}:$SPARKY_PUBLISHED_REPO:ro" \
  -v "${SPARKY_DMO_PUBLIC_KEYS:?}:$SPARKY_DMO_PUBLIC_KEYS:ro" \
  -e SPARKY_LC_ARCHIVE_CONFIG -e SPARKY_LC_SCRATCH -e SPARKY_LC_SIBLINGS_FILE \
- "$RIG_IMAGE" sh /source/sparky-os/theme-icon-editor/build-in-container.sh
+ "$RIG_IMAGE" sh /source/sparky-os/sparky-stereo-plasma-theme-studio/build-in-container.sh

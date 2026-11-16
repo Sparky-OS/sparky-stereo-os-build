@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "editor.h"
+#include "identity.h"
 #include <KConfig>
 #include <KConfigGroup>
 #include <QFileDialog>
@@ -109,7 +110,7 @@ QString Editor::makePeerWork()
 {
     if (peer && peer->state() != QProcess::NotRunning)
         throw std::runtime_error(tr("Close the KDE tool before opening another one.").toStdString());
-    const auto root = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/sparky-stereo-theme-editor/work";
+    const auto root = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/sparky-stereo-plasma-theme-studio/work";
     if (!QDir().mkpath(root)) throw std::runtime_error(tr("Cannot create a private working copy").toStdString());
     peerWork = std::make_unique<QTemporaryDir>(root + "/project-XXXXXX");
     if (!peerWork->isValid()) throw std::runtime_error(tr("Cannot create a private working copy").toStdString());

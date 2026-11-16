@@ -118,10 +118,6 @@
   <context>
     <name>Editor</name>
     <message>
-      <source>Theme editor</source>
-      <translation>主題編輯器</translation>
-    </message>
-    <message>
       <source>Open icon theme…</source>
       <translation>開啟圖示主題…</translation>
     </message>
@@ -416,6 +412,17 @@
     <message>
       <source>The Plasma theme has no valid identifier</source>
       <translation>Plasma 主題沒有有效的識別碼</translation>
+    </message>
+    <message>
+      <source>About…</source>
+      <translation>關於…</translation>
+    </message>
+  </context>
+  <context>
+    <name>Identity</name>
+    <message>
+      <source>Product name</source>
+      <translation>@PRODUCT@</translation>
     </message>
   </context>
 </TS>

@@ -118,10 +118,6 @@
   <context>
     <name>Editor</name>
     <message>
-      <source>Theme editor</source>
-      <translation>Editor de temas</translation>
-    </message>
-    <message>
       <source>Open icon theme…</source>
       <translation>Abrir tema de ícones…</translation>
     </message>
@@ -416,6 +412,17 @@
     <message>
       <source>The Plasma theme has no valid identifier</source>
       <translation>O tema do Plasma não tem um identificador válido</translation>
+    </message>
+    <message>
+      <source>About…</source>
+      <translation>Sobre…</translation>
+    </message>
+  </context>
+  <context>
+    <name>Identity</name>
+    <message>
+      <source>Product name</source>
+      <translation>@PRODUCT@</translation>
     </message>
   </context>
 </TS>

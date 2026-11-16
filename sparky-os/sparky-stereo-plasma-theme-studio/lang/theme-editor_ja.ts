@@ -118,10 +118,6 @@
   <context>
     <name>Editor</name>
     <message>
-      <source>Theme editor</source>
-      <translation>テーマエディター</translation>
-    </message>
-    <message>
       <source>Open icon theme…</source>
       <translation>アイコンテーマを開く…</translation>
     </message>
@@ -416,6 +412,17 @@
     <message>
       <source>The Plasma theme has no valid identifier</source>
       <translation>Plasma テーマに有効な識別子がありません</translation>
+    </message>
+    <message>
+      <source>About…</source>
+      <translation>このソフトウェアについて…</translation>
+    </message>
+  </context>
+  <context>
+    <name>Identity</name>
+    <message>
+      <source>Product name</source>
+      <translation>@PRODUCT@</translation>
     </message>
   </context>
 </TS>

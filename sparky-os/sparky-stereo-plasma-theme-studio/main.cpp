@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "editor.h"
+#include "identity.h"
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QFile>
@@ -14,7 +15,7 @@ static void loadTranslations(QTranslator &translations)
 {
     const auto path = qEnvironmentVariable("THEME_EDITOR_TRANSLATIONS",
         QStandardPaths::locate(QStandardPaths::GenericDataLocation,
-            "sparky-stereo-theme-editor/translations", QStandardPaths::LocateDirectory));
+            "sparky-stereo-plasma-theme-studio/translations", QStandardPaths::LocateDirectory));
     if (translations.load(QLocale(), "theme-editor", "_", path)) QCoreApplication::installTranslator(&translations);
 }
 
@@ -33,7 +34,9 @@ static void configureParser(QCommandLineParser &parser)
 
 int main(int argc, char **argv)
 {
-    QCoreApplication::setApplicationVersion("0.1.3");
+    QCoreApplication::setApplicationVersion(Identity::version());
+    QCoreApplication::setApplicationName(Identity::package());
+    QCoreApplication::setOrganizationName(Identity::edition());
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
         if (arg != "--help" && arg != "-h" && arg != "--version" && arg != "-v") continue;
@@ -46,6 +49,8 @@ int main(int argc, char **argv)
         return 0;
     }
     QApplication app(argc, argv);
+    QApplication::setApplicationDisplayName(Identity::product());
+    QApplication::setDesktopFileName(Identity::package());
     QTranslator translations;
     loadTranslations(translations);
     QCommandLineParser parser;

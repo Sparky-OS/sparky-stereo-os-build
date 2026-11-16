@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "editor.h"
+#include "identity.h"
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -31,7 +32,7 @@ int main(int argc, char **argv)
                 const auto name = context.firstChildElement("name").text().toUtf8();
                 for (auto message = context.firstChildElement("message"); !message.isNull(); message = message.nextSiblingElement("message")) {
                     const auto text = message.firstChildElement("source").text().toUtf8();
-                    const auto translation = message.firstChildElement("translation").text();
+                    const auto translation = message.firstChildElement("translation").text().replace("@PRODUCT@", Identity::product());
                     if (translation.isEmpty() || catalogue.translate(name.constData(), text.constData()) != translation)
                         throw std::runtime_error("Compiled catalogue differs: " + language.toStdString() + ": " + text.toStdString());
                     ++count;
@@ -40,7 +41,7 @@ int main(int argc, char **argv)
             Editor editor;
             editor.loadProject(QString::fromLocal8Bit(argv[1]));
             auto state = QJsonDocument::fromJson(editor.sessionState().toUtf8()).object();
-            const auto title = catalogue.translate("Editor", "Theme editor") + "[*]";
+            const auto title = Identity::product() + "[*]";
             if (editor.windowTitle() != title || editor.stereo->text() != catalogue.translate("Editor", "Enable 3D"))
                 throw std::runtime_error("Runtime widget did not use compiled catalogue");
             results.append(QJsonObject{{"language", language}, {"locale", locale}, {"compiledMessages", count},

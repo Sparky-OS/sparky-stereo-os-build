@@ -118,10 +118,6 @@
   <context>
     <name>Editor</name>
     <message>
-      <source>Theme editor</source>
-      <translation>테마 편집기</translation>
-    </message>
-    <message>
       <source>Open icon theme…</source>
       <translation>아이콘 테마 열기…</translation>
     </message>
@@ -416,6 +412,17 @@
     <message>
       <source>The Plasma theme has no valid identifier</source>
       <translation>Plasma 테마에 유효한 식별자가 없습니다</translation>
+    </message>
+    <message>
+      <source>About…</source>
+      <translation>정보…</translation>
+    </message>
+  </context>
+  <context>
+    <name>Identity</name>
+    <message>
+      <source>Product name</source>
+      <translation>@PRODUCT@</translation>
     </message>
   </context>
 </TS>

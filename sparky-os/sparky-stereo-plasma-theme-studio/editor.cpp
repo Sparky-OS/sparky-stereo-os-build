@@ -34,6 +34,7 @@
 #include <iostream>
 
 #include "editor.h"
+#include "identity.h"
 #include <QDoubleSpinBox>
 #include <QHeaderView>
 #include <QCloseEvent>
@@ -43,7 +44,7 @@ Editor::Editor(bool part)
     : partMode(part)
 {
     Stereo::WidgetLayer::prepareWindow(this);
-    setWindowTitle(tr("Theme editor") + "[*]");
+    setWindowTitle(Identity::product() + "[*]");
     resize(1000, 680);
     history = new QUndoStack(this);
     auto *layout = new QVBoxLayout(this);
@@ -57,6 +58,11 @@ Editor::Editor(bool part)
     undo->setShortcut(QKeySequence::Undo); redo->setShortcut(QKeySequence::Redo);
     undo->setEnabled(false); redo->setEnabled(false);
     for (auto *w : {open, save, undo, redo}) files->addWidget(w);
+    auto *about = new QPushButton(tr("About…"));
+    files->addWidget(about);
+    connect(about, &QPushButton::clicked, this, [this] {
+        QMessageBox::about(this, Identity::product(), Identity::product() + "\n" + Identity::version() + "\n" + Identity::edition() + "\nDaniel Campos Ramos");
+    });
     layout->addLayout(files);
     if (partMode) { open->hide(); save->hide(); }
     if (!partMode) {
