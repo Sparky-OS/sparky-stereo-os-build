@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 16 Oct 2026 08:36:20 -0300
+Subject: [PATCH 2/2] lib/igt_kms: Declare every HDMI 3D structure in the 3D
+ EDID
+
+The 3D EDID declared 3D_present only, so kms_3d tested the mandatory
+formats (frame packing, top-and-bottom, side by side (half)) and never
+the other structures of HDMI 1.4a, Appendix H. Declare all of them
+through 3D_Multi_present and 3D_Structure_ALL (Table H-7) for the VICs
+of the EDID; the kernel lists each on the formats its structure allows
+(field alternative on the interlaced ones; line alternative and both
+picture plus depth structures on the progressive ones).
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ lib/igt_kms.c | 21 ++++++++++++++++-----
+ 1 file changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/lib/igt_kms.c b/lib/igt_kms.c
+index af0f7c4e5..e0126c22d 100644
+--- a/lib/igt_kms.c
++++ b/lib/igt_kms.c
+@@ -561,8 +561,16 @@ const struct edid *igt_kms_get_3d_edid(void)
+ 	struct edid_cea *edid_cea;
+ 	char *cea_data;
+ 	struct edid_cea_data_block *block;
+-	/* We'll add 5 extension fields to the HDMI VSDB. */
+-	char raw_hdmi[HDMI_VSDB_MIN_SIZE + 5] = {0};
++	/* We'll add 7 extension fields to the HDMI VSDB. */
++	char raw_hdmi[HDMI_VSDB_MIN_SIZE + 7] = {0};
++	/*
++	 * Every 3D structure of HDMI 1.4a (Appendix H, Table H-7) for all the
++	 * VICs: frame packing, field alternative, line alternative, side by
++	 * side (full), L + depth, L + depth + graphics + graphics-depth,
++	 * top-and-bottom and side by side (half). The kernel lists each on the
++	 * formats its structure allows.
++	 */
++	const uint16_t structure_all = 0x017f;
+ 	struct hdmi_vsdb *hdmi;
+ 	size_t cea_data_size = 0;
+ 
+@@ -584,12 +592,15 @@ const struct edid *igt_kms_get_3d_edid(void)
+ 	hdmi = (struct hdmi_vsdb *) raw_hdmi;
+ 	hdmi->src_phy_addr[0] = 0x10;
+ 	hdmi->src_phy_addr[1] = 0x00;
+-	/* 5 extension fields */
++	/* 7 extension fields */
+ 	hdmi->flags1 = 0;
+ 	hdmi->max_tdms_clock = 0;
+ 	hdmi->flags2 = HDMI_VSDB_VIDEO_PRESENT;
+-	hdmi->data[0] = HDMI_VSDB_VIDEO_3D_PRESENT; /* HDMI video flags */
+-	hdmi->data[1] = 0; /* 0 VIC entries, 0 3D entries */
++	/* HDMI video flags: 3D_present, 3D_Multi_present 01 */
++	hdmi->data[0] = HDMI_VSDB_VIDEO_3D_PRESENT | 1 << 5;
++	hdmi->data[1] = 2; /* 0 VIC entries, 2 bytes of 3D */
++	hdmi->data[2] = structure_all >> 8; /* 3D_Structure_ALL_15..8 */
++	hdmi->data[3] = structure_all & 0xff; /* 3D_Structure_ALL_7..0 */
+ 
+ 	block = (struct edid_cea_data_block *) &cea_data[cea_data_size];
+ 	cea_data_size += edid_cea_data_block_set_hdmi_vsdb(block, hdmi,
+-- 
+2.53.0
+
