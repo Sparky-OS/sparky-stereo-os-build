@@ -38,6 +38,21 @@ Build:
 -------------
 OUT=/path/to/workspace/out ./build.sh (inside debian:testing)
 
+Broadcom Wi-Fi (wl):
+-------------------------------------------------------
+For a Broadcom 802.11ac card that no driver of the kernel drives (BCM4360, BCM4352: 14e4:43a0, 14e4:43b1, 14e4:4360)
+the setup offers Broadcom's own driver, wl, as Debian's unmodified package broadcom-sta-dkms (non-free), only for such
+a card and only after its licence is shown (Daniel, 2026-10-05). `sparky-stereo-hardware --broadcom-wl ask` shows the
+licence (the package's copyright file, Broadcom's Software License Agreement, unchanged) and installs on a yes;
+`yes` prints the licence and installs; `no` keeps "Not now" for the machine; `repair` goes on with what was accepted;
+`reset` forgets "Not now". The package comes from the ISO's driver pool (/usr/share/sparky-stereo/driver-debs, checked
+against its index) with the network cut, else from the network with its size said first. Each step is verified (dpkg,
+DKMS for the running kernel, the signature and the enrolled key under Secure Boot, the modules, `wl` loaded, the card's
+wireless interface) and each failure is told and kept in sparky-stereo-problems until the Wi-Fi works.
+Credits: Broadcom Corporation for the driver; the broadcom-sta packaging by Cyril Lacoux, Daniel Baumann, Eduard Bloch
+and Roger Shimizu (Debian's copyright file of broadcom-sta-dkms); the list of the chips from Debian's README and
+CachyOS's chwd profile (GPL-3.0); an AI partner's desk study of an iMac 21.5-inch Late 2013 for the detection patch.
+
 Rig drivers:
 -------------
 Flight and racing access is selected from exact USB pairs in

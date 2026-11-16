@@ -88,9 +88,22 @@ fixture_cases = {
     'broadcom-4331-v2': ({'task-laptop', 'power-profiles-daemon', 'thermald', 'intel-microcode'}, [
         'fact\tcpu-level\tv2', 'fact\tx86-64-v3\tno',
         'fact\tnetwork-pci\t14e4:4331'], ['candidate\tbroadcom-sta-dkms\t14e4:4331: closed Broadcom wl driver']),
+    # An Intel iMac 21.5-inch, Late 2013 (iMac14,1): the Wi-Fi is a BCM4360, which no driver of our kernel drives, so wl
+    # is the plan's candidate with its licence line; the wired Broadcom card (tg3) is not in the table and is left alone
+    'imac14-1-bcm4360': ({'intel-microcode', 'thermald'}, [
+        'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes',
+        'fact\tboard\tApple Inc. / Mac-031B6874CF7F642A',
+        'fact\tusb-vendors\t05ac 1d6b',
+        'fact\tnetwork-driver\t14e4:43a0 wl (Broadcom, DKMS; no driver of our kernel) Broadcom Wi-Fi (802.11ac)',
+        'fact\tnetwork-no-kernel-driver\t14e4:43a0', 'action\tbroadcom-wl',
+        'fact\tnetwork-pci\t14e4:1686 14e4:43a0',
+        'licence\tbroadcom-sta-dkms\t14e4:43a0\tBroadcom Software License Agreement\tusr/share/doc/broadcom-sta-dkms/copyright'],
+        ['candidate\tbroadcom-sta-dkms\t14e4:43a0: closed Broadcom wl driver']),
     'baseline-cpu': ({'intel-microcode', 'thermald'}, [
         'fact\tcpu-level\tv1', 'fact\tx86-64-v3\tno'], []),
 }
+# lines that must NOT appear: the BCM4331 has b43 in our kernel, so it is not a card without a kernel driver
+absent_lines = {'broadcom-4331-v2': ['fact\tnetwork-no-kernel-driver', 'action\tbroadcom-wl']}
 for name, (expected_packages, expected_lines, candidate_prefixes) in fixture_cases.items():
     out = subprocess.run([tool, '--auto', '--dry-run', '--fixture', str(here / name)], text=True,
                          capture_output=True, check=True).stdout
@@ -102,9 +115,19 @@ for name, (expected_packages, expected_lines, candidate_prefixes) in fixture_cas
     for prefix in candidate_prefixes:
         assert any(l.startswith(prefix) for l in lines), (name, prefix, out)
         assert any('licence must be shown' in l for l in lines if l.startswith('candidate\t')), (name, out)
+        # the planner names the licence file for every wl candidate: the action layer shows it before any install
+        assert any(l.startswith('licence\tbroadcom-sta-dkms\t') and l.endswith('usr/share/doc/broadcom-sta-dkms/copyright') for l in lines), (name, out)
+    for prefix in absent_lines.get(name, []):
+        assert not any(l.startswith(prefix) for l in lines), (name, prefix, out)
+    # the dry run says what it would do about the Wi-Fi driver, only for the card no kernel driver drives
+    assert ('Would show the licence of broadcom-sta-dkms' in out) == (name == 'imac14-1-bcm4360'), (name, out)
     assert not any('broadcom-sta' in p for p in packages), name
     assert not any('disagreement' in l for l in lines), (name, out)
     print(f'PASS fixture {name}: packages={sorted(packages)}')
+bad = subprocess.run([tool, '--broadcom-wl', 'bogus', '--dry-run', '--fixture', str(here / 'imac14-1-bcm4360')], text=True, capture_output=True)
+assert bad.returncode == 2 and 'ask, yes, no, repair or reset' in bad.stderr, bad
+assert '--broadcom-wl ask|yes|no|repair|reset' in subprocess.run([tool, '--help'], text=True, capture_output=True, check=True).stdout
+print('PASS --broadcom-wl takes only ask, yes, no, repair or reset')
 old = subprocess.run([tool, '--auto', '--dry-run', '--fixture', str(here / 'creative-nvidia-laptop')], text=True,
                      capture_output=True, check=True).stdout
 assert not any(l.startswith(('fact\t', 'candidate\t')) for l in old.splitlines()), old

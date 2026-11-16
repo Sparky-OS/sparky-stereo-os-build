@@ -186,6 +186,54 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 		}
 	done
 
+	# the driver pool (ORDER 614; Daniel, 2026-10-05: "Debian's unmodified broadcom-sta-dkms goes on the ISO and is installed
+	# only for a matching card, with its licence shown"): the packages of lists/driver-pool.list and the headers of every
+	# kernel in the image, as Debian's own .deb files, in their own folder with their own index. sparky-stereo-hardware
+	# installs broadcom-sta-dkms from here, with the network cut, only for a Broadcom card no kernel driver drives, after
+	# the person has read the licence and said yes. The folder is not the installer's offline folder (offline-packages
+	# removes that one after the installation) and nothing in it is installed by the image. Debian's package is copied as
+	# apt fetched it: never unpacked, edited or rebuilt, and its copyright file (Broadcom's agreement) travels inside it
+	# (Broadcom's Software License Agreement, 2.1 "complete, unmodified" and 2.3 "a copy of this Agreement accompanies such
+	# distribution"). The compiler and make are in the image itself: the image builds its ZFS and NVIDIA modules (zfs-check.py).
+	echo "== $(date -u +%T) the driver pool: Debian's packages of lists/driver-pool.list and the headers of the image's kernels, unmodified"
+	DP=/usr/share/sparky-stereo/driver-debs
+	rm -rf "$R$DP"; mkdir -p "$R$DP/partial"
+	pool_names=$(grep -v '^#' /edition-lists/driver-pool.list | grep .) || {
+		echo "!! lists/driver-pool.list is empty or unreadable. Repair the list and rebuild the image." >&2
+		exit 1
+	}
+	pool_kernels=$(inr dpkg-query -W -f '${Package}\n' 'linux-image-[0-9]*') || {
+		echo "!! Could not list the image's kernels for the driver pool. Repair the package database and rebuild the image." >&2
+		exit 1
+	}
+	pool_kernels=$(printf '%s\n' "$pool_kernels" | grep -v -- '-lc-hr$' || true)
+	[ -n "$pool_kernels" ] || { echo "!! The image has no kernel, so the driver pool has no headers to carry. Rebuild the image." >&2; exit 1; }
+	pool_headers=$(printf '%s\n' "$pool_kernels" | sed 's/^linux-image-/linux-headers-/')
+	# apt-get download fetches exactly these packages (Debian's from Debian, the edition's from its repository, also when that is
+	# a flat folder) and copies each file into the folder as apt fetched it; no dependency comes with them
+	# shellcheck disable=SC2086 # package names, one word each
+	inr sh -c 'cd "$1" && shift && apt-get -o Dpkg::Use-Pty=0 download "$@"' sh "$DP" $pool_names $pool_headers || {
+		echo "!! The driver pool download failed. Repair the package sources/network and rebuild the image." >&2
+		exit 1
+	}
+	(cd "$R$DP" && dpkg-scanpackages -m . > Packages) || {
+		echo "!! The driver pool's Packages index could not be generated. Check the downloaded packages and rebuild the image." >&2
+		exit 1
+	}
+	# shellcheck disable=SC2086
+	for p in $pool_names $pool_headers; do
+		grep -qx "Package: $p" "$R$DP/Packages" || {
+			echo "!! Driver pool package $p is missing from Packages. Repair the download and rebuild the image." >&2
+			exit 1
+		}
+	done
+	printf '%s\n' "Debian's packages, as apt fetched them, unmodified." \
+		"They are installed by sparky-stereo-hardware only for hardware that needs them, after the person has read the licence in the package (usr/share/doc/NAME/copyright) and said yes." \
+		"Packages is the index the installer checks each file against." >"$R$DP/README" || {
+		echo "!! The driver pool's README could not be written. Check the image's disk and rebuild the image." >&2
+		exit 1
+	}
+
 	apt_in clean
 	echo "== $(date -u +%T) the image's apt sources: the build's own sources go; Debian, SparkyLinux (sparky-apt), deb-multimedia and NVIDIA's CUDA repository (sparky-stereo-cuda-repo) stay"
 	rm -f $R/etc/apt/sources.list.d/beta-build-*.sources $R/etc/apt/sources.list.d/sparky-stereo-build.sources $R/etc/apt/preferences.d/beta-build-*

@@ -13,7 +13,7 @@
 import gzip, lzma, os, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-LISTS = ['image', 'apps', 'games', 'gaming', 'film', 'emulation-3d', 'hardware', 'hardware-found', 'system',
+LISTS = ['image', 'apps', 'games', 'gaming', 'film', 'emulation-3d', 'hardware', 'hardware-found', 'driver-pool', 'system',
          'look', 'runtimes', 'languages', 'developer', 'os-developer', 'aptus']
 
 def read_list(name):

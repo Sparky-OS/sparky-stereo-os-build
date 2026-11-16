@@ -240,6 +240,14 @@ group('hardware-found', 'Hardware support installed when the hardware is found',
     'libnvcuvid1',   # NVDEC and its matching libcuda1, not pulled in by the graphics driver
 ])
 
+# 7c. Debian's closed drivers carried unmodified as .deb files in the ISO's driver pool (pack.sh: /usr/share/sparky-stereo/driver-debs),
+# not installed on the image: sparky-stereo-hardware installs broadcom-sta-dkms from here for a Broadcom card no kernel
+# driver drives, after the licence is shown and the person says yes (ORDER 614; Daniel, 2026-10-05). dkms is carried
+# beside it so the build step has it with the network cut; the headers of the image's kernels are added by the packer.
+group('driver-pool', 'Debian packages carried in the ISO driver pool, installed only for matching hardware', [
+    'broadcom-sta-dkms', 'dkms',
+])
+
 # 8. System: apps from Flathub, containers, Android, snapshots. No zram (Daniel, 2026-10-10): the swap is an emergency swap
 # file, on only under memory pressure.
 group('system', 'System', [

@@ -9,7 +9,7 @@
 # boot image), command-not-found's index is filled, and every kernel the ISO boots or installs carries the security
 # fixes kernel-fixes.py lists, with no older kernel left (the ISO's kernels, initrds and menus; the image's /boot,
 # module trees, DKMS builds and kernel packages, linux-libc-dev included), and nothing of zram or zswap is in the image
-# or its boot menus (zram-check.py), and no package that downloads data while it is installed and no FlightGear data (check-no-install-downloads.py). Runs as root in the build image (privileged,
+# or its boot menus (zram-check.py), the stick's layout (check-layout.sh: isohybrid MBR, GPT, Apple partition map, 0xef partition), and no package that downloads data while it is installed and no FlightGear data (check-no-install-downloads.py). Runs as root in the build image (privileged,
 # for the loop mounts and the chroot), with the root file system at /rootfs and the build tree at /build. The ISO and
 # its filesystem.squashfs are mounted read-only and only a few small files are copied out, into the container's own
 # /tmp. Prints a report; exits 1 on any failed check.
@@ -49,6 +49,14 @@ n=$(grep -c 'sparky_no_key$' "$T/boot_grub_grub.cfg"); l=$(grep -c 'if linux /li
 for lang in English Polski Português Français Deutsch 日本語 한국어 简体中文 繁體中文; do
 	[ "$(grep -c "echo \"$lang: " "$T/boot_grub_grub.cfg")" = 2 ] || no "the two texts are not both in $lang"
 done && ok "both texts in the nine required languages"
+
+echo "-- the stick's layout (check-layout.sh: isohybrid MBR, GPT, the Apple partition map, the 0xef partition; ORDER 614)"
+sh /build/check-layout.sh "$ISO" > "$T/layout.txt"; r=$?
+sed "s/^/   /" "$T/layout.txt"
+if [ $r != 0 ]; then
+	n=$(grep -c '^FAIL' "$T/layout.txt"); [ "$n" -gt 0 ] || { n=1; echo "FAIL  check-layout.sh stopped (exit $r)"; }
+	fails=$((fails + n))
+fi
 
 echo "-- EFI image (efi.img)"
 mdir -/ -b -i "$T/boot_grub_efi.img" :: 2>/dev/null | sed "s/^/   /"

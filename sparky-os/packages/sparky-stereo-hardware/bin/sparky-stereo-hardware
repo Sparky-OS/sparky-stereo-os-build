@@ -19,20 +19,25 @@ dry=false
 auto=false
 rig_driver=
 nvidia_choice=edition
+wl_option=
 while (($#)); do
 	case "$1" in
 		--auto) auto=true ;;
 		--dry-run) dry=true ;;
 		--fixture) shift; fixture=${1:?Missing fixture directory} ;;
 		--rig-driver) shift; rig_driver=${1:?Missing rig driver package} ;;
+		--broadcom-wl) shift; wl_option=${1:?Missing --broadcom-wl value: ask, yes, no, repair or reset} ;;
 		--nvidia) shift; nvidia_choice=${1:?Missing NVIDIA choice: edition or nouveau} ;;
 		# NVIDIA's i386 libraries at the installed driver's version, for i386 enabled after the driver (the Repair of the
 		# problem dpkg's hook keeps; ORDER 363)
 		--nvidia-i386) exec "$LIB/nvidia-i386" install ;;
-		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY] [--rig-driver PACKAGE] [--nvidia edition|nouveau] [--nvidia-i386]'
+		--help) echo 'sparky-stereo-hardware [--auto] [--dry-run] [--fixture DIRECTORY] [--rig-driver PACKAGE] [--nvidia edition|nouveau] [--nvidia-i386] [--broadcom-wl ask|yes|no|repair|reset]'
 			echo '  --nvidia edition (the default): the edition'"'"'s NVIDIA driver for the card: its open modules with HDMI 3D on Turing and newer, NVIDIA'"'"'s 580 driver on Maxwell, Pascal and Volta'
 			echo '  --nvidia nouveau: keep nouveau'
 			echo '  --nvidia-i386: only NVIDIA'"'"'s 32-bit libraries (nvidia-driver-libs:i386, libcuda1:i386) at the installed driver'"'"'s version, where dpkg has i386'
+			echo '  --broadcom-wl ask: for a Broadcom Wi-Fi card no driver of the kernel drives (BCM4360, BCM4352): show Broadcom'"'"'s licence and install Debian'"'"'s unmodified broadcom-sta-dkms (wl) only on your yes'
+			echo '  --broadcom-wl yes: you have read the licence (it is printed) and accept it: install; no: Not now (kept for this machine); repair: go on with what you accepted; reset: be asked again'
+			echo '  Alone, --broadcom-wl does only this step; with --auto it is one step of the run'
 			exit 0 ;;
 		*) echo "Unknown option: $1" >&2; exit 2 ;;
 	esac
@@ -40,6 +45,7 @@ while (($#)); do
 done
 # Detection and plan parsing use stable output; Repair above keeps the person's language.
 export LC_ALL=C.UTF-8
+case "$wl_option" in ''|ask|yes|no|repair|reset) ;; *) echo 'The Broadcom Wi-Fi choice is ask, yes, no, repair or reset' >&2; exit 2 ;; esac
 case "$rig_driver" in ''|hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) ;; *) echo 'Unknown rig driver' >&2; exit 2 ;; esac
 case "$nvidia_choice" in edition|nouveau) ;; *) echo 'The NVIDIA choice is edition (the default: the edition'"'"'s driver with HDMI 3D) or nouveau' >&2; exit 2 ;; esac
 if [[ -n "$fixture" ]] && ! $dry; then echo 'Fixtures require --dry-run' >&2; exit 2; fi
@@ -49,10 +55,20 @@ if [[ -e /.dockerenv && -z "$fixture" ]]; then
 fi
 # shellcheck source=../lib/actions.sh
 source "$LIB/actions.sh"
+# shellcheck source=../lib/broadcom-wl.sh
+source "$LIB/broadcom-wl.sh"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
+# --broadcom-wl alone does only the Wi-Fi driver's step (with --auto it is one step of the run); reset only forgets Not now
+wl_only=false
+if [[ -n $wl_option ]] && ! $auto; then wl_only=true; fi
+if [[ $wl_option == reset ]]; then
+	wl_reset
+	echo 'Broadcom Wi-Fi: Not now is forgotten; the next Hardware Setup asks again'
+	exit 0
+fi
 # Started from the menu (not --auto, not a dry run), the person has no terminal: what fails is shown in a window too.
-if ! $auto && ! $dry; then export SPARKY_STEREO_HARDWARE_GUI=1; fi
+if ! $auto && ! $dry && ! $wl_only; then export SPARKY_STEREO_HARDWARE_GUI=1; fi
 # stop_run: the end of a run that cannot go on: its errors, in a window too when the menu started it, and exit 1
 stop_run() {
 	finish_run "${LOG:-}" 1 || exit 1
@@ -125,6 +141,13 @@ if $dry; then
 		log 'Fixture sensor module recommendations:'
 		sensor_modules "$FACTS/sensors-detect"
 	fi
+	if grep -Fxq $'action\tbroadcom-wl' "$WORK/plan"; then
+		if wl_declined; then
+			log "Would not ask about Broadcom's wl Wi-Fi driver: Not now was chosen for this machine (--broadcom-wl reset asks again)"
+		else
+			log "Would show the licence of broadcom-sta-dkms (Broadcom Software License Agreement, read from the package file) and install the package unmodified only on a yes: from $WL_POOL when it is there, else from the network with the download size said first"
+		fi
+	fi
 	if grep -Fxq $'action\tnvidia-open' "$WORK/plan"; then
 		if [[ $nvidia_choice == nouveau ]]; then
 			log "Would keep nouveau for the NVIDIA graphics, as chosen (--nvidia nouveau): the edition's NVIDIA driver with HDMI 3D would not be installed"
@@ -162,12 +185,28 @@ if $dry; then
 	exit 0
 fi
 
+if $wl_only; then
+	# only the Wi-Fi driver's step: a terminal session, no plan window (the step asks on the terminal)
+	failed=0
+	setup_broadcom_wl "$wl_option" || failed=1
+	trap - ERR
+	finish_run "$LOG" "$failed"
+	exit
+fi
 if ! $auto; then
 	load_strings
+	# Not now was chosen before: the plan says so, and has a button to be asked again
+	wl_again=false
+	if grep -Fxq $'action\tbroadcom-wl' "$WORK/plan" && wl_declined; then
+		wl_again=true
+		text=$(render_message 65 "$(wl_cards "$WORK/plan" | paste -sd, - | sed 's/,/, /g')")
+		printf 'note\tbroadcom-wl\t%s\n' "${text//@BUTTON@/$LOCAL66}" >>"$WORK/plan"
+	fi
 	# The plan, and the person's answer: install it, install it but keep nouveau for the NVIDIA graphics (offered only when
 	# the plan installs the edition's NVIDIA driver), or cancel. yad gives 1 for Cancel and 252 for a closed window; any
 	# other code means the window itself failed, which is said, never taken as an answer.
 	buttons=(--button="$LOCAL2:1")
+	if $wl_again; then buttons+=(--button="$LOCAL66:4"); fi
 	if grep -Eq $'^action\tnvidia-(open|legacy-580xx)$' "$WORK/plan"; then buttons+=(--button="$LOCAL4:2"); fi
 	buttons+=(--button="$LOCAL3:0")
 	# A Maxwell, Pascal or Volta card has two drivers that give different results: both are said above the plan, in the
@@ -181,15 +220,21 @@ if ! $auto; then
 	yad --text-info --title="$LOCAL1" --filename="$WORK/plan" --width=760 --height=500 "${explain[@]}" "${buttons[@]}" || answer=$?
 	case $(plan_answer "$answer") in
 		edition) ;;
+		wl-again) wl_reset ;;
 		nouveau) nvidia_choice=nouveau ;;
 		cancel) log 'Hardware Setup cancelled; nothing was changed'; exit 0 ;;
 		*) err 52 "$answer"; stop_run ;;
 	esac
 	# The child owns the execution lock; release it before launching the visible terminal.
 	flock -u 9
-	exec env SHELL=/bin/bash SPARKY_STEREO_HARDWARE_GUI=1 sparky-xterm "/usr/bin/sparky-stereo-hardware --auto --nvidia $nvidia_choice ${rig_driver:+--rig-driver $rig_driver}"
+	# the licence is asked first in the run's own window (the Wi-Fi driver is what a machine without a cable needs most)
+	wl_ask=
+	if grep -Fxq $'action\tbroadcom-wl' "$WORK/plan" && ! wl_declined; then wl_ask=ask; fi
+	exec env SHELL=/bin/bash SPARKY_STEREO_HARDWARE_GUI=1 sparky-xterm "/usr/bin/sparky-stereo-hardware --auto --nvidia $nvidia_choice ${rig_driver:+--rig-driver $rig_driver} ${wl_ask:+--broadcom-wl $wl_ask}"
 fi
 failed=0
+# the Wi-Fi driver of a Broadcom card no kernel driver drives: the licence and the person's yes first, then the checks
+setup_broadcom_wl "$wl_option" || failed=1
 # install_step PACKAGE... [OPTION...]: apt installs them, or the failure is said and counted; the setup goes on with the
 # steps that do not need them
 install_step() {

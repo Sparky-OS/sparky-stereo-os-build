@@ -82,6 +82,7 @@ plan_answer() {
 	case $1 in
 		0) echo edition ;;
 		2) echo nouveau ;;
+		4) echo wl-again ;;
 		1|252) echo cancel ;;
 		*) echo window-failed ;;
 	esac
