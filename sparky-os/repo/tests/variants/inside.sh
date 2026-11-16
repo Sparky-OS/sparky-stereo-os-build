@@ -16,7 +16,7 @@ bad() { echo "FAIL $*"; failed=1; }
 mk() { # name version arch variant text
 	local d=$T/pkg-$1-$3${4:+-$4}
 	mkdir -p "$d/DEBIAN" "$d/usr/bin"
-	{ printf 'Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: test <test@example.invalid>\nDescription: toy %s\n' "$1" "$2" "$3" "$1"
+	{ printf 'Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: test\nDescription: toy %s\n' "$1" "$2" "$3" "$1"
 	  [ -z "$4" ] || printf 'Architecture-Variant: %s\n' "$4"; } >"$d/DEBIAN/control"
 	printf '#!/bin/sh\necho "%s"\n' "$5" >"$d/usr/bin/$1"; chmod 755 "$d/usr/bin/$1"
 	dpkg-deb --root-owner-group -b "$d" "$6" >/dev/null
@@ -28,7 +28,7 @@ mk c 1.0 all '' "c, architecture all" "$S1/c_1.0_all.deb"
 cp "$S1"/*.deb "$S2/"
 mk a 1.0 amd64 amd64v3 "a built for x86-64-v3" "$S2/a_1.0_amd64v3.deb"
 export GNUPGHOME=/work/gnupg; rm -rf "$GNUPGHOME"; mkdir -m 700 "$GNUPGHOME"
-gpg --batch --pinentry-mode loopback --passphrase '' --quick-gen-key 'test <test@example.invalid>' default default never >/dev/null 2>&1
+gpg --batch --pinentry-mode loopback --passphrase '' --quick-gen-key 'test' default default never >/dev/null 2>&1
 FPR=$(gpg --with-colons --list-secret-keys | awk -F: '/^fpr:/ {print $10; exit}')
 export SPARKY_REPO_KEY=$FPR SPARKY_REPO_GNUPGHOME=$GNUPGHOME SPARKY_APPSTREAM=0 SPARKY_INSTALLABLE=off SPARKY_SCRATCH=/work/scratch TMPDIR=/work/scratch
 pub() { # script src dest
