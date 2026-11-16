@@ -1,0 +1,16 @@
+qt6-declarative (6.11.2+dfsg-3+stereo3d4) unstable; urgency=medium
+
+  * Quick: a window inside the frame Qt draws around it (client-side
+    decorations, where the desktop draws no frame) is drawn as a pair when
+    its style shows the depth of its elements, where the platform draws that
+    frame into both eyes (the window's _q_stereo_csd_pair_supported, which
+    the Wayland EGL window sets). Before, such a window asked for two views,
+    got them and showed one picture in both eyes (ORDER 583, s4-0001).
+  * The pair ends before the window's request for views changes with its
+    depth, so a framed window turned flat and back at once no longer ends on
+    a protocol error (the platform declared its surface a second time).
+  * libqt6quick6 depends on the libqt6waylandclient6 whose Wayland EGL
+    plugin draws the frame of such a pair into both eyes (qt6-base
+    +stereo3d23).
+  * Test: tst_qquickwindowstereo's drawsAFramedWindowAsAPair, which fails on
+    +stereo3d3.
