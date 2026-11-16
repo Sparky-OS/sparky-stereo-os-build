@@ -17,7 +17,7 @@ apt-get update >/dev/null 2>&1
 check "before: no drop-in" "[ ! -e $PW ]"
 apt-get -y install sparky-stereo-audio >/tmp/install.log 2>&1
 check "install: exit status 0" "dpkg -s sparky-stereo-audio | grep -q 'Status: install ok installed'"
-for f in $PW /etc/pipewire/client.conf.d/00-sparky-stereo-audio.conf /etc/pipewire/jack.conf.d/00-sparky-stereo-audio.conf \
+for f in $PW /etc/pipewire/client.conf.d/00-sparky-stereo-audio.conf \
 	/etc/pipewire/pipewire-pulse.conf.d/00-sparky-stereo-audio.conf $WP; do
 	check "install wrote $f with the package's mark" "head -n 1 $f | grep -q '^# sparky-stereo-audio:'"
 done

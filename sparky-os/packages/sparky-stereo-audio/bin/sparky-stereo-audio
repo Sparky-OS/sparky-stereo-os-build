@@ -48,7 +48,6 @@ def conf_dirs():
     return {
         'pipewire': ROOT + '/etc/pipewire/pipewire.conf.d',
         'client': ROOT + '/etc/pipewire/client.conf.d',
-        'jack': ROOT + '/etc/pipewire/jack.conf.d',
         'pulse': ROOT + '/etc/pipewire/pipewire-pulse.conf.d',
         'wireplumber': ROOT + '/etc/wireplumber/wireplumber.conf.d',
     }
@@ -474,7 +473,6 @@ def cmd_detect(write):
     dirs = conf_dirs()
     plan = [(dirs['pipewire'], pipewire_file(d['rates'], d['default'])),
             (dirs['client'], stream_file(d['quality'])),
-            (dirs['jack'], stream_file(d['quality'])),
             (dirs['pulse'], stream_file(d['quality'])),
             (dirs['wireplumber'], wireplumber_file(d['quality']))]
     rc = 0

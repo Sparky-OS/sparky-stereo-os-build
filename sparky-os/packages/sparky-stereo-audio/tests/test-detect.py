@@ -157,10 +157,10 @@ class Run(unittest.TestCase):
     def path(self, *p):
         return os.path.join(self.root, *p)
 
-    def test_write_makes_the_five_drop_ins(self):
+    def test_write_makes_the_four_drop_ins(self):
         r = self.run_tool('detect', '--write')
         self.assertEqual(r.returncode, 0, r.stderr)
-        for f in ('etc/pipewire/pipewire.conf.d', 'etc/pipewire/client.conf.d', 'etc/pipewire/jack.conf.d',
+        for f in ('etc/pipewire/pipewire.conf.d', 'etc/pipewire/client.conf.d',
                   'etc/pipewire/pipewire-pulse.conf.d', 'etc/wireplumber/wireplumber.conf.d'):
             self.assertTrue(os.path.exists(self.path(f, '00-sparky-stereo-audio.conf')), f)
         t = open(self.path('etc/pipewire/pipewire.conf.d/00-sparky-stereo-audio.conf')).read()

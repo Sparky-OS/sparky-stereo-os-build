@@ -25,7 +25,7 @@ This package gives each computer the defaults of Daniel Ramos's design (ORDER it
 - Nothing is forced on a device: PipeWire still refuses a rate the device cannot take.
 
 Read the choices of this computer, in your language: `sparky-stereo-audio show`.
-The files are 00-sparky-stereo-audio.conf in /etc/pipewire/pipewire.conf.d, client.conf.d, jack.conf.d, pipewire-pulse.conf.d and /etc/wireplumber/wireplumber.conf.d.
+The files are 00-sparky-stereo-audio.conf in /etc/pipewire/pipewire.conf.d, client.conf.d, pipewire-pulse.conf.d and /etc/wireplumber/wireplumber.conf.d (JACK clients run at the graph's rate and are never converted, so they have no file).
 They start with 00, so a file of yours with any later name in /etc, or any file in ~/.config/pipewire and ~/.config/wireplumber, wins; the package never edits your files and leaves a file of that name that it did not write as it is, saying so.
 
 Commands:

@@ -56,7 +56,7 @@ cat >"$D/DEBIAN/postrm" <<'EOS'
 set -e
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
 	# only the files this package wrote carry its mark; a file of the person with the same name stays
-	for f in /etc/pipewire/pipewire.conf.d /etc/pipewire/client.conf.d /etc/pipewire/jack.conf.d /etc/pipewire/pipewire-pulse.conf.d /etc/wireplumber/wireplumber.conf.d; do
+	for f in /etc/pipewire/pipewire.conf.d /etc/pipewire/client.conf.d /etc/pipewire/pipewire-pulse.conf.d /etc/wireplumber/wireplumber.conf.d; do
 		p=$f/00-sparky-stereo-audio.conf
 		if [ -f "$p" ] && head -n 1 "$p" | grep -q '^# sparky-stereo-audio:'; then
 			rm -f "$p" || echo "sparky-stereo-audio: $p could not be removed: it keeps the sound defaults of the removed package. Remove it by hand." >&2
