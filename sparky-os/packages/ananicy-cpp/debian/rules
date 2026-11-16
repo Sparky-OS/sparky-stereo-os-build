@@ -1,0 +1,19 @@
+#!/usr/bin/make -f
+# Created by Daniel Ramos (Capitain Jack) 2026/11/16
+# Copyright 2026 under the GNU GPL3 License
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+# the system's fmt, spdlog and nlohmann_json; systemd's notify; no BPF listener (clang and libbpf)
+override_dh_auto_configure:
+	dh_auto_configure -- -DCMAKE_BUILD_TYPE=Release -DVERSION=1.1.1 -DENABLE_SYSTEMD=ON -DUSE_EXTERNAL_JSON=ON \
+		-DUSE_EXTERNAL_SPDLOG=ON -DUSE_EXTERNAL_FMTLIB=ON -DUSE_BPF_PROC_IMPL=OFF
+
+# the unit is installed, never enabled or started by the package (off until the person switches it on)
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start --name=ananicy-cpp
+
+override_dh_auto_test:
+	obj-*/ananicy-cpp --version || obj-*/ananicy-cpp --help

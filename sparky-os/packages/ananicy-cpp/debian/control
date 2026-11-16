@@ -1,0 +1,20 @@
+Source: ananicy-cpp
+Section: admin
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), cmake, g++, pkgconf, libsystemd-dev, nlohmann-json3-dev, libspdlog-dev, libfmt-dev
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+Homepage: https://gitlab.com/ananicy-cpp/ananicy-cpp
+
+Package: ananicy-cpp
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Auto nice daemon, a C++ rewrite of Ananicy
+ Sets the nice value, scheduling class, I/O class, OOM score, CPU affinity
+ and cgroup of running programs from rule files. The unit is installed and
+ stays off until it is enabled; the package ships no rules.
+ .
+ Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo"
+ Pijanowski). Upstream: Vladislav Nepogodin and the ananicy-cpp contributors;
+ the idea and the first rules are Nefelim4ag's Ananicy.
