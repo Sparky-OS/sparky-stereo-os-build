@@ -1,4 +1,4 @@
-# Sparky Stereo OS, ORDER 592: vlc-stereo +stereo3d21, the +stereo3d20+lc1 source (staged by ORDER 578, published by round r1116a) made plain again (repo/plain-from-lc.py), with 3d-0050 (a film with a picture and no audio track says so: the volume control's tooltip and, once the picture is there, a message of five seconds on it; the rule is the stereo layer's Stereo::NoSound::applies, ORDER 579) added as its own patch, built through Lean Code. Runs as root inside a container of the published set (Debian testing, deb-multimedia and the edition's repository pinned at 1001); mounts: /in the +stereo3d20+lc1 source package, /toolkit sparky-os, /prev the +stereo3d20+lc1 .deb files for the link and start gate, /out. Created by Daniel Ramos (Capitain Jack) 2026/11/16
+# Sparky Stereo OS, ORDER 592: vlc-stereo +stereo3d21, the +stereo3d20+lc1 source (staged by ORDER 578, published by round r1116a) made plain again (repo/plain-from-lc.py), with 3d-0050 (a film with a picture and no audio track says so: the volume control's tooltip and, once the picture is there, a message of five seconds on it; the rule is the stereo layer's Stereo::NoSound::applies, ORDER 579) added as its own patch, and 3d-0051 (VLC Stereo's own catalogues are read: its data directory is the one it was configured for, not Debian's /usr/share/vlc), built through Lean Code. Runs as root inside a container of the published set (Debian testing, deb-multimedia and the edition's repository pinned at 1001); mounts: /in the +stereo3d20+lc1 source package, /toolkit sparky-os, /prev the +stereo3d20+lc1 .deb files for the link and start gate, /out. Created by Daniel Ramos (Capitain Jack) 2026/11/16
 # Copyright 2026 under the GNU GPL3 License
 set -euo pipefail
 REPRO=/toolkit/repo/reproducible.py
@@ -10,6 +10,7 @@ export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 sh /run/https-only-apt.sh || exit 1
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4 DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 P=3d-0050-qt-say-when-a-film-has-no-sound.patch
+Q=3d-0051-linux-the-data-directory-of-a-build-configured-for-its-own.patch
 apt-get -y --error-on=any update >/dev/null 2>&1 </dev/null
 apt-get -y --no-install-recommends install devscripts quilt xz-utils >/dev/null 2>&1 </dev/null
 mkdir -p /out/lc && cd /out/lc && cp /in/* .
@@ -19,9 +20,11 @@ dpkg-source -x vlc_3.0.24-1+stereo3d20+lc1.dsc src >/dev/null 2>&1
 python3 /toolkit/repo/plain-from-lc.py --drop-plan src
 cd src
 cp /toolkit/upstream/vlc/${P#3d-} debian/patches/$P
+cp /toolkit/upstream/vlc/${Q#3d-} debian/patches/$Q
 echo $P >> debian/patches/series
+echo $Q >> debian/patches/series
 QUILT_PATCHES=debian/patches quilt push -a
-dch --date "$SOURCE_DATE_RFC2822" --newversion 3.0.24-1+stereo3d21 --distribution unstable 'A film with a picture and no audio track says so (3d-0050): the tooltip of the volume control and, a moment after the picture starts, a message of its own on the picture for five seconds read "This film has no sound." in the ten languages of the edition, instead of leaving a silent volume control that looks broken. The streams are counted without the Disable entry every kind carries; the volume control stays usable; a film with sound and an audio-only file behave as in +stereo3d20. The rule is the one of Stereo::NoSound::applies in the edition'"'"'s stereo layer (ORDER 579).'
+dch --date "$SOURCE_DATE_RFC2822" --newversion 3.0.24-1+stereo3d21 --distribution unstable 'A film with a picture and no audio track says so (3d-0050): the tooltip of the volume control and, a moment after the picture starts, a message of its own on the picture for five seconds read "This film has no sound." in the ten languages of the edition, instead of leaving a silent volume control that looks broken. The streams are counted without the Disable entry every kind carries; the volume control stays usable; a film with sound and an audio-only file behave as in +stereo3d20. The rule is the one of Stereo::NoSound::applies in the edition'"'"'s stereo layer (ORDER 579). The catalogues of VLC Stereo are read (3d-0051): VLC worked its data directory out from the place of its libraries, which for vlc-stereo is Debian'"'"'s /usr/share/vlc, and looked for the catalogues in /usr/share/locale, so every string the edition adds, and the interface where vlc-l10n is not installed, showed in English in every language; the directory the build was configured for, /usr/share/vlc-stereo/vlc, is used now (VLC_DATA_PATH still wins).'
 head -14 debian/changelog
 PYTHONPATH=/toolkit python3 -m lean.debian_prepare . 3.0.24-1+stereo3d21+lc1 --toolkit /toolkit
 apt-get -y --no-install-recommends build-dep /out/lc/src > /out/build-dep.log 2>&1 </dev/null || { tail -20 /out/build-dep.log; exit 1; }

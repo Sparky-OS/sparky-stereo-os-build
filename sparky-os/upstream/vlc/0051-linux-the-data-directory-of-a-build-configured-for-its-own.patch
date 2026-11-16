@@ -1,0 +1,31 @@
+Description: linux: a build configured for a data directory of its own reads its data and its message catalogues there. VLC finds its data directory from the place of its libraries (src/linux/dirs.c, config_GetDataDir): for /usr/lib/x86_64-linux-gnu/vlc-stereo that is /usr/share/vlc, Debian's, and vlc_bindtextdomain then looks for the catalogues in /usr/share/locale, so VLC Stereo showed every string of its own, and the whole interface where Debian's vlc-l10n is not installed, in English, in every language, though its catalogues are in /usr/share/vlc-stereo/locale. The directory the build was configured for (PKGDATADIR) is used when it is not Debian's own /usr/share/vlc and it exists. VLC_DATA_PATH still wins, as before.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky Stereo OS (ORDER 592)
+Forwarded: not-needed
+Last-Update: 2026-11-16
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+
+--- a/src/linux/dirs.c
++++ b/src/linux/dirs.c
+@@ -24,6 +24,7 @@
+ 
+ #include <stdio.h>
+ #include <string.h>
++#include <unistd.h>
+ #include <linux/limits.h>
+ 
+ #include <vlc_common.h>
+@@ -104,6 +105,13 @@
+     if (path != NULL)
+         return strdup (path);
+ 
++    /* A build configured for a data directory of its own (VLC Stereo: /usr/share/vlc-stereo/vlc, beside the /usr/share/vlc
++     * of Debian's VLC) reads its data and its message catalogues (../locale) there. The directory worked out below from
++     * the place of the libraries is /usr/share/vlc for /usr/lib/ARCH/vlc-stereo, which is Debian's, so the catalogues of
++     * VLC Stereo were never read (ORDER 592). */
++    if (strcmp (PKGDATADIR, "/usr/share/vlc") != 0 && access (PKGDATADIR, X_OK) == 0)
++        return strdup (PKGDATADIR);
++
+     char *libdir = config_GetLibDir ();
+     if (libdir == NULL)
+         return NULL; /* OOM */
