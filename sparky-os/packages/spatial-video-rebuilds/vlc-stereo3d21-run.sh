@@ -1,0 +1,35 @@
+#!/bin/bash
+# Created by Daniel Ramos (Capitain Jack) 2026/11/16
+# Copyright 2026 under the GNU GPL3 License
+# ORDER 592: run vlc-stereo3d21-build.sh in a container of IMAGE (Debian testing with the edition's repository pinned at
+# 1001 and deb-multimedia as apt sources), with the build's provenance recorded (build-provenance.sh) and apt over HTTPS
+# only (tools/https-only-apt.sh).
+# Usage: SPARKY_LC_ARCHIVE_DIR=DIR [VLC_PREV_DIR=DIR] vlc-stereo3d21-run.sh IMAGE OUT [REPO]
+#   DIR    the link gate's folder, mounted at /archive: sources.json (Debian forky, deb-multimedia forky and the edition's published tree as file:///repo) and the public keyrings it names
+#   IMAGE  the container image (its apt sources: the edition at pin 1001 over Debian testing and deb-multimedia)
+#   OUT    an empty folder for the build (the packages end in OUT/out/lc)
+#   REPO   the published repository, a folder (default /var/tmp/sparky-repo-current), mounted at /repo for the link gate
+#   VLC_PREV_DIR  the folder that holds the +stereo3d20+lc1 source and .deb files (default REPO's pool; before round r1116a is published, ORDER 578's stage)
+# The recipe's own folder must be committed: the record then says recipeDirty False.
+set -euo pipefail
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+tree=$(cd "$here/../../.." && pwd)
+[ -n "${SPARKY_LC_ARCHIVE_DIR:-}" ] || { echo "SPARKY_LC_ARCHIVE_DIR is not set: the link gate's folder (see sparky-os/lean/archive.md)" >&2; exit 2; }
+image=${1:?image} out=${2:?out folder} repo=$(readlink -f "${3:-/var/tmp/sparky-repo-current}")
+[ -z "$(ls -A "$out" 2>/dev/null)" ] || { echo "$out is not empty" >&2; exit 1; }
+mkdir -p "$out/in" "$out/prev" "$out/out"
+pool=${VLC_PREV_DIR:-$repo/pool/main/v/vlc}
+cp "$pool"/vlc_3.0.24-1+stereo3d20+lc1.dsc "$pool"/vlc_3.0.24-1+stereo3d20+lc1.debian.tar.xz "$pool"/vlc_3.0.24.orig.tar.xz "$pool"/vlc_3.0.24.orig.tar.xz.asc "$out/in/"
+cp "$pool"/vlc-stereo_3.0.24-1+stereo3d20+lc1_amd64.deb "$pool"/vlc-stereo-plugin-pipewire_3.0.24-1+stereo3d20+lc1_amd64.deb "$pool"/vlc-stereo-lc-hr_3.0.24-1+stereo3d20+lc1_amd64.deb "$out/prev/"
+. "$tree/sparky-os/repo/build-provenance.sh"
+sparky_provenance_init "$image" "$here"
+docker run --rm --ulimit core=0 --cpus 4 --platform linux/amd64 ${SPARKY_CONTAINER_NAME:+--name "$SPARKY_CONTAINER_NAME"} \
+	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/out/link-scratch \
+	--mount "type=bind,src=$SPARKY_LC_ARCHIVE_DIR,dst=/archive,readonly" \
+	--mount type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/host-ca.crt,readonly \
+	--mount "type=bind,src=$tree/tools/https-only-apt.sh,dst=/run/https-only-apt.sh,readonly" \
+	--mount "type=bind,src=$repo,dst=/repo,readonly" --mount "type=bind,src=$tree/sparky-os,dst=/toolkit,readonly" \
+	--mount "type=bind,src=$out/in,dst=/in,readonly" --mount "type=bind,src=$out/prev,dst=/prev,readonly" \
+	--mount "type=bind,src=$out/out,dst=/out" \
+	--mount "type=bind,src=$here/vlc-stereo3d21-build.sh,dst=/run/build.sh,readonly" --entrypoint "" "$image" bash /run/build.sh

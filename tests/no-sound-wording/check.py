@@ -4,7 +4,8 @@
 # check fails when a copy differs from the layer's in a language it ships, or when a required language is missing.
 #   python3 tests/no-sound-wording/check.py            runs from a clone with no arguments: the layer's sentences are kept in
 #                                                      layer-sentences.json beside this file, the copies are read from the recipe's own
-#                                                      patches (sparky-os/upstream/no-sound/patches); when a stereo-layer clone sits beside
+#                                                      patches (sView's in sparky-os/upstream/no-sound/patches, VLC's 3d-0050 in
+#                                                      sparky-os/upstream/vlc since ORDER 592); when a stereo-layer clone sits beside
 #                                                      the build tree (../stereo-layer/po) or STEREO_LAYER_PO names its po folder, the
 #                                                      layer's own catalogue is compared with the kept sentences too
 #   --update LAYER_PO                                  rewrite layer-sentences.json from the layer's catalogue
@@ -16,6 +17,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 TREE = HERE.parent.parent
 PATCHES = TREE / 'sparky-os' / 'upstream' / 'no-sound' / 'patches'
+VLC_PATCH = TREE / 'sparky-os' / 'upstream' / 'vlc'
 REFERENCE = HERE / 'layer-sentences.json'
 LANGS = ['de', 'es', 'fr', 'ja', 'ko', 'pl', 'pt_BR', 'zh_CN', 'zh_TW']
 SVIEW = {'de': 'german', 'es': 'spanish', 'fr': 'french', 'ja': 'japanese', 'ko': 'korean', 'pl': 'polish', 'pt_BR': 'portuguesebr',
@@ -67,6 +69,14 @@ def vlc_from_patch(patch):
         elif cur and out.get(cur) == 'next' and line.startswith('+msgstr "'):
             out[cur] = line[len('+msgstr "'):-1]
     return out
+
+
+def vlc_code_uses(patch):
+    # the C++ the patch adds names the sentence in its three places (the slider's tooltip, the control's two tooltips, the picture's message)
+    # through qtr() or _(), so the msgid the catalogues translate is the very text the program asks for
+    added = [l[1:] for l in Path(patch).read_text(encoding='utf8').splitlines() if l.startswith('+') and not l.startswith('+++')]
+    calls = [l for l in added if 'This film has no sound' in l and ('qtr(' in l or '_(' in l)]
+    return len(calls), [l for l in calls if ('"' + ENGLISH + '"') not in l]
 
 
 def vlc_from_po(folder):
@@ -122,7 +132,13 @@ def main():
     if a.vlc_po:
         vlc = vlc_from_po(a.vlc_po)
     else:
-        vlc = vlc_from_patch(a.vlc_patch or next(PATCHES.glob('vlc-*.patch')))
+        vlc_patch = a.vlc_patch or next(VLC_PATCH.glob('0050-*.patch'))
+        vlc = vlc_from_patch(vlc_patch)
+        n, off = vlc_code_uses(vlc_patch)
+        if n < 4:
+            bad.append(f'vlc: the patch asks for the sentence {n} times in code, four are expected (slider, two control tooltips, picture message)')
+        for l in off:
+            bad.append(f'vlc: a call names the sentence differently from the msgid: {l.strip()!r}')
     bad += run(ref, sview, vlc)
     if a.self_test:
         drifted = dict(sview); drifted['german'] = (drifted.get('german') or '') + '!'

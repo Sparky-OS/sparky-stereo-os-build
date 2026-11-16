@@ -10,7 +10,7 @@ The sentence "This film has no sound." and the rule (loaded, a picture, no audio
 | dragonplayer 4:26.04.0-1+stereo3d12+lc1 | `mk-successors.sh` | patches/dragon-0014 |
 | plank-player ...-1+stereo3d5+lc1 | `mk-successors.sh` | patches/plank-player-0007 |
 | sview 26.9+stereo3d6+lc1 | `mk-sview-source.sh` from the sView fork commit 54469b1, the successor of 41bddfc6 (ORDER 529, +stereo3d5) | patches/sview-26.9+stereo3d6-from-stereo3d5.patch (for reading) |
-| VLC Stereo | no package from this recipe | patches/vlc-3d-0050-... (a proposal for the VLC recipe, after 3d-0049 of +stereo3d20; not applied here) |
+| VLC Stereo 3.0.24-1+stereo3d21+lc1 | `packages/spatial-video-rebuilds/vlc-stereo3d21-run.sh` (ORDER 592) | `upstream/vlc/0050-qt-say-when-a-film-has-no-sound.patch` (3d-0050 in the series, after 3d-0049 of +stereo3d20) |
 
 `build-in-container.sh` builds the binaries of a made source with `dpkg-buildpackage -b`, so the staged `.dsc` and tarballs stay the ones the source scripts made.
 `tests/no-sound-wording/check.py` fails when the sView or VLC copy of the sentence differs from the layer's.
