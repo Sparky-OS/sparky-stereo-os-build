@@ -1,4 +1,10 @@
 -------------------------------------------------------------------------------
+  Version 20261116.1~sparky9~0 (2026-11-16)
+-------------------------------------------------------------------------------
+  * Every sysctl, udev, tmpfiles and modules-load value names the file it comes from (ORDER 108; Daniel, 2026-11-02: "adopt what main gammer distros were using"; each value his design when a main gaming distribution ships the same value), read on 2026-11-16 from CachyOS-Settings master 9e6603a82c89 and Bazzite main 69db4d1cf1, with the exact file. Comments only: the effective values are the same lines as in 20261111.1 (the Lean Code installed file is unchanged)
+  * Found while reading the sources, nothing changed: CachyOS-Settings replaced vm.dirty_bytes, vm.dirty_background_bytes and vm.dirty_writeback_centisecs by vm.dirty_ratio = 10 and vm.dirty_background_ratio = 3 with a per-device cap (commit 218f5c7de3, #289, 2026-11-09), so ours are the values of 2026-09-24; Bazzite's Steam Deck file has vm.dirty_background_bytes = 134217728, ours 67108864. vm.swappiness = 1 and kernel.kexec_load_disabled = 1 are Daniel's own, no distribution's. vm.compaction_proactiveness = 0 and the 256 KiB read-ahead rest on CachyOS kernel changes that were not re-read
+
+-------------------------------------------------------------------------------
   Version 20261111.1~sparky9~0 (2026-11-11)
 -------------------------------------------------------------------------------
   * ORDER 521: Reconcile inherited /tmp tmpfs fstab entries when tmp.mount is masked.

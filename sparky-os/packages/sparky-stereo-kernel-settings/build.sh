@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=20261111.1~sparky9~0+lc1
+VERSION=20261116.1~sparky9~0+lc1
 PACKAGE=sparky-stereo-kernel-settings
 DEPENDS='python3, apt, sparky-stereo-problems, libpam-modules, systemd, mount, udev'
 FILES='etc/security/limits.d/20-sparky-audio.conf etc/tmpfiles.d/tmp.conf usr/lib/modules-load.d/sparky-stereo.conf usr/lib/sysctl.d/70-sparky-stereo.conf usr/lib/tmpfiles.d/sparky-thp.conf usr/lib/udev/rules.d/60-sparky-block.rules usr/lib/udev/rules.d/70-sparky-ntsync.rules usr/lib/udev/rules.d/99-sparky-audio.rules'
