@@ -63,7 +63,10 @@ id builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd source
 sed -i "s/^mk_add_options MOZ_PARALLEL_BUILD=.*/mk_add_options MOZ_PARALLEL_BUILD=${BROWSER_JOBS:-8}/" debian/mozconfig
-runuser -u builder -- env SPARKY_BROWSER_TOOLCHAIN_ROOT=/browser-toolchains dpkg-buildpackage -us -uc -b ${BROWSER_RESUME:+-nc} -j${BROWSER_JOBS:-8}
+# A resumed build keeps its objects; a mounted object folder (BROWSER_OBJ_DIR, BROWSER_RUST_DIR) cannot be removed by debian/rules
+# clean ("Device or resource busy"), and the freshly unpacked source has nothing to clean: both build without cleaning.
+if [ -n "${BROWSER_RESUME:-}${BROWSER_MOUNTED:-}" ]; then NC=-nc; else NC=; fi
+runuser -u builder -- env SPARKY_BROWSER_TOOLCHAIN_ROOT=/browser-toolchains dpkg-buildpackage -us -uc -b $NC -j${BROWSER_JOBS:-8}
 cp .sparky-lc/source.json /work/native-source.json
 cd /work/build
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/build/*+lc1_*.deb
