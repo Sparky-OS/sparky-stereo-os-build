@@ -401,6 +401,9 @@ def prepare(root, hr_root=None, *, documentation=False, preserve=None, retired=N
         for key in ('homepage', 'bugs'):
             if key in fields:
                 set_fields(hr / 'DEBIAN/control', {key.title(): fields[key]})
+        # an apt architecture variant's companion is the variant's (ORDER 108): check_debs pairs them by it
+        if 'architecture-variant' in fields:
+            set_fields(hr / 'DEBIAN/control', {'Architecture-Variant': fields['architecture-variant']})
         copyright_file = root / f'usr/share/doc/{p}/copyright'
         if copyright_file.is_file():
             dest = hr / f'usr/share/doc/{p}-lc-hr/copyright'
