@@ -12,8 +12,8 @@
 #   repair  install those packages again: apt takes the baseline build on this processor (the Repair of the notice)
 #   --dry-run  print the engine commands instead of running them
 # The level is the loader's own list, the lines marked "supported, searched", as detect.py reads it. The packages are the
-# installed ones whose dpkg status carries Architecture-Variant: amd64vN (dpkg keeps the field as the repository wrote it).
-# SPARKY_VARIANT_FIXTURE=DIR (tests): DIR/ldso-help and DIR/status replace the loader and /var/lib/dpkg/status.
+# installed ones whose dpkg record carries Architecture-Variant: amd64vN (dpkg keeps the field as the repository wrote it).
+# SPARKY_VARIANT_FIXTURE=DIR (tests): DIR/ldso-help and DIR/installed (dpkg-query lines: status, name, variant) replace the loader and dpkg.
 import os, re, subprocess, sys
 
 PKG = "sparky-stereo-hardware"
@@ -49,18 +49,24 @@ def cpu_level():
 
 
 def variant_packages():
-    path = os.path.join(FIXTURE, "status") if FIXTURE else ROOT + "/var/lib/dpkg/status"
+    """name -> level for the installed packages whose status carries Architecture-Variant: amd64vN (dpkg-query reads the field as written)."""
+    if FIXTURE:
+        with open(os.path.join(FIXTURE, "installed")) as f:
+            lines = f.read().splitlines()
+    else:
+        out = subprocess.run(["dpkg-query", "-W", "-f", "${db:Status-Abbrev}\t${Package}\t${Architecture-Variant}\n"], capture_output=True, text=True)
+        if out.returncode != 0:
+            say("dpkg-query failed (exit status %d): %s" % (out.returncode, out.stderr.strip()))
+            raise SystemExit(1)
+        lines = out.stdout.splitlines()
     found = {}
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for stanza in f.read().split("\n\n"):
-            if "Architecture-Variant:" not in stanza:
-                continue
-            fields = dict(re.findall(r"^([A-Za-z-]+): (.*)$", stanza, re.M))
-            if not fields.get("Status", "").endswith(" installed"):
-                continue
-            m = re.fullmatch(r"amd64v([1-9])", fields.get("Architecture-Variant", "").strip())
-            if m:
-                found[fields["Package"]] = int(m.group(1))
+    for line in lines:
+        parts = line.split("\t")
+        if len(parts) != 3 or not parts[0].startswith("ii"):
+            continue
+        m = re.fullmatch(r"amd64v([1-9])", parts[2].strip())
+        if m:
+            found[parts[1]] = int(m.group(1))
     return found
 
 
