@@ -46,7 +46,7 @@
 02-carry-stereo-ramos/0007-drm-i915-drm-nouveau-drm-amdgpu-side-by-side-full-li.patch
 02-carry-stereo-ramos/0008-drm-nouveau-dispnv50-16-bpc-HDMI-deep-colour-on-Turi.patch
 02-carry-stereo-ramos/0009-HID-betop-keep-the-input-device-when-the-pad-has-no-.patch
-# ORDER 569: independent UVC regression fix and hardware-free KUnit controls.
+# ORDER 569: independent UVC regression fix and hardware-free KUnit controls (first in build 17, all three flavours: 7.3.1-17+lc1).
 02-carry-stereo-ramos/0010-media-uvcvideo-decode-unaligned-bulk-payloads.patch
 02-carry-stereo-ramos/0011-media-uvcvideo-test-bulk-payload-boundaries.patch
 
@@ -390,7 +390,7 @@
 #      0007 KUnit: a vkms-config case, vkms-frame-sequential (listing and atomic check, opted in and not) and vkms-frame-sequential-model (connector types, eye order, MISC1/VSC values).
 #      Tests: kernel/tests/kunit (drm-stereo.kunitconfig runs the VKMS suites), kernel/tests/vkms-frame-sequential (QEMU guest: configfs device with two DisplayPort connectors, IGT's kms_frame_sequential, the negative controls) and kernel/tests/igt (two patches on IGT aa4739436: the frame-sequential layout in IGT's stereo framebuffer helper and mode dumps, and kms_frame_sequential).
 #      Upstream: VKMS (Louis Chauvet; reviewers Haneen Mohammed, Simona Vetter, Melissa Wen) after the core RFC of group 36, 0004-0007 rebased on the configfs series; 0001 may go first, alone. IGT: kms_frame_sequential with the core RFC (its flag is not in the uAPI yet). Nothing sent.
-#      0008 to 0010 (ORDER 450, next build): a VKMS connector lists the HDMI 3D modes of its EDID. Builds 14 and 16 listed none: the EDID parser added them and drm_mode_validate_stereo() dropped each with MODE_NO_STEREO, because VKMS never set connector->stereo_allowed (the vkms-stereo-bench's patches "Allow stereo modes" and "Compose the frame of both eyes", written on Louis Chauvet's v5, did not come over when 0002 and 0003 replaced it). 0008 vkms_frame_size(): the composer, its line buffers and the writeback buffer use the frame of both eyes, drm_mode_get_hv_timing() (frame packing, line alternative, L + depth, side by side (full) and the rest of HDMI 1.4a Appendix H), frame-sequential staying one eye at the mode's size. 0009 stereo_allowed on every VKMS connector (the frame-sequential opt-in is its own). 0010 KUnit: vkms-stereo (an EDID with frame packing, top and bottom, side by side (half); the frame sizes), vkms-stereo-whole-spec (every structure of Table H-2) and vkms-stereo-no-edid. Tests: kernel/tests/kunit (drm-stereo.kunitconfig) and a guest per published kernel with the vkms-stereo-bench's stereo-wb-test.
+#      0008 to 0010 (ORDER 450, build 17): a VKMS connector lists the HDMI 3D modes of its EDID. Builds 14 and 16 listed none: the EDID parser added them and drm_mode_validate_stereo() dropped each with MODE_NO_STEREO, because VKMS never set connector->stereo_allowed (the vkms-stereo-bench's patches "Allow stereo modes" and "Compose the frame of both eyes", written on Louis Chauvet's v5, did not come over when 0002 and 0003 replaced it). 0008 vkms_frame_size(): the composer, its line buffers and the writeback buffer use the frame of both eyes, drm_mode_get_hv_timing() (frame packing, line alternative, L + depth, side by side (full) and the rest of HDMI 1.4a Appendix H), frame-sequential staying one eye at the mode's size. 0009 stereo_allowed on every VKMS connector (the frame-sequential opt-in is its own). 0010 KUnit: vkms-stereo (an EDID with frame packing, top and bottom, side by side (half); the frame sizes), vkms-stereo-whole-spec (every structure of Table H-2) and vkms-stereo-no-edid. Tests: kernel/tests/kunit (drm-stereo.kunitconfig) and a guest per published kernel with the vkms-stereo-bench's stereo-wb-test.
 38-vkms-dp-frame-sequential/0001-drm-vkms-keep-the-composer-running-for-every-writeba.patch
 38-vkms-dp-frame-sequential/0002-drm-vkms-give-a-connector-a-type-and-an-EDID-in-its-.patch
 38-vkms-dp-frame-sequential/0003-drm-vkms-set-a-connector-s-type-and-EDID-through-con.patch
@@ -467,7 +467,7 @@
 43-amdgpu-vm-job-leak/0002-drm-amdgpu-free-job-when-amdgpu_vm_ptes_update-fails.patch
 
 # ==== 44-ev-btn: more than 80 buttons on a joystick: the EV_BTN event for generic, numbered buttons (ORDER 15)
-#      status: next build (build 17, all three flavours). Tomasz Pakuła's "[RFC PATCH 0/6] Input: New EV_BTN event for generic buttons", linux-input and LKML, 2026-01-04, carried as posted
+#      status: this build (build 17, all three flavours: 7.3.1-17+lc1). Tomasz Pakuła's "[RFC PATCH 0/6] Input: New EV_BTN event for generic buttons", linux-input and LKML, 2026-01-04, carried as posted
 #      (no v2 by 2026-11-06; torvalds/linux master of 2026-11-06 has no EV_BTN and KEY_MAX is still 0x2ff). Joysticks keep the EV_KEY codes they have (up to 80 buttons, as before) and
 #      also send EV_BTN with the HID button number, so a device with 128 buttons shows all 128 to a client that reads EV_BTN: 0001 the EV_BTN event type (0x06) and its documentation,
 #      0002 the button count in /proc/bus/input/devices, uevent and modalias, 0003 hid-input sends EV_BTN with each HID button, 0004 HID joysticks get EV_BTN for every Button-page usage
@@ -488,7 +488,7 @@
 44-ev-btn/0007-Size-the-evdev-buffer-for-EV-BTN-buttons.patch
 
 # ==== 45-amdgpu-soft-reset-guilty-fence: a GPU job that outlives amdgpu's 2 s watchdog on Southern Islands wedges the GPU until a reboot (ORDER 525)
-#      status: next build (all three flavours). Jesse Zhang's (AMD) "[PATCH v3 02/15] drm/amdgpu: complete the guilty fence at the end of a multi ring reset", amd-gfx 2026-10-28,
+#      status: this build (build 17, all three flavours: 7.3.1-17+lc1). Jesse Zhang's (AMD) "[PATCH v3 02/15] drm/amdgpu: complete the guilty fence at the end of a multi ring reset", amd-gfx 2026-10-28,
 #      not merged; backported to v7.3.1 without its 01/15 (which only passes the device to the helpers). gfx_v6_0 has no wave-kill soft recovery, so every gfx timeout goes to the
 #      IP block soft reset (Timur Kristóf's, 1fc76380c6ce, v7.3-rc1). When the same fence times out again, or a later fence sits at the freed address ring->guilty_fence still holds,
 #      amdgpu_ring_backup_unprocessed_commands drops the backup and sets ring->guilty_fence to NULL, and amdgpu_multi_ring_reset_helper_end passed that NULL on, so the fence was
@@ -498,3 +498,51 @@
 #      v4 of the series (2026-11-05) replaced this patch by Timur Kristóf's 02/13, which replays the first backup on every repeat; on gfx6 that can loop the same way (ORDER 525 model).
 #      Drop this group when a fix that completes a repeated guilty fence after an IP block soft reset is in the release this kernel moves to.
 45-amdgpu-soft-reset-guilty-fence/0001-drm-amdgpu-complete-the-guilty-fence-at-the-end-of-a.patch
+
+# ==== 46-stable-security-7.3.y: the security fixes linux-7.3.y took after 7.3.1, in stable's form, and the two CVE-2026-98432 follow-ups (ORDER 627)
+#      status: this build (build 17, all three flavours: 7.3.1-17+lc1). Checked on 2026-11-16: linux-7.3.y at v7.3.4 (7595a62d45ee), stable-rc at v7.3.5-rc1 (2a640ccd9d),
+#      stable-queue.git e7bd85eb3d, vulns.git 40859ff8f, torvalds master at v7.4-rc3 (aebb727447). Each patch is stable's commit (format-patch of linux-7.3.y) with an ORDER 627
+#      note; 0004 and 0005 are mainline commits cherry-picked -x, because no stable tree has them yet. All 32 apply strictly (git apply, no fuzz) on v7.3.1 + groups 01-45.
+#      0001-0003 CVE-2026-99288 "NoisyTCP" (Hyunwoo Kim, oss-security 2026/q4/715): a remote sender crashes a machine with a listening TCP port (two or more receive
+#      queues or RPS). 0002 is the fix (4e2b3ef19e0e, stable eb8a2d156f2c in 7.3.4); 0001 is stable's earlier commit on inet_connection_sock.c (Ruide Cao's MPTCP
+#      reqsk-clone use-after-free fix, c9c90cf437a9, 7.3.2); 0003 is the series' second patch (5b5d8f351dd9, queued for 7.3.5; memory ordering for weakly ordered CPUs).
+#      0004 (Eric Dumazet, fafbc4051123) and 0005 (Yingjie Wang, 2b9fd1a0abf0): CVE-2026-98432's fix (e3f33b0a1d89, in v7.3) applied to ireq->ipv6_opt and saved_syn.
+#      0006-0032: every kernel CVE record naming a 7.3.2, 7.3.3 or 7.3.4 commit whose files no other 7.3.y commit touched before it (apart from the CVE fixes carried here or
+#      in group 41), in stable order: io_uring (Josef Bacik's series, three more of it beside group 41's four), ALSA line6, fuse, libceph and ceph, em28xx, go7007, TCP
+#      snd_cwnd_clamp, udf, udlfb, virtio_net, the SMB client (two), tun's CAP_NET_ADMIN for an ownerless device, xen-netback and xen-blkback (0031 fixes 0021),
+#      xhci, speakup, nvmet-rdma. Not carried, a judgment for the rebase: each of ksmbd CVE-2026-99273, -99277 to -99279, -99289 to -99291 and -99309, nfsd -99310,
+#      SMB client -99272, -99274 and -99275 and sch_teql -99282 needs 7.3.y commits that are not security fixes; ksmbd -99276 and -99280 need none themselves but are two
+#      of the five session-lifetime fixes -99276 to -99280. Group 41 holds CVE-2026-99228 to -99231 and -99284.
+#      Drop this group at the rebase onto a 7.3.y release that has these commits (0004 and 0005 once stable takes them).
+46-stable-security-7.3.y/0001-mptcp-hold-MP_JOIN-msk-ref-when-cloning-reqsk.patch
+46-stable-security-7.3.y/0002-inet-reject-unhashed-sockets-during-established-look.patch
+46-stable-security-7.3.y/0003-net-restore-refcount-ordering-for-lockless-socket-ac.patch
+46-stable-security-7.3.y/0004-tcp-ipv6-free-ireq-ipv6_opt-after-an-RCU-grace-perio.patch
+46-stable-security-7.3.y/0005-tcp-free-saved_syn-after-an-RCU-grace-period.patch
+46-stable-security-7.3.y/0006-io_uring-io-wq-don-t-hide-a-link-from-cancellations.patch
+46-stable-security-7.3.y/0007-io_uring-don-t-flood-a-cancelling-task-with-task_wor.patch
+46-stable-security-7.3.y/0008-io_uring-cancel-rearm-local-work-wake-up-before-slee.patch
+46-stable-security-7.3.y/0009-ALSA-line6-Clear-prev_fbuf-on-capture-buffer-release.patch
+46-stable-security-7.3.y/0010-fuse-don-t-BUG-when-the-copy-buffer-is-exhausted.patch
+46-stable-security-7.3.y/0011-libceph-bound-mon_command-ack-decode-to-front-len.patch
+46-stable-security-7.3.y/0012-media-em28xx-reject-audio-endpoint-with-zero-packet-.patch
+46-stable-security-7.3.y/0013-media-go7007-only-set-audio_enabled-if-go7007_snd_in.patch
+46-stable-security-7.3.y/0014-net-ipv4-add-zero-check-for-snd_cwnd_clamp.patch
+46-stable-security-7.3.y/0015-udf-fix-return-value-for-non-recorded-allocated-exte.patch
+46-stable-security-7.3.y/0016-fbdev-udlfb-don-t-rebuild-the-mode-list-while-the-fr.patch
+46-stable-security-7.3.y/0017-virtio_net-atomically-disable-rx-mode-work.patch
+46-stable-security-7.3.y/0018-smb-client-stop-processing-a-read-response-after-a-r.patch
+46-stable-security-7.3.y/0019-smb-client-fix-slab-out-of-bounds-write-in-id_mode_t.patch
+46-stable-security-7.3.y/0020-tun-Require-CAP_NET_ADMIN-to-attach-to-an-ownerless-.patch
+46-stable-security-7.3.y/0021-xen-netback-Fix-UAF-when-reading-statistics-data.patch
+46-stable-security-7.3.y/0022-xen-netback-defer-xenvif_mcast_addr_list_free.patch
+46-stable-security-7.3.y/0023-xen-blkback-Avoid-UAF-when-reading-I-O-statistics.patch
+46-stable-security-7.3.y/0024-media-em28xx-fix-double-free-in-em28xx_alloc_urbs.patch
+46-stable-security-7.3.y/0025-usb-xhci-Fix-bounce-buffer-overflow.patch
+46-stable-security-7.3.y/0026-speakup-Fix-NULL-pointer-dereference-on-VT-switch-se.patch
+46-stable-security-7.3.y/0027-ceph-reject-mdsmaps-that-claim-more-than-CEPH_MAX_MD.patch
+46-stable-security-7.3.y/0028-ceph-require-the-dentry-lease-record-to-cover-struct.patch
+46-stable-security-7.3.y/0029-ceph-fix-integer-overflow-in-the-snap-trace-bounds-c.patch
+46-stable-security-7.3.y/0030-nvmet-rdma-reject-short-connection-requests.patch
+46-stable-security-7.3.y/0031-xen-netback-Fix-XenBus-connection-failure-cleanup.patch
+46-stable-security-7.3.y/0032-xen-netback-Zero-out-sring-pointers-on-unmap.patch

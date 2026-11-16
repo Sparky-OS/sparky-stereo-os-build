@@ -38,6 +38,7 @@ shutil.copytree(cfg.TREE / 'kernel/qualification/hibernate-bench', inputs / 'ben
 shutil.copytree(old / 'bench-run/r2/initrd-tree/guest', inputs / 'guest')
 shutil.copy2(cfg.TREE / 'kernel/qualification/guest/features.sh', inputs / 'features.sh')
 shutil.copy2(cfg.TREE / 'kernel/qualification/guest/modules.sh', inputs / 'modules.sh')
+shutil.copy2(cfg.TREE / 'kernel/qualification/guest/tcp.sh', inputs / 'tcp.sh')
 certificate = (base / 'kernel-signature-investigation/embedded-cert.pem' if rehearsal
                else (cfg.path('SPARKY_SECUREBOOT_DIR') / 'cert.pem'))
 fingerprint = subprocess.check_output(['openssl', 'x509', '-in', str(certificate),

@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Samuel Thibault <samuel.thibault@ens-lyon.org>
+Date: Sat, 29 Aug 2026 18:49:45 +0200
+Subject: speakup: Fix NULL pointer dereference on VT switch +
+ selection
+
+[ Upstream commit e1301ab8a8411fccc7effe0711fc09939a94953c ]
+
+When selecting/pasting very quickly after VT switch, the tty is not set
+yet, leading to a NULL dereference. We can just abort the operation.
+
+Reported-by: co+e5693071d903b832@bugs.sh
+Signed-off-by: Samuel Thibault <samuel.thibault@ens-lyon.org>
+Cc: stable@kernel.org
+Tested-by: Weiming Shi <bestswngs@gmail.com>
+Link: https://patch.msgid.link/20260829164945.2691317-3-samuel.thibault@ens-lyon.org
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+[ORDER 627: CVE-2026-99303 (kernel CVE record, vulns.git 40859ff8f); linux-7.3.y stable commit cb1b95b98b63 (v7.3.4), carried in stable's form; applies unchanged on v7.3.1 + groups 01-45 and the patches of this group before it.]
+---
+ drivers/accessibility/speakup/selection.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/accessibility/speakup/selection.c b/drivers/accessibility/speakup/selection.c
+index 1713ce4e0..a04a7e8c3 100644
+--- a/drivers/accessibility/speakup/selection.c
++++ b/drivers/accessibility/speakup/selection.c
+@@ -61,6 +61,9 @@ static struct speakup_selection_work speakup_sel_work = {
+ 
+ int speakup_set_selection(struct tty_struct *tty)
+ {
++	if (!tty)
++		return -ENODEV;
++
+ 	/* we get kref here first in order to avoid a subtle race when
+ 	 * cancelling selection work. getting kref first establishes the
+ 	 * invariant that if speakup_sel_work.tty is not NULL when
+@@ -120,6 +123,9 @@ static struct speakup_selection_work speakup_paste_work = {
+ 
+ int speakup_paste_selection(struct tty_struct *tty)
+ {
++	if (!tty)
++		return -ENODEV;
++
+ 	tty_kref_get(tty);
+ 	if (cmpxchg(&speakup_paste_work.tty, NULL, tty)) {
+ 		tty_kref_put(tty);
