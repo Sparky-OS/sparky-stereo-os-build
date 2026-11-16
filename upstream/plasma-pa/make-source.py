@@ -27,7 +27,9 @@ patches=source/'debian/patches'
 patches.mkdir(exist_ok=True)
 shutil.copy2(recipe/'patches/virtual-streams.patch',patches)
 translation=toolkit/'translations/plasma-pa-virtual-streams.po.patch'
-(patches/translation.name).write_text('Description: Translate virtual stream visibility labels\nAuthor: Daniel Campos Ramos\nOrigin: vendor\nForwarded: no\n\n'+translation.read_text())
+# Quilt consumes unified file headers; the catalogue keeps its Git section headers.
+translation_diff=''.join(line for line in translation.read_text().splitlines(True) if not line.startswith('diff --git '))
+(patches/translation.name).write_text('Description: Translate virtual stream visibility labels\nAuthor: Daniel Campos Ramos\nOrigin: vendor\nForwarded: no\n\n'+translation_diff)
 series=patches/'series'
 with series.open('a') as f:
     f.write('virtual-streams.patch\nplasma-pa-virtual-streams.po.patch\n')
