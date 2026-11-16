@@ -32,7 +32,8 @@ def operation(signature):
 functions = [operation("int StereoDepth::parallax(qreal depth, int viewWidth)"),
              operation("int StereoDepth::eyeShift(int parallax, StereoEye eye)")]
 import xml.etree.ElementTree as ET
-kcfg = ET.parse(a.source / "src/kwin.kcfg")
+kcfg_file = a.source / "src/kwin.kcfg"
+kcfg = ET.parse(kcfg_file)
 defaults = {}
 for entry in kcfg.iter():
     if entry.tag.rsplit('}', 1)[-1] == 'entry' and entry.get('name') in ('SunkLimit', 'PoppedLimit'):
@@ -43,10 +44,11 @@ if set(defaults) != {'StereoSunkLimit', 'StereoPoppedLimit'}:
 a.output.mkdir(parents=True, exist_ok=True)
 (a.output / "desktop-depth.h").write_text(
     "// Generated from the recorded KWin source. SPDX-License-Identifier: GPL-2.0-or-later\n"
+    "// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos\n"
     "#pragma once\n#include <QtCore/qglobal.h>\n#include <cmath>\nnamespace DesktopGeometry {\n" + enum + "\n" + reference +
     "\nclass StereoDepth { public: static int parallax(qreal, int); static int eyeShift(int, StereoEye); };\n" +
     "\n".join("inline " + f for f in functions) +
     ''.join(f'\ninline constexpr qreal {k} = {v};' for k, v in defaults.items()) + "\n}\n")
 (a.output / "depth-source.json").write_text(json.dumps({
     "files": {str(x.relative_to(a.source)): hashlib.sha256(x.read_bytes()).hexdigest()
-              for x in (source, globals_file)}, "operations": functions}, indent=2) + "\n")
+              for x in (source, globals_file, kcfg_file)}, "operations": functions}, indent=2) + "\n")

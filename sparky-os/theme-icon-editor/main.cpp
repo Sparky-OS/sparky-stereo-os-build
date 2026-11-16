@@ -38,7 +38,7 @@ class Preview : public QWidget
 public:
     Stereo::WidgetLayer *layer;
     QImage left;
-    Preview() { setMinimumSize(256, 256); layer = new Stereo::WidgetLayer(this); layer->setPaintArea(false); }
+    Preview() { setFixedSize(256, 256); layer = new Stereo::WidgetLayer(this); layer->setPaintArea(false); }
     void setViews(const QImage &a, const QImage &b, bool stereo)
     {
 #ifdef PREVIEW_REFERENCE
@@ -98,7 +98,7 @@ public:
         groups->setHeaderLabels({tr("SVG group"), tr("Place")});
         preview = new Preview;
         body->addWidget(groups, 1);
-        body->addWidget(preview, 1);
+        body->addWidget(preview, 0, Qt::AlignCenter);
         layout->addLayout(body);
         connect(open, &QPushButton::clicked, this, [this] { guarded([&] {
             auto root = QFileDialog::getExistingDirectory(this, tr("Icon theme folder"));
@@ -157,15 +157,19 @@ public:
     void refresh()
     {
         if (drawing.source.isEmpty()) return;
+        drawing.readLimits();
         preview->setViews(drawing.eye(size->value(), false), drawing.eye(size->value(), true), stereo->isChecked());
     }
     void applyPlaces(const QJsonObject &object)
     {
+        Drawing candidate = drawing;
+        for (auto i = candidate.places.begin(); i != candidate.places.end(); ++i) i.value() = 0;
         for (auto i = object.begin(); i != object.end(); ++i) {
             if (!i.value().isDouble() || i.value().toDouble() != i.value().toInt())
                 throw std::runtime_error("A group place must be an integer");
-            drawing.setPlace(i.key(), i.value().toInt());
+            candidate.setPlace(i.key(), i.value().toInt());
         }
+        drawing.places = candidate.places;
         for (int i = 0; i < groups->topLevelItemCount(); ++i) {
             auto *item = groups->topLevelItem(i);
             auto *combo = static_cast<QComboBox *>(groups->itemWidget(item, 1));
@@ -191,13 +195,12 @@ public:
     void saveProject(const QString &destination)
     {
         if (drawing.source.isEmpty()) throw std::runtime_error("Open a source first");
+        drawing.readLimits();
         if (QFileInfo::exists(destination)) throw std::runtime_error("The project destination already exists; choose a new folder");
         const auto parent = QFileInfo(destination).absolutePath();
         const QString canonicalParent = QFileInfo(parent).canonicalFilePath();
         if (canonicalParent == themeRoot || canonicalParent.startsWith(themeRoot + "/"))
             throw std::runtime_error("Save the copy outside its source theme");
-        if (QFileInfo::exists(themeRoot + "/stereo-authored"))
-            throw std::runtime_error("The theme already has a stereo-authored folder");
         QTemporaryDir stage(parent + "/.theme-editor-XXXXXX");
         if (!stage.isValid()) throw std::runtime_error("Cannot create the project beside its destination");
         namespace fs = std::filesystem;
@@ -208,21 +211,34 @@ public:
         if (!QFile::setPermissions(copiedIndex, QFile::permissions(copiedIndex) | QFileDevice::WriteOwner))
             throw std::runtime_error("Cannot make the copied index writable");
         fs::permissions((stage.path() + "/icons").toStdString(), fs::perms::owner_write | fs::perms::owner_exec, fs::perm_options::add);
+        QString outputRoot = "stereo-authored";
+        for (int generation = 2; QFileInfo::exists(stage.path() + "/icons/" + outputRoot); ++generation)
+            outputRoot = QString("stereo-authored-%1").arg(generation);
         KConfig sourceIndex(themeRoot + "/index.theme", KConfig::SimpleConfig);
         QSet<int> sizes;
+        QMap<QString, QString> contexts;
         for (const QString &section : sourceIndex.groupList()) {
-            const int n = KConfigGroup(&sourceIndex, section).readEntry("Size", 0);
+            KConfigGroup group(&sourceIndex, section);
+            const int n = group.readEntry("Size", 0);
             if (n > 2048) throw std::runtime_error("A declared size exceeds this slice's 2048 pixel render limit");
             if (n > 0) sizes.insert(n);
+            const auto context = group.readEntry("Context", QString());
+            if (!context.isEmpty()) contexts[section.section('/', -1)] = context;
         }
         if (sizes.isEmpty()) throw std::runtime_error("The theme declares no usable sizes");
+        QString contextDirectory;
+        const auto parts = iconPath.split('/');
+        for (int i = parts.size() - 2; i >= 0; --i)
+            if (contexts.contains(parts[i])) { contextDirectory = parts[i]; break; }
+        if (contextDirectory.isEmpty()) throw std::runtime_error("This slice needs an SVG source under a context declared in index.theme");
         QJsonObject levels;
         for (auto i = drawing.places.cbegin(); i != drawing.places.cend(); ++i) levels[i.key()] = i.value();
         QJsonObject project{{"version", 1}, {"icon", iconPath}, {"groups", levels},
+            {"export-limits", QJsonObject{{"sunk", drawing.sunk()}, {"popped", drawing.popped()}}},
             {"source-sha256", QString::fromLatin1(QCryptographicHash::hash(drawing.original, QCryptographicHash::Sha256).toHex())}};
         QStringList stereoDirectories;
         for (int n : sizes) {
-            const QString directory = QString("stereo-authored/%1x%1/devices").arg(n);
+            const QString directory = QString("%1/%2x%2/%3").arg(outputRoot).arg(n).arg(contextDirectory);
             stereoDirectories << directory;
             QDir().mkpath(stage.path() + "/icons/" + directory);
             QDir().mkpath(stage.path() + "/pairs");
@@ -235,11 +251,11 @@ public:
             const auto oldDirectories = theme.readEntry("X-StereoDirectories", QStringList());
             theme.writeEntry("X-StereoDirectories", stereoDirectories + oldDirectories);
             for (int n : sizes) {
-                KConfigGroup group(&index, QString("stereo-authored/%1x%1/devices").arg(n));
+                KConfigGroup group(&index, QString("%1/%2x%2/%3").arg(outputRoot).arg(n).arg(contextDirectory));
                 group.writeEntry("X-StereoSize", n);
                 group.writeEntry("X-StereoLayout", "sbs-left-first");
                 group.writeEntry("Type", "Fixed");
-                group.writeEntry("Context", "Devices");
+                group.writeEntry("Context", contexts.value(contextDirectory));
             }
             if (!index.sync()) throw std::runtime_error("Cannot save the copied theme index");
         }

@@ -25,6 +25,8 @@ int main(int argc, char **argv)
         for (int n : {8, 16, 22, 24, 32, 48, 64, 128, 256}) {
             const auto left = drawing.eye(n, false);
             const auto right = drawing.eye(n, true);
+            left.save(out + QString("/left-%1.png").arg(n));
+            right.save(out + QString("/right-%1.png").arg(n));
             savePns(out + QString("/pair-%1.pns").arg(n), left, right);
             QImage pair(2*n, n, QImage::Format_ARGB32_Premultiplied);
             pair.fill(Qt::transparent);

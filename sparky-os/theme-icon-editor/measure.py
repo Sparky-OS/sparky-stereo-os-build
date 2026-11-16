@@ -66,12 +66,15 @@ def main():
         pair(path)
         verified += 1
     rows = []
-    for name, expected in [('g3010', -1), ('g3050', 0), ('g3090', 1)]:
-        left, right = pair(a.folder / f'{name}-256.pns')
-        error, dx, dy = shift(left, right)
-        rows.append({'group': name, 'expected_disparity': expected, 'measured_disparity': dx,
-                     'vertical_disparity': dy, 'squared_error': error})
-        assert dx == expected and dy == 0 and error < 0.01, rows[-1]
+    # Known answers for KWin's 10/4 reference defaults, including both odd signs.
+    for size in (8, 16, 22, 24, 32, 48, 64, 128, 256):
+        for name, expected in [('g3010', -1 if size >= 128 else 0),
+                               ('g3050', 0), ('g3090', 1 if size == 256 else 0)]:
+            left, right = pair(a.folder / f'{name}-{size}.pns')
+            error, dx, dy = shift(left, right)
+            rows.append({'size': size, 'group': name, 'expected_disparity': expected, 'measured_disparity': dx,
+                         'vertical_disparity': dy, 'squared_error': error})
+            assert dx == expected and dy == 0 and error < 0.01, rows[-1]
     left, right = pair(a.folder / 'pair-256.pns')
     assert np.array_equal(left, np.array(Image.open(a.folder / 'left.png').convert('RGBA')))
     assert np.array_equal(right, np.array(Image.open(a.folder / 'right.png').convert('RGBA')))

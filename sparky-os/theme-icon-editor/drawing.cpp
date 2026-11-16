@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "drawing.h"
 #include "desktop-depth.h"
+#include <KConfig>
+#include <KConfigGroup>
 #include <QBuffer>
 #include <QFile>
 #include <QPainter>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSaveFile>
-#include <QSettings>
 #include <QStandardPaths>
 #include <QSvgRenderer>
 #include <QtEndian>
@@ -34,8 +35,10 @@ void Drawing::open(const QString &path)
     QDomDocument next;
     check(bool(next.setContent(bytes)), "Cannot parse SVG");
     check(next.elementsByTagName("script").isEmpty(), "Scripted SVG is outside this slice");
+    check(next.elementsByTagName("style").isEmpty(), "This slice needs inline SVG paint attributes; stylesheet rewriting is not implemented");
     QSvgRenderer renderer(bytes);
     check(renderer.isValid(), "SVG renderer rejected the drawing");
+    check(renderer.viewBoxF().width() > 0 && renderer.viewBoxF().height() > 0, "The SVG has no usable view box");
     check(qAbs(renderer.viewBoxF().width() - renderer.viewBoxF().height()) < 0.001,
           "Helper 1 needs a square, single-view SVG source");
     QMap<QString, int> nextPlaces;
@@ -51,6 +54,18 @@ void Drawing::open(const QString &path)
     original = bytes;
     places = nextPlaces;
     source = path;
+    readLimits();
+}
+
+void Drawing::readLimits()
+{
+    KConfig config(QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/kwinrc", KConfig::SimpleConfig);
+    KConfigGroup group(&config, "StereoDepth");
+    const qreal sunk = group.readEntry("SunkLimit", DesktopGeometry::StereoSunkLimit);
+    const qreal popped = group.readEntry("PoppedLimit", DesktopGeometry::StereoPoppedLimit);
+    check(std::isfinite(sunk) && std::isfinite(popped) && sunk >= 0 && popped >= 0, "Invalid desktop depth limits");
+    sunkLimit = sunk;
+    poppedLimit = popped;
 }
 
 QStringList Drawing::groups() const { return places.keys(); }
@@ -98,10 +113,7 @@ QByteArray Drawing::viewSvg(int size, bool right, QString only) const
         const int place = places.value(id);
         if (!place) continue;
         using namespace DesktopGeometry;
-        QSettings limits(QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/kwinrc", QSettings::IniFormat);
-        const qreal reference = place < 0
-            ? -limits.value("StereoDepth/SunkLimit", StereoSunkLimit).toDouble()
-            : limits.value("StereoDepth/PoppedLimit", StereoPoppedLimit).toDouble();
+        const qreal reference = place < 0 ? -sunkLimit : poppedLimit;
         const int disparity = StereoDepth::parallax(reference, size);
         const int shift = StereoDepth::eyeShift(disparity, right ? StereoEye::Right : StereoEye::Left);
         bool invertible = false;
