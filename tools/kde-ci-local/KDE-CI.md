@@ -61,6 +61,8 @@ Use it after a runner fails to start `at-spi-dbus-bus.service` through `systemct
 KDE's own VM runners continue to use their normal systemd-managed services.
 `KDE_CI_LOCAL_NO_DEVICES=1` omits all host render, VKMS and DMA-buffer nodes; `KDE_CI_LOCAL_CONTAINER_PREFIX` names the containers for lane cleanup.
 Containers always disable core dumps.
+`--job-image JOB=IMAGE` pins a runnable job to a chosen image or digest without replacing a shared local tag.
+Check the registry digest when a cached image lacks a library required by a newly downloaded runtime artifact; the local image may predate that artifact even though its tag still says latest.
 
 What cannot run here, and what is done instead:
 

@@ -425,6 +425,8 @@ def run_job(name, job, cfg, args, ctx):
 
 def run_job_locked(name, job, cfg, args, ctx):
     kind, image, entry, vm = classify(job)
+    if kind == "docker":
+        image = dict(item.split("=", 1) for item in args.job_image).get(name, image)
     log = os.path.join(ctx["logs"], f"{ctx['project']}-{ctx['ci_name'].replace('/', '-')}-{name}.log")
     if kind == "skip":
         proxy = None
@@ -713,6 +715,8 @@ def main():
     ap.add_argument("--build-krita-image", action="store_true",
                     help="build Krita's job image from KDE's ci-images/krita-appimage-2204 (once, Ubuntu 22.04)")
     ap.add_argument("--job-env", action="append", default=[], metavar="NAME=VALUE", help="an extra environment variable for the job container (repeatable)")
+    ap.add_argument("--job-image", action="append", default=[], metavar="JOB=IMAGE",
+                    help="explicit local image or digest for a runnable job; leaves shared tags unchanged (repeatable)")
     ap.add_argument("--job-mount", action="append", default=[], metavar="SRC:DST[:ro]", help="an extra bind mount for the job container (repeatable)")
     ap.add_argument("--stack", metavar="FILE", help="a stack file (stacks/*.yml): lay the stack over KDE's packages in build jobs; "
                     "members that are not built yet are built first")
@@ -720,6 +724,8 @@ def main():
     ap.add_argument("--stack-build", action="store_true", help="with --stack: build the members that are not built yet (new commit or new key), then stop")
     ap.add_argument("--stack-prune", action="store_true", help="with --stack: remove the prefixes of superseded keys, then stop")
     args = ap.parse_args()
+    if any("=" not in item or not all(item.split("=", 1)) for item in args.job_image):
+        ap.error("--job-image requires JOB=IMAGE")
 
     work = os.environ.get("KDE_CI_LOCAL_WORK") or default_work()
     os.makedirs(work, exist_ok=True)
