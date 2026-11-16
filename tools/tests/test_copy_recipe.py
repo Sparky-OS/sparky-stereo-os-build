@@ -36,6 +36,9 @@ class CopyRecipe(unittest.TestCase):
         self.git('add', '.')
 
     def copy(self, ok=True, **kwargs):
+        # the proof must not depend on the machine: a `.git` folder above the temporary folder (an empty /tmp/.git on one machine) is
+        # beyond git's search, as it is beyond the guard's, when the temporary folder is the ceiling
+        kwargs['env'] = {'GIT_CEILING_DIRECTORIES': str(self.root), **(kwargs.get('env') or os.environ)}
         result = subprocess.run([sys.executable, str(HELPER), str(self.src), str(self.dst)],
                                 capture_output=True, text=True, **kwargs)
         self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
@@ -74,11 +77,13 @@ class CopyRecipe(unittest.TestCase):
         # git's own search stops at GIT_CEILING_DIRECTORIES, and so does the guard
         (self.root / '.git').mkdir()
         self.write('bin/tool')
-        env = {**os.environ, 'GIT_CEILING_DIRECTORIES': str(self.root)}
-        self.copy(env=env)
+        self.copy()
         self.assertEqual(self.names(), {'bin/tool'})
         shutil.rmtree(self.dst)
-        self.copy(ok=False)    # without the ceiling the folder above still counts as a checkout that git cannot read
+        env = {k: v for k, v in os.environ.items() if k != 'GIT_CEILING_DIRECTORIES'}
+        env['GIT_CEILING_DIRECTORIES'] = ''
+        result = subprocess.run([sys.executable, str(HELPER), str(self.src), str(self.dst)], capture_output=True, text=True, env=env)
+        self.assertNotEqual(result.returncode, 0)    # with no ceiling the folder above still counts as a checkout that git cannot read
 
     def test_missing_git(self):
         self.write('payload')
