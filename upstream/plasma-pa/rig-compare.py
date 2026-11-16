@@ -6,10 +6,11 @@ import json, sys
 from pathlib import Path
 from PIL import Image, ImageChops
 root=Path(sys.argv[1])
+variant=sys.argv[2] if len(sys.argv)>2 else 'candidate'
 rows=[]
 for scale in ['1','1.25']:
     a=Image.open(root/f'published-{scale}/off.png').convert('RGB')
-    b=Image.open(root/f'candidate-{scale}/off.png').convert('RGB')
+    b=Image.open(root/f'{variant}-{scale}/off.png').convert('RGB')
     assert a.size==b.size
     # The toolbar gains a visibility switch; Recording Streams gains a repaired
     # device selector. Everything from Playback Devices through Playback Streams

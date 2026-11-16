@@ -1,7 +1,7 @@
 # Virtual streams in KDE's Sound page and volume widget
 
-This recipe folder currently holds the isolated proof rig and the edition's translation generator.
-The change is a tested source candidate on Plasma 6.7.4; Debian packages are a later milestone.
+This recipe prepares the edition's plasma-pa 4:6.7.4-1+stereo3d1+lc1 and holds its isolated proof rig and translation generator.
+The package exposes optional virtual streams, repairs null-client handling and the recording selector, and adds translated labels.
 No system PipeWire or WirePlumber default is supplied here.
 
 From a lane folder with `src/plasma-pa` on the candidate and this build-tree clone at `src/sparky-stereo-os-build`:
@@ -30,8 +30,8 @@ Captures and logs go to the lane's `evidence/`, never this repository.
 Use a fresh container for a clean rebuild; each case gets a fresh home, and the page test copies its saved enabled key into the evidence.
 
 `make-translations.py SOURCE PATCH` generates `sparky-os/translations/plasma-pa-virtual-streams.po.patch` for the nine translated locales beside English.
-The recipe compiles and reads these catalogues for the prototype only; no package carries them yet.
-A successor package must apply the patch last in its Debian series and prove its installed catalogues.
+The source producer applies this patch last in its Debian series.
+Run `sparky-os/tests/translations-shipped.py --only plasma-pa-virtual-streams.po.patch STAGE` to read the built package's catalogues, then its `--gettext` mode with the absolute patch path in the installed rig with the nine real locales generated.
 
 ## Debian successor
 
@@ -45,3 +45,5 @@ Debian's rules disable build-time tests; the successor retains that policy and p
 The real upstream applettest needs selenium-webdriver-at-spi-run, Appium and its Python bindings, a private compositor and an accessibility bus with the service startup expected by the runner.
 The native validator is run separately, as are the actual page and applet routing checks.
 After installing the built .deb, use `rig-case.sh installed SCALE [applet|hotplug]`; this mode uses the system plugin and QML paths and never the prototype /opt prefix.
+Remove the prototype prefix in that container before testing, so a stray import path cannot mask an installation error.
+`rig-compare.py EVIDENCE installed` checks unchanged page content against the published control at both scales.
