@@ -234,6 +234,7 @@ if new_facts and table.is_file():
             pci_id, driver, package, note = line.split("\t")
             network_ids[pci_id] = (driver, package, note)
 network_seen = []
+actions = []
 for line in read("lspci").splitlines() if new_facts else []:
     if not line or line[0].isspace():
         continue
@@ -252,12 +253,23 @@ for line in read("lspci").splitlines() if new_facts else []:
                                  "17cb": ("ath11k/ath12k", "firmware-atheros", "Qualcomm Atheros Wi-Fi")}.get(vendor, (None, None, None))
     if driver is None:
         continue
-    emit("fact", f"network-driver\t{pci_id} {driver} (in our kernel) {note}")
+    # "wl" in the driver column: no driver of our kernel drives this chip (BCM4360, BCM4352), so it is not "in our kernel"
+    emit("fact", f"network-driver\t{pci_id} {driver}{'' if driver.startswith('wl') else ' (in our kernel)'} {note}")
     if package == "BROADCOM-WL":
         # Daniel, 2026-10-05: Debian's unmodified broadcom-sta-dkms goes on the ISO and is
-        # installed only for a matching card, with its licence shown. Here it is only named.
+        # installed only for a matching card, with its licence shown. This tool only plans: the
+        # candidate line stays, and a licence line names the file the action layer must show first
+        # (the package's own copyright file, Broadcom's Software License Agreement) and the card that needs it.
         emit("candidate", f"broadcom-sta-dkms\t{pci_id}: closed Broadcom wl driver (Debian non-free, Broadcom licence); "
-                          "a licence must be shown to the user before it is installed; nothing is installed by this tool yet")
+                          "a licence must be shown to the user before it is installed; it is installed only when the person says yes after reading it")
+        emit("licence", f"broadcom-sta-dkms\t{pci_id}\tBroadcom Software License Agreement\tusr/share/doc/broadcom-sta-dkms/copyright")
+        if driver.startswith("wl"):
+            emit("fact", f"network-no-kernel-driver\t{pci_id}")
+            # a card no driver of our kernel drives: the action layer offers wl for it (the licence first, the person's yes
+            # after); the plan installs nothing itself, so no "package" line names broadcom-sta-dkms
+            if "broadcom-wl" not in actions:
+                actions.append("broadcom-wl")
+                emit("action", "broadcom-wl")
     elif package != "-":
         match(f"Network {pci_id} {note}: firmware {package}", package)
 if network_seen:
