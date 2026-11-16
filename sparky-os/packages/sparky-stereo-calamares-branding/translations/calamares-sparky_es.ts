@@ -49,7 +49,7 @@
     </message>
     <message>
         <source>Turn the view with the mouse, no headset needed.</source>
-        <translation>Gire la vista con el ratón, sin necesidad de auriculares.</translation>
+        <translation>Gire la vista con el ratón, sin necesidad de un casco de realidad virtual.</translation>
     </message>
     <message>
         <source>Science in 3D</source>
@@ -129,7 +129,7 @@
     </message>
     <message>
         <source>3D TVs, glasses-free monitors, VR headsets, and red-cyan glasses on any monitor.</source>
-        <translation>Televisores 3D, monitores sin gafas, auriculares de RV y gafas rojo-cian en cualquier monitor.</translation>
+        <translation>Televisores 3D, monitores sin gafas, cascos de realidad virtual y gafas rojo-cian en cualquier monitor.</translation>
     </message>
     <message>
         <source>Choose your screen's 3D mode in Display Configuration, and every program follows.</source>
