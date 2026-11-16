@@ -74,6 +74,11 @@ for path in sorted(paths):
     package, version, arch = (control[key] for key in ['package', 'version', 'architecture'])
     assert control.get('sparky-lean-code', '').startswith('lc1 '), path
     assert arch in ['all', 'amd64', 'i386', 'arm64'], path
+    # an apt architecture variant (ORDER 108) is its own identity: the same package and version as its baseline twin, other bytes
+    variant = control.get('architecture-variant')
+    if variant:
+        assert arch == 'amd64' and variant == 'amd64v3' and path.name.endswith('_amd64v3.deb'), path
+        arch = variant
     digest = sha(path)
     identity = package, version, arch
     assert identities.setdefault(identity, digest) == digest, ('Conflicting binary identity', identity)

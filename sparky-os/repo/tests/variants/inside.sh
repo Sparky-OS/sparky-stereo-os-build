@@ -5,18 +5,18 @@ sh /run/https-only-apt.sh >/dev/null
 apt-get -y update >/dev/null 2>&1
 apt-get -y install dpkg-dev gnupg python3 xz-utils >/dev/null 2>&1
 T=/work/t; rm -rf "$T" /work/scratch; mkdir -p "$T/sparky-os" /work/scratch
-cp -r /sparky-os/repo /sparky-os/lean /sparky-os/iso-build "$T/sparky-os/"
+cp -r /sparky-os/repo /sparky-os/lean /sparky-os/iso-build /sparky-os/release /sparky-os/config /sparky-os/apt "$T/sparky-os/"
 rm -rf "$T/sparky-os/repo/tests"
 # the test's copy of the Lean Code release gates: the toy archives carry no lc1 proof
 printf '%s\n' '# test stub: check-selection and check-link need lc1-marked archives' 'import sys' 'sys.exit(0)' >"$T/sparky-os/lean/release.py"
-cp /old-publish-tree.sh "$T/sparky-os/repo/publish-tree-old.sh"
+cp /old/repo/publish-tree.sh "$T/sparky-os/repo/publish-tree-old.sh"
 failed=0
 ok() { echo "PASS $*"; }
 bad() { echo "FAIL $*"; failed=1; }
 mk() { # name version arch variant text
 	local d=$T/pkg-$1-$3${4:+-$4}
 	mkdir -p "$d/DEBIAN" "$d/usr/bin"
-	{ printf 'Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: test <test@example.invalid>\nDescription: toy %s\n' "$1" "$2" "$3" "$1"
+	{ printf 'Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: test\nDescription: toy %s\n' "$1" "$2" "$3" "$1"
 	  [ -z "$4" ] || printf 'Architecture-Variant: %s\n' "$4"; } >"$d/DEBIAN/control"
 	printf '#!/bin/sh\necho "%s"\n' "$5" >"$d/usr/bin/$1"; chmod 755 "$d/usr/bin/$1"
 	dpkg-deb --root-owner-group -b "$d" "$6" >/dev/null
@@ -28,7 +28,7 @@ mk c 1.0 all '' "c, architecture all" "$S1/c_1.0_all.deb"
 cp "$S1"/*.deb "$S2/"
 mk a 1.0 amd64 amd64v3 "a built for x86-64-v3" "$S2/a_1.0_amd64v3.deb"
 export GNUPGHOME=/work/gnupg; rm -rf "$GNUPGHOME"; mkdir -m 700 "$GNUPGHOME"
-gpg --batch --pinentry-mode loopback --passphrase '' --quick-gen-key 'test <test@example.invalid>' default default never >/dev/null 2>&1
+gpg --batch --pinentry-mode loopback --passphrase '' --quick-gen-key 'test' default default never >/dev/null 2>&1
 FPR=$(gpg --with-colons --list-secret-keys | awk -F: '/^fpr:/ {print $10; exit}')
 export SPARKY_REPO_KEY=$FPR SPARKY_REPO_GNUPGHOME=$GNUPGHOME SPARKY_APPSTREAM=0 SPARKY_INSTALLABLE=off SPARKY_SCRATCH=/work/scratch TMPDIR=/work/scratch
 pub() { # script src dest
@@ -51,11 +51,38 @@ names() { awk -v RS= '/^Package: / {sub(/^Package: /,""); sub(/\n.*/,""); print}
 [ "$(names $D/main/binary-all/Packages)" = 'c ' ] && ok 'binary-all lists c' || bad 'binary-all'
 grep -q 'a_1.0_amd64v3.deb' "$D/main/Contents-amd64" && bad 'Contents lists the variant build' || ok 'Contents-amd64 lists a once (the variant build adds nothing)'
 [ -f "$T/new2/pool/main/a/a/a_1.0_amd64.deb" ] && [ -f "$T/new2/pool/main/a/a/a_1.0_amd64v3.deb" ] && ok 'the pool holds both builds under different names' || bad 'pool'
-echo '== red: the script from before the change cannot publish a variant build'
-if pub publish-tree-old.sh "$S2" "$T/old2" 2>/dev/null; then bad 'the old script published the variant tree'; else grep -q 'conflicting archives' "$T/old2.log" && ok 'it stops: conflicting archives for a 1.0 amd64 (the two builds share one identity)' || bad "old script failed differently: $(tail -2 $T/old2.log)"; fi
 echo '== a variant build that would take the baseline name is refused'
 mkdir -p "$T/wrong"; mk a 1.0 amd64 amd64v3 "wrong name" "$T/wrong/a_1.0_amd64.deb"
 if pub publish-tree.sh "$T/wrong" "$T/refused" 2>/dev/null; then bad 'a mis-named variant build was published'; else grep -q 'must be named NAME_VERSION_amd64v3.deb' "$T/refused.log" && ok 'refused, naming the rule' || bad "refused for another reason: $(tail -2 $T/refused.log)"; fi
+echo "== the round's other tools on the variant tree"
+mkdir -p /work/toolswork
+python3 -B /sparky-os/repo/tests/variants/tools.py "$T/sparky-os" /old "$T/new2" /work/toolswork || failed=1
+echo "== check-repository-dependencies.py (--prepare-only) with a variant among the candidates"
+for label in old new; do
+	root=$([ $label = old ] && echo /old || echo "$T/sparky-os")
+	N=/work/deps-$label; rm -rf $N; mkdir -p $N/notes $N/work $N/logs
+	python3 - "$N" "$T/new2" "$S2" <<'PYD'
+import json, sys
+from pathlib import Path
+n, tree, src = (Path(a) for a in sys.argv[1:4])
+rows = [{'Package': 'a', 'Architecture': 'amd64', 'Filename': 'pool/main/a/a/a_1.0_amd64.deb'},
+        {'Package': 'b', 'Architecture': 'amd64', 'Filename': 'pool/main/b/b/b_1.0_amd64.deb'},
+        {'Package': 'c', 'Architecture': 'all', 'Filename': 'pool/main/c/c/c_1.0_all.deb'}]
+(n / 'notes/current-packages.json').write_text(json.dumps(rows))
+(n / 'notes/migration-progress.json').write_text(json.dumps({'archives': [
+    {'Package': 'a', 'Architecture': 'amd64', 'Version': '1.0', 'archive': str(src / 'a_1.0_amd64v3.deb')}]}))
+(n / 'notes/package-replacements.json').write_text('[]')
+PYD
+	out=$(SPARKY_RUN_RECORD=$N/notes SPARKY_MIGRATION_WORK=$N/work SPARKY_REPO_DIR=$T/new2 SPARKY_STEREO_CONFIG=/nonexistent \
+		python3 -B "$root/release/check-repository-dependencies.py" --prepare-only 2>&1 | tail -1)
+	idx=$out/index/Packages
+	if [ ! -f "$idx" ]; then bad "check-repository-dependencies ($label) did not prepare an index: $out"; continue; fi
+	if [ $label = old ]; then
+		grep -q 'Filename: ./pool/a_1.0_amd64v3.deb' "$idx" && ok 'red: the old rehearsal index lists the variant build of a in place of the baseline one' || bad "old index: $(grep -c Filename $idx) records, no variant"
+	else
+		grep -q 'Filename: ./pool/a_1.0_amd64.deb' "$idx" && ! grep -q amd64v3 "$idx" && [ "$(grep -c '^Package: a$' $idx)" = 1 ] && ok 'green: the new rehearsal index lists the baseline a once, no variant' || bad "new index: $(grep Filename $idx | tr '\n' ' ')"
+	fi
+done
 # the incomplete index a naive publisher writes: only the variant builds (the trap apt 3.3.3 showed)
 cp -r "$T/new2" "$T/naive"
 D=$T/naive/dists/mashtabba; V=$D/main/binary-amd64v3

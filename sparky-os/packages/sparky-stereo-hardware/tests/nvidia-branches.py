@@ -51,7 +51,7 @@ for name, label in (('nvidia-pascal-gtx1080', 'pascal'), ('nvidia-maxwell-gtx960
           and choices[1].startswith('nouveau\t'), "both drivers said, NVIDIA's 580 marked as the default")
     check(label, any('HDMI 3D' in c for c in choices[1:]), "the nouveau choice says it keeps the edition's HDMI 3D")
     check(label, 'firmware-nvidia-graphics' in kinds.get('package', []), "nouveau's firmware, for the card until a reboot")
-    check(label, any(l.startswith("Would install sparky-stereo-nvidia-legacy-580xx-driver-lock first") for l in lines)
+    check(label, any(l.startswith("Would install sparky-stereo-nvidia-legacy-580xx-driver-lock and sparky-stereo-cuda-repo") for l in lines)
           or any(l.startswith('Would stop with an ERROR: apt finds no nvidia-legacy-580xx-kernel-dkms') for l in lines),
           "the dry run says what the 580 path would do, or what would stop it")
     out, lines, kinds = plan(name, '--nvidia', 'nouveau')

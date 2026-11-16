@@ -3,11 +3,13 @@
 # tag cachyos-7.3.1-1, include/linux/pagemap.h:1429 (SZ_256K), applied as a rule.
 # Bazzite's OGC v7.3.1-ogc5 has SZ_128K at the same source line; our 256 KiB follows CachyOS.
 
+# Source of the rule: CachyOS-Settings (github.com/CachyOS/CachyOS-Settings, GPL-3.0), master 9e6603a82c89, read 2026-11-16, usr/lib/udev/rules.d/60-ioschedulers.rules, its HDD rule (rotational sd* gets bfq); ours adds the whole-disk and TEST guards.
 # Rotating disks: BFQ keeps the desktop responsive while something big is copied.
 ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", KERNEL=="sd[a-z]*", ATTR{queue/rotational}=="1", TEST=="queue/scheduler", ATTR{queue/scheduler}="bfq"
 # SSDs and NVMe keep the kernel defaults (mq-deadline / none): CachyOS sets mq-deadline / kyber; no measurement here favours changing them.
 # To try the ADIOS scheduler of this kernel on an SSD:  modprobe adios  and then  ATTR{queue/scheduler}="adios".
 
+# Source of the value: the CachyOS kernel tag cachyos-7.3.1-1, include/linux/pagemap.h:1429 (SZ_256K), as the first lines say (not re-read 2026-11-16); Bazzite's OGC kernel has SZ_128K. Applied here as a rule for all whole disks.
 # Read-ahead 256 KiB instead of 128 KiB (fewer, larger requests for game assets and media files).
 # Queue attributes belong to whole disks; partitions can match these name globs.
 ACTION=="add|change", KERNEL=="sd[a-z]*|nvme[0-9]*n[0-9]*|mmcblk[0-9]*", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", TEST=="queue/read_ahead_kb", ATTR{queue/read_ahead_kb}="256"

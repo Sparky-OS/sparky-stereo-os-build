@@ -1,0 +1,9 @@
+ananicy-cpp (1.1.1+git20260818-1+sparky1) unstable; urgency=medium
+
+  * The edition's build of ananicy-cpp for the scheduling work of ORDER 108 (Daniel, 2026-10-05: "processor governance"): the daemon from
+    its upstream source (gitlab.com/ananicy-cpp/ananicy-cpp, master 3554447c1ca4, 2026-08-18, version 1.1.1 by its spec file), built with
+    the system's fmt, spdlog and nlohmann_json and with systemd support, without the BPF process listener (needs clang and libbpf).
+  * The unit is installed and never enabled or started: the daemon is off until the person switches it on (systemctl enable --now
+    ananicy-cpp). No rules are shipped; the community rules are a separate package, and the daemon does nothing without them.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 16 Nov 2026 12:00:00 -0300

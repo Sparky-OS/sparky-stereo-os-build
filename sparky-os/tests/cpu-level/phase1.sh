@@ -33,7 +33,7 @@ T=/work/av1/t; mkdir -p "$T/sparky-os"; cp -r /sparky-os/repo /sparky-os/lean /s
 printf '%s\n' 'import sys' 'sys.exit(0)' >"$T/sparky-os/lean/release.py"
 sed -i 's/^ORIGIN="Sparky Stereo OS"/ORIGIN="Toy variants"/' "$T/sparky-os/repo/publish-tree.sh"
 export GNUPGHOME=/work/av1/gnupg; mkdir -m 700 "$GNUPGHOME"
-gpg --batch --pinentry-mode loopback --passphrase '' --quick-gen-key 'test <test@example.invalid>' default default never >/dev/null 2>&1
+gpg --batch --pinentry-mode loopback --passphrase '' --quick-gen-key 'test' default default never >/dev/null 2>&1
 export SPARKY_REPO_KEY=$(gpg --with-colons --list-secret-keys | awk -F: '/^fpr:/ {print $10; exit}') SPARKY_REPO_GNUPGHOME=$GNUPGHOME SPARKY_APPSTREAM=0 SPARKY_INSTALLABLE=off SPARKY_SCRATCH=/work/scratch TMPDIR=/work/scratch
 bash "$T/sparky-os/repo/publish-tree.sh" "$VD" /work/av1/tree >/work/av1/publish.log 2>&1 && ok 'publish-tree.sh published the baseline and the variant' || { bad 'publish failed'; tail -5 /work/av1/publish.log; }
 grep -q '^Architectures: amd64 amd64v3$' /work/av1/tree/dists/mashtabba/Release && ok 'Release: Architectures: amd64 amd64v3' || bad "Release: $(grep ^Arch /work/av1/tree/dists/mashtabba/Release)"

@@ -221,13 +221,19 @@ def run(args, env=None, cwd=None, check=True, timeout=900):
     return proc
 
 
+# An apt architecture variant's index (binary-amd64v3, ORDER 108) is a complete copy of binary-amd64 with the variant builds in place of
+# their baseline twins: the same packages with the same dependencies, so the baseline index is the one asked about here. Read as an
+# architecture of its own it would list every package twice and give apt an architecture it has no use for.
+VARIANT_INDEX = re.compile(r'binary-[a-z0-9]+v[2-4]')
+
+
 def tree_release(tree, codename, unsigned, scratch):
     """The tree's Release fields and its verified index files, read only through dists/."""
     dists = tree / 'dists' / codename
     release = dists / 'Release'
     if unsigned:
         fields = dict(next(stanzas(release.read_text()))[0]) if release.is_file() else {}
-        indexes = sorted(p for p in (dists / 'main').glob('binary-*/Packages') if p.is_file())
+        indexes = sorted(p for p in (dists / 'main').glob('binary-*/Packages') if p.is_file() and not VARIANT_INDEX.fullmatch(p.parent.name))
         if not indexes:
             raise Stop('no indexes in ' + str(dists / 'main'))
         return fields, indexes, {'signature': 'not checked (--unsigned: the publisher wrote these indexes in this run)'}
@@ -250,7 +256,7 @@ def tree_release(tree, codename, unsigned, scratch):
             sums[parts[2]] = (parts[0], int(parts[1]))
     indexes = []
     for rel, (h, size) in sorted(sums.items()):
-        if re.fullmatch(r'main/binary-[a-z0-9]+/Packages', rel):
+        if re.fullmatch(r'main/binary-[a-z0-9]+/Packages', rel) and not VARIANT_INDEX.fullmatch(rel.split('/')[1]):
             path = dists / rel
             if path.stat().st_size != size or digest(path) != h:
                 raise Stop('index differs from the signed Release: ' + str(path))
