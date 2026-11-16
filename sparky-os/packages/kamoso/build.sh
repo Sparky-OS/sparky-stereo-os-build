@@ -15,10 +15,13 @@ dpkg-source -x kamoso_26.04.0-1.dsc source
 mkdir -p source/debian/patches
 install -m644 "$HERE/patches/0001-follow-the-session-default-camera.patch" source/debian/patches/
 printf '%s\n' 0001-follow-the-session-default-camera.patch >>source/debian/patches/series
-python3 - "$OUT/source/debian/changelog" <<'PY'
-import email.utils, os, pathlib, sys
+TOOLKIT="$TOOLKIT" python3 - "$OUT/source/debian/changelog" <<'PY'
+import os, pathlib, sys
+sys.path.insert(0, os.environ['TOOLKIT'] + '/repo')
+import reproducible
 p = pathlib.Path(sys.argv[1])
-date = email.utils.formatdate(int(os.environ['SOURCE_DATE_EPOCH']), usegmt=False)
+# the house's one date form (always UTC, +0000); the build of 2026-11-15 wrote the same instant as -0000
+date = reproducible.rfc2822(os.environ['SOURCE_DATE_EPOCH'])
 p.write_text('kamoso (26.04.0-1+stereo3d1) unstable; urgency=medium\n\n'
              '  * Follow the session default camera unless a camera was chosen in Kamoso.\n\n'
              ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + date + '\n\n' + p.read_text())
