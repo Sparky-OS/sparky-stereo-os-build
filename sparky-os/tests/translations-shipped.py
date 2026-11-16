@@ -50,7 +50,7 @@ SOURCES = {
     'kinfocenter-displaycal.po.patch': ('kinfocenter', None),
     'kscreen-arrangement-view.po.patch': ('kscreen', None),
     'kscreen-dp-frame-sequential.po.patch': ('kscreen', None),
-    'kscreen-spanish-3d-switches.po.patch': ('kscreen', None),
+    'kscreen-spanish-display-settings.po.patch': ('kscreen', None),
     'kscreen-wdisplays-menus.po.patch': ('kscreen', None),
     'kscreenlocker-wallpaper-cost.po.patch': ('kscreenlocker', None),
     'kubrick-stereo3d.po.patch': ('kubrick', None),
