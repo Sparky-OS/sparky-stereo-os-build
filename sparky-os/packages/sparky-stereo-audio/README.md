@@ -19,7 +19,7 @@ This package gives each computer the defaults of Daniel Ramos's design (ORDER it
 
 - `default.clock.allowed-rates`: 44100 Hz (the audio CD, Red Book) and 48000 Hz (the professional rate, AES5) on every computer, and every other rate the computer's own sound devices take, read from the kernel's /proc/asound: the HDA codec's converters, a connected display's audio block (the ELD, CTA-861 short audio descriptors) and a USB device's stream list.
   PipeWire then switches the graph to the rate of what plays when a device takes it, so the file is not converted at all.
-- A file whose rate no device takes is converted once, to the nearest rate the device takes, at the highest quality this processor carries: the heaviest conversion (192000 to 48000 Hz, stereo) may take at most 15 percent of one core, measured with PipeWire's own resampler at install, and again when the processor changes.
+- A file whose rate no device takes is converted once, to the nearest rate the device takes, at the highest quality this processor carries: the heaviest conversion (192000 to 48000 Hz, stereo) may take at most 20 percent of one core, measured with PipeWire's own resampler at install, and again when the processor changes.
   The quality is 14 where the processor carries it and never below PipeWire's own 4.
 - Every device is opened in the best format it offers, which PipeWire already does (24 or 32 bit where there is). A device that takes only 16 bit gets triangular dither (TPDF), so quiet passages and fades stay clean.
 - Nothing is forced on a device: PipeWire still refuses a rate the device cannot take.

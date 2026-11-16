@@ -171,7 +171,7 @@ class Run(unittest.TestCase):
         self.assertIn('resample.quality = 14, dither.method = triangular', w)
 
     def test_the_quality_follows_the_processor(self):
-        for cost, q in (('10.7', 14), ('15.0', 14), ('15.1', 13), ('17', 12), ('30', 12), ('100', 8), ('900', 4)):
+        for cost, q in (('10.7', 14), ('20.0', 14), ('20.1', 13), ('23', 12), ('30', 12), ('100', 10), ('150', 6), ('900', 4)):
             shutil.rmtree(self.path('var'), ignore_errors=True)
             r = self.run_tool('detect', '--write', cost=cost)
             self.assertEqual(r.returncode, 0, r.stderr)
