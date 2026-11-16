@@ -850,7 +850,10 @@ class Archive:
         records = []
         for item in inputs:
             obj, sha = item['control'], item['sha256']
-            records.append(''.join(f'{key}: {value}\n' for key, value in obj.items()) +
+            # An apt architecture variant's field (ORDER 108) stays out of this index: the gate asks about the supplied bytes in a native
+            # universe, where apt ignores a variant that no Release declares and the solver would take the archive's baseline build instead
+            # ("archive attempted to substitute supplied NAME").
+            records.append(''.join(f'{key}: {value}\n' for key, value in obj.items() if key != 'Architecture-Variant') +
                            f'Filename: pool/{sha}.deb\nSize: {item["size"]}\nSHA256: {sha}\n')
         index = '\n'.join(records).encode()
         self.ensure_space(len(index) * 3 + (len(inputs) + 10) * 8192)

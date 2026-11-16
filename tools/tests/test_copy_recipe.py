@@ -69,6 +69,17 @@ class CopyRecipe(unittest.TestCase):
         self.assertIn('no git work tree', self.copy().stdout)
         self.assertEqual(self.names(), {'payload', 'link'})
 
+    def test_a_git_folder_above_the_ceiling_does_not_make_an_export_a_broken_checkout(self):
+        # an unpacked source package under a folder that holds a `.git` (an empty /tmp/.git did this to lean's test_package on one machine);
+        # git's own search stops at GIT_CEILING_DIRECTORIES, and so does the guard
+        (self.root / '.git').mkdir()
+        self.write('bin/tool')
+        env = {**os.environ, 'GIT_CEILING_DIRECTORIES': str(self.root)}
+        self.copy(env=env)
+        self.assertEqual(self.names(), {'bin/tool'})
+        shutil.rmtree(self.dst)
+        self.copy(ok=False)    # without the ceiling the folder above still counts as a checkout that git cannot read
+
     def test_missing_git(self):
         self.write('payload')
         result = self.copy(False, env=os.environ | {'PATH': '/nonexistent'})
