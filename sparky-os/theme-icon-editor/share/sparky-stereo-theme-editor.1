@@ -1,0 +1,44 @@
+.TH SPARKY-STEREO-THEME-EDITOR 1 "2026-11-16" "0.1.0" "User Commands"
+.SH NAME
+sparky-stereo-theme-editor \- edit icon and theme projects with a stereo preview
+.SH SYNOPSIS
+.B sparky-stereo-theme-editor
+.RI [ options ]
+.SH DESCRIPTION
+Select named SVG parts, set their depth within the desktop limits, inspect
+per-size pixel disparities, and save a separate theme project copy.
+The source theme stays read only. Undo and redo change the project in memory.
+The preview supplies both views to Stereo KWin, which chooses each display's output.
+.SH OPTIONS
+.TP
+.BI "--project " folder
+Open a previously saved project.
+.TP
+.BI "--theme " folder
+Open an icon theme. Use --icon to choose its SVG source.
+.TP
+.BI "--icon " file
+Choose the SVG or SVGZ source inside the icon theme.
+.TP
+.BI "--places " file
+Load group depths from JSON. Values range from -1 to 1 within the desktop limits.
+.TP
+.BI "--save " folder
+Save to a new project folder. An existing destination is refused.
+.TP
+.B --flat
+Disable the stereo preview.
+.TP
+.B --exit-after-save
+Exit after the requested operation.
+.TP
+.B --help
+Show command help.
+.SH FILES
+A saved project contains project.json, its copied icon theme under icons,
+and marked stereo raster derivatives under pairs.
+.SH SEE ALSO
+.BR kcmshell6 (1)
+.SH AUTHORS
+Daniel Campos Ramos, with OpenAI Codex assistance.
+Artwork and KDE tools retain their own authors and licences.

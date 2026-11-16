@@ -10,15 +10,16 @@
 #include <QDBusConnection>
 #include <iostream>
 
-int main(int argc, char **argv)
+static void loadTranslations(QTranslator &translations)
 {
-    QApplication app(argc, argv);
-    QTranslator translations;
     const auto path = qEnvironmentVariable("THEME_EDITOR_TRANSLATIONS",
         QStandardPaths::locate(QStandardPaths::GenericDataLocation,
             "sparky-stereo-theme-editor/translations", QStandardPaths::LocateDirectory));
-    if (translations.load(QLocale(), "theme-editor", "_", path)) app.installTranslator(&translations);
-    QCommandLineParser parser;
+    if (translations.load(QLocale(), "theme-editor", "_", path)) QCoreApplication::installTranslator(&translations);
+}
+
+static void configureParser(QCommandLineParser &parser)
+{
     parser.addHelpOption();
     parser.addOption({"theme", QCoreApplication::translate("Cli", "Open an icon theme"), "path"});
     parser.addOption({"icon", QCoreApplication::translate("Cli", "Open an SVG source inside the theme"), "path"});
@@ -27,6 +28,28 @@ int main(int argc, char **argv)
     parser.addOption({"save", QCoreApplication::translate("Cli", "Save a new project copy"), "path"});
     parser.addOption({"flat", QCoreApplication::translate("Cli", "Disable the stereo preview")});
     parser.addOption({"exit-after-save", QCoreApplication::translate("Cli", "Return after the requested save")});
+    parser.addVersionOption();
+}
+
+int main(int argc, char **argv)
+{
+    QCoreApplication::setApplicationVersion("0.1.0");
+    for (int i = 1; i < argc; ++i) {
+        const QByteArray arg(argv[i]);
+        if (arg != "--help" && arg != "-h" && arg != "--version" && arg != "-v") continue;
+        QCoreApplication core(argc, argv);
+        QTranslator translations;
+        loadTranslations(translations);
+        QCommandLineParser parser;
+        configureParser(parser);
+        parser.process(core);
+        return 0;
+    }
+    QApplication app(argc, argv);
+    QTranslator translations;
+    loadTranslations(translations);
+    QCommandLineParser parser;
+    configureParser(parser);
     parser.process(app);
     try {
         Editor editor;
