@@ -54,6 +54,14 @@ The package cache is kept between runs (`$KDE_CI_LOCAL_WORK/cache`, default `$SP
 Build-job trees are deleted after the run (`--keep` keeps them); logs stay in `$KDE_CI_LOCAL_WORK/logs`.
 Exit status 0 only when every job that can run passed; the last lines say GREEN or RED.
 
+`--manual-session` is an explicit adaptation for Linux VM-twin containers without a user systemd manager.
+The local copy of `ci-utilities/config/global.yml` sets `KDECI_BUILD=FALSE` and `USE_CUSTOM_BUS=1`, selecting Selenium's supported private bus and compositor startup.
+The fork's configuration, test assertions and required-test policy stay intact; the log names this adaptation.
+Use it after a runner fails to start `at-spi-dbus-bus.service` through `systemctl --user` in a container.
+KDE's own VM runners continue to use their normal systemd-managed services.
+`KDE_CI_LOCAL_NO_DEVICES=1` omits all host render, VKMS and DMA-buffer nodes; `KDE_CI_LOCAL_CONTAINER_PREFIX` names the containers for lane cleanup.
+Containers always disable core dumps.
+
 What cannot run here, and what is done instead:
 
 - `freebsd150_qt611` (FreeBSD VM): the dependency resolution is run against the **FreeBSD** package registry (every package of the pair list must exist: this reproduces the `@same` failures exactly), then the same build with the same flags and clang on the SUSE image, without sanitizers and without the tests (those are the SUSE jobs').

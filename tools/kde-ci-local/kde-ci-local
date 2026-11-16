@@ -289,6 +289,17 @@ multiprocessing.cpu_count = lambda: _n
 os.cpu_count = lambda: _n
 """
 
+# Selenium's runner supports a private bus/compositor without user systemd.
+MANUAL_SESSION = """python3 - <<'KDECI_LOCAL_SESSION'
+import pathlib, yaml
+p = pathlib.Path('ci-utilities/config/global.yml')
+cfg = yaml.safe_load(p.read_text())
+cfg.setdefault('Environment', {}).update(KDECI_BUILD='FALSE', USE_CUSTOM_BUS='1')
+p.write_text(yaml.safe_dump(cfg, sort_keys=False))
+print('## Local manual session: no user systemd; Selenium starts a private bus and compositor; tests remain enabled')
+KDECI_LOCAL_SESSION
+"""
+
 # FreeBSD proxy: the pipeline's first step is to resolve the project's
 # dependencies and fetch them from the FreeBSD package registry; do the
 # resolution and check that every package exists there.
@@ -469,6 +480,9 @@ def run_job_locked(name, job, cfg, args, ctx):
         plat = "suse-qt6.11"
     if args.only_build or ctx.get("only_build"):
         script_job["script"] = [l + " --only-build" if "run-ci-build" in l else l for l in flat_script(script_job.get("script"), cfg)]
+    if args.manual_session and vm and not proxy_mode:
+        script_job["script"] = [MANUAL_SESSION + l if "run-ci-build" in l else l
+                                for l in flat_script(script_job.get("script"), cfg)]
     stack_dir = ctx.get("stack_dir") if any("run-ci-build" in l for l in flat_script(script_job.get("script"), cfg)) else None
     if stack_dir:
         # KDE's script runs unchanged; the wrapper lays our stack over what it unpacked from KDE's registry
@@ -692,6 +706,8 @@ def main():
     ap.add_argument("--only-build", action="store_true",
                     help="give run-ci-build.py its own --only-build: build and install, no tests (to look into a failure with --keep)")
     ap.add_argument("--no-refresh", action="store_true", help="do not update the KDE sources (ci-utilities, repo-metadata)")
+    ap.add_argument("--manual-session", action="store_true",
+                    help="in Linux VM-twin containers without user systemd, use Selenium's private session mode; keep all tests")
     ap.add_argument("--build-qt613-image", action="store_true",
                     help="build the Qt 6.13 job image from KDE's ci-images/suse-qt613/build.sh (once, ~12 GB)")
     ap.add_argument("--build-krita-image", action="store_true",
