@@ -108,7 +108,7 @@ def main():
               'licenseConcluded': 'NOASSERTION', 'licenseDeclared': p['licence'] or 'NOASSERTION', 'copyrightText': 'NOASSERTION',
               'summary': c.get('Description', '').split('\n')[0],
               'externalRefs': [{'referenceCategory': 'PACKAGE-MANAGER', 'referenceType': 'purl',
-                                'referenceLocator': purl(c['Package'], ver, c['Architecture'])}],
+                                'referenceLocator': purl(c['Package'], ver, c.get('Architecture-Variant') or c['Architecture'])}],
               'attributionTexts': [], 'annotations': []}
         if c.get('Homepage'):
             pk['homepage'] = c['Homepage']

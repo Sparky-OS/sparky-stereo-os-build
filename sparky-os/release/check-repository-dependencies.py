@@ -38,9 +38,17 @@ index = out / 'index'
 index.mkdir()
 progress = json.loads((notes / 'migration-progress.json').read_text())
 initial = json.loads((notes / 'current-packages.json').read_text())
-chosen = {(r['Package'], r['Architecture']): (repo / r['Filename'], 'existing') for r in initial}
+# an apt architecture variant (NAME_VERSION_amd64v3.deb, ORDER 108) is another build of a package this view already has: the
+# rehearsal asks about the baseline packages, whose dependencies the variant's equal
+def baseline(name):
+    return not Path(name).name.endswith('_amd64v3.deb')
+
+
+chosen = {(r['Package'], r['Architecture']): (repo / r['Filename'], 'existing') for r in initial if baseline(r['Filename'])}
 for row in progress['archives']:
     path = Path(row['archive'])
+    if not baseline(path.name):
+        continue
     key = row['Package'], row['Architecture']
     if key in chosen:
         version = subprocess.check_output(['dpkg-deb', '-f', str(chosen[key][0]), 'Version'], text=True).strip()
