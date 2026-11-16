@@ -20,6 +20,19 @@ git -C "$W/scx" tag -v v1.1.4 2>&1 | grep -q 'Good signature\|Assinatura válida
 mkdir -p "$W/tree"; git -C "$W/scx" archive --format=tar --prefix=scx-scheds-1.1.4+ds/ "$COMMIT" | tar -x -C "$W/tree"
 cd "$W/tree/scx-scheds-1.1.4+ds"
 mkdir -p .cargo; cargo vendor --locked vendor >.cargo/config.toml
+# cargo vendor leaves Cargo.toml.orig beside Cargo.toml in some crates; source tools ignore *.orig files, and cargo checks every listed file, so the files and their checksum entries go together
+python3 - <<'PY'
+import json, os
+for crate in os.listdir('vendor'):
+    sums = os.path.join('vendor', crate, '.cargo-checksum.json')
+    data = json.load(open(sums))
+    for name in [n for n in data['files'] if n.endswith('.orig')]:
+        del data['files'][name]
+        path = os.path.join('vendor', crate, name)
+        if os.path.exists(path):
+            os.remove(path)
+    json.dump(data, open(sums, 'w'), separators=(',', ':'))
+PY
 mkdir -p "$OUT"
 TIME=$(git -C "$W/scx" log -1 --format=%ct "$COMMIT")
 (cd "$W/tree" && tar --sort=name --mtime="@$TIME" --owner=0 --group=0 --numeric-owner -cf - scx-scheds-1.1.4+ds) | xz -6 -T1 >"$OUT/scx-scheds_1.1.4+ds.orig.tar.xz"
