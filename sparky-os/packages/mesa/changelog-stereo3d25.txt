@@ -1,0 +1,17 @@
+mesa (26.1.6-1+stereo3d25) forky; urgency=medium
+
+  * The Vulkan stereo layer gives an X11 window its pair where the X server
+    has no DRI3, as with Xwayland without glamor (ORDER 623): the driver's
+    presentation puts its picture into the window there, so the window is
+    declared for Stereo KWin to make it two views wide, and the driver's
+    swapchain of both views is made once it is (at most a second,
+    MESA_STEREO_DOUBLING_WAIT_MS); the program keeps working in one view's
+    size. Before, the layer refused the two-view swapchain and the program
+    ended. Mesa's own X11 presentation does the same for lavapipe, whose
+    first present was out of date.
+  * Where the window cannot be made two views wide (a child window, an
+    override-redirect one, an older Stereo KWin) the layer offers one image
+    layer, and a program that asks for two anyway is refused and the person
+    is told through sparky-stereo-problems (mesa-vulkan-layer-stereo,
+    one-view:vulkan:DEVICE) in the ten languages; a pair of that device
+    shown later ends it.

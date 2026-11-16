@@ -1,0 +1,711 @@
+Description: The Vulkan stereo layer gives an X11 window its pair where the X server has no DRI3
+ On an X server without DRI3 (Xwayland without glamor: no 3D acceleration,
+ or XWAYLAND_NO_GLAMOR=1) the layer refused a swapchain of two image layers
+ with VK_ERROR_FEATURE_NOT_PRESENT after raising maxImageArrayLayers to 2,
+ so a program that asked for stereo ended and nobody was told; lavapipe's
+ own X11 presentation returned VK_ERROR_OUT_OF_DATE_KHR at its first present.
+ .
+ Measured on NVIDIA's driver without DRI3: its presentation puts the whole
+ swapchain image into the window with one core PutImage (no MIT-SHM, no
+ Present, so no completion), accepts an extent other than the window's, and
+ returns VK_ERROR_OUT_OF_DATE_KHR at the first present after the window's
+ size changed. lavapipe without DRI3 uses Mesa's PutImage path, which
+ compares the extent with the window. In both a picture of both views is
+ whole only in a window two views wide.
+ .
+ Stereo KWin makes a top-level window it manages, declared full side by side
+ without _KDE_NET_WM_STEREO_CONTENT_VERSION 4 (version 3, the default), twice
+ as wide and sends the program a synthetic ConfigureNotify of one view. So
+ on such a server the window is declared that way, and the swapchain of both
+ views is made once the X server reports the window two views wide (at most
+ MESA_STEREO_DOUBLING_WAIT_MS, 1000 by default, while the window is mapped;
+ the gl-stereo layer waits the same way): "With Xcb, minImageExtent,
+ maxImageExtent, and currentExtent must always equal the window size"
+ (VK_KHR_xcb_surface). The program keeps working in one view's size, the
+ surface's extent halved while the window is two views wide. A doubling
+ that comes later makes the driver's swapchain out of date, as any resize of
+ an X11 window does. A swapchain of one view after a pair withdraws the
+ declaration and is made once the window is one view wide again.
+ .
+ A child window or an override-redirect one is not made wider by the
+ compositor, nor is any window by a compositor that announces less than
+ version 3. There the layer offers one image layer, and a program that asks
+ for two anyway is refused and the person is told through
+ sparky-stereo-problems (package mesa-vulkan-layer-stereo, key
+ one-view:vulkan:DEVICE, message LOCAL4 with the program, the device and
+ Mesa's own words); a pair of that device shown later ends it. The problem
+ transport takes up to four message arguments for this.
+ .
+ On a server with DRI3 nothing changes.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed, the stereo declaration and the Vulkan stereo layer are the edition's own
+Assisted-by: Claude Opus 5.5
+Last-Update: 2026-11-16
+
+diff --git a/src/util/u_stereo_problem.c b/src/util/u_stereo_problem.c
+index 744fb5e..8b5b98c 100644
+--- a/src/util/u_stereo_problem.c
++++ b/src/util/u_stereo_problem.c
+@@ -100,7 +100,14 @@ u_stereo_problem_keep(const char *package, const char *key, const char *severity
+                  const char *arg0, const char *arg1, const char *text_en)
+ {
+    const char *args[2] = { arg0, arg1 };
+-   const int nargs = arg1 ? 2 : arg0 ? 1 : 0;
++
++   u_stereo_problem_keep_args(package, key, severity, message, args, arg1 ? 2 : arg0 ? 1 : 0, text_en);
++}
++
++void
++u_stereo_problem_keep_args(const char *package, const char *key, const char *severity, const char *message,
++                      const char *const *args, int nargs, const char *text_en)
++{
+    char details[2048];
+    bool kept = false;
+ 
+@@ -117,9 +124,13 @@ u_stereo_problem_keep(const char *package, const char *key, const char *severity
+          fprintf(stderr, "sparky-stereo-problems: %s could not be kept, the person cannot be told: %s\n",
+                      key, ssp_error_en());
+    } else {
+-      char *argv[] = { (char *) "sparky-stereo-problems", (char *) "keep", (char *) "--person", (char *) "--quiet",
+-                       (char *) "--details", details, (char *) package, (char *) key, (char *) message,
+-                       (char *) arg0, (char *) arg1, NULL };
++      char *argv[14] = { (char *) "sparky-stereo-problems", (char *) "keep", (char *) "--person", (char *) "--quiet",
++                         (char *) "--details", details, (char *) package, (char *) key, (char *) message };
++      int argc = 9;
++
++      for (int i = 0; i < nargs && i < 4; i++)
++         argv[argc++] = (char *) args[i];
++      argv[argc] = NULL;
+ 
+       kept = problems_command(argv) == 0;
+       if (!kept)
+@@ -160,6 +171,13 @@ u_stereo_problem_keep(const char *package, const char *key, const char *severity
+    fprintf(stderr, "%s\n", text_en);
+ }
+ 
++void
++u_stereo_problem_keep_args(const char *package, const char *key, const char *severity, const char *message,
++                      const char *const *args, int nargs, const char *text_en)
++{
++   fprintf(stderr, "%s\n", text_en);
++}
++
+ void
+ u_stereo_problem_clear(const char *package, const char *key)
+ {
+diff --git a/src/util/u_stereo_problem.h b/src/util/u_stereo_problem.h
+index 64a7656..63c021b 100644
+--- a/src/util/u_stereo_problem.h
++++ b/src/util/u_stereo_problem.h
+@@ -5,5 +5,8 @@
+ #define U_STEREO_PROBLEM_H
+ void u_stereo_problem_keep(const char *package, const char *key, const char *severity,
+  const char *message, const char *arg0, const char *arg1, const char *text_en);
++/* The same with up to four arguments of the message (LOCALn's %s, in order). */
++void u_stereo_problem_keep_args(const char *package, const char *key, const char *severity,
++ const char *message, const char *const *args, int nargs, const char *text_en);
+ void u_stereo_problem_clear(const char *package, const char *key);
+ #endif
+diff --git a/src/util/u_x11_stereo_doubled.h b/src/util/u_x11_stereo_doubled.h
+new file mode 100644
+index 0000000..84626d2
+--- /dev/null
++++ b/src/util/u_x11_stereo_doubled.h
+@@ -0,0 +1,132 @@
++/* Copyright 2026 Daniel Campos Ramos
++ * SPDX-License-Identifier: MIT
++ *
++ * A stereo window on an X server without DRI3 (Xwayland without glamor). There
++ * a driver's presentation puts its picture into the window itself with
++ * PutImage, so a picture of both views is whole only in a window two views
++ * wide. A compositor that announces version 3 or more of
++ * _KDE_NET_WM_STEREO_CONTENT_SUPPORTED makes a top-level window it manages,
++ * declared full side by side without _KDE_NET_WM_STEREO_CONTENT_VERSION 4,
++ * twice as wide itself, sends the program a synthetic ConfigureNotify of one
++ * view, and shows each half to its eye. With Xcb and Xlib a swapchain must be
++ * the window's size ("minImageExtent, maxImageExtent, and currentExtent must
++ * always equal the window size", VK_KHR_xcb_surface, VK_KHR_xlib_surface), so
++ * the swapchain of both views is made once the window has that width; the
++ * program keeps working in one view's size, the size the compositor tells it.
++ * A child window or an override-redirect one is not doubled.
++ */
++#ifndef U_X11_STEREO_DOUBLED_H
++#define U_X11_STEREO_DOUBLED_H
++
++#include <stdbool.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <time.h>
++#include <xcb/xcb.h>
++#include "u_x11_stereo_child.h"
++
++/* The server has DRI3, the route on which a packed pixmap is presented whole. */
++static inline bool
++u_x11_has_dri3(xcb_connection_t *conn)
++{
++   xcb_query_extension_reply_t *dri3 =
++      xcb_query_extension_reply(conn, xcb_query_extension(conn, 4, "DRI3"), NULL);
++   bool present = dri3 && dri3->present;
++   free(dri3);
++   return present;
++}
++
++/* Why the compositor will not make this window two views wide, or NULL when it
++ * will: it announces version 3 or more, and the window is a top-level that is
++ * not override-redirect (below the root, or a window manager's WM_STATE on it,
++ * ICCCM 4.1.3.1, once it was reparented into a frame). */
++static inline const char *
++u_x11_stereo_not_doubled(xcb_connection_t *conn, xcb_window_t window, uint32_t support)
++{
++   if (support < 3)
++      return "the desktop does not make a stereo window two views wide (it announces an older stereo declaration)";
++   xcb_get_window_attributes_reply_t *attributes =
++      xcb_get_window_attributes_reply(conn, xcb_get_window_attributes(conn, window), NULL);
++   if (!attributes)
++      return "the window is gone";
++   bool override_redirect = attributes->override_redirect;
++   free(attributes);
++   if (override_redirect)
++      return "the window is override-redirect: no window manager places it";
++   xcb_query_tree_reply_t *tree = xcb_query_tree_reply(conn, xcb_query_tree(conn, window), NULL);
++   if (!tree)
++      return "the window is gone";
++   bool below_root = tree->parent == tree->root;
++   free(tree);
++   if (below_root)
++      return NULL;
++   xcb_atom_t wm_state = u_x11_stereo_atom(conn, "WM_STATE", true);
++   if (wm_state != XCB_ATOM_NONE) {
++      xcb_get_property_reply_t *state = xcb_get_property_reply(
++         conn, xcb_get_property(conn, 0, window, wm_state, XCB_GET_PROPERTY_TYPE_ANY, 0, 1), NULL);
++      bool managed = state && state->type != XCB_ATOM_NONE;
++      free(state);
++      if (managed)
++         return NULL;
++   }
++   return "the window is a child of another window";
++}
++
++/* Declares the window full side by side for the compositor to make it two
++ * views wide: _KDE_NET_WM_STEREO_CONTENT 3 and no declaration version (version
++ * 3, the default). */
++static inline void
++u_x11_stereo_declare_doubled(xcb_connection_t *conn, xcb_window_t window, uint32_t support)
++{
++   xcb_delete_property(conn, window,
++                       u_x11_stereo_atom(conn, "_KDE_NET_WM_STEREO_CONTENT_VERSION", false));
++   const uint32_t layout = 3;
++   xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window,
++                       u_x11_stereo_atom(conn, "_KDE_NET_WM_STEREO_CONTENT", false),
++                       XCB_ATOM_CARDINAL, 32, 1, &layout);
++   if (support >= 5)
++      u_x11_stereo_list_child(conn, window);
++   xcb_flush(conn);
++}
++
++/* How long to wait for the compositor to give the window its new width:
++ * MESA_STEREO_DOUBLING_WAIT_MS, 1000 by default, 0 for not at all (as the
++ * gl-stereo layer's GL_STEREO_DOUBLING_WAIT_MS). */
++static inline unsigned
++u_x11_stereo_doubling_wait_ms(void)
++{
++   const char *s = getenv("MESA_STEREO_DOUBLING_WAIT_MS");
++   if (!s || !*s)
++      return 1000;
++   char *end;
++   unsigned long ms = strtoul(s, &end, 10);
++   return *end || ms > 60000 ? 1000 : (unsigned)ms;
++}
++
++/* Waits, at most wait_ms and only while the window is mapped (an unmapped one
++ * is sized when the window manager takes it), for the X server to report the
++ * window WIDTH wide. Returns the width the window has. */
++static inline uint32_t
++u_x11_stereo_wait_width(xcb_connection_t *conn, xcb_window_t window, uint32_t width, unsigned wait_ms)
++{
++   uint32_t now = 0;
++   for (unsigned ms = 0;; ms += 10) {
++      xcb_get_geometry_reply_t *geometry =
++         xcb_get_geometry_reply(conn, xcb_get_geometry(conn, window), NULL);
++      now = geometry ? geometry->width : 0;
++      free(geometry);
++      if (!now || now == width || ms >= wait_ms)
++         return now;
++      xcb_get_window_attributes_reply_t *attributes =
++         xcb_get_window_attributes_reply(conn, xcb_get_window_attributes(conn, window), NULL);
++      bool mapped = attributes && attributes->map_state != XCB_MAP_STATE_UNMAPPED;
++      free(attributes);
++      if (!mapped)
++         return now;
++      nanosleep(&(struct timespec){ 0, 10 * 1000 * 1000 }, NULL);
++   }
++}
++
++#endif
+diff --git a/src/vulkan/stereo-layer/stereo_layer.c b/src/vulkan/stereo-layer/stereo_layer.c
+index a7674f6..e1e2353 100644
+--- a/src/vulkan/stereo-layer/stereo_layer.c
++++ b/src/vulkan/stereo-layer/stereo_layer.c
+@@ -12,6 +12,7 @@
+ #include <string.h>
+ 
+ #include "util/u_x11_stereo_present.h"
++#include "util/u_x11_stereo_doubled.h"
+ #include <xcb/present.h>
+ 
+ #define PUBLIC __attribute__((visibility("default")))
+@@ -132,6 +133,14 @@ struct surface_data {
+     * declaration lives as long as it does. */
+    struct swapchain_data *current;
+    struct u_stereo_pair pair;
++   /* The X server has DRI3 (1), has not (0), not asked yet (-1). */
++   int dri3;
++   /* Without DRI3 the driver puts its picture into the window itself, so the
++    * window is declared for the compositor to make it two views wide; the
++    * program keeps one view's width, view_width. */
++   bool doubled;
++   bool doubled_seen;
++   uint32_t view_width;
+    xcb_special_event_t *present_event;
+    xcb_present_event_t present_eid;
+    uint32_t probe_serial;
+@@ -164,6 +173,7 @@ struct instance_data {
+    PFN_vkDestroySurfaceKHR DestroySurfaceKHR;
+    PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR GetSurfaceCapabilities;
+    PFN_vkGetPhysicalDeviceMemoryProperties GetMemoryProperties;
++   PFN_vkGetPhysicalDeviceProperties GetProperties;
+    struct instance_data *next;
+ };
+ 
+@@ -215,6 +225,8 @@ struct device_data {
+    PFN_vkCreateSemaphore CreateSemaphore;
+    PFN_vkDestroySemaphore DestroySemaphore;
+    VkPhysicalDeviceMemoryProperties memory;
++   /* A pair of this device was shown, which ends its one-view problem. */
++   bool pair_shown;
+    struct queue_data *queues;
+    VkQueue first_queue;
+    uint32_t first_family;
+@@ -572,11 +584,133 @@ withdraw(struct surface_data *surface)
+          u_x11_stereo_withdraw(conn, window);
+    }
+    surface->declared = false;
++   surface->doubled = false;
++   surface->doubled_seen = false;
+    surface->stereo_swapchain_created = false;
+    surface->current = NULL;
+    memset(&surface->pair, 0, sizeof(surface->pair));
+ }
+ 
++static bool
++x11_without_dri3(struct surface_data *surface)
++{
++   if (surface->wayland)
++      return false;
++   if (surface->dri3 < 0) {
++      xcb_window_t window = XCB_NONE;
++      xcb_connection_t *conn = x11_connection(surface, &window);
++      surface->dri3 = conn && u_x11_has_dri3(conn);
++   }
++   return !surface->dri3;
++}
++
++/* Why the compositor will not make this X11 window two views wide, or NULL. */
++static const char *
++x11_not_doubled(struct surface_data *surface)
++{
++   xcb_window_t window = XCB_NONE;
++   xcb_connection_t *conn = x11_connection(surface, &window);
++   return u_x11_stereo_not_doubled(conn, window, surface_support_version(surface));
++}
++
++/* Without DRI3 the window is declared for the compositor to make it two views
++ * wide (version 3), and the driver's swapchain of both views is made once it
++ * is, as the gl-stereo layer waits: a mapped window, at most
++ * MESA_STEREO_DOUBLING_WAIT_MS. The compositor may double it later (it may be
++ * busy, or the window not mapped yet); the driver's swapchain is then out of
++ * date, as for any resize of an X11 window, and the next one has the width. */
++static void
++x11_double(struct surface_data *surface, uint32_t view_width)
++{
++   xcb_window_t window = XCB_NONE;
++   xcb_connection_t *conn = x11_connection(surface, &window);
++   if (!surface->doubled || !surface->declared) {
++      u_x11_stereo_declare_doubled(conn, window, surface_support_version(surface));
++      surface->declared = true;
++      surface->doubled = true;
++      surface->doubled_seen = false;
++   }
++   surface->view_width = view_width;
++   const unsigned wait_ms = u_x11_stereo_doubling_wait_ms();
++   const uint32_t width = u_x11_stereo_wait_width(conn, window, 2 * view_width, wait_ms);
++   if (width == 2 * view_width)
++      surface->doubled_seen = true;
++   else
++      fprintf(stderr, "Mesa stereo layer: the desktop has not made window 0x%lx two views wide (%u) "
++                      "within %u ms, it is %u wide; the program's swapchain goes out of date when it is.\n",
++              (unsigned long)window, 2 * view_width, wait_ms, width);
++}
++
++/* The window shows its two views: the X server has reported it two views wide. */
++static bool
++x11_doubled_shown(struct surface_data *surface)
++{
++   if (!surface->doubled_seen) {
++      xcb_window_t window = XCB_NONE;
++      xcb_connection_t *conn = x11_connection(surface, &window);
++      xcb_get_geometry_reply_t *geometry =
++         xcb_get_geometry_reply(conn, xcb_get_geometry(conn, window), NULL);
++      surface->doubled_seen = geometry && geometry->width == 2 * surface->view_width;
++      free(geometry);
++   }
++   return surface->doubled_seen;
++}
++
++/* one-view:vulkan:DEVICE, the device's name as vkGetPhysicalDeviceProperties gives it */
++static void
++one_view_key(struct device_data *data, char *key, size_t size, char *device, size_t device_size)
++{
++   VkPhysicalDeviceProperties properties;
++   memset(&properties, 0, sizeof(properties));
++   if (data->instance->GetProperties)
++      data->instance->GetProperties(data->physical, &properties);
++   snprintf(device, device_size, "%s", properties.deviceName[0] ? properties.deviceName : "Vulkan device");
++   size_t n = snprintf(key, size, "one-view:vulkan:");
++   for (const char *c = device; *c && n + 1 < size; c++)
++      key[n++] = (*c >= '0' && *c <= '9') || (*c >= 'a' && *c <= 'z') ||
++                 (*c >= 'A' && *c <= 'Z') || strchr("_@+-.", *c) ? *c : '_';
++   key[n] = 0;
++}
++
++/* A program asked for two views where the layer cannot give them: the person
++ * is told through sparky-stereo-problems, once per device (ORDER 573's shape). */
++static void
++one_view_problem(struct device_data *data, struct surface_data *surface, const char *why)
++{
++   char key[160], device[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE], detail[320], text[1024];
++   xcb_window_t window = XCB_NONE;
++   x11_connection(surface, &window);
++   one_view_key(data, key, sizeof(key), device, sizeof(device));
++   const char *program = util_get_process_name();
++   if (!program || !*program)
++      program = "program";
++   snprintf(detail, sizeof(detail),
++            "the X server has no DRI3, where the two views reach the desktop only in a window it makes two views "
++            "wide, and window 0x%lx cannot be: %s", (unsigned long)window, why);
++   snprintf(text, sizeof(text),
++            "%s asked for two pictures of its window, one for each eye, on %s, and could not be given them: the "
++            "desktop's X server (Xwayland) runs without 3D acceleration, and there the two pictures reach the "
++            "desktop only in a program's own main window. Log out and in again; if it repeats, look at the graphics "
++            "driver on the Graphics page of System Settings, and report it with the program's name. Mesa says: %s",
++            program, device, detail);
++   const char *args[] = { program, device, detail };
++   u_stereo_problem_keep_args("mesa-vulkan-layer-stereo", key, "failed", "LOCAL4", args, 3, text);
++   data->pair_shown = false;
++}
++
++/* A pair of this device was shown, which ends the device's one-view problem;
++ * the engine ends nothing that is not there, so once per process is enough. */
++static void
++pair_shown(struct device_data *data)
++{
++   if (data->pair_shown)
++      return;
++   char key[160], device[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
++   one_view_key(data, key, sizeof(key), device, sizeof(device));
++   u_stereo_problem_clear("mesa-vulkan-layer-stereo", key);
++   data->pair_shown = true;
++}
++
+ /* A swapchain the layer does not pack becomes the one presented on the
+  * surface, and a declaration the layer made for an earlier pair there goes.
+  */
+@@ -585,6 +719,14 @@ create_passed_through(struct device_data *data, struct surface_data *surface, Vk
+                       const VkSwapchainCreateInfoKHR *create_info,
+                       const VkAllocationCallbacks *allocator, VkSwapchainKHR *swapchain_handle)
+ {
++   if (surface && surface->doubled && surface->stereo_swapchain_created) {
++      /* The window the compositor made two views wide goes back to one view's
++       * width first, so the driver's swapchain is made at the window's size. */
++      xcb_window_t window = XCB_NONE;
++      xcb_connection_t *conn = x11_connection(surface, &window);
++      withdraw(surface);
++      u_x11_stereo_wait_width(conn, window, create_info->imageExtent.width, u_x11_stereo_doubling_wait_ms());
++   }
+    VkResult result = data->CreateSwapchain(device, create_info, allocator, swapchain_handle);
+    if (result == VK_SUCCESS && surface && surface->stereo_swapchain_created)
+       withdraw(surface);
+@@ -651,6 +793,8 @@ stereo_CreateInstance(const VkInstanceCreateInfo *create_info,
+       next(*instance, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
+    data->GetMemoryProperties = (PFN_vkGetPhysicalDeviceMemoryProperties)
+       next(*instance, "vkGetPhysicalDeviceMemoryProperties");
++   data->GetProperties = (PFN_vkGetPhysicalDeviceProperties)
++      next(*instance, "vkGetPhysicalDeviceProperties");
+    data->next = instances;
+    instances = data;
+    global_next_gpa = next;
+@@ -715,6 +859,7 @@ stereo_CreateXcbSurfaceKHR(VkInstance instance,
+    surface->surface = *surface_handle;
+    surface->instance = data;
+    surface->xcb = true;
++   surface->dri3 = -1;
+    surface->u.xcb.connection = create_info->connection;
+    surface->u.xcb.window = create_info->window;
+    surface->enabled = enabled() && xcb_support_version(create_info->connection) >= 1;
+@@ -741,6 +886,7 @@ stereo_CreateXlibSurfaceKHR(VkInstance instance,
+    surface->surface = *surface_handle;
+    surface->instance = data;
+    surface->xlib = true;
++   surface->dri3 = -1;
+    surface->u.xlib.display = create_info->dpy;
+    surface->u.xlib.window = create_info->window;
+    surface->enabled = enabled() && xlib_support_version(create_info->dpy) >= 1;
+@@ -778,8 +924,20 @@ stereo_GetSurfaceCapabilities(VkPhysicalDevice physical, VkSurfaceKHR surface_ha
+    struct instance_data *instance = find_instance(physical);
+    VkResult result = instance->GetSurfaceCapabilities(physical, surface_handle, caps);
+    if (result == VK_SUCCESS && surface && surface->enabled && caps->maxImageArrayLayers < 2) {
++      /* Without DRI3 a pair reaches the desktop only in a window the compositor
++       * makes two views wide: elsewhere the layer promises nothing. */
++      if (!surface->doubled && x11_without_dri3(surface) && x11_not_doubled(surface))
++         return result;
+       caps->maxImageArrayLayers = 2;
+-      if (surface_support_version(surface) == 3 && surface->stereo_swapchain_created) {
++      if (surface->doubled && caps->currentExtent.width != UINT32_MAX &&
++          (surface->doubled_seen || caps->currentExtent.width == 2 * surface->view_width)) {
++         /* The window is two views wide; the program works in one view's
++          * size, the size the compositor's synthetic ConfigureNotify gives. */
++         surface->doubled_seen = true;
++         caps->currentExtent.width /= 2;
++         caps->minImageExtent.width /= 2;
++         caps->maxImageExtent.width /= 2;
++      } else if (surface_support_version(surface) == 3 && surface->stereo_swapchain_created) {
+          if (caps->currentExtent.width != UINT32_MAX)
+             caps->currentExtent.width /= 2;
+          if (caps->minImageExtent.width != UINT32_MAX)
+@@ -991,21 +1149,16 @@ stereo_CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR *create_i
+       return result;
+    if (caps.maxImageArrayLayers >= 2)
+       return create_passed_through(data, surface, device, create_info, allocator, swapchain_handle);
+-   if (!surface->wayland) {
+-      xcb_window_t window = XCB_NONE;
+-      xcb_connection_t *conn = x11_connection(surface, &window);
+-      xcb_query_extension_reply_t *dri3 = xcb_query_extension_reply(conn,
+-         xcb_query_extension(conn, 4, "DRI3"), NULL);
+-      bool present = dri3 && dri3->present;
+-      free(dri3);
+-      if (!present) {
+-         /* A one-layer WSI may use PutImage without DRI3. Its packed buffer
+-          * is clipped to the left view, and there is no Present completion
+-          * to observe. It cannot provide this two-view swapchain.
+-          */
+-         fprintf(stderr, "Mesa stereo layer: this X11 server has no DRI3; "
+-                         "the one-layer WSI cannot present a complete pair. "
+-                         "The two-view swapchain request was refused.\n");
++   /* Without DRI3 the driver puts its picture into the window itself (PutImage,
++    * no Present completion), so the pair is whole only in a window two views
++    * wide: the compositor makes a top-level window so. Where it cannot, the
++    * capabilities promised one layer; a program that asks for two anyway is
++    * refused, and the person is told. */
++   const bool doubled = x11_without_dri3(surface);
++   if (doubled) {
++      const char *why = x11_not_doubled(surface);
++      if (why) {
++         one_view_problem(data, surface, why);
+          return VK_ERROR_FEATURE_NOT_PRESENT;
+       }
+    }
+@@ -1013,7 +1166,10 @@ stereo_CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR *create_i
+    VkSwapchainCreateInfoKHR downstream_info = *create_info;
+    downstream_info.imageArrayLayers = 1;
+    downstream_info.imageExtent.width *= 2;
+-   if (!declared_before_create && !surface->wayland && surface_support_version(surface) >= 3) {
++   if (doubled) {
++      x11_double(surface, create_info->imageExtent.width);
++      declared_before_create = true;
++   } else if (!declared_before_create && !surface->wayland && surface_support_version(surface) >= 3) {
+       if (surface->xcb)
+          declare_xcb(surface);
+       else if (surface->xlib)
+@@ -1228,7 +1384,7 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
+       if (!swapchain)
+          continue;
+       record_pack(swapchain, present_info->pImageIndices[i], present_info->pImageIndices[i]);
+-      if (!swapchain->surface->wayland && !x11_watch(swapchain->surface)) {
++      if (!swapchain->surface->wayland && !swapchain->surface->doubled && !x11_watch(swapchain->surface)) {
+          free(commands); free(ready); free(stages);
+          return VK_ERROR_SURFACE_LOST_KHR;
+       }
+@@ -1259,8 +1415,19 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
+    if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
+       for (uint32_t i = 0; i < present_info->swapchainCount; i++) {
+          struct swapchain_data *swapchain = find_swapchain(data, present_info->pSwapchains[i]);
+-         if (!swapchain || swapchain->surface->wayland) continue;
++         if (!swapchain) continue;
+          struct surface_data *surface = swapchain->surface;
++         if (surface->wayland) {
++            pair_shown(data);
++            continue;
++         }
++         if (surface->doubled) {
++            /* The picture of both views went into the window by PutImage: a
++             * pair once the window is two views wide. */
++            if (x11_doubled_shown(surface))
++               pair_shown(data);
++            continue;
++         }
+          int mode = x11_completion(surface, 0, false);
+          if (mode < 0) { result = VK_ERROR_SURFACE_LOST_KHR; break; }
+          if (surface->pair.flat) {
+@@ -1269,6 +1436,8 @@ stereo_QueuePresent(VkQueue queue, const VkPresentInfoKHR *present_info)
+          }
+          bool wait = u_stereo_pair_wait(&surface->pair);
+          x11_completed(swapchain, mode);
++         if (!surface->pair.flat && mode == XCB_PRESENT_COMPLETE_MODE_FLIP)
++            pair_shown(data);
+          if (surface->pair.flat) {
+             if (!x11_left(swapchain, queue, present_info->pImageIndices[i]))
+                result = VK_ERROR_SURFACE_LOST_KHR;
+diff --git a/src/vulkan/wsi/wsi_common_x11.c b/src/vulkan/wsi/wsi_common_x11.c
+index a25bad4..27c48ba 100644
+--- a/src/vulkan/wsi/wsi_common_x11.c
++++ b/src/vulkan/wsi/wsi_common_x11.c
+@@ -36,6 +36,7 @@
+ 
+ #include "util/u_x11_stereo_child.h"
+ #include "util/u_x11_stereo_present.h"
++#include "util/u_x11_stereo_doubled.h"
+ #include "util/macros.h"
+ #include <stdatomic.h>
+ #include <stdlib.h>
+@@ -110,8 +111,23 @@ struct wsi_x11_vk_surface {
+    /* The two-view swapchain that is the window's current one: the window's
+     * declaration lives as long as it does. */
+    struct x11_swapchain *stereo_chain;
++   /* Without DRI3 a software driver puts its picture into the window with
++    * PutImage, so the window of a pair is declared for the compositor to make
++    * it two views wide; the program keeps one view's width, view_width. */
++   bool doubled;
++   bool doubled_seen;
++   uint32_t view_width;
+ };
+ 
++/* The presentation puts the picture into the window itself (PutImage): a
++ * software driver on an X server without DRI3, where MIT-SHM pixmaps are not
++ * used (wsi_x11_connection_create). */
++static bool
++x11_puts_image(const struct wsi_device *wsi_device, const struct wsi_x11_connection *wsi_conn)
++{
++   return wsi_device->sw && !wsi_conn->has_mit_shm;
++}
++
+ static uint32_t
+ x11_stereo_support_version(xcb_connection_t *conn, xcb_window_t root)
+ {
+@@ -758,12 +774,24 @@ x11_surface_get_capabilities(VkIcdSurfaceBase *icd_surface,
+       return VK_ERROR_SURFACE_LOST_KHR;
+    root = geom->root;
+    const uint32_t stereo_version = x11_stereo_support_version(conn, root);
++   /* Where the picture is put into the window, a pair is whole only in a
++    * window the compositor makes two views wide; elsewhere no second layer is
++    * promised. */
++   const bool one_layer = stereo_version >= 1 && !surface->doubled &&
++      x11_puts_image(wsi_device, wsi_conn) && u_x11_stereo_not_doubled(conn, window, stereo_version);
+    {
+       VkExtent2D extent = { geom->width, geom->height };
+       /* version 3 makes the window of a stereo swapchain hold both views;
+        * from version 4 it stays one eye wide */
+-      if (surface->stereo_swapchain_created && stereo_version == 3)
++      if (surface->doubled &&
++          (surface->doubled_seen || extent.width == 2 * surface->view_width)) {
++         /* the program works in one view's size, the size the compositor's
++          * synthetic ConfigureNotify gives */
++         surface->doubled_seen = true;
++         extent.width /= 2;
++      } else if (surface->stereo_swapchain_created && stereo_version == 3) {
+          extent.width /= 2;
++      }
+       caps->currentExtent = extent;
+       caps->minImageExtent = extent;
+       caps->maxImageExtent = extent;
+@@ -791,7 +819,7 @@ x11_surface_get_capabilities(VkIcdSurfaceBase *icd_surface,
+    caps->supportedTransforms = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+    caps->currentTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+    caps->maxImageArrayLayers =
+-      stereo_version >= 1 ? 2 : 1;
++      stereo_version >= 1 && !one_layer ? 2 : 1;
+    caps->supportedUsageFlags = wsi_caps_get_image_usage();
+ 
+    VK_FROM_HANDLE(vk_physical_device, pdevice, wsi_device->pdevice);
+@@ -2497,6 +2525,8 @@ x11_swapchain_destroy(struct wsi_swapchain *wsi_chain,
+       u_x11_stereo_withdraw(chain->conn, chain->window);
+       chain->stereo_surface->stereo_swapchain_created = false;
+       chain->stereo_surface->stereo_chain = NULL;
++      chain->stereo_surface->doubled = false;
++      chain->stereo_surface->doubled_seen = false;
+    }
+ 
+    mtx_lock(&chain->thread_state_lock);
+@@ -2807,7 +2837,28 @@ x11_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
+    chain->has_mit_shm = wsi_conn->has_mit_shm;
+    chain->has_async_may_tear = present_caps & XCB_PRESENT_CAPABILITY_ASYNC_MAY_TEAR;
+ 
+-   if (chain->base.stereo && stereo_version >= 4) {
++   const bool doubled = chain->base.stereo && stereo_version >= 3 &&
++      x11_puts_image(wsi_device, wsi_conn) && !u_x11_stereo_not_doubled(conn, window, stereo_version);
++   if (doubled) {
++      /* The picture of both views goes into the window, so the compositor
++       * makes the window two views wide (declaration version 3), and the
++       * first present is made once it is (a mapped window, at most
++       * MESA_STEREO_DOUBLING_WAIT_MS); a later doubling makes this swapchain
++       * out of date, as any resize of an X11 window does. */
++      u_x11_stereo_declare_doubled(chain->conn, chain->window, stereo_version);
++      surface->doubled = true;
++      surface->view_width = pCreateInfo->imageExtent.width;
++      const unsigned wait_ms = u_x11_stereo_doubling_wait_ms();
++      const uint32_t width = u_x11_stereo_wait_width(chain->conn, chain->window, chain->extent.width, wait_ms);
++      surface->doubled_seen = width == chain->extent.width;
++      if (!surface->doubled_seen)
++         mesa_logw("vulkan: the desktop has not made window 0x%x two views wide (%u) within %u ms, it is %u "
++                   "wide; the swapchain goes out of date when it is", chain->window, chain->extent.width,
++                   wait_ms, width);
++      surface->stereo_swapchain_created = true;
++      surface->stereo_chain = chain;
++      chain->stereo_surface = surface;
++   } else if (chain->base.stereo && stereo_version >= 4) {
+       /* the window stays one eye wide; the packed images hold both eyes */
+       xcb_intern_atom_reply_t *atom = xcb_intern_atom_reply(
+          chain->conn,
+@@ -2822,7 +2873,7 @@ x11_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
+       }
+    }
+ 
+-   if (chain->base.stereo) {
++   if (chain->base.stereo && !doubled) {
+       xcb_intern_atom_reply_t *atom = xcb_intern_atom_reply(
+          chain->conn,
+          xcb_intern_atom(chain->conn, 0,
+@@ -2841,13 +2892,21 @@ x11_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
+       surface->stereo_swapchain_created = true;
+       surface->stereo_chain = chain;
+       chain->stereo_surface = surface;
+-   } else if (surface->stereo_swapchain_created) {
++   } else if (!chain->base.stereo && surface->stereo_swapchain_created) {
+       /* The declaration follows the swapchain that is current on the window:
+        * a swapchain of one view after a pair there makes the window one
+        * picture again from its next frame on. */
+       u_x11_stereo_withdraw(chain->conn, chain->window);
+       surface->stereo_swapchain_created = false;
+       surface->stereo_chain = NULL;
++      if (surface->doubled) {
++         /* the window goes back to one view's width before the first picture
++          * is put into it */
++         u_x11_stereo_wait_width(chain->conn, chain->window, chain->extent.width,
++                                 u_x11_stereo_doubling_wait_ms());
++         surface->doubled = false;
++         surface->doubled_seen = false;
++      }
+    }
+ 
+    /* When images in the swapchain don't fit the window, X can still present them, but it won't
