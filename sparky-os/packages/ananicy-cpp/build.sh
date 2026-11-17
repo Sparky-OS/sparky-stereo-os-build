@@ -11,13 +11,13 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REPRO=$HERE/../../repo/reproducible.py
 SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$REPRO" epoch "$HERE")}
 export SOURCE_DATE_EPOCH
-: "${ORIG:?published ananicy-cpp_1.1.1+git20260818.orig.tar.xz}"
+: "${ORIG:?published ananicy-cpp_1.2.0+git20260818.orig.tar.xz}"
 : "${WORK:?empty build directory}"
 mkdir -p "$WORK"
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
-cp "$ORIG" "$WORK/ananicy-cpp_1.1.1+git20260818.orig.tar.xz"
+cp "$ORIG" "$WORK/ananicy-cpp_1.2.0+git20260818.orig.tar.xz"
 tar -xf "$ORIG" -C "$WORK"
-SOURCE=$WORK/ananicy-cpp-1.1.1+git20260818
+SOURCE=$WORK/ananicy-cpp-1.2.0+git20260818
 [ -d "$SOURCE" ]
 # The orig archive has no Debian packaging; this recipe owns it.
 python3 "$HERE/../../../tools/copy-recipe.py" "$HERE/debian" "$SOURCE/debian"

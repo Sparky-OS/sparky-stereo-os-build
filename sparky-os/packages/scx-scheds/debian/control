@@ -1,0 +1,21 @@
+Source: scx-scheds
+Section: kernel
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), cargo, rustc, clang, clang-22, llvm-22, cmake, pkgconf, libelf-dev, libseccomp-dev, libbpf-dev, protobuf-compiler, zlib1g-dev, libssl-dev, dwarves, bpftool, make
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+Homepage: https://github.com/sched-ext/scx
+
+Package: scx-scheds
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: sched_ext schedulers and tools
+ Process schedulers that run as BPF programs through the kernel's sched_ext
+ class (scx_lavd, scx_bpfland, scx_rusty, scx_cosmos, scx_flash, scx_p2dq and
+ the others of the sched-ext/scx project). The service is installed and stays
+ off until it is enabled; a kernel with CONFIG_SCHED_CLASS_EXT and BTF is needed.
+ .
+ Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo"
+ Pijanowski). Upstream: Tejun Heo, David Vernet, Andrea Righi, Changwoo Min
+ and the sched-ext contributors.

@@ -1,9 +1,8 @@
-ananicy-cpp (1.1.1+git20260818-1+sparky1) unstable; urgency=medium
+ananicy-cpp (1.2.0+git20260818-1+sparky1) unstable; urgency=medium
 
   * The edition's build of ananicy-cpp for the scheduling work of ORDER 108 (Daniel, 2026-10-05: "processor governance"): the daemon from
-    its upstream source (gitlab.com/ananicy-cpp/ananicy-cpp, master 3554447c1ca4, 2026-08-18, version 1.1.1 by its spec file), built with
-    the system's fmt, spdlog and nlohmann_json and with systemd support, without the BPF process listener (needs clang and libbpf).
-  * The unit is installed and never enabled or started: the daemon is off until the person switches it on (systemctl enable --now
-    ananicy-cpp). No rules are shipped; the community rules are a separate package, and the daemon does nothing without them.
+    its upstream source (gitlab.com/ananicy-cpp/ananicy-cpp, master 3554447c1ca4, 2026-08-18, version 1.2.0: the tag v1.2.0 of 2026-03-26 plus its three later commits, a README bump and the glibc 2.42 header fix), built the way Arch Linux builds it for CachyOS (gitlab.archlinux.org packages/ananicy-cpp PKGBUILD, commit 883d54f204fe of 2026-03-27): the system's fmt, spdlog and nlohmann_json, systemd support, the BPF process listener and regex support.
+  * The unit is installed and not enabled or started. CachyOS enables ananicy-cpp (cachyos-settings.install post_install, systemctl enable) and Bazzite ships no ananicy-cpp, so the two differ and the unit stays off until Daniel answers; the person's switch is systemctl enable --now ananicy-cpp. The rules are the package cachyos-ananicy-rules, which this package depends on.
+  * Upstream searched on 2026-11-16 (gitlab.com/ananicy-cpp/ananicy-cpp): no merge request is carried (35 Debian packaging, 41 cgroup v2 migration policy, 44 musl, 45 forked children and renames, 46 scan after attach are open; 42 gcc 16 builds as it is).
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 16 Nov 2026 12:00:00 -0300

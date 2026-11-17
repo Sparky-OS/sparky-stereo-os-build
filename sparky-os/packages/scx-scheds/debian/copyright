@@ -1,0 +1,26 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: scx
+Source: https://github.com/sched-ext/scx
+
+Files: *
+Copyright: the sched-ext contributors (Tejun Heo, David Vernet, Andrea Righi, Changwoo Min, Jake Hillion, Ryan Newton and others, as the project's git history lists them)
+License: GPL-2
+Comment: The project's licence is GPL-2.0-only (GitHub's licence detection and CachyOS's PKGBUILD agree); BPF programs under scheds/ are GPL-2.0-only with the kernel's own BPF licence note; the vendored crates (vendor/) keep the licences of their own crates, each in its folder.
+
+Files: vendor/*
+Copyright: the authors of the vendored crates
+License: various
+Comment: Each crate under vendor/ carries its own Cargo.toml licence field and licence files.
+
+Files: debian/*
+Copyright: 2026 Daniel Ramos (Capitain Jack)
+License: GPL-2
+
+License: GPL-2
+ This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the
+ Free Software Foundation, version 2 of the License.
+ .
+ On Debian systems, the complete text of the GNU General Public License version 2 can be found in /usr/share/common-licenses/GPL-2.
+
+License: various
+ See the licence field and the licence files of each vendored crate.

@@ -6,10 +6,10 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 %:
 	dh $@
 
-# the system's fmt, spdlog and nlohmann_json; systemd's notify; no BPF listener (clang and libbpf)
+# as Arch Linux builds it for CachyOS: the system's fmt, spdlog and nlohmann_json, systemd's notify, the BPF process listener (system libbpf), regex support
 override_dh_auto_configure:
-	dh_auto_configure -- -DCMAKE_BUILD_TYPE=Release -DVERSION=1.1.1 -DENABLE_SYSTEMD=ON -DUSE_EXTERNAL_JSON=ON \
-		-DUSE_EXTERNAL_SPDLOG=ON -DUSE_EXTERNAL_FMTLIB=ON -DUSE_BPF_PROC_IMPL=OFF
+	dh_auto_configure -- -DCMAKE_BUILD_TYPE=Release -DVERSION=1.2.0 -DENABLE_SYSTEMD=ON -DUSE_EXTERNAL_JSON=ON \
+		-DUSE_EXTERNAL_SPDLOG=ON -DUSE_EXTERNAL_FMTLIB=ON -DUSE_BPF_PROC_IMPL=ON -DBPF_BUILD_LIBBPF=OFF -DENABLE_REGEX_SUPPORT=ON
 
 # the unit is installed, never enabled or started by the package (off until the person switches it on)
 override_dh_installsystemd:
