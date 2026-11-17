@@ -4,13 +4,14 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?}
-VERSION=1.0.3+lc1
+VERSION=1.0.4+lc1
 WORK=$(mktemp -d "${BUILD_ROOT:?}/language-tasks.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 D=$WORK/tree
 P=sparky-stereo-language-tasks
 mkdir -p "$D/DEBIAN" "$D/usr/lib/$P" "$D/usr/share/$P" "$D/usr/share/doc/$P" "$D/usr/lib/systemd/system"
 install -m755 "$HERE/bin/languages" "$D/usr/lib/$P/languages"
+install -Dm755 "$HERE/bin/tasksel-test" "$D/usr/lib/tasksel/tests/sparky-language"
 install -m644 "$HERE/../../lists/language-tasks.json" "$D/usr/share/$P/manifest.json"
 install -m644 "$HERE/systemd/"* "$D/usr/lib/systemd/system/"
 install -m644 "$HERE/copyright" "$D/usr/share/doc/$P/copyright"

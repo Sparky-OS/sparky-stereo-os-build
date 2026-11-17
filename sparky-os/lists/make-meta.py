@@ -343,11 +343,11 @@ META['sparky-stereo'] = (META['sparky-stereo'][0], META['sparky-stereo'][1].repl
 META['sparky-stereo-tasks'] = (
     'Sparky Stereo OS tasks for tasksel',
     'This package lists the role tasks of Sparky Stereo OS in tasksel, the Debian way: gamer, designer, video creator, musician, scientist, student, simulator pilot and driver, maker, electrical and automation engineer, developer and Stereo OS developer, with the 2D programs of science and education as their own tasks.',
-    ['tasksel', 'sparky-stereo-language-tasks (>= 1.0.0)'], [])
+    ['tasksel', 'sparky-stereo-language-tasks (>= 1.0.4)'], [])
 
 LANGUAGE_TASKS = json.load(open(os.path.join(HERE, 'language-tasks.json')))
 META['task-sparky-language-common'] = ('Shared language support', 'Shared fonts, locales and input methods.',
-    ['tasksel', 'sparky-stereo-language-tasks (>= 1.0.0)'] + LANGUAGE_TASKS['common'], [])
+    ['tasksel', 'sparky-stereo-language-tasks (>= 1.0.4)'] + LANGUAGE_TASKS['common'], [])
 for language in LANGUAGE_TASKS['languages']:
     META[language['name']] = ('Language support (' + language['code'] + ')',
         'Required dictionaries, translations and input methods for this language.',
@@ -360,8 +360,10 @@ def desc():
         if not k.startswith('task-'):
             continue
         title, body = META[k][0], META[k][1]
-        out += ['Task: ' + k[len('task-'):], 'Parent: sparky-stereo', 'Relevance: 5', 'Key:', '  ' + k,
-                'Section: ' + ('l10n' if k.startswith('task-sparky-language-') else 'user'), 'Description: ' + title, ' ' + body, '']
+        out += ['Task: ' + k[len('task-'):], 'Parent: sparky-stereo', 'Relevance: 5', 'Key:', '  ' + k]
+        if k.startswith('task-sparky-language-'):
+            out += ['Test-sparky-language: ' + k[len('task-sparky-language-'):]]
+        out += ['Section: ' + ('l10n' if k.startswith('task-sparky-language-') else 'user'), 'Description: ' + title, ' ' + body, '']
     return '\n'.join(out)
 
 def main():
