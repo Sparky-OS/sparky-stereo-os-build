@@ -18,7 +18,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from lean import package, project, release
+from lean import package, parallel, project, release
 
 BIN = Path(__file__).resolve().parents[2] / 'packages/dpkg-stereo/bin/dpkg-stereo'
 loader = importlib.machinery.SourceFileLoader('dpkg_stereo_test', str(BIN))
@@ -263,6 +263,22 @@ class Packages(unittest.TestCase):
             with self.assertRaises(package.Invalid):
                 package.prepare(root, self.base / 'hr')
         self.assertNotIn(package.FIELD.lower(), package.control(root))
+
+    def test_order_638_workers_give_the_manifest_and_hr_of_one_process(self):
+        first = self.stage()
+        for n in range(6):
+            (first / f'usr/bin/lc-demo-{n}').write_text(SCRIPT.replace('hello', f'hello {n}'))
+        second = self.base / 'stage-copy'
+        shutil.copytree(first, second, symlinks=True)
+        made = []
+        for root, count in ((first, 1), (second, 3)):
+            hr = self.base / f'hr-{count}'
+            with patch.object(parallel, 'processors', return_value=count):
+                obj = package.prepare(root, hr)
+            made.append((obj['files'], sorted((p.relative_to(hr).as_posix(), p.read_bytes())
+                                              for p in hr.rglob('*') if p.is_file())))
+        self.assertGreater(sum(row['status'] == 'projected' for row in made[0][0]), 6)
+        self.assertEqual(made[0], made[1])
 
     def test_source_paths_cannot_escape(self):
         for path in ('../../file', '/../../file', '//etc/file', '/usr/./file', '/x\ny'):

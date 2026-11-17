@@ -99,7 +99,7 @@ A comparison has at most two live qualified roots, and releases them after retai
 The low-level `Archive.qualify` API returns a qualifier whose `close()` records the inventory and releases its root; a third live qualifier is refused.
 These are qualification evidence, not packages to publish.
 Scratch is persistent and private to the invocation owner; remove completed run directories when their evidence is no longer needed.
-The enforced minimum floors are 2 GiB on scratch and 12 GiB on the root filesystem, with the larger floor applying when they share storage.
+The floors default to the house floors (ORDER 638): 1 GiB on the root filesystem, and for the scratch the floor of its own disk (1 GiB on the root filesystem, 2 GiB on another); a raised floor applies, the larger one when scratch and root share storage. A floor below 1 GiB is refused.
 `--min-free-gib` / `SPARKY_LC_MIN_FREE_GIB` and `--root-min-free-gib` / `SPARKY_LC_ROOT_MIN_FREE_GIB` can raise these floors.
 The gate reserves the impending write against both floors conservatively because bind mounts and overlay filesystems can share physical storage despite reporting different devices.
 Checks occur before public-key copying, input caching, index construction, downloads, archive members and each 1 MiB write chunk.

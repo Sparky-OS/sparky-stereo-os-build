@@ -4,16 +4,17 @@
 A tag is accepted only with the commit it was verified to point to (the tag's signature checked with its signer's key
 and the commit compared with git.kernel.org): Linus Torvalds's, ABAF11C65A2970B130ABE3C479BE3E4300411886, for mainline
 tags, and Greg Kroah-Hartman's, 647F28654894E3BD457199BE38DBBDC86092693E, for the stable releases of the stable tree.
-The rule is build-deb.sh's: v7.3-rc6 gives 7.3.0-rc6 (uname -r) and 7.3.0~rc6 (Debian), v7.3 gives 7.3.0, v7.3.1 gives 7.3.1.
+The rule is build-deb.sh's: v7.3-rc6 gives 7.3.0-rc6 (uname -r) and 7.3.0~rc6 (Debian), v7.3 gives 7.3.0, v7.3.1 gives 7.3.1, v7.3.4 gives 7.3.4.
 """
 import re
 
 PINNED = {
     'v7.3-rc6': 'a90ee4305c4a5df72c11b31dacfdc76e00fcf78a',  # builds 9 to 12
     'v7.3': 'c03c1a14507dfaf8b856c2608f9ac216021fc222',  # build 13 (tag object 091b06388b11, 2026-10-18)
-    'v7.3.1': '79a907609d53d5cd645b42c11550d295d43abf99',  # build 14 on (stable, tag object dfc1145bbaa1, 2026-10-30)
+    'v7.3.1': '79a907609d53d5cd645b42c11550d295d43abf99',  # builds 14 to 17 (stable, tag object dfc1145bbaa1, 2026-10-30)
+    'v7.3.4': '7595a62d45ee1a2297eafa5f2ef5d0a45142d84d',  # build 18 on (stable, tag object 8310b43a724c, 2026-11-10)
 }
-CURRENT = 'v7.3.1'
+CURRENT = 'v7.3.4'
 
 
 def versions(tag):

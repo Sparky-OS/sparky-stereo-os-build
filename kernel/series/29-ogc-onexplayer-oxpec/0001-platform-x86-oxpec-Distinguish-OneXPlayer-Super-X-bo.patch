@@ -15,23 +15,19 @@ Signed-off-by: Alexander Egorov <begeebe@gmail.com>
 (cherry picked from commit 7da0102aed5cd28c6a3eca6e0595aeedcfa2f8b9)
 
 OGC-tag: FROM-ML
+[ORDER 636: ported to v7.3.4: upstream 8b6c2c832 ("platform/x86: oxpec: Fix Apex charge limit control", Antheas Kapenekakis, 7.3.2) added the board oxp_apex and a "case oxp_apex:" after each "case oxp_g1_a:"; the port keeps this patch's rule, oxp_super_x at the end of the enum and "case oxp_super_x:" right after each of the ten "case oxp_g1_a:", so the Super X still behaves as the G1 AMD; the Apex-only charge cases are not G1 ones and get none. The changed lines are the original ones, only their context moved.]
 ---
- drivers/platform/x86/oxpec.c | 13 ++++++++++++-
- 1 file changed, 12 insertions(+), 1 deletion(-)
-
-diff --git a/drivers/platform/x86/oxpec.c b/drivers/platform/x86/oxpec.c
-index 34bb17fca14813669b14c8e833a87a8a85e3bd17..00a5e64b20015a3b8bc2c9632aac31fa990e8443 100644
 --- a/drivers/platform/x86/oxpec.c
 +++ b/drivers/platform/x86/oxpec.c
-@@ -50,6 +50,7 @@ enum oxp_board {
- 	oxp_x1,
+@@ -51,6 +51,7 @@
  	oxp_g1_i,
  	oxp_g1_a,
+ 	oxp_apex,
 +	oxp_super_x,
  };
  
  static enum oxp_board board;
-@@ -210,7 +211,7 @@ static const struct dmi_system_id dmi_table[] = {
+@@ -214,7 +215,7 @@
  			DMI_MATCH(DMI_BOARD_VENDOR, "ONE-NETBOOK"),
  			DMI_EXACT_MATCH(DMI_BOARD_NAME, "ONEXPLAYER SUPER X"),
  		},
@@ -40,83 +36,83 @@ index 34bb17fca14813669b14c8e833a87a8a85e3bd17..00a5e64b20015a3b8bc2c9632aac31fa
  	},
  	{
  		.matches = {
-@@ -352,6 +353,7 @@ static umode_t tt_toggle_is_visible(struct kobject *kobj,
+@@ -356,6 +357,7 @@
  	case oxp_x1:
  	case oxp_g1_i:
  	case oxp_g1_a:
 +	case oxp_super_x:
+ 	case oxp_apex:
  		return attr->mode;
  	default:
- 		break;
-@@ -381,6 +383,7 @@ static ssize_t tt_toggle_store(struct device *dev,
+@@ -386,6 +388,7 @@
  	case oxp_fly:
  	case oxp_mini_amd_pro:
  	case oxp_g1_a:
 +	case oxp_super_x:
+ 	case oxp_apex:
  		reg = OXP_TURBO_SWITCH_REG;
  		mask = OXP_TURBO_TAKE_VAL;
- 		break;
-@@ -427,6 +430,7 @@ static ssize_t tt_toggle_show(struct device *dev,
+@@ -433,6 +436,7 @@
  	case oxp_fly:
  	case oxp_mini_amd_pro:
  	case oxp_g1_a:
 +	case oxp_super_x:
+ 	case oxp_apex:
  		reg = OXP_TURBO_SWITCH_REG;
  		mask = OXP_TURBO_TAKE_VAL;
- 		break;
-@@ -523,6 +527,7 @@ static bool oxp_psy_ext_supported(void)
+@@ -530,6 +534,7 @@
  	case oxp_x1:
  	case oxp_g1_i:
  	case oxp_g1_a:
 +	case oxp_super_x:
  	case oxp_fly:
+ 	case oxp_apex:
  		return true;
- 	default:
-@@ -656,6 +661,7 @@ static int oxp_pwm_enable(void)
+@@ -688,6 +693,7 @@
  	case oxp_x1:
  	case oxp_g1_i:
  	case oxp_g1_a:
 +	case oxp_super_x:
+ 	case oxp_apex:
  		return write_to_ec(OXP_SENSOR_PWM_ENABLE_REG, PWM_MODE_MANUAL);
  	default:
- 		return -EINVAL;
-@@ -676,6 +682,7 @@ static int oxp_pwm_disable(void)
+@@ -709,6 +715,7 @@
  	case oxp_x1:
  	case oxp_g1_i:
  	case oxp_g1_a:
 +	case oxp_super_x:
+ 	case oxp_apex:
  		return write_to_ec(OXP_SENSOR_PWM_ENABLE_REG, PWM_MODE_AUTO);
  	default:
- 		return -EINVAL;
-@@ -696,6 +703,7 @@ static int oxp_pwm_read(long *val)
+@@ -730,6 +737,7 @@
  	case oxp_x1:
  	case oxp_g1_i:
  	case oxp_g1_a:
 +	case oxp_super_x:
+ 	case oxp_apex:
  		return read_from_ec(OXP_SENSOR_PWM_ENABLE_REG, 1, val);
  	default:
- 		return -EOPNOTSUPP;
-@@ -732,6 +740,7 @@ static int oxp_pwm_fan_speed(long *val)
+@@ -767,6 +775,7 @@
  	case oxp_mini_amd_a07:
  	case oxp_mini_amd_pro:
  	case oxp_g1_a:
 +	case oxp_super_x:
+ 	case oxp_apex:
  		return read_from_ec(OXP_SENSOR_FAN_REG, 2, val);
  	default:
- 		return -EOPNOTSUPP;
-@@ -764,6 +773,7 @@ static int oxp_pwm_input_write(long val)
+@@ -800,6 +809,7 @@
  	case oxp_fly:
  	case oxp_mini_amd_pro:
  	case oxp_g1_a:
 +	case oxp_super_x:
+ 	case oxp_apex:
  		return write_to_ec(OXP_SENSOR_PWM_REG, val);
  	default:
- 		return -EOPNOTSUPP;
-@@ -803,6 +813,7 @@ static int oxp_pwm_input_read(long *val)
+@@ -840,6 +850,7 @@
  	case oxp_fly:
  	case oxp_mini_amd_pro:
  	case oxp_g1_a:
 +	case oxp_super_x:
+ 	case oxp_apex:
  	default:
  		ret = read_from_ec(OXP_SENSOR_PWM_REG, 1, val);
- 		if (ret)

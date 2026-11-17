@@ -7,14 +7,17 @@
 prepare-kernel-source.py has already written SPARKY_MIGRATION_WORK/kernel-sources/FLAVOUR. The packages stay unsigned
 (no SPARKY_SIGNING_KEY_DIR is mounted): the release coordinator signs the image afterwards (kernel/qualification/sign-kernel-image.py).
 Module signing uses Kbuild's own key, which exists only during the build. The tree of a finished build is pruned by
-the caller once its packages are retained. The build stops when SPARKY_MIGRATION_WORK has less than --floor-gb free (default 12,
-the root file system's floor; a scratch disk takes its own).
+the caller once its packages are retained. SPARKY_MIGRATION_WORK may be on any local solid-state disk with room (ORDER 638;
+a hard disk or a network mount is refused), so two flavours can use two disks; the build stops when it has less than
+--floor-gb free (default the house floor of its disk: 1 GiB on the root file system, 2 GiB on another).
 The Lean Code link gate (lean.debhelper, ORDER 198) runs inside the package build: it resolves the packages' runtime
 dependencies from the public archives of --archive-config (default sparky-os/lean/archive.example.json, Debian forky main)
 and starts their programs in bubblewrap, so the container has bubblewrap and unconfined seccomp, AppArmor and system paths.
-The gate also keeps 12 GiB free on the root file system, which inside the container is the host's.
---container names the container (default sparky-lc-kernel-FLAVOUR; two runs of one flavour need two names), --cpus and --jobs
-set its CPU quota and make's jobs (default 4 each; a running build's quota can be raised with docker update --cpus). --detach
+The gate keeps the same house floors: its scratch's disk the floor above, the root file system (the host's, inside the
+container) 1 GiB.
+--container names the container (default sparky-lc-kernel-FLAVOUR; two runs of one flavour need two names), --cpus sets its
+CPU quota (default every processor of the host) and --jobs its make jobs (default what nproc grants inside the container, the
+quota; more jobs than CPUs let a quota raised later with docker update --cpus be used). --detach
 starts the container detached and waits on its state, then writes docker logs to build.log: a Docker socket proxy can cut the
 attached output of a long run while the build goes on (ORDER 627).
 The container gets the host's provenance facts as sparky-os/repo/build-provenance.sh gives them (the build repository's commit
@@ -25,6 +28,7 @@ from pathlib import Path
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -35,20 +39,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sparky-os' / 'conf
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sparky-os' / 'release'))
 import local_config as cfg
 from build_slots import start_build
+import scratch_disk
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('flavour', choices=['base', 'v3', 'rt'])
 parser.add_argument('--counter', required=True)
 parser.add_argument('--packaging-revision')
 parser.add_argument('--memory', default='16g')
-parser.add_argument('--floor-gb', type=float, default=12)
+parser.add_argument('--floor-gb', type=float)
 parser.add_argument('--archive-config', type=Path)
 parser.add_argument('--container')
-parser.add_argument('--cpus', default='4')
-parser.add_argument('--jobs', type=int, default=4)
+parser.add_argument('--cpus', default=str(os.cpu_count()))
+parser.add_argument('--jobs', type=int)
 parser.add_argument('--detach', action='store_true')
 args = parser.parse_args()
 base = cfg.path('SPARKY_MIGRATION_WORK')
+scratch_disk.check(base)
+floor = args.floor_gb if args.floor_gb is not None else scratch_disk.floor_gib(base)
 kit = cfg.TREE
 flavour = args.flavour
 name = 'linux-stereo-' + flavour
@@ -104,7 +111,7 @@ PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/*+lc1_*.deb
 find build/certs -name signing_key.pem -o -name x509.genkey > /work/key-remnants.txt
 test ! -s /work/key-remnants.txt
 '''
-(work / 'run.sh').write_text(recipe.replace('@JOBS@', str(args.jobs)))
+(work / 'run.sh').write_text(recipe.replace('@JOBS@', str(args.jobs) if args.jobs else '$(nproc)'))
 status = dict(source=name, version=version, architecture='amd64', state='queued', archives=[],
               signed=False, source_descriptor_sha256=hashlib.sha256(descriptor.read_bytes()).hexdigest())
 (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
@@ -130,7 +137,7 @@ else:
 command = ['docker', 'run', '-d' if args.detach else '--rm', '--ulimit', 'core=0', '--platform', 'linux/amd64', '--name', container,
            '--cpus', args.cpus, '--memory', args.memory, '--security-opt', 'seccomp=unconfined',
            '--security-opt', 'apparmor=unconfined', '--security-opt', 'systempaths=unconfined',
-           '-v', str(work) + ':/work',
+           '-e', f'SPARKY_LC_MIN_FREE_GIB={int(scratch_disk.floor_gib(base))}', '-v', str(work) + ':/work',
            '-v', str(kit / 'sparky-os') + ':/toolkit:ro',
            '-v', '/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro',
            '-v', str(Path(__file__).resolve().parents[2] / 'tools' / 'https-only-apt.sh') + ':/run/https-only-apt.sh:ro',
@@ -149,7 +156,7 @@ with (work / 'build.log').open('w') as log:
     if args.detach and process.wait() != 0:
         raise SystemExit(f'{container}: docker run -d failed, see {work / "build.log"}')
     while running():
-        if shutil.disk_usage(base).free < args.floor_gb * 1024**3:
+        if shutil.disk_usage(base).free < floor * 1024**3:
             subprocess.run(['docker', 'stop', '-t', '20', container], check=False)
             stopped = True
             break
