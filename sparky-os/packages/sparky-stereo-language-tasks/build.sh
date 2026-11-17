@@ -50,9 +50,9 @@ set -e
 if [ "$1" = configure ]; then
     sparky-stereo-problems catalog sparky-stereo-language-tasks /usr/share/sparky/sparky-stereo-language-tasks /usr/lib/systemd/catalog --subject LOCAL1
     /usr/lib/sparky-stereo-language-tasks/languages queue
+    systemctl enable sparky-stereo-language-tasks.path sparky-stereo-language-tasks.service
     if [ -d /run/systemd/system ]; then
         systemctl daemon-reload
-        systemctl enable sparky-stereo-language-tasks.path sparky-stereo-language-tasks.service
         systemctl --no-block start sparky-stereo-language-tasks.path sparky-stereo-language-tasks.service
     fi
 fi
@@ -73,7 +73,7 @@ Package: $P
 Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Depends: python3, apt, dpkg, tasksel, sparky-stereo-problems
+Depends: python3, apt, dpkg, tasksel, systemd, sparky-stereo-problems
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org

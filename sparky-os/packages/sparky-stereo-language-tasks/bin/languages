@@ -19,6 +19,7 @@ DATA = json.loads((SHARE / 'manifest.json').read_text())
 ROWS = {r['code'].lower(): r for r in DATA['languages']}
 FAILURE = 'Language %s is incomplete (%s). Connect to the network and retry this installation step.'
 MIGRATION = 'Language support could not be completed: %s. Check the network and retry the update.'
+DRY = os.environ.get('SPARKY_STEREO_LANG_DRY_RUN') == '1'
 locale = os.environ.get('INSTALLER_LANG') or os.environ.get('LANG', 'en')
 _ = gettext.translation('sparky-stereo-language-tasks', '/usr/share/locale', languages=[locale.split('.')[0]], fallback=True).gettext
 
@@ -101,7 +102,8 @@ def verify(codes):
 def add(codes, refresh=False):
     try:
         verify(codes)
-        run(['apt-mark', 'manual'] + [ROWS[c]['name'] for c in sorted(codes)])
+        if not DRY:
+            run(['apt-mark', 'manual'] + [ROWS[c]['name'] for c in sorted(codes)])
         return
     except RuntimeError:
         if refresh:
@@ -109,6 +111,8 @@ def add(codes, refresh=False):
     wrappers = {n for c in codes for n in ROWS[c]['conflicts']}
     args = ['install'] + [ROWS[c]['name'] for c in sorted(codes)]
     plan(args, wrappers)
+    if DRY:
+        return
     print(run(['apt-get', '-y', '-o', 'DPkg::Lock::Timeout=-1', '--no-install-recommends'] + args).stdout)
     verify(codes)
     run(['apt-mark', 'manual'] + [ROWS[c]['name'] for c in sorted(codes)])
@@ -124,7 +128,10 @@ def retain(codes):
     if purge:
         args = ['purge'] + sorted(purge)
         plan(args, purge)
-        print(run(['apt-get', '-y', '-o', 'DPkg::Lock::Timeout=-1'] + args).stdout)
+        if not DRY:
+            print(run(['apt-get', '-y', '-o', 'DPkg::Lock::Timeout=-1'] + args).stdout)
+    if DRY:
+        return
     STATE.mkdir(parents=True, exist_ok=True)
     (STATE / 'retained.json').write_text(json.dumps(sorted(codes)) + '\n')
     add(codes)

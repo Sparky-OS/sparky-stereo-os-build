@@ -320,7 +320,8 @@ allow_in_config() {
 add_languages() {
     local task_tool=/usr/lib/sparky-stereo-language-tasks/languages task_codes
     if [ -x "$task_tool" ] && task_codes=$("$task_tool" select "$(keep_names)" 2>/dev/null); then
-        [ "$DRY_RUN" -eq 0 ] || { echo "$LOCAL16"; "$task_tool" select "$task_codes"; return; }
+        [ -n "$task_codes" ] || task_codes=system
+        [ "$DRY_RUN" -eq 0 ] || { echo "$LOCAL16"; SPARKY_STEREO_LANG_DRY_RUN=1 "$task_tool" add "$task_codes"; return; }
         allow_in_config
         "$task_tool" add "$task_codes"
         return $?
@@ -515,7 +516,7 @@ apply_selection() {
         mapfile -t KEEP < <(printf '%s\n' "${KEEP[@]}"; default_keep)
         [ "$RESTORE_ALL" -eq 0 ] || task_codes=all
         if [ "$DRY_RUN" -eq 1 ]; then
-            echo "$LOCAL16"; "$task_tool" select "$(keep_names)"; return
+            echo "$LOCAL16"; SPARKY_STEREO_LANG_DRY_RUN=1 "$task_tool" keep "$task_codes"; return
         fi
         "$task_tool" keep "$task_codes" || return $?
         write_config
