@@ -42,10 +42,10 @@ Assisted-by: Claude Opus 5.5 via Claude Code
  src/libply-splash-core/ply-renderer-plugin.h  |   2 +
  src/libply-splash-core/ply-renderer.c         |  16 ++
  src/libply-splash-core/ply-renderer.h         |   2 +
- src/plugins/renderers/drm/plugin.c            |  60 +++++--
+ src/plugins/renderers/drm/plugin.c            |  70 ++++++--
  src/plugins/splash/script/script-lib-sprite.c | 153 ++++++++++++++----
  src/plugins/splash/script/script-lib-sprite.h |   5 +
- 9 files changed, 237 insertions(+), 44 deletions(-)
+ 9 files changed, 247 insertions(+), 44 deletions(-)
 
 diff --git a/src/libply-splash-core/ply-boot-splash.c b/src/libply-splash-core/ply-boot-splash.c
 index 88a836b..3f28541 100644
@@ -184,7 +184,7 @@ index e9d1c9a..4e63502 100644
                                ply_renderer_head_t *head);
  
 diff --git a/src/plugins/renderers/drm/plugin.c b/src/plugins/renderers/drm/plugin.c
-index f34b583..658a4b0 100644
+index f34b583..dde232a 100644
 --- a/src/plugins/renderers/drm/plugin.c
 +++ b/src/plugins/renderers/drm/plugin.c
 @@ -143,6 +143,7 @@ typedef struct
@@ -195,16 +195,15 @@ index f34b583..658a4b0 100644
          double                  popped_px;      /* popped=, sunk=: the person's depth limits on this screen, pixels of an eye 1920 wide */
          double                  sunk_px;
  } ply_stereo_output_t;
-@@ -165,6 +166,8 @@ struct _ply_renderer_head
+@@ -165,6 +166,7 @@ struct _ply_renderer_head
          const ply_stereo_output_t *stereo;
          bool                    stereo_input;
          bool                    depth_default_said;
-+        bool                    left_eye_said;
 +        char                    name[64];       /* the connector's name, as plymouth.stereo= names it */
          unsigned long           eye_width;
          unsigned long           eye_height;
          unsigned long           eye_stride_lines;
-@@ -238,6 +241,7 @@ typedef struct
+@@ -238,6 +240,7 @@ typedef struct
          bool                        is_non_desktop;
          const ply_stereo_output_t  *stereo;
          ply_stereo_layout_t         stereo_layout;
@@ -212,7 +211,16 @@ index f34b583..658a4b0 100644
  } ply_output_t;
  
  struct _ply_renderer_backend
-@@ -390,22 +394,20 @@ parse_stereo_outputs (ply_renderer_backend_t *backend)
+@@ -267,6 +270,8 @@ struct _ply_renderer_backend
+ 
+         ply_stereo_output_t        *stereo_outputs;
+         int                         stereo_outputs_len;
++        char                        left_eye_said[16][64]; /* the screens already said to show the left eye: once each, */
++        int                         left_eye_said_len;     /* though a hotplug makes their heads again */
+         ply_fd_watch_t             *device_watch;
+ 
+         uint32_t                    is_active : 1;
+@@ -390,22 +395,20 @@ parse_stereo_outputs (ply_renderer_backend_t *backend)
          free (value);
  }
  
@@ -242,7 +250,7 @@ index f34b583..658a4b0 100644
          device = strrchr (backend->device_name, '/');
          device = device != NULL ? device + 1 : backend->device_name;
  
-@@ -1310,6 +1312,7 @@ ply_renderer_head_new (ply_renderer_backend_t *backend,
+@@ -1310,6 +1313,7 @@ ply_renderer_head_new (ply_renderer_backend_t *backend,
          head->rotation = output->rotation;
          head->stereo = output->stereo;
          head->stereo_layout = output->stereo_layout;
@@ -250,20 +258,29 @@ index f34b583..658a4b0 100644
  
          /* the sizes drm_mode_set_crtcinfo (CRTC_STEREO_DOUBLE) gives the mode */
          if (head->stereo_layout == PLY_STEREO_LAYOUT_FRAME_PACKING) {
-@@ -1585,6 +1588,12 @@ set_head_stereo_input (ply_renderer_backend_t *backend,
+@@ -1585,6 +1589,21 @@ set_head_stereo_input (ply_renderer_backend_t *backend,
          ply_trace ("%ldx%ld renderer head: the theme draws %s", head->area.width, head->area.height,
                     stereo_input ? "both eyes side by side" : "one picture");
  
-+        if (stereo_input && head->stereo_layout == PLY_STEREO_LAYOUT_NONE && !head->left_eye_said) {
-+                head->left_eye_said = true;
-+                ply_error ("%s %s, it shows the left eye", head->name,
-+                           head->stereo == NULL ? "is not named in plymouth.stereo=" : "has no stereo mode");
++        if (stereo_input && head->stereo_layout == PLY_STEREO_LAYOUT_NONE) {
++                int i;
++
++                for (i = 0; i < backend->left_eye_said_len; i++) {
++                        if (strcmp (backend->left_eye_said[i], head->name) == 0)
++                                break;
++                }
++                if (i == backend->left_eye_said_len) {
++                        if (backend->left_eye_said_len < (int) PLY_NUMBER_OF_ELEMENTS (backend->left_eye_said))
++                                memcpy (backend->left_eye_said[backend->left_eye_said_len++], head->name, sizeof(head->name));
++                        ply_error ("%s %s, it shows the left eye", head->name,
++                                   head->stereo == NULL ? "is not named in plymouth.stereo=" : "has no stereo mode");
++                }
 +        }
 +
          return true;
  }
  
-@@ -1627,6 +1636,14 @@ get_head_stereo_depth_limits (ply_renderer_backend_t *backend,
+@@ -1627,6 +1646,14 @@ get_head_stereo_depth_limits (ply_renderer_backend_t *backend,
          return given;
  }
  
@@ -278,7 +295,7 @@ index f34b583..658a4b0 100644
  static void
  ply_renderer_head_remove (ply_renderer_backend_t *backend,
                            ply_renderer_head_t    *head)
-@@ -2073,6 +2090,7 @@ get_output_info (ply_renderer_backend_t *backend,
+@@ -2073,6 +2100,7 @@ get_output_info (ply_renderer_backend_t *backend,
  {
          drmModeModeInfo *mode = NULL;
          drmModeConnector *connector;
@@ -286,7 +303,7 @@ index f34b583..658a4b0 100644
          bool has_90_rotation = false;
  
          memset (output, 0, sizeof(*output));
-@@ -2107,13 +2125,28 @@ get_output_info (ply_renderer_backend_t *backend,
+@@ -2107,13 +2135,28 @@ get_output_info (ply_renderer_backend_t *backend,
                  mode = &connector->modes[0];
          }
  
@@ -319,7 +336,7 @@ index f34b583..658a4b0 100644
                  }
          }
          output->mode = *mode;
-@@ -3037,6 +3070,7 @@ ply_renderer_backend_get_interface (void)
+@@ -3037,6 +3080,7 @@ ply_renderer_backend_get_interface (void)
                  .remove_input_device          = remove_input_device,
                  .set_head_stereo_input        = set_head_stereo_input,
                  .get_head_stereo_depth_limits = get_head_stereo_depth_limits,
