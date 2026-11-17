@@ -38,6 +38,8 @@ inr() { chroot $R "$@"; }
 apt_in() { chroot $R apt-get -y -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"; }
 
 if [ "$STEP" = base ] || [ "$STEP" = all ]; then
+	# Source presence and binary availability are different checks: a source alive only in sid needs review.
+	python3 /build/check-base-gone-sources.py --gone /edition-lists/base-gone.tsv --sources /edition-lists/base-gone-sources.tsv
 	echo "== $(date -u +%T) base: minbase from Debian testing"
 	mmdebstrap --mode=root --variant=minbase --components=main,contrib,non-free,non-free-firmware --architectures=amd64 \
 		--include=ca-certificates,curl,gnupg,apt-utils,dpkg-dev testing $R https://deb.debian.org/debian
@@ -69,6 +71,9 @@ EOF
 fi
 
 if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
+	if [ "$STEP" = packages ]; then
+		python3 /build/check-base-gone-sources.py --gone /edition-lists/base-gone.tsv --sources /edition-lists/base-gone-sources.tsv
+	fi
 	mounts
 	# packages such as sparky-grub-theme and sparky-info run grub-mkconfig when they are configured, as on
 	# an installed system. In a chroot it would probe the build machine's disks, and os-prober would mount

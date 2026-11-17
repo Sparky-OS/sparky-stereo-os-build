@@ -5,13 +5,13 @@
 # has a package again (then the row goes) or when a name without a package is not listed here (then it gets a row, or
 # its repository is repaired). One name and one reason per line, separated by a tab. Read on 2026-11-17.
 alsa-base	last in Debian 8; alsa-utils is in the set
-apt-xapian-index	removed from Debian unstable on 2025-04-11: "RoQA; orphaned, obsolete"
-cryptsetup-run	not in Debian testing; cryptsetup is in the set
-db5.1-util	not in Debian testing
+apt-xapian-index	2025-04-11 removal ("RoQA; orphaned, obsolete") was superseded: Debian 0.57 changelog says "Reintroduce package"; 0.59 is in sid, migration blocked by serious open #1145121 (build test failure); ORDER 653 carries 0.59+0stereo3d1+lc1 with Santiago Vila's discovery fix plus current assertions and a living test fixture; this row goes only on publication; https://sources.debian.org/src/apt-xapian-index/0.59/debian/changelog/
+cryptsetup-run	cryptsetup changelog: "d/control: Drop cryptsetup-run transitional binary package."; cryptsetup is in the set; https://sources.debian.org/src/cryptsetup/2%3A2.8.8-1/debian/changelog/
+db5.1-util	source db removed from unstable on 2015-08-26 (#796881): "ROM; Obsoleted by db5.3"; use db5.3-util for Berkeley DB 5.3 tools, not an obsolete DB 5.1 runtime; https://ftp-master.debian.org/removals-2015.txt
 dnsutils	now bind9-dnsutils, which is in the set
 e2fslibs	now libext2fs2t64, a library that comes by dependency
 firmware-crystalhd	last in Debian 10 (crystalhd)
-firmware-intelwimax	not in Debian testing
+firmware-intelwimax	firmware-nonfree changelog, 20220815: "intelwimax: Drop Intel WiMax package (unsupported since 5.10+)"; the kernel no longer supports this device; https://sources.debian.org/src/firmware-nonfree/20261019-1/debian/changelog/
 gconf-service	last in Debian 12 (gconf)
 gconf2	last in Debian 12 (gconf)
 gconf2-common	last in Debian 12 (gconf)
@@ -42,25 +42,25 @@ liquorix-archive-keyring	another kernel's archive keys, in none of the edition's
 liquorix-keyring	another kernel's archive keys, in none of the edition's sources; the edition ships its own kernel
 mime-support	last in Debian 12; split into mailcap and media-types, both in the set
 mlocate	last in Debian 11; replaced by plocate, which is in the set
-multiarch-support	not in Debian testing
+multiarch-support	glibc changelog: "debian/control.in/main, debian/rules: drop the multiarch-support package." (#910669, closed); retired transitional package, current libc already supports multiarch; https://sources.debian.org/src/glibc/2.43-7/debian/changelog/
 p7zip-full	now 7zip, which is in the set
 perl-modules-5.42	Perl 5.44 is in Debian testing; perl-modules-5.44 comes with perl
 plasma-runner-telepathy-contact	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
-printer-driver-all	not in Debian testing; the drivers it gathered are named one by one in the set
-printer-driver-hpcups	hplip is alive in Debian unstable (3.26.4+dfsg0-4) and only out of testing, with no removal record: the edition carries it, ORDER 653; this row goes when it is published
-printer-driver-postscript-hp	hplip is alive in Debian unstable (3.26.4+dfsg0-4) and only out of testing, with no removal record: the edition carries it, ORDER 653; this row goes when it is published
+printer-driver-all	printing-metas 0.20210903 remains in sid; britney: "Depends: printing-metas hplip (not considered)" and "Invalidated by dependency"; no RC bug of its own (normal open #1126396); ORDER 653 carries both metapackages unchanged through Lean Code; this row goes only on publication; https://release.debian.org/britney/update_excuses.html#printing-metas
+printer-driver-hpcups	hplip in unstable is blocked by grave bugs #1148269 and #1153419; ORDER 653 carries HP 3.26.6 security remediation on Debian 3.26.4+dfsg0-4 packaging; this row goes only when the qualified build is published
+printer-driver-postscript-hp	hplip in unstable is blocked by grave bugs #1148269 and #1153419; ORDER 653 carries HP 3.26.6 security remediation on Debian 3.26.4+dfsg0-4 packaging; this row goes only when the qualified build is published
 qml-module-org-kde-people	kpeople (Qt 5) was removed from Debian unstable on 2026-03-02: "ROM; Dead upstream, superseded by kf6-kpeople, no reverse dependencies"; the Qt 6 module comes with Plasma
-qml-module-org-kde-pipewire	Qt 5 modules, not in Debian testing; Plasma brings the Qt 6 ones
+qml-module-org-kde-pipewire	kpipewire Debian control in 5.27.5-3 names "Package: qml-module-org-kde-pipewire"; 6.7.4-1 names "Package: qml6-module-org-kde-pipewire" with Qt 6 build dependencies; superseded Qt 5 binary, Plasma uses the Qt 6 module; https://sources.debian.org/src/kpipewire/6.7.4-1/debian/control/
 qml-module-org-kde-telepathy	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
 qml-module-qtgstreamer	qt-gstreamer was removed from Debian unstable on 2025-04-10: "ROM; dead upstream, no more used"
 qtgstreamer-plugins-qt5	qt-gstreamer was removed from Debian unstable on 2025-04-10: "ROM; dead upstream, no more used"
 task-english	Debian testing has it (tasksel 3.92); the edition's own apt rule keeps Debian's tasks out (sparky-stereo-only-ours), the edition's tasks are task-sparky-*
 task-laptop	Debian testing has it (tasksel 3.92); the edition's own apt rule keeps Debian's tasks out (sparky-stereo-only-ours); its laptop tools (powertop, iw, wpasupplicant, bluetooth, avahi-autoipd, wireless-tools) are in the set
-telepathy-accounts-signon	KDE Telepathy and Telepathy are not in Debian testing
+telepathy-accounts-signon	removed from unstable on 2024-11-27 (#1088336, closed): "ROM; Abandoned upstream"; https://ftp-master.debian.org/removals-2024.txt
 telepathy-haze	removed from Debian unstable on 2026-11-12: "RoQA; unmaintained and unused"
-telepathy-logger	KDE Telepathy and Telepathy are not in Debian testing
-telepathy-rakia	KDE Telepathy and Telepathy are not in Debian testing
-telepathy-ring	KDE Telepathy and Telepathy are not in Debian testing
+telepathy-logger	removed from unstable on 2026-11-12 (#1118545, closed): "RoQA; unmaintained and unused"; https://ftp-master.debian.org/removals.txt
+telepathy-rakia	removed from unstable on 2026-11-12 (#1118550, closed): "RoQA; unmaintained and unused"; https://ftp-master.debian.org/removals.txt
+telepathy-ring	removed from unstable on 2022-12-27 (#1027042): "RoQA; Depends on Python 2"; no supported Python 2 stack is restored; https://ftp-master.debian.org/removals-2022.txt
 vdpau-va-driver	last in Debian 10 (vdpau-video)
-xserver-xorg-video-qxl	alive in Debian unstable (0.1.6-1.1) and only out of testing, with no removal record: the edition carries it, ORDER 653; this row goes when it is published
-xserver-xorg-video-vmware	alive in Debian unstable (1:13.4.0-2) and only out of testing, with no removal record: the edition carries it, ORDER 653; this row goes when it is published
+xserver-xorg-video-qxl	in unstable 0.1.6-1.1, blocked by grave Xspice bug #1137518; ORDER 653 fixed candidate built and installed with Frank Heckenbach's patch; this row goes only when published
+xserver-xorg-video-vmware	good reason to stay gone: Debian 1:13.4.0-2 changelog: "control: Drop libxatracker-dev from build-depends, since mesa dropped it."; serious open #1112670 and upstream issue 12 describe the lost XA-dependent KMS/3D path; MR 21 (opened, not merged, read 2026-11-17): "Without XA tracker this driver is largely useless on Linux." and advises distributions with Mesa above 25.0 against shipping it; vmwgfx DRM/KMS serves KWin directly on Wayland and Xorg modesetting on X11; https://gitlab.freedesktop.org/xorg/driver/xf86-video-vmware/-/issues/12 ; https://gitlab.freedesktop.org/xorg/driver/xf86-video-vmware/-/merge_requests/21 ; https://sources.debian.org/src/xserver-xorg-video-vmware/1%3A13.4.0-2/debian/changelog/
