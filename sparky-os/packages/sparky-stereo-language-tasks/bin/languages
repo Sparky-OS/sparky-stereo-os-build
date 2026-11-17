@@ -174,7 +174,7 @@ def capture():
         for r in ROWS.values():
             for n in r['ours']:
                 counts[n] = counts.get(n, 0) + 1
-        codes = {c for c, r in ROWS.items() if any(n in have and counts[n] == 1 for n in r['ours'])}
+        codes = {c for c, r in ROWS.items() if any(n in have and counts[n] == 1 and not n.startswith('fonts-') for n in r['ours'])}
     codes |= {'en', system_language()}
     STATE.mkdir(parents=True, exist_ok=True)
     old = json.loads((STATE / 'pending').read_text()) if (STATE / 'pending').exists() else {}
@@ -220,6 +220,10 @@ def main():
         print(' '.join(sorted(requested(values))))
     elif action == 'queue':
         capture()
+    elif action == 'retry':
+        if (STATE / 'pending').exists() and Path('/run/systemd/system').is_dir():
+            run(['systemctl', 'reset-failed', 'sparky-stereo-language-tasks.path', 'sparky-stereo-language-tasks.service'])
+            run(['systemctl', '--no-block', 'start', 'sparky-stereo-language-tasks.path', 'sparky-stereo-language-tasks.service'])
     elif action == 'migrate':
         migrate()
     elif action == 'verify':

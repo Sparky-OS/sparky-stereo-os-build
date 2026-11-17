@@ -78,6 +78,11 @@ if [ "$1" = remove ] || [ "$1" = purge ]; then
 fi
 EOF
 chmod 755 "$D/DEBIAN/"{preinst,postinst,postrm}
+mkdir -p "$D/etc/apt/apt.conf.d"
+cat > "$D/etc/apt/apt.conf.d/90sparky-language-retry" <<'EOF'
+DPkg::Post-Invoke { "test ! -x /usr/lib/sparky-stereo-language-tasks/languages || /usr/lib/sparky-stereo-language-tasks/languages retry"; };
+EOF
+printf '/etc/apt/apt.conf.d/90sparky-language-retry\n' > "$D/DEBIAN/conffiles"
 cat > "$D/DEBIAN/control" <<EOF
 Package: $P
 Version: $VERSION
