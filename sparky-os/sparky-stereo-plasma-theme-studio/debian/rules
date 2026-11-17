@@ -1,0 +1,12 @@
+#!/usr/bin/make -f
+# SPDX-License-Identifier: GPL-3.0-or-later
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export QT_QPA_PLATFORM = offscreen
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DBUILD_TESTING=ON
+
+execute_after_dh_strip:
+	install -Dm644 debian/sparky-stereo-plasma-theme-studio-dbgsym.lintian-overrides debian/.debhelper/sparky-stereo-plasma-theme-studio/dbgsym-root/usr/share/lintian/overrides/sparky-stereo-plasma-theme-studio-dbgsym
