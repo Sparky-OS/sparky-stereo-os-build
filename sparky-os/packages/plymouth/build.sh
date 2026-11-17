@@ -31,7 +31,7 @@ for p in "$HERE"/stereo3d-*.patch; do
 	echo "$(basename "$p")" >> debian/patches/series
 	quilt push -q >/dev/null
 done
-# the new functions of libply-splash-core: 0001's three, 0003's two, 0004's four
+# the new functions of libply-splash-core: 0001's three, 0003's two, 0004's five
 python3 - debian/libplymouth5.symbols <<'PY'
 import sys
 path = sys.argv[1]
@@ -44,7 +44,8 @@ new = {'ply_pixel_display_get_stereo_input': '26.134.222-1+stereo3d1~',
        'ply_pixel_display_set_shows_left_eye': '26.134.222-1+stereo3d4~',
        'ply_pixel_display_get_shows_left_eye': '26.134.222-1+stereo3d4~',
        'ply_pixel_display_get_stereo_main': '26.134.222-1+stereo3d4~',
-       'ply_renderer_get_head_stereo_main': '26.134.222-1+stereo3d4~'}
+       'ply_renderer_get_head_stereo_main': '26.134.222-1+stereo3d4~',
+       'ply_pixel_buffer_fill_with_edges_of_area': '26.134.222-1+stereo3d4~'}
 start = next(i for i, l in enumerate(lines) if l.startswith('libply-splash-core.so.5'))
 end = next(i for i in range(start + 1, len(lines)) if lines[i] and not lines[i].startswith(' '))
 block = lines[start + 1:end] + [' %s@Base %s' % (n, v) for n, v in new.items()]
@@ -63,9 +64,9 @@ dch --date "$SOURCE_DATE_RFC2822" -a "plymouth.stereo= entries take popped=PIXEL
 dch --date "$SOURCE_DATE_RFC2822" -a "The script plugin has Window.GetStereoPoppedLimit () and Window.GetStereoSunkLimit (), so a theme places its levels inside the limits. An entry without them gets the desktop's defaults, 4 and 10, and the renderer says once per output which of the two is missing." >/dev/null
 dch --date "$SOURCE_DATE_RFC2822" -a "debian/libplymouth5.symbols: ply_pixel_display_get_stereo_depth_limits and ply_renderer_get_head_stereo_depth_limits." >/dev/null
 dch --date "$SOURCE_DATE_RFC2822" -v "$VERSION" -D unstable --force-distribution "One eye on every screen a stereo boot does not convert (ORDER 639, stereo3d-0004):" >/dev/null
-dch --date "$SOURCE_DATE_RFC2822" -a "The script plugin keeps one window for every screen: on a stereo boot with a stereo theme it holds both eyes, each the size of the main screen's eye (the first screen plymouth.stereo= names). A screen that shows both eyes takes each half from its own eye of the window, a screen that shows one eye takes the middle of the left eye, and beside an eye there is only background. Before, every screen was centred as one block in a window as wide as the widest screen, so a panel beside a television showed its anaglyph from two places 554 px apart and a television added later showed the left picture with the right one beside it." >/dev/null
+dch --date "$SOURCE_DATE_RFC2822" -a "The script plugin keeps one window for every screen: on a stereo boot with a stereo theme it holds both eyes, each the size of the main screen's eye (the first screen plymouth.stereo= names). A screen that shows both eyes takes each half from its own eye of the window, a screen that shows one eye takes the middle of the left eye, and a screen larger than the eye continues the eye's own edge beyond it (each pixel the nearest pixel of the eye), so it shows no frame of another colour and never a part of the other eye; the eye is not scaled. Before, every screen was centred as one block in a window as wide as the widest screen, so a panel beside a television showed its anaglyph from two places 554 px apart and a television added later showed the left picture with the right one beside it." >/dev/null
 dch --date "$SOURCE_DATE_RFC2822" -a "A screen that cannot take both eyes on a stereo boot (the frame-buffer renderer, the firmware's framebuffer before the GPU's driver, a rotated screen) shows the left eye and the window stays in both eyes for the others; before, its arrival or presence made the theme draw one picture for every screen. Said once per screen in Plymouth's log, as is a screen not named in plymouth.stereo= and a saved mode the screen does not list (it then keeps its own mode and shows the left eye; no other 3D mode is chosen in its place)." >/dev/null
-dch --date "$SOURCE_DATE_RFC2822" -a "debian/libplymouth5.symbols: ply_pixel_display_set_shows_left_eye, ply_pixel_display_get_shows_left_eye, ply_pixel_display_get_stereo_main and ply_renderer_get_head_stereo_main." >/dev/null
+dch --date "$SOURCE_DATE_RFC2822" -a "debian/libplymouth5.symbols: ply_pixel_display_set_shows_left_eye, ply_pixel_display_get_shows_left_eye, ply_pixel_display_get_stereo_main, ply_renderer_get_head_stereo_main and ply_pixel_buffer_fill_with_edges_of_area." >/dev/null
 quilt pop -a -q >/dev/null
 rm -rf .pc
 python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" .

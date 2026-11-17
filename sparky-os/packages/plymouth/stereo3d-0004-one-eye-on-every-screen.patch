@@ -23,9 +23,12 @@ output plymouth.stereo= names; the largest display while the main
 screen is not there). A display that shows both eyes takes each of its
 halves from the middle of its own eye of the window; a display that
 shows one eye (not named in plymouth.stereo=, no stereo mode, or a
-renderer without the conversion) takes the middle of the left eye; on
-a stereo window nothing is drawn beside or beyond an eye but the
-background. A screen named with a mode it does not list keeps its own
+renderer without the conversion) takes the middle of the left eye. A
+display larger than the eye continues the eye's own edge beside and
+beyond it, each pixel the nearest pixel of the eye
+(ply_pixel_buffer_fill_with_edges_of_area), so it shows no frame of
+another colour and never a part of the other eye; the eye itself is
+not scaled. A screen named with a mode it does not list keeps its own
 mode and shows the left eye: no other 3D mode is chosen in its place.
 Each of these is said once in Plymouth's log. Themes that do not
 declare Stereo=full-side-by-side and boots without plymouth.stereo=
@@ -40,15 +43,17 @@ Plymouth.SetDisplayHotplugFunction when screens come and go.
 Assisted-by: Claude Opus 5.5 via Claude Code
 ---
  src/libply-splash-core/ply-boot-splash.c      |  16 +-
- src/libply-splash-core/ply-pixel-display.c    |  23 +++
+ src/libply-splash-core/ply-pixel-buffer.c     |  37 ++++
+ src/libply-splash-core/ply-pixel-buffer.h     |   3 +
+ src/libply-splash-core/ply-pixel-display.c    |  23 ++
  src/libply-splash-core/ply-pixel-display.h    |   4 +
  src/libply-splash-core/ply-renderer-plugin.h  |   2 +
  src/libply-splash-core/ply-renderer.c         |  16 ++
  src/libply-splash-core/ply-renderer.h         |   2 +
- src/plugins/renderers/drm/plugin.c            |  70 ++++++--
- src/plugins/splash/script/script-lib-sprite.c | 161 ++++++++++++++----
+ src/plugins/renderers/drm/plugin.c            |  70 ++++--
+ src/plugins/splash/script/script-lib-sprite.c | 202 +++++++++++++++---
  src/plugins/splash/script/script-lib-sprite.h |   5 +
- 9 files changed, 253 insertions(+), 46 deletions(-)
+ 11 files changed, 334 insertions(+), 46 deletions(-)
 
 diff --git a/src/libply-splash-core/ply-boot-splash.c b/src/libply-splash-core/ply-boot-splash.c
 index 88a836b..3f28541 100644
@@ -77,6 +82,68 @@ index 88a836b..3f28541 100644
  
          width = ply_pixel_display_get_width (display);
          height = ply_pixel_display_get_height (display);
+diff --git a/src/libply-splash-core/ply-pixel-buffer.c b/src/libply-splash-core/ply-pixel-buffer.c
+index 503c93b..a928781 100644
+--- a/src/libply-splash-core/ply-pixel-buffer.c
++++ b/src/libply-splash-core/ply-pixel-buffer.c
+@@ -602,6 +602,43 @@ ply_pixel_buffer_fill_with_color (ply_pixel_buffer_t *buffer,
+         ply_pixel_buffer_fill_area_with_pixel_value (buffer, fill_area, pixel_value);
+ }
+ 
++/* Fills the part of fill_area that lies outside inner_area with inner_area's own edge: each pixel takes the value of the
++ * nearest pixel of inner_area, so the picture inside continues to the buffer's edges with no frame of another colour.
++ * Nothing inside inner_area changes. */
++void
++ply_pixel_buffer_fill_with_edges_of_area (ply_pixel_buffer_t *buffer,
++                                          ply_rectangle_t    *inner_area,
++                                          ply_rectangle_t    *fill_area)
++{
++        ply_rectangle_t cropped_area, inner;
++        long row, column, x, y;
++
++        assert (buffer != NULL);
++        assert (inner_area != NULL);
++
++        if (fill_area == NULL)
++                fill_area = &buffer->logical_area;
++
++        ply_pixel_buffer_crop_area_to_clip_area (buffer, fill_area, &cropped_area);
++        inner = *inner_area;
++        ply_pixel_buffer_adjust_area_for_device_scale (buffer, &inner);
++        ply_rectangle_intersect (&inner, &buffer->area, &inner);
++        if (inner.width == 0 || inner.height == 0 || cropped_area.width == 0 || cropped_area.height == 0)
++                return;
++
++        for (row = cropped_area.y; row < cropped_area.y + (long) cropped_area.height; row++) {
++                y = CLAMP (row, inner.y, inner.y + (long) inner.height - 1);
++                for (column = cropped_area.x; column < cropped_area.x + (long) cropped_area.width; column++) {
++                        if (row == y && column >= inner.x && column < inner.x + (long) inner.width)
++                                continue;
++                        x = CLAMP (column, inner.x, inner.x + (long) inner.width - 1);
++                        ply_pixel_buffer_set_pixel (buffer, column, row, ply_pixel_buffer_get_pixel (buffer, x, y));
++                }
++        }
++
++        ply_pixel_buffer_add_updated_area (buffer, &cropped_area);
++}
++
+ void
+ ply_pixel_buffer_fill_with_hex_color_at_opacity (ply_pixel_buffer_t *buffer,
+                                                  ply_rectangle_t    *fill_area,
+diff --git a/src/libply-splash-core/ply-pixel-buffer.h b/src/libply-splash-core/ply-pixel-buffer.h
+index bcfc643..a12f7c1 100644
+--- a/src/libply-splash-core/ply-pixel-buffer.h
++++ b/src/libply-splash-core/ply-pixel-buffer.h
+@@ -80,6 +80,9 @@ void ply_pixel_buffer_fill_with_color (ply_pixel_buffer_t *buffer,
+                                        double              green,
+                                        double              blue,
+                                        double              alpha);
++void ply_pixel_buffer_fill_with_edges_of_area (ply_pixel_buffer_t *buffer,
++                                               ply_rectangle_t    *inner_area,
++                                               ply_rectangle_t    *fill_area);
+ void ply_pixel_buffer_fill_with_hex_color (ply_pixel_buffer_t *buffer,
+                                            ply_rectangle_t    *fill_area,
+                                            uint32_t            hex_color);
 diff --git a/src/libply-splash-core/ply-pixel-display.c b/src/libply-splash-core/ply-pixel-display.c
 index 416a0ca..4a1ca97 100644
 --- a/src/libply-splash-core/ply-pixel-display.c
@@ -348,7 +415,7 @@ index f34b583..dde232a 100644
  
          return &plugin_interface;
 diff --git a/src/plugins/splash/script/script-lib-sprite.c b/src/plugins/splash/script/script-lib-sprite.c
-index 9a20e64..31e7b49 100644
+index 9a20e64..8a5e69b 100644
 --- a/src/plugins/splash/script/script-lib-sprite.c
 +++ b/src/plugins/splash/script/script-lib-sprite.c
 @@ -249,16 +249,13 @@ static script_return_t sprite_window_get_stereo (script_state_t *state,
@@ -428,16 +495,31 @@ index 9a20e64..31e7b49 100644
          ply_list_node_t *node;
          sprite_t *sprite;
          script_lib_sprite_data_t *data = display->data;
-@@ -522,6 +530,27 @@ static void script_lib_sprite_draw_area (script_lib_display_t *display,
+@@ -522,6 +530,42 @@ static void script_lib_sprite_draw_area (script_lib_display_t *display,
          clip_area.width = width;
          clip_area.height = height;
  
-+        /* the part of the rectangle inside the eye (on a stereo window also inside the eye's height): what lies
-+         * beside it on the display is background */
++        /* the part of the rectangle inside the eye (on a stereo window also inside the eye's height). On a stereo
++         * window what lies beside or beyond the eye continues the eye's own edge, so a screen larger than the eye
++         * shows no frame around it and never a part of the other eye; on a 2D boot it is the background. */
 +        from = MAX (x, eye_from - offset_x);
 +        to = MIN (x + width, eye_to - offset_x);
 +        top = data->stereo ? MAX (y, -offset_y) : y;
 +        bottom = data->stereo ? MIN (y + height, (int) data->max_height - offset_y) : y + height;
++        if (data->stereo && (from > x || to < x + width || top > y || bottom < y + height)) {
++                ply_rectangle_t eye_area;
++
++                eye_area.x = eye_from - offset_x;
++                eye_area.y = -offset_y;
++                eye_area.width = eye_to - eye_from;
++                eye_area.height = data->max_height;
++                if (to > from && bottom > top)
++                        script_lib_sprite_draw_window_area (display, pixel_buffer, from, top, to - from, bottom - top,
++                                                            offset_x, offset_y, eye_from, eye_to);
++                area = clip_area;
++                ply_pixel_buffer_fill_with_edges_of_area (pixel_buffer, &eye_area, &area);
++                return;
++        }
 +        if (from > x || to < x + width || top > y || bottom < y + height) {
 +                area = clip_area;
 +                script_lib_draw_brackground (pixel_buffer, &area, data);
@@ -456,7 +538,7 @@ index 9a20e64..31e7b49 100644
          if (data->plugin_console_messages_updating == false && display->console_viewer != NULL && data->should_show_console_messages == true) {
                  script_lib_draw_brackground (pixel_buffer, &clip_area, data);
                  ply_console_viewer_draw_area (display->console_viewer, pixel_buffer, x, y, width, height);
-@@ -537,8 +566,8 @@ static void script_lib_sprite_draw_area (script_lib_display_t *display,
+@@ -537,8 +581,8 @@ static void script_lib_sprite_draw_area (script_lib_display_t *display,
          /* Check If the first sprite should be rendered opaque */
          if (sprite->image && !sprite->remove_me &&
              ply_pixel_buffer_is_opaque (sprite->image) && sprite->opacity == 1.0) {
@@ -467,7 +549,7 @@ index 9a20e64..31e7b49 100644
  
                  /* In that case only draw the background if the sprite doesn't
                   * cover the complete area */
-@@ -561,8 +590,8 @@ static void script_lib_sprite_draw_area (script_lib_display_t *display,
+@@ -561,8 +605,8 @@ static void script_lib_sprite_draw_area (script_lib_display_t *display,
                  if (sprite->remove_me) continue;
                  if (sprite->opacity < 0.011) continue;
  
@@ -478,7 +560,7 @@ index 9a20e64..31e7b49 100644
  
                  if (position_x >= (x + width)) continue;
                  if (position_y >= (y + height)) continue;
-@@ -579,6 +608,35 @@ static void script_lib_sprite_draw_area (script_lib_display_t *display,
+@@ -579,6 +623,35 @@ static void script_lib_sprite_draw_area (script_lib_display_t *display,
          }
  }
  
@@ -514,7 +596,7 @@ index 9a20e64..31e7b49 100644
  static void
  draw_area (script_lib_sprite_data_t *data,
             int                       x,
-@@ -593,11 +651,21 @@ draw_area (script_lib_sprite_data_t *data,
+@@ -593,11 +666,47 @@ draw_area (script_lib_sprite_data_t *data,
               node = ply_list_get_next_node (data->displays, node)) {
                  script_lib_display_t *display = ply_list_node_get_data (node);
  
@@ -524,6 +606,32 @@ index 9a20e64..31e7b49 100644
 -                                             width,
 -                                             height);
 +                int left = x - display->x, right = x - display->x_right + display->eye_width;
++                int top = y - display->y, bottom = y - display->y + height;
++                int eye_top = -display->y, eye_bottom = (int) data->max_height - display->y;
++                int display_width = ply_pixel_display_get_width (display->pixel_display);
++                int display_height = ply_pixel_display_get_height (display->pixel_display);
++
++                /* on a stereo window a screen larger than the eye continues the eye's edge beyond it: a rectangle that
++                 * touches the eye's edge redraws the whole of that screen's part, so the continuation follows */
++                if (data->stereo && (display->eye_width > (int) data->eye_width || display_height > (int) data->max_height)) {
++                        int eye_left = -display->x, eye_right = (int) data->eye_width - display->x;
++
++                        if (!display->stereo_input) {
++                                if (left <= eye_left || left + width >= eye_right || top <= eye_top || bottom >= eye_bottom)
++                                        ply_pixel_display_draw_area (display->pixel_display, 0, 0, display_width, display_height);
++                                else
++                                        ply_pixel_display_draw_area (display->pixel_display, left, top, width, height);
++                                continue;
++                        }
++                        if ((left < display->eye_width && left + width > 0 &&
++                             (left <= eye_left || left + width >= eye_right || top <= eye_top || bottom >= eye_bottom)) ||
++                            (right < 2 * display->eye_width && right + width > display->eye_width &&
++                             (right <= eye_left + display->eye_width || right + width >= eye_right + display->eye_width ||
++                              top <= eye_top || bottom >= eye_bottom))) {
++                                ply_pixel_display_draw_area (display->pixel_display, 0, 0, display_width, display_height);
++                                continue;
++                        }
++                }
 +
 +                if (!display->stereo_input) {
 +                        ply_pixel_display_draw_area (display->pixel_display, left, y - display->y, width, height);
@@ -541,7 +649,7 @@ index 9a20e64..31e7b49 100644
          }
  }
  
-@@ -607,22 +675,47 @@ update_displays (script_lib_sprite_data_t *data)
+@@ -607,22 +716,47 @@ update_displays (script_lib_sprite_data_t *data)
          ply_list_node_t *node;
          script_lib_display_t *script_display;
  
@@ -593,7 +701,7 @@ index 9a20e64..31e7b49 100644
          }
  
          data->full_refresh = true;
-@@ -930,8 +1023,14 @@ script_lib_sprite_refresh (script_lib_sprite_data_t *data)
+@@ -930,8 +1064,14 @@ script_lib_sprite_refresh (script_lib_sprite_data_t *data)
                          region_add_area (region,
                                           display->x,
                                           display->y,
