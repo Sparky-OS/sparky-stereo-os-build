@@ -1,0 +1,591 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 17 Nov 2026 12:40:00 -0300
+Subject: [PATCH 4/4] script, libply-splash-core, renderers/drm: One eye on
+ every screen a stereo boot does not convert
+
+On a stereo boot (plymouth.stereo=) with a stereo theme every screen
+showed what the script plugin's single window gave it: each display was
+centred as one block in a window as wide as the widest display. With two
+screens of different sizes (a 1366x768 laptop panel beside a 1920x1080
+television) the narrower stereo display took its two eye halves from
+places that are not the window's eyes: the panel's anaglyph mixed two
+pictures 554 px apart, and a screen showing the left eye showed a crop.
+A display that cannot take both eyes (the frame-buffer renderer, before
+the GPU's driver) made Window.GetStereo () false for the whole window,
+so a theme that laid itself out then stayed one picture when the DRM
+screens arrived, and their left halves showed that picture with parts of
+the right eye beside it.
+
+Now the window holds both eyes whenever the boot is stereo and the
+theme draws them, each eye the size of the main screen's (the first
+output plymouth.stereo= names; the largest display while the main
+screen is not there). A display that shows both eyes takes each of its
+halves from the middle of its own eye of the window; a display that
+shows one eye (not named in plymouth.stereo=, no stereo mode, or a
+renderer without the conversion) takes the middle of the left eye; on
+a stereo window nothing is drawn beside or beyond an eye but the
+background. A screen named with a mode it does not list keeps its own
+mode and shows the left eye: no other 3D mode is chosen in its place.
+Each of these is said once in Plymouth's log. Themes that do not
+declare Stereo=full-side-by-side and boots without plymouth.stereo=
+are unchanged.
+
+A theme lays itself out again with Plymouth.SetDisplayHotplugFunction
+when screens come and go.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ src/libply-splash-core/ply-boot-splash.c      |  16 +-
+ src/libply-splash-core/ply-pixel-display.c    |  23 +++
+ src/libply-splash-core/ply-pixel-display.h    |   4 +
+ src/libply-splash-core/ply-renderer-plugin.h  |   2 +
+ src/libply-splash-core/ply-renderer.c         |  16 ++
+ src/libply-splash-core/ply-renderer.h         |   2 +
+ src/plugins/renderers/drm/plugin.c            |  60 +++++--
+ src/plugins/splash/script/script-lib-sprite.c | 153 ++++++++++++++----
+ src/plugins/splash/script/script-lib-sprite.h |   5 +
+ 9 files changed, 237 insertions(+), 44 deletions(-)
+
+diff --git a/src/libply-splash-core/ply-boot-splash.c b/src/libply-splash-core/ply-boot-splash.c
+index 88a836b..3f28541 100644
+--- a/src/libply-splash-core/ply-boot-splash.c
++++ b/src/libply-splash-core/ply-boot-splash.c
+@@ -138,8 +138,20 @@ ply_boot_splash_add_pixel_display (ply_boot_splash_t   *splash,
+         if (splash->plugin_interface->add_pixel_display == NULL)
+                 return;
+ 
+-        if (!ply_pixel_display_set_stereo_input (display, splash->stereo_input))
+-                ply_trace ("display takes one picture, the theme draws it once");
++        if (!ply_pixel_display_set_stereo_input (display, splash->stereo_input)) {
++                char *stereo = ply_kernel_command_line_get_key_value ("plymouth.stereo=");
++
++                /* a stereo boot: the theme draws both eyes for the screens that show them, and this one shows the left
++                 * eye; a 2D boot: the theme draws one picture */
++                if (stereo != NULL) {
++                        ply_pixel_display_set_shows_left_eye (display, true);
++                        ply_error ("%s cannot show the two eyes of the stereo boot splash, it shows the left eye",
++                                   ply_renderer_get_device_name (ply_pixel_display_get_renderer (display)));
++                } else {
++                        ply_trace ("display takes one picture, the theme draws it once");
++                }
++                free (stereo);
++        }
+ 
+         width = ply_pixel_display_get_width (display);
+         height = ply_pixel_display_get_height (display);
+diff --git a/src/libply-splash-core/ply-pixel-display.c b/src/libply-splash-core/ply-pixel-display.c
+index 416a0ca..4a1ca97 100644
+--- a/src/libply-splash-core/ply-pixel-display.c
++++ b/src/libply-splash-core/ply-pixel-display.c
+@@ -52,6 +52,7 @@ struct _ply_pixel_display
+         unsigned long                    height;
+         int                              device_scale;
+         bool                             stereo_input;
++        bool                             shows_left_eye;
+ 
+         ply_pixel_display_draw_handler_t draw_handler;
+         void                            *draw_handler_user_data;
+@@ -142,6 +143,28 @@ ply_pixel_display_get_stereo_input (ply_pixel_display_t *display)
+         return display->stereo_input;
+ }
+ 
++/* A display of a stereo boot that cannot take both eyes (a renderer without the stereo conversion, such as the
++ * firmware's framebuffer, or a rotated screen) shows the left eye of the stereo theme, never the two side by side */
++void
++ply_pixel_display_set_shows_left_eye (ply_pixel_display_t *display,
++                                      bool                 shows_left_eye)
++{
++        display->shows_left_eye = shows_left_eye;
++}
++
++bool
++ply_pixel_display_get_shows_left_eye (ply_pixel_display_t *display)
++{
++        return display->shows_left_eye;
++}
++
++/* The main screen of a stereo boot (the first one plymouth.stereo= names): the splash lays its eyes out at its size */
++bool
++ply_pixel_display_get_stereo_main (ply_pixel_display_t *display)
++{
++        return ply_renderer_get_head_stereo_main (display->renderer, display->head);
++}
++
+ /* How far the theme may pop and sink on this display, pixels of an eye 1920 wide: the person's limits
+  * when plymouth.stereo= carries them, the display's default otherwise (false) */
+ bool
+diff --git a/src/libply-splash-core/ply-pixel-display.h b/src/libply-splash-core/ply-pixel-display.h
+index d5bcdaf..a3c4a9e 100644
+--- a/src/libply-splash-core/ply-pixel-display.h
++++ b/src/libply-splash-core/ply-pixel-display.h
+@@ -55,6 +55,10 @@ int ply_pixel_display_get_device_scale (ply_pixel_display_t *display);
+ bool ply_pixel_display_set_stereo_input (ply_pixel_display_t *display,
+                                          bool                 stereo_input);
+ bool ply_pixel_display_get_stereo_input (ply_pixel_display_t *display);
++void ply_pixel_display_set_shows_left_eye (ply_pixel_display_t *display,
++                                           bool                 shows_left_eye);
++bool ply_pixel_display_get_shows_left_eye (ply_pixel_display_t *display);
++bool ply_pixel_display_get_stereo_main (ply_pixel_display_t *display);
+ bool ply_pixel_display_get_stereo_depth_limits (ply_pixel_display_t *display,
+                                                 double              *popped_px,
+                                                 double              *sunk_px);
+diff --git a/src/libply-splash-core/ply-renderer-plugin.h b/src/libply-splash-core/ply-renderer-plugin.h
+index 78937c4..13f5021 100644
+--- a/src/libply-splash-core/ply-renderer-plugin.h
++++ b/src/libply-splash-core/ply-renderer-plugin.h
+@@ -91,6 +91,8 @@ typedef struct
+                                              ply_renderer_head_t    *head,
+                                              double                 *popped_px,
+                                              double                 *sunk_px);
++        bool (*get_head_stereo_main)(ply_renderer_backend_t *backend,
++                                     ply_renderer_head_t    *head);
+ } ply_renderer_plugin_interface_t;
+ 
+ #endif /* PLY_RENDERER_PLUGIN_H */
+diff --git a/src/libply-splash-core/ply-renderer.c b/src/libply-splash-core/ply-renderer.c
+index 8497335..bc665f9 100644
+--- a/src/libply-splash-core/ply-renderer.c
++++ b/src/libply-splash-core/ply-renderer.c
+@@ -408,6 +408,22 @@ ply_renderer_get_head_stereo_depth_limits (ply_renderer_t      *renderer,
+                                                                          sunk_px);
+ }
+ 
++/* Whether the head is the main screen of a stereo boot, the first one plymouth.stereo= names: the splash's eye is
++ * its size */
++bool
++ply_renderer_get_head_stereo_main (ply_renderer_t      *renderer,
++                                   ply_renderer_head_t *head)
++{
++        assert (renderer != NULL);
++        assert (renderer->plugin_interface != NULL);
++        assert (head != NULL);
++
++        if (renderer->plugin_interface->get_head_stereo_main == NULL)
++                return false;
++
++        return renderer->plugin_interface->get_head_stereo_main (renderer->backend, head);
++}
++
+ void
+ ply_renderer_flush_head (ply_renderer_t      *renderer,
+                          ply_renderer_head_t *head)
+diff --git a/src/libply-splash-core/ply-renderer.h b/src/libply-splash-core/ply-renderer.h
+index e9d1c9a..4e63502 100644
+--- a/src/libply-splash-core/ply-renderer.h
++++ b/src/libply-splash-core/ply-renderer.h
+@@ -77,6 +77,8 @@ bool ply_renderer_get_head_stereo_depth_limits (ply_renderer_t      *renderer,
+                                                 ply_renderer_head_t *head,
+                                                 double              *popped_px,
+                                                 double              *sunk_px);
++bool ply_renderer_get_head_stereo_main (ply_renderer_t      *renderer,
++                                        ply_renderer_head_t *head);
+ void ply_renderer_flush_head (ply_renderer_t      *renderer,
+                               ply_renderer_head_t *head);
+ 
+diff --git a/src/plugins/renderers/drm/plugin.c b/src/plugins/renderers/drm/plugin.c
+index f34b583..658a4b0 100644
+--- a/src/plugins/renderers/drm/plugin.c
++++ b/src/plugins/renderers/drm/plugin.c
+@@ -143,6 +143,7 @@ typedef struct
+         bool                    iz3d_linear;
+         bool                    has_popped;
+         bool                    has_sunk;
++        bool                    missing_mode_said; /* its saved mode is not in the screen's list: said once */
+         double                  popped_px;      /* popped=, sunk=: the person's depth limits on this screen, pixels of an eye 1920 wide */
+         double                  sunk_px;
+ } ply_stereo_output_t;
+@@ -165,6 +166,8 @@ struct _ply_renderer_head
+         const ply_stereo_output_t *stereo;
+         bool                    stereo_input;
+         bool                    depth_default_said;
++        bool                    left_eye_said;
++        char                    name[64];       /* the connector's name, as plymouth.stereo= names it */
+         unsigned long           eye_width;
+         unsigned long           eye_height;
+         unsigned long           eye_stride_lines;
+@@ -238,6 +241,7 @@ typedef struct
+         bool                        is_non_desktop;
+         const ply_stereo_output_t  *stereo;
+         ply_stereo_layout_t         stereo_layout;
++        char                        name[64];
+ } ply_output_t;
+ 
+ struct _ply_renderer_backend
+@@ -390,22 +394,20 @@ parse_stereo_outputs (ply_renderer_backend_t *backend)
+         free (value);
+ }
+ 
+-static const ply_stereo_output_t *
++static ply_stereo_output_t *
+ find_stereo_output (ply_renderer_backend_t *backend,
+-                    drmModeConnector       *connector)
++                    drmModeConnector       *connector,
++                    char                   *name,
++                    size_t                  name_size)
+ {
+         const char *type_name, *device;
+-        char name[64];
+         int i;
+ 
+-        if (backend->stereo_outputs_len == 0)
+-                return NULL;
+-
+         type_name = drmModeGetConnectorTypeName (connector->connector_type);
+-        if (type_name == NULL)
+-                return NULL;
++        snprintf (name, name_size, "%s-%u", type_name != NULL ? type_name : "Unknown", connector->connector_type_id);
+ 
+-        snprintf (name, sizeof(name), "%s-%u", type_name, connector->connector_type_id);
++        if (backend->stereo_outputs_len == 0 || type_name == NULL)
++                return NULL;
+         device = strrchr (backend->device_name, '/');
+         device = device != NULL ? device + 1 : backend->device_name;
+ 
+@@ -1310,6 +1312,7 @@ ply_renderer_head_new (ply_renderer_backend_t *backend,
+         head->rotation = output->rotation;
+         head->stereo = output->stereo;
+         head->stereo_layout = output->stereo_layout;
++        memcpy (head->name, output->name, sizeof(head->name));
+ 
+         /* the sizes drm_mode_set_crtcinfo (CRTC_STEREO_DOUBLE) gives the mode */
+         if (head->stereo_layout == PLY_STEREO_LAYOUT_FRAME_PACKING) {
+@@ -1585,6 +1588,12 @@ set_head_stereo_input (ply_renderer_backend_t *backend,
+         ply_trace ("%ldx%ld renderer head: the theme draws %s", head->area.width, head->area.height,
+                    stereo_input ? "both eyes side by side" : "one picture");
+ 
++        if (stereo_input && head->stereo_layout == PLY_STEREO_LAYOUT_NONE && !head->left_eye_said) {
++                head->left_eye_said = true;
++                ply_error ("%s %s, it shows the left eye", head->name,
++                           head->stereo == NULL ? "is not named in plymouth.stereo=" : "has no stereo mode");
++        }
++
+         return true;
+ }
+ 
+@@ -1627,6 +1636,14 @@ get_head_stereo_depth_limits (ply_renderer_backend_t *backend,
+         return given;
+ }
+ 
++/* The main screen is the first output plymouth.stereo= names (sparky-stereo-boot writes the main screen first) */
++static bool
++get_head_stereo_main (ply_renderer_backend_t *backend,
++                      ply_renderer_head_t    *head)
++{
++        return head->backend == backend && backend->stereo_outputs_len > 0 && head->stereo == &backend->stereo_outputs[0];
++}
++
+ static void
+ ply_renderer_head_remove (ply_renderer_backend_t *backend,
+                           ply_renderer_head_t    *head)
+@@ -2073,6 +2090,7 @@ get_output_info (ply_renderer_backend_t *backend,
+ {
+         drmModeModeInfo *mode = NULL;
+         drmModeConnector *connector;
++        ply_stereo_output_t *stereo;
+         bool has_90_rotation = false;
+ 
+         memset (output, 0, sizeof(*output));
+@@ -2107,13 +2125,28 @@ get_output_info (ply_renderer_backend_t *backend,
+                 mode = &connector->modes[0];
+         }
+ 
+-        output->stereo = find_stereo_output (backend, connector);
+-        if (output->stereo != NULL && !output->tiled && !backend->simpledrm) {
+-                drmModeModeInfo *stereo_mode = find_stereo_mode (connector, mode, output->stereo);
++        stereo = find_stereo_output (backend, connector, output->name, sizeof(output->name));
++        output->stereo = stereo;
++        if (stereo != NULL && !output->tiled && !backend->simpledrm) {
++                drmModeModeInfo *stereo_mode = find_stereo_mode (connector, mode, stereo);
+ 
+                 if (stereo_mode != NULL) {
+                         mode = stereo_mode;
+-                        output->stereo_layout = output->stereo->layout;
++                        output->stereo_layout = stereo->layout;
++                } else if (!stereo->missing_mode_said) {
++                        /* never a mode the screen does not list, and never another 3D mode in its place: the screen
++                         * keeps its own mode and shows the left eye */
++                        stereo->missing_mode_said = true;
++                        if (stereo->has_mode)
++                                ply_error ("%s does not list the %dx%d %s mode at %u mHz that plymouth.stereo= asks for: "
++                                           "it shows the left eye in its own mode, %dx%d",
++                                           output->name, stereo->mode_width, stereo->mode_height,
++                                           stereo_layout_name (stereo->layout), stereo->mode_refresh,
++                                           mode->hdisplay, mode->vdisplay);
++                        else
++                                ply_error ("%s lists no %s mode of %dx%d: it shows the left eye in its own mode",
++                                           output->name, stereo_layout_name (stereo->layout),
++                                           mode->hdisplay, mode->vdisplay);
+                 }
+         }
+         output->mode = *mode;
+@@ -3037,6 +3070,7 @@ ply_renderer_backend_get_interface (void)
+                 .remove_input_device          = remove_input_device,
+                 .set_head_stereo_input        = set_head_stereo_input,
+                 .get_head_stereo_depth_limits = get_head_stereo_depth_limits,
++                .get_head_stereo_main         = get_head_stereo_main,
+         };
+ 
+         return &plugin_interface;
+diff --git a/src/plugins/splash/script/script-lib-sprite.c b/src/plugins/splash/script/script-lib-sprite.c
+index 9a20e64..7753521 100644
+--- a/src/plugins/splash/script/script-lib-sprite.c
++++ b/src/plugins/splash/script/script-lib-sprite.c
+@@ -249,16 +249,13 @@ static script_return_t sprite_window_get_stereo (script_state_t *state,
+                 if (node == NULL)
+                         return script_return_obj_null ();
+                 display = ply_list_node_get_data (node);
+-                return script_return_obj (script_obj_new_number (ply_pixel_display_get_stereo_input (display->pixel_display)));
++                return script_return_obj (script_obj_new_number (ply_pixel_display_get_stereo_input (display->pixel_display) ||
++                                                                 ply_pixel_display_get_shows_left_eye (display->pixel_display)));
+         }
+ 
+-        for (node = ply_list_get_first_node (data->displays); node; node = ply_list_get_next_node (data->displays, node)) {
+-                display = ply_list_node_get_data (node);
+-                if (!ply_pixel_display_get_stereo_input (display->pixel_display))
+-                        return script_return_obj (script_obj_new_number (0));
+-        }
+-
+-        return script_return_obj (script_obj_new_number (ply_list_get_length (data->displays) > 0));
++        /* On a stereo boot every display either shows both eyes or the left one, so the window holds both eyes
++         * whatever screens come and go: the theme lays out two eyes once and keeps them */
++        return script_return_obj (script_obj_new_number (data->stereo));
+ }
+ 
+ /* How far the theme may pop (popped is non-zero) or sink, pixels of an eye 1920 wide: the person's depth
+@@ -505,14 +502,21 @@ static void script_lib_draw_brackground (ply_pixel_buffer_t       *pixel_buffer,
+ 
+ }
+ 
+-static void script_lib_sprite_draw_area (script_lib_display_t *display,
+-                                         ply_pixel_buffer_t   *pixel_buffer,
+-                                         int                   x,
+-                                         int                   y,
+-                                         int                   width,
+-                                         int                   height)
++/* Draws the window's area seen through a rectangle of the display, the window at offset_x, offset_y of it; only the
++ * window's columns eye_from to eye_to (one eye of a stereo window) show their sprites, the rest is background */
++static void script_lib_sprite_draw_window_area (script_lib_display_t *display,
++                                                ply_pixel_buffer_t   *pixel_buffer,
++                                                int                   x,
++                                                int                   y,
++                                                int                   width,
++                                                int                   height,
++                                                int                   offset_x,
++                                                int                   offset_y,
++                                                int                   eye_from,
++                                                int                   eye_to)
+ {
+-        ply_rectangle_t clip_area;
++        ply_rectangle_t clip_area, area;
++        int from, to, top, bottom;
+         ply_list_node_t *node;
+         sprite_t *sprite;
+         script_lib_sprite_data_t *data = display->data;
+@@ -522,6 +526,27 @@ static void script_lib_sprite_draw_area (script_lib_display_t *display,
+         clip_area.width = width;
+         clip_area.height = height;
+ 
++        /* the part of the rectangle inside the eye (on a stereo window also inside the eye's height): what lies
++         * beside it on the display is background */
++        from = MAX (x, eye_from - offset_x);
++        to = MIN (x + width, eye_to - offset_x);
++        top = data->stereo ? MAX (y, -offset_y) : y;
++        bottom = data->stereo ? MIN (y + height, (int) data->max_height - offset_y) : y + height;
++        if (from > x || to < x + width || top > y || bottom < y + height) {
++                area = clip_area;
++                script_lib_draw_brackground (pixel_buffer, &area, data);
++                if (to <= from || bottom <= top)
++                        return;
++                clip_area.x = from;
++                clip_area.width = to - from;
++                clip_area.y = top;
++                clip_area.height = bottom - top;
++                x = from;
++                width = to - from;
++                y = top;
++                height = bottom - top;
++        }
++
+         if (data->plugin_console_messages_updating == false && display->console_viewer != NULL && data->should_show_console_messages == true) {
+                 script_lib_draw_brackground (pixel_buffer, &clip_area, data);
+                 ply_console_viewer_draw_area (display->console_viewer, pixel_buffer, x, y, width, height);
+@@ -537,8 +562,8 @@ static void script_lib_sprite_draw_area (script_lib_display_t *display,
+         /* Check If the first sprite should be rendered opaque */
+         if (sprite->image && !sprite->remove_me &&
+             ply_pixel_buffer_is_opaque (sprite->image) && sprite->opacity == 1.0) {
+-                int position_x = sprite->x - display->x;
+-                int position_y = sprite->y - display->y;
++                int position_x = sprite->x - offset_x;
++                int position_y = sprite->y - offset_y;
+ 
+                 /* In that case only draw the background if the sprite doesn't
+                  * cover the complete area */
+@@ -561,8 +586,8 @@ static void script_lib_sprite_draw_area (script_lib_display_t *display,
+                 if (sprite->remove_me) continue;
+                 if (sprite->opacity < 0.011) continue;
+ 
+-                position_x = sprite->x - display->x;
+-                position_y = sprite->y - display->y;
++                position_x = sprite->x - offset_x;
++                position_y = sprite->y - offset_y;
+ 
+                 if (position_x >= (x + width)) continue;
+                 if (position_y >= (y + height)) continue;
+@@ -579,6 +604,35 @@ static void script_lib_sprite_draw_area (script_lib_display_t *display,
+         }
+ }
+ 
++/* A rectangle of a display: a display that shows both eyes takes its left half from the window's left eye and its
++ * right half from the window's right eye, each eye at the centre of the window's; every other display is one picture
++ * from the window's left eye (or the window, when it holds one picture) */
++static void script_lib_sprite_draw_area (script_lib_display_t *display,
++                                         ply_pixel_buffer_t   *pixel_buffer,
++                                         int                   x,
++                                         int                   y,
++                                         int                   width,
++                                         int                   height)
++{
++        script_lib_sprite_data_t *data = display->data;
++        int eye = data->eye_width;
++        int split;
++
++        if (!display->stereo_input) {
++                script_lib_sprite_draw_window_area (display, pixel_buffer, x, y, width, height, display->x, display->y,
++                                                    0, eye);
++                return;
++        }
++
++        split = display->eye_width;
++        if (x < split)
++                script_lib_sprite_draw_window_area (display, pixel_buffer, x, y, MIN (x + width, split) - x, height,
++                                                    display->x, display->y, 0, eye);
++        if (x + width > split)
++                script_lib_sprite_draw_window_area (display, pixel_buffer, MAX (x, split), y, x + width - MAX (x, split), height,
++                                                    display->x_right - split, display->y, eye, 2 * eye);
++}
++
+ static void
+ draw_area (script_lib_sprite_data_t *data,
+            int                       x,
+@@ -593,11 +647,21 @@ draw_area (script_lib_sprite_data_t *data,
+              node = ply_list_get_next_node (data->displays, node)) {
+                 script_lib_display_t *display = ply_list_node_get_data (node);
+ 
+-                ply_pixel_display_draw_area (display->pixel_display,
+-                                             x - display->x,
+-                                             y - display->y,
+-                                             width,
+-                                             height);
++                int left = x - display->x, right = x - display->x_right + display->eye_width;
++
++                if (!display->stereo_input) {
++                        ply_pixel_display_draw_area (display->pixel_display, left, y - display->y, width, height);
++                        continue;
++                }
++
++                /* the window's rectangle in each eye of the display */
++                if (left < display->eye_width && left + width > 0)
++                        ply_pixel_display_draw_area (display->pixel_display, MAX (left, 0), y - display->y,
++                                                     MIN (left + width, display->eye_width) - MAX (left, 0), height);
++                if (right < 2 * display->eye_width && right + width > display->eye_width)
++                        ply_pixel_display_draw_area (display->pixel_display, MAX (right, display->eye_width), y - display->y,
++                                                     MIN (right + width, 2 * display->eye_width) - MAX (right, display->eye_width),
++                                                     height);
+         }
+ }
+ 
+@@ -607,22 +671,47 @@ update_displays (script_lib_sprite_data_t *data)
+         ply_list_node_t *node;
+         script_lib_display_t *script_display;
+ 
+-        data->max_width = 0;
++        /* One window for every display. On a stereo boot with a stereo theme it holds both eyes side by side, each
++         * the size of the main screen's eye (the first screen plymouth.stereo= names; the widest and tallest display
++         * while the main screen is not there yet): a display that shows both eyes takes each of its halves from the
++         * middle of the window's eye of that side, a display that shows one eye its picture from the middle of the
++         * left eye. Eyes of displays of different sizes then line up, whatever display came first, and the main screen
++         * shows the splash as it does alone. Otherwise one picture, every display at its middle. */
++        unsigned int main_width = 0, main_height = 0;
++
++        data->stereo = false;
++        data->eye_width = 0;
+         data->max_height = 0;
+         for (node = ply_list_get_first_node (data->displays);
+              node;
+              node = ply_list_get_next_node (data->displays, node)) {
+                 script_display = ply_list_node_get_data (node);
+-                data->max_width = MAX (data->max_width, ply_pixel_display_get_width (script_display->pixel_display));
++                script_display->stereo_input = ply_pixel_display_get_stereo_input (script_display->pixel_display);
++                script_display->eye_width = ply_pixel_display_get_width (script_display->pixel_display);
++                if (script_display->stereo_input)
++                        script_display->eye_width /= 2;
++                data->stereo |= script_display->stereo_input ||
++                                ply_pixel_display_get_shows_left_eye (script_display->pixel_display);
++                data->eye_width = MAX (data->eye_width, (unsigned int) script_display->eye_width);
+                 data->max_height = MAX (data->max_height, ply_pixel_display_get_height (script_display->pixel_display));
++                if (ply_pixel_display_get_stereo_main (script_display->pixel_display)) {
++                        main_width = MAX (main_width, (unsigned int) script_display->eye_width);
++                        main_height = MAX (main_height, ply_pixel_display_get_height (script_display->pixel_display));
++                }
+         }
++        if (data->stereo && main_width > 0) {
++                data->eye_width = main_width;
++                data->max_height = main_height;
++        }
++        data->max_width = data->stereo ? 2 * data->eye_width : data->eye_width;
+ 
+         for (node = ply_list_get_first_node (data->displays);
+              node;
+              node = ply_list_get_next_node (data->displays, node)) {
+                 script_display = ply_list_node_get_data (node);
+-                script_display->x = (data->max_width - ply_pixel_display_get_width (script_display->pixel_display)) / 2;
+-                script_display->y = (data->max_height - ply_pixel_display_get_height (script_display->pixel_display)) / 2;
++                script_display->x = ((int) data->eye_width - script_display->eye_width) / 2;
++                script_display->x_right = script_display->x + data->eye_width;
++                script_display->y = ((int) data->max_height - (int) ply_pixel_display_get_height (script_display->pixel_display)) / 2;
+         }
+ 
+         data->full_refresh = true;
+@@ -930,8 +1019,14 @@ script_lib_sprite_refresh (script_lib_sprite_data_t *data)
+                         region_add_area (region,
+                                          display->x,
+                                          display->y,
+-                                         ply_pixel_display_get_width (display->pixel_display),
++                                         display->eye_width,
+                                          ply_pixel_display_get_height (display->pixel_display));
++                        if (display->stereo_input)
++                                region_add_area (region,
++                                                 display->x_right,
++                                                 display->y,
++                                                 display->eye_width,
++                                                 ply_pixel_display_get_height (display->pixel_display));
+                 }
+ 
+                 data->full_refresh = false;
+diff --git a/src/plugins/splash/script/script-lib-sprite.h b/src/plugins/splash/script/script-lib-sprite.h
+index 1a5ee59..33fb199 100644
+--- a/src/plugins/splash/script/script-lib-sprite.h
++++ b/src/plugins/splash/script/script-lib-sprite.h
+@@ -38,6 +38,8 @@ typedef struct
+         bool                       full_refresh;
+         unsigned int               max_width;
+         unsigned int               max_height;
++        bool                       stereo;      /* a stereo theme on a stereo boot: the window holds both eyes */
++        unsigned int               eye_width;   /* the main screen's eye (else the widest display's); max_width is twice it on a stereo window */
+ 
+         ply_buffer_t              *boot_buffer;
+         char                      *monospace_font;
+@@ -55,6 +57,9 @@ typedef struct
+         script_lib_sprite_data_t *data;
+         int                       x;
+         int                       y;
++        int                       x_right;      /* where the right eye of a display that shows both eyes is taken */
++        int                       eye_width;
++        bool                      stereo_input; /* the display shows both eyes, its right half the right eye */
+ 
+         ply_console_viewer_t     *console_viewer;
+ } script_lib_display_t;
+-- 
+2.53.0
+
