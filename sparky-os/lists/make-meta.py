@@ -157,7 +157,7 @@ OPT_IN = {'developer', 'os-developer'}
 OS_DEV_STACK = [f'{n} (>= {RV[n]})' for n in (
     'kwin-dev', 'libgbm-dev', 'libkscreen-dev', 'libnvidia-egl-wayland-dev', 'libstereo-declare-dev', 'libstereo-layer-dev',
     'libstereo-policy-dev', 'mesa-common-dev', 'plasma-wayland-protocols', 'qt6-base-dev', 'qt6-base-private-dev',
-    'qt6-multimedia-dev')]
+    'qt6-multimedia-dev')] if not os.environ.get('PACKAGES') or 'task-sparky-stereo-os-developer' in os.environ['PACKAGES'].split() else []
 SPLIT = {'scientist', 'student'}
 
 def read_roles():
