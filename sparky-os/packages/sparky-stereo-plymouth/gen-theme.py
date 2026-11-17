@@ -45,10 +45,15 @@ header = '''\
 #  fsck code and uses its images.
 #
 #  What is new, written for Sparky Stereo OS (Daniel Ramos):
-#   - the theme declares Stereo=full-side-by-side, and on a stereo output
+#   - the theme declares Stereo=full-side-by-side, and on a stereo boot
 #     Plymouth hands it both eyes side by side (Window.GetStereo () is then
 #     true): the left eye in the left half, the right eye in the right half,
-#     both from one animation clock; elsewhere it draws once, like the original;
+#     both from one animation clock, each eye the size of the main screen's; a
+#     screen that does not show both eyes shows the left one, never the pair;
+#     on a 2D boot it draws once, like the original;
+#   - layout () sizes and places everything again when a screen comes or goes
+#     (the GPU's driver after the firmware's framebuffer, a television plugged
+#     in), so a later screen never keeps an older screen's layout;
 #   - three levels, each item shifted by its own depth and drawn once per eye:
 #     the background on the screen; the base, the swirl with its orbit lines,
 #     one step in front of it; the SparkyOS logo (its swirl and the wordmark
@@ -97,21 +102,25 @@ SINK_PX = SUNK_LIMIT * 0.6;
 
 eyes = '''
 #------------------------------- Eyes ----------------------------------------------
-# On a stereo output the window holds both eyes side by side (the theme declares
-# Stereo=full-side-by-side); anywhere else it is one picture and the theme draws it once,
-# like the original.
-win_width = Window.GetWidth ();
-win_height = Window.GetHeight ();
+# On a stereo boot the window holds both eyes side by side (the theme declares
+# Stereo=full-side-by-side): a screen that shows both eyes gets both, any other screen the
+# left eye. On a 2D boot it is one picture and the theme draws it once, like the original.
+# Screens come and go while the splash runs (the GPU's driver replaces the firmware's
+# framebuffer, a second screen appears): layout () sizes and places everything again for the
+# window as it is then, at load and at each display hotplug. EYES is decided once, at load.
 if (Window.GetStereo ())
     EYES = 2;
 else
     EYES = 1;
-EYE_W = win_width / EYES;
-EYE_H = win_height;
-POP = POP_PX * EYE_W / 1920;
-SINK = SINK_PX * EYE_W / 1920;
-BASE = BASE_PX * EYE_W / 1920;
-LOGO = LOGO_PX * EYE_W / 1920;
+win_width = 0;
+win_height = 0;
+EYE_W = 0;
+EYE_H = 0;
+LAID_OUT = 0;
+POP = 0;
+SINK = 0;
+BASE = 0;
+LOGO = 0;
 
 # A stereo sprite is one sprite per eye. d is the parallax in pixels, positive in front of
 # the screen: the left eye's picture moves right and the right eye's left, together by d rounded to whole
@@ -158,92 +167,45 @@ fun SS_SetImage (ss, image) {
         ss.s[e].SetImage (image);
 }
 
-#------------------------------- Background ----------------------------------------
-bg_image = Image("background.png");
-# Scale the background to cover one eye. With two eyes it is scaled by the width, so that
-# it never reaches into the other eye.
-screen_ratio = EYE_W / EYE_H;
-bg_image_ratio = bg_image.GetWidth() / bg_image.GetHeight();
-if (EYES == 2 || screen_ratio > bg_image_ratio)
-    bg_scale_factor = EYE_W / bg_image.GetWidth();
-else
-    bg_scale_factor = EYE_H / bg_image.GetHeight();
-scaled_bg_image = bg_image.Scale(bg_image.GetWidth() * bg_scale_factor,
-                                 bg_image.GetHeight() * bg_scale_factor);
-
-# Display background
+#------------------------------- The pictures, made once ---------------------------
+bg_original = Image("background.png");
+logo_original = Image("logo.png");
+wordmark_original = Image("wordmark.png");
+electron_original = Image("electron.png");
+scaled_bg_image = bg_original;
+logo_image = logo_original;
+debian_image = wordmark_original;
+electron_image = electron_original;
 bg_sprite = SS_New(scaled_bg_image);
-SS_Place(bg_sprite, EYE_W / 2 - scaled_bg_image.GetWidth() / 2,
-                    EYE_H / 2 - scaled_bg_image.GetHeight() / 2,
-                    -10000, 0);
-
-#------------------------------- Base: the swirl and its orbits ----------------------
-logo_image = Image("logo.png");
-logo_height = Math.Min(EYE_W, EYE_H) * 0.7;
-logo_scale_factor = logo_height / logo_image.GetHeight();
-logo_image = logo_image.Scale(logo_image.GetWidth() * logo_scale_factor,
-                              logo_image.GetHeight() * logo_scale_factor);
 logo_sprite = SS_New(logo_image);
-logo_to_top_edge = EYE_H * 0;
-logo_right_shift = logo_image.GetWidth() * 0.092;
-logo_x = EYE_W / 2 - logo_image.GetWidth() / 2 + logo_right_shift;
-logo_y = logo_to_top_edge;
-SS_Place(logo_sprite, logo_x, logo_y, -100, BASE);
-
-#------------------------------- Logo: SPARKYOS / POWERED BY DEBIAN / STEREO 3D EDITION -
-debian_image = Image("wordmark.png");
-debian_width = logo_image.GetWidth();
-debian_scale_factor = debian_width / debian_image.GetWidth() * 0.7;
-if (debian_scale_factor < 1) {
-    debian_image = debian_image.Scale(debian_image.GetWidth() * debian_scale_factor,
-                                      debian_image.GetHeight() * debian_scale_factor);
-}
 debian_sprite = SS_New(debian_image);
-debian_to_bottom_edge = EYE_H * 0.092;
-debian_x = EYE_W / 2 - debian_image.GetWidth() / 2;
-debian_y = EYE_H - debian_to_bottom_edge - debian_image.GetHeight();
-SS_Place(debian_sprite, debian_x, debian_y, -90, LOGO);
+screen_ratio = 1;
+bg_image_ratio = 1;
+bg_scale_factor = 1;
+logo_height = 0;
+logo_scale_factor = 1;
+logo_to_top_edge = 0;
+logo_right_shift = 0;
+logo_x = 0;
+logo_y = 0;
+debian_width = 0;
+debian_scale_factor = 1;
+debian_to_bottom_edge = 0;
+debian_x = 0;
+debian_y = 0;
 
-#------------------------------- Electrons --------------------------------------------
-
-electron_image = Image("electron.png");
-electron_image = electron_image.Scale(
-    electron_image.GetWidth() * 0.06 * logo_scale_factor,
-    electron_image.GetHeight() * 0.06 * logo_scale_factor);
-
-
-#main center coords
-ellipses[0].x = logo_x + logo_image.GetWidth() * 0.4245;
-ellipses[0].y = logo_y + logo_image.GetHeight() * 0.611;
-#main small / large axis
-ellipses[0].height = logo_image.GetHeight() * 0.3303;
-ellipses[0].width = logo_image.GetWidth() * 0.295;
 #main animation parameters
 ellipses[0].anim.start_iter = 0;
 ellipses[0].anim.stop_iter = 150;
 ellipses[0].anim.start_angle = Math.Pi;
 ellipses[0].anim.arc = 2*Math.Pi;
 ellipses[0].anim.rotat_dir = -1;
-
-#left center coords
-ellipses[1].x = logo_x + logo_image.GetWidth() * 0.3825;
-ellipses[1].y = logo_y + logo_image.GetHeight() * 0.411;
-#left small / large axis
-ellipses[1].height = logo_image.GetHeight() * 0.1645;
-ellipses[1].width = logo_image.GetWidth() * 0.2248;
 #left animation parameters
 ellipses[1].anim.start_iter = 50;
 ellipses[1].anim.stop_iter = 130;
 ellipses[1].anim.start_angle = 0;
 ellipses[1].anim.arc = 2*Math.Pi;
 ellipses[1].anim.rotat_dir = 1;
-
-#right center coords
-ellipses[2].x = logo_x + logo_image.GetWidth() * 0.7065;
-ellipses[2].y = logo_y + logo_image.GetHeight() * 0.460;
-#right small / large axis
-ellipses[2].height = logo_image.GetHeight() * 0.2343;
-ellipses[2].width = logo_image.GetWidth() * 0.2945;
 #right animation parameters
 ellipses[2].anim.start_iter = 20;
 ellipses[2].anim.stop_iter = 100;
@@ -262,6 +224,106 @@ for (i = 0; i < ELECTRONS_DISPLAYED; i++) {
         electron_sprite[i][j].angle_diff = -(anim.rotat_dir*j*0.01);
     }
 }
+
+#------------------------------- Layout --------------------------------------------
+fun layout () {
+    local.i;
+    local.j;
+    # A hotplug that leaves no display (the firmware's framebuffer gone before the GPU's screens come) keeps the
+    # layout as it was: with no display the window has no size and no depth limits, and the next display lays it out.
+    if (LAID_OUT && Window.GetWidth () == 0)
+        return;
+    LAID_OUT = 1;
+    win_width = Window.GetWidth ();
+    win_height = Window.GetHeight ();
+    EYE_W = win_width / EYES;
+    EYE_H = win_height;
+    POPPED_LIMIT = Window.GetStereoPoppedLimit ();
+    SUNK_LIMIT = Window.GetStereoSunkLimit ();
+    STEP_PX = POPPED_LIMIT / 2;
+    BASE_PX = STEP_PX;
+    LOGO_PX = 2 * STEP_PX;
+    POP_PX = STEP_PX;
+    SINK_PX = SUNK_LIMIT * 0.6;
+    POP = POP_PX * EYE_W / 1920;
+    SINK = SINK_PX * EYE_W / 1920;
+    BASE = BASE_PX * EYE_W / 1920;
+    LOGO = LOGO_PX * EYE_W / 1920;
+
+    #--------------------------- Background
+    # Scale the background to cover one eye. With two eyes it is scaled by the width, so that
+    # it never reaches into the other eye.
+    screen_ratio = EYE_W / EYE_H;
+    bg_image_ratio = bg_original.GetWidth() / bg_original.GetHeight();
+    if (EYES == 2 || screen_ratio > bg_image_ratio)
+        bg_scale_factor = EYE_W / bg_original.GetWidth();
+    else
+        bg_scale_factor = EYE_H / bg_original.GetHeight();
+    scaled_bg_image = bg_original.Scale(bg_original.GetWidth() * bg_scale_factor,
+                                        bg_original.GetHeight() * bg_scale_factor);
+    SS_SetImage(bg_sprite, scaled_bg_image);
+    SS_Place(bg_sprite, EYE_W / 2 - scaled_bg_image.GetWidth() / 2,
+                        EYE_H / 2 - scaled_bg_image.GetHeight() / 2,
+                        -10000, 0);
+
+    #--------------------------- Base: the swirl and its orbits
+    logo_height = Math.Min(EYE_W, EYE_H) * 0.7;
+    logo_scale_factor = logo_height / logo_original.GetHeight();
+    logo_image = logo_original.Scale(logo_original.GetWidth() * logo_scale_factor,
+                                     logo_original.GetHeight() * logo_scale_factor);
+    SS_SetImage(logo_sprite, logo_image);
+    logo_to_top_edge = EYE_H * 0;
+    logo_right_shift = logo_image.GetWidth() * 0.092;
+    logo_x = EYE_W / 2 - logo_image.GetWidth() / 2 + logo_right_shift;
+    logo_y = logo_to_top_edge;
+    SS_Place(logo_sprite, logo_x, logo_y, -100, BASE);
+
+    #--------------------------- Logo: SPARKYOS / POWERED BY DEBIAN / STEREO 3D EDITION
+    debian_width = logo_image.GetWidth();
+    debian_scale_factor = debian_width / wordmark_original.GetWidth() * 0.7;
+    debian_image = wordmark_original;
+    if (debian_scale_factor < 1) {
+        debian_image = wordmark_original.Scale(wordmark_original.GetWidth() * debian_scale_factor,
+                                               wordmark_original.GetHeight() * debian_scale_factor);
+    }
+    SS_SetImage(debian_sprite, debian_image);
+    debian_to_bottom_edge = EYE_H * 0.092;
+    debian_x = EYE_W / 2 - debian_image.GetWidth() / 2;
+    debian_y = EYE_H - debian_to_bottom_edge - debian_image.GetHeight();
+    SS_Place(debian_sprite, debian_x, debian_y, -90, LOGO);
+
+    #--------------------------- Electrons
+    electron_image = electron_original.Scale(
+        electron_original.GetWidth() * 0.06 * logo_scale_factor,
+        electron_original.GetHeight() * 0.06 * logo_scale_factor);
+    for (i = 0; i < ELECTRONS_DISPLAYED; i++)
+        for (j = 0; j < 5; j++)
+            SS_SetImage(electron_sprite[i][j], electron_image);
+
+    #main center coords
+    ellipses[0].x = logo_x + logo_image.GetWidth() * 0.4245;
+    ellipses[0].y = logo_y + logo_image.GetHeight() * 0.611;
+    #main small / large axis
+    ellipses[0].height = logo_image.GetHeight() * 0.3303;
+    ellipses[0].width = logo_image.GetWidth() * 0.295;
+
+    #left center coords
+    ellipses[1].x = logo_x + logo_image.GetWidth() * 0.3825;
+    ellipses[1].y = logo_y + logo_image.GetHeight() * 0.411;
+    #left small / large axis
+    ellipses[1].height = logo_image.GetHeight() * 0.1645;
+    ellipses[1].width = logo_image.GetWidth() * 0.2248;
+
+    #right center coords
+    ellipses[2].x = logo_x + logo_image.GetWidth() * 0.7065;
+    ellipses[2].y = logo_y + logo_image.GetHeight() * 0.460;
+    #right small / large axis
+    ellipses[2].height = logo_image.GetHeight() * 0.2343;
+    ellipses[2].width = logo_image.GetWidth() * 0.2945;
+}
+
+layout ();
+Plymouth.SetDisplayHotplugFunction (layout);
 
 # The animation clock: every frame of both eyes is drawn from it
 anim_clock = 0;
