@@ -22,18 +22,27 @@ xserver-xorg-video-qxl)
  version=0.1.6-1.1+stereo3d1+lc1
  entry="Carry Debian unstable's QXL and Xspice; apply Frank Heckenbach's option-default fix from Debian bug 1137518."
  ;;
+printing-metas)
+ dsc=printing-metas_0.20210903.dsc
+ sha=15c82a034daf2a0a1a65cc2141e934e55ee86f76a2b91db19f963d64518e6756
+ patch=
+ version=0.20210903+stereo3d1+lc1
+ entry="Carry Debian unstable's printer driver metapackages while HPLIP's migration blocks testing; preserve Debian's complete driver recommendations."
+ ;;
 *) echo "no qualified preparation for $name" >&2; exit 2 ;;
 esac
 mkdir -p "/work/candidates/$name"
 cd "/work/candidates/$name"
 [ ! -e source ] || { echo 'source already exists' >&2; exit 1; }
 printf '%s  %s\n' "$sha" "/work/$name/$dsc" | sha256sum -c -
-cp /work/"$name"/*.orig.tar.* .
+if [ "$name" != printing-metas ]; then cp /work/"$name"/*.orig.tar.* .; fi
 dpkg-source -x "/work/$name/$dsc" source
 cd source
-cp "$HERE/patches/$patch" "debian/patches/$patch"
-printf '%s\n' "$patch" >> debian/patches/series
-QUILT_PATCHES=debian/patches quilt push
+if [ -n "$patch" ]; then
+ cp "$HERE/patches/$patch" "debian/patches/$patch"
+ printf '%s\n' "$patch" >> debian/patches/series
+ QUILT_PATCHES=debian/patches quilt push
+fi
 if [ "$name" = hplip ]; then
  # HP removed the privileged plugin D-Bus service in its security release.
  sed -i '/^usr\/bin\/hp-pkservice$/d; /^usr\/share\/polkit-1$/d; /^usr\/share\/dbus-1$/d' debian/hplip.install
