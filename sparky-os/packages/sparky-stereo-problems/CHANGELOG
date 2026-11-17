@@ -1,4 +1,13 @@
 -------------------------------------------------------------------------------
+  Version 0.2.2 (2026-11-17)
+-------------------------------------------------------------------------------
+  * The engine runs on every 64-bit processor again (ORDER 658). Its build did not tell Zig the target processor, so
+    the command and the library were built for the processor of the machine that built them: on a processor without
+    AVX2 and BMI (an Ivy Bridge notebook; anything older than about 2013) the engine died of an illegal instruction,
+    and with it every program that loads the library, so the graphics chooser failed and nothing started from the
+    desktop. Both are now built for the amd64 baseline, and the build refuses a result that holds any instruction
+    above it (repo/cpu-baseline.py)
+-------------------------------------------------------------------------------
   Version 0.2.1 (2026-11-09)
 -------------------------------------------------------------------------------
   * A failed hibernation says why (ORDER 446). systemd-hibernate, systemd-suspend-then-hibernate and systemd-hybrid-sleep
