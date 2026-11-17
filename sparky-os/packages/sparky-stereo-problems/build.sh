@@ -5,7 +5,7 @@
 # is Zig (cgm-zig, Daniel's Zig; ZIG names it, `zig` by default), built twice from the same source: the command and
 # the private C library. Then its own message catalogs (with the command just built), the source package, provenance
 # and Lean Code's build-tree. Needs zig, libsystemd-dev, dpkg-dev and python3.
-# Last update 2026/11/03
+# Last update 2026/11/17
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPRO="$HERE/../../repo/reproducible.py"
@@ -25,11 +25,14 @@ mkdir -p "$D/usr/bin" "$D/$PRIVATE" "$D/usr/include" "$D/usr/lib/$MULTIARCH/pkgc
 	"$D/usr/lib/systemd/system/sparky-stereo-problems-failed@.service.d" "$D/usr/lib/tmpfiles.d" \
 	"$D/usr/share/polkit-1/actions" "$D/usr/share/doc/$PACKAGE"
 JOBS=${JOBS:-4}
-(cd "$HERE/src" && "$ZIG" build-exe main.zig -lc -lsystemd -O ReleaseSafe -j"$JOBS" \
+# -mcpu=baseline: without it Zig builds for the processor of the machine that builds, and the engine, with every program
+# that loads it, dies of an illegal instruction on an older one (ORDER 658); cpu-baseline.py below refuses such a build
+(cd "$HERE/src" && "$ZIG" build-exe main.zig -lc -lsystemd -O ReleaseSafe -mcpu=baseline -j"$JOBS" \
 	--name $PACKAGE -femit-bin="$WORK/bin/$PACKAGE") 2>&1 | grep -v '^info: threads' || :
-(cd "$HERE/src" && "$ZIG" build-lib -dynamic capi.zig -lc -lsystemd -O ReleaseSafe -j"$JOBS" \
+(cd "$HERE/src" && "$ZIG" build-lib -dynamic capi.zig -lc -lsystemd -O ReleaseSafe -mcpu=baseline -j"$JOBS" \
 	--name $PACKAGE -fsoname=lib$PACKAGE.so.0 -femit-bin="$WORK/bin/lib$PACKAGE.so.0") 2>&1 | grep -v '^info: threads' || :
 [ -x "$WORK/bin/$PACKAGE" ] && [ -f "$WORK/bin/lib$PACKAGE.so.0" ] || { echo "the Zig build failed" >&2; exit 1; }
+python3 "$HERE/../../repo/cpu-baseline.py" "$WORK/bin/$PACKAGE" "$WORK/bin/lib$PACKAGE.so.0" >/dev/null
 install -m 755 "$WORK/bin/$PACKAGE" "$D/usr/bin/$PACKAGE"
 install -m 644 "$WORK/bin/lib$PACKAGE.so.0" "$D/$PRIVATE/lib$PACKAGE.so.0"
 ln -s lib$PACKAGE.so.0 "$D/$PRIVATE/lib$PACKAGE.so"
@@ -132,7 +135,7 @@ Section: admin
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Standards-Version: 4.7.3
-Build-Depends: cgm-zig, libsystemd-dev, dpkg-dev, python3
+Build-Depends: cgm-zig, libsystemd-dev, dpkg-dev, python3, binutils
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
 
