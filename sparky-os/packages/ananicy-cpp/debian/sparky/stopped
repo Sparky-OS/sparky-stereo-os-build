@@ -1,0 +1,14 @@
+#!/bin/sh
+# After every stop. A stop the person asked for (SERVICE_RESULT=success) leaves things as they are; a failed one removes the singleton the dead
+# daemon left and keeps one problem, with the reason, in the shared engine.
+[ "$SERVICE_RESULT" = success ] && exit 0
+/usr/bin/ananicy-cpp --force-remove-semaphore || :
+repair='["systemctl","restart","ananicy-cpp.service"]'
+if [ ! -e /sys/kernel/btf/vmlinux ]; then
+	exec sparky-stereo-problems keep --repair "$repair" ananicy-cpp listener LOCAL2
+fi
+err=$(journalctl -u ananicy-cpp.service -n 40 -o cat --no-pager 2>/dev/null | sed -n 's/^failed to load BPF object: //p' | tail -n 1)
+if [ -n "$err" ]; then
+	exec sparky-stereo-problems keep --repair "$repair" ananicy-cpp listener LOCAL3 "$err"
+fi
+exec sparky-stereo-problems keep --repair "$repair" ananicy-cpp listener LOCAL4 "${EXIT_STATUS:-$SERVICE_RESULT}"

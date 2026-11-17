@@ -1,3 +1,11 @@
+ananicy-cpp (1.2.0+git20260818-1+sparky2) unstable; urgency=medium
+
+  * The unit is enabled and started on installation, as CachyOS ships it (the main session's ruling by the recorded rule for settings, that a setting is adopted when a main gaming distribution ships the same value; cachyos-settings.install runs systemctl enable on ananicy-cpp.service; Bazzite does not ship the program, which is no second value). The person's own choice stays: systemctl disable is kept across upgrades by deb-systemd-helper. The schedulers (scx-scheds, scx-tools) stay off, as both distributions ship them.
+  * Upgrading from 1.2.0+git20260818-1+sparky1, which installed the unit off, turns it on once (postinst); a later upgrade never does.
+  * A start the kernel does not allow is told, never silent: patch 0001 (upstream issues 88 and 90 are open, no merge request carries a fix; searched 2026-11-17) makes a BPF program that did not load end the start with a message and exit status 1 instead of a segmentation fault that left /dev/shm/AnanicyCppMutex; the unit is Type=notify, is not restarted after exit status 1, removes a stale singleton before it starts and after a failed stop, and keeps one problem in sparky-stereo-problems (ananicy-cpp/listener: no BTF, BPF refused with the error, or another stop with its status) in ten languages, cleared when the daemon reports it is ready. The engine's generic failed-service handler is masked for this unit so that the one problem is the one with the reason.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 17 Nov 2026 12:00:00 -0300
+
 ananicy-cpp (1.2.0+git20260818-1+sparky1) unstable; urgency=medium
 
   * The edition's build of ananicy-cpp for the scheduling work of ORDER 108 (Daniel, 2026-10-05: "processor governance"): the daemon from

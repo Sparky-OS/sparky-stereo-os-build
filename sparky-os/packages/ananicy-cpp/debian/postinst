@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+if [ "$1" = configure ] && [ -n "$2" ] && dpkg --compare-versions "$2" lt 1.2.0+git20260818-1+sparky2~; then
+	# the earlier build of this package (1.2.0+git20260818-1+sparky1) installed the unit off; this one ships it on, as CachyOS does: switched on here once
+	# (a version from sparky2 on never gets here, so a person's own off stays)
+	deb-systemd-helper enable ananicy-cpp.service >/dev/null || :
+fi
+#DEBHELPER#
