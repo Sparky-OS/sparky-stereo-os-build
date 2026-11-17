@@ -37,6 +37,7 @@ QUILT_PATCHES=debian/patches quilt push
 if [ "$name" = hplip ]; then
  # HP removed the privileged plugin D-Bus service in its security release.
  sed -i '/^usr\/bin\/hp-pkservice$/d; /^usr\/share\/polkit-1$/d; /^usr\/share\/dbus-1$/d' debian/hplip.install
+ sed -i '/^hp-pkservice\.1$/d' debian/hplip.manpages
 fi
 python3 - <<'PY'
 from pathlib import Path
