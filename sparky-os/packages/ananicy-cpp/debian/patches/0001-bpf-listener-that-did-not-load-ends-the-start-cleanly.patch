@@ -1,0 +1,51 @@
+Description: A BPF program that did not load ends the start with a message, not with a crash
+ When the kernel refuses the BPF listener (no BTF, BPF not permitted, an
+ unprivileged container) initialize_bpf_program returns NULL, and
+ BPFProgram::initialize went on to call bpf_program_init_events with it, which
+ reads obj->maps.events: the daemon died of SEGV after one line ("failed to
+ load BPF object") and left its singleton, so every restart said "Ananicy Cpp
+ is already running!". Now initialize returns false at once, main prints
+ "processListener initialization failed!", removes the singleton and exits 1.
+ ProcessQueue::stop() also no longer joins a thread that was never started
+ (std::jthread::join on a non-joinable thread throws inside a noexcept
+ destructor).
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Bug: https://gitlab.com/ananicy-cpp/ananicy-cpp/-/issues/88
+Bug: https://gitlab.com/ananicy-cpp/ananicy-cpp/-/issues/90
+Forwarded: no
+Last-Update: 2026-11-17
+---
+diff -ruN a/libananicycpp_bpf/include_cpp/bpf_program.hpp b/libananicycpp_bpf/include_cpp/bpf_program.hpp
+--- a/libananicycpp_bpf/include_cpp/bpf_program.hpp
++++ b/libananicycpp_bpf/include_cpp/bpf_program.hpp
+@@ -26,9 +26,15 @@
+     }
+ 
+     m_bpf_program = initialize_bpf_program(m_min_us, m_verbose);
++    // A program that did not load has no maps: its perf buffer cannot be made
++    // (bpf_program_init_events reads obj->maps.events) and nothing is destroyed.
++    if (m_bpf_program == nullptr) {
++      return false;
++    }
+     m_perf_buffer = bpf_program_init_events(m_bpf_program);
+-    if ((m_bpf_program == nullptr) || (m_perf_buffer == nullptr)) {
++    if (m_perf_buffer == nullptr) {
+       destroy_bpf_program(m_bpf_program, m_perf_buffer);
++      m_bpf_program = nullptr;
+       return false;
+     }
+ 
+diff -ruN a/src/platform/linux/process.cpp b/src/platform/linux/process.cpp
+--- a/src/platform/linux/process.cpp
++++ b/src/platform/linux/process.cpp
+@@ -290,7 +290,9 @@
+ #if defined(USE_BPF_PROC_IMPL)
+   g_exiting.store(true, std::memory_order_relaxed);
+ #endif
+-  if (!this->event_thread.get_stop_token().stop_requested()) {
++  // The thread is not started when the listener could not be set up (start() is never called then).
++  if (this->event_thread.joinable() &&
++      !this->event_thread.get_stop_token().stop_requested()) {
+     this->event_thread.request_stop();
+     this->event_thread.join();
+   }

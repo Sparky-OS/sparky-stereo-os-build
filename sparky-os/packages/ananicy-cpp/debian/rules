@@ -11,9 +11,19 @@ override_dh_auto_configure:
 	dh_auto_configure -- -DCMAKE_BUILD_TYPE=Release -DVERSION=1.2.0 -DENABLE_SYSTEMD=ON -DUSE_EXTERNAL_JSON=ON \
 		-DUSE_EXTERNAL_SPDLOG=ON -DUSE_EXTERNAL_FMTLIB=ON -DUSE_BPF_PROC_IMPL=ON -DBPF_BUILD_LIBBPF=OFF -DENABLE_REGEX_SUPPORT=ON
 
-# the unit is installed, never enabled or started by the package (off until the person switches it on)
+# the unit is enabled and started on a fresh install, as CachyOS ships it (cachyos-settings.install, systemctl enable); the person's own
+# systemctl disable is kept by deb-systemd-helper, and the one upgrade from the earlier off build turns it on in the postinst
 override_dh_installsystemd:
-	dh_installsystemd --no-enable --no-start --name=ananicy-cpp
+	dh_installsystemd --name=ananicy-cpp
+
+# the unit's drop-in and its three helpers (debian/ananicy-cpp.install); the problem's messages in ten languages as journal catalogs; the engine's
+# generic "a service failed" handler is masked by name for this unit, so that the one problem is the one with the reason
+override_dh_install:
+	dh_install
+	chmod 755 debian/ananicy-cpp/usr/libexec/sparky-ananicy-cpp/*
+	mkdir -p debian/ananicy-cpp/usr/lib/systemd/catalog
+	sparky-stereo-problems catalog ananicy-cpp debian/problems-lang debian/ananicy-cpp/usr/lib/systemd/catalog --subject LOCAL1
+	ln -s /dev/null debian/ananicy-cpp/usr/lib/systemd/system/ananicy-cpp.service.d/50-sparky-stereo-problems.conf
 
 override_dh_auto_test:
 	obj-*/ananicy-cpp --version || obj-*/ananicy-cpp --help

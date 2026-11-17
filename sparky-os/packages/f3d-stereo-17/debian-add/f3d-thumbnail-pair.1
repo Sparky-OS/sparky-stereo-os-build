@@ -1,0 +1,25 @@
+.TH F3D-THUMBNAIL-PAIR 1 "17 November 2026" "Sparky Stereo OS"
+.SH NAME
+f3d-thumbnail-pair \- draw a 3D model as a stereo pair for a file manager's thumbnail
+.SH SYNOPSIS
+.B f3d-thumbnail-pair
+.I PLUGIN SIZE INPUT OUTPUT
+.SH DESCRIPTION
+Draws the model in
+.I INPUT
+through libf3d, once for the left eye and once for the right eye (two parallel cameras whose frusta meet at the focal distance), and writes one PNG file,
+.I OUTPUT,
+of
+.I SIZE
+by
+.I SIZE/2
+pixels: the left eye in the left half, the right eye in the right half.
+The picture carries the text X\-KDE::Stereo3DLayout=sideBySideLeftFirst, which the file managers of Sparky Stereo OS read; a screen without 3D shows the left half.
+.PP
+.I PLUGIN
+is the F3D plugin that reads the file (native, assimp, occt, draco, hdf) or "all".
+The arguments are those of the freedesktop thumbnailer files in /usr/share/thumbnailers (%s, %i and %o).
+.SH EXIT STATUS
+0 when the picture was written, 1 when the model could not be drawn (the reason is written to the standard error), 2 for a wrong argument.
+.SH SEE ALSO
+.BR f3d (1)

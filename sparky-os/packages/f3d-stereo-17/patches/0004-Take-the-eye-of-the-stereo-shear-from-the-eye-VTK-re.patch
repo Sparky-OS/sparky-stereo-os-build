@@ -1,0 +1,69 @@
+From a13b8ea5e18d993326bcbf22b4aad1e18b44e8cd Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 17 Nov 2026 15:32:25 -0300
+Subject: [PATCH 4/7] Take the eye of the stereo shear from the eye VTK
+ renders, or from the caller
+
+The shear of each eye was chosen by the left eye flag of the camera. Let a
+caller ask for one eye explicitly (an image of one eye), and keep the flag for
+the stereo window, where VTK toggles it for each eye.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ vtkext/private/module/vtkF3DRenderer.cxx | 11 +++++++++--
+ vtkext/private/module/vtkF3DRenderer.h   |  7 +++++++
+ 2 files changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/vtkext/private/module/vtkF3DRenderer.cxx b/vtkext/private/module/vtkF3DRenderer.cxx
+index 58964f8..d716e95 100644
+--- a/vtkext/private/module/vtkF3DRenderer.cxx
++++ b/vtkext/private/module/vtkF3DRenderer.cxx
+@@ -2186,11 +2186,18 @@ void vtkF3DRenderer::Render()
+   // VTK only applies the stereo shear of the camera in vtkOpenGLCamera::Render, which the render
+   // passes do not call, so set the shear of each eye here, as vtkCamera does with its eye angle
+   vtkCamera* camera = this->GetActiveCamera();
+-  const bool stereo = this->GetRenderWindow()->GetStereoRender();
++  const bool stereo = this->GetRenderWindow()->GetStereoRender() || this->StereoEye != 0;
+   if (stereo)
+   {
++    // The eye is asked for (an image of one eye), or it is the eye VTK is rendering, which it
++    // announces through the left eye flag of the camera
++    int eye = this->StereoEye;
++    if (eye == 0)
++    {
++      eye = camera->GetLeftEye() ? -1 : 1;
++    }
+     const double shear = std::tan(vtkMath::RadiansFromDegrees(camera->GetEyeAngle() / 2.0));
+-    camera->SetViewShear(camera->GetLeftEye() ? -shear : shear, 0.0, 1.0);
++    camera->SetViewShear(eye < 0 ? -shear : shear, 0.0, 1.0);
+   }
+ 
+   if (!this->TimerVisible)
+diff --git a/vtkext/private/module/vtkF3DRenderer.h b/vtkext/private/module/vtkF3DRenderer.h
+index 23f69c5..bd4cb3f 100644
+--- a/vtkext/private/module/vtkF3DRenderer.h
++++ b/vtkext/private/module/vtkF3DRenderer.h
+@@ -529,6 +529,12 @@ public:
+    * Set/Get the total application time in seconds
+    */
+   vtkSetMacro(TotalTime, double);
++
++  /**
++   * The eye the next render is for: -1 the left eye, 1 the right eye, 0 the buffer VTK draws into.
++   */
++  vtkSetMacro(StereoEye, int);
++  vtkGetMacro(StereoEye, int);
+   vtkGetMacro(TotalTime, double);
+   //@}
+ 
+@@ -688,6 +694,7 @@ private:
+   vtkSmartPointer<vtkCallbackCommand> ModernAxisWidgetResizeCallback;
+   double ModernAxisBackdropOpacity = 0.0;
+   double TotalTime = 0.0;
++  int StereoEye = 0;
+ 
+   // Does vtk version support GridAxesActor
+ #if VTK_VERSION_NUMBER >= VTK_VERSION_CHECK(9, 4, 20250513)
+-- 
+2.53.0
+

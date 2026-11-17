@@ -1,0 +1,39 @@
+From 4350c7ee8990a6311cf704f2e53980f7cf176bca Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 17 Nov 2026 16:27:57 -0300
+Subject: [PATCH 7/7] Draw the scene again for a UI only frame of a stereo
+ window
+
+F3D redraws the interface over the cached layers of the last frame whenever no
+render was requested (the event loop, every input event). The layers hold the last
+eye drawn, so in a stereo window the left eye of that frame was the right eye's
+picture and both back buffers showed one eye. With two eyes the scene is drawn again.
+
+Found by reading the render framebuffer before VTK's StereoMidpoint blit: it held the
+previous frame's right eye, while the same call made without the UI only frames gave
+two different eyes.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ vtkext/private/module/vtkF3DRenderPass.cxx | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/vtkext/private/module/vtkF3DRenderPass.cxx b/vtkext/private/module/vtkF3DRenderPass.cxx
+index fc72655..be085e9 100644
+--- a/vtkext/private/module/vtkF3DRenderPass.cxx
++++ b/vtkext/private/module/vtkF3DRenderPass.cxx
+@@ -272,7 +272,10 @@ void vtkF3DRenderPass::Render(const vtkRenderState* s)
+ 
+   vtkRenderer* r = s->GetRenderer();
+   vtkInformation* info = r->GetInformation();
+-  bool uiOnly = info->Has(vtkF3DRenderPass::RENDER_UI_ONLY());
++  // A UI only frame draws the interface over the layers of the last frame, which hold one eye: with
++  // two eyes the scene is drawn again, so that each eye keeps its own picture
++  bool uiOnly =
++    info->Has(vtkF3DRenderPass::RENDER_UI_ONLY()) && !r->GetRenderWindow()->GetStereoRender();
+ 
+   r->GetBackground(bgColor);
+ 
+-- 
+2.53.0
+
