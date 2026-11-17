@@ -2,18 +2,21 @@ Source: ananicy-cpp
 Section: admin
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Build-Depends: debhelper-compat (= 13), cmake, g++, pkgconf, libsystemd-dev, nlohmann-json3-dev, libspdlog-dev, libfmt-dev, clang, libbpf-dev, libelf-dev, bpftool, libpcre2-dev, zlib1g-dev
+Build-Depends: debhelper-compat (= 13), cmake, g++, pkgconf, libsystemd-dev, nlohmann-json3-dev, libspdlog-dev, libfmt-dev, clang, libbpf-dev, libelf-dev, bpftool, libpcre2-dev, zlib1g-dev, sparky-stereo-problems
 Standards-Version: 4.7.3
 Rules-Requires-Root: no
 Homepage: https://gitlab.com/ananicy-cpp/ananicy-cpp
 
 Package: ananicy-cpp
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, cachyos-ananicy-rules
+Depends: ${shlibs:Depends}, ${misc:Depends}, cachyos-ananicy-rules, sparky-stereo-problems
 Description: Auto nice daemon, a C++ rewrite of Ananicy
  Sets the nice value, scheduling class, I/O class, OOM score, CPU affinity
- and cgroup of running programs from rule files. The unit is installed and
- stays off until it is enabled; the package ships no rules.
+ and cgroup of running programs from rule files. The unit is enabled and
+ started on installation, as CachyOS ships it; a person's own choice (systemctl
+ disable) is kept across upgrades. A start the kernel does not allow (no BTF,
+ BPF refused) is told through the shared problems engine and is not repeated.
+ The package ships no rules.
  .
  Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo"
  Pijanowski). Upstream: Vladislav Nepogodin and the ananicy-cpp contributors;
