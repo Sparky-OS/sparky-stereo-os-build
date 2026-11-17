@@ -161,6 +161,10 @@ check "--check: exit status 0 while the data is whole" test $? -eq 0
 rm -f "$DATA/Nasal/a.nas"
 "$BIN" --check
 check "--check: exit status is not 0 when a file is missing" test $? -ne 0
+# our own damaged data is put right by the next install, not taken for someone else's (ORDER 645's early conflict check must not stop it)
+conf "file://$W/FlightGear-2024.1.5-data.txz"
+run install
+check "damaged data of ours: the next install repairs it (exit $RC, a.nas back)" bash -c "[ $RC -eq 0 ] && [ -f $DATA/Nasal/a.nas ] && grep -q 'is installed in' $OUTF"
 
 # 6b parallel ranges over HTTPS (a local server with byte ranges; its certificate is the only one curl is told to trust)
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$W/srv.key" -out "$W/srv.crt" -days 2 -subj /CN=127.0.0.1 -addext "subjectAltName=IP:127.0.0.1" >/dev/null 2>&1

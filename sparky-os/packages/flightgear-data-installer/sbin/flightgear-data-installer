@@ -489,12 +489,13 @@ install_data() {
 	if tz_link >/dev/null; then
 		die LINK "$DATA_DIR/Timezone"
 	fi
-	# data of someone else (another version of Debian's packages, say) is found before 1.75 GiB are fetched, not after
-	if [ -e "$DATA_DIR/version" ] || [ -L "$DATA_DIR/version" ]; then
-		die CONFLICT "$DATA_DIR/version"
-	fi
 	if [ -f "$STATE/files.list" ]; then
 		forget_ours
+	fi
+	# data of someone else (another version of Debian's packages, say) is found before 1.75 GiB are fetched, not after; our own,
+	# incomplete or damaged, was taken out just above
+	if [ -e "$DATA_DIR/version" ] || [ -L "$DATA_DIR/version" ]; then
+		die CONFLICT "$DATA_DIR/version"
 	fi
 
 	SOURCE_FILE=
