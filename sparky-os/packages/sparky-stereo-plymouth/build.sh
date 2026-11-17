@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL2 License
-# Last update 2026/11/09
+# Last update 2026/11/17
 #
 # Builds sparky-stereo-plymouth: the sparky-stereo-lines boot splash themes, generated from
 # sparky-lines (upstream/sparky-lines, read only) by gen-theme.py.
@@ -9,7 +9,7 @@
 set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
-VERSION=20261109~sparky9~0+lc1
+VERSION=20261117~sparky9~0+lc1
 PKG=sparky-stereo-plymouth
 # the host's facts for the build record, and the source date from the recipe's last commit (ORDER 394b, ORDER 421b)
 . "$HERE/../../repo/build-provenance.sh"
@@ -63,7 +63,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: plymouth (>= 26.134.222-1+stereo3d3)
+Depends: plymouth (>= 26.134.222-1+stereo3d4)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
@@ -72,7 +72,11 @@ Description: Sparky Stereo OS boot splash themes in stereo 3D
   per eye. On a stereo output (plymouth.stereo=, written by
   sparky-stereo-boot from the saved choice of the main screen) each eye
   gets its own picture, the electrons popping and sinking along their
-  curves; on a 2D screen the theme draws once. The depth stays inside the
+  curves; a screen that does not show both eyes (not named in
+  plymouth.stereo=, the firmware's framebuffer before the GPU's driver)
+  shows the left eye, never the two side by side; on a 2D boot the theme
+  draws once. Screens that come later get the theme laid out again for
+  the main screen's eye. The depth stays inside the
   limits the person set for the main screen (the kernel line's popped= and
   sunk=, from sparky-stereo-boot). Two depth rules:
   sparky-stereo-lines (the slope of the curve) and
