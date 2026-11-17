@@ -8,6 +8,7 @@
 #   vendor-licences.tsv and vendor-licences/  one row per vendored module and the legal files themselves, from the module cache (go to debian/)
 # Usage: make-orig.sh OUTDIR
 set -euo pipefail
+umask 022
 OUT=${1:?output folder}
 VERSION=0.9.4
 TAG_SHA256=c77b3f914afa0cb9a7bbd5079bfe7be379dddafd71897979db72fdbf2a7c19ff   # codeload tar.gz of refs/tags/0.9.4
