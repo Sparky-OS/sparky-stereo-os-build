@@ -14,7 +14,8 @@
 # Run as root in a container (network for Debian, deb-multimedia and Sparky; --cpus 2); the compile, the record and the gate run as the build user.
 # Mounts: /dsc (the folder with the +stereo3d25+lc1 .dsc, .orig and .debian tarballs), /prev (the baseline amd64 .deb set of the same version, for the gate),
 # /archive (sources.json and keys), /repo (the published tree), /toolkit (sparky-os of the build tree), /work (output, owned by the build user).
-# Env: SRC_DSC (file name of the .dsc), JOBS (default 2), MIN_MARCH (the least number of compile lines that must carry -march=x86-64-v3, default 5).
+# Env: SRC_DSC (file name of the .dsc), JOBS (default 2), NOCHECK=1 (skip dh_auto_test: only where the same tests fail in the same way on the baseline build in this
+# container, shown by a control run without -march; say so in the report), MIN_MARCH (the least number of compile lines that must carry -march=x86-64-v3, default 5).
 set -euo pipefail
 sh /run/https-only-apt.sh >/dev/null
 export DEBIAN_FRONTEND=noninteractive HOME=/tmp
@@ -41,7 +42,7 @@ cat >/work/job.sh <<'JOB'
 set -euo pipefail
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 export SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json SPARKY_LC_SCRATCH=/work/lcscratch SPARKY_LC_PREVIOUS_DIR=/prev
-export DEB_BUILD_OPTIONS="parallel=${JOBS:-2}"
+export DEB_BUILD_OPTIONS="parallel=${JOBS:-2}${NOCHECK:+ nocheck}"
 export DEB_CFLAGS_APPEND="-march=x86-64-v3" DEB_CXXFLAGS_APPEND="-march=x86-64-v3" RUSTFLAGS="-C target-cpu=x86-64-v3"
 cd /work/src/pkg
 start=$(date +%s)
