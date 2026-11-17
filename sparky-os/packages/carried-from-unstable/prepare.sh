@@ -26,14 +26,14 @@ printing-metas)
  dsc=printing-metas_0.20210903.dsc
  sha=15c82a034daf2a0a1a65cc2141e934e55ee86f76a2b91db19f963d64518e6756
  patch=
- version=0.20210903+stereo3d1+lc1
+ version=0.20210903+0stereo3d1+lc1
  entry="Carry Debian unstable's printer driver metapackages while HPLIP's migration blocks testing; preserve Debian's complete driver recommendations."
  ;;
 apt-xapian-index)
  dsc=apt-xapian-index_0.59.dsc
  sha=cf83f0096d05dd7ec50c1074ec7daee0d4000a33f357d81402301a71f9db5c9e
  patch=apt-xapian-current-tests.patch
- version=0.59+stereo3d1+lc1
+ version=0.59+0stereo3d1+lc1
  entry="Carry the reintroduced Debian indexer; use Santiago Vila's local-suite discovery fix from bug 1145121, current unittest assertions and a living dpkg fixture."
  ;;
 *) echo "no qualified preparation for $name" >&2; exit 2 ;;
