@@ -238,9 +238,14 @@ if usb_vendors and new_facts:
 
 # Lights and peripherals (ORDER 108, milestone 6). A device seen on USB leads to its tool, installed without a question, from the
 # tool's own list of the devices it drives (share/peripherals/*.ids, made by tools/make-peripheral-ids.py from the package's udev
-# rules or device files; the first lines of each say which package and version). One owner per device: where OpenLinkHub is
-# installed (the `openlinkhub` fact) and a device is one it opens too (share/peripherals/owners.tsv), the tools it keeps out are
-# not installed for that device, and the udev rule 62-sparky-stereo-peripheral-owner.rules takes their access away. The image
+# rules or device files; the first lines of each say which package and version). One owner per device: OpenLinkHub, the edition's
+# package of upstream's program (milestone 7), is installed for Corsair hubs, coolers, lighting nodes and power supplies only
+# (share/peripherals/openlinkhub.ids; its keyboards, mice and headsets stay OpenRGB's: Daniel, 2026-11-17, "I agree with the corsair
+# plan - the user can always change it inside openrgb"). A device in that list that another tool opens too (share/peripherals/
+# owners.tsv) is OpenLinkHub's: the tools it keeps out are not installed for that device, and the udev rule
+# 62-sparky-stereo-peripheral-owner.rules takes their access away once OpenLinkHub is there. A copy of OpenLinkHub the person
+# installed with upstream's own scripts (the `openlinkhub-upstream` fact: /opt/OpenLinkHub or its unit in /etc) is theirs: the plan
+# does not install the package beside it (a hand-installed service is the person's, Daniel 2026-11-07), and says so. The image
 # already carries OpenRGB; the plan names it so a machine that lost it gets it back.
 def device_table(name):
     table = {}
@@ -254,7 +259,7 @@ def device_table(name):
 
 
 usb_ids = sorted({f"{v.lower()}:{p.lower()}" for v, p in re.findall(r"\bID ([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\b", read("lsusb"))})
-olh_installed = (read_optional("openlinkhub") or "").strip() == "yes"
+olh_upstream = (read_optional("openlinkhub-upstream") or "").strip() == "yes"
 owned = {}
 for ident, row in device_table("owners.tsv").items():
     _, owner, kept_out, label = (row.split("\t") + [""] * 4)[:4]
@@ -262,13 +267,14 @@ for ident, row in device_table("owners.tsv").items():
 openrgb_devices = []
 for tool, name, tool_packages in (("openrgb", "OpenRGB", ("openrgb",)), ("solaar", "Solaar", ("solaar",)),
                                   ("ratbag", "libratbag with Piper", ("ratbagd", "piper")), ("liquidctl", "liquidctl", ("liquidctl",)),
-                                  ("g810-led", "g810-led", ("g810-led",)), ("openrazer", "OpenRazer", ("openrazer-daemon", "openrazer-driver-dkms"))):
+                                  ("g810-led", "g810-led", ("g810-led",)), ("openrazer", "OpenRazer", ("openrazer-daemon", "openrazer-driver-dkms")),
+                                  ("openlinkhub", "OpenLinkHub", ("openlinkhub",))):
     table = device_table(tool + ".ids")
     seen = []
     for ident in usb_ids:
         if ident not in table:
             continue
-        if olh_installed and ident in owned and tool in owned[ident][1]:
+        if ident in owned and tool in owned[ident][1]:
             emit("owner", f"{ident}\t{owned[ident][0]}\tnot {name}\t{owned[ident][2] or table[ident] or ident}")
             continue
         # liquidctl's own name for the device says "LED": a lights-only controller that OpenRGB drives too is left to OpenRGB (liquidctl adds
@@ -277,7 +283,9 @@ for tool, name, tool_packages in (("openrgb", "OpenRGB", ("openrgb",)), ("solaar
             emit("owner", f"{ident}\topenrgb\tnot {name}\t{table[ident]}")
             continue
         seen.append(ident)
-    if seen:
+    if seen and tool == "openlinkhub" and olh_upstream:
+        emit("fact", f"peripheral\topenlinkhub-upstream\t{' '.join(seen)}")
+    elif seen:
         match(f"{name} drives {', '.join(seen)}", *tool_packages)
         emit("fact", f"peripheral\t{tool}\t{' '.join(seen)}")
         if tool == "openrgb":

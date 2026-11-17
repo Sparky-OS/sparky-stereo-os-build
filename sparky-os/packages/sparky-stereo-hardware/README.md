@@ -69,10 +69,15 @@ Lights and peripherals:
 A device seen on USB leads to its tool, installed without a question, from the tool's own list of the devices it drives
 (share/peripherals/*.ids; tools/make-peripheral-ids.py makes them from the packages' udev rules and device files, and the first
 lines of each file say which package and version). OpenRGB starts minimized with the session on a machine that has a device
-it drives; a desktop board of a maker OpenRGB's detectors name gets i2c-dev. Where OpenLinkHub is installed it owns the 99 Corsair
-devices it shares with OpenRGB and liquidctl (share/peripherals/owners.tsv): 62-sparky-stereo-peripheral-owner.rules removes
-the uaccess tag of those devices, and the person is told once (sparky-stereo-hardware-peripheral-owner.service, and after every
-dpkg run). To give the devices back to OpenRGB put an empty file named 62-sparky-stereo-peripheral-owner.rules in /etc/udev/rules.d.
+it drives; a desktop board of a maker OpenRGB's detectors name gets i2c-dev. OpenLinkHub, the edition's package of upstream's program
+(packages/openlinkhub), is installed for Corsair hubs, coolers, lighting nodes and power supplies only (share/peripherals/openlinkhub.ids: 43
+ids, told by OpenLinkHub's own device folders, listed with their family in openlinkhub-families.tsv; Daniel, 2026-11-17: "I agree with the corsair
+plan - the user can always change it inside openrgb"). Its keyboards, mice, headsets and the rest stay OpenRGB's. Where a device of those four
+families is one OpenRGB or liquidctl open too (share/peripherals/owners.tsv, 37 ids) it is OpenLinkHub's: the other tool is not installed
+for it, 62-sparky-stereo-peripheral-owner.rules removes its uaccess tag once OpenLinkHub is installed, and the person is told once
+(sparky-stereo-hardware-peripheral-owner.service, and after every dpkg run). A copy of OpenLinkHub the person installed with upstream's own
+scripts (/opt/OpenLinkHub, or its unit in /etc/systemd/system) is theirs: the package is not installed beside it. To give the devices back to
+OpenRGB put an empty file named 62-sparky-stereo-peripheral-owner.rules in /etc/udev/rules.d.
 `/usr/lib/sparky-stereo-hardware/peripheral-owner list` prints each owned device present. Credits, as each project's copyright file or
 page names them: the OpenRGB project and its contributors (device lists, udev rules); Solaar, Daniel Pavel and contributors; libratbag
 and Piper, Jonas Ådahl, Benjamin Tissoires, Red Hat, David Herrmann and contributors; liquidctl, Jonas Malaco and contributors; g810-led,
