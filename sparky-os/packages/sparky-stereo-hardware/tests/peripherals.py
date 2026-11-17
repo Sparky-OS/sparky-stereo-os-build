@@ -47,6 +47,9 @@ cases = [
      [f'owner\t{PSU_COOLER}\topenlinkhub\tnot OpenRGB\tCorsair_H100i_v2', f'owner\t{PSU_COOLER}\topenlinkhub\tnot liquidctl\tCorsair_H100i_v2'], []),
     # a device only OpenRGB drives stays OpenRGB's even where OpenLinkHub is installed
     ('a Wraith Prism, OpenLinkHub installed', {'lsusb': usb(WRAITH), 'openlinkhub': 'yes\n'}, {'openrgb'}, set(), ['action\topenrgb-session'], []),
+    # a lights-only controller that OpenRGB and liquidctl both list (liquidctl names it "LED Controller"): OpenRGB's; liquidctl is for coolers and fans
+    ('an ASUS Aura LED controller', {'lsusb': usb('0b05:18f3')}, {'openrgb'}, {'liquidctl'},
+     ['owner\t0b05:18f3\topenrgb\tnot liquidctl\tASUS Aura LED Controller', 'action\topenrgb-session'], []),
     # the SMBus: a desktop of a board maker OpenRGB's detectors name, per CPU maker (OpenRGB's SMBusAccess.md); never a laptop
     ('a Gigabyte desktop board, AMD', {'dmi-board-vendor': 'Gigabyte Technology Co., Ltd.\n'}, {'i2c-tools', 'openrgb'}, set(),
      ['action\ti2c-dev', 'fact\tsmbus-modules\ti2c-dev i2c-piix4', 'action\topenrgb-session'], []),

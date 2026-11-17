@@ -271,6 +271,11 @@ for tool, name, tool_packages in (("openrgb", "OpenRGB", ("openrgb",)), ("solaar
         if olh_installed and ident in owned and tool in owned[ident][1]:
             emit("owner", f"{ident}\t{owned[ident][0]}\tnot {name}\t{owned[ident][2] or table[ident] or ident}")
             continue
+        # liquidctl's own name for the device says "LED": a lights-only controller that OpenRGB drives too is left to OpenRGB (liquidctl adds
+        # coolers, pumps and fans, not lights; the two would only meet on the same node)
+        if tool == "liquidctl" and re.search(r"\bLED\b|Lighting", table[ident]) and ident in device_table("openrgb.ids"):
+            emit("owner", f"{ident}\topenrgb\tnot {name}\t{table[ident]}")
+            continue
         seen.append(ident)
     if seen:
         match(f"{name} drives {', '.join(seen)}", *tool_packages)

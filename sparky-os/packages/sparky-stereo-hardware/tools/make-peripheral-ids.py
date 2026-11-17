@@ -32,15 +32,19 @@ def write(name, source, rows):
 
 def pairs_from_rules(path, subsystem_ok=lambda line: True):
     rows = []
+    comment = ""
     for line in path.read_text().splitlines():
-        if line.lstrip().startswith("#") or not subsystem_ok(line):
+        if line.lstrip().startswith("#"):
+            comment = line.lstrip("# ").strip()  # liquidctl names each device in the comment above its rule
+            continue
+        if not subsystem_ok(line):
             continue
         m = re.search(r'idVendor\}=="([0-9a-fA-F]{4})"[^\n]*?idProduct\}=="([0-9a-fA-F|]{4,})"', line)
         if not m:
             continue
         tag = re.findall(r'TAG\+="(?!uaccess")([^"]+)"', line)
         for product in m.group(2).split("|"):
-            rows.append((f"{m.group(1).lower()}:{product.lower()}", tag[0] if tag else ""))
+            rows.append((f"{m.group(1).lower()}:{product.lower()}", tag[0] if tag else comment))
     return rows
 
 
