@@ -240,6 +240,141 @@ purge_state
 unset CURL_CA_BUNDLE
 conf "file://$W/FlightGear-2024.1.5-data.txz"
 
+
+# 6c ORDER 645: Debian's data already holds the data, and a Timezone folder that is a link out of FlightGear's folder is never followed
+mkdir -p "$W/fakebin" "$W/zi/America"
+cat >"$W/fakebin/sparky-stereo-problems" <<'EOT'
+#!/bin/bash
+printf '%s\n' "$*" >>"$FAKE_ENGINE_LOG"
+EOT
+cat >"$W/fakebin/dpkg-query" <<'EOT'
+#!/bin/bash
+# fake database: Debian's data packages installed at the version in $FAKE_DEBIAN_VERSION (empty: not installed), tzdata installed
+case $* in
+	*flightgear-data-base* | *flightgear-data-ai* | *flightgear-data-models*)
+		[ -n "${FAKE_DEBIAN_VERSION:-}" ] && { printf 'installed %s' "$FAKE_DEBIAN_VERSION"; exit 0; }
+		exit 1 ;;
+	*tzdata-legacy*) printf 'not-installed'; exit 0 ;;
+	*) /usr/bin/dpkg-query "$@" ;;
+esac
+EOT
+cat >"$W/fakebin/dpkg" <<'EOT'
+#!/bin/bash
+# dpkg --verify tzdata: reports what $FAKE_TZ_REPORT holds
+if [ "${1:-}" = --verify ]; then [ -f "${FAKE_TZ_REPORT:-/nonexistent}" ] && cat "$FAKE_TZ_REPORT"; exit 0; fi
+exec /usr/bin/dpkg "$@"
+EOT
+cat >"$W/fakebin/apt-get" <<'EOT'
+#!/bin/bash
+printf '%s\n' "$*" >>"$FAKE_APT_LOG"
+[ -n "${FAKE_APT_FAIL:-}" ] && exit 100
+# the reinstall brings the time zone files back
+[ -n "${FAKE_TZ_REPORT:-}" ] && : >"$FAKE_TZ_REPORT"
+exit 0
+EOT
+chmod 755 "$W/fakebin/sparky-stereo-problems" "$W/fakebin/dpkg-query" "$W/fakebin/dpkg" "$W/fakebin/apt-get"
+export FAKE_ENGINE_LOG=$W/engine.log FAKE_APT_LOG=$W/apt.log FAKE_TZ_REPORT=$W/tzreport
+frun() { OUTF=$W/out.txt; PATH=$W/fakebin:$PATH "$BIN" "$@" >"$OUTF" 2>&1; RC=$?; }
+reset_fakes() { rm -f "$W/engine.log" "$W/apt.log" "$W/tzreport"; unset FAKE_DEBIAN_VERSION FAKE_APT_FAIL; rm -rf "$DATA" "$STATE" "$CACHE"; }
+
+# Debian's three data packages at the recorded version, the data there: nothing is downloaded, nothing is removed
+reset_fakes
+mkdir -p "$DATA/Timezone"
+echo 2024.1.5 >"$DATA/version"
+echo zone >"$DATA/Timezone/zone.tab"
+conf "https://127.0.0.1:9/none"
+FAKE_DEBIAN_VERSION=1:2024.1.5+dfsg-1 frun install
+check "Debian's data whole: exit status 0 ($RC) and it says so" bash -c "[ $RC -eq 0 ] && grep -q 'by Debian' $OUTF"
+check "Debian's data whole: no download was tried and the data is as it was" bash -c "! grep -q 'Downloading' $OUTF && [ -f $DATA/Timezone/zone.tab ] && [ ! -e $STATE/files.list ]"
+check "Debian's data whole: no problem was kept" bash -c "! grep -q '^keep' $W/engine.log 2>/dev/null"
+# another version of Debian's data is not taken for ours
+reset_fakes
+mkdir -p "$DATA/Timezone"
+echo 2020.3.19 >"$DATA/version"
+echo zone >"$DATA/Timezone/zone.tab"
+FAKE_DEBIAN_VERSION=1:2020.3.19+dfsg-1 frun install
+check "Debian's data of another version: the install goes on to the conflict check and stops there ($RC)" bash -c "[ $RC -ne 0 ] && grep -q 'does not come from this package' $OUTF && grep -q 2020.3.19 $DATA/version"
+
+# Timezone is a link to the system's time zone files: refused, said, kept as a problem, nothing under the target touched
+reset_fakes
+mkdir -p "$DATA" "$W/zi/America"
+echo keep >"$W/zi/America/Sao_Paulo"
+ln -s "$W/zi" "$DATA/Timezone"
+printf 'missing     /usr/share/zoneinfo/Africa/Abidjan\nmissing     /usr/share/zoneinfo/Africa/Accra\n??5??????   /usr/share/zoneinfo/Asia/Tokyo\n' >"$W/tzreport"
+cp "$W/tzreport" "$W/tzreport.keep"
+conf "file://$W/FlightGear-2024.1.5-data.txz"
+frun install
+check "link: exit status is not 0 ($RC)" test "$RC" -ne 0
+check "link: the message names the link and the repair" bash -c "grep -q 'is a link into the system.s time zone files' $OUTF && grep -q -- '--repair-timezones' $OUTF"
+check "link: nothing under the link's target was touched, the link is still a link" bash -c "[ \$(cat $W/zi/America/Sao_Paulo) = keep ] && [ -L $DATA/Timezone ]"
+check "link: nothing of FlightGear's data was placed" bash -c "[ ! -e $DATA/version ] && [ ! -e $STATE/files.list ]"
+check "link: the problem is kept with LOCAL3 (files missing: 2) and the repair" bash -c "grep -q 'keep --machine --repair .*repair-timezones.* flightgear-data-installer timezone-link LOCAL3 .*Timezone $W/zi 2' $W/engine.log"
+# the same link with the time zone files present but overwritten: the other message
+reset_fakes
+mkdir -p "$DATA"
+ln -s "$W/zi" "$DATA/Timezone"
+printf '??5??????   /usr/share/zoneinfo/Asia/Tokyo\n??5??????   /usr/share/zoneinfo/Asia/Seoul\n' >"$W/tzreport"
+frun --check-timezones
+check "link, files overwritten: the problem is kept with LOCAL2 and 2 files" grep -q 'timezone-link LOCAL2 .* 2$' "$W/engine.log"
+# --check-timezones with no link ends the problem
+rm "$DATA/Timezone"
+frun --check-timezones
+check "no link: the problem is cleared" grep -q 'clear --machine flightgear-data-installer timezone-link' "$W/engine.log"
+
+# the lists name paths under the link: neither the installer's own removal nor the postrm follows it
+reset_fakes
+mkdir -p "$DATA" "$STATE" "$W/zi/America"
+echo keep >"$W/zi/America/Sao_Paulo"
+ln -s "$W/zi" "$DATA/Timezone"
+printf '%s\n' "$DATA/Timezone/America/Sao_Paulo" >"$STATE/files.list"
+printf '%s\n' "$DATA/Timezone/America" "$DATA/Timezone" >"$STATE/dirs.list"
+printf '2024.1.5 x\n' >"$STATE/installed"
+cp -a "$STATE" "$W/state.keep"
+frun --purge
+check "purge through a link: the file under the target is intact and the left-alone path is said" bash -c "[ \$(cat $W/zi/America/Sao_Paulo) = keep ] && [ -d $W/zi/America ] && grep -q 'left alone' $OUTF"
+mkdir -p "$STATE"
+cp -a "$W/state.keep/." "$STATE/"
+/var/lib/dpkg/info/flightgear-data-installer.postrm remove >"$W/postrm-link.txt" 2>&1
+check "postrm remove through a link: the file under the target is intact and it is said ($?)" bash -c "[ \$(cat $W/zi/America/Sao_Paulo) = keep ] && grep -q 'left alone' $W/postrm-link.txt"
+
+# the repair: the link goes, tzdata is reinstalled, the result is read back, the problem ends
+reset_fakes
+mkdir -p "$DATA"
+ln -s "$W/zi" "$DATA/Timezone"
+printf 'missing     /usr/share/zoneinfo/Africa/Abidjan\n' >"$W/tzreport"
+FAKE_DEBIAN_VERSION= frun --repair-timezones
+check "repair: exit status 0 ($RC)" test "$RC" -eq 0
+check "repair: the link is gone and its target was not touched" bash -c "[ ! -e $DATA/Timezone ] && [ ! -L $DATA/Timezone ] && [ \$(cat $W/zi/America/Sao_Paulo) = keep ]"
+check "repair: tzdata was reinstalled with apt-get, noninteractive" grep -q -- '-y --reinstall install tzdata' "$W/apt.log"
+check "repair: the problem was cleared" grep -q 'clear --machine flightgear-data-installer timezone-link' "$W/engine.log"
+# the repair does not say it worked when dpkg --verify still finds the files missing
+reset_fakes
+mkdir -p "$DATA"
+ln -s "$W/zi" "$DATA/Timezone"
+printf 'missing     /usr/share/zoneinfo/Africa/Abidjan\n' >"$W/tzreport"
+cat >"$W/fakebin/apt-get" <<'EOT'
+#!/bin/bash
+printf '%s\n' "$*" >>"$FAKE_APT_LOG"
+exit 0
+EOT
+frun --repair-timezones
+check "repair that does not restore the files: exit status is not 0 and the problem stays ($RC)" bash -c "[ $RC -ne 0 ] && grep -q 'still finds 1 missing' $OUTF && ! grep -q '^clear' $W/engine.log 2>/dev/null"
+reset_fakes
+cat >"$W/fakebin/apt-get" <<'EOT'
+#!/bin/bash
+printf '%s\n' "$*" >>"$FAKE_APT_LOG"
+[ -n "${FAKE_APT_FAIL:-}" ] && exit 100
+[ -n "${FAKE_TZ_REPORT:-}" ] && : >"$FAKE_TZ_REPORT"
+exit 0
+EOT
+mkdir -p "$DATA"
+ln -s "$W/zi" "$DATA/Timezone"
+FAKE_APT_FAIL=1 frun --repair-timezones
+check "repair with no network: exit status is not 0, the message says what to do, the link is already gone ($RC)" bash -c "[ $RC -ne 0 ] && grep -q 'could not be reinstalled' $OUTF && [ ! -L $DATA/Timezone ]"
+reset_fakes
+rm -rf "$W/zi" "$W/state.keep"
+conf "file://$W/FlightGear-2024.1.5-data.txz"
+
 # 7 messages: every language has every key and the same placeholders; a language is picked from the locale
 fail_msgs=0
 for f in "$LANGD"/*; do
@@ -251,7 +386,7 @@ for f in "$LANGD"/*; do
 		[ "$a" = "$b" ] || { bad "language $l: $k placeholders $b differ from English $a"; fail_msgs=1; }
 	done < <(grep -o '^MSG_[A-Z_]*' "$LANGD/en")
 done
-check "messages: nine languages complete with the same placeholders" test "$(ls "$LANGD" | wc -l)" -eq 9 -a "$fail_msgs" -eq 0
+check "messages: ten languages complete with the same placeholders" test "$(ls "$LANGD" | wc -l)" -eq 10 -a "$fail_msgs" -eq 0
 for pair in de_DE.UTF-8:"Führen Sie" es_ES.UTF-8:"Ejecutar esto como" fr_FR.UTF-8:"Lancez ceci" pl_PL.UTF-8:"Uruchom to" pt_BR.UTF-8:"Execute isto" ja_JP.UTF-8:"管理者として" ko_KR.UTF-8:"관리자 권한" zh_CN.UTF-8:"请以管理员" zh_TW.UTF-8:"請以管理員" en_US.UTF-8:"Run this as"; do
 	loc=${pair%%:*}
 	want=${pair#*:}

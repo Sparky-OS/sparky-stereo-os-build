@@ -2,7 +2,10 @@
 # Created by Daniel Ramos (Capitain Jack) 2026/11/04
 # Copyright 2026 under the GNU GPL3 License
 # Fetches FlightGear's own data release, checks its recorded SHA-256 and unpacks it where FlightGear looks for it.
-# Usage: flightgear-data-installer [install] [--file FILE]   |   --purge   |   --check
+# Usage: flightgear-data-installer [install] [--file FILE]   |   --purge   |   --check   |   --check-timezones   |   --repair-timezones
+# ORDER 645: a Timezone folder that is a link into the system's time zone files (what Debian's flightgear-data-base
+# shipped up to 1:2020.3.19) is never followed: nothing here removes or writes through it, the person is told through the
+# edition's problems engine, and --repair-timezones puts the system's time zone files back.
 set -euo pipefail
 umask 022
 LIB=/usr/share/flightgear-data-installer
@@ -10,6 +13,9 @@ LANGDIR=/usr/share/sparky/flightgear-data-installer
 CACHE=/var/cache/flightgear-data-installer
 STATE=/var/lib/flightgear-data-installer
 DATA_DIR=/usr/share/games/flightgear
+ZONEINFO=/usr/share/zoneinfo
+PACKAGE=flightgear-data-installer
+ENGINE=sparky-stereo-problems
 MIRROR_URL=
 PARALLEL=8
 [ -r /etc/default/flightgear-data-installer ] && . /etc/default/flightgear-data-installer
@@ -130,17 +136,37 @@ cleanup() {
 	exit "$rc"
 }
 
+# A path this program removes is inside FlightGear's folder as it stands: the folder that holds it, with every link on the
+# way followed, is still under the data folder. A path that goes out through a link (Timezone -> ../../zoneinfo) is left
+# alone and said (ORDER 645: dpkg removed Debian's data through such a link and took the system's time zone files with it).
+inside() {
+	local real parent
+	real=$(realpath -m -- "$DATA_DIR") || return 1
+	parent=$(realpath -m -- "$(dirname -- "$1")") || return 1
+	case $parent/ in
+		"$real"/*) return 0 ;;
+	esac
+	# the folders above the data folder (/usr/share/games) are listed as shared and may be removed when empty
+	case $1 in
+		"$DATA_DIR" | "$(dirname -- "$DATA_DIR")") return 0 ;;
+	esac
+	return 1
+}
+left_alone() {
+	say UNSAFE "$1" >&2 || true
+}
+
 remove_listed() {
 	local files=$1 dirs=$2 f d
 	if [ -f "$files" ]; then
 		while IFS= read -r f; do
-			rm -f -- "$f"
+			if inside "$f"; then rm -f -- "$f"; else left_alone "$f"; fi
 		done <"$files"
 	fi
 	if [ -f "$dirs" ]; then
 		# deepest first; a directory that still holds something of someone else stays
 		while IFS= read -r d; do
-			rmdir -- "$d" 2>/dev/null || true
+			if inside "$d"; then rmdir -- "$d" 2>/dev/null || true; else left_alone "$d"; fi
 		done < <(sort -r "$dirs")
 	fi
 }
@@ -150,8 +176,111 @@ remove_shared() {
 	local d
 	[ -f "$1" ] || return 0
 	while IFS= read -r d; do
-		rmdir -- "$d" 2>/dev/null || true
+		if inside "$d"; then rmdir -- "$d" 2>/dev/null || true; else left_alone "$d"; fi
 	done < <(sort -r "$1")
+}
+
+# The Timezone folder of FlightGear's data is a link that leaves FlightGear's folder (Debian's flightgear-data-base up to
+# 1:2020.3.19 shipped Timezone -> ../../zoneinfo, and dpkg replaces a shipped link with a folder only through
+# dpkg-maintscript-helper symlink_to_dir, which 1:2024.1.3 did not use). Prints where it leads.
+tz_link() {
+	local l=$DATA_DIR/Timezone t real
+	[ -L "$l" ] || return 1
+	t=$(realpath -m -- "$l") || return 1
+	real=$(realpath -m -- "$DATA_DIR")
+	case $t/ in
+		"$real"/*) return 1 ;;
+	esac
+	printf '%s\n' "$t"
+}
+
+# "MISSING CHANGED": the files of tzdata and tzdata-legacy that dpkg --verify finds missing, and those whose content differs
+# (FlightGear's copies were unpacked over them through the link)
+tz_damage() {
+	local p pkgs=()
+	for p in tzdata tzdata-legacy; do
+		[ "$(dpkg-query -W -f='${db:Status-Status}' "$p" 2>/dev/null)" = installed ] && pkgs+=("$p")
+	done
+	[ "${#pkgs[@]}" -gt 0 ] || { echo "0 0"; return 0; }
+	dpkg --verify "${pkgs[@]}" 2>/dev/null | awk '$1 == "missing" { m++ } $1 != "missing" && substr($1, 3, 1) == "5" { c++ } END { print m + 0, c + 0 }'
+}
+
+engine_ok() {
+	command -v "$ENGINE" >/dev/null 2>&1 || {
+		say NOENGINE "$ENGINE" >&2
+		return 1
+	}
+}
+
+# Keeps the machine's problem "timezone-link" while the link is there, and ends it when it is not
+tz_check() {
+	local target missing changed
+	if target=$(tz_link); then
+		read -r missing changed < <(tz_damage)
+		say LINKFOUND "$DATA_DIR/Timezone" "$target" >&2
+		engine_ok || return 0
+		if [ "$missing" -gt 0 ]; then
+			"$ENGINE" keep --machine --repair "[\"/usr/sbin/$PACKAGE\",\"--repair-timezones\"]" "$PACKAGE" timezone-link LOCAL3 \
+				"$DATA_DIR/Timezone" "$target" "$missing" || return 0
+		else
+			"$ENGINE" keep --machine --repair "[\"/usr/sbin/$PACKAGE\",\"--repair-timezones\"]" "$PACKAGE" timezone-link LOCAL2 \
+				"$DATA_DIR/Timezone" "$target" "$changed" || return 0
+		fi
+		return 0
+	fi
+	if command -v "$ENGINE" >/dev/null 2>&1; then
+		"$ENGINE" clear --machine "$PACKAGE" timezone-link >/dev/null 2>&1 || true
+	fi
+	return 0
+}
+
+# Debian's own data packages, whole and at the recorded version, already hold FlightGear's data: nothing to download and
+# nothing to take away (ORDER 645: taking them away is what ran through the link)
+debian_data_ok() {
+	local p v
+	for p in flightgear-data-base flightgear-data-ai flightgear-data-models; do
+		v=$(dpkg-query -W -f='${db:Status-Status} ${Version}' "$p" 2>/dev/null) || return 1
+		case $v in
+			"installed 1:$DATA_VERSION+"* | "installed 1:$DATA_VERSION-"* | "installed $DATA_VERSION+"* | "installed $DATA_VERSION-"*) ;;
+			*) return 1 ;;
+		esac
+	done
+	[ "$(tr -d '[:space:]' <"$DATA_DIR/version" 2>/dev/null)" = "$DATA_VERSION" ] && [ -r "$DATA_DIR/Timezone/zone.tab" ]
+}
+
+# The repair of the problem: the link goes (only the link), the time zone packages are unpacked again from the archive, and
+# the result is read back. FlightGear's own Timezone folder is rebuilt by reinstalling Debian's flightgear-data-base when
+# that is installed and the archive still has it.
+repair_timezones() {
+	[ "$(id -u)" -eq 0 ] || die ROOT
+	local pkgs=(tzdata) p base=
+	[ "$(dpkg-query -W -f='${db:Status-Status}' tzdata-legacy 2>/dev/null)" = installed ] && pkgs+=(tzdata-legacy)
+	if [ "$(dpkg-query -W -f='${db:Status-Status}' flightgear-data-base 2>/dev/null)" = installed ]; then
+		p=$(apt-cache policy flightgear-data-base 2>/dev/null | awk '/Candidate:/ { print $2 }')
+		if [ -n "$p" ] && [ "$p" != "(none)" ]; then pkgs+=(flightgear-data-base); else base=missing; fi
+	fi
+	if tz_link >/dev/null; then
+		rm -- "$DATA_DIR/Timezone"
+		say REPAIR_UNLINKED "$DATA_DIR/Timezone"
+	fi
+	say REPAIRING "${pkgs[*]}"
+	if ! DEBIAN_FRONTEND=noninteractive apt-get -y --reinstall install "${pkgs[@]}"; then
+		die REPAIR_FAILED "${pkgs[*]}"
+	fi
+	local missing changed
+	read -r missing changed < <(tz_damage)
+	if [ "$missing" -ne 0 ] || [ "$changed" -ne 0 ]; then
+		die REPAIR_VERIFY "$missing" "$changed"
+	fi
+	if [ "$base" = missing ]; then
+		# the archive no longer has Debian's data: its Timezone folder cannot be given back, and the person is told what to do
+		say REPAIRED_NOARCHIVE
+		engine_ok && "$ENGINE" clear --machine "$PACKAGE" timezone-link >/dev/null 2>&1
+		return 0
+	fi
+	say REPAIRED
+	engine_ok && "$ENGINE" clear --machine "$PACKAGE" timezone-link >/dev/null 2>&1
+	return 0
 }
 
 check_tools() {
@@ -348,9 +477,21 @@ install_data() {
 		remove_listed "$PENDING.files" "$PENDING.dirs"
 		rm -f "$PENDING.files" "$PENDING.dirs" "$PENDING.shared"
 	fi
+	tz_check
 	if [ -z "$userfile" ] && data_ok; then
 		say PRESENT "$DATA_VERSION" "$DATA_DIR"
 		return 0
+	fi
+	if [ -z "$userfile" ] && debian_data_ok; then
+		say PRESENT_DEBIAN "$DATA_VERSION" "$DATA_DIR"
+		return 0
+	fi
+	if tz_link >/dev/null; then
+		die LINK "$DATA_DIR/Timezone"
+	fi
+	# data of someone else (another version of Debian's packages, say) is found before 1.75 GiB are fetched, not after
+	if [ -e "$DATA_DIR/version" ] || [ -L "$DATA_DIR/version" ]; then
+		die CONFLICT "$DATA_DIR/version"
 	fi
 	if [ -f "$STATE/files.list" ]; then
 		forget_ours
@@ -502,5 +643,7 @@ case ${1:-install} in
 		;;
 	--purge) purge_data ;;
 	--check) data_ok ;;
+	--check-timezones) tz_check ;;
+	--repair-timezones) repair_timezones ;;
 	*) die USAGE ;;
 esac

@@ -36,7 +36,7 @@ Depends is met. Its postinst runs flightgear-data-installer, which
      refusing to overwrite a file that is not its own; permissions are the ones Debian's data package uses;
   5. keeps the list of what it placed in /var/lib/flightgear-data-installer, so a failed run removes exactly that again and
      removing or purging the package removes the data, as Debian's data packages and ttf-mscorefonts-installer do (an upgrade keeps it).
-Every failure stops the configuration, says what failed, why and what to do, in en, pl, pt_BR, fr, de, ja, ko, zh_CN and
+Every failure stops the configuration, says what failed, why and what to do, in en, pl, pt_BR, fr, de, es, ja, ko, zh_CN and
 zh_TW; dpkg keeps the package unconfigured and `sudo dpkg --configure flightgear-data-installer` tries again.
 
 Without internet: download FlightGear-2024.1.5-data.txz elsewhere and run `sudo flightgear-data-installer --file FILE`
@@ -53,9 +53,28 @@ matched SourceForge's):
 
 Updating to another FlightGear data release means a new version of this package with new recorded values.
 
+Debian's own data and the time zone link (ORDER 645, 2024.1.5-2):
+-------------
+The package no longer Conflicts with Debian's flightgear-data packages. Debian's flightgear-data-base 1:2024.1.3 and later
+ship FlightGear's Timezone folder as a folder; up to 1:2020.3.19 it was a link, /usr/share/games/flightgear/Timezone ->
+../../zoneinfo, and a package upgrade does not turn a link into a folder by itself (dpkg-maintscript-helper(1), "Switching a
+symlink to directory"), so on a computer that had the old package the link stayed, Debian's Timezone files were unpacked
+over tzdata's through it (dpkg --verify tzdata then lists them as changed), and removing the package deleted tzdata's files.
+Taking Debian's packages away from this package's installation is what did that on 2026-11-17; nothing a package script
+can do runs before apt's removal, so the package does not ask for it.
+  - Debian's flightgear-data-base, -ai and -models at 2024.1.5 installed and whole: the installer says so and stops there.
+  - Another version of Debian's data, or files of anything else, in the way: the installer stops and names the file; remove
+    that package yourself (and see the next point first if Timezone is a link).
+  - Timezone is a link out of FlightGear's folder: the installer does not install through it and does not follow it. The
+    problem "timezone-link" is kept in sparky-stereo-problems (Repair in System Settings, or on a terminal
+    `sudo flightgear-data-installer --repair-timezones`): the link is removed (only the link), tzdata and tzdata-legacy are
+    reinstalled from the archive (and flightgear-data-base, when installed and still offered), dpkg --verify must then be clean.
+  - A path from the installer's lists is removed only when the folder that holds it, every link followed, is still inside
+    /usr/share/games/flightgear; the others are left alone and said (the postrm does the same).
+
 Dependencies:
 -------------
-bash, ca-certificates, curl, xz-utils (coreutils, findutils, tar and util-linux are Essential)
+bash, ca-certificates, curl, sparky-stereo-problems, xz-utils (coreutils, findutils, tar and util-linux are Essential)
 
 Build:
 -------------
