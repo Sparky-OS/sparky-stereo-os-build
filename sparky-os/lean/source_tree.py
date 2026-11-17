@@ -54,10 +54,6 @@ def _project_file(item):
     return project.project('/' + name, path.read_bytes(), package='native-build', pointer=False, native=True)
 
 
-def _known_digests(digests):
-    lang_rust._digests.update(digests)
-
-
 def project_tree(root):
     started = time.monotonic()
     evidence = root / '.sparky-lc'
@@ -115,8 +111,7 @@ def project_tree(root):
         left.append(reasons)
     # a hard link is projected here, in order, after the files it shares its bytes with are written
     results = parallel.ordered(_project_file, [(path, name) for path, name, reasons in zip(paths, names, left)
-                                               if not reasons and path.stat().st_nlink == 1],
-                               *((_known_digests, (lang_rust._digests,)) if 'rust' in languages else ()))
+                                               if not reasons and path.stat().st_nlink == 1])
     for path, name, reasons in zip(paths, names, left):
         rel = path.relative_to(root)
         raw = path.read_bytes()

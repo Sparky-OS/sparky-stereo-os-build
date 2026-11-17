@@ -259,9 +259,7 @@ class Packages(unittest.TestCase):
 
     def test_failed_consumer_check_cannot_stamp(self):
         root = self.stage()
-        # in this process, where the patch is: a worker process starts with the real check
-        with patch.object(project, '_verify', return_value=(False, 'test failure')), \
-                patch.object(parallel, 'processors', return_value=1):
+        with patch.object(project, '_verify', return_value=(False, 'test failure')):
             with self.assertRaises(package.Invalid):
                 package.prepare(root, self.base / 'hr')
         self.assertNotIn(package.FIELD.lower(), package.control(root))
