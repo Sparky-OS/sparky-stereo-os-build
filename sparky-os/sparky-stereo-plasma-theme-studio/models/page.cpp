@@ -147,6 +147,8 @@ QJsonObject ModelPage::render(int n, bool common, bool flat, QImage* left, QImag
         require(output.isValid(), Editor::tr("Cannot create model render files."));
         QProcess process;
         QString executable = QCoreApplication::applicationDirPath() + "/studio-model-renderer";
+        if (!QFileInfo(executable).isExecutable())
+            executable = QString::fromUtf8(STUDIO_MODEL_INSTALL_PATH);
         const auto override = qEnvironmentVariable("STUDIO_MODEL_RENDERER");
         if (!override.isEmpty())
             executable = override;

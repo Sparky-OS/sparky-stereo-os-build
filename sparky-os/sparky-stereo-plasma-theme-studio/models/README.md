@@ -13,8 +13,7 @@ Two cameras retain parallel axes and the same up vector, field of view and clipp
 Each camera renders that scene into a native-size offscreen EGL target.
 Only the readback row order changes from OpenGL's bottom origin to QImage's top origin.
 
-For a source point at centred model depth z, model translation t, camera distance D,
-focal length F in render pixels and camera separation e, left-minus-right disparity is:
+For a source point at centred model depth z, model translation t, camera distance D, focal length F in render pixels and camera separation e, left-minus-right disparity is:
 
 `d(z) = F e [1/(D-z-t) - 1/D]`.
 
@@ -32,13 +31,11 @@ A nonzero authored placement whose centre rounds flat is compensated by moving f
 A zero owner limit and no room in the drawing remain distinct notices.
 The disparity is monotone in z, so rounding cannot reverse depth order.
 
-Framing is a fixed initial studio view: camera distance eight bounding radii, a 28-percent half-frame fit,
-and an authored travel of twice the depth extent (at least a quarter radius for a planar model).
+Framing is a fixed initial studio view: camera distance eight bounding radii, a 28-percent half-frame fit, and an authored travel of twice the depth extent (at least a quarter radius for a planar model).
 These are implementation choices, not a larger desktop depth range.
 The table exposes the actual fitted far/near pixels for every size.
 
 The GLB BIN chunk is optional (glTF 2.0 sections 3.6.1.2 and 5).
-VTK's file path assumes it exists; a JSON-only GLB is therefore passed to its public memory-stream importer,
-with a native URI loader rooted at the unchanged source filename.
+VTK's file path assumes it exists; a JSON-only GLB is therefore passed to its public memory-stream importer, with a native URI loader rooted at the unchanged source filename.
 Unknown container chunks are ignored; malformed lengths are refused.
 No source model is rewritten for that dispatch.
