@@ -214,10 +214,12 @@ def main():
     elif action == 'keep':
         retain(set(ROWS) if values == ['all'] else requested(values))
     elif action == 'installer':
+        code = 'system'
         try:
-            add({system_language()}, refresh=True)
+            code = system_language()
+            add({code}, refresh=True)
         except (RuntimeError, ValueError) as error:
-            raise RuntimeError(_(FAILURE) % (values[0] if values else locale, str(error))) from error
+            raise RuntimeError(_(FAILURE) % (code, str(error))) from error
     else:
         raise ValueError(action)
 
