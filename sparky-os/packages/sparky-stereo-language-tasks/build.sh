@@ -4,7 +4,8 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?}
-VERSION=1.0.6+lc1
+VERSION=1.0.7+lc1
+TASKSEL_SOURCE_DIR=${TASKSEL_SOURCE_DIR:?Set TASKSEL_SOURCE_DIR to Debian tasksel 3.92 descriptor and source archive}
 WORK=$(mktemp -d "${BUILD_ROOT:?}/language-tasks.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 D=$WORK/tree
@@ -15,30 +16,7 @@ install -Dm755 "$HERE/bin/tasksel-test" "$D/usr/lib/tasksel/tests/sparky-languag
 install -m644 "$HERE/../../lists/language-tasks.json" "$D/usr/share/$P/manifest.json"
 install -m644 "$HERE/systemd/"* "$D/usr/lib/systemd/system/"
 install -m644 "$HERE/copyright" "$D/usr/share/doc/$P/copyright"
-for po in "$HERE"/po/*.po; do
-    lang=$(basename "$po" .po)
-    dest=$D/usr/share/locale/$lang/LC_MESSAGES
-    mkdir -p "$dest"
-    msgfmt --check-format -o "$dest/$P.mo" "$po"
-    merged=$D/usr/share/$P/tasksel/$lang
-    mkdir -p "$merged"
-    # tasksel uses the debian-tasks domain; retain upstream messages alongside ours.
-    if [ -f "$HERE/upstream-po/$lang.po" ]; then
-        msgcat --use-first "$po" "$HERE/upstream-po/$lang.po" -o "$WORK/merged.po"
-        msgfmt --check-format -o "$merged/debian-tasks.mo" "$WORK/merged.po"
-    else
-        cp "$dest/$P.mo" "$merged/debian-tasks.mo"
-    fi
-done
-python3 - "$D" <<'PYCODE'
-import gettext, json, pathlib, sys
-root=pathlib.Path(sys.argv[1]); name='sparky-stereo-language-tasks'
-for path in (root/'usr/share/locale').glob('*/LC_MESSAGES/'+name+'.mo'):
-    t=gettext.GNUTranslations(path.open('rb'))
-    target=root/'usr/share/sparky'/name/path.parts[-3]
-    target.parent.mkdir(parents=True,exist_ok=True)
-    target.write_text('LOCAL1='+json.dumps(t.gettext('Shared language support'),ensure_ascii=False)+'\nLOCAL2='+json.dumps(t.gettext('Language support could not be completed: %s. Check the network and retry the update.'),ensure_ascii=False)+'\n')
-PYCODE
+python3 "$HERE/catalogues.py" --source-dir "$TASKSEL_SOURCE_DIR" --tree "$D"
 cat > "$D/DEBIAN/preinst" <<'EOF'
 #!/bin/sh
 set -e
@@ -96,4 +74,5 @@ Homepage: https://sparkylinux.org
 Description: Shared language support
  Shared fonts, locales and input methods.
 EOF
-PYTHONPATH="$HERE/../.." python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
+PYTHONPATH="$HERE/../.." python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE" --build-dependency gettext
+python3 "$HERE/retain-source.py" "$OUT" "$TASKSEL_SOURCE_DIR" "$VERSION"
