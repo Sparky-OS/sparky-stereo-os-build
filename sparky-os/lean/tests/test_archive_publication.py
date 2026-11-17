@@ -734,3 +734,37 @@ def test_no_room_in_the_previous_check_stays_no_room(sources, tmp_path, monkeypa
     with pytest.raises(package.NoSpace, match='insufficient space'):
         linkcheck.check(programs[1], programs[0], archive_context=context,
                        siblings=[libraries[1], common], previous_siblings=[libraries[0], common])
+
+
+def test_a_loader_trace_that_times_out_once_on_a_busy_machine_is_tried_again(sources, tmp_path, monkeypatch):
+    # ORDER 648: round r1117a's gate, on every processor beside three lanes (load 25 on 12 processors), stopped on
+    # "kio_trash.so: timeout": the 20 s limit passed before the trace started. One longer try decides.
+    programs, libraries, common = edition(tmp_path / 'build')
+    context = archive.Archive(sources, tmp_path / 'scratch', 'amd64')
+    real = archive.Qualified.run
+    slow = []
+
+    def run(self, command, env=None, timeout=20):
+        if env and 'LD_TRACE_LOADED_OBJECTS' in env and timeout == 20 and not slow:
+            slow.append(command)
+            raise subprocess.TimeoutExpired(command, timeout)
+        return real(self, command, env, timeout)
+
+    monkeypatch.setattr(archive.Qualified, 'run', run)
+    linkcheck.check(programs[0], archive_context=context, siblings=[libraries[0], common])
+    assert len(slow) == 1
+
+
+def test_a_loader_trace_that_always_times_out_is_still_refused(sources, tmp_path, monkeypatch):
+    programs, libraries, common = edition(tmp_path / 'build')
+    context = archive.Archive(sources, tmp_path / 'scratch', 'amd64')
+    real = archive.Qualified.run
+
+    def run(self, command, env=None, timeout=20):
+        if env and 'LD_TRACE_LOADED_OBJECTS' in env:
+            raise subprocess.TimeoutExpired(command, timeout)
+        return real(self, command, env, timeout)
+
+    monkeypatch.setattr(archive.Qualified, 'run', run)
+    with pytest.raises(package.Invalid, match='timeout'):
+        linkcheck.check(programs[0], archive_context=context, siblings=[libraries[0], common])

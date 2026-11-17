@@ -319,8 +319,13 @@ def resolve(root, timeout=20, extra_dirs=(), qualified=None, notes=None):
             command, static = loader_command(path, root, qualified)
             if static:
                 continue
-            run = qualified.run(command, {'LD_TRACE_LOADED_OBJECTS': '1', 'LD_WARN': 'yes',
-                                           'LD_BIND_NOW': 'yes'}, timeout)
+            trace = {'LD_TRACE_LOADED_OBJECTS': '1', 'LD_WARN': 'yes', 'LD_BIND_NOW': 'yes'}
+            try:
+                run = qualified.run(command, trace, timeout)
+            except subprocess.TimeoutExpired:
+                # a loader trace takes milliseconds; on a machine busy with packages checked side by side the limit can
+                # pass before the trace starts, so one longer try decides: a file that really hangs still ends as a timeout
+                run = qualified.run(command, trace, timeout * 6)
         except subprocess.TimeoutExpired:
             result[(rel, 'timeout', '')] = True
             continue
