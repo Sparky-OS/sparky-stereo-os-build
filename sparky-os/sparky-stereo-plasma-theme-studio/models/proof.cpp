@@ -11,6 +11,7 @@
 #include <QPainter>
 #include <QSvgRenderer>
 #include <QTemporaryDir>
+#include <filesystem>
 #include <iostream>
 static void require(bool ok, const char* why)
 {
@@ -37,6 +38,15 @@ int main(int argc, char** argv)
         const auto original = read(model);
         Editor editor;
         editor.loadProject(QFileInfo(model).absolutePath() + "/../project");
+        const QString copiedTheme = out + "/source-theme";
+        std::filesystem::copy(editor.themeRoot.toStdString(), copiedTheme.toStdString(),
+            std::filesystem::copy_options::recursive);
+        editor.themeRoot = copiedTheme;
+        QDir().mkpath(copiedTheme + "/16x16/apps");
+        const QString sentinel = out + "/outside.png";
+        saveBytes(sentinel, "original outside file");
+        std::filesystem::create_symlink(sentinel.toStdString(),
+            (copiedTheme + "/16x16/apps/" + QFileInfo(model).completeBaseName() + ".png").toStdString());
         require(editor.openModelFile(model).isEmpty(), "Open model failed");
         require(editor.setModelDepth(-.25).isEmpty(), "Depth failed");
         editor.history->undo();
@@ -45,6 +55,7 @@ int main(int argc, char** argv)
         require(editor.modelPage->depth->value() == -25, "Model depth redo failed");
         require(editor.exportModelPairs(out + "/pairs").isEmpty(), "Export failed");
         require(editor.saveCurrentProject(out + "/project").isEmpty(), "Project save failed");
+        require(read(sentinel) == "original outside file", "Model save wrote through a copied theme alias");
         auto project = QJsonDocument::fromJson(read(out + "/project/project.json")).object();
         require(read(out + "/project/" + project["model"].toObject()["source"].toString()) == original,
             "Model copy is changed");
@@ -80,6 +91,10 @@ int main(int argc, char** argv)
         editor.modelPage->render(64, false, true, &a, &b);
         require(a == b, "Flat model control differs");
         const auto kept = editor.modelPage->source;
+        saveBytes(out + "/bad.gltf", "not JSON");
+        require(!editor.openModelFile(out + "/bad.gltf").isEmpty(), "Invalid JSON accepted");
+        require(editor.modelPage->source == kept, "Invalid JSON lost the prior model");
+
         if (model.endsWith(".glb")) {
             auto damaged = original;
             damaged[8] = damaged[8] ^ 1;
@@ -89,6 +104,22 @@ int main(int argc, char** argv)
         }
         require(!editor.openModelFile(out + "/missing.gltf").isEmpty(), "Missing model hidden");
         require(editor.modelPage->source == kept, "Rejected model lost prior source");
+        QTemporaryDir changed(out + "/changed-XXXXXX");
+        require(changed.isValid(), "Cannot create changed-model fixture");
+        std::filesystem::copy(QFileInfo(model).absolutePath().toStdString(), changed.path().toStdString(),
+            std::filesystem::copy_options::recursive);
+        const QString changedModel = changed.path() + "/" + QFileInfo(model).fileName();
+        require(editor.openModelFile(changedModel).isEmpty(), "Cannot load independent model fixture");
+        auto different = original;
+        if (model.endsWith(".gltf"))
+            different += "\n";
+        else
+            different[different.size() - 1] = different[different.size() - 1] ^ 1;
+        saveBytes(changedModel, different);
+        require(!editor.saveCurrentProject(out + "/changed-project").isEmpty(),
+            "Changed model silently saved against cached views");
+        require(!QFileInfo::exists(out + "/changed-project"), "Failed model save left a project behind");
+        saveBytes(changedModel, original);
         qputenv("STUDIO_MODEL_RENDERER", "/missing/model-helper");
         editor.modelPage->metadata.clear();
         editor.modelPage->images.clear();

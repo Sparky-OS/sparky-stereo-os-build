@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "assets.h"
 #include "editor.h"
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -20,7 +21,7 @@ static QByteArray read(const QString& path)
     require(file.open(QIODevice::ReadOnly), Editor::tr("Cannot read model: %1").arg(path));
     return file.readAll();
 }
-QString copyModelAssets(const QString& source, const QString& project)
+static QStringList modelFiles(const QString& source)
 {
     auto data = read(source);
     if (source.endsWith(".glb", Qt::CaseInsensitive)) {
@@ -48,7 +49,21 @@ QString copyModelAssets(const QString& source, const QString& project)
             files << QDir::cleanPath(base + "/" + url.path());
         }
     }
-    QString common = base;
+    files.removeDuplicates();
+    return files;
+}
+QMap<QString, QByteArray> modelFingerprints(const QString& source)
+{
+    QMap<QString, QByteArray> result;
+    for (const auto& file : modelFiles(source))
+        result[file] = QCryptographicHash::hash(read(file), QCryptographicHash::Sha256);
+    return result;
+}
+QString copyModelAssets(
+    const QString& source, const QString& project, const QMap<QString, QByteArray>& expected)
+{
+    const auto files = modelFiles(source);
+    QString common = QFileInfo(source).absolutePath();
     auto contains = [](const QString& dir, const QString& path) {
         return path.startsWith(dir == "/" ? dir : dir + "/");
     };
@@ -56,12 +71,14 @@ QString copyModelAssets(const QString& source, const QString& project)
         while (!contains(common, file))
             common = QFileInfo(common).absolutePath();
     }
-    files.removeDuplicates();
     for (const auto& file : files) {
         const auto relative = QDir(common).relativeFilePath(file);
         const QString target = project + "/models/" + relative;
         QDir().mkpath(QFileInfo(target).absolutePath());
-        saveBytes(target, read(file));
+        const auto data = read(file);
+        require(QCryptographicHash::hash(data, QCryptographicHash::Sha256) == expected.value(file),
+            Editor::tr("The model changed. Reopen it before rendering or saving."));
+        saveBytes(target, data);
     }
     return "models/" + QDir(common).relativeFilePath(source);
 }

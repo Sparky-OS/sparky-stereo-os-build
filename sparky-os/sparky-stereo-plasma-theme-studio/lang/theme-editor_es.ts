@@ -513,6 +513,10 @@
             <source>no room in the drawing at this size</source>
             <translation>no hay espacio en el dibujo a este tamaño</translation>
         </message>
+        <message>
+            <source>The model changed. Reopen it before rendering or saving.</source>
+            <translation>El modelo ha cambiado. Ábralo de nuevo antes de renderizar o guardar.</translation>
+        </message>
     </context>
     <context>
         <name>Identity</name>

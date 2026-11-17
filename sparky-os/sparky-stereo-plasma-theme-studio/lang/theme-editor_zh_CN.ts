@@ -513,6 +513,10 @@
             <source>no room in the drawing at this size</source>
             <translation>此尺寸的绘图内没有移动空间</translation>
         </message>
+        <message>
+            <source>The model changed. Reopen it before rendering or saving.</source>
+            <translation>模型已更改。渲染或保存前请重新打开。</translation>
+        </message>
     </context>
     <context>
         <name>Identity</name>

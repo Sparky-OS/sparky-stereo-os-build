@@ -513,6 +513,10 @@
             <source>no room in the drawing at this size</source>
             <translation>이 크기에서는 그림 안에 공간이 없습니다</translation>
         </message>
+        <message>
+            <source>The model changed. Reopen it before rendering or saving.</source>
+            <translation>모델이 변경되었습니다. 렌더링하거나 저장하기 전에 다시 여세요.</translation>
+        </message>
     </context>
     <context>
         <name>Identity</name>

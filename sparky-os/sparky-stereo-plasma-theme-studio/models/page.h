@@ -15,6 +15,7 @@ public:
     QLabel *sourceLabel, *summary;
     QDoubleSpinBox* depth;
     QString source;
+    QMap<QString, QByteArray> sourceFingerprints;
     double committedDepth = 0;
     void restoreDepth(double value);
     QMap<QString, QJsonObject> metadata;

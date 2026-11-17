@@ -80,6 +80,8 @@ ModelPage::ModelPage(Editor* owner)
     depth->setRange(-100, 100);
     depth->setDecimals(1);
     depth->setSingleStep(5);
+    depth->setToolTip(
+        Editor::tr("Sunk") + " < 0; " + Editor::tr("Screen") + " = 0; " + Editor::tr("Popped") + " > 0");
     row->addWidget(depth);
     auto* exporter = new QPushButton(Editor::tr("Export model pairs…"));
     row->addWidget(exporter);
@@ -122,6 +124,8 @@ ModelPage::ModelPage(Editor* owner)
 QJsonObject ModelPage::render(int n, bool common, bool flat, QImage* left, QImage* right)
 {
     require(!source.isEmpty(), Editor::tr("Open a source first"));
+    require(modelFingerprints(source) == sourceFingerprints,
+        Editor::tr("The model changed. Reopen it before rendering or saving."));
     auto* screen
         = editor->windowHandle() ? editor->windowHandle()->screen() : QGuiApplication::primaryScreen();
     require(screen, Editor::tr("Cannot read the preview output"));
@@ -167,6 +171,15 @@ QJsonObject ModelPage::render(int n, bool common, bool flat, QImage* left, QImag
         QImage a(output.path() + "/left.png"), b(output.path() + "/right.png");
         require(a.size() == QSize(n, n) && b.size() == a.size(),
             Editor::tr("The model renderer returned invalid data."));
+        require(modelFingerprints(source) == sourceFingerprints,
+            Editor::tr("The model changed. Reopen it before rendering or saving."));
+        qsizetype cacheBytes = a.sizeInBytes() + b.sizeInBytes();
+        for (const auto& cached : images)
+            cacheBytes += cached.first.sizeInBytes() + cached.second.sizeInBytes();
+        if (images.size() >= 16 || cacheBytes > 64 * 1024 * 1024) {
+            images.clear();
+            metadata.clear();
+        }
         metadata[key] = result;
         images[key] = { a, b };
     }
@@ -183,14 +196,18 @@ void ModelPage::open(const QString& path)
             && (canonical.endsWith(".gltf", Qt::CaseInsensitive)
                 || canonical.endsWith(".glb", Qt::CaseInsensitive)),
         Editor::tr("Choose a readable glTF (.gltf or .glb) model."));
+    const auto nextFingerprints = modelFingerprints(canonical);
     const auto previous = source;
+    const auto previousFingerprints = sourceFingerprints;
     source = canonical;
+    sourceFingerprints = nextFingerprints;
     metadata.clear();
     images.clear();
     try {
         render(editor->size->value(), false, !editor->stereo->isChecked());
     } catch (...) {
         source = previous;
+        sourceFingerprints = previousFingerprints;
         metadata.clear();
         images.clear();
         throw;
@@ -312,7 +329,9 @@ void ModelPage::saveProject(const QString& destination)
     }
     QString name = QFileInfo(source).completeBaseName();
     QString root = "stereo-models";
-    for (int i = 2; QFileInfo::exists(stage.path() + "/icons/" + root); ++i)
+    for (int i = 2; (QFileInfo::exists(stage.path() + "/icons/" + root)
+             || QFileInfo(stage.path() + "/icons/" + root).isSymLink());
+        ++i)
         root = QString("stereo-models-%1").arg(i);
     QStringList stereoDirs, ordinaryDirs;
     QJsonArray cameras;
@@ -321,7 +340,8 @@ void ModelPage::saveProject(const QString& destination)
         auto meta = render(n, true, false, &a, &b);
         meta["size"] = n;
         cameras << meta;
-        const QString dir = root + QString("/%1x%1/apps").arg(n), ordinary = QString("%1x%1/apps").arg(n);
+        const QString dir = root + QString("/%1x%1/apps").arg(n),
+                      ordinary = root + QString("/ordinary/%1x%1/apps").arg(n);
         QDir().mkpath(stage.path() + "/icons/" + dir);
         QDir().mkpath(stage.path() + "/icons/" + ordinary);
         QDir().mkpath(stage.path() + "/pairs");
@@ -345,12 +365,14 @@ void ModelPage::saveProject(const QString& destination)
         "X-StereoDirectories", stereoDirs + theme.readEntry("X-StereoDirectories", QStringList()));
     theme.writeEntry("Directories", ordinaryDirs + theme.readEntry("Directories", QStringList()));
     require(index.sync(), Editor::tr("Cannot save the copied theme index"));
-    const auto modelCopy = copyModelAssets(source, stage.path());
+    const auto modelCopy = copyModelAssets(source, stage.path(), sourceFingerprints);
     QJsonObject groups;
     for (auto i = editor->drawing.places.cbegin(); i != editor->drawing.places.cend(); ++i)
         groups[i.key()] = i.value();
     QJsonObject project { { "version", 1 },
-        { "icon", editor->iconPath.isEmpty() ? QString("256x256/apps/%1.png").arg(name) : editor->iconPath },
+        { "icon",
+            editor->iconPath.isEmpty() ? root + QString("/ordinary/256x256/apps/%1.png").arg(name)
+                                       : editor->iconPath },
         { "groups", groups },
         { "model",
             QJsonObject { { "source", modelCopy }, { "depth", depth->value() / 100 },
@@ -364,6 +386,8 @@ void ModelPage::saveProject(const QString& destination)
     stage.setAutoRemove(false);
     editor->membersDirty = false;
     editor->history->setClean();
+    if (editor->plasmaEditor)
+        editor->plasmaEditor->history->setClean();
     editor->setWindowModified(false);
     editor->setWindowTitle(QFileInfo(destination).fileName() + "[*]");
     sourceLabel->setText(Editor::tr("Saved project copy: %1").arg(destination));
