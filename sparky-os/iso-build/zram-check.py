@@ -190,6 +190,25 @@ RULES = [
 # edition's former zram switch (/etc/default/sparky-stereo-zram, /usr/libexec/sparky-stereo/zram-auto) and the
 # zswap parameter. Qt keeps u"" literals in UTF-16, so both encodings are searched.
 TOKENS = ('zram-generator.conf', 'sparky-stereo-zram', '/sparky-stereo/zram-auto', 'zswap.enabled=1')
+# A compiled program that carries zram-generator's file name only to write it into ANOTHER system. Podman's
+# `podman machine` builds the Ignition configuration of the virtual machine a person creates, and gives that guest a
+# zram-generator.conf when the person asked swap for it (containers/podman, pkg/machine/ignition/ignition.go:
+# `Path: "/etc/systemd/zram-generator.conf"` among the guest's `files`, under `if swap > 0`). Nothing is set up on the
+# system podman is installed on. The case is told by the program's own code paths, both of which must be in the
+# file, never by its name alone; it passes with a note.
+GUEST_ONLY = (
+    ('zram-generator.conf', (b'github.com/containers/podman/', b'pkg/machine/ignition'),
+     'written by podman into the Ignition configuration of a virtual machine the person creates (podman machine), '
+     'not on this system'),
+)
+
+
+def guest_only(data, token):
+    """The reason TOKEN in the compiled DATA configures another system, or None."""
+    for known, marks, why in GUEST_ONLY:
+        if token == known and all(mark in data for mark in marks):
+            return why
+    return None
 
 # ---- WHAT A ZRAM UNIT DOES (ORDER 558) -------------------------------------------------------------------------
 #
@@ -851,8 +870,12 @@ def scan_file(shown, path, data, notes=None, document=None):
     if text is not None:
         findings += [f'{shown}:{n}: {line} ({w})' for n, line, w in scan_text(path, text, notes)]
     elif data[:4] == b'\x7fELF':
-        findings += [f'{shown}: byte {at}: "{token}" (a compiled zram or zswap set-up)'
-                     for at, token in scan_compiled(data)]
+        for at, token in scan_compiled(data):
+            why = guest_only(data, token)
+            if why is None:
+                findings.append(f'{shown}: byte {at}: "{token}" (a compiled zram or zswap set-up)')
+            elif notes is not None:
+                notes.append((0, '', f'byte {at}: "{token}": {why}'))
     return findings
 
 

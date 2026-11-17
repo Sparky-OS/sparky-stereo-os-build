@@ -294,6 +294,21 @@ class Packages(Fixtures):
         self.assertRefused(self.deb(files={'/usr/lib/x/plugin.so': b'\x7fELF\0\0zram-generator.conf\0'}), 'zram-generator.conf')
         self.assertPassed(self.deb(files={'/usr/share/x/picture.png': b'\x89PNG\0\0sparky-stereo-zram\0'}))
 
+    def test_a_program_that_writes_the_file_into_a_guest_machine_passes_with_a_note(self):
+        podman = (b'\x7fELF' + b'\0' * 60 + b'github.com/containers/podman/v5/pkg/machine/ignition\0'
+                  + b'/etc/systemd/zram-generator.conf\0')
+        self.assertPassed(self.deb(files={'/usr/bin/podman': podman}))
+        findings, notes = gate.scan_file('/usr/bin/podman', 'usr/bin/podman', podman, []), []
+        self.assertEqual(findings, [])
+        gate.scan_file('/usr/bin/podman', 'usr/bin/podman', podman, notes)
+        self.assertTrue(any('virtual machine' in what for _, _, what in notes), notes)
+
+    def test_the_same_string_without_the_guest_machine_code_still_refuses(self):
+        named_alike = b'\x7fELF' + b'\0' * 60 + b'/etc/systemd/zram-generator.conf\0'
+        self.assertRefused(self.deb(files={'/usr/bin/podman': named_alike}), 'zram-generator.conf')
+        half = b'\x7fELF' + b'\0' * 60 + b'github.com/containers/podman/v5\0/etc/systemd/zram-generator.conf\0'
+        self.assertRefused(self.deb(files={'/usr/bin/other': half}), 'zram-generator.conf')
+
     def test_documentation_is_not_read(self):
         self.assertPassed(self.deb(files={'/usr/share/doc/x/README': 'GRUB_CMDLINE_LINUX="zswap.enabled=1"\n',
                                           '/usr/share/man/man8/x.8': 'zramctl --find --size 4G\n',
