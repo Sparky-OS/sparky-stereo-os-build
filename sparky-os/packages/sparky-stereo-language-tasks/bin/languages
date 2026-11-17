@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import time
+import tempfile
 
 SHARE = Path('/usr/share/sparky-stereo-language-tasks')
 STATE = Path('/var/lib/sparky-stereo-language-tasks')
@@ -24,6 +24,17 @@ locale = os.environ.get('INSTALLER_LANG') or os.environ.get('LANG', 'en')
 _ = gettext.translation('sparky-stereo-language-tasks', '/usr/share/locale', languages=[locale.split('.')[0]], fallback=True).gettext
 
 
+def atomic(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as stream:
+        stream.write(text)
+        stream.flush()
+        os.fsync(stream.fileno())
+        temporary = stream.name
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, path)
+
+
 def run(args, check=True):
     p = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                        env=os.environ | {'DEBIAN_FRONTEND': 'noninteractive', 'LC_ALL': 'C'})
@@ -34,7 +45,7 @@ def run(args, check=True):
 
 def installed():
     text = run(['dpkg-query', '-W', '-f', '${Package}\t${db:Status-Status}\t${Depends}, ${Pre-Depends}, ${Recommends}\t${Provides}\n']).stdout
-    return {f[0]: {'deps': f[2], 'provides': f[3]} for line in text.splitlines()
+    return {f[0]: {'deps': f[2], 'provides': f[3], 'status': f[1]} for line in text.splitlines()
             if len(f := line.split('\t')) == 4 and f[1] in ('installed', 'triggers-pending', 'triggers-awaited', 'half-configured')}
 
 
@@ -92,7 +103,8 @@ def plan(args, allowed=()):
 
 
 def verify(codes):
-    missing = [ROWS[c]['name'] for c in codes if ROWS[c]['name'] not in installed()]
+    have = installed()
+    missing = [ROWS[c]['name'] for c in codes if ROWS[c]['name'] not in have or have[ROWS[c]['name']]['status'] == 'half-configured']
     if missing:
         raise RuntimeError(', '.join(missing))
     # Check the installed dependency graph, not the mere presence of a pack.
@@ -137,7 +149,7 @@ def retain(codes):
     if DRY:
         return
     STATE.mkdir(parents=True, exist_ok=True)
-    (STATE / 'retained.json').write_text(json.dumps(sorted(codes)) + '\n')
+    atomic(STATE / 'retained.json', json.dumps(sorted(codes)) + '\n')
     add(codes)
     if (STATE / 'pending').exists():
         capture()
@@ -146,13 +158,11 @@ def retain(codes):
 def capture():
     have = installed()
     roots = names(DATA['common']) | set().union(*(payload(r) for r in ROWS.values()))
-    provides = {alias: n for n, fields in have.items() for alias in names([fields['provides']])}
-    roots = {provides.get(n, n) for n in roots} & set(have)
+    roots = actual(roots, have)
     protected = set(roots)
     todo = list(roots)
     while todo:
-        for n in names([have[todo.pop()]['deps']]):
-            n = provides.get(n, n)
+        for n in actual(names([have[todo.pop()]['deps']]), have):
             if n in have and n not in protected and not n.startswith('task-'):
                 protected.add(n)
                 todo.append(n)
@@ -170,8 +180,8 @@ def capture():
     old = json.loads((STATE / 'pending').read_text()) if (STATE / 'pending').exists() else {}
     roots |= set(old.get('roots', [])) & set(have)
     protected |= set(old.get('protected', [])) & set(have)
-    PROTECTION.write_text('APT::NeverAutoRemove {\n' + ''.join(' "^' + re.escape(n) + '$";\n' for n in sorted(protected)) + '};\n')
-    (STATE / 'pending').write_text(json.dumps({'codes': sorted(codes), 'roots': sorted(roots), 'protected': sorted(protected)}, indent=2) + '\n')
+    atomic(PROTECTION, 'APT::NeverAutoRemove {\n' + ''.join(' "^' + re.escape(n) + '$";\n' for n in sorted(protected)) + '};\n')
+    atomic(STATE / 'pending', json.dumps({'codes': sorted(codes), 'roots': sorted(roots), 'protected': sorted(protected)}, indent=2) + '\n')
 
 
 def migrate():
@@ -196,7 +206,7 @@ def migrate():
         removed = {line.split()[1] for line in after.stdout.splitlines() if line.startswith('Remv ')}
         if removed & set(pending['protected']):
             raise RuntimeError('autoremove: ' + ', '.join(sorted(removed & set(pending['protected']))))
-        (STATE / 'retained.json').write_text(json.dumps(sorted(codes)) + '\n')
+        atomic(STATE / 'retained.json', json.dumps(sorted(codes)) + '\n')
         (STATE / 'pending').unlink()
         PROTECTION.unlink(missing_ok=True)
         run(['sparky-stereo-problems', 'clear', '--machine', 'sparky-stereo-language-tasks', 'migration'], False)
@@ -219,7 +229,7 @@ def main():
         add(codes, refresh=True)
         if not DRY and (STATE / 'retained.json').exists():
             kept = set(json.loads((STATE / 'retained.json').read_text())) | codes
-            (STATE / 'retained.json').write_text(json.dumps(sorted(kept)) + '\n')
+            atomic(STATE / 'retained.json', json.dumps(sorted(kept)) + '\n')
         if not DRY and (STATE / 'pending').exists():
             capture()
     elif action == 'keep':
