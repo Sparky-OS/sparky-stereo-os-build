@@ -400,7 +400,7 @@ def main():
         dep = sorted(set(dep))
         for n in dep:   # no versioned library names in Depends
             b = n.split(' ')[0].split(':')[0]
-            if re.match(r'lib.*(\d|t64)', b) and b not in ('libvulkan1', 'libkscreen-bin', 'libenchant-2-voikko'):
+            if re.match(r'lib.*(\d|t64)', b) and not b.startswith('libreoffice-') and b not in ('libvulkan1', 'libkscreen-bin', 'libenchant-2-voikko'):
                 sys.exit(f'{pkg}: versioned library {n} in Depends')
         # A packaging-only rebuild must advance the meta version without
         # inventing a new kernel ABI or changing the image/header dependency.
