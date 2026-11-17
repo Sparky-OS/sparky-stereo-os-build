@@ -116,6 +116,7 @@ win_width = 0;
 win_height = 0;
 EYE_W = 0;
 EYE_H = 0;
+LAID_OUT = 0;
 POP = 0;
 SINK = 0;
 BASE = 0;
@@ -228,6 +229,11 @@ for (i = 0; i < ELECTRONS_DISPLAYED; i++) {
 fun layout () {
     local.i;
     local.j;
+    # A hotplug that leaves no display (the firmware's framebuffer gone before the GPU's screens come) keeps the
+    # layout as it was: with no display the window has no size and no depth limits, and the next display lays it out.
+    if (LAID_OUT && Window.GetWidth () == 0)
+        return;
+    LAID_OUT = 1;
     win_width = Window.GetWidth ();
     win_height = Window.GetHeight ();
     EYE_W = win_width / EYES;

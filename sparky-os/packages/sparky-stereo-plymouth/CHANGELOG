@@ -9,6 +9,9 @@
     layout () now sizes and places the background, the swirl, the logo and the electrons' orbits for the window as it is,
     at load and at each display hotplug (Plymouth.SetDisplayHotplugFunction); the sprites are made once and keep their
     places in the drawing order. The depth limits are read again with the window
+  * A hotplug that leaves no display (the firmware's framebuffer gone before the GPU's screens come) keeps the layout
+    as it was: with no display the window has no size and no depth limits, and the next display lays it out (found in
+    the rig: without this the script stopped at every frame of that gap, "Cannot negate non number objects")
   * Needs plymouth 26.134.222-1+stereo3d4, whose script plugin keeps the window in both eyes for every screen of a stereo
     boot (a screen that cannot show them shows the left eye) and sizes the eyes for the main screen
 
