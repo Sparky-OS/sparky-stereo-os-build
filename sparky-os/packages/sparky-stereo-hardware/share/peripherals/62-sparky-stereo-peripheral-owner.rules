@@ -1,0 +1,15 @@
+# Sparky Stereo OS (ORDER 108, milestone 6): one owner per device. OpenLinkHub and OpenRGB (or liquidctl) both open the Corsair
+# devices below; read together they cross each other's replies (measured 2026-11-06 on an iCUE LINK System Hub: a power supply
+# shown at about 1,800 W). Where OpenLinkHub is installed it owns these devices: the access OpenRGB's rules give the person
+# (the uaccess tag) is taken away. Generated from share/peripherals/owners.tsv by tools/make-peripheral-ids.py.
+# To change it, put an empty file with this name in /etc/udev/rules.d: that overrides this one (udevadm control --reload-rules,
+# then unplug and plug the device again). sparky-stereo-hardware --peripherals says who owns what.
+ACTION=="remove", GOTO="sparky_owner_end"
+SUBSYSTEM!="hidraw|usb", GOTO="sparky_owner_end"
+TEST=="/etc/systemd/system/OpenLinkHub.service", GOTO="sparky_owner_olh"
+TEST=="/usr/lib/systemd/system/OpenLinkHub.service", GOTO="sparky_owner_olh"
+TEST=="/opt/OpenLinkHub", GOTO="sparky_owner_olh"
+GOTO="sparky_owner_end"
+LABEL="sparky_owner_olh"
+SUBSYSTEM=="hidraw|usb", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a34|0c08|0c09|0c0a|0c0b|0c10|0c12|0c13|0c15|0c17|0c18|0c19|0c1a|0c1c|0c20|0c21|0c22|0c23|0c2a|0c2d|0c32|0c35|0c36|0c37|0c3f|0c40|0c41|1b11|1b17|1b1e|1b20|1b2d|1b2e|1b33|1b34|1b36|1b38|1b39|1b3b|1b3d|1b3e|1b48|1b49|1b4b|1b4c|1b4f|1b55|1b5a|1b5c|1b5d|1b5e|1b65|1b6b|1b6e|1b70|1b73|1b74|1b75|1b7c|1b7d|1b7e|1b89|1b8b|1b93|1b9b|1b9e|1ba0|1ba1|1ba4|1ba6|1bac|1bad|1baf|1bb3|1bb5|1bb9|1bc4|1bc5|1bc6|1bc9|1bdc|1bf0|1bf1|1bfd|1c05|1c06|1c07|1c08|1c0c|1c0d|1c1e|1c1f|1c23|1c27|1d00|1d04|2b00|2b01|2b32", TAG-="uaccess", ENV{SPARKY_PERIPHERAL_OWNER}="openlinkhub"
+LABEL="sparky_owner_end"

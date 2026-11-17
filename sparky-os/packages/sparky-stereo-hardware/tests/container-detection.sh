@@ -22,4 +22,5 @@ apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends 
 D=/ HERE=/pkg source /pkg/payload.sh
 mkdir -p /pkg-tests-run && cp -r /tests/. /pkg-tests-run/
 python3 /pkg-tests-run/detection.py
-python3 /pkg-tests-run/nvidia-branches.py' 2>&1
+python3 /pkg-tests-run/nvidia-branches.py
+python3 /pkg-tests-run/peripherals.py' 2>&1

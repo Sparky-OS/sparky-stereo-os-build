@@ -26,6 +26,9 @@ def plan(name, *extra):
     kinds = {}
     for line in lines:
         kind, _, value = line.partition('\t')
+        # the lights actions (OpenRGB with the session, the SMBus: ORDER 108, milestone 6) are not NVIDIA's; the fixtures' Corsair keyboard raises them
+        if kind == 'action' and value in ('openrgb-session', 'i2c-dev'):
+            continue
         kinds.setdefault(kind, []).append(value)
     return run.stdout, lines, kinds
 

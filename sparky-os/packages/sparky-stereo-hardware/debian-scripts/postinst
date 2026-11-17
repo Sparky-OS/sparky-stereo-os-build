@@ -10,6 +10,7 @@ if [ "$1" = configure ]; then
 	deb-systemd-helper unmask sparky-stereo-hardware-bt-voice.service >/dev/null || true
 	deb-systemd-helper enable sparky-stereo-hardware-bt-voice.service >/dev/null || true
 	deb-systemd-helper enable sparky-stereo-hardware-variant-check.service >/dev/null || true
+	deb-systemd-helper enable sparky-stereo-hardware-peripheral-owner.service >/dev/null || true
 	deb-systemd-helper enable sparky-stereo-known-machines.service >/dev/null
 	if [ -d /run/udev ]; then udevadm control --reload-rules || true; fi
 	# NVIDIA's services wait for NVIDIA's driver (sparky-stereo-hardware.conf); one that failed on a machine

@@ -236,6 +236,70 @@ usb_vendors = sorted({vendor.lower() for vendor, _ in re.findall(r"\bID ([0-9a-f
 if usb_vendors and new_facts:
     emit("fact", "usb-vendors\t" + " ".join(v + (f" ({USB_VENDOR_NAMES[v]})" if v in USB_VENDOR_NAMES else "") for v in usb_vendors))
 
+# Lights and peripherals (ORDER 108, milestone 6). A device seen on USB leads to its tool, installed without a question, from the
+# tool's own list of the devices it drives (share/peripherals/*.ids, made by tools/make-peripheral-ids.py from the package's udev
+# rules or device files; the first lines of each say which package and version). One owner per device: where OpenLinkHub is
+# installed (the `openlinkhub` fact) and a device is one it opens too (share/peripherals/owners.tsv), the tools it keeps out are
+# not installed for that device, and the udev rule 62-sparky-stereo-peripheral-owner.rules takes their access away. The image
+# already carries OpenRGB; the plan names it so a machine that lost it gets it back.
+def device_table(name):
+    table = {}
+    path = data / "peripherals" / name
+    if path.is_file():
+        for line in path.read_text().splitlines():
+            if line and not line.startswith("#"):
+                ident, _, label = line.partition("\t")
+                table[ident] = label.split("\t")[0] if name != "owners.tsv" else line
+    return table
+
+
+usb_ids = sorted({f"{v.lower()}:{p.lower()}" for v, p in re.findall(r"\bID ([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\b", read("lsusb"))})
+olh_installed = (read_optional("openlinkhub") or "").strip() == "yes"
+owned = {}
+for ident, row in device_table("owners.tsv").items():
+    _, owner, kept_out, label = (row.split("\t") + [""] * 4)[:4]
+    owned[ident] = (owner, set(kept_out.split(",")), label)
+openrgb_devices = []
+for tool, name, tool_packages in (("openrgb", "OpenRGB", ("openrgb",)), ("solaar", "Solaar", ("solaar",)),
+                                  ("ratbag", "libratbag with Piper", ("ratbagd", "piper")), ("liquidctl", "liquidctl", ("liquidctl",)),
+                                  ("g810-led", "g810-led", ("g810-led",)), ("openrazer", "OpenRazer", ("openrazer-daemon", "openrazer-driver-dkms"))):
+    table = device_table(tool + ".ids")
+    seen = []
+    for ident in usb_ids:
+        if ident not in table:
+            continue
+        if olh_installed and ident in owned and tool in owned[ident][1]:
+            emit("owner", f"{ident}\t{owned[ident][0]}\tnot {name}\t{owned[ident][2] or table[ident] or ident}")
+            continue
+        # liquidctl's own name for the device says "LED": a lights-only controller that OpenRGB drives too is left to OpenRGB (liquidctl adds
+        # coolers, pumps and fans, not lights; the two would only meet on the same node)
+        if tool == "liquidctl" and re.search(r"\bLED\b|Lighting", table[ident]) and ident in device_table("openrgb.ids"):
+            emit("owner", f"{ident}\topenrgb\tnot {name}\t{table[ident]}")
+            continue
+        seen.append(ident)
+    if seen:
+        match(f"{name} drives {', '.join(seen)}", *tool_packages)
+        emit("fact", f"peripheral\t{tool}\t{' '.join(seen)}")
+        if tool == "openrgb":
+            openrgb_devices = seen
+# Motherboard and memory lights over the SMBus cannot be seen from USB: a desktop whose board maker is one OpenRGB's detectors
+# name (its sources check "Micro-Star International Co., Ltd." and "Gigabyte Technology Co., Ltd."; ASUS Aura, ASRock Polychrome and EVGA
+# are found by probing the bus) gets the modules that make the bus reachable (i2c-dev and the chipset's driver, OpenRGB's SMBusAccess.md) and
+# the tools to look at it (i2c-tools). Without RGB memory or a board of that generation the document says to skip all of it: the board maker is the
+# nearest thing a machine shows without probing the bus.
+SMBUS_BOARD_MAKERS = ("asustek", "gigabyte", "micro-star", "asrock", "evga", "biostar")
+board_maker = (board_vendor or "").strip().lower()
+if laptop == "1" and any(board_maker.startswith(maker) for maker in SMBUS_BOARD_MAKERS):
+    match(f"Desktop board {board_vendor.strip()}: the SMBus for OpenRGB (i2c-dev, i2c-tools)", "i2c-tools", "openrgb")
+    # OpenRGB's own SMBusAccess.md (in its package): i2c-tools, the i2c-dev module, and the chipset's driver (i2c-i801 on Intel, i2c-piix4 on AMD)
+    smbus = ["i2c-dev"] + (["i2c-i801"] if "GenuineIntel" in vendors else ["i2c-piix4"] if "AuthenticAMD" in vendors else [])
+    emit("action", "i2c-dev")
+    emit("fact", "smbus-modules\t" + " ".join(smbus))
+    emit("fact", "peripheral\tsmbus\t" + board_vendor.strip())
+    openrgb_devices = openrgb_devices or ["smbus"]
+if openrgb_devices:
+    emit("action", "openrgb-session")
+
 # Network PCI IDs (classes 0200 Ethernet, 0280 and 0282 wireless) against share/network-ids.tsv.
 network_ids = {}
 table = data / "network-ids.tsv"

@@ -5,3 +5,5 @@ post-invoke=if [ -x /usr/lib/sparky-stereo-hardware/nvidia-i386 ]; then /usr/lib
 post-invoke=if [ -x /usr/lib/sparky-stereo-hardware/thermald-manual ]; then /usr/lib/sparky-stereo-hardware/thermald-manual check || true; fi
 # A package built for a higher processor level than this one's (an amd64v3 build on an older processor) is told to the person (ORDER 108): looked for only when dpkg's status carries such a package or a notice is kept
 post-invoke=if [ -x /usr/lib/sparky-stereo-hardware/variant-check ] && { grep -qs '^Architecture-Variant:' /var/lib/dpkg/status || [ -e /var/lib/sparky-stereo-problems/sparky-stereo-hardware_variant-mismatch.json ]; }; then /usr/lib/sparky-stereo-hardware/variant-check check || true; fi
+# OpenLinkHub installed beside OpenRGB (ORDER 108, milestone 6): who owns the devices both open is told once, after the apt run that brought it
+post-invoke=if [ -x /usr/lib/sparky-stereo-hardware/peripheral-owner ] && { [ -e /opt/OpenLinkHub ] || [ -e /usr/lib/systemd/system/OpenLinkHub.service ] || [ -d /var/lib/sparky-stereo-hardware/owner-told ]; }; then /usr/lib/sparky-stereo-hardware/peripheral-owner check || true; fi

@@ -1,0 +1,13 @@
+# Created by Daniel Ramos (Capitain Jack) 2026/11/17
+# Copyright 2026 under the GNU GPL3 License
+# Tells the person once when OpenLinkHub owns a device that OpenRGB would also open (ORDER 108): at boot, since a device can be plugged in while off.
+[Unit]
+Description=Tell who owns each lights and peripherals device
+Documentation=file:/usr/share/doc/sparky-stereo-hardware/README.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/sparky-stereo-hardware/peripheral-owner check
+
+[Install]
+WantedBy=multi-user.target

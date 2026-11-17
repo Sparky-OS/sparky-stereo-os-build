@@ -113,7 +113,7 @@ apt_install() { run env DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-s
 setup_rig_driver() {
 	local package=$1 kernel headers
 	case "$package" in
-		hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) ;;
+		hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms|openrazer-driver-dkms) ;;
 		*) err 36 "$package"; return 1 ;;
 	esac
 	kernel=$(uname -r)
@@ -427,5 +427,34 @@ setup_nvidia() {
 		log "NVIDIA $userspace userspace and the edition's build of NVIDIA's 580 kernel modules installed; reboot required"
 	else
 		log "NVIDIA $userspace userspace and edition open modules installed; reboot required"
+	fi
+}
+
+# The SMBus of a desktop board, for OpenRGB's motherboard and memory lights: i2c-dev loaded now and at every boot (OpenRGB's own udev rule
+# gives the seat's user the access once the module has made /dev/i2c-N). ORDER 108, milestone 6.
+setup_i2c_dev() {
+	local modules module failed=0
+	modules=$(awk -F '\t' '$1 == "fact" && $2 == "smbus-modules" {print $3}' "$1")
+	[[ -n $modules ]] || modules=i2c-dev
+	mkdir -p "$ROOT/etc/modules-load.d" || return 1
+	{ printf '# Sparky Stereo OS: the SMBus of the board, for OpenRGB (sparky-stereo-hardware; OpenRGB'"'"'s SMBusAccess.md)\n'; tr ' ' '\n' <<<"$modules"; } >"$ROOT/etc/modules-load.d/sparky-stereo-i2c.conf" || return 1
+	for module in $modules; do
+		if [[ -z $ROOT ]] && ! run modprobe "$module"; then err 84 "$module" "$module"; failed=1; fi
+	done
+	((failed == 0)) || return 1
+	log "$modules loaded and listed for every boot (/etc/modules-load.d/sparky-stereo-i2c.conf)"
+}
+
+# OpenRGB starts with the session, minimized, only on a machine that has a device it drives: the mark is a file the autostart
+# entry (/etc/xdg/autostart/sparky-stereo-openrgb.desktop) looks for. A machine whose device is gone loses the mark.
+setup_openrgb_session() {
+	local plan=$1 mark=$ROOT/var/lib/sparky-stereo-hardware/openrgb-session
+	if grep -Fxq $'action\topenrgb-session' "$plan"; then
+		mkdir -p "${mark%/*}" || return 1
+		: >"$mark" || return 1
+		log 'OpenRGB: this machine has a device it drives, so it starts minimized with the session (a program the person started by their own autostart entry is left alone)'
+	elif [[ -e $mark ]]; then
+		rm -f "$mark" || return 1
+		log 'OpenRGB: no device it drives is left on this machine, so it no longer starts with the session'
 	fi
 }
