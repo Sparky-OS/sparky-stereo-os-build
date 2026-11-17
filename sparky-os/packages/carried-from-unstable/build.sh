@@ -24,6 +24,7 @@ docker run --rm --name "${SPARKY_CONTAINER_PREFIX}build-$name" --platform linux/
  --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
  --user "$(id -u):$(id -g)" "${SPARKY_PROV_ARGS[@]}" \
  -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
+ -e SPARKY_LC_SIBLINGS_FILE \
  -e DEBFULLNAME='Daniel Ramos (Capitain Jack)' -e DEBEMAIL='Capitain_Jack@yahoo.com' -e DEB_BUILD_OPTIONS=parallel=4 \
  -e NAME="$name" \
  --mount "type=bind,src=$WORK,dst=/work" \
