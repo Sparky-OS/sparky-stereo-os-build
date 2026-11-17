@@ -457,6 +457,9 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
             if own_previous:
                 try:
                     previous_qualified = archive_context.qualify(previous_deb, old_inputs)
+                except package.NoSpace:
+                    # no room is the machine's state, not the previous edition's: the gate's one-at-a-time recheck takes it
+                    raise
                 except (OSError, package.Invalid) as exc:
                     raise package.Invalid(f'{Path(previous_deb).name}: previous edition dependency qualification '
                                           f'failed; provide the matching previous sibling snapshot:\n{exc}') from exc

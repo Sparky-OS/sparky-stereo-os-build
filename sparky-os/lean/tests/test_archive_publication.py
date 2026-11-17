@@ -716,3 +716,21 @@ def test_public_key_copy_obeys_space_guard(sources, tmp_path):
         with pytest.raises(package.Invalid, match='public-key space refusal'):
             archive.Archive(sources, tmp_path / 'scratch', 'amd64')
     assert not list((tmp_path / 'scratch').glob('link-*/etc/key-*.gpg'))
+
+
+def test_no_room_in_the_previous_check_stays_no_room(sources, tmp_path, monkeypatch):
+    # ORDER 647: wrapped as "previous edition dependency qualification failed", a disk floor reached while the gate
+    # checked packages side by side was not recognised, the one-at-a-time recheck never ran and the round stopped
+    programs, libraries, common = edition(tmp_path / 'build')
+    context = archive.Archive(sources, tmp_path / 'scratch', 'amd64')
+    real = context.qualify
+
+    def qualify(deb, inputs):
+        if Path(deb) == Path(programs[0]):
+            raise package.NoSpace(f'{tmp_path}: insufficient space: 1 free, 2 requested, floor 3')
+        return real(deb, inputs)
+
+    monkeypatch.setattr(context, 'qualify', qualify)
+    with pytest.raises(package.NoSpace, match='insufficient space'):
+        linkcheck.check(programs[1], programs[0], archive_context=context,
+                       siblings=[libraries[1], common], previous_siblings=[libraries[0], common])
