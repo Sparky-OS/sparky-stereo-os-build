@@ -228,7 +228,7 @@ def previous_build(deb, previous_dir=None, previous_debs=(), controls=None):
 
 
 def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, scratch=None, siblings=(),
-               previous_siblings=(), min_free_gib=2, root_min_free_gib=12):
+               previous_siblings=(), min_free_gib=None, root_min_free_gib=1):
     """Qualify old/new edition snapshots against the same frozen public indexes."""
     archive_config = archive_config or os.environ.get('SPARKY_LC_ARCHIVE_CONFIG')
     scratch = scratch or os.environ.get('SPARKY_LC_SCRATCH')
@@ -272,7 +272,18 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
     except Exception as exc:
         stop = exc
     try:
-        for notes, error in parallel.ordered(_linked, range(len(_LINK['plan']))):
+        results = parallel.ordered(_linked, range(len(_LINK['plan'])))
+        side_by_side = min(parallel.processors(), len(_LINK['plan'])) > 1
+        for index in range(len(_LINK['plan'])):
+            notes, error = next(results)
+            if isinstance(error, package.NoSpace) and side_by_side:
+                side_by_side = False
+                # side by side the packages share their disks: from this one on, one at a time, as a single process
+                results.close()
+                print(f'lc1: a disk floor was reached with packages checked side by side; {Path(_LINK["plan"][index][0]).name}'
+                      ' and the packages after it are checked one at a time')
+                results = map(_linked, range(index, len(_LINK['plan'])))
+                notes, error = next(results)
             sys.stdout.write(notes)
             if error is not None:
                 raise error
@@ -323,8 +334,10 @@ def main():
     link.add_argument('--scratch', help='private APT state, verified cache and roots (SPARKY_LC_SCRATCH)')
     link.add_argument('--siblings-file', help='newline-separated authoritative current edition .debs')
     link.add_argument('--previous-siblings-file', help='previous edition snapshot .debs, including unchanged dependencies')
-    link.add_argument('--min-free-gib', type=int, default=os.environ.get('SPARKY_LC_MIN_FREE_GIB', '2'), help='scratch floor, at least 2 GiB')
-    link.add_argument('--root-min-free-gib', type=int, default=os.environ.get('SPARKY_LC_ROOT_MIN_FREE_GIB', '12'), help='root filesystem floor, at least 12 GiB')
+    link.add_argument('--min-free-gib', type=int, default=os.environ.get('SPARKY_LC_MIN_FREE_GIB'),
+                      help='scratch floor (default the house floor of its disk: 1 GiB on /, 2 GiB on another)')
+    link.add_argument('--root-min-free-gib', type=int, default=os.environ.get('SPARKY_LC_ROOT_MIN_FREE_GIB', '1'),
+                      help='root filesystem floor (the house floor, 1 GiB)')
     selection = commands.add_parser('check-selection')
     selection.add_argument('tsv')
     tree = commands.add_parser('check-tree')

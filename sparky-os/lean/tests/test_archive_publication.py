@@ -88,6 +88,21 @@ def test_order_638_packages_qualified_side_by_side_share_one_frozen_universe(sou
     assert len({Path(obj['metadata']).parent for _, obj in rows}) == 2
 
 
+def test_order_638_a_floor_reached_side_by_side_rechecks_one_at_a_time(sources, tmp_path, capsys):
+    programs, libraries, common = edition(tmp_path / 'build')
+    parent, real = os.getpid(), linkcheck.check
+
+    def check(*args, **kwargs):
+        if os.getpid() != parent:
+            raise package.NoSpace('/: free space 1 is below root floor 1073741824')
+        return real(*args, **kwargs)
+    with patch.object(parallel, 'processors', return_value=2), patch.object(linkcheck, 'check', check):
+        release.check_link([programs[1], libraries[1]], archive_config=sources, scratch=tmp_path / 'scratch', siblings=[common])
+    out = capsys.readouterr().out
+    assert 'and the packages after it are checked one at a time' in out
+    assert out.endswith('lc1: archive-qualified link check passed for 2 packages\n')
+
+
 def test_direct_upgrade_with_explicit_previous_siblings(sources, tmp_path):
     programs, libraries, common = edition(tmp_path / 'build')
     context = archive.Archive(sources, tmp_path / 'scratch', 'amd64')
@@ -215,7 +230,7 @@ def disk_free(free):
 
 
 def test_low_space_refuses_before_snapshot_import_or_apt(sources, tmp_path):
-    with patch('lean.archive.shutil.disk_usage', return_value=disk_free((12 << 30) - 1)):
+    with patch('lean.archive.shutil.disk_usage', return_value=disk_free((1 << 30) - 1)):
         with pytest.raises(package.Invalid, match='below root floor'):
             archive.Archive(sources, tmp_path / 'scratch', 'amd64')
     assert not (tmp_path / 'scratch').exists()
@@ -225,7 +240,7 @@ def test_low_space_refuses_selected_copy_without_crossing_floor(sources, tmp_pat
     context = archive.Archive(sources, tmp_path / 'scratch', 'amd64')
     candidate = deb(tmp_path, 'large-input', files={'usr/share/blob': os.urandom(1 << 20)})
     item = context.input(candidate)
-    with patch('lean.archive.shutil.disk_usage', return_value=disk_free((12 << 30) + item['size'] - 1)):
+    with patch('lean.archive.shutil.disk_usage', return_value=disk_free((1 << 30) + item['size'] - 1)):
         with pytest.raises(package.Invalid, match='insufficient space'):
             context.cached_input(item)
     assert not list(context.cache.iterdir())
@@ -235,7 +250,7 @@ def test_low_space_refuses_extraction_before_payload_write(sources, tmp_path):
     candidate = deb(tmp_path, 'payload', files={'usr/share/blob': os.urandom(1 << 20)})
     root = tmp_path / 'root'
     root.mkdir()
-    with patch('lean.archive.shutil.disk_usage', return_value=disk_free((12 << 30) + (512 << 10))):
+    with patch('lean.archive.shutil.disk_usage', return_value=disk_free((1 << 30) + (512 << 10))):
         with pytest.raises(package.Invalid, match='insufficient space'):
             archive.unpack(candidate, root)
     assert not (root / 'usr/share/blob').exists()
@@ -264,7 +279,7 @@ def test_raised_scratch_floor_and_minimum_configuration(sources, tmp_path):
         with pytest.raises(package.Invalid, match='insufficient space'):
             archive.Archive(sources, tmp_path / 'scratch', 'amd64', min_free_gib=14)
     with pytest.raises(package.Invalid, match='floors cannot be below'):
-        archive.Archive(sources, tmp_path / 'low', 'amd64', root_min_free_gib=1)
+        archive.Archive(sources, tmp_path / 'low', 'amd64', root_min_free_gib=0)
 
 
 def test_frozen_input_drift_is_rejected(sources, tmp_path):

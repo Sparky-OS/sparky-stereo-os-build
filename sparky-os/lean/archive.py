@@ -539,8 +539,9 @@ def unpack(deb, root, check_space=None, diversions=None, package_name=None):
         proc.communicate()
 
 
-def space(path, required=0, minimum=2 << 30, root_minimum=12 << 30):
-    """Refuse writes before either the scratch or root filesystem floor is crossed."""
+def space(path, required=0, minimum=2 << 30, root_minimum=1 << 30):
+    """Refuse writes before either the scratch or root filesystem floor is crossed (the house floors by default, ORDER 638:
+    1 GiB on the root file system, 2 GiB on another disk)."""
     path = Path(path)
     root_free = shutil.disk_usage('/').free
     if root_free < root_minimum:
@@ -616,15 +617,17 @@ class Archive:
     apply after the gate's own exact pins, as on a system that has them installed.
     """
 
-    def __init__(self, config, scratch, arch, min_free_gib=2, root_min_free_gib=12):
+    def __init__(self, config, scratch, arch, min_free_gib=None, root_min_free_gib=1):
         self.arch = arch
         self.scratch = Path(scratch).resolve()
-        if min_free_gib < 2 or root_min_free_gib < 12:
-            raise package.Invalid('space floors cannot be below 2 GiB scratch and 12 GiB root')
-        self.minimum, self.root_minimum = min_free_gib << 30, root_min_free_gib << 30
         ancestor = self.scratch
         while not ancestor.exists():
             ancestor = ancestor.parent
+        if min_free_gib is None:       # the house floor of the scratch's disk
+            min_free_gib = 1 if ancestor.stat().st_dev == Path('/').stat().st_dev else 2
+        if min_free_gib < 1 or root_min_free_gib < 1:
+            raise package.Invalid('space floors cannot be below the house floor of 1 GiB')
+        self.minimum, self.root_minimum = min_free_gib << 30, root_min_free_gib << 30
         space(ancestor, 1 << 20, self.minimum, self.root_minimum)
         self.scratch.mkdir(parents=True, exist_ok=True)
         self.ensure_space(1 << 20)
