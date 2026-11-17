@@ -93,11 +93,15 @@ class InventoryError(package.Invalid):
 def probe(args, what, path, timeout):
     """The output of an inventory tool, read in the C locale; its failure is an InventoryError naming the tool's own
     error, so a failed probe never passes for a file with nothing to report."""
+    env = {'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}
     try:
-        run = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
-                             env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'})
+        try:
+            run = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env)
+        except subprocess.TimeoutExpired:
+            # one longer try on a busy machine, as for the loader trace (ORDER 648)
+            run = subprocess.run(args, capture_output=True, text=True, timeout=timeout * 6, env=env)
     except subprocess.TimeoutExpired:
-        raise InventoryError(f'cannot verify the {what} of {path}: {args[0]} timed out after {timeout} s')
+        raise InventoryError(f'cannot verify the {what} of {path}: {args[0]} timed out after {timeout * 6} s')
     except OSError as exc:
         raise InventoryError(f'cannot verify the {what} of {path}: {args[0]}: {exc}')
     if run.returncode:
