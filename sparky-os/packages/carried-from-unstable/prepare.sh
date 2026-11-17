@@ -29,19 +29,31 @@ printing-metas)
  version=0.20210903+stereo3d1+lc1
  entry="Carry Debian unstable's printer driver metapackages while HPLIP's migration blocks testing; preserve Debian's complete driver recommendations."
  ;;
+apt-xapian-index)
+ dsc=apt-xapian-index_0.59.dsc
+ sha=cf83f0096d05dd7ec50c1074ec7daee0d4000a33f357d81402301a71f9db5c9e
+ patch=apt-xapian-current-tests.patch
+ version=0.59+stereo3d1+lc1
+ entry="Carry the reintroduced Debian indexer; use Santiago Vila's local-suite discovery fix from bug 1145121, current unittest assertions and a living dpkg fixture."
+ ;;
 *) echo "no qualified preparation for $name" >&2; exit 2 ;;
 esac
 mkdir -p "/work/candidates/$name"
 cd "/work/candidates/$name"
 [ ! -e source ] || { echo 'source already exists' >&2; exit 1; }
 printf '%s  %s\n' "$sha" "/work/$name/$dsc" | sha256sum -c -
-if [ "$name" != printing-metas ]; then cp /work/"$name"/*.orig.tar.* .; fi
+case $name in printing-metas|apt-xapian-index) ;; *) cp /work/"$name"/*.orig.tar.* . ;; esac
 dpkg-source -x "/work/$name/$dsc" source
 cd source
 if [ -n "$patch" ]; then
- cp "$HERE/patches/$patch" "debian/patches/$patch"
- printf '%s\n' "$patch" >> debian/patches/series
- QUILT_PATCHES=debian/patches quilt push
+ if [ "$name" = apt-xapian-index ]; then
+  # Native source archives contain the patched tree, without a quilt application step.
+  patch -p1 < "$HERE/patches/$patch"
+ else
+  cp "$HERE/patches/$patch" "debian/patches/$patch"
+  printf '%s\n' "$patch" >> debian/patches/series
+  QUILT_PATCHES=debian/patches quilt push
+ fi
 fi
 if [ "$name" = hplip ]; then
  # HP removed the privileged plugin D-Bus service in its security release.

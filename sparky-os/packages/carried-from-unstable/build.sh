@@ -7,7 +7,7 @@
 set -euo pipefail
 [ $# = 5 ] || { echo 'usage: build.sh SOURCE WORK IMAGE PUBLISHED_TREE ARCHIVE_DIR' >&2; exit 2; }
 name=$1
-case $name in hplip|xserver-xorg-video-qxl|printing-metas) ;; *) echo "no qualified source preparation for $name" >&2; exit 2 ;; esac
+case $name in hplip|xserver-xorg-video-qxl|printing-metas|apt-xapian-index) ;; *) echo "no qualified source preparation for $name" >&2; exit 2 ;; esac
 : "${SPARKY_CONTAINER_PREFIX:?set a lane-owned container prefix}"
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOOLKIT=$(cd "$HERE/../.." && pwd)

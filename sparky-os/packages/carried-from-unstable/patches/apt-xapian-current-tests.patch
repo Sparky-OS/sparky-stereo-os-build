@@ -1,0 +1,139 @@
+Description: Discover the local suite and run it with current Python and APT data
+ Santiago Vila supplied the nose2 start-directory fix in Debian bug 1145121.
+ Daniel Campos Ramos updated removed unittest aliases and replaced the removed
+ libept-dev fixture with dpkg; retain all four rebuild/incremental tests.
+Author: Santiago Vila
+Author: Daniel Campos Ramos
+Origin: other, https://bugs.debian.org/1145121#25
+Bug-Debian: https://bugs.debian.org/1145121
+Forwarded: no
+Last-Update: 2026-11-17
+
+--- a/runtests
++++ b/runtests
+@@ -8,13 +8,13 @@
+ 	--cov)
+ 		echo "Run with code coverage..."
+ 		shift
+-		nose2-3 test --with-coverage --cover-package axi --cover-html --cover-html-dir=test-coverage "$@"
++		nose2-3 -s test --with-coverage --cover-package axi --cover-html --cover-html-dir=test-coverage "$@"
+ 		echo "Coverage information found at file://`pwd`/test/test-coverage"
+ 		;;
+ 	--clean)
+ 		rm -rf test/test-coverage test/.coverage testdb
+ 		;;
+ 	*)
+-		python3 -m nose2 test "$@"
++		python3 -m nose2 -s test "$@"
+ 		;;
+ esac
+--- a/test/test_indexer.py
++++ b/test/test_indexer.py
+@@ -13,7 +13,7 @@
+ import axi.indexer
+ 
+ 
+-def smallcache(pkglist=["apt", "libept-dev", "gedit"]):
++def smallcache(pkglist=["apt", "dpkg", "gedit"]):
+     class sc:
+         def __init__(self, cache) -> None:
+             self._pkgs = pkglist
+@@ -56,10 +56,10 @@
+         self.indexer._test_wrap_apt_cache(smallcache())
+ 
+         # No other indexers are running, ensure lock succeeds
+-        self.assert_(self.indexer.lock())
++        self.assertTrue(self.indexer.lock())
+ 
+         # No index exists, so the indexer should decide it needs to run
+-        self.assert_(self.indexer.setupIndexing())
++        self.assertTrue(self.indexer.setupIndexing())
+ 
+         # Perform a rebuild
+         self.indexer.rebuild()
+@@ -73,13 +73,13 @@
+     def testDeb822Rebuild(self) -> None:
+         assert self.indexer
+         pkgfile = os.path.join(axi.XAPIANDBPATH, "packages")
+-        subprocess.check_call("apt-cache show apt libept-dev gedit > " + pkgfile, shell=True)
++        subprocess.check_call("apt-cache show apt dpkg gedit > " + pkgfile, shell=True)
+ 
+         # No other indexers are running, ensure lock succeeds
+-        self.assert_(self.indexer.lock())
++        self.assertTrue(self.indexer.lock())
+ 
+         # No index exists, so the indexer should decide it needs to run
+-        self.assert_(self.indexer.setupIndexing())
++        self.assertTrue(self.indexer.setupIndexing())
+ 
+         # Perform a rebuild
+         self.indexer.rebuild([pkgfile])
+@@ -96,9 +96,9 @@
+         # Perform the initial indexing
+         progress = axi.indexer.SilentProgress()
+         pre_indexer = axi.indexer.Indexer(progress, True)
+-        pre_indexer._test_wrap_apt_cache(smallcache(["apt", "libept-dev", "gedit"]))
+-        self.assert_(pre_indexer.lock())
+-        self.assert_(pre_indexer.setupIndexing())
++        pre_indexer._test_wrap_apt_cache(smallcache(["apt", "dpkg", "gedit"]))
++        self.assertTrue(pre_indexer.lock())
++        self.assertTrue(pre_indexer.setupIndexing())
+         pre_indexer.rebuild()
+         pre_indexer = None
+         curidx = open(axi.XAPIANINDEX).read()
+@@ -110,12 +110,12 @@
+         self.indexer._test_wrap_apt_cache(smallcache(["apt", "coreutils", "gedit"]))
+ 
+         # No other indexers are running, ensure lock succeeds
+-        self.assert_(self.indexer.lock())
++        self.assertTrue(self.indexer.lock())
+ 
+         # An index exists the plugin modification timestamps are the same, so
+         # we need to force the indexer to run
+-        self.assert_(not self.indexer.setupIndexing())
+-        self.assert_(self.indexer.setupIndexing(force=True))
++        self.assertTrue(not self.indexer.setupIndexing())
++        self.assertTrue(self.indexer.setupIndexing(force=True))
+ 
+         # Perform a rebuild
+         self.indexer.incrementalUpdate()
+@@ -135,10 +135,10 @@
+         self.indexer._test_wrap_apt_cache(smallcache())
+ 
+         # No other indexers are running, ensure lock succeeds
+-        self.assert_(self.indexer.lock())
++        self.assertTrue(self.indexer.lock())
+ 
+         # No index exists, so the indexer should decide it needs to run
+-        self.assert_(self.indexer.setupIndexing())
++        self.assertTrue(self.indexer.setupIndexing())
+ 
+         # Perform an incremental rebuild, which should fall back on a normal
+         # one
+--- a/test/tools.py
++++ b/test/tools.py
+@@ -10,17 +10,17 @@
+ 
+ class AxiTestBase(unittest.TestCase):
+     def assertCleanIndex(self) -> None:
+-        self.assert_(os.path.exists(axi.XAPIANINDEX))
+-        self.assert_(os.path.exists(axi.XAPIANDBSTAMP))
+-        self.assert_(os.path.exists(axi.XAPIANDBVALUES))
+-        self.assert_(os.path.exists(axi.XAPIANDBDOC))
+-        self.assert_(not os.path.exists(axi.XAPIANDBUPDATESOCK))
++        self.assertTrue(os.path.exists(axi.XAPIANINDEX))
++        self.assertTrue(os.path.exists(axi.XAPIANDBSTAMP))
++        self.assertTrue(os.path.exists(axi.XAPIANDBVALUES))
++        self.assertTrue(os.path.exists(axi.XAPIANDBDOC))
++        self.assertTrue(not os.path.exists(axi.XAPIANDBUPDATESOCK))
+         indexer: axi.indexer.Indexer | None
+ 
+         # Index is clean and up to date: an indexer should tell us that it does
+         # not need to run
+         progress = axi.indexer.SilentProgress()
+         indexer = axi.indexer.Indexer(progress, True)
+-        self.assert_(indexer.lock())
+-        self.assert_(not indexer.setupIndexing())
++        self.assertTrue(indexer.lock())
++        self.assertTrue(not indexer.setupIndexing())
+         indexer = None
