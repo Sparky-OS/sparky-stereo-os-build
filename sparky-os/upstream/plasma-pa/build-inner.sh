@@ -10,9 +10,8 @@ trap 'chown -R "$BUILD_UID:$BUILD_GID" /work' EXIT
 apt-get update --error-on=any
 apt-get -y --no-install-recommends install build-essential dpkg-dev devscripts debhelper quilt fakeroot gettext python3 python3-yaml python3-pyelftools nodejs node-acorn ca-certificates bubblewrap
 if ! getent passwd builder >/dev/null; then useradd --create-home builder; fi
-mkdir /work/build
-chown builder:builder /work/build
-cp /source-input/plasma-pa_6.7.4.orig.tar.xz /work/build/
+mkdir /work/build /work/link-scratch
+chown builder:builder /work/build /work/link-scratch
 runuser -u builder -- dpkg-source -x /source-input/plasma-pa_6.7.4-1+stereo3d2+lc1.dsc /work/build/source
 apt-get -y --no-install-recommends build-dep /work/build/source
 cd /work/build/source
