@@ -39,6 +39,9 @@ apt-get -y update
 id builder >/dev/null 2>&1 || useradd -u 1000 -m builder
 if [ -d /extra ]; then apt-get -y --allow-downgrades install /extra/libplib1t64_*amd64.deb /extra/libplib-dev_*amd64.deb; fi
 mkdir -p /work/prepared /work/build /work/link-scratch /work/previous
+: > /work/siblings.list
+[ ! -d /extra ] || find /extra -maxdepth 1 -name "*.deb" -print > /work/siblings.list
+export SPARKY_LC_SIBLINGS_FILE=/work/siblings.list
 chown -R builder:builder /work
 runuser -u builder -- python3 /recipe/sparky-os/upstream/$NAME/prepare-source.py /published/$DSC /work/prepared
 cp /published/*.deb /work/previous/
@@ -47,7 +50,7 @@ cd /work/build
 runuser -u builder -- dpkg-source -x /work/prepared/*+lc1.dsc source
 apt-get -y --no-install-recommends build-dep ./source
 cd source
-runuser -u builder -- env SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" SPARKY_LC_PREVIOUS_DIR="$SPARKY_LC_PREVIOUS_DIR" dpkg-buildpackage -b -us -uc -j4
+runuser -u builder -- env SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" SPARKY_LC_PREVIOUS_DIR="$SPARKY_LC_PREVIOUS_DIR" SPARKY_LC_SIBLINGS_FILE="$SPARKY_LC_SIBLINGS_FILE" dpkg-buildpackage -b -us -uc -j4
 cd /work/build
 PYTHONPATH=/recipe/sparky-os python3 -m lean.release check-debs ./*.deb
 '
