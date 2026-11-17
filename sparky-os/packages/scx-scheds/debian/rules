@@ -4,6 +4,8 @@
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 export CARGO_HOME = $(CURDIR)/debian/.cargo-home
 export CARGO_TARGET_DIR = $(CURDIR)/target
+# scx_nitosis and the cid-form struct_ops refuse clang before 22 (their build.rs says so); forky has clang-22
+export BPF_CLANG = clang-22
 
 %:
 	dh $@

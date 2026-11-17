@@ -7,6 +7,7 @@ scx-scheds (1.1.4+ds-1+sparky1) unstable; urgency=medium
   * The workspace is built as CachyOS builds it, less scx_rlfifo, scx_mitosis, scx_characterize, xtask, vmlinux_docify and the two arena self-test
     crates. The units and /etc/default/scx are upstream's (services/scx.service, services/scx), installed and not enabled: CachyOS's packages enable
     nothing and Bazzite installs the schedulers and disables scx_loader.service (build_files/bazzite/12-finalize.sh:161), so both ship them off.
+    The BPF programs are compiled with clang-22 (BPF_CLANG): scx_nitosis refuses the clang 21 that forky's clang package gives.
     The person's switch is systemctl enable --now scx.service, with the scheduler named in /etc/default/scx.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 16 Nov 2026 12:00:00 -0300
