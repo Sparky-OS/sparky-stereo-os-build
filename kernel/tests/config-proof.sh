@@ -9,21 +9,22 @@
 #   kernel/tests/config-proof.sh [out-dir] [flavour...]     (default ${SPARKY_SCRATCH}/linux-stereo3d-config-proof, base v3 rt)
 #
 # Uses the same environment as build-deb.sh (TAG, TAG_COMMIT, KERNEL_GIT, SERIES, CPUS, MEM). One CPU is enough; nothing is built.
+# NAME names the container (optional; a lane names its containers after itself).
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 OUT=${1:-${SPARKY_SCRATCH:?}/linux-stereo3d-config-proof}
 [ $# -gt 0 ] && shift
 FLAVOURS=${*:-base v3 rt}
-TAG=${TAG:-v7.3.1}
-TAG_COMMIT=${TAG_COMMIT:-79a907609d53d5cd645b42c11550d295d43abf99}
+TAG=${TAG:-v7.3.4}
+TAG_COMMIT=${TAG_COMMIT:-7595a62d45ee1a2297eafa5f2ef5d0a45142d84d}
 SERIES=${SERIES:-$HERE/series}
 IMAGE=${IMAGE:-sparky-kernel-build:1}
 docker image inspect "$IMAGE" >/dev/null 2>&1 || "$HERE/../tools/https-only-build.sh" --platform linux/amd64 -t "$IMAGE" "$HERE/docker"
 mkdir -p "$OUT"
 GITMOUNT=; [ -n "${KERNEL_GIT:-}" ] && GITMOUNT="-v $KERNEL_GIT:/kernel-git:ro"
 # shellcheck disable=SC2086
-docker run --rm --platform linux/amd64 --cpus "${CPUS:-2}" --memory "${MEM:-8g}" --user "$(id -u):$(id -g)" \
+docker run --rm ${NAME:+--name "$NAME"} --ulimit core=0 --platform linux/amd64 --cpus "${CPUS:-2}" --memory "${MEM:-8g}" --user "$(id -u):$(id -g)" \
     -v "$OUT":/out -v "$HERE":/kernel:ro -v "$SERIES":/series:ro $GITMOUNT \
     -e TAG="$TAG" -e TAG_COMMIT="$TAG_COMMIT" -e FLAVOURS="$FLAVOURS" -e HAVE_KERNEL_GIT="${KERNEL_GIT:+1}" \
     "$IMAGE" sh -eu -c '

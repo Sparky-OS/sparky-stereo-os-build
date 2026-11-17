@@ -21,8 +21,9 @@ import re
 import shutil
 import stat
 import subprocess
+import time
 
-from . import project
+from . import parallel, project
 
 FIELD = 'Sparky-Lean-Code'
 FORMAT = 'lc1'
@@ -314,6 +315,35 @@ def preservation(plan):
     return plan
 
 
+def _project_payload(item):
+    real, path, name = item
+    data = real.read_bytes()
+    r = project.project(path, data, name)
+    return r, lzma.compress(data, preset=9) if r.status == 'projected' else None
+
+
+def _left(real, row, plan, readers, documentation):
+    """Why a payload entry stays as it is, or None when its handler decides."""
+    if row['kind'] != 'file':
+        return 'symlink: retained'
+    path = row['path']
+    kept = next((pattern for pattern in plan if fnmatch.fnmatchcase(path, pattern)), None)
+    if documentation:
+        if not (path.startswith(HR_BASE + '/') or path.startswith('/usr/share/doc/')):
+            raise Invalid('HR companion may contain only documentation')
+        return 'authored documentation: retained'
+    if kept is not None:
+        return PRESERVED + plan[kept]
+    if real.stat().st_nlink > 1:
+        return 'hardlinked payload: retained'
+    if row['bytes'] == 0 or row['bytes'] > MAX_TEXT:
+        return 'empty' if row['bytes'] == 0 else 'larger than 4 MiB'
+    data = real.read_bytes()
+    if b'\0' in data[:8192]:
+        return 'binary'
+    return readers.get(path)
+
+
 def prepare(root, hr_root=None, *, documentation=False, preserve=None, retired=None):
     """Final staging step, before md5sums/dpkg-deb. Never run against an installed root.
 
@@ -350,47 +380,35 @@ def prepare(root, hr_root=None, *, documentation=False, preserve=None, retired=N
     readers = project.read_as_data({row['path']: real.read_bytes() for real, row in items
                                     if row['kind'] == 'file' and project.reads_others(row['path'])},
                                    (row['path'] for _, row in items)) if not documentation else {}
-    for real, row in items:
-        path = row['path']
-        row.update(status='left', reason='symlink: retained')
-        if row['kind'] == 'file':
-            kept = next((pattern for pattern in plan if fnmatch.fnmatchcase(path, pattern)), None)
-            if documentation:
-                if not (path.startswith(HR_BASE + '/') or path.startswith('/usr/share/doc/')):
-                    raise Invalid('HR companion may contain only documentation')
-                row['reason'] = 'authored documentation: retained'
-            elif kept is not None:
-                row['reason'] = PRESERVED + plan[kept]
-            elif real.stat().st_nlink > 1:
-                row['reason'] = 'hardlinked payload: retained'
-            elif row['bytes'] == 0 or row['bytes'] > MAX_TEXT:
-                row['reason'] = 'empty' if row['bytes'] == 0 else 'larger than 4 MiB'
-            else:
-                data = real.read_bytes()
-                if b'\0' in data[:8192]:
-                    row['reason'] = 'binary'
-                elif path in readers:
-                    row['reason'] = readers[path]
-                else:
-                    r = project.project(path, data, p)
-                    row.update(status=r.status, reason=r.reason, handler=r.handler, variant=r.variant)
-                    # Failed qualification is a build failure, not permission to stamp a broken pass.
-                    if r.reason.startswith(('check failed:', 'not stable under', 'adapter error:')):
-                        raise Invalid(f'{path}: {r.reason}')
-                    if r.status == 'projected':
-                        st = real.stat()
-                        originals.append((r.sha_in, data))
-                        real.write_bytes(r.lean)
-                        os.utime(real, ns=(st.st_atime_ns, st.st_mtime_ns))
-                        row.update(sha256=r.sha_out, bytes=r.bytes_out, sha_hr=r.sha_in,
-                                   bytes_hr=r.bytes_in, check=r.check)
+    started = time.monotonic()
+    reasons = [_left(real, row, plan, readers, documentation) for real, row in items]
+    results = parallel.ordered(_project_payload, [(real, row['path'], p) for (real, row), reason in zip(items, reasons)
+                                                  if reason is None])
+    for (real, row), reason in zip(items, reasons):
+        row.update(status='left', reason=reason)
+        if reason is None:
+            r, packed = next(results)
+            row.update(status=r.status, reason=r.reason, handler=r.handler, variant=r.variant)
+            # Failed qualification is a build failure, not permission to stamp a broken pass.
+            if r.reason.startswith(('check failed:', 'not stable under', 'adapter error:')):
+                raise Invalid(f'{row["path"]}: {r.reason}')
+            if r.status == 'projected':
+                st = real.stat()
+                originals.append((r.sha_in, packed))
+                real.write_bytes(r.lean)
+                os.utime(real, ns=(st.st_atime_ns, st.st_mtime_ns))
+                row.update(sha256=r.sha_out, bytes=r.bytes_out, sha_hr=r.sha_in,
+                           bytes_hr=r.bytes_in, check=r.check)
         rows.append(row)
+    if not documentation:
+        print(f'Payload Lean Code: {p}: {len(originals)}/{len(items)} files projected in {time.monotonic() - started:.0f} s '
+              f'on {parallel.processors()} processors')
     if originals:
         (hr / 'DEBIAN').mkdir(parents=True)
-        for sha, data in originals:
+        for sha, packed in originals:
             dest = hr / hr_path(p, a, sha).lstrip('/')
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(lzma.compress(data, preset=9))
+            dest.write_bytes(packed)
         source = fields.get('source', f'{p} ({v})')
         multi = '\nMulti-Arch: same' if a != 'all' else ''
         (hr / 'DEBIAN/control').write_text(

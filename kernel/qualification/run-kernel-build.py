@@ -2,39 +2,60 @@
 """Build one prepared Lean Code kernel source package unsigned, in a disposable container.
 
     run-kernel-build.py FLAVOUR --counter N [--memory 16g] [--floor-gb G] [--archive-config FILE]
+                        [--container NAME] [--cpus N] [--jobs N] [--detach]
 
 prepare-kernel-source.py has already written SPARKY_MIGRATION_WORK/kernel-sources/FLAVOUR. The packages stay unsigned
 (no SPARKY_SIGNING_KEY_DIR is mounted): the release coordinator signs the image afterwards (kernel/qualification/sign-kernel-image.py).
 Module signing uses Kbuild's own key, which exists only during the build. The tree of a finished build is pruned by
-the caller once its packages are retained. The build stops when SPARKY_MIGRATION_WORK has less than --floor-gb free (default 12,
-the root file system's floor; a scratch disk takes its own).
+the caller once its packages are retained. SPARKY_MIGRATION_WORK may be on any local solid-state disk with room (ORDER 638;
+a hard disk or a network mount is refused), so two flavours can use two disks; the build stops when it has less than
+--floor-gb free (default the house floor of its disk: 1 GiB on the root file system, 2 GiB on another).
 The Lean Code link gate (lean.debhelper, ORDER 198) runs inside the package build: it resolves the packages' runtime
 dependencies from the public archives of --archive-config (default sparky-os/lean/archive.example.json, Debian forky main)
 and starts their programs in bubblewrap, so the container has bubblewrap and unconfined seccomp, AppArmor and system paths.
-The gate also keeps 12 GiB free on the root file system, which inside the container is the host's.
+The gate keeps the same house floors: its scratch's disk the floor above, the root file system (the host's, inside the
+container) 1 GiB.
+--container names the container (default sparky-lc-kernel-FLAVOUR; two runs of one flavour need two names), --cpus sets its
+CPU quota (default every processor of the host) and --jobs its make jobs (default what nproc grants inside the container, the
+quota; more jobs than CPUs let a quota raised later with docker update --cpus be used). --detach
+starts the container detached and waits on its state, then writes docker logs to build.log: a Docker socket proxy can cut the
+attached output of a long run while the build goes on (ORDER 627).
+The container gets the host's provenance facts as sparky-os/repo/build-provenance.sh gives them (the build repository's commit
+and whether sparky-os is dirty, the builder image's id and digests, an invocation id, the start time), so the job's
+`lean.release check-debs` writes the build record (ORDER 394b, 412); the source date stays the prepared source's own.
 """
 from pathlib import Path
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
 import time
+import uuid
+from datetime import datetime, timezone
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sparky-os' / 'config'))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sparky-os' / 'release'))
 import local_config as cfg
 from build_slots import start_build
+import scratch_disk
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('flavour', choices=['base', 'v3', 'rt'])
 parser.add_argument('--counter', required=True)
 parser.add_argument('--packaging-revision')
 parser.add_argument('--memory', default='16g')
-parser.add_argument('--floor-gb', type=float, default=12)
+parser.add_argument('--floor-gb', type=float)
 parser.add_argument('--archive-config', type=Path)
+parser.add_argument('--container')
+parser.add_argument('--cpus', default=str(os.cpu_count()))
+parser.add_argument('--jobs', type=int)
+parser.add_argument('--detach', action='store_true')
 args = parser.parse_args()
 base = cfg.path('SPARKY_MIGRATION_WORK')
+scratch_disk.check(base)
+floor = args.floor_gb if args.floor_gb is not None else scratch_disk.floor_gib(base)
 kit = cfg.TREE
 flavour = args.flavour
 name = 'linux-stereo-' + flavour
@@ -73,7 +94,7 @@ shutil.move(source, work / 'source')
 shutil.copy2(args.archive_config or kit / 'sparky-os/lean/archive.example.json', work / 'archives.json')
 recipe = '''#!/bin/bash
 set -euo pipefail
-export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
+export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=@JOBS@
 sh /run/https-only-apt.sh
 apt-get -y update
 apt-get -y --no-install-recommends build-dep /work/source
@@ -83,38 +104,71 @@ mkdir -p /work/lc-scratch
 chown -R builder:builder /work
 cd /work/source
 runuser -u builder -- env SPARKY_LC_ARCHIVE_CONFIG=/work/archives.json SPARKY_LC_SCRATCH=/work/lc-scratch \
-    dpkg-buildpackage -us -uc -b -j4
+    dpkg-buildpackage -us -uc -b -j@JOBS@
 cp .sparky-lc/source.json /work/native-source.json
 tar -cJf /work/native-authored-evidence.tar.xz .sparky-lc
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/*+lc1_*.deb
 find build/certs -name signing_key.pem -o -name x509.genkey > /work/key-remnants.txt
 test ! -s /work/key-remnants.txt
 '''
-(work / 'run.sh').write_text(recipe)
+(work / 'run.sh').write_text(recipe.replace('@JOBS@', str(args.jobs) if args.jobs else '$(nproc)'))
 status = dict(source=name, version=version, architecture='amd64', state='queued', archives=[],
               signed=False, source_descriptor_sha256=hashlib.sha256(descriptor.read_bytes()).hexdigest())
 (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
-container = 'sparky-lc-kernel-' + flavour
-command = ['docker', 'run', '--rm', '--ulimit', 'core=0', '--platform', 'linux/amd64', '--name', container,
-           '--cpus', '4', '--memory', args.memory, '--security-opt', 'seccomp=unconfined',
+container = args.container or 'sparky-lc-kernel-' + flavour
+image = 'sparky-lc-migration:20261020'
+provenance = ['-e', 'SPARKY_BUILD_INVOCATION=' + str(uuid.uuid4()),
+              '-e', 'SPARKY_BUILD_STARTED=' + datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+              '-e', 'SPARKY_BUILD_IMAGE_NAME=' + image]
+commit = subprocess.run(['git', '-C', str(kit), 'rev-parse', '--verify', 'HEAD'], capture_output=True, text=True)
+if commit.returncode == 0 and len(commit.stdout.strip()) == 40:
+    dirty = subprocess.run(['git', '-C', str(kit), 'status', '--porcelain', '--untracked-files=normal', '--', 'sparky-os'],
+                           capture_output=True, text=True, check=True).stdout.strip()
+    provenance += ['-e', 'SPARKY_BUILD_COMMIT=' + commit.stdout.strip(), '-e', 'SPARKY_BUILD_DIRTY=' + ('1' if dirty else '0')]
+else:
+    print('provenance: NOT recorded: the build repository is not a git checkout with a commit', file=sys.stderr)
+image_id = subprocess.run(['docker', 'image', 'inspect', '--format', '{{.Id}}', image], capture_output=True, text=True)
+if image_id.returncode == 0 and image_id.stdout.strip().startswith('sha256:'):
+    digests = subprocess.run(['docker', 'image', 'inspect', '--format', '{{range .RepoDigests}}{{.}} {{end}}', image],
+                             capture_output=True, text=True).stdout.strip()
+    provenance += ['-e', 'SPARKY_BUILD_IMAGE_ID=' + image_id.stdout.strip(), '-e', 'SPARKY_BUILD_IMAGE_REPO_DIGESTS=' + digests]
+else:
+    print(f'provenance: NOT recorded: docker image inspect {image} gave no id', file=sys.stderr)
+command = ['docker', 'run', '-d' if args.detach else '--rm', '--ulimit', 'core=0', '--platform', 'linux/amd64', '--name', container,
+           '--cpus', args.cpus, '--memory', args.memory, '--security-opt', 'seccomp=unconfined',
            '--security-opt', 'apparmor=unconfined', '--security-opt', 'systempaths=unconfined',
-           '-v', str(work) + ':/work',
+           '-e', f'SPARKY_LC_MIN_FREE_GIB={int(scratch_disk.floor_gib(base))}', '-v', str(work) + ':/work',
            '-v', str(kit / 'sparky-os') + ':/toolkit:ro',
            '-v', '/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro',
            '-v', str(Path(__file__).resolve().parents[2] / 'tools' / 'https-only-apt.sh') + ':/run/https-only-apt.sh:ro',
-           'sparky-lc-migration:20261020', 'bash', '/work/run.sh']
+           *provenance, image, 'bash', '/work/run.sh']
 with (work / 'build.log').open('w') as log:
     process = start_build(command, container, log)
     status['state'] = 'building'
     (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
     start, stopped = time.time(), False
-    while process.poll() is None:
-        if shutil.disk_usage(base).free < args.floor_gb * 1024**3:
+    def running():
+        if not args.detach:
+            return process.poll() is None
+        state = subprocess.run(['docker', 'inspect', '-f', '{{.State.Running}}', container],
+                               capture_output=True, text=True)
+        return state.returncode == 0 and state.stdout.strip() == 'true'
+    if args.detach and process.wait() != 0:
+        raise SystemExit(f'{container}: docker run -d failed, see {work / "build.log"}')
+    while running():
+        if shutil.disk_usage(base).free < floor * 1024**3:
             subprocess.run(['docker', 'stop', '-t', '20', container], check=False)
             stopped = True
             break
         time.sleep(5)
-    result = process.wait()
+    if args.detach:
+        subprocess.run(['docker', 'wait', container], capture_output=True, check=False)
+        result = int(subprocess.run(['docker', 'inspect', '-f', '{{.State.ExitCode}}', container],
+                                    capture_output=True, text=True, check=True).stdout.strip())
+        subprocess.run(['docker', 'logs', container], stdout=log, stderr=subprocess.STDOUT, check=True)
+        subprocess.run(['docker', 'rm', container], capture_output=True, check=True)
+    else:
+        result = process.wait()
 status.update(state='candidate-needs-review' if result == 0 else 'needs-repair',
               exit_code=result, disk_floor_stop=stopped, seconds=round(time.time() - start, 1),
               archives=sorted(p.name for p in work.glob('*+lc1_*.deb')))

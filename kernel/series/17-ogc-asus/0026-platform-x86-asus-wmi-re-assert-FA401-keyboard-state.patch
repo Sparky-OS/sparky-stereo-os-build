@@ -24,15 +24,11 @@ Signed-off-by: ido <106871003+idobutidont@users.noreply.github.com>
 (cherry picked from commit 03a883a3dada356f1c0f42948749fd5616afc89f)
 
 OGC-tag: FROM-ML
+[ORDER 636: ported to v7.3.4 with 17/0024 as ported: the default state flags use TUF_RGB_STATE_SHUTDOWN, the name upstream b5b3ac5af gave bit 23 (0024 named it TUF_RGB_STATE_KEYBOARD); kbd_rgb_state_store's variable is shutdown, so hunk 4 sits on that context; the other hunks move by 2 to 38 lines (upstream 7fb548304, the WMI method mutex, and b5b3ac5af). Every other changed line is the original one.]
 ---
- drivers/platform/x86/asus-wmi.c | 68 ++++++++++++++++++++++++++++++---
- 1 file changed, 63 insertions(+), 5 deletions(-)
-
-diff --git a/drivers/platform/x86/asus-wmi.c b/drivers/platform/x86/asus-wmi.c
-index cc1a4d755f96951692a499f0ec7d2ad6a279fd23..313fa8042c7d84990ff5a491f91b5bf6778df219 100644
 --- a/drivers/platform/x86/asus-wmi.c
 +++ b/drivers/platform/x86/asus-wmi.c
-@@ -257,6 +257,7 @@ struct asus_wmi {
+@@ -259,6 +259,7 @@
  	int tpd_led_wk;
  	struct led_classdev kbd_led;
  	int kbd_led_wk;
@@ -40,7 +36,7 @@ index cc1a4d755f96951692a499f0ec7d2ad6a279fd23..313fa8042c7d84990ff5a491f91b5bf6
  	bool kbd_led_notify;
  	bool kbd_led_avail;
  	bool kbd_led_registered;
-@@ -310,6 +311,7 @@ struct asus_wmi {
+@@ -312,6 +313,7 @@
  
  	u32 kbd_rgb_dev;
  	bool kbd_rgb_state_available;
@@ -48,7 +44,7 @@ index cc1a4d755f96951692a499f0ec7d2ad6a279fd23..313fa8042c7d84990ff5a491f91b5bf6
  	bool oobe_state_available;
  
  	u8 throttle_thermal_policy_mode;
-@@ -344,6 +346,7 @@ struct asus_wmi {
+@@ -346,6 +348,7 @@
  
  /* Global to allow setting externally without requiring driver data */
  static enum asus_ally_mcu_hack use_ally_mcu_hack = ASUS_WMI_ALLY_MCU_HACK_INIT;
@@ -56,16 +52,16 @@ index cc1a4d755f96951692a499f0ec7d2ad6a279fd23..313fa8042c7d84990ff5a491f91b5bf6
  
  #if IS_ENABLED(CONFIG_ASUS_WMI_DEPRECATED_ATTRS)
  static void asus_wmi_show_deprecated(void)
-@@ -1146,6 +1149,8 @@ static ssize_t kbd_rgb_state_store(struct device *dev,
+@@ -1159,6 +1162,8 @@
  				 struct device_attribute *attr,
  				 const char *buf, size_t count)
  {
 +	struct led_classdev *led = dev_get_drvdata(dev);
 +	struct asus_wmi *asus = container_of(led, struct asus_wmi, kbd_led);
- 	u32 cmd, boot, awake, sleep, keyboard;
+ 	u32 cmd, boot, awake, sleep, shutdown;
  	u32 arg0;
  	int err;
-@@ -1172,6 +1177,8 @@ static ssize_t kbd_rgb_state_store(struct device *dev,
+@@ -1185,6 +1190,8 @@
  	if (err)
  		return err;
  
@@ -74,7 +70,7 @@ index cc1a4d755f96951692a499f0ec7d2ad6a279fd23..313fa8042c7d84990ff5a491f91b5bf6
  	return count;
  }
  static DEVICE_ATTR_WO(kbd_rgb_state);
-@@ -1944,8 +1951,11 @@ static void do_kbd_led_set(struct led_classdev *led_cdev, int value)
+@@ -1957,8 +1964,11 @@
  
  	asus = container_of(led_cdev, struct asus_wmi, kbd_led);
  
@@ -87,7 +83,7 @@ index cc1a4d755f96951692a499f0ec7d2ad6a279fd23..313fa8042c7d84990ff5a491f91b5bf6
  
  	if (asus->kbd_led_avail)
  		kbd_led_update(asus);
-@@ -2155,6 +2165,7 @@ static int asus_wmi_led_init(struct asus_wmi *asus)
+@@ -2180,6 +2190,7 @@
  
  	if (asus->kbd_led_avail) {
  		asus->kbd_led_wk = led_val;
@@ -95,7 +91,7 @@ index cc1a4d755f96951692a499f0ec7d2ad6a279fd23..313fa8042c7d84990ff5a491f91b5bf6
  		if (num_rgb_groups != 0)
  			asus->kbd_led.groups = kbd_rgb_mode_groups;
  	} else {
-@@ -5178,6 +5189,7 @@ static int asus_wmi_add(struct platform_device *pdev)
+@@ -5216,6 +5227,7 @@
  	asus->platform_device = pdev;
  	wdrv->platform_device = pdev;
  	platform_set_drvdata(asus->platform_device, asus);
@@ -103,7 +99,7 @@ index cc1a4d755f96951692a499f0ec7d2ad6a279fd23..313fa8042c7d84990ff5a491f91b5bf6
  
  	if (wdrv->detect_quirks)
  		wdrv->detect_quirks(asus->driver);
-@@ -5216,6 +5228,14 @@ static int asus_wmi_add(struct platform_device *pdev)
+@@ -5254,6 +5266,14 @@
  	asus->kbd_rgb_state_available =
  		asus_wmi_dev_is_present(asus, ASUS_WMI_DEVID_TUF_RGB_STATE) ||
  		asus->driver->quirks->kbd_rgb_state_available;
@@ -113,12 +109,12 @@ index cc1a4d755f96951692a499f0ec7d2ad6a279fd23..313fa8042c7d84990ff5a491f91b5bf6
 +			FIELD_PREP(TUF_RGB_STATE_BOOT, 1) |
 +			FIELD_PREP(TUF_RGB_STATE_AWAKE, 1) |
 +			FIELD_PREP(TUF_RGB_STATE_SLEEP, 1) |
-+			FIELD_PREP(TUF_RGB_STATE_KEYBOARD, 1);
++			FIELD_PREP(TUF_RGB_STATE_SHUTDOWN, 1);
 +	}
  
  	if (asus_wmi_dev_is_present(asus, ASUS_WMI_DEVID_MINI_LED_MODE))
  		asus->mini_led_dev_id = ASUS_WMI_DEVID_MINI_LED_MODE;
-@@ -5356,6 +5376,7 @@ static void asus_wmi_remove(struct platform_device *device)
+@@ -5394,6 +5414,7 @@
  	struct asus_wmi *asus;
  
  	asus = platform_get_drvdata(device);
@@ -126,7 +122,7 @@ index cc1a4d755f96951692a499f0ec7d2ad6a279fd23..313fa8042c7d84990ff5a491f91b5bf6
  	if (asus->driver->i8042_filter)
  		i8042_remove_filter(asus->driver->i8042_filter);
  	wmi_remove_notify_handler(asus->driver->event_guid);
-@@ -5456,17 +5477,54 @@ static int asus_hotk_restore(struct device *device)
+@@ -5494,17 +5515,54 @@
  	return 0;
  }
  
@@ -181,7 +177,7 @@ index cc1a4d755f96951692a499f0ec7d2ad6a279fd23..313fa8042c7d84990ff5a491f91b5bf6
  static void asus_ally_s2idle_restore(void)
  {
  	if (use_ally_mcu_hack == ASUS_WMI_ALLY_MCU_HACK_ENABLED) {
-@@ -5476,20 +5534,20 @@ static void asus_ally_s2idle_restore(void)
+@@ -5514,20 +5572,20 @@
  	}
  }
  

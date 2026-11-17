@@ -1,0 +1,647 @@
+/*
+    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+
+    SPDX-License-Identifier: GPL-2.0-or-later
+*/
+
+#include "scene/stereodepth.h"
+
+#include "core/backendoutput.h"
+#include "core/output.h"
+#include "effect/effecthandler.h"
+#include "options.h"
+#include "wayland/surface.h"
+#include "window.h"
+#include "workspace.h"
+
+#include <stereo-policy.h>
+
+#include <QEasingCurve>
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+namespace KWin
+{
+
+// the width of the view the limits are given for
+static constexpr qreal s_referenceWidth = 1920;
+// the defaults of SunkLimit and PoppedLimit in kwin.kcfg: the depth libstereo-policy gives the reference monitor
+static constexpr qreal s_referenceSunk = 10;
+static constexpr qreal s_referencePopped = 4;
+
+// What opens over a window kept above the others (its menus and sub-menus, and a notification or an on-screen display
+// shown over it) stacks further out than the person's popped limit, where that window stays. The layers over one pinned
+// window share this many popped limits beyond it, so each is a step of span / layers nearer the viewer than the layer
+// under it: the spacing the popped share had before notifications were put at the limit (limit / surfaces in the pile).
+static constexpr qreal s_pinnedStackSpan = 1.0;
+
+// The windows beneath the active one step back one layer each; a layer is this fraction of the sunk limit, and the stack stops at
+// the limit, the wallpaper's depth: the windows beyond this many share the deepest level and never go behind the wallpaper
+// (Daniel, 2026-11-08)
+static constexpr int s_sunkLayers = 5;
+
+// A chain of popups (a menu, its sub-menu, the next) stacks one popped limit per level from its base, whatever the length of the
+// chain: level n is n limits out from the base, the screen for a plain window and the pinned window's level for a window kept above
+// the others, and opening a sub-menu moves nothing above it (Daniel, 2026-11-08: "two menu levels will yeld twice the separation from
+// the screen, three levels the same"). The chain stops growing at this depth, which bounds what is drawn of it.
+static constexpr int s_maxPopupDepth = 6;
+
+// how long a change of level lasts at the default animation speed: towards the viewer quickly, so
+// that nothing is drawn behind what it is over for more than an instant, and away from it gently
+static constexpr std::chrono::milliseconds s_riseDuration(80);
+static constexpr std::chrono::milliseconds s_sinkDuration(150);
+
+enum class Role {
+    Fixed, // at the screen's level whatever happens
+    Desktop,
+    Active,
+    Popped,
+    Sunk,
+    Above, // pinned above the others by the user or a rule: at the popped limit
+    Below, // pinned below the others by the user or a rule: at the sunk limit
+};
+
+static const Window *mainWindow(const Window *window)
+{
+    const Window *main = window;
+    for (int i = 0; i < 16; ++i) {
+        const QList<Window *> mains = main->mainWindows();
+        if (mains.isEmpty()) {
+            break;
+        }
+        main = mains.first();
+    }
+    return main;
+}
+
+// what pops up over a window rather than being a window of its own
+static bool isPopup(const Window *window)
+{
+    return window->isMenu() || window->isDropdownMenu() || window->isPopupMenu() || window->isComboBox()
+        || window->isTooltip() || window->isNotification() || window->isCriticalNotification()
+        || window->isOnScreenDisplay() || window->isAppletPopup() || window->isPopupWindow();
+}
+
+// what the panel shell shows to be noticed, not to be worked in: notifications and on-screen displays
+static bool isAlert(const Window *window)
+{
+    return window->isNotification() || window->isCriticalNotification() || window->isOnScreenDisplay();
+}
+
+static Role roleOf(const Window *window);
+
+static bool isOnStage(const Window *window, const LogicalOutput *output)
+{
+    return window->output() == output && window->isShown() && window->isOnCurrentDesktop() && window->isOnCurrentActivity();
+}
+
+// whether a window of the pile lies over @a window: the active window waits there until it is raised
+static bool isCovered(const Window *window)
+{
+    const QList<Window *> &stack = workspace()->stackingOrder();
+    const RectF frame = window->frameGeometry();
+    for (qsizetype i = stack.indexOf(const_cast<Window *>(window)) + 1; i > 0 && i < stack.size(); ++i) {
+        const Window *other = stack[i];
+        if (other == mainWindow(other) && isOnStage(other, window->output()) && other->frameGeometry().intersects(frame)
+            && roleOf(other) == Role::Sunk) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static Role roleOf(const Window *window)
+{
+    if (window->isDeleted() || window->isFullScreen() || window->isLockScreen() || window->isInternal()
+        || window->isOutline() || window->isInputMethod() || window->isDNDIcon() || window->isPictureInPicture()) {
+        return Role::Fixed;
+    }
+    if (window->isDesktop()) {
+        return Role::Desktop;
+    }
+    if (window->isDock()) {
+        return Role::Fixed;
+    }
+    const Window *main = mainWindow(window);
+    if (main != window) {
+        // what is transient for a window follows it when it is sunk, and pops over everything else
+        const Role mainRole = roleOf(main);
+        return mainRole == Role::Sunk || mainRole == Role::Below ? mainRole : Role::Popped;
+    }
+    if (isPopup(window)) {
+        return Role::Popped;
+    }
+    // a window pinned above or below stays at its limit whatever is active
+    if (window->keepAbove() != window->keepBelow()) {
+        return window->keepAbove() ? Role::Above : Role::Below;
+    }
+    const Window *active = workspace()->activeWindow();
+    return active && mainWindow(active) == window && !isCovered(window) ? Role::Active : Role::Sunk;
+}
+
+// the window kept above the others that @a window opens over: the one it is transient for, or for a notification or an
+// on-screen display the topmost pinned window below it in the stack whose frame it overlaps
+static const Window *pinnedBase(const Window *window)
+{
+    const Window *main = mainWindow(window);
+    if (main != window) {
+        return roleOf(main) == Role::Above ? main : nullptr;
+    }
+    if (!isAlert(window)) {
+        return nullptr;
+    }
+    const QList<Window *> &stack = workspace()->stackingOrder();
+    const RectF frame = window->frameGeometry();
+    for (qsizetype i = stack.indexOf(const_cast<Window *>(window)) - 1; i >= 0; --i) {
+        const Window *other = stack[i];
+        if (other == mainWindow(other) && isOnStage(other, window->output()) && roleOf(other) == Role::Above
+            && other->frameGeometry().intersects(frame)) {
+            return other;
+        }
+    }
+    return nullptr;
+}
+
+// where the program declared a popup sits (kde_stereo_depth_v1.set_place), from -1 to 1
+static std::optional<qreal> declaredPlace(const Window *window)
+{
+    const SurfaceInterface *surface = window->surface();
+    return surface ? surface->stereoPlace() : std::nullopt;
+}
+
+static bool touchesEdge(const Window *window)
+{
+    const RectF frame = window->frameGeometry();
+    const RectF screen = window->output()->geometryF();
+    return frame.x() <= screen.x() || frame.y() <= screen.y()
+        || frame.x() + frame.width() >= screen.x() + screen.width()
+        || frame.y() + frame.height() >= screen.y() + screen.height();
+}
+
+// Whether the edge rule flattens @a window to the screen's level: a popped thing that touches its output's edge. A popup that cannot
+// fit inside the invisible border of an output (ORDER 418), a menu taller or wider than the room the border leaves, is the exception:
+// where the client lets the positioner resize it, ORDER 418's bounds fit it inside the border; otherwise it keeps its place, and it
+// keeps its level and its place in front of what it was opened from (Daniel, 2026-11-08), where the edge rule dropped it behind its
+// parent to the screen's level.
+static bool edgeFlattens(const Window *window)
+{
+    if (!touchesEdge(window)) {
+        return false;
+    }
+    if (isPopup(window)) {
+        const qreal border = StereoDepth::popupBorder(window->output());
+        const RectF screen = window->output()->geometryF();
+        const QSizeF size = window->frameGeometry().size();
+        if (border > 0 && (size.width() > screen.width() - 2 * border || size.height() > screen.height() - 2 * border)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool StereoDepth::isDesktopChrome(const Window *window)
+{
+    return window->isDock() || isPopup(window);
+}
+
+bool StereoDepth::isEnabled()
+{
+    return options->stereoSunkLimit() > 0 || options->stereoPoppedLimit() > 0;
+}
+
+// how many levels deep @a window is in its chain: itself and every popped window it was opened from (a dialog counts, a combo box's list
+// or a menu opened in it is the level beyond it, and so is a pop-up of the panel that holds a menu), up to the window that holds them; a popup with no parent (an X11 override-redirect menu)
+// is the n-th such popup on the output in the stacking order
+static int popupDepth(const Window *window, const LogicalOutput *output)
+{
+    if (window->transientFor()) {
+        int depth = 0;
+        for (const Window *w = window; w && depth < s_maxPopupDepth; w = w->transientFor()) {
+            if (roleOf(w) == Role::Popped) {
+                depth++;
+            }
+        }
+        return std::max(depth, 1);
+    }
+    int rank = 0;
+    for (const Window *other : workspace()->stackingOrder()) {
+        if (isOnStage(other, output) && roleOf(other) == Role::Popped && !other->transientFor() && !edgeFlattens(other) && !declaredPlace(other) && !isAlert(other)) {
+            rank++;
+            if (other == window) {
+                break;
+            }
+        }
+    }
+    return std::clamp(rank, 1, s_maxPopupDepth);
+}
+
+qreal StereoDepth::level(const Window *window)
+{
+    const LogicalOutput *output = window->output();
+    if (!output) {
+        return 0;
+    }
+    const QList<Window *> &stack = workspace()->stackingOrder();
+    switch (roleOf(window)) {
+    case Role::Fixed:
+    case Role::Active:
+        return 0;
+    case Role::Desktop:
+        return -1;
+    case Role::Above:
+        return touchesEdge(window) ? 0 : 1;
+    case Role::Below:
+        return -1;
+    case Role::Popped: {
+        if (edgeFlattens(window)) {
+            return 0;
+        }
+        qreal level = 1;
+        if (const auto place = declaredPlace(window)) {
+            // where the program declared it, under the rules below
+            level = std::clamp(*place, -1.0, 1.0);
+        } else if (const Window *base = pinnedBase(window); base && !touchesEdge(base) && isAlert(window)) {
+            // a notification or an on-screen display over a pinned window, which stays at the limit: one step further out than the
+            // layer under it
+            int count = 0;
+            int below = 0;
+            bool found = false;
+            for (const Window *other : stack) {
+                if (isOnStage(other, output) && roleOf(other) == Role::Popped && !edgeFlattens(other) && !declaredPlace(other) && pinnedBase(other) == base) {
+                    count++;
+                    found |= other == window;
+                    below += !found;
+                }
+            }
+            level = found ? 1 + s_pinnedStackSpan * qreal(below + 1) / count : 1;
+        } else if (isAlert(window)) {
+            // a notification or an on-screen display is the nearest thing on the output, at the
+            // popped limit whatever else is popped
+            level = 1;
+        } else if (const Window *base = pinnedBase(window); base && !touchesEdge(base)) {
+            // a menu chain over a window kept above the others: level n is n limits out from the pinned window
+            level = 1 + popupDepth(window, output);
+        } else {
+            // a menu chain over a plain window: level n is n limits out from the screen, a popup opened alone at the limit
+            level = popupDepth(window, output);
+        }
+        // nor behind what its own window popped up before it, which it was opened from: a sub-menu
+        // that ends up under its menu shares the menu's level
+        const Window *main = mainWindow(window);
+        const QList<Window *> &shown = workspace()->windows();
+        for (qsizetype i = 0, end = shown.indexOf(const_cast<Window *>(window)); i < end; ++i) {
+            const Window *other = shown[i];
+            if (mainWindow(other) == main && isOnStage(other, output) && roleOf(other) == Role::Popped && !edgeFlattens(other)) {
+                level = std::max(level, StereoDepth::level(other));
+            }
+        }
+        return level;
+    }
+    case Role::Sunk: {
+        // the windows beneath the active one step back from the screen in their stacking order, each a layer of the sunk range deeper
+        // than the one above it, the first right behind the screen: a layer is a fifth of the limit whatever the number of windows,
+        // so two windows are not at the bottom, and when they fill the range the rest share the limit, never behind the wallpaper (Daniel, 2026-11-08)
+        const Window *main = mainWindow(window);
+        int above = 0;
+        bool found = false;
+        for (const Window *other : stack) {
+            if (isOnStage(other, output) && other == mainWindow(other) && roleOf(other) == Role::Sunk) {
+                found |= other == main;
+                above += found && other != main;
+            }
+        }
+        return found ? -qreal(std::min(above + 1, s_sunkLayers)) / s_sunkLayers : 0;
+    }
+    }
+    return 0;
+}
+
+bool StereoDepth::isAwake(const Window *window)
+{
+    const LogicalOutput *output = window->output();
+    if (!output || !output->hasStereoEyes() || !isOnStage(window, output)) {
+        return false;
+    }
+    switch (roleOf(window)) {
+    case Role::Active:
+    case Role::Popped:
+    case Role::Above:
+    case Role::Desktop:
+        return true;
+    case Role::Fixed: {
+        // a panel is never in the pile; a fullscreen window is awake while it is the active one
+        const Window *active = workspace()->activeWindow();
+        return window->isDock() || window->isLockScreen() || window->isInternal()
+            || (window->isFullScreen() && active && mainWindow(active) == mainWindow(window));
+    }
+    case Role::Sunk:
+    case Role::Below:
+        return false;
+    }
+    return false;
+}
+
+Qt::Edges StereoDepth::outputEdges(const Window *window)
+{
+    const LogicalOutput *output = window->output();
+    if (!output) {
+        return Qt::Edges();
+    }
+    const RectF frame = window->frameGeometry();
+    const RectF screen = output->geometryF();
+    Qt::Edges edges;
+    edges.setFlag(Qt::LeftEdge, frame.x() <= screen.x());
+    edges.setFlag(Qt::TopEdge, frame.y() <= screen.y());
+    edges.setFlag(Qt::RightEdge, frame.x() + frame.width() >= screen.x() + screen.width());
+    edges.setFlag(Qt::BottomEdge, frame.y() + frame.height() >= screen.y() + screen.height());
+    return edges;
+}
+
+int StereoDepth::parallax(const Window *window, int viewWidth)
+{
+    return parallax(levelDepth(window), viewWidth);
+}
+
+int StereoDepth::parallax(qreal depth, int viewWidth)
+{
+    return std::lround(depth * viewWidth / s_referenceWidth);
+}
+
+bool StereoDepth::effectsEnabled()
+{
+    return options->stereoEffectSunkLimit() > 0 || options->stereoEffectPoppedLimit() > 0;
+}
+
+qreal StereoDepth::effectPoppedLimit()
+{
+    return options->stereoEffectPoppedLimit();
+}
+
+qreal StereoDepth::effectSunkLimit()
+{
+    return options->stereoEffectSunkLimit();
+}
+
+qreal StereoDepth::levelDepth(const Window *window)
+{
+    const qreal level = StereoDepth::level(window);
+    const LogicalOutput *output = window->output();
+    return level * (level > 0 ? poppedLimit(output) : sunkLimit(output));
+}
+
+static bool displayDepth(const LogicalOutput *output, stereo_policy_depth *depth)
+{
+    if (!output || !output->backendOutput() || !output->backendOutput()->currentMode()) {
+        return false;
+    }
+    const QSize mm = output->physicalSize();
+    if (mm.isEmpty()) {
+        return false;
+    }
+    const OutputModeline::Flags flags = output->backendOutput()->currentMode()->flags();
+    int kind = STEREO_POLICY_DISPLAY_FRAMED;
+    if (flags & (OutputModeline::Flag::Stereo3DAnaglyphModern | OutputModeline::Flag::Stereo3DAnaglyphCrt)) {
+        kind = STEREO_POLICY_DISPLAY_ANAGLYPH;
+    } else if (flags & OutputModeline::Flag::VirtualStereo) {
+        kind = STEREO_POLICY_DISPLAY_HEADSET;
+    }
+    // The person's choice is the limits themselves, with the factor on top of them: strength 100 and no override, so
+    // the library returns the display's own depth.
+    return stereo_policy_display_depth(kind, mm.width(), mm.height(), 100, 0, 0, depth) == 0 && depth->size_known;
+}
+
+qreal StereoDepth::popupBorder(const LogicalOutput *output)
+{
+    if (!output || !output->hasStereoEyes()) {
+        return 0;
+    }
+    return std::max<qreal>(0, options->stereoPopupBorder());
+}
+
+RectF StereoDepth::popupArea(const RectF &area, const LogicalOutput *output, const QSizeF &minimum)
+{
+    const qreal border = popupBorder(output);
+    if (border <= 0) {
+        return area;
+    }
+    const RectF screen = output->geometryF();
+    RectF result = area;
+    // only the sides on the output's own edge: a side next to a panel is the panel's edge, not the output's
+    if (area.left() <= screen.left()) {
+        result.setLeft(screen.left() + border);
+    }
+    if (area.right() >= screen.right()) {
+        result.setRight(screen.right() - border);
+    }
+    if (area.top() <= screen.top()) {
+        result.setTop(screen.top() + border);
+    }
+    if (area.bottom() >= screen.bottom()) {
+        result.setBottom(screen.bottom() - border);
+    }
+    if (result.width() < std::max<qreal>(minimum.width(), 1)) {
+        result.setLeft(area.left());
+        result.setRight(area.right());
+    }
+    if (result.height() < std::max<qreal>(minimum.height(), 1)) {
+        result.setTop(area.top());
+        result.setBottom(area.bottom());
+    }
+    return result;
+}
+
+RectF StereoDepth::keepPopupInside(const RectF &geometry, const RectF &area, const LogicalOutput *output)
+{
+    const RectF inside = popupArea(area, output, geometry.size());
+    if (inside == area) {
+        return geometry;
+    }
+    RectF result = geometry;
+    if (result.right() > inside.right()) {
+        result.moveRight(inside.right());
+    }
+    if (result.left() < inside.left()) {
+        result.moveLeft(inside.left());
+    }
+    if (result.bottom() > inside.bottom()) {
+        result.moveBottom(inside.bottom());
+    }
+    if (result.top() < inside.top()) {
+        result.moveTop(inside.top());
+    }
+    return result;
+}
+
+qreal StereoDepth::sunkFactor(const LogicalOutput *output)
+{
+    stereo_policy_depth depth{};
+    return displayDepth(output, &depth) && depth.sunk_px > 0 ? depth.sunk_px / s_referenceSunk : 1.0;
+}
+
+qreal StereoDepth::poppedFactor(const LogicalOutput *output)
+{
+    stereo_policy_depth depth{};
+    return displayDepth(output, &depth) && depth.popped_px > 0 ? depth.popped_px / s_referencePopped : 1.0;
+}
+
+qreal StereoDepth::sunkLimit(const LogicalOutput *output)
+{
+    return options->stereoSunkLimit() * sunkFactor(output);
+}
+
+qreal StereoDepth::poppedLimit(const LogicalOutput *output)
+{
+    return options->stereoPoppedLimit() * poppedFactor(output);
+}
+
+qreal StereoDepth::coveredDepth(const RectF &area, const Window *window)
+{
+    const LogicalOutput *output = window->output();
+    const QList<Window *> &stack = workspace()->stackingOrder();
+    qsizetype end = stack.indexOf(const_cast<Window *>(window));
+    if (end < 0) {
+        end = stack.size();
+    }
+    qreal depth = std::numeric_limits<qreal>::lowest();
+    for (qsizetype i = 0; i < end; ++i) {
+        const Window *other = stack[i];
+        if (!isOnStage(other, output)) {
+            continue;
+        }
+        if (other->isDesktop() || other->frameGeometry().intersects(area)) {
+            depth = std::max(depth, levelDepth(other));
+        }
+    }
+    return depth;
+}
+
+qreal StereoDepth::poppedLimit(int viewWidth)
+{
+    return options->stereoPoppedLimit() * viewWidth / s_referenceWidth;
+}
+
+qreal StereoDepth::sunkLimit(int viewWidth)
+{
+    return options->stereoSunkLimit() * viewWidth / s_referenceWidth;
+}
+
+int StereoDepth::pointerParallax(const QPointF &pos, int viewWidth)
+{
+    return parallax(pointerDepth(pos), viewWidth);
+}
+
+qreal StereoDepth::pointerDepth(const QPointF &pos)
+{
+    if (effects && effects->activeFullScreenEffect()) {
+        return 0;
+    }
+    const Window *window = workspace()->moveResizeWindow();
+    if (!window) {
+        const QList<Window *> &stack = workspace()->stackingOrder();
+        for (auto it = stack.crbegin(); it != stack.crend(); ++it) {
+            const Window *candidate = *it;
+            if (candidate->isShown() && candidate->isOnCurrentDesktop() && candidate->isOnCurrentActivity()
+                && candidate->frameGeometry().contains(pos) && candidate->hitTest(pos)) {
+                window = candidate;
+                break;
+            }
+        }
+    }
+    return window ? levelDepth(window) : 0;
+}
+
+int StereoDepth::eyeShift(int parallax, StereoEye eye)
+{
+    switch (eye) {
+    case StereoEye::Left:
+        return parallax - parallax / 2;
+    case StereoEye::Right:
+        return -(parallax / 2);
+    default:
+        return 0;
+    }
+}
+
+int StereoDepth::maxEyeShift(int viewWidth, const LogicalOutput *output)
+{
+    const qreal limit = std::max(sunkLimit(output), poppedLimit(output) * (1 + s_maxPopupDepth));
+    return (std::lround(limit * viewWidth / s_referenceWidth) + 1) / 2;
+}
+
+int StereoDepth::maxEyeShift(int viewWidth)
+{
+    const qreal limit = std::max(options->stereoSunkLimit(), options->stereoPoppedLimit() * (1 + s_maxPopupDepth));
+    return (std::lround(limit * viewWidth / s_referenceWidth) + 1) / 2;
+}
+
+qreal StereoDepth::wallpaperDepth(const LogicalOutput *output)
+{
+    return -sunkLimit(output);
+}
+
+qreal StereoDepth::wallpaperDepth()
+{
+    return -options->stereoSunkLimit();
+}
+
+int StereoDepth::wallpaperCut(int parallax)
+{
+    return (std::abs(parallax) + 1) / 2;
+}
+
+int StereoDepth::wallpaperCut(const LogicalOutput *output, qreal sunkLimit)
+{
+    if (!output->hasStereoEyes() || sunkLimit <= 0) {
+        return 0;
+    }
+    // the width of the output's view in device pixels, as the compositor sizes the view
+    const Rect view = output->geometryF().scaled(output->scale()).rounded();
+    return wallpaperCut(parallax(-sunkLimit, view.width()));
+}
+
+void StereoDepth::Motion::setTarget(qreal depth, std::chrono::nanoseconds time)
+{
+    if (!m_started) {
+        m_from = m_to = depth;
+        m_started = true;
+        return;
+    }
+    if (depth == m_to) {
+        return;
+    }
+    m_from = this->depth(time);
+    m_to = depth;
+    m_start = time;
+    m_duration = m_to > m_from ? riseDuration() : sinkDuration();
+}
+
+qreal StereoDepth::Motion::depth(std::chrono::nanoseconds time) const
+{
+    if (m_duration <= std::chrono::nanoseconds::zero() || time >= m_start + m_duration) {
+        return m_to;
+    }
+    if (time <= m_start) {
+        return m_from;
+    }
+    const qreal progress = qreal((time - m_start).count()) / m_duration.count();
+    return m_from + (m_to - m_from) * QEasingCurve(QEasingCurve::OutCubic).valueForProgress(progress);
+}
+
+bool StereoDepth::Motion::isMoving(std::chrono::nanoseconds time) const
+{
+    return m_duration > std::chrono::nanoseconds::zero() && time < m_start + m_duration;
+}
+
+std::chrono::nanoseconds StereoDepth::Motion::riseDuration()
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(s_riseDuration * options->animationTimeFactor());
+}
+
+std::chrono::nanoseconds StereoDepth::Motion::sinkDuration()
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(s_sinkDuration * options->animationTimeFactor());
+}
+
+} // namespace KWin

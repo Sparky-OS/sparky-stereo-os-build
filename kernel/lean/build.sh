@@ -11,7 +11,10 @@ export KBUILD_BUILD_USER=sparky KBUILD_BUILD_HOST=stereo
 export KBUILD_BUILD_TIMESTAMP
 KBUILD_BUILD_TIMESTAMP=$(date -u -d "@$UPSTREAM_TIMESTAMP" '+%a %b %e %H:%M:%S UTC %Y')
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
-export KBUILD_VERBOSE=0 DEB_BUILD_OPTIONS=parallel=4
+# every processor the build has: the parallel= dpkg-buildpackage was given, else what nproc grants (affinity and CPU quota)
+jobs=$(sed -n 's/.*\bparallel=\([0-9][0-9]*\).*/\1/p' <<< "${DEB_BUILD_OPTIONS:-}")
+jobs=${jobs:-$(nproc)}
+export KBUILD_VERBOSE=0 DEB_BUILD_OPTIONS=parallel=$jobs
 
 erase_module_key() {
     for key in signing_key.pem signing_key.x509 x509.genkey; do
@@ -42,9 +45,11 @@ if [ "$SMOKE" != 1 ]; then
     if [ "$FLAVOUR" = v3 ]; then grep -qx CONFIG_X86_64_VERSION=3 "$obj/.config"; fi
 fi
 
-make -j4 O="$obj" bindeb-pkg LOCALVERSION="$LOCALVERSION" \
+started=$SECONDS
+make -j"$jobs" O="$obj" bindeb-pkg LOCALVERSION="$LOCALVERSION" \
     KDEB_PKGVERSION="$PACKAGE_VERSION" KDEB_CHANGELOG_DIST=unstable \
     DPKG_FLAGS='-Ppkg.linux-upstream.nokerneldbg'
+echo "Kernel build (bindeb-pkg): $((SECONDS - started)) s with $jobs jobs"
 test "$(cat "$obj/include/config/kernel.release")" = "$RELEASE"
 cp "$obj/.config" debian/built.config
 

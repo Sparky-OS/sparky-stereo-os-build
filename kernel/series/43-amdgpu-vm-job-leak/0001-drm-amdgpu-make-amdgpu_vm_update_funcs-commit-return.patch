@@ -13,19 +13,11 @@ Link: https://lore.kernel.org/amd-gfx/20260929-amdgpu_vm_update_funcs_abort-v1-1
 Adapted to v7.3.1 only in its hunks: the series was written on a tree where amdgpu_vm_update_range is split into amdgpu_vm_map_range and amdgpu_vm_unmap_range and the struct is in amdgpu_vm_internal.h; here the struct is in amdgpu_vm.h, the map path is still amdgpu_vm_update_range, and amdgpu_vm_handle_fault has no commit call, so those hunks have no counterpart. The changed lines are the same.
 Drop this group when the series, or Benjamin Cheng's 2026-11-05 "free pte update job on error", reaches the release this kernel moves to.]
 Assisted-by: Claude Sonnet 5.5 via Claude Code
+[ORDER 636: ported to v7.3.4: upstream eb8cfa911 ("drm/amdgpu: wait for pending page table updates before switching a VM to CPU updates", John Fisher, 7.3.4) made amdgpu_vm_pt_clear() commit with &vm->last_update instead of NULL, so that line keeps its new argument and loses the result as everywhere else; both commit hooks still return only 0 in 7.3.4 (amdgpu_vm_sdma_commit, amdgpu_vm_cpu_commit). Every other changed line is the original one.]
 ---
- drivers/gpu/drm/amd/amdgpu/amdgpu_vm.c      |  8 ++------
- drivers/gpu/drm/amd/amdgpu/amdgpu_vm.h      |  4 ++--
- drivers/gpu/drm/amd/amdgpu/amdgpu_vm_cpu.c  |  8 +++-----
- drivers/gpu/drm/amd/amdgpu/amdgpu_vm_pt.c   |  2 +-
- drivers/gpu/drm/amd/amdgpu/amdgpu_vm_sdma.c | 12 +++---------
- 5 files changed, 11 insertions(+), 23 deletions(-)
-
-diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.c
-index 4a63b47..1f3228b 100644
 --- a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.c
 +++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.c
-@@ -1027,9 +1027,7 @@ int amdgpu_vm_update_pdes(struct amdgpu_device *adev,
+@@ -1027,9 +1027,7 @@
  			goto error;
  	}
  
@@ -36,7 +28,7 @@ index 4a63b47..1f3228b 100644
  
  	if (flush_tlb_needed)
  		atomic64_inc(&vm->tlb_seq);
-@@ -1243,9 +1241,7 @@ int amdgpu_vm_update_range(struct amdgpu_device *adev, struct amdgpu_vm *vm,
+@@ -1243,9 +1241,7 @@
  		start = tmp;
  	}
  
@@ -47,26 +39,9 @@ index 4a63b47..1f3228b 100644
  
  	if (params.needs_flush) {
  		amdgpu_vm_tlb_flush(&params, fence, tlb_cb);
-diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.h b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.h
-index d32183c..3b237e7 100644
---- a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.h
-+++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.h
-@@ -332,8 +332,8 @@ struct amdgpu_vm_update_funcs {
- 	int (*update)(struct amdgpu_vm_update_params *p,
- 		      struct amdgpu_bo_vm *bo, uint64_t pe, uint64_t addr,
- 		      unsigned count, uint32_t incr, uint64_t flags);
--	int (*commit)(struct amdgpu_vm_update_params *p,
--		      struct dma_fence **fence);
-+	void (*commit)(struct amdgpu_vm_update_params *p,
-+		       struct dma_fence **fence);
- };
- 
- struct amdgpu_vm_fault_info {
-diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_cpu.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_cpu.c
-index b31ff6f..5c17946 100644
 --- a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_cpu.c
 +++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_cpu.c
-@@ -116,8 +116,8 @@ static int amdgpu_vm_cpu_update(struct amdgpu_vm_update_params *p,
+@@ -116,8 +116,8 @@
   *
   * Make sure that the hardware sees the page table updates.
   */
@@ -77,7 +52,7 @@ index b31ff6f..5c17946 100644
  {
  	struct amdgpu_device *adev = p->adev;
  
-@@ -127,12 +127,10 @@ static int amdgpu_vm_cpu_commit(struct amdgpu_vm_update_params *p,
+@@ -127,12 +127,10 @@
  	mb();
  	/* A reset flushed the HDP anyway, so that here can be skipped when a reset is ongoing */
  	if (!down_read_trylock(&adev->reset_domain->sem))
@@ -91,24 +66,33 @@ index b31ff6f..5c17946 100644
  }
  
  const struct amdgpu_vm_update_funcs amdgpu_vm_cpu_funcs = {
-diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_pt.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_pt.c
-index e43a60d..e9622ad 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.h
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.h
+@@ -332,8 +332,8 @@
+ 	int (*update)(struct amdgpu_vm_update_params *p,
+ 		      struct amdgpu_bo_vm *bo, uint64_t pe, uint64_t addr,
+ 		      unsigned count, uint32_t incr, uint64_t flags);
+-	int (*commit)(struct amdgpu_vm_update_params *p,
+-		      struct dma_fence **fence);
++	void (*commit)(struct amdgpu_vm_update_params *p,
++		       struct dma_fence **fence);
+ };
+ 
+ struct amdgpu_vm_fault_info {
 --- a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_pt.c
 +++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_pt.c
-@@ -422,7 +422,7 @@ int amdgpu_vm_pt_clear(struct amdgpu_device *adev, struct amdgpu_vm *vm,
+@@ -422,7 +422,7 @@
  	if (r)
  		goto exit;
  
--	r = vm->update_funcs->commit(&params, NULL);
-+	vm->update_funcs->commit(&params, NULL);
+-	r = vm->update_funcs->commit(&params, &vm->last_update);
++	vm->update_funcs->commit(&params, &vm->last_update);
  exit:
  	drm_dev_exit(idx);
  	return r;
-diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_sdma.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_sdma.c
-index 50cc077..eaa53f7 100644
 --- a/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_sdma.c
 +++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_vm_sdma.c
-@@ -99,12 +99,9 @@ static int amdgpu_vm_sdma_prepare(struct amdgpu_vm_update_params *p,
+@@ -99,12 +99,9 @@
   *
   * @p: see amdgpu_vm_update_params definition
   * @fence: resulting fence
@@ -123,7 +107,7 @@ index 50cc077..eaa53f7 100644
  {
  	struct amdgpu_ib *ib = p->job->ibs;
  	struct amdgpu_ring *ring;
-@@ -142,7 +139,6 @@ static int amdgpu_vm_sdma_commit(struct amdgpu_vm_update_params *p,
+@@ -142,7 +139,6 @@
  		swap(*fence, f);
  	}
  	dma_fence_put(f);
@@ -131,7 +115,7 @@ index 50cc077..eaa53f7 100644
  }
  
  /**
-@@ -246,9 +242,7 @@ static int amdgpu_vm_sdma_update(struct amdgpu_vm_update_params *p,
+@@ -246,9 +242,7 @@
  		ndw -= p->job->ibs->length_dw;
  
  		if (ndw < 32) {

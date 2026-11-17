@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from lean import archive, linkcheck, package, release
+from lean import archive, linkcheck, package, parallel, release
 from lean.tests.archive_fixtures import deb, signed_archive
 
 
@@ -74,6 +74,33 @@ def test_exact_version_upgrade_has_comparable_correct_universes(sources, tmp_pat
     assert before['metadata'] == now['metadata']
     assert all(not (p.parent / 'root').exists() and (p.parent / 'root-files.jsonl').is_file() for p, _ in rows)
     assert len(list((scratch / 'sha256').glob(archive.digest(common) + '.deb'))) == 1
+
+
+def test_order_638_packages_qualified_side_by_side_share_one_frozen_universe(sources, tmp_path, capsys):
+    programs, libraries, common = edition(tmp_path / 'build')
+    scratch = tmp_path / 'scratch'
+    with patch.object(parallel, 'processors', return_value=2):
+        release.check_link([programs[1], libraries[1]], archive_config=sources, scratch=scratch, siblings=[common])
+    assert capsys.readouterr().out.endswith('lc1: archive-qualified link check passed for 2 packages\n')
+    rows = resolutions(scratch)
+    assert sorted(obj['candidate'][0] for _, obj in rows) == ['edition-consumer', 'edition-library']
+    assert len({Path(obj['metadata']).read_bytes() for _, obj in rows}) == 1
+    assert len({Path(obj['metadata']).parent for _, obj in rows}) == 2
+
+
+def test_order_638_a_floor_reached_side_by_side_rechecks_one_at_a_time(sources, tmp_path, capsys):
+    programs, libraries, common = edition(tmp_path / 'build')
+    parent, real = os.getpid(), linkcheck.check
+
+    def check(*args, **kwargs):
+        if os.getpid() != parent:
+            raise package.NoSpace('/: free space 1 is below root floor 1073741824')
+        return real(*args, **kwargs)
+    with patch.object(parallel, 'processors', return_value=2), patch.object(linkcheck, 'check', check):
+        release.check_link([programs[1], libraries[1]], archive_config=sources, scratch=tmp_path / 'scratch', siblings=[common])
+    out = capsys.readouterr().out
+    assert 'and the packages after it are checked one at a time' in out
+    assert out.endswith('lc1: archive-qualified link check passed for 2 packages\n')
 
 
 def test_direct_upgrade_with_explicit_previous_siblings(sources, tmp_path):
@@ -203,7 +230,7 @@ def disk_free(free):
 
 
 def test_low_space_refuses_before_snapshot_import_or_apt(sources, tmp_path):
-    with patch('lean.archive.shutil.disk_usage', return_value=disk_free((12 << 30) - 1)):
+    with patch('lean.archive.shutil.disk_usage', return_value=disk_free((1 << 30) - 1)):
         with pytest.raises(package.Invalid, match='below root floor'):
             archive.Archive(sources, tmp_path / 'scratch', 'amd64')
     assert not (tmp_path / 'scratch').exists()
@@ -213,7 +240,7 @@ def test_low_space_refuses_selected_copy_without_crossing_floor(sources, tmp_pat
     context = archive.Archive(sources, tmp_path / 'scratch', 'amd64')
     candidate = deb(tmp_path, 'large-input', files={'usr/share/blob': os.urandom(1 << 20)})
     item = context.input(candidate)
-    with patch('lean.archive.shutil.disk_usage', return_value=disk_free((12 << 30) + item['size'] - 1)):
+    with patch('lean.archive.shutil.disk_usage', return_value=disk_free((1 << 30) + item['size'] - 1)):
         with pytest.raises(package.Invalid, match='insufficient space'):
             context.cached_input(item)
     assert not list(context.cache.iterdir())
@@ -223,7 +250,7 @@ def test_low_space_refuses_extraction_before_payload_write(sources, tmp_path):
     candidate = deb(tmp_path, 'payload', files={'usr/share/blob': os.urandom(1 << 20)})
     root = tmp_path / 'root'
     root.mkdir()
-    with patch('lean.archive.shutil.disk_usage', return_value=disk_free((12 << 30) + (512 << 10))):
+    with patch('lean.archive.shutil.disk_usage', return_value=disk_free((1 << 30) + (512 << 10))):
         with pytest.raises(package.Invalid, match='insufficient space'):
             archive.unpack(candidate, root)
     assert not (root / 'usr/share/blob').exists()
@@ -252,7 +279,7 @@ def test_raised_scratch_floor_and_minimum_configuration(sources, tmp_path):
         with pytest.raises(package.Invalid, match='insufficient space'):
             archive.Archive(sources, tmp_path / 'scratch', 'amd64', min_free_gib=14)
     with pytest.raises(package.Invalid, match='floors cannot be below'):
-        archive.Archive(sources, tmp_path / 'low', 'amd64', root_min_free_gib=1)
+        archive.Archive(sources, tmp_path / 'low', 'amd64', root_min_free_gib=0)
 
 
 def test_frozen_input_drift_is_rejected(sources, tmp_path):
@@ -689,3 +716,55 @@ def test_public_key_copy_obeys_space_guard(sources, tmp_path):
         with pytest.raises(package.Invalid, match='public-key space refusal'):
             archive.Archive(sources, tmp_path / 'scratch', 'amd64')
     assert not list((tmp_path / 'scratch').glob('link-*/etc/key-*.gpg'))
+
+
+def test_no_room_in_the_previous_check_stays_no_room(sources, tmp_path, monkeypatch):
+    # ORDER 647: wrapped as "previous edition dependency qualification failed", a disk floor reached while the gate
+    # checked packages side by side was not recognised, the one-at-a-time recheck never ran and the round stopped
+    programs, libraries, common = edition(tmp_path / 'build')
+    context = archive.Archive(sources, tmp_path / 'scratch', 'amd64')
+    real = context.qualify
+
+    def qualify(deb, inputs):
+        if Path(deb) == Path(programs[0]):
+            raise package.NoSpace(f'{tmp_path}: insufficient space: 1 free, 2 requested, floor 3')
+        return real(deb, inputs)
+
+    monkeypatch.setattr(context, 'qualify', qualify)
+    with pytest.raises(package.NoSpace, match='insufficient space'):
+        linkcheck.check(programs[1], programs[0], archive_context=context,
+                       siblings=[libraries[1], common], previous_siblings=[libraries[0], common])
+
+
+def test_a_loader_trace_that_times_out_once_on_a_busy_machine_is_tried_again(sources, tmp_path, monkeypatch):
+    # ORDER 648: round r1117a's gate, on every processor beside three lanes (load 25 on 12 processors), stopped on
+    # "kio_trash.so: timeout": the 20 s limit passed before the trace started. One longer try decides.
+    programs, libraries, common = edition(tmp_path / 'build')
+    context = archive.Archive(sources, tmp_path / 'scratch', 'amd64')
+    real = archive.Qualified.run
+    slow = []
+
+    def run(self, command, env=None, timeout=20):
+        if env and 'LD_TRACE_LOADED_OBJECTS' in env and timeout == 20 and not slow:
+            slow.append(command)
+            raise subprocess.TimeoutExpired(command, timeout)
+        return real(self, command, env, timeout)
+
+    monkeypatch.setattr(archive.Qualified, 'run', run)
+    linkcheck.check(programs[0], archive_context=context, siblings=[libraries[0], common])
+    assert len(slow) == 1
+
+
+def test_a_loader_trace_that_always_times_out_is_still_refused(sources, tmp_path, monkeypatch):
+    programs, libraries, common = edition(tmp_path / 'build')
+    context = archive.Archive(sources, tmp_path / 'scratch', 'amd64')
+    real = archive.Qualified.run
+
+    def run(self, command, env=None, timeout=20):
+        if env and 'LD_TRACE_LOADED_OBJECTS' in env:
+            raise subprocess.TimeoutExpired(command, timeout)
+        return real(self, command, env, timeout)
+
+    monkeypatch.setattr(archive.Qualified, 'run', run)
+    with pytest.raises(package.Invalid, match='timeout'):
+        linkcheck.check(programs[0], archive_context=context, siblings=[libraries[0], common])

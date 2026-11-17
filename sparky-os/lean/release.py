@@ -7,15 +7,19 @@ dpkg-deb step of a build; check-debs is the mandatory gate before repository sig
 """
 
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import lzma
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
+import time
 
-from . import VERSION, archive, buildrecord, identities, linkcheck, package, project
+from . import VERSION, archive, buildrecord, identities, linkcheck, package, parallel, project
 
 
 def projection_hash(path):
@@ -106,35 +110,43 @@ def build_tree(root, out, preserve=None, retired=None):
             print(dest)
 
 
+def _checked(deb):
+    """(manifest, architecture variant, copyright bytes, {HR path: authored digest}) of one final archive."""
+    with tempfile.TemporaryDirectory(prefix='lc-check-') as work:
+        subprocess.run(['dpkg-deb', '--raw-extract', str(deb), work], check=True, stdout=subprocess.DEVNULL)
+        obj = package.check_tree(work)
+        why = identities.problem(obj['renderer']['identity'], obj['renderer']['sha256'])
+        if why:
+            raise package.Invalid(f'{deb}: {why}')
+        # An apt architecture variant (Architecture-Variant: amd64v3 in the control file, ORDER 108) shares its package, version and
+        # architecture with its baseline twin; the variant is the rest of its identity, and its HR companion carries the same one.
+        variant = package.control(Path(work)).get('architecture-variant', '')
+        licence = Path(work) / 'usr/share/doc' / obj['package'] / 'copyright'
+        blobs = {}
+        if obj['package'].endswith('-lc-hr'):
+            # Decompression is bounded by the projected file size cap.
+            for row in obj['files']:
+                if row['kind'] == 'file' and row['path'].startswith(package.HR_BASE + '/'):
+                    with package.lzma.open(Path(work) / row['path'][1:]) as stream:
+                        data = stream.read(package.MAX_TEXT + 1)
+                    if len(data) > package.MAX_TEXT:
+                        raise package.Invalid('HR entry exceeds the source size limit')
+                    blobs[row['path']] = package.digest(data)
+        return obj, variant, licence.read_bytes() if licence.is_file() and not licence.is_symlink() else None, blobs
+
+
 def check_debs(paths):
     """Check final archive bytes and require matching, independently marked HR companions."""
+    started = time.monotonic()
     verified, hr_blobs, copyrights, variants = {}, {}, {}, {}
-    for deb in paths:
-        with tempfile.TemporaryDirectory(prefix='lc-check-') as work:
-            subprocess.run(['dpkg-deb', '--raw-extract', str(deb), work], check=True, stdout=subprocess.DEVNULL)
-            obj = package.check_tree(work)
-            why = identities.problem(obj['renderer']['identity'], obj['renderer']['sha256'])
-            if why:
-                raise package.Invalid(f'{deb}: {why}')
-            # An apt architecture variant (Architecture-Variant: amd64v3 in the control file, ORDER 108) shares its package, version and
-            # architecture with its baseline twin; the variant is the rest of its identity, and its HR companion carries the same one.
-            variant = package.control(Path(work)).get('architecture-variant', '')
-            key = (obj['package'], obj['version'], obj['architecture'] + (':' + variant if variant else ''))
-            if key in verified:
-                raise package.Invalid(f'duplicate package identity: {key}')
-            verified[key] = obj
-            variants[key] = variant
-            licence = Path(work) / 'usr/share/doc' / obj['package'] / 'copyright'
-            copyrights[key] = licence.read_bytes() if licence.is_file() and not licence.is_symlink() else None
-            if obj['package'].endswith('-lc-hr'):
-                # Decompression is bounded by the projected file size cap.
-                for row in obj['files']:
-                    if row['kind'] == 'file' and row['path'].startswith(package.HR_BASE + '/'):
-                        with package.lzma.open(Path(work) / row['path'][1:]) as stream:
-                            data = stream.read(package.MAX_TEXT + 1)
-                        if len(data) > package.MAX_TEXT:
-                            raise package.Invalid('HR entry exceeds the source size limit')
-                        hr_blobs[(key, row['path'])] = package.digest(data)
+    for obj, variant, licence, blobs in parallel.ordered(_checked, paths):
+        key = (obj['package'], obj['version'], obj['architecture'] + (':' + variant if variant else ''))
+        if key in verified:
+            raise package.Invalid(f'duplicate package identity: {key}')
+        verified[key] = obj
+        variants[key] = variant
+        copyrights[key] = licence
+        hr_blobs.update(((key, path), sha) for path, sha in blobs.items())
     for key, obj in verified.items():
         if not obj['hr_package']:
             continue
@@ -151,7 +163,8 @@ def check_debs(paths):
             path = package.hr_path(obj['package'], obj['architecture'], row['sha_hr'])
             if hr_blobs.get((hr_key, path)) != row['sha_hr']:
                 raise package.Invalid(f'{key}: HR missing or corrupt for {row["path"]}')
-    print(f'lc1: verified {len(verified)} packages, payload hashes and required HR companions')
+    print(f'lc1: verified {len(verified)} packages, payload hashes and required HR companions'
+          f' in {time.monotonic() - started:.0f} s on {parallel.processors()} processors')
     return verified
 
 
@@ -215,7 +228,7 @@ def previous_build(deb, previous_dir=None, previous_debs=(), controls=None):
 
 
 def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, scratch=None, siblings=(),
-               previous_siblings=(), min_free_gib=2, root_min_free_gib=12):
+               previous_siblings=(), min_free_gib=None, root_min_free_gib=1):
     """Qualify old/new edition snapshots against the same frozen public indexes."""
     archive_config = archive_config or os.environ.get('SPARKY_LC_ARCHIVE_CONFIG')
     scratch = scratch or os.environ.get('SPARKY_LC_SCRATCH')
@@ -230,27 +243,73 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
         previous_inputs += sorted(Path(previous_dir).rglob('*.deb'))
     current_inputs = list(dict.fromkeys(debs + list(map(Path, siblings))))
     previous_inputs = list(dict.fromkeys(previous_inputs))
-    controls = {path: archive.control(path) for path in dict.fromkeys(current_inputs + previous_inputs)}
+    every = list(dict.fromkeys(current_inputs + previous_inputs))
+    controls = dict(zip(every, parallel.ordered(archive.control, every)))
     contexts = {}
     native = subprocess.run(['dpkg', '--print-architecture'], capture_output=True, text=True, check=True).stdout.strip()
-    for deb in debs:
-        arch = controls[deb]['Architecture']
-        if arch == 'all':
-            arch = native
-        if arch != native:
-            raise package.Invalid(f'{deb}: unsupported execution gate for {arch} on {native}; use a native runner')
-        if arch not in contexts:
-            contexts[arch] = archive.Archive(archive_config, scratch, arch, min_free_gib, root_min_free_gib)
-        same_arch = [p for p in current_inputs if controls[p]['Architecture'] in (arch, 'all')]
-        old_arch = [p for p in previous_inputs if controls[p]['Architecture'] in (arch, 'all')]
-        for path in dict.fromkeys(same_arch + old_arch):
-            frozen = contexts[arch].input(path)['control']
-            if frozen != controls[path]:
-                raise package.Invalid(f'{path}: control changed before the edition snapshot was frozen')
-        previous = previous_build(deb, previous_debs=old_arch, controls=controls)
-        linkcheck.check(deb, previous_deb=previous, smoke_table=smoke_table,
-                        archive_context=contexts[arch], siblings=same_arch, previous_siblings=old_arch)
+    # each package as the loop of one process checked it, its notes printed and its refusal raised in this order;
+    # a refusal before a package's check comes after the checks of the packages before it (ORDER 638)
+    _LINK.update(contexts=contexts, smoke=smoke_table, plan=[], private={})
+    stop = None
+    try:
+        for deb in debs:
+            arch = controls[deb]['Architecture']
+            if arch == 'all':
+                arch = native
+            if arch != native:
+                raise package.Invalid(f'{deb}: unsupported execution gate for {arch} on {native}; use a native runner')
+            if arch not in contexts:
+                contexts[arch] = archive.Archive(archive_config, scratch, arch, min_free_gib, root_min_free_gib)
+            same_arch = [p for p in current_inputs if controls[p]['Architecture'] in (arch, 'all')]
+            old_arch = [p for p in previous_inputs if controls[p]['Architecture'] in (arch, 'all')]
+            contexts[arch].freeze(same_arch + old_arch)
+            for path in dict.fromkeys(same_arch + old_arch):
+                frozen = contexts[arch].input(path)['control']
+                if frozen != controls[path]:
+                    raise package.Invalid(f'{path}: control changed before the edition snapshot was frozen')
+            previous = previous_build(deb, previous_debs=old_arch, controls=controls)
+            _LINK['plan'].append((deb, arch, same_arch, old_arch, previous))
+    except Exception as exc:
+        stop = exc
+    try:
+        results = parallel.ordered(_linked, range(len(_LINK['plan'])))
+        side_by_side = min(parallel.processors(), len(_LINK['plan'])) > 1
+        for index in range(len(_LINK['plan'])):
+            notes, error = next(results)
+            if isinstance(error, package.NoSpace) and side_by_side:
+                side_by_side = False
+                # side by side the packages share their disks: from this one on, one at a time, as a single process
+                results.close()
+                print(f'lc1: a disk floor was reached with packages checked side by side; {Path(_LINK["plan"][index][0]).name}'
+                      ' and the packages after it are checked one at a time')
+                results = map(_linked, range(index, len(_LINK['plan'])))
+                notes, error = next(results)
+            sys.stdout.write(notes)
+            if error is not None:
+                raise error
+    finally:
+        _LINK.clear()
+    if stop is not None:
+        raise stop
     print(f'lc1: archive-qualified link check passed for {len(debs)} packages')
+
+
+_LINK = {}
+
+
+def _linked(index):
+    """(printed notes, refusal or None) of one package's link check, in a context of this process's own."""
+    deb, arch, same_arch, old_arch, previous = _LINK['plan'][index]
+    if arch not in _LINK['private']:
+        _LINK['private'][arch] = _LINK['contexts'][arch].private()
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            linkcheck.check(deb, previous_deb=previous, smoke_table=_LINK['smoke'],
+                            archive_context=_LINK['private'][arch], siblings=same_arch, previous_siblings=old_arch)
+    except Exception as exc:
+        return out.getvalue(), exc
+    return out.getvalue(), None
 
 
 def main():
@@ -275,8 +334,10 @@ def main():
     link.add_argument('--scratch', help='private APT state, verified cache and roots (SPARKY_LC_SCRATCH)')
     link.add_argument('--siblings-file', help='newline-separated authoritative current edition .debs')
     link.add_argument('--previous-siblings-file', help='previous edition snapshot .debs, including unchanged dependencies')
-    link.add_argument('--min-free-gib', type=int, default=os.environ.get('SPARKY_LC_MIN_FREE_GIB', '2'), help='scratch floor, at least 2 GiB')
-    link.add_argument('--root-min-free-gib', type=int, default=os.environ.get('SPARKY_LC_ROOT_MIN_FREE_GIB', '12'), help='root filesystem floor, at least 12 GiB')
+    link.add_argument('--min-free-gib', type=int, default=os.environ.get('SPARKY_LC_MIN_FREE_GIB'),
+                      help='scratch floor (default the house floor of its disk: 1 GiB on /, 2 GiB on another)')
+    link.add_argument('--root-min-free-gib', type=int, default=os.environ.get('SPARKY_LC_ROOT_MIN_FREE_GIB', '1'),
+                      help='root filesystem floor (the house floor, 1 GiB)')
     selection = commands.add_parser('check-selection')
     selection.add_argument('tsv')
     tree = commands.add_parser('check-tree')

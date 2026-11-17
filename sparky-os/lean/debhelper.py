@@ -29,8 +29,8 @@ def link_gate(built):
             gated, os.environ.get('SPARKY_LC_PREVIOUS_DIR') or None, str(table),
             siblings=Path(siblings_file).read_text().splitlines() if siblings_file else (),
             previous_siblings=Path(previous_file).read_text().splitlines() if previous_file else (),
-            min_free_gib=int(os.environ.get('SPARKY_LC_MIN_FREE_GIB', '2')),
-            root_min_free_gib=int(os.environ.get('SPARKY_LC_ROOT_MIN_FREE_GIB', '12')),
+            min_free_gib=int(os.environ['SPARKY_LC_MIN_FREE_GIB']) if 'SPARKY_LC_MIN_FREE_GIB' in os.environ else None,
+            root_min_free_gib=int(os.environ.get('SPARKY_LC_ROOT_MIN_FREE_GIB', '1')),
         )
     except (ValueError, OSError, subprocess.CalledProcessError):
         for deb in built:

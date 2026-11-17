@@ -71,6 +71,8 @@ run('features', bench + ['--load-modules', 'virtio_blk efivarfs binder_linux nts
     ['custom'], env)
 run('modules', bench + ['--load-modules', 'virtio_blk vkms rtw89_8852au rtw89_8852cu rtw89_8922au rtw89_8922de amdgpu nouveau',
     '--guest-script', '/inputs/modules.sh', '--guest-dir', '/inputs/guest', 'run', 'custom'], ['custom'], env)
+# build 17 on (ORDER 627): TCP over loopback, IPv4 and IPv6, without and with SYN cookies, through the paths series group 46 changed
+run('tcp', bench + ['--guest-script', '/inputs/tcp.sh', '--guest-dir', '/inputs/guest', 'run', 'custom'], ['custom'], env)
 run('settings-kexec', bench + settings + ['run', 'kexec'], ['kexec'], env)
 run('legacy-bios', bench + ['--bios', 'run', 'policy'], ['policy'], env)
 
@@ -85,5 +87,9 @@ mandatory = ['secure_boot', 'btf_vmlinux', 'btf_modules', 'sched_ext_load',
              'sched_cgroup_mode', 'cgroup_dmem', 'cgroup_dmem_files']
 missing = [key for key in mandatory if not re.search(r'^PASS\s+' + key + r'\s', features, re.M)]
 results.append(dict(label='required-features', passed=not missing, missing=missing))
+tcp = (root / 'tcp.log').read_text(errors='replace')
+tcp_missing = [f'tcp_{fam}_syncookies_{c}' for c in (0, 2) for fam in ('ipv4', 'ipv6')
+               if not re.search(r'^PASS\s+tcp_' + fam + '_syncookies_' + str(c) + r'\s', tcp, re.M)]
+results.append(dict(label='required-tcp', passed=not tcp_missing, missing=tcp_missing))
 (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
 raise SystemExit(not all(r['passed'] for r in results))
