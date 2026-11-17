@@ -316,7 +316,7 @@ bool Editor::mayDiscard()
 void Editor::closeEvent(QCloseEvent *event)
 {
     if (peer && peer->state() != QProcess::NotRunning) {
-        QMessageBox::information(this, tr("Theme editor"), tr("Close the KDE tool before closing this project."));
+        QMessageBox::information(this, Identity::product(), tr("Close the KDE tool before closing this project."));
         event->ignore();
     } else if (mayDiscard()) event->accept(); else event->ignore();
 }
