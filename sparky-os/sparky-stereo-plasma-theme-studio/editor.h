@@ -34,6 +34,7 @@ public:
     QUndoStack *history;
     explicit Editor(bool part = false);
     bool partMode;
+    QWindow *observedWindow = nullptr;
     Editor *plasmaEditor = nullptr;
     QTabWidget *pages = nullptr;
     QString plasmaRoot, plasmaPath, colourName;

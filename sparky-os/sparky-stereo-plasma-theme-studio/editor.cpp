@@ -279,8 +279,10 @@ void Editor::refresh()
             if (!ties.isEmpty()) text += tr("; same pixel as %1").arg(ties.join(", "));
             return text;
         };
-        disparities->setItem(row, 1, new QTableWidgetItem(describe(exported)));
-        disparities->setItem(row, 2, new QTableWidgetItem(describe(drawing)));
+        auto *common = new QTableWidgetItem(describe(exported)); common->setToolTip(common->text());
+        auto *personal = new QTableWidgetItem(describe(drawing)); personal->setToolTip(personal->text());
+        disparities->setItem(row, 1, common);
+        disparities->setItem(row, 2, personal);
     }
 }
 
@@ -361,8 +363,8 @@ QString Editor::setGroupDepth(const QString &id, double value)
         Drawing candidate = drawing;
         candidate.setPlace(id, value);
         if (!selectPart(id)) return tr("Invalid group or place");
-        auto *control = groups->itemWidget(groups->currentItem(), 1)->findChild<QDoubleSpinBox *>();
         if (!STUDIO_STEREO) return tr("Enable 3D");
+        auto *control = groups->itemWidget(groups->currentItem(), 1)->findChild<QDoubleSpinBox *>();
         control->setValue(value * 100.0);
         return {};
     } catch (const std::exception &e) { return QString::fromUtf8(e.what()); }
@@ -506,5 +508,8 @@ void Editor::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
     guarded([&] { refresh(); });
-    if (windowHandle()) connect(windowHandle(), &QWindow::screenChanged, this, [this] { guarded([&] { refresh(); }); });
+    if (windowHandle() && observedWindow != windowHandle()) {
+        observedWindow = windowHandle();
+        connect(windowHandle(), &QWindow::screenChanged, this, [this] { guarded([&] { refresh(); }); });
+    }
 }
