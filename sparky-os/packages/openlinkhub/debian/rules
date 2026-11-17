@@ -21,11 +21,9 @@ export CGO_LDFLAGS = $(shell dpkg-buildflags --get LDFLAGS)
 %:
 	dh $@ --buildsystem=none
 
-# debian/copyright is generated from the licence table and the legal files of the vendored modules; the build stops when the committed file differs
-execute_before_dh_auto_configure:
-	python3 debian/gen-copyright.py debian/copyright-head.txt debian/vendor-licences.tsv | cmp - debian/copyright
-
+# debian/copyright is generated from the licence table of the vendored modules; the build stops when the committed file differs
 override_dh_auto_build:
+	python3 debian/gen-copyright.py debian/copyright-head.txt debian/vendor-licences.tsv | cmp - debian/copyright
 	go version
 	go build -buildmode=pie -o debian/.build/OpenLinkHub .
 
