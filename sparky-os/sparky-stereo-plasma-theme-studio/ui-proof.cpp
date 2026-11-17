@@ -24,10 +24,12 @@ int main(int argc, char **argv)
         require(baseline != editor.drawing.eye(256, false), "Selected group is not highlighted");
         auto *spin = editor.findChild<QDoubleSpinBox *>("g3010");
         require(spin, "Missing single depth control");
+        editor.show(); app.processEvents();
+        require(spin->height() < 50 && spin->height() < editor.groups->topLevelItem(0)->sizeHint(0).height(), "Depth control stretched to thumbnail height");
         spin->setValue(-25.0);
         require(editor.drawing.places.value("g3010") == -0.25, "Continuous value lost");
         require(editor.drawing.disparity("g3010", 256) == -1, "Fractional depth was not visibly compensated within the budget");
-        require(editor.disparities->item(0, 1)->text().contains("limit"), "Zero disparity is hidden");
+        require(editor.disparities->item(0, 1)->text().contains("room"), "Physical no-room exception is hidden");
         editor.history->undo();
         require(editor.drawing.places.value("g3010") == -1, "Undo did not restore the value");
         require(editor.preview->left == baseline, "Undo did not restore the rendered selection");

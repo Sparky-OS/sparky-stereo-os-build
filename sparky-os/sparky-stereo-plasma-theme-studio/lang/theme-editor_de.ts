@@ -1,5 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE TS>
+<?xml version='1.0' encoding='utf-8'?>
 <TS version="2.1" language="de" sourcelanguage="en">
   <context>
     <name>Cli</name>
@@ -113,6 +112,18 @@
     <message>
       <source>Cannot encode PNG</source>
       <translation>PNG kann nicht kodiert werden</translation>
+    </message>
+    <message>
+      <source>the desktop's limit is zero</source>
+      <translation>die Grenze der Arbeitsfläche ist null</translation>
+    </message>
+    <message>
+      <source>no room in the drawing at this size</source>
+      <translation>kein Platz in der Zeichnung bei dieser Größe</translation>
+    </message>
+    <message>
+      <source>Depth order cannot fit in this drawing at %1 px: %2 / %3</source>
+      <translation>Die Tiefenreihenfolge passt bei %1 px nicht in diese Zeichnung: %2 / %3</translation>
     </message>
   </context>
   <context>
@@ -232,10 +243,6 @@
     <message>
       <source>%1 px</source>
       <translation>%1 px</translation>
-    </message>
-    <message>
-      <source>0 px (limit below 1 px)</source>
-      <translation>0 px (Grenze unter 1 px)</translation>
     </message>
     <message>
       <source>0 px (screen)</source>
@@ -416,6 +423,26 @@
     <message>
       <source>About…</source>
       <translation>Über…</translation>
+    </message>
+    <message>
+      <source>Cannot read the preview output</source>
+      <translation>Vorschauausgabe kann nicht gelesen werden</translation>
+    </message>
+    <message>
+      <source>Export (defaults)</source>
+      <translation>Export (Vorgaben)</translation>
+    </message>
+    <message>
+      <source>Preview (desktop)</source>
+      <translation>Vorschau (Arbeitsfläche)</translation>
+    </message>
+    <message>
+      <source>0 px (%1)</source>
+      <translation>0 px (%1)</translation>
+    </message>
+    <message>
+      <source>; same pixel as %1</source>
+      <translation>; gleiches Pixel wie %1</translation>
     </message>
   </context>
   <context>

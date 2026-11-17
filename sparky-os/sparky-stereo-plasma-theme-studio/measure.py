@@ -39,12 +39,12 @@ def shift(left, right):
     def canvas(image):
         premultiplied = image.astype(float) / 255
         premultiplied[..., :3] *= premultiplied[..., 3:4]
-        return np.pad(premultiplied, ((8, 8), (8, 8), (0, 0)))
+        return np.pad(premultiplied, ((16, 16), (16, 16), (0, 0)))
     assert left[..., 3].max() > 0 and right[..., 3].max() > 0, 'Empty group probe'
     a, b = canvas(left), canvas(right)
     candidates = []
     for dy in range(-2, 3):
-        for dx in range(-5, 6):
+        for dx in range(-12, 13):
             error = float(np.square(a - np.roll(b, (dy, dx), (0, 1))).sum())
             candidates.append((error, dx, dy))
     return min(candidates)
@@ -66,10 +66,14 @@ def main():
         pair(path)
         verified += 1
     rows = []
-    # Known answers for KWin's 10/4 reference defaults, including both odd signs.
+    # KWin's 10/4 screen-pixel defaults at reference output width; independently measured bounds limit physical motion.
     for size in (8, 16, 22, 24, 32, 48, 64, 128, 256):
-        for name, expected in [('g3010', -1 if size >= 128 else 0),
-                               ('g3050', 0), ('g3090', 1 if size == 256 else 0)]:
+        for name, sign, limit in [('g3010', -1, 10), ('g3050', 0, 0), ('g3090', 1, 4)]:
+            alpha=np.asarray(Image.open(a.folder/f'flat-{name}-{size}.png').convert('RGBA'))[...,3]
+            ys,xs=np.nonzero(alpha);assert len(xs)>0
+            left_room=int(xs.min());right_room=size-1-int(xs.max())
+            room=min(2*left_room,2*right_room+1) if sign<0 else min(2*right_room,2*left_room+1)
+            expected=sign*min(limit,room)
             left, right = pair(a.folder / f'{name}-{size}.pns')
             error, dx, dy = shift(left, right)
             rows.append({'size': size, 'group': name, 'expected_disparity': expected, 'measured_disparity': dx,

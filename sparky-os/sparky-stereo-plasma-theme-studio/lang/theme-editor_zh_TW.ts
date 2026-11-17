@@ -1,5 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE TS>
+<?xml version='1.0' encoding='utf-8'?>
 <TS version="2.1" language="zh_TW" sourcelanguage="en">
   <context>
     <name>Cli</name>
@@ -113,6 +112,18 @@
     <message>
       <source>Cannot encode PNG</source>
       <translation>無法編碼 PNG</translation>
+    </message>
+    <message>
+      <source>the desktop's limit is zero</source>
+      <translation>桌面限制為零</translation>
+    </message>
+    <message>
+      <source>no room in the drawing at this size</source>
+      <translation>此尺寸的繪圖中沒有移動空間</translation>
+    </message>
+    <message>
+      <source>Depth order cannot fit in this drawing at %1 px: %2 / %3</source>
+      <translation>在 %1 像素時無法在此繪圖中保持深度順序：%2 / %3</translation>
     </message>
   </context>
   <context>
@@ -232,10 +243,6 @@
     <message>
       <source>%1 px</source>
       <translation>%1 像素</translation>
-    </message>
-    <message>
-      <source>0 px (limit below 1 px)</source>
-      <translation>0 px（限制不足 1 px）</translation>
     </message>
     <message>
       <source>0 px (screen)</source>
@@ -416,6 +423,26 @@
     <message>
       <source>About…</source>
       <translation>關於…</translation>
+    </message>
+    <message>
+      <source>Cannot read the preview output</source>
+      <translation>無法讀取預覽輸出</translation>
+    </message>
+    <message>
+      <source>Export (defaults)</source>
+      <translation>匯出（預設值）</translation>
+    </message>
+    <message>
+      <source>Preview (desktop)</source>
+      <translation>預覽（桌面）</translation>
+    </message>
+    <message>
+      <source>0 px (%1)</source>
+      <translation>0 像素（%1）</translation>
+    </message>
+    <message>
+      <source>; same pixel as %1</source>
+      <translation>；與 %1 為同一像素</translation>
     </message>
   </context>
   <context>

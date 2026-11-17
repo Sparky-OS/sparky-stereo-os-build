@@ -1,5 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE TS>
+<?xml version='1.0' encoding='utf-8'?>
 <TS version="2.1" language="en" sourcelanguage="en">
   <context>
     <name>Cli</name>
@@ -113,6 +112,18 @@
     <message>
       <source>Cannot encode PNG</source>
       <translation>Cannot encode PNG</translation>
+    </message>
+    <message>
+      <source>the desktop's limit is zero</source>
+      <translation>the desktop's limit is zero</translation>
+    </message>
+    <message>
+      <source>no room in the drawing at this size</source>
+      <translation>no room in the drawing at this size</translation>
+    </message>
+    <message>
+      <source>Depth order cannot fit in this drawing at %1 px: %2 / %3</source>
+      <translation>Depth order cannot fit in this drawing at %1 px: %2 / %3</translation>
     </message>
   </context>
   <context>
@@ -232,10 +243,6 @@
     <message>
       <source>%1 px</source>
       <translation>%1 px</translation>
-    </message>
-    <message>
-      <source>0 px (limit below 1 px)</source>
-      <translation>0 px (limit below 1 px)</translation>
     </message>
     <message>
       <source>0 px (screen)</source>
@@ -416,6 +423,26 @@
     <message>
       <source>About…</source>
       <translation>About…</translation>
+    </message>
+    <message>
+      <source>Cannot read the preview output</source>
+      <translation>Cannot read the preview output</translation>
+    </message>
+    <message>
+      <source>Export (defaults)</source>
+      <translation>Export (defaults)</translation>
+    </message>
+    <message>
+      <source>Preview (desktop)</source>
+      <translation>Preview (desktop)</translation>
+    </message>
+    <message>
+      <source>0 px (%1)</source>
+      <translation>0 px (%1)</translation>
+    </message>
+    <message>
+      <source>; same pixel as %1</source>
+      <translation>; same pixel as %1</translation>
     </message>
   </context>
   <context>

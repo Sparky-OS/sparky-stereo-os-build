@@ -1,5 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE TS>
+<?xml version='1.0' encoding='utf-8'?>
 <TS version="2.1" language="pl" sourcelanguage="en">
   <context>
     <name>Cli</name>
@@ -113,6 +112,18 @@
     <message>
       <source>Cannot encode PNG</source>
       <translation>Nie można zakodować PNG</translation>
+    </message>
+    <message>
+      <source>the desktop's limit is zero</source>
+      <translation>limit pulpitu wynosi zero</translation>
+    </message>
+    <message>
+      <source>no room in the drawing at this size</source>
+      <translation>brak miejsca na rysunku w tym rozmiarze</translation>
+    </message>
+    <message>
+      <source>Depth order cannot fit in this drawing at %1 px: %2 / %3</source>
+      <translation>Nie można zachować kolejności głębi na rysunku przy %1 px: %2 / %3</translation>
     </message>
   </context>
   <context>
@@ -232,10 +243,6 @@
     <message>
       <source>%1 px</source>
       <translation>%1 px</translation>
-    </message>
-    <message>
-      <source>0 px (limit below 1 px)</source>
-      <translation>0 px (limit poniżej 1 px)</translation>
     </message>
     <message>
       <source>0 px (screen)</source>
@@ -416,6 +423,26 @@
     <message>
       <source>About…</source>
       <translation>O programie…</translation>
+    </message>
+    <message>
+      <source>Cannot read the preview output</source>
+      <translation>Nie można odczytać wyjścia podglądu</translation>
+    </message>
+    <message>
+      <source>Export (defaults)</source>
+      <translation>Eksport (domyślne)</translation>
+    </message>
+    <message>
+      <source>Preview (desktop)</source>
+      <translation>Podgląd (pulpit)</translation>
+    </message>
+    <message>
+      <source>0 px (%1)</source>
+      <translation>0 px (%1)</translation>
+    </message>
+    <message>
+      <source>; same pixel as %1</source>
+      <translation>; ten sam piksel co %1</translation>
     </message>
   </context>
   <context>

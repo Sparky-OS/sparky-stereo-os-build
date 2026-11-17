@@ -12,6 +12,7 @@
 #include <QStandardPaths>
 #include <QSvgRenderer>
 #include <QSet>
+#include <QtMath>
 #include <QtEndian>
 #include <stdexcept>
 #include <functional>
@@ -89,16 +90,19 @@ void Drawing::open(const QString &path, bool square)
     original = bytes;
     places = nextPlaces;
     source = path;
-    readLimits();
+    boundsCache.clear();
+    useDefaults();
 }
 
-void Drawing::readLimits()
+void Drawing::readLimits(int outputWidth, int displayedWidth)
 {
     const auto limits = Depth::desktopLimits();
     const qreal sunk = limits.sunk, popped = limits.popped;
     check(std::isfinite(sunk) && std::isfinite(popped) && sunk >= 0 && popped >= 0, Drawing::tr("Invalid desktop depth limits"));
     sunkLimit = sunk;
     poppedLimit = popped;
+    outputPixels = outputWidth > 0 ? outputWidth : Depth::referenceWidth();
+    displayedPixels = displayedWidth;
 }
 
 int Drawing::height(int width) const
@@ -109,11 +113,76 @@ int Drawing::height(int width) const
 
 QStringList Drawing::groups() const { return places.keys(); }
 
+void Drawing::useDefaults()
+{
+    const auto limits = Depth::defaultLimits();
+    sunkLimit = limits.sunk; poppedLimit = limits.popped;
+    outputPixels = Depth::referenceWidth(); displayedPixels = 0;
+}
+Drawing Drawing::forExport() const { Drawing copy = *this; copy.useDefaults(); return copy; }
+
+QRect Drawing::partBounds(const QString &id, int size) const
+{
+    auto &cache = boundsCache[size];
+    if (cache.contains(id)) return cache.value(id);
+    Drawing flat = *this;
+    for (auto i = flat.places.begin(); i != flat.places.end(); ++i) i.value() = 0;
+    const auto image = flat.eye(size, false, id);
+    QRect bounds;
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x)
+            if (qAlpha(image.pixel(x,y))) bounds |= QRect(x,y,1,1);
+    cache[id] = bounds;
+    return bounds;
+}
+int Drawing::drawingCapacity(const QString &id, int size, bool popped) const
+{
+    // Physical horizontal room of this part, not a depth budget scaled to the canvas.
+    const auto bounds = partBounds(id, size);
+    if (bounds.isEmpty()) return 0;
+    const qreal scale = displayedPixels > 0 ? qreal(displayedPixels) / size : 1;
+    const int left = qFloor(bounds.left() * scale);
+    const int right = qFloor((size - bounds.right() - 1) * scale);
+    // Exact asymmetric integer eyeShift: ceil(magnitude/2) in the left eye, floor in the right.
+    return qMax(0, popped ? qMin(2 * right, 2 * left + 1) : qMin(2 * left, 2 * right + 1));
+}
+int Drawing::desktopCapacity(const QString &id) const
+{
+    return std::abs(Depth::parallax(places.value(id) < 0 ? sunkLimit : poppedLimit, outputPixels));
+}
 int Drawing::disparity(const QString &id, int size) const
 {
     check(places.contains(id), Drawing::tr("Invalid group or place"));
     const qreal value = places.value(id);
-    return Depth::authoredDisparity(value, {sunkLimit, poppedLimit}, size);
+    const int requested = Depth::authoredDisparity(value, {sunkLimit, poppedLimit}, outputPixels);
+    const int magnitude = qMin(std::abs(requested), drawingCapacity(id, size, value > 0));
+    return requested < 0 ? -magnitude : magnitude;
+}
+QString Drawing::depthNotice(const QString &id, int size) const
+{
+    if (!places.value(id)) return {};
+    if (!desktopCapacity(id)) return Drawing::tr("the desktop's limit is zero");
+    if (!drawingCapacity(id, size, places.value(id) > 0)) return Drawing::tr("no room in the drawing at this size");
+    return {};
+}
+QStringList Drawing::collapsedWith(const QString &id, int size) const
+{
+    QStringList ids;
+    for (auto i = places.cbegin(); i != places.cend(); ++i)
+        if (i.key() != id && i.value() != places.value(id) && i.value() && places.value(id)
+            && disparity(i.key(), size) == disparity(id, size)) ids << groupLabel(i.key());
+    return ids;
+}
+void Drawing::checkOrder(int size) const
+{
+    for (auto a = places.cbegin(); a != places.cend(); ++a) {
+        if (!a.value()) continue;
+        for (auto b = places.cbegin(); b != places.cend(); ++b) {
+            if (!b.value()) continue;
+            check(!(a.value() < b.value() && disparity(a.key(),size) > disparity(b.key(),size)),
+                Drawing::tr("Depth order cannot fit in this drawing at %1 px: %2 / %3").arg(size).arg(groupLabel(a.key()),groupLabel(b.key())));
+        }
+    }
 }
 
 QString Drawing::groupLabel(const QString &id) const
@@ -154,6 +223,7 @@ void Drawing::setPlace(const QString &id, qreal place)
 
 QByteArray Drawing::viewSvg(int size, bool right, QString only) const
 {
+    checkOrder(size);
     auto view = document.cloneNode(true).toDocument();
     QSvgRenderer sourceRenderer(document.toByteArray());
     const qreal unitsPerPixel = sourceRenderer.viewBoxF().width() / size;
@@ -177,7 +247,7 @@ QByteArray Drawing::viewSvg(int size, bool right, QString only) const
         const QString id = e.attribute("id");
         const qreal place = places.value(id);
         if (!place) continue;
-        const int shift = Depth::eyeShift(disparity(id, size), right);
+        const qreal shift = Depth::eyeShift(disparity(id, size), right) * (displayedPixels > 0 ? qreal(size) / displayedPixels : 1);
         bool invertible = false;
         auto inverse = sourceRenderer.transformForElement(id).inverted(&invertible);
         check(invertible, Drawing::tr("Singular parent transform for ") + id);

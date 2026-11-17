@@ -23,6 +23,8 @@ int main(int argc, char **argv)
         const QMap<QString, int> choices{{"g3010", -1}, {"g3050", 0}, {"g3090", 1}};
         for (auto i = choices.cbegin(); i != choices.cend(); ++i) drawing.setPlace(i.key(), i.value());
         for (int n : {8, 16, 22, 24, 32, 48, 64, 128, 256}) {
+            Drawing flat = drawing; for (const auto &id : choices.keys()) flat.setPlace(id, 0);
+            for (const auto &id : choices.keys()) flat.eye(n,false,id).save(out + QString("/flat-%1-%2.png").arg(id).arg(n));
             const auto left = drawing.eye(n, false);
             const auto right = drawing.eye(n, true);
             left.save(out + QString("/left-%1.png").arg(n));
