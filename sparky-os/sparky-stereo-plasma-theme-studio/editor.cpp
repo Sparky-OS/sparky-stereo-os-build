@@ -427,6 +427,8 @@ void Editor::loadProject(const QString &path)
         throw std::runtime_error(tr("Invalid or unsupported theme project").toStdString());
 #if STUDIO_MODELS
     if(modelPage && project.contains("model")) { modelPage->loadProject(path,project); return; }
+#else
+    if(project.contains("model")) throw std::runtime_error(tr("The model helper is unavailable in this build.").toStdString());
 #endif
     load(path + "/icons", path + "/icons/" + project.value("icon").toString());
     applyPlaces(project.value("groups").toObject());
@@ -558,40 +560,63 @@ bool Editor::event(QEvent *event)
     return result;
 }
 
-QString Editor::openModelFile(const QString &path)
+QString Editor::openModelFile(const QString& path)
 {
 #if STUDIO_MODELS
-    try {if(!modelPage) return tr("The model helper is unavailable in this build.");modelPage->open(path);pages->setCurrentWidget(modelPage);return {};}catch(const std::exception &e){return QString::fromUtf8(e.what());}
+    try {
+        if (!modelPage)
+            return tr("The model helper is unavailable in this build.");
+        modelPage->open(path);
+        pages->setCurrentWidget(modelPage);
+        return {};
+    } catch (const std::exception& e) {
+        return QString::fromUtf8(e.what());
+    }
 #else
-    Q_UNUSED(path);return tr("The model helper is unavailable in this build.");
+    Q_UNUSED(path);
+    return tr("The model helper is unavailable in this build.");
 #endif
 }
 QString Editor::setModelDepth(double value)
 {
 #if STUDIO_MODELS
-    if(!modelPage || !std::isfinite(value) || value < -1 || value > 1) return tr("Invalid group or place");
-    modelPage->depth->setValue(value*100);return {};
+    if (!modelPage || !std::isfinite(value) || value < -1 || value > 1)
+        return tr("Invalid group or place");
+    modelPage->depth->setValue(value * 100);
+    return {};
 #else
-    Q_UNUSED(value);return tr("The model helper is unavailable in this build.");
+    Q_UNUSED(value);
+    return tr("The model helper is unavailable in this build.");
 #endif
 }
 QString Editor::modelState() const
 {
 #if STUDIO_MODELS
-    return modelPage?modelPage->state():QString();
+    return modelPage ? modelPage->state() : QString();
 #else
     return {};
 #endif
 }
-QString Editor::exportModelPairs(const QString &path)
+QString Editor::exportModelPairs(const QString& path)
 {
 #if STUDIO_MODELS
-    try{modelPage->exportPairs(path);return {};}catch(const std::exception &e){return QString::fromUtf8(e.what());}
+    try {
+        modelPage->exportPairs(path);
+        return {};
+    } catch (const std::exception& e) {
+        return QString::fromUtf8(e.what());
+    }
 #else
-    Q_UNUSED(path);return tr("The model helper is unavailable in this build.");
+    Q_UNUSED(path);
+    return tr("The model helper is unavailable in this build.");
 #endif
 }
-QString Editor::saveCurrentProject(const QString &path)
+QString Editor::saveCurrentProject(const QString& path)
 {
-    try{saveProject(path);return {};}catch(const std::exception &e){return QString::fromUtf8(e.what());}
+    try {
+        saveProject(path);
+        return {};
+    } catch (const std::exception& e) {
+        return QString::fromUtf8(e.what());
+    }
 }
