@@ -1,0 +1,14 @@
+#!/bin/sh
+# Created by Daniel Ramos (Capitain Jack) 2026/11/17
+# Copyright 2026 under the GNU GPL3 License
+# OpenRGB with the session, minimized (Daniel, 2026-11-08: "I would like openRGB to start already minimized or as a service only, I do
+# not need to see it's window at every boot - but I need it to start to control the RGB"), on a machine that has a device it drives:
+# sparky-stereo-hardware marks such a machine (/var/lib/sparky-stereo-hardware/openrgb-session). A person who starts OpenRGB by an
+# autostart entry of their own is left alone; one who switches this entry off in System Settings (Autostart) is left alone by KDE.
+[ -e "${SPARKY_STEREO_ROOT:-}/var/lib/sparky-stereo-hardware/openrgb-session" ] || exit 0
+for entry in "${XDG_CONFIG_HOME:-$HOME/.config}"/autostart/*.desktop; do
+	[ -f "$entry" ] || continue
+	case "$entry" in */sparky-stereo-openrgb.desktop) continue ;; esac
+	if grep -qis '^Exec=.*openrgb' "$entry" && ! grep -qis '^Hidden=true' "$entry"; then exit 0; fi
+done
+exec "${SPARKY_OPENRGB:-/usr/bin/openrgb}" --startminimized

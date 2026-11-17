@@ -127,6 +127,8 @@ else
 	for file in board_vendor board_name; do
 		if [[ -r /sys/class/dmi/id/$file ]]; then cat "/sys/class/dmi/id/$file" >"$FACTS/dmi-${file//_/-}"; fi
 	done
+	# OpenLinkHub (upstream's package, not in Debian) owns the Corsair devices it shares with OpenRGB and liquidctl (ORDER 108)
+	if [[ -e /etc/systemd/system/OpenLinkHub.service || -e /usr/lib/systemd/system/OpenLinkHub.service || -e /opt/OpenLinkHub ]]; then echo yes >"$FACTS/openlinkhub"; else echo no >"$FACTS/openlinkhub"; fi
 	: >"$FACTS/hid-uevents"
 	for file in /sys/bus/hid/devices/*/uevent; do
 		[[ ! -f "$file" ]] || cat "$file" >>"$FACTS/hid-uevents"
@@ -165,6 +167,15 @@ if $dry; then
 		log "Would install linux-image-sparky-stereo-v3 and linux-headers-sparky-stereo-v3 (the kernel built for this x86-64-v3 processor); the baseline kernel stays installed and in GRUB, and the newer release boots first"
 	elif grep -Fxq $'fact\tx86-64-v3\tyes' "$WORK/plan"; then
 		log "Would not install the x86-64-v3 kernel: the baseline kernel was chosen for this machine (--kernel v3 undoes it)"
+	fi
+	if grep -Fxq $'action\topenrgb-session' "$WORK/plan"; then
+		log "Would mark this machine for OpenRGB at the session start (minimized): the machine has a device OpenRGB drives"
+	fi
+	if grep -Fxq $'action\ti2c-dev' "$WORK/plan"; then
+		log "Would load i2c-dev and the chipset's driver (i2c-i801 on Intel, i2c-piix4 on AMD) now and at every boot (/etc/modules-load.d/sparky-stereo-i2c.conf) so OpenRGB can reach the board's SMBus"
+	fi
+	if grep -Eq $'^owner\t' "$WORK/plan"; then
+		log "Would leave each device named in an owner line of the plan to its owner (62-sparky-stereo-peripheral-owner.rules takes the other tools' access away)"
 	fi
 	if grep -Fxq $'action\tbroadcom-wl' "$WORK/plan"; then
 		if wl_declined; then
@@ -320,6 +331,16 @@ for package in "${packages[@]}"; do
 		hid-tmff2-dkms|hid-fanatecff-dkms|new-lg4ff-dkms) setup_rig_driver "$package" || failed=1 ;;
 	esac
 done
+# Lights and peripherals (ORDER 108): the tool of each device seen, without a question. The kernel module of OpenRazer is DKMS, like the
+# wheel drivers: the running kernel's headers with it.
+for package in "${packages[@]}"; do
+	case "$package" in
+		openrgb|i2c-tools|solaar|ratbagd|piper|liquidctl|g810-led|openrazer-daemon) install_step "$package" ;;
+		openrazer-driver-dkms) setup_rig_driver "$package" || failed=1 ;;
+	esac
+done
+if grep -Fxq $'action\ti2c-dev' "$WORK/plan"; then setup_i2c_dev "$WORK/plan" || failed=1; fi
+setup_openrgb_session "$WORK/plan" || failed=1
 # The OpenGL stereo default follows the card the desktop runs on; a driver installed now
 # binds at the next boot, when sparky-stereo-opengl-default.service writes it again.
 if ! run /usr/bin/sparky-stereo-opengl-default; then

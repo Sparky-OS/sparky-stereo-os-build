@@ -1,0 +1,100 @@
+#!/usr/bin/python3
+# Created by Daniel Ramos (Capitain Jack) 2026/11/17
+# Copyright 2026 under the GNU GPL3 License
+# sparky-stereo-peripheral-owner [check | list] [--dry-run]
+# One owner per device (ORDER 108, milestone 6). OpenLinkHub and OpenRGB (or liquidctl) both open the Corsair devices of
+# share/peripherals/owners.tsv; read together they cross each other's replies (measured on an iCUE LINK System Hub: a power supply
+# shown at about 1,800 W). When OpenLinkHub is installed it owns them, and 62-sparky-stereo-peripheral-owner.rules takes the other
+# tools' access away. This tells the person once for each such device that is plugged in, through the engine, and forgets
+# the telling when OpenLinkHub or the device is gone, so a later return is told again.
+#   check  (default)  tell, once per device
+#   list              print what is owned and by whom, tell nothing
+#   --dry-run         print the engine commands instead of running them
+# Tests: SPARKY_PERIPHERAL_FIXTURE=DIR (DIR/lsusb, DIR/openlinkhub = yes|no) replaces the machine; SPARKY_STEREO_ROOT moves the state.
+import os
+import re
+import subprocess
+import sys
+
+PKG = "sparky-stereo-hardware"
+ROOT = os.environ.get("SPARKY_STEREO_ROOT", "")
+TABLE = os.environ.get("SPARKY_PERIPHERAL_TABLE", "/usr/share/sparky/sparky-stereo-hardware/peripherals/owners.tsv")
+STATE = ROOT + "/var/lib/sparky-stereo-hardware/owner-told"
+FIXTURE = os.environ.get("SPARKY_PERIPHERAL_FIXTURE")
+
+
+def say(text):
+    print("sparky-stereo-peripheral-owner: " + text, file=sys.stderr)
+
+
+def olh_installed():
+    if FIXTURE:
+        return open(os.path.join(FIXTURE, "openlinkhub")).read().strip() == "yes"
+    return any(os.path.exists(ROOT + p) for p in ("/etc/systemd/system/OpenLinkHub.service", "/usr/lib/systemd/system/OpenLinkHub.service", "/opt/OpenLinkHub"))
+
+
+def usb_ids():
+    if FIXTURE:
+        text = open(os.path.join(FIXTURE, "lsusb")).read()
+    else:
+        out = subprocess.run(["lsusb"], capture_output=True, text=True)
+        if out.returncode != 0:
+            say("lsusb failed (exit status %d), so the devices cannot be listed: %s" % (out.returncode, out.stderr.strip()))
+            raise SystemExit(1)
+        text = out.stdout
+    return {"%s:%s" % (v.lower(), p.lower()) for v, p in re.findall(r"\bID ([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\b", text)}
+
+
+def owned():
+    table = {}
+    with open(TABLE) as f:
+        for line in f:
+            if line.startswith("#") or not line.strip():
+                continue
+            ident, owner, kept_out, name = (line.rstrip("\n").split("\t") + [""] * 4)[:4]
+            table[ident] = (owner, kept_out, name or ident)
+    return table
+
+
+def engine(args, dry):
+    cmd = ["sparky-stereo-problems"] + args
+    if dry:
+        print(" ".join(cmd))
+        return
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def main(argv):
+    dry = "--dry-run" in argv
+    words = [a for a in argv if not a.startswith("--")]
+    mode = words[0] if words else "check"
+    table = owned()
+    present = usb_ids() & set(table)
+    with_olh = olh_installed()
+    if mode == "list":
+        for ident in sorted(present):
+            owner, kept_out, name = table[ident]
+            print("%s\t%s\t%s\t%s" % (ident, owner if with_olh else "openrgb", "keeps out " + kept_out if with_olh else "OpenLinkHub is not installed", name))
+        return 0
+    marks = set(os.listdir(STATE)) if os.path.isdir(STATE) else set()
+    for ident in sorted(present) if with_olh else []:
+        mark = ident.replace(":", "-")
+        if mark in marks:
+            continue
+        engine(["say", PKG, "LOCAL87", "%s (%s)" % (table[ident][2].replace("_", " "), ident)], dry)
+        if not dry:
+            os.makedirs(STATE, exist_ok=True)
+            open(os.path.join(STATE, mark), "w").close()
+    # the telling is forgotten for a device that is gone or whose owner left
+    for mark in sorted(marks):
+        ident = mark.replace("-", ":", 1)
+        if not with_olh or ident not in present:
+            if dry:
+                print("forget " + mark)
+            else:
+                os.unlink(os.path.join(STATE, mark))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

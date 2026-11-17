@@ -75,12 +75,17 @@ for device in ('0010', '0011', '0012'):
 # must be present. The new facts are read-only; the packages named are ones the lists install.
 here = pathlib.Path(__file__).resolve().parent / 'fixtures'
 fixture_cases = {
-    'gigabyte-corsair-v3': ({'amd64-microcode', 'linux-image-sparky-stereo-v3', 'linux-headers-sparky-stereo-v3'}, [
-        'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes',
+    # a Corsair K70 (OpenRGB drives it) on a Gigabyte desktop board: OpenRGB, and the SMBus for its board lights (ORDER 108, milestone 6)
+    'gigabyte-corsair-v3': ({'amd64-microcode', 'linux-image-sparky-stereo-v3', 'linux-headers-sparky-stereo-v3', 'openrgb', 'i2c-tools'}, [
+        'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes', 'action\topenrgb-session', 'action\ti2c-dev',
+        'fact\tsmbus-modules\ti2c-dev i2c-piix4', 'fact\tperipheral\topenrgb\t1b1c:1b13',
         'fact\tboard\tGigabyte Technology Co., Ltd. / B550 TEST BOARD',
         'fact\tusb-vendors\t1b1c (Corsair) 1d6b'], []),
-    'razer-mt7922-v3': ({'intel-microcode', 'thermald', 'firmware-mediatek', 'linux-image-sparky-stereo-v3', 'linux-headers-sparky-stereo-v3'}, [
-        'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes',
+    # a Razer Huntsman Elite on an ASUS desktop board: OpenRGB and OpenRazer (the daemon and its DKMS module), and the SMBus (Intel: i2c-i801)
+    'razer-mt7922-v3': ({'intel-microcode', 'thermald', 'firmware-mediatek', 'linux-image-sparky-stereo-v3', 'linux-headers-sparky-stereo-v3',
+                         'openrgb', 'i2c-tools', 'openrazer-daemon', 'openrazer-driver-dkms'}, [
+        'fact\tcpu-level\tv3', 'fact\tx86-64-v3\tyes', 'action\topenrgb-session', 'fact\tsmbus-modules\ti2c-dev i2c-i801',
+        'fact\tperipheral\topenrazer\t1532:0243',
         'fact\tboard\tASUSTeK COMPUTER INC. / Z370 TEST BOARD',
         'fact\tusb-vendors\t1532 (Razer)',
         'fact\tnetwork-driver\t14c3:0616 mt7921e (in our kernel) MediaTek Wi-Fi 6/7 (MT7921, MT7922, MT7902, MT7925)',

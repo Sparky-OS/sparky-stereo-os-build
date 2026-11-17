@@ -64,6 +64,21 @@ with --rig-driver PACKAGE; the helper rejects a package without a detected match
 Use --dry-run first to inspect the plan. The setup does not load a wheel driver
 into a running kernel. Reconnect or reboot after installation.
 
+Lights and peripherals:
+-------------------------------------------------------
+A device seen on USB leads to its tool, installed without a question, from the tool's own list of the devices it drives
+(share/peripherals/*.ids; tools/make-peripheral-ids.py makes them from the packages' udev rules and device files, and the first
+lines of each file say which package and version). OpenRGB starts minimized with the session on a machine that has a device
+it drives; a desktop board of a maker OpenRGB's detectors name gets i2c-dev. Where OpenLinkHub is installed it owns the 99 Corsair
+devices it shares with OpenRGB and liquidctl (share/peripherals/owners.tsv): 62-sparky-stereo-peripheral-owner.rules removes
+the uaccess tag of those devices, and the person is told once (sparky-stereo-hardware-peripheral-owner.service, and after every
+dpkg run). To give the devices back to OpenRGB put an empty file named 62-sparky-stereo-peripheral-owner.rules in /etc/udev/rules.d.
+`/usr/lib/sparky-stereo-hardware/peripheral-owner list` prints each owned device present. Credits, as each project's copyright file or
+page names them: the OpenRGB project and its contributors (device lists, udev rules); Solaar, Daniel Pavel and contributors; libratbag
+and Piper, Jonas Ådahl, Benjamin Tissoires, Red Hat, David Herrmann and contributors; liquidctl, Jonas Malaco and contributors; g810-led,
+MatMoul; OpenRazer, Terry Cain, Tim Theede, Gabriele Musco and contributors; OpenLinkHub, its contributors (github.com/jurkovic-nikola/OpenLinkHub,
+GPL-3.0); the Debian maintainers of those packages.
+
 Install:
 -------------
 su

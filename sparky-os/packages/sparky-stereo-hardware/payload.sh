@@ -26,6 +26,14 @@ install -Dm644 "$HERE/share/udev/71-sparky-stereo-bt-voice.rules" "$D/usr/lib/ud
 # packages built for a higher processor level than the machine's are told to the person: after every dpkg run (the hook) and at boot (ORDER 108)
 install -Dm755 "$HERE/bin/sparky-stereo-variant-check" "$D/usr/lib/sparky-stereo-hardware/variant-check"
 install -Dm644 "$HERE/share/systemd/sparky-stereo-hardware-variant-check.service" "$D/usr/lib/systemd/system/sparky-stereo-hardware-variant-check.service"
+# lights and peripherals by detection (ORDER 108, milestone 6): the ids each tool drives, who owns the devices two tools open, OpenRGB with the session
+mkdir -p "$D/usr/share/sparky/sparky-stereo-hardware/peripherals"
+install -m644 "$HERE"/share/peripherals/*.ids "$HERE/share/peripherals/owners.tsv" "$D/usr/share/sparky/sparky-stereo-hardware/peripherals/"
+install -Dm644 "$HERE/share/peripherals/62-sparky-stereo-peripheral-owner.rules" "$D/usr/lib/udev/rules.d/62-sparky-stereo-peripheral-owner.rules"
+install -Dm755 "$HERE/bin/sparky-stereo-peripheral-owner" "$D/usr/lib/sparky-stereo-hardware/peripheral-owner"
+install -Dm644 "$HERE/share/systemd/sparky-stereo-hardware-peripheral-owner.service" "$D/usr/lib/systemd/system/sparky-stereo-hardware-peripheral-owner.service"
+install -Dm755 "$HERE/bin/sparky-stereo-openrgb-session" "$D/usr/lib/sparky-stereo-hardware/openrgb-session"
+install -Dm644 "$HERE/share/autostart/sparky-stereo-openrgb.desktop" "$D/etc/xdg/autostart/sparky-stereo-openrgb.desktop"
 # a newly connected headset or speaker (Bluetooth, or USB) takes the sound and hands it back when it leaves; the script is wanted, not required (ORDER 129)
 install -Dm644 "$HERE/share/wireplumber/50-sparky-stereo-new-output.conf" "$D/usr/share/wireplumber/wireplumber.conf.d/50-sparky-stereo-new-output.conf"
 install -Dm644 "$HERE/share/wireplumber/sparky-stereo-new-output.lua" "$D/usr/share/wireplumber/scripts/sparky-stereo-new-output.lua"
@@ -64,7 +72,7 @@ install -Dm644 "$HERE/share/udev/71-sparky-stereo-nvidia-units.rules" "$D/usr/li
 
 sparky-stereo-problems catalog sparky-stereo-hardware "$HERE/problems-lang" "$D/usr/lib/systemd/catalog" \
 	--subject LOCAL1=LOCAL2,LOCAL3,LOCAL4 --subject LOCAL9=LOCAL5,LOCAL6,LOCAL7,LOCAL8,LOCAL10,LOCAL11,LOCAL12,LOCAL13,LOCAL14,LOCAL15,LOCAL16 \
-	--subject LOCAL17=LOCAL18 --subject LOCAL19=LOCAL20 --subject LOCAL84=LOCAL85 \
+	--subject LOCAL17=LOCAL18 --subject LOCAL19=LOCAL20 --subject LOCAL84=LOCAL85 --subject LOCAL86=LOCAL87 \
 	--subject LOCAL61=LOCAL73,LOCAL74,LOCAL75,LOCAL76,LOCAL77,LOCAL78,LOCAL79,LOCAL80,LOCAL81,LOCAL82,LOCAL83
 
 # Persistent DisplayLink startup errors are reported once; vendor hotplug stays.

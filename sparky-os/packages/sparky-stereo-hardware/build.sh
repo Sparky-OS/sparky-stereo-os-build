@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.29+lc1
+VERSION=0.1.30+lc1
 PACKAGE=sparky-stereo-hardware
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.sparky-stereo-hardware.XXXXXX")
@@ -41,7 +41,7 @@ Description: Detect and configure matched hardware for Sparky Stereo OS
   The system default for OpenGL stereo, from the card the desktop runs on.
 EOF
 printf '%s\n' /etc/apt/preferences.d/sparky-stereo-gpu-nvidia /etc/apt/preferences.d/sparky-stereo-gpu-amd \
-	/etc/xdg/autostart/sparky-stereo-live-gpu.desktop /etc/xdg/plasma-workspace/env/sparky-stereo-primary-gpu.sh \
+	/etc/xdg/autostart/sparky-stereo-live-gpu.desktop /etc/xdg/autostart/sparky-stereo-openrgb.desktop /etc/xdg/plasma-workspace/env/sparky-stereo-primary-gpu.sh \
 	/etc/xdg/plasma-workspace/env/sparky-stereo-opengl.sh /etc/xdg/plasma-workspace/env/sparky-stereo-tablet-mode.sh\
 	/etc/dpkg/dpkg.cfg.d/sparky-stereo-hardware >"$D/DEBIAN/conffiles"
 # the OpenGL stereo default: written at install, at boot (the service) and by udev on GPU changes
