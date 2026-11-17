@@ -4,7 +4,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?}
-VERSION=1.0.5+lc1
+VERSION=1.0.6+lc1
 WORK=$(mktemp -d "${BUILD_ROOT:?}/language-tasks.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 D=$WORK/tree
@@ -89,7 +89,7 @@ Package: $P
 Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Depends: python3, apt, dpkg, tasksel, systemd, sparky-stereo-problems
+Depends: python3, dash, base-files, apt, dpkg, tasksel, systemd, sparky-stereo-problems
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org

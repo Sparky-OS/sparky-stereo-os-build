@@ -8,7 +8,7 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-"$HERE/../../../../out"}
-VERSION=0.4.0+lc1
+VERSION=0.4.1+lc1
 PKG=sparky-stereo-locales
 SHARE=/usr/share/$PKG
 mkdir -p "$OUT"
@@ -48,7 +48,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $(du -sk --exclude=DEBIAN "$D" | cut -f1)
-Depends: apt, dpkg, sparky-remsu, yad, sparky-stereo-language-tasks (>= 1.0.0)
+Depends: bash, apt, dpkg, sparky-remsu, yad, sparky-stereo-language-tasks (>= 1.0.6)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
