@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/14
+# Last update 2026/11/17
 #
 # Builds the sparky-stereo-boot package (hand assembled, Paweł's formula).
 #   build.sh OUTDIR
@@ -9,7 +9,7 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
 PKG=sparky-stereo-boot
-VERSION=0.1.11+lc1
+VERSION=0.1.12+lc1
 # the host's facts for the build record, and the source date from the recipe's last commit (ORDER 394b, ORDER 421b)
 . "$HERE/../../repo/build-provenance.sh"
 sparky_provenance_init "${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}" "$HERE"
@@ -29,6 +29,14 @@ for u in sparky-stereo-boot.socket sparky-stereo-boot@.service sparky-stereo-boo
 done
 install -D -m 644 "$HERE/systemd/system/plymouth-quit.service.d/sparky-stereo-boot.conf" "$D/usr/lib/systemd/system/plymouth-quit.service.d/sparky-stereo-boot.conf"
 install -D -m 644 "$HERE/systemd/system/sddm.service.d/sparky-stereo-boot.conf" "$D/usr/lib/systemd/system/sddm.service.d/sparky-stereo-boot.conf"
+# the restart and shutdown splash with the main screen's choice saved now (0.1.12, ORDER 639): each of Plymouth's
+# shutdown units starts plymouthd through sparky-stereo-boot plymouth-shutdown, with that unit's own mode
+for u in reboot:reboot poweroff:shutdown halt:shutdown kexec:shutdown; do
+	install -d "$D/usr/lib/systemd/system/plymouth-${u%%:*}.service.d"
+	sed "s/@MODE@/${u#*:}/" "$HERE/systemd/system/plymouth-shutdown.service.d/sparky-stereo-boot.conf" \
+		> "$D/usr/lib/systemd/system/plymouth-${u%%:*}.service.d/sparky-stereo-boot.conf"
+	chmod 644 "$D/usr/lib/systemd/system/plymouth-${u%%:*}.service.d/sparky-stereo-boot.conf"
+done
 mkdir -p "$D/usr/lib/systemd/system/sockets.target.wants" "$D/usr/lib/systemd/system/multi-user.target.wants" \
 	"$D/usr/lib/systemd/user/default.target.wants" "$D/usr/lib/systemd/catalog"
 ln -s ../sparky-stereo-boot.socket "$D/usr/lib/systemd/system/sockets.target.wants/sparky-stereo-boot.socket"
@@ -289,7 +297,7 @@ Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
 Depends: grub-common, os-prober, libdrm2, libstereo-policy1 (>= 1.15.0), python3, systemd, sparky-stereo-problems (>= 0.1.0)
-Recommends: plymouth (>= 26.134.222-1+stereo3d3), sparky-stereo-plymouth (>= 20261109~sparky9~0)
+Recommends: plymouth (>= 26.134.222-1+stereo3d4), sparky-stereo-plymouth (>= 20261117~sparky9~0)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org

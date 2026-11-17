@@ -1,4 +1,19 @@
 -------------------------------------------------------------------------------
+  Version 0.1.12 (2026-11-17)
+-------------------------------------------------------------------------------
+  * The splash of a restart or a shutdown shows the main screen as the person set it now (ORDER 639; Daniel, 2026-11-17:
+    "the tv is switching to 2d before restart - why?"). Plymouth's shutdown units start plymouthd with /proc/cmdline,
+    the choice this boot started with; a television made the main screen, or put in 3D, after the start was not named
+    in it, and Plymouth gives a screen it is not told about its preferred mode, so the television fell to 2D at the
+    restart. plymouth-reboot, -poweroff, -halt and -kexec.service now start plymouthd through
+    sparky-stereo-boot plymouth-shutdown, which hands it the plymouth.stereo= exported last
+    (/var/lib/sparky-stereo-boot/main-output.json, written at every export) with plymouthd's own --kernel-command-line;
+    the journal says when that differs from the start's, and why the start's stays when the record cannot be read
+  * Recommends plymouth 26.134.222-1+stereo3d4 and sparky-stereo-plymouth 20261117: one eye on every screen the splash
+    does not convert, and the splash laid out again for a screen that comes later
+  * tests/shutdown-splash-tests.py: the line plymouthd is given in each case
+
+-------------------------------------------------------------------------------
   Version 0.1.11 (2026-11-15)
 -------------------------------------------------------------------------------
   * After a start that did not finish, GRUB's menu shows by itself at the next start, with the older kernel under
