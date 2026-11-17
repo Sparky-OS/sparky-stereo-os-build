@@ -4,8 +4,10 @@
 # the patches and the Lean Code pipeline are untouched. The recipe's steps on the source are only these:
 #   - XB-Architecture-Variant: amd64v3 in every binary stanza of debian/control and of debian/control.in (debian/rules regenerates the first from the
 #     second), which dpkg-gencontrol copies into each binary package's control file;
-#   - -march=x86-64-v3 through DEB_CFLAGS_MAINT_APPEND and DEB_CXXFLAGS_MAINT_APPEND, and -C target-cpu=x86-64-v3 for the Rust parts (NVK, Rusticl) through
-#     RUSTFLAGS; the optimisation level stays Debian's (no -O3, tests on, warnings on);
+#   - -march=x86-64-v3 through DEB_CFLAGS_APPEND and DEB_CXXFLAGS_APPEND (the user-level variables, applied after the maintainer's): Mesa's debian/rules
+#     assigns DEB_CFLAGS_MAINT_APPEND := -Wall, which throws away the value of that variable from the environment, so the *_MAINT_APPEND route the
+#     libstereo-av1 build uses compiles at the baseline here without a word; and -C target-cpu=x86-64-v3 for the Rust parts (NVK, Rusticl) through
+#     RUSTFLAGS; the optimisation level stays Debian's (no -O3, tests on, warnings on). The build fails if -march=x86-64-v3 is not on the compile lines;
 #   - the link and start gate runs with the toolkit that leaves Architecture-Variant out of its local index (lean/archive.py), so the source package's
 #     older copy of archive.py and package.py is replaced by the build tree's (as a toolkit release will).
 # Run as root in a container (network for Debian, deb-multimedia and Sparky; --cpus 2); the compile, the record and the gate run as the build user.
@@ -39,11 +41,13 @@ export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.c
 export SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json SPARKY_LC_SCRATCH=/work/lcscratch SPARKY_LC_PREVIOUS_DIR=/prev
 export DEB_BUILD_OPTIONS="parallel=${JOBS:-2}"
 export DH_OPTIONS='--builddirectory=build/ --buildsystem=meson'
-export DEB_CFLAGS_MAINT_APPEND="-march=x86-64-v3" DEB_CXXFLAGS_MAINT_APPEND="-march=x86-64-v3" RUSTFLAGS="-C target-cpu=x86-64-v3"
+export DEB_CFLAGS_APPEND="-march=x86-64-v3" DEB_CXXFLAGS_APPEND="-march=x86-64-v3" RUSTFLAGS="-C target-cpu=x86-64-v3"
 cd /work/src/mesa
 start=$(date +%s)
 dpkg-buildpackage -B -us -uc -d -j"${JOBS:-2}" >/work/build-v3.log 2>&1 && echo "v3 build exit=0" || { echo "v3 build FAILED"; exit 1; }
 echo "v3 build seconds: $(( $(date +%s) - start ))"
+n=$(grep -c -- "-march=x86-64-v3" /work/build-v3.log || true); echo "compile lines with -march=x86-64-v3: $n"
+[ "$n" -gt 100 ] || { echo "march=x86-64-v3 never reached the compiler"; exit 1; }
 cd /work/src
 mv ./*.deb ./*.buildinfo ./*.changes /work/out/ 2>/dev/null || true
 cd /work/out
