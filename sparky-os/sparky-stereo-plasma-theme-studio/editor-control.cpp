@@ -15,6 +15,7 @@ int main(int argc, char **argv)
     QList<QVariant> args;
     if (argc > 2) {
         if (method == "setRenderWidth") args << QString::fromLocal8Bit(argv[2]).toInt();
+        else if (method == "setModelDepth") args << QString::fromLocal8Bit(argv[2]).toDouble();
         else args << QString::fromLocal8Bit(argv[2]);
     }
     if (argc > 3) args << QString::fromLocal8Bit(argv[3]).toDouble();

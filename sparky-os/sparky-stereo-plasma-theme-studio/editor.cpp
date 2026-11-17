@@ -34,12 +34,16 @@
 #include <iostream>
 
 #include "editor.h"
+#if STUDIO_MODELS
+#include "models/page.h"
+#endif
 #include "identity.h"
 #include <QDoubleSpinBox>
 #include <QHeaderView>
 #include <QtMath>
 #include <QCloseEvent>
 #include <algorithm>
+#include <cmath>
 #include <QScreen>
 #include <QWindow>
 #include <QShowEvent>
@@ -72,6 +76,7 @@ Editor::Editor(bool part)
     });
     layout->addLayout(files);
     if (partMode) { open->hide(); save->hide(); }
+    auto *sharedLayout = layout;
     if (!partMode) {
         setupParts(layout);
         pages = new QTabWidget;
@@ -79,6 +84,16 @@ Editor::Editor(bool part)
         auto *iconPage = new QWidget;
         pages->addTab(iconPage, tr("Icons"));
         layout = new QVBoxLayout(iconPage);
+#if STUDIO_MODELS
+        modelPage = new ModelPage(this);
+        pages->addTab(modelPage, tr("Models"));
+        auto *openModel = new QPushButton(tr("Open model…"));
+        files->addWidget(openModel);
+        connect(openModel, &QPushButton::clicked, this, [this] { guarded([&] {
+            const auto path = QFileDialog::getOpenFileName(this,tr("Open model…"),{},"glTF (*.gltf *.glb)");
+            if (!path.isEmpty()) { const auto error=openModelFile(path); if(!error.isEmpty())throw std::runtime_error(error.toStdString()); }
+        }); });
+#endif
     }
     auto *actions = new QHBoxLayout;
     stereo = new QCheckBox(tr("Enable 3D"));
@@ -90,7 +105,7 @@ Editor::Editor(bool part)
     auto *settings = new QPushButton(tr("Display Settings…"));
     for (auto *w : QList<QWidget *>{stereo, size, settings}) actions->addWidget(w);
     if (!STUDIO_STEREO) settings->hide();
-    layout->addLayout(actions);
+    sharedLayout->insertLayout(partMode ? 1 : 2, actions);
     location = new QLabel(tr("Open a theme. Save creates a separate project copy."));
     location->setWordWrap(true); layout->addWidget(location);
     auto *body = new QHBoxLayout;
@@ -249,6 +264,9 @@ static QImage highlight(QImage image, const QImage &mask)
 
 void Editor::refresh()
 {
+#if STUDIO_MODELS
+    if(modelPage) modelPage->refresh();
+#endif
     if (drawing.source.isEmpty()) return;
     auto *screen = windowHandle() ? windowHandle()->screen() : QGuiApplication::primaryScreen();
     if (!screen) throw std::runtime_error(tr("Cannot read the preview output").toStdString());
@@ -407,6 +425,9 @@ void Editor::loadProject(const QString &path)
     if (error.error != QJsonParseError::NoError || project.value("version").toInt() != 1
         || !project.value("icon").isString() || !project.value("groups").isObject())
         throw std::runtime_error(tr("Invalid or unsupported theme project").toStdString());
+#if STUDIO_MODELS
+    if(modelPage && project.contains("model")) { modelPage->loadProject(path,project); return; }
+#endif
     load(path + "/icons", path + "/icons/" + project.value("icon").toString());
     applyPlaces(project.value("groups").toObject());
     loadParts(path, project);
@@ -416,6 +437,9 @@ void Editor::loadProject(const QString &path)
 }
 void Editor::saveProject(const QString &destination)
 {
+#if STUDIO_MODELS
+    if(modelPage && pages->currentWidget()==modelPage && !modelPage->source.isEmpty()) {modelPage->saveProject(destination);return;}
+#endif
     ensurePeerClosed();
     if (drawing.source.isEmpty()) throw std::runtime_error(tr("Open a source first").toStdString());
     const auto exported = drawing.forExport();
@@ -532,4 +556,42 @@ bool Editor::event(QEvent *event)
     if (event->type() == QEvent::DevicePixelRatioChange)
         QTimer::singleShot(0, this, [this] { guarded([&] { refresh(); }); });
     return result;
+}
+
+QString Editor::openModelFile(const QString &path)
+{
+#if STUDIO_MODELS
+    try {if(!modelPage) return tr("The model helper is unavailable in this build.");modelPage->open(path);pages->setCurrentWidget(modelPage);return {};}catch(const std::exception &e){return QString::fromUtf8(e.what());}
+#else
+    Q_UNUSED(path);return tr("The model helper is unavailable in this build.");
+#endif
+}
+QString Editor::setModelDepth(double value)
+{
+#if STUDIO_MODELS
+    if(!modelPage || !std::isfinite(value) || value < -1 || value > 1) return tr("Invalid group or place");
+    modelPage->depth->setValue(value*100);return {};
+#else
+    Q_UNUSED(value);return tr("The model helper is unavailable in this build.");
+#endif
+}
+QString Editor::modelState() const
+{
+#if STUDIO_MODELS
+    return modelPage?modelPage->state():QString();
+#else
+    return {};
+#endif
+}
+QString Editor::exportModelPairs(const QString &path)
+{
+#if STUDIO_MODELS
+    try{modelPage->exportPairs(path);return {};}catch(const std::exception &e){return QString::fromUtf8(e.what());}
+#else
+    Q_UNUSED(path);return tr("The model helper is unavailable in this build.");
+#endif
+}
+QString Editor::saveCurrentProject(const QString &path)
+{
+    try{saveProject(path);return {};}catch(const std::exception &e){return QString::fromUtf8(e.what());}
 }
