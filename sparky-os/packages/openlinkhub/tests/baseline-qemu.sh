@@ -6,6 +6,7 @@
 # carry AES-NI, AVX2, SHA-NI, POPCNT and SSE4.1 code that the runtime chooses by CPUID, and GOAMD64=v1 guards the compiler own POPCNT and ROUNDSD
 # the same way), so the proof is the program itself running on a processor that lacks them: qemu64 (SSE2 and SSE3 only), after a control
 # program with AES-NI shows that qemu64 refuses such an instruction.
+export DEBIAN_FRONTEND=noninteractive HOME=/tmp
 sh /run/https-only-apt.sh >/dev/null
 apt-get -y -qq update >/dev/null 2>&1
 apt-get -y -qq --no-install-recommends install qemu-user gcc libc6-dev libpipewire-0.3-0t64 libudev1 curl binutils python3 >/tmp/a.log 2>&1 || tail -3 /tmp/a.log
