@@ -68,7 +68,38 @@ try:
             assert n in on,n
     else:
         assert 'pa19-module-' not in on and 'pa19-filter-playback' not in on
-    if mode=='candidate':
+    if os.environ.get('PA19_APPLET_OWNED')=='1':
+        import ast
+        def state():
+            value=subprocess.check_output(['gdbus','call','--session','--dest','org.kde.kded6','--object-path','/org/kde/plasma/AudioRoutes','--method','org.kde.plasma.AudioRoutes.snapshot'],text=True)
+            return json.loads(ast.literal_eval(value)[0])
+        before=state()
+        assert before['listen']['mic-a']['output']=='out-a'
+        item=next(obj for obj,depth in walk(pyatspi.Registry.getDesktop(0)) if obj.getRoleName()=='list item' and 'Listen:' in obj.name and not any('Listen:' in c.name for c in obj if c.getRoleName()=='list item'))
+        if os.environ.get('PA19_CHECK_NAMES')=='1':
+            expected='Listen: '+before['listen']['mic-a']['sourceLabel']
+            assert item.name==expected,(item.name,expected)
+            combined=[obj.name for obj,depth in walk(pyatspi.Registry.getDesktop(0)) if obj.getRoleName()=='list item' and 'Combined Recording' in obj.name]
+            assert len(combined)==2 and all(n.startswith('Combined Recording: ') for n in combined),combined
+            assert all('pw-cli' not in n for n in combined),combined
+        button=next(c for c in item if c.name=='Additional Options' and c.getRoleName()=='push button menu')
+        click(button)
+        snapshot('owned-route-menu')
+        menu_click(p,5/8,'owned-menu-geometry.txt')
+        for _ in range(100):
+            after=state()
+            if after['listen']['mic-a']['output']=='out-b' and after['listen']['mic-a']['running']: break
+            time.sleep(.1)
+        else: raise AssertionError(after)
+        sinks=json.loads(subprocess.check_output(['pactl','-f','json','list','sinks']))
+        target=next(x['index'] for x in sinks if x['name']=='out-b')
+        rows=json.loads(subprocess.check_output(['pactl','-f','json','list','sink-inputs']))
+        stream=next(x for x in rows if x['properties'].get('plasma.pa.route')=='Listen-hotplug-check')
+        assert stream['sink']==target,(stream,target)
+        (result/'owned-route-state.json').write_text(json.dumps({'before':before,'after':after,'sink_inputs':rows},indent=2)+'\n')
+        snapshot('owned-routed')
+        print('PASS: actual widget menu updates owned route preferences and server target',flush=True)
+    elif mode=='candidate':
         for name, fraction, kind, field, target in [
             ('pa19-module-playback',5/8,'sink-inputs','sink','out-b'),
             ('pa19-filter-playback',5/8,'sink-inputs','sink','out-b'),
