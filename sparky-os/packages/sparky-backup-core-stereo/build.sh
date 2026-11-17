@@ -17,7 +17,38 @@ OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 PKG=sparky-backup-core-stereo
 SOURCE_VERSION=$(sed -n '2s/^  Version \(.*\) (.*$/\1/p' "$SRC/CHANGELOG")
 [ -n "$SOURCE_VERSION" ] || { echo "no version in $SRC/CHANGELOG" >&2; exit 1; }
-VERSION=${VERSION:-20261111~sparky9~0+lc1}
+VERSION=${VERSION:-20261117~sparky9~0+lc1}
+# The source is one commit of the fork, never "whatever is checked out": 20261111 was built from a work tree left on
+# an older branch (partner/lean-code-20261020), and lost the packer's menu generator, its keyboard layouts and its
+# menu languages while every gate passed; the developer ISO of 2026-11-17 could not be packed with it.
+# SOURCE_COMMIT names the commit of danielcamposramos/sparky-backup-core (branch stereo) and SOURCE_TREE is the
+# fingerprint of its folder 9: sha256 over "path NUL sha256-of-file LF" for every file in path order, __pycache__
+# left out. A folder that is not that commit stops the build. To move to a new commit, change both together.
+SOURCE_COMMIT=${SOURCE_COMMIT:-8c234115415685d4747651ac457e334099afbeb5}
+SOURCE_TREE=${SOURCE_TREE:-5a5471515bb6f26776b46d4a221f711ad450a1811bce04f8e71a8fc61930b10a}
+got=$(python3 - "$SRC" <<'FINGERPRINT'
+import hashlib, os, sys
+root = sys.argv[1]
+h = hashlib.sha256()
+for folder, folders, files in sorted(os.walk(root)):
+    if '__pycache__' in os.path.relpath(folder, root).split(os.sep):
+        continue
+    for name in sorted(files):
+        path = os.path.join(folder, name)
+        digest = 'link:' + os.readlink(path) if os.path.islink(path) else hashlib.sha256(open(path, 'rb').read()).hexdigest()
+        h.update(os.path.relpath(path, root).encode() + b'\0' + digest.encode() + b'\n')
+print(h.hexdigest())
+FINGERPRINT
+)
+[ "$got" = "$SOURCE_TREE" ] || {
+	echo "$SRC is not folder 9 of commit $SOURCE_COMMIT (fingerprint $got, expected $SOURCE_TREE)." >&2
+	echo "Export that commit (git archive $SOURCE_COMMIT 9) and build from the export; a work tree on another branch gives another packer." >&2
+	exit 1
+}
+for needed in lib/stereo/gen-menus.py lib/stereo/keyboard-layouts lib/stereo/isolinux-head.cfg lib/stereo/lang/en; do
+	[ -e "$SRC/$needed" ] || { echo "$SRC has no $needed: the Stereo profile cannot write its menus without it" >&2; exit 1; }
+done
+grep -q -- '-isohybrid-apm-hfsplus' "$SRC/bin/sparkybackup" || { echo "$SRC/bin/sparkybackup does not write the Apple partition map" >&2; exit 1; }
 W=$(mktemp -d "${TMPDIR:-/tmp}/backup-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 COPY="$HERE/../../../tools/copy-recipe.py"
