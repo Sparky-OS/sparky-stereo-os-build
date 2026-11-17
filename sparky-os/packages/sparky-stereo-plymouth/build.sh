@@ -87,11 +87,13 @@ Description: Sparky Stereo OS boot splash themes in stereo 3D
 CONTROL
 (cd "$D" && find usr -type f -exec md5sum {} + | sort -k2) > "$D/DEBIAN/md5sums"
 chmod 644 "$D/DEBIAN/control" "$D/DEBIAN/md5sums" "$D/DEBIAN/triggers"
-# the gate runs in a container that is given the host's facts: its check-debs writes the complete build record
+# the gate runs in a container that is given the host's facts; the source package is built again with dpkg-buildpackage
+# (repo/rebuild-script-source.py: payload and controls equal, the genuine .buildinfo and .changes kept, as
+# sparky-stereo-look does), so check-debs writes the complete build record (ORDER 639)
 IMAGE=${SPARKY_BUILD_IMAGE:-plymouth-481-base:1}
 TREE=$(cd "$HERE/../../.." && pwd)
 docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lean-standalone-sparky-stereo-plymouth" --ulimit core=0 --network none --platform linux/amd64 \
 	--user "$(id -u):$(id -g)" "${SPARKY_PROV_ARGS[@]}" -e HOME=/tmp -e PYTHONPATH="$TREE/sparky-os" \
 	-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-	-v "$TREE":"$TREE":ro -v "$D":"$D" -v "$OUT":"$OUT" "$IMAGE" sh -c 'python3 -m lean.standalone "$1" "$2" --authoring "$3" && cd "$2" && python3 -m lean.release check-debs ./*_all.deb' sh "$D" "$OUT" "$HERE"
+	-v "$TREE":"$TREE":ro -v "$D":"$D" -v "$OUT":"$OUT" "$IMAGE" sh -c 'python3 -m lean.standalone "$1" "$2" --authoring "$3" && python3 "$PYTHONPATH/repo/rebuild-script-source.py" "$2/$4_$5.dsc" && cd "$2" && python3 -m lean.release check-debs ./*_all.deb' sh "$D" "$OUT" "$HERE" "$PKG" "$VERSION"
 
