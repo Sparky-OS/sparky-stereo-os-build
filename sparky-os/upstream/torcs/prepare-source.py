@@ -35,9 +35,9 @@ with tempfile.TemporaryDirectory(prefix=name+'-source-', dir=out.parent) as temp
         control = (work/'published/debian/control').read_text()
         assert control.count('libplib-dev,') == 1
         control = control.replace('libplib-dev,', 'libplib-dev (>= 1.8.5-15+stereo3d3+lc1),')
-        assert control.count('Depends: ${shlibs:Depends}') == 1
-        control = control.replace('Depends: ${shlibs:Depends}',
-                                  'Depends: libplib1t64 (>= 1.8.5-15+stereo3d3+lc1), ${shlibs:Depends}')
+        assert control.count('         ${shlibs:Depends}') == 1
+        control = control.replace('         ${shlibs:Depends}',
+                                  '         libplib1t64 (>= 1.8.5-15+stereo3d3+lc1), ${shlibs:Depends}')
         (overlay/'control').write_text(control)
     version = {'plib':'1.8.5-15+stereo3d3','torcs':'1.3.7+dfsg-5+stereo3d3'}[name]
     item = ('Expose per-draw screen planes and infinite backgrounds, retaining environment overrides.' if name == 'plib'
