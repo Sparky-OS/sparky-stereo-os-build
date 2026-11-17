@@ -1,0 +1,18 @@
+# F3D in stereo, libf3d, and a picture of every model (ORDER 17, milestone 2)
+
+f3d, libf3d3 and libf3d-dev 3.5.0+dfsg-3+stereo3d1+lc1, built from Debian's own source package (3.5.0+dfsg-3, the F3D release Debian testing ships), and sparky-stereo-mime-models 20261117.1+lc1 (`../sparky-stereo-mime-models`).
+Debian ships no libf3d: its rules build F3D static and remove /usr/lib.
+
+Design followed:
+- /K3D/CLAUDE.md: "A program's 3D options are only: enable 3D, render resolution per eye, and a shortcut to Display Settings"; "a program that renders its own 3D scene offers no swap"; "Every source ... hands KWin full side by side ... declared once". F3D's `--stereo` is "Enable 3D" (on by default through `/etc/f3d/config.d/50_sparky_stereo.json`, F3 switches it), F4 opens Display Settings (`kcmshell6 kcm_kscreen`), `--stereo-eye-angle` is gone from the program (the separation is the desktop's; libf3d keeps `render.stereo_eye_angle` for the code that uses it, 2 degrees by default), and the window is the one declared full side-by-side surface (our Mesa declares a GLX quad-buffer window under Stereo KWin through Xwayland).
+- Faked 3D is doubled, real scenes get two cameras with parallel axes (skill stereo-two-cameras): a model is a real scene, so the window and the thumbnail draw two sheared parallel cameras.
+
+## Files
+
+- `patches/0001..0007`: branch `order17-stereo` of the F3D fork on upstream's v3.5.0 (`git format-patch`): the quad-buffer option, the per-eye shear, the size of one eye, the eye taken from the left-eye flag or the caller, the pair in an image, the program's options and the Display Settings shortcut (with the ten-language sentences in `application/F3DSparkyStrings.h`), and the UI-only frame of a stereo window (below).
+- `overlay.py`, `debian-add/`: the changes to Debian's `debian/`: shared libf3d, libf3d3 and libf3d-dev, `libvtkext.so` private to libf3d in `/usr/lib/<multiarch>/f3d` (policy: private libraries in a folder of the package, found through the library's RUNPATH; lintian's relative-library-search-path says why `$ORIGIN` is not kept), `f3d-thumbnail-pair` (a libf3d program: two parallel sheared cameras, the PNG text key `X-KDE::Stereo3DLayout`), F3D's `.thumbnailer` files pointed at it with the canonical type names, the config file that turns 3D on.
+- `build.sh DEBIAN.dsc WORK`: unpack, patches, overlay, changelog (dated by `SOURCE_DATE_EPOCH`), `lean.debian_prepare`, `dpkg-buildpackage`. Run as an ordinary user in a container with the build dependencies, bubblewrap, `SPARKY_LC_ARCHIVE_CONFIG` (the public Debian archive), `SPARKY_LC_SCRATCH`, the previous edition's .deb list (`SPARKY_LC_PREVIOUS_SIBLINGS_FILE`), the siblings of this round (`SPARKY_LC_SIBLINGS_FILE`: sparky-stereo-mime-models +lc1) and the host's build facts (`SPARKY_BUILD_*`); then `python3 -m lean.release check-debs *.deb` writes the build record.
+
+## The cause of one eye in both buffers (ORDER 17)
+
+F3D draws the interface over the cached layers of the last frame whenever no render was requested (the event loop, every input event; `RENDER_UI_ONLY`). The layers hold the last eye drawn, so in a stereo window the left eye of that frame was the right eye's picture and both back buffers showed one eye. Found by reading, in a `vtkF3DGLXRenderWindow` of a debug build, the render framebuffer before VTK's `StereoMidpoint` blit: it held the previous frame's right eye, and VTK's own blits (the render framebuffer to the display framebuffer's two attachments, then to GL_BACK_LEFT and GL_BACK_RIGHT) and our Mesa (a blit control: left red, right blue, through a visual and through an fbconfig window) were innocent. The fix: a UI-only frame draws the scene again when the window has two eyes (`vtkF3DRenderPass`).

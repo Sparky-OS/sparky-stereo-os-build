@@ -1,0 +1,104 @@
+From b84f4a89b4ec25c26f6160917e46b15fb830c68b Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 17 Nov 2026 15:32:34 -0300
+Subject: [PATCH 5/7] Render the two eyes side by side in an image
+
+An image has no stereo capable window, so render.stereo did nothing offscreen.
+renderToImage now draws the left eye and the right eye, each from the sheared
+parallel camera of the eye, and returns them side by side, left first.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ doc/libf3d/03-OPTIONS.md      |  1 +
+ library/private/window_impl.h |  1 +
+ library/src/window_impl.cxx   | 36 +++++++++++++++++++++++++++++++++++
+ 3 files changed, 38 insertions(+)
+
+diff --git a/doc/libf3d/03-OPTIONS.md b/doc/libf3d/03-OPTIONS.md
+index 75a5fed..f299b46 100644
+--- a/doc/libf3d/03-OPTIONS.md
++++ b/doc/libf3d/03-OPTIONS.md
+@@ -376,6 +376,7 @@ CLI: `--grid-color`.
+ 
+ Render the scene in quad-buffer stereo, one image for the left eye and one for the right eye.
+ It needs a stereo capable display and is read before the first render.
++With an offscreen window `renderToImage` returns the two eyes side by side, the left eye first, each as wide as the window.
+ 
+ CLI: `--stereo`.
+ 
+diff --git a/library/private/window_impl.h b/library/private/window_impl.h
+index deff1cd..2bd0d80 100644
+--- a/library/private/window_impl.h
++++ b/library/private/window_impl.h
+@@ -51,6 +51,7 @@ public:
+   camera& getCamera() override;
+   bool render() override;
+   image renderToImage(bool noBackground = false) override;
++  image renderOneImage(bool noBackground);
+   int getWidth() const override;
+   int getHeight() const override;
+   window& setSize(int width, int height) override;
+diff --git a/library/src/window_impl.cxx b/library/src/window_impl.cxx
+index 7ff2d0e..9faedfc 100644
+--- a/library/src/window_impl.cxx
++++ b/library/src/window_impl.cxx
+@@ -15,6 +15,7 @@
+ #include "vtkF3DNoRenderWindow.h"
+ #include "vtkF3DRenderer.h"
+ 
++#include <algorithm>
+ #include <vtkCamera.h>
+ #include <vtkF3DRenderPass.h>
+ #include <vtkImageData.h>
+@@ -423,6 +424,11 @@ void window_impl::UpdateDynamicOptions()
+     }
+     renderer->GetActiveCamera()->SetEyeAngle(opt.render.stereo_eye_angle);
+   }
++  else if (opt.render.stereo)
++  {
++    // An image has no stereo capable window: renderToImage draws the two eyes one after the other
++    renderer->GetActiveCamera()->SetEyeAngle(opt.render.stereo_eye_angle);
++  }
+ 
+   // Update pending up direction if changed
+   renderer->SetPendingUpDirection(opt.scene.up_direction);
+@@ -748,6 +754,36 @@ bool window_impl::render()
+ 
+ //----------------------------------------------------------------------------
+ image window_impl::renderToImage(bool noBackground)
++{
++  const bool eyes = this->Internals->Options.render.stereo && this->Internals->RenWin->GetOffScreenRendering();
++  if (!eyes)
++  {
++    return this->renderOneImage(noBackground);
++  }
++
++  // The two eyes side by side, the left eye first, each in its own half of the width
++  vtkF3DRenderer* renderer = this->Internals->Renderer;
++  renderer->SetStereoEye(-1);
++  image left = this->renderOneImage(noBackground);
++  renderer->SetStereoEye(1);
++  image right = this->renderOneImage(noBackground);
++  renderer->SetStereoEye(0);
++
++  const unsigned int width = left.getWidth();
++  const unsigned int height = left.getHeight();
++  const unsigned int cmp = left.getChannelCount();
++  image both(2 * width, height, cmp);
++  for (unsigned int y = 0; y < height; y++)
++  {
++    unsigned char* row = static_cast<unsigned char*>(both.getContent()) + static_cast<size_t>(y) * 2 * width * cmp;
++    std::copy_n(static_cast<const unsigned char*>(left.getContent()) + static_cast<size_t>(y) * width * cmp, static_cast<size_t>(width) * cmp, row);
++    std::copy_n(static_cast<const unsigned char*>(right.getContent()) + static_cast<size_t>(y) * width * cmp, static_cast<size_t>(width) * cmp, row + static_cast<size_t>(width) * cmp);
++  }
++  return both;
++}
++
++//----------------------------------------------------------------------------
++image window_impl::renderOneImage(bool noBackground)
+ {
+   this->render();
+ 
+-- 
+2.53.0
+

@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Types of 3D model, point cloud and splat files that shared-mime-info does not have yet (checked against its master on
+  2026-11-17: PLY, splat, SPZ, PTS, FBX, COLLADA, OFF and Draco have no type; glTF, OBJ, STL, 3MF, IGES have one).
+  STEP and BREP are in shared-mime-info's master but not in the release Debian testing ships, so their definitions are
+  carried as they are there (STEP: Bastien Nocera, merge request 208; BREP: shared-mime-info's data/freedesktop.org.xml.in).
+  The names carry no vendor's name; the names F3D uses in its own thumbnailer and desktop files are aliases, so F3D's
+  files keep matching. COLLADA's own registered name is model/vnd.collada+xml (IANA).
+  SPDX-License-Identifier: GPL-2.0-or-later
+-->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="model/x-ply">
+    <comment>PLY polygon model or point cloud</comment>
+    <acronym>PLY</acronym>
+    <expanded-acronym>Polygon File Format</expanded-acronym>
+    <generic-icon name="image-x-generic"/>
+    <alias type="application/vnd.ply"/>
+    <magic priority="60">
+      <match type="string" value="ply\n" offset="0"/>
+      <match type="string" value="ply\r\n" offset="0"/>
+    </magic>
+    <glob pattern="*.ply"/>
+  </mime-type>
+
+  <mime-type type="model/x-gaussian-splat">
+    <comment>Gaussian splat scene</comment>
+    <generic-icon name="image-x-generic"/>
+    <alias type="application/vnd.splat"/>
+    <glob pattern="*.splat"/>
+  </mime-type>
+
+  <mime-type type="model/x-spz">
+    <comment>Compressed Gaussian splat scene (SPZ)</comment>
+    <acronym>SPZ</acronym>
+    <generic-icon name="image-x-generic"/>
+    <alias type="application/vnd.spz"/>
+    <glob pattern="*.spz"/>
+  </mime-type>
+
+  <mime-type type="model/x-pts">
+    <comment>PTS point cloud</comment>
+    <acronym>PTS</acronym>
+    <sub-class-of type="text/plain"/>
+    <generic-icon name="image-x-generic"/>
+    <alias type="application/vnd.pts"/>
+    <glob pattern="*.pts"/>
+  </mime-type>
+
+  <mime-type type="model/x-fbx">
+    <comment>FBX 3D scene</comment>
+    <acronym>FBX</acronym>
+    <expanded-acronym>Filmbox</expanded-acronym>
+    <generic-icon name="image-x-generic"/>
+    <alias type="application/vnd.fbx"/>
+    <magic priority="60">
+      <match type="string" value="Kaydara FBX Binary" offset="0"/>
+    </magic>
+    <glob pattern="*.fbx"/>
+  </mime-type>
+
+  <mime-type type="model/vnd.collada+xml">
+    <comment>COLLADA 3D scene</comment>
+    <acronym>COLLADA</acronym>
+    <sub-class-of type="application/xml"/>
+    <generic-icon name="image-x-generic"/>
+    <alias type="application/vnd.dae"/>
+    <glob pattern="*.dae"/>
+  </mime-type>
+
+  <mime-type type="model/x-off">
+    <comment>OFF 3D model</comment>
+    <acronym>OFF</acronym>
+    <expanded-acronym>Object File Format</expanded-acronym>
+    <sub-class-of type="text/plain"/>
+    <generic-icon name="image-x-generic"/>
+    <alias type="application/vnd.off"/>
+    <glob pattern="*.off"/>
+  </mime-type>
+
+  <mime-type type="model/x-draco">
+    <comment>Draco compressed mesh</comment>
+    <generic-icon name="image-x-generic"/>
+    <alias type="application/vnd.drc"/>
+    <magic>
+      <match type="string" value="DRACO" offset="0"/>
+    </magic>
+    <glob pattern="*.drc"/>
+  </mime-type>
+
+  <mime-type type="model/step">
+    <comment>STEP 3D model</comment>
+    <generic-icon name="image-x-generic"/>
+    <alias type="application/vnd.step"/>
+    <glob pattern="*.step"/>
+    <glob pattern="*.stp"/>
+    <magic>
+      <match type="string" value="ISO-10303-21;" offset="0"/>
+    </magic>
+  </mime-type>
+
+  <mime-type type="model/x-brep">
+    <comment>BREP 3D model</comment>
+    <acronym>BREP</acronym>
+    <expanded-acronym>Boundary REPresentation</expanded-acronym>
+    <sub-class-of type="text/plain"/>
+    <generic-icon name="image-x-generic"/>
+    <alias type="application/vnd.brep"/>
+    <glob pattern="*.brep"/>
+    <magic>
+      <match type="string" value="DBRep_DrawableShape" offset="0"/>
+    </magic>
+  </mime-type>
+</mime-info>

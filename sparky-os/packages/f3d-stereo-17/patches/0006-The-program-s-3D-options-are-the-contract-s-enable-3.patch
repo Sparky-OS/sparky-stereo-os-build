@@ -1,0 +1,319 @@
+From 8aa92e36d0d43281b3d3a0645c9c5a517538642a Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 17 Nov 2026 16:22:55 -0300
+Subject: [PATCH 6/7] The program's 3D options are the contract's: enable 3D
+ and the shortcut to Display Settings
+
+Remove --stereo-eye-angle (the separation is the desktop's), let render.stereo be
+switched on and off while the window runs (F3), add the display_settings command (F4,
+kcmshell6 kcm_kscreen), tell in the ten languages of the edition when the display
+offers no stereo window, and add window::isStereo.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ application/F3DOptionsTools.h  |  1 -
+ application/F3DSparkyStrings.h | 91 ++++++++++++++++++++++++++++++++++
+ application/F3DStarter.cxx     | 43 ++++++++++++++++
+ doc/user/03-OPTIONS.md         |  1 -
+ library/private/window_impl.h  |  1 +
+ library/public/window.h        |  7 +++
+ library/src/window_impl.cxx    | 19 +++++--
+ resources/cli-options.json     |  7 +--
+ 8 files changed, 159 insertions(+), 11 deletions(-)
+ create mode 100644 application/F3DSparkyStrings.h
+
+diff --git a/application/F3DOptionsTools.h b/application/F3DOptionsTools.h
+index 2537361..be997cc 100644
+--- a/application/F3DOptionsTools.h
++++ b/application/F3DOptionsTools.h
+@@ -82,7 +82,6 @@ static inline const std::map<std::string_view, std::string_view> LibOptionsNames
+   { "grid-subdivisions", "render.grid.subdivisions" },
+   { "grid-color", "render.grid.color" },
+   { "stereo", "render.stereo" },
+-  { "stereo-eye-angle", "render.stereo_eye_angle" },
+   { "axes-grid", "render.axes_grid.enable" },
+   { "edges", "render.show_edges" },
+   { "armature", "render.armature.enable" },
+diff --git a/application/F3DSparkyStrings.h b/application/F3DSparkyStrings.h
+new file mode 100644
+index 0000000..b0f0095
+--- /dev/null
++++ b/application/F3DSparkyStrings.h
+@@ -0,0 +1,91 @@
++// SPDX-License-Identifier: BSD-3-Clause
++// The sentences Sparky Stereo OS adds to F3D, in the ten languages of the edition (en, pl, pt_BR, fr, de, es, ja, ko,
++// zh_CN, zh_TW). The language is the first of LANGUAGE, LC_ALL, LC_MESSAGES and LANG that names one of them; English
++// is used when none does.
++#ifndef F3DSparkyStrings_h
++#define F3DSparkyStrings_h
++
++#include <cstdlib>
++#include <string>
++
++namespace F3DSparkyStrings
++{
++enum Id
++{
++  Enable3D = 0,
++  DisplaySettings,
++  DisplaySettingsFailed,
++  NoStereoWindow,
++  Count
++};
++
++inline const char* Text(Id id)
++{
++  static const char* const table[][Count] = {
++    // en
++    { "Enable 3D", "Display Settings", "Display Settings could not be opened: kcmshell6 was not found",
++      "3D could not be enabled: this display offers no stereo window" },
++    // pl
++    { "Włącz 3D", "Ustawienia ekranu", "Nie można otworzyć ustawień ekranu: nie znaleziono kcmshell6",
++      "Nie można włączyć 3D: ten ekran nie udostępnia okna stereo" },
++    // pt_BR
++    { "Ativar 3D", "Configurações de tela", "Não foi possível abrir as configurações de tela: kcmshell6 não foi encontrado",
++      "Não foi possível ativar o 3D: esta tela não oferece uma janela estéreo" },
++    // fr
++    { "Activer la 3D", "Paramètres d’affichage", "Impossible d’ouvrir les paramètres d’affichage : kcmshell6 est introuvable",
++      "Impossible d’activer la 3D : cet affichage ne propose pas de fenêtre stéréo" },
++    // de
++    { "3D aktivieren", "Anzeigeeinstellungen", "Die Anzeigeeinstellungen konnten nicht geöffnet werden: kcmshell6 wurde nicht gefunden",
++      "3D konnte nicht aktiviert werden: dieser Bildschirm bietet kein Stereo-Fenster" },
++    // es
++    { "Activar 3D", "Configuración de pantalla", "No se pudo abrir la configuración de pantalla: no se encontró kcmshell6",
++      "No se pudo activar el 3D: esta pantalla no ofrece una ventana estéreo" },
++    // ja
++    { "3Dを有効にする", "ディスプレイ設定", "ディスプレイ設定を開けませんでした: kcmshell6 が見つかりません",
++      "3Dを有効にできませんでした: このディスプレイはステレオウィンドウを提供していません" },
++    // ko
++    { "3D 켜기", "디스플레이 설정", "디스플레이 설정을 열 수 없습니다: kcmshell6을 찾을 수 없습니다",
++      "3D를 켤 수 없습니다: 이 디스플레이는 스테레오 창을 제공하지 않습니다" },
++    // zh_CN
++    { "启用 3D", "显示设置", "无法打开显示设置：找不到 kcmshell6", "无法启用 3D：此显示器不提供立体窗口" },
++    // zh_TW
++    { "啟用 3D", "顯示設定", "無法開啟顯示設定：找不到 kcmshell6", "無法啟用 3D：此顯示器不提供立體視窗" },
++  };
++  static const char* const names[] = { "en", "pl", "pt_BR", "fr", "de", "es", "ja", "ko", "zh_CN", "zh_TW" };
++  static int chosen = -1;
++  if (chosen < 0)
++  {
++    chosen = 0;
++    for (const char* variable : { "LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG" })
++    {
++      const char* value = std::getenv(variable);
++      if (!value || !*value)
++      {
++        continue;
++      }
++      // the first entry of a LANGUAGE list, without its encoding
++      std::string language(value);
++      language = language.substr(0, language.find(':'));
++      language = language.substr(0, language.find('.'));
++      bool found = false;
++      for (int i = 0; i < 10 && !found; i++)
++      {
++        const std::string name = names[i];
++        if (language == name || (language.size() >= 2 && language.compare(0, 2, name, 0, 2) == 0 && name.size() == 2) ||
++          (name == "pt_BR" && language.compare(0, 2, "pt") == 0))
++        {
++          chosen = i;
++          found = true;
++        }
++      }
++      if (found || language != "C")
++      {
++        break;
++      }
++    }
++  }
++  return table[chosen][id];
++}
++}
++
++#endif
+diff --git a/application/F3DStarter.cxx b/application/F3DStarter.cxx
+index 1b3e30c..30a6b38 100644
+--- a/application/F3DStarter.cxx
++++ b/application/F3DStarter.cxx
+@@ -8,6 +8,10 @@
+ #include "F3DNSDelegate.h"
+ #include "F3DOptionsTools.h"
+ #include "F3DPluginsTools.h"
++#include "F3DSparkyStrings.h"
++
++#include <sys/wait.h>
++#include <unistd.h>
+ #include "F3DSystemTools.h"
+ 
+ #if F3D_MODULE_DMON
+@@ -962,6 +966,8 @@ public:
+       interactor.addBinding({ mod_t::NONE, "Up" }, "reload_current_file_group", "Others", std::bind(docString, "Reload current file group"));
+       interactor.addBinding({ mod_t::NONE, "Down" }, "add_current_directories", "Others", std::bind(docString, "Add files from dir of current file"));
+       interactor.addBinding({ mod_t::NONE, "F12" }, "take_screenshot", "Others", std::bind(docString, "Take a screenshot"));
++      interactor.addBinding({ mod_t::NONE, "F3" }, "toggle render.stereo", "Others", std::bind(docString, F3DSparkyStrings::Text(F3DSparkyStrings::Enable3D)));
++      interactor.addBinding({ mod_t::NONE, "F4" }, "display_settings", "Others", std::bind(docString, F3DSparkyStrings::Text(F3DSparkyStrings::DisplaySettings)));
+ #if F3D_MODULE_TINYFILEDIALOGS
+       interactor.addBinding({ mod_t::CTRL, "O" }, "open_file_dialog", "Others", std::bind(docString, "Open File Dialog"), f3d::interactor::BindingType::OTHER, true);
+ #endif
+@@ -1512,6 +1518,11 @@ int F3DStarter::Start(int argc, char** argv)
+         // Create the event loop repeating timer
+         window.render();
+ 
++        if (this->Internals->LibOptions.render.stereo && !window.isStereo())
++        {
++          f3d::log::error(F3DSparkyStrings::Text(F3DSparkyStrings::NoStereoWindow));
++        }
++
+         // gracefully exits if SIGTERM or SIGINT is send to F3D
+         GlobalInteractor = &interactor;
+         std::signal(SIGTERM, F3DInternals::SigCallback);
+@@ -2288,6 +2299,38 @@ void F3DStarter::AddCommands()
+     return candidates;
+   };
+ 
++  // The shortcut to the desktop's Display Settings, where the 3D screens and their depth are set
++  interactor.addCommand("display_settings",
++    [](const std::vector<std::string>&)
++    {
++      pid_t pid = fork();
++      if (pid == 0)
++      {
++        const char* args[] = { "kcmshell6", "kcm_kscreen", nullptr };
++        execvp(args[0], const_cast<char* const*>(args));
++        _exit(127);
++      }
++      if (pid < 0)
++      {
++        f3d::log::error(F3DSparkyStrings::Text(F3DSparkyStrings::DisplaySettingsFailed));
++        return;
++      }
++      // a short wait tells a missing program from a running one
++      for (int i = 0; i < 20; i++)
++      {
++        int status = 0;
++        if (waitpid(pid, &status, WNOHANG) == pid)
++        {
++          if (WIFEXITED(status) && WEXITSTATUS(status) == 127)
++          {
++            f3d::log::error(F3DSparkyStrings::Text(F3DSparkyStrings::DisplaySettingsFailed));
++          }
++          return;
++        }
++        usleep(10000);
++      }
++    });
++
+   interactor.addCommand("print_config_info",
+     [this](const std::vector<std::string>&)
+     {
+diff --git a/doc/user/03-OPTIONS.md b/doc/user/03-OPTIONS.md
+index fe2298c..602b1fd 100644
+--- a/doc/user/03-OPTIONS.md
++++ b/doc/user/03-OPTIONS.md
+@@ -159,7 +159,6 @@ Set the color grid lines.
+ 
+ Render the scene in quad-buffer stereo, one image for the left eye and one for the right eye. It needs a stereo capable display. The setting is read before the first render.
+ 
+-### `--stereo-eye-angle=<degrees>` (_double_, default: `2.0`)
+ 
+ Set the angle between the two eyes' lines of sight, in degrees. The eyes stay parallel and meet at the focal distance, so the separation grows with the distance to the focal point.
+ 
+diff --git a/library/private/window_impl.h b/library/private/window_impl.h
+index 2bd0d80..4d62220 100644
+--- a/library/private/window_impl.h
++++ b/library/private/window_impl.h
+@@ -48,6 +48,7 @@ public:
+    */
+   Type getType() override;
+   bool isOffscreen() override;
++  bool isStereo() override;
+   camera& getCamera() override;
+   bool render() override;
+   image renderToImage(bool noBackground = false) override;
+diff --git a/library/public/window.h b/library/public/window.h
+index f037cc0..8437d58 100644
+--- a/library/public/window.h
++++ b/library/public/window.h
+@@ -57,6 +57,13 @@ public:
+    */
+   [[nodiscard]] virtual bool isOffscreen() = 0;
+ 
++  /**
++   * Return true when the window draws the two eyes of a stereo pair (render.stereo is on and the
++   * window could be made stereo capable). Call it after a render: the window is made stereo capable
++   * when it is first rendered.
++   */
++  [[nodiscard]] virtual bool isStereo() = 0;
++
+   /**
+    * Get the camera provided by the window.
+    */
+diff --git a/library/src/window_impl.cxx b/library/src/window_impl.cxx
+index 9faedfc..b9b424b 100644
+--- a/library/src/window_impl.cxx
++++ b/library/src/window_impl.cxx
+@@ -263,6 +263,14 @@ window_impl::Type window_impl::getType()
+   return Type::UNKNOWN;
+ }
+ 
++//----------------------------------------------------------------------------
++bool window_impl::isStereo()
++{
++  vtkRenderWindow* renWin = this->Internals->RenWin;
++  return this->Internals->Options.render.stereo &&
++    (renWin->GetOffScreenRendering() || (renWin->GetStereoCapableWindow() && renWin->GetStereoRender()));
++}
++
+ //----------------------------------------------------------------------------
+ bool window_impl::isOffscreen()
+ {
+@@ -408,9 +416,9 @@ void window_impl::UpdateDynamicOptions()
+   // The window is realized when the engine is created, before the options are known, and a stereo
+   // capable window can only be requested before it is realized, so it is recreated once
+   vtkRenderWindow* renWin = this->Internals->RenWin;
+-  if (opt.render.stereo && !renWin->GetOffScreenRendering())
++  if (!renWin->GetOffScreenRendering())
+   {
+-    if (renWin->GetNeverRendered() && !renWin->GetStereoCapableWindow())
++    if (opt.render.stereo && renWin->GetNeverRendered() && !renWin->GetStereoCapableWindow())
+     {
+       vtkRenderWindowInteractor* iren = renWin->GetInteractor();
+       renWin->Finalize();
+@@ -422,7 +430,12 @@ void window_impl::UpdateDynamicOptions()
+         iren->ReInitialize();
+       }
+     }
+-    renderer->GetActiveCamera()->SetEyeAngle(opt.render.stereo_eye_angle);
++    if (renWin->GetStereoCapableWindow())
++    {
++      // 3D can be switched on and off while the window runs: off draws one picture into both eyes
++      renWin->SetStereoRender(opt.render.stereo ? 1 : 0);
++      renderer->GetActiveCamera()->SetEyeAngle(opt.render.stereo_eye_angle);
++    }
+   }
+   else if (opt.render.stereo)
+   {
+diff --git a/resources/cli-options.json b/resources/cli-options.json
+index 92e265d..e645785 100644
+--- a/resources/cli-options.json
++++ b/resources/cli-options.json
+@@ -232,15 +232,10 @@
+         },
+         {
+           "longName": "stereo",
+-          "helpText": "Enable stereo rendering",
++          "helpText": "Enable 3D: draw the two eyes as one full side-by-side picture for the compositor",
+           "valueHelper": "<bool>",
+           "implicitValue": "1"
+         },
+-        {
+-          "longName": "stereo-eye-angle",
+-          "helpText": "Stereo camera eye angle in degrees",
+-          "valueHelper": "<value>"
+-        },
+         {
+           "longName": "armature",
+           "helpText": "Enable armature visualization",
+-- 
+2.53.0
+
