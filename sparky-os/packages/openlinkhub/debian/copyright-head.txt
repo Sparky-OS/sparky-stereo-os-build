@@ -1,0 +1,17 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: OpenLinkHub
+Upstream-Contact: Nikola Jurkovic (https://github.com/jurkovic-nikola)
+Source: https://github.com/jurkovic-nikola/OpenLinkHub
+Comment: OpenLinkHub itself is under the GNU General Public License version 3. The program is one static-Go binary that also
+ links the Go modules in vendor/ (seven, listed below) and the C libraries libpipewire-0.3 and libudev, each under its own terms.
+ go-hid carries a copy of the hidapi project's C sources and states in their headers that they may be used under the GNU General
+ Public License version 3, a BSD-style licence, or the original HIDAPI licence; this package uses them under the BSD-style
+ terms of go-hid's own LICENSE. freetype is offered to its users under the FreeType licence or the GPL version 2 or later, at
+ their choice; this package takes the GPL version 2 or later, which the GPL version 3 of the whole program allows.
+ The vendor/ stanzas are generated (sparky-os/packages/openlinkhub/tools/gen-copyright.py in the edition's build repository)
+ from each module's own legal files, kept beside this file in /usr/share/doc/openlinkhub/vendor-licences, as fetched and
+ verified against upstream's go.sum; the build stops when this file differs from what the generator gives.
+
+Files: *
+Copyright: 2024-2026 Nikola Jurkovic and the OpenLinkHub contributors
+License: GPL-3

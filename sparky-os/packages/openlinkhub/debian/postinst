@@ -1,0 +1,30 @@
+#!/bin/sh
+# Created by Daniel Ramos (Capitain Jack) 2026/11/17
+# Copyright 2026 under the GNU GPL3 License
+set -e
+#DEBHELPER#
+unit=OpenLinkHub.service
+# A copy installed with upstream's own scripts keeps the name of this unit (/etc/systemd/system/OpenLinkHub.service wins over the unit of this
+# package) and lives in /opt/OpenLinkHub with its profiles. This package then changes nothing of it: it does not enable, start, restart or
+# stop that service, moves no profile, and tells the person once how to change over (README.Debian has the steps).
+upstream_install() { [ -d /opt/OpenLinkHub ] || [ -e /etc/systemd/system/$unit ] || [ -e /etc/udev/rules.d/99-openlinkhub.rules ]; }
+if [ "$1" = configure ]; then
+	if upstream_install; then
+		echo "openlinkhub: OpenLinkHub from upstream's own install (/opt/OpenLinkHub) is on this computer. It was left as it is, and this package's service is not enabled. How to change over: /usr/share/doc/openlinkhub/README.Debian" >&2
+	else
+		# the stock snippet of dh_installsystemd: enabled on first installation, a person's disable kept on upgrade (deb-systemd-helper's record)
+		deb-systemd-helper unmask $unit >/dev/null || true
+		if deb-systemd-helper --quiet was-enabled $unit; then
+			deb-systemd-helper enable $unit >/dev/null || true
+		else
+			deb-systemd-helper update-state $unit >/dev/null || true
+		fi
+		if [ -d /run/systemd/system ]; then
+			systemctl --system daemon-reload >/dev/null || true
+			if [ -n "$2" ]; then action=restart; else action=start; fi
+			deb-systemd-invoke $action $unit >/dev/null || true
+		fi
+	fi
+	if [ -d /run/udev ]; then udevadm control --reload-rules >/dev/null 2>&1 || true; fi
+fi
+exit 0

@@ -1,0 +1,48 @@
+#!/usr/bin/make -f
+# Created by Daniel Ramos (Capitain Jack) 2026/11/17
+# Copyright 2026 under the GNU GPL3 License
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# no network, no other toolchain, the vendored modules, upstream's go.mod and go.sum as they are (go-release-packaging.md);
+# GOAMD64=v1 is the default and is set so the baseline processor is a decision, proved by repo/cpu-baseline.py on the program;
+# libpipewire-0.3's pkg-config asks for -fno-strict-overflow, which cgo refuses unless it is allowed by name (no change to the program)
+export GOTOOLCHAIN = local
+export GOPROXY = off
+export GOFLAGS = -mod=vendor -trimpath -buildvcs=false
+export CGO_ENABLED = 1
+export GOAMD64 = v1
+export CGO_CFLAGS_ALLOW = -fno-strict-overflow
+export GOCACHE = $(CURDIR)/debian/.go-cache
+export GOPATH = $(CURDIR)/debian/.go-path
+export HOME = $(CURDIR)/debian/.home
+export CGO_CFLAGS = $(shell dpkg-buildflags --get CFLAGS)
+export CGO_LDFLAGS = $(shell dpkg-buildflags --get LDFLAGS)
+
+%:
+	dh $@ --buildsystem=none
+
+# debian/copyright is generated from the licence table and the legal files of the vendored modules; the build stops when the committed file differs
+execute_before_dh_auto_configure:
+	python3 debian/gen-copyright.py debian/copyright-head.txt debian/vendor-licences.tsv | cmp - debian/copyright
+
+override_dh_auto_build:
+	go version
+	go build -buildmode=pie -o debian/.build/OpenLinkHub .
+
+# upstream has no test files; vet is the build's check
+override_dh_auto_test:
+	go vet ./...
+
+# a Go program carries DWARF 5 sections dwz does not read (dh-golang does the same)
+override_dh_dwz:
+
+# the unit is installed as a file and started by postinst/prerm under their own guard: dh's snippets would stop and restart a service of
+# the same name that upstream's own scripts installed beside it (/etc/systemd/system/OpenLinkHub.service)
+override_dh_installsystemd:
+
+override_dh_installchangelogs:
+	dh_installchangelogs CHANGELOG.md
+
+override_dh_clean:
+	dh_clean
+	rm -rf debian/.go-cache debian/.go-path debian/.home debian/.build
