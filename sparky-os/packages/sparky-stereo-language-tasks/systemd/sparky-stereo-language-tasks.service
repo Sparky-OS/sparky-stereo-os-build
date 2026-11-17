@@ -1,0 +1,10 @@
+[Unit]
+Description=sparky-stereo-language-tasks
+ConditionPathExists=/var/lib/sparky-stereo-language-tasks/pending
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/sparky-stereo-language-tasks/languages migrate
+TimeoutStartSec=infinity
+[Install]
+WantedBy=multi-user.target

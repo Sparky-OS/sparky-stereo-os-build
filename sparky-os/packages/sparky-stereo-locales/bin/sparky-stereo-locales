@@ -318,6 +318,13 @@ allow_in_config() {
 
 # add_languages: the edition's packages of the languages named, when none of the language is installed; nothing is removed.
 add_languages() {
+    local task_tool=/usr/lib/sparky-stereo-language-tasks/languages task_codes
+    if [ -x "$task_tool" ] && task_codes=$("$task_tool" select "$(keep_names)" 2>/dev/null); then
+        [ "$DRY_RUN" -eq 0 ] || { echo "$LOCAL16"; "$task_tool" select "$task_codes"; return; }
+        allow_in_config
+        "$task_tool" add "$task_codes"
+        return $?
+    fi
 	local code
 	EXPLICIT=("${KEEP[@]}")
 	code=$(keep_names | sed 's/ *$//; s/ /,/g')
@@ -503,6 +510,17 @@ keep_names() {
 }
 
 apply_selection() {
+    local task_tool=/usr/lib/sparky-stereo-language-tasks/languages task_codes
+    if [ -x "$task_tool" ] && task_codes=$("$task_tool" select "$(keep_names)" 2>/dev/null); then
+        mapfile -t KEEP < <(printf '%s\n' "${KEEP[@]}"; default_keep)
+        [ "$RESTORE_ALL" -eq 0 ] || task_codes=all
+        if [ "$DRY_RUN" -eq 1 ]; then
+            echo "$LOCAL16"; "$task_tool" select "$(keep_names)"; return
+        fi
+        "$task_tool" keep "$task_codes" || return $?
+        write_config
+        return
+    fi
 	local entry rc code
 	if [ "$RESTORE_ALL" -eq 1 ]; then
 		KEEP=()

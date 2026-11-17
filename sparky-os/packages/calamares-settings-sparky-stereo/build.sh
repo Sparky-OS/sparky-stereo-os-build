@@ -73,7 +73,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: calamares, os-prober, util-linux, sparky-stereo-kernel-settings (>= 20261111.1~sparky9~0), sparky-stereo-cushion-swap (>= 0.3.5), debconf-i18n, python3, python3-pyqt6, qt6-wayland, sparky-core-fonts-dialog (>= 1.0), sparky-stereo-apt (>= 20261104.3)
+Depends: sparky-stereo-language-tasks (>= 1.0.0), calamares, os-prober, util-linux, sparky-stereo-kernel-settings (>= 20261111.1~sparky9~0), sparky-stereo-cushion-swap (>= 0.3.5), debconf-i18n, python3, python3-pyqt6, qt6-wayland, sparky-core-fonts-dialog (>= 1.0), sparky-stereo-apt (>= 20261104.3)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org

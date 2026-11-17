@@ -20,7 +20,7 @@
 # Earlier update 2026/10/14: each package gets its copyright file here (build.sh no longer writes it).
 # Earlier update 2026/10/07: role tasks task-sparky-stereo-<role> (and task-sparky-<role> for the
 # 2D programs of science and education), sparky-stereo-gaming transitional, sparky-stereo-tasks for tasksel
-import os, re, subprocess, sys
+import os, re, subprocess, sys, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import integrations
 
@@ -296,7 +296,7 @@ META = {
     'sparky-stereo-languages': (
         'Sparky Stereo languages',
         'This meta package installs the languages of Steam for the applications Sparky Stereo OS ships: dictionaries, hyphenation, fonts, help and input methods.',
-        [],
+        ['sparky-stereo-language-tasks (>= 1.0.0)'],
         lst('languages')),
     'sparky-stereo-hardware-support': (
         'Sparky Stereo hardware support',
@@ -343,7 +343,15 @@ META['sparky-stereo'] = (META['sparky-stereo'][0], META['sparky-stereo'][1].repl
 META['sparky-stereo-tasks'] = (
     'Sparky Stereo OS tasks for tasksel',
     'This package lists the role tasks of Sparky Stereo OS in tasksel, the Debian way: gamer, designer, video creator, musician, scientist, student, simulator pilot and driver, maker, electrical and automation engineer, developer and Stereo OS developer, with the 2D programs of science and education as their own tasks.',
-    ['tasksel'], [])
+    ['tasksel', 'sparky-stereo-language-tasks (>= 1.0.0)'], [])
+
+LANGUAGE_TASKS = json.load(open(os.path.join(HERE, 'language-tasks.json')))
+META['task-sparky-language-common'] = ('Shared language support', 'Shared fonts, locales and input methods.',
+    ['tasksel', 'sparky-stereo-language-tasks (>= 1.0.0)'] + LANGUAGE_TASKS['common'], [])
+for language in LANGUAGE_TASKS['languages']:
+    META[language['name']] = ('Language support (' + language['code'] + ')',
+        'Required dictionaries, translations and input methods for this language.',
+        ['task-sparky-language-common'] + language['depends'], [])
 
 def desc():
     out = ['Task: sparky-stereo', 'Relevance: 3', 'Key:', '  sparky-stereo-desktop', 'Section: user',
@@ -353,7 +361,7 @@ def desc():
             continue
         title, body = META[k][0], META[k][1]
         out += ['Task: ' + k[len('task-'):], 'Parent: sparky-stereo', 'Relevance: 5', 'Key:', '  ' + k,
-                'Section: user', 'Description: ' + title, ' ' + body, '']
+                'Section: ' + ('l10n' if k.startswith('task-sparky-language-') else 'user'), 'Description: ' + title, ' ' + body, '']
     return '\n'.join(out)
 
 def main():
@@ -392,7 +400,7 @@ def main():
         dep = sorted(set(dep))
         for n in dep:   # no versioned library names in Depends
             b = n.split(' ')[0].split(':')[0]
-            if re.match(r'lib.*(\d|t64)', b) and b not in ('libvulkan1', 'libkscreen-bin'):
+            if re.match(r'lib.*(\d|t64)', b) and b not in ('libvulkan1', 'libkscreen-bin', 'libenchant-2-voikko'):
                 sys.exit(f'{pkg}: versioned library {n} in Depends')
         # A packaging-only rebuild must advance the meta version without
         # inventing a new kernel ABI or changing the image/header dependency.
@@ -418,6 +426,9 @@ def main():
         suggested = sorted(set(available(SUGGESTS.get(pkg, []))) - set(dep) - set(rec))
         if suggested:
             f.append(('Suggests', ', '.join(suggested)))
+        language = next((r for r in LANGUAGE_TASKS['languages'] if r['name'] == pkg), None)
+        if language and language['conflicts']:
+            f.append(('Conflicts', ', '.join(language['conflicts'])))
         if pkg in BREAKS:
             f.append(('Breaks', ', '.join(BREAKS[pkg]).replace('@VERSION@', v)))
         if pkg in REPLACES:
