@@ -1,0 +1,38 @@
+Description: Give the measured inside bodywork a clearly crossed screen position
+Author: Daniel Ramos (Capitain Jack)
+Forwarded: no
+
+--- a/src/modules/graphic/ssggraph/grscreen.cpp
++++ b/src/modules/graphic/ssggraph/grscreen.cpp
+@@ -56,7 +56,7 @@
+ 	mirrorFlag = 1;
+ 	memset(cams, 0, sizeof(cams));
+ 	viewRatio = 1.33;
+-	stereoConvergence = 1.2f;
++	stereoConvergence = 1.8f;
+ 	cars = 0;
+ }
+ 
+@@ -458,9 +458,9 @@
+ 	const bool cockpit = curCamHead == 0 && curCam->getId() >= 2;
+ 	stereoConvergence = (float)GfParmGetNum(grHandle, GR_SCT_GRAPHIC,
+ 		cockpit ? "stereo cockpit convergence" : "stereo chase convergence",
+-		(char*)NULL, cockpit ? 1.2 : 2.0);
++		(char*)NULL, cockpit ? 1.8 : 2.0);
+ 	if (!(stereoConvergence > 0.0f && stereoConvergence < 1.0e6f))
+-		stereoConvergence = cockpit ? 1.2f : 2.0f;
++		stereoConvergence = cockpit ? 1.8f : 2.0f;
+ }
+ 
+ /* Create cameras */
+--- a/src/modules/graphic/ssggraph/graph.xml
++++ b/src/modules/graphic/ssggraph/graph.xml
+@@ -16,7 +16,7 @@
+ 
+ <params name="graph" type="param" mode="mw">
+   <section name="Graphic">
+-    <attnum name="stereo cockpit convergence" val="1.2"/>
++    <attnum name="stereo cockpit convergence" val="1.8"/>
+     <attnum name="stereo chase convergence" val="2.0"/>
+     <attnum name="smoke value" val="300"/>
+     <attnum name="smoke interval" val="0.01"/>
