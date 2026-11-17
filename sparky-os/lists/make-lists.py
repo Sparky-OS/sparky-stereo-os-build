@@ -100,14 +100,17 @@ group('apps', "Applications beyond the KDE edition (Daniel's, deduplicated)", ap
 # 1a. On the image from first boot, whatever their roles say: our stereo builds of the programs everyone uses
 # (Daniel, 2026-10-31: "are you kidding we're not shipping our stereo software?"; "if Lutz has to discover how to install
 # anything before looking and demoing, we lost him"; "this is human centric, not machine centric"). Seeing 3D (our browser,
-# PlasmaTube, Marble, the KDAB demonstrator, Haruna), making it (Blender, Kdenlive, Krita, Showfoto, KolourPaint), everyone's
+# PlasmaTube, Marble, the KDAB demonstrator, Haruna), making it (Krita, Showfoto, KolourPaint), everyone's
 # photo library (digiKam), serving one's own files (UMS), the hardware's lights (OpenRGB) and KDE's own 3D games (Kubrick;
 # KDE first: the light ones, on KDE's frameworks; other games stay optional on the shipped OpenGL, Wine and DXVK), and our
 # own System Settings pages.
+# Blender and Kdenlive left the image on 2026-11-17 (Daniel: "blender and kdenlive are specific tools, for the next iso, do
+# not include them ... as we advance we also refine the minimal iso packages that are meant to quickly demonstrate the
+# system and then the person can install it"): they stay in the creator, designer and maker tasks.
 # make-meta.py puts this list in sparky-stereo-desktop; the role tasks keep their own entries.
 group('image', 'On the image from first boot (our stereo programs everyone uses)', [
     'sparky-stereo-browser', 'plasmatube', 'marble', 'stereo3ddemo', 'haruna',
-    'blender', 'kdenlive', 'krita', 'showfoto', 'kolourpaint',
+    'krita', 'showfoto', 'kolourpaint',
     'digikam', 'ums', 'kcm-ums', 'openrgb',
     'simple-scan',   # scanning, Daniel 2026-10-31: "simple-scan is a must in our distro"
     'kubrick',
