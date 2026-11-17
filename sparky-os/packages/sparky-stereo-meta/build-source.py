@@ -47,7 +47,7 @@ recovered by extracting an already sealed binary package.
 Section: metapackages
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Build-Depends: python3
+Build-Depends: dpkg-dev, gcc, node-acorn, nodejs, perl, python3, python3-yaml
 Standards-Version: 4.7.4
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org

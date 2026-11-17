@@ -4,7 +4,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?}
-VERSION=1.0.0+lc1
+VERSION=1.0.1+lc1
 WORK=$(mktemp -d "${BUILD_ROOT:?}/language-tasks.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 D=$WORK/tree
@@ -48,8 +48,8 @@ cat > "$D/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
 if [ "$1" = configure ]; then
-    sparky-stereo-problems catalog sparky-stereo-language-tasks /usr/share/sparky/sparky-stereo-language-tasks /usr/lib/systemd/catalog --subject LOCAL1
     /usr/lib/sparky-stereo-language-tasks/languages queue
+    sparky-stereo-problems catalog sparky-stereo-language-tasks /usr/share/sparky/sparky-stereo-language-tasks /usr/lib/systemd/catalog --subject LOCAL1
     systemctl enable sparky-stereo-language-tasks.path sparky-stereo-language-tasks.service
     if [ -d /run/systemd/system ]; then
         systemctl daemon-reload

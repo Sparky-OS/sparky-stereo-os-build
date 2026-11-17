@@ -118,12 +118,16 @@ def add(codes, refresh=False):
     run(['apt-mark', 'manual'] + [ROWS[c]['name'] for c in sorted(codes)])
 
 
+def actual(wanted, have):
+    return wanted & set(have) | {n for n, fields in have.items() if wanted & names([fields['provides']])}
+
+
 def retain(codes):
     codes |= {'en', system_language()}
     have = installed()
-    kept_payload = names(DATA['common']) | set().union(*(payload(ROWS[c]) for c in codes))
+    kept_payload = actual(names(DATA['common']) | set().union(*(payload(ROWS[c]) for c in codes)), have)
     unwanted = set(ROWS) - codes
-    purge = ({ROWS[c]['name'] for c in unwanted} | set().union(*(payload(ROWS[c]) for c in unwanted))) & set(have)
+    purge = actual({ROWS[c]['name'] for c in unwanted} | set().union(*(payload(ROWS[c]) for c in unwanted)), have)
     purge -= kept_payload
     if purge:
         args = ['purge'] + sorted(purge)
@@ -135,6 +139,8 @@ def retain(codes):
     STATE.mkdir(parents=True, exist_ok=True)
     (STATE / 'retained.json').write_text(json.dumps(sorted(codes)) + '\n')
     add(codes)
+    if (STATE / 'pending').exists():
+        capture()
 
 
 def capture():
@@ -211,6 +217,11 @@ def main():
     elif action == 'add':
         codes = requested(values)
         add(codes, refresh=True)
+        if not DRY and (STATE / 'retained.json').exists():
+            kept = set(json.loads((STATE / 'retained.json').read_text())) | codes
+            (STATE / 'retained.json').write_text(json.dumps(sorted(kept)) + '\n')
+        if not DRY and (STATE / 'pending').exists():
+            capture()
     elif action == 'keep':
         retain(set(ROWS) if values == ['all'] else requested(values))
     elif action == 'installer':
