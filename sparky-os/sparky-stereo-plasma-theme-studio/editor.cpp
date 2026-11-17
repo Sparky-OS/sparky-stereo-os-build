@@ -43,6 +43,7 @@
 #include <QScreen>
 #include <QWindow>
 #include <QShowEvent>
+#include <QTimer>
 #include <QJsonArray>
 static QImage highlight(QImage image, const QImage &mask);
 
@@ -251,8 +252,15 @@ void Editor::refresh()
     if (drawing.source.isEmpty()) return;
     auto *screen = windowHandle() ? windowHandle()->screen() : QGuiApplication::primaryScreen();
     if (!screen) throw std::runtime_error(tr("Cannot read the preview output").toStdString());
-    drawing.readLimits(qRound(screen->geometry().width() * screen->devicePixelRatio()),
-                       qRound(preview->width() * preview->devicePixelRatioF()));
+    if (observedScreen != screen) {
+        disconnect(observedGeometry);
+        observedScreen = screen;
+        observedGeometry = connect(screen, &QScreen::geometryChanged, this, [this] { guarded([&] { refresh(); }); });
+    }
+    // On fractional Wayland outputs QScreen can report a rounded buffer scale.
+    // The actual window's preferred fractional ratio gives physical output/presentation pixels.
+    const qreal ratio = windowHandle() ? windowHandle()->devicePixelRatio() : devicePixelRatioF();
+    drawing.readLimits(qRound(screen->geometry().width() * ratio), qRound(preview->width() * ratio));
     const auto id = selectedGroup();
     auto left = drawing.eye(size->value(), false);
     QImage right;
@@ -378,9 +386,13 @@ QString Editor::sessionState() const
     for (int row = 0; row < disparities->rowCount(); ++row)
         rows.append(QJsonArray{disparities->item(row, 0)->text(), disparities->item(row, 1)->text(), disparities->columnCount()>2 && disparities->item(row,2) ? disparities->item(row,2)->text() : QString()});
     const QPoint global = preview->mapToGlobal(QPoint());
+    auto *screen = windowHandle() ? windowHandle()->screen() : QGuiApplication::primaryScreen();
+    QJsonObject metrics;
+    if (screen) metrics = {{"screenDpr",screen->devicePixelRatio()}, {"widgetDpr",preview->devicePixelRatioF()}, {"windowDpr",windowHandle()?windowHandle()->devicePixelRatio():devicePixelRatioF()},
+        {"screenWidth",screen->geometry().width()}, {"presentationPixels",qRound(preview->width()*(windowHandle()?windowHandle()->devicePixelRatio():devicePixelRatioF()))}};
     return QString::fromUtf8(QJsonDocument(QJsonObject{{"previewRect", QJsonArray{global.x(), global.y(), preview->width(), preview->height()}}, {"renderWidth", size->value()}, {"stereoAvailable", bool(STUDIO_STEREO)}, {"selected", selectedGroup()}, {"depths", depths},
         {"disparities", rows}, {"canUndo", history->canUndo()}, {"canRedo", history->canRedo()},
-        {"title", windowTitle()}, {"enable3d", stereo->text()}, {"pixelsPerView", size->prefix()},
+        {"desktopMetrics", metrics}, {"title", windowTitle()}, {"enable3d", stereo->text()}, {"pixelsPerView", size->prefix()},
         {"partHeader", groups->headerItem()->text(0)}}).toJson(QJsonDocument::Compact));
 }
 
@@ -512,4 +524,12 @@ void Editor::showEvent(QShowEvent *event)
         observedWindow = windowHandle();
         connect(windowHandle(), &QWindow::screenChanged, this, [this] { guarded([&] { refresh(); }); });
     }
+}
+
+bool Editor::event(QEvent *event)
+{
+    const bool result = QWidget::event(event);
+    if (event->type() == QEvent::DevicePixelRatioChange)
+        QTimer::singleShot(0, this, [this] { guarded([&] { refresh(); }); });
+    return result;
 }
