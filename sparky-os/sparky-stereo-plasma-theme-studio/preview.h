@@ -1,35 +1,33 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include <QWidget>
-#include <QPainter>
-#include <stereo-layer/widgetlayer.h>
-#include <stereo-layer/picture.h>
-class Preview : public QWidget
-{
+#include <QImage>
+#include <functional>
+#include <memory>
+class QPainter;
+class Preview;
+class PreviewBackend {
 public:
-    Stereo::WidgetLayer *layer;
-    QImage left;
-    Preview() { setFixedSize(256, 256); layer = new Stereo::WidgetLayer(this); layer->setPaintArea(false); }
-    void setViews(const QImage &a, const QImage &b, bool stereo)
-    {
-#ifdef PREVIEW_REFERENCE
-        stereo = false;
-#endif
-        left = a;
-        setFixedSize(QSize(256, qMax(1, qRound(256.0 * a.height() / a.width()))));
-        if (stereo) {
-            QImage pair(a.width() * 2, a.height(), a.format());
-            pair.fill(Qt::transparent);
-            { QPainter p(&pair); p.setCompositionMode(QPainter::CompositionMode_Source); p.drawImage(0, 0, a); p.drawImage(a.width(), 0, b); }
-            layer->setPicture(Stereo::Picture::fromPackedImage(pair, Stereo::Picture::Layout::SideBySide, Stereo::Picture::EyeOrder::LeftFirst));
-        } else { Stereo::Picture flat; flat.original = a; layer->setPicture(flat); }
-        update();
-    }
-    void paintEvent(QPaintEvent *) override
-    {
-        QPainter p(this);
-        p.fillRect(rect(), Qt::black);
-        layer->paint(&p);
-    }
+    virtual ~PreviewBackend() = default;
+    virtual void setViews(const QImage &, const QImage &, bool) = 0;
+    virtual void paint(QPainter *) = 0;
+    virtual QString failure() const = 0;
 };
-
+std::unique_ptr<PreviewBackend> makePreviewBackend(Preview *);
+void preparePreviewWindow(QWidget *);
+class Preview : public QWidget {
+public:
+    Preview();
+    ~Preview() override;
+    QImage left;
+    std::function<void(QPointF)> picked;
+    std::function<void()> failed;
+    static void prepareWindow(QWidget *w) { preparePreviewWindow(w); }
+    void setViews(const QImage &, const QImage &, bool);
+    QString failure() const { return backend->failure(); }
+protected:
+    void paintEvent(QPaintEvent *) override;
+    void mousePressEvent(QMouseEvent *) override;
+private:
+    std::unique_ptr<PreviewBackend> backend;
+};

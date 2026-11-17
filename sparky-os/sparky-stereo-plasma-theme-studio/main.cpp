@@ -27,7 +27,9 @@ static void configureParser(QCommandLineParser &parser)
     parser.addOption({"project", QCoreApplication::translate("Cli", "Open a saved project"), "path"});
     parser.addOption({"places", QCoreApplication::translate("Cli", "Read group depths from JSON"), "path"});
     parser.addOption({"save", QCoreApplication::translate("Cli", "Save a new project copy"), "path"});
+#if STUDIO_STEREO
     parser.addOption({"flat", QCoreApplication::translate("Cli", "Disable the stereo preview")});
+#endif
     parser.addOption({"exit-after-save", QCoreApplication::translate("Cli", "Return after the requested save")});
     parser.addVersionOption();
 }
@@ -74,7 +76,9 @@ int main(int argc, char **argv)
             if (error.error != QJsonParseError::NoError || !data.isObject()) throw std::runtime_error(QCoreApplication::translate("Cli", "Invalid group choices").toStdString());
             editor.applyPlaces(data.object());
         }
+#if STUDIO_STEREO
         if (parser.isSet("flat")) editor.stereo->setChecked(false);
+#endif
         if (parser.isSet("save")) editor.saveProject(parser.value("save"));
         if (parser.isSet("exit-after-save")) return 0;
         editor.show();

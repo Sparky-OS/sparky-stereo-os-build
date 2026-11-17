@@ -26,8 +26,8 @@ int main(int argc, char **argv)
         require(spin, "Missing single depth control");
         spin->setValue(-25.0);
         require(editor.drawing.places.value("g3010") == -0.25, "Continuous value lost");
-        require(editor.drawing.disparity("g3010", 256) == 0, "Fractional depth did not use KWin rounding");
-        require(editor.disparities->item(8, 1)->text().contains("no depth"), "Zero disparity is hidden");
+        require(editor.drawing.disparity("g3010", 256) == -1, "Fractional depth was not visibly compensated within the budget");
+        require(editor.disparities->item(0, 1)->text().contains("limit"), "Zero disparity is hidden");
         editor.history->undo();
         require(editor.drawing.places.value("g3010") == -1, "Undo did not restore the value");
         require(editor.preview->left == baseline, "Undo did not restore the rendered selection");
@@ -46,7 +46,7 @@ int main(int argc, char **argv)
         require(editor.selectPart("g3090"), "Cannot select another part");
         require(editor.preview->left != baseline, "Selection did not change highlighted pixels");
         require(editor.setGroupDepth("g3090", 0.5).isEmpty(), "Fractional popped edit failed");
-        require(editor.drawing.disparity("g3090", 256) == 0, "Half popped limit should round to zero at 256");
+        require(editor.drawing.disparity("g3090", 256) == 1, "Half popped limit must receive the minimum visible step");
         std::cout << "PASS: group highlight, continuous bounded depth, per-size zero notice, keyboard edit, undo button, redo and rejected edits\n";
         return 0;
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }

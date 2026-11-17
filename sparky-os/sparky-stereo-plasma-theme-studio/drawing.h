@@ -13,6 +13,7 @@ public:
     void open(const QString &path, bool square = true);
     int height(int width) const;
     QStringList groups() const;
+    QStringList hitGroups(const QPoint &pixel, int width) const;
     void setPlace(const QString &id, qreal place);
     int disparity(const QString &id, int size) const;
     QString groupLabel(const QString &id) const;

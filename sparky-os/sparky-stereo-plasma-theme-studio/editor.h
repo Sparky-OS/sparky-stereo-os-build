@@ -66,6 +66,10 @@ public:
     void restorePlaces(const QMap<QString, qreal> &places);
     QList<int> themeSizes() const;
     QString selectedGroup() const;
+    QPoint lastPick{-1000, -1000};
+    QStringList pickStack;
+    int pickIndex = 0;
+    void pickAt(QPointF point);
     bool mayDiscard();
 public slots:
     bool selectPart(const QString &id);
@@ -77,6 +81,7 @@ public slots:
     QString launchThemeExplorer();
     QString setGroupDepth(const QString &id, double value);
     QString sessionState() const;
+    bool setRenderWidth(int width);
     void undoDepth() { history->undo(); }
     void redoDepth() { history->redo(); }
 protected:

@@ -234,8 +234,8 @@
       <translation>%1 px</translation>
     </message>
     <message>
-      <source>0 px (no depth at this size)</source>
-      <translation>0 px (이 크기에서는 깊이 없음)</translation>
+      <source>0 px (limit below 1 px)</source>
+      <translation>0 px (한도 1 px 미만)</translation>
     </message>
     <message>
       <source>0 px (screen)</source>

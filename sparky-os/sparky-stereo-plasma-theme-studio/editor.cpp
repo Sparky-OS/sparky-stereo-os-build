@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "drawing.h"
-#include <stereo-layer/widgetlayer.h>
-#include <stereo-layer/picture.h>
+
+
 #include <KConfig>
 #include <KConfigGroup>
 #include <QApplication>
@@ -37,15 +37,18 @@
 #include "identity.h"
 #include <QDoubleSpinBox>
 #include <QHeaderView>
+#include <QtMath>
 #include <QCloseEvent>
 #include <algorithm>
 #include <QJsonArray>
+static QImage highlight(QImage image, const QImage &mask);
+
 Editor::Editor(bool part)
     : partMode(part)
 {
-    Stereo::WidgetLayer::prepareWindow(this);
+    Preview::prepareWindow(this);
     setWindowTitle(Identity::product() + "[*]");
-    resize(1000, 680);
+    resize(1120, 720);
     history = new QUndoStack(this);
     auto *layout = new QVBoxLayout(this);
     auto *files = new QHBoxLayout;
@@ -75,12 +78,14 @@ Editor::Editor(bool part)
     }
     auto *actions = new QHBoxLayout;
     stereo = new QCheckBox(tr("Enable 3D"));
-    stereo->setChecked(true);
+    stereo->setChecked(STUDIO_STEREO);
+    if (!STUDIO_STEREO) stereo->hide();
     size = new QSpinBox;
     size->setRange(8, 2048); size->setValue(256);
     size->setPrefix(tr("Pixels per view: "));
     auto *settings = new QPushButton(tr("Display Settings…"));
     for (auto *w : QList<QWidget *>{stereo, size, settings}) actions->addWidget(w);
+    if (!STUDIO_STEREO) settings->hide();
     layout->addLayout(actions);
     location = new QLabel(tr("Open a theme. Save creates a separate project copy."));
     location->setWordWrap(true); layout->addWidget(location);
@@ -88,11 +93,12 @@ Editor::Editor(bool part)
     groups = new QTreeWidget;
     groups->setObjectName("groups");
     groups->setHeaderLabels({tr("Part"), tr("Depth (% of limit)")});
-    groups->setIconSize(QSize(40, 40));
-    groups->setColumnWidth(0, 250);
+    if (!STUDIO_STEREO) groups->hideColumn(1);
+    groups->setIconSize(QSize(112, 88));
+    groups->setColumnWidth(0, 320);
     groups->setToolTip(tr("Select a part to highlight it in both views. Negative depth sinks; positive depth pops."));
     auto *details = new QVBoxLayout;
-    selection = new QLabel; selection->setWordWrap(true);
+    selection = new QLabel; selection->setWordWrap(true); selection->setTextFormat(Qt::PlainText);
     details->addWidget(selection);
     preview = new Preview;
     details->addWidget(preview, 0, Qt::AlignCenter);
@@ -103,6 +109,7 @@ Editor::Editor(bool part)
     disparities->setEditTriggers(QAbstractItemView::NoEditTriggers);
     disparities->setSelectionMode(QAbstractItemView::NoSelection);
     details->addWidget(disparities);
+    if (!STUDIO_STEREO) disparities->hide();
     body->addWidget(groups, 1); body->addLayout(details, 1);
     layout->addLayout(body);
     connect(open, &QPushButton::clicked, this, [this] { guarded([&] {
@@ -129,9 +136,9 @@ Editor::Editor(bool part)
         if (!QProcess::startDetached("kcmshell6", {"kcm_kscreen"}))
             QMessageBox::critical(this, tr("Display Settings"), tr("Cannot start Display Settings (kcmshell6)."));
     });
-    connect(preview->layer, &Stereo::WidgetLayer::failureChanged, this, [this] {
-        if (!preview->layer->failure().isEmpty()) location->setText(preview->layer->failure());
-    });
+    preview->picked = [this](QPointF point) { guarded([&] { pickAt(point); }); };
+    preview->failed = [this] { if (!preview->failure().isEmpty()) location->setText(preview->failure()); };
+
 }
 
 void Editor::guarded(const std::function<void()> &f)
@@ -159,18 +166,33 @@ void Editor::load(QString root, QString icon)
 
 void Editor::populateGroups()
 {
+    pickStack.clear(); lastPick = {-1000, -1000};
     { QSignalBlocker block(groups); groups->clear(); }
     for (const QString &id : drawing.groups()) {
         auto *item = new QTreeWidgetItem(groups, {drawing.groupLabel(id)});
         item->setData(0, Qt::UserRole, id);
         item->setToolTip(0, id);
-        auto thumbnail = drawing.eye(128, false, id);
+        auto isolated = drawing.eye(512, false, id);
         QRect bounds;
-        for (int y = 0; y < thumbnail.height(); ++y)
-            for (int x = 0; x < thumbnail.width(); ++x)
-                if (qAlpha(thumbnail.pixel(x, y))) bounds |= QRect(x, y, 1, 1);
-        if (!bounds.isEmpty()) thumbnail = thumbnail.copy(bounds).scaled(40, 40, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        for (int y = 0; y < isolated.height(); ++y)
+            for (int x = 0; x < isolated.width(); ++x)
+                if (qAlpha(isolated.pixel(x, y))) bounds |= QRect(x, y, 1, 1);
+        QImage thumbnail(112, 88, QImage::Format_ARGB32_Premultiplied);
+        QPainter painter(&thumbnail);
+        for (int y = 0; y < 88; y += 8) for (int x = 0; x < 112; x += 8)
+            painter.fillRect(x, y, 8, 8, ((x/8+y/8)%2) ? QColor(185,185,185) : QColor(235,235,235));
+        if (!bounds.isEmpty()) {
+            const auto part = isolated.copy(bounds).scaled(100, 56, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            painter.drawImage((112-part.width())/2, (60-part.height())/2, part);
+        }
+        // A context inset locates very thin highlights and outlines without deforming their isolated drawing.
+        auto context = drawing.eye(56, false);
+        context = highlight(context, drawing.eye(56, false, id));
+        painter.drawImage(28, 60, context.scaled(56, 28, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        painter.end();
         item->setIcon(0, QPixmap::fromImage(thumbnail));
+        item->setSizeHint(0, QSize(112, 92));
+        if (!STUDIO_STEREO) continue;
         auto *depth = new QDoubleSpinBox;
         depth->setRange(-100, 100); depth->setDecimals(1); depth->setSingleStep(5);
         depth->setSuffix(tr(" %"));
@@ -222,10 +244,11 @@ void Editor::refresh()
     drawing.readLimits();
     const auto id = selectedGroup();
     auto left = drawing.eye(size->value(), false);
-    auto right = drawing.eye(size->value(), true);
+    QImage right;
+    if (STUDIO_STEREO) right = drawing.eye(size->value(), true);
     if (!id.isEmpty()) {
         left = highlight(left, drawing.eye(size->value(), false, id));
-        right = highlight(right, drawing.eye(size->value(), true, id));
+        if (STUDIO_STEREO) right = highlight(right, drawing.eye(size->value(), true, id));
     }
     preview->setViews(left, right, stereo->isChecked());
     disparities->setRowCount(0);
@@ -236,7 +259,7 @@ void Editor::refresh()
         const int row = disparities->rowCount(); disparities->insertRow(row);
         const int pixels = drawing.disparity(id, n);
         disparities->setItem(row, 0, new QTableWidgetItem(tr("%1 px").arg(n)));
-        const auto text = pixels ? tr("%1 px").arg(pixels) : value ? tr("0 px (no depth at this size)") : tr("0 px (screen)");
+        const auto text = pixels ? tr("%1 px").arg(pixels) : value ? tr("0 px (limit below 1 px)") : tr("0 px (screen)");
         disparities->setItem(row, 1, new QTableWidgetItem(text));
     }
 }
@@ -247,6 +270,7 @@ void Editor::restorePlaces(const QMap<QString, qreal> &places)
     for (int i = 0; i < groups->topLevelItemCount(); ++i) {
         auto *item = groups->topLevelItem(i);
         auto *depth = static_cast<QDoubleSpinBox *>(groups->itemWidget(item, 1));
+        if (!depth) continue;
         QSignalBlocker block(depth);
         depth->setValue(100.0 * drawing.places.value(item->data(0, Qt::UserRole).toString()));
     }
@@ -317,6 +341,7 @@ QString Editor::setGroupDepth(const QString &id, double value)
         candidate.setPlace(id, value);
         if (!selectPart(id)) return tr("Invalid group or place");
         auto *control = static_cast<QDoubleSpinBox *>(groups->itemWidget(groups->currentItem(), 1));
+        if (!STUDIO_STEREO) return tr("Enable 3D");
         control->setValue(value * 100.0);
         return {};
     } catch (const std::exception &e) { return QString::fromUtf8(e.what()); }
@@ -329,7 +354,8 @@ QString Editor::sessionState() const
     QJsonArray rows;
     for (int row = 0; row < disparities->rowCount(); ++row)
         rows.append(QJsonArray{disparities->item(row, 0)->text(), disparities->item(row, 1)->text()});
-    return QString::fromUtf8(QJsonDocument(QJsonObject{{"selected", selectedGroup()}, {"depths", depths},
+    const QPoint global = preview->mapToGlobal(QPoint());
+    return QString::fromUtf8(QJsonDocument(QJsonObject{{"previewRect", QJsonArray{global.x(), global.y(), preview->width(), preview->height()}}, {"renderWidth", size->value()}, {"stereoAvailable", bool(STUDIO_STEREO)}, {"selected", selectedGroup()}, {"depths", depths},
         {"disparities", rows}, {"canUndo", history->canUndo()}, {"canRedo", history->canRedo()},
         {"title", windowTitle()}, {"enable3d", stereo->text()}, {"pixelsPerView", size->prefix()},
         {"partHeader", groups->headerItem()->text(0)}}).toJson(QJsonDocument::Compact));
@@ -398,6 +424,7 @@ void Editor::saveProject(const QString &destination)
         {"export-limits", QJsonObject{{"sunk", drawing.sunk()}, {"popped", drawing.popped()}}},
         {"source-sha256", QString::fromLatin1(QCryptographicHash::hash(drawing.original, QCryptographicHash::Sha256).toHex())}};
     QStringList stereoDirectories;
+#if STUDIO_STEREO
     for (int n : sizes) {
         const QString directory = QString("%1/%2x%2/%3").arg(outputRoot).arg(n).arg(contextDirectory);
         stereoDirectories << directory;
@@ -420,6 +447,8 @@ void Editor::saveProject(const QString &destination)
         }
         if (!index.sync()) throw std::runtime_error(tr("Cannot save the copied theme index").toStdString());
     }
+
+#endif
     saveParts(stage.path(), project);
     saveBytes(stage.path() + "/project.json", QJsonDocument(project).toJson());
     if (!QDir().rename(stage.path(), destination)) throw std::runtime_error(tr("Cannot commit the project folder").toStdString());
@@ -429,4 +458,22 @@ void Editor::saveProject(const QString &destination)
     membersDirty = false; setWindowModified(false);
     location->setText(tr("Saved project copy: %1").arg(destination));
     if (projectLocation) projectLocation->setText(location->text());
+}
+
+bool Editor::setRenderWidth(int width)
+{
+    if (width < size->minimum() || width > size->maximum()) return false;
+    size->setValue(width); return true;
+}
+
+void Editor::pickAt(QPointF point)
+{
+    if (drawing.source.isEmpty()) return;
+    const QPoint pixel(qFloor(point.x() * size->value() / preview->width()),
+                       qFloor(point.y() * drawing.height(size->value()) / preview->height()));
+    if ((pixel-lastPick).manhattanLength() > 2 || pickStack.isEmpty()) {
+        pickStack = drawing.hitGroups(pixel, size->value());
+        pickIndex = 0; lastPick = pixel;
+    } else { pickIndex = (pickIndex+1) % pickStack.size(); }
+    if (!pickStack.isEmpty()) selectPart(pickStack[pickIndex]);
 }

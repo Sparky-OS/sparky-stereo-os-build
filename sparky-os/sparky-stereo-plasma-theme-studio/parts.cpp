@@ -240,11 +240,14 @@ void Editor::saveParts(const QString &stage, QJsonObject &project)
         for (auto it = part.places.cbegin(); it != part.places.cend(); ++it) levels[it.key()] = it.value();
         project["plasma"] = QJsonObject{{"source", plasmaPath}, {"groups", levels},
             {"sunk", part.sunk()}, {"popped", part.popped()}};
+
+#if STUDIO_STEREO
         QDir().mkpath(stage + "/plasma-pairs");
         const int n = plasmaEditor->size->value();
         saveBytes(stage + "/plasma-pairs/part.svg", part.pairSvg(n));
         savePns(stage + "/plasma-pairs/part.pns", part.eye(n, false), part.eye(n, true));
         project["plasma-width"] = n;
+#endif
     }
 }
 

@@ -234,8 +234,8 @@
       <translation>%1 像素</translation>
     </message>
     <message>
-      <source>0 px (no depth at this size)</source>
-      <translation>0 像素（此尺寸下无深度）</translation>
+      <source>0 px (limit below 1 px)</source>
+      <translation>0 px（限值不足 1 px）</translation>
     </message>
     <message>
       <source>0 px (screen)</source>

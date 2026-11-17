@@ -234,8 +234,8 @@
       <translation>%1 px</translation>
     </message>
     <message>
-      <source>0 px (no depth at this size)</source>
-      <translation>0 px (sin profundidad a este tamaño)</translation>
+      <source>0 px (limit below 1 px)</source>
+      <translation>0 px (límite inferior a 1 px)</translation>
     </message>
     <message>
       <source>0 px (screen)</source>

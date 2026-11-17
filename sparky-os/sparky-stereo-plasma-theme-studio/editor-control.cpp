@@ -13,7 +13,10 @@ int main(int argc, char **argv)
     QDBusInterface editor("org.sparky.ThemeEditor", "/ThemeEditor", "org.sparky.ThemeEditor1");
     const QString method = QString::fromLocal8Bit(argv[1]);
     QList<QVariant> args;
-    if (argc > 2) args << QString::fromLocal8Bit(argv[2]);
+    if (argc > 2) {
+        if (method == "setRenderWidth") args << QString::fromLocal8Bit(argv[2]).toInt();
+        else args << QString::fromLocal8Bit(argv[2]);
+    }
     if (argc > 3) args << QString::fromLocal8Bit(argv[3]).toDouble();
     const auto reply = editor.callWithArgumentList(QDBus::Block, method, args);
     if (reply.type() == QDBusMessage::ErrorMessage) {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "drawing.h"
-#include "desktop-depth.h"
+#include "depth-interface.h"
 #include <KConfig>
 #include <KConfigGroup>
 #include <QBuffer>
@@ -11,6 +11,7 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QSvgRenderer>
+#include <QSet>
 #include <QtEndian>
 #include <stdexcept>
 #include <functional>
@@ -41,6 +42,40 @@ void Drawing::open(const QString &path, bool square)
     check(renderer.viewBoxF().width() > 0 && renderer.viewBoxF().height() > 0, Drawing::tr("The SVG has no usable view box"));
     check(!square || qAbs(renderer.viewBoxF().width() - renderer.viewBoxF().height()) < 0.001,
           Drawing::tr("Choose a square, single-view SVG source"));
+    // Loose painted elements alongside groups must also be selectable authoring parts.
+    // Neutral wrappers exist only in the working DOM; original bytes and element IDs stay intact.
+    QSet<QString> usedIds;
+    std::function<void(QDomElement)> collectIds = [&](QDomElement e) {
+        if (e.hasAttribute("id")) usedIds.insert(e.attribute("id"));
+        for (auto c = e.firstChildElement(); !c.isNull(); c = c.nextSiblingElement()) collectIds(c);
+    };
+    collectIds(next.documentElement());
+    int anonymous = 0;
+    std::function<void(QDomElement)> groupLoose = [&](QDomElement parent) {
+        bool mixed = parent == next.documentElement();
+        for (auto c = parent.firstChildElement(); !c.isNull(); c = c.nextSiblingElement()) mixed |= c.tagName() == "g";
+        QList<QDomElement> children;
+        for (auto c = parent.firstChildElement(); !c.isNull(); c = c.nextSiblingElement()) children << c;
+        for (auto e : children) {
+            if (e.tagName() == "g") { groupLoose(e); continue; }
+            if (!mixed || !QStringList{"path","rect","circle","ellipse","polygon","polyline","line","text","image","use"}.contains(e.tagName())) continue;
+            QString sourceId = e.attribute("id");
+            if (sourceId.isEmpty()) sourceId = e.tagName() + QString::number(++anonymous);
+            QString id = "studio-part-" + sourceId;
+            while (usedIds.contains(id)) id += "-part";
+            usedIds.insert(id);
+            auto wrapper = next.createElement("g"); wrapper.setAttribute("id", id); wrapper.setAttribute("data-source-id", sourceId);
+            auto title = e.firstChildElement("title");
+            if (!title.isNull()) wrapper.appendChild(title.cloneNode(true));
+            const auto attributes = e.attributes();
+            for (int a = 0; a < attributes.size(); ++a) {
+                const auto attribute = attributes.item(a).toAttr();
+                if (attribute.name().section(':', -1) == "label") wrapper.setAttribute(attribute.name(), attribute.value());
+            }
+            parent.replaceChild(wrapper, e); wrapper.appendChild(e);
+        }
+    };
+    groupLoose(next.documentElement());
     QMap<QString, qreal> nextPlaces;
     const auto groups = next.elementsByTagName("g");
     for (int i = 0; i < groups.size(); ++i) {
@@ -59,10 +94,8 @@ void Drawing::open(const QString &path, bool square)
 
 void Drawing::readLimits()
 {
-    KConfig config(QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/kwinrc", KConfig::SimpleConfig);
-    KConfigGroup group(&config, "StereoDepth");
-    const qreal sunk = group.readEntry("SunkLimit", DesktopGeometry::StereoSunkLimit);
-    const qreal popped = group.readEntry("PoppedLimit", DesktopGeometry::StereoPoppedLimit);
+    const auto limits = Depth::desktopLimits();
+    const qreal sunk = limits.sunk, popped = limits.popped;
     check(std::isfinite(sunk) && std::isfinite(popped) && sunk >= 0 && popped >= 0, Drawing::tr("Invalid desktop depth limits"));
     sunkLimit = sunk;
     poppedLimit = popped;
@@ -80,8 +113,7 @@ int Drawing::disparity(const QString &id, int size) const
 {
     check(places.contains(id), Drawing::tr("Invalid group or place"));
     const qreal value = places.value(id);
-    const qreal reference = value * (value < 0 ? sunkLimit : poppedLimit);
-    return DesktopGeometry::StereoDepth::parallax(reference, size);
+    return Depth::authoredDisparity(value, {sunkLimit, poppedLimit}, size);
 }
 
 QString Drawing::groupLabel(const QString &id) const
@@ -90,11 +122,16 @@ QString Drawing::groupLabel(const QString &id) const
     for (int i = 0; i < groups.size(); ++i) {
         const auto group = groups.at(i).toElement();
         if (group.attribute("id") != id) continue;
-        const auto label = group.attribute("inkscape:label");
-        if (!label.isEmpty()) return label;
+        const auto attributes = group.attributes();
+        for (int a = 0; a < attributes.size(); ++a) {
+            const auto attribute = attributes.item(a).toAttr();
+            if (attribute.name().section(':', -1) == "label" && !attribute.value().isEmpty()) return attribute.value();
+        }
         const auto title = group.firstChildElement("title").text();
         if (!title.isEmpty()) return title;
     }
+    const auto all = document.elementsByTagName("g");
+    for (int i=0;i<all.size();++i) { auto e=all.at(i).toElement(); if(e.attribute("id")==id && e.hasAttribute("data-source-id")) return e.attribute("data-source-id"); }
     return id;
 }
 
@@ -118,7 +155,7 @@ void Drawing::setPlace(const QString &id, qreal place)
 QByteArray Drawing::viewSvg(int size, bool right, QString only) const
 {
     auto view = document.cloneNode(true).toDocument();
-    QSvgRenderer sourceRenderer(original);
+    QSvgRenderer sourceRenderer(document.toByteArray());
     const qreal unitsPerPixel = sourceRenderer.viewBoxF().width() / size;
     if (!only.isEmpty()) {
         std::function<void(QDomElement, bool)> isolate = [&](QDomElement e, bool inside) {
@@ -140,8 +177,7 @@ QByteArray Drawing::viewSvg(int size, bool right, QString only) const
         const QString id = e.attribute("id");
         const qreal place = places.value(id);
         if (!place) continue;
-        using namespace DesktopGeometry;
-        const int shift = StereoDepth::eyeShift(disparity(id, size), right ? StereoEye::Right : StereoEye::Left);
+        const int shift = Depth::eyeShift(disparity(id, size), right);
         bool invertible = false;
         auto inverse = sourceRenderer.transformForElement(id).inverted(&invertible);
         check(invertible, Drawing::tr("Singular parent transform for ") + id);
@@ -167,77 +203,6 @@ QImage Drawing::eye(int size, bool right, QString only) const
     return image;
 }
 
-QByteArray Drawing::pairSvg(int size) const
-{
-    // Flatten each source root to a group because Qt's SVG Tiny reader rejects nested SVG roots.
-    const auto left = viewSvg(size, false);
-    const auto right = viewSvg(size, true);
-    QDomDocument pair;
-    auto root = pair.createElement("svg");
-    root.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-    root.setAttribute("xmlns:svgstereo", "https://github.com/Sparky-OS/svgstereo");
-    root.setAttribute("svgstereo:layout", "sideBySideLeftFirst");
-    root.setAttribute("viewBox", QString("0 0 %1 %2").arg(size * 2).arg(height(size)));
-    root.setAttribute("width", size * 2);
-    root.setAttribute("height", height(size));
-    pair.appendChild(root);
-    auto defs = pair.createElement("defs");
-    auto clip = pair.createElement("clipPath");
-    clip.setAttribute("id", "eye-bound");
-    auto clipRect = pair.createElement("rect");
-    clipRect.setAttribute("width", size);
-    clipRect.setAttribute("height", height(size));
-    clip.appendChild(clipRect);
-    defs.appendChild(clip);
-    root.appendChild(defs);
-    QSvgRenderer sourceRenderer(original);
-    const auto box = sourceRenderer.viewBoxF();
-    for (int i = 0; i < 2; ++i) {
-        QDomDocument view;
-        check(bool(view.setContent(i ? right : left)), Drawing::tr("Cannot encode pair"));
-        const QString prefix = i ? "right_" : "left_";
-        QMap<QString, QString> ids;
-        QList<QDomElement> elements;
-        std::function<void(QDomElement)> collect = [&](QDomElement e) {
-            elements << e;
-            for (auto c = e.firstChildElement(); !c.isNull(); c = c.nextSiblingElement()) collect(c);
-        };
-        collect(view.documentElement());
-        for (int j = 0; j < elements.size(); ++j) {
-            auto e = elements.at(j);
-            if (e.hasAttribute("id")) ids[e.attribute("id")] = prefix + e.attribute("id");
-        }
-        for (int j = 0; j < elements.size(); ++j) {
-            auto e = elements.at(j);
-            auto attributes = e.attributes();
-            for (int k = 0; k < attributes.size(); ++k) {
-                auto attribute = attributes.item(k).toAttr();
-                QString value = attribute.value();
-                for (auto id = ids.cbegin(); id != ids.cend(); ++id) {
-                    value.replace("url(#" + id.key() + ")", "url(#" + id.value() + ")");
-                    if ((attribute.name() == "href" || attribute.name() == "xlink:href") && value == "#" + id.key()) value = "#" + id.value();
-                }
-                if (attribute.name() == "id") value = ids.value(value, value);
-                e.setAttribute(attribute.name(), value);
-            }
-        }
-        auto imported = pair.importNode(view.documentElement(), true).toElement();
-        imported.setTagName("g");
-        imported.removeAttribute("width");
-        imported.removeAttribute("height");
-        imported.removeAttribute("viewBox");
-        imported.setAttribute("transform", QString("scale(%1 %2) translate(%3 %4)")
-            .arg(size / box.width(), 0, 'g', 17).arg(height(size) / box.height(), 0, 'g', 17)
-            .arg(-box.x(), 0, 'g', 17).arg(-box.y(), 0, 'g', 17));
-        auto eye = pair.createElement("g");
-        eye.setAttribute("transform", QString("translate(%1 0)").arg(i * size));
-        eye.setAttribute("clip-path", "url(#eye-bound)");
-        eye.appendChild(imported);
-        root.appendChild(eye);
-    }
-    return pair.toByteArray();
-}
-
 void saveBytes(const QString &path, const QByteArray &bytes)
 {
     QSaveFile file(path);
@@ -246,28 +211,17 @@ void saveBytes(const QString &path, const QByteArray &bytes)
     check(file.commit(), file.errorString());
 }
 
-void savePns(const QString &path, const QImage &left, const QImage &right)
+
+QStringList Drawing::hitGroups(const QPoint &pixel, int width) const
 {
-    check(left.size() == right.size(), Drawing::tr("The views have different dimensions"));
-    const int padding = (8 - left.width() % 8) % 8;
-    QImage pair(2 * left.width() + padding, left.height(), left.format());
-    pair.fill(Qt::transparent);
-    { QPainter p(&pair); p.setCompositionMode(QPainter::CompositionMode_Source); p.drawImage(0, 0, left); p.drawImage(left.width() + padding, 0, right); }
-    QByteArray png;
-    QBuffer buffer(&png);
-    check(buffer.open(QIODevice::WriteOnly) && pair.save(&buffer, "PNG"), Drawing::tr("Cannot encode PNG"));
-    QByteArray chunk("sTER", 4);
-    chunk.append(char(1));
-    quint32 crcValue = 0xffffffff;
-    for (unsigned char byte : chunk) {
-        crcValue ^= byte;
-        for (int bit = 0; bit < 8; ++bit) crcValue = (crcValue >> 1) ^ ((crcValue & 1) ? 0xedb88320 : 0);
+    QStringList hits;
+    const auto nodes = document.elementsByTagName("g");
+    // Reverse document order is the SVG paint stack. Alpha tests share the rendered view geometry.
+    for (int i = nodes.size() - 1; i >= 0; --i) {
+        const auto id = nodes.at(i).toElement().attribute("id");
+        if (!places.contains(id)) continue;
+        const auto image = eye(width, false, id);
+        if (image.rect().contains(pixel) && qAlpha(image.pixel(pixel)) > 0) hits << id;
     }
-    const quint32 crc = qToBigEndian(crcValue ^ 0xffffffff);
-    const quint32 length = qToBigEndian(quint32(1));
-    QByteArray encoded(reinterpret_cast<const char *>(&length), 4);
-    encoded += chunk;
-    encoded.append(reinterpret_cast<const char *>(&crc), 4);
-    png.insert(33, encoded);
-    saveBytes(path, png);
+    return hits;
 }
