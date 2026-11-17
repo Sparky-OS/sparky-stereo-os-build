@@ -1,0 +1,176 @@
+Description: 3MF thumbnails: the slicer's picture first, F3D's stereo pair when there is none, and the person's option (ORDER 17)
+ KIO took model/3mf for the compiled opendocumentthumbnail plugin, which reads only a thumbnail embedded in the file, so a 3MF
+ without one got no picture although F3D's thumbnailer (a standard thumbnailer, which a compiled plugin shadows) draws it.
+ A plugin of its own, threemfthumbnail, takes the type: the picture the slicer embedded (Metadata/thumbnail.png) first, then
+ the model drawn as a stereo pair by f3d-thumbnail-pair (the F3D of Sparky Stereo OS), and the other way round when the person
+ sets ThreeMFPreferRender=true in the PreviewSettings group of kdeglobals.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-17
+---
+--- a/thumbnail/CMakeLists.txt
++++ b/thumbnail/CMakeLists.txt
+@@ -335,6 +335,20 @@
+ 
+ # ########### next target ###############
+ 
++kcoreaddons_add_plugin(threemfthumbnail
++    INSTALL_NAMESPACE "kf6/thumbcreator"
++    SOURCES threemfcreator.cpp
++)
++
++target_link_libraries(threemfthumbnail
++    Qt::Gui
++    KF6::ConfigCore
++    KF6::KIOGui
++    KF6::Archive
++)
++
++# ########### next target ###############
++
+ if(libappimage_FOUND)
+ 
+     kcoreaddons_add_plugin(appimagethumbnail
+--- a/thumbnail/opendocumentthumbnail.json
++++ b/thumbnail/opendocumentthumbnail.json
+@@ -26,8 +26,7 @@
+             "vnd.openxmlformats-officedocument.presentationml.slide",
+             "application/oxps",
+             "application/vnd.ms-xpsdocument",
+-            "application/vnd.ms-printing.printticket+xml",
+-            "model/3mf"
++            "application/vnd.ms-printing.printticket+xml"
+         ],
+         "Name": "Office Documents",
+         "Name[ar]": "مستندات المكتب",
+--- a/thumbnail/threemfcreator.cpp
++++ b/thumbnail/threemfcreator.cpp
+@@ -0,0 +1,87 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++ *
++ * SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++ */
++
++#include "threemfcreator.h"
++
++#include <QImage>
++#include <QProcess>
++#include <QStandardPaths>
++#include <QTemporaryDir>
++
++#include <KConfigGroup>
++#include <KPluginFactory>
++#include <KSharedConfig>
++#include <KZip>
++
++K_PLUGIN_CLASS_WITH_JSON(ThreeMFCreator, "threemfthumbnail.json")
++
++ThreeMFCreator::ThreeMFCreator(QObject *parent, const QVariantList &args)
++    : KIO::ThumbnailCreator(parent, args)
++{
++}
++
++ThreeMFCreator::~ThreeMFCreator() = default;
++
++static QImage embeddedPicture(const QString &path)
++{
++    KZip zip(path);
++    if (!zip.open(QIODevice::ReadOnly)) {
++        return {};
++    }
++    // Where slicers write it (PrusaSlicer, Bambu Studio, Cura: Metadata/thumbnail.png; the package relationship type
++    // http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail names the same part)
++    const KArchiveEntry *entry = zip.directory()->entry(QStringLiteral("Metadata/thumbnail.png"));
++    if (entry && entry->isFile()) {
++        QImage image;
++        if (image.loadFromData(static_cast<const KZipFileEntry *>(entry)->data(), "PNG")) {
++            return image;
++        }
++    }
++    return {};
++}
++
++static QImage renderedPair(const QString &path, int size)
++{
++    // F3D's thumbnailer of Sparky Stereo OS draws the model as a stereo pair, marked with X-KDE::Stereo3DLayout
++    const QString program = QStandardPaths::findExecutable(QStringLiteral("f3d-thumbnail-pair"));
++    if (program.isEmpty()) {
++        return {};
++    }
++    QTemporaryDir dir;
++    if (!dir.isValid()) {
++        return {};
++    }
++    const QString out = dir.filePath(QStringLiteral("pair.png"));
++    QProcess process;
++    process.start(program, {QStringLiteral("assimp"), QString::number(size), path, out});
++    if (!process.waitForFinished(30000) || process.exitCode() != 0) {
++        return {};
++    }
++    QImage image(out);
++    if (!image.isNull()) {
++        image.setText(QStringLiteral("Stereo3DLayout"), image.text(QStringLiteral("X-KDE::Stereo3DLayout")));
++    }
++    return image;
++}
++
++KIO::ThumbnailResult ThreeMFCreator::create(const KIO::ThumbnailRequest &request)
++{
++    const QString path = request.url().toLocalFile();
++    const bool preferRender = KSharedConfig::openConfig(QStringLiteral("kdeglobals"))->group(QStringLiteral("PreviewSettings")).readEntry("ThreeMFPreferRender", false);
++    const int size = qMax(request.targetSize().width(), 64);
++
++    for (int pass = 0; pass < 2; ++pass) {
++        const bool renderNow = (pass == 0) == preferRender;
++        const QImage image = renderNow ? renderedPair(path, size) : embeddedPicture(path);
++        if (!image.isNull()) {
++            return KIO::ThumbnailResult::pass(image);
++        }
++    }
++    return KIO::ThumbnailResult::fail();
++}
++
++#include "moc_threemfcreator.cpp"
++#include "threemfcreator.moc"
+--- a/thumbnail/threemfcreator.h
++++ b/thumbnail/threemfcreator.h
+@@ -0,0 +1,25 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++ *
++ * SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++ */
++
++#pragma once
++
++#include <KIO/ThumbnailCreator>
++
++/*
++ * The thumbnail of a 3MF file: the picture the slicer embedded in it (Metadata/thumbnail.png, 3MF Core specification 1.4,
++ * Annex "Thumbnail") or, when it has none or the person prefers it, the model drawn by F3D's f3d-thumbnail-pair as a
++ * stereo pair. The person's choice is ThreeMFPreferRender in the PreviewSettings group of kdeglobals (default false: the
++ * slicer's picture first).
++ */
++class ThreeMFCreator : public KIO::ThumbnailCreator
++{
++    Q_OBJECT
++public:
++    ThreeMFCreator(QObject *parent, const QVariantList &args);
++    ~ThreeMFCreator() override;
++
++    KIO::ThumbnailResult create(const KIO::ThumbnailRequest &request) override;
++};
+--- a/thumbnail/threemfthumbnail.json
++++ b/thumbnail/threemfthumbnail.json
+@@ -0,0 +1,10 @@
++{
++    "CacheThumbnail": true,
++    "ThumbnailerVersion": "1",
++    "KPlugin": {
++        "MimeTypes": [
++            "model/3mf"
++        ],
++        "Name": "3MF models"
++    }
++}

@@ -1,0 +1,17 @@
+Source: sparky-stereo-mime-models
+Section: misc
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.7.4
+Rules-Requires-Root: no
+
+Package: sparky-stereo-mime-models
+Architecture: all
+Depends: shared-mime-info, ${misc:Depends}
+Description: MIME types of 3D model, point cloud and splat files
+ shared-mime-info has no type for PLY, Gaussian splat, SPZ, PTS, FBX, COLLADA,
+ OFF and Draco files, and its release in Debian testing has none for STEP and
+ BREP either. Without a type a file manager shows a PLY file as text and asks
+ no thumbnailer for the others. This package adds them, with the names F3D
+ uses as aliases, so that F3D's thumbnailers and desktop files match.

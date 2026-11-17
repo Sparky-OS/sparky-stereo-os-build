@@ -113,6 +113,10 @@ group('image', 'On the image from first boot (our stereo programs everyone uses)
     'kubrick',
     # ours, for everyone: the Graphics page in System Settings (which GPU each program uses) and the locale tool
     'sparky-stereo-graphics', 'sparky-stereo-locales',
+    # a model viewer is a default in a system that calls itself stereo and is for all screens (Daniel, 2026-11-17: "for sure a
+    # model viewer is a default in a OS that self declare itself "stereo" and "for all screens""): our F3D, with the file types of
+    # the formats it reads that shared-mime-info has not yet (ORDER 17)
+    'f3d', 'sparky-stereo-mime-models',
 ])
 
 # 1b. Film and visual effects: the studios' own open projects (Daniel, 2026-10-14: "follow those that have repos, orgs

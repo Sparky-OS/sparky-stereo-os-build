@@ -1,0 +1,12 @@
+Sparky Stereo OS: libf3d as shared libraries (libf3d3 and libf3d-dev, which Debian does not ship), so that the viewer and the
+thumbnailers can use it. libvtkext, private to libf3d, goes in /usr/lib/<multiarch>/f3d.
+
+render.stereo draws the two eyes of a stereo window, declared by the edition's Mesa as one full side-by-side surface under
+Stereo KWin, and of an image (renderToImage returns the left eye and the right eye side by side, left first). A UI only
+frame of a stereo window draws the scene again, which fixed one eye shown in both buffers. The program's 3D options are
+the contract's: --stereo is "Enable 3D" (on by default through /etc/f3d/config.d/50_sparky_stereo.json, F3
+switches it), F4 opens the Display Settings, --stereo-eye-angle is gone (the separation is the desktop's), and our sentences
+are in the ten languages of the edition.
+
+f3d-thumbnail-pair draws a model as a stereo pair (two parallel, sheared cameras) marked with X-KDE::Stereo3DLayout, and
+the thumbnailer files call it and name the canonical MIME types (KIO matches a thumbnailer to the type's own name).
