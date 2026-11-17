@@ -14,8 +14,9 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 
-from . import VERSION, archive, buildrecord, identities, linkcheck, package, project
+from . import VERSION, archive, buildrecord, identities, linkcheck, package, parallel, project
 
 
 def projection_hash(path):
@@ -106,35 +107,43 @@ def build_tree(root, out, preserve=None, retired=None):
             print(dest)
 
 
+def _checked(deb):
+    """(manifest, architecture variant, copyright bytes, {HR path: authored digest}) of one final archive."""
+    with tempfile.TemporaryDirectory(prefix='lc-check-') as work:
+        subprocess.run(['dpkg-deb', '--raw-extract', str(deb), work], check=True, stdout=subprocess.DEVNULL)
+        obj = package.check_tree(work)
+        why = identities.problem(obj['renderer']['identity'], obj['renderer']['sha256'])
+        if why:
+            raise package.Invalid(f'{deb}: {why}')
+        # An apt architecture variant (Architecture-Variant: amd64v3 in the control file, ORDER 108) shares its package, version and
+        # architecture with its baseline twin; the variant is the rest of its identity, and its HR companion carries the same one.
+        variant = package.control(Path(work)).get('architecture-variant', '')
+        licence = Path(work) / 'usr/share/doc' / obj['package'] / 'copyright'
+        blobs = {}
+        if obj['package'].endswith('-lc-hr'):
+            # Decompression is bounded by the projected file size cap.
+            for row in obj['files']:
+                if row['kind'] == 'file' and row['path'].startswith(package.HR_BASE + '/'):
+                    with package.lzma.open(Path(work) / row['path'][1:]) as stream:
+                        data = stream.read(package.MAX_TEXT + 1)
+                    if len(data) > package.MAX_TEXT:
+                        raise package.Invalid('HR entry exceeds the source size limit')
+                    blobs[row['path']] = package.digest(data)
+        return obj, variant, licence.read_bytes() if licence.is_file() and not licence.is_symlink() else None, blobs
+
+
 def check_debs(paths):
     """Check final archive bytes and require matching, independently marked HR companions."""
+    started = time.monotonic()
     verified, hr_blobs, copyrights, variants = {}, {}, {}, {}
-    for deb in paths:
-        with tempfile.TemporaryDirectory(prefix='lc-check-') as work:
-            subprocess.run(['dpkg-deb', '--raw-extract', str(deb), work], check=True, stdout=subprocess.DEVNULL)
-            obj = package.check_tree(work)
-            why = identities.problem(obj['renderer']['identity'], obj['renderer']['sha256'])
-            if why:
-                raise package.Invalid(f'{deb}: {why}')
-            # An apt architecture variant (Architecture-Variant: amd64v3 in the control file, ORDER 108) shares its package, version and
-            # architecture with its baseline twin; the variant is the rest of its identity, and its HR companion carries the same one.
-            variant = package.control(Path(work)).get('architecture-variant', '')
-            key = (obj['package'], obj['version'], obj['architecture'] + (':' + variant if variant else ''))
-            if key in verified:
-                raise package.Invalid(f'duplicate package identity: {key}')
-            verified[key] = obj
-            variants[key] = variant
-            licence = Path(work) / 'usr/share/doc' / obj['package'] / 'copyright'
-            copyrights[key] = licence.read_bytes() if licence.is_file() and not licence.is_symlink() else None
-            if obj['package'].endswith('-lc-hr'):
-                # Decompression is bounded by the projected file size cap.
-                for row in obj['files']:
-                    if row['kind'] == 'file' and row['path'].startswith(package.HR_BASE + '/'):
-                        with package.lzma.open(Path(work) / row['path'][1:]) as stream:
-                            data = stream.read(package.MAX_TEXT + 1)
-                        if len(data) > package.MAX_TEXT:
-                            raise package.Invalid('HR entry exceeds the source size limit')
-                        hr_blobs[(key, row['path'])] = package.digest(data)
+    for obj, variant, licence, blobs in parallel.ordered(_checked, paths):
+        key = (obj['package'], obj['version'], obj['architecture'] + (':' + variant if variant else ''))
+        if key in verified:
+            raise package.Invalid(f'duplicate package identity: {key}')
+        verified[key] = obj
+        variants[key] = variant
+        copyrights[key] = licence
+        hr_blobs.update(((key, path), sha) for path, sha in blobs.items())
     for key, obj in verified.items():
         if not obj['hr_package']:
             continue
@@ -151,7 +160,8 @@ def check_debs(paths):
             path = package.hr_path(obj['package'], obj['architecture'], row['sha_hr'])
             if hr_blobs.get((hr_key, path)) != row['sha_hr']:
                 raise package.Invalid(f'{key}: HR missing or corrupt for {row["path"]}')
-    print(f'lc1: verified {len(verified)} packages, payload hashes and required HR companions')
+    print(f'lc1: verified {len(verified)} packages, payload hashes and required HR companions'
+          f' in {time.monotonic() - started:.0f} s on {parallel.processors()} processors')
     return verified
 
 

@@ -56,7 +56,7 @@ import re
 import subprocess
 import tempfile
 
-from . import archive, package
+from . import archive, package, parallel
 
 LOADER_ERRORS = re.compile(
     r'symbol lookup error|undefined symbol|cannot open shared object file|'
@@ -354,16 +354,22 @@ def inventories(root, qualified, findings, whose):
     loaded by the host. A file whose inventory cannot be read is a finding (U58: a failed readelf or nm gave an empty
     inventory, the same as a file that imports nothing, and could hide a lost stereo import)."""
     needed_of, stereo_of = {}, {}
-    for path in elf_files(root):
+    paths = [path for path in elf_files(root) if not guest_data(path, '/' + str(path.relative_to(root)), qualified)]
+    for path, (libraries, imports, error) in zip(paths, parallel.ordered(_inventory, paths)):
         rel = str(path.relative_to(root))
-        if guest_data(path, '/' + rel, qualified):
-            continue
-        try:
-            needed_of[rel] = needed(path)
-            stereo_of[rel] = stereo_imports(path)
-        except InventoryError as exc:
-            findings.append(f'/{rel} ({whose}): {str(exc).replace(str(path), "/" + rel)}')
+        if error:
+            findings.append(f'/{rel} ({whose}): {error.replace(str(path), "/" + rel)}')
+        else:
+            needed_of[rel] = libraries
+            stereo_of[rel] = imports
     return needed_of, stereo_of
+
+
+def _inventory(path):
+    try:
+        return needed(path), stereo_imports(path), None
+    except InventoryError as exc:
+        return None, None, str(exc)
 
 
 def recommends_of(deb):

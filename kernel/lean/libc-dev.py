@@ -31,6 +31,7 @@ linux-libc-dev installed on the build system (its dpkg file list), for a source 
 import hashlib
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -112,13 +113,17 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+# the build's parallel= (build.sh exports it), else every processor this process may use
+JOBS = next(iter(re.findall(r'\bparallel=(\d+)', os.environ.get('DEB_BUILD_OPTIONS', ''))), str(os.process_cpu_count()))
+
+
 def install_headers(source, work, arch):
     obj = work / ('hdr-' + arch)
     dest = obj / 'dest'
     shutil.rmtree(obj, ignore_errors=True)
     obj.mkdir(parents=True)
     subprocess.run(['make', '-s', '-C', str(source), f'O={obj}', f'ARCH={arch}', 'headers_install',
-                    f'INSTALL_HDR_PATH={dest}', '-j2'], check=True)
+                    f'INSTALL_HDR_PATH={dest}', '-j' + JOBS], check=True)
     include = dest / 'include'
     for leftover in list(include.rglob('*')):
         if leftover.name in LEFTOVERS:

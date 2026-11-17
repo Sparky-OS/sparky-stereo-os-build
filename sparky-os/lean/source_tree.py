@@ -13,8 +13,9 @@ import json
 import os
 from pathlib import Path
 import re
+import time
 
-from . import VERSION, lang_c, lang_rust, lang_zig, project
+from . import VERSION, lang_c, lang_rust, lang_zig, parallel, project
 
 EXCLUDED = {'.git', '.pc', 'debian', '.sparky-lc', 'build'}
 PRESERVE_PLAN = 'debian/sparky-lean-preserve.json'
@@ -48,7 +49,17 @@ def preservation_plan(root):
     return plan
 
 
+def _project_file(item):
+    path, name = item
+    return project.project('/' + name, path.read_bytes(), package='native-build', pointer=False, native=True)
+
+
+def _known_digests(digests):
+    lang_rust._digests.update(digests)
+
+
 def project_tree(root):
+    started = time.monotonic()
     evidence = root / '.sparky-lc'
     report = evidence / 'source.json'
     plan = preservation_plan(root)
@@ -93,22 +104,31 @@ def project_tree(root):
     if 'rust' in languages:
         prime_rust(paths, names, plan, readers, rust_left)
     position_lines = {}
-    for path, name in zip(paths, names):
-        rel = path.relative_to(root)
-        raw = path.read_bytes()
-        metadata = path.stat()
+    left = []
+    for name in names:
         reasons = [reason for pattern, reason in plan.items()
                    if fnmatch.fnmatchcase(name, pattern)]
         if '/' + name in readers:
             reasons.append(readers['/' + name])
         if name in rust_left:
             reasons.append(rust_left[name])
+        left.append(reasons)
+    # a hard link is projected here, in order, after the files it shares its bytes with are written
+    results = parallel.ordered(_project_file, [(path, name) for path, name, reasons in zip(paths, names, left)
+                                               if not reasons and path.stat().st_nlink == 1],
+                               *((_known_digests, (lang_rust._digests,)) if 'rust' in languages else ()))
+    for path, name, reasons in zip(paths, names, left):
+        rel = path.relative_to(root)
+        raw = path.read_bytes()
+        metadata = path.stat()
         if reasons:
             result = project.Result(path='/' + name, status='left',
                                     reason='additional source consumer: ' + '; '.join(reasons),
                                     bytes_in=len(raw), bytes_out=len(raw), sha_in=sha(raw))
+        elif metadata.st_nlink > 1:
+            result = _project_file((path, name))
         else:
-            result = project.project('/' + name, raw, package='native-build', pointer=False, native=True)
+            result = next(results)
         row = asdict(result)
         row.pop('lean')
         row['final_sha256'] = sha(result.lean if result.lean is not None else raw)
@@ -136,7 +156,8 @@ def project_tree(root):
                                  # Rust files whose own code reads its position: these values name lean lines
                                  'position_lines': position_lines,
                                  'stage': 'before compilation', 'files': records}, indent=2) + '\n')
-    print(f'Build-input Lean Code: {sum(r["status"] == "projected" for r in records.values())}/{len(records)} files projected')
+    print(f'Build-input Lean Code: {sum(r["status"] == "projected" for r in records.values())}/{len(records)} files projected'
+          f' in {time.monotonic() - started:.0f} s on {parallel.processors()} processors')
 
 
 def _manifest_folders(root, names):

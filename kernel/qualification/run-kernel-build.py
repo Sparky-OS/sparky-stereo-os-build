@@ -13,8 +13,9 @@ The Lean Code link gate (lean.debhelper, ORDER 198) runs inside the package buil
 dependencies from the public archives of --archive-config (default sparky-os/lean/archive.example.json, Debian forky main)
 and starts their programs in bubblewrap, so the container has bubblewrap and unconfined seccomp, AppArmor and system paths.
 The gate also keeps 12 GiB free on the root file system, which inside the container is the host's.
---container names the container (default sparky-lc-kernel-FLAVOUR; two runs of one flavour need two names), --cpus and --jobs
-set its CPU quota and make's jobs (default 4 each; a running build's quota can be raised with docker update --cpus). --detach
+--container names the container (default sparky-lc-kernel-FLAVOUR; two runs of one flavour need two names), --cpus sets its
+CPU quota (default every processor of the host) and --jobs its make jobs (default what nproc grants inside the container, the
+quota; more jobs than CPUs let a quota raised later with docker update --cpus be used). --detach
 starts the container detached and waits on its state, then writes docker logs to build.log: a Docker socket proxy can cut the
 attached output of a long run while the build goes on (ORDER 627).
 The container gets the host's provenance facts as sparky-os/repo/build-provenance.sh gives them (the build repository's commit
@@ -25,6 +26,7 @@ from pathlib import Path
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -44,8 +46,8 @@ parser.add_argument('--memory', default='16g')
 parser.add_argument('--floor-gb', type=float, default=12)
 parser.add_argument('--archive-config', type=Path)
 parser.add_argument('--container')
-parser.add_argument('--cpus', default='4')
-parser.add_argument('--jobs', type=int, default=4)
+parser.add_argument('--cpus', default=str(os.cpu_count()))
+parser.add_argument('--jobs', type=int)
 parser.add_argument('--detach', action='store_true')
 args = parser.parse_args()
 base = cfg.path('SPARKY_MIGRATION_WORK')
@@ -104,7 +106,7 @@ PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/*+lc1_*.deb
 find build/certs -name signing_key.pem -o -name x509.genkey > /work/key-remnants.txt
 test ! -s /work/key-remnants.txt
 '''
-(work / 'run.sh').write_text(recipe.replace('@JOBS@', str(args.jobs)))
+(work / 'run.sh').write_text(recipe.replace('@JOBS@', str(args.jobs) if args.jobs else '$(nproc)'))
 status = dict(source=name, version=version, architecture='amd64', state='queued', archives=[],
               signed=False, source_descriptor_sha256=hashlib.sha256(descriptor.read_bytes()).hexdigest())
 (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
