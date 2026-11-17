@@ -237,6 +237,22 @@ if [ "$STEP" = configure ] || [ "$STEP" = all ]; then
 	apt_in clean
 	echo "== $(date -u +%T) the image's apt sources: the build's own sources go; Debian, SparkyLinux (sparky-apt), deb-multimedia and NVIDIA's CUDA repository (sparky-stereo-cuda-repo) stay"
 	rm -f $R/etc/apt/sources.list.d/beta-build-*.sources $R/etc/apt/sources.list.d/sparky-stereo-build.sources $R/etc/apt/preferences.d/beta-build-*
+	# Debian's source in the format apt asks for (ORDER 660): the bootstrap leaves the one-line /etc/apt/sources.list, and apt
+	# on the image says "some sources can be modernized". The same suite and components, as a deb822 file; no line stays.
+	DK=/usr/share/keyrings/debian-archive-keyring.pgp; [ -s $R$DK ] || DK=/usr/share/keyrings/debian-archive-keyring.gpg
+	[ -s $R$DK ] || { echo "!! Debian's archive keyring is not in the image, so its source cannot be written. Check that debian-archive-keyring is installed." >&2; exit 1; }
+	printf 'Types: deb\nURIs: https://deb.debian.org/debian\nSuites: testing\nComponents: main contrib non-free non-free-firmware\nSigned-By: %s\n' $DK > $R/etc/apt/sources.list.d/debian.sources
+	rm -f $R/etc/apt/sources.list
+	# a source file of a package that dpkg parked beside the build's hand-written one (FILE.dpkg-dist) becomes the file, so
+	# the image carries the package's own and nothing is left beside it
+	for f in $R/etc/apt/sources.list.d/*.dpkg-dist; do
+		[ -e "$f" ] && mv "$f" "${f%.dpkg-dist}"
+	done
+	# the build's own copy of deb-multimedia's key goes once no source names it (the package's source names the keyring package's)
+	grep -rqs '/etc/apt/keyrings/deb-multimedia-keyring.pgp' $R/etc/apt/sources.list.d || rm -f $R/etc/apt/keyrings/deb-multimedia-keyring.pgp
+	left=$(find $R/etc/apt -name '*.dpkg-*' -o -name '*.list' -size +0 -o -name 'sources.list')
+	[ -z "$left" ] || { echo "!! Left in the image's apt configuration: $left. The image must carry deb822 sources only and no parked copy." >&2; exit 1; }
+	inr apt-cache policy >/dev/null || { echo "!! apt cannot read the image's sources after the clean-up." >&2; exit 1; }
 	rm -f $R/usr/sbin/policy-rc.d $R/etc/dkms/framework.conf.d/beta-build.conf
 	# the real os-prober and grub-mkconfig, stubs while the tree was built (rootfs.sh)
 	for f in /usr/bin/os-prober /usr/sbin/grub-mkconfig; do
