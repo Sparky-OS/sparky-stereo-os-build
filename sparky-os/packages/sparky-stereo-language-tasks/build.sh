@@ -4,7 +4,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?}
-VERSION=1.0.2+lc1
+VERSION=1.0.3+lc1
 WORK=$(mktemp -d "${BUILD_ROOT:?}/language-tasks.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 D=$WORK/tree
