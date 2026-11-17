@@ -50,6 +50,6 @@ def ordered(function, items):
     pool = concurrent.futures.ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context('fork'),
                                                   initializer=_worker)
     try:
-        yield from pool.map(function, items, chunksize=max(1, len(items) // (workers * 16)))
+        yield from pool.map(function, items)
     finally:
         pool.shutdown(cancel_futures=True)
