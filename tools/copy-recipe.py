@@ -42,7 +42,12 @@ def inventory(source):
         print(f'copy-recipe: {source}: files as git tracks them', flush=True)
         return paths
     # Git errors other than absence of a repository are not an export route.
+    # git stops looking for a repository at GIT_CEILING_DIRECTORIES (git(1): it does not chdir up into them); so does this guard, or a
+    # `.git` folder far above a test's temporary folder (an empty /tmp/.git is enough) would make an unpacked source look like a broken checkout
+    ceilings = {Path(c).resolve() for c in os.environ.get('GIT_CEILING_DIRECTORIES', '').split(os.pathsep) if c}
     for parent in (source, *source.parents):
+        if parent in ceilings:
+            break
         if os.path.lexists(parent / '.git'):
             raise ValueError(probe.stderr.decode(errors='replace').strip())
     if (probe.returncode != 128 or

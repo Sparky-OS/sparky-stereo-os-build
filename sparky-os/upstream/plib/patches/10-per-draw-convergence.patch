@@ -1,0 +1,47 @@
+Description: Add a per-draw zero-parallax distance without changing existing contexts.
+Author: Daniel Ramos (Capitain Jack)
+Forwarded: no
+
+--- a/src/ssg/ssg.h
++++ b/src/ssg/ssg.h
+@@ -2342,6 +2342,7 @@
+ class ssgContext
+ {
+   friend void ssgCullAndDraw ( ssgBranch *r ) ;
++  friend void ssgCullAndDraw ( ssgBranch *r, float convergence ) ;
+  protected:
+ 
+   int enabledClipPlanes ;
+@@ -2583,6 +2584,8 @@
+ void ssgInit () ;
+ 
+ void ssgCullAndDraw ( ssgBranch *root ) ;
++// Scene-unit zero-parallax distance; PLIB_SSG_CONVERGENCE remains an override.
++void ssgCullAndDraw ( ssgBranch *root, float convergence ) ;
+ void ssgCullAndPick ( ssgBranch *root, sgVec2 botleft, sgVec2 topright ) ;
+ int  ssgIsect       ( ssgBranch *root, sgSphere*s,sgMat4 m, ssgHit **results ) ;
+ int  ssgHOT         ( ssgBranch *root, sgVec3  s, sgMat4 m, ssgHit **results ) ;
+--- a/src/ssg/ssg.cxx
++++ b/src/ssg/ssg.cxx
+@@ -283,6 +283,11 @@
+ 
+ void ssgCullAndDraw ( ssgBranch *r )
+ {
++  ssgCullAndDraw ( r, 10.0f ) ;
++}
++
++void ssgCullAndDraw ( ssgBranch *r, float convergence )
++{
+   if ( _ssgCurrentContext == NULL )
+   {
+     ulSetError ( UL_FATAL, "ssg: No Current Context: Did you forgot to call ssgInit()?" ) ;
+@@ -305,7 +310,8 @@
+   _ssgCurrentContext->getModelviewMatrix ( camera ) ;
+   sgFrustum frustum = *_ssgCurrentContext->getFrustum () ;
+   float separation = stereoValue ( "PLIB_SSG_EYE_SEPARATION", 0.065f ) ;
+-  float convergence = stereoValue ( "PLIB_SSG_CONVERGENCE", 10.0f ) ;
++  if ( !(convergence > 0.0f && convergence < 1.0e6f) ) convergence = 10.0f ;
++  convergence = stereoValue ( "PLIB_SSG_CONVERGENCE", convergence ) ;
+ 
+   for ( int eye = 0 ; eye < (stereo ? 2 : 1) ; eye++ )
+   {

@@ -1,0 +1,38 @@
+#!/usr/bin/make -f
+# Created by Daniel Ramos (Capitain Jack) 2026/11/16
+# Copyright 2026 under the GNU GPL3 License
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export CARGO_HOME = $(CURDIR)/debian/.cargo-home
+export CARGO_TARGET_DIR = $(CURDIR)/target
+# scx_nitosis and the cid-form struct_ops refuse clang before 22 (their build.rs says so); forky has clang-22
+export BPF_CLANG = clang-22
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+
+# the workspace as CachyOS builds it (its PKGBUILD's build()), from the vendored crates, offline
+override_dh_auto_build:
+	cargo build --release --frozen --offline --workspace --jobs $(or $(DEB_BUILD_OPTION_PARALLEL),2) \
+		--exclude scx_rlfifo --exclude scx_mitosis --exclude scx_characterize --exclude xtask --exclude vmlinux_docify \
+		--exclude scx_arena_selftests --exclude scx_arena_libarena_selftests
+
+override_dh_auto_test:
+	target/release/scx_lavd --version
+	target/release/scx_bpfland --version
+
+override_dh_auto_install:
+	install -d debian/scx-scheds/usr/bin
+	find target/release -maxdepth 1 -type f -executable ! -name '*.so' -name 'scx*' -exec install -m755 -t debian/scx-scheds/usr/bin/ {} +
+	install -Dm644 services/scx debian/scx-scheds/etc/default/scx
+	install -Dm644 services/scx.service debian/scx-scheds/usr/lib/systemd/system/scx.service
+	test -x debian/scx-scheds/usr/bin/scx_lavd
+
+# the unit is upstream's scx.service, installed and never enabled or started (off until the person switches it on)
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start --name=scx
+
+override_dh_dwz:
+override_dh_strip:
+	dh_strip --no-automatic-dbgsym

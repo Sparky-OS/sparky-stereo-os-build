@@ -1,0 +1,66 @@
+# Names of SparkyLinux KDE 2026.09's package set that have no package to install today, each with the reason read at its
+# source (Debian's removal log, the suites that still have the source, the edition's own apt rules) and what took its
+# place. A name missing from Debian testing is not thereby gone from the edition: when the reason is not a good one and
+# SparkyLinux does not host the package, the edition carries it (Daniel, 2026-11-17), and its row goes when it is published. base-list.sh takes them out before it asks apt, and stops the build when a name listed here
+# has a package again (then the row goes) or when a name without a package is not listed here (then it gets a row, or
+# its repository is repaired). One name and one reason per line, separated by a tab. Read on 2026-11-17.
+alsa-base	last in Debian 8; alsa-utils is in the set
+apt-xapian-index	removed from Debian unstable on 2025-04-11: "RoQA; orphaned, obsolete"
+cryptsetup-run	not in Debian testing; cryptsetup is in the set
+db5.1-util	not in Debian testing
+dnsutils	now bind9-dnsutils, which is in the set
+e2fslibs	now libext2fs2t64, a library that comes by dependency
+firmware-crystalhd	last in Debian 10 (crystalhd)
+firmware-intelwimax	not in Debian testing
+gconf-service	last in Debian 12 (gconf)
+gconf2	last in Debian 12 (gconf)
+gconf2-common	last in Debian 12 (gconf)
+gnome-mime-data	last in Debian 11
+gstreamer1.0-crystalhd	last in Debian 10 (crystalhd)
+host	now bind9-host, which is in the set
+isc-dhcp-client	removed from Debian unstable on 2026-08-05: "ROM; EOL'ed upstream; not supported in trixie; alternatives exist"; dhcpcd-base is in testing and NetworkManager has its own client
+isc-dhcp-common	removed from Debian unstable on 2026-08-05: "ROM; EOL'ed upstream; not supported in trixie; alternatives exist"
+kde-config-telepathy-accounts	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+kde-telepathy	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+kde-telepathy-approver	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+kde-telepathy-auth-handler	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+kde-telepathy-call-ui	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+kde-telepathy-contact-list	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+kde-telepathy-data	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+kde-telepathy-desktop-applets	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+kde-telepathy-filetransfer-handler	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+kde-telepathy-integration-module	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+kde-telepathy-kaccounts	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+kde-telepathy-kpeople	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+kde-telepathy-minimal	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+kde-telepathy-send-file	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+kde-telepathy-text-ui	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+linux-wlan-ng	last in Debian 8
+linux-wlan-ng-doc	last in Debian 8
+linux-wlan-ng-firmware	last in Debian 8
+liquorix-archive-keyring	another kernel's archive keys, in none of the edition's sources; the edition ships its own kernel
+liquorix-keyring	another kernel's archive keys, in none of the edition's sources; the edition ships its own kernel
+mime-support	last in Debian 12; split into mailcap and media-types, both in the set
+mlocate	last in Debian 11; replaced by plocate, which is in the set
+multiarch-support	not in Debian testing
+p7zip-full	now 7zip, which is in the set
+perl-modules-5.42	Perl 5.44 is in Debian testing; perl-modules-5.44 comes with perl
+plasma-runner-telepathy-contact	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+printer-driver-all	not in Debian testing; the drivers it gathered are named one by one in the set
+printer-driver-hpcups	hplip is alive in Debian unstable (3.26.4+dfsg0-4) and only out of testing, with no removal record: the edition carries it, ORDER 653; this row goes when it is published
+printer-driver-postscript-hp	hplip is alive in Debian unstable (3.26.4+dfsg0-4) and only out of testing, with no removal record: the edition carries it, ORDER 653; this row goes when it is published
+qml-module-org-kde-people	kpeople (Qt 5) was removed from Debian unstable on 2026-03-02: "ROM; Dead upstream, superseded by kf6-kpeople, no reverse dependencies"; the Qt 6 module comes with Plasma
+qml-module-org-kde-pipewire	Qt 5 modules, not in Debian testing; Plasma brings the Qt 6 ones
+qml-module-org-kde-telepathy	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
+qml-module-qtgstreamer	qt-gstreamer was removed from Debian unstable on 2025-04-10: "ROM; dead upstream, no more used"
+qtgstreamer-plugins-qt5	qt-gstreamer was removed from Debian unstable on 2025-04-10: "ROM; dead upstream, no more used"
+task-english	Debian testing has it (tasksel 3.92); the edition's own apt rule keeps Debian's tasks out (sparky-stereo-only-ours), the edition's tasks are task-sparky-*
+task-laptop	Debian testing has it (tasksel 3.92); the edition's own apt rule keeps Debian's tasks out (sparky-stereo-only-ours); its laptop tools (powertop, iw, wpasupplicant, bluetooth, avahi-autoipd, wireless-tools) are in the set
+telepathy-accounts-signon	KDE Telepathy and Telepathy are not in Debian testing
+telepathy-haze	removed from Debian unstable on 2026-11-12: "RoQA; unmaintained and unused"
+telepathy-logger	KDE Telepathy and Telepathy are not in Debian testing
+telepathy-rakia	KDE Telepathy and Telepathy are not in Debian testing
+telepathy-ring	KDE Telepathy and Telepathy are not in Debian testing
+vdpau-va-driver	last in Debian 10 (vdpau-video)
+xserver-xorg-video-qxl	alive in Debian unstable (0.1.6-1.1) and only out of testing, with no removal record: the edition carries it, ORDER 653; this row goes when it is published
+xserver-xorg-video-vmware	alive in Debian unstable (1:13.4.0-2) and only out of testing, with no removal record: the edition carries it, ORDER 653; this row goes when it is published

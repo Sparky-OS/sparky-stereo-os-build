@@ -12,15 +12,15 @@ export DEB_BUILD_OPTIONS=parallel=2
 export HOME=/build/home
 export TMPDIR=/build/tmp
 mkdir -p "$HOME" "$TMPDIR" /build/output
-python3 /source/tools/copy-recipe.py /source/sparky-os/sparky-stereo-plasma-theme-studio /build/output/sparky-stereo-plasma-theme-studio-0.2.0+lc1
-cd /build/output/sparky-stereo-plasma-theme-studio-0.2.0+lc1
+python3 /source/tools/copy-recipe.py /source/sparky-os/sparky-stereo-plasma-theme-studio /build/output/sparky-stereo-plasma-theme-studio-0.3.0+lc1
+cd /build/output/sparky-stereo-plasma-theme-studio-0.3.0+lc1
 python3 identity.py . generated
 python3 - <<'IDENTITY'
 from pathlib import Path
 import json
 p=Path('debian/control');p.write_text(p.read_text().replace('@PRODUCT@',json.loads(Path('identity.json').read_text())['product']))
 IDENTITY
-PYTHONPATH=/source/sparky-os python3 -m lean.debian_prepare . 0.2.0+lc1 --toolkit /source/sparky-os \
+PYTHONPATH=/source/sparky-os python3 -m lean.debian_prepare . 0.3.0+lc1 --toolkit /source/sparky-os \
  --preserve-source geometry/kwin/src/scene/stereodepth.cpp 'The depth adapter extracts these exact source bytes and records their hash' \
  --preserve-source geometry/kwin/src/effect/globals.h 'The depth adapter extracts the exact enum and records this source hash'
 # gcc is already guaranteed by Debian's implicit build-essential set.

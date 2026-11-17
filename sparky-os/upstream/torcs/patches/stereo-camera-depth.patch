@@ -1,0 +1,90 @@
+Description: Select changeable cockpit and chase stereo depths with each camera.
+Author: Daniel Ramos (Capitain Jack)
+Forwarded: no
+
+--- a/src/modules/graphic/ssggraph/grscreen.h
++++ b/src/modules/graphic/ssggraph/grscreen.h
+@@ -46,6 +46,8 @@
+ 	
+ 		int scrx, scry, scrw, scrh;
+ 		float viewRatio;
++		float stereoConvergence;
++		void updateStereoConvergence(void);
+ 	
+ 		int active;								// Is the screen activated.
+ 	
+--- a/src/modules/graphic/ssggraph/grscreen.cpp
++++ b/src/modules/graphic/ssggraph/grscreen.cpp
+@@ -56,6 +56,7 @@
+ 	mirrorFlag = 1;
+ 	memset(cams, 0, sizeof(cams));
+ 	viewRatio = 1.33;
++	stereoConvergence = 1.2f;
+ 	cars = 0;
+ }
+ 
+@@ -235,6 +236,7 @@
+ 	
+ 	snprintf(buf, BUFSIZE, "%s-%d-%d", GR_ATT_FOVY, curCamHead, curCam->getId());
+ 	curCam->loadDefaults(buf);
++	updateStereoConvergence();
+ 	drawCurrent = curCam->getDrawCurrent();
+ 	curCam->limitFov ();
+ 	GfParmWriteFile(NULL, grHandle, "Graph");
+@@ -294,7 +296,7 @@
+ 	START_PROFILE("grDrawScene*");
+ 	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+ 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+-	grDrawScene();
++	grDrawScene(stereoConvergence);
+ 	STOP_PROFILE("grDrawScene*");
+ }
+ 
+@@ -445,10 +447,21 @@
+ 	
+ 	snprintf(buf, BUFSIZE, "%s-%d-%d", GR_ATT_FOVY, curCamHead, curCam->getId());
+ 	curCam->loadDefaults(buf);
++	updateStereoConvergence();
+ 	drawCurrent = curCam->getDrawCurrent();
+ 	board->loadDefaults(curCar);
+ }
+ 
++
++void cGrScreen::updateStereoConvergence(void)
++{
++	const bool cockpit = curCamHead == 0;
++	stereoConvergence = (float)GfParmGetNum(grHandle, GR_SCT_GRAPHIC,
++		cockpit ? "stereo cockpit convergence" : "stereo chase convergence",
++		(char*)NULL, cockpit ? 1.2 : 2.0);
++	if (!(stereoConvergence > 0.0f && stereoConvergence < 1.0e6f))
++		stereoConvergence = cockpit ? 1.2f : 2.0f;
++}
+ 
+ /* Create cameras */
+ void cGrScreen::initCams(tSituation *s)
+--- a/src/modules/graphic/ssggraph/grscene.h
++++ b/src/modules/graphic/ssggraph/grscene.h
+@@ -46,7 +46,7 @@
+ 
+ extern int grInitScene(void);
+ extern int grLoadScene(tTrack *track);
+-extern void grDrawScene(void);
++extern void grDrawScene(float convergence);
+ extern void grShutdownScene(void);
+ extern void grCustomizePits(void);
+ 
+--- a/src/modules/graphic/ssggraph/grscene.cpp
++++ b/src/modules/graphic/ssggraph/grscene.cpp
+@@ -241,10 +241,10 @@
+ }
+ 
+ 
+-void grDrawScene(void)
++void grDrawScene(float convergence)
+ {
+     TRACE_GL("refresh: ssgCullAndDraw start");
+-    ssgCullAndDraw(TheScene);
++    ssgCullAndDraw(TheScene, convergence);
+     TRACE_GL("refresh: ssgCullAndDraw");
+ }
+ 

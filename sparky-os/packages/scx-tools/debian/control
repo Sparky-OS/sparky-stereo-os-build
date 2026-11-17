@@ -1,0 +1,19 @@
+Source: scx-tools
+Section: kernel
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), cargo, rustc, pkgconf, libssl-dev
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+Homepage: https://github.com/sched-ext/scx-loader
+
+Package: scx-tools
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, scx-scheds, polkitd
+Description: D-Bus loader for sched_ext schedulers
+ scx_loader starts, stops and switches the sched_ext schedulers of scx-scheds
+ over D-Bus (org.scx.Loader) with a polkit policy, and scxctl and scxtui talk
+ to it. The unit is installed and stays off until it is enabled.
+ .
+ Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo"
+ Pijanowski). Upstream: Vladislav Nepogodin and the scx-loader contributors.

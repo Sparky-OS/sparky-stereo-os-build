@@ -93,11 +93,15 @@ class InventoryError(package.Invalid):
 def probe(args, what, path, timeout):
     """The output of an inventory tool, read in the C locale; its failure is an InventoryError naming the tool's own
     error, so a failed probe never passes for a file with nothing to report."""
+    env = {'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}
     try:
-        run = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
-                             env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'})
+        try:
+            run = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env)
+        except subprocess.TimeoutExpired:
+            # one longer try on a busy machine, as for the loader trace (ORDER 648)
+            run = subprocess.run(args, capture_output=True, text=True, timeout=timeout * 6, env=env)
     except subprocess.TimeoutExpired:
-        raise InventoryError(f'cannot verify the {what} of {path}: {args[0]} timed out after {timeout} s')
+        raise InventoryError(f'cannot verify the {what} of {path}: {args[0]} timed out after {timeout * 6} s')
     except OSError as exc:
         raise InventoryError(f'cannot verify the {what} of {path}: {args[0]}: {exc}')
     if run.returncode:
@@ -319,8 +323,13 @@ def resolve(root, timeout=20, extra_dirs=(), qualified=None, notes=None):
             command, static = loader_command(path, root, qualified)
             if static:
                 continue
-            run = qualified.run(command, {'LD_TRACE_LOADED_OBJECTS': '1', 'LD_WARN': 'yes',
-                                           'LD_BIND_NOW': 'yes'}, timeout)
+            trace = {'LD_TRACE_LOADED_OBJECTS': '1', 'LD_WARN': 'yes', 'LD_BIND_NOW': 'yes'}
+            try:
+                run = qualified.run(command, trace, timeout)
+            except subprocess.TimeoutExpired:
+                # a loader trace takes milliseconds; on a machine busy with packages checked side by side the limit can
+                # pass before the trace starts, so one longer try decides: a file that really hangs still ends as a timeout
+                run = qualified.run(command, trace, timeout * 6)
         except subprocess.TimeoutExpired:
             result[(rel, 'timeout', '')] = True
             continue
@@ -457,6 +466,9 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
             if own_previous:
                 try:
                     previous_qualified = archive_context.qualify(previous_deb, old_inputs)
+                except package.NoSpace:
+                    # no room is the machine's state, not the previous edition's: the gate's one-at-a-time recheck takes it
+                    raise
                 except (OSError, package.Invalid) as exc:
                     raise package.Invalid(f'{Path(previous_deb).name}: previous edition dependency qualification '
                                           f'failed; provide the matching previous sibling snapshot:\n{exc}') from exc

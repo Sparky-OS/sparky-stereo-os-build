@@ -1,0 +1,65 @@
+Description: Support infinite backgrounds with the scene camera projection scale
+Author: Daniel Ramos (Capitain Jack)
+Forwarded: no
+
+--- a/src/ssg/ssg.h
++++ b/src/ssg/ssg.h
+@@ -2343,6 +2343,7 @@
+ {
+   friend void ssgCullAndDraw ( ssgBranch *r ) ;
+   friend void ssgCullAndDraw ( ssgBranch *r, float convergence ) ;
++  friend void ssgCullAndDraw ( ssgBranch *r, float convergence, bool atInfinity, float projectionScale ) ;
+  protected:
+ 
+   int enabledClipPlanes ;
+@@ -2586,6 +2587,8 @@
+ void ssgCullAndDraw ( ssgBranch *root ) ;
+ // Scene-unit zero-parallax distance; PLIB_SSG_CONVERGENCE remains an override.
+ void ssgCullAndDraw ( ssgBranch *root, float convergence ) ;
++// An infinite background keeps the projection shift but has no eye translation.
++void ssgCullAndDraw ( ssgBranch *root, float convergence, bool atInfinity, float projectionScale ) ;
+ void ssgCullAndPick ( ssgBranch *root, sgVec2 botleft, sgVec2 topright ) ;
+ int  ssgIsect       ( ssgBranch *root, sgSphere*s,sgMat4 m, ssgHit **results ) ;
+ int  ssgHOT         ( ssgBranch *root, sgVec3  s, sgMat4 m, ssgHit **results ) ;
+--- a/src/ssg/ssg.cxx
++++ b/src/ssg/ssg.cxx
+@@ -288,6 +288,11 @@
+ 
+ void ssgCullAndDraw ( ssgBranch *r, float convergence )
+ {
++  ssgCullAndDraw ( r, convergence, false, 1.0f ) ;
++}
++
++void ssgCullAndDraw ( ssgBranch *r, float convergence, bool atInfinity, float projectionScale )
++{
+   if ( _ssgCurrentContext == NULL )
+   {
+     ulSetError ( UL_FATAL, "ssg: No Current Context: Did you forgot to call ssgInit()?" ) ;
+@@ -312,6 +317,7 @@
+   float separation = stereoValue ( "PLIB_SSG_EYE_SEPARATION", 0.065f ) ;
+   if ( !(convergence > 0.0f && convergence < 1.0e6f) ) convergence = 10.0f ;
+   convergence = stereoValue ( "PLIB_SSG_CONVERGENCE", convergence ) ;
++  if ( !(projectionScale > 0.0f && projectionScale < 1.0e6f) ) projectionScale = 1.0f ;
+ 
+   for ( int eye = 0 ; eye < (stereo ? 2 : 1) ; eye++ )
+   {
+@@ -319,8 +325,8 @@
+     if ( stereo )
+     {
+       sgCopyMat4 ( _ssgCurrentContext->cameraMatrix, camera ) ;
+-      _ssgCurrentContext->cameraMatrix[3][0] -= offset ;
+-      float shift = -offset * frustum.getNear () / convergence ;
++      if ( !atInfinity ) _ssgCurrentContext->cameraMatrix[3][0] -= offset ;
++      float shift = -offset * frustum.getNear () * projectionScale / convergence ;
+       _ssgCurrentContext->setFrustum ( frustum.getLeft () + shift,
+                                      frustum.getRight () + shift,
+                                      frustum.getBot (), frustum.getTop (),
+@@ -338,7 +344,7 @@
+ 
+     glMatrixMode ( GL_MODELVIEW ) ;
+     glLoadIdentity () ;
+-    if ( stereo ) glTranslatef ( -offset, 0.0f, 0.0f ) ;
++    if ( stereo && !atInfinity ) glTranslatef ( -offset, 0.0f, 0.0f ) ;
+ 
+     int i ;
+ 

@@ -41,7 +41,7 @@ int main(int argc, char **argv)
             Editor editor;
             editor.loadProject(QString::fromLocal8Bit(argv[1]));
             auto state = QJsonDocument::fromJson(editor.sessionState().toUtf8()).object();
-            const auto title = Identity::product() + "[*]";
+            const auto title = QFileInfo(QString::fromLocal8Bit(argv[1])).fileName() + "[*]";
             if (editor.windowTitle() != title || editor.stereo->text() != catalogue.translate("Editor", "Enable 3D"))
                 throw std::runtime_error("Runtime widget did not use compiled catalogue");
             results.append(QJsonObject{{"language", language}, {"locale", locale}, {"compiledMessages", count},

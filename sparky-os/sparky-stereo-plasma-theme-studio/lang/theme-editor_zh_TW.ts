@@ -1,428 +1,528 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
 <TS version="2.1" language="zh_TW" sourcelanguage="en">
-  <context>
-    <name>Cli</name>
-    <message>
-      <source>Open an icon theme</source>
-      <translation>開啟圖示主題</translation>
-    </message>
-    <message>
-      <source>Open an SVG source inside the theme</source>
-      <translation>開啟主題中的 SVG 原始檔</translation>
-    </message>
-    <message>
-      <source>Open a saved project</source>
-      <translation>開啟已儲存的專案</translation>
-    </message>
-    <message>
-      <source>Read group depths from JSON</source>
-      <translation>從 JSON 讀取群組深度</translation>
-    </message>
-    <message>
-      <source>Save a new project copy</source>
-      <translation>儲存新的專案副本</translation>
-    </message>
-    <message>
-      <source>Disable the stereo preview</source>
-      <translation>停用立體預覽</translation>
-    </message>
-    <message>
-      <source>Return after the requested save</source>
-      <translation>完成要求的儲存後結束</translation>
-    </message>
-    <message>
-      <source>Cannot open the group choices</source>
-      <translation>無法開啟群組設定</translation>
-    </message>
-    <message>
-      <source>Invalid group choices</source>
-      <translation>無效的群組設定</translation>
-    </message>
-  </context>
-  <context>
-    <name>Drawing</name>
-    <message>
-      <source>SVGZ decompression failed or timed out</source>
-      <translation>SVGZ 解壓縮失敗或逾時</translation>
-    </message>
-    <message>
-      <source>Invalid or excessive SVGZ input</source>
-      <translation>SVGZ 輸入無效或過大</translation>
-    </message>
-    <message>
-      <source>Cannot parse SVG</source>
-      <translation>無法剖析 SVG</translation>
-    </message>
-    <message>
-      <source>SVG renderer rejected the drawing</source>
-      <translation>SVG 繪製器拒絕了此繪圖</translation>
-    </message>
-    <message>
-      <source>The SVG has no usable view box</source>
-      <translation>SVG 沒有可用的視圖區域</translation>
-    </message>
-    <message>
-      <source>Duplicate SVG group id: </source>
-      <translation>重複的 SVG 群組 ID：</translation>
-    </message>
-    <message>
-      <source>This SVG has no named groups to author</source>
-      <translation>此 SVG 沒有可編輯的具名群組</translation>
-    </message>
-    <message>
-      <source>Invalid desktop depth limits</source>
-      <translation>無效的桌面深度限制</translation>
-    </message>
-    <message>
-      <source>Invalid group or place</source>
-      <translation>無效的群組或位置</translation>
-    </message>
-    <message>
-      <source>Scripted SVG is not supported</source>
-      <translation>不支援含指令碼的 SVG</translation>
-    </message>
-    <message>
-      <source>Use inline SVG paint attributes; CSS stylesheets are not supported</source>
-      <translation>請在 SVG 元素中直接指定繪製屬性，不支援 CSS 樣式表</translation>
-    </message>
-    <message>
-      <source>Choose a square, single-view SVG source</source>
-      <translation>請選擇正方形的單一視圖 SVG 原始檔</translation>
-    </message>
-    <message>
-      <source>Select disjoint groups for depth; clear the parent or child depth first</source>
-      <translation>請選擇互不重疊的群組設定深度，先清零父群組或子群組的深度</translation>
-    </message>
-    <message>
-      <source>Singular parent transform for </source>
-      <translation>父變換不可逆：</translation>
-    </message>
-    <message>
-      <source>Cannot render the authored view</source>
-      <translation>無法繪製所建立的視圖</translation>
-    </message>
-    <message>
-      <source>Cannot encode pair</source>
-      <translation>無法編碼影像對</translation>
-    </message>
-    <message>
-      <source>The views have different dimensions</source>
-      <translation>視圖尺寸不同</translation>
-    </message>
-    <message>
-      <source>Cannot encode PNG</source>
-      <translation>無法編碼 PNG</translation>
-    </message>
-  </context>
-  <context>
-    <name>Editor</name>
-    <message>
-      <source>Open icon theme…</source>
-      <translation>開啟圖示主題…</translation>
-    </message>
-    <message>
-      <source>Save a project copy…</source>
-      <translation>儲存專案副本…</translation>
-    </message>
-    <message>
-      <source>Undo</source>
-      <translation>復原</translation>
-    </message>
-    <message>
-      <source>Redo</source>
-      <translation>重做</translation>
-    </message>
-    <message>
-      <source>Icons</source>
-      <translation>圖示</translation>
-    </message>
-    <message>
-      <source>Enable 3D</source>
-      <translation>啟用 3D</translation>
-    </message>
-    <message>
-      <source>Pixels per view: </source>
-      <translation>每個視圖的像素：</translation>
-    </message>
-    <message>
-      <source>Display Settings…</source>
-      <translation>顯示設定…</translation>
-    </message>
-    <message>
-      <source>Open a theme. Save creates a separate project copy.</source>
-      <translation>開啟主題。儲存時會建立獨立的專案副本。</translation>
-    </message>
-    <message>
-      <source>Part</source>
-      <translation>部件</translation>
-    </message>
-    <message>
-      <source>Depth (% of limit)</source>
-      <translation>深度（限制的百分比）</translation>
-    </message>
-    <message>
-      <source>Select a part to highlight it in both views. Negative depth sinks; positive depth pops.</source>
-      <translation>選取部件可在兩個視圖中醒目顯示。負深度向內凹，正深度向外凸。</translation>
-    </message>
-    <message>
-      <source>Size per view</source>
-      <translation>每個視圖的尺寸</translation>
-    </message>
-    <message>
-      <source>Disparity</source>
-      <translation>視差</translation>
-    </message>
-    <message>
-      <source>Icon theme folder</source>
-      <translation>圖示主題資料夾</translation>
-    </message>
-    <message>
-      <source>SVG source</source>
-      <translation>SVG 原始檔</translation>
-    </message>
-    <message>
-      <source>New project folder</source>
-      <translation>新專案資料夾</translation>
-    </message>
-    <message>
-      <source>Display Settings</source>
-      <translation>顯示設定</translation>
-    </message>
-    <message>
-      <source>Cannot start Display Settings (kcmshell6).</source>
-      <translation>無法啟動顯示設定（kcmshell6）。</translation>
-    </message>
-    <message>
-      <source>Cannot complete the operation</source>
-      <translation>無法完成操作</translation>
-    </message>
-    <message>
-      <source>Choose an icon inside a readable theme with index.theme</source>
-      <translation>請選擇包含 index.theme 的可讀主題中的圖示</translation>
-    </message>
-    <message>
-      <source> %</source>
-      <translation> %</translation>
-    </message>
-    <message>
-      <source>Depth of %1</source>
-      <translation>%1 的深度</translation>
-    </message>
-    <message>
-      <source>Read only source: %1. Save creates a separate project copy.</source>
-      <translation>唯讀原始檔：%1。儲存時會建立獨立的專案副本。</translation>
-    </message>
-    <message>
-      <source>Selected: %1 (%2)</source>
-      <translation>已選取：%1（%2）</translation>
-    </message>
-    <message>
-      <source>Sunk</source>
-      <translation>內凹</translation>
-    </message>
-    <message>
-      <source>Popped</source>
-      <translation>外凸</translation>
-    </message>
-    <message>
-      <source>Screen</source>
-      <translation>螢幕平面</translation>
-    </message>
-    <message>
-      <source>%1 px</source>
-      <translation>%1 像素</translation>
-    </message>
-    <message>
-      <source>0 px (limit below 1 px)</source>
-      <translation>0 px（限制不足 1 px）</translation>
-    </message>
-    <message>
-      <source>0 px (screen)</source>
-      <translation>0 像素（螢幕平面）</translation>
-    </message>
-    <message>
-      <source>A group depth must be a number</source>
-      <translation>群組深度必須是數值</translation>
-    </message>
-    <message>
-      <source>Unsaved changes</source>
-      <translation>未儲存的變更</translation>
-    </message>
-    <message>
-      <source>Discard unsaved changes?</source>
-      <translation>要放棄未儲存的變更嗎？</translation>
-    </message>
-    <message>
-      <source>Close the KDE tool before closing this project.</source>
-      <translation>關閉此專案前請先關閉 KDE 工具。</translation>
-    </message>
-    <message>
-      <source>Invalid group or place</source>
-      <translation>無效的群組或位置</translation>
-    </message>
-    <message>
-      <source>Cannot read the project</source>
-      <translation>無法讀取專案</translation>
-    </message>
-    <message>
-      <source>Invalid or unsupported theme project</source>
-      <translation>主題專案無效或不受支援</translation>
-    </message>
-    <message>
-      <source>Project copy: %1</source>
-      <translation>專案副本：%1</translation>
-    </message>
-    <message>
-      <source>Open a source first</source>
-      <translation>請先開啟原始檔</translation>
-    </message>
-    <message>
-      <source>The project destination already exists; choose a new folder</source>
-      <translation>專案目的地已存在，請選擇新資料夾</translation>
-    </message>
-    <message>
-      <source>Save the copy outside its source theme</source>
-      <translation>請將副本儲存在來源主題之外</translation>
-    </message>
-    <message>
-      <source>Cannot create the project beside its destination</source>
-      <translation>無法在目的地旁建立專案</translation>
-    </message>
-    <message>
-      <source>A project index must be a regular file</source>
-      <translation>專案索引必須是一般檔案</translation>
-    </message>
-    <message>
-      <source>Cannot make the copied index writable</source>
-      <translation>無法讓複製的索引可寫入</translation>
-    </message>
-    <message>
-      <source>Declared icon size exceeds the supported 2048 pixels per view</source>
-      <translation>宣告的圖示尺寸超出每個視圖 2048 像素的支援上限</translation>
-    </message>
-    <message>
-      <source>Choose an SVG source inside a context declared in index.theme</source>
-      <translation>請選擇位於 index.theme 所宣告情境中的 SVG 原始檔</translation>
-    </message>
-    <message>
-      <source>The theme declares no usable sizes</source>
-      <translation>主題未宣告可用尺寸</translation>
-    </message>
-    <message>
-      <source>Cannot save the copied theme index</source>
-      <translation>無法儲存複製的主題索引</translation>
-    </message>
-    <message>
-      <source>Cannot commit the project folder</source>
-      <translation>無法完成專案資料夾的儲存</translation>
-    </message>
-    <message>
-      <source>Saved project copy: %1</source>
-      <translation>已儲存專案副本：%1</translation>
-    </message>
-    <message>
-      <source>The colour scheme is too large</source>
-      <translation>配色方案過大</translation>
-    </message>
-    <message>
-      <source>Open colour scheme…</source>
-      <translation>開啟配色方案…</translation>
-    </message>
-    <message>
-      <source>Edit colours in KDE…</source>
-      <translation>在 KDE 中編輯顏色…</translation>
-    </message>
-    <message>
-      <source>Open Plasma SVG part…</source>
-      <translation>開啟 Plasma SVG 部件…</translation>
-    </message>
-    <message>
-      <source>Explore Plasma theme…</source>
-      <translation>瀏覽 Plasma 主題…</translation>
-    </message>
-    <message>
-      <source>No colour scheme in this project</source>
-      <translation>此專案沒有配色方案</translation>
-    </message>
-    <message>
-      <source>Colour scheme</source>
-      <translation>配色方案</translation>
-    </message>
-    <message>
-      <source>Plasma theme folder</source>
-      <translation>Plasma 主題資料夾</translation>
-    </message>
-    <message>
-      <source>Choose an SVG inside a Plasma theme with metadata.json</source>
-      <translation>請選擇含 metadata.json 的 Plasma 主題內的 SVG</translation>
-    </message>
-    <message>
-      <source>Plasma parts</source>
-      <translation>Plasma 部件</translation>
-    </message>
-    <message>
-      <source>Cannot inspect the colour scheme</source>
-      <translation>無法檢查配色方案</translation>
-    </message>
-    <message>
-      <source>Not a KDE colour scheme</source>
-      <translation>這不是 KDE 配色方案</translation>
-    </message>
-    <message>
-      <source>The colour scheme has no name</source>
-      <translation>配色方案沒有名稱</translation>
-    </message>
-    <message>
-      <source>Colour scheme: %1. KDE edits a private copy; Save keeps it in this project.</source>
-      <translation>配色方案：%1。KDE 編輯私有副本；儲存會將其保留在此專案中。</translation>
-    </message>
-    <message>
-      <source>Close the KDE tool before opening another one.</source>
-      <translation>開啟其他工具前請先關閉目前的 KDE 工具。</translation>
-    </message>
-    <message>
-      <source>Cannot create a private working copy</source>
-      <translation>無法建立私有工作副本</translation>
-    </message>
-    <message>
-      <source>The KDE tool failed: %1</source>
-      <translation>KDE 工具失敗：%1</translation>
-    </message>
-    <message>
-      <source>The KDE tool returned an invalid file name</source>
-      <translation>KDE 工具傳回了無效的檔案名稱</translation>
-    </message>
-    <message>
-      <source>Cannot start %1: %2</source>
-      <translation>無法啟動 %1：%2</translation>
-    </message>
-    <message>
-      <source>Open a colour scheme first</source>
-      <translation>請先開啟配色方案</translation>
-    </message>
-    <message>
-      <source>The Plasma working copy contains an outside or cyclic link: %1</source>
-      <translation>Plasma 工作副本包含指向主題外部或循環的連結：%1</translation>
-    </message>
-    <message>
-      <source>Open a Plasma theme part first</source>
-      <translation>請先開啟 Plasma 主題部件</translation>
-    </message>
-    <message>
-      <source>The Plasma theme has no valid identifier</source>
-      <translation>Plasma 主題沒有有效的識別碼</translation>
-    </message>
-    <message>
-      <source>About…</source>
-      <translation>關於…</translation>
-    </message>
-  </context>
-  <context>
-    <name>Identity</name>
-    <message>
-      <source>Product name</source>
-      <translation>@PRODUCT@</translation>
-    </message>
-  </context>
+    <context>
+        <name>Cli</name>
+        <message>
+            <source>Open an icon theme</source>
+            <translation>開啟圖示主題</translation>
+        </message>
+        <message>
+            <source>Open an SVG source inside the theme</source>
+            <translation>開啟主題中的 SVG 原始檔</translation>
+        </message>
+        <message>
+            <source>Open a saved project</source>
+            <translation>開啟已儲存的專案</translation>
+        </message>
+        <message>
+            <source>Read group depths from JSON</source>
+            <translation>從 JSON 讀取群組深度</translation>
+        </message>
+        <message>
+            <source>Save a new project copy</source>
+            <translation>儲存新的專案副本</translation>
+        </message>
+        <message>
+            <source>Disable the stereo preview</source>
+            <translation>停用立體預覽</translation>
+        </message>
+        <message>
+            <source>Return after the requested save</source>
+            <translation>完成要求的儲存後結束</translation>
+        </message>
+        <message>
+            <source>Cannot open the group choices</source>
+            <translation>無法開啟群組設定</translation>
+        </message>
+        <message>
+            <source>Invalid group choices</source>
+            <translation>無效的群組設定</translation>
+        </message>
+    </context>
+    <context>
+        <name>Drawing</name>
+        <message>
+            <source>SVGZ decompression failed or timed out</source>
+            <translation>SVGZ 解壓縮失敗或逾時</translation>
+        </message>
+        <message>
+            <source>Invalid or excessive SVGZ input</source>
+            <translation>SVGZ 輸入無效或過大</translation>
+        </message>
+        <message>
+            <source>Cannot parse SVG</source>
+            <translation>無法剖析 SVG</translation>
+        </message>
+        <message>
+            <source>SVG renderer rejected the drawing</source>
+            <translation>SVG 繪製器拒絕了此繪圖</translation>
+        </message>
+        <message>
+            <source>The SVG has no usable view box</source>
+            <translation>SVG 沒有可用的視圖區域</translation>
+        </message>
+        <message>
+            <source>Duplicate SVG group id: </source>
+            <translation>重複的 SVG 群組 ID：</translation>
+        </message>
+        <message>
+            <source>This SVG has no named groups to author</source>
+            <translation>此 SVG 沒有可編輯的具名群組</translation>
+        </message>
+        <message>
+            <source>Invalid desktop depth limits</source>
+            <translation>無效的桌面深度限制</translation>
+        </message>
+        <message>
+            <source>Invalid group or place</source>
+            <translation>無效的群組或位置</translation>
+        </message>
+        <message>
+            <source>Scripted SVG is not supported</source>
+            <translation>不支援含指令碼的 SVG</translation>
+        </message>
+        <message>
+            <source>Use inline SVG paint attributes; CSS stylesheets are not supported</source>
+            <translation>請在 SVG 元素中直接指定繪製屬性，不支援 CSS 樣式表</translation>
+        </message>
+        <message>
+            <source>Choose a square, single-view SVG source</source>
+            <translation>請選擇正方形的單一視圖 SVG 原始檔</translation>
+        </message>
+        <message>
+            <source>Select disjoint groups for depth; clear the parent or child depth first</source>
+            <translation>請選擇互不重疊的群組設定深度，先清零父群組或子群組的深度</translation>
+        </message>
+        <message>
+            <source>Singular parent transform for </source>
+            <translation>父變換不可逆：</translation>
+        </message>
+        <message>
+            <source>Cannot render the authored view</source>
+            <translation>無法繪製所建立的視圖</translation>
+        </message>
+        <message>
+            <source>Cannot encode pair</source>
+            <translation>無法編碼影像對</translation>
+        </message>
+        <message>
+            <source>The views have different dimensions</source>
+            <translation>視圖尺寸不同</translation>
+        </message>
+        <message>
+            <source>Cannot encode PNG</source>
+            <translation>無法編碼 PNG</translation>
+        </message>
+        <message>
+            <source>the desktop's limit is zero</source>
+            <translation>桌面限制為零</translation>
+        </message>
+        <message>
+            <source>no room in the drawing at this size</source>
+            <translation>此尺寸的繪圖中沒有移動空間</translation>
+        </message>
+        <message>
+            <source>Depth order cannot fit in this drawing at %1 px: %2 / %3</source>
+            <translation>在 %1 像素時無法在此繪圖中保持深度順序：%2 / %3</translation>
+        </message>
+    </context>
+    <context>
+        <name>Editor</name>
+        <message>
+            <source>Open icon theme…</source>
+            <translation>開啟圖示主題…</translation>
+        </message>
+        <message>
+            <source>Save a project copy…</source>
+            <translation>儲存專案副本…</translation>
+        </message>
+        <message>
+            <source>Undo</source>
+            <translation>復原</translation>
+        </message>
+        <message>
+            <source>Redo</source>
+            <translation>重做</translation>
+        </message>
+        <message>
+            <source>Icons</source>
+            <translation>圖示</translation>
+        </message>
+        <message>
+            <source>Enable 3D</source>
+            <translation>啟用 3D</translation>
+        </message>
+        <message>
+            <source>Pixels per view: </source>
+            <translation>每個視圖的像素：</translation>
+        </message>
+        <message>
+            <source>Display Settings…</source>
+            <translation>顯示設定…</translation>
+        </message>
+        <message>
+            <source>Open a theme. Save creates a separate project copy.</source>
+            <translation>開啟主題。儲存時會建立獨立的專案副本。</translation>
+        </message>
+        <message>
+            <source>Part</source>
+            <translation>部件</translation>
+        </message>
+        <message>
+            <source>Depth (% of limit)</source>
+            <translation>深度（限制的百分比）</translation>
+        </message>
+        <message>
+            <source>Select a part to highlight it in both views. Negative depth sinks; positive depth pops.</source>
+            <translation>選取部件可在兩個視圖中醒目顯示。負深度向內凹，正深度向外凸。</translation>
+        </message>
+        <message>
+            <source>Size per view</source>
+            <translation>每個視圖的尺寸</translation>
+        </message>
+        <message>
+            <source>Disparity</source>
+            <translation>視差</translation>
+        </message>
+        <message>
+            <source>Icon theme folder</source>
+            <translation>圖示主題資料夾</translation>
+        </message>
+        <message>
+            <source>SVG source</source>
+            <translation>SVG 原始檔</translation>
+        </message>
+        <message>
+            <source>New project folder</source>
+            <translation>新專案資料夾</translation>
+        </message>
+        <message>
+            <source>Display Settings</source>
+            <translation>顯示設定</translation>
+        </message>
+        <message>
+            <source>Cannot start Display Settings (kcmshell6).</source>
+            <translation>無法啟動顯示設定（kcmshell6）。</translation>
+        </message>
+        <message>
+            <source>Cannot complete the operation</source>
+            <translation>無法完成操作</translation>
+        </message>
+        <message>
+            <source>Choose an icon inside a readable theme with index.theme</source>
+            <translation>請選擇包含 index.theme 的可讀主題中的圖示</translation>
+        </message>
+        <message>
+            <source> %</source>
+            <translation> %</translation>
+        </message>
+        <message>
+            <source>Depth of %1</source>
+            <translation>%1 的深度</translation>
+        </message>
+        <message>
+            <source>Read only source: %1. Save creates a separate project copy.</source>
+            <translation>唯讀原始檔：%1。儲存時會建立獨立的專案副本。</translation>
+        </message>
+        <message>
+            <source>Selected: %1 (%2)</source>
+            <translation>已選取：%1（%2）</translation>
+        </message>
+        <message>
+            <source>Sunk</source>
+            <translation>內凹</translation>
+        </message>
+        <message>
+            <source>Popped</source>
+            <translation>外凸</translation>
+        </message>
+        <message>
+            <source>Screen</source>
+            <translation>螢幕平面</translation>
+        </message>
+        <message>
+            <source>%1 px</source>
+            <translation>%1 像素</translation>
+        </message>
+        <message>
+            <source>0 px (screen)</source>
+            <translation>0 像素（螢幕平面）</translation>
+        </message>
+        <message>
+            <source>A group depth must be a number</source>
+            <translation>群組深度必須是數值</translation>
+        </message>
+        <message>
+            <source>Unsaved changes</source>
+            <translation>未儲存的變更</translation>
+        </message>
+        <message>
+            <source>Discard unsaved changes?</source>
+            <translation>要放棄未儲存的變更嗎？</translation>
+        </message>
+        <message>
+            <source>Close the KDE tool before closing this project.</source>
+            <translation>關閉此專案前請先關閉 KDE 工具。</translation>
+        </message>
+        <message>
+            <source>Invalid group or place</source>
+            <translation>無效的群組或位置</translation>
+        </message>
+        <message>
+            <source>Cannot read the project</source>
+            <translation>無法讀取專案</translation>
+        </message>
+        <message>
+            <source>Invalid or unsupported theme project</source>
+            <translation>主題專案無效或不受支援</translation>
+        </message>
+        <message>
+            <source>Project copy: %1</source>
+            <translation>專案副本：%1</translation>
+        </message>
+        <message>
+            <source>Open a source first</source>
+            <translation>請先開啟原始檔</translation>
+        </message>
+        <message>
+            <source>The project destination already exists; choose a new folder</source>
+            <translation>專案目的地已存在，請選擇新資料夾</translation>
+        </message>
+        <message>
+            <source>Save the copy outside its source theme</source>
+            <translation>請將副本儲存在來源主題之外</translation>
+        </message>
+        <message>
+            <source>Cannot create the project beside its destination</source>
+            <translation>無法在目的地旁建立專案</translation>
+        </message>
+        <message>
+            <source>A project index must be a regular file</source>
+            <translation>專案索引必須是一般檔案</translation>
+        </message>
+        <message>
+            <source>Cannot make the copied index writable</source>
+            <translation>無法讓複製的索引可寫入</translation>
+        </message>
+        <message>
+            <source>Declared icon size exceeds the supported 2048 pixels per view</source>
+            <translation>宣告的圖示尺寸超出每個視圖 2048 像素的支援上限</translation>
+        </message>
+        <message>
+            <source>Choose an SVG source inside a context declared in index.theme</source>
+            <translation>請選擇位於 index.theme 所宣告情境中的 SVG 原始檔</translation>
+        </message>
+        <message>
+            <source>The theme declares no usable sizes</source>
+            <translation>主題未宣告可用尺寸</translation>
+        </message>
+        <message>
+            <source>Cannot save the copied theme index</source>
+            <translation>無法儲存複製的主題索引</translation>
+        </message>
+        <message>
+            <source>Cannot commit the project folder</source>
+            <translation>無法完成專案資料夾的儲存</translation>
+        </message>
+        <message>
+            <source>Saved project copy: %1</source>
+            <translation>已儲存專案副本：%1</translation>
+        </message>
+        <message>
+            <source>The colour scheme is too large</source>
+            <translation>配色方案過大</translation>
+        </message>
+        <message>
+            <source>Open colour scheme…</source>
+            <translation>開啟配色方案…</translation>
+        </message>
+        <message>
+            <source>Edit colours in KDE…</source>
+            <translation>在 KDE 中編輯顏色…</translation>
+        </message>
+        <message>
+            <source>Open Plasma SVG part…</source>
+            <translation>開啟 Plasma SVG 部件…</translation>
+        </message>
+        <message>
+            <source>Explore Plasma theme…</source>
+            <translation>瀏覽 Plasma 主題…</translation>
+        </message>
+        <message>
+            <source>No colour scheme in this project</source>
+            <translation>此專案沒有配色方案</translation>
+        </message>
+        <message>
+            <source>Colour scheme</source>
+            <translation>配色方案</translation>
+        </message>
+        <message>
+            <source>Plasma theme folder</source>
+            <translation>Plasma 主題資料夾</translation>
+        </message>
+        <message>
+            <source>Choose an SVG inside a Plasma theme with metadata.json</source>
+            <translation>請選擇含 metadata.json 的 Plasma 主題內的 SVG</translation>
+        </message>
+        <message>
+            <source>Plasma parts</source>
+            <translation>Plasma 部件</translation>
+        </message>
+        <message>
+            <source>Cannot inspect the colour scheme</source>
+            <translation>無法檢查配色方案</translation>
+        </message>
+        <message>
+            <source>Not a KDE colour scheme</source>
+            <translation>這不是 KDE 配色方案</translation>
+        </message>
+        <message>
+            <source>The colour scheme has no name</source>
+            <translation>配色方案沒有名稱</translation>
+        </message>
+        <message>
+            <source>Colour scheme: %1. KDE edits a private copy; Save keeps it in this project.</source>
+            <translation>配色方案：%1。KDE 編輯私有副本；儲存會將其保留在此專案中。</translation>
+        </message>
+        <message>
+            <source>Close the KDE tool before opening another one.</source>
+            <translation>開啟其他工具前請先關閉目前的 KDE 工具。</translation>
+        </message>
+        <message>
+            <source>Cannot create a private working copy</source>
+            <translation>無法建立私有工作副本</translation>
+        </message>
+        <message>
+            <source>The KDE tool failed: %1</source>
+            <translation>KDE 工具失敗：%1</translation>
+        </message>
+        <message>
+            <source>The KDE tool returned an invalid file name</source>
+            <translation>KDE 工具傳回了無效的檔案名稱</translation>
+        </message>
+        <message>
+            <source>Cannot start %1: %2</source>
+            <translation>無法啟動 %1：%2</translation>
+        </message>
+        <message>
+            <source>Open a colour scheme first</source>
+            <translation>請先開啟配色方案</translation>
+        </message>
+        <message>
+            <source>The Plasma working copy contains an outside or cyclic link: %1</source>
+            <translation>Plasma 工作副本包含指向主題外部或循環的連結：%1</translation>
+        </message>
+        <message>
+            <source>Open a Plasma theme part first</source>
+            <translation>請先開啟 Plasma 主題部件</translation>
+        </message>
+        <message>
+            <source>The Plasma theme has no valid identifier</source>
+            <translation>Plasma 主題沒有有效的識別碼</translation>
+        </message>
+        <message>
+            <source>About…</source>
+            <translation>關於…</translation>
+        </message>
+        <message>
+            <source>Cannot read the preview output</source>
+            <translation>無法讀取預覽輸出</translation>
+        </message>
+        <message>
+            <source>Export (defaults)</source>
+            <translation>匯出（預設值）</translation>
+        </message>
+        <message>
+            <source>Preview (desktop)</source>
+            <translation>預覽（桌面）</translation>
+        </message>
+        <message>
+            <source>0 px (%1)</source>
+            <translation>0 像素（%1）</translation>
+        </message>
+        <message>
+            <source>; same pixel as %1</source>
+            <translation>；與 %1 為同一像素</translation>
+        </message>
+        <message>
+            <source>Models</source>
+            <translation>模型</translation>
+        </message>
+        <message>
+            <source>Open model…</source>
+            <translation>開啟模型…</translation>
+        </message>
+        <message>
+            <source>Open a glTF model. The source is read only.</source>
+            <translation>開啟 glTF 模型。來源檔案為唯讀。</translation>
+        </message>
+        <message>
+            <source>Export model pairs…</source>
+            <translation>匯出模型視圖對…</translation>
+        </message>
+        <message>
+            <source>Cannot read model: %1</source>
+            <translation>無法讀取模型：%1</translation>
+        </message>
+        <message>
+            <source>Cannot create model render files.</source>
+            <translation>無法建立模型算繪檔案。</translation>
+        </message>
+        <message>
+            <source>Cannot start the model renderer. Install the model helper and its dependencies.</source>
+            <translation>無法啟動模型算繪器。請安裝模型輔助程式及其相依套件。</translation>
+        </message>
+        <message>
+            <source>The model renderer did not finish.</source>
+            <translation>模型算繪器未完成。</translation>
+        </message>
+        <message>
+            <source>Cannot render model: %1</source>
+            <translation>無法算繪模型：%1</translation>
+        </message>
+        <message>
+            <source>The model renderer returned invalid data.</source>
+            <translation>模型算繪器傳回無效資料。</translation>
+        </message>
+        <message>
+            <source>Choose a readable glTF (.gltf or .glb) model.</source>
+            <translation>請選擇可讀取的 glTF 模型（.gltf 或 .glb）。</translation>
+        </message>
+        <message>
+            <source>Read only model: %1</source>
+            <translation>唯讀模型：%1</translation>
+        </message>
+        <message>
+            <source>%1 px: far / near %2; preview %3</source>
+            <translation>%1 像素：遠 / 近 %2；預覽 %3</translation>
+        </message>
+        <message>
+            <source>Model assets must be local files beside the glTF model.</source>
+            <translation>模型資源必須是 glTF 模型旁的本機檔案。</translation>
+        </message>
+        <message>
+            <source>The model helper is unavailable in this build.</source>
+            <translation>此組建不提供模型輔助程式。</translation>
+        </message>
+        <message>
+            <source>the desktop's limit is zero</source>
+            <translation>桌面限制為零</translation>
+        </message>
+        <message>
+            <source>no room in the drawing at this size</source>
+            <translation>此尺寸的繪圖內沒有移動空間</translation>
+        </message>
+        <message>
+            <source>The model changed. Reopen it before rendering or saving.</source>
+            <translation>模型已變更。算繪或儲存前請重新開啟。</translation>
+        </message>
+    </context>
+    <context>
+        <name>Identity</name>
+        <message>
+            <source>Product name</source>
+            <translation>@PRODUCT@</translation>
+        </message>
+    </context>
 </TS>

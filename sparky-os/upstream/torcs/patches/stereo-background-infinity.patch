@@ -1,0 +1,48 @@
+Description: Keep the unit-radius background at the world camera infinity disparity
+Author: Daniel Ramos (Capitain Jack)
+Forwarded: no
+
+--- a/src/modules/graphic/ssggraph/grscene.h
++++ b/src/modules/graphic/ssggraph/grscene.h
+@@ -51,7 +51,7 @@
+ extern void grCustomizePits(void);
+ 
+ struct Camera;
+-extern void grDrawBackground(class cGrCamera *, class cGrBackgroundCam *bgCam);
++extern void grDrawBackground(class cGrCamera *, class cGrBackgroundCam *bgCam, float convergence);
+ 
+ extern ssgStateSelector	*grEnvSelector;
+ #include "grmultitexstate.h"
+--- a/src/modules/graphic/ssggraph/grscene.cpp
++++ b/src/modules/graphic/ssggraph/grscene.cpp
+@@ -602,14 +602,17 @@
+ }
+ 
+ 
+-void grDrawBackground(class cGrCamera *cam, class cGrBackgroundCam *bgCam)
++void grDrawBackground(class cGrCamera *cam, class cGrBackgroundCam *bgCam, float convergence)
+ {
+     TRACE_GL("grDrawBackground: ssgCullAndDraw start");
+ 
+     bgCam->update(cam);
+     bgCam->action();
+ 
+-    ssgCullAndDraw(TheBackground);
++    // The unit cylinder represents scenery at infinity, despite its mesh radius.
++    float projectionScale = tan(bgCam->getFovY() * M_PI / 360.0) /
++                            tan(cam->getFovY() * M_PI / 360.0);
++    ssgCullAndDraw(TheBackground, convergence, true, projectionScale);
+ 
+     TRACE_GL("grDrawBackground: ssgCullAndDraw");
+ }
+--- a/src/modules/graphic/ssggraph/grscreen.cpp
++++ b/src/modules/graphic/ssggraph/grscreen.cpp
+@@ -270,7 +270,7 @@
+ 	if (dispCam->getDrawBackground()) {
+ 		glDisable(GL_LIGHTING);
+ 		glDisable(GL_DEPTH_TEST);
+-		grDrawBackground(dispCam, bgCam);
++		grDrawBackground(dispCam, bgCam, stereoConvergence);
+ 		glClear(GL_DEPTH_BUFFER_BIT);
+ 	}
+ 	glEnable(GL_DEPTH_TEST);

@@ -34,12 +34,20 @@
 #include <iostream>
 
 #include "editor.h"
+#if STUDIO_MODELS
+#include "models/page.h"
+#endif
 #include "identity.h"
 #include <QDoubleSpinBox>
 #include <QHeaderView>
 #include <QtMath>
 #include <QCloseEvent>
 #include <algorithm>
+#include <cmath>
+#include <QScreen>
+#include <QWindow>
+#include <QShowEvent>
+#include <QTimer>
 #include <QJsonArray>
 static QImage highlight(QImage image, const QImage &mask);
 
@@ -68,6 +76,7 @@ Editor::Editor(bool part)
     });
     layout->addLayout(files);
     if (partMode) { open->hide(); save->hide(); }
+    auto *sharedLayout = layout;
     if (!partMode) {
         setupParts(layout);
         pages = new QTabWidget;
@@ -75,6 +84,16 @@ Editor::Editor(bool part)
         auto *iconPage = new QWidget;
         pages->addTab(iconPage, tr("Icons"));
         layout = new QVBoxLayout(iconPage);
+#if STUDIO_MODELS
+        modelPage = new ModelPage(this);
+        pages->addTab(modelPage, tr("Models"));
+        auto *openModel = new QPushButton(tr("Open model…"));
+        files->addWidget(openModel);
+        connect(openModel, &QPushButton::clicked, this, [this] { guarded([&] {
+            const auto path = QFileDialog::getOpenFileName(this,tr("Open model…"),{},"glTF (*.gltf *.glb)");
+            if (!path.isEmpty()) { const auto error=openModelFile(path); if(!error.isEmpty())throw std::runtime_error(error.toStdString()); }
+        }); });
+#endif
     }
     auto *actions = new QHBoxLayout;
     stereo = new QCheckBox(tr("Enable 3D"));
@@ -86,7 +105,7 @@ Editor::Editor(bool part)
     auto *settings = new QPushButton(tr("Display Settings…"));
     for (auto *w : QList<QWidget *>{stereo, size, settings}) actions->addWidget(w);
     if (!STUDIO_STEREO) settings->hide();
-    layout->addLayout(actions);
+    sharedLayout->insertLayout(partMode ? 1 : 2, actions);
     location = new QLabel(tr("Open a theme. Save creates a separate project copy."));
     location->setWordWrap(true); layout->addWidget(location);
     auto *body = new QHBoxLayout;
@@ -150,6 +169,7 @@ void Editor::guarded(const std::function<void()> &f)
 
 void Editor::load(QString root, QString icon)
 {
+    setWindowTitle(QFileInfo(root).fileName() + "[*]");
     ensurePeerClosed();
     root = QFileInfo(root).canonicalFilePath();
     icon = QFileInfo(icon).canonicalFilePath();
@@ -198,7 +218,11 @@ void Editor::populateGroups()
         depth->setSuffix(tr(" %"));
         depth->setObjectName(id);
         depth->setAccessibleName(tr("Depth of %1").arg(drawing.groupLabel(id)));
-        groups->setItemWidget(item, 1, depth);
+        auto *control = new QWidget;
+        auto *controlLayout = new QHBoxLayout(control);
+        controlLayout->setContentsMargins(0,0,0,0);
+        controlLayout->addWidget(depth, 0, Qt::AlignVCenter);
+        groups->setItemWidget(item, 1, control);
         connect(depth, &QDoubleSpinBox::valueChanged, this, [this, id, item](double value) {
             guarded([&] { groups->setCurrentItem(item); changeDepth(id, value / 100.0); });
             restorePlaces(drawing.places);
@@ -240,8 +264,21 @@ static QImage highlight(QImage image, const QImage &mask)
 
 void Editor::refresh()
 {
+#if STUDIO_MODELS
+    if(modelPage) modelPage->refresh();
+#endif
     if (drawing.source.isEmpty()) return;
-    drawing.readLimits();
+    auto *screen = windowHandle() ? windowHandle()->screen() : QGuiApplication::primaryScreen();
+    if (!screen) throw std::runtime_error(tr("Cannot read the preview output").toStdString());
+    if (observedScreen != screen) {
+        disconnect(observedGeometry);
+        observedScreen = screen;
+        observedGeometry = connect(screen, &QScreen::geometryChanged, this, [this] { guarded([&] { refresh(); }); });
+    }
+    // On fractional Wayland outputs QScreen can report a rounded buffer scale.
+    // The actual window's preferred fractional ratio gives physical output/presentation pixels.
+    const qreal ratio = windowHandle() ? windowHandle()->devicePixelRatio() : devicePixelRatioF();
+    drawing.readLimits(qRound(screen->geometry().width() * ratio), qRound(preview->width() * ratio));
     const auto id = selectedGroup();
     auto left = drawing.eye(size->value(), false);
     QImage right;
@@ -254,13 +291,24 @@ void Editor::refresh()
     disparities->setRowCount(0);
     if (id.isEmpty()) return;
     const qreal value = drawing.places.value(id);
+    const auto exported = drawing.forExport();
+    disparities->setColumnCount(3);
+    disparities->setHorizontalHeaderLabels({tr("Size per view"), tr("Export (defaults)"), tr("Preview (desktop)")});
     selection->setText(tr("Selected: %1 (%2)").arg(drawing.groupLabel(id), value < 0 ? tr("Sunk") : value > 0 ? tr("Popped") : tr("Screen")));
     for (int n : themeSizes()) {
         const int row = disparities->rowCount(); disparities->insertRow(row);
-        const int pixels = drawing.disparity(id, n);
         disparities->setItem(row, 0, new QTableWidgetItem(tr("%1 px").arg(n)));
-        const auto text = pixels ? tr("%1 px").arg(pixels) : value ? tr("0 px (limit below 1 px)") : tr("0 px (screen)");
-        disparities->setItem(row, 1, new QTableWidgetItem(text));
+        auto describe = [&](const Drawing &part) {
+            const int pixels = part.disparity(id,n);
+            QString text = pixels ? tr("%1 px").arg(pixels) : value ? tr("0 px (%1)").arg(part.depthNotice(id,n)) : tr("0 px (screen)");
+            const auto ties = part.collapsedWith(id,n);
+            if (!ties.isEmpty()) text += tr("; same pixel as %1").arg(ties.join(", "));
+            return text;
+        };
+        auto *common = new QTableWidgetItem(describe(exported)); common->setToolTip(common->text());
+        auto *personal = new QTableWidgetItem(describe(drawing)); personal->setToolTip(personal->text());
+        disparities->setItem(row, 1, common);
+        disparities->setItem(row, 2, personal);
     }
 }
 
@@ -269,7 +317,8 @@ void Editor::restorePlaces(const QMap<QString, qreal> &places)
     drawing.places = places;
     for (int i = 0; i < groups->topLevelItemCount(); ++i) {
         auto *item = groups->topLevelItem(i);
-        auto *depth = static_cast<QDoubleSpinBox *>(groups->itemWidget(item, 1));
+        auto *control = groups->itemWidget(item, 1);
+        auto *depth = control ? control->findChild<QDoubleSpinBox *>() : nullptr;
         if (!depth) continue;
         QSignalBlocker block(depth);
         depth->setValue(100.0 * drawing.places.value(item->data(0, Qt::UserRole).toString()));
@@ -340,8 +389,8 @@ QString Editor::setGroupDepth(const QString &id, double value)
         Drawing candidate = drawing;
         candidate.setPlace(id, value);
         if (!selectPart(id)) return tr("Invalid group or place");
-        auto *control = static_cast<QDoubleSpinBox *>(groups->itemWidget(groups->currentItem(), 1));
         if (!STUDIO_STEREO) return tr("Enable 3D");
+        auto *control = groups->itemWidget(groups->currentItem(), 1)->findChild<QDoubleSpinBox *>();
         control->setValue(value * 100.0);
         return {};
     } catch (const std::exception &e) { return QString::fromUtf8(e.what()); }
@@ -353,16 +402,21 @@ QString Editor::sessionState() const
     for (auto i = drawing.places.cbegin(); i != drawing.places.cend(); ++i) depths[i.key()] = i.value();
     QJsonArray rows;
     for (int row = 0; row < disparities->rowCount(); ++row)
-        rows.append(QJsonArray{disparities->item(row, 0)->text(), disparities->item(row, 1)->text()});
+        rows.append(QJsonArray{disparities->item(row, 0)->text(), disparities->item(row, 1)->text(), disparities->columnCount()>2 && disparities->item(row,2) ? disparities->item(row,2)->text() : QString()});
     const QPoint global = preview->mapToGlobal(QPoint());
+    auto *screen = windowHandle() ? windowHandle()->screen() : QGuiApplication::primaryScreen();
+    QJsonObject metrics;
+    if (screen) metrics = {{"screenDpr",screen->devicePixelRatio()}, {"widgetDpr",preview->devicePixelRatioF()}, {"windowDpr",windowHandle()?windowHandle()->devicePixelRatio():devicePixelRatioF()},
+        {"screenWidth",screen->geometry().width()}, {"presentationPixels",qRound(preview->width()*(windowHandle()?windowHandle()->devicePixelRatio():devicePixelRatioF()))}};
     return QString::fromUtf8(QJsonDocument(QJsonObject{{"previewRect", QJsonArray{global.x(), global.y(), preview->width(), preview->height()}}, {"renderWidth", size->value()}, {"stereoAvailable", bool(STUDIO_STEREO)}, {"selected", selectedGroup()}, {"depths", depths},
         {"disparities", rows}, {"canUndo", history->canUndo()}, {"canRedo", history->canRedo()},
-        {"title", windowTitle()}, {"enable3d", stereo->text()}, {"pixelsPerView", size->prefix()},
+        {"desktopMetrics", metrics}, {"title", windowTitle()}, {"enable3d", stereo->text()}, {"pixelsPerView", size->prefix()},
         {"partHeader", groups->headerItem()->text(0)}}).toJson(QJsonDocument::Compact));
 }
 
 void Editor::loadProject(const QString &path)
 {
+    setWindowTitle(QFileInfo(path).fileName() + "[*]");
     QFile file(path + "/project.json");
     if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error(tr("Cannot read the project").toStdString());
     QJsonParseError error;
@@ -371,17 +425,26 @@ void Editor::loadProject(const QString &path)
     if (error.error != QJsonParseError::NoError || project.value("version").toInt() != 1
         || !project.value("icon").isString() || !project.value("groups").isObject())
         throw std::runtime_error(tr("Invalid or unsupported theme project").toStdString());
+#if STUDIO_MODELS
+    if(modelPage && project.contains("model")) { modelPage->loadProject(path,project); return; }
+#else
+    if(project.contains("model")) throw std::runtime_error(tr("The model helper is unavailable in this build.").toStdString());
+#endif
     load(path + "/icons", path + "/icons/" + project.value("icon").toString());
     applyPlaces(project.value("groups").toObject());
     loadParts(path, project);
+    setWindowTitle(QFileInfo(path).fileName() + "[*]");
     location->setText(tr("Project copy: %1").arg(path));
     if (projectLocation) projectLocation->setText(location->text());
 }
 void Editor::saveProject(const QString &destination)
 {
+#if STUDIO_MODELS
+    if(modelPage && pages->currentWidget()==modelPage && !modelPage->source.isEmpty()) {modelPage->saveProject(destination);return;}
+#endif
     ensurePeerClosed();
     if (drawing.source.isEmpty()) throw std::runtime_error(tr("Open a source first").toStdString());
-    drawing.readLimits();
+    const auto exported = drawing.forExport();
     if (QFileInfo::exists(destination)) throw std::runtime_error(tr("The project destination already exists; choose a new folder").toStdString());
     const auto parent = QFileInfo(destination).absolutePath();
     const QString canonicalParent = QFileInfo(parent).canonicalFilePath();
@@ -421,7 +484,7 @@ void Editor::saveProject(const QString &destination)
     QJsonObject levels;
     for (auto i = drawing.places.cbegin(); i != drawing.places.cend(); ++i) levels[i.key()] = i.value();
     QJsonObject project{{"version", 1}, {"icon", iconPath}, {"groups", levels},
-        {"export-limits", QJsonObject{{"sunk", drawing.sunk()}, {"popped", drawing.popped()}}},
+        {"export-limits", QJsonObject{{"sunk", exported.sunk()}, {"popped", exported.popped()}}},
         {"source-sha256", QString::fromLatin1(QCryptographicHash::hash(drawing.original, QCryptographicHash::Sha256).toHex())}};
     QStringList stereoDirectories;
 #if STUDIO_STEREO
@@ -430,8 +493,8 @@ void Editor::saveProject(const QString &destination)
         stereoDirectories << directory;
         QDir().mkpath(stage.path() + "/icons/" + directory);
         QDir().mkpath(stage.path() + "/pairs");
-        saveBytes(stage.path() + "/icons/" + directory + "/" + QFileInfo(iconPath).completeBaseName() + ".svg", drawing.pairSvg(n));
-        savePns(stage.path() + QString("/pairs/%1.pns").arg(n), drawing.eye(n, false), drawing.eye(n, true));
+        saveBytes(stage.path() + "/icons/" + directory + "/" + QFileInfo(iconPath).completeBaseName() + ".svg", exported.pairSvg(n));
+        savePns(stage.path() + QString("/pairs/%1.pns").arg(n), exported.eye(n, false), exported.eye(n, true));
     }
     {
         KConfig index(stage.path() + "/icons/index.theme", KConfig::SimpleConfig);
@@ -453,6 +516,7 @@ void Editor::saveProject(const QString &destination)
     saveBytes(stage.path() + "/project.json", QJsonDocument(project).toJson());
     if (!QDir().rename(stage.path(), destination)) throw std::runtime_error(tr("Cannot commit the project folder").toStdString());
     stage.setAutoRemove(false);
+    setWindowTitle(QFileInfo(destination).fileName() + "[*]");
     history->setClean();
     if (plasmaEditor) plasmaEditor->history->setClean();
     membersDirty = false; setWindowModified(false);
@@ -476,4 +540,83 @@ void Editor::pickAt(QPointF point)
         pickIndex = 0; lastPick = pixel;
     } else { pickIndex = (pickIndex+1) % pickStack.size(); }
     if (!pickStack.isEmpty()) selectPart(pickStack[pickIndex]);
+}
+
+void Editor::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    guarded([&] { refresh(); });
+    if (windowHandle() && observedWindow != windowHandle()) {
+        observedWindow = windowHandle();
+        connect(windowHandle(), &QWindow::screenChanged, this, [this] { guarded([&] { refresh(); }); });
+    }
+}
+
+bool Editor::event(QEvent *event)
+{
+    const bool result = QWidget::event(event);
+    if (event->type() == QEvent::DevicePixelRatioChange)
+        QTimer::singleShot(0, this, [this] { guarded([&] { refresh(); }); });
+    return result;
+}
+
+QString Editor::openModelFile(const QString& path)
+{
+#if STUDIO_MODELS
+    try {
+        if (!modelPage)
+            return tr("The model helper is unavailable in this build.");
+        modelPage->open(path);
+        pages->setCurrentWidget(modelPage);
+        return {};
+    } catch (const std::exception& e) {
+        return QString::fromUtf8(e.what());
+    }
+#else
+    Q_UNUSED(path);
+    return tr("The model helper is unavailable in this build.");
+#endif
+}
+QString Editor::setModelDepth(double value)
+{
+#if STUDIO_MODELS
+    if (!modelPage || !std::isfinite(value) || value < -1 || value > 1)
+        return tr("Invalid group or place");
+    modelPage->depth->setValue(value * 100);
+    return {};
+#else
+    Q_UNUSED(value);
+    return tr("The model helper is unavailable in this build.");
+#endif
+}
+QString Editor::modelState() const
+{
+#if STUDIO_MODELS
+    return modelPage ? modelPage->state() : QString();
+#else
+    return {};
+#endif
+}
+QString Editor::exportModelPairs(const QString& path)
+{
+#if STUDIO_MODELS
+    try {
+        modelPage->exportPairs(path);
+        return {};
+    } catch (const std::exception& e) {
+        return QString::fromUtf8(e.what());
+    }
+#else
+    Q_UNUSED(path);
+    return tr("The model helper is unavailable in this build.");
+#endif
+}
+QString Editor::saveCurrentProject(const QString& path)
+{
+    try {
+        saveProject(path);
+        return {};
+    } catch (const std::exception& e) {
+        return QString::fromUtf8(e.what());
+    }
 }

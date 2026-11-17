@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/16
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/11/15
+# Last update 2026/11/17
 #
 # sparky-stereo-boot: the boot follows the saved choice of the main screen.
 #
@@ -37,6 +37,8 @@
 #   sparky-stereo-boot export-socket       the socket service (stdin is the connection)
 #   sparky-stereo-boot plymouth-quit       plymouth-quit.service: hand the splash over
 #   sparky-stereo-boot plymouth-handover   wait for the compositor's first frame, then quit
+#   sparky-stereo-boot plymouth-shutdown MODE  plymouth-reboot/-poweroff/-halt/-kexec.service: the splash of a restart
+#                                          or shutdown (MODE reboot or shutdown) with the main screen's choice saved now
 #   sparky-stereo-boot boot-check          at boot: the resolution GRUB showed, against the one it was given
 #   sparky-stereo-boot start-finished      after boot-complete.target: the start is recorded as finished, and after
 #                                          one that did not finish the person is told what the check found
@@ -83,6 +85,7 @@ KWINRC_SYSTEM = ROOT + '/etc/xdg/kwinrc'
 DEPTH_DEFAULTS = {'SunkLimit': 10.0, 'PoppedLimit': 4.0}
 DEPTH_MAX = 1000.0
 SDDM_WAYLAND = ROOT + '/etc/sddm.conf.d/50-sparky-stereo-boot.conf'
+PLYMOUTHD = os.environ.get('SPARKY_STEREO_PLYMOUTHD', '/usr/sbin/plymouthd')
 
 DEFAULTS = {
     'SPARKY_STEREO_BOOT': 'yes',        # the boot follows the saved choice of the main screen
@@ -1489,6 +1492,42 @@ def plymouth_handover(limit=HANDOVER_LIMIT):
     return handover_failed(('LOCAL38', '%d' % limit))
 
 
+def plymouth_shutdown(mode):
+    """plymouth-reboot, -poweroff, -halt and -kexec.service: plymouthd for the restart or shutdown splash, with the
+    main screen's choice as it is saved now (main-output.json, written at every export), not the one /proc/cmdline
+    carries from the start of this boot: a screen made the main one or switched to or from 3D since then keeps its
+    mode to the end, and a screen the splash is not told about shows one eye. Without a readable record the start's
+    choice stays, and the journal says why."""
+    if mode not in ('reboot', 'shutdown'):
+        print('sparky-stereo-boot: plymouth-shutdown takes reboot or shutdown', file=sys.stderr)
+        return 2
+    try:
+        words = open(CMDLINE).read().split()
+    except OSError as error:
+        log('the kernel line was not read: %s' % error)
+        words = []
+    started = [w for w in words if w.startswith('plymouth.stereo=')]
+    line = [w for w in words if not w.startswith('plymouth.stereo=')]
+    try:
+        with open(STATE) as f:
+            record = json.load(f)
+        saved = [a for a in record.get('kernelArguments', []) if isinstance(a, str) and a.startswith('plymouth.stereo=')]
+        saved = safe_kernel_args(saved)
+    except (OSError, ValueError, AttributeError) as error:
+        log('the %s splash keeps the choice this boot started with (%s): %s is not readable: %s'
+            % ('restart' if mode == 'reboot' else 'shutdown', ' '.join(started) or '2D', STATE, error))
+        saved = started
+    if saved != started:
+        log('the %s splash follows the main screen as saved now: %s (this boot started with %s)'
+            % ('restart' if mode == 'reboot' else 'shutdown', ' '.join(saved) or '2D', ' '.join(started) or '2D'))
+    args = [PLYMOUTHD, '--mode=' + mode, '--attach-to-session', '--kernel-command-line=' + ' '.join(line + saved)]
+    try:
+        os.execv(PLYMOUTHD, args)
+    except OSError as error:
+        log('%s did not start: %s' % (PLYMOUTHD, error))
+        return 1
+
+
 def main(argv):
     command = argv[1] if len(argv) > 1 else 'status'
     if command == 'status':
@@ -1527,6 +1566,8 @@ def main(argv):
         return plymouth_quit()
     if command == 'plymouth-handover':
         return plymouth_handover()
+    if command == 'plymouth-shutdown' and len(argv) == 3:
+        return plymouth_shutdown(argv[2])
     print(__doc__ if __doc__ else 'usage: sparky-stereo-boot status|export-user USER|reapply|client', file=sys.stderr)
     return 2
 

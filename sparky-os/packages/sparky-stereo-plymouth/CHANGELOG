@@ -1,4 +1,21 @@
 -------------------------------------------------------------------------------
+  Version 20261117~sparky9~0 (2026-11-17)
+-------------------------------------------------------------------------------
+  * A screen that arrives after the splash was laid out gets the splash laid out again (ORDER 639; Daniel, 2026-11-17:
+    "it's displaying a flat sbs image"; "if it's saved mode is 2D, then it should display only one eye"). The theme sized
+    and placed its pictures once, for the screens there when it loaded: on a machine whose GPU driver comes after
+    Plymouth's device timeout (the A10: the firmware's framebuffer at 1024x768, amdgpu about 17 s in) the eyes stayed laid
+    out for the framebuffer, and a television connected later showed the left picture with the right one beside it.
+    layout () now sizes and places the background, the swirl, the logo and the electrons' orbits for the window as it is,
+    at load and at each display hotplug (Plymouth.SetDisplayHotplugFunction); the sprites are made once and keep their
+    places in the drawing order. The depth limits are read again with the window
+  * A hotplug that leaves no display (the firmware's framebuffer gone before the GPU's screens come) keeps the layout
+    as it was: with no display the window has no size and no depth limits, and the next display lays it out (found in
+    the rig: without this the script stopped at every frame of that gap, "Cannot negate non number objects")
+  * Needs plymouth 26.134.222-1+stereo3d4, whose script plugin keeps the window in both eyes for every screen of a stereo
+    boot (a screen that cannot show them shows the left eye) and sizes the eyes for the main screen
+
+-------------------------------------------------------------------------------
   Version 20261109~sparky9~0 (2026-11-09)
 -------------------------------------------------------------------------------
   * The splash follows the person's depth limits (ORDER 481; Daniel, 2026-11-05: "read the depth config by, and in this

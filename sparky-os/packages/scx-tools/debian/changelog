@@ -1,0 +1,10 @@
+scx-tools (1.1.3+ds-1+sparky1) unstable; urgency=medium
+
+  * scx_loader, the D-Bus interface that starts and switches sched_ext schedulers, from sched-ext/scx-loader at the tag v1.1.3 (commit eab0ea026f3f,
+    2026-09-05), the release CachyOS packages as scx-tools (CachyOS-PKGBUILDS scx/scx-tools PKGBUILD, 0c7ddbc13573), crates vendored by cargo vendor
+    --locked. ORDER 108. The units, the D-Bus service file, the polkit policy and the configuration are upstream's, installed by its xtask; the unit is
+    installed and not enabled. CachyOS's package enables nothing and Bazzite installs the loader and disables scx_loader.service
+    (build_files/bazzite/12-finalize.sh:161), so both ship it off; D-Bus activation by a call to org.scx.Loader still starts it for whoever asks.
+  * The tag's signature was not verified: the signer's public key has no user ID on keys.openpgp.org (stated in make-orig.sh).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 16 Nov 2026 12:00:00 -0300

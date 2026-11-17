@@ -1,0 +1,1489 @@
+Description: Add explicit input monitoring and combined recording
+Author: Daniel Campos Ramos
+Origin: vendor
+Forwarded: no
+
+diff --git a/applet/ListItemBase.qml b/applet/ListItemBase.qml
+index 0e0effe2..330b82e1 100644
+--- a/applet/ListItemBase.qml
++++ b/applet/ListItemBase.qml
+@@ -377,7 +377,7 @@ PC3.ItemDelegate {
+         anchors.fill: parent
+         enabled: main.draggedStream && main.draggedStream.deviceIndex !== item.model.Index
+         onDropped: drop => {
+-            main.draggedStream.deviceIndex = item.model.Index;
++            if (!GlobalService.routeStream(main.draggedStream, item.model.Index)) main.draggedStream.deviceIndex = item.model.Index;
+         }
+     }
+ 
+diff --git a/applet/StreamListItem.qml b/applet/StreamListItem.qml
+index b3df1899..e035ee78 100644
+--- a/applet/StreamListItem.qml
++++ b/applet/StreamListItem.qml
+@@ -16,8 +16,11 @@ ListItemBase {
+ 
+     Accessible.onToggleAction: toggleMuteItem()
+     Keys.onSpacePressed: toggleMuteItem()
+-    draggable: devicesModel && devicesModel.count > 1
++    draggable: devicesModel && devicesModel.count > 1 && model.Properties["plasma.pa.route"] !== "CombinedRecording"
+     label: {
++        if (model.Properties["plasma.pa.owner"] && model.Properties["application.description"]) {
++            return model.Properties["application.description"];
++        }
+         let parts = []
+         if (model.Client && model.Client.name && model.Client.name != "pipewire-media-session") {
+             parts.push(model.Client.name);
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index a92f3e9d..89e9dbed 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -42,6 +42,7 @@ target_sources(plasma-volume-declarative PRIVATE
+     qml/microphoneindicator.cpp qml/microphoneindicator.h
+     qml/globalservice.cpp qml/globalservice.h
+     qml/dbusinterface.cpp
++    qml/routingcontroller.cpp qml/routingcontroller.h
+ )
+ target_include_directories(plasma-volume-declarative PRIVATE qml/)
+ 
+diff --git a/src/kcm/ui/DeviceComboBox.qml b/src/kcm/ui/DeviceComboBox.qml
+index a07337ec..13f8e559 100644
+--- a/src/kcm/ui/DeviceComboBox.qml
++++ b/src/kcm/ui/DeviceComboBox.qml
+@@ -8,14 +8,18 @@
+ 
+ import QtQuick
+ import QtQuick.Controls
++import org.kde.plasma.private.volume
+ 
+ ComboBox {
+     textRole: "Description"
+     valueRole: "Index"
+ 
+     property int deviceIndex: DeviceIndex
++    property var streamObject: null
+ 
+-    onActivated: DeviceIndex = currentValue
++    onActivated: {
++        if (!GlobalService.routeStream(streamObject, currentValue)) DeviceIndex = currentValue;
++    }
+ 
+     onDeviceIndexChanged: {
+         currentIndex = indexOfValue(DeviceIndex)
+diff --git a/src/kcm/ui/DeviceListItem.qml b/src/kcm/ui/DeviceListItem.qml
+index 937d478e..49e0856e 100644
+--- a/src/kcm/ui/DeviceListItem.qml
++++ b/src/kcm/ui/DeviceListItem.qml
+@@ -28,6 +28,7 @@ ColumnLayout {
+ 
+     property alias portVisible: portBox.visible
+     property bool comboBoxLabelsVisible: false
++    property var routingController
+ 
+     RowLayout {
+         spacing: Kirigami.Units.smallSpacing
+@@ -273,6 +274,21 @@ ColumnLayout {
+         }
+     }
+ 
++    Repeater {
++        model: {
++            if (delegate.isPlayback || !delegate.routingController) return [];
++            const routes = Object.values(delegate.routingController.listens).filter(route => route.source === delegate.pulseObject.name);
++            return routes.length > 0 ? routes : [{}];
++        }
++        RouteControls {
++            required property var modelData
++            Layout.fillWidth: true
++            controller: delegate.routingController
++            sourceName: delegate.pulseObject.name
++            routeState: modelData
++        }
++    }
++
+     Kirigami.Separator {
+         visible: (delegate.ListView.view.count != 0) && (delegate.ListView.view.count !== (index + 1))
+         Layout.topMargin: Kirigami.Units.smallSpacing
+diff --git a/src/kcm/ui/RouteControls.qml b/src/kcm/ui/RouteControls.qml
+new file mode 100644
+index 00000000..45198c09
+--- /dev/null
++++ b/src/kcm/ui/RouteControls.qml
+@@ -0,0 +1,100 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++*/
++import QtQuick
++import QtQuick.Controls
++import QtQuick.Layouts
++import org.kde.kirigami as Kirigami
++
++ColumnLayout {
++    id: root
++    required property var controller
++    property string sourceName: ""
++    property bool combined: false
++    property var routeState: ({})
++    readonly property var state: combined ? controller.combined : routeState
++    readonly property string input: combined ? (state.source || "") : sourceName
++    readonly property string output: state.output || ""
++    readonly property bool wanted: state.enabled || false
++    function configure(source, output, enabled) {
++        if (combined) {
++            controller.setCombined(source, output, enabled);
++        } else {
++            controller.setListenRoute(state.id || "", source, output, enabled);
++        }
++    }
++
++    CheckBox {
++        objectName: root.combined ? "combinedRecording" : "listen-" + root.sourceName
++        text: root.combined ? i18nd("kcm_pulseaudio", "Combine output and microphone for recording") : i18nd("kcm_pulseaudio", "Listen to this device")
++        checked: root.wanted
++        enabled: controller.serviceError.length === 0 && (root.wanted || (root.input.length > 0 && root.output.length > 0))
++        onClicked: root.configure(root.input, root.output, checked)
++    }
++
++    Label {
++        visible: root.combined
++        text: i18nd("kcm_pulseaudio", "Recording apps can select Combined Recording as one input.")
++        wrapMode: Text.WordWrap
++        Layout.fillWidth: true
++    }
++
++    GridLayout {
++        columns: 2
++        Layout.fillWidth: true
++        Label {
++            visible: root.combined
++            text: i18nd("kcm_pulseaudio", "Input:")
++        }
++        ComboBox {
++            visible: root.combined
++            objectName: "combinedInput"
++            Layout.fillWidth: true
++            model: root.controller.inputs
++            textRole: "description"
++            valueRole: "name"
++            currentIndex: model.findIndex(item => item.name === root.input)
++            displayText: currentIndex < 0 ? (root.input.length > 0 ? root.state.sourceLabel : i18nd("kcm_pulseaudio", "Choose an input")) : currentText
++            Accessible.name: i18nd("kcm_pulseaudio", "Combined recording input")
++            onActivated: root.configure(currentValue, root.output, root.wanted)
++        }
++        Label {
++            text: i18nd("kcm_pulseaudio", "Output:")
++        }
++        ComboBox {
++            objectName: root.combined ? "combinedOutput" : "listenOutput-" + root.sourceName
++            Layout.fillWidth: true
++            model: root.controller.outputs
++            textRole: "description"
++            valueRole: "name"
++            currentIndex: model.findIndex(item => item.name === root.output)
++            displayText: currentIndex < 0 ? (root.output.length > 0 ? root.state.outputLabel : i18nd("kcm_pulseaudio", "Choose an output")) : currentText
++            Accessible.name: root.combined ? i18nd("kcm_pulseaudio", "Combined recording output") : i18nd("kcm_pulseaudio", "Listening output")
++            onActivated: root.configure(root.input, currentValue, root.wanted)
++        }
++    }
++
++    Kirigami.InlineMessage {
++        Layout.fillWidth: true
++        visible: root.combined && root.wanted && (root.state.reason || 0) === 0
++            && Object.values(root.controller.listens).some(route => route.enabled && (route.reason || 0) === 0
++                && route.source === root.input && route.output === root.output)
++        type: Kirigami.MessageType.Warning
++        text: i18nd("kcm_pulseaudio", "This microphone is also being sent to this output. The combined recording captures it twice, which can cause an echo.")
++    }
++
++    Kirigami.InlineMessage {
++        Layout.fillWidth: true
++        visible: text.length > 0
++        type: (root.state.reason || 0) > 0 || root.controller.serviceError.length > 0 ? Kirigami.MessageType.Error : Kirigami.MessageType.Information
++        text: root.controller.serviceError || root.controller.message(root.state)
++        actions: [
++            Kirigami.Action {
++                text: i18nd("kcm_pulseaudio", "Retry")
++                visible: (root.state.reason || 0) > 0
++                onTriggered: root.configure(root.input, root.output, root.wanted)
++            }
++        ]
++    }
++}
+diff --git a/src/kcm/ui/StreamListItem.qml b/src/kcm/ui/StreamListItem.qml
+index 2aa655f0..108676fd 100644
+--- a/src/kcm/ui/StreamListItem.qml
++++ b/src/kcm/ui/StreamListItem.qml
+@@ -18,6 +18,8 @@ ColumnLayout {
+     property alias deviceModel: deviceComboBox.model
+     readonly property bool isEventStream: Name == "sink-input-by-media-role:event"
+     property bool isPlayback
++    property var pulseStream: model.PulseObject
++    readonly property bool isCombinedRoute: !!pulseStream && pulseStream.properties["plasma.pa.route"] === "CombinedRecording"
+ 
+     width: parent ? parent.width : undefined
+ 
+@@ -57,6 +59,8 @@ ColumnLayout {
+                     text: {
+                         if (isEventStream) {
+                             return i18nd("kcm_pulseaudio", "Notification Sounds");
++                        } else if (Properties["plasma.pa.owner"] && Properties["application.description"]) {
++                            return Properties["application.description"];
+                         } else if (Client) {
+                             if (Client.name === "pipewire-media-session") {
+                                 return Name;
+@@ -83,8 +87,16 @@ ColumnLayout {
+ 
+                 DeviceComboBox {
+                     id: deviceComboBox
++                    streamObject: delegate.pulseStream
+                     Layout.minimumWidth: Kirigami.Units.gridUnit * 12
+-                    visible: !isEventStream && count > 1
++                    visible: !isEventStream && count > 1 && !delegate.isCombinedRoute
++                }
++
++                Label {
++                    visible: delegate.isCombinedRoute
++                    Layout.preferredWidth: Kirigami.Units.gridUnit * 12
++                    text: i18nd("kcm_pulseaudio", "Choose the microphone and output in Combined Recording.")
++                    wrapMode: Text.WordWrap
+                 }
+             }
+ 
+diff --git a/src/kcm/ui/main.qml b/src/kcm/ui/main.qml
+index ac81d5b2..e3c3471c 100644
+--- a/src/kcm/ui/main.qml
++++ b/src/kcm/ui/main.qml
+@@ -27,6 +27,10 @@ KCM.ScrollViewKCM {
+         id: config
+     }
+ 
++    RoutingController {
++        id: routing
++    }
++
+     SinkModel {
+         id: paSinkModel
+     }
+@@ -164,6 +168,7 @@ KCM.ScrollViewKCM {
+                 model: inactiveDevicesSwitch.checked || !inactiveDevicesSwitch.visible ? paSinkModel : paSinkFilterModel
+                 delegate: DeviceListItem {
+                     isPlayback: true
++                    routingController: routing
+                     comboBoxLabelsVisible: column.comboBoxLabelsVisible
+                 }
+             }
+@@ -188,10 +193,43 @@ KCM.ScrollViewKCM {
+                 model: inactiveDevicesSwitch.checked || !inactiveDevicesSwitch.visible ? paSourceModel : paSourceFilterModel
+                 delegate: DeviceListItem {
+                     isPlayback: false
++                    routingController: routing
+                     comboBoxLabelsVisible: column.comboBoxLabelsVisible
+                 }
+             }
+ 
++            Kirigami.ListSectionHeader {
++                Layout.fillWidth: true
++                text: i18nd("kcm_pulseaudio", "Combined Recording")
++            }
++
++            RouteControls {
++                Layout.fillWidth: true
++                Layout.leftMargin: Kirigami.Units.largeSpacing
++                Layout.rightMargin: Kirigami.Units.largeSpacing
++                controller: routing
++                combined: true
++            }
++
++            Repeater {
++                model: Object.values(routing.listens).filter(route => route.reason > 0 && !routing.inputs.some(input => input.name === route.source))
++                Kirigami.InlineMessage {
++                    required property var modelData
++                    Layout.fillWidth: true
++                    Layout.leftMargin: Kirigami.Units.largeSpacing
++                    Layout.rightMargin: Kirigami.Units.largeSpacing
++                    visible: true
++                    type: Kirigami.MessageType.Error
++                    text: routing.message(modelData)
++                    actions: [
++                        Kirigami.Action {
++                            text: i18nd("kcm_pulseaudio", "Stop Listening")
++                            onTriggered: routing.setListenRoute(modelData.id, modelData.source, modelData.output, false)
++                        }
++                    ]
++                }
++            }
++
+             Kirigami.ListSectionHeader {
+                 Layout.fillWidth: true
+                 visible: inactiveCards.visible
+diff --git a/src/kded/CMakeLists.txt b/src/kded/CMakeLists.txt
+index 47736611..5278398a 100644
+--- a/src/kded/CMakeLists.txt
++++ b/src/kded/CMakeLists.txt
+@@ -7,6 +7,8 @@ kcoreaddons_add_plugin(audioshortcutsservice
+     SOURCES
+         audioshortcutsservice.cpp
+         audioshortcutsservice.h
++        audioroutes.cpp
++        audioroutes.h
+         mutedmicrophonereminder.cpp
+         mutedmicrophonereminder.h
+         KDBusPropertiesChangedAdaptor.cpp
+diff --git a/src/kded/audioroutes.cpp b/src/kded/audioroutes.cpp
+new file mode 100644
+index 00000000..1b56d0b8
+--- /dev/null
++++ b/src/kded/audioroutes.cpp
+@@ -0,0 +1,698 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++#include "audioroutes.h"
++
++#include <QDBusConnection>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QPointer>
++#include <QProcess>
++#include <QRegularExpression>
++#include <QSet>
++#include <QUuid>
++#include <functional>
++#ifdef Q_OS_LINUX
++#include <signal.h>
++#include <sys/prctl.h>
++#include <unistd.h>
++#endif
++#include <KConfigGroup>
++#include <KLocalizedString>
++#include <PulseAudioQt/Context>
++#include <PulseAudioQt/Device>
++#include <PulseAudioQt/Module>
++#include <PulseAudioQt/Server>
++#include <PulseAudioQt/Sink>
++#include <PulseAudioQt/SinkInput>
++#include <PulseAudioQt/Source>
++#include <PulseAudioQt/SourceOutput>
++
++using namespace Qt::Literals::StringLiterals;
++namespace
++{
++const QString combinedName = u"plasma_pa_combined"_s;
++QString json(const QJsonObject &o)
++{
++    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
++}
++QString quoted(const QString &s)
++{
++    const auto a = QJsonDocument(QJsonArray{s}).toJson(QJsonDocument::Compact);
++    return QString::fromUtf8(a.mid(1, a.size() - 2));
++}
++QString propertyArgument(QString value)
++{
++    value.replace(u'\'', u"\\'"_s);
++    return u'\'' + value + u'\'';
++}
++PulseAudioQt::Source *source(const QString &name)
++{
++    for (auto *s : PulseAudioQt::Context::instance()->sources())
++        if (s->name() == name)
++            return s;
++    return nullptr;
++}
++PulseAudioQt::Sink *sink(const QString &name)
++{
++    for (auto *s : PulseAudioQt::Context::instance()->sinks())
++        if (s->name() == name)
++            return s;
++    return nullptr;
++}
++QString node(PulseAudioQt::Device *d)
++{
++    return d->pulseProperties().value(u"node.name"_s, d->name()).toString();
++}
++QString serial(PulseAudioQt::Device *d)
++{
++    const auto value = d->pulseProperties().value(u"object.serial"_s).toString();
++    bool ok;
++    const auto number = value.toULongLong(&ok);
++    return ok ? QString::number(number) : QString();
++}
++bool monitor(PulseAudioQt::Device *d)
++{
++    return d->pulseProperties().value(u"device.class"_s) == u"monitor"_s;
++}
++QString identity(PulseAudioQt::Device *d)
++{
++    if (PulseAudioQt::Context::instance()->server()->isPipeWire())
++        return node(d);
++    return monitor(d) && d->name().endsWith(u".monitor"_s) ? d->name().chopped(8) : d->name();
++}
++} // namespace
++
++struct AudioRoutes::Route : QObject {
++    QString key, input, output, inputLabel, outputLabel, identity;
++    bool enabled = false, mix = false, blocked = false;
++    int reason = 0;
++    QString detail;
++    QPointer<QProcess> process;
++    QList<uint> modules;
++    QList<QStringList> commands;
++    QTimer startup;
++    bool running = false, stopping = false, native = false;
++    QJsonObject state() const
++    {
++        return {{u"id"_s, key},
++                {u"source"_s, input},
++                {u"output"_s, output},
++                {u"enabled"_s, enabled},
++                {u"running"_s, running},
++                {u"reason"_s, reason},
++                {u"detail"_s, detail},
++                {u"sourceLabel"_s, inputLabel},
++                {u"outputLabel"_s, outputLabel}};
++    }
++};
++
++AudioRoutes::AudioRoutes(QObject *parent)
++    : QObject(parent)
++    , m_config(KSharedConfig::openConfig(u"plasmaparc"_s))
++    , m_combined(std::make_shared<Route>())
++{
++    m_combined->key = u"CombinedRecording"_s;
++    m_combined->mix = true;
++    KConfigGroup group(m_config, u"AudioRoutes"_s);
++    m_owner = group.readEntry("Owner", QString());
++    if (QUuid(m_owner).isNull()) {
++        m_owner = QUuid::createUuid().toString(QUuid::WithoutBraces);
++        group.writeEntry("Owner", m_owner);
++        group.sync();
++    }
++    const auto load = [&](Route &r) {
++        KConfigGroup g(&group, r.key);
++        r.input = g.readEntry("Source", QString());
++        r.output = g.readEntry("Output", QString());
++        r.enabled = g.readEntry("Enabled", false);
++        r.inputLabel = g.readEntry("SourceLabel", r.input);
++        r.outputLabel = g.readEntry("OutputLabel", r.output);
++    };
++    load(*m_combined);
++    for (const auto &name : group.groupList()) {
++        if (!name.startsWith(u"Listen-"_s))
++            continue;
++        auto r = std::make_shared<Route>();
++        r->key = name;
++        load(*r);
++        m_listen.insert(r->key, r);
++    }
++    auto *c = PulseAudioQt::Context::instance();
++    connect(c, &PulseAudioQt::Context::stateChanged, this, [this, c] {
++        if (c->state() != PulseAudioQt::Context::State::Ready) {
++            for (const auto &r : m_listen)
++                stop(*r);
++            stop(*m_combined);
++        }
++        schedule();
++    });
++    connect(c, &PulseAudioQt::Context::sourceAdded, this, &AudioRoutes::schedule);
++    connect(c, &PulseAudioQt::Context::sourceRemoved, this, &AudioRoutes::schedule);
++    connect(c, &PulseAudioQt::Context::sinkAdded, this, &AudioRoutes::schedule);
++    connect(c, &PulseAudioQt::Context::sinkRemoved, this, &AudioRoutes::schedule);
++    // Also detect a helper that started but never published its streams.
++    m_timer.setInterval(250);
++    connect(&m_timer, &QTimer::timeout, this, &AudioRoutes::reconcile);
++    m_timer.start();
++    QDBusConnection::sessionBus().registerObject(u"/org/kde/plasma/AudioRoutes"_s, this, QDBusConnection::ExportScriptableContents);
++}
++
++AudioRoutes::~AudioRoutes()
++{
++    m_timer.stop();
++    for (auto &r : m_listen)
++        stop(*r);
++    stop(*m_combined);
++}
++void AudioRoutes::schedule()
++{
++    QTimer::singleShot(0, this, &AudioRoutes::reconcile);
++}
++void AudioRoutes::save(Route &r)
++{
++    KConfigGroup root(m_config, u"AudioRoutes"_s), g(&root, r.key);
++    g.writeEntry("Source", r.input);
++    g.writeEntry("Output", r.output);
++    g.writeEntry("Enabled", r.enabled);
++    g.writeEntry("SourceLabel", r.inputLabel);
++    g.writeEntry("OutputLabel", r.outputLabel);
++    g.sync();
++}
++QString AudioRoutes::snapshot() const
++{
++    QJsonObject listens;
++    for (auto it = m_listen.cbegin(); it != m_listen.cend(); ++it) {
++        QString key = it.value()->input;
++        if (listens.contains(key))
++            key = it.key();
++        while (listens.contains(key))
++            key += u'#';
++        listens.insert(key, it.value()->state());
++    }
++    return json({{u"listen"_s, listens}, {u"combined"_s, m_combined->state()}});
++}
++void AudioRoutes::setListen(const QString &input, const QString &output, bool enabled)
++{
++    QString key;
++    for (const auto &r : m_listen)
++        if (r->input == input) {
++            key = r->key;
++            break;
++        }
++    setListenRoute(key, input, output, enabled);
++}
++void AudioRoutes::setListenRoute(const QString &id, const QString &input, const QString &output, bool enabled)
++{
++    const QString key = m_listen.contains(id) ? id : u"Listen-"_s + QUuid::createUuid().toString(QUuid::WithoutBraces);
++    auto &r = m_listen[key];
++    if (!r) {
++        r = std::make_shared<Route>();
++        r->key = key;
++    }
++    const bool stopped = stop(*r);
++    r->input = input;
++    r->output = output;
++    r->enabled = enabled;
++    r->blocked = !stopped;
++    r->reason = stopped ? 0 : 10;
++    if (auto *d = source(input))
++        r->inputLabel = d->description();
++    else
++        r->inputLabel = input;
++    if (auto *d = sink(output))
++        r->outputLabel = d->description();
++    else
++        r->outputLabel = output;
++    save(*r);
++    if (stopped)
++        reconcile();
++    Q_EMIT changed();
++}
++void AudioRoutes::moveListen(const QString &id, bool playback, uint deviceIndex)
++{
++    const auto r = m_listen.value(id);
++    if (!r)
++        return;
++    if (playback) {
++        for (auto *d : PulseAudioQt::Context::instance()->sinks())
++            if (d->index() == deviceIndex) {
++                setListenRoute(id, r->input, d->name(), r->enabled);
++                return;
++            }
++    } else {
++        for (auto *d : PulseAudioQt::Context::instance()->sources())
++            if (d->index() == deviceIndex) {
++                setListenRoute(id, d->name(), r->output, r->enabled);
++                return;
++            }
++    }
++}
++void AudioRoutes::setCombined(const QString &input, const QString &output, bool enabled)
++{
++    auto &r = *m_combined;
++    const bool stopped = stop(r);
++    r.input = input;
++    r.output = output;
++    r.enabled = enabled;
++    r.blocked = !stopped;
++    r.reason = stopped ? 0 : 10;
++    if (auto *d = source(input))
++        r.inputLabel = d->description();
++    else
++        r.inputLabel = input;
++    if (auto *d = sink(output))
++        r.outputLabel = d->description();
++    else
++        r.outputLabel = output;
++    save(r);
++    if (stopped)
++        reconcile();
++    Q_EMIT changed();
++}
++bool AudioRoutes::stop(Route &r)
++{
++    r.stopping = true;
++    r.startup.stop();
++    r.running = false;
++    r.identity.clear();
++    if (r.process) {
++        auto *p = r.process.data();
++        r.process = nullptr;
++        if (r.native && p->state() != QProcess::NotRunning)
++            p->waitForFinished(2000);
++        p->disconnect(this);
++        if (p->state() != QProcess::NotRunning) {
++            p->terminate();
++            if (!p->waitForFinished(1500)) {
++                p->kill();
++                p->waitForFinished(1500);
++            }
++        }
++        delete p;
++    }
++    r.commands.clear();
++    QList<uint> remaining;
++    if (PulseAudioQt::Context::instance()->state() == PulseAudioQt::Context::State::Ready) {
++        for (auto it = r.modules.crbegin(); it != r.modules.crend(); ++it) {
++            QProcess p;
++            p.start(u"pactl"_s, {u"unload-module"_s, QString::number(*it)});
++            if (!p.waitForFinished(2000) || p.exitCode() != 0) {
++                for (auto *m : PulseAudioQt::Context::instance()->modules())
++                    if (m->index() == *it && m->argument().contains(u"plasma.pa.owner="_s + m_owner))
++                        remaining.prepend(*it);
++            }
++        }
++    }
++    if (!remaining.isEmpty()) {
++        QProcess query;
++        query.start(u"pactl"_s, {u"--format=json"_s, u"list"_s, u"modules"_s});
++        if (query.waitForFinished(2000) && query.exitCode() == 0) {
++            const auto document = QJsonDocument::fromJson(query.readAllStandardOutput());
++            if (document.isArray()) {
++                QSet<uint> existing;
++                for (const auto &value : document.array())
++                    existing.insert(value.toObject().value(u"index"_s).toInt());
++                remaining.removeIf([&](uint id) {
++                    return !existing.contains(id);
++                });
++            }
++        }
++    }
++    r.modules = remaining;
++    r.stopping = false;
++    if (!remaining.isEmpty()) {
++        r.reason = 10;
++        r.blocked = true;
++        return false;
++    }
++    return true;
++}
++void AudioRoutes::failed(Route &r, int reason, const QString &detail)
++{
++    r.reason = stop(r) ? reason : 10;
++    r.detail = detail;
++    r.blocked = true;
++    Q_EMIT changed();
++}
++bool AudioRoutes::wouldLoop(const Route &route) const
++{
++    QMap<QString, QStringList> edges;
++    for (const auto &r : m_listen) {
++        if (!r->enabled)
++            continue;
++        auto *a = source(r->input);
++        auto *b = sink(r->output);
++        if (a && b)
++            edges[identity(a)].append(identity(b));
++    }
++    if (m_combined->enabled) {
++        auto *a = source(m_combined->input);
++        auto *b = sink(m_combined->output);
++        if (a)
++            edges[identity(a)].append(combinedName);
++        if (b)
++            edges[identity(b)].append(combinedName);
++    }
++    const auto reaches = [&](const QString &from, const QString &target) {
++        QSet<QString> visited;
++        std::function<bool(const QString &)> visit = [&](const QString &n) {
++            if (n == target)
++                return true;
++            if (visited.contains(n))
++                return false;
++            visited.insert(n);
++            for (const auto &child : edges.value(n))
++                if (visit(child))
++                    return true;
++            return false;
++        };
++        return visit(from);
++    };
++    auto *a = source(route.input);
++    auto *b = sink(route.output);
++    return route.mix ? ((a && reaches(combinedName, identity(a))) || (b && reaches(combinedName, identity(b)))) : (a && b && reaches(identity(b), identity(a)));
++}
++void AudioRoutes::reconcile()
++{
++    const auto before = snapshot();
++    auto routes = m_listen.values();
++    routes.append(m_combined);
++    cleanOrphans();
++    for (const auto &ptr : routes) {
++        auto &r = *ptr;
++        int reason = 0;
++        QString detail;
++        auto *a = source(r.input);
++        auto *b = sink(r.output);
++        if (!r.enabled) {
++            if (r.reason != 10)
++                stop(r);
++            if (r.modules.isEmpty())
++                r.reason = 0;
++            continue;
++        }
++        if (r.reason == 10 && r.blocked)
++            continue;
++        if (PulseAudioQt::Context::instance()->state() != PulseAudioQt::Context::State::Ready)
++            reason = 1;
++        else if ((r.mix && (r.input == combinedName || r.input.startsWith(combinedName + u"."_s))) || r.output.startsWith(combinedName) || wouldLoop(r))
++            reason = 8;
++        else if (!a) {
++            reason = 2;
++            detail = r.inputLabel;
++        } else if (!b) {
++            reason = 3;
++            detail = r.outputLabel;
++        }
++        if (reason) {
++            const bool stopped = stop(r);
++            r.reason = stopped ? reason : 10;
++            r.detail = detail;
++            r.blocked = !stopped;
++            continue;
++        }
++        const auto id = QString::number(a->index()) + u":"_s + QString::number(b->index());
++        if (!r.identity.isEmpty() && r.identity != id) {
++            if (!stop(r))
++                continue;
++            r.blocked = false;
++        }
++        if (!r.process && r.modules.isEmpty() && !r.blocked) {
++            r.reason = 0;
++            start(r);
++            r.identity = id;
++        }
++    }
++    if (snapshot() != before)
++        Q_EMIT changed();
++}
++
++void AudioRoutes::start(Route &r)
++{
++    auto *a = source(r.input);
++    auto *b = sink(r.output);
++    const bool pw = PulseAudioQt::Context::instance()->server()->isPipeWire();
++    r.native = !pw;
++    auto *p = new QProcess(this);
++    r.process = p;
++    p->setProcessChannelMode(QProcess::MergedChannels);
++    connect(p, &QProcess::readyReadStandardOutput, this, [p] {
++        p->readAllStandardOutput();
++    });
++    connect(p, &QProcess::errorOccurred, this, [this, &r](QProcess::ProcessError error) {
++        if (error == QProcess::FailedToStart)
++            QTimer::singleShot(0, this, [this, &r, guard = QPointer<QProcess>(r.process)] {
++                if (guard && r.process == guard)
++                    failed(r, 4, r.mix ? u"pw-cli"_s : u"pw-loopback"_s);
++            });
++    });
++    if (!pw) {
++        // PulseAudio's modules are owned by their returned IDs, never by name.
++        const auto loopback = [&](const QString &src, const QString &dst, const QString &label) {
++            return QStringList{u"load-module"_s,
++                               u"module-loopback"_s,
++                               u"source="_s + quoted(src),
++                               u"sink="_s + quoted(dst),
++                               u"source_dont_move=true"_s,
++                               u"sink_dont_move=true"_s,
++                               u"sink_input_properties="_s
++                                   + propertyArgument(u"media.name="_s + quoted(label) + u" application.name="_s + quoted(label) + u" application.description="_s + quoted(label)
++                                                      + u" plasma.pa.owner="_s + m_owner + u" plasma.pa.route="_s + r.key),
++                               u"source_output_properties="_s
++                                   + propertyArgument(u"media.name="_s + quoted(label) + u" application.name="_s + quoted(label) + u" application.description="_s + quoted(label)
++                                                      + u" plasma.pa.owner="_s + m_owner + u" plasma.pa.route="_s + r.key)};
++        };
++        if (r.mix) {
++            QProcess query;
++            query.start(u"pactl"_s, {u"--format=json"_s, u"list"_s, u"sources"_s});
++            if (!query.waitForFinished(2000) || query.exitCode() != 0) {
++                failed(r, 9);
++                return;
++            }
++            QString rate;
++            for (const auto &value : QJsonDocument::fromJson(query.readAllStandardOutput()).array()) {
++                const auto item = value.toObject();
++                if (item.value(u"name"_s).toString() == r.input) {
++                    rate = QRegularExpression(u"\\b([0-9]+)Hz\\b"_s).match(item.value(u"sample_specification"_s).toString()).captured(1);
++                }
++            }
++            if (rate.isEmpty()) {
++                failed(r, 9);
++                return;
++            }
++            r.commands.append({u"load-module"_s,
++                               u"module-null-sink"_s,
++                               u"sink_name="_s + combinedName + u"_bus"_s,
++                               u"sink_properties="_s
++                                   + propertyArgument(u"device.description="_s + quoted(i18nd("kcm_pulseaudio", "Combined Recording")) + u" plasma.pa.owner="_s
++                                                      + m_owner + u" plasma.pa.route="_s + r.key),
++                               u"format=float32le"_s,
++                               u"rate="_s + rate});
++            r.commands.append(loopback(r.input, combinedName + u"_bus"_s, i18nd("kcm_pulseaudio", "Combined Recording") + u": "_s + a->description()));
++            r.commands.append(
++                loopback(r.output + u".monitor"_s, combinedName + u"_bus"_s, i18nd("kcm_pulseaudio", "Combined Recording") + u": "_s + b->description()));
++            r.commands.append({u"load-module"_s,
++                               u"module-remap-source"_s,
++                               u"master="_s + combinedName + u"_bus.monitor"_s,
++                               u"source_name="_s + combinedName,
++                               u"source_properties="_s
++                                   + propertyArgument(u"device.description="_s + quoted(i18nd("kcm_pulseaudio", "Combined Recording")) + u" plasma.pa.owner="_s
++                                                      + m_owner + u" plasma.pa.route="_s + r.key)});
++        } else
++            r.commands.append(loopback(r.input, r.output, i18nd("kcm_pulseaudio", "Listen: %1", a->description())));
++        p->disconnect(this);
++        delete p;
++        r.process = nullptr;
++        nativeStep(r);
++        return;
++    }
++    const auto sourceSerial = serial(a), sinkSerial = serial(b);
++    if (sourceSerial.isEmpty() || sinkSerial.isEmpty()) {
++        failed(r, 6);
++        return;
++    }
++    const QString name = u"plasma-pa-"_s + r.key;
++#ifdef Q_OS_LINUX
++    const auto parentPid = getpid();
++    p->setChildProcessModifier([parentPid] {
++        prctl(PR_SET_PDEATHSIG, SIGTERM);
++        if (getppid() != parentPid)
++            _exit(1);
++    });
++#endif
++    if (r.mix) {
++        QJsonArray rules;
++        for (const auto &[device, isMonitor] : QList<QPair<PulseAudioQt::Device *, bool>>{{a, monitor(a)}, {b, true}}) {
++            QJsonObject props{{u"stream.capture.sink"_s, isMonitor},
++                              {u"node.name"_s, name + (device == a ? u".microphone"_s : u".output"_s)},
++                              {u"media.name"_s, i18nd("kcm_pulseaudio", "Combined Recording") + u": "_s + device->description()},
++                              {u"application.name"_s, i18nd("kcm_pulseaudio", "Combined Recording") + u": "_s + device->description()},
++                              {u"application.description"_s, i18nd("kcm_pulseaudio", "Combined Recording") + u": "_s + device->description()},
++                              {u"audio.position"_s, QJsonArray{u"FL"_s, u"FR"_s}},
++                              {u"combine.audio.position"_s, QJsonArray{u"FL"_s, u"FR"_s}}};
++            rules.append(QJsonObject{{u"matches"_s, QJsonArray{QJsonObject{{u"object.serial"_s, serial(device)}}}},
++                                     {u"actions"_s, QJsonObject{{u"create-stream"_s, props}}}});
++        }
++        const QJsonObject args{
++            {u"combine.mode"_s, u"source"_s},
++            {u"node.name"_s, combinedName},
++            {u"node.description"_s, i18nd("kcm_pulseaudio", "Combined Recording")},
++            {u"combine.props"_s, QJsonObject{{u"audio.position"_s, QJsonArray{u"FL"_s, u"FR"_s}}, {u"node.virtual"_s, false}, {u"priority.session"_s, 0}}},
++            {u"stream.props"_s,
++             QJsonObject{{u"node.virtual"_s, false},
++                         {u"node.dont-fallback"_s, true},
++                         {u"node.passive"_s, true},
++                         {u"plasma.pa.owner"_s, m_owner},
++                         {u"plasma.pa.route"_s, r.key}}},
++            {u"stream.rules"_s, rules}};
++        p->start(u"pw-cli"_s, {u"-m"_s, u"load-module"_s, u"libpipewire-module-combine-stream"_s, json(args)});
++    } else {
++        QJsonObject capture{{u"target.object"_s, sourceSerial},
++                            {u"plasma.pa.owner"_s, m_owner},
++                            {u"plasma.pa.route"_s, r.key},
++                            {u"stream.capture.sink"_s, monitor(a)},
++                            {u"node.virtual"_s, false},
++                            {u"node.dont-fallback"_s, true},
++                            {u"node.name"_s, name + u".capture"_s},
++                            {u"application.name"_s, i18nd("kcm_pulseaudio", "Listen: %1", a->description())},
++                            {u"application.description"_s, i18nd("kcm_pulseaudio", "Listen: %1", a->description())},
++                            {u"media.name"_s, i18nd("kcm_pulseaudio", "Listen: %1", a->description())}};
++        QJsonObject playback{{u"target.object"_s, sinkSerial},
++                             {u"plasma.pa.owner"_s, m_owner},
++                             {u"plasma.pa.route"_s, r.key},
++                             {u"node.virtual"_s, false},
++                             {u"node.dont-fallback"_s, true},
++                             {u"node.name"_s, name + u".playback"_s},
++                             {u"application.name"_s, i18nd("kcm_pulseaudio", "Listen: %1", a->description())},
++                            {u"application.description"_s, i18nd("kcm_pulseaudio", "Listen: %1", a->description())},
++                            {u"media.name"_s, i18nd("kcm_pulseaudio", "Listen: %1", a->description())}};
++        const QMap<QString, QString> positions{{u"front-left"_s, u"FL"_s},
++                                               {u"front-right"_s, u"FR"_s},
++                                               {u"front-center"_s, u"FC"_s},
++                                               {u"lfe"_s, u"LFE"_s},
++                                               {u"rear-left"_s, u"RL"_s},
++                                               {u"rear-right"_s, u"RR"_s},
++                                               {u"side-left"_s, u"SL"_s},
++                                               {u"side-right"_s, u"SR"_s},
++                                               {u"rear-center"_s, u"RC"_s},
++                                               {u"mono"_s, u"MONO"_s},
++                                               {u"front-left-of-center"_s, u"FLC"_s},
++                                               {u"front-right-of-center"_s, u"FRC"_s},
++                                               {u"top-center"_s, u"TC"_s},
++                                               {u"top-front-left"_s, u"TFL"_s},
++                                               {u"top-front-center"_s, u"TFC"_s},
++                                               {u"top-front-right"_s, u"TFR"_s},
++                                               {u"top-rear-left"_s, u"TRL"_s},
++                                               {u"top-rear-center"_s, u"TRC"_s},
++                                               {u"top-rear-right"_s, u"TRR"_s}};
++        QStringList channels;
++        for (const auto &ch : a->rawChannels())
++            channels.append(positions.value(ch, ch.toUpper()));
++        p->start(u"pw-loopback"_s,
++                 {u"--name"_s,
++                  name,
++                  u"--channel-map"_s,
++                  u"[ "_s + channels.join(u' ') + u" ]"_s,
++                  u"--capture-props"_s,
++                  json(capture),
++                  u"--playback-props"_s,
++                  json(playback)});
++    }
++    connect(p, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this, [this, &r, p](int code, QProcess::ExitStatus) {
++        QTimer::singleShot(0, this, [this, &r, code, guard = QPointer<QProcess>(p)] {
++            if (guard && r.process == guard)
++                failed(r, 5, QString::number(code));
++        });
++    });
++    r.startup.setSingleShot(true);
++    r.startup.setInterval(5000);
++    r.startup.disconnect(this);
++    connect(&r.startup, &QTimer::timeout, this, [this, &r] {
++        const bool present = r.mix ? source(combinedName) != nullptr : [&] {
++            bool capture = false, playback = false;
++            for (auto *s : PulseAudioQt::Context::instance()->sinkInputs())
++                if (s->properties().value(u"node.name"_s).toString() == u"plasma-pa-"_s + r.key + u".playback"_s)
++                    playback = sink(r.output) && s->deviceIndex() == sink(r.output)->index();
++            for (auto *s : PulseAudioQt::Context::instance()->sourceOutputs())
++                if (s->properties().value(u"node.name"_s).toString() == u"plasma-pa-"_s + r.key + u".capture"_s)
++                    capture = source(r.input) && s->deviceIndex() == source(r.input)->index();
++            return capture && playback;
++        }();
++        if (!present)
++            failed(r, 7);
++        else {
++            r.running = true;
++            Q_EMIT changed();
++        }
++    });
++    r.startup.start();
++}
++
++void AudioRoutes::nativeStep(Route &r)
++{
++    if (r.commands.isEmpty()) {
++        r.running = true;
++        Q_EMIT changed();
++        return;
++    }
++    auto *p = new QProcess(this);
++    r.process = p;
++    const auto command = r.commands.takeFirst();
++    connect(p, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this, [this, &r, p](int code, QProcess::ExitStatus status) {
++        bool ok;
++        const auto id = QString::fromUtf8(p->readAllStandardOutput()).trimmed().toUInt(&ok);
++        if (!ok || code != 0 || status != QProcess::NormalExit) {
++            QTimer::singleShot(0, this, [this, &r, guard = QPointer<QProcess>(p)] {
++                if (guard && r.process == guard)
++                    failed(r, 9);
++            });
++            return;
++        }
++        r.modules.append(id);
++        if (r.stopping)
++            return;
++        r.process = nullptr;
++        p->deleteLater();
++        nativeStep(r);
++    });
++    connect(p, &QProcess::errorOccurred, this, [this, &r](QProcess::ProcessError e) {
++        if (e == QProcess::FailedToStart)
++            QTimer::singleShot(0, this, [this, &r, guard = QPointer<QProcess>(r.process)] {
++                if (guard && r.process == guard)
++                    failed(r, 4, u"pactl"_s);
++            });
++    });
++    p->start(u"pactl"_s, command);
++    QTimer::singleShot(5000, this, [this, &r, guard = QPointer<QProcess>(p)] {
++        if (guard && r.process == guard && guard->state() != QProcess::NotRunning)
++            failed(r, 9);
++    });
++}
++
++void AudioRoutes::cleanOrphans()
++{
++    auto *c = PulseAudioQt::Context::instance();
++    if (c->state() != PulseAudioQt::Context::State::Ready || c->server()->isPipeWire())
++        return;
++    auto routes = m_listen.values();
++    routes.append(m_combined);
++    QSet<uint> live;
++    for (const auto &r : routes) {
++        if (r->process || !r->commands.isEmpty())
++            return;
++        for (auto id : r->modules)
++            live.insert(id);
++    }
++    for (auto *m : c->modules()) {
++        if (!live.contains(m->index()) && m->argument().contains(u"plasma.pa.owner="_s + m_owner)) {
++            QProcess p;
++            p.start(u"pactl"_s, {u"unload-module"_s, QString::number(m->index())});
++            p.waitForFinished(2000);
++        }
++    }
++}
++
++#include "moc_audioroutes.cpp"
+diff --git a/src/kded/audioroutes.h b/src/kded/audioroutes.h
+new file mode 100644
+index 00000000..81aadce1
+--- /dev/null
++++ b/src/kded/audioroutes.h
+@@ -0,0 +1,44 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++#pragma once
++
++#include <KSharedConfig>
++#include <QMap>
++#include <QObject>
++#include <QTimer>
++#include <memory>
++
++class AudioRoutes : public QObject
++{
++    Q_OBJECT
++    Q_CLASSINFO("D-Bus Interface", "org.kde.plasma.AudioRoutes")
++public:
++    explicit AudioRoutes(QObject *parent);
++    ~AudioRoutes() override;
++    Q_SCRIPTABLE QString snapshot() const;
++    Q_SCRIPTABLE void setListen(const QString &source, const QString &output, bool enabled);
++    Q_SCRIPTABLE void setListenRoute(const QString &id, const QString &source, const QString &output, bool enabled);
++    Q_SCRIPTABLE void moveListen(const QString &id, bool playback, uint deviceIndex);
++    Q_SCRIPTABLE void setCombined(const QString &source, const QString &output, bool enabled);
++Q_SIGNALS:
++    Q_SCRIPTABLE void changed();
++
++private:
++    struct Route;
++    void schedule();
++    void reconcile();
++    void save(Route &route);
++    void start(Route &route);
++    bool stop(Route &route);
++    void nativeStep(Route &route);
++    void failed(Route &route, int reason, const QString &detail = {});
++    bool wouldLoop(const Route &route) const;
++    void cleanOrphans();
++    QString m_owner;
++    KSharedConfig::Ptr m_config;
++    QMap<QString, std::shared_ptr<Route>> m_listen;
++    std::shared_ptr<Route> m_combined;
++    QTimer m_timer;
++};
+diff --git a/src/kded/audioshortcutsservice.cpp b/src/kded/audioshortcutsservice.cpp
+index 19913a5a..89fd8f7a 100644
+--- a/src/kded/audioshortcutsservice.cpp
++++ b/src/kded/audioshortcutsservice.cpp
+@@ -6,6 +6,7 @@
+ #include "audioshortcutsservice.h"
+ 
+ #include "audioicon.h"
++#include "audioroutes.h"
+ 
+ #include <QAction>
+ #include <QDBusConnection>
+@@ -40,6 +41,7 @@ AudioShortcutsService::AudioShortcutsService(QObject *parent, const QList<QVaria
+     , m_osdDBusInterface(new OsdServiceInterface(OSD_DBUS_SERVICE, OSD_DBUS_PATH, QDBusConnection::sessionBus(), this))
+     , m_feedback(new VolumeFeedback(this))
+ {
++    new AudioRoutes(this);
+     connect(m_globalConfigWatcher.get(), &KConfigWatcher::configChanged, this, [this](const KConfigGroup &group, const QByteArrayList &names) {
+         if (group.name() == "General"_ba && names.contains("MutedMicrophoneReminderOsd"_ba)) {
+             if (m_globalConfig->mutedMicrophoneReminderOsd()) {
+diff --git a/src/qml/globalservice.cpp b/src/qml/globalservice.cpp
+index 4733472b..64de6307 100644
+--- a/src/qml/globalservice.cpp
++++ b/src/qml/globalservice.cpp
+@@ -6,6 +6,8 @@
+ 
+ #include "globalservice.h"
+ 
++#include <PulseAudioQt/SinkInput>
++#include <PulseAudioQt/Stream>
+ #include <QDBusConnection>
+ #include <QDBusMessage>
+ #include <QString>
+@@ -15,6 +17,21 @@ using namespace Qt::Literals::StringLiterals;
+ constexpr QLatin1String OSD_DBUS_SERVICE = "org.kde.plasmashell"_L1;
+ constexpr QLatin1String OSD_DBUS_PATH = "/org/kde/osdService"_L1;
+ 
++bool GlobalService::routeStream(QObject *object, quint32 deviceIndex)
++{
++    auto *stream = qobject_cast<PulseAudioQt::Stream *>(object);
++    if (!stream || !stream->properties().contains(u"plasma.pa.owner"_s))
++        return false;
++    const QString id = stream->properties().value(u"plasma.pa.route"_s).toString();
++    if (!id.startsWith(u"Listen-"_s))
++        return false;
++    ensureKDEDModule();
++    auto request = QDBusMessage::createMethodCall(u"org.kde.kded6"_s, u"/org/kde/plasma/AudioRoutes"_s, u"org.kde.plasma.AudioRoutes"_s, u"moveListen"_s);
++    request.setArguments({id, qobject_cast<PulseAudioQt::SinkInput *>(object) != nullptr, deviceIndex});
++    QDBusConnection::sessionBus().call(request, QDBus::NoBlock);
++    return true;
++}
++
+ void GlobalService::globalMuteSinks()
+ {
+     invokeShortcut(u"mute"_s);
+diff --git a/src/qml/globalservice.h b/src/qml/globalservice.h
+index 18cff1c3..7cbfb151 100644
+--- a/src/qml/globalservice.h
++++ b/src/qml/globalservice.h
+@@ -15,6 +15,7 @@ class GlobalService : public QObject
+     Q_OBJECT
+ 
+ public Q_SLOTS:
++    static bool routeStream(QObject *stream, quint32 deviceIndex);
+     static void globalMuteSinks();
+     static void globalMuteSources();
+     static void volumeUp();
+diff --git a/src/qml/listitemmenu.cpp b/src/qml/listitemmenu.cpp
+index 9a1e3840..c129b869 100644
+--- a/src/qml/listitemmenu.cpp
++++ b/src/qml/listitemmenu.cpp
+@@ -24,6 +24,7 @@
+ #include <PulseAudioQt/Stream>
+ 
+ #include "debug.h"
++#include "globalservice.h"
+ 
+ using namespace PulseAudioQt;
+ 
+@@ -459,31 +460,36 @@ QMenu *ListItemMenu::createMenu()
+     auto *stream = qobject_cast<PulseAudioQt::Stream *>(m_pulseObject.data());
+     if (stream && m_sourceModel && m_sourceModel->rowCount() > 1) {
+         if (m_itemType == SinkInput || m_itemType == SourceOutput) {
+-            if (m_itemType == SinkInput) {
+-                menu->addSection(i18nc("Heading for a list of possible output devices (speakers, headphones, ...) to choose", "Play audio using"));
++            if (stream->properties().value(QStringLiteral("plasma.pa.route")).toString() == QStringLiteral("CombinedRecording")) {
++                menu->addAction(i18nd("kcm_pulseaudio", "Choose the microphone and output in Combined Recording."))->setEnabled(false);
+             } else {
+-                menu->addSection(i18nc("Heading for a list of possible input devices (built-in microphone, headset, ...) to choose", "Record audio using"));
+-            }
++                if (m_itemType == SinkInput) {
++                    menu->addSection(i18nc("Heading for a list of possible output devices (speakers, headphones, ...) to choose", "Play audio using"));
++                } else {
++                    menu->addSection(i18nc("Heading for a list of possible input devices (built-in microphone, headset, ...) to choose", "Record audio using"));
++                }
+ 
+-            const int indexRole = m_sourceModel->roleNames().key("Index", -1);
+-            Q_ASSERT(indexRole != -1);
+-            const int descriptionRole = m_sourceModel->roleNames().key("Description", -1);
+-            Q_ASSERT(descriptionRole != -1);
++                const int indexRole = m_sourceModel->roleNames().key("Index", -1);
++                Q_ASSERT(indexRole != -1);
++                const int descriptionRole = m_sourceModel->roleNames().key("Description", -1);
++                Q_ASSERT(descriptionRole != -1);
+ 
+-            auto *deviceGroup = new QActionGroup(menu);
++                auto *deviceGroup = new QActionGroup(menu);
+ 
+-            for (int i = 0; i < m_sourceModel->rowCount(); ++i) {
+-                const QModelIndex idx = m_sourceModel->index(i, 0);
+-                const auto index = idx.data(indexRole).toUInt();
++                for (int i = 0; i < m_sourceModel->rowCount(); ++i) {
++                    const QModelIndex idx = m_sourceModel->index(i, 0);
++                    const auto index = idx.data(indexRole).toUInt();
+ 
+-                auto *item = menu->addAction(idx.data(descriptionRole).toString());
+-                item->setCheckable(true);
+-                item->setChecked(index == stream->deviceIndex());
+-                connect(item, &QAction::triggered, stream, [stream, index] {
+-                    stream->setDeviceIndex(index);
+-                });
++                    auto *item = menu->addAction(idx.data(descriptionRole).toString());
++                    item->setCheckable(true);
++                    item->setChecked(index == stream->deviceIndex());
++                    connect(item, &QAction::triggered, stream, [stream, index] {
++                        if (!GlobalService::routeStream(stream, index))
++                            stream->setDeviceIndex(index);
++                    });
+ 
+-                deviceGroup->addAction(item);
++                    deviceGroup->addAction(item);
++                }
+             }
+         }
+     }
+diff --git a/src/qml/plugin.cpp b/src/qml/plugin.cpp
+index e7cc138e..c4aa9a82 100644
+--- a/src/qml/plugin.cpp
++++ b/src/qml/plugin.cpp
+@@ -34,6 +34,7 @@
+ #include "speakertest.h"
+ #include "volumefeedback.h"
+ #include "microphonetest.h"
++#include "routingcontroller.h"
+ 
+ static QJSValue pulseaudio_singleton(QQmlEngine *engine, QJSEngine *scriptEngine)
+ {
+@@ -75,6 +76,7 @@ void Plugin::registerTypes(const char *uri)
+     qmlRegisterType<VolumeFeedback>(uri, 0, 1, "VolumeFeedback");
+     qmlRegisterType<SpeakerTest>(uri, 0, 1, "SpeakerTest");
+     qmlRegisterType<MicrophoneTest>(uri, 0, 1, "MicrophoneTest");
++    qmlRegisterType<RoutingController>(uri, 0, 1, "RoutingController");
+     qmlRegisterType<GlobalConfig>(uri, 0, 1, "GlobalConfig");
+     qmlRegisterType<DeviceRenameModel>(uri, 0, 1, "DeviceRenameModel");
+     qmlRegisterType<DeviceRenameSaver>(uri, 0, 1, "DeviceRenameSaver");
+diff --git a/src/qml/routingcontroller.cpp b/src/qml/routingcontroller.cpp
+new file mode 100644
+index 00000000..be8fe54f
+--- /dev/null
++++ b/src/qml/routingcontroller.cpp
+@@ -0,0 +1,195 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++#include "routingcontroller.h"
++
++#include <KLocalizedString>
++#include <PulseAudioQt/Context>
++#include <PulseAudioQt/Sink>
++#include <PulseAudioQt/Source>
++#include <QDBusConnection>
++#include <QDBusMessage>
++#include <QDBusPendingCallWatcher>
++#include <QDBusPendingReply>
++#include <QJsonDocument>
++
++using namespace Qt::Literals::StringLiterals;
++
++namespace
++{
++QDBusMessage call(const QString &method)
++{
++    return QDBusMessage::createMethodCall(u"org.kde.kded6"_s, u"/org/kde/plasma/AudioRoutes"_s, u"org.kde.plasma.AudioRoutes"_s, method);
++}
++QString unavailable()
++{
++    return i18nd("kcm_pulseaudio",
++                 "The audio routing service is unavailable. Restart the KDE "
++                 "background service and try again.");
++}
++} // namespace
++
++RoutingController::RoutingController(QObject *parent)
++    : QObject(parent)
++{
++    auto load = QDBusMessage::createMethodCall(u"org.kde.kded6"_s, u"/kded"_s, u"org.kde.kded6"_s, u"loadModule"_s);
++    load.setArguments({u"audioshortcutsservice"_s});
++    auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(load), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, watcher] {
++        watcher->deleteLater();
++        refresh();
++    });
++    QDBusConnection::sessionBus()
++        .connect(u"org.kde.kded6"_s, u"/org/kde/plasma/AudioRoutes"_s, u"org.kde.plasma.AudioRoutes"_s, u"changed"_s, this, SLOT(refresh()));
++    m_timer.setInterval(1000);
++    connect(&m_timer, &QTimer::timeout, this, &RoutingController::refresh);
++    m_timer.start();
++}
++
++QVariantMap RoutingController::listens() const
++{
++    return m_snapshot.value(u"listen"_s).toMap();
++}
++QVariantMap RoutingController::combined() const
++{
++    return m_snapshot.value(u"combined"_s).toMap();
++}
++QString RoutingController::serviceError() const
++{
++    return m_error;
++}
++QVariantList RoutingController::inputs() const
++{
++    return m_inputs;
++}
++QVariantList RoutingController::outputs() const
++{
++    return m_outputs;
++}
++namespace
++{
++QVariantList inputDevices()
++{
++    QVariantList result;
++    for (auto *s : PulseAudioQt::Context::instance()->sources()) {
++        if (!s->name().startsWith(u"plasma_pa_combined"_s)) {
++            result.append(QVariantMap{{u"name"_s, s->name()}, {u"description"_s, s->description()}});
++        }
++    }
++    return result;
++}
++QVariantList outputDevices()
++{
++    QVariantList result;
++    for (auto *s : PulseAudioQt::Context::instance()->sinks()) {
++        if (!s->name().startsWith(u"plasma_pa_combined"_s)) {
++            result.append(QVariantMap{{u"name"_s, s->name()}, {u"description"_s, s->description()}});
++        }
++    }
++    return result;
++}
++}
++
++void RoutingController::refresh()
++{
++    if (m_pending) {
++        return;
++    }
++    m_pending = true;
++    auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(call(u"snapshot"_s)), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, watcher] {
++        const QDBusPendingReply<QString> reply = *watcher;
++        watcher->deleteLater();
++        m_pending = false;
++        const auto oldSnapshot = m_snapshot;
++        const auto oldError = m_error;
++        const auto oldInputs = m_inputs, oldOutputs = m_outputs;
++        m_inputs = inputDevices();
++        m_outputs = outputDevices();
++        if (reply.isError()) {
++            m_error = unavailable();
++        } else {
++            m_error.clear();
++            m_snapshot = QJsonDocument::fromJson(reply.value().toUtf8()).toVariant().toMap();
++        }
++        if (m_snapshot != oldSnapshot || m_error != oldError || m_inputs != oldInputs || m_outputs != oldOutputs)
++            Q_EMIT changed();
++    });
++}
++
++void RoutingController::configure(const QString &method, const QString &source, const QString &output, bool enabled, const QString &id)
++{
++    auto request = call(method);
++    request.setArguments(method == u"setListenRoute"_s ? QVariantList{id, source, output, enabled} : QVariantList{source, output, enabled});
++    auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(request), this);
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, watcher] {
++        const QDBusPendingReply<> reply = *watcher;
++        watcher->deleteLater();
++        if (reply.isError()) {
++            m_error = unavailable();
++            Q_EMIT changed();
++        } else {
++            refresh();
++        }
++    });
++}
++void RoutingController::setListen(const QString &source, const QString &output, bool enabled)
++{
++    configure(u"setListen"_s, source, output, enabled);
++}
++void RoutingController::setListenRoute(const QString &id, const QString &source, const QString &output, bool enabled)
++{
++    configure(u"setListenRoute"_s, source, output, enabled, id);
++}
++void RoutingController::setCombined(const QString &source, const QString &output, bool enabled)
++{
++    configure(u"setCombined"_s, source, output, enabled);
++}
++
++QString RoutingController::message(const QVariantMap &state) const
++{
++    if (!state.value(u"enabled"_s).toBool() && state.value(u"reason"_s).toInt() == 0) {
++        return {};
++    }
++    const QString detail = state.value(u"detail"_s).toString();
++    switch (state.value(u"reason"_s).toInt()) {
++    case 1:
++        return i18nd("kcm_pulseaudio",
++                     "The sound server is unavailable. This "
++                     "route will resume when it returns.");
++    case 2:
++        return i18nd("kcm_pulseaudio", "The input %1 is unavailable. This route will resume when it returns.", detail);
++    case 3:
++        return i18nd("kcm_pulseaudio", "The output %1 is unavailable. This route will resume when it returns.", detail);
++    case 4:
++        return i18nd("kcm_pulseaudio", "Could not start %1. Install the audio backend tools and try again.", detail);
++    case 5:
++        return i18nd("kcm_pulseaudio",
++                     "The audio helper stopped (exit code %1). Check the sound "
++                     "server and try again.",
++                     detail);
++    case 6:
++        return i18nd("kcm_pulseaudio",
++                     "The sound server did not provide a stable device identifier. "
++                     "Reconnect the device and try again.");
++    case 7:
++        return i18nd("kcm_pulseaudio",
++                     "The audio helper did not create the requested route. Check "
++                     "the sound server and try again.");
++    case 8:
++        return i18nd("kcm_pulseaudio",
++                     "This selection would feed audio back into its own input. "
++                     "Choose another input or output.");
++    case 9:
++        return i18nd("kcm_pulseaudio",
++                     "PulseAudio could not create this route. "
++                     "Check the selected devices and try again.");
++    case 10:
++        return i18nd("kcm_pulseaudio", "Could not stop this route. Restore the audio backend tools and try again.");
++    default:
++        return state.value(u"running"_s).toBool() ? i18nd("kcm_pulseaudio", "Active") : i18nd("kcm_pulseaudio", "Starting…");
++    }
++}
++
++#include "moc_routingcontroller.cpp"
+diff --git a/src/qml/routingcontroller.h b/src/qml/routingcontroller.h
+new file mode 100644
+index 00000000..6e667af7
+--- /dev/null
++++ b/src/qml/routingcontroller.h
+@@ -0,0 +1,42 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++#pragma once
++
++#include <QObject>
++#include <QTimer>
++#include <QVariantMap>
++
++class RoutingController : public QObject
++{
++    Q_OBJECT
++    Q_PROPERTY(QVariantMap listens READ listens NOTIFY changed)
++    Q_PROPERTY(QVariantMap combined READ combined NOTIFY changed)
++    Q_PROPERTY(QString serviceError READ serviceError NOTIFY changed)
++    Q_PROPERTY(QVariantList inputs READ inputs NOTIFY changed)
++    Q_PROPERTY(QVariantList outputs READ outputs NOTIFY changed)
++public:
++    explicit RoutingController(QObject *parent = nullptr);
++    QVariantMap listens() const;
++    QVariantMap combined() const;
++    QString serviceError() const;
++    QVariantList inputs() const;
++    QVariantList outputs() const;
++    Q_INVOKABLE void setListen(const QString &source, const QString &output, bool enabled);
++    Q_INVOKABLE void setListenRoute(const QString &id, const QString &source, const QString &output, bool enabled);
++    Q_INVOKABLE void setCombined(const QString &source, const QString &output, bool enabled);
++    Q_INVOKABLE QString message(const QVariantMap &state) const;
++Q_SIGNALS:
++    void changed();
++private Q_SLOTS:
++    void refresh();
++
++private:
++    void configure(const QString &method, const QString &source, const QString &output, bool enabled, const QString &id = {});
++    QVariantMap m_snapshot;
++    QVariantList m_inputs, m_outputs;
++    QString m_error;
++    QTimer m_timer;
++    bool m_pending = false;
++};

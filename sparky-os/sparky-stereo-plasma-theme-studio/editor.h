@@ -16,11 +16,14 @@
 #include <QProcess>
 #include <memory>
 
+class QScreen;
+class ModelPage;
 class Editor : public QWidget
 {
     Q_OBJECT
     Q_CLASSINFO("D-Bus Interface", "org.sparky.ThemeEditor1")
 public:
+    ModelPage *modelPage = nullptr;
     Drawing drawing;
     QString themeRoot;
     QString iconPath;
@@ -34,6 +37,9 @@ public:
     QUndoStack *history;
     explicit Editor(bool part = false);
     bool partMode;
+    QWindow *observedWindow = nullptr;
+    QScreen *observedScreen = nullptr;
+    QMetaObject::Connection observedGeometry;
     Editor *plasmaEditor = nullptr;
     QTabWidget *pages = nullptr;
     QString plasmaRoot, plasmaPath, colourName;
@@ -72,6 +78,11 @@ public:
     void pickAt(QPointF point);
     bool mayDiscard();
 public slots:
+    QString openModelFile(const QString &path);
+    QString setModelDepth(double value);
+    QString modelState() const;
+    QString exportModelPairs(const QString &path);
+    QString saveCurrentProject(const QString &path);
     bool selectPart(const QString &id);
     QString addColourFile(const QString &path);
     QString addPlasmaFile(const QString &path);
@@ -85,5 +96,7 @@ public slots:
     void undoDepth() { history->undo(); }
     void redoDepth() { history->redo(); }
 protected:
+    bool event(QEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 };

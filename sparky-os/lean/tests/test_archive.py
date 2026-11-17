@@ -104,6 +104,16 @@ def test_supplied_candidate_and_sibling_remain_authoritative(context, tmp_path):
         context.qualify(incompatible, [local])
 
 
+def test_supplied_variant_build_is_not_substituted(context, tmp_path):
+    # An apt architecture variant (ORDER 108) shares package, version and architecture with the archive's baseline build; its field must
+    # not make apt ignore it in the gate's local index ("archive attempted to substitute supplied chosen")
+    variant = deb(tmp_path, 'chosen', '2:1.0-3', extra='Architecture-Variant: amd64v3\n', files={'usr/lib/edition-identity': b'variant build'})
+    consumer = deb(tmp_path, 'consumer', depends='chosen (= 2:1.0-3)')
+    q = context.qualify(consumer, [variant])
+    assert (q.root / 'usr/lib/edition-identity').read_bytes() == b'variant build'
+    assert 'chosen' not in [r['identity'][0] for r in manifest(q)['packages']]
+
+
 def test_conflicting_supplied_identity(context, tmp_path):
     candidate = deb(tmp_path, 'consumer')
     first = deb(tmp_path, 'sibling', '1')

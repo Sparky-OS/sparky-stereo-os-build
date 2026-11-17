@@ -234,8 +234,7 @@ void Editor::saveParts(const QString &stage, QJsonObject &project)
     if (plasmaEditor) {
         std::filesystem::copy(plasmaRoot.toStdString(), (stage + "/plasma").toStdString(),
             std::filesystem::copy_options::recursive | std::filesystem::copy_options::copy_symlinks);
-        auto &part = plasmaEditor->drawing;
-        part.readLimits();
+        auto part = plasmaEditor->drawing.forExport();
         QJsonObject levels;
         for (auto it = part.places.cbegin(); it != part.places.cend(); ++it) levels[it.key()] = it.value();
         project["plasma"] = QJsonObject{{"source", plasmaPath}, {"groups", levels},

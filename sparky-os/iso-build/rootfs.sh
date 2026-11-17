@@ -96,8 +96,8 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 	apt_in install sparky-stereo-nvidia-driver-lock sparky-stereo-cuda-repo
 	inr apt-get update
 	echo "== $(date -u +%T) Sparky KDE 2026.09's package set"
-	cp /build/base-list.sh /build/sparky-kde-2026.09.names /edition-lists/base-remove.list $R/tmp/
-	inr env NAMES=/tmp/sparky-kde-2026.09.names REMOVE=/tmp/base-remove.list sh /tmp/base-list.sh > /tmp/base
+	cp /build/base-list.sh /build/sparky-kde-2026.09.names /edition-lists/base-remove.list /edition-lists/base-gone.tsv $R/tmp/
+	inr env NAMES=/tmp/sparky-kde-2026.09.names REMOVE=/tmp/base-remove.list GONE=/tmp/base-gone.tsv sh /tmp/base-list.sh > /tmp/base
 	[ -s /tmp/base ] || { echo "rootfs: empty base list" >&2; exit 1; }
 	echo "   $(wc -l < /tmp/base) names"
 	# the answers SparkyLinux's own image carries: US keyboard, the firmware licences accepted
