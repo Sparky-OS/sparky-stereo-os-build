@@ -32,7 +32,7 @@ install|install-optout)
 	echo "result: $(which_build)";;
 guard)
 	apt-get -y install /work/mesa/v3/libgl1-mesa-dri_*_amd64v3.deb /work/mesa/v3/mesa-libgallium_*_amd64v3.deb >/tmp/install.out 2>&1 || { tail -5 /tmp/install.out; echo "install failed"; exit 1; }
-	apt-get -y install sparky-stereo-problems >/dev/null 2>&1 || { echo "sparky-stereo-problems not installed"; exit 1; }
+	apt-get -y install python3 sparky-stereo-problems >/dev/null 2>&1 || { echo "sparky-stereo-problems not installed"; exit 1; }
 	dpkg-deb -x /hw/sparky-stereo-hardware_*_all.deb /
 	mkdir -p /tmp/fix
 	printf '    x86-64-v2 (supported, searched)\n    x86-64-v1 (baseline)\n' >/tmp/fix/ldso-help

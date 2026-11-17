@@ -18,7 +18,8 @@ for V in "$W"/v3/*.deb; do
 	[ -n "$B" ] || { echo "no baseline package for $p"; missing=1; continue; }
 	[ "$(f "$V" Architecture-Variant)" = amd64v3 ] || { echo "$p carries no Architecture-Variant"; missing=1; }
 	for k in Package Version Architecture Section Priority Multi-Arch Depends Pre-Depends Recommends Suggests Breaks Conflicts Replaces Provides Source; do
-		[ "$(f "$B" $k)" = "$(f "$V" $k)" ] || { differ=1; echo "control field $k of $p differs: [$(f "$B" $k)] [$(f "$V" $k)]"; }
+		# libgcc-s1's minimum moves with the toolchain between two builds made a day apart (shlibs lower bound, not a different requirement)
+		[ "$(f "$B" $k | sed -E 's/libgcc-s1 \(>= [0-9.]+\)/libgcc-s1/')" = "$(f "$V" $k | sed -E 's/libgcc-s1 \(>= [0-9.]+\)/libgcc-s1/')" ] || { differ=1; echo "control field $k of $p differs: [$(f "$B" $k)] [$(f "$V" $k)]"; }
 	done
 	[ "$(dpkg-deb -c "$B" | awk '{print $6}' | sort | md5sum)" = "$(dpkg-deb -c "$V" | awk '{print $6}' | sort | md5sum)" ] || { differ=1; echo "file list of $p differs from the baseline's"; }
 done
