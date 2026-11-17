@@ -1,0 +1,20 @@
+Description: Initialize Xspice option defaults after xf86ProcessOptions
+Origin: other, https://bugs.debian.org/1137518
+Author: Frank Heckenbach
+Bug-Debian: https://bugs.debian.org/1137518
+Bug: https://gitlab.freedesktop.org/xorg/driver/xf86-video-qxl/-/issues/16
+Last-Update: 2026-11-17
+
+--- a/src/qxl_driver.c
++++ b/src/qxl_driver.c
+@@ -995,6 +995,10 @@
+     memcpy (qxl->options, DefaultOptions, sizeof (DefaultOptions));
+     xf86ProcessOptions (scrnIndex, pScrn->options, qxl->options);
+ 
++    /* found is wrongly initialized with FALSE, also xf86ProcessOptions resets it to FALSE */
++    for (OptionInfoRec *p = qxl->options; p->name; p++)
++      p->found = TRUE;
++
+     qxl->enable_image_cache =
+         get_bool_option (qxl->options, OPTION_ENABLE_IMAGE_CACHE, "QXL_ENABLE_IMAGE_CACHE");
+     qxl->enable_fallback_cache =
