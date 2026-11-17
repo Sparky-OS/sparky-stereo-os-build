@@ -20,7 +20,7 @@ SOURCE_WORK/prepared contains both authored and Lean Code sources. BINARY_WORK/b
 
 ARCHIVE_DIR/sources.json names the public signed APT archives and their public keyrings as described in sparky-os/lean/archive.md. The edition's signed snapshot is available at /repo. Keyrings supplied in ARCHIVE_DIR use /archive paths inside the container; the base image supplies Debian's keyring. The binary container enables the namespace operations needed by the nested bubblewrap gate, whose own root is isolated and capabilities dropped. No desktop session or sound device is mounted.
 
-Reproduce the source with tests/repro-source.py BASE_DSC PREPARED WORK BUILD_RECORD inside a disposable container carrying fakeroot, libfaketime, devscripts and the producer's tools. This is a proof driver, not a producer: it compares authored and LC descriptors/archives across clocks, time zones and umasks, then checks an actual dpkg-buildpackage -S repack. Its source date comes from the build record. The static supply-chain/test-wiring.sh must finish ALL PASS before hand-back.
+Reproduce the source with tests/repro-source.py BASE_DSC PREPARED WORK BUILD_RECORD inside a disposable container carrying fakeroot, libfaketime, devscripts, the source's debhelper addon (dh-sequence-kf6) and the producer's tools. This is a proof driver, not a producer: it compares authored and LC descriptors/archives across clocks, time zones and umasks, then checks an actual dpkg-buildpackage -S repack. Its source date comes from the build record. The static supply-chain/test-wiring.sh must finish ALL PASS before hand-back.
 
 ## Installed audio and GUI proofs
 

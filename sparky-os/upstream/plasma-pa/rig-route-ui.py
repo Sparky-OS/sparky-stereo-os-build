@@ -26,7 +26,7 @@ if os.environ.get('PA19_INSTALLED')=='1':
     for key in ('QT_PLUGIN_PATH','QML_IMPORT_PATH','LD_LIBRARY_PATH'): os.environ.pop(key,None)
 catalogue=gettext.translation('kcm_pulseaudio',localedir=prefix+'/share/locale',languages=[language],fallback=language=='en')
 T=catalogue.gettext
-for part in ('home/config','run'): (work/part).mkdir(mode=0o700,parents=True,exist_ok=True)
+for part in ('home/config','run','run/pulse'): (work/part).mkdir(mode=0o700,parents=True,exist_ok=True)
 children=[]; logs=[]
 def spawn(args):
     log=open(work/(Path(args[0]).name+str(len(children))+'.log'),'w'); logs.append(log)
