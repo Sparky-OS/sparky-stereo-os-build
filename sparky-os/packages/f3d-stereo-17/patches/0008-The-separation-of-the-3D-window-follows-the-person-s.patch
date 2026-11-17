@@ -1,0 +1,610 @@
+From 9be325ca59b2298123506561bd7f82e849504b56 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 17 Nov 2026 20:00:48 -0300
+Subject: [PATCH] The separation of the 3D window follows the person's depth
+ limits from the desktop
+
+render.stereo_eye_angle is zero by default and then the two cameras' separation is the largest one under which the nearest
+and farthest point of the scene stay inside the sunk and popped limits Stereo KWin gives the window (libstereo-declare 1.10,
+_KDE_NET_WM_STEREO_DEPTH_LIMITS), and follows a change of them. With no limits the eyes are the same picture and the program
+says so, in the ten languages. window::pollStereoDepth reports the state.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ application/F3DSparkyStrings.h                |  33 +++--
+ application/F3DStarter.cxx                    |  24 ++++
+ doc/libf3d/03-OPTIONS.md                      |   6 +-
+ library/options.json                          |   2 +-
+ library/private/window_impl.h                 |   1 +
+ library/public/window.h                       |  23 ++++
+ library/src/window_impl.cxx                   |  53 +++++++-
+ vtkext/private/module/CMakeLists.txt          |  11 ++
+ .../private/module/vtkF3DGLXRenderWindow.cxx  |  38 ++++++
+ vtkext/private/module/vtkF3DGLXRenderWindow.h |  16 +++
+ vtkext/private/module/vtkF3DRenderer.cxx      | 128 +++++++++++++++++-
+ vtkext/private/module/vtkF3DRenderer.h        |  22 +++
+ 12 files changed, 341 insertions(+), 16 deletions(-)
+
+diff --git a/application/F3DSparkyStrings.h b/application/F3DSparkyStrings.h
+index b0f0095..a29a725 100644
+--- a/application/F3DSparkyStrings.h
++++ b/application/F3DSparkyStrings.h
+@@ -16,6 +16,9 @@ enum Id
+   DisplaySettings,
+   DisplaySettingsFailed,
+   NoStereoWindow,
++  DepthNotOffered,
++  DepthNotDelivered,
++  DepthNotReadable,
+   Count
+ };
+ 
+@@ -24,32 +27,42 @@ inline const char* Text(Id id)
+   static const char* const table[][Count] = {
+     // en
+     { "Enable 3D", "Display Settings", "Display Settings could not be opened: kcmshell6 was not found",
+-      "3D could not be enabled: this display offers no stereo window" },
++      "3D could not be enabled: this display offers no stereo window",
++      "3D depth: this desktop offers no depth limits, so both eyes show the same picture", "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now", "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture" },
+     // pl
+     { "Włącz 3D", "Ustawienia ekranu", "Nie można otworzyć ustawień ekranu: nie znaleziono kcmshell6",
+-      "Nie można włączyć 3D: ten ekran nie udostępnia okna stereo" },
++      "Nie można włączyć 3D: ten ekran nie udostępnia okna stereo",
++      "Głębia 3D: ten pulpit nie podaje limitów głębi, więc oba oczy widzą ten sam obraz", "Głębia 3D: pulpit nie przekazał jeszcze limitów głębi, na razie oba oczy widzą ten sam obraz", "Głębia 3D: to okno nie może odczytać limitów głębi pulpitu, więc oba oczy widzą ten sam obraz" },
+     // pt_BR
+     { "Ativar 3D", "Configurações de tela", "Não foi possível abrir as configurações de tela: kcmshell6 não foi encontrado",
+-      "Não foi possível ativar o 3D: esta tela não oferece uma janela estéreo" },
++      "Não foi possível ativar o 3D: esta tela não oferece uma janela estéreo",
++      "Profundidade 3D: este desktop não oferece limites de profundidade, então os dois olhos veem a mesma imagem", "Profundidade 3D: o desktop ainda não entregou os limites de profundidade, por enquanto os dois olhos veem a mesma imagem", "Profundidade 3D: esta janela não consegue ler os limites de profundidade do desktop, então os dois olhos veem a mesma imagem" },
+     // fr
+     { "Activer la 3D", "Paramètres d’affichage", "Impossible d’ouvrir les paramètres d’affichage : kcmshell6 est introuvable",
+-      "Impossible d’activer la 3D : cet affichage ne propose pas de fenêtre stéréo" },
++      "Impossible d’activer la 3D : cet affichage ne propose pas de fenêtre stéréo",
++      "Profondeur 3D : ce bureau n’offre pas de limites de profondeur, les deux yeux voient donc la même image", "Profondeur 3D : le bureau n’a pas encore transmis les limites de profondeur, les deux yeux voient la même image pour l’instant", "Profondeur 3D : cette fenêtre ne peut pas lire les limites de profondeur du bureau, les deux yeux voient donc la même image" },
+     // de
+     { "3D aktivieren", "Anzeigeeinstellungen", "Die Anzeigeeinstellungen konnten nicht geöffnet werden: kcmshell6 wurde nicht gefunden",
+-      "3D konnte nicht aktiviert werden: dieser Bildschirm bietet kein Stereo-Fenster" },
++      "3D konnte nicht aktiviert werden: dieser Bildschirm bietet kein Stereo-Fenster",
++      "3D-Tiefe: Dieser Desktop bietet keine Tiefengrenzen, deshalb sehen beide Augen dasselbe Bild", "3D-Tiefe: Der Desktop hat die Tiefengrenzen noch nicht geliefert, beide Augen sehen vorerst dasselbe Bild", "3D-Tiefe: Dieses Fenster kann die Tiefengrenzen des Desktops nicht lesen, deshalb sehen beide Augen dasselbe Bild" },
+     // es
+     { "Activar 3D", "Configuración de pantalla", "No se pudo abrir la configuración de pantalla: no se encontró kcmshell6",
+-      "No se pudo activar el 3D: esta pantalla no ofrece una ventana estéreo" },
++      "No se pudo activar el 3D: esta pantalla no ofrece una ventana estéreo",
++      "Profundidad 3D: este escritorio no ofrece límites de profundidad, así que los dos ojos ven la misma imagen", "Profundidad 3D: el escritorio aún no ha entregado los límites de profundidad, por ahora los dos ojos ven la misma imagen", "Profundidad 3D: esta ventana no puede leer los límites de profundidad del escritorio, así que los dos ojos ven la misma imagen" },
+     // ja
+     { "3Dを有効にする", "ディスプレイ設定", "ディスプレイ設定を開けませんでした: kcmshell6 が見つかりません",
+-      "3Dを有効にできませんでした: このディスプレイはステレオウィンドウを提供していません" },
++      "3Dを有効にできませんでした: このディスプレイはステレオウィンドウを提供していません",
++      "3D奥行き: このデスクトップは奥行きの上限を提供しないため、両目に同じ画像を表示します", "3D奥行き: デスクトップがまだ奥行きの上限を渡していないため、今は両目に同じ画像を表示します", "3D奥行き: このウィンドウはデスクトップの奥行きの上限を読み取れないため、両目に同じ画像を表示します" },
+     // ko
+     { "3D 켜기", "디스플레이 설정", "디스플레이 설정을 열 수 없습니다: kcmshell6을 찾을 수 없습니다",
+-      "3D를 켤 수 없습니다: 이 디스플레이는 스테레오 창을 제공하지 않습니다" },
++      "3D를 켤 수 없습니다: 이 디스플레이는 스테레오 창을 제공하지 않습니다",
++      "3D 깊이: 이 데스크톱은 깊이 한계를 제공하지 않아 두 눈에 같은 화면을 보여 줍니다", "3D 깊이: 데스크톱이 아직 깊이 한계를 전달하지 않아 지금은 두 눈에 같은 화면을 보여 줍니다", "3D 깊이: 이 창은 데스크톱의 깊이 한계를 읽을 수 없어 두 눈에 같은 화면을 보여 줍니다" },
+     // zh_CN
+-    { "启用 3D", "显示设置", "无法打开显示设置：找不到 kcmshell6", "无法启用 3D：此显示器不提供立体窗口" },
++    { "启用 3D", "显示设置", "无法打开显示设置：找不到 kcmshell6", "无法启用 3D：此显示器不提供立体窗口",
++      "3D 深度：此桌面未提供深度限制，因此两眼显示相同的画面", "3D 深度：桌面尚未提供深度限制，暂时两眼显示相同的画面", "3D 深度：此窗口无法读取桌面的深度限制，因此两眼显示相同的画面" },
+     // zh_TW
+-    { "啟用 3D", "顯示設定", "無法開啟顯示設定：找不到 kcmshell6", "無法啟用 3D：此顯示器不提供立體視窗" },
++    { "啟用 3D", "顯示設定", "無法開啟顯示設定：找不到 kcmshell6", "無法啟用 3D：此顯示器不提供立體視窗",
++      "3D 深度：此桌面未提供深度限制，因此兩眼顯示相同的畫面", "3D 深度：桌面尚未提供深度限制，暫時兩眼顯示相同的畫面", "3D 深度：此視窗無法讀取桌面的深度限制，因此兩眼顯示相同的畫面" },
+   };
+   static const char* const names[] = { "en", "pl", "pt_BR", "fr", "de", "es", "ja", "ko", "zh_CN", "zh_TW" };
+   static int chosen = -1;
+diff --git a/application/F3DStarter.cxx b/application/F3DStarter.cxx
+index 30a6b38..b0a6a8f 100644
+--- a/application/F3DStarter.cxx
++++ b/application/F3DStarter.cxx
+@@ -2095,6 +2095,30 @@ bool F3DStarter::LoadRelativeFileGroup(int index, bool restoreCamera, bool force
+ //----------------------------------------------------------------------------
+ void F3DStarter::EventLoop()
+ {
++  // The person's depth limits come from the desktop and can change while the window is open: render
++  // again when they do, and say once when the two eyes are the same picture for want of them
++  {
++    f3d::window& window = this->Internals->Engine->getWindow();
++    bool changed = false;
++    const auto state = window.pollStereoDepth(changed);
++    if (changed)
++    {
++      this->Internals->Engine->getInteractor().requestRender();
++      using state_t = f3d::window::stereo_depth_state;
++      if (state == state_t::NOT_OFFERED)
++      {
++        f3d::log::warn(F3DSparkyStrings::Text(F3DSparkyStrings::DepthNotOffered));
++      }
++      else if (state == state_t::NOT_DELIVERED)
++      {
++        f3d::log::info(F3DSparkyStrings::Text(F3DSparkyStrings::DepthNotDelivered));
++      }
++      else if (state == state_t::NOT_READABLE)
++      {
++        f3d::log::warn(F3DSparkyStrings::Text(F3DSparkyStrings::DepthNotReadable));
++      }
++    }
++  }
+   if (this->Internals->ReloadFileRequested)
+   {
+     this->LoadRelativeFileGroup(0, true, true);
+diff --git a/doc/libf3d/03-OPTIONS.md b/doc/libf3d/03-OPTIONS.md
+index f299b46..010c087 100644
+--- a/doc/libf3d/03-OPTIONS.md
++++ b/doc/libf3d/03-OPTIONS.md
+@@ -380,10 +380,12 @@ With an offscreen window `renderToImage` returns the two eyes side by side, the
+ 
+ CLI: `--stereo`.
+ 
+-### `render.stereo_eye_angle` (_double_, default: `2.0`)
++### `render.stereo_eye_angle` (_double_, default: `0.0`)
+ 
+-Set the angle between the two eyes' lines of sight, in degrees.
++Set the angle between the two eyes' lines of sight, in degrees, for a program that wants its own value.
+ The eyes stay parallel and meet at the focal distance, so the separation grows with the distance to the focal point.
++Zero, the default, takes the separation from the person's depth limits of a stereo window (`window::pollStereoDepth`): the largest separation under which the farthest and the nearest point of the scene stay inside the sunk and popped limits.
++With no limits (an image, a compositor that offers none, limits not delivered yet) the two eyes are the same picture.
+ 
+ CLI: `--stereo-eye-angle`.
+ 
+diff --git a/library/options.json b/library/options.json
+index a734440..ab637e0 100644
+--- a/library/options.json
++++ b/library/options.json
+@@ -42,7 +42,7 @@
+     },
+     "stereo_eye_angle": {
+       "type": "double",
+-      "default_value": "2.0"
++      "default_value": "0.0"
+     },
+     "show_edges": {
+       "type": "bool"
+diff --git a/library/private/window_impl.h b/library/private/window_impl.h
+index 4d62220..7b0ce93 100644
+--- a/library/private/window_impl.h
++++ b/library/private/window_impl.h
+@@ -49,6 +49,7 @@ public:
+   Type getType() override;
+   bool isOffscreen() override;
+   bool isStereo() override;
++  stereo_depth_state pollStereoDepth(bool& changed) override;
+   camera& getCamera() override;
+   bool render() override;
+   image renderToImage(bool noBackground = false) override;
+diff --git a/library/public/window.h b/library/public/window.h
+index 8437d58..9e0ce51 100644
+--- a/library/public/window.h
++++ b/library/public/window.h
+@@ -64,6 +64,29 @@ public:
+    */
+   [[nodiscard]] virtual bool isStereo() = 0;
+ 
++  /**
++   * The state of the person's depth limits for a stereo window whose eye angle is not given
++   * (render.stereo_eye_angle is zero): the desktop (Stereo KWin) hands them over per window and
++   * the separation of the two eyes follows them.
++   * UNUSED: no stereo window, or an angle was given. DELIVERED: the limits are in use.
++   * NOT_OFFERED: the compositor offers no limits. NOT_DELIVERED: offered, not delivered yet.
++   * NOT_READABLE: this window or build cannot read them. In the last three the two eyes are the same picture.
++   */
++  enum class stereo_depth_state
++  {
++    UNUSED,
++    DELIVERED,
++    NOT_OFFERED,
++    NOT_DELIVERED,
++    NOT_READABLE
++  };
++
++  /**
++   * Poll the depth limits of the window (one property read). Sets changed when the state or the
++   * limits are not what the previous call returned, so a program can render again and say why.
++   */
++  [[nodiscard]] virtual stereo_depth_state pollStereoDepth(bool& changed) = 0;
++
+   /**
+    * Get the camera provided by the window.
+    */
+diff --git a/library/src/window_impl.cxx b/library/src/window_impl.cxx
+index b9b424b..c35cc1f 100644
+--- a/library/src/window_impl.cxx
++++ b/library/src/window_impl.cxx
+@@ -108,6 +108,9 @@ public:
+   vtkSmartPointer<vtkRenderWindow> RenWin;
+   vtkNew<vtkF3DRenderer> Renderer;
+   const options& Options;
++  window::stereo_depth_state DepthState = window::stereo_depth_state::UNUSED;
++  double DepthSunk = 0.0;
++  double DepthPopped = 0.0;
+   interactor_impl* Interactor = nullptr;
+   fs::path CachePath;
+   context::function GetProcAddress;
+@@ -271,6 +274,52 @@ bool window_impl::isStereo()
+     (renWin->GetOffScreenRendering() || (renWin->GetStereoCapableWindow() && renWin->GetStereoRender()));
+ }
+ 
++//----------------------------------------------------------------------------
++window::stereo_depth_state window_impl::pollStereoDepth(bool& changed)
++{
++  changed = false;
++  vtkRenderWindow* renWin = this->Internals->RenWin;
++  vtkF3DRenderer* renderer = this->Internals->Renderer;
++  stereo_depth_state state = stereo_depth_state::UNUSED;
++  double sunk = 0.0;
++  double popped = 0.0;
++  if (this->Internals->Options.render.stereo && renWin->GetStereoCapableWindow() &&
++    renWin->GetStereoRender() && this->Internals->Options.render.stereo_eye_angle == 0.0)
++  {
++    switch (renderer->PollStereoDepthLimits())
++    {
++      case 0:
++        state = stereo_depth_state::DELIVERED;
++#ifdef VTK_USE_X
++        if (auto* glx = vtkF3DGLXRenderWindow::SafeDownCast(renWin))
++        {
++          sunk = glx->GetStereoDepthSunk();
++          popped = glx->GetStereoDepthPopped();
++        }
++#endif
++        break;
++      case 1:
++        state = stereo_depth_state::NOT_OFFERED;
++        break;
++      case 2:
++        state = stereo_depth_state::NOT_DELIVERED;
++        break;
++      default:
++        state = stereo_depth_state::NOT_READABLE;
++        break;
++    }
++  }
++  if (state != this->Internals->DepthState || sunk != this->Internals->DepthSunk ||
++    popped != this->Internals->DepthPopped)
++  {
++    changed = true;
++  }
++  this->Internals->DepthState = state;
++  this->Internals->DepthSunk = sunk;
++  this->Internals->DepthPopped = popped;
++  return state;
++}
++
+ //----------------------------------------------------------------------------
+ bool window_impl::isOffscreen()
+ {
+@@ -434,13 +483,13 @@ void window_impl::UpdateDynamicOptions()
+     {
+       // 3D can be switched on and off while the window runs: off draws one picture into both eyes
+       renWin->SetStereoRender(opt.render.stereo ? 1 : 0);
+-      renderer->GetActiveCamera()->SetEyeAngle(opt.render.stereo_eye_angle);
++      renderer->SetStereoEyeAngle(opt.render.stereo_eye_angle);
+     }
+   }
+   else if (opt.render.stereo)
+   {
+     // An image has no stereo capable window: renderToImage draws the two eyes one after the other
+-    renderer->GetActiveCamera()->SetEyeAngle(opt.render.stereo_eye_angle);
++    renderer->SetStereoEyeAngle(opt.render.stereo_eye_angle);
+   }
+ 
+   // Update pending up direction if changed
+diff --git a/vtkext/private/module/CMakeLists.txt b/vtkext/private/module/CMakeLists.txt
+index 55484dc..12e426d 100644
+--- a/vtkext/private/module/CMakeLists.txt
++++ b/vtkext/private/module/CMakeLists.txt
+@@ -115,6 +115,11 @@ endif()
+ # only exported starting from VTK 9.4
+ if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN AND NOT ANDROID)
+   list(APPEND classes vtkF3DGLXRenderWindow)
++  option(F3D_WITH_STEREO_DECLARE "Read the depth limits of a stereo window through libstereo-declare 1.10" OFF)
++  if(F3D_WITH_STEREO_DECLARE)
++    find_package(PkgConfig REQUIRED)
++    pkg_check_modules(STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare>=1.10.0)
++  endif()
+ endif()
+ 
+ if(VTK_OPENGL_HAS_EGL)
+@@ -156,6 +161,12 @@ if(MSVC)
+   vtk_module_definitions(f3d::vtkextPrivate PRIVATE _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS _CRT_SECURE_NO_WARNINGS)
+ endif()
+ 
++# libstereo-declare
++if(F3D_WITH_STEREO_DECLARE)
++  vtk_module_link(f3d::vtkextPrivate PRIVATE PkgConfig::STEREO_DECLARE)
++  vtk_module_definitions(f3d::vtkextPrivate PRIVATE F3D_WITH_STEREO_DECLARE)
++endif()
++
+ # exr
+ if(F3D_MODULE_EXR)
+   vtk_module_link(f3d::vtkextPrivate PRIVATE OpenEXR::OpenEXR)
+diff --git a/vtkext/private/module/vtkF3DGLXRenderWindow.cxx b/vtkext/private/module/vtkF3DGLXRenderWindow.cxx
+index 5d208b6..ae7ba6c 100644
+--- a/vtkext/private/module/vtkF3DGLXRenderWindow.cxx
++++ b/vtkext/private/module/vtkF3DGLXRenderWindow.cxx
+@@ -1,6 +1,8 @@
+ #include <vtkObjectFactory.h>
+ #include <vtkVersion.h>
+ 
++#include <cerrno>
++
+ #if VTK_VERSION_NUMBER >= VTK_VERSION_CHECK(9, 3, 20240914)
+ #include <vtk_glad.h>
+ #include <vtkglad/include/glad/glx.h>
+@@ -10,6 +12,10 @@
+ 
+ #include "vtkF3DGLXRenderWindow.h"
+ 
++#ifdef F3D_WITH_STEREO_DECLARE
++#include <stereo-declare.h>
++#endif
++
+ #if VTK_VERSION_NUMBER >= VTK_VERSION_CHECK(9, 5, 20251009)
+ #include "vtkX11Functions.h"
+ #else
+@@ -40,6 +46,38 @@ void vtkF3DGLXRenderWindow::Start()
+   this->Superclass::Start();
+ }
+ 
++//------------------------------------------------------------------------------
++int vtkF3DGLXRenderWindow::UpdateStereoDepthLimits()
++{
++#ifdef F3D_WITH_STEREO_DECLARE
++  if (!this->DisplayId || !this->WindowId)
++  {
++    this->StereoDepthState = 3;
++    return this->StereoDepthState;
++  }
++  stereo_depth_limits limits;
++  const int r = stereo_depth_x11_get_limits(this->DisplayId, this->WindowId, &limits);
++  if (r == 0)
++  {
++    this->StereoDepthSunk = limits.sunk;
++    this->StereoDepthPopped = limits.popped;
++    this->StereoDepthState = 0;
++  }
++  else if (r == -ENODATA)
++  {
++    this->StereoDepthState = 2;
++  }
++  else
++  {
++    // -ENOTSUP, or a property that is not the limits: never zeros, never a guess
++    this->StereoDepthState = 1;
++  }
++#else
++  this->StereoDepthState = 3;
++#endif
++  return this->StereoDepthState;
++}
++
+ //------------------------------------------------------------------------------
+ vtkF3DGLXRenderWindow* vtkF3DGLXRenderWindow::New()
+ {
+diff --git a/vtkext/private/module/vtkF3DGLXRenderWindow.h b/vtkext/private/module/vtkF3DGLXRenderWindow.h
+index ab77370..eb51049 100644
+--- a/vtkext/private/module/vtkF3DGLXRenderWindow.h
++++ b/vtkext/private/module/vtkF3DGLXRenderWindow.h
+@@ -19,10 +19,26 @@ public:
+    */
+   void Start() override;
+ 
++  /**
++   * Read the person's depth limits that Stereo KWin gives this window, through libstereo-declare
++   * (X11 property _KDE_NET_WM_STEREO_DEPTH_LIMITS). Returns the state of the limits:
++   * 0 delivered (Sunk and Popped, in pixels of a view 1920 wide), 1 not offered by the compositor,
++   * 2 offered and not delivered yet, 3 this build cannot read them. Cheap: one property read.
++   */
++  int UpdateStereoDepthLimits();
++
++  vtkGetMacro(StereoDepthSunk, double);
++  vtkGetMacro(StereoDepthPopped, double);
++  vtkGetMacro(StereoDepthState, int);
++
+ protected:
+   vtkF3DGLXRenderWindow();
+   ~vtkF3DGLXRenderWindow() override;
+ 
++  double StereoDepthSunk = 0.0;
++  double StereoDepthPopped = 0.0;
++  int StereoDepthState = 3;
++
+ private:
+   vtkF3DGLXRenderWindow(const vtkF3DGLXRenderWindow&) = delete;
+   void operator=(const vtkF3DGLXRenderWindow&) = delete;
+diff --git a/vtkext/private/module/vtkF3DRenderer.cxx b/vtkext/private/module/vtkF3DRenderer.cxx
+index d716e95..548d5c7 100644
+--- a/vtkext/private/module/vtkF3DRenderer.cxx
++++ b/vtkext/private/module/vtkF3DRenderer.cxx
+@@ -34,7 +34,15 @@
+ #include <vtkLight.h>
+ #include <vtkLightCollection.h>
+ #include <vtkLightKit.h>
++#include <algorithm>
++#include <cmath>
++#include <limits>
+ #include <vtkMath.h>
++#include <vtkRenderingOpenGLConfigure.h>
++
++#ifdef VTK_USE_X
++#include "vtkF3DGLXRenderWindow.h"
++#endif
+ #include <vtkMathUtilities.h>
+ #include <vtkMatrix4x4.h>
+ #include <vtkMultiBlockDataSet.h>
+@@ -2175,6 +2183,124 @@ void vtkF3DRenderer::UpdateActors()
+   }
+ }
+ 
++//----------------------------------------------------------------------------
++int vtkF3DRenderer::PollStereoDepthLimits()
++{
++  if (this->StereoEyeAngle != 0.0)
++  {
++    this->StereoDepthState = -1;
++    return this->StereoDepthState;
++  }
++#ifdef VTK_USE_X
++  vtkF3DGLXRenderWindow* glx = vtkF3DGLXRenderWindow::SafeDownCast(this->GetRenderWindow());
++  this->StereoDepthState = glx ? glx->UpdateStereoDepthLimits() : 3;
++#else
++  this->StereoDepthState = 3;
++#endif
++  return this->StereoDepthState;
++}
++
++//----------------------------------------------------------------------------
++double vtkF3DRenderer::ComputeStereoShear()
++{
++  if (this->StereoEyeAngle != 0.0)
++  {
++    return std::tan(vtkMath::RadiansFromDegrees(this->StereoEyeAngle / 2.0));
++  }
++
++  // No separation of our own: the person's limits decide, and with none the two eyes are the same
++  // picture (the state says why, the program tells the person)
++  if (this->PollStereoDepthLimits() != 0)
++  {
++    return 0.0;
++  }
++#ifdef VTK_USE_X
++  vtkF3DGLXRenderWindow* glx = vtkF3DGLXRenderWindow::SafeDownCast(this->GetRenderWindow());
++#else
++  return 0.0;
++#endif
++  const int* size = this->GetRenderWindow()->GetSize();
++  const double width = size[0];  // one eye, in pixels
++  const double height = size[1];
++  if (width <= 0 || height <= 0)
++  {
++    return 0.0;
++  }
++  // the limits are pixels of a view 1920 wide
++#ifdef VTK_USE_X
++  const double sunk = glx->GetStereoDepthSunk() * width / 1920.0;
++  const double popped = glx->GetStereoDepthPopped() * width / 1920.0;
++#else
++  const double sunk = 0.0, popped = 0.0;
++#endif
++
++  vtkCamera* camera = this->GetActiveCamera();
++  double bounds[6];
++  this->ComputeVisiblePropBounds(bounds);
++  if (!vtkMath::AreBoundsInitialized(bounds))
++  {
++    return 0.0;
++  }
++  double position[3], focal[3], direction[3];
++  camera->GetPosition(position);
++  camera->GetFocalPoint(focal);
++  vtkMath::Subtract(focal, position, direction);
++  const double focalDistance = vtkMath::Norm(direction);
++  if (focalDistance <= 0)
++  {
++    return 0.0;
++  }
++  vtkMath::MultiplyScalar(direction, 1.0 / focalDistance);
++
++  // the depth of the scene along the view direction: its box in the camera's space
++  double zMin = std::numeric_limits<double>::max();
++  double zMax = std::numeric_limits<double>::lowest();
++  for (int i = 0; i < 8; i++)
++  {
++    const double corner[3] = { bounds[i & 1], bounds[2 + ((i >> 1) & 1)], bounds[4 + ((i >> 2) & 1)] };
++    double d[3];
++    vtkMath::Subtract(corner, position, d);
++    const double z = vtkMath::Dot(d, direction);
++    zMin = std::min(zMin, z);
++    zMax = std::max(zMax, z);
++  }
++
++  // disparity of a point at depth z, in pixels, left minus right: the far side is sunk (at most
++  // the sunk limit), the near side popped (at most the popped limit). The shear is t = tan(angle / 2).
++  // perspective: d = 2 t F (1 - f / z), F = height / (2 tan(view angle / 2)); parallel: d = 2 t (z - f) height / (2 scale)
++  double farTerm = 0.0, nearTerm = 0.0;
++  double pixelsPerT = 0.0;
++  if (camera->GetParallelProjection())
++  {
++    pixelsPerT = height / camera->GetParallelScale();  // 2 t (z - f) * height / (2 scale)
++    farTerm = zMax - focalDistance;
++    nearTerm = focalDistance - zMin;
++  }
++  else
++  {
++    const double fPixels = height / (2.0 * std::tan(vtkMath::RadiansFromDegrees(camera->GetViewAngle() / 2.0)));
++    pixelsPerT = 2.0 * fPixels;
++    const double zNear = std::max(zMin, std::max(camera->GetClippingRange()[0], 1e-6 * focalDistance));
++    farTerm = zMax > focalDistance ? 1.0 - focalDistance / zMax : 0.0;
++    nearTerm = zMin < focalDistance ? focalDistance / zNear - 1.0 : 0.0;
++  }
++  double t = std::numeric_limits<double>::infinity();
++  if (farTerm > 0.0)
++  {
++    t = std::min(t, sunk / (pixelsPerT * farTerm));
++  }
++  if (nearTerm > 0.0)
++  {
++    t = std::min(t, popped / (pixelsPerT * nearTerm));
++  }
++  if (!std::isfinite(t))
++  {
++    // a scene flat at the focal plane has no depth to limit: infinity sinks the sunk limit
++    t = camera->GetParallelProjection() ? 0.0 : sunk / pixelsPerT;
++  }
++  return t;
++}
++
+ //----------------------------------------------------------------------------
+ void vtkF3DRenderer::Render()
+ {
+@@ -2196,7 +2322,7 @@ void vtkF3DRenderer::Render()
+     {
+       eye = camera->GetLeftEye() ? -1 : 1;
+     }
+-    const double shear = std::tan(vtkMath::RadiansFromDegrees(camera->GetEyeAngle() / 2.0));
++    const double shear = this->ComputeStereoShear();
+     camera->SetViewShear(eye < 0 ? -shear : shear, 0.0, 1.0);
+   }
+ 
+diff --git a/vtkext/private/module/vtkF3DRenderer.h b/vtkext/private/module/vtkF3DRenderer.h
+index bd4cb3f..0413a03 100644
+--- a/vtkext/private/module/vtkF3DRenderer.h
++++ b/vtkext/private/module/vtkF3DRenderer.h
+@@ -535,6 +535,20 @@ public:
+    */
+   vtkSetMacro(StereoEye, int);
+   vtkGetMacro(StereoEye, int);
++
++  /**
++   * The angle between the eyes' lines of sight in degrees, for a program that wants its own value.
++   * Zero (the default) takes the separation from the window's depth limits (the person's).
++   */
++  vtkSetMacro(StereoEyeAngle, double);
++  vtkGetMacro(StereoEyeAngle, double);
++
++  /**
++   * The state of the depth limits of the last stereo render: 0 delivered, 1 not offered, 2 not
++   * delivered yet, 3 not readable (an image, or a window that is not an X11 window), -1 no stereo
++   * render yet or an angle was given. Reading it polls the window.
++   */
++  int PollStereoDepthLimits();
+   vtkGetMacro(TotalTime, double);
+   //@}
+ 
+@@ -695,6 +709,14 @@ private:
+   double ModernAxisBackdropOpacity = 0.0;
+   double TotalTime = 0.0;
+   int StereoEye = 0;
++  double StereoEyeAngle = 0.0;
++  int StereoDepthState = -1;
++
++  /**
++   * The half tangent of the eye angle, from the person's limits: the largest separation under
++   * which the farthest and the nearest point of the scene stay inside the sunk and popped limits.
++   */
++  double ComputeStereoShear();
+ 
+   // Does vtk version support GridAxesActor
+ #if VTK_VERSION_NUMBER >= VTK_VERSION_CHECK(9, 4, 20250513)
+-- 
+2.53.0
+

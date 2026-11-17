@@ -76,6 +76,9 @@ int main(int argc, char** argv)
     f3d::engine engine = f3d::engine::create(true);
     f3d::options& opt = engine.getOptions();
     opt.render.stereo = true;
+    // the pair of a thumbnail keeps its own angle, 2 degrees as in +stereo3d1: an image has no window whose depth limits could
+    // give one, and the depth of a thumbnail has no recorded design yet (Daniel's call)
+    opt.render.stereo_eye_angle = 2.0;
     opt.render.effect.antialiasing.enable = true;
     opt.render.effect.antialiasing.mode = "ssaa";
     opt.render.effect.tone_mapping = true;
