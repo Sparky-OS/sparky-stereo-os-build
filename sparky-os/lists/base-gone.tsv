@@ -47,8 +47,8 @@ p7zip-full	now 7zip, which is in the set
 perl-modules-5.42	Perl 5.44 is in Debian testing; perl-modules-5.44 comes with perl
 plasma-runner-telepathy-contact	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
 printer-driver-all	not in Debian testing; the drivers it gathered are named one by one in the set
-printer-driver-hpcups	hplip is alive in Debian unstable (3.26.4+dfsg0-4) and only out of testing, with no removal record: the edition carries it, ORDER 653; this row goes when it is published
-printer-driver-postscript-hp	hplip is alive in Debian unstable (3.26.4+dfsg0-4) and only out of testing, with no removal record: the edition carries it, ORDER 653; this row goes when it is published
+printer-driver-hpcups	hplip in unstable is blocked by grave bugs #1148269 and #1153419; ORDER 653 carries HP 3.26.6 security remediation on Debian 3.26.4+dfsg0-4 packaging; this row goes only when the qualified build is published
+printer-driver-postscript-hp	hplip in unstable is blocked by grave bugs #1148269 and #1153419; ORDER 653 carries HP 3.26.6 security remediation on Debian 3.26.4+dfsg0-4 packaging; this row goes only when the qualified build is published
 qml-module-org-kde-people	kpeople (Qt 5) was removed from Debian unstable on 2026-03-02: "ROM; Dead upstream, superseded by kf6-kpeople, no reverse dependencies"; the Qt 6 module comes with Plasma
 qml-module-org-kde-pipewire	Qt 5 modules, not in Debian testing; Plasma brings the Qt 6 ones
 qml-module-org-kde-telepathy	KDE Telepathy: its metapackage was removed from Debian unstable on 2024-11-27: "ROM; Meta package for the KDE Telepathy stack, abandoned upstream"; last in Debian 12
@@ -62,5 +62,5 @@ telepathy-logger	KDE Telepathy and Telepathy are not in Debian testing
 telepathy-rakia	KDE Telepathy and Telepathy are not in Debian testing
 telepathy-ring	KDE Telepathy and Telepathy are not in Debian testing
 vdpau-va-driver	last in Debian 10 (vdpau-video)
-xserver-xorg-video-qxl	alive in Debian unstable (0.1.6-1.1) and only out of testing, with no removal record: the edition carries it, ORDER 653; this row goes when it is published
-xserver-xorg-video-vmware	alive in Debian unstable (1:13.4.0-2) and only out of testing, with no removal record: the edition carries it, ORDER 653; this row goes when it is published
+xserver-xorg-video-qxl	in unstable 0.1.6-1.1, blocked by grave Xspice bug #1137518; ORDER 653 fixed candidate built and installed with Frank Heckenbach's patch; this row goes only when published
+xserver-xorg-video-vmware	in unstable 1:13.4.0-2, blocked by serious bug #1112670; Mesa removed XA and the build disables KMS/3D; upstream issue 12 and open deprecation MR 21 explain why a module-only rebuild does not restore Linux functionality; ORDER 653 carry remains unresolved
