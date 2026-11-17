@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from lean import archive, linkcheck, package, release
+from lean import archive, linkcheck, package, parallel, release
 from lean.tests.archive_fixtures import deb, signed_archive
 
 
@@ -74,6 +74,18 @@ def test_exact_version_upgrade_has_comparable_correct_universes(sources, tmp_pat
     assert before['metadata'] == now['metadata']
     assert all(not (p.parent / 'root').exists() and (p.parent / 'root-files.jsonl').is_file() for p, _ in rows)
     assert len(list((scratch / 'sha256').glob(archive.digest(common) + '.deb'))) == 1
+
+
+def test_order_638_packages_qualified_side_by_side_share_one_frozen_universe(sources, tmp_path, capsys):
+    programs, libraries, common = edition(tmp_path / 'build')
+    scratch = tmp_path / 'scratch'
+    with patch.object(parallel, 'processors', return_value=2):
+        release.check_link([programs[1], libraries[1]], archive_config=sources, scratch=scratch, siblings=[common])
+    assert capsys.readouterr().out.endswith('lc1: archive-qualified link check passed for 2 packages\n')
+    rows = resolutions(scratch)
+    assert sorted(obj['candidate'][0] for _, obj in rows) == ['edition-consumer', 'edition-library']
+    assert len({Path(obj['metadata']).read_bytes() for _, obj in rows}) == 1
+    assert len({Path(obj['metadata']).parent for _, obj in rows}) == 2
 
 
 def test_direct_upgrade_with_explicit_previous_siblings(sources, tmp_path):

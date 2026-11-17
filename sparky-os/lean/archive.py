@@ -10,6 +10,7 @@ can contribute files to the execution root. No maintainer scripts are run.
 
 from __future__ import annotations
 
+import copy
 import fnmatch
 import hashlib
 import io
@@ -28,7 +29,7 @@ import tempfile
 from urllib.parse import unquote, urlsplit
 from urllib.request import urlopen
 
-from . import package
+from . import package, parallel
 
 # The control fields a downloaded archive must share with its signed index record.
 RELATIONSHIPS = ('Depends', 'Pre-Depends', 'Provides', 'Conflicts', 'Breaks', 'Multi-Arch')
@@ -577,6 +578,27 @@ def inventory(root, output):
                                              'sha256': digest(path)}) + '\n')
 
 
+def frozen(path):
+    """What a context freezes of one supplied archive: its identity, digest and shipped preferences."""
+    path = Path(path).resolve()
+    stat = path.stat()
+    stamp = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    obj = {'path': path, 'control': control(path), 'sha256': digest(path), 'size': stat.st_size, 'stamp': stamp,
+           'preferences': preference_names(shipped_paths(path))}
+    current = path.stat()
+    if stamp != (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_ctime_ns):
+        raise package.Invalid(f'{path}: supplied input changed during verification')
+    return obj
+
+
+def _lists_linked(source, target):
+    # apt replaces a list file by renaming a new one over it, so a linked list is never written through
+    if Path(source).parent.name == 'lists':
+        os.link(source, target)
+    else:
+        shutil.copy2(source, target)
+
+
 class ExecutionUnavailable(package.Invalid):
     """The execution environment failed, so baseline error comparison is invalid."""
 
@@ -757,15 +779,39 @@ class Archive:
             if obj['stamp'] != stamp:
                 raise package.Invalid(f'{path}: supplied input changed after its universe was frozen')
             return obj
-        obj = {'path': path, 'control': control(path), 'sha256': digest(path), 'size': stat.st_size, 'stamp': stamp,
-               'preferences': preference_names(shipped_paths(path))}
-        current = path.stat()
-        if stamp != (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_ctime_ns):
-            raise package.Invalid(f'{path}: supplied input changed during verification')
+        return self._admit(frozen(path))
+
+    def _admit(self, obj):
         if obj['control']['Architecture'] not in (self.arch, 'all'):
-            raise package.Invalid(f'{path}: wrong architecture {obj["control"]["Architecture"]}; context is {self.arch}')
-        self._inputs[path] = obj
+            raise package.Invalid(f'{obj["path"]}: wrong architecture {obj["control"]["Architecture"]}; context is {self.arch}')
+        self._inputs[obj['path']] = obj
         return obj
+
+    def freeze(self, paths):
+        """input() for each path not frozen yet, its archive read on every processor, admitted in order (ORDER 638)."""
+        for obj in parallel.ordered(frozen, [p for p in dict.fromkeys(Path(p).resolve() for p in paths)
+                                             if p not in self._inputs]):
+            self._admit(obj)
+
+    def private(self):
+        """This context for one worker that qualifies packages beside others (ORDER 638): the same frozen indexes,
+        inputs and caches, its own APT state, locks, pins, logs and cases."""
+        other = copy.copy(self)
+        other.base = Path(tempfile.mkdtemp(prefix=f'link-{self.arch}-', dir=self.scratch))
+        old, new = str(self.base), str(other.base)
+        shutil.copytree(self.base / 'etc', other.base / 'etc', symlinks=True)
+        shutil.copytree(self.base / 'state', other.base / 'state', symlinks=True,
+                        ignore=shutil.ignore_patterns('lock', 'partial'), copy_function=_lists_linked)
+        for name in ('state/lists/partial', 'cache/archives/partial', 'log', 'inputs'):
+            (other.base / name).mkdir(parents=True, exist_ok=True)
+        for name in ('apt.conf', 'etc/sources.list', 'etc/local.list'):
+            if (self.base / name).is_file():
+                (other.base / name).write_text((self.base / name).read_text().replace(old, new))
+        shutil.copy2(self.base / 'metadata.json', other.base / 'metadata.json')
+        other.public_sources = self.public_sources.replace(old, new)
+        other.env = {**self.env, 'HOME': new, 'APT_CONFIG': str(other.base / 'apt.conf')}
+        other._active = set()
+        return other
 
     def preferences(self, item):
         """{name: bytes} of the files a supplied package ships in /etc/apt/preferences.d, read once per hash.
@@ -822,7 +868,10 @@ class Archive:
                 if digest(temporary) != item['sha256']:
                     raise package.Invalid(f'{item["path"]}: supplied bytes changed while copying')
                 temporary.chmod(0o444)
-                os.link(temporary, dest)
+                try:
+                    os.link(temporary, dest)
+                except FileExistsError:   # another worker linked the same verified bytes first
+                    pass
             finally:
                 temporary.unlink(missing_ok=True)
         return dest
@@ -868,11 +917,15 @@ class Archive:
                              'size': item['size'], 'source': str(item['path'])} for item in inputs]
                 (temporary / 'universe.json').write_text(json.dumps(manifest, indent=2) + '\n')
                 (temporary / 'universe.json').chmod(0o444)
-                temporary.rename(local)
+                try:
+                    temporary.rename(local)
+                except OSError:           # another worker made the same index first
+                    if not local.is_dir():
+                        raise
             finally:
                 if temporary.exists():
                     shutil.rmtree(temporary)
-        elif (local / 'Packages').read_bytes() != index:
+        if (local / 'Packages').read_bytes() != index:
             raise package.Invalid(f'{local}: corrupt immutable local index')
         local_source = f'deb [trusted=yes arch={self.arch}] {local.as_uri()} ./\n'
         (self.base / 'etc/local.list').write_text(local_source)

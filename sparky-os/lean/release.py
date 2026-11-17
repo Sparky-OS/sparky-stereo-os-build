@@ -7,12 +7,15 @@ dpkg-deb step of a build; check-debs is the mandatory gate before repository sig
 """
 
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import lzma
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -240,27 +243,62 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
         previous_inputs += sorted(Path(previous_dir).rglob('*.deb'))
     current_inputs = list(dict.fromkeys(debs + list(map(Path, siblings))))
     previous_inputs = list(dict.fromkeys(previous_inputs))
-    controls = {path: archive.control(path) for path in dict.fromkeys(current_inputs + previous_inputs)}
+    every = list(dict.fromkeys(current_inputs + previous_inputs))
+    controls = dict(zip(every, parallel.ordered(archive.control, every)))
     contexts = {}
     native = subprocess.run(['dpkg', '--print-architecture'], capture_output=True, text=True, check=True).stdout.strip()
-    for deb in debs:
-        arch = controls[deb]['Architecture']
-        if arch == 'all':
-            arch = native
-        if arch != native:
-            raise package.Invalid(f'{deb}: unsupported execution gate for {arch} on {native}; use a native runner')
-        if arch not in contexts:
-            contexts[arch] = archive.Archive(archive_config, scratch, arch, min_free_gib, root_min_free_gib)
-        same_arch = [p for p in current_inputs if controls[p]['Architecture'] in (arch, 'all')]
-        old_arch = [p for p in previous_inputs if controls[p]['Architecture'] in (arch, 'all')]
-        for path in dict.fromkeys(same_arch + old_arch):
-            frozen = contexts[arch].input(path)['control']
-            if frozen != controls[path]:
-                raise package.Invalid(f'{path}: control changed before the edition snapshot was frozen')
-        previous = previous_build(deb, previous_debs=old_arch, controls=controls)
-        linkcheck.check(deb, previous_deb=previous, smoke_table=smoke_table,
-                        archive_context=contexts[arch], siblings=same_arch, previous_siblings=old_arch)
+    # each package as the loop of one process checked it, its notes printed and its refusal raised in this order;
+    # a refusal before a package's check comes after the checks of the packages before it (ORDER 638)
+    _LINK.update(contexts=contexts, smoke=smoke_table, plan=[], private={})
+    stop = None
+    try:
+        for deb in debs:
+            arch = controls[deb]['Architecture']
+            if arch == 'all':
+                arch = native
+            if arch != native:
+                raise package.Invalid(f'{deb}: unsupported execution gate for {arch} on {native}; use a native runner')
+            if arch not in contexts:
+                contexts[arch] = archive.Archive(archive_config, scratch, arch, min_free_gib, root_min_free_gib)
+            same_arch = [p for p in current_inputs if controls[p]['Architecture'] in (arch, 'all')]
+            old_arch = [p for p in previous_inputs if controls[p]['Architecture'] in (arch, 'all')]
+            contexts[arch].freeze(same_arch + old_arch)
+            for path in dict.fromkeys(same_arch + old_arch):
+                frozen = contexts[arch].input(path)['control']
+                if frozen != controls[path]:
+                    raise package.Invalid(f'{path}: control changed before the edition snapshot was frozen')
+            previous = previous_build(deb, previous_debs=old_arch, controls=controls)
+            _LINK['plan'].append((deb, arch, same_arch, old_arch, previous))
+    except Exception as exc:
+        stop = exc
+    try:
+        for notes, error in parallel.ordered(_linked, range(len(_LINK['plan']))):
+            sys.stdout.write(notes)
+            if error is not None:
+                raise error
+    finally:
+        _LINK.clear()
+    if stop is not None:
+        raise stop
     print(f'lc1: archive-qualified link check passed for {len(debs)} packages')
+
+
+_LINK = {}
+
+
+def _linked(index):
+    """(printed notes, refusal or None) of one package's link check, in a context of this process's own."""
+    deb, arch, same_arch, old_arch, previous = _LINK['plan'][index]
+    if arch not in _LINK['private']:
+        _LINK['private'][arch] = _LINK['contexts'][arch].private()
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            linkcheck.check(deb, previous_deb=previous, smoke_table=_LINK['smoke'],
+                            archive_context=_LINK['private'][arch], siblings=same_arch, previous_siblings=old_arch)
+    except Exception as exc:
+        return out.getvalue(), exc
+    return out.getvalue(), None
 
 
 def main():
