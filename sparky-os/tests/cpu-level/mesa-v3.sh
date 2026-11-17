@@ -28,6 +28,7 @@ cd /work
 runuser -u builder -- dpkg-source -x "/dsc/$MESA_DSC" src/mesa >/work/unpack.log 2>&1
 cd src/mesa
 for f in debian/control debian/control.in; do
+	[ -f "$f" ] || continue
 	awk '/^Package: / {print; print "XB-Architecture-Variant: amd64v3"; next} {print}' "$f" >"$f.new" && mv "$f.new" "$f"
 done
 cp /toolkit/lean/archive.py /toolkit/lean/package.py debian/sparky-lean-toolkit/lean/
