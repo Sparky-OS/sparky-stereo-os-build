@@ -39,7 +39,8 @@ for p in grub-efi grub-efi-amd64 libjcat1 grub-efi-amd64-signed-template shim-he
 done''')
         (self.root/'names').write_text('available\nmissing\n')
         (self.root/'remove').write_text('')
-        self.env.update(NAMES=str(self.root/'names'), REMOVE=str(self.root/'remove'))
+        (self.root/'gone').write_text('# name, tab, what took its place\n')
+        self.env.update(NAMES=str(self.root/'names'), REMOVE=str(self.root/'remove'), GONE=str(self.root/'gone'))
 
     def mock(self, name, body):
         p=self.bin/name; p.write_text('#!/bin/sh\n'+body+'\n'); p.chmod(0o755)
@@ -81,6 +82,23 @@ inr() {
     def assert_failure(self,r,detail):
         self.assertNotEqual(r.returncode,0,r.stdout+r.stderr)
         self.assertIn(detail,r.stderr)
+
+    def test_a_name_listed_as_gone_is_not_asked_for(self):
+        (self.root/'gone').write_text('missing\tnow another-name, in the set\n')
+        r=self.base('none')
+        self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+        self.assertEqual(r.stdout.split(),['available'])
+
+    def test_a_name_listed_as_gone_that_has_a_package_again_stops_the_build(self):
+        (self.root/'gone').write_text('available\tsaid to be gone\n')
+        self.assert_failure(self.base(),'has a package for them again')
+
+    def test_a_name_without_a_package_and_without_a_row_still_stops_the_build(self):
+        self.assert_failure(self.base('none'),'base-gone.tsv')
+
+    def test_an_unreadable_gone_list_stops_the_build(self):
+        self.env['GONE']=str(self.root/'absent')
+        self.assert_failure(self.base(),'Cannot read')
 
     def test_U06_helper_install_failure(self):
         self.assert_failure(self.pack('install-fail'),'Secure Boot helper')
