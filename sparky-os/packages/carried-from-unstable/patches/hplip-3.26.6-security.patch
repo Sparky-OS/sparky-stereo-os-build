@@ -4375,15 +4375,18 @@ Last-Update: 2026-11-17
  {
      setbuf (stderr, NULL);
  
-@@ -232,6 +232,7 @@
+@@ -230,8 +230,8 @@
+     if (m_pPrinterBuffer) {
+         delete [] m_pPrinterBuffer;
          m_pPrinterBuffer = NULL;
-         m_PrinterBufferSize = 0;
-     }
+-        m_PrinterBufferSize = 0;
+-    }
++    }
 +    m_uPrinterBufferSize = 0;
  
      if(m_ppd){
         ppdClose(m_ppd);
-@@ -242,6 +243,23 @@
+@@ -242,6 +242,23 @@
      	delete m_pSys;
      	m_pSys = NULL;
      }
@@ -4407,7 +4410,7 @@ Last-Update: 2026-11-17
  }
  
  void HPCupsFilter::CancelJob()
-@@ -467,16 +485,23 @@
+@@ -467,16 +484,23 @@
          i--;
      }
      snprintf(m_JA.driver_name, sizeof(m_JA.driver_name), "%s; %s", &m_argv[0][i+1], HP_FILE_VERSION_STR);
@@ -4438,7 +4441,7 @@ Last-Update: 2026-11-17
      }
  
      string strPrinterURI="" , strPrinterName= "";
-@@ -487,7 +512,11 @@
+@@ -487,7 +511,11 @@
  
      ptr = strstr(m_argv[5], "job-uuid");
      if (ptr) {
@@ -4451,7 +4454,7 @@ Last-Update: 2026-11-17
      }
  
      for (i = 0; i < 16; i++)
-@@ -673,7 +702,10 @@
+@@ -673,7 +701,10 @@
      char hpPreProcessedRasterFile[MAX_FILE_PATH_LEN]; //temp file needed to store raster data with swaped pages.
  
  
@@ -4463,7 +4466,7 @@ Last-Update: 2026-11-17
      #ifndef DISABLE_IMAGEPROCESSOR 
  	    image_processor_t* imageProcessor=NULL;
  	    IMAGE_PROCESSOR_ERROR result;
-@@ -696,13 +728,7 @@
+@@ -696,13 +727,7 @@
         #endif
          current_page_number++;
  
