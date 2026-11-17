@@ -1,0 +1,261 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 Daniel Campos Ramos
+"""Language task selection, installation and post-apt migration."""
+import fcntl
+import gettext
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+SHARE = Path('/usr/share/sparky-stereo-language-tasks')
+STATE = Path('/var/lib/sparky-stereo-language-tasks')
+PROTECTION = Path('/etc/apt/apt.conf.d/90sparky-language-pending')
+DATA = json.loads((SHARE / 'manifest.json').read_text())
+ROWS = {r['code'].lower(): r for r in DATA['languages']}
+FAILURE = 'Language %s is incomplete (%s). Connect to the network and retry this installation step.'
+MIGRATION = 'Language support could not be completed: %s. Check the network and retry the update.'
+DRY = os.environ.get('SPARKY_STEREO_LANG_DRY_RUN') == '1'
+locale = os.environ.get('INSTALLER_LANG') or os.environ.get('LANG', 'en')
+_ = gettext.translation('sparky-stereo-language-tasks', '/usr/share/locale', languages=[locale.split('.')[0]], fallback=True).gettext
+
+
+def atomic(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as stream:
+        stream.write(text)
+        stream.flush()
+        os.fsync(stream.fileno())
+        temporary = stream.name
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, path)
+
+
+def run(args, check=True):
+    p = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       env=os.environ | {'DEBIAN_FRONTEND': 'noninteractive', 'LC_ALL': 'C'})
+    if check and p.returncode:
+        raise RuntimeError(p.stdout.strip())
+    return p
+
+
+def installed():
+    text = run(['dpkg-query', '-W', '-f', '${Package}\t${db:Status-Status}\t${Depends}, ${Pre-Depends}, ${Recommends}\t${Provides}\n']).stdout
+    return {f[0]: {'deps': f[2], 'provides': f[3], 'status': f[1]} for line in text.splitlines()
+            if len(f := line.split('\t')) == 4 and f[1] in ('installed', 'triggers-pending', 'triggers-awaited', 'half-configured')}
+
+
+def names(groups):
+    return set(re.findall(r'(?:^|[,|])\s*([a-z0-9][a-z0-9+.-]*)', ', '.join(groups)))
+
+
+def payload(row):
+    return names(row['depends'])
+
+
+def select(value):
+    value = value.strip().strip('"\'').split('.')[0].split('@')[0].replace('_', '-').lower()
+    if value in ('c', 'posix', 'en') or value.startswith('en-'):
+        return 'en'
+    if value in ('nb', 'nn', 'no') or value.startswith(('nb-', 'nn-', 'no-')):
+        return 'no'
+    if value.startswith(('zh-cn', 'zh-sg', 'zh-hans')):
+        return 'zh-cn'
+    if value.startswith(('zh-tw', 'zh-hk', 'zh-mo', 'zh-hant')):
+        return 'zh-tw'
+    if value == 'pt-br':
+        return 'pt-br'
+    if value.startswith('es-') and value != 'es-es':
+        return 'es-419'
+    if value in ROWS:
+        return value
+    base = value.split('-')[0]
+    if base in ROWS:
+        return base
+    raise ValueError(value)
+
+
+def system_language():
+    if not Path('/etc/default/locale').exists():
+        return select(os.environ.get('LANG', 'C.UTF-8'))
+    for line in Path('/etc/default/locale').read_text().splitlines():
+        if line.startswith('LANG='):
+            return select(line[5:])
+    raise ValueError('/etc/default/locale: LANG')
+
+
+def requested(values):
+    return {system_language() if v == 'system' else select(v)
+            for arg in values for v in re.split('[, ]+', arg) if v}
+
+
+def plan(args, allowed=()):
+    p = run(['apt-get', '-s', '-o', 'DPkg::Lock::Timeout=-1', '--no-install-recommends'] + args)
+    removed = {line.split()[1].split(':')[0] for line in p.stdout.splitlines() if line.startswith(('Remv ', 'Purg '))}
+    if removed - set(allowed):
+        raise RuntimeError('Remv: ' + ', '.join(sorted(removed - set(allowed))))
+    print(p.stdout, end='')
+    return p
+
+
+def verify(codes):
+    have = installed()
+    missing = [ROWS[c]['name'] for c in codes if ROWS[c]['name'] not in have or have[ROWS[c]['name']]['status'] == 'half-configured']
+    if missing:
+        raise RuntimeError(', '.join(missing))
+    # Check the installed dependency graph, not the mere presence of a pack.
+    run(['apt-get', '-q', 'check'])
+
+
+def add(codes, refresh=False):
+    try:
+        verify(codes)
+        if not DRY:
+            run(['apt-mark', 'manual'] + [ROWS[c]['name'] for c in sorted(codes)])
+        return
+    except RuntimeError:
+        if refresh:
+            run(['apt-get', 'update', '-o', 'APT::Update::Error-Mode=any'])
+    wrappers = {n for c in codes for n in ROWS[c]['conflicts']}
+    args = ['install'] + [ROWS[c]['name'] for c in sorted(codes)]
+    plan(args, wrappers)
+    if DRY:
+        return
+    print(run(['apt-get', '-y', '-o', 'DPkg::Lock::Timeout=-1', '--no-install-recommends'] + args).stdout)
+    verify(codes)
+    run(['apt-mark', 'manual'] + [ROWS[c]['name'] for c in sorted(codes)])
+
+
+def actual(wanted, have):
+    return wanted & set(have) | {n for n, fields in have.items() if wanted & names([fields['provides']])}
+
+
+def retain(codes):
+    codes |= {'en', system_language()}
+    have = installed()
+    kept_payload = actual(names(DATA['common']) | set().union(*(payload(ROWS[c]) for c in codes)), have)
+    unwanted = set(ROWS) - codes
+    purge = actual({ROWS[c]['name'] for c in unwanted} | set().union(*(payload(ROWS[c]) for c in unwanted)), have)
+    purge -= kept_payload
+    if purge:
+        args = ['purge'] + sorted(purge)
+        plan(args, purge)
+        if not DRY:
+            print(run(['apt-get', '-y', '-o', 'DPkg::Lock::Timeout=-1'] + args).stdout)
+    if DRY:
+        return
+    STATE.mkdir(parents=True, exist_ok=True)
+    atomic(STATE / 'retained.json', json.dumps(sorted(codes)) + '\n')
+    add(codes)
+    if (STATE / 'pending').exists():
+        capture()
+
+
+def capture():
+    have = installed()
+    roots = names(DATA['common']) | set().union(*(payload(r) for r in ROWS.values()))
+    roots = actual(roots, have)
+    protected = set(roots)
+    todo = list(roots)
+    while todo:
+        for n in actual(names([have[todo.pop()]['deps']]), have):
+            if n in have and n not in protected and not n.startswith('task-'):
+                protected.add(n)
+                todo.append(n)
+    if (STATE / 'retained.json').exists():
+        codes = set(json.loads((STATE / 'retained.json').read_text()))
+    else:
+        # Shared data alone cannot resurrect a removed regional language.
+        counts = {}
+        for r in ROWS.values():
+            for n in r['ours']:
+                counts[n] = counts.get(n, 0) + 1
+        codes = {c for c, r in ROWS.items() if any(n in have and counts[n] == 1 and not n.startswith('fonts-') for n in r['ours'])}
+    codes |= {'en', system_language()}
+    STATE.mkdir(parents=True, exist_ok=True)
+    old = json.loads((STATE / 'pending').read_text()) if (STATE / 'pending').exists() else {}
+    roots |= set(old.get('roots', [])) & set(have)
+    protected |= set(old.get('protected', [])) & set(have)
+    atomic(PROTECTION, 'APT::NeverAutoRemove {\n' + ''.join(' "^' + re.escape(n) + '$";\n' for n in sorted(protected)) + '};\n')
+    atomic(STATE / 'pending', json.dumps({'codes': sorted(codes), 'roots': sorted(roots), 'protected': sorted(protected)}, indent=2) + '\n')
+
+
+def migrate():
+    STATE.mkdir(parents=True, exist_ok=True)
+    with (STATE / 'lock').open('w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not (STATE / 'pending').exists():
+            return
+        # Same wait-for-apt pattern as kernel-settings' deferred migration.
+        run(['apt-get', '-q', '-o', 'DPkg::Lock::Timeout=-1', 'check'])
+        pending = json.loads((STATE / 'pending').read_text())
+        roots = sorted(set(pending['roots']) & set(installed()))
+        if roots:
+            run(['apt-mark', 'manual'] + roots)
+        codes = set(pending['codes'])
+        wrappers = {n for c in codes for n in ROWS[c]['conflicts']}
+        args = ['install', 'tasksel', 'tasksel-data'] + [ROWS[c]['name'] for c in sorted(codes)] + roots
+        p = plan(args, wrappers)
+        print(run(['apt-get', '-y', '-o', 'DPkg::Lock::Timeout=-1', '--no-install-recommends'] + args).stdout)
+        verify(codes)
+        after = run(['apt-get', '-s', 'autoremove'])
+        removed = {line.split()[1] for line in after.stdout.splitlines() if line.startswith('Remv ')}
+        if removed & set(pending['protected']):
+            raise RuntimeError('autoremove: ' + ', '.join(sorted(removed & set(pending['protected']))))
+        atomic(STATE / 'retained.json', json.dumps(sorted(codes)) + '\n')
+        (STATE / 'pending').unlink()
+        PROTECTION.unlink(missing_ok=True)
+        run(['sparky-stereo-problems', 'clear', '--machine', 'sparky-stereo-language-tasks', 'migration'], False)
+
+
+def main():
+    action, *values = sys.argv[1:]
+    if action == 'list':
+        print(' '.join(r['name'] for r in ROWS.values()))
+    elif action == 'select':
+        print(' '.join(sorted(requested(values))))
+    elif action == 'queue':
+        capture()
+    elif action == 'retry':
+        if (STATE / 'pending').exists() and Path('/run/systemd/system').is_dir():
+            run(['systemctl', 'reset-failed', 'sparky-stereo-language-tasks.path', 'sparky-stereo-language-tasks.service'])
+            run(['systemctl', '--no-block', 'start', 'sparky-stereo-language-tasks.path', 'sparky-stereo-language-tasks.service'])
+    elif action == 'migrate':
+        migrate()
+    elif action == 'verify':
+        verify(set(ROWS) if values == ['all'] else requested(values))
+    elif action == 'add':
+        codes = requested(values)
+        add(codes, refresh=True)
+        if not DRY and (STATE / 'retained.json').exists():
+            kept = set(json.loads((STATE / 'retained.json').read_text())) | codes
+            atomic(STATE / 'retained.json', json.dumps(sorted(kept)) + '\n')
+        if not DRY and (STATE / 'pending').exists():
+            capture()
+    elif action == 'keep':
+        retain(set(ROWS) if values == ['all'] else requested(values))
+    elif action == 'installer':
+        code = 'system'
+        try:
+            code = system_language()
+            add({code}, refresh=True)
+        except (RuntimeError, ValueError) as error:
+            raise RuntimeError(_(FAILURE) % (code, str(error))) from error
+    else:
+        raise ValueError(action)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, ValueError, RuntimeError) as error:
+        print(str(error), file=sys.stderr)
+        if sys.argv[1:2] == ['migrate']:
+            run(['sparky-stereo-problems', 'keep', '--machine', '--repair',
+                 '["/usr/lib/sparky-stereo-language-tasks/languages","migrate"]',
+                 'sparky-stereo-language-tasks', 'migration', 'LOCAL2', str(error)], False)
+        sys.exit(1)

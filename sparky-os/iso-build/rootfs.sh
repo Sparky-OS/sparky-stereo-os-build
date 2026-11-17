@@ -110,6 +110,11 @@ if [ "$STEP" = packages ] || [ "$STEP" = all ]; then
 		sparky-stereo-calamares-branding
 	echo "== $(date -u +%T) the edition's languages, input methods and language data with their Recommends"
 	apt_in install sparky-stereo-languages
+    # The complete language set is explicit; task payloads are hard dependencies.
+    language_tasks=$(inr /usr/lib/sparky-stereo-language-tasks/languages list)
+    [ -n "$language_tasks" ] || { echo "rootfs: empty language task manifest" >&2; exit 1; }
+    apt_in install --no-install-recommends $language_tasks
+    inr /usr/lib/sparky-stereo-language-tasks/languages verify all
 	echo "== $(date -u +%T) the edition's top meta, without the optional role tasks"
 	apt_in install --no-install-recommends sparky-stereo
 	echo "== $(date -u +%T) kernels: the edition's kernel and its headers, no other; NVIDIA 615 with the edition's open modules"

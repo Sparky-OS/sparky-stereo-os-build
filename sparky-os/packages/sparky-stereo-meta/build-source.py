@@ -47,23 +47,24 @@ recovered by extracting an already sealed binary package.
 Section: metapackages
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Build-Depends: python3
+Build-Depends: dpkg-dev, gcc, node-acorn, nodejs, perl, python3, python3-yaml
 Standards-Version: 4.7.4
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
 '''
     for tree in sorted(trees.iterdir()):
         fields = package.control(tree)
-        control += f'\nPackage: {tree.name}\nArchitecture: all\nSection: {fields["section"]}\nPriority: {fields["priority"]}\nDescription: Sparky Stereo OS development task\n Resolved development task dependencies for the edition.\n'
+        control += f'\nPackage: {tree.name}\nArchitecture: all\nSection: {fields["section"]}\nPriority: {fields["priority"]}\nDescription: {fields["description"]}\n'
     (source / 'debian/control').write_text(control)
     (source / 'debian/source/format').write_text('3.0 (native)\n')
+    source_stamp = reproducible.epoch([Path(__file__).parent])
     (source / 'debian/changelog').write_text(f'''sparky-stereo-meta ({version}) unstable; urgency=medium
 
-  * Development task update: distribution maintainer skills belong to the
-    OS developer role; retain independent ordinary developer task selection.
+  * Build the selected edition tasks from the retained resolved controls.
+  * Include per-language payload dependencies and the tasksel descriptions.
   * Apply Lean Code during package assembly and retain exact source inputs.
 
- -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Mon, 19 Oct 2026 18:00:00 -0300
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  {reproducible.rfc2822(source_stamp)}
 ''')
     copyright_file = next(trees.glob('*/usr/share/doc/*/copyright'))
     shutil.copy2(copyright_file, source / 'debian/copyright')
