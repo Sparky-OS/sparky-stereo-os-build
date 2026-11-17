@@ -10,8 +10,11 @@ remove)
 	if [ -d /run/udev ]; then udevadm control --reload-rules >/dev/null 2>&1 || true; fi ;;
 purge)
 	# the unit's enable records and the state this package made (profiles, config.json); the system user stays, as Debian policy has it
-	deb-systemd-helper purge $unit >/dev/null || true
-	deb-systemd-helper unmask $unit >/dev/null || true
-	if ! [ -d /opt/OpenLinkHub ]; then rm -rf /var/lib/openlinkhub; fi ;;
+	# (not where upstream's own install holds the unit's name: its enable records are its own)
+	if ! [ -d /opt/OpenLinkHub ] && ! [ -e /etc/systemd/system/$unit ]; then
+		deb-systemd-helper purge $unit >/dev/null || true
+		deb-systemd-helper unmask $unit >/dev/null || true
+	fi
+	rm -rf /var/lib/openlinkhub ;;
 esac
 exit 0
