@@ -4,7 +4,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?}
-VERSION=1.0.1+lc1
+VERSION=1.0.2+lc1
 WORK=$(mktemp -d "${BUILD_ROOT:?}/language-tasks.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 D=$WORK/tree
@@ -19,12 +19,14 @@ for po in "$HERE"/po/*.po; do
     dest=$D/usr/share/locale/$lang/LC_MESSAGES
     mkdir -p "$dest"
     msgfmt --check-format -o "$dest/$P.mo" "$po"
+    merged=$D/usr/share/$P/tasksel/$lang
+    mkdir -p "$merged"
     # tasksel uses the debian-tasks domain; retain upstream messages alongside ours.
     if [ -f "$HERE/upstream-po/$lang.po" ]; then
         msgcat --use-first "$po" "$HERE/upstream-po/$lang.po" -o "$WORK/merged.po"
-        msgfmt --check-format -o "$dest/debian-tasks.mo" "$WORK/merged.po"
+        msgfmt --check-format -o "$merged/debian-tasks.mo" "$WORK/merged.po"
     else
-        cp "$dest/$P.mo" "$dest/debian-tasks.mo"
+        cp "$dest/$P.mo" "$merged/debian-tasks.mo"
     fi
 done
 python3 - "$D" <<'PYCODE'
@@ -48,6 +50,12 @@ cat > "$D/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
 if [ "$1" = configure ]; then
+    for l in en pl pt_BR fr de es ja ko zh_CN zh_TW; do
+        f=/usr/share/locale/$l/LC_MESSAGES/debian-tasks.mo
+        target=/usr/share/sparky-stereo-language-tasks/tasksel/$l/debian-tasks.mo
+        mkdir -p "$(dirname "$f")"
+        if [ "$(readlink "$f" 2>/dev/null || :)" != "$target" ]; then ln -s "$target" "$f"; fi
+    done
     /usr/lib/sparky-stereo-language-tasks/languages queue
     sparky-stereo-problems catalog sparky-stereo-language-tasks /usr/share/sparky/sparky-stereo-language-tasks /usr/lib/systemd/catalog --subject LOCAL1
     systemctl enable sparky-stereo-language-tasks.path sparky-stereo-language-tasks.service
@@ -63,6 +71,8 @@ set -e
 if [ "$1" = remove ] || [ "$1" = purge ]; then
     for l in en pl pt_BR fr de es ja ko zh_CN zh_TW; do
         f=/usr/share/locale/$l/LC_MESSAGES/debian-tasks.mo
+        target=/usr/share/sparky-stereo-language-tasks/tasksel/$l/debian-tasks.mo
+        if [ "$(readlink "$f" 2>/dev/null || :)" = "$target" ]; then rm "$f"; fi
         dpkg-divert --package sparky-stereo-language-tasks --rename --divert "$f.debian-language-tasks" --remove "$f"
     done
 fi
