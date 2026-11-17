@@ -1,5 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE TS>
+<?xml version='1.0' encoding='utf-8'?>
 <TS version="2.1" language="fr" sourcelanguage="en">
   <context>
     <name>Cli</name>
@@ -113,6 +112,18 @@
     <message>
       <source>Cannot encode PNG</source>
       <translation>Impossible d’encoder le PNG</translation>
+    </message>
+    <message>
+      <source>the desktop's limit is zero</source>
+      <translation>la limite du bureau est nulle</translation>
+    </message>
+    <message>
+      <source>no room in the drawing at this size</source>
+      <translation>pas de place dans le dessin à cette taille</translation>
+    </message>
+    <message>
+      <source>Depth order cannot fit in this drawing at %1 px: %2 / %3</source>
+      <translation>L’ordre de profondeur ne tient pas dans ce dessin à %1 px : %2 / %3</translation>
     </message>
   </context>
   <context>
@@ -232,10 +243,6 @@
     <message>
       <source>%1 px</source>
       <translation>%1 px</translation>
-    </message>
-    <message>
-      <source>0 px (limit below 1 px)</source>
-      <translation>0 px (limite inférieure à 1 px)</translation>
     </message>
     <message>
       <source>0 px (screen)</source>
@@ -416,6 +423,26 @@
     <message>
       <source>About…</source>
       <translation>À propos…</translation>
+    </message>
+    <message>
+      <source>Cannot read the preview output</source>
+      <translation>Impossible de lire la sortie de l’aperçu</translation>
+    </message>
+    <message>
+      <source>Export (defaults)</source>
+      <translation>Export (valeurs par défaut)</translation>
+    </message>
+    <message>
+      <source>Preview (desktop)</source>
+      <translation>Aperçu (bureau)</translation>
+    </message>
+    <message>
+      <source>0 px (%1)</source>
+      <translation>0 px (%1)</translation>
+    </message>
+    <message>
+      <source>; same pixel as %1</source>
+      <translation> ; même pixel que %1</translation>
     </message>
   </context>
   <context>

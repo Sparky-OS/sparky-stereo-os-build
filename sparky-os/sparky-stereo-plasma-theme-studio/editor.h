@@ -16,6 +16,7 @@
 #include <QProcess>
 #include <memory>
 
+class QScreen;
 class Editor : public QWidget
 {
     Q_OBJECT
@@ -34,6 +35,9 @@ public:
     QUndoStack *history;
     explicit Editor(bool part = false);
     bool partMode;
+    QWindow *observedWindow = nullptr;
+    QScreen *observedScreen = nullptr;
+    QMetaObject::Connection observedGeometry;
     Editor *plasmaEditor = nullptr;
     QTabWidget *pages = nullptr;
     QString plasmaRoot, plasmaPath, colourName;
@@ -85,5 +89,7 @@ public slots:
     void undoDepth() { history->undo(); }
     void redoDepth() { history->redo(); }
 protected:
+    bool event(QEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 };

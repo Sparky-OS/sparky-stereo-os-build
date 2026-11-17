@@ -1,5 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE TS>
+<?xml version='1.0' encoding='utf-8'?>
 <TS version="2.1" language="ko" sourcelanguage="en">
   <context>
     <name>Cli</name>
@@ -113,6 +112,18 @@
     <message>
       <source>Cannot encode PNG</source>
       <translation>PNG를 인코딩할 수 없습니다</translation>
+    </message>
+    <message>
+      <source>the desktop's limit is zero</source>
+      <translation>데스크톱 한계가 0입니다</translation>
+    </message>
+    <message>
+      <source>no room in the drawing at this size</source>
+      <translation>이 크기의 그림 안에 이동할 공간이 없습니다</translation>
+    </message>
+    <message>
+      <source>Depth order cannot fit in this drawing at %1 px: %2 / %3</source>
+      <translation>%1 px에서 이 그림의 깊이 순서를 유지할 수 없습니다: %2 / %3</translation>
     </message>
   </context>
   <context>
@@ -232,10 +243,6 @@
     <message>
       <source>%1 px</source>
       <translation>%1 px</translation>
-    </message>
-    <message>
-      <source>0 px (limit below 1 px)</source>
-      <translation>0 px (한도 1 px 미만)</translation>
     </message>
     <message>
       <source>0 px (screen)</source>
@@ -416,6 +423,26 @@
     <message>
       <source>About…</source>
       <translation>정보…</translation>
+    </message>
+    <message>
+      <source>Cannot read the preview output</source>
+      <translation>미리 보기 출력을 읽을 수 없습니다</translation>
+    </message>
+    <message>
+      <source>Export (defaults)</source>
+      <translation>내보내기 (기본값)</translation>
+    </message>
+    <message>
+      <source>Preview (desktop)</source>
+      <translation>미리 보기 (데스크톱)</translation>
+    </message>
+    <message>
+      <source>0 px (%1)</source>
+      <translation>0 px (%1)</translation>
+    </message>
+    <message>
+      <source>; same pixel as %1</source>
+      <translation>; %1와 같은 픽셀</translation>
     </message>
   </context>
   <context>

@@ -1,5 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE TS>
+<?xml version='1.0' encoding='utf-8'?>
 <TS version="2.1" language="ja" sourcelanguage="en">
   <context>
     <name>Cli</name>
@@ -113,6 +112,18 @@
     <message>
       <source>Cannot encode PNG</source>
       <translation>PNG をエンコードできません</translation>
+    </message>
+    <message>
+      <source>the desktop's limit is zero</source>
+      <translation>デスクトップの制限がゼロです</translation>
+    </message>
+    <message>
+      <source>no room in the drawing at this size</source>
+      <translation>このサイズでは描画内に移動する余地がありません</translation>
+    </message>
+    <message>
+      <source>Depth order cannot fit in this drawing at %1 px: %2 / %3</source>
+      <translation>%1 px ではこの描画内の奥行き順序を維持できません: %2 / %3</translation>
     </message>
   </context>
   <context>
@@ -232,10 +243,6 @@
     <message>
       <source>%1 px</source>
       <translation>%1 px</translation>
-    </message>
-    <message>
-      <source>0 px (limit below 1 px)</source>
-      <translation>0 px（上限が 1 px 未満）</translation>
     </message>
     <message>
       <source>0 px (screen)</source>
@@ -416,6 +423,26 @@
     <message>
       <source>About…</source>
       <translation>このソフトウェアについて…</translation>
+    </message>
+    <message>
+      <source>Cannot read the preview output</source>
+      <translation>プレビュー出力を読み取れません</translation>
+    </message>
+    <message>
+      <source>Export (defaults)</source>
+      <translation>書き出し (既定値)</translation>
+    </message>
+    <message>
+      <source>Preview (desktop)</source>
+      <translation>プレビュー (デスクトップ)</translation>
+    </message>
+    <message>
+      <source>0 px (%1)</source>
+      <translation>0 px (%1)</translation>
+    </message>
+    <message>
+      <source>; same pixel as %1</source>
+      <translation>; %1 と同じピクセル</translation>
     </message>
   </context>
   <context>

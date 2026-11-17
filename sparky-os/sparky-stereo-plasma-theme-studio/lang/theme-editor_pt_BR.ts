@@ -1,5 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE TS>
+<?xml version='1.0' encoding='utf-8'?>
 <TS version="2.1" language="pt_BR" sourcelanguage="en">
   <context>
     <name>Cli</name>
@@ -113,6 +112,18 @@
     <message>
       <source>Cannot encode PNG</source>
       <translation>Não foi possível codificar o PNG</translation>
+    </message>
+    <message>
+      <source>the desktop's limit is zero</source>
+      <translation>o limite da área de trabalho é zero</translation>
+    </message>
+    <message>
+      <source>no room in the drawing at this size</source>
+      <translation>não há espaço no desenho neste tamanho</translation>
+    </message>
+    <message>
+      <source>Depth order cannot fit in this drawing at %1 px: %2 / %3</source>
+      <translation>A ordem de profundidade não cabe neste desenho a %1 px: %2 / %3</translation>
     </message>
   </context>
   <context>
@@ -232,10 +243,6 @@
     <message>
       <source>%1 px</source>
       <translation>%1 px</translation>
-    </message>
-    <message>
-      <source>0 px (limit below 1 px)</source>
-      <translation>0 px (limite abaixo de 1 px)</translation>
     </message>
     <message>
       <source>0 px (screen)</source>
@@ -416,6 +423,26 @@
     <message>
       <source>About…</source>
       <translation>Sobre…</translation>
+    </message>
+    <message>
+      <source>Cannot read the preview output</source>
+      <translation>Não foi possível ler a saída da prévia</translation>
+    </message>
+    <message>
+      <source>Export (defaults)</source>
+      <translation>Exportação (padrões)</translation>
+    </message>
+    <message>
+      <source>Preview (desktop)</source>
+      <translation>Prévia (área de trabalho)</translation>
+    </message>
+    <message>
+      <source>0 px (%1)</source>
+      <translation>0 px (%1)</translation>
+    </message>
+    <message>
+      <source>; same pixel as %1</source>
+      <translation>; mesmo pixel que %1</translation>
     </message>
   </context>
   <context>
