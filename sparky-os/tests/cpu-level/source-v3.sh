@@ -9,7 +9,8 @@
 #     libstereo-av1 build uses compiles at the baseline here without a word; and -C target-cpu=x86-64-v3 for the Rust parts (NVK, Rusticl) through
 #     RUSTFLAGS; the optimisation level stays Debian's (no -O3, tests on, warnings on). The build fails if -march=x86-64-v3 is not on the compile lines;
 #   - the link and start gate runs with the toolkit that leaves Architecture-Variant out of its local index (lean/archive.py), so the source package's
-#     older copy of archive.py and package.py is replaced by the build tree's (as a toolkit release will).
+#     older copy of the whole lean/ folder is replaced by the build tree's (as a toolkit release will; the two files alone are not enough for a source
+#     whose copy is older than lean/parallel.py: ImportError: cannot import name 'parallel').
 # Run as root in a container (network for Debian, deb-multimedia and Sparky; --cpus 2); the compile, the record and the gate run as the build user.
 # Mounts: /dsc (the folder with the +stereo3d25+lc1 .dsc, .orig and .debian tarballs), /prev (the baseline amd64 .deb set of the same version, for the gate),
 # /archive (sources.json and keys), /repo (the published tree), /toolkit (sparky-os of the build tree), /work (output, owned by the build user).
@@ -31,7 +32,7 @@ for f in debian/control debian/control.in; do
 	[ -f "$f" ] || continue
 	awk '/^Package: / {print; print "XB-Architecture-Variant: amd64v3"; next} {print}' "$f" >"$f.new" && mv "$f.new" "$f"
 done
-cp /toolkit/lean/archive.py /toolkit/lean/package.py debian/sparky-lean-toolkit/lean/
+cp /toolkit/lean/*.py /toolkit/lean/*.tsv /toolkit/lean/*.java /toolkit/lean/*.zig debian/sparky-lean-toolkit/lean/
 chown -R builder:builder /work
 mk-build-deps -r -i -t "apt-get -y -qq --no-install-recommends" debian/control >/work/builddeps.log 2>&1 || { tail -8 /work/builddeps.log; exit 1; }
 echo "build dependencies installed: $(grep -c '^Setting up' /work/builddeps.log)"
@@ -44,7 +45,7 @@ export DEB_BUILD_OPTIONS="parallel=${JOBS:-2}"
 export DEB_CFLAGS_APPEND="-march=x86-64-v3" DEB_CXXFLAGS_APPEND="-march=x86-64-v3" RUSTFLAGS="-C target-cpu=x86-64-v3"
 cd /work/src/pkg
 start=$(date +%s)
-dpkg-buildpackage -B -us -uc -d -j"${JOBS:-2}" >/work/build-v3.log 2>&1 && echo "v3 build exit=0" || { echo "v3 build FAILED"; exit 1; }
+dpkg-buildpackage -B -us -uc -d -j"${JOBS:-2}" >>/work/build-v3.log 2>&1 && echo "v3 build exit=0" || { echo "v3 build FAILED"; exit 1; }
 echo "v3 build seconds: $(( $(date +%s) - start ))"
 n=$(grep -c -- "-march=x86-64-v3" /work/build-v3.log || true); echo "compile lines with -march=x86-64-v3: $n"
 [ "$n" -gt "${MIN_MARCH:-5}" ] || { echo "march=x86-64-v3 never reached the compiler"; exit 1; }
