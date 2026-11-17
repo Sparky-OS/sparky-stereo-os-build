@@ -25,6 +25,8 @@ import reproducible
 import local_config as cfg
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lean'))
 import upstream
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import orig_archive
 
 parser = argparse.ArgumentParser()
 parser.add_argument('flavour', choices=['base', 'v3', 'rt'])
@@ -73,13 +75,8 @@ subprocess.run(['python3', str(kit / 'lean/prepare.py'), str(source), str(kit), 
                + (['--packaging-revision', args.packaging_revision] if args.packaging_revision else [])
                + (['--smoke'] if args.smoke else []), check=True, env={**os.environ, 'SOURCE_DATE_EPOCH': str(stamp)})
 archive = work / f'linux-stereo-{flavour}_{upstream_version}.orig.tar.xz'
-with archive.open('wb') as sink:
-    packed = subprocess.Popen(['tar', '-C', str(source), '--exclude=./debian',
-                               '--transform=flags=r;s,^\\.,linux-stereo-' + flavour + '-' + upstream_version + ',',
-                               '-cf', '-', '.'], stdout=subprocess.PIPE)
-    compressed = subprocess.Popen(['xz', '-T2', '-3'], stdin=packed.stdout, stdout=sink)
-    packed.stdout.close()
-    assert compressed.wait() == 0 and packed.wait() == 0
+# the same tree gives the same orig, whatever its file times, owners or write order (ORDER 636; orig_archive.py)
+orig_archive.pack(source, archive, 'linux-stereo-' + flavour + '-' + upstream_version, stamp)
 reproducible.normalize_tree(source, stamp)
 subprocess.run(['dpkg-source', '-b', str(source)], cwd=work, check=True, env={**os.environ, 'SOURCE_DATE_EPOCH': str(stamp)})
 print(flavour, 'retained source prepared; not a compiled or release-qualified kernel')

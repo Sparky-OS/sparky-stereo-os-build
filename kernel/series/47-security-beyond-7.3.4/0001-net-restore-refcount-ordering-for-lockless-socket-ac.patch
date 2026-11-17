@@ -33,7 +33,7 @@ Reviewed-by: Kuniyuki Iwashima <kuniyu@google.com>
 Link: https://patch.msgid.link/20261029214219.1035176-3-imv4bel@gmail.com
 Signed-off-by: Paolo Abeni <pabeni@redhat.com>
 Signed-off-by: Sasha Levin <sashal@kernel.org>
-[ORDER 627: second patch of the same series as 0002 (merge 7b1fd97321 "inet-fix-lockless-ehash-walk-races", patch 3 of 20261029214219.1035176); queued for 7.3.5, not yet released. On x86 the acquire and release forms order nothing more than the plain ones; it keeps the lookups as stable has them; linux-7.3.y stable commit 1a3c094f7ef4 (v7.3.5-rc1, stable-rc linux-7.3.y), carried in stable's form; applies unchanged on v7.3.1 + groups 01-45 and the patches of this group before it.]
+[ORDER 636: carried since build 17 (46/0003); the series' second patch to CVE-2026-99288's fix, which v7.3.4 has (eb8a2d156f2c); this one is stable-rc's 1a3c094f7e (v7.3.5-rc1), not in a release on 2026-11-16. On x86 the acquire and release forms order nothing more than the plain ones; it keeps the lookups as stable has them. Applies unchanged on v7.3.4 + groups 01-45.]
 ---
  net/core/filter.c               | 2 +-
  net/ipv4/inet_connection_sock.c | 6 +++---
