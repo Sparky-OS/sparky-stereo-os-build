@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Wed, 18 Nov 2026 09:00:00 -0300
-Subject: [PATCH 1/4] x11: The depth limits reach every declared child window
+Subject: [PATCH 1/6] x11: The depth limits reach every declared child window
 
 s52-0001 writes _KDE_NET_WM_STEREO_DEPTH_LIMITS on the window that declares
 stereo content. A program whose 3D area is a child window (every Qt, GLX or
@@ -20,6 +20,10 @@ declaration leaving the child deletes it too. The top level keeps its own rule.
 _KDE_NET_WM_STEREO_CONTENT_SUPPORTED is 11 from here: a program that sees 11
 knows the property comes on its child, and its arrival means KWin holds the
 child (the redirect request is on the connection before the property).
+
+Lane 501 (Spirula Studio's stereo view) met the same gap and wrote the same fix
+independently (commit b11a36705 on the +stereo3d54 tree); the two were compared
+and the cases its test covers that this test lacked went into s59-0002.
 
 Assisted-by: Claude Sonnet 5.5 via Claude Code
 ---
