@@ -35,9 +35,10 @@ if (panels().length === 0) {
     panel.addWidget("org.kde.plasma.showdesktop");
 }
 
-// The desktop's icons fill a line from left to right, then the next line: Folder View's arrangement 1, which Plasma 6.7's settings
-// call "In Rows" (Plasma's own default 0 is "In Columns"). Daniel, 2026-11-18 (ORDER 704): "arrange desktop icons in line, not in
-// collums". A fresh layout only: an account that already has a desktop keeps its own arrangement.
+// The desktop's Folder View arrangement is 1, the value Daniel's own machines carry (ORDER 704; Daniel, 2026-11-18: "arrange desktop icons
+// in line, not in collums"). System Settings lists value 1 as "In Rows" and the key's own label in main.xml calls it Columns; measured on this
+// Plasma (6.7.4) in a fresh login: with 1 the icons stack from the top down the first column and continue below, with the default 0 they
+// lay left to right along the first line. A fresh layout only: an account that already has a desktop keeps its own arrangement.
 var desktopContainments = desktopsForActivity(currentActivity());
 for (var i = 0; i < desktopContainments.length; i++) {
     desktopContainments[i].currentConfigGroup = ["General"];
