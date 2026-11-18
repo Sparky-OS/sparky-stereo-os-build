@@ -1,7 +1,7 @@
 # Publication input discovery
 
 Read-only inventory before qualifying a publication cohort.
-The tools never execute producers, import cohort modules, copy packages or publish anything.
+The discovery tools do not execute producers or import cohort modules. Qualification and explicit source-rebuild helpers are separate; none signs or publishes a repository.
 
 ```sh
 python3 tools/publication-reconcile/inventory.py \
@@ -36,3 +36,13 @@ A dynamic version, patch-only root or source alias needs source inspection befor
 
 Before a take list is usable, resolve authoritative recipes, inspect source components and all build receipts, compare payloads against published binaries, and run the release and installed-upgrade checks.
 Those checks are separate from discovery.
+
+`metadata.py` verifies the exact selected source closures against descriptors, receipts, clean build records and stage checksums. Its successful `source-artifacts.tsv` is the authority for ancillary selection, not merely a matching source/version in another folder.
+`leave-out.py FILES --qualified-artifacts SOURCE_ARTIFACTS --output EVIDENCE` expands excluded components and receipts and names missing inputs. Compare its selected path set independently with the copied pool manifest.
+`payload.py FILES INVENTORY --published TREE --output EVIDENCE` keeps every raw listing and tar member difference. Repeat `--explanations REVIEWED.tsv` to attach separately reviewed binary/path/reason records. Directory presentation is normalized; unreadable listing lines refuse the comparison.
+
+`requalify-script.sh` and `rebuild-native.py` consume retained descriptors in a disposable non-root builder and require equality with accepted payload/control members. `generate-metas.sh` needs `META_VERSION`, the selected catalogue, the public archive inputs and the documented builder mounts. Use the supported `KERNEL_META_VERSION_SUFFIX` when the round requires newer kernel meta versions; compare every resulting binary with dpkg.
+
+The `proof/` scripts install a published edition first, verify that its own dpkg is in use, then apply the exact unsigned local `/pool` overlay. They retain complete simulations, installed versions, conffile checks, audit and deep Lean verification. `/base` remains the signed published tree. Run their red/green `test-checks.sh` fixtures before relying on a verdict. Every container needs core dumps disabled and the HTTPS-only APT helper before any apt action.
+
+`budget-run.py --scratch PATH --scratch-gib CAP --root-min-free-gib FLOOR --build-min-free-gib FLOOR --container OWN_NAME --log LOG -- COMMAND` monitors one owned container command and stops that literal name on a budget violation. Supply the lane's actual limits explicitly. It never inspects or stops another container.

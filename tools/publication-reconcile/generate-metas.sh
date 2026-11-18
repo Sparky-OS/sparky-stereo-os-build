@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 # Inside a disposable HTTPS-only builder, with read-only public archive inputs.
 set -euo pipefail
+: "${META_VERSION:?set the round meta source version}"
 sh /run/https-only-apt.sh
 install -m644 /keys/deb-multimedia-keyring.gpg /usr/share/keyrings/deb-multimedia-keyring.pgp
 install -m644 /keys/sparky-repo.asc /etc/apt/trusted.gpg.d/sparky-repo.asc
@@ -32,8 +33,8 @@ EOF
 export DEBIAN_FRONTEND=noninteractive
 apt-get -y update
 setpriv --reuid="$RP_UID" --regid="$RP_GID" --clear-groups bash -euc '
-  export OUT=/output BUILD_ROOT=/scratch VERSION=20261118.701 REPO=/catalog
+  export OUT=/output BUILD_ROOT=/scratch VERSION="$META_VERSION" REPO=/catalog
   bash /build/sparky-os/packages/sparky-stereo-meta/build.sh
-  python3 /build/tools/publication-reconcile/rebuild-native.py /output/sparky-stereo-meta_20261118.701.dsc /scratch
+  python3 /build/tools/publication-reconcile/rebuild-native.py /output/sparky-stereo-meta_"$META_VERSION".dsc /scratch
   python3 -m lean.release check-debs /output/*.deb
 '

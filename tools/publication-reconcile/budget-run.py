@@ -9,7 +9,9 @@ import time
 
 ap = argparse.ArgumentParser(description=__doc__)
 ap.add_argument('--scratch', type=Path, required=True)
-ap.add_argument('--scratch-gib', type=float, default=9)
+ap.add_argument('--scratch-gib', type=float, required=True)
+ap.add_argument('--root-min-free-gib', type=float, default=1)
+ap.add_argument('--build-min-free-gib', type=float, default=2)
 ap.add_argument('--container', required=True)
 ap.add_argument('--log', type=Path, required=True)
 ap.add_argument('command', nargs=argparse.REMAINDER)
@@ -21,7 +23,7 @@ with a.log.open('w') as log:
         used = int(subprocess.check_output(['du', '-sx', '--block-size=1', str(a.scratch)], text=True).split()[0])
         free_root = shutil.disk_usage('/').free
         free_build = shutil.disk_usage('/mnt/build').free
-        if used > a.scratch_gib * 1024**3 or free_root < 20 * 1024**3 or free_build < 6 * 1024**3:
+        if used > a.scratch_gib * 1024**3 or free_root < a.root_min_free_gib * 1024**3 or free_build < a.build_min_free_gib * 1024**3:
             print(f'BUDGET STOP scratch={used}, root-free={free_root}, build-free={free_build}', flush=True)
             subprocess.run(['docker', 'stop', '--time', '5', a.container], check=False)
             child.wait(timeout=30)
