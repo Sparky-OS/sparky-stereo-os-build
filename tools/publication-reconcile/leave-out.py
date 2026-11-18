@@ -112,7 +112,7 @@ for path, r in qualified.items():
         expanded[path] = dict(stage=str(path.parent), filename=path.name, kind=kind,
                               source=r['source'], source_version=r['version'], binary='', version='', architecture='', variant='')
     expanded[path].update(decision='candidate', reason='Exact independently qualified source closure artifact',
-                          sha256=r['sha256'], bytes=r['bytes'])
+                          source=r['source'], source_version=r['version'], sha256=r['sha256'], bytes=r['bytes'])
 
 fields = ['stage', 'filename', 'kind', 'source', 'source_version', 'binary', 'version',
           'architecture', 'variant', 'decision', 'reason', 'bytes', 'sha256']
