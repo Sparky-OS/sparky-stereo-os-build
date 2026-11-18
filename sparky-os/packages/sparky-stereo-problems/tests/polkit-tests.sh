@@ -22,6 +22,7 @@ EOS
 cp /usr/lib/pam.d/polkit-1 /opt/pe661-auth/pam-original
 printf 'auth required pam_permit.so\naccount required pam_permit.so\nsession required pam_permit.so\n' >/etc/pam.d/polkit-1
 systemctl restart polkit
+rm -f /tmp/pe661-auth-result /run/pe661-machine-repaired /run/pe661-second-repaired /run/pe661-decoy-ran /run/pe661-forged
 $B keep --machine $P cache-first LOCAL4 --repair '["/usr/bin/touch","/run/pe661-machine-repaired"]'
 $B keep --machine $P cache-second LOCAL4 --repair '["/usr/bin/touch","/run/pe661-second-repaired"]'
 # A decoy store has a repair which must never be executed.
