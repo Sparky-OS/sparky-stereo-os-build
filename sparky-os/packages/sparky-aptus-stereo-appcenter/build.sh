@@ -5,7 +5,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT}
 SOURCE=${APTUS_SOURCE:-$HERE/../../sparky-aptus-stereo-appcenter}
-VERSION=0.1.14+lc1
+VERSION=0.1.15+lc1
 PACKAGE=sparky-aptus-stereo-appcenter
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.aptus-stereo.XXXXXX")
@@ -21,6 +21,7 @@ install -Dm755 "$WORK/source/actions/entry" "$D/usr/lib/$PACKAGE/actions/entry"
 install -m644 "$WORK/source/common.py" "$D/usr/lib/$PACKAGE/common.py"
 install -m644 "$WORK/source/appimage.py" "$D/usr/lib/$PACKAGE/appimage.py"
 install -m644 "$WORK/source/tools.py" "$D/usr/lib/$PACKAGE/tools.py"
+install -m644 "$WORK/source/storelink.py" "$D/usr/lib/$PACKAGE/storelink.py"
 install -m755 "$WORK/source/main-entry" "$D/usr/lib/$PACKAGE/main-entry"
 install -m644 "$WORK/source/mainpages.py" "$WORK/source/main-entries.json" "$D/usr/lib/$PACKAGE/"
 python3 "$HERE/../../../tools/copy-recipe.py" "$SOURCE/9" "$WORK/main-source"
