@@ -2,6 +2,9 @@
    DELAY_MS waits between the map of both windows and the first swap, SWAPS and GAP_MS set the swaps after it. */
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
+#include <X11/Xlib-xcb.h>
+#include <xcb/present.h>
+#include <time.h>
 #include <GL/glx.h>
 #include <GL/gl.h>
 #include <stdio.h>
@@ -41,6 +44,14 @@ int main(void)
     usleep(env("DELAY_MS", 0) * 1000);
     show("before first swap", child, "_KDE_NET_WM_STEREO_CONTENT");
     show("before first swap", top, "_KDE_NET_WM_STEREO_CONTENT_CHILDREN");
+    xcb_connection_t *xc = XGetXCBConnection(d);
+    xcb_special_event_t *trace = NULL;
+    if (env("PRESENT_TRACE", 0)) {
+        xcb_present_event_t eid = xcb_generate_id(xc);
+        trace = xcb_register_for_special_xge(xc, &xcb_present_id, eid, NULL);
+        xcb_present_select_input(xc, eid, child, XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY);
+        xcb_flush(xc);
+    }
     long swaps = env("SWAPS", 1), gap = env("GAP_MS", 100);
     for (long i = 0; i < swaps; i++) {
         glViewport(0, 0, 640, 400);
@@ -49,6 +60,21 @@ int main(void)
         glXSwapBuffers(d, child);
         printf("swap %ld done\n", i + 1); fflush(stdout);
         if (i + 1 < swaps) usleep(gap * 1000);
+    }
+    if (trace) { /* the completions the server sent for the child's presents, in the order they came */
+        for (int t = 0; t < 40; t++) {
+            xcb_generic_event_t *ev;
+            while ((ev = xcb_poll_for_special_event(xc, trace))) {
+                xcb_present_generic_event_t *g = (xcb_present_generic_event_t *)ev;
+                if (g->evtype == XCB_PRESENT_EVENT_COMPLETE_NOTIFY) {
+                    xcb_present_complete_notify_event_t *c = (xcb_present_complete_notify_event_t *)ev;
+                    printf("present complete: serial %u mode %u (0 copy 1 flip 2 skip 3 suboptimal copy)\n", c->serial, c->mode);
+                }
+                free(ev);
+            }
+            usleep(25000);
+        }
+        fflush(stdout);
     }
     show("after swaps", child, "_KDE_NET_WM_STEREO_CONTENT");
     show("after swaps", child, "_KDE_NET_WM_STEREO_DEPTH_LIMITS");
