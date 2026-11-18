@@ -41,7 +41,7 @@ def archive_git(repository,revision,destination,arc_prefix,excluded=()):
     return data
 main=archive_git(source,base,out/f'spirula-studio_{version}.orig.tar.xz',prefix+'/')
 with tarfile.open(fileobj=io.BytesIO(main)) as tar:tar.extractall(out,filter='data')
-shutil.copytree(recipe/'debian',root/'debian')
+shutil.copytree(recipe/'debian',root/'debian',ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
 patches=root/'debian/patches';patches.mkdir()
 patch=subprocess.check_output(['git','-C',str(source),'diff','--binary',base,head])
 (patches/'edition.patch').write_bytes(('From: Daniel Campos Ramos\nOrigin: other, https://github.com/Sparky-OS/spirula-studio/commit/'+head+'\nDescription: Edition stereo, depth, installed profiles and Graphics GPU integration\nForwarded: not-needed\n\n').encode()+patch)
