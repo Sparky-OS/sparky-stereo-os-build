@@ -16,6 +16,8 @@ check "logging out asks no confirmation" "$(read_key confirmLogout true)" false
 printf '[General]\nloginMode=restorePreviousLogout\nconfirmLogout=true\n' > "$W/home/.config/ksmserverrc"
 check "the person's own session choice wins" "$(read_key loginMode x)" restorePreviousLogout
 check "the person's own confirmation choice wins" "$(read_key confirmLogout x)" true
+[ "$SRC" = none ] || cp "$SRC/default/xdg/kdeglobals" "$W/etc/xdg/kdeglobals"
+check "the sound theme is Oxygen" "$(HOME=$W/home XDG_CONFIG_HOME=$W/home/.config XDG_CONFIG_DIRS=$W/etc/xdg kreadconfig6 --file kdeglobals --group Sounds --key Theme --default ocean)" oxygen
 if [ "$SRC" != none ]; then
 	L=$SRC/default/org.sparkystereo.desktop/contents/layouts/org.kde.plasma.desktop-layout.js
 	check "the layout adds the Application Menu" "$(grep -c 'addWidget("org.kde.plasma.kicker")' "$L")" 1
