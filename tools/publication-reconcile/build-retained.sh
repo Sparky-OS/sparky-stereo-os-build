@@ -31,13 +31,22 @@ Suites: ./
 Trusted: yes
 EOF
 printf 'Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n' > /etc/apt/preferences.d/edition
+if [ -f /extra/Packages ]; then
+    printf 'deb [trusted=yes] file:/extra ./\n' >/etc/apt/sources.list.d/retained-build-inputs.list
+    printf 'Package: *\nPin: origin ""\nPin-Priority: 1002\n' >/etc/apt/preferences.d/retained-build-inputs
+fi
 export DEBIAN_FRONTEND=noninteractive DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 apt-get -o APT::Update::Error-Mode=any -y update
-setpriv --reuid="$RP_UID" --regid="$RP_GID" --clear-groups dpkg-source -x "$DSC" /work/source
-apt-get -y --no-install-recommends build-dep /work/source
+SOURCE_DIR=${SOURCE_DIR:-/work/source}
+setpriv --reuid="$RP_UID" --regid="$RP_GID" --clear-groups dpkg-source -x "$DSC" "$SOURCE_DIR"
+if [ -n "${RETAINED_BUILD_PACKAGES:-}" ]; then
+    apt-get -y --no-install-recommends install $RETAINED_BUILD_PACKAGES
+fi
+apt-get -y --no-install-recommends build-dep "$SOURCE_DIR"
 mkdir -p /work/home
 chown "$RP_UID:$RP_GID" /work/home
 export HOME=/work/home
+[ "${RP_PREPARE_ONLY:-0}" != 1 ] || exit 0
 setpriv --reuid="$RP_UID" --regid="$RP_GID" --clear-groups bash -euc '
   export DEB_BUILD_OPTIONS=parallel=4
   cd /work/source
