@@ -18,8 +18,9 @@ line to insert before exists, and both inserts use it.
 The command now stores the choice or says why not, and exits non-zero:
 - it reads the Theme back from the Daemon section and fails with a
   sentence naming the file when it is not the one asked for;
-- a file or folder it cannot write fails before anything is changed, with
-  a sentence naming it, instead of sed's message about a temporary file;
+- a file or folder it cannot write fails before anything is changed (the
+  legacy default.plymouth link included), with a sentence naming it,
+  instead of sed's message about a temporary file;
 - --reset deletes the Theme line of the Daemon section only, not a Theme
   line of another section, and says when one is still there.
 ---
@@ -111,9 +112,16 @@ The command now stores the choice or says why not, and exits non-zero:
          fi
  
          [ $DO_INITRD_REBUILD -eq 0 ] && exit 0
-@@ -315,6 +350,10 @@ fi
+@@ -311,10 +346,16 @@ if [ ! -e ${PLYMOUTH_PLUGIN_PATH}${MODULE_NAME}.so ]; then
+         exit 1
+ fi
  
- [ -d ${PLYMOUTH_CONFDIR} ] || mkdir -p ${PLYMOUTH_CONFDIR}
++[ -d ${PLYMOUTH_CONFDIR} ] || mkdir -p ${PLYMOUTH_CONFDIR}
++check_config_file_can_be_written ${PLYMOUTH_CONFDIR}/plymouthd.conf
++
+ [ -L ${PLYMOUTH_DATADIR}/plymouth/themes/default.plymouth ] && rm -f ${PLYMOUTH_DATADIR}/plymouth/themes/default.plymouth
+ 
+-[ -d ${PLYMOUTH_CONFDIR} ] || mkdir -p ${PLYMOUTH_CONFDIR}
  read_or_set_file_ini_value ${PLYMOUTH_CONFDIR}/plymouthd.conf Daemon Theme ${THEME_NAME}
 +STORED_THEME_NAME=$(read_or_set_file_ini_value ${PLYMOUTH_CONFDIR}/plymouthd.conf Daemon Theme)
 +if [ "$STORED_THEME_NAME" != "$THEME_NAME" ]; then
