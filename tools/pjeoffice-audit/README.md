@@ -8,7 +8,9 @@ The official application jar is neither changed nor distributed with these tools
 
 `startup.py`, `TrayProbe.java`, `TrustProbe.java`, `ProviderProbe.java` and `UpdaterPermission.java` measure their named boundaries.
 Component success does not establish full task compatibility.
+Pass `-Dpjeoffice_home=APP_DIRECTORY` and an explicit private user.home when running helpers that initialize application classes.
 Compile Java helpers with `javac --release 8 -cp OFFICIAL_JAR -d /scratch FILE.java`.
+CutterTaskProbe needs cutplayer4jfx.jar on its compile and run classpaths.
 MediaProbe also needs the bundled `jre/lib/ext/jfxrt.jar` at compile time.
 
 For actual task fixtures:
