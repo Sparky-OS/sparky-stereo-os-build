@@ -83,6 +83,9 @@ class EventsTest(unittest.TestCase):
             self.assertEqual(stereo.show_problems(self.P), 1)
         for word in (PACKAGE, PATH, 'does not reproduce', '.dpkg-dist'):
             self.assertIn(word, output.getvalue())
+        self.assertIn(f'{PACKAGE}: {PATH}; the current renderer does not reproduce the installed bytes; '
+                      f'package candidate: {PATH}.dpkg-dist', output.getvalue())
+        self.assertNotIn('%s', output.getvalue())
         self.assertEqual(self.file.read_bytes(), b'value=personal\n')
 
     def test_missing_verifier_names_dpkg_new(self):

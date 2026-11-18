@@ -56,6 +56,8 @@ dpkg-stereo ($VERSION) unstable; urgency=medium
     is 0755 whatever the umask of the machine that builds it.
   * The refusal names the path and the failed check (which folder, its mode or
     owner) in the ten languages, and what to do.
+  * dpkg-stereo --problems prints each refused conffile as one sentence (it
+    used the message of another problem, so the line showed unfilled %s).
   * dpkg-stereo --repair sets the same folders right when they are not, says
     what it set, and then rechecks each conffile: a file that is its package's
     bytes, or the exact projection of its package's original (what the

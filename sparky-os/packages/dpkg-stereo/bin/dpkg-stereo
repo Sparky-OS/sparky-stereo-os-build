@@ -3571,9 +3571,9 @@ def show_problems(P):
         for item in entry.get('items', []):
             if entry.get('step') == 'conffiles' and isinstance(item, dict):
                 args = [item['package'], item['path'], conffile_events.reason_argument(item), item['location']]
-                print('  ' + text('LOCAL54', args, lang))
+                print('  ' + text('LOCAL63', args, lang))
                 if lang != 'en':
-                    print('    (en) ' + text('LOCAL54', args, 'en'))
+                    print('    (en) ' + text('LOCAL63', args, 'en'))
             elif isinstance(item, dict) and item.get('why') in WHY:
                 print('  ' + stays_lean(item, lang))
                 if lang != 'en':
