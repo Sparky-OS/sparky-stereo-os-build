@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.error
 
 app = Path(sys.argv[1]).resolve()
 java = sys.argv[2]
@@ -46,6 +47,20 @@ with (out / 'xvfb.log').open('w') as xf, (out / 'application.log').open('w') as 
             except Exception as e:
                 result['http_error'] = str(e)
             time.sleep(.25)
+        for route in ['/pjeOffice/', '/pjeOffice/versao/']:
+            request = urllib.request.Request(
+                'http://127.0.0.1:8800' + route + '?u=18', data=b'', method='PUT',
+                headers={'Content-Type': 'application/json', 'Force-Preflight': 'true',
+                         'Origin': 'http://127.0.0.1:8800'})
+            try:
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    result['http'][route] = {'status': response.status,
+                                            'body': response.read().decode('utf-8', 'replace')}
+            except urllib.error.HTTPError as error:
+                result['http'][route] = {'status': error.code,
+                                        'body': error.read().decode('utf-8', 'replace')}
+            except OSError as error:
+                result['http'][route] = {'error': str(error)}
         result['alive_at_observation'] = p.poll() is None
         result['exit_at_observation'] = p.poll()
         result['observation_seconds'] = round(time.monotonic() - start, 2)
