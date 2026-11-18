@@ -78,9 +78,6 @@ void F3DWorker::run()
     bool quit = false;
     bool attached = false;
     bool stereo = true;
-    int ratio = 1;     // X window width over the width of one eye
-    int wantEye = 0;   // the width of one eye that the person's area and resolution ask for
-    int wantHeight = 0;
     bool announcedNative = false;
     bool noStereoSaid = false;
     int lastState = -1;
@@ -89,7 +86,6 @@ void F3DWorker::run()
     bool wasPlaying = false;
     QRect lastRect;
     int rerender = 0;
-    int settled = 0;
     int lastPercent = 0;
 
     Command lastPlace;
@@ -110,18 +106,14 @@ void F3DWorker::run()
         const int width = std::max(16, c.rect.width() * percent / 100);
         const int height = std::max(16, c.rect.height() * percent / 100);
         window.setPosition(c.rect.x(), c.rect.y());
-        // the X window is one eye wide at first and twice that once the compositor has taken the window (the drawable then
-        // counts both eyes): the loop below measures the ratio and corrects it
-        wantEye = width;
-        wantHeight = height;
-        window.setSize(ratio * width, height);
+        // a declared stereo child is one eye wide (declaration version 4): the X window is the eye's size
+        window.setSize(width, height);
         lastRect = c.rect;
         if (const quint64 native = window.getNativeWindowId()) {
             declareShownSize(display, native, c.rect.size());
         }
-        // the compositor's buffers follow a resize one picture later: draw again until the window and its buffers agree
-        rerender = 600;
-        settled = 0;
+        // libf3d draws only when asked: draw again after a resize
+        rerender = 6;
         interactor.requestRender();
     };
 
@@ -187,35 +179,9 @@ void F3DWorker::run()
     auto tick = [&]() {
         drain();
         if (rerender > 0) {
-            // The window is a stereo window whose X window holds both eyes; libf3d reads the size of one eye from the GLX
-            // drawable at the start of every picture, and the drawable follows a resize (and the compositor's declaration) one
-            // picture or a few later. Draw again until the eye is half of the X window, for a few seconds at most.
+            // libf3d draws only when asked: draw again after a resize
             --rerender;
-            XWindowAttributes xa{};
-            if (display && window.getNativeWindowId() && XGetWindowAttributes(display, window.getNativeWindowId(), &xa) && xa.width > 0
-                && window.isStereo()) {
-                const int eye = window.getWidth();
-                if (eye == wantEye) {
-                    if (++settled >= 3) {
-                        rerender = 0;
-                    }
-                } else if (eye > 0) {
-                    settled = 0;
-                    const int measured = xa.width / eye;
-                    ratio = (measured == 1 || measured == 2) ? measured : 1;
-                    if (ratio * wantEye != xa.width) {
-                        window.setSize(ratio * wantEye, wantHeight);
-                    }
-                    interactor.requestRender();
-                }
-            } else {
-                settled = 0;
-                interactor.requestRender();
-            }
-            if (qEnvironmentVariableIsSet("STEREO_MODEL_VIEWER_LOG") && rerender % 20 == 0) {
-                qWarning("render %d: eye %d x %d, X window %d x %d, stereo %d", rerender, window.getWidth(), window.getHeight(), xa.width, xa.height,
-                         window.isStereo() ? 1 : 0);
-            }
+            interactor.requestRender();
         }
         if (!announcedNative) {
             if (const quint64 native = window.getNativeWindowId()) {
