@@ -22,7 +22,11 @@ No driver, toolkit, processing model or GPU is needed by the Vulkan runtime pack
 The pinned Slang compiler is a build tool downloaded into disposable `slang/`, excluded from both source and runtime payloads.
 GLFW, Dear ImGui and the CJK fonts are declared source components with their original notices.
 
-Set `SPIRULA_SOURCE` to the clean, committed fork checkout, `OUT` to an owned output directory, and run `build.sh` with at most four build jobs.
+Set `SPIRULA_SOURCE` to the clean, committed fork checkout, `OUT` to an owned output directory, and run `build-container.sh` with the prepared image, public archive configuration and disposable gate path set as its required variables describe.
+Pass read-only Docker mounts for that configuration, its public keyrings, the signed local repository, CUDA SDK and any explicit sibling archives; all paths in the configuration must be visible inside the container.
+The wrapper initializes the host build facts through `build-provenance.sh`; `build.sh` refuses missing provenance or a missing archive-backed gate.
+A complete build is capped at four compiler jobs.
+Pinned source components and fonts are fetched from their publishers when no verified local cache is present.
 It composes a `3.0 (quilt)` source from upstream b8e15cb8 and the edition patch, retains the native Lean Code source-consumer plan, and uses ordinary debhelper with the qualified payload and link/start gates.
 The generated `.dsc`, `.buildinfo` and `.changes` retain the build identity and checksums.
 Run the source checks before the build projection, backend parity on both GPUs, and the installed-package stereo rig against the accepted compositor and Mesa cohort.

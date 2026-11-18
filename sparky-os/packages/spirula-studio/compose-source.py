@@ -3,6 +3,8 @@
 """Compose the upstream, fork patch, declared components and native lc1 source."""
 import argparse
 import io
+import hashlib
+import urllib.request
 import json
 import lzma
 from pathlib import Path
@@ -14,6 +16,7 @@ p=argparse.ArgumentParser()
 p.add_argument('--source',type=Path,required=True)
 p.add_argument('--out',type=Path,required=True)
 p.add_argument('--toolkit',type=Path,required=True)
+p.add_argument('--component-cache',type=Path)
 a=p.parse_args()
 source=a.source.resolve();out=a.out.resolve();toolkit=a.toolkit.resolve()
 recipe=Path(__file__).resolve().parent
@@ -36,13 +39,28 @@ patch=subprocess.check_output(['git','-C',str(source),'diff','--binary',base,hea
 (patches/'edition.patch').write_bytes(('From: Daniel Campos Ramos\nOrigin: other, https://github.com/Sparky-OS/spirula-studio/commit/'+head+'\nDescription: Edition stereo, depth, installed profiles and Graphics GPU integration\nForwarded: not-needed\n\n').encode()+patch)
 (patches/'series').write_text('edition.patch\n')
 components={}
-for component in ['glfw','imgui']:
+cache=(a.component_cache or out/'.components').resolve();cache.mkdir(parents=True,exist_ok=True)
+for component,owner,revision in [('glfw','glfw','7b6aead9fb88b3623e3b3725ebb42670cbe4c579'),('imgui','ocornut','8936b58fe26e8c3da834b8f60b06511d537b4c63')]:
     tree=source/'build_vulkan/_deps'/f'{component}-src'
-    revision=subprocess.check_output(['git','-C',str(tree),'rev-parse','HEAD'],text=True).strip()
+    if not (tree/'.git').exists():
+        tree=cache/component
+        if not tree.exists():
+            subprocess.run(['git','clone','--no-checkout',f'https://github.com/{owner}/{component}.git',str(tree)],check=True)
+    subprocess.run(['git','-C',str(tree),'cat-file','-e',revision+'^{commit}'],check=True)
     data=archive_git(tree,revision,out/f'spirula-studio_{version}.orig-{component}.tar.xz',component+'/')
     with tarfile.open(fileobj=io.BytesIO(data)) as tar:tar.extractall(root,filter='data')
     components[component]=revision
-fonts=source/'build_vulkan/fonts'
+fonts=cache/'fonts';fonts.mkdir(exist_ok=True)
+for line in (source/'assets/fonts/cjk_faces.txt').read_text().splitlines():
+    if not line.strip() or line.lstrip().startswith('#'):continue
+    _,filename,url,sha,size,_=map(str.strip,line.split('|'))
+    target=fonts/filename;previous=source/'build_vulkan/fonts'/filename
+    if not target.exists():
+        if previous.is_file():shutil.copyfile(previous,target)
+        else:
+            with urllib.request.urlopen(url) as response,target.open('wb') as dest:shutil.copyfileobj(response,dest)
+    if target.stat().st_size!=int(size) or hashlib.sha256(target.read_bytes()).hexdigest()!=sha:
+        raise SystemExit('Font size/hash mismatch: '+filename)
 with tarfile.open(out/f'spirula-studio_{version}.orig-fonts.tar.xz','w:xz') as tar:
     for path in sorted(fonts.glob('*.otf')):
         info=tar.gettarinfo(str(path),arcname='fonts/'+path.name);info.uid=info.gid=0;info.uname=info.gname='';info.mtime=0
