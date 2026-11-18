@@ -77,7 +77,7 @@ Package: $PACKAGE
 Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Depends: sparky-core-fonts-dialog (>= 1.0), sparky-aptus-appcenter, sparky-stereo-apt (>= 20261104.3~sparky9~0), python3, python3-apt, curl, desktop-file-utils, sparky-stereo-hardware, apt, dpkg, systemd, udev, kmod, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
+Depends: sparky-aptus-appcenter, sparky-stereo-apt (>= 20261104.3~sparky9~0), python3, python3-apt, curl, sparky-stereo-hardware, apt, dpkg, systemd, udev, kmod, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
 Section: admin
 Priority: optional
 Homepage: https://sparkylinux.org
