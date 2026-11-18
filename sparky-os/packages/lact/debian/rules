@@ -19,6 +19,7 @@ override_dh_auto_build:
 	python3 debian/gen-copyright.py debian/copyright-head.txt debian/crate-licences.tsv | cmp - debian/copyright
 	mkdir -p $(CARGO_HOME) $(HOME)
 	sed 's|^directory = .*|directory = "$(CURDIR)/vendor"|' debian/cargo-config.toml > $(CARGO_HOME)/config.toml
+	python3 debian/strip-missing-checksums.py vendor
 	cargo --version
 	cargo build -p lact --release --offline --locked
 

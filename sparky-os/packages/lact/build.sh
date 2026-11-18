@@ -26,6 +26,11 @@ WORK=$(mktemp -d "${SPARKY_SCRATCH:?}/lact.XXXXXX")
 trap 'chmod -R u+w "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
 SRC=lact-$UPV
 mkdir "$WORK/orig"
+if [ -n "${ORIG_CACHE:-}" ] && [ -f "$ORIG_CACHE/lact_$UPV.orig-vendor.tar.xz" ]; then
+	# archives an earlier run of make-orig.sh made (a rebuild need not fetch and compress the crates again); the checks below still apply
+	cp "$ORIG_CACHE"/lact_"$UPV".orig*.tar.xz "$ORIG_CACHE"/crate-licences.tsv "$ORIG_CACHE"/cargo-config.toml "$WORK/orig/"
+	cp -a "$ORIG_CACHE/crate-licences" "$WORK/orig/"
+else
 docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lact-orig" --platform linux/amd64 --cpus "${CPUS:-4}" --ulimit core=0 \
 	-v "$WORK/orig":/out -v "$HERE":/pkg:ro -e OWNER="$(id -u):$(id -g)" \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMAGE" bash -c '
@@ -38,6 +43,7 @@ useradd --create-home --uid 1000 builder
 chown builder:builder /out
 runuser -u builder -- env HOME=/tmp/builder-home bash /pkg/make-orig.sh /out
 chown -R "$OWNER" /out'
+fi
 tar -xJf "$WORK/orig/lact_$UPV.orig.tar.xz" -C "$WORK"
 mkdir "$WORK/$SRC/vendor"
 tar -xJf "$WORK/orig/lact_$UPV.orig-vendor.tar.xz" -C "$WORK/$SRC/vendor"
