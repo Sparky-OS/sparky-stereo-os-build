@@ -19,7 +19,11 @@ Path('so-pin').write_text(secrets.token_hex(8))
 PY
 PIN=$(cat pin); SO_PIN=$(cat so-pin); export PIN
 softhsm2-util --init-token --free --label TEST-ONLY --pin "$PIN" --so-pin "$SO_PIN" > init.log
-openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj '/CN=SIGNER TEST ONLY' -keyout key.pem -out cert.pem > generation.log 2>&1
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj '/CN=TEST ONLY ROOT' -keyout root.key -out root.pem > generation.log 2>&1
+openssl req -new -newkey rsa:2048 -nodes -subj '/CN=SIGNER TEST ONLY' -keyout key.pem -out leaf.csr >> generation.log 2>&1
+printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,nonRepudiation\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\nsubjectAltName=otherName:2.16.76.1.3.1;UTF8:000000000000000000000000000000000000000000000000000\n' > leaf.ext
+openssl x509 -req -in leaf.csr -CA root.pem -CAkey root.key -CAcreateserial -days 2 -extfile leaf.ext -out cert.pem >> generation.log 2>&1
+openssl verify -CAfile root.pem cert.pem
 openssl pkcs8 -topk8 -nocrypt -in key.pem -out key-p8.pem
 softhsm2-util --import key-p8.pem --token TEST-ONLY --label TEST-KEY --id 01 --pin "$PIN" > import.log
 openssl x509 -in cert.pem -outform DER -out cert.der
@@ -35,5 +39,5 @@ if openssl dgst -sha256 -verify public.pem -signature signature wrong-challenge 
     exit 1
 fi
 echo 'PASS: altered challenge refused'
-openssl pkcs12 -export -inkey key.pem -in cert.pem -out test.p12 -passout file:pin
+openssl pkcs12 -export -inkey key.pem -in cert.pem -certfile root.pem -out test.p12 -passout file:pin
 echo 'Fixture only: no PJeOffice request has been signed by this script.'
