@@ -45,7 +45,9 @@ for index, lang in enumerate(LANGS):
            'msgid ""\nmsgstr ""\n"Project-Id-Version: sparky-pjeoffice 0.1.0\\n"\n"Language: %s\\n"\n"MIME-Version: 1.0\\n"\n"Content-Type: text/plain; charset=UTF-8\\n"\n"Content-Transfer-Encoding: 8bit\\n"\n"Plural-Forms: nplurals=2; plural=(n != 1);\\n"\n' % lang]
     for i in ids:
         out.append('msgid "%s"\nmsgstr "%s"\n' % (esc(i), esc(T[i][index])))
-    (folder / 'sparky-pjeoffice.po').write_text('\n'.join(out), encoding='utf-8')
+    # the tray's catalogue and the settings page's: QML reads its strings from the catalogue named like the plugin
+    for domain in ('sparky-pjeoffice', 'kcm_sparkystereo_pjeoffice'):
+        (folder / (domain + '.po')).write_text('\n'.join(out), encoding='utf-8')
 
 
 
