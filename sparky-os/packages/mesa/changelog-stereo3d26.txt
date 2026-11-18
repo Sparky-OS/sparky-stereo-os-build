@@ -14,5 +14,12 @@ mesa (26.1.6-1+stereo3d26) forky; urgency=medium
     a window that is not a child, are not waited for; a compositor that does
     not answer in half a second is said on stderr and the presents go as
     before.
+  * A flip that Xwayland completes as SUBOPTIMAL_COPY is not counted as a
+    copy by the pair rule (ORDER 17, patch 0044): Xwayland reports it for
+    the first presents of a surface whose compositor feedback is unread, as a
+    child that Stereo KWin has just redirected has, and two of them took the
+    declaration back although both pictures had reached the surface
+    (measured with an Xwayland that printed its decisions). On DRI3 and
+    software GLX, EGL on X11 and the Vulkan stereo layer.
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 18 Nov 2026 12:00:00 -0300
