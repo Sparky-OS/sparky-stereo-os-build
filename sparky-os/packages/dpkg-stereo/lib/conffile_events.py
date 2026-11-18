@@ -10,7 +10,6 @@ No conffile, candidate or pristine copy is written here.
 import fcntl
 import os
 import stat
-from pathlib import Path
 
 REASONS = {10: 'LOCAL64', 11: 'LOCAL65', 12: 'LOCAL66', 13: 'LOCAL67',
            14: 'LOCAL68', 15: 'LOCAL69', 16: 'LOCAL70', 17: 'LOCAL71'}
@@ -23,6 +22,15 @@ REASONS = {10: 'LOCAL64', 11: 'LOCAL65', 12: 'LOCAL66', 13: 'LOCAL67',
 TREE = '/usr/lib/dpkg-stereo'
 TREE_BASE = ''
 FINDING_KEYS = {'mode': 'LOCAL86', 'owner': 'LOCAL87', 'type': 'LOCAL88', 'missing': 'LOCAL89', 'exec': 'LOCAL90'}
+
+
+def _walk(root):
+    """ROOT's entries, folders and files, ROOT first, in a fixed order (os.walk, so the hook never imports pathlib)."""
+    found = [root]
+    for here, dirs, files in os.walk(root):
+        dirs.sort()
+        found += [os.path.join(here, name) for name in dirs + sorted(files)]
+    return found
 
 
 def _trust_step(path, real, last=False):
@@ -55,13 +63,7 @@ def trust_findings(limit=8):
             found.append(step)
             if step[0] == FINDING_KEYS['missing']:
                 return found
-    lean = TREE + '/lean'
-    members = [lean]
-    try:
-        members += [str(p)[len(TREE_BASE):] for p in sorted(Path(TREE_BASE + lean).rglob('*'))]
-    except OSError:
-        pass
-    for path in members:
+    for path in [p[len(TREE_BASE):] for p in _walk(TREE_BASE + TREE + '/lean')]:
         step = _trust_step(path, TREE_BASE + path)
         if step:
             found.append(step)
@@ -75,19 +77,14 @@ def mend_own_tree():
     others can write loses that write permission; nothing outside the folder is touched, and an entry that another
     user owns or that is a link is left as it is for trust_findings to name. Returns [(path, old, new)]."""
     mended = []
-    root = TREE_BASE + TREE
-    try:
-        entries = [Path(root)] + sorted(Path(root).rglob('*'))
-    except OSError:
-        return mended
-    for entry in entries:
+    for entry in _walk(TREE_BASE + TREE):
         try:
             info = os.lstat(entry)
             if stat.S_ISLNK(info.st_mode) or info.st_uid != 0 or not info.st_mode & 0o022:
                 continue
             new = info.st_mode & 0o7777 & ~0o022
             os.chmod(entry, new)
-            mended.append((str(entry)[len(TREE_BASE):], '%o' % (info.st_mode & 0o7777), '%o' % new))
+            mended.append((entry[len(TREE_BASE):], '%o' % (info.st_mode & 0o7777), '%o' % new))
         except OSError:
             continue
     return mended
