@@ -19,6 +19,7 @@ install -m644 "$WORK/source/ATTRIBUTIONS.md" "$D/usr/lib/$PACKAGE/ATTRIBUTIONS.m
 install -m644 "$WORK/source/catalogue.py" "$WORK/source/catalogue.json" "$D/usr/lib/$PACKAGE/"
 install -Dm755 "$WORK/source/actions/entry" "$D/usr/lib/$PACKAGE/actions/entry"
 install -m644 "$WORK/source/packageuri.py" "$D/usr/lib/$PACKAGE/packageuri.py"
+install -m644 "$WORK/source/packagepages.py" "$D/usr/lib/$PACKAGE/packagepages.py"
 install -m644 "$WORK/source/common.py" "$D/usr/lib/$PACKAGE/common.py"
 install -m644 "$WORK/source/appimage.py" "$D/usr/lib/$PACKAGE/appimage.py"
 install -m644 "$WORK/source/tools.py" "$D/usr/lib/$PACKAGE/tools.py"
@@ -75,7 +76,7 @@ Package: $PACKAGE
 Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
-Depends: sparky-aptus-appcenter, sparky-stereo-apt (>= 20261104.3~sparky9~0), python3, python3-apt, curl, desktop-file-utils, sparky-stereo-hardware, apt, dpkg, systemd, udev, kmod, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
+Depends: sparky-core-fonts-dialog (>= 1.0), sparky-aptus-appcenter, sparky-stereo-apt (>= 20261104.3~sparky9~0), python3, python3-apt, curl, desktop-file-utils, sparky-stereo-hardware, apt, dpkg, systemd, udev, kmod, pkexec, yad, sparky-stereo-problems (>= 0.1.1)
 Section: admin
 Priority: optional
 Homepage: https://sparkylinux.org
