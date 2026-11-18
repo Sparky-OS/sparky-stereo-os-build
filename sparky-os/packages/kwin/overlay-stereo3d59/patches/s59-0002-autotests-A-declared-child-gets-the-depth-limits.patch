@@ -6,7 +6,7 @@ Subject: [PATCH 2/2] autotests: A declared child gets the depth limits
 testStereoChildWindowDepthLimits: a child that declares stereo content and is
 listed in its window's children gets the output's sunk and popped limits
 (24.8 fixed point), follows a change of the limits, and loses the property when
-the declaration goes; the top level gets none. Red on +stereo3d58, green on +59.
+the declaration goes; the top level gets none. The announced support version is 11. Red on +stereo3d58, green on +59.
 
 Assisted-by: Claude Sonnet 5.5 via Claude Code
 ---
@@ -28,6 +28,15 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
  };
  
  void X11WindowTest::initTestCase_data()
+@@ -4075,7 +4077,7 @@
+     std::unique_ptr<xcb_get_property_reply_t> supportReply(xcb_get_property_reply(c.get(), supportCookie, nullptr));
+     QVERIFY(supportReply);
+     QCOMPARE(supportReply->value_len, 1u);
+-    QCOMPARE(*reinterpret_cast<uint32_t *>(xcb_get_property_value(supportReply.get())), 10u);
++    QCOMPARE(*reinterpret_cast<uint32_t *>(xcb_get_property_value(supportReply.get())), 11u);
+ 
+     const uint32_t value = StereoContentSideBySideFull;
+     X11Window *window = createWindow(c.get(), Rect(0, 0, 100, 100), [&c, &value](xcb_window_t windowId) {
 @@ -5212,4 +5214,75 @@
  }
  
