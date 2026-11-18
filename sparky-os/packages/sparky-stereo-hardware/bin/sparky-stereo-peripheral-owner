@@ -37,20 +37,39 @@ def olh_installed():
     return any(os.path.exists(ROOT + p) for p in ("/etc/systemd/system/OpenLinkHub.service", "/usr/lib/systemd/system/OpenLinkHub.service", "/opt/OpenLinkHub"))
 
 
-def upstream_install():
-    if FIXTURE:
-        return open(os.path.join(FIXTURE, "openlinkhub-upstream")).read().strip() == "yes"
-    return any(os.path.exists(ROOT + p) for p in ("/etc/systemd/system/OpenLinkHub.service", "/opt/OpenLinkHub", "/etc/udev/rules.d/99-openlinkhub.rules"))
+# A copy the person made with upstream's own scripts or makefile, and the package of the same program installed beside it: one notice each
+# (OpenLinkHub in milestone 8; LACT and HeadsetControl in milestone 11). name: (fixture name, the paths of upstream's installs, the package,
+# the message of the catalogue)
+NOTICES = {
+    "openlinkhub": ("openlinkhub", ("/etc/systemd/system/OpenLinkHub.service", "/opt/OpenLinkHub", "/etc/udev/rules.d/99-openlinkhub.rules"), "openlinkhub", "LOCAL89"),
+    "lact": ("lact", ("/usr/local/bin/lact", "/usr/local/lib/systemd/system/lactd.service", "/etc/systemd/system/lactd.service"), "lact", "LOCAL91"),
+    "headsetcontrol": ("headsetcontrol", ("/usr/local/bin/headsetcontrol", "/usr/local/lib/udev/rules.d/70-headsets.rules"), "headsetcontrol", "LOCAL93"),
+}
 
 
-def package_installed():
+def fixture_fact(name):
+    try:
+        return open(os.path.join(FIXTURE, name)).read().strip() == "yes"
+    except OSError:
+        return False
+
+
+def upstream_install(which="openlinkhub"):
+    fixture, paths, _, _ = NOTICES[which]
     if FIXTURE:
-        return open(os.path.join(FIXTURE, "openlinkhub-package")).read().strip() == "yes"
-    out = subprocess.run(["dpkg-query", "-W", "-f", "${db:Status-Abbrev}", "openlinkhub"], capture_output=True, text=True)
+        return fixture_fact(fixture + ("-upstream" if which == "openlinkhub" else "-local"))
+    return any(os.path.exists(ROOT + p) for p in paths)
+
+
+def package_installed(which="openlinkhub"):
+    fixture, _, package, _ = NOTICES[which]
+    if FIXTURE:
+        return fixture_fact(fixture + "-package")
+    out = subprocess.run(["dpkg-query", "-W", "-f", "${db:Status-Abbrev}", package], capture_output=True, text=True)
     return out.returncode == 0 and out.stdout.strip().startswith("ii")
 
 
-NOTICE = "notice-openlinkhub-upstream"
+NOTICE = "notice-openlinkhub-upstream"   # the first notice keeps the name of milestone 8; the others are notice-NAME-local
 
 
 def usb_ids():
@@ -107,7 +126,7 @@ def main(argv):
             open(os.path.join(STATE, mark), "w").close()
     # the telling is forgotten for a device that is gone or whose owner left
     for mark in sorted(marks):
-        if mark == NOTICE:
+        if mark.startswith('notice-'):
             continue
         ident = mark.replace("-", ":", 1)
         if not with_olh or ident not in present:
@@ -115,18 +134,20 @@ def main(argv):
                 print("forget " + mark)
             else:
                 os.unlink(os.path.join(STATE, mark))
-    # upstream's own copy with the package beside it: one notice while that holds, told again if it comes back
-    both = upstream_install() and package_installed()
-    if both and NOTICE not in marks:
-        engine(["say", PKG, "LOCAL89"], dry)
-        if not dry:
-            os.makedirs(STATE, exist_ok=True)
-            open(os.path.join(STATE, NOTICE), "w").close()
-    elif not both and NOTICE in marks:
-        if dry:
-            print("forget " + NOTICE)
-        else:
-            os.unlink(os.path.join(STATE, NOTICE))
+    # upstream's own copy with the package beside it: one notice each while that holds, told again if it comes back
+    for which, (_, _, _, message) in NOTICES.items():
+        mark = NOTICE if which == "openlinkhub" else "notice-%s-local" % which
+        both = upstream_install(which) and package_installed(which)
+        if both and mark not in marks:
+            engine(["say", PKG, message], dry)
+            if not dry:
+                os.makedirs(STATE, exist_ok=True)
+                open(os.path.join(STATE, mark), "w").close()
+        elif not both and mark in marks:
+            if dry:
+                print("forget " + mark)
+            else:
+                os.unlink(os.path.join(STATE, mark))
     return 0
 
 
