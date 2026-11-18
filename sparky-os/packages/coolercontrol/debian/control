@@ -1,0 +1,37 @@
+Source: coolercontrol
+Section: admin
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 14), nodejs (>= 22), esbuild (>= 0.28.2), cargo (>= 1.97~), rustc (>= 1.97~), cmake, pkgconf, python3, git, libdrm-dev,
+ libgl1-mesa-dev, libqt6opengl6-dev, qt6-base-dev, qt6-webengine-dev, qt6-webengine-dev-tools
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+Homepage: https://gitlab.com/coolercontrol/coolercontrol
+
+Package: coolercontrold
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, systemd
+Recommends: liquidctl, lm-sensors
+Description: Cooling control and monitoring: the system service
+ CoolerControl reads the temperatures and sets the fans, pumps and lights of a
+ computer: the motherboard's and the processor's sensors and fan channels
+ through the kernel's hwmon interface, graphics cards, and liquid coolers and
+ fan controllers through liquidctl. This is its system service, with the web
+ interface it serves (http://localhost:11987) and the programming interface
+ the window uses. Profiles, functions, alerts and modes are kept in
+ /etc/coolercontrol.
+ .
+ The package is built from the release's source: the daemon's Rust crates are
+ vendored, and the interface is built with Vite 7, Rollup (its native part
+ built from source) and Debian's esbuild, not with upstream's prebuilt
+ bundler. A copy made by upstream's makefile (/usr/local) is left as it is.
+ .
+ Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Pawel "pavroo"
+ Pijanowski). Upstream: Guy Boldon, Eren Simsek and the CoolerControl contributors.
+
+Package: coolercontrol
+Architecture: amd64
+Depends: coolercontrold (= ${binary:Version}), qt6-qpa-plugins, libqt6webenginecore6-bin, ${shlibs:Depends}, ${misc:Depends}
+Description: Cooling control and monitoring: the desktop window
+ The Qt window of CoolerControl: the interface of the service in a web view
+ of its own, with a tray icon and desktop notifications for the alerts.
