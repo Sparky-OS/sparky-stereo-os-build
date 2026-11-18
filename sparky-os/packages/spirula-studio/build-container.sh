@@ -2,7 +2,7 @@
 # Copyright 2026 Daniel Ramos (Capitain Jack), GPL-3.0-or-later.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-BUILD=$(cd "$HERE/../../.." && pwd)
+BUILD=$(cd "$HERE/../.." && pwd)
 : "${SPARKY_BUILDER_IMAGE:?Set the prepared Debian testing builder image}"
 : "${SPIRULA_SOURCE:?Set the clean edition fork checkout}"
 : "${OUT:?Set an owned empty output folder}"
