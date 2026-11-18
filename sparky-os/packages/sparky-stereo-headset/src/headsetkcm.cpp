@@ -37,6 +37,7 @@ void HeadsetKcm::refresh()
 
 void HeadsetKcm::describeAll()
 {
+    const QVariantList before = m_described;
     m_described.clear();
     for (const Headset &h : std::as_const(m_headsets)) {
         QVariantMap saved = savedChoices(h.id);
@@ -56,7 +57,11 @@ void HeadsetKcm::describeAll()
         d[QStringLiteral("settings")] = settings;
         m_described << d;
     }
-    Q_EMIT headsetsChanged();
+    // the controls are rebuilt only when something changed, so a refresh never interrupts a slider being dragged
+    if (m_described != before || !m_everDescribed) {
+        m_everDescribed = true;
+        Q_EMIT headsetsChanged();
+    }
 }
 
 void HeadsetKcm::stage(const QString &id, const QString &key, const QVariant &value)
