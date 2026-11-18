@@ -1,16 +1,36 @@
 // SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Used for a fresh layout, never as a login-time rewrite of an existing panel.
+// The panel is KDE's default one (plasma-desktop, layout-templates/org.kde.plasma.desktop.defaultPanel, by the KDE
+// community, GPL-2.0-or-later), written out here because one widget differs: the launcher is the Application Menu
+// (org.kde.plasma.kicker, the cascading one), not Kickoff (Daniel, 2026-11-17, ORDER 668). When KDE's template
+// changes, this follows it.
 if (panels().length === 0) {
-    loadTemplate("org.kde.plasma.desktop.defaultPanel");
-    var created = panels();
-    for (var i = 0; i < created.length; ++i) {
-        var widgets = created[i].widgets();
-        for (var j = 0; j < widgets.length; ++j) {
-            if (widgets[j].type === "org.kde.plasma.icontasks" || widgets[j].type === "org.kde.plasma.taskmanager") {
-                widgets[j].currentConfigGroup = ["General"];
-                widgets[j].writeConfig("launchers", ["applications:sparky-aptus-stereo-appcenter.desktop", "applications:org.kde.dolphin.desktop", "applications:firefox.desktop", "applications:steam.desktop", "applications:vlc-stereo.desktop", "applications:libreoffice-writer.desktop", "applications:libreoffice-calc.desktop", "applications:org.kde.kcalc.desktop", "applications:org.kde.konsole.desktop"]);
-            }
+    var panel = new Panel;
+    var panelScreen = panel.screen;
+    panel.height = 2 * Math.ceil(gridUnit * 2.5 / 2);
+    const maximumAspectRatio = 21 / 9;
+    if (panel.formFactor === "horizontal") {
+        const geo = screenGeometry(panelScreen);
+        const maximumWidth = Math.ceil(geo.height * maximumAspectRatio);
+        if (geo.width > maximumWidth) {
+            panel.alignment = "center";
+            panel.minimumLength = maximumWidth;
+            panel.maximumLength = maximumWidth;
         }
     }
+    panel.addWidget("org.kde.plasma.kicker");
+    panel.addWidget("org.kde.plasma.pager");
+    var tasks = panel.addWidget("org.kde.plasma.icontasks");
+    tasks.currentConfigGroup = ["General"];
+    tasks.writeConfig("launchers", ["applications:sparky-aptus-stereo-appcenter.desktop", "applications:org.kde.dolphin.desktop", "applications:firefox.desktop", "applications:steam.desktop", "applications:vlc-stereo.desktop", "applications:libreoffice-writer.desktop", "applications:libreoffice-calc.desktop", "applications:org.kde.kcalc.desktop", "applications:org.kde.konsole.desktop"]);
+    panel.addWidget("org.kde.plasma.marginsseparator");
+    var langIds = ["as", "bn", "bo", "brx", "doi", "gu", "hi", "ja", "kn", "ko", "kok", "ks", "lep", "mai", "ml", "mni", "mr",
+                   "ne", "or", "pa", "sa", "sat", "sd", "si", "ta", "te", "th", "ur", "vi", "zh_CN", "zh_TW"];
+    if (langIds.indexOf(languageId) != -1) {
+        panel.addWidget("org.kde.plasma.kimpanel");
+    }
+    panel.addWidget("org.kde.plasma.systemtray");
+    panel.addWidget("org.kde.plasma.digitalclock");
+    panel.addWidget("org.kde.plasma.showdesktop");
 }
