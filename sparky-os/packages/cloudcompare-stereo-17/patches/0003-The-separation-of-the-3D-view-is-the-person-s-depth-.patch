@@ -1,4 +1,4 @@
-From 188dfb652b083c0a63aeda329f082608376da4f3 Mon Sep 17 00:00:00 2001
+From ed8d24ecaecb1d96336e4a78ec2d762069e946e2 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Wed, 18 Nov 2026 02:14:15 -0300
 Subject: [PATCH 3/3] The separation of the 3D view is the person's depth
@@ -22,7 +22,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  create mode 100644 libs/qCC_glWindow/include/ccGLWindowDepthNotice.h
 
 diff --git a/libs/qCC_glWindow/CMakeLists.txt b/libs/qCC_glWindow/CMakeLists.txt
-index be19190..f63c12f 100644
+index be19190..81418c4 100644
 --- a/libs/qCC_glWindow/CMakeLists.txt
 +++ b/libs/qCC_glWindow/CMakeLists.txt
 @@ -11,6 +11,16 @@ target_link_libraries( ${PROJECT_NAME}
@@ -35,7 +35,7 @@ index be19190..f63c12f 100644
 +	find_package( PkgConfig REQUIRED )
 +	pkg_check_modules( STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare>=1.10.0 )
 +	find_package( Qt5 COMPONENTS X11Extras REQUIRED )
-+	target_link_libraries( ${PROJECT_NAME} PRIVATE PkgConfig::STEREO_DECLARE Qt5::X11Extras )
++	target_link_libraries( ${PROJECT_NAME} PkgConfig::STEREO_DECLARE Qt5::X11Extras )
 +	target_compile_definitions( ${PROJECT_NAME} PRIVATE CC_WITH_STEREO_DECLARE )
 +endif()
 +
