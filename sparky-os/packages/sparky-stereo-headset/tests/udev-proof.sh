@@ -33,11 +33,11 @@ out=$(props /t/udev/battery-input-other.umockdev $IO); [[ $out != *SOUND_* ]] &&
 [[ -x /usr/libexec/sparky-stereo-headset-battery && -f /usr/lib/systemd/system/sparky-stereo-headset-battery.service ]] && ok "the battery service and its unit are there" || bad "battery service missing"
 echo "== the battery service stands down where the kernel has the entry (recorded USB headset 03f0:018b with a power_supply of its own) and tries to make one where it has not"
 mkdir -p /hs; cp /t/standin/headsetcontrol /usr/local/bin/headsetcontrol; chmod +x /usr/local/bin/headsetcontrol
-out=$(HS_STANDIN_DIR=/hs umockdev-run -d /t/udev/kernel-battery.umockdev -- /usr/libexec/sparky-stereo-headset-battery --once 2>&1); rc=$?
+out=$(LC_ALL=C.UTF-8 HS_STANDIN_DIR=/hs umockdev-run -d /t/udev/kernel-battery.umockdev -- /usr/libexec/sparky-stereo-headset-battery --once 2>&1); rc=$?
 [[ $rc == 0 && $out == *"the kernel's own driver gives this headset's battery; nothing is added"* ]] && ok "the kernel has the entry: nothing is added (exit $rc)" || bad "kernel case: rc=$rc $out"
-out=$(HS_STANDIN_DIR=/hs umockdev-run -d /t/udev/other.umockdev -- /usr/libexec/sparky-stereo-headset-battery --once 2>&1); rc=$?
+out=$(LC_ALL=C.UTF-8 HS_STANDIN_DIR=/hs umockdev-run -d /t/udev/other.umockdev -- /usr/libexec/sparky-stereo-headset-battery --once 2>&1); rc=$?
 [[ $rc == 1 && $out == *"cannot open /dev/uhid"* ]] && ok "no entry of the kernel's: it tries to make one (this container has no /dev/uhid: exit $rc, said)" || bad "no-kernel case: rc=$rc $out"
-echo 0 >/hs/present; out=$(HS_STANDIN_DIR=/hs umockdev-run -d /t/udev/other.umockdev -- /usr/libexec/sparky-stereo-headset-battery --once 2>&1); rc=$?; echo 1 >/hs/present
+echo 0 >/hs/present; out=$(LC_ALL=C.UTF-8 HS_STANDIN_DIR=/hs umockdev-run -d /t/udev/other.umockdev -- /usr/libexec/sparky-stereo-headset-battery --once 2>&1); rc=$?; echo 1 >/hs/present
 [[ $rc == 0 && -z $out ]] && ok "no headset connected: nothing is made (exit $rc)" || bad "no-headset case: rc=$rc $out"
 rm -f /usr/local/bin/headsetcontrol
 [[ -x /usr/bin/sparky-stereo-headset && -f /usr/lib/systemd/user/sparky-stereo-headset.service && -L /usr/lib/systemd/user/default.target.wants/sparky-stereo-headset.service ]] && ok "the command and the user service (wanted by default.target) are there" || bad "command or unit missing"
