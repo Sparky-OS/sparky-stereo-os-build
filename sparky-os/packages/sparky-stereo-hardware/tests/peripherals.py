@@ -61,10 +61,10 @@ cases = [
      ['fact\tperipheral\topenlinkhub\t' + HUB, 'fact\tperipheral\topenrgb\t1b1c:1b11'], []),
     # headsets (milestone 10): HeadsetControl drives the battery, sidetone and lights through the headset's own interface; a headset OpenRGB lists
     # too gets both (no clash has been seen, and the person can take either away)
-    ('a HyperX headset', {'lsusb': usb('03f0:018b')}, {'headsetcontrol'}, {'openrgb', 'openlinkhub'}, ['fact\tperipheral\theadsetcontrol\t03f0:018b'], []),
-    ('a Logitech headset that OpenRGB lists too', {'lsusb': usb('046d:0a87')}, {'headsetcontrol', 'openrgb'}, set(),
+    ('a HyperX headset', {'lsusb': usb('03f0:018b')}, {'headsetcontrol', 'sparky-stereo-headset'}, {'openrgb', 'openlinkhub'}, ['fact\tperipheral\theadsetcontrol\t03f0:018b'], []),
+    ('a Logitech headset that OpenRGB lists too', {'lsusb': usb('046d:0a87')}, {'headsetcontrol', 'sparky-stereo-headset', 'openrgb'}, set(),
      ['fact\tperipheral\theadsetcontrol\t046d:0a87', 'fact\tperipheral\topenrgb\t046d:0a87'], []),
-    ('a HyperX headset and a HeadsetControl made by upstream\'s makefile', {'lsusb': usb('03f0:018b'), 'headsetcontrol-local': 'yes\n'}, set(), {'headsetcontrol'},
+    ('a HyperX headset and a HeadsetControl made by upstream\'s makefile', {'lsusb': usb('03f0:018b'), 'headsetcontrol-local': 'yes\n'}, set(), {'headsetcontrol', 'sparky-stereo-headset'},
      ['fact\tperipheral\theadsetcontrol-local\t03f0:018b'], []),
     # LACT (milestone 10): an AMD display controller gets LACT, which owns the card; CoreCtrl is not installed for it
     ('an AMD Radeon card', {'lspci': AMD}, {'lact'}, {'corectrl', 'openrgb'},
