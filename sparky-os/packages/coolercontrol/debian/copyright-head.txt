@@ -1,0 +1,24 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: CoolerControl
+Upstream-Contact: Guy Boldon (https://gitlab.com/coolercontrol/coolercontrol)
+Source: https://gitlab.com/coolercontrol/coolercontrol
+Comment: CoolerControl (the daemon, the interface and the Qt window) is under the GNU General Public License version 3 or later; the
+ programming interface's documents and some data files carry the licences REUSE.toml of the project names. The daemon is one Rust
+ binary that also links the crates of vendor/ (listed below by the licence each one's Cargo.toml states); the interface is built
+ from its own source with the packages of npm (listed below by the licence each one's package.json states), of which only the
+ bundler's output is part of the program; Rollup's native part is built from its Rust source and the crates of rollupvendor/. The
+ source package carries all of that source and the whole build recipe. The stanzas below are generated
+ (sparky-os/packages/coolercontrol/debian/gen-copyright.py in the edition's build repository) from the tables
+ debian/crate-licences.tsv, debian/rollup-crate-licences.tsv and debian/npm-licences.tsv, which pin every package's legal files by
+ SHA-256; the files themselves (they carry their authors' names and addresses) are not kept in git, build.sh takes them from the
+ trees and stops unless each has the pinned hash, and they are installed in /usr/share/doc/coolercontrold/vendor-licences. The
+ build stops when this file differs from what the generator gives.
+
+Files: *
+Copyright: 2021-2026 Guy Boldon, Eren Simsek and the CoolerControl contributors
+License: GPL-3+
+
+Files: debian/*
+Copyright: 2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+License: GPL-3+
+Comment: Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Pawel "pavroo" Pijanowski).
