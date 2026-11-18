@@ -1,4 +1,4 @@
-From ed8d24ecaecb1d96336e4a78ec2d762069e946e2 Mon Sep 17 00:00:00 2001
+From 3a8d47b9a71f5a4be9f66e54fdcd72ee65736384 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Wed, 18 Nov 2026 02:14:15 -0300
 Subject: [PATCH 3/3] The separation of the 3D view is the person's depth
@@ -12,14 +12,19 @@ width and distance, eye separation, strength) are gone from StereoParams.
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
  libs/qCC_glWindow/CMakeLists.txt              | 10 +++
- libs/qCC_glWindow/include/CMakeLists.txt      |  1 +
+ libs/qCC_glWindow/include/CMakeLists.txt      |  2 +
+ .../include/ccGLWindowDepthLimits.h           | 13 +++
  .../include/ccGLWindowDepthNotice.h           | 79 +++++++++++++++++
  .../include/ccGLWindowInterface.h             | 28 +++++-
  libs/qCC_glWindow/include/ccGLWindowStereo.h  |  9 ++
+ libs/qCC_glWindow/src/CMakeLists.txt          |  1 +
+ .../src/ccGLWindowDepthLimits.cpp             | 33 +++++++
  libs/qCC_glWindow/src/ccGLWindowInterface.cpp | 85 ++++++++++++++++---
- libs/qCC_glWindow/src/ccGLWindowStereo.cpp    | 59 +++++++++++++
- 7 files changed, 254 insertions(+), 17 deletions(-)
+ libs/qCC_glWindow/src/ccGLWindowStereo.cpp    | 40 +++++++++
+ 10 files changed, 283 insertions(+), 17 deletions(-)
+ create mode 100644 libs/qCC_glWindow/include/ccGLWindowDepthLimits.h
  create mode 100644 libs/qCC_glWindow/include/ccGLWindowDepthNotice.h
+ create mode 100644 libs/qCC_glWindow/src/ccGLWindowDepthLimits.cpp
 
 diff --git a/libs/qCC_glWindow/CMakeLists.txt b/libs/qCC_glWindow/CMakeLists.txt
 index be19190..81418c4 100644
@@ -43,17 +48,37 @@ index be19190..81418c4 100644
  include( cmake/OculusSupport.cmake )
  
 diff --git a/libs/qCC_glWindow/include/CMakeLists.txt b/libs/qCC_glWindow/include/CMakeLists.txt
-index d274227..ec6c9e9 100644
+index d274227..f34139b 100644
 --- a/libs/qCC_glWindow/include/CMakeLists.txt
 +++ b/libs/qCC_glWindow/include/CMakeLists.txt
-@@ -5,6 +5,7 @@ target_sources( ${PROJECT_NAME}
+@@ -5,6 +5,8 @@ target_sources( ${PROJECT_NAME}
  		${CMAKE_CURRENT_LIST_DIR}/ccGLWindow.h
  		${CMAKE_CURRENT_LIST_DIR}/ccGLWindowInterface.h
  		${CMAKE_CURRENT_LIST_DIR}/ccGLWindowSignalEmitter.h
++		${CMAKE_CURRENT_LIST_DIR}/ccGLWindowDepthLimits.h
 +		${CMAKE_CURRENT_LIST_DIR}/ccGLWindowDepthNotice.h
  		${CMAKE_CURRENT_LIST_DIR}/ccGLWindowStereo.h
  		${CMAKE_CURRENT_LIST_DIR}/ccGuiParameters.h
  		${CMAKE_CURRENT_LIST_DIR}/ccRenderingTools.h
+diff --git a/libs/qCC_glWindow/include/ccGLWindowDepthLimits.h b/libs/qCC_glWindow/include/ccGLWindowDepthLimits.h
+new file mode 100644
+index 0000000..6676bf6
+--- /dev/null
++++ b/libs/qCC_glWindow/include/ccGLWindowDepthLimits.h
+@@ -0,0 +1,13 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// The person's depth limits of an X11 window (Sparky Stereo OS), read through libstereo-declare 1.10. Its own file: the X11 headers
++// define macros (None, Status, Bool...) that break Qt's headers when they come first.
++#ifndef CC_GL_WINDOW_DEPTH_LIMITS_H
++#define CC_GL_WINDOW_DEPTH_LIMITS_H
++
++namespace ccDepthLimits
++{
++//! Reads the depth limits of the X11 window (pixels of a view 1920 wide): 0 delivered, 1 not offered, 2 not delivered yet, 3 not readable
++int readX11(unsigned long window, double& sunk, double& popped);
++}
++
++#endif
 diff --git a/libs/qCC_glWindow/include/ccGLWindowDepthNotice.h b/libs/qCC_glWindow/include/ccGLWindowDepthNotice.h
 new file mode 100644
 index 0000000..1bfba25
@@ -215,6 +240,57 @@ index 9be6eea..21a03da 100644
  protected: //members
  
  	//! Associated OpenGL context
+diff --git a/libs/qCC_glWindow/src/CMakeLists.txt b/libs/qCC_glWindow/src/CMakeLists.txt
+index b42959b..70ac562 100644
+--- a/libs/qCC_glWindow/src/CMakeLists.txt
++++ b/libs/qCC_glWindow/src/CMakeLists.txt
+@@ -5,6 +5,7 @@ target_sources( ${PROJECT_NAME}
+ 		${CMAKE_CURRENT_LIST_DIR}/ccGLWindow.cpp
+ 		${CMAKE_CURRENT_LIST_DIR}/ccGLWindowInterface.cpp
+ 		${CMAKE_CURRENT_LIST_DIR}/ccGLWindowSignalEmitter.cpp
++		${CMAKE_CURRENT_LIST_DIR}/ccGLWindowDepthLimits.cpp
+ 		${CMAKE_CURRENT_LIST_DIR}/ccGLWindowStereo.cpp
+ 		${CMAKE_CURRENT_LIST_DIR}/ccGuiParameters.cpp
+ 		${CMAKE_CURRENT_LIST_DIR}/ccGLUtils.cpp
+diff --git a/libs/qCC_glWindow/src/ccGLWindowDepthLimits.cpp b/libs/qCC_glWindow/src/ccGLWindowDepthLimits.cpp
+new file mode 100644
+index 0000000..fab838c
+--- /dev/null
++++ b/libs/qCC_glWindow/src/ccGLWindowDepthLimits.cpp
+@@ -0,0 +1,33 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++#include "ccGLWindowDepthLimits.h"
++
++#ifdef CC_WITH_STEREO_DECLARE
++#include <QX11Info>
++#include <cerrno>
++#include <stereo-declare.h>
++#endif
++
++int ccDepthLimits::readX11(unsigned long window, double& sunk, double& popped)
++{
++#ifdef CC_WITH_STEREO_DECLARE
++	if (!QX11Info::isPlatformX11())
++	{
++		return 3;
++	}
++	stereo_depth_limits limits;
++	const int r = stereo_depth_x11_get_limits(QX11Info::display(), static_cast<Window>(window), &limits);
++	if (r == 0)
++	{
++		sunk = limits.sunk;
++		popped = limits.popped;
++		return 0;
++	}
++	// never zeros, never a guess: not delivered yet, or not offered (an older compositor, or the window is not declared)
++	return (r == -ENODATA ? 2 : 1);
++#else
++	(void)window;
++	(void)sunk;
++	(void)popped;
++	return 3;
++#endif
++}
 diff --git a/libs/qCC_glWindow/src/ccGLWindowInterface.cpp b/libs/qCC_glWindow/src/ccGLWindowInterface.cpp
 index bdecd98..fe042f3 100644
 --- a/libs/qCC_glWindow/src/ccGLWindowInterface.cpp
@@ -340,24 +416,20 @@ index bdecd98..fe042f3 100644
  	if (needSecondFBO && !initFBO(width(), height()))
  	{
 diff --git a/libs/qCC_glWindow/src/ccGLWindowStereo.cpp b/libs/qCC_glWindow/src/ccGLWindowStereo.cpp
-index efd194c..9dfc863 100644
+index efd194c..af286cd 100644
 --- a/libs/qCC_glWindow/src/ccGLWindowStereo.cpp
 +++ b/libs/qCC_glWindow/src/ccGLWindowStereo.cpp
-@@ -17,6 +17,13 @@
+@@ -17,6 +17,9 @@
  
  //qCC
  #include "ccGLWindowStereo.h"
 +#include "ccGLWindowDepthNotice.h"
 +
-+#ifdef CC_WITH_STEREO_DECLARE
-+#include <QX11Info>
-+#include <stereo-declare.h>
-+#include <cerrno>
-+#endif
++#include "ccGLWindowDepthLimits.h"
  
  //qCC_db
  #include <ccHObject.h>
-@@ -63,6 +70,34 @@ ccGLWindowStereo::ccGLWindowStereo(	QSurfaceFormat* format/*=nullptr*/,
+@@ -63,6 +66,34 @@ ccGLWindowStereo::ccGLWindowStereo(	QSurfaceFormat* format/*=nullptr*/,
  	connect(&m_autoRefreshTimer, &QTimer::timeout, this, [&]() { update(); });
  	connect(&m_deferredPickingTimer, &QTimer::timeout, this, [&]() { doPicking(); });
  
@@ -392,32 +464,17 @@ index efd194c..9dfc863 100644
  	QString windowTitle = QString("3D View Stereo %1").arg(m_uniqueID);
  	setWindowTitle(windowTitle);
  	setObjectName(windowTitle);
-@@ -533,6 +568,30 @@ ccGLWindowStereo* ccGLWindowStereo::FromWidget(QWidget* widget)
+@@ -533,6 +564,15 @@ ccGLWindowStereo* ccGLWindowStereo::FromWidget(QWidget* widget)
  	}
  }
  
 +int ccGLWindowStereo::readDepthLimits(double& sunk, double& popped)
 +{
-+#ifdef CC_WITH_STEREO_DECLARE
-+	if (!isExposed() || !QX11Info::isPlatformX11())
++	if (!isExposed())
 +	{
 +		return 3;
 +	}
-+	stereo_depth_limits limits;
-+	const int r = stereo_depth_x11_get_limits(QX11Info::display(), static_cast<Window>(winId()), &limits);
-+	if (r == 0)
-+	{
-+		sunk = limits.sunk;
-+		popped = limits.popped;
-+		return 0;
-+	}
-+	// never zeros, never a guess: not delivered yet, or not offered (an older compositor, or the window is not declared)
-+	return (r == -ENODATA ? 2 : 1);
-+#else
-+	Q_UNUSED(sunk)
-+	Q_UNUSED(popped)
-+	return 3;
-+#endif
++	return ccDepthLimits::readX11(static_cast<unsigned long>(winId()), sunk, popped);
 +}
 +
  void ccGLWindowStereo::doSetMouseTracking(bool enable)
