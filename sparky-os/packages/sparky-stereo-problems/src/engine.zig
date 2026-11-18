@@ -31,7 +31,7 @@ const sys = @import("sys.zig");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 
-pub const version = "0.2.0";
+pub const version = "0.2.4";
 pub const engine_package = "sparky-stereo-problems";
 const support_url = "https://github.com/Sparky-OS/sparky-stereo-os/issues";
 const output_lines = 200;
@@ -135,7 +135,7 @@ pub const Ctx = struct {
     // a journal folder read instead of the system's (tests keep a journal's export there)
     journal_dir: ?[]const u8 = null,
     euid: u32,
-    under_pkexec: bool = false,
+    repair_only: bool = false,
     // the last failure, in English (for support and the journal) and in the person's language
     err_en: []const u8 = "",
     err_local: []const u8 = "",
@@ -151,14 +151,15 @@ pub const Ctx = struct {
 
     pub fn init(a: Allocator) Ctx {
         var ctx = Ctx{ .a = a, .euid = sys.geteuid() };
-        // under pkexec only what root kept is read: the caller's environment never names the stores
-        ctx.under_pkexec = ctx.euid == 0 and sys.getenv("PKEXEC_UID") != null;
-        if (!ctx.under_pkexec) {
-            if (env("SPARKY_STEREO_ROOT")) |r| ctx.root = r;
-            if (env("SPARKY_STEREO_PROBLEMS_CATALOG")) |c| ctx.catalog_dir = c;
-            if (env("SPARKY_STEREO_PROBLEMS_JOURNAL")) |d| ctx.journal_dir = d;
-        }
+        if (env("SPARKY_STEREO_ROOT")) |r| ctx.root = r;
+        if (env("SPARKY_STEREO_PROBLEMS_CATALOG")) |c| ctx.catalog_dir = c;
+        if (env("SPARKY_STEREO_PROBLEMS_JOURNAL")) |d| ctx.journal_dir = d;
         return ctx;
+    }
+
+    // Only the separate polkit entry point constructs this context. No caller environment names its stores.
+    pub fn initRepair(a: Allocator) Ctx {
+        return .{ .a = a, .euid = sys.geteuid(), .repair_only = true };
     }
 
     pub fn deinit(ctx: *Ctx) void {
@@ -975,7 +976,7 @@ fn argsJson(ctx: *Ctx, args: []const Value) Failure![]const u8 {
 // The stores
 
 pub fn personDir(ctx: *Ctx) Failure!?[]const u8 {
-    if (ctx.under_pkexec) return null;
+    if (ctx.repair_only) return null;
     if (env("XDG_STATE_HOME")) |s| {
         if (s[0] == '/') return try cat(ctx.a, &.{ s, "/sparky-stereo-problems" });
     }
@@ -1343,7 +1344,7 @@ pub fn repair(ctx: *Ctx, scope: Scope, package: []const u8, key: []const u8) Fai
         .record => |x| x,
     };
     if (scope != .person and ctx.euid != 0) {
-        const how = try cat(ctx.a, &.{ "pkexec sparky-stereo-problems repair --", @tagName(scope), " ", package, " ", key });
+        const how = try cat(ctx.a, &.{ "pkexec /usr/libexec/sparky-stereo-problems/pkexec-repair repair --", @tagName(scope), " ", package, " ", key });
         return fail(ctx, "LOCAL17", &.{ key, package, how });
     }
     if (r.repair.len == 0) return fail(ctx, "LOCAL16", &.{ key, package });

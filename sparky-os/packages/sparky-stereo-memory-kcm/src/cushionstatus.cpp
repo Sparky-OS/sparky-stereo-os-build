@@ -156,7 +156,7 @@ void MemoryKcm::repairProblem(int index)
     QStringList arguments{u"repair"_s, u"--"_s + scope, s_package, problem.value(u"key"_s).toString()};
     QString program = s_engine;
     if (scope != u"person"_s) {
-        arguments.prepend(s_engine);
+        arguments.prepend(u"/usr/libexec/sparky-stereo-problems/pkexec-repair"_s);
         program = u"/usr/bin/pkexec"_s;
     }
     auto *process = new QProcess(this);

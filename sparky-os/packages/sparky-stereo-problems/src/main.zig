@@ -11,6 +11,8 @@ const sys = @import("sys.zig");
 const Value = std.json.Value;
 const Ctx = engine.Ctx;
 const Scope = engine.Scope;
+// A compile-time property of the separate executable, never argv0 or an inherited environment mark.
+const restricted_entry = if (@hasDecl(@import("root"), "polkit_repair_entry")) @import("root").polkit_repair_entry else false;
 
 // The usage, each description in the person's language (the engine's own messages); the command lines are syntax
 const Line = struct { syntax: []const u8, what: []const u8 };
@@ -348,6 +350,14 @@ fn printList(ctx: *Ctx, p: *Parsed) !u8 {
 }
 
 fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
+    if (restricted_entry) {
+        if (ctx.euid != 0 or (argv.len != 3 and argv.len != 4) or
+            !std.mem.eql(u8, argv[0], "repair") or
+            (!std.mem.eql(u8, argv[1], "--machine") and !std.mem.eql(u8, argv[1], "--boot")) or
+            !engine.validPackage(argv[2]) or
+            (argv.len == 4 and (!engine.validKey(argv[3]) or std.mem.startsWith(u8, argv[3], "-"))))
+            return wrongUse(ctx, "LOCAL55", &.{});
+    }
     if (argv.len < 1) return wrongUse(ctx, "LOCAL52", &.{});
     const verb = argv[0];
     if (std.mem.eql(u8, verb, "--version")) {
@@ -366,10 +376,6 @@ fn runMain(ctx: *Ctx, argv: []const []const u8) !u8 {
         pos.len != 3 or p.record.command == null or p.record.command.?.len == 0 or
         p.record.status == null or p.record.status.? == 0 or p.record.output.len == 0 or p.repairs.items.len == 0))
         return wrongUse(ctx, "LOCAL54", &.{"--after-removal"});
-    // pkexec runs only a repair of what root kept, never anything the caller names (org.sparkylinux.sparkystereo.problems.repair)
-    if (ctx.under_pkexec and (!std.mem.eql(u8, verb, "repair") or p.scope == null or p.scope.? == .person)) {
-        return wrongUse(ctx, "LOCAL55", &.{});
-    }
     if (std.mem.eql(u8, verb, "keep") or std.mem.eql(u8, verb, "run")) {
         if (pos.len < 3) return wrongUse(ctx, "LOCAL53", &.{"PACKAGE KEY MESSAGE"});
         var r = p.record;
@@ -560,7 +566,7 @@ pub export fn main(argc: c_int, argv: [*][*:0]u8) callconv(.c) c_int {
     var args = a.alloc([]const u8, @intCast(@max(argc - 1, 0))) catch return outOfMemory();
     var i: usize = 1;
     while (i < @as(usize, @intCast(argc))) : (i += 1) args[i - 1] = std.mem.span(argv[i]);
-    var ctx = Ctx.init(a);
+    var ctx = if (restricted_entry) Ctx.initRepair(a) else Ctx.init(a);
     defer ctx.deinit();
     const status = runMain(&ctx, args) catch return outOfMemory();
     return status;

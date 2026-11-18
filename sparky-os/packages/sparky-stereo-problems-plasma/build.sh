@@ -65,13 +65,13 @@ Section: kde
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Standards-Version: 4.7.3
-Build-Depends: cmake, dpkg-dev, extra-cmake-modules, g++, gettext, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, libkf6notifications-dev, pkgconf, qt6-base-dev, qt6-declarative-dev, sparky-stereo-problems (>= 0.2.0)
+Build-Depends: cmake, dpkg-dev, extra-cmake-modules, g++, gettext, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, libkf6notifications-dev, pkgconf, qt6-base-dev, qt6-declarative-dev, sparky-stereo-problems (>= 0.2.4)
 Rules-Requires-Root: no
 Homepage: https://sparkylinux.org
 
 Package: $PACKAGE
 Architecture: amd64
-Depends: \${shlibs:Depends}, sparky-stereo-problems (>= 0.2.0), pkexec, kdialog, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, qml6-module-qtquick-controls, qml6-module-qtquick-layouts
+Depends: \${shlibs:Depends}, sparky-stereo-problems (>= 0.2.4), pkexec, kdialog, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, qml6-module-qtquick-controls, qml6-module-qtquick-layouts
 Description: the computer's problems as notifications and a Problems page in Plasma
  Every problem sparky-stereo-problems keeps, as a KDE notification with Show
  details, Repair, the problem's own actions and Dismiss, and the Problems
@@ -80,7 +80,7 @@ EOC
 {
 	printf '%s (%s) unstable; urgency=medium\n\n' "$PACKAGE" "$VERSION"
 	sed -n '4,/^---/p' "$HERE/CHANGELOG" | grep -v '^---'
-	printf '\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 08 Nov 2026 12:00:00 -0300\n'
+	printf '\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 18 Nov 2026 00:00:00 -0300\n'
 } >"$S/debian/changelog"
 cp "$HERE/copyright" "$S/debian/copyright"
 echo '3.0 (native)' >"$S/debian/source/format"
@@ -88,7 +88,7 @@ cat >"$S/debian/rules" <<'EOC'
 #!/usr/bin/make -f
 binary:
 	OUT=$(CURDIR)/.. bash ./build.sh
-	dpkg-distaddfile $$(dpkg-parsechangelog -S Source)_$$(dpkg-parsechangelog -S Version)_amd64.deb kde optional
+	for deb in $(CURDIR)/../$$(dpkg-parsechangelog -S Source)*_$$(dpkg-parsechangelog -S Version)_*.deb; do dpkg-distaddfile "$${deb##*/}" kde optional; done
 clean:
 build:
 EOC

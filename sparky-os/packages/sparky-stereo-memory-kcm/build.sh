@@ -6,7 +6,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.1.8
+VERSION=0.1.9
 PACKAGE=sparky-stereo-memory-kcm
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.memory-kcm.XXXXXX")
@@ -30,7 +30,7 @@ install -m644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
 mkdir -p "$D/DEBIAN" "$WORK/shlibs/debian"
 printf 'Source: %s\n\nPackage: %s\nArchitecture: amd64\n' "$PACKAGE" "$PACKAGE" >"$WORK/shlibs/debian/control"
 SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -O $(find "$D" -type f \( -name '*.so' -o -path '*/kauth/*' \)) 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
-DEPENDS="$SHLIBS, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-kernel-settings (>= 20261010.2~sparky9~0), sparky-stereo-problems (>= 0.1.0), sparky-aptus-stereo-appcenter (>= 0.1.1), sparky-stereo-cushion-swap, pkexec"
+DEPENDS="$SHLIBS, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-kernel-settings (>= 20261010.2~sparky9~0), sparky-stereo-problems (>= 0.2.4), sparky-aptus-stereo-appcenter (>= 0.1.1), sparky-stereo-cushion-swap, pkexec"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
 cat >"$D/DEBIAN/control" <<EOF
 Package: $PACKAGE
@@ -48,7 +48,6 @@ Description: Memory page for System Settings
   and how it is woken, beside the shared Stereo APTus zram install/remove action.
 EOF
 (cd "$D" && find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums)
-dpkg-deb --root-owner-group -Zxz -b "$D" "$OUT/${PACKAGE}_${VERSION}_amd64.deb"
 
 S=$WORK/$PACKAGE-$VERSION
 mkdir -p "$S/debian"
@@ -69,13 +68,19 @@ Homepage: https://sparkylinux.org
 
 Package: $PACKAGE
 Architecture: amd64
-Depends: \${shlibs:Depends}, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-kernel-settings (>= 20261010.2~sparky9~0), sparky-stereo-problems (>= 0.1.0), sparky-aptus-stereo-appcenter (>= 0.1.1), sparky-stereo-cushion-swap, pkexec
+Depends: \${shlibs:Depends}, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, sparky-stereo-kernel-settings (>= 20261010.2~sparky9~0), sparky-stereo-problems (>= 0.2.4), sparky-aptus-stereo-appcenter (>= 0.1.1), sparky-stereo-cushion-swap, pkexec
 Breaks: sparky-stereo-kernel-settings (<< 20261103.4~)
 Description: Memory page for System Settings
  The Cushion Swap File and its protection state in System Settings.
 EOF
 cat >"$S/debian/changelog" <<EOF
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Use the engine's dedicated privileged repair entry point and require 0.2.4.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 18 Nov 2026 00:00:00 -0300
+
+$PACKAGE (0.1.8) unstable; urgency=medium
 
   * Require Cushion Swap for the Memory page even without Recommends.
 
@@ -155,4 +160,6 @@ export SOURCE_DATE_EPOCH
 python3 "$REPRO" normalize "$SOURCE_DATE_EPOCH" "$S"
 (cd "$WORK" && dpkg-source -b "$S")
 cp "$WORK/${PACKAGE}_${VERSION}.dsc" "$WORK/${PACKAGE}_${VERSION}.tar.xz" "$OUT/"
+"$TOOLKIT/repo/provenance.sh" --tree "$D"
+PYTHONPATH="$TOOLKIT${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release build-tree "$D" "$OUT"
 sync
