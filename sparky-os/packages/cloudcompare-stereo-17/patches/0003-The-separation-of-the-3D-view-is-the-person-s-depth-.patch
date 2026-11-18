@@ -1,4 +1,4 @@
-From 3a8d47b9a71f5a4be9f66e54fdcd72ee65736384 Mon Sep 17 00:00:00 2001
+From d1a87ca2ac802d2e4f78da82b656557bdb88343d Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Wed, 18 Nov 2026 02:14:15 -0300
 Subject: [PATCH 3/3] The separation of the 3D view is the person's depth
@@ -20,8 +20,8 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  libs/qCC_glWindow/src/CMakeLists.txt          |  1 +
  .../src/ccGLWindowDepthLimits.cpp             | 33 +++++++
  libs/qCC_glWindow/src/ccGLWindowInterface.cpp | 85 ++++++++++++++++---
- libs/qCC_glWindow/src/ccGLWindowStereo.cpp    | 40 +++++++++
- 10 files changed, 283 insertions(+), 17 deletions(-)
+ libs/qCC_glWindow/src/ccGLWindowStereo.cpp    | 41 +++++++++
+ 10 files changed, 284 insertions(+), 17 deletions(-)
  create mode 100644 libs/qCC_glWindow/include/ccGLWindowDepthLimits.h
  create mode 100644 libs/qCC_glWindow/include/ccGLWindowDepthNotice.h
  create mode 100644 libs/qCC_glWindow/src/ccGLWindowDepthLimits.cpp
@@ -416,7 +416,7 @@ index bdecd98..fe042f3 100644
  	if (needSecondFBO && !initFBO(width(), height()))
  	{
 diff --git a/libs/qCC_glWindow/src/ccGLWindowStereo.cpp b/libs/qCC_glWindow/src/ccGLWindowStereo.cpp
-index efd194c..af286cd 100644
+index efd194c..463192f 100644
 --- a/libs/qCC_glWindow/src/ccGLWindowStereo.cpp
 +++ b/libs/qCC_glWindow/src/ccGLWindowStereo.cpp
 @@ -17,6 +17,9 @@
@@ -464,17 +464,18 @@ index efd194c..af286cd 100644
  	QString windowTitle = QString("3D View Stereo %1").arg(m_uniqueID);
  	setWindowTitle(windowTitle);
  	setObjectName(windowTitle);
-@@ -533,6 +564,15 @@ ccGLWindowStereo* ccGLWindowStereo::FromWidget(QWidget* widget)
+@@ -533,6 +564,16 @@ ccGLWindowStereo* ccGLWindowStereo::FromWidget(QWidget* widget)
  	}
  }
  
 +int ccGLWindowStereo::readDepthLimits(double& sunk, double& popped)
 +{
-+	if (!isExposed())
++	const WId id = winId(); // the native window of the 3D view: the window the compositor sees declared
++	if (id == 0)
 +	{
 +		return 3;
 +	}
-+	return ccDepthLimits::readX11(static_cast<unsigned long>(winId()), sunk, popped);
++	return ccDepthLimits::readX11(static_cast<unsigned long>(id), sunk, popped);
 +}
 +
  void ccGLWindowStereo::doSetMouseTracking(bool enable)
