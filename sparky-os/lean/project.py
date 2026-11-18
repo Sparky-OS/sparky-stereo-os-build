@@ -118,6 +118,9 @@ def render_text(text: str, key: str, variant: str | None, package: str | None, p
         asm = lang_c.assembler_evidence(text, variant) is not None
         rendered = core.render(text, spans, lang_c.joiner_for(text, spans, asm=asm), keep_empty_after=mod.keep_empty_after,
                                collapse_blank=False, drop_lines=True)
+    elif key == 'go':
+        # Go: a comment-only line stays as an empty line and no run of them is collapsed, so no position moves
+        rendered = core.render(text, spans, mod.joiner, keep_empty_after=mod.keep_empty_after, collapse_blank=False)
     elif getattr(mod, 'DROP_LINES', False):
         # Zig as C and C++: comment-only lines go completely, the authored empty lines stay
         rendered = core.render(text, spans, mod.joiner, keep_empty_after=mod.keep_empty_after, collapse_blank=False,
@@ -158,10 +161,11 @@ def project(path: str, data: bytes, package: str | None = None, *, pointer=True,
         if why:
             res.reason = why
             return res
-    if key in ('perl', 'zig', 'rust') and check:
+    if key in ('perl', 'zig', 'rust', 'go') and check:
         # as for shell: an authored file perl does not compile on its own (a handler that runs inside its host,
         # such as snmptrapd's embedded Perl, which defines its names) has no consumer check, so it is retained;
-        # so is a Zig file Zig's tokenizer or `zig ast-check` does not accept, or any Zig file without zig
+        # so is a Zig file Zig's tokenizer or `zig ast-check` does not accept, or any Zig file without zig;
+        # a Go file go/scanner or go/parser does not accept, or any Go file without go
         why = mod.authored_refusal(text)
         if why:
             res.reason = why

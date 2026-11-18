@@ -237,6 +237,10 @@ def render(src: str, spans: list, joiner, *, keep_empty_after=None, collapse_bla
             continue
         if any(src_in_literal(origin[x]) for x in range(ls, line_end)):
             continue
+        if keep_empty_after is not None and getattr(keep_empty_after, 'keep_all', False):
+            if line_end > ls:
+                dels.append((ls, line_end))       # every emptied line stays (Go: no position moves), the blanks go
+            continue
         if keep_empty_after is not None and ls > 0:
             prev_start = text.rfind('\n', 0, ls - 1) + 1
             if keep_empty_after(text[prev_start:ls - 1]):
