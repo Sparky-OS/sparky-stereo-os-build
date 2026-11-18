@@ -1,0 +1,3 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+import java.security.*;import java.util.*;import java.io.*;
+public class CompareStores {public static void main(String[]a)throws Exception{KeyStore x=KeyStore.getInstance("JKS"),y=KeyStore.getInstance("JKS");try(InputStream i=new FileInputStream(a[0])){x.load(i,"pjeoffice".toCharArray());}try(InputStream i=new FileInputStream(a[1])){y.load(i,"pjeoffice".toCharArray());}for(Enumeration<String> e=x.aliases();e.hasMoreElements();){String n=e.nextElement();if(!Arrays.equals(x.getCertificate(n).getEncoded(),y.getCertificate(n).getEncoded()))throw new Exception("Changed certificate");}System.out.println("PASS: all "+x.size()+" original certificate encodings preserved; union="+y.size());}}
