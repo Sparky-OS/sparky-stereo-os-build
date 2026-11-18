@@ -1,3 +1,13 @@
+20261117~sparky9~0 (2026-11-17)
+  * The panel's launcher is the Application Menu, the cascading one (org.kde.plasma.kicker), on a fresh layout; before, the
+    layout loaded KDE's default panel with Kickoff. A session starts empty (ksmserverrc loginMode=emptySession), so a
+    program that upset the last session is not started again, and logging out asks no confirmation
+    (confirmLogout=false). ORDER 668; Daniel, 2026-11-17, on a freshly installed MacBook: "some defaults are not being
+    applyed - meny type, some power settings, new session instead of continuing the last (in case something is messing
+    with the session) and don't ask for confirmation"; "read what it has now, then copy it to our defaults". An existing
+    panel and a person's own choices are kept: the layout is used only where there is no panel, and /etc/xdg is read
+    below the person's own files
+
 20261115~sparky9~0 (2026-11-15)
   * The loading screen after the login is ours (ORDER 571; Daniel, 2026-11-08: "on KDE - splash screen is not ours", and
     2026-11-14: "one more detail, kde loading is the deault KDE one, not ours, why?"). The theme's splash was KDE's 2014

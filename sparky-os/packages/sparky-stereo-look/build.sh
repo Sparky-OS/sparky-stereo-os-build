@@ -23,7 +23,7 @@ OUT=$(mkdir -p "${OUT:-${SPARKY_REPO_DIR:?}}" && cd "${OUT:-${SPARKY_REPO_DIR:?}
 IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}
 sparky_provenance_init "$IMAGE" "$HERE"
 TREE=$(cd "$HERE/../../.." && pwd)
-VERSION=${VERSION:-20261115~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261117~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 case ${1:-all} in all|default) ;; *) echo 'Usage: build.sh [all|default]' >&2; exit 2 ;; esac
 WORK=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -85,7 +85,7 @@ cp "$HERE/default/previews/splash.png" "$T/contents/previews/splash.png"
 # the loading screen is ours (ORDER 571): the boot splash's picture, its pictures the same files as sparky-stereo-plymouth's
 # (tests/splash-pictures.sh), each part at the boot splash's level inside the person's limits through org.sparky.stereo
 cp -a "$HERE/default/splash" "$T/contents/"
-cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$HERE/default/xdg/krunnerrc" "$HERE/default/xdg/konsolerc" "$HERE/default/xdg/dolphinrc" "$HERE/default/xdg/ksplashrc" "$D/etc/xdg/"
+cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$HERE/default/xdg/krunnerrc" "$HERE/default/xdg/konsolerc" "$HERE/default/xdg/dolphinrc" "$HERE/default/xdg/ksplashrc" "$HERE/default/xdg/ksmserverrc" "$D/etc/xdg/"
 install -D -m 755 "$HERE/default/first-login-input-method" "$D/usr/lib/sparky-stereo-look/first-login-input-method"
 install -D -m 644 "$HERE/default/xdg/plasma-workspace/env/10-sparky-stereo-input-method.sh" \
 	"$D/etc/xdg/plasma-workspace/env/10-sparky-stereo-input-method.sh"
@@ -115,7 +115,7 @@ control "$D" sparky-stereo-look \
 	"mode each part stands at the boot splash's depth, inside the person's" \
 	"limits for that screen; on a 2D screen it is plain. /etc/xdg/ksplashrc" \
 	"names it, and a person who chose another splash keeps it."
-printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc /etc/xdg/kde-mimeapps.list /etc/xdg/krunnerrc /etc/xdg/konsolerc /etc/xdg/dolphinrc /etc/xdg/ksplashrc \
+printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc /etc/xdg/kde-mimeapps.list /etc/xdg/krunnerrc /etc/xdg/konsolerc /etc/xdg/dolphinrc /etc/xdg/ksplashrc /etc/xdg/ksmserverrc \
 	/etc/xdg/plasma-workspace/env/10-sparky-stereo-input-method.sh \
 	/etc/needrestart/conf.d/90-sparky-stereo.conf >"$D/DEBIAN/conffiles"
 cat >"$D/usr/share/doc/sparky-stereo-look/copyright" <<'EOF'
