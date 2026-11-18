@@ -12,6 +12,8 @@ export DEBIAN_FRONTEND=noninteractive
 rm -f /usr/sbin/policy-rc.d
 sh /run/https-only-apt.sh >/dev/null 2>&1
 apt-get -y -qq update >/dev/null 2>&1; apt-get -y -qq --no-install-recommends install curl python3 xz-utils >/dev/null 2>&1
+# the engine the service package depends on (5.1.2-2): from /engine, the folder with its deb (the edition's archive is not this container's source)
+[ -d /engine ] && apt-get -y -qq --no-install-recommends install /engine/sparky-stereo-problems_*_amd64.deb >/dev/null 2>&1
 echo "== P0: the recorded machine over /sys/class/hwmon, verified before anything runs"
 mkdir -p /tmp/hw && tar -xJf /fix/hwmon-station.tar.xz -C /tmp/hw || { echo "STOP: the fixture does not unpack"; exit 3; }
 echo fixture > /tmp/hw/hwmon/FIXTURE-NOT-SYSFS

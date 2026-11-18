@@ -10,7 +10,7 @@ export DEBIAN_FRONTEND=noninteractive HOME=/tmp
 sh /run/https-only-apt.sh >/dev/null 2>&1 || true
 apt-get -y -qq update >/dev/null 2>&1
 failed=0; ok() { echo "PASS $*"; }; bad() { echo "FAIL $*"; failed=1; }
-apt-get -y -qq --no-install-recommends install /engine/sparky-stereo-problems_*_amd64.deb >/tmp/e.log 2>&1 || { tail -3 /tmp/e.log; echo "FAIL the engine did not install"; exit 1; }
+apt-get -y -qq --no-install-recommends install python3 /engine/sparky-stereo-problems_*_amd64.deb >/tmp/e.log 2>&1 || { tail -3 /tmp/e.log; echo "FAIL the engine did not install"; exit 1; }
 POST=/var/lib/dpkg/info/coolercontrold.postinst
 MARK=/var/lib/coolercontrold/local-copy-told
 COPY=/usr/local/bin/coolercontrold
