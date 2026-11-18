@@ -65,19 +65,21 @@ def main():
                 match = re.search(r'^Source:\s*(\S+)', text, re.M)
                 if match:
                     source_names.add(match[1])
-            if not producer and path.name not in ('CHANGELOG', 'changelog') and suffix not in ('.env', '.json') and 'changelog' not in str(path).lower():
+            if not producer and path.name not in ('CHANGELOG', 'changelog') and suffix not in ('.env', '.json') and 'changelog' not in str(path).lower() and 'changelog' not in text:
                 continue
             for n, line in enumerate(text.splitlines(), 1):
                 if line.lstrip().startswith('#'):
                     continue
-                for match in PATTERN.finditer(line):
+                assignment = re.match(r'^(?:export )?(?:VERSION|NEW_VERSION|NEXT|VER|NEWV|NEW|V|version|edition_version)\s*=', line.strip())
+                target_flag = re.search(r'--(?:next|newversion)', line)
+                for match in PATTERN.finditer(line) if assignment or target_flag else []:
                     v = match[1]
                     if v.isdigit() and len(v) < 8:
                         continue
                     evidence.append((v, f'{rel}:{n}', line.strip()))
                 if re.search(r'\b(?:VERSION|NEW_VERSION|NEXT|VER|NEWV|NEW|V|version|edition_version)\s*=|--next |--newversion', line):
                     dynamic.append(f'{rel}:{n}: {line.strip()}')
-            for match in re.finditer(r'^([a-z][a-z0-9.+-]+) \(([0-9][^ )]+)\) [A-Za-z][^;]*;', text, re.M):
+            for match in re.finditer(r'([a-z][a-z0-9.+-]+) \(([0-9][^ )]+)\) (?:unstable|mashtabba|UNRELEASED)[^;]*;', text, re.M):
                 source_names.add(match[1])
                 n = text[:match.start()].count('\n') + 1
                 evidence.append((match[2], f'{rel}:{n}', match[0]))
