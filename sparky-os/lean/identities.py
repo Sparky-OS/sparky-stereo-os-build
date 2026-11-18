@@ -63,6 +63,9 @@ RELEASED = {
     # ORDER 533: the Rust adapter (lang_rust.py), for build inputs under a language plan; installed Rust files stay authored.
     '0.1.29': {'1c8f4978a3646f2dfc2fae2eed4636e2da1a2dd5bbf44cffbfb60abdbbff30fb':
                'lean 0.1.29 (collapse-blank,pointer,c-drop-lines) code 1c8f4978a3646f2d'},
+    # ORDER 108 milestone 9: the Go adapter (lang_go.py), for build inputs under a language plan; installed Go files stay authored.
+    '0.1.30': {'44c285cbedd14ec1f253b092314360a0ee32e36142a0d4398d20739439ef9151':
+               'lean 0.1.30 (collapse-blank,pointer,c-drop-lines) code 44c285cbedd14ec1'},
 }
 
 # Digests that built under a label without being its released renderer: never accepted.

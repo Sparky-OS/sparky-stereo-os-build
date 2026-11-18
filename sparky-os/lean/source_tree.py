@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 import time
 
-from . import VERSION, lang_c, lang_rust, lang_zig, parallel, project
+from . import VERSION, lang_c, lang_go, lang_rust, lang_zig, parallel, project
 
 EXCLUDED = {'.git', '.pc', 'debian', '.sparky-lc', 'build'}
 PRESERVE_PLAN = 'debian/sparky-lean-preserve.json'
@@ -24,7 +24,7 @@ PAYLOAD_SOURCE_PLAN = 'debian/sparky-lean-payload-sources.json'
 # installed files a build step generates in a declared form from a source copy (Zig's install step writes every
 # *test.zig as an empty placeholder): pattern -> {"form": "empty" or "sha256:HEX", "reason": why}
 PAYLOAD_GENERATED_PLAN = 'debian/sparky-lean-payload-generated.json'
-EXTENSIONS = {'c': lang_c.EXTS | lang_c.ASM_EXTS, 'java': {'.java'}, 'zig': lang_zig.EXTS, 'rust': lang_rust.EXTS}
+EXTENSIONS = {'c': lang_c.EXTS | lang_c.ASM_EXTS, 'java': {'.java'}, 'zig': lang_zig.EXTS, 'rust': lang_rust.EXTS, 'go': lang_go.EXTS}
 # procedural-macro crates that read their callers' source text, each with the review that decided what stays authored
 # for it: {"crate folder": "what was reviewed"}; without an entry the projection stops and names the crate
 RUST_READERS_PLAN = 'debian/sparky-lean-rust-readers.json'
@@ -99,6 +99,8 @@ def project_tree(root):
     rust_left = rust_readers(root, names) if 'rust' in languages else {}
     if 'rust' in languages:
         prime_rust(paths, names, plan, readers, rust_left)
+    if 'go' in languages:
+        prime_go(paths, names, plan)
     position_lines = {}
     left = []
     for name in names:
@@ -139,7 +141,7 @@ def project_tree(root):
             original.write_bytes(raw)
             path.write_bytes(result.lean)
             os.utime(path, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
-        if result.reason.startswith(('check failed:', 'the c reader', 'the java reader', 'the zig reader', 'the rust reader',
+        if result.reason.startswith(('check failed:', 'the c reader', 'the java reader', 'the zig reader', 'the rust reader', 'the go reader',
                                      'not stable')):
             # Retain recovery records even when qualification fails.
             report.write_text(json.dumps({'engine': VERSION, 'files': records}, indent=2) + '\n')
@@ -236,6 +238,31 @@ def prime_rust(paths, names, plan, readers, rust_left):
             texts.append(lean)
     if texts and lang_rust.rustc():
         lang_rust.prime(texts)
+
+
+def prime_go(paths, names, plan):
+    """One go/scanner helper run per few hundred files: the authored texts and their renders are read ahead;
+    project() then finds each file's token digest remembered."""
+    texts = []
+    for path, name in zip(paths, names):
+        if (not name.endswith('.go') or name.endswith('_test.go') or '/testdata/' in '/' + name
+                or any(fnmatch.fnmatchcase(name, pattern) for pattern in plan)):
+            continue
+        try:
+            text = path.read_bytes().decode('utf-8')
+        except UnicodeDecodeError:
+            continue
+        if '\r' in text or lang_go.refuse(text):
+            continue
+        texts.append(text)
+        try:
+            lean, rendered, _ = project.render_text(text, 'go', None, None, None, pointer=False)
+        except Exception:      # project() names it for this file
+            continue
+        if rendered.removed:
+            texts.append(lean)
+    if texts and lang_go.go():
+        lang_go.prime(texts)
 
 
 def authored(root):

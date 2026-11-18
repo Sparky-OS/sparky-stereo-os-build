@@ -14,10 +14,10 @@ import fnmatch
 import os
 import re
 
-from . import lang_c, lang_ini, lang_js, lang_json, lang_perl, lang_python, lang_shell, lang_toml, lang_yaml, lang_java, lang_kotlin, lang_zig, lang_rust
+from . import lang_c, lang_ini, lang_js, lang_json, lang_perl, lang_python, lang_shell, lang_toml, lang_yaml, lang_java, lang_kotlin, lang_zig, lang_rust, lang_go
 
 HANDLERS = {m.KEY: m for m in (lang_shell, lang_python, lang_js, lang_ini, lang_yaml, lang_toml, lang_json,
-                               lang_c, lang_perl, lang_java, lang_kotlin, lang_zig, lang_rust)}
+                               lang_c, lang_perl, lang_java, lang_kotlin, lang_zig, lang_rust, lang_go)}
 
 # never projected, with the reason recorded in the manifest
 EXCLUDE = [
@@ -123,6 +123,15 @@ def choose(path: str, data: bytes, native: bool = False):
                                 '.cargo-checksum.json, and rust-analyzer and -Zbuild-std read rust-src; the Rust '
                                 'adapter projects build inputs only')
         return 'rust', None, None
+    if ext in lang_go.EXTS:
+        if not native:
+            return None, None, ('installed Go source: go list, gopls and go doc read a packaged module\'s files; '
+                                'the Go adapter projects build inputs only')
+        if base.endswith('_test.go'):
+            return None, None, 'a Go test file: go test compares the // Output: comment of an Example'
+        if '/testdata/' in path:
+            return None, None, 'testdata: the input of a Go test'
+        return 'go', None, None
     if ext in ('.qml', '.js', '.mjs'):
         return 'js', None, None
     if ext in ('.yaml', '.yml'):
