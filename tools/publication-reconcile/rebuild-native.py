@@ -14,7 +14,7 @@ import tarfile
 def members(path, option):
     data = subprocess.check_output(['dpkg-deb', option, str(path)])
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
-        return {m.name: (m.type, m.mode, m.uid, m.gid, m.linkname,
+        return {m.name: (m.type.decode("ascii"), m.mode, m.uid, m.gid, m.linkname,
                          hashlib.sha256(archive.extractfile(m).read()).hexdigest() if m.isfile() else '')
                 for m in archive}
 
@@ -24,12 +24,14 @@ ap.add_argument('descriptor', type=Path)
 ap.add_argument('scratch', type=Path)
 ap.add_argument('--source-dir', type=Path, help='legacy recipe-tree layout; artifacts are emitted to its parent')
 ap.add_argument('--comparison', type=Path, help='retain every differing payload/control member as JSON')
+ap.add_argument('--compare-only', action='store_true', help='inspect retained outputs without repeating a build')
 args = ap.parse_args()
 source = args.source_dir or args.scratch / 'source'
 source.parent.mkdir(parents=True, exist_ok=True)
 artifacts = source.parent
-subprocess.run(['dpkg-source', '--no-copy', '-x', str(args.descriptor), str(source)], check=True)
-subprocess.run(['dpkg-buildpackage', '-us', '-uc', '-b'], cwd=source, check=True)
+if not args.compare_only:
+    subprocess.run(['dpkg-source', '--no-copy', '-x', str(args.descriptor), str(source)], check=True)
+    subprocess.run(['dpkg-buildpackage', '-us', '-uc', '-b'], cwd=source, check=True)
 made = sorted(artifacts.glob('*.deb'))
 if not made:
     raise SystemExit('No binary outputs')
@@ -51,6 +53,9 @@ if args.comparison:
         'binaries': [p.name for p in made], 'differences': differences}, indent=2) + '\n')
 if differences:
     raise SystemExit(f'{len(differences)} payload/control members differ; accepted references are unchanged')
+if args.compare_only:
+    print(f'{len(made)} retained binary payload/control member sets match; no receipts modified')
+    raise SystemExit(0)
 # Legacy native rules can emit a generated HR companion without registering it.
 # Register actual outputs, then regenerate genuine binary metadata through dpkg.
 entries = source / 'debian/files'
