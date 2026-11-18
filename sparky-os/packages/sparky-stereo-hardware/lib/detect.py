@@ -286,7 +286,7 @@ for tool, name, tool_packages in (("openrgb", "OpenRGB", ("openrgb",)), ("solaar
                                   ("ratbag", "libratbag with Piper", ("ratbagd", "piper")), ("liquidctl", "liquidctl", ("liquidctl",)),
                                   ("g810-led", "g810-led", ("g810-led",)), ("openrazer", "OpenRazer", ("openrazer-daemon", "openrazer-driver-dkms")),
                                   ("openlinkhub", "OpenLinkHub", ("openlinkhub",)),
-                                  ("headsetcontrol", "HeadsetControl", ("headsetcontrol",))):
+                                  ("headsetcontrol", "HeadsetControl", ("headsetcontrol", "sparky-stereo-headset"))):
     table = device_table(tool + ".ids")
     seen = []
     for ident in usb_ids:
