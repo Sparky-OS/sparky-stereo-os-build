@@ -49,3 +49,13 @@ Its `merge CERTIFICATE` test mode writes `/scratch/union/pjeoffice.jks`, adding 
 Placing that resource directory first on the test classpath exercises an additive resource bridge without altering the jar.
 `CompareStores ORIGINAL_JKS UNION_JKS` requires every original certificate encoding to survive unchanged.
 These helpers do not grant new trust on the host or implement an installer.
+
+For the bounded JavaFX compatibility fixture, verify FFmpeg 5.1.10's source signature against its published release key before building.
+`build-media-compat.sh VERIFIED_SOURCE PRIVATE_PREFIX` builds only private shared libraries and the H.264/AAC/MOV decode paths.
+It builds no package and installs nothing on the host.
+With that prefix's lib directory in the container's LD_LIBRARY_PATH, the bundled JavaFX opens the synthetic MP4.
+An ALSA null PCM in the private container handles the fixture's lack of an audio device; no host audio socket is used.
+`CutterTaskProbe` opens the actual cutter and posts its existing CutStartEvent/CutEndEvent for 1000–4000 ms after window startup.
+This exercises its normal cut panel without relying on mouse timing against the null audio sink.
+Use its visible Save all cuts button and folder dialog, then independently check the produced MP4 with ffprobe and a full decode.
+These are event-driven fixture marks; do not report them as manual mark-button verification.
