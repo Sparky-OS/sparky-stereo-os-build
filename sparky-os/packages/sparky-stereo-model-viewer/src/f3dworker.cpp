@@ -12,6 +12,7 @@
 
 #include <QByteArray>
 #include <QMutexLocker>
+#include <QtGlobal>
 
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
@@ -43,9 +44,25 @@ void declareShownSize(Display *display, unsigned long window, const QSize &shown
 }
 }
 
+// A file dropped over the 3D area goes to the program's window like a file dropped anywhere else: libf3d's own window would add
+// the file to the scene without the program knowing (no title, no recent files, no said failure). XDND (version 5): the child is
+// not a drop target and names its window as its proxy; the proxy names itself (the drag source checks both).
+static void dropsGoToTheWindow(Display *display, unsigned long child, unsigned long parent)
+{
+    if (!display || !child || !parent) {
+        return;
+    }
+    const Atom aware = XInternAtom(display, "XdndAware", False);
+    const Atom proxy = XInternAtom(display, "XdndProxy", False);
+    XDeleteProperty(display, child, aware);
+    XChangeProperty(display, child, proxy, XA_WINDOW, 32, PropModeReplace, reinterpret_cast<const unsigned char *>(&parent), 1);
+    XChangeProperty(display, parent, proxy, XA_WINDOW, 32, PropModeReplace, reinterpret_cast<const unsigned char *>(&parent), 1);
+    XFlush(display);
+}
+
 void F3DWorker::run()
 {
-    f3d::log::setVerboseLevel(f3d::log::VerboseLevel::WARN);
+    f3d::log::setVerboseLevel(qEnvironmentVariableIsSet("STEREO_MODEL_VIEWER_LOG") ? f3d::log::VerboseLevel::DEBUG : f3d::log::VerboseLevel::WARN);
     f3d::engine::autoloadPlugins();
     f3d::engine engine = f3d::engine::createGLX();
     f3d::window &window = engine.getWindow();
@@ -61,6 +78,9 @@ void F3DWorker::run()
     bool quit = false;
     bool attached = false;
     bool stereo = true;
+    int ratio = 1;     // X window width over the width of one eye
+    int wantEye = 0;   // the width of one eye that the person's area and resolution ask for
+    int wantHeight = 0;
     bool announcedNative = false;
     bool noStereoSaid = false;
     int lastState = -1;
@@ -68,24 +88,40 @@ void F3DWorker::run()
     double lastPopped = -1;
     bool wasPlaying = false;
     QRect lastRect;
+    int rerender = 0;
+    int settled = 0;
+    int lastPercent = 0;
 
+    Command lastPlace;
     auto place = [&](const Command &c) {
         if (!c.parent) {
             return;
         }
+        lastPlace = c;
         if (!attached) {
             window.setParentWindowId(static_cast<unsigned long>(c.parent));
             attached = true;
         }
         const int percent = c.percent > 0 ? c.percent : 100;
+        if (attached && c.rect == lastRect && percent == lastPercent) {
+            return;
+        }
+        lastPercent = percent;
         const int width = std::max(16, c.rect.width() * percent / 100);
         const int height = std::max(16, c.rect.height() * percent / 100);
         window.setPosition(c.rect.x(), c.rect.y());
-        window.setSize(width, height);
+        // the X window is one eye wide at first and twice that once the compositor has taken the window (the drawable then
+        // counts both eyes): the loop below measures the ratio and corrects it
+        wantEye = width;
+        wantHeight = height;
+        window.setSize(ratio * width, height);
         lastRect = c.rect;
         if (const quint64 native = window.getNativeWindowId()) {
             declareShownSize(display, native, c.rect.size());
         }
+        // the compositor's buffers follow a resize one picture later: draw again until the window and its buffers agree
+        rerender = 600;
+        settled = 0;
         interactor.requestRender();
     };
 
@@ -117,6 +153,9 @@ void F3DWorker::run()
             break;
         case Command::TogglePlay:
             interactor.toggleAnimation();
+            if (qEnvironmentVariableIsSet("STEREO_MODEL_VIEWER_LOG")) {
+                qWarning("toggle animation: playing %d", interactor.isPlayingAnimation() ? 1 : 0);
+            }
             break;
         case Command::Stereo:
             stereo = c.flag;
@@ -147,10 +186,42 @@ void F3DWorker::run()
 
     auto tick = [&]() {
         drain();
+        if (rerender > 0) {
+            // The window is a stereo window whose X window holds both eyes; libf3d reads the size of one eye from the GLX
+            // drawable at the start of every picture, and the drawable follows a resize (and the compositor's declaration) one
+            // picture or a few later. Draw again until the eye is half of the X window, for a few seconds at most.
+            --rerender;
+            XWindowAttributes xa{};
+            if (display && window.getNativeWindowId() && XGetWindowAttributes(display, window.getNativeWindowId(), &xa) && xa.width > 0
+                && window.isStereo()) {
+                const int eye = window.getWidth();
+                if (eye == wantEye) {
+                    if (++settled >= 3) {
+                        rerender = 0;
+                    }
+                } else if (eye > 0) {
+                    settled = 0;
+                    const int measured = xa.width / eye;
+                    ratio = (measured == 1 || measured == 2) ? measured : 1;
+                    if (ratio * wantEye != xa.width) {
+                        window.setSize(ratio * wantEye, wantHeight);
+                    }
+                    interactor.requestRender();
+                }
+            } else {
+                settled = 0;
+                interactor.requestRender();
+            }
+            if (qEnvironmentVariableIsSet("STEREO_MODEL_VIEWER_LOG") && rerender % 20 == 0) {
+                qWarning("render %d: eye %d x %d, X window %d x %d, stereo %d", rerender, window.getWidth(), window.getHeight(), xa.width, xa.height,
+                         window.isStereo() ? 1 : 0);
+            }
+        }
         if (!announcedNative) {
             if (const quint64 native = window.getNativeWindowId()) {
                 announcedNative = true;
                 m_native = native;
+                dropsGoToTheWindow(display, native, lastPlace.parent);
                 if (lastRect.isValid()) {
                     declareShownSize(display, native, lastRect.size());
                 }
@@ -183,6 +254,9 @@ void F3DWorker::run()
             }
             if (code != lastState) {
                 lastState = code;
+                if (qEnvironmentVariableIsSet("STEREO_MODEL_VIEWER_LOG")) {
+                    qWarning("depth state %d", code);
+                }
                 Q_EMIT depthState(code, lastSunk, lastPopped);
             }
         }

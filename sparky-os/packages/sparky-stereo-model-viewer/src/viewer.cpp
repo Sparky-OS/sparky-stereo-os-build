@@ -53,6 +53,10 @@ Viewer::Viewer(QObject *parent)
         Q_EMIT playingChanged();
     });
     m_worker->start();
+    F3DWorker::Command initial;
+    initial.kind = F3DWorker::Command::Stereo;
+    initial.flag = m_stereo;
+    m_worker->post(initial);
 }
 
 Viewer::~Viewer()
@@ -142,6 +146,9 @@ void Viewer::reset()
 
 void Viewer::togglePlay()
 {
+    if (qEnvironmentVariableIsSet("STEREO_MODEL_VIEWER_LOG")) {
+        qWarning("togglePlay asked");
+    }
     F3DWorker::Command c;
     c.kind = F3DWorker::Command::TogglePlay;
     m_worker->post(c);

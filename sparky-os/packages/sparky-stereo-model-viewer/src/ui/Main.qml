@@ -21,8 +21,11 @@ Kirigami.ApplicationWindow {
         onAccepted: viewer.open(selectedFile)
     }
 
+    // menus are windows of their own: the 3D area is a native child window, and a popup drawn inside this window would be hidden
+    // under it
     QQC2.Menu {
         id: recentMenu
+        popupType: QQC2.Popup.Window
         Instantiator {
             model: viewer.recent
             delegate: QQC2.MenuItem {
@@ -76,30 +79,40 @@ Kirigami.ApplicationWindow {
                 onToggled: viewer.stereo = checked
             },
             Kirigami.Action {
+                id: resolutionAction
                 text: i18nc("@action:button", "Render resolution per eye")
-                Kirigami.Action {
-                    text: i18nc("@item:inmenu", "Half of the area")
-                    checkable: true
-                    checked: viewer.resolution === 50
-                    onTriggered: viewer.resolution = 50
-                }
-                Kirigami.Action {
-                    text: i18nc("@item:inmenu", "The size of the area")
-                    checkable: true
-                    checked: viewer.resolution === 100
-                    onTriggered: viewer.resolution = 100
-                }
-                Kirigami.Action {
-                    text: i18nc("@item:inmenu", "One and a half times the area")
-                    checkable: true
-                    checked: viewer.resolution === 150
-                    onTriggered: viewer.resolution = 150
-                }
-                Kirigami.Action {
-                    text: i18nc("@item:inmenu", "Twice the area")
-                    checkable: true
-                    checked: viewer.resolution === 200
-                    onTriggered: viewer.resolution = 200
+                displayComponent: QQC2.ToolButton {
+                    text: resolutionAction.text
+                    display: QQC2.AbstractButton.TextOnly
+                    onClicked: resolutionMenu.popup(this, 0, height)
+                    QQC2.Menu {
+                        id: resolutionMenu
+                        popupType: QQC2.Popup.Window
+                        QQC2.MenuItem {
+                            text: i18nc("@item:inmenu", "Half of the area")
+                            checkable: true
+                            checked: viewer.resolution === 50
+                            onTriggered: viewer.resolution = 50
+                        }
+                        QQC2.MenuItem {
+                            text: i18nc("@item:inmenu", "The size of the area")
+                            checkable: true
+                            checked: viewer.resolution === 100
+                            onTriggered: viewer.resolution = 100
+                        }
+                        QQC2.MenuItem {
+                            text: i18nc("@item:inmenu", "One and a half times the area")
+                            checkable: true
+                            checked: viewer.resolution === 150
+                            onTriggered: viewer.resolution = 150
+                        }
+                        QQC2.MenuItem {
+                            text: i18nc("@item:inmenu", "Twice the area")
+                            checkable: true
+                            checked: viewer.resolution === 200
+                            onTriggered: viewer.resolution = 200
+                        }
+                    }
                 }
             },
             Kirigami.Action {
@@ -174,11 +187,15 @@ Kirigami.ApplicationWindow {
             }
         }
 
-        DropArea {
-            anchors.fill: parent
-            onDropped: drop => {
-                if (drop.hasUrls)
-                    viewer.open(drop.urls[0])
+    }
+
+    // a file dropped anywhere on the window, the 3D area included (its window names this window as its drop proxy)
+    DropArea {
+        anchors.fill: parent
+        onDropped: drop => {
+            if (drop.hasUrls) {
+                drop.accept(Qt.CopyAction)
+                viewer.open(drop.urls[0])
             }
         }
     }
