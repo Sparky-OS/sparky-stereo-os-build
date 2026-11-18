@@ -1,0 +1,36 @@
+[Unit]
+Description=Put the battery of a USB headset in the desktop's battery list
+Documentation=man:sparky-stereo-headset(1)
+# started by the udev rule of a headset that HeadsetControl reads (SYSTEMD_WANTS), stopped when the last one is gone
+StopWhenUnneeded=yes
+
+[Service]
+Type=simple
+ExecStartPre=-+/usr/sbin/modprobe -q uhid
+ExecStart=/usr/libexec/sparky-stereo-headset-battery
+Restart=on-failure
+RestartSec=10
+# it reads a headset (hidraw) and writes one virtual HID device (uhid), nothing else
+DevicePolicy=closed
+DeviceAllow=/dev/uhid rw
+DeviceAllow=char-hidraw rw
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077

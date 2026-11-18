@@ -1,366 +1,366 @@
-# Start the headset service of the person at the seat when a headset that HeadsetControl supports appears.
+# Start the headset service of the person at the seat, and the system service of the battery, when a headset that HeadsetControl supports appears.
 # Written by tools/make-rules.sh from `headsetcontrol -u` (the program carries the list); do not edit by hand.
 ACTION!="add", GOTO="sparky_headset_end"
 SUBSYSTEM!="hidraw", GOTO="sparky_headset_end"
 
 # Logitech ASTRO A50 Gen 4
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="9886", ATTRS{idProduct}=="002c", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="9886", ATTRS{idProduct}=="002c", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech ASTRO A50 Gen 5
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0b1c", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0b1c", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G522 LIGHTSPEED
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0b18", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0b18", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G533
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a66", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a66", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G535
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0ac4", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0ac4", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G633/G635/G733/G933/G935
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a5c", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a5c", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G633/G635/G733/G933/G935
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a89", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a89", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G633/G635/G733/G933/G935
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a5b", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a5b", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G633/G635/G733/G933/G935
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a87", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a87", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G633/G635/G733/G933/G935
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0ab5", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0ab5", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G633/G635/G733/G933/G935
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0afe", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0afe", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G633/G635/G733/G933/G935
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0b1f", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0b1f", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G431/G432/G433
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a9b", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a9b", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G431/G432/G433
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a9c", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a9c", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G431/G432/G433
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a6d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a6d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G930
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a1f", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0a1f", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G PRO X 2 LIGHTSPEED
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0af7", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0af7", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G PRO X 3 LIGHTSPEED
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0b45", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0b45", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G PRO Series
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0aa7", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0aa7", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G PRO Series
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0aaa", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0aaa", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G PRO Series
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0aba", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0aba", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G PRO Series
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0afb", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0afb", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech G PRO Series
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0afc", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0afc", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech Zone Wired/Zone 750
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0aad", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0aad", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Logitech Zone Wired/Zone 750
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0ade", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0ade", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="1b1c", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="1b1c", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="1b27", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="1b27", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a14", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a14", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a16", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a16", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a17", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a17", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a1d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a1d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a1a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a1a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="1b2a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="1b2a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="1b23", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="1b23", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="1b29", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="1b29", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a55", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a55", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a51", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a51", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a52", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a52", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a38", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a38", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a4f", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a4f", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a2b", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a2b", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a75", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a75", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a56", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a56", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Wireless V2 Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="2a08", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="2a08", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Wireless V2 Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="2a02", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="2a02", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Wireless V2 Headset Device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a97", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a97", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Virtuoso XT/SE
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a64", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a64", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Virtuoso XT/SE
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a62", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a62", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Virtuoso XT/SE
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a3e", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a3e", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Corsair Virtuoso XT/SE
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a3d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1b1c", ATTRS{idProduct}=="0a3d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis (1/7X/7P) Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12b3", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12b3", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis (1/7X/7P) Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12b6", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12b6", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis (1/7X/7P) Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12d7", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12d7", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis (1/7X/7P) Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12d5", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12d5", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis (7/Pro)
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="1260", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="1260", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis (7/Pro)
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12ad", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12ad", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis (7/Pro)
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="1252", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="1252", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis (7/Pro)
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="1280", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="1280", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis 9
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12c2", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12c2", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis 9
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12c4", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12c4", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Pro Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="1290", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="1290", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 3
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12ec", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12ec", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova (5/5X)
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2232", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2232", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova (5/5X)
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2253", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2253", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 7
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2202", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2202", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 7
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="22a1", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="22a1", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 7
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="227e", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="227e", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 7
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2206", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2206", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 7
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2258", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2258", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 7
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="229e", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="229e", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 7
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="22ad", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="22ad", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 7
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="223a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="223a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 7
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="22a9", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="22a9", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 7
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="227a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="227a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 7
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="22a4", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="22a4", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 7
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="22a5", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="22a5", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 7P
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="220a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="220a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 7P
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="22a7", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="22a7", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 7P
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2298", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2298", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis 7+
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="220e", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="220e", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis 7+
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2212", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2212", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis 7+
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2216", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2216", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis 7+
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2236", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2236", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova Pro Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12e0", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12e0", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova Pro Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12e5", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12e5", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 3P Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2269", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2269", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis Nova 3P Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="226d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="226d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # SteelSeries Arctis GameBuds
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="230a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="230a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # HyperX Cloud Alpha Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="098d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="098d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # HyperX Cloud Alpha 2 Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="08be", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="08be", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # HyperX Cloud Alpha S
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0951", ATTRS{idProduct}=="16ed", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0951", ATTRS{idProduct}=="16ed", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # HyperX Cloud Flight Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0951", ATTRS{idProduct}=="16c4", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0951", ATTRS{idProduct}=="16c4", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # HyperX Cloud Flight Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0951", ATTRS{idProduct}=="1723", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0951", ATTRS{idProduct}=="1723", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # HyperX Cloud II Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="0696", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="0696", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # HyperX Cloud II Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="018b", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="018b", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # HyperX Cloud II Wireless (Kingston)
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0951", ATTRS{idProduct}=="1718", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0951", ATTRS{idProduct}=="1718", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # HyperX Cloud 3
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="089d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="089d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # HyperX Cloud 3
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="03cc", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="03cc", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # ROCCAT Elo 7.1 Air
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1e7d", ATTRS{idProduct}=="3a37", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1e7d", ATTRS{idProduct}=="3a37", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # ROCCAT Elo 7.1 USB
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1e7d", ATTRS{idProduct}=="3a34", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1e7d", ATTRS{idProduct}=="3a34", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Audeze Maxwell
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3329", ATTRS{idProduct}=="4b19", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3329", ATTRS{idProduct}=="4b19", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Audeze Maxwell
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3329", ATTRS{idProduct}=="4b18", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3329", ATTRS{idProduct}=="4b18", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Audeze Maxwell 2
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3329", ATTRS{idProduct}=="4b29", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3329", ATTRS{idProduct}=="4b29", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Audeze Maxwell 2
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3329", ATTRS{idProduct}=="4b28", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3329", ATTRS{idProduct}=="4b28", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Lenovo Wireless VoIP Headset
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="17ef", ATTRS{idProduct}=="a07d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="17ef", ATTRS{idProduct}=="a07d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Plantronics Voyager 8200 UC (BT600)
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="047f", ATTRS{idProduct}=="02ee", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="047f", ATTRS{idProduct}=="02ee", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Sennheiser GSP 370
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1395", ATTRS{idProduct}=="009a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1395", ATTRS{idProduct}=="009a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Sennheiser GSP 370
-KERNEL=="ttyACM*", SUBSYSTEM=="tty", ATTRS{idVendor}=="1395", ATTRS{idProduct}=="009a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="ttyACM*", SUBSYSTEM=="tty", ATTRS{idVendor}=="1395", ATTRS{idProduct}=="009a", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Jabra Link 380 (paired headset)
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b0e", ATTRS{idProduct}=="24c7", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b0e", ATTRS{idProduct}=="24c7", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Jabra Link 390 (paired headset)
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b0e", ATTRS{idProduct}=="2e57", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b0e", ATTRS{idProduct}=="2e57", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Jabra Evolve2 65 Flex (USB)
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b0e", ATTRS{idProduct}=="2519", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b0e", ATTRS{idProduct}=="2519", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # FIFINE HT6 Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3142", ATTRS{idProduct}=="00c3", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3142", ATTRS{idProduct}=="00c3", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Sony INZONE Buds
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="0ec2", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="0ec2", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Sony INZONE H5
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="0ebf", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="0ebf", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Sony INZONE H9 II
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="0fa8", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="0fa8", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Sony PULSE 3D
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="0d5e", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="0d5e", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # MCHOSE X9 Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3837", ATTRS{idProduct}=="6045", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3837", ATTRS{idProduct}=="6045", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # MCHOSE V9 Pro Wireless
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="291d", ATTRS{idProduct}=="385d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="291d", ATTRS{idProduct}=="385d", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # Razer BlackShark V2 Pro (PlayStation)
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1532", ATTRS{idProduct}=="1014", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1532", ATTRS{idProduct}=="1014", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 # HeadsetControl Test device
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="f00b", ATTRS{idProduct}=="a00c", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="f00b", ATTRS{idProduct}=="a00c", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="sparky-stereo-headset.service", ENV{SYSTEMD_WANTS}+="sparky-stereo-headset-battery.service"
 
 LABEL="sparky_headset_end"
