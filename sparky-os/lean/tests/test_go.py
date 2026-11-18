@@ -110,6 +110,8 @@ class Render(unittest.TestCase):
     def test_a_general_comment_over_lines_keeps_its_line_breaks(self):
         lean = lean_of('package p\n\nvar a = 1 /* one\n two\n three */ + 2\n')
         self.assertEqual(lean.count('\n'), 5)
+        if not GO:
+            self.skipTest('go is not installed: the token comparison needs it')
         self.assertEqual(lang_go.token_streams(lean)[0], lang_go.token_streams('package p\n\nvar a = 1 /* one\n two\n three */ + 2\n')[0])
 
     def test_installed_go_test_files_and_testdata_are_left(self):
