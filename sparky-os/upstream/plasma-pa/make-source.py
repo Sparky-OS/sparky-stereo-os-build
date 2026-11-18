@@ -61,6 +61,8 @@ text=text.replace('Homepage: https://invent.kde.org/plasma/plasma-pa',
                   'Homepage: https://sparkylinux.org\nBugs: https://github.com/Sparky-OS/sparky-stereo-os/issues',1)
 assert '\nDepends: ' in text
 text=text.replace('\nDepends: ', '\nDepends: kded6, pulseaudio-utils, pipewire-bin (>= 1.6.9) | pulseaudio, sparky-stereo-audio (>= 0.1.0), polkitd, ',1)
+assert 'Build-Depends: debhelper-compat (= 13),' in text
+text=text.replace('Build-Depends: debhelper-compat (= 13),','Build-Depends: debhelper-compat (= 13),\n               libkf6auth-dev (>= 6.26.0~),',1)
 control.write_text(text)
 subprocess.run(['dch','--force-distribution','--date',os.environ['SOURCE_DATE_RFC2822'],'--newversion',version,'--distribution','mashtabba',
     'Add Sound Quality to the Sound page: formats and rates per device, the graph, the resampler and a bit-perfect option, with the automatic choice and its reason shown; changes are drop-ins of the person for one account or, through KAuth, for every account. Retain input monitoring, combined recording and virtual stream controls.'],cwd=source,check=True)
