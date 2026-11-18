@@ -13,7 +13,7 @@ override_dh_auto_configure:
 	cp fonts/*.otf build_vulkan/fonts/
 	cp fonts/*.otf build_cuda/fonts/
 	cmake -S . -B build_vulkan $(COMMON) -DSS_BACKEND=vulkan
-	CUDACXX=/opt/cuda/bin/nvcc cmake -S . -B build_cuda $(COMMON) -DSS_BACKEND=cuda -DCUDAToolkit_ROOT=/opt/cuda -DTORCH_CUDA_ARCH_LIST="7.5 8.6" -DSS_CUDA_EMBED_PTX=ON -DSS_CUDA_COMPILER_THREADS=1 "-DCMAKE_CUDA_FLAGS=$(foreach flag,$(filter-out -g,$(CXXFLAGS) $(CPPFLAGS)),-Xcompiler=$(flag))"
+	CUDACXX=/opt/cuda/bin/nvcc cmake -S . -B build_cuda $(COMMON) -DSS_BACKEND=cuda -DCUDAToolkit_ROOT=/opt/cuda -DTORCH_CUDA_ARCH_LIST="7.5 8.6" -DCMAKE_CUDA_RUNTIME_LIBRARY=Shared -DSS_CUDA_EMBED_PTX=ON -DSS_CUDA_COMPILER_THREADS=1 "-DCMAKE_CUDA_FLAGS=$(foreach flag,$(filter-out -g,$(CXXFLAGS) $(CPPFLAGS)),-Xcompiler=$(flag))"
 
 override_dh_auto_build:
 	cmake --build build_vulkan --target spirula --parallel 4
