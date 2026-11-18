@@ -40,9 +40,9 @@ for filename, groups, key, default, override in rows:
 qdbus = shutil.which('qdbus6') or shutil.which('qdbus')
 if not qdbus:
     raise SystemExit('qdbus is missing')
-script = '''JSON.stringify(panels().map(function(p) {
+script = '''print(JSON.stringify(panels().map(function(p) {
     return {id: p.id, widgets: p.widgets().map(function(w) { return w.type; })};
-}))'''
+})))'''
 live = subprocess.run([qdbus, 'org.kde.plasmashell', '/PlasmaShell',
                        'org.kde.PlasmaShell.evaluateScript', script],
                       text=True, capture_output=True)
