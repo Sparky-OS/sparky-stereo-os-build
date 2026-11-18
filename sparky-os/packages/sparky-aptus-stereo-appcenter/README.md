@@ -36,7 +36,7 @@ Names with no downloadable archive candidate are omitted, except only-ours names
 The system's configured Flathub remote supplies SlimeVR; no remote is added here.
 The SlimeVR driver ZIP is downloaded and checked against its pinned SHA-256 before being made available in /var/cache/sparky-aptus-stereo-appcenter.
 It is labelled Downloaded; its linked upstream instructions describe registration in SteamVR.
-CODESYS 4 links to CODESYS Store; registration and the EULA stay with CODESYS.
+CODESYS 4 is an entry of the store-link kind: a card that says what the program is, who makes it and what the button does, and a button that opens the CODESYS Store in the person's web browser (as the person, never as root); registration, the licence agreement and the download stay with CODESYS, and the package installs and fetches nothing of theirs.
 Hardware Setup owns driver choices.
 
 Build with OUT=/scratch/output APTUS_SOURCE=/path/to/the/fork bash build.sh inside the package build container.
