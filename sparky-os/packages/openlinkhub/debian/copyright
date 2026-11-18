@@ -1,0 +1,93 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: OpenLinkHub
+Upstream-Contact: Nikola Jurkovic (https://github.com/jurkovic-nikola)
+Source: https://github.com/jurkovic-nikola/OpenLinkHub
+Comment: OpenLinkHub itself is under the GNU General Public License version 3. The program is one static-Go binary that also
+ links the Go modules in vendor/ (seven, listed below) and the C libraries libpipewire-0.3 and libudev, each under its own terms.
+ go-hid carries a copy of the hidapi project's C sources and states in their headers that they may be used under the GNU General
+ Public License version 3, a BSD-style licence, or the original HIDAPI licence; this package uses them under the BSD-style
+ terms of go-hid's own LICENSE. freetype is offered to its users under the FreeType licence or the GPL version 2 or later, at
+ their choice; this package takes the GPL version 2 or later, which the GPL version 3 of the whole program allows.
+ The vendor/ stanzas are generated (sparky-os/packages/openlinkhub/tools/gen-copyright.py in the edition's build repository)
+ from each module's own legal files, kept beside this file in /usr/share/doc/openlinkhub/vendor-licences, as fetched and
+ verified against upstream's go.sum; the build stops when this file differs from what the generator gives.
+
+Files: *
+Copyright: 2024-2026 Nikola Jurkovic and the OpenLinkHub contributors
+License: GPL-3
+
+Files: vendor/github.com/godbus/dbus/v5/*
+Copyright: see the legal files of github.com/godbus/dbus/v5 v5.1.0 in /usr/share/doc/openlinkhub/vendor-licences/github.com/godbus/dbus/v5/ (LICENSE)
+License: BSD-2-Clause
+
+Files: vendor/github.com/golang/freetype/*
+Copyright: see the legal files of github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 in /usr/share/doc/openlinkhub/vendor-licences/github.com/golang/freetype/ (LICENSE licenses/ftl.txt licenses/gpl.txt)
+License: GPL-2+
+Comment: bundled projects: licenses/ftl.txt (FTL), licenses/gpl.txt (GPL-2.0-text)
+
+Files: vendor/github.com/sstallion/go-hid/*
+Copyright: see the legal files of github.com/sstallion/go-hid v0.14.1 in /usr/share/doc/openlinkhub/vendor-licences/github.com/sstallion/go-hid/ (LICENSE)
+License: BSD-2-Clause
+Comment: C file headers say: GNU General Public License v3, a BSD-Style license, or the | LICENSE-gpl3.txt, LICENSE-bsd.txt, and LICENSE-orig.txt | original HIDAPI license as outlined in the LICENSE.txt, | this software may be licensed under the terms of the
+
+Files: vendor/golang.org/x/crypto/*
+Copyright: see the legal files of golang.org/x/crypto v0.58.0 in /usr/share/doc/openlinkhub/vendor-licences/golang.org/x/crypto/ (LICENSE PATENTS)
+License: BSD-3-Clause
+
+Files: vendor/golang.org/x/image/*
+Copyright: see the legal files of golang.org/x/image v0.47.0 in /usr/share/doc/openlinkhub/vendor-licences/golang.org/x/image/ (LICENSE PATENTS)
+License: BSD-3-Clause
+
+Files: vendor/golang.org/x/sys/*
+Copyright: see the legal files of golang.org/x/sys v0.49.0 in /usr/share/doc/openlinkhub/vendor-licences/golang.org/x/sys/ (LICENSE PATENTS)
+License: BSD-3-Clause
+
+Files: vendor/golang.org/x/text/*
+Copyright: see the legal files of golang.org/x/text v0.43.0 in /usr/share/doc/openlinkhub/vendor-licences/golang.org/x/text/ (LICENSE PATENTS)
+License: BSD-3-Clause
+
+Files: debian/*
+Copyright: 2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+License: GPL-3
+ Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Pawel "pavroo" Pijanowski).
+
+License: GPL-3
+ On Debian systems, the full text of the GNU General Public License version 3 can be found in /usr/share/common-licenses/GPL-3.
+
+License: GPL-2+
+ On Debian systems, the full text of the GNU General Public License version 2 can be found in /usr/share/common-licenses/GPL-2.
+
+License: BSD-2-Clause
+ Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following
+ conditions are met:
+ .
+ 1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+ .
+ 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer
+ in the documentation and/or other materials provided with the distribution.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT
+ NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+ THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+License: BSD-3-Clause
+ Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following
+ conditions are met:
+ .
+ 1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+ .
+ 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer
+ in the documentation and/or other materials provided with the distribution.
+ .
+ 3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived
+ from this software without specific prior written permission.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT
+ NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+ THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

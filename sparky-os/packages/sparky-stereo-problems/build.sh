@@ -20,7 +20,7 @@ WORK=$(mktemp -d "$OUT/.problems.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 D=$WORK/$PACKAGE
 mkdir -p "$WORK/bin"
-mkdir -p "$D/usr/bin" "$D/$PRIVATE" "$D/usr/include" "$D/usr/lib/$MULTIARCH/pkgconfig" "$D/usr/lib/python3/dist-packages" \
+mkdir -p "$D/usr/libexec/$PACKAGE" "$D/usr/bin" "$D/$PRIVATE" "$D/usr/include" "$D/usr/lib/$MULTIARCH/pkgconfig" "$D/usr/lib/python3/dist-packages" \
 	"$D/usr/lib/systemd/catalog" "$D/usr/lib/systemd/system/service.d" \
 	"$D/usr/lib/systemd/system/sparky-stereo-problems-failed@.service.d" "$D/usr/lib/tmpfiles.d" \
 	"$D/usr/share/polkit-1/actions" "$D/usr/share/doc/$PACKAGE"
@@ -31,12 +31,15 @@ JOBS=${JOBS:-4}
 	--name $PACKAGE -femit-bin="$WORK/bin/$PACKAGE") 2>&1 | grep -v '^info: threads' || :
 (cd "$HERE/src" && "$ZIG" build-lib -dynamic capi.zig -lc -lsystemd -O ReleaseSafe -mcpu=baseline -j"$JOBS" \
 	--name $PACKAGE -fsoname=lib$PACKAGE.so.0 -femit-bin="$WORK/bin/lib$PACKAGE.so.0") 2>&1 | grep -v '^info: threads' || :
+(cd "$HERE/src" && "$ZIG" build-exe pkexec-repair.zig -lc -lsystemd -O ReleaseSafe -mcpu=baseline -j"$JOBS" \
+    --name pkexec-repair -femit-bin="$WORK/bin/pkexec-repair")
 [ -x "$WORK/bin/$PACKAGE" ] && [ -f "$WORK/bin/lib$PACKAGE.so.0" ] || { echo "the Zig build failed" >&2; exit 1; }
-python3 "$HERE/../../repo/cpu-baseline.py" "$WORK/bin/$PACKAGE" "$WORK/bin/lib$PACKAGE.so.0" >/dev/null
+python3 "$HERE/../../repo/cpu-baseline.py" "$WORK/bin/$PACKAGE" "$WORK/bin/lib$PACKAGE.so.0" "$WORK/bin/pkexec-repair" >/dev/null
 install -m 755 "$WORK/bin/$PACKAGE" "$D/usr/bin/$PACKAGE"
+install -m 755 "$WORK/bin/pkexec-repair" "$D/usr/libexec/$PACKAGE/pkexec-repair"
 install -m 644 "$WORK/bin/lib$PACKAGE.so.0" "$D/$PRIVATE/lib$PACKAGE.so.0"
 ln -s lib$PACKAGE.so.0 "$D/$PRIVATE/lib$PACKAGE.so"
-strip --strip-unneeded "$D/usr/bin/$PACKAGE" "$D/$PRIVATE/lib$PACKAGE.so.0"
+strip --strip-unneeded "$D/usr/libexec/$PACKAGE/pkexec-repair" "$D/usr/bin/$PACKAGE" "$D/$PRIVATE/lib$PACKAGE.so.0"
 install -m 644 "$HERE/include/$PACKAGE.h" "$D/usr/include/$PACKAGE.h"
 cat >"$D/usr/lib/$MULTIARCH/pkgconfig/$PACKAGE.pc" <<EOS
 prefix=/usr
@@ -71,7 +74,7 @@ install -m 644 "$HERE/README.md" "$D/usr/share/doc/$PACKAGE/README.md"
 mkdir -p "$D/DEBIAN" "$WORK/shlibs/debian"
 printf "/etc/dpkg/dpkg.cfg.d/%s\n" "$PACKAGE" >"$D/DEBIAN/conffiles"
 printf 'Source: %s\n\nPackage: %s\nArchitecture: amd64\n' "$PACKAGE" "$PACKAGE" >"$WORK/shlibs/debian/control"
-SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -O "$D/usr/bin/$PACKAGE" "$D/$PRIVATE/lib$PACKAGE.so.0" 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
+SHLIBS=$(cd "$WORK/shlibs" && dpkg-shlibdeps -O "$D/usr/libexec/$PACKAGE/pkexec-repair" "$D/usr/bin/$PACKAGE" "$D/$PRIVATE/lib$PACKAGE.so.0" 2>/dev/null | sed -n 's/^shlibs:Depends=//p')
 [ -n "$SHLIBS" ] || { echo "dpkg-shlibdeps found no dependencies" >&2; exit 1; }
 DEPENDS="$SHLIBS, systemd"
 SIZE=$(du -sk --exclude=DEBIAN "$D" | cut -f1)
@@ -150,7 +153,7 @@ EOS
 {
 	printf '%s (%s) unstable; urgency=medium\n\n' "$PACKAGE" "$VERSION"
 	sed -n '4,/^---/p' "$HERE/CHANGELOG" | grep -v '^---' | sed 's/^  \*/  */'
-	printf '\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Tue, 03 Nov 2026 12:00:00 -0300\n'
+	printf '\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 18 Nov 2026 00:00:00 -0300\n'
 } >"$S/debian/changelog"
 cp "$HERE/copyright" "$S/debian/copyright"
 echo '3.0 (native)' >"$S/debian/source/format"
@@ -158,7 +161,7 @@ cat >"$S/debian/rules" <<'EOS'
 #!/usr/bin/make -f
 binary:
 	OUT=$(CURDIR)/.. bash ./build.sh
-	dpkg-distaddfile $$(dpkg-parsechangelog -S Source)_$$(dpkg-parsechangelog -S Version)_amd64.deb admin optional
+	for deb in $(CURDIR)/../$$(dpkg-parsechangelog -S Source)*_$$(dpkg-parsechangelog -S Version)_*.deb; do dpkg-distaddfile "$${deb##*/}" admin optional; done
 clean:
 build:
 EOS

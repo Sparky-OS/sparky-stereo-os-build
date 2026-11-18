@@ -28,7 +28,7 @@ install -Dm755 "$HERE/bin/sparky-stereo-variant-check" "$D/usr/lib/sparky-stereo
 install -Dm644 "$HERE/share/systemd/sparky-stereo-hardware-variant-check.service" "$D/usr/lib/systemd/system/sparky-stereo-hardware-variant-check.service"
 # lights and peripherals by detection (ORDER 108, milestone 6): the ids each tool drives, who owns the devices two tools open, OpenRGB with the session
 mkdir -p "$D/usr/share/sparky/sparky-stereo-hardware/peripherals"
-install -m644 "$HERE"/share/peripherals/*.ids "$HERE/share/peripherals/owners.tsv" "$D/usr/share/sparky/sparky-stereo-hardware/peripherals/"
+install -m644 "$HERE"/share/peripherals/*.ids "$HERE/share/peripherals/owners.tsv" "$HERE/share/peripherals/openlinkhub-families.tsv" "$D/usr/share/sparky/sparky-stereo-hardware/peripherals/"
 install -Dm644 "$HERE/share/peripherals/62-sparky-stereo-peripheral-owner.rules" "$D/usr/lib/udev/rules.d/62-sparky-stereo-peripheral-owner.rules"
 install -Dm755 "$HERE/bin/sparky-stereo-peripheral-owner" "$D/usr/lib/sparky-stereo-hardware/peripheral-owner"
 install -Dm644 "$HERE/share/systemd/sparky-stereo-hardware-peripheral-owner.service" "$D/usr/lib/systemd/system/sparky-stereo-hardware-peripheral-owner.service"

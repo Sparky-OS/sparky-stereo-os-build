@@ -218,7 +218,7 @@ void ProblemsKcm::repair(const QString &handle)
     QString program = s_engine;
     if (scope != u"person"_s) {
         // the machine's problems are root's: org.sparkylinux.sparkystereo.problems.repair, which runs only repair
-        args.prepend(s_engine);
+        args.prepend(u"/usr/libexec/sparky-stereo-problems/pkexec-repair"_s);
         program = u"pkexec"_s;
     }
     m_busy = true;
