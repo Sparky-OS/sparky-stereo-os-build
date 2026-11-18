@@ -9,14 +9,14 @@
 # CGM) in /usr/lib/dpkg-stereo, dpkg's pre-invoke and post-invoke hooks, the first-update hook that writes
 # the HR copies of settings, and the pre-squashfs hook Sparky Backup Core Stereo runs for the ISO.
 # Needs only dpkg-deb; run it in a throwaway container or on any Debian.
-# Last update 2026/11/03
+# Last update 2026/11/18
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 set -euo pipefail
 umask 022
 HERE=$(cd "$(dirname "$0")" && pwd)
 LEAN=$(cd "$HERE/../../lean" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=0.1.41
+VERSION=0.1.42
 PKG=dpkg-stereo
 W=$(mktemp -d "${TMPDIR:-/tmp}/dpkg-stereo-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
@@ -57,6 +57,24 @@ python3 "$COPY" "$HERE/lang" "$W/lang-inputs"
 install -m 644 "$W/lang-inputs"/* "$D/usr/share/sparky/$PKG/"
 sparky-stereo-problems catalog $PKG "$D/usr/share/sparky/$PKG" "$D/usr/lib/systemd/catalog" --subject LOCAL16
 printf '/etc/apt/apt.conf.d/99dpkg-stereo-hr\n/etc/dpkg/dpkg.cfg.d/dpkg-stereo\n' >"$D/DEBIAN/conffiles"
+# every folder of the package is root-owned and writable by root alone whatever the umask of the machine that builds it:
+# the conffile verifier is trusted only from such folders (conffile-verifier.md), and dpkg keeps the mode of a folder
+# it finds on a machine, so the mode shipped is the mode that stays (0.1.0 to 0.1.7 were built with the umask of the
+# build user, 0002, and shipped these folders group-writable: ORDER 707)
+find "$D" -type d -exec chmod 0755 {} +
+cat >"$D/DEBIAN/preinst" <<'EOS'
+#!/bin/sh
+# preinst script
+set -e
+# an early version left its folders writable by their group, and dpkg keeps the mode of a folder it finds; the
+# verifier is trusted only from folders root alone can write, so they are set right before this version is unpacked,
+# which is before any package unpacked after it in the same run meets its conffiles (only dpkg-stereo's own tree)
+if [ "$1" = "upgrade" ] && [ -d /usr/lib/dpkg-stereo ]; then
+	find /usr/lib/dpkg-stereo -xdev ! -type l -user root -perm /022 -exec chmod go-w {} + || true
+fi
+exit 0
+EOS
+chmod 755 "$D/DEBIAN/preinst"
 cat >"$D/DEBIAN/postinst" <<'EOS'
 #!/bin/sh
 # postinst script
@@ -64,6 +82,11 @@ set -e
 # Lean Code never fails dpkg-stereo's own configuration: a step that does not complete is said by dpkg-stereo
 # itself (what, why, what to do), kept by the edition's one engine and repaired with dpkg-stereo --repair;
 # every file stays its package's original or a checked projection
+# dpkg-stereo's own folders are writable by root alone (the preinst did it before unpacking an upgrade; this covers a
+# first install and a reinstall): the verifier is trusted only from such folders
+if [ "$1" = "configure" ]; then
+	find /usr/lib/dpkg-stereo -xdev ! -type l -user root -perm /022 -exec chmod go-w {} + || true
+fi
 # the program and the lean toolkit byte-compiled now, as Debian's Python packages are (py3compile, removed by the
 # prerm's py3clean), so no dpkg hook compiles them
 if [ "$1" = "configure" ] && command -v py3compile >/dev/null 2>&1; then
