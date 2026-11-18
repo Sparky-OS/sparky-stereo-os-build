@@ -42,6 +42,41 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * Fix: the conffile verifier is refused on a machine that an early dpkg-stereo
+    upgraded (ORDER 707). Versions 0.1.0 to 0.1.7 were built with the build
+    user's umask and shipped /usr/lib/dpkg-stereo and its lean folder writable
+    by their group; dpkg keeps the mode of a folder it finds, and dpkg's native
+    caller and the verifier trust the verifier only from folders and files that
+    root alone can write, so every projected conffile an upgrade changed was
+    handled by dpkg's conflict rules ("the verifier is missing or its
+    executable or library is not trusted"). The check is right and stays.
+  * The package sets its own folders: the preinst of an upgrade and the postinst
+    take the group and other write permission off what root owns under
+    /usr/lib/dpkg-stereo, and nothing outside it. Every folder the recipe ships
+    is 0755 whatever the umask of the machine that builds it.
+  * The refusal names the path and the failed check (which folder, its mode or
+    owner) in the ten languages, and what to do.
+  * dpkg-stereo --repair sets the same folders right when they are not, says
+    what it set, and then rechecks each conffile: a file that is its package's
+    bytes, or the exact projection of its package's original (what the
+    post-invoke makes of a conffile dpkg installed while the verifier was
+    refused), settles. A file the person edited, or one whose package version
+    waits as .dpkg-dist, stays named. No conffile is ever written.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 18 Nov 2026 17:30:00 +0000
+
+dpkg-stereo (0.1.41) unstable; urgency=medium
+
+  * Qualify literal diversion destination directories without running preinst.
+    A mkdir is accepted only for the exact parent of a declared destination,
+    before that diversion; dynamic and unrelated commands remain refused.
+  * Retain the standalone source rebuild, buildinfo and changes before recording
+    the package group. Install-time projection is unchanged.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Sun, 15 Nov 2026 17:21:00 +0000
+
+dpkg-stereo (0.1.40) unstable; urgency=medium
+
   * Carry Lean Code 0.1.29: the Rust adapter (ORDER 533), which projects Rust
     build inputs of a source tree under a language plan. An installed Rust
     file stays as authored.

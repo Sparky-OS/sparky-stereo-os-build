@@ -3570,7 +3570,7 @@ def show_problems(P):
         # each package version whose files stay lean, with why and what brings it back (restore, ORDER 365)
         for item in entry.get('items', []):
             if entry.get('step') == 'conffiles' and isinstance(item, dict):
-                args = [item['package'], item['path'], [conffile_events.REASONS[item['reason']]], item['location']]
+                args = [item['package'], item['path'], conffile_events.reason_argument(item), item['location']]
                 print('  ' + text('LOCAL54', args, lang))
                 if lang != 'en':
                     print('    (en) ' + text('LOCAL54', args, 'en'))
