@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 import subprocess
 
+TAG_LINE = re.compile(r'^([EWIPXO]): ([^:]+): ([a-z0-9][a-z0-9+.-]*)(?: (.*))?$')
+
 ap = argparse.ArgumentParser(description=__doc__)
 ap.add_argument('files', type=Path)
 ap.add_argument('inventory', type=Path)
@@ -54,7 +56,7 @@ for source in sorted(groups, key=lambda s: sum((a.pool/r['filename']).stat().st_
             result[side+'_rc'] = run.returncode if run else None
         tag_count, other = 0, []
         for line in log.read_text(errors='replace').splitlines():
-            match = re.match(r'^([EWIPXO]): ([^:]+): ([a-z0-9][a-z0-9+-]*)(?: (.*))?$', line)
+            match = TAG_LINE.match(line)
             if match:
                 level, package, tag, context = match.groups()
                 context = context or ''
@@ -67,7 +69,15 @@ for source in sorted(groups, key=lambda s: sum((a.pool/r['filename']).stat().st_
         result[side+'_tag_lines'] = tag_count
         result[side+'_other_lines'] = other
         if saved:
-            assert tag_count == saved[side+'_tag_lines'] and other == saved[side+'_other_lines'], log
+            # A corrected parser may recognize a formerly retained diagnostic
+            # as a tag. Account for each reclassification explicitly.
+            prior_other = saved[side+'_other_lines']
+            reclassified = sum(bool(TAG_LINE.match(line)) for line in prior_other)
+            assert tag_count == saved[side+'_tag_lines'] + reclassified, log
+            assert other == [line for line in prior_other if not TAG_LINE.match(line)], log
+        result[side+'_log_sha256'] = hashlib.sha256(log.read_bytes()).hexdigest()
+        if saved and side+'_log_sha256' in saved:
+            assert result[side+'_log_sha256'] == saved[side+'_log_sha256'], log
     results.append(result)
     (a.output/'progress.json').write_text(json.dumps(results, indent=2)+'\n')
     print(source, result, flush=True)
