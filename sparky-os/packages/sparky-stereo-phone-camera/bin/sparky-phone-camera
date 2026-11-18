@@ -1,0 +1,252 @@
+#!/usr/bin/python3
+# Created by Daniel Ramos (Capitain Jack) 2026/11/18
+# Copyright 2026 under the GNU GPL3 License
+# Sparky Stereo OS: starts a phone as the computer's camera (DroidCam's client, or scrcpy's camera mode) after saying plainly,
+# in the person's language, what is missing when it cannot work. The phone's picture goes to a v4l2loopback device named
+# "Phone camera"; PipeWire lists it as a camera of the session and System Settings, Camera shows it like any camera.
+# Usage: sparky-phone-camera status | check [usb|wifi IP] | announce | droidcam [usb [PORT] | wifi IP [PORT]] | droidcam-gui | scrcpy [ARG...]
+import json
+import os
+import subprocess
+import sys
+
+NAME = 'Phone camera'
+ROOT = os.environ.get('SPARKY_PHONE_CAMERA_ROOT', '')
+LANGDIR = os.environ.get('SPARKY_PHONE_CAMERA_LANG', '/usr/share/sparky-stereo-phone-camera/lang')
+PORT = 4747
+
+
+def language_codes():
+    codes = []
+    for var in ('LC_ALL', 'LC_MESSAGES', 'LANGUAGE', 'LANG'):
+        for value in os.environ.get(var, '').split(':'):
+            value = value.split('.')[0].split('@')[0]
+            if value and value not in ('C', 'POSIX'):
+                codes.append(value)
+    out = []
+    for code in codes:
+        out.append(code)
+        out.append(code.split('_')[0])
+    return out + ['en']
+
+
+def messages():
+    for code in language_codes():
+        path = os.path.join(LANGDIR, code + '.json')
+        if os.path.isfile(path):
+            with open(path, encoding='utf-8') as handle:
+                found = json.load(handle)
+            if code != 'en':
+                with open(os.path.join(LANGDIR, 'en.json'), encoding='utf-8') as handle:
+                    base = json.load(handle)
+                base.update(found)
+                found = base
+            return found
+    raise SystemExit('no message catalogue in ' + LANGDIR)
+
+
+MESSAGES = None
+
+
+def say(key, *args):
+    global MESSAGES
+    if MESSAGES is None:
+        MESSAGES = messages()
+    print(MESSAGES[key] % args if args else MESSAGES[key], file=sys.stderr)
+
+
+def run(cmd, **kw):
+    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+
+
+def release():
+    return os.uname().release
+
+
+def loopback_device():
+    base = os.path.join(ROOT, 'sys/class/video4linux')
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return None
+    for entry in names:
+        try:
+            with open(os.path.join(base, entry, 'name'), encoding='utf-8') as handle:
+                if handle.read().strip() == NAME:
+                    return '/dev/' + entry
+        except OSError:
+            continue
+    return None
+
+
+def module_loaded():
+    return os.path.isdir(os.path.join(ROOT, 'sys/module/v4l2loopback'))
+
+
+def module_built():
+    result = run(['modinfo', '-k', release(), '-n', 'v4l2loopback'])
+    return result.returncode == 0
+
+
+def virtual_camera():
+    """Returns the loopback device, or says why there is none and returns None."""
+    device = loopback_device()
+    if device:
+        return device
+    if not module_loaded():
+        if not module_built():
+            say('module_not_built', release())
+            return None
+        say('module_loading')
+        result = run(['pkexec', 'modprobe', 'v4l2loopback'])
+        if result.returncode != 0:
+            error = (result.stderr or result.stdout).strip()
+            if 'Key was rejected' in error or 'required key' in error.lower():
+                say('secure_boot')
+            else:
+                say('module_failed', error or 'exit %d' % result.returncode)
+            return None
+        device = loopback_device()
+        if device:
+            return device
+    say('no_device', NAME)
+    return None
+
+
+def adb_check():
+    """Returns the adb serial of the one phone ready on USB, or says what is wrong and returns None."""
+    result = run(['adb', 'devices']) if which('adb') else None
+    if result is None:
+        say('no_program', 'adb')
+        return None
+    rows = [line.split() for line in result.stdout.splitlines()[1:] if line.strip()]
+    ready = [row[0] for row in rows if len(row) > 1 and row[1] == 'device']
+    if any(len(row) > 1 and row[1] == 'unauthorized' for row in rows) and not ready:
+        say('unauthorized')
+        return None
+    if any(len(row) > 1 and row[1] == 'offline' for row in rows) and not ready:
+        say('offline')
+        return None
+    if not ready:
+        say('no_phone_usb')
+        return None
+    if len(ready) > 1 and not os.environ.get('ANDROID_SERIAL'):
+        say('several_phones', ', '.join(ready))
+        return None
+    return os.environ.get('ANDROID_SERIAL') or ready[0]
+
+
+def announce():
+    """Makes PipeWire list the virtual camera again: with exclusive_caps=1 the device is output only until a program writes to it, and
+    PipeWire enumerates a device once, when udev adds it. A remove and an add for that one device, as the administrator."""
+    device = loopback_device()
+    if not device:
+        say('no_device', NAME)
+        return 1
+    name = os.path.basename(device)
+    prefix = [] if os.geteuid() == 0 else ['pkexec']
+    for action in ('remove', 'add'):
+        result = run(prefix + ['udevadm', 'trigger', '--action=' + action, '--subsystem-match=video4linux', '--sysname-match=' + name])
+        if result.returncode != 0:
+            say('module_failed', (result.stderr or result.stdout).strip() or 'exit %d' % result.returncode)
+            return 1
+    run(prefix + ['udevadm', 'settle'])
+    return 0
+
+
+def which(command):
+    for folder in os.environ.get('PATH', '').split(':'):
+        path = os.path.join(folder, command)
+        if os.access(path, os.X_OK) and os.path.isfile(path):
+            return path
+    return None
+
+
+def wifi_check(address, port):
+    """The phone is asked once, by the client; this tells the sentence for the client's own failure line."""
+    return True
+
+
+def run_client(command, address, port):
+    """Runs the client, passes its lines on, and says the person's sentence when it could not reach the phone."""
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL if os.environ.get('SPARKY_PHONE_CAMERA_NO_STDIN') else None,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    failed = False
+    for line in process.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        if 'Connect failed' in line or 'Connection reset' in line:
+            failed = True
+    code = process.wait()
+    if failed:
+        say('no_answer_wifi', '%s:%d' % (address, port))
+        return 1
+    return code
+
+
+def check(mode, address=None, port=PORT):
+    device = virtual_camera()
+    if not device:
+        return None
+    if mode == 'usb' and adb_check() is None:
+        return None
+    if mode == 'wifi' and not wifi_check(address, port):
+        return None
+    return device
+
+
+def program(name):
+    if which(name) is None:
+        say('no_program', name)
+        raise SystemExit(1)
+
+
+def main(argv):
+    if not argv or argv[0] in ('-h', '--help'):
+        print(__doc__ if __doc__ else 'sparky-phone-camera status | check | droidcam | droidcam-gui | scrcpy')
+        return 2
+    command, rest = argv[0], argv[1:]
+    if command == 'status':
+        print(json.dumps({'device': loopback_device(), 'module_loaded': module_loaded(), 'module_built': module_built() if not module_loaded() else True}))
+        return 0
+    if command == 'announce':
+        return announce()
+    if command == 'check':
+        mode = rest[0] if rest else 'none'
+        address = rest[1] if len(rest) > 1 else None
+        return 0 if check(mode, address) else 1
+    if command == 'droidcam-gui':
+        program('droidcam')
+        if not virtual_camera():
+            return 1
+        os.execvp('droidcam', ['droidcam'])
+    if command == 'droidcam':
+        program('droidcam-cli')
+        mode = rest[0] if rest else 'usb'
+        if mode == 'usb':
+            port = int(rest[1]) if len(rest) > 1 else PORT
+            serial = None
+            device = check('usb')
+            if not device:
+                return 1
+            os.execvp('droidcam-cli', ['droidcam-cli', '-dev=' + device, 'adb', str(port)])
+        if mode == 'wifi' and len(rest) > 1:
+            port = int(rest[2]) if len(rest) > 2 else PORT
+            device = check('wifi', rest[1], port)
+            if not device:
+                return 1
+            return run_client(['droidcam-cli', '-dev=' + device, rest[1], str(port)], rest[1], port)
+        print(__doc__, file=sys.stderr)
+        return 2
+    if command == 'scrcpy':
+        program('scrcpy')
+        device = check('usb')
+        if not device:
+            return 1
+        os.execvp('scrcpy', ['scrcpy', '--video-source=camera', '--v4l2-sink=' + device, '--no-playback', '--no-audio'] + rest)
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,16 @@
+.TH SPARKY-PHONE-CAMERA 1 "November 2026" "sparky-stereo-phone-camera 0.1.0" "User Commands"
+.SH NAME
+sparky-phone-camera \- use a phone as the computer's camera
+.SH SYNOPSIS
+.B sparky-phone-camera
+status | check [usb | wifi \fIIP\fR] | announce | droidcam [usb [\fIPORT\fR] | wifi \fIIP\fR [\fIPORT\fR]] | droidcam-gui | scrcpy [\fIOPTION\fR...]
+.SH DESCRIPTION
+Starts DroidCam's client or scrcpy's camera mode after checking that the virtual camera ("Phone camera", a v4l2loopback device) exists
+and that the phone can be reached, and says in the person's language what is missing when it cannot work.
+The picture goes to the virtual camera, which PipeWire lists as a camera of the session.
+.PP
+\fBannounce\fR makes PipeWire list the virtual camera again (a udev remove and add for that one device, as the administrator); it is needed only when /etc/modprobe.d/sparky-stereo-phone-camera.conf sets exclusive_caps=1.
+.PP
+KDE Connect is not needed.
+.SH SEE ALSO
+droidcam-cli(1), scrcpy(1), v4l2loopback-ctl(8)
