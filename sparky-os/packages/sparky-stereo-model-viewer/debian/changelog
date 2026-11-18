@@ -1,3 +1,11 @@
+sparky-stereo-model-viewer (0.1.1) unstable; urgency=medium
+
+  * libf3d's window is made by F3D's automatic backend (engine::create), not createGLX(): createGLX loads libGLX.so, the unversioned development
+    symlink, so the viewer stopped at start with "Cannot find GLX library" on a system without libglx-dev (found in a Plasma login rig that
+    had none; the earlier rigs had the symlink). ORDER 17 milestone 7 round 3.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 18 Nov 2026 09:30:00 -0300
+
 sparky-stereo-model-viewer (0.1.0) unstable; urgency=medium
 
   * First release (ORDER 17 milestone 7): a Kirigami window with libf3d's 3D area, a declared stereo surface whose depth is the person's limits.

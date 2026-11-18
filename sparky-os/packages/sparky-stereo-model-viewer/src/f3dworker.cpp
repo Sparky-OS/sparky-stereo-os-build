@@ -64,7 +64,9 @@ void F3DWorker::run()
 {
     f3d::log::setVerboseLevel(qEnvironmentVariableIsSet("STEREO_MODEL_VIEWER_LOG") ? f3d::log::VerboseLevel::DEBUG : f3d::log::VerboseLevel::WARN);
     f3d::engine::autoloadPlugins();
-    f3d::engine engine = f3d::engine::createGLX();
+    // the automatic backend, as F3D itself starts: createGLX() loads libGLX.so, the unversioned development symlink, so it fails on a system
+    // without libglx-dev (found in a login rig that lacked it)
+    f3d::engine engine = f3d::engine::create(false);
     f3d::window &window = engine.getWindow();
     f3d::scene &scene = engine.getScene();
     f3d::interactor &interactor = engine.getInteractor();
