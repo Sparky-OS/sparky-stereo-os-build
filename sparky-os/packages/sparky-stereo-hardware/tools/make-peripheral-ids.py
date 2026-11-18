@@ -90,6 +90,15 @@ for f in sorted((roots / "ratbagd/usr/share/libratbag").glob("*.device")):
     for pair in re.findall(r"usb:([0-9a-fA-F]{4}:[0-9a-fA-F]{4})", re.search(r"^DeviceMatch=(.*)$", t, re.M).group(1) if re.search(r"^DeviceMatch=", t, re.M) else ""):
         ratbag_rows.append((pair.lower(), name.group(1) if name else f.stem))
 ratbag = write("ratbag", f"ratbagd {VERSIONS['ratbagd']} usr/share/libratbag/*.device (gaming mice libratbag drives, configured with piper)", ratbag_rows)
+# HeadsetControl (milestone 10): the udev rules it writes from its own device list at build time (`headsetcontrol -u`)
+hc_rules = roots / "headsetcontrol/usr/lib/udev/rules.d/70-headsets.rules"
+hc_rows = []
+for line in hc_rules.read_text().splitlines():
+    m = re.search(r'ATTRS\{idVendor\}=="([0-9a-fA-F]{4})".*?ATTRS\{idProduct\}=="([0-9a-fA-F]{4})"', line)
+    if m and not line.lstrip().startswith("#"):
+        hc_rows.append((f"{m.group(1).lower()}:{m.group(2).lower()}", ""))
+headsetcontrol = write("headsetcontrol", f"headsetcontrol {VERSIONS['headsetcontrol']} usr/lib/udev/rules.d/70-headsets.rules (the headsets the program drives; "
+                       "github.com/Sapd/HeadsetControl, GPL-3.0; not in Debian, carried as the package headsetcontrol)", hc_rows)
 # OpenLinkHub: its own udev rules, as read from its repository, and its registry of products (devices.go), whose Init functions name the
 # folder of src/devices that drives each id. A folder is one family; a folder not in FAMILY_OF is "other" (keyboards, mice, headsets,
 # dongles, screens), which the edition does not carry OpenLinkHub for.
@@ -165,4 +174,4 @@ for vendor_id, products in by_vendor.items():
     rule.append(f'SUBSYSTEM=="hidraw|usb", ATTRS{{idVendor}}=="{vendor_id}", ATTRS{{idProduct}}=="{"|".join(products)}", TAG-="uaccess", ENV{{SPARKY_PERIPHERAL_OWNER}}="openlinkhub"')
 rule.append('LABEL="sparky_owner_end"')
 (out / "62-sparky-stereo-peripheral-owner.rules").write_text("\n".join(rule) + "\n")
-print(f"openrgb {len(openrgb)}, liquidctl {len(liquid)}, g810-led {len(g810)}, openrazer {len(razer)}, solaar {len(solaar)}, ratbag {len(ratbag)}, openlinkhub {len(olh)} carried ({summary}), {other} more ids of OpenLinkHub left to OpenRGB, owned by OpenLinkHub {len(overlap)}")
+print(f"openrgb {len(openrgb)}, liquidctl {len(liquid)}, g810-led {len(g810)}, openrazer {len(razer)}, solaar {len(solaar)}, ratbag {len(ratbag)}, headsetcontrol {len(headsetcontrol)} ({len(headsetcontrol & openrgb)} of them also OpenRGB's), openlinkhub {len(olh)} carried ({summary}), {other} more ids of OpenLinkHub left to OpenRGB, owned by OpenLinkHub {len(overlap)}")

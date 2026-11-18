@@ -52,6 +52,7 @@ for package in read("firmware-packages").split():
 
 gpus = []
 amd_display = False
+amd_cards = []
 current_gpu = None
 for line in read("lspci").splitlines():
     subsystem = re.search(r"Subsystem:.*?([0-9a-fA-F]{4}):([0-9a-fA-F]{4})", line)
@@ -66,6 +67,7 @@ for line in read("lspci").splitlines():
     cls, vendor, device = (part.lower() for part in pci.groups())
     if vendor == "1002" and cls.startswith("03"):
         amd_display = True
+        amd_cards.append(f"{vendor}:{device}")
     if vendor == "10de" and cls.startswith("03"):
         current_gpu = len(gpus)
         gpus.append([device])
@@ -137,6 +139,21 @@ if amd_display and "AuthenticAMD" in vendors:
     emit("action", "amdgpu-dpm")
     if laptop == "0":
         emit("action", "amdgpu-panel")
+
+# LACT (ORDER 108, milestone 10; not in Debian, carried as the package lact) sets an AMD card's clocks, power limits and fan curve through the
+# amdgpu driver. It is installed for a machine with an AMD display controller, and it owns the cards it is installed for: CoreCtrl (Debian's
+# tool for the same sysfs files) is not installed for them. A CoreCtrl, or a LACT made by upstream's makefile (/usr/local), that the person
+# installed is theirs (a hand-installed program is the person's, Daniel 2026-11-07): the package is not planned beside it, and the plan says so.
+if amd_cards:
+    own_tool = (read_optional("corectrl") or "").strip() == "yes" or (read_optional("lact-local") or "").strip() == "yes"
+    cards = " ".join(sorted(set(amd_cards)))
+    if own_tool:
+        emit("fact", f"peripheral\tlact-not-planned\t{cards}")
+    else:
+        match(f"AMD graphics cards {cards}: LACT", "lact")
+        emit("fact", f"peripheral\tlact\t{cards}")
+        for card in sorted(set(amd_cards)):
+            emit("owner", f"{card}\tlact\tnot CoreCtrl\tAMD graphics card")
 
 xbox_usb = {"028e", "028f", "02d1", "02dd", "02e3", "02ea", "0b00", "0b0a", "0b12"}
 xbox_bt = {"02e0", "02fd", "0b05", "0b13", "0b20", "0b22"}
@@ -268,7 +285,8 @@ openrgb_devices = []
 for tool, name, tool_packages in (("openrgb", "OpenRGB", ("openrgb",)), ("solaar", "Solaar", ("solaar",)),
                                   ("ratbag", "libratbag with Piper", ("ratbagd", "piper")), ("liquidctl", "liquidctl", ("liquidctl",)),
                                   ("g810-led", "g810-led", ("g810-led",)), ("openrazer", "OpenRazer", ("openrazer-daemon", "openrazer-driver-dkms")),
-                                  ("openlinkhub", "OpenLinkHub", ("openlinkhub",))):
+                                  ("openlinkhub", "OpenLinkHub", ("openlinkhub",)),
+                                  ("headsetcontrol", "HeadsetControl", ("headsetcontrol",))):
     table = device_table(tool + ".ids")
     seen = []
     for ident in usb_ids:
