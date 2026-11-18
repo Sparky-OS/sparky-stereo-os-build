@@ -12,7 +12,7 @@ from pathlib import Path
 add = Path(sys.argv[1])
 rules = Path('debian/rules').read_text()
 assert '-DBUILD_SHARED_LIBS=OFF' in rules and 'override_dh_auto_install:' in rules, 'Debian rules changed'
-rules = rules.replace('-DBUILD_SHARED_LIBS=OFF', '-DBUILD_SHARED_LIBS=ON')
+rules = rules.replace('-DBUILD_SHARED_LIBS=OFF', '-DBUILD_SHARED_LIBS=ON -DF3D_WITH_STEREO_DECLARE=ON')
 rules = rules[:rules.index('override_dh_auto_install:')]
 rules = rules.replace('%:\n\tdh $@', 'include /usr/share/dpkg/architecture.mk\n\n%:\n\tdh $@', 1)
 rules += (
@@ -67,7 +67,7 @@ old = 'Package: f3d\nArchitecture: any\nDepends: ${shlibs:Depends}, ${misc:Depen
 assert old in control, 'Debian control changed'
 control = control.replace(old, 'Package: f3d\nArchitecture: any\n'
                           'Depends: libf3d3 (= ${binary:Version}), sparky-stereo-mime-models, ${shlibs:Depends}, ${misc:Depends}', 1)
-control = control.replace('Build-Depends: debhelper-compat (= 13),', 'Build-Depends: debhelper-compat (= 13),\n               patchelf,\n               zlib1g-dev,', 1)
+control = control.replace('Build-Depends: debhelper-compat (= 13),', 'Build-Depends: debhelper-compat (= 13),\n               libstereo-declare-dev (>= 1.10.0),\n               patchelf,\n               zlib1g-dev,', 1)
 control += """
 Package: libf3d3
 Section: libs

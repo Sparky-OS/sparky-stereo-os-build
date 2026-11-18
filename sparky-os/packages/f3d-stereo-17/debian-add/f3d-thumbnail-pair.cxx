@@ -82,6 +82,9 @@ int main(int argc, char** argv)
     opt.render.hdri.ambient = true;
     engine.getScene().add(argv[3]);
     f3d::window& window = engine.getWindow();
+    // the pair of a thumbnail keeps its own angle, 2 degrees as in +stereo3d1, by the route of images (not an option): an image has no
+    // window whose depth limits could give one, and the depth of a thumbnail has no recorded design yet (Daniel's call)
+    window.setStereoImageEyeAngle(2.0);
     window.setSize(size / 2, size / 2);
     f3d::camera& camera = window.getCamera();
     camera.resetToBounds();
