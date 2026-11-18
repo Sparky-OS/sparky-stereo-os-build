@@ -23,7 +23,7 @@ OUT=$(mkdir -p "${OUT:-${SPARKY_REPO_DIR:?}}" && cd "${OUT:-${SPARKY_REPO_DIR:?}
 IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}
 sparky_provenance_init "$IMAGE" "$HERE"
 TREE=$(cd "$HERE/../../.." && pwd)
-VERSION=${VERSION:-20261115~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261118~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 case ${1:-all} in all|default) ;; *) echo 'Usage: build.sh [all|default]' >&2; exit 2 ;; esac
 WORK=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -82,9 +82,13 @@ cp -a "$HERE/default/org.sparkystereo.desktop/contents/layouts" "$T/contents/"
 # the global theme's previews are Oxygen's; the splash's preview is ours, a capture of our loading screen
 cp -a "$OXYGEN/contents/previews" "$T/contents/"
 cp "$HERE/default/previews/splash.png" "$T/contents/previews/splash.png"
-# the loading screen is ours (ORDER 571): the boot splash's picture, its pictures the same files as sparky-stereo-plymouth's
-# (tests/splash-pictures.sh), each part at the boot splash's level inside the person's limits through org.sparky.stereo
+# Daniel's Sparky Black splash, with the logo explicitly at twice the popped limit (ORDER 672).
 cp -a "$HERE/default/splash" "$T/contents/"
+# ORDER 571 remains a separate choice on System Settings' Splash Screen page.
+R=$D/$LNF/org.sparkystereo.boot-picture
+mkdir -p "$R/contents"
+cp "$HERE/retained-splash/metadata.json" "$R/"
+cp -a "$HERE/retained-splash/splash" "$HERE/retained-splash/previews" "$R/contents/"
 cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$HERE/default/xdg/krunnerrc" "$HERE/default/xdg/konsolerc" "$HERE/default/xdg/dolphinrc" "$HERE/default/xdg/ksplashrc" "$D/etc/xdg/"
 install -D -m 755 "$HERE/default/first-login-input-method" "$D/usr/lib/sparky-stereo-look/first-login-input-method"
 install -D -m 644 "$HERE/default/xdg/plasma-workspace/env/10-sparky-stereo-input-method.sh" \
@@ -92,7 +96,7 @@ install -D -m 644 "$HERE/default/xdg/plasma-workspace/env/10-sparky-stereo-input
 install -D -m 644 "$HERE/default/needrestart.conf" "$D/etc/needrestart/conf.d/90-sparky-stereo.conf"
 install -D -m 644 "$HERE/default/flathub.flatpakrepo" "$D/usr/share/flatpak/remotes.d/flathub.flatpakrepo"
 control "$D" sparky-stereo-look \
-	"plasma-workspace (>= 4:6.7.4-2+stereo3d6), plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, kwin-style-aurorae, libkf6config-bin, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk, qml6-module-qtquick, libstereo-layer1 (>= 1.20.0)" \
+	"plasma-workspace (>= 4:6.7.4-2+stereo3d6), plasma-theme-oxygen, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, kwin-style-aurorae, libkf6config-bin, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk, qml6-module-qtquick, libstereo-layer1 (>= 1.22.0)" \
 	"kde-style-oxygen-qt5, sparkyos-artwork, sparky-stereo-look-kubabbar-glass" \
 	"Sparky Stereo OS default look: Oxygen dark" \
 	"The edition's default global theme: Oxygen, whole, in its dark colours:" \
@@ -110,11 +114,11 @@ control "$D" sparky-stereo-look \
 	"Ctrl+Alt+Del, Ctrl+Shift+Esc and Ctrl+Esc open System Monitor; existing shortcuts remain available." \
 	"Japanese, Korean and Chinese sessions default to the installed Fcitx5 input" \
 	"method before KWin starts, preserving an existing or explicitly disabled choice." \
-	"The loading screen after the login is the boot splash's picture, so the" \
-	"screen is one picture from power-on to the desktop. On a screen in a 3D" \
-	"mode each part stands at the boot splash's depth, inside the person's" \
-	"limits for that screen; on a 2D screen it is plain. /etc/xdg/ksplashrc" \
-	"names it, and a person who chose another splash keeps it."
+	"The loading screen is Daniel Ramos's Sparky Black design. On a 3D screen" \
+	"the background is sunk, the box and progress bar at the popped limit," \
+	"and the original logo at twice that limit. On a 2D screen it is plain." \
+	"The former boot-picture splash remains selectable. /etc/xdg/ksplashrc" \
+	"names the default; a person who chose another splash keeps it."
 printf '%s\n' /etc/xdg/kdeglobals /etc/xdg/kwinrc /etc/xdg/kde-mimeapps.list /etc/xdg/krunnerrc /etc/xdg/konsolerc /etc/xdg/dolphinrc /etc/xdg/ksplashrc \
 	/etc/xdg/plasma-workspace/env/10-sparky-stereo-input-method.sh \
 	/etc/needrestart/conf.d/90-sparky-stereo.conf >"$D/DEBIAN/conffiles"
@@ -124,9 +128,10 @@ Theme definition and defaults: Copyright 2026 Daniel Ramos (Capitain Jack), GPL-
 Global theme previews (preview.png, fullscreenpreview.jpg): copied from KDE's Oxygen global theme
 (plasma-theme-oxygen), Copyright the Oxygen team, under its own licence (see
 /usr/share/doc/plasma-theme-oxygen/copyright).
-Loading screen (contents/splash/Splash.qml, contents/previews/splash.png): Copyright 2026 Daniel Ramos
-(Capitain Jack), GPL-2.0-or-later; KSplash, which shows it, is KDE's (plasma-workspace, Marco Martin and KDE).
-Its pictures (contents/splash/images) are those of sparky-stereo-plymouth's boot splash, with the credits
+Default loading screen: Sparky Black by Daniel Campos Ramos, 2019, on KDE's 2014 splash by Marco Martin,
+GPL-2.0-or-later; stereo integration Copyright 2026 Daniel Campos Ramos, GPL-2.0-or-later.
+Retained boot-picture loading screen: Copyright 2026 Daniel Ramos (Capitain Jack), GPL-2.0-or-later.
+Its pictures (org.sparkystereo.boot-picture/contents/splash/images) retain the credits
 its copyright file gives them: background.png, logo.png and electron.png from Sparky's lines theme,
 Copyright 2014 Juliette Taka Belin and Aurelien Couderc (Debian 8 "Jessie" lines theme), Copyright
 2018-2020 Pawel "pavroo" Pijanowski and Daniel Ramos (sparky-lines, the Sparky black set), GPL-2+;
@@ -138,6 +143,7 @@ foreground artwork is inherited; licence texts in /usr/share/plasma/desktoptheme
 On Debian systems the GPL is in /usr/share/common-licenses/GPL-2.
 EOF
 install -m 644 "$HERE/README.md" "$D/usr/share/doc/sparky-stereo-look/README"
+install -m 644 "$HERE/ATTRIBUTIONS.md" "$D/usr/share/doc/sparky-stereo-look/ATTRIBUTIONS.md"
 build "$D" sparky-stereo-look
 [ "${1:-all}" != default ] || exit 0
 

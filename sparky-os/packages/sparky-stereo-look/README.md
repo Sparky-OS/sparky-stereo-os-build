@@ -9,7 +9,9 @@ Your saved assignments take precedence; Reset to defaults in System Settings res
 The loading screen
 
 Between the login and the desktop KSplash shows the theme's splash on every screen.
-It is the boot splash's picture (sparky-stereo-plymouth, theme sparky-stereo-lines), the same pictures placed the same way, so the screen is one picture from power-on to the desktop; `tests/splash-pictures.sh` fails when the two drift apart.
-On a screen in a 3D mode each part stands at the boot splash's level, inside the person's own limits for that screen (System Settings, 3D Depth): the background on the screen, the swirl at half the popped limit, the SparkyOS logo at the popped limit, the electrons popping where their curve rises and sinking where it falls.
-The depth comes from `StereoDepth` in `org.sparky.stereo` (stereo-layer 1.20.0); on a 2D screen the picture is plain, and when a 3D screen cannot be shown a pair the picture is plain and the session's log says why once.
-`/etc/xdg/ksplashrc` names this theme; a person's own choice (another theme, or None) stays, and Oxygen's splash stays selectable.
+It is Daniel Campos Ramos's Sparky Black design, with its original background, box, logo and progress bar.
+On a screen in a 3D mode the background stands at the person's sunk limit, the box and progress bar at the popped limit, and the original logo at twice that limit.
+The explicit artwork multiple is confined to the logo of this splash; ordinary items remain inside the person's limits.
+The depth comes from `StereoDepth` in `org.sparky.stereo` (stereo-layer 1.22.0); on a 2D screen the picture is plain, and a renderer unable to draw the pair logs why once.
+The former boot-picture splash remains selectable as “Sparky Stereo, boot picture” on System Settings' Splash Screen page, with its original levels.
+`/etc/xdg/ksplashrc` still names the default theme; a person's saved splash or None stays.
