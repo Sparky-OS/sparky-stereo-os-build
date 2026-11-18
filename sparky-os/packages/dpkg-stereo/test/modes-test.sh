@@ -31,6 +31,7 @@ no_problem() { dpkg-stereo --problems >/dev/null 2>&1; }
 group_writable() { chmod g+w $TREE $TREE/lean; }
 mode_of() { stat -c %a "$1"; }
 done_fx() { dpkg -P $1 </dev/null >/dev/null 2>&1; }
+nothing_named() { ! dpkg-stereo --repair 2>&1 | grep -q '/usr/lib '; }
 settle_state() { chmod 755 $TREE $TREE/lean /usr/lib; dpkg-stereo --repair >/dev/null 2>&1; }
 
 echo "== the package under test ships its folders 0755, root-owned"
@@ -105,10 +106,18 @@ FX=fxf; install_fx $FX
 chmod g+w /usr/lib
 upgrade_fx --force-confnew
 check "S5 the refusal names /usr/lib" says '/usr/lib .*775'
-dpkg-stereo --repair >/dev/null 2>&1; rc=$?
+dpkg-stereo --repair >"$W/s5-repair.log" 2>&1; rc=$?
 check "S5 repair left /usr/lib alone ($(mode_of /usr/lib))" [ "$(mode_of /usr/lib)" = 775 ]
-check "S5 and the problem stays (exit $rc)" [ "$rc" != 0 ]
+check "S5 repair still names /usr/lib, which it cannot mend (exit $rc)" grep -q '/usr/lib .*775' "$W/s5-repair.log"
 chmod 755 /usr/lib
-check "S5 once its owner fixes it, repair settles" dpkg-stereo --repair
+check "S5 once its owner fixes it, nothing is named" nothing_named
+done_fx $FX
+
+echo "== S6 one dpkg run: the successor first, a package with projected conffiles after it"
+FX=fxg; install_fx $FX
+group_writable
+dpkg --force-confnew -i "$DEB" $W/${FX}_2.0_all.deb </dev/null >"$W/s6.log" 2>&1
+check "S6 no conffile problem kept" no_problem
+check "S6 all three conffiles are the new version, projected" projected_new $FX
 done_fx $FX
 exit $fail
