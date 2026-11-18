@@ -1,0 +1,12 @@
+Sparky Stereo OS: the 3D view of CloudCompare in stereo, as the edition has it. The stereo window now gets its stereo format
+(Qt chose a visual without GLX_STEREO because the format was kept for the OpenGL context and never set on the window), so the
+quad-buffered stereo of the program is offered under Stereo KWin, which sees the 3D view declared as its own area of the window.
+
+One 3D mode: Enable 3D. The stereo dialog (anaglyph, NVIDIA Vision, generic stereo display and the physical parameters: screen
+width, screen distance, eye separation, strength) is not built, the glass type is neither stored nor read, and the exclusive full
+screen mode is not part of Enable 3D; the program draws no output format of its own, KWin and KScreen give every output.
+
+The separation of the two cameras is the person's depth limits and nothing else: the largest under which the farthest and the
+nearest displayed point stay inside the sunk and popped limits that Stereo KWin gives the window (libstereo-declare 1.10,
+_KDE_NET_WM_STEREO_DEPTH_LIMITS), followed while the window is open. With no limits the two eyes are the same picture and the
+program says so in the ten languages of the edition.
