@@ -1,0 +1,4 @@
+# The virtual device that sparky-stereo-headset-battery makes for a headset's charge is a headset to UPower. UPower learns what a battery belongs to from
+# the input node beside it: SOUND_INITIALIZED with SOUND_FORM_FACTOR is what it reads on the sound card of a headset that the kernel's own driver serves.
+# Only the devices of this service carry the uniq below.
+SUBSYSTEM=="input", ATTR{uniq}=="sparky-stereo-headset:*", ENV{SOUND_INITIALIZED}="1", ENV{SOUND_FORM_FACTOR}="headset"

@@ -1,3 +1,12 @@
+coolercontrol (5.1.2-2) unstable; urgency=medium
+
+  * A copy of CoolerControl made by upstream's makefile (/usr/local, or a coolercontrold.service in /etc/systemd/system) is now told through the problems engine (sparky-stereo-problems), once while the copy is there, in the language of the person and in the ten languages of the edition (debian/problems-lang, built into the journal catalogue; ORDER 108 milestone 14). Before, the notice was one English line in apt's output, which nobody reads who installs through the app center. The line stays for the terminal. The files of the copy are named in the notice and the steps to change over are in README.Debian. Nothing of the copy is touched, as before.
+  * coolercontrold Depends on and the source Build-Depends on sparky-stereo-problems (>= 0.2.1). The mark that the notice was told is /var/lib/coolercontrold/local-copy-told: removed when the copy is gone, on removal and on purge.
+  * postrm: the comment of the purge named /etc/lact; it is /etc/coolercontrol.
+  * Upstream's source, the five archives, the patch and the build chain are the ones of 5.1.2-1.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 18 Nov 2026 18:00:00 -0300
+
 coolercontrol (5.1.2-1) unstable; urgency=medium
 
   * The edition's build of CoolerControl 5.1.2 (Guy Boldon, Eren Simsek and the contributors, gitlab.com/coolercontrol/coolercontrol, GPL-3.0-or-later), carried because Debian never packaged it and SparkyLinux does not host it (ORDER 108 milestone 13). The whole tool: the daemon, its interface and the Qt window.

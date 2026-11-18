@@ -19,7 +19,7 @@ def quote(s):
 
 def head(lang, domain):
     return (f"# Headset page of Sparky Stereo OS, {lang}.\n# SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)\n# SPDX-License-Identifier: GPL-3.0-or-later\n"
-            f'msgid ""\nmsgstr ""\n"Project-Id-Version: sparky-stereo-headset 0.1.0\\n"\n"Language: {lang}\\n"\n"MIME-Version: 1.0\\n"\n'
+            f'msgid ""\nmsgstr ""\n"Project-Id-Version: sparky-stereo-headset 0.2.0\\n"\n"Language: {lang}\\n"\n"MIME-Version: 1.0\\n"\n'
             '"Content-Type: text/plain; charset=UTF-8\\n"\n"Content-Transfer-Encoding: 8bit\\n"\n'
             f'"Plural-Forms: nplurals={1 if lang in ("ja", "ko", "zh_CN", "zh_TW") else 2}; plural={"0" if lang in ("ja", "ko", "zh_CN", "zh_TW") else "(n != 1)"};\\n"\n\n')
 

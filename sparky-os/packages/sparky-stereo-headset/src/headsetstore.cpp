@@ -56,12 +56,6 @@ void forgetChoices(const QString &id)
     config()->sync();
 }
 
-int peripheralLowLevel()
-{
-    const KSharedConfigPtr powerdevil = KSharedConfig::openConfig(QStringLiteral("powerdevilrc"), KConfig::FullConfig);
-    return powerdevil->group(QStringLiteral("BatteryManagement")).readEntry("PeripheralBatteryLowLevel", 10);
-}
-
 QString batteryText(const Headset &h)
 {
     if (!h.has(QStringLiteral("CAP_BATTERY_STATUS"))) {

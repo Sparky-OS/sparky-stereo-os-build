@@ -4,7 +4,7 @@
 // sparky-stereo-headset status [--json] | apply | watch
 //   status  what is connected and what it reports, in words or as JSON
 //   apply   send the saved choices of every connected headset to it, now
-//   watch   what the user service runs: the saved choices go to a headset when it appears, and the person is told when its battery is low
+//   watch   what the user service runs: the saved choices go to a headset when it appears (the battery is the system service's, sparky-stereo-headset-battery)
 
 #include "headsetengine.h"
 #include "headsetstore.h"
@@ -81,7 +81,6 @@ static int status(bool json)
 static int watch(QCoreApplication &app)
 {
     static QSet<QString> seen;
-    static QSet<QString> lowTold;
     auto poll = [] {
         QList<Headset> list;
         QString error;
@@ -93,18 +92,6 @@ static int watch(QCoreApplication &app)
             if (!seen.contains(h.id)) {
                 seen.insert(h.id);
                 applySaved(h);
-            }
-            if (!h.batteryKnown() || h.charging()) {
-                lowTold.remove(h.id);
-                continue;
-            }
-            const int low = peripheralLowLevel();
-            if (h.battery <= low && !lowTold.contains(h.id)) {
-                lowTold.insert(h.id);
-                KNotification::event(QStringLiteral("lowBattery"), i18n("Headset battery low"), i18n("%1: the battery is at %2%. Charge it soon.", h.name, h.battery),
-                                     QStringLiteral("audio-headset"), KNotification::CloseOnTimeout, QStringLiteral("sparkystereoheadset"));
-            } else if (h.battery > low + 5) {
-                lowTold.remove(h.id);
             }
         }
     };
