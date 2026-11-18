@@ -23,7 +23,11 @@ sparky-pjeoffice install | remove | rollback | trust [--if-changed] | status [--
 
 Test:
 -------------
-tests/installer.sh in a disposable container (generated stand-ins for CNJ's ZIP, a local HTTPS server); tests/catalogue-matches-control.py; the tests of the watcher in watcher/.
+Everything runs in disposable containers (the skill brazil-certificates, references/pjeoffice-installed.md, has the commands and what each proves).
+- tests/installer.sh: the transaction with generated stand-ins for CNJ's ZIP and a local HTTPS server (48 checks); tests/mutations.sh: the red controls.
+- tests/catalogue-matches-control.py: the control file's declared download is the catalogue's.
+- watcher/test_watch.py: the watcher (21 checks).
+- tests/rig/signing.sh (a PDF and a login challenge through a generated file identity and SoftHSM, verified with OpenSSL), cutter.sh, plasma.sh (a Plasma login: tray, settings page), dolphin.sh, entry.sh (the app center entry's cases), lifecycle.sh (install, update, remove, purge), trust.sh (the program's own HTTPS codec with the merged certificate list), twostarts.sh.
 
 Install:
 -------------

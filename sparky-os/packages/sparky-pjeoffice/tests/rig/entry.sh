@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-3.0-or-later
 # As root in a container made from the flat repository image (the packages are offered, sparky-pjeoffice is not installed, the app center is extracted from its .deb):
-# the entry's page and its action, in four cases. Usage: entry.sh CASE OUT   CASE: page | good | wronghash | interrupted | switchfail
+# the entry's page and its action, in four cases. Usage: entry.sh CASE OUT   CASE: page | good | wronghash | offline | interrupted | switchfail
 # Needs /debs (the built packages), /tb (the proof helpers), /fx (rw scratch), and the network only for the cases that fetch (good, wronghash).
 set -u
 CASE=${1:?}; OUT=${2:?}; mkdir -p "$OUT"
@@ -19,7 +19,7 @@ case "${METERED:-no}" in yes) echo "u 1" ;; no) echo "u 2" ;; none) echo "no NM"
 BC
 chmod +x /usr/local/bin/busctl
 # a system without the tools: OpenSC, pcscd and libccid are the package's Recommends
-apt-get -y -q remove opensc pcscd libccid >/dev/null 2>&1
+case $CASE in interrupted|switchfail) ;; *) apt-get -y -q remove opensc pcscd libccid >/dev/null 2>&1 ;; esac
 APP=/usr/lib/sparky-aptus-stereo-appcenter
 page() { python3 -c "
 import re,sys,html
@@ -51,11 +51,13 @@ good)
   t "the page then offers the removal" "grep -q -i 'Installed' $OUT/page-after-install.txt && ! grep -q 'Packages apt installs' $OUT/page-after-install.txt"
   ;;
 wronghash)
+  # a reviewed catalogue with one digit of the SHA-256 changed, put in place before the package unpacks, and kept there: dpkg is told not to replace that one file
+  mkdir -p /usr/share/sparky-pjeoffice; echo 'path-exclude=/usr/share/sparky-pjeoffice/catalogue.json' > /etc/dpkg/dpkg.cfg.d/pj18-fixture-catalogue
+  mkdir -p /tmp/real && dpkg-deb -x /debs/sparky-pjeoffice_0.1.0+lc1_amd64.deb /tmp/real
   python3 - <<'PY'
 import json
-p='/usr/share/sparky-pjeoffice/catalogue.json'
-c=json.load(open(p)); v=c['versions'][c['current']]; v['sha256']=v['sha256'][:-1]+('0' if v['sha256'][-1]!='0' else '1')
-json.dump(c,open(p,'w'),indent=1)
+c=json.load(open('/tmp/real/usr/share/sparky-pjeoffice/catalogue.json')); v=c['versions'][c['current']]; v['sha256']=v['sha256'][:-1]+('0' if v['sha256'][-1]!='0' else '1')
+json.dump(c,open('/usr/share/sparky-pjeoffice/catalogue.json','w'),indent=1)
 PY
   METERED=no python3 $APP/actions/entry pjeoffice install > "$OUT/action.txt" 2>&1; RC=$?
   t "the action fails" "[ $RC != 0 ]"
@@ -65,6 +67,14 @@ PY
   t "the page shows the same sentence" "grep -q 'not the one that was reviewed' $OUT/page-after-failure.txt"
   t "the engine keeps the problem with a repair" "sparky-stereo-problems list sparky-pjeoffice | grep -q 'Repair: /usr/bin/sparky-pjeoffice install'"
   dpkg -s sparky-pjeoffice 2>/dev/null | grep '^Status' > "$OUT/dpkg-status.txt"
+  ;;
+offline)
+  METERED=no python3 $APP/actions/entry pjeoffice install > "$OUT/action.txt" 2>&1; RC=$?
+  t "with no network the action fails" "[ $RC != 0 ]"
+  t "it says the packages could not be downloaded and that nothing was changed" "grep -q 'could not be downloaded' $OUT/action.txt && grep -q 'Nothing was changed' $OUT/action.txt"
+  t "no package and no program were installed" "! dpkg -s sparky-pjeoffice 2>/dev/null | grep -q 'Status: install ok installed' && [ ! -e /opt/pjeoffice-pro ]"
+  python3 $APP/main-entry pjeoffice --render | page > "$OUT/page-after-failure.txt" 2>&1
+  t "the page still offers the install, and shows the sizes" "grep -q 'debinst' <(python3 $APP/main-entry pjeoffice --render) && grep -q '159.7 MiB' $OUT/page-after-failure.txt"
   ;;
 interrupted|switchfail)
   # the fixture's server and certificate authority (loopback only), as tests/installer.sh makes them
@@ -77,6 +87,7 @@ interrupted|switchfail)
   cp ca.crt /usr/local/share/ca-certificates/pj18-fixture-ca.crt && update-ca-certificates >/dev/null 2>&1
   python3 /pkg/tests/make-fixture.py $FX/www 2.5.90u >/dev/null
   python3 /pkg/tests/make-fixture.py $FX/www 2.5.92u --bad-java >/dev/null
+  mkdir -p /usr/share/sparky-pjeoffice; echo 'path-exclude=/usr/share/sparky-pjeoffice/catalogue.json' > /etc/dpkg/dpkg.cfg.d/pj18-fixture-catalogue
   python3 /pkg/tests/serve.py $FX/www srv.crt srv.key 8443 > server.log 2>&1 & S1=$!
   python3 /pkg/tests/serve.py $FX/www srv.crt srv.key 8444 --cut-at 3000 > server-cut.log 2>&1 & S2=$!
   sleep 2
@@ -98,12 +109,13 @@ PY
     t "the problem is gone" "! sparky-stereo-problems list sparky-pjeoffice | grep -q failed"
   else
     cp /fx/www/catalogue-2.5.90u.json /usr/share/sparky-pjeoffice/catalogue.json
-    sparky-pjeoffice install > "$OUT/first.txt" 2>&1
-    t "version 2.5.90u is installed first" "[ \"\$(readlink /opt/pjeoffice-pro/current)\" = versions/2.5.90u ]"
+    apt-get -y install sparky-pjeoffice > "$OUT/first.txt" 2>&1
+    t "version 2.5.90u is installed first, by apt" "[ \"\$(readlink /opt/pjeoffice-pro/current)\" = versions/2.5.90u ]"
+    # an update's two steps, as dpkg takes them: unpack the new package, then run its setup; the new reviewed catalogue (a version whose Java fails its checks) is put between them
+    dpkg --unpack /debs/sparky-pjeoffice_0.1.0+lc1_amd64.deb > "$OUT/apt-reinstall.txt" 2>&1
     cp /fx/www/catalogue-2.5.92u.json /usr/share/sparky-pjeoffice/catalogue.json
-    # what apt runs after an update's unpack: the package's own setup, here as a reinstall of the same package
-    apt-get -y --reinstall install sparky-pjeoffice > "$OUT/apt-reinstall.txt" 2>&1; RC=$?
-    t "apt completes: the failed update keeps the version in use, and says so" "[ $RC = 0 ] && grep -q 'did not install; the version that was in use still is' $OUT/apt-reinstall.txt"
+    dpkg --configure sparky-pjeoffice >> "$OUT/apt-reinstall.txt" 2>&1; RC=$?
+    t "dpkg completes: the failed update keeps the version in use, and says so" "[ $RC = 0 ] && grep -q 'did not install; the version that was in use still is' $OUT/apt-reinstall.txt"
     t "the version in use is still 2.5.90u" "[ \"\$(readlink /opt/pjeoffice-pro/current)\" = versions/2.5.90u ]"
     t "the engine keeps the reason, naming the version in use" "sparky-stereo-problems list sparky-pjeoffice | grep -q 'version 2.5.90u is still in use'"
     t "the signer's program folder of the failed version is not left" "[ ! -d /opt/pjeoffice-pro/versions/2.5.92u ] && [ -z \"\$(ls -d /opt/pjeoffice-pro/versions/.*new 2>/dev/null)\" ]"
