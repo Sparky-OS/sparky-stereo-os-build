@@ -2,7 +2,8 @@
 # Created by Daniel Ramos (Capitain Jack) 2026/11/17
 # Copyright 2026 under the GNU GPL3 License
 # The processor-level proof of a Go program (inside a container as root; /deb the build output, /src the build repository):
-# repo/cpu-baseline.py lists the instructions above the amd64 baseline, which a Go program always holds (the standard library and x/crypto
+# repo/cpu-baseline.py (which since milestone 8 judges a Go program by its build setting and the shape of each newer instruction) and, here, the run itself.
+# A Go program always holds instructions above the amd64 baseline (the standard library and x/crypto
 # carry AES-NI, AVX2, SHA-NI, POPCNT and SSE4.1 code that the runtime chooses by CPUID, and GOAMD64=v1 guards the compiler own POPCNT and ROUNDSD
 # the same way), so the proof is the program itself running on a processor that lacks them: qemu64 (SSE2 and SSE3 only), after a control
 # program with AES-NI shows that qemu64 refuses such an instruction.
@@ -19,7 +20,7 @@ echo "control: a program with AES-NI (aesenc)"
 qemu-x86_64 -cpu qemu64 /tmp/aes; echo "  on qemu64 (SSE2/SSE3, no AES-NI, no SSE4, no POPCNT, no AVX): exit=$? (132 = illegal instruction)"
 qemu-x86_64 -cpu max /tmp/aes; echo "  on max: exit=$?"
 echo "the program, whose own check lists 6,620 instructions above the baseline:"
-python3 -I /src/sparky-os/repo/cpu-baseline.py /r/usr/bin/OpenLinkHub 2>&1 | head -2
+python3 -I /src/sparky-os/repo/cpu-baseline.py /r/usr/bin/OpenLinkHub 2>&1 | head -2; echo "  (the tool knows Go since milestone 8: GOAMD64=v1 and every newer instruction in dispatched or guarded code; exit ${PIPESTATUS[0]})"
 mkdir -p /st && cp -a /r/usr/share/openlinkhub/database /st/ && ln -s /r/usr/share/openlinkhub/web /st/web && ln -s /r/usr/share/openlinkhub/static /st/static
 cd /st
 qemu-x86_64 -cpu qemu64 /r/usr/bin/OpenLinkHub >/tmp/olh.log 2>&1 &
