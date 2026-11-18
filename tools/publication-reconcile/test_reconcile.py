@@ -72,6 +72,36 @@ class Listings(unittest.TestCase):
 
 
 class Decisions(unittest.TestCase):
+    def test_reused_source_component_takes_the_qualified_generation_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            component = root / 'sample_1.0.orig.tar.xz'
+            component.write_bytes(b'shared upstream source')
+            sha = hashlib.sha256(component.read_bytes()).hexdigest()
+            rows = []
+            for version, decision in (('1.0-1', 'held'), ('1.0-2', 'candidate')):
+                descriptor = root / ('sample_' + version + '.dsc')
+                descriptor.write_text('Source: sample\nVersion: ' + version + '\nChecksums-Sha256:\n '
+                                      + sha + ' ' + str(component.stat().st_size) + ' ' + component.name + '\n')
+                rows.append(dict(stage=str(root), filename=descriptor.name, kind='source', source='sample',
+                                 source_version=version, decision=decision))
+            with (root / 'files.tsv').open('w') as stream:
+                writer = csv.DictWriter(stream, fieldnames=rows[0].keys(), delimiter='\t')
+                writer.writeheader()
+                writer.writerows(rows)
+            with (root / 'qualified.tsv').open('w') as stream:
+                writer = csv.DictWriter(stream, fieldnames=['path', 'source', 'version', 'sha256', 'bytes'], delimiter='\t')
+                writer.writeheader()
+                writer.writerow(dict(path=str(component), source='sample', version='1.0-2', sha256=sha,
+                                     bytes=component.stat().st_size))
+            subprocess.run([sys.executable, str(Path(__file__).with_name('leave-out.py')), str(root / 'files.tsv'),
+                            '--qualified-artifacts', str(root / 'qualified.tsv'), '--output', str(root / 'out')],
+                           check=True, capture_output=True)
+            with (root / 'out/stage-closure-decisions.tsv').open() as stream:
+                selected = [r for r in csv.DictReader(stream, delimiter='\t') if r['decision'] == 'candidate']
+            self.assertEqual([(r['source'], r['source_version'], r['filename']) for r in selected],
+                             [('sample', '1.0-2', component.name)])
+
     def test_held_unlisted_predecessor_and_changed_identity_are_not_candidates(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
