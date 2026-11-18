@@ -1,9 +1,11 @@
 #!/bin/sh
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Starts CNJ's PJeOffice Pro from the version sparky-pjeoffice installed. CNJ's own pjeoffice-pro.sh is not used: it deletes the
-# program's logs at every start and runs from its own folder. Every path here is the resolved folder of one version, so a switch to
-# another version never changes the files a running signer reads.
+# Starts CNJ's PJeOffice Pro from the version sparky-pjeoffice installed, and waits until it answers on localhost. CNJ's own
+# pjeoffice-pro.sh is not used: it deletes the program's logs at every start and runs from its own folder. Every path here is the
+# resolved folder of one version, so a switch to another version never changes the files a running signer reads.
+# Two starts at once (the menu entry and the tray at login) would make the second instance shut the first down ("Tentativa de shutdown
+# da porta 8800", measured), so the check and the start are made under one lock and the second start finds the signer answering.
 LINK=/opt/pjeoffice-pro/current
 APP=$(readlink -f "$LINK" 2>/dev/null)
 if [ -z "$APP" ] || [ ! -x "$APP/jre/bin/java" ]; then
@@ -21,6 +23,8 @@ answers() {
 	curl -fs --max-time 2 -X PUT -H 'Content-Type: application/json' -H 'Force-Preflight: true' -H 'Origin: http://127.0.0.1:8800' \
 		'http://127.0.0.1:8800/pjeOffice/?u=18' 2>/dev/null | grep -q '"success"'
 }
+exec 9>"$STATE/start.lock"
+flock -w 120 9 || { echo "PJeOffice Pro: another start is still waiting for the signer" >&2; exit 1; }
 if answers; then
 	exit 0
 fi
@@ -33,9 +37,22 @@ if [ -d "$CODEC" ]; then
 	LD_LIBRARY_PATH="$CODEC${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 	export LD_LIBRARY_PATH
 fi
-echo $$ > "$STATE/signer.pid"
 cd "$APP" || exit 1
-exec "$APP/jre/bin/java" -XX:+UseG1GC -XX:MinHeapFreeRatio=3 -XX:MaxHeapFreeRatio=3 -Xms20m -Xmx2048m \
+"$APP/jre/bin/java" -XX:+UseG1GC -XX:MinHeapFreeRatio=3 -XX:MaxHeapFreeRatio=3 -Xms20m -Xmx2048m \
 	-Dpjeoffice_home="$APP" -Dffmpeg_home=/var/lib/sparky-pjeoffice/ffmpeg \
 	-Dpjeoffice_looksandfeels=Metal -Dcutplayer4j_looksandfeels=Nimbus -Dsigner4j_a3auto=true \
-	-cp "$TRUST:$APP/pjeoffice-pro.jar" br.jus.cnj.pje.office.imp.PjeOfficePROUser >> "$STATE/signer.log" 2>&1
+	-cp "$TRUST:$APP/pjeoffice-pro.jar" br.jus.cnj.pje.office.imp.PjeOfficePROUser < /dev/null >> "$STATE/signer.log" 2>&1 9>&- &
+PID=$!
+echo "$PID" > "$STATE/signer.pid"
+for _ in $(seq 90); do
+	if answers; then
+		exit 0
+	fi
+	if ! kill -0 "$PID" 2>/dev/null; then
+		echo "PJeOffice Pro ended while starting; its log is $STATE/signer.log" >&2
+		exit 1
+	fi
+	sleep 1
+done
+echo "PJeOffice Pro did not answer within 90 seconds; its log is $STATE/signer.log" >&2
+exit 1

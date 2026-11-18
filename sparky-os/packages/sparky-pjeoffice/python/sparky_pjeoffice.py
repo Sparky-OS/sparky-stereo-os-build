@@ -649,27 +649,27 @@ def tray_running():
     return False
 
 
-def launch(wait=60, tell=False):
-    """Start the tray entry and the signer for the person and wait until the signer answers. With tell, a signer that does not
-    start is kept in the person's own list of problems with the place of its log."""
+def launch(wait=100, tell=False):
+    """Start the tray entry and the signer for the person and wait until the signer answers (the launcher holds the start under one lock,
+    so the tray's own start and this one never run two signers). With tell, a signer that does not start is kept in the person's own
+    list of problems with the place of its log."""
     if os.path.exists('/usr/bin/sparky-pjeoffice-tray') and not tray_running():
         subprocess.Popen(['/usr/bin/sparky-pjeoffice-tray'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True)
     if signer_answers():
         return 0
-    process = subprocess.Popen(['/usr/bin/pjeoffice-pro'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               start_new_session=True)
-    end = time.monotonic() + wait
-    while time.monotonic() < end:
-        if signer_answers():
-            engine('clear', '--person', PACKAGE, 'launch')
-            return 0
-        if process.poll() not in (None, 0):
-            break
-        time.sleep(1)
+    try:
+        result = subprocess.run(['/usr/bin/pjeoffice-pro'], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=wait)
+        reason = (result.stderr or result.stdout).strip().splitlines()
+        reason = reason[-1] if reason else 'the launcher exited with %d' % result.returncode
+        failed = result.returncode != 0
+    except subprocess.TimeoutExpired:
+        reason, failed = 'it did not answer within %d seconds' % wait, True
+    if not failed and signer_answers():
+        engine('clear', '--person', PACKAGE, 'launch')
+        return 0
     if tell:
         log = os.path.join(os.environ.get('XDG_STATE_HOME') or os.path.join(os.path.expanduser('~'), '.local/state'), 'sparky-pjeoffice/signer.log')
-        reason = 'the program ended with status %s' % process.poll() if process.poll() is not None else 'it did not answer within %d seconds' % wait
         tell_person(Failure('launch', 'LOCAL11', [reason, log], reason))
     return 1
 
@@ -740,6 +740,7 @@ def main(argv=None):
     commands.add_parser('check')
     sign = commands.add_parser('sign-pdf')
     sign.add_argument('files', nargs='+')
+    sign.add_argument('--wait', type=int, default=300, help='seconds to wait for the signature file (the person types the PIN meanwhile)')
     commands.add_parser('launch').add_argument('--tell', action='store_true')
     arguments = parser.parse_args(argv)
     if arguments.command in ('install', 'remove', 'rollback', 'trust') and os.geteuid() != 0:
@@ -769,7 +770,7 @@ def dispatch(arguments):
     if arguments.command == 'check':
         return check()
     if arguments.command == 'sign-pdf':
-        return sign_pdf(arguments.files)
+        return sign_pdf(arguments.files, arguments.wait)
     return launch(tell=arguments.tell)
 
 
