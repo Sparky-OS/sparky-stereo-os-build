@@ -9,6 +9,7 @@ Writes OUT_DIR/pjeoffice-pro-vVERSION-linux_x64.zip and OUT_DIR/catalogue-VERSIO
 import hashlib, json, os, subprocess, sys, tempfile, zipfile
 from pathlib import Path
 sys.path.insert(0, '/usr/lib/sparky-pjeoffice')
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'python'))
 import jks
 
 out, version = Path(sys.argv[1]), sys.argv[2]
