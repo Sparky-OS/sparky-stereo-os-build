@@ -35,10 +35,11 @@ Viewer::Viewer(QObject *parent)
         Q_EMIT fileChanged();
     });
     connect(m_worker.get(), &F3DWorker::loadFailed, this, [this](const QString &path, const QString &reason) {
+        qWarning("%s: %s", qPrintable(path), qPrintable(reason));
         const QString name = QFileInfo(path).fileName();
         m_problem = reason == QLatin1String("no reader")
             ? i18nc("@info the file is not a model the viewer knows", "“%1” is not a 3D model format the viewer can read.", name)
-            : i18nc("@info a model file that cannot be read, then the reason", "“%1” cannot be read: %2", name, reason);
+            : i18nc("@info a model file that cannot be read", "“%1” cannot be read: it is damaged or not a valid model file.", name);
         Q_EMIT problemChanged();
     });
     connect(m_worker.get(), &F3DWorker::depthState, this, [this](int state, double, double) {
