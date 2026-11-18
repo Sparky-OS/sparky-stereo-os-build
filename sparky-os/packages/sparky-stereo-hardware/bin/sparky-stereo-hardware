@@ -131,6 +131,9 @@ else
 	# upstream's own install (its scripts put the program in /opt and the unit in /etc) is the person's: the package openlinkhub is not planned beside it
 	if [[ -e /etc/systemd/system/OpenLinkHub.service || -e /usr/lib/systemd/system/OpenLinkHub.service || -e /opt/OpenLinkHub ]]; then echo yes >"$FACTS/openlinkhub"; else echo no >"$FACTS/openlinkhub"; fi
 	if [[ -e /etc/systemd/system/OpenLinkHub.service || -e /opt/OpenLinkHub || -e /etc/udev/rules.d/99-openlinkhub.rules ]]; then echo yes >"$FACTS/openlinkhub-upstream"; else echo no >"$FACTS/openlinkhub-upstream"; fi
+	# a CoreCtrl or a LACT the person installed by hand is theirs: the package lact is not planned beside it (ORDER 108, milestone 10)
+	if [[ -e /usr/bin/corectrl ]]; then echo yes >"$FACTS/corectrl"; else echo no >"$FACTS/corectrl"; fi
+	if [[ -e /usr/local/bin/lact || -e /usr/local/lib/systemd/system/lactd.service || -e /etc/systemd/system/lactd.service ]]; then echo yes >"$FACTS/lact-local"; else echo no >"$FACTS/lact-local"; fi
 	: >"$FACTS/hid-uevents"
 	for file in /sys/bus/hid/devices/*/uevent; do
 		[[ ! -f "$file" ]] || cat "$file" >>"$FACTS/hid-uevents"
