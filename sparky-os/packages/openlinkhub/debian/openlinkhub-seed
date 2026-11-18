@@ -1,0 +1,53 @@
+#!/bin/sh
+# Created by Daniel Ramos (Capitain Jack) 2026/11/17
+# Copyright 2026 under the GNU GPL3 License
+# Run by OpenLinkHub.service before the program, as its user, in /var/lib/openlinkhub. The program reads and writes everything relative
+# to its working folder: config.json (it makes its own), database/ (default profiles it also writes back), web/ and static/ (read only).
+#   web/ and static/ become links to /usr/share/openlinkhub (a real folder or another link there is the person's and stays);
+#   database/ is seeded from /usr/share/openlinkhub/database: a file that is not there is copied, a file still byte for byte as this script
+#   copied it is replaced by a newer default, and a file the person or the program changed is never touched; a file the person deleted
+#   (recorded, absent) is not brought back. What was copied is recorded in .seed-sha256.
+set -eu
+share=/usr/share/openlinkhub
+state=${OPENLINKHUB_STATE:-/var/lib/openlinkhub}
+share=${OPENLINKHUB_SHARE:-$share}
+manifest=$state/.seed-sha256
+cd "$state"
+for dir in web static; do
+	if [ ! -e "$dir" ] && [ ! -L "$dir" ]; then ln -s "$share/$dir" "$dir"; fi
+done
+mkdir -p database
+[ -f "$manifest" ] || : >"$manifest"
+new=$(mktemp "$state/.seed-sha256.XXXXXX")
+trap 'rm -f "$new"' EXIT
+copied=0 upgraded=0 kept=0
+( cd "$share/database" && find . -type f | LC_ALL=C sort ) >"$new.list"
+while IFS= read -r file; do
+	file=${file#./}
+	from=$share/database/$file
+	to=$state/database/$file
+	now=$(sha256sum "$from" | cut -d' ' -f1)
+	was=$(awk -v f="$file" '{ line = $0; sub(/^[0-9a-f]+  /, "", line); if (line == f) { print $1; exit } }' "$manifest")
+	if [ -z "$was" ]; then
+		if [ ! -e "$to" ]; then
+			mkdir -p "$(dirname "$to")"
+			cp "$from" "$to"
+			copied=$((copied + 1))
+		else
+			kept=$((kept + 1))
+		fi
+		printf '%s  %s\n' "$now" "$file" >>"$new"
+	elif [ ! -e "$to" ]; then
+		printf '%s  %s\n' "$was" "$file" >>"$new"
+	elif [ "$(sha256sum "$to" | cut -d' ' -f1)" = "$was" ] && [ "$was" != "$now" ]; then
+		cp "$from" "$to"
+		upgraded=$((upgraded + 1))
+		printf '%s  %s\n' "$now" "$file" >>"$new"
+	else
+		printf '%s  %s\n' "$was" "$file" >>"$new"
+		kept=$((kept + 1))
+	fi
+done <"$new.list"
+rm -f "$new.list"
+LC_ALL=C sort -k2 "$new" >"$manifest"
+echo "openlinkhub-seed: $copied database files copied, $upgraded default files replaced by newer ones, $kept left as they are" >&2

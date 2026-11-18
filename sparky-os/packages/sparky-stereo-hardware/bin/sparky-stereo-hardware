@@ -127,8 +127,10 @@ else
 	for file in board_vendor board_name; do
 		if [[ -r /sys/class/dmi/id/$file ]]; then cat "/sys/class/dmi/id/$file" >"$FACTS/dmi-${file//_/-}"; fi
 	done
-	# OpenLinkHub (upstream's package, not in Debian) owns the Corsair devices it shares with OpenRGB and liquidctl (ORDER 108)
+	# OpenLinkHub (not in Debian; the edition's package of upstream's program) owns the Corsair hubs, coolers, lighting nodes and power supplies it shares with OpenRGB and liquidctl (ORDER 108)
+	# upstream's own install (its scripts put the program in /opt and the unit in /etc) is the person's: the package openlinkhub is not planned beside it
 	if [[ -e /etc/systemd/system/OpenLinkHub.service || -e /usr/lib/systemd/system/OpenLinkHub.service || -e /opt/OpenLinkHub ]]; then echo yes >"$FACTS/openlinkhub"; else echo no >"$FACTS/openlinkhub"; fi
+	if [[ -e /etc/systemd/system/OpenLinkHub.service || -e /opt/OpenLinkHub || -e /etc/udev/rules.d/99-openlinkhub.rules ]]; then echo yes >"$FACTS/openlinkhub-upstream"; else echo no >"$FACTS/openlinkhub-upstream"; fi
 	: >"$FACTS/hid-uevents"
 	for file in /sys/bus/hid/devices/*/uevent; do
 		[[ ! -f "$file" ]] || cat "$file" >>"$FACTS/hid-uevents"

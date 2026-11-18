@@ -1,0 +1,29 @@
+OpenLinkHub for Sparky Stereo OS
+================================
+
+Where things are
+  program        /usr/bin/OpenLinkHub
+  web page       http://127.0.0.1:27003/ (the page's files: /usr/share/openlinkhub/web and static)
+  working folder /var/lib/openlinkhub  (config.json, database/ with the profiles; web and static are links)
+  rules          /usr/lib/udev/rules.d/99-openlinkhub.rules
+  service        OpenLinkHub.service (enabled when the package is installed; systemctl disable --now OpenLinkHub keeps it off across upgrades)
+
+The state folder is yours: openlinkhub-seed never overwrites a file that was changed (by you or by the program), and never brings back
+a file you deleted. Removing the package keeps /var/lib/openlinkhub; purging it removes it (the system user openlinkhub stays).
+
+If upstream's own install is on the computer
+  A copy installed with upstream's install.sh (/opt/OpenLinkHub, its unit in /etc/systemd/system/OpenLinkHub.service, its rules in
+  /etc/udev/rules.d/99-openlinkhub.rules) keeps the name of this package's unit and rules, and its files win. Installing this package
+  changes nothing of it: nothing is enabled, started, restarted, stopped or moved. To change over to this package, by hand:
+    sudo systemctl disable --now OpenLinkHub
+    sudo mkdir -p /var/lib/openlinkhub && sudo cp -a /opt/OpenLinkHub/database /opt/OpenLinkHub/config.json /var/lib/openlinkhub/
+    sudo chown -R openlinkhub:openlinkhub /var/lib/openlinkhub
+    sudo rm /etc/systemd/system/OpenLinkHub.service /etc/udev/rules.d/99-openlinkhub.rules
+    sudo systemctl daemon-reload && sudo udevadm control --reload-rules
+    sudo systemctl enable --now OpenLinkHub
+  and, when you are sure, remove /opt/OpenLinkHub yourself. Nothing here does it for you.
+
+Who owns a device
+  Where OpenLinkHub and OpenRGB would both open a Corsair hub, cooler, lighting node or power supply, sparky-stereo-hardware gives it to
+  OpenLinkHub while this program is installed and takes OpenRGB's access away (62-sparky-stereo-peripheral-owner.rules); an empty file of
+  that name in /etc/udev/rules.d gives it back.
