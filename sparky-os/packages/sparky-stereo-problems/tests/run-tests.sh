@@ -219,7 +219,7 @@ check "its output was shown" "grep -q fixing $W/rep.out"
 check "and the problem is over" "[ $rc = 0 ] && [ ! -e /home/alice/.local/state/sparky-stereo-problems/${P}_mine.json ]"
 $B keep --machine $P root-only LOCAL4 "R" r.service @LOCAL8 --repair '["true"]'
 as alice $B repair --machine $P root-only >$W/rep.out 2>&1; rc=$?
-check "a person repairing the machine's problem: exit 1, it needs an administrator, said with how" "[ $rc = 1 ] && grep -q 'needs an administrator: pkexec sparky-stereo-problems repair --machine sparky-stereo-problems root-only' $W/rep.out"
+check "a person repairing the machine's problem: exit 1, it needs an administrator, said with how" "[ $rc = 1 ] && grep -q 'needs an administrator: pkexec /usr/libexec/sparky-stereo-problems/pkexec-repair repair --machine sparky-stereo-problems root-only' $W/rep.out"
 check "and the problem stays" "[ -f $M/${P}_root-only.json ]"
 $B keep --machine $P none LOCAL4 "N" n.service @LOCAL8
 $B repair --machine $P none >$W/rep.out 2>&1; rc=$?
@@ -288,15 +288,12 @@ env -i LANG=de_DE.UTF-8 $B say $P LOCAL4 "S" s.service @LOCAL8 >$W/say.out 2>&1;
 check "say exits 0, in the person's language and English" "[ $rc = 0 ] && grep -q '^sparky-stereo-problems: Der Systemdienst S' $W/say.out && grep -q '^sparky-stereo-problems: (en) The system service S' $W/say.out"
 check "say keeps nothing" "[ $rc = 0 ] && [ -d $M ] && [ -z \"\$(ls $M)\" ]"
 
-echo "== pkexec runs only a repair of what root kept"
+echo "== an inherited pkexec mark does not restrict the general command"
 reset
-$B keep --machine $P px LOCAL4 "P" p.service @LOCAL8 --repair '["true"]'
-PKEXEC_UID=1000 $B keep --machine $P px2 LOCAL4 >$W/px.out 2>&1; rc=$?
-check "under pkexec, keep is refused (exit 2)" "[ $rc = 2 ] && [ ! -e $M/${P}_px2.json ]"
-PKEXEC_UID=1000 $B repair --person $P px >$W/px.out 2>&1; rc=$?
-check "under pkexec, a person's repair is refused (exit 2)" "[ $rc = 2 ]"
-PKEXEC_UID=1000 SPARKY_STEREO_ROOT=/nonexistent $B repair --machine $P px >$W/px.out 2>&1; rc=$?
-check "under pkexec, repair --machine runs, and the caller's environment names no store" "[ $rc = 0 ] && [ ! -e $M/${P}_px.json ]"
+PKEXEC_UID=1000 $B keep --machine $P px LOCAL4 "P" p.service @LOCAL8 --repair '["true"]' >$W/px.out 2>&1; rc=$?
+check "with an inherited mark, keep runs" "[ $rc = 0 ] && [ -e $M/${P}_px.json ]"
+PKEXEC_UID=1000 $B repair --machine $P px >$W/px.out 2>&1; rc=$?
+check "with an inherited mark, repair runs" "[ $rc = 0 ] && [ ! -e $M/${P}_px.json ]"
 
 echo "== the failed-service handler, with systemd's MONITOR_ variables"
 reset

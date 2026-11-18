@@ -1,4 +1,19 @@
 -------------------------------------------------------------------------------
+  Version 0.2.4 (2026-11-18)
+-------------------------------------------------------------------------------
+  * The repair action names its own compiled entry point (ORDER 661), restricted to repairs of records root kept.
+    An inherited PKEXEC_UID no longer refuses package steps; privileged callers use the dedicated path.
+
+-------------------------------------------------------------------------------
+  Version 0.2.3 (2026-11-17)
+-------------------------------------------------------------------------------
+  * A package tool started through pkexec no longer ends every dpkg run in an error (ORDER 658). dpkg's hook of
+    the engine inherited PKEXEC_UID from the tool (the installer, started by remsu, was the case found: its step
+    that removes the live packages failed with apt's status 100), and the engine refused the call as if pkexec had
+    started the engine itself. The hook drops the variable for its one call
+  * When the engine cannot read the kept problems after a package run, the hook says so on standard error and the
+    package run ends as dpkg decided; before, an engine that could not start made every dpkg run fail
+-------------------------------------------------------------------------------
   Version 0.2.2 (2026-11-17)
 -------------------------------------------------------------------------------
   * The engine runs on every 64-bit processor again (ORDER 658). Its build did not tell Zig the target processor, so

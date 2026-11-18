@@ -15,7 +15,7 @@ tool = '/usr/bin/sparky-stereo-hardware'
 base = {
     'lspci': '', 'lsusb': '', 'cpuinfo': 'vendor_id : AuthenticAMD\n', 'laptop': '1\n', 'architecture': 'amd64\n',
     'hid-uevents': '', 'input-properties': '', 'firmware-packages': '', 'nvidia-detect': 'No NVIDIA GPU detected.\n',
-    'dmi-board-vendor': 'Some Board Maker\n', 'dmi-board-name': 'TEST\n',
+    'dmi-board-vendor': 'Some Board Maker\n', 'dmi-board-name': 'TEST\n', 'openlinkhub': 'no\n', 'openlinkhub-upstream': 'no\n',
 }
 
 
@@ -35,18 +35,30 @@ cases = [
     ('a Logitech G810 keyboard', {'lsusb': usb('046d:c337')}, {'g810-led'}, set(), ['fact\tperipheral\tg810-led\t046d:c337'], []),
     ('a Razer keyboard', {'lsusb': usb('1532:0243')}, {'openrazer-daemon', 'openrazer-driver-dkms', 'openrgb'}, set(),
      ['fact\tperipheral\topenrazer\t1532:0243'], []),
-    # the clash of 2026-11-06: an iCUE LINK System Hub, no OpenLinkHub on the machine: OpenRGB owns it
-    ('an iCUE LINK hub, OpenLinkHub absent', {'lsusb': usb(HUB), 'openlinkhub': 'no\n'}, {'openrgb'}, set(),
-     ['fact\tperipheral\topenrgb\t' + HUB, 'action\topenrgb-session'], []),
-    # OpenLinkHub installed: it owns the hub, OpenRGB is not installed for it, no session start for a device OpenRGB would not open
-    ('an iCUE LINK hub, OpenLinkHub installed', {'lsusb': usb(HUB), 'openlinkhub': 'yes\n'}, set(), {'openrgb', 'liquidctl'},
-     [f'owner\t{HUB}\topenlinkhub\tnot OpenRGB\tCorsair_iCUE_Link_System_Hub'], ['action\topenrgb-session']),
-    # a cooler both liquidctl and OpenRGB drive
-    ('an H100i v2 cooler, OpenLinkHub absent', {'lsusb': usb(PSU_COOLER), 'openlinkhub': 'no\n'}, {'openrgb', 'liquidctl'}, set(), [], []),
-    ('an H100i v2 cooler, OpenLinkHub installed', {'lsusb': usb(PSU_COOLER), 'openlinkhub': 'yes\n'}, set(), {'openrgb', 'liquidctl'},
+    # the clash of 2026-11-06: an iCUE LINK System Hub. OpenLinkHub, the edition's package of upstream's program, is installed for it and
+    # owns it; OpenRGB is not installed for it (Daniel, 2026-11-17: "I agree with the corsair plan - the user can always change it inside openrgb")
+    ('an iCUE LINK hub', {'lsusb': usb(HUB)}, {'openlinkhub'}, {'openrgb', 'liquidctl'},
+     ['fact\tperipheral\topenlinkhub\t' + HUB, f'owner\t{HUB}\topenlinkhub\tnot OpenRGB\tCorsair_iCUE_Link_System_Hub'], ['action\topenrgb-session']),
+    # the same hub with upstream's own install on the machine (/opt/OpenLinkHub): the person's, so the package is not planned beside it
+    ('an iCUE LINK hub, upstream\'s own OpenLinkHub installed', {'lsusb': usb(HUB), 'openlinkhub': 'yes\n', 'openlinkhub-upstream': 'yes\n'},
+     set(), {'openlinkhub', 'openrgb', 'liquidctl'},
+     ['fact\tperipheral\topenlinkhub-upstream\t' + HUB, f'owner\t{HUB}\topenlinkhub\tnot OpenRGB\tCorsair_iCUE_Link_System_Hub'], ['action\topenrgb-session']),
+    # a cooler both liquidctl and OpenRGB drive: OpenLinkHub's, both kept out
+    ('an H100i v2 cooler', {'lsusb': usb(PSU_COOLER)}, {'openlinkhub'}, {'openrgb', 'liquidctl'},
      [f'owner\t{PSU_COOLER}\topenlinkhub\tnot OpenRGB\tCorsair_H100i_v2', f'owner\t{PSU_COOLER}\topenlinkhub\tnot liquidctl\tCorsair_H100i_v2'], []),
-    # a device only OpenRGB drives stays OpenRGB's even where OpenLinkHub is installed
-    ('a Wraith Prism, OpenLinkHub installed', {'lsusb': usb(WRAITH), 'openlinkhub': 'yes\n'}, {'openrgb'}, set(), ['action\topenrgb-session'], []),
+    ('a Lighting Node Pro', {'lsusb': usb('1b1c:0c0b')}, {'openlinkhub'}, {'openrgb', 'liquidctl'}, ['fact\tperipheral\topenlinkhub\t1b1c:0c0b'], []),
+    # a power supply liquidctl alone lists
+    ('an HX750i power supply', {'lsusb': usb('1b1c:1c05')}, {'openlinkhub'}, {'liquidctl', 'openrgb'}, ['fact\tperipheral\topenlinkhub\t1b1c:1c05'], []),
+    # Corsair keyboards, mice and the LT100 tower stay OpenRGB's: OpenLinkHub drives them too, the edition does not carry it for them
+    ('a Corsair K95 keyboard', {'lsusb': usb('1b1c:1b11')}, {'openrgb'}, {'openlinkhub', 'liquidctl'},
+     ['fact\tperipheral\topenrgb\t1b1c:1b11', 'action\topenrgb-session'], []),
+    ('a Corsair Scimitar mouse', {'lsusb': usb('1b1c:1b1e')}, {'openrgb'}, {'openlinkhub'}, ['action\topenrgb-session'], []),
+    ('a Corsair LT100 lighting tower', {'lsusb': usb('1b1c:0c23')}, {'openrgb'}, {'openlinkhub'}, ['action\topenrgb-session'], []),
+    # a hub and a keyboard together: each goes to its own tool
+    ('a hub and a keyboard', {'lsusb': usb(HUB, '1b1c:1b11')}, {'openlinkhub', 'openrgb'}, {'liquidctl'},
+     ['fact\tperipheral\topenlinkhub\t' + HUB, 'fact\tperipheral\topenrgb\t1b1c:1b11'], []),
+    # a device only OpenRGB drives stays OpenRGB's
+    ('a Wraith Prism', {'lsusb': usb(WRAITH)}, {'openrgb'}, {'openlinkhub'}, ['action\topenrgb-session'], []),
     # a lights-only controller that OpenRGB and liquidctl both list (liquidctl names it "LED Controller"): OpenRGB's; liquidctl is for coolers and fans
     ('an ASUS Aura LED controller', {'lsusb': usb('0b05:18f3')}, {'openrgb'}, {'liquidctl'},
      ['owner\t0b05:18f3\topenrgb\tnot liquidctl\tASUS Aura LED Controller', 'action\topenrgb-session'], []),

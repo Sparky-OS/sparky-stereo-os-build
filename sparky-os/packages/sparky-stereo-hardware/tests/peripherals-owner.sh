@@ -4,7 +4,8 @@
 # One owner per device, on recorded devices (ORDER 108, milestone 6). Inside a container as root (the test installs umockdev and udev).
 # Mounts: /pkg (the package folder), /orgb (OpenRGB's 60-openrgb.rules, from the published package), env OWNER_RULES (default /pkg/share/peripherals/62-...).
 # Red: with OpenLinkHub installed and only OpenRGB's rules, the recorded iCUE LINK hub is given to the person (uaccess): the measured clash.
-# Green: with the owner rule it is not; without OpenLinkHub it still is; an empty file in /etc/udev/rules.d gives it back; a device OpenRGB alone drives keeps it.
+# Green: with the owner rule it is not; without OpenLinkHub it still is; an empty file in /etc/udev/rules.d gives it back; a device OpenRGB alone
+# drives keeps it, and so does a Corsair keyboard (OpenLinkHub drives it too, the edition carries it for hubs, coolers, lighting nodes and power supplies only).
 set -uo pipefail
 sh /run/https-only-apt.sh >/dev/null 2>&1 || true
 export DEBIAN_FRONTEND=noninteractive
@@ -19,6 +20,7 @@ tags() { # DEVICE_FILE SYSPATH -> the device's tags and the owner property
 }
 HUB=/devices/pci0000:00/usb1/1-1/1-1:1.0/0003:1B1C:0C3F.0001/hidraw/hidraw0
 WRA=/devices/pci0000:00/usb1/1-1/1-1:1.0/0003:2516:0051.0001/hidraw/hidraw0
+KBD=/devices/pci0000:00/usb1/1-1/1-1:1.0/0003:1B1C:1B11.0001/hidraw/hidraw0
 OLH=/opt/OpenLinkHub
 rm -rf $OLH /etc/udev/rules.d/$OWNER $RULES/$OWNER
 out=$(tags /pkg/tests/peripherals/hub.umockdev $HUB); [[ $out == *uaccess* ]] && ok "the recorded iCUE LINK hub is given to the person by OpenRGB's rules (OpenLinkHub absent): $out" || bad "no uaccess on the hub: $out"
@@ -27,6 +29,7 @@ out=$(tags /pkg/tests/peripherals/hub.umockdev $HUB); [[ $out == *uaccess* ]] &&
 cp /pkg/share/peripherals/$OWNER $RULES/
 out=$(tags /pkg/tests/peripherals/hub.umockdev $HUB); [[ $out != *uaccess* && $out == *SPARKY_PERIPHERAL_OWNER=openlinkhub* ]] && ok "green: with the owner rule OpenLinkHub owns the hub, no uaccess: $out" || bad "green expected no uaccess: $out"
 out=$(tags /pkg/tests/peripherals/wraith.umockdev $WRA); [[ $out == *uaccess* ]] && ok "a device only OpenRGB drives keeps its access with OpenLinkHub installed: $out" || bad "wraith lost uaccess: $out"
+out=$(tags /pkg/tests/peripherals/keyboard.umockdev $KBD); [[ $out == *uaccess* && $out != *SPARKY_PERIPHERAL_OWNER* ]] && ok "a Corsair K95 keyboard keeps OpenRGB's access with OpenLinkHub installed: $out" || bad "keyboard lost uaccess: $out"
 rmdir $OLH
 out=$(tags /pkg/tests/peripherals/hub.umockdev $HUB); [[ $out == *uaccess* && $out != *SPARKY_PERIPHERAL_OWNER* ]] && ok "OpenLinkHub absent: OpenRGB keeps the hub with the owner rule installed: $out" || bad "absent case: $out"
 touch /usr/lib/systemd/system/OpenLinkHub.service

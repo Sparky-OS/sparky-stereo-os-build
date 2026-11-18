@@ -3,10 +3,16 @@
 # Copyright 2026 under the GNU GPL3 License
 """Make share/peripherals/*.ids and the owner rule from each tool's own device list (ORDER 108, milestone 6).
 
-Usage: make-peripheral-ids.py ROOTS OLH_RULES OUTDIR
-  ROOTS      a folder with one extracted package root per name (dpkg-deb -x): openrgb, solaar, ratbagd, liquidctl, g810-led, openrazer-driver-dkms
-  OLH_RULES  OpenLinkHub's own 99-openlinkhub.rules (github.com/jurkovic-nikola/OpenLinkHub), as read
-  OUTDIR     where the .ids files, owners.tsv and 62-sparky-stereo-peripheral-owner.rules are written
+Usage: make-peripheral-ids.py ROOTS OLH_RULES OLH_DEVICES OUTDIR
+  ROOTS        a folder with one extracted package root per name (dpkg-deb -x): openrgb, solaar, ratbagd, liquidctl, g810-led, openrazer-driver-dkms
+  OLH_RULES    OpenLinkHub's own 99-openlinkhub.rules (github.com/jurkovic-nikola/OpenLinkHub), as read
+  OLH_DEVICES  OpenLinkHub's src/devices/devices.go from the same tag: its device registry names, for each product id, the folder
+               (package) of src/devices that drives it, and that folder is the family
+  OUTDIR       where the .ids files, owners.tsv and 62-sparky-stereo-peripheral-owner.rules are written
+OpenLinkHub's families are told by its own device folders (milestone 7). The edition carries OpenLinkHub for four of them: hubs,
+coolers, lighting nodes and power supplies (Daniel, 2026-11-17: "I agree with the corsair plan - the user can always change it inside
+openrgb"). Its keyboards, mice, headsets and the rest stay OpenRGB's: openlinkhub.ids and owners.tsv list only the four;
+openlinkhub-families.tsv lists every id of the registry with its folder, family and whether the edition carries it.
 Every line of a .ids file is `vendor:product<TAB>name` (the name is the tool's own tag or file name). The first lines say which
 package and version the list was read from, so a regenerated file shows what changed.
 """
@@ -14,7 +20,7 @@ import pathlib
 import re
 import sys
 
-roots, olh_rules, out = (pathlib.Path(a) for a in sys.argv[1:4])
+roots, olh_rules, olh_devices, out = (pathlib.Path(a) for a in sys.argv[1:5])
 out.mkdir(parents=True, exist_ok=True)
 VERSIONS = {}
 for line in (roots / "VERSIONS").read_text().splitlines():
@@ -84,16 +90,45 @@ for f in sorted((roots / "ratbagd/usr/share/libratbag").glob("*.device")):
     for pair in re.findall(r"usb:([0-9a-fA-F]{4}:[0-9a-fA-F]{4})", re.search(r"^DeviceMatch=(.*)$", t, re.M).group(1) if re.search(r"^DeviceMatch=", t, re.M) else ""):
         ratbag_rows.append((pair.lower(), name.group(1) if name else f.stem))
 ratbag = write("ratbag", f"ratbagd {VERSIONS['ratbagd']} usr/share/libratbag/*.device (gaming mice libratbag drives, configured with piper)", ratbag_rows)
-# OpenLinkHub: its own udev rules, as read from its repository
-olh_rows = []
+# OpenLinkHub: its own udev rules, as read from its repository, and its registry of products (devices.go), whose Init functions name the
+# folder of src/devices that drives each id. A folder is one family; a folder not in FAMILY_OF is "other" (keyboards, mice, headsets,
+# dongles, screens), which the edition does not carry OpenLinkHub for.
+FAMILY_OF = {"lsh": "hub", "cc": "hub", "ccxt": "hub", "cduo": "hub", "cpro": "hub",
+             "platinum": "cooler", "hydro": "cooler", "elite": "cooler", "xc7": "cooler", "nautilusLcd": "cooler", "cone": "cooler",
+             "lncore": "lighting-node", "lnpro": "lighting-node",
+             "psuhid": "power-supply", "psudongle": "power-supply"}
+CARRIED = ("hub", "cooler", "lighting-node", "power-supply")
+registry = {}
+for m in re.finditer(r'^\s+(\d+):\s+\{[^"\n]*"([^"]*)",[^\n]*?\b([A-Za-z0-9]+)\.Init\b', olh_devices.read_text(), re.M):
+    registry[f"1b1c:{int(m.group(1)):04x}"] = (m.group(3), m.group(2))
+vendors_other = {}  # products of another vendor in the rules (Scuf 2e95): the registry key is the product id alone
+all_rule_rows = []
 for line in olh_rules.read_text().splitlines():
     m = re.search(r'idVendor\}=="([0-9a-fA-F]{4})", ATTRS\{idProduct\}=="([0-9a-fA-F]{4})"', line)
     if m and not line.lstrip().startswith("#"):
-        olh_rows.append((f"{m.group(1).lower()}:{m.group(2).lower()}", ""))
-olh = write("openlinkhub", f"OpenLinkHub {VERSIONS['openlinkhub']} 99-openlinkhub.rules (github.com/jurkovic-nikola/OpenLinkHub, GPL-3.0; not in Debian)", olh_rows)
+        all_rule_rows.append(f"{m.group(1).lower()}:{m.group(2).lower()}")
+families = {}
+for ident in sorted(set(all_rule_rows)):
+    product = ident.split(":")[1]
+    found = registry.get("1b1c:" + product)
+    folder, name = found if found else ("", "")
+    families[ident] = (folder, FAMILY_OF.get(folder, "other" if folder else "unlisted"), name)
+with (out / "openlinkhub-families.tsv").open("w") as f:
+    f.write(f"# OpenLinkHub {VERSIONS['openlinkhub']}: each id of 99-openlinkhub.rules with the folder of src/devices that drives it (devices.go) and its family\n")
+    f.write("# vendor:product<TAB>folder<TAB>family<TAB>carried by the edition (yes: " + ", ".join(CARRIED) + ")<TAB>name\n")
+    for ident, (folder, family, name) in families.items():
+        f.write(f"{ident}\t{folder}\t{family}\t{'yes' if family in CARRIED else 'no'}\t{name}\n")
+olh_rows = [(ident, f"{family}: {name}") for ident, (folder, family, name) in families.items() if family in CARRIED]
+olh = write("openlinkhub", f"OpenLinkHub {VERSIONS['openlinkhub']} 99-openlinkhub.rules and src/devices/devices.go (github.com/jurkovic-nikola/OpenLinkHub, GPL-3.0; the "
+            f"families {', '.join(CARRIED)} only; not in Debian, carried as the package openlinkhub)", olh_rows)
+by_family = {}
+for ident, (folder, family, name) in families.items():
+    by_family.setdefault(family, []).append(ident)
+summary = ", ".join(f"{family} {len(by_family.get(family, []))}" for family in CARRIED)
+other = sum(len(v) for k, v in by_family.items() if k not in CARRIED)
 
-# One owner per device: a device both OpenLinkHub and another tool of the table open belongs to OpenLinkHub when it is installed
-# (the iCUE LINK hub clash, measured 2026-11-06), to OpenRGB when it is not.
+# One owner per device: a device both OpenLinkHub (for the four families it is carried for) and another tool of the table open belongs to
+# OpenLinkHub (the iCUE LINK hub clash, measured 2026-11-06); detection installs it for these devices. The rest stays OpenRGB's.
 others = {"openrgb": openrgb, "liquidctl": liquid}
 overlap = {}
 for tool, ids in others.items():
@@ -113,8 +148,8 @@ by_vendor = {}
 for ident in sorted(overlap):
     vendor_id, product_id = ident.split(":")
     by_vendor.setdefault(vendor_id, []).append(product_id)
-rule = ['# Sparky Stereo OS (ORDER 108, milestone 6): one owner per device. OpenLinkHub and OpenRGB (or liquidctl) both open the Corsair',
-        '# devices below; read together they cross each other\'s replies (measured 2026-11-06 on an iCUE LINK System Hub: a power supply',
+rule = ['# Sparky Stereo OS (ORDER 108): one owner per device. OpenLinkHub and OpenRGB (or liquidctl) both open the Corsair',
+        '# hubs, coolers, lighting nodes and power supplies below; read together they cross each other\'s replies (measured 2026-11-06 on an iCUE LINK System Hub: a power supply',
         '# shown at about 1,800 W). Where OpenLinkHub is installed it owns these devices: the access OpenRGB\'s rules give the person',
         '# (the uaccess tag) is taken away. Generated from share/peripherals/owners.tsv by tools/make-peripheral-ids.py.',
         '# To change it, put an empty file with this name in /etc/udev/rules.d: that overrides this one (udevadm control --reload-rules,',
@@ -130,4 +165,4 @@ for vendor_id, products in by_vendor.items():
     rule.append(f'SUBSYSTEM=="hidraw|usb", ATTRS{{idVendor}}=="{vendor_id}", ATTRS{{idProduct}}=="{"|".join(products)}", TAG-="uaccess", ENV{{SPARKY_PERIPHERAL_OWNER}}="openlinkhub"')
 rule.append('LABEL="sparky_owner_end"')
 (out / "62-sparky-stereo-peripheral-owner.rules").write_text("\n".join(rule) + "\n")
-print(f"openrgb {len(openrgb)}, liquidctl {len(liquid)}, g810-led {len(g810)}, openrazer {len(razer)}, solaar {len(solaar)}, ratbag {len(ratbag)}, openlinkhub {len(olh)}, owned by OpenLinkHub when installed {len(overlap)}")
+print(f"openrgb {len(openrgb)}, liquidctl {len(liquid)}, g810-led {len(g810)}, openrazer {len(razer)}, solaar {len(solaar)}, ratbag {len(ratbag)}, openlinkhub {len(olh)} carried ({summary}), {other} more ids of OpenLinkHub left to OpenRGB, owned by OpenLinkHub {len(overlap)}")

@@ -17,3 +17,7 @@ The session's side of [sparky-stereo-problems](../sparky-stereo-problems/README.
 
 `sparky-stereo-problems-notifier.service` runs for the whole session (graphical-session.target); `sparky-stereo-problems-notifier.path` starts it when a store changes while it is not running.
 The events are in `sparky-stereo-problems.notifyrc`, so System Settings' Notifications page lists them.
+
+Machine and boot repairs use `pkexec /usr/libexec/sparky-stereo-problems/pkexec-repair repair --machine PACKAGE KEY` (or `--boot`).
+The separate executable accepts only repairs of records root kept and ignores store overrides from the caller's environment.
+The ordinary CLI remains usable by descendants of a package tool started through pkexec.

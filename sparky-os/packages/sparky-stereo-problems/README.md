@@ -121,3 +121,7 @@ Old records without that observation and records in an unreadable database are k
 A new failure kept after removal starts a new observation, so it too is retained.
 A reader unable to delete a record continues to show it, including a recovered service until a privileged collection clears its boot record.
 A package's `postrm remove` should still call `clear --all PACKAGE`; use `--after-removal` for a restoration failure that must outlive that clear.
+
+Machine and boot repairs use `pkexec /usr/libexec/sparky-stereo-problems/pkexec-repair repair --machine PACKAGE KEY` (or `--boot`).
+The separate executable accepts only repairs of records root kept and ignores store overrides from the caller's environment.
+The ordinary CLI remains usable by descendants of a package tool started through pkexec.
