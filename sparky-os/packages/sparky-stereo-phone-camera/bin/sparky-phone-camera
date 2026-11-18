@@ -167,17 +167,26 @@ def wifi_check(address, port):
     return True
 
 
+FAILURES = ('Connect failed', 'Connection reset', 'Error sending request', 'send error', 'recv error')
+
+
 def run_client(command, address, port):
-    """Runs the client, passes its lines on, and says the person's sentence when it could not reach the phone."""
-    process = subprocess.Popen(command, stdin=subprocess.DEVNULL if os.environ.get('SPARKY_PHONE_CAMERA_NO_STDIN') else None,
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    """Runs the client, passes its lines on, and when it reports that it could not reach the phone (it would otherwise wait for the
+    keyboard for ever) stops it and says the person's sentence."""
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     failed = False
     for line in process.stdout:
         sys.stdout.write(line)
         sys.stdout.flush()
-        if 'Connect failed' in line or 'Connection reset' in line:
+        if any(mark in line for mark in FAILURES):
             failed = True
-    code = process.wait()
+            process.terminate()
+            break
+    try:
+        code = process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        code = process.wait()
     if failed:
         say('no_answer_wifi', '%s:%d' % (address, port))
         return 1

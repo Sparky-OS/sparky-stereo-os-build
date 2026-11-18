@@ -121,6 +121,16 @@ class Failures(unittest.TestCase):
         self.assertEqual(res.returncode, 1, res.stderr)
         self.assertIn(sentence('zh_TW', 'no_answer_wifi') % '127.0.0.1:4747', res.stderr)
 
+    def test_wifi_refused_connection_stops_a_client_that_would_wait_for_the_keyboard(self):
+        r = Rig(loaded=True, device=True)
+        stub(r.bin, 'droidcam-cli', "echo \"send error (111) 'Connection refused'\"; sleep 30")
+        import time
+        started = time.time()
+        res = r.run('droidcam', 'wifi', '127.0.0.1', lang='ja_JP.UTF-8')
+        self.assertEqual(res.returncode, 1, res.stderr)
+        self.assertLess(time.time() - started, 15)
+        self.assertIn(sentence('ja', 'no_answer_wifi') % '127.0.0.1:4747', res.stderr)
+
     def test_wifi_client_that_connects_is_left_alone(self):
         r = Rig(loaded=True, device=True)
         stub(r.bin, 'droidcam-cli', 'echo "Video: $1"; exit 0')
