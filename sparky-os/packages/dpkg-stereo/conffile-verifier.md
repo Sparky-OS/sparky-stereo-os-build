@@ -77,3 +77,18 @@ The hook truncates consumed events only after the problems engine keeps or clear
 A failed engine leaves the journal for the next post-invoke.
 The hook names existing .dpkg-dist/.dpkg-new files, or says when package bytes are installed at the original path or neither candidate remains.
 Repair only rechecks the conffile; it does not merge or overwrite it.
+
+## Where the trust walk fails, and what dpkg-stereo says and does (ORDER 707)
+
+Exit 14 has two callers.
+dpkg's native caller refuses first, before it runs anything, when a step of `/`, `/usr`, `/usr/lib`, `/usr/lib/dpkg-stereo`, `/usr/lib/dpkg-stereo/conffile-verify` is not root-owned, can be written by its group or by others, is not a folder where a folder is due, or is not an executable file at the end (leancode_verifier_open in src/main/archives.c).
+The verifier then walks `/usr/lib/dpkg-stereo/lean` and everything under it the same way (library_trusted).
+Neither check is weakened: a folder that its group can write is refused.
+
+dpkg keeps the mode of a folder it finds, so a folder an early package shipped group-writable stays so through every upgrade.
+dpkg-stereo 0.1.0 to 0.1.7 were built with the build user's umask and shipped `/usr/lib/dpkg-stereo` and its `lean` folder as 0775; the recipe has set `umask 022` since 0.1.8 and, since 0.1.42, `chmod 0755` on every folder it ships.
+
+Since 0.1.42:
+- the preinst of an upgrade and the postinst take the group and other write permission off what root owns under `/usr/lib/dpkg-stereo`, and touch nothing outside it;
+- the refusal in the problems store names the folder or file that fails and the check (mode, owner, type, missing, not executable), found by `conffile_events.trust_findings`, which walks the same steps;
+- `dpkg-stereo --repair` sets the same tree right when it is not, says what it set, and settles a refused conffile whose bytes are its package's own or the exact projection of its package's original; it never writes a conffile, and a folder outside `/usr/lib/dpkg-stereo`, an entry another user owns and a link are named and left.
