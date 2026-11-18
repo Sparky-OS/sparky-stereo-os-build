@@ -7,7 +7,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=$(realpath "${OUT:?set OUT to an empty output folder}")
 IMAGE=${IMAGE:-debian@sha256:cf15c569a84dfda832e421ab27a8049e962ba8e90571612396cd8db799279e4e}
 sparky_provenance_init "$IMAGE"
-docker run --rm --name fonts-519-build --platform linux/amd64 --ulimit core=0 --cpus 4 \
+docker run --rm --pull="${SPARKY_BUILD_PULL:-missing}" --name "${SPARKY_CONTAINER_PREFIX:-fonts-519}-build" --platform linux/amd64 --ulimit core=0 --cpus 4 \
     "${SPARKY_PROV_ARGS[@]}" -e OWNER="$(id -u):$(id -g)" \
     -v "$OUT:/out" -v "$HERE:/recipe:ro" \
     -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro \
