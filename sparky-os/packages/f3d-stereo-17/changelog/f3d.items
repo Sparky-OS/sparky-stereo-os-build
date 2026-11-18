@@ -5,8 +5,20 @@ render.stereo draws the two eyes of a stereo window, declared by the edition's M
 Stereo KWin, and of an image (renderToImage returns the left eye and the right eye side by side, left first). A UI only
 frame of a stereo window draws the scene again, which fixed one eye shown in both buffers. The program's 3D options are
 the contract's: --stereo is "Enable 3D" (on by default through /etc/f3d/config.d/50_sparky_stereo.json, F3
-switches it), F4 opens the Display Settings, --stereo-eye-angle is gone (the separation is the desktop's), and our sentences
-are in the ten languages of the edition.
+switches it), F4 opens the Display Settings, --stereo-eye-angle is gone, and our sentences are in the ten languages of the
+edition.
+
+The separation of the two eyes is the desktop's: it follows the person's depth limits that Stereo KWin gives the window
+(libstereo-declare 1.10, _KDE_NET_WM_STEREO_DEPTH_LIMITS), the largest one under which the nearest and the farthest point of the
+scene stay inside the sunk and popped limits, and follows a change of them while the window is open; the fixed 2 degrees of
++stereo3d1 is gone from the window. With no limits (an older compositor, limits not delivered yet) the two eyes are the same
+picture and the program says so in the ten languages. The pair of a thumbnail keeps its 2 degrees (its depth has no recorded
+design yet).
 
 f3d-thumbnail-pair draws a model as a stereo pair (two parallel, sheared cameras) marked with X-KDE::Stereo3DLayout, and
 the thumbnailer files call it and name the canonical MIME types (KIO matches a thumbnailer to the type's own name).
+
+The separation of a 3D window is the person's depth limits and nothing else: render.stereo_eye_angle is not used, from -D, a
+configuration file or libf3d's API, and whoever sets it is told once in a warning in the ten languages of the edition (+stereo3d2
+still took the separation from that option when it was set, so -D render.stereo_eye_angle=6 gave 104 and 63 pixels against limits
+that allow 2 and 6). The pair of an image keeps its 2 degrees by window::setStereoImageEyeAngle, which is not an option.

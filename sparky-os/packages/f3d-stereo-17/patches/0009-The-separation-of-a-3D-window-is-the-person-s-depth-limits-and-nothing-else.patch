@@ -1,0 +1,255 @@
+From 0974602a85c1d117e4aa288edaf7d8cd47cd1acc Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 17 Nov 2026 23:43:13 -0300
+Subject: [PATCH] The separation of a 3D window is the person's depth limits
+ and nothing else in the edition's build
+
+render.stereo_eye_angle is not used there, from -D, a configuration file or libf3d's API, and whoever sets it is told once in
+the ten languages. The pair of an image has its own route, window::setStereoImageEyeAngle, which is not an option.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ doc/libf3d/03-OPTIONS.md       |  5 ++--
+ library/CMakeLists.txt         |  5 ++++
+ library/private/depth_notice.h | 55 ++++++++++++++++++++++++++++++++++
+ library/private/window_impl.h  |  1 +
+ library/public/window.h        | 10 ++++++-
+ library/src/window_impl.cxx    | 39 +++++++++++++++++++++---
+ 6 files changed, 107 insertions(+), 8 deletions(-)
+ create mode 100644 library/private/depth_notice.h
+
+diff --git a/doc/libf3d/03-OPTIONS.md b/doc/libf3d/03-OPTIONS.md
+index 010c087..f615455 100644
+--- a/doc/libf3d/03-OPTIONS.md
++++ b/doc/libf3d/03-OPTIONS.md
+@@ -382,12 +382,11 @@ CLI: `--stereo`.
+ 
+ ### `render.stereo_eye_angle` (_double_, default: `0.0`)
+ 
+-Set the angle between the two eyes' lines of sight, in degrees, for a program that wants its own value.
++Set the angle between the two eyes' lines of sight, in degrees.
+ The eyes stay parallel and meet at the focal distance, so the separation grows with the distance to the focal point.
+ Zero, the default, takes the separation from the person's depth limits of a stereo window (`window::pollStereoDepth`): the largest separation under which the farthest and the nearest point of the scene stay inside the sunk and popped limits.
+ With no limits (an image, a compositor that offers none, limits not delivered yet) the two eyes are the same picture.
+-
+-CLI: `--stereo-eye-angle`.
++In a build with `F3D_WITH_STEREO_DECLARE` (Sparky Stereo OS) the separation of a window is the person's depth limits and nothing else: this option is not used, from the command line, a configuration file or the API, and a non-zero value is said once in a warning in the ten languages of the edition. A program that draws an image off screen gives its own angle with `window::setStereoImageEyeAngle`.
+ 
+ ### `render.axes_grid` (_bool_, default: `false`)
+ 
+diff --git a/library/CMakeLists.txt b/library/CMakeLists.txt
+index 287eb58..c7c6d63 100644
+--- a/library/CMakeLists.txt
++++ b/library/CMakeLists.txt
+@@ -96,6 +96,11 @@ add_library(libf3d
+   ${F3D_SOURCE_FILES}
+   )
+ 
++if(F3D_WITH_STEREO_DECLARE)
++  # the person's depth limits are the only separation of a 3D window: render.stereo_eye_angle is not used
++  target_compile_definitions(libf3d PRIVATE F3D_WITH_STEREO_DECLARE)
++endif()
++
+ target_include_directories(libf3d
+   PUBLIC
+   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/public>
+diff --git a/library/private/depth_notice.h b/library/private/depth_notice.h
+new file mode 100644
+index 0000000..c247418
+--- /dev/null
++++ b/library/private/depth_notice.h
+@@ -0,0 +1,55 @@
++// SPDX-License-Identifier: BSD-3-Clause
++// The sentence Sparky Stereo OS shows to whoever sets render.stereo_eye_angle in the edition's build, where the separation of a
++// 3D window is the person's depth limits and nothing else: in the ten languages of the edition (en, pl, pt_BR, fr, de, es, ja, ko,
++// zh_CN, zh_TW), the language being the first of LANGUAGE, LC_ALL, LC_MESSAGES and LANG that names one of them (English otherwise).
++#ifndef f3d_depth_notice_h
++#define f3d_depth_notice_h
++
++#include <cstdlib>
++#include <string>
++
++namespace f3d::detail
++{
++inline const char* depthFollowsDesktopNotice()
++{
++  static const char* const table[] = {
++    "3D depth follows the desktop's depth limits: render.stereo_eye_angle is not used",
++    "Głębia 3D wynika z limitów głębi pulpitu: render.stereo_eye_angle nie jest używane",
++    "A profundidade 3D segue os limites de profundidade do desktop: render.stereo_eye_angle não é usado",
++    "La profondeur 3D suit les limites de profondeur du bureau : render.stereo_eye_angle n’est pas utilisé",
++    "Die 3D-Tiefe folgt den Tiefengrenzen des Desktops: render.stereo_eye_angle wird nicht verwendet",
++    "La profundidad 3D sigue los límites de profundidad del escritorio: render.stereo_eye_angle no se usa",
++    "3D奥行きはデスクトップの奥行きの上限に従います: render.stereo_eye_angle は使われません",
++    "3D 깊이는 데스크톱의 깊이 한계를 따릅니다: render.stereo_eye_angle은 사용되지 않습니다",
++    "3D 深度跟随桌面的深度限制：不使用 render.stereo_eye_angle",
++    "3D 深度跟隨桌面的深度限制：不使用 render.stereo_eye_angle",
++  };
++  static const char* const names[] = { "en", "pl", "pt_BR", "fr", "de", "es", "ja", "ko", "zh_CN", "zh_TW" };
++  for (const char* variable : { "LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG" })
++  {
++    const char* value = std::getenv(variable);
++    if (!value || !*value)
++    {
++      continue;
++    }
++    std::string language(value);
++    language = language.substr(0, language.find(':'));
++    language = language.substr(0, language.find('.'));
++    for (int i = 0; i < 10; i++)
++    {
++      const std::string name = names[i];
++      if (language == name || (name.size() == 2 && language.compare(0, 2, name) == 0) ||
++        (name == "pt_BR" && language.compare(0, 2, "pt") == 0))
++      {
++        return table[i];
++      }
++    }
++    if (language != "C")
++    {
++      break;
++    }
++  }
++  return table[0];
++}
++}
++#endif
+diff --git a/library/private/window_impl.h b/library/private/window_impl.h
+index 7b0ce93..da08524 100644
+--- a/library/private/window_impl.h
++++ b/library/private/window_impl.h
+@@ -50,6 +50,7 @@ public:
+   bool isOffscreen() override;
+   bool isStereo() override;
+   stereo_depth_state pollStereoDepth(bool& changed) override;
++  window& setStereoImageEyeAngle(double degrees) override;
+   camera& getCamera() override;
+   bool render() override;
+   image renderToImage(bool noBackground = false) override;
+diff --git a/library/public/window.h b/library/public/window.h
+index 9e0ce51..9e782cf 100644
+--- a/library/public/window.h
++++ b/library/public/window.h
+@@ -66,7 +66,7 @@ public:
+ 
+   /**
+    * The state of the person's depth limits for a stereo window whose eye angle is not given
+-   * (render.stereo_eye_angle is zero): the desktop (Stereo KWin) hands them over per window and
++   * (always in the edition's build, elsewhere when render.stereo_eye_angle is zero): the desktop (Stereo KWin) hands them over per window and
+    * the separation of the two eyes follows them.
+    * UNUSED: no stereo window, or an angle was given. DELIVERED: the limits are in use.
+    * NOT_OFFERED: the compositor offers no limits. NOT_DELIVERED: offered, not delivered yet.
+@@ -87,6 +87,14 @@ public:
+    */
+   [[nodiscard]] virtual stereo_depth_state pollStereoDepth(bool& changed) = 0;
+ 
++  /**
++   * The angle between the eyes' lines of sight, in degrees, of the pair that renderToImage draws when render.stereo is on and the
++   * window is off screen. An image has no window, so no depth limits to follow; this is a program's own value, never an option a
++   * person can set (the on-screen window always follows the person's limits in the edition's build). Zero, the default, draws
++   * two equal pictures.
++   */
++  virtual window& setStereoImageEyeAngle(double degrees) = 0;
++
+   /**
+    * Get the camera provided by the window.
+    */
+diff --git a/library/src/window_impl.cxx b/library/src/window_impl.cxx
+index c35cc1f..1f034c2 100644
+--- a/library/src/window_impl.cxx
++++ b/library/src/window_impl.cxx
+@@ -9,6 +9,7 @@
+ #include "utils.h"
+ 
+ #include "F3DStyle.h"
++#include "depth_notice.h"
+ #include "vtkF3DExternalRenderWindow.h"
+ 
+ #include "vtkF3DGenericImporter.h"
+@@ -55,6 +56,23 @@ namespace fs = std::filesystem;
+ 
+ namespace f3d::detail
+ {
++// In the edition's build (F3D_WITH_STEREO_DECLARE) the separation of a 3D window is the person's depth limits and nothing else:
++// render.stereo_eye_angle, from the command line, a configuration file or this API, is not used, and whoever sets it is told once
++static double ownEyeAngle(const options& opt, bool& given)
++{
++#ifdef F3D_WITH_STEREO_DECLARE
++  if (opt.render.stereo_eye_angle != 0.0 && !given)
++  {
++    given = true;
++    log::warn(depthFollowsDesktopNotice());
++  }
++  return 0.0;
++#else
++  (void)given;
++  return opt.render.stereo_eye_angle;
++#endif
++}
++
+ class window_impl::internals
+ {
+ public:
+@@ -108,6 +126,8 @@ public:
+   vtkSmartPointer<vtkRenderWindow> RenWin;
+   vtkNew<vtkF3DRenderer> Renderer;
+   const options& Options;
++  double ImageEyeAngle = 0.0;
++  bool AngleNoticeGiven = false;
+   window::stereo_depth_state DepthState = window::stereo_depth_state::UNUSED;
+   double DepthSunk = 0.0;
+   double DepthPopped = 0.0;
+@@ -274,6 +294,13 @@ bool window_impl::isStereo()
+     (renWin->GetOffScreenRendering() || (renWin->GetStereoCapableWindow() && renWin->GetStereoRender()));
+ }
+ 
++//----------------------------------------------------------------------------
++window& window_impl::setStereoImageEyeAngle(double degrees)
++{
++  this->Internals->ImageEyeAngle = degrees;
++  return *this;
++}
++
+ //----------------------------------------------------------------------------
+ window::stereo_depth_state window_impl::pollStereoDepth(bool& changed)
+ {
+@@ -284,7 +311,7 @@ window::stereo_depth_state window_impl::pollStereoDepth(bool& changed)
+   double sunk = 0.0;
+   double popped = 0.0;
+   if (this->Internals->Options.render.stereo && renWin->GetStereoCapableWindow() &&
+-    renWin->GetStereoRender() && this->Internals->Options.render.stereo_eye_angle == 0.0)
++    renWin->GetStereoRender() && ownEyeAngle(this->Internals->Options, this->Internals->AngleNoticeGiven) == 0.0)
+   {
+     switch (renderer->PollStereoDepthLimits())
+     {
+@@ -461,6 +488,8 @@ void window_impl::UpdateDynamicOptions()
+   renderer->UpdateLights();
+ 
+   const options& opt = this->Internals->Options;
++  // say once that a separation of the program's own is not used (edition's build), whatever the window is
++  (void)ownEyeAngle(opt, this->Internals->AngleNoticeGiven);
+ 
+   // The window is realized when the engine is created, before the options are known, and a stereo
+   // capable window can only be requested before it is realized, so it is recreated once
+@@ -483,13 +512,15 @@ void window_impl::UpdateDynamicOptions()
+     {
+       // 3D can be switched on and off while the window runs: off draws one picture into both eyes
+       renWin->SetStereoRender(opt.render.stereo ? 1 : 0);
+-      renderer->SetStereoEyeAngle(opt.render.stereo_eye_angle);
++      renderer->SetStereoEyeAngle(ownEyeAngle(opt, this->Internals->AngleNoticeGiven));
+     }
+   }
+   else if (opt.render.stereo)
+   {
+-    // An image has no stereo capable window: renderToImage draws the two eyes one after the other
+-    renderer->SetStereoEyeAngle(opt.render.stereo_eye_angle);
++    // An image has no stereo capable window and no depth limits: renderToImage draws the two eyes one after the other, with the angle
++    // the program gave for images (setStereoImageEyeAngle), else the option where the build allows it
++    const double own = ownEyeAngle(opt, this->Internals->AngleNoticeGiven);
++    renderer->SetStereoEyeAngle(this->Internals->ImageEyeAngle != 0.0 ? this->Internals->ImageEyeAngle : own);
+   }
+ 
+   // Update pending up direction if changed
+-- 
+2.53.0
+
