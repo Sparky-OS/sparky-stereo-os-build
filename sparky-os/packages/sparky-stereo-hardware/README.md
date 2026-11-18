@@ -76,7 +76,7 @@ plan - the user can always change it inside openrgb"). Its keyboards, mice, head
 families is one OpenRGB or liquidctl open too (share/peripherals/owners.tsv, 37 ids) it is OpenLinkHub's: the other tool is not installed
 for it, 62-sparky-stereo-peripheral-owner.rules removes its uaccess tag once OpenLinkHub is installed, and the person is told once
 (sparky-stereo-hardware-peripheral-owner.service, and after every dpkg run). A copy of OpenLinkHub the person installed with upstream's own
-scripts (/opt/OpenLinkHub, or its unit in /etc/systemd/system) is theirs: the package is not installed beside it. To give the devices back to
+scripts (/opt/OpenLinkHub, or its unit in /etc/systemd/system) is theirs: the package is not installed beside it. When the package and that copy are both on the computer the person is told once, in their language, with the way over (the notice LOCAL89, through the problems engine). To give the devices back to
 OpenRGB put an empty file named 62-sparky-stereo-peripheral-owner.rules in /etc/udev/rules.d.
 `/usr/lib/sparky-stereo-hardware/peripheral-owner list` prints each owned device present. Credits, as each project's copyright file or
 page names them: the OpenRGB project and its contributors (device lists, udev rules); Solaar, Daniel Pavel and contributors; libratbag
