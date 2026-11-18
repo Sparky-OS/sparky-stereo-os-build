@@ -1,0 +1,20 @@
+#!/bin/sh
+# Created by Daniel Ramos (Capitain Jack) 2026/11/17
+# Copyright 2026 under the GNU GPL3 License
+set -e
+#DEBHELPER#
+unit=OpenLinkHub.service
+case "$1" in
+remove)
+	if [ -d /run/systemd/system ]; then systemctl --system daemon-reload >/dev/null || true; fi
+	if [ -d /run/udev ]; then udevadm control --reload-rules >/dev/null 2>&1 || true; fi ;;
+purge)
+	# the unit's enable records and the state this package made (profiles, config.json); the system user stays, as Debian policy has it
+	# (not where upstream's own install holds the unit's name: its enable records are its own)
+	if ! [ -d /opt/OpenLinkHub ] && ! [ -e /etc/systemd/system/$unit ]; then
+		deb-systemd-helper purge $unit >/dev/null || true
+		deb-systemd-helper unmask $unit >/dev/null || true
+	fi
+	rm -rf /var/lib/openlinkhub ;;
+esac
+exit 0

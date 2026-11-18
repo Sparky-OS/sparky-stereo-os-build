@@ -1,0 +1,28 @@
+Source: openlinkhub
+Section: utils
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 14), golang-go (>= 2:1.26~), pkgconf, libpipewire-0.3-dev, libudev-dev, python3
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+Homepage: https://github.com/jurkovic-nikola/OpenLinkHub
+
+Package: openlinkhub
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, systemd, udev
+Description: Interface for Corsair iCUE LINK hubs, coolers, lighting nodes and power supplies
+ OpenLinkHub reads and controls Corsair devices that have no Linux driver of
+ their own, through a local web page (127.0.0.1:27003): fans, pumps,
+ temperatures, lighting and power supplies of the iCUE LINK System Hub,
+ Commander, Lighting Node and Hydro/Elite families, and Corsair keyboards,
+ mice and headsets.
+ .
+ The service runs as the system user openlinkhub, with its state in
+ /var/lib/openlinkhub and the page's files in /usr/share/openlinkhub, and
+ upstream's udev rules are in place. It is built from the release's source with
+ its Go modules vendored, not from upstream's prebuilt program, and installs
+ nothing under /opt. A copy installed with upstream's own scripts
+ (/opt/OpenLinkHub) is left as it is.
+ .
+ Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Pawel "pavroo"
+ Pijanowski). Upstream: Nikola Jurkovic and the OpenLinkHub contributors.
