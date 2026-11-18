@@ -272,6 +272,17 @@ class EventsTest(unittest.TestCase):
         self.assertFalse(stereo.kept_problems(self.P))
         self.assertEqual(self.file.read_bytes(), LEAN)
 
+    def test_repair_says_what_it_cannot_mend_even_when_every_file_is_settled(self):
+        self.tree({'usr/lib': 0o775})
+        self.event(14)
+        self.assertFalse(self.report())
+        said = io.StringIO()
+        with contextlib.redirect_stderr(said):
+            self.assertTrue(events.report(self.P, stereo, True))
+        self.assertIn('/usr/lib', said.getvalue())
+        self.assertIn('775', said.getvalue())
+        self.assertEqual(oct((self.root / 'trust/usr/lib').stat().st_mode & 0o7777), '0o775')
+
     def test_repair_does_not_settle_a_projection_of_another_version(self):
         self.file.write_bytes(project.project(PATH, ORIGINAL.replace(b'value=old', b'value=older'), PACKAGE,
                                               check=False).lean)

@@ -201,6 +201,10 @@ def report(P, api, refresh=False):
                                     repair=api.text('LOCAL91' if findings else 'LOCAL73'))
         else:
             kept = api.clear_problem(P, 'conffiles')
+        if refresh and P.root == '':
+            # what repair cannot mend is said, even when every conffile is settled: the next upgrade meets it again
+            for finding in trust_findings():
+                api.say(finding[0], finding[1:])
         if kept and stream:
             stream.seek(0)
             stream.truncate()
