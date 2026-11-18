@@ -52,7 +52,7 @@ def main():
         env.pop(key, None)
     for line in lines:
         key, value = line.split('=', 1)
-        if not re.fullmatch('[A-Z_][A-Z0-9_]*', key):
+        if not re.fullmatch('[A-Za-z_][A-Za-z0-9_]*', key):
             raise ValueError(key)
         env[key] = value
     env.pop('CUDA_VISIBLE_DEVICES', None)
