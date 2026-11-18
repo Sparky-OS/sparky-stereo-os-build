@@ -1,0 +1,77 @@
+#!/usr/bin/python3
+# Created by Daniel Ramos (Capitain Jack) 2026/11/18
+# Copyright 2026 under the GNU GPL3 License
+"""Seed KDE desktop links once without replacing or recreating personal choices."""
+import configparser
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+from urllib.parse import unquote, urlparse
+
+LANGUAGES = ('en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW')
+
+
+def home_names():
+    names = json.loads(Path('/usr/share/sparky-stereo-look/desktop-shortcuts.json').read_text())
+    if set(names) != set(LANGUAGES):
+        raise ValueError('Desktop shortcut catalogue must contain the ten edition languages')
+    return names
+
+
+def link_target(path):
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        parser.read(path, encoding='utf-8')
+        return parser.get('Desktop Entry', 'URL', fallback='')
+    except (configparser.Error, UnicodeError):
+        return ''
+
+
+def create(path, text):
+    for number in range(1000):
+        target = path if number == 0 else path.with_name(f'{path.stem}-{number}{path.suffix}')
+        try:
+            with target.open('x', encoding='utf-8') as stream:
+                stream.write(text)
+            return
+        except FileExistsError:
+            continue
+    raise OSError(f'No unused shortcut name for {path.name}')
+
+
+def main():
+    home = Path.home()
+    state = Path(os.environ.get('XDG_STATE_HOME', home / '.local/state')) / 'sparky-stereo-look/desktop-shortcuts-v1'
+    if state.exists():
+        return
+    subprocess.run(['xdg-user-dirs-update'], check=True)
+    desktop = Path(subprocess.check_output(['xdg-user-dir', 'DESKTOP'], text=True).strip())
+    if not desktop.is_absolute():
+        raise ValueError('xdg-user-dir returned a non-absolute desktop path')
+    # XDG uses the home directory to represent a disabled desktop folder.
+    if desktop != home:
+        desktop.mkdir(parents=True, exist_ok=True)
+        targets = [link_target(p) for p in desktop.iterdir() if p.is_file() and p.suffix in ('.desktop', '.trash')]
+        if not any(url.rstrip('/') == 'trash:' for url in targets):
+            create(desktop / 'trash.desktop', Path('/usr/share/kio_desktop/directory.trash').read_text())
+        has_home = any(urlparse(url).scheme == 'file' and Path(unquote(urlparse(url).path)) == home for url in targets)
+        if not has_home:
+            names = home_names()
+            if any('\n' in name or '\r' in name for name in names.values()):
+                raise ValueError('Desktop shortcut label contains a line break')
+            text = '[Desktop Entry]\nType=Link\nIcon=user-home\nName=' + names['en'] + '\n'
+            text += ''.join(f'Name[{language}]={names[language]}\n' for language in LANGUAGES if language != 'en')
+            text += f'URL={home.as_uri()}\nOnlyShowIn=KDE;\n'
+            create(desktop / 'home.desktop', text)
+    state.parent.mkdir(parents=True, exist_ok=True)
+    state.write_text('1\n')
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print(f'Desktop shortcut initialization failed: {error}', file=sys.stderr)
+        sys.exit(1)
