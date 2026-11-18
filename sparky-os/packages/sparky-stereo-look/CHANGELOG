@@ -1,7 +1,22 @@
+20261118.1~sparky9~0 (2026-11-18)
+  * Merge ORDER 668 session, Application Menu and Oxygen sound defaults with current main.
+  * Retain ORDER 672 loading screen unchanged.
+
 20261118~sparky9~0 (2026-11-18)
   * Restore Daniel Campos Ramos's original Sparky Black loading screen as the default (ORDER 672)
   * Background at the sunk limit, box and progress at the popped limit, original logo at twice the popped limit through stereo-layer 1.22.0
   * Keep ORDER 571's boot-picture splash installed and selectable; preserve the person's chosen splash
+20261117~sparky9~0 (2026-11-17)
+  * The panel's launcher is the Application Menu, the cascading one (org.kde.plasma.kicker), on a fresh layout; before, the
+    layout loaded KDE's default panel with Kickoff. A session starts empty (ksmserverrc loginMode=emptySession), so a
+    program that upset the last session is not started again, and logging out asks no confirmation
+    (confirmLogout=false). ORDER 668; Daniel, 2026-11-17, on a freshly installed MacBook: "some defaults are not being
+    applyed - meny type, some power settings, new session instead of continuing the last (in case something is messing
+    with the session) and don't ask for confirmation"; "read what it has now, then copy it to our defaults". An existing
+    panel and a person's own choices are kept: the layout is used only where there is no panel, and /etc/xdg is read
+    below the person's own files
+  * The sound theme is Oxygen (kdeglobals [Sounds] Theme=oxygen; oxygen-sounds is a dependency). Daniel, 2026-11-17:
+    "our default sound theme should be oxygen". KDE's own default is Ocean; a person's own choice wins
 
 20261115~sparky9~0 (2026-11-15)
   * The loading screen after the login is ours (ORDER 571; Daniel, 2026-11-08: "on KDE - splash screen is not ours", and

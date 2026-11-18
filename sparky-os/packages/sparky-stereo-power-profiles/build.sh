@@ -1,11 +1,11 @@
 #!/bin/bash
 # Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/10/08
 # Copyright 2026 under the GNU GPL3 License
-# Last update 2026/10/08
+# Last update 2026/11/17
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=20261103.1~sparky9~0+lc1
+VERSION=20261118.1~sparky9~0+lc1
 PACKAGE=sparky-stereo-power-profiles
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.power-profiles.XXXXXX")
