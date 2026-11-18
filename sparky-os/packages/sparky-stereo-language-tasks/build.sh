@@ -3,6 +3,7 @@
 # Copyright 2026 Daniel Campos Ramos
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+python3 "$HERE/tests/test_system_language.py"
 OUT=${OUT:?}
 VERSION=1.0.8+lc1
 TASKSEL_SOURCE_DIR=${TASKSEL_SOURCE_DIR:?Set TASKSEL_SOURCE_DIR to Debian tasksel 3.92 descriptor and source archive}

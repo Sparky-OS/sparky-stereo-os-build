@@ -20,8 +20,11 @@ class SystemLanguageTests(unittest.TestCase):
         tree.body = [node for node in tree.body if isinstance(node, ast.FunctionDef)
                      and node.name in ('select', 'system_language')]
         cls.functions = compile(tree, 'bin/languages', 'exec')
+        manifest = TREE / 'lists/language-tasks.json'
+        if not manifest.exists():
+            manifest = RECIPE.parent / 'tree/usr/share/sparky-stereo-language-tasks/manifest.json'
         cls.rows = {r['code'].lower(): r for r in
-                    json.loads((TREE / 'lists/language-tasks.json').read_text())['languages']}
+                    json.loads(manifest.read_text())['languages']}
 
     def read_language(self, content, environment):
         with tempfile.TemporaryDirectory() as directory:
