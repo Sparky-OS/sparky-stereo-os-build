@@ -2,7 +2,7 @@
 # Created by Daniel Ramos (Capitain Jack) 2026/11/17
 # Copyright 2026 under the GNU GPL3 License
 # Sparky Stereo OS, ORDER 17: f3d 3.5.0+dfsg-3+stereo3d1+lc1, libf3d3 and libf3d-dev, built from Debian's own source package with
-# the eight patches of branch order17-stereo of Sparky-OS/f3d (patches/), this folder's debian additions (overlay.py,
+# the nine patches of branch order17-stereo of Sparky-OS/f3d (patches/), this folder's debian additions (overlay.py,
 # debian-add/), and Lean Code (lean.debian_prepare, the toolkit of this tree).
 #   build.sh DEBIAN.dsc WORK
 # Run as root in a disposable container that has the build dependencies of f3d, patchelf, python3, dpkg-dev and devscripts,
@@ -42,7 +42,7 @@ import sys
 for para in open(sys.argv[1], encoding='utf-8').read().strip().split('\n\n'):
     print(' '.join(l.strip() for l in para.splitlines()))
 PY
-VERSION=3.5.0+dfsg-3+stereo3d2
+VERSION=3.5.0+dfsg-3+stereo3d3
 DATE=$(date -u -d "@$SOURCE_DATE_EPOCH" -R)
 dch --date "$DATE" -v "$VERSION" -D unstable --force-distribution "$(head -1 "$WORK/items.txt")"
 while IFS= read -r item; do [ "$item" = "$(head -1 "$WORK/items.txt")" ] || dch --date "$DATE" -a "$item"; done < "$WORK/items.txt"

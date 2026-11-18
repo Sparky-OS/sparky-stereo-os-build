@@ -17,3 +17,8 @@ design yet).
 
 f3d-thumbnail-pair draws a model as a stereo pair (two parallel, sheared cameras) marked with X-KDE::Stereo3DLayout, and
 the thumbnailer files call it and name the canonical MIME types (KIO matches a thumbnailer to the type's own name).
+
+The separation of a 3D window is the person's depth limits and nothing else: render.stereo_eye_angle is not used, from -D, a
+configuration file or libf3d's API, and whoever sets it is told once in a warning in the ten languages of the edition (+stereo3d2
+still took the separation from that option when it was set, so -D render.stereo_eye_angle=6 gave 104 and 63 pixels against limits
+that allow 2 and 6). The pair of an image keeps its 2 degrees by window::setStereoImageEyeAngle, which is not an option.
