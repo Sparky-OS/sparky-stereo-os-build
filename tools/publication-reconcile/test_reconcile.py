@@ -77,9 +77,11 @@ class Decisions(unittest.TestCase):
             root = Path(tmp)
             published = []
             staged, rules = [], []
-            for name in ('held', 'unlisted', 'successor', 'conflict', 'equal', 'superseded'):
+            for name in ('held', 'unlisted', 'successor', 'conflict', 'equal', 'superseded', 'nested'):
                 folder = root / ('superseded' if name in ('successor', 'superseded') else name)
-                folder.mkdir(exist_ok=True)
+                if name == 'nested':
+                    folder = root / 'selected/superseded'
+                folder.mkdir(exist_ok=True, parents=True)
                 path = folder / (name + '.deb')
                 path.write_bytes(b'archive placeholder')
                 row = {'kind': 'binary', 'binary': name, 'version': '1.0', 'source': name,
@@ -89,8 +91,8 @@ class Decisions(unittest.TestCase):
                 if name in ('held', 'conflict', 'equal'):
                     sha = hashlib.sha256(path.read_bytes()).hexdigest()
                     published.append(dict(row, filename='unused', sha256=sha if name != 'conflict' else '0' * 64))
-                if name in ('held', 'successor', 'conflict'):
-                    rules.append({'root': str(folder), 'source': name, 'version': '1.0',
+                if name in ('held', 'successor', 'conflict', 'nested'):
+                    rules.append({'root': str(folder.parent if name == 'nested' else folder), 'source': name, 'version': '1.0',
                                   'decision': 'held' if name == 'held' else 'candidate', 'reason': 'fixture'})
             (root / 'inventory.json').write_text(json.dumps({'build_root': str(root), 'published': published, 'staged': staged}))
             (root / 'rules.json').write_text(json.dumps(rules))
@@ -102,7 +104,7 @@ class Decisions(unittest.TestCase):
             actual = {r['binary']: r['decision'] for r in rows}
             self.assertEqual(actual, {'held': 'held', 'unlisted': 'unlisted', 'successor': 'candidate',
                                      'conflict': 'identity-conflict', 'equal': 'already-published',
-                                     'superseded': 'superseded'})
+                                     'superseded': 'superseded', 'nested': 'superseded'})
             with (root / 'candidate-binaries.tsv').open() as stream:
                 self.assertEqual([r['binary'] for r in csv.DictReader(stream, delimiter='\t')], ['successor'])
 

@@ -66,13 +66,18 @@ def main():
         source, version = row['source'], row['source_version']
         baseline = newest(published_versions[source])
         decision, reason = 'unlisted', 'No accepted source generation at this path in the brief'
+        matched_root = None
         for rule in rules:
             root = Path(rule['root'])
             if path.is_relative_to(root) and (rule.get('source') in (None, source)) \
                     and (rule.get('version') in (None, version)):
                 decision, reason = rule['decision'], rule['reason']
+                matched_root = root
                 break
-        if decision == 'unlisted' and any(p in ('superseded', 'predecessor') for p in path.parts):
+        if decision == 'candidate' and any(p in ('superseded', 'predecessor', 'upstream-offer')
+                                           for p in path.relative_to(matched_root).parts[:-1]):
+            decision, reason = 'superseded', 'Excluded nested predecessor/superseded/upstream-offer folder; accepted parent does not select it'
+        if decision == 'unlisted' and any(p in ('superseded', 'predecessor', 'upstream-offer') for p in path.parts):
             decision, reason = 'superseded', 'Excluded predecessor/superseded folder; no explicit exception'
         if decision == 'unlisted':
             for accepted_source, accepted_version in sorted(accepted):
