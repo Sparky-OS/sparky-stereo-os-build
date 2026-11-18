@@ -54,6 +54,7 @@ private:
     QVariantList m_described;
     QString m_message;
     QString m_problem;
+    bool m_everDescribed = false;
     QMap<QString, QVariantMap> m_staged; // headset id -> key -> value, written and applied by Apply
     QTimer m_poll;
 };

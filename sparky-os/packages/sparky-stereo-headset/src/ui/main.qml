@@ -114,14 +114,22 @@ KCM.SimpleKCM {
     Component {
         id: numberControl
         RowLayout {
+            id: numberRow
             property var setting
+            // the range first, then the value: a value set before its range is clamped to the old one
+            onSettingChanged: {
+                if (setting) {
+                    slider.from = setting.min;
+                    slider.to = setting.max;
+                    slider.value = setting.value;
+                }
+            }
             QQC2.Slider {
                 id: slider
                 Layout.preferredWidth: Kirigami.Units.gridUnit * 12
-                from: setting ? setting.min : 0
-                to: setting ? setting.max : 1
                 stepSize: 1
-                value: setting ? setting.value : 0
+                from: 0
+                to: 128
                 onMoved: kcm.stage(root.headset.id, setting.key, Math.round(value))
             }
             QQC2.Label {
