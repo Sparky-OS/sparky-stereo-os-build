@@ -48,7 +48,7 @@ def main():
             else:
                 version = norm(version)
                 current = newest(all_targets[source])
-                if compare(version, current) < 0:
+                if compare(version, current) < 0 and not target.get('required_version', False):
                     state = 'retained producer; newer tracked successor'
                 elif p != 'absent' and compare(version, p) <= 0:
                     state = 'published or newer published successor'

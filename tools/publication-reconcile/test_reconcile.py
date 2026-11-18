@@ -39,6 +39,24 @@ class Identities(unittest.TestCase):
             self.assertNotIn('a/stage/source', dirs)
 
 
+class RecipeTargets(unittest.TestCase):
+    def test_required_compiler_seed_remains_a_gap_beside_its_successor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'inventory.json').write_text(json.dumps({'published': [], 'staged': []}))
+            (root / 'roots.tsv').write_text('root\ncompiler\n')
+            targets = [{'source': 'compiler', 'version': '1.0', 'required_version': True, 'location': 'seed.env'},
+                       {'source': 'compiler', 'version': '2.0', 'location': 'next.env'}]
+            (root / 'reviewed.json').write_text(json.dumps({'compiler': {'targets': targets, 'mode': 'parameterized', 'note': 'fixture'}}))
+            subprocess.run([sys.executable, str(Path(__file__).with_name('resolve.py')),
+                            str(root / 'inventory.json'), str(root / 'roots.tsv'), str(root / 'reviewed.json'),
+                            '--output', str(root)], check=True, capture_output=True)
+            with (root / 'recipe-reconciliation.tsv').open() as stream:
+                rows = list(csv.DictReader(stream, delimiter='\t'))
+            self.assertEqual([r['recipe_version'] for r in rows], ['1.0', '2.0'])
+            self.assertTrue(all(r['state'] == 'recipe newer than published and bounded stages' for r in rows))
+
+
 class Listings(unittest.TestCase):
     def test_listing_directories_match_tar_names(self):
         self.assertEqual(listing_name('drwxr-xr-x root/root 0 2026-11-18 00:00 ./usr/'), member_name('./usr'))
