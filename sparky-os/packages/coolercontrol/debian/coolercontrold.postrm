@@ -6,9 +6,11 @@ set -e
 unit=coolercontrold.service
 case "$1" in
 remove)
+	rm -f /var/lib/coolercontrold/local-copy-told; rmdir /var/lib/coolercontrold 2>/dev/null || true
 	if [ -d /run/systemd/system ]; then systemctl --system daemon-reload >/dev/null || true; fi ;;
 purge)
-	# the unit's enable records, and the settings the service wrote (/etc/lact: the package never shipped them); a copy made by upstream's
+	rm -f /var/lib/coolercontrold/local-copy-told; rmdir /var/lib/coolercontrold 2>/dev/null || true
+	# the unit's enable records, and the settings the service wrote (/etc/coolercontrol: the package never shipped them); a copy made by upstream's
 	# makefile shares that folder and keeps it
 	if ! [ -e /usr/local/bin/coolercontrold ] && ! [ -e /usr/local/lib/systemd/system/$unit ] && ! [ -e /etc/systemd/system/$unit ]; then
 		deb-systemd-helper purge $unit >/dev/null || true
