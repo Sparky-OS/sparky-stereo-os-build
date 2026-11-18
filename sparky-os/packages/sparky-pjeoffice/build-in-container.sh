@@ -15,7 +15,7 @@ IMAGE=${IMAGE:?a builder image with the packages named in debian/control}
 SCRATCH=${SCRATCH:?a folder with room for the link gate}
 mkdir -p "$OUT" "$SCRATCH"
 sparky_provenance_init "$IMAGE" "$HERE"
-docker run --rm --ulimit core=0 --cpus 4 --user "$(id -u):$(id -g)" -e HOME="$SCRATCH/home" -e OUT="$OUT" -e JOBS=4 \
+docker run --rm --name "pj18-build-$$" --pull=never --ulimit core=0 --cpus 4 --user "$(id -u):$(id -g)" -e HOME="$SCRATCH/home" -e OUT="$OUT" -e JOBS=4 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH="$SCRATCH/link" \
 	-v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro -v "$REPO":/repo:ro -v /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro \
