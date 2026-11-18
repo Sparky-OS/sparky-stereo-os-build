@@ -42,6 +42,9 @@ EOF
 cat > "$S/debian/changelog" <<EOF
 dpkg-stereo ($VERSION) unstable; urgency=medium
 
+  * Carry Lean Code 0.1.30 (main's toolkit): the Go adapter for build inputs
+    (installed Go files stay as authored). The renderer's identity moves with
+    it; nothing else in the toolkit is changed here.
   * Fix: the conffile verifier is refused on a machine that an early dpkg-stereo
     upgraded (ORDER 707). Versions 0.1.0 to 0.1.7 were built with the build
     user's umask and shipped /usr/lib/dpkg-stereo and its lean folder writable
