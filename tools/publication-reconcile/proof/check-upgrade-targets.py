@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 
 
-def verify(before, simulation, targets):
+def verify(before, simulation, targets, native='amd64'):
     installed = {}
     for line in before.splitlines():
         words = line.split()
@@ -24,7 +24,9 @@ def verify(before, simulation, targets):
             continue
         checked += 1
         package, arch = name.rsplit(':', 1)
-        found = offered.get(name, offered.get(package))
+        found = offered.get(name)
+        if found is None and arch in ('all', native):
+            found = offered.get(package)
         if found != version:
             failures.append(f'{name}: installed {installed[name]}, expected Inst {version}, offered {found or "nothing"}')
     if not checked:
