@@ -1,0 +1,428 @@
+From 188dfb652b083c0a63aeda329f082608376da4f3 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 18 Nov 2026 02:14:15 -0300
+Subject: [PATCH 3/3] The separation of the 3D view is the person's depth
+ limits and nothing else
+
+The two cameras' separation is the largest under which the farthest and nearest displayed point stay inside the sunk and popped
+limits the desktop gives the window (libstereo-declare 1.10, _KDE_NET_WM_STEREO_DEPTH_LIMITS), read again while the window is
+open; with none the two eyes are the same picture and the program says so in the ten languages. The physical parameters (screen
+width and distance, eye separation, strength) are gone from StereoParams.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ libs/qCC_glWindow/CMakeLists.txt              | 10 +++
+ libs/qCC_glWindow/include/CMakeLists.txt      |  1 +
+ .../include/ccGLWindowDepthNotice.h           | 79 +++++++++++++++++
+ .../include/ccGLWindowInterface.h             | 28 +++++-
+ libs/qCC_glWindow/include/ccGLWindowStereo.h  |  9 ++
+ libs/qCC_glWindow/src/ccGLWindowInterface.cpp | 85 ++++++++++++++++---
+ libs/qCC_glWindow/src/ccGLWindowStereo.cpp    | 59 +++++++++++++
+ 7 files changed, 254 insertions(+), 17 deletions(-)
+ create mode 100644 libs/qCC_glWindow/include/ccGLWindowDepthNotice.h
+
+diff --git a/libs/qCC_glWindow/CMakeLists.txt b/libs/qCC_glWindow/CMakeLists.txt
+index be19190..f63c12f 100644
+--- a/libs/qCC_glWindow/CMakeLists.txt
++++ b/libs/qCC_glWindow/CMakeLists.txt
+@@ -11,6 +11,16 @@ target_link_libraries( ${PROJECT_NAME}
+ 	QCC_DB_LIB
+ )
+ 
++# the person's depth limits (Sparky Stereo OS): libstereo-declare 1.10 reads them from the desktop
++option( OPTION_STEREO_DECLARE "Read the depth limits of the stereo 3D view through libstereo-declare" OFF )
++if ( OPTION_STEREO_DECLARE )
++	find_package( PkgConfig REQUIRED )
++	pkg_check_modules( STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare>=1.10.0 )
++	find_package( Qt5 COMPONENTS X11Extras REQUIRED )
++	target_link_libraries( ${PROJECT_NAME} PRIVATE PkgConfig::STEREO_DECLARE Qt5::X11Extras )
++	target_compile_definitions( ${PROJECT_NAME} PRIVATE CC_WITH_STEREO_DECLARE )
++endif()
++
+ # Oculus support
+ include( cmake/OculusSupport.cmake )
+ 
+diff --git a/libs/qCC_glWindow/include/CMakeLists.txt b/libs/qCC_glWindow/include/CMakeLists.txt
+index d274227..ec6c9e9 100644
+--- a/libs/qCC_glWindow/include/CMakeLists.txt
++++ b/libs/qCC_glWindow/include/CMakeLists.txt
+@@ -5,6 +5,7 @@ target_sources( ${PROJECT_NAME}
+ 		${CMAKE_CURRENT_LIST_DIR}/ccGLWindow.h
+ 		${CMAKE_CURRENT_LIST_DIR}/ccGLWindowInterface.h
+ 		${CMAKE_CURRENT_LIST_DIR}/ccGLWindowSignalEmitter.h
++		${CMAKE_CURRENT_LIST_DIR}/ccGLWindowDepthNotice.h
+ 		${CMAKE_CURRENT_LIST_DIR}/ccGLWindowStereo.h
+ 		${CMAKE_CURRENT_LIST_DIR}/ccGuiParameters.h
+ 		${CMAKE_CURRENT_LIST_DIR}/ccRenderingTools.h
+diff --git a/libs/qCC_glWindow/include/ccGLWindowDepthNotice.h b/libs/qCC_glWindow/include/ccGLWindowDepthNotice.h
+new file mode 100644
+index 0000000..1bfba25
+--- /dev/null
++++ b/libs/qCC_glWindow/include/ccGLWindowDepthNotice.h
+@@ -0,0 +1,79 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// The sentences Sparky Stereo OS adds to CloudCompare's 3D view when the desktop gives it no depth limits, in the ten languages of
++// the edition (en, pl, pt_BR, fr, de, es, ja, ko, zh_CN, zh_TW): the language is the first of LANGUAGE, LC_ALL, LC_MESSAGES and
++// LANG that names one of them (English otherwise).
++#ifndef CC_GL_WINDOW_DEPTH_NOTICE_H
++#define CC_GL_WINDOW_DEPTH_NOTICE_H
++
++#include <QByteArray>
++#include <QString>
++
++namespace ccDepthNotice
++{
++enum Id { NotOffered = 0, NotDelivered, NotReadable, Count };
++
++inline QString text(Id id)
++{
++	static const char* const table[10][Count] = {
++		{ "3D depth: this desktop offers no depth limits, so both eyes show the same picture",
++		  "3D depth: the desktop has not delivered the depth limits yet, both eyes show the same picture for now",
++		  "3D depth: this window cannot read the desktop's depth limits, so both eyes show the same picture" },
++		{ "Głębia 3D: ten pulpit nie podaje limitów głębi, więc oba oczy widzą ten sam obraz",
++		  "Głębia 3D: pulpit nie przekazał jeszcze limitów głębi, na razie oba oczy widzą ten sam obraz",
++		  "Głębia 3D: to okno nie może odczytać limitów głębi pulpitu, więc oba oczy widzą ten sam obraz" },
++		{ "Profundidade 3D: este desktop não oferece limites de profundidade, então os dois olhos veem a mesma imagem",
++		  "Profundidade 3D: o desktop ainda não entregou os limites de profundidade, por enquanto os dois olhos veem a mesma imagem",
++		  "Profundidade 3D: esta janela não consegue ler os limites de profundidade do desktop, então os dois olhos veem a mesma imagem" },
++		{ "Profondeur 3D : ce bureau n’offre pas de limites de profondeur, les deux yeux voient donc la même image",
++		  "Profondeur 3D : le bureau n’a pas encore transmis les limites de profondeur, les deux yeux voient la même image pour l’instant",
++		  "Profondeur 3D : cette fenêtre ne peut pas lire les limites de profondeur du bureau, les deux yeux voient donc la même image" },
++		{ "3D-Tiefe: Dieser Desktop bietet keine Tiefengrenzen, deshalb sehen beide Augen dasselbe Bild",
++		  "3D-Tiefe: Der Desktop hat die Tiefengrenzen noch nicht geliefert, beide Augen sehen vorerst dasselbe Bild",
++		  "3D-Tiefe: Dieses Fenster kann die Tiefengrenzen des Desktops nicht lesen, deshalb sehen beide Augen dasselbe Bild" },
++		{ "Profundidad 3D: este escritorio no ofrece límites de profundidad, así que los dos ojos ven la misma imagen",
++		  "Profundidad 3D: el escritorio aún no ha entregado los límites de profundidad, por ahora los dos ojos ven la misma imagen",
++		  "Profundidad 3D: esta ventana no puede leer los límites de profundidad del escritorio, así que los dos ojos ven la misma imagen" },
++		{ "3D奥行き: このデスクトップは奥行きの上限を提供しないため、両目に同じ画像を表示します",
++		  "3D奥行き: デスクトップがまだ奥行きの上限を渡していないため、今は両目に同じ画像を表示します",
++		  "3D奥行き: このウィンドウはデスクトップの奥行きの上限を読み取れないため、両目に同じ画像を表示します" },
++		{ "3D 깊이: 이 데스크톱은 깊이 한계를 제공하지 않아 두 눈에 같은 화면을 보여 줍니다",
++		  "3D 깊이: 데스크톱이 아직 깊이 한계를 전달하지 않아 지금은 두 눈에 같은 화면을 보여 줍니다",
++		  "3D 깊이: 이 창은 데스크톱의 깊이 한계를 읽을 수 없어 두 눈에 같은 화면을 보여 줍니다" },
++		{ "3D 深度：此桌面未提供深度限制，因此两眼显示相同的画面",
++		  "3D 深度：桌面尚未提供深度限制，暂时两眼显示相同的画面",
++		  "3D 深度：此窗口无法读取桌面的深度限制，因此两眼显示相同的画面" },
++		{ "3D 深度：此桌面未提供深度限制，因此兩眼顯示相同的畫面",
++		  "3D 深度：桌面尚未提供深度限制，暫時兩眼顯示相同的畫面",
++		  "3D 深度：此視窗無法讀取桌面的深度限制，因此兩眼顯示相同的畫面" } };
++	static const char* const names[10] = { "en", "pl", "pt_BR", "fr", "de", "es", "ja", "ko", "zh_CN", "zh_TW" };
++	int chosen = 0;
++	for (const char* variable : { "LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG" })
++	{
++		QByteArray value = qgetenv(variable);
++		if (value.isEmpty())
++		{
++			continue;
++		}
++		QString language = QString::fromLocal8Bit(value);
++		language = language.left(language.indexOf(':') < 0 ? language.size() : language.indexOf(':'));
++		language = language.left(language.indexOf('.') < 0 ? language.size() : language.indexOf('.'));
++		bool found = false;
++		for (int i = 0; i < 10 && !found; i++)
++		{
++			const QString name = QString::fromLatin1(names[i]);
++			if (language == name || (name.size() == 2 && language.startsWith(name)) || (name == "pt_BR" && language.startsWith("pt")))
++			{
++				chosen = i;
++				found = true;
++			}
++		}
++		if (found || language != "C")
++		{
++			break;
++		}
++	}
++	return QString::fromUtf8(table[chosen][id]);
++}
++}
++
++#endif
+diff --git a/libs/qCC_glWindow/include/ccGLWindowInterface.h b/libs/qCC_glWindow/include/ccGLWindowInterface.h
+index 5754f6b..efc7fca 100644
+--- a/libs/qCC_glWindow/include/ccGLWindowInterface.h
++++ b/libs/qCC_glWindow/include/ccGLWindowInterface.h
+@@ -585,13 +585,25 @@ public: //stereo mode
+ 		//! Whether stereo-mode is 'analgyph' or real stereo mode
+ 		inline bool isAnaglyph() const { return glassType <= 4; }
+ 
+-		int screenWidth_mm;
+-		int screenDistance_mm;
+-		int eyeSeparation_mm;
+-		int stereoStrength;
+ 		GlassType glassType;
+ 	};
+ 
++	//! State of the person's depth limits, which the desktop gives the 3D view
++	enum class DepthLimitsState
++	{
++		Unused,       //!< stereo mode is off
++		Delivered,    //!< the limits are in use
++		NotOffered,   //!< the compositor offers none
++		NotDelivered, //!< offered, not delivered yet
++		NotReadable   //!< this window or build cannot read them
++	};
++
++	//! Polls the desktop's depth limits (when stereo mode is on). Returns true when the state or the numbers changed
++	bool pollDepthLimits();
++
++	//! Current state of the depth limits
++	inline DepthLimitsState depthLimitsState() const { return m_depthLimitsState; }
++
+ 	//! Enables stereo display mode
+ 	virtual bool enableStereoMode(const StereoParams& params);
+ 
+@@ -1269,6 +1281,14 @@ protected: //members
+ 	//! Whether seterovision mode is enabled or not
+ 	bool m_stereoModeEnabled;
+ 
++	//! Reads the person's depth limits (pixels of a view 1920 wide) from the desktop: 0 delivered, 1 not offered, 2 not delivered yet, 3 not readable
++	virtual int readDepthLimits(double& sunk, double& popped) { Q_UNUSED(sunk) Q_UNUSED(popped) return 3; }
++
++	//! State and values of the person's depth limits
++	DepthLimitsState m_depthLimitsState = DepthLimitsState::Unused;
++	double m_depthSunk = 0.0;
++	double m_depthPopped = 0.0;
++
+ 	//! Former parent object (for exclusive full-screen display)
+ 	QWidget* m_formerParent;
+ 
+diff --git a/libs/qCC_glWindow/include/ccGLWindowStereo.h b/libs/qCC_glWindow/include/ccGLWindowStereo.h
+index 9be6eea..21a03da 100644
+--- a/libs/qCC_glWindow/include/ccGLWindowStereo.h
++++ b/libs/qCC_glWindow/include/ccGLWindowStereo.h
+@@ -25,6 +25,7 @@
+ #include <QHBoxLayout>
+ #include <QWidget>
+ #include <QWindow>
++#include <QTimer>
+ 
+ class QOpenGLPaintDevice;
+ 
+@@ -144,6 +145,14 @@ protected: //other methods
+ 	virtual void dragEnterEvent(QDragEnterEvent* event) { doDragEnterEvent(event); }
+ 	virtual void dropEvent(QDropEvent* event) { doDropEvent(event); }
+ 
++protected: //depth limits
++
++	//! Reads the person's depth limits through libstereo-declare (the window's _KDE_NET_WM_STEREO_DEPTH_LIMITS property)
++	int readDepthLimits(double& sunk, double& popped) override;
++
++	//! Polls the depth limits
++	QTimer m_depthLimitsTimer;
++
+ protected: //members
+ 
+ 	//! Associated OpenGL context
+diff --git a/libs/qCC_glWindow/src/ccGLWindowInterface.cpp b/libs/qCC_glWindow/src/ccGLWindowInterface.cpp
+index bdecd98..fe042f3 100644
+--- a/libs/qCC_glWindow/src/ccGLWindowInterface.cpp
++++ b/libs/qCC_glWindow/src/ccGLWindowInterface.cpp
+@@ -18,6 +18,9 @@
+ //qCC
+ #include "ccGLWindow.h"
+ #include "ccGLWindowStereo.h"
++#include <algorithm>
++#include <cmath>
++#include <limits>
+ #include "ccRenderingTools.h"
+ 
+ //qCC_db
+@@ -1569,13 +1572,36 @@ ccGLMatrixd ccGLWindowInterface::computeProjectionMatrix(bool withGLfeatures, Pr
+ 			//see 'NVIDIA 3D VISION PRO AND STEREOSCOPIC 3D' White paper (Oct 2010, p. 12)
+ 			double convergence = std::abs(m_viewportParams.getFocalDistance());
+ 
+-			//we assume zNear = screen distance
+-			//double scale = zNear * m_stereoParams.stereoStrength / m_stereoParams.screenDistance_mm;	//DGM: we don't want to depend on the cloud size anymore
+-																										//as it can produce very strange visual effects on very large clouds
+-																										//we now keep something related to the focal distance (multiplied by
+-																										//the 'zNearCoef' that can be tweaked by the user if necessary)
+-			double scale = convergence * m_viewportParams.zNearCoef * m_stereoParams.stereoStrength / m_stereoParams.screenDistance_mm;
+-			double eyeSeperation = m_stereoParams.eyeSeparation_mm * scale;
++			//the separation is the largest one under which the farthest and the nearest displayed points stay inside the person's
++			//depth limits, which the desktop gives the window (sunk and popped, in pixels of a view 1920 wide); with no limits the
++			//two eyes are the same picture. Parallel cameras meeting at the focal distance f: a point at depth z is 2 t F (1 - f / z)
++			//pixels apart (t = separation / f, F = half the view's width in pixels over the half width ratio)
++			double eyeSeperation = 0.0;
++			if (m_depthLimitsState == DepthLimitsState::Delivered && convergence > 0.0)
++			{
++				const double viewWidth = std::max(1, glWidth());
++				const double sunk = m_depthSunk * viewWidth / 1920.0;
++				const double popped = m_depthPopped * viewWidth / 1920.0;
++				const double F = (viewWidth / 2.0) / distanceToHalfWidthRatio;
++				const double zNearest = std::max(zMinDisplayed, 1.0e-6 * convergence);
++				const double farTerm = (zMaxDisplayed > convergence ? 1.0 - convergence / zMaxDisplayed : 0.0);
++				const double nearTerm = (zNearest < convergence ? convergence / zNearest - 1.0 : 0.0);
++				double t = std::numeric_limits<double>::infinity();
++				if (farTerm > 0.0)
++				{
++					t = std::min(t, sunk / (2.0 * F * farTerm));
++				}
++				if (nearTerm > 0.0)
++				{
++					t = std::min(t, popped / (2.0 * F * nearTerm));
++				}
++				if (!std::isfinite(t))
++				{
++					//a scene flat at the focal plane has no depth to limit: infinity sinks the sunk limit
++					t = sunk / (2.0 * F);
++				}
++				eyeSeperation = t * convergence;
++			}
+ 
+ 			//on input 'eyeOffset' should be -1 (left) or +1 (right)
+ 			*eyeOffset *= eyeSeperation;
+@@ -3605,12 +3631,9 @@ void ccGLWindowInterface::scheduleFullRedraw(unsigned maxDelay_ms)
+ }
+ 
+ ccGLWindowInterface::StereoParams::StereoParams()
+-	: screenWidth_mm(600)
+-	, screenDistance_mm(800)
+-	, eyeSeparation_mm(64)
+-	, stereoStrength(50)
+-	, glassType(RED_CYAN)
+-{}
++	: glassType(GENERIC_STEREO_DISPLAY)
++{
++}
+ 
+ void ccGLWindowInterface::renderText(int x, int y, const QString & str, uint16_t uniqueID/*=0*/, const QFont & font/*=QFont()*/)
+ {   
+@@ -6927,6 +6950,39 @@ void ccGLWindowInterface::drawPivot()
+ 	glFunc->glPopMatrix();
+ }
+ 
++bool ccGLWindowInterface::pollDepthLimits()
++{
++	DepthLimitsState state = DepthLimitsState::Unused;
++	double sunk = 0.0;
++	double popped = 0.0;
++	if (m_stereoModeEnabled)
++	{
++		switch (readDepthLimits(sunk, popped))
++		{
++		case 0:
++			state = DepthLimitsState::Delivered;
++			break;
++		case 1:
++			state = DepthLimitsState::NotOffered;
++			sunk = popped = 0.0;
++			break;
++		case 2:
++			state = DepthLimitsState::NotDelivered;
++			sunk = popped = 0.0;
++			break;
++		default:
++			state = DepthLimitsState::NotReadable;
++			sunk = popped = 0.0;
++			break;
++		}
++	}
++	const bool changed = (state != m_depthLimitsState || sunk != m_depthSunk || popped != m_depthPopped);
++	m_depthLimitsState = state;
++	m_depthSunk = sunk;
++	m_depthPopped = popped;
++	return changed;
++}
++
+ bool ccGLWindowInterface::enableStereoMode(const StereoParams& params)
+ {
+ 	if (!m_initialized)
+@@ -6965,6 +7021,9 @@ bool ccGLWindowInterface::enableStereoMode(const StereoParams& params, bool need
+ 	m_stereoParams = params;
+ 	m_stereoModeEnabled = true;
+ 
++	//the person's depth limits decide the separation
++	pollDepthLimits();
++
+ 	//In some cases we must init the secondary FBO
+ 	if (needSecondFBO && !initFBO(width(), height()))
+ 	{
+diff --git a/libs/qCC_glWindow/src/ccGLWindowStereo.cpp b/libs/qCC_glWindow/src/ccGLWindowStereo.cpp
+index efd194c..9dfc863 100644
+--- a/libs/qCC_glWindow/src/ccGLWindowStereo.cpp
++++ b/libs/qCC_glWindow/src/ccGLWindowStereo.cpp
+@@ -17,6 +17,13 @@
+ 
+ //qCC
+ #include "ccGLWindowStereo.h"
++#include "ccGLWindowDepthNotice.h"
++
++#ifdef CC_WITH_STEREO_DECLARE
++#include <QX11Info>
++#include <stereo-declare.h>
++#include <cerrno>
++#endif
+ 
+ //qCC_db
+ #include <ccHObject.h>
+@@ -63,6 +70,34 @@ ccGLWindowStereo::ccGLWindowStereo(	QSurfaceFormat* format/*=nullptr*/,
+ 	connect(&m_autoRefreshTimer, &QTimer::timeout, this, [&]() { update(); });
+ 	connect(&m_deferredPickingTimer, &QTimer::timeout, this, [&]() { doPicking(); });
+ 
++	// the person's depth limits can change while the window is open: read them again, render again and say why when there are none
++	connect(&m_depthLimitsTimer, &QTimer::timeout, this, [this]()
++	{
++		const DepthLimitsState before = m_depthLimitsState;
++		if (pollDepthLimits())
++		{
++			if (m_depthLimitsState != before)
++			{
++				switch (m_depthLimitsState)
++				{
++				case DepthLimitsState::NotOffered:
++					ccLog::Warning(ccDepthNotice::text(ccDepthNotice::NotOffered));
++					break;
++				case DepthLimitsState::NotDelivered:
++					ccLog::Print(ccDepthNotice::text(ccDepthNotice::NotDelivered));
++					break;
++				case DepthLimitsState::NotReadable:
++					ccLog::Warning(ccDepthNotice::text(ccDepthNotice::NotReadable));
++					break;
++				default:
++					break;
++				}
++			}
++			redraw();
++		}
++	});
++	m_depthLimitsTimer.start(250);
++
+ 	QString windowTitle = QString("3D View Stereo %1").arg(m_uniqueID);
+ 	setWindowTitle(windowTitle);
+ 	setObjectName(windowTitle);
+@@ -533,6 +568,30 @@ ccGLWindowStereo* ccGLWindowStereo::FromWidget(QWidget* widget)
+ 	}
+ }
+ 
++int ccGLWindowStereo::readDepthLimits(double& sunk, double& popped)
++{
++#ifdef CC_WITH_STEREO_DECLARE
++	if (!isExposed() || !QX11Info::isPlatformX11())
++	{
++		return 3;
++	}
++	stereo_depth_limits limits;
++	const int r = stereo_depth_x11_get_limits(QX11Info::display(), static_cast<Window>(winId()), &limits);
++	if (r == 0)
++	{
++		sunk = limits.sunk;
++		popped = limits.popped;
++		return 0;
++	}
++	// never zeros, never a guess: not delivered yet, or not offered (an older compositor, or the window is not declared)
++	return (r == -ENODATA ? 2 : 1);
++#else
++	Q_UNUSED(sunk)
++	Q_UNUSED(popped)
++	return 3;
++#endif
++}
++
+ void ccGLWindowStereo::doSetMouseTracking(bool enable)
+ {
+ 	if (m_parentWidget)
+-- 
+2.53.0
+

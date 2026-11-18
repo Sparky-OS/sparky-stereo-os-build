@@ -1,0 +1,31 @@
+From 677cbd05eb955414ae8782d1b3e4ca381d934619 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 18 Nov 2026 02:12:06 -0300
+Subject: [PATCH 1/3] ccGLWindowStereo: give the window its stereo format
+
+The stereo window kept its QSurfaceFormat (stereo, double buffer) for the OpenGL context but never set it on the QWindow, so Qt
+chose a visual without GLX_STEREO and isQuadBufferSupported() answered no.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ libs/qCC_glWindow/src/ccGLWindowStereo.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/libs/qCC_glWindow/src/ccGLWindowStereo.cpp b/libs/qCC_glWindow/src/ccGLWindowStereo.cpp
+index 46f8c9b..efd194c 100644
+--- a/libs/qCC_glWindow/src/ccGLWindowStereo.cpp
++++ b/libs/qCC_glWindow/src/ccGLWindowStereo.cpp
+@@ -47,6 +47,10 @@ ccGLWindowStereo::ccGLWindowStereo(	QSurfaceFormat* format/*=nullptr*/,
+ 
+ 	m_format = format ? *format : requestedFormat();
+ 
++	// Qt picks the native window's visual from the window's own format: without this the window gets no stereo visual
++	// (GLX_STEREO) and quad-buffered stereo reports "not supported" although the context asks for it
++	setFormat(m_format);
++
+ 	//default picking mode
+ 	setPickingMode(DEFAULT_PICKING);
+ 
+-- 
+2.53.0
+
