@@ -1,0 +1,18 @@
+mesa (26.1.6-1+stereo3d26) forky; urgency=medium
+
+  * A stereo window that is a child of another window shows its first pair
+    (ORDER 17). The child is declared at the program's first swap and
+    presented at once; Stereo KWin holds it some tens of milliseconds later
+    (measured: a declaration 30 ms before the first swap is shown flat, 80 ms
+    before it is a pair), so the first presents completed as copies and took
+    the declaration back, and a flat child never flips, so it never returned:
+    a program that draws once stayed flat until it made a new drawable. From
+    KWin's declaration support 11, which writes _KDE_NET_WM_STEREO_DEPTH_LIMITS
+    on a declared child once it holds the child, the first present of a
+    declared child waits for the property, up to half a second, on DRI3 and
+    on the software path (patch 0043). A compositor that announces less, and
+    a window that is not a child, are not waited for; a compositor that does
+    not answer in half a second is said on stderr and the presents go as
+    before.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 18 Nov 2026 12:00:00 -0300
