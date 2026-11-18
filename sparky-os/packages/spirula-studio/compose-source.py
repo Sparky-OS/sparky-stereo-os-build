@@ -27,8 +27,16 @@ if subprocess.check_output(['git','-C',str(source),'status','--porcelain'],text=
     raise SystemExit('Commit the authored source before composing the package')
 root=out/prefix
 if root.exists():raise SystemExit('Refusing an existing source tree: '+str(root))
-def archive_git(repository,revision,destination,arc_prefix):
+def archive_git(repository,revision,destination,arc_prefix,excluded=()):
     data=subprocess.check_output(['git','-C',str(repository),'archive','--format=tar','--prefix='+arc_prefix,revision])
+    if excluded:
+        packed=io.BytesIO();removed=[]
+        with tarfile.open(fileobj=io.BytesIO(data)) as original,tarfile.open(fileobj=packed,mode='w') as target:
+            for member in original:
+                if member.name in excluded:removed.append(member.name);continue
+                target.addfile(member,original.extractfile(member) if member.isfile() else None)
+        if set(removed)!=set(excluded):raise SystemExit('Pinned source exclusions no longer match')
+        data=packed.getvalue()
     with lzma.open(destination,'wb',preset=6) as f:f.write(data)
     return data
 main=archive_git(source,base,out/f'spirula-studio_{version}.orig.tar.xz',prefix+'/')
@@ -47,7 +55,8 @@ for component,owner,revision in [('glfw','glfw','7b6aead9fb88b3623e3b3725ebb4267
         if not tree.exists():
             subprocess.run(['git','clone','--no-checkout',f'https://github.com/{owner}/{component}.git',str(tree)],check=True)
     subprocess.run(['git','-C',str(tree),'cat-file','-e',revision+'^{commit}'],check=True)
-    data=archive_git(tree,revision,out/f'spirula-studio_{version}.orig-{component}.tar.xz',component+'/')
+    excluded=['imgui/examples/libs/glfw/lib-vc2010-32/glfw3.lib','imgui/examples/libs/glfw/lib-vc2010-64/glfw3.lib'] if component=='imgui' else []
+    data=archive_git(tree,revision,out/f'spirula-studio_{version}.orig-{component}.tar.xz',component+'/',excluded)
     with tarfile.open(fileobj=io.BytesIO(data)) as tar:tar.extractall(root,filter='data')
     components[component]=revision
 fonts=cache/'fonts';fonts.mkdir(exist_ok=True)
@@ -80,5 +89,5 @@ subprocess.run(command,env=env,check=True)
 smoke=root/'debian/sparky-lean-toolkit/lean/smoke.tsv'
 with smoke.open('a') as f:
     f.write('spirula-studio\t/usr/lib/spirula-studio/vulkan/spirula\t--version\nspirula-studio-cuda\t/usr/lib/spirula-studio/cuda/spirula\t--version\n')
-(root/'debian/build-origin.json').write_text(json.dumps(dict(upstream=base,fork=head,components=components),indent=2)+'\n')
+(root/'debian/build-origin.json').write_text(json.dumps(dict(upstream=base,fork=head,components=components,excluded_prebuilt_examples=['imgui/examples/libs/glfw/lib-vc2010-32/glfw3.lib','imgui/examples/libs/glfw/lib-vc2010-64/glfw3.lib']),indent=2)+'\n')
 print(root)

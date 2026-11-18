@@ -90,22 +90,19 @@ def metered():
 
 
 def language():
-    for name in ('LC_ALL', 'LC_MESSAGES', 'LANG'):
-        value = os.environ.get(name)
-        if value:
-            break
-    else:
-        value = 'C'
-    value = value.split('.')[0].split('@')[0]
-    if value.startswith('pt'):
-        value = 'pt_BR'
-    elif value in ('zh_TW', 'zh_HK', 'zh_MO'):
-        value = 'zh_TW'
-    elif value.startswith('zh'):
-        value = 'zh_CN'
-    for candidate in (value, value.split('_')[0], 'en'):
-        if re.fullmatch(r'[A-Za-z]{2,3}(_[A-Za-z]+)?', candidate) and os.path.isfile(os.path.join(LANGDIR, candidate + '.json')):
-            return candidate
+    values = os.environ.get('LANGUAGE', '').split(':')
+    values += [os.environ.get('LC_ALL') or os.environ.get('LC_MESSAGES') or os.environ.get('LANG', 'C')]
+    for value in values:
+        value = value.split('.')[0].split('@')[0]
+        if value.startswith('pt'):
+            value = 'pt_BR'
+        elif value in ('zh_TW', 'zh_HK', 'zh_MO'):
+            value = 'zh_TW'
+        elif value.startswith('zh'):
+            value = 'zh_CN'
+        for candidate in (value, value.split('_')[0]):
+            if re.fullmatch(r'[A-Za-z]{2,3}(_[A-Za-z]+)?', candidate) and os.path.isfile(os.path.join(LANGDIR, candidate + '.json')):
+                return candidate
     return 'en'
 
 
