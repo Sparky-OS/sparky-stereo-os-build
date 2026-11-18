@@ -1,0 +1,9 @@
+lact (0.10.1-1) unstable; urgency=medium
+
+  * The edition's build of LACT 0.10.1 (Ilya Zlobintsev, github.com/ilya-zlobintsev/LACT, release of 2026-08-29), carried because Debian never packaged it (no source package in Debian, no removal record in ftp-master's logs read 2018 to 2026: nothing against it) and SparkyLinux does not host it. Debian has CoreCtrl for AMD cards; LACT also reads NVIDIA and Intel cards and has a command line and a service.
+  * Built from the tag's source, pinned in the recipe by commit 30dc182391e2c002f6f7c988e76aa477a4772aa2, the tarball's SHA-256 and the git tree id db82ba79c61c8fc27fb84fcb201de9a5bd80f229, with its 414 Rust crates vendored (Cargo.toml and Cargo.lock unchanged: hashes checked before and after `cargo vendor --locked`), no network in the build. The program is not changed. Upstream's prebuilt program and packages are not used.
+  * The filesystem hierarchy: the program in /usr/bin, the unit in /usr/lib/systemd/system, upstream's polkit action, desktop file, icons and metadata where Debian puts them; settings stay in /etc/lact/config.yaml, written by the service, never by the package.
+  * The service is enabled and started when the package is installed (it only applies what the person saved); a person's own disable is kept across upgrades. A copy installed by upstream's makefile (/usr/local) is left alone: this package then enables, starts, restarts and stops nothing and says so once at the install (README.Debian).
+  * Lean Code 0.1.30: the language plan names rust (the program's own crates are projected as build inputs by the Rust adapter) and vendor/* is preserved as the crates' authors wrote it. The licences of the 414 crates are in debian/copyright (generated from debian/crate-licences.tsv; the legal files themselves are pinned by SHA-256 and installed, not kept in git).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 18 Nov 2026 01:30:00 -0300

@@ -15,7 +15,7 @@ tool = '/usr/bin/sparky-stereo-hardware'
 base = {
     'lspci': '', 'lsusb': '', 'cpuinfo': 'vendor_id : AuthenticAMD\n', 'laptop': '1\n', 'architecture': 'amd64\n',
     'hid-uevents': '', 'input-properties': '', 'firmware-packages': '', 'nvidia-detect': 'No NVIDIA GPU detected.\n',
-    'dmi-board-vendor': 'Some Board Maker\n', 'dmi-board-name': 'TEST\n', 'openlinkhub': 'no\n', 'openlinkhub-upstream': 'no\n',
+    'dmi-board-vendor': 'Some Board Maker\n', 'dmi-board-name': 'TEST\n', 'openlinkhub': 'no\n', 'openlinkhub-upstream': 'no\n', 'corectrl': 'no\n', 'lact-local': 'no\n', 'headsetcontrol-local': 'no\n',
 }
 
 
@@ -23,6 +23,8 @@ def usb(*ids):
     return ''.join(f'Bus 001 Device {n + 2:03d}: ID {i} Test device\n' for n, i in enumerate(ids))
 
 
+AMD = '03:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Navi 21 [Radeon RX 6800] [1002:73bf] (rev c1)\n'
+INTEL = '00:02.0 VGA compatible controller [0300]: Intel Corporation UHD Graphics 630 [8086:3e92]\n'
 HUB, PSU_COOLER, WRAITH = '1b1c:0c3f', '1b1c:0c09', '2516:0051'
 cases = [
     # name, changed facts, packages that must be in the plan, packages that must not, lines that must be in it, lines that must not
@@ -57,6 +59,21 @@ cases = [
     # a hub and a keyboard together: each goes to its own tool
     ('a hub and a keyboard', {'lsusb': usb(HUB, '1b1c:1b11')}, {'openlinkhub', 'openrgb'}, {'liquidctl'},
      ['fact\tperipheral\topenlinkhub\t' + HUB, 'fact\tperipheral\topenrgb\t1b1c:1b11'], []),
+    # headsets (milestone 10): HeadsetControl drives the battery, sidetone and lights through the headset's own interface; a headset OpenRGB lists
+    # too gets both (no clash has been seen, and the person can take either away)
+    ('a HyperX headset', {'lsusb': usb('03f0:018b')}, {'headsetcontrol'}, {'openrgb', 'openlinkhub'}, ['fact\tperipheral\theadsetcontrol\t03f0:018b'], []),
+    ('a Logitech headset that OpenRGB lists too', {'lsusb': usb('046d:0a87')}, {'headsetcontrol', 'openrgb'}, set(),
+     ['fact\tperipheral\theadsetcontrol\t046d:0a87', 'fact\tperipheral\topenrgb\t046d:0a87'], []),
+    ('a HyperX headset and a HeadsetControl made by upstream\'s makefile', {'lsusb': usb('03f0:018b'), 'headsetcontrol-local': 'yes\n'}, set(), {'headsetcontrol'},
+     ['fact\tperipheral\theadsetcontrol-local\t03f0:018b'], []),
+    # LACT (milestone 10): an AMD display controller gets LACT, which owns the card; CoreCtrl is not installed for it
+    ('an AMD Radeon card', {'lspci': AMD}, {'lact'}, {'corectrl', 'openrgb'},
+     ['fact\tperipheral\tlact\t1002:73bf', 'owner\t1002:73bf\tlact\tnot CoreCtrl\tAMD graphics card'], []),
+    ('an AMD Radeon card and a CoreCtrl the person installed', {'lspci': AMD, 'corectrl': 'yes\n'}, set(), {'lact', 'corectrl'},
+     ['fact\tperipheral\tlact-not-planned\t1002:73bf'], ['owner\t1002:73bf\tlact\tnot CoreCtrl\tAMD graphics card']),
+    ('an AMD Radeon card and a LACT made by upstream\'s makefile', {'lspci': AMD, 'lact-local': 'yes\n'}, set(), {'lact'},
+     ['fact\tperipheral\tlact-not-planned\t1002:73bf'], []),
+    ('an Intel graphics controller', {'lspci': INTEL}, set(), {'lact'}, [], []),
     # a device only OpenRGB drives stays OpenRGB's
     ('a Wraith Prism', {'lsusb': usb(WRAITH)}, {'openrgb'}, {'openlinkhub'}, ['action\topenrgb-session'], []),
     # a lights-only controller that OpenRGB and liquidctl both list (liquidctl names it "LED Controller"): OpenRGB's; liquidctl is for coolers and fans
