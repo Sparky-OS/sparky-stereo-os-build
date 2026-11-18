@@ -10,7 +10,7 @@ OUT=${OUT:?Set OUT to the workspace output directory}
 PACKAGE=sparky-pjeoffice-codec
 VERSION=5.1.10
 TARBALL=ffmpeg-$VERSION.tar.xz
-SHA256=7b2a6630d4da6015cac0f1dc508f702db3f9c2b5cae766543a170798fb893ef8
+SHA256=392306d6fc45dab0e9e0ea55381e071842e83a2fb31d320aeda40477a7766293
 KEY=FCF986EA15E6E293A5644F10B4322F04D67658D8
 export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:?the host passes the date of the recipe: build-provenance.sh}
 export DEBEMAIL=Capitain_Jack@yahoo.com DEBFULLNAME="Daniel Ramos (Capitain Jack)"
