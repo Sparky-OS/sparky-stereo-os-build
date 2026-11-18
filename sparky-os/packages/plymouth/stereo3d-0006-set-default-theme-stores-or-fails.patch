@@ -1,0 +1,124 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 18 Nov 2026 19:00:00 -0300
+Subject: [PATCH 6/6] plymouth-set-default-theme: Store the theme or fail with
+ a sentence
+
+Merge request !488 (stereo3d-0005) adds the missing line when the Daemon
+header is the last line of a file that ends with a newline. The script
+still stored nothing, and exited 0, for an empty file and for a file whose
+last line is a header with no newline after it: the line count it tests
+(`-le 0`) is 1 for an empty file, because readarray makes one element of
+an empty string, and one `echo >>` only ends the unterminated line.
+
+add_empty_lines_to_file does what !488 does, with the count taken from the
+file: it ends an unterminated last line, then adds empty lines until the
+line to insert before exists, and both inserts use it.
+
+The command now stores the choice or says why not, and exits non-zero:
+- it reads the Theme back from the Daemon section and fails with a
+  sentence naming the file when it is not the one asked for;
+- a file or folder it cannot write fails before anything is changed, with
+  a sentence naming it, instead of sed's message about a temporary file;
+- --reset deletes the Theme line of the Daemon section only, not a Theme
+  line of another section, and says when one is still there.
+---
+--- a/scripts/plymouth-set-default-theme.in
++++ b/scripts/plymouth-set-default-theme.in
+@@ -42,6 +42,39 @@ function list_themes ()
+         done
+ }
+ 
++function cannot_write ()
++{
++        echo "plymouth-set-default-theme: cannot write $1: $2" >&2
++        exit 1
++}
++
++function check_config_file_can_be_written ()
++{
++        if [[ -e "$1" && ! -w "$1" ]]; then
++                cannot_write "$1" "the file is not writable"
++        fi
++        if [[ ! -w "$(dirname "$1")" ]]; then
++                cannot_write "$1" "the folder is not writable"
++        fi
++}
++
++function add_empty_lines_to_file ()
++{
++        FILE_PATH="$1"
++        FILE_WANTED_LINES="$2"
++
++        if [[ -s "$FILE_PATH" && -n "$(tail -c 1 "$FILE_PATH")" ]]; then
++                echo >> "$FILE_PATH"
++        fi
++
++        FILE_LINE_COUNT=$(sed -n '$=' "$FILE_PATH")
++        FILE_LINE_COUNT=${FILE_LINE_COUNT:-0}
++        while [[ $FILE_LINE_COUNT -lt $FILE_WANTED_LINES ]]; do
++                echo >> "$FILE_PATH"
++                FILE_LINE_COUNT=$(( FILE_LINE_COUNT + 1 ))
++        done
++}
++
+ function read_or_set_file_ini_value ()
+ {
+         CONFIG_FILE_PATH="$1"
+@@ -51,6 +84,10 @@ function read_or_set_file_ini_value ()
+ 
+         unset CONFIG_FILE_LINES_ARRAY
+ 
++        if [[ ! -z $CONFIG_FILE_VALUE_NEW_VALUE ]]; then
++                check_config_file_can_be_written "$CONFIG_FILE_PATH"
++        fi
++
+         if [[ ! -e "$CONFIG_FILE_PATH" && ! -z $CONFIG_FILE_VALUE_NEW_VALUE ]]; then
+                 echo > "$CONFIG_FILE_PATH"
+         else
+@@ -133,19 +170,13 @@ function read_or_set_file_ini_value ()
+         if [[ ! -z $CONFIG_FILE_VALUE_NEW_VALUE ]]; then
+                 if [[ $INI_SEGMENT_LINE_NUMBER == 0 ]]; then
+                         INI_SEGMENT_LINE_NUMBER=1
+-                        if [[ $CONFIG_FILE_LINE_COUNT -le 0 ]]
+-                        then
+-                                echo >> "$CONFIG_FILE_PATH"
+-                        fi
++                        add_empty_lines_to_file "$CONFIG_FILE_PATH" $INI_SEGMENT_LINE_NUMBER
+                         sed -i "$INI_SEGMENT_LINE_NUMBER i [$CONFIG_FILE_INI_SEGMENT]" "$CONFIG_FILE_PATH"
+                 fi
+ 
+                 if [[ $CONFIG_VALUE_LINE_NUMBER == 0 ]]; then
+                         NEW_LINE_NUMBER=$(( $INI_SEGMENT_LINE_NUMBER + 1 ))
+-                        if [[ $NEW_LINE_NUMBER -gt $CONFIG_FILE_LINE_COUNT ]]
+-                        then
+-                                echo >> "$CONFIG_FILE_PATH"
+-                        fi
++                        add_empty_lines_to_file "$CONFIG_FILE_PATH" $NEW_LINE_NUMBER
+                         sed -i "$NEW_LINE_NUMBER i $CONFIG_FILE_VALUE_NAME=$CONFIG_FILE_VALUE_NEW_VALUE" "$CONFIG_FILE_PATH"
+                 else
+                         sed -i -e "${CONFIG_VALUE_LINE_NUMBER}s/.*/$CONFIG_FILE_VALUE_NAME=$CONFIG_FILE_VALUE_NEW_VALUE/" "$CONFIG_FILE_PATH"
+@@ -289,7 +320,11 @@ fi
+ 
+ if [ $DO_RESET -ne 0 ]; then
+         if [ -f ${PLYMOUTH_CONFDIR}/plymouthd.conf ]; then
+-                sed -i -e '/^Theme[[:blank:]]*=.*/d' ${PLYMOUTH_CONFDIR}/plymouthd.conf || exit $?
++                check_config_file_can_be_written ${PLYMOUTH_CONFDIR}/plymouthd.conf
++                sed -i -e '/^[[:space:]]*\[Daemon\]/,/^[[:space:]]*\[/{/^Theme[[:blank:]]*=.*/d}' ${PLYMOUTH_CONFDIR}/plymouthd.conf || exit $?
++                if [ -n "$(read_or_set_file_ini_value ${PLYMOUTH_CONFDIR}/plymouthd.conf Daemon Theme)" ]; then
++                        cannot_write ${PLYMOUTH_CONFDIR}/plymouthd.conf "a Theme line is still in its Daemon section"
++                fi
+         fi
+ 
+         [ $DO_INITRD_REBUILD -eq 0 ] && exit 0
+@@ -315,6 +350,10 @@ fi
+ 
+ [ -d ${PLYMOUTH_CONFDIR} ] || mkdir -p ${PLYMOUTH_CONFDIR}
+ read_or_set_file_ini_value ${PLYMOUTH_CONFDIR}/plymouthd.conf Daemon Theme ${THEME_NAME}
++STORED_THEME_NAME=$(read_or_set_file_ini_value ${PLYMOUTH_CONFDIR}/plymouthd.conf Daemon Theme)
++if [ "$STORED_THEME_NAME" != "$THEME_NAME" ]; then
++        cannot_write ${PLYMOUTH_CONFDIR}/plymouthd.conf "Theme=${THEME_NAME} is not in its Daemon section afterwards"
++fi
+ 
+ [ $DO_INITRD_REBUILD -ne 0 ] && (${PLYMOUTH_LIBEXECDIR}/plymouth/plymouth-update-initrd)
+ exit 0
