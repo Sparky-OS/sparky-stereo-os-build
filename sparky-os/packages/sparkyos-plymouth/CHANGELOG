@@ -1,4 +1,21 @@
 -------------------------------------------------------------------------------
+  Version 9~20261118 (2026-11-18)
+-------------------------------------------------------------------------------
+  * sparkyos-stereo no longer draws its own half side by side pair (ORDER 715; Daniel, 2026-11-18: "plymouyth flat sbs output
+    is still there, with anaglyph on"). 9~20261102 was built from a checkout of the artwork repository left on an older
+    branch: its sparkyos-stereo.plymouth had no Stereo= key and its script squeezed each eye to half the window's width on
+    every screen, so the edition's Plymouth drew the squeezed pair as one flat picture (log: "key file does not have entry
+    for key 'Stereo'"). The package is now built from a pinned commit of the artwork repository (ART_COMMIT and the hash of
+    its plymouth/ tree in build.sh; the build stops on any other)
+  * The theme declares Stereo=full-side-by-side and draws with the code of the edition's sparky-stereo-lines: one sprite per
+    eye, each eye at the size of the main screen's, when the window holds both eyes (Window.GetStereo ()), one picture when it
+    does not; the levels inside the person's popped and sunk limits (Window.GetStereoPoppedLimit () and GetStereoSunkLimit ()),
+    no depth constant; laid out again at every display hotplug. sparkyos (2D) and the pictures are unchanged
+  * Depends on plymouth (>= 26.134.222-1+stereo3d4), the Plymouth that gives a theme the stereo window, the limits and a
+    left eye on a screen that cannot show both; the script needs those calls
+  * The theme in use is not touched by the upgrade: a Theme=sparkyos-stereo already configured stays and now shows right
+
+-------------------------------------------------------------------------------
   Version 9~20261102 (2026-11-02)
 -------------------------------------------------------------------------------
   * Copy only tracked artwork and recipe inputs into source and binary packages.
