@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.22)
+project(sonnet_state LANGUAGES CXX)
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(KF6Sonnet REQUIRED)
+add_executable(sonnet-state sonnet-state.cpp)
+target_link_libraries(sonnet-state PRIVATE Qt6::Widgets KF6::SonnetCore KF6::SonnetUi)
