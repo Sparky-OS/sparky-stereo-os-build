@@ -15,9 +15,6 @@ QVariantMap savedChoices(const QString &id);
 void saveChoice(const QString &id, const QString &key, const QVariant &value);
 void forgetChoices(const QString &id);
 
-// PowerDevil's own level for a peripheral's low battery (powerdevilrc, [BatteryManagement] PeripheralBatteryLowLevel, 10 when unset)
-int peripheralLowLevel();
-
 // One headset described for the page and the panel entry: only the settings it reports, each with its saved value
 QVariantMap describe(const Headset &headset, const QVariantMap &saved);
 QString batteryText(const Headset &headset);

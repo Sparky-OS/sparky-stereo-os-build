@@ -8,3 +8,8 @@ override_dh_auto_configure:
 override_dh_auto_install:
 	dh_auto_install
 	install -D -m 0644 data/71-sparky-stereo-headset.rules debian/sparky-stereo-headset/usr/lib/udev/rules.d/71-sparky-stereo-headset.rules
+
+# the battery service is started by udev with the headset (SYSTEMD_WANTS) and stops with it (StopWhenUnneeded): installing the package starts nothing,
+# and an upgrade restarts it only when it is running
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start sparky-stereo-headset-battery.service
