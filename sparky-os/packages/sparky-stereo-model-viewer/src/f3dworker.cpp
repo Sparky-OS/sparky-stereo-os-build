@@ -62,6 +62,7 @@ void F3DWorker::run()
     bool attached = false;
     bool stereo = true;
     bool announcedNative = false;
+    bool noStereoSaid = false;
     int lastState = -1;
     double lastSunk = -1;
     double lastPopped = -1;
@@ -154,6 +155,10 @@ void F3DWorker::run()
                     declareShownSize(display, native, lastRect.size());
                 }
             }
+        }
+        if (announcedNative && stereo && !noStereoSaid && !window.isStereo()) {
+            noStereoSaid = true;
+            Q_EMIT stereoFailed();
         }
         bool changed = false;
         const auto state = window.pollStereoDepth(changed);

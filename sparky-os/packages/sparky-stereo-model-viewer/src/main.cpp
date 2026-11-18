@@ -3,7 +3,7 @@
 #include "viewer.h"
 
 #include <KAboutData>
-#include <KLocalizedContext>
+#include <KLocalizedQmlContext>
 #include <KLocalizedString>
 
 #include <QApplication>
@@ -45,7 +45,7 @@ int main(int argc, char *argv[])
 
     Viewer viewer;
     QQmlApplicationEngine engine;
-    engine.rootContext()->setContextObject(new KLocalizedContext(&engine));
+    engine.rootContext()->setContextObject(new KLocalizedQmlContext(&engine));
     engine.rootContext()->setContextProperty(QStringLiteral("viewer"), &viewer);
     engine.load(QUrl(QStringLiteral("qrc:/ui/Main.qml")));
     if (engine.rootObjects().isEmpty()) {
