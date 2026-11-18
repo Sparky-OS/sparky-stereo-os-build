@@ -25,7 +25,10 @@ ap.add_argument('scratch', type=Path)
 ap.add_argument('--source-dir', type=Path, help='legacy recipe-tree layout; artifacts are emitted to its parent')
 ap.add_argument('--comparison', type=Path, help='retain every differing payload/control member as JSON')
 ap.add_argument('--compare-only', action='store_true', help='inspect retained outputs without repeating a build')
+ap.add_argument('--new-source-build', action='store_true', help='new successor: descriptor directory must contain no reference binaries')
 args = ap.parse_args()
+if args.new_source_build and (args.compare_only or list(args.descriptor.parent.glob('*.deb'))):
+    ap.error('--new-source-build requires an input-only source directory without reference binaries')
 source = args.source_dir or args.scratch / 'source'
 source.parent.mkdir(parents=True, exist_ok=True)
 artifacts = source.parent
@@ -36,7 +39,7 @@ made = sorted(artifacts.glob('*.deb'))
 if not made:
     raise SystemExit('No binary outputs')
 differences = []
-for path in made:
+for path in (() if args.new_source_build else made):
     prior = args.descriptor.parent / path.name
     if not prior.is_file():
         differences.append({'binary': path.name, 'difference': 'no accepted reference archive'})
@@ -89,4 +92,5 @@ for pattern in ('*.deb', '*.buildinfo', '*.changes'):
         raise SystemExit(f'Missing native build metadata {pattern}')
     for path in paths:
         shutil.copy2(path, args.descriptor.parent / path.name)
-print(f'Native rebuild: {len(made)} binary payload/control member sets identical; genuine archives and receipts retained')
+print(f'Native new source build: {len(made)} archives and genuine receipts retained' if args.new_source_build else
+      f'Native rebuild: {len(made)} binary payload/control member sets identical; genuine archives and receipts retained')
