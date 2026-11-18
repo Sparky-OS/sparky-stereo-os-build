@@ -60,7 +60,7 @@ control() { # dir package depends recommends description...
 build() { # dir package: the Lean Code package and its source, then the gate that writes the build record, in the build image
 	find "$1" -name '*.qmlc' -delete
 	chmod -R go-w "$1"
-	docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lean-standalone-$2" --ulimit core=0 --cpus 4 --network none --platform linux/amd64 \
+	docker run --rm --pull="${SPARKY_BUILD_PULL:-missing}" --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lean-standalone-$2" --ulimit core=0 --cpus 4 --network none --platform linux/amd64 \
 		--user "$(id -u):$(id -g)" "${SPARKY_PROV_ARGS[@]}" -e HOME=/tmp -e PYTHONPATH="$TREE/sparky-os" \
 		-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
 		-v "$TREE":"$TREE":ro -v "$1":"$1" -v "$OUT":"$OUT" "$IMAGE" \
@@ -161,7 +161,7 @@ cp "$HERE/sparkyblack/splash/Splash.qml" "$D/$LNF/org.kde.sparkyblack.desktop/co
 cp "$HERE/sparkyblack/metadata.json" "$D/$LNF/org.kde.sparkyblack.desktop/"
 cp "$HERE/sparkyblack/defaults" "$D/$LNF/org.kde.sparkyblack.desktop/contents/defaults"
 cp -a /usr/share/plasma/desktoptheme/sparkyblack "$D/usr/share/plasma/desktoptheme/"
-rsync -a --exclude=.directory /usr/share/icons/sparkyblack "$D/usr/share/icons/"   # .directory: a root-only folder-view file
+rsync -a --no-owner --no-group --exclude=.directory /usr/share/icons/sparkyblack "$D/usr/share/icons/"   # .directory: a root-only folder-view file
 cp -a /usr/share/plymouth/themes/sparky-lines "$D/usr/share/plymouth/themes/"
 # Our own Qt 6 port of Pawel's sparky-black SDDM theme, under our own name (his is never modified)
 cp -a "$HERE/sparkyblack/sddm/sparky-stereo-black" "$D/usr/share/sddm/themes/"
