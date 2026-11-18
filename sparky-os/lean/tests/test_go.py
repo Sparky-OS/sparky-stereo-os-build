@@ -226,7 +226,7 @@ class Programs(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('gcc') and CGO_WORKS, 'gcc is not installed, or this go cannot build runtime/cgo here')
     def test_the_cgo_preamble_is_program_data(self):
-        text = ('package main\n\n// a doc comment\n/*\n#include <stdio.h>\nstatic int two(void) { return 2; } // C comment\n*/\n'
+        text = ('package main\n\n// a comment apart from the preamble: gone\n\n/*\n#include <stdio.h>\nstatic int two(void) { return 2; } // C comment\n*/\n'
                 'import "C"\n\nfunc main() { println(C.two()) }\n')
         with tempfile.TemporaryDirectory() as ok, tempfile.TemporaryDirectory() as bad:
             tree(ok, {'main.go': lean_of(text)})
