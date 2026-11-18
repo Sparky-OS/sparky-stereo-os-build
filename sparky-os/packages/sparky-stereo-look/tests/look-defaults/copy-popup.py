@@ -42,7 +42,7 @@ class SlowFile(http.server.BaseHTTPRequestHandler):
 def windows():
     active = {}
     for line in (case / 'session.log').read_text(errors='replace').splitlines():
-        match = re.search(r'(ADDED|REMOVED) plasmashell type=(13|17) .* wid=(\S+)', line)
+        match = re.search(r'(ADDED|REMOVED) (?:org\.kde\.)?plasmashell type=(13|17) .* wid=(\S+)', line)
         if match:
             if match[1] == 'ADDED':
                 active[match[3]] = line
@@ -80,6 +80,16 @@ try:
                   jobStillRegistered=bool(late['jobPaths']),
                   copyStillRunning=early['running'] and late['running'],
                   copyAdvances=late['bytes'] > early['bytes'] > 0)
+    if dismiss and not late['windows']:
+        with (case / 'tray-input.log').open('w') as input_log:
+            pointer = subprocess.Popen(['/test-bin/fakeinput', 'm:1723,1051', 's:300', 'b:272', 's:300', 'm:1400,600', 's:5000'], stdout=input_log, stderr=input_log)
+            try:
+                time.sleep(2)
+                shot('tray')
+                late['trayJobPaths'] = job_paths()
+                checks['jobRetainedWhenTrayOpened'] = bool(late['trayJobPaths'])
+            finally:
+                pointer.wait(timeout=6)
     (case / 'copy-popup.json').write_text(json.dumps(dict(early=early, late=late, expectDismiss=dismiss, checks=checks), indent=2) + '\n')
     for name, passed in checks.items():
         print('PASS' if passed else 'FAIL', name, flush=True)

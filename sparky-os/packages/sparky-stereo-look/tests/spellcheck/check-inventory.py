@@ -26,6 +26,7 @@ for language, check in state['languageChecks'].items():
 selected = state['pageSelectedLanguage']
 locale = state['systemLocale']
 if __import__('os').environ.get('EXPECT_USER') == '1':
+    assert state['defaultLanguage'] == 'fr_FR', 'saved language did not win'
     locale = state['defaultLanguage']
 matched = locale in ('ja_JP', 'zh_CN', 'zh_TW') or selected == locale or selected == locale.split('_')[0]
 print(('PASS' if matched else 'FAIL'), 'page selection', repr(selected), 'system locale', repr(locale))
