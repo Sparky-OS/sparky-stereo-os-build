@@ -4,6 +4,7 @@
 import argparse
 from collections import Counter, defaultdict
 import csv
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -15,8 +16,15 @@ ap.add_argument('inventory', type=Path)
 ap.add_argument('--pool', type=Path, required=True)
 ap.add_argument('--published', type=Path, required=True)
 ap.add_argument('--output', type=Path, required=True)
+ap.add_argument('--resume', action='store_true', help='reuse only complete paired families in this frozen pool')
+ap.add_argument('--frozen-pool-id', help='expected SHA-256 of pool/SHA256SUMS; required for resume')
 a = ap.parse_args()
 a.output.mkdir(parents=True, exist_ok=True)
+completed = {}
+if a.resume:
+    if not a.frozen_pool_id or hashlib.sha256((a.pool/'SHA256SUMS').read_bytes()).hexdigest() != a.frozen_pool_id:
+        raise ValueError('resume requires the exact declared frozen pool identity')
+    completed = {r['source']:r for r in json.loads((a.output/'progress.json').read_text())}
 rows = [r for r in csv.DictReader(a.files.open(), delimiter='\t')
         if r['kind'] == 'binary' and r['decision'] == 'candidate']
 old = {(r['binary'], r['architecture'], r.get('variant', '')): r
@@ -30,13 +38,20 @@ for source in sorted(groups, key=lambda s: sum((a.pool/r['filename']).stat().st_
     previous = [old[k] for r in selected if (k := (r['binary'], r['architecture'], r.get('variant', ''))) in old]
     versions = sorted({r['version'] for r in selected + previous}, key=len, reverse=True)
     result = {'source': source, 'current_binaries': len(selected), 'published_binaries': len(previous)}
+    saved = completed.get(source)
+    if saved:
+        assert all(saved[k] == result[k] for k in result), source
     for side, paths in [('current', [a.pool/r['filename'] for r in selected]),
                         ('published', [a.published/r['filename'] for r in previous])]:
         log = a.output/(source+'-'+side+'.log')
-        with log.open('w') as stream:
-            run = subprocess.run(['lintian', '--allow-root', '--tag-display-limit', '0', *map(str, paths)],
-                                 stdout=stream, stderr=subprocess.STDOUT) if paths else None
-        result[side+'_rc'] = run.returncode if run else None
+        if saved:
+            assert log.is_file(), log
+            result[side+'_rc'] = saved[side+'_rc']
+        else:
+            with log.open('w') as stream:
+                run = subprocess.run(['lintian', '--allow-root', '--tag-display-limit', '0', *map(str, paths)],
+                                     stdout=stream, stderr=subprocess.STDOUT) if paths else None
+            result[side+'_rc'] = run.returncode if run else None
         tag_count, other = 0, []
         for line in log.read_text(errors='replace').splitlines():
             match = re.match(r'^([EWIPXO]): ([^:]+): ([a-z0-9][a-z0-9+-]*)(?: (.*))?$', line)
@@ -51,6 +66,8 @@ for source in sorted(groups, key=lambda s: sum((a.pool/r['filename']).stat().st_
                 other.append(line)
         result[side+'_tag_lines'] = tag_count
         result[side+'_other_lines'] = other
+        if saved:
+            assert tag_count == saved[side+'_tag_lines'] and other == saved[side+'_other_lines'], log
     results.append(result)
     (a.output/'progress.json').write_text(json.dumps(results, indent=2)+'\n')
     print(source, result, flush=True)
