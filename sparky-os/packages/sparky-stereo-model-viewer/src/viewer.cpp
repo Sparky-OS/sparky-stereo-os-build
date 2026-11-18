@@ -44,6 +44,10 @@ Viewer::Viewer(QObject *parent)
     connect(m_worker.get(), &F3DWorker::depthState, this, [this](int state, double, double) {
         depthState(state);
     });
+    connect(m_worker.get(), &F3DWorker::stereoFailed, this, [this]() {
+        m_notice = i18nc("@info", "3D could not be enabled: this display offers no stereo window");
+        Q_EMIT noticeChanged();
+    });
     connect(m_worker.get(), &F3DWorker::playingChanged, this, [this](bool playing) {
         m_playing = playing;
         Q_EMIT playingChanged();
