@@ -1,0 +1,18 @@
+Source: sparky-stereo-headset
+Section: System
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Standards-Version: 4.7.4
+Build-Depends: debhelper-compat (= 13), cmake, extra-cmake-modules, gettext, libkf6config-dev, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, libkf6notifications-dev, libplasma-dev, ninja-build, pkgconf, qt6-base-dev, qt6-declarative-dev
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+
+Package: sparky-stereo-headset
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, headsetcontrol (>= 4.3.0), systemsettings, plasma-workspace, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, qml6-module-qtquick-controls, qml6-module-qtquick-layouts
+Description: Headset page and panel entry for USB gaming headsets
+ A Headset page in System Settings, a panel entry that appears only while a
+ headset is connected, and a user service that sends the saved choices to a
+ headset when it appears and tells when its battery is low. The headsets and
+ what each can do come from HeadsetControl.
