@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+profile=${DPKG_MAINTSCRIPT_PACKAGE:?}
+helper=/usr/lib/sparky-stereo-apt/model-profilectl
+[ "${1:-}" = configure ] || exit 0
+"$helper" plan "$profile"
+required=$(python3 -c 'import json,sys; p=json.load(open("/usr/share/sparky-install-models/profiles/"+sys.argv[1]+".json")); print(int(p["consent_required"]))' "$profile")
+if [ "$required" = 1 ]; then
+    . /usr/share/debconf/confmodule
+    terms=$("$helper" terms "$profile")
+    db_subst sparky-install-models/licence PROFILE "$profile"
+    db_subst sparky-install-models/licence TERMS "$terms"
+    db_subst sparky-install-models/consent PROFILE "$profile"
+    db_set sparky-install-models/consent false
+    db_fset sparky-install-models/licence seen false
+    db_fset sparky-install-models/consent seen false
+    db_input critical sparky-install-models/licence || true
+    db_input critical sparky-install-models/consent || true
+    db_go || exit 1
+    db_get sparky-install-models/consent
+    if [ "$RET" != true ]; then
+        "$helper" install "$profile"
+        exit 1
+    fi
+    "$helper" install "$profile" --consented
+else
+    "$helper" install "$profile"
+fi

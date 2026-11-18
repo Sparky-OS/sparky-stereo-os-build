@@ -52,7 +52,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-$PWD}
-VERSION=${VERSION:-20261118~sparky9~0+lc1}
+VERSION=${VERSION:-20261118.1~sparky9~0+lc1}
 # the oldest sparky-stereo-keyring with the repository's one key (the key has not changed since; 20261016 is published)
 KEYRING_VERSION=${KEYRING_VERSION:-20261008.1~sparky9~0+lc1}
 PKG=sparky-stereo-apt
@@ -68,6 +68,12 @@ mkdir -p "$D/usr/lib/$PKG" "$D/usr/share/sparky/$PKG/install-downloads" "$D/usr/
 install -m755 "$HERE/install-downloads/install-downloads" "$D/usr/lib/$PKG/install-downloads"
 install -m644 "$HERE/install-downloads/sparky_install_downloads.py" "$D/usr/lib/$PKG/sparky_install_downloads.py"
 install -m644 "$HERE"/install-downloads/lang/*.json "$D/usr/share/sparky/$PKG/install-downloads/"
+install -Dm755 "$HERE/install-downloads/models/postinst" "$D/usr/lib/$PKG/model-postinst"
+install -Dm755 "$HERE/install-downloads/models/postrm" "$D/usr/lib/$PKG/model-postrm"
+install -Dm755 "$HERE/install-downloads/models/profilectl.py" "$D/usr/lib/$PKG/model-profilectl"
+install -Dm644 "$HERE/install-downloads/models/messages.json" "$D/usr/share/sparky-install-models/messages.json"
+install -m644 "$HERE/install-downloads/models/templates" "$D/DEBIAN/templates"
+ln -s ../lib/$PKG/model-profilectl "$D/usr/bin/sparky-install-models"
 ln -s "../lib/$PKG/install-downloads" "$D/usr/bin/sparky-install-downloads"
 install -m755 "$HERE/lib/shadowed-by-dmo" "$D/usr/lib/$PKG/shadowed-by-dmo"
 install -Dm644 "$HERE/../../apt/shadowed-by-dmo.tsv" "$D/usr/share/$PKG/shadowed-by-dmo.tsv"
@@ -152,7 +158,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: apt (>= 3.3.6), python3, python3-apt, sparky-stereo-problems (>= 0.1.2), sparky-apt, sparky-stereo-keyring (>= $KEYRING_VERSION), deb-multimedia-keyring
+Depends: debconf (>= 0.5), apt (>= 3.3.6), python3, python3-apt, sparky-stereo-problems (>= 0.1.2), sparky-apt, sparky-stereo-keyring (>= $KEYRING_VERSION), deb-multimedia-keyring
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
