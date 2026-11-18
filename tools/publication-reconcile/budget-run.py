@@ -20,7 +20,13 @@ command = a.command[1:] if a.command[:1] == ['--'] else a.command
 with a.log.open('w') as log:
     child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
     while child.poll() is None:
-        used = int(subprocess.check_output(['du', '-sx', '--block-size=1', str(a.scratch)], text=True).split()[0])
+        measurement = subprocess.run(['du', '-sx', '--block-size=1', str(a.scratch)], capture_output=True, text=True)
+        if measurement.returncode:
+            print('BUDGET STOP: scratch measurement failed: ' + measurement.stderr.strip(), flush=True)
+            subprocess.run(['docker', 'stop', '--timeout', '5', a.container], check=False)
+            child.wait(timeout=30)
+            raise SystemExit(3)
+        used = int(measurement.stdout.split()[0])
         free_root = shutil.disk_usage('/').free
         free_build = shutil.disk_usage('/mnt/build').free
         if used > a.scratch_gib * 1024**3 or free_root < a.root_min_free_gib * 1024**3 or free_build < a.build_min_free_gib * 1024**3:
