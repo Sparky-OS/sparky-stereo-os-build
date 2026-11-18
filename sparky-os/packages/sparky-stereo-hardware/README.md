@@ -275,3 +275,10 @@ The package depends on `plasma-keyboard`.
 A Japanese, Korean or Chinese session keeps Fcitx 5, which the look package writes at the first login.
 A desktop with a touch monitor has no built-in panel and gets nothing.
 `tests/tablet-mode.sh` runs the detection on fixture sysfs trees, the slider among them, and reads the result through KConfig.
+
+OpenLogi (0.1.37, ORDER 27) is offered in Hardware Setup's plan window for Logitech receivers, HID++ devices, UVC webcams and Litra lights.
+The button opens its app center entry, where the size and metered notice precede the person's installation choice.
+The plan itself installs no vendor program.
+Solaar stays available in apt and existing installations are kept; it is not automatically selected for a device offered to OpenLogi.
+The identity table gives a source address for every row; generic Logitech UVC interfaces are matched by USB vendor 046d and interface class 0e.
+The detection reads metadata and opens no camera, input or hidraw node.

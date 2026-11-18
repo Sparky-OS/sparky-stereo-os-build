@@ -21,6 +21,7 @@ rig_driver=
 nvidia_choice=edition
 wl_option=
 kernel_choice=
+original_args=("$@")
 while (($#)); do
 	case "$1" in
 		--auto) auto=true ;;
@@ -145,8 +146,10 @@ else
 	done
 	: >"$FACTS/hid-uevents"
 	for file in /sys/bus/hid/devices/*/uevent; do
-		[[ ! -f "$file" ]] || cat "$file" >>"$FACTS/hid-uevents"
+		if [[ -f "$file" ]]; then cat "$file" >>"$FACTS/hid-uevents"; printf '\n' >>"$FACTS/hid-uevents"; fi
 	done
+	python3 "$LIB/logitech.py" capture-video >"$FACTS/usb-video"
+	if command -v openlogi-desktop >/dev/null 2>&1; then echo yes >"$FACTS/openlogi-present"; else echo no >"$FACTS/openlogi-present"; fi
 	: >"$FACTS/input-properties"
 	for file in /sys/class/input/event*; do
 		[[ ! -e "$file" ]] || udevadm info --query=property --path="$file" >>"$FACTS/input-properties"
@@ -245,6 +248,9 @@ if $wl_only; then
 fi
 if ! $auto; then
 	load_strings
+	if grep -q $'^offer\topenlogi\t' "$WORK/plan"; then
+		printf 'note\tOpenLogi\t%s\n' "$LOCAL85" >>"$WORK/plan"
+	fi
 	# Not now was chosen before: the plan says so, and has a button to be asked again
 	wl_again=false
 	if grep -Fxq $'action\tbroadcom-wl' "$WORK/plan" && wl_declined; then
@@ -256,6 +262,7 @@ if ! $auto; then
 	# the plan installs the edition's NVIDIA driver), or cancel. yad gives 1 for Cancel and 252 for a closed window; any
 	# other code means the window itself failed, which is said, never taken as an answer.
 	buttons=(--button="$LOCAL2:1")
+	if grep -q $'^offer\topenlogi\t' "$WORK/plan"; then buttons+=(--button="$LOCAL86:5"); fi
 	if $wl_again; then buttons+=(--button="$LOCAL66:4"); fi
 	if grep -Eq $'^action\tnvidia-(open|legacy-580xx)$' "$WORK/plan"; then buttons+=(--button="$LOCAL4:2"); fi
 	buttons+=(--button="$LOCAL3:0")
@@ -268,6 +275,15 @@ if ! $auto; then
 	fi
 	answer=0
 	yad --text-info --title="$LOCAL1" --filename="$WORK/plan" --width=760 --height=500 "${explain[@]}" "${buttons[@]}" || answer=$?
+	if [[ $answer == 5 ]]; then
+		flock -u 9
+		if [[ -x /usr/lib/sparky-aptus-stereo-appcenter/main-entry ]]; then
+			/usr/lib/sparky-aptus-stereo-appcenter/main-entry openlogi
+		else
+			yad --error --title="$LOCAL1" --text="$LOCAL87"
+		fi
+		exec "$0" "${original_args[@]}"
+	fi
 	case $(plan_answer "$answer") in
 		edition) ;;
 		wl-again) wl_reset ;;

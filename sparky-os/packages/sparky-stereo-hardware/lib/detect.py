@@ -276,6 +276,12 @@ def device_table(name):
 
 
 usb_ids = sorted({f"{v.lower()}:{p.lower()}" for v, p in re.findall(r"\bID ([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\b", read("lsusb"))})
+from logitech import devices as logitech_devices
+logitech = logitech_devices(facts, data)
+if logitech:
+    emit("found", "Logitech hardware: " + ", ".join(logitech))
+    if (read_optional("openlogi-present") or "").strip() != "yes":
+        emit("offer", "openlogi\t" + " ".join(logitech))
 olh_upstream = (read_optional("openlinkhub-upstream") or "").strip() == "yes"
 owned = {}
 for ident, row in device_table("owners.tsv").items():
@@ -291,6 +297,8 @@ for tool, name, tool_packages in (("openrgb", "OpenRGB", ("openrgb",)), ("solaar
     seen = []
     for ident in usb_ids:
         if ident not in table:
+            continue
+        if tool == "solaar" and ident in logitech:
             continue
         if ident in owned and tool in owned[ident][1]:
             emit("owner", f"{ident}\t{owned[ident][0]}\tnot {name}\t{owned[ident][2] or table[ident] or ident}")
