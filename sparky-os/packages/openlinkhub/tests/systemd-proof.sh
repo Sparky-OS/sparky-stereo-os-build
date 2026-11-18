@@ -20,7 +20,7 @@ st() { printf '  enabled=%s active=%s user=%s\n' "$(systemctl is-enabled OpenLin
 web() { for i in $(seq 1 40); do c=$(curl -s -o /tmp/page.html -w '%{http_code}' http://127.0.0.1:27003/ 2>/dev/null); [ "$c" = 200 ] && break; sleep 1; done; echo "  web page http://127.0.0.1:27003/ -> $c after ${i}s, $(wc -c </tmp/page.html) bytes, title: $(grep -o '<title>[^<]*' /tmp/page.html | head -1)"; }
 bump() { # N: a copy of the package with version -N and changed default profiles
   rm -rf /tmp/bump$1 && mkdir -p /tmp/bump$1 && dpkg-deb -R "$DEB" /tmp/bump$1/pkg
-  sed -i "s/^Version: .*/Version: 0.9.4-$1+lc1/" /tmp/bump$1/pkg/DEBIAN/control
+  sed -i "s/^Version: .*/Version: 0.9.4-9$1+lc1/" /tmp/bump$1/pkg/DEBIAN/control
   D=/tmp/bump$1/pkg/usr/share/openlinkhub/database
   [ "$1" = 2 ] && { for f in $FILES; do printf '\n' >>$D/$f; done; cp $D/$B $D/zz-new-default.json; }
   dpkg-deb -b /tmp/bump$1/pkg /tmp/bump$1/o.deb >/dev/null 2>&1; echo /tmp/bump$1/o.deb
