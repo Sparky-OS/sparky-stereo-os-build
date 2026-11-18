@@ -18,8 +18,15 @@ for language in required:
         missing.append(language)
 for language in ('ja_JP', 'zh_CN', 'zh_TW'):
     print('NONE', language, 'no word-list spelling dictionary; preserve Sonnet choice for Latin-letter words')
+for language, check in state['languageChecks'].items():
+    same = check['valid'] and check['actual'] in (language, language.split('_')[0])
+    print('PASS' if same else 'FAIL', language, 'native Speller', check)
+    if not same and language not in missing:
+        missing.append(language)
 selected = state['pageSelectedLanguage']
 locale = state['systemLocale']
+if __import__('os').environ.get('EXPECT_USER') == '1':
+    locale = state['defaultLanguage']
 matched = locale in ('ja_JP', 'zh_CN', 'zh_TW') or selected == locale or selected == locale.split('_')[0]
 print(('PASS' if matched else 'FAIL'), 'page selection', repr(selected), 'system locale', repr(locale))
 print('Missing:', ', '.join(missing) if missing else 'none')

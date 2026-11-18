@@ -19,6 +19,11 @@ int main(int argc, char **argv)
     Sonnet::ConfigView page;
     page.setLanguage(settings.defaultLanguage());
     QJsonObject dictionaries;
+    QJsonObject languageChecks;
+    for (const auto &language : {"en_US", "pl_PL", "pt_BR", "fr_FR", "de_DE", "es_ES", "ko_KR"}) {
+        Sonnet::Speller selected(QString::fromLatin1(language));
+        languageChecks.insert(QString::fromLatin1(language), QJsonObject{{"actual", selected.language()}, {"valid", selected.isValid()}});
+    }
     const auto available = speller.availableDictionaries();
     for (auto i = available.cbegin(); i != available.cend(); ++i) {
         dictionaries.insert(i.key(), i.value());
@@ -35,6 +40,7 @@ int main(int argc, char **argv)
         {QStringLiteral("clients"), QJsonArray::fromStringList(settings.clients())},
         {QStringLiteral("availableLanguages"), QJsonArray::fromStringList(speller.availableLanguages())},
         {QStringLiteral("dictionaries"), dictionaries},
+        {QStringLiteral("languageChecks"), languageChecks},
         {QStringLiteral("checkerEnabledByDefault"), settings.checkerEnabledByDefault()},
         {QStringLiteral("backgroundCheckerEnabled"), settings.backgroundCheckerEnabled()},
         {QStringLiteral("autodetectLanguage"), settings.autodetectLanguage()},
