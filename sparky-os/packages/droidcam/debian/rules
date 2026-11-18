@@ -1,0 +1,21 @@
+#!/usr/bin/make -f
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+# upstream's Makefile reads these from the environment (a value given on make's command line would replace its pkg-config call)
+export APPINDICATOR = ayatana-appindicator3-0.1
+export USBMUXD = libusbmuxd-2.0
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	dh_auto_build -- droidcam droidcam-cli
+
+override_dh_auto_install:
+	install -D -m 0755 droidcam debian/droidcam/usr/bin/droidcam
+	install -D -m 0755 droidcam-cli debian/droidcam/usr/bin/droidcam-cli
+	install -D -m 0644 debian/droidcam.desktop debian/droidcam/usr/share/applications/droidcam.desktop
+	install -D -m 0644 icon2.png debian/droidcam/usr/share/icons/hicolor/96x96/apps/droidcam.png
+	install -D -m 0644 icon.png debian/droidcam/usr/share/icons/hicolor/32x32/apps/droidcam.png
+
+override_dh_auto_clean:
+	rm -f droidcam droidcam-cli

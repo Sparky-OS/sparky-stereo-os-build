@@ -1,0 +1,24 @@
+#!/bin/sh
+set -e
+case "$1" in
+configure)
+	# The official ZIP is fetched here, from CNJ's own address (its size and address are declared in this package's control file, so
+	# apt and Stereo APTus said them first). A failed first installation stops dpkg here, said and kept by the problems engine, and
+	# `dpkg --configure sparky-pjeoffice` tries again. A failed update keeps the version that was in use: the installer exits 10,
+	# has said why and has kept the problem, and the package is configured.
+	status=0
+	/usr/bin/sparky-pjeoffice install || status=$?
+	if [ "$status" = 10 ]; then
+		echo "sparky-pjeoffice: the update did not install; the version that was in use still is (see the Problems page)." >&2
+	elif [ "$status" != 0 ]; then
+		echo "sparky-pjeoffice: PJeOffice Pro was not installed. After the cause is repaired: dpkg --configure sparky-pjeoffice" >&2
+		exit "$status"
+	fi
+	;;
+triggered)
+	# the system's certificates changed: a failure is said and kept by the engine, and never stops an unrelated apt run
+	/usr/bin/sparky-pjeoffice trust --if-changed || echo "sparky-pjeoffice: the certificate list was not updated (see the Problems page)." >&2
+	;;
+esac
+#DEBHELPER#
+exit 0

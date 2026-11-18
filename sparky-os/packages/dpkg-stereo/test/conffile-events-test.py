@@ -83,6 +83,9 @@ class EventsTest(unittest.TestCase):
             self.assertEqual(stereo.show_problems(self.P), 1)
         for word in (PACKAGE, PATH, 'does not reproduce', '.dpkg-dist'):
             self.assertIn(word, output.getvalue())
+        self.assertIn(f'{PACKAGE}: {PATH}; the current renderer does not reproduce the installed bytes; '
+                      f'package candidate: {PATH}.dpkg-dist', output.getvalue())
+        self.assertNotIn('%s', output.getvalue())
         self.assertEqual(self.file.read_bytes(), b'value=personal\n')
 
     def test_missing_verifier_names_dpkg_new(self):
@@ -195,8 +198,113 @@ class EventsTest(unittest.TestCase):
             self.assertEqual(stereo.pre_invoke(self.P, 'configure'), 0)
         self.assertEqual(self.file.read_bytes(), LEAN)
 
+    def tree(self, modes=None):
+        """A verifier tree of its own under the test's root, as dpkg's native caller and the verifier walk it."""
+        base = self.root / 'trust'
+        for name, mode in (('', 0o755), ('usr', 0o755), ('usr/lib', 0o755), ('usr/lib/dpkg-stereo', 0o755),
+                           ('usr/lib/dpkg-stereo/lean', 0o755), ('usr/lib/dpkg-stereo/lean/__pycache__', 0o755)):
+            (base / name).mkdir(exist_ok=True)
+            (base / name).chmod(mode)
+        verifier = base / 'usr/lib/dpkg-stereo/conffile-verify'
+        verifier.write_text('#!/bin/sh\n')
+        verifier.chmod(0o755)
+        (base / 'usr/lib/dpkg-stereo/lean/core.py').write_text('x = 1\n')
+        (base / 'usr/lib/dpkg-stereo/lean/core.py').chmod(0o644)
+        for name, mode in (modes or {}).items():
+            (base / name).chmod(mode)
+        patcher = patch.object(events, 'TREE_BASE', str(base))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return base
+
+    def test_trust_findings_are_empty_for_a_trusted_tree(self):
+        self.tree()
+        self.assertEqual(events.trust_findings(), [])
+
+    def test_trust_findings_name_the_folder_and_its_mode(self):
+        self.tree({'usr/lib/dpkg-stereo': 0o775})
+        self.assertEqual(events.trust_findings()[0], ['LOCAL86', '/usr/lib/dpkg-stereo', '775'])
+
+    def test_trust_findings_cover_the_lean_tree_the_verifier_walks(self):
+        self.tree({'usr/lib/dpkg-stereo/lean/core.py': 0o664})
+        (self.root / 'trust/usr/lib/dpkg-stereo/lean/core.py').chmod(0o664)
+        self.assertEqual(events.trust_findings(), [['LOCAL86', '/usr/lib/dpkg-stereo/lean/core.py', '664']])
+
+    def test_trust_findings_name_a_foreign_owner_a_link_and_a_missing_verifier(self):
+        base = self.tree()
+        os.chown(base / 'usr/lib/dpkg-stereo/lean', 12345, 0)
+        self.assertEqual(events.trust_findings(), [['LOCAL87', '/usr/lib/dpkg-stereo/lean', 12345]])
+        os.chown(base / 'usr/lib/dpkg-stereo/lean', 0, 0)
+        (base / 'usr/lib/dpkg-stereo/lean/link').symlink_to('core.py')
+        self.assertEqual(events.trust_findings(), [['LOCAL88', '/usr/lib/dpkg-stereo/lean/link']])
+        (base / 'usr/lib/dpkg-stereo/lean/link').unlink()
+        (base / 'usr/lib/dpkg-stereo/conffile-verify').chmod(0o644)
+        self.assertEqual(events.trust_findings(), [['LOCAL90', '/usr/lib/dpkg-stereo/conffile-verify', '644']])
+        (base / 'usr/lib/dpkg-stereo/conffile-verify').unlink()
+        self.assertEqual(events.trust_findings(), [['LOCAL89', '/usr/lib/dpkg-stereo/conffile-verify']])
+
+    def test_mend_changes_only_dpkg_stereos_own_tree(self):
+        base = self.tree({'usr/lib': 0o775, 'usr/lib/dpkg-stereo': 0o775, 'usr/lib/dpkg-stereo/lean': 0o775})
+        foreign = base / 'usr/lib/dpkg-stereo/lean/__pycache__'
+        os.chown(foreign, 12345, 0)
+        foreign.chmod(0o777)
+        mended = events.mend_own_tree()
+        self.assertEqual(sorted(m[0] for m in mended), ['/usr/lib/dpkg-stereo', '/usr/lib/dpkg-stereo/lean'])
+        self.assertEqual(oct((base / 'usr/lib').stat().st_mode & 0o7777), '0o775')
+        self.assertEqual(oct((base / 'usr/lib/dpkg-stereo').stat().st_mode & 0o7777), '0o755')
+        self.assertEqual(oct(foreign.stat().st_mode & 0o7777), '0o777')
+
+    def test_refusal_keeps_the_folder_and_the_check(self):
+        self.tree({'usr/lib/dpkg-stereo': 0o775})
+        self.file.write_bytes(LEAN)
+        self.event(14)
+        self.assertFalse(self.report())
+        item = self.kept()['items'][0]
+        self.assertEqual(item['finding'], ['LOCAL86', '/usr/lib/dpkg-stereo', '775'])
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            stereo.show_problems(self.P)
+        self.assertIn('/usr/lib/dpkg-stereo', output.getvalue())
+        self.assertIn('775', output.getvalue())
+
+    def test_repair_settles_a_conffile_that_is_the_projection_of_its_package_original(self):
+        self.event(14)
+        self.assertFalse(self.report())
+        self.assertEqual(self.file.read_bytes(), LEAN)
+        self.assertTrue(self.report(refresh=True))
+        self.assertFalse(stereo.kept_problems(self.P))
+        self.assertEqual(self.file.read_bytes(), LEAN)
+
+    def test_repair_says_what_it_cannot_mend_even_when_every_file_is_settled(self):
+        self.tree({'usr/lib': 0o775})
+        self.event(14)
+        self.assertFalse(self.report())
+        said = io.StringIO()
+        with contextlib.redirect_stderr(said):
+            self.assertTrue(events.report(self.P, stereo, True))
+        self.assertIn('/usr/lib', said.getvalue())
+        self.assertIn('775', said.getvalue())
+        self.assertEqual(oct((self.root / 'trust/usr/lib').stat().st_mode & 0o7777), '0o775')
+
+    def test_repair_does_not_settle_a_projection_of_another_version(self):
+        self.file.write_bytes(project.project(PATH, ORIGINAL.replace(b'value=old', b'value=older'), PACKAGE,
+                                              check=False).lean)
+        kept = self.file.read_bytes()
+        self.event(14)
+        self.assertFalse(self.report())
+        self.assertFalse(self.report(refresh=True))
+        self.assertEqual(self.file.read_bytes(), kept)
+
+    def test_repair_does_not_settle_a_person_edit_of_the_projection(self):
+        edited = LEAN.replace(b'value=old', b'value=own')
+        self.file.write_bytes(edited)
+        self.event(14)
+        self.assertFalse(self.report())
+        self.assertFalse(self.report(refresh=True))
+        self.assertEqual(self.file.read_bytes(), edited)
+
     def test_nine_languages_have_the_same_message_arguments(self):
-        keys = list(range(61, 72)) + [73, 74, 75]
+        keys = list(range(61, 72)) + [73, 74, 75] + list(range(86, 93))
         for lang in stereo.LANGS:
             for key in keys:
                 name = f'LOCAL{key}'

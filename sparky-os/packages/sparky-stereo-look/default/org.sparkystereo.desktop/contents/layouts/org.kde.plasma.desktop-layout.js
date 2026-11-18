@@ -34,3 +34,12 @@ if (panels().length === 0) {
     panel.addWidget("org.kde.plasma.digitalclock");
     panel.addWidget("org.kde.plasma.showdesktop");
 }
+
+// Folder View arrangement 1: the desktop's icons start at the top left and stack down the first column, then fill the next column
+// (System Settings lists the value as "In Rows"; the default 0 lays them along the first line). Fresh layout only: an account that
+// already has a desktop keeps its own arrangement.
+var desktopContainments = desktopsForActivity(currentActivity());
+for (var i = 0; i < desktopContainments.length; i++) {
+    desktopContainments[i].currentConfigGroup = ["General"];
+    desktopContainments[i].writeConfig("arrangement", 1);
+}

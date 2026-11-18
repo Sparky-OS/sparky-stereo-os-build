@@ -1,4 +1,33 @@
 -------------------------------------------------------------------------------
+  Version 0.1.42 (2026-11-18)
+-------------------------------------------------------------------------------
+  * Carry Lean Code 0.1.30 (main's toolkit): the Go adapter for build inputs
+    (installed Go files stay as authored). The renderer's identity moves with
+    it; nothing else in the toolkit is changed here.
+  * Fix: the conffile verifier is refused on a machine that an early dpkg-stereo
+    upgraded (ORDER 707). Versions 0.1.0 to 0.1.7 were built with the build
+    user's umask and shipped /usr/lib/dpkg-stereo and its lean folder writable
+    by their group; dpkg keeps the mode of a folder it finds, and dpkg's native
+    caller and the verifier trust the verifier only from folders and files that
+    root alone can write, so every projected conffile an upgrade changed was
+    handled by dpkg's conflict rules ("the verifier is missing or its
+    executable or library is not trusted"). The check is right and stays.
+  * The package sets its own folders: the preinst of an upgrade and the postinst
+    take the group and other write permission off what root owns under
+    /usr/lib/dpkg-stereo, and nothing outside it. Every folder the recipe ships
+    is 0755 whatever the umask of the machine that builds it.
+  * The refusal names the path and the failed check (which folder, its mode or
+    owner) in the ten languages, and what to do.
+  * dpkg-stereo --problems prints each refused conffile as one sentence (it
+    used the message of another problem, so the line showed unfilled %s).
+  * dpkg-stereo --repair sets the same folders right when they are not, says
+    what it set, and then rechecks each conffile: a file that is its package's
+    bytes, or the exact projection of its package's original (what the
+    post-invoke makes of a conffile dpkg installed while the verifier was
+    refused), settles. A file the person edited, or one whose package version
+    waits as .dpkg-dist, stays named. No conffile is ever written.
+
+-------------------------------------------------------------------------------
   Version 0.1.41 (2026-11-15)
 -------------------------------------------------------------------------------
   * Qualify literal diversion destination directories without running preinst.

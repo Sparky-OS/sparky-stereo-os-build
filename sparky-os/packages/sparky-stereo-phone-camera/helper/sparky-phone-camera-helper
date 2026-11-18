@@ -1,0 +1,31 @@
+#!/bin/sh
+# Created by Daniel Ramos (Capitain Jack) 2026/11/18
+# Copyright 2026 under the GNU GPL3 License
+# The root helper of sparky-stereo-phone-camera, run through pkexec under the polkit action org.sparky.stereo.phonecamera.run.
+# It takes exactly one argument, load or unload, and does exactly one thing: it loads or removes the module v4l2loopback (with the
+# options of /etc/modprobe.d/sparky-stereo-phone-camera.conf, which modprobe reads). Any other word, any extra argument and any other
+# module are refused. Exit status: 0 done, 3 the module is in use, 64 a refused request, 1 another failure.
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+unset MODPROBE_OPTIONS
+[ "$#" -eq 1 ] || { echo "sparky-phone-camera-helper: one argument, load or unload" >&2; exit 64; }
+case "$1" in
+load)
+	exec modprobe v4l2loopback
+	;;
+unload)
+	if out=$(modprobe -r v4l2loopback 2>&1); then
+		exit 0
+	fi
+	echo "$out" >&2
+	case "$out" in
+	*"in use"*) exit 3 ;;
+	esac
+	exit 1
+	;;
+*)
+	echo "sparky-phone-camera-helper: refused: $1" >&2
+	exit 64
+	;;
+esac

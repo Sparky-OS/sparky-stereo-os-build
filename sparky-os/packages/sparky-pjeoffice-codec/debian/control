@@ -1,0 +1,23 @@
+Source: sparky-pjeoffice-codec
+Section: libs
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Standards-Version: 4.7.4
+Build-Depends: debhelper-compat (= 13), make, pkgconf
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+
+Package: sparky-pjeoffice-codec
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Private FFmpeg 5.1 decoder libraries for PJeOffice Pro's video cutter
+ PJeOffice Pro's cutter plays video through JavaFX Media, which looks for
+ FFmpeg libraries of the major versions 53 to 59 (libavcodec up to 59). The
+ system's FFmpeg is newer, so nothing could be loaded and the cutter showed a
+ generic error. These libraries are FFmpeg 5.1.10, unmodified, built as shared
+ libraries with only the decoders, demuxers and parsers of the formats JavaFX
+ Media plays (H.264 and AAC in MP4, FLV with VP6, MP3, WAV, AIFF), and kept in
+ /usr/lib/sparky-pjeoffice/codec. Only the PJeOffice Pro launcher puts that
+ folder on a library path, and only for that program; the system's FFmpeg is
+ not replaced.
