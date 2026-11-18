@@ -50,7 +50,7 @@ with (out / 'xvfb.log').open('w') as xf, (out / 'application.log').open('w') as 
         result['exit_at_observation'] = p.poll()
         result['observation_seconds'] = round(time.monotonic() - start, 2)
         with (out / 'windows.txt').open('w') as f:
-            subprocess.run(['xwininfo', '-root', '-tree'], env=env, stdout=f, stderr=subprocess.STDOUT)
+            subprocess.run(['xdotool', 'search', '--name', '.*', 'getwindowname', '%@'], env=env, stdout=f, stderr=subprocess.STDOUT)
     finally:
         for child in [p, x]:
             if child is not None and child.poll() is None:
