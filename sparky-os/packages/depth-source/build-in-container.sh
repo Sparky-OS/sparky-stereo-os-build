@@ -24,7 +24,7 @@ apt-get -y --no-install-recommends build-dep ${SPARKY_BUILD_PROFILES:+-P "$SPARK
 # the link and start gate of lean.debhelper runs the rebuilt programs in a bubblewrap root
 apt-get -y --no-install-recommends install bubblewrap >>/work/build-dep.log 2>&1
 mkdir -p "$SPARKY_LC_SCRATCH"
-useradd --create-home --uid 1000 builder
+id builder >/dev/null 2>&1 || useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/lc/source
 build_mode=()

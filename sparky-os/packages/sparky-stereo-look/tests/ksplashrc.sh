@@ -38,5 +38,9 @@ person '[KSplash]
 Engine=KSplashQML
 Theme=None
 ';                                                             check "person's None" None
+person '[KSplash]
+Engine=KSplashQML
+Theme=org.sparkystereo.boot-picture
+';                                                             check "person's retained splash" org.sparkystereo.boot-picture
 echo "$fail failing"
 [ "$fail" = 0 ]
