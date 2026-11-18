@@ -5,13 +5,29 @@ set -e
 #DEBHELPER#
 unit=coolercontrold.service
 # A copy made by upstream's makefile (/usr/local, or a unit the person put in /etc/systemd/system) keeps the name of this unit and wins
-# over it. This package then changes nothing of it: it does not enable, start, restart or stop that service, and says so once.
-local_install() { [ -e /usr/local/bin/coolercontrold ] || [ -e /usr/local/lib/systemd/system/$unit ] || [ -e /etc/systemd/system/$unit ]; }
+# over it. This package then changes nothing of it: it does not enable, start, restart or stop that service, and says so once: on the terminal
+# here, and in the person's language through the problems engine (a person who installs through the app center never reads apt's output).
+copies() {
+	for f in /usr/local/bin/coolercontrold /usr/local/lib/systemd/system/$unit /etc/systemd/system/$unit; do
+		if [ -e "$f" ]; then printf '%s ' "$f"; fi
+	done
+}
+told=/var/lib/coolercontrold/local-copy-told
 if [ "$1" = configure ]; then
-	if local_install; then
+	found=$(copies)
+	if [ -n "$found" ]; then
 		echo "coolercontrold: a copy of CoolerControl made by upstream's makefile (/usr/local) or a coolercontrold.service in /etc/systemd/system is on this computer. It was left as it is, and this package's service is not enabled. How to change over: /usr/share/doc/coolercontrold/README.Debian" >&2
+		# once while the copy is there (told again if it goes and comes back); a notice that could not be said is tried again at the next configuration
+		if ! [ -e $told ]; then
+			if sparky-stereo-problems say coolercontrold LOCAL2 "${found% }" "${found% }"; then
+				mkdir -p /var/lib/coolercontrold && : >$told
+			else
+				echo "coolercontrold: the notice above could not be said through sparky-stereo-problems; it will be tried again the next time this package is configured" >&2
+			fi
+		fi
 	else
 		# the stock snippet of dh_installsystemd: enabled on first installation, a person's disable kept on upgrade
+		rm -f $told
 		deb-systemd-helper unmask $unit >/dev/null || true
 		if deb-systemd-helper --quiet was-enabled $unit; then
 			deb-systemd-helper enable $unit >/dev/null || true

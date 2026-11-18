@@ -7,7 +7,14 @@ Where things are
   settings       /etc/coolercontrol (config.toml, written by the service), /var/lib/coolercontrol; the package never ships, writes or replaces them. Removing the package keeps them; purging it removes them (where no copy of upstream's makefile shares the folders)
 
 If a copy made by upstream's own makefile is on the computer
-  `make install` puts coolercontrold in /usr/local/bin (or /usr/bin) and its unit in /usr/local/lib/systemd/system or /etc/systemd/system, which systemd reads before /usr/lib/systemd/system, and it shares /etc/coolercontrol with this package. Installing this package then changes nothing of that copy: its service is not enabled, started, restarted or stopped, and no setting is touched. Nothing here removes your copy for you.
+  `make install` puts coolercontrold in /usr/local/bin (or /usr/bin) and its unit in /usr/local/lib/systemd/system or /etc/systemd/system, which systemd reads before /usr/lib/systemd/system, and it shares /etc/coolercontrol with this package. Installing this package then changes nothing of that copy: its service is not enabled, started, restarted or stopped, and no setting is touched. Nothing here removes your copy for you. The package says this once, in the language of the session, through the problems engine (sparky-stereo-problems; `journalctl -x` explains it too).
+
+Changing over to the package, when you want to (nothing does it for you)
+  sudo systemctl disable --now coolercontrold
+  sudo rm FILES            the ones that exist of /usr/local/bin/coolercontrold, /usr/local/lib/systemd/system/coolercontrold.service and /etc/systemd/system/coolercontrold.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now coolercontrold
+  Your settings in /etc/coolercontrol stay; the package's service reads them.
 
 What the package does not do
   Upstream's package rewrites the computer's apt sources to the project's own repository and installs its archive keyring when it is installed. This package does not: the sources of the package manager are the person's.

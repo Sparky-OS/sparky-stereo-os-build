@@ -3,14 +3,14 @@ Section: admin
 Priority: optional
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Build-Depends: debhelper-compat (= 14), nodejs (>= 22), esbuild (>= 0.28.2), cargo (>= 1.97~), rustc (>= 1.97~), cmake, pkgconf, python3, git, libdrm-dev,
- libgl1-mesa-dev, libqt6opengl6-dev, qt6-base-dev, qt6-webengine-dev, qt6-webengine-dev-tools
+ libgl1-mesa-dev, libqt6opengl6-dev, qt6-base-dev, qt6-webengine-dev, qt6-webengine-dev-tools, sparky-stereo-problems (>= 0.2.1)
 Standards-Version: 4.7.3
 Rules-Requires-Root: no
 Homepage: https://gitlab.com/coolercontrol/coolercontrol
 
 Package: coolercontrold
 Architecture: amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}, systemd
+Depends: ${shlibs:Depends}, ${misc:Depends}, systemd, sparky-stereo-problems (>= 0.2.1)
 Recommends: liquidctl, lm-sensors
 Description: Cooling control and monitoring: the system service
  CoolerControl reads the temperatures and sets the fans, pumps and lights of a
