@@ -15,21 +15,22 @@ import tempfile
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('recipe', type=Path)
 parser.add_argument('output', type=Path)
+parser.add_argument('inputs', type=Path)
 args = parser.parse_args()
 recipe = args.recipe.resolve()
 output = args.output.resolve()
 output.mkdir(parents=True, exist_ok=True)
 spec = json.loads((recipe / 'upstream.json').read_text())
 for filename, digest in spec['files'].items():
-    if hashlib.sha256((recipe / 'upstream' / filename).read_bytes()).hexdigest() != digest:
+    if hashlib.sha256((args.inputs / filename).read_bytes()).hexdigest() != digest:
         raise SystemExit(f'{filename}: upstream checksum mismatch')
 with tempfile.TemporaryDirectory(prefix='sparky-display-', dir=output) as temporary:
     work = Path(temporary)
-    with tarfile.open(recipe / 'upstream/source.tar.gz') as archive:
+    with tarfile.open(args.inputs / 'source.tar.gz') as archive:
         archive.extractall(work / 'upstream', filter='data')
     source = next((work / 'upstream').iterdir())
     tree = work / 'tree'
-    subprocess.run(['dpkg-deb', '-R', str(recipe / 'upstream' / spec['binary']), str(tree)], check=True)
+    subprocess.run(['dpkg-deb', '-R', str(args.inputs / spec['binary']), str(tree)], check=True)
     name = spec['name']
     for path in tree.rglob('*'):
         if not path.is_file() or 'DEBIAN' in path.parts:
