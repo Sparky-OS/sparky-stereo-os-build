@@ -1,0 +1,1519 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: CoolerControl
+Upstream-Contact: Guy Boldon (https://gitlab.com/coolercontrol/coolercontrol)
+Source: https://gitlab.com/coolercontrol/coolercontrol
+Comment: CoolerControl (the daemon, the interface and the Qt window) is under the GNU General Public License version 3 or later; the
+ programming interface's documents and some data files carry the licences REUSE.toml of the project names. The daemon is one Rust
+ binary that also links the crates of vendor/ (listed below by the licence each one's Cargo.toml states); the interface is built
+ from its own source with the packages of npm (listed below by the licence each one's package.json states), of which only the
+ bundler's output is part of the program; Rollup's native part is built from its Rust source and the crates of rollupvendor/. The
+ source package carries all of that source and the whole build recipe. The stanzas below are generated
+ (sparky-os/packages/coolercontrol/debian/gen-copyright.py in the edition's build repository) from the tables
+ debian/crate-licences.tsv, debian/rollup-crate-licences.tsv and debian/npm-licences.tsv, which pin every package's legal files by
+ SHA-256; the files themselves (they carry their authors' names and addresses) are not kept in git, build.sh takes them from the
+ trees and stops unless each has the pinned hash, and they are installed in /usr/share/doc/coolercontrold/vendor-licences. The
+ build stops when this file differs from what the generator gives.
+
+Files: *
+Copyright: 2021-2026 Guy Boldon, Eren Simsek and the CoolerControl contributors
+License: GPL-3+
+
+Files: debian/*
+Copyright: 2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+License: GPL-3+
+Comment: Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Pawel "pavroo" Pijanowski).
+# Packages that hold no legal file (the licence is the one their package.json or Cargo.toml states): agent-base aide asn1-rs-impl ast_node base-encode base64-simd better_scoped_tls block boolbase bytes-str codespan-reporting dlv from_variant gif-dispose gifski gl_generator gpu-alloc gpu-alloc-types gpu-descriptor gpu-descriptor-types hexf-parse https-proxy-agent include_dir include_dir_macros jni-sys-macros khronos_api malloc_buf naga napi napi-build napi-derive napi-derive-backend napi-sys ndk-sys objc2-core-foundation objc2-io-kit par-core profiling profiling-procmacros pulp-wasm-simd-flag r-efi r-efi-5.3.0 saxes simd_helpers spirv string_enum swc_allocator swc_atoms swc_common swc_compiler_base swc_config swc_config_macro swc_ecma_ast swc_ecma_codegen swc_ecma_codegen_macros swc_ecma_hooks swc_ecma_minifier swc_ecma_parser swc_ecma_transforms_base swc_ecma_transforms_optimization swc_ecma_utils swc_ecma_visit swc_eq_ignore_macros swc_macros_common swc_sourcemap swc_visit tonic-prost tonic-prost-build tower-sessions-core tower-sessions-memory-store vsimd vue-i18n/node_modules/@vue/devtools-api winapi-i686-pc-windows-gnu winapi-x86_64-pc-windows-gnu zune-inflate
+
+
+Files: coolercontrold/vendor/encoding_rs/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Apache-2.0 or Expat and BSD-3-Clause
+Comment: licence field of the package: (Apache-2.0 OR MIT) AND BSD-3-Clause
+
+Files: coolercontrold/vendor/libfuzzer-sys/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Expat or Apache-2.0 and NCSA
+Comment: licence field of the package: (MIT OR Apache-2.0) AND NCSA
+
+Files: coolercontrold/vendor/unicode-ident/*
+  rollupvendor/unicode-id-start/*
+  rollupvendor/unicode-ident/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Expat or Apache-2.0 and Unicode-3.0
+Comment: licence field of the package: (MIT OR Apache-2.0) AND Unicode-3.0
+
+Files: coolercontrol-ui/node_modules/tslib/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: 0BSD
+Comment: licence field of the package: 0BSD
+
+Files: coolercontrold/vendor/adler2/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: 0BSD or Expat or Apache-2.0
+Comment: licence field of the package: 0BSD OR MIT OR Apache-2.0
+
+Files: coolercontrold/vendor/gifski/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: AGPL-3+
+Comment: licence field of the package: AGPL-3.0-or-later
+
+Files: coolercontrold/vendor/codespan-reporting/*
+  coolercontrold/vendor/gl_generator/*
+  coolercontrold/vendor/glutin_wgl_sys/*
+  coolercontrold/vendor/khronos_api/*
+  coolercontrold/vendor/miette/*
+  coolercontrold/vendor/miette-derive/*
+  coolercontrold/vendor/prost/*
+  coolercontrold/vendor/prost-build/*
+  coolercontrold/vendor/prost-derive/*
+  coolercontrold/vendor/prost-types/*
+  coolercontrold/vendor/pulldown-cmark-to-cmark/*
+  coolercontrold/vendor/spirv/*
+  coolercontrold/vendor/sync_wrapper/*
+  rollupvendor/ast_node/*
+  rollupvendor/better_scoped_tls/*
+  rollupvendor/bytes-str/*
+  rollupvendor/debugid/*
+  rollupvendor/from_variant/*
+  rollupvendor/hstr/*
+  rollupvendor/is-macro/*
+  rollupvendor/par-core/*
+  rollupvendor/par-iter/*
+  rollupvendor/radix_fmt/*
+  rollupvendor/string_enum/*
+  rollupvendor/swc_allocator/*
+  rollupvendor/swc_atoms/*
+  rollupvendor/swc_common/*
+  rollupvendor/swc_compiler_base/*
+  rollupvendor/swc_config/*
+  rollupvendor/swc_config_macro/*
+  rollupvendor/swc_ecma_ast/*
+  rollupvendor/swc_ecma_codegen/*
+  rollupvendor/swc_ecma_codegen_macros/*
+  rollupvendor/swc_ecma_hooks/*
+  rollupvendor/swc_ecma_minifier/*
+  rollupvendor/swc_ecma_parser/*
+  rollupvendor/swc_ecma_transforms_base/*
+  rollupvendor/swc_ecma_transforms_optimization/*
+  rollupvendor/swc_ecma_utils/*
+  rollupvendor/swc_ecma_visit/*
+  rollupvendor/swc_eq_ignore_macros/*
+  rollupvendor/swc_macros_common/*
+  rollupvendor/swc_visit/*
+  coolercontrol-ui/node_modules/@internationalized/date/*
+  coolercontrol-ui/node_modules/@internationalized/number/*
+  coolercontrol-ui/node_modules/@mdi/js/*
+  coolercontrol-ui/node_modules/@swc/helpers/*
+  coolercontrol-ui/node_modules/axios-retry/*
+  coolercontrol-ui/node_modules/baseline-browser-mapping/*
+  coolercontrol-ui/node_modules/didyoumean/*
+  coolercontrol-ui/node_modules/echarts/*
+  coolercontrol-ui/node_modules/expect-type/*
+  coolercontrol-ui/node_modules/reflect-metadata/*
+  coolercontrol-ui/node_modules/ts-interface-checker/*
+  coolercontrol-ui/node_modules/typescript/*
+  coolercontrol-ui/node_modules/xml-name-validator/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Apache-2.0
+Comment: licence field of the package: Apache-2.0
+
+Files: coolercontrold/vendor/fnv/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Apache-2.0 or Expat
+Comment: licence field of the package: Apache-2.0 / MIT
+
+Files: coolercontrold/vendor/ring/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Apache-2.0 and ISC
+Comment: licence field of the package: Apache-2.0 AND ISC
+
+Files: coolercontrold/vendor/ryu/*
+  rollupvendor/ryu/*
+  rollupvendor/ryu-js/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Apache-2.0 or BSL-1.0
+Comment: licence field of the package: Apache-2.0 OR BSL-1.0
+
+Files: coolercontrold/vendor/rustls/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Apache-2.0 or ISC or Expat
+Comment: licence field of the package: Apache-2.0 OR ISC OR MIT
+
+Files: coolercontrold/vendor/aes-gcm/*
+  coolercontrold/vendor/atomic-waker/*
+  coolercontrold/vendor/autocfg/*
+  coolercontrold/vendor/base64ct/*
+  coolercontrold/vendor/bit-set/*
+  coolercontrold/vendor/bit-vec/*
+  coolercontrold/vendor/bit-vec-0.8.0/*
+  coolercontrold/vendor/cmov/*
+  coolercontrold/vendor/ctutils/*
+  coolercontrold/vendor/equivalent/*
+  coolercontrold/vendor/fastrand/*
+  coolercontrold/vendor/ghash/*
+  coolercontrold/vendor/indexmap/*
+  coolercontrold/vendor/multiversion_no_op/*
+  coolercontrold/vendor/no_std_io2/*
+  coolercontrold/vendor/ntapi/*
+  coolercontrold/vendor/phc/*
+  coolercontrold/vendor/pin-project/*
+  coolercontrold/vendor/pin-project-internal/*
+  coolercontrold/vendor/pin-project-lite/*
+  coolercontrold/vendor/polyval/*
+  coolercontrold/vendor/portable-atomic/*
+  coolercontrold/vendor/portable-atomic-util/*
+  coolercontrold/vendor/utf8parse/*
+  coolercontrold/vendor/uuid/*
+  coolercontrold/vendor/zeroize/*
+  rollupvendor/ascii/*
+  rollupvendor/autocfg/*
+  rollupvendor/ctor/*
+  rollupvendor/equivalent/*
+  rollupvendor/idna_adapter/*
+  rollupvendor/indexmap/*
+  rollupvendor/nohash-hasher/*
+  rollupvendor/object/*
+  rollupvendor/pin-project-lite/*
+  rollupvendor/rustc-hash/*
+  rollupvendor/utf8_iter/*
+  rollupvendor/utf_types/*
+  rollupvendor/uuid/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Apache-2.0 or Expat
+Comment: licence field of the package: Apache-2.0 OR MIT
+
+Files: rollupvendor/ar_archive_writer/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Apache-2.0-with-LLVM-exception
+Comment: licence field of the package: Apache-2.0 WITH LLVM-exception
+
+Files: coolercontrold/vendor/linux-raw-sys/*
+  coolercontrold/vendor/rustix/*
+  coolercontrold/vendor/wasi/*
+  coolercontrold/vendor/wasip2/*
+  coolercontrold/vendor/wit-bindgen/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Apache-2.0-with-LLVM-exception or Apache-2.0 or Expat
+Comment: licence field of the package: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
+
+Files: rollupvendor/dragonbox_ecma/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Apache-2.0-with-LLVM-exception or BSL-1.0
+Comment: licence field of the package: Apache-2.0 WITH LLVM-exception OR BSL-1.0
+
+Files: coolercontrold/vendor/bit_field/*
+  coolercontrold/vendor/rustc-hash/*
+  rollupvendor/console_error_panic_hook/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Apache-2.0 or Expat
+Comment: licence field of the package: Apache-2.0/MIT
+
+Files: coolercontrold/vendor/arrayref/*
+  coolercontrold/vendor/av1-grain/*
+  coolercontrold/vendor/rav1e/*
+  coolercontrold/vendor/v_frame/*
+  coolercontrol-ui/node_modules/css-select/*
+  coolercontrol-ui/node_modules/css-what/*
+  coolercontrol-ui/node_modules/dom-serializer/node_modules/entities/*
+  coolercontrol-ui/node_modules/domelementtype/*
+  coolercontrol-ui/node_modules/domhandler/*
+  coolercontrol-ui/node_modules/domutils/*
+  coolercontrol-ui/node_modules/entities/*
+  coolercontrol-ui/node_modules/esutils/*
+  coolercontrol-ui/node_modules/nth-check/*
+  coolercontrol-ui/node_modules/parse5/node_modules/entities/*
+  coolercontrol-ui/node_modules/regjsparser/*
+  coolercontrol-ui/node_modules/terser/*
+  coolercontrol-ui/node_modules/webidl-conversions/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: BSD-2-Clause
+Comment: licence field of the package: BSD-2-Clause
+
+Files: coolercontrold/vendor/zerocopy/*
+  coolercontrold/vendor/zerocopy-derive/*
+  rollupvendor/zerocopy/*
+  rollupvendor/zerocopy-derive/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: BSD-2-Clause or Apache-2.0 or Expat
+Comment: licence field of the package: BSD-2-Clause OR Apache-2.0 OR MIT
+
+Files: coolercontrold/vendor/avif-serialize/*
+  coolercontrold/vendor/exr/*
+  coolercontrold/vendor/lebe/*
+  coolercontrold/vendor/ravif/*
+  coolercontrold/vendor/subtle/*
+  coolercontrold/vendor/tiny-skia/*
+  coolercontrold/vendor/tiny-skia-path/*
+  rollupvendor/swc_sourcemap/*
+  coolercontrol-ui/node_modules/source-map/*
+  coolercontrol-ui/node_modules/source-map-js/*
+  coolercontrol-ui/node_modules/tough-cookie/*
+  coolercontrol-ui/node_modules/zrender/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: BSD-3-Clause
+Comment: licence field of the package: BSD-3-Clause
+
+Files: coolercontrold/vendor/moxcms/*
+  coolercontrold/vendor/pxfm/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: BSD-3-Clause or Apache-2.0
+Comment: licence field of the package: BSD-3-Clause OR Apache-2.0
+
+Files: rollupvendor/xxhash-rust/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: BSL-1.0
+Comment: licence field of the package: BSL-1.0
+
+Files: coolercontrol-ui/node_modules/@isaacs/nonrecursive-glob-match/*
+  coolercontrol-ui/node_modules/glob/*
+  coolercontrol-ui/node_modules/isexe/*
+  coolercontrol-ui/node_modules/jsdom/node_modules/lru-cache/*
+  coolercontrol-ui/node_modules/minimatch/*
+  coolercontrol-ui/node_modules/minipass/*
+  coolercontrol-ui/node_modules/path-scurry/*
+  coolercontrol-ui/node_modules/path-scurry/node_modules/lru-cache/*
+  coolercontrol-ui/node_modules/sax/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: BlueOak-1.0.0
+Comment: licence field of the package: BlueOak-1.0.0
+
+Files: coolercontrol-ui/node_modules/caniuse-lite/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: CC-BY-4.0
+Comment: licence field of the package: CC-BY-4.0
+
+Files: coolercontrold/vendor/hexf-parse/*
+  coolercontrol-ui/node_modules/csso/node_modules/mdn-data/*
+  coolercontrol-ui/node_modules/mdn-data/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: CC0-1.0
+Comment: licence field of the package: CC0-1.0
+
+Files: coolercontrold/vendor/imgref/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: CC0-1.0 or Apache-2.0
+Comment: licence field of the package: CC0-1.0 OR Apache-2.0
+
+Files: coolercontrold/vendor/imagequant/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: GPL-3+
+Comment: licence field of the package: GPL-3.0-or-later
+
+Files: coolercontrold/vendor/libloading/*
+  coolercontrold/vendor/rustls-webpki/*
+  coolercontrold/vendor/untrusted/*
+  rollupvendor/libloading/*
+  coolercontrol-ui/node_modules/abbrev/*
+  coolercontrol-ui/node_modules/anymatch/*
+  coolercontrol-ui/node_modules/boolbase/*
+  coolercontrol-ui/node_modules/cross-spawn/node_modules/isexe/*
+  coolercontrol-ui/node_modules/cross-spawn/node_modules/which/*
+  coolercontrol-ui/node_modules/d3-array/*
+  coolercontrol-ui/node_modules/d3-color/*
+  coolercontrol-ui/node_modules/d3-format/*
+  coolercontrol-ui/node_modules/d3-interpolate/*
+  coolercontrol-ui/node_modules/d3-scale/*
+  coolercontrol-ui/node_modules/d3-scale-chromatic/*
+  coolercontrol-ui/node_modules/d3-time/*
+  coolercontrol-ui/node_modules/d3-time-format/*
+  coolercontrol-ui/node_modules/editorconfig/node_modules/semver/*
+  coolercontrol-ui/node_modules/electron-to-chromium/*
+  coolercontrol-ui/node_modules/fast-glob/node_modules/glob-parent/*
+  coolercontrol-ui/node_modules/fastq/*
+  coolercontrol-ui/node_modules/glob-parent/*
+  coolercontrol-ui/node_modules/ini/*
+  coolercontrol-ui/node_modules/internmap/*
+  coolercontrol-ui/node_modules/lru-cache/*
+  coolercontrol-ui/node_modules/material-colors/*
+  coolercontrol-ui/node_modules/nopt/*
+  coolercontrol-ui/node_modules/npm-normalize-package-bin/*
+  coolercontrol-ui/node_modules/picocolors/*
+  coolercontrol-ui/node_modules/proto-list/*
+  coolercontrol-ui/node_modules/read-package-json-fast/*
+  coolercontrol-ui/node_modules/saxes/*
+  coolercontrol-ui/node_modules/semver/*
+  coolercontrol-ui/node_modules/tailwindcss/node_modules/chokidar/node_modules/glob-parent/*
+  coolercontrol-ui/node_modules/which/*
+  coolercontrol-ui/node_modules/yallist/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: ISC
+Comment: licence field of the package: ISC
+
+Files: coolercontrold/vendor/aligned-vec/*
+  coolercontrold/vendor/arg_enum_proc_macro/*
+  coolercontrold/vendor/av-scenechange/*
+  coolercontrold/vendor/axum/*
+  coolercontrold/vendor/axum-core/*
+  coolercontrold/vendor/axum-macros/*
+  coolercontrold/vendor/axum-server/*
+  coolercontrold/vendor/block/*
+  coolercontrold/vendor/built/*
+  coolercontrold/vendor/bytes/*
+  coolercontrold/vendor/cfg_aliases/*
+  coolercontrold/vendor/color_quant/*
+  coolercontrold/vendor/crunchy/*
+  coolercontrold/vendor/darling/*
+  coolercontrold/vendor/darling_core/*
+  coolercontrold/vendor/darling_macro/*
+  coolercontrold/vendor/data-encoding/*
+  coolercontrold/vendor/endi/*
+  coolercontrold/vendor/equator/*
+  coolercontrold/vendor/equator-macro/*
+  coolercontrold/vendor/fax/*
+  coolercontrold/vendor/generic-array/*
+  coolercontrold/vendor/h2/*
+  coolercontrold/vendor/http-body/*
+  coolercontrold/vendor/http-body-util/*
+  coolercontrold/vendor/http-range-header/*
+  coolercontrold/vendor/hyper/*
+  coolercontrold/vendor/hyper-util/*
+  coolercontrold/vendor/include_dir/*
+  coolercontrold/vendor/include_dir_macros/*
+  coolercontrold/vendor/interpolate_name/*
+  coolercontrold/vendor/libdrm_amdgpu_sys/*
+  coolercontrold/vendor/libm/*
+  coolercontrold/vendor/loop9/*
+  coolercontrold/vendor/malloc_buf/*
+  coolercontrold/vendor/maybe-rayon/*
+  coolercontrold/vendor/memoffset/*
+  coolercontrold/vendor/mime_guess/*
+  coolercontrold/vendor/mio/*
+  coolercontrold/vendor/multer/*
+  coolercontrold/vendor/new_debug_unreachable/*
+  coolercontrold/vendor/nix/*
+  coolercontrold/vendor/nom/*
+  coolercontrold/vendor/nom-7.1.3/*
+  coolercontrold/vendor/noop_proc_macro/*
+  coolercontrold/vendor/objc/*
+  coolercontrold/vendor/ordered-float/*
+  coolercontrold/vendor/pem/*
+  coolercontrold/vendor/pulldown-cmark/*
+  coolercontrold/vendor/pulp/*
+  coolercontrold/vendor/pulp-wasm-simd-flag/*
+  coolercontrold/vendor/raw-cpuid/*
+  coolercontrold/vendor/reborrow/*
+  coolercontrold/vendor/redox_syscall/*
+  coolercontrold/vendor/resize/*
+  coolercontrold/vendor/rgb/*
+  coolercontrold/vendor/ril/*
+  coolercontrold/vendor/schemars/*
+  coolercontrold/vendor/schemars_derive/*
+  coolercontrold/vendor/serial_test/*
+  coolercontrold/vendor/serial_test_derive/*
+  coolercontrold/vendor/simd-adler32/*
+  coolercontrold/vendor/simd_helpers/*
+  coolercontrold/vendor/slab/*
+  coolercontrold/vendor/spin/*
+  coolercontrold/vendor/strict-num/*
+  coolercontrold/vendor/strsim/*
+  coolercontrold/vendor/strum/*
+  coolercontrold/vendor/strum-0.26.3/*
+  coolercontrold/vendor/strum_macros/*
+  coolercontrold/vendor/strum_macros-0.26.4/*
+  coolercontrold/vendor/synstructure/*
+  coolercontrold/vendor/sysinfo/*
+  coolercontrold/vendor/tiff/*
+  coolercontrold/vendor/tokio/*
+  coolercontrold/vendor/tokio-macros/*
+  coolercontrold/vendor/tokio-stream/*
+  coolercontrold/vendor/tokio-util/*
+  coolercontrold/vendor/tonic/*
+  coolercontrold/vendor/tonic-build/*
+  coolercontrold/vendor/tonic-health/*
+  coolercontrold/vendor/tonic-prost/*
+  coolercontrold/vendor/tonic-prost-build/*
+  coolercontrold/vendor/tower/*
+  coolercontrold/vendor/tower-cookies/*
+  coolercontrold/vendor/tower-http/*
+  coolercontrold/vendor/tower-layer/*
+  coolercontrold/vendor/tower-serve-static/*
+  coolercontrold/vendor/tower-service/*
+  coolercontrold/vendor/tower-sessions/*
+  coolercontrold/vendor/tower-sessions-core/*
+  coolercontrold/vendor/tower-sessions-memory-store/*
+  coolercontrold/vendor/tracing/*
+  coolercontrold/vendor/tracing-attributes/*
+  coolercontrold/vendor/tracing-core/*
+  coolercontrold/vendor/try-lock/*
+  coolercontrold/vendor/uds_windows/*
+  coolercontrold/vendor/want/*
+  coolercontrold/vendor/winnow/*
+  coolercontrold/vendor/xml-rs/*
+  coolercontrold/vendor/y4m/*
+  coolercontrold/vendor/zbus/*
+  coolercontrold/vendor/zbus_macros/*
+  coolercontrold/vendor/zbus_utils/*
+  coolercontrold/vendor/zcheapstr/*
+  coolercontrold/vendor/zmij/*
+  coolercontrold/vendor/zruntime/*
+  rollupvendor/base-encode/*
+  rollupvendor/base64-simd/*
+  rollupvendor/bitvec/*
+  rollupvendor/bytes/*
+  rollupvendor/castaway/*
+  rollupvendor/compact_str/*
+  rollupvendor/convert_case/*
+  rollupvendor/dashmap/*
+  rollupvendor/data-encoding/*
+  rollupvendor/funty/*
+  rollupvendor/libmimalloc-sys2/*
+  rollupvendor/mimalloc-safe/*
+  rollupvendor/napi/*
+  rollupvendor/napi-build/*
+  rollupvendor/napi-derive/*
+  rollupvendor/napi-derive-backend/*
+  rollupvendor/napi-sys/*
+  rollupvendor/new_debug_unreachable/*
+  rollupvendor/outref/*
+  rollupvendor/phf/*
+  rollupvendor/phf_generator/*
+  rollupvendor/phf_macros/*
+  rollupvendor/phf_shared/*
+  rollupvendor/radium/*
+  rollupvendor/redox_syscall/*
+  rollupvendor/slab/*
+  rollupvendor/synstructure/*
+  rollupvendor/tap/*
+  rollupvendor/tracing/*
+  rollupvendor/tracing-attributes/*
+  rollupvendor/tracing-core/*
+  rollupvendor/vsimd/*
+  rollupvendor/wyz/*
+  rollupvendor/zmij/*
+  coolercontrol-ui/node_modules/@alloc/quick-lru/*
+  coolercontrol-ui/node_modules/@babel/code-frame/*
+  coolercontrol-ui/node_modules/@babel/compat-data/*
+  coolercontrol-ui/node_modules/@babel/core/*
+  coolercontrol-ui/node_modules/@babel/generator/*
+  coolercontrol-ui/node_modules/@babel/helper-annotate-as-pure/*
+  coolercontrol-ui/node_modules/@babel/helper-compilation-targets/*
+  coolercontrol-ui/node_modules/@babel/helper-create-class-features-plugin/*
+  coolercontrol-ui/node_modules/@babel/helper-create-regexp-features-plugin/*
+  coolercontrol-ui/node_modules/@babel/helper-define-polyfill-provider/*
+  coolercontrol-ui/node_modules/@babel/helper-globals/*
+  coolercontrol-ui/node_modules/@babel/helper-member-expression-to-functions/*
+  coolercontrol-ui/node_modules/@babel/helper-module-imports/*
+  coolercontrol-ui/node_modules/@babel/helper-module-transforms/*
+  coolercontrol-ui/node_modules/@babel/helper-optimise-call-expression/*
+  coolercontrol-ui/node_modules/@babel/helper-plugin-utils/*
+  coolercontrol-ui/node_modules/@babel/helper-remap-async-to-generator/*
+  coolercontrol-ui/node_modules/@babel/helper-replace-supers/*
+  coolercontrol-ui/node_modules/@babel/helper-skip-transparent-expression-wrappers/*
+  coolercontrol-ui/node_modules/@babel/helper-string-parser/*
+  coolercontrol-ui/node_modules/@babel/helper-validator-identifier/*
+  coolercontrol-ui/node_modules/@babel/helper-validator-option/*
+  coolercontrol-ui/node_modules/@babel/helper-wrap-function/*
+  coolercontrol-ui/node_modules/@babel/helpers/*
+  coolercontrol-ui/node_modules/@babel/parser/*
+  coolercontrol-ui/node_modules/@babel/plugin-bugfix-firefox-class-in-computed-class-key/*
+  coolercontrol-ui/node_modules/@babel/plugin-bugfix-safari-class-field-initializer-scope/*
+  coolercontrol-ui/node_modules/@babel/plugin-bugfix-safari-id-destructuring-collision-in-function-expression/*
+  coolercontrol-ui/node_modules/@babel/plugin-bugfix-safari-rest-destructuring-rhs-array/*
+  coolercontrol-ui/node_modules/@babel/plugin-bugfix-v8-spread-parameters-in-optional-chaining/*
+  coolercontrol-ui/node_modules/@babel/plugin-bugfix-v8-static-class-fields-redefine-readonly/*
+  coolercontrol-ui/node_modules/@babel/plugin-proposal-private-property-in-object/*
+  coolercontrol-ui/node_modules/@babel/plugin-syntax-import-assertions/*
+  coolercontrol-ui/node_modules/@babel/plugin-syntax-import-attributes/*
+  coolercontrol-ui/node_modules/@babel/plugin-syntax-unicode-sets-regex/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-arrow-functions/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-async-generator-functions/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-async-to-generator/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-block-scoped-functions/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-block-scoping/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-class-properties/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-class-static-block/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-classes/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-computed-properties/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-destructuring/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-dotall-regex/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-duplicate-keys/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-duplicate-named-capturing-groups-regex/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-dynamic-import/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-explicit-resource-management/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-exponentiation-operator/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-export-namespace-from/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-for-of/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-function-name/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-json-strings/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-literals/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-logical-assignment-operators/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-member-expression-literals/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-modules-amd/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-modules-commonjs/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-modules-systemjs/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-modules-umd/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-named-capturing-groups-regex/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-new-target/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-nullish-coalescing-operator/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-numeric-separator/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-object-rest-spread/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-object-super/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-optional-catch-binding/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-optional-chaining/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-parameters/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-private-methods/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-private-property-in-object/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-property-literals/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-regenerator/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-regexp-modifiers/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-reserved-words/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-shorthand-properties/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-spread/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-sticky-regex/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-template-literals/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-typeof-symbol/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-unicode-escapes/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-unicode-property-regex/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-unicode-regex/*
+  coolercontrol-ui/node_modules/@babel/plugin-transform-unicode-sets-regex/*
+  coolercontrol-ui/node_modules/@babel/preset-env/*
+  coolercontrol-ui/node_modules/@babel/preset-modules/*
+  coolercontrol-ui/node_modules/@babel/template/*
+  coolercontrol-ui/node_modules/@babel/traverse/*
+  coolercontrol-ui/node_modules/@babel/types/*
+  coolercontrol-ui/node_modules/@exodus/bytes/*
+  coolercontrol-ui/node_modules/@floating-ui/core/*
+  coolercontrol-ui/node_modules/@floating-ui/dom/*
+  coolercontrol-ui/node_modules/@floating-ui/utils/*
+  coolercontrol-ui/node_modules/@floating-ui/vue/*
+  coolercontrol-ui/node_modules/@intlify/core-base/*
+  coolercontrol-ui/node_modules/@intlify/devtools-types/*
+  coolercontrol-ui/node_modules/@intlify/message-compiler/*
+  coolercontrol-ui/node_modules/@intlify/shared/*
+  coolercontrol-ui/node_modules/@jamescoyle/vue-icon/*
+  coolercontrol-ui/node_modules/@jridgewell/gen-mapping/*
+  coolercontrol-ui/node_modules/@jridgewell/remapping/*
+  coolercontrol-ui/node_modules/@jridgewell/resolve-uri/*
+  coolercontrol-ui/node_modules/@jridgewell/source-map/*
+  coolercontrol-ui/node_modules/@jridgewell/sourcemap-codec/*
+  coolercontrol-ui/node_modules/@jridgewell/trace-mapping/*
+  coolercontrol-ui/node_modules/@microsoft/fetch-event-source/*
+  coolercontrol-ui/node_modules/@nodelib/fs.scandir/*
+  coolercontrol-ui/node_modules/@nodelib/fs.stat/*
+  coolercontrol-ui/node_modules/@nodelib/fs.walk/*
+  coolercontrol-ui/node_modules/@popperjs/core/*
+  coolercontrol-ui/node_modules/@rolldown/pluginutils/*
+  coolercontrol-ui/node_modules/@tanstack/virtual-core/*
+  coolercontrol-ui/node_modules/@tanstack/vue-virtual/*
+  coolercontrol-ui/node_modules/@tsconfig/node22/*
+  coolercontrol-ui/node_modules/@types/chai/*
+  coolercontrol-ui/node_modules/@types/d3/*
+  coolercontrol-ui/node_modules/@types/d3-array/*
+  coolercontrol-ui/node_modules/@types/d3-axis/*
+  coolercontrol-ui/node_modules/@types/d3-brush/*
+  coolercontrol-ui/node_modules/@types/d3-chord/*
+  coolercontrol-ui/node_modules/@types/d3-color/*
+  coolercontrol-ui/node_modules/@types/d3-contour/*
+  coolercontrol-ui/node_modules/@types/d3-delaunay/*
+  coolercontrol-ui/node_modules/@types/d3-dispatch/*
+  coolercontrol-ui/node_modules/@types/d3-drag/*
+  coolercontrol-ui/node_modules/@types/d3-dsv/*
+  coolercontrol-ui/node_modules/@types/d3-ease/*
+  coolercontrol-ui/node_modules/@types/d3-fetch/*
+  coolercontrol-ui/node_modules/@types/d3-force/*
+  coolercontrol-ui/node_modules/@types/d3-format/*
+  coolercontrol-ui/node_modules/@types/d3-geo/*
+  coolercontrol-ui/node_modules/@types/d3-hierarchy/*
+  coolercontrol-ui/node_modules/@types/d3-interpolate/*
+  coolercontrol-ui/node_modules/@types/d3-path/*
+  coolercontrol-ui/node_modules/@types/d3-polygon/*
+  coolercontrol-ui/node_modules/@types/d3-quadtree/*
+  coolercontrol-ui/node_modules/@types/d3-random/*
+  coolercontrol-ui/node_modules/@types/d3-scale/*
+  coolercontrol-ui/node_modules/@types/d3-scale-chromatic/*
+  coolercontrol-ui/node_modules/@types/d3-selection/*
+  coolercontrol-ui/node_modules/@types/d3-shape/*
+  coolercontrol-ui/node_modules/@types/d3-time/*
+  coolercontrol-ui/node_modules/@types/d3-time-format/*
+  coolercontrol-ui/node_modules/@types/d3-timer/*
+  coolercontrol-ui/node_modules/@types/d3-transition/*
+  coolercontrol-ui/node_modules/@types/d3-zoom/*
+  coolercontrol-ui/node_modules/@types/deep-eql/*
+  coolercontrol-ui/node_modules/@types/estree/*
+  coolercontrol-ui/node_modules/@types/geojson/*
+  coolercontrol-ui/node_modules/@types/jsdom/*
+  coolercontrol-ui/node_modules/@types/lodash/*
+  coolercontrol-ui/node_modules/@types/node/*
+  coolercontrol-ui/node_modules/@types/node/node_modules/undici-types/*
+  coolercontrol-ui/node_modules/@types/sortablejs/*
+  coolercontrol-ui/node_modules/@types/tough-cookie/*
+  coolercontrol-ui/node_modules/@types/web-bluetooth/*
+  coolercontrol-ui/node_modules/@vitejs/plugin-legacy/*
+  coolercontrol-ui/node_modules/@vitejs/plugin-legacy/node_modules/babel-plugin-polyfill-corejs3/*
+  coolercontrol-ui/node_modules/@vitejs/plugin-legacy/node_modules/magic-string/*
+  coolercontrol-ui/node_modules/@vitejs/plugin-vue/*
+  coolercontrol-ui/node_modules/@vitest/mocker/*
+  coolercontrol-ui/node_modules/@vitest/mocker/node_modules/estree-walker/*
+  coolercontrol-ui/node_modules/@vitest/spy/*
+  coolercontrol-ui/node_modules/@volar/language-core/*
+  coolercontrol-ui/node_modules/@volar/language-service/*
+  coolercontrol-ui/node_modules/@volar/source-map/*
+  coolercontrol-ui/node_modules/@volar/typescript/*
+  coolercontrol-ui/node_modules/@vue-macros/common/*
+  coolercontrol-ui/node_modules/@vue/compiler-core/*
+  coolercontrol-ui/node_modules/@vue/compiler-dom/*
+  coolercontrol-ui/node_modules/@vue/compiler-sfc/*
+  coolercontrol-ui/node_modules/@vue/compiler-sfc/node_modules/magic-string/*
+  coolercontrol-ui/node_modules/@vue/compiler-ssr/*
+  coolercontrol-ui/node_modules/@vue/devtools-api/*
+  coolercontrol-ui/node_modules/@vue/devtools-kit/*
+  coolercontrol-ui/node_modules/@vue/devtools-shared/*
+  coolercontrol-ui/node_modules/@vue/language-core/*
+  coolercontrol-ui/node_modules/@vue/reactivity/*
+  coolercontrol-ui/node_modules/@vue/runtime-core/*
+  coolercontrol-ui/node_modules/@vue/runtime-dom/*
+  coolercontrol-ui/node_modules/@vue/server-renderer/*
+  coolercontrol-ui/node_modules/@vue/shared/*
+  coolercontrol-ui/node_modules/@vue/test-utils/*
+  coolercontrol-ui/node_modules/@vue/tsconfig/*
+  coolercontrol-ui/node_modules/@vueuse/core/*
+  coolercontrol-ui/node_modules/@vueuse/integrations/*
+  coolercontrol-ui/node_modules/@vueuse/integrations/node_modules/@types/web-bluetooth/*
+  coolercontrol-ui/node_modules/@vueuse/integrations/node_modules/@vueuse/core/*
+  coolercontrol-ui/node_modules/@vueuse/integrations/node_modules/@vueuse/metadata/*
+  coolercontrol-ui/node_modules/@vueuse/integrations/node_modules/@vueuse/shared/*
+  coolercontrol-ui/node_modules/@vueuse/integrations/node_modules/vue-demi/*
+  coolercontrol-ui/node_modules/@vueuse/metadata/*
+  coolercontrol-ui/node_modules/@vueuse/shared/*
+  coolercontrol-ui/node_modules/abortcontroller-polyfill/*
+  coolercontrol-ui/node_modules/acorn/*
+  coolercontrol-ui/node_modules/agent-base/*
+  coolercontrol-ui/node_modules/alien-signals/*
+  coolercontrol-ui/node_modules/ansi-styles/*
+  coolercontrol-ui/node_modules/any-promise/*
+  coolercontrol-ui/node_modules/anymatch/node_modules/picomatch/*
+  coolercontrol-ui/node_modules/arg/*
+  coolercontrol-ui/node_modules/aria-hidden/*
+  coolercontrol-ui/node_modules/assertion-error/*
+  coolercontrol-ui/node_modules/ast-kit/*
+  coolercontrol-ui/node_modules/ast-walker-scope/*
+  coolercontrol-ui/node_modules/ast-walker-scope/node_modules/@babel/helper-string-parser/*
+  coolercontrol-ui/node_modules/ast-walker-scope/node_modules/@babel/helper-validator-identifier/*
+  coolercontrol-ui/node_modules/ast-walker-scope/node_modules/@babel/parser/*
+  coolercontrol-ui/node_modules/ast-walker-scope/node_modules/@babel/types/*
+  coolercontrol-ui/node_modules/ast-walker-scope/node_modules/ast-kit/*
+  coolercontrol-ui/node_modules/ast-walker-scope/node_modules/estree-walker/*
+  coolercontrol-ui/node_modules/asynckit/*
+  coolercontrol-ui/node_modules/autoprefixer/*
+  coolercontrol-ui/node_modules/axios/*
+  coolercontrol-ui/node_modules/babel-plugin-polyfill-corejs2/*
+  coolercontrol-ui/node_modules/babel-plugin-polyfill-corejs3/*
+  coolercontrol-ui/node_modules/babel-plugin-polyfill-regenerator/*
+  coolercontrol-ui/node_modules/balanced-match/*
+  coolercontrol-ui/node_modules/bcp-47/*
+  coolercontrol-ui/node_modules/bcp-47-match/*
+  coolercontrol-ui/node_modules/binary-extensions/*
+  coolercontrol-ui/node_modules/birpc/*
+  coolercontrol-ui/node_modules/brace-expansion/*
+  coolercontrol-ui/node_modules/braces/*
+  coolercontrol-ui/node_modules/browserslist/*
+  coolercontrol-ui/node_modules/browserslist-to-esbuild/*
+  coolercontrol-ui/node_modules/buffer-from/*
+  coolercontrol-ui/node_modules/call-bind-apply-helpers/*
+  coolercontrol-ui/node_modules/camelcase-css/*
+  coolercontrol-ui/node_modules/chai/*
+  coolercontrol-ui/node_modules/chokidar/*
+  coolercontrol-ui/node_modules/class-transformer/*
+  coolercontrol-ui/node_modules/color/*
+  coolercontrol-ui/node_modules/color-convert/*
+  coolercontrol-ui/node_modules/color-name/*
+  coolercontrol-ui/node_modules/color-string/*
+  coolercontrol-ui/node_modules/combined-stream/*
+  coolercontrol-ui/node_modules/commander/*
+  coolercontrol-ui/node_modules/confbox/*
+  coolercontrol-ui/node_modules/config-chain/*
+  coolercontrol-ui/node_modules/convert-source-map/*
+  coolercontrol-ui/node_modules/core-js/*
+  coolercontrol-ui/node_modules/core-js-compat/*
+  coolercontrol-ui/node_modules/cross-spawn/*
+  coolercontrol-ui/node_modules/css-tree/*
+  coolercontrol-ui/node_modules/cssesc/*
+  coolercontrol-ui/node_modules/csso/*
+  coolercontrol-ui/node_modules/csso/node_modules/css-tree/*
+  coolercontrol-ui/node_modules/csstype/*
+  coolercontrol-ui/node_modules/data-urls/*
+  coolercontrol-ui/node_modules/debug/*
+  coolercontrol-ui/node_modules/decimal.js/*
+  coolercontrol-ui/node_modules/defu/*
+  coolercontrol-ui/node_modules/delayed-stream/*
+  coolercontrol-ui/node_modules/dlv/*
+  coolercontrol-ui/node_modules/dom-serializer/*
+  coolercontrol-ui/node_modules/dunder-proto/*
+  coolercontrol-ui/node_modules/editorconfig/*
+  coolercontrol-ui/node_modules/es-define-property/*
+  coolercontrol-ui/node_modules/es-errors/*
+  coolercontrol-ui/node_modules/es-module-lexer/*
+  coolercontrol-ui/node_modules/es-object-atoms/*
+  coolercontrol-ui/node_modules/es-set-tostringtag/*
+  coolercontrol-ui/node_modules/esbuild/*
+  coolercontrol-ui/node_modules/escalade/*
+  coolercontrol-ui/node_modules/estree-walker/*
+  coolercontrol-ui/node_modules/exsolve/*
+  coolercontrol-ui/node_modules/fast-glob/*
+  coolercontrol-ui/node_modules/fdir/*
+  coolercontrol-ui/node_modules/fill-range/*
+  coolercontrol-ui/node_modules/focus-trap/*
+  coolercontrol-ui/node_modules/follow-redirects/*
+  coolercontrol-ui/node_modules/form-data/*
+  coolercontrol-ui/node_modules/fraction.js/*
+  coolercontrol-ui/node_modules/function-bind/*
+  coolercontrol-ui/node_modules/gensync/*
+  coolercontrol-ui/node_modules/get-intrinsic/*
+  coolercontrol-ui/node_modules/get-proto/*
+  coolercontrol-ui/node_modules/gopd/*
+  coolercontrol-ui/node_modules/has-symbols/*
+  coolercontrol-ui/node_modules/has-tostringtag/*
+  coolercontrol-ui/node_modules/hasown/*
+  coolercontrol-ui/node_modules/hookable/*
+  coolercontrol-ui/node_modules/hotkeys-js/*
+  coolercontrol-ui/node_modules/html-encoding-sniffer/*
+  coolercontrol-ui/node_modules/https-proxy-agent/*
+  coolercontrol-ui/node_modules/immutable/*
+  coolercontrol-ui/node_modules/is-alphabetical/*
+  coolercontrol-ui/node_modules/is-alphanumerical/*
+  coolercontrol-ui/node_modules/is-arrayish/*
+  coolercontrol-ui/node_modules/is-binary-path/*
+  coolercontrol-ui/node_modules/is-core-module/*
+  coolercontrol-ui/node_modules/is-decimal/*
+  coolercontrol-ui/node_modules/is-extglob/*
+  coolercontrol-ui/node_modules/is-glob/*
+  coolercontrol-ui/node_modules/is-number/*
+  coolercontrol-ui/node_modules/is-potential-custom-element-name/*
+  coolercontrol-ui/node_modules/is-retry-allowed/*
+  coolercontrol-ui/node_modules/jiti/*
+  coolercontrol-ui/node_modules/js-beautify/*
+  coolercontrol-ui/node_modules/js-cookie/*
+  coolercontrol-ui/node_modules/js-tokens/*
+  coolercontrol-ui/node_modules/jsdom/*
+  coolercontrol-ui/node_modules/jsesc/*
+  coolercontrol-ui/node_modules/json-parse-even-better-errors/*
+  coolercontrol-ui/node_modules/json5/*
+  coolercontrol-ui/node_modules/just-unique/*
+  coolercontrol-ui/node_modules/lilconfig/*
+  coolercontrol-ui/node_modules/lines-and-columns/*
+  coolercontrol-ui/node_modules/local-pkg/*
+  coolercontrol-ui/node_modules/lodash/*
+  coolercontrol-ui/node_modules/lodash.debounce/*
+  coolercontrol-ui/node_modules/lodash.merge/*
+  coolercontrol-ui/node_modules/lodash.mergewith/*
+  coolercontrol-ui/node_modules/magic-string/*
+  coolercontrol-ui/node_modules/magic-string-ast/*
+  coolercontrol-ui/node_modules/magic-string-ast/node_modules/magic-string/*
+  coolercontrol-ui/node_modules/math-intrinsics/*
+  coolercontrol-ui/node_modules/memorystream/*
+  coolercontrol-ui/node_modules/meow/*
+  coolercontrol-ui/node_modules/merge2/*
+  coolercontrol-ui/node_modules/micromatch/*
+  coolercontrol-ui/node_modules/micromatch/node_modules/picomatch/*
+  coolercontrol-ui/node_modules/mime-db/*
+  coolercontrol-ui/node_modules/mime-types/*
+  coolercontrol-ui/node_modules/mitt/*
+  coolercontrol-ui/node_modules/mlly/*
+  coolercontrol-ui/node_modules/mlly/node_modules/confbox/*
+  coolercontrol-ui/node_modules/mlly/node_modules/pkg-types/*
+  coolercontrol-ui/node_modules/ms/*
+  coolercontrol-ui/node_modules/muggle-string/*
+  coolercontrol-ui/node_modules/mz/*
+  coolercontrol-ui/node_modules/nanoid/*
+  coolercontrol-ui/node_modules/node-releases/*
+  coolercontrol-ui/node_modules/normalize-path/*
+  coolercontrol-ui/node_modules/nostics/*
+  coolercontrol-ui/node_modules/npm-run-all2/*
+  coolercontrol-ui/node_modules/object-assign/*
+  coolercontrol-ui/node_modules/object-hash/*
+  coolercontrol-ui/node_modules/obug/*
+  coolercontrol-ui/node_modules/ohash/*
+  coolercontrol-ui/node_modules/parse5/*
+  coolercontrol-ui/node_modules/parse5-parser-stream/*
+  coolercontrol-ui/node_modules/path-browserify/*
+  coolercontrol-ui/node_modules/path-key/*
+  coolercontrol-ui/node_modules/path-parse/*
+  coolercontrol-ui/node_modules/pathe/*
+  coolercontrol-ui/node_modules/perfect-debounce/*
+  coolercontrol-ui/node_modules/picomatch/*
+  coolercontrol-ui/node_modules/pidtree/*
+  coolercontrol-ui/node_modules/pinia/*
+  coolercontrol-ui/node_modules/pirates/*
+  coolercontrol-ui/node_modules/pkg-types/*
+  coolercontrol-ui/node_modules/postcss/*
+  coolercontrol-ui/node_modules/postcss-import/*
+  coolercontrol-ui/node_modules/postcss-js/*
+  coolercontrol-ui/node_modules/postcss-load-config/*
+  coolercontrol-ui/node_modules/postcss-nested/*
+  coolercontrol-ui/node_modules/postcss-selector-parser/*
+  coolercontrol-ui/node_modules/postcss-value-parser/*
+  coolercontrol-ui/node_modules/proxy-from-env/*
+  coolercontrol-ui/node_modules/punycode/*
+  coolercontrol-ui/node_modules/quansync/*
+  coolercontrol-ui/node_modules/queue-microtask/*
+  coolercontrol-ui/node_modules/read-cache/*
+  coolercontrol-ui/node_modules/readdirp/*
+  coolercontrol-ui/node_modules/regenerate/*
+  coolercontrol-ui/node_modules/regenerate-unicode-properties/*
+  coolercontrol-ui/node_modules/regenerator-runtime/*
+  coolercontrol-ui/node_modules/regexpu-core/*
+  coolercontrol-ui/node_modules/regjsgen/*
+  coolercontrol-ui/node_modules/reka-ui/*
+  coolercontrol-ui/node_modules/resolve/*
+  coolercontrol-ui/node_modules/reusify/*
+  coolercontrol-ui/node_modules/rollup/*
+  coolercontrol-ui/node_modules/run-parallel/*
+  coolercontrol-ui/node_modules/sass/*
+  coolercontrol-ui/node_modules/scule/*
+  coolercontrol-ui/node_modules/shebang-command/*
+  coolercontrol-ui/node_modules/shebang-regex/*
+  coolercontrol-ui/node_modules/shell-quote/*
+  coolercontrol-ui/node_modules/simple-swizzle/*
+  coolercontrol-ui/node_modules/source-map-support/*
+  coolercontrol-ui/node_modules/std-env/*
+  coolercontrol-ui/node_modules/sucrase/*
+  coolercontrol-ui/node_modules/sucrase/node_modules/commander/*
+  coolercontrol-ui/node_modules/supports-preserve-symlinks-flag/*
+  coolercontrol-ui/node_modules/svgo/*
+  coolercontrol-ui/node_modules/svgo/node_modules/commander/*
+  coolercontrol-ui/node_modules/systemjs/*
+  coolercontrol-ui/node_modules/tabbable/*
+  coolercontrol-ui/node_modules/tailwindcss/*
+  coolercontrol-ui/node_modules/tailwindcss-themer/*
+  coolercontrol-ui/node_modules/tailwindcss/node_modules/chokidar/*
+  coolercontrol-ui/node_modules/tailwindcss/node_modules/picomatch/*
+  coolercontrol-ui/node_modules/tailwindcss/node_modules/readdirp/*
+  coolercontrol-ui/node_modules/terser/node_modules/commander/*
+  coolercontrol-ui/node_modules/thenify/*
+  coolercontrol-ui/node_modules/thenify-all/*
+  coolercontrol-ui/node_modules/tinybench/*
+  coolercontrol-ui/node_modules/tinycolor2/*
+  coolercontrol-ui/node_modules/tinyexec/*
+  coolercontrol-ui/node_modules/tinyglobby/*
+  coolercontrol-ui/node_modules/tldts/*
+  coolercontrol-ui/node_modules/tldts-core/*
+  coolercontrol-ui/node_modules/to-regex-range/*
+  coolercontrol-ui/node_modules/tr46/*
+  coolercontrol-ui/node_modules/ts-enum-util/*
+  coolercontrol-ui/node_modules/ufo/*
+  coolercontrol-ui/node_modules/undici/*
+  coolercontrol-ui/node_modules/undici-types/*
+  coolercontrol-ui/node_modules/unicode-canonical-property-names-ecmascript/*
+  coolercontrol-ui/node_modules/unicode-match-property-ecmascript/*
+  coolercontrol-ui/node_modules/unicode-match-property-value-ecmascript/*
+  coolercontrol-ui/node_modules/unicode-property-aliases-ecmascript/*
+  coolercontrol-ui/node_modules/unplugin/*
+  coolercontrol-ui/node_modules/unplugin-utils/*
+  coolercontrol-ui/node_modules/update-browserslist-db/*
+  coolercontrol-ui/node_modules/uplot/*
+  coolercontrol-ui/node_modules/util-deprecate/*
+  coolercontrol-ui/node_modules/uuid/*
+  coolercontrol-ui/node_modules/v-onboarding/*
+  coolercontrol-ui/node_modules/vite/*
+  coolercontrol-ui/node_modules/vite-plugin-package-version/*
+  coolercontrol-ui/node_modules/vite-svg-loader/*
+  coolercontrol-ui/node_modules/vitest/*
+  coolercontrol-ui/node_modules/vscode-jsonrpc/*
+  coolercontrol-ui/node_modules/vscode-languageserver-protocol/*
+  coolercontrol-ui/node_modules/vscode-languageserver-textdocument/*
+  coolercontrol-ui/node_modules/vscode-languageserver-types/*
+  coolercontrol-ui/node_modules/vscode-uri/*
+  coolercontrol-ui/node_modules/vue/*
+  coolercontrol-ui/node_modules/vue-component-type-helpers/*
+  coolercontrol-ui/node_modules/vue-draggable-plus/*
+  coolercontrol-ui/node_modules/vue-echarts/*
+  coolercontrol-ui/node_modules/vue-fullscreen/*
+  coolercontrol-ui/node_modules/vue-i18n/*
+  coolercontrol-ui/node_modules/vue-i18n/node_modules/@vue/devtools-api/*
+  coolercontrol-ui/node_modules/vue-router/*
+  coolercontrol-ui/node_modules/vue-tsc/*
+  coolercontrol-ui/node_modules/w3c-xmlserializer/*
+  coolercontrol-ui/node_modules/webpack-virtual-modules/*
+  coolercontrol-ui/node_modules/whatwg-mimetype/*
+  coolercontrol-ui/node_modules/whatwg-url/*
+  coolercontrol-ui/node_modules/why-is-node-running/*
+  coolercontrol-ui/node_modules/xmlchars/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Expat
+Comment: licence field of the package: MIT
+
+Files: coolercontrold/vendor/matchit/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Expat and BSD-3-Clause
+Comment: licence field of the package: MIT AND BSD-3-Clause
+
+Files: coolercontrold/vendor/aead/*
+  coolercontrold/vendor/aes/*
+  coolercontrold/vendor/ahash/*
+  coolercontrold/vendor/aide/*
+  coolercontrold/vendor/aligned/*
+  coolercontrold/vendor/android_system_properties/*
+  coolercontrold/vendor/anstream/*
+  coolercontrold/vendor/anstyle/*
+  coolercontrold/vendor/anstyle-parse/*
+  coolercontrold/vendor/anstyle-query/*
+  coolercontrold/vendor/anstyle-wincon/*
+  coolercontrold/vendor/anyhow/*
+  coolercontrold/vendor/arbitrary/*
+  coolercontrold/vendor/arc-swap/*
+  coolercontrold/vendor/argon2/*
+  coolercontrold/vendor/arrayvec/*
+  coolercontrold/vendor/as-slice/*
+  coolercontrold/vendor/ash/*
+  coolercontrold/vendor/asn1-rs/*
+  coolercontrold/vendor/asn1-rs-derive/*
+  coolercontrold/vendor/async-compression/*
+  coolercontrold/vendor/async-trait/*
+  coolercontrold/vendor/base64/*
+  coolercontrold/vendor/base64-0.22.1/*
+  coolercontrold/vendor/beef/*
+  coolercontrold/vendor/bitflags/*
+  coolercontrold/vendor/blake2/*
+  coolercontrold/vendor/block-buffer/*
+  coolercontrold/vendor/block-buffer-0.10.4/*
+  coolercontrold/vendor/bumpalo/*
+  coolercontrold/vendor/cc/*
+  coolercontrold/vendor/cfg-if/*
+  coolercontrold/vendor/chrono/*
+  coolercontrold/vendor/cipher/*
+  coolercontrold/vendor/clap/*
+  coolercontrold/vendor/clap_builder/*
+  coolercontrold/vendor/clap_derive/*
+  coolercontrold/vendor/clap_lex/*
+  coolercontrold/vendor/colorchoice/*
+  coolercontrold/vendor/compression-codecs/*
+  coolercontrold/vendor/compression-core/*
+  coolercontrold/vendor/cookie/*
+  coolercontrold/vendor/core-foundation/*
+  coolercontrold/vendor/core-foundation-sys/*
+  coolercontrold/vendor/core-graphics-types/*
+  coolercontrold/vendor/cpufeatures/*
+  coolercontrold/vendor/cpufeatures-0.2.17/*
+  coolercontrold/vendor/crc32fast/*
+  coolercontrold/vendor/crossbeam-channel/*
+  coolercontrold/vendor/crossbeam-deque/*
+  coolercontrold/vendor/crossbeam-epoch/*
+  coolercontrold/vendor/crossbeam-utils/*
+  coolercontrold/vendor/crypto-common/*
+  coolercontrold/vendor/crypto-common-0.1.7/*
+  coolercontrold/vendor/ctr/*
+  coolercontrold/vendor/defmt/*
+  coolercontrold/vendor/defmt-macros/*
+  coolercontrold/vendor/defmt-parser/*
+  coolercontrold/vendor/der-parser/*
+  coolercontrold/vendor/deranged/*
+  coolercontrold/vendor/digest/*
+  coolercontrold/vendor/digest-0.10.7/*
+  coolercontrold/vendor/displaydoc/*
+  coolercontrold/vendor/document-features/*
+  coolercontrold/vendor/dyn-clone/*
+  coolercontrold/vendor/either/*
+  coolercontrold/vendor/env_filter/*
+  coolercontrold/vendor/env_logger/*
+  coolercontrold/vendor/errno/*
+  coolercontrold/vendor/fdeflate/*
+  coolercontrold/vendor/find-msvc-tools/*
+  coolercontrold/vendor/fixedbitset/*
+  coolercontrold/vendor/flate2/*
+  coolercontrold/vendor/form_urlencoded/*
+  coolercontrold/vendor/fs-err/*
+  coolercontrold/vendor/futures/*
+  coolercontrold/vendor/futures-channel/*
+  coolercontrold/vendor/futures-core/*
+  coolercontrold/vendor/futures-executor/*
+  coolercontrold/vendor/futures-io/*
+  coolercontrold/vendor/futures-macro/*
+  coolercontrold/vendor/futures-sink/*
+  coolercontrold/vendor/futures-task/*
+  coolercontrold/vendor/futures-util/*
+  coolercontrold/vendor/getrandom/*
+  coolercontrold/vendor/getrandom-0.2.17/*
+  coolercontrold/vendor/getrandom-0.3.4/*
+  coolercontrold/vendor/gif/*
+  coolercontrold/vendor/gif-0.13.3/*
+  coolercontrold/vendor/gif-dispose/*
+  coolercontrold/vendor/glob/*
+  coolercontrold/vendor/gpu-alloc/*
+  coolercontrold/vendor/gpu-alloc-types/*
+  coolercontrold/vendor/gpu-descriptor/*
+  coolercontrold/vendor/gpu-descriptor-types/*
+  coolercontrold/vendor/half/*
+  coolercontrold/vendor/hashbrown/*
+  coolercontrold/vendor/hashbrown-0.13.2/*
+  coolercontrold/vendor/hashbrown-0.15.5/*
+  coolercontrold/vendor/heck/*
+  coolercontrold/vendor/hex/*
+  coolercontrold/vendor/hkdf/*
+  coolercontrold/vendor/hmac/*
+  coolercontrold/vendor/http/*
+  coolercontrold/vendor/httparse/*
+  coolercontrold/vendor/httpdate/*
+  coolercontrold/vendor/hybrid-array/*
+  coolercontrold/vendor/hyper-timeout/*
+  coolercontrold/vendor/iana-time-zone/*
+  coolercontrold/vendor/iana-time-zone-haiku/*
+  coolercontrold/vendor/image/*
+  coolercontrold/vendor/image-webp/*
+  coolercontrold/vendor/inout/*
+  coolercontrold/vendor/is_terminal_polyfill/*
+  coolercontrold/vendor/itertools/*
+  coolercontrold/vendor/itoa/*
+  coolercontrold/vendor/jni-sys/*
+  coolercontrold/vendor/jni-sys-0.3.1/*
+  coolercontrold/vendor/jni-sys-macros/*
+  coolercontrold/vendor/jobserver/*
+  coolercontrold/vendor/js-sys/*
+  coolercontrold/vendor/lazy_static/*
+  coolercontrold/vendor/libc/*
+  coolercontrold/vendor/litrs/*
+  coolercontrold/vendor/lock_api/*
+  coolercontrold/vendor/log/*
+  coolercontrold/vendor/logos/*
+  coolercontrold/vendor/logos-0.15.1/*
+  coolercontrold/vendor/logos-codegen/*
+  coolercontrold/vendor/logos-codegen-0.15.1/*
+  coolercontrold/vendor/logos-derive/*
+  coolercontrold/vendor/logos-derive-0.15.1/*
+  coolercontrold/vendor/metal/*
+  coolercontrold/vendor/mime/*
+  coolercontrold/vendor/moro-local/*
+  coolercontrold/vendor/multimap/*
+  coolercontrold/vendor/naga/*
+  coolercontrold/vendor/ndk-sys/*
+  coolercontrold/vendor/num-bigint/*
+  coolercontrold/vendor/num-complex/*
+  coolercontrold/vendor/num-conv/*
+  coolercontrold/vendor/num-derive/*
+  coolercontrold/vendor/num-integer/*
+  coolercontrold/vendor/num-rational/*
+  coolercontrold/vendor/num-traits/*
+  coolercontrold/vendor/nvml-wrapper/*
+  coolercontrold/vendor/nvml-wrapper-sys/*
+  coolercontrold/vendor/oid-registry/*
+  coolercontrold/vendor/once_cell/*
+  coolercontrold/vendor/once_cell_polyfill/*
+  coolercontrold/vendor/opaque-debug/*
+  coolercontrold/vendor/ordered-channel/*
+  coolercontrold/vendor/ordered-stream/*
+  coolercontrold/vendor/parking_lot/*
+  coolercontrold/vendor/parking_lot_core/*
+  coolercontrold/vendor/password-hash/*
+  coolercontrold/vendor/paste/*
+  coolercontrold/vendor/pastey/*
+  coolercontrold/vendor/percent-encoding/*
+  coolercontrold/vendor/petgraph/*
+  coolercontrold/vendor/pkg-config/*
+  coolercontrold/vendor/png/*
+  coolercontrold/vendor/png-0.17.16/*
+  coolercontrold/vendor/powerfmt/*
+  coolercontrold/vendor/ppv-lite86/*
+  coolercontrold/vendor/prettyplease/*
+  coolercontrold/vendor/proc-macro2/*
+  coolercontrold/vendor/profiling/*
+  coolercontrold/vendor/profiling-procmacros/*
+  coolercontrold/vendor/prost-reflect/*
+  coolercontrold/vendor/protox/*
+  coolercontrold/vendor/protox-parse/*
+  coolercontrold/vendor/quote/*
+  coolercontrold/vendor/rand/*
+  coolercontrold/vendor/rand-0.8.8/*
+  coolercontrold/vendor/rand_chacha/*
+  coolercontrold/vendor/rand_chacha-0.3.1/*
+  coolercontrold/vendor/rand_core/*
+  coolercontrold/vendor/rand_core-0.6.4/*
+  coolercontrold/vendor/rayon/*
+  coolercontrold/vendor/rayon-core/*
+  coolercontrold/vendor/rcgen/*
+  coolercontrold/vendor/ref-cast/*
+  coolercontrold/vendor/ref-cast-impl/*
+  coolercontrold/vendor/regex/*
+  coolercontrold/vendor/regex-automata/*
+  coolercontrold/vendor/regex-syntax/*
+  coolercontrold/vendor/renderdoc-sys/*
+  coolercontrold/vendor/rustc_version/*
+  coolercontrold/vendor/rustls-pki-types/*
+  coolercontrold/vendor/rustversion/*
+  coolercontrold/vendor/scopeguard/*
+  coolercontrold/vendor/sd-notify/*
+  coolercontrold/vendor/semver/*
+  coolercontrold/vendor/serde/*
+  coolercontrold/vendor/serde_core/*
+  coolercontrold/vendor/serde_derive/*
+  coolercontrold/vendor/serde_derive_internals/*
+  coolercontrold/vendor/serde_json/*
+  coolercontrold/vendor/serde_path_to_error/*
+  coolercontrold/vendor/serde_repr/*
+  coolercontrold/vendor/serde_spanned/*
+  coolercontrold/vendor/sha2/*
+  coolercontrold/vendor/shlex/*
+  coolercontrold/vendor/signal-hook-registry/*
+  coolercontrold/vendor/simdutf8/*
+  coolercontrold/vendor/smallvec/*
+  coolercontrold/vendor/socket2/*
+  coolercontrold/vendor/stable_deref_trait/*
+  coolercontrold/vendor/static_assertions/*
+  coolercontrold/vendor/syn/*
+  coolercontrold/vendor/syn-2.0.119/*
+  coolercontrold/vendor/systemd-journal-logger/*
+  coolercontrold/vendor/tar/*
+  coolercontrold/vendor/tempfile/*
+  coolercontrold/vendor/thiserror/*
+  coolercontrold/vendor/thiserror-1.0.69/*
+  coolercontrold/vendor/thiserror-impl/*
+  coolercontrold/vendor/thiserror-impl-1.0.69/*
+  coolercontrold/vendor/thread_local/*
+  coolercontrold/vendor/time/*
+  coolercontrold/vendor/time-core/*
+  coolercontrold/vendor/time-macros/*
+  coolercontrold/vendor/tokio-rustls/*
+  coolercontrold/vendor/toml/*
+  coolercontrold/vendor/toml_datetime/*
+  coolercontrold/vendor/toml_edit/*
+  coolercontrold/vendor/toml_parser/*
+  coolercontrold/vendor/toml_writer/*
+  coolercontrold/vendor/ttf-parser/*
+  coolercontrold/vendor/typenum/*
+  coolercontrold/vendor/unicase/*
+  coolercontrold/vendor/unicode-width/*
+  coolercontrold/vendor/unicode-xid/*
+  coolercontrold/vendor/universal-hash/*
+  coolercontrold/vendor/wasm-bindgen/*
+  coolercontrold/vendor/wasm-bindgen-futures/*
+  coolercontrold/vendor/wasm-bindgen-macro/*
+  coolercontrold/vendor/wasm-bindgen-macro-support/*
+  coolercontrold/vendor/wasm-bindgen-shared/*
+  coolercontrold/vendor/web-sys/*
+  coolercontrold/vendor/weezl/*
+  coolercontrold/vendor/wgpu/*
+  coolercontrold/vendor/wgpu-core/*
+  coolercontrold/vendor/wgpu-hal/*
+  coolercontrold/vendor/wgpu-types/*
+  coolercontrold/vendor/windows/*
+  coolercontrold/vendor/windows-0.58.0/*
+  coolercontrold/vendor/windows-collections/*
+  coolercontrold/vendor/windows-core/*
+  coolercontrold/vendor/windows-core-0.58.0/*
+  coolercontrold/vendor/windows-future/*
+  coolercontrold/vendor/windows-implement/*
+  coolercontrold/vendor/windows-implement-0.58.0/*
+  coolercontrold/vendor/windows-interface/*
+  coolercontrold/vendor/windows-interface-0.58.0/*
+  coolercontrold/vendor/windows-link/*
+  coolercontrold/vendor/windows-numerics/*
+  coolercontrold/vendor/windows-result/*
+  coolercontrold/vendor/windows-result-0.2.0/*
+  coolercontrold/vendor/windows-strings/*
+  coolercontrold/vendor/windows-strings-0.1.0/*
+  coolercontrold/vendor/windows-sys/*
+  coolercontrold/vendor/windows-sys-0.52.0/*
+  coolercontrold/vendor/windows-targets/*
+  coolercontrold/vendor/windows-threading/*
+  coolercontrold/vendor/windows_aarch64_gnullvm/*
+  coolercontrold/vendor/windows_aarch64_msvc/*
+  coolercontrold/vendor/windows_i686_gnu/*
+  coolercontrold/vendor/windows_i686_gnullvm/*
+  coolercontrold/vendor/windows_i686_msvc/*
+  coolercontrold/vendor/windows_x86_64_gnu/*
+  coolercontrold/vendor/windows_x86_64_gnullvm/*
+  coolercontrold/vendor/windows_x86_64_msvc/*
+  coolercontrold/vendor/x509-parser/*
+  coolercontrold/vendor/yasna/*
+  rollupvendor/ahash/*
+  rollupvendor/allocator-api2/*
+  rollupvendor/anyhow/*
+  rollupvendor/arrayvec/*
+  rollupvendor/base64/*
+  rollupvendor/bitflags/*
+  rollupvendor/bstr/*
+  rollupvendor/bumpalo/*
+  rollupvendor/cc/*
+  rollupvendor/cfg-if/*
+  rollupvendor/cmake/*
+  rollupvendor/crossbeam-utils/*
+  rollupvendor/displaydoc/*
+  rollupvendor/either/*
+  rollupvendor/find-msvc-tools/*
+  rollupvendor/fixedbitset/*
+  rollupvendor/form_urlencoded/*
+  rollupvendor/futures/*
+  rollupvendor/futures-channel/*
+  rollupvendor/futures-core/*
+  rollupvendor/futures-executor/*
+  rollupvendor/futures-io/*
+  rollupvendor/futures-macro/*
+  rollupvendor/futures-sink/*
+  rollupvendor/futures-task/*
+  rollupvendor/futures-util/*
+  rollupvendor/hashbrown/*
+  rollupvendor/hashbrown-0.14.5/*
+  rollupvendor/hashbrown-0.16.1/*
+  rollupvendor/heck/*
+  rollupvendor/hermit-abi/*
+  rollupvendor/idna/*
+  rollupvendor/itoa/*
+  rollupvendor/js-sys/*
+  rollupvendor/libc/*
+  rollupvendor/lock_api/*
+  rollupvendor/num-bigint/*
+  rollupvendor/num-integer/*
+  rollupvendor/num-traits/*
+  rollupvendor/num_cpus/*
+  rollupvendor/once_cell/*
+  rollupvendor/parking_lot/*
+  rollupvendor/parking_lot_core/*
+  rollupvendor/percent-encoding/*
+  rollupvendor/petgraph/*
+  rollupvendor/proc-macro2/*
+  rollupvendor/psm/*
+  rollupvendor/quote/*
+  rollupvendor/rand/*
+  rollupvendor/rand_core/*
+  rollupvendor/regex/*
+  rollupvendor/regex-automata/*
+  rollupvendor/regex-syntax/*
+  rollupvendor/regress/*
+  rollupvendor/rustversion/*
+  rollupvendor/scopeguard/*
+  rollupvendor/semver/*
+  rollupvendor/seq-macro/*
+  rollupvendor/serde/*
+  rollupvendor/serde_core/*
+  rollupvendor/serde_derive/*
+  rollupvendor/serde_json/*
+  rollupvendor/shlex/*
+  rollupvendor/siphasher/*
+  rollupvendor/smallvec/*
+  rollupvendor/stable_deref_trait/*
+  rollupvendor/stacker/*
+  rollupvendor/static_assertions/*
+  rollupvendor/syn/*
+  rollupvendor/syn-2.0.119/*
+  rollupvendor/triomphe/*
+  rollupvendor/unicode-segmentation/*
+  rollupvendor/unicode-width/*
+  rollupvendor/url/*
+  rollupvendor/wasm-bindgen/*
+  rollupvendor/wasm-bindgen-macro/*
+  rollupvendor/wasm-bindgen-macro-support/*
+  rollupvendor/wasm-bindgen-shared/*
+  rollupvendor/windows-link/*
+  rollupvendor/windows-sys/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Expat or Apache-2.0
+Comment: licence field of the package: MIT OR Apache-2.0
+
+Files: coolercontrold/vendor/r-efi/*
+  coolercontrold/vendor/r-efi-5.3.0/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Expat or Apache-2.0 or LGPL-2.1+
+Comment: licence field of the package: MIT OR Apache-2.0 OR LGPL-2.1-or-later
+
+Files: coolercontrold/vendor/fontdue/*
+  coolercontrold/vendor/glow/*
+  coolercontrold/vendor/raw-window-handle/*
+  coolercontrold/vendor/zune-core/*
+  coolercontrold/vendor/zune-inflate/*
+  coolercontrold/vendor/zune-jpeg/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Expat or Apache-2.0 or Zlib
+Comment: licence field of the package: MIT OR Apache-2.0 OR Zlib
+
+Files: coolercontrold/vendor/miniz_oxide/*
+  coolercontrold/vendor/miniz_oxide-0.8.9/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Expat or Zlib or Apache-2.0
+Comment: licence field of the package: MIT OR Zlib OR Apache-2.0
+
+Files: coolercontrold/vendor/asn1-rs-impl/*
+  coolercontrold/vendor/bitflags-1.3.2/*
+  coolercontrold/vendor/bitstream-io/*
+  coolercontrold/vendor/core_detect/*
+  coolercontrold/vendor/filetime/*
+  coolercontrold/vendor/foreign-types/*
+  coolercontrold/vendor/foreign-types-macros/*
+  coolercontrold/vendor/foreign-types-shared/*
+  coolercontrold/vendor/ident_case/*
+  coolercontrold/vendor/khronos-egl/*
+  coolercontrold/vendor/minimal-lexical/*
+  coolercontrold/vendor/quick-error/*
+  coolercontrold/vendor/rusticata-macros/*
+  coolercontrold/vendor/serde_qs/*
+  coolercontrold/vendor/serde_urlencoded/*
+  coolercontrold/vendor/version_check/*
+  coolercontrold/vendor/winapi/*
+  coolercontrold/vendor/winapi-i686-pc-windows-gnu/*
+  coolercontrold/vendor/winapi-x86_64-pc-windows-gnu/*
+  coolercontrold/vendor/wrapcenum-derive/*
+  rollupvendor/if_chain/*
+  rollupvendor/pathdiff/*
+  rollupvendor/scoped-tls/*
+  rollupvendor/version_check/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Expat or Apache-2.0
+Comment: licence field of the package: MIT/Apache-2.0
+
+Files: coolercontrol-ui/node_modules/vue-color/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: public-domain-or-unstated
+Comment: licence field of the package: UNSTATED
+
+Files: rollupvendor/icu_collections/*
+  rollupvendor/icu_locale_core/*
+  rollupvendor/icu_normalizer/*
+  rollupvendor/icu_normalizer_data/*
+  rollupvendor/icu_properties/*
+  rollupvendor/icu_properties_data/*
+  rollupvendor/icu_provider/*
+  rollupvendor/litemap/*
+  rollupvendor/potential_utf/*
+  rollupvendor/tinystr/*
+  rollupvendor/writeable/*
+  rollupvendor/yoke/*
+  rollupvendor/yoke-derive/*
+  rollupvendor/zerofrom/*
+  rollupvendor/zerofrom-derive/*
+  rollupvendor/zerotrie/*
+  rollupvendor/zerovec/*
+  rollupvendor/zerovec-derive/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Unicode-3.0
+Comment: licence field of the package: Unicode-3.0
+
+Files: coolercontrold/vendor/aho-corasick/*
+  coolercontrold/vendor/byteorder-lite/*
+  coolercontrold/vendor/jiff/*
+  coolercontrold/vendor/jiff-core/*
+  coolercontrold/vendor/jiff-static/*
+  coolercontrold/vendor/memchr/*
+  coolercontrold/vendor/termcolor/*
+  coolercontrold/vendor/winapi-util/*
+  rollupvendor/aho-corasick/*
+  rollupvendor/globset/*
+  rollupvendor/memchr/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Unlicense or Expat
+Comment: licence field of the package: Unlicense OR MIT
+
+Files: coolercontrold/vendor/foldhash/*
+  coolercontrold/vendor/slotmap/*
+  coolercontrold/vendor/zlib-rs/*
+  rollupvendor/foldhash/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Zlib
+Comment: licence field of the package: Zlib
+
+Files: coolercontrold/vendor/bytemuck/*
+  coolercontrold/vendor/bytemuck_derive/*
+  coolercontrold/vendor/objc2-core-foundation/*
+  coolercontrold/vendor/objc2-io-kit/*
+Copyright: see the legal files of the packages, installed under /usr/share/doc/coolercontrold/
+License: Zlib or Apache-2.0 or Expat
+Comment: licence field of the package: Zlib OR Apache-2.0 OR MIT
+
+License: 0BSD
+ The text is the legal file of each package that states this licence, installed under /usr/share/doc/coolercontrold/ (its SHA-256 is pinned in the debian/*licences.tsv tables).
+
+License: AGPL-3+
+ On Debian systems, the full text can be found in /usr/share/common-licenses/AGPL-3.
+
+License: Apache-2.0
+ On Debian systems, the full text can be found in /usr/share/common-licenses/Apache-2.0.
+
+License: Apache-2.0-with-LLVM-exception
+ Apache-2.0 with the LLVM exception; see Apache-2.0 and the legal file of the packages that state it.
+
+License: BSD-2-Clause
+ Redistribution and use in source and binary forms, with or without modification, are permitted provided that the
+ following conditions are met:
+ .
+ 1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+ .
+ 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following
+ disclaimer in the documentation and/or other materials provided with the distribution.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT
+ NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+ THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+License: BSD-3-Clause
+ Redistribution and use in source and binary forms, with or without modification, are permitted provided that the
+ following conditions are met:
+ .
+ 1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+ .
+ 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following
+ disclaimer in the documentation and/or other materials provided with the distribution.
+ .
+ 3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived
+ from this software without specific prior written permission.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT
+ NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+ THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+License: BSL-1.0
+ The text is the legal file of each package that states this licence, installed under /usr/share/doc/coolercontrold/ (its SHA-256 is pinned in the debian/*licences.tsv tables).
+
+License: BlueOak-1.0.0
+ The text is the legal file of each package that states this licence, installed under /usr/share/doc/coolercontrold/ (its SHA-256 is pinned in the debian/*licences.tsv tables).
+
+License: CC-BY-4.0
+ On Debian systems, the full text can be found in /usr/share/common-licenses/CC-BY-4.0.
+
+License: CC0-1.0
+ On Debian systems, the full text can be found in /usr/share/common-licenses/CC0-1.0.
+
+License: Expat
+ Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+ documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to
+ use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
+ Software is furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+ FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+License: GPL-3+
+ On Debian systems, the full text of the GNU General Public License version 3 can be found in /usr/share/common-licenses/GPL-3.
+
+License: ISC
+ Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted,
+ provided that the above copyright notice and this permission notice appear in all copies.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED
+ WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR
+ CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,
+ NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+License: LGPL-2.1+
+ On Debian systems, the full text can be found in /usr/share/common-licenses/LGPL-2.1.
+
+License: NCSA
+ The text is the legal file of each package that states this licence, installed under /usr/share/doc/coolercontrold/ (its SHA-256 is pinned in the debian/*licences.tsv tables).
+
+License: Unicode-3.0
+ The text is the legal file of each package that states this licence, installed under /usr/share/doc/coolercontrold/ (its SHA-256 is pinned in the debian/*licences.tsv tables).
+
+License: Unlicense
+ The text is the legal file of each package that states this licence, installed under /usr/share/doc/coolercontrold/ (its SHA-256 is pinned in the debian/*licences.tsv tables).
+
+License: Zlib
+ This software is provided 'as-is', without any express or implied warranty. In no event will the authors be held liable
+ for any damages arising from the use of this software.
+ .
+ Permission is granted to anyone to use this software for any purpose, including commercial applications, and to alter it and
+ redistribute it freely, subject to the following restrictions:
+ .
+ 1. The origin of this software must not be misrepresented; you must not claim that you wrote the original software. If you use
+ this software in a product, an acknowledgment in the product documentation would be appreciated but is not required.
+ .
+ 2. Altered source versions must be plainly marked as such, and must not be misrepresented as being the original software.
+ .
+ 3. This notice may not be removed or altered from any source distribution.
+
+License: public-domain-or-unstated
+ The package states no licence field; its files, if it has any, are in /usr/share/doc/coolercontrold/. It is a build tool or data of the interface build, named in the list above.

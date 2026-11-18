@@ -1,0 +1,19 @@
+#!/bin/sh
+# Created by Daniel Ramos (Capitain Jack) 2026/11/18
+# Copyright 2026 under the GNU GPL3 License
+set -e
+#DEBHELPER#
+unit=coolercontrold.service
+case "$1" in
+remove)
+	if [ -d /run/systemd/system ]; then systemctl --system daemon-reload >/dev/null || true; fi ;;
+purge)
+	# the unit's enable records, and the settings the service wrote (/etc/lact: the package never shipped them); a copy made by upstream's
+	# makefile shares that folder and keeps it
+	if ! [ -e /usr/local/bin/coolercontrold ] && ! [ -e /usr/local/lib/systemd/system/$unit ] && ! [ -e /etc/systemd/system/$unit ]; then
+		deb-systemd-helper purge $unit >/dev/null || true
+		deb-systemd-helper unmask $unit >/dev/null || true
+		rm -rf /etc/coolercontrol /var/lib/coolercontrol
+	fi ;;
+esac
+exit 0

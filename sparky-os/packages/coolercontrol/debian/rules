@@ -1,0 +1,72 @@
+#!/usr/bin/make -f
+# Created by Daniel Ramos (Capitain Jack) 2026/11/18
+# Copyright 2026 under the GNU GPL3 License
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# no network: the vendored crates, the vendored npm tree, upstream's Cargo.toml and Cargo.lock as they are
+export CARGO_HOME = $(CURDIR)/debian/.cargo-home
+export CARGO_NET_OFFLINE = true
+export CARGO_BUILD_JOBS = $(shell nproc)
+export HOME = $(CURDIR)/debian/.home
+export npm_config_offline = true
+export ESBUILD_BINARY_PATH = /usr/bin/esbuild
+export APP_ID = org.coolercontrol.CoolerControl
+UI = coolercontrol-ui
+ROLLUP_VERSION = 4.68.6
+
+%:
+	dh $@ --buildsystem=none
+
+# debian/copyright is generated from the licence tables; the build stops when the committed file differs
+override_dh_auto_build:
+	python3 debian/gen-copyright.py debian/copyright-head.txt debian/crate-licences.tsv:coolercontrold/vendor:vendor-licences \
+	  debian/rollup-crate-licences.tsv:rollupvendor:vendor-licences debian/npm-licences.tsv:coolercontrol-ui/node_modules:vendor-licences | cmp - debian/copyright
+	mkdir -p $(CARGO_HOME) $(HOME)
+	# 1. Rollup's native part, from the source of the tag its JavaScript comes from
+	grep -q '"version": "$(ROLLUP_VERSION)"' npm/rollup/package.json
+	cp -a rollupvendor rollup/rust/vendor
+	python3 debian/strip-missing-checksums.py rollup/rust/vendor
+	sed 's|^directory = .*|directory = "$(CURDIR)/rollup/rust/vendor"|' debian/rollup-cargo-config.toml > $(CARGO_HOME)/config.toml
+	cd rollup/rust && cargo build --release --offline --locked -p bindings_napi
+	# 2. the interface: the npm tree where the build looks for it, Rollup's native part beside Rollup's JavaScript, esbuild from Debian
+	cp -a npm $(UI)/node_modules
+	cp rollup/rust/target/release/libbindings_napi.so $(UI)/node_modules/rollup/dist/rollup.linux-x64-gnu.node
+	cd $(UI) && sha256sum package-lock.json > ../debian/.lock.sha256 && node node_modules/vite/bin/vite.js build && sha256sum -c ../debian/.lock.sha256
+	# 3. the daemon, with the interface built into it (include_dir)
+	rm -rf coolercontrold/resources/app/*
+	cp -rf $(UI)/dist/* coolercontrold/resources/app/
+	cp -a vendor coolercontrold/vendor
+	python3 debian/strip-missing-checksums.py coolercontrold/vendor
+	sed 's|^directory = .*|directory = "$(CURDIR)/coolercontrold/vendor"|' debian/cargo-config.toml > $(CARGO_HOME)/config.toml
+	cd coolercontrold && cargo --version && cargo build --release --offline --locked
+	# 4. the Qt window
+	cmake -S coolercontrol -B debian/.qt -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+	cmake --build debian/.qt -j$(shell nproc)
+
+# the daemon's own tests (no hardware needed); the interface's unit tests need developer packages this tree does not carry
+override_dh_auto_test:
+	cd coolercontrold && cargo test --release --offline --locked
+	coolercontrold/target/release/coolercontrold --version
+
+override_dh_dwz:
+
+# the unit is installed as a file and started by postinst/prerm under their own guard: dh's snippets would stop and restart a
+# service of the same name that upstream's own makefile installed in /usr/local
+override_dh_installsystemd:
+
+override_dh_auto_install:
+	install -Dm755 coolercontrold/target/release/coolercontrold debian/tmp/usr/bin/coolercontrold
+	install -Dm644 packaging/systemd/coolercontrold.service debian/tmp/usr/lib/systemd/system/coolercontrold.service
+	DESTDIR=$(CURDIR)/debian/tmp cmake --install debian/.qt
+	install -Dm644 packaging/metadata/$(APP_ID).desktop -t debian/tmp/usr/share/applications/
+	install -Dm644 packaging/metadata/$(APP_ID).svg -t debian/tmp/usr/share/icons/hicolor/scalable/apps/
+	install -Dm644 packaging/metadata/$(APP_ID)-alert.svg -t debian/tmp/usr/share/icons/hicolor/scalable/apps/
+	install -Dm644 packaging/metadata/$(APP_ID)-symbolic.svg -t debian/tmp/usr/share/icons/hicolor/symbolic/apps/
+	install -Dm644 packaging/metadata/$(APP_ID)-alert-symbolic.svg -t debian/tmp/usr/share/icons/hicolor/symbolic/apps/
+	install -Dm644 packaging/metadata/$(APP_ID).png -t debian/tmp/usr/share/icons/hicolor/256x256/apps/
+	install -Dm644 packaging/metadata/$(APP_ID)-alert.png -t debian/tmp/usr/share/icons/hicolor/256x256/apps/
+	install -Dm644 packaging/metadata/$(APP_ID).metainfo.xml -t debian/tmp/usr/share/metainfo/
+
+override_dh_clean:
+	dh_clean
+	rm -rf debian/.cargo-home debian/.home debian/.qt debian/.lock.sha256 coolercontrold/target coolercontrold/vendor rollup/rust/target rollup/rust/vendor coolercontrol-ui/node_modules coolercontrol-ui/dist
