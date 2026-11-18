@@ -1,0 +1,138 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 18 Nov 2026 12:00:00 -0300
+Subject: [PATCH] glx: a declared child waits for the compositor to take it
+
+A program whose 3D area is a child window (Qt's QOpenGLWidget on xcb,
+CloudCompare, VTK, Netgen) declares it at its first swap and presents at once.
+Stereo KWin holds the child only some tens of milliseconds later (measured: a
+declaration written 30 ms before the first swap is shown flat, 80 ms before it
+is a pair), so the first presents complete as copies, nothing is copied into a
+child that has no surface of its own yet, and two copies take the declaration
+back (glx_stereo_pair.h). A flat child never flips, so the three flips that
+bring the declaration back never come, and the window stays flat until the
+program re-creates its drawable.
+
+KWin 6.7.4-2+stereo3d59 announces declaration support 11 and then writes
+_KDE_NET_WM_STEREO_DEPTH_LIMITS on a declared child once it holds the child: the
+redirect it asked for is on the X connection before the property. The first
+present of a declared child, on DRI3 and on the software path, now waits for the
+property, up to half a second; the wait ends at the property or says on stderr
+that the compositor did not answer, and the presents then go the way they did.
+A compositor that announces less than 11, and a window that is not a child, are
+not waited for.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+--- a/src/glx/dri_common.c
++++ b/src/glx/dri_common.c
+@@ -49,6 +49,7 @@
+ #include "dri_util.h"
+ #include "pipe-loader/pipe_loader.h"
+ #include "x11/x11_display.h"
++#include "util/os_time.h"
+ 
+ /* Track the X windows on a private connection. Selecting StructureNotify here
+  * neither changes the application's event mask nor consumes its events.
+@@ -344,6 +345,70 @@
+       glx_message(_LOADER_WARNING, "Failed to wake stereo window observer\n");
+ }
+ 
++/* KWin 6.7.4 with declaration support 11 writes _KDE_NET_WM_STEREO_DEPTH_LIMITS on a
++ * declared child window once it holds the child: the redirect it asked for is on the
++ * X connection before the property, so a present that follows is flipped.  A program
++ * that draws once presents before KWin has the child; the present completes as a copy
++ * (nothing copied into a child that has no surface of its own), two copies take the
++ * declaration back (glx_stereo_pair.h), and a flat child never flips, so it never
++ * returns.  The first present of a declared child therefore waits for the property.
++ * The wait ends at the property or at STEREO_CHILD_ADOPT_US: a compositor that
++ * does not answer is the old case, told as before.
++ */
++#define STEREO_CHILD_ADOPT_US 500000
++#define STEREO_CHILD_ADOPT_STEP_US 1000
++#define STEREO_CHILD_ADOPT_VERSION 11
++
++static bool
++stereo_child_limits_arrived(Display *dpy, Window window, Atom atom)
++{
++   Atom type;
++   int format;
++   unsigned long count, after;
++   unsigned char *data = NULL;
++   bool arrived = false;
++
++   if (XGetWindowProperty(dpy, window, atom, 0, 2, False, XA_CARDINAL, &type,
++                          &format, &count, &after, &data) == Success)
++      arrived = type == XA_CARDINAL && format == 32 && count == 2;
++   if (data)
++      XFree(data);
++   return arrived;
++}
++
++void
++glx_x11_wait_stereo_child_adopted(Display *dpy, int screen, Window window)
++{
++   Window root, parent, *kids = NULL;
++   unsigned int nkids;
++
++   if (glx_x11_stereo_support_version(dpy, screen) < STEREO_CHILD_ADOPT_VERSION)
++      return;
++   if (!XQueryTree(dpy, window, &root, &parent, &kids, &nkids))
++      return;
++   if (kids)
++      XFree(kids);
++   if (parent == root || parent == None)
++      return;
++
++   Atom atom = XInternAtom(dpy, "_KDE_NET_WM_STEREO_DEPTH_LIMITS", False);
++   const int64_t start = os_time_get();
++   int64_t waited = 0;
++
++   while (!stereo_child_limits_arrived(dpy, window, atom)) {
++      waited = os_time_get() - start;
++      if (waited >= STEREO_CHILD_ADOPT_US) {
++         glx_message(_LOADER_WARNING,
++                     "stereo child 0x%lx: the compositor did not take the child in %d ms\n",
++                     (unsigned long) window, STEREO_CHILD_ADOPT_US / 1000);
++         return;
++      }
++      os_time_sleep(STEREO_CHILD_ADOPT_STEP_US);
++   }
++   glx_message(_LOADER_DEBUG, "stereo child 0x%lx: the compositor took the child after %d us\n",
++               (unsigned long) window, (int) waited);
++}
++
+ /* The window no longer holds two views: its window stops listing it. */
+ void
+ glx_x11_undeclare_stereo_child(Display *dpy, Window window)
+--- a/src/glx/dri_common.h
++++ b/src/glx/dri_common.h
+@@ -127,6 +127,8 @@
+ glx_x11_declare_stereo_child(Display *dpy, Window window);
+ void
+ glx_x11_undeclare_stereo_child(Display *dpy, Window window);
++void
++glx_x11_wait_stereo_child_adopted(Display *dpy, int screen, Window window);
+ #endif /* GLX_DIRECT_RENDERING */
+ 
+ #endif /* _DRI_COMMON_H */
+--- a/src/glx/dri3_glx.c
++++ b/src/glx/dri3_glx.c
+@@ -287,6 +287,8 @@
+    if (!glx_x11_stereo_content_declared(pdraw->base.psc->dpy, pdraw->base.xDrawable))
+       glx_declare_stereo(pdraw->base.psc->dpy, pdraw->base.xDrawable);
+    glx_x11_declare_stereo_child(pdraw->base.psc->dpy, pdraw->base.xDrawable);
++   glx_x11_wait_stereo_child_adopted(pdraw->base.psc->dpy, pdraw->base.psc->scr,
++                                     pdraw->base.xDrawable);
+    if (version < 3)
+       XResizeWindow(pdraw->base.psc->dpy, pdraw->base.xDrawable,
+                     2 * attributes.width, attributes.height);
+--- a/src/glx/drisw_glx.c
++++ b/src/glx/drisw_glx.c
+@@ -648,6 +648,7 @@
+    XChangeProperty(dpy, pdraw->base.xDrawable, atom, XA_CARDINAL, 32,
+                    PropModeReplace, (unsigned char *)&layout, 1);
+    glx_x11_declare_stereo_child(dpy, pdraw->base.xDrawable);
++   glx_x11_wait_stereo_child_adopted(dpy, pdraw->base.psc->scr, pdraw->base.xDrawable);
+    if (version < 3)
+       XResizeWindow(dpy, pdraw->base.xDrawable, 2 * attributes.width,
+                     attributes.height);
