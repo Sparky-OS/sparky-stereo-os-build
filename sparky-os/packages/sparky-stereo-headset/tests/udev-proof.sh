@@ -12,7 +12,7 @@ apt-get -y -qq --no-install-recommends install umockdev udev ca-certificates >/d
 failed=0; ok() { echo "PASS $*"; }; bad() { echo "FAIL $*"; failed=1; }
 HS=/devices/pci0000:00/usb1/1-1/1-1:1.0/0003:03F0:018B.0001/hidraw/hidraw0
 OT=/devices/pci0000:00/usb1/1-1/1-1:1.0/0003:03F0:FFFF.0001/hidraw/hidraw0
-props() { umockdev-run -d "$1" -- udevadm test --action=add "$2" 2>&1 | grep -E '^(SYSTEMD_USER_WANTS|TAGS|CURRENT_TAGS)=' | tr '\n' ' '; }
+props() { umockdev-run -d "$1" -- udevadm test --action=add "$2" 2>&1 | grep -E '^ *(SYSTEMD_USER_WANTS|TAGS|CURRENT_TAGS)=' | tr '\n' ' '; }
 echo "== before: no package"
 out=$(props /t/udev/headset.umockdev $HS); [[ $out != *SYSTEMD_USER_WANTS* ]] && ok "the recorded HyperX headset starts nothing without the package: $out" || bad "service wanted before: $out"
 echo "== installed by apt (headsetcontrol comes with it)"
@@ -26,13 +26,13 @@ ids() { grep -o 'idVendor}=="[0-9a-f]*", ATTRS{idProduct}=="[0-9a-f]*"' | sort -
 /usr/bin/headsetcontrol -u 2>/dev/null | ids >/tmp/prog.ids; ids <$RULE >/tmp/ours.ids
 [[ -s /tmp/prog.ids && $(cat /tmp/prog.ids) == "$(cat /tmp/ours.ids)" ]] && ok "the headsets of the rules are the headsets of the program: $(wc -l </tmp/ours.ids) ids" || bad "lists differ: $(diff /tmp/prog.ids /tmp/ours.ids | head -4)"
 [[ -x /usr/bin/sparky-stereo-headset && -f /usr/lib/systemd/user/sparky-stereo-headset.service && -L /usr/lib/systemd/user/default.target.wants/sparky-stereo-headset.service ]] && ok "the command and the user service (wanted by default.target) are there" || bad "command or unit missing"
-sparky-stereo-headset 2>&1 | grep -q Usage && ok "the command answers" || bad "command silent"
+out=$(sparky-stereo-headset 2>&1); [[ $out == *Usage* ]] && ok "the command answers" || bad "command silent"
 out=$(HOME=/tmp/nohome QT_QPA_PLATFORM=offscreen /usr/bin/sparky-stereo-headset status 2>&1 | tail -1); [[ $out == "No headset that HeadsetControl knows is connected." ]] && ok "with no headset it says so: $out" || bad "no-headset case: $out"
 echo "== a choice of the person, then upgrade, removal and purge"
 mkdir -p /root/.config; printf '[Headset 03f0:018b]\nInactiveTime=30\n' >/root/.config/sparky-stereo-headsetrc
-rm -rf /tmp/b && mkdir /tmp/b && dpkg-deb -R /deb/sparky-stereo-headset_*_amd64.deb /tmp/b/pkg && sed -i 's/^Version: .*/Version: 0.1.0-92+lc1/' /tmp/b/pkg/DEBIAN/control && dpkg-deb -b /tmp/b/pkg /tmp/b/o.deb >/dev/null 2>&1
+rm -rf /tmp/b && mkdir /tmp/b && dpkg-deb -R /deb/sparky-stereo-headset_*_amd64.deb /tmp/b/pkg && sed -i 's/^Version: .*/Version: 0.1.1+lc1/' /tmp/b/pkg/DEBIAN/control && dpkg-deb -b /tmp/b/pkg /tmp/b/o.deb >/dev/null 2>&1
 apt-get -s --no-install-recommends install /tmp/b/o.deb 2>&1 | grep -E "^(Inst|Remv)" | cut -c1-110
-apt-get -y --no-install-recommends install /tmp/b/o.deb >/tmp/i2.log 2>&1; [[ $? == 0 && $(dpkg -s sparky-stereo-headset | sed -n 's/^Version: //p') == 0.1.0-92+lc1 ]] && ok "the upgrade installs without a removal" || bad "upgrade: $(tail -2 /tmp/i2.log)"
+apt-get -y --no-install-recommends install /tmp/b/o.deb >/tmp/i2.log 2>&1; [[ $? == 0 && $(dpkg -s sparky-stereo-headset | sed -n 's/^Version: //p') == 0.1.1+lc1 ]] && ok "the upgrade installs without a removal" || bad "upgrade: $(tail -2 /tmp/i2.log)"
 out=$(props /t/udev/headset.umockdev $HS); [[ $out == *SYSTEMD_USER_WANTS* ]] && ok "after the upgrade the recorded headset still wants the service" || bad "service lost: $out"
 apt-get -y remove sparky-stereo-headset >/tmp/i3.log 2>&1; [[ ! -e $RULE && ! -e /usr/bin/sparky-stereo-headset ]] && ok "removal takes the files away" || bad "files left after removal"
 [[ -f /root/.config/sparky-stereo-headsetrc ]] && ok "the person's choices stay after removal" || bad "choices lost on removal"
