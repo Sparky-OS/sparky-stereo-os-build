@@ -1,0 +1,37 @@
+Source: headsetcontrol
+Section: utils
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 14), cmake, g++, libhidapi-dev, pkgconf
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+Homepage: https://github.com/Sapd/HeadsetControl
+
+Package: headsetcontrol
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, udev
+Description: Control USB headsets: battery, sidetone, lights and more
+ HeadsetControl reads and sets what a USB gaming headset's own firmware
+ offers and its manufacturer's program does not give to Linux: the battery
+ level, sidetone, lights, the inactive time, the equaliser presets and the
+ chat-mix dial, for the headsets of Logitech, SteelSeries, Corsair, HyperX,
+ Razer, Audeze, Astro and others (headsetcontrol --help lists what a connected
+ headset supports).
+ .
+ The package installs the program and the udev rules that give the person
+ at the desktop the headset's device files (headsetcontrol -u writes them from
+ its own device list). It is built from the release's source, not from
+ upstream's prebuilt program.
+ .
+ Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Pawel "pavroo"
+ Pijanowski). Upstream: Denis Arnst (Sapd) and the HeadsetControl contributors.
+
+Package: headsetcontrol-dev
+Section: libdevel
+Architecture: amd64
+Depends: ${misc:Depends}, libhidapi-dev
+Description: HeadsetControl as a library: headers and static library
+ The C++ and C interfaces of HeadsetControl (headsetcontrol.hpp,
+ headsetcontrol_c.h) and the static library the program is linked from, for
+ programs that want to read a headset's battery or set its sidetone
+ themselves.

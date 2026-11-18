@@ -1,0 +1,21 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: LACT
+Upstream-Contact: Ilya Zlobintsev (https://github.com/ilya-zlobintsev)
+Source: https://github.com/ilya-zlobintsev/LACT
+Comment: LACT itself is under the MIT licence. The program is one Rust binary that also links the crates in vendor/ (414, listed
+ below by the licence each one's Cargo.toml states), among them amdgpu-sysfs under the GNU Lesser General Public License version 3
+ or later, linked statically: the source package carries that crate's source (vendor/amdgpu-sysfs) and the whole build recipe, so
+ the program can be relinked with a changed copy of it. The stanzas of vendor/ are generated (sparky-os/packages/lact/debian/
+ gen-copyright.py in the edition's build repository) from the table debian/crate-licences.tsv, which pins every crate's legal
+ files by SHA-256; the files themselves (they carry their authors' names and addresses) are not kept in git, build.sh takes them
+ from the vendor tree and stops unless each has the pinned hash, and they are installed in /usr/share/doc/lact/vendor-licences.
+ The build stops when this file differs from what the generator gives.
+
+Files: *
+Copyright: 2023-2026 Ilya Zlobintsev and the LACT contributors
+License: Expat
+
+Files: debian/*
+Copyright: 2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+License: GPL-3
+Comment: Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Pawel "pavroo" Pijanowski).

@@ -1,0 +1,8 @@
+headsetcontrol (4.3.0-1) unstable; urgency=medium
+
+  * The edition's build of HeadsetControl 4.3.0 (Denis Arnst, github.com/Sapd/HeadsetControl, release of 2026-11-16), carried because Debian never packaged it (no source package in Debian, no removal record in ftp-master's logs read 2018 to 2026: nothing against it) and SparkyLinux does not host it. It is the tool for the battery, sidetone and lights of USB headsets that no other package of the edition reaches (OpenRGB drives a few headsets' lights only).
+  * Built from the tag's source, pinned in the recipe by commit 62e361b085d7716805a3bf524bc9cca3761e0e15, the tarball's SHA-256 and the git tree id 6b2e6243d22bebe9e99511a93e189b0a87de52b7 (the tarball's own: the commit's tree is 29d2e85f7f3c2932fd11540e05079267025c7a51, and the tarball leaves out what .gitattributes marks export-ignore), with Debian's hidapi; upstream's own tests run in the build (they use a mock HID interface). The program is not changed. Upstream's prebuilt packages are not used.
+  * Two binary packages: headsetcontrol (the program and the udev rules it writes for its own device list, /usr/lib/udev/rules.d/70-headsets.rules) and headsetcontrol-dev (headers and the static library, which upstream installs too).
+  * Lean Code 0.1.30: the C++ sources are projected as build inputs by the C adapter.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 18 Nov 2026 01:30:00 -0300
