@@ -5,5 +5,5 @@ RUN --mount=type=bind,from=https-only-apt,source=https-only-apt.sh,target=/run/h
     ulimit -c 0 && sh /run/https-only-apt.sh && \
     DEBIAN_FRONTEND=noninteractive apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-recommends install \
-      bubblewrap ca-certificates gnupg lintian fakeroot locales python3-debian python3-pytest libfaketime systemd && \
+      bubblewrap ca-certificates gnupg lintian fakeroot locales python3-debian python3-pytest libfaketime golang-go cpio zstd systemd && \
     apt-get clean
