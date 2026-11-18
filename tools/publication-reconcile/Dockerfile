@@ -5,5 +5,5 @@ RUN --mount=type=bind,from=https-only-apt,source=https-only-apt.sh,target=/run/h
     sh /run/https-only-apt.sh && \
     DEBIAN_FRONTEND=noninteractive apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get -y --no-install-recommends install \
-      bubblewrap ca-certificates gnupg lintian fakeroot locales python3-debian && \
+      bubblewrap ca-certificates gnupg lintian fakeroot locales python3-debian systemd && \
     apt-get clean
