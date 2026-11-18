@@ -1,26 +1,20 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Wed, 18 Nov 2026 09:05:00 -0300
-Subject: [PATCH 2/4] autotests: A declared child gets the depth limits
+Subject: [PATCH 2/6] autotests: A declared child gets the depth limits
 
 testStereoChildWindowDepthLimits: a child that declares stereo content and is
 listed in its window's children gets the output's sunk and popped limits
 (24.8 fixed point), follows a change of the limits, and loses the property when
-the declaration goes; the top level gets none. The announced support version is 11. Red on +stereo3d58, green on +59.
+the declaration goes (and comes back when it is declared again) or the window stops listing the child; the top level gets none. The announced support version is 11. Red on +stereo3d58, green on +59.
+
+The last two steps (declared again, child dropped from the list) are the cases of lane 501's own test of the same fix, taken in.
 
 Assisted-by: Claude Sonnet 5.5 via Claude Code
 ---
 --- a/autotests/integration/x11_window_test.cpp
 +++ b/autotests/integration/x11_window_test.cpp
-@@ -19,6 +19,7 @@
- #include "scene/surfaceitem_wayland.h"
- #include "scene/windowitem.h"
- #include "scene/stereodepth.h"
-+#include "scene/stereodepth.h"
- #include "scene/workspacescene.h"
- #include "virtualdesktops.h"
- #include "wayland/surface.h"
-@@ -165,6 +166,7 @@
+@@ -165,6 +165,7 @@
      void testStereoChildWindowOneViewSize();
      void testStereoChildWindowClip();
      void testStereoChildWindowClipAncestor();
@@ -28,7 +22,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
  };
  
  void X11WindowTest::initTestCase_data()
-@@ -4075,7 +4077,7 @@
+@@ -4075,7 +4076,7 @@
      std::unique_ptr<xcb_get_property_reply_t> supportReply(xcb_get_property_reply(c.get(), supportCookie, nullptr));
      QVERIFY(supportReply);
      QCOMPARE(supportReply->value_len, 1u);
@@ -37,10 +31,11 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
  
      const uint32_t value = StereoContentSideBySideFull;
      X11Window *window = createWindow(c.get(), Rect(0, 0, 100, 100), [&c, &value](xcb_window_t windowId) {
-@@ -5212,4 +5214,75 @@
+@@ -5211,5 +5212,86 @@
+     xcb_flush(c.get());
  }
  
- WAYLANDTEST_MAIN(X11WindowTest)
+-WAYLANDTEST_MAIN(X11WindowTest)
 +void X11WindowTest::testStereoChildWindowDepthLimits()
 +{
 +    // This test verifies that the person's depth limits reach a declared child window as they reach
@@ -100,16 +95,27 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
 +    QVERIFY(second != first);
 +    QTRY_COMPARE(limitsOf(child).value_or(std::array<uint32_t, 2>{0, 0}), second);
 +
-+    // the declaration goes: so do the limits
++    // the declaration goes: so do the limits; declared again, they come back
 +    const uint32_t none = StereoContentNone;
 +    xcb_change_property(c.get(), XCB_PROP_MODE_REPLACE, child, atoms->kde_net_wm_stereo_content,
 +                        XCB_ATOM_CARDINAL, 32, 1, &none);
++    xcb_flush(c.get());
++    QTRY_VERIFY(!limitsOf(child).has_value());
++    xcb_change_property(c.get(), XCB_PROP_MODE_REPLACE, child, atoms->kde_net_wm_stereo_content,
++                        XCB_ATOM_CARDINAL, 32, 1, &stereo);
++    xcb_flush(c.get());
++    QTRY_COMPARE(limitsOf(child).value_or(std::array<uint32_t, 2>{0, 0}), second);
++
++    // the window stops listing the child: the limits go with it (case by lane 501's own test of the same fix)
 +    xcb_delete_property(c.get(), window->window(), atoms->kde_net_wm_stereo_content_children);
 +    xcb_flush(c.get());
 +    QTRY_VERIFY(!limitsOf(child).has_value());
++    QVERIFY(!limitsOf(window->window()).has_value());
 +
 +    options->setStereoSunkLimit(10);
 +    options->setStereoPoppedLimit(4);
 +}
 +
  #include "x11_window_test.moc"
++
++WAYLANDTEST_MAIN(X11WindowTest)
