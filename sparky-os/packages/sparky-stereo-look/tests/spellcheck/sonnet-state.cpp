@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocale>
+#include <QSettings>
 #include <QTextStream>
 #include <Sonnet/ConfigView>
 #include <Sonnet/Settings>
@@ -24,6 +25,10 @@ int main(int argc, char **argv)
     }
     const QJsonObject state{
         {QStringLiteral("systemLocale"), QLocale::system().name()},
+        {QStringLiteral("settingsFile"), QSettings("KDE", "Sonnet").fileName()},
+        {QStringLiteral("systemSettingsFile"), QSettings(QSettings::NativeFormat, QSettings::SystemScope, "KDE", "Sonnet").fileName()},
+        {QStringLiteral("checkUppercase"), !settings.skipUppercase()},
+        {QStringLiteral("defaultCheckUppercase"), !Sonnet::Settings::defaultSkipUppercase()},
         {QStringLiteral("pageSelectedLanguage"), page.language()},
         {QStringLiteral("defaultLanguage"), settings.defaultLanguage()},
         {QStringLiteral("defaultClient"), settings.defaultClient()},
