@@ -15,12 +15,24 @@ import tarfile
 from reconcile import write_tsv
 
 
+def member_name(name):
+    """dpkg-deb prints directory slashes that tar member names may omit."""
+    return name.removeprefix('./').rstrip('/') or '.'
+
+
+def listing_name(line):
+    fields = line.split(None, 5)
+    if len(fields) != 6:
+        raise ValueError('unreadable dpkg-deb listing line: ' + line)
+    return member_name(fields[5].split(' -> ', 1)[0].split(' link to ', 1)[0])
+
+
 def members(path):
     result = {}
     child = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     with tarfile.open(fileobj=child.stdout, mode='r|') as archive:
         for entry in archive:
-            name = entry.name.removeprefix('./')
+            name = member_name(entry.name)
             digest = ''
             if entry.isfile():
                 h = hashlib.sha256()
@@ -44,7 +56,13 @@ def main():
     ap.add_argument('inventory', type=Path)
     ap.add_argument('--published', type=Path, required=True)
     ap.add_argument('--output', type=Path, required=True)
+    ap.add_argument('--explanations', type=Path, action='append', default=[],
+                    help='reviewed TSV with binary, path, reason columns; retained separately from the diff')
     args = ap.parse_args()
+    explanations = {}
+    for path in args.explanations:
+        for row in csv.DictReader(path.open(), delimiter='\t'):
+            explanations[(row['binary'], member_name(row['path']))] = row['reason']
     rows = list(csv.DictReader(args.files.open(), delimiter='\t'))
     candidates = [r for r in rows if r['kind'] == 'binary' and r['decision'] == 'candidate']
     published = {(r['binary'], r['architecture'], r.get('variant', '')): r
@@ -84,6 +102,8 @@ def main():
                     reason = 'REVIEW REQUIRED: published payload path absent from successor'
             else:
                 action, reason = 'changed', 'Path remains; content/metadata differences are recorded explicitly'
+            if action == 'removed' and (binary, path) in explanations:
+                reason = explanations[(binary, path)]
             differences.append({'binary': binary, 'architecture': arch, 'path': path,
                                 'action': action, 'reason': reason,
                                 'published': json.dumps(before, sort_keys=True), 'candidate': json.dumps(after, sort_keys=True)})
@@ -91,8 +111,7 @@ def main():
         removed_lines = []
         for line in difflib.unified_diff(previous_listing.splitlines(), listing.splitlines()):
             if line.startswith('-') and not line.startswith('---'):
-                fields = line[1:].split(None, 5)
-                path = fields[5].split(' -> ', 1)[0].split(' link to ', 1)[0].removeprefix('./') if len(fields) == 6 else ''
+                path = listing_name(line[1:])
                 reason = ('Payload path remains; listing metadata/size/time changed' if path in right
                           else next((r['reason'] for r in differences if r['path'] == path), 'REVIEW REQUIRED: listing path unresolved'))
                 removed_lines.append({'binary': binary, 'architecture': arch, 'line': line[1:], 'path': path, 'reason': reason})
