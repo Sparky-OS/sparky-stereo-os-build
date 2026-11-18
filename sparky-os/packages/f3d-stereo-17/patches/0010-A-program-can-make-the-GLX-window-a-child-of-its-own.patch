@@ -1,0 +1,109 @@
+From c99381857deb8a1398240391565cc01d1eaddef8 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 18 Nov 2026 10:09:01 -0300
+Subject: [PATCH] A program can make the GLX window a child of its own window
+ and read the window's id
+
+A viewer that shows the scene inside its own window (a Qt program: the 3D area of a Kirigami window) needs the window to be a child of
+its window, positioned and sized by it, and needs the window's id to declare things on it. window::setParentWindowId() and
+window::getNativeWindowId(), for the GLX window only.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+ library/private/window_impl.h |  2 ++
+ library/public/window.h       | 14 ++++++++++++
+ library/src/window_impl.cxx   | 40 +++++++++++++++++++++++++++++++++++
+ 3 files changed, 56 insertions(+)
+
+diff --git a/library/private/window_impl.h b/library/private/window_impl.h
+index da08524..f64efb4 100644
+--- a/library/private/window_impl.h
++++ b/library/private/window_impl.h
+@@ -50,6 +50,8 @@ public:
+   bool isOffscreen() override;
+   bool isStereo() override;
+   stereo_depth_state pollStereoDepth(bool& changed) override;
++  window& setParentWindowId(unsigned long id) override;
++  unsigned long getNativeWindowId() override;
+   window& setStereoImageEyeAngle(double degrees) override;
+   camera& getCamera() override;
+   bool render() override;
+diff --git a/library/public/window.h b/library/public/window.h
+index 9e782cf..e3c87b7 100644
+--- a/library/public/window.h
++++ b/library/public/window.h
+@@ -95,6 +95,20 @@ public:
+    */
+   virtual window& setStereoImageEyeAngle(double degrees) = 0;
+ 
++  /**
++   * Make the window a child of a window of the program's own (an X11 window id), so a program that shows the scene inside its own
++   * window (a Qt or GTK program: the 3D area of a viewer) owns the place and the size of the 3D area. Only a GLX window takes it;
++   * set it before the first render, or the window is created again once. The window is then positioned with setPosition()
++   * relative to its parent. Does nothing for another window type.
++   */
++  virtual window& setParentWindowId(unsigned long id) = 0;
++
++  /**
++   * The id of the window's own X11 window (GLX), 0 while it does not exist or for another window type. The program that
++   * declares things on the window (a depth limit read, the size one view is shown at) needs it.
++   */
++  [[nodiscard]] virtual unsigned long getNativeWindowId() = 0;
++
+   /**
+    * Get the camera provided by the window.
+    */
+diff --git a/library/src/window_impl.cxx b/library/src/window_impl.cxx
+index 1f034c2..b581d1b 100644
+--- a/library/src/window_impl.cxx
++++ b/library/src/window_impl.cxx
+@@ -347,6 +347,46 @@ window::stereo_depth_state window_impl::pollStereoDepth(bool& changed)
+   return state;
+ }
+ 
++//----------------------------------------------------------------------------
++window& window_impl::setParentWindowId(unsigned long id)
++{
++#ifdef VTK_USE_X
++  if (auto* glx = vtkF3DGLXRenderWindow::SafeDownCast(this->Internals->RenWin))
++  {
++    if (static_cast<unsigned long>(glx->GetParentId()) != id)
++    {
++      vtkRenderWindowInteractor* iren = glx->GetInteractor();
++      // a window that exists is created again under its new parent, as the stereo capable one is
++      const bool created = glx->GetWindowId() != 0;
++      if (created)
++      {
++        glx->Finalize();
++      }
++      glx->SetParentId(static_cast<Window>(id));
++      if (created && iren)
++      {
++        iren->ReInitialize();
++      }
++    }
++  }
++#else
++  (void)id;
++#endif
++  return *this;
++}
++
++//----------------------------------------------------------------------------
++unsigned long window_impl::getNativeWindowId()
++{
++#ifdef VTK_USE_X
++  if (auto* glx = vtkF3DGLXRenderWindow::SafeDownCast(this->Internals->RenWin))
++  {
++    return static_cast<unsigned long>(glx->GetWindowId());
++  }
++#endif
++  return 0;
++}
++
+ //----------------------------------------------------------------------------
+ bool window_impl::isOffscreen()
+ {
+-- 
+2.53.0
+
