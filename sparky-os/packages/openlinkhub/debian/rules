@@ -4,7 +4,8 @@
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 
 # no network, no other toolchain, the vendored modules, upstream's go.mod and go.sum as they are (go-release-packaging.md);
-# GOAMD64=v1 is the default and is set so the baseline processor is a decision, proved by repo/cpu-baseline.py on the program;
+# GOAMD64=v1 is the default and is set so the baseline processor is a decision; repo/cpu-baseline.py cannot pass any Go program (the standard
+# library's AES-NI, AVX2 and SHA-NI code is chosen by CPUID at run time), so the proof is tests/baseline-qemu.sh: the program runs on qemu64;
 # libpipewire-0.3's pkg-config asks for -fno-strict-overflow, which cgo refuses unless it is allowed by name (no change to the program)
 export GOTOOLCHAIN = local
 export GOPROXY = off
