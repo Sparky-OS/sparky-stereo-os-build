@@ -140,21 +140,6 @@ if amd_display and "AuthenticAMD" in vendors:
     if laptop == "0":
         emit("action", "amdgpu-panel")
 
-# LACT (ORDER 108, milestone 10; not in Debian, carried as the package lact) sets an AMD card's clocks, power limits and fan curve through the
-# amdgpu driver. It is installed for a machine with an AMD display controller, and it owns the cards it is installed for: CoreCtrl (Debian's
-# tool for the same sysfs files) is not installed for them. A CoreCtrl, or a LACT made by upstream's makefile (/usr/local), that the person
-# installed is theirs (a hand-installed program is the person's, Daniel 2026-11-07): the package is not planned beside it, and the plan says so.
-if amd_cards:
-    own_tool = (read_optional("corectrl") or "").strip() == "yes" or (read_optional("lact-local") or "").strip() == "yes"
-    cards = " ".join(sorted(set(amd_cards)))
-    if own_tool:
-        emit("fact", f"peripheral\tlact-not-planned\t{cards}")
-    else:
-        match(f"AMD graphics cards {cards}: LACT", "lact")
-        emit("fact", f"peripheral\tlact\t{cards}")
-        for card in sorted(set(amd_cards)):
-            emit("owner", f"{card}\tlact\tnot CoreCtrl\tAMD graphics card")
-
 xbox_usb = {"028e", "028f", "02d1", "02dd", "02e3", "02ea", "0b00", "0b0a", "0b12"}
 xbox_bt = {"02e0", "02fd", "0b05", "0b13", "0b20", "0b22"}
 rigs = json.loads((data / "rig-devices.json").read_text())
@@ -253,6 +238,21 @@ usb_vendors = sorted({vendor.lower() for vendor, _ in re.findall(r"\bID ([0-9a-f
 if usb_vendors and new_facts:
     emit("fact", "usb-vendors\t" + " ".join(v + (f" ({USB_VENDOR_NAMES[v]})" if v in USB_VENDOR_NAMES else "") for v in usb_vendors))
 
+# LACT (ORDER 108, milestone 10; not in Debian, carried as the package lact) sets an AMD card's clocks, power limits and fan curve through the
+# amdgpu driver. It is installed for a machine with an AMD display controller, and it owns the cards it is installed for: CoreCtrl (Debian's
+# tool for the same sysfs files) is not installed for them. A CoreCtrl, or a LACT made by upstream's makefile (/usr/local), that the person
+# installed is theirs (a hand-installed program is the person's, Daniel 2026-11-07): the package is not planned beside it, and the plan says so.
+if amd_cards:
+    own_tool = (read_optional("corectrl") or "").strip() == "yes" or (read_optional("lact-local") or "").strip() == "yes"
+    cards = " ".join(sorted(set(amd_cards)))
+    if own_tool:
+        emit("fact", f"peripheral\tlact-not-planned\t{cards}")
+    else:
+        match(f"AMD graphics cards {cards}: LACT", "lact")
+        emit("fact", f"peripheral\tlact\t{cards}")
+        for card in sorted(set(amd_cards)):
+            emit("owner", f"{card}\tlact\tnot CoreCtrl\tAMD graphics card")
+
 # Lights and peripherals (ORDER 108, milestone 6). A device seen on USB leads to its tool, installed without a question, from the
 # tool's own list of the devices it drives (share/peripherals/*.ids, made by tools/make-peripheral-ids.py from the package's udev
 # rules or device files; the first lines of each say which package and version). One owner per device: OpenLinkHub, the edition's
@@ -301,7 +301,10 @@ for tool, name, tool_packages in (("openrgb", "OpenRGB", ("openrgb",)), ("solaar
             emit("owner", f"{ident}\topenrgb\tnot {name}\t{table[ident]}")
             continue
         seen.append(ident)
-    if seen and tool == "openlinkhub" and olh_upstream:
+    if seen and tool == "headsetcontrol" and (read_optional("headsetcontrol-local") or "").strip() == "yes":
+        # a HeadsetControl made by upstream's makefile (/usr/local) is the person's: the package is not planned beside it
+        emit("fact", f"peripheral\theadsetcontrol-local\t{' '.join(seen)}")
+    elif seen and tool == "openlinkhub" and olh_upstream:
         emit("fact", f"peripheral\topenlinkhub-upstream\t{' '.join(seen)}")
     elif seen:
         match(f"{name} drives {', '.join(seen)}", *tool_packages)

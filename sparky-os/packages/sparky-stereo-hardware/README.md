@@ -84,6 +84,12 @@ and Piper, Jonas Ådahl, Benjamin Tissoires, Red Hat, David Herrmann and contrib
 MatMoul; OpenRazer, Terry Cain, Tim Theede, Gabriele Musco and contributors; OpenLinkHub, its contributors (github.com/jurkovic-nikola/OpenLinkHub,
 GPL-3.0); the Debian maintainers of those packages.
 
+Two more carried tools (milestone 10): LACT (package lact) for a machine with an AMD display controller, which owns the card (CoreCtrl is
+not installed for it), and HeadsetControl (package headsetcontrol) for the 119 headsets of share/peripherals/headsetcontrol.ids. A CoreCtrl,
+a LACT or a HeadsetControl the person installed by hand (the facts corectrl, lact-local and headsetcontrol-local) is theirs: the package is
+not installed beside it. Credits: LACT, Ilya Zlobintsev and contributors (github.com/ilya-zlobintsev/LACT, MIT); HeadsetControl, Denis
+Arnst and contributors (github.com/Sapd/HeadsetControl, GPL-3.0).
+
 Install:
 -------------
 su

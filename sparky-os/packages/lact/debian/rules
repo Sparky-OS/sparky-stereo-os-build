@@ -23,9 +23,10 @@ override_dh_auto_build:
 	cargo --version
 	cargo build -p lact --release --offline --locked
 
-# upstream's tests that need no graphics card: the daemon's snapshots and the schema
+# upstream's tests that need no graphics card: the daemon's snapshots and the schema. apply_settings mounts a FUSE file system (/dev/fuse),
+# which a build container does not have; it is skipped by name, every other test runs
 override_dh_auto_test:
-	cargo test --release --offline --locked -p lact-daemon -p lact-schema
+	cargo test --release --offline --locked -p lact-daemon -p lact-schema -- --skip apply_settings
 
 # the Rust program carries DWARF 5 sections dwz does not read
 override_dh_dwz:
