@@ -19,8 +19,8 @@ setup_sources() {
 	printf 'path-exclude=/etc/apt/sources.list.d/sparky-stereo.sources\n' >/etc/dpkg/dpkg.cfg.d/lane-edition-source
 	printf 'Types: deb\nURIs: https://deb.debian.org/debian\nSuites: testing\nComponents: contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n' \
 		>/etc/apt/sources.list.d/debian-extra-components.sources
-	apt_get update -q >$O/00-update-debian.log 2>&1
-	apt_get -y -q install --no-install-recommends ca-certificates >$O/00-ca.log 2>&1
+	apt_get update -q >$O/00-update-debian.log 2>&1 || fail "Debian archive update failed"
+	apt_get -y -q install --no-install-recommends ca-certificates cpio zstd >$O/00-ca.log 2>&1 || fail "baseline bootstrap tools failed to install"
 	# the answers the image carries (iso-build/rootfs.sh, SparkyLinux's own image): US keyboard, the firmware licences
 	# accepted; without them firmware-ipw2x00's preinst exits 2 under DEBIAN_FRONTEND=noninteractive (r1103a, Opus 2026-11-04)
 	printf '%s\n' "keyboard-configuration keyboard-configuration/layoutcode string us" \
@@ -54,7 +54,7 @@ edition() {
             >>/etc/apt/sources.list.d/sparky-stereo.sources
     fi
 }
-update_all() { apt_get update -q >"$1" 2>&1; }
+update_all() { apt_get update -q >"$1" 2>&1 || fail "archive update failed: $1"; }
 # refresh only the edition source: Debian, deb-multimedia and SparkyLinux keep the lists the install used
 update_edition() {
 	apt_get update -q -o Dir::Etc::SourceList=/etc/apt/sources.list.d/sparky-stereo.sources -o Dir::Etc::SourceParts=- \
