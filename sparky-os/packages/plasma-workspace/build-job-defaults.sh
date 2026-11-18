@@ -33,7 +33,19 @@ p=Path('source/debian/changelog')
 s='plasma-workspace (4:6.7.4-2+stereo3d9) unstable; urgency=medium\n\n  * Default running copy popups to automatic dismissal while retaining the job in the tray (ORDER 684).\n\n -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  '+os.environ['SOURCE_DATE_RFC2822']+'\n\n'
 p.write_text(s+p.read_text())
 PY
-(cd source && python3 /toolkit/repo/provenance-files.py . 'debian/patches/s9-*')
+(cd source && python3 - <<'PYCODE'
+from pathlib import Path
+import subprocess
+p=Path('debian/sparky-provenance-files')
+old=p.read_text() if p.exists() else ''
+subprocess.run(['python3','/toolkit/repo/provenance-files.py','.','s9-*'],check=True)
+new=p.read_text()
+for line in old.splitlines():
+    if line and not line.startswith('#') and line not in new.splitlines():
+        new+=line+'\n'
+p.write_text(new)
+PYCODE
+)
 python3 /run/reproducible.py normalize-tree "$SOURCE_DATE_EPOCH" source
 dpkg-source -b source
 PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/source 4:6.7.4-2+stereo3d9+lc1 --toolkit /toolkit --preserve-plan /work/published-preserve.json
