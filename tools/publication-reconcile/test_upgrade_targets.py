@@ -24,6 +24,13 @@ class Targets(unittest.TestCase):
         _, failures = module.verify('ii pkg:all 1\n', 'Inst pkg [1] (1.5 Local [all])\n', 'pkg:all 2\n')
         self.assertEqual(len(failures), 1)
 
+    def test_native_line_does_not_certify_foreign_uplift(self):
+        checked, failures = module.verify('ii pkg:amd64 1\nii pkg:i386 1\n',
+            'Inst pkg [1] (2 Local [amd64])\n', 'pkg:amd64 2\npkg:i386 2\n')
+        self.assertEqual(checked, 2)
+        self.assertEqual(len(failures), 1)
+        self.assertIn('pkg:i386', failures[0])
+
     def test_no_installed_target_is_refused(self):
         _, failures = module.verify('', '', 'pkg:all 2\n')
         self.assertEqual(len(failures), 1)
