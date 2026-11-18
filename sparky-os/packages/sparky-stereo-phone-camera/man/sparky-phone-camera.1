@@ -9,6 +9,10 @@ Starts DroidCam's client or scrcpy's camera mode after checking that the virtual
 and that the phone can be reached, and says in the person's language what is missing when it cannot work.
 The picture goes to the virtual camera, which PipeWire lists as a camera of the session.
 .PP
+The virtual camera is there while a phone session runs: the command loads it when the session starts and removes it when the session ends, through the helper /usr/lib/sparky-stereo-phone-camera/sparky-phone-camera-helper and the polkit action org.sparky.stereo.phonecamera.run, which the active local session may use without a password. The helper takes one word, load or unload, and only loads or removes the module v4l2loopback with the options of /etc/modprobe.d/sparky-stereo-phone-camera.conf. If a program still holds the camera when the session ends, the module stays until the next end and the command says so once.
+.PP
+To keep the camera always listed, write the line v4l2loopback in a file /etc/modules-load.d/phone-camera.conf; a camera that was already loaded when a session starts is left loaded.
+.PP
 \fBannounce\fR makes PipeWire list the virtual camera again (a udev remove and add for that one device, as the administrator); it is needed only when /etc/modprobe.d/sparky-stereo-phone-camera.conf sets exclusive_caps=1.
 .PP
 KDE Connect is not needed.

@@ -25,7 +25,7 @@ def stub(folder, name, body):
 
 
 class Rig:
-    def __init__(self, loaded=False, device=False, built=True, pkexec_fail=None, adb=None):
+    def __init__(self, loaded=False, device=False, built=True, pkexec_fail=None, pkexec_code=1, unload_code=0, adb=None):
         self.tmp = tempfile.TemporaryDirectory()
         root = self.tmp.name
         self.root = os.path.join(root, 'root')
@@ -39,13 +39,16 @@ class Rig:
             with open(os.path.join(self.root, 'sys/class/video4linux/video7/name'), 'w') as handle:
                 handle.write('Phone camera\n')
         stub(self.bin, 'modinfo', '[ %s = yes ] || { echo "modinfo: ERROR: Module v4l2loopback not found." >&2; exit 1; }; echo /x/v4l2loopback.ko' % ('yes' if built else 'no'))
+        self.log = os.path.join(root, 'pkexec.log')
+        self.helper = '/usr/lib/sparky-stereo-phone-camera/sparky-phone-camera-helper'
+        sysroot = '$SPARKY_PHONE_CAMERA_ROOT'
         if pkexec_fail:
-            stub(self.bin, 'pkexec', 'echo "%s" >&2; exit 1' % pkexec_fail)
+            stub(self.bin, 'pkexec', 'echo "$@" >> %s; echo "%s" >&2; exit %d' % (self.log, pkexec_fail, pkexec_code))
         else:
-            stub(self.bin, 'pkexec', 'mkdir -p "$SPARKY_PHONE_CAMERA_ROOT/sys/module/v4l2loopback" "$SPARKY_PHONE_CAMERA_ROOT/sys/class/video4linux/video9"; echo "Phone camera" > "$SPARKY_PHONE_CAMERA_ROOT/sys/class/video4linux/video9/name"')
+            stub(self.bin, 'pkexec', 'echo "$@" >> %s; case "$2" in load) mkdir -p "%s/sys/module/v4l2loopback" "%s/sys/class/video4linux/video9"; echo "Phone camera" > "%s/sys/class/video4linux/video9/name";; unload) [ -n "%s" ] && exit %s; rm -rf "%s/sys/module/v4l2loopback" "%s/sys/class/video4linux/video9";; udevadm) ;; esac' % (self.log, sysroot, sysroot, sysroot, 'x' if unload_code else '', unload_code or 0, sysroot, sysroot))
         if adb is not None:
             stub(self.bin, 'adb', 'echo "List of devices attached"; ' + ''.join('echo "%s\t%s"; ' % row for row in adb))
-        self.env = {'PATH': self.bin + ':/usr/bin:/bin', 'SPARKY_PHONE_CAMERA_ROOT': self.root, 'SPARKY_PHONE_CAMERA_LANG': os.path.join(PKG, 'lang'), 'LANG': 'en_US.UTF-8'}
+        self.env = {'PATH': self.bin + ':/usr/bin:/bin', 'SPARKY_PHONE_CAMERA_ROOT': self.root, 'SPARKY_PHONE_CAMERA_LANG': os.path.join(PKG, 'lang'), 'SPARKY_PHONE_CAMERA_HELPER': self.helper, 'LANG': 'en_US.UTF-8'}
 
     def run(self, *args, lang='en_US.UTF-8', **extra):
         env = dict(self.env, LANG=lang, **extra)
@@ -138,14 +141,81 @@ class Failures(unittest.TestCase):
         self.assertEqual((res.returncode, res.stderr), (0, ''))
         self.assertIn('Video: -dev=/dev/video7', res.stdout)
 
-    def test_module_loaded_on_demand_when_allowed(self):
+    def test_the_camera_comes_with_the_session_and_goes_with_it(self):
         r = Rig()
-        res = r.run('check', 'none')
-        self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn(sentence('en', 'module_loading'), res.stderr)
+        stub(r.bin, 'droidcam-cli', 'ls "$SPARKY_PHONE_CAMERA_ROOT/sys/class/video4linux/video9/name" >/dev/null && echo during-session')
+        res = r.run('droidcam', 'wifi', '127.0.0.1')
+        self.assertEqual((res.returncode, res.stderr), (0, ''), res.stderr)
+        self.assertIn('during-session', res.stdout)
+        self.assertEqual([l.split()[1] for l in open(r.log).read().splitlines()], ['load', 'unload'])
+        self.assertFalse(os.path.exists(os.path.join(r.root, 'sys/module/v4l2loopback')), 'gone after the session')
+
+    def test_a_second_session_works(self):
+        r = Rig()
+        stub(r.bin, 'droidcam-cli', 'echo ok')
+        for _ in range(2):
+            res = r.run('droidcam', 'wifi', '127.0.0.1')
+            self.assertEqual((res.returncode, res.stderr), (0, ''), res.stderr)
+        self.assertEqual([l.split()[1] for l in open(r.log).read().splitlines()], ['load', 'unload', 'load', 'unload'])
+
+    def test_a_camera_the_person_keeps_loaded_is_left_loaded(self):
+        r = Rig(loaded=True, device=True)
+        stub(r.bin, 'droidcam-cli', 'echo ok')
+        res = r.run('droidcam', 'wifi', '127.0.0.1')
+        self.assertEqual((res.returncode, res.stderr), (0, ''))
+        self.assertFalse(os.path.exists(r.log), 'no helper call for a camera that was already there')
+
+    def test_the_action_not_allowed_says_its_sentence(self):
+        for lang in ('en_US.UTF-8', 'pt_BR.UTF-8', 'ja_JP.UTF-8'):
+            r = Rig(pkexec_fail='Error executing command as another user: Not authorized', pkexec_code=126)
+            self.check(r, lang, 'not_authorised')
+
+    def test_a_camera_still_in_use_stays_and_is_said_once(self):
+        r = Rig(unload_code=3)
+        stub(r.bin, 'droidcam-cli', 'echo ok')
+        res = r.run('droidcam', 'wifi', '127.0.0.1')
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(res.stderr.count(sentence('en', 'still_in_use')), 1, res.stderr)
 
     def test_unknown_language_is_english(self):
         self.check(Rig(built=False), 'xx_XX.UTF-8', 'module_not_built', os.uname().release)
+
+
+class Helper(unittest.TestCase):
+    """The root helper, run with a stand-in modprobe: the helper fixes its own PATH, so the test runs a copy whose PATH line names the stand-in."""
+
+    def helper(self, *args, out=''):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        log = os.path.join(tmp.name, 'modprobe.log')
+        stub(tmp.name, 'modprobe', 'echo "$@" >> %s; %s' % (log, out or 'exit 0'))
+        text = open(os.path.join(PKG, 'helper', 'sparky-phone-camera-helper')).read().replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'PATH=' + tmp.name)
+        path = os.path.join(tmp.name, 'helper')
+        open(path, 'w').write(text)
+        res = subprocess.run(['/bin/sh', path] + list(args), capture_output=True, text=True, env={'MODPROBE_OPTIONS': '-v --force'})
+        calls = open(log).read().splitlines() if os.path.exists(log) else []
+        return res, calls
+
+    def test_load_loads_exactly_the_one_module(self):
+        res, calls = self.helper('load')
+        self.assertEqual((res.returncode, calls), (0, ['v4l2loopback']))
+
+    def test_unload_removes_exactly_the_one_module(self):
+        res, calls = self.helper('unload')
+        self.assertEqual((res.returncode, calls), (0, ['-r v4l2loopback']))
+
+    def test_a_module_in_use_is_exit_three(self):
+        res, calls = self.helper('unload', out='echo "modprobe: FATAL: Module v4l2loopback is in use." >&2; exit 1')
+        self.assertEqual(res.returncode, 3)
+
+    def test_any_other_word_any_extra_argument_and_no_argument_are_refused(self):
+        for args in (('nvidia',), ('load', 'v4l2loopback'), ('load', 'exclusive_caps=1'), ('unload', 'nvidia'), ('-r', 'nvidia'), ('',), ()):
+            res, calls = self.helper(*args)
+            self.assertEqual((res.returncode, calls), (64, []), args)
+
+    def test_the_environment_cannot_add_options(self):
+        res, calls = self.helper('load')
+        self.assertNotIn('--force', ' '.join(calls))
 
 
 class Announce(unittest.TestCase):

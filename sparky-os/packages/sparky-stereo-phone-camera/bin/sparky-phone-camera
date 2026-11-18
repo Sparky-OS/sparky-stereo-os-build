@@ -4,6 +4,8 @@
 # Sparky Stereo OS: starts a phone as the computer's camera (DroidCam's client, or scrcpy's camera mode) after saying plainly,
 # in the person's language, what is missing when it cannot work. The phone's picture goes to a v4l2loopback device named
 # "Phone camera"; PipeWire lists it as a camera of the session and System Settings, Camera shows it like any camera.
+# The virtual camera is there while a phone session runs: the command loads it when the session starts and removes it when the session ends,
+# through the package's helper and its polkit action (the active local session needs no password).
 # Usage: sparky-phone-camera status | check [usb|wifi IP] | announce | droidcam [usb [PORT] | wifi IP [PORT]] | droidcam-gui | scrcpy [ARG...]
 import json
 import os
@@ -14,6 +16,8 @@ NAME = 'Phone camera'
 ROOT = os.environ.get('SPARKY_PHONE_CAMERA_ROOT', '')
 LANGDIR = os.environ.get('SPARKY_PHONE_CAMERA_LANG', '/usr/share/sparky-stereo-phone-camera/lang')
 PORT = 4747
+HELPER = os.environ.get('SPARKY_PHONE_CAMERA_HELPER', '/usr/lib/sparky-stereo-phone-camera/sparky-phone-camera-helper')
+LOADED_BY_US = False
 
 
 def language_codes():
@@ -88,8 +92,19 @@ def module_built():
     return result.returncode == 0
 
 
+def helper(action):
+    """Runs the package's root helper for load or unload through pkexec; returns the process result."""
+    return run(['pkexec', HELPER, action])
+
+
+def refused(result):
+    """pkexec answers 126 when the action is not authorized and 127 when no one could be asked."""
+    return result.returncode in (126, 127)
+
+
 def virtual_camera():
     """Returns the loopback device, or says why there is none and returns None."""
+    global LOADED_BY_US
     device = loopback_device()
     if device:
         return device
@@ -97,20 +112,44 @@ def virtual_camera():
         if not module_built():
             say('module_not_built', release())
             return None
-        say('module_loading')
-        result = run(['pkexec', 'modprobe', 'v4l2loopback'])
+        result = helper('load')
         if result.returncode != 0:
             error = (result.stderr or result.stdout).strip()
-            if 'Key was rejected' in error or 'required key' in error.lower():
+            if refused(result):
+                say('not_authorised')
+            elif 'Key was rejected' in error or 'required key' in error.lower():
                 say('secure_boot')
             else:
                 say('module_failed', error or 'exit %d' % result.returncode)
             return None
+        LOADED_BY_US = True
         device = loopback_device()
         if device:
             return device
     say('no_device', NAME)
     return None
+
+
+def end_session():
+    """Removes the virtual camera when this command loaded it; a program that still holds it keeps it until the next end."""
+    global LOADED_BY_US
+    if not LOADED_BY_US:
+        return
+    result = helper('unload')
+    if result.returncode == 0:
+        LOADED_BY_US = False
+    elif result.returncode == 3:
+        say('still_in_use')
+    else:
+        say('module_failed', (result.stderr or result.stdout).strip() or 'exit %d' % result.returncode)
+
+
+def run_program(command):
+    """Runs a program of the session in the foreground, then ends the session."""
+    try:
+        return subprocess.call(command)
+    finally:
+        end_session()
 
 
 def adb_check():
@@ -162,11 +201,6 @@ def which(command):
     return None
 
 
-def wifi_check(address, port):
-    """The phone is asked once, by the client; this tells the sentence for the client's own failure line."""
-    return True
-
-
 FAILURES = ('Connect failed', 'Connection reset', 'Error sending request', 'send error', 'recv error')
 
 
@@ -187,6 +221,7 @@ def run_client(command, address, port):
     except subprocess.TimeoutExpired:
         process.kill()
         code = process.wait()
+    end_session()
     if failed:
         say('no_answer_wifi', '%s:%d' % (address, port))
         return 1
@@ -198,8 +233,7 @@ def check(mode, address=None, port=PORT):
     if not device:
         return None
     if mode == 'usb' and adb_check() is None:
-        return None
-    if mode == 'wifi' and not wifi_check(address, port):
+        end_session()
         return None
     return device
 
@@ -223,22 +257,23 @@ def main(argv):
     if command == 'check':
         mode = rest[0] if rest else 'none'
         address = rest[1] if len(rest) > 1 else None
-        return 0 if check(mode, address) else 1
+        ok = check(mode, address)
+        end_session()
+        return 0 if ok else 1
     if command == 'droidcam-gui':
         program('droidcam')
         if not virtual_camera():
             return 1
-        os.execvp('droidcam', ['droidcam'])
+        return run_program(['droidcam'])
     if command == 'droidcam':
         program('droidcam-cli')
         mode = rest[0] if rest else 'usb'
         if mode == 'usb':
             port = int(rest[1]) if len(rest) > 1 else PORT
-            serial = None
             device = check('usb')
             if not device:
                 return 1
-            os.execvp('droidcam-cli', ['droidcam-cli', '-dev=' + device, 'adb', str(port)])
+            return run_program(['droidcam-cli', '-dev=' + device, 'adb', str(port)])
         if mode == 'wifi' and len(rest) > 1:
             port = int(rest[2]) if len(rest) > 2 else PORT
             device = check('wifi', rest[1], port)
@@ -252,7 +287,7 @@ def main(argv):
         device = check('usb')
         if not device:
             return 1
-        os.execvp('scrcpy', ['scrcpy', '--video-source=camera', '--v4l2-sink=' + device, '--no-playback', '--no-audio'] + rest)
+        return run_program(['scrcpy', '--video-source=camera', '--v4l2-sink=' + device, '--no-playback', '--no-audio'] + rest)
     print(__doc__, file=sys.stderr)
     return 2
 

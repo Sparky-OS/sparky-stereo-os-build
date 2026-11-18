@@ -7,7 +7,8 @@ override_dh_auto_install:
 	install -d debian/sparky-stereo-phone-camera/usr/share/sparky-stereo-phone-camera/lang
 	install -m 0644 lang/*.json debian/sparky-stereo-phone-camera/usr/share/sparky-stereo-phone-camera/lang/
 	install -D -m 0644 data/sparky-stereo-phone-camera.conf debian/sparky-stereo-phone-camera/etc/modprobe.d/sparky-stereo-phone-camera.conf
-	install -D -m 0644 data/modules-load.conf debian/sparky-stereo-phone-camera/usr/lib/modules-load.d/sparky-stereo-phone-camera.conf
+	install -D -m 0755 helper/sparky-phone-camera-helper debian/sparky-stereo-phone-camera/usr/lib/sparky-stereo-phone-camera/sparky-phone-camera-helper
+	install -D -m 0644 data/org.sparky.stereo.phonecamera.policy debian/sparky-stereo-phone-camera/usr/share/polkit-1/actions/org.sparky.stereo.phonecamera.policy
 	install -D -m 0644 data/sparky-stereo-phone-camera-droidcam.desktop debian/sparky-stereo-phone-camera/usr/share/applications/sparky-stereo-phone-camera-droidcam.desktop
 	install -D -m 0644 data/sparky-stereo-phone-camera-scrcpy.desktop debian/sparky-stereo-phone-camera/usr/share/applications/sparky-stereo-phone-camera-scrcpy.desktop
 	install -D -m 0644 man/sparky-phone-camera.1 debian/sparky-stereo-phone-camera/usr/share/man/man1/sparky-phone-camera.1
