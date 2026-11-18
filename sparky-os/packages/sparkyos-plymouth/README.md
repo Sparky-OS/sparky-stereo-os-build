@@ -8,11 +8,14 @@ This program is free software: you can redistribute it and/or modify it under th
 
 Dependencies:
 -------------
-plymouth, plymouth-themes
+plymouth (>= 26.134.222-1+stereo3d4), plymouth-themes
 
 Build:
 -------------
-ART=/path/to/artwork-repo/plymouth OUT=/path/to/output ./build.sh
+ART_REPO=/path/to/artwork-repo SPARKY_BUILD_IMAGE=IMAGE OUT=/path/to/output ./build.sh
+
+The artwork is read from the repository's object store at the commit and plymouth/ tree hash written in build.sh, never from a work tree.
+The image holds python3, python3-yaml, dpkg-dev, fakeroot, debhelper, git, gcc, nodejs, node-acorn and perl.
 
 The default theme is sparkyos-stereo: both eyes on a stereo output, one picture on a 2D screen.
 The 2D theme:
