@@ -22,11 +22,12 @@ echo "the program, whose own check lists 6,620 instructions above the baseline:"
 python3 -I /src/sparky-os/repo/cpu-baseline.py /r/usr/bin/OpenLinkHub 2>&1 | head -2
 mkdir -p /st && cp -a /r/usr/share/openlinkhub/database /st/ && ln -s /r/usr/share/openlinkhub/web /st/web && ln -s /r/usr/share/openlinkhub/static /st/static
 cd /st
-(qemu-x86_64 -cpu qemu64 /r/usr/bin/OpenLinkHub >/tmp/olh.log 2>&1; echo "program exit=$?" >>/tmp/olh.log) &
+qemu-x86_64 -cpu qemu64 /r/usr/bin/OpenLinkHub >/tmp/olh.log 2>&1 &
+QPID=$!
 for i in $(seq 1 60); do c=$(curl -s -o /tmp/page.html -w '%{http_code}' http://127.0.0.1:27003/ 2>/dev/null); [ "$c" = 200 ] && break; sleep 1; done
 echo "OpenLinkHub on qemu64: web page -> $c after ${i}s, $(wc -c </tmp/page.html) bytes; title: $(grep -o '<title>[^<]*' /tmp/page.html | head -1)"
 grep -c "illegal\|SIGILL" /tmp/olh.log | sed 's/^/illegal-instruction lines in its log: /'
-pkill -f 'qemu-x86_64.*OpenLinkHub'; sleep 1; tail -3 /tmp/olh.log | cut -c1-200
+kill "$QPID"; wait "$QPID" 2>/dev/null; echo "program stopped by killing its own pid $QPID"; tail -3 /tmp/olh.log | cut -c1-200
 echo "build info:"; python3 - <<'EOP'
 import re
 d=open('/r/usr/bin/OpenLinkHub','rb').read()

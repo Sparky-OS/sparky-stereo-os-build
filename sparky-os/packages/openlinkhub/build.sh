@@ -49,7 +49,30 @@ cp "$WORK"/orig/openlinkhub_"$UPV".orig*.tar.xz "$WORK"/
 git -C "$CLONE" archive --format=tar "$PACKAGING_COMMIT" sparky-os/packages/openlinkhub/debian | tar -x -C "$WORK/$SRC" --strip-components=3
 echo "packaging: $PACKAGING_COMMIT"
 cmp "$WORK/orig/vendor-licences.tsv" "$WORK/$SRC/debian/vendor-licences.tsv" || { echo "debian/vendor-licences.tsv is not what make-orig.sh gives for these modules" >&2; exit 1; }
-diff -r "$WORK/orig/vendor-licences" "$WORK/$SRC/debian/vendor-licences" || { echo "debian/vendor-licences differs from the module files" >&2; exit 1; }
+# The verbatim legal texts are not kept in git (they carry their authors' addresses): they come from the module cache, make-orig.sh read them,
+# and each must be the file debian/vendor-licences.tsv pins by sha256, with none extra and none missing.
+cp -a "$WORK/orig/vendor-licences" "$WORK/$SRC/debian/vendor-licences"
+python3 - "$WORK/$SRC/debian/vendor-licences.tsv" "$WORK/$SRC/debian/vendor-licences" <<'PY'
+import csv, hashlib, os, sys
+table, root = sys.argv[1:3]
+want = {}
+for row in csv.reader(open(table, encoding='utf-8'), delimiter='\t'):
+	if not row or row[0].startswith('#'):
+		continue
+	for item in row[3].split(';'):
+		path, _, digest = item.rpartition(':')
+		want[os.path.join(row[0], path)] = digest
+have = {}
+for base, _, files in os.walk(root):
+	for name in files:
+		full = os.path.join(base, name)
+		have[os.path.relpath(full, root)] = hashlib.sha256(open(full, 'rb').read()).hexdigest()
+problems = [f'missing {p}' for p in sorted(want.keys() - have.keys())] + [f'extra {p}' for p in sorted(have.keys() - want.keys())]
+problems += [f'{p}: sha256 {have[p]} is not the pinned {want[p]}' for p in sorted(want.keys() & have.keys()) if want[p] != have[p]]
+if problems:
+	sys.exit('debian/vendor-licences does not match debian/vendor-licences.tsv:\n  ' + '\n  '.join(problems))
+print(f'{len(want)} legal files match the pinned hashes')
+PY
 DEBV=$(dpkg-parsechangelog -l "$WORK/$SRC/debian/changelog" -S Version)
 [ "${DEBV%-*}" = "$UPV" ] || { echo "debian/changelog is $DEBV, not $UPV" >&2; exit 1; }
 rm -rf "$WORK/orig"
