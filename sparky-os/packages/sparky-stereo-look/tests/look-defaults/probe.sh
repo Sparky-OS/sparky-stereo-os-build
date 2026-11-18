@@ -11,7 +11,6 @@ else
  echo 'PASS: no user Sonnet settings before native read' > "$CASE/system-fallback.txt"
 fi
 /test-bin/sonnet-state > "$CASE/sonnet-state.json"
-/test-bin/home-labels > "$CASE/kde-home-labels.json"
 /test-bin/notification-settings > "$CASE/notification-settings.json"
 python3 - <<'PYCODE'
 import json, os

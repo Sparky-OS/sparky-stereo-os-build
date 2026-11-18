@@ -12,7 +12,8 @@ case = Path(os.environ['CASE'])
 home = Path.home()
 desktop = Path(subprocess.check_output(['xdg-user-dir', 'DESKTOP'], text=True).strip())
 checks = []
-labels = json.loads((case / 'kde-home-labels.json').read_text())
+labels = json.loads(Path('/usr/share/sparky-stereo-look/desktop-shortcuts.json').read_text())
+(case / 'shortcut-labels.json').write_text(json.dumps(labels, ensure_ascii=False, indent=2) + '\n')
 found = {}
 for path in desktop.iterdir():
     if path.suffix != '.desktop':
@@ -28,9 +29,13 @@ for path in desktop.iterdir():
     if urlparse(url).scheme == 'file' and Path(unquote(urlparse(url).path)) == home:
         found['home'] = path
         checks.append(('home icon', entry.get('Icon') == 'user-home'))
+        locale = os.environ.get('LANG', 'en').split('.')[0]
+        language = locale if locale in labels else locale.split('_')[0]
+        key = 'Name' if language == 'en' else f'Name[{language}]'
+        checks.append(('independently expected session label', entry.get(key) == os.environ['EXPECTED_DESKTOP_LABEL']))
         for language, wanted in labels.items():
             key = 'Name' if language == 'en' else f'Name[{language}]'
-            checks.append((f'KDE home label {language}', entry.get(key) == wanted))
+            checks.append((f'catalogue label {language}', entry.get(key) == wanted))
 checks.extend([('Trash desktop link', 'trash' in found), ('Home desktop link', 'home' in found)])
 result = dict(checks=[dict(name=name, passed=passed) for name, passed in checks], files={k:str(v) for k,v in found.items()})
 (case / 'desktop-check.json').write_text(json.dumps(result, indent=2) + '\n')

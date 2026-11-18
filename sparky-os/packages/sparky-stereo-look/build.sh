@@ -23,7 +23,7 @@ OUT=$(mkdir -p "${OUT:-${SPARKY_REPO_DIR:?}}" && cd "${OUT:-${SPARKY_REPO_DIR:?}
 IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}
 sparky_provenance_init "$IMAGE" "$HERE"
 TREE=$(cd "$HERE/../../.." && pwd)
-VERSION=${VERSION:-20261118.2~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261118.3~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 case ${1:-all} in all|default) ;; *) echo 'Usage: build.sh [all|default]' >&2; exit 2 ;; esac
 WORK=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -92,6 +92,7 @@ cp -a "$HERE/retained-splash/splash" "$HERE/retained-splash/previews" "$R/conten
 cp "$HERE/default/xdg/kdeglobals" "$HERE/default/xdg/kwinrc" "$HERE/default/xdg/kde-mimeapps.list" "$HERE/default/xdg/krunnerrc" "$HERE/default/xdg/konsolerc" "$HERE/default/xdg/dolphinrc" "$HERE/default/xdg/ksplashrc" "$HERE/default/xdg/ksmserverrc" "$D/etc/xdg/"
 install -D -m 644 "$HERE/default/xdg/KDE/Sonnet.conf" "$D/etc/xdg/KDE/Sonnet.conf"
 install -D -m 755 "$HERE/default/first-login-desktop-shortcuts" "$D/usr/lib/sparky-stereo-look/first-login-desktop-shortcuts"
+install -D -m 644 "$HERE/default/desktop-shortcuts.json" "$D/usr/share/sparky-stereo-look/desktop-shortcuts.json"
 install -D -m 644 "$HERE/default/xdg/plasma-workspace/env/20-sparky-stereo-desktop-shortcuts.sh" "$D/etc/xdg/plasma-workspace/env/20-sparky-stereo-desktop-shortcuts.sh"
 install -D -m 755 "$HERE/default/first-login-input-method" "$D/usr/lib/sparky-stereo-look/first-login-input-method"
 install -D -m 644 "$HERE/default/xdg/plasma-workspace/env/10-sparky-stereo-input-method.sh" \
@@ -99,7 +100,7 @@ install -D -m 644 "$HERE/default/xdg/plasma-workspace/env/10-sparky-stereo-input
 install -D -m 644 "$HERE/default/needrestart.conf" "$D/etc/needrestart/conf.d/90-sparky-stereo.conf"
 install -D -m 644 "$HERE/default/flathub.flatpakrepo" "$D/usr/share/flatpak/remotes.d/flathub.flatpakrepo"
 control "$D" sparky-stereo-look \
-	"plasma-workspace (>= 4:6.7.4-2+stereo3d6), plasma-theme-oxygen, oxygen-sounds, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, kwin-style-aurorae, kio6, python3, xdg-user-dirs, libkf6config-bin, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk, qml6-module-qtquick, libstereo-layer1 (>= 1.22.0)" \
+	"plasma-workspace (>= 4:6.7.4-2+stereo3d6), plasma-theme-oxygen, oxygen-sounds, oxygen-icon-theme, oxygencursors, kde-style-oxygen-qt6, kwin-decoration-oxygen, kwin-style-aurorae, python3, xdg-user-dirs, libkf6config-bin, plasma-runners-addons (>= 4:6.7.4-1+stereo3d1), plasma-systemmonitor, sparky-stereo-gtk, qml6-module-qtquick, libstereo-layer1 (>= 1.22.0)" \
 	"kde-style-oxygen-qt5, sparkyos-artwork, sparky-stereo-look-kubabbar-glass" \
 	"Sparky Stereo OS default look: Oxygen dark" \
 	"The edition's default global theme: Oxygen, whole, in its dark colours:" \

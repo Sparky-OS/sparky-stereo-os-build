@@ -3,7 +3,7 @@
 # Copyright 2026 under the GNU GPL3 License
 """Seed KDE desktop links once without replacing or recreating personal choices."""
 import configparser
-import gettext
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -14,8 +14,10 @@ LANGUAGES = ('en', 'pl', 'pt_BR', 'fr', 'de', 'es', 'ja', 'ko', 'zh_CN', 'zh_TW'
 
 
 def home_names():
-    return {language: gettext.translation('kio6', '/usr/share/locale', languages=[language], fallback=True)
-            .pgettext('KFile System Bookmarks', 'Home') for language in LANGUAGES}
+    names = json.loads(Path('/usr/share/sparky-stereo-look/desktop-shortcuts.json').read_text())
+    if set(names) != set(LANGUAGES):
+        raise ValueError('Desktop shortcut catalogue must contain the ten edition languages')
+    return names
 
 
 def link_target(path):
@@ -58,7 +60,7 @@ def main():
         if not has_home:
             names = home_names()
             if any('\n' in name or '\r' in name for name in names.values()):
-                raise ValueError('KDE home label contains a line break')
+                raise ValueError('Desktop shortcut label contains a line break')
             text = '[Desktop Entry]\nType=Link\nIcon=user-home\nName=' + names['en'] + '\n'
             text += ''.join(f'Name[{language}]={names[language]}\n' for language in LANGUAGES if language != 'en')
             text += f'URL={home.as_uri()}\nOnlyShowIn=KDE;\n'
