@@ -1,0 +1,51 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
+# SPDX-License-Identifier: GPL-3.0-or-later
+# THE STAND-IN for the HeadsetControl program in the proofs: it answers as headsetcontrol 4.3.0 does for the HyperX Cloud II Wireless dongle
+# (03f0:018b, the device recorded in the udev proof of the headsetcontrol package): JSON in the program's own form, capabilities battery and inactive time only,
+# and a refusal for every option the device lacks. What it stands in for: the dongle, the radio link and the headset; no HID traffic happens.
+# State in $HS_STANDIN_DIR (default /tmp/hs-standin): present (1/0), battery (0-100), status (BATTERY_AVAILABLE ...), log (every call, one line).
+D=${HS_STANDIN_DIR:-/tmp/hs-standin}; mkdir -p "$D"
+echo "$*" >>"$D/log"
+present=$(cat "$D/present" 2>/dev/null || echo 1); level=$(cat "$D/battery" 2>/dev/null || echo 80); st=$(cat "$D/status" 2>/dev/null || echo BATTERY_AVAILABLE)
+case "$*" in
+	"-o json")
+		if [ "$present" = 0 ]; then
+			printf '{\n  "name": "HeadsetControl",\n  "version": "4.3.0",\n  "api_version": "1.9",\n  "hidapi_version": "0.15.0",\n  "device_count": 0,\n  "devices": [\n\n  ]\n}\n'; exit 1
+		fi
+		cat <<J
+{
+  "name": "HeadsetControl",
+  "version": "4.3.0",
+  "api_version": "1.9",
+  "hidapi_version": "0.15.0",
+  "device_count": 1,
+  "devices": [
+    {
+      "status": "success",
+      "device": "HyperX Cloud II Wireless",
+      "vendor": "HyperX",
+      "product": "Cloud II Wireless",
+      "id_vendor": "0x03f0",
+      "id_product": "0x018b",
+      "capabilities": [
+        "CAP_BATTERY_STATUS",
+        "CAP_INACTIVE_TIME"
+      ],
+      "capabilities_str": [
+        "battery",
+        "inactive time"
+      ],
+      "battery": {
+        "status": "$st",
+        "level": $level
+      }
+    }
+  ]
+}
+J
+		exit 0 ;;
+	"-d 03f0:018b -i "*) echo "${*##* }" >"$D/inactive"; exit 0 ;;
+	-d*) echo "Error: the device does not support this option" >&2; exit 1 ;;
+esac
+echo "unknown call: $*" >&2; exit 2

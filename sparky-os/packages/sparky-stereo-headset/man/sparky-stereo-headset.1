@@ -1,0 +1,28 @@
+.TH SPARKY-STEREO-HEADSET 1 "November 2026" "sparky-stereo-headset 0.1.0"
+.SH NAME
+sparky-stereo-headset \- the saved settings and the battery of a USB gaming headset
+.SH SYNOPSIS
+.B sparky-stereo-headset status
+[\-\-json]
+.br
+.B sparky-stereo-headset apply
+.br
+.B sparky-stereo-headset watch
+.SH DESCRIPTION
+The command behind the Headset page of System Settings and the Headset entry of the panel. It reads and sets headsets through
+.BR headsetcontrol (1);
+what a headset does not report is not offered. The choices a person makes are kept in
+.I ~/.config/sparky-stereo-headsetrc
+(KConfig), one group per headset, and only for the settings that were changed.
+.TP
+.B status
+Say what is connected and what it reports; with \-\-json, the same as JSON. Exit status 1 when no headset is connected.
+.TP
+.B apply
+Send the saved choices of every connected headset to it now.
+.TP
+.B watch
+What the user service runs: the saved choices go to a headset when it appears, and a notification tells when its battery is at or below the level
+PowerDevil keeps for peripherals (powerdevilrc, BatteryManagement, PeripheralBatteryLowLevel).
+.SH SEE ALSO
+.BR headsetcontrol (1)
