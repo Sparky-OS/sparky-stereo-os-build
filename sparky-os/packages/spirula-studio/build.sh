@@ -16,5 +16,5 @@ ROOT=$OUT/spirula-studio-2026.11.12
 # Seal authored source before the native Lean Code build projection.
 (cd "$OUT" && dpkg-source -b "$(basename "$ROOT")")
 (cd "$ROOT" && dpkg-buildpackage -us -uc -b -j"${JOBS:-4}")
-PYTHONPATH="$TOOLKIT" python3 -m lean.release check-debs "$OUT"
+PYTHONPATH="$TOOLKIT" python3 -m lean.release check-debs "$OUT"/*.deb
 sync
