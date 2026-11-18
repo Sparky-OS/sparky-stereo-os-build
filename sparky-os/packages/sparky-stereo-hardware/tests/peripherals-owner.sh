@@ -63,6 +63,21 @@ echo yes >/fx/openlinkhub-upstream; : >/stub/engine.log; run check; [[ $(wc -l <
 echo no >/fx/openlinkhub-upstream; echo no >/fx/openlinkhub-package; run check
 n=$(python3 /pkg/tests/upstream-notice-lang.py 2>&1 | grep -c "^PASS"); [[ $n == 10 ]] && ok "the notice is in the catalogue in all ten languages" || bad "ten languages: $n"
 
+# LACT and HeadsetControl made by upstream's makefile (/usr/local) with the package beside them: one notice each (milestone 11)
+for t in lact headsetcontrol; do
+	msg=LOCAL91; [[ $t == headsetcontrol ]] && msg=LOCAL93
+	echo no >/fx/openlinkhub-upstream; echo no >/fx/openlinkhub-package; echo no >/fx/$t-local; echo no >/fx/$t-package; : >/stub/engine.log
+	run check; [[ ! -s /stub/engine.log ]] && ok "$t: neither the /usr/local copy nor the package: no notice" || bad "$t: notice with neither: $(cat /stub/engine.log)"
+	echo yes >/fx/$t-local; run check; [[ ! -s /stub/engine.log ]] && ok "$t: the /usr/local copy alone: no notice" || bad "$t: notice for the copy alone"
+	echo no >/fx/$t-local; echo yes >/fx/$t-package; run check; [[ ! -s /stub/engine.log ]] && ok "$t: the package alone: no notice" || bad "$t: notice for the package alone"
+	echo yes >/fx/$t-local; run check; run check
+	[[ $(grep -c "say sparky-stereo-hardware $msg" /stub/engine.log) == 1 ]] && ok "$t: both: told once in two checks ($(cat /stub/engine.log))" || bad "$t: both: engine log: $(cat /stub/engine.log)"
+	echo no >/fx/$t-local; run check; [[ ! -e /state/var/lib/sparky-stereo-hardware/owner-told/notice-$t-local ]] && ok "$t: the telling is forgotten when the copy is gone" || bad "$t: mark kept"
+	echo yes >/fx/$t-local; : >/stub/engine.log; run check; [[ $(wc -l </stub/engine.log) == 1 ]] && ok "$t: told again when it comes back" || bad "$t: not told again"
+	echo no >/fx/$t-local; echo no >/fx/$t-package; run check
+done
+n=$(python3 /pkg/tests/local-notice-lang.py 2>&1 | grep -c "^PASS"); [[ $n == 10 ]] && ok "the two notices are in the catalogue in all ten languages" || bad "ten languages (LACT, HeadsetControl): $n"
+
 # OpenRGB with the session: only with the mark, never over a person's own entry
 mkdir -p /home/t/.config/autostart /state/var/lib/sparky-stereo-hardware; printf '#!/bin/sh\necho "started $@" >>/stub/openrgb.log\n' >/stub/openrgb; chmod +x /stub/openrgb
 sess() { HOME=/home/t XDG_CONFIG_HOME=/home/t/.config SPARKY_STEREO_ROOT=/state SPARKY_OPENRGB=/stub/openrgb sh /pkg/bin/sparky-stereo-openrgb-session; }
