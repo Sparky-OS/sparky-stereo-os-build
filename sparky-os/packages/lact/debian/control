@@ -1,0 +1,27 @@
+Source: lact
+Section: utils
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 14), cargo (>= 1.97~), rustc (>= 1.97~), clang, libclang-dev, make, pkgconf, libgtk-4-dev,
+ libadwaita-1-dev, libdrm-dev, libdisplay-info-dev, python3
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+Homepage: https://github.com/ilya-zlobintsev/LACT
+
+Package: lact
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, systemd, polkitd | policykit-1
+Recommends: vulkan-tools, clinfo
+Description: Control, monitor and overclock a graphics card
+ LACT reads and sets what the graphics driver exposes: clocks, voltages,
+ power limits, fan curves and temperatures, for AMD cards through the amdgpu
+ driver (and, in part, NVIDIA and Intel cards). A background service applies
+ the settings the person saves, and a window and a command line change them.
+ .
+ The package is built from the release's source with its Rust crates vendored,
+ not from upstream's prebuilt program, and nothing is installed under
+ /usr/local. A copy installed by upstream's own makefile (/usr/local) is left
+ as it is.
+ .
+ Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Pawel "pavroo"
+ Pijanowski). Upstream: Ilya Zlobintsev and the LACT contributors.

@@ -1,0 +1,13 @@
+HeadsetControl for Sparky Stereo OS
+===================================
+
+  program     /usr/bin/headsetcontrol (headsetcontrol --help; with a headset connected, headsetcontrol -b prints its battery)
+  udev rules  /usr/lib/udev/rules.d/70-headsets.rules, written at build time by `headsetcontrol -u` from the program's own device
+              list: they give the person at the desktop the headset's device files (uaccess), nothing else
+  library     headsetcontrol-dev: headers and the static library
+
+Who owns a headset
+  OpenRGB lists the lights of a few headsets too (Corsair's); HeadsetControl sets battery, sidetone and lights through the headset's
+  own interface. sparky-stereo-hardware installs HeadsetControl for the headsets it lists and leaves OpenRGB as it is; the two
+  have not been seen to clash. To keep HeadsetControl's access away from a headset, put an empty file named 70-headsets.rules
+  in /etc/udev/rules.d.

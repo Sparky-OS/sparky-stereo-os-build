@@ -1,0 +1,21 @@
+LACT for Sparky Stereo OS
+=========================
+
+Where things are
+  program        /usr/bin/lact (the window, the command line and, as `lact daemon`, the service)
+  service        lactd.service (enabled when the package is installed; systemctl disable --now lactd keeps it off across upgrades)
+  settings       /etc/lact/config.yaml, written by the service when you save a setting in the window; the package never ships, writes or replaces it. Removing the package keeps it; purging the package removes it (where no copy of upstream's makefile shares the folder)
+  polkit action  io.github.ilya_zlobintsev.LACT (the window asks the service, the service asks polkit)
+
+If a copy made by upstream's own makefile is on the computer
+  `make install` puts lact in /usr/local/bin and lactd.service in /usr/local/lib/systemd/system, which systemd reads before
+  /usr/lib/systemd/system, and it shares /etc/lact/config.yaml with this package. Installing this package then changes nothing of
+  that copy: its service is not enabled, started, restarted or stopped, and no setting is touched. To change over, by hand:
+    sudo systemctl disable --now lactd
+    sudo rm /usr/local/bin/lact /usr/local/lib/systemd/system/lactd.service
+    sudo systemctl daemon-reload && sudo systemctl enable --now lactd
+  /etc/lact/config.yaml stays and is read by the packaged service. Nothing here removes your copy for you.
+
+Who owns a graphics card
+  Where LACT and CoreCtrl would both set an AMD card's clocks, sparky-stereo-hardware gives it to LACT and does not install CoreCtrl for it;
+  a CoreCtrl the person installed is theirs, and then the package is not installed beside it.
