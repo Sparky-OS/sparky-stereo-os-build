@@ -1,0 +1,18 @@
+Source: sparky-stereo-model-viewer
+Section: graphics
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Standards-Version: 4.7.4
+Build-Depends: debhelper-compat (= 13), cmake, extra-cmake-modules, gettext, libf3d-dev (>= 3.5.0+dfsg-3+stereo3d4), libkf6config-dev, libkf6coreaddons-dev, libkf6i18n-dev, qt6-base-dev, libx11-dev, ninja-build, pkgconf, qt6-base-dev, qt6-declarative-dev
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+
+Package: sparky-stereo-model-viewer
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, libf3d3 (>= 3.5.0+dfsg-3+stereo3d4), sparky-stereo-mime-models, qml6-module-org-kde-kirigami, qml6-module-qtquick-controls, qml6-module-qtquick-dialogs, qml6-module-qtquick-layouts, qml6-module-qtquick-templates, kf6-breeze-icon-theme | breeze-icon-theme
+Recommends: systemsettings
+Description: Simple 3D model viewer in stereo
+ A small window to open a 3D model, a point cloud, a splat or a CAD file,
+ look at it and turn it. Built on libf3d; on a stereo display the 3D area is
+ drawn once for each eye, with the depth the person set for the desktop.
