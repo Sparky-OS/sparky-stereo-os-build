@@ -1,0 +1,39 @@
+From: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Date: Wed, 18 Nov 2026 12:00:00 -0300
+Subject: [PATCH] systemtray: release the mouse areas around the applet when its context menu opens
+
+SystemTray::showPlasmoidMenu() releases the press that opened the menu (the popup takes the release, QTBUG-59044) through QQuickWindow::mouseGrabberItem().
+Outside an event delivery that function answers null, with the warning "mouse grabber ambiguous: no event is currently being delivered", as soon as
+several pointing devices have been in use (a touchpad beside a mouse, a compositor's virtual pointer). Then nothing is released: the tray item's MouseArea
+stays pressed after the menu closes, and the next right click on the item is spent clearing that, so an applet's menu opened on every second right click only
+(measured in a Plasma 6.7.4 login: 5 menus of 10 right clicks with the stock plugin, 10 of 10 with this change; the stock Clipboard and Disks & Devices
+items alternate the same way).
+The mouse areas of the applet's ancestors are released instead; releasing an area that holds no grab does nothing.
+Origin: ours; master of plasma-workspace has the same code on 2026-11-18, not reported upstream (one report at a time).
+Assisted-by: claude-sonnet-5-5
+---
+--- a/applets/systemtray/systemtray.cpp
++++ b/applets/systemtray/systemtray.cpp
+@@ -329,9 +329,20 @@
+     // this causes the next click to go missing
+ 
+     // by releasing manually we avoid that situation
++    //
++    // QQuickWindow::mouseGrabberItem() used to find the item holding the press. Outside an event delivery it answers null, with the warning
++    // "mouse grabber ambiguous: no event is currently being delivered", as soon as more than one pointing device has been in use (a touchpad beside a mouse,
++    // a compositor's virtual pointer), so the workaround did nothing: the tray item's MouseArea stayed pressed, and the next right click on the item was
++    // spent clearing it (the menu opened on every second right click only). The mouse areas around the applet are released instead.
+     auto ungrabMouseHack = [appletInterface]() {
+-        if (appletInterface->window() && appletInterface->window()->mouseGrabberItem()) {
+-            appletInterface->window()->mouseGrabberItem()->ungrabMouse();
++        QQuickItem *item = appletInterface;
++        for (int depth = 0; item && depth < 12; item = item->parentItem(), ++depth) {
++            const auto children = item->childItems();
++            for (QQuickItem *child : children) {
++                if (child->inherits("QQuickMouseArea")) {
++                    child->ungrabMouse();
++                }
++            }
+         }
+     };
+ 
