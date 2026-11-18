@@ -18,6 +18,10 @@ with tempfile.TemporaryDirectory(prefix='language-source-', dir=out) as temporar
     work = Path(temporary)
     source = work / (name + '-' + version)
     subprocess.run(['dpkg-source', '-x', str(out / (name + '_' + version + '.dsc')), str(source)], check=True)
+    changelog = Path(__file__).with_name('CHANGELOG')
+    if not changelog.read_text().startswith(f'{name} ({version}) '):
+        raise ValueError('Authored changelog does not match the package version')
+    shutil.copyfile(changelog, source / 'debian/changelog')
     (source / 'upstream').mkdir()
     for filename in PIN['files']:
         shutil.copyfile(source_dir / filename, source / 'upstream' / filename)
@@ -26,7 +30,8 @@ with tempfile.TemporaryDirectory(prefix='language-source-', dir=out) as temporar
     marker = '    before = set(root.parent.glob("*.deb"))\n'
     if text.count(marker) != 1:
         raise ValueError('Standalone source builder changed: catalogue hook location is ambiguous')
-    hook = ('    subprocess.run([sys.executable, str(root / "authoring/catalogues.py"), '
+    hook = ('    subprocess.run([sys.executable, str(root / "authoring/tests/test_system_language.py")], check=True)\n'
+            '    subprocess.run([sys.executable, str(root / "authoring/catalogues.py"), '
             '"--source-dir", str(root / "upstream"), "--tree", str(staging)], check=True)\n')
     builder.write_text(text.replace(marker, hook + marker))
     with (source / 'README.source').open('a') as stream:

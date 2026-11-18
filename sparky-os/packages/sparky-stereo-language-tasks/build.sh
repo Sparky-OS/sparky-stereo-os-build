@@ -3,8 +3,9 @@
 # Copyright 2026 Daniel Campos Ramos
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+python3 "$HERE/tests/test_system_language.py"
 OUT=${OUT:?}
-VERSION=1.0.7+lc1
+VERSION=1.0.8+lc1
 TASKSEL_SOURCE_DIR=${TASKSEL_SOURCE_DIR:?Set TASKSEL_SOURCE_DIR to Debian tasksel 3.92 descriptor and source archive}
 WORK=$(mktemp -d "${BUILD_ROOT:?}/language-tasks.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -16,6 +17,7 @@ install -Dm755 "$HERE/bin/tasksel-test" "$D/usr/lib/tasksel/tests/sparky-languag
 install -m644 "$HERE/../../lists/language-tasks.json" "$D/usr/share/$P/manifest.json"
 install -m644 "$HERE/systemd/"* "$D/usr/lib/systemd/system/"
 install -m644 "$HERE/copyright" "$D/usr/share/doc/$P/copyright"
+gzip -9n -c "$HERE/CHANGELOG" > "$D/usr/share/doc/$P/changelog.gz"
 python3 "$HERE/catalogues.py" --source-dir "$TASKSEL_SOURCE_DIR" --tree "$D"
 cat > "$D/DEBIAN/preinst" <<'EOF'
 #!/bin/sh
