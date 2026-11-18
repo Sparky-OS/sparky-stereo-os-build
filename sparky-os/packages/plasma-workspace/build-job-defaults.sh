@@ -10,6 +10,7 @@ export DEBEMAIL=Capitain_Jack@yahoo.com DEBFULLNAME='Daniel Ramos (Capitain Jack
 SRC=/repo/pool/main/p/plasma-workspace
 DSC=plasma-workspace_6.7.4-2+stereo3d8+lc1.dsc
 cd /work
+printf '%s  %s\n' 568507fffccd25f8422541a4841d72c723f337254adeb7a8137304278fd93db5 "$SRC/$DSC" | sha256sum -c
 python3 - "$SRC/$DSC" <<'PY'
 import hashlib,shutil,sys
 from pathlib import Path
