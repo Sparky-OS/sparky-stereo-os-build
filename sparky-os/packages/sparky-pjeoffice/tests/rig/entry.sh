@@ -10,6 +10,8 @@ export DEBIAN_FRONTEND=noninteractive LANG=${LANG:-en_US.UTF-8}
 FAIL=0
 t() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1   [$2]"; FAIL=1; fi; }
 dpkg-deb -x /debs/sparky-aptus-stereo-appcenter_0.1.13+lc1_all.deb /
+# the edition's generated policy file, which the app center's actions read (sparky-stereo-apt ships it): taken from the published package
+(cd /tmp && apt-get download sparky-stereo-apt >/dev/null 2>&1 && dpkg-deb -x sparky-stereo-apt_*.deb /tmp/ssa2 && cp /tmp/ssa2/etc/apt/preferences.d/sparky-stereo-only-ours /etc/apt/preferences.d/)
 # the stand-in for NetworkManager's answer, the only thing replaced: METERED=yes|no
 cat > /usr/local/bin/busctl <<'BC'
 #!/bin/sh

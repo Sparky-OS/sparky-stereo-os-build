@@ -5,7 +5,7 @@
 # keyboard's menu key, a picture of it, and the action's own command line read from the menu entry file. Usage: dolphin.sh OUT
 set -u
 OUT=${1:?}; mkdir -p "$OUT" "$HOME/docs"; ulimit -c 0
-export DISPLAY=:98 LANG=${LOGIN_LANG:-C.UTF-8} QT_QPA_PLATFORM=xcb
+export OUT DISPLAY=:98 LANG=${LOGIN_LANG:-C.UTF-8} QT_QPA_PLATFORM=xcb
 Xvfb :98 -screen 0 1280x800x24 -nolisten tcp > "$OUT/xvfb.log" 2>&1 &
 sleep 1
 printf '%%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%%%EOF\n' > "$HOME/docs/document.pdf"
