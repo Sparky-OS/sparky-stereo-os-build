@@ -18,6 +18,10 @@ with tempfile.TemporaryDirectory(prefix='language-source-', dir=out) as temporar
     work = Path(temporary)
     source = work / (name + '-' + version)
     subprocess.run(['dpkg-source', '-x', str(out / (name + '_' + version + '.dsc')), str(source)], check=True)
+    changelog = Path(__file__).with_name('CHANGELOG')
+    if not changelog.read_text().startswith(f'{name} ({version}) '):
+        raise ValueError('Authored changelog does not match the package version')
+    shutil.copyfile(changelog, source / 'debian/changelog')
     (source / 'upstream').mkdir()
     for filename in PIN['files']:
         shutil.copyfile(source_dir / filename, source / 'upstream' / filename)
