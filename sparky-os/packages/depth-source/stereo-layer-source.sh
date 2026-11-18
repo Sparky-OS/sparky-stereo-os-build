@@ -13,12 +13,11 @@ FORK=$(cd "$1" && pwd)
 REV=$2
 OUT=$(mkdir -p "$3" && cd "$3" && pwd)
 [ -z "$(ls -A "$OUT")" ] || { echo "$OUT is not empty" >&2; exit 1; }
-docker run --rm -i --name "${SOURCE_NAME:-stereo-layer-source}" --ulimit core=0 --cpus "${THREADS:-4}" --platform linux/amd64 -e REV="$REV" --mount type=bind,src="$FORK",dst=/fork,readonly --mount type=bind,src="$OUT",dst=/out --mount type=bind,src="$HERE/../..",dst=/toolkit,readonly \
-	--mount type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/host-ca.crt,readonly --mount type=bind,src="$HERE/../../../tools/https-only-apt.sh",dst=/run/https-only-apt.sh,readonly \
-	--entrypoint bash "${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}" -c 'sh /run/https-only-apt.sh && bash -s' <<'INNER'
+docker run --rm -i --name "${SOURCE_NAME:-stereo-layer-source}" --ulimit core=0 --network none --user "$(id -u):$(id -g)" -e HOME=/tmp --cpus "${THREADS:-4}" --platform linux/amd64 -e REV="$REV" --mount type=bind,src="$FORK",dst=/fork,readonly --mount type=bind,src="$OUT",dst=/out --mount type=bind,src="$HERE/../..",dst=/toolkit,readonly \
+	--entrypoint bash "${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}" -s <<'INNER'
 set -euo pipefail
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
-git config --global safe.directory '*'
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'
 git -C /fork cat-file -e "$REV^{commit}"
 git -C /fork show "$REV:debian/changelog" > /tmp/changelog
 NEWV=$(dpkg-parsechangelog -l /tmp/changelog -S Version)
