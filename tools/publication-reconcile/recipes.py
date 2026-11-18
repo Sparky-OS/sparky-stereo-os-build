@@ -18,7 +18,7 @@ from reconcile import newest, compare, write_tsv
 
 
 PATTERN = re.compile(
-    r'''(?:\b(?:VERSION|NEW_VERSION|NEXT|VER|version|edition_version)\s*=\s*["']?(?:\$\{[A-Z_]+:-)?|--(?:next|newversion)\s+["']?)([0-9][0-9A-Za-z.+:~_-]*)''')
+    r'''(?:\b(?:VERSION|NEW_VERSION|NEXT|VER|NEWV|NEW|V|version|edition_version)\s*=\s*["']?(?:\$\{[A-Z_]+:-)?|--(?:next|newversion)["']?[,\s]+["']?)([0-9][0-9A-Za-z.+:~_-]*)''')
 
 
 def main():
@@ -53,7 +53,7 @@ def main():
             if not path.is_file() or path.stat().st_size > 1024 * 1024:
                 continue
             suffix = path.suffix
-            if suffix not in ('.sh', '.py', '.env', '.json', ''):
+            if suffix not in ('.sh', '.py', '.env', '.json', '.txt', ''):
                 continue
             if any(p in ('tests', 'autotests', 'fixtures', 'upstream', 'vendor') for p in Path(rel).parts[3:]):
                 continue
@@ -65,7 +65,7 @@ def main():
                 match = re.search(r'^Source:\s*(\S+)', text, re.M)
                 if match:
                     source_names.add(match[1])
-            if not producer and path.name not in ('CHANGELOG', 'changelog') and suffix not in ('.env', '.json'):
+            if not producer and path.name not in ('CHANGELOG', 'changelog') and suffix not in ('.env', '.json') and 'changelog' not in str(path).lower():
                 continue
             for n, line in enumerate(text.splitlines(), 1):
                 if line.lstrip().startswith('#'):
@@ -75,8 +75,12 @@ def main():
                     if v.isdigit() and len(v) < 8:
                         continue
                     evidence.append((v, f'{rel}:{n}', line.strip()))
-                if re.search(r'\b(?:VERSION|NEW_VERSION|NEXT|VER|version|edition_version)\s*=|--next |--newversion', line):
+                if re.search(r'\b(?:VERSION|NEW_VERSION|NEXT|VER|NEWV|NEW|V|version|edition_version)\s*=|--next |--newversion', line):
                     dynamic.append(f'{rel}:{n}: {line.strip()}')
+            for match in re.finditer(r'^([a-z][a-z0-9.+-]+) \(([0-9][^ )]+)\) [A-Za-z][^;]*;', text, re.M):
+                source_names.add(match[1])
+                n = text[:match.start()].count('\n') + 1
+                evidence.append((match[2], f'{rel}:{n}', match[0]))
             if path.name == 'changelog' and path.parent.name == 'debian':
                 match = re.match(r'([\w.+-]+)\s+\(([^)]+)\)', text)
                 if match:
