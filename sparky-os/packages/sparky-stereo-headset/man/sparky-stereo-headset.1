@@ -1,4 +1,4 @@
-.TH SPARKY-STEREO-HEADSET 1 "November 2026" "sparky-stereo-headset 0.1.0"
+.TH SPARKY-STEREO-HEADSET 1 "November 2026" "sparky-stereo-headset 0.2.0"
 .SH NAME
 sparky-stereo-headset \- the saved settings and the battery of a USB gaming headset
 .SH SYNOPSIS
@@ -22,7 +22,12 @@ Say what is connected and what it reports; with \-\-json, the same as JSON. Exit
 Send the saved choices of every connected headset to it now.
 .TP
 .B watch
-What the user service runs: the saved choices go to a headset when it appears, and a notification tells when its battery is at or below the level
-PowerDevil keeps for peripherals (powerdevilrc, BatteryManagement, PeripheralBatteryLowLevel).
+What the user service runs: the saved choices go to a headset when it appears.
+.SH THE BATTERY
+Plasma shows the battery of a headset in its Power and Battery applet, in the Info Centre and in PowerDevil's low-battery notice for peripherals, because they all read UPower. A headset for which the kernel has its own driver (hid-corsair-void, hid-steelseries-arctis, hid-logitech-hidpp) is listed by the kernel. For the others the system service
+.B sparky-stereo-headset-battery
+(/usr/libexec, started by udev when a listed headset appears and stopped when the last one is gone) reads the charge through
+.BR headsetcontrol (1)
+every 30 seconds and gives the kernel a virtual HID device through /dev/uhid whose only content is that charge. The entry goes at once when the headset does not say its charge. PowerDevil tells the person when the charge is at or below its level for peripherals (Power Management).
 .SH SEE ALSO
 .BR headsetcontrol (1)
