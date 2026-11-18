@@ -114,7 +114,7 @@ polkit.addRule(function(action, subject) {
 });
 EOS
 systemctl restart polkit.service 2>/dev/null
-check "polkit knows the action, with pkexec's program and argv1" "pkaction --verbose --action-id org.sparkylinux.sparkystereo.problems.repair | grep -q 'org.freedesktop.policykit.exec.argv1 -> repair'"
+check "polkit knows the action, with pkexec's program and argv1" "pkaction --verbose --action-id org.sparkylinux.sparkystereo.problems.repair | grep -q 'org.freedesktop.policykit.exec.path -> /usr/libexec/sparky-stereo-problems/pkexec-repair'"
 first=$(python3 -c "import json; d=json.load(open('$LOG'))['notify']; print([x['id'] for x in d if 'First Service' in x['body'] and \"'Repair'\" in str(x['actions'])][-1])")
 invoke "$first" "Repair"
 check "Repair of the machine's problem runs through pkexec as root: it is over" "waitfor '[ ! -e /var/lib/sparky-stereo-problems/${P}_one.json ]' 30"

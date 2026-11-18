@@ -77,3 +77,7 @@ The page never reads, writes or deletes /etc/default/sparky-stereo-zram.
 The zram item reads installation and active-device state through Stereo APTus and invokes the same authorized install/remove action.
 Status is refreshed on showing the page, activating its application and requesting Refresh status.
 The APTus action supplies the translated labels and kept engine failure; the page does not copy its package-management logic.
+
+Machine and boot repairs use `pkexec /usr/libexec/sparky-stereo-problems/pkexec-repair repair --machine PACKAGE KEY` (or `--boot`).
+The separate executable accepts only repairs of records root kept and ignores store overrides from the caller's environment.
+The ordinary CLI remains usable by descendants of a package tool started through pkexec.

@@ -1,6 +1,3 @@
 # Observe unpacked packages before a later removal, including failures kept by preinst.
 # A transaction in a different root or database must not collect this system's records.
-# dpkg runs this as root whoever started the package tool. A tool started through pkexec (the installer, an app center)
-# hands PKEXEC_UID down to it, and the engine takes that for a pkexec call of its own and refuses everything but a
-# repair: the variable goes for this one call (ORDER 658). A failure here is said and never fails the package run.
-post-invoke=if [ "${DPKG_ROOT:-/}" = / ] && [ "${DPKG_ADMINDIR:-/var/lib/dpkg}" = /var/lib/dpkg ] && [ -x /usr/bin/sparky-stereo-problems ]; then env -u PKEXEC_UID /usr/bin/sparky-stereo-problems list --json >/dev/null || echo "sparky-stereo-problems: the kept problems could not be read after this package run (status $?)" >&2; fi
+post-invoke=if [ "${DPKG_ROOT:-/}" = / ] && [ "${DPKG_ADMINDIR:-/var/lib/dpkg}" = /var/lib/dpkg ] && [ -x /usr/bin/sparky-stereo-problems ]; then /usr/bin/sparky-stereo-problems list --json >/dev/null || echo "sparky-stereo-problems: the kept problems could not be read after this package run (status $?)" >&2; fi
