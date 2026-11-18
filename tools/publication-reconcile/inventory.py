@@ -124,7 +124,7 @@ def main():
                     published.append({'kind': 'source', 'source': fields['Package'],
                                       'source_version': fields['Version'], 'directory': fields['Directory']})
     args.output.mkdir(parents=True, exist_ok=True)
-    data = {'depth': args.depth, 'stage_file_depth': args.depth, 'stage_directories': sorted(directories), 'errors': errors,
+    data = {'build_root': str(args.build_root), 'depth': args.depth, 'stage_file_depth': args.depth, 'stage_directories': sorted(directories), 'errors': errors,
             'indexes': indexes, 'published': published, 'staged': rows}
     (args.output / 'inventory.json').write_text(json.dumps(data, indent=2) + '\n')
     (args.output / 'search-errors.txt').write_text('\n'.join(errors) + '\n')

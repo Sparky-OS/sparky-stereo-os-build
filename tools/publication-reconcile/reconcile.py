@@ -8,7 +8,6 @@ import argparse
 from collections import Counter, defaultdict
 import csv
 from functools import lru_cache
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -57,6 +56,8 @@ def main():
         published_versions[row['source']].add(row['source_version'])
         if row['kind'] == 'binary':
             published[binary_key(row)] = row
+    accepted = {(r['source'], r['version']) for r in rules
+                if r['decision'] == 'candidate' and r.get('source') and r.get('version')}
     groups, files = defaultdict(list), []
     for row in data['staged']:
         if 'error' in row:
@@ -73,6 +74,11 @@ def main():
                 break
         if decision == 'unlisted' and any(p in ('superseded', 'predecessor') for p in path.parts):
             decision, reason = 'superseded', 'Excluded predecessor/superseded folder; no explicit exception'
+        if decision == 'unlisted':
+            for accepted_source, accepted_version in sorted(accepted):
+                if source == accepted_source and compare(version, accepted_version) < 0:
+                    decision, reason = 'superseded', f'Older than accepted {source} {accepted_version}'
+                    break
         if decision == 'candidate' and baseline != 'absent' and compare(version, baseline) <= 0:
             decision, reason = 'already-published-version', 'Accepted path is not newer than published source; inspect binary identity'
         published_binary = published.get(binary_key(row)) if row['kind'] == 'binary' else None
@@ -117,8 +123,8 @@ def main():
     (args.output / 'stage-sources.md').write_text('\n'.join(lines) + '\n')
     orders = defaultdict(list)
     for row in files:
-        if row['decision'] == 'already-published':
-            folder = Path(row['path']).relative_to('/mnt/build').parts[0]
+        if row['published_bytes'] == 'equal':
+            folder = Path(row['path']).relative_to(data.get('build_root', '/mnt/build')).parts[0]
             match = re.search(r'-(\d+[a-z]?)$', folder)
             orders[(match[1] if match else 'no ORDER suffix', folder)].append(row)
     text = ['# Already published staged binaries', '',
@@ -128,6 +134,8 @@ def main():
         text.append(f"| {order} | {folder} | {len(rows)} | " + ', '.join(sorted({r['source'] for r in rows})) + ' |')
     (args.output / 'already-published-by-order.md').write_text('\n'.join(text) + '\n')
     counts = Counter(r['decision'] for r in files if r['kind'] == 'binary')
+    counts['published_byte_equal'] = sum(r['published_bytes'] == 'equal' for r in files)
+    counts['published_identity_different_bytes'] = sum(r['published_bytes'] == 'DIFFERENT' for r in files)
     counts['candidate_binary_bytes'] = sum(r['bytes'] for r in files if r['kind'] == 'binary' and r['decision'] == 'candidate')
     (args.output / 'decision-counts.json').write_text(json.dumps(counts, indent=2) + '\n')
     print(json.dumps(counts))
