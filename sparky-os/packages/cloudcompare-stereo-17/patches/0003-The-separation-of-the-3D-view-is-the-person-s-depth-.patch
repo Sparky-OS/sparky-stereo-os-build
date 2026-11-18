@@ -1,4 +1,4 @@
-From d1a87ca2ac802d2e4f78da82b656557bdb88343d Mon Sep 17 00:00:00 2001
+From d63d03916cc5a04579f2e994b45050cf6635a4c9 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Wed, 18 Nov 2026 02:14:15 -0300
 Subject: [PATCH 3/3] The separation of the 3D view is the person's depth
@@ -15,13 +15,13 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  libs/qCC_glWindow/include/CMakeLists.txt      |  2 +
  .../include/ccGLWindowDepthLimits.h           | 13 +++
  .../include/ccGLWindowDepthNotice.h           | 79 +++++++++++++++++
- .../include/ccGLWindowInterface.h             | 28 +++++-
+ .../include/ccGLWindowInterface.h             | 28 ++++++-
  libs/qCC_glWindow/include/ccGLWindowStereo.h  |  9 ++
  libs/qCC_glWindow/src/CMakeLists.txt          |  1 +
- .../src/ccGLWindowDepthLimits.cpp             | 33 +++++++
- libs/qCC_glWindow/src/ccGLWindowInterface.cpp | 85 ++++++++++++++++---
+ .../src/ccGLWindowDepthLimits.cpp             | 33 ++++++++
+ libs/qCC_glWindow/src/ccGLWindowInterface.cpp | 84 ++++++++++++++++---
  libs/qCC_glWindow/src/ccGLWindowStereo.cpp    | 41 +++++++++
- 10 files changed, 284 insertions(+), 17 deletions(-)
+ 10 files changed, 283 insertions(+), 17 deletions(-)
  create mode 100644 libs/qCC_glWindow/include/ccGLWindowDepthLimits.h
  create mode 100644 libs/qCC_glWindow/include/ccGLWindowDepthNotice.h
  create mode 100644 libs/qCC_glWindow/src/ccGLWindowDepthLimits.cpp
@@ -292,7 +292,7 @@ index 0000000..fab838c
 +#endif
 +}
 diff --git a/libs/qCC_glWindow/src/ccGLWindowInterface.cpp b/libs/qCC_glWindow/src/ccGLWindowInterface.cpp
-index bdecd98..fe042f3 100644
+index bdecd98..32926b6 100644
 --- a/libs/qCC_glWindow/src/ccGLWindowInterface.cpp
 +++ b/libs/qCC_glWindow/src/ccGLWindowInterface.cpp
 @@ -18,6 +18,9 @@
@@ -405,12 +405,11 @@ index bdecd98..fe042f3 100644
  bool ccGLWindowInterface::enableStereoMode(const StereoParams& params)
  {
  	if (!m_initialized)
-@@ -6965,6 +7021,9 @@ bool ccGLWindowInterface::enableStereoMode(const StereoParams& params, bool need
+@@ -6965,6 +7021,8 @@ bool ccGLWindowInterface::enableStereoMode(const StereoParams& params, bool need
  	m_stereoParams = params;
  	m_stereoModeEnabled = true;
  
-+	//the person's depth limits decide the separation
-+	pollDepthLimits();
++	//the person's depth limits decide the separation: the window polls them (a quarter of a second) and says when there are none
 +
  	//In some cases we must init the secondary FBO
  	if (needSecondFBO && !initFBO(width(), height()))
