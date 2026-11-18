@@ -1,0 +1,2400 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 35bf8cc3..7a626b33 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -45,6 +45,7 @@ find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS
+     Widgets
+ )
+ find_package(KF6 ${KF6_MIN_VERSION} REQUIRED COMPONENTS
++    Auth
+     Config
+     CoreAddons
+     Declarative
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+index 26961ce1..d4bb5ace 100644
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -12,3 +12,10 @@ ecm_add_test(
+     TEST_NAME percentvalidatortest
+     LINK_LIBRARIES Qt6::Test Qt6::Gui plasma-volume
+ )
++
++ecm_add_test(
++    soundformatconftest.cpp ../src/soundformatconf.cpp
++    TEST_NAME soundformatconftest
++    LINK_LIBRARIES Qt6::Test Qt6::Core
++)
++target_include_directories(soundformatconftest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+diff --git a/autotests/soundformatconftest.cpp b/autotests/soundformatconftest.cpp
+new file mode 100644
+index 00000000..84ae9ffb
+--- /dev/null
++++ b/autotests/soundformatconftest.cpp
+@@ -0,0 +1,114 @@
++// SPDX-License-Identifier: BSD-2-Clause
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++#include "soundformatconf.h"
++
++#include <QFile>
++#include <QTemporaryDir>
++#include <QTest>
++
++using namespace Qt::StringLiterals;
++
++class SoundFormatConfTest : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void validateRefuses_data()
++    {
++        QTest::addColumn<QVariantMap>("state");
++        QTest::addColumn<QString>("code");
++        QTest::newRow("rate too low") << QVariantMap{{u"graph"_s, QVariantMap{{u"rate"_s, 100}}}} << u"graph.rate"_s;
++        QTest::newRow("rate not allowed") << QVariantMap{{u"graph"_s, QVariantMap{{u"rate"_s, 96000}, {u"allowedRates"_s, QVariantList{44100, 48000}}}}}
++                                          << u"graph.rate"_s;
++        QTest::newRow("empty rates") << QVariantMap{{u"graph"_s, QVariantMap{{u"allowedRates"_s, QVariantList{}}}}} << u"graph.allowedRates"_s;
++        QTest::newRow("quantum not power of two") << QVariantMap{{u"graph"_s, QVariantMap{{u"quantum"_s, 1000}}}} << u"graph.quantum"_s;
++        QTest::newRow("quantum above default max") << QVariantMap{{u"graph"_s, QVariantMap{{u"quantum"_s, 4096}}}} << u"graph.quantum"_s;
++        QTest::newRow("quality 15") << QVariantMap{{u"quality"_s, 15}} << u"quality"_s;
++        QTest::newRow("path as node") << QVariantMap{{u"devices"_s, QVariantMap{{u"../../etc/passwd"_s, QVariantMap{{u"rate"_s, 48000}}}}}} << u"device.name"_s;
++        QTest::newRow("foreign node") << QVariantMap{{u"devices"_s, QVariantMap{{u"loopback.x"_s, QVariantMap{{u"rate"_s, 48000}}}}}} << u"device.name"_s;
++        QTest::newRow("unknown format") << QVariantMap{{u"devices"_s, QVariantMap{{u"alsa_output.x"_s, QVariantMap{{u"format"_s, u"S99"_s}}}}}} << u"device.format"_s;
++        QTest::newRow("unknown key") << QVariantMap{{u"script"_s, u"rm -rf /"_s}} << u"state.script"_s;
++    }
++    void validateRefuses()
++    {
++        QFETCH(QVariantMap, state);
++        QFETCH(QString, code);
++        QCOMPARE(SoundFormatConf::validate(state), code);
++    }
++
++    void validateAccepts()
++    {
++        const QVariantMap state{{u"graph"_s, QVariantMap{{u"rate"_s, 96000}, {u"allowedRates"_s, QVariantList{44100, 48000, 96000}}, {u"quantum"_s, 256}}},
++                                {u"quality"_s, 10},
++                                {u"devices"_s, QVariantMap{{u"alsa_output.pci-0000_00_1f.3.analog-stereo"_s, QVariantMap{{u"format"_s, u"S32LE"_s}, {u"rate"_s, 96000}, {u"bitPerfect"_s, true}}}}}};
++        QCOMPARE(SoundFormatConf::validate(state), QString());
++    }
++
++    void roundTrip()
++    {
++        QTemporaryDir dir;
++        const QVariantMap state{{u"graph"_s, QVariantMap{{u"rate"_s, 96000}, {u"allowedRates"_s, QVariantList{44100, 48000, 96000}}, {u"quantum"_s, 256}}},
++                                {u"quality"_s, 10},
++                                {u"devices"_s, QVariantMap{{u"alsa_output.a"_s, QVariantMap{{u"format"_s, u"S32LE"_s}, {u"rate"_s, 96000}, {u"bitPerfect"_s, true}}},
++                                                           {u"bluez_output.b"_s, QVariantMap{{u"rate"_s, 44100}}}}}};
++        QString error;
++        QVERIFY2(SoundFormatConf::write(dir.path(), state, &error), qPrintable(error));
++        const QVariantMap back = SoundFormatConf::read(dir.path());
++        QCOMPARE(back.value(u"quality"_s).toInt(), 10);
++        QCOMPARE(back.value(u"graph"_s).toMap().value(u"rate"_s).toInt(), 96000);
++        QCOMPARE(back.value(u"graph"_s).toMap().value(u"allowedRates"_s).toList().size(), 3);
++        QCOMPARE(back.value(u"graph"_s).toMap().value(u"quantum"_s).toInt(), 256);
++        const auto devices = back.value(u"devices"_s).toMap();
++        QCOMPARE(devices.value(u"alsa_output.a"_s).toMap().value(u"format"_s).toString(), u"S32LE"_s);
++        QVERIFY(devices.value(u"alsa_output.a"_s).toMap().value(u"bitPerfect"_s).toBool());
++        QCOMPARE(devices.value(u"bluez_output.b"_s).toMap().value(u"rate"_s).toInt(), 44100);
++        // The files carry the mark on their first line and use the name that sorts after the engine's 00-.
++        QFile f(dir.filePath(u"pipewire/pipewire.conf.d/50-sound-page.conf"_s));
++        QVERIFY(f.open(QFile::ReadOnly));
++        QCOMPARE(QString::fromUtf8(f.readLine()).trimmed(), SoundFormatConf::mark());
++        // PipeWire's own "key = value" form, so sparky-stereo-audio's `apply` sees these keys as the person's own.
++        f.seek(0);
++        const QString text = QString::fromUtf8(f.readAll());
++        QVERIFY(text.contains(u"\n    default.clock.rate = 96000\n"_s));
++        QVERIFY(text.contains(u"\n    default.clock.allowed-rates = [ 44100 48000 96000 ]\n"_s));
++    }
++
++    void backToAutomaticRemovesOnlyOurFiles()
++    {
++        QTemporaryDir dir;
++        QDir().mkpath(dir.filePath(u"pipewire/pipewire.conf.d"_s));
++        // A file of the person's, and the engine's own, beside ours.
++        for (const auto &name : {u"00-sparky-stereo-audio.conf"_s, u"99-mine.conf"_s}) {
++            QFile f(dir.filePath(u"pipewire/pipewire.conf.d/"_s + name));
++            QVERIFY(f.open(QFile::WriteOnly));
++            f.write("context.properties = { default.clock.rate = 44100 }\n");
++        }
++        QString error;
++        QVERIFY(SoundFormatConf::write(dir.path(), QVariantMap{{u"graph"_s, QVariantMap{{u"rate"_s, 96000}}}}, &error));
++        QVERIFY(QFile::exists(dir.filePath(u"pipewire/pipewire.conf.d/50-sound-page.conf"_s)));
++        QVERIFY(SoundFormatConf::write(dir.path(), QVariantMap(), &error));
++        QVERIFY(!QFile::exists(dir.filePath(u"pipewire/pipewire.conf.d/50-sound-page.conf"_s)));
++        QVERIFY(QFile::exists(dir.filePath(u"pipewire/pipewire.conf.d/00-sparky-stereo-audio.conf"_s)));
++        QVERIFY(QFile::exists(dir.filePath(u"pipewire/pipewire.conf.d/99-mine.conf"_s)));
++    }
++
++    void aForeignFileOfOurNameIsNeverOverwritten()
++    {
++        QTemporaryDir dir;
++        QDir().mkpath(dir.filePath(u"pipewire/pipewire.conf.d"_s));
++        const QString path = dir.filePath(u"pipewire/pipewire.conf.d/50-sound-page.conf"_s);
++        QFile f(path);
++        QVERIFY(f.open(QFile::WriteOnly));
++        f.write("context.properties = { default.clock.rate = 44100 }\n");
++        f.close();
++        QString error;
++        QVERIFY(!SoundFormatConf::write(dir.path(), QVariantMap{{u"graph"_s, QVariantMap{{u"rate"_s, 96000}}}}, &error));
++        QVERIFY(error.startsWith(u"foreign"_s));
++        QVERIFY(QFile(path).open(QFile::ReadOnly));
++        QVERIFY(SoundFormatConf::write(dir.path(), QVariantMap(), &error)); // not wanted and not ours: left alone
++        QVERIFY(QFile::exists(path));
++    }
++};
++
++QTEST_GUILESS_MAIN(SoundFormatConfTest)
++#include "soundformatconftest.moc"
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 89e9dbed..b7330166 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -19,6 +19,7 @@ set(plasma-volume_SRCS
+     devicerenamemodel.cpp devicerenamemodel.h
+     devicerenamesaver.cpp devicerenamesaver.h
+     percentvalidator.cpp percentvalidator.h
++    soundformatconf.cpp soundformatconf.h
+     microphonetest.cpp microphonetest.h
+ )
+ 
+@@ -43,6 +44,7 @@ target_sources(plasma-volume-declarative PRIVATE
+     qml/globalservice.cpp qml/globalservice.h
+     qml/dbusinterface.cpp
+     qml/routingcontroller.cpp qml/routingcontroller.h
++    qml/soundformats.cpp qml/soundformats.h
+ )
+ target_include_directories(plasma-volume-declarative PRIVATE qml/)
+ 
+@@ -77,6 +79,7 @@ target_link_libraries(plasma-volume-declarative PRIVATE
+     KF6::ConfigCore
+     KF6::ConfigGui
+     KF6::CoreAddons
++    KF6::AuthCore
+     KF6::PulseAudioQt
+     Canberra::Canberra
+     PkgConfig::LIBPULSE
+@@ -108,6 +111,7 @@ install(TARGETS plasma-volume ${KDE_INSTALL_TARGETS_DEFAULT_ARGS} LIBRARY NAMELI
+ 
+ add_subdirectory(kcm)
+ add_subdirectory(kded)
++add_subdirectory(kauth)
+ 
+ ecm_qt_install_logging_categories(EXPORT PLASMAPA FILE plasmapa.categories DESTINATION ${KDE_INSTALL_LOGGINGCATEGORIESDIR})
+ 
+diff --git a/src/kauth/CMakeLists.txt b/src/kauth/CMakeLists.txt
+new file mode 100644
+index 00000000..20824cdb
+--- /dev/null
++++ b/src/kauth/CMakeLists.txt
+@@ -0,0 +1,6 @@
++add_executable(plasma-pa-soundformats-helper soundformatshelper.cpp ../soundformatconf.cpp)
++target_include_directories(plasma-pa-soundformats-helper PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
++target_link_libraries(plasma-pa-soundformats-helper PRIVATE Qt::Core KF6::AuthCore)
++install(TARGETS plasma-pa-soundformats-helper DESTINATION ${KAUTH_HELPER_INSTALL_DIR})
++kauth_install_helper_files(plasma-pa-soundformats-helper org.kde.plasma.pa.soundformats root)
++kauth_install_actions(org.kde.plasma.pa.soundformats org.kde.plasma.pa.soundformats.actions)
+diff --git a/src/kauth/org.kde.plasma.pa.soundformats.actions b/src/kauth/org.kde.plasma.pa.soundformats.actions
+new file mode 100644
+index 00000000..f3f40356
+--- /dev/null
++++ b/src/kauth/org.kde.plasma.pa.soundformats.actions
+@@ -0,0 +1,23 @@
++[org.kde.plasma.pa.soundformats.write]
++Name="Change the sound format settings for every account"
++Name[pl]="Zmień ustawienia formatu dźwięku dla wszystkich kont"
++Name[pt_BR]="Alterar as configurações de formato do som para todas as contas"
++Name[fr]="Modifier les réglages de format du son pour tous les comptes"
++Name[de]="Die Einstellungen für das Tonformat für alle Konten ändern"
++Name[es]="Cambiar los ajustes de formato del sonido para todas las cuentas"
++Name[ja]="すべてのアカウントのサウンド形式の設定を変更する"
++Name[ko]="모든 계정의 소리 형식 설정 변경"
++Name[zh_CN]="更改所有账户的声音格式设置"
++Name[zh_TW]="變更所有帳號的聲音格式設定"
++Description="Authentication is required to change the sound format settings for every account on this computer"
++Description[pl]="Zmiana ustawień formatu dźwięku dla wszystkich kont na tym komputerze wymaga uwierzytelnienia"
++Description[pt_BR]="É necessária autenticação para alterar as configurações de formato do som de todas as contas deste computador"
++Description[fr]="Une authentification est nécessaire pour modifier les réglages de format du son de tous les comptes de cet ordinateur"
++Description[de]="Zum Ändern der Einstellungen für das Tonformat aller Konten auf diesem Computer ist eine Authentifizierung nötig"
++Description[es]="Se necesita autenticación para cambiar los ajustes de formato del sonido de todas las cuentas de este equipo"
++Description[ja]="このコンピュータのすべてのアカウントのサウンド形式の設定を変更するには認証が必要です"
++Description[ko]="이 컴퓨터의 모든 계정의 소리 형식 설정을 변경하려면 인증이 필요합니다"
++Description[zh_CN]="更改此计算机上所有账户的声音格式设置需要身份验证"
++Description[zh_TW]="變更這台電腦上所有帳號的聲音格式設定需要驗證身分"
++Policy=auth_admin
++Persistence=session
+diff --git a/src/kauth/soundformatshelper.cpp b/src/kauth/soundformatshelper.cpp
+new file mode 100644
+index 00000000..3cff5bc0
+--- /dev/null
++++ b/src/kauth/soundformatshelper.cpp
+@@ -0,0 +1,50 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++
++#include "soundformatconf.h"
++
++#include <QJsonDocument>
++#include <QObject>
++
++#include <KAuth/ActionReply>
++#include <KAuth/HelperSupport>
++
++using namespace Qt::StringLiterals;
++
++/**
++ * Writes the sound format settings that apply to every account, as /etc drop-ins for PipeWire and WirePlumber.
++ * It accepts one thing: a state map that SoundFormatConf::validate approves. It builds the file text itself and never
++ * writes a path or text it was given, and it removes only files that carry the Sound page's mark.
++ */
++class SoundFormatsHelper : public QObject
++{
++    Q_OBJECT
++public Q_SLOTS:
++    KAuth::ActionReply write(const QVariantMap &args)
++    {
++        QJsonParseError parse;
++        const auto doc = QJsonDocument::fromJson(args.value(u"state"_s).toString().toUtf8(), &parse);
++        if (parse.error != QJsonParseError::NoError || !doc.isObject()) {
++            return failure(u"The settings were not readable."_s);
++        }
++        QString error;
++        if (!SoundFormatConf::write(u"/etc"_s, doc.object().toVariantMap(), &error)) {
++            return failure(error);
++        }
++        return KAuth::ActionReply::SuccessReply();
++    }
++
++private:
++    static KAuth::ActionReply failure(const QString &text)
++    {
++        auto reply = KAuth::ActionReply::HelperErrorReply();
++        reply.setErrorDescription(text);
++        return reply;
++    }
++};
++
++KAUTH_HELPER_MAIN("org.kde.plasma.pa.soundformats", SoundFormatsHelper)
++
++#include "soundformatshelper.moc"
+diff --git a/src/kcm/ui/DeviceListItem.qml b/src/kcm/ui/DeviceListItem.qml
+index 49e0856e..25880c82 100644
+--- a/src/kcm/ui/DeviceListItem.qml
++++ b/src/kcm/ui/DeviceListItem.qml
+@@ -29,6 +29,7 @@ ColumnLayout {
+     property alias portVisible: portBox.visible
+     property bool comboBoxLabelsVisible: false
+     property var routingController
++    property var soundFormats
+ 
+     RowLayout {
+         spacing: Kirigami.Units.smallSpacing
+@@ -176,6 +177,15 @@ ColumnLayout {
+         }
+     }
+ 
++    Label {
++        Layout.fillWidth: true
++        Layout.leftMargin: Kirigami.Units.largeSpacing * 2
++        visible: text !== ""
++        font: Kirigami.Theme.smallFont
++        opacity: 0.7
++        text: soundFormats && soundFormats.live ? (soundFormats.live[pulseObject.name] || "") : ""
++    }
++
+     RowLayout {
+         spacing: Kirigami.Units.smallSpacing
+ 
+diff --git a/src/kcm/ui/SoundFormats.qml b/src/kcm/ui/SoundFormats.qml
+new file mode 100644
+index 00000000..5062d9e9
+--- /dev/null
++++ b/src/kcm/ui/SoundFormats.qml
+@@ -0,0 +1,530 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++import QtQuick
++import QtQuick.Layouts
++import QtQuick.Controls
++
++import org.kde.kcmutils as KCM
++import org.kde.kirigami as Kirigami
++import org.kde.plasma.private.volume
++
++KCM.ScrollViewKCM {
++    id: page
++
++    title: i18nd("kcm_pulseaudio", "Sound Quality")
++    implicitHeight: Kirigami.Units.gridUnit * 28
++    implicitWidth: Kirigami.Units.gridUnit * 28
++
++    readonly property var standardRates: [32000, 44100, 48000, 88200, 96000, 176400, 192000]
++    readonly property var quantums: [32, 64, 128, 256, 512, 1024, 2048]
++    readonly property int textWidth: Kirigami.Units.gridUnit * 30
++    property bool allAccounts: false
++    readonly property var scopeState: allAccounts ? formats.systemState : formats.userState
++    readonly property var scopeGraph: scopeState.graph !== undefined ? scopeState.graph : ({})
++    readonly property var engineRates: formats.engine.rates !== undefined ? formats.engine.rates : []
++    readonly property bool customRates: scopeGraph.allowedRates !== undefined
++
++    SoundFormats {
++        id: formats
++    }
++
++    Timer {
++        interval: 3000
++        running: page.visible && !formats.busy
++        repeat: true
++        onTriggered: formats.refresh()
++    }
++
++    function clone(o) {
++        return JSON.parse(JSON.stringify(o))
++    }
++
++    function rateText(r) {
++        return i18nd("kcm_pulseaudio", "%1 Hz", r)
++    }
++
++    function formatText(f) {
++        const bits = {"S16LE": 16, "S24LE": 24, "S24_32LE": 24, "S32LE": 32, "F32LE": 32}
++        if (f === "F32LE") {
++            return i18nd("kcm_pulseaudio", "32 bit float")
++        }
++        return bits[f] ? i18nd("kcm_pulseaudio", "%1 bit", bits[f]) : f
++    }
++
++    function listText(list, fn) {
++        let out = []
++        for (let i = 0; i < list.length; ++i) {
++            out.push(fn(list[i]))
++        }
++        return out.join(", ")
++    }
++
++    function changeGraph(key, value) {
++        let st = clone(scopeState)
++        st.graph = st.graph || {}
++        if (value === undefined) {
++            delete st.graph[key]
++        } else {
++            st.graph[key] = value
++        }
++        if (Object.keys(st.graph).length === 0) {
++            delete st.graph
++        }
++        formats.apply(allAccounts, st, "graph")
++    }
++
++    function setQuality(value) {
++        let st = clone(scopeState)
++        if (value === undefined) {
++            delete st.quality
++        } else {
++            st.quality = value
++        }
++        formats.apply(allAccounts, st, "quality")
++    }
++
++    function changeDevice(name, key, value) {
++        let st = clone(scopeState)
++        st.devices = st.devices || {}
++        let d = st.devices[name] || {}
++        if (value === undefined || value === false) {
++            delete d[key]
++        } else {
++            d[key] = value
++        }
++        if (Object.keys(d).length === 0) {
++            delete st.devices[name]
++        } else {
++            st.devices[name] = d
++        }
++        if (Object.keys(st.devices).length === 0) {
++            delete st.devices
++        }
++        formats.apply(allAccounts, st, "device:" + name)
++    }
++
++    function personDevice(name) {
++        const d = scopeState.devices
++        return d !== undefined && d[name] !== undefined ? d[name] : ({})
++    }
++
++    function backToAutomatic() {
++        let st = clone(scopeState)
++        delete st.graph
++        delete st.quality
++        formats.apply(allAccounts, st, "graph")
++    }
++
++    headerPaddingEnabled: false
++    header: ColumnLayout {
++        spacing: Kirigami.Units.smallSpacing
++
++        Kirigami.InlineMessage {
++            Layout.fillWidth: true
++            visible: formats.message.text !== undefined
++            type: formats.message.type === "positive" ? Kirigami.MessageType.Positive : Kirigami.MessageType.Error
++            position: Kirigami.InlineMessage.Position.Header
++            text: formats.message.text !== undefined ? formats.message.text : ""
++            showCloseButton: true
++            onVisibleChanged: if (!visible) formats.dismissMessage()
++        }
++
++        Kirigami.InlineMessage {
++            Layout.fillWidth: true
++            visible: !formats.engine.installed || !formats.engine.available
++            type: Kirigami.MessageType.Warning
++            position: Kirigami.InlineMessage.Position.Header
++            text: i18nd("kcm_pulseaudio", "The sound defaults of this computer have not been written yet, so there is no automatic choice to show. Run: sudo sparky-stereo-audio detect --write")
++        }
++
++        Kirigami.InlineMessage {
++            Layout.fillWidth: true
++            visible: !formats.graph.available
++            type: Kirigami.MessageType.Warning
++            position: Kirigami.InlineMessage.Position.Header
++            text: i18nd("kcm_pulseaudio", "The sound system of this session did not answer, so its rates and devices cannot be shown.")
++        }
++
++        CheckBox {
++            Layout.leftMargin: Kirigami.Units.largeSpacing
++            text: i18nd("kcm_pulseaudio", "Apply changes to every account on this computer")
++            checked: page.allAccounts
++            enabled: !formats.busy
++            onToggled: page.allAccounts = checked
++        }
++    }
++
++    view: Flickable {
++        id: flickable
++        contentWidth: width
++        contentHeight: col.implicitHeight + Kirigami.Units.largeSpacing * 2
++        clip: true
++        enabled: !formats.busy
++
++        ColumnLayout {
++            id: col
++            width: flickable.width
++
++        Kirigami.FormLayout {
++            id: form
++            Layout.fillWidth: true
++
++            Kirigami.Separator {
++                Kirigami.FormData.isSection: true
++                Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Sound system")
++            }
++
++            Label {
++                Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Automatic choice:")
++                Layout.fillWidth: true
++                wrapMode: Text.Wrap
++                Layout.maximumWidth: page.textWidth
++                visible: formats.engine.available === true
++                text: i18nd("kcm_pulseaudio", "Rates %1, resting at %2, resampling quality %3 of 14.",
++                            page.listText(page.engineRates, r => String(r)), page.rateText(formats.engine.defaultRate), formats.engine.quality)
++            }
++
++            Label {
++                Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Running now:")
++                Layout.fillWidth: true
++                wrapMode: Text.Wrap
++                Layout.maximumWidth: page.textWidth
++                text: formats.graph.rate === undefined ? "" : i18nd("kcm_pulseaudio", "%1, buffer %2 (%3 ms).",
++                    page.rateText(formats.graph.rate), formats.graph.quantum, (formats.graph.quantum * 1000 / formats.graph.rate).toFixed(1))
++            }
++
++            ComboBox {
++
++                Layout.minimumWidth: Kirigami.Units.gridUnit * 16
++                id: defaultRate
++                Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Resting rate:")
++                readonly property var values: [undefined].concat(page.engineRates)
++                model: values.map(v => v === undefined ? i18nd("kcm_pulseaudio", "Automatic (%1)", page.rateText(formats.engine.defaultRate)) : page.rateText(v))
++                currentIndex: Math.max(0, values.indexOf(page.scopeGraph.rate))
++                onActivated: index => page.changeGraph("rate", values[index])
++            }
++
++            ColumnLayout {
++                Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Rates the sound system may use:")
++                Kirigami.FormData.labelAlignment: Qt.AlignTop
++
++                RadioButton {
++                    text: i18nd("kcm_pulseaudio", "Automatic (the rates of the devices in this computer)")
++                    checked: !page.customRates
++                    onClicked: page.changeGraph("allowedRates", undefined)
++                }
++                RadioButton {
++                    id: customRadio
++                    text: i18nd("kcm_pulseaudio", "These rates:")
++                    checked: page.customRates
++                }
++                Flow {
++                    Layout.fillWidth: true
++                    Layout.leftMargin: Kirigami.Units.gridUnit
++                    spacing: Kirigami.Units.smallSpacing
++                    enabled: customRadio.checked
++                    Repeater {
++                        id: rateBoxes
++                        model: page.engineRates
++                        CheckBox {
++                            required property var modelData
++                            text: String(modelData)
++                            checked: page.scopeGraph.allowedRates !== undefined ? page.scopeGraph.allowedRates.indexOf(modelData) >= 0 : true
++                        }
++                    }
++                }
++                Button {
++                    Layout.leftMargin: Kirigami.Units.gridUnit
++                    text: i18nd("kcm_pulseaudio", "Use these rates")
++                    enabled: customRadio.checked
++                    onClicked: {
++                        let chosen = []
++                        for (let i = 0; i < rateBoxes.count; ++i) {
++                            if (rateBoxes.itemAt(i).checked) {
++                                chosen.push(page.engineRates[i])
++                            }
++                        }
++                        if (chosen.length > 0) {
++                            page.changeGraph("allowedRates", chosen)
++                        }
++                    }
++                }
++                Label {
++                    Layout.fillWidth: true
++                    wrapMode: Text.Wrap
++                    Layout.maximumWidth: page.textWidth
++                    font: Kirigami.Theme.smallFont
++                    opacity: 0.7
++                    text: i18nd("kcm_pulseaudio", "With several rates the sound system follows the rate of what plays, so the file is not converted. AES5: 48 kHz is recommended for professional audio, 44.1 kHz is recognised for consumer applications, 96 kHz for higher bandwidth.")
++                }
++            }
++
++            ComboBox {
++
++                Layout.minimumWidth: Kirigami.Units.gridUnit * 16
++                Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Buffer size:")
++                readonly property var values: [undefined].concat(page.quantums)
++                model: values.map(v => v === undefined ? i18nd("kcm_pulseaudio", "Automatic (PipeWire's own)") : i18nd("kcm_pulseaudio", "%1 samples", v))
++                currentIndex: Math.max(0, values.indexOf(page.scopeGraph.quantum))
++                onActivated: index => page.changeGraph("quantum", values[index])
++            }
++
++            Label {
++                Layout.fillWidth: true
++                wrapMode: Text.Wrap
++                Layout.maximumWidth: page.textWidth
++                font: Kirigami.Theme.smallFont
++                opacity: 0.7
++                text: i18nd("kcm_pulseaudio", "A smaller buffer means less delay and more work for the processor. No standard sets this; the delay is the buffer size divided by the rate.")
++            }
++
++            SpinBox {
++                id: quality
++                Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Resampling quality:")
++                from: 0
++                to: 14
++                value: page.scopeState.quality !== undefined ? page.scopeState.quality : (formats.engine.quality !== undefined ? formats.engine.quality : 4)
++                onValueModified: page.setQuality(value)
++                textFromValue: (v, locale) => (page.scopeState.quality === undefined && v === formats.engine.quality) ? i18nd("kcm_pulseaudio", "%1 (automatic)", v) : String(v)
++            }
++
++            Label {
++                Layout.fillWidth: true
++                wrapMode: Text.Wrap
++                Layout.maximumWidth: page.textWidth
++                font: Kirigami.Theme.smallFont
++                opacity: 0.7
++                text: i18nd("kcm_pulseaudio", "Used only when a file's rate is not one the device takes. The scale is PipeWire's own, 0 to 14; no standard defines it.")
++            }
++
++            Label {
++                Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Why these choices:")
++                Layout.fillWidth: true
++                wrapMode: Text.Wrap
++                Layout.maximumWidth: page.textWidth
++                visible: formats.engine.reason !== undefined && formats.engine.reason !== ""
++                text: formats.engine.reason !== undefined ? formats.engine.reason : ""
++                font: Kirigami.Theme.smallFont
++            }
++
++            Button {
++                text: i18nd("kcm_pulseaudio", "Back to automatic")
++                icon.name: "edit-undo-symbolic"
++                visible: page.scopeGraph.rate !== undefined || page.customRates || page.scopeGraph.quantum !== undefined || page.scopeState.quality !== undefined
++                onClicked: page.backToAutomatic()
++            }
++
++        }
++
++            Repeater {
++                model: formats.devices
++
++                ColumnLayout {
++                    id: dev
++                    required property var modelData
++                    readonly property bool isBluetooth: modelData.kind === "bluetooth"
++                    readonly property bool isOutput: modelData.direction === "output"
++                    readonly property var choice: page.personDevice(modelData.name)
++                    readonly property int labelWidth: Kirigami.Units.gridUnit * 9
++                    Layout.fillWidth: true
++                    Layout.topMargin: Kirigami.Units.largeSpacing
++
++                    Kirigami.Heading {
++                        level: 3
++                        Layout.fillWidth: true
++                        text: dev.modelData.description !== "" ? dev.modelData.description : dev.modelData.name
++                    }
++                    Kirigami.Separator {
++                        Layout.fillWidth: true
++                    }
++
++                    GridLayout {
++                        columns: 2
++                        columnSpacing: Kirigami.Units.largeSpacing
++                        rowSpacing: Kirigami.Units.smallSpacing
++                        Layout.fillWidth: true
++
++                        Label {
++                            text: i18nd("kcm_pulseaudio", "In use:")
++                            Layout.preferredWidth: dev.labelWidth
++                            horizontalAlignment: Text.AlignRight
++                            Layout.alignment: Qt.AlignTop
++                        }
++                        Label {
++                            Layout.fillWidth: true
++                            Layout.maximumWidth: page.textWidth
++                            wrapMode: Text.Wrap
++                            text: formats.live[dev.modelData.name] !== undefined ? formats.live[dev.modelData.name] : i18nd("kcm_pulseaudio", "Not open at the moment.")
++                        }
++
++                        Label {
++                            text: i18nd("kcm_pulseaudio", "Takes:")
++                            Layout.preferredWidth: dev.labelWidth
++                            horizontalAlignment: Text.AlignRight
++                            Layout.alignment: Qt.AlignTop
++                        }
++                        Label {
++                            Layout.fillWidth: true
++                            Layout.maximumWidth: page.textWidth
++                            wrapMode: Text.Wrap
++                            text: i18nd("kcm_pulseaudio", "%1; %2", page.listText(dev.modelData.rates, page.rateText), page.listText(dev.modelData.formats, page.formatText))
++                        }
++
++                        Label {
++                            visible: dev.isBluetooth
++                            text: i18nd("kcm_pulseaudio", "Bluetooth codec:")
++                            Layout.preferredWidth: dev.labelWidth
++                            horizontalAlignment: Text.AlignRight
++                            Layout.alignment: Qt.AlignTop
++                        }
++                        Label {
++                            visible: dev.isBluetooth
++                            Layout.fillWidth: true
++                            Layout.maximumWidth: page.textWidth
++                            wrapMode: Text.Wrap
++                            text: dev.modelData.codec !== undefined && dev.modelData.codec !== "" ? i18nd("kcm_pulseaudio", "%1. The codec decides the rate and the format of a Bluetooth device.", dev.modelData.codec) : i18nd("kcm_pulseaudio", "The codec is not known until the device plays.")
++                        }
++
++                        Label {
++                            visible: dev.modelData.eld !== undefined && dev.modelData.eld.length > 0
++                            text: i18nd("kcm_pulseaudio", "The display says:")
++                            Layout.preferredWidth: dev.labelWidth
++                            horizontalAlignment: Text.AlignRight
++                            Layout.alignment: Qt.AlignTop
++                        }
++                        ColumnLayout {
++                            visible: dev.modelData.eld !== undefined && dev.modelData.eld.length > 0
++                            Layout.fillWidth: true
++                            Layout.maximumWidth: page.textWidth
++                            Repeater {
++                                model: dev.modelData.eld !== undefined ? dev.modelData.eld : []
++                                ColumnLayout {
++                                    required property var modelData
++                                    Layout.fillWidth: true
++                                    Label {
++                                        Layout.fillWidth: true
++                                        wrapMode: Text.Wrap
++                                        text: modelData.monitor
++                                        font.bold: true
++                                    }
++                                    Repeater {
++                                        model: modelData.lpcm
++                                        Label {
++                                            required property var modelData
++                                            Layout.fillWidth: true
++                                            wrapMode: Text.Wrap
++                                            text: i18nd("kcm_pulseaudio", "Uncompressed: %1 channels, %2 Hz, %3 bit", modelData.channels, modelData.rates.join(" "), modelData.bits.join(" "))
++                                        }
++                                    }
++                                    Repeater {
++                                        model: modelData.encoded
++                                        Label {
++                                            required property var modelData
++                                            Layout.fillWidth: true
++                                            wrapMode: Text.Wrap
++                                            text: i18nd("kcm_pulseaudio", "Encoded, for pass-through: %1, %2 channels", modelData.coding, modelData.channels)
++                                        }
++                                    }
++                                    Label {
++                                        Layout.fillWidth: true
++                                        wrapMode: Text.Wrap
++                                        font: Kirigami.Theme.smallFont
++                                        opacity: 0.7
++                                        text: i18nd("kcm_pulseaudio", "This is the list the display sends in its CTA-861 audio data blocks.")
++                                    }
++                                }
++                            }
++                        }
++
++                        Label {
++                            visible: !dev.isBluetooth
++                            text: i18nd("kcm_pulseaudio", "Format:")
++                            Layout.preferredWidth: dev.labelWidth
++                            horizontalAlignment: Text.AlignRight
++                        }
++                        ComboBox {
++                            visible: !dev.isBluetooth
++                            Layout.minimumWidth: Kirigami.Units.gridUnit * 16
++                            readonly property var values: [undefined].concat(dev.modelData.formats)
++                            model: values.map(v => v === undefined ? i18nd("kcm_pulseaudio", "Automatic (best this device supports)") : page.formatText(v))
++                            currentIndex: Math.max(0, values.indexOf(dev.choice.format))
++                            onActivated: index => page.changeDevice(dev.modelData.name, "format", values[index])
++                        }
++
++                        Label {
++                            visible: !dev.isBluetooth
++                            text: i18nd("kcm_pulseaudio", "Rate:")
++                            Layout.preferredWidth: dev.labelWidth
++                            horizontalAlignment: Text.AlignRight
++                        }
++                        ComboBox {
++                            visible: !dev.isBluetooth
++                            Layout.minimumWidth: Kirigami.Units.gridUnit * 16
++                            readonly property var values: [undefined].concat(dev.modelData.rates)
++                            model: values.map(v => v === undefined ? i18nd("kcm_pulseaudio", "Automatic (best this device supports)") : page.rateText(v))
++                            currentIndex: Math.max(0, values.indexOf(dev.choice.rate))
++                            onActivated: index => page.changeDevice(dev.modelData.name, "rate", values[index])
++                        }
++
++                        Item {
++                            visible: dev.isOutput && !dev.isBluetooth
++                            Layout.preferredWidth: dev.labelWidth
++                        }
++                        ColumnLayout {
++                            visible: dev.isOutput && !dev.isBluetooth
++                            Layout.fillWidth: true
++                            CheckBox {
++                                text: i18nd("kcm_pulseaudio", "Bit-perfect: add nothing to the samples")
++                                checked: dev.choice.bitPerfect === true
++                                onToggled: page.changeDevice(dev.modelData.name, "bitPerfect", checked)
++                            }
++                            Label {
++                                Layout.fillWidth: true
++                                Layout.maximumWidth: page.textWidth
++                                wrapMode: Text.Wrap
++                                font: Kirigami.Theme.smallFont
++                                opacity: 0.7
++                                text: i18nd("kcm_pulseaudio", "Switches off dither. The samples reach the device unchanged only while one program plays at full volume in the device's own format.")
++                            }
++                        }
++
++                        Item {
++                            visible: Object.keys(dev.choice).length > 0
++                            Layout.preferredWidth: dev.labelWidth
++                        }
++                        Button {
++                            visible: Object.keys(dev.choice).length > 0
++                            text: i18nd("kcm_pulseaudio", "Back to automatic")
++                            icon.name: "edit-undo-symbolic"
++                            onClicked: {
++                                let st = page.clone(page.scopeState)
++                                if (st.devices !== undefined) {
++                                    delete st.devices[dev.modelData.name]
++                                    if (Object.keys(st.devices).length === 0) {
++                                        delete st.devices
++                                    }
++                                }
++                                formats.apply(page.allAccounts, st, "device:" + dev.modelData.name)
++                            }
++                        }
++                    }
++                }
++            }
++
++            Label {
++                Layout.fillWidth: true
++                wrapMode: Text.Wrap
++                Layout.maximumWidth: page.textWidth
++                visible: formats.devices.length === 0 && formats.graph.available === true
++                text: i18nd("kcm_pulseaudio", "No sound device is connected.")
++            }
++        }
++    }
++
++    BusyIndicator {
++        anchors.centerIn: parent
++        running: formats.busy
++        visible: formats.busy
++    }
++}
+diff --git a/src/kcm/ui/main.qml b/src/kcm/ui/main.qml
+index e3c3471c..91604a64 100644
+--- a/src/kcm/ui/main.qml
++++ b/src/kcm/ui/main.qml
+@@ -68,6 +68,17 @@ KCM.ScrollViewKCM {
+         id: moduleManager
+     }
+ 
++    SoundFormats {
++        id: soundFormats
++    }
++
++    Timer {
++        interval: 3000
++        running: soundFormats && Window.window !== null
++        repeat: true
++        onTriggered: soundFormats.refresh()
++    }
++
+     actions: [
+         Kirigami.Action {
+             text: i18nd("kcm_pulseaudio", "Show Virtual Streams")
+@@ -93,6 +104,11 @@ KCM.ScrollViewKCM {
+             visible: Server.hasWirePlumber && Server.isPipeWire
+             onTriggered: kcm.push("RenameDevices.qml", { "config": config })
+         },
++        Kirigami.Action {
++            icon.name: "audio-card"
++            text: i18nd("kcm_pulseaudio", "Sound Quality…")
++            onTriggered: kcm.push("SoundFormats.qml")
++        },
+         Kirigami.Action {
+             icon.name: "configure"
+             text: i18nd("kcm_pulseaudio", "Configure Volume Controls…")
+@@ -169,6 +185,7 @@ KCM.ScrollViewKCM {
+                 delegate: DeviceListItem {
+                     isPlayback: true
+                     routingController: routing
++                    soundFormats: soundFormats
+                     comboBoxLabelsVisible: column.comboBoxLabelsVisible
+                 }
+             }
+@@ -194,6 +211,7 @@ KCM.ScrollViewKCM {
+                 delegate: DeviceListItem {
+                     isPlayback: false
+                     routingController: routing
++                    soundFormats: soundFormats
+                     comboBoxLabelsVisible: column.comboBoxLabelsVisible
+                 }
+             }
+diff --git a/src/qml/plugin.cpp b/src/qml/plugin.cpp
+index c4aa9a82..9500a2a5 100644
+--- a/src/qml/plugin.cpp
++++ b/src/qml/plugin.cpp
+@@ -35,6 +35,7 @@
+ #include "volumefeedback.h"
+ #include "microphonetest.h"
+ #include "routingcontroller.h"
++#include "soundformats.h"
+ 
+ static QJSValue pulseaudio_singleton(QQmlEngine *engine, QJSEngine *scriptEngine)
+ {
+@@ -77,6 +78,7 @@ void Plugin::registerTypes(const char *uri)
+     qmlRegisterType<SpeakerTest>(uri, 0, 1, "SpeakerTest");
+     qmlRegisterType<MicrophoneTest>(uri, 0, 1, "MicrophoneTest");
+     qmlRegisterType<RoutingController>(uri, 0, 1, "RoutingController");
++    qmlRegisterType<SoundFormats>(uri, 0, 1, "SoundFormats");
+     qmlRegisterType<GlobalConfig>(uri, 0, 1, "GlobalConfig");
+     qmlRegisterType<DeviceRenameModel>(uri, 0, 1, "DeviceRenameModel");
+     qmlRegisterType<DeviceRenameSaver>(uri, 0, 1, "DeviceRenameSaver");
+diff --git a/src/qml/soundformats.cpp b/src/qml/soundformats.cpp
+new file mode 100644
+index 00000000..03e38d9d
+--- /dev/null
++++ b/src/qml/soundformats.cpp
+@@ -0,0 +1,865 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++
++#include "soundformats.h"
++
++#include "soundformatconf.h"
++
++#include <QDir>
++#include <QEventLoop>
++#include <QFile>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QRegularExpression>
++#include <QSet>
++#include <QStandardPaths>
++#include <QTemporaryDir>
++#include <QTimer>
++
++#include <KAuth/Action>
++#include <KAuth/ExecuteJob>
++#include <KLocalizedString>
++
++using namespace Qt::StringLiterals;
++
++namespace
++{
++// The rates of the standards a continuous range stands for (the same list the edition's sound defaults use for a range).
++const QList<int> STANDARD_RATES = {32000, 44100, 48000, 88200, 96000, 176400, 192000};
++
++QString root()
++{
++    return qEnvironmentVariable("SPARKY_STEREO_AUDIO_ROOT");
++}
++
++QString procAsound()
++{
++    return qEnvironmentVariable("SPARKY_STEREO_AUDIO_PROC", u"/proc/asound"_s);
++}
++
++QList<int> ints(const QString &text)
++{
++    QList<int> out;
++    static const QRegularExpression re(u"\\d+"_s);
++    auto it = re.globalMatch(text);
++    while (it.hasNext()) {
++        out << it.next().captured().toInt();
++    }
++    return out;
++}
++
++QVariantList toList(const QList<int> &v)
++{
++    QVariantList out;
++    for (int i : v) {
++        out << i;
++    }
++    return out;
++}
++
++// PipeWire's names for sample formats, from what pw-dump prints, to the ones a person reads and the drop-in takes.
++QString normaliseFormat(QString f)
++{
++    f = f.toUpper();
++    if (f.endsWith(u"P"_s) && f != u"S24_32P"_s) { // planar twin of an interleaved format
++        f.chop(1);
++    }
++    if (f == u"S16"_s || f == u"S24"_s || f == u"S32"_s || f == u"F32"_s || f == u"S24_32"_s) {
++        f += u"LE"_s;
++    }
++    return f;
++}
++
++int formatBits(const QString &f)
++{
++    if (f.startsWith(u"S16"_s)) {
++        return 16;
++    }
++    if (f.startsWith(u"S24_32"_s)) {
++        return 24;
++    }
++    if (f.startsWith(u"S24"_s)) {
++        return 24;
++    }
++    if (f.startsWith(u"S32"_s) || f.startsWith(u"F32"_s)) {
++        return 32;
++    }
++    return 0;
++}
++
++QString formatLabel(const QString &f)
++{
++    if (f.startsWith(u"F32"_s)) {
++        return u"32 bit float"_s;
++    }
++    const int bits = formatBits(f);
++    return bits ? QString::number(bits) + u" bit"_s : f;
++}
++
++void collectChoice(const QJsonValue &v, QSet<int> *rates, QSet<QString> *formats)
++{
++    if (v.isDouble()) {
++        rates->insert(v.toInt());
++    } else if (v.isString()) {
++        formats->insert(normaliseFormat(v.toString()));
++    } else if (v.isObject()) {
++        const auto o = v.toObject();
++        if (o.contains(u"min"_s) && o.contains(u"max"_s) && o.value(u"min"_s).isDouble()) {
++            const int lo = o.value(u"min"_s).toInt();
++            const int hi = o.value(u"max"_s).toInt();
++            for (int r : STANDARD_RATES) {
++                if (r >= lo && r <= hi) {
++                    rates->insert(r);
++                }
++            }
++        }
++        for (auto it = o.begin(); it != o.end(); ++it) {
++            if (it.key() == u"min"_s || it.key() == u"max"_s || it.key() == u"step"_s) {
++                continue;
++            }
++            collectChoice(it.value(), rates, formats);
++        }
++    } else if (v.isArray()) {
++        for (const auto &e : v.toArray()) {
++            collectChoice(e, rates, formats);
++        }
++    }
++}
++
++QString graphLabel(const QString &key)
++{
++    if (key == u"rate"_s) {
++        return i18nd("kcm_pulseaudio", "default rate");
++    }
++    if (key == u"quantum"_s) {
++        return i18nd("kcm_pulseaudio", "buffer size");
++    }
++    if (key == u"minQuantum"_s) {
++        return i18nd("kcm_pulseaudio", "smallest buffer size");
++    }
++    return i18nd("kcm_pulseaudio", "largest buffer size");
++}
++
++QString describeWriteError(const QString &code)
++{
++    const int colon = code.indexOf(u": "_s);
++    const QString kind = colon > 0 ? code.left(colon) : code;
++    const QString path = colon > 0 ? code.mid(colon + 2) : QString();
++    if (kind == u"foreign"_s) {
++        return i18nd("kcm_pulseaudio", "the file %1 is not one this page wrote, so it was left alone", path);
++    }
++    if (kind == u"mkdir"_s || kind == u"write"_s || kind == u"remove"_s) {
++        return i18nd("kcm_pulseaudio", "the file %1 could not be written", path);
++    }
++    return i18nd("kcm_pulseaudio", "the settings were not accepted");
++}
++
++QString propString(const QJsonObject &props, const QString &key)
++{
++    const auto v = props.value(key);
++    if (v.isString()) {
++        return v.toString();
++    }
++    if (v.isDouble()) {
++        return QString::number(v.toInt());
++    }
++    if (v.isBool()) {
++        return v.toBool() ? u"true"_s : u"false"_s;
++    }
++    return {};
++}
++} // namespace
++
++SoundFormats::SoundFormats(QObject *parent)
++    : QObject(parent)
++{
++    refresh();
++}
++
++QString SoundFormats::userBase() const
++{
++    return QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
++}
++
++void SoundFormats::setBusy(bool busy)
++{
++    if (m_busy != busy) {
++        m_busy = busy;
++        Q_EMIT busyChanged();
++    }
++}
++
++void SoundFormats::setMessage(const QString &type, const QString &text)
++{
++    m_message = type.isEmpty() ? QVariantMap() : QVariantMap{{u"type"_s, type}, {u"text"_s, text}};
++    Q_EMIT messageChanged();
++}
++
++void SoundFormats::dismissMessage()
++{
++    setMessage({}, {});
++}
++
++void SoundFormats::wait(int ms) const
++{
++    QEventLoop loop;
++    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
++    loop.exec(QEventLoop::ExcludeUserInputEvents);
++}
++
++SoundFormats::Run SoundFormats::run(const QString &program, const QStringList &args, int timeoutMs, const QByteArray &input) const
++{
++    Run r;
++    const QString exe = QStandardPaths::findExecutable(program);
++    if (exe.isEmpty()) {
++        r.failedToStart = true;
++        return r;
++    }
++    QProcess p;
++    QEventLoop loop;
++    QTimer timer;
++    timer.setSingleShot(true);
++    QObject::connect(&p, &QProcess::finished, &loop, &QEventLoop::quit);
++    QObject::connect(&p, &QProcess::errorOccurred, &loop, [&](QProcess::ProcessError e) {
++        if (e == QProcess::FailedToStart) {
++            r.failedToStart = true;
++            loop.quit();
++        }
++    });
++    QObject::connect(&timer, &QTimer::timeout, &loop, [&] {
++        r.timedOut = true;
++        loop.quit();
++    });
++    p.start(exe, args);
++    if (!input.isEmpty()) {
++        p.write(input);
++    }
++    if (p.state() != QProcess::NotRunning) {
++        // Closed for every program: a reader of standard input must see its end.
++        p.closeWriteChannel();
++        timer.start(timeoutMs);
++        loop.exec(QEventLoop::ExcludeUserInputEvents);
++    }
++    if (p.state() != QProcess::NotRunning) {
++        p.kill();
++        p.waitForFinished(1000);
++    }
++    r.code = p.exitStatus() == QProcess::NormalExit ? p.exitCode() : -1;
++    r.out = p.readAllStandardOutput();
++    r.err = p.readAllStandardError();
++    return r;
++}
++
++QJsonDocument SoundFormats::pwDump() const
++{
++    const Run r = run(u"pw-dump"_s, {}, 5000);
++    if (r.failedToStart || r.code != 0) {
++        return {};
++    }
++    return QJsonDocument::fromJson(r.out);
++}
++
++QVariantMap SoundFormats::readEngine() const
++{
++    QVariantMap e;
++    QFile f(root() + u"/var/lib/sparky-stereo-audio/choices.json"_s);
++    if (!f.open(QFile::ReadOnly)) {
++        e.insert(u"available"_s, false);
++    } else {
++        const auto o = QJsonDocument::fromJson(f.readAll()).object();
++        e.insert(u"available"_s, !o.isEmpty());
++        e.insert(u"rates"_s, o.value(u"rates"_s).toVariant());
++        e.insert(u"defaultRate"_s, o.value(u"default"_s).toInt());
++        e.insert(u"quality"_s, o.value(u"quality"_s).toInt());
++        e.insert(u"cpu"_s, o.value(u"cpu"_s).toString());
++        e.insert(u"sixteenOnly"_s, o.value(u"sixteen"_s).toBool());
++        e.insert(u"cards"_s, o.value(u"cards"_s).toVariant());
++        const auto cost = o.value(u"cost"_s).toObject();
++        const auto cq = cost.value(QString::number(o.value(u"quality"_s).toInt()));
++        e.insert(u"qualityCost"_s, cq.isDouble() ? cq.toDouble() : -1.0);
++        e.insert(u"limit"_s, o.value(u"limit"_s).toDouble());
++    }
++    // The engine's own sentences, in the person's language, are the reasons the page shows.
++    const Run r = run(u"sparky-stereo-audio"_s, {u"show"_s}, 8000);
++    e.insert(u"reason"_s, r.failedToStart ? QString() : QString::fromUtf8(r.out).trimmed());
++    e.insert(u"installed"_s, !r.failedToStart);
++    return e;
++}
++
++QVariantMap SoundFormats::readGraph() const
++{
++    QVariantMap g;
++    const Run r = run(u"pw-metadata"_s, {u"-n"_s, u"settings"_s}, 4000);
++    g.insert(u"available"_s, !r.failedToStart && r.code == 0);
++    static const QRegularExpression re(u"key:'([^']+)' value:'([^']*)'"_s);
++    auto it = re.globalMatch(QString::fromUtf8(r.out));
++    while (it.hasNext()) {
++        const auto m = it.next();
++        const QString key = m.captured(1);
++        const QString value = m.captured(2);
++        if (key == u"clock.allowed-rates"_s) {
++            g.insert(u"allowedRates"_s, toList(ints(value)));
++        } else if (key == u"clock.rate"_s) {
++            g.insert(u"rate"_s, value.toInt());
++        } else if (key == u"clock.quantum"_s) {
++            g.insert(u"quantum"_s, value.toInt());
++        } else if (key == u"clock.min-quantum"_s) {
++            g.insert(u"minQuantum"_s, value.toInt());
++        } else if (key == u"clock.max-quantum"_s) {
++            g.insert(u"maxQuantum"_s, value.toInt());
++        } else if (key == u"clock.force-rate"_s) {
++            g.insert(u"forceRate"_s, value.toInt());
++        } else if (key == u"clock.force-quantum"_s) {
++            g.insert(u"forceQuantum"_s, value.toInt());
++        }
++    }
++    return g;
++}
++
++QVariantMap SoundFormats::parseEld(const QString &text)
++{
++    if (!text.contains(QRegularExpression(u"^monitor_present\\s+1"_s, QRegularExpression::MultilineOption))
++        || !text.contains(QRegularExpression(u"^eld_valid\\s+1"_s, QRegularExpression::MultilineOption))) {
++        return {};
++    }
++    QVariantMap out;
++    const auto mon = QRegularExpression(u"^monitor_name\\s+(.*)$"_s, QRegularExpression::MultilineOption).match(text);
++    out.insert(u"monitor"_s, mon.hasMatch() ? mon.captured(1).trimmed() : QString());
++    QVariantList lpcm;
++    QVariantList encoded;
++    for (int i = 0; i < 16; ++i) {
++        const auto ct = QRegularExpression(u"^sad%1_coding_type\\s+\\[0x([0-9a-fA-F]+)\\]\\s*(.*)$"_s.arg(i), QRegularExpression::MultilineOption).match(text);
++        if (!ct.hasMatch()) {
++            continue;
++        }
++        const auto field = [&](const QString &name) {
++            const auto m = QRegularExpression(u"^sad%1_%2\\s+(?:\\[[^\\]]*\\])?\\s*(.*)$"_s.arg(i).arg(name), QRegularExpression::MultilineOption).match(text);
++            return m.hasMatch() ? m.captured(1) : QString();
++        };
++        const int channels = field(u"channels"_s).trimmed().toInt();
++        const QList<int> rates = ints(field(u"rates"_s));
++        QVariantMap entry{{u"coding"_s, ct.captured(2).trimmed()}, {u"channels"_s, channels}, {u"rates"_s, toList(rates)}};
++        if (ct.captured(1).toInt(nullptr, 16) == 1) { // coding type 1 is LPCM (CTA-861 audio data block)
++            entry.insert(u"bits"_s, toList(ints(field(u"bits"_s))));
++            lpcm << entry;
++        } else {
++            encoded << entry;
++        }
++    }
++    out.insert(u"lpcm"_s, lpcm);
++    out.insert(u"encoded"_s, encoded);
++    return out;
++}
++
++QVariantList SoundFormats::readDevices(const QVariantMap &engine, QVariantMap *live) const
++{
++    QVariantList out;
++    const auto doc = pwDump();
++    if (!doc.isArray()) {
++        return out;
++    }
++    const QVariantList cards = engine.value(u"cards"_s).toList();
++    QMap<QString, QVariantMap> person; // the effective choice per node: every account's, then this account's
++    for (const auto &st : {m_system, m_user}) {
++        const QVariantMap devs = st.value(u"devices"_s).toMap();
++        for (auto it = devs.begin(); it != devs.end(); ++it) {
++            QVariantMap merged = person.value(it.key());
++            merged.insert(it.value().toMap());
++            person.insert(it.key(), merged);
++        }
++    }
++    for (const auto &item : doc.array()) {
++        const auto obj = item.toObject();
++        if (obj.value(u"type"_s).toString() != u"PipeWire:Interface:Node"_s) {
++            continue;
++        }
++        const auto info = obj.value(u"info"_s).toObject();
++        const auto props = info.value(u"props"_s).toObject();
++        const QString cls = propString(props, u"media.class"_s);
++        if (cls != u"Audio/Sink"_s && cls != u"Audio/Source"_s) {
++            continue;
++        }
++        const QString name = propString(props, u"node.name"_s);
++        if (!SoundFormatConf::validNodeName(name) || propString(props, u"node.virtual"_s) == u"true"_s) {
++            continue;
++        }
++        const auto params = info.value(u"params"_s).toObject();
++        QSet<int> rates;
++        QSet<QString> formats;
++        for (const auto &ef : params.value(u"EnumFormat"_s).toArray()) {
++            const auto o = ef.toObject();
++            collectChoice(o.value(u"rate"_s), &rates, &formats);
++            if (o.value(u"format"_s).isString() || o.value(u"format"_s).isObject()) {
++                QSet<int> ignore;
++                collectChoice(o.value(u"format"_s), &ignore, &formats);
++            }
++        }
++        QVariantMap inUse;
++        const auto fmt = params.value(u"Format"_s).toArray();
++        if (!fmt.isEmpty()) {
++            const auto f = fmt.at(0).toObject();
++            if (f.value(u"rate"_s).isDouble()) {
++                inUse.insert(u"rate"_s, f.value(u"rate"_s).toInt());
++            }
++            if (f.value(u"format"_s).isString()) {
++                inUse.insert(u"format"_s, normaliseFormat(f.value(u"format"_s).toString()));
++            }
++            if (f.value(u"channels"_s).isDouble()) {
++                inUse.insert(u"channels"_s, f.value(u"channels"_s).toInt());
++            }
++        }
++        // Ordered lists: planar twins and the like collapse to the interleaved names the drop-in takes.
++        QList<int> rateList = rates.values();
++        std::sort(rateList.begin(), rateList.end());
++        QStringList formatList;
++        for (const auto &f : SoundFormatConf::knownFormats()) {
++            if (formats.contains(f)) {
++                formatList << f;
++            }
++        }
++        // A choice of the person's narrows what PipeWire enumerates for the device, so the full list then comes from the
++        // card as the edition's sound defaults read it, kept beside what PipeWire says.
++        if (!person.value(name).isEmpty()) {
++            int cardNo = -1;
++            for (const auto &k : {u"api.alsa.pcm.card"_s, u"alsa.card"_s, u"api.alsa.card"_s}) {
++                if (!propString(props, k).isEmpty()) {
++                    cardNo = propString(props, k).toInt();
++                    break;
++                }
++            }
++            for (const auto &c : cards) {
++                const auto cm = c.toMap();
++                if (cm.value(u"card"_s).toInt() != cardNo) {
++                    continue;
++                }
++                for (const auto &o : cm.value(u"outputs"_s).toList()) {
++                    for (const auto &r : o.toMap().value(u"rates"_s).toList()) {
++                        if (!rateList.contains(r.toInt())) {
++                            rateList << r.toInt();
++                        }
++                    }
++                    for (const auto &b : o.toMap().value(u"bits"_s).toList()) {
++                        const QString f = b.toInt() == 16 ? u"S16LE"_s : (b.toInt() >= 32 ? u"S32LE"_s : (b.toInt() >= 20 ? u"S24LE"_s : QString()));
++                        if (!f.isEmpty() && !formatList.contains(f)) {
++                            formatList << f;
++                        }
++                    }
++                }
++            }
++            std::sort(rateList.begin(), rateList.end());
++            QStringList ordered;
++            for (const auto &f : SoundFormatConf::knownFormats()) {
++                if (formatList.contains(f)) {
++                    ordered << f;
++                }
++            }
++            formatList = ordered;
++        }
++        const QString lower = (name + propString(props, u"api.alsa.path"_s) + propString(props, u"device.profile.name"_s)).toLower();
++        QVariantMap d;
++        d.insert(u"id"_s, obj.value(u"id"_s).toInt());
++        d.insert(u"name"_s, name);
++        d.insert(u"description"_s, propString(props, u"node.description"_s));
++        d.insert(u"direction"_s, cls == u"Audio/Sink"_s ? u"output"_s : u"input"_s);
++        const bool bluez = name.startsWith(u"bluez_"_s);
++        d.insert(u"kind"_s, bluez ? u"bluetooth"_s : (lower.contains(u"hdmi"_s) ? u"hdmi"_s : u"alsa"_s));
++        if (!inUse.isEmpty()) {
++            live->insert(name, u"%1 Hz, %2"_s.arg(inUse.value(u"rate"_s).toInt()).arg(formatLabel(inUse.value(u"format"_s).toString())));
++        }
++        d.insert(u"rates"_s, toList(rateList));
++        d.insert(u"formats"_s, QVariant(formatList));
++        d.insert(u"appliedFormat"_s, propString(props, u"audio.format"_s));
++        d.insert(u"appliedRate"_s, propString(props, u"audio.rate"_s).toInt());
++        d.insert(u"person"_s, person.value(name));
++        if (bluez) {
++            d.insert(u"codec"_s, propString(props, u"api.bluez5.codec"_s));
++            d.insert(u"profile"_s, propString(props, u"api.bluez5.profile"_s));
++        }
++        // The engine's reading of this card (its own parse of the kernel's files), kept beside what PipeWire says.
++        int cardNo = -1;
++        for (const auto &k : {u"api.alsa.pcm.card"_s, u"alsa.card"_s, u"api.alsa.card"_s}) {
++            const QString v = propString(props, k);
++            if (!v.isEmpty()) {
++                cardNo = v.toInt();
++                break;
++            }
++        }
++        if (cardNo >= 0) {
++            d.insert(u"card"_s, cardNo);
++            for (const auto &c : cards) {
++                const auto cm = c.toMap();
++                if (cm.value(u"card"_s).toInt() == cardNo) {
++                    d.insert(u"engineOutputs"_s, cm.value(u"outputs"_s));
++                }
++            }
++            if (d.value(u"kind"_s) == u"hdmi"_s) {
++                QVariantList elds;
++                const QDir dir(procAsound() + u"/card%1"_s.arg(cardNo));
++                for (const auto &fn : dir.entryList({u"eld#*"_s}, QDir::Files, QDir::Name)) {
++                    QFile ef(dir.filePath(fn));
++                    if (ef.open(QFile::ReadOnly)) {
++                        const auto eld = parseEld(QString::fromUtf8(ef.readAll()));
++                        if (!eld.isEmpty()) {
++                            elds << eld;
++                        }
++                    }
++                }
++                d.insert(u"eld"_s, elds);
++            }
++        }
++        out << d;
++    }
++    return out;
++}
++
++void SoundFormats::refresh()
++{
++    m_user = SoundFormatConf::read(userBase());
++    m_system = SoundFormatConf::read(u"/etc"_s);
++    m_engine = readEngine();
++    m_graph = readGraph();
++    QVariantMap live;
++    const QVariantList devices = readDevices(m_engine, &live);
++    // Only what really changed is announced, so a page that is open is not rebuilt under the person's hand.
++    if (devices != m_devices) {
++        m_devices = devices;
++        Q_EMIT devicesChanged();
++    }
++    if (live != m_live) {
++        m_live = live;
++        Q_EMIT liveChanged();
++    }
++    Q_EMIT changed();
++}
++
++QString SoundFormats::inUse(const QString &nodeName) const
++{
++    return m_live.value(nodeName).toString();
++}
++
++bool SoundFormats::writeScope(bool system, const QVariantMap &state, QString *error)
++{
++    if (!system) {
++        QString code;
++        const bool ok = SoundFormatConf::write(userBase(), state, &code);
++        if (!ok && error) {
++            *error = describeWriteError(code);
++        }
++        return ok;
++    }
++    KAuth::Action action(u"org.kde.plasma.pa.soundformats.write"_s);
++    action.setHelperId(u"org.kde.plasma.pa.soundformats"_s);
++    action.setArguments({{u"state"_s, QString::fromUtf8(QJsonDocument::fromVariant(state).toJson(QJsonDocument::Compact))}});
++    auto *job = action.execute();
++    if (!job->exec()) {
++        if (error) {
++            const int code = job->error();
++            if (code == KAuth::ActionReply::AuthorizationDeniedError || code == KAuth::ActionReply::UserCancelledError || code == KAuth::ActionReply::BackendError) {
++                *error = i18nd("kcm_pulseaudio", "the system did not allow the change for every account");
++            } else {
++                *error = describeWriteError(job->errorText());
++            }
++        }
++        return false;
++    }
++    return true;
++}
++
++bool SoundFormats::activate(const QString &what, bool removal)
++{
++    // A graph change that only sets values goes into the running graph at once; everything else, and every removal (the
++    // automatic value then comes from the files again), is read when PipeWire and WirePlumber start.
++    if (what == u"graph"_s && !removal) {
++        return true; // the values are set by check() through pw-metadata, which also reads them back
++    }
++    const Run r = run(u"systemctl"_s, {u"--user"_s, u"restart"_s, u"wireplumber.service"_s, u"pipewire.service"_s}, 20000);
++    if (r.failedToStart || r.code != 0) {
++        return false;
++    }
++    // The nodes come back a moment after the services do.
++    for (int i = 0; i < 50; ++i) {
++        wait(200);
++        const auto doc = pwDump();
++        if (doc.isArray()) {
++            for (const auto &item : doc.array()) {
++                const auto props = item.toObject().value(u"info"_s).toObject().value(u"props"_s).toObject();
++                if (propString(props, u"media.class"_s) == u"Audio/Sink"_s && SoundFormatConf::validNodeName(propString(props, u"node.name"_s))) {
++                    wait(500);
++                    if (removal || what == u"graph"_s) {
++                        run(u"sparky-stereo-audio"_s, {u"apply"_s}, 8000); // the engine gives the running graph its own answer again
++                    }
++                    return true;
++                }
++            }
++        }
++    }
++    return false;
++}
++
++QList<QPair<int, QString>> SoundFormats::pinnedStreams() const
++{
++    QList<QPair<int, QString>> out;
++    const auto doc = pwDump();
++    for (const auto &item : doc.array()) {
++        const auto info = item.toObject().value(u"info"_s).toObject();
++        const auto props = info.value(u"props"_s).toObject();
++        if (info.value(u"state"_s).toString() != u"running"_s || !propString(props, u"media.class"_s).startsWith(u"Stream/"_s)) {
++            continue;
++        }
++        const int rate = propString(props, u"node.force-rate"_s).toInt();
++        if (rate > 0) {
++            const QString n = propString(props, u"application.name"_s);
++            out << qMakePair(rate, n.isEmpty() ? propString(props, u"node.name"_s) : n);
++        }
++    }
++    return out;
++}
++
++QString SoundFormats::probe(const QString &node, const QVariantMap &choice)
++{
++    // A short stretch of silence sent to the device in the chosen format shows what the device really opens.
++    const QString format = choice.value(u"format"_s).toString();
++    const int rate = choice.value(u"rate"_s).toInt();
++    QString pwFormat = u"s32"_s;
++    if (format.startsWith(u"S16"_s)) {
++        pwFormat = u"s16"_s;
++    } else if (format.startsWith(u"S24"_s) && !format.startsWith(u"S24_32"_s)) {
++        pwFormat = u"s24"_s;
++    } else if (format.startsWith(u"F32"_s)) {
++        pwFormat = u"f32"_s;
++    }
++    const int useRate = rate > 0 ? rate : 48000;
++    const int bytes = useRate * 2 * 4 / 2; // half a second, stereo, the widest sample
++    QProcess cat;
++    const QString exe = QStandardPaths::findExecutable(u"pw-cat"_s);
++    if (exe.isEmpty()) {
++        return i18nd("kcm_pulseaudio", "The tool %1 is not installed, so the choice could not be tried.", u"pw-cat"_s);
++    }
++    cat.start(exe, {u"--playback"_s, u"--raw"_s, u"--target"_s, node, u"--rate"_s, QString::number(useRate), u"--channels"_s, u"2"_s, u"--format"_s, pwFormat, u"-"_s});
++    if (!cat.waitForStarted(3000)) {
++        return i18nd("kcm_pulseaudio", "The tool %1 is not installed, so the choice could not be tried.", u"pw-cat"_s);
++    }
++    cat.write(QByteArray(bytes, '\0'));
++    cat.closeWriteChannel();
++    QString problem;
++    bool seen = false;
++    for (int i = 0; i < 25 && cat.state() != QProcess::NotRunning; ++i) {
++        wait(100);
++        const auto doc = pwDump();
++        for (const auto &item : doc.array()) {
++            const auto o = item.toObject();
++            const auto props = o.value(u"info"_s).toObject().value(u"props"_s).toObject();
++            if (propString(props, u"node.name"_s) != node) {
++                continue;
++            }
++            const QString state = o.value(u"info"_s).toObject().value(u"state"_s).toString();
++            if (state == u"error"_s) {
++                problem = i18nd("kcm_pulseaudio", "The device went into an error state.");
++            }
++            const auto fmt = o.value(u"info"_s).toObject().value(u"params"_s).toObject().value(u"Format"_s).toArray();
++            if (state == u"running"_s && !fmt.isEmpty()) {
++                seen = true;
++                const auto f = fmt.at(0).toObject();
++                const int gotRate = f.value(u"rate"_s).toInt();
++                const QString gotFormat = normaliseFormat(f.value(u"format"_s).toString());
++                if (rate > 0 && gotRate != rate) {
++                    problem = i18nd("kcm_pulseaudio", "The device ran at %1 Hz, not the %2 Hz chosen.", gotRate, rate);
++                } else if (!format.isEmpty() && gotFormat != format) {
++                    problem = i18nd("kcm_pulseaudio", "The device ran in %1, not in the format chosen.", formatLabel(gotFormat));
++                }
++            }
++        }
++        if (seen || !problem.isEmpty()) {
++            break;
++        }
++    }
++    cat.kill();
++    cat.waitForFinished(1000);
++    if (problem.isEmpty() && !seen) {
++        problem = i18nd("kcm_pulseaudio", "The device did not start playing in the chosen format.");
++    }
++    return problem;
++}
++
++QString SoundFormats::check(const QString &what, const QVariantMap &state)
++{
++    if (what == u"graph"_s) {
++        const QVariantMap want = state.value(u"graph"_s).toMap();
++        // Set the running graph now; the files carry the same values for the next start.
++        const auto set = [&](const QString &key, const QString &value) {
++            run(u"pw-metadata"_s, {u"-n"_s, u"settings"_s, u"0"_s, key, value}, 4000);
++        };
++        if (want.contains(u"allowedRates"_s)) {
++            QStringList rs;
++            for (const auto &r : want.value(u"allowedRates"_s).toList()) {
++                rs << r.toString();
++            }
++            set(u"clock.allowed-rates"_s, u"[ %1 ]"_s.arg(rs.join(u' ')));
++        }
++        for (const auto &[k, mk] : {std::pair{u"rate"_s, u"clock.rate"_s}, std::pair{u"quantum"_s, u"clock.quantum"_s},
++                                    std::pair{u"minQuantum"_s, u"clock.min-quantum"_s}, std::pair{u"maxQuantum"_s, u"clock.max-quantum"_s}}) {
++            if (want.contains(k)) {
++                set(mk, want.value(k).toString());
++            }
++        }
++        wait(800);
++        const QVariantMap got = readGraph();
++        QStringList wrong;
++        for (const auto &k : {u"rate"_s, u"quantum"_s, u"minQuantum"_s, u"maxQuantum"_s}) {
++            if (want.contains(k) && got.value(k).toInt() != want.value(k).toInt()) {
++                wrong << i18nd("kcm_pulseaudio", "The sound system kept the %1 at %2, not %3.", graphLabel(k), got.value(k).toInt(), want.value(k).toInt());
++            }
++        }
++        if (want.contains(u"allowedRates"_s)) {
++            QList<int> wl;
++            for (const auto &r : want.value(u"allowedRates"_s).toList()) {
++                wl << r.toInt();
++            }
++            QList<int> gl;
++            for (const auto &r : got.value(u"allowedRates"_s).toList()) {
++                gl << r.toInt();
++            }
++            if (wl != gl) {
++                wrong << i18nd("kcm_pulseaudio", "The allowed rates stay as they were.");
++            }
++        }
++        if (want.contains(u"allowedRates"_s)) {
++            // A program that pins the graph to one rate keeps it there whatever the list says.
++            for (const auto &[rate, who] : pinnedStreams()) {
++                bool listed = false;
++                for (const auto &r : want.value(u"allowedRates"_s).toList()) {
++                    listed = listed || r.toInt() == rate;
++                }
++                if (!listed) {
++                    wrong << i18nd("kcm_pulseaudio", "%1 holds the sound system at %2 Hz, which is not among the rates chosen.", who, rate);
++                }
++            }
++        }
++        return wrong.join(u" "_s);
++    }
++    if (what == u"quality"_s) {
++        const int want = state.value(u"quality"_s).toInt();
++        const auto doc = pwDump();
++        for (const auto &item : doc.array()) {
++            const auto props = item.toObject().value(u"info"_s).toObject().value(u"props"_s).toObject();
++            const QString name = propString(props, u"node.name"_s);
++            if (name.startsWith(u"alsa_output."_s) || name.startsWith(u"bluez_output."_s)) {
++                const QString got = propString(props, u"resample.quality"_s);
++                if (got.toInt() != want || got.isEmpty()) {
++                    return i18nd("kcm_pulseaudio", "%1 still has resampling quality %2.", propString(props, u"node.description"_s), got.isEmpty() ? QStringLiteral("-") : got);
++                }
++            }
++        }
++        return {};
++    }
++    if (what.startsWith(u"device:"_s)) {
++        const QString node = what.mid(7);
++        const QVariantMap choice = state.value(u"devices"_s).toMap().value(node).toMap();
++        const auto doc = pwDump();
++        bool found = false;
++        for (const auto &item : doc.array()) {
++            const auto props = item.toObject().value(u"info"_s).toObject().value(u"props"_s).toObject();
++            if (propString(props, u"node.name"_s) != node) {
++                continue;
++            }
++            found = true;
++            if (choice.isEmpty()) {
++                return {};
++            }
++            if (choice.contains(u"format"_s) && propString(props, u"audio.format"_s) != choice.value(u"format"_s).toString()) {
++                return i18nd("kcm_pulseaudio", "The device did not take the chosen format or rate.");
++            }
++            if (choice.contains(u"rate"_s) && propString(props, u"audio.rate"_s).toInt() != choice.value(u"rate"_s).toInt()) {
++                return i18nd("kcm_pulseaudio", "The device did not take the chosen format or rate.");
++            }
++        }
++        if (!found) {
++            return i18nd("kcm_pulseaudio", "This device is no longer connected.");
++        }
++        if (!choice.isEmpty() && node.contains(u"_output."_s) && (choice.contains(u"format"_s) || choice.contains(u"rate"_s))) {
++            return probe(node, choice);
++        }
++        return {};
++    }
++    return {};
++}
++
++void SoundFormats::apply(bool system, const QVariantMap &newState, const QString &what)
++{
++    if (m_busy) {
++        return;
++    }
++    setBusy(true);
++    setMessage({}, {});
++    const auto finish = [this, &what](bool ok, const QString &type, const QString &text) {
++        setMessage(type, text);
++        setBusy(false);
++        refresh();
++        Q_EMIT applied(ok, what);
++    };
++
++    const QString bad = SoundFormatConf::validate(newState);
++    if (!bad.isEmpty()) {
++        finish(false, u"error"_s, i18nd("kcm_pulseaudio", "Nothing was changed: the value %1 is not one the sound system accepts.", bad));
++        return;
++    }
++    // PipeWire's own reader looks at every file before it is put in place.
++    const QString dumper = QStandardPaths::findExecutable(u"spa-json-dump"_s);
++    if (!dumper.isEmpty()) {
++        QTemporaryDir tmp;
++        const auto files = SoundFormatConf::render(newState);
++        for (auto it = files.begin(); it != files.end(); ++it) {
++            if (it.value().isEmpty()) {
++                continue;
++            }
++            QFile f(tmp.filePath(u"check.conf"_s));
++            f.open(QFile::WriteOnly | QFile::Truncate);
++            f.write(it.value());
++            f.close();
++            const Run r = run(u"spa-json-dump"_s, {f.fileName()}, 4000);
++            if (r.code != 0) {
++                finish(false, u"error"_s,
++                       i18nd("kcm_pulseaudio", "Nothing was changed: PipeWire cannot read the settings file (%1).", QString::fromUtf8(r.err).trimmed()));
++                return;
++            }
++        }
++    }
++
++    const QVariantMap previous = system ? m_system : m_user;
++    QString error;
++    if (!writeScope(system, newState, &error)) {
++        finish(false, u"error"_s, i18nd("kcm_pulseaudio", "Nothing was changed: the settings could not be written (%1).", error));
++        return;
++    }
++    const bool removal = [&] {
++        // A key that was set before and is not now: its automatic value comes back from the files, so the services restart.
++        const auto gone = [](const QVariantMap &a, const QVariantMap &b) {
++            for (auto it = a.begin(); it != a.end(); ++it) {
++                if (!b.contains(it.key())) {
++                    return true;
++                }
++            }
++            return false;
++        };
++        return gone(previous.value(u"graph"_s).toMap(), newState.value(u"graph"_s).toMap()) || (previous.contains(u"quality"_s) && !newState.contains(u"quality"_s))
++            || gone(previous.value(u"devices"_s).toMap(), newState.value(u"devices"_s).toMap());
++    }();
++    bool ok = activate(what, removal);
++    QString problem = ok ? check(what, newState) : i18nd("kcm_pulseaudio", "The sound system did not come back after the restart.");
++    if (!problem.isEmpty()) {
++        // The earlier settings are written back, and the sound system is given them again.
++        QString restoreError;
++        const bool restored = writeScope(system, previous, &restoreError);
++        activate(what, true);
++        const QString note = restored ? i18nd("kcm_pulseaudio", "The earlier settings stay.")
++                                      : i18nd("kcm_pulseaudio", "The earlier settings could not be put back (%1); check the files named 50-sound-page.conf.", restoreError);
++        finish(false, u"error"_s, i18nd("kcm_pulseaudio", "The change was not kept. %1 %2", problem, note));
++        return;
++    }
++    finish(true, u"positive"_s, i18nd("kcm_pulseaudio", "The change is in use."));
++}
++
++#include "moc_soundformats.cpp"
+diff --git a/src/qml/soundformats.h b/src/qml/soundformats.h
+new file mode 100644
+index 00000000..3aca8d6c
+--- /dev/null
++++ b/src/qml/soundformats.h
+@@ -0,0 +1,97 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++#pragma once
++
++#include <QJsonDocument>
++#include <QObject>
++#include <QProcess>
++#include <QVariantList>
++#include <QVariantMap>
++
++/**
++ * What the Sound page shows and sets about formats and rates.
++ *
++ * It reads three things and decides nothing of its own:
++ *  - what the edition's sparky-stereo-audio chose and why (its choices.json and its `show` text, in the person's language),
++ *  - what PipeWire reports for each device and for the graph (pw-dump, pw-metadata) and what the kernel reads from a display (ELD),
++ *  - the person's own drop-ins (SoundFormatConf), for this account or, through KAuth, for every account.
++ *
++ * A change is validated, written, applied and then checked against the running graph or device. If the check fails the earlier
++ * files are written back and the reason is said; nothing stays half applied.
++ */
++class SoundFormats : public QObject
++{
++    Q_OBJECT
++    Q_PROPERTY(QVariantMap engine READ engine NOTIFY changed)
++    Q_PROPERTY(QVariantMap graph READ graph NOTIFY changed)
++    Q_PROPERTY(QVariantMap userState READ userState NOTIFY changed)
++    Q_PROPERTY(QVariantMap systemState READ systemState NOTIFY changed)
++    Q_PROPERTY(QVariantList devices READ devices NOTIFY devicesChanged)
++    Q_PROPERTY(QVariantMap live READ live NOTIFY liveChanged)
++    Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
++    Q_PROPERTY(QVariantMap message READ message NOTIFY messageChanged)
++public:
++    explicit SoundFormats(QObject *parent = nullptr);
++
++    QVariantMap engine() const { return m_engine; }
++    QVariantMap graph() const { return m_graph; }
++    QVariantMap userState() const { return m_user; }
++    QVariantMap systemState() const { return m_system; }
++    QVariantList devices() const { return m_devices; }
++    QVariantMap live() const { return m_live; }
++    bool busy() const { return m_busy; }
++    QVariantMap message() const { return m_message; }
++
++    Q_INVOKABLE void refresh();
++    /** The format a device runs in now, "48000 Hz, 24 bit" style, or an empty string when it is not open. */
++    Q_INVOKABLE QString inUse(const QString &nodeName) const;
++    /**
++     * Replace the person's settings for one scope with newState and check the result.
++     * what is "graph", "quality" or "device:NODE"; it chooses how the change is applied and checked.
++     */
++    Q_INVOKABLE void apply(bool system, const QVariantMap &newState, const QString &what);
++    Q_INVOKABLE void dismissMessage();
++
++Q_SIGNALS:
++    void changed();
++    void devicesChanged();
++    void liveChanged();
++    void busyChanged();
++    void messageChanged();
++    void applied(bool ok, const QString &what);
++
++private:
++    struct Run {
++        int code = -1;
++        QByteArray out;
++        QByteArray err;
++        bool failedToStart = false;
++        bool timedOut = false;
++    };
++    Run run(const QString &program, const QStringList &args, int timeoutMs, const QByteArray &input = {}) const;
++    void wait(int ms) const;
++    void setBusy(bool busy);
++    void setMessage(const QString &type, const QString &text);
++    QString userBase() const;
++    bool writeScope(bool system, const QVariantMap &state, QString *error);
++    bool activate(const QString &what, bool removal);
++    QString check(const QString &what, const QVariantMap &state);
++    QString probe(const QString &node, const QVariantMap &choice);
++    QList<QPair<int, QString>> pinnedStreams() const;
++    QVariantMap readEngine() const;
++    QVariantMap readGraph() const;
++    QVariantList readDevices(const QVariantMap &engine, QVariantMap *live) const;
++    QJsonDocument pwDump() const;
++    static QVariantMap parseEld(const QString &text);
++
++    QVariantMap m_engine;
++    QVariantMap m_graph;
++    QVariantMap m_user;
++    QVariantMap m_system;
++    QVariantList m_devices;
++    QVariantMap m_live;
++    QVariantMap m_message;
++    bool m_busy = false;
++};
+diff --git a/src/soundformatconf.cpp b/src/soundformatconf.cpp
+new file mode 100644
+index 00000000..1a74ea59
+--- /dev/null
++++ b/src/soundformatconf.cpp
+@@ -0,0 +1,454 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++
++#include "soundformatconf.h"
++
++#include <QDir>
++#include <QFile>
++#include <QFileInfo>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QRegularExpression>
++#include <QSaveFile>
++
++using namespace Qt::StringLiterals;
++
++namespace
++{
++constexpr auto NAME = "50-sound-page.conf"_L1;
++const QString PIPEWIRE_FILE = u"pipewire/pipewire.conf.d/"_s + NAME;
++const QString CLIENT_FILE = u"pipewire/client.conf.d/"_s + NAME;
++const QString PULSE_FILE = u"pipewire/pipewire-pulse.conf.d/"_s + NAME;
++const QString WIREPLUMBER_FILE = u"wireplumber/wireplumber.conf.d/"_s + NAME;
++const QStringList ALL_FILES = {PIPEWIRE_FILE, CLIENT_FILE, PULSE_FILE, WIREPLUMBER_FILE};
++
++constexpr int MIN_RATE = 8000;
++constexpr int MAX_RATE = 768000;
++constexpr int MAX_RATES = 32; // PipeWire's list of allowed rates holds 32
++constexpr int DEFAULT_MIN_QUANTUM = 32;
++constexpr int DEFAULT_MAX_QUANTUM = 2048;
++
++bool isPowerOfTwo(int v)
++{
++    return v > 0 && (v & (v - 1)) == 0;
++}
++
++bool validQuantum(int v)
++{
++    return isPowerOfTwo(v) && v >= 16 && v <= 8192;
++}
++
++QByteArray withMark(const QJsonObject &object)
++{
++    return (SoundFormatConf::mark() + u"\n"_s).toUtf8() + QJsonDocument(object).toJson(QJsonDocument::Indented);
++}
++
++// PipeWire's own file form (SPA JSON with "key = value" lines), which is also the form sparky-stereo-audio looks for when
++// it asks whether the person has set a key, so its runtime `apply` leaves a key of ours alone.
++QByteArray spaSection(const QString &section, const QList<QPair<QString, QString>> &values)
++{
++    QString text = SoundFormatConf::mark() + u"\n"_s + section + u" = {\n"_s;
++    for (const auto &[k, v] : values) {
++        text += u"    "_s + k + u" = "_s + v + u"\n"_s;
++    }
++    return (text + u"}\n"_s).toUtf8();
++}
++
++QString ratesList(const QVariantList &list)
++{
++    QStringList out;
++    for (const auto &v : list) {
++        out << QString::number(v.toInt());
++    }
++    return u"[ "_s + out.join(u' ') + u" ]"_s;
++}
++
++// The value of `key = value` in a section of such a file, or an empty string.
++QString spaValue(const QString &body, const QString &key)
++{
++    const auto m = QRegularExpression(u"^\\s*"_s + QRegularExpression::escape(key) + u"\\s*=\\s*(.*?)\\s*$"_s, QRegularExpression::MultilineOption).match(body);
++    return m.hasMatch() ? m.captured(1) : QString();
++}
++
++QString stripMark(const QByteArray &raw, bool *ours);
++
++QString readBody(const QString &path)
++{
++    QFile f(path);
++    if (!f.open(QFile::ReadOnly)) {
++        return {};
++    }
++    const QByteArray raw = f.readAll();
++    bool ours = false;
++    const QString body = stripMark(raw, &ours);
++    return ours ? body : QString();
++}
++
++QJsonObject deviceProps(const QVariantMap &choice)
++{
++    QJsonObject props;
++    const QString format = choice.value(u"format"_s).toString();
++    const int rate = choice.value(u"rate"_s).toInt();
++    if (!format.isEmpty()) {
++        props.insert(u"audio.format"_s, format);
++    }
++    if (rate > 0) {
++        props.insert(u"audio.rate"_s, rate);
++        props.insert(u"audio.allowed-rates"_s, QJsonArray{rate});
++    }
++    if (choice.value(u"bitPerfect"_s).toBool()) {
++        // Nothing may be added to the samples: no dither. The device keeps the stream's own format and rate.
++        props.insert(u"dither.method"_s, u"none"_s);
++    }
++    return props;
++}
++
++QJsonObject rule(const QString &nodeMatch, const QJsonObject &props)
++{
++    return QJsonObject{{u"matches"_s, QJsonArray{QJsonObject{{u"node.name"_s, nodeMatch}}}},
++                       {u"actions"_s, QJsonObject{{u"update-props"_s, props}}}};
++}
++
++QString stripMark(const QByteArray &raw, bool *ours)
++{
++    const QString text = QString::fromUtf8(raw);
++    const auto lines = text.split(u'\n');
++    *ours = !lines.isEmpty() && lines.first() == SoundFormatConf::mark();
++    QStringList body;
++    for (const auto &l : lines) {
++        if (!l.startsWith(u'#')) {
++            body << l;
++        }
++    }
++    return body.join(u'\n');
++}
++
++QJsonObject readOurs(const QString &path)
++{
++    QFile f(path);
++    if (!f.open(QFile::ReadOnly)) {
++        return {};
++    }
++    bool ours = false;
++    const QString body = stripMark(f.readAll(), &ours);
++    if (!ours) {
++        return {};
++    }
++    QJsonParseError error;
++    const auto doc = QJsonDocument::fromJson(body.toUtf8(), &error);
++    return error.error == QJsonParseError::NoError ? doc.object() : QJsonObject();
++}
++
++bool isOurs(const QString &path)
++{
++    QFile f(path);
++    if (!f.open(QFile::ReadOnly)) {
++        return false;
++    }
++    bool ours = false;
++    stripMark(f.read(4096), &ours);
++    return ours;
++}
++} // namespace
++
++QString SoundFormatConf::fileName()
++{
++    return NAME;
++}
++
++QString SoundFormatConf::mark()
++{
++    return u"# Written by the Sound page of System Settings (plasma-pa). Back to automatic removes this file. "
++           "The sparky-stereo-audio defaults in 00-sparky-stereo-audio.conf are never written here."_s;
++}
++
++QStringList SoundFormatConf::knownFormats()
++{
++    return {u"S16LE"_s, u"S24LE"_s, u"S24_32LE"_s, u"S32LE"_s, u"F32LE"_s};
++}
++
++bool SoundFormatConf::validNodeName(const QString &name)
++{
++    static const QRegularExpression re(u"^(alsa|bluez)_(output|input)\\.[A-Za-z0-9_.:+-]{1,200}$"_s);
++    return re.match(name).hasMatch();
++}
++
++QString SoundFormatConf::validate(const QVariantMap &state)
++{
++    static const QSet<QString> topKeys = {u"graph"_s, u"quality"_s, u"devices"_s};
++    for (auto it = state.begin(); it != state.end(); ++it) {
++        if (!topKeys.contains(it.key())) {
++            return u"state."_s + it.key();
++        }
++    }
++    const QVariantMap graph = state.value(u"graph"_s).toMap();
++    static const QSet<QString> graphKeys = {u"allowedRates"_s, u"rate"_s, u"quantum"_s, u"minQuantum"_s, u"maxQuantum"_s};
++    for (auto it = graph.begin(); it != graph.end(); ++it) {
++        if (!graphKeys.contains(it.key())) {
++            return u"graph."_s + it.key();
++        }
++    }
++    QList<int> allowed;
++    if (graph.contains(u"allowedRates"_s)) {
++        const auto list = graph.value(u"allowedRates"_s).toList();
++        if (list.isEmpty() || list.size() > MAX_RATES) {
++            return u"graph.allowedRates"_s;
++        }
++        for (const auto &v : list) {
++            bool ok = false;
++            const int r = v.toInt(&ok);
++            if (!ok || r < MIN_RATE || r > MAX_RATE || allowed.contains(r)) {
++                return u"graph.allowedRates"_s;
++            }
++            allowed << r;
++        }
++    }
++    if (graph.contains(u"rate"_s)) {
++        bool ok = false;
++        const int r = graph.value(u"rate"_s).toInt(&ok);
++        if (!ok || r < MIN_RATE || r > MAX_RATE || (!allowed.isEmpty() && !allowed.contains(r))) {
++            return u"graph.rate"_s;
++        }
++    }
++    for (const auto &k : {u"quantum"_s, u"minQuantum"_s, u"maxQuantum"_s}) {
++        if (graph.contains(k)) {
++            bool ok = false;
++            const int v = graph.value(k).toInt(&ok);
++            if (!ok || !validQuantum(v)) {
++                return u"graph."_s + k;
++            }
++        }
++    }
++    const int mn = graph.value(u"minQuantum"_s, DEFAULT_MIN_QUANTUM).toInt();
++    const int mx = graph.value(u"maxQuantum"_s, DEFAULT_MAX_QUANTUM).toInt();
++    if (mn > mx) {
++        return u"graph.minQuantum"_s;
++    }
++    if (graph.contains(u"quantum"_s)) {
++        const int q = graph.value(u"quantum"_s).toInt();
++        if (q < mn || q > mx) {
++            return u"graph.quantum"_s;
++        }
++    }
++    if (state.contains(u"quality"_s)) {
++        bool ok = false;
++        const int q = state.value(u"quality"_s).toInt(&ok);
++        if (!ok || q < 0 || q > 14) {
++            return u"quality"_s;
++        }
++    }
++    const QVariantMap devices = state.value(u"devices"_s).toMap();
++    for (auto it = devices.begin(); it != devices.end(); ++it) {
++        if (!validNodeName(it.key())) {
++            return u"device.name"_s;
++        }
++        const QVariantMap choice = it.value().toMap();
++        for (auto c = choice.begin(); c != choice.end(); ++c) {
++            if (c.key() != u"format"_s && c.key() != u"rate"_s && c.key() != u"bitPerfect"_s) {
++                return u"device."_s + c.key();
++            }
++        }
++        if (choice.contains(u"format"_s) && !knownFormats().contains(choice.value(u"format"_s).toString())) {
++            return u"device.format"_s;
++        }
++        if (choice.contains(u"rate"_s)) {
++            bool ok = false;
++            const int r = choice.value(u"rate"_s).toInt(&ok);
++            if (!ok || r < MIN_RATE || r > MAX_RATE) {
++                return u"device.rate"_s;
++            }
++        }
++        if (choice.contains(u"bitPerfect"_s) && choice.value(u"bitPerfect"_s).typeId() != QMetaType::Bool) {
++            return u"device.bitPerfect"_s;
++        }
++        if (choice.isEmpty()) {
++            return u"device.empty"_s;
++        }
++    }
++    return {};
++}
++
++QMap<QString, QByteArray> SoundFormatConf::render(const QVariantMap &state)
++{
++    QMap<QString, QByteArray> files;
++    for (const auto &f : ALL_FILES) {
++        files.insert(f, QByteArray());
++    }
++
++    const QVariantMap graph = state.value(u"graph"_s).toMap();
++    if (!graph.isEmpty()) {
++        QList<QPair<QString, QString>> values;
++        if (graph.contains(u"rate"_s)) {
++            values << qMakePair(u"default.clock.rate"_s, QString::number(graph.value(u"rate"_s).toInt()));
++        }
++        if (graph.contains(u"allowedRates"_s)) {
++            values << qMakePair(u"default.clock.allowed-rates"_s, ratesList(graph.value(u"allowedRates"_s).toList()));
++        }
++        for (const auto &[json, key] : {std::pair{u"default.clock.quantum"_s, u"quantum"_s},
++                                        std::pair{u"default.clock.min-quantum"_s, u"minQuantum"_s},
++                                        std::pair{u"default.clock.max-quantum"_s, u"maxQuantum"_s}}) {
++            if (graph.contains(key)) {
++                values << qMakePair(json, QString::number(graph.value(key).toInt()));
++            }
++        }
++        files[PIPEWIRE_FILE] = spaSection(u"context.properties"_s, values);
++    }
++
++    const bool hasQuality = state.contains(u"quality"_s);
++    const int quality = state.value(u"quality"_s).toInt();
++    if (hasQuality) {
++        const QByteArray stream = spaSection(u"stream.properties"_s, {qMakePair(u"resample.quality"_s, QString::number(quality))});
++        files[CLIENT_FILE] = stream;
++        files[PULSE_FILE] = stream;
++    }
++
++    const QVariantMap devices = state.value(u"devices"_s).toMap();
++    if (hasQuality || !devices.isEmpty()) {
++        QJsonArray alsa;
++        QJsonArray bluez;
++        if (hasQuality) {
++            const QJsonObject q{{u"resample.quality"_s, quality}};
++            alsa.append(rule(u"~alsa_output.*"_s, q));
++            bluez.append(rule(u"~bluez_output.*"_s, q));
++        }
++        for (auto it = devices.begin(); it != devices.end(); ++it) {
++            const QJsonObject props = deviceProps(it.value().toMap());
++            if (props.isEmpty()) {
++                continue;
++            }
++            (it.key().startsWith(u"bluez_"_s) ? bluez : alsa).append(rule(it.key(), props));
++        }
++        QJsonObject root;
++        if (!alsa.isEmpty()) {
++            root.insert(u"monitor.alsa.rules"_s, alsa);
++        }
++        if (!bluez.isEmpty()) {
++            root.insert(u"monitor.bluez.rules"_s, bluez);
++        }
++        if (!root.isEmpty()) {
++            files[WIREPLUMBER_FILE] = withMark(root);
++        }
++    }
++    return files;
++}
++
++QVariantMap SoundFormatConf::read(const QString &baseDir)
++{
++    QVariantMap state;
++
++    const QString pw = readBody(baseDir + u'/' + PIPEWIRE_FILE);
++    QVariantMap graph;
++    if (!spaValue(pw, u"default.clock.rate"_s).isEmpty()) {
++        graph.insert(u"rate"_s, spaValue(pw, u"default.clock.rate"_s).toInt());
++    }
++    const QString rates = spaValue(pw, u"default.clock.allowed-rates"_s);
++    if (!rates.isEmpty()) {
++        QVariantList list;
++        static const QRegularExpression digits(u"\\d+"_s);
++        auto it = digits.globalMatch(rates);
++        while (it.hasNext()) {
++            list << it.next().captured().toInt();
++        }
++        graph.insert(u"allowedRates"_s, list);
++    }
++    for (const auto &[json, key] : {std::pair{u"default.clock.quantum"_s, u"quantum"_s},
++                                    std::pair{u"default.clock.min-quantum"_s, u"minQuantum"_s},
++                                    std::pair{u"default.clock.max-quantum"_s, u"maxQuantum"_s}}) {
++        if (!spaValue(pw, json).isEmpty()) {
++            graph.insert(key, spaValue(pw, json).toInt());
++        }
++    }
++    if (!graph.isEmpty()) {
++        state.insert(u"graph"_s, graph);
++    }
++
++    const QString stream = readBody(baseDir + u'/' + CLIENT_FILE);
++    if (!spaValue(stream, u"resample.quality"_s).isEmpty()) {
++        state.insert(u"quality"_s, spaValue(stream, u"resample.quality"_s).toInt());
++    }
++
++    const QJsonObject wp = readOurs(baseDir + u'/' + WIREPLUMBER_FILE);
++    QVariantMap devices;
++    for (const auto &key : {u"monitor.alsa.rules"_s, u"monitor.bluez.rules"_s}) {
++        for (const auto &r : wp.value(key).toArray()) {
++            const QJsonObject ro = r.toObject();
++            const QString name = ro.value(u"matches"_s).toArray().at(0).toObject().value(u"node.name"_s).toString();
++            if (name.startsWith(u'~')) {
++                continue;
++            }
++            const QJsonObject props = ro.value(u"actions"_s).toObject().value(u"update-props"_s).toObject();
++            QVariantMap choice;
++            if (props.contains(u"audio.format"_s)) {
++                choice.insert(u"format"_s, props.value(u"audio.format"_s).toString());
++            }
++            if (props.contains(u"audio.rate"_s)) {
++                choice.insert(u"rate"_s, props.value(u"audio.rate"_s).toInt());
++            }
++            if (props.value(u"dither.method"_s).toString() == u"none"_s) {
++                choice.insert(u"bitPerfect"_s, true);
++            }
++            if (!choice.isEmpty()) {
++                devices.insert(name, choice);
++            }
++        }
++    }
++    if (!devices.isEmpty()) {
++        state.insert(u"devices"_s, devices);
++    }
++    return state;
++}
++
++bool SoundFormatConf::write(const QString &baseDir, const QVariantMap &state, QString *error)
++{
++    const QString bad = validate(state);
++    if (!bad.isEmpty()) {
++        if (error) {
++            *error = u"invalid: "_s + bad;
++        }
++        return false;
++    }
++    const auto files = render(state);
++    // Check first that nothing in the way is somebody else's file, so a refusal leaves everything as it was.
++    for (auto it = files.begin(); it != files.end(); ++it) {
++        const QString path = baseDir + u'/' + it.key();
++        if (QFileInfo::exists(path) && !isOurs(path)) {
++            if (it.value().isEmpty()) {
++                continue; // not ours and not wanted: left alone
++            }
++            if (error) {
++                *error = u"foreign: "_s + path;
++            }
++            return false;
++        }
++    }
++    for (auto it = files.begin(); it != files.end(); ++it) {
++        const QString path = baseDir + u'/' + it.key();
++        if (it.value().isEmpty()) {
++            if (QFileInfo::exists(path) && isOurs(path) && !QFile::remove(path)) {
++                if (error) {
++                    *error = u"remove: "_s + path;
++                }
++                return false;
++            }
++            continue;
++        }
++        if (!QDir().mkpath(QFileInfo(path).absolutePath())) {
++            if (error) {
++                *error = u"mkdir: "_s + path;
++            }
++            return false;
++        }
++        QSaveFile f(path);
++        if (!f.open(QFile::WriteOnly) || f.write(it.value()) != it.value().size() || !f.commit()) {
++            if (error) {
++                *error = u"write: "_s + path;
++            }
++            return false;
++        }
++        QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadGroup | QFileDevice::ReadOther);
++    }
++    return true;
++}
+diff --git a/src/soundformatconf.h b/src/soundformatconf.h
+new file mode 100644
+index 00000000..7aace182
+--- /dev/null
++++ b/src/soundformatconf.h
+@@ -0,0 +1,46 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++#pragma once
++
++#include <QByteArray>
++#include <QJsonObject>
++#include <QMap>
++#include <QString>
++#include <QStringList>
++#include <QVariantMap>
++
++/**
++ * The person's own sound format settings, as drop-ins for PipeWire and WirePlumber.
++ *
++ * The edition's sparky-stereo-audio writes 00-sparky-stereo-audio.conf and treats every other file as the person's.
++ * This class writes 50-sound-page.conf beside it, in one folder under a base directory (~/.config for one account,
++ * /etc for every account), and removes only files that carry its mark.
++ * It never computes a default: a key that is absent here is the automatic choice, which is the engine's.
++ *
++ * State, as a map: "graph" {allowedRates [int], rate, quantum, minQuantum, maxQuantum}, "quality" int,
++ * "devices" {nodeName {format, rate, bitPerfect}}. A missing key is automatic.
++ */
++class SoundFormatConf
++{
++public:
++    static QString fileName();
++    static QString mark();
++
++    /** Empty when the state is acceptable, else a code naming the first value refused: "graph.rate", "device.format"... */
++    static QString validate(const QVariantMap &state);
++
++    /** Relative path (under the base directory) to file content; an empty content means that file is not wanted. */
++    static QMap<QString, QByteArray> render(const QVariantMap &state);
++
++    /** The state the files under baseDir describe (only files that carry the mark). */
++    static QVariantMap read(const QString &baseDir);
++
++    /** Make the files under baseDir match the state: write the wanted ones, remove our own that are no longer wanted. */
++    static bool write(const QString &baseDir, const QVariantMap &state, QString *error = nullptr);
++
++    /** The formats a node may be asked for, as PipeWire names them. */
++    static QStringList knownFormats();
++    static bool validNodeName(const QString &name);
++};

@@ -1,0 +1,2691 @@
+diff --git a/po/pl/kcm_pulseaudio.po b/po/pl/kcm_pulseaudio.po
+--- a/po/pl/kcm_pulseaudio.po
++++ b/po/pl/kcm_pulseaudio.po
+@@ -894,3 +894,295 @@
+ #. Explicit monitoring and combined recording controls.
+ msgid "This microphone is also being sent to this output. The combined recording captures it twice, which can cause an echo."
+ msgstr "Ten mikrofon jest również przesyłany na to wyjście. Nagrywanie łączone przechwytuje go dwukrotnie, co może powodować echo."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "default rate"
++msgstr "domyślną częstotliwość"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "buffer size"
++msgstr "rozmiar bufora"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "smallest buffer size"
++msgstr "najmniejszy rozmiar bufora"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "largest buffer size"
++msgstr "największy rozmiar bufora"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 is not one this page wrote, so it was left alone"
++msgstr "plik %1 nie został zapisany przez tę stronę, więc go pozostawiono"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 could not be written"
++msgstr "nie można zapisać pliku %1"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the settings were not accepted"
++msgstr "ustawienia nie zostały przyjęte"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the system did not allow the change for every account"
++msgstr "system nie pozwolił na zmianę dla wszystkich kont"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The tool %1 is not installed, so the choice could not be tried."
++msgstr "Narzędzie %1 nie jest zainstalowane, więc nie można było wypróbować wyboru."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device went into an error state."
++msgstr "Urządzenie przeszło w stan błędu."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran at %1 Hz, not the %2 Hz chosen."
++msgstr "Urządzenie pracowało z częstotliwością %1 Hz, a nie wybranymi %2 Hz."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran in %1, not in the format chosen."
++msgstr "Urządzenie pracowało w formacie %1, a nie w wybranym."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not start playing in the chosen format."
++msgstr "Urządzenie nie zaczęło odtwarzać w wybranym formacie."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system kept the %1 at %2, not %3."
++msgstr "System dźwięku zachował %1 na poziomie %2, a nie %3."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The allowed rates stay as they were."
++msgstr "Dozwolone częstotliwości pozostają bez zmian."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 holds the sound system at %2 Hz, which is not among the rates chosen."
++msgstr "%1 utrzymuje system dźwięku na %2 Hz, czego nie ma wśród wybranych częstotliwości."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 still has resampling quality %2."
++msgstr "%1 nadal ma jakość konwersji %2."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not take the chosen format or rate."
++msgstr "Urządzenie nie przyjęło wybranego formatu lub częstotliwości."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This device is no longer connected."
++msgstr "To urządzenie nie jest już podłączone."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the value %1 is not one the sound system accepts."
++msgstr "Nic nie zmieniono: wartość %1 nie jest akceptowana przez system dźwięku."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: PipeWire cannot read the settings file (%1)."
++msgstr "Nic nie zmieniono: PipeWire nie może odczytać pliku ustawień (%1)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the settings could not be written (%1)."
++msgstr "Nic nie zmieniono: nie można zapisać ustawień (%1)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system did not come back after the restart."
++msgstr "System dźwięku nie wrócił po ponownym uruchomieniu."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings stay."
++msgstr "Poprzednie ustawienia pozostają."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings could not be put back (%1); check the files named 50-sound-page.conf."
++msgstr "Nie udało się przywrócić poprzednich ustawień (%1); sprawdź pliki o nazwie 50-sound-page.conf."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change was not kept. %1 %2"
++msgstr "Zmiana nie została zachowana. %1 %2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change is in use."
++msgstr "Zmiana jest w użyciu."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality"
++msgstr "Jakość dźwięku"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 Hz"
++msgstr "%1 Hz"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "32 bit float"
++msgstr "32 bity zmiennoprzecinkowe"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 bit"
++msgstr "%1 bit(y)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound defaults of this computer have not been written yet, so there is no automatic choice to show. Run: sudo sparky-stereo-audio detect --write"
++msgstr "Domyślne ustawienia dźwięku tego komputera nie zostały jeszcze zapisane, więc nie ma automatycznego wyboru do pokazania. Uruchom: sudo sparky-stereo-audio detect --write"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system of this session did not answer, so its rates and devices cannot be shown."
++msgstr "System dźwięku tej sesji nie odpowiedział, więc nie można pokazać jego częstotliwości ani urządzeń."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Apply changes to every account on this computer"
++msgstr "Zastosuj zmiany dla wszystkich kont na tym komputerze"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound system"
++msgstr "System dźwięku"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic choice:"
++msgstr "Wybór automatyczny:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates %1, resting at %2, resampling quality %3 of 14."
++msgstr "Częstotliwości %1, spoczynkowa %2, jakość konwersji %3 z 14."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Running now:"
++msgstr "Teraz działa:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1, buffer %2 (%3 ms)."
++msgstr "%1, bufor %2 (%3 ms)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resting rate:"
++msgstr "Częstotliwość spoczynkowa:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (%1)"
++msgstr "Automatycznie (%1)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates the sound system may use:"
++msgstr "Częstotliwości, których może używać system dźwięku:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (the rates of the devices in this computer)"
++msgstr "Automatycznie (częstotliwości urządzeń tego komputera)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "These rates:"
++msgstr "Te częstotliwości:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Use these rates"
++msgstr "Użyj tych częstotliwości"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "With several rates the sound system follows the rate of what plays, so the file is not converted. AES5: 48 kHz is recommended for professional audio, 44.1 kHz is recognised for consumer applications, 96 kHz for higher bandwidth."
++msgstr "Przy kilku częstotliwościach system dźwięku podąża za częstotliwością odtwarzanego materiału, więc plik nie jest konwertowany. AES5: 48 kHz jest zalecane dla dźwięku profesjonalnego, 44,1 kHz jest uznane dla zastosowań konsumenckich, 96 kHz dla większego pasma."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Buffer size:"
++msgstr "Rozmiar bufora:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (PipeWire's own)"
++msgstr "Automatycznie (własny PipeWire)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 samples"
++msgstr "%1 próbek"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "A smaller buffer means less delay and more work for the processor. No standard sets this; the delay is the buffer size divided by the rate."
++msgstr "Mniejszy bufor oznacza mniejsze opóźnienie i więcej pracy procesora. Żaden standard tego nie określa; opóźnienie to rozmiar bufora podzielony przez częstotliwość."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resampling quality:"
++msgstr "Jakość konwersji:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 (automatic)"
++msgstr "%1 (automatycznie)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Used only when a file's rate is not one the device takes. The scale is PipeWire's own, 0 to 14; no standard defines it."
++msgstr "Używana tylko wtedy, gdy częstotliwość pliku nie jest jedną z obsługiwanych przez urządzenie. Skala jest własna dla PipeWire, od 0 do 14; żaden standard jej nie określa."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Why these choices:"
++msgstr "Dlaczego te wybory:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Back to automatic"
++msgstr "Wróć do automatycznego"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "In use:"
++msgstr "W użyciu:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Not open at the moment."
++msgstr "W tej chwili nieotwarte."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Takes:"
++msgstr "Obsługuje:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1; %2"
++msgstr "%1; %2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bluetooth codec:"
++msgstr "Kodek Bluetooth:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1. The codec decides the rate and the format of a Bluetooth device."
++msgstr "%1. O częstotliwości i formacie urządzenia Bluetooth decyduje kodek."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The codec is not known until the device plays."
++msgstr "Kodek nie jest znany, dopóki urządzenie nie zacznie odtwarzać."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The display says:"
++msgstr "Wyświetlacz podaje:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Uncompressed: %1 channels, %2 Hz, %3 bit"
++msgstr "Nieskompresowany: %1 kanały, %2 Hz, %3 bit"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Encoded, for pass-through: %1, %2 channels"
++msgstr "Kodowany, do przekazania dalej: %1, %2 kanały"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This is the list the display sends in its CTA-861 audio data blocks."
++msgstr "To lista, którą wyświetlacz wysyła w blokach danych audio CTA-861."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Format:"
++msgstr "Format:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (best this device supports)"
++msgstr "Automatycznie (najlepszy, jaki obsługuje to urządzenie)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rate:"
++msgstr "Częstotliwość:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bit-perfect: add nothing to the samples"
++msgstr "Bit-perfect: niczego nie dodawaj do próbek"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Switches off dither. The samples reach the device unchanged only while one program plays at full volume in the device's own format."
++msgstr "Wyłącza dithering. Próbki docierają do urządzenia bez zmian tylko wtedy, gdy gra jeden program przy pełnej głośności we własnym formacie urządzenia."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "No sound device is connected."
++msgstr "Nie podłączono żadnego urządzenia dźwiękowego."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality…"
++msgstr "Jakość dźwięku…"
+diff --git a/po/pt_BR/kcm_pulseaudio.po b/po/pt_BR/kcm_pulseaudio.po
+--- a/po/pt_BR/kcm_pulseaudio.po
++++ b/po/pt_BR/kcm_pulseaudio.po
+@@ -880,3 +880,295 @@
+ #. Explicit monitoring and combined recording controls.
+ msgid "This microphone is also being sent to this output. The combined recording captures it twice, which can cause an echo."
+ msgstr "Este microfone também está sendo enviado para esta saída. A gravação combinada o captura duas vezes, o que pode causar eco."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "default rate"
++msgstr "a taxa padrão"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "buffer size"
++msgstr "o tamanho do buffer"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "smallest buffer size"
++msgstr "o menor tamanho do buffer"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "largest buffer size"
++msgstr "o maior tamanho do buffer"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 is not one this page wrote, so it was left alone"
++msgstr "o arquivo %1 não foi escrito por esta página, então foi deixado como está"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 could not be written"
++msgstr "não foi possível gravar o arquivo %1"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the settings were not accepted"
++msgstr "as configurações não foram aceitas"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the system did not allow the change for every account"
++msgstr "o sistema não permitiu a alteração para todas as contas"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The tool %1 is not installed, so the choice could not be tried."
++msgstr "A ferramenta %1 não está instalada, então não foi possível testar a escolha."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device went into an error state."
++msgstr "O dispositivo entrou em estado de erro."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran at %1 Hz, not the %2 Hz chosen."
++msgstr "O dispositivo funcionou a %1 Hz, não aos %2 Hz escolhidos."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran in %1, not in the format chosen."
++msgstr "O dispositivo funcionou em %1, não no formato escolhido."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not start playing in the chosen format."
++msgstr "O dispositivo não começou a tocar no formato escolhido."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system kept the %1 at %2, not %3."
++msgstr "O sistema de som manteve %1 em %2, não em %3."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The allowed rates stay as they were."
++msgstr "As taxas permitidas continuam como estavam."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 holds the sound system at %2 Hz, which is not among the rates chosen."
++msgstr "%1 mantém o sistema de som em %2 Hz, que não está entre as taxas escolhidas."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 still has resampling quality %2."
++msgstr "%1 ainda tem qualidade de reamostragem %2."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not take the chosen format or rate."
++msgstr "O dispositivo não aceitou o formato ou a taxa escolhidos."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This device is no longer connected."
++msgstr "Este dispositivo não está mais conectado."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the value %1 is not one the sound system accepts."
++msgstr "Nada foi alterado: o valor %1 não é aceito pelo sistema de som."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: PipeWire cannot read the settings file (%1)."
++msgstr "Nada foi alterado: o PipeWire não consegue ler o arquivo de configurações (%1)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the settings could not be written (%1)."
++msgstr "Nada foi alterado: não foi possível gravar as configurações (%1)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system did not come back after the restart."
++msgstr "O sistema de som não voltou após a reinicialização."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings stay."
++msgstr "As configurações anteriores continuam."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings could not be put back (%1); check the files named 50-sound-page.conf."
++msgstr "Não foi possível restaurar as configurações anteriores (%1); verifique os arquivos chamados 50-sound-page.conf."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change was not kept. %1 %2"
++msgstr "A alteração não foi mantida. %1 %2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change is in use."
++msgstr "A alteração está em uso."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality"
++msgstr "Qualidade do som"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 Hz"
++msgstr "%1 Hz"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "32 bit float"
++msgstr "32 bits em ponto flutuante"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 bit"
++msgstr "%1 bits"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound defaults of this computer have not been written yet, so there is no automatic choice to show. Run: sudo sparky-stereo-audio detect --write"
++msgstr "Os padrões de som deste computador ainda não foram gravados, então não há escolha automática para mostrar. Execute: sudo sparky-stereo-audio detect --write"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system of this session did not answer, so its rates and devices cannot be shown."
++msgstr "O sistema de som desta sessão não respondeu, então suas taxas e dispositivos não podem ser mostrados."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Apply changes to every account on this computer"
++msgstr "Aplicar as alterações a todas as contas neste computador"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound system"
++msgstr "Sistema de som"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic choice:"
++msgstr "Escolha automática:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates %1, resting at %2, resampling quality %3 of 14."
++msgstr "Taxas %1, em repouso %2, qualidade de reamostragem %3 de 14."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Running now:"
++msgstr "Em funcionamento agora:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1, buffer %2 (%3 ms)."
++msgstr "%1, buffer %2 (%3 ms)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resting rate:"
++msgstr "Taxa em repouso:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (%1)"
++msgstr "Automático (%1)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates the sound system may use:"
++msgstr "Taxas que o sistema de som pode usar:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (the rates of the devices in this computer)"
++msgstr "Automático (as taxas dos dispositivos deste computador)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "These rates:"
++msgstr "Estas taxas:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Use these rates"
++msgstr "Usar estas taxas"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "With several rates the sound system follows the rate of what plays, so the file is not converted. AES5: 48 kHz is recommended for professional audio, 44.1 kHz is recognised for consumer applications, 96 kHz for higher bandwidth."
++msgstr "Com várias taxas, o sistema de som acompanha a taxa do que está tocando, então o arquivo não é convertido. AES5: 48 kHz é recomendada para áudio profissional, 44,1 kHz é reconhecida para aplicações de consumo, 96 kHz para maior largura de banda."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Buffer size:"
++msgstr "Tamanho do buffer:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (PipeWire's own)"
++msgstr "Automático (o próprio do PipeWire)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 samples"
++msgstr "%1 amostras"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "A smaller buffer means less delay and more work for the processor. No standard sets this; the delay is the buffer size divided by the rate."
++msgstr "Um buffer menor significa menos atraso e mais trabalho para o processador. Nenhum padrão define isso; o atraso é o tamanho do buffer dividido pela taxa."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resampling quality:"
++msgstr "Qualidade de reamostragem:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 (automatic)"
++msgstr "%1 (automático)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Used only when a file's rate is not one the device takes. The scale is PipeWire's own, 0 to 14; no standard defines it."
++msgstr "Usada só quando a taxa de um arquivo não é uma das que o dispositivo aceita. A escala é do próprio PipeWire, de 0 a 14; nenhum padrão a define."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Why these choices:"
++msgstr "Por que estas escolhas:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Back to automatic"
++msgstr "Voltar ao automático"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "In use:"
++msgstr "Em uso:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Not open at the moment."
++msgstr "Não está aberto no momento."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Takes:"
++msgstr "Aceita:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1; %2"
++msgstr "%1; %2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bluetooth codec:"
++msgstr "Codec Bluetooth:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1. The codec decides the rate and the format of a Bluetooth device."
++msgstr "%1. O codec decide a taxa e o formato de um dispositivo Bluetooth."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The codec is not known until the device plays."
++msgstr "O codec só é conhecido quando o dispositivo toca."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The display says:"
++msgstr "A tela informa:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Uncompressed: %1 channels, %2 Hz, %3 bit"
++msgstr "Sem compressão: %1 canais, %2 Hz, %3 bits"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Encoded, for pass-through: %1, %2 channels"
++msgstr "Codificado, para repasse: %1, %2 canais"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This is the list the display sends in its CTA-861 audio data blocks."
++msgstr "Esta é a lista que a tela envia nos blocos de dados de áudio CTA-861."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Format:"
++msgstr "Formato:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (best this device supports)"
++msgstr "Automático (o melhor que este dispositivo aceita)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rate:"
++msgstr "Taxa:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bit-perfect: add nothing to the samples"
++msgstr "Bit-perfect: não acrescentar nada às amostras"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Switches off dither. The samples reach the device unchanged only while one program plays at full volume in the device's own format."
++msgstr "Desliga o dither. As amostras chegam ao dispositivo sem alteração apenas enquanto um programa toca com volume total no formato do próprio dispositivo."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "No sound device is connected."
++msgstr "Nenhum dispositivo de som está conectado."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality…"
++msgstr "Qualidade do som…"
+diff --git a/po/fr/kcm_pulseaudio.po b/po/fr/kcm_pulseaudio.po
+--- a/po/fr/kcm_pulseaudio.po
++++ b/po/fr/kcm_pulseaudio.po
+@@ -905,3 +905,295 @@
+ #. Explicit monitoring and combined recording controls.
+ msgid "This microphone is also being sent to this output. The combined recording captures it twice, which can cause an echo."
+ msgstr "Ce microphone est aussi envoyé vers cette sortie. L’enregistrement combiné le capture deux fois, ce qui peut produire un écho."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "default rate"
++msgstr "le taux par défaut"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "buffer size"
++msgstr "la taille du tampon"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "smallest buffer size"
++msgstr "la plus petite taille du tampon"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "largest buffer size"
++msgstr "la plus grande taille du tampon"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 is not one this page wrote, so it was left alone"
++msgstr "le fichier %1 n'a pas été écrit par cette page, il a donc été laissé tel quel"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 could not be written"
++msgstr "le fichier %1 n'a pas pu être écrit"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the settings were not accepted"
++msgstr "les réglages n'ont pas été acceptés"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the system did not allow the change for every account"
++msgstr "le système n'a pas autorisé la modification pour tous les comptes"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The tool %1 is not installed, so the choice could not be tried."
++msgstr "L'outil %1 n'est pas installé, le choix n'a donc pas pu être essayé."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device went into an error state."
++msgstr "L'appareil est passé en état d'erreur."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran at %1 Hz, not the %2 Hz chosen."
++msgstr "L'appareil a fonctionné à %1 Hz, et non aux %2 Hz choisis."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran in %1, not in the format chosen."
++msgstr "L'appareil a fonctionné en %1, et non dans le format choisi."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not start playing in the chosen format."
++msgstr "L'appareil n'a pas commencé à lire dans le format choisi."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system kept the %1 at %2, not %3."
++msgstr "Le système de son a gardé %1 à %2, et non à %3."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The allowed rates stay as they were."
++msgstr "Les taux autorisés restent inchangés."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 holds the sound system at %2 Hz, which is not among the rates chosen."
++msgstr "%1 maintient le système de son à %2 Hz, qui ne fait pas partie des taux choisis."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 still has resampling quality %2."
++msgstr "%1 a toujours la qualité de rééchantillonnage %2."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not take the chosen format or rate."
++msgstr "L'appareil n'a pas accepté le format ou le taux choisi."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This device is no longer connected."
++msgstr "Cet appareil n'est plus connecté."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the value %1 is not one the sound system accepts."
++msgstr "Rien n'a été modifié : la valeur %1 n'est pas acceptée par le système de son."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: PipeWire cannot read the settings file (%1)."
++msgstr "Rien n'a été modifié : PipeWire ne peut pas lire le fichier de réglages (%1)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the settings could not be written (%1)."
++msgstr "Rien n'a été modifié : les réglages n'ont pas pu être écrits (%1)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system did not come back after the restart."
++msgstr "Le système de son n'est pas revenu après le redémarrage."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings stay."
++msgstr "Les réglages précédents sont conservés."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings could not be put back (%1); check the files named 50-sound-page.conf."
++msgstr "Les réglages précédents n'ont pas pu être rétablis (%1) ; vérifiez les fichiers nommés 50-sound-page.conf."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change was not kept. %1 %2"
++msgstr "La modification n'a pas été conservée. %1 %2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change is in use."
++msgstr "La modification est en cours d'utilisation."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality"
++msgstr "Qualité du son"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 Hz"
++msgstr "%1 Hz"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "32 bit float"
++msgstr "32 bits flottants"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 bit"
++msgstr "%1 bits"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound defaults of this computer have not been written yet, so there is no automatic choice to show. Run: sudo sparky-stereo-audio detect --write"
++msgstr "Les réglages de son par défaut de cet ordinateur n'ont pas encore été écrits, il n'y a donc pas de choix automatique à afficher. Exécutez : sudo sparky-stereo-audio detect --write"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system of this session did not answer, so its rates and devices cannot be shown."
++msgstr "Le système de son de cette session n'a pas répondu, ses taux et ses appareils ne peuvent donc pas être affichés."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Apply changes to every account on this computer"
++msgstr "Appliquer les modifications à tous les comptes de cet ordinateur"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound system"
++msgstr "Système de son"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic choice:"
++msgstr "Choix automatique :"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates %1, resting at %2, resampling quality %3 of 14."
++msgstr "Taux %1, au repos %2, qualité de rééchantillonnage %3 sur 14."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Running now:"
++msgstr "En fonctionnement :"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1, buffer %2 (%3 ms)."
++msgstr "%1, tampon %2 (%3 ms)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resting rate:"
++msgstr "Taux au repos :"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (%1)"
++msgstr "Automatique (%1)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates the sound system may use:"
++msgstr "Taux que le système de son peut utiliser :"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (the rates of the devices in this computer)"
++msgstr "Automatique (les taux des appareils de cet ordinateur)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "These rates:"
++msgstr "Ces taux :"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Use these rates"
++msgstr "Utiliser ces taux"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "With several rates the sound system follows the rate of what plays, so the file is not converted. AES5: 48 kHz is recommended for professional audio, 44.1 kHz is recognised for consumer applications, 96 kHz for higher bandwidth."
++msgstr "Avec plusieurs taux, le système de son suit le taux de ce qui est lu, le fichier n'est donc pas converti. AES5 : 48 kHz est recommandé pour l'audio professionnel, 44,1 kHz est reconnu pour les applications grand public, 96 kHz pour une bande passante plus large."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Buffer size:"
++msgstr "Taille du tampon :"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (PipeWire's own)"
++msgstr "Automatique (celle de PipeWire)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 samples"
++msgstr "%1 échantillons"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "A smaller buffer means less delay and more work for the processor. No standard sets this; the delay is the buffer size divided by the rate."
++msgstr "Un tampon plus petit signifie moins de délai et plus de travail pour le processeur. Aucune norme ne le fixe ; le délai est la taille du tampon divisée par le taux."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resampling quality:"
++msgstr "Qualité de rééchantillonnage :"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 (automatic)"
++msgstr "%1 (automatique)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Used only when a file's rate is not one the device takes. The scale is PipeWire's own, 0 to 14; no standard defines it."
++msgstr "Utilisée seulement quand le taux d'un fichier n'est pas l'un de ceux de l'appareil. L'échelle est celle de PipeWire, de 0 à 14 ; aucune norme ne la définit."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Why these choices:"
++msgstr "Pourquoi ces choix :"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Back to automatic"
++msgstr "Revenir à l'automatique"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "In use:"
++msgstr "En cours d'utilisation :"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Not open at the moment."
++msgstr "Pas ouvert pour le moment."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Takes:"
++msgstr "Accepte :"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1; %2"
++msgstr "%1 ; %2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bluetooth codec:"
++msgstr "Codec Bluetooth :"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1. The codec decides the rate and the format of a Bluetooth device."
++msgstr "%1. Le codec décide du taux et du format d'un appareil Bluetooth."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The codec is not known until the device plays."
++msgstr "Le codec n'est connu que lorsque l'appareil lit."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The display says:"
++msgstr "L'écran indique :"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Uncompressed: %1 channels, %2 Hz, %3 bit"
++msgstr "Non compressé : %1 canaux, %2 Hz, %3 bits"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Encoded, for pass-through: %1, %2 channels"
++msgstr "Encodé, pour transmission directe : %1, %2 canaux"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This is the list the display sends in its CTA-861 audio data blocks."
++msgstr "C'est la liste que l'écran envoie dans ses blocs de données audio CTA-861."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Format:"
++msgstr "Format :"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (best this device supports)"
++msgstr "Automatique (le meilleur que cet appareil accepte)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rate:"
++msgstr "Taux :"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bit-perfect: add nothing to the samples"
++msgstr "Bit-perfect : ne rien ajouter aux échantillons"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Switches off dither. The samples reach the device unchanged only while one program plays at full volume in the device's own format."
++msgstr "Désactive le dither. Les échantillons n'atteignent l'appareil sans changement que lorsqu'un seul programme joue à plein volume dans le format propre à l'appareil."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "No sound device is connected."
++msgstr "Aucun périphérique audio n'est connecté."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality…"
++msgstr "Qualité du son…"
+diff --git a/po/de/kcm_pulseaudio.po b/po/de/kcm_pulseaudio.po
+--- a/po/de/kcm_pulseaudio.po
++++ b/po/de/kcm_pulseaudio.po
+@@ -879,3 +879,295 @@
+ #. Explicit monitoring and combined recording controls.
+ msgid "This microphone is also being sent to this output. The combined recording captures it twice, which can cause an echo."
+ msgstr "Dieses Mikrofon wird auch an diesen Ausgang gesendet. Die kombinierte Aufnahme erfasst es zweimal, was ein Echo verursachen kann."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "default rate"
++msgstr "die Standardrate"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "buffer size"
++msgstr "die Puffergröße"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "smallest buffer size"
++msgstr "die kleinste Puffergröße"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "largest buffer size"
++msgstr "die größte Puffergröße"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 is not one this page wrote, so it was left alone"
++msgstr "die Datei %1 wurde nicht von dieser Seite geschrieben und blieb deshalb unberührt"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 could not be written"
++msgstr "die Datei %1 konnte nicht geschrieben werden"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the settings were not accepted"
++msgstr "die Einstellungen wurden nicht akzeptiert"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the system did not allow the change for every account"
++msgstr "das System hat die Änderung für alle Konten nicht erlaubt"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The tool %1 is not installed, so the choice could not be tried."
++msgstr "Das Programm %1 ist nicht installiert, daher konnte die Auswahl nicht ausprobiert werden."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device went into an error state."
++msgstr "Das Gerät ist in einen Fehlerzustand geraten."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran at %1 Hz, not the %2 Hz chosen."
++msgstr "Das Gerät lief mit %1 Hz, nicht mit den gewählten %2 Hz."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran in %1, not in the format chosen."
++msgstr "Das Gerät lief in %1, nicht im gewählten Format."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not start playing in the chosen format."
++msgstr "Das Gerät hat im gewählten Format nicht zu spielen begonnen."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system kept the %1 at %2, not %3."
++msgstr "Das Tonsystem hat %1 bei %2 belassen, nicht bei %3."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The allowed rates stay as they were."
++msgstr "Die erlaubten Raten bleiben unverändert."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 holds the sound system at %2 Hz, which is not among the rates chosen."
++msgstr "%1 hält das Tonsystem bei %2 Hz, was nicht zu den gewählten Raten gehört."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 still has resampling quality %2."
++msgstr "%1 hat weiterhin die Resampling-Qualität %2."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not take the chosen format or rate."
++msgstr "Das Gerät hat das gewählte Format oder die gewählte Rate nicht angenommen."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This device is no longer connected."
++msgstr "Dieses Gerät ist nicht mehr verbunden."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the value %1 is not one the sound system accepts."
++msgstr "Nichts wurde geändert: Der Wert %1 wird vom Tonsystem nicht akzeptiert."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: PipeWire cannot read the settings file (%1)."
++msgstr "Nichts wurde geändert: PipeWire kann die Einstellungsdatei nicht lesen (%1)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the settings could not be written (%1)."
++msgstr "Nichts wurde geändert: Die Einstellungen konnten nicht geschrieben werden (%1)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system did not come back after the restart."
++msgstr "Das Tonsystem ist nach dem Neustart nicht zurückgekehrt."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings stay."
++msgstr "Die früheren Einstellungen bleiben bestehen."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings could not be put back (%1); check the files named 50-sound-page.conf."
++msgstr "Die früheren Einstellungen konnten nicht wiederhergestellt werden (%1); prüfen Sie die Dateien mit dem Namen 50-sound-page.conf."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change was not kept. %1 %2"
++msgstr "Die Änderung wurde nicht beibehalten. %1 %2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change is in use."
++msgstr "Die Änderung ist in Gebrauch."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality"
++msgstr "Tonqualität"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 Hz"
++msgstr "%1 Hz"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "32 bit float"
++msgstr "32 Bit Gleitkomma"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 bit"
++msgstr "%1 Bit"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound defaults of this computer have not been written yet, so there is no automatic choice to show. Run: sudo sparky-stereo-audio detect --write"
++msgstr "Die Tonvorgaben dieses Computers wurden noch nicht geschrieben, daher gibt es keine automatische Wahl anzuzeigen. Ausführen: sudo sparky-stereo-audio detect --write"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system of this session did not answer, so its rates and devices cannot be shown."
++msgstr "Das Tonsystem dieser Sitzung hat nicht geantwortet, daher können seine Raten und Geräte nicht angezeigt werden."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Apply changes to every account on this computer"
++msgstr "Änderungen für alle Konten auf diesem Computer übernehmen"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound system"
++msgstr "Tonsystem"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic choice:"
++msgstr "Automatische Wahl:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates %1, resting at %2, resampling quality %3 of 14."
++msgstr "Raten %1, im Ruhezustand %2, Resampling-Qualität %3 von 14."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Running now:"
++msgstr "Gerade in Betrieb:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1, buffer %2 (%3 ms)."
++msgstr "%1, Puffer %2 (%3 ms)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resting rate:"
++msgstr "Ruherate:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (%1)"
++msgstr "Automatisch (%1)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates the sound system may use:"
++msgstr "Raten, die das Tonsystem verwenden darf:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (the rates of the devices in this computer)"
++msgstr "Automatisch (die Raten der Geräte dieses Computers)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "These rates:"
++msgstr "Diese Raten:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Use these rates"
++msgstr "Diese Raten verwenden"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "With several rates the sound system follows the rate of what plays, so the file is not converted. AES5: 48 kHz is recommended for professional audio, 44.1 kHz is recognised for consumer applications, 96 kHz for higher bandwidth."
++msgstr "Bei mehreren Raten folgt das Tonsystem der Rate dessen, was spielt, die Datei wird also nicht umgerechnet. AES5: 48 kHz wird für professionelles Audio empfohlen, 44,1 kHz ist für Verbraucheranwendungen anerkannt, 96 kHz für größere Bandbreite."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Buffer size:"
++msgstr "Puffergröße:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (PipeWire's own)"
++msgstr "Automatisch (die von PipeWire)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 samples"
++msgstr "%1 Samples"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "A smaller buffer means less delay and more work for the processor. No standard sets this; the delay is the buffer size divided by the rate."
++msgstr "Ein kleinerer Puffer bedeutet weniger Verzögerung und mehr Arbeit für den Prozessor. Kein Standard legt das fest; die Verzögerung ist die Puffergröße geteilt durch die Rate."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resampling quality:"
++msgstr "Resampling-Qualität:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 (automatic)"
++msgstr "%1 (automatisch)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Used only when a file's rate is not one the device takes. The scale is PipeWire's own, 0 to 14; no standard defines it."
++msgstr "Wird nur verwendet, wenn die Rate einer Datei keine ist, die das Gerät annimmt. Die Skala ist die von PipeWire, 0 bis 14; kein Standard definiert sie."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Why these choices:"
++msgstr "Warum diese Wahl:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Back to automatic"
++msgstr "Zurück zu automatisch"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "In use:"
++msgstr "In Gebrauch:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Not open at the moment."
++msgstr "Im Moment nicht geöffnet."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Takes:"
++msgstr "Unterstützt:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1; %2"
++msgstr "%1; %2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bluetooth codec:"
++msgstr "Bluetooth-Codec:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1. The codec decides the rate and the format of a Bluetooth device."
++msgstr "%1. Der Codec bestimmt Rate und Format eines Bluetooth-Geräts."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The codec is not known until the device plays."
++msgstr "Der Codec ist erst bekannt, wenn das Gerät spielt."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The display says:"
++msgstr "Das Display meldet:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Uncompressed: %1 channels, %2 Hz, %3 bit"
++msgstr "Unkomprimiert: %1 Kanäle, %2 Hz, %3 Bit"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Encoded, for pass-through: %1, %2 channels"
++msgstr "Kodiert, zur Weitergabe: %1, %2 Kanäle"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This is the list the display sends in its CTA-861 audio data blocks."
++msgstr "Das ist die Liste, die das Display in seinen CTA-861-Audiodatenblöcken sendet."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Format:"
++msgstr "Format:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (best this device supports)"
++msgstr "Automatisch (das Beste, das dieses Gerät unterstützt)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rate:"
++msgstr "Rate:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bit-perfect: add nothing to the samples"
++msgstr "Bit-perfect: den Samples nichts hinzufügen"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Switches off dither. The samples reach the device unchanged only while one program plays at full volume in the device's own format."
++msgstr "Schaltet das Dithering aus. Die Samples erreichen das Gerät nur dann unverändert, wenn ein einziges Programm mit voller Lautstärke im eigenen Format des Geräts spielt."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "No sound device is connected."
++msgstr "Es ist kein Tongerät verbunden."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality…"
++msgstr "Tonqualität…"
+diff --git a/po/es/kcm_pulseaudio.po b/po/es/kcm_pulseaudio.po
+--- a/po/es/kcm_pulseaudio.po
++++ b/po/es/kcm_pulseaudio.po
+@@ -753,3 +753,295 @@
+ #. Explicit monitoring and combined recording controls.
+ msgid "This microphone is also being sent to this output. The combined recording captures it twice, which can cause an echo."
+ msgstr "Este micrófono también se envía a esta salida. La grabación combinada lo captura dos veces, lo que puede causar eco."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "default rate"
++msgstr "la tasa predeterminada"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "buffer size"
++msgstr "el tamaño del búfer"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "smallest buffer size"
++msgstr "el tamaño mínimo del búfer"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "largest buffer size"
++msgstr "el tamaño máximo del búfer"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 is not one this page wrote, so it was left alone"
++msgstr "el archivo %1 no lo escribió esta página, así que se dejó como estaba"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 could not be written"
++msgstr "no se pudo escribir el archivo %1"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the settings were not accepted"
++msgstr "no se aceptaron los ajustes"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the system did not allow the change for every account"
++msgstr "el sistema no permitió el cambio para todas las cuentas"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The tool %1 is not installed, so the choice could not be tried."
++msgstr "La herramienta %1 no está instalada, así que no se pudo probar la elección."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device went into an error state."
++msgstr "El dispositivo pasó a un estado de error."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran at %1 Hz, not the %2 Hz chosen."
++msgstr "El dispositivo funcionó a %1 Hz, no a los %2 Hz elegidos."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran in %1, not in the format chosen."
++msgstr "El dispositivo funcionó en %1, no en el formato elegido."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not start playing in the chosen format."
++msgstr "El dispositivo no empezó a reproducir en el formato elegido."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system kept the %1 at %2, not %3."
++msgstr "El sistema de sonido mantuvo %1 en %2, no en %3."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The allowed rates stay as they were."
++msgstr "Las tasas permitidas siguen como estaban."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 holds the sound system at %2 Hz, which is not among the rates chosen."
++msgstr "%1 mantiene el sistema de sonido a %2 Hz, que no está entre las tasas elegidas."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 still has resampling quality %2."
++msgstr "%1 sigue con la calidad de remuestreo %2."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not take the chosen format or rate."
++msgstr "El dispositivo no aceptó el formato o la tasa elegidos."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This device is no longer connected."
++msgstr "Este dispositivo ya no está conectado."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the value %1 is not one the sound system accepts."
++msgstr "No se cambió nada: el sistema de sonido no acepta el valor %1."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: PipeWire cannot read the settings file (%1)."
++msgstr "No se cambió nada: PipeWire no puede leer el archivo de ajustes (%1)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the settings could not be written (%1)."
++msgstr "No se cambió nada: no se pudieron escribir los ajustes (%1)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system did not come back after the restart."
++msgstr "El sistema de sonido no volvió tras el reinicio."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings stay."
++msgstr "Los ajustes anteriores se mantienen."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings could not be put back (%1); check the files named 50-sound-page.conf."
++msgstr "No se pudieron restaurar los ajustes anteriores (%1); revise los archivos llamados 50-sound-page.conf."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change was not kept. %1 %2"
++msgstr "El cambio no se conservó. %1 %2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change is in use."
++msgstr "El cambio está en uso."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality"
++msgstr "Calidad del sonido"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 Hz"
++msgstr "%1 Hz"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "32 bit float"
++msgstr "32 bits en coma flotante"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 bit"
++msgstr "%1 bits"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound defaults of this computer have not been written yet, so there is no automatic choice to show. Run: sudo sparky-stereo-audio detect --write"
++msgstr "Los valores de sonido de este equipo aún no se han escrito, así que no hay elección automática que mostrar. Ejecute: sudo sparky-stereo-audio detect --write"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system of this session did not answer, so its rates and devices cannot be shown."
++msgstr "El sistema de sonido de esta sesión no respondió, así que no se pueden mostrar sus tasas ni sus dispositivos."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Apply changes to every account on this computer"
++msgstr "Aplicar los cambios a todas las cuentas de este equipo"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound system"
++msgstr "Sistema de sonido"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic choice:"
++msgstr "Elección automática:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates %1, resting at %2, resampling quality %3 of 14."
++msgstr "Tasas %1, en reposo %2, calidad de remuestreo %3 de 14."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Running now:"
++msgstr "En funcionamiento ahora:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1, buffer %2 (%3 ms)."
++msgstr "%1, búfer %2 (%3 ms)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resting rate:"
++msgstr "Tasa en reposo:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (%1)"
++msgstr "Automático (%1)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates the sound system may use:"
++msgstr "Tasas que puede usar el sistema de sonido:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (the rates of the devices in this computer)"
++msgstr "Automático (las tasas de los dispositivos de este equipo)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "These rates:"
++msgstr "Estas tasas:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Use these rates"
++msgstr "Usar estas tasas"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "With several rates the sound system follows the rate of what plays, so the file is not converted. AES5: 48 kHz is recommended for professional audio, 44.1 kHz is recognised for consumer applications, 96 kHz for higher bandwidth."
++msgstr "Con varias tasas, el sistema de sonido sigue la tasa de lo que suena, así que el archivo no se convierte. AES5: 48 kHz se recomienda para audio profesional, 44,1 kHz se reconoce para aplicaciones de consumo, 96 kHz para mayor ancho de banda."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Buffer size:"
++msgstr "Tamaño del búfer:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (PipeWire's own)"
++msgstr "Automático (el propio de PipeWire)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 samples"
++msgstr "%1 muestras"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "A smaller buffer means less delay and more work for the processor. No standard sets this; the delay is the buffer size divided by the rate."
++msgstr "Un búfer menor significa menos retardo y más trabajo para el procesador. Ninguna norma lo fija; el retardo es el tamaño del búfer dividido entre la tasa."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resampling quality:"
++msgstr "Calidad de remuestreo:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 (automatic)"
++msgstr "%1 (automático)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Used only when a file's rate is not one the device takes. The scale is PipeWire's own, 0 to 14; no standard defines it."
++msgstr "Solo se usa cuando la tasa de un archivo no es una de las que acepta el dispositivo. La escala es la propia de PipeWire, de 0 a 14; ninguna norma la define."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Why these choices:"
++msgstr "Por qué estas elecciones:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Back to automatic"
++msgstr "Volver a automático"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "In use:"
++msgstr "En uso:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Not open at the moment."
++msgstr "No está abierto en este momento."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Takes:"
++msgstr "Admite:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1; %2"
++msgstr "%1; %2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bluetooth codec:"
++msgstr "Códec Bluetooth:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1. The codec decides the rate and the format of a Bluetooth device."
++msgstr "%1. El códec decide la tasa y el formato de un dispositivo Bluetooth."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The codec is not known until the device plays."
++msgstr "El códec no se conoce hasta que el dispositivo reproduce."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The display says:"
++msgstr "La pantalla indica:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Uncompressed: %1 channels, %2 Hz, %3 bit"
++msgstr "Sin comprimir: %1 canales, %2 Hz, %3 bits"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Encoded, for pass-through: %1, %2 channels"
++msgstr "Codificado, para transmisión directa: %1, %2 canales"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This is the list the display sends in its CTA-861 audio data blocks."
++msgstr "Esta es la lista que la pantalla envía en sus bloques de datos de audio CTA-861."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Format:"
++msgstr "Formato:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (best this device supports)"
++msgstr "Automático (lo mejor que admite este dispositivo)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rate:"
++msgstr "Tasa:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bit-perfect: add nothing to the samples"
++msgstr "Bit-perfect: no añadir nada a las muestras"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Switches off dither. The samples reach the device unchanged only while one program plays at full volume in the device's own format."
++msgstr "Desactiva el dither. Las muestras llegan al dispositivo sin cambios solo mientras un programa suena a todo volumen en el formato propio del dispositivo."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "No sound device is connected."
++msgstr "No hay ningún dispositivo de sonido conectado."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality…"
++msgstr "Calidad del sonido…"
+diff --git a/po/ja/kcm_pulseaudio.po b/po/ja/kcm_pulseaudio.po
+--- a/po/ja/kcm_pulseaudio.po
++++ b/po/ja/kcm_pulseaudio.po
+@@ -757,3 +757,295 @@
+ #. Explicit monitoring and combined recording controls.
+ msgid "This microphone is also being sent to this output. The combined recording captures it twice, which can cause an echo."
+ msgstr "このマイクの音声はこの出力にも送られています。結合録音では二重に録音され、エコーが発生することがあります。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "default rate"
++msgstr "既定のレート"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "buffer size"
++msgstr "バッファサイズ"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "smallest buffer size"
++msgstr "最小のバッファサイズ"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "largest buffer size"
++msgstr "最大のバッファサイズ"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 is not one this page wrote, so it was left alone"
++msgstr "ファイル %1 はこのページが書いたものではないため、そのままにしました"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 could not be written"
++msgstr "ファイル %1 を書き込めませんでした"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the settings were not accepted"
++msgstr "設定が受け付けられませんでした"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the system did not allow the change for every account"
++msgstr "システムがすべてのアカウントへの変更を許可しませんでした"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The tool %1 is not installed, so the choice could not be tried."
++msgstr "ツール %1 がインストールされていないため、選択を試せませんでした。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device went into an error state."
++msgstr "デバイスがエラー状態になりました。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran at %1 Hz, not the %2 Hz chosen."
++msgstr "デバイスは選択された %2 Hz ではなく %1 Hz で動作しました。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran in %1, not in the format chosen."
++msgstr "デバイスは選択された形式ではなく %1 で動作しました。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not start playing in the chosen format."
++msgstr "デバイスは選択された形式で再生を始めませんでした。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system kept the %1 at %2, not %3."
++msgstr "サウンドシステムは %1 を %3 ではなく %2 のままにしました。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The allowed rates stay as they were."
++msgstr "許可されるレートは変更されません。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 holds the sound system at %2 Hz, which is not among the rates chosen."
++msgstr "%1 がサウンドシステムを %2 Hz に保っており、これは選択したレートに含まれていません。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 still has resampling quality %2."
++msgstr "%1 の再サンプリング品質は %2 のままです。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not take the chosen format or rate."
++msgstr "デバイスは選択された形式またはレートを受け付けませんでした。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This device is no longer connected."
++msgstr "このデバイスはもう接続されていません。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the value %1 is not one the sound system accepts."
++msgstr "何も変更されませんでした: 値 %1 はサウンドシステムに受け付けられません。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: PipeWire cannot read the settings file (%1)."
++msgstr "何も変更されませんでした: PipeWire が設定ファイルを読めません (%1)。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the settings could not be written (%1)."
++msgstr "何も変更されませんでした: 設定を書き込めませんでした (%1)。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system did not come back after the restart."
++msgstr "再起動後にサウンドシステムが戻りませんでした。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings stay."
++msgstr "以前の設定はそのままです。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings could not be put back (%1); check the files named 50-sound-page.conf."
++msgstr "以前の設定を戻せませんでした (%1)。50-sound-page.conf というファイルを確認してください。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change was not kept. %1 %2"
++msgstr "変更は保持されませんでした。%1 %2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change is in use."
++msgstr "変更が使用されています。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality"
++msgstr "サウンド品質"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 Hz"
++msgstr "%1 Hz"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "32 bit float"
++msgstr "32 ビット浮動小数点"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 bit"
++msgstr "%1 ビット"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound defaults of this computer have not been written yet, so there is no automatic choice to show. Run: sudo sparky-stereo-audio detect --write"
++msgstr "このコンピュータのサウンドの既定値はまだ書き込まれていないため、表示できる自動の選択がありません。実行してください: sudo sparky-stereo-audio detect --write"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system of this session did not answer, so its rates and devices cannot be shown."
++msgstr "このセッションのサウンドシステムが応答しなかったため、レートとデバイスを表示できません。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Apply changes to every account on this computer"
++msgstr "このコンピュータのすべてのアカウントに変更を適用する"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound system"
++msgstr "サウンドシステム"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic choice:"
++msgstr "自動の選択:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates %1, resting at %2, resampling quality %3 of 14."
++msgstr "レート %1、待機時 %2、再サンプリング品質 14 段階中 %3。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Running now:"
++msgstr "現在動作中:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1, buffer %2 (%3 ms)."
++msgstr "%1、バッファ %2 (%3 ms)。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resting rate:"
++msgstr "待機時のレート:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (%1)"
++msgstr "自動 (%1)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates the sound system may use:"
++msgstr "サウンドシステムが使えるレート:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (the rates of the devices in this computer)"
++msgstr "自動 (このコンピュータのデバイスのレート)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "These rates:"
++msgstr "これらのレート:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Use these rates"
++msgstr "これらのレートを使う"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "With several rates the sound system follows the rate of what plays, so the file is not converted. AES5: 48 kHz is recommended for professional audio, 44.1 kHz is recognised for consumer applications, 96 kHz for higher bandwidth."
++msgstr "複数のレートがあると、サウンドシステムは再生中の音声のレートに合わせるため、ファイルは変換されません。AES5: 48 kHz は業務用オーディオに推奨され、44.1 kHz は民生用途として認められ、96 kHz はより広い帯域用です。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Buffer size:"
++msgstr "バッファサイズ:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (PipeWire's own)"
++msgstr "自動 (PipeWire 標準)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 samples"
++msgstr "%1 サンプル"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "A smaller buffer means less delay and more work for the processor. No standard sets this; the delay is the buffer size divided by the rate."
++msgstr "バッファが小さいほど遅延は減り、プロセッサの負荷は増えます。これを定める規格はありません。遅延はバッファサイズをレートで割ったものです。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resampling quality:"
++msgstr "再サンプリング品質:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 (automatic)"
++msgstr "%1 (自動)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Used only when a file's rate is not one the device takes. The scale is PipeWire's own, 0 to 14; no standard defines it."
++msgstr "ファイルのレートがデバイスの対応レートでないときだけ使われます。尺度は PipeWire 独自の 0 から 14 で、これを定める規格はありません。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Why these choices:"
++msgstr "これらを選んだ理由:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Back to automatic"
++msgstr "自動に戻す"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "In use:"
++msgstr "使用中:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Not open at the moment."
++msgstr "現在は開かれていません。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Takes:"
++msgstr "対応:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1; %2"
++msgstr "%1、%2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bluetooth codec:"
++msgstr "Bluetooth コーデック:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1. The codec decides the rate and the format of a Bluetooth device."
++msgstr "%1。Bluetooth デバイスのレートと形式はコーデックが決めます。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The codec is not known until the device plays."
++msgstr "デバイスが再生するまでコーデックはわかりません。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The display says:"
++msgstr "ディスプレイの申告:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Uncompressed: %1 channels, %2 Hz, %3 bit"
++msgstr "非圧縮: %1 チャンネル、%2 Hz、%3 ビット"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Encoded, for pass-through: %1, %2 channels"
++msgstr "エンコード済み、パススルー用: %1、%2 チャンネル"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This is the list the display sends in its CTA-861 audio data blocks."
++msgstr "これはディスプレイが CTA-861 のオーディオデータブロックで送るリストです。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Format:"
++msgstr "形式:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (best this device supports)"
++msgstr "自動 (このデバイスが対応する最良のもの)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rate:"
++msgstr "レート:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bit-perfect: add nothing to the samples"
++msgstr "ビットパーフェクト: サンプルに何も加えない"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Switches off dither. The samples reach the device unchanged only while one program plays at full volume in the device's own format."
++msgstr "ディザをオフにします。サンプルがデバイスにそのまま届くのは、1 つのプログラムがデバイス自身の形式で最大音量で再生している間だけです。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "No sound device is connected."
++msgstr "サウンドデバイスが接続されていません。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality…"
++msgstr "サウンド品質…"
+diff --git a/po/ko/kcm_pulseaudio.po b/po/ko/kcm_pulseaudio.po
+--- a/po/ko/kcm_pulseaudio.po
++++ b/po/ko/kcm_pulseaudio.po
+@@ -875,3 +875,295 @@
+ #. Explicit monitoring and combined recording controls.
+ msgid "This microphone is also being sent to this output. The combined recording captures it twice, which can cause an echo."
+ msgstr "이 마이크는 이 출력으로도 전송되고 있습니다. 결합 녹음에서 두 번 캡처되어 에코가 발생할 수 있습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "default rate"
++msgstr "기본 샘플레이트"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "buffer size"
++msgstr "버퍼 크기"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "smallest buffer size"
++msgstr "최소 버퍼 크기"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "largest buffer size"
++msgstr "최대 버퍼 크기"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 is not one this page wrote, so it was left alone"
++msgstr "%1 파일은 이 페이지가 쓴 것이 아니므로 그대로 두었습니다"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 could not be written"
++msgstr "%1 파일을 쓸 수 없었습니다"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the settings were not accepted"
++msgstr "설정이 받아들여지지 않았습니다"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the system did not allow the change for every account"
++msgstr "시스템이 모든 계정에 대한 변경을 허용하지 않았습니다"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The tool %1 is not installed, so the choice could not be tried."
++msgstr "%1 도구가 설치되어 있지 않아 선택을 시험해 볼 수 없었습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device went into an error state."
++msgstr "장치가 오류 상태가 되었습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran at %1 Hz, not the %2 Hz chosen."
++msgstr "장치가 선택한 %2 Hz가 아니라 %1 Hz로 동작했습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran in %1, not in the format chosen."
++msgstr "장치가 선택한 형식이 아니라 %1(으)로 동작했습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not start playing in the chosen format."
++msgstr "장치가 선택한 형식으로 재생을 시작하지 않았습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system kept the %1 at %2, not %3."
++msgstr "소리 시스템은 %1을(를) %3이(가) 아닌 %2(으)로 유지했습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The allowed rates stay as they were."
++msgstr "허용된 샘플레이트는 그대로입니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 holds the sound system at %2 Hz, which is not among the rates chosen."
++msgstr "%1이(가) 소리 시스템을 %2 Hz로 붙잡고 있으며, 이는 선택한 샘플레이트에 없습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 still has resampling quality %2."
++msgstr "%1의 리샘플링 품질은 여전히 %2입니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not take the chosen format or rate."
++msgstr "장치가 선택한 형식이나 샘플레이트를 받아들이지 않았습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This device is no longer connected."
++msgstr "이 장치는 더 이상 연결되어 있지 않습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the value %1 is not one the sound system accepts."
++msgstr "아무것도 변경되지 않았습니다: %1 값은 소리 시스템이 받아들이지 않습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: PipeWire cannot read the settings file (%1)."
++msgstr "아무것도 변경되지 않았습니다: PipeWire가 설정 파일을 읽을 수 없습니다 (%1)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the settings could not be written (%1)."
++msgstr "아무것도 변경되지 않았습니다: 설정을 쓸 수 없었습니다 (%1)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system did not come back after the restart."
++msgstr "재시작 후 소리 시스템이 돌아오지 않았습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings stay."
++msgstr "이전 설정이 유지됩니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings could not be put back (%1); check the files named 50-sound-page.conf."
++msgstr "이전 설정을 되돌릴 수 없었습니다 (%1). 50-sound-page.conf 파일을 확인하세요."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change was not kept. %1 %2"
++msgstr "변경이 유지되지 않았습니다. %1 %2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change is in use."
++msgstr "변경이 사용 중입니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality"
++msgstr "소리 품질"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 Hz"
++msgstr "%1 Hz"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "32 bit float"
++msgstr "32비트 부동소수점"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 bit"
++msgstr "%1비트"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound defaults of this computer have not been written yet, so there is no automatic choice to show. Run: sudo sparky-stereo-audio detect --write"
++msgstr "이 컴퓨터의 소리 기본값이 아직 기록되지 않아 보여 줄 자동 선택이 없습니다. 실행하세요: sudo sparky-stereo-audio detect --write"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system of this session did not answer, so its rates and devices cannot be shown."
++msgstr "이 세션의 소리 시스템이 응답하지 않아 샘플레이트와 장치를 표시할 수 없습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Apply changes to every account on this computer"
++msgstr "이 컴퓨터의 모든 계정에 변경 사항 적용"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound system"
++msgstr "소리 시스템"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic choice:"
++msgstr "자동 선택:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates %1, resting at %2, resampling quality %3 of 14."
++msgstr "샘플레이트 %1, 대기 시 %2, 리샘플링 품질 14단계 중 %3."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Running now:"
++msgstr "지금 동작 중:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1, buffer %2 (%3 ms)."
++msgstr "%1, 버퍼 %2 (%3 ms)."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resting rate:"
++msgstr "대기 시 샘플레이트:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (%1)"
++msgstr "자동 (%1)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates the sound system may use:"
++msgstr "소리 시스템이 사용할 수 있는 샘플레이트:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (the rates of the devices in this computer)"
++msgstr "자동 (이 컴퓨터 장치의 샘플레이트)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "These rates:"
++msgstr "이 샘플레이트:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Use these rates"
++msgstr "이 샘플레이트 사용"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "With several rates the sound system follows the rate of what plays, so the file is not converted. AES5: 48 kHz is recommended for professional audio, 44.1 kHz is recognised for consumer applications, 96 kHz for higher bandwidth."
++msgstr "샘플레이트가 여러 개이면 소리 시스템이 재생 중인 소리의 샘플레이트를 따르므로 파일이 변환되지 않습니다. AES5: 48 kHz는 전문가용 오디오에 권장되고, 44.1 kHz는 소비자용에 인정되며, 96 kHz는 더 넓은 대역폭용입니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Buffer size:"
++msgstr "버퍼 크기:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (PipeWire's own)"
++msgstr "자동 (PipeWire 기본)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 samples"
++msgstr "%1 샘플"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "A smaller buffer means less delay and more work for the processor. No standard sets this; the delay is the buffer size divided by the rate."
++msgstr "버퍼가 작을수록 지연은 줄고 프로세서 부담은 늘어납니다. 이를 정하는 표준은 없으며, 지연은 버퍼 크기를 샘플레이트로 나눈 값입니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resampling quality:"
++msgstr "리샘플링 품질:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 (automatic)"
++msgstr "%1 (자동)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Used only when a file's rate is not one the device takes. The scale is PipeWire's own, 0 to 14; no standard defines it."
++msgstr "파일의 샘플레이트가 장치가 지원하는 것이 아닐 때만 사용됩니다. 척도는 PipeWire 고유의 0에서 14까지이며, 이를 정하는 표준은 없습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Why these choices:"
++msgstr "이렇게 선택한 이유:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Back to automatic"
++msgstr "자동으로 되돌리기"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "In use:"
++msgstr "사용 중:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Not open at the moment."
++msgstr "현재 열려 있지 않습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Takes:"
++msgstr "지원:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1; %2"
++msgstr "%1, %2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bluetooth codec:"
++msgstr "Bluetooth 코덱:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1. The codec decides the rate and the format of a Bluetooth device."
++msgstr "%1. Bluetooth 장치의 샘플레이트와 형식은 코덱이 정합니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The codec is not known until the device plays."
++msgstr "장치가 재생하기 전에는 코덱을 알 수 없습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The display says:"
++msgstr "디스플레이가 알려 준 내용:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Uncompressed: %1 channels, %2 Hz, %3 bit"
++msgstr "비압축: %1채널, %2 Hz, %3비트"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Encoded, for pass-through: %1, %2 channels"
++msgstr "인코딩됨, 패스스루용: %1, %2채널"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This is the list the display sends in its CTA-861 audio data blocks."
++msgstr "디스플레이가 CTA-861 오디오 데이터 블록으로 보내는 목록입니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Format:"
++msgstr "형식:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (best this device supports)"
++msgstr "자동 (이 장치가 지원하는 최상의 것)"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rate:"
++msgstr "샘플레이트:"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bit-perfect: add nothing to the samples"
++msgstr "비트 퍼펙트: 샘플에 아무것도 더하지 않기"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Switches off dither. The samples reach the device unchanged only while one program plays at full volume in the device's own format."
++msgstr "디더를 끕니다. 하나의 프로그램이 장치 자체 형식으로 최대 음량에서 재생하는 동안에만 샘플이 변경 없이 장치에 도달합니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "No sound device is connected."
++msgstr "연결된 소리 장치가 없습니다."
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality…"
++msgstr "소리 품질…"
+diff --git a/po/zh_CN/kcm_pulseaudio.po b/po/zh_CN/kcm_pulseaudio.po
+--- a/po/zh_CN/kcm_pulseaudio.po
++++ b/po/zh_CN/kcm_pulseaudio.po
+@@ -746,3 +746,295 @@
+ #. Explicit monitoring and combined recording controls.
+ msgid "This microphone is also being sent to this output. The combined recording captures it twice, which can cause an echo."
+ msgstr "此麦克风也被发送到此输出。合并录音会捕获它两次，可能产生回声。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "default rate"
++msgstr "默认采样率"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "buffer size"
++msgstr "缓冲区大小"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "smallest buffer size"
++msgstr "最小缓冲区大小"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "largest buffer size"
++msgstr "最大缓冲区大小"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 is not one this page wrote, so it was left alone"
++msgstr "文件 %1 不是此页面写入的，因此保持原样"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 could not be written"
++msgstr "无法写入文件 %1"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the settings were not accepted"
++msgstr "设置未被接受"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the system did not allow the change for every account"
++msgstr "系统不允许为所有账户进行更改"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The tool %1 is not installed, so the choice could not be tried."
++msgstr "未安装工具 %1，因此无法试用该选择。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device went into an error state."
++msgstr "设备进入了错误状态。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran at %1 Hz, not the %2 Hz chosen."
++msgstr "设备以 %1 Hz 运行，而不是所选的 %2 Hz。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran in %1, not in the format chosen."
++msgstr "设备以 %1 运行，而不是所选的格式。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not start playing in the chosen format."
++msgstr "设备没有以所选格式开始播放。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system kept the %1 at %2, not %3."
++msgstr "声音系统将%1保持在 %2，而不是 %3。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The allowed rates stay as they were."
++msgstr "允许的采样率保持不变。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 holds the sound system at %2 Hz, which is not among the rates chosen."
++msgstr "%1 将声音系统保持在 %2 Hz，该值不在所选的采样率中。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 still has resampling quality %2."
++msgstr "%1 的重采样质量仍为 %2。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not take the chosen format or rate."
++msgstr "设备未接受所选的格式或采样率。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This device is no longer connected."
++msgstr "此设备已不再连接。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the value %1 is not one the sound system accepts."
++msgstr "未做任何更改：声音系统不接受值 %1。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: PipeWire cannot read the settings file (%1)."
++msgstr "未做任何更改：PipeWire 无法读取设置文件（%1）。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the settings could not be written (%1)."
++msgstr "未做任何更改：无法写入设置（%1）。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system did not come back after the restart."
++msgstr "重启后声音系统没有恢复。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings stay."
++msgstr "之前的设置保持不变。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings could not be put back (%1); check the files named 50-sound-page.conf."
++msgstr "无法恢复之前的设置（%1）；请检查名为 50-sound-page.conf 的文件。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change was not kept. %1 %2"
++msgstr "更改未被保留。%1 %2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change is in use."
++msgstr "更改正在使用中。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality"
++msgstr "声音质量"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 Hz"
++msgstr "%1 Hz"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "32 bit float"
++msgstr "32 位浮点"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 bit"
++msgstr "%1 位"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound defaults of this computer have not been written yet, so there is no automatic choice to show. Run: sudo sparky-stereo-audio detect --write"
++msgstr "此计算机的声音默认设置尚未写入，因此没有可显示的自动选择。请运行：sudo sparky-stereo-audio detect --write"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system of this session did not answer, so its rates and devices cannot be shown."
++msgstr "此会话的声音系统没有响应，因此无法显示其采样率和设备。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Apply changes to every account on this computer"
++msgstr "将更改应用于此计算机上的所有账户"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound system"
++msgstr "声音系统"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic choice:"
++msgstr "自动选择："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates %1, resting at %2, resampling quality %3 of 14."
++msgstr "采样率 %1，空闲时 %2，重采样质量 %3（共 14 级）。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Running now:"
++msgstr "当前运行："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1, buffer %2 (%3 ms)."
++msgstr "%1，缓冲区 %2（%3 毫秒）。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resting rate:"
++msgstr "空闲采样率："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (%1)"
++msgstr "自动（%1）"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates the sound system may use:"
++msgstr "声音系统可以使用的采样率："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (the rates of the devices in this computer)"
++msgstr "自动（此计算机上设备的采样率）"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "These rates:"
++msgstr "这些采样率："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Use these rates"
++msgstr "使用这些采样率"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "With several rates the sound system follows the rate of what plays, so the file is not converted. AES5: 48 kHz is recommended for professional audio, 44.1 kHz is recognised for consumer applications, 96 kHz for higher bandwidth."
++msgstr "有多个采样率时，声音系统会跟随正在播放内容的采样率，因此文件不会被转换。AES5：专业音频推荐 48 kHz，消费类应用认可 44.1 kHz，更宽带宽的应用使用 96 kHz。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Buffer size:"
++msgstr "缓冲区大小："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (PipeWire's own)"
++msgstr "自动（PipeWire 自带）"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 samples"
++msgstr "%1 个采样"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "A smaller buffer means less delay and more work for the processor. No standard sets this; the delay is the buffer size divided by the rate."
++msgstr "缓冲区越小，延迟越低，处理器的负担越重。没有标准规定这一点；延迟等于缓冲区大小除以采样率。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resampling quality:"
++msgstr "重采样质量："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 (automatic)"
++msgstr "%1（自动）"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Used only when a file's rate is not one the device takes. The scale is PipeWire's own, 0 to 14; no standard defines it."
++msgstr "仅在文件的采样率不是设备支持的采样率时使用。该刻度是 PipeWire 自己的，从 0 到 14；没有标准定义它。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Why these choices:"
++msgstr "为什么做出这些选择："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Back to automatic"
++msgstr "恢复为自动"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "In use:"
++msgstr "使用中："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Not open at the moment."
++msgstr "当前未打开。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Takes:"
++msgstr "支持："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1; %2"
++msgstr "%1；%2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bluetooth codec:"
++msgstr "蓝牙编解码器："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1. The codec decides the rate and the format of a Bluetooth device."
++msgstr "%1。蓝牙设备的采样率和格式由编解码器决定。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The codec is not known until the device plays."
++msgstr "设备开始播放之前不知道编解码器。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The display says:"
++msgstr "显示器报告："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Uncompressed: %1 channels, %2 Hz, %3 bit"
++msgstr "未压缩：%1 声道，%2 Hz，%3 位"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Encoded, for pass-through: %1, %2 channels"
++msgstr "已编码，用于直通：%1，%2 声道"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This is the list the display sends in its CTA-861 audio data blocks."
++msgstr "这是显示器在其 CTA-861 音频数据块中发送的列表。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Format:"
++msgstr "格式："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (best this device supports)"
++msgstr "自动（此设备支持的最佳格式）"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rate:"
++msgstr "采样率："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bit-perfect: add nothing to the samples"
++msgstr "比特完美：不向采样添加任何内容"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Switches off dither. The samples reach the device unchanged only while one program plays at full volume in the device's own format."
++msgstr "关闭抖动。只有当一个程序以设备自身的格式、满音量播放时，采样才会原样到达设备。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "No sound device is connected."
++msgstr "没有连接声音设备。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality…"
++msgstr "声音质量…"
+diff --git a/po/zh_TW/kcm_pulseaudio.po b/po/zh_TW/kcm_pulseaudio.po
+--- a/po/zh_TW/kcm_pulseaudio.po
++++ b/po/zh_TW/kcm_pulseaudio.po
+@@ -872,3 +872,295 @@
+ #. Explicit monitoring and combined recording controls.
+ msgid "This microphone is also being sent to this output. The combined recording captures it twice, which can cause an echo."
+ msgstr "此麥克風也被傳送至此輸出。合併錄音會擷取它兩次，可能產生回音。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "default rate"
++msgstr "預設取樣率"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "buffer size"
++msgstr "緩衝區大小"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "smallest buffer size"
++msgstr "最小緩衝區大小"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "largest buffer size"
++msgstr "最大緩衝區大小"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 is not one this page wrote, so it was left alone"
++msgstr "檔案 %1 不是此頁面寫入的，因此保持原樣"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the file %1 could not be written"
++msgstr "無法寫入檔案 %1"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the settings were not accepted"
++msgstr "設定未被接受"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "the system did not allow the change for every account"
++msgstr "系統不允許為所有帳號進行變更"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The tool %1 is not installed, so the choice could not be tried."
++msgstr "未安裝工具 %1，因此無法試用該選擇。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device went into an error state."
++msgstr "裝置進入了錯誤狀態。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran at %1 Hz, not the %2 Hz chosen."
++msgstr "裝置以 %1 Hz 運作，而不是所選的 %2 Hz。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device ran in %1, not in the format chosen."
++msgstr "裝置以 %1 運作，而不是所選的格式。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not start playing in the chosen format."
++msgstr "裝置沒有以所選格式開始播放。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system kept the %1 at %2, not %3."
++msgstr "聲音系統將%1維持在 %2，而不是 %3。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The allowed rates stay as they were."
++msgstr "允許的取樣率維持不變。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 holds the sound system at %2 Hz, which is not among the rates chosen."
++msgstr "%1 將聲音系統維持在 %2 Hz，該值不在所選的取樣率中。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 still has resampling quality %2."
++msgstr "%1 的重新取樣品質仍為 %2。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The device did not take the chosen format or rate."
++msgstr "裝置未接受所選的格式或取樣率。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This device is no longer connected."
++msgstr "此裝置已不再連線。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the value %1 is not one the sound system accepts."
++msgstr "未做任何變更：聲音系統不接受值 %1。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: PipeWire cannot read the settings file (%1)."
++msgstr "未做任何變更：PipeWire 無法讀取設定檔（%1）。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Nothing was changed: the settings could not be written (%1)."
++msgstr "未做任何變更：無法寫入設定（%1）。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system did not come back after the restart."
++msgstr "重新啟動後聲音系統沒有恢復。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings stay."
++msgstr "先前的設定維持不變。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The earlier settings could not be put back (%1); check the files named 50-sound-page.conf."
++msgstr "無法還原先前的設定（%1）；請檢查名為 50-sound-page.conf 的檔案。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change was not kept. %1 %2"
++msgstr "變更未被保留。%1 %2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The change is in use."
++msgstr "變更正在使用中。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality"
++msgstr "聲音品質"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 Hz"
++msgstr "%1 Hz"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "32 bit float"
++msgstr "32 位元浮點"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 bit"
++msgstr "%1 位元"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound defaults of this computer have not been written yet, so there is no automatic choice to show. Run: sudo sparky-stereo-audio detect --write"
++msgstr "這台電腦的聲音預設值尚未寫入，因此沒有可顯示的自動選擇。請執行：sudo sparky-stereo-audio detect --write"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The sound system of this session did not answer, so its rates and devices cannot be shown."
++msgstr "此工作階段的聲音系統沒有回應，因此無法顯示其取樣率和裝置。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Apply changes to every account on this computer"
++msgstr "將變更套用到這台電腦上的所有帳號"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound system"
++msgstr "聲音系統"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic choice:"
++msgstr "自動選擇："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates %1, resting at %2, resampling quality %3 of 14."
++msgstr "取樣率 %1，閒置時 %2，重新取樣品質 %3（共 14 級）。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Running now:"
++msgstr "目前運作中："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1, buffer %2 (%3 ms)."
++msgstr "%1，緩衝區 %2（%3 毫秒）。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resting rate:"
++msgstr "閒置取樣率："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (%1)"
++msgstr "自動（%1）"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rates the sound system may use:"
++msgstr "聲音系統可以使用的取樣率："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (the rates of the devices in this computer)"
++msgstr "自動（這台電腦上裝置的取樣率）"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "These rates:"
++msgstr "這些取樣率："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Use these rates"
++msgstr "使用這些取樣率"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "With several rates the sound system follows the rate of what plays, so the file is not converted. AES5: 48 kHz is recommended for professional audio, 44.1 kHz is recognised for consumer applications, 96 kHz for higher bandwidth."
++msgstr "有多個取樣率時，聲音系統會跟隨正在播放內容的取樣率，因此檔案不會被轉換。AES5：專業音訊建議使用 48 kHz，消費性應用認可 44.1 kHz，需要更寬頻寬的應用使用 96 kHz。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Buffer size:"
++msgstr "緩衝區大小："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (PipeWire's own)"
++msgstr "自動（PipeWire 內建）"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 samples"
++msgstr "%1 個取樣"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "A smaller buffer means less delay and more work for the processor. No standard sets this; the delay is the buffer size divided by the rate."
++msgstr "緩衝區越小，延遲越低，處理器的負擔越重。沒有標準規定這一點；延遲等於緩衝區大小除以取樣率。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Resampling quality:"
++msgstr "重新取樣品質："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1 (automatic)"
++msgstr "%1（自動）"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Used only when a file's rate is not one the device takes. The scale is PipeWire's own, 0 to 14; no standard defines it."
++msgstr "僅在檔案的取樣率不是裝置支援的取樣率時使用。該刻度是 PipeWire 自己的，從 0 到 14；沒有標準定義它。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Why these choices:"
++msgstr "為什麼做出這些選擇："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Back to automatic"
++msgstr "恢復為自動"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "In use:"
++msgstr "使用中："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Not open at the moment."
++msgstr "目前未開啟。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Takes:"
++msgstr "支援："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1; %2"
++msgstr "%1；%2"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bluetooth codec:"
++msgstr "藍牙編解碼器："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "%1. The codec decides the rate and the format of a Bluetooth device."
++msgstr "%1。藍牙裝置的取樣率和格式由編解碼器決定。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The codec is not known until the device plays."
++msgstr "裝置開始播放之前不知道編解碼器。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "The display says:"
++msgstr "顯示器回報："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Uncompressed: %1 channels, %2 Hz, %3 bit"
++msgstr "未壓縮：%1 聲道，%2 Hz，%3 位元"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Encoded, for pass-through: %1, %2 channels"
++msgstr "已編碼，用於直通：%1，%2 聲道"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "This is the list the display sends in its CTA-861 audio data blocks."
++msgstr "這是顯示器在其 CTA-861 音訊資料區塊中傳送的清單。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Format:"
++msgstr "格式："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Automatic (best this device supports)"
++msgstr "自動（此裝置支援的最佳格式）"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Rate:"
++msgstr "取樣率："
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Bit-perfect: add nothing to the samples"
++msgstr "位元完美：不對取樣加入任何內容"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Switches off dither. The samples reach the device unchanged only while one program plays at full volume in the device's own format."
++msgstr "關閉抖動。只有當一個程式以裝置自身的格式、滿音量播放時，取樣才會原樣抵達裝置。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "No sound device is connected."
++msgstr "沒有連線的聲音裝置。"
++
++#. Sound Quality: formats, rates and the graph settings.
++msgid "Sound Quality…"
++msgstr "聲音品質…"
