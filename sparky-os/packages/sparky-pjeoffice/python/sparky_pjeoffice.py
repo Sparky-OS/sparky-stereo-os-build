@@ -24,7 +24,6 @@ import json
 import os
 import re
 import shutil
-import ssl
 import subprocess
 import sys
 import tempfile
@@ -33,8 +32,6 @@ import urllib.error
 import urllib.request
 import zipfile
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-import jks
 
 PACKAGE = 'sparky-pjeoffice'
 PROGRAM = '/opt/pjeoffice-pro'
@@ -52,6 +49,7 @@ SYSTEM_FFMPEG = '/usr/bin/ffmpeg'
 CODEC = '/usr/lib/sparky-pjeoffice/codec'
 ENGINE = '/usr/bin/sparky-stereo-problems'
 KEYSTORE_PASSWORD = 'pjeoffice'
+MERGE_SCRIPT = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'merge-trust.js')
 KEYSTORE_RESOURCE = 'pjeoffice.jks'
 SIGNER_URL = 'http://127.0.0.1:8800/pjeOffice/?u=18'
 EXECUTABLES = ('ffmpeg.exe', 'pjeoffice-pro.sh', 'jre/lib/jexec', 'jre/lib/jspawnhelper')
@@ -309,7 +307,7 @@ def prepare(target, entry):
 def qualify(target, entry):
     """What can be checked before the program is switched in: the files are there, the jar is a whole ZIP and holds the
     certificate list, and the bundled Java runs and is the version the catalogue reviewed."""
-    for needed in ('pjeoffice-pro.jar', 'cutplayer4jfx.jar', 'jre/bin/java', 'pjeoffice-update.properties'):
+    for needed in ('pjeoffice-pro.jar', 'cutplayer4jfx.jar', 'jre/bin/java', 'jre/bin/jjs', 'pjeoffice-update.properties'):
         if not os.path.isfile(os.path.join(target, needed)):
             raise ValueError('%s is missing from the program' % needed)
     jar = os.path.join(target, 'pjeoffice-pro.jar')
@@ -327,47 +325,43 @@ def qualify(target, entry):
 
 # ---- the certificate list ------------------------------------------------------------------------------------------
 
-def pem_certificates(data):
-    found = []
-    for block in re.findall(rb'-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----', data, re.S):
-        found.append(ssl.PEM_cert_to_DER_cert('-----BEGIN CERTIFICATE-----' + block.decode('ascii') + '-----END CERTIFICATE-----\n'))
-    return found
-
-
-def make_trust(version, jar, bundle_path=None):
+def make_trust(version, app, bundle_path=None):
     """The program's HTTPS codec reads its own certificate list from the jar and never the system's. The list made here keeps every
-    entry of the original exactly as it is and adds the system's TLS certificates, so the person's system trust (what Sparky CA or
-    they added) reaches the program. The original certificates are never dropped."""
+    original certificate exactly as it is and adds the system's TLS certificates, so the person's system trust (what Sparky CA or
+    they added) reaches the program. The original certificates are never dropped: the program's own Java (jjs) writes the list and
+    reads it back to check. A certificate Java cannot read is counted and said, never skipped silently."""
     bundle_path = bundle_path or SYSTEM_TLS
-    with zipfile.ZipFile(jar) as bundle:
-        original = jks.read(bundle.read(KEYSTORE_RESOURCE), KEYSTORE_PASSWORD)
+    jar = os.path.join(app, 'pjeoffice-pro.jar')
+    jjs = os.path.join(app, 'jre/bin/jjs')
     try:
-        with open(bundle_path, 'rb') as stream:
-            raw = stream.read()
-        system = pem_certificates(raw)
-    except (OSError, ValueError, ssl.SSLError) as error:
+        sha256_of(bundle_path)
+    except OSError as error:
         raise Failure('trust', 'LOCAL7', [str(error)], 'the system certificate list %s cannot be read: %s' % (bundle_path, error))
-    if not system:
-        raise Failure('trust', 'LOCAL7', ['%s holds no certificate' % bundle_path], 'no certificate in ' + bundle_path)
-    have = {der for _, _, der in original}
-    added = {}
-    for der in system:
-        if der not in have:
-            added[hashlib.sha256(der).hexdigest()] = der
-    entries = list(original) + [('sparky-system-' + key[:16], 0, added[key]) for key in sorted(added)]
-    data = jks.write(entries, KEYSTORE_PASSWORD)
-    # preservation: every original entry is in what is written, byte for byte
-    again = jks.read(data, KEYSTORE_PASSWORD)
-    if again[:len(original)] != original or len(again) != len(original) + len(added):
-        raise Failure('trust', 'LOCAL7', ['the original certificates were not preserved'], 'preservation check failed')
     folder = os.path.join(TRUST_DIR, version)
     os.makedirs(folder, mode=0o755, exist_ok=True)
-    handle, temporary = tempfile.mkstemp(dir=folder, prefix='.jks-')
-    with os.fdopen(handle, 'wb') as stream:
-        stream.write(data)
-    os.chmod(temporary, 0o644)
-    os.replace(temporary, os.path.join(folder, KEYSTORE_RESOURCE))
-    return {'bundle_sha256': hashlib.sha256(raw).hexdigest(), 'original': len(original), 'added': len(added), 'version': version}
+    with tempfile.TemporaryDirectory(dir=folder, prefix='.merge-') as work:
+        original = os.path.join(work, 'original')
+        with zipfile.ZipFile(jar) as bundle:
+            data = bundle.read(KEYSTORE_RESOURCE)
+        with open(original, 'wb') as stream:
+            stream.write(data)
+        kind = 'PKCS12' if data[:1] == b'\x30' else 'JKS' if data[:4] == bytes.fromhex('feedfeed') else None
+        if kind is None:
+            raise Failure('trust', 'LOCAL7', ['the program\'s certificate list is neither PKCS12 nor JKS'], 'unknown key store type')
+        written = os.path.join(work, 'merged')
+        result = subprocess.run([jjs, MERGE_SCRIPT, '--', kind, original, bundle_path, written, KEYSTORE_PASSWORD],
+                                capture_output=True, text=True, timeout=300)
+        if result.returncode or not os.path.isfile(written):
+            reason = (result.stderr or result.stdout).strip().splitlines()
+            raise Failure('trust', 'LOCAL7', [(reason[-1] if reason else 'jjs exited with %d' % result.returncode)[:240]],
+                          'the certificate list could not be made: ' + ' '.join(reason[-3:]))
+        counts = json.loads(result.stdout.strip().splitlines()[-1])
+        os.chmod(written, 0o644)
+        os.replace(written, os.path.join(folder, KEYSTORE_RESOURCE))
+    if counts.get('skipped'):
+        print('sparky-pjeoffice: %d certificate(s) of %s could not be read by the program\'s Java and were not added' % (counts['skipped'], bundle_path), file=sys.stderr)
+    return {'bundle_sha256': sha256_of(bundle_path), 'original': counts['original'], 'added': counts['added'], 'skipped': counts['skipped'],
+            'version': version, 'type': kind}
 
 
 def ensure_ffmpeg_link():
@@ -466,7 +460,7 @@ def install(catalogue_path=None):
                     os.rename(target, aside)
                 os.replace(staging, target)
                 out('LOCAL34')
-                trust = make_trust(version, os.path.join(target, 'pjeoffice-pro.jar'))
+                trust = make_trust(version, target)
                 ensure_ffmpeg_link()
                 switch(version)
             except Failure:
@@ -484,6 +478,9 @@ def install(catalogue_path=None):
                               '%s: %s' % (type(error).__name__, error))
         except Failure as failure:
             shutil.rmtree(staging, ignore_errors=True)
+            if not in_use():
+                shutil.rmtree(PROGRAM, ignore_errors=True)
+                shutil.rmtree(TRUST_DIR, ignore_errors=True)
             keep(failure)
             print(failure.reason, file=sys.stderr)
             return EXIT_KEPT if in_use() else 1
@@ -519,7 +516,7 @@ def regenerate_trust(only_if_changed=False):
         return 0
     with Lock():
         try:
-            trust = make_trust(version, os.path.join(VERSIONS, version, 'pjeoffice-pro.jar'))
+            trust = make_trust(version, os.path.join(VERSIONS, version))
         except Failure as failure:
             keep(failure)
             print(failure.reason, file=sys.stderr)

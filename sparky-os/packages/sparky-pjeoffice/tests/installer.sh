@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Daniel Ramos (Capitain Jack)
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The installer's transaction with generated stand-ins for CNJ's ZIP, in a disposable container as root, no network but loopback.
-# Needs: sparky-pjeoffice installed (the .deb, or tests/dev-install), sparky-stereo-problems, openssl, python3, curl, ffmpeg.
+# Needs: a Java 8 JRE with keytool and jjs (JAVA_HOME_FOR_FIXTURE, default /real/pjeoffice-pro/jre: the bundled one of an unpacked PJeOffice Pro mounted read-only), sparky-pjeoffice installed (the .deb, or tests/dev-install), sparky-stereo-problems, openssl, python3, curl, ffmpeg.
 # Usage: installer.sh FIXTURE_DIR   (a writable folder for the generated ZIPs and keys)
 set -u
 FX=${1:?a writable fixture folder}
@@ -76,16 +76,12 @@ t "the manifest of CNJ's files exists"     "grep -q ' pjeoffice-pro.jar\$' $V/SH
 t "java and ffmpeg.exe are executable"     "[ -x $V/jre/bin/java ] && [ -x $V/ffmpeg.exe ]"
 t "the jar is not executable"              "[ ! -x $V/pjeoffice-pro.jar ]"
 t "ffmpeg.exe of the managed folder links the system's" "[ \"\$(readlink /var/lib/sparky-pjeoffice/ffmpeg/ffmpeg.exe)\" = /usr/bin/ffmpeg ]"
-python3 - "$V" <<'PY' > trust1.txt
-import sys, zipfile
-sys.path.insert(0, '/usr/lib/sparky-pjeoffice')
-import jks
-v = sys.argv[1]
-orig = jks.read(zipfile.ZipFile(v + '/pjeoffice-pro.jar').read('pjeoffice.jks'), 'pjeoffice')
-new = jks.read(open('/var/lib/sparky-pjeoffice/trust/2.5.90u/pjeoffice.jks', 'rb').read(), 'pjeoffice')
-print('original', len(orig), 'new', len(new), 'preserved', new[:len(orig)] == orig)
-PY
-t "the list keeps every original entry, byte for byte" "grep -q 'preserved True' trust1.txt"
+KT=${JAVA_HOME_FOR_FIXTURE:-/real/pjeoffice-pro/jre}/bin/keytool
+fps() { "$KT" -list -v -keystore "$1" -storetype PKCS12 -storepass pjeoffice 2>/dev/null | grep 'SHA256:' | sed 's/^[[:space:]]*//' | sort; }
+unzip -p $V/pjeoffice-pro.jar pjeoffice.jks > orig1.p12
+fps orig1.p12 > fp-orig1.txt; fps /var/lib/sparky-pjeoffice/trust/2.5.90u/pjeoffice.jks > fp-new1.txt
+echo "original $(wc -l < fp-orig1.txt) new $(wc -l < fp-new1.txt) missing $(comm -23 fp-orig1.txt fp-new1.txt | wc -l)" > trust1.txt
+t "keytool (another reader) finds every original certificate in the list" "grep -q 'missing 0' trust1.txt && [ \$(awk '{print \$2}' trust1.txt) -ge 3 ]"
 t "the list adds the system's certificates"            "[ \$(awk '{print \$4}' trust1.txt) -gt \$(awk '{print \$2}' trust1.txt) ]"
 t "the state names the version and the digest"         "python3 -c \"import json;s=json.load(open('/var/lib/sparky-pjeoffice/state.json'));assert s['installed']=='2.5.90u' and len(s['zip_sha256'])==64\""
 
