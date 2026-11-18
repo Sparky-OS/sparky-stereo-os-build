@@ -1,0 +1,27 @@
+Source: sparky-pjeoffice
+Section: utils
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Standards-Version: 4.7.4
+Build-Depends: debhelper-compat (= 13), cmake, extra-cmake-modules, gettext, libkf6config-dev, libkf6coreaddons-dev, libkf6i18n-dev, libkf6kcmutils-dev, libkf6notifications-dev, libkf6statusnotifieritem-dev, ninja-build, pkgconf, qt6-base-dev, qt6-declarative-dev, sparky-stereo-problems (>= 0.2.1)
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+
+Package: sparky-pjeoffice
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, python3, curl, ffmpeg, sparky-stereo-problems (>= 0.2.1), sparky-pjeoffice-codec (>= 5.1.10), systemsettings, qml6-module-org-kde-kcmutils, qml6-module-org-kde-kirigami, qml6-module-qtquick-controls, qml6-module-qtquick-layouts, qml6-module-qtquick-window, fontconfig, fonts-dejavu-core, libasound2t64, libgtk-3-0t64, libx11-6, libxext6, libxi6, libxrender1, libxtst6, libxxf86vm1, libxrandr2, libxinerama1, libfreetype6, libgl1
+Recommends: opensc, pcscd, libccid
+Suggests: kleopatra, sparky-ca
+XB-Sparky-Install-Download-Size: 167505940
+XB-Sparky-Install-Download-Source: https://pje-office.pje.jus.br/pro/pjeoffice-pro-v2.5.16u-linux_x64.zip
+Description: Installer and KDE integration for CNJ's PJeOffice Pro
+ PJeOffice Pro is the signer of Brazil's court e-filing system (PJe, CNJ). It
+ has no licence that lets a distribution redistribute it, so this package holds
+ only the installer and the integration: the official ZIP is fetched from CNJ's
+ own address when the package is installed, checked against a reviewed size and
+ SHA-256, and kept in versioned folders, the previous one beside it.
+ .
+ A menu entry, a tray entry that says when the signer does not answer, a
+ System Settings page, a Dolphin action that signs a PDF (a CAdES file beside it)
+ and the system's certificates added to the program's own list.
