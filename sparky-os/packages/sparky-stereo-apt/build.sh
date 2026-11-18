@@ -71,6 +71,7 @@ install -m644 "$HERE"/install-downloads/lang/*.json "$D/usr/share/sparky/$PKG/in
 install -Dm755 "$HERE/install-downloads/models/postinst" "$D/usr/lib/$PKG/model-postinst"
 install -Dm755 "$HERE/install-downloads/models/postrm" "$D/usr/lib/$PKG/model-postrm"
 install -Dm755 "$HERE/install-downloads/models/profilectl.py" "$D/usr/lib/$PKG/model-profilectl"
+install -Dm755 "$HERE/install-downloads/models/install-gui.py" "$D/usr/lib/$PKG/model-install-gui"
 install -Dm644 "$HERE/install-downloads/models/messages.json" "$D/usr/share/sparky-install-models/messages.json"
 install -m644 "$HERE/install-downloads/models/templates" "$D/DEBIAN/templates"
 ln -s ../lib/$PKG/model-profilectl "$D/usr/bin/sparky-install-models"
