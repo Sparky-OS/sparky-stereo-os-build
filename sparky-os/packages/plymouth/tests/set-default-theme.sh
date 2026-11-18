@@ -105,8 +105,10 @@ if [ $status -eq 0 ] && [ "$(cat "$case_dir/stdout")" = "$(printf 'alpha\ntext\n
 start "a theme that does not exist" "${D}Theme=old\n"; run nosuchtheme; log
 if [ $status -ne 0 ] && grep -q nosuchtheme "$case_dir/stderr" && cmp -s "$conf" "$orig"; then ok; else bad "exit $status, stderr '$(cat "$case_dir/stderr")', file changed: $(cmp -s "$conf" "$orig" && echo no || echo yes)"; fi
 
-start "a file the person cannot write" "${D}ShowDelay=5\n"; chmod 444 "$conf"; chmod 555 "$case_dir/etc"; run alpha; log
-if [ $status -ne 0 ] && grep -q "$conf" "$case_dir/stderr" && cmp -s "$conf" "$orig"; then ok; else bad "exit $status, stderr '$(cat "$case_dir/stderr")', file changed: $(cmp -s "$conf" "$orig" && echo no || echo yes)"; fi
+start "a file the person cannot write" "${D}ShowDelay=5\n"; chmod 444 "$conf"; chmod 555 "$case_dir/etc"
+ln -s alpha/alpha.plymouth "$share/plymouth/themes/default.plymouth"; run alpha; log
+if [ $status -ne 0 ] && grep -q "$conf" "$case_dir/stderr" && cmp -s "$conf" "$orig" && [ -L "$share/plymouth/themes/default.plymouth" ]; then ok; else bad "exit $status, stderr '$(cat "$case_dir/stderr")', file changed: $(cmp -s "$conf" "$orig" && echo no || echo yes), legacy default link kept: $([ -L "$share/plymouth/themes/default.plymouth" ] && echo yes || echo no)"; fi
+rm -f "$share/plymouth/themes/default.plymouth"
 start "a file the person cannot write, reset" "${D}Theme=old\n"; chmod 444 "$conf"; chmod 555 "$case_dir/etc"; run --reset; log
 if [ $status -ne 0 ] && grep -q "$conf" "$case_dir/stderr" && cmp -s "$conf" "$orig"; then ok; else bad "exit $status, stderr '$(cat "$case_dir/stderr")', file changed: $(cmp -s "$conf" "$orig" && echo no || echo yes)"; fi
 start "a folder the person cannot write, no file" -; chmod 555 "$case_dir/etc"; run alpha; log
