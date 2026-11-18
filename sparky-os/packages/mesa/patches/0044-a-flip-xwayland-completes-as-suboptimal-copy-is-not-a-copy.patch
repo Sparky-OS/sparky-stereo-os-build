@@ -1,0 +1,77 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 18 Nov 2026 13:00:00 -0300
+Subject: [PATCH] A flip Xwayland completes as SUBOPTIMAL_COPY is not a copy
+
+The pair rule (glx_stereo_pair.h, ORDER 561b: one copy tolerated, two take the
+declaration back, three flips return it) reads the mode of a Present
+completion: flipped when it is FLIP, copied otherwise. Xwayland completes a
+flip as SUBOPTIMAL_COPY while a compositor's dmabuf feedback for the window's
+surface is still unread (xwl_present_maybe_set_reason), and the surface of a
+child window Stereo KWin has just redirected has fresh feedback: measured with
+an Xwayland that prints its decisions, the first present of a declared child
+was a flip completed as mode 3, and when the second one carried mode 3 too
+(both feedback flags set) two flips took the declaration back and the window
+went flat although both pictures had reached the surface. Mesa's own wsi code
+already notes that Xwayland reports SUBOPTIMAL_COPY without any change to the
+buffers (wsi_common_x11.c).
+
+SUBOPTIMAL_COPY is now neither a copy nor a flip for the rule, on DRI3 and
+software GLX, EGL on X11 and the Vulkan stereo layer: the completion is
+ignored, as SKIP is. A copy that the server really made still completes as COPY
+and is counted as before.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+--- a/src/vulkan/stereo-layer/stereo_layer.c
++++ b/src/vulkan/stereo-layer/stereo_layer.c
+@@ -514,7 +514,10 @@
+ static void
+ x11_completed(struct swapchain_data *swapchain, int mode)
+ {
+-   if (mode < 0 || mode == XCB_PRESENT_COMPLETE_MODE_SKIP)
++   /* Xwayland completes a flip as SUBOPTIMAL_COPY while the compositor's new dmabuf feedback is
++    * unread: the pixmap reached the surface, so it is neither a copy nor a confirmed flip */
++   if (mode < 0 || mode == XCB_PRESENT_COMPLETE_MODE_SKIP ||
++       mode == XCB_PRESENT_COMPLETE_MODE_SUBOPTIMAL_COPY)
+       return;
+    struct surface_data *surface = swapchain->surface;
+    xcb_window_t window = XCB_NONE;
+--- a/src/egl/drivers/dri2/platform_x11.c
++++ b/src/egl/drivers/dri2/platform_x11.c
+@@ -103,7 +103,9 @@
+ dri2_x11_pair_completed(struct dri2_egl_display *dpy, struct dri2_egl_surface *surf,
+                         unsigned mode, int width, int height)
+ {
+-   if (!surf->x11_stereo_one_eye || mode == XCB_PRESENT_COMPLETE_MODE_SKIP)
++   /* a flip Xwayland completes as SUBOPTIMAL_COPY is neither a copy nor a confirmed flip */
++   if (!surf->x11_stereo_one_eye || mode == XCB_PRESENT_COMPLETE_MODE_SKIP ||
++       mode == XCB_PRESENT_COMPLETE_MODE_SUBOPTIMAL_COPY)
+       return;
+    xcb_get_geometry_reply_t *g = xcb_get_geometry_reply(dpy->conn,
+       xcb_get_geometry(dpy->conn, surf->drawable), NULL);
+--- a/src/glx/dri3_glx.c
++++ b/src/glx/dri3_glx.c
+@@ -117,7 +117,10 @@
+    if (!pdraw->base.stereo || !pdraw->base.dri_drawable ||
+        !pdraw->base.dri_drawable->stereo_window_one_eye ||
+        (!pdraw->stereo_declared && !pdraw->pair.flat) ||
+-       mode == XCB_PRESENT_COMPLETE_MODE_SKIP)
++       mode == XCB_PRESENT_COMPLETE_MODE_SKIP ||
++       /* a flip Xwayland completes as SUBOPTIMAL_COPY (new dmabuf feedback unread) is
++        * neither a copy nor a confirmed flip */
++       mode == XCB_PRESENT_COMPLETE_MODE_SUBOPTIMAL_COPY)
+       return;
+ 
+    switch (glx_stereo_pair_completed(&pdraw->pair, pdraw->base.psc->dpy,
+--- a/src/glx/drisw_glx.c
++++ b/src/glx/drisw_glx.c
+@@ -229,7 +229,8 @@
+          if (ce->kind == XCB_PRESENT_COMPLETE_KIND_PIXMAP &&
+              ce->serial == pdp->present_serial) {
+             wait = false;
+-            if (ce->mode != XCB_PRESENT_COMPLETE_MODE_SKIP) {
++            if (ce->mode != XCB_PRESENT_COMPLETE_MODE_SKIP &&
++                ce->mode != XCB_PRESENT_COMPLETE_MODE_SUBOPTIMAL_COPY) {
+                switch (glx_stereo_pair_completed(&pdp->pair, pdraw->psc->dpy,
+                                                  pdraw->xDrawable,
+                                                  ce->mode == XCB_PRESENT_COMPLETE_MODE_FLIP,
