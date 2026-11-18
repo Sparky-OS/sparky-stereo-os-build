@@ -31,7 +31,12 @@ fi
 # the last three starts keep their log
 [ -f "$STATE/signer.log.1" ] && mv -f "$STATE/signer.log.1" "$STATE/signer.log.2"
 [ -f "$STATE/signer.log" ] && mv -f "$STATE/signer.log" "$STATE/signer.log.1"
-case "${LANG:-C}" in C | POSIX | '') export LANG=C.UTF-8 ;; esac
+# the program's own driver list has a character no other charset holds (opensc-pkcs11 with an en dash): its Java stops with InvalidPathException
+# when the locale in effect is not UTF-8, which includes a LANG naming a locale that is not generated (measured)
+if [ "$(locale charmap 2>/dev/null)" != UTF-8 ]; then
+	echo "PJeOffice Pro: the locale in effect (${LC_ALL:-${LANG:-C}}) is not a UTF-8 locale the system has; the program runs with C.UTF-8" >> "$STATE/signer.log"
+	export LC_ALL=C.UTF-8
+fi
 CODEC=/usr/lib/sparky-pjeoffice/codec
 if [ -d "$CODEC" ]; then
 	LD_LIBRARY_PATH="$CODEC${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
