@@ -10,7 +10,9 @@ OUT=${1:?output folder}
 VERSION=4.3.0
 TAG_SHA256=d05f9e18e8d2783109c54efe4e77ad1765b008f2ee13a028521ad37fe3e2a2b9   # codeload tar.gz of refs/tags/4.3.0
 COMMIT=62e361b085d7716805a3bf524bc9cca3761e0e15                                  # the tag is annotated: its tarball names this commit
-TREE=29d2e85f7f3c2932fd11540e05079267025c7a51                                    # that commit's git tree
+# the commit's own tree is 29d2e85f7f3c2932fd11540e05079267025c7a51; the tarball leaves out what .gitattributes marks export-ignore, so the
+# tree id of the unpacked tarball is the pin (the commit it names is checked above)
+TREE=6b2e6243d22bebe9e99511a93e189b0a87de52b7
 MTIME=2026-11-13T15:59:22Z                                                       # that commit's committer date
 W=$(mktemp -d "${TMPDIR:-/tmp}/headsetcontrol-orig.XXXXXX")
 trap 'chmod -R u+w "$W" 2>/dev/null; rm -rf "$W"' EXIT
