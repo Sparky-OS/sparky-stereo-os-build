@@ -12,6 +12,7 @@ import unittest
 
 from inventory import paragraphs, source_identity, walk
 from reconcile import binary_key, newest
+from payload import listing_name, member_name
 
 
 class Identities(unittest.TestCase):
@@ -36,6 +37,20 @@ class Identities(unittest.TestCase):
             dirs = {p.relative_to(root).as_posix() for p, _, _, _ in walk(root, 2, [])}
             self.assertIn('a/stage', dirs)
             self.assertNotIn('a/stage/source', dirs)
+
+
+class Listings(unittest.TestCase):
+    def test_listing_directories_match_tar_names(self):
+        self.assertEqual(listing_name('drwxr-xr-x root/root 0 2026-11-18 00:00 ./usr/'), member_name('./usr'))
+        self.assertEqual(listing_name('drwxr-xr-x root/root 0 2026-11-18 00:00 ./'), member_name('.'))
+
+    def test_links_and_spaces_keep_the_payload_path(self):
+        self.assertEqual(listing_name('lrwxrwxrwx root/root 0 2026-11-18 00:00 ./usr/a b -> target'), 'usr/a b')
+        self.assertEqual(listing_name('hrw-r--r-- root/root 0 2026-11-18 00:00 ./usr/a link to usr/b'), 'usr/a')
+
+    def test_unreadable_listing_refuses_instead_of_claiming_no_removal(self):
+        with self.assertRaises(ValueError):
+            listing_name('not a dpkg-deb listing')
 
 
 class Decisions(unittest.TestCase):
