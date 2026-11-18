@@ -1,0 +1,37 @@
+.TH DROIDCAM-CLI 1 "November 2026" "droidcam 2.1.7" "User Commands"
+.SH NAME
+droidcam-cli \- use a phone running the DroidCam app as a webcam
+.SH SYNOPSIS
+.B droidcam-cli
+[\fIoptions\fR] \fIip\fR \fIport\fR
+.br
+.B droidcam-cli
+[\fIoptions\fR] adb \fIport\fR
+.br
+.B droidcam-cli
+[\fIoptions\fR] ios \fIport\fR
+.SH DESCRIPTION
+Connects to the DroidCam app on a phone (the app's default port is 4747), by Wi-Fi, by USB through adb or to an iPhone,
+and writes the picture to a v4l2loopback virtual camera.
+With several phones on adb, set ANDROID_SERIAL to the serial that "adb devices" lists.
+.SH OPTIONS
+.TP
+.B \-a
+Enable the sound.
+.TP
+.B \-v
+Enable the video (the default).
+.TP
+.B \-vflip, \-hflip
+Flip the picture vertically or horizontally.
+.TP
+.B \-nocontrols
+Do not read the keyboard.
+.TP
+.BI \-dev= PATH
+Use this v4l2loopback device instead of the first one found.
+.TP
+.BI \-size= WxH
+The video size when the regular v4l2loopback module is used.
+.SH AUTHORS
+Dev47Apps.

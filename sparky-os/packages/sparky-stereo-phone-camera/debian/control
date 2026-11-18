@@ -1,0 +1,23 @@
+Source: sparky-stereo-phone-camera
+Section: video
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), python3
+Standards-Version: 4.7.2
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+Rules-Requires-Root: no
+
+Package: sparky-stereo-phone-camera
+Architecture: all
+Depends: ${misc:Depends}, python3, droidcam, v4l2loopback-dkms, v4l2loopback-utils, adb, scrcpy, pkexec
+Suggests: kdeconnect
+Description: a phone as the computer's camera: DroidCam or scrcpy
+ Sets up a virtual camera named "Phone camera" and starts either DroidCam's client (the DroidCam app on the phone, by Wi-Fi
+ or USB) or scrcpy's camera mode (USB debugging, no app on the phone). The phone's camera is then a camera of the session:
+ PipeWire lists it and System Settings, Camera shows it like any camera.
+ .
+ When something is missing (no phone found, the virtual camera module not built for the running kernel, Secure Boot refusing
+ the module, USB debugging not allowed on the phone) the command says what and what to do, in the person's language.
+ .
+ KDE Connect is not needed: if it is installed it may find the phone, the stream never depends on it.
