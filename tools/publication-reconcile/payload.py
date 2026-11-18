@@ -94,10 +94,10 @@ def main():
                 action, reason = 'added', 'New payload member'
             elif after is None:
                 action = 'removed'
-                if before['type'] == '5':
-                    reason = 'Directory removed; descendant files are compared separately'
-                elif '/.build-id/' in '/' + path and binary.endswith('-dbgsym'):
+                if '/.build-id/' in '/' + path and binary.endswith('-dbgsym'):
                     reason = 'Version-specific debug build ID replaced by successor debug archive; executable family retained'
+                elif before['type'] == '5':
+                    reason = 'Directory removed; descendant files are compared separately'
                 else:
                     reason = 'REVIEW REQUIRED: published payload path absent from successor'
             else:
