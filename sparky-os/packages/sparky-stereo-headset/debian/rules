@@ -1,0 +1,10 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DBUILD_TESTING=OFF -DKDE_INSTALL_USE_QT_SYS_PATHS=ON "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$(CURDIR)=."
+
+override_dh_auto_install:
+	dh_auto_install
+	install -D -m 0644 data/71-sparky-stereo-headset.rules debian/sparky-stereo-headset/usr/lib/udev/rules.d/71-sparky-stereo-headset.rules

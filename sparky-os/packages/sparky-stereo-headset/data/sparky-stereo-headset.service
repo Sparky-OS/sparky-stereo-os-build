@@ -1,0 +1,12 @@
+[Unit]
+Description=Send the saved settings of a headset to it when it appears, and tell when its battery is low
+Documentation=man:sparky-stereo-headset(1)
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sparky-stereo-headset watch
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
