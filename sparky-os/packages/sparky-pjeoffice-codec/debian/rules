@@ -25,6 +25,12 @@ override_dh_auto_install:
 	$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp
 	rm -rf debian/tmp/usr/share debian/tmp/usr/lib/sparky-pjeoffice/codec-include debian/tmp/usr/lib/sparky-pjeoffice/codec/pkgconfig debian/tmp/usr/lib/sparky-pjeoffice/codec/*.so
 
+override_dh_makeshlibs:
+	dh_makeshlibs -n
+
+override_dh_shlibdeps:
+	dh_shlibdeps -l$(CURDIR)/debian/sparky-pjeoffice-codec$(PRIVATE)
+
 override_dh_auto_clean:
 	@true
 
