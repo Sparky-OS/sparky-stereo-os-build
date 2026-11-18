@@ -1,0 +1,660 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: LACT
+Upstream-Contact: Ilya Zlobintsev (https://github.com/ilya-zlobintsev)
+Source: https://github.com/ilya-zlobintsev/LACT
+Comment: LACT itself is under the MIT licence. The program is one Rust binary that also links the crates in vendor/ (414, listed
+ below by the licence each one's Cargo.toml states), among them amdgpu-sysfs under the GNU Lesser General Public License version 3
+ or later, linked statically: the source package carries that crate's source (vendor/amdgpu-sysfs) and the whole build recipe, so
+ the program can be relinked with a changed copy of it. The stanzas of vendor/ are generated (sparky-os/packages/lact/debian/
+ gen-copyright.py in the edition's build repository) from the table debian/crate-licences.tsv, which pins every crate's legal
+ files by SHA-256; the files themselves (they carry their authors' names and addresses) are not kept in git, build.sh takes them
+ from the vendor tree and stops unless each has the pinned hash, and they are installed in /usr/share/doc/lact/vendor-licences.
+ The build stops when this file differs from what the generator gives.
+
+Files: *
+Copyright: 2023-2026 Ilya Zlobintsev and the LACT contributors
+License: Expat
+
+Files: debian/*
+Copyright: 2026 Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+License: GPL-3
+Comment: Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux (https://sparkylinux.org, by Pawel "pavroo" Pijanowski).
+# Crates whose package holds no legal file (the licence is the one their Cargo.toml states): defmt-parser easy_fuser_macro fluent-langneg intl_pluralrules libdisplay-info libdisplay-info-derive libdisplay-info-sys r-efi r-efi-5.3.0 tracker-macros valuable winapi-i686-pc-windows-gnu winapi-x86_64-pc-windows-gnu
+
+
+Files: vendor/unicode-ident/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Expat or Apache-2.0 and Unicode-3.0
+Comment: Cargo.toml license field: (MIT OR Apache-2.0) AND Unicode-3.0
+
+Files: vendor/adler2/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: 0BSD or Expat or Apache-2.0
+Comment: Cargo.toml license field: 0BSD OR MIT OR Apache-2.0
+
+Files: vendor/clang-sys/*
+  vendor/fragile/*
+  vendor/insta/*
+  vendor/similar/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Apache-2.0
+Comment: Cargo.toml license field: Apache-2.0
+
+Files: vendor/fnv/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Apache-2.0 or Expat
+Comment: Cargo.toml license field: Apache-2.0 / MIT
+
+Files: vendor/ring/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Apache-2.0 and ISC
+Comment: Cargo.toml license field: Apache-2.0 AND ISC
+
+Files: vendor/ryu/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Apache-2.0 or BSL-1.0
+Comment: Cargo.toml license field: Apache-2.0 OR BSL-1.0
+
+Files: vendor/self_cell/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Apache-2.0 or GPL-2
+Comment: Cargo.toml license field: Apache-2.0 OR GPL-2.0-only
+
+Files: vendor/rustls/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Apache-2.0 or ISC or Expat
+Comment: Cargo.toml license field: Apache-2.0 OR ISC OR MIT
+
+Files: vendor/autocfg/*
+  vendor/concurrent-queue/*
+  vendor/const-oid/*
+  vendor/encode_unicode/*
+  vendor/equivalent/*
+  vendor/event-listener/*
+  vendor/event-listener-strategy/*
+  vendor/fastrand/*
+  vendor/find-crate/*
+  vendor/fluent/*
+  vendor/fluent-bundle/*
+  vendor/fluent-langneg/*
+  vendor/fluent-syntax/*
+  vendor/futures-lite/*
+  vendor/idna_adapter/*
+  vendor/indexmap/*
+  vendor/intl-memoizer/*
+  vendor/no_std_io2/*
+  vendor/parking/*
+  vendor/pin-project-lite/*
+  vendor/portable-atomic/*
+  vendor/portable-atomic-util/*
+  vendor/relm4/*
+  vendor/relm4-components/*
+  vendor/relm4-css/*
+  vendor/relm4-macros/*
+  vendor/rustc-hash/*
+  vendor/tracker/*
+  vendor/tracker-macros/*
+  vendor/utf8_iter/*
+  vendor/utf8parse/*
+  vendor/uuid/*
+  vendor/zeroize/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Apache-2.0 or Expat
+Comment: Cargo.toml license field: Apache-2.0 OR MIT
+
+Files: vendor/target-lexicon/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Apache-2.0-with-LLVM-exception
+Comment: Cargo.toml license field: Apache-2.0 WITH LLVM-exception
+
+Files: vendor/linux-raw-sys/*
+  vendor/rustix/*
+  vendor/wasi/*
+  vendor/wasip2/*
+  vendor/wit-bindgen/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Apache-2.0-with-LLVM-exception or Apache-2.0 or Expat
+Comment: Cargo.toml license field: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
+
+Files: vendor/bimap/*
+  vendor/cexpr/*
+  vendor/flume/*
+  vendor/intl_pluralrules/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Apache-2.0 or Expat
+Comment: Cargo.toml license field: Apache-2.0/MIT
+
+Files: vendor/zerocopy/*
+  vendor/zerocopy-derive/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: BSD-2-Clause or Apache-2.0 or Expat
+Comment: Cargo.toml license field: BSD-2-Clause OR Apache-2.0 OR MIT
+
+Files: vendor/bindgen/*
+  vendor/bindgen-0.71.1/*
+  vendor/subtle/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: BSD-3-Clause
+Comment: Cargo.toml license field: BSD-3-Clause
+
+Files: vendor/notify/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: CC0-1.0
+Comment: Cargo.toml license field: CC0-1.0
+
+Files: vendor/webpki-roots/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: CDLA-Permissive-2.0
+Comment: Cargo.toml license field: CDLA-Permissive-2.0
+
+Files: vendor/inotify/*
+  vendor/inotify-sys/*
+  vendor/libloading/*
+  vendor/rustls-webpki/*
+  vendor/untrusted/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: ISC
+Comment: Cargo.toml license field: ISC
+
+Files: vendor/amdgpu-sysfs/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: LGPL-3+
+Comment: Cargo.toml license field: LGPL-3.0-or-later
+
+Files: vendor/bytes/*
+  vendor/cairo-rs/*
+  vendor/cairo-sys-rs/*
+  vendor/cfg_aliases/*
+  vendor/console/*
+  vendor/darling/*
+  vendor/darling-0.20.11/*
+  vendor/darling_core/*
+  vendor/darling_core-0.20.11/*
+  vendor/darling_macro/*
+  vendor/darling_macro-0.20.11/*
+  vendor/easy_fuser/*
+  vendor/easy_fuser_macro/*
+  vendor/endi/*
+  vendor/fuser/*
+  vendor/gdk-pixbuf/*
+  vendor/gdk-pixbuf-sys/*
+  vendor/gdk4/*
+  vendor/gdk4-sys/*
+  vendor/gio/*
+  vendor/gio-sys/*
+  vendor/glib/*
+  vendor/glib-macros/*
+  vendor/glib-sys/*
+  vendor/gobject-sys/*
+  vendor/graphene-rs/*
+  vendor/graphene-sys/*
+  vendor/gsk4/*
+  vendor/gsk4-sys/*
+  vendor/gtk4/*
+  vendor/gtk4-macros/*
+  vendor/gtk4-sys/*
+  vendor/i18n-config/*
+  vendor/i18n-embed/*
+  vendor/i18n-embed-fl/*
+  vendor/i18n-embed-impl/*
+  vendor/kqueue/*
+  vendor/kqueue-sys/*
+  vendor/libadwaita/*
+  vendor/libadwaita-sys/*
+  vendor/libdisplay-info/*
+  vendor/libdisplay-info-derive/*
+  vendor/libdisplay-info-sys/*
+  vendor/libdrm_amdgpu_sys/*
+  vendor/libflate/*
+  vendor/libflate_lz77/*
+  vendor/matchers/*
+  vendor/memoffset/*
+  vendor/mime_guess/*
+  vendor/mio/*
+  vendor/nix/*
+  vendor/nix-0.29.0/*
+  vendor/nom/*
+  vendor/nu-ansi-term/*
+  vendor/os-release/*
+  vendor/pango/*
+  vendor/pango-sys/*
+  vendor/pciid-parser/*
+  vendor/plotters/*
+  vendor/plotters-backend/*
+  vendor/plotters-cairo/*
+  vendor/redox_syscall/*
+  vendor/rust-embed/*
+  vendor/rust-embed-impl/*
+  vendor/rust-embed-utils/*
+  vendor/serde-error/*
+  vendor/sharded-slab/*
+  vendor/simd-adler32/*
+  vendor/slab/*
+  vendor/spin/*
+  vendor/strsim/*
+  vendor/synstructure/*
+  vendor/thread-priority/*
+  vendor/tokio/*
+  vendor/tokio-macros/*
+  vendor/tracing/*
+  vendor/tracing-attributes/*
+  vendor/tracing-core/*
+  vendor/tracing-log/*
+  vendor/tracing-subscriber/*
+  vendor/uds_windows/*
+  vendor/unsafe-libyaml-norway/*
+  vendor/valuable/*
+  vendor/version-compare/*
+  vendor/winnow/*
+  vendor/zbus/*
+  vendor/zbus_macros/*
+  vendor/zbus_names/*
+  vendor/zbus_polkit/*
+  vendor/zmij/*
+  vendor/zvariant/*
+  vendor/zvariant_derive/*
+  vendor/zvariant_utils/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Expat
+Comment: Cargo.toml license field: MIT
+
+Files: vendor/allocator-api2/*
+  vendor/anstream/*
+  vendor/anstyle/*
+  vendor/anstyle-parse/*
+  vendor/anstyle-query/*
+  vendor/anstyle-wincon/*
+  vendor/anyhow/*
+  vendor/arc-swap/*
+  vendor/askama/*
+  vendor/askama_derive/*
+  vendor/askama_macros/*
+  vendor/askama_parser/*
+  vendor/async-broadcast/*
+  vendor/async-recursion/*
+  vendor/async-trait/*
+  vendor/base64/*
+  vendor/basic-toml/*
+  vendor/bitflags/*
+  vendor/block-buffer/*
+  vendor/bon/*
+  vendor/bon-macros/*
+  vendor/bumpalo/*
+  vendor/cc/*
+  vendor/cfg-expr/*
+  vendor/cfg-if/*
+  vendor/clap/*
+  vendor/clap_builder/*
+  vendor/clap_derive/*
+  vendor/clap_lex/*
+  vendor/colorchoice/*
+  vendor/condtype/*
+  vendor/cookie/*
+  vendor/cookie_store/*
+  vendor/cpufeatures/*
+  vendor/crc32fast/*
+  vendor/crossbeam-utils/*
+  vendor/crypto-common/*
+  vendor/dary_heap/*
+  vendor/defmt/*
+  vendor/defmt-macros/*
+  vendor/defmt-parser/*
+  vendor/deranged/*
+  vendor/diff/*
+  vendor/digest/*
+  vendor/displaydoc/*
+  vendor/divan/*
+  vendor/divan-macros/*
+  vendor/document-features/*
+  vendor/either/*
+  vendor/enum_dispatch/*
+  vendor/enumflags2/*
+  vendor/enumflags2_derive/*
+  vendor/errno/*
+  vendor/field-offset/*
+  vendor/find-msvc-tools/*
+  vendor/flate2/*
+  vendor/form_urlencoded/*
+  vendor/futures/*
+  vendor/futures-channel/*
+  vendor/futures-core/*
+  vendor/futures-executor/*
+  vendor/futures-io/*
+  vendor/futures-macro/*
+  vendor/futures-sink/*
+  vendor/futures-task/*
+  vendor/futures-util/*
+  vendor/getrandom/*
+  vendor/getrandom-0.2.17/*
+  vendor/getrandom-0.3.4/*
+  vendor/glob/*
+  vendor/hashbrown/*
+  vendor/hashbrown-0.16.1/*
+  vendor/heck/*
+  vendor/hermit-abi/*
+  vendor/hex/*
+  vendor/http/*
+  vendor/httparse/*
+  vendor/hybrid-array/*
+  vendor/idna/*
+  vendor/is_terminal_polyfill/*
+  vendor/itertools/*
+  vendor/itoa/*
+  vendor/js-sys/*
+  vendor/lazy_static/*
+  vendor/libc/*
+  vendor/litrs/*
+  vendor/lock_api/*
+  vendor/log/*
+  vendor/mime/*
+  vendor/notify-types/*
+  vendor/num-conv/*
+  vendor/num-traits/*
+  vendor/num_cpus/*
+  vendor/num_threads/*
+  vendor/nvml-wrapper/*
+  vendor/nvml-wrapper-sys/*
+  vendor/once_cell/*
+  vendor/once_cell_polyfill/*
+  vendor/ordered-stream/*
+  vendor/parking_lot/*
+  vendor/parking_lot_core/*
+  vendor/percent-encoding/*
+  vendor/pkg-config/*
+  vendor/powerfmt/*
+  vendor/pretty_assertions/*
+  vendor/prettyplease/*
+  vendor/proc-macro-crate/*
+  vendor/proc-macro-error-attr3/*
+  vendor/proc-macro-error3/*
+  vendor/proc-macro2/*
+  vendor/quote/*
+  vendor/regex/*
+  vendor/regex-automata/*
+  vendor/regex-lite/*
+  vendor/regex-syntax/*
+  vendor/rle-decode-fast/*
+  vendor/rustc_version/*
+  vendor/rustls-pki-types/*
+  vendor/rustversion/*
+  vendor/scopeguard/*
+  vendor/semver/*
+  vendor/serde/*
+  vendor/serde_core/*
+  vendor/serde_derive/*
+  vendor/serde_json/*
+  vendor/serde_norway/*
+  vendor/serde_repr/*
+  vendor/serde_spanned/*
+  vendor/serde_with/*
+  vendor/serde_with_macros/*
+  vendor/sha2/*
+  vendor/shlex/*
+  vendor/shlex-1.3.0/*
+  vendor/signal-hook-registry/*
+  vendor/smallvec/*
+  vendor/socket2/*
+  vendor/stable_deref_trait/*
+  vendor/static_assertions/*
+  vendor/syn/*
+  vendor/syn-2.0.118/*
+  vendor/sys-locale/*
+  vendor/system-deps/*
+  vendor/tar/*
+  vendor/tempfile/*
+  vendor/terminal_size/*
+  vendor/thiserror/*
+  vendor/thiserror-1.0.69/*
+  vendor/thiserror-impl/*
+  vendor/thiserror-impl-1.0.69/*
+  vendor/thread_local/*
+  vendor/time/*
+  vendor/time-core/*
+  vendor/time-macros/*
+  vendor/toml/*
+  vendor/toml_datetime/*
+  vendor/toml_edit/*
+  vendor/toml_parser/*
+  vendor/toml_writer/*
+  vendor/typenum/*
+  vendor/unic-langid/*
+  vendor/unic-langid-impl/*
+  vendor/unicase/*
+  vendor/ureq/*
+  vendor/ureq-proto/*
+  vendor/url/*
+  vendor/utf8-zero/*
+  vendor/vergen/*
+  vendor/vergen-gitcl/*
+  vendor/vergen-lib/*
+  vendor/wasm-bindgen/*
+  vendor/wasm-bindgen-macro/*
+  vendor/wasm-bindgen-macro-support/*
+  vendor/wasm-bindgen-shared/*
+  vendor/web-sys/*
+  vendor/windows/*
+  vendor/windows-collections/*
+  vendor/windows-core/*
+  vendor/windows-future/*
+  vendor/windows-implement/*
+  vendor/windows-interface/*
+  vendor/windows-link/*
+  vendor/windows-numerics/*
+  vendor/windows-result/*
+  vendor/windows-strings/*
+  vendor/windows-sys/*
+  vendor/windows-sys-0.52.0/*
+  vendor/windows-sys-0.60.2/*
+  vendor/windows-targets/*
+  vendor/windows-targets-0.52.6/*
+  vendor/windows-threading/*
+  vendor/windows_aarch64_gnullvm/*
+  vendor/windows_aarch64_gnullvm-0.52.6/*
+  vendor/windows_aarch64_msvc/*
+  vendor/windows_aarch64_msvc-0.52.6/*
+  vendor/windows_i686_gnu/*
+  vendor/windows_i686_gnu-0.52.6/*
+  vendor/windows_i686_gnullvm/*
+  vendor/windows_i686_gnullvm-0.52.6/*
+  vendor/windows_i686_msvc/*
+  vendor/windows_i686_msvc-0.52.6/*
+  vendor/windows_x86_64_gnu/*
+  vendor/windows_x86_64_gnu-0.52.6/*
+  vendor/windows_x86_64_gnullvm/*
+  vendor/windows_x86_64_gnullvm-0.52.6/*
+  vendor/windows_x86_64_msvc/*
+  vendor/windows_x86_64_msvc-0.52.6/*
+  vendor/xattr/*
+  vendor/yansi/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Expat or Apache-2.0
+Comment: Cargo.toml license field: MIT OR Apache-2.0
+
+Files: vendor/r-efi/*
+  vendor/r-efi-5.3.0/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Expat or Apache-2.0 or LGPL-2.1+
+Comment: Cargo.toml license field: MIT OR Apache-2.0 OR LGPL-2.1-or-later
+
+Files: vendor/miniz_oxide/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Expat or Zlib or Apache-2.0
+Comment: Cargo.toml license field: MIT OR Zlib OR Apache-2.0
+
+Files: vendor/bitflags-1.3.2/*
+  vendor/filetime/*
+  vendor/ident_case/*
+  vendor/minimal-lexical/*
+  vendor/page_size/*
+  vendor/threadpool/*
+  vendor/toml-0.5.11/*
+  vendor/type-map/*
+  vendor/version_check/*
+  vendor/winapi/*
+  vendor/winapi-i686-pc-windows-gnu/*
+  vendor/winapi-x86_64-pc-windows-gnu/*
+  vendor/wrapcenum-derive/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Expat or Apache-2.0
+Comment: Cargo.toml license field: MIT/Apache-2.0
+
+Files: vendor/libcopes/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: MPL-2.0
+Comment: Cargo.toml license field: MPL-2.0
+
+Files: vendor/icu_collections/*
+  vendor/icu_locale_core/*
+  vendor/icu_normalizer/*
+  vendor/icu_normalizer_data/*
+  vendor/icu_properties/*
+  vendor/icu_properties_data/*
+  vendor/icu_provider/*
+  vendor/litemap/*
+  vendor/potential_utf/*
+  vendor/tinystr/*
+  vendor/writeable/*
+  vendor/yoke/*
+  vendor/yoke-derive/*
+  vendor/zerofrom/*
+  vendor/zerofrom-derive/*
+  vendor/zerotrie/*
+  vendor/zerovec/*
+  vendor/zerovec-derive/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Unicode-3.0
+Comment: Cargo.toml license field: Unicode-3.0
+
+Files: vendor/aho-corasick/*
+  vendor/jiff/*
+  vendor/jiff-static/*
+  vendor/jiff-tzdb/*
+  vendor/jiff-tzdb-platform/*
+  vendor/memchr/*
+  vendor/winapi-util/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Unlicense or Expat
+Comment: Cargo.toml license field: Unlicense OR MIT
+
+Files: vendor/same-file/*
+  vendor/walkdir/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Unlicense or Expat
+Comment: Cargo.toml license field: Unlicense/MIT
+
+Files: vendor/adler32/*
+  vendor/foldhash/*
+Copyright: see the legal files of the crates, installed in /usr/share/doc/lact/vendor-licences/
+License: Zlib
+Comment: Cargo.toml license field: Zlib
+
+
+License: 0BSD
+ The text is the legal file of each crate that states this licence, installed in /usr/share/doc/lact/vendor-licences/CRATE/ (its SHA-256 is pinned in debian/crate-licences.tsv).
+
+License: Apache-2.0
+ On Debian systems, the full text can be found in /usr/share/common-licenses/Apache-2.0.
+
+License: Apache-2.0-with-LLVM-exception
+ Apache-2.0 with the LLVM exception; see Apache-2.0 and the legal file of the crates that state it.
+
+License: BSD-2-Clause
+ Redistribution and use in source and binary forms, with or without modification, are permitted provided that the
+ following conditions are met:
+ .
+ 1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+ .
+ 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following
+ disclaimer in the documentation and/or other materials provided with the distribution.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT
+ NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+ THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+License: BSD-3-Clause
+ Redistribution and use in source and binary forms, with or without modification, are permitted provided that the
+ following conditions are met:
+ .
+ 1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+ .
+ 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following
+ disclaimer in the documentation and/or other materials provided with the distribution.
+ .
+ 3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived
+ from this software without specific prior written permission.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT
+ NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+ THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+License: BSL-1.0
+ The text is the legal file of each crate that states this licence, installed in /usr/share/doc/lact/vendor-licences/CRATE/ (its SHA-256 is pinned in debian/crate-licences.tsv).
+
+License: CC0-1.0
+ On Debian systems, the full text can be found in /usr/share/common-licenses/CC0-1.0.
+
+License: CDLA-Permissive-2.0
+ The text is the legal file of each crate that states this licence, installed in /usr/share/doc/lact/vendor-licences/CRATE/ (its SHA-256 is pinned in debian/crate-licences.tsv).
+
+License: Expat
+ Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+ documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to
+ use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
+ Software is furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+ FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+License: GPL-2
+ On Debian systems, the full text can be found in /usr/share/common-licenses/GPL-2.
+
+License: GPL-3
+ On Debian systems, the full text of the GNU General Public License version 3 can be found in /usr/share/common-licenses/GPL-3.
+
+License: ISC
+ Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted,
+ provided that the above copyright notice and this permission notice appear in all copies.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED
+ WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR
+ CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,
+ NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+License: LGPL-2.1+
+ On Debian systems, the full text can be found in /usr/share/common-licenses/LGPL-2.1.
+
+License: LGPL-3+
+ On Debian systems, the full text can be found in /usr/share/common-licenses/LGPL-3.
+
+License: MPL-2.0
+ On Debian systems, the full text can be found in /usr/share/common-licenses/MPL-2.0.
+
+License: Unicode-3.0
+ The text is the legal file of each crate that states this licence, installed in /usr/share/doc/lact/vendor-licences/CRATE/ (its SHA-256 is pinned in debian/crate-licences.tsv).
+
+License: Unlicense
+ The text is the legal file of each crate that states this licence, installed in /usr/share/doc/lact/vendor-licences/CRATE/ (its SHA-256 is pinned in debian/crate-licences.tsv).
+
+License: Zlib
+ This software is provided 'as-is', without any express or implied warranty. In no event will the authors be held liable
+ for any damages arising from the use of this software.
+ .
+ Permission is granted to anyone to use this software for any purpose, including commercial applications, and to alter it and
+ redistribute it freely, subject to the following restrictions:
+ .
+ 1. The origin of this software must not be misrepresented; you must not claim that you wrote the original software. If you use
+ this software in a product, an acknowledgment in the product documentation would be appreciated but is not required.
+ .
+ 2. Altered source versions must be plainly marked as such, and must not be misrepresented as being the original software.
+ .
+ 3. This notice may not be removed or altered from any source distribution.

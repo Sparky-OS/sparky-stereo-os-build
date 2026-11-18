@@ -1,0 +1,48 @@
+#!/usr/bin/make -f
+# Created by Daniel Ramos (Capitain Jack) 2026/11/18
+# Copyright 2026 under the GNU GPL3 License
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# no network, the vendored crates, upstream's Cargo.toml and Cargo.lock as they are (go-release-packaging.md and the Rust adapter's page)
+export CARGO_HOME = $(CURDIR)/debian/.cargo-home
+export CARGO_TARGET_DIR = $(CURDIR)/debian/.target
+export CARGO_NET_OFFLINE = true
+export CARGO_BUILD_JOBS = $(shell nproc)
+export HOME = $(CURDIR)/debian/.home
+
+%:
+	dh $@ --buildsystem=none
+
+# debian/copyright is generated from the crate table; the build stops when the committed file differs. rust-toolchain.toml names a
+# rustup channel; Debian's cargo does not read it.
+override_dh_auto_build:
+	python3 debian/gen-copyright.py debian/copyright-head.txt debian/crate-licences.tsv | cmp - debian/copyright
+	mkdir -p $(CARGO_HOME) $(HOME)
+	sed 's|^directory = .*|directory = "$(CURDIR)/vendor"|' debian/cargo-config.toml > $(CARGO_HOME)/config.toml
+	cargo --version
+	cargo build -p lact --release --offline --locked
+
+# upstream's tests that need no graphics card: the daemon's snapshots and the schema
+override_dh_auto_test:
+	cargo test --release --offline --locked -p lact-daemon -p lact-schema
+
+# the Rust program carries DWARF 5 sections dwz does not read
+override_dh_dwz:
+
+# the unit is installed as a file and started by postinst/prerm under their own guard: dh's snippets would stop and restart a
+# service of the same name that upstream's own makefile installed in /usr/local
+override_dh_installsystemd:
+
+override_dh_auto_install:
+	install -Dm755 debian/.target/release/lact debian/lact/usr/bin/lact
+	install -Dm644 res/lactd.service debian/lact/usr/lib/systemd/system/lactd.service
+	install -Dm644 res/io.github.ilya_zlobintsev.LACT.desktop debian/lact/usr/share/applications/io.github.ilya_zlobintsev.LACT.desktop
+	install -Dm644 res/io.github.ilya_zlobintsev.LACT.png debian/lact/usr/share/icons/hicolor/512x512/apps/io.github.ilya_zlobintsev.LACT.png
+	install -Dm644 res/io.github.ilya_zlobintsev.LACT.svg debian/lact/usr/share/icons/hicolor/scalable/apps/io.github.ilya_zlobintsev.LACT.svg
+	install -Dm644 res/io.github.ilya_zlobintsev.LACT-symbolic.svg debian/lact/usr/share/icons/hicolor/symbolic/apps/io.github.ilya_zlobintsev.LACT-symbolic.svg
+	install -Dm644 res/io.github.ilya_zlobintsev.LACT.metainfo.xml debian/lact/usr/share/metainfo/io.github.ilya_zlobintsev.LACT.metainfo.xml
+	install -Dm644 res/io.github.ilya_zlobintsev.LACT.policy debian/lact/usr/share/polkit-1/actions/io.github.ilya_zlobintsev.LACT.policy
+
+override_dh_clean:
+	dh_clean
+	rm -rf debian/.cargo-home debian/.target debian/.home

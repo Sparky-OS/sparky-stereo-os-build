@@ -1,0 +1,28 @@
+#!/bin/sh
+# Created by Daniel Ramos (Capitain Jack) 2026/11/18
+# Copyright 2026 under the GNU GPL3 License
+set -e
+#DEBHELPER#
+unit=lactd.service
+# A copy made by upstream's makefile (/usr/local, or a unit the person put in /etc/systemd/system) keeps the name of this unit and wins
+# over it. This package then changes nothing of it: it does not enable, start, restart or stop that service, and says so once.
+local_install() { [ -e /usr/local/bin/lact ] || [ -e /usr/local/lib/systemd/system/$unit ] || [ -e /etc/systemd/system/$unit ]; }
+if [ "$1" = configure ]; then
+	if local_install; then
+		echo "lact: a copy of LACT made by upstream's makefile (/usr/local) or a lactd.service in /etc/systemd/system is on this computer. It was left as it is, and this package's service is not enabled. How to change over: /usr/share/doc/lact/README.Debian" >&2
+	else
+		# the stock snippet of dh_installsystemd: enabled on first installation, a person's disable kept on upgrade
+		deb-systemd-helper unmask $unit >/dev/null || true
+		if deb-systemd-helper --quiet was-enabled $unit; then
+			deb-systemd-helper enable $unit >/dev/null || true
+		else
+			deb-systemd-helper update-state $unit >/dev/null || true
+		fi
+		if [ -d /run/systemd/system ]; then
+			systemctl --system daemon-reload >/dev/null || true
+			if [ -n "$2" ]; then action=restart; else action=start; fi
+			deb-systemd-invoke $action $unit >/dev/null || true
+		fi
+	fi
+fi
+exit 0

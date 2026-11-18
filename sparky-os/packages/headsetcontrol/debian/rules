@@ -1,0 +1,12 @@
+#!/usr/bin/make -f
+# Created by Daniel Ramos (Capitain Jack) 2026/11/18
+# Copyright 2026 under the GNU GPL3 License
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@ --buildsystem=cmake
+
+# upstream's defaults, a release build with its unit tests (they use a mock HID interface, no headset); the udev rules are written at
+# build time by the built program itself (`headsetcontrol -u`) into lib/udev/rules.d under the prefix
+override_dh_auto_configure:
+	dh_auto_configure -- -DCMAKE_BUILD_TYPE=Release
