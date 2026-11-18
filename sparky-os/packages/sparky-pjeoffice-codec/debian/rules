@@ -1,0 +1,38 @@
+#!/usr/bin/make -f
+# FFmpeg 5.1.10 as its signed release, unmodified, LGPL-2.1-or-later (no --enable-gpl, no --enable-nonfree).
+# Only the decode paths JavaFX Media plays; the libraries are private to PJeOffice Pro's launcher.
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+include /usr/share/dpkg/buildflags.mk
+PRIVATE = /usr/lib/sparky-pjeoffice/codec
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	./configure --prefix=/usr --libdir=$(PRIVATE) --incdir=/usr/lib/sparky-pjeoffice/codec-include --shlibdir=$(PRIVATE) \
+	  --disable-everything --disable-programs --disable-doc --disable-static --enable-shared --disable-x86asm \
+	  --disable-avdevice --disable-avfilter --disable-swscale --disable-postproc --disable-network \
+	  --enable-decoder=h264,aac,aac_latm,mp3,mp3float,mp2,mp2float,vp6,vp6f,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_s32be,pcm_u8,pcm_f32le,pcm_f32be,pcm_alaw,pcm_mulaw,adpcm_ima_wav,adpcm_ms \
+	  --enable-parser=h264,aac,aac_latm,mpegaudio \
+	  --enable-demuxer=mov,flv,mp3,wav,aiff,aac,mpegts \
+	  --enable-protocol=file \
+	  --extra-cflags="$(CFLAGS) $(CPPFLAGS) -ffile-prefix-map=$(CURDIR)=." --extra-ldflags="$(LDFLAGS) -Wl,-rpath,\$$ORIGIN"
+
+override_dh_auto_build:
+	$(MAKE) -j$(or $(JOBS),4)
+
+override_dh_auto_install:
+	$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp
+	rm -rf debian/tmp/usr/share debian/tmp/usr/lib/sparky-pjeoffice/codec-include debian/tmp/usr/lib/sparky-pjeoffice/codec/pkgconfig debian/tmp/usr/lib/sparky-pjeoffice/codec/*.so
+
+override_dh_makeshlibs:
+	dh_makeshlibs -n
+
+override_dh_shlibdeps:
+	dh_shlibdeps -l$(CURDIR)/debian/sparky-pjeoffice-codec$(PRIVATE)
+
+override_dh_auto_clean:
+	@true
+
+override_dh_auto_test:
+	@true
