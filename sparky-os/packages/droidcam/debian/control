@@ -1,0 +1,25 @@
+Source: droidcam
+Section: video
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), pkg-config, libgtk-3-dev, libayatana-appindicator3-dev, libavutil-dev, libswscale-dev,
+ libasound2-dev, libspeex-dev, libusbmuxd-dev, libimobiledevice-glue-dev, libplist-dev, libturbojpeg0-dev
+Standards-Version: 4.7.2
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+Rules-Requires-Root: no
+
+Package: droidcam
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, v4l2loopback-dkms
+Recommends: adb
+Suggests: kdeconnect
+Description: use a phone running the DroidCam app as the computer's webcam
+ The Linux client of DroidCam by Dev47Apps. It connects to the DroidCam app on a phone, over Wi-Fi or by USB through adb,
+ and writes the phone's picture (and, if asked, its sound) to a v4l2loopback virtual camera, which every program then sees
+ as a webcam.
+ .
+ The phone app is Dev47Apps' own and comes from the phone's store; this package holds only the computer's side.
+ .
+ The package depends on Debian's v4l2loopback-dkms, not on the bundled module of the upstream archive. KDE Connect is
+ not needed to find the phone.

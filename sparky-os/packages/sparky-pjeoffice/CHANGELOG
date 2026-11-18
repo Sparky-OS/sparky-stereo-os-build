@@ -1,0 +1,7 @@
+sparky-pjeoffice 0.1.0 (2026-11-18)
+  * First release (ORDER 18, milestone 2): the installer and the KDE integration of CNJ's PJeOffice Pro. The official ZIP is fetched from CNJ's address when the package is installed, checked against the size and SHA-256 in the reviewed catalogue, unpacked into a versioned folder of /opt/pjeoffice-pro and switched in only after every check passed; the previous version stays.
+  * CNJ's own updater is switched off in the installed copy (the original properties file is kept beside it); the package updates the program.
+  * The program's certificate list (it reads its own, never the system's) is extended with the system's TLS certificates, every original entry kept byte for byte, and made again when the system's list changes.
+  * A menu entry, a tray entry (KStatusNotifierItem) that says when the signer does not answer, a System Settings page (start at login, the version, the update state), a Dolphin action that signs a PDF through the program's own entry point (a CAdES file beside it); ten languages.
+  * Every failure of the fetch, the check, the switch or the start is kept by the problems engine with what to do.
+  * The launcher starts the signer under a lock (the tray and the menu entry at login started two, and the second shut the first down) and runs it with a UTF-8 locale when the one in effect is not (the program's own driver list stops a Java that cannot map an en dash).

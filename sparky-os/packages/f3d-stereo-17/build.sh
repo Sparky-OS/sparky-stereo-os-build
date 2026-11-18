@@ -42,7 +42,7 @@ import sys
 for para in open(sys.argv[1], encoding='utf-8').read().strip().split('\n\n'):
     print(' '.join(l.strip() for l in para.splitlines()))
 PY
-VERSION=3.5.0+dfsg-3+stereo3d3
+VERSION=3.5.0+dfsg-3+stereo3d4
 DATE=$(date -u -d "@$SOURCE_DATE_EPOCH" -R)
 dch --date "$DATE" -v "$VERSION" -D unstable --force-distribution "$(head -1 "$WORK/items.txt")"
 while IFS= read -r item; do [ "$item" = "$(head -1 "$WORK/items.txt")" ] || dch --date "$DATE" -a "$item"; done < "$WORK/items.txt"
