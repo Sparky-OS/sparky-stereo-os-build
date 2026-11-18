@@ -25,7 +25,12 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
 ---
 --- a/src/glx/dri_common.c
 +++ b/src/glx/dri_common.c
-@@ -49,6 +49,7 @@
+@@ -45,10 +45,12 @@
+ #include "dri_common.h"
+ #include "loader.h"
+ #include <X11/Xlib-xcb.h>
++#include <X11/Xatom.h>
+ #include <xcb/xproto.h>
  #include "dri_util.h"
  #include "pipe-loader/pipe_loader.h"
  #include "x11/x11_display.h"
@@ -33,7 +38,7 @@ Assisted-by: Claude Sonnet 5.5 via Claude Code
  
  /* Track the X windows on a private connection. Selecting StructureNotify here
   * neither changes the application's event mask nor consumes its events.
-@@ -344,6 +345,70 @@
+@@ -344,6 +346,70 @@
        glx_message(_LOADER_WARNING, "Failed to wake stereo window observer\n");
  }
  
