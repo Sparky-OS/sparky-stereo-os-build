@@ -218,6 +218,22 @@ class Helper(unittest.TestCase):
         self.assertNotIn('--force', ' '.join(calls))
 
 
+class Udev(unittest.TestCase):
+    def test_a_new_device_node_is_waited_for_until_the_person_can_open_it(self):
+        import importlib.machinery, importlib.util
+        loader = importlib.machinery.SourceFileLoader('spc2', BIN)
+        spec = importlib.util.spec_from_loader('spc2', loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        mod.ROOT = ''
+        answers = [False, False, False, True]
+        calls = []
+        mod.os.access = lambda path, mode: calls.append(path) or answers.pop(0)
+        mod.time.sleep = lambda seconds: None
+        mod.wait_usable('/dev/video0')
+        self.assertEqual(len(calls), 4, 'asked until it could be opened, then stopped')
+
+
 class Announce(unittest.TestCase):
     def test_announce_removes_and_adds_the_one_device(self):
         r = Rig(loaded=True, device=True)

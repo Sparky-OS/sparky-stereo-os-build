@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 NAME = 'Phone camera'
 ROOT = os.environ.get('SPARKY_PHONE_CAMERA_ROOT', '')
@@ -125,9 +126,21 @@ def virtual_camera():
         LOADED_BY_US = True
         device = loopback_device()
         if device:
+            wait_usable(device)
             return device
     say('no_device', NAME)
     return None
+
+
+def wait_usable(device):
+    """udev gives the new device node its group and access a moment after the module is loaded; a program started before that
+    meets 'Permission denied'. Waits up to five seconds for the person to be able to open it."""
+    if ROOT:
+        return
+    for _ in range(50):
+        if os.access(device, os.R_OK | os.W_OK):
+            return
+        time.sleep(0.1)
 
 
 def end_session():
