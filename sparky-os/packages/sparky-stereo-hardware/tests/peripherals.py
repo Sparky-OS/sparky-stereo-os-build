@@ -15,7 +15,7 @@ tool = '/usr/bin/sparky-stereo-hardware'
 base = {
     'lspci': '', 'lsusb': '', 'cpuinfo': 'vendor_id : AuthenticAMD\n', 'laptop': '1\n', 'architecture': 'amd64\n',
     'hid-uevents': '', 'input-properties': '', 'firmware-packages': '', 'nvidia-detect': 'No NVIDIA GPU detected.\n',
-    'dmi-board-vendor': 'Some Board Maker\n', 'dmi-board-name': 'TEST\n', 'openlinkhub': 'no\n', 'openlinkhub-upstream': 'no\n', 'corectrl': 'no\n', 'lact-local': 'no\n', 'headsetcontrol-local': 'no\n',
+    'dmi-board-vendor': 'Some Board Maker\n', 'dmi-board-name': 'TEST\n', 'openlinkhub': 'no\n', 'openlinkhub-upstream': 'no\n', 'corectrl': 'no\n', 'lact-local': 'no\n', 'headsetcontrol-local': 'no\n', 'coolercontrol-local': 'no\n', 'hwmon-fans': '',
 }
 
 
@@ -86,6 +86,20 @@ cases = [
      {'i2c-tools', 'openrgb'}, set(), ['fact\tsmbus-modules\ti2c-dev i2c-i801'], []),
     ('a Gigabyte laptop board', {'dmi-board-vendor': 'Gigabyte Technology Co., Ltd.\n', 'laptop': '0\n'}, set(), {'i2c-tools', 'openrgb'}, [],
      ['action\ti2c-dev', 'action\topenrgb-session']),
+    # CoolerControl (milestone 13): the board's fan channels read from hwmon (no module loaded, no probing), and the liquid coolers liquidctl drives
+    ('a board with seven fan channels', {'hwmon-fans': 'k10temp\t0\nnct6798\t7\n'}, {'coolercontrold', 'coolercontrol'}, {'lact'},
+     ['fact\tperipheral\tcoolercontrol\thwmon:nct6798'], []),
+    ('a machine with no fan channel', {'hwmon-fans': 'nvme\t0\nk10temp\t0\n'}, set(), {'coolercontrold', 'coolercontrol'}, [], ['fact\tperipheral\tcoolercontrol\thwmon:nvme']),
+    ('an AMD card whose fan is LACT\'s', {'lspci': AMD, 'hwmon-fans': 'amdgpu\t1\n'}, {'lact'}, {'coolercontrold', 'coolercontrol'},
+     ['fact\tperipheral\tcoolercontrol-not-gpu-fan\tamdgpu (1 fan channels are LACT\'s)'], []),
+    ('an AMD card whose owner is a CoreCtrl the person installed: its fan is CoolerControl\'s', {'lspci': AMD, 'hwmon-fans': 'amdgpu\t1\n', 'corectrl': 'yes\n'},
+     {'coolercontrold', 'coolercontrol'}, {'lact'}, ['fact\tperipheral\tcoolercontrol\thwmon:amdgpu'], []),
+    ('an NZXT Kraken', {'lsusb': usb('1e71:2014')}, {'liquidctl', 'coolercontrold', 'coolercontrol'}, {'openlinkhub'}, ['fact\tperipheral\tcoolercontrol\t1e71:2014'], []),
+    ('a Corsair cooler stays OpenLinkHub\'s', {'lsusb': usb(PSU_COOLER)}, {'openlinkhub'}, {'coolercontrold', 'coolercontrol'},
+     ['owner\t1b1c:0c09\topenlinkhub\tnot CoolerControl\tCorsair_H100i_v2'], []),
+    ('a lights-only controller is not CoolerControl\'s', {'lsusb': usb('048d:5702')}, set(), {'coolercontrold', 'coolercontrol'}, [], []),
+    ('fans and a CoolerControl made by upstream\'s makefile', {'hwmon-fans': 'nct6798\t7\n', 'coolercontrol-local': 'yes\n'}, set(), {'coolercontrold', 'coolercontrol'},
+     ['fact\tperipheral\tcoolercontrol-local\thwmon:nct6798'], []),
 ]
 failed = 0
 with tempfile.TemporaryDirectory() as tmp:

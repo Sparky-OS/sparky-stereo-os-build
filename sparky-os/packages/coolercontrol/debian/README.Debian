@@ -1,0 +1,16 @@
+CoolerControl for Sparky Stereo OS
+==================================
+
+Where things are
+  service        coolercontrold.service (enabled when the package is installed; systemctl disable --now coolercontrold keeps it off across upgrades)
+  interface      http://localhost:11987 (served by the service), and the window /usr/bin/coolercontrol (package coolercontrol)
+  settings       /etc/coolercontrol (config.toml, written by the service), /var/lib/coolercontrol; the package never ships, writes or replaces them. Removing the package keeps them; purging it removes them (where no copy of upstream's makefile shares the folders)
+
+If a copy made by upstream's own makefile is on the computer
+  `make install` puts coolercontrold in /usr/local/bin (or /usr/bin) and its unit in /usr/local/lib/systemd/system or /etc/systemd/system, which systemd reads before /usr/lib/systemd/system, and it shares /etc/coolercontrol with this package. Installing this package then changes nothing of that copy: its service is not enabled, started, restarted or stopped, and no setting is touched. Nothing here removes your copy for you.
+
+What the package does not do
+  Upstream's package rewrites the computer's apt sources to the project's own repository and installs its archive keyring when it is installed. This package does not: the sources of the package manager are the person's.
+
+Who owns a fan or a pump
+  A device two programs could open has one owner on this edition (sparky-stereo-hardware): Corsair's hubs and coolers stay OpenLinkHub's, an AMD card's fan is LACT's while LACT is installed, the rest is CoolerControl's. In CoolerControl a person can still disable any device or channel in the interface.
