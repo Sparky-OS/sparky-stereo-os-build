@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Wed, 18 Nov 2026 10:00:00 -0300
+Subject: [PATCH 3/4] wayland: A subsurface that follows the depth gets the limits
+
+A window's depth states are made from its top-level surface: StereoDepthStates
+watches that surface's stereoDepthFollowed() and nothing else. A declared
+subsurface (the 3D area of an ordinary Wayland window) that asked for
+kde_stereo_depth_v1 after its window was shown therefore got no state, and so no
+depth_limits, until something else (a move, a change of the limits) made the
+update run. The follow is now announced up the tree of subsurfaces to the top
+level, so the update that tells the new follower comes at once.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+--- a/src/wayland/stereocontent_v1.cpp
++++ b/src/wayland/stereocontent_v1.cpp
+@@ -7,6 +7,7 @@
+ 
+ #include "display.h"
+ #include "effect/globals.h"
++#include "subcompositor.h"
+ #include "surface.h"
+ #include "surface_p.h"
+ 
+@@ -49,7 +50,13 @@
+     SurfaceInterface *surf = SurfaceInterface::get(surface);
+     auto depth = new StereoDepthSurfaceV1(resource->client(), id, resource->version(), surf);
+     SurfaceInterfacePrivate::get(surf)->stereoDepths.append(depth);
+-    Q_EMIT surf->stereoDepthFollowed();
++    // the window's depth states are made from its top-level surface: a subsurface that starts
++    // following later is announced up to the top-level, so the update that tells it comes
++    for (SurfaceInterface *followed = surf; followed;) {
++        Q_EMIT followed->stereoDepthFollowed();
++        const SubSurfaceInterface *sub = followed->subSurface();
++        followed = sub ? sub->parentSurface() : nullptr;
++    }
+     // a surface whose state is known tells a new follower at once
+     if (const auto state = SurfaceInterfacePrivate::get(surf)->stereoDepthState) {
+         depth->sendState(state->awake, state->outputEdges, state->sunk, state->popped);
