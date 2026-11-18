@@ -3,6 +3,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 BUILD=$(cd "$HERE/../.." && pwd)
+ROOT=$(cd "$BUILD/.." && pwd)
 : "${SPARKY_BUILDER_IMAGE:?Set the prepared Debian testing builder image}"
 : "${SPIRULA_SOURCE:?Set the clean edition fork checkout}"
 : "${OUT:?Set an owned empty output folder}"
@@ -20,7 +21,7 @@ docker run --name "$SPARKY_BUILD_CONTAINER" --platform linux/amd64 --user "$(id 
     "${SPARKY_PROV_ARGS[@]}" -e SPIRULA_SOURCE -e OUT -e SPARKY_LC_ARCHIVE_CONFIG -e SPARKY_LC_SCRATCH -e SPARKY_LC_SIBLINGS_FILE \
     -e SPARKY_LC_MIN_FREE_GIB=2 -e SPARKY_LC_ROOT_MIN_FREE_GIB=1 -e JOBS=4 \
     --mount "type=bind,src=$SPIRULA_SOURCE,dst=$SPIRULA_SOURCE,readonly" \
-    --mount "type=bind,src=$BUILD,dst=$BUILD,readonly" --mount "type=bind,src=$OUT,dst=$OUT" \
+    --mount "type=bind,src=$ROOT,dst=$ROOT,readonly" --mount "type=bind,src=$OUT,dst=$OUT" \
     --mount "type=bind,src=$SPARKY_LC_SCRATCH,dst=$SPARKY_LC_SCRATCH" \
     --mount "type=bind,src=$SPARKY_HTTPS_APT_HELPER,dst=/run/https-only-apt.sh,readonly" \
     --mount "type=bind,src=$SPARKY_HOST_CA,dst=/run/host-ca.crt,readonly" \
