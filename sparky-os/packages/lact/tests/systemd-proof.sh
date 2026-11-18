@@ -3,7 +3,7 @@
 # Copyright 2026 under the GNU GPL3 License
 # Proof under systemd, run as root inside a systemd container (docker run -d --cgroupns=private --security-opt writable-cgroups=true --tmpfs /run
 # --tmpfs /tmp -v BUILD_OUT:/deb:ro IMAGE /lib/systemd/systemd; docker cp this file; docker exec CONTAINER bash systemd-proof.sh), with LACT_SNAPSHOT_DIR
-# a folder holding upstream's recorded graphics cards (tests/snapshots/amd of the source tarball, mounted at /snap). No real card: the service
+# a recorded card of upstream (tests/snapshots/amd/rx5500xt of the source tarball) mounted at /snap/rx5500xt. No real card: the service
 # reads a recorded one through `_LACT_DRM_SYSFS_PATH` (upstream's own test hook) set by a drop-in, the proof's only deviation from the shipped unit.
 export DEBIAN_FRONTEND=noninteractive
 rm -f /usr/sbin/policy-rc.d
