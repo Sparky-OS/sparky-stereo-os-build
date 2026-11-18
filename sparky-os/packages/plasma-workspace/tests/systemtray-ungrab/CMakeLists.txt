@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.22)
+project(ungrabtest)
+find_package(Qt6 REQUIRED COMPONENTS Quick QuickPrivate Test Gui GuiPrivate)
+set(CMAKE_AUTOMOC ON)
+add_executable(ungrabtest ungrabtest.cpp)
+target_link_libraries(ungrabtest Qt6::Quick Qt6::QuickPrivate Qt6::Test Qt6::GuiPrivate)
+file(COPY ungrab.qml DESTINATION ${CMAKE_BINARY_DIR})
