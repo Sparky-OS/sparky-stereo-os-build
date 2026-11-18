@@ -1,0 +1,11 @@
+#!/bin/sh
+# Created by Daniel Ramos (Capitain Jack) 2026/11/18
+# Copyright 2026 under the GNU GPL3 License
+set -e
+#DEBHELPER#
+unit=coolercontrold.service
+# stops only the service this package installed: never the one of a copy made by upstream's makefile
+if [ "$1" = remove ] && [ -d /run/systemd/system ] && ! [ -e /usr/local/bin/coolercontrold ] && ! [ -e /usr/local/lib/systemd/system/$unit ] && ! [ -e /etc/systemd/system/$unit ]; then
+	deb-systemd-invoke stop $unit >/dev/null || true
+fi
+exit 0

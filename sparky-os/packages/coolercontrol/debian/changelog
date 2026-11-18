@@ -1,0 +1,8 @@
+coolercontrol (5.1.2-1) unstable; urgency=medium
+
+  * The edition's build of CoolerControl 5.1.2 (Guy Boldon, Eren Simsek and the contributors, gitlab.com/coolercontrol/coolercontrol, GPL-3.0-or-later), carried because Debian never packaged it and SparkyLinux does not host it (ORDER 108 milestone 13). The whole tool: the daemon, its interface and the Qt window.
+  * Built from the tag's source, pinned in the recipe by commit b4ba6db3e0b87dc4835492a2bada87b2b8163743, the tarball's SHA-256 and the git tree id, with the daemon's crates vendored (Cargo.toml and Cargo.lock unchanged) and no network in the build. Upstream's prebuilt packages and binaries are not used.
+  * The interface is built by a chain whose native parts have a source: Vite 7.3.8 with Rollup 4.68.6 (its native part built here from the tag's rust/ workspace, vendored) and Debian's esbuild 0.28.2, instead of Vite 8 with Rolldown and Lightning CSS, which npm delivers as prebuilt objects that cannot be built without an earlier prebuilt copy. One patch (debian/patches/0001): vite and @vitejs/plugin-legacy move to the Vite 7 line and esbuild is pinned, the build configuration names esbuild for minification, and package-lock.json changes only in the build tools. The interface's own code and its dependencies' versions are unchanged.
+  * Upstream's postinst rewrites the machine's apt sources to the project's repository and installs its archive keyring: not done here (the package manager's sources are the person's); the service is handled as LACT's: enabled on first installation, a person's disable kept, a copy made by upstream's makefile (/usr/local) left alone.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Wed, 18 Nov 2026 12:00:00 -0300
