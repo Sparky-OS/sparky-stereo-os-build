@@ -22,3 +22,7 @@ The separation of a 3D window is the person's depth limits and nothing else: ren
 configuration file or libf3d's API, and whoever sets it is told once in a warning in the ten languages of the edition (+stereo3d2
 still took the separation from that option when it was set, so -D render.stereo_eye_angle=6 gave 104 and 63 pixels against limits
 that allow 2 and 6). The pair of an image keeps its 2 degrees by window::setStereoImageEyeAngle, which is not an option.
+
+A program that shows the scene inside its own window can make the GLX window a child of its window (window::setParentWindowId) and read the
+window's id (window::getNativeWindowId): the 3D area of a Qt viewer is positioned and sized by the program, and the program can declare what it
+needs on that window. Nothing changes for a program that does not call them (patch 0010).
