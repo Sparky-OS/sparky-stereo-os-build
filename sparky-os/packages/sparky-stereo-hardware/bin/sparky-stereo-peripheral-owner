@@ -10,7 +10,11 @@
 #   check  (default)  tell, once per device
 #   list              print what is owned and by whom, tell nothing
 #   --dry-run         print the engine commands instead of running them
-# Tests: SPARKY_PERIPHERAL_FIXTURE=DIR (DIR/lsusb, DIR/openlinkhub = yes|no) replaces the machine; SPARKY_STEREO_ROOT moves the state.
+# A copy of OpenLinkHub the person installed with upstream's own scripts (/opt/OpenLinkHub, its unit in /etc/systemd/system, its rules in
+# /etc/udev/rules.d: the fact openlinkhub-upstream) with the package openlinkhub installed beside it is told once, in the person's
+# language, as a notice (milestone 8): the package left their copy as it is, and the way over (README.Debian) is in the message.
+# Tests: SPARKY_PERIPHERAL_FIXTURE=DIR (DIR/lsusb, DIR/openlinkhub = yes|no, DIR/openlinkhub-upstream and DIR/openlinkhub-package = yes|no)
+# replaces the machine; SPARKY_STEREO_ROOT moves the state.
 import os
 import re
 import subprocess
@@ -31,6 +35,22 @@ def olh_installed():
     if FIXTURE:
         return open(os.path.join(FIXTURE, "openlinkhub")).read().strip() == "yes"
     return any(os.path.exists(ROOT + p) for p in ("/etc/systemd/system/OpenLinkHub.service", "/usr/lib/systemd/system/OpenLinkHub.service", "/opt/OpenLinkHub"))
+
+
+def upstream_install():
+    if FIXTURE:
+        return open(os.path.join(FIXTURE, "openlinkhub-upstream")).read().strip() == "yes"
+    return any(os.path.exists(ROOT + p) for p in ("/etc/systemd/system/OpenLinkHub.service", "/opt/OpenLinkHub", "/etc/udev/rules.d/99-openlinkhub.rules"))
+
+
+def package_installed():
+    if FIXTURE:
+        return open(os.path.join(FIXTURE, "openlinkhub-package")).read().strip() == "yes"
+    out = subprocess.run(["dpkg-query", "-W", "-f", "${db:Status-Abbrev}", "openlinkhub"], capture_output=True, text=True)
+    return out.returncode == 0 and out.stdout.strip().startswith("ii")
+
+
+NOTICE = "notice-openlinkhub-upstream"
 
 
 def usb_ids():
@@ -87,12 +107,26 @@ def main(argv):
             open(os.path.join(STATE, mark), "w").close()
     # the telling is forgotten for a device that is gone or whose owner left
     for mark in sorted(marks):
+        if mark == NOTICE:
+            continue
         ident = mark.replace("-", ":", 1)
         if not with_olh or ident not in present:
             if dry:
                 print("forget " + mark)
             else:
                 os.unlink(os.path.join(STATE, mark))
+    # upstream's own copy with the package beside it: one notice while that holds, told again if it comes back
+    both = upstream_install() and package_installed()
+    if both and NOTICE not in marks:
+        engine(["say", PKG, "LOCAL89"], dry)
+        if not dry:
+            os.makedirs(STATE, exist_ok=True)
+            open(os.path.join(STATE, NOTICE), "w").close()
+    elif not both and NOTICE in marks:
+        if dry:
+            print("forget " + NOTICE)
+        else:
+            os.unlink(os.path.join(STATE, NOTICE))
     return 0
 
 

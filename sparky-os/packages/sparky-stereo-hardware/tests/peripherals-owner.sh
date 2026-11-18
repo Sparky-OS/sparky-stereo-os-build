@@ -42,7 +42,7 @@ rm -f /etc/udev/rules.d/$OWNER /usr/lib/systemd/system/OpenLinkHub.service
 mkdir -p /fx /stub /state; printf 'Bus 001 Device 002: ID 1b1c:0c3f Corsair iCUE LINK System Hub\nBus 001 Device 003: ID 1d6b:0002 Linux Foundation root hub\n' >/fx/lsusb
 printf '#!/bin/sh\necho "$@" >>/stub/engine.log\n' >/stub/sparky-stereo-problems; chmod +x /stub/sparky-stereo-problems
 run() { PATH=/stub:$PATH SPARKY_PERIPHERAL_FIXTURE=/fx SPARKY_STEREO_ROOT=/state SPARKY_PERIPHERAL_TABLE=/pkg/share/peripherals/owners.tsv python3 /pkg/bin/sparky-stereo-peripheral-owner "$@"; }
-echo yes >/fx/openlinkhub; rm -f /stub/engine.log
+echo no >/fx/openlinkhub-upstream; echo no >/fx/openlinkhub-package; echo yes >/fx/openlinkhub; rm -f /stub/engine.log
 run check; n1=$(wc -l </stub/engine.log); run check; n2=$(wc -l </stub/engine.log)
 [[ $n1 == 1 && $n2 == 1 ]] && ok "told once: one engine call at the first check, none at the second ($(cat /stub/engine.log))" || bad "told $n1 then $n2 times"
 grep -q 'say sparky-stereo-hardware LOCAL87' /stub/engine.log && ok "the message is LOCAL87 of the package's catalogue" || bad "wrong call: $(cat /stub/engine.log)"
@@ -50,6 +50,18 @@ echo no >/fx/openlinkhub; run check; [[ ! -e /state/var/lib/sparky-stereo-hardwa
 echo yes >/fx/openlinkhub; : >/stub/engine.log; run check; [[ $(wc -l </stub/engine.log) == 1 ]] && ok "told again when it comes back" || bad "not told again"
 run list | grep -q '^1b1c:0c3f.openlinkhub' && ok "list: $(run list)" || bad "list: $(run list)"
 printf 'Bus 001 Device 003: ID 1d6b:0002 Linux Foundation root hub\n' >/fx/lsusb; : >/stub/engine.log; run check; [[ ! -s /stub/engine.log && ! -e /state/var/lib/sparky-stereo-hardware/owner-told/1b1c-0c3f ]] && ok "a device that is gone is not told and its mark is forgotten" || bad "gone device"
+
+# upstream's own OpenLinkHub with the package beside it: one notice, LOCAL89, in the engine's catalogue; not for either alone
+echo no >/fx/openlinkhub-upstream; echo no >/fx/openlinkhub-package; : >/stub/engine.log; rm -rf /state/var/lib/sparky-stereo-hardware/owner-told
+run check; [[ ! -s /stub/engine.log ]] && ok "neither upstream's copy nor the package: no notice" || bad "notice with neither: $(cat /stub/engine.log)"
+echo yes >/fx/openlinkhub-upstream; run check; [[ ! -s /stub/engine.log ]] && ok "upstream's copy alone: no notice" || bad "notice for upstream alone: $(cat /stub/engine.log)"
+echo no >/fx/openlinkhub-upstream; echo yes >/fx/openlinkhub-package; run check; [[ ! -s /stub/engine.log ]] && ok "the package alone: no notice" || bad "notice for the package alone: $(cat /stub/engine.log)"
+echo yes >/fx/openlinkhub-upstream; run check; run check
+[[ $(grep -c 'say sparky-stereo-hardware LOCAL89' /stub/engine.log) == 1 ]] && ok "both: told once in two checks ($(cat /stub/engine.log))" || bad "both: engine log: $(cat /stub/engine.log)"
+echo no >/fx/openlinkhub-upstream; run check; [[ ! -e /state/var/lib/sparky-stereo-hardware/owner-told/notice-openlinkhub-upstream ]] && ok "the telling is forgotten when upstream's copy is gone" || bad "notice mark kept"
+echo yes >/fx/openlinkhub-upstream; : >/stub/engine.log; run check; [[ $(wc -l </stub/engine.log) == 1 ]] && ok "told again when it comes back" || bad "not told again"
+echo no >/fx/openlinkhub-upstream; echo no >/fx/openlinkhub-package; run check
+n=$(python3 /pkg/tests/upstream-notice-lang.py 2>&1 | grep -c "^PASS"); [[ $n == 10 ]] && ok "the notice is in the catalogue in all ten languages" || bad "ten languages: $n"
 
 # OpenRGB with the session: only with the mark, never over a person's own entry
 mkdir -p /home/t/.config/autostart /state/var/lib/sparky-stereo-hardware; printf '#!/bin/sh\necho "started $@" >>/stub/openrgb.log\n' >/stub/openrgb; chmod +x /stub/openrgb
