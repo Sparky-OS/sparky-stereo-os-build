@@ -30,7 +30,7 @@ cases = [
     # name, changed facts, packages that must be in the plan, packages that must not, lines that must be in it, lines that must not
     ('no device', {}, set(), {'openrgb', 'solaar', 'piper', 'ratbagd', 'liquidctl', 'g810-led', 'openrazer-daemon', 'i2c-tools'},
      [], ['action\topenrgb-session', 'action\ti2c-dev']),
-    ('a Logitech Unifying receiver', {'lsusb': usb('046d:c52b')}, {'solaar'}, {'openrgb', 'piper'}, ['fact\tperipheral\tsolaar\t046d:c52b'],
+    ('a Logitech Unifying receiver', {'lsusb': usb('046d:c52b')}, set(), {'openrgb', 'piper', 'solaar', 'openlogi'}, ['offer\topenlogi\t046d:c52b'],
      ['action\topenrgb-session']),
     ('a Logitech gaming mouse (libratbag)', {'lsusb': usb('046d:c097')}, {'ratbagd', 'piper'}, {'solaar'}, ['fact\tperipheral\tratbag\t046d:c097'], []),
     ('an AMD Wraith Prism cooler light', {'lsusb': usb(WRAITH)}, {'openrgb'}, {'liquidctl'}, ['action\topenrgb-session'], ['action\ti2c-dev']),

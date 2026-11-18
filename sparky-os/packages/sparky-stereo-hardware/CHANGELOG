@@ -1,4 +1,11 @@
 -------------------------------------------------------------------------------
+  Version 0.1.37 (2026-11-18)
+-------------------------------------------------------------------------------
+  * ORDER 27: offers the signed upstream OpenLogi entry when a supported receiver, USB or Bluetooth HID++ device, Logitech UVC interface or Litra light is present. The plan window has a localized explanation and a button opening the app center entry; the person chooses installation there. Hardware Setup never downloads or installs OpenLogi by detection.
+  * Numeric identities carry their source address in peripherals/openlogi.ids; tools/make-logitech-ids.py regenerates them from separately fetched OpenLogi and kernel sources. UVC class metadata is read without opening a camera. A copy already on PATH is left alone.
+  * Solaar is no longer automatically installed for a device offered to OpenLogi; it stays available in apt, and existing installations are unchanged. Tests cover the offer and the no-Logitech control.
+
+-------------------------------------------------------------------------------
   Version 0.1.36 (2026-11-18)
 -------------------------------------------------------------------------------
   * CoolerControl by detection (ORDER 108, milestone 13; ORDER 699; not in Debian, carried as the packages coolercontrold and coolercontrol): installed for a machine that shows a fan channel or a cooler it can drive, read without loading a module or probing. Facts: `hwmon-fans` (the name and the number of pwm channels of each /sys/class/hwmon folder, read) and `coolercontrol-local` (a copy made by upstream's makefile: /usr/local/bin/coolercontrold or its unit in /usr/local or /etc, which is the person's: neither package is planned beside it). Rows: a USB device of liquidctl's list that is not a lights-only controller, a hwmon folder that holds a pwm channel.
