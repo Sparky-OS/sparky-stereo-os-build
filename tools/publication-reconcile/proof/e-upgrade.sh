@@ -19,6 +19,10 @@ apt_get -s dist-upgrade >$O/e2-sim-dist.txt 2>&1; rc=$?; echo "sim dist-upgrade 
 echo "dist-upgrade would: $(grep -c '^Inst' $O/e2-sim-dist.txt) Inst, $(grep -c '^Remv' $O/e2-sim-dist.txt) Remv; $(grep -E 'upgraded,' $O/e2-sim-dist.txt)" | tee -a $O/rc.txt
 grep -E '^(Inst|Remv) ' $O/e2-sim-dist.txt | head -60
 check_inst_remv $O/e2-sim-dist.txt "$ALLOW" "simulated dist-upgrade"
+if [ -n "${E_TARGETS:-}" ]; then
+    python3 /proof/check-upgrade-targets.py $O/e2-before.txt $O/e2-sim-dist.txt "$E_TARGETS" >$O/e2-targets.txt 2>&1 || fail "installed selected targets are missing from the simulation: $(head -3 $O/e2-targets.txt)"
+    pass "every installed selected target is offered at its frozen version"
+fi
 # the packages the upgrade touches, for the planted conffile edits (only upgrades: Inst NAME [old] (new ...))
 awk '/^Inst .*\[/{print $2}' $O/e2-sim-dist.txt | sed 's/:[a-z0-9]*$//' | sort -u >$O/e2-upgraded.txt
 plant_conffiles $O/e2-planted.tsv $O/e2-upgraded.txt
