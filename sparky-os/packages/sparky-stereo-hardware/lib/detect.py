@@ -311,6 +311,40 @@ for tool, name, tool_packages in (("openrgb", "OpenRGB", ("openrgb",)), ("solaar
         emit("fact", f"peripheral\t{tool}\t{' '.join(seen)}")
         if tool == "openrgb":
             openrgb_devices = seen
+# CoolerControl (ORDER 108, milestone 13; not in Debian, carried as the packages coolercontrold and coolercontrol) reads the temperatures and sets the fans and
+# pumps of a computer: the hwmon fan channels of the board (the kernel's pwm files), and the liquid coolers and fan controllers liquidctl drives. It is
+# installed for a machine that shows either, and for nothing else; what the facts can know is read, never probed: a USB device of liquidctl's list
+# (share/peripherals/liquidctl.ids, minus the lights-only controllers, which are OpenRGB's) and the hwmon folders that already hold a pwm channel
+# (the `hwmon-fans` fact: name and number of pwm channels, read from /sys/class/hwmon with no module loaded: a Super I/O whose driver is not loaded
+# shows no fan, and the machine gets nothing from this row). One owner per device, as for the other tools: Corsair's hubs and coolers stay OpenLinkHub's
+# (owners.tsv keeps liquidctl, and so CoolerControl, out of them), an AMD card's fan is LACT's while LACT is planned for the card, the rest is
+# CoolerControl's; the person can change any of it inside CoolerControl. A CoolerControl made by upstream's makefile (the `coolercontrol-local` fact:
+# /usr/local/bin/coolercontrold or its unit in /usr/local or /etc) is theirs: the packages are not planned beside it.
+cc_devices = []
+liquid_table = device_table("liquidctl.ids")
+for ident in usb_ids:
+    label = liquid_table.get(ident)
+    if label is None or re.search(r"\bLED\b|Lighting|RGB Fusion|\bHUE\b", label):
+        continue
+    if ident in owned and "liquidctl" in owned[ident][1]:
+        emit("owner", f"{ident}\t{owned[ident][0]}\tnot CoolerControl\t{owned[ident][2] or label}")
+        continue
+    cc_devices.append(ident)
+cc_fans = {}
+for line in (read_optional("hwmon-fans") or "").splitlines():
+    name, _, count = line.partition("\t")
+    if name and count.strip().isdigit() and int(count) > 0:
+        cc_fans[name] = int(count)
+lact_planned = bool(amd_cards) and not ((read_optional("corectrl") or "").strip() == "yes" or (read_optional("lact-local") or "").strip() == "yes")
+if "amdgpu" in cc_fans and lact_planned:
+    emit("fact", f"peripheral\tcoolercontrol-not-gpu-fan\tamdgpu ({cc_fans.pop('amdgpu')} fan channels are LACT's)")
+if cc_devices or cc_fans:
+    seen_cc = cc_devices + [f"hwmon:{name}" for name in sorted(cc_fans)]
+    if (read_optional("coolercontrol-local") or "").strip() == "yes":
+        emit("fact", f"peripheral\tcoolercontrol-local\t{' '.join(seen_cc)}")
+    else:
+        match(f"CoolerControl drives {', '.join(seen_cc)}", "coolercontrold", "coolercontrol")
+        emit("fact", f"peripheral\tcoolercontrol\t{' '.join(seen_cc)}")
 # Motherboard and memory lights over the SMBus cannot be seen from USB: a desktop whose board maker is one OpenRGB's detectors
 # name (its sources check "Micro-Star International Co., Ltd." and "Gigabyte Technology Co., Ltd."; ASUS Aura, ASRock Polychrome and EVGA
 # are found by probing the bus) gets the modules that make the bus reachable (i2c-dev and the chipset's driver, OpenRGB's SMBusAccess.md) and
