@@ -19,7 +19,8 @@ BASE = 'http://127.0.0.1:11987'
 COOKIE = ''
 
 
-PASS = 'ProofPass-2026'
+import secrets
+PASS = 'Proof-' + secrets.token_hex(8)   # a password of this run only
 
 
 def login_as(password):
