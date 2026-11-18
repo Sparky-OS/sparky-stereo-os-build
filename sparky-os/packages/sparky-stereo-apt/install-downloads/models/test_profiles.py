@@ -123,6 +123,18 @@ class Profiles(unittest.TestCase):
         root=Path(self.profile['root']);root.symlink_to(self.case/'outside')
         with self.assertRaises(ValueError):self.install()
         self.assertEqual(requests,[])
+    def test_preexisting_verified_person_file_is_not_adopted(self):
+        root=Path(self.profile['root']);root.mkdir()
+        (root/'shared.bin').write_bytes(BODY)
+        self.assertEqual(self.install(),0)
+        with contextlib.redirect_stdout(io.StringIO()):engine.purge(self.profile['package'])
+        self.assertEqual((root/'shared.bin').read_bytes(),BODY)
+    def test_preexisting_different_person_file_is_not_replaced(self):
+        root=Path(self.profile['root']);root.mkdir()
+        (root/'shared.bin').write_text('the person keeps this')
+        with self.assertRaises(PermissionError):self.install()
+        self.assertEqual(requests,[])
+        self.assertEqual((root/'shared.bin').read_text(),'the person keeps this')
     def test_http_redirect_refused(self):
         self.profile['files'][0]['url']=self.url+'/redirect'
         with self.assertRaises(ValueError):self.install()

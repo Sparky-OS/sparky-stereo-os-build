@@ -1,0 +1,28 @@
+.TH SPIRULA-STUDIO 1 "November 2026" "Spirula Studio"
+.SH NAME
+spirula-studio \- create and view 3D models from photos or video
+.SH SYNOPSIS
+.B spirula-studio
+.RI [ options ] " [files]"
+.SH DESCRIPTION
+Vulkan is the default backend. Use the desktop CUDA action or put
+.B --compute-backend=cuda
+first to select the separately installed CUDA backend.
+The Graphics page chooses the GPU by stable identity for training,
+structure from motion and model inference.
+The native program prints its active backend and GPU.
+.SH STEREO
+Enable 3D, render resolution per eye, and Display Settings are the
+three stereo controls. Stereo KWin supplies the depth limits.
+Missing limits produce identical eyes with an explicit message.
+.SH PROCESSING DATA
+Model profiles are separate packages. Their installation displays
+the pinned publisher, current download size, metered notice and terms.
+Required consent is never assumed. Missing profiles open their
+AppCenter installation page; the application never downloads them.
+Installer-owned models are under /var/lib/spirula-studio/models.
+Removing a package keeps them. Purging a profile deletes its unshared
+files. Purging spirula-studio deletes all its installer-owned models.
+The person's other files are kept.
+.SH SEE ALSO
+.BR sparky-install-models (1)
