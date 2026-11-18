@@ -1,0 +1,34 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Spirula Studio
+Comment=Create and view 3D models from photos or video
+Comment[pl]=Twórz i oglądaj modele 3D ze zdjęć lub filmu
+Comment[pt_BR]=Crie e visualize modelos 3D a partir de fotos ou vídeos
+Comment[fr]=Créez et affichez des modèles 3D à partir de photos ou de vidéos
+Comment[de]=3D-Modelle aus Fotos oder Videos erstellen und anzeigen
+Comment[es]=Cree y visualice modelos 3D a partir de fotos o vídeos
+Comment[ja]=写真や動画から3Dモデルを作成して表示
+Comment[ko]=사진이나 동영상으로 3D 모델을 만들고 보기
+Comment[zh_CN]=从照片或视频创建并查看 3D 模型
+Comment[zh_TW]=從相片或影片建立並檢視 3D 模型
+Exec=/usr/bin/spirula-studio %F
+Icon=spirula-studio
+Terminal=false
+Categories=Graphics;3DGraphics;Photography;
+MimeType=application/x-ply;model/obj;model/gltf+json;model/gltf-binary;
+StartupNotify=true
+Actions=CUDA;
+
+[Desktop Action CUDA]
+Name=Use CUDA
+Name[pl]=Użyj CUDA
+Name[pt_BR]=Usar CUDA
+Name[fr]=Utiliser CUDA
+Name[de]=CUDA verwenden
+Name[es]=Usar CUDA
+Name[ja]=CUDA を使用
+Name[ko]=CUDA 사용
+Name[zh_CN]=使用 CUDA
+Name[zh_TW]=使用 CUDA
+Exec=/usr/bin/spirula-studio --compute-backend=cuda %F

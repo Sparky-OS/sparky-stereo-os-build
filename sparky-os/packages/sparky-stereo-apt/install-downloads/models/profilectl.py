@@ -117,6 +117,27 @@ def install(p, consent):
         os.chmod(work, 0o700)
         files = []
         try:
+            owned = set()
+            for receipt in (STATE / 'receipts').glob('*.json'):
+                record = json.loads(receipt.read_text())
+                if record['root'] == str(root):
+                    owned.update(record['files'])
+            unowned = set()
+            for f in p['files']:
+                path = root / f['file']
+                owned_directory(path.parent)
+                if path.is_symlink():
+                    raise ValueError(str(path))
+                if path.exists() and f['file'] not in owned:
+                    if not verified(path,f):
+                        raise PermissionError(str(path))
+                    unowned.add(f['file'])
+            generated = p.get('generated_files', [])
+            for name in generated:
+                path = root / name
+                owned_directory(path.parent)
+                if path.is_symlink() or (path.exists() and name not in owned):
+                    raise PermissionError(str(path))
             missing = [f for f in p['files'] if not verified(root / f['file'], f)]
             need = sum(f['bytes'] for f in missing)
             if shutil.disk_usage(root).free < need + p.get('postprocess_disk_bytes', 0) + 128 * 1024 * 1024:
@@ -154,7 +175,7 @@ def install(p, consent):
                 target.chmod(0o644)
                 target.replace(destination)
             receipt = dict(profile=p['package'], package=p['package'], group=p['group'], root=str(root),
-                           files=[f['file'] for f in p['files']] + p.get('generated_files', []),
+                           files=[f['file'] for f in p['files'] if f['file'] not in unowned] + generated,
                            profile_sha256=hashlib.sha256(json.dumps(p, sort_keys=True).encode()).hexdigest())
             temp = STATE / 'receipts' / (p['package'] + '.json.new')
             temp.write_text(json.dumps(receipt, indent=2) + '\n')
@@ -163,6 +184,15 @@ def install(p, consent):
             if p.get('postprocess'):
                 env = dict(os.environ, XDG_CONFIG_HOME=str(work / 'config'), XDG_CACHE_HOME=str(work / 'cache'))
                 subprocess.run(p['postprocess'], env=env, check=True)
+                for name in p.get('generated_verified', []):
+                    path = root / name
+                    if path.is_symlink() or not path.is_file():
+                        raise ValueError(name)
+                    sidecar = path.with_name(path.name + '.sha256')
+                    if sidecar.is_symlink():
+                        raise ValueError(str(sidecar))
+                    sidecar.write_text(digest(path) + '\n')
+                    sidecar.chmod(0o644)
         finally:
             shutil.rmtree(work)
     print(words('done', profile=p['title']), flush=True)

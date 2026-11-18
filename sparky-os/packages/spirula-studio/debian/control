@@ -1,0 +1,369 @@
+Source: spirula-studio
+Section: graphics
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), cmake, ninja-build, build-essential, pkg-config, libvulkan-dev, libgl-dev, libegl-dev, libxrandr-dev, libxinerama-dev, libxcursor-dev, libxi-dev, libxext-dev, libwayland-dev, wayland-protocols, libxkbcommon-dev, libstereo-declare-dev (>= 1.10), python3, chrpath, cuda-nvcc-13-5 (>= 13.5.37), cuda-cudart-dev-13-5 (>= 13.5.37)
+Standards-Version: 4.7.4
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+
+Package: spirula-studio
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, python3, ffmpeg (>= 10:9.0.2-dmo1+stereo3d14), libstereo-declare1 (>= 1.10), xdg-utils, yad, sparky-aptus-stereo-appcenter (>= 0.1.13), sparky-stereo-apt (>= 20261118.1~sparky9~0), sparky-stereo-graphics, libgl1, libegl1, libxrandr2, libxinerama1, libxcursor1, libxi6, libwayland-client0, libxkbcommon0
+Suggests: spirula-studio-cuda, spirula-studio-model-aliked-n16rot
+Description: Build and view 3D models from photos or video
+ Spirula Studio reconstructs Gaussian splats and meshes, with a native
+ stereo view controlled by Stereo KWin's depth limits. Vulkan is the default.
+ Processing model profiles are installed separately from their publishers,
+ after their download size and applicable licence terms are shown.
+ Purging this package deletes installer-owned downloaded model profiles.
+
+Package: spirula-studio-cuda
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, spirula-studio (= ${binary:Version}), cuda-cudart-13-5
+Description: CUDA backend for Spirula Studio
+ The same application and features, using CUDA for training on a supported
+ NVIDIA GPU. SfM and inference remain available through Vulkan on the GPU
+ selected in Graphics. CUDA includes sm_75 and sm_86 code and forward PTX.
+ Choose CUDA through the desktop action or --compute-backend cuda.
+
+Package: spirula-studio-model-aliked-n16rot
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 2997054
+XB-Sparky-Install-Download-Source: https://github.com/colmap/colmap/releases/download/3.13.0/aliked-n16rot.onnx
+Description: Spirula Studio processing profile aliked-n16rot.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-aliked-n32
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 4205634
+XB-Sparky-Install-Download-Source: https://github.com/colmap/colmap/releases/download/3.13.0/aliked-n32.onnx
+Description: Spirula Studio processing profile aliked-n32.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-aliked-lightglue
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 45804950
+XB-Sparky-Install-Download-Source: https://github.com/colmap/colmap/releases/download/3.13.0/aliked-lightglue.onnx
+Description: Spirula Studio processing profile aliked-lightglue.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-loma-detector
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 26187830
+XB-Sparky-Install-Download-Source: https://github.com/davnords/storage/releases/download/loma/loma_detector.onnx
+Description: Spirula Studio processing profile loma_detector.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-loma-descriptor-dedode-b
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 53782693
+XB-Sparky-Install-Download-Source: https://github.com/davnords/storage/releases/download/loma/loma_descriptor_dedode_b.onnx
+Description: Spirula Studio processing profile loma_descriptor_dedode_b.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-loma-descriptor-dedode-g
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 1294905349
+XB-Sparky-Install-Download-Source: https://github.com/davnords/storage/releases/download/loma/loma_descriptor_dedode_g.onnx
+Description: Spirula Studio processing profile loma_descriptor_dedode_g.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-loma-matcher-b
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 48361254
+XB-Sparky-Install-Download-Source: https://github.com/davnords/storage/releases/download/loma/loma_matcher_B.onnx
+Description: Spirula Studio processing profile loma_matcher_B.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-loma-matcher-b128
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 48430237
+XB-Sparky-Install-Download-Source: https://github.com/davnords/storage/releases/download/loma/loma_matcher_B128.onnx
+Description: Spirula Studio processing profile loma_matcher_B128.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-loma-matcher-r
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 48361254
+XB-Sparky-Install-Download-Source: https://github.com/davnords/storage/releases/download/loma/loma_matcher_R.onnx
+Description: Spirula Studio processing profile loma_matcher_R.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-loma-matcher-l
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 184354635
+XB-Sparky-Install-Download-Source: https://github.com/davnords/storage/releases/download/loma/loma_matcher_L.onnx
+Description: Spirula Studio processing profile loma_matcher_L.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-loma-matcher-g
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 726335554
+XB-Sparky-Install-Download-Source: https://github.com/davnords/storage/releases/download/loma/loma_matcher_G.onnx
+Description: Spirula Studio processing profile loma_matcher_G.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-metric3d-vit-small-fp16
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 75778144
+XB-Sparky-Install-Download-Source: https://huggingface.co/onnx-community/metric3d-vit-small/resolve/ee63b95d92d2f629b3e019e88f57eea7c1e97d4b/onnx/model_fp16.onnx
+Description: Spirula Studio processing profile metric3d-vit-small-fp16.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-metric3d-vit-large-fp16
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 825204259
+XB-Sparky-Install-Download-Source: https://huggingface.co/onnx-community/metric3d-vit-large/resolve/7d679e55ebc155d3f7c919371f0784080fb5f5bd/onnx/model_fp16.onnx
+Description: Spirula Studio processing profile metric3d-vit-large-fp16.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-metric3d-vit-giant2-fp16
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 2756934492
+XB-Sparky-Install-Download-Source: https://huggingface.co/onnx-community/metric3d-vit-giant2/resolve/6c5c293ea8e9f12de4a1a0098a2f61c48743969a/onnx/model_fp16.onnx
+Description: Spirula Studio processing profile metric3d-vit-giant2-fp16.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-moge2-vits-normal
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 140852051
+XB-Sparky-Install-Download-Source: https://huggingface.co/Ruicheng/moge-2-vits-normal-onnx/resolve/e50ffda41565591092adea54c6ac83d6212e1e23/model.onnx
+Description: Spirula Studio processing profile moge2-vits-normal.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-moge2-vitb-normal
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 419411850
+XB-Sparky-Install-Download-Source: https://huggingface.co/Ruicheng/moge-2-vitb-normal-onnx/resolve/2d247a122ada42ce700fe59273cd62e076da1f32/model.onnx
+Description: Spirula Studio processing profile moge2-vitb-normal.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-moge2-vitl-normal
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 1324265014
+XB-Sparky-Install-Download-Source: https://huggingface.co/Ruicheng/moge-2-vitl-normal-onnx/resolve/1c02388b024dd34da413e1a934d7a941785f1460/model.onnx
+Description: Spirula Studio processing profile moge2-vitl-normal.onnx
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-moge3-vitl
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 1481333394
+XB-Sparky-Install-Download-Source: https://huggingface.co/Ruicheng/moge-3-vitl/resolve/184008f877d7ad1ad4c2cd2182a9bd1f63d0e5be/model.pt
+Description: Spirula Studio processing profile moge3-vitl.pt
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-alexnet-owt-7be5be79
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 244414920
+XB-Sparky-Install-Download-Source: https://download.pytorch.org/models/alexnet-owt-7be5be79.pth
+Description: Spirula Studio processing profile alexnet-owt-7be5be79.pth
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-vgg16-397923af
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 553441170
+XB-Sparky-Install-Download-Source: https://download.pytorch.org/models/vgg16-397923af.pth
+Description: Spirula Studio processing profile vgg16-397923af.pth
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-romav2-0-1
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 1095883548
+XB-Sparky-Install-Download-Source: https://github.com/Parskatt/RoMaV2/releases/download/v2.0.1/romav2.0.1.pt
+Description: Spirula Studio processing profile romav2.0.1.pt
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-flexglue
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 567328059
+XB-Sparky-Install-Download-Source: https://github.com/cvg/FlexGlue/releases/download/v0.1/flexglue.pth
+Description: Spirula Studio processing profile flexglue.pth
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-sam3-q4-0
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 706606590
+XB-Sparky-Install-Download-Source: https://huggingface.co/PABannier/sam3.cpp/resolve/a3892b63b918e872671322e116982a8910f0ffb7/sam3-q4_0.ggml
+Description: Spirula Studio processing profile sam3-q4_0.ggml
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-sam3-f16
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 1837873470
+XB-Sparky-Install-Download-Source: https://huggingface.co/PABannier/sam3.cpp/resolve/a3892b63b918e872671322e116982a8910f0ffb7/sam3-f16.ggml
+Description: Spirula Studio processing profile sam3-f16.ggml
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-sam2-1-hiera-large-f16
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 450930592
+XB-Sparky-Install-Download-Source: https://huggingface.co/PABannier/sam3.cpp/resolve/a3892b63b918e872671322e116982a8910f0ffb7/sam2.1_hiera_large_f16.ggml
+Description: Spirula Studio processing profile sam2.1_hiera_large_f16.ggml
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-sam2-1-hiera-base-plus-f16
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 163303648
+XB-Sparky-Install-Download-Source: https://huggingface.co/PABannier/sam3.cpp/resolve/a3892b63b918e872671322e116982a8910f0ffb7/sam2.1_hiera_base_plus_f16.ggml
+Description: Spirula Studio processing profile sam2.1_hiera_base_plus_f16.ggml
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-sam2-1-hiera-small-f16
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 93559264
+XB-Sparky-Install-Download-Source: https://huggingface.co/PABannier/sam3.cpp/resolve/a3892b63b918e872671322e116982a8910f0ffb7/sam2.1_hiera_small_f16.ggml
+Description: Spirula Studio processing profile sam2.1_hiera_small_f16.ggml
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-sam2-1-hiera-tiny-f16
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 79320544
+XB-Sparky-Install-Download-Source: https://huggingface.co/PABannier/sam3.cpp/resolve/a3892b63b918e872671322e116982a8910f0ffb7/sam2.1_hiera_tiny_f16.ggml
+Description: Spirula Studio processing profile sam2.1_hiera_tiny_f16.ggml
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-grounding-dino-tiny
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 689590604
+XB-Sparky-Install-Download-Source: https://huggingface.co/IDEA-Research/grounding-dino-tiny/resolve/a2bb814dd30d776dcf7e30523b00659f4f141c71/model.safetensors
+Description: Spirula Studio processing profile grounding-dino-tiny.safetensors
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-grounding-dino-base
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 933632380
+XB-Sparky-Install-Download-Source: https://huggingface.co/IDEA-Research/grounding-dino-base/resolve/12bdfa3120f3e7ec7b434d90674b3396eccf88eb/model.safetensors
+Description: Spirula Studio processing profile grounding-dino-base.safetensors
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-birefnet-general
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 444473596
+XB-Sparky-Install-Download-Source: https://huggingface.co/ZhengPeng7/BiRefNet/resolve/e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4/model.safetensors
+Description: Spirula Studio processing profile birefnet-general.safetensors
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-birefnet-lite
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 177634392
+XB-Sparky-Install-Download-Source: https://huggingface.co/ZhengPeng7/BiRefNet_lite/resolve/aa62cd87eafb9cc43056d08ef3615a14628b831d/model.safetensors
+Description: Spirula Studio processing profile birefnet-lite.safetensors
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-marigold-depth
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 43407564700
+XB-Sparky-Install-Download-Source: https://huggingface.co/Qwen/Qwen-Image-Edit-2509/resolve/d3968ef930e841f4c73640fb8afa3b306a78167e/transformer/diffusion_pytorch_model-00001-of-00005.safetensors
+Description: Spirula Studio processing profile Marigold v2 depth
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.
+
+Package: spirula-studio-model-marigold-normals
+Architecture: all
+Depends: ${misc:Depends}, spirula-studio (= ${binary:Version}), sparky-stereo-apt (>= 20261118.1~sparky9~0)
+XB-Sparky-Install-Download-Size: 43390700122
+XB-Sparky-Install-Download-Source: https://huggingface.co/Qwen/Qwen-Image-Edit-2509/resolve/d3968ef930e841f4c73640fb8afa3b306a78167e/transformer/diffusion_pytorch_model-00001-of-00005.safetensors
+Description: Spirula Studio processing profile Marigold v2 normals
+ Download the pinned processing files from their publisher during package
+ installation, with size and licence terms shown first. No model weights
+ are included in this package. Removing keeps data; purging deletes it.

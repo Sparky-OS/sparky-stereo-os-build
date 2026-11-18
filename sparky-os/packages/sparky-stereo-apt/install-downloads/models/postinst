@@ -7,7 +7,9 @@ helper=/usr/lib/sparky-stereo-apt/model-profilectl
 required=$(python3 -c 'import json,sys; p=json.load(open("/usr/share/sparky-install-models/profiles/"+sys.argv[1]+".json")); print(int(p["consent_required"]))' "$profile")
 if [ "$required" = 1 ]; then
     . /usr/share/debconf/confmodule
+    db_capb escape
     terms=$("$helper" terms "$profile")
+    terms=$(printf '%s' "$terms" | debconf-escape -e)
     db_subst sparky-install-models/licence PROFILE "$profile"
     db_subst sparky-install-models/licence TERMS "$terms"
     db_subst sparky-install-models/consent PROFILE "$profile"
