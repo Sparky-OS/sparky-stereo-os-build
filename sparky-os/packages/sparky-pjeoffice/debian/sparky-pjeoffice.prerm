@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+case "$1" in
+remove)
+	# the program's folders are this package's to take away; the person's certificates, settings and files never are
+	/usr/bin/sparky-pjeoffice remove || echo "sparky-pjeoffice: the program was not completely removed: /opt/pjeoffice-pro" >&2
+	[ ! -x /usr/bin/sparky-stereo-problems ] || /usr/bin/sparky-stereo-problems clear --all sparky-pjeoffice || true
+	;;
+esac
+#DEBHELPER#
+exit 0
