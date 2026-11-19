@@ -1,0 +1,104 @@
+From aef968fb5ddc82dcdb14a828f149932d76609cb2 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Tue, 6 Oct 2026 09:44:37 -0300
+Subject: [PATCH 2/3] Draw the colour bar and the title with the projection of
+ the monitor
+
+Add VisualScene::mono_projection, the projection without the view of an
+eye while a scene is drawn once for each eye, and draw the colour bar
+and the title, which sit on the screen and not in the scene, with it so
+they stay identical in both eyes.  It is null otherwise and nothing
+changes.
+
+Assisted-by: Claude Opus 5.5 (Anthropic) and glm-5.3:cloud (Ollama) via Codex
+---
+ libsrc/visualization/mvdraw.cpp | 24 ++++++++++++++++++++++++
+ libsrc/visualization/mvdraw.hpp |  6 ++++++
+ 2 files changed, 30 insertions(+)
+
+diff --git a/libsrc/visualization/mvdraw.cpp b/libsrc/visualization/mvdraw.cpp
+index e4351ae..7de200e 100644
+--- a/libsrc/visualization/mvdraw.cpp
++++ b/libsrc/visualization/mvdraw.cpp
+@@ -23,6 +23,7 @@
+ namespace netgen
+ {
+   NGGUI_API Point3d VisualScene :: center;
++  NGGUI_API const GLdouble * VisualScene :: mono_projection = nullptr;
+   NGGUI_API double VisualScene :: rad;
+   NGGUI_API GLdouble VisualScene :: backcolor;
+   NGGUI_API VisualScene visual_scene_cross;
+@@ -577,10 +578,30 @@ namespace netgen
+ 
+ 
+ 
++  void VisualScene :: BeginScreenOverlay ()
++  {
++    if (!mono_projection) return;
++
++    glMatrixMode (GL_PROJECTION);
++    glPushMatrix();
++    glLoadMatrixd (mono_projection);
++    glMatrixMode (GL_MODELVIEW);
++  }
++
++  void VisualScene :: EndScreenOverlay ()
++  {
++    if (!mono_projection) return;
++
++    glMatrixMode (GL_PROJECTION);
++    glPopMatrix();
++    glMatrixMode (GL_MODELVIEW);
++  }
++
+   void VisualScene :: DrawColorBar (double minval, double maxval, int logscale, bool linear, string format, string unit)
+   {
+     if (!vispar.drawcolorbar) return;
+ 
++    BeginScreenOverlay ();
+     CreateTexture (GetVSSolution().numtexturecols, linear, 1, GL_DECAL);
+ 
+     if (logscale && maxval <= 0) maxval = 1;
+@@ -647,12 +668,14 @@ namespace netgen
+ 
+     glPopAttrib ();
+     glEnable (GL_DEPTH_TEST);
++    EndScreenOverlay ();
+   }
+ 
+   void VisualScene :: DrawTitle (string title)
+   {
+     if(title=="")
+       return;
++    BeginScreenOverlay ();
+     glDisable (GL_LIGHTING);
+     glDisable (GL_DEPTH_TEST);
+ 
+@@ -672,6 +695,7 @@ namespace netgen
+     MyOpenGLText (title.c_str());
+     glPopAttrib ();
+     glEnable (GL_DEPTH_TEST);
++    EndScreenOverlay ();
+   }
+ 
+ 
+diff --git a/libsrc/visualization/mvdraw.hpp b/libsrc/visualization/mvdraw.hpp
+index 1ca3ae7..a578e51 100644
+--- a/libsrc/visualization/mvdraw.hpp
++++ b/libsrc/visualization/mvdraw.hpp
+@@ -38,6 +38,12 @@ namespace netgen
+     static int subdivisions;
+   public:
+     static int viewport[4];
++
++    // projection without the view of an eye while one is drawn in stereo,
++    // for what is drawn on the screen and not in the scene (else null)
++    static NGGUI_API const GLdouble * mono_projection;
++    static void BeginScreenOverlay ();
++    static void EndScreenOverlay ();
+     static GLuint coltexname;
+     static int ntexcols;
+     int invcolor;
+-- 
+2.53.0
+

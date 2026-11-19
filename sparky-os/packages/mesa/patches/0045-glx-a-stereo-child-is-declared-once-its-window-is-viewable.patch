@@ -1,0 +1,86 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 19 Nov 2026 12:00:00 -0300
+Subject: [PATCH] glx: a stereo child is declared once its window is viewable
+
+Netgen's drawing area is a Togl child window of a Tk window. Tk creates the
+child and draws it once while the top-level window is still unmapped (0.58 s
+after the start in the rig), and maps the window 0.7 s later. Stereo KWin
+cannot take a child of a window that is not on the screen, so the declaration
+made at that first swap met the 500 ms wait of 0043 without an answer, the
+presents that completed as copies took the declaration back, and the drawing
+area stayed flat after the window was mapped ("stereo child 0x...: the
+compositor did not take the child in 500 ms", then the problems engine's
+"is shown flat"). Both GLX paths, DRI3 and the software one, now leave the
+declaration of a child window to the first swap after the window is viewable
+(XWindowAttributes.map_state == IsViewable, which holds only when the window
+and every ancestor are mapped); a top-level window is declared as before.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+--- a/src/glx/dri_common.c
++++ b/src/glx/dri_common.c
+@@ -377,6 +377,28 @@
+    return arrived;
+ }
+ 
++/* A child window of a window that is not on the screen yet cannot be taken by the
++ * compositor: Tk (Netgen's drawing area) and other toolkits create the GL child, draw
++ * once and map the top-level window some time later.  The declaration of such a child
++ * waits until the window is viewable: declared earlier, the compositor holds nothing
++ * to answer within the wait of glx_x11_wait_stereo_child_adopted, the presents that
++ * complete as copies take the declaration back, and the child stays flat.
++ */
++bool
++glx_x11_stereo_child_hidden(Display *dpy, Window window, int map_state)
++{
++   Window root, parent, *kids = NULL;
++   unsigned int nkids;
++
++   if (map_state == IsViewable)
++      return false;
++   if (!XQueryTree(dpy, window, &root, &parent, &kids, &nkids))
++      return false;
++   if (kids)
++      XFree(kids);
++   return parent != root && parent != None;
++}
++
+ void
+ glx_x11_wait_stereo_child_adopted(Display *dpy, int screen, Window window)
+ {
+--- a/src/glx/dri_common.h
++++ b/src/glx/dri_common.h
+@@ -129,6 +129,8 @@
+ glx_x11_undeclare_stereo_child(Display *dpy, Window window);
+ void
+ glx_x11_wait_stereo_child_adopted(Display *dpy, int screen, Window window);
++bool
++glx_x11_stereo_child_hidden(Display *dpy, Window window, int map_state);
+ #endif /* GLX_DIRECT_RENDERING */
+ 
+ #endif /* _DRI_COMMON_H */
+--- a/src/glx/dri3_glx.c
++++ b/src/glx/dri3_glx.c
+@@ -275,6 +275,10 @@
+        attributes.width > INT_MAX / 2)
+       return;
+ 
++   if (glx_x11_stereo_child_hidden(pdraw->base.psc->dpy, pdraw->base.xDrawable,
++                                   attributes.map_state))
++      return;
++
+    const unsigned version =
+       glx_x11_stereo_support_version(pdraw->base.psc->dpy, pdraw->base.psc->scr);
+ 
+--- a/src/glx/drisw_glx.c
++++ b/src/glx/drisw_glx.c
+@@ -611,6 +611,9 @@
+        attributes.width <= 0 || attributes.width > INT_MAX / 2)
+       return;
+ 
++   if (glx_x11_stereo_child_hidden(dpy, pdraw->base.xDrawable, attributes.map_state))
++      return;
++
+    if (!pdraw->base.dri_drawable->stereo_view_width)
+       pdraw->base.dri_drawable->stereo_view_width = attributes.width;
+ 
