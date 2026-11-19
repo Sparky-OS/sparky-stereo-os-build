@@ -1,0 +1,136 @@
+Description: Fix the --frame-packing 5 view when --frame-dup drops pictures
+Author: Daniel Campos Ramos
+Origin: backport, https://github.com/Multicorewareinc/x265/commit/143a263b2ee74866af04783f814bd1245d5a5413
+Applied-Upstream: master, 143a263b2ee74866af04783f814bd1245d5a5413
+Last-Update: 2026-11-19
+
+diff --git a/doc/reST/cli.rst b/doc/reST/cli.rst
+index 577ab880d..92adfd771 100755
+--- a/doc/reST/cli.rst
++++ b/doc/reST/cli.rst
+@@ -2802,7 +2802,9 @@ Bitstream options
+ 	picture is the left view, so an odd :option:`--seek` swaps the views.
+ 	With :option:`--interlace` both fields of a frame belong to the same view,
+ 	whether the input pictures are already fields or :option:`--field` splits
+-	each input frame into fields.
++	each input frame into fields. With :option:`--frame-dup` the view follows
++	the input picture, so a dropped duplicate does not swap the views of the
++	pictures after it.
+ 
+ 	The message is written on the base layer only, so with :option:`--alpha` the
+ 	alpha layer does not carry it. It cannot be combined with
+diff --git a/source/common/frame.cpp b/source/common/frame.cpp
+index ca25e25bd..7d0dffdac 100644
+--- a/source/common/frame.cpp
++++ b/source/common/frame.cpp
+@@ -58,6 +58,7 @@ Frame::Frame()
+     m_addOnPrevChange = NULL;
+     m_classifyFrame = false;
+     m_fieldNum = 0;
++    m_sourcePoc = 0;
+     m_picStruct = 0;
+     m_edgePic = NULL;
+     m_gaussianPic = NULL;
+diff --git a/source/common/frame.h b/source/common/frame.h
+index 9916ba92e..5560727dc 100644
+--- a/source/common/frame.h
++++ b/source/common/frame.h
+@@ -92,6 +92,7 @@ public:
+     PicList                refPicSetInterLayer1;
+ 
+     int                    m_poc;
++    int                    m_sourcePoc;          // first input picture the frame stands for, m_poc unless frame duplication dropped pictures
+     int                    m_encodeOrder;
+     int                    m_gopOffset;
+     int64_t                m_pts;                // user provided presentation time stamp
+diff --git a/source/encoder/encoder.cpp b/source/encoder/encoder.cpp
+index ad807262f..be821069d 100644
+--- a/source/encoder/encoder.cpp
++++ b/source/encoder/encoder.cpp
+@@ -125,6 +125,7 @@ Encoder::Encoder()
+     m_reconfigureRc = false;
+     m_encodedFrameNum = 0;
+     m_pocLast = -1;
++    m_sourcePocNext = 0;
+     m_curEncoder = 0;
+     m_numLumaWPFrames = 0;
+     m_numChromaWPFrames = 0;
+@@ -1734,6 +1735,7 @@ int Encoder::encode(const x265_picture* pic_in, x265_picture* pic_out)
+             inFrame[layer]->m_fencPic->copyFromPicture(*inputPic[!m_param->format ? (m_param->numScalableLayers > 1) ? 0 : layer : 0], *m_param, m_sps.conformanceWindow.rightOffset, m_sps.conformanceWindow.bottomOffset, !layer);
+ 
+             inFrame[layer]->m_poc = (!layer) ? (++m_pocLast) : m_pocLast;
++            inFrame[layer]->m_sourcePoc = m_sourcePocNext;
+             inFrame[layer]->m_userData = inputPic[0]->userData;
+             inFrame[layer]->m_pts = inputPic[0]->pts;
+             inFrame[layer]-> vbvEndFlag = inputPic[0]->vbvEndFlag;
+@@ -1773,6 +1775,15 @@ int Encoder::encode(const x265_picture* pic_in, x265_picture* pic_out)
+             /* Encoder holds a reference count until stats collection is finished */
+             ATOMIC_INC(&inFrame[layer]->m_countRefEncoders);
+         }
++        m_sourcePocNext++;
++        if (m_param->bEnableFrameDuplication)
++        {
++            /* A doubled or tripled picture also stands for the duplicates dropped after it */
++            if (inputPic[0]->picStruct == doubling)
++                m_sourcePocNext++;
++            else if (inputPic[0]->picStruct == tripling)
++                m_sourcePocNext += 2;
++        }
+         copyUserSEIMessages(inFrame[0], inputPic[0]);
+ 
+         /*Copy Dolby Vision RPU from inputPic to frame*/
+diff --git a/source/encoder/encoder.h b/source/encoder/encoder.h
+index 9101b79b1..31c45774d 100644
+--- a/source/encoder/encoder.h
++++ b/source/encoder/encoder.h
+@@ -188,6 +188,7 @@ public:
+     int64_t            m_encodeStartTime;
+ 
+     int                m_pocLast;         // time index (POC)
++    int                m_sourcePocNext;   // input pictures consumed so far, dropped duplicates included
+     int                m_encodedFrameNum;
+     int                m_outputCount;
+     int                m_bframeDelay;
+diff --git a/source/encoder/frameencoder.cpp b/source/encoder/frameencoder.cpp
+index 9ba7ca51e..b7730a346 100644
+--- a/source/encoder/frameencoder.cpp
++++ b/source/encoder/frameencoder.cpp
+@@ -861,8 +861,9 @@ void FrameEncoder::compressFrame(int layer)
+     {
+         /* Type 5 alternates the views frame by frame, so every picture carries its own message. The
+          * other types persist until the next IRAP, which repeats the message. With --interlace the
+-         * pictures are fields and both fields of a frame belong to the same view. */
+-        int frameIdx = m_param->interlaceMode ? m_frame[layer]->m_poc >> 1 : m_frame[layer]->m_poc;
++         * pictures are fields and both fields of a frame belong to the same view. The view follows
++         * the input picture, not the encoded one: --frame-dup drops duplicates before encoding. */
++        int frameIdx = m_param->interlaceMode ? m_frame[layer]->m_sourcePoc >> 1 : m_frame[layer]->m_sourcePoc;
+         SEIFramePacking m_seiFramePacking;
+         m_seiFramePacking.m_arrangementType = m_param->framePacking;
+         m_seiFramePacking.m_currentFrameIsFrame0 = m_param->framePacking == 5 && !(frameIdx & 1);
+diff --git a/source/x265.h b/source/x265.h
+index bda2d6d41..3c672619b 100644
+--- a/source/x265.h
++++ b/source/x265.h
+@@ -2414,7 +2414,9 @@ typedef struct x265_param
+      * source frames. 3 = side by side, 4 = top and bottom (frame 0 is the left view),
+      * 5 = temporal interleaving (alternate frames are the left and right views).
+      * The first encoded picture is the left view, so an odd --seek swaps the views.
+-     * With interlaceMode both fields of a frame belong to the same view.
++     * With interlaceMode both fields of a frame belong to the same view. With
++     * bEnableFrameDuplication the view follows the input picture, so a dropped
++     * duplicate does not swap the views of the pictures after it.
+      * Other values are an error.
+      * Types 3 and 4 write the message with each IRAP picture, type 5 with every
+      * picture. It is written on the base layer only and cannot be combined with
+diff --git a/source/x265cli.cpp b/source/x265cli.cpp
+index 2bbfe4082..fc3290f89 100755
+--- a/source/x265cli.cpp
++++ b/source/x265cli.cpp
+@@ -384,6 +384,7 @@ namespace X265_NS {
+         H0("                                   - 4: top and bottom - left view on top, right view on the bottom\n");
+         H0("                                   - 5: temporal interleaving - alternate frames are the left and right views. The first encoded picture is the left view\n");
+         H0("                                   An odd --seek swaps the views. With --interlace both fields of a frame belong to the same view\n");
++        H0("                                   With --frame-dup the view follows the input picture, so a dropped duplicate does not swap the views\n");
+         H0("   --pic-struct <integer>        Set the picture structure and emit it in the picture timing SEI message. Values in the range 0..12. See D.3.3 of the HEVC spec. for a detailed explanation.\n");
+         H0("   --log2-max-poc-lsb <integer>  Maximum of the picture order count\n");
+         H0("   --[no-]vui-timing-info        Emit VUI timing information in the bitstream. Default %s\n", OPT(param->bEmitVUITimingInfo));

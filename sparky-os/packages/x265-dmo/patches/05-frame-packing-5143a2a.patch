@@ -1,0 +1,59 @@
+Description: Repeat the --frame-packing SEI at each --intra-refresh cycle
+Author: Daniel Campos Ramos
+Origin: upstream, https://github.com/Multicorewareinc/x265/commit/5143a2a00ad0cc600831654a248b96ec7307eb4a
+Applied-Upstream: master, 5143a2a00ad0cc600831654a248b96ec7307eb4a
+Last-Update: 2026-11-19
+
+diff --git a/doc/reST/cli.rst b/doc/reST/cli.rst
+index 92adfd771..9a260c08b 100755
+--- a/doc/reST/cli.rst
++++ b/doc/reST/cli.rst
+@@ -2796,8 +2796,10 @@ Bitstream options
+ 	5. Temporal interleaving: alternate frames in output order are the left
+ 	   and right views.
+ 
+-	Types 3 and 4 write the message with each IRAP picture, and it persists until
+-	the next one or the end of the coded video sequence. Type 5 writes it with every picture, because
++	Types 3 and 4 write the message with each IRAP picture, and with
++	:option:`--intra-refresh` also with the first picture of each refresh cycle,
++	as x264 does. It persists until the next one or the end of the coded video
++	sequence. Type 5 writes it with every picture, because
+ 	current_frame_is_frame0_flag alternates with the frame. The first encoded
+ 	picture is the left view, so an odd :option:`--seek` swaps the views.
+ 	With :option:`--interlace` both fields of a frame belong to the same view,
+diff --git a/source/encoder/frameencoder.cpp b/source/encoder/frameencoder.cpp
+index b7730a346..2682533d7 100644
+--- a/source/encoder/frameencoder.cpp
++++ b/source/encoder/frameencoder.cpp
+@@ -856,11 +856,13 @@ void FrameEncoder::compressFrame(int layer)
+     }
+ 
+     /* The message describes the packed pictures of the base layer: an alpha layer is not a view. */
+-    bool writeFramePacking = m_param->framePacking > -1 && !layer && (slice->isIRAP() || m_param->framePacking == 5);
++    bool writeFramePacking = m_param->framePacking > -1 && !layer && (slice->isIRAP() || m_param->framePacking == 5 ||
++                             (m_param->bIntraRefresh && m_frame[layer]->m_lowres.bKeyframe));
+     if (writeFramePacking)
+     {
+         /* Type 5 alternates the views frame by frame, so every picture carries its own message. The
+-         * other types persist until the next IRAP, which repeats the message. With --interlace the
++         * other types persist until the next IRAP, which repeats the message, or with intra refresh
++         * until the next refresh cycle, which starts a keyframe that is not an IRAP. With --interlace the
+          * pictures are fields and both fields of a frame belong to the same view. The view follows
+          * the input picture, not the encoded one: --frame-dup drops duplicates before encoding. */
+         int frameIdx = m_param->interlaceMode ? m_frame[layer]->m_sourcePoc >> 1 : m_frame[layer]->m_sourcePoc;
+diff --git a/source/x265.h b/source/x265.h
+index 3c672619b..395ad9411 100644
+--- a/source/x265.h
++++ b/source/x265.h
+@@ -2418,8 +2418,9 @@ typedef struct x265_param
+      * bEnableFrameDuplication the view follows the input picture, so a dropped
+      * duplicate does not swap the views of the pictures after it.
+      * Other values are an error.
+-     * Types 3 and 4 write the message with each IRAP picture, type 5 with every
+-     * picture. It is written on the base layer only and cannot be combined with
++     * Types 3 and 4 write the message with each IRAP picture and, with
++     * bIntraRefresh, with the first picture of each refresh cycle; type 5 with
++     * every picture. It is written on the base layer only and cannot be combined with
+      * numViews > 1. Default -1 (disabled). */
+     int      framePacking;
+ } x265_param;
