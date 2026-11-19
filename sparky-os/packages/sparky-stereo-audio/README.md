@@ -115,8 +115,8 @@ A virtual sink does not establish a real receiver handshake.
 
 General MIDI is available at login through Debian's fluidsynth.service. The
 small sparky-stereo-midi renderer uses Debian's libfluidsynth; its PipeWire audio
-driver exists only while notes or an audible effects tail need it. The MIDI port
-stays available. The synthesis rate is 48 kHz; when another graph rate is in use,
+stream exists only while notes or an audible effects tail need it. The MIDI port
+stays available. The synthesis rate is FluidSynth's highest supported rate, 96 kHz in 2.6.1; when another graph rate is in use,
 PipeWire converts at the edge using the existing audio policy.
 
 ```
@@ -134,7 +134,6 @@ larger installed font, and the person's explicit choice wins. No unmeasured
 weak-processor cutoff is shipped. Automatic hardware connections remain off
 pending a design decision; the command exposes the existing FluidSynth option.
 PipeWire's existing ALSA sequencer bridge is the only bridge; a2jmidid is not
-started. MIDI files use one visible connection to the service's port. The
-system MIME defaults cover only MIDI; the person's own MIME associations win.
+started. MIDI files use one visible connection to the service's port. The existing file-player defaults stay. The MIDI command and its desktop entry are additional choices.
 The renderer is a separate native package so the existing script/data engine
 keeps its architecture-independent source and Lean Code route.

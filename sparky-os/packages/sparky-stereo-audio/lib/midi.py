@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import signal
+import select
+import socket
 import subprocess
 import time
 from session import report, clear, Parser, snapshot
@@ -73,13 +75,25 @@ def serve(data, say):
     command = ['/usr/lib/sparky-stereo-midi/render', font_path(data), backend, data.get('connect', 'no')]
     if backend == 'jack':
         command.insert(0, 'pw-jack')
-    child = subprocess.Popen(command)
+    child = subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
     def stop(signum, frame):
         child.terminate()
     old = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
+        if not select.select([child.stdout], [], [], 30)[0] or child.stdout.readline().strip() != 'READY':
+            raise RuntimeError('FluidSynth: MIDI endpoint startup failed')
+        clear('midi-font'); clear('midi')
+        address = os.environ.get('NOTIFY_SOCKET')
+        if address:
+            if address.startswith('@'):
+                address = '\0' + address[1:]
+            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notify:
+                notify.connect(address); notify.sendall(b'READY=1')
         code = child.wait()
     finally:
+        if child.poll() is None:
+            child.terminate(); child.wait(timeout=10)
+
         for sig, handler in old.items():
             signal.signal(sig, handler)
     if code:
@@ -141,8 +155,12 @@ def command(argv, say):
     parser.add_argument('--service', choices=('on', 'off'))
     parser.add_argument('--serve', action='store_true')
     parser.add_argument('--play')
+    parser.add_argument('--rom-error', choices=('Munt', 'DOSBox-Staging'))
     try:
         args = parser.parse_args(argv)
+        if args.rom_error:
+            report(say, 'midi-rom-' + args.rom_error.lower(), 56, args.rom_error)
+            return 1
         data = choices()
         changed = False
         for key in ('font', 'driver', 'connect'):
@@ -159,8 +177,18 @@ def command(argv, say):
             import tempfile
             with tempfile.NamedTemporaryFile(mode='w', dir=p.parent, delete=False) as f:
                 json.dump(data, f); f.write('\n'); temporary = f.name
+            previous = p.read_bytes() if p.exists() else None
             os.replace(temporary, p)
-            subprocess.run(['systemctl', '--user', 'try-restart', 'fluidsynth.service'], check=True)
+            try:
+                subprocess.run(['systemctl', '--user', 'try-restart', 'fluidsynth.service'], check=True)
+            except subprocess.SubprocessError:
+                if previous is None:
+                    p.unlink()
+                else:
+                    with tempfile.NamedTemporaryFile(mode='wb', dir=p.parent, delete=False) as old:
+                        old.write(previous); rollback = old.name
+                    os.replace(rollback, p)
+                raise
         if args.service:
             commands = [['mask', '--now']] if args.service == 'off' else [['unmask'], ['start']]
             for cmd in commands:
