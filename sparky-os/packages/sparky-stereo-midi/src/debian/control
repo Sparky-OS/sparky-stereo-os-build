@@ -1,0 +1,16 @@
+Source: sparky-stereo-midi
+Section: sound
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), pkg-config, libfluidsynth-dev (>= 2.6.1), libpipewire-0.3-dev
+Standards-Version: 4.7.4
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+
+Package: sparky-stereo-midi
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: FluidSynth renderer that releases audio while idle
+ MIDI remains available while the native PipeWire audio driver is absent.
+ Notes retain their order and relative times across audio startup.
+ Voices and effects render until their output is below half a 24-bit step.

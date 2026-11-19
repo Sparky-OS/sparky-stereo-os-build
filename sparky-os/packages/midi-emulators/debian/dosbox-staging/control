@@ -1,0 +1,15 @@
+Source: dosbox-staging
+Section: sound
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), cmake, pkg-config, libasio-dev, libiir-dev, libopusfile-dev, libsdl2-dev, libsdl2-image-dev, zlib1g-dev, libspeexdsp-dev, libslirp-dev, libpng-dev, libgl-dev, libfluidsynth-dev, libmt32emu-dev (>= 2.8)
+Standards-Version: 4.7.4
+Rules-Requires-Root: no
+Homepage: https://github.com/dosbox-staging/dosbox-staging
+
+Package: dosbox-staging
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, sparky-stereo-audio (>= 0.3.0)
+Description: DOS emulator with FluidSynth and optional personal MT-32 ROMs
+ Built from the pinned upstream source with its notices retained.
+ No MT-32 ROM or unapproved instrument bank is included.

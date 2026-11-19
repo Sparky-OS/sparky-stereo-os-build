@@ -1,0 +1,21 @@
+[Unit]
+Description=General MIDI through FluidSynth
+After=pipewire.service wireplumber.service
+Wants=pipewire.service wireplumber.service
+ConditionUser=!@system
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=/usr/bin/sparky-stereo-audio midi --serve
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=no
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+PrivateUsers=yes
+
+[Install]
+WantedBy=default.target

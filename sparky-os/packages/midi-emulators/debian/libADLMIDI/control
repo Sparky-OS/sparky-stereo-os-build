@@ -1,0 +1,23 @@
+Source: libadlmidi
+Section: sound
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), cmake, ninja-build, pkg-config, libasound2-dev, libsamplerate0-dev, libzita-resampler-dev
+Standards-Version: 4.7.4
+Rules-Requires-Root: no
+Homepage: https://github.com/Wohlstand/libADLMIDI
+
+Package: libadlmidi1
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: ADL MIDI synthesis library without instrument banks
+ Built from the pinned upstream source with its notices retained.
+ No MT-32 ROM or unapproved instrument bank is included.
+
+Package: libadlmidi-dev
+Architecture: any
+Depends: libadlmidi1 (= ${binary:Version}), ${misc:Depends}
+Description: ADL MIDI synthesis development files
+ Built from the pinned upstream source with its notices retained.
+ No MT-32 ROM or unapproved instrument bank is included.
+

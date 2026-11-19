@@ -1,0 +1,52 @@
+Description: Detect system zlib when zlib-ng is unavailable
+ Context adapted to the 0.83.1 CMake configuration order.
+Author: John Novak
+Origin: upstream, https://github.com/dosbox-staging/dosbox-staging/commit/482477a6f48ba30520920c0a09732371ba1cd772
+Applied-Upstream: 482477a6f48ba30520920c0a09732371ba1cd772
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -440,6 +440,22 @@
+ 
+ set(project_name "${PROJECT_NAME}")
+ set(version      "${PROJECT_VERSION}")
++
++find_package(PkgConfig REQUIRED)
++if (USE_SYSTEM_LIBS)
++  pkg_check_modules(ZLIB_NG IMPORTED_TARGET zlib-ng)
++  if (ZLIB_NG_FOUND)
++    set(C_SYSTEM_ZLIB_NG ON)
++    set(ZMBV_ZLIB_TARGET PkgConfig::ZLIB_NG)
++  else()
++    find_package(ZLIB REQUIRED)
++    set(ZMBV_ZLIB_TARGET ZLIB::ZLIB)
++  endif()
++else()
++  find_package(zlib-ng CONFIG REQUIRED)
++  set(C_SYSTEM_ZLIB_NG ON)
++  set(ZMBV_ZLIB_TARGET zlib-ng::zlib)
++endif()
+ 
+ configure_file(
+   src/dosbox_config.h.in.cmake
+--- a/src/libs/zmbv/CMakeLists.txt
++++ b/src/libs/zmbv/CMakeLists.txt
+@@ -1,6 +1,3 @@
+ add_library(zmbv STATIC zmbv.cpp)
+-
+-pkg_check_modules(ZLIB_NG REQUIRED IMPORTED_TARGET zlib-ng)
+-
+ target_include_directories(zmbv PUBLIC ..)
+-target_link_libraries(zmbv PRIVATE PkgConfig::ZLIB_NG)
++target_link_libraries(zmbv PRIVATE ${ZMBV_ZLIB_TARGET})
+--- a/src/libs/zmbv/zmbv.h
++++ b/src/libs/zmbv/zmbv.h
+@@ -9,7 +9,7 @@
+ 
+ #include "dosbox_config.h"
+ 
+-#if defined(C_SYSTEM_ZLIB_NG)
++#if C_SYSTEM_ZLIB_NG
+ #include <zlib-ng.h>
+ #define deflateInit2 zng_deflateInit2
+ #define deflateReset zng_deflateReset
