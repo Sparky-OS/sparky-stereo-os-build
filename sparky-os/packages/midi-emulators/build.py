@@ -25,7 +25,7 @@ if subprocess.check_output(['git', '-C', str(upstream), 'rev-parse', 'HEAD'], te
 work.mkdir(parents=True, exist_ok=True)
 if list(work.iterdir()):
     raise SystemExit('work directory is not empty')
-source = work / (meta['source'] + '-' + meta['version'])
+source = work / 'tree'
 source.mkdir()
 archive = subprocess.check_output(['git', '-C', str(upstream), 'archive', '--format=tar', meta['commit']])
 if hashlib.sha256(archive).hexdigest() != meta['upstream_tree_tar_sha256']:
