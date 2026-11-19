@@ -10,3 +10,6 @@ for name in re.findall(r'^Package: ([a-z0-9][a-z0-9+.-]*)$', (debian / 'control'
     payload = debian / name
     if payload.is_dir() and not payload.is_symlink():
         shutil.rmtree(payload)
+    for generated in (debian / (name + '-lc-hr'), debian / '.debhelper' / name / 'dbgsym-root'):
+        if generated.is_dir() and not generated.is_symlink():
+            shutil.rmtree(generated)
