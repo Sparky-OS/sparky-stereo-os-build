@@ -45,7 +45,7 @@ def font_path(data):
                 if len(words) != 1 or not os.path.isabs(words[0]):
                     raise ValueError(str(personal))
                 font = words[0]
-    paths = ['/usr/share/sounds/sf2/default-GM.sf2', '/usr/share/sounds/sf3/default-GM.sf3',
+    paths = ['/usr/share/sounds/sf3/default-GM.sf3', '/usr/share/sounds/sf2/default-GM.sf2',
              '/usr/share/sounds/sf2/TimGM6mb.sf2'] if font == 'auto' else [font]
     for p in paths:
         if Path(p).is_file() and os.access(p, os.R_OK):
