@@ -1,0 +1,212 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] wayland: Send the selected output width with its depth limits
+
+Keep the output selection and depth rules unchanged. Version 6 sends
+output_width immediately before depth_limits, including on an output or
+pixel-width change with equal limits. Older resources keep their existing
+events. The library owns the buffer-pixel conversion.
+
+Assisted-by: GPT-6 (Codex)
+
+--- a/src/wayland/protocols/stereo/kde-stereo-content-v1.xml
++++ b/src/wayland/protocols/stereo/kde-stereo-content-v1.xml
+@@ -6,7 +6,7 @@
+     SPDX-License-Identifier: MIT-CMU
+     ]]></copyright>
+ 
+-<interface name="kde_stereo_content_manager_v1" version="5">
++<interface name="kde_stereo_content_manager_v1" version="6">
+   <description summary="declare stereo content of surfaces">
+     A program tells the compositor that a surface's picture holds two
+     views packed full side by side, with the left view first.
+@@ -52,7 +52,7 @@
+   </request>
+ </interface>
+ 
+-<interface name="kde_stereo_content_v1" version="5">
++<interface name="kde_stereo_content_v1" version="6">
+   <description summary="stereo content declaration of one surface">
+     The declaration of one surface, created with
+     kde_stereo_content_manager_v1.create.
+@@ -125,7 +125,7 @@
+   </request>
+ </interface>
+ 
+-<interface name="kde_stereo_depth_v1" version="5">
++<interface name="kde_stereo_depth_v1" version="6">
+   <description summary="desktop depth of one surface">
+     The compositor shows the desktop's own surfaces at depth levels: the
+     active window at the screen, the windows lying behind it sunk, menus,
+@@ -204,11 +204,31 @@
+       in pixels of a view 1920 wide. They are the user's limits built on the
+       output's display: a headset gets more separation, a framed 3D screen
+       less (the display's kind and physical size, libstereo-policy). A
+-      surface takes them as they are for its screen, in its buffer's pixels
+-      through stereo_depth_limits_for_buffer, never by its own width.
++      surface uses the limits for that screen through the shared
++      stereo_depth_limits_for_buffer conversion, never by its own width.
++      Since version 6, output_width is sent immediately before every
++      depth_limits event. Together they describe the same selected output.
++      The compositor sends both again when that output or its pixel width
++      changes, even when sunk and popped stay the same.
+     </description>
+     <arg name="sunk" type="fixed" summary="the sunk limit, pixels of a view 1920 wide"/>
+     <arg name="popped" type="fixed" summary="the popped limit, pixels of a view 1920 wide"/>
++  </event>
++
++  <event name="output_width" since="6">
++    <description summary="Pixel width of the output the limits are for">
++      Sent immediately before each depth_limits event to resources of
++      version 6 or newer. The width is the pixel width of one view of the
++      output the surface mainly sits on, the same output as the following
++      limits. It is independent of the surface, window and buffer sizes.
++      Zero means the surface has no selected output with a known pixel width.
++
++      One separation setting, centralized, tailored to the screen, not to
++      the element size: the person's choice, built on the display. Clients
++      pass this width and the following limits to the shared buffer-pixel
++      conversion; they never rescale depth by their own window's width.
++    </description>
++    <arg name="width" type="uint" summary="selected output width in pixels per view, or zero"/>
+   </event>
+ 
+   <request name="set_desktop_depth">
+--- a/src/scene/stereodepthstates.cpp
++++ b/src/scene/stereodepthstates.cpp
+@@ -106,9 +106,12 @@
+         // the limits of the output the window mainly sits on: the person's, built on that display
+         const qreal sunk = StereoDepth::sunkLimit(window->output());
+         const qreal popped = StereoDepth::poppedLimit(window->output());
+-        surface->traverseTree([awake, edges, sunk, popped](SurfaceInterface *child) {
++        const LogicalOutput *output = window->output();
++        const uint32_t outputWidth = output ? output->pixelSize().width() : 0;
++        const QUuid outputId = output ? output->backendOutput()->uuid() : QUuid();
++        surface->traverseTree([awake, edges, sunk, popped, outputWidth, outputId](SurfaceInterface *child) {
+             if (child->followsStereoDepth()) {
+-                child->setStereoDepthState(awake, edges, sunk, popped);
++                child->setStereoDepthState(awake, edges, sunk, popped, outputWidth, outputId);
+             }
+         });
+     }
+--- a/src/wayland/surface_p.h
++++ b/src/wayland/surface_p.h
+@@ -226,6 +226,8 @@
+         uint32_t outputEdges = 0;
+         qreal sunk = 0;
+         qreal popped = 0;
++        uint32_t outputWidth = 0;
++        QUuid outputId;
+     };
+     std::optional<StereoDepthState> stereoDepthState;
+     // takes the desktop depth mark and the place from the surface's kde_stereo_depth_v1 objects
+--- a/src/wayland/surface.h
++++ b/src/wayland/surface.h
+@@ -12,6 +12,7 @@
+ #include "effect/globals.h"
+ 
+ #include <QObject>
++#include <QUuid>
+ 
+ struct wl_resource;
+ 
+@@ -371,7 +372,7 @@
+      * shown in depth now (@a awake) and which of its edges lie on its output's edge. Only changes
+      * are sent.
+      */
+-    void setStereoDepthState(bool awake, Qt::Edges outputEdges, qreal sunk, qreal popped);
++    void setStereoDepthState(bool awake, Qt::Edges outputEdges, qreal sunk, qreal popped, uint32_t outputWidth = 0, const QUuid &outputId = {});
+ 
+     /**
+      * Returns the current release point for the buffer on this surface. The buffer keeps the
+--- a/src/wayland/surface.cpp
++++ b/src/wayland/surface.cpp
+@@ -1374,12 +1374,12 @@
+     return !d->stereoDepths.isEmpty();
+ }
+ 
+-void SurfaceInterface::setStereoDepthState(bool awake, Qt::Edges outputEdges, qreal sunk, qreal popped)
+-{
+-    const SurfaceInterfacePrivate::StereoDepthState state{awake, uint32_t(outputEdges.toInt()), sunk, popped};
++void SurfaceInterface::setStereoDepthState(bool awake, Qt::Edges outputEdges, qreal sunk, qreal popped, uint32_t outputWidth, const QUuid &outputId)
++{
++    const SurfaceInterfacePrivate::StereoDepthState state{awake, uint32_t(outputEdges.toInt()), sunk, popped, outputWidth, outputId};
+     d->stereoDepthState = state;
+     for (StereoDepthSurfaceV1 *depth : std::as_const(d->stereoDepths)) {
+-        depth->sendState(state.awake, state.outputEdges, state.sunk, state.popped);
++        depth->sendState(state.awake, state.outputEdges, state.sunk, state.popped, state.outputWidth, state.outputId);
+     }
+ }
+ 
+--- a/src/wayland/stereocontent_v1.h
++++ b/src/wayland/stereocontent_v1.h
+@@ -9,6 +9,7 @@
+ #include "wayland/qwayland-server-kde-stereo-content-v1.h"
+ 
+ #include <QObject>
++#include <QUuid>
+ #include <QPointer>
+ 
+ #include <optional>
+@@ -63,7 +64,7 @@
+     quint64 placeSerial() const;
+ 
+     // sends the state unless it is the one this object last received
+-    void sendState(bool awake, uint32_t outputEdges, qreal sunk, qreal popped);
++    void sendState(bool awake, uint32_t outputEdges, qreal sunk, qreal popped, uint32_t outputWidth = 0, const QUuid &outputId = {});
+ 
+ private:
+     void kde_stereo_depth_v1_destroy_resource(Resource *resource) override;
+@@ -78,6 +79,7 @@
+     quint64 m_placeSerial = 0;
+     std::optional<std::pair<bool, uint32_t>> m_sent;
+     std::optional<std::pair<qreal, qreal>> m_sentLimits;
++    std::optional<std::pair<uint32_t, QUuid>> m_sentOutput;
+ };
+ 
+ }
+--- a/src/wayland/stereocontent_v1.cpp
++++ b/src/wayland/stereocontent_v1.cpp
+@@ -16,7 +16,7 @@
+ namespace KWin
+ {
+ 
+-static constexpr uint32_t s_version = 5;
++static constexpr uint32_t s_version = 6;
+ 
+ static constexpr StereoContent toStereoContent(uint32_t content)
+ {
+@@ -59,7 +59,7 @@
+     }
+     // a surface whose state is known tells a new follower at once
+     if (const auto state = SurfaceInterfacePrivate::get(surf)->stereoDepthState) {
+-        depth->sendState(state->awake, state->outputEdges, state->sunk, state->popped);
++        depth->sendState(state->awake, state->outputEdges, state->sunk, state->popped, state->outputWidth, state->outputId);
+     }
+ }
+ 
+@@ -168,7 +168,7 @@
+     return m_placeSerial;
+ }
+ 
+-void StereoDepthSurfaceV1::sendState(bool awake, uint32_t outputEdges, qreal sunk, qreal popped)
++void StereoDepthSurfaceV1::sendState(bool awake, uint32_t outputEdges, qreal sunk, qreal popped, uint32_t outputWidth, const QUuid &outputId)
+ {
+     if (!m_surface) {
+         return;
+@@ -179,8 +179,15 @@
+         send_depth_state(awake ? 1 : 0, outputEdges);
+     }
+     const auto limits = std::make_pair(sunk, popped);
+-    if (resource()->version() >= KDE_STEREO_DEPTH_V1_DEPTH_LIMITS_SINCE_VERSION && m_sentLimits != limits) {
++    const auto output = std::make_pair(outputWidth, outputId);
++    const bool hasOutputWidth = resource()->version() >= KDE_STEREO_DEPTH_V1_OUTPUT_WIDTH_SINCE_VERSION;
++    if (resource()->version() >= KDE_STEREO_DEPTH_V1_DEPTH_LIMITS_SINCE_VERSION
++        && (m_sentLimits != limits || (hasOutputWidth && m_sentOutput != output))) {
+         m_sentLimits = limits;
++        m_sentOutput = output;
++        if (hasOutputWidth) {
++            send_output_width(outputWidth);
++        }
+         send_depth_limits(wl_fixed_from_double(sunk), wl_fixed_from_double(popped));
+     }
+ }
