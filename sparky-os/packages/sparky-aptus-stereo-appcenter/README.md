@@ -73,3 +73,10 @@ Removing the entry removes no tool: those the entry brought or marked are marked
 DisplayCAL (0.1.10): an entry of Tools and utilities that is offered and not installed by default, with the sentence that it requires calibrator hardware and apt's sizes before the button; `actions/entry status ID` answers for one entry, which the Info Centre's Stereo 3D and Deep Colour page uses to offer "Install DisplayCAL" (ORDER 575).
 
 Vinci (0.1.11): the entry pins Vinci 0.4.9, its release address, its size and its SHA-256; the download is refused and said when the bytes do not match (ORDER 589).
+
+A program its maker publishes only as binaries (ORDER 40, 0.1.19).
+SenseCom (SenseGlove's program that finds and connects their haptic gloves) and the SenseGlove API's two libraries are entries of the kind "tree": no source exists that the edition could build, so nothing of theirs is in this package, rebuilt or mirrored.
+The row carries the address of a pinned file list (stereo/vendor/NAME.json: the maker's repository at one commit, and for each file its size, SHA-256 and mode) and that list's own SHA-256.
+The action fetches the licence first and shows it, then every different file from the maker (the Unity player that the maker's tree holds twice is fetched once), checks each file against the list, installs the tools the entry declares, and only then puts the folder in place at once, with a link and a menu entry.
+A wrong SHA-256, no network, an old glibc, a folder that is not ours, a damaged list and a missing Bluetooth adapter are each said in the person's language, and nothing is installed after a failure; nothing is accepted for the person: the maker's licence is MIT.
+The maker's own updater stays in its files and is not run by the entry; a newer version arrives by a newer pin.
