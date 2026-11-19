@@ -59,6 +59,22 @@ if project == 'dosbox-staging':
     if before.count(needle) != 1:
         raise SystemExit('upstream soundfont default changed; review the integration')
     p.write_text(before.replace(needle, 'AddString("soundfont", WhenIdle, "default-GM.sf2")'))
+    p = source / 'src/midi/midi.cpp'
+    text = p.read_text()
+    needle = 'static auto DefaultMidiDevicePref = MidiDevicePortPref;'
+    if text.count(needle) != 1:
+        raise SystemExit('DOSBox MIDI default changed')
+    p.write_text(text.replace(needle, 'static auto DefaultMidiDevicePref = "fluidsynth";'))
+    p = source / 'src/midi/fluidsynth.cpp'
+    text = p.read_text()
+    text = '#include <cstdlib>\n' + text.replace('throw std::runtime_error(msg);',
+        'std::system("/usr/bin/sparky-stereo-audio midi --emulator-error DOSBox-Staging");\n\t\tthrow std::runtime_error(msg);')
+    needle = '\tsynth    = std::move(fluid_synth);'
+    if text.count(needle) != 1:
+        raise SystemExit('DOSBox successful synth initialization changed')
+    text = text.replace(needle, '\tstd::system("/usr/bin/sparky-stereo-audio midi --emulator-ready DOSBox-Staging");\n' + needle)
+    p.write_text(text)
+
 # Forward a real missing-ROM failure through the edition's translated problems engine.
 if project == 'munt':
     p = source / 'mt32emu_qt/src/QSynth.cpp'
