@@ -24,8 +24,8 @@ def main():
                         'QUILT_PATCHES': 'debian/patches', 'PYTHONPATH': str(toolkit),
                         'SOURCE_DATE_EPOCH': str(stamp)}
     version = subprocess.check_output(['dpkg-parsechangelog', '-SVersion'], cwd=source, text=True).strip()
-    if version != '3:0.165.3222+gitb35605a-dmo5':
-        raise ValueError(f'Expected x264-dmo 3:0.165.3222+gitb35605a-dmo5, got {version}')
+    if version != '4:0.165.3222+gitb35605a-dmo5':
+        raise ValueError(f'Expected x264-dmo 4:0.165.3222+gitb35605a-dmo5, got {version}')
     series = source / 'debian/patches/series'
     patches = sorted((recipe / 'patches').glob('*.patch'))
     for patch in patches:
@@ -35,12 +35,12 @@ def main():
         shutil.copy2(patch, target)
     series.write_text(series.read_text().rstrip() + '\n' + '\n'.join(p.name for p in patches) + '\n')
     subprocess.run(['quilt', 'push', '-a'], cwd=source, env=env, check=True)
-    subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', '3:0.165.3222+gitb35605a-dmo5+stereo3d1',
+    subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', '4:0.165.3222+gitb35605a-dmo5+stereo3d1',
                     '--distribution', 'UNRELEASED',
                     'Carry HandBrake stack-alignment build compatibility in the edition shared x264.'],
                    cwd=source, env=env, check=True)
     subprocess.run([sys.executable, '-m', 'lean.debian_prepare', str(source),
-                    '3:0.165.3222+gitb35605a-dmo5+stereo3d1+lc1', '--toolkit', str(toolkit),
+                    '4:0.165.3222+gitb35605a-dmo5+stereo3d1+lc1', '--toolkit', str(toolkit),
                     '--build-dependency', 'bubblewrap'], cwd=source, env=env, check=True)
     reproducible.normalize_tree(source, stamp)
 
