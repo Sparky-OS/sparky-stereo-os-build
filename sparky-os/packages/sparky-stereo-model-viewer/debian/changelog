@@ -1,3 +1,14 @@
+sparky-stereo-model-viewer (0.1.2) unstable; urgency=medium
+
+  * Depends: qml6-module-org-kde-desktop and qml6-module-qtquick (ORDER 750 finding). The program sets the Qt Quick Controls style
+    org.kde.desktop itself (src/main.cpp) when QT_QUICK_CONTROLS_STYLE is empty, and the style's module is a package of its own
+    (source kf6-qqc2-desktop-style); without it the window stays black with "module org.kde.desktop is not installed". Every
+    import of the QML files now has its package named: org.kde.kirigami (qml6-module-org-kde-kirigami), QtQuick (qml6-module-qtquick),
+    QtQuick.Controls, QtQuick.Dialogs, QtQuick.Layouts (qml6-module-qtquick-controls, -dialogs, -layouts), QtQuick.Templates through
+    the Controls (qml6-module-qtquick-templates, already named).
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 19 Nov 2026 09:00:00 -0300
+
 sparky-stereo-model-viewer (0.1.1) unstable; urgency=medium
 
   * libf3d's window is made by F3D's automatic backend (engine::create), not createGLX(): createGLX loads libGLX.so, the unversioned development

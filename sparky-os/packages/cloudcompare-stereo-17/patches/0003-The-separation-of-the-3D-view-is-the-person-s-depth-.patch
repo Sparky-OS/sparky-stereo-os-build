@@ -38,7 +38,7 @@ index be19190..81418c4 100644
 +option( OPTION_STEREO_DECLARE "Read the depth limits of the stereo 3D view through libstereo-declare" OFF )
 +if ( OPTION_STEREO_DECLARE )
 +	find_package( PkgConfig REQUIRED )
-+	pkg_check_modules( STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare>=1.10.0 )
++	pkg_check_modules( STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare>=1.11.0 )
 +	find_package( Qt5 COMPONENTS X11Extras REQUIRED )
 +	target_link_libraries( ${PROJECT_NAME} PkgConfig::STEREO_DECLARE Qt5::X11Extras )
 +	target_compile_definitions( ${PROJECT_NAME} PRIVATE CC_WITH_STEREO_DECLARE )
@@ -65,7 +65,7 @@ new file mode 100644
 index 0000000..6676bf6
 --- /dev/null
 +++ b/libs/qCC_glWindow/include/ccGLWindowDepthLimits.h
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,14 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// The person's depth limits of an X11 window (Sparky Stereo OS), read through libstereo-declare 1.10. Its own file: the X11 headers
 +// define macros (None, Status, Bool...) that break Qt's headers when they come first.
@@ -74,8 +74,9 @@ index 0000000..6676bf6
 +
 +namespace ccDepthLimits
 +{
-+//! Reads the depth limits of the X11 window (pixels of a view 1920 wide): 0 delivered, 1 not offered, 2 not delivered yet, 3 not readable
-+int readX11(unsigned long window, double& sunk, double& popped);
++//! Reads the depth limits of the X11 window in the pixels of its buffer (libstereo-declare 1.11: the desktop's limits, pixels of a view 1920 wide
++//! of the screen, times the output's width over 1920; the window is shown as it is drawn): 0 delivered, 1 not offered, 2 not delivered yet, 3 not readable
++int readX11(unsigned long window, double bufferWidth, double& sunk, double& popped);
 +}
 +
 +#endif
@@ -202,7 +203,7 @@ index 5754f6b..efc7fca 100644
  	//! Whether seterovision mode is enabled or not
  	bool m_stereoModeEnabled;
  
-+	//! Reads the person's depth limits (pixels of a view 1920 wide) from the desktop: 0 delivered, 1 not offered, 2 not delivered yet, 3 not readable
++	//! Reads the person's depth limits from the desktop, in the pixels of this view's buffer (see ccDepthLimits::readX11): 0 delivered, 1 not offered, 2 not delivered yet, 3 not readable
 +	virtual int readDepthLimits(double& sunk, double& popped) { Q_UNUSED(sunk) Q_UNUSED(popped) return 3; }
 +
 +	//! State and values of the person's depth limits
@@ -257,7 +258,7 @@ new file mode 100644
 index 0000000..fab838c
 --- /dev/null
 +++ b/libs/qCC_glWindow/src/ccGLWindowDepthLimits.cpp
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,34 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +#include "ccGLWindowDepthLimits.h"
 +
@@ -267,7 +268,7 @@ index 0000000..fab838c
 +#include <stereo-declare.h>
 +#endif
 +
-+int ccDepthLimits::readX11(unsigned long window, double& sunk, double& popped)
++int ccDepthLimits::readX11(unsigned long window, double bufferWidth, double& sunk, double& popped)
 +{
 +#ifdef CC_WITH_STEREO_DECLARE
 +	if (!QX11Info::isPlatformX11())
@@ -275,7 +276,7 @@ index 0000000..fab838c
 +		return 3;
 +	}
 +	stereo_depth_limits limits;
-+	const int r = stereo_depth_x11_get_limits(QX11Info::display(), static_cast<Window>(window), &limits);
++	const int r = stereo_depth_x11_get_buffer_limits(QX11Info::display(), static_cast<Window>(window), bufferWidth, bufferWidth, &limits);
 +	if (r == 0)
 +	{
 +		sunk = limits.sunk;
@@ -286,6 +287,7 @@ index 0000000..fab838c
 +	return (r == -ENODATA ? 2 : 1);
 +#else
 +	(void)window;
++	(void)bufferWidth;
 +	(void)sunk;
 +	(void)popped;
 +	return 3;
@@ -317,15 +319,15 @@ index bdecd98..32926b6 100644
 -			double scale = convergence * m_viewportParams.zNearCoef * m_stereoParams.stereoStrength / m_stereoParams.screenDistance_mm;
 -			double eyeSeperation = m_stereoParams.eyeSeparation_mm * scale;
 +			//the separation is the largest one under which the farthest and the nearest displayed points stay inside the person's
-+			//depth limits, which the desktop gives the window (sunk and popped, in pixels of a view 1920 wide); with no limits the
++			//depth limits, which the desktop gives the window (sunk and popped, already in the pixels of this view's buffer by libstereo-declare 1.11: the screen's limits, never scaled by the view's own width); with no limits the
 +			//two eyes are the same picture. Parallel cameras meeting at the focal distance f: a point at depth z is 2 t F (1 - f / z)
 +			//pixels apart (t = separation / f, F = half the view's width in pixels over the half width ratio)
 +			double eyeSeperation = 0.0;
 +			if (m_depthLimitsState == DepthLimitsState::Delivered && convergence > 0.0)
 +			{
 +				const double viewWidth = std::max(1, glWidth());
-+				const double sunk = m_depthSunk * viewWidth / 1920.0;
-+				const double popped = m_depthPopped * viewWidth / 1920.0;
++				const double sunk = m_depthSunk;
++				const double popped = m_depthPopped;
 +				const double F = (viewWidth / 2.0) / distanceToHalfWidthRatio;
 +				const double zNearest = std::max(zMinDisplayed, 1.0e-6 * convergence);
 +				const double farTerm = (zMaxDisplayed > convergence ? 1.0 - convergence / zMaxDisplayed : 0.0);
@@ -474,7 +476,7 @@ index efd194c..463192f 100644
 +	{
 +		return 3;
 +	}
-+	return ccDepthLimits::readX11(static_cast<unsigned long>(id), sunk, popped);
++	return ccDepthLimits::readX11(static_cast<unsigned long>(id), glWidth() > 0 ? glWidth() : 1, sunk, popped); // the view is shown as it is drawn
 +}
 +
  void ccGLWindowStereo::doSetMouseTracking(bool enable)
