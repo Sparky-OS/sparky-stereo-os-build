@@ -110,3 +110,34 @@ The rendering and transport rigs are in `tests/render-surround.py` and `tests/pa
 They use private PipeWire, Pulse and WirePlumber instances, synthetic signals and an ALSA file-writing fixture, without a sound device.
 They require NumPy, SciPy, FFmpeg, a compiler and ALSA/Pulse development headers, separate from runtime dependencies.
 A virtual sink does not establish a real receiver handshake.
+
+## MIDI
+
+General MIDI is available at login through sparky-stereo-midi.service. The
+small sparky-stereo-midi renderer uses Debian's libfluidsynth directly; its PipeWire audio
+stream exists only while notes or an audible effects tail need it. The MIDI port
+stays available. The synthesis rate is FluidSynth's highest supported rate, 96 kHz in 2.6.1; when another graph rate is in use,
+PipeWire converts at the edge using the existing audio policy.
+
+```
+sparky-stereo-audio midi --font auto
+sparky-stereo-audio midi --font /absolute/personal.sf2
+sparky-stereo-audio midi --connect yes
+sparky-stereo-audio midi --service off
+sparky-stereo-audio midi --service on
+sparky-stereo-audio midi --play /absolute/music.mid
+sparky-stereo-audio show
+```
+
+TimGM6mb is the small dependency. Debian's soundfont alternatives select a
+larger installed font, and the person's explicit choice wins. No unmeasured
+weak-processor cutoff is shipped. Automatic hardware connections remain off
+pending a design decision; the command exposes the existing FluidSynth option.
+PipeWire's existing ALSA sequencer bridge is the only bridge; a2jmidid is not
+started. MIDI files use one visible connection to the service's port. The existing file-player defaults stay. The MIDI command and its desktop entry are additional choices.
+The renderer is a separate native package so the existing script/data engine
+keeps its architecture-independent source and Lean Code route.
+
+The dedicated unit keeps the default small: Debian’s fluidsynth CLI package recommends Qsynth, whose recommendation installs FluidR3 even when TimGM6mb is already present.
+The renderer uses the same Debian synthesis library without that CLI/GUI dependency chain.
+Debian’s own fluidsynth.service and any personal configuration remain independent; turn this service off before selecting another General MIDI daemon.
