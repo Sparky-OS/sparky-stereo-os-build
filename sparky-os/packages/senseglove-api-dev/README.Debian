@@ -17,6 +17,11 @@ Build the example:
   cp -r /usr/share/doc/senseglove-api-dev/examples /tmp/sgexample && cd /tmp/sgexample
   cmake -S . -B build && cmake --build build
 
+The libraries were built with libstdc++'s old std::string ABI (their exported names have no [abi:cxx11]; v20, v21 and v22 alike),
+while Debian's compiler defaults to the new one. The CMake targets therefore add -D_GLIBCXX_USE_CXX11_ABI=0 to the programs that
+use them; by hand, add it yourself, or the link fails with undefined references such as SGCore::HapticGlove::ToString. Pass no
+std::string between such a program and another library that was built with the new ABI.
+
 On Linux, SenseCom (the other Stereo APTus entry in VR and SteamVR) connects the gloves; the API talks to it.
 The example is SenseGlove's Windows example: it waits for a key with system("pause"), which does not exist on Linux, so
 without a glove it prints its message again and again instead of waiting.
