@@ -17,7 +17,8 @@ def fonts(source, root, archive):
             info = tar.gettarinfo(str(path), arcname='fonts/' + path.name)
             info.uid = info.gid = 0
             info.uname = info.gname = ''
-            info.mode = 0o644
+            # Preserve the already qualified original component's metadata.
+            info.mode = 0o664
             info.mtime = 0
             with path.open('rb') as stream:
                 tar.addfile(info, stream)
