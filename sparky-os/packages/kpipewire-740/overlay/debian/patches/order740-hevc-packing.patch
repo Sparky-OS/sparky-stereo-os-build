@@ -1,0 +1,59 @@
+From 17203deedb3c499810a32d7ead0a7b8729431db0 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 19 Nov 2026 07:01:42 -0300
+Subject: [PATCH] Encode HEVC using the selected stereo link raster
+
+Allow the existing per-eye packing filters for HEVC and size the software encoder from their packed output.
+
+Assisted-by: GPT-6 via Codex
+---
+ src/hevcencoder.cpp               | 5 +++--
+ src/pipewirebaseencodedstream.cpp | 2 +-
+ src/pipewireproduce.cpp           | 2 +-
+ 3 files changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/src/hevcencoder.cpp b/src/hevcencoder.cpp
+index c965ad1..0c0b87d 100644
+--- a/src/hevcencoder.cpp
++++ b/src/hevcencoder.cpp
+@@ -25,8 +25,9 @@ bool HEVCEncoder::initialize(const QSize &size)
+     if (!m_avCodecContext) {
+         return false;
+     }
+-    m_avCodecContext->width = (size.width() + 1) & ~1;
+-    m_avCodecContext->height = (size.height() + 1) & ~1;
++    const auto encodedSize = m_produce->encodedSize(size);
++    m_avCodecContext->width = (encodedSize.width() + 1) & ~1;
++    m_avCodecContext->height = (encodedSize.height() + 1) & ~1;
+     m_avCodecContext->pix_fmt = AV_PIX_FMT_YUV420P;
+     m_avCodecContext->colorspace = AVCOL_SPC_BT709;
+     m_avCodecContext->color_primaries = AVCOL_PRI_BT709;
+diff --git a/src/pipewirebaseencodedstream.cpp b/src/pipewirebaseencodedstream.cpp
+index 25d31cc..c088d51 100644
+--- a/src/pipewirebaseencodedstream.cpp
++++ b/src/pipewirebaseencodedstream.cpp
+@@ -264,7 +264,7 @@ void PipeWireBaseEncodedStream::setQuality(quint8 quality)
+ 
+ bool PipeWireBaseEncodedStream::setStereoPacking(StereoPacking packing)
+ {
+-    if (d->m_produceThread || d->m_state != Idle || (packing != StereoPacking::SideBySide && d->m_encoder != H264Baseline && d->m_encoder != H264Main)) {
++    if (d->m_produceThread || d->m_state != Idle || (packing != StereoPacking::SideBySide && d->m_encoder != H264Baseline && d->m_encoder != H264Main && d->m_encoder != HEVCMain)) {
+         return false;
+     }
+     d->m_stereoPacking = packing;
+diff --git a/src/pipewireproduce.cpp b/src/pipewireproduce.cpp
+index d94c794..14bca4f 100644
+--- a/src/pipewireproduce.cpp
++++ b/src/pipewireproduce.cpp
+@@ -525,7 +525,7 @@ std::unique_ptr<Encoder> PipeWireProduce::makeEncoder()
+ 
+     auto size = m_stream->size();
+     if (m_stereoPacking != StereoPacking::SideBySide && (size.width() % 4 || size.height() % 2
+-        || (m_encoderType != PipeWireBaseEncodedStream::H264Baseline && m_encoderType != PipeWireBaseEncodedStream::H264Main))) {
++        || (m_encoderType != PipeWireBaseEncodedStream::H264Baseline && m_encoderType != PipeWireBaseEncodedStream::H264Main && m_encoderType != PipeWireBaseEncodedStream::HEVCMain))) {
+         return nullptr;
+     }
+ 
+-- 
+2.53.0
+
