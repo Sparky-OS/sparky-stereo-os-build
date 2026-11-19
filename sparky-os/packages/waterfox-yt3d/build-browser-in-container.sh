@@ -8,7 +8,7 @@ set -euo pipefail
 : "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build-provenance.sh (sparky_provenance_init) or export SOURCE_DATE_EPOCH}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=${BROWSER_JOBS:-8}
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
-OLD=6.7.5-0+stereo3d14+lc1 NEW=6.7.5-0+stereo3d15 COMMIT=5787349248e08d7b8f5538c16d6a38cdbfacd0d7 OLDCOMMIT=4ed7888140abc8f4ab6e68a4166eeea88d2871d7
+OLD=6.7.5-0+stereo3d15+lc1 NEW=6.7.5-0+stereo3d16 COMMIT=22f052e7901a96dabc710aa4338a93a3da211c33 OLDCOMMIT=5787349248e08d7b8f5538c16d6a38cdbfacd0d7
 if [ -z "${BROWSER_RESUME:-}" ]; then
 cd /work && mkdir plain && cd plain
 cp /in/sparky-stereo-browser_6.7.5.orig.tar.xz "/in/sparky-stereo-browser_$OLD.dsc" "/in/sparky-stereo-browser_$OLD.debian.tar.xz" .
@@ -17,17 +17,17 @@ sha256sum sparky-stereo-browser_6.7.5.orig.tar.xz | tee /work/orig.sha256
 dpkg-source -x "sparky-stereo-browser_$OLD.dsc" src >/dev/null
 cd src
 mkdir -p debian/patches
-cp /patches/0017-*.patch /patches/0018-*.patch debian/patches/
-ls /patches/0017-*.patch /patches/0018-*.patch | xargs -n1 basename >> debian/patches/series
+cp /patches/0019-*.patch /patches/0020-*.patch debian/patches/
+ls /patches/0019-*.patch /patches/0020-*.patch | xargs -n1 basename >> debian/patches/series
 python3 - <<'PY'
 import os
-top = open('/patches/changelog15.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d15').replace('@DATE@', os.environ['SOURCE_DATE_RFC2822'])
-lc = ('sparky-stereo-browser (6.7.5-0+stereo3d15+lc1) UNRELEASED; urgency=medium\n\n'
+top = open('/patches/changelog16.top').read().replace('@DEBVERSION@', '6.7.5-0+stereo3d16').replace('@DATE@', os.environ['SOURCE_DATE_RFC2822'])
+lc = ('sparky-stereo-browser (6.7.5-0+stereo3d16+lc1) UNRELEASED; urgency=medium\n\n'
       '  * Apply verified native Lean Code before compilation and qualified lc1\n'
       '    payload assembly; retain exact authored source and HR companions.\n\n'
       ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ' + os.environ['SOURCE_DATE_RFC2822'] + '\n\n')
 old = open('debian/changelog').read()
-open('debian/changelog', 'w').write(lc + top + old[old.index('sparky-stereo-browser (6.7.5-0+stereo3d14) unstable'):])
+open('debian/changelog', 'w').write(lc + top + old[old.index('sparky-stereo-browser (6.7.5-0+stereo3d15) unstable'):])
 PY
 # The package's languages: the nine of the edition and the four Spanish locales (Spanish is the tenth required language; Mozilla's
 # locales carry a territory, and ORDER 473u round 3b gives the same Spanish text to all four). +stereo3d14's source already lists them.
