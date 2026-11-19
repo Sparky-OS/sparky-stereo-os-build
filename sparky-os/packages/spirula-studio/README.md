@@ -39,3 +39,5 @@ The recipe verifies its source and build record, carries its source-consumer pre
 Both composition paths normalize the source tree with SOURCE_DATE_EPOCH immediately before dpkg-source -b.
 The reuse path checks all predecessor archive hashes and unchanged native inputs, then restores authored payloads through HR and repeats the normal payload and link/start gates.
 The build record retains the new recipe identity and the compiled predecessor identity; reuse never invokes a native compiler.
+The original font component uses mode 0644 regardless of cache modes or umask.
+Reuse permits only the four named, hash-pinned font resource mode normalizations; native code and compiler inputs must otherwise match exactly.
