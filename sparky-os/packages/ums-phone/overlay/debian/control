@@ -1,0 +1,22 @@
+Source: ums
+Section: Network
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: ca-certificates, debhelper-compat (= 13), maven, openjdk-21-jdk-headless | default-jdk-headless, gcc, node-acorn, nodejs, perl, python3, python3-yaml, ffmpeg, libmediainfo0v5
+Standards-Version: 4.7.2
+Homepage: https://sparkylinux.org
+Rules-Requires-Root: no
+
+Package: ums
+Architecture: all
+Depends: default-jre-headless (>= 2:1.17) | java17-runtime-headless, ffmpeg, libmediainfo0v5, openssl, xdg-user-dirs, ${misc:Depends}
+Recommends: kcm-ums
+Suggests: dcraw, mplayer, vlc-bin
+Description: Universal Media Server, a DLNA and UPnP media server
+ Shares videos, music and pictures with TVs and other devices on the network,
+ and transcodes what a device cannot play. Built from the upstream 15.9.0 tag,
+ using the edition's FFmpeg and MediaInfo. It runs as the user service
+ ums.service, which is off until switched on: systemctl --user enable --now ums
+ .
+ The first run shares Pictures, Music and Videos (xdg-user-dirs) and never the
+ home folder. Web interface: http://localhost:9001
