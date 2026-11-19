@@ -1,0 +1,191 @@
+Description: Translate headset pairing refusal and revocation
+Author: Daniel Campos Ramos
+Origin: backport, edition commit c91ac51
+Last-Update: 2026-11-19
+
+--- a/discovery/PanelDiscovery.cpp
++++ b/discovery/PanelDiscovery.cpp
+@@ -2,6 +2,7 @@
+ #include "PanelDiscovery.h"
+ #include "PairingTrust.h"
+ #include <PanelDescriptor.h>
++#include <KLocalizedString>
+ #include <QCryptographicHash>
+ #include <QDBusInterface>
+ #include <QDBusArgument>
+@@ -106,7 +107,7 @@
+     QSslCertificate certificate;
+     QSslKey key;
+     if (paired.isNull() || !PairingTrust::localIdentity(certificate, key)) {
+-        qWarning("Headset control requires KDE Connect pairing and its local TLS identity");
++        qWarning().noquote() << i18n("Pair this headset with this computer in KDE Connect before connecting.");
+         return;
+     }
+     auto socket = new QSslSocket(this);
+@@ -123,7 +124,12 @@
+         if (QString::fromLatin1(socket->peerCertificate().digest(QCryptographicHash::Sha256).toHex()) != peer->identity || !PairingTrust::isPaired(socket->peerCertificate())) { socket->abort(); return; }
+         peer->lastReply.start();
+         connect(&peer->heartbeat, &QTimer::timeout, socket, [socket, peer] {
+-            if (peer->lastReply.elapsed() > 15000 || !PairingTrust::isPaired(socket->peerCertificate())) { socket->abort(); return; }
++            if (!PairingTrust::isPaired(socket->peerCertificate())) {
++                qWarning().noquote() << i18n("Headset disconnected: KDE Connect pairing was removed.");
++                socket->abort();
++                return;
++            }
++            if (peer->lastReply.elapsed() > 15000) { socket->abort(); return; }
+             socket->write("{\"action\":\"ping\"}\n");
+         });
+         peer->heartbeat.start(5000);
+--- a/po/de/krdpserver.po
++++ b/po/de/krdpserver.po
+@@ -103,3 +103,14 @@
+ #. Stereo headset Throw interface.
+ msgid "Throw"
+ msgstr "Werfen"
++
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Pair this headset with this computer in KDE Connect before connecting."
++msgstr "Koppeln Sie dieses Headset vor dem Verbinden in KDE Connect mit diesem Computer."
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Headset disconnected: KDE Connect pairing was removed."
++msgstr "Headset getrennt: Die Kopplung in KDE Connect wurde entfernt."
+--- a/po/es/krdpserver.po
++++ b/po/es/krdpserver.po
+@@ -88,3 +88,14 @@
+ #, kde-format
+ msgid "Quit"
+ msgstr "Salir"
++
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Pair this headset with this computer in KDE Connect before connecting."
++msgstr "Antes de conectar, empareje este visor con este equipo en KDE Connect."
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Headset disconnected: KDE Connect pairing was removed."
++msgstr "Visor desconectado: se eliminó el emparejamiento en KDE Connect."
+--- a/po/fr/krdpserver.po
++++ b/po/fr/krdpserver.po
+@@ -101,3 +101,14 @@
+ #. Stereo headset Throw interface.
+ msgid "Throw"
+ msgstr "Lancer"
++
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Pair this headset with this computer in KDE Connect before connecting."
++msgstr "Avant la connexion, associez ce casque à cet ordinateur dans KDE Connect."
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Headset disconnected: KDE Connect pairing was removed."
++msgstr "Casque déconnecté : l’association dans KDE Connect a été supprimée."
+--- a/po/ja/krdpserver.po
++++ b/po/ja/krdpserver.po
+@@ -25,3 +25,14 @@
+ #. Stereo headset Throw interface.
+ msgid "Throw"
+ msgstr "スロー"
++
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Pair this headset with this computer in KDE Connect before connecting."
++msgstr "接続する前に、KDE Connect でこのヘッドセットとこのコンピューターをペアリングしてください。"
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Headset disconnected: KDE Connect pairing was removed."
++msgstr "ヘッドセットの接続が切れました。KDE Connect のペアリングが解除されました。"
+--- a/po/ko/krdpserver.po
++++ b/po/ko/krdpserver.po
+@@ -101,3 +101,14 @@
+ #. Stereo headset Throw interface.
+ msgid "Throw"
+ msgstr "던지기"
++
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Pair this headset with this computer in KDE Connect before connecting."
++msgstr "연결하기 전에 KDE Connect에서 이 헤드셋을 이 컴퓨터와 페어링하세요."
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Headset disconnected: KDE Connect pairing was removed."
++msgstr "헤드셋 연결이 끊어졌습니다. KDE Connect 페어링이 해제되었습니다."
+--- a/po/pl/krdpserver.po
++++ b/po/pl/krdpserver.po
+@@ -102,3 +102,14 @@
+ #. Stereo headset Throw interface.
+ msgid "Throw"
+ msgstr "Przerzuć"
++
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Pair this headset with this computer in KDE Connect before connecting."
++msgstr "Przed połączeniem sparuj ten zestaw z tym komputerem w KDE Connect."
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Headset disconnected: KDE Connect pairing was removed."
++msgstr "Zestaw rozłączony: usunięto parowanie w KDE Connect."
+--- a/po/pt_BR/krdpserver.po
++++ b/po/pt_BR/krdpserver.po
+@@ -108,3 +108,14 @@
+ #. Stereo headset Throw interface.
+ msgid "Throw"
+ msgstr "Arremessar"
++
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Pair this headset with this computer in KDE Connect before connecting."
++msgstr "Antes de conectar, emparelhe este headset com este computador no KDE Connect."
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Headset disconnected: KDE Connect pairing was removed."
++msgstr "Headset desconectado: o emparelhamento no KDE Connect foi removido."
+--- a/po/zh_CN/krdpserver.po
++++ b/po/zh_CN/krdpserver.po
+@@ -101,3 +101,14 @@
+ #. Stereo headset Throw interface.
+ msgid "Throw"
+ msgstr "投送"
++
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Pair this headset with this computer in KDE Connect before connecting."
++msgstr "连接前，请在 KDE Connect 中将此头显与这台计算机配对。"
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Headset disconnected: KDE Connect pairing was removed."
++msgstr "头显已断开连接：KDE Connect 配对已解除。"
+--- a/po/zh_TW/krdpserver.po
++++ b/po/zh_TW/krdpserver.po
+@@ -101,3 +101,14 @@
+ #. Stereo headset Throw interface.
+ msgid "Throw"
+ msgstr "投送"
++
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Pair this headset with this computer in KDE Connect before connecting."
++msgstr "連線前，請在 KDE Connect 中將此頭戴裝置與這台電腦配對。"
++
++#: discovery/PanelDiscovery.cpp
++#, kde-format
++msgid "Headset disconnected: KDE Connect pairing was removed."
++msgstr "頭戴裝置已中斷連線：KDE Connect 配對已解除。"
