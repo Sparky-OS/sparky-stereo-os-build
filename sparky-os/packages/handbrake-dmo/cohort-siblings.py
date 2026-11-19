@@ -3,6 +3,7 @@
 """Build one authoritative sibling list, omitting the candidate's own packages."""
 import argparse
 from pathlib import Path
+import re
 import subprocess
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -21,6 +22,11 @@ def archives(name):
     return sorted((work / name).glob('*.deb'))
 
 excluded = {package(p) for p in archives(args.candidate)}
+controls = list((work / args.candidate).glob('*/debian/control'))
+if len(controls) != 1:
+    raise ValueError('Expected one candidate source control file')
+for name in re.findall(r'^Package: (\S+)$', controls[0].read_text(), re.M):
+    excluded.update((name, name + '-dbgsym', name + '-lc-hr'))
 replacements = {}
 for folder in args.replace:
     for p in archives(folder):
