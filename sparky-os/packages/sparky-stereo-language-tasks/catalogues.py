@@ -15,6 +15,8 @@ import tempfile
 
 HERE = Path(__file__).resolve().parent
 PIN = json.loads((HERE / 'tasksel-source.json').read_text())
+LOCAL3 = 'Language support was not changed: the update would also remove %s, which it does not manage. Keep them with apt-mark manual or remove them yourself, then retry the update.'
+LOCAL4 = 'Language support could not be completed: %s. The details are in the journal (journalctl -u sparky-stereo-language-tasks). Retry the update when this is fixed.'
 
 
 def verify(directory):
@@ -66,7 +68,9 @@ def compile_catalogues(tree, source_dir):
             target = tree / 'usr/share/sparky' / name / lang
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text('LOCAL1=' + json.dumps(translation.gettext('Shared language support'), ensure_ascii=False) + '\n'
-                              'LOCAL2=' + json.dumps(translation.gettext('Language support could not be completed: %s. Check the network and retry the update.'), ensure_ascii=False) + '\n')
+                              'LOCAL2=' + json.dumps(translation.gettext('Language support could not be completed: %s. Check the network and retry the update.'), ensure_ascii=False) + '\n'
+                              'LOCAL3=' + json.dumps(translation.gettext(LOCAL3), ensure_ascii=False) + '\n'
+                              'LOCAL4=' + json.dumps(translation.gettext(LOCAL4), ensure_ascii=False) + '\n')
 
 
 if __name__ == '__main__':

@@ -1,3 +1,25 @@
+sparky-stereo-language-tasks (1.0.9+lc1) unstable; urgency=medium
+
+  * Retire Debian's own task packages (built from the tasksel source, each
+    locked to tasksel's exact version) when the plan for tasksel would remove
+    them, and keep what they brought: the installed packages they depend on
+    or recommend are marked as installed by the person. A machine with
+    task-laptop, task-english and a language task at tasksel 3.91 no longer
+    holds tasksel back and no longer fails with "Remv: task-laptop".
+  * Say what really failed: packages the plan would remove, a fetch that
+    failed, or apt's own error; "check the network" only for a fetch. Two new
+    messages in the ten languages.
+  * A failed migration waits for a new request (the next package transaction)
+    or the next boot. The service is no longer wanted by multi-user.target, so
+    it never holds the boot; its path unit reacts to a change of the queue
+    (PathChanged) instead of to the queue's existence, so a run that failed is
+    not started again by its own path unit, and a timer starts it once, 30
+    seconds after the manager starts, when work is queued.
+  * Queue the migration when a Debian task holds tasksel back after an
+    earlier migration finished.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 19 Nov 2026 19:30:00 +0000
+
 sparky-stereo-language-tasks (1.0.8+lc1) unstable; urgency=medium
 
   * Treat a generated locale file without LANG like an absent file; found
