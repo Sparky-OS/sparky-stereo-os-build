@@ -16,3 +16,10 @@ and upstream Slang 2026.12.0.1. The recipe pins the Slang compiler archive's
 address and SHA256 and downloads it only in the disposable build tree.
 GLFW, Dear ImGui and CJK font source components have their original licences.
 No model profile is downloaded while building the application.
+
+Packaging-only icon revisions may use SPIRULA_REPACK_FROM pointing to the exact
+qualified predecessor archive directory. The source carries every required hash.
+The adapter rejects changed native source/components, changed runtime controls
+and unrelated authored packaging inputs, restores original text through its HR
+companion, and re-runs the payload and archive-backed link/start gates. It never
+invokes a native compiler. Ordinary cold source builds remain the default.
