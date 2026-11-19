@@ -10,3 +10,5 @@ The separation of the two cameras is the person's depth limits and nothing else:
 nearest displayed point stay inside the sunk and popped limits that Stereo KWin gives the window (libstereo-declare 1.10,
 _KDE_NET_WM_STEREO_DEPTH_LIMITS), followed while the window is open. With no limits the two eyes are the same picture and the
 program says so in the ten languages of the edition.
+
+The limits are the screen's, converted for the view's buffer by libstereo-declare 1.11 (ORDER 750; Daniel, 2026-11-19: "one separation setting, centralized, tailored TO THE SCREEN not to the element size"): limit * output width / 1920 * buffer width / shown width, the output being the monitor the window is on. +stereo3d1 multiplied them by the view's own width over 1920, so a small 3D view had almost no depth (patch 3).
