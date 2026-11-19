@@ -1,0 +1,23 @@
+Description: Ensuring the mvdLX is compliant
+Author: Mr-Z-2697
+Origin: vendor, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/x265/A09-Ensuring-the-mvdLX-is-compliant.patch
+Last-Update: 2026-11-19
+
+diff --git a/source/encoder/entropy.cpp b/source/encoder/entropy.cpp
+index d4bf73d53..bc1c0d8e0 100644
+--- a/source/encoder/entropy.cpp
++++ b/source/encoder/entropy.cpp
+@@ -2104,8 +2104,9 @@ void Entropy::codeRefFrmIdx(const CUData& cu, uint32_t absPartIdx, int list)
+ void Entropy::codeMvd(const CUData& cu, uint32_t absPartIdx, int list)
+ {
+     const MV& mvd = cu.m_mvd[list][absPartIdx];
+-    const int hor = mvd.x;
+-    const int ver = mvd.y;
++    // to ensure the mvdLX is in the range of [-2^15, 2^15-1]
++    const int16_t hor = (int16_t)mvd.x;
++    const int16_t ver = (int16_t)mvd.y;
+ 
+     encodeBin(hor != 0 ? 1 : 0, m_contextState[OFF_MV_RES_CTX]);
+     encodeBin(ver != 0 ? 1 : 0, m_contextState[OFF_MV_RES_CTX]);
+-- 
+2.50.1.windows.1
