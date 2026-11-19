@@ -10,10 +10,10 @@ mkdir -p "$job"
 trap 'chown -R 1000:1000 "$job"' EXIT
 id builder >/dev/null 2>&1 || useradd --uid 1000 --no-create-home builder
 cd "$job"
-cp /work/linux/source-10-final/krdp_6.7.4-1+stereo3d10.dsc /work/linux/source-10-final/krdp_6.7.4-1+stereo3d10.debian.tar.xz .
+cp /work/linux/source-11-final/krdp_6.7.4-1+stereo3d11.dsc /work/linux/source-11-final/krdp_6.7.4-1+stereo3d11.debian.tar.xz .
 cp /repo/pool/main/k/krdp/krdp_6.7.4.orig.tar.xz .
-if [ ! -d source ]; then dpkg-source -x krdp_6.7.4-1+stereo3d10.dsc source; fi
-printf '[{"uri":"https://deb.debian.org/debian","suite":"forky","components":["main"],"keyring":"/usr/share/keyrings/debian-archive-keyring.gpg"},{"uri":"https://www.deb-multimedia.org","suite":"forky","components":["main","non-free"],"keyring":"/usr/share/keyrings/deb-multimedia-keyring.pgp"},{"uri":"file:/repo","suite":"mashtabba","components":["main"],"keyring":"/repo/sparky-stereo-repo.asc"}]\n' > "$job/archive.json"
+if [ ! -d source ]; then dpkg-source -x krdp_6.7.4-1+stereo3d11.dsc source; fi
+printf '[{"uri":"https://deb.debian.org/debian","suite":"forky","components":["main"],"keyring":"/usr/share/keyrings/debian-archive-keyring.gpg"},{"uri":"https://www.deb-multimedia.org","suite":"forky","components":["main","non-free"],"keyring":"/usr/share/keyrings/deb-multimedia-keyring.pgp"},{"uri":"https://repo.sparkyos.org","suite":"mashtabba","components":["main"],"keyring":"/repo/repo-key.gpg"}]\n' > "$job/archive.json"
 export SPARKY_LC_ARCHIVE_CONFIG="$job/archive.json" SPARKY_LC_SCRATCH="$job/link-scratch" SPARKY_LC_PREVIOUS_DIR=/stage
 mkdir -p "$SPARKY_LC_SCRATCH"
 export SPARKY_LC_SIBLINGS_FILE="$job/siblings.txt"
