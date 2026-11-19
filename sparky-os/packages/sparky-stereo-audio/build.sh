@@ -27,9 +27,8 @@ install -m 755 "$HERE/bin/sparky-stereo-audio" "$D/usr/bin/"
 mkdir -p "$D/usr/share/applications" "$D/etc/xdg" "$D/usr/lib/modules-load.d"
 printf '[Desktop Entry]\nType=Application\nName=FluidSynth\nExec=sparky-stereo-audio midi --play %%f\nIcon=audio-x-generic\nTerminal=false\nCategories=AudioVideo;Audio;\nMimeType=audio/midi;audio/x-midi;\n' > "$D/usr/share/applications/sparky-stereo-midi.desktop"
 printf '# General MIDI ports for ALSA programs, including software-only games.\nsnd_seq\n' > "$D/usr/lib/modules-load.d/sparky-stereo-midi.conf"
-mkdir -p "$D/usr/lib/systemd/user/fluidsynth.service.d"
-install -m 644 "$HERE/systemd/fluidsynth-override.conf" "$D/usr/lib/systemd/user/fluidsynth.service.d/00-sparky-midi.conf"
-ln -s ../fluidsynth.service "$D/usr/lib/systemd/user/default.target.wants/fluidsynth.service"
+install -m 644 "$HERE/systemd/sparky-stereo-midi.service" "$D/usr/lib/systemd/user/"
+ln -s ../sparky-stereo-midi.service "$D/usr/lib/systemd/user/default.target.wants/sparky-stereo-midi.service"
 install -m 644 "$HERE"/lib/*.py "$D/usr/lib/sparky-stereo-audio/"
 install -m 644 "$HERE/wireplumber/sparky-stereo-audio.lua" "$D/usr/share/wireplumber/scripts/"
 install -m 644 "$HERE/wireplumber/00-sparky-stereo-surround.conf" "$D/usr/share/wireplumber/wireplumber.conf.d/"
@@ -92,7 +91,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: sparky-stereo-midi (>= 0.1.0), fluidsynth (>= 2.6.1), timgm6mb-soundfont, pipewire-jack, alsa-utils, pipewire (>= 1.6.9), pipewire-bin, pipewire-pulse, pulseaudio-utils, libmysofa-utils, python3, sparky-stereo-problems (>= 0.2.0), systemd, wireplumber (>= 0.5.19)
+Depends: sparky-stereo-midi (>= 0.1.0), libfluidsynth3 (>= 2.6.1), timgm6mb-soundfont, pipewire-jack, alsa-utils, pipewire (>= 1.6.9), pipewire-bin, pipewire-pulse, pulseaudio-utils, libmysofa-utils, python3, sparky-stereo-problems (>= 0.2.0), systemd, wireplumber (>= 0.5.19)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
