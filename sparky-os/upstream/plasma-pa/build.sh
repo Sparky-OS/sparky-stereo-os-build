@@ -13,7 +13,7 @@ WORK=$(mkdir -p "${1:?empty work directory}" && cd "$1" && pwd)
 SRC=$(cd "${2:?directory holding the prepared LC descriptor and tarballs}" && pwd)
 PREV=$(cd "${3:?previous binary packages}" && pwd)
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
-SOURCE_DATE_EPOCH=$(python3 "$HERE/source-epoch.py" "$SRC/plasma-pa_6.7.4-1+stereo3d3+lc1.debian.tar.xz")
+SOURCE_DATE_EPOCH=$(python3 "$HERE/source-epoch.py" "$SRC/plasma-pa_6.7.4-1+stereo3d5+lc1.debian.tar.xz")
 export SOURCE_DATE_EPOCH SPARKY_PROVENANCE_REQUIRED=1 SPARKY_SOURCE_DATE_BASIS='the newest changelog of the supplied plasma-pa LC source'
 sparky_provenance_init "$IMAGE" "$HERE"
 # Edition packages this one depends on that are staged and not yet in the signed repository (sparky-stereo-audio, ORDER 631): their paths, as seen in /previous, one per line in PREVIOUS_DEBS_DIR/siblings.txt
