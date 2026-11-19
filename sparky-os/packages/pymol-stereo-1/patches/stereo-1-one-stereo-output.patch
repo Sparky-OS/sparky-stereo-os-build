@@ -1,0 +1,463 @@
+Description: Sparky Stereo OS: one stereo output, the quad buffer, handed to Stereo KWin
+ PyMOL keeps every way of reading molecules; its stereo OUTPUT is one: a quad
+ buffer window (GLX_STEREO) that Mesa packs as full side by side and Stereo KWin
+ shows on every screen.  The cross-eye, wall-eye, side-by-side, stencil,
+ anaglyph, geowall, dynamic and OpenVR modes and the eye swap are not offered:
+ "stereo MODE" and the menu entries are gone and stereo_mode is always the quad
+ buffer.  The 3D options are "Enable 3D" (read when the window is made, because
+ a window gets its quad buffer when it is created) and a shortcut to Display
+ Settings.  Enable 3D is on unless the person turned it off: a screen with no
+ quad buffer visual (a 2D desktop) stays 2D and PyMOL says nothing; when the
+ person turned 3D on and the window has none, it says so in their language
+ (ten languages, pymol/edition3d.py, also the sentences of the refused stereo
+ commands) and stays 2D.  -S no longer forces a flat picture to pass for 3D
+ (check_gl_stereo_capable).  PyMOL's own stereo_angle and stereo_shift
+ camera settings are untouched.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-19
+---
+--- a/layer1/Scene.cpp
++++ b/layer1/Scene.cpp
+@@ -1100,7 +1100,7 @@
+   int cur_stereo_mode = I->StereoMode;
+ 
+   if(flag) {
+-    I->StereoMode = SettingGetGlobal_i(G, cSetting_stereo_mode);
++    I->StereoMode = cStereo_quadbuffer;
+   } else {
+     I->StereoMode = 0;
+   }
+--- a/layer3/Executive.cpp
++++ b/layer3/Executive.cpp
+@@ -9344,14 +9344,23 @@
+     SettingSet(G, cSetting_chromadepth, 1);
+     SceneSetStereo(G, 0);
+     break;
+-  case -1:
+-    SettingSetGlobal_f(G, cSetting_stereo_shift, -SettingGetGlobal_f(G, cSetting_stereo_shift));
+-    break;
+   default:
++    if (flag > 0 && flag != cStereo_quadbuffer) {
++      return pymol::make_error("this build has one stereo output, quad buffer, "
++                               "which Stereo KWin shows on every screen");
++    }
++    if (flag == -1) {
++      return pymol::make_error("the swap of the eyes belongs to the output "
++                               "(Display Settings)");
++    }
+     SettingSet(G, cSetting_chromadepth, 0);
+ 
+-    if (flag == cStereo_quadbuffer && !G->StereoCapable) {
+-      return pymol::make_error("no 'quadbuffer' support detected (force with 'pymol -S')");
++    if (flag != 0 && !G->StereoCapable) {
++      return pymol::make_error("no quad buffer in this window: staying 2D "
++                               "(enable 3D in the Display menu and restart)");
++    }
++    if (flag != 0) {
++      flag = cStereo_quadbuffer;
+     }
+ 
+     if (flag == cStereo_openvr) {
+--- a/layer5/PyMOL.cpp
++++ b/layer5/PyMOL.cpp
+@@ -2171,11 +2171,6 @@
+     OrthoAddOutput(G,
+         " OpenGL quad-buffer stereo 3D detected and enabled.\n");;
+   } else {
+-    if(G->LaunchStatus & cPyMOLGlobals_LaunchStatus_StereoFailed) {
+-      G->Feedback->addColored(
+-          "Error: The requested stereo 3D visualization mode is not available.\n",
+-          FB_Errors);
+-    }
+   }
+ 
+   if(G->LaunchStatus & cPyMOLGlobals_LaunchStatus_MultisampleFailed) {
+@@ -2191,10 +2186,7 @@
+   // quad buffer stereo available?
+   GLboolean state;
+   glGetBooleanv(GL_STEREO, &state);
+-  G->StereoCapable = state || G->Option->force_stereo > 0;
+-  if (!state && G->Option->force_stereo > 0) {
+-    printf("Warning: forcing stereo despite GL_STEREO=0\n");
+-  }
++  G->StereoCapable = state;
+ 
+   // stereo request feedback
+   if (state && G->Option->stereo_mode == cStereo_default) {
+--- a/modules/pmg_qt/pymol_gl_widget.py
++++ b/modules/pmg_qt/pymol_gl_widget.py
+@@ -3,6 +3,7 @@
+ from pymol2 import SingletonPyMOL as PyMOL
+ 
+ import pymol
++from pymol import edition3d
+ 
+ from pymol.Qt import QtCore
+ from pymol.Qt import QtGui
+@@ -78,16 +79,16 @@
+         if options.multisample:
+             f.setSamples(4)
+ 
+-        if options.force_stereo != -1:
+-            # See layer1/Setting.h for stereo modes
+-
+-            if options.stereo_mode in (1, 12) or (
+-                    options.stereo_mode == 0 and AUTO_DETECT_STEREO):
++        # the one 3D output of this build: a quad buffer window, handed to
++        # Stereo KWin (see pymol/edition3d.py)
++        self._edition3d_started = False
++        self._edition3d_visual = False
++        if edition3d.enabled():
++            self._edition3d_visual = edition3d.stereo_visual_available()
++            if self._edition3d_visual or edition3d.explicit():
++                options.stereo_mode = 1
+                 f.setStereo(True)
+ 
+-            if options.stereo_mode in (11, 12) and not USE_QOPENGLWIDGET:
+-                f.setAccum(True)
+-
+         if USE_QOPENGLWIDGET:
+             super(PyMOLGLWidget, self).__init__(parent=parent)
+             self.setFormat(f)
+@@ -204,8 +205,23 @@
+             glViewport(0, 0, int(self.fb_scale * self.width()),
+                          int(self.fb_scale * self.height()))
+         self.pymol.draw()
++        if not self._edition3d_started:
++            self._edition3d_started = True
++            if edition3d.enabled() and (self._edition3d_visual or edition3d.explicit()):
++                QtCore.QTimer.singleShot(0, self._edition3dStart)
+         self._timer.start(0)
+ 
++    def _edition3dStart(self):
++        try:
++            self.cmd.stereo('on')
++        except BaseException as e:
++            text = edition3d.say('unavailable')
++            print(text)
++            box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Warning, 'PyMOL',
++                                        text, QtWidgets.QMessageBox.Ok, self.gui)
++            box.setAttribute(Qt.WA_DeleteOnClose)
++            box.open()
++
+     def resizeGL(self, w, h):
+         if USE_QOPENGLWIDGET:
+             w = int(w * self.fb_scale)
+--- a/modules/pymol/edition3d.py
++++ b/modules/pymol/edition3d.py
+@@ -0,0 +1,205 @@
++'''
++Sparky Stereo OS: the one 3D switch of this build.
++
++PyMOL draws its two eyes into a quad buffer window (GLX_STEREO); Mesa and
++Stereo KWin show them on every screen.  The only 3D options are "Enable 3D"
++and a shortcut to Display Settings.  The choice is kept in PyMOL's user
++folder and is read when the window is made, because a window gets its quad
++buffer when it is created.
++'''
++
++import os
++import subprocess
++
++MESSAGES = {
++    'enable': {
++        'en': 'Enable 3D (applies when PyMOL starts again)',
++        'pl': 'Włącz 3D (działa po ponownym uruchomieniu PyMOL)',
++        'pt_BR': 'Ativar 3D (vale quando o PyMOL for iniciado de novo)',
++        'fr': 'Activer la 3D (effective au prochain démarrage de PyMOL)',
++        'de': '3D einschalten (gilt beim nächsten Start von PyMOL)',
++        'es': 'Activar 3D (se aplica al volver a iniciar PyMOL)',
++        'ja': '3D を有効にする (PyMOL の再起動後に反映)',
++        'ko': '3D 켜기 (PyMOL을 다시 시작하면 적용)',
++        'zh_CN': '启用 3D（重新启动 PyMOL 后生效）',
++        'zh_TW': '啟用 3D（重新啟動 PyMOL 後生效）',
++    },
++    'disable': {
++        'en': 'Disable 3D (applies when PyMOL starts again)',
++        'pl': 'Wyłącz 3D (działa po ponownym uruchomieniu PyMOL)',
++        'pt_BR': 'Desativar 3D (vale quando o PyMOL for iniciado de novo)',
++        'fr': 'Désactiver la 3D (effective au prochain démarrage de PyMOL)',
++        'de': '3D ausschalten (gilt beim nächsten Start von PyMOL)',
++        'es': 'Desactivar 3D (se aplica al volver a iniciar PyMOL)',
++        'ja': '3D を無効にする (PyMOL の再起動後に反映)',
++        'ko': '3D 끄기 (PyMOL을 다시 시작하면 적용)',
++        'zh_CN': '禁用 3D（重新启动 PyMOL 后生效）',
++        'zh_TW': '停用 3D（重新啟動 PyMOL 後生效）',
++    },
++    'display': {
++        'en': '3D display settings...',
++        'pl': 'Ustawienia wyświetlacza 3D...',
++        'pt_BR': 'Configurações da tela 3D...',
++        'fr': "Réglages de l'écran 3D...",
++        'de': '3D-Anzeigeeinstellungen ...',
++        'es': 'Ajustes de la pantalla 3D...',
++        'ja': '3D ディスプレイの設定...',
++        'ko': '3D 디스플레이 설정...',
++        'zh_CN': '3D 显示设置...',
++        'zh_TW': '3D 顯示設定...',
++    },
++    'unavailable': {
++        'en': 'PyMOL asked for 3D, but this window has no quad buffer, so it stays 2D. '
++              'Stereo KWin offers one only on a screen in a 3D mode.',
++        'pl': 'PyMOL poprosił o 3D, ale to okno nie ma bufora quad, więc pozostaje w 2D. '
++              'Stereo KWin udostępnia go tylko na ekranie w trybie 3D.',
++        'pt_BR': 'O PyMOL pediu 3D, mas esta janela não tem quad buffer, então fica em 2D. '
++                 'O Stereo KWin só oferece um em uma tela em modo 3D.',
++        'fr': "PyMOL a demandé la 3D, mais cette fenêtre n'a pas de quad buffer : elle reste en 2D. "
++              "Stereo KWin n'en offre un que sur un écran en mode 3D.",
++        'de': 'PyMOL hat 3D angefordert, aber dieses Fenster hat keinen Quad-Buffer und bleibt 2D. '
++              'Stereo KWin bietet ihn nur auf einem Bildschirm im 3D-Modus.',
++        'es': 'PyMOL pidió 3D, pero esta ventana no tiene quad buffer y sigue en 2D. '
++              'Stereo KWin solo ofrece uno en una pantalla en modo 3D.',
++        'ja': 'PyMOL は 3D を要求しましたが、このウィンドウには quad buffer がないため 2D のままです。'
++              'Stereo KWin は 3D モードの画面にだけ quad buffer を提供します。',
++        'ko': 'PyMOL이 3D를 요청했지만 이 창에는 quad buffer가 없어 2D로 유지됩니다. '
++              'Stereo KWin은 3D 모드의 화면에서만 quad buffer를 제공합니다.',
++        'zh_CN': 'PyMOL 请求了 3D，但此窗口没有 quad buffer，因此保持 2D。'
++                 'Stereo KWin 只在处于 3D 模式的屏幕上提供 quad buffer。',
++        'zh_TW': 'PyMOL 要求了 3D，但此視窗沒有 quad buffer，因此維持 2D。'
++                 'Stereo KWin 只在處於 3D 模式的螢幕上提供 quad buffer。',
++    },
++    'onemode': {
++        'en': 'This build has one stereo output, the quad buffer, which Stereo KWin shows on every screen.',
++        'pl': 'Ta wersja ma jedno wyjście stereo, bufor quad, który Stereo KWin pokazuje na każdym ekranie.',
++        'pt_BR': 'Esta versão tem uma única saída estéreo, o quad buffer, que o Stereo KWin mostra em todas as telas.',
++        'fr': "Cette version n'a qu'une sortie stéréo, le quad buffer, que Stereo KWin montre sur chaque écran.",
++        'de': 'Diese Version hat einen einzigen Stereo-Ausgang, den Quad-Buffer, den Stereo KWin auf jedem Bildschirm zeigt.',
++        'es': 'Esta versión tiene una sola salida estéreo, el quad buffer, que Stereo KWin muestra en todas las pantallas.',
++        'ja': 'このビルドのステレオ出力は quad buffer の 1 つだけで、Stereo KWin がすべての画面に表示します。',
++        'ko': '이 빌드의 스테레오 출력은 quad buffer 하나뿐이며 Stereo KWin이 모든 화면에 표시합니다.',
++        'zh_CN': '此版本只有一种立体输出，即 quad buffer，由 Stereo KWin 显示在每个屏幕上。',
++        'zh_TW': '此版本只有一種立體輸出，即 quad buffer，由 Stereo KWin 顯示在每個螢幕上。',
++    },
++    'swap': {
++        'en': 'Swapping the eyes belongs to the output: use Display Settings.',
++        'pl': 'Zamiana oczu należy do wyjścia: użyj Ustawień wyświetlacza.',
++        'pt_BR': 'A troca dos olhos é da saída: use as Configurações de tela.',
++        'fr': "L'échange des yeux appartient à la sortie : utilisez les Réglages de l'écran.",
++        'de': 'Das Vertauschen der Augen gehört zum Ausgang: nutzen Sie die Anzeigeeinstellungen.',
++        'es': 'El intercambio de ojos es de la salida: use los Ajustes de pantalla.',
++        'ja': '左右の目の入れ替えは出力側の機能です。ディスプレイ設定を使ってください。',
++        'ko': '양안 교체는 출력의 몫입니다. 디스플레이 설정을 사용하세요.',
++        'zh_CN': '交换左右眼属于输出端：请使用显示设置。',
++        'zh_TW': '交換左右眼屬於輸出端：請使用顯示設定。',
++    },
++    'noquad': {
++        'en': 'This window has no quad buffer, so it stays 2D. Stereo KWin offers one only on a screen in a 3D mode.',
++        'pl': 'To okno nie ma bufora quad, więc pozostaje w 2D. Stereo KWin udostępnia go tylko na ekranie w trybie 3D.',
++        'pt_BR': 'Esta janela não tem quad buffer, então fica em 2D. O Stereo KWin só oferece um em uma tela em modo 3D.',
++        'fr': "Cette fenêtre n'a pas de quad buffer : elle reste en 2D. Stereo KWin n'en offre un que sur un écran en mode 3D.",
++        'de': 'Dieses Fenster hat keinen Quad-Buffer und bleibt 2D. Stereo KWin bietet ihn nur auf einem Bildschirm im 3D-Modus.',
++        'es': 'Esta ventana no tiene quad buffer y sigue en 2D. Stereo KWin solo ofrece uno en una pantalla en modo 3D.',
++        'ja': 'このウィンドウには quad buffer がないため 2D のままです。Stereo KWin は 3D モードの画面にだけ quad buffer を提供します。',
++        'ko': '이 창에는 quad buffer가 없어 2D로 유지됩니다. Stereo KWin은 3D 모드의 화면에서만 quad buffer를 제공합니다.',
++        'zh_CN': '此窗口没有 quad buffer，因此保持 2D。Stereo KWin 只在处于 3D 模式的屏幕上提供 quad buffer。',
++        'zh_TW': '此視窗沒有 quad buffer，因此維持 2D。Stereo KWin 只在處於 3D 模式的螢幕上提供 quad buffer。',
++    },
++}
++
++
++def _languages():
++    names = []
++    for var in ('LC_ALL', 'LC_MESSAGES', 'LANG'):
++        value = os.environ.get(var, '').split('.')[0].split('@')[0]
++        if value and value not in ('C', 'POSIX'):
++            names.append(value)
++            break
++    out = []
++    for name in names:
++        out.append(name)
++        out.append(name.split('_')[0])
++    return out + ['en']
++
++
++def say(key):
++    table = MESSAGES[key]
++    for lang in _languages():
++        if lang in table:
++            return table[lang]
++    return table['en']
++
++
++def _file():
++    base = os.environ.get('XDG_CONFIG_HOME') or os.path.join(os.path.expanduser('~'), '.config')
++    return os.path.join(base, 'pymol', 'enable3d')
++
++
++def _stored():
++    try:
++        with open(_file()) as f:
++            return f.read().strip()
++    except OSError:
++        return ''
++
++
++def enabled():
++    """3D is on unless the person turned it off (the file, the environment)."""
++    if os.environ.get('PYMOL_ENABLE_3D') in ('0', '1'):
++        return os.environ['PYMOL_ENABLE_3D'] == '1'
++    return _stored() != '0'
++
++
++def explicit():
++    """The person turned 3D on themselves (the menu, -S or the environment)."""
++    if os.environ.get('PYMOL_ENABLE_3D') in ('0', '1'):
++        return os.environ['PYMOL_ENABLE_3D'] == '1'
++    return _stored() == '1'
++
++
++def stereo_visual_available():
++    """Whether the X server offers a quad buffer visual (GLX_STEREO): on Stereo KWin only on a screen in a 3D mode."""
++    try:
++        import ctypes
++        import ctypes.util
++        x11 = ctypes.CDLL(ctypes.util.find_library('X11') or 'libX11.so.6')
++        gl = ctypes.CDLL(ctypes.util.find_library('GL') or 'libGL.so.1')
++        x11.XOpenDisplay.restype = ctypes.c_void_p
++        x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
++        x11.XDefaultScreen.argtypes = [ctypes.c_void_p]
++        x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
++        gl.glXChooseVisual.restype = ctypes.c_void_p
++        gl.glXChooseVisual.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
++        display = x11.XOpenDisplay(None)
++        if not display:
++            return False
++        try:
++            GLX_RGBA, GLX_DOUBLEBUFFER, GLX_STEREO = 4, 5, 6
++            attributes = (ctypes.c_int * 5)(GLX_RGBA, GLX_DOUBLEBUFFER, GLX_STEREO, 0, 0)
++            return bool(gl.glXChooseVisual(display, x11.XDefaultScreen(display), attributes))
++        finally:
++            x11.XCloseDisplay(display)
++    except Exception:
++        return False
++
++
++def toggle(cmd=None):
++    path = _file()
++    os.makedirs(os.path.dirname(path), exist_ok=True)
++    with open(path, 'w') as f:
++        f.write('0' if enabled() else '1')
++
++
++def menu_label():
++    return say('disable' if enabled() else 'enable')
++
++
++def open_display_settings():
++    for argv in (['systemsettings', 'kcm_kscreen'], ['kcmshell6', 'kcm_kscreen']):
++        try:
++            subprocess.Popen(argv)
++            return
++        except OSError:
++            continue
++    print(' ' + say('display'))
+--- a/modules/pymol/_gui.py
++++ b/modules/pymol/_gui.py
+@@ -5,6 +5,7 @@
+ import sys
+ import os
+ import webbrowser
++from pymol import edition3d
+ 
+ class PyMOLDesktopGUI(object):
+     '''Superclass for PyMOL Desktop Applications'''
+@@ -417,20 +418,9 @@
+                     for val in [0, 1, 3, 5]
+                 ]),
+                 ('separator',),
+-                ('check', 'Stereo', 'stereo', 1),
+-                ('menu', 'Stereo Mode', [
+-                    ('command', 'Anaglyph Stereo', 'stereo anaglyph'),
+-                    ('command', 'Cross-Eye Stereo', 'stereo crosseye'),
+-                    ('command', 'Wall-Eye Stereo', 'stereo walleye'),
+-                    ('command', 'Quad-Buffered Stereo', 'stereo quadbuffer'),
+-                    ('command', 'Zalman Stereo', 'stereo byrow'),
+-                    ('command', 'OpenVR', 'stereo openvr'),
+-                    ('separator',),
+-                    ('command', 'Swap Sides', 'stereo swap'),
+-                    ('separator',),
+-                    ('command', 'Chromadepth', 'stereo chromadepth'),
+-                    ('command', 'off', 'stereo off'),
+-                ]),
++                ('command', edition3d.menu_label(), edition3d.toggle),
++                ('command', edition3d.say('display'), edition3d.open_display_settings),
++                ('command', 'Chromadepth', 'stereo chromadepth'),
+                 ('separator',),
+                 ('menu', 'Zoom', [
+                     ('command', str(i) + ' Angstrom Sphere', lambda i=i: cmd.zoom('center', i, animate=-1))
+--- a/modules/pymol/invocation.py
++++ b/modules/pymol/invocation.py
+@@ -54,7 +54,6 @@
+   -H N      window height in pixels
+   -i        internal_gui=0
+   -I        auto_reinitialize=1 (Mac only)
+-  -j        side-by-side stereo (stereo_mode=4)
+   -J        cd to user's home directory
+   -k        don't load pymolrc or plugins
+   -K        keep alive: when running without a GUI, don't quit after the input
+@@ -74,8 +73,7 @@
+   -r file   run python script
+   -R        launch RPC Server
+   -s file   log to file
+-  -S        force stereo
+-  -t N      stereo_mode=N
++  -S        Enable 3D for this run
+   -T name   UNSUPPORTED - Tcl/Tk GUI skin
+   -u file   resume log file (execute existing content and append new log output)
+   -U        UNSUPPORTED reuse the helper application
+@@ -382,8 +380,8 @@
+                     options.external_gui = 0
+                 if "n" in a:
+                     options.incentive_product = 1
+-                if "t" in a: # type of stereo to use
+-                    options.stereo_mode = int(av.pop())
++                if "t" in a: # the stereo type of upstream PyMOL: one output here
++                    av.pop()
+                 if "T" in a: # what skin to use?
+                     options.skin = str(av.pop())
+                 if "w" in a: # what gui to use
+@@ -415,18 +413,10 @@
+                         options.game_mode = 1
+                         options.win_x = 1024
+                         options.win_y = 768
+-                    if "S" in a: # Force stereo context on stereo-capable hardware
+-                        options.force_stereo = 1
+-                        if options.stereo_mode == 0:
+-                            options.stereo_mode = 1  # quadbuffer
+-                        if sys.platform=='darwin':
+-                            options.deferred.append(
+-                              "_do__ set stereo_double_pump_mono,1,quiet=1")
++                    if "S" in a: # Enable 3D for this run
++                        os.environ['PYMOL_ENABLE_3D'] = '1'
+                     if "M" in a: # Force mono on stereo hardware (all)
+                         options.force_stereo = -1
+-                    if "j" in a: # Geowall: two side-by-side images
+-                        options.stereo_mode = 4
+-                        options.deferred.append("_do__ stereo on")
+                     if ("d" in a):
+                         options.deferred.append(
+                             "_do_" + av.pop().replace('%',' '))
+--- a/modules/pymol/viewing.py
++++ b/modules/pymol/viewing.py
+@@ -1291,9 +1291,19 @@
+ 
+     cmd.stereo(string toggle)
+         '''
++        from pymol import edition3d
+         toggle = stereo_dict[stereo_sc.auto_err(str(toggle),'toggle')]
++        if toggle > 1:
++            raise pymol.CmdException(edition3d.say('onemode'))
++        if toggle == -1:
++            raise pymol.CmdException(edition3d.say('swap'))
+         with _self.lockcm:
+-            return _cmd.stereo(_self._COb, toggle)
++            try:
++                return _cmd.stereo(_self._COb, toggle)
++            except pymol.CmdException:
++                if toggle in (-2, 1):
++                    raise pymol.CmdException(edition3d.say('noquad'))
++                raise
+ 
+ 
+     def turn(axis, angle, *, _self=cmd):

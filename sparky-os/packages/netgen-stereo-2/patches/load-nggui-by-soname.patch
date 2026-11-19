@@ -1,0 +1,39 @@
+Description: Load the GUI library by its SONAME
+ fix-version.patch gives libnggui the SONAME libnggui.so.6.2, and the
+ unversioned libnggui.so link is shipped only in libnglib-dev, so the Tcl
+ script's "load libnggui.so gui" failed whenever libnglib-dev was not
+ installed: the GUI started from the menu printed "couldn't load file
+ libnggui.so" and exited.  Load the library by its SONAME, and keep the
+ unversioned name as the fallback for builds without fix-version.patch.
+ The version here follows the SOVERSION set in fix-version.patch.
+Author: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Assisted-by: Claude Opus via Claude Code
+Forwarded: not-needed
+Last-Update: 2026-10-10
+
+--- a/ng/ng.tcl
++++ b/ng/ng.tcl
+@@ -2,7 +2,9 @@
+ catch {lappend auto_path $env(NETGENDIR)/../lib }
+ 
+ if {[catch {Ng_GetCommandLineParameter batchmode} result ]} {
+-	load libnggui[info sharedlibextension] gui
++	if {[catch {load libnggui[info sharedlibextension].6.2 gui}]} {
++		load libnggui[info sharedlibextension] gui
++	}
+ }
+ 
+ set batchmode [Ng_GetCommandLineParameter batchmode]
+--- a/ng/onetcl.cpp
++++ b/ng/onetcl.cpp
+@@ -3,8 +3,10 @@
+ ,"catch {lappend auto_path $env(NETGENDIR) }\n"
+ ,"catch {lappend auto_path $env(NETGENDIR)/../lib }\n"
+ ,"if {[catch {Ng_GetCommandLineParameter batchmode} result ]} {\n"
++,"if {[catch {load libnggui[info sharedlibextension].6.2 gui}]} {\n"
+ ,"load libnggui[info sharedlibextension] gui\n"
+ ,"}\n"
++,"}\n"
+ ,"set batchmode [Ng_GetCommandLineParameter batchmode]\n"
+ ,"if {$batchmode==\"undefined\"} {\n"
+ ,"if {[catch {package require tkdnd } result ]} {\n"
