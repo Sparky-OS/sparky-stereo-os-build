@@ -345,7 +345,8 @@ end)
 
 -- The standard hook's SiLink can fail before any public PipeWire Link is
 -- exported. Own only IEC958 playback activation so that failure is reported.
--- Registration and flags follow linking/link-target.lua, Collabora, MIT.
+-- Registration and flags adapt linking/link-target.lua, Copyright 2022
+-- Collabora Ltd., MIT; its full permission notice is in the package copyright.
 SimpleEventHook {
   name="sparky-audio/encoded-link",
   after="linking/prepare-link",
