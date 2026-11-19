@@ -1,0 +1,326 @@
+Description: Require KDE Connect pairing on standalone headset control
+Author: Daniel Campos Ramos
+Origin: other, edition fork krdp order24
+Forwarded: not-needed
+Last-Update: 2026-11-19
+
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+index 0d171e1..161bf47 100644
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -7,6 +7,7 @@ set_tests_properties(kcm_smoketest PROPERTIES
+ )
+ 
+ find_package(Qt6 REQUIRED COMPONENTS Test)
++ecm_add_test(PairingTrustTest.cpp ../discovery/PairingTrust.cpp TEST_NAME PairingTrustTest LINK_LIBRARIES Qt::Test Qt::Network)
+ ecm_add_test(PanelDescriptorTest.cpp TEST_NAME PanelDescriptorTest LINK_LIBRARIES KRdp Qt::Test)
+ 
+ if (BUILD_PLASMA_SESSION)
+diff --git a/autotests/PairingTrustTest.cpp b/autotests/PairingTrustTest.cpp
+new file mode 100644
+index 0000000..4d355ac
+--- /dev/null
++++ b/autotests/PairingTrustTest.cpp
+@@ -0,0 +1,65 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#include "../discovery/PairingTrust.h"
++#include <QCryptographicHash>
++#include <QDir>
++#include <QFile>
++#include <QProcess>
++#include <QSettings>
++#include <QTemporaryDir>
++#include <QTest>
++
++class PairingTrustTest : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void pairingLifecycle()
++    {
++        QTemporaryDir home;
++        QVERIFY(home.isValid());
++        qputenv("XDG_CONFIG_HOME", home.path().toUtf8());
++        QDir().mkpath(home.path() + QStringLiteral("/kdeconnect"));
++        const QString base = home.path() + QStringLiteral("/kdeconnect/");
++        const auto makeCertificate = [&base](const QString &prefix) {
++            return QProcess::execute(QStringLiteral("openssl"), {QStringLiteral("req"), QStringLiteral("-x509"), QStringLiteral("-newkey"), QStringLiteral("rsa:2048"), QStringLiteral("-nodes"), QStringLiteral("-days"), QStringLiteral("1"),
++                QStringLiteral("-subj"), QStringLiteral("/CN=isolated-test-") + prefix, QStringLiteral("-keyout"), base + prefix + QStringLiteral("Key.pem"), QStringLiteral("-out"), base + prefix + QStringLiteral("Certificate.pem")});
++        };
++        QCOMPARE(makeCertificate(QStringLiteral("peer")), 0);
++        QCOMPARE(makeCertificate(QStringLiteral("stranger")), 0);
++        QFile file(base + QStringLiteral("peerCertificate.pem"));
++        QVERIFY(file.open(QIODevice::ReadOnly));
++        const QSslCertificate peer(file.readAll());
++        QVERIFY(!peer.isNull());
++        const auto fingerprint = QString::fromLatin1(peer.digest(QCryptographicHash::Sha256).toHex());
++        QVERIFY(PairingTrust::pairedCertificate(fingerprint).isNull());
++        QSettings obsolete(home.path() + QStringLiteral("/KDE/krdp-panel-discovery.conf"), QSettings::IniFormat);
++        obsolete.setValue(QStringLiteral("approvedPanels/") + fingerprint, true);
++        obsolete.sync();
++        QVERIFY(!PairingTrust::isPaired(peer));
++        QSettings trusted(base + QStringLiteral("trusted_devices"), QSettings::IniFormat);
++        trusted.setValue(QStringLiteral("named-pc/certificate"), peer.toPem());
++        trusted.sync();
++        QCOMPARE(PairingTrust::pairedCertificate(fingerprint), peer);
++        QVERIFY(PairingTrust::isPaired(peer));
++        QFile strangerFile(base + QStringLiteral("strangerCertificate.pem"));
++        QVERIFY(strangerFile.open(QIODevice::ReadOnly));
++        const QSslCertificate stranger(strangerFile.readAll());
++        QVERIFY(!PairingTrust::isPaired(stranger));
++        trusted.setValue(QStringLiteral("named-pc/certificate"), stranger.toPem());
++        trusted.sync();
++        QVERIFY(!PairingTrust::isPaired(peer));
++        trusted.remove(QStringLiteral("named-pc"));
++        trusted.sync();
++        QVERIFY(!PairingTrust::isPaired(stranger));
++        QSslCertificate local;
++        QSslKey key;
++        QVERIFY(!PairingTrust::localIdentity(local, key));
++        QVERIFY(QFile::copy(base + QStringLiteral("peerCertificate.pem"), base + QStringLiteral("certificate.pem")));
++        QVERIFY(QFile::copy(base + QStringLiteral("peerKey.pem"), base + QStringLiteral("privateKey.pem")));
++        QVERIFY(PairingTrust::localIdentity(local, key));
++        QCOMPARE(local, peer);
++        QVERIFY(!key.isNull());
++    }
++};
++
++QTEST_GUILESS_MAIN(PairingTrustTest)
++#include "PairingTrustTest.moc"
+diff --git a/discovery/CMakeLists.txt b/discovery/CMakeLists.txt
+index ac769c5..af40348 100644
+--- a/discovery/CMakeLists.txt
++++ b/discovery/CMakeLists.txt
+@@ -2,7 +2,7 @@
+ find_package(UPNP CONFIG REQUIRED)
+ find_package(KF6Notifications REQUIRED)
+ include(ECMInstallIcons)
+-add_executable(krdp-panel-discovery main.cpp PanelDiscovery.cpp PanelDiscovery.h InterfaceMonitor.cpp InterfaceMonitor.h)
++add_executable(krdp-panel-discovery main.cpp PanelDiscovery.cpp PanelDiscovery.h PairingTrust.cpp PairingTrust.h InterfaceMonitor.cpp InterfaceMonitor.h)
+ target_link_libraries(krdp-panel-discovery PRIVATE KRdp Qt6::Gui Qt6::Network Qt6::DBus KF6::Notifications KF6::I18n KF6::CoreAddons UPNP::Shared)
+ install(TARGETS krdp-panel-discovery DESTINATION ${KDE_INSTALL_BINDIR})
+ install(FILES krdp-panel-discovery.notifyrc DESTINATION ${KDE_INSTALL_KNOTIFYRCDIR})
+diff --git a/discovery/PairingTrust.cpp b/discovery/PairingTrust.cpp
+new file mode 100644
+index 0000000..6b7e265
+--- /dev/null
++++ b/discovery/PairingTrust.cpp
+@@ -0,0 +1,42 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#include "PairingTrust.h"
++
++#include <QCryptographicHash>
++#include <QDir>
++#include <QFile>
++#include <QSettings>
++#include <QStandardPaths>
++
++static QDir configDirectory()
++{
++    return QDir(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/kdeconnect"));
++}
++
++QSslCertificate PairingTrust::pairedCertificate(const QString &fingerprint)
++{
++    if (fingerprint.size() != 64) return {};
++    QSettings devices(configDirectory().filePath(QStringLiteral("trusted_devices")), QSettings::IniFormat);
++    devices.sync();
++    for (const auto &device : devices.childGroups()) {
++        const QSslCertificate certificate(devices.value(device + QStringLiteral("/certificate")).toByteArray());
++        if (!certificate.isNull() && QString::fromLatin1(certificate.digest(QCryptographicHash::Sha256).toHex()) == fingerprint) return certificate;
++    }
++    return {};
++}
++
++bool PairingTrust::isPaired(const QSslCertificate &certificate)
++{
++    return !certificate.isNull() && pairedCertificate(QString::fromLatin1(certificate.digest(QCryptographicHash::Sha256).toHex())) == certificate;
++}
++
++bool PairingTrust::localIdentity(QSslCertificate &certificate, QSslKey &key)
++{
++    QFile certFile(configDirectory().filePath(QStringLiteral("certificate.pem")));
++    QFile keyFile(configDirectory().filePath(QStringLiteral("privateKey.pem")));
++    if (!certFile.open(QIODevice::ReadOnly) || !keyFile.open(QIODevice::ReadOnly)) return false;
++    certificate = QSslCertificate(certFile.readAll());
++    const auto bytes = keyFile.readAll();
++    key = QSslKey(bytes, QSsl::Rsa);
++    if (key.isNull()) key = QSslKey(bytes, QSsl::Ec);
++    return !certificate.isNull() && !key.isNull();
++}
+diff --git a/discovery/PairingTrust.h b/discovery/PairingTrust.h
+new file mode 100644
+index 0000000..8604e0d
+--- /dev/null
++++ b/discovery/PairingTrust.h
+@@ -0,0 +1,15 @@
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#pragma once
++
++#include <QSslCertificate>
++#include <QSslKey>
++#include <QString>
++
++// KDE Connect owns these credentials. Read its current pairing store each time;
++// discovery and the old standalone approval store never grant trust.
++namespace PairingTrust
++{
++QSslCertificate pairedCertificate(const QString &fingerprint);
++bool isPaired(const QSslCertificate &certificate);
++bool localIdentity(QSslCertificate &certificate, QSslKey &key);
++}
+diff --git a/discovery/PanelDiscovery.cpp b/discovery/PanelDiscovery.cpp
+index be61fad..0e8e5ee 100644
+--- a/discovery/PanelDiscovery.cpp
++++ b/discovery/PanelDiscovery.cpp
+@@ -1,8 +1,7 @@
+ // SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
+ #include "PanelDiscovery.h"
++#include "PairingTrust.h"
+ #include <PanelDescriptor.h>
+-#include <KNotification>
+-#include <KLocalizedString>
+ #include <QCryptographicHash>
+ #include <QDBusInterface>
+ #include <QDBusArgument>
+@@ -12,18 +11,16 @@
+ #include <QJsonObject>
+ #include <QNetworkReply>
+ #include <QRegularExpression>
+-#include <QSettings>
+ #include <QXmlStreamReader>
+ #include <UpnpDiscovery.h>
+ 
+ static constexpr auto HeadsetType = "urn:schemas-sparky-os:device:Headset:1";
+ static constexpr auto StereoNamespace = "urn:sparky-os:headset:1";
+ 
+-PanelDiscovery::PanelDiscovery(const QString &interface, const QString &transport, const QString &approvedIdentity, QObject *parent)
++PanelDiscovery::PanelDiscovery(const QString &interface, const QString &transport, const QString &, QObject *parent)
+     : QObject(parent)
+     , m_interface(QNetworkInterface::interfaceFromName(interface))
+     , m_transport(transport)
+-    , m_approvedIdentity(approvedIdentity)
+ {
+     m_http.setTransferTimeout(5000);
+     connect(&m_search, &QTimer::timeout, this, [this] { UpnpSearchAsync(m_client, 2, HeadsetType, this); });
+@@ -105,19 +102,28 @@ void PanelDiscovery::inspect(const QUrl &url)
+ 
+ void PanelDiscovery::connectPanel(const QString &address, quint16 port, const QString &identity)
+ {
++    const auto paired = PairingTrust::pairedCertificate(identity);
++    QSslCertificate certificate;
++    QSslKey key;
++    if (paired.isNull() || !PairingTrust::localIdentity(certificate, key)) {
++        qWarning("Headset control requires KDE Connect pairing and its local TLS identity");
++        return;
++    }
+     auto socket = new QSslSocket(this);
++    socket->setLocalCertificate(certificate);
++    socket->setPrivateKey(key);
+     auto peer = std::make_shared<Peer>();
+     peer->identity = identity;
+     m_peers.insert(socket, peer);
+     socket->setReadBufferSize(16385);
+-    connect(socket, &QSslSocket::sslErrors, this, [socket, identity](const QList<QSslError> &errors) {
+-        if (QString::fromLatin1(socket->peerCertificate().digest(QCryptographicHash::Sha256).toHex()) == identity) socket->ignoreSslErrors(errors);
++    connect(socket, &QSslSocket::sslErrors, this, [socket, paired](const QList<QSslError> &errors) {
++        if (socket->peerCertificate() == paired && PairingTrust::isPaired(paired)) socket->ignoreSslErrors(errors);
+     });
+     connect(socket, &QSslSocket::encrypted, this, [this, socket, peer] {
+-        if (QString::fromLatin1(socket->peerCertificate().digest(QCryptographicHash::Sha256).toHex()) != peer->identity) { socket->abort(); return; }
++        if (QString::fromLatin1(socket->peerCertificate().digest(QCryptographicHash::Sha256).toHex()) != peer->identity || !PairingTrust::isPaired(socket->peerCertificate())) { socket->abort(); return; }
+         peer->lastReply.start();
+         connect(&peer->heartbeat, &QTimer::timeout, socket, [socket, peer] {
+-            if (peer->lastReply.elapsed() > 15000) { socket->abort(); return; }
++            if (peer->lastReply.elapsed() > 15000 || !PairingTrust::isPaired(socket->peerCertificate())) { socket->abort(); return; }
+             socket->write("{\"action\":\"ping\"}\n");
+         });
+         peer->heartbeat.start(5000);
+@@ -135,6 +141,7 @@ void PanelDiscovery::receive(QSslSocket *socket)
+ {
+     const auto peer = m_peers.value(socket);
+     if (!peer) return;
++    if (!socket->isEncrypted() || !PairingTrust::isPaired(socket->peerCertificate())) { socket->abort(); return; }
+     peer->input += socket->readAll();
+     if (peer->input.size() > 16384) { socket->abort(); return; }
+     while (peer->input.contains('\n')) {
+@@ -150,22 +157,7 @@ void PanelDiscovery::receive(QSslSocket *socket)
+         if (!socket->isEncrypted() || !panel || panel->identity != peer->identity) { socket->abort(); return; }
+         peer->panel = message.value(QStringLiteral("panel")).toObject();
+         peer->announced = true;
+-        QSettings settings;
+-        const auto key = QStringLiteral("approvedPanels/") + peer->identity;
+-        if (settings.value(key, false).toBool() || peer->identity == m_approvedIdentity) { approve(socket); return; }
+-        auto notification = new KNotification(QStringLiteral("headsetFound"), KNotification::Persistent, socket);
+-        notification->setComponentName(QStringLiteral("krdp-panel-discovery"));
+-        notification->setTitle(i18n("Throw to → %1", panel->name.toHtmlEscaped()));
+-        notification->setText(i18n("Throw a stereo display to %1? The headset receives the picture. Sound and input stay on this computer.", panel->name.toHtmlEscaped()));
+-        auto allow = notification->addAction(i18n("Throw"));
+-        connect(allow, &KNotificationAction::activated, socket, [this, socket, key] {
+-            QSettings().setValue(key, true);
+-            approve(socket);
+-        });
+-        auto deny = notification->addAction(i18n("Cancel"));
+-        connect(deny, &KNotificationAction::activated, socket, [socket] { socket->abort(); });
+-        connect(notification, &KNotification::ignored, socket, [socket] { socket->abort(); });
+-        notification->sendEvent();
++        approve(socket);
+     }
+ }
+ 
+@@ -173,6 +165,7 @@ void PanelDiscovery::approve(QSslSocket *socket)
+ {
+     const auto peer = m_peers.value(socket);
+     if (!peer || peer->pending || !peer->lease.isEmpty()) return;
++    if (!PairingTrust::isPaired(socket->peerCertificate())) { socket->abort(); return; }
+     peer->pending = true;
+     QDBusInterface owner(QStringLiteral("org.kde.krdp.PanelSessions"), QStringLiteral("/PanelSessions"), QStringLiteral("org.kde.krdp.PanelSessions1"));
+     auto watcher = new QDBusPendingCallWatcher(owner.asyncCall(QStringLiteral("acquireApproved"), QJsonDocument(peer->panel).toJson(QJsonDocument::Compact), m_transport, peer->identity), this);
+@@ -187,9 +180,11 @@ void PanelDiscovery::approve(QSslSocket *socket)
+             return;
+         }
+         peer->lease = reply.value().value(QStringLiteral("lease")).toString();
+-        if (!guardedSocket || !m_peers.contains(guardedSocket)) {
++        if (!guardedSocket || !m_peers.contains(guardedSocket) || !PairingTrust::isPaired(guardedSocket->peerCertificate())) {
+             QDBusInterface owner(QStringLiteral("org.kde.krdp.PanelSessions"), QStringLiteral("/PanelSessions"), QStringLiteral("org.kde.krdp.PanelSessions1"));
+             owner.asyncCall(QStringLiteral("release"), peer->identity, peer->lease);
++            peer->lease.clear();
++            if (guardedSocket) guardedSocket->abort();
+             return;
+         }
+         auto connection = QJsonObject::fromVariantMap(reply.value());
+diff --git a/discovery/PanelDiscovery.h b/discovery/PanelDiscovery.h
+index 0709179..d92acf2 100644
+--- a/discovery/PanelDiscovery.h
++++ b/discovery/PanelDiscovery.h
+@@ -39,7 +39,6 @@ private:
+     void release(QSslSocket *socket);
+     QNetworkInterface m_interface;
+     QString m_transport;
+-    QString m_approvedIdentity;
+     UpnpClient_Handle m_client = -1;
+     QNetworkAccessManager m_http;
+     QSet<QUrl> m_pendingDescriptions;
+diff --git a/discovery/main.cpp b/discovery/main.cpp
+index e0b44de..a3fae65 100644
+--- a/discovery/main.cpp
++++ b/discovery/main.cpp
+@@ -23,12 +23,17 @@ int main(int argc, char **argv)
+     parser.addHelpOption();
+     parser.addOption({QStringLiteral("interface"), QStringLiteral("Network interface to discover headsets on"), QStringLiteral("interface")});
+     parser.addOption({QStringLiteral("transport"), QStringLiteral("Lease transport: ssdp or usb"), QStringLiteral("transport"), QStringLiteral("ssdp")});
+-    parser.addOption({QStringLiteral("approve-identity"), QStringLiteral("Explicitly approve this certificate SHA-256 identity"), QStringLiteral("identity")});
++    parser.addOption({QStringLiteral("approve-identity"), QStringLiteral("Obsolete: pair the headset through KDE Connect"), QStringLiteral("identity")});
+     parser.addOption({QStringLiteral("forget-identity"), QStringLiteral("Revoke automatic connection approval for this identity"), QStringLiteral("identity")});
+     parser.addOption({QStringLiteral("description"), QStringLiteral("Headset description URL when multicast discovery is unavailable"), QStringLiteral("url")});
+     parser.process(app);
++    if (parser.isSet(QStringLiteral("approve-identity"))) {
++        qWarning("Standalone approval is no longer supported. Pair the headset through KDE Connect.");
++        return 1;
++    }
+     if (parser.isSet(QStringLiteral("forget-identity"))) {
+         QSettings().remove(QStringLiteral("approvedPanels/") + parser.value(QStringLiteral("forget-identity")));
++        qInfo("Removed obsolete standalone approval. Revoke current trust by unpairing in KDE Connect.");
+         return 0;
+     }
+     if (!parser.isSet(QStringLiteral("interface"))) {
