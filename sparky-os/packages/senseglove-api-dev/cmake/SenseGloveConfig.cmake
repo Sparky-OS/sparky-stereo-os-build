@@ -4,6 +4,9 @@
 #   find_package(SenseGlove REQUIRED)
 #   target_link_libraries(myprogram PRIVATE SenseGlove::SGCore SenseGlove::SGConnect)
 #
+# SenseGlove built v20 to v22 with libstdc++'s old std::string ABI (no [abi:cxx11] in their exported names, measured with nm -D),
+# so the targets compile a program with _GLIBCXX_USE_CXX11_ABI=0; without it the link fails with undefined references.
+#
 # SENSEGLOVE_LIBRARY_DIR (cache or environment) names another folder that holds libsgcore.so and libsgconnect.so.
 if(TARGET SenseGlove::SGCore)
   return()
@@ -46,6 +49,7 @@ foreach(_name sgcore sgconnect)
   set_target_properties(SenseGlove::${_target} PROPERTIES
     IMPORTED_LOCATION "${SENSEGLOVE_LIBRARY_DIR}/lib${_name}.so"
     IMPORTED_SONAME "lib${_name}.so"
-    INTERFACE_INCLUDE_DIRECTORIES "${SenseGlove_INCLUDE_DIR}")
+    INTERFACE_INCLUDE_DIRECTORIES "${SenseGlove_INCLUDE_DIR}"
+    INTERFACE_COMPILE_DEFINITIONS "_GLIBCXX_USE_CXX11_ABI=0")
 endforeach()
 set(SenseGlove_FOUND TRUE)
