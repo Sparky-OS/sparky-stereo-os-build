@@ -16,7 +16,7 @@ mkdir -p "$OUT" "$SPARKY_LC_SCRATCH"
 export SPARKY_PROVENANCE_REQUIRED=1
 . "$BUILD/repo/build-provenance.sh"
 sparky_provenance_init "$SPARKY_BUILDER_IMAGE" "$HERE"
-docker run --name "$SPARKY_BUILD_CONTAINER" --platform linux/amd64 --user "$(id -u):$(id -g)" --ulimit core=0 --cpus 4 \
+docker run --pull=never --name "$SPARKY_BUILD_CONTAINER" --platform linux/amd64 --user "$(id -u):$(id -g)" --ulimit core=0 --cpus 4 \
     --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
     "${SPARKY_PROV_ARGS[@]}" -e SPIRULA_SOURCE -e SPIRULA_REPACK_FROM -e OUT -e SPARKY_LC_ARCHIVE_CONFIG -e SPARKY_LC_SCRATCH -e SPARKY_LC_SIBLINGS_FILE \
     -e SPARKY_LC_MIN_FREE_GIB=2 -e SPARKY_LC_ROOT_MIN_FREE_GIB=1 -e JOBS=4 \
