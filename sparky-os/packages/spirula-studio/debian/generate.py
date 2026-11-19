@@ -39,7 +39,7 @@ write(edition / 'edition_model_messages.h', text)
 folder = debian / 'model-profiles'
 folder.mkdir(exist_ok=True)
 for p in profiles:
-    p['version'] = '2026.11.12-1+stereo3d4+lc1'
+    p['version'] = '2026.11.12-1+stereo3d5+lc1'
     (folder / (p['package']+'.json')).write_text(json.dumps(p,ensure_ascii=False,indent=2)+'\n')
     (debian / (p['package']+'.postinst')).write_text('#!/bin/sh\n. /usr/lib/sparky-stereo-apt/model-postinst\n')
     (debian / (p['package']+'.postrm')).write_text('#!/bin/sh\n. /usr/lib/sparky-stereo-apt/model-postrm\n')
