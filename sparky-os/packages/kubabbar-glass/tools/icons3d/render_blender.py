@@ -94,12 +94,10 @@ def main():
         meshes = [o for o in bpy.context.scene.objects if o.type == "MESH" and o.name != "floor"]
     near, far = studio.DISTANCE - radius, studio.DISTANCE + radius
     model_near, model_far = studio.depth_range(position, forward, meshes)
-    base = studio.separation(near, far)
-    studio.place_eyes(cameras, right, plane_width, base)
+    popped, sunk = studio.CANDIDATES[os.environ.get("ICON_RANGE", "a")]
     studio.render_settings(int(os.environ.get("ICON_SAMPLES", "96")))
     recipe = {"icon": icon, "azimuth_deg": math.degrees(studio.AZIMUTH), "elevation_deg": math.degrees(studio.ELEVATION),
-              "distance": studio.DISTANCE, "hfov_deg": math.degrees(studio.HFOV), "separation": base,
-              "convergence_plane_distance": studio.DISTANCE, "depth_range_fraction_of_width": studio.DEPTH_RANGE,
+              "distance": studio.DISTANCE, "hfov_deg": math.degrees(studio.HFOV), "popped_px": popped, "sunk_px": sunk, "separation_per_size": {},
               "frame_depth_near": near, "frame_depth_far": far, "model_depth_near": model_near, "model_depth_far": model_far, "supersample": SUPERSAMPLE,
               "cameras": {eye: {"location": list(cameras[eye].location), "rotation_euler": list(cameras[eye].rotation_euler),
                                 "shift_x": cameras[eye].data.shift_x} for eye in cameras},
@@ -108,6 +106,10 @@ def main():
     tmp = out / "tmp"
     tmp.mkdir(exist_ok=True)
     for size in sizes:
+        base, convergence = studio.separation(model_near, model_far, size, popped, sunk)
+        studio.place_eyes(cameras, right, 2 * convergence * math.tan(studio.HFOV / 2), base)
+        recipe["separation_per_size"][size] = {"separation": base, "convergence_plane_distance": convergence}
+        (out / (icon + ".recipe.json")).write_text(json.dumps(recipe, indent=2) + "\n")
         bpy.context.scene.render.resolution_x = bpy.context.scene.render.resolution_y = size * SUPERSAMPLE
         for eye in ("left", "right"):
             bpy.context.scene.camera = cameras[eye]
