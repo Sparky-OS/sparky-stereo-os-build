@@ -23,6 +23,15 @@ export YARN_ENABLE_NETWORK=0
 export HOME="$job"
 export SPARKY_LC_MIN_FREE_GIB=20 SPARKY_LC_ROOT_MIN_FREE_GIB=20
 if [ "${PV24_PHASE:-build}" = build ]; then
+ # The upstream connect-timeout test needs a silent destination. Both veth ends
+ # stay in this network-none container; nothing is routed to a Docker bridge.
+ test ! -e /sys/class/net/eth0
+ ip link add pv24-test0 type veth peer name pv24-drop0
+ ip link set pv24-drop0 address 02:24:00:00:00:02
+ ip addr add 10.253.252.250/24 dev pv24-test0
+ ip link set pv24-test0 up
+ ip link set pv24-drop0 up
+ ip neigh add 10.253.252.251 lladdr 02:24:00:00:00:02 nud permanent dev pv24-test0
  runuser -u builder --preserve-environment -- dpkg-buildpackage -Tbuild -us -uc -j4
  exit 0
 fi
