@@ -1,0 +1,57 @@
+Description: Dispatch paired HTTPS without jUPnP's blanket HTTPS rejection
+ Keep ordinary UPnP behavior, pin both KDE Connect identities, prohibit redirects
+ and enforce the configured total request timeout on the paired Jetty request.
+Origin: vendor
+Forwarded: not-needed
+Last-Update: 2026-11-19
+
+--- a/src/main/java/net/pms/network/mediaserver/jupnp/transport/impl/jetty/JettyStreamClientImpl.java
++++ b/src/main/java/net/pms/network/mediaserver/jupnp/transport/impl/jetty/JettyStreamClientImpl.java
+@@ -97,12 +97,46 @@
+ 		return configuration;
+ 	}
+ 
++	private static boolean isPairedEndpoint(java.net.URI uri) {
++		return "https".equals(uri.getScheme()) && uri.getUserInfo() == null &&
++			uri.getPath().matches("/paired/[a-f0-9]{64}/[^/]+/(control|event)");
++	}
++
++	@Override
++	public StreamResponseMessage sendRequest(StreamRequestMessage message) throws InterruptedException {
++		if (!isPairedEndpoint(message.getUri())) {
++			return super.sendRequest(message);
++		}
++		// jUPnP's base client rejects HTTPS before reaching createRequest().
++		// The paired client authenticates both certificates and disables redirects.
++		Request request = null;
++		try {
++			request = createRequest(message);
++			if (request == null) {
++				return null;
++			}
++			request.timeout(configuration.getTimeoutSeconds(), java.util.concurrent.TimeUnit.SECONDS);
++			return createCallable(message, request).call();
++		} catch (InterruptedException error) {
++			if (request != null) {
++				abort(request);
++			}
++			throw error;
++		} catch (Exception error) {
++			if (request != null) {
++				abort(request);
++			}
++			LOGGER.warn("Paired headset request failed: {}", error.toString());
++			return null;
++		}
++	}
++
+ 	@Override
+ 	protected Request createRequest(StreamRequestMessage requestMessage) {
+ 		final UpnpRequest upnpRequest = requestMessage.getOperation();
+ 		HttpClient selectedClient = httpClient;
+ 		var uri = upnpRequest.getURI();
+-		boolean paired = "https".equals(uri.getScheme()) && uri.getPath().matches("/paired/[a-f0-9]{64}/[^/]+/(control|event)");
++		boolean paired = isPairedEndpoint(uri);
+ 		if (paired) {
+ 			String identity = uri.getPath().split("/")[2];
+ 			if (!net.pms.network.mediaserver.KdeConnectTrust.isPaired(identity)) {
