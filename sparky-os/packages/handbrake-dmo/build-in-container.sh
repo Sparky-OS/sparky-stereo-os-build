@@ -13,6 +13,7 @@ for family in x264 x265 ffmpeg; do
 done
 apt-get -y --no-install-recommends install "${cohort[@]}"
 python3 /recipe/pin-local-built.py "${cohort[@]}"
+python3 /recipe/check-required-encoders.py
 source_trees=(/work/handbrake-shared/handbrake-dmo-*)
 [ "${#source_trees[@]}" = 1 ]
 apt-get -y --no-install-recommends build-dep "${source_trees[0]}"
