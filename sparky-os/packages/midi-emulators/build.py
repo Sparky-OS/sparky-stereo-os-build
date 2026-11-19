@@ -53,6 +53,7 @@ if project in ('libADLMIDI', 'libOPNMIDI'):
             removed.append(str(target.relative_to(source))); target.unlink()
 # The application consumes the distro's font alternatives and remains individually configurable.
 if project == 'dosbox-staging':
+    subprocess.run(['patch', '-p1', '-i', str(here / 'patches/dosbox-system-zlib.patch')], cwd=source, check=True)
     p = source / 'src/midi/fluidsynth.cpp'
     before = p.read_text()
     needle = 'AddString("soundfont", WhenIdle, "default.sf2")'
@@ -93,6 +94,8 @@ if project == 'dosbox-staging':
     text = '#include <cstdlib>\n' + text.replace(needle, needle + '\n\t\tstd::system("/usr/bin/sparky-stereo-audio midi --rom-error DOSBox-Staging");')
     p.write_text(text)
 shutil.copytree(here / 'debian' / project, source / 'debian')
+if project == 'dosbox-staging':
+    shutil.copytree(here / 'patches', source / 'debian/downstream-patches')
 (source / 'debian/upstream-source.json').write_text(json.dumps(dict(meta, excluded=removed), indent=2) + '\n')
 (source / 'debian/rules').chmod(0o755)
 notices = source / 'debian/upstream-notices'

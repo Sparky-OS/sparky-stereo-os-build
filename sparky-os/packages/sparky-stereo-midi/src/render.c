@@ -220,7 +220,9 @@ int main(int argc, char **argv) {
         if (audio && queued && !started && now() - opened > 5000000000ULL) { stopping = 6; break; }
         struct timespec until; clock_gettime(CLOCK_REALTIME, &until); until.tv_sec++;
         pthread_mutex_lock(&s.mutex);
-        if (!stopping && s.write == s.read && s.silent < s.rate / 2)
+        if (!stopping && !s.failed && !s.overflow
+            && !(!audio && s.write != s.read)
+            && !(audio && s.write == s.read && s.silent >= s.rate / 2))
             pthread_cond_timedwait(&s.changed, &s.mutex, &until);
         pthread_mutex_unlock(&s.mutex);
     }
