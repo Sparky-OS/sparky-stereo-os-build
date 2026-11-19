@@ -12,12 +12,12 @@ apt-get -y --no-install-recommends install build-essential dpkg-dev devscripts d
 if ! getent passwd builder >/dev/null; then useradd --create-home builder; fi
 mkdir /work/build /work/link-scratch
 chown builder:builder /work/build /work/link-scratch
-runuser -u builder -- dpkg-source -x /source-input/plasma-pa_6.7.4-1+stereo3d3+lc1.dsc /work/build/source
+runuser -u builder -- dpkg-source -x /source-input/plasma-pa_6.7.4-1+stereo3d5+lc1.dsc /work/build/source
 apt-get -y --no-install-recommends build-dep /work/build/source
 cd /work/build/source
 runuser -u builder -- env DEB_BUILD_OPTIONS="parallel=$BUILD_THREADS" dpkg-buildpackage -b -us -uc -j"$BUILD_THREADS"
 # Debian disables its build-time suite. Run the native unit test explicitly;
 # Appium requirements and the independently installed UI proofs are recorded.
-runuser -u builder -- env QT_QPA_PLATFORM=offscreen ctest --test-dir obj-x86_64-linux-gnu -R '^percentvalidatortest$' --output-on-failure
+runuser -u builder -- env QT_QPA_PLATFORM=offscreen ctest --test-dir obj-x86_64-linux-gnu -R '^(percentvalidatortest|soundformatconftest|speakersetupconftest|speakertestsignaltest|speakerlevelmathtest)$' --output-on-failure
 cd /work/build
 PYTHONPATH=/build-tree/sparky-os python3 -m lean.release check-debs ./*.deb
