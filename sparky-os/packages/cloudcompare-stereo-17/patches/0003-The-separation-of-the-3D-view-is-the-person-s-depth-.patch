@@ -65,7 +65,7 @@ new file mode 100644
 index 0000000..6676bf6
 --- /dev/null
 +++ b/libs/qCC_glWindow/include/ccGLWindowDepthLimits.h
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,15 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// The person's depth limits of an X11 window (Sparky Stereo OS), read through libstereo-declare 1.10. Its own file: the X11 headers
 +// define macros (None, Status, Bool...) that break Qt's headers when they come first.
@@ -76,6 +76,8 @@ index 0000000..6676bf6
 +{
 +//! Reads the depth limits of the X11 window (pixels of a view 1920 wide): 0 delivered, 1 not offered, 2 not delivered yet, 3 not readable
 +int readX11(unsigned long window, double& sunk, double& popped);
++//! The width in pixels of the screen the limits are for (their unit is a view 1920 wide of the screen), 0 when it is not known
++double screenWidthX11();
 +}
 +
 +#endif
@@ -257,7 +259,7 @@ new file mode 100644
 index 0000000..fab838c
 --- /dev/null
 +++ b/libs/qCC_glWindow/src/ccGLWindowDepthLimits.cpp
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,47 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +#include "ccGLWindowDepthLimits.h"
 +
@@ -291,14 +293,29 @@ index 0000000..fab838c
 +	return 3;
 +#endif
 +}
++
++double ccDepthLimits::screenWidthX11()
++{
++#ifdef CC_WITH_STEREO_DECLARE
++	if (!QX11Info::isPlatformX11())
++	{
++		return 0.0;
++	}
++	Display* display = QX11Info::display();
++	return display ? static_cast<double>(DisplayWidth(display, QX11Info::appScreen())) : 0.0;
++#else
++	return 0.0;
++#endif
++}
 diff --git a/libs/qCC_glWindow/src/ccGLWindowInterface.cpp b/libs/qCC_glWindow/src/ccGLWindowInterface.cpp
 index bdecd98..32926b6 100644
 --- a/libs/qCC_glWindow/src/ccGLWindowInterface.cpp
 +++ b/libs/qCC_glWindow/src/ccGLWindowInterface.cpp
-@@ -18,6 +18,9 @@
+@@ -18,6 +18,10 @@
  //qCC
  #include "ccGLWindow.h"
  #include "ccGLWindowStereo.h"
++#include "ccGLWindowDepthLimits.h"
 +#include <algorithm>
 +#include <cmath>
 +#include <limits>
@@ -317,15 +334,15 @@ index bdecd98..32926b6 100644
 -			double scale = convergence * m_viewportParams.zNearCoef * m_stereoParams.stereoStrength / m_stereoParams.screenDistance_mm;
 -			double eyeSeperation = m_stereoParams.eyeSeparation_mm * scale;
 +			//the separation is the largest one under which the farthest and the nearest displayed points stay inside the person's
-+			//depth limits, which the desktop gives the window (sunk and popped, in pixels of a view 1920 wide); with no limits the
++			//depth limits, which the desktop gives the window (sunk and popped, in pixels of a view 1920 wide of the screen, scaled by the screen's width over 1920 and never by the view's); with no limits the
 +			//two eyes are the same picture. Parallel cameras meeting at the focal distance f: a point at depth z is 2 t F (1 - f / z)
 +			//pixels apart (t = separation / f, F = half the view's width in pixels over the half width ratio)
 +			double eyeSeperation = 0.0;
 +			if (m_depthLimitsState == DepthLimitsState::Delivered && convergence > 0.0)
 +			{
 +				const double viewWidth = std::max(1, glWidth());
-+				const double sunk = m_depthSunk * viewWidth / 1920.0;
-+				const double popped = m_depthPopped * viewWidth / 1920.0;
++				const double sunk = m_depthSunk * ccDepthLimits::screenWidthX11() / 1920.0;
++				const double popped = m_depthPopped * ccDepthLimits::screenWidthX11() / 1920.0;
 +				const double F = (viewWidth / 2.0) / distanceToHalfWidthRatio;
 +				const double zNearest = std::max(zMinDisplayed, 1.0e-6 * convergence);
 +				const double farTerm = (zMaxDisplayed > convergence ? 1.0 - convergence / zMaxDisplayed : 0.0);
