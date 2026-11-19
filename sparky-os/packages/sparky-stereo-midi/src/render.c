@@ -93,6 +93,7 @@ static int render(void *opaque, int length, int nfx, float **fx, int nout, float
     return FLUID_OK;
 }
 int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--version")) { puts("sparky-stereo-midi 0.1.0"); return 0; }
     if (argc < 2 || argc > 4) return 2;
     pw_init(NULL, NULL);
     struct state s = { .mutex = PTHREAD_MUTEX_INITIALIZER, .changed = PTHREAD_COND_INITIALIZER };
