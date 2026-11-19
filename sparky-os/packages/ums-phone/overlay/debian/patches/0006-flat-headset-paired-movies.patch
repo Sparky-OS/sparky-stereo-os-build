@@ -1,0 +1,473 @@
+Description: Pair Flat Headset movie control, events and media with KDE Connect
+ Retain the accepted renderer-specific panel sizing and frame-packing work.
+ SOAP, GENA and media use the existing KDE Connect certificates on mutual TLS.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor, includes Flat Headset commits 16fbee6 and 82e017d
+Forwarded: not-needed
+Last-Update: 2026-11-19
+
+--- /dev/null
++++ b/src/main/java/net/pms/configuration/ReportedPanel.java
+@@ -0,0 +1,27 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++package net.pms.configuration;
++
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++/** Native panel dimensions carried by Flat Headset's device description and HTTP identity. */
++public final class ReportedPanel {
++	private static final Pattern FORMAT = Pattern.compile("\\bFlatHeadset/[0-9.]+ Panel/(\\d{2,5})x(\\d{2,5})\\b");
++
++	private ReportedPanel() {
++	}
++
++	public static int[] parse(String description) {
++		if (description == null || description.length() > 4096) {
++			return null;
++		}
++		Matcher match = FORMAT.matcher(description);
++		if (!match.find()) {
++			return null;
++		}
++		int width = Integer.parseInt(match.group(1));
++		int height = Integer.parseInt(match.group(2));
++		return width >= 320 && width <= 16384 && height >= 240 && height <= 8192 && width % 2 == 0 && height % 2 == 0
++			? new int[] {width, height} : null;
++	}
++}
+--- a/src/main/java/net/pms/encoders/FFMpegVideo.java
++++ b/src/main/java/net/pms/encoders/FFMpegVideo.java
+@@ -313,6 +313,13 @@
+ 			!stereoLayout.equals(renderer3DOutputFormat)
+ 		) {
+ 			filterChain.add("stereo3d=" + stereoLayout + ":" + renderer3DOutputFormat);
++			if (renderer3DOutputFormat.equals("sbsl") || renderer3DOutputFormat.equals("sbsr")) {
++				filterChain.add("scale=iw*sar:ih,setsar=1");
++				if (renderer.isMaximumResolutionSpecified()) {
++					filterChain.add("scale=" + renderer.getMaxVideoWidth() + ":" + renderer.getMaxVideoHeight()
++						+ ":force_original_aspect_ratio=decrease:force_divisible_by=2");
++				}
++			}
+ 		}
+ 
+ 		if (!filterChain.isEmpty()) {
+--- /dev/null
++++ b/src/main/java/net/pms/network/mediaserver/KdeConnectTrust.java
+@@ -0,0 +1,136 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++package net.pms.network.mediaserver;
++
++import jakarta.servlet.http.HttpServletRequest;
++import java.io.ByteArrayInputStream;
++import java.net.URI;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.security.KeyFactory;
++import java.security.KeyStore;
++import java.security.MessageDigest;
++import java.security.cert.CertificateException;
++import java.security.cert.CertificateFactory;
++import java.security.cert.X509Certificate;
++import java.security.spec.PKCS8EncodedKeySpec;
++import java.util.HexFormat;
++import java.util.concurrent.TimeUnit;
++import javax.net.ssl.KeyManagerFactory;
++import javax.net.ssl.SSLContext;
++import javax.net.ssl.TrustManager;
++import javax.net.ssl.X509TrustManager;
++
++/** The headset uses KDE Connect's current trust, including its unpair action. */
++public final class KdeConnectTrust {
++	private KdeConnectTrust() {
++	}
++
++	private static Path directory() {
++		String home = System.getenv("XDG_CONFIG_HOME");
++		return Path.of(home == null || home.isBlank() ? System.getProperty("user.home") + "/.config" : home, "kdeconnect");
++	}
++
++	private static X509Certificate certificate(byte[] bytes) throws CertificateException {
++		return (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(new ByteArrayInputStream(bytes));
++	}
++
++	public static String fingerprint(X509Certificate certificate) {
++		try {
++			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded()));
++		} catch (Exception error) {
++			throw new IllegalStateException(error);
++		}
++	}
++
++	public static boolean isPaired(X509Certificate peer) {
++		return isPaired(fingerprint(peer));
++	}
++
++	public static boolean isPaired(String identity) {
++		try {
++			Path file = directory().resolve("trusted_devices");
++			if (Files.size(file) > 1024 * 1024) {
++				return false;
++			}
++			for (String row : Files.readAllLines(file)) {
++				if (row.startsWith("certificate=")) {
++					String pem = row.substring("certificate=".length());
++					if (pem.startsWith("\"") && pem.endsWith("\"")) {
++						pem = pem.substring(1, pem.length() - 1);
++					}
++					X509Certificate peer = certificate(pem.replace("\\n", "\n").getBytes(java.nio.charset.StandardCharsets.US_ASCII));
++					if (identity.equals(fingerprint(peer))) {
++						peer.checkValidity();
++						return true;
++					}
++				}
++			}
++		} catch (Exception ignored) {
++			return false;
++		}
++		return false;
++	}
++
++	public static boolean authenticated(HttpServletRequest request) {
++		Object certificates = request.getAttribute("jakarta.servlet.request.X509Certificate");
++		return request.isSecure() && certificates instanceof X509Certificate[] chain && chain.length > 0 && isPaired(chain[0]);
++	}
++
++	public static SSLContext context(String expectedPeer) throws Exception {
++		X509Certificate local = certificate(Files.readAllBytes(directory().resolve("certificate.pem")));
++		// OpenSSL consumes KDE Connect's SEC1 or PKCS#1 PEM and returns PKCS#8 in memory.
++		Process conversion = new ProcessBuilder("openssl", "pkcs8", "-topk8", "-nocrypt", "-passin", "pass:", "-in",
++			directory().resolve("privateKey.pem").toString(), "-outform", "DER").redirectError(ProcessBuilder.Redirect.DISCARD).start();
++		byte[] encoded = conversion.getInputStream().readNBytes(65537);
++		if (!conversion.waitFor(5, TimeUnit.SECONDS) || conversion.exitValue() != 0 || encoded.length > 65536) {
++			conversion.destroyForcibly();
++			throw new CertificateException("Cannot read the local KDE Connect identity");
++		}
++		var key = KeyFactory.getInstance(local.getPublicKey().getAlgorithm()).generatePrivate(new PKCS8EncodedKeySpec(encoded));
++		KeyStore store = KeyStore.getInstance(KeyStore.getDefaultType());
++		store.load(null, null);
++		store.setKeyEntry("kdeconnect", key, new char[0], new java.security.cert.Certificate[] {local});
++		KeyManagerFactory keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
++		keys.init(store, new char[0]);
++		X509TrustManager trust = new X509TrustManager() {
++			@Override
++			public X509Certificate[] getAcceptedIssuers() {
++				return new X509Certificate[0];
++			}
++
++			private void check(X509Certificate[] chain) throws CertificateException {
++				if (chain.length == 0 || !isPaired(chain[0]) || (expectedPeer != null && !expectedPeer.equals(fingerprint(chain[0])))) {
++					throw new CertificateException("Pair this headset with this computer in KDE Connect before connecting.");
++				}
++			}
++
++			@Override
++			public void checkClientTrusted(X509Certificate[] chain, String type) throws CertificateException {
++				check(chain);
++			}
++
++			@Override
++			public void checkServerTrusted(X509Certificate[] chain, String type) throws CertificateException {
++				if (expectedPeer == null) {
++					throw new CertificateException("A paired server identity is required");
++				}
++				check(chain);
++			}
++		};
++		SSLContext result = SSLContext.getInstance("TLSv1.2");
++		result.init(keys.getKeyManagers(), new TrustManager[] {trust}, null);
++		return result;
++	}
++
++	public static String secureUrl(String address) {
++		URI uri = URI.create(address);
++		if (!"http".equals(uri.getScheme()) || uri.getUserInfo() != null || uri.getPort() < 1 || uri.getPort() >= 65535) {
++			throw new IllegalArgumentException("No secure movie endpoint for this address");
++		}
++		try {
++			return new URI("https", null, uri.getHost(), uri.getPort() + 1, uri.getPath(), uri.getQuery(), null).toString();
++		} catch (java.net.URISyntaxException error) {
++			throw new IllegalArgumentException(error);
++		}
++	}
++}
+--- a/src/main/java/net/pms/network/mediaserver/jupnp/transport/impl/jetty/JettyStreamClientImpl.java
++++ b/src/main/java/net/pms/network/mediaserver/jupnp/transport/impl/jetty/JettyStreamClientImpl.java
+@@ -61,6 +61,7 @@
+ 
+ 	protected final StreamClientConfigurationImpl configuration;
+ 	protected final HttpClient httpClient;
++	private final Map<String, HttpClient> pairedClients = new java.util.concurrent.ConcurrentHashMap<>();
+ 
+ 	public JettyStreamClientImpl(StreamClientConfigurationImpl configuration) throws InitializationException {
+ 		this.configuration = configuration;
+@@ -101,13 +102,50 @@
+ 	@Override
+ 	protected Request createRequest(StreamRequestMessage requestMessage) {
+ 		final UpnpRequest upnpRequest = requestMessage.getOperation();
++		HttpClient selectedClient = httpClient;
++		var uri = upnpRequest.getURI();
++		boolean paired = "https".equals(uri.getScheme()) && uri.getPath().matches("/paired/[a-f0-9]{64}/[^/]+/(control|event)");
++		if (paired) {
++			String identity = uri.getPath().split("/")[2];
++			if (!net.pms.network.mediaserver.KdeConnectTrust.isPaired(identity)) {
++				throw new IllegalStateException("Pair this headset in KDE Connect before playing a movie");
++			}
++			selectedClient = pairedClients.computeIfAbsent(identity, fingerprint -> {
++				if (pairedClients.size() >= 16) {
++					throw new IllegalStateException("Too many paired headset connections");
++				}
++				try {
++					var tls = new org.eclipse.jetty.util.ssl.SslContextFactory.Client();
++					tls.setSslContext(net.pms.network.mediaserver.KdeConnectTrust.context(fingerprint));
++					tls.setEndpointIdentificationAlgorithm(null);
++					tls.setHostnameVerifier((host, session) -> {
++						try {
++							var certificate = (java.security.cert.X509Certificate) session.getPeerCertificates()[0];
++							return net.pms.network.mediaserver.KdeConnectTrust.isPaired(certificate) && fingerprint.equals(net.pms.network.mediaserver.KdeConnectTrust.fingerprint(certificate));
++						} catch (Exception error) {
++							return false;
++						}
++					});
++					var client = new HttpClient();
++					client.setSslContextFactory(tls);
++					client.setFollowRedirects(false);
++					client.setConnectTimeout(configuration.getTimeoutSeconds() * 1000L);
++					client.setMaxConnectionsPerDestination(2);
++					client.setExecutor(httpClient.getExecutor());
++					client.start();
++					return client;
++				} catch (Exception error) {
++					throw new IllegalStateException("KDE Connect pairing is required for headset movies", error);
++				}
++			});
++		}
+ 
+ 		LOGGER.trace("Creating HTTP request. URI: '{}' method: '{}'", upnpRequest.getURI(), upnpRequest.getMethod());
+ 		Request request;
+ 		switch (upnpRequest.getMethod()) {
+ 			case GET, SUBSCRIBE, UNSUBSCRIBE -> {
+ 				try {
+-					request = httpClient.newRequest(upnpRequest.getURI()).method(upnpRequest.getHttpMethodName());
++					request = selectedClient.newRequest(upnpRequest.getURI()).method(upnpRequest.getHttpMethodName());
+ 				} catch (IllegalArgumentException e) {
+ 					LOGGER.debug("Cannot create request because URI '{}' is invalid", upnpRequest.getURI(), e);
+ 					return null;
+@@ -115,7 +153,7 @@
+ 			}
+ 			case POST, NOTIFY -> {
+ 				try {
+-					request = httpClient.newRequest(upnpRequest.getURI()).method(upnpRequest.getHttpMethodName());
++					request = selectedClient.newRequest(upnpRequest.getURI()).method(upnpRequest.getHttpMethodName());
+ 					request.body(createContentProvider(requestMessage));
+ 				} catch (IllegalArgumentException e) {
+ 					LOGGER.debug("Cannot create request because URI '{}' is invalid", upnpRequest.getURI(), e);
+@@ -146,6 +184,14 @@
+ 
+ 		// Headers
+ 		addHeaders(request, requestMessage.getHeaders());
++		if (paired && request.getHeaders().get("CALLBACK") != null) {
++			String callback = request.getHeaders().get("CALLBACK");
++			if (!callback.startsWith("<") || !callback.endsWith(">") || callback.indexOf('>') != callback.length() - 1) {
++				throw new IllegalArgumentException("A single paired movie callback is required");
++			}
++			String secure = net.pms.network.mediaserver.KdeConnectTrust.secureUrl(callback.substring(1, callback.length() - 1));
++			request.headers(headers -> headers.put("CALLBACK", "<" + secure + ">"));
++		}
+ 
+ 		return request;
+ 	}
+@@ -220,6 +266,14 @@
+ 
+ 	@Override
+ 	public void stop() {
++		for (HttpClient client : pairedClients.values()) {
++			try {
++				client.stop();
++			} catch (Exception error) {
++				LOGGER.debug("Could not stop paired movie client", error);
++			}
++		}
++		pairedClients.clear();
+ 		LOGGER.trace("Shutting down HTTP client connection manager/pool");
+ 		try {
+ 			httpClient.stop();
+--- a/src/main/java/net/pms/network/mediaserver/jupnp/transport/impl/jetty/ee10/JettyServletContainer.java
++++ b/src/main/java/net/pms/network/mediaserver/jupnp/transport/impl/jetty/ee10/JettyServletContainer.java
+@@ -77,6 +77,20 @@
+ 		//let some time for pausing from media renderer (2 hours)
+ 		connector.setIdleTimeout(2 * 60 * 60 * 1000);
+ 		server.addConnector(connector);
++		try {
++			var tls = new org.eclipse.jetty.util.ssl.SslContextFactory.Server();
++			tls.setSslContext(net.pms.network.mediaserver.KdeConnectTrust.context(null));
++			tls.setNeedClientAuth(true);
++			var http = new org.eclipse.jetty.server.HttpConfiguration();
++			http.addCustomizer(new org.eclipse.jetty.server.SecureRequestCustomizer(false));
++			var secure = new ServerConnector(server, new org.eclipse.jetty.server.SslConnectionFactory(tls, "http/1.1"), new HttpConnectionFactory(http));
++			secure.setHost(host);
++			secure.setPort(port + 1);
++			secure.setIdleTimeout(2 * 60 * 60 * 1000);
++			server.addConnector(secure);
++		} catch (Exception error) {
++			LOGGER.warn("Paired headset movies unavailable: KDE Connect's local identity is required ({})", error.getClass().getSimpleName());
++		}
+ 		return port;
+ 	}
+ 
+@@ -94,6 +108,14 @@
+ 			}
+ 
+ 			addImportServlet(servletHandler);
++			servletHandler.addFilter(new org.eclipse.jetty.ee10.servlet.FilterHolder((jakarta.servlet.Filter) (request, response, chain) -> {
++				var http = (jakarta.servlet.http.HttpServletRequest) request;
++				if (http.isSecure() && !net.pms.network.mediaserver.KdeConnectTrust.authenticated(http)) {
++					((jakarta.servlet.http.HttpServletResponse) response).sendError(403);
++					return;
++				}
++				chain.doFilter(request, response);
++			}), "/*", java.util.EnumSet.of(jakarta.servlet.DispatcherType.REQUEST));
+ 			servletHandler.addServlet(new ServletHolder("MEDIA HTTP SERVER", new MediaServerServlet()), "/ums/*");
+ 			final ServletHolder s = new ServletHolder("UPNP HTTP SERVER", servlet);
+ 			servletHandler.addServlet(s, "/dev/*");
+--- a/src/main/java/net/pms/network/mediaserver/servlets/MediaServerServlet.java
++++ b/src/main/java/net/pms/network/mediaserver/servlets/MediaServerServlet.java
+@@ -132,6 +132,10 @@
+ 				return;
+ 			}
+ 
++			if ("Flat Headset".equals(renderer.getConfName()) && !net.pms.network.mediaserver.KdeConnectTrust.authenticated(req)) {
++				respondForbidden(req, resp);
++				return;
++			}
+ 			if (!renderer.isAllowed()) {
+ 				if (LOGGER.isTraceEnabled()) {
+ 					logHttpServletRequest(req, "", getRendererNameForLogging(req, renderer));
+--- a/src/main/java/net/pms/renderers/ConnectedRenderers.java
++++ b/src/main/java/net/pms/renderers/ConnectedRenderers.java
+@@ -134,6 +134,9 @@
+ 			}
+ 		} finally {
+ 			RENDERER_LOCK.unlock();
++		}
++		if (renderer != null) {
++			renderer.updateReportedPanel(userAgentString);
+ 		}
+ 		return renderer;
+ 	}
+--- a/src/main/java/net/pms/renderers/Renderer.java
++++ b/src/main/java/net/pms/renderers/Renderer.java
+@@ -30,6 +30,7 @@
+ import java.util.concurrent.locks.ReentrantReadWriteLock;
+ import net.pms.Messages;
+ import net.pms.PMS;
++import net.pms.configuration.ReportedPanel;
+ import net.pms.configuration.RendererConfiguration;
+ import net.pms.configuration.RendererConfigurations;
+ import net.pms.configuration.RendererDeviceConfiguration;
+@@ -333,6 +334,57 @@
+ 		return JUPnPDeviceHelper.getDeviceDetails(uuid);
+ 	}
+ 
++	private volatile int[] httpPanel;
++
++	public void updateReportedPanel(String userAgent) {
++		if (getBoolean("UseReportedPanelSize", false)) {
++			int[] panel = ReportedPanel.parse(userAgent);
++			if (panel != null) {
++				httpPanel = panel;
++			}
++		}
++	}
++
++	private int[] reportedPanel() {
++		if (!getBoolean("UseReportedPanelSize", false)) {
++			return null;
++		}
++		if (httpPanel != null) {
++			return httpPanel;
++		}
++		List<String> headers = getIdentifiers();
++		if (headers != null) {
++			for (String header : headers) {
++				int[] panel = ReportedPanel.parse(header);
++				if (panel != null) {
++					return panel;
++				}
++			}
++		}
++		Map<String, String> device = getUpnpDetails();
++		if (device != null) {
++			for (String detail : device.values()) {
++				int[] panel = ReportedPanel.parse(detail);
++				if (panel != null) {
++					return panel;
++				}
++			}
++		}
++		return null;
++	}
++
++	@Override
++	public int getMaxVideoWidth() {
++		int[] panel = reportedPanel();
++		return panel == null ? super.getMaxVideoWidth() : panel[0];
++	}
++
++	@Override
++	public int getMaxVideoHeight() {
++		int[] panel = reportedPanel();
++		return panel == null ? super.getMaxVideoHeight() : panel[1];
++	}
++
+ 	public boolean isUpnp() {
+ 		return JUPnPDeviceHelper.isUpnpDevice(uuid);
+ 	}
+--- a/src/main/java/net/pms/store/StoreItem.java
++++ b/src/main/java/net/pms/store/StoreItem.java
+@@ -567,7 +567,8 @@
+ 						isIncompatible = true;
+ 						LOGGER.debug(prependTranscodingReason + "the H.264 level is unknown.", getName());
+ 					}
+-				} else if (mediaVideo.is3d() && StringUtils.isNotBlank(renderer.getOutput3DFormat()) &&
++				}
++				if (mediaVideo.is3d() && StringUtils.isNotBlank(renderer.getOutput3DFormat()) &&
+ 						(!mediaVideo.get3DLayout().toString().toLowerCase(Locale.ROOT).equals(renderer.getOutput3DFormat()))) {
+ 					forceTranscode = true;
+ 					LOGGER.debug(prependTranscodingReason + "it is 3D and is forced to transcode to the format \"{}\"", getName(), renderer.getOutput3DFormat());
+@@ -1072,6 +1073,9 @@
+ 
+ 	private String getMediaURL(String prefix, boolean useSystemName, boolean urlEncode) {
+ 		StringBuilder sb = MediaServerRequest.getServerMediaURL(renderer.getUUID(), getResourceId());
++		if ("Flat Headset".equals(renderer.getConfName())) {
++			sb = new StringBuilder(net.pms.network.mediaserver.KdeConnectTrust.secureUrl(sb.toString()));
++		}
+ 		String uri = useSystemName ? getSystemName() : getName();
+ 		sb.append(prefix);
+ 		sb.append(urlEncode ? encode(uri) : uri);
+--- /dev/null
++++ b/src/main/external-resources/renderers/FlatHeadset.conf
+@@ -0,0 +1,23 @@
++# Flat Headset: local Media3 decoding into the Cardboard viewer.
++RendererName = Flat Headset
++UpnpDetailsSearch = Flat Headset
++UserAgentSearch = FlatHeadset
++LoadingPriority = 10
++Video = true
++Audio = false
++Image = false
++MediaInfo = true
++TranscodeVideo = MPEGTS-H264-AAC
++SeekByTime = true
++Output3DFormat = sbsl
++UseReportedPanelSize = true
++MaxVideoWidth = 1920
++MaxVideoHeight = 1080
++H264LevelLimit = 5.1
++KeepAspectRatio = false
++KeepAspectRatioTranscoding = false
++Supported = f:mp4 v:h264 a:aac m:video/mp4
++Supported = f:mp4 v:h264 m:video/mp4
++Supported = f:mkv v:h264 m:video/x-matroska
++Supported = f:webm v:vp8|vp9 m:video/webm
++Supported = f:mpegts v:h264 a:aac m:video/mp2t
