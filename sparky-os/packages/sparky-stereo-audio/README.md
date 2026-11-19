@@ -140,8 +140,7 @@ weak-processor cutoff is shipped. Automatic hardware connections remain off
 pending a design decision; the command exposes the existing FluidSynth option.
 PipeWire's existing ALSA sequencer bridge is the only bridge; a2jmidid is not
 started. MIDI files use one visible connection to the service's port. The existing file-player defaults stay. The MIDI command and its desktop entry are additional choices.
-The renderer is a separate native package so the existing script/data engine
-keeps its architecture-independent source and Lean Code route.
+The renderer is a separate native package so the existing script/data engine keeps its architecture-independent source and Lean Code route.
 
 The dedicated unit keeps the default small: Debian’s fluidsynth CLI package recommends Qsynth, whose recommendation installs FluidR3 even when TimGM6mb is already present.
 The renderer uses the same Debian synthesis library without that CLI/GUI dependency chain.
