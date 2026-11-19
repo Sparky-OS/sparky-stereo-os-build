@@ -1,0 +1,1305 @@
+Description: Stereo 3D: one output, both eyes as complete pictures side by side, declared to Stereo KWin
+ Dolphin's own Depth, Convergence, per-game Depth Percentage, Convergence and
+ Monoscopic Shadows, their hotkeys and defaults stay upstream's. The other
+ stereo output modes (top and bottom, anaglyph, quad buffer, passive), the eye
+ swap and the half-width eyes are not built: Stereo KWin's outputs make every
+ format, and the eye swap is the output's. OpenGL draws the two eyes into a
+ window the desktop makes two views wide (libstereo-declare); Vulkan renders
+ each eye into its own image layer, which the graphics driver packs and
+ declares. The interface and the on-screen messages are drawn in both eyes, at
+ the screen. 3D is on by default; a desktop without the pair shows 2D and says
+ nothing unless the person turned 3D on; a renderer or surface that cannot give
+ two views is told. The no-GUI front end shows 2D and says so.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Origin: vendor, Sparky Stereo OS (ORDER 39), branch order39 of the edition's fork
+Last-Update: 2026-11-19
+
+diff --git a/Source/Core/Core/Config/GraphicsSettings.cpp b/Source/Core/Core/Config/GraphicsSettings.cpp
+index f91b87e..a977853 100644
+--- a/Source/Core/Core/Config/GraphicsSettings.cpp
++++ b/Source/Core/Core/Config/GraphicsSettings.cpp
+@@ -174,7 +174,9 @@ const Info<float> GFX_CC_HDR_PAPER_WHITE_NITS{{System::GFX, "ColorCorrection", "
+ 
+ // Graphics.Stereoscopy
+ 
+-const Info<StereoMode> GFX_STEREO_MODE{{System::GFX, "Stereoscopy", "StereoMode"}, StereoMode::Off};
++// Enable 3D is on unless the person turns it off; on a desktop that cannot take the pair the picture stays 2D
++const Info<StereoMode> GFX_STEREO_MODE{{System::GFX, "Stereoscopy", "StereoMode"},
++                                       StereoMode::SideBySide};
+ const Info<bool> GFX_STEREO_PER_EYE_RESOLUTION_FULL{
+     {System::GFX, "Stereoscopy", "StereoPerEyeResolutionFull"}, false};
+ const Info<float> GFX_STEREO_DEPTH{{System::GFX, "Stereoscopy", "StereoDepth"}, 20};
+diff --git a/Source/Core/Core/HotkeyManager.cpp b/Source/Core/Core/HotkeyManager.cpp
+index 915dc0d..1276e0e 100644
+--- a/Source/Core/Core/HotkeyManager.cpp
++++ b/Source/Core/Core/HotkeyManager.cpp
+@@ -123,8 +123,6 @@ constexpr std::array<const char*, NUM_HOTKEYS> s_hotkey_labels{{
+     _trans("Freelook Toggle"),
+ 
+     _trans("Toggle 3D Side-by-Side"),
+-    _trans("Toggle 3D Top-Bottom"),
+-    _trans("Toggle 3D Anaglyph"),
+     _trans("Decrease Depth"),
+     _trans("Increase Depth"),
+     _trans("Decrease Convergence"),
+@@ -314,7 +312,7 @@ constexpr std::array<HotkeyGroupInfo, NUM_HOTKEY_GROUPS> s_groups_info = {
+      {_trans("Internal Resolution"), HK_INCREASE_IR, HK_DECREASE_IR},
+      {_trans("Freelook"), HK_FREELOOK_TOGGLE, HK_FREELOOK_TOGGLE},
+      // i18n: Stereoscopic 3D
+-     {_trans("3D"), HK_TOGGLE_STEREO_SIDE_BY_SIDE, HK_TOGGLE_STEREO_ANAGLYPH},
++     {_trans("3D"), HK_TOGGLE_STEREO_SIDE_BY_SIDE, HK_TOGGLE_STEREO_SIDE_BY_SIDE},
+      // i18n: Stereoscopic 3D
+      {_trans("3D Depth"), HK_DECREASE_DEPTH, HK_INCREASE_CONVERGENCE},
+      {_trans("Load State"), HK_LOAD_STATE_SLOT_1, HK_LOAD_STATE_SLOT_SELECTED},
+diff --git a/Source/Core/Core/HotkeyManager.h b/Source/Core/Core/HotkeyManager.h
+index 6a1b754..214f37a 100644
+--- a/Source/Core/Core/HotkeyManager.h
++++ b/Source/Core/Core/HotkeyManager.h
+@@ -109,8 +109,6 @@ enum Hotkey
+   HK_FREELOOK_TOGGLE,
+ 
+   HK_TOGGLE_STEREO_SIDE_BY_SIDE,
+-  HK_TOGGLE_STEREO_TOP_AND_BOTTOM,
+-  HK_TOGGLE_STEREO_ANAGLYPH,
+ 
+   HK_DECREASE_DEPTH,
+   HK_INCREASE_DEPTH,
+diff --git a/Source/Core/DolphinNoGUI/MainNoGUI.cpp b/Source/Core/DolphinNoGUI/MainNoGUI.cpp
+index 3bf40ea..db798a3 100644
+--- a/Source/Core/DolphinNoGUI/MainNoGUI.cpp
++++ b/Source/Core/DolphinNoGUI/MainNoGUI.cpp
+@@ -15,12 +15,14 @@
+ #include <windows.h>
+ #endif
+ 
++#include "Common/MsgHandler.h"
+ #include "Common/ScopeGuard.h"
+ #include "Core/Boot/Boot.h"
+ #include "Core/BootManager.h"
+ #include "Core/Core.h"
+ #include "Core/DolphinAnalytics.h"
+ #include "Core/Host.h"
++#include "Core/Config/GraphicsSettings.h"
+ #include "Core/System.h"
+ 
+ #include "UICommon/CommandLineParse.h"
+@@ -28,6 +30,9 @@
+ #include "UICommon/DiscordPresence.h"
+ #endif
+ #include "UICommon/UICommon.h"
++#include "VideoCommon/OnScreenDisplay.h"
++#include "VideoCommon/StereoOutput.h"
++#include "VideoCommon/VideoConfig.h"
+ 
+ static std::unique_ptr<Platform> s_platform;
+ 
+@@ -272,6 +277,18 @@ int main(const int argc, char* argv[])
+   UICommon::Init();
+   UICommon::InitControllers(wsi);
+ 
++  // The one 3D output is a pair declared to the desktop, which only the Qt front end (dolphin-emu) does: this front
++  // end shows 2D, and says so when the person turned 3D on
++  StereoOutput::SetHost(StereoOutput::Host::NotOffered);
++  if (Config::Get(Config::GFX_STEREO_MODE) != StereoMode::Off &&
++      Config::GetAsString(Config::GFX_STEREO_MODE.GetLocation()).has_value())
++  {
++    const std::string why = Common::GetStringT(
++        "3D is shown by dolphin-emu, which declares the pair to the desktop; dolphin-emu-nogui shows 2D.");
++    fprintf(stderr, "%s\n", why.c_str());
++    OSD::AddMessage(why, 10000);
++  }
++
+   Common::ScopeGuard ui_common_guard([] {
+     UICommon::ShutdownControllers();
+     UICommon::Shutdown();
+diff --git a/Source/Core/DolphinQt/CMakeLists.txt b/Source/Core/DolphinQt/CMakeLists.txt
+index 4a6ffab..830483e 100644
+--- a/Source/Core/DolphinQt/CMakeLists.txt
++++ b/Source/Core/DolphinQt/CMakeLists.txt
+@@ -368,6 +368,8 @@ add_executable(dolphin-emu
+   QtUtils/WrapInScrollArea.cpp
+   QtUtils/WrapInScrollArea.h
+   RenderWidget.cpp
++  StereoDeclare.cpp
++  StereoDeclare.h
+   RenderWidget.h
+   ResourcePackManager.cpp
+   ResourcePackManager.h
+@@ -465,9 +467,12 @@ PRIVATE
+   /usr/include/imgui
+ )
+ 
++find_package(PkgConfig REQUIRED)
++pkg_check_modules(STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare)
+ target_link_libraries(dolphin-emu
+ PRIVATE
+   core
++  PkgConfig::STEREO_DECLARE
+   Qt6::Widgets
+   uicommon
+   imgui
+diff --git a/Source/Core/DolphinQt/Config/Graphics/EnhancementsWidget.cpp b/Source/Core/DolphinQt/Config/Graphics/EnhancementsWidget.cpp
+index 228cc34..138fecd 100644
+--- a/Source/Core/DolphinQt/Config/Graphics/EnhancementsWidget.cpp
++++ b/Source/Core/DolphinQt/Config/Graphics/EnhancementsWidget.cpp
+@@ -8,6 +8,7 @@
+ #include <QGridLayout>
+ #include <QGroupBox>
+ #include <QLabel>
++#include <QProcess>
+ #include <QPushButton>
+ #include <QVBoxLayout>
+ 
+@@ -206,27 +207,21 @@ void EnhancementsWidget::CreateWidgets()
+   enhancements_layout->addWidget(m_hdr, row, 1, 1, -1);
+   ++row;
+ 
+-  // Stereoscopy
+-  auto* stereoscopy_box = new QGroupBox(tr("Stereoscopy"));
++  // 3D: enable it, and where the desktop's own 3D settings are
++  auto* stereoscopy_box = new QGroupBox(tr("3D"));
+   auto* stereoscopy_layout = new QGridLayout();
+   stereoscopy_box->setLayout(stereoscopy_layout);
+ 
+-  m_3d_mode = new ConfigChoice({tr("Off"), tr("Side-by-Side"), tr("Top-and-Bottom"), tr("Anaglyph"),
+-                                tr("HDMI 3D"), tr("Passive")},
+-                               Config::GFX_STEREO_MODE, m_game_layer);
++  m_3d_mode = new ConfigChoice({tr("Off"), tr("On")}, Config::GFX_STEREO_MODE, m_game_layer);
+   m_3d_depth = new ConfigFloatSlider(0, Config::GFX_STEREO_DEPTH_MAXIMUM, Config::GFX_STEREO_DEPTH,
+                                      1.0f, m_game_layer);
+   m_3d_convergence = new ConfigFloatSlider(0, Config::GFX_STEREO_CONVERGENCE_MAXIMUM,
+                                            Config::GFX_STEREO_CONVERGENCE, 0.01f, m_game_layer);
+   m_3d_depth_value = new QLabel();
+   m_3d_convergence_value = new QLabel();
++  m_3d_display_settings = new QPushButton(tr("Display Settings..."));
+ 
+-  m_3d_swap_eyes = new ConfigBool(tr("Swap Eyes"), Config::GFX_STEREO_SWAP_EYES, m_game_layer);
+-
+-  m_3d_per_eye_resolution = new ConfigBool(
+-      tr("Use Full Resolution Per Eye"), Config::GFX_STEREO_PER_EYE_RESOLUTION_FULL, m_game_layer);
+-
+-  stereoscopy_layout->addWidget(new QLabel(tr("Stereoscopic 3D Mode:")), 0, 0);
++  stereoscopy_layout->addWidget(new QLabel(tr("3D:")), 0, 0);
+   stereoscopy_layout->addWidget(m_3d_mode, 0, 1);
+   stereoscopy_layout->addWidget(new ConfigFloatLabel(tr("Depth:"), m_3d_depth), 1, 0);
+   stereoscopy_layout->addWidget(m_3d_depth, 1, 1);
+@@ -234,19 +229,11 @@ void EnhancementsWidget::CreateWidgets()
+   stereoscopy_layout->addWidget(new ConfigFloatLabel(tr("Convergence:"), m_3d_convergence), 2, 0);
+   stereoscopy_layout->addWidget(m_3d_convergence, 2, 1);
+   stereoscopy_layout->addWidget(m_3d_convergence_value, 2, 2);
+-  stereoscopy_layout->addWidget(m_3d_swap_eyes, 3, 0);
+-  stereoscopy_layout->addWidget(m_3d_per_eye_resolution, 4, 0);
++  stereoscopy_layout->addWidget(m_3d_display_settings, 3, 0, 1, 2);
+ 
+   m_3d_depth_value->setText(QString::asprintf("%.0f", m_3d_depth->GetValue()));
+   m_3d_convergence_value->setText(QString::asprintf("%.2f", m_3d_convergence->GetValue()));
+ 
+-  auto current_stereo_mode = Get(m_game_layer, Config::GFX_STEREO_MODE);
+-  if (current_stereo_mode != StereoMode::SideBySide &&
+-      current_stereo_mode != StereoMode::TopAndBottom)
+-  {
+-    m_3d_per_eye_resolution->hide();
+-  }
+-
+   main_layout->addWidget(enhancements_box);
+   main_layout->addWidget(stereoscopy_box);
+   main_layout->addStretch();
+@@ -256,19 +243,10 @@ void EnhancementsWidget::CreateWidgets()
+ 
+ void EnhancementsWidget::ConnectWidgets()
+ {
+-  connect(m_3d_mode, &QComboBox::currentIndexChanged, this, [this] {
+-    auto current_stereo_mode = Get(m_game_layer, Config::GFX_STEREO_MODE);
+-    LoadPostProcessingShaders();
+-
+-    if (current_stereo_mode == StereoMode::SideBySide ||
+-        current_stereo_mode == StereoMode::TopAndBottom)
+-    {
+-      m_3d_per_eye_resolution->show();
+-    }
+-    else
+-    {
+-      m_3d_per_eye_resolution->hide();
+-    }
++  connect(m_3d_mode, &QComboBox::currentIndexChanged, this,
++          [this] { LoadPostProcessingShaders(); });
++  connect(m_3d_display_settings, &QPushButton::clicked, this, [] {
++    QProcess::startDetached(QStringLiteral("systemsettings"), {QStringLiteral("kcm_kscreen")});
+   });
+ 
+   connect(m_post_processing_effect, &QComboBox::currentIndexChanged, this,
+@@ -288,22 +266,14 @@ void EnhancementsWidget::ConnectWidgets()
+ 
+ void EnhancementsWidget::LoadPostProcessingShaders()
+ {
+-  auto stereo_mode = Get(m_game_layer, Config::GFX_STEREO_MODE);
+-
+   const QSignalBlocker blocker(m_post_processing_effect);
+   m_post_processing_effect->clear();
+ 
+   // Get shader list
+   std::vector<std::string> shaders = VideoCommon::PostProcessing::GetShaderList();
+ 
+-  if (stereo_mode == StereoMode::Anaglyph)
+-    shaders = VideoCommon::PostProcessing::GetAnaglyphShaderList();
+-  else if (stereo_mode == StereoMode::Passive)
+-    shaders = VideoCommon::PostProcessing::GetPassiveShaderList();
+-
+   // Populate widget
+-  if (stereo_mode != StereoMode::Anaglyph && stereo_mode != StereoMode::Passive)
+-    m_post_processing_effect->addItem(tr("(off)"), QStringLiteral(""));
++  m_post_processing_effect->addItem(tr("(off)"), QStringLiteral(""));
+ 
+   auto selected_shader = Get(m_game_layer, Config::GFX_ENHANCE_POST_SHADER);
+ 
+@@ -320,15 +290,9 @@ void EnhancementsWidget::LoadPostProcessingShaders()
+     }
+   }
+ 
+-  // Force a shader for StereoModes that require it.
+   if (!found)
+   {
+-    if (stereo_mode == StereoMode::Anaglyph)
+-      selected_shader = "dubois";
+-    else if (stereo_mode == StereoMode::Passive)
+-      selected_shader = "horizontal";
+-    else
+-      selected_shader = "";
++    selected_shader = "";
+ 
+     const int index =
+         std::max(0, m_post_processing_effect->findData(QString::fromStdString(selected_shader)));
+@@ -355,7 +319,6 @@ void EnhancementsWidget::OnBackendChanged()
+   m_3d_mode->setEnabled(supports_stereoscopy);
+   m_3d_convergence->setEnabled(supports_stereoscopy);
+   m_3d_depth->setEnabled(supports_stereoscopy);
+-  m_3d_swap_eyes->setEnabled(supports_stereoscopy);
+ 
+   // PostProcessing
+   const bool supports_postprocessing = g_backend_info.bSupportsPostProcessing;
+@@ -521,12 +484,12 @@ void EnhancementsWidget::AddDescriptions()
+                  "emulation.<br><br><dolphin_emphasis>If unsure, leave this "
+                  "unchecked.</dolphin_emphasis>");
+   static const char TR_3D_MODE_DESCRIPTION[] = QT_TR_NOOP(
+-      "Selects the stereoscopic 3D mode. Stereoscopy allows a better feeling "
+-      "of depth if the necessary hardware is present. Heavily decreases "
+-      "emulation speed and sometimes causes issues.<br><br>Side-by-Side and Top-and-Bottom are "
+-      "used by most 3D TVs.<br>Anaglyph is used for Red-Cyan colored glasses.<br>HDMI 3D is "
+-      "used when the monitor supports 3D display resolutions.<br>Passive is another type of 3D "
+-      "used by some TVs.<br><br><dolphin_emphasis>If unsure, select Off.</dolphin_emphasis>");
++      "Shows the game in 3D on a desktop that takes it (Stereo KWin): both eyes are drawn as "
++      "separate complete pictures, side by side, and handed to the desktop, which turns them into "
++      "what each screen needs (Display Settings). Depth and Convergence below set the 3D of the "
++      "picture. Heavily decreases emulation speed and sometimes causes issues.<br><br>The size of "
++      "each eye's picture is the Internal Resolution.<br><br><dolphin_emphasis>If unsure, select "
++      "On.</dolphin_emphasis>");
+   static const char TR_3D_DEPTH_DESCRIPTION[] = QT_TR_NOOP(
+       "Controls the separation distance between the virtual cameras.<br><br>A higher "
+       "value creates a stronger feeling of depth while a lower value is more comfortable.");
+@@ -534,13 +497,6 @@ void EnhancementsWidget::AddDescriptions()
+       "Controls the distance of the convergence plane. This is the distance at which "
+       "virtual objects will appear to be in front of the screen.<br><br>A higher value creates "
+       "stronger out-of-screen effects while a lower value is more comfortable.");
+-  static const char TR_3D_SWAP_EYES_DESCRIPTION[] = QT_TR_NOOP(
+-      "Swaps the left and right eye. Most useful in side-by-side stereoscopy "
+-      "mode.<br><br><dolphin_emphasis>If unsure, leave this unchecked.</dolphin_emphasis>");
+-  static const char TR_3D_PER_EYE_RESOLUTION_DESCRIPTION[] =
+-      QT_TR_NOOP("Whether each eye gets full or half image resolution when using side-by-side "
+-                 "or above-and-below 3D."
+-                 "<br><br><dolphin_emphasis>If unsure, leave this unchecked.</dolphin_emphasis>");
+   static const char TR_FORCE_24BIT_DESCRIPTION[] = QT_TR_NOOP(
+       "Forces the game to render the RGB color channels in 24-bit, thereby increasing "
+       "quality by reducing color banding.<br><br>Has no impact on performance and causes "
+@@ -602,7 +558,7 @@ void EnhancementsWidget::AddDescriptions()
+ 
+   m_hdr->SetDescription(tr(TR_HDR_DESCRIPTION));
+ 
+-  m_3d_mode->SetTitle(tr("Stereoscopic 3D Mode"));
++  m_3d_mode->SetTitle(tr("3D"));
+   m_3d_mode->SetDescription(tr(TR_3D_MODE_DESCRIPTION));
+ 
+   m_3d_depth->SetTitle(tr("Depth"));
+@@ -610,10 +566,6 @@ void EnhancementsWidget::AddDescriptions()
+ 
+   m_3d_convergence->SetTitle(tr("Convergence"));
+   m_3d_convergence->SetDescription(tr(TR_3D_CONVERGENCE_DESCRIPTION));
+-
+-  m_3d_per_eye_resolution->SetDescription(tr(TR_3D_PER_EYE_RESOLUTION_DESCRIPTION));
+-
+-  m_3d_swap_eyes->SetDescription(tr(TR_3D_SWAP_EYES_DESCRIPTION));
+ }
+ 
+ void EnhancementsWidget::ConfigureColorCorrection()
+diff --git a/Source/Core/DolphinQt/Config/Graphics/EnhancementsWidget.h b/Source/Core/DolphinQt/Config/Graphics/EnhancementsWidget.h
+index 02205f5..10d91dc 100644
+--- a/Source/Core/DolphinQt/Config/Graphics/EnhancementsWidget.h
++++ b/Source/Core/DolphinQt/Config/Graphics/EnhancementsWidget.h
+@@ -64,8 +64,7 @@ private:
+   QLabel* m_3d_depth_value;
+   ConfigFloatSlider* m_3d_convergence;
+   QLabel* m_3d_convergence_value;
+-  ConfigBool* m_3d_swap_eyes;
+-  ConfigBool* m_3d_per_eye_resolution;
++  QPushButton* m_3d_display_settings;
+ 
+   Config::Layer* m_game_layer = nullptr;
+ };
+diff --git a/Source/Core/DolphinQt/HotkeyScheduler.cpp b/Source/Core/DolphinQt/HotkeyScheduler.cpp
+index 478454e..74990fe 100644
+--- a/Source/Core/DolphinQt/HotkeyScheduler.cpp
++++ b/Source/Core/DolphinQt/HotkeyScheduler.cpp
+@@ -573,36 +573,6 @@ void HotkeyScheduler::Run()
+         }
+       }
+ 
+-      if (IsHotkey(HK_TOGGLE_STEREO_TOP_AND_BOTTOM))
+-      {
+-        if (Config::Get(Config::GFX_STEREO_MODE) != StereoMode::TopAndBottom)
+-        {
+-          // Disable post-processing shader, as stereoscopy itself is currently a shader
+-          if (Config::Get(Config::GFX_ENHANCE_POST_SHADER) == DUBOIS_ALGORITHM_SHADER)
+-            Config::SetCurrent(Config::GFX_ENHANCE_POST_SHADER, "");
+-
+-          Config::SetCurrent(Config::GFX_STEREO_MODE, StereoMode::TopAndBottom);
+-        }
+-        else
+-        {
+-          Config::SetCurrent(Config::GFX_STEREO_MODE, StereoMode::Off);
+-        }
+-      }
+-
+-      if (IsHotkey(HK_TOGGLE_STEREO_ANAGLYPH))
+-      {
+-        if (Config::Get(Config::GFX_STEREO_MODE) != StereoMode::Anaglyph)
+-        {
+-          Config::SetCurrent(Config::GFX_STEREO_MODE, StereoMode::Anaglyph);
+-          Config::SetCurrent(Config::GFX_ENHANCE_POST_SHADER, DUBOIS_ALGORITHM_SHADER);
+-        }
+-        else
+-        {
+-          Config::SetCurrent(Config::GFX_STEREO_MODE, StereoMode::Off);
+-          Config::SetCurrent(Config::GFX_ENHANCE_POST_SHADER, "");
+-        }
+-      }
+-
+       CheckGBAHotkeys();
+     }
+ 
+diff --git a/Source/Core/DolphinQt/RenderWidget.cpp b/Source/Core/DolphinQt/RenderWidget.cpp
+index 49680b8..26fa014 100644
+--- a/Source/Core/DolphinQt/RenderWidget.cpp
++++ b/Source/Core/DolphinQt/RenderWidget.cpp
+@@ -25,6 +25,7 @@
+ #include "DolphinQt/Host.h"
+ #include "DolphinQt/QtUtils/ModalMessageBox.h"
+ #include "DolphinQt/Resources.h"
++#include "DolphinQt/StereoDeclare.h"
+ #include "DolphinQt/Settings.h"
+ 
+ #include "InputCommon/ControllerInterface/ControllerInterface.h"
+@@ -89,6 +90,9 @@ RenderWidget::RenderWidget(QWidget* parent) : QWidget(parent)
+   OnKeepOnTopChanged(Settings::Instance().IsKeepWindowOnTopEnabled());
+   m_mouse_timer->start(MOUSE_HIDE_DELAY);
+ 
++  // The 3D output is declared to the desktop (Stereo KWin) from here
++  new StereoDeclare(this);
++
+   // We need a native window to render into.
+   setAttribute(Qt::WA_NativeWindow);
+   setAttribute(Qt::WA_PaintOnScreen);
+diff --git a/Source/Core/DolphinQt/StereoDeclare.cpp b/Source/Core/DolphinQt/StereoDeclare.cpp
+new file mode 100644
+index 0000000..ab05eb5
+--- /dev/null
++++ b/Source/Core/DolphinQt/StereoDeclare.cpp
+@@ -0,0 +1,182 @@
++// Copyright 2026 Dolphin Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#include "DolphinQt/StereoDeclare.h"
++
++#include <string>
++
++#include <QGuiApplication>
++#include <QMessageBox>
++#include <QTimer>
++#include <QWidget>
++
++#include <X11/Xlib.h>
++#include <stereo-declare.h>
++
++#include "Core/Config/GraphicsSettings.h"
++#include "Core/Config/MainSettings.h"
++#include "DolphinQt/Host.h"
++#include "VideoCommon/Present.h"
++#include "VideoCommon/StereoOutput.h"
++#include "VideoCommon/VideoConfig.h"
++
++StereoDeclare::StereoDeclare(QWidget* render_widget) : QObject(render_widget), m_widget(render_widget)
++{
++  m_timer = new QTimer(this);
++  connect(m_timer, &QTimer::timeout, this, &StereoDeclare::Update);
++  m_timer->start(50);
++}
++
++StereoDeclare::~StereoDeclare()
++{
++  Remove();
++  if (m_display)
++    XCloseDisplay(m_display);
++}
++
++void StereoDeclare::Remove()
++{
++  if (m_declared && m_display)
++  {
++    if (m_parent != 0)
++      stereo_remove_x11_child(m_display, m_parent, m_window);
++    else
++      stereo_remove_x11(m_display, m_window);
++    XFlush(m_display);
++  }
++  m_declared = false;
++  StereoOutput::SetSurfaceSize(0, 0);
++  m_pushed_width = 0;
++  m_pushed_height = 0;
++  m_repushes = 0;
++}
++
++void StereoDeclare::Tell(const QString& text)
++{
++  if (m_told)
++    return;
++  m_told = true;
++  auto* box = new QMessageBox(QMessageBox::Warning, tr("3D"), text, QMessageBox::Ok, m_widget->window());
++  box->setAttribute(Qt::WA_DeleteOnClose);
++  box->open();
++}
++
++void StereoDeclare::Update()
++{
++  if (QGuiApplication::platformName() != QStringLiteral("xcb") || !m_widget->testAttribute(Qt::WA_WState_Created))
++    return;
++
++  const bool wanted = Config::Get(Config::GFX_STEREO_MODE) != StereoMode::Off;
++  if (!wanted)
++  {
++    Remove();
++    m_told = false;
++    return;
++  }
++
++  if (!m_display)
++  {
++    m_display = XOpenDisplay(nullptr);
++    if (!m_display)
++    {
++      StereoOutput::SetHost(StereoOutput::Host::NotOffered);
++      return;
++    }
++  }
++
++  if (!m_probed)
++  {
++    // Stereo KWin makes a declared top-level window two views wide from support version 3, and shows a declared
++    // child at the size of one view from version 8
++    m_probed = true;
++    m_support = stereo_supported_x11(m_display);
++    const unsigned int needed = m_widget->isWindow() ? 3 : 8;
++    if (m_support < needed)
++      StereoOutput::SetHost(StereoOutput::Host::NotOffered);
++  }
++  if (StereoOutput::GetHost() == StereoOutput::Host::NotOffered)
++  {
++    // 3D is on by default: a desktop that cannot take the pair shows 2D and says nothing, unless the person turned
++    // 3D on themselves
++    Remove();
++    if (Config::GetAsString(Config::GFX_STEREO_MODE.GetLocation()).has_value())
++      Tell(tr("3D needs a desktop that takes both eyes as a pair (Stereo KWin); showing 2D."));
++    return;
++  }
++
++  // The renderer cannot give two views: declare nothing, and say so
++  const std::string renderer = StereoOutput::GetRendererRefusal();
++  if (!renderer.empty())
++  {
++    Remove();
++    Tell(tr("3D is not available with this renderer (%1): it needs geometry shaders. Showing 2D.")
++             .arg(QString::fromStdString(renderer)));
++    return;
++  }
++  if (StereoOutput::GetSwapChainRefusal())
++  {
++    Remove();
++    Tell(tr("3D is not available: the Vulkan driver gives this window one view (its surface takes one image "
++            "layer). Showing 2D."));
++    return;
++  }
++
++  const unsigned long window = static_cast<unsigned long>(m_widget->winId());
++
++  // Vulkan: the swapchain has two image layers, and the graphics driver packs them into one picture and declares
++  // it, so the window is never declared or made wider here
++  if (Config::Get(Config::MAIN_GFX_BACKEND) == "Vulkan")
++  {
++    if (m_declared)
++      Remove();
++    m_window = window;
++    StereoOutput::SetHost(StereoOutput::Host::Declared);
++    return;
++  }
++
++  if (m_declared && window != m_window)
++    Remove();
++  if (!m_declared)
++  {
++    m_window = window;
++    m_parent = m_widget->isWindow() ? 0 : static_cast<unsigned long>(m_widget->window()->winId());
++    const int r = m_parent != 0 ? stereo_declare_x11_child(m_display, m_parent, m_window, STEREO_SBS_FULL,
++                                                           STEREO_CLASS_GAME, STEREO_GAME_3D,
++                                                           static_cast<unsigned>(m_widget->width()),
++                                                           static_cast<unsigned>(m_widget->height())) :
++                                  stereo_declare_x11(m_display, m_window, STEREO_SBS_FULL,
++                                                     STEREO_CLASS_GAME, STEREO_GAME_3D);
++    if (r != 0)
++    {
++      StereoOutput::SetHost(StereoOutput::Host::NotOffered);
++      return;
++    }
++    m_declared = true;
++    XFlush(m_display);
++    StereoOutput::SetHost(StereoOutput::Host::Declared);
++  }
++
++  // Stereo KWin makes a declared X11 window two views wide and then tells the program its own size, one view,
++  // in a second event that Qt takes as the window's size. The picture is as wide as the X window the server
++  // holds, so that is the size the video backend gets.
++  Window root;
++  int x;
++  int y;
++  unsigned int width;
++  unsigned int height;
++  unsigned int border;
++  unsigned int depth;
++  if (XGetGeometry(m_display, m_window, &root, &x, &y, &width, &height, &border, &depth) != 0 &&
++      (width != m_pushed_width || height != m_pushed_height ||
++       (m_repushes < 40 && g_presenter &&
++        (g_presenter->GetBackbufferWidth() != static_cast<int>(width) ||
++         g_presenter->GetBackbufferHeight() != static_cast<int>(height)))))
++  {
++    if (width == m_pushed_width && height == m_pushed_height)
++      m_repushes++;
++    StereoOutput::SetSurfaceSize(static_cast<int>(width), static_cast<int>(height));
++    m_pushed_width = width;
++    m_pushed_height = height;
++    Host::GetInstance()->ResizeSurface(static_cast<int>(width), static_cast<int>(height));
++  }
++}
+diff --git a/Source/Core/DolphinQt/StereoDeclare.h b/Source/Core/DolphinQt/StereoDeclare.h
+new file mode 100644
+index 0000000..4a1aa04
+--- /dev/null
++++ b/Source/Core/DolphinQt/StereoDeclare.h
+@@ -0,0 +1,40 @@
++// Copyright 2026 Dolphin Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++#include <QObject>
++
++class QTimer;
++class QWidget;
++typedef struct _XDisplay Display;
++
++// The one 3D output: the render window holds both eyes side by side, declared as full side by side to a desktop
++// that takes it (Stereo KWin). With OpenGL the window is declared here; with Vulkan the swapchain has two image
++// layers and the graphics driver (Mesa) packs and declares them. When the desktop or the renderer cannot show
++// the pair, nothing is declared and the person is told.
++class StereoDeclare final : public QObject
++{
++  Q_OBJECT
++public:
++  explicit StereoDeclare(QWidget* render_widget);
++  ~StereoDeclare() override;
++
++private:
++  void Update();
++  void Remove();
++  void Tell(const QString& text);
++
++  QWidget* m_widget;
++  QTimer* m_timer;
++  Display* m_display = nullptr;
++  unsigned long m_window = 0;
++  unsigned long m_parent = 0;
++  unsigned int m_support = 0;
++  bool m_declared = false;
++  bool m_probed = false;
++  bool m_told = false;
++  unsigned int m_pushed_width = 0;
++  unsigned int m_pushed_height = 0;
++  int m_repushes = 0;
++};
+diff --git a/Source/Core/VideoBackends/D3DCommon/SwapChain.cpp b/Source/Core/VideoBackends/D3DCommon/SwapChain.cpp
+index 1c91275..d7ba033 100644
+--- a/Source/Core/VideoBackends/D3DCommon/SwapChain.cpp
++++ b/Source/Core/VideoBackends/D3DCommon/SwapChain.cpp
+@@ -48,7 +48,7 @@ SwapChain::~SwapChain()
+ 
+ bool SwapChain::WantsStereo()
+ {
+-  return g_ActiveConfig.stereo_mode == StereoMode::QuadBuffer;
++  return false;
+ }
+ 
+ bool SwapChain::WantsHDR()
+diff --git a/Source/Core/VideoBackends/OGL/OGLMain.cpp b/Source/Core/VideoBackends/OGL/OGLMain.cpp
+index df0c28a..f2b6d5c 100644
+--- a/Source/Core/VideoBackends/OGL/OGLMain.cpp
++++ b/Source/Core/VideoBackends/OGL/OGLMain.cpp
+@@ -76,7 +76,7 @@ std::string VideoBackend::GetDisplayName() const
+ void VideoBackend::InitBackendInfo(const WindowSystemInfo& wsi)
+ {
+   std::unique_ptr<GLContext> temp_gl_context =
+-      GLContext::Create(wsi, g_Config.stereo_mode == StereoMode::QuadBuffer, true,
++      GLContext::Create(wsi, false, true,
+                         Config::Get(Config::GFX_PREFER_GLES));
+ 
+   if (!temp_gl_context)
+@@ -195,7 +195,7 @@ bool VideoBackend::FillBackendInfo(GLContext* context)
+ bool VideoBackend::Initialize(const WindowSystemInfo& wsi)
+ {
+   std::unique_ptr<GLContext> main_gl_context =
+-      GLContext::Create(wsi, g_Config.stereo_mode == StereoMode::QuadBuffer, true,
++      GLContext::Create(wsi, false, true,
+                         Config::Get(Config::GFX_PREFER_GLES));
+   if (!main_gl_context)
+     return false;
+diff --git a/Source/Core/VideoBackends/Vulkan/VKSwapChain.cpp b/Source/Core/VideoBackends/Vulkan/VKSwapChain.cpp
+index 370e22d..b70a761 100644
+--- a/Source/Core/VideoBackends/Vulkan/VKSwapChain.cpp
++++ b/Source/Core/VideoBackends/Vulkan/VKSwapChain.cpp
+@@ -16,6 +16,7 @@
+ #include "VideoBackends/Vulkan/VKTexture.h"
+ #include "VideoBackends/Vulkan/VulkanContext.h"
+ #include "VideoCommon/Present.h"
++#include "VideoCommon/StereoOutput.h"
+ 
+ #if defined(VK_USE_PLATFORM_XLIB_KHR)
+ #include <X11/Xlib.h>
+@@ -320,8 +321,23 @@ bool SwapChain::CreateSwapChain()
+     return false;
+   }
+ 
+-  // Select the number of image layers for Quad-Buffered stereoscopy
+-  uint32_t image_layers = g_ActiveConfig.stereo_mode == StereoMode::QuadBuffer ? 2 : 1;
++  // The one 3D output: two image layers, one per eye, which the graphics driver packs into one picture and declares
++  // to the desktop (Mesa's Vulkan presentation, or its Vulkan stereo layer over another driver)
++  uint32_t image_layers = 1;
++  g_backend_info.bStereoPairFromLayers = true;
++  if (g_ActiveConfig.stereo_mode != StereoMode::Off)
++  {
++    if (surface_capabilities.maxImageArrayLayers >= 2)
++    {
++      image_layers = 2;
++      StereoOutput::SetSwapChainRefusal(false);
++    }
++    else
++    {
++      StereoOutput::SetSwapChainRefusal(true);
++    }
++  }
++  g_backend_info.bBackbufferStereoLayers = image_layers == 2;
+ 
+   // Store the old/current swap chain when recreating for resize
+   VkSwapchainKHR old_swap_chain = m_swap_chain;
+diff --git a/Source/Core/VideoCommon/AbstractGfx.cpp b/Source/Core/VideoCommon/AbstractGfx.cpp
+index 851dc48..3e26165 100644
+--- a/Source/Core/VideoCommon/AbstractGfx.cpp
++++ b/Source/Core/VideoCommon/AbstractGfx.cpp
+@@ -184,8 +184,6 @@ void AbstractGfx::OnConfigChanged(u32 changed_bits)
+ 
+ bool AbstractGfx::UseGeometryShaderForUI() const
+ {
+-  // OpenGL doesn't render to a 2-layer backbuffer like D3D/Vulkan for quad-buffered stereo,
+-  // instead drawing twice and the eye selected by glDrawBuffer() (see Presenter::RenderXFBToScreen)
+-  return g_ActiveConfig.stereo_mode == StereoMode::QuadBuffer &&
+-         !g_backend_info.bUsesExplictQuadBuffering;
++  // The interface is drawn into both layers of a backbuffer the graphics driver packs into a pair
++  return g_ActiveConfig.StereoBackbufferLayers();
+ }
+diff --git a/Source/Core/VideoCommon/CMakeLists.txt b/Source/Core/VideoCommon/CMakeLists.txt
+index 61d5f6d..cb0eb20 100644
+--- a/Source/Core/VideoCommon/CMakeLists.txt
++++ b/Source/Core/VideoCommon/CMakeLists.txt
+@@ -146,6 +146,8 @@ add_library(videocommon
+   PostProcessing.h
+   Present.cpp
+   Present.h
++  StereoOutput.cpp
++  StereoOutput.h
+   RenderState.cpp
+   RenderState.h
+   Resources/CustomResourceManager.cpp
+diff --git a/Source/Core/VideoCommon/OnScreenUI.cpp b/Source/Core/VideoCommon/OnScreenUI.cpp
+index 209e96c..9fc7781 100644
+--- a/Source/Core/VideoCommon/OnScreenUI.cpp
++++ b/Source/Core/VideoCommon/OnScreenUI.cpp
+@@ -210,13 +210,13 @@ void OnScreenUI::BeginImGuiFrameUnlocked(u32 width, u32 height)
+   ImGui::NewFrame();
+ }
+ 
+-void OnScreenUI::DrawImGui()
++void OnScreenUI::DrawImGui(int x_offset)
+ {
+   ImDrawData* draw_data = ImGui::GetDrawData();
+   if (!draw_data)
+     return;
+ 
+-  g_gfx->SetViewport(0.0f, 0.0f, static_cast<float>(m_backbuffer_width),
++  g_gfx->SetViewport(static_cast<float>(x_offset), 0.0f, static_cast<float>(m_backbuffer_width),
+                      static_cast<float>(m_backbuffer_height), 0.0f, 1.0f);
+ 
+   // Uniform buffer for draws.
+@@ -253,8 +253,8 @@ void OnScreenUI::DrawImGui()
+ 
+       g_gfx->SetScissorRect(g_gfx->ConvertFramebufferRectangle(
+           MathUtil::Rectangle<int>(
+-              static_cast<int>(cmd.ClipRect.x), static_cast<int>(cmd.ClipRect.y),
+-              static_cast<int>(cmd.ClipRect.z), static_cast<int>(cmd.ClipRect.w)),
++              static_cast<int>(cmd.ClipRect.x) + x_offset, static_cast<int>(cmd.ClipRect.y),
++              static_cast<int>(cmd.ClipRect.z) + x_offset, static_cast<int>(cmd.ClipRect.w)),
+           g_gfx->GetCurrentFramebuffer()));
+       g_gfx->SetTexture(0, reinterpret_cast<const AbstractTexture*>(cmd.GetTexID()));
+       g_gfx->DrawIndexed(base_index, cmd.ElemCount, base_vertex);
+@@ -268,7 +268,7 @@ void OnScreenUI::DrawImGui()
+   // capture whenever any ImGui windows are open. We'll reset the scissor rectangle to the entire
+   // viewport here to avoid this problem.
+   g_gfx->SetScissorRect(g_gfx->ConvertFramebufferRectangle(
+-      MathUtil::Rectangle<int>(0, 0, m_backbuffer_width, m_backbuffer_height),
++      MathUtil::Rectangle<int>(0, 0, m_backbuffer_width + x_offset, m_backbuffer_height),
+       g_gfx->GetCurrentFramebuffer()));
+ }
+ 
+diff --git a/Source/Core/VideoCommon/OnScreenUI.h b/Source/Core/VideoCommon/OnScreenUI.h
+index e9a14e0..9b32731 100644
+--- a/Source/Core/VideoCommon/OnScreenUI.h
++++ b/Source/Core/VideoCommon/OnScreenUI.h
+@@ -45,7 +45,8 @@ public:
+ 
+   // Renders ImGui windows to the currently-bound framebuffer.
+   // Should be called with the ImGui lock held.
+-  void DrawImGui();
++  // x_offset: where the picture starts in the backbuffer (the right eye's half of a declared pair)
++  void DrawImGui(int x_offset = 0);
+ 
+   // Recompiles ImGui pipeline - call when stereo mode changes.
+   bool RecompileImGuiPipeline();
+diff --git a/Source/Core/VideoCommon/PostProcessing.cpp b/Source/Core/VideoCommon/PostProcessing.cpp
+index 92f7c1f..9850dbf 100644
+--- a/Source/Core/VideoCommon/PostProcessing.cpp
++++ b/Source/Core/VideoCommon/PostProcessing.cpp
+@@ -76,15 +76,6 @@ void PostProcessingConfiguration::LoadShader(const std::string& shader)
+ 
+   std::string sub_dir = "";
+ 
+-  if (g_Config.stereo_mode == StereoMode::Anaglyph)
+-  {
+-    sub_dir = ANAGLYPH_DIR DIR_SEP;
+-  }
+-  else if (g_Config.stereo_mode == StereoMode::Passive)
+-  {
+-    sub_dir = PASSIVE_DIR DIR_SEP;
+-  }
+-
+   std::string code;
+   if (!LoadShaderFromFile(shader, sub_dir, code))
+   {
+@@ -1004,27 +995,6 @@ bool PostProcessing::CompilePixelShader()
+   return true;
+ }
+ 
+-static bool UseGeometryShaderForPostProcess(bool is_intermediary_buffer)
+-{
+-  // We only return true on stereo modes that need to copy
+-  // both source texture layers into the target texture layers.
+-  // Any other case is handled manually with multiple copies, thus
+-  // it doesn't need a geom shader.
+-  switch (g_ActiveConfig.stereo_mode)
+-  {
+-  case StereoMode::QuadBuffer:
+-    return !g_backend_info.bUsesExplictQuadBuffering;
+-  case StereoMode::Anaglyph:
+-  case StereoMode::Passive:
+-    return is_intermediary_buffer;
+-  case StereoMode::SideBySide:
+-  case StereoMode::TopAndBottom:
+-  case StereoMode::Off:
+-  default:
+-    return false;
+-  }
+-}
+-
+ bool PostProcessing::CompilePipeline()
+ {
+   // Not needed. Some backends don't like making pipelines with no targets,
+@@ -1039,9 +1009,8 @@ bool PostProcessing::CompilePipeline()
+   config.vertex_shader = m_default_vertex_shader.get();
+   // This geometry shader will take care of reading both layer 0 and 1 on the source texture,
+   // and writing to both layer 0 and 1 on the render target.
+-  config.geometry_shader = UseGeometryShaderForPostProcess(needs_intermediary_buffer) ?
+-                               g_shader_cache->GetTexcoordGeometryShader() :
+-                               nullptr;
++  config.geometry_shader =
++      g_ActiveConfig.StereoBackbufferLayers() ? g_shader_cache->GetTexcoordGeometryShader() : nullptr;
+   config.pixel_shader = m_default_pixel_shader.get();
+   config.rasterization_state = RenderState::GetNoCullRasterizationState(PrimitiveType::Triangles);
+   config.depth_state = RenderState::GetNoDepthTestingDepthState();
+@@ -1054,9 +1023,8 @@ bool PostProcessing::CompilePipeline()
+     m_default_pipeline = g_gfx->CreatePipeline(config);
+ 
+   config.vertex_shader = m_vertex_shader.get();
+-  config.geometry_shader = UseGeometryShaderForPostProcess(false) ?
+-                               g_shader_cache->GetTexcoordGeometryShader() :
+-                               nullptr;
++  config.geometry_shader =
++      g_ActiveConfig.StereoBackbufferLayers() ? g_shader_cache->GetTexcoordGeometryShader() : nullptr;
+   config.pixel_shader = m_pixel_shader.get();
+   config.framebuffer_state = RenderState::GetColorFramebufferState(m_framebuffer_format);
+   m_pipeline = g_gfx->CreatePipeline(config);
+diff --git a/Source/Core/VideoCommon/Present.cpp b/Source/Core/VideoCommon/Present.cpp
+index 41d05f3..73b4ee1 100644
+--- a/Source/Core/VideoCommon/Present.cpp
++++ b/Source/Core/VideoCommon/Present.cpp
+@@ -3,6 +3,7 @@
+ 
+ #include "VideoCommon/Present.h"
+ 
++
+ #include "Common/ChunkFile.h"
+ #include "Core/Config/GraphicsSettings.h"
+ #include "Core/Config/MainSettings.h"
+@@ -125,7 +126,7 @@ bool Presenter::Initialize()
+       return false;
+ 
+     m_onscreen_ui = std::make_unique<OnScreenUI>();
+-    if (!m_onscreen_ui->Initialize(m_backbuffer_width, m_backbuffer_height, m_backbuffer_scale))
++    if (!m_onscreen_ui->Initialize(EyeRegionWidth(), m_backbuffer_height, m_backbuffer_scale))
+       return false;
+ 
+     // Draw a blank frame (and complete OnScreenUI initialization)
+@@ -336,6 +337,11 @@ void Presenter::SetBackbuffer(int backbuffer_width, int backbuffer_height)
+   OnBackbufferSet(size_changed, is_first);
+ }
+ 
++int Presenter::EyeRegionWidth() const
++{
++  return g_ActiveConfig.StereoBackbufferHalves() ? m_backbuffer_width / 2 : m_backbuffer_width;
++}
++
+ void Presenter::SetBackbuffer(SurfaceInfo info)
+ {
+   const bool is_first = m_backbuffer_width == 0 && m_backbuffer_height == 0;
+@@ -394,40 +400,12 @@ void Presenter::ConfigChanged(u32 changed_bits)
+ std::tuple<MathUtil::Rectangle<int>, MathUtil::Rectangle<int>>
+ Presenter::ConvertStereoRectangle(const MathUtil::Rectangle<int>& rc) const
+ {
+-  // Resize target to half its original size
+-  auto draw_rc = rc;
+-  if (g_ActiveConfig.stereo_mode == StereoMode::TopAndBottom)
+-  {
+-    // The height may be negative due to flipped rectangles
+-    int height = rc.bottom - rc.top;
+-    draw_rc.top += height / 4;
+-    draw_rc.bottom -= height / 4;
+-  }
+-  else
+-  {
+-    int width = rc.right - rc.left;
+-    draw_rc.left += width / 4;
+-    draw_rc.right -= width / 4;
+-  }
+-
+-  // Create two target rectangle offset to the sides of the backbuffer
+-  auto left_rc = draw_rc;
+-  auto right_rc = draw_rc;
+-  if (g_ActiveConfig.stereo_mode == StereoMode::TopAndBottom)
+-  {
+-    left_rc.top -= m_backbuffer_height / 4;
+-    left_rc.bottom -= m_backbuffer_height / 4;
+-    right_rc.top += m_backbuffer_height / 4;
+-    right_rc.bottom += m_backbuffer_height / 4;
+-  }
+-  else
+-  {
+-    left_rc.left -= m_backbuffer_width / 4;
+-    left_rc.right -= m_backbuffer_width / 4;
+-    right_rc.left += m_backbuffer_width / 4;
+-    right_rc.right += m_backbuffer_width / 4;
+-  }
+-
++  // The picture fitted into one eye's half of the window is the left eye's rectangle; the right eye's
++  // is the same rectangle one half of the window to the right. Nothing is stretched or squeezed.
++  auto left_rc = rc;
++  auto right_rc = rc;
++  right_rc.left += m_backbuffer_width / 2;
++  right_rc.right += m_backbuffer_width / 2;
+   return std::make_tuple(left_rc, right_rc);
+ }
+ 
+@@ -491,7 +469,7 @@ float Presenter::CalculateDrawAspectRatio(bool allow_stretch) const
+   if (aspect_mode == AspectMode::Stretch)
+   {
+     resulting_aspect_ratio =
+-        (static_cast<float>(m_backbuffer_width) / static_cast<float>(m_backbuffer_height));
++        (static_cast<float>(EyeRegionWidth()) / static_cast<float>(m_backbuffer_height));
+   }
+   else
+   {
+@@ -528,22 +506,6 @@ float Presenter::CalculateDrawAspectRatio(bool allow_stretch) const
+     }
+   }
+ 
+-  if (g_ActiveConfig.stereo_per_eye_resolution_full)
+-  {
+-    if (g_ActiveConfig.stereo_mode == StereoMode::SideBySide)
+-    {
+-      // Render twice as wide if using side-by-side 3D, since the 3D will halve the horizontal
+-      // resolution
+-      resulting_aspect_ratio *= 2.0;
+-    }
+-    else if (g_ActiveConfig.stereo_mode == StereoMode::TopAndBottom)
+-    {
+-      // Render twice as tall if using top-and-bottom 3D, since the 3D will halve the vertical
+-      // resolution
+-      resulting_aspect_ratio /= 2.0;
+-    }
+-  }
+-
+   return resulting_aspect_ratio;
+ }
+ 
+@@ -743,7 +705,8 @@ void Presenter::UpdateDrawRectangle()
+   }
+ 
+   // The rendering window size
+-  const float win_width = static_cast<float>(m_backbuffer_width);
++  // With 3D the window holds two eyes side by side: the picture is fitted into one eye's half
++  const float win_width = static_cast<float>(EyeRegionWidth());
+   const float win_height = static_cast<float>(m_backbuffer_height);
+   const float win_aspect_ratio = win_width / win_height;
+ 
+@@ -875,27 +838,15 @@ void Presenter::RenderXFBToScreen(const MathUtil::Rectangle<int>& target_rc,
+                                   const AbstractTexture* source_texture,
+                                   const MathUtil::Rectangle<int>& source_rc)
+ {
+-  if (g_ActiveConfig.stereo_mode == StereoMode::QuadBuffer &&
+-      g_backend_info.bUsesExplictQuadBuffering)
+-  {
+-    // Quad-buffered stereo is annoying on GL.
+-    g_gfx->SelectLeftBuffer();
+-    m_post_processor->BlitFromTexture(target_rc, source_rc, source_texture, 0);
+-
+-    g_gfx->SelectRightBuffer();
+-    m_post_processor->BlitFromTexture(target_rc, source_rc, source_texture, 1);
+-
+-    g_gfx->SelectMainBuffer();
+-  }
+-  else if (g_ActiveConfig.stereo_mode == StereoMode::SideBySide ||
+-           g_ActiveConfig.stereo_mode == StereoMode::TopAndBottom)
++  if (g_ActiveConfig.StereoBackbufferHalves())
+   {
+     const auto [left_rc, right_rc] = ConvertStereoRectangle(target_rc);
+ 
+     m_post_processor->BlitFromTexture(left_rc, source_rc, source_texture, 0);
+     m_post_processor->BlitFromTexture(right_rc, source_rc, source_texture, 1);
+   }
+-  // Every other case will be treated the same (stereo or not).
++  // Without 3D the picture is one view; with the two layers of a backbuffer the graphics driver packs into a pair,
++  // each eye goes to its own layer.
+   // If there's multiple source layers, they should all be copied.
+   else
+   {
+@@ -951,7 +902,13 @@ void Presenter::Present(PresentInfo* present_info)
+   {
+     m_onscreen_ui->Finalize();
+     if (backbuffer_bound)
++    {
++      // The interface and the on-screen messages are 2D: in a declared window two views wide they are drawn once
++      // in each eye's half, at the same place, so they stand at the screen
+       m_onscreen_ui->DrawImGui();
++      if (g_ActiveConfig.StereoBackbufferHalves())
++        m_onscreen_ui->DrawImGui(EyeRegionWidth());
++    }
+   }
+ 
+   // Present to the window system.
+@@ -981,7 +938,7 @@ void Presenter::Present(PresentInfo* present_info)
+   }
+ 
+   if (m_onscreen_ui)
+-    m_onscreen_ui->BeginImGuiFrame(m_backbuffer_width, m_backbuffer_height);
++    m_onscreen_ui->BeginImGuiFrame(EyeRegionWidth(), m_backbuffer_height);
+ 
+   g_gfx->EndUtilityDrawing();
+ }
+diff --git a/Source/Core/VideoCommon/Present.h b/Source/Core/VideoCommon/Present.h
+index 91ba870..7030feb 100644
+--- a/Source/Core/VideoCommon/Present.h
++++ b/Source/Core/VideoCommon/Present.h
+@@ -132,6 +132,9 @@ private:
+   std::tuple<MathUtil::Rectangle<int>, MathUtil::Rectangle<int>>
+   ConvertStereoRectangle(const MathUtil::Rectangle<int>& rc) const;
+ 
++  // The width of the part of the window one eye's picture is fitted into
++  int EyeRegionWidth() const;
++
+   std::mutex m_swap_mutex;
+ 
+   // Backbuffer (window) size and render area
+diff --git a/Source/Core/VideoCommon/StereoOutput.cpp b/Source/Core/VideoCommon/StereoOutput.cpp
+new file mode 100644
+index 0000000..8ff2442
+--- /dev/null
++++ b/Source/Core/VideoCommon/StereoOutput.cpp
+@@ -0,0 +1,70 @@
++// Copyright 2026 Dolphin Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#include "VideoCommon/StereoOutput.h"
++
++#include <atomic>
++#include <mutex>
++
++namespace StereoOutput
++{
++namespace
++{
++std::atomic<int> s_host{static_cast<int>(Host::Unknown)};
++std::atomic<int> s_surface_width{0};
++std::atomic<int> s_surface_height{0};
++std::mutex s_refusal_mutex;
++std::string s_renderer_refusal;
++std::atomic<bool> s_swapchain_refusal{false};
++}  // namespace
++
++void SetHost(Host host)
++{
++  s_host.store(static_cast<int>(host));
++}
++
++Host GetHost()
++{
++  return static_cast<Host>(s_host.load());
++}
++
++void SetSurfaceSize(int width, int height)
++{
++  s_surface_width.store(width);
++  s_surface_height.store(height);
++}
++
++bool GetSurfaceSize(int* width, int* height)
++{
++  *width = s_surface_width.load();
++  *height = s_surface_height.load();
++  return *width > 0 && *height > 0;
++}
++
++void SetRendererRefusal(const std::string& renderer)
++{
++  std::lock_guard lock(s_refusal_mutex);
++  s_renderer_refusal = renderer;
++}
++
++std::string GetRendererRefusal()
++{
++  std::lock_guard lock(s_refusal_mutex);
++  return s_renderer_refusal;
++}
++
++void SetSwapChainRefusal(bool refused)
++{
++  s_swapchain_refusal.store(refused);
++}
++
++bool GetSwapChainRefusal()
++{
++  return s_swapchain_refusal.load();
++}
++
++bool BackendRefuses()
++{
++  return !GetRendererRefusal().empty() || GetSwapChainRefusal();
++}
++}  // namespace StereoOutput
+diff --git a/Source/Core/VideoCommon/StereoOutput.h b/Source/Core/VideoCommon/StereoOutput.h
+new file mode 100644
+index 0000000..573ac8b
+--- /dev/null
++++ b/Source/Core/VideoCommon/StereoOutput.h
+@@ -0,0 +1,37 @@
++// Copyright 2026 Dolphin Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++// The one 3D output of this build: both eyes as separate complete pictures, side by side, left eye first, declared
++// to a desktop that takes such a pair (Stereo KWin). The separation and the convergence stay Dolphin's own settings
++// (Depth and Convergence); this only says whether the desktop and the renderer can show the pair, and why not.
++#include <string>
++
++namespace StereoOutput
++{
++enum class Host : int
++{
++  Unknown,     // the host has not said yet
++  NotOffered,  // the desktop cannot take a pair
++  Declared,    // the pair is declared (by the host program, or by the graphics driver)
++};
++
++// Called by the host program (any thread).
++void SetHost(Host host);
++Host GetHost();
++
++// The size of the window the host declared, as the X server holds it (two views wide); false when none is declared.
++void SetSurfaceSize(int width, int height);
++bool GetSurfaceSize(int* width, int* height);
++
++// The renderer that cannot draw two views (it has no geometry shaders), empty when it can; set by the video
++// configuration.
++void SetRendererRefusal(const std::string& renderer);
++std::string GetRendererRefusal();
++// The swapchain cannot hold two views (its surface takes one image layer); set by the video backend.
++void SetSwapChainRefusal(bool refused);
++bool GetSwapChainRefusal();
++// Either: the host then declares nothing and tells the person.
++bool BackendRefuses();
++}  // namespace StereoOutput
+diff --git a/Source/Core/VideoCommon/VideoConfig.cpp b/Source/Core/VideoCommon/VideoConfig.cpp
+index c56f32c..ae155d6 100644
+--- a/Source/Core/VideoCommon/VideoConfig.cpp
++++ b/Source/Core/VideoCommon/VideoConfig.cpp
+@@ -29,6 +29,7 @@
+ #include "VideoCommon/OnScreenDisplay.h"
+ #include "VideoCommon/PixelShaderManager.h"
+ #include "VideoCommon/ShaderGenCommon.h"
++#include "VideoCommon/StereoOutput.h"
+ #include "VideoCommon/TextureCacheBase.h"
+ #include "VideoCommon/VertexManagerBase.h"
+ #include "VideoCommon/XFMemory.h"
+@@ -51,6 +52,14 @@ void UpdateActiveConfig()
+ {
+   g_ActiveConfig = g_Config;
+   g_ActiveConfig.bVSyncActive = IsVSyncActive(g_ActiveConfig.bVSync);
++  // The one 3D output needs a desktop that takes the pair and a renderer and surface that can give it; the host
++  // and the backend say so at any time, and the next frame follows
++  if (g_ActiveConfig.stereo_mode != StereoMode::Off &&
++      (StereoOutput::GetHost() == StereoOutput::Host::NotOffered ||
++       StereoOutput::BackendRefuses()))
++  {
++    g_ActiveConfig.stereo_mode = StereoMode::Off;
++  }
+ }
+ 
+ void VideoConfig::Refresh()
+@@ -166,13 +175,16 @@ void VideoConfig::Refresh()
+   color_correction.fSDRDisplayCustomGamma = Config::Get(Config::GFX_CC_SDR_DISPLAY_CUSTOM_GAMMA);
+   color_correction.fHDRPaperWhiteNits = Config::Get(Config::GFX_CC_HDR_PAPER_WHITE_NITS);
+ 
+-  stereo_mode = Config::Get(Config::GFX_STEREO_MODE);
+-  stereo_per_eye_resolution_full = Config::Get(Config::GFX_STEREO_PER_EYE_RESOLUTION_FULL);
++  // Any value an older configuration holds (top and bottom, anaglyph, quad buffer, passive) means the one 3D output
++  stereo_mode = Config::Get(Config::GFX_STEREO_MODE) != StereoMode::Off ? StereoMode::SideBySide :
++                                                                          StereoMode::Off;
++  // Each eye is always a complete picture of its own, and the eye swap is the desktop's, per output
++  stereo_per_eye_resolution_full = false;
+   stereo_depth = Config::Get(Config::GFX_STEREO_DEPTH) *
+                  Config::Get(Config::GFX_STEREO_DEPTH_PERCENTAGE) * 0.00001f;
+   stereo_convergence = Config::Get(Config::GFX_STEREO_CONVERGENCE) *
+                        Config::Get(Config::GFX_STEREO_CONVERGENCE_PERCENTAGE) * 0.01f;
+-  bStereoSwapEyes = Config::Get(Config::GFX_STEREO_SWAP_EYES);
++  bStereoSwapEyes = false;
+   bStereoEFBMonoDepth = Config::Get(Config::GFX_STEREO_EFB_MONO_DEPTH);
+ 
+   bEFBAccessEnable = Config::Get(Config::GFX_HACK_EFB_ACCESS_ENABLE);
+@@ -204,6 +216,17 @@ void VideoConfig::Refresh()
+   vertex_loader_type = Config::Get(Config::GFX_VERTEX_LOADER_TYPE);
+ }
+ 
++bool VideoConfig::StereoBackbufferLayers() const
++{
++  return stereo_mode != StereoMode::Off && g_backend_info.bStereoPairFromLayers &&
++         g_backend_info.bBackbufferStereoLayers;
++}
++
++bool VideoConfig::StereoBackbufferHalves() const
++{
++  return stereo_mode != StereoMode::Off && !g_backend_info.bStereoPairFromLayers;
++}
++
+ void VideoConfig::VerifyValidity()
+ {
+   // TODO: Check iMaxAnisotropy value
+@@ -213,13 +236,13 @@ void VideoConfig::VerifyValidity()
+   if (!Common::Contains(g_backend_info.AAModes, iMultisamples))
+     iMultisamples = 1;
+ 
++  StereoOutput::SetRendererRefusal("");
+   if (stereo_mode != StereoMode::Off)
+   {
++    // The host program tells the person, when they turned 3D on themselves or when the desktop takes the pair
+     if (!g_backend_info.bSupportsGeometryShaders)
+     {
+-      OSD::AddMessage(
+-          "Stereoscopic 3D isn't supported by your GPU, support for OpenGL 3.2 is required.",
+-          10000);
++      StereoOutput::SetRendererRefusal(g_backend_info.DisplayName);
+       stereo_mode = StereoMode::Off;
+     }
+   }
+diff --git a/Source/Core/VideoCommon/VideoConfig.h b/Source/Core/VideoCommon/VideoConfig.h
+index e160154..22471e1 100644
+--- a/Source/Core/VideoCommon/VideoConfig.h
++++ b/Source/Core/VideoCommon/VideoConfig.h
+@@ -33,11 +33,9 @@ enum class AspectMode : int
+ enum class StereoMode : int
+ {
+   Off,
+-  SideBySide,
+-  TopAndBottom,
+-  Anaglyph,
+-  QuadBuffer,
+-  Passive
++  // The one 3D output of the edition: both eyes as separate complete pictures, side by side, left eye first,
++  // declared to the compositor as full side by side
++  SideBySide
+ };
+ 
+ enum class ShaderCompilationMode : int
+@@ -138,6 +136,11 @@ struct BackendInfo
+   u32 MaxTextureSize = 16384;
+   bool bUsesLowerLeftOrigin = false;
+   bool bUsesExplictQuadBuffering = false;
++  // The one 3D output is made from the two image layers of the swapchain, which the graphics driver packs into one
++  // pair and declares to the desktop (Mesa's Vulkan presentation): the program never makes its window wider
++  bool bStereoPairFromLayers = false;
++  // The current swapchain has those two layers
++  bool bBackbufferStereoLayers = false;
+   bool bSupportsExclusiveFullscreen = false;  // Note: Vulkan can change this at runtime.
+   bool bSupportsDualSourceBlend = false;
+   bool bSupportsPrimitiveRestart = false;
+@@ -320,6 +323,11 @@ struct VideoConfig final
+   float stereo_convergence = 0;
+   bool bStereoSwapEyes = false;
+   bool bStereoEFBMonoDepth = false;
++  // 3D is on and each eye is drawn into its own layer of the backbuffer, which the graphics driver packs into one
++  // declared pair (Mesa's Vulkan presentation)
++  bool StereoBackbufferLayers() const;
++  // 3D is on and the backbuffer is the declared window itself, two views wide: each eye is drawn into its half
++  bool StereoBackbufferHalves() const;
+ 
+   // D3D only config, mostly to be merged into the above
+   int iAdapter = 0;
