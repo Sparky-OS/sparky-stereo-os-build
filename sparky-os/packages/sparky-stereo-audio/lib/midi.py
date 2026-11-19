@@ -162,9 +162,18 @@ def command(argv, say):
     parser.add_argument('--service', choices=('on', 'off'))
     parser.add_argument('--serve', action='store_true')
     parser.add_argument('--play')
+    parser.add_argument('--emulator-error', choices=('DOSBox-Staging',))
+    parser.add_argument('--emulator-ready', choices=('DOSBox-Staging',))
     parser.add_argument('--rom-error', choices=('Munt', 'DOSBox-Staging'))
     try:
         args = parser.parse_args(argv)
+        if args.emulator_error:
+            report(say, 'midi-emulator-' + args.emulator_error.lower(), 53, args.emulator_error)
+            return 1
+        if args.emulator_ready:
+            clear('midi-emulator-' + args.emulator_ready.lower())
+            clear('midi-rom-' + args.emulator_ready.lower())
+            return 0
         if args.rom_error:
             report(say, 'midi-rom-' + args.rom_error.lower(), 56, args.rom_error)
             return 1
