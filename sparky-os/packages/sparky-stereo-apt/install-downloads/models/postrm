@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+[ "${1:-}" = purge ] || exit 0
+if [ -e /usr/share/debconf/confmodule ]; then
+    . /usr/share/debconf/confmodule
+fi
+/usr/lib/sparky-stereo-apt/model-profilectl purge "${DPKG_MAINTSCRIPT_PACKAGE:?}"
+if command -v db_purge >/dev/null 2>&1; then db_purge; fi

@@ -5,7 +5,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT}
 SOURCE=${APTUS_SOURCE:-$HERE/../../sparky-aptus-stereo-appcenter}
-VERSION=0.1.16+lc1
+VERSION=0.1.17+lc1
 PACKAGE=sparky-aptus-stereo-appcenter
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.aptus-stereo.XXXXXX")
@@ -18,6 +18,8 @@ install -m755 "$WORK/source/handler" "$D/usr/lib/$PACKAGE/handler"
 install -m644 "$WORK/source/ATTRIBUTIONS.md" "$D/usr/lib/$PACKAGE/ATTRIBUTIONS.md"
 install -m644 "$WORK/source/catalogue.py" "$WORK/source/catalogue.json" "$D/usr/lib/$PACKAGE/"
 install -Dm755 "$WORK/source/actions/entry" "$D/usr/lib/$PACKAGE/actions/entry"
+install -m644 "$WORK/source/packageuri.py" "$D/usr/lib/$PACKAGE/packageuri.py"
+install -m644 "$WORK/source/packagepages.py" "$D/usr/lib/$PACKAGE/packagepages.py"
 install -m644 "$WORK/source/common.py" "$D/usr/lib/$PACKAGE/common.py"
 install -m644 "$WORK/source/appimage.py" "$D/usr/lib/$PACKAGE/appimage.py"
 install -m644 "$WORK/source/tools.py" "$D/usr/lib/$PACKAGE/tools.py"
@@ -35,6 +37,17 @@ done
 install -m644 "$HERE/../sparky-stereo-apt/install-downloads/lang/es.json" "$D/usr/share/sparky/$PACKAGE/install-downloads/es.json"
 printf '#!/bin/sh\nexec /usr/lib/sparky-aptus-stereo-appcenter/appcenter "$@"\n' > "$D/usr/bin/$PACKAGE"
 chmod 755 "$D/usr/bin/$PACKAGE"
+cat > "$D/usr/share/applications/sparky-aptus-stereo-package.desktop" <<EOF
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Stereo APTus
+NoDisplay=true
+Exec=/usr/bin/sparky-aptus-stereo-appcenter --open-package %u
+Icon=system-software-install
+Terminal=false
+MimeType=x-scheme-handler/aptus;
+EOF
 install -m644 "$HERE/copyright" "$D/usr/share/doc/$PACKAGE/copyright"
 install -m644 "$HERE/README.md" "$HERE/CHANGELOG" "$WORK/source/ATTRIBUTIONS.md" "$D/usr/share/doc/$PACKAGE/"
 sparky-stereo-problems catalog "$PACKAGE" "$WORK/source/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL1

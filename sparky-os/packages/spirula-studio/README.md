@@ -1,0 +1,43 @@
+# Spirula Studio
+
+Create a 3D model from photos or video, then inspect it in stereo.
+This recipe builds the edition's fork of Harry Chen's Spirula Studio.
+The application is GPL-3.0; the optional processing profiles retain their publishers' own terms.
+
+`spirula-studio` installs the Vulkan application, menu entry and shared profile declarations.
+`spirula-studio-cuda` adds the same program with CUDA training, selected by its menu action or `--compute-backend=cuda` as the first argument.
+Graphics supplies one stable GPU identity for training, structure from motion and inference.
+Native patented video is disabled; video decoding and extraction use the edition's external FFmpeg.
+
+Each `spirula-studio-model-*` package selects one processing profile independently.
+It contains no weights: installation shows the pinned publisher, byte count, metered notice and verbatim terms before downloading anything.
+A required licence answer starts at No.
+The program opens the missing profile's AppCenter installation page rather than fetching on first use.
+Removal keeps downloaded models; purge removes installer-owned data, preserving files owned by the person and data shared with another profile.
+
+Build inside an updated Debian testing container with the edition's signed repository and the house HTTPS apt helper.
+Mount the CUDA 13.5 toolkit read-only at `/opt/cuda`, or install NVIDIA's `cuda-nvcc-13-5` and `cuda-cudart-dev-13-5` and point `/opt/cuda` to that toolkit.
+The NVIDIA hardware setup already configures the edition's CUDA repository and driver lock; the CUDA runtime remains NVIDIA's separately installed package.
+No driver, toolkit, processing model or GPU is needed by the Vulkan runtime package itself.
+The pinned Slang compiler is a build tool downloaded into disposable `slang/`, excluded from both source and runtime payloads.
+GLFW, Dear ImGui and the CJK fonts are declared source components with their original notices.
+
+Set `SPIRULA_SOURCE` to the clean, committed fork checkout, `OUT` to an owned output directory, and run `build-container.sh` with the prepared image, public archive configuration and disposable gate path set as its required variables describe.
+Pass read-only Docker mounts for that configuration, its public keyrings, the signed local repository, CUDA SDK and any explicit sibling archives; all paths in the configuration must be visible inside the container.
+The wrapper initializes the host build facts through `build-provenance.sh`; `build.sh` refuses missing provenance or a missing archive-backed gate.
+A complete build is capped at four compiler jobs.
+Pinned source components and fonts are fetched from their publishers when no verified local cache is present.
+It composes a `3.0 (quilt)` source from upstream b8e15cb8 and the edition patch, retains the native Lean Code source-consumer plan, and uses ordinary debhelper with the qualified payload and link/start gates.
+The generated `.dsc`, `.buildinfo` and `.changes` retain the build identity and checksums.
+Run the source checks before the build projection, backend parity on both GPUs, and the installed-package stereo rig against the accepted compositor and Mesa cohort.
+
+The application belongs on Graphics/Editors and Stereo players, editors and tools in AppCenter.
+The accepted role mapping is designer and creator, as Suggests; this recipe changes neither role list.
+
+For a packaging-only successor, set SPIRULA_REPACK_FROM to the qualified predecessor directory named by debian/repack-predecessor.json.
+The recipe verifies its source and build record, carries its source-consumer preserve plan and copies the declared original components without downloading them.
+Both composition paths normalize the source tree with SOURCE_DATE_EPOCH immediately before dpkg-source -b.
+The reuse path checks all predecessor archive hashes and unchanged native inputs, then restores authored payloads through HR and repeats the normal payload and link/start gates.
+The build record retains the new recipe identity and the compiled predecessor identity; reuse never invokes a native compiler.
+The original font component retains its pinned mode 0664 regardless of cache modes or umask; extracted build inputs use mode 0644.
+The reuse guard still requires every extracted native input byte and mode to match exactly; no mode exception is needed or allowed.

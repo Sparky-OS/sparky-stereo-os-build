@@ -1,0 +1,85 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Spirula Studio
+Upstream-Contact: Harry Chen
+Source: https://github.com/harry7557558/spirula-studio
+Files-Excluded: imgui/examples/libs/glfw/lib-vc2010-32/glfw3.lib
+ imgui/examples/libs/glfw/lib-vc2010-64/glfw3.lib
+Comment: Unused prebuilt Windows example libraries are omitted from the ImGui source component.
+
+Files: *
+Copyright: Harry Chen and Spirula Studio contributors
+License: GPL-3.0
+ The complete licence is in LICENSE and
+ /usr/share/common-licenses/GPL-3.
+
+Files: debian/*
+Copyright: 2026 Daniel Campos Ramos
+License: GPL-3.0+
+ On Debian systems the complete GNU General Public License version 3
+ is in /usr/share/common-licenses/GPL-3.
+
+Files: glfw/*
+Copyright: Marcus Geelnard, Camilla Löwy and GLFW contributors
+License: Zlib
+ See glfw/LICENSE.md; retained in the installed licenses/GLFW.txt.
+
+Files: imgui/*
+Copyright: Omar Cornut and Dear ImGui contributors
+License: MIT
+ See imgui/LICENSE.txt; retained in the installed licenses/ImGui.txt.
+ Embedded stb components retain their own notices too.
+
+Files: fonts/* assets/fonts/*
+Copyright: Adobe, Google and the font contributors named in the OFL files
+License: OFL-1.1
+ See assets/fonts/OFL*.txt and the installed licenses directory.
+
+Files: src/external/miniz.* src/external/npy.hpp
+Copyright: Rich Geldreich, RAD Game Tools, Valve Software, Tenacious Software LLC,
+ Leon Merten Lohse
+License: MIT
+ The exact copyright and grant from each component are in debian/notices.
+
+Files: src/external/stb_image* src/external/stb_image_write*
+Copyright: Sean Barrett and the contributors named in the source
+License: MIT or Unlicense
+ Both alternative grants are retained in debian/notices and installed licenses.
+
+Files: src/external/apriltag/*
+Copyright: The Regents of the University of Michigan
+License: BSD-2-Clause
+ See src/external/apriltag/LICENSE.md and LICENSE-OpenCV.txt for the
+ OpenCV ArUco component's separate BSD-3-Clause notice.
+ Both verbatim notices are retained in debian/notices and installed licenses.
+
+Files: src/shaders/ppisp.slang src/kernels/bilagrid/BilagridPpispMath*.cuh
+Copyright: NVIDIA Corporation and affiliates
+License: Apache-2.0
+ See debian/notices/PPISP.txt and /usr/share/common-licenses/Apache-2.0.
+
+Files: src/generated/slang.cuh
+Copyright: The Slang authors
+License: Apache-2.0 with LLVM exception
+ The upstream grant and exception are in debian/notices/Slang.txt.
+ CUDA template components retain the publisher's complete CCCL notices.
+
+Files: debian/licences/*
+Copyright: The model publishers named in the retained verbatim terms
+License: model-notices
+ These are the publishers' own licence notices, not model weights.
+ Each notice retains its original terms; this packaging makes no additional
+ grant for any model. The profile's installer presents the applicable texts.
+
+Files: debian/notices/*
+Copyright: The component authors named in each verbatim notice
+License: component-notices
+ The original component grants are retained in these files and installed
+ under /usr/share/doc/spirula-studio/licenses. They are not relicensed by
+ the Debian packaging paragraph above.
+
+Files: debian/notices/CUDA-EULA.txt
+Copyright: NVIDIA Corporation
+License: NVIDIA-CUDA
+ The SDK terms are retained verbatim in this file and in the installed
+ licenses directory. They cover CUDA compiler runtime components; the
+ application's own CUDA source retains its upstream GPL licence.
