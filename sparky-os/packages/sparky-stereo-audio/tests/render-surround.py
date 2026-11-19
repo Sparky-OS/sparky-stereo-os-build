@@ -77,12 +77,13 @@ def main():
         os.environ['HOME'] = str(root)
         conf = root / 'config/pipewire/pipewire.conf.d'
         conf.mkdir(parents=True)
+        target_positions = s.LAYOUTS['5.1'] if os.environ.get('AS21_MODE') in ('decode', 'upmix') else ['FL', 'FR']
         (conf / 'test.conf').write_text(json.dumps({
             'context.properties': {'default.clock.allowed-rates': [44100, 48000, 96000]},
             'context.objects': [{'factory': 'adapter', 'args': {
                 'factory.name': 'support.null-audio-sink', 'node.name': 'as21-headphones',
-                'media.class': 'Audio/Sink', 'device.form-factor': 'headphone',
-                'audio.position': ['FL', 'FR'], 'audio.channels': 2}}]}))
+                'media.class': 'Audio/Sink', 'device.form-factor': 'speaker' if len(target_positions) > 2 else 'headphone',
+                'audio.position': target_positions, 'audio.channels': len(target_positions)}}]}))
         automatic = os.environ.get('AS21_AUTOMATIC') == '1'
         if automatic and os.environ.get('AS21_BASELINE') != '1':
             wpconf = root / 'config/wireplumber/wireplumber.conf.d'
@@ -105,44 +106,85 @@ def main():
             start(['wireplumber'], 'wireplumber')
             wait_for(lambda: any(n['info']['props'].get('node.name') == 'as21-headphones' for n in nodes()))
             layout = os.environ.get('AS21_LAYOUT', '5.1')
-            positions = s.LAYOUTS[layout]
+            mode = os.environ.get('AS21_MODE', 'surround')
+            positions = ['FL', 'FR'] if mode in ('stereo', 'decode', 'upmix') else s.LAYOUTS[layout]
+            if mode in ('decode', 'upmix'):
+                command = [str(Path(__file__).resolve().parents[1] / 'bin/sparky-stereo-audio'), 'surround',
+                           '--output', 'as21-headphones', '--matrix', mode]
+                subprocess.run(command, check=True, timeout=10)
             args = s.module_args('as21-binaural', 'as21-headphones', s.binaural(layout),
-                                 positions, 'as21')
+                                 s.LAYOUTS[layout], 'as21')
             config = root / 'filter.conf'
-            config.write_text(json.dumps(s.client_config(args)))
+            config.write_text(json.dumps(s.client_config(args), indent=2))
             filter_process = None
             if not automatic:
                 filter_process = start(['pipewire', '-c', str(config)], 'filter')
                 wait_for(lambda: any(n['info']['props'].get('node.name') == 'as21-binaural' for n in nodes()))
             results = []
-            for rate in (48000, 96000):
+            for rate in map(int, os.environ.get('AS21_RATES', '48000,96000').split(',')):
                 frames = 3 * rate
                 source = np.zeros((frames, len(positions)), dtype='<f4')
-                offsets = [rate // 2 + i * rate // 3 for i in range(len(positions))]
-                for i, offset in enumerate(offsets):
-                    source[offset, i] = 0.1
+                if mode in ('stereo', 'decode', 'upmix'):
+                    source = np.random.default_rng(21).integers(-2048, 2048, size=source.shape).astype('<f4') / 8192
+                offsets = [(0 if os.environ.get('AS21_FIRST_SAMPLE') == '1' else rate // 2) + i * rate // 3 for i in range(len(positions))]
+                if mode not in ('stereo', 'decode', 'upmix'):
+                    for i, offset in enumerate(offsets):
+                        source[offset, i] = 0.1
                 raw = root / 'source.raw'
                 source.tofile(raw)
                 capture = root / 'capture.raw'
                 with open(capture, 'wb') as output:
                     rec = subprocess.Popen(['pw-record', '--raw', '--properties', 'stream.capture.sink=true', '--target', 'as21-headphones', '--rate', str(rate),
-                                            '--channels', '2', '--channel-map', 'FL,FR', '--format', 'f32', '-'],
+                                            '--channels', str(len(target_positions)), '--channel-map', ','.join(target_positions), '--format', 'f32', '-'],
                                            stdout=output, stderr=subprocess.DEVNULL)
                     processes.append(rec)
                     time.sleep(0.3)
-                    player = subprocess.Popen(['pw-play', '--raw', '--target', 'as21-headphones' if automatic else 'as21-binaural', '--rate', str(rate),
+                    player = subprocess.Popen(['pw-play', '--raw', '--target', 'auto' if automatic else 'as21-binaural', '--rate', str(rate),
                                     '--channels', str(len(positions)), '--channel-map', ','.join(positions),
                                     '--format', 'f32', '-'], stdin=open(raw, 'rb'))
                     processes.append(player)
                     time.sleep(0.3)
                     if automatic:
                         Path('/evidence/automatic-graph.json').write_text(subprocess.check_output(['pw-dump'], text=True))
+                    if mode == 'switch':
+                        subprocess.run(['pw-cli', 'create-node', 'adapter', json.dumps({
+                            'factory.name': 'support.null-audio-sink', 'node.name': 'as21-speakers',
+                            'media.class': 'Audio/Sink', 'device.form-factor': 'speaker',
+                            'priority.session': 5000, 'audio.channels': 2, 'audio.position': ['FL','FR'],
+                            'object.linger': True})], check=True, stdout=subprocess.DEVNULL)
+                        wait_for(lambda: not any(n['info']['props'].get('node.name', '').startswith('sparky.audio.') for n in nodes()))
+                        assert player.poll() is None, 'switch checked after playback ended'
+                        Path('/evidence/speaker-switch-graph.json').write_text(subprocess.check_output(['pw-dump'], text=True))
+                    if mode == 'stereo':
+                        assert not any(n['info']['props'].get('node.name', '').startswith('sparky.audio.') for n in nodes())
                     player.wait(timeout=15)
                     time.sleep(0.3)
                     rec.send_signal(signal.SIGINT)
                     rec.wait(timeout=5)
-                received = np.fromfile(capture, dtype='<f4').reshape(-1, 2)
+                received = np.fromfile(capture, dtype='<f4').reshape(-1, len(target_positions))
                 assert len(received) > frames, (rate, len(received))
+                if mode in ('decode', 'upmix'):
+                    alignment = int(np.argmax(correlate(received[:, 0], source[:, 0], mode='full')) - len(source) + 1)
+                    actual=received[alignment:alignment+frames]
+                    expected=source * (0.707 if mode == 'decode' else 1.0)
+                    front_error=float(np.max(np.abs(actual[:, :2]-expected)))
+                    energy=np.sum(actual.astype('float64')**2,axis=0)
+                    assert front_error < 2e-6, front_error
+                    assert energy[4] > 0 and energy[5] > 0, energy
+                    if mode == 'decode': assert energy[2] == energy[3] == 0, energy
+                    results.append({'mode':mode,'rate':rate,'front_max_error':front_error,'channel_energy':energy.tolist()})
+                    continue
+                if mode == 'switch':
+                    results.append({'mode': mode, 'filter_removed_during_playback': True})
+                    break
+                if mode == 'stereo':
+                    alignment = int(np.argmax(correlate(received[:, 0], source[:, 0], mode='full')) - len(source) + 1)
+                    actual = received[alignment:alignment + frames]
+                    assert actual.shape == source.shape
+                    error = float(np.max(np.abs(actual-source)))
+                    assert error == 0, error
+                    results.append({'mode': mode, 'rate': rate, 'max_error': error, 'bit_exact': actual.tobytes() == source.tobytes()})
+                    continue
                 predicted = np.zeros((frames, 2), dtype='<f4')
                 refs = []
                 for i, channel in enumerate(positions):
@@ -167,7 +209,7 @@ def main():
                 filter_process.terminate()
                 filter_process.wait(timeout=5)
             wait_for(lambda: not any(n['info']['props'].get('node.name', '').startswith(('as21-binaural', 'sparky.audio.')) for n in nodes()))
-            Path('/evidence/' + ('automatic' if automatic else 'render') + '-' + layout + '-results.json').write_text(json.dumps(results, indent=2) + '\n')
+            Path('/evidence/' + ('automatic' if automatic else 'render') + '-' + mode + '-' + layout + '-results.json').write_text(json.dumps(results, indent=2) + '\n')
             print(json.dumps(results, indent=2))
         finally:
             for p in reversed(processes):

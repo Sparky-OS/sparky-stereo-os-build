@@ -5,8 +5,6 @@
 PipeWire's SOFA spatializer and convolution examples own the processing.
 HeSuVi channel indices follow PipeWire's sink-virtual-surround-7.1-hesuvi.conf.
 """
-import json
-import os
 import re
 
 KEMAR = '/usr/share/libmysofa/MIT_KEMAR_normal_pinna.sofa'
@@ -53,14 +51,22 @@ def headphone(sink):
         ports = [dict(value, name=key) for key, value in ports.items()]
     for port in ports:
         if port.get('name') == active:
-            return str(port.get('type', '')).lower() in ('headphones', 'headset')
+            kind = str(port.get('type', '')).lower()
+            if kind in ('headphones', 'headset'):
+                return True
+            if kind in ('speaker', 'line', 'hdmi', 'spdif'):
+                return False
     form = str(props.get('device.form_factor', props.get('device.form-factor', '')))
     icon = str(props.get('device.icon_name', props.get('api.bluez5.icon', '')))
     profile = str(props.get('api.bluez5.profile', props.get('bluez5.profile', '')))
-    return (form in ('headphone', 'headphones', 'headset') or
+    if (form in ('headphone', 'headphones', 'headset') or
             icon in ('audio-headphones', 'audio-headset') or
             profile in ('headset-head-unit', 'headset-head-unit-cvsd',
-                        'headset-head-unit-msbc', 'hfp-hf', 'hsp-hs'))
+                        'headset-head-unit-msbc', 'hfp-hf', 'hsp-hs')):
+        return True
+    if form in ('speaker', 'speakers') or icon == 'audio-speakers':
+        return False
+    return None
 
 
 def binaural(layout, filename=KEMAR, kind='sofa'):

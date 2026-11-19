@@ -13,16 +13,22 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=0.1.0+lc1
+VERSION=0.2.0+lc1
 PKG=sparky-stereo-audio
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/audio-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT
 D=$W/$PKG
 mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/usr/share/sparky/$PKG" "$D/usr/share/doc/$PKG" \
 	"$D/usr/lib/systemd/system/multi-user.target.wants" "$D/usr/lib/systemd/user/default.target.wants" \
+	"$D/usr/lib/sparky-stereo-audio" "$D/usr/share/wireplumber/scripts" "$D/usr/share/wireplumber/wireplumber.conf.d" \
 	"$D/usr/lib/udev/rules.d" "$D/usr/lib/systemd/catalog"
 
 install -m 755 "$HERE/bin/sparky-stereo-audio" "$D/usr/bin/"
+install -m 644 "$HERE"/lib/*.py "$D/usr/lib/sparky-stereo-audio/"
+install -m 644 "$HERE/wireplumber/sparky-stereo-audio.lua" "$D/usr/share/wireplumber/scripts/"
+install -m 644 "$HERE/wireplumber/00-sparky-stereo-surround.conf" "$D/usr/share/wireplumber/wireplumber.conf.d/"
+install -m 644 "$HERE/systemd/sparky-stereo-audio-monitor.service" "$D/usr/lib/systemd/user/"
+ln -s ../sparky-stereo-audio-monitor.service "$D/usr/lib/systemd/user/default.target.wants/sparky-stereo-audio-monitor.service"
 install -m 644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
 install -m 644 "$HERE/README.md" "$D/usr/share/doc/$PKG/README.md"
 install -m 644 "$HERE/CHANGELOG" "$D/usr/share/doc/$PKG/CHANGELOG"
@@ -34,7 +40,7 @@ ln -s ../sparky-stereo-audio.service "$D/usr/lib/systemd/system/multi-user.targe
 ln -s ../sparky-stereo-audio-apply.path "$D/usr/lib/systemd/user/default.target.wants/sparky-stereo-audio-apply.path"
 ln -s ../sparky-stereo-audio-apply.service "$D/usr/lib/systemd/user/default.target.wants/sparky-stereo-audio-apply.service"
 # the package's failure messages (LOCAL20 to LOCAL23), word for word, as journal catalogs the engine reads in the person's language
-sparky-stereo-problems catalog $PKG "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL1 --keys LOCAL20,LOCAL21,LOCAL22,LOCAL23
+sparky-stereo-problems catalog $PKG "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL1 --keys LOCAL20,LOCAL21,LOCAL22,LOCAL23,LOCAL27,LOCAL29,LOCAL40,LOCAL41
 
 # The program says and keeps what fails (sparky-stereo-problems); the package configures either way, as debhelper's own
 # service starts do, and `sparky-stereo-audio detect --write` does the step again.
@@ -80,7 +86,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: pipewire, pipewire-bin, python3, sparky-stereo-problems (>= 0.2.0), systemd, wireplumber
+Depends: pipewire (>= 1.6.9), pipewire-bin, pipewire-pulse, pulseaudio-utils, libmysofa-utils, python3, sparky-stereo-problems (>= 0.2.0), systemd, wireplumber (>= 0.5.19)
 Section: System
 Priority: optional
 Homepage: https://sparkylinux.org
