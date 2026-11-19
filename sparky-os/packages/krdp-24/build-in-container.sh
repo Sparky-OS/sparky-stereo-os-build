@@ -18,6 +18,7 @@ export SPARKY_LC_ARCHIVE_CONFIG="$job/archive.json" SPARKY_LC_SCRATCH="$job/link
 mkdir -p "$SPARKY_LC_SCRATCH"
 export SPARKY_LC_SIBLINGS_FILE="$job/siblings.txt"
 find /work/linux/kpw-package -maxdepth 1 -name "*.deb" ! -name "*-dbgsym_*" ! -name "*-lc-hr_*" -print | sort > "$SPARKY_LC_SIBLINGS_FILE"
+export SPARKY_LC_PREVIOUS_SIBLINGS_FILE="$SPARKY_LC_SIBLINGS_FILE"
 chown -R builder:builder "$job"
 cd source
 export HOME="$job"
