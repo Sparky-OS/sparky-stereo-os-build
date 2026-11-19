@@ -6,8 +6,10 @@ import bpy
 from mathutils import Vector
 
 AZIMUTH, ELEVATION, DISTANCE, HFOV = math.radians(34), math.radians(26), 4.2, math.radians(24)
-# Total disparity from the farthest to the nearest point of the model, as a fraction of the picture width (one eye).
-DEPTH_RANGE = 0.03
+# The separation is the screen's, never the picture's: the model's nearest point stands POPPED pixels in front of the screen and its
+# farthest point SUNK pixels behind it, pixels of a screen 1920 wide on which the icon is drawn at its own size, at every icon size.
+# Candidate "a" is an element inside a window (plus and minus 1 px), candidate "b" the desktop's limits (popped 4, sunk 10).
+CANDIDATES = {"a": (1.0, 1.0), "b": (4.0, 10.0)}
 
 
 def reset():
@@ -109,11 +111,13 @@ def depth_range(position, forward, objects):
     return min(zs), max(zs)
 
 
-def separation(near, far):
-    """The eye separation that spreads DEPTH_RANGE across the model: disparity(Z) = b * (D - Z) / Z, in units of the plane's width."""
-    d = DISTANCE
-    span = (d - near) / near - (d - far) / far
-    return DEPTH_RANGE * (2 * d * math.tan(HFOV / 2)) / span
+def separation(near, far, size, popped, sunk):
+    """The eye separation b and the convergence distance that put the nearest point at +popped px and the farthest at -sunk px of an icon
+    drawn size px wide: disparity(Z) = b (1/Z - 1/convergence) / (2 tan(HFOV/2)) of the picture width, times size px."""
+    t2 = 2 * math.tan(HFOV / 2)
+    b = t2 * (popped + sunk) / (size * (1 / near - 1 / far))
+    convergence = 1 / (1 / near - popped * t2 / (size * b))
+    return b, convergence
 
 
 def place_eyes(cameras, right, width_at_plane, base):

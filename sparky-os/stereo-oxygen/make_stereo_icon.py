@@ -20,7 +20,7 @@ UNITS (the "parts"), in paint order. Starting at the document root:
   * every other drawable child (path, rect, circle, ellipse, polygon, polyline, line, text, use, image, and any
     other <g>) is one unit; a <g> is never split, so an object drawn as a group moves as a whole.
 
-DEPTH. B = strength * N is the total parallax (pixels) between the icon's back (level 0, parallax 0, the
+DEPTH (step-1 experiment, not shipped; its strength as a share of the icon's size is against the rule of one separation tailored to the screen, never to the element size: a shipped icon takes a fixed number of pixels of a 1920 wide screen, as tools/icons3d does since ORDER 750). B = strength * N is the total parallax (pixels) between the icon's back (level 0, parallax 0, the
 icon's own level) and its front (parallax B). Parallax is never negative: nothing goes behind the icon's level.
   Rule A (paint order): unit i of n (0 = first painted) has parallax B * i / (n-1); the first unit is at the icon's
     level, the last painted unit at B, the others evenly between.

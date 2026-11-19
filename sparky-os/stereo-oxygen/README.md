@@ -26,7 +26,7 @@ From left to right, in every row:
 3. **B 2%, B 4%, B 6%**: depth rule B, three strengths.
 4. **C 2%, C 4%, C 6%**: depth rule C, three strengths.
 
-The strength is the total depth between the back and the front of the icon, as a fraction of the icon's size: 2 %, 4 % and 6 % (at 32 pixels that is about 0.6, 1.3 and 1.9 pixels; at 256 pixels, 5, 10 and 15). It is the same fraction at every size. The back of the icon stays at the icon's own level and only the rest comes out toward you; nothing goes behind it and nothing is cut by the picture's edge (where a part would be, the strength of that one icon is reduced; the generator records it).
+The strength is the total depth between the back and the front of the icon, as a fraction of the icon's size: 2 %, 4 % and 6 % (at 32 pixels that is about 0.6, 1.3 and 1.9 pixels; at 256 pixels, 5, 10 and 15). It is the same fraction at every size, which is the experiment's limit and not the rule: the edition's separation is tailored to the screen, never to the size of an element, so a shipped icon takes a fixed number of pixels of a 1920 wide screen at every size (the Kubabbar Glass pipeline, `tools/icons3d`, since ORDER 750). Nothing of this step-1 set is shipped. The back of the icon stays at the icon's own level and only the rest comes out toward you; nothing goes behind it and nothing is cut by the picture's edge (where a part would be, the strength of that one icon is reduced; the generator records it).
 
 One thing to know when comparing: the PLAIN column is Oxygen's shipped PNG, the other columns are the source drawing rendered by librsvg, so at 32 and 48 pixels the two can differ a little in softness (Oxygen made its small PNGs with its own export steps).
 

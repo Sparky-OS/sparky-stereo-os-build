@@ -329,8 +329,8 @@ index 094d494..c8e9318 100644
 +      in pixels of a view 1920 wide. They are the user's limits built on the
 +      output's display: a headset gets more separation, a framed 3D screen
 +      less (the display's kind and physical size, libstereo-policy). A
-+      surface scales them to its own view's width, and nothing it draws
-+      reaches beyond them.
++      surface takes them as they are for its screen, in its buffer's pixels
++      through stereo_depth_limits_for_buffer, never by its own width.
 +    </description>
 +    <arg name="sunk" type="fixed" summary="the sunk limit, pixels of a view 1920 wide"/>
 +    <arg name="popped" type="fixed" summary="the popped limit, pixels of a view 1920 wide"/>
