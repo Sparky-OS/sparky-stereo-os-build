@@ -5,11 +5,16 @@
 """High fidelity sound out of the box (ORDER 631): the sound system follows the rate of what plays, a file is converted
 only when the device cannot take its rate, and then at the highest quality this processor carries.
 
-  sparky-stereo-audio detect [--write]  read the sound devices (/proc/asound), measure the processor, say the choices;
+  sparky-stereo-audio detect [--write] [--settle]  read the sound devices (/proc/asound), measure the processor, say the choices;
                                         with --write (root) write the drop-ins for PipeWire and WirePlumber
   sparky-stereo-audio show              the choices made on this computer, in plain words and in your language
   sparky-stereo-audio apply             in a session: give the running sound system the current list of rates, adding
                                         what PipeWire itself reports for the devices connected now
+
+A graphics card's audio is read from its codec's HDMI or DisplayPort pins and the ELD of each connected display, whether a
+PCM is open or not. What a display told is kept in /var/lib/sparky-stereo-audio/displays.json by the display's identity
+(the ELD's manufacture_id, product_id and monitor_name) and used while that display is not connected; --settle reads a
+graphics card again until two readings agree, for the moment after a display was plugged in.
 
 The drop-ins are named 00-sparky-stereo-audio.conf, so every file of yours sorts after them and wins, as do the files
 in ~/.config. A file of that name that this program did not write is left alone and said. Environment, for tests:
@@ -25,6 +30,7 @@ import resource
 import subprocess
 import sys
 import tempfile
+import time
 
 # The installed library is beside the engine, with a source-tree path for tests.
 _lib = os.environ.get('SPARKY_STEREO_AUDIO_ROOT', '') + '/usr/lib/sparky-stereo-audio'
@@ -51,6 +57,9 @@ QUALITIES = (14, 13, 12, 10, 8, 6, 4)
 QUALITY_FLOOR = 4          # PipeWire's own default: the package never goes below it
 CPU_LIMIT = 20.0           # percent of one core the heaviest conversion may take: a fifth, so five at once would fill a core
 MAX_RATES = 32             # PipeWire's list of allowed rates holds 32
+MAX_DISPLAYS = 16          # displays whose values are kept; the one connected longest ago goes first (ours, no recorded design)
+SETTLE_STEP = 0.5          # seconds between two readings of a graphics card after a display came or went
+SETTLE_MAX = 4.0
 
 
 def conf_dirs():
@@ -77,7 +86,11 @@ def ints(text):
 
 
 def parse_codec(text):
-    """HDA codec file -> (codec name, [ {name, type, rates, bits} ]) for the Audio Output converters that carry a PCM."""
+    """HDA codec file -> (codec name, [ {name, type, rates, bits} ]) for the Audio Output converters that carry a PCM.
+    The Device line is printed by the kernel only while a PCM is assigned to the converter (sound/hda/common/proc.c,
+    print_nid_pcms(): `cpcm->stream[type].nid != nid` skips it, and an HDMI or DisplayPort codec sets that nid when
+    a stream is opened and clears it on close), so it is the way to name an analog or S/PDIF output, never a test that a
+    codec is readable. A graphics card's codec is read by hdmi_codec() below."""
     name = ''
     m = re.search(r'^Codec:\s*(.+)$', text, re.M)
     if m:
@@ -100,12 +113,32 @@ def parse_codec(text):
     return name, outs
 
 
+def hdmi_codec(text):
+    """HDA codec file -> None for a codec with no HDMI or DisplayPort pin, else the rates its converters take, whether a
+    PCM is open or not: the Pin Complex nodes whose Pincap lists HDMI or DP (HDA 1.0a, pin capabilities), and the Audio
+    Output converters' PCM lines, or the Default PCM line of the function group for a converter that has none."""
+    pins = [b for b in re.split(r'\n(?=Node 0x)', text)[1:] if '[Pin Complex]' in b.split('\n', 1)[0]]
+    if not any(re.search(r'^\s*Pincap 0x[0-9a-f]+:.*\b(HDMI|DP)\b', b, re.M) for b in pins):
+        return None
+    head = text.split('\nNode ', 1)[0]
+    dm = re.search(r'Default PCM:\s*\n\s*rates \[[^\]]*\]:([^\n]*)\n\s*bits \[[^\]]*\]:([^\n]*)', head)
+    default = ints(dm.group(1)) if dm else []
+    rates = set()
+    for block in re.split(r'\n(?=Node 0x)', text)[1:]:
+        if '[Audio Output]' not in block.split('\n', 1)[0]:
+            continue
+        pm = re.search(r'PCM:\s*\n\s*rates \[[^\]]*\]:([^\n]*)', block)
+        rates |= set(ints(pm.group(1)) if pm else default)
+    return rates
+
+
 def parse_eld(text):
     """ELD file (the kernel's reading of the display's CTA-861 audio data blocks) -> None or {name, rates, bits}.
     Only the LPCM short audio descriptors count: the rest are encoded formats (AC-3, DTS) for passthrough."""
     if not text or not re.search(r'^monitor_present\s+1', text, re.M) or not re.search(r'^eld_valid\s+1', text, re.M):
         return None
     mon = re.search(r'^monitor_name\s+(.*)$', text, re.M)
+    ident = [(re.search(r'^%s\s+(\S+)' % k, text, re.M) or [None, ''])[1] for k in ('manufacture_id', 'product_id')]
     rates, bits = set(), set()
     for i in range(16):
         ct = re.search(r'^sad%d_coding_type\s+\[0x1\]' % i, text, re.M)
@@ -115,7 +148,8 @@ def parse_eld(text):
         b = re.search(r'^sad%d_bits\s+\[[^\]]*\]([^\n]*)' % i, text, re.M)
         rates |= set(ints(r.group(1))) if r else set()
         bits |= set(ints(b.group(1))) if b else set()
-    return {'name': (mon.group(1).strip() if mon else 'display'), 'rates': sorted(rates), 'bits': sorted(bits), 'codecs': eld_formats(text)}
+    name = mon.group(1).strip() if mon else 'display'
+    return {'name': name, 'id': '%s:%s:%s' % (ident[0], ident[1], name), 'rates': sorted(rates), 'bits': sorted(bits), 'codecs': eld_formats(text)}
 
 
 def parse_usb_stream(text):
@@ -160,29 +194,34 @@ def scan(proc=None):
         streams = sorted(glob.glob(cdir + '/stream[0-9]*'))
         if codecs:
             card['kind'] = 'hda'
-            elds = [parse_eld(read(p)) for p in sorted(glob.glob(cdir + '/eld#*'))]
+            eld_files = sorted(glob.glob(cdir + '/eld#*'))
+            elds = [parse_eld(read(p)) for p in eld_files]
             elds = [e for e in elds if e]
+            hdmi = bool(eld_files)      # a codec with eld# files is a graphics card's audio, whether a PCM is open or not
+            conv = set()
             for cp in codecs:
-                cname, outs = parse_codec(read(cp) or '')
+                text = read(cp) or ''
+                cname, outs = parse_codec(text)
                 if cname:
                     card['name'] = cname
                 for o in outs:
                     if o['type'] == 'HDMI':
-                        continue
-                    if o['rates']:
+                        hdmi = True
+                        conv |= set(o['rates'])
+                    elif o['rates']:
                         card['outputs'].append({'label': o['name'], 'rates': sorted(o['rates']), 'bits': sorted(o['bits'])})
                         card['readable'] = True
-                hdmi = [o for o in outs if o['type'] == 'HDMI']
-                if hdmi:
-                    card['readable'] = True      # a graphics card's audio: nothing to play until a display is connected
-                    conv = set()
-                    for o in hdmi:
-                        conv |= set(o['rates'])
-                    for e in elds:
-                        rates = sorted(set(e['rates']) & conv) if conv else e['rates']
-                        bits = e['bits']
-                        if rates:
-                            card['outputs'].append({'label': e['name'], 'rates': rates, 'bits': bits, 'codecs': e['codecs']})
+                pins = hdmi_codec(text)
+                if pins is not None:
+                    hdmi = True
+                    conv |= pins
+            if hdmi:
+                card['hdmi'] = True
+                card['readable'] = True      # a graphics card's audio: its outputs are the displays connected, none until then
+                for e in elds:
+                    rates = sorted(set(e['rates']) & conv) if conv else e['rates']
+                    if rates:
+                        card['outputs'].append({'label': e['name'], 'rates': rates, 'bits': e['bits'], 'codecs': e['codecs'], 'display': e['id']})
         elif streams:
             card['kind'] = 'usb'
             for sp in streams:
@@ -190,6 +229,79 @@ def scan(proc=None):
                     card['outputs'].append({'label': ident, 'rates': s['rates'], 'bits': s['bits']})
                     card['readable'] = True
         cards.append(card)
+    return cards
+
+
+# ---------------------------------------------------------------- what a display told us, kept for that display
+
+def load_displays():
+    try:
+        with open(STATE + '/displays.json') as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def remember(cards, store):
+    """Keep what each connected display told us, and give a display that is away the values it had. The identity is the
+    ELD's manufacture_id, product_id and monitor_name (the display's EDID identity, whichever port it is on).
+    Returns the new store, most recently connected last; the cards gain the outputs of the displays that are away."""
+    store = {k: v for k, v in store.items() if isinstance(v, dict) and v.get('rates')}
+    here = set()
+    for c in cards:
+        for o in c['outputs']:
+            if o.get('display'):
+                here.add(o['display'])
+                store.pop(o['display'], None)
+                store[o['display']] = {'name': o['label'], 'card': c['id'], 'rates': o['rates'], 'bits': o['bits'],
+                                       'codecs': o.get('codecs', [])}
+    while len(store) > MAX_DISPLAYS:
+        store.pop(next(iter(store)))
+    for c in cards:
+        if not c.get('hdmi'):
+            continue
+        for ident, v in store.items():
+            if ident not in here and v.get('card') == c['id']:
+                c['outputs'].append({'label': v['name'], 'rates': v['rates'], 'bits': v.get('bits', []), 'codecs': v.get('codecs', []),
+                                     'display': ident, 'remembered': True})
+    return store
+
+
+def save_displays(store):
+    old = read(STATE + '/displays.json')
+    text = json.dumps(store, indent=1) + '\n'
+    if old == text:
+        return
+    os.makedirs(STATE, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=STATE, prefix='.displays')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            f.write(text)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, STATE + '/displays.json')
+    except OSError:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def scan_settled(settle):
+    """scan(); after a display was plugged in the kernel fills its ELD a moment later, so with `settle` the graphics cards are
+    read again until two readings, a step apart, agree (at most SETTLE_MAX seconds)."""
+    cards = scan()
+    if not settle or not any(c.get('hdmi') for c in cards):
+        return cards
+    step = float(os.environ.get('SPARKY_STEREO_AUDIO_SETTLE_STEP', SETTLE_STEP))
+    deadline = time.monotonic() + SETTLE_MAX
+    last = json.dumps(cards, sort_keys=True)
+    while time.monotonic() < deadline:
+        time.sleep(step)
+        cards = scan()
+        now = json.dumps(cards, sort_keys=True)
+        if now == last:
+            break
+        last = now
     return cards
 
 
@@ -453,21 +565,22 @@ def clear_problem(key):
 
 # ---------------------------------------------------------------- commands
 
-def decide(measure=True):
-    cards = scan()
+def decide(cards, store, measure=True):
     rates, default, unreadable = choose_rates(cards)
     quality, cost, key, how = choose_quality(measure)
-    return {'cards': cards, 'rates': rates, 'default': default, 'unreadable': [c['id'] for c in unreadable],
+    return {'cards': cards, 'displays': store, 'rates': rates, 'default': default, 'unreadable': [c['id'] for c in unreadable],
             'sixteen': sixteen_only(cards), 'quality': quality, 'cost': cost, 'cpu': key, 'cpu_how': how,
             'limit': CPU_LIMIT, 'files': {'pipewire': conf_dirs()['pipewire'] + '/' + NAME}}
 
 
-def cmd_detect(write):
+def cmd_detect(write, settle=False):
+    cards = scan_settled(settle)
+    store = remember(cards, load_displays())
     try:
-        d = decide()
+        d = decide(cards, store)
     except (RuntimeError, OSError) as e:
         keep_problem('measure', 23, e)
-        d = {'cards': scan()}
+        d = {'cards': cards, 'displays': store}
         d['rates'], d['default'], un = choose_rates(d['cards'])
         d.update({'unreadable': [c['id'] for c in un], 'sixteen': sixteen_only(d['cards']), 'quality': QUALITY_FLOOR,
                   'cost': {}, 'cpu': cpu_key(), 'cpu_how': 'not measured', 'limit': CPU_LIMIT,
@@ -506,9 +619,10 @@ def cmd_detect(write):
         clear_problem('read')
     try:
         os.makedirs(STATE, exist_ok=True)
+        save_displays(d['displays'])
         with open(STATE + '/choices.json', 'w') as f:
             json.dump({k: d[k] for k in ('rates', 'default', 'quality', 'cost', 'cpu', 'cpu_how', 'limit', 'unreadable', 'sixteen')} |
-                      {'cards': [{k: c[k] for k in ('card', 'id', 'name', 'kind', 'outputs', 'readable')} for c in d['cards']]}, f, indent=1)
+                      {'cards': [{k: c[k] for k in ('card', 'id', 'name', 'kind', 'outputs', 'readable', 'hdmi') if k in c} for c in d['cards']]}, f, indent=1)
         if d['cpu_how'] != 'not measured':
             with open(STATE + '/cpu.json', 'w') as f:
                 json.dump({'key': d['cpu'], 'quality': d['quality'], 'cost': d['cost'], 'limit': CPU_LIMIT}, f)
@@ -535,14 +649,18 @@ def show(d=None):
     print(say(3, d['default']))
     print(say(4))
     any_dev = False
+    waiting = False
     for c in d['cards']:
         for o in c['outputs']:
             any_dev = True
             bits = say(6, bits_note(o)) if o['bits'] and max(o['bits']) > 16 else say(7)
-            print(say(5, '%s (%s)' % (o['label'], c['name']), fmt_rates(o['rates']), bits))
+            print(say(57 if o.get('remembered') else 5, '%s (%s)' % (o['label'], c['name']), fmt_rates(o['rates']), bits))
             if 'codecs' in o:
                 print(say(31, o['label'], ' '.join(o['codecs']), ' '.join(o['codecs'])))
-    if not any_dev:
+        if c.get('hdmi') and not any(not o.get('remembered') for o in c['outputs']):
+            waiting = True
+            print(say(58, c['name']))
+    if not any_dev and not waiting:
         print(say(15))
     for cid in d['unreadable']:
         print(say(8, cid))
@@ -641,7 +759,7 @@ def main(argv):
     if cmd == 'midi':
         return midi.command(argv[1:], say)
     if cmd == 'detect':
-        return cmd_detect('--write' in argv[1:])
+        return cmd_detect('--write' in argv[1:], '--settle' in argv[1:])
     if cmd == 'show':
         rc = show()
         session.show(say)

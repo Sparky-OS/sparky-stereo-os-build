@@ -1,7 +1,8 @@
 # Created by Daniel Ramos (Capitain Jack) and Paweł "pavroo" Pijanowski 2026/11/16
 # Copyright 2026 under the GNU GPL3 License
 # Reads the sound devices and writes the sound defaults (ORDER 631): at boot, and again by a udev rule when a sound
-# card comes or goes (a USB DAC, a display's audio after it is connected).
+# card comes or goes (a USB DAC, a graphics card's audio) and when a graphics driver reports a display connected or
+# disconnected (its audio block follows a moment later).
 [Unit]
 Description=Choose the sound defaults from the sound devices of this computer
 Documentation=file:/usr/share/doc/sparky-stereo-audio/README.md
@@ -10,7 +11,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/sparky-stereo-audio detect --write
+ExecStart=/usr/bin/sparky-stereo-audio detect --write --settle
 
 [Install]
 WantedBy=multi-user.target
