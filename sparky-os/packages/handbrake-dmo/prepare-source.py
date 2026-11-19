@@ -39,6 +39,11 @@ def main():
         shutil.copy2(patch, target)
     series.write_text(series.read_text().rstrip() + '\n' + '\n'.join(p.name for p in patches) + '\n')
     subprocess.run(['quilt', 'push', '-a'], cwd=source, env=env, check=True)
+    rules = source / 'debian/rules'
+    text = rules.read_text()
+    if 'download/*tar* ' not in text:
+        raise ValueError('Expected the deb-multimedia distfile cleanup rule')
+    rules.write_text(text.replace('download/*tar* ', '', 1))
     subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion',
                     '1:1.11.2-dmo3+stereo3d1', '--distribution', 'UNRELEASED',
                     'Carry upstream stereo metadata preservation and x264 frame packing; retain the deb-multimedia bundled media build.'],
