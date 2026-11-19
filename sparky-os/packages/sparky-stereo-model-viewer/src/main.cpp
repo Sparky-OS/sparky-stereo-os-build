@@ -31,7 +31,7 @@ int main(int argc, char *argv[])
         QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
     }
 
-    KAboutData about(QStringLiteral("stereo-model-viewer"), i18nc("@title", "Stereo Model Viewer"), QStringLiteral("0.1.1"),
+    KAboutData about(QStringLiteral("stereo-model-viewer"), i18nc("@title", "Stereo Model Viewer"), QStringLiteral("0.1.2"),
                      i18nc("@title", "Open a 3D model, look at it and turn it"), KAboutLicense::GPL_V3,
                      QStringLiteral("© 2026 Daniel Ramos (Capitain Jack)"));
     about.setDesktopFileName(QStringLiteral("org.sparkystereo.ModelViewer"));

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/11/19
 # Copyright 2026 under the GNU GPL3 License
-# Sparky Stereo OS, ORDER 743: the +lc1 source of fraqtive 0.4.8.1-1+stereo3d2, made from Debian's own 0.4.8.1-1 source.
+# Sparky Stereo OS, ORDER 743: the +lc1 source of fraqtive 0.4.8.1-1+stereo3d3, made from Debian's own 0.4.8.1-1 source.
 # Runs as root inside the Lean Code migration container (build.sh starts it, with the https-only apt helper and the host's CA
 # bundle mounted). Debian's source is fetched here, from Debian's signed index (apt-get source), and refused unless its three
 # files have the SHA-256 recorded below (read from the same index on 2026-11-19); the two patches of ../patches go last in its
@@ -15,7 +15,7 @@ OUT=$1
 [ -z "$(ls -A "$OUT" 2>/dev/null)" ] || { echo "$OUT is not empty" >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
-UPSTREAM=0.4.8.1 DEBIAN=0.4.8.1-1 VERSION=0.4.8.1-1+stereo3d2
+UPSTREAM=0.4.8.1 DEBIAN=0.4.8.1-1 VERSION=0.4.8.1-1+stereo3d3
 mkdir -p "$OUT/plain" "$OUT/fetch"
 printf 'Types: deb-src\nURIs: https://deb.debian.org/debian\nSuites: testing\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n' > /etc/apt/sources.list.d/fq743-src.sources
 apt-get -qq update --error-on=any

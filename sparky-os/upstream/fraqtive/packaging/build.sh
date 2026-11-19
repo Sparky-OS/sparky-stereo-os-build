@@ -8,6 +8,7 @@
 #   WORK: a new empty folder; PUBLISHED_TREE: the signed published tree (its real path, read only); ARCHIVE_DIR: the link gate's
 #   folder (sources.json and keyrings/, sparky-os/lean/archive.md). Environment: SPARKY_BUILD_IMAGE (the Lean Code migration
 #   image, default sparky-lc-migration:20261020), BUILD_NAME_PREFIX (container names), THREADS (default 4).
+# NEW_DIR (environment): a flat repository of debs built earlier in the round (libstereo-declare 1.11 for +stereo3d3).
 # Needs a committed recipe: the source is dated by the last commit touching sparky-os/upstream/fraqtive (ORDER 421b).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -32,6 +33,6 @@ docker run --rm --name "$BUILD_NAME_PREFIX-source" --pull=never --ulimit core=0 
 	|| { tail -30 "$W/next-source.log"; exit 1; }
 # the published edition's .deb files as the build container sees them: what the publisher supplies as the destination pool
 (cd "$TREE" && find pool -name '*.deb' ! -name '*-lc-hr_*' ! -name '*-dbgsym_*' | LC_ALL=C sort | sed 's|^|/repo/|') > "$W/siblings.txt"
-"$TOOLKIT/packages/depth-source/build.sh" fraqtive "$W/work" "$W/src" "$W/prev" "$TREE" "$ARCHIVE" "" "$W/siblings.txt" \
+ROUND_SOURCES=${NEW_DIR:+stereo-declare} "$TOOLKIT/packages/depth-source/build.sh" fraqtive "$W/work" "$W/src" "$W/prev" "$TREE" "$ARCHIVE" "${NEW_DIR:-}" "$W/siblings.txt" \
 	|| { echo "the build failed; the end of its log:" >&2; tail -40 "$W/work/build.log" >&2; exit 1; }
 grep -E 'link check passed|verified [0-9]+ packages' "$W/work/build.log" | tail -4
