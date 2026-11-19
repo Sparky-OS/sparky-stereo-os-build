@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import wave
 
 import numpy as np
 from scipy.signal import correlate
@@ -44,6 +45,13 @@ def nodes():
 
 
 def reference(azimuth, rate):
+    if os.environ.get("AS21_PROFILE") == "hesuvi":
+        assert rate == 48000
+        channel = next(c for c, a in s.ANGLES.items() if a == azimuth)
+        ir = np.zeros((32, 2), dtype="<f4")
+        for ear, index in enumerate(s.HESUVI[channel]):
+            ir[index + 2, ear] = (8192 + index * 256) / 32768
+        return ir
     lib = ctypes.CDLL('libmysofa.so.1')
     lib.mysofa_open.argtypes = [ctypes.c_char_p, ctypes.c_float,
                                 ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
@@ -77,7 +85,7 @@ def main():
         os.environ['HOME'] = str(root)
         conf = root / 'config/pipewire/pipewire.conf.d'
         conf.mkdir(parents=True)
-        target_positions = s.LAYOUTS['5.1'] if os.environ.get('AS21_MODE') in ('decode', 'upmix') else ['FL', 'FR']
+        target_positions = s.LAYOUTS['5.1'] if os.environ.get('AS21_MODE') in ('decode', 'upmix', 'direct-stereo', 'direct-multi') else ['FL', 'FR']
         (conf / 'test.conf').write_text(json.dumps({
             'context.properties': {'default.clock.allowed-rates': [44100, 48000, 96000]},
             'context.objects': [{'factory': 'adapter', 'args': {
@@ -85,7 +93,7 @@ def main():
                 'media.class': 'Audio/Sink', 'device.form-factor': 'speaker' if len(target_positions) > 2 else 'headphone',
                 'audio.position': target_positions, 'audio.channels': len(target_positions)}}]}))
         automatic = os.environ.get('AS21_AUTOMATIC') == '1'
-        if automatic and os.environ.get('AS21_BASELINE') != '1':
+        if automatic and os.environ.get('AS21_BASELINE') != '1' and os.environ.get('AS21_INSTALLED') != '1':
             wpconf = root / 'config/wireplumber/wireplumber.conf.d'
             wpconf.mkdir(parents=True)
             source_dir = Path(__file__).resolve().parents[1] / 'wireplumber'
@@ -103,13 +111,41 @@ def main():
         try:
             start(['pipewire'], 'pipewire')
             wait_for(lambda: (runtime / 'pipewire-0').exists())
-            start(['wireplumber'], 'wireplumber')
+            wp = start(['wireplumber'], 'wireplumber')
             wait_for(lambda: any(n['info']['props'].get('node.name') == 'as21-headphones' for n in nodes()))
+            engine = '/usr/bin/sparky-stereo-audio' if os.environ.get('AS21_INSTALLED') == '1' else str(Path(__file__).resolve().parents[1] / 'bin/sparky-stereo-audio')
+            if os.environ.get('AS21_CHECKS') == '1':
+                start([engine, 'monitor'], 'problems-monitor')
+                bad=subprocess.run([engine,'surround','--output','as21-headphones','--profile','/missing/as21.sofa'],capture_output=True,text=True)
+                assert bad.returncode == 1
+                problems=json.loads(subprocess.check_output(['sparky-stereo-problems','list','--json','sparky-stereo-audio'],text=True))
+                assert 'options' in json.dumps(problems), problems
+                subprocess.run([engine,'surround','--output','as21-headphones','--layout','5.1','--headphones','yes'],check=True)
+                wp.terminate();wp.wait(timeout=5)
+                wp=start(['wireplumber'],'wireplumber-restarted')
+                wait_for(lambda: subprocess.run(['wpctl','settings','sparky.audio.outputs'],capture_output=True,text=True).returncode == 0)
+                saved=subprocess.check_output(['wpctl','settings','sparky.audio.outputs'],text=True)
+                assert '5.1' in saved and 'as21-headphones' in saved,saved
+                readouts={}
+                for language in ('en','pl','pt_BR','fr','de','es','ja','ko','zh_CN','zh_TW'):
+                    readouts[language]=subprocess.check_output([engine,'show'],env=os.environ|{'LANGUAGE':language},text=True)
+                Path('/evidence/show-ten-languages.json').write_text(json.dumps(readouts,ensure_ascii=False,indent=2)+'\n')
+                Path('/evidence/session-checks.json').write_text(json.dumps({'invalid_profile_exit':bad.returncode,'problem_kept':problems,'settings_after_restart':saved},indent=2)+'\n')
+            profile = os.environ.get('AS21_PROFILE')
+            if profile:
+                filename = root / ('personal.wav' if profile == 'hesuvi' else 'personal.sofa')
+                if profile == 'hesuvi':
+                    data = np.zeros((32, 14), dtype='<i2')
+                    for index in range(14): data[index + 2, index] = 8192 + index * 256
+                    with wave.open(str(filename), 'wb') as wav:
+                        wav.setnchannels(14); wav.setsampwidth(2); wav.setframerate(48000); wav.writeframes(data.tobytes())
+                else: shutil.copyfile(s.KEMAR, filename)
+                subprocess.run([engine, 'surround', '--output', 'as21-headphones', '--profile', str(filename), '--kind', 'hesuvi' if profile == 'hesuvi' else 'sofa'], check=True, timeout=15)
             layout = os.environ.get('AS21_LAYOUT', '5.1')
             mode = os.environ.get('AS21_MODE', 'surround')
-            positions = ['FL', 'FR'] if mode in ('stereo', 'decode', 'upmix') else s.LAYOUTS[layout]
+            positions = ['FL', 'FR'] if mode in ('stereo', 'decode', 'upmix', 'direct-stereo') else s.LAYOUTS[layout]
             if mode in ('decode', 'upmix'):
-                command = [str(Path(__file__).resolve().parents[1] / 'bin/sparky-stereo-audio'), 'surround',
+                command = [engine, 'surround',
                            '--output', 'as21-headphones', '--matrix', mode]
                 subprocess.run(command, check=True, timeout=10)
             args = s.module_args('as21-binaural', 'as21-headphones', s.binaural(layout),
@@ -124,10 +160,10 @@ def main():
             for rate in map(int, os.environ.get('AS21_RATES', '48000,96000').split(',')):
                 frames = 3 * rate
                 source = np.zeros((frames, len(positions)), dtype='<f4')
-                if mode in ('stereo', 'decode', 'upmix'):
+                if mode in ('stereo', 'decode', 'upmix', 'direct-stereo', 'direct-multi'):
                     source = np.random.default_rng(21).integers(-2048, 2048, size=source.shape).astype('<f4') / 8192
                 offsets = [(0 if os.environ.get('AS21_FIRST_SAMPLE') == '1' else rate // 2) + i * rate // 3 for i in range(len(positions))]
-                if mode not in ('stereo', 'decode', 'upmix'):
+                if mode not in ('stereo', 'decode', 'upmix', 'direct-stereo', 'direct-multi'):
                     for i, offset in enumerate(offsets):
                         source[offset, i] = 0.1
                 raw = root / 'source.raw'
@@ -146,6 +182,17 @@ def main():
                     time.sleep(0.3)
                     if automatic:
                         Path('/evidence/automatic-graph.json').write_text(subprocess.check_output(['pw-dump'], text=True))
+                    if mode == 'unplug':
+                        ident=next(n['id'] for n in nodes() if n['info']['props'].get('node.name') == 'as21-headphones')
+                        subprocess.run(['pw-cli','destroy',str(ident)],check=True)
+                        wait_for(lambda: not any(n['info']['props'].get('node.name','').startswith('sparky.audio.') for n in nodes()))
+                        graph=subprocess.check_output(['pw-dump'],text=True)
+                        Path('/evidence/unplug-graph.json').write_text(graph)
+                        assert '"name":"sparky.audio.' not in graph
+                        player.terminate()
+                        rec.send_signal(signal.SIGINT);rec.wait(timeout=5)
+                        results.append({'mode':mode,'temporary_filter_removed':True})
+                        break
                     if mode == 'switch':
                         subprocess.run(['pw-cli', 'create-node', 'adapter', json.dumps({
                             'factory.name': 'support.null-audio-sink', 'node.name': 'as21-speakers',
@@ -155,7 +202,7 @@ def main():
                         wait_for(lambda: not any(n['info']['props'].get('node.name', '').startswith('sparky.audio.') for n in nodes()))
                         assert player.poll() is None, 'switch checked after playback ended'
                         Path('/evidence/speaker-switch-graph.json').write_text(subprocess.check_output(['pw-dump'], text=True))
-                    if mode == 'stereo':
+                    if mode in ('stereo','direct-stereo','direct-multi'):
                         assert not any(n['info']['props'].get('node.name', '').startswith('sparky.audio.') for n in nodes())
                     player.wait(timeout=15)
                     time.sleep(0.3)
@@ -177,9 +224,12 @@ def main():
                 if mode == 'switch':
                     results.append({'mode': mode, 'filter_removed_during_playback': True})
                     break
-                if mode == 'stereo':
+                if mode in ('stereo','direct-stereo','direct-multi'):
                     alignment = int(np.argmax(correlate(received[:, 0], source[:, 0], mode='full')) - len(source) + 1)
                     actual = received[alignment:alignment + frames]
+                    if mode == 'direct-stereo':
+                        assert np.max(np.abs(actual[:,2:])) == 0
+                        actual=actual[:,:2]
                     assert actual.shape == source.shape
                     error = float(np.max(np.abs(actual-source)))
                     assert error == 0, error
@@ -209,7 +259,7 @@ def main():
                 filter_process.terminate()
                 filter_process.wait(timeout=5)
             wait_for(lambda: not any(n['info']['props'].get('node.name', '').startswith(('as21-binaural', 'sparky.audio.')) for n in nodes()))
-            Path('/evidence/' + ('automatic' if automatic else 'render') + '-' + mode + '-' + layout + '-results.json').write_text(json.dumps(results, indent=2) + '\n')
+            Path('/evidence/' + ('automatic' if automatic else 'render') + '-' + mode + '-' + layout + ('-' + profile if profile else '') + '-results.json').write_text(json.dumps(results, indent=2) + '\n')
             print(json.dumps(results, indent=2))
         finally:
             for p in reversed(processes):
