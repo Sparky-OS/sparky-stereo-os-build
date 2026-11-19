@@ -1,0 +1,26 @@
+#!/bin/sh
+# The lab's screens guest: the edition's kernel with VKMS, a virtual HDMI-A connector that reads a 3D television's EDID
+# (configfs), and the compositor of the row (Debian's KWin or Stereo KWin) from a root shared over 9p, run by the vkms
+# stereo bench's own kwin phase scripts. Results go to the serial console as STEREO| lines.
+export PATH=/bin:/sbin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mount -t tmpfs tmpfs /run
+mount -t tmpfs tmpfs /tmp
+exec 0</dev/console 1>/dev/console 2>&1
+echo "LAB|guest|kernel|$(head -c 60 /proc/version)"
+sh /lib/lab-modules/load.sh 2>&1 | head -30
+mount -t configfs configfs /sys/kernel/config 2>/dev/null
+mkdir -p /out
+mount -t 9p -o trans=virtio,version=9p2000.L out /out 2>/dev/null || echo "LAB|guest|error|no output share"
+echo "LAB|guest|info|connectors $(ls /sys/class/drm | tr '\n' ' ')"
+echo "LAB|guest|info|vkms modes dir $(ls /sys/kernel/config/vkms 2>&1 | tr '\n' ' ')"
+. /phases/kwin.sh
+echo "LAB|guest|info|connector type $(cat /sys/kernel/config/vkms/kwin/connectors/hdmi0/type 2>&1) status $(cat /sys/class/drm/card*-*/status 2>&1 | tr '\n' ' ')"
+for m in /sys/class/drm/card*-*/modes; do echo "LAB|guest|info|$m $(head -c 300 $m | tr '\n' ' ')"; done
+dmesg | grep -i -E "vkms|stereo|edid" | head -12 | sed 's/^/LAB|guest|dmesg|/'
+echo "LAB|guest|done"
+sync
+umount /out 2>/dev/null
+poweroff -f

@@ -7,7 +7,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 RECIPE=$HERE
 REPRO="$HERE/../../repo/reproducible.py"
 OUT=${OUT:?Set OUT to the workspace output directory}
-VERSION=0.2.13
+VERSION=0.2.14
 PACKAGE=sparky-stereo-graphics
 mkdir -p "$OUT"
 WORK=$(mktemp -d "$OUT/.graphics.XXXXXX")
@@ -101,6 +101,12 @@ Description: Graphics page for System Settings
 EOS
 cat >"$S/debian/changelog" <<EOS
 $PACKAGE ($VERSION) unstable; urgency=medium
+
+  * Rebuilt with complete receipts; no change of behaviour.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ${SOURCE_DATE_RFC2822:?}
+
+$PACKAGE (0.2.13) unstable; urgency=medium
 
   * ORDER 583: the page asks for the Qt that carries the painting by its
     exact version, and that Qt is now 6.11.2+dfsg-5+stereo3d23+lc1 (a window

@@ -1,0 +1,9 @@
+[
+ {"op": "dump", "name": "0-start"},
+ {"op": "apply", "what": "graph",
+  "state": {"graph": {"rate": 96000, "allowedRates": [44100, 48000, 96000]}}},
+ {"op": "dump", "name": "1-after-graph"},
+ {"op": "apply", "what": "device:alsa_output.rig_only48",
+  "state": {"graph": {"rate": 96000, "allowedRates": [44100, 48000, 96000]}, "devices": {"alsa_output.rig_only48": {"rate": 96000}}}},
+ {"op": "dump", "name": "2-after-refusal"}
+]

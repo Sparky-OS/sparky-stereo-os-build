@@ -1,6 +1,6 @@
 # Virtual streams in KDE's Sound page and volume widget
 
-This recipe prepares the edition's plasma-pa 4:6.7.4-1+stereo3d2+lc1 and holds its isolated proof rig and translation generator.
+This recipe prepares the edition's plasma-pa 4:6.7.4-1+stereo3d3+lc1 and holds its isolated proof rig and translation generator.
 The package exposes optional virtual streams, repairs null-client handling and the recording selector, and adds optional input monitoring and a combined recording source. Both routing features start off. Their controls, failures and shared-microphone warning have English messages and nine translated catalogues.
 No system PipeWire or WirePlumber default is supplied here.
 
