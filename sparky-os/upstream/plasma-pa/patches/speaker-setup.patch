@@ -1,0 +1,3031 @@
+Description: Speaker Setup, a page for every playback device with more than two channels: levels, distances as delays, bass management and a pink noise test signal; and the format in use on the device rows
+Author: Daniel Campos Ramos
+Origin: vendor
+Forwarded: no
+
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+index d4bb5ace..de7ab9c7 100644
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -19,3 +19,17 @@ ecm_add_test(
+     LINK_LIBRARIES Qt6::Test Qt6::Core
+ )
+ target_include_directories(soundformatconftest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
++
++ecm_add_test(
++    speakersetupconftest.cpp ../src/speakersetupconf.cpp
++    TEST_NAME speakersetupconftest
++    LINK_LIBRARIES Qt6::Test Qt6::Core
++)
++target_include_directories(speakersetupconftest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
++
++ecm_add_test(
++    speakertestsignaltest.cpp ../src/speakertestsignal.cpp
++    TEST_NAME speakertestsignaltest
++    LINK_LIBRARIES Qt6::Test Qt6::Core
++)
++target_include_directories(speakertestsignaltest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+diff --git a/autotests/speakersetupconftest.cpp b/autotests/speakersetupconftest.cpp
+new file mode 100644
+index 00000000..f583b6aa
+--- /dev/null
++++ b/autotests/speakersetupconftest.cpp
+@@ -0,0 +1,366 @@
++// SPDX-License-Identifier: BSD-2-Clause
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++#include "speakersetupconf.h"
++
++#include <QFile>
++#include <QJsonDocument>
++#include <QRegularExpression>
++#include <QSet>
++#include <QTemporaryDir>
++#include <QTest>
++#include <limits>
++
++using namespace Qt::StringLiterals;
++
++namespace
++{
++const QString NODE = u"alsa_output.pci-0000_00_1f.3.analog-surround-51"_s;
++const QVariantList POS51 = {u"FL"_s, u"FR"_s, u"FC"_s, u"LFE"_s, u"RL"_s, u"RR"_s};
++
++QVariantMap withDevice(const QString &node, const QVariantMap &device)
++{
++    return QVariantMap{{u"devices"_s, QVariantMap{{node, device}}}};
++}
++
++QVariantMap dev(const QVariantMap &more)
++{
++    QVariantMap d{{u"positions"_s, POS51}};
++    for (auto it = more.begin(); it != more.end(); ++it) {
++        d.insert(it.key(), it.value());
++    }
++    return d;
++}
++
++QVariantMap oneLevel(const QVariant &value)
++{
++    return withDevice(NODE, dev({{u"levels"_s, QVariantMap{{u"FL"_s, value}}}}));
++}
++
++QVariantMap allDistances(double v)
++{
++    QVariantMap m;
++    for (const auto &p : POS51) {
++        m.insert(p.toString(), v);
++    }
++    return m;
++}
++
++QByteArray fileText(const QString &baseDir)
++{
++    QFile f(baseDir + u"/pipewire/pipewire.conf.d/50-speaker-page.conf"_s);
++    return f.open(QFile::ReadOnly) ? f.readAll() : QByteArray();
++}
++} // namespace
++
++class SpeakerSetupConfTest : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void validateRefuses_data()
++    {
++        QTest::addColumn<QVariantMap>("state");
++        QTest::addColumn<QString>("code");
++
++        const auto named = [](const QString &name) {
++            return withDevice(name, dev({{u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
++        };
++        QTest::newRow("unknown top key") << QVariantMap{{u"script"_s, u"rm -rf /"_s}} << u"state.key"_s;
++        QTest::newRow("devices not a map") << QVariantMap{{u"devices"_s, u"x"_s}} << u"devices"_s;
++        QTest::newRow("path as node") << named(u"../../etc/passwd"_s) << u"device.name"_s;
++        QTest::newRow("an input node") << named(u"alsa_input.pci-0000_00_1f.3.analog-stereo"_s) << u"device.name"_s;
++        QTest::newRow("foreign node") << named(u"loopback.x"_s) << u"device.name"_s;
++        QTest::newRow("the setup of a setup") << named(u"speaker_setup.alsa_output.x"_s) << u"device.name"_s;
++        QTest::newRow("name with a double quote") << named(u"alsa_output.x\"y"_s) << u"device.name"_s;
++        QTest::newRow("name with a newline in it") << named(u"alsa_output.x\ny"_s) << u"device.name"_s;
++        QTest::newRow("name with a final newline") << named(u"alsa_output.x\n"_s) << u"device.name"_s;
++        QTest::newRow("name with a carriage return") << named(u"alsa_output.x\ry"_s) << u"device.name"_s;
++        QTest::newRow("name with an opening brace") << named(u"alsa_output.x{y"_s) << u"device.name"_s;
++        QTest::newRow("name with a closing brace") << named(u"alsa_output.x}"_s) << u"device.name"_s;
++        QTest::newRow("name with an opening bracket") << named(u"alsa_output.x[y"_s) << u"device.name"_s;
++        QTest::newRow("name with a closing bracket") << named(u"alsa_output.x]"_s) << u"device.name"_s;
++        QTest::newRow("name with a space") << named(u"alsa_output.x y"_s) << u"device.name"_s;
++        QTest::newRow("name with a hash") << named(u"alsa_output.x#y"_s) << u"device.name"_s;
++        QTest::newRow("name with a backslash") << named(u"alsa_output.x\\y"_s) << u"device.name"_s;
++        QTest::newRow("name with an equals sign") << named(u"alsa_output.x=y"_s) << u"device.name"_s;
++        QTest::newRow("name with a comma") << named(u"alsa_output.x,y"_s) << u"device.name"_s;
++        QTest::newRow("name with a NUL") << named(QString(u"alsa_output.x") + QChar(0) + u"y"_s) << u"device.name"_s;
++        QTest::newRow("name with a tab") << named(u"alsa_output.x\ty"_s) << u"device.name"_s;
++        QTest::newRow("name with a non-ASCII letter") << named(u"alsa_output.xé"_s) << u"device.name"_s;
++        QTest::newRow("name at the limit plus one") << named(u"alsa_output."_s + QString(201, u'a')) << u"device.name"_s;
++        QTest::newRow("name with nothing after the prefix") << named(u"alsa_output."_s) << u"device.name"_s;
++
++        QTest::newRow("device not a map") << QVariantMap{{u"devices"_s, QVariantMap{{NODE, u"x"_s}}}} << u"device"_s;
++        QTest::newRow("unknown device key") << withDevice(NODE, dev({{u"exec"_s, u"x"_s}})) << u"device.key"_s;
++        QTest::newRow("no positions") << withDevice(NODE, QVariantMap{{u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}) << u"device.positions"_s;
++        QTest::newRow("two positions") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"FL"_s, u"FR"_s}}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})
++                                       << u"device.positions"_s;
++        QTest::newRow("nine positions")
++            << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"FL"_s, u"FR"_s, u"FC"_s, u"LFE"_s, u"RL"_s, u"RR"_s, u"SL"_s, u"SR"_s, u"RC"_s}},
++                                            {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})
++            << u"device.positions"_s;
++        QTest::newRow("a repeated position") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"FL"_s, u"FL"_s, u"FC"_s}}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})
++                                             << u"device.positions"_s;
++        QTest::newRow("a position that is a node name") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"FL"_s, u"FR"_s, u"in_FL:In\"] }"_s}}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})
++                                                        << u"device.positions"_s;
++        QTest::newRow("a position that is a number") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"FL"_s, u"FR"_s, 3}}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})
++                                                     << u"device.positions"_s;
++        QTest::newRow("a lower case position") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"fl"_s, u"FR"_s, u"FC"_s}}, {u"levels"_s, QVariantMap{{u"FR"_s, -3}}}})
++                                               << u"device.positions"_s;
++
++        for (const QString &bad : {u"a\"b"_s, u"a\nb"_s, u"a\n"_s, u"a\\b"_s, u"a{b"_s, u"a}b"_s, u"a[b"_s, u"a]b"_s, u"a#b"_s, u"a=b"_s, u"a,b"_s, u"a\tb"_s, u"a\rb"_s,
++                                   u" a"_s, u""_s, u"a;b"_s, u"a$b"_s, u"a`b"_s, u"a<b"_s}) {
++            QTest::newRow(qPrintable(u"label "_s + QString::fromLatin1(QByteArray(bad.toUtf8()).toPercentEncoding()))) << withDevice(NODE, dev({{u"label"_s, bad}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}))
++                                                                                                                        << u"device.label"_s;
++        }
++        QTest::newRow("label over the limit") << withDevice(NODE, dev({{u"label"_s, QString(81, u'a')}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})) << u"device.label"_s;
++        QTest::newRow("label not a string") << withDevice(NODE, dev({{u"label"_s, 5}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})) << u"device.label"_s;
++
++        QTest::newRow("level below the range") << oneLevel(-30.5) << u"device.levels"_s;
++        QTest::newRow("level above the range") << oneLevel(15.5) << u"device.levels"_s;
++        QTest::newRow("level as text") << oneLevel(u"-3"_s) << u"device.levels"_s;
++        QTest::newRow("level as a bool") << oneLevel(true) << u"device.levels"_s;
++        QTest::newRow("level not a number") << oneLevel(std::numeric_limits<double>::quiet_NaN()) << u"device.levels"_s;
++        QTest::newRow("level infinite") << oneLevel(std::numeric_limits<double>::infinity()) << u"device.levels"_s;
++        QTest::newRow("level for a position the device lacks") << withDevice(NODE, dev({{u"levels"_s, QVariantMap{{u"SL"_s, -3}}}})) << u"device.levels"_s;
++        QTest::newRow("level for an unsafe position") << withDevice(NODE, dev({{u"levels"_s, QVariantMap{{u"FL\"x"_s, -3}}}})) << u"device.levels"_s;
++        QTest::newRow("levels not a map") << withDevice(NODE, dev({{u"levels"_s, -3}})) << u"device.levels"_s;
++
++        QVariantMap d = allDistances(3);
++        d.insert(u"FL"_s, 0.29);
++        QTest::newRow("distance below the range") << withDevice(NODE, dev({{u"distances"_s, d}})) << u"device.distances"_s;
++        d.insert(u"FL"_s, 30.1);
++        QTest::newRow("distance above the range") << withDevice(NODE, dev({{u"distances"_s, d}})) << u"device.distances"_s;
++        d.insert(u"FL"_s, u"3"_s);
++        QTest::newRow("distance as text") << withDevice(NODE, dev({{u"distances"_s, d}})) << u"device.distances"_s;
++        d.insert(u"FL"_s, std::numeric_limits<double>::quiet_NaN());
++        QTest::newRow("distance not a number") << withDevice(NODE, dev({{u"distances"_s, d}})) << u"device.distances"_s;
++        d = allDistances(3);
++        d.remove(u"RR"_s);
++        QTest::newRow("a distance missing") << withDevice(NODE, dev({{u"distances"_s, d}})) << u"device.distances"_s;
++        d = allDistances(3);
++        d.insert(u"SL"_s, 3);
++        QTest::newRow("a distance too many") << withDevice(NODE, dev({{u"distances"_s, d}})) << u"device.distances"_s;
++        d = allDistances(3);
++        d.remove(u"RR"_s);
++        d.insert(u"RR\"]"_s, 3);
++        QTest::newRow("a distance for an unsafe position") << withDevice(NODE, dev({{u"distances"_s, d}})) << u"device.distances"_s;
++
++        QTest::newRow("small without a subwoofer")
++            << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"FL"_s, u"FR"_s, u"FC"_s}}, {u"small"_s, QVariantList{u"FL"_s}}}) << u"device.small"_s;
++        QTest::newRow("the subwoofer small") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"LFE"_s}}})) << u"device.small"_s;
++        QTest::newRow("small speaker the device lacks") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"SL"_s}}})) << u"device.small"_s;
++        QTest::newRow("small twice") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s, u"FL"_s}}})) << u"device.small"_s;
++        QTest::newRow("small empty") << withDevice(NODE, dev({{u"small"_s, QVariantList{}}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})) << u"device.small"_s;
++        QTest::newRow("small as text") << withDevice(NODE, dev({{u"small"_s, u"FL"_s}})) << u"device.small"_s;
++        QTest::newRow("small unsafe") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL\"] x"_s}}})) << u"device.small"_s;
++
++        QTest::newRow("crossover without small speakers") << withDevice(NODE, dev({{u"crossover"_s, 80}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})) << u"device.crossover"_s;
++        QTest::newRow("crossover too low") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s}}, {u"crossover"_s, 39}})) << u"device.crossover"_s;
++        QTest::newRow("crossover too high") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s}}, {u"crossover"_s, 251}})) << u"device.crossover"_s;
++        QTest::newRow("crossover not whole") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s}}, {u"crossover"_s, 80.5}})) << u"device.crossover"_s;
++        QTest::newRow("crossover as text") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s}}, {u"crossover"_s, u"80"_s}})) << u"device.crossover"_s;
++        QTest::newRow("crossover not a number")
++            << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s}}, {u"crossover"_s, std::numeric_limits<double>::quiet_NaN()}})) << u"device.crossover"_s;
++
++        QTest::newRow("a device with nothing set") << withDevice(NODE, dev({})) << u"device.empty"_s;
++        QTest::newRow("only zero levels") << withDevice(NODE, dev({{u"levels"_s, QVariantMap{{u"FL"_s, 0}}}})) << u"device.empty"_s;
++        QTest::newRow("only equal distances") << withDevice(NODE, dev({{u"distances"_s, allDistances(2.5)}})) << u"device.empty"_s;
++    }
++    void validateRefuses()
++    {
++        QFETCH(QVariantMap, state);
++        QFETCH(QString, code);
++        QCOMPARE(SpeakerSetupConf::validate(state), code);
++    }
++
++    void tooManyDevices()
++    {
++        QVariantMap devices;
++        for (int i = 0; i < 9; ++i) {
++            devices.insert(u"alsa_output.card%1"_s.arg(i), dev({{u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
++        }
++        QCOMPARE(SpeakerSetupConf::validate(QVariantMap{{u"devices"_s, devices}}), u"devices"_s);
++    }
++
++    void validateAccepts_data()
++    {
++        QTest::addColumn<QVariantMap>("state");
++        QTest::newRow("nothing at all") << QVariantMap{};
++        QTest::newRow("a level") << oneLevel(-3.5);
++        QTest::newRow("the largest level") << oneLevel(15);
++        QTest::newRow("the smallest level") << oneLevel(-30);
++        QTest::newRow("distances that differ") << withDevice(NODE, dev({{u"distances"_s, [] {
++                                                                           QVariantMap m = allDistances(3);
++                                                                           m.insert(u"RL"_s, 1.8);
++                                                                           return m;
++                                                                       }()}}));
++        QTest::newRow("small speakers and the crossover") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s, u"FR"_s, u"FC"_s}}, {u"crossover"_s, 120}}));
++        QTest::newRow("a label with letters of another script") << withDevice(NODE, dev({{u"label"_s, u"Alto-falantes (áudio 5.1) 標準"_s}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
++        QTest::newRow("a real bluez name") << withDevice(u"bluez_output.AA_BB_CC_DD_EE_FF.1"_s, dev({{u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
++        QTest::newRow("a usb name with plus and colon") << withDevice(u"alsa_output.usb-Rig_DAC+Dock-00.analog-surround-71:1"_s, dev({{u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
++    }
++    void validateAccepts()
++    {
++        QFETCH(QVariantMap, state);
++        QCOMPARE(SpeakerSetupConf::validate(state), QString());
++    }
++
++    void defaultsWriteNothing()
++    {
++        QCOMPARE(SpeakerSetupConf::render(QVariantMap{}).value(u"pipewire/pipewire.conf.d/50-speaker-page.conf"_s), QByteArray());
++        QTemporaryDir dir;
++        QVERIFY(SpeakerSetupConf::write(dir.path(), QVariantMap{}));
++        QVERIFY(fileText(dir.path()).isEmpty());
++    }
++
++    void thePredictedNumbers()
++    {
++        QCOMPARE(SpeakerSetupConf::gain(0), 1.0);
++        QVERIFY(qAbs(SpeakerSetupConf::gain(-6.0206) - 0.5) < 1e-4);
++        QVERIFY(qAbs(SpeakerSetupConf::gain(20) - 10.0) < 1e-12);
++        // 3.43 m nearer than the farthest speaker is 10 ms
++        QVERIFY(qAbs(SpeakerSetupConf::delaySeconds(2.0, 5.43) - 0.01) < 1e-12);
++        QCOMPARE(SpeakerSetupConf::delaySeconds(5.0, 5.0), 0.0);
++        QCOMPARE(SpeakerSetupConf::delaySeconds(6.0, 5.0), 0.0);
++    }
++
++    void theFileHoldsWhatTheStateNames()
++    {
++        QVariantMap d = allDistances(3.0);
++        d.insert(u"FL"_s, 2.0);
++        d.insert(u"RR"_s, 3.686);
++        const QVariantMap state = withDevice(NODE,
++                                             dev({{u"label"_s, u"Surround 5.1"_s},
++                                                  {u"levels"_s, QVariantMap{{u"FC"_s, 6}, {u"LFE"_s, -4}}},
++                                                  {u"distances"_s, d},
++                                                  {u"small"_s, QVariantList{u"FL"_s, u"FR"_s}},
++                                                  {u"crossover"_s, 100}}));
++        QTemporaryDir dir;
++        QString error;
++        QVERIFY2(SpeakerSetupConf::write(dir.path(), state, &error), qPrintable(error));
++        const QString text = QString::fromUtf8(fileText(dir.path()));
++        QVERIFY(text.startsWith(SpeakerSetupConf::mark() + u"\n"_s));
++        QVERIFY(text.contains(u"node.name = \"speaker_setup.%1\""_s.arg(NODE)));
++        QVERIFY(text.contains(u"target.object = \"%1\""_s.arg(NODE)));
++        QVERIFY(text.contains(u"audio.position = [ FL FR FC LFE RL RR ]"_s));
++        // FC +6 dB, LFE -4 dB
++        QVERIFY(text.contains(u"Mult = %1"_s.arg(QString::number(SpeakerSetupConf::gain(6), 'f', 9))));
++        QVERIFY(text.contains(u"Mult = %1"_s.arg(QString::number(SpeakerSetupConf::gain(-4), 'f', 9))));
++        // the farthest speaker, RR, has no delay node; FL is 1.686 m nearer
++        QVERIFY(!text.contains(u"name = d_RR "_s));
++        QVERIFY(text.contains(u"\"Delay (s)\" = %1"_s.arg(QString::number(1.686 / 343.0, 'f', 9))));
++        // the crossover, twice in each direction for each small speaker, at 100 Hz
++        QCOMPARE(text.count(u"label = bq_highpass"_s), 4);
++        QCOMPARE(text.count(u"label = bq_lowpass"_s), 4);
++        QCOMPARE(text.count(u"Freq = 100.000000000"_s), 8);
++        QVERIFY(text.contains(u"{ output = \"lp2_FL:Out\" input = \"mix_LFE:In 2\" }"_s));
++        QVERIFY(text.contains(u"{ output = \"lp2_FR:Out\" input = \"mix_LFE:In 3\" }"_s));
++        QVERIFY(!text.contains(u"hp1_FC"_s));
++        // the person's words cannot have reached anything but the description
++        QVERIFY(text.contains(u"node.description = \"Surround 5.1\""_s));
++    }
++
++    void everyKeyInTheFileIsOneWeKnow()
++    {
++        QVariantMap d = allDistances(3.0);
++        d.insert(u"FL"_s, 2.0);
++        const QVariantMap state = withDevice(NODE,
++                                             dev({{u"levels"_s, QVariantMap{{u"FC"_s, 6}, {u"LFE"_s, -4}, {u"FL"_s, 1}}},
++                                                  {u"distances"_s, d},
++                                                  {u"small"_s, QVariantList{u"FL"_s, u"FR"_s, u"FC"_s, u"RL"_s, u"RR"_s}}}));
++        QTemporaryDir dir;
++        QVERIFY(SpeakerSetupConf::write(dir.path(), state));
++        QString text = QString::fromUtf8(fileText(dir.path()));
++        // drop the two comment lines, then every word that stands before an equals sign must be one PipeWire's filter chain takes
++        text = text.mid(text.indexOf(u"context.modules"_s));
++        static const QSet<QString> known = {u"context.modules"_s, u"name"_s, u"flags"_s, u"args"_s, u"node.description"_s, u"media.name"_s, u"filter.graph"_s,
++                                            u"nodes"_s, u"type"_s, u"label"_s, u"config"_s, u"control"_s, u"links"_s, u"output"_s, u"input"_s, u"inputs"_s,
++                                            u"outputs"_s, u"capture.props"_s, u"playback.props"_s, u"node.name"_s, u"media.class"_s, u"audio.channels"_s,
++                                            u"audio.position"_s, u"target.object"_s, u"node.passive"_s, u"stream.dont-remix"_s,
++                                            u"Mult"_s, u"Add"_s, u"Freq"_s, u"Q"_s, u"max-delay"_s, u"Delay (s)"_s, u"Gain 1"_s, u"Gain 2"_s, u"Gain 3"_s,
++                                            u"Gain 4"_s, u"Gain 5"_s, u"Gain 6"_s, u"Gain 7"_s, u"Gain 8"_s};
++        static const QRegularExpression key(u"(\"[^\"]+\"|[A-Za-z][A-Za-z0-9_.-]*)\\s*=\\s"_s);
++        auto it = key.globalMatch(text);
++        int n = 0;
++        while (it.hasNext()) {
++            QString k = it.next().captured(1);
++            if (k.startsWith(u'"')) {
++                k = k.mid(1, k.size() - 2);
++            }
++            QVERIFY2(known.contains(k), qPrintable(k));
++            ++n;
++        }
++        QVERIFY(n > 40);
++        // braces and brackets balance, so no text of the person's closed a block early
++        QCOMPARE(text.count(u'{'), text.count(u'}'));
++        QCOMPARE(text.count(u'['), text.count(u']'));
++    }
++
++    void roundTrip()
++    {
++        const QVariantMap state = withDevice(NODE, dev({{u"levels"_s, QVariantMap{{u"FC"_s, 2.5}}}, {u"small"_s, QVariantList{u"FL"_s}}, {u"crossover"_s, 80}}));
++        QTemporaryDir dir;
++        QVERIFY(SpeakerSetupConf::write(dir.path(), state));
++        const QVariantMap got = SpeakerSetupConf::read(dir.path());
++        QCOMPARE(SpeakerSetupConf::validate(got), QString());
++        QCOMPARE(QJsonDocument::fromVariant(got).toJson(QJsonDocument::Compact), QJsonDocument::fromVariant(state).toJson(QJsonDocument::Compact));
++    }
++
++    void anUnacceptableStateIsNeverWritten()
++    {
++        QTemporaryDir dir;
++        QString error;
++        QVERIFY(!SpeakerSetupConf::write(dir.path(), withDevice(u"alsa_output.x\n"_s, dev({{u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})), &error));
++        QVERIFY(error.startsWith(u"invalid: device.name"_s));
++        QVERIFY(fileText(dir.path()).isEmpty());
++    }
++
++    void backToDefaultsRemovesOnlyOurFile()
++    {
++        QTemporaryDir dir;
++        QVERIFY(QDir().mkpath(dir.path() + u"/pipewire/pipewire.conf.d"_s));
++        QFile mine(dir.path() + u"/pipewire/pipewire.conf.d/50-sound-page.conf"_s);
++        QVERIFY(mine.open(QFile::WriteOnly));
++        mine.write("# the Sound Quality page's file\ncontext.properties = { default.clock.rate = 96000 }\n");
++        mine.close();
++        QVERIFY(SpeakerSetupConf::write(dir.path(), oneLevel(-3)));
++        QVERIFY(!fileText(dir.path()).isEmpty());
++        QVERIFY(SpeakerSetupConf::write(dir.path(), QVariantMap{}));
++        QVERIFY(fileText(dir.path()).isEmpty());
++        QVERIFY(QFile::exists(mine.fileName()));
++    }
++
++    void aForeignFileOfOurNameIsNeverOverwritten()
++    {
++        QTemporaryDir dir;
++        QVERIFY(QDir().mkpath(dir.path() + u"/pipewire/pipewire.conf.d"_s));
++        QFile foreign(dir.path() + u"/pipewire/pipewire.conf.d/50-speaker-page.conf"_s);
++        QVERIFY(foreign.open(QFile::WriteOnly));
++        foreign.write("# somebody else's file\n");
++        foreign.close();
++        QString error;
++        QVERIFY(!SpeakerSetupConf::write(dir.path(), oneLevel(-3), &error));
++        QVERIFY(error.startsWith(u"foreign: "_s));
++        QVERIFY(SpeakerSetupConf::write(dir.path(), QVariantMap{}));
++        QCOMPARE(fileText(dir.path()), QByteArray("# somebody else's file\n"));
++    }
++
++    void theAnglesAreTheStandards()
++    {
++        const QStringList p51 = {u"FL"_s, u"FR"_s, u"FC"_s, u"LFE"_s, u"RL"_s, u"RR"_s};
++        const QStringList p71 = {u"FL"_s, u"FR"_s, u"FC"_s, u"LFE"_s, u"RL"_s, u"RR"_s, u"SL"_s, u"SR"_s};
++        QCOMPARE(SpeakerSetupConf::angle(u"FC"_s, p51), 0.0);
++        QCOMPARE(SpeakerSetupConf::angle(u"FL"_s, p51), -30.0);
++        QCOMPARE(SpeakerSetupConf::angle(u"FR"_s, p51), 30.0);
++        QCOMPARE(SpeakerSetupConf::angle(u"RL"_s, p51), -110.0);
++        QCOMPARE(SpeakerSetupConf::angle(u"RR"_s, p51), 110.0);
++        QCOMPARE(SpeakerSetupConf::angle(u"SL"_s, p71), -90.0);
++        QCOMPARE(SpeakerSetupConf::angle(u"RL"_s, p71), -120.0);
++        QCOMPARE(SpeakerSetupConf::angle(u"RR"_s, p71), 120.0);
++    }
++};
++
++QTEST_GUILESS_MAIN(SpeakerSetupConfTest)
++
++#include "speakersetupconftest.moc"
+diff --git a/autotests/speakertestsignaltest.cpp b/autotests/speakertestsignaltest.cpp
+new file mode 100644
+index 00000000..642e0734
+--- /dev/null
++++ b/autotests/speakertestsignaltest.cpp
+@@ -0,0 +1,155 @@
++// SPDX-License-Identifier: BSD-2-Clause
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++#include "speakertestsignal.h"
++
++#include <QTest>
++#include <QtMath>
++#include <complex>
++#include <vector>
++
++namespace
++{
++double rmsDb(const float *p, int stride, int frames)
++{
++    double sq = 0;
++    for (int i = 0; i < frames; ++i) {
++        const double v = p[i * stride];
++        sq += v * v;
++    }
++    return 20 * std::log10(std::sqrt(sq / frames));
++}
++
++void fft(std::vector<std::complex<double>> &a)
++{
++    const size_t n = a.size();
++    for (size_t i = 1, j = 0; i < n; ++i) {
++        size_t bit = n >> 1;
++        for (; j & bit; bit >>= 1) {
++            j ^= bit;
++        }
++        j ^= bit;
++        if (i < j) {
++            std::swap(a[i], a[j]);
++        }
++    }
++    for (size_t len = 2; len <= n; len <<= 1) {
++        const double ang = -2 * M_PI / double(len);
++        const std::complex<double> wl(std::cos(ang), std::sin(ang));
++        for (size_t i = 0; i < n; i += len) {
++            std::complex<double> w(1);
++            for (size_t k = 0; k < len / 2; ++k) {
++                const auto u = a[i + k];
++                const auto v = a[i + k + len / 2] * w;
++                a[i + k] = u + v;
++                a[i + k + len / 2] = u - v;
++                w *= wl;
++            }
++        }
++    }
++}
++} // namespace
++
++class SpeakerTestSignalTest : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void theBurstIsAtMinusTwentyDbfs()
++    {
++        const auto noise = SpeakerTestSignal::pinkNoise(96000);
++        QVERIFY(qAbs(rmsDb(noise.constData(), 1, noise.size()) + 20.0) < 0.001);
++        float peak = 0;
++        for (float v : noise) {
++            peak = qMax(peak, qAbs(v));
++        }
++        QVERIFY(peak < 0.99f);
++    }
++
++    void aDifferentLevelIsHonoured()
++    {
++        const auto noise = SpeakerTestSignal::pinkNoise(48000, -12.0);
++        QVERIFY(qAbs(rmsDb(noise.constData(), 1, noise.size()) + 12.0) < 0.001);
++    }
++
++    void itIsTheSameBurstEveryTime()
++    {
++        QCOMPARE(SpeakerTestSignal::pinkNoise(4800), SpeakerTestSignal::pinkNoise(4800));
++    }
++
++    void itIsPinkNotWhite()
++    {
++        // pink noise has the same power in every octave: the level of a band 100 to 200 Hz equals the one 3200 to 6400 Hz within 1.5 dB;
++        // white noise would differ by 3 dB per octave, 15 dB over these five.
++        const int n = 1 << 17;
++        const auto noise = SpeakerTestSignal::pinkNoise(n);
++        std::vector<std::complex<double>> a(n);
++        for (int i = 0; i < n; ++i) {
++            a[i] = double(noise.at(i)) * (0.5 - 0.5 * std::cos(2 * M_PI * i / (n - 1)));
++        }
++        fft(a);
++        const double binHz = double(SpeakerTestSignal::rate) / n;
++        const auto band = [&](double lo, double hi) {
++            double p = 0;
++            for (int k = int(lo / binHz); k < int(hi / binHz); ++k) {
++                p += std::norm(a[k]);
++            }
++            return 10 * std::log10(p);
++        };
++        const double low = band(100, 200);
++        for (double f = 200; f < 6400; f *= 2) {
++            QVERIFY2(qAbs(band(f, 2 * f) - low) < 1.5, qPrintable(QString::number(f)));
++        }
++    }
++
++    void onlyTheChosenSpeakerSounds()
++    {
++        const QStringList positions = {"FL", "FR", "FC", "LFE", "RL", "RR"};
++        const QByteArray data = SpeakerTestSignal::sequence(positions, {"FC"}, 1.0, 0.5);
++        const auto *p = reinterpret_cast<const float *>(data.constData());
++        const int frames = data.size() / int(sizeof(float)) / positions.size();
++        QCOMPARE(frames, 48000 + 24000);
++        for (int ch = 0; ch < 6; ++ch) {
++            if (ch == 2) {
++                QVERIFY(qAbs(rmsDb(p + ch, 6, 48000) + 20.0) < 0.001);
++                continue;
++            }
++            for (int i = 0; i < frames; ++i) {
++                QCOMPARE(p[i * 6 + ch], 0.0f);
++            }
++        }
++        for (int i = 48000; i < frames; ++i) {
++            QCOMPARE(p[i * 6 + 2], 0.0f);
++        }
++    }
++
++    void theSequenceGoesOneByOne()
++    {
++        const QStringList positions = {"FL", "FR", "FC", "LFE", "RL", "RR"};
++        const QByteArray data = SpeakerTestSignal::sequence(positions, positions, 0.5, 0.25);
++        const auto *p = reinterpret_cast<const float *>(data.constData());
++        const int frames = data.size() / int(sizeof(float)) / 6;
++        QCOMPARE(frames, 6 * (24000 + 12000));
++        for (int n = 0; n < 6; ++n) {
++            const auto [first, len] = SpeakerTestSignal::burst(n, 0.5, 0.25);
++            for (int ch = 0; ch < 6; ++ch) {
++                if (ch == n) {
++                    QVERIFY(qAbs(rmsDb(p + first * 6 + ch, 6, len) + 20.0) < 0.001);
++                } else {
++                    for (int i = first; i < first + len; ++i) {
++                        QCOMPARE(p[i * 6 + ch], 0.0f);
++                    }
++                }
++            }
++        }
++    }
++
++    void aSpeakerTheDeviceLacksIsIgnored()
++    {
++        const QByteArray data = SpeakerTestSignal::sequence({"FL", "FR", "FC"}, {"SL"}, 1.0);
++        QVERIFY(data.isEmpty());
++    }
++};
++
++QTEST_GUILESS_MAIN(SpeakerTestSignalTest)
++
++#include "speakertestsignaltest.moc"
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index b7330166..fc455c36 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -20,6 +20,8 @@ set(plasma-volume_SRCS
+     devicerenamesaver.cpp devicerenamesaver.h
+     percentvalidator.cpp percentvalidator.h
+     soundformatconf.cpp soundformatconf.h
++    speakersetupconf.cpp speakersetupconf.h
++    speakertestsignal.cpp speakertestsignal.h
+     microphonetest.cpp microphonetest.h
+ )
+ 
+@@ -45,6 +47,7 @@ target_sources(plasma-volume-declarative PRIVATE
+     qml/dbusinterface.cpp
+     qml/routingcontroller.cpp qml/routingcontroller.h
+     qml/soundformats.cpp qml/soundformats.h
++    qml/speakersetup.cpp qml/speakersetup.h
+ )
+ target_include_directories(plasma-volume-declarative PRIVATE qml/)
+ 
+diff --git a/src/kauth/CMakeLists.txt b/src/kauth/CMakeLists.txt
+index 20824cdb..56147477 100644
+--- a/src/kauth/CMakeLists.txt
++++ b/src/kauth/CMakeLists.txt
+@@ -4,3 +4,10 @@ target_link_libraries(plasma-pa-soundformats-helper PRIVATE Qt::Core KF6::AuthCo
+ install(TARGETS plasma-pa-soundformats-helper DESTINATION ${KAUTH_HELPER_INSTALL_DIR})
+ kauth_install_helper_files(plasma-pa-soundformats-helper org.kde.plasma.pa.soundformats root)
+ kauth_install_actions(org.kde.plasma.pa.soundformats org.kde.plasma.pa.soundformats.actions)
++
++add_executable(plasma-pa-speakers-helper speakershelper.cpp ../speakersetupconf.cpp)
++target_include_directories(plasma-pa-speakers-helper PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
++target_link_libraries(plasma-pa-speakers-helper PRIVATE Qt::Core KF6::AuthCore)
++install(TARGETS plasma-pa-speakers-helper DESTINATION ${KAUTH_HELPER_INSTALL_DIR})
++kauth_install_helper_files(plasma-pa-speakers-helper org.kde.plasma.pa.speakers root)
++kauth_install_actions(org.kde.plasma.pa.speakers org.kde.plasma.pa.speakers.actions)
+diff --git a/src/kauth/org.kde.plasma.pa.speakers.actions b/src/kauth/org.kde.plasma.pa.speakers.actions
+new file mode 100644
+index 00000000..c20d5011
+--- /dev/null
++++ b/src/kauth/org.kde.plasma.pa.speakers.actions
+@@ -0,0 +1,23 @@
++[org.kde.plasma.pa.speakers.write]
++Name="Change the speaker setup for every account"
++Name[pl]="Zmień ustawienia głośników dla wszystkich kont"
++Name[pt_BR]="Alterar a configuração dos alto-falantes para todas as contas"
++Name[fr]="Modifier la configuration des haut-parleurs pour tous les comptes"
++Name[de]="Die Lautsprechereinrichtung für alle Konten ändern"
++Name[es]="Cambiar la configuración de los altavoces para todas las cuentas"
++Name[ja]="すべてのアカウントのスピーカー設定を変更する"
++Name[ko]="모든 계정의 스피커 설정 변경"
++Name[zh_CN]="更改所有账户的扬声器设置"
++Name[zh_TW]="變更所有帳號的喇叭設定"
++Description="Authentication is required to change the speaker setup for every account on this computer"
++Description[pl]="Zmiana ustawień głośników dla wszystkich kont na tym komputerze wymaga uwierzytelnienia"
++Description[pt_BR]="É necessária autenticação para alterar a configuração dos alto-falantes de todas as contas deste computador"
++Description[fr]="Une authentification est nécessaire pour modifier la configuration des haut-parleurs de tous les comptes de cet ordinateur"
++Description[de]="Zum Ändern der Lautsprechereinrichtung aller Konten auf diesem Computer ist eine Authentifizierung nötig"
++Description[es]="Se necesita autenticación para cambiar la configuración de los altavoces de todas las cuentas de este equipo"
++Description[ja]="このコンピュータのすべてのアカウントのスピーカー設定を変更するには認証が必要です"
++Description[ko]="이 컴퓨터의 모든 계정의 스피커 설정을 변경하려면 인증이 필요합니다"
++Description[zh_CN]="更改此计算机上所有账户的扬声器设置需要身份验证"
++Description[zh_TW]="變更這台電腦上所有帳號的喇叭設定需要驗證身分"
++Policy=auth_admin
++Persistence=session
+diff --git a/src/kauth/speakershelper.cpp b/src/kauth/speakershelper.cpp
+new file mode 100644
+index 00000000..65340a2c
+--- /dev/null
++++ b/src/kauth/speakershelper.cpp
+@@ -0,0 +1,51 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++
++#include "speakersetupconf.h"
++
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QObject>
++
++#include <KAuth/ActionReply>
++#include <KAuth/HelperSupport>
++
++using namespace Qt::StringLiterals;
++
++/**
++ * Writes the speaker setup that applies to every account, as an /etc drop-in for PipeWire.
++ * It accepts one thing: a state map that SpeakerSetupConf::validate approves. It builds the file text itself and never
++ * writes a path or text it was given, and it removes only files that carry the Speaker Setup page's mark.
++ */
++class SpeakerSetupHelper : public QObject
++{
++    Q_OBJECT
++public Q_SLOTS:
++    KAuth::ActionReply write(const QVariantMap &args)
++    {
++        QJsonParseError parse;
++        const auto doc = QJsonDocument::fromJson(args.value(u"state"_s).toString().toUtf8(), &parse);
++        if (parse.error != QJsonParseError::NoError || !doc.isObject()) {
++            return failure(u"The settings were not readable."_s);
++        }
++        QString error;
++        if (!SpeakerSetupConf::write(u"/etc"_s, doc.object().toVariantMap(), &error)) {
++            return failure(error);
++        }
++        return KAuth::ActionReply::SuccessReply();
++    }
++
++private:
++    static KAuth::ActionReply failure(const QString &text)
++    {
++        auto reply = KAuth::ActionReply::HelperErrorReply();
++        reply.setErrorDescription(text);
++        return reply;
++    }
++};
++
++KAUTH_HELPER_MAIN("org.kde.plasma.pa.speakers", SpeakerSetupHelper)
++
++#include "speakershelper.moc"
+diff --git a/src/kcm/ui/DeviceListItem.qml b/src/kcm/ui/DeviceListItem.qml
+index 25880c82..826ca8ec 100644
+--- a/src/kcm/ui/DeviceListItem.qml
++++ b/src/kcm/ui/DeviceListItem.qml
+@@ -30,6 +30,20 @@ ColumnLayout {
+     property bool comboBoxLabelsVisible: false
+     property var routingController
+     property var soundFormats
++    property var speakerSetup
++    signal speakerSetupRequested(string name)
++    readonly property var speakerInfo: {
++        if (!isPlayback || !speakerSetup) {
++            return null
++        }
++        const list = speakerSetup.devices
++        for (let i = 0; i < list.length; ++i) {
++            if (list[i].name === pulseObject.name) {
++                return list[i]
++            }
++        }
++        return null
++    }
+ 
+     RowLayout {
+         spacing: Kirigami.Units.smallSpacing
+@@ -186,6 +200,16 @@ ColumnLayout {
+         text: soundFormats && soundFormats.live ? (soundFormats.live[pulseObject.name] || "") : ""
+     }
+ 
++    Label {
++        Layout.fillWidth: true
++        Layout.leftMargin: Kirigami.Units.largeSpacing * 2
++        visible: delegate.speakerInfo !== null && !delegate.speakerInfo.eligible
++        wrapMode: Text.Wrap
++        font: Kirigami.Theme.smallFont
++        opacity: 0.7
++        text: delegate.speakerInfo !== null ? delegate.speakerInfo.reason : ""
++    }
++
+     RowLayout {
+         spacing: Kirigami.Units.smallSpacing
+ 
+@@ -282,6 +306,15 @@ ColumnLayout {
+                 });
+             }
+         }
++
++        Button {
++            Layout.alignment: Qt.AlignTop
++            visible: delegate.speakerInfo !== null
++            enabled: delegate.speakerInfo !== null && delegate.speakerInfo.eligible
++            text: i18nd("kcm_pulseaudio", "Speaker Setup…")
++            icon.name: "audio-speakers-symbolic"
++            onClicked: delegate.speakerSetupRequested(delegate.pulseObject.name)
++        }
+     }
+ 
+     Repeater {
+diff --git a/src/kcm/ui/SpeakerSetup.qml b/src/kcm/ui/SpeakerSetup.qml
+new file mode 100644
+index 00000000..ebca828c
+--- /dev/null
++++ b/src/kcm/ui/SpeakerSetup.qml
+@@ -0,0 +1,639 @@
++// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++import QtQuick
++import QtQuick.Layouts
++import QtQuick.Controls
++
++import org.kde.kcmutils as KCM
++import org.kde.kirigami as Kirigami
++import org.kde.plasma.private.volume
++
++KCM.ScrollViewKCM {
++    id: page
++
++    title: i18nd("kcm_pulseaudio", "Speaker Setup")
++    implicitHeight: Kirigami.Units.gridUnit * 34
++    implicitWidth: Kirigami.Units.gridUnit * 34
++
++    // The device this page was opened for: the node name of a playback device whose profile has more than two channels.
++    property string deviceName: ""
++    property bool allAccounts: false
++    property bool makeDefault: true
++    property string selected: ""
++    property bool dirty: false
++    property var work: ({levels: {}, distances: null, small: [], crossover: 0})
++    readonly property int textWidth: Kirigami.Units.gridUnit * 30
++    readonly property var info: {
++        const list = setup.devices
++        for (let i = 0; i < list.length; ++i) {
++            if (list[i].name === deviceName) {
++                return list[i]
++            }
++        }
++        return null
++    }
++    readonly property var positions: info !== null ? info.positions : []
++    readonly property bool eligible: info !== null && info.eligible
++    readonly property bool hasSub: positions.indexOf("LFE") >= 0
++    readonly property var scopeState: allAccounts ? setup.systemState : setup.userState
++    readonly property var savedDevice: setup.deviceState(allAccounts, deviceName)
++    readonly property var groups: {
++        const g = []
++        const pairs = [
++            {id: "front", members: ["FL", "FR"], text: i18nd("kcm_pulseaudio", "Front speakers")},
++            {id: "center", members: ["FC"], text: i18nd("kcm_pulseaudio", "Center speaker")},
++            {id: "side", members: ["SL", "SR"], text: i18nd("kcm_pulseaudio", "Side speakers")},
++            {id: "rear", members: ["RL", "RR", "RC"], text: i18nd("kcm_pulseaudio", "Rear speakers")}
++        ]
++        for (let i = 0; i < pairs.length; ++i) {
++            const present = pairs[i].members.filter(m => positions.indexOf(m) >= 0)
++            if (present.length > 0) {
++                g.push({id: pairs[i].id, members: present, text: pairs[i].text})
++            }
++        }
++        return g
++    }
++
++    SpeakerSetup {
++        id: setup
++    }
++
++    Timer {
++        interval: 3000
++        running: page.visible && !setup.busy && !setup.testRunning
++        repeat: true
++        onTriggered: setup.refresh()
++    }
++
++    function clone(o) {
++        return JSON.parse(JSON.stringify(o))
++    }
++
++    function speakerName(p) {
++        switch (p) {
++        case "FL": return i18nd("kcm_pulseaudio", "Front left")
++        case "FR": return i18nd("kcm_pulseaudio", "Front right")
++        case "FC": return i18nd("kcm_pulseaudio", "Center")
++        case "LFE": return i18nd("kcm_pulseaudio", "Subwoofer")
++        case "RL": return i18nd("kcm_pulseaudio", "Rear left")
++        case "RR": return i18nd("kcm_pulseaudio", "Rear right")
++        case "SL": return i18nd("kcm_pulseaudio", "Side left")
++        case "SR": return i18nd("kcm_pulseaudio", "Side right")
++        case "RC": return i18nd("kcm_pulseaudio", "Rear center")
++        }
++        return p
++    }
++
++    function levelText(db) {
++        return i18nd("kcm_pulseaudio", "%1 dB", Number(db).toLocaleString(Qt.locale(), "f", 1))
++    }
++
++    function distanceText(m) {
++        return setup.feet ? i18nd("kcm_pulseaudio", "%1 ft", Number(m / 0.3048).toLocaleString(Qt.locale(), "f", 1))
++                          : i18nd("kcm_pulseaudio", "%1 m", Number(m).toLocaleString(Qt.locale(), "f", 2))
++    }
++
++    function load() {
++        const d = clone(savedDevice)
++        let w = {levels: d.levels !== undefined ? d.levels : ({}), distances: d.distances !== undefined ? d.distances : null,
++                 small: d.small !== undefined ? d.small : [], crossover: d.crossover !== undefined ? d.crossover : 0}
++        work = w
++        dirty = false
++        if (selected === "" || positions.indexOf(selected) < 0) {
++            selected = positions.length > 0 ? positions[0] : ""
++        }
++    }
++
++    function touch() {
++        work = clone(work)
++        dirty = true
++    }
++
++    function levelOf(p) {
++        return work.levels[p] !== undefined ? work.levels[p] : 0
++    }
++
++    function setLevel(p, db) {
++        work.levels[p] = db
++        touch()
++    }
++
++    function farthest() {
++        let f = 0
++        if (work.distances === null) {
++            return f
++        }
++        for (const k in work.distances) {
++            f = Math.max(f, work.distances[k])
++        }
++        return f
++    }
++
++    function distanceOf(p) {
++        return work.distances !== null && work.distances[p] !== undefined ? work.distances[p] : 0
++    }
++
++    function delayMs(p) {
++        return work.distances === null ? 0 : setup.delaySeconds(distanceOf(p), farthest()) * 1000
++    }
++
++    function setDistancesOn(on) {
++        if (on) {
++            let d = {}
++            for (let i = 0; i < positions.length; ++i) {
++                d[positions[i]] = 3.0
++            }
++            work.distances = d
++        } else {
++            work.distances = null
++        }
++        touch()
++    }
++
++    function setDistance(p, m) {
++        work.distances[p] = m
++        touch()
++    }
++
++    function isSmall(group) {
++        return group.members.every(m => work.small.indexOf(m) >= 0)
++    }
++
++    function setSmall(group, small) {
++        let s = work.small.filter(m => group.members.indexOf(m) < 0)
++        if (small) {
++            s = s.concat(group.members)
++        }
++        work.small = s
++        if (s.length === 0) {
++            work.crossover = 0
++        } else if (work.crossover === 0) {
++            work.crossover = setup.defaultCrossover
++        }
++        touch()
++    }
++
++    // What the person has set for this device, as the drop-in's state; an empty object when every speaker is at its defaults.
++    function composeDevice() {
++        let levels = {}
++        let any = false
++        for (const k in work.levels) {
++            if (work.levels[k] !== 0 && positions.indexOf(k) >= 0) {
++                levels[k] = work.levels[k]
++                any = true
++            }
++        }
++        let d = {positions: positions}
++        if (any) {
++            d.levels = levels
++        }
++        if (work.distances !== null) {
++            let all = positions.map(p => work.distances[p])
++            if (Math.max.apply(null, all) > Math.min.apply(null, all)) {
++                d.distances = work.distances
++                any = true
++            }
++        }
++        const small = positions.filter(p => work.small.indexOf(p) >= 0 && p !== "LFE")
++        if (small.length > 0 && hasSub) {
++            d.small = small
++            d.crossover = work.crossover > 0 ? work.crossover : setup.defaultCrossover
++            any = true
++        }
++        if (!any) {
++            return null
++        }
++        const text = info.description.replace(/[^\p{L}\p{N} ._+:()\/-]/gu, "").trim().substring(0, 56)
++        if (/^[\p{L}\p{N}]/u.test(text)) {
++            d.label = i18nd("kcm_pulseaudio", "Speaker Setup: %1", text).substring(0, 80)
++        }
++        return d
++    }
++
++    function composeState() {
++        let st = clone(scopeState)
++        st.devices = st.devices !== undefined ? st.devices : ({})
++        const d = composeDevice()
++        if (d === null) {
++            delete st.devices[deviceName]
++        } else {
++            st.devices[deviceName] = d
++        }
++        if (Object.keys(st.devices).length === 0) {
++            delete st.devices
++        }
++        return st
++    }
++
++    readonly property bool hasChanges: dirty && (composeDevice() !== null || Object.keys(savedDevice).length > 0)
++
++    function applyNow() {
++        setup.apply(allAccounts, composeState(), deviceName, makeDefault)
++    }
++
++    function backToDefaults() {
++        let st = clone(scopeState)
++        if (st.devices !== undefined) {
++            delete st.devices[deviceName]
++            if (Object.keys(st.devices).length === 0) {
++                delete st.devices
++            }
++        }
++        setup.apply(allAccounts, st, deviceName, makeDefault)
++    }
++
++    onDeviceNameChanged: load()
++    onAllAccountsChanged: load()
++    onPositionsChanged: if (!dirty) load()
++    Connections {
++        target: setup
++        function onApplied(ok, node) {
++            page.load()
++        }
++        function onChanged() {
++            if (!page.dirty) {
++                page.load()
++            }
++        }
++    }
++    Component.onCompleted: load()
++
++    headerPaddingEnabled: false
++    header: ColumnLayout {
++        spacing: Kirigami.Units.smallSpacing
++
++        Kirigami.InlineMessage {
++            Layout.fillWidth: true
++            visible: setup.message.text !== undefined
++            type: setup.message.type === "positive" ? Kirigami.MessageType.Positive : Kirigami.MessageType.Error
++            position: Kirigami.InlineMessage.Position.Header
++            text: setup.message.text !== undefined ? setup.message.text : ""
++            showCloseButton: true
++            onVisibleChanged: if (!visible) setup.dismissMessage()
++        }
++
++        Kirigami.InlineMessage {
++            Layout.fillWidth: true
++            visible: page.info === null
++            type: Kirigami.MessageType.Warning
++            position: Kirigami.InlineMessage.Position.Header
++            text: i18nd("kcm_pulseaudio", "This device is no longer connected.")
++        }
++
++        Kirigami.InlineMessage {
++            Layout.fillWidth: true
++            visible: page.info !== null && !page.eligible
++            type: Kirigami.MessageType.Information
++            position: Kirigami.InlineMessage.Position.Header
++            text: page.info !== null ? page.info.reason : ""
++        }
++
++        RowLayout {
++            Layout.leftMargin: Kirigami.Units.largeSpacing
++            Layout.rightMargin: Kirigami.Units.largeSpacing
++            spacing: Kirigami.Units.largeSpacing
++
++            Label {
++                text: i18nd("kcm_pulseaudio", "Device:")
++            }
++
++            ComboBox {
++                id: deviceBox
++                Layout.fillWidth: true
++                enabled: !setup.busy
++                readonly property var eligibleDevices: setup.devices.filter(d => d.eligible)
++                model: eligibleDevices.map(d => d.description !== "" ? d.description : d.name)
++                currentIndex: Math.max(0, eligibleDevices.findIndex(d => d.name === page.deviceName))
++                onActivated: index => {
++                    page.deviceName = eligibleDevices[index].name
++                }
++            }
++        }
++
++        CheckBox {
++            Layout.leftMargin: Kirigami.Units.largeSpacing
++            text: i18nd("kcm_pulseaudio", "Apply changes to every account on this computer")
++            checked: page.allAccounts
++            enabled: !setup.busy
++            onToggled: page.allAccounts = checked
++        }
++    }
++
++    view: Flickable {
++        id: flickable
++        contentWidth: width
++        contentHeight: col.implicitHeight + Kirigami.Units.largeSpacing * 2
++        clip: true
++        enabled: !setup.busy && page.eligible
++
++        ColumnLayout {
++            id: col
++            width: flickable.width
++            spacing: Kirigami.Units.largeSpacing
++
++            // The room: the listener in the middle and the speakers where ITU-R BS.775-4 puts them.
++            Item {
++                id: room
++                Layout.alignment: Qt.AlignHCenter
++                Layout.preferredWidth: Kirigami.Units.gridUnit * 30
++                Layout.preferredHeight: Kirigami.Units.gridUnit * 24
++                readonly property real cx: width / 2
++                readonly property real cy: height * 0.5
++                readonly property real farMax: page.work.distances !== null ? Math.max(page.farthest(), 0.5) : 1
++
++                Rectangle {
++                    anchors.fill: parent
++                    radius: Kirigami.Units.cornerRadius
++                    color: "transparent"
++                    border.width: 1
++                    border.color: Kirigami.Theme.disabledTextColor
++                }
++
++                Kirigami.Icon {
++                    x: room.cx - width / 2
++                    y: room.cy - height / 2
++                    width: Kirigami.Units.iconSizes.medium
++                    height: width
++                    source: "user-identity"
++                    Accessible.name: i18nd("kcm_pulseaudio", "Listener")
++                }
++
++                Repeater {
++                    model: page.positions
++
++                    Rectangle {
++                        id: spk
++                        required property string modelData
++                        readonly property bool isSub: modelData === "LFE"
++                        readonly property real angle: page.info !== null ? setup.angle(modelData, page.positions) * Math.PI / 180 : 0
++                        readonly property real orbit: {
++                            const base = Math.min(room.width, room.height) * 0.38
++                            if (page.work.distances === null) {
++                                return base
++                            }
++                            return base * Math.max(0.25, page.distanceOf(modelData) / room.farMax)
++                        }
++                        width: Kirigami.Units.gridUnit * 4
++                        height: Kirigami.Units.gridUnit * 2.4
++                        x: (isSub ? room.width - width - Kirigami.Units.smallSpacing : room.cx + orbit * Math.sin(angle)) - (isSub ? 0 : width / 2)
++                        y: (isSub ? room.height - height - Kirigami.Units.smallSpacing : room.cy - orbit * Math.cos(angle)) - (isSub ? 0 : height / 2)
++                        color: setup.testing === modelData ? Kirigami.Theme.highlightColor
++                             : (page.selected === modelData ? Qt.alpha(Kirigami.Theme.highlightColor, 0.35) : Kirigami.Theme.backgroundColor)
++                        border.width: page.selected === modelData ? 2 : 1
++                        border.color: page.selected === modelData ? Kirigami.Theme.highlightColor : Kirigami.Theme.textColor
++                        Accessible.role: Accessible.Button
++                        Accessible.name: page.speakerName(modelData)
++
++                        ColumnLayout {
++                            anchors.centerIn: parent
++                            spacing: 0
++                            Label {
++                                Layout.alignment: Qt.AlignHCenter
++                                text: page.speakerName(spk.modelData)
++                                font: Kirigami.Theme.smallFont
++                                color: setup.testing === spk.modelData ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
++                            }
++                            Label {
++                                Layout.alignment: Qt.AlignHCenter
++                                text: page.levelText(page.levelOf(spk.modelData))
++                                font: Kirigami.Theme.smallFont
++                                opacity: 0.7
++                                color: setup.testing === spk.modelData ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
++                            }
++                        }
++
++                        MouseArea {
++                            anchors.fill: parent
++                            onClicked: page.selected = spk.modelData
++                        }
++                    }
++                }
++            }
++
++            Label {
++                Layout.fillWidth: true
++                Layout.maximumWidth: page.textWidth
++                wrapMode: Text.Wrap
++                font: Kirigami.Theme.smallFont
++                opacity: 0.7
++                text: i18nd("kcm_pulseaudio", "The speakers stand at the angles of Recommendation ITU-R BS.775-4: left and right at 30 degrees, the surrounds between 100 and 120 degrees.")
++            }
++
++            Kirigami.FormLayout {
++                Layout.fillWidth: true
++
++                Kirigami.Separator {
++                    Kirigami.FormData.isSection: true
++                    Kirigami.FormData.label: page.selected !== "" ? page.speakerName(page.selected) : ""
++                }
++
++                RowLayout {
++                    Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Level:")
++                    SpinBox {
++                        id: levelBox
++                        from: Math.round(setup.minLevel * 10)
++                        to: Math.round(setup.maxLevel * 10)
++                        stepSize: 5
++                        editable: true
++                        value: Math.round(page.levelOf(page.selected) * 10)
++                        textFromValue: (v, locale) => page.levelText(v / 10)
++                        valueFromText: (t, locale) => Math.round(Number.fromLocaleString(locale, t.replace(/[^0-9,.\-−]/g, "").replace("−", "-")) * 10)
++                        onValueModified: page.setLevel(page.selected, value / 10)
++                    }
++                    Button {
++                        icon.name: "edit-undo"
++                        text: i18nd("kcm_pulseaudio", "0 dB")
++                        enabled: page.levelOf(page.selected) !== 0
++                        onClicked: page.setLevel(page.selected, 0)
++                    }
++                }
++
++                RowLayout {
++                    Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Test signal:")
++                    Button {
++                        icon.name: "media-playback-start"
++                        text: i18nd("kcm_pulseaudio", "Test this speaker")
++                        enabled: page.selected !== "" && !setup.testRunning
++                        onClicked: setup.testChannel(page.deviceName, page.selected)
++                    }
++                    Button {
++                        icon.name: "media-playlist-play"
++                        text: i18nd("kcm_pulseaudio", "Test all in sequence")
++                        enabled: !setup.testRunning
++                        onClicked: setup.testAll(page.deviceName)
++                    }
++                    Button {
++                        icon.name: "media-playback-stop"
++                        text: i18nd("kcm_pulseaudio", "Stop")
++                        enabled: setup.testRunning
++                        onClicked: setup.stopTest()
++                    }
++                }
++
++                ComboBox {
++                    Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Test signal length:")
++                    readonly property var values: [1, 2, 5, 10]
++                    model: values.map(v => i18nd("kcm_pulseaudio", "%1 s per speaker", v))
++                    currentIndex: Math.max(0, values.indexOf(setup.testSeconds))
++                    onActivated: index => setup.testSeconds = values[index]
++                }
++
++                Label {
++                    Layout.fillWidth: true
++                    Layout.maximumWidth: page.textWidth
++                    wrapMode: Text.Wrap
++                    font: Kirigami.Theme.smallFont
++                    opacity: 0.7
++                    text: i18nd("kcm_pulseaudio", "Pink noise at -20 dBFS, one speaker at a time, through the speaker setup when there is one.")
++                }
++
++                Kirigami.Separator {
++                    Kirigami.FormData.isSection: true
++                    Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Distances")
++                }
++
++                CheckBox {
++                    text: i18nd("kcm_pulseaudio", "The speakers are at different distances from the listener")
++                    checked: page.work.distances !== null
++                    onToggled: page.setDistancesOn(checked)
++                }
++
++                RowLayout {
++                    Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Distance:")
++                    visible: page.work.distances !== null
++                    SpinBox {
++                        id: distBox
++                        from: setup.feet ? 10 : Math.round(setup.minDistance * 10)
++                        to: setup.feet ? Math.round(setup.maxDistance / 0.3048 * 10) : Math.round(setup.maxDistance * 10)
++                        stepSize: 1
++                        editable: true
++                        value: Math.round((setup.feet ? page.distanceOf(page.selected) / 0.3048 : page.distanceOf(page.selected)) * 10)
++                        textFromValue: (v, locale) => page.distanceText(setup.feet ? v / 10 * 0.3048 : v / 10)
++                        valueFromText: (t, locale) => Math.round(Number.fromLocaleString(locale, t.replace(/[^0-9,.]/g, "")) * 10)
++                        onValueModified: page.setDistance(page.selected, setup.feet ? value / 10 * 0.3048 : value / 10)
++                    }
++                    ComboBox {
++                        model: [i18nd("kcm_pulseaudio", "Meters"), i18nd("kcm_pulseaudio", "Feet")]
++                        currentIndex: setup.feet ? 1 : 0
++                        onActivated: index => setup.feet = index === 1
++                    }
++                }
++
++                Label {
++                    Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Delay:")
++                    visible: page.work.distances !== null
++                    Layout.fillWidth: true
++                    Layout.maximumWidth: page.textWidth
++                    wrapMode: Text.Wrap
++                    text: page.delayMs(page.selected) === 0 ? i18nd("kcm_pulseaudio", "None: this is the farthest speaker.")
++                        : i18nd("kcm_pulseaudio", "%1 ms, so that its sound arrives with the farthest speaker's.", Number(page.delayMs(page.selected)).toLocaleString(Qt.locale(), "f", 2))
++                }
++
++                Kirigami.Separator {
++                    Kirigami.FormData.isSection: true
++                    Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Bass management")
++                }
++
++                Label {
++                    visible: !page.hasSub
++                    Layout.fillWidth: true
++                    Layout.maximumWidth: page.textWidth
++                    wrapMode: Text.Wrap
++                    text: i18nd("kcm_pulseaudio", "Bass management needs a subwoofer channel, and the profile of this device has none.")
++                }
++
++                Repeater {
++                    model: page.hasSub ? page.groups : []
++                    delegate: ComboBox {
++                        required property var modelData
++                        Kirigami.FormData.label: modelData.text + ":"
++                        readonly property var group: modelData
++                        Layout.minimumWidth: Kirigami.Units.gridUnit * 18
++                        model: [i18nd("kcm_pulseaudio", "Large (full range)"), i18nd("kcm_pulseaudio", "Small (bass goes to the subwoofer)")]
++                        currentIndex: page.isSmall(group) ? 1 : 0
++                        onActivated: index => page.setSmall(group, index === 1)
++                    }
++                }
++
++                RowLayout {
++                    Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Crossover:")
++                    visible: page.hasSub
++                    enabled: page.work.small.length > 0
++                    SpinBox {
++                        from: setup.minCrossover
++                        to: setup.maxCrossover
++                        stepSize: 10
++                        editable: true
++                        value: page.work.crossover > 0 ? page.work.crossover : setup.defaultCrossover
++                        textFromValue: (v, locale) => i18nd("kcm_pulseaudio", "%1 Hz", v)
++                        valueFromText: (t, locale) => Math.round(Number(t.replace(/[^0-9]/g, "")))
++                        onValueModified: {
++                            page.work.crossover = value
++                            page.touch()
++                        }
++                    }
++                }
++
++                Label {
++                    visible: page.hasSub
++                    Layout.fillWidth: true
++                    Layout.maximumWidth: page.textWidth
++                    wrapMode: Text.Wrap
++                    font: Kirigami.Theme.smallFont
++                    opacity: 0.7
++                    text: i18nd("kcm_pulseaudio", "Small speakers play only what is above the crossover; what is below goes to the subwoofer, with a 24 dB per octave slope. With every speaker large nothing is added to the signal.")
++                }
++
++                Kirigami.Separator {
++                    Kirigami.FormData.isSection: true
++                    Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Output")
++                }
++
++                CheckBox {
++                    text: i18nd("kcm_pulseaudio", "Make the speaker setup the output of this account")
++                    checked: page.makeDefault
++                    onToggled: page.makeDefault = checked
++                }
++
++                Label {
++                    Layout.fillWidth: true
++                    Layout.maximumWidth: page.textWidth
++                    wrapMode: Text.Wrap
++                    font: Kirigami.Theme.smallFont
++                    opacity: 0.7
++                    text: i18nd("kcm_pulseaudio", "Programs reach the speakers through the setup only while it is the output they play to. With every speaker at its defaults there is no setup and nothing is added to the signal.")
++                }
++            }
++        }
++    }
++
++    footer: RowLayout {
++        Layout.fillWidth: true
++        spacing: Kirigami.Units.smallSpacing
++
++        Item {
++            Layout.fillWidth: true
++        }
++
++        Button {
++            icon.name: "edit-reset"
++            text: i18nd("kcm_pulseaudio", "Back to defaults")
++            enabled: !setup.busy && page.eligible && Object.keys(page.savedDevice).length > 0
++            onClicked: page.backToDefaults()
++        }
++
++        Button {
++            icon.name: "dialog-ok-apply"
++            text: i18nd("kcm_pulseaudio", "Apply")
++            enabled: !setup.busy && page.eligible && page.hasChanges
++            onClicked: page.applyNow()
++        }
++    }
++
++    BusyIndicator {
++        anchors.centerIn: parent
++        running: setup.busy
++        visible: setup.busy
++    }
++}
+diff --git a/src/kcm/ui/main.qml b/src/kcm/ui/main.qml
+index 91604a64..e16c7d5e 100644
+--- a/src/kcm/ui/main.qml
++++ b/src/kcm/ui/main.qml
+@@ -69,14 +69,21 @@ KCM.ScrollViewKCM {
+     }
+ 
+     SoundFormats {
+-        id: soundFormats
++        id: soundFormatsModel
++    }
++
++    SpeakerSetup {
++        id: speakerSetupModel
+     }
+ 
+     Timer {
+         interval: 3000
+-        running: soundFormats && Window.window !== null
++        running: soundFormatsModel && Window.window !== null
+         repeat: true
+-        onTriggered: soundFormats.refresh()
++        onTriggered: {
++            soundFormatsModel.refresh()
++            speakerSetupModel.refresh()
++        }
+     }
+ 
+     actions: [
+@@ -185,8 +192,10 @@ KCM.ScrollViewKCM {
+                 delegate: DeviceListItem {
+                     isPlayback: true
+                     routingController: routing
+-                    soundFormats: soundFormats
++                    soundFormats: soundFormatsModel
++                    speakerSetup: speakerSetupModel
+                     comboBoxLabelsVisible: column.comboBoxLabelsVisible
++                    onSpeakerSetupRequested: name => kcm.push("SpeakerSetup.qml", { "deviceName": name })
+                 }
+             }
+ 
+@@ -211,7 +220,7 @@ KCM.ScrollViewKCM {
+                 delegate: DeviceListItem {
+                     isPlayback: false
+                     routingController: routing
+-                    soundFormats: soundFormats
++                    soundFormats: soundFormatsModel
+                     comboBoxLabelsVisible: column.comboBoxLabelsVisible
+                 }
+             }
+diff --git a/src/qml/plugin.cpp b/src/qml/plugin.cpp
+index 9500a2a5..159a3036 100644
+--- a/src/qml/plugin.cpp
++++ b/src/qml/plugin.cpp
+@@ -36,6 +36,7 @@
+ #include "microphonetest.h"
+ #include "routingcontroller.h"
+ #include "soundformats.h"
++#include "speakersetup.h"
+ 
+ static QJSValue pulseaudio_singleton(QQmlEngine *engine, QJSEngine *scriptEngine)
+ {
+@@ -79,6 +80,7 @@ void Plugin::registerTypes(const char *uri)
+     qmlRegisterType<MicrophoneTest>(uri, 0, 1, "MicrophoneTest");
+     qmlRegisterType<RoutingController>(uri, 0, 1, "RoutingController");
+     qmlRegisterType<SoundFormats>(uri, 0, 1, "SoundFormats");
++    qmlRegisterType<SpeakerSetup>(uri, 0, 1, "SpeakerSetup");
+     qmlRegisterType<GlobalConfig>(uri, 0, 1, "GlobalConfig");
+     qmlRegisterType<DeviceRenameModel>(uri, 0, 1, "DeviceRenameModel");
+     qmlRegisterType<DeviceRenameSaver>(uri, 0, 1, "DeviceRenameSaver");
+diff --git a/src/qml/speakersetup.cpp b/src/qml/speakersetup.cpp
+new file mode 100644
+index 00000000..f97bb27c
+--- /dev/null
++++ b/src/qml/speakersetup.cpp
+@@ -0,0 +1,730 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++
++#include "speakersetup.h"
++
++#include "speakersetupconf.h"
++#include "speakertestsignal.h"
++
++#include <QDir>
++#include <QElapsedTimer>
++#include <QEventLoop>
++#include <QFile>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QRegularExpression>
++#include <QSet>
++#include <QStandardPaths>
++#include <QTemporaryDir>
++#include <QtMath>
++
++#include <KAuth/Action>
++#include <KAuth/ExecuteJob>
++#include <KConfigGroup>
++#include <KLocalizedString>
++#include <KSharedConfig>
++
++using namespace Qt::StringLiterals;
++
++namespace
++{
++QString propString(const QJsonObject &props, const QString &key)
++{
++    const auto v = props.value(key);
++    if (v.isString()) {
++        return v.toString();
++    }
++    if (v.isDouble()) {
++        return QString::number(v.toInt());
++    }
++    if (v.isBool()) {
++        return v.toBool() ? u"true"_s : u"false"_s;
++    }
++    return {};
++}
++
++QStringList positionTokens(const QString &text)
++{
++    QStringList out;
++    static const QRegularExpression re(u"[A-Za-z0-9]+"_s);
++    auto it = re.globalMatch(text);
++    while (it.hasNext()) {
++        out << it.next().captured();
++    }
++    return out;
++}
++
++QString describeWriteError(const QString &code)
++{
++    const int colon = code.indexOf(u": "_s);
++    const QString kind = colon > 0 ? code.left(colon) : code;
++    const QString path = colon > 0 ? code.mid(colon + 2) : QString();
++    if (kind == u"foreign"_s) {
++        return i18nd("kcm_pulseaudio", "the file %1 is not one this page wrote, so it was left alone", path);
++    }
++    if (kind == u"mkdir"_s || kind == u"write"_s || kind == u"remove"_s) {
++        return i18nd("kcm_pulseaudio", "the file %1 could not be written", path);
++    }
++    return i18nd("kcm_pulseaudio", "the settings were not accepted");
++}
++
++// The controls the filter should hold once the setup is running, as PipeWire names them in the node's Props: "node:Control".
++QMap<QString, double> expectedControls(const QVariantMap &dev)
++{
++    QMap<QString, double> want;
++    const QVariantMap levels = dev.value(u"levels"_s).toMap();
++    for (auto it = levels.begin(); it != levels.end(); ++it) {
++        if (it.value().toDouble() != 0.0) {
++            want.insert(u"g_%1:Mult"_s.arg(it.key()), SpeakerSetupConf::gain(it.value().toDouble()));
++        }
++    }
++    const QVariantMap distances = dev.value(u"distances"_s).toMap();
++    double farthest = 0;
++    for (auto it = distances.begin(); it != distances.end(); ++it) {
++        farthest = qMax(farthest, it.value().toDouble());
++    }
++    for (auto it = distances.begin(); it != distances.end(); ++it) {
++        const double d = SpeakerSetupConf::delaySeconds(it.value().toDouble(), farthest);
++        if (d > 0.0) {
++            want.insert(u"d_%1:Delay (s)"_s.arg(it.key()), d);
++        }
++    }
++    const double crossover = dev.value(u"crossover"_s, SpeakerSetupConf::defaultCrossover).toDouble();
++    const QStringList small = dev.value(u"small"_s).toStringList();
++    for (const auto &p : small) {
++        for (const QString &k : {u"hp1"_s, u"hp2"_s, u"lp1"_s, u"lp2"_s}) {
++            want.insert(u"%1_%2:Freq"_s.arg(k, p), crossover);
++        }
++    }
++    return want;
++}
++} // namespace
++
++SpeakerSetup::SpeakerSetup(QObject *parent)
++    : QObject(parent)
++{
++    loadSettings();
++    m_testTimer.setInterval(100);
++    refresh();
++}
++
++SpeakerSetup::~SpeakerSetup()
++{
++    stopTest();
++}
++
++double SpeakerSetup::speedOfSound() const
++{
++    return SpeakerSetupConf::speedOfSound;
++}
++double SpeakerSetup::minLevel() const
++{
++    return SpeakerSetupConf::minLevel;
++}
++double SpeakerSetup::maxLevel() const
++{
++    return SpeakerSetupConf::maxLevel;
++}
++double SpeakerSetup::minDistance() const
++{
++    return SpeakerSetupConf::minDistance;
++}
++double SpeakerSetup::maxDistance() const
++{
++    return SpeakerSetupConf::maxDistance;
++}
++int SpeakerSetup::minCrossover() const
++{
++    return SpeakerSetupConf::minCrossover;
++}
++int SpeakerSetup::maxCrossover() const
++{
++    return SpeakerSetupConf::maxCrossover;
++}
++int SpeakerSetup::defaultCrossover() const
++{
++    return SpeakerSetupConf::defaultCrossover;
++}
++
++double SpeakerSetup::angle(const QString &position, const QStringList &positions) const
++{
++    return SpeakerSetupConf::angle(position, positions);
++}
++
++double SpeakerSetup::delaySeconds(double distance, double farthest) const
++{
++    return SpeakerSetupConf::delaySeconds(distance, farthest);
++}
++
++void SpeakerSetup::loadSettings()
++{
++    const KConfigGroup g(KSharedConfig::openConfig(u"kcm_pulseaudiorc"_s), u"SpeakerSetup"_s);
++    m_feet = g.readEntry("Feet", false);
++    m_testSeconds = qBound(1, g.readEntry("TestSeconds", 2), 10);
++}
++
++void SpeakerSetup::setFeet(bool feet)
++{
++    if (m_feet == feet) {
++        return;
++    }
++    m_feet = feet;
++    KConfigGroup(KSharedConfig::openConfig(u"kcm_pulseaudiorc"_s), u"SpeakerSetup"_s).writeEntry("Feet", feet);
++    KSharedConfig::openConfig(u"kcm_pulseaudiorc"_s)->sync();
++    Q_EMIT settingsChanged();
++}
++
++void SpeakerSetup::setTestSeconds(int seconds)
++{
++    seconds = qBound(1, seconds, 10);
++    if (m_testSeconds == seconds) {
++        return;
++    }
++    m_testSeconds = seconds;
++    KConfigGroup(KSharedConfig::openConfig(u"kcm_pulseaudiorc"_s), u"SpeakerSetup"_s).writeEntry("TestSeconds", seconds);
++    KSharedConfig::openConfig(u"kcm_pulseaudiorc"_s)->sync();
++    Q_EMIT settingsChanged();
++}
++
++QString SpeakerSetup::userBase() const
++{
++    return QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
++}
++
++void SpeakerSetup::setBusy(bool busy)
++{
++    if (m_busy != busy) {
++        m_busy = busy;
++        Q_EMIT busyChanged();
++    }
++}
++
++void SpeakerSetup::setMessage(const QString &type, const QString &text)
++{
++    m_message = type.isEmpty() ? QVariantMap() : QVariantMap{{u"type"_s, type}, {u"text"_s, text}};
++    Q_EMIT messageChanged();
++}
++
++void SpeakerSetup::dismissMessage()
++{
++    setMessage({}, {});
++}
++
++void SpeakerSetup::wait(int ms) const
++{
++    QEventLoop loop;
++    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
++    loop.exec(QEventLoop::ExcludeUserInputEvents);
++}
++
++SpeakerSetup::Run SpeakerSetup::run(const QString &program, const QStringList &args, int timeoutMs) const
++{
++    Run r;
++    const QString exe = QStandardPaths::findExecutable(program);
++    if (exe.isEmpty()) {
++        r.failedToStart = true;
++        return r;
++    }
++    QProcess p;
++    QEventLoop loop;
++    QTimer timer;
++    timer.setSingleShot(true);
++    QObject::connect(&p, &QProcess::finished, &loop, &QEventLoop::quit);
++    QObject::connect(&p, &QProcess::errorOccurred, &loop, [&](QProcess::ProcessError e) {
++        if (e == QProcess::FailedToStart) {
++            r.failedToStart = true;
++            loop.quit();
++        }
++    });
++    QObject::connect(&timer, &QTimer::timeout, &loop, [&] {
++        r.timedOut = true;
++        loop.quit();
++    });
++    p.start(exe, args);
++    if (p.state() != QProcess::NotRunning) {
++        p.closeWriteChannel();
++        timer.start(timeoutMs);
++        loop.exec(QEventLoop::ExcludeUserInputEvents);
++    }
++    if (p.state() != QProcess::NotRunning) {
++        p.kill();
++        p.waitForFinished(1000);
++    }
++    r.code = p.exitStatus() == QProcess::NormalExit ? p.exitCode() : -1;
++    r.out = p.readAllStandardOutput();
++    r.err = p.readAllStandardError();
++    return r;
++}
++
++QJsonDocument SpeakerSetup::pwDump() const
++{
++    const Run r = run(u"pw-dump"_s, {}, 5000);
++    if (r.failedToStart || r.code != 0) {
++        return {};
++    }
++    return QJsonDocument::fromJson(r.out);
++}
++
++QString SpeakerSetup::defaultSinkNow() const
++{
++    const Run r = run(u"pactl"_s, {u"get-default-sink"_s}, 4000);
++    return r.failedToStart || r.code != 0 ? QString() : QString::fromUtf8(r.out).trimmed();
++}
++
++QVariantList SpeakerSetup::readDevices() const
++{
++    QVariantList out;
++    const auto doc = pwDump();
++    if (!doc.isArray()) {
++        return out;
++    }
++    QSet<QString> setups;
++    for (const auto &item : doc.array()) {
++        const auto props = item.toObject().value(u"info"_s).toObject().value(u"props"_s).toObject();
++        const QString name = propString(props, u"node.name"_s);
++        if (propString(props, u"media.class"_s) == u"Audio/Sink"_s && name.startsWith(u"speaker_setup."_s)) {
++            setups.insert(name);
++        }
++    }
++    for (const auto &item : doc.array()) {
++        const auto obj = item.toObject();
++        if (obj.value(u"type"_s).toString() != u"PipeWire:Interface:Node"_s) {
++            continue;
++        }
++        const auto info = obj.value(u"info"_s).toObject();
++        const auto props = info.value(u"props"_s).toObject();
++        if (propString(props, u"media.class"_s) != u"Audio/Sink"_s) {
++            continue;
++        }
++        const QString name = propString(props, u"node.name"_s);
++        const auto params = info.value(u"params"_s).toObject();
++        QStringList tokens = positionTokens(propString(props, u"audio.position"_s));
++        if (tokens.isEmpty()) {
++            for (const char *key : {"Format", "EnumFormat"}) {
++                const auto arr = params.value(QLatin1String(key)).toArray();
++                if (!arr.isEmpty()) {
++                    for (const auto &p : arr.at(0).toObject().value(u"position"_s).toArray()) {
++                        tokens << p.toString();
++                    }
++                }
++                if (!tokens.isEmpty()) {
++                    break;
++                }
++            }
++        }
++        int channels = tokens.size();
++        if (channels == 0) {
++            channels = propString(props, u"audio.channels"_s).toInt();
++        }
++        QStringList known;
++        QStringList unknown;
++        for (const auto &t : tokens) {
++            (SpeakerSetupConf::validPosition(t) ? known : unknown) << t;
++        }
++        QString reason;
++        if (SpeakerSetupConf::isSetupSink(name)) {
++            reason = i18nd("kcm_pulseaudio", "This is the speaker setup of another device. Set up the speakers from that device.");
++        } else if (channels <= 2) {
++            reason = channels == 0 ? i18nd("kcm_pulseaudio", "The channels of this device could not be read, so Speaker Setup is not offered.")
++                                   : i18nd("kcm_pulseaudio",
++                                           "Speaker Setup is for devices whose current profile has more than two channels. The profile of this device has %1.",
++                                           channels);
++        } else if (channels > 8) {
++            reason = i18nd("kcm_pulseaudio", "This device has more than eight channels, which Speaker Setup does not handle.");
++        } else if (!unknown.isEmpty() || known.size() != channels) {
++            reason = i18nd("kcm_pulseaudio", "This device names speakers that Speaker Setup does not know: %1.", unknown.join(u", "_s));
++        } else if (!SpeakerSetupConf::validNodeName(name)) {
++            reason = i18nd("kcm_pulseaudio", "Speaker Setup cannot change this device yet.");
++        }
++        QVariantMap dev{{u"name"_s, name},
++                        {u"description"_s, propString(props, u"node.description"_s)},
++                        {u"channels"_s, channels},
++                        {u"positions"_s, QVariant(known)},
++                        {u"eligible"_s, reason.isEmpty()},
++                        {u"reason"_s, reason},
++                        {u"setupActive"_s, setups.contains(SpeakerSetupConf::sinkName(name))},
++                        {u"setupSink"_s, SpeakerSetupConf::sinkName(name)}};
++        out << dev;
++    }
++    return out;
++}
++
++QVariantMap SpeakerSetup::deviceInfo(const QString &node) const
++{
++    for (const auto &d : m_devices) {
++        if (d.toMap().value(u"name"_s).toString() == node) {
++            return d.toMap();
++        }
++    }
++    return {};
++}
++
++QVariantMap SpeakerSetup::deviceState(bool system, const QString &node) const
++{
++    return (system ? m_system : m_user).value(u"devices"_s).toMap().value(node).toMap();
++}
++
++void SpeakerSetup::refresh()
++{
++    m_user = SpeakerSetupConf::read(userBase());
++    m_system = SpeakerSetupConf::read(u"/etc"_s);
++    const QVariantList devices = readDevices();
++    if (devices != m_devices) {
++        m_devices = devices;
++        Q_EMIT devicesChanged();
++    }
++    m_defaultSink = defaultSinkNow();
++    Q_EMIT changed();
++}
++
++bool SpeakerSetup::writeScope(bool system, const QVariantMap &state, QString *error)
++{
++    if (!system) {
++        QString code;
++        const bool ok = SpeakerSetupConf::write(userBase(), state, &code);
++        if (!ok && error) {
++            *error = describeWriteError(code);
++        }
++        return ok;
++    }
++    KAuth::Action action(u"org.kde.plasma.pa.speakers.write"_s);
++    action.setHelperId(u"org.kde.plasma.pa.speakers"_s);
++    action.setArguments({{u"state"_s, QString::fromUtf8(QJsonDocument::fromVariant(state).toJson(QJsonDocument::Compact))}});
++    auto *job = action.execute();
++    if (!job->exec()) {
++        if (error) {
++            const int code = job->error();
++            if (code == KAuth::ActionReply::AuthorizationDeniedError || code == KAuth::ActionReply::UserCancelledError || code == KAuth::ActionReply::BackendError) {
++                *error = i18nd("kcm_pulseaudio", "the system did not allow the change for every account");
++            } else {
++                *error = describeWriteError(job->errorText());
++            }
++        }
++        return false;
++    }
++    return true;
++}
++
++bool SpeakerSetup::activate(const QString &node)
++{
++    const Run r = run(u"systemctl"_s, {u"--user"_s, u"restart"_s, u"wireplumber.service"_s, u"pipewire.service"_s}, 20000);
++    if (r.failedToStart || r.code != 0) {
++        return false;
++    }
++    // The nodes come back a moment after the services do.
++    for (int i = 0; i < 50; ++i) {
++        wait(200);
++        const auto doc = pwDump();
++        if (doc.isArray()) {
++            for (const auto &item : doc.array()) {
++                const auto props = item.toObject().value(u"info"_s).toObject().value(u"props"_s).toObject();
++                if (propString(props, u"media.class"_s) == u"Audio/Sink"_s && propString(props, u"node.name"_s) == node) {
++                    wait(700);
++                    return true;
++                }
++            }
++        }
++    }
++    return false;
++}
++
++QString SpeakerSetup::check(const QString &node, const QVariantMap &state, bool makeDefault)
++{
++    const QVariantMap dev = state.value(u"devices"_s).toMap().value(node).toMap();
++    const QString sink = SpeakerSetupConf::sinkName(node);
++    QJsonObject sinkObject;
++    QJsonObject deviceObject;
++    // The setup's output is made when PipeWire loads the filter, which can be a moment after the device is back.
++    for (int tries = 0; tries < 25; ++tries) {
++        sinkObject = {};
++        deviceObject = {};
++        for (const auto &item : pwDump().array()) {
++            const auto o = item.toObject();
++            const auto props = o.value(u"info"_s).toObject().value(u"props"_s).toObject();
++            const QString name = propString(props, u"node.name"_s);
++            if (name == sink) {
++                sinkObject = o;
++            } else if (name == node) {
++                deviceObject = o;
++            }
++        }
++        if (dev.isEmpty() || !sinkObject.isEmpty()) {
++            break;
++        }
++        wait(200);
++    }
++    if (deviceObject.isEmpty()) {
++        return i18nd("kcm_pulseaudio", "This device is no longer connected.");
++    }
++    if (dev.isEmpty()) {
++        return sinkObject.isEmpty() ? QString() : i18nd("kcm_pulseaudio", "The speaker setup of this device is still there.");
++    }
++    if (sinkObject.isEmpty()) {
++        return i18nd("kcm_pulseaudio", "PipeWire did not make the output of the speaker setup.");
++    }
++    const QStringList positions = dev.value(u"positions"_s).toStringList();
++    const auto sinkProps = sinkObject.value(u"info"_s).toObject().value(u"props"_s).toObject();
++    if (propString(sinkProps, u"audio.channels"_s).toInt() != positions.size()) {
++        return i18nd("kcm_pulseaudio", "The speaker setup came up with %1 channels, not the %2 of the device.", propString(sinkProps, u"audio.channels"_s).toInt(), positions.size());
++    }
++    // The filter's own controls, as the running graph holds them.
++    QMap<QString, double> got;
++    for (const auto &pv : sinkObject.value(u"info"_s).toObject().value(u"params"_s).toObject().value(u"Props"_s).toArray()) {
++        const auto arr = pv.toObject().value(u"params"_s).toArray();
++        for (int i = 0; i + 1 < arr.size(); i += 2) {
++            if (arr.at(i).isString() && arr.at(i + 1).isDouble()) {
++                got.insert(arr.at(i).toString(), arr.at(i + 1).toDouble());
++            }
++        }
++    }
++    const auto want = expectedControls(dev);
++    for (auto it = want.begin(); it != want.end(); ++it) {
++        if (!got.contains(it.key()) || qAbs(got.value(it.key()) - it.value()) > 1e-4 * qMax(1.0, qAbs(it.value())) + 1e-6) {
++            return i18nd("kcm_pulseaudio", "The sound system did not take the value %1 of the speaker setup.", it.key().section(u':', 0, 0).section(u'_', 1));
++        }
++    }
++    // The setup does not pin the graph to a rate.
++    const Run meta = run(u"pw-metadata"_s, {u"-n"_s, u"settings"_s}, 4000);
++    const QString forceRate = QRegularExpression(u"key:'clock.force-rate' value:'([^']*)'"_s).match(QString::fromUtf8(meta.out)).captured(1);
++    if (!forceRate.isEmpty() && forceRate != u"0"_s) {
++        return i18nd("kcm_pulseaudio", "The speaker setup holds the sound system at %1 Hz.", forceRate);
++    }
++    if (makeDefault) {
++        run(u"pactl"_s, {u"set-default-sink"_s, sink}, 4000);
++        if (defaultSinkNow() != sink) {
++            return i18nd("kcm_pulseaudio", "The speaker setup could not be made the default output.");
++        }
++    }
++    // A short stretch of silence through the setup shows that the device takes all its channels.
++    const QString exe = QStandardPaths::findExecutable(u"pw-cat"_s);
++    if (exe.isEmpty()) {
++        return i18nd("kcm_pulseaudio", "The tool %1 is not installed, so the speaker setup could not be tried.", u"pw-cat"_s);
++    }
++    QProcess cat;
++    cat.start(exe,
++              {u"--playback"_s, u"--raw"_s, u"--target"_s, sink, u"--rate"_s, u"48000"_s, u"--channels"_s, QString::number(positions.size()), u"--channel-map"_s,
++               positions.join(u','), u"--format"_s, u"f32"_s, u"-"_s});
++    if (!cat.waitForStarted(3000)) {
++        return i18nd("kcm_pulseaudio", "The tool %1 is not installed, so the speaker setup could not be tried.", u"pw-cat"_s);
++    }
++    cat.write(QByteArray(48000 * positions.size() * int(sizeof(float)) / 2, '\0'));
++    cat.closeWriteChannel();
++    QString problem;
++    bool seen = false;
++    for (int i = 0; i < 25 && cat.state() != QProcess::NotRunning; ++i) {
++        wait(100);
++        for (const auto &item : pwDump().array()) {
++            const auto o = item.toObject();
++            const auto props = o.value(u"info"_s).toObject().value(u"props"_s).toObject();
++            if (propString(props, u"node.name"_s) != node) {
++                continue;
++            }
++            const auto info = o.value(u"info"_s).toObject();
++            if (info.value(u"state"_s).toString() == u"error"_s) {
++                problem = i18nd("kcm_pulseaudio", "The device went into an error state.");
++            }
++            const auto fmt = info.value(u"params"_s).toObject().value(u"Format"_s).toArray();
++            if (info.value(u"state"_s).toString() == u"running"_s && !fmt.isEmpty()) {
++                seen = true;
++                const int ch = fmt.at(0).toObject().value(u"channels"_s).toInt();
++                if (ch != positions.size()) {
++                    problem = i18nd("kcm_pulseaudio", "The device ran with %1 channels, not the %2 of the speaker setup.", ch, positions.size());
++                }
++            }
++        }
++        if (seen || !problem.isEmpty()) {
++            break;
++        }
++    }
++    cat.kill();
++    cat.waitForFinished(1000);
++    if (problem.isEmpty() && !seen) {
++        problem = i18nd("kcm_pulseaudio", "The device did not start playing through the speaker setup.");
++    }
++    return problem;
++}
++
++void SpeakerSetup::apply(bool system, const QVariantMap &newState, const QString &node, bool makeDefault)
++{
++    if (m_busy) {
++        return;
++    }
++    stopTest();
++    setBusy(true);
++    setMessage({}, {});
++    const auto finish = [this, &node](bool ok, const QString &type, const QString &text) {
++        setMessage(type, text);
++        setBusy(false);
++        refresh();
++        Q_EMIT applied(ok, node);
++    };
++
++    const QString bad = SpeakerSetupConf::validate(newState);
++    if (!bad.isEmpty()) {
++        finish(false, u"error"_s, i18nd("kcm_pulseaudio", "Nothing was changed: the value %1 is not one the speaker setup accepts.", bad));
++        return;
++    }
++    if (!SpeakerSetupConf::validNodeName(node) || deviceInfo(node).isEmpty()) {
++        finish(false, u"error"_s, i18nd("kcm_pulseaudio", "Nothing was changed: the device is no longer connected."));
++        return;
++    }
++    // PipeWire's own reader looks at the file before it is put in place.
++    const QString dumper = QStandardPaths::findExecutable(u"spa-json-dump"_s);
++    if (!dumper.isEmpty()) {
++        QTemporaryDir tmp;
++        const auto files = SpeakerSetupConf::render(newState);
++        for (auto it = files.begin(); it != files.end(); ++it) {
++            if (it.value().isEmpty()) {
++                continue;
++            }
++            QFile f(tmp.filePath(u"check.conf"_s));
++            f.open(QFile::WriteOnly | QFile::Truncate);
++            f.write(it.value());
++            f.close();
++            const Run r = run(u"spa-json-dump"_s, {f.fileName()}, 4000);
++            if (r.code != 0) {
++                finish(false, u"error"_s,
++                       i18nd("kcm_pulseaudio", "Nothing was changed: PipeWire cannot read the settings file (%1).", QString::fromUtf8(r.err).trimmed()));
++                return;
++            }
++        }
++    }
++
++    const QVariantMap previous = system ? m_system : m_user;
++    const QString previousDefault = defaultSinkNow();
++    QString error;
++    if (!writeScope(system, newState, &error)) {
++        finish(false, u"error"_s, i18nd("kcm_pulseaudio", "Nothing was changed: the settings could not be written (%1).", error));
++        return;
++    }
++    const bool wanted = !newState.value(u"devices"_s).toMap().value(node).toMap().isEmpty();
++    // When the setup goes away its output stops being the default: the device itself is, again.
++    const bool wasDefault = previousDefault == SpeakerSetupConf::sinkName(node);
++    const bool ok = activate(node);
++    QString problem = ok ? check(node, newState, wanted && makeDefault) : i18nd("kcm_pulseaudio", "The sound system did not come back after the restart.");
++    if (problem.isEmpty() && !wanted && wasDefault) {
++        run(u"pactl"_s, {u"set-default-sink"_s, node}, 4000);
++        if (defaultSinkNow() != node) {
++            problem = i18nd("kcm_pulseaudio", "The device could not be made the default output again.");
++        }
++    }
++    if (!problem.isEmpty()) {
++        // The earlier settings are written back, and the sound system is given them again.
++        QString restoreError;
++        const bool restored = writeScope(system, previous, &restoreError);
++        activate(node);
++        if (!previousDefault.isEmpty()) {
++            run(u"pactl"_s, {u"set-default-sink"_s, previousDefault}, 4000);
++        }
++        const QString note = restored ? i18nd("kcm_pulseaudio", "The earlier settings stay.")
++                                      : i18nd("kcm_pulseaudio", "The earlier settings could not be put back (%1); check the files named 50-speaker-page.conf.", restoreError);
++        finish(false, u"error"_s, i18nd("kcm_pulseaudio", "The change was not kept. %1 %2", problem, note));
++        return;
++    }
++    if (wanted && !makeDefault) {
++        finish(true, u"positive"_s, i18nd("kcm_pulseaudio", "The change is in use. Programs that play to the device itself do not pass through the speaker setup."));
++        return;
++    }
++    finish(true, u"positive"_s, i18nd("kcm_pulseaudio", "The change is in use."));
++}
++
++void SpeakerSetup::testChannel(const QString &node, const QString &position)
++{
++    startTest(node, {position});
++}
++
++void SpeakerSetup::testAll(const QString &node)
++{
++    const QVariantMap dev = deviceInfo(node);
++    startTest(node, dev.value(u"positions"_s).toStringList());
++}
++
++void SpeakerSetup::startTest(const QString &node, const QStringList &which)
++{
++    stopTest();
++    const QVariantMap dev = deviceInfo(node);
++    if (dev.isEmpty() || !dev.value(u"eligible"_s).toBool()) {
++        setMessage(u"error"_s, i18nd("kcm_pulseaudio", "This device is no longer connected."));
++        return;
++    }
++    const QStringList positions = dev.value(u"positions"_s).toStringList();
++    // Through the speaker setup when there is one, so that what the person hears has the levels and delays; else to the device itself.
++    const QString target = dev.value(u"setupActive"_s).toBool() ? dev.value(u"setupSink"_s).toString() : node;
++    const QString exe = QStandardPaths::findExecutable(u"pw-cat"_s);
++    if (exe.isEmpty()) {
++        setMessage(u"error"_s, i18nd("kcm_pulseaudio", "The tool %1 is not installed, so the test signal cannot be played.", u"pw-cat"_s));
++        return;
++    }
++    m_testOrder.clear();
++    for (const auto &p : which) {
++        if (positions.contains(p)) {
++            m_testOrder << p;
++        }
++    }
++    if (m_testOrder.isEmpty()) {
++        return;
++    }
++    const QByteArray data = SpeakerTestSignal::sequence(positions, m_testOrder, m_testSeconds);
++    m_cat = new QProcess(this);
++    connect(m_cat, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
++        const QString err = QString::fromUtf8(m_cat->readAllStandardError()).trimmed();
++        m_cat->deleteLater();
++        m_cat = nullptr;
++        m_testTimer.stop();
++        m_testing.clear();
++        Q_EMIT testingChanged();
++        if (status != QProcess::NormalExit || code != 0) {
++            setMessage(u"error"_s, i18nd("kcm_pulseaudio", "The test signal could not be played (%1).", err.isEmpty() ? i18nd("kcm_pulseaudio", "the player stopped") : err));
++        }
++    });
++    m_cat->start(exe,
++                 {u"--playback"_s, u"--raw"_s, u"--target"_s, target, u"--rate"_s, QString::number(SpeakerTestSignal::rate), u"--channels"_s,
++                  QString::number(positions.size()), u"--channel-map"_s, positions.join(u','), u"--format"_s, u"f32"_s, u"-"_s});
++    if (!m_cat->waitForStarted(3000)) {
++        m_cat->deleteLater();
++        m_cat = nullptr;
++        setMessage(u"error"_s, i18nd("kcm_pulseaudio", "The tool %1 is not installed, so the test signal cannot be played.", u"pw-cat"_s));
++        return;
++    }
++    m_cat->write(data);
++    m_cat->closeWriteChannel();
++    m_testStep = 0;
++    m_clock.start();
++    disconnect(&m_testTimer, nullptr, this, nullptr);
++    connect(&m_testTimer, &QTimer::timeout, this, [this] {
++        const double stepMs = 1000.0 * SpeakerTestSignal::burst(1, m_testSeconds).first / SpeakerTestSignal::rate;
++        const int step = int(m_clock.elapsed() / stepMs);
++        const double within = m_clock.elapsed() - step * stepMs;
++        QString now;
++        if (step < m_testOrder.size() && within < 1000.0 * m_testSeconds) {
++            now = m_testOrder.at(step);
++        }
++        if (now != m_testing) {
++            m_testing = now;
++            Q_EMIT testingChanged();
++        }
++    });
++    m_testTimer.start();
++    m_testing = m_testOrder.first();
++    Q_EMIT testingChanged();
++}
++
++void SpeakerSetup::stopTest()
++{
++    if (!m_cat) {
++        return;
++    }
++    m_cat->disconnect(this);
++    m_cat->kill();
++    m_cat->waitForFinished(1000);
++    m_cat->deleteLater();
++    m_cat = nullptr;
++    m_testTimer.stop();
++    m_testing.clear();
++    Q_EMIT testingChanged();
++}
++
++#include "moc_speakersetup.cpp"
+diff --git a/src/qml/speakersetup.h b/src/qml/speakersetup.h
+new file mode 100644
+index 00000000..b94d3b4f
+--- /dev/null
++++ b/src/qml/speakersetup.h
+@@ -0,0 +1,134 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++#pragma once
++
++#include <QElapsedTimer>
++#include <QJsonDocument>
++#include <QObject>
++#include <QProcess>
++#include <QTimer>
++#include <QVariantList>
++#include <QVariantMap>
++
++/**
++ * What the Speaker Setup page shows and sets for a device with more than two channels.
++ *
++ * It reads the devices PipeWire reports (pw-dump: the channel map of each sink's current profile) and the person's own
++ * drop-in (SpeakerSetupConf, for this account or, through KAuth, for every account). A change is validated, written,
++ * applied (PipeWire is restarted so it loads the filter) and then checked against the running graph. If the check fails
++ * the earlier file is written back and the reason is said; nothing stays half applied.
++ *
++ * With every speaker at its defaults no file exists and the device has no filter in its signal path.
++ */
++class SpeakerSetup : public QObject
++{
++    Q_OBJECT
++    Q_PROPERTY(QVariantMap userState READ userState NOTIFY changed)
++    Q_PROPERTY(QVariantMap systemState READ systemState NOTIFY changed)
++    Q_PROPERTY(QVariantList devices READ devices NOTIFY devicesChanged)
++    Q_PROPERTY(QString defaultSink READ defaultSink NOTIFY changed)
++    Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
++    Q_PROPERTY(QVariantMap message READ message NOTIFY messageChanged)
++    Q_PROPERTY(QString testing READ testing NOTIFY testingChanged)
++    Q_PROPERTY(bool testRunning READ testRunning NOTIFY testingChanged)
++    Q_PROPERTY(bool feet READ feet WRITE setFeet NOTIFY settingsChanged)
++    Q_PROPERTY(int testSeconds READ testSeconds WRITE setTestSeconds NOTIFY settingsChanged)
++    Q_PROPERTY(double speedOfSound READ speedOfSound CONSTANT)
++    Q_PROPERTY(double minLevel READ minLevel CONSTANT)
++    Q_PROPERTY(double maxLevel READ maxLevel CONSTANT)
++    Q_PROPERTY(double minDistance READ minDistance CONSTANT)
++    Q_PROPERTY(double maxDistance READ maxDistance CONSTANT)
++    Q_PROPERTY(int minCrossover READ minCrossover CONSTANT)
++    Q_PROPERTY(int maxCrossover READ maxCrossover CONSTANT)
++    Q_PROPERTY(int defaultCrossover READ defaultCrossover CONSTANT)
++public:
++    explicit SpeakerSetup(QObject *parent = nullptr);
++    ~SpeakerSetup() override;
++
++    QVariantMap userState() const { return m_user; }
++    QVariantMap systemState() const { return m_system; }
++    QVariantList devices() const { return m_devices; }
++    QString defaultSink() const { return m_defaultSink; }
++    bool busy() const { return m_busy; }
++    QVariantMap message() const { return m_message; }
++    QString testing() const { return m_testing; }
++    bool testRunning() const { return m_cat != nullptr; }
++    bool feet() const { return m_feet; }
++    void setFeet(bool feet);
++    int testSeconds() const { return m_testSeconds; }
++    void setTestSeconds(int seconds);
++    double speedOfSound() const;
++    double minLevel() const;
++    double maxLevel() const;
++    double minDistance() const;
++    double maxDistance() const;
++    int minCrossover() const;
++    int maxCrossover() const;
++    int defaultCrossover() const;
++
++    Q_INVOKABLE void refresh();
++    /** Where a speaker stands in the room, degrees clockwise from the front centre. */
++    Q_INVOKABLE double angle(const QString &position, const QStringList &positions) const;
++    /** The delay in seconds a speaker at distance (metres) gets when the farthest speaker is at farthest. */
++    Q_INVOKABLE double delaySeconds(double distance, double farthest) const;
++    /** The setup, for this account or every account, as the person set it for one device. */
++    Q_INVOKABLE QVariantMap deviceState(bool system, const QString &node) const;
++    /**
++     * Replace the person's speaker setup for one scope with newState and check the result. node is the device being changed;
++     * makeDefault says whether the setup's output also becomes this account's default output.
++     */
++    Q_INVOKABLE void apply(bool system, const QVariantMap &newState, const QString &node, bool makeDefault);
++    Q_INVOKABLE void dismissMessage();
++    Q_INVOKABLE void testChannel(const QString &node, const QString &position);
++    Q_INVOKABLE void testAll(const QString &node);
++    Q_INVOKABLE void stopTest();
++
++Q_SIGNALS:
++    void changed();
++    void devicesChanged();
++    void busyChanged();
++    void messageChanged();
++    void testingChanged();
++    void settingsChanged();
++    void applied(bool ok, const QString &node);
++
++private:
++    struct Run {
++        int code = -1;
++        QByteArray out;
++        QByteArray err;
++        bool failedToStart = false;
++        bool timedOut = false;
++    };
++    Run run(const QString &program, const QStringList &args, int timeoutMs) const;
++    void wait(int ms) const;
++    void setBusy(bool busy);
++    void setMessage(const QString &type, const QString &text);
++    QString userBase() const;
++    bool writeScope(bool system, const QVariantMap &state, QString *error);
++    bool activate(const QString &node);
++    QString check(const QString &node, const QVariantMap &state, bool makeDefault);
++    QString defaultSinkNow() const;
++    QJsonDocument pwDump() const;
++    QVariantList readDevices() const;
++    QVariantMap deviceInfo(const QString &node) const;
++    void startTest(const QString &node, const QStringList &which);
++    void loadSettings();
++
++    QVariantMap m_user;
++    QVariantMap m_system;
++    QVariantList m_devices;
++    QVariantMap m_message;
++    QString m_defaultSink;
++    QString m_testing;
++    bool m_busy = false;
++    bool m_feet = false;
++    int m_testSeconds = 2;
++    QProcess *m_cat = nullptr;
++    QTimer m_testTimer;
++    QElapsedTimer m_clock;
++    QStringList m_testOrder;
++    int m_testStep = 0;
++};
+diff --git a/src/speakersetupconf.cpp b/src/speakersetupconf.cpp
+new file mode 100644
+index 00000000..b7a3b918
+--- /dev/null
++++ b/src/speakersetupconf.cpp
+@@ -0,0 +1,493 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++
++#include "speakersetupconf.h"
++
++#include <QDir>
++#include <QFile>
++#include <QFileInfo>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QRegularExpression>
++#include <QSaveFile>
++#include <QSet>
++#include <QtMath>
++
++using namespace Qt::StringLiterals;
++
++namespace
++{
++const QString FILE_PATH = u"pipewire/pipewire.conf.d/50-speaker-page.conf"_s;
++constexpr auto NAME = "50-speaker-page.conf"_L1;
++constexpr char STATE_PREFIX[] = "# state: ";
++constexpr int MAX_DEVICES = 8;
++constexpr int MAX_POSITIONS = 8; // the builtin mixer has eight inputs
++constexpr double MAX_DELAY_SECONDS = 0.5;
++
++bool isNumber(const QVariant &v)
++{
++    switch (v.typeId()) {
++    case QMetaType::Int:
++    case QMetaType::UInt:
++    case QMetaType::LongLong:
++    case QMetaType::ULongLong:
++        return true;
++    case QMetaType::Double:
++    case QMetaType::Float:
++        return qIsFinite(v.toDouble());
++    default:
++        return false;
++    }
++}
++
++QString num(double v)
++{
++    return QString::number(v, 'f', 9);
++}
++
++QStringList stringList(const QVariant &v, bool *ok)
++{
++    *ok = false;
++    if (v.typeId() == QMetaType::QStringList) {
++        *ok = true;
++        return v.toStringList();
++    }
++    if (v.typeId() != QMetaType::QVariantList) {
++        return {};
++    }
++    QStringList out;
++    for (const auto &item : v.toList()) {
++        if (item.typeId() != QMetaType::QString) {
++            return {};
++        }
++        out << item.toString();
++    }
++    *ok = true;
++    return out;
++}
++
++bool hasEffect(const QVariantMap &dev)
++{
++    const QVariantMap levels = dev.value(u"levels"_s).toMap();
++    for (auto it = levels.begin(); it != levels.end(); ++it) {
++        if (it.value().toDouble() != 0.0) {
++            return true;
++        }
++    }
++    const QVariantMap distances = dev.value(u"distances"_s).toMap();
++    double lo = 1e9;
++    double hi = -1e9;
++    for (auto it = distances.begin(); it != distances.end(); ++it) {
++        lo = qMin(lo, it.value().toDouble());
++        hi = qMax(hi, it.value().toDouble());
++    }
++    if (!distances.isEmpty() && SpeakerSetupConf::delaySeconds(lo, hi) > 0.0) {
++        return true;
++    }
++    return !dev.value(u"small"_s).toList().isEmpty() || !dev.value(u"small"_s).toStringList().isEmpty();
++}
++
++struct Graph {
++    QStringList nodes;
++    QStringList links;
++    QMap<QString, QString> outputs; // position -> output port
++    QStringList inputs;
++    void node(const QString &name, const QString &label, const QString &config = {}, const QString &control = {})
++    {
++        QString line = u"        { name = %1 type = builtin label = %2"_s.arg(name, label);
++        if (!config.isEmpty()) {
++            line += u" config = { %1 }"_s.arg(config);
++        }
++        if (!control.isEmpty()) {
++            line += u" control = { %1 }"_s.arg(control);
++        }
++        nodes << line + u" }"_s;
++    }
++    void link(const QString &from, const QString &to)
++    {
++        links << u"        { output = \"%1\" input = \"%2\" }"_s.arg(from, to);
++    }
++};
++
++QString positionList(const QStringList &positions)
++{
++    return u"[ "_s + positions.join(u' ') + u" ]"_s;
++}
++
++QString renderDevice(const QString &node, const QVariantMap &dev)
++{
++    const QStringList positions = dev.value(u"positions"_s).toStringList();
++    const QVariantMap levels = dev.value(u"levels"_s).toMap();
++    const QVariantMap distances = dev.value(u"distances"_s).toMap();
++    const QStringList small = dev.value(u"small"_s).toStringList();
++    const double crossover = dev.value(u"crossover"_s, SpeakerSetupConf::defaultCrossover).toDouble();
++    double farthest = 0;
++    for (auto it = distances.begin(); it != distances.end(); ++it) {
++        farthest = qMax(farthest, it.value().toDouble());
++    }
++
++    Graph g;
++    QStringList subFeeds;
++    for (const QString &p : positions) {
++        g.node(u"in_"_s + p, u"copy"_s);
++        g.inputs << u"\"in_%1:In\""_s.arg(p);
++    }
++    const auto delayAfter = [&](const QString &p, QString head) {
++        const double d = distances.contains(p) ? SpeakerSetupConf::delaySeconds(distances.value(p).toDouble(), farthest) : 0.0;
++        if (d > 0.0) {
++            g.node(u"d_"_s + p, u"delay"_s, u"\"max-delay\" = %1"_s.arg(num(MAX_DELAY_SECONDS)), u"\"Delay (s)\" = %1"_s.arg(num(d)));
++            g.link(head, u"d_%1:In"_s.arg(p));
++            head = u"d_%1:Out"_s.arg(p);
++        }
++        return head;
++    };
++    for (const QString &p : positions) {
++        if (p == u"LFE"_s) {
++            continue;
++        }
++        QString head = u"in_%1:Out"_s.arg(p);
++        const double level = levels.value(p).toDouble();
++        if (level != 0.0) {
++            g.node(u"g_"_s + p, u"linear"_s, {}, u"Mult = %1 Add = 0.000000000"_s.arg(num(SpeakerSetupConf::gain(level))));
++            g.link(head, u"g_%1:In"_s.arg(p));
++            head = u"g_%1:Out"_s.arg(p);
++        }
++        if (small.contains(p)) {
++            const QString control = u"Freq = %1 Q = 0.707106781"_s.arg(num(crossover));
++            for (const QString &k : {u"1"_s, u"2"_s}) {
++                g.node(u"hp%1_%2"_s.arg(k, p), u"bq_highpass"_s, {}, control);
++                g.node(u"lp%1_%2"_s.arg(k, p), u"bq_lowpass"_s, {}, control);
++            }
++            g.link(head, u"hp1_%1:In"_s.arg(p));
++            g.link(u"hp1_%1:Out"_s.arg(p), u"hp2_%1:In"_s.arg(p));
++            g.link(head, u"lp1_%1:In"_s.arg(p));
++            g.link(u"lp1_%1:Out"_s.arg(p), u"lp2_%1:In"_s.arg(p));
++            subFeeds << u"lp2_%1:Out"_s.arg(p);
++            head = u"hp2_%1:Out"_s.arg(p);
++        }
++        g.outputs.insert(p, delayAfter(p, head));
++    }
++    if (positions.contains(u"LFE"_s)) {
++        QString head = u"in_LFE:Out"_s;
++        if (!subFeeds.isEmpty()) {
++            QString gains;
++            for (int i = 1; i <= subFeeds.size() + 1; ++i) {
++                gains += u"\"Gain %1\" = 1.000000000 "_s.arg(i);
++            }
++            g.node(u"mix_LFE"_s, u"mixer"_s, {}, gains.trimmed());
++            g.link(head, u"mix_LFE:In 1"_s);
++            for (int i = 0; i < subFeeds.size(); ++i) {
++                g.link(subFeeds.at(i), u"mix_LFE:In %1"_s.arg(i + 2));
++            }
++            head = u"mix_LFE:Out"_s;
++        }
++        const double level = levels.value(u"LFE"_s).toDouble();
++        if (level != 0.0) {
++            g.node(u"g_LFE"_s, u"linear"_s, {}, u"Mult = %1 Add = 0.000000000"_s.arg(num(SpeakerSetupConf::gain(level))));
++            g.link(head, u"g_LFE:In"_s);
++            head = u"g_LFE:Out"_s;
++        }
++        g.outputs.insert(u"LFE"_s, delayAfter(u"LFE"_s, head));
++    }
++    QStringList outs;
++    for (const QString &p : positions) {
++        outs << u"\"%1\""_s.arg(g.outputs.value(p));
++    }
++
++    const QString label = dev.contains(u"label"_s) ? dev.value(u"label"_s).toString() : u"Speaker Setup"_s;
++    const QString pos = positionList(positions);
++    QString text;
++    text += u"    { name = libpipewire-module-filter-chain\n"_s;
++    text += u"      flags = [ nofail ]\n"_s;
++    text += u"      args = {\n"_s;
++    text += u"        node.description = \"%1\"\n"_s.arg(label);
++    text += u"        media.name = \"%1\"\n"_s.arg(label);
++    text += u"        filter.graph = {\n"_s;
++    text += u"          nodes = [\n%1\n          ]\n"_s.arg(g.nodes.join(u'\n'));
++    text += u"          links = [\n%1\n          ]\n"_s.arg(g.links.join(u'\n'));
++    text += u"          inputs = [ %1 ]\n"_s.arg(g.inputs.join(u' '));
++    text += u"          outputs = [ %1 ]\n"_s.arg(outs.join(u' '));
++    text += u"        }\n"_s;
++    text += u"        capture.props = { node.name = \"%1\" media.class = Audio/Sink audio.channels = %2 audio.position = %3 }\n"_s.arg(
++        SpeakerSetupConf::sinkName(node), QString::number(positions.size()), pos);
++    text += u"        playback.props = { node.name = \"speaker_setup_out.%1\" target.object = \"%1\" node.passive = true stream.dont-remix = true "
++            "audio.channels = %2 audio.position = %3 }\n"_s.arg(node, QString::number(positions.size()), pos);
++    text += u"      }\n"_s;
++    text += u"    }\n"_s;
++    return text;
++}
++
++bool isOurs(const QString &path)
++{
++    QFile f(path);
++    if (!f.open(QFile::ReadOnly)) {
++        return false;
++    }
++    return f.readLine(4096).trimmed() == SpeakerSetupConf::mark().toUtf8();
++}
++} // namespace
++
++QString SpeakerSetupConf::fileName()
++{
++    return NAME;
++}
++
++QString SpeakerSetupConf::mark()
++{
++    return u"# Written by the Speaker Setup page of System Settings (plasma-pa). Back to defaults removes this file. "
++           "The sparky-stereo-audio defaults in 00-sparky-stereo-audio.conf are never written here."_s;
++}
++
++QStringList SpeakerSetupConf::knownPositions()
++{
++    return {u"FL"_s, u"FR"_s, u"FC"_s, u"LFE"_s, u"RL"_s, u"RR"_s, u"SL"_s, u"SR"_s, u"RC"_s};
++}
++
++bool SpeakerSetupConf::validPosition(const QString &position)
++{
++    return knownPositions().contains(position);
++}
++
++bool SpeakerSetupConf::validNodeName(const QString &name)
++{
++    // \\z, not $: $ also matches before a final newline
++    static const QRegularExpression re(u"^(alsa|bluez)_output\\.[A-Za-z0-9_.:+-]{1,200}\\z"_s);
++    return re.match(name).hasMatch();
++}
++
++bool SpeakerSetupConf::validLabel(const QString &label)
++{
++    // Letters and digits of any script, a space and a few marks; no quote, backslash, brace, bracket, hash or control character.
++    static const QRegularExpression re(u"^[\\p{L}\\p{N}][\\p{L}\\p{N} ._+:()/-]{0,79}\\z"_s);
++    return re.match(label).hasMatch();
++}
++
++QString SpeakerSetupConf::sinkName(const QString &nodeName)
++{
++    return u"speaker_setup."_s + nodeName;
++}
++
++bool SpeakerSetupConf::isSetupSink(const QString &nodeName)
++{
++    return nodeName.startsWith(u"speaker_setup."_s) || nodeName.startsWith(u"speaker_setup_out."_s);
++}
++
++double SpeakerSetupConf::angle(const QString &position, const QStringList &positions)
++{
++    const bool sides = positions.contains(u"SL"_s) && positions.contains(u"RL"_s);
++    if (position == u"FC"_s) {
++        return 0;
++    }
++    if (position == u"FL"_s) {
++        return -30;
++    }
++    if (position == u"FR"_s) {
++        return 30;
++    }
++    if (position == u"SL"_s) {
++        return -90;
++    }
++    if (position == u"SR"_s) {
++        return 90;
++    }
++    if (position == u"RL"_s) {
++        return sides ? -120 : -110;
++    }
++    if (position == u"RR"_s) {
++        return sides ? 120 : 110;
++    }
++    return 180; // RC, and LFE
++}
++
++double SpeakerSetupConf::gain(double db)
++{
++    return qPow(10.0, db / 20.0);
++}
++
++double SpeakerSetupConf::delaySeconds(double distance, double farthest)
++{
++    const double d = (farthest - distance) / speedOfSound;
++    return d > 0.0 ? d : 0.0;
++}
++
++QString SpeakerSetupConf::validate(const QVariantMap &state)
++{
++    for (auto it = state.begin(); it != state.end(); ++it) {
++        if (it.key() != u"devices"_s) {
++            return u"state.key"_s;
++        }
++    }
++    if (state.contains(u"devices"_s) && state.value(u"devices"_s).typeId() != QMetaType::QVariantMap) {
++        return u"devices"_s;
++    }
++    const QVariantMap devices = state.value(u"devices"_s).toMap();
++    if (devices.size() > MAX_DEVICES) {
++        return u"devices"_s;
++    }
++    static const QSet<QString> deviceKeys = {u"positions"_s, u"label"_s, u"levels"_s, u"distances"_s, u"small"_s, u"crossover"_s};
++    for (auto it = devices.begin(); it != devices.end(); ++it) {
++        if (!validNodeName(it.key())) {
++            return u"device.name"_s;
++        }
++        if (it.value().typeId() != QMetaType::QVariantMap) {
++            return u"device"_s;
++        }
++        const QVariantMap dev = it.value().toMap();
++        for (auto k = dev.begin(); k != dev.end(); ++k) {
++            if (!deviceKeys.contains(k.key())) {
++                return u"device.key"_s;
++            }
++        }
++        bool ok = false;
++        const QStringList positions = stringList(dev.value(u"positions"_s), &ok);
++        if (!ok || positions.size() < 3 || positions.size() > MAX_POSITIONS || QSet<QString>(positions.begin(), positions.end()).size() != positions.size()) {
++            return u"device.positions"_s;
++        }
++        for (const auto &p : positions) {
++            if (!validPosition(p)) {
++                return u"device.positions"_s;
++            }
++        }
++        if (dev.contains(u"label"_s) && (dev.value(u"label"_s).typeId() != QMetaType::QString || !validLabel(dev.value(u"label"_s).toString()))) {
++            return u"device.label"_s;
++        }
++        if (dev.contains(u"levels"_s)) {
++            if (dev.value(u"levels"_s).typeId() != QMetaType::QVariantMap) {
++                return u"device.levels"_s;
++            }
++            const QVariantMap levels = dev.value(u"levels"_s).toMap();
++            for (auto l = levels.begin(); l != levels.end(); ++l) {
++                if (!positions.contains(l.key()) || !isNumber(l.value()) || l.value().toDouble() < minLevel || l.value().toDouble() > maxLevel) {
++                    return u"device.levels"_s;
++                }
++            }
++        }
++        if (dev.contains(u"distances"_s)) {
++            if (dev.value(u"distances"_s).typeId() != QMetaType::QVariantMap) {
++                return u"device.distances"_s;
++            }
++            const QVariantMap distances = dev.value(u"distances"_s).toMap();
++            if (distances.size() != positions.size()) {
++                return u"device.distances"_s;
++            }
++            for (const auto &p : positions) {
++                const QVariant v = distances.value(p);
++                if (!distances.contains(p) || !isNumber(v) || v.toDouble() < minDistance || v.toDouble() > maxDistance) {
++                    return u"device.distances"_s;
++                }
++            }
++        }
++        QStringList small;
++        if (dev.contains(u"small"_s)) {
++            small = stringList(dev.value(u"small"_s), &ok);
++            if (!ok || small.isEmpty() || !positions.contains(u"LFE"_s) || QSet<QString>(small.begin(), small.end()).size() != small.size()) {
++                return u"device.small"_s;
++            }
++            for (const auto &p : small) {
++                if (!positions.contains(p) || p == u"LFE"_s) {
++                    return u"device.small"_s;
++                }
++            }
++        }
++        if (dev.contains(u"crossover"_s)) {
++            const QVariant v = dev.value(u"crossover"_s);
++            if (small.isEmpty() || !isNumber(v) || v.toDouble() != qFloor(v.toDouble()) || v.toDouble() < minCrossover || v.toDouble() > maxCrossover) {
++                return u"device.crossover"_s;
++            }
++        }
++        if (!hasEffect(dev)) {
++            return u"device.empty"_s;
++        }
++    }
++    return {};
++}
++
++QMap<QString, QByteArray> SpeakerSetupConf::render(const QVariantMap &state)
++{
++    QMap<QString, QByteArray> files;
++    const QVariantMap devices = state.value(u"devices"_s).toMap();
++    if (devices.isEmpty()) {
++        files.insert(FILE_PATH, QByteArray());
++        return files;
++    }
++    QString text = mark() + u"\n"_s;
++    text += QString::fromLatin1(STATE_PREFIX) + QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(state)).toJson(QJsonDocument::Compact)) + u"\n"_s;
++    text += u"context.modules = [\n"_s;
++    for (auto it = devices.begin(); it != devices.end(); ++it) {
++        text += renderDevice(it.key(), it.value().toMap());
++    }
++    text += u"]\n"_s;
++    files.insert(FILE_PATH, text.toUtf8());
++    return files;
++}
++
++QVariantMap SpeakerSetupConf::read(const QString &baseDir)
++{
++    QFile f(baseDir + u'/' + FILE_PATH);
++    if (!f.open(QFile::ReadOnly)) {
++        return {};
++    }
++    const QList<QByteArray> lines = f.readAll().split('\n');
++    if (lines.size() < 2 || lines.at(0).trimmed() != mark().toUtf8()) {
++        return {};
++    }
++    const QByteArray second = lines.at(1);
++    if (!second.startsWith(STATE_PREFIX)) {
++        return {};
++    }
++    const auto doc = QJsonDocument::fromJson(second.mid(int(sizeof(STATE_PREFIX)) - 1));
++    if (!doc.isObject()) {
++        return {};
++    }
++    const QVariantMap state = doc.object().toVariantMap();
++    return validate(state).isEmpty() ? state : QVariantMap();
++}
++
++bool SpeakerSetupConf::write(const QString &baseDir, const QVariantMap &state, QString *error)
++{
++    const QString bad = validate(state);
++    if (!bad.isEmpty()) {
++        if (error) {
++            *error = u"invalid: "_s + bad;
++        }
++        return false;
++    }
++    const auto files = render(state);
++    const QString path = baseDir + u'/' + FILE_PATH;
++    const QByteArray content = files.value(FILE_PATH);
++    if (QFileInfo::exists(path) && !isOurs(path)) {
++        if (content.isEmpty()) {
++            return true; // not ours and not wanted: left alone
++        }
++        if (error) {
++            *error = u"foreign: "_s + path;
++        }
++        return false;
++    }
++    if (content.isEmpty()) {
++        if (QFileInfo::exists(path) && !QFile::remove(path)) {
++            if (error) {
++                *error = u"remove: "_s + path;
++            }
++            return false;
++        }
++        return true;
++    }
++    if (!QDir().mkpath(QFileInfo(path).absolutePath())) {
++        if (error) {
++            *error = u"mkdir: "_s + path;
++        }
++        return false;
++    }
++    QSaveFile f(path);
++    if (!f.open(QFile::WriteOnly) || f.write(content) != content.size() || !f.commit()) {
++        if (error) {
++            *error = u"write: "_s + path;
++        }
++        return false;
++    }
++    QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadGroup | QFileDevice::ReadOther);
++    return true;
++}
+diff --git a/src/speakersetupconf.h b/src/speakersetupconf.h
+new file mode 100644
+index 00000000..f2649b71
+--- /dev/null
++++ b/src/speakersetupconf.h
+@@ -0,0 +1,74 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++#pragma once
++
++#include <QByteArray>
++#include <QMap>
++#include <QString>
++#include <QStringList>
++#include <QVariantMap>
++
++/**
++ * The person's own speaker setup, as a PipeWire drop-in.
++ *
++ * One file, 50-speaker-page.conf in pipewire/pipewire.conf.d under a base directory (~/.config for one account, /etc for
++ * every account), beside ORDER 20's 50-sound-page.conf and the edition's 00-sparky-stereo-audio.conf. It holds one
++ * filter-chain sink per device the person set up. Nothing is written for a device whose speakers are all at their
++ * defaults (levels at 0 dB, equal distances, every speaker large): the device then has no filter in its signal path.
++ * The class never computes a default; a key that is absent is the default.
++ *
++ * State, as a map: "devices" { nodeName { "positions" [ch], "label" text, "levels" {ch: dB}, "distances" {ch: metres},
++ * "small" [ch], "crossover" Hz } }. "positions" is the channel map of the device's current profile and the only
++ * required key. "distances", when present, names every position; the delays are relative to the farthest speaker.
++ */
++class SpeakerSetupConf
++{
++public:
++    static QString fileName();
++    static QString mark();
++
++    /** Empty when the state is acceptable, else a code naming the first value refused: "device.name", "device.levels"... */
++    static QString validate(const QVariantMap &state);
++
++    /** Relative path (under the base directory) to file content; an empty content means that file is not wanted. */
++    static QMap<QString, QByteArray> render(const QVariantMap &state);
++
++    /** The state the file under baseDir describes (only a file that carries the mark and a state this class accepts). */
++    static QVariantMap read(const QString &baseDir);
++
++    /** Make the file under baseDir match the state: write it, or remove our own file when nothing is wanted. */
++    static bool write(const QString &baseDir, const QVariantMap &state, QString *error = nullptr);
++
++    static bool validNodeName(const QString &name);
++    static bool validLabel(const QString &label);
++    static bool validPosition(const QString &position);
++    static QStringList knownPositions();
++
++    /** The name of the sink a device's setup makes. */
++    static QString sinkName(const QString &nodeName);
++    /** A node name made by this class (a setup of a setup is not offered). */
++    static bool isSetupSink(const QString &nodeName);
++
++    /**
++     * Where a position stands in the room, in degrees clockwise from the front centre (ITU-R BS.775-4, Fig. 1 and Note 4):
++     * L and R at 30, C at 0, the surrounds of a 5.1 at 110 (the middle of the 100 to 120 sector), and with side and rear
++     * pairs both, at equal intervals on the arc from 60 to 150: sides at 90, rears at 120. The subwoofer has no angle (180 is
++     * returned for it and the page draws it apart).
++     */
++    static double angle(const QString &position, const QStringList &positions);
++
++    static constexpr double speedOfSound = 343.0; // m/s, dry air at 20 C
++    static constexpr double minLevel = -30.0;
++    static constexpr double maxLevel = 15.0;
++    static constexpr double minDistance = 0.3;
++    static constexpr double maxDistance = 30.0;
++    static constexpr int minCrossover = 40;
++    static constexpr int maxCrossover = 250;
++    static constexpr int defaultCrossover = 80;
++
++    /** The linear gain of a level in dB, and the delay in seconds of a speaker at distance (m) when the farthest stands at farthest (m). */
++    static double gain(double db);
++    static double delaySeconds(double distance, double farthest);
++};
+diff --git a/src/speakertestsignal.cpp b/src/speakertestsignal.cpp
+new file mode 100644
+index 00000000..b7d78242
+--- /dev/null
++++ b/src/speakertestsignal.cpp
+@@ -0,0 +1,76 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++
++#include "speakertestsignal.h"
++
++#include <QtMath>
++#include <cstring>
++#include <random>
++
++QList<float> SpeakerTestSignal::pinkNoise(int frames, double levelDb)
++{
++    // Paul Kellet's "economy" pink filter on white noise from a generator with a fixed seed: the same burst every time.
++    std::mt19937 gen(20261119u);
++    std::uniform_real_distribution<double> uni(-1.0, 1.0);
++    QList<double> x(frames);
++    double b0 = 0, b1 = 0, b2 = 0;
++    double sum = 0;
++    for (int i = 0; i < frames; ++i) {
++        const double w = uni(gen);
++        b0 = 0.99765 * b0 + w * 0.0990460;
++        b1 = 0.96300 * b1 + w * 0.2965164;
++        b2 = 0.57000 * b2 + w * 1.0526913;
++        x[i] = b0 + b1 + b2 + w * 0.1848;
++        sum += x[i];
++    }
++    const double mean = frames ? sum / frames : 0;
++    double sq = 0;
++    for (int i = 0; i < frames; ++i) {
++        x[i] -= mean;
++        sq += x[i] * x[i];
++    }
++    const double rms = frames ? qSqrt(sq / frames) : 0;
++    const double scale = rms > 0 ? qPow(10.0, levelDb / 20.0) / rms : 0;
++    QList<float> out(frames);
++    for (int i = 0; i < frames; ++i) {
++        out[i] = float(x[i] * scale);
++    }
++    return out;
++}
++
++QPair<int, int> SpeakerTestSignal::burst(int indexInWhich, double seconds, double gapSeconds)
++{
++    const int len = qRound(seconds * rate);
++    const int gap = qRound(gapSeconds * rate);
++    return {indexInWhich * (len + gap), len};
++}
++
++QByteArray SpeakerTestSignal::sequence(const QStringList &positions, const QStringList &which, double seconds, double gapSeconds, double levelDb)
++{
++    const int channels = positions.size();
++    QStringList chosen;
++    for (const auto &p : which) {
++        if (positions.contains(p)) {
++            chosen << p;
++        }
++    }
++    const int len = qRound(seconds * rate);
++    const int gap = qRound(gapSeconds * rate);
++    const int frames = chosen.size() * (len + gap);
++    QByteArray out(frames * channels * int(sizeof(float)), '\0');
++    if (chosen.isEmpty() || len <= 0) {
++        return out;
++    }
++    const QList<float> noise = pinkNoise(len, levelDb);
++    auto *samples = reinterpret_cast<float *>(out.data());
++    for (int n = 0; n < chosen.size(); ++n) {
++        const int ch = positions.indexOf(chosen.at(n));
++        const int first = burst(n, seconds, gapSeconds).first;
++        for (int i = 0; i < len; ++i) {
++            samples[(first + i) * channels + ch] = noise.at(i);
++        }
++    }
++    return out;
++}
+diff --git a/src/speakertestsignal.h b/src/speakertestsignal.h
+new file mode 100644
+index 00000000..079799de
+--- /dev/null
++++ b/src/speakertestsignal.h
+@@ -0,0 +1,33 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++#pragma once
++
++#include <QByteArray>
++#include <QStringList>
++
++/**
++ * The test signal of the Speaker Setup page: pink noise, one speaker at a time, as interleaved 32 bit float samples.
++ *
++ * Every speaker gets the same noise (fixed seed), scaled so that its root mean square level over the burst is exactly
++ * levelDb dBFS (-20 by default); the speakers not being tested carry exact zeros.
++ */
++class SpeakerTestSignal
++{
++public:
++    static constexpr double defaultLevelDb = -20.0;
++    static constexpr int rate = 48000;
++
++    /** One burst of pink noise of the given length in frames, mono, root mean square levelDb dBFS. */
++    static QList<float> pinkNoise(int frames, double levelDb = defaultLevelDb);
++
++    /**
++     * The bursts of the speakers in `which` one after the other (each seconds long, then gapSeconds of silence) on the
++     * channels named by `positions`, interleaved; a speaker that is not in positions is ignored.
++     */
++    static QByteArray sequence(const QStringList &positions, const QStringList &which, double seconds, double gapSeconds = 0.5, double levelDb = defaultLevelDb);
++
++    /** The span of speakerIndex's burst in the sequence, in frames: first frame and frame count. */
++    static QPair<int, int> burst(int indexInWhich, double seconds, double gapSeconds = 0.5);
++};
