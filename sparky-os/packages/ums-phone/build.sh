@@ -6,7 +6,7 @@ export SPARKY_PROVENANCE_REQUIRED=1
 export DOCKER_HOST="${PV24_DOCKER_HOST:?set the lane Docker socket}"
 sparky_provenance_init "${PV24_BUILD_IMAGE:?set the prepared UMS build image}" "$here"
 docker run --name pv24-ums-package --pull=never --platform linux/amd64 --ulimit core=0 --cpus=4 --network "${PV24_NETWORK:-none}" \
- --add-host repo.sparkyos.org:192.168.0.60 --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+ --hostname pv24-ums --add-host pv24-ums:127.0.0.1 --add-host repo.sparkyos.org:192.168.0.60 --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
  "${SPARKY_PROV_ARGS[@]}" \
  --mount type=bind,source="${PV24_WORKSPACE:?set the isolated work directory}",target=/work \
  --mount type=bind,source="${PV24_ARCHIVE:?set the published archive}",target=/repo,readonly \

@@ -16,6 +16,7 @@ mkdir -p "$SPARKY_LC_SCRATCH"
 chown -R builder:builder "$job"
 cd source
 export MAVEN_OPTS='-Xmx2g -Duser.home=/work/ums-home'
+export MAVEN_ARGS=--offline
 export COREPACK_HOME=/work/ums-home/.cache/node/corepack
 export YARN_GLOBAL_FOLDER=/work/ums-home/.yarn/berry
 export YARN_ENABLE_NETWORK=0
