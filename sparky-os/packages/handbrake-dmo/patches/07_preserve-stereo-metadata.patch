@@ -1,0 +1,341 @@
+Description: libhb: preserve the stereo 3d metadata
+Author: Damiano Galassi
+Origin: upstream, https://github.com/HandBrake/HandBrake/commit/1d2087644882966ec4f4d79a8bfd7105c82be7be
+Applied-Upstream: master, 1d2087644882966ec4f4d79a8bfd7105c82be7be
+Last-Update: 2026-11-19
+
+diff --git a/libhb/common.c b/libhb/common.c
+index c6603444c..5a2471480 100644
+--- a/libhb/common.c
++++ b/libhb/common.c
+@@ -4634,6 +4634,7 @@ hb_title_t * hb_title_init( char * path, int index )
+     t->color_transfer     = HB_COLR_TRA_UNSET;
+     t->color_matrix       = HB_COLR_MAT_UNSET;
+     t->spherical_mapping.projection = HB_SPHERICAL_UNSET;
++    t->stereo_3d.type     = HB_STEREO3D_UNSET;
+ 
+     return t;
+ }
+@@ -4750,6 +4751,7 @@ static void job_setup(hb_job_t * job, hb_title_t * title)
+     job->passthru_dynamic_hdr_metadata |= title->hdr_10_plus ? HB_HDR_DYNAMIC_METADATA_HDR10PLUS : HB_HDR_DYNAMIC_METADATA_NONE;
+ 
+     job->spherical_mapping = title->spherical_mapping;
++    job->stereo_3d = title->stereo_3d;
+ 
+     job->mux = HB_MUX_MP4;
+ 
+diff --git a/libhb/handbrake/common.h b/libhb/handbrake/common.h
+index 8f3728a4f..85275eba7 100644
+--- a/libhb/handbrake/common.h
++++ b/libhb/handbrake/common.h
+@@ -446,6 +446,17 @@ struct hb_spherical_mapping_s
+     uint32_t padding;
+ };
+ 
++struct hb_stereo_3d_s
++{
++    int type;
++    int flags;
++    int view;
++    int primary_eye;
++    uint32_t baseline;
++    hb_rational_t horizontal_disparity_adjustment;
++    hb_rational_t horizontal_field_of_view;
++};
++
+ int hb_str_ends_with(const char *base, const char *str);
+ 
+ /*******************************************************************************
+@@ -873,6 +884,18 @@ struct hb_job_s
+ #define HB_SPHERICAL_FISHEYE                 5
+ #define HB_SPHERICAL_PARAMETRIC_IMMERSIVE    6
+ 
++    hb_stereo_3d_t stereo_3d;
++#define HB_STEREO3D_UNSET                   -1
++#define HB_STEREO3D_2D                       0
++#define HB_STEREO3D_SIDEBYSIDE               1
++#define HB_STEREO3D_TOPBOTTOM                2
++#define HB_STEREO3D_FRAMESEQUENCE            3
++#define HB_STEREO3D_CHECKERBOARD             4
++#define HB_STEREO3D_SIDEBYSIDE_QUINCUNX      5
++#define HB_STEREO3D_LINES                    6
++#define HB_STEREO3D_COLUMNS                  7
++#define HB_STEREO3D_UNSPEC                   8
++
+     hb_list_t     * list_chapter;
+ 
+     /* List of audio settings. */
+@@ -1366,6 +1389,7 @@ struct hb_title_s
+     int             hdr_10_plus;
+ 
+     hb_spherical_mapping_t spherical_mapping;
++    hb_stereo_3d_t stereo_3d;
+ 
+     hb_rational_t   vrate;
+     int             crop[4];
+diff --git a/libhb/handbrake/hbffmpeg.h b/libhb/handbrake/hbffmpeg.h
+index dd6e112cc..d7f854e40 100644
+--- a/libhb/handbrake/hbffmpeg.h
++++ b/libhb/handbrake/hbffmpeg.h
+@@ -23,6 +23,7 @@
+ #include "libavutil/ambient_viewing_environment.h"
+ #include "libavutil/dovi_meta.h"
+ #include "libavutil/spherical.h"
++#include "libavutil/stereo3d.h"
+ #include "libswscale/swscale.h"
+ #include "libswresample/swresample.h"
+ #include "handbrake/common.h"
+@@ -58,6 +59,9 @@ hb_dovi_conf_t hb_dovi_ff_to_hb(AVDOVIDecoderConfigurationRecord dovi);
+ AVSphericalMapping hb_spherical_hb_to_ff(hb_spherical_mapping_t spherical_mapping);
+ hb_spherical_mapping_t hb_spherical_ff_to_hb(AVSphericalMapping spherical_mapping);
+ 
++AVStereo3D hb_stereo_3d_hb_to_ff(hb_stereo_3d_t stereo_3d);
++hb_stereo_3d_t hb_stereo_3d_ff_to_hb(AVStereo3D stereo_3d);
++
+ struct SwsContext*
+ hb_sws_get_context(int srcW, int srcH, enum AVPixelFormat srcFormat, int srcRange,
+                    int dstW, int dstH, enum AVPixelFormat dstFormat, int dstRange,
+diff --git a/libhb/handbrake/hbtypes.h b/libhb/handbrake/hbtypes.h
+index 325594d60..08967e701 100644
+--- a/libhb/handbrake/hbtypes.h
++++ b/libhb/handbrake/hbtypes.h
+@@ -54,5 +54,6 @@ typedef struct hb_content_light_metadata_s hb_content_light_metadata_t;
+ typedef struct hb_ambient_viewing_environment_metadata_s hb_ambient_viewing_environment_metadata_t;
+ typedef struct hb_dovi_conf_s hb_dovi_conf_t;
+ typedef struct hb_spherical_mapping_s hb_spherical_mapping_t;
++typedef struct hb_stereo_3d_s hb_stereo_3d_t;
+ 
+ #endif // HANDBRAKE_TYPES_H
+diff --git a/libhb/hb_json.c b/libhb/hb_json.c
+index 84dbe5a5b..83398690a 100644
+--- a/libhb/hb_json.c
++++ b/libhb/hb_json.c
+@@ -395,6 +395,23 @@ static hb_dict_t* hb_title_to_dict_internal( hb_title_t *title )
+         hb_dict_set(dict, "SphericalMapping", spherical_mapping_dict);
+     }
+ 
++    // Stereo 3D
++    hb_dict_t *stereo_dict;
++    if (title->stereo_3d.type > HB_STEREO3D_UNSET)
++    {
++        stereo_dict = json_pack_ex(&error, 0, "{s:i, s:i, s:i, s:i, s:i, s:i, s:i, s:i, s:i}",
++            "Type",       title->stereo_3d.type,
++            "Flags",      title->stereo_3d.flags,
++            "View",       title->stereo_3d.view,
++            "PrimaryEye", title->stereo_3d.primary_eye,
++            "Baseline",   title->stereo_3d.baseline,
++            "HorizontalDisparityAdjustmentNum", title->stereo_3d.horizontal_disparity_adjustment.num,
++            "HorizontalDisparityAdjustmentDen", title->stereo_3d.horizontal_disparity_adjustment.den,
++            "HorizontalFieldOfViewNum", title->stereo_3d.horizontal_field_of_view.num,
++            "HorizontalFieldOfViewDen", title->stereo_3d.horizontal_field_of_view.den);
++        hb_dict_set(dict, "Stereo3D", stereo_dict);
++    }
++
+     if (title->container_name != NULL)
+     {
+         hb_dict_set(dict, "Container", hb_value_string(title->container_name));
+@@ -852,6 +869,23 @@ hb_dict_t* hb_job_to_dict( const hb_job_t * job )
+         hb_dict_set(video_dict, "SphericalMapping", spherical_mapping_dict);
+     }
+ 
++    // Stereo 3D
++    hb_dict_t *stereo_dict;
++    if (job->stereo_3d.type > HB_STEREO3D_UNSET)
++    {
++        stereo_dict = json_pack_ex(&error, 0, "{s:i, s:i, s:i, s:i, s:i, s:i, s:i, s:i, s:i}",
++            "Type",       job->stereo_3d.type,
++            "Flags",      job->stereo_3d.flags,
++            "View",       job->stereo_3d.view,
++            "PrimaryEye", job->stereo_3d.primary_eye,
++            "Baseline",   job->stereo_3d.baseline,
++            "HorizontalDisparityAdjustmentNum", job->stereo_3d.horizontal_disparity_adjustment.num,
++            "HorizontalDisparityAdjustmentDen", job->stereo_3d.horizontal_disparity_adjustment.den,
++            "HorizontalFieldOfViewNum", job->stereo_3d.horizontal_field_of_view.num,
++            "HorizontalFieldOfViewDen", job->stereo_3d.horizontal_field_of_view.den);
++        hb_dict_set(video_dict, "Stereo3D", stereo_dict);
++    }
++
+     if (job->vquality > HB_INVALID_VIDEO_QUALITY)
+     {
+         hb_dict_set(video_dict, "Quality", hb_value_double(job->vquality));
+@@ -1186,6 +1220,7 @@ hb_job_t* hb_dict_to_job( hb_handle_t * h, hb_dict_t *dict )
+     hb_dict_t        * coll_dict = NULL;
+     hb_dict_t        * dovi_dict = NULL;
+     hb_dict_t        * spherical_mapping_dict = NULL;
++    hb_dict_t        * stereo_dict = NULL;
+     hb_value_t       * acodec_copy_mask = NULL, * acodec_fallback = NULL;
+     const char       * destfile = NULL;
+     const char       * range_type = NULL;
+@@ -1221,6 +1256,7 @@ hb_job_t* hb_dict_to_job( hb_handle_t * h, hb_dict_t *dict )
+     //       ContentLightLevel,
+     //       DolbyVisionConfigurationRecord
+     //       SphericalMapping
++    //       Stereo3D
+     //       ColorPrimariesOverride, ColorTransferOverride, ColorMatrixOverride,
+     //       HardwareDecode, AdapterIndex, AsyncDepth
+     "s:{s:o, s?F, s?i, s?s, s?s, s?s, s?s, s?s,"
+@@ -1231,6 +1267,7 @@ hb_job_t* hb_dict_to_job( hb_handle_t * h, hb_dict_t *dict )
+     "   s?o,"
+     "   s?o,"
+     "   s?o,"
++    "   s?o,"
+     "   s?i, s?i, s?i,"
+     "   s?i, s?i, s?i},"
+     // Audio {CopyMask, FallbackEncoder, AudioList}
+@@ -1289,6 +1326,7 @@ hb_job_t* hb_dict_to_job( hb_handle_t * h, hb_dict_t *dict )
+             "ContentLightLevel",    unpack_o(&coll_dict),
+             "DolbyVisionConfigurationRecord", unpack_o(&dovi_dict),
+             "SphericalMapping",     unpack_o(&spherical_mapping_dict),
++            "Stereo3D",             unpack_o(&stereo_dict),
+             "ColorPrimariesOverride", unpack_i(&job->color_prim_override),
+             "ColorTransferOverride",  unpack_i(&job->color_transfer_override),
+             "ColorMatrixOverride",    unpack_i(&job->color_matrix_override),
+@@ -1539,6 +1577,27 @@ hb_job_t* hb_dict_to_job( hb_handle_t * h, hb_dict_t *dict )
+         }
+     }
+ 
++    if (stereo_dict != NULL)
++    {
++        result = json_unpack_ex(stereo_dict, &error, 0,
++        "{s:i, s:i, s:i, s:i, s:i, s:i, s:i, s:i, s:i}",
++            "Type",       unpack_i(&job->stereo_3d.type),
++            "Flags",      unpack_i(&job->stereo_3d.flags),
++            "View",       unpack_i(&job->stereo_3d.view),
++            "PrimaryEye", unpack_i(&job->stereo_3d.primary_eye),
++            "Baseline",   unpack_u(&job->stereo_3d.baseline),
++            "HorizontalDisparityAdjustmentNum", unpack_i(&job->stereo_3d.horizontal_disparity_adjustment.num),
++            "HorizontalDisparityAdjustmentDen", unpack_i(&job->stereo_3d.horizontal_disparity_adjustment.den),
++            "HorizontalFieldOfViewNum", unpack_i(&job->stereo_3d.horizontal_field_of_view.num),
++            "HorizontalFieldOfViewDen", unpack_i(&job->stereo_3d.horizontal_field_of_view.den)
++        );
++        if (result < 0)
++        {
++            hb_error("hb_dict_to_job: failed to parse stereo_dict: %s", error.text);
++            goto fail;
++        }
++    }
++
+     // process chapter list
+     if (chapter_list != NULL &&
+         hb_value_type(chapter_list) == HB_VALUE_TYPE_ARRAY)
+diff --git a/libhb/hbffmpeg.c b/libhb/hbffmpeg.c
+index f85a8eb95..667fc027a 100644
+--- a/libhb/hbffmpeg.c
++++ b/libhb/hbffmpeg.c
+@@ -705,6 +705,40 @@ hb_spherical_mapping_t hb_spherical_ff_to_hb(AVSphericalMapping spherical_mappin
+     return hb_spherical_mapping;
+ }
+ 
++AVStereo3D hb_stereo_3d_hb_to_ff(hb_stereo_3d_t stereo_3d)
++{
++    AVStereo3D ff_stereo_3d;
++
++    ff_stereo_3d.type        = stereo_3d.type;
++    ff_stereo_3d.flags       = stereo_3d.flags;
++    ff_stereo_3d.view        = stereo_3d.view;
++    ff_stereo_3d.primary_eye = stereo_3d.primary_eye;
++    ff_stereo_3d.baseline    = stereo_3d.baseline;
++    ff_stereo_3d.horizontal_disparity_adjustment.num = stereo_3d.horizontal_disparity_adjustment.num;
++    ff_stereo_3d.horizontal_disparity_adjustment.den = stereo_3d.horizontal_disparity_adjustment.den;
++    ff_stereo_3d.horizontal_field_of_view.num = stereo_3d.horizontal_field_of_view.num;
++    ff_stereo_3d.horizontal_field_of_view.den = stereo_3d.horizontal_field_of_view.den;
++
++    return ff_stereo_3d;
++}
++
++hb_stereo_3d_t hb_stereo_3d_ff_to_hb(AVStereo3D stereo_3d)
++{
++    hb_stereo_3d_t hb_stereo_3d;
++
++    hb_stereo_3d.type        = stereo_3d.type;
++    hb_stereo_3d.flags       = stereo_3d.flags;
++    hb_stereo_3d.view        = stereo_3d.view;
++    hb_stereo_3d.primary_eye = stereo_3d.primary_eye;
++    hb_stereo_3d.baseline    = stereo_3d.baseline;
++    hb_stereo_3d.horizontal_disparity_adjustment.num = stereo_3d.horizontal_disparity_adjustment.num;
++    hb_stereo_3d.horizontal_disparity_adjustment.den = stereo_3d.horizontal_disparity_adjustment.den;
++    hb_stereo_3d.horizontal_field_of_view.num = stereo_3d.horizontal_field_of_view.num;
++    hb_stereo_3d.horizontal_field_of_view.den = stereo_3d.horizontal_field_of_view.den;
++
++    return hb_stereo_3d;
++}
++
+ int hb_ff_mixdown_ch_xlat(AVChannelLayout *channel_layout, int hb_mixdown, int *downmix_mode)
+ {
+     uint64_t layout = hb_ff_mixdown_xlat(hb_mixdown, downmix_mode);
+diff --git a/libhb/muxavformat.c b/libhb/muxavformat.c
+index cf7d45800..2acdc69dd 100644
+--- a/libhb/muxavformat.c
++++ b/libhb/muxavformat.c
+@@ -642,6 +642,20 @@ static int avformatInit( hb_mux_object_t * m )
+                                 sizeof(AVSphericalMapping), 0);
+     }
+ 
++    if (job->stereo_3d.type > HB_STEREO3D_UNSET && job->stereo_3d.type < HB_STEREO3D_UNSPEC)
++    {
++        AVStereo3D stereo = hb_stereo_3d_hb_to_ff(job->stereo_3d);
++
++        uint8_t *stereo_data = av_malloc(sizeof(AVStereo3D));
++        memcpy(stereo_data, &stereo, sizeof(AVStereo3D));
++
++        av_packet_side_data_add(&track->st->codecpar->coded_side_data,
++                                &track->st->codecpar->nb_coded_side_data,
++                                AV_PKT_DATA_STEREO3D,
++                                stereo_data,
++                                sizeof(AVStereo3D), 0);
++    }
++
+     hb_rational_t vrate = job->vrate;
+     hb_rational_t clock_vrate = { clock, av_rescale(vrate.den, clock, vrate.num)};
+     int standard_rate = 0;
+diff --git a/libhb/scan.c b/libhb/scan.c
+index a5c3aecb7..58f64e139 100644
+--- a/libhb/scan.c
++++ b/libhb/scan.c
+@@ -1402,6 +1402,12 @@ skip_preview:
+                    av_spherical_projection_name(title->spherical_mapping.projection));
+         }
+ 
++        if (title->stereo_3d.type > HB_STEREO3D_UNSET)
++        {
++            hb_log("scan: stereo 3d: %s",
++                   av_stereo3d_type_name(title->stereo_3d.type));
++        }
++
+         if (title->video_decode_support != HB_DECODE_SW)
+         {
+             hb_log("scan: supported video decoders:%s%s%s",
+diff --git a/libhb/stream.c b/libhb/stream.c
+index c47db0438..bfaae5917 100644
+--- a/libhb/stream.c
++++ b/libhb/stream.c
+@@ -6145,6 +6145,12 @@ static hb_title_t *ffmpeg_title_scan( hb_stream_t *stream, hb_title_t *title )
+                         title->dovi = hb_dovi_ff_to_hb(*dovi);
+                         break;
+                     }
++                    case AV_PKT_DATA_STEREO3D:
++                    {
++                        AVStereo3D *stereo = (AVStereo3D *)sd.data;
++                        title->stereo_3d = hb_stereo_3d_ff_to_hb(*stereo);
++                        break;
++                    }
+                     case AV_PKT_DATA_SPHERICAL:
+                     {
+                         AVSphericalMapping *spherical_mapping = (AVSphericalMapping *)sd.data;
+diff --git a/libhb/work.c b/libhb/work.c
+index fef00f009..b3e5ed7ff 100644
+--- a/libhb/work.c
++++ b/libhb/work.c
+@@ -687,6 +687,12 @@ void hb_display_job_info(hb_job_t *job)
+             hb_log("     + spherical mapping: %s",
+                    av_spherical_projection_name(job->spherical_mapping.projection));
+         }
++
++        if (job->stereo_3d.type > HB_STEREO3D_UNSET && job->stereo_3d.type < HB_STEREO3D_UNSPEC)
++        {
++            hb_log("     + stereo 3d: %s",
++                   av_stereo3d_type_name(job->stereo_3d.type));
++        }
+     }
+ 
+     if (job->indepth_scan)
