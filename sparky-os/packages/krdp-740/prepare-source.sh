@@ -13,4 +13,5 @@ python3 "$toolkit/repo/lc-successor.py" --in-place --next 6.7.4-1+stereo3d9 \
  --source-date-epoch "$SOURCE_DATE_EPOCH" --overlay "$here/overlay/debian" \
  --item 'Offer the authenticated HEVC channel on every headset link format, using the same encoded raster, packing and refresh as H.264. Keep every route and H.264 as the default (ORDER 740).' \
  --item 'Preserve the complete published +stereo3d8 source and package interfaces.' \
+ --item 'Declare systemd development and test-session D-Bus dependencies; retain the settings module service controls and journal support.' \
  "$input/krdp_6.7.4-1+stereo3d8.dsc" "$out"
