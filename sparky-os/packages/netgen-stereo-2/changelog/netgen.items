@@ -1,0 +1,5 @@
+Sparky Stereo OS: rebased on Debian's 6.2.2606+dfsg1-3 (testing), the successor of the published 6.2.2606+dfsg1-1+stereo3d3+lc1. Debian's own changes come with it: the autopkgtest dependency on dpkg-dev (#1150068), the menu moved to netgen.menu, and PRTE_MCA_mapby (-2).
+
+Debian's -3 makes netgen depend on libnglib-dev so that Tcl finds libnggui.so (#1150173, #1125008). The edition keeps load-nggui-by-soname.patch, which loads the GUI library by its SONAME, so netgen still depends on libnglib-6.2t64 only and starts without the development package.
+
+The drawing area, a Togl child window of the Tk window, is declared to Stereo KWin once its window is viewable (Mesa +stereo3d27): Tk creates and draws the child before it maps its top-level window, and a declaration made before that was taken back, which left the drawing area flat.
