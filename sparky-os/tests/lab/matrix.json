@@ -171,18 +171,550 @@
    "not_proven": "Which eye a person sees on a real monitor beyond the left-eye rule; stock shows nothing of the client: the test client did not appear."
   },
   {
-   "id": "screens-anaglyph",
+   "image": "lab22-guest:1",
+   "network": "none",
+   "user": "host",
+   "devices": [
+    "/dev/kvm"
+   ],
+   "mounts": [
+    [
+     "{skills}/tools/vkms-stereo-bench",
+     "/bench"
+    ],
+    [
+     "{work}/kern",
+     "/kern"
+    ],
+    [
+     "{lab}",
+     "/lab"
+    ]
+   ],
+   "limits": {
+    "cpus": 4,
+    "memory": "8g"
+   },
+   "timeout": 1500,
+   "build": "rig/prepare.sh",
+   "id": "screens-plain-monitor-2d-edid",
    "kind": "screens",
-   "title": "an anaglyph output shows the two eyes combined",
-   "skip": "the output's anaglyph switch has no command line client: kscreen-doctor of the edition (libkscreen knows KScreen::Output::setAnaglyph) has no such setting, and kwinoutputconfig.json with anaglyph true for the output was kept but not applied when KWin started (measured in the lab guest: the frame stayed pure red, blue and black). Needs a small libkscreen client that calls setAnaglyph, then the row compares the client area against the Dubois mix of the two views.",
-   "tracks": "lab gap, not an ORDER"
+   "title": "a plain monitor by its own EDID (an HDMI sink that declares no 3D) lists no 3D mode and shows one eye of a declared pair",
+   "needs": [
+    "docker",
+    "image:lab22-guest:1",
+    "kvm",
+    "path:{work}/kern/ours/x",
+    "path:{skills}/tools/vkms-stereo-bench/bench",
+    "path:{work}/root-ours",
+    "path:{work}/root-stock"
+   ],
+   "sides": {
+    "ours": {
+     "mounts": [
+      [
+       "{work}/root-ours",
+       "/kroot"
+      ]
+     ],
+     "cmd": [
+      "bash",
+      "/lab/rows/screens_guest.sh",
+      "ours",
+      "edid-no-3d",
+      "no-3d-modes",
+      "2d"
+     ],
+     "versions": [
+      "sh",
+      "-c",
+      "grep -E '^(kwin-wayland|libkwin6|libegl-mesa0|libgl1-mesa-dri|libkscreen-bin)\\s' /kroot/etc/lab22-packages.txt; ls /kern/ours/x/lib/modules"
+     ]
+    },
+    "stock": {
+     "mounts": [
+      [
+       "{work}/root-stock",
+       "/kroot"
+      ]
+     ],
+     "cmd": [
+      "bash",
+      "/lab/rows/screens_guest.sh",
+      "stock",
+      "edid-no-3d",
+      "no-3d-modes",
+      "2d"
+     ],
+     "versions": [
+      "sh",
+      "-c",
+      "grep -E '^(kwin-wayland|libkwin6|libegl-mesa0|libgl1-mesa-dri|libkscreen-bin)\\s' /kroot/etc/lab22-packages.txt; ls /kern/ours/x/lib/modules"
+     ]
+    }
+   },
+   "proves": "The bench's 3D television EDID with the HDMI vendor block's 3D fields removed (edid/make-2d-edid.py; edid-decode shows an HDMI sink with no 3D present, evidence/edid-decode.txt): the compositor lists 0 3D modes for the output, and in its 1920x1080 60 Hz mode the desktop and a fullscreen 2D client are the same in both halves of the frame, the declared client shows its left view only (red, no green). Stock shows no client.",
+   "not_proven": "Which eye a person sees on a real monitor beyond the left-eye rule; that the kernel's mode list alone (without a compositor) has no 3D mode; stock's red here is the missing declared client, as in screens-plain-monitor (stock lists no 3D mode for either EDID).",
+   "env": {
+    "LAB_PHASE": "kwin",
+    "LAB_EDID": "stereo-test-2d"
+   }
   },
   {
+   "image": "lab22-guest:1",
+   "network": "none",
+   "user": "host",
+   "devices": [
+    "/dev/kvm"
+   ],
+   "mounts": [
+    [
+     "{skills}/tools/vkms-stereo-bench",
+     "/bench"
+    ],
+    [
+     "{work}/kern",
+     "/kern"
+    ],
+    [
+     "{lab}",
+     "/lab"
+    ]
+   ],
+   "limits": {
+    "cpus": 4,
+    "memory": "8g"
+   },
+   "timeout": 1500,
+   "build": "rig/prepare.sh",
+   "id": "screens-anaglyph",
+   "kind": "screens",
+   "title": "an anaglyph output shows the two eyes combined (set from the command line: kscreen-doctor anaglyph.enable, then the mode)",
+   "needs": [
+    "docker",
+    "image:lab22-guest:1",
+    "kvm",
+    "path:{work}/kern/ours/x",
+    "path:{skills}/tools/vkms-stereo-bench/bench",
+    "path:{work}/root-ours",
+    "path:{work}/root-stock"
+   ],
+   "sides": {
+    "ours": {
+     "mounts": [
+      [
+       "{work}/root-ours",
+       "/kroot"
+      ]
+     ],
+     "cmd": [
+      "bash",
+      "/lab/rows/screens_guest.sh",
+      "ours",
+      "doctor"
+     ],
+     "versions": [
+      "sh",
+      "-c",
+      "grep -E '^(kwin-wayland|libkwin6|libegl-mesa0|libgl1-mesa-dri|libkscreen-bin)\\s' /kroot/etc/lab22-packages.txt; ls /kern/ours/x/lib/modules"
+     ]
+    },
+    "stock": {
+     "mounts": [
+      [
+       "{work}/root-stock",
+       "/kroot"
+      ]
+     ],
+     "cmd": [
+      "bash",
+      "/lab/rows/screens_guest.sh",
+      "stock",
+      "doctor"
+     ],
+     "versions": [
+      "sh",
+      "-c",
+      "grep -E '^(kwin-wayland|libkwin6|libegl-mesa0|libgl1-mesa-dri|libkscreen-bin)\\s' /kroot/etc/lab22-packages.txt; ls /kern/ours/x/lib/modules"
+     ]
+    }
+   },
+   "proves": "With kscreen-doctor of the edition (output.NAME.anaglyph.enable, then output.NAME.mode.ID of the 1920x1080@60 mode tagged virtual-3D:5) the declared client's 3D area (left view red, right view green) is the modern Dubois mix of the two views, (164, 215, 0) within 2 codes, and the 2D window (blue, the same in both eyes) is colour coded to (111, 0, 255) under the same filter. The guest also records three other ways, for the diagnosis of queue row 733: nothing asked (the left view alone, red), only the stored value anaglyph true in kwinoutputconfig.json (no change: the toggle only adds the anaglyph modes to the output's list), and the stored value with the stored mode carrying the anaglyph layout (the anaglyph). Stock's kscreen-doctor does not parse output.NAME.anaglyph.enable ('Unable to parse arguments', exit 0) and lists no such mode.",
+   "not_proven": "The Dubois sets against a real pair of glasses, the CRT set (the eye order matrix row covers both sets), a real screen. The first milestone's claim that kscreen-doctor has no anaglyph setting was wrong: the verb exists in libkscreen-bin +stereo3d12 and is missing from its --help.",
+   "env": {
+    "LAB_PHASE": "anaglyph"
+   }
+  },
+  {
+   "image": "lab22-guest:1",
+   "network": "none",
+   "user": "host",
+   "devices": [
+    "/dev/kvm"
+   ],
+   "mounts": [
+    [
+     "{skills}/tools/vkms-stereo-bench",
+     "/bench"
+    ],
+    [
+     "{work}/kern",
+     "/kern"
+    ],
+    [
+     "{lab}",
+     "/lab"
+    ]
+   ],
+   "limits": {
+    "cpus": 4,
+    "memory": "8g"
+   },
+   "timeout": 1500,
+   "build": "rig/prepare.sh",
    "id": "screens-deep-colour",
    "kind": "screens",
-   "title": "a deep colour ramp keeps its levels to the output (10, 12 and 16 bits)",
-   "skip": "the deep-colour skill describes the proof (a ramp counted per eye in a deep readback) but has no runnable rig; VKMS scans out AB48 (16 bits per channel), so the readback exists in the screens guest. Needs a ramp client drawn at 16 bits and a counter of distinct levels per eye; not written here.",
-   "tracks": "lab gap, not an ORDER"
+   "title": "a 16 bit ramp keeps its 256 levels to the output (plain mode and side by side half, each eye), where stock scans out 8 bits",
+   "needs": [
+    "docker",
+    "image:lab22-guest:1",
+    "kvm",
+    "path:{work}/kern/ours/x",
+    "path:{skills}/tools/vkms-stereo-bench/bench",
+    "path:{work}/root-ours",
+    "path:{work}/root-stock"
+   ],
+   "sides": {
+    "ours": {
+     "mounts": [
+      [
+       "{work}/root-ours",
+       "/kroot"
+      ]
+     ],
+     "cmd": [
+      "bash",
+      "/lab/rows/screens_guest.sh",
+      "ours",
+      "2d",
+      "sbs-half"
+     ],
+     "versions": [
+      "sh",
+      "-c",
+      "grep -E '^(kwin-wayland|libkwin6|libegl-mesa0|libgl1-mesa-dri|libkscreen-bin)\\s' /kroot/etc/lab22-packages.txt; ls /kern/ours/x/lib/modules"
+     ]
+    },
+    "stock": {
+     "mounts": [
+      [
+       "{work}/root-stock",
+       "/kroot"
+      ]
+     ],
+     "cmd": [
+      "bash",
+      "/lab/rows/screens_guest.sh",
+      "stock",
+      "2d",
+      "sbs-half"
+     ],
+     "versions": [
+      "sh",
+      "-c",
+      "grep -E '^(kwin-wayland|libkwin6|libegl-mesa0|libgl1-mesa-dri|libkscreen-bin)\\s' /kroot/etc/lab22-packages.txt; ls /kern/ours/x/lib/modules"
+     ]
+    }
+   },
+   "proves": "A client draws a grey ramp of 256 values of a 16 bit channel (0x8000 to 0x80ff, 1/256 of the range): as a fullscreen wl_shm window in 16 bit AB48 (or XB48), 10 bit XR30 and 8 bit XR24, and as a declared two view EGL surface in a 16 bit fixed point config (left view the ramp from 0x8000, right view from 0x9000). The output's scanned-out frame is read at 16 bits per channel (drm-grab with DRM_GRAB_DEEP=1) and the distinct values counted in each eye. Ours scans out AB48 and keeps 256 levels of the 16 bit client in the plain mode and in each eye of side by side half, 256 levels of each view of the pair in its own eye and none of the other view's; the 10 and 8 bit clients show 4 and 1. Stock (Debian's KWin and Mesa) scans out AB24: the same 16 bit client shows 1 level.",
+   "not_proven": "10 and 12 bit links to a display (VKMS has none), HDR, a GPU renderer (software Mesa draws), other modes (frame packing, top and bottom), video decoding, a real 16 bit capable display. The 256 levels are the compositor's output buffer, the check does not say a display shows them.",
+   "env": {
+    "LAB_PHASE": "deep"
+   }
+  },
+  {
+   "image": "lab22-guest:1",
+   "network": "none",
+   "user": "host",
+   "devices": [
+    "/dev/kvm"
+   ],
+   "mounts": [
+    [
+     "{skills}/tools/vkms-stereo-bench",
+     "/bench"
+    ],
+    [
+     "{work}/kern",
+     "/kern"
+    ],
+    [
+     "{lab}",
+     "/lab"
+    ]
+   ],
+   "limits": {
+    "cpus": 4,
+    "memory": "8g"
+   },
+   "timeout": 1500,
+   "build": "rig/prepare.sh",
+   "id": "screens-eyeorder-hdmi",
+   "kind": "screens",
+   "title": "the eye order on every HDMI 3D mode the EDID declares: each mode with the output's swap eyes off and on equals the packing's model",
+   "needs": [
+    "docker",
+    "image:lab22-guest:1",
+    "kvm",
+    "path:{work}/kern/ours/x",
+    "path:{skills}/tools/vkms-stereo-bench/bench",
+    "path:{work}/root-ours",
+    "path:{work}/root-stock"
+   ],
+   "sides": {
+    "ours": {
+     "mounts": [
+      [
+       "{work}/root-ours",
+       "/kroot"
+      ]
+     ],
+     "cmd": [
+      "bash",
+      "/lab/rows/screens_guest.sh",
+      "ours",
+      "hdmi-sbs-half",
+      "hdmi-tab",
+      "hdmi-sbs-full",
+      "hdmi-fp"
+     ],
+     "versions": [
+      "sh",
+      "-c",
+      "grep -E '^(kwin-wayland|libkwin6|libegl-mesa0|libgl1-mesa-dri|libkscreen-bin)\\s' /kroot/etc/lab22-packages.txt; ls /kern/ours/x/lib/modules"
+     ]
+    },
+    "stock": {
+     "mounts": [
+      [
+       "{work}/root-stock",
+       "/kroot"
+      ]
+     ],
+     "cmd": [
+      "bash",
+      "/lab/rows/screens_guest.sh",
+      "stock",
+      "hdmi-sbs-half",
+      "hdmi-tab",
+      "hdmi-sbs-full",
+      "hdmi-fp"
+     ],
+     "versions": [
+      "sh",
+      "-c",
+      "grep -E '^(kwin-wayland|libkwin6|libegl-mesa0|libgl1-mesa-dri|libkscreen-bin)\\s' /kroot/etc/lab22-packages.txt; ls /kern/ours/x/lib/modules"
+     ]
+    }
+   },
+   "proves": "From the 2D reference frame (the declared client's left view, red) the bench's analyze-eyeorder.py builds the model of each packing: side by side half and top and bottom (each eye halved), side by side full (left eye in the left half, 3840x1080) and frame packing (eyes at lines 0 and 1125 of 2205, 1920x2205). Ours: with the output's swap off every pixel of the scanned-out frame is within 2 codes of the model made from (left, right) (all exact), with the swap on within 2 codes of the model made from (right, left), and the other swap's model matches none of the pixels where the eyes differ. The plain 2D output shows the left view and, with the swap on, the right view. Stock cannot show the declared client at all.",
+   "not_proven": "A real television, the HDMI InfoFrame (VKMS has no link), the order of a time-multiplexed mode on the link.",
+   "env": {
+    "LAB_PHASE": "eyeorder",
+    "LAB_EDID": "stereo-eyeorder"
+   }
+  },
+  {
+   "image": "lab22-guest:1",
+   "network": "none",
+   "user": "host",
+   "devices": [
+    "/dev/kvm"
+   ],
+   "mounts": [
+    [
+     "{skills}/tools/vkms-stereo-bench",
+     "/bench"
+    ],
+    [
+     "{work}/kern",
+     "/kern"
+    ],
+    [
+     "{lab}",
+     "/lab"
+    ]
+   ],
+   "limits": {
+    "cpus": 4,
+    "memory": "8g"
+   },
+   "timeout": 1500,
+   "build": "rig/prepare.sh",
+   "id": "screens-eyeorder-virtual",
+   "kind": "screens",
+   "title": "the eye order on the virtual 3D modes (twins: side by side half, top and bottom, anaglyph modern and CRT, rows, columns, checkerboard) and no right eye first twin",
+   "needs": [
+    "docker",
+    "image:lab22-guest:1",
+    "kvm",
+    "path:{work}/kern/ours/x",
+    "path:{skills}/tools/vkms-stereo-bench/bench",
+    "path:{work}/root-ours",
+    "path:{work}/root-stock"
+   ],
+   "sides": {
+    "ours": {
+     "mounts": [
+      [
+       "{work}/root-ours",
+       "/kroot"
+      ]
+     ],
+     "cmd": [
+      "bash",
+      "/lab/rows/screens_guest.sh",
+      "ours",
+      "twin-sbs-half",
+      "twin-tab",
+      "anaglyph-modern",
+      "anaglyph-crt",
+      "rows-left",
+      "rows-right",
+      "columns-left",
+      "columns-right",
+      "checkerboard-left",
+      "checkerboard-right"
+     ],
+     "versions": [
+      "sh",
+      "-c",
+      "grep -E '^(kwin-wayland|libkwin6|libegl-mesa0|libgl1-mesa-dri|libkscreen-bin)\\s' /kroot/etc/lab22-packages.txt; ls /kern/ours/x/lib/modules"
+     ]
+    },
+    "stock": {
+     "mounts": [
+      [
+       "{work}/root-stock",
+       "/kroot"
+      ]
+     ],
+     "cmd": [
+      "bash",
+      "/lab/rows/screens_guest.sh",
+      "stock",
+      "twin-sbs-half",
+      "twin-tab",
+      "anaglyph-modern",
+      "anaglyph-crt",
+      "rows-left",
+      "rows-right",
+      "columns-left",
+      "columns-right",
+      "checkerboard-left",
+      "checkerboard-right"
+     ],
+     "versions": [
+      "sh",
+      "-c",
+      "grep -E '^(kwin-wayland|libkwin6|libegl-mesa0|libgl1-mesa-dri|libkscreen-bin)\\s' /kroot/etc/lab22-packages.txt; ls /kern/ours/x/lib/modules"
+     ]
+    }
+   },
+   "proves": "The toggles of the output are switched on with kscreen-doctor (anaglyph.enable and otherStereoFormats.enable). For every twin the mode is set with the swap off and on, and the scanned-out frame equals the model within 2 codes (all exact here): anaglyph with KWin's Dubois sets and gamma 2.2, rows, columns and checkerboard by the parity of the line, column or both (left eye on the even ones), half packings with each eye halved. The mode list has no right eye first twin (KWin +stereo3d48 lists every packing left eye first; the swap flips the order). Stock cannot show the declared client at all.",
+   "not_proven": "Real glasses or a lenticular panel, the filter against a person's eyes, the order of the eyes in time.",
+   "env": {
+    "LAB_PHASE": "eyeorder",
+    "LAB_EDID": "stereo-eyeorder"
+   }
+  },
+  {
+   "image": "lab22-guest:1",
+   "network": "none",
+   "user": "host",
+   "devices": [
+    "/dev/kvm"
+   ],
+   "mounts": [
+    [
+     "{skills}/tools/vkms-stereo-bench",
+     "/bench"
+    ],
+    [
+     "{work}/kern",
+     "/kern"
+    ],
+    [
+     "{lab}",
+     "/lab"
+    ]
+   ],
+   "limits": {
+    "cpus": 4,
+    "memory": "8g"
+   },
+   "timeout": 1500,
+   "build": "rig/prepare.sh",
+   "id": "screens-eyeorder-sequential",
+   "kind": "screens",
+   "title": "the eye order of the frame sequential twin (1920x1080 at 120 Hz): the packed frame has the left view in its left half, the swap exchanges them",
+   "needs": [
+    "docker",
+    "image:lab22-guest:1",
+    "kvm",
+    "path:{work}/kern/ours/x",
+    "path:{skills}/tools/vkms-stereo-bench/bench",
+    "path:{work}/root-ours",
+    "path:{work}/root-stock"
+   ],
+   "sides": {
+    "ours": {
+     "mounts": [
+      [
+       "{work}/root-ours",
+       "/kroot"
+      ]
+     ],
+     "cmd": [
+      "bash",
+      "/lab/rows/screens_guest.sh",
+      "ours",
+      "fs-left",
+      "fs-right"
+     ],
+     "versions": [
+      "sh",
+      "-c",
+      "grep -E '^(kwin-wayland|libkwin6|libegl-mesa0|libgl1-mesa-dri|libkscreen-bin)\\s' /kroot/etc/lab22-packages.txt; ls /kern/ours/x/lib/modules"
+     ]
+    },
+    "stock": {
+     "mounts": [
+      [
+       "{work}/root-stock",
+       "/kroot"
+      ]
+     ],
+     "cmd": [
+      "bash",
+      "/lab/rows/screens_guest.sh",
+      "stock",
+      "fs-left",
+      "fs-right"
+     ],
+     "versions": [
+      "sh",
+      "-c",
+      "grep -E '^(kwin-wayland|libkwin6|libegl-mesa0|libgl1-mesa-dri|libkscreen-bin)\\s' /kroot/etc/lab22-packages.txt; ls /kern/ours/x/lib/modules"
+     ]
+    }
+   },
+   "proves": "The 120 Hz mode of the EDID gets KWin's frame sequential twin; the scanned-out frame (3840x1080: left half then right half) equals the model with the swap off and with it on (the halves exchanged), and the mode list has no right eye first twin. Stock cannot show the declared client at all.",
+   "not_proven": "The order of the eyes in time on the link: which half is shown on each refresh was measured by the bench's drm-planelog (references/eye-order-matrix.md) and is not judged here, nor is a strict per-refresh pace (software GL in a guest draws about one frame in five refreshes).",
+   "env": {
+    "LAB_PHASE": "eyeorder",
+    "LAB_EDID": "stereo-eyeorder"
+   }
   },
   {
    "network": "none",
@@ -289,6 +821,60 @@
    },
    "proves": "A fake device that takes S16_LE only: the device is opened in S16_LE, the sink carries dither.method triangular, the graph runs at the file's rate.",
    "not_proven": "That the dither is audible or inaudible; a 16 bit file on a 16 bit device is not bit exact with the dither on."
+  },
+  {
+   "network": "none",
+   "user": "0:0",
+   "limits": {
+    "cpus": 2,
+    "memory": "2g"
+   },
+   "timeout": 600,
+   "build": "rig/build-page.sh",
+   "mounts": [
+    [
+     "{lab}",
+     "/lab"
+    ]
+   ],
+   "needs": [
+    "docker",
+    "image:lab22-page-ours:1",
+    "image:lab22-page-stock:1"
+   ],
+   "id": "audio-sound-quality-page",
+   "kind": "audio",
+   "title": "the Sound Quality page lists each device's formats and rates, a chosen rate reaches the running graph and a refused one is said (stock plasma-pa has no such page)",
+   "sides": {
+    "ours": {
+     "image": "lab22-page-ours:1",
+     "cmd": [
+      "bash",
+      "/lab/rows/page_row.sh",
+      "ours"
+     ],
+     "versions": [
+      "sh",
+      "-c",
+      "dpkg-query -W plasma-pa pipewire wireplumber sparky-stereo-audio qml-qt6 2>&1"
+     ]
+    },
+    "stock": {
+     "image": "lab22-page-stock:1",
+     "cmd": [
+      "bash",
+      "/lab/rows/page_row.sh",
+      "stock"
+     ],
+     "versions": [
+      "sh",
+      "-c",
+      "dpkg-query -W plasma-pa pipewire wireplumber qml-qt6 2>&1"
+     ]
+    }
+   },
+   "proves": "The page's own QML type (SoundFormats of plasma-pa 6.7.4-1+stereo3d3, the Sound Quality page of ORDER 20) runs in the page rig's harness against a private PipeWire, WirePlumber and pipewire-pulse with the fake devices. It lists the DAC (44.1 to 192 kHz; 16, 24 and 32 bit), the 48 kHz only device, the 16 bit only device, the HDMI sink (32 to 96 kHz, with its ELD: LPCM 16, 20 and 24 bit and AC-3 six channels) and the Bluetooth sink (codec aac), each equal to the fixture's own table; a graph rate of 96 kHz with 44.1, 48 and 96 allowed is accepted and PipeWire itself, read by the row, says clock.rate 96000 and clock.allowed-rates [44100 48000 96000]; 96 kHz on the 48 kHz only device is refused with 'The change was not kept ... The earlier settings stay.' and kept nowhere. Stock plasma-pa (Debian's 4:6.7.4-1+b1) has no SoundFormats type: the harness cannot load it.",
+   "not_proven": "The page's controls on a screen (the harness drives the page's type, not its QML in System Settings; the page rig's ui.sh does that under Xvfb and is not joined), the every-account route (KAuth and polkit), a real card or display, audibility. The refusal sentence names an error state, not the rate: its wording has no recorded design."
   },
   {
    "network": "none",

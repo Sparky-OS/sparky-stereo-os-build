@@ -328,5 +328,94 @@ class DockerPath(Base):
         self.assertIn("lab22-stock:1", runs[1])
 
 
+class PreparedAgainst(Base):
+    def test_the_report_says_which_tree_the_images_were_made_from(self):
+        work = os.path.join(self.tmp, "work")
+        os.makedirs(work)
+        r = row("ok", "exit 0", "exit 1")
+        with open(os.path.join(work, "tree.txt"), "w") as f:
+            f.write("/x/tree (Tue, 17 Nov 2026 18:28:18 UTC)\n")
+        _, rep, out, _ = self.run_lab([r], "--var", "work=" + work)
+        self.assertIn("Images and roots prepared against: /x/tree (Tue, 17 Nov 2026 18:28:18 UTC)", out)
+        self.assertNotIn("NOT the tree of this run", out)
+        self.assertEqual(rep["images_prepared_against"], "/x/tree (Tue, 17 Nov 2026 18:28:18 UTC)")
+        with open(os.path.join(work, "tree.txt"), "w") as f:
+            f.write("/x/older (Fri, 06 Nov 2026 10:00:00 UTC)\n")
+        _, _, out, _ = self.run_lab([r], "--var", "work=" + work)
+        self.assertIn("NOT the tree of this run", out)
+
+    def test_no_work_folder_no_line(self):
+        _, rep, out, _ = self.run_lab([row("ok", "exit 0", "exit 1")])
+        self.assertNotIn("prepared against", out)
+        self.assertNotIn("images_prepared_against", rep)
+
+
+class ShippedMatrix(unittest.TestCase):
+    """The matrix this folder ships: every row is well formed, red on stock is the default for every runnable row, every named
+    skip says whose it is, and the screens rows ask the guest only for phases, layouts and tags the guest scripts know."""
+    PHASES = {"kwin": {"fp", "tab", "sbs-half", "sbs-full", "2d", "edid-no-3d", "no-3d-modes"},
+              "deep": {"2d", "sbs-half"},
+              "eyeorder": {"hdmi-sbs-half", "hdmi-tab", "hdmi-sbs-full", "hdmi-fp", "twin-sbs-half", "twin-tab", "anaglyph-modern",
+                           "anaglyph-crt", "rows-left", "rows-right", "columns-left", "columns-right", "checkerboard-left",
+                           "checkerboard-right", "fs-left", "fs-right"},
+              "anaglyph": {"doctor", "file", "filemode", "plain"}}
+    EDIDS = {"stereo-test", "stereo-test-2d", "stereo-eyeorder"}
+
+    def setUp(self):
+        self.data, self.rows = lab.load_matrix(os.path.join(os.path.dirname(HERE), "matrix.json"))
+
+    def test_every_runnable_row_is_red_on_stock_and_green_on_ours(self):
+        for r in self.rows:
+            if "skip" in r:
+                continue
+            self.assertEqual(lab.expected(r, "stock"), "fail", r["id"] + ": a row that is green on stock proves nothing")
+            if r["id"] != "audio-detect-headphones":
+                self.assertEqual(lab.expected(r, "ours"), "pass", r["id"])
+
+    def test_a_named_skip_says_whose_it_is_and_why(self):
+        for r in self.rows:
+            if "skip" in r:
+                self.assertTrue(r.get("tracks"), r["id"] + " is a skip without a name")
+                self.assertGreater(len(r["skip"]), 30, r["id"])
+
+    def test_the_screens_guest_rows_ask_for_what_the_guest_knows(self):
+        for r in self.rows:
+            if r.get("kind") not in ("screens", "weak") or "skip" in r:
+                continue
+            cmd = r["sides"]["ours"]["cmd"]
+            if "screens_guest.sh" not in " ".join(cmd):
+                continue
+            env = r.get("env", {})
+            phase = env.get("LAB_PHASE", "kwin")
+            self.assertIn(phase, self.PHASES, r["id"])
+            self.assertIn(env.get("LAB_EDID", "stereo-test"), self.EDIDS, r["id"])
+            args = cmd[cmd.index("ours") + 1:]
+            self.assertTrue(args, r["id"])
+            self.assertLessEqual(set(args), self.PHASES[phase], r["id"])
+            self.assertEqual(cmd[cmd.index("ours")], "ours")
+            self.assertEqual(r["sides"]["stock"]["cmd"][:3], cmd[:2] + ["stock"], r["id"])
+            self.assertEqual(r["sides"]["stock"]["cmd"][3:], args, r["id"])
+
+    def test_the_guest_scripts_named_by_the_phases_exist(self):
+        base = os.path.dirname(HERE)
+        for f in ("rows/screens_guest.sh", "rows/deep_judge.py", "rows/eyeorder_judge.py", "rows/anaglyph_judge.py",
+                  "rows/page_judge.py", "rows/page_row.sh", "rows/page-steps.json", "rig/guest/deep-steps.sh",
+                  "rig/guest/eyeorder-steps.sh", "rig/guest/anaglyph-steps.sh", "rig/guest/make-eyeorder-edid.py", "rig/build-page.sh"):
+            self.assertTrue(os.path.exists(os.path.join(base, f)), f)
+
+    def test_the_rows_use_images_that_prepare_builds(self):
+        built = {"lab22-guest:1", "lab22-audio-ours:1", "lab22-audio-stock:1", "lab22-kwin-ours:1", "lab22-kwin-stock:1",
+                 "lab22-page-ours:1", "lab22-page-stock:1"}
+        for r in self.rows:
+            if "skip" in r:
+                continue
+            for n in r.get("needs", []):
+                if n.startswith("image:"):
+                    self.assertIn(n[6:], built, r["id"])
+            for s in ("ours", "stock"):
+                img = r["sides"][s].get("image", r.get("image"))
+                self.assertIn(img, built, r["id"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
