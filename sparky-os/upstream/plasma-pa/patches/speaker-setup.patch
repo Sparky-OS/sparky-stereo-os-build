@@ -27,10 +27,10 @@ index d4bb5ace..de7ab9c7 100644
 +target_include_directories(speakertestsignaltest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 diff --git a/autotests/speakersetupconftest.cpp b/autotests/speakersetupconftest.cpp
 new file mode 100644
-index 00000000..bc9a41c2
+index 00000000..31c48a64
 --- /dev/null
 +++ b/autotests/speakersetupconftest.cpp
-@@ -0,0 +1,393 @@
+@@ -0,0 +1,396 @@
 +// SPDX-License-Identifier: BSD-2-Clause
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +
@@ -142,7 +142,7 @@ index 00000000..bc9a41c2
 +        QTest::newRow("a lower case position") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"fl"_s, u"FR"_s, u"FC"_s}}, {u"levels"_s, QVariantMap{{u"FR"_s, -3}}}})
 +                                               << u"device.positions"_s;
 +
-+        for (const QString &bad : {u"a\"b"_s, u"a\nb"_s, u"a\n"_s, u"a\\b"_s, u"a{b"_s, u"a}b"_s, u"a[b"_s, u"a]b"_s, u"a#b"_s, u"a=b"_s, u"a,b"_s, u"a\tb"_s, u"a\rb"_s,
++        for (const QString &bad : {u"a\u2028b"_s, u"a\u0085b"_s, u"a\u200b" "b"_s, u"a\u00a0\u2029"_s, u"a\uff02b"_s, u"a\uff3cb"_s, u"a\"b"_s, u"a\nb"_s, u"a\n"_s, u"a\\b"_s, u"a{b"_s, u"a}b"_s, u"a[b"_s, u"a]b"_s, u"a#b"_s, u"a=b"_s, u"a,b"_s, u"a\tb"_s, u"a\rb"_s,
 +                                   u" a"_s, u""_s, u"a;b"_s, u"a$b"_s, u"a`b"_s, u"a<b"_s}) {
 +            QTest::newRow(qPrintable(u"label "_s + QString::fromLatin1(QByteArray(bad.toUtf8()).toPercentEncoding()))) << withDevice(NODE, dev({{u"label"_s, bad}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}))
 +                                                                                                                        << u"device.label"_s;
@@ -231,6 +231,9 @@ index 00000000..bc9a41c2
 +                                                                       }()}}));
 +        QTest::newRow("small speakers and the crossover") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s, u"FR"_s, u"FC"_s}}, {u"crossover"_s, 120}}));
 +        QTest::newRow("a label with letters of another script") << withDevice(NODE, dev({{u"label"_s, u"Alto-falantes (áudio 5.1) 標準"_s}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
++        QTest::newRow("a label with the fullwidth colon of a Chinese translation") << withDevice(NODE, dev({{u"label"_s, u"\u626c\u58f0\u5668\u8bbe\u7f6e\uff1arig 71"_s}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
++        QTest::newRow("a label with fullwidth parentheses and an ideographic space") << withDevice(NODE, dev({{u"label"_s, u"\u30b9\u30d4\u30fc\u30ab\u30fc\uff08rig\u3000\u0035\uff09"_s}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
++        QTest::newRow("a label with a combining mark") << withDevice(NODE, dev({{u"label"_s, u"Cafe\u0301 audio"_s}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
 +        QTest::newRow("a real bluez name") << withDevice(u"bluez_output.AA_BB_CC_DD_EE_FF.1"_s, dev({{u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
 +        QTest::newRow("a usb name with plus and colon") << withDevice(u"alsa_output.usb-Rig_DAC+Dock-00.analog-surround-71:1"_s, dev({{u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
 +    }
@@ -767,10 +770,10 @@ index 25880c82..826ca8ec 100644
      Repeater {
 diff --git a/src/kcm/ui/SpeakerSetup.qml b/src/kcm/ui/SpeakerSetup.qml
 new file mode 100644
-index 00000000..ebca828c
+index 00000000..d21ae836
 --- /dev/null
 +++ b/src/kcm/ui/SpeakerSetup.qml
-@@ -0,0 +1,639 @@
+@@ -0,0 +1,652 @@
 +// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +
@@ -810,7 +813,10 @@ index 00000000..ebca828c
 +    readonly property bool eligible: info !== null && info.eligible
 +    readonly property bool hasSub: positions.indexOf("LFE") >= 0
 +    readonly property var scopeState: allAccounts ? setup.systemState : setup.userState
-+    readonly property var savedDevice: setup.deviceState(allAccounts, deviceName)
++    readonly property var savedDevice: {
++        const devs = scopeState.devices
++        return devs !== undefined && devs[deviceName] !== undefined ? devs[deviceName] : ({})
++    }
 +    readonly property var groups: {
 +        const g = []
 +        const pairs = [
@@ -977,9 +983,12 @@ index 00000000..ebca828c
 +        if (!any) {
 +            return null
 +        }
-+        const text = info.description.replace(/[^\p{L}\p{N} ._+:()\/-]/gu, "").trim().substring(0, 56)
++        // The label becomes the setup's name in the lists of devices; only characters the drop-in accepts go into it.
++        const allowed = "\\p{L}\\p{N}\\p{M}\\p{Zs}._+:()\\/\\uFF1A\\uFF08\\uFF09\\-"
++        const text = info.description.replace(new RegExp("[^" + allowed + "]", "gu"), "").trim().substring(0, 56)
 +        if (/^[\p{L}\p{N}]/u.test(text)) {
-+            d.label = i18nd("kcm_pulseaudio", "Speaker Setup: %1", text).substring(0, 80)
++            const translated = i18nd("kcm_pulseaudio", "Speaker Setup: %1", text)
++            d.label = new RegExp("^[\\p{L}\\p{N}][" + allowed + "]{0,79}$", "u").test(translated) ? translated : "Speaker Setup: " + text
 +        }
 +        return d
 +    }
@@ -1163,8 +1172,9 @@ index 00000000..ebca828c
 +                            spacing: 0
 +                            Label {
 +                                Layout.alignment: Qt.AlignHCenter
-+                                text: page.speakerName(spk.modelData)
-+                                font: Kirigami.Theme.smallFont
++                                text: spk.modelData
++                                font.bold: true
++                                font.pixelSize: Kirigami.Theme.smallFont.pixelSize
 +                                color: setup.testing === spk.modelData ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
 +                            }
 +                            Label {
@@ -1177,9 +1187,14 @@ index 00000000..ebca828c
 +                        }
 +
 +                        MouseArea {
++                            id: spkArea
 +                            anchors.fill: parent
++                            hoverEnabled: true
 +                            onClicked: page.selected = spk.modelData
 +                        }
++
++                        ToolTip.visible: spkArea.containsMouse
++                        ToolTip.text: page.speakerName(spk.modelData)
 +                    }
 +                }
 +            }
@@ -1246,6 +1261,7 @@ index 00000000..ebca828c
 +
 +                ComboBox {
 +                    Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Test signal length:")
++                    Layout.minimumWidth: Kirigami.Units.gridUnit * 14
 +                    readonly property var values: [1, 2, 5, 10]
 +                    model: values.map(v => i18nd("kcm_pulseaudio", "%1 s per speaker", v))
 +                    currentIndex: Math.max(0, values.indexOf(setup.testSeconds))
@@ -2358,10 +2374,10 @@ index 00000000..b94d3b4f
 +};
 diff --git a/src/speakersetupconf.cpp b/src/speakersetupconf.cpp
 new file mode 100644
-index 00000000..b7a3b918
+index 00000000..a5df6df0
 --- /dev/null
 +++ b/src/speakersetupconf.cpp
-@@ -0,0 +1,493 @@
+@@ -0,0 +1,494 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
@@ -2623,8 +2639,9 @@ index 00000000..b7a3b918
 +
 +bool SpeakerSetupConf::validLabel(const QString &label)
 +{
-+    // Letters and digits of any script, a space and a few marks; no quote, backslash, brace, bracket, hash or control character.
-+    static const QRegularExpression re(u"^[\\p{L}\\p{N}][\\p{L}\\p{N} ._+:()/-]{0,79}\\z"_s);
++    // Letters and digits of any script, combining marks, spaces, and the marks . _ + : ( ) / - and the fullwidth colon and
++    // parentheses CJK translations use; no quote, backslash, brace, bracket, hash, comma, equals sign or control character.
++    static const QRegularExpression re(u"^[\\p{L}\\p{N}][\\p{L}\\p{N}\\p{M}\\p{Zs}._+:()/\\x{FF1A}\\x{FF08}\\x{FF09}-]{0,79}\\z"_s);
 +    return re.match(label).hasMatch();
 +}
 +
