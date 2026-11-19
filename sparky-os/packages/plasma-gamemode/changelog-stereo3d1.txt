@@ -1,0 +1,12 @@
+plasma-gamemode (0.0~git20240315.4d60358-2+stereo3d1) unstable; urgency=medium
+
+  * Sparky Stereo OS: the Game Mode applet no longer takes plasmashell down
+    at login (ORDER 755). GamesModel::reload() ran twice when the GameMode
+    service appeared while the first ListGames answer was on its way, and
+    the first answer's handler deleted the second reload's watcher and set
+    the member to null, so the second handler called deleteLater() on a
+    null pointer (SIGSEGV in libplasma-gamemode.so). Each handler now owns
+    its watcher and the member is cleared only by the watcher it points to
+    (0001-gamesmodel-each-answer-owns-its-watcher.patch). Nothing was found
+    upstream or in Debian's tracker on 2026-11-19; the applet and its
+    behaviour are unchanged.
