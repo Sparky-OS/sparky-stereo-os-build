@@ -79,7 +79,7 @@ preserve=[('src/shaders/*','Shared Slang/CUDA shader input; GCC-only token quali
           ('src/backend/api/*','Generated interface text retains the header-generator marker'),
           ('src/engine/EngineColorSpace.cpp','Read by the upstream auto-header generator'),
           ('src/backend/vulkan/kernels/Visualizer.cpp','Read by the upstream auto-header generator')]
-command=['python3','-m','lean.debian_prepare',str(root),'2026.11.12-1+stereo3d5+lc1','--toolkit',str(toolkit)]
+command=['python3','-m','lean.debian_prepare',str(root),'2026.11.12-1+stereo3d6+lc1','--toolkit',str(toolkit)]
 for pattern,reason in preserve:command+=['--preserve-source',pattern,reason]
 env=__import__('os').environ.copy();env['PYTHONPATH']=str(toolkit);env['DEBFULLNAME']='Daniel Ramos (Capitain Jack)';env['DEBEMAIL']='Capitain_Jack@yahoo.com'
 subprocess.run(command,env=env,check=True)

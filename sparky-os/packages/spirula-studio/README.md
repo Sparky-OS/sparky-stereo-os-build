@@ -41,3 +41,7 @@ The reuse path checks all predecessor archive hashes and unchanged native inputs
 The build record retains the new recipe identity and the compiled predecessor identity; reuse never invokes a native compiler.
 The original font component retains its pinned mode 0664 regardless of cache modes or umask; extracted build inputs use mode 0644.
 The reuse guard still requires every extracted native input byte and mode to match exactly; no mode exception is needed or allowed.
+
+The +stereo3d6 cache correction builds fork commit 27fbbcff over accepted d5c4ac86.
+Every depth-limits notification invalidates the rendered pair, including when the normalized values stay equal after a screen change.
+The camera fit, settings, messages and dependencies are unchanged.
