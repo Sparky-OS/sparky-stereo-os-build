@@ -1,6 +1,6 @@
 # Virtual streams in KDE's Sound page and volume widget
 
-This recipe prepares the edition's plasma-pa 4:6.7.4-1+stereo3d4+lc1 and holds its isolated proof rig and translation generator.
+This recipe prepares the edition's plasma-pa 4:6.7.4-1+stereo3d5+lc1 and holds its isolated proof rig and translation generator.
 The package exposes optional virtual streams, repairs null-client handling and the recording selector, and adds optional input monitoring and a combined recording source. Both routing features start off. Their controls, failures and shared-microphone warning have English messages and nine translated catalogues.
 No system PipeWire or WirePlumber default is supplied here.
 
@@ -60,8 +60,8 @@ The images must contain Weston and the distribution's runtime libraries required
 This proves the widget under a private software Wayland compositor; it does not test KWin-specific protocols or a hardware renderer.
 
 
-## Speaker Setup (4:6.7.4-1+stereo3d4)
+## Speaker Setup (4:6.7.4-1+stereo3d5)
 
-`patches/speaker-setup.patch` is the fork's branch order23 on order20 (Sparky-OS/plasma-pa): a page for every playback device whose current profile has more than two channels, written as the person's own `50-speaker-page.conf` beside ORDER 20's `50-sound-page.conf`, checked against the running graph and undone when PipeWire refuses it.
+`patches/speaker-setup.patch` is the fork's branch order23 on order20 (Sparky-OS/plasma-pa): a page for every playback device whose current profile has more than two channels, a speaker's level is the device's channel volume; distances and bass management are written as the person's own `50-speaker-page.conf` beside ORDER 20's `50-sound-page.conf` (one filter-chain sink with `node.dont-fallback` and `node.linger`), checked against the running graph and undone when PipeWire refuses it.
 `speaker-setup-strings.json` holds its sentences in the ten languages and `make-speaker-setup-translations.py` appends them to the already patched catalogues (`translations/plasma-pa-speaker-setup.po.patch`); regenerate the patch from a source with every earlier patch applied, as `make-sound-format-translations.py` does.
-The build runs the three native tests (`soundformatconftest`, `speakersetupconftest`, `speakertestsignaltest`) with the Debian build; the installed proofs (fake 5.1, 7.1 and stereo cards, bit exact at the defaults, the measured level, delay, crossover and test signal) are the audio skill's `bench/speaker-rig`.
+The build runs the four native tests (`soundformatconftest`, `speakersetupconftest`, `speakertestsignaltest`, `speakerlevelmathtest`) with the Debian build; the installed proofs (fake 5.1, 7.1 and stereo cards, bit exact at the defaults, the measured level, delay, crossover and test signal) are the audio skill's `bench/speaker-rig`.

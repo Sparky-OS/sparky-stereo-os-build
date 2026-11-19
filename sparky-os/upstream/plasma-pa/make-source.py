@@ -18,7 +18,7 @@ work=Path(sys.argv[2]).resolve()
 assert os.environ['SOURCE_DATE_EPOCH'].isdigit()
 assert not work.exists(), work
 work.mkdir(parents=True)
-version='4:6.7.4-1+stereo3d4'
+version='4:6.7.4-1+stereo3d5'
 source=work/'source'
 subprocess.run(['dpkg-source','-x',str(base),str(source)],check=True)
 for p in base.parent.glob('plasma-pa_6.7.4.orig.tar.*'):
@@ -71,7 +71,7 @@ assert 'Build-Depends: debhelper-compat (= 13),' in text
 text=text.replace('Build-Depends: debhelper-compat (= 13),','Build-Depends: debhelper-compat (= 13),\n               libkf6auth-dev (>= 6.26.0~),',1)
 control.write_text(text)
 subprocess.run(['dch','--force-distribution','--date',os.environ['SOURCE_DATE_RFC2822'],'--newversion',version,'--distribution','mashtabba',
-    'Add Speaker Setup to the Sound page: for every playback device whose current profile has more than two channels, the speakers drawn at the angles of ITU-R BS.775-4 with a level in dB, a distance applied as a delay, bass management with a crossover and a pink noise test signal; nothing is in the signal path while every speaker is at its defaults; the setup is a drop-in of the person for one account or, through KAuth, for every account. Show the format in use on the device rows again. Retain Sound Quality, input monitoring, combined recording, virtual stream controls and Show Channels.'],cwd=source,check=True)
+    'Add Speaker Setup to the Sound page: for every playback device whose current profile has more than two channels, the speakers drawn at the angles of ITU-R BS.775-4 with a level that is the device\'s own channel volume (the value Show Channels shows, live, no file and no restart), a distance applied as a delay and bass management with a crossover as one PipeWire filter that exists only for those two, waits for its device and never plays into another one, a pink noise test signal, and a sentence before Apply says sound stops for a moment. Show the format in use on the device rows again. Retain Sound Quality, input monitoring, combined recording, virtual stream controls and Show Channels.'],cwd=source,check=True)
 subprocess.run(['python3',str(toolkit/'repo/provenance-files.py'),str(source),'virtual-streams.patch','plasma-pa-virtual-streams.po.patch','audio-routes.patch','plasma-pa-audio-routes.po.patch','sound-formats.patch','plasma-pa-sound-formats.po.patch','speaker-setup.patch','plasma-pa-speaker-setup.po.patch'],check=True)
 repro=toolkit/'repo/reproducible.py'
 subprocess.run(['python3',str(repro),'normalize-tree',os.environ['SOURCE_DATE_EPOCH'],str(source)],check=True)
@@ -83,9 +83,9 @@ for p in work.glob('plasma-pa_*'):
 lc=work/'lc'
 lc.mkdir()
 for p in authored.iterdir(): shutil.copy2(p,lc/p.name)
-subprocess.run(['dpkg-source','-x',str(authored/'plasma-pa_6.7.4-1+stereo3d4.dsc'),str(lc/'source')],check=True)
+subprocess.run(['dpkg-source','-x',str(authored/'plasma-pa_6.7.4-1+stereo3d5.dsc'),str(lc/'source')],check=True)
 env=dict(os.environ,PYTHONPATH=str(toolkit))
 subprocess.run(['python3','-m','lean.debian_prepare',str(lc/'source'),version+'+lc1','--toolkit',str(toolkit)],env=env,check=True)
 subprocess.run(['python3',str(repro),'normalize-tree',os.environ['SOURCE_DATE_EPOCH'],str(lc/'source')],check=True)
 subprocess.run(['dpkg-source','-b','source'],cwd=lc,check=True)
-print(lc/'plasma-pa_6.7.4-1+stereo3d4+lc1.dsc')
+print(lc/'plasma-pa_6.7.4-1+stereo3d5+lc1.dsc')
