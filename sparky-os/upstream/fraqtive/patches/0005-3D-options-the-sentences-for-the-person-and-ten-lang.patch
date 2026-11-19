@@ -1,0 +1,559 @@
+From 6f9c3fda43ce0e405b048f80e97882a7dd074598 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 19 Nov 2026 05:08:39 -0300
+Subject: [PATCH 3/3] 3D options, the sentences for the person, and ten
+ languages
+
+Enable 3D, Render Resolution per Eye and Display Settings in the View strip; a message above
+the view says when the two views cannot be given (X11, no stereo surface, limits not told,
+limits zero); the 3D View action no longer fails without a sentence. The program's sentences
+are translated into the ten languages of the edition and embedded.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/fraqtiveapplication.cpp          |  8 ++++
+ src/fraqtivemainwindow.cpp           | 65 +++++++++++++++++++++++++++-
+ src/fraqtivemainwindow.h             |  3 ++
+ src/resources/fraqtivemainwindow.xml |  5 +++
+ src/src.pro                          |  2 +
+ src/translations/fraqtive_de.ts      | 23 ++++++++++
+ src/translations/fraqtive_es.ts      | 23 ++++++++++
+ src/translations/fraqtive_fr.ts      | 23 ++++++++++
+ src/translations/fraqtive_ja.ts      | 23 ++++++++++
+ src/translations/fraqtive_ko.ts      | 23 ++++++++++
+ src/translations/fraqtive_pl.ts      | 23 ++++++++++
+ src/translations/fraqtive_pt_BR.ts   | 23 ++++++++++
+ src/translations/fraqtive_zh_CN.ts   | 23 ++++++++++
+ src/translations/fraqtive_zh_TW.ts   | 23 ++++++++++
+ src/viewcontainer.cpp                | 16 +++++++
+ src/viewcontainer.h                  |  7 +++
+ 16 files changed, 312 insertions(+), 1 deletion(-)
+ create mode 100644 src/translations/fraqtive_de.ts
+ create mode 100644 src/translations/fraqtive_es.ts
+ create mode 100644 src/translations/fraqtive_fr.ts
+ create mode 100644 src/translations/fraqtive_ja.ts
+ create mode 100644 src/translations/fraqtive_ko.ts
+ create mode 100644 src/translations/fraqtive_pl.ts
+ create mode 100644 src/translations/fraqtive_pt_BR.ts
+ create mode 100644 src/translations/fraqtive_zh_CN.ts
+ create mode 100644 src/translations/fraqtive_zh_TW.ts
+
+diff --git a/src/fraqtiveapplication.cpp b/src/fraqtiveapplication.cpp
+index 951e9e4..5db9183 100644
+--- a/src/fraqtiveapplication.cpp
++++ b/src/fraqtiveapplication.cpp
+@@ -28,6 +28,9 @@
+ #include <shlobj.h>
+ #endif
+ 
++#include <QTranslator>
++#include <QLocale>
++
+ #include "jobscheduler.h"
+ #include "configurationdata.h"
+ #include "fraqtivemainwindow.h"
+@@ -52,6 +55,11 @@ FraqtiveApplication::FraqtiveApplication( int& argc, char** argv ) : QApplicatio
+ 
+     setWindowIcon( IconLoader::icon( "fraqtive" ) ); 
+ 
++    // the program's own sentences are in the ten languages of the edition (English is the source text)
++    QTranslator* translator = new QTranslator( this );
++    if ( translator->load( QLocale(), "fraqtive", "_", ":/i18n" ) )
++        installTranslator( translator );
++
+     registerDataStructures();
+ 
+     m_jobScheduler = new JobScheduler();
+diff --git a/src/fraqtivemainwindow.cpp b/src/fraqtivemainwindow.cpp
+index ffe68ec..e22b5f2 100644
+--- a/src/fraqtivemainwindow.cpp
++++ b/src/fraqtivemainwindow.cpp
+@@ -22,6 +22,8 @@
+ 
+ #include <QCloseEvent>
+ #include <QMessageBox>
++#include <QInputDialog>
++#include <QProcess>
+ #include <QImageWriter>
+ #include <QClipboard>
+ #include <QProgressDialog>
+@@ -130,6 +132,20 @@ FraqtiveMainWindow::FraqtiveMainWindow()
+     connect( action, SIGNAL( triggered() ), this, SLOT( view3d() ) );
+     setAction( "view3d", action );
+ 
++    action = new QAction( tr( "Enable 3D" ), this );
++    action->setCheckable( true );
++    action->setChecked( fraqtive()->configuration()->value( "Enable3D", true ).toBool() );
++    connect( action, SIGNAL( triggered() ), this, SLOT( enable3d() ) );
++    setAction( "enable3d", action );
++
++    action = new QAction( tr( "Render Resolution per Eye..." ), this );
++    connect( action, SIGNAL( triggered() ), this, SLOT( chooseRenderResolution() ) );
++    setAction( "renderResolution", action );
++
++    action = new QAction( tr( "Display Settings..." ), this );
++    connect( action, SIGNAL( triggered() ), this, SLOT( openDisplaySettings() ) );
++    setAction( "displaySettings", action );
++
+     action = new QAction( IconLoader::icon( "about" ), tr( "About Fraqtive" ), this );
+     action->setShortcut( QKeySequence( Qt::Key_F1 ) );
+     connect( action, SIGNAL( triggered() ), fraqtive(), SLOT( about() ) );
+@@ -138,6 +154,7 @@ FraqtiveMainWindow::FraqtiveMainWindow()
+     setTitle( "sectionFile", tr( "File" ) );
+     setTitle( "sectionEdit", tr( "Edit" ) );
+     setTitle( "sectionView", tr( "View" ) );
++    setTitle( "section3d", tr( "3D" ) );
+     setTitle( "sectionPosition", tr( "Position" ) );
+ 
+     loadXmlUiFile( ":/resources/fraqtivemainwindow.xml" );
+@@ -195,7 +212,6 @@ FraqtiveMainWindow::FraqtiveMainWindow()
+ 
+     m_ui.mainContainer->installEventFilter( this );
+ 
+-    this->action( "view3d" )->setEnabled( QOpenGLContext().create() );
+ 
+     m_model->setViewMode( ImageViewMode );
+ 
+@@ -676,12 +692,23 @@ void FraqtiveMainWindow::view2d()
+ 
+     action( "view2d" )->setChecked( true );
+     action( "view3d" )->setChecked( false );
++    m_ui.mainContainer->setMessage( QString() );
+ }
+ 
+ void FraqtiveMainWindow::view3d()
+ {
+     if ( !qobject_cast<MeshView*>( m_ui.mainContainer->view() ) ) {
++        QOpenGLContext probe;
++        if ( !probe.create() ) {
++            QMessageBox::warning( this, tr( "3D View" ), tr( "The 3D view needs OpenGL, which could not be started on this computer." ) );
++            action( "view3d" )->setChecked( false );
++            return;
++        }
++
+         MeshView* view = new MeshView( m_ui.mainContainer, m_model->presenter() );
++        view->setStereoEnabled( action( "enable3d" )->isChecked() );
++        view->setRenderScale( fraqtive()->configuration()->value( "RenderScalePercent", 100 ).toInt() / 100.0 );
++        connect( view, SIGNAL( stereoStatusChanged( const QString& ) ), m_ui.mainContainer, SLOT( setMessage( const QString& ) ) );
+ 
+         m_model->presenter()->setView( view );
+         m_ui.mainContainer->setView( view );
+@@ -696,3 +723,39 @@ void FraqtiveMainWindow::view3d()
+     action( "view2d" )->setChecked( false );
+     action( "view3d" )->setChecked( true );
+ }
++
++void FraqtiveMainWindow::enable3d()
++{
++    bool enabled = action( "enable3d" )->isChecked();
++    fraqtive()->configuration()->setValue( "Enable3D", enabled );
++    if ( MeshView* meshView = qobject_cast<MeshView*>( m_ui.mainContainer->view() ) )
++        meshView->setStereoEnabled( enabled );
++}
++
++void FraqtiveMainWindow::chooseRenderResolution()
++{
++    // the size each eye is drawn at, as a share of the size of the 3D area; Stereo KWin resizes it once, at the output
++    QStringList items;
++    items << "50 %" << "75 %" << "100 %" << "150 %" << "200 %";
++    int percent[] = { 50, 75, 100, 150, 200 };
++    int current = fraqtive()->configuration()->value( "RenderScalePercent", 100 ).toInt();
++    int index = 2;
++    for ( int i = 0; i < 5; i++ ) {
++        if ( percent[ i ] == current )
++            index = i;
++    }
++    bool ok = false;
++    QString item = QInputDialog::getItem( this, tr( "Render Resolution per Eye" ), tr( "Size of each eye's picture, as a share of the 3D area:" ), items, index, false, &ok );
++    if ( !ok )
++        return;
++    int value = percent[ items.indexOf( item ) ];
++    fraqtive()->configuration()->setValue( "RenderScalePercent", value );
++    if ( MeshView* meshView = qobject_cast<MeshView*>( m_ui.mainContainer->view() ) )
++        meshView->setRenderScale( value / 100.0 );
++}
++
++void FraqtiveMainWindow::openDisplaySettings()
++{
++    if ( !QProcess::startDetached( "kcmshell6", QStringList() << "kcm_kscreen" ) )
++        QMessageBox::warning( this, tr( "Display Settings" ), tr( "Display Settings could not be opened (kcmshell6 was not found)." ) );
++}
+diff --git a/src/fraqtivemainwindow.h b/src/fraqtivemainwindow.h
+index eebf3db..96ce9dc 100644
+--- a/src/fraqtivemainwindow.h
++++ b/src/fraqtivemainwindow.h
+@@ -58,6 +58,9 @@ private slots:
+     void generateSeries();
+     void view2d();
+     void view3d();
++    void enable3d();
++    void chooseRenderResolution();
++    void openDisplaySettings();
+ 
+     void customContextMenuRequested( const QPoint& pos );
+ 
+diff --git a/src/resources/fraqtivemainwindow.xml b/src/resources/fraqtivemainwindow.xml
+index e95482b..194157d 100644
+--- a/src/resources/fraqtivemainwindow.xml
++++ b/src/resources/fraqtivemainwindow.xml
+@@ -19,6 +19,11 @@
+       <action id="view3d"/>
+       <action id="fullScreen"/>
+     </section>
++    <section id="section3d">
++      <action id="enable3d"/>
++      <action id="renderResolution"/>
++      <action id="displaySettings"/>
++    </section>
+     <section id="sectionPosition">
+       <action id="defaultPosition"/>
+       <action id="navigateBack"/>
+diff --git a/src/src.pro b/src/src.pro
+index 97c7f79..debca9c 100644
+--- a/src/src.pro
++++ b/src/src.pro
+@@ -5,6 +5,8 @@ TARGET = fraqtive
+ 
+ QT += widgets openglwidgets xml gui-private
+ LIBS += -lstereo-declare -lX11
++CONFIG += lrelease embed_translations
++TRANSLATIONS += translations/fraqtive_de.ts translations/fraqtive_es.ts translations/fraqtive_fr.ts translations/fraqtive_ja.ts translations/fraqtive_ko.ts translations/fraqtive_pl.ts translations/fraqtive_pt_BR.ts translations/fraqtive_zh_CN.ts translations/fraqtive_zh_TW.ts
+ 
+ HEADERS   += aboutbox.h \
+              abstractjobprovider.h \
+diff --git a/src/translations/fraqtive_de.ts b/src/translations/fraqtive_de.ts
+new file mode 100644
+index 0000000..2d5d861
+--- /dev/null
++++ b/src/translations/fraqtive_de.ts
+@@ -0,0 +1,23 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="de">
++<context><name>FraqtiveMainWindow</name>
++<message><source>Enable 3D</source><translation>3D aktivieren</translation></message>
++<message><source>Render Resolution per Eye...</source><translation>Renderauflösung pro Auge …</translation></message>
++<message><source>Display Settings...</source><translation>Anzeigeeinstellungen …</translation></message>
++<message><source>3D</source><translation>3D</translation></message>
++<message><source>3D View</source><translation>3D-Ansicht</translation></message>
++<message><source>The 3D view needs OpenGL, which could not be started on this computer.</source><translation>Die 3D-Ansicht braucht OpenGL, das auf diesem Computer nicht gestartet werden konnte.</translation></message>
++<message><source>Render Resolution per Eye</source><translation>Renderauflösung pro Auge</translation></message>
++<message><source>Size of each eye's picture, as a share of the 3D area:</source><translation>Größe des Bildes jedes Auges, als Anteil des 3D-Bereichs:</translation></message>
++<message><source>Display Settings</source><translation>Anzeigeeinstellungen</translation></message>
++<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>Die Anzeigeeinstellungen konnten nicht geöffnet werden (kcmshell6 wurde nicht gefunden).</translation></message>
++</context>
++<context><name>MeshView</name>
++<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>Die 3D-Ansicht wird flach gezeigt: Unter X11 kann dieses Programm noch keine zwei Ansichten liefern.</translation></message>
++<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>Die 3D-Ansicht wird flach gezeigt: Dieser Computer kann kein Fenster mit zwei Ansichten liefern.</translation></message>
++<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>Die 3D-Ansicht wird flach gezeigt: Der Compositor nennt die Tiefengrenzen des Bildschirms nicht.</translation></message>
++<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>Die 3D-Ansicht wird flach gezeigt: Der Compositor hat die Tiefengrenzen des Bildschirms noch nicht mitgeteilt.</translation></message>
++<message><source>The 3D view is shown flat: the depth limits of the screen are zero.</source><translation>Die 3D-Ansicht wird flach gezeigt: Die Tiefengrenzen des Bildschirms sind null.</translation></message>
++</context>
++</TS>
+diff --git a/src/translations/fraqtive_es.ts b/src/translations/fraqtive_es.ts
+new file mode 100644
+index 0000000..c22640b
+--- /dev/null
++++ b/src/translations/fraqtive_es.ts
+@@ -0,0 +1,23 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="es">
++<context><name>FraqtiveMainWindow</name>
++<message><source>Enable 3D</source><translation>Activar 3D</translation></message>
++<message><source>Render Resolution per Eye...</source><translation>Resolución de render por ojo…</translation></message>
++<message><source>Display Settings...</source><translation>Configuración de pantalla…</translation></message>
++<message><source>3D</source><translation>3D</translation></message>
++<message><source>3D View</source><translation>Vista 3D</translation></message>
++<message><source>The 3D view needs OpenGL, which could not be started on this computer.</source><translation>La vista 3D necesita OpenGL, que no se pudo iniciar en este equipo.</translation></message>
++<message><source>Render Resolution per Eye</source><translation>Resolución de render por ojo</translation></message>
++<message><source>Size of each eye's picture, as a share of the 3D area:</source><translation>Tamaño de la imagen de cada ojo, como parte del área 3D:</translation></message>
++<message><source>Display Settings</source><translation>Configuración de pantalla</translation></message>
++<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>No se pudo abrir la configuración de pantalla (no se encontró kcmshell6).</translation></message>
++</context>
++<context><name>MeshView</name>
++<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>La vista 3D se muestra plana: en X11 este programa aún no puede dar dos vistas.</translation></message>
++<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>La vista 3D se muestra plana: este equipo no puede dar una ventana con dos vistas.</translation></message>
++<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>La vista 3D se muestra plana: el compositor no indica los límites de profundidad de la pantalla.</translation></message>
++<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>La vista 3D se muestra plana: el compositor aún no ha indicado los límites de profundidad de la pantalla.</translation></message>
++<message><source>The 3D view is shown flat: the depth limits of the screen are zero.</source><translation>La vista 3D se muestra plana: los límites de profundidad de la pantalla son cero.</translation></message>
++</context>
++</TS>
+diff --git a/src/translations/fraqtive_fr.ts b/src/translations/fraqtive_fr.ts
+new file mode 100644
+index 0000000..f2286e4
+--- /dev/null
++++ b/src/translations/fraqtive_fr.ts
+@@ -0,0 +1,23 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="fr">
++<context><name>FraqtiveMainWindow</name>
++<message><source>Enable 3D</source><translation>Activer la 3D</translation></message>
++<message><source>Render Resolution per Eye...</source><translation>Résolution de rendu par œil…</translation></message>
++<message><source>Display Settings...</source><translation>Paramètres d’affichage…</translation></message>
++<message><source>3D</source><translation>3D</translation></message>
++<message><source>3D View</source><translation>Vue 3D</translation></message>
++<message><source>The 3D view needs OpenGL, which could not be started on this computer.</source><translation>La vue 3D a besoin d’OpenGL, qui n’a pas pu démarrer sur cet ordinateur.</translation></message>
++<message><source>Render Resolution per Eye</source><translation>Résolution de rendu par œil</translation></message>
++<message><source>Size of each eye's picture, as a share of the 3D area:</source><translation>Taille de l’image de chaque œil, en part de la zone 3D :</translation></message>
++<message><source>Display Settings</source><translation>Paramètres d’affichage</translation></message>
++<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>Les paramètres d’affichage n’ont pas pu être ouverts (kcmshell6 est introuvable).</translation></message>
++</context>
++<context><name>MeshView</name>
++<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>La vue 3D est affichée à plat : sous X11, ce programme ne peut pas encore donner deux vues.</translation></message>
++<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>La vue 3D est affichée à plat : cet ordinateur ne peut pas donner une fenêtre à deux vues.</translation></message>
++<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>La vue 3D est affichée à plat : le compositeur n’indique pas les limites de profondeur de l’écran.</translation></message>
++<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>La vue 3D est affichée à plat : le compositeur n’a pas encore indiqué les limites de profondeur de l’écran.</translation></message>
++<message><source>The 3D view is shown flat: the depth limits of the screen are zero.</source><translation>La vue 3D est affichée à plat : les limites de profondeur de l’écran sont nulles.</translation></message>
++</context>
++</TS>
+diff --git a/src/translations/fraqtive_ja.ts b/src/translations/fraqtive_ja.ts
+new file mode 100644
+index 0000000..b263e8b
+--- /dev/null
++++ b/src/translations/fraqtive_ja.ts
+@@ -0,0 +1,23 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="ja">
++<context><name>FraqtiveMainWindow</name>
++<message><source>Enable 3D</source><translation>3Dを有効にする</translation></message>
++<message><source>Render Resolution per Eye...</source><translation>片目あたりのレンダリング解像度…</translation></message>
++<message><source>Display Settings...</source><translation>ディスプレイ設定…</translation></message>
++<message><source>3D</source><translation>3D</translation></message>
++<message><source>3D View</source><translation>3Dビュー</translation></message>
++<message><source>The 3D view needs OpenGL, which could not be started on this computer.</source><translation>3Dビューには OpenGL が必要ですが、このコンピューターでは起動できませんでした。</translation></message>
++<message><source>Render Resolution per Eye</source><translation>片目あたりのレンダリング解像度</translation></message>
++<message><source>Size of each eye's picture, as a share of the 3D area:</source><translation>各目の画像のサイズ（3D領域に対する割合）:</translation></message>
++<message><source>Display Settings</source><translation>ディスプレイ設定</translation></message>
++<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>ディスプレイ設定を開けませんでした（kcmshell6 が見つかりません）。</translation></message>
++</context>
++<context><name>MeshView</name>
++<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>3Dビューは平面で表示されています: X11 では、このプログラムはまだ2つのビューを出せません。</translation></message>
++<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>3Dビューは平面で表示されています: このコンピューターでは2つのビューを持つウィンドウを出せません。</translation></message>
++<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>3Dビューは平面で表示されています: コンポジターが画面の奥行き制限を知らせていません。</translation></message>
++<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>3Dビューは平面で表示されています: コンポジターがまだ画面の奥行き制限を知らせていません。</translation></message>
++<message><source>The 3D view is shown flat: the depth limits of the screen are zero.</source><translation>3Dビューは平面で表示されています: 画面の奥行き制限がゼロです。</translation></message>
++</context>
++</TS>
+diff --git a/src/translations/fraqtive_ko.ts b/src/translations/fraqtive_ko.ts
+new file mode 100644
+index 0000000..25740fd
+--- /dev/null
++++ b/src/translations/fraqtive_ko.ts
+@@ -0,0 +1,23 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="ko">
++<context><name>FraqtiveMainWindow</name>
++<message><source>Enable 3D</source><translation>3D 사용</translation></message>
++<message><source>Render Resolution per Eye...</source><translation>눈당 렌더링 해상도…</translation></message>
++<message><source>Display Settings...</source><translation>디스플레이 설정…</translation></message>
++<message><source>3D</source><translation>3D</translation></message>
++<message><source>3D View</source><translation>3D 보기</translation></message>
++<message><source>The 3D view needs OpenGL, which could not be started on this computer.</source><translation>3D 보기에는 OpenGL이 필요하지만 이 컴퓨터에서 시작할 수 없습니다.</translation></message>
++<message><source>Render Resolution per Eye</source><translation>눈당 렌더링 해상도</translation></message>
++<message><source>Size of each eye's picture, as a share of the 3D area:</source><translation>각 눈 화면의 크기(3D 영역 대비 비율):</translation></message>
++<message><source>Display Settings</source><translation>디스플레이 설정</translation></message>
++<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>디스플레이 설정을 열 수 없습니다(kcmshell6을 찾을 수 없음).</translation></message>
++</context>
++<context><name>MeshView</name>
++<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>3D 보기가 평면으로 표시됩니다: X11에서는 이 프로그램이 아직 두 개의 뷰를 제공할 수 없습니다.</translation></message>
++<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>3D 보기가 평면으로 표시됩니다: 이 컴퓨터는 두 개의 뷰를 가진 창을 제공할 수 없습니다.</translation></message>
++<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>3D 보기가 평면으로 표시됩니다: 컴포지터가 화면의 깊이 한계를 알려 주지 않습니다.</translation></message>
++<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>3D 보기가 평면으로 표시됩니다: 컴포지터가 아직 화면의 깊이 한계를 알려 주지 않았습니다.</translation></message>
++<message><source>The 3D view is shown flat: the depth limits of the screen are zero.</source><translation>3D 보기가 평면으로 표시됩니다: 화면의 깊이 한계가 0입니다.</translation></message>
++</context>
++</TS>
+diff --git a/src/translations/fraqtive_pl.ts b/src/translations/fraqtive_pl.ts
+new file mode 100644
+index 0000000..4565aae
+--- /dev/null
++++ b/src/translations/fraqtive_pl.ts
+@@ -0,0 +1,23 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="pl">
++<context><name>FraqtiveMainWindow</name>
++<message><source>Enable 3D</source><translation>Włącz 3D</translation></message>
++<message><source>Render Resolution per Eye...</source><translation>Rozdzielczość renderowania na oko…</translation></message>
++<message><source>Display Settings...</source><translation>Ustawienia ekranu…</translation></message>
++<message><source>3D</source><translation>3D</translation></message>
++<message><source>3D View</source><translation>Widok 3D</translation></message>
++<message><source>The 3D view needs OpenGL, which could not be started on this computer.</source><translation>Widok 3D wymaga OpenGL, którego nie udało się uruchomić na tym komputerze.</translation></message>
++<message><source>Render Resolution per Eye</source><translation>Rozdzielczość renderowania na oko</translation></message>
++<message><source>Size of each eye's picture, as a share of the 3D area:</source><translation>Rozmiar obrazu każdego oka, jako część obszaru 3D:</translation></message>
++<message><source>Display Settings</source><translation>Ustawienia ekranu</translation></message>
++<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>Nie udało się otworzyć ustawień ekranu (nie znaleziono kcmshell6).</translation></message>
++</context>
++<context><name>MeshView</name>
++<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>Widok 3D jest pokazany płasko: w X11 ten program nie potrafi jeszcze dać dwóch widoków.</translation></message>
++<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>Widok 3D jest pokazany płasko: ten komputer nie potrafi dać okna z dwoma widokami.</translation></message>
++<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>Widok 3D jest pokazany płasko: kompozytor nie podaje granic głębi ekranu.</translation></message>
++<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>Widok 3D jest pokazany płasko: kompozytor nie podał jeszcze granic głębi ekranu.</translation></message>
++<message><source>The 3D view is shown flat: the depth limits of the screen are zero.</source><translation>Widok 3D jest pokazany płasko: granice głębi ekranu wynoszą zero.</translation></message>
++</context>
++</TS>
+diff --git a/src/translations/fraqtive_pt_BR.ts b/src/translations/fraqtive_pt_BR.ts
+new file mode 100644
+index 0000000..93a0408
+--- /dev/null
++++ b/src/translations/fraqtive_pt_BR.ts
+@@ -0,0 +1,23 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="pt_BR">
++<context><name>FraqtiveMainWindow</name>
++<message><source>Enable 3D</source><translation>Ativar 3D</translation></message>
++<message><source>Render Resolution per Eye...</source><translation>Resolução de renderização por olho…</translation></message>
++<message><source>Display Settings...</source><translation>Configurações de tela…</translation></message>
++<message><source>3D</source><translation>3D</translation></message>
++<message><source>3D View</source><translation>Vista 3D</translation></message>
++<message><source>The 3D view needs OpenGL, which could not be started on this computer.</source><translation>A vista 3D precisa do OpenGL, que não pôde ser iniciado neste computador.</translation></message>
++<message><source>Render Resolution per Eye</source><translation>Resolução de renderização por olho</translation></message>
++<message><source>Size of each eye's picture, as a share of the 3D area:</source><translation>Tamanho da imagem de cada olho, como parte da área 3D:</translation></message>
++<message><source>Display Settings</source><translation>Configurações de tela</translation></message>
++<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>Não foi possível abrir as configurações de tela (kcmshell6 não foi encontrado).</translation></message>
++</context>
++<context><name>MeshView</name>
++<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>A vista 3D é mostrada plana: no X11 este programa ainda não consegue dar duas vistas.</translation></message>
++<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>A vista 3D é mostrada plana: este computador não consegue dar uma janela com duas vistas.</translation></message>
++<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>A vista 3D é mostrada plana: o compositor não informa os limites de profundidade da tela.</translation></message>
++<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>A vista 3D é mostrada plana: o compositor ainda não informou os limites de profundidade da tela.</translation></message>
++<message><source>The 3D view is shown flat: the depth limits of the screen are zero.</source><translation>A vista 3D é mostrada plana: os limites de profundidade da tela são zero.</translation></message>
++</context>
++</TS>
+diff --git a/src/translations/fraqtive_zh_CN.ts b/src/translations/fraqtive_zh_CN.ts
+new file mode 100644
+index 0000000..ccf057e
+--- /dev/null
++++ b/src/translations/fraqtive_zh_CN.ts
+@@ -0,0 +1,23 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="zh_CN">
++<context><name>FraqtiveMainWindow</name>
++<message><source>Enable 3D</source><translation>启用 3D</translation></message>
++<message><source>Render Resolution per Eye...</source><translation>每眼渲染分辨率…</translation></message>
++<message><source>Display Settings...</source><translation>显示设置…</translation></message>
++<message><source>3D</source><translation>3D</translation></message>
++<message><source>3D View</source><translation>3D 视图</translation></message>
++<message><source>The 3D view needs OpenGL, which could not be started on this computer.</source><translation>3D 视图需要 OpenGL，但它无法在这台电脑上启动。</translation></message>
++<message><source>Render Resolution per Eye</source><translation>每眼渲染分辨率</translation></message>
++<message><source>Size of each eye's picture, as a share of the 3D area:</source><translation>每只眼睛的画面大小（占 3D 区域的比例）：</translation></message>
++<message><source>Display Settings</source><translation>显示设置</translation></message>
++<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>无法打开显示设置（找不到 kcmshell6）。</translation></message>
++</context>
++<context><name>MeshView</name>
++<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>3D 视图以平面显示：在 X11 上，本程序暂时无法提供两个视图。</translation></message>
++<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>3D 视图以平面显示：这台电脑无法提供带两个视图的窗口。</translation></message>
++<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>3D 视图以平面显示：合成器没有告知屏幕的深度限制。</translation></message>
++<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>3D 视图以平面显示：合成器尚未告知屏幕的深度限制。</translation></message>
++<message><source>The 3D view is shown flat: the depth limits of the screen are zero.</source><translation>3D 视图以平面显示：屏幕的深度限制为零。</translation></message>
++</context>
++</TS>
+diff --git a/src/translations/fraqtive_zh_TW.ts b/src/translations/fraqtive_zh_TW.ts
+new file mode 100644
+index 0000000..010ada3
+--- /dev/null
++++ b/src/translations/fraqtive_zh_TW.ts
+@@ -0,0 +1,23 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="zh_TW">
++<context><name>FraqtiveMainWindow</name>
++<message><source>Enable 3D</source><translation>啟用 3D</translation></message>
++<message><source>Render Resolution per Eye...</source><translation>每眼算圖解析度…</translation></message>
++<message><source>Display Settings...</source><translation>顯示設定…</translation></message>
++<message><source>3D</source><translation>3D</translation></message>
++<message><source>3D View</source><translation>3D 檢視</translation></message>
++<message><source>The 3D view needs OpenGL, which could not be started on this computer.</source><translation>3D 檢視需要 OpenGL，但它無法在這台電腦上啟動。</translation></message>
++<message><source>Render Resolution per Eye</source><translation>每眼算圖解析度</translation></message>
++<message><source>Size of each eye's picture, as a share of the 3D area:</source><translation>每隻眼睛的畫面大小（佔 3D 區域的比例）：</translation></message>
++<message><source>Display Settings</source><translation>顯示設定</translation></message>
++<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>無法開啟顯示設定（找不到 kcmshell6）。</translation></message>
++</context>
++<context><name>MeshView</name>
++<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>3D 檢視以平面顯示：在 X11 上，本程式暫時無法提供兩個視圖。</translation></message>
++<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>3D 檢視以平面顯示：這台電腦無法提供具有兩個視圖的視窗。</translation></message>
++<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>3D 檢視以平面顯示：合成器沒有告知螢幕的深度限制。</translation></message>
++<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>3D 檢視以平面顯示：合成器尚未告知螢幕的深度限制。</translation></message>
++<message><source>The 3D view is shown flat: the depth limits of the screen are zero.</source><translation>3D 檢視以平面顯示：螢幕的深度限制為零。</translation></message>
++</context>
++</TS>
+diff --git a/src/viewcontainer.cpp b/src/viewcontainer.cpp
+index c8dfe94..057f57a 100644
+--- a/src/viewcontainer.cpp
++++ b/src/viewcontainer.cpp
+@@ -19,12 +19,22 @@
+ #include "viewcontainer.h"
+ 
+ #include <QVBoxLayout>
++#include <QLabel>
+ 
+ ViewContainer::ViewContainer( QWidget* parent ) : QWidget( parent ),
+     m_view( NULL )
+ {
+     m_layout = new QVBoxLayout( this );
+     m_layout->setContentsMargins( 0, 0, 0, 0 );
++
++    m_message = new QLabel( this );
++    m_message->setWordWrap( true );
++    m_message->setMargin( 4 );
++    m_message->setAutoFillBackground( true );
++    m_message->setBackgroundRole( QPalette::ToolTipBase );
++    m_message->setForegroundRole( QPalette::ToolTipText );
++    m_message->hide();
++    m_layout->addWidget( m_message );
+ }
+ 
+ ViewContainer::~ViewContainer()
+@@ -40,6 +50,12 @@ void ViewContainer::setView( QWidget* view )
+     }
+ }
+ 
++void ViewContainer::setMessage( const QString& text )
++{
++    m_message->setText( text );
++    m_message->setVisible( !text.isEmpty() );
++}
++
+ QSize ViewContainer::sizeHint() const
+ {
+     return QSize( 200, 200 );
+diff --git a/src/viewcontainer.h b/src/viewcontainer.h
+index da07d1d..dd507d3 100644
+--- a/src/viewcontainer.h
++++ b/src/viewcontainer.h
+@@ -22,6 +22,7 @@
+ #include <QWidget>
+ 
+ class QBoxLayout;
++class QLabel;
+ 
+ class ViewContainer : public QWidget
+ {
+@@ -34,6 +35,11 @@ public:
+     void setView( QWidget* view );
+     QWidget* view() const { return m_view; }
+ 
++
++public slots:
++    // a sentence for the person above the view (empty to remove it)
++    void setMessage( const QString& text );
++
+ public: // overrides
+     QSize sizeHint() const;
+ 
+@@ -41,6 +47,7 @@ private:
+     QBoxLayout* m_layout;
+ 
+     QWidget* m_view;
++    QLabel* m_message;
+ };
+ 
+ #endif
+-- 
+2.53.0
+

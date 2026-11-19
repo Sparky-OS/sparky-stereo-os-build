@@ -1,0 +1,428 @@
+From 20d9e488acafc676a7b3ac89896f6538a3727def Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 19 Nov 2026 05:08:39 -0300
+Subject: [PATCH 1/3] Port Fraqtive to Qt 6
+
+qmake 6 and configure accept it, Qt 6's QOpenGLWidget module, setContentsMargins,
+std::sort, QElapsedTimer, QScreen, the wheel event's angleDelta() and position(),
+qRegisterMetaType for the stream operators, QStyleOptionFrame, Qt::SkipEmptyParts,
+QPixmapCache::find with a pointer, QPalette::Window.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ configure                   |  4 ++--
+ src/aboutbox.cpp            |  6 +++---
+ src/bookmarkmodel.cpp       |  4 +++-
+ src/configurationdata.cpp   |  2 +-
+ src/datastructures.cpp      | 16 ++++++++--------
+ src/fractalmodel.h          |  4 ++--
+ src/fraqtiveapplication.cpp |  2 +-
+ src/fraqtivemainwindow.h    |  2 +-
+ src/generateimagedialog.cpp |  4 ++--
+ src/guidedialog.cpp         |  4 ++--
+ src/iconloader.cpp          |  6 +++---
+ src/imageview.cpp           | 12 ++++++------
+ src/meshview.cpp            |  2 +-
+ src/presetmodel.cpp         |  4 +++-
+ src/src.pro                 |  2 +-
+ src/viewcontainer.cpp       |  2 +-
+ src/xmlui/toolstrip.cpp     | 12 ++++++------
+ 17 files changed, 46 insertions(+), 42 deletions(-)
+
+diff --git a/configure b/configure
+index ba506e7..104ac9c 100755
+--- a/configure
++++ b/configure
+@@ -57,7 +57,7 @@ if test -n "$QMAKE"; then
+     exit 1
+   fi
+ else
+-  for i in qmake qmake-qt4; do
++  for i in qmake qmake6 qmake-qt4; do
+     if which $i >/dev/null 2>/dev/null; then
+       paths="$paths `which $i`"
+     fi
+@@ -81,7 +81,7 @@ for i in $paths; do
+   if test "$version" != "**Unknown**"; then
+     major=`echo $version | sed -e "s/\([0-9][0-9]*\).*/\1/"`
+     minor=`echo $version | sed -e "s/[0-9][0-9]*\.\([0-9][0-9]*\).*/\1/"`
+-    if test $major -eq 5; then
++    if test $major -ge 5; then
+       QMAKE=$i
+       break
+     fi
+diff --git a/src/aboutbox.cpp b/src/aboutbox.cpp
+index 752d27f..2433820 100644
+--- a/src/aboutbox.cpp
++++ b/src/aboutbox.cpp
+@@ -34,7 +34,7 @@ AboutBox::AboutBox( const QString& title, const QString& message, QWidget* paren
+     setWindowTitle( title );
+ 
+     QVBoxLayout* topLayout = new QVBoxLayout( this );
+-    topLayout->setMargin( 0 );
++    topLayout->setContentsMargins( 0, 0, 0, 0 );
+     topLayout->setSpacing( 0 );
+ 
+     XmlUi::GradientWidget* promptWidget = new XmlUi::GradientWidget( this );
+@@ -58,7 +58,7 @@ AboutBox::AboutBox( const QString& title, const QString& message, QWidget* paren
+     topLayout->addWidget( separator );
+ 
+     QVBoxLayout* mainLayout = new QVBoxLayout();
+-    mainLayout->setMargin( 9 );
++    mainLayout->setContentsMargins( 9, 9, 9, 9 );
+     mainLayout->setSpacing( 4 );
+     topLayout->addLayout( mainLayout );
+ 
+@@ -72,7 +72,7 @@ AboutBox::AboutBox( const QString& title, const QString& message, QWidget* paren
+     scrollArea->setWidgetResizable( true );
+ 
+     m_sectionsLayout = new QVBoxLayout( m_sectionsWidget );
+-    m_sectionsLayout->setMargin( 6 );
++    m_sectionsLayout->setContentsMargins( 6, 6, 6, 6 );
+     m_sectionsLayout->setSpacing( 6 );
+ 
+     m_sectionsLayout->addStretch( 1 );
+diff --git a/src/bookmarkmodel.cpp b/src/bookmarkmodel.cpp
+index 0ac65cf..3144781 100644
+--- a/src/bookmarkmodel.cpp
++++ b/src/bookmarkmodel.cpp
+@@ -24,6 +24,8 @@
+ # define M_PI 3.14159265358979323846
+ #endif
+ 
++#include <algorithm>
++
+ #include <QPalette>
+ #include <QPainter>
+ #include <QIcon>
+@@ -126,7 +128,7 @@ void BookmarkModel::update()
+     beginResetModel();
+ 
+     m_keys = m_map->keys();
+-    qSort( m_keys.begin(), m_keys.end(), localeAwareLessThan );
++    std::sort( m_keys.begin(), m_keys.end(), localeAwareLessThan );
+ 
+     endResetModel();
+ }
+diff --git a/src/configurationdata.cpp b/src/configurationdata.cpp
+index fa997cf..b704afe 100644
+--- a/src/configurationdata.cpp
++++ b/src/configurationdata.cpp
+@@ -180,7 +180,7 @@ bool ConfigurationData::checkAccess( const QString& path )
+ 
+     QDir dir = QDir::root();
+ 
+-    QStringList pathParts = path.split( '/', QString::SkipEmptyParts );
++    QStringList pathParts = path.split( '/', Qt::SkipEmptyParts );
+ 
+     for ( int i = 0; i < pathParts.size() - 1; i++ ) {
+         const QString& part = pathParts.at( i );
+diff --git a/src/datastructures.cpp b/src/datastructures.cpp
+index f7faeb2..65d8cd7 100644
+--- a/src/datastructures.cpp
++++ b/src/datastructures.cpp
+@@ -197,12 +197,12 @@ QDataStream& operator >>( QDataStream& stream, Preset& preset )
+ 
+ void registerDataStructures()
+ {
+-    qRegisterMetaTypeStreamOperators<FractalType>( "FractalType" );
+-    qRegisterMetaTypeStreamOperators<Position>( "Position" );
+-    qRegisterMetaTypeStreamOperators<Gradient>( "Gradient" );
+-    qRegisterMetaTypeStreamOperators<ColorMapping>( "ColorMapping" );
+-    qRegisterMetaTypeStreamOperators<GeneratorSettings>( "GeneratorSettings" );
+-    qRegisterMetaTypeStreamOperators<ViewSettings>( "ViewSettings" );
+-    qRegisterMetaTypeStreamOperators<Bookmark>( "Bookmark" );
+-    qRegisterMetaTypeStreamOperators<Preset>( "Preset" );
++    qRegisterMetaType<FractalType>( "FractalType" );
++    qRegisterMetaType<Position>( "Position" );
++    qRegisterMetaType<Gradient>( "Gradient" );
++    qRegisterMetaType<ColorMapping>( "ColorMapping" );
++    qRegisterMetaType<GeneratorSettings>( "GeneratorSettings" );
++    qRegisterMetaType<ViewSettings>( "ViewSettings" );
++    qRegisterMetaType<Bookmark>( "Bookmark" );
++    qRegisterMetaType<Preset>( "Preset" );
+ }
+diff --git a/src/fractalmodel.h b/src/fractalmodel.h
+index d875878..d370bba 100644
+--- a/src/fractalmodel.h
++++ b/src/fractalmodel.h
+@@ -21,7 +21,7 @@
+ 
+ #include <QObject>
+ #include <QColor>
+-#include <QTime>
++#include <QElapsedTimer>
+ 
+ #include "datastructures.h"
+ 
+@@ -190,7 +190,7 @@ private:
+     AnimationState m_animationState;
+ 
+     QTimer* m_timer;
+-    QTime m_time;
++    QElapsedTimer m_time;
+ };
+ 
+ #endif
+diff --git a/src/fraqtiveapplication.cpp b/src/fraqtiveapplication.cpp
+index c1545b1..951e9e4 100644
+--- a/src/fraqtiveapplication.cpp
++++ b/src/fraqtiveapplication.cpp
+@@ -144,7 +144,7 @@ void FraqtiveApplication::about()
+             " it under the terms of the GNU General Public License as published by"
+             " the Free Software Foundation, either version 3 of the License, or"
+             " (at your option) any later version." ) + "</p>";
+-        message += "<p>" + trUtf8( "Copyright &copy; 2004-2015 Michał Męciński" ) + "</p>";
++        message += "<p>" + tr( "Copyright &copy; 2004-2015 Michał Męciński" ) + "</p>";
+ 
+         QString link = "<a href=\"http://fraqtive.mimec.org\">fraqtive.mimec.org</a>";
+ 
+diff --git a/src/fraqtivemainwindow.h b/src/fraqtivemainwindow.h
+index fd932dc..eebf3db 100644
+--- a/src/fraqtivemainwindow.h
++++ b/src/fraqtivemainwindow.h
+@@ -71,7 +71,7 @@ private:
+     void enterFullScreenMode();
+     void leaveFullScreenMode();
+ 
+-    QString getSaveFileName( const QString& title, const QString& fileName, QByteArray* selectedFormat, QFileDialog::Options options = 0 );
++    QString getSaveFileName( const QString& title, const QString& fileName, QByteArray* selectedFormat, QFileDialog::Options options = QFileDialog::Options() );
+     QString getSaveImageName( QByteArray* selectedFormat );
+     QString getSaveSeriesName( QByteArray* selectedFormat );
+ 
+diff --git a/src/generateimagedialog.cpp b/src/generateimagedialog.cpp
+index d011c36..ae7638f 100644
+--- a/src/generateimagedialog.cpp
++++ b/src/generateimagedialog.cpp
+@@ -18,7 +18,7 @@
+ 
+ #include "generateimagedialog.h"
+ 
+-#include <QDesktopWidget>
++#include <QScreen>
+ 
+ #include "fraqtiveapplication.h"
+ #include "configurationdata.h"
+@@ -32,7 +32,7 @@ static void initializeDefaultSettings()
+         ConfigurationData* config = fraqtive()->configuration();
+ 
+         if ( !config->contains( "ImageResolution" ) )
+-            config->setValue( "ImageResolution", QVariant::fromValue( QApplication::desktop()->screenGeometry().size() ) );
++            config->setValue( "ImageResolution", QVariant::fromValue( QGuiApplication::primaryScreen()->geometry().size() ) );
+         if ( !config->contains( "ImageMultiSampling" ) )
+             config->setValue( "ImageMultiSampling", QVariant::fromValue( 0 ) );
+         if ( !config->contains( "ImageGeneratorSettings" ) )
+diff --git a/src/guidedialog.cpp b/src/guidedialog.cpp
+index 34c4a79..fc53db4 100644
+--- a/src/guidedialog.cpp
++++ b/src/guidedialog.cpp
+@@ -55,7 +55,7 @@ GuideDialog::GuideDialog( QWidget* parent ) : QDialog( parent )
+     builder->addClient( this );
+ 
+     QVBoxLayout* topLayout = new QVBoxLayout( this );
+-    topLayout->setMargin( 0 );
++    topLayout->setContentsMargins( 0, 0, 0, 0 );
+     topLayout->setSpacing( 0 );
+ 
+     XmlUi::GradientWidget* promptWidget = new XmlUi::GradientWidget( this );
+@@ -80,7 +80,7 @@ GuideDialog::GuideDialog( QWidget* parent ) : QDialog( parent )
+     topLayout->addWidget( separator );
+ 
+     QVBoxLayout* mainLayout = new QVBoxLayout();
+-    mainLayout->setMargin( 9 );
++    mainLayout->setContentsMargins( 9, 9, 9, 9 );
+     mainLayout->setSpacing( 4 );
+     topLayout->addLayout( mainLayout );
+ 
+diff --git a/src/iconloader.cpp b/src/iconloader.cpp
+index 9aad86e..90e7e00 100644
+--- a/src/iconloader.cpp
++++ b/src/iconloader.cpp
+@@ -27,7 +27,7 @@ QPixmap IconLoader::pixmap( const QString& name, int size )
+     QString key = QString( "pixmap:%1:%2" ).arg( name ).arg( size );
+ 
+     QPixmap pixmap;
+-    if ( QPixmapCache::find( key, pixmap ) )
++    if ( QPixmapCache::find( key, &pixmap ) )
+         return pixmap;
+ 
+     QString path = QString( ":/icons/%1-%2.png" ).arg( name ).arg( size );
+@@ -45,7 +45,7 @@ QPixmap IconLoader::overlayedPixmap( const QString& name, const QString& overlay
+     QString key = QString( "overlayed:%1:%2:%3" ).arg( name ).arg( overlay ).arg( size );
+ 
+     QPixmap resultPixmap;
+-    if ( QPixmapCache::find( key, resultPixmap ) )
++    if ( QPixmapCache::find( key, &resultPixmap ) )
+         return resultPixmap;
+ 
+     QPixmap basePixmap = pixmap( name, size );
+@@ -68,7 +68,7 @@ QPixmap IconLoader::overlayedPixmap( const QString& name, const QString& overlay
+     QString key = QString( "overlayed2:%1:%2:%3:%4" ).arg( name ).arg( overlay1 ).arg( overlay2 ).arg( size );
+ 
+     QPixmap resultPixmap;
+-    if ( QPixmapCache::find( key, resultPixmap ) )
++    if ( QPixmapCache::find( key, &resultPixmap ) )
+         return resultPixmap;
+ 
+     QPixmap basePixmap = pixmap( name, size );
+diff --git a/src/imageview.cpp b/src/imageview.cpp
+index eb887dc..a07be3c 100644
+--- a/src/imageview.cpp
++++ b/src/imageview.cpp
+@@ -216,10 +216,10 @@ void ImageView::updateGradient()
+ void ImageView::updateBackground()
+ {
+     QPalette palette;
+-    palette.setBrush( QPalette::Background, m_backgroundColor );
++    palette.setBrush( QPalette::Window, m_backgroundColor );
+ 
+     setPalette( palette );
+-    setBackgroundRole( QPalette::Background );
++    setBackgroundRole( QPalette::Window );
+     setAutoFillBackground( true );
+ }
+ 
+@@ -311,7 +311,7 @@ void ImageView::mousePressEvent( QMouseEvent* e )
+             m_tracking = RotateCenter;
+         else
+             m_tracking = DragZoomOut;
+-    } else if ( e->button() == Qt::MidButton ) {
++    } else if ( e->button() == Qt::MiddleButton ) {
+         m_tracking = DragMove;
+     }
+ 
+@@ -435,16 +435,16 @@ void ImageView::wheelEvent( QWheelEvent* e )
+     const double rotateFactor = 0.5;
+ 
+     QPointF center( width() / 2.0, height() / 2.0 );
+-    double delta = e->delta() / 8.0;
++    double delta = e->angleDelta().y() / 8.0;
+ 
+     QTransform transform;
+ 
+     switch ( mode ) {
+         case ZoomPoint: {
+             double zoom = pow( 10.0, -delta / zoomFactor );
+-            transform.translate( e->pos().x(), e->pos().y() );
++            transform.translate( e->position().x(), e->position().y() );
+             transform.scale( zoom, zoom );
+-            transform.translate( -e->pos().x(), -e->pos().y() );
++            transform.translate( -e->position().x(), -e->position().y() );
+             break;
+         }
+ 
+diff --git a/src/meshview.cpp b/src/meshview.cpp
+index 119355e..b7588ef 100644
+--- a/src/meshview.cpp
++++ b/src/meshview.cpp
+@@ -497,7 +497,7 @@ void MeshView::mouseReleaseEvent( QMouseEvent* /*e*/ )
+ 
+ void MeshView::wheelEvent( QWheelEvent* e )
+ {
+-    double delta = e->delta() / 120.0;
++    double delta = e->angleDelta().y() / 120.0;
+ 
+     m_presenter->adjustCameraZoom( delta );
+ }
+diff --git a/src/presetmodel.cpp b/src/presetmodel.cpp
+index b94a6a1..069cf04 100644
+--- a/src/presetmodel.cpp
++++ b/src/presetmodel.cpp
+@@ -18,6 +18,8 @@
+ 
+ #include "presetmodel.h"
+ 
++#include <algorithm>
++
+ #include <QPainter>
+ #include <QApplication>
+ #include <QPalette>
+@@ -51,7 +53,7 @@ void PresetModel::update()
+     beginResetModel();
+ 
+     m_keys = m_map->keys();
+-    qSort( m_keys.begin(), m_keys.end(), localeAwareLessThan );
++    std::sort( m_keys.begin(), m_keys.end(), localeAwareLessThan );
+ 
+     endResetModel();
+ }
+diff --git a/src/src.pro b/src/src.pro
+index c38714b..d1f4be6 100644
+--- a/src/src.pro
++++ b/src/src.pro
+@@ -3,7 +3,7 @@ include( ../config.pri )
+ TEMPLATE = app
+ TARGET = fraqtive
+ 
+-QT += opengl xml
++QT += widgets openglwidgets xml
+ 
+ HEADERS   += aboutbox.h \
+              abstractjobprovider.h \
+diff --git a/src/viewcontainer.cpp b/src/viewcontainer.cpp
+index 849112d..c8dfe94 100644
+--- a/src/viewcontainer.cpp
++++ b/src/viewcontainer.cpp
+@@ -24,7 +24,7 @@ ViewContainer::ViewContainer( QWidget* parent ) : QWidget( parent ),
+     m_view( NULL )
+ {
+     m_layout = new QVBoxLayout( this );
+-    m_layout->setMargin( 0 );
++    m_layout->setContentsMargins( 0, 0, 0, 0 );
+ }
+ 
+ ViewContainer::~ViewContainer()
+diff --git a/src/xmlui/toolstrip.cpp b/src/xmlui/toolstrip.cpp
+index 47ca530..c194cee 100644
+--- a/src/xmlui/toolstrip.cpp
++++ b/src/xmlui/toolstrip.cpp
+@@ -113,7 +113,7 @@ void ToolStrip::endSection()
+ void ToolStrip::beginGrid()
+ {
+     m_gridLayout = new QGridLayout();
+-    m_gridLayout->setMargin( 0 );
++    m_gridLayout->setContentsMargins( 0, 0, 0, 0 );
+     m_gridLayout->setSpacing( 0 );
+ 
+     m_sectionLayout->addLayout( m_gridLayout );
+@@ -130,7 +130,7 @@ void ToolStrip::endGrid()
+ void ToolStrip::beginRow()
+ {
+     m_rowLayout = new QHBoxLayout();
+-    m_rowLayout->setMargin( 0 );
++    m_rowLayout->setContentsMargins( 0, 0, 0, 0 );
+     m_rowLayout->setSpacing( 0 );
+ 
+     m_gridLayout->addLayout( m_rowLayout, m_gridRow++, m_gridColumn );
+@@ -224,8 +224,8 @@ void ToolStrip::childEvent( QChildEvent* e )
+ static void drawSeparator( const QRect& rect, QPainter* painter, QWidget* widget )
+ {
+ #if ( QT_VERSION >= 0x040500 )
+-    QStyleOptionFrameV3 option;
+-    option.init( widget );
++    QStyleOptionFrame option;
++    option.initFrom( widget );
+     option.frameShape = QFrame::VLine;
+     option.state |= QStyle::State_Sunken;
+     option.rect = rect;
+@@ -628,7 +628,7 @@ void ToolStripSectionLayout::setCollapsed( bool collapsed )
+ 
+ Qt::Orientations ToolStripSectionLayout::expandingDirections() const
+ {
+-    return 0;
++    return Qt::Orientations();
+ }
+ 
+ QSize ToolStripSectionLayout::sizeHint() const
+@@ -800,7 +800,7 @@ void ActionButton::adjustText()
+         QString text = defaultAction()->iconText();
+         if ( !text.contains( '\n' ) ) {
+             QFontMetrics metrics( font() );
+-            if ( metrics.width( text ) > 40 ) {
++            if ( metrics.horizontalAdvance( text ) > 40 ) {
+                 int mid = text.length() / 2;
+                 int after = text.indexOf( ' ', mid );
+                 int before = text.lastIndexOf( ' ', mid );
+-- 
+2.53.0
+

@@ -1,0 +1,50 @@
+diff -ruN a/debian/control b/debian/control
+--- a/debian/control	2023-03-13 08:00:59.000000000 -0300
++++ b/debian/control	2026-11-19 05:08:18.192358746 -0300
+@@ -15,10 +15,15 @@
+  libfreetype6-dev,
+  libfontconfig1-dev,
+  libglu1-mesa-dev,
+- libgl1-mesa-dev,
++ libgl-dev,
+  libpcre2-dev,
+- libqt5opengl5-desktop-dev,
+- qtbase5-dev
++ libx11-dev,
++ qt6-base-dev,
++ qt6-base-private-dev,
++ qt6-l10n-tools,
++ libqt6opengl6-dev,
++ libqt6openglwidgets6,
++ libstereo-declare-dev
+ Rules-Requires-Root: no
+ Standards-Version: 4.6.2
+ 
+diff -ruN a/debian/rules b/debian/rules
+--- a/debian/rules	2023-03-13 08:00:59.000000000 -0300
++++ b/debian/rules	2026-11-19 05:08:18.192621397 -0300
+@@ -1,7 +1,6 @@
+ #!/usr/bin/make -f
+ 
+ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+-export QT_SELECT=qt5
+ 
+ include /usr/share/dpkg/architecture.mk
+ 
+@@ -9,14 +8,14 @@
+ 	EXTRA_CONFIGURE_OPTS += -no-sse2
+ endif
+ ifneq ($(DEB_BUILD_ARCH),$(DEB_HOST_ARCH))
+-	EXTRA_CONFIGURE_OPTS += -qmake $(shell which $(DEB_HOST_GNU_TYPE)-qmake)
++	EXTRA_CONFIGURE_OPTS += -qmake $(shell which $(DEB_HOST_GNU_TYPE)-qmake6)
+ endif
+ 
+ %:
+ 	dh $@
+ 
+ override_dh_auto_configure:
+-	./configure $(EXTRA_CONFIGURE_OPTS) -prefix /usr -debug
++	./configure -qmake $(shell which qmake6) $(EXTRA_CONFIGURE_OPTS) -prefix /usr -debug
+ 
+ override_dh_auto_install:
+ 
