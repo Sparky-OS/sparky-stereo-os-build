@@ -1,0 +1,32 @@
+mesa (26.1.6-1+stereo3d28) forky; urgency=medium
+
+  * A stereo child window of a window that is not on the screen yet is
+    declared once the window is viewable (ORDER 50c, patch 0045). Tk creates
+    the GL child of Netgen's drawing area and draws once while its top level
+    is unmapped, and maps the top level about 0.7 s later. Stereo KWin can only
+    take a child of a window that is on the screen, so the declaration made at
+    that first swap met the wait of patch 0043 without an answer, the presents
+    that completed as copies took the declaration back, and the child stayed
+    flat after the window was mapped. Both GLX paths, DRI3 and software, now
+    leave the declaration to the first swap after the window and every
+    ancestor are mapped (map_state IsViewable); a top-level window and a child
+    of a window mapped from the start are declared as before, and a child that
+    is viewable and not taken is still told as before ("is shown flat").
+  * A stereo child whose window is unmapped or minimised and comes back is a
+    pair again (ORDER 50c, patch 0046). The presents a child makes while its
+    window is away complete as copies and took the declaration back, and a
+    flat child never flips, so it stayed flat after the window returned. A
+    present that completes as a copy while the window is not viewable is left
+    out of the pair rule, and the first completion after the window is viewable
+    again declares the child anew. Both GLX paths.
+  * libudev-dev and libxcb-keysyms1-dev are declared build dependencies, on
+    every architecture (ORDER 50c). Debian's source lists neither, so meson
+    found them only when another build dependency installed them: the amd64
+    build of +stereo3d26 had them and its i386 twin did not, and a build on a
+    later day lost them without a message. libudev lets the Vulkan drivers'
+    VK_KHR_display notice display hotplug through a udev monitor; libxcb-keysyms
+    gives the X11 Vulkan presentation the F1 capture hotkey. Both link into every
+    libvulkan_*.so of mesa-vulkan-drivers, so its Depends names libudev1 and
+    libxcb-keysyms1 on i386 too.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Thu, 19 Nov 2026 16:00:00 -0300
