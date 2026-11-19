@@ -341,8 +341,13 @@ def write_report(evidence, rows, tree, matrix_path, started, finished, extra):
         json.dump(doc, f, indent=1, sort_keys=True)
         f.write("\n")
     lines = ["# System test lab report", "",
-             "Tree: `%s` (%s)" % (tree.get("resolved", tree.get("path")), tree.get("date", "no Release date read")),
-             "Run: %s to %s" % (started, finished),
+             "Tree: `%s` (%s)" % (tree.get("resolved", tree.get("path")), tree.get("date", "no Release date read"))]
+    prepared = extra.get("images_prepared_against")
+    if prepared:
+        same = tree.get("date") and ("(%s)" % tree["date"]) in prepared
+        lines.append("Images and roots prepared against: %s%s" % (prepared, "" if same else
+                     " -- NOT the tree of this run: the compositor, kernel and SDL rows ran against the prepared one"))
+    lines += ["Run: %s to %s" % (started, finished),
              "Rows: %d PASS, %d FAIL, %d SKIPPED" % (counts["PASS"], counts["FAIL"], counts["SKIPPED"]), "",
              "| Row | Kind | Verdict | Ours | Stock | Seconds | Why |", "|---|---|---|---|---|---|---|"]
     for r in rows:
@@ -419,7 +424,13 @@ def main(argv=None):
         lab.log("   %s %s" % (res["verdict"], res.get("reason", "")))
         done.append(res)
     finished = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-    counts = write_report(a.evidence, done, tree_info(a.tree), os.path.abspath(a.matrix), started, finished, {})
+    prepared = None
+    tfile = os.path.join(vars_.get("work", ""), "tree.txt")
+    if vars_.get("work") and os.path.exists(tfile):
+        with open(tfile, encoding="utf-8") as f:
+            prepared = f.read().strip()
+    counts = write_report(a.evidence, done, tree_info(a.tree), os.path.abspath(a.matrix), started, finished,
+                          {"images_prepared_against": prepared} if prepared else {})
     print(open(os.path.join(a.evidence, "report.md"), encoding="utf-8").read())
     if counts["FAIL"]:
         return 1
