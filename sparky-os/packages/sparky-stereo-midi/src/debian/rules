@@ -1,0 +1,12 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+override_dh_auto_build:
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) -Wall -Wextra -Werror render.c $$(pkg-config --cflags --libs fluidsynth libpipewire-0.3) -pthread -o render
+
+override_dh_auto_install:
+	install -D -m755 render debian/sparky-stereo-midi/usr/lib/sparky-stereo-midi/render
+
+override_dh_auto_clean:
+	rm -f render
