@@ -1,0 +1,231 @@
+From 13c806178f3033098dbd85f4dec8bc5b7150ac2f Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 19 Nov 2026 01:57:30 -0300
+Subject: [PATCH 2/2] Draw the 3D view with QOpenGLWidget so that it works on
+ Wayland
+
+QGLWidget needs a native window of its own, which Qt's Wayland platform
+plugins do not give it: on a native Wayland session the 3D view's area stayed
+the window's background colour and nothing was logged (measured with Qt 5.15.19
+and KWin 6.7 on Mesa 26.1). QOpenGLWidget, available since Qt 5.4, renders
+into a framebuffer object and draws on every platform plugin.
+
+The OpenGL calls stay as they were (fixed function, as before). Changes:
+QOpenGLWidget as the base class, update() for updateGL(), grabFramebuffer()
+for grabFrameBuffer(), glClearColor() for qglClearColor(), QImage's own
+RGBA8888 conversion for convertToGLFormat(), the context's getProcAddress()
+for glLockArraysEXT, and the 3D View action is enabled when an OpenGL context
+can be made, which is what QGLFormat::hasOpenGL() asked.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/fraqtivemainwindow.cpp |  4 +++-
+ src/meshview.cpp           | 34 ++++++++++++++++++----------------
+ src/meshview.h             |  4 ++--
+ 3 files changed, 23 insertions(+), 19 deletions(-)
+
+diff --git a/src/fraqtivemainwindow.cpp b/src/fraqtivemainwindow.cpp
+index f1a6c67..ffe68ec 100644
+--- a/src/fraqtivemainwindow.cpp
++++ b/src/fraqtivemainwindow.cpp
+@@ -18,6 +18,8 @@
+ 
+ #include "fraqtivemainwindow.h"
+ 
++#include <QOpenGLContext>
++
+ #include <QCloseEvent>
+ #include <QMessageBox>
+ #include <QImageWriter>
+@@ -193,7 +195,7 @@ FraqtiveMainWindow::FraqtiveMainWindow()
+ 
+     m_ui.mainContainer->installEventFilter( this );
+ 
+-    this->action( "view3d" )->setEnabled( QGLFormat::hasOpenGL() );
++    this->action( "view3d" )->setEnabled( QOpenGLContext().create() );
+ 
+     m_model->setViewMode( ImageViewMode );
+ 
+diff --git a/src/meshview.cpp b/src/meshview.cpp
+index 7ffc552..119355e 100644
+--- a/src/meshview.cpp
++++ b/src/meshview.cpp
+@@ -27,13 +27,14 @@
+ #include <GL/glu.h>
+ 
+ #include <QMouseEvent>
++#include <QOpenGLContext>
+ #include <QWheelEvent>
+ #include <QKeyEvent>
+ 
+ #include "fractalpresenter.h"
+ #include "datafunctions.h"
+ 
+-MeshView::MeshView( QWidget* parent, FractalPresenter* presenter ) : QGLWidget( parent ),
++MeshView::MeshView( QWidget* parent, FractalPresenter* presenter ) : QOpenGLWidget( parent ),
+     m_presenter( presenter ),
+     m_textureId( 0 ),
+     m_textureDirty( false ),
+@@ -54,6 +55,7 @@ MeshView::~MeshView()
+     if ( m_textureId != 0 ) {
+         makeCurrent();
+         glDeleteTextures( 1, &m_textureId );
++        doneCurrent();
+     }
+ 
+     delete[] m_vertexArray;
+@@ -62,7 +64,7 @@ MeshView::~MeshView()
+ 
+ QImage MeshView::image()
+ {
+-    return grabFrameBuffer();
++    return grabFramebuffer();
+ }
+ 
+ void MeshView::clearView()
+@@ -76,7 +78,7 @@ void MeshView::clearView()
+ 
+     m_updatedRegion = QRect();
+ 
+-    updateGL();
++    update();
+ }
+ 
+ void MeshView::transformView( const QTransform& /*transform*/ )
+@@ -119,7 +121,7 @@ void MeshView::partialUpdate( const FractalData* data )
+ 
+         m_updatedRegion = validRegions.first();
+ 
+-        updateGL();
++        update();
+     }
+ }
+ 
+@@ -138,7 +140,7 @@ void MeshView::setColorSettings( const Gradient& gradient, const QColor& backgro
+     m_backgroundColor = backgroundColor;
+     m_colorMapping = mapping;
+ 
+-    updateGL();
++    update();
+ }
+ 
+ void MeshView::setGradient( const Gradient& gradient )
+@@ -146,21 +148,21 @@ void MeshView::setGradient( const Gradient& gradient )
+     m_gradient = gradient;
+     m_textureDirty = true;
+ 
+-    updateGL();
++    update();
+ }
+ 
+ void MeshView::setBackgroundColor( const QColor& backgroundColor )
+ {
+     m_backgroundColor = backgroundColor;
+ 
+-    updateGL();
++    update();
+ }
+ 
+ void MeshView::setColorMapping( const ColorMapping& mapping )
+ {
+     m_colorMapping = mapping;
+ 
+-    updateGL();
++    update();
+ }
+ 
+ void MeshView::setViewSettings( const ViewSettings& settings )
+@@ -182,14 +184,14 @@ void MeshView::setViewSettings( const ViewSettings& settings )
+             break;
+     }
+ 
+-    updateGL();
++    update();
+ }
+ 
+ void MeshView::setAnimationState( const AnimationState& state )
+ {
+     m_animationState = state;
+ 
+-    updateGL();
++    update();
+ }
+ 
+ void MeshView::initializeGL()
+@@ -236,7 +238,7 @@ typedef void ( APIENTRY *_glUnlockArraysEXT )();
+ static _glLockArraysEXT p_glLockArraysEXT = NULL;
+ static _glUnlockArraysEXT p_glUnlockArraysEXT = NULL;
+ 
+-static bool hasLockArrays( const QGLContext* context )
++static bool hasLockArrays( const QOpenGLContext* context )
+ {
+     static bool checked = false;
+     static bool result = false;
+@@ -259,7 +261,7 @@ static const double FarClipping = 70.0;
+ 
+ void MeshView::paintGL()
+ {
+-    qglClearColor( m_backgroundColor );
++    glClearColor( m_backgroundColor.redF(), m_backgroundColor.greenF(), m_backgroundColor.blueF(), m_backgroundColor.alphaF() );
+     glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+ 
+     if ( m_resolution.isEmpty() )
+@@ -363,7 +365,7 @@ void MeshView::generateTexture()
+     QRgb* line = (QRgb*)image.scanLine( 0 );
+     DataFunctions::fillGradientCache( m_gradient, line, size );
+ 
+-    QImage textureImage = QGLWidget::convertToGLFormat( image );
++    QImage textureImage = image.convertToFormat( QImage::Format_RGBA8888 );
+ 
+     if ( m_textureId == 0 )
+         glGenTextures( 1, &m_textureId );
+@@ -472,7 +474,7 @@ void MeshView::mouseMoveEvent( QMouseEvent* e )
+         case RotateXY: {
+             m_rotation += 0.4 * ( e->pos().x() - m_lastPos.x() );
+             m_angle += 0.4 * ( e->pos().y() - m_lastPos.y() );
+-            updateGL();
++            update();
+             break;
+         }
+ 
+@@ -518,14 +520,14 @@ void MeshView::keyPressEvent( QKeyEvent* e )
+         case Qt::Key_Down:
+             m_angle += ( e->key() == Qt::Key_Up ) ? 5.0 : -5.0;
+             e->accept();
+-            updateGL();
++            update();
+             break;
+ 
+         case Qt::Key_Left:
+         case Qt::Key_Right:
+             m_rotation += ( e->key() == Qt::Key_Left ) ? 5.0 : -5.0;
+             e->accept();
+-            updateGL();
++            update();
+             break;
+ 
+         case Qt::Key_Plus:
+diff --git a/src/meshview.h b/src/meshview.h
+index 75db6a4..7f5eb9c 100644
+--- a/src/meshview.h
++++ b/src/meshview.h
+@@ -19,14 +19,14 @@
+ #ifndef MESHVIEW_H
+ #define MESHVIEW_H
+ 
+-#include <QGLWidget>
++#include <QOpenGLWidget>
+ 
+ #include "abstractview.h"
+ #include "datastructures.h"
+ 
+ class FractalPresenter;
+ 
+-class MeshView : public QGLWidget, public AbstractView
++class MeshView : public QOpenGLWidget, public AbstractView
+ {
+     Q_OBJECT
+ public:
+-- 
+2.53.0
+
