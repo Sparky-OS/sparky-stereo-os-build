@@ -97,6 +97,11 @@ if project == 'munt':
     if text.count(needle) != 1:
         raise SystemExit('Munt ROM failure handler changed')
     text = text.replace(needle, needle + '\n\t\tQProcess::execute("/usr/bin/sparky-stereo-audio", {"midi", "--rom-error", "Munt"});')
+    ready = 'if (controlROMImage != NULL && pcmROMImage != NULL) break;'
+    if text.count(ready) != 1:
+        raise SystemExit('Munt ROM success handler changed')
+    text = text.replace(ready, 'if (controlROMImage != NULL && pcmROMImage != NULL) {\n\t\t\tQProcess::execute("/usr/bin/sparky-stereo-audio", {"midi", "--emulator-ready", "Munt"});\n\t\t\tbreak;\n\t\t}')
+
     p.write_text(text)
 if project == 'dosbox-staging':
     p = source / 'src/midi/mt32.cpp'
