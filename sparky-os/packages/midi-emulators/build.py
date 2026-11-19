@@ -62,10 +62,23 @@ if project == 'dosbox-staging':
     p.write_text(before.replace(needle, 'AddString("soundfont", WhenIdle, "default-GM.sf2")'))
     p = source / 'src/midi/midi.cpp'
     text = p.read_text()
-    needle = 'static auto DefaultMidiDevicePref = MidiDevicePortPref;'
+    needle = 'secprop.AddString("mididevice", WhenIdle, DefaultMidiDevicePref)'
     if text.count(needle) != 1:
         raise SystemExit('DOSBox MIDI default changed')
-    p.write_text(text.replace(needle, 'static auto DefaultMidiDevicePref = "fluidsynth";'))
+    text = text.replace(needle, 'secprop.AddString("mididevice", WhenIdle, MidiDeviceName::FluidSynth)')
+    text = text.replace('                   DefaultMidiDevicePref));', '                   MidiDeviceName::FluidSynth));')
+    text = text.replace('                (default). You can configure', '                You can configure')
+    p.write_text(text)
+    # Remove the old default marker from existing option-help translations.
+    # The option identity stays "port"; it is not renamed to the new default's identity.
+    for p in (source / 'resources/translations').glob('*.po'):
+        text = p.read_text()
+        parts = text.split('\n\n')
+        for i, part in enumerate(parts):
+            if 'msgctxt "CONFIGITEM_MIDIDEVICE_PORT"' in part:
+                import re
+                parts[i] = re.sub(r'\([^()\n]*\)\. ?', '', part)
+        p.write_text('\n\n'.join(parts))
     p = source / 'src/midi/fluidsynth.cpp'
     text = p.read_text()
     text = '#include <cstdlib>\n' + text.replace('throw std::runtime_error(msg);',
