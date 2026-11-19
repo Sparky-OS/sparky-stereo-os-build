@@ -5,7 +5,7 @@ set -euo pipefail
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 export TMPDIR="${TMPDIR:?set a private assembly temporary directory}"
-rev=18d98090c01196e572b4d3eb59b98bba2d971584
+rev=85eea17c09ac4361adbaa2869355dc6a635168d2
 version=1.12.0-1
 prefix=stereo-declare-1.12.0
 out=$(realpath -m "$1")
