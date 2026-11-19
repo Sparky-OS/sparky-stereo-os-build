@@ -117,7 +117,7 @@ Assisted-by: GPT-6 (Codex)
 -        surface->traverseTree([awake, edges, sunk, popped](SurfaceInterface *child) {
 +        const LogicalOutput *output = window->output();
 +        const uint32_t outputWidth = output ? output->pixelSize().width() : 0;
-+        const QUuid outputId = output ? output->backendOutput()->uuid() : QUuid();
++        const QUuid outputId = output ? QUuid(output->backendOutput()->uuid()) : QUuid();
 +        surface->traverseTree([awake, edges, sunk, popped, outputWidth, outputId](SurfaceInterface *child) {
              if (child->followsStereoDepth()) {
 -                child->setStereoDepthState(awake, edges, sunk, popped);
