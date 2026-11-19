@@ -1,4 +1,18 @@
 -------------------------------------------------------------------------------
+  Version 20261119~sparky9~0 (2026-11-19)
+-------------------------------------------------------------------------------
+  * The splash's levels are the ones the theme had before ORDER 472 (ORDER 750; Daniel, 2026-11-19: "one separation setting,
+    centralized, tailored TO THE SCREEN not to the element size"; 2026-11-18: "that huge separation was a upscaled in
+    anaglyph during plymouth"). ORDER 472 cut the base from 4.54 to 2 px, the logo from 9.08 to 4 and the electrons' pop from
+    4 to 2 at 1920 after the picture looked huge on a notebook, and that look was a picture upscaled in anaglyph before any
+    compositor, not the separation. At the display's default limits (popped 4, sunk 10) the step is again 4.54 px, the logo
+    9.08, the pop 4 and the sink 6; they follow the person's limits from Plymouth in the same proportion (step 1.135 times
+    the popped limit, pop the popped limit, sink 0.6 of the sunk limit) and are scaled by the eye's width over 1920 only
+  * The whole-pixel placement of ORDER 472 stays: it rounds, it does not scale
+  * tests/depth-limits.py checks the levels against 20261025's at the default limits and that no level reads the size of a
+    picture; it fails on 20261117's script (4 failing) and passes on this one
+
+-------------------------------------------------------------------------------
   Version 20261117~sparky9~0 (2026-11-17)
 -------------------------------------------------------------------------------
   * A screen that arrives after the splash was laid out gets the splash laid out again (ORDER 639; Daniel, 2026-11-17:

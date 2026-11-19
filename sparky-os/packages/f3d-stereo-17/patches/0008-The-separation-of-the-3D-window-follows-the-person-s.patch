@@ -296,10 +296,10 @@ index 55484dc..12e426d 100644
  # only exported starting from VTK 9.4
  if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN AND NOT ANDROID)
    list(APPEND classes vtkF3DGLXRenderWindow)
-+  option(F3D_WITH_STEREO_DECLARE "Read the depth limits of a stereo window through libstereo-declare 1.10" OFF)
++  option(F3D_WITH_STEREO_DECLARE "Read the depth limits of a stereo window through libstereo-declare 1.11" OFF)
 +  if(F3D_WITH_STEREO_DECLARE)
 +    find_package(PkgConfig REQUIRED)
-+    pkg_check_modules(STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare>=1.10.0)
++    pkg_check_modules(STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare>=1.11.0)
 +  endif()
  endif()
  
@@ -330,18 +330,19 @@ index 5d208b6..ae7ba6c 100644
  #if VTK_VERSION_NUMBER >= VTK_VERSION_CHECK(9, 3, 20240914)
  #include <vtk_glad.h>
  #include <vtkglad/include/glad/glx.h>
-@@ -10,6 +12,10 @@
+@@ -10,6 +12,11 @@
  
  #include "vtkF3DGLXRenderWindow.h"
  
 +#ifdef F3D_WITH_STEREO_DECLARE
++#include <X11/Xatom.h>
 +#include <stereo-declare.h>
 +#endif
 +
  #if VTK_VERSION_NUMBER >= VTK_VERSION_CHECK(9, 5, 20251009)
  #include "vtkX11Functions.h"
  #else
-@@ -40,6 +46,38 @@ void vtkF3DGLXRenderWindow::Start()
+@@ -40,6 +47,70 @@ void vtkF3DGLXRenderWindow::Start()
    this->Superclass::Start();
  }
  
@@ -361,6 +362,38 @@ index 5d208b6..ae7ba6c 100644
 +    this->StereoDepthSunk = limits.sunk;
 +    this->StereoDepthPopped = limits.popped;
 +    this->StereoDepthState = 0;
++    // The limits are pixels of a view 1920 wide of the screen: this window's buffer holds
++    // screen width / 1920 * (its width / the width Stereo KWin shows it at) pixels of it per pixel of the limit,
++    // a unit conversion that does not depend on how large the window is. The shown width is the window's own
++    // _KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_SIZE when a program declared one, else the window's width.
++    double shown = this->Size[0];
++    const Atom oneView = XInternAtom(this->DisplayId, "_KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_SIZE", True);
++    if (oneView != None)
++    {
++      Atom type = None;
++      int format = 0;
++      unsigned long count = 0, after = 0;
++      unsigned char* data = nullptr;
++      if (XGetWindowProperty(this->DisplayId, this->WindowId, oneView, 0, 2, False, XA_CARDINAL, &type,
++            &format, &count, &after, &data) == Success &&
++        data && format == 32 && count == 2 && reinterpret_cast<long*>(data)[0] > 0)
++      {
++        shown = static_cast<double>(reinterpret_cast<long*>(data)[0]);
++      }
++      if (data)
++      {
++        XFree(data);
++      }
++    }
++    // the conversion is libstereo-declare's (1.11): the output the window is on, never the whole X layout
++    const struct stereo_depth_limits unit = { 1.0, 1.0 };
++    struct stereo_depth_limits perLimit = { 0.0, 0.0 };
++    double outputWidth = 0.0;
++    this->StereoDepthBufferPerLimit =
++      (shown > 0 && stereo_depth_x11_output_width(this->DisplayId, this->WindowId, &outputWidth) == 0 &&
++        stereo_depth_limits_for_buffer(&unit, outputWidth, this->Size[0], shown, &perLimit) == 0)
++      ? perLimit.sunk
++      : 0.0;
 +  }
 +  else if (r == -ENODATA)
 +  {
@@ -384,7 +417,7 @@ diff --git a/vtkext/private/module/vtkF3DGLXRenderWindow.h b/vtkext/private/modu
 index ab77370..eb51049 100644
 --- a/vtkext/private/module/vtkF3DGLXRenderWindow.h
 +++ b/vtkext/private/module/vtkF3DGLXRenderWindow.h
-@@ -19,10 +19,26 @@ public:
+@@ -19,10 +19,28 @@ public:
     */
    void Start() override;
  
@@ -399,6 +432,7 @@ index ab77370..eb51049 100644
 +  vtkGetMacro(StereoDepthSunk, double);
 +  vtkGetMacro(StereoDepthPopped, double);
 +  vtkGetMacro(StereoDepthState, int);
++  vtkGetMacro(StereoDepthBufferPerLimit, double);
 +
  protected:
    vtkF3DGLXRenderWindow();
@@ -406,6 +440,7 @@ index ab77370..eb51049 100644
  
 +  double StereoDepthSunk = 0.0;
 +  double StereoDepthPopped = 0.0;
++  double StereoDepthBufferPerLimit = 0.0;
 +  int StereoDepthState = 3;
 +
  private:
@@ -478,10 +513,10 @@ index d716e95..548d5c7 100644
 +  {
 +    return 0.0;
 +  }
-+  // the limits are pixels of a view 1920 wide
++  // the limits are pixels of a view 1920 wide of the screen; the window converts them for its own buffer
 +#ifdef VTK_USE_X
-+  const double sunk = glx->GetStereoDepthSunk() * width / 1920.0;
-+  const double popped = glx->GetStereoDepthPopped() * width / 1920.0;
++  const double sunk = glx->GetStereoDepthSunk() * glx->GetStereoDepthBufferPerLimit();
++  const double popped = glx->GetStereoDepthPopped() * glx->GetStereoDepthBufferPerLimit();
 +#else
 +  const double sunk = 0.0, popped = 0.0;
 +#endif

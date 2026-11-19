@@ -11,8 +11,8 @@ own camera, moved sideways by half the offset, with its frustum shifted so that 
 through the middle of the mesh stays at the screen.
 
 The offset is the largest for which every visible vertex stays inside the person's depth
-limits (read through libstereo-declare from the top level's surface and scaled to the
-width of the view), with no setting. The maths is in stereofit.cpp and is tested against
+limits (read through libstereo-declare from the top level's surface and converted by it for the
+view's buffer: the screen's limits, never the view's own width), with no setting. The maths is in stereofit.cpp and is tested against
 an independent projection in tests/stereofit-test.cpp. Save Image and Copy Image take one eye, the left, at the size of the view. On X11 (Xwayland) the same widget is the stereo area, with the limits read from the declared child window.
 
 
@@ -33,11 +33,12 @@ diff --git a/src/meshview.cpp b/src/meshview.cpp
 index b7588ef..6251393 100644
 --- a/src/meshview.cpp
 +++ b/src/meshview.cpp
-@@ -30,6 +30,23 @@
+@@ -30,6 +30,24 @@
  #include <QOpenGLContext>
  #include <QWheelEvent>
  #include <QKeyEvent>
 +#include <QWindow>
++#include <QScreen>
 +#include <QGuiApplication>
 +#include <QSurfaceFormat>
 +#include <X11/Xatom.h>
@@ -160,7 +161,7 @@ index b7588ef..6251393 100644
      glTranslated( 0.0, 0.0, -CameraDistance );
      glRotated( m_angle, 1.0, 0.0, 0.0 );
      glRotated( rotation, 0.0, 0.0, 1.0 );
-@@ -354,6 +424,168 @@ void MeshView::paintGL()
+@@ -354,6 +424,172 @@ void MeshView::paintGL()
  
      if ( hasLockArrays( context() ) )
          p_glUnlockArraysEXT();
@@ -300,7 +301,7 @@ index b7588ef..6251393 100644
 +}
 +
 +// The largest camera offset for which every vertex of the visible mesh stays inside the person's limits, one rule and no setting.
-+// The limits are pixels of a view 1920 wide and are scaled to the width of this view.
++// The limits are pixels of a view 1920 wide of the screen; libstereo-declare converts them for this view's buffer, never by the view's own width.
 +double MeshView::eyeOffset( double viewWidth, double halfFrustumWidth )
 +{
 +    if ( !m_stereoEnabled || !m_haveLimits || m_resolution.isEmpty() || !m_vertexArray )
@@ -317,13 +318,17 @@ index b7588ef..6251393 100644
 +    scene.farClipping = FarClipping;
 +
 +    double focal = 0.5 * viewWidth * NearClipping / halfFrustumWidth;
-+    double scale = viewWidth / 1920.0;
++    // the person's limits for this view's buffer: libstereo-declare's conversion with the width of the screen the window is on
++    struct stereo_depth_limits screenLimits = { m_sunkLimit, m_poppedLimit }, limits = { 0.0, 0.0 };
++    double shown = m_shownSize.isEmpty() ? viewWidth : m_shownSize.width() * devicePixelRatioF();
++    if ( !screen() || stereo_depth_limits_for_buffer( &screenLimits, screen()->geometry().width() * devicePixelRatioF(), viewWidth, shown, &limits ) != 0 )
++        return 0.0;
 +    double farthest = 0.0, nearest = 0.0;
-+    double offset = stereoFitOffset( m_vertexArray, m_resolution.width() * m_resolution.height(), scene, focal, m_sunkLimit * scale, m_poppedLimit * scale, &farthest, &nearest );
++    double offset = stereoFitOffset( m_vertexArray, m_resolution.width() * m_resolution.height(), scene, focal, limits.sunk, limits.popped, &farthest, &nearest );
 +    if ( fabs( offset - m_offset ) > 0.01 * offset ) {
 +        m_offset = offset;
 +        qCDebug( lcStereo, "view %.0f px wide, offset %.5f, predicted disparity (right minus left, px): farthest %+.3f nearest %+.3f, limits sunk %.3f popped %.3f px",
-+                 viewWidth, offset, offset * farthest, offset * nearest, m_sunkLimit * scale, m_poppedLimit * scale );
++                 viewWidth, offset, offset * farthest, offset * nearest, limits.sunk, limits.popped );
 +    }
 +    return offset;
  }

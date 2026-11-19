@@ -9,7 +9,7 @@ switches it), F4 opens the Display Settings, --stereo-eye-angle is gone, and our
 edition.
 
 The separation of the two eyes is the desktop's: it follows the person's depth limits that Stereo KWin gives the window
-(libstereo-declare 1.10, _KDE_NET_WM_STEREO_DEPTH_LIMITS), the largest one under which the nearest and the farthest point of the
+(libstereo-declare 1.11, _KDE_NET_WM_STEREO_DEPTH_LIMITS), the largest one under which the nearest and the farthest point of the
 scene stay inside the sunk and popped limits, and follows a change of them while the window is open; the fixed 2 degrees of
 +stereo3d1 is gone from the window. With no limits (an older compositor, limits not delivered yet) the two eyes are the same
 picture and the program says so in the ten languages. The pair of a thumbnail keeps its 2 degrees (its depth has no recorded
@@ -26,3 +26,5 @@ that allow 2 and 6). The pair of an image keeps its 2 degrees by window::setSter
 A program that shows the scene inside its own window can make the GLX window a child of its window (window::setParentWindowId) and read the
 window's id (window::getNativeWindowId): the 3D area of a Qt viewer is positioned and sized by the program, and the program can declare what it
 needs on that window. Nothing changes for a program that does not call them (patch 0010).
+
+The limits are the screen's, converted for the window's buffer by libstereo-declare 1.11 (ORDER 750; Daniel, 2026-11-19: "one separation setting, centralized, tailored TO THE SCREEN not to the element size"): limit * output width / 1920 * buffer width / shown width, the output being the monitor the window is on and the shown width the window's _KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_SIZE when a program declared one. +stereo3d4 multiplied them by the window's own width over 1920, so a small window or a 3D area had almost no depth (patch 0008).

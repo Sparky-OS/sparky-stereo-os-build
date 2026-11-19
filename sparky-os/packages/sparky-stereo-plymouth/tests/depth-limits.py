@@ -1,11 +1,11 @@
 #!/usr/bin/python3
-# The splash stays inside the desktop's own depth limits at the same eye width (ORDER 472).
+# The splash's levels are the ones the theme had before ORDER 472, from the person's limits, scaled by the screen only.
 # usage: depth-limits.py GENERATED.script [POPPED SUNK]
 # The script takes the limits from Plymouth (Window.GetStereoPoppedLimit and GetStereoSunkLimit, ORDER 481); the test gives
-# it the same two numbers and holds the placement against them: POPPED and SUNK, 4 and 10 when not given.
-# Stereo KWin (src/scene/stereodepth.cpp): a level's parallax is lround(limit * viewWidth / 1920), the limits being
-# kwinrc [StereoDepth] PoppedLimit 4 and SunkLimit 10 by default. The script's own placement (SS_Place) is modelled
-# here with the same rounding: the whole disparity is d rounded to a pixel, the odd pixel to the left eye.
+# it the same two numbers. Daniel, 2026-11-19: "one separation setting, centralized, tailored TO THE SCREEN not to the
+# element size". At the display's default limits (popped 4, sunk 10) the levels are those of 20261025: step 4.54, logo 9.08,
+# electron pop 4 and sink 6 px at a view 1920 wide; on a screen the eye's width over 1920 scales them (Stereo KWin's
+# lround(limit * outputWidth / 1920)), and nothing else: no logo, sprite or element size enters.
 import math, re, sys
 
 REF = 1920.0
@@ -13,8 +13,6 @@ POPPED, SUNK = (float(sys.argv[2]), float(sys.argv[3])) if len(sys.argv) == 4 el
 text = open(sys.argv[1], encoding='utf-8').read()
 
 def const(name):
-    """a constant of the script, its right side evaluated: numbers, the names of other constants, the two limits Plymouth
-    gives (the calls are replaced by POPPED and SUNK) and + - * /"""
     m = re.search(r'^%s = ([^;]+);' % name, text, re.M)
     if not m:
         raise SystemExit('constant not found: ' + name)
@@ -24,36 +22,33 @@ def const(name):
         raise SystemExit('cannot evaluate %s = %s' % (name, m.group(1)))
     return eval(expr)
 
-def lround(v):
-    return int(math.floor(abs(v) + 0.5)) * (1 if v >= 0 else -1)
-
 def disparity(d):
-    """the disparity the script's SS_Place gives: left eye shift minus right eye shift"""
-    if 'whole = Math.Int (d + 0.5)' in text:
-        whole = int(d + 0.5) if d >= 0 else -int(-d + 0.5)
-        left = int(whole / 2 + 0.5)
-        return left - (left - whole)
-    half = d / 2
-    return int(half + 0.5) - int(-half + 0.5)   # the old placement: both eyes round their half
+    whole = int(d + 0.5) if d >= 0 else -int(-d + 0.5)
+    left = int(whole / 2 + 0.5)
+    return left - (left - whole)
 
 pop, sink, base, logo = const('POP_PX'), const('SINK_PX'), const('BASE_PX'), const('LOGO_PX')
 failed = 0
-for w in (1366, 1280, 1920, 2560, 3840):
-    scale = w / REF
-    desk_pop, desk_sunk = lround(POPPED * scale), lround(SUNK * scale)
-    pops = {'base': base, 'logo': logo, 'electron at its nearest': base + pop}
-    for name, v in pops.items():
-        got = disparity(v * scale)
-        ok = got <= desk_pop
-        failed += not ok
-        print('%5d  %-24s splash %2d px  desktop popped limit %2d px  %s' % (w, name, got, desk_pop, 'ok' if ok else 'ABOVE'))
-    got = -disparity((base - sink) * scale) if base - sink < 0 else 0
-    ok = got <= desk_sunk
+def check(ok, what):
+    global failed
     failed += not ok
-    print('%5d  %-24s splash %2d px  desktop sunk limit   %2d px  %s' % (w, 'electron at its farthest', got, desk_sunk, 'ok' if ok else 'ABOVE'))
-    if w < 1500 and desk_pop >= 2:
-        ok = disparity(logo * scale) > disparity(base * scale)
-        failed += not ok
-        print('%5d  %-24s logo %d px against base %d px  %s' % (w, 'levels stay apart', disparity(logo * scale), disparity(base * scale), 'ok' if ok else 'COLLAPSED'))
+    print('%-4s %s' % ('ok' if ok else 'FAIL', what))
+
+# the levels at the display's default are the pre-472 ones (20261025)
+if (POPPED, SUNK) == (4.0, 10.0):
+    for name, got, want in (('step', base, 4.54), ('logo', logo, 9.08), ('pop', pop, 4.0), ('sink', sink, 6.0)):
+        check(abs(got - want) < 0.01, 'default limits: %s %.3f px, before ORDER 472 %.2f' % (name, got, want))
+# they follow the person's limits: popped and sunk in proportion, one rule for every screen
+check(abs(logo - 2 * base) < 1e-9 and abs(pop - POPPED) < 1e-9 and abs(sink - 0.6 * SUNK) < 1e-9,
+      'the levels follow the limits %g and %g' % (POPPED, SUNK))
+# the script scales by the eye's width over 1920 only
+for token in ('POP = POP_PX * EYE_W / 1920', 'SINK = SINK_PX * EYE_W / 1920', 'BASE = BASE_PX * EYE_W / 1920', 'LOGO = LOGO_PX * EYE_W / 1920'):
+    check(token in text, 'scaled by the eye width only: ' + token)
+check(not re.search(r'(LOGO|BASE|POP|SINK)(_PX)?\s*=[^;]*(logo_image|GetHeight|logo_height|GetWidth)', text),
+      'no level is computed from the size of a picture')
+for w in (1366, 1920, 3840):
+    s = w / REF
+    print('     %5d wide: base %d px, logo %d px, nearest electron %d px, farthest %d px behind'
+          % (w, disparity(base * s), disparity(logo * s), disparity((base + pop) * s), -disparity((base - sink) * s)))
 print('%d failing' % failed)
 sys.exit(1 if failed else 0)
