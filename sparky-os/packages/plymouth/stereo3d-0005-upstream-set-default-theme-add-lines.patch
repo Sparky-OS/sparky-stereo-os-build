@@ -1,0 +1,42 @@
+Description: plymouth-set-default-theme: Add lines to the config file when a new line needs to be added
+ A theme chosen with plymouth-set-default-theme was not stored when
+ /etc/plymouth/plymouthd.conf held only its [Daemon] header: the script
+ inserted the Theme line before a line that was not in the file yet, and
+ sed inserted nothing. This adds the missing empty line first and then
+ inserts. The same commit corrects `sed -ie`, whose `e` was a backup
+ suffix and left a stray plymouthd.confe beside the file.
+Origin: upstream, https://gitlab.freedesktop.org/plymouth/plymouth/-/commit/3ada77164ede1dfc2226d16d20c87874658ac38c
+Author: n3rdopolis
+Bug: https://gitlab.freedesktop.org/plymouth/plymouth/-/work_items/348
+Forwarded: not-needed
+Applied-Upstream: main (merge request !488, merged 2026-08-23), after the 26.134.222 release
+Last-Update: 2026-11-18
+---
+--- a/scripts/plymouth-set-default-theme.in
++++ b/scripts/plymouth-set-default-theme.in
+@@ -133,14 +133,22 @@ function read_or_set_file_ini_value ()
+         if [[ ! -z $CONFIG_FILE_VALUE_NEW_VALUE ]]; then
+                 if [[ $INI_SEGMENT_LINE_NUMBER == 0 ]]; then
+                         INI_SEGMENT_LINE_NUMBER=1
++                        if [[ $CONFIG_FILE_LINE_COUNT -le 0 ]]
++                        then
++                                echo >> "$CONFIG_FILE_PATH"
++                        fi
+                         sed -i "$INI_SEGMENT_LINE_NUMBER i [$CONFIG_FILE_INI_SEGMENT]" "$CONFIG_FILE_PATH"
+                 fi
+ 
+                 if [[ $CONFIG_VALUE_LINE_NUMBER == 0 ]]; then
+-                        CONFIG_FILE_LINE_COUNT=$(( $INI_SEGMENT_LINE_NUMBER + 1 ))
+-                        sed -i "$CONFIG_FILE_LINE_COUNT i $CONFIG_FILE_VALUE_NAME=$CONFIG_FILE_VALUE_NEW_VALUE" "$CONFIG_FILE_PATH"
++                        NEW_LINE_NUMBER=$(( $INI_SEGMENT_LINE_NUMBER + 1 ))
++                        if [[ $NEW_LINE_NUMBER -gt $CONFIG_FILE_LINE_COUNT ]]
++                        then
++                                echo >> "$CONFIG_FILE_PATH"
++                        fi
++                        sed -i "$NEW_LINE_NUMBER i $CONFIG_FILE_VALUE_NAME=$CONFIG_FILE_VALUE_NEW_VALUE" "$CONFIG_FILE_PATH"
+                 else
+-                        sed -ie "${CONFIG_VALUE_LINE_NUMBER}s/.*/$CONFIG_FILE_VALUE_NAME=$CONFIG_FILE_VALUE_NEW_VALUE/" "$CONFIG_FILE_PATH"
++                        sed -i -e "${CONFIG_VALUE_LINE_NUMBER}s/.*/$CONFIG_FILE_VALUE_NAME=$CONFIG_FILE_VALUE_NEW_VALUE/" "$CONFIG_FILE_PATH"
+                 fi
+         fi
+ 

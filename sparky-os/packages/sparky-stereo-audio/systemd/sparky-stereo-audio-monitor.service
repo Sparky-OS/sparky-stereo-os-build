@@ -1,0 +1,14 @@
+# Created by Paweł "pavroo" Pijanowski and Daniel Ramos (Capitain Jack) 2026/11/18
+# Copyright 2026 under the GNU GPL3 License
+[Unit]
+Description=sparky-stereo-audio monitor
+After=pipewire.service wireplumber.service
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/bin/sparky-stereo-audio monitor
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

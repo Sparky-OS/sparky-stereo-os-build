@@ -85,7 +85,7 @@ def system_language():
     for line in Path('/etc/default/locale').read_text().splitlines():
         if line.startswith('LANG='):
             return select(line[5:])
-    raise ValueError('/etc/default/locale: LANG')
+    return select(os.environ.get('LANG', 'C.UTF-8'))
 
 
 def requested(values):

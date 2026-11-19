@@ -1,0 +1,22 @@
+#!/bin/sh
+# The lab's input guest: loads the modules, makes the virtual HID joystick, asks the kernel and SDL, powers off.
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev
+mount -t tmpfs tmp /tmp
+echo "LAB|guest|kernel|$(cat /proc/version | head -c 60)"
+sh /lib/lab-modules/load.sh 2>&1 | head -20
+sleep 1
+/bin/hidtest &
+n=0
+while [ ! -e /tmp/hid.ready ] && [ $n -lt 80 ]; do sleep 0.2; n=$((n+1)); done
+if [ -e /tmp/hid.ready ]; then
+  if [ -x /bin/sdltest ]; then
+    export LD_LIBRARY_PATH=/opt/sdl SDL_JOYSTICK_HIDAPI=0 SDL_VIDEODRIVER=dummy SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1
+    /bin/sdltest 2>&1 | head -5
+  fi
+else
+  echo "LAB|guest|error|hidtest never became ready"
+fi
+echo "LAB|guest|done"
+poweroff -f
