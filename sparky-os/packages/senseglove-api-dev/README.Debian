@@ -15,12 +15,13 @@ Your own copy works too: cmake -DSENSEGLOVE_LIBRARY_DIR=DIR (or the environment 
 Build the example:
 
   cp -r /usr/share/doc/senseglove-api-dev/examples /tmp/sgexample && cd /tmp/sgexample
-  cmake -S . -B build && cmake --build build
+  cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++ && cmake --build build
 
-The libraries were built with libstdc++'s old std::string ABI (their exported names have no [abi:cxx11]; v20, v21 and v22 alike),
-while Debian's compiler defaults to the new one. The CMake targets therefore add -D_GLIBCXX_USE_CXX11_ABI=0 to the programs that
-use them; by hand, add it yourself, or the link fails with undefined references such as SGCore::HapticGlove::ToString. Pass no
-std::string between such a program and another library that was built with the new ABI.
+The libraries were built with LLVM's libc++, not with libstdc++ (their exported names say std::__1::vector and std::__1::basic_string; v20, v21
+and v22 alike), so a program that uses them must be built with clang++ and -stdlib=libc++: apt install clang libc++-dev libc++abi-dev.
+Built with g++ the link fails with undefined references such as SGCore::HapticGlove::ToString[abi:cxx11](SGCore::EHapticLocation).
+The CMake targets add -stdlib=libc++ for Clang and refuse another compiler with this reason. Pass no std::string or std::vector
+between such a program and a library built with libstdc++.
 
 On Linux, SenseCom (the other Stereo APTus entry in VR and SteamVR) connects the gloves; the API talks to it.
 The example is SenseGlove's Windows example: it waits for a key with system("pause"), which does not exist on Linux, so

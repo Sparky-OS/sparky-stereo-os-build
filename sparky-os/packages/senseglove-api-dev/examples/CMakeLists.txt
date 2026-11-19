@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(sgcore-client CXX)
 set(CMAKE_CXX_STANDARD 17)
+# SenseGlove's libraries need clang++ with libc++: cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++
 find_package(SenseGlove REQUIRED)
 add_executable(sgcore-client sgcore-client.cpp)
 target_link_libraries(sgcore-client PRIVATE SenseGlove::SGCore SenseGlove::SGConnect)

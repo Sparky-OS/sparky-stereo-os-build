@@ -52,7 +52,7 @@ Installed-Size: $SIZE
 Section: libdevel
 Priority: optional
 Homepage: https://sparkylinux.org
-Suggests: cmake, g++
+Suggests: cmake, clang, libc++-dev, libc++abi-dev
 Description: SenseGlove C++ API: headers, CMake package and example
  The 61 headers of SenseGlove's C++ API (SGCore and SGConnect) and its
  example, taken from SenseGlove's repository at one commit and checked
