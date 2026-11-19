@@ -1,0 +1,13 @@
+sparky-stereo-browser (@DEBVERSION@) unstable; urgency=medium
+
+  * The flat WebXR display (an inline-stereo session, WebXR 3.4, drawn through
+    the page's canvas) gives the eyes the person's depth limit as the screen
+    has it, whatever the width of the window: the limits are set once, for the
+    screen, in pixels of a view as wide as the output, and the separation is
+    that share of the output's width over the width the canvas is shown at,
+    the same conversion as the 3D Canvas camera. Before, the separation was
+    the limit over 1920 times the canvas's own width, so a window half as wide
+    showed half the separation. An immersive session fills the output and is
+    unchanged. The browser has no new setting.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  @DATE@
