@@ -1,0 +1,28 @@
+senseglove-api-dev for Sparky Stereo OS
+=======================================
+
+What is here: the headers of SenseGlove's C++ API under /usr/include/SenseGlove/ (Core and Connect), a CMake package in
+/usr/lib/cmake/SenseGlove/, and SenseGlove's example in /usr/share/doc/senseglove-api-dev/examples/ with a CMakeLists.txt.
+They are SenseGlove B.V.'s files under the MIT licence (LICENSE.SenseGlove), taken from github.com/Adjuvo/SenseGlove-API at the
+commit named in SOURCE and checked against sources.tsv when the package was built.
+
+What is not here: libsgcore.so and libsgconnect.so. SenseGlove publishes them only as binaries, so the edition cannot build them
+and does not carry them. They arrive when you ask for them: open Stereo APTus, VR and SteamVR, "SenseGlove API libraries (C++)".
+The entry shows the size (2.8 MiB) and the address first, fetches the two files from SenseGlove's repository at the same commit,
+checks each against its SHA-256, and puts them in /opt/senseglove-api/lib. Until then find_package(SenseGlove) fails and says so.
+Your own copy works too: cmake -DSENSEGLOVE_LIBRARY_DIR=DIR (or the environment variable of the same name).
+
+Build the example:
+
+  cp -r /usr/share/doc/senseglove-api-dev/examples /tmp/sgexample && cd /tmp/sgexample
+  cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++ && cmake --build build
+
+The libraries were built with LLVM's libc++, not with libstdc++ (their exported names say std::__1::vector and std::__1::basic_string; v20, v21
+and v22 alike), so a program that uses them must be built with clang++ and -stdlib=libc++: apt install clang libc++-dev libc++abi-dev.
+Built with g++ the link fails with undefined references such as SGCore::HapticGlove::ToString[abi:cxx11](SGCore::EHapticLocation).
+The CMake targets add -stdlib=libc++ for Clang and refuse another compiler with this reason. Pass no std::string or std::vector
+between such a program and a library built with libstdc++.
+
+On Linux, SenseCom (the other Stereo APTus entry in VR and SteamVR) connects the gloves; the API talks to it.
+The example is SenseGlove's Windows example: it waits for a key with system("pause"), which does not exist on Linux, so
+without a glove it prints its message again and again instead of waiting.

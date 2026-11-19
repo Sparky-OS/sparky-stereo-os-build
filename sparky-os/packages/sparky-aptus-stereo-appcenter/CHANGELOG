@@ -1,3 +1,9 @@
+0.1.19 (2026-11-19)
+  * ORDER 40: the entry kind "tree", for a program its maker publishes only as binaries (no source the edition can build). The row names a pinned file list (stereo/vendor/NAME.json: the maker's address at one commit, and each file's size, SHA-256 and mode); the files are fetched from the maker on the person's machine, the licence first and shown, each file checked, and only then everything is put in place at once under /opt, with a menu entry and a link. Nothing is rebuilt, changed or mirrored; the maker's own updater is neither run nor removed, and a newer version arrives by a newer pin.
+  * Two rows in VR and SteamVR: SenseCom 1.9.2 (SenseGlove's program that finds and connects their haptic gloves; 106,422,960 bytes in 189 different files, fetched from github.com/Adjuvo/SenseCom at commit dbfd4266f040, MIT) and the SenseGlove API's C++ libraries libsgcore and libsgconnect, v22 x86-64 release (2,937,659 bytes, commit 31900b320aa0, MIT), which senseglove-api-dev's CMake package finds.
+  * The card says before the button the size, the address, the pin and the licence; on a metered connection the shared notice says the size first. A wrong SHA-256, a failed download (the host and curl's exit status), a glibc older than 2.27, a folder that is not ours, a damaged pinned list and a computer with no Bluetooth adapter are each said in the ten required languages, and nothing is installed after a failure. Removal leaves the person's own settings. Depends, Recommends and Pre-Depends are the same as 0.1.18: nothing SenseGlove needs is a dependency of this package.
+  * Every file of 0.1.18 is still in the package (compared file by file); new: usr/lib/sparky-aptus-stereo-appcenter/vendortree.py and vendor/*.json. New test: stereo/tests/vendortree.py (14 cases).
+
 0.1.18 (2026-11-19)
   * Rebase the optional MIDI catalogue on AppCenter master 8bef4f6.
   * Retain Spirula Studio, its profiles and every existing entry and language key.
