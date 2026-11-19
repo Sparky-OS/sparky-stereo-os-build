@@ -1,7 +1,10 @@
-Description: Expect current MediaInfo's progressive scan report for the HEVC fixture
- All 400 decoded video frames report interlaced_frame=0. Retain the complete
- metadata assertion, including the additional scan-type field.
+Description: Match MediaInfo 26.10 HEVC scan and DTS:X supplemental layout
+ The upstream 26.10 history adds HEVC scan-type and DTS:X supplemental layout
+ reporting. All 400 decoded HEVC frames are progressive. The DTS:X fixture
+ reports twelve named channels including Tfl, Tfr, Tbl and Tbr via the library
+ API. Keep complete metadata assertions rather than omitting these fields.
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor
 Forwarded: not-needed
 Last-Update: 2026-11-19
 
@@ -14,5 +17,14 @@ Last-Update: 2026-11-19
 -			"Container: MKV, Size: 5291494, Overall Bitrate: 2619551, Duration: 0:00:16.160, Video Tracks: 1 [Video Id: 0, Default, Codec: h265, Format Profile: main, Format Level: 4, Format Tier: main, Stream Order: 0, Duration: 0:00:16.160, Resolution: 1920 x 960, Display Aspect Ratio: 2.00:1, Frame Rate: 25.0, Frame Rate Mode: CFR (CFR), Matrix Coefficients: BT.709], Audio Tracks: 1 [Audio Id: 0, Default, Title: Stereo, Language Code: eng, Codec: AAC-LC, Stream Order: 1, Bitrate: 0, Channels: 2, Sample Frequency: 48000 Hz, Video Delay: -21], Mime Type: video/x-matroska",
 +			"Container: MKV, Size: 5291494, Overall Bitrate: 2619551, Duration: 0:00:16.160, Video Tracks: 1 [Video Id: 0, Default, Codec: h265, Format Profile: main, Format Level: 4, Format Tier: main, Stream Order: 0, Duration: 0:00:16.160, Resolution: 1920 x 960, Display Aspect Ratio: 2.00:1, Scan Type: Progressive, Frame Rate: 25.0, Frame Rate Mode: CFR (CFR), Matrix Coefficients: BT.709], Audio Tracks: 1 [Audio Id: 0, Default, Title: Stereo, Language Code: eng, Codec: AAC-LC, Stream Order: 1, Bitrate: 0, Channels: 2, Sample Frequency: 48000 Hz, Video Delay: -21], Mime Type: video/x-matroska",
  			getTestFileMediaInfo("video-h265-aac.mkv").toString()
+ 		);
+ 		assertEquals(
+@@ -192,7 +192,7 @@
+ 			getTestFileMediaInfo("video-h264-dtshd.mkv").toString()
+ 		);
+ 		assertEquals(
+-			"Container: MKV, Size: 9513954, Overall Bitrate: 8484186, Duration: 0:00:08.971, Video Tracks: 1 [Video Id: 0, Default, Language Code: eng, Codec: h264, Format Profile: high, Format Level: 4.1, Stream Order: 0, Duration: 0:00:08.967, Resolution: 1920 x 1080, Display Aspect Ratio: 16:9, Scan Type: Progressive, Frame Rate: 23.976, Frame Rate Mode: CFR (CFR), Reference Frame Count: 4], Audio Tracks: 1 [Audio Id: 0, Default, Language Code: eng, Codec: DTS-HD, Stream Order: 1, Bitrate: 0, Bits per Sample: 24, Channels: 8, Sample Frequency: 48000 Hz], Mime Type: video/x-matroska",
++			"Container: MKV, Size: 9513954, Overall Bitrate: 8484186, Duration: 0:00:08.971, Video Tracks: 1 [Video Id: 0, Default, Language Code: eng, Codec: h264, Format Profile: high, Format Level: 4.1, Stream Order: 0, Duration: 0:00:08.967, Resolution: 1920 x 1080, Display Aspect Ratio: 16:9, Scan Type: Progressive, Frame Rate: 23.976, Frame Rate Mode: CFR (CFR), Reference Frame Count: 4], Audio Tracks: 1 [Audio Id: 0, Default, Language Code: eng, Codec: DTS-HD, Stream Order: 1, Bitrate: 0, Bits per Sample: 24, Channels: 12, Sample Frequency: 48000 Hz], Mime Type: video/x-matroska",
+ 			getTestFileMediaInfo("video-h264-dtshd_x.mkv").toString()
  		);
  		assertEquals(
