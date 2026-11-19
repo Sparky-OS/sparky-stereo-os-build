@@ -175,6 +175,7 @@ def main():
     ap.add_argument('--depends', nargs=2, action='append', default=[], metavar=('OLD', 'NEW'),
                     help='with --in-place: one text of debian/control replaced by another (a dependency the recipe changes)')
     ap.add_argument('--overlay', type=Path, help='with --in-place: a folder of files for debian/ (patches, series, symbols, control)')
+    ap.add_argument('--reapply-patches', action='store_true', help='with an in-place patch overlay: pop the inherited quilt stack and apply the complete new series before packing')
     ap.add_argument('--in-place', action='store_true', help='keep the published debian/ but for its toolkit and changelog')
     ap.add_argument('--preserve', nargs=2, action='append', default=[], metavar=('PATTERN', 'REASON'),
                     help='one more source-consumer pattern for the next version, its reason beside it')
@@ -189,6 +190,8 @@ def main():
         ap.error('either --next and --item (no source change), or --recipe DIR')
     if (args.depends or args.overlay) and not args.in_place:
         ap.error('--depends and --overlay go with --in-place')
+    if args.reapply_patches and not (args.in_place and args.overlay):
+        ap.error('--reapply-patches needs --in-place and --overlay')
     if args.recipe and args.recipe.resolve().name != 'debian':
         ap.error("--recipe names a recipe's debian/ directory")
     dsc = args.dsc.resolve()
@@ -211,6 +214,13 @@ def main():
                 raise ValueError('--in-place and --recipe exclude each other')
             report = in_place(old, work / 'new', name, version, args.next, args.item, args.depends,
                               args.overlay.resolve() if args.overlay else None)
+            if args.reapply_patches:
+                env = dict(os.environ, QUILT_PATCHES='debian/patches')
+                popped = subprocess.run(['quilt', 'pop', '-a'], cwd=new, env=env)
+                if popped.returncode not in (0, 2):
+                    raise subprocess.CalledProcessError(popped.returncode, popped.args)
+                subprocess.run(['quilt', 'push', '-a'], cwd=new, env=env, check=True)
+                report['patches_reapplied'] = True
             finish(work, dsc, name, version, report['new'], old, out, report)
             return
         if not version.endswith('+lc1'):
