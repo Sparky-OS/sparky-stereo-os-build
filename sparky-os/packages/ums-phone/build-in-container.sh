@@ -21,7 +21,7 @@ export COREPACK_HOME=/work/ums-home/.cache/node/corepack
 export YARN_GLOBAL_FOLDER=/work/ums-home/.yarn/berry
 export YARN_ENABLE_NETWORK=0
 export HOME="$job"
-export SPARKY_LC_MIN_FREE_GIB=20 SPARKY_LC_ROOT_MIN_FREE_GIB=20
+export SPARKY_LC_MIN_FREE_GIB=3 SPARKY_LC_ROOT_MIN_FREE_GIB=20
 if [ "${PV24_PHASE:-build}" = build ]; then
  # The upstream connect-timeout test needs a silent destination. Both veth ends
  # stay in this network-none container; nothing is routed to a Docker bridge.
