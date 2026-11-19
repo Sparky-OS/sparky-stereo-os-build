@@ -45,7 +45,7 @@ import sys
 for para in open(sys.argv[1], encoding='utf-8').read().strip().split('\n\n'):
     print(' '.join(l.strip() for l in para.splitlines()))
 PY
-VERSION=2.13.2+git20240821+ds-7+stereo3d1
+VERSION=2.13.2+git20240821+ds-7+stereo3d2
 DATE=$(date -u -d "@$SOURCE_DATE_EPOCH" -R)
 dch --date "$DATE" -v "$VERSION" -D unstable --force-distribution "$(head -1 "$WORK/items.txt")"
 while IFS= read -r item; do [ "$item" = "$(head -1 "$WORK/items.txt")" ] || dch --date "$DATE" -a "$item"; done < "$WORK/items.txt"
@@ -61,5 +61,5 @@ EOC
 export PYTHONPATH="$TREE${PYTHONPATH:+:$PYTHONPATH}"
 python3 -m lean.debian_prepare "$PWD" "$VERSION+lc1" --toolkit "$TREE"
 python3 "$REPRO" normalize-tree "$SOURCE_DATE_EPOCH" "$PWD"
-export DEB_BUILD_OPTIONS=${DEB_BUILD_OPTIONS:-parallel=6 nocheck}
-dpkg-buildpackage -us -uc -sa -j6
+export DEB_BUILD_OPTIONS=${DEB_BUILD_OPTIONS:-parallel=4 nocheck}
+dpkg-buildpackage -us -uc -sa -j4
