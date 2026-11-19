@@ -4,8 +4,9 @@
 #   find_package(SenseGlove REQUIRED)
 #   target_link_libraries(myprogram PRIVATE SenseGlove::SGCore SenseGlove::SGConnect)
 #
-# SenseGlove built v20 to v22 with libstdc++'s old std::string ABI (no [abi:cxx11] in their exported names, measured with nm -D),
-# so the targets compile a program with _GLIBCXX_USE_CXX11_ABI=0; without it the link fails with undefined references.
+# SenseGlove built v20 to v22 with LLVM's libc++ (their exported names say std::__1::vector, measured with nm -DC), not with
+# libstdc++: a program that uses them must be built with clang++ and -stdlib=libc++ (Debian: clang, libc++-dev, libc++abi-dev).
+# The targets add the option for Clang; any other compiler is refused with the reason.
 #
 # SENSEGLOVE_LIBRARY_DIR (cache or environment) names another folder that holds libsgcore.so and libsgconnect.so.
 if(TARGET SenseGlove::SGCore)
@@ -29,6 +30,9 @@ foreach(_name sgcore sgconnect)
       "lib${_name}.so is not in ${SENSEGLOVE_LIBRARY_DIR}. ")
   endif()
 endforeach()
+if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  string(APPEND _senseglove_missing "The libraries use LLVM's libc++ (std::__1), so the program must be built with clang++, not ${CMAKE_CXX_COMPILER_ID} (cmake -DCMAKE_CXX_COMPILER=clang++; Debian packages clang, libc++-dev and libc++abi-dev). ")
+endif()
 if(NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
   string(APPEND _senseglove_missing "SenseGlove publishes these libraries for x86-64 and aarch64; the entry installs the x86-64 ones. ")
 endif()
@@ -50,6 +54,7 @@ foreach(_name sgcore sgconnect)
     IMPORTED_LOCATION "${SENSEGLOVE_LIBRARY_DIR}/lib${_name}.so"
     IMPORTED_SONAME "lib${_name}.so"
     INTERFACE_INCLUDE_DIRECTORIES "${SenseGlove_INCLUDE_DIR}"
-    INTERFACE_COMPILE_DEFINITIONS "_GLIBCXX_USE_CXX11_ABI=0")
+    INTERFACE_COMPILE_OPTIONS "-stdlib=libc++"
+    INTERFACE_LINK_OPTIONS "-stdlib=libc++")
 endforeach()
 set(SenseGlove_FOUND TRUE)
