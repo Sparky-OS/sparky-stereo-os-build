@@ -196,7 +196,7 @@ def command(argv, say):
             previous = p.read_bytes() if p.exists() else None
             os.replace(temporary, p)
             try:
-                subprocess.run(['systemctl', '--user', 'try-restart', 'fluidsynth.service'], check=True)
+                subprocess.run(['systemctl', '--user', 'try-restart', 'sparky-stereo-midi.service'], check=True)
             except subprocess.SubprocessError:
                 if previous is None:
                     p.unlink()
@@ -208,13 +208,13 @@ def command(argv, say):
         if args.service:
             commands = [['mask', '--now']] if args.service == 'off' else [['unmask'], ['start']]
             for cmd in commands:
-                subprocess.run(['systemctl', '--user', *cmd, 'fluidsynth.service'], check=True)
+                subprocess.run(['systemctl', '--user', *cmd, 'sparky-stereo-midi.service'], check=True)
         if args.serve:
             return serve(data, say)
         if args.play:
             path = str(Path(args.play).resolve(strict=True))
             # Starting an already-running service is harmless. A masked service stays the person's choice.
-            subprocess.run(['systemctl', '--user', 'start', 'fluidsynth.service'], check=True)
+            subprocess.run(['systemctl', '--user', 'start', 'sparky-stereo-midi.service'], check=True)
             return play(path, data)
         show(say)
         clear('midi')
