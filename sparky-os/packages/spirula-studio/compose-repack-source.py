@@ -34,6 +34,8 @@ if json.loads((root / 'debian/build-origin.json').read_text())['fork'] != plan['
     raise SystemExit('Predecessor fork differs from the reuse plan')
 for p in previous.glob('*.orig*.tar.xz'):
     shutil.copy2(p, out / p.name)
+from source_components import fonts as pack_fonts
+pack_fonts(root / 'fonts', root, out / 'spirula-studio_2026.11.12.orig-fonts.tar.xz')
 saved = out / 'predecessor-authored-debian'
 shutil.copytree(root / 'debian', saved)
 shutil.rmtree(root / 'debian')

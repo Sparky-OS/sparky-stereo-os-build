@@ -55,7 +55,14 @@ def source_files(folder, debian=False):
             result[str(rel)] = [p.stat().st_mode & 0o777, sha(p)]
     return result
 
-assert source_files(root) == source_files(previous), 'Native source/components changed: compile normally'
+before_native = source_files(previous)
+after_native = source_files(root)
+for name, resource in plan.get('source_resource_modes', {}).items():
+    assert name.startswith('fonts/') and name.endswith('.otf')
+    assert before_native[name] == [resource['old_mode'], resource['sha256']]
+    assert after_native[name] == [resource['mode'], resource['sha256']]
+    before_native[name] = after_native[name]
+assert after_native == before_native, 'Native source/components changed: compile normally'
 allowed = {'rules', 'changelog', 'control', 'install-icons.py', 'repack-icons.py', 'repack-predecessor.json', 'README.Debian', 'generate.py'}
 before = source_files(previous / 'debian', True)
 after = source_files(root / 'debian', True)

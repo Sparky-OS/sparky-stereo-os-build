@@ -70,11 +70,8 @@ for line in (source/'assets/fonts/cjk_faces.txt').read_text().splitlines():
             with urllib.request.urlopen(url) as response,target.open('wb') as dest:shutil.copyfileobj(response,dest)
     if target.stat().st_size!=int(size) or hashlib.sha256(target.read_bytes()).hexdigest()!=sha:
         raise SystemExit('Font size/hash mismatch: '+filename)
-with tarfile.open(out/f'spirula-studio_{version}.orig-fonts.tar.xz','w:xz') as tar:
-    for path in sorted(fonts.glob('*.otf')):
-        info=tar.gettarinfo(str(path),arcname='fonts/'+path.name);info.uid=info.gid=0;info.uname=info.gname='';info.mtime=0
-        with path.open('rb') as f:tar.addfile(info,f)
-shutil.copytree(fonts,root/'fonts')
+from source_components import fonts as pack_fonts
+pack_fonts(fonts, root, out/f'spirula-studio_{version}.orig-fonts.tar.xz')
 (root/'debian/source/options').write_text('extend-diff-ignore = "^(build_vulkan|build_cuda|slang|\\.sparky-lc)/"\n')
 subprocess.run(['dpkg-source','--before-build',str(root)],check=True)
 # The Slang headers and marker-bearing code-generation inputs have extra readers.
