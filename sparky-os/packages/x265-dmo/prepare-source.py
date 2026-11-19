@@ -36,16 +36,16 @@ def main():
     series.write_text(series.read_text().rstrip() + '\n' + '\n'.join(p.name for p in patches) + '\n')
     subprocess.run(['quilt', 'push', '-a'], cwd=source, env=env, check=True)
     control = source / 'debian/control'
-    control.write_text(control.read_text().replace('libx265-217', 'libx265-219'))
-    (source / 'debian/libx265-217.install').rename(source / 'debian/libx265-219.install')
-    install = source / 'debian/libx265-219.install'
-    install.write_text(install.read_text().replace('.217', '.219'))
-    subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', '1:4.3-dmo1+stereo3d1',
+    control.write_text(control.read_text().replace('libx265-217', 'libx265-30219'))
+    (source / 'debian/libx265-217.install').rename(source / 'debian/libx265-30219.install')
+    install = source / 'debian/libx265-30219.install'
+    install.write_text(install.read_text().replace('.217', '.30219'))
+    subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', '1:4.3-dmo1+stereo3d2',
                     '--distribution', 'UNRELEASED',
-                    'Carry upstream frame packing and HandBrake library fixes. Assign SONAME 219 for the additional ambient API; retain libx265-217 for existing consumers.'],
+                    'Carry upstream frame packing and HandBrake library fixes. Assign SONAME 30219 for the additional ambient API; retain libx265-217 for existing consumers.'],
                    cwd=source, env=env, check=True)
     subprocess.run([sys.executable, '-m', 'lean.debian_prepare', str(source),
-                    '1:4.3-dmo1+stereo3d1+lc1', '--toolkit', str(toolkit),
+                    '1:4.3-dmo1+stereo3d2+lc1', '--toolkit', str(toolkit),
                     '--build-dependency', 'bubblewrap'], cwd=source, env=env, check=True)
     reproducible.normalize_tree(source, stamp)
 

@@ -7,7 +7,9 @@ The H.273 backport keeps the existing `ipt-pq-c2` name and adds matrix coefficie
 The upstream aq-motion fix is already present in this release.
 
 Frame packing changes upstream's ABI from 217 to 218.
-The additional ambient fields are appended after that API and assigned ABI and SONAME 219; existing fields retain their offsets.
-`libx265-219` coexists with `libx265-217`, so installing it does not remove consumers of 217.
+The additional ambient fields are appended after that API and assigned ABI and SONAME 30219; existing fields retain their offsets.
+`libx265-30219` coexists with `libx265-217`, so installing it does not remove consumers of 217.
 FFmpeg and HandBrake must be rebuilt against the new development package to use the added API.
 The package comparison and loader qualification must verify the exact installed result.
+
+The edition ABI uses 30219 because upstream master already uses 219 with a smaller parameter structure. This prevents its ordinary library from satisfying the edition ambient API by SONAME alone.

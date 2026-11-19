@@ -24,7 +24,7 @@ t = t.replace('libx264-dev (>= 3:0.155~)', 'libx264-dev (>= 4:0.165.3222+gitb356
 t = t.replace(' libmp3lame-dev,',
               ' libavcodec-dev (>= 10:9.0.2-dmo1+stereo3d16+lc1), libavformat-dev (>= 10:9.0.2-dmo1+stereo3d16+lc1),\n'
               ' libavfilter-dev, libavutil-dev, libswscale-dev, libswresample-dev, libdvdread-dev,\n'
-              ' libx265-dev (>= 1:4.3-dmo1+stereo3d1+lc1), zlib1g-dev, libmp3lame-dev,')
+              ' libx265-dev (>= 1:4.3-dmo1+stereo3d2+lc1), zlib1g-dev, libmp3lame-dev,')
 control.write_text(t)
 rules = source / 'debian/rules'
 t = rules.read_text()
