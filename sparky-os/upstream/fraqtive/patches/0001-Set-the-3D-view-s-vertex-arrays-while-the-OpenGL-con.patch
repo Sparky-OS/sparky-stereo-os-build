@@ -1,0 +1,52 @@
+From 9142e1decc756c5f92933b043adea21b9a2a8a96 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 19 Nov 2026 01:57:30 -0300
+Subject: [PATCH 1/2] Set the 3D view's vertex arrays while the OpenGL context
+ is current
+
+MeshView::initializeVertices() ran glVertexPointer(), glTexCoordPointer() and
+glEnableClientState() from initialUpdate(), a data callback of the fractal
+generator. No OpenGL context is current there: the widget's context is made
+current only inside initializeGL() and paintGL(). The calls were dropped, the
+context kept its client arrays disabled, and glDrawElements() drew nothing
+with no GL error, so the 3D view stayed on its black background (measured
+with Qt 5.15 on X11 and Mesa 22.3 and 26.1, llvmpipe and radeonsi).
+
+Set the arrays in paintGL(), where the context is current, on every frame.
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/meshview.cpp | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/src/meshview.cpp b/src/meshview.cpp
+index 6f64d34..7ffc552 100644
+--- a/src/meshview.cpp
++++ b/src/meshview.cpp
+@@ -265,6 +265,12 @@ void MeshView::paintGL()
+     if ( m_resolution.isEmpty() )
+         return;
+ 
++    // the context is current here; initializeVertices() runs from the data callbacks, with no context current
++    glVertexPointer( 3, GL_FLOAT, 0, m_vertexArray );
++    glEnableClientState( GL_VERTEX_ARRAY );
++    glTexCoordPointer( 1, GL_FLOAT, 0, m_textureCoordArray );
++    glEnableClientState( GL_TEXTURE_COORD_ARRAY );
++
+     if ( m_textureDirty ) {
+         generateTexture();
+         m_textureDirty = false;
+@@ -393,10 +399,6 @@ void MeshView::initializeVertices()
+     m_averageRowHeight.fill( 0.0, m_resolution.height() );
+     m_averageHeight = 0.0;
+ 
+-    glVertexPointer( 3, GL_FLOAT, 0, m_vertexArray );
+-    glEnableClientState( GL_VERTEX_ARRAY );
+-    glTexCoordPointer( 1, GL_FLOAT, 0, m_textureCoordArray );
+-    glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+ }
+ 
+ void MeshView::updateVertices( const FractalData* data, const QRect& region )
+-- 
+2.53.0
+
