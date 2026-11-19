@@ -12,6 +12,10 @@ import time
 from session import report, clear, Parser, snapshot
 
 
+class MissingFont(FileNotFoundError):
+    pass
+
+
 def config_path():
     return Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'sparky-stereo-audio/midi.json'
 
@@ -46,7 +50,7 @@ def font_path(data):
     for p in paths:
         if Path(p).is_file() and os.access(p, os.R_OK):
             return str(Path(p).resolve())
-    raise FileNotFoundError(font)
+    raise MissingFont(font)
 
 
 def driver(data):
@@ -60,7 +64,7 @@ def show(say):
         print(say(50, font_path(data)))
         print(say(51, driver(data), say(33 if data.get('connect') == 'yes' else 34)))
         print(say(52))
-    except FileNotFoundError as exc:
+    except MissingFont as exc:
         print(say(54, str(exc)))
     except (OSError, ValueError) as exc:
         print(say(53, str(exc)))
@@ -136,7 +140,10 @@ def play(path, data):
             ports = midi_ports(name)
             if name in ports and 'sparky-midi' in ports:
                 subprocess.run(['pw-link', str(ports[name]), str(ports['sparky-midi'])], check=True)
-                return child.wait()
+                code = child.wait()
+                if code:
+                    raise RuntimeError('pw-midiplay: %d' % code)
+                return 0
             if child.poll() is not None:
                 raise RuntimeError('pw-midiplay: %d' % child.returncode)
             time.sleep(.1)
@@ -203,7 +210,7 @@ def command(argv, say):
         show(say)
         clear('midi')
         return 0
-    except FileNotFoundError as exc:
+    except MissingFont as exc:
         report(say, 'midi-font', 54, str(exc))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         report(say, 'midi', 53, str(exc))
