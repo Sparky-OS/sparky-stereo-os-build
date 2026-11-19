@@ -1,4 +1,4 @@
-From 0fe2ac1aa8dea2e627f2533f211e6c5f70afef36 Mon Sep 17 00:00:00 2001
+From fc2211a13c57f9528bf6e740fb0d1e533d3c72fb Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Thu, 19 Nov 2026 05:08:39 -0300
 Subject: [PATCH 2/3] Draw the 3D view as one stereo area with two parallel
@@ -13,24 +13,24 @@ through the middle of the mesh stays at the screen.
 The offset is the largest for which every visible vertex stays inside the person's depth
 limits (read through libstereo-declare from the top level's surface and scaled to the
 width of the view), with no setting. The maths is in stereofit.cpp and is tested against
-an independent projection in tests/stereofit-test.cpp. On X11 (Xwayland) the same widget is the stereo area, with the limits read from the declared child window.
+an independent projection in tests/stereofit-test.cpp. Save Image and Copy Image take one eye, the left, at the size of the view. On X11 (Xwayland) the same widget is the stereo area, with the limits read from the declared child window.
 
 
 Assisted-by: Claude Sonnet via Claude Code
 ---
- src/meshview.cpp         | 207 ++++++++++++++++++++++++++++++++++++++-
- src/meshview.h           |  29 ++++++
+ src/meshview.cpp         | 236 ++++++++++++++++++++++++++++++++++++++-
+ src/meshview.h           |  31 +++++
  src/src.pro              |   5 +-
- src/stereofit.cpp        |  64 ++++++++++++
- src/stereofit.h          |  42 ++++++++
- tests/stereofit-test.cpp |  71 ++++++++++++++
- 6 files changed, 416 insertions(+), 2 deletions(-)
+ src/stereofit.cpp        |  64 +++++++++++
+ src/stereofit.h          |  42 +++++++
+ tests/stereofit-test.cpp |  71 ++++++++++++
+ 6 files changed, 446 insertions(+), 3 deletions(-)
  create mode 100644 src/stereofit.cpp
  create mode 100644 src/stereofit.h
  create mode 100644 tests/stereofit-test.cpp
 
 diff --git a/src/meshview.cpp b/src/meshview.cpp
-index b7588ef..2b5d1c2 100644
+index b7588ef..6251393 100644
 --- a/src/meshview.cpp
 +++ b/src/meshview.cpp
 @@ -30,6 +30,23 @@
@@ -40,8 +40,8 @@ index b7588ef..2b5d1c2 100644
 +#include <QWindow>
 +#include <QGuiApplication>
 +#include <QSurfaceFormat>
++#include <X11/Xatom.h>
 +#include <QOpenGLFramebufferObject>
-+#include <QOpenGLExtraFunctions>
 +
 +#include <errno.h>
 +#include <stdio.h>
@@ -57,11 +57,10 @@ index b7588ef..2b5d1c2 100644
  
  #include "fractalpresenter.h"
  #include "datafunctions.h"
-@@ -44,14 +61,43 @@ MeshView::MeshView( QWidget* parent, FractalPresenter* presenter ) : QOpenGLWidg
+@@ -44,8 +61,30 @@ MeshView::MeshView( QWidget* parent, FractalPresenter* presenter ) : QOpenGLWidg
      m_averageHeight( 0.0 ),
      m_rotation( 0.0 ),
      m_angle( -45.0 ),
-+    m_renderTarget( NULL ),
 +    m_stereoSurface( false ),
 +    m_stereoEnabled( true ),
 +    m_renderScale( 1.0 ),
@@ -89,49 +88,63 @@ index b7588ef..2b5d1c2 100644
      setContextMenuPolicy( Qt::PreventContextMenu );
      setFocusPolicy( Qt::WheelFocus );
  }
+@@ -62,9 +101,22 @@ MeshView::~MeshView()
+     delete[] m_textureCoordArray;
+ }
  
- MeshView::~MeshView()
++// The picture that Save Image and Copy Image take of the 3D view: one eye's plain picture (the left eye) at the size of the view,
++// never the pair and never a doubled picture.
+ QImage MeshView::image()
  {
-+    if ( m_renderTarget ) {
-+        makeCurrent();
-+        delete m_renderTarget;
-+        doneCurrent();
-+    }
-+
-     if ( m_textureId != 0 ) {
-         makeCurrent();
-         glDeleteTextures( 1, &m_textureId );
-@@ -261,6 +307,21 @@ static const double FarClipping = 70.0;
+-    return grabFramebuffer();
++    makeCurrent();
++    QSize size( qMax( 1, qRound( width() * devicePixelRatioF() ) ), qMax( 1, qRound( height() * devicePixelRatioF() ) ) );
++    QOpenGLFramebufferObjectFormat format;
++    format.setAttachment( QOpenGLFramebufferObject::CombinedDepthStencil );
++    QOpenGLFramebufferObject target( size, format );
++    target.bind();
++    glViewport( 0, 0, size.width(), size.height() );
++    drawScene( -1 );
++    QImage result = target.toImage().convertToFormat( QImage::Format_RGB32 );
++    target.release();
++    doneCurrent();
++    return result;
+ }
+ 
+ void MeshView::clearView()
+@@ -260,6 +312,16 @@ static const double NearClipping = 10.0;
+ static const double FarClipping = 70.0;
  
  void MeshView::paintGL()
- {
-+    // each eye is drawn at the render resolution (a share of the area's size) and stretched once into the widget's picture
-+    QSize area( qMax( 1, qRound( width() * devicePixelRatioF() ) ), qMax( 1, qRound( height() * devicePixelRatioF() ) ) );
-+    QSize render( qMax( 1, qRound( area.width() * m_renderScale ) ), qMax( 1, qRound( area.height() * m_renderScale ) ) );
-+    bool scaled = render != area;
-+    if ( scaled ) {
-+        if ( !m_renderTarget || m_renderTarget->size() != render ) {
-+            delete m_renderTarget;
-+            QOpenGLFramebufferObjectFormat format;
-+            format.setAttachment( QOpenGLFramebufferObject::CombinedDepthStencil );
-+            m_renderTarget = new QOpenGLFramebufferObject( render, format );
-+        }
-+        m_renderTarget->bind();
-+        glViewport( 0, 0, render.width(), render.height() );
-+    }
++{
++    // Qt calls paintGL() once for each eye of the stereo surface (the left eye when no surface has two views)
++    int eye = 0;
++    if ( m_stereoSurface && context()->format().stereo() )
++        eye = currentTargetBuffer() == QOpenGLWidget::RightBuffer ? 1 : -1;
++    drawScene( eye );
++}
 +
++// the scene seen by one eye (-1 left, 1 right, 0 the middle) into the framebuffer that is bound
++void MeshView::drawScene( int eye )
+ {
      glClearColor( m_backgroundColor.redF(), m_backgroundColor.greenF(), m_backgroundColor.blueF(), m_backgroundColor.alphaF() );
      glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+@@ -306,6 +368,9 @@ void MeshView::paintGL()
+         glTexParameteri( GL_TEXTURE_1D, GL_TEXTURE_WRAP_S, GL_REPEAT );
+     }
  
-@@ -315,14 +376,22 @@ void MeshView::paintGL()
++    // the viewport is the size of this view in device pixels, whatever the framebuffer that is bound had before (EXPLICIT)
++    glViewport( 0, 0, qMax( 1, qRound( width() * devicePixelRatioF() ) ), qMax( 1, qRound( height() * devicePixelRatioF() ) ) );
++
+     GLint viewport[ 4 ];
+     glGetIntegerv( GL_VIEWPORT, viewport );
+ 
+@@ -315,14 +380,19 @@ void MeshView::paintGL()
      double fy = tan( 0.5 * m_settings.cameraZoom() * M_PI / 180.0 ) * NearClipping;
      double fx = fy * vw / vh;
  
 +    // two parallel cameras, one for each eye (Qt calls paintGL() once for each): each is moved sideways by half the offset
 +    // and its frustum is shifted so that the plane through the centre of the mesh, at CameraDistance, stays at the screen
-+    int eye = 0;
-+    if ( m_stereoSurface && context()->format().stereo() )
-+        eye = currentTargetBuffer() == QOpenGLWidget::RightBuffer ? 1 : -1;
 +    double cameraX = eye * 0.5 * eyeOffset( vw, fx );
 +
      glMatrixMode( GL_PROJECTION );
@@ -147,18 +160,11 @@ index b7588ef..2b5d1c2 100644
      glTranslated( 0.0, 0.0, -CameraDistance );
      glRotated( m_angle, 1.0, 0.0, 0.0 );
      glRotated( rotation, 0.0, 0.0, 1.0 );
-@@ -354,6 +423,142 @@ void MeshView::paintGL()
+@@ -354,6 +424,168 @@ void MeshView::paintGL()
  
      if ( hasLockArrays( context() ) )
          p_glUnlockArraysEXT();
 +
-+    if ( scaled ) {
-+        QOpenGLExtraFunctions* f = context()->extraFunctions();
-+        f->glBindFramebuffer( GL_READ_FRAMEBUFFER, m_renderTarget->handle() );
-+        f->glBindFramebuffer( GL_DRAW_FRAMEBUFFER, defaultFramebufferObject( currentTargetBuffer() ) );
-+        f->glBlitFramebuffer( 0, 0, render.width(), render.height(), 0, 0, area.width(), area.height(), GL_COLOR_BUFFER_BIT, GL_LINEAR );
-+        f->glBindFramebuffer( GL_FRAMEBUFFER, defaultFramebufferObject( currentTargetBuffer() ) );
-+    }
 +}
 +
 +void MeshView::setStereoEnabled( bool enabled )
@@ -171,7 +177,39 @@ index b7588ef..2b5d1c2 100644
 +void MeshView::setRenderScale( double scale )
 +{
 +    m_renderScale = scale;
-+    update();
++}
++
++// The window of this view holds each eye at the render resolution; Stereo KWin shows it at the size of the area. Wayland: the
++// viewport destination, through the window's _q_stereo_view_size (logical pixels, the edition's Qt). X11: the declared child's
++// _KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_SIZE (display pixels, declaration support 6 or more).
++void MeshView::setShownSize( const QSize& area )
++{
++    m_shownSize = area;
++    applyShownSize();
++}
++
++void MeshView::applyShownSize()
++{
++    QWindow* handle = windowHandle();
++    if ( !handle )
++        return;
++    handle->setProperty( "_q_stereo_view_size", m_shownSize );
++
++    if ( QGuiApplication::platformName() == QLatin1String( "xcb" ) ) {
++        QPlatformNativeInterface* native = QGuiApplication::platformNativeInterface();
++        Display* display = native ? (Display*)native->nativeResourceForIntegration( "display" ) : NULL;
++        if ( !display )
++            return;
++        Atom atom = XInternAtom( display, "_KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_SIZE", False );
++        if ( m_shownSize.isEmpty() ) {
++            XDeleteProperty( display, (Window)handle->winId(), atom );
++        } else {
++            qreal ratio = devicePixelRatioF();
++            unsigned long size[ 2 ] = { (unsigned long)qRound( m_shownSize.width() * ratio ), (unsigned long)qRound( m_shownSize.height() * ratio ) };
++            XChangeProperty( display, (Window)handle->winId(), atom, XA_CARDINAL, 32, PropModeReplace, (const unsigned char*)size, 2 );
++        }
++        XFlush( display );
++    }
 +}
 +
 +void MeshView::setStereoStatus( const QString& text )
@@ -229,6 +267,7 @@ index b7588ef..2b5d1c2 100644
 +
 +void MeshView::pollLimits()
 +{
++    applyShownSize();
 +    double sunk = 0.0, popped = 0.0;
 +    int result = m_stereoSurface ? readDepthLimits( &sunk, &popped ) : -ENOTSUP;
 +    bool changed = result != m_limitsResult || ( result == 0 && ( sunk != m_sunkLimit || popped != m_poppedLimit ) );
@@ -291,10 +330,10 @@ index b7588ef..2b5d1c2 100644
  
  void MeshView::generateTexture()
 diff --git a/src/meshview.h b/src/meshview.h
-index 7f5eb9c..15912db 100644
+index 7f5eb9c..d08fd73 100644
 --- a/src/meshview.h
 +++ b/src/meshview.h
-@@ -20,11 +20,14 @@
+@@ -20,6 +20,8 @@
  #define MESHVIEW_H
  
  #include <QOpenGLWidget>
@@ -303,19 +342,14 @@ index 7f5eb9c..15912db 100644
  
  #include "abstractview.h"
  #include "datastructures.h"
- 
- class FractalPresenter;
-+class QOpenGLFramebufferObject;
- 
- class MeshView : public QOpenGLWidget, public AbstractView
- {
-@@ -54,6 +57,14 @@ public: // AbstractView implementation
+@@ -54,6 +56,15 @@ public: // AbstractView implementation
  
      void setAnimationState( const AnimationState& state );
  
 +    // the 3D options of the program: whether the two views differ, and the render resolution of each (a fraction of the area)
 +    void setStereoEnabled( bool enabled );
 +    void setRenderScale( double scale );
++    void setShownSize( const QSize& area );
 +
 +signals:
 +    // what the person must be told about the two views ("" when they are given); a sentence in the person's language
@@ -324,7 +358,13 @@ index 7f5eb9c..15912db 100644
  protected: // overrides
      void initializeGL();
      void resizeGL( int width, int height );
-@@ -72,6 +83,11 @@ private:
+@@ -67,11 +78,18 @@ protected: // overrides
+     void keyPressEvent( QKeyEvent* e );
+ 
+ private:
++    void drawScene( int eye );
+     void generateTexture();
+ 
      void initializeVertices();
      void updateVertices( const FractalData* data, const QRect& region );
  
@@ -332,15 +372,16 @@ index 7f5eb9c..15912db 100644
 +    double eyeOffset( double viewWidth, double halfFrustumWidth );
 +    void setStereoStatus( const QString& text );
 +    void pollLimits();
++    void applyShownSize();
 +
  private:
      enum Tracking
      {
-@@ -98,6 +114,19 @@ private:
+@@ -98,6 +116,19 @@ private:
      float* m_textureCoordArray;
      QSize m_resolution;
  
-+    QOpenGLFramebufferObject* m_renderTarget;
++    QSize m_shownSize;
 +    bool m_stereoSurface;
 +    bool m_stereoEnabled;
 +    double m_renderScale;
