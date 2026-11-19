@@ -296,10 +296,10 @@ index 55484dc..12e426d 100644
  # only exported starting from VTK 9.4
  if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN AND NOT ANDROID)
    list(APPEND classes vtkF3DGLXRenderWindow)
-+  option(F3D_WITH_STEREO_DECLARE "Read the depth limits of a stereo window through libstereo-declare 1.10" OFF)
++  option(F3D_WITH_STEREO_DECLARE "Read the depth limits of a stereo window through libstereo-declare 1.11" OFF)
 +  if(F3D_WITH_STEREO_DECLARE)
 +    find_package(PkgConfig REQUIRED)
-+    pkg_check_modules(STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare>=1.10.0)
++    pkg_check_modules(STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare>=1.11.0)
 +  endif()
  endif()
  
@@ -342,7 +342,7 @@ index 5d208b6..ae7ba6c 100644
  #if VTK_VERSION_NUMBER >= VTK_VERSION_CHECK(9, 5, 20251009)
  #include "vtkX11Functions.h"
  #else
-@@ -40,6 +47,63 @@ void vtkF3DGLXRenderWindow::Start()
+@@ -40,6 +47,70 @@ void vtkF3DGLXRenderWindow::Start()
    this->Superclass::Start();
  }
  
@@ -385,8 +385,15 @@ index 5d208b6..ae7ba6c 100644
 +        XFree(data);
 +      }
 +    }
++    // the conversion is libstereo-declare's (1.11): the output the window is on, never the whole X layout
++    const struct stereo_depth_limits unit = { 1.0, 1.0 };
++    struct stereo_depth_limits perLimit = { 0.0, 0.0 };
++    double outputWidth = 0.0;
 +    this->StereoDepthBufferPerLimit =
-+      shown > 0 ? DisplayWidth(this->DisplayId, DefaultScreen(this->DisplayId)) / 1920.0 * this->Size[0] / shown : 0.0;
++      (shown > 0 && stereo_depth_x11_output_width(this->DisplayId, this->WindowId, &outputWidth) == 0 &&
++        stereo_depth_limits_for_buffer(&unit, outputWidth, this->Size[0], shown, &perLimit) == 0)
++      ? perLimit.sunk
++      : 0.0;
 +  }
 +  else if (r == -ENODATA)
 +  {

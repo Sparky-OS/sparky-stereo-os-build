@@ -15,5 +15,5 @@ Path('debian/rules').write_text(rules)
 control = Path('debian/control').read_text()
 old = ' libqt5opengl5-dev,\n'
 assert old in control, 'Debian control changed'
-control = control.replace(old, old + ' libqt5x11extras5-dev,\n libstereo-declare-dev (>= 1.10.0),\n', 1)
+control = control.replace(old, old + ' libqt5x11extras5-dev,\n libstereo-declare-dev (>= 1.11.0),\n', 1)
 Path('debian/control').write_text(control)
