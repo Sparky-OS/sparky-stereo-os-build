@@ -13,9 +13,9 @@ docker run --name "${SPARKY_CONTAINER_PREFIX:-x265}-x265-package" --pull=never \
     "${SPARKY_PROV_ARGS[@]}" -e DEB_BUILD_OPTIONS=parallel=4 \
     -e DEBFULLNAME='Daniel Ramos (Capitain Jack)' -e DEBEMAIL=Capitain_Jack@yahoo.com \
     -e SPARKY_LC_ARCHIVE_CONFIG=/recipe/archive-sources.json -e SPARKY_LC_SCRATCH=/work/link-x265 \
-    -e SPARKY_LC_SIBLINGS_FILE=/work/siblings.txt -e SPARKY_LC_PREVIOUS_DIR=/work/previous-x265 \
+    -e SPARKY_LC_SIBLINGS_FILE=/work/siblings-x265.txt -e SPARKY_LC_PREVIOUS_DIR=/work/previous-x265 \
     --mount "type=bind,src=$WORK,dst=/work" --mount "type=bind,src=$REPO,dst=/repo,readonly" \
     --mount "type=bind,src=$HERE,dst=/recipe,readonly" \
     --mount type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/host-ca.crt,readonly \
     --mount "type=bind,src=$HERE/../../../tools/https-only-apt.sh,dst=/run/https-only-apt.sh,readonly" \
-    "$1" bash -c 'set -eu; ulimit -c 0; sh /run/https-only-apt.sh; export DEBIAN_FRONTEND=noninteractive; apt-get -y --no-install-recommends build-dep /work/x265-build/x265-dmo-4.3; id builder >/dev/null 2>&1 || useradd --uid 1000 --no-create-home builder; cd /work/x265-build/x265-dmo-4.3; runuser -u builder -- dpkg-buildpackage -us -uc -sa -j4; cd ..; PYTHONPATH=$(pwd)/x265-dmo-4.3/debian/sparky-lean-toolkit python3 -m lean.release check-debs ./*.deb'
+    "$1" bash -c 'set -eu; ulimit -c 0; sh /run/https-only-apt.sh; export DEBIAN_FRONTEND=noninteractive; apt-get -y --no-install-recommends build-dep /work/x265-build/x265-dmo-4.3; id builder >/dev/null 2>&1 || useradd --uid 1000 --no-create-home builder; cd /work/x265-build/x265-dmo-4.3; runuser -u builder -- dpkg-buildpackage -us -uc -sa -j4; python3 /recipe/check-built.py /work/x265-build/x265-dmo-4.3'

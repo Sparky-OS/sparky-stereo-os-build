@@ -28,10 +28,10 @@ for patch in patches:
 series.write_text(series.read_text().rstrip() + '\n' + '\n'.join(p.name for p in patches) + '\n')
 subprocess.run(['quilt', 'push', '-a'], cwd=source, env=env, check=True)
 control = source / 'debian/control'
-control.write_text(control.read_text().replace('libx265-dev (>= 1:3.5)', 'libx265-dev (>= 1:4.3-dmo1+stereo3d1+lc1)'))
+control.write_text(control.read_text().replace('libx265-dev (>= 1:3.5)', 'libx265-dev (>= 1:4.3-dmo1+stereo3d2+lc1)'))
 subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', '10:9.0.2-dmo1+stereo3d16',
                 '--distribution', 'UNRELEASED',
-                'Import the HandBrake 1.11.2 FFmpeg fixes into the shared edition libraries; build against x265 ABI 219.'],
+                'Import the HandBrake 1.11.2 FFmpeg fixes into the shared edition libraries; build against x265 ABI 30219.'],
                cwd=source, env=env, check=True)
 subprocess.run([sys.executable, '-m', 'lean.debian_prepare', str(source), '10:9.0.2-dmo1+stereo3d16+lc1',
                 '--toolkit', str(toolkit), '--preserve-plan', str(plan)], env=env, check=True)
