@@ -26,6 +26,14 @@ import subprocess
 import sys
 import tempfile
 
+# The installed library is beside the engine, with a source-tree path for tests.
+_lib = os.environ.get('SPARKY_STEREO_AUDIO_ROOT', '') + '/usr/lib/sparky-stereo-audio'
+if not os.path.isdir(_lib):
+    _lib = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'lib')
+sys.path.insert(0, _lib)
+import session
+from surround import eld_formats
+
 TAG = 'sparky-stereo-audio'
 NAME = '00-sparky-stereo-audio.conf'
 MARK = '# sparky-stereo-audio: written by sparky-stereo-audio, regenerated when a sound device comes or goes'
@@ -106,7 +114,7 @@ def parse_eld(text):
         b = re.search(r'^sad%d_bits\s+\[[^\]]*\]([^\n]*)' % i, text, re.M)
         rates |= set(ints(r.group(1))) if r else set()
         bits |= set(ints(b.group(1))) if b else set()
-    return {'name': (mon.group(1).strip() if mon else 'display'), 'rates': sorted(rates), 'bits': sorted(bits)}
+    return {'name': (mon.group(1).strip() if mon else 'display'), 'rates': sorted(rates), 'bits': sorted(bits), 'codecs': eld_formats(text)}
 
 
 def parse_usb_stream(text):
@@ -173,7 +181,7 @@ def scan(proc=None):
                         rates = sorted(set(e['rates']) & conv) if conv else e['rates']
                         bits = e['bits']
                         if rates:
-                            card['outputs'].append({'label': e['name'], 'rates': rates, 'bits': bits})
+                            card['outputs'].append({'label': e['name'], 'rates': rates, 'bits': bits, 'codecs': e['codecs']})
         elif streams:
             card['kind'] = 'usb'
             for sp in streams:
@@ -329,6 +337,7 @@ def stream_file(quality):
         '# Your own file wins, as for the rates.',
         'stream.properties = {',
         '    resample.quality = %d' % quality,
+        '    channelmix.upmix = false',
         '}', ''])
 
 
@@ -530,6 +539,8 @@ def show(d=None):
             any_dev = True
             bits = say(6, bits_note(o)) if o['bits'] and max(o['bits']) > 16 else say(7)
             print(say(5, '%s (%s)' % (o['label'], c['name']), fmt_rates(o['rates']), bits))
+            if 'codecs' in o:
+                print(say(31, o['label'], ' '.join(o['codecs']), ' '.join(o['codecs'])))
     if not any_dev:
         print(say(15))
     for cid in d['unreadable']:
@@ -623,12 +634,21 @@ def cmd_apply():
 def main(argv):
     if not argv or argv[0] in ('-h', '--help'):
         print(__doc__)
+        print(say(30))
         return 0
     cmd = argv[0]
     if cmd == 'detect':
         return cmd_detect('--write' in argv[1:])
     if cmd == 'show':
-        return show()
+        rc = show()
+        session.show(say)
+        return rc
+    if cmd == 'passthrough':
+        return session.passthrough(argv[1:], say)
+    if cmd == 'monitor':
+        return session.monitor(say)
+    if cmd == 'surround':
+        return session.configure(argv[1:], say)
     if cmd == 'apply':
         return cmd_apply()
     print(__doc__, file=sys.stderr)
