@@ -16,6 +16,8 @@ dpkg-source -x krdp_6.7.4-1+stereo3d9.dsc source
 printf '[{"uri":"https://deb.debian.org/debian","suite":"forky","components":["main"],"keyring":"/usr/share/keyrings/debian-archive-keyring.gpg"},{"uri":"https://www.deb-multimedia.org","suite":"forky","components":["main","non-free"],"keyring":"/usr/share/keyrings/deb-multimedia-keyring.pgp"},{"uri":"file:/repo","suite":"mashtabba","components":["main"],"keyring":"/repo/sparky-stereo-repo.asc"}]\n' > "$job/archive.json"
 export SPARKY_LC_ARCHIVE_CONFIG="$job/archive.json" SPARKY_LC_SCRATCH="$job/link-scratch" SPARKY_LC_PREVIOUS_DIR=/repo/pool/main/k/krdp
 mkdir -p "$SPARKY_LC_SCRATCH"
+export SPARKY_LC_SIBLINGS_FILE="$job/siblings.txt"
+find /work/linux/kpw-package -maxdepth 1 -name "*.deb" ! -name "*-dbgsym_*" ! -name "*-lc-hr_*" -print | sort > "$SPARKY_LC_SIBLINGS_FILE"
 chown -R builder:builder "$job"
 cd source
 export HOME="$job"
