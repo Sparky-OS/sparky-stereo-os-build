@@ -33,11 +33,12 @@ diff --git a/src/meshview.cpp b/src/meshview.cpp
 index b7588ef..6251393 100644
 --- a/src/meshview.cpp
 +++ b/src/meshview.cpp
-@@ -30,6 +30,23 @@
+@@ -30,6 +30,24 @@
  #include <QOpenGLContext>
  #include <QWheelEvent>
  #include <QKeyEvent>
 +#include <QWindow>
++#include <QScreen>
 +#include <QGuiApplication>
 +#include <QSurfaceFormat>
 +#include <X11/Xatom.h>
@@ -300,7 +301,7 @@ index b7588ef..6251393 100644
 +}
 +
 +// The largest camera offset for which every vertex of the visible mesh stays inside the person's limits, one rule and no setting.
-+// The limits are pixels of a view 1920 wide and are scaled to the width of this view.
++// The limits are pixels of a view 1920 wide of the screen: the screen's width over 1920, times the share of the shown picture this view's buffer holds when it is rendered smaller; never the view's own width.
 +double MeshView::eyeOffset( double viewWidth, double halfFrustumWidth )
 +{
 +    if ( !m_stereoEnabled || !m_haveLimits || m_resolution.isEmpty() || !m_vertexArray )
@@ -317,7 +318,7 @@ index b7588ef..6251393 100644
 +    scene.farClipping = FarClipping;
 +
 +    double focal = 0.5 * viewWidth * NearClipping / halfFrustumWidth;
-+    double scale = viewWidth / 1920.0;
++    double scale = ( screen() ? screen()->geometry().width() * devicePixelRatioF() : 0.0 ) / 1920.0 * ( m_shownSize.isEmpty() ? 1.0 : viewWidth / ( m_shownSize.width() * devicePixelRatioF() ) );
 +    double farthest = 0.0, nearest = 0.0;
 +    double offset = stereoFitOffset( m_vertexArray, m_resolution.width() * m_resolution.height(), scene, focal, m_sunkLimit * scale, m_poppedLimit * scale, &farthest, &nearest );
 +    if ( fabs( offset - m_offset ) > 0.01 * offset ) {
