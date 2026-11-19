@@ -276,6 +276,8 @@ SimpleEventHook {
             ["node.description"] = tp["node.description"] or tp["node.name"],
             ["filter.graph"] = graph(layout, filename, kind),
             ["capture.props"] = { ["node.name"]=name, ["media.class"]="Audio/Sink", ["node.virtual"]=true,
+              ["sparky.audio.output"]=tp["node.name"], ["sparky.audio.profile"]=filename,
+              ["sparky.audio.kind"]=matrix and "matrix" or kind,
               ["priority.session"]=-1000, ["audio.channels"]=#layouts[layout], ["audio.position"]=layouts[layout] },
             ["playback.props"] = { ["node.name"]=name..".output", ["node.passive"]=true,
               ["node.dont-fallback"]=true, ["node.linger"]=true, ["target.object"]=tp["node.name"],
@@ -340,3 +342,55 @@ Settings.subscribe("sparky.audio.outputs", function()
   local source = Plugin.find("standard-event-source")
   source:call("schedule-rescan", "linking")
 end)
+
+-- The standard hook's SiLink can fail before any public PipeWire Link is
+-- exported. Own only IEC958 playback activation so that failure is reported.
+-- Registration and flags follow linking/link-target.lua, Collabora, MIT.
+SimpleEventHook {
+  name="sparky-audio/encoded-link",
+  after="linking/prepare-link",
+  before="linking/link-target",
+  interests={EventInterest {Constraint {"event.type","=","select-target"}}},
+  execute=function(event)
+    local source,om,si,p,flags,target=lutils:unwrap_select_target_event(event)
+    if not target or p["media.class"] ~= "Stream/Output/Audio" or not flags.can_passthrough then return end
+    local node=si:get_associated_proxy("node")
+    local codec=nil
+    for pod in node:iterate_params("EnumFormat") do
+      local f=cutils.parseParam(pod,"EnumFormat")
+      if f and f.mediaSubtype == "iec958" and type(f.iec958Codec) == "string" then codec=f.iec958Codec;break end
+    end
+    if not codec then return end
+    local name=target.properties["node.name"]
+    local function notice(cause)
+      local metadata=cutils.get_default_metadata_object()
+      if metadata then
+        metadata:set(0,"sparky.audio.passthrough."..name..":"..codec,cause and "Spa:String:JSON" or nil,
+          cause and Json.Object {output=name,codec=codec,cause=cause}:to_string() or nil)
+      end
+    end
+    event:stop_processing()
+    if flags.failed_peer_id == target.id and (flags.failed_count or 0) > 5 then return end
+    local link=SessionItem("si-standard-link")
+    if not link:configure {
+      ["out.item"]=si,["in.item"]=target,["passthrough"]=true,
+      ["exclusive"]=cutils.parseBool(p["node.exclusive"]),
+      ["out.item.port.context"]="output",["in.item.port.context"]="input",
+      ["main.item.id"]=si.id,["target.item.id"]=target.id,
+    } then notice("link-configure-failed");return end
+    link:connect("link-error",function(_,message)
+      notice(message)
+      lutils.sendClientError(event,node,-32,message)
+    end)
+    flags.was_handled=true;flags.peer_id=target.id;flags.failed_peer_id=target.id
+    flags.failed_count=(flags.failed_count or 0)+1
+    link:register()
+    link:activate(Feature.SessionItem.ACTIVE,function(l,error)
+      if error then
+        notice(tostring(error));flags.peer_id=nil;l:remove()
+      else
+        notice(nil);flags.failed_peer_id=nil;flags.failed_count=0
+      end
+    end)
+  end,
+}:register()

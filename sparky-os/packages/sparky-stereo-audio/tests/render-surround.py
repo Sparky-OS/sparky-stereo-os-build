@@ -90,7 +90,7 @@ def main():
             'context.properties': {'default.clock.allowed-rates': [44100, 48000, 96000]},
             'context.objects': [{'factory': 'adapter', 'args': {
                 'factory.name': 'support.null-audio-sink', 'node.name': 'as21-headphones',
-                'media.class': 'Audio/Sink', 'device.form-factor': 'speaker' if len(target_positions) > 2 else 'headphone',
+                'media.class': 'Audio/Sink', 'device.form-factor': os.environ.get('AS21_DEVICE_FORM') or ('speaker' if len(target_positions) > 2 else 'headphone'),
                 'audio.position': target_positions, 'audio.channels': len(target_positions)}}]}))
         automatic = os.environ.get('AS21_AUTOMATIC') == '1'
         if automatic and os.environ.get('AS21_BASELINE') != '1' and os.environ.get('AS21_INSTALLED') != '1':
@@ -121,9 +121,12 @@ def main():
                 problems=json.loads(subprocess.check_output(['sparky-stereo-problems','list','--json','sparky-stereo-audio'],text=True))
                 assert 'options' in json.dumps(problems), problems
                 subprocess.run([engine,'surround','--output','as21-headphones','--layout','5.1','--headphones','yes'],check=True)
+                wait_for(lambda: any('as21-headphones' in path.read_text(errors='replace') for path in (root/'state').rglob('*') if path.is_file()))
+                time.sleep(2)
+                Path('/evidence/settings-state-before-restart.json').write_text(json.dumps({str(path.relative_to(root)):path.read_text(errors='replace') for path in (root/'state').rglob('*') if path.is_file()},indent=2))
                 wp.terminate();wp.wait(timeout=5)
                 wp=start(['wireplumber'],'wireplumber-restarted')
-                wait_for(lambda: subprocess.run(['wpctl','settings','sparky.audio.outputs'],capture_output=True,text=True).returncode == 0)
+                wait_for(lambda: '5.1' in subprocess.run(['wpctl','settings','sparky.audio.outputs'],capture_output=True,text=True).stdout)
                 saved=subprocess.check_output(['wpctl','settings','sparky.audio.outputs'],text=True)
                 assert '5.1' in saved and 'as21-headphones' in saved,saved
                 readouts={}
@@ -141,8 +144,12 @@ def main():
                         wav.setnchannels(14); wav.setsampwidth(2); wav.setframerate(48000); wav.writeframes(data.tobytes())
                 else: shutil.copyfile(s.KEMAR, filename)
                 subprocess.run([engine, 'surround', '--output', 'as21-headphones', '--profile', str(filename), '--kind', 'hesuvi' if profile == 'hesuvi' else 'sofa'], check=True, timeout=15)
+            if os.environ.get('AS21_BAD_HRTF') == '1':
+                start([engine,'monitor'],'problems-monitor')
+                filename.unlink()
             layout = os.environ.get('AS21_LAYOUT', '5.1')
             mode = os.environ.get('AS21_MODE', 'surround')
+            if mode == 'unknown': start([engine,'monitor'],'problems-monitor')
             positions = ['FL', 'FR'] if mode in ('stereo', 'decode', 'upmix', 'direct-stereo') else s.LAYOUTS[layout]
             if mode in ('decode', 'upmix'):
                 command = [engine, 'surround',
@@ -182,6 +189,25 @@ def main():
                     time.sleep(0.3)
                     if automatic:
                         Path('/evidence/automatic-graph.json').write_text(subprocess.check_output(['pw-dump'], text=True))
+                    if mode == 'unknown':
+                        def unknown():
+                            data=json.loads(subprocess.check_output(['sparky-stereo-problems','list','--json','sparky-stereo-audio'],text=True))
+                            return data if 'LOCAL40' in json.dumps(data) else None
+                        problem=wait_for(unknown)
+                        assert not any(n['info']['props'].get('node.name','').startswith('sparky.audio.') for n in nodes())
+                        subprocess.run([engine,'surround','--output','as21-headphones','--headphones','yes'],check=True)
+                        wait_for(lambda:any(n['info']['props'].get('node.name','').startswith('sparky.audio.') for n in nodes()))
+                        results.append({'unknown_output_reported':True,'explicit_headphone_override_created_filter':True,'problem':problem})
+                        player.terminate();rec.send_signal(signal.SIGINT);rec.wait(timeout=5)
+                        break
+                    if os.environ.get('AS21_BAD_HRTF') == '1':
+                        def failed():
+                            data=json.loads(subprocess.check_output(['sparky-stereo-problems','list','--json','sparky-stereo-audio'],text=True))
+                            return data if 'surround:as21-headphones' in json.dumps(data) else None
+                        problem=wait_for(failed)
+                        results.append({'missing_response_reported':True,'problem':problem})
+                        player.terminate();rec.send_signal(signal.SIGINT);rec.wait(timeout=5)
+                        break
                     if mode == 'unplug':
                         ident=next(n['id'] for n in nodes() if n['info']['props'].get('node.name') == 'as21-headphones')
                         subprocess.run(['pw-cli','destroy',str(ident)],check=True)

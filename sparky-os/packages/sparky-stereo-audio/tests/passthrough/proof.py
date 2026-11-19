@@ -69,16 +69,25 @@ pcm.!hdmi {
     conf=root/'config/pipewire/pipewire.conf.d';conf.mkdir(parents=True)
     objects=[]
     descriptors={}
-    for name,codes in [('encoded',[2,7]),('pcm',[])]:
-      text=eld(codes);descriptors[name]=text
+    fixtures=json.loads((HERE/'cta-fixtures.json').read_text())
+    for name,fixture in fixtures.items():
+      block=bytes.fromhex(fixture['audio_data_block_hex'])
+      assert block[0] >> 5 == 1 and block[0] & 31 == len(block)-1
+      sads=[block[i:i+3] for i in range(1,len(block),3)]
+      codes=[sad[0] >> 3 & 15 for sad in sads if sad[0] >> 3 & 15 != 1]
+      assert codes == fixture['encoded_codes']
+      # The fixture supplies the ELD view that ALSA's connector monitor exports.
+      # The independent block bytes are retained so capability provenance is explicit.
+      text=eld(codes);descriptors[name]={'cta_audio_data_block_hex':block.hex(),'eld':text}
       (root/(name+'.eld')).write_text(text)
       objects.append({'factory':'adapter','args':{
        'factory.name':'api.alsa.pcm.sink','node.name':'as21-'+name,'media.class':'Audio/Sink',
        'api.alsa.path':'hdmi:CARD='+name+',DEV=0','api.alsa.disable-mmap':True,
        'audio.position':['FL','FR'],'iec958.codecs':['PCM']+s.eld_formats(text),
+       'iec958.codecs.detected':json.dumps(s.eld_formats(text)),
        'session.suspend-timeout-seconds':0}})
     (conf/'fake-hdmi.conf').write_text(json.dumps({'context.objects':objects},indent=2))
-    if os.environ.get('AS21_BASELINE') != '1':
+    if os.environ.get('AS21_BASELINE') != '1' and os.environ.get('AS21_INSTALLED') != '1':
       wpconf=root/'config/wireplumber/wireplumber.conf.d';wpconf.mkdir(parents=True)
       source_dir=HERE.parents[1]/'wireplumber'
       text=(source_dir/'00-sparky-stereo-surround.conf').read_text()
@@ -101,6 +110,31 @@ pcm.!hdmi {
       wait(lambda:len([o for o in nodes() if o.get('info',{}).get('props',{}).get('node.name','').startswith('as21-')])==2)
       Path('/evidence/passthrough-initial-graph.json').write_text(json.dumps(nodes(),indent=2))
       Path('/evidence/passthrough-pulse-sinks.json').write_text(subprocess.check_output(['pactl','--format=json','list','sinks'],text=True))
+      engine='/usr/bin/sparky-stereo-audio' if os.environ.get('AS21_INSTALLED') == '1' else str(HERE.parents[1]/'bin/sparky-stereo-audio')
+      start([engine,'monitor'],'monitor')
+      if os.environ.get('AS21_REJECT') == '1': start(['pw-dump','-m'],'failure-events')
+      if os.environ.get('AS21_REJECT') == '1':
+        proc=start([str(client),'as21-encoded',str(spdif),str(decoded),'ac3'],'refused-client')
+        def problem():
+          data=json.loads(subprocess.check_output(['sparky-stereo-problems','list','--json','sparky-stereo-audio'],text=True))
+          return data if 'passthrough:as21-encoded' in json.dumps(data) else None
+        try:
+          kept=wait(problem)
+        except AssertionError:
+          Path('/evidence/passthrough-refusal-graph.json').write_text(json.dumps(nodes(),indent=2))
+          raise
+        Path('/evidence/passthrough-refusal-problem.json').write_text(json.dumps(kept,indent=2)+'\n')
+        print(json.dumps(kept,indent=2));return
+      if os.environ.get('AS21_INSTALLED') == '1':
+        run(engine,'passthrough','--output','as21-encoded','--codec','DTS=off')
+        formats=lambda: next(x['formats'] for x in json.loads(subprocess.check_output(['pactl','--format=json','list','sinks'],text=True)) if x['name']=='as21-encoded')
+        assert 'dts-iec61937' not in json.dumps(formats())
+        assert 'ac3-iec61937' in json.dumps(formats())
+        run(engine,'passthrough','--output','as21-encoded','--codec','DTS=auto')
+        assert 'dts-iec61937' in json.dumps(formats())
+        run(engine,'passthrough','--output','as21-pcm','--codec','AC3=auto')
+        pcm=next(x for x in json.loads(subprocess.check_output(['pactl','--format=json','list','sinks'],text=True)) if x['name']=='as21-pcm')
+        assert 'ac3-iec61937' not in json.dumps(pcm['formats'])
       results=[]
       for name in ('encoded','pcm'):
         proc=subprocess.Popen([str(client),'as21-'+name,str(spdif),str(decoded),'ac3'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)

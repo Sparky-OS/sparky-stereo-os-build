@@ -244,7 +244,7 @@ def monitor(say):
     utf8 = codecs.getincrementaldecoder('utf-8')()
     buffer = ''
     previous = {}
-    cache, last_codec, codec_notices = {}, {}, {}
+    cache, last_codec, codec_notices, filter_notices, checked_profiles = {}, {}, {}, {}, set()
     try:
         while chunk := process.stdout.read1(65536):
             buffer += utf8.decode(chunk)
@@ -257,9 +257,10 @@ def monitor(say):
                 buffer = buffer[end:]
                 for obj in objects:
                     ident = obj.get('id')
-                    if set(obj) == {'id'}:
+                    if set(obj) == {'id'} or ('info' in obj and obj['info'] is None):
                         cache.pop(ident, None)
                         last_codec.pop(ident, None)
+                        checked_profiles.discard(ident)
                         continue
                     saved = cache.setdefault(ident, {})
                     for field, value in obj.items():
@@ -281,6 +282,23 @@ def monitor(say):
                     if fmt.get('mediaSubtype') == 'iec958':
                         last_codec[info.get('input-node-id')] = fmt.get('iec958Codec', 'IEC61937')
                 for ident, obj in list(cache.items()):
+                    info=obj.get('info',{})
+                    props=info.get('props',{})
+                    output=props.get('sparky.audio.output')
+                    kind=props.get('sparky.audio.kind')
+                    if output and ident not in checked_profiles and kind in ('sofa','hesuvi'):
+                        checked_profiles.add(ident)
+                        try:
+                            validate_profile(props.get('sparky.audio.profile',''),kind)
+                        except (OSError,ValueError,subprocess.SubprocessError) as error:
+                            detail=str(props.get('sparky.audio.profile',''))+': '+str(error)
+                            report(say,'surround:'+output,27,detail)
+                            filter_notices[output]=detail
+                    if output and info.get('state') == 'error':
+                        detail=str(props.get('sparky.audio.profile',''))+': '+str(info.get('error','filter-error'))
+                        if filter_notices.get(output) != detail:
+                            report(say,'surround:'+output,27,detail)
+                            filter_notices[output]=detail
                     if obj.get('type') != 'PipeWire:Interface:Node' or ident not in last_codec:
                         continue
                     info = obj.get('info', {})
@@ -302,6 +320,20 @@ def monitor(say):
                         continue
                     for entry in obj.get('metadata', []):
                         key = entry.get('key', '')
+                        if key.startswith('sparky.audio.passthrough.'):
+                            value=entry.get('value')
+                            if key in previous and previous[key] == value:
+                                continue
+                            previous[key]=value
+                            problem_key='passthrough:'+key.removeprefix('sparky.audio.passthrough.')
+                            if value:
+                                detail=str(value.get('codec','IEC61937'))+': '+str(value.get('cause',''))
+                                print(say(41,value.get('output',''),detail),flush=True)
+                                command=['sparky-stereo-problems','keep','sparky-stereo-audio',problem_key,'LOCAL41',value.get('output',''),detail]
+                            else:
+                                command=['sparky-stereo-problems','clear','sparky-stereo-audio',problem_key]
+                            subprocess.run(command,check=True)
+                            continue
                         if not key.startswith('sparky.audio.problem.'):
                             continue
                         value = entry.get('value')
