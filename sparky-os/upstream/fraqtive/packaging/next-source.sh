@@ -10,7 +10,7 @@
 #   /recipe = this folder's parent)
 #   OUT receives the +lc1 .dsc, its Debian tarball and the orig tarball, and plain/ with the same source before Lean Code.
 set -euo pipefail
-: "${SOURCE_DATE_EPOCH:?the date of this source is its recipe's, never the clock}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
+: "${SOURCE_DATE_EPOCH:?the date of this source belongs to its recipe, never to the clock}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 OUT=$1
 [ -z "$(ls -A "$OUT" 2>/dev/null)" ] || { echo "$OUT is not empty" >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
