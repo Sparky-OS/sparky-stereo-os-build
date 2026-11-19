@@ -7,7 +7,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 export SPARKY_PROVENANCE_REQUIRED=1
 sparky_provenance_init fh740h-linux:2 "$here"
 docker run --name fh740h-krdp-package --pull=never --platform linux/amd64 --ulimit core=0 --cpus=4 \
- --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+ --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
  "${SPARKY_PROV_ARGS[@]}" \
  --mount type=bind,source=/var/tmp/flat-headset-hevc-740,target=/work \
  --mount type=bind,source=/K3D/sparky-repo-r1117a,target=/repo,readonly \

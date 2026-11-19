@@ -5,7 +5,7 @@ set -euo pipefail
 unset DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS XAUTHORITY
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 export DEB_BUILD_OPTIONS=parallel=4
-job=/work/linux/package-c
+job=/work/linux/package-d
 mkdir -p "$job"
 trap 'chown -R 1000:1000 "$job"' EXIT
 id builder >/dev/null 2>&1 || useradd --uid 1000 --no-create-home builder
@@ -18,5 +18,6 @@ export SPARKY_LC_ARCHIVE_CONFIG="$job/archive.json" SPARKY_LC_SCRATCH="$job/link
 mkdir -p "$SPARKY_LC_SCRATCH"
 chown -R builder:builder "$job"
 cd source
+export HOME="$job"
 runuser -u builder --preserve-environment -- dpkg-buildpackage -b -us -uc -j4
 PYTHONPATH=/work/src/sparky-stereo-os-build/sparky-os python3 -m lean.release check-debs "$job/"*.deb
