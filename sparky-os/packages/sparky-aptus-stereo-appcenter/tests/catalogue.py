@@ -11,6 +11,10 @@ rows=json.loads(catalogue.read_text())
 known={s for name in ('image.list','apps.list','emulation-3d.list','gaming.list') for s in lines(name)}
 known.update(s.split()[0] for s in lines('roles.tsv'))
 known.add('vlc-stereo') # make-meta.py: OURS_PLAYER
+# ORDER 501 offers the packaged scan program before the accepted designer/creator role changes.
+control=Path(__file__).resolve().parents[2]/'spirula-studio/debian/control'
+assert '\nPackage: spirula-studio\n' in control.read_text()
+known.add('spirula-studio')
 # the VPN and Tools sections (ORDER 252c) are what the person may add from Debian: their packages are on no image list on
 # purpose (the plain VPN plugins the image already carries are on system.list)
 offered={row['package'] for row in rows if row['kind']=='apt' and row['section'] in ('vpn','tools')}

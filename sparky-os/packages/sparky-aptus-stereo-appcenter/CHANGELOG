@@ -1,3 +1,9 @@
+0.1.17 (2026-11-18)
+  * Merge current AppCenter master b4b9dec with ORDER 501 profiles, preserving all entries and ten language keys.
+  * Add Spirula Studio and independently selectable installer-owned model profiles, with pinned size, licence, metering and purge notices.
+  * Keep Depends, Recommends and Pre-Depends equal to 0.1.16; entry tools arrive only with their entry.
+  * Set the AppCenter source pointer to merged order501 5247c6c9b3c37b2e3a4ea0c9053b29767b91992c.
+
 0.1.16 (2026-11-18)
   * ORDER 25: Phone as a camera, a package entry of Graphics, Others (`kind: apt`, `sizes: true`), beside Kamoso and Webcamoid in Pawel's page of both trees. It installs sparky-stereo-phone-camera, which depends on DroidCam's client (droidcam), scrcpy (its camera mode, the fully open way), adb and v4l2loopback-dkms; the app center depends on none of them, so the upgrade from 0.1.15 installs one package.
   * The card says in the ten languages what each program is and what the phone needs (the DroidCam app from the phone's own store; USB debugging and Android 12 or newer for scrcpy), that scrcpy's package fetches its small phone-side server from the project's release page and checks its SHA-256, and that the phone appears as the camera "Phone camera". New test: stereo/tests/phonecamera.py (8 cases).
