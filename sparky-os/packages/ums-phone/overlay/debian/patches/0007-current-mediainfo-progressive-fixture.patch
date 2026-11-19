@@ -1,0 +1,18 @@
+Description: Expect current MediaInfo's progressive scan report for the HEVC fixture
+ All 400 decoded video frames report interlaced_frame=0. Retain the complete
+ metadata assertion, including the additional scan-type field.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-19
+
+--- a/src/test/java/net/pms/parsers/MediaInfoParserTest.java
++++ b/src/test/java/net/pms/parsers/MediaInfoParserTest.java
+@@ -136,7 +136,7 @@
+ 			getTestFileMediaInfo("video-mpeg4-aac.mkv").toString()
+ 		);
+ 		assertEquals(
+-			"Container: MKV, Size: 5291494, Overall Bitrate: 2619551, Duration: 0:00:16.160, Video Tracks: 1 [Video Id: 0, Default, Codec: h265, Format Profile: main, Format Level: 4, Format Tier: main, Stream Order: 0, Duration: 0:00:16.160, Resolution: 1920 x 960, Display Aspect Ratio: 2.00:1, Frame Rate: 25.0, Frame Rate Mode: CFR (CFR), Matrix Coefficients: BT.709], Audio Tracks: 1 [Audio Id: 0, Default, Title: Stereo, Language Code: eng, Codec: AAC-LC, Stream Order: 1, Bitrate: 0, Channels: 2, Sample Frequency: 48000 Hz, Video Delay: -21], Mime Type: video/x-matroska",
++			"Container: MKV, Size: 5291494, Overall Bitrate: 2619551, Duration: 0:00:16.160, Video Tracks: 1 [Video Id: 0, Default, Codec: h265, Format Profile: main, Format Level: 4, Format Tier: main, Stream Order: 0, Duration: 0:00:16.160, Resolution: 1920 x 960, Display Aspect Ratio: 2.00:1, Scan Type: Progressive, Frame Rate: 25.0, Frame Rate Mode: CFR (CFR), Matrix Coefficients: BT.709], Audio Tracks: 1 [Audio Id: 0, Default, Title: Stereo, Language Code: eng, Codec: AAC-LC, Stream Order: 1, Bitrate: 0, Channels: 2, Sample Frequency: 48000 Hz, Video Delay: -21], Mime Type: video/x-matroska",
+ 			getTestFileMediaInfo("video-h265-aac.mkv").toString()
+ 		);
+ 		assertEquals(
