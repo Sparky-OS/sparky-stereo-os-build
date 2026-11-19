@@ -1,13 +1,13 @@
-Description: Speaker Setup, a page for every playback device with more than two channels: levels, distances as delays, bass management and a pink noise test signal; and the format in use on the device rows
+Description: Speaker Setup, a page for every playback device with more than two channels: a level that is the device channel volume, distances as delays, bass management and a pink noise test signal; and the format in use on the device rows
 Author: Daniel Campos Ramos
 Origin: vendor
 Forwarded: no
 
 diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
-index d4bb5ace..de7ab9c7 100644
+index d4bb5ace..88d62a59 100644
 --- a/autotests/CMakeLists.txt
 +++ b/autotests/CMakeLists.txt
-@@ -19,3 +19,17 @@ ecm_add_test(
+@@ -19,3 +19,24 @@ ecm_add_test(
      LINK_LIBRARIES Qt6::Test Qt6::Core
  )
  target_include_directories(soundformatconftest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
@@ -25,12 +25,88 @@ index d4bb5ace..de7ab9c7 100644
 +    LINK_LIBRARIES Qt6::Test Qt6::Core
 +)
 +target_include_directories(speakertestsignaltest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
++
++ecm_add_test(
++    speakerlevelmathtest.cpp
++    TEST_NAME speakerlevelmathtest
++    LINK_LIBRARIES Qt6::Test Qt6::Core
++)
++target_include_directories(speakerlevelmathtest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+diff --git a/autotests/speakerlevelmathtest.cpp b/autotests/speakerlevelmathtest.cpp
+new file mode 100644
+index 00000000..bdd5413d
+--- /dev/null
++++ b/autotests/speakerlevelmathtest.cpp
+@@ -0,0 +1,63 @@
++// SPDX-License-Identifier: BSD-2-Clause
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++
++#include "speakerlevelmath.h"
++
++#include <QTest>
++
++using namespace SpeakerLevelMath;
++
++class SpeakerLevelMathTest : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void normalVolumeIsZeroDb()
++    {
++        QCOMPARE(volumeToDb(65536), 0.0);
++        QCOMPARE(dbToVolume(0.0), qint64(65536));
++    }
++
++    void theScaleIsCubic()
++    {
++        // pa_sw_volume_to_dB: the amplitude is (volume / 65536)^3, so 50 % of the slider is -18.06 dB, not -6.02 dB
++        QVERIFY(qAbs(volumeToDb(32768) + 18.0618) < 1e-3);
++        // -6.0206 dB halves the amplitude: the slider stands at 79.37 %
++        QVERIFY(qAbs(double(dbToVolume(-6.0206)) / 65536.0 - 0.7937) < 1e-3);
++    }
++
++    void roundTrip_data()
++    {
++        QTest::addColumn<double>("db");
++        for (const double db : {-30.0, -12.0, -6.0, -3.5, -0.5, 0.0, 3.0, 10.5}) {
++            QTest::newRow(qPrintable(QString::number(db))) << db;
++        }
++    }
++    void roundTrip()
++    {
++        QFETCH(double, db);
++        QVERIFY(qAbs(volumeToDb(dbToVolume(db)) - db) < 0.001);
++    }
++
++    void theSoundPagesRange()
++    {
++        QCOMPARE(minimumDb, -30.0);
++        QCOMPARE(maximumDb(false), 0.0);
++        // "Raise maximum volume" lets a slider go to 150 %, which is +10.57 dB
++        QVERIFY(qAbs(maximumDb(true) - 10.5655) < 1e-3);
++        QVERIFY(qAbs(volumeToDb(qint64(65536 * 1.5)) - maximumDb(true)) < 1e-3);
++        QCOMPARE(clampDb(-45.0, false), -30.0);
++        QCOMPARE(clampDb(6.0, false), 0.0);
++        QCOMPARE(clampDb(6.0, true), 6.0);
++        QCOMPARE(clampDb(20.0, true), maximumDb(true));
++    }
++
++    void silenceHasNoDb()
++    {
++        QVERIFY(std::isinf(volumeToDb(0)));
++        QVERIFY(volumeToDb(0) < 0);
++    }
++};
++
++QTEST_GUILESS_MAIN(SpeakerLevelMathTest)
++
++#include "speakerlevelmathtest.moc"
 diff --git a/autotests/speakersetupconftest.cpp b/autotests/speakersetupconftest.cpp
 new file mode 100644
-index 00000000..7fa3a819
+index 00000000..12095afd
 --- /dev/null
 +++ b/autotests/speakersetupconftest.cpp
-@@ -0,0 +1,422 @@
+@@ -0,0 +1,411 @@
 +// SPDX-License-Identifier: BSD-2-Clause
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +
@@ -66,9 +142,9 @@ index 00000000..7fa3a819
 +    return d;
 +}
 +
-+QVariantMap oneLevel(const QVariant &value)
++QVariantMap anEffect()
 +{
-+    return withDevice(NODE, dev({{u"levels"_s, QVariantMap{{u"FL"_s, value}}}}));
++    return withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s}}}));
 +}
 +
 +QVariantMap allDistances(double v)
@@ -97,7 +173,7 @@ index 00000000..7fa3a819
 +        QTest::addColumn<QString>("code");
 +
 +        const auto named = [](const QString &name) {
-+            return withDevice(name, dev({{u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
++            return withDevice(name, dev({{u"small"_s, QVariantList{u"FL"_s}}}));
 +        };
 +        QTest::newRow("unknown top key") << QVariantMap{{u"script"_s, u"rm -rf /"_s}} << u"state.key"_s;
 +        QTest::newRow("devices not a map") << QVariantMap{{u"devices"_s, u"x"_s}} << u"devices"_s;
@@ -126,39 +202,31 @@ index 00000000..7fa3a819
 +
 +        QTest::newRow("device not a map") << QVariantMap{{u"devices"_s, QVariantMap{{NODE, u"x"_s}}}} << u"device"_s;
 +        QTest::newRow("unknown device key") << withDevice(NODE, dev({{u"exec"_s, u"x"_s}})) << u"device.key"_s;
-+        QTest::newRow("no positions") << withDevice(NODE, QVariantMap{{u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}) << u"device.positions"_s;
-+        QTest::newRow("two positions") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"FL"_s, u"FR"_s}}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})
++        QTest::newRow("no positions") << withDevice(NODE, QVariantMap{{u"small"_s, QVariantList{u"FL"_s}}}) << u"device.positions"_s;
++        QTest::newRow("two positions") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"FL"_s, u"FR"_s}}, {u"small"_s, QVariantList{u"FL"_s}}})
 +                                       << u"device.positions"_s;
 +        QTest::newRow("nine positions")
 +            << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"FL"_s, u"FR"_s, u"FC"_s, u"LFE"_s, u"RL"_s, u"RR"_s, u"SL"_s, u"SR"_s, u"RC"_s}},
-+                                            {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})
++                                            {u"small"_s, QVariantList{u"FL"_s}}})
 +            << u"device.positions"_s;
-+        QTest::newRow("a repeated position") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"FL"_s, u"FL"_s, u"FC"_s}}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})
++        QTest::newRow("a repeated position") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"FL"_s, u"FL"_s, u"FC"_s}}, {u"small"_s, QVariantList{u"FL"_s}}})
 +                                             << u"device.positions"_s;
-+        QTest::newRow("a position that is a node name") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"FL"_s, u"FR"_s, u"in_FL:In\"] }"_s}}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})
++        QTest::newRow("a position that is a node name") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"FL"_s, u"FR"_s, u"in_FL:In\"] }"_s}}, {u"small"_s, QVariantList{u"FL"_s}}})
 +                                                        << u"device.positions"_s;
-+        QTest::newRow("a position that is a number") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"FL"_s, u"FR"_s, 3}}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})
++        QTest::newRow("a position that is a number") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"FL"_s, u"FR"_s, 3}}, {u"small"_s, QVariantList{u"FL"_s}}})
 +                                                     << u"device.positions"_s;
-+        QTest::newRow("a lower case position") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"fl"_s, u"FR"_s, u"FC"_s}}, {u"levels"_s, QVariantMap{{u"FR"_s, -3}}}})
++        QTest::newRow("a lower case position") << withDevice(NODE, QVariantMap{{u"positions"_s, QVariantList{u"fl"_s, u"FR"_s, u"FC"_s}}, {u"small"_s, QVariantList{u"FR"_s}}})
 +                                               << u"device.positions"_s;
 +
 +        for (const QString &bad : {u"a\u2028b"_s, u"a\u0085b"_s, u"a\u200b" "b"_s, u"a\u00a0\u2029"_s, u"a\uff02b"_s, u"a\uff3cb"_s, u"a\"b"_s, u"a\nb"_s, u"a\n"_s, u"a\\b"_s, u"a{b"_s, u"a}b"_s, u"a[b"_s, u"a]b"_s, u"a#b"_s, u"a=b"_s, u"a,b"_s, u"a\tb"_s, u"a\rb"_s,
 +                                   u" a"_s, u""_s, u"a;b"_s, u"a$b"_s, u"a`b"_s, u"a<b"_s}) {
-+            QTest::newRow(qPrintable(u"label "_s + QString::fromLatin1(QByteArray(bad.toUtf8()).toPercentEncoding()))) << withDevice(NODE, dev({{u"label"_s, bad}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}))
++            QTest::newRow(qPrintable(u"label "_s + QString::fromLatin1(QByteArray(bad.toUtf8()).toPercentEncoding()))) << withDevice(NODE, dev({{u"label"_s, bad}, {u"small"_s, QVariantList{u"FL"_s}}}))
 +                                                                                                                        << u"device.label"_s;
 +        }
-+        QTest::newRow("label over the limit") << withDevice(NODE, dev({{u"label"_s, QString(81, u'a')}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})) << u"device.label"_s;
-+        QTest::newRow("label not a string") << withDevice(NODE, dev({{u"label"_s, 5}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})) << u"device.label"_s;
++        QTest::newRow("label over the limit") << withDevice(NODE, dev({{u"label"_s, QString(81, u'a')}, {u"small"_s, QVariantList{u"FL"_s}}})) << u"device.label"_s;
++        QTest::newRow("label not a string") << withDevice(NODE, dev({{u"label"_s, 5}, {u"small"_s, QVariantList{u"FL"_s}}})) << u"device.label"_s;
 +
-+        QTest::newRow("level below the range") << oneLevel(-30.5) << u"device.levels"_s;
-+        QTest::newRow("level above the range") << oneLevel(15.5) << u"device.levels"_s;
-+        QTest::newRow("level as text") << oneLevel(u"-3"_s) << u"device.levels"_s;
-+        QTest::newRow("level as a bool") << oneLevel(true) << u"device.levels"_s;
-+        QTest::newRow("level not a number") << oneLevel(std::numeric_limits<double>::quiet_NaN()) << u"device.levels"_s;
-+        QTest::newRow("level infinite") << oneLevel(std::numeric_limits<double>::infinity()) << u"device.levels"_s;
-+        QTest::newRow("level for a position the device lacks") << withDevice(NODE, dev({{u"levels"_s, QVariantMap{{u"SL"_s, -3}}}})) << u"device.levels"_s;
-+        QTest::newRow("level for an unsafe position") << withDevice(NODE, dev({{u"levels"_s, QVariantMap{{u"FL\"x"_s, -3}}}})) << u"device.levels"_s;
-+        QTest::newRow("levels not a map") << withDevice(NODE, dev({{u"levels"_s, -3}})) << u"device.levels"_s;
++        QTest::newRow("levels are the device's channel volumes, never in a file") << withDevice(NODE, dev({{u"levels"_s, QVariantMap{{u"FL"_s, -3}}}, {u"small"_s, QVariantList{u"FL"_s}}})) << u"device.key"_s;
 +
 +        QVariantMap d = allDistances(3);
 +        d.insert(u"FL"_s, 0.29);
@@ -185,11 +253,11 @@ index 00000000..7fa3a819
 +        QTest::newRow("the subwoofer small") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"LFE"_s}}})) << u"device.small"_s;
 +        QTest::newRow("small speaker the device lacks") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"SL"_s}}})) << u"device.small"_s;
 +        QTest::newRow("small twice") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s, u"FL"_s}}})) << u"device.small"_s;
-+        QTest::newRow("small empty") << withDevice(NODE, dev({{u"small"_s, QVariantList{}}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})) << u"device.small"_s;
++        QTest::newRow("small empty") << withDevice(NODE, dev({{u"small"_s, QVariantList{}}, {u"distances"_s, [] { QVariantMap m = allDistances(3); m.insert(u"RL"_s, 2); return m; }()}})) << u"device.small"_s;
 +        QTest::newRow("small as text") << withDevice(NODE, dev({{u"small"_s, u"FL"_s}})) << u"device.small"_s;
 +        QTest::newRow("small unsafe") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL\"] x"_s}}})) << u"device.small"_s;
 +
-+        QTest::newRow("crossover without small speakers") << withDevice(NODE, dev({{u"crossover"_s, 80}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})) << u"device.crossover"_s;
++        QTest::newRow("crossover without small speakers") << withDevice(NODE, dev({{u"crossover"_s, 80}, {u"distances"_s, [] { QVariantMap m = allDistances(3); m.insert(u"RL"_s, 2); return m; }()}})) << u"device.crossover"_s;
 +        QTest::newRow("crossover too low") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s}}, {u"crossover"_s, 39}})) << u"device.crossover"_s;
 +        QTest::newRow("crossover too high") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s}}, {u"crossover"_s, 251}})) << u"device.crossover"_s;
 +        QTest::newRow("crossover not whole") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s}}, {u"crossover"_s, 80.5}})) << u"device.crossover"_s;
@@ -198,7 +266,7 @@ index 00000000..7fa3a819
 +            << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s}}, {u"crossover"_s, std::numeric_limits<double>::quiet_NaN()}})) << u"device.crossover"_s;
 +
 +        QTest::newRow("a device with nothing set") << withDevice(NODE, dev({})) << u"device.empty"_s;
-+        QTest::newRow("only zero levels") << withDevice(NODE, dev({{u"levels"_s, QVariantMap{{u"FL"_s, 0}}}})) << u"device.empty"_s;
++        
 +        QTest::newRow("only equal distances") << withDevice(NODE, dev({{u"distances"_s, allDistances(2.5)}})) << u"device.empty"_s;
 +    }
 +    void validateRefuses()
@@ -212,7 +280,7 @@ index 00000000..7fa3a819
 +    {
 +        QVariantMap devices;
 +        for (int i = 0; i < 9; ++i) {
-+            devices.insert(u"alsa_output.card%1"_s.arg(i), dev({{u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
++            devices.insert(u"alsa_output.card%1"_s.arg(i), dev({{u"small"_s, QVariantList{u"FL"_s}}}));
 +        }
 +        QCOMPARE(SpeakerSetupConf::validate(QVariantMap{{u"devices"_s, devices}}), u"devices"_s);
 +    }
@@ -221,21 +289,19 @@ index 00000000..7fa3a819
 +    {
 +        QTest::addColumn<QVariantMap>("state");
 +        QTest::newRow("nothing at all") << QVariantMap{};
-+        QTest::newRow("a level") << oneLevel(-3.5);
-+        QTest::newRow("the largest level") << oneLevel(15);
-+        QTest::newRow("the smallest level") << oneLevel(-30);
-+        QTest::newRow("distances that differ") << withDevice(NODE, dev({{u"distances"_s, [] {
++        QTest::newRow("small speakers") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s}}}));
++                        QTest::newRow("distances that differ") << withDevice(NODE, dev({{u"distances"_s, [] {
 +                                                                           QVariantMap m = allDistances(3);
 +                                                                           m.insert(u"RL"_s, 1.8);
 +                                                                           return m;
 +                                                                       }()}}));
 +        QTest::newRow("small speakers and the crossover") << withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s, u"FR"_s, u"FC"_s}}, {u"crossover"_s, 120}}));
-+        QTest::newRow("a label with letters of another script") << withDevice(NODE, dev({{u"label"_s, u"Alto-falantes (áudio 5.1) 標準"_s}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
-+        QTest::newRow("a label with the fullwidth colon of a Chinese translation") << withDevice(NODE, dev({{u"label"_s, u"\u626c\u58f0\u5668\u8bbe\u7f6e\uff1arig 71"_s}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
-+        QTest::newRow("a label with fullwidth parentheses and an ideographic space") << withDevice(NODE, dev({{u"label"_s, u"\u30b9\u30d4\u30fc\u30ab\u30fc\uff08rig\u3000\u0035\uff09"_s}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
-+        QTest::newRow("a label with a combining mark") << withDevice(NODE, dev({{u"label"_s, u"Cafe\u0301 audio"_s}, {u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
-+        QTest::newRow("a real bluez name") << withDevice(u"bluez_output.AA_BB_CC_DD_EE_FF.1"_s, dev({{u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
-+        QTest::newRow("a usb name with plus and colon") << withDevice(u"alsa_output.usb-Rig_DAC+Dock-00.analog-surround-71:1"_s, dev({{u"levels"_s, QVariantMap{{u"FL"_s, -3}}}}));
++        QTest::newRow("a label with letters of another script") << withDevice(NODE, dev({{u"label"_s, u"Alto-falantes (áudio 5.1) 標準"_s}, {u"small"_s, QVariantList{u"FL"_s}}}));
++        QTest::newRow("a label with the fullwidth colon of a Chinese translation") << withDevice(NODE, dev({{u"label"_s, u"\u626c\u58f0\u5668\u8bbe\u7f6e\uff1arig 71"_s}, {u"small"_s, QVariantList{u"FL"_s}}}));
++        QTest::newRow("a label with fullwidth parentheses and an ideographic space") << withDevice(NODE, dev({{u"label"_s, u"\u30b9\u30d4\u30fc\u30ab\u30fc\uff08rig\u3000\u0035\uff09"_s}, {u"small"_s, QVariantList{u"FL"_s}}}));
++        QTest::newRow("a label with a combining mark") << withDevice(NODE, dev({{u"label"_s, u"Cafe\u0301 audio"_s}, {u"small"_s, QVariantList{u"FL"_s}}}));
++        QTest::newRow("a real bluez name") << withDevice(u"bluez_output.AA_BB_CC_DD_EE_FF.1"_s, dev({{u"small"_s, QVariantList{u"FL"_s}}}));
++        QTest::newRow("a usb name with plus and colon") << withDevice(u"alsa_output.usb-Rig_DAC+Dock-00.analog-surround-71:1"_s, dev({{u"small"_s, QVariantList{u"FL"_s}}}));
 +    }
 +    void validateAccepts()
 +    {
@@ -253,9 +319,6 @@ index 00000000..7fa3a819
 +
 +    void thePredictedNumbers()
 +    {
-+        QCOMPARE(SpeakerSetupConf::gain(0), 1.0);
-+        QVERIFY(qAbs(SpeakerSetupConf::gain(-6.0206) - 0.5) < 1e-4);
-+        QVERIFY(qAbs(SpeakerSetupConf::gain(20) - 10.0) < 1e-12);
 +        // 3.43 m nearer than the farthest speaker is 10 ms
 +        QVERIFY(qAbs(SpeakerSetupConf::delaySeconds(2.0, 5.43) - 0.01) < 1e-12);
 +        QCOMPARE(SpeakerSetupConf::delaySeconds(5.0, 5.0), 0.0);
@@ -269,7 +332,6 @@ index 00000000..7fa3a819
 +        d.insert(u"RR"_s, 3.686);
 +        const QVariantMap state = withDevice(NODE,
 +                                             dev({{u"label"_s, u"Surround 5.1"_s},
-+                                                  {u"levels"_s, QVariantMap{{u"FC"_s, 6}, {u"LFE"_s, -4}}},
 +                                                  {u"distances"_s, d},
 +                                                  {u"small"_s, QVariantList{u"FL"_s, u"FR"_s}},
 +                                                  {u"crossover"_s, 100}}));
@@ -281,9 +343,11 @@ index 00000000..7fa3a819
 +        QVERIFY(text.contains(u"node.name = \"speaker_setup.%1\""_s.arg(NODE)));
 +        QVERIFY(text.contains(u"target.object = \"%1\""_s.arg(NODE)));
 +        QVERIFY(text.contains(u"audio.position = [ FL FR FC LFE RL RR ]"_s));
-+        // FC +6 dB, LFE -4 dB
-+        QVERIFY(text.contains(u"Mult = %1"_s.arg(QString::number(SpeakerSetupConf::gain(6), 'f', 9))));
-+        QVERIFY(text.contains(u"Mult = %1"_s.arg(QString::number(SpeakerSetupConf::gain(-4), 'f', 9))));
++        // no level in the file: a level is the device's channel volume
++        QVERIFY(!text.contains(u"linear"_s));
++        QVERIFY(!text.contains(u"Mult"_s));
++        // the setup's output waits for its device and is never sent to another: both flags together
++        QVERIFY(text.contains(u"node.dont-fallback = true node.linger = true"_s));
 +        // the farthest speaker, RR, has no delay node; FL is 1.686 m nearer
 +        QVERIFY(!text.contains(u"name = d_RR "_s));
 +        QVERIFY(text.contains(u"\"Delay (s)\" = %1"_s.arg(QString::number(1.686 / 343.0, 'f', 9))));
@@ -303,7 +367,7 @@ index 00000000..7fa3a819
 +        QVariantMap d = allDistances(3.0);
 +        d.insert(u"FL"_s, 2.0);
 +        const QVariantMap state = withDevice(NODE,
-+                                             dev({{u"levels"_s, QVariantMap{{u"FC"_s, 6}, {u"LFE"_s, -4}, {u"FL"_s, 1}}},
++                                             dev({
 +                                                  {u"distances"_s, d},
 +                                                  {u"small"_s, QVariantList{u"FL"_s, u"FR"_s, u"FC"_s, u"RL"_s, u"RR"_s}}}));
 +        QTemporaryDir dir;
@@ -314,8 +378,8 @@ index 00000000..7fa3a819
 +        static const QSet<QString> known = {u"context.modules"_s, u"name"_s, u"flags"_s, u"args"_s, u"node.description"_s, u"media.name"_s, u"filter.graph"_s,
 +                                            u"nodes"_s, u"type"_s, u"label"_s, u"config"_s, u"control"_s, u"links"_s, u"output"_s, u"input"_s, u"inputs"_s,
 +                                            u"outputs"_s, u"capture.props"_s, u"playback.props"_s, u"node.name"_s, u"media.class"_s, u"audio.channels"_s,
-+                                            u"audio.position"_s, u"target.object"_s, u"node.passive"_s, u"stream.dont-remix"_s,
-+                                            u"Mult"_s, u"Add"_s, u"Freq"_s, u"Q"_s, u"max-delay"_s, u"Delay (s)"_s, u"Gain 1"_s, u"Gain 2"_s, u"Gain 3"_s,
++                                            u"audio.position"_s, u"target.object"_s, u"node.passive"_s, u"stream.dont-remix"_s, u"node.dont-fallback"_s, u"node.linger"_s,
++                                            u"Freq"_s, u"Q"_s, u"max-delay"_s, u"Delay (s)"_s, u"Gain 1"_s, u"Gain 2"_s, u"Gain 3"_s,
 +                                            u"Gain 4"_s, u"Gain 5"_s, u"Gain 6"_s, u"Gain 7"_s, u"Gain 8"_s};
 +        static const QRegularExpression key(u"(\"[^\"]+\"|[A-Za-z][A-Za-z0-9_.-]*)\\s*=\\s"_s);
 +        auto it = key.globalMatch(text);
@@ -336,7 +400,7 @@ index 00000000..7fa3a819
 +
 +    void roundTrip()
 +    {
-+        const QVariantMap state = withDevice(NODE, dev({{u"levels"_s, QVariantMap{{u"FC"_s, 2.5}}}, {u"small"_s, QVariantList{u"FL"_s}}, {u"crossover"_s, 80}}));
++        const QVariantMap state = withDevice(NODE, dev({{u"small"_s, QVariantList{u"FL"_s}}, {u"crossover"_s, 80}}));
 +        QTemporaryDir dir;
 +        QVERIFY(SpeakerSetupConf::write(dir.path(), state));
 +        const QVariantMap got = SpeakerSetupConf::read(dir.path());
@@ -348,7 +412,7 @@ index 00000000..7fa3a819
 +    {
 +        QTemporaryDir dir;
 +        QString error;
-+        QVERIFY(!SpeakerSetupConf::write(dir.path(), withDevice(u"alsa_output.x\n"_s, dev({{u"levels"_s, QVariantMap{{u"FL"_s, -3}}}})), &error));
++        QVERIFY(!SpeakerSetupConf::write(dir.path(), withDevice(u"alsa_output.x\n"_s, dev({{u"small"_s, QVariantList{u"FL"_s}}})), &error));
 +        QVERIFY(error.startsWith(u"invalid: device.name"_s));
 +        QVERIFY(fileText(dir.path()).isEmpty());
 +    }
@@ -361,7 +425,7 @@ index 00000000..7fa3a819
 +        QVERIFY(mine.open(QFile::WriteOnly));
 +        mine.write("# the Sound Quality page's file\ncontext.properties = { default.clock.rate = 96000 }\n");
 +        mine.close();
-+        QVERIFY(SpeakerSetupConf::write(dir.path(), oneLevel(-3)));
++        QVERIFY(SpeakerSetupConf::write(dir.path(), anEffect()));
 +        QVERIFY(!fileText(dir.path()).isEmpty());
 +        QVERIFY(SpeakerSetupConf::write(dir.path(), QVariantMap{}));
 +        QVERIFY(fileText(dir.path()).isEmpty());
@@ -377,7 +441,7 @@ index 00000000..7fa3a819
 +        foreign.write("# somebody else's file\n");
 +        foreign.close();
 +        QString error;
-+        QVERIFY(!SpeakerSetupConf::write(dir.path(), oneLevel(-3), &error));
++        QVERIFY(!SpeakerSetupConf::write(dir.path(), anEffect(), &error));
 +        QVERIFY(error.startsWith(u"foreign: "_s));
 +        QVERIFY(SpeakerSetupConf::write(dir.path(), QVariantMap{}));
 +        QCOMPARE(fileText(dir.path()), QByteArray("# somebody else's file\n"));
@@ -388,14 +452,15 @@ index 00000000..7fa3a819
 +        QTest::addColumn<QByteArray>("json");
 +        QTest::addColumn<QString>("code");
 +        const QByteArray head = "{\"devices\":{\"alsa_output.x\":{\"positions\":[\"FL\",\"FR\",\"FC\",\"LFE\",\"RL\",\"RR\"],";
-+        QTest::newRow("numbers as JSON doubles") << head + "\"levels\":{\"FL\":-3.5},\"small\":[\"FL\"],\"crossover\":80.0}}}" << QString();
-+        QTest::newRow("a quote in a label escaped in JSON") << head + "\"label\":\"a\\\"b\",\"levels\":{\"FL\":-3}}}}" << u"device.label"_s;
-+        QTest::newRow("a newline in a label escaped in JSON") << head + "\"label\":\"a\\nb\",\"levels\":{\"FL\":-3}}}}" << u"device.label"_s;
++        QTest::newRow("numbers as JSON doubles") << head + "\"small\":[\"FL\"],\"crossover\":80.0}}}" << QString();
++        QTest::newRow("a quote in a label escaped in JSON") << head + "\"label\":\"a\\\"b\",\"small\":[\"FL\"]}}}" << u"device.label"_s;
++        QTest::newRow("a newline in a label escaped in JSON") << head + "\"label\":\"a\\nb\",\"small\":[\"FL\"]}}}" << u"device.label"_s;
 +        QTest::newRow("a final newline in a node name escaped in JSON")
-+            << QByteArray("{\"devices\":{\"alsa_output.x\\n\":{\"positions\":[\"FL\",\"FR\",\"FC\"],\"levels\":{\"FL\":-3}}}}") << u"device.name"_s;
-+        QTest::newRow("a unicode escape of a quote") << head + "\"label\":\"a\\u0022b\",\"levels\":{\"FL\":-3}}}}" << u"device.label"_s;
-+        QTest::newRow("a level as a string") << head + "\"levels\":{\"FL\":\"-3\"}}}}" << u"device.levels"_s;
-+        QTest::newRow("a level out of range") << head + "\"levels\":{\"FL\":1e300}}}}" << u"device.levels"_s;
++            << QByteArray("{\"devices\":{\"alsa_output.x\\n\":{\"positions\":[\"FL\",\"FR\",\"FC\"],\"small\":[\"FL\"]}}}") << u"device.name"_s;
++        QTest::newRow("a unicode escape of a quote") << head + "\"label\":\"a\\u0022b\",\"small\":[\"FL\"]}}}" << u"device.label"_s;
++        QTest::newRow("a level in a file") << head + "\"levels\":{\"FL\":-3},\"small\":[\"FL\"]}}}" << u"device.key"_s;
++        QTest::newRow("a distance out of range") << head + "\"distances\":{\"FL\":1e300,\"FR\":3,\"FC\":3,\"LFE\":3,\"RL\":3,\"RR\":3}}}}" << u"device.distances"_s;
++        QTest::newRow("a distance as a string") << head + "\"distances\":{\"FL\":\"3\",\"FR\":3,\"FC\":3,\"LFE\":3,\"RL\":3,\"RR\":3}}}}" << u"device.distances"_s;
 +        QTest::newRow("a crossover with a fraction") << head + "\"small\":[\"FL\"],\"crossover\":80.5}}}" << u"device.crossover"_s;
 +        QTest::newRow("an extra top level key") << QByteArray("{\"devices\":{},\"path\":\"/etc/shadow\"}") << u"state.key"_s;
 +    }
@@ -615,7 +680,7 @@ index 00000000..642e0734
 +
 +#include "speakertestsignaltest.moc"
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index b7330166..fc455c36 100644
+index b7330166..1650f0ac 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
 @@ -20,6 +20,8 @@ set(plasma-volume_SRCS
@@ -627,11 +692,12 @@ index b7330166..fc455c36 100644
      microphonetest.cpp microphonetest.h
  )
  
-@@ -45,6 +47,7 @@ target_sources(plasma-volume-declarative PRIVATE
+@@ -45,6 +47,8 @@ target_sources(plasma-volume-declarative PRIVATE
      qml/dbusinterface.cpp
      qml/routingcontroller.cpp qml/routingcontroller.h
      qml/soundformats.cpp qml/soundformats.h
 +    qml/speakersetup.cpp qml/speakersetup.h
++    qml/speakerlevels.cpp qml/speakerlevels.h
  )
  target_include_directories(plasma-volume-declarative PRIVATE qml/)
  
@@ -796,10 +862,10 @@ index 25880c82..826ca8ec 100644
      Repeater {
 diff --git a/src/kcm/ui/SpeakerSetup.qml b/src/kcm/ui/SpeakerSetup.qml
 new file mode 100644
-index 00000000..e806c717
+index 00000000..752e2646
 --- /dev/null
 +++ b/src/kcm/ui/SpeakerSetup.qml
-@@ -0,0 +1,651 @@
+@@ -0,0 +1,678 @@
 +// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +
@@ -820,11 +886,14 @@ index 00000000..e806c717
 +
 +    // The device this page was opened for: the node name of a playback device whose profile has more than two channels.
 +    property string deviceName: ""
++    // The Sound page's settings: "Raise maximum volume" lets a channel go above 100 %.
++    property var config: null
++    readonly property bool raised: config !== null && config !== undefined && config.raiseMaximumVolume === true
 +    property bool allAccounts: false
 +    property bool makeDefault: true
 +    property string selected: ""
 +    property bool dirty: false
-+    property var work: ({levels: {}, distances: null, small: [], crossover: 0})
++    property var work: ({distances: null, small: [], crossover: 0})
 +    readonly property int textWidth: Kirigami.Units.gridUnit * 30
 +    readonly property var info: {
 +        const list = setup.devices
@@ -864,6 +933,12 @@ index 00000000..e806c717
 +        id: setup
 +    }
 +
++    // The level of a speaker is its channel volume, the value "Show Channels" shows: nothing is written and nothing restarts.
++    SpeakerLevels {
++        id: channelLevels
++        node: page.deviceName
++    }
++
 +    Timer {
 +        interval: 3000
 +        running: page.visible && !setup.busy && !setup.testRunning
@@ -901,9 +976,8 @@ index 00000000..e806c717
 +
 +    function load() {
 +        const d = clone(savedDevice)
-+        let w = {levels: d.levels !== undefined ? d.levels : ({}), distances: d.distances !== undefined ? d.distances : null,
-+                 small: d.small !== undefined ? d.small : [], crossover: d.crossover !== undefined ? d.crossover : 0}
-+        work = w
++        work = {distances: d.distances !== undefined ? d.distances : null, small: d.small !== undefined ? d.small : [],
++                crossover: d.crossover !== undefined ? d.crossover : 0}
 +        dirty = false
 +        if (selected === "" || positions.indexOf(selected) < 0) {
 +            selected = positions.length > 0 ? positions[0] : ""
@@ -916,12 +990,12 @@ index 00000000..e806c717
 +    }
 +
 +    function levelOf(p) {
-+        return work.levels[p] !== undefined ? work.levels[p] : 0
++        const v = channelLevels.levels[positions.indexOf(p)]
++        return v === undefined || v === null || !isFinite(v) ? channelLevels.minimumDb() : v
 +    }
 +
 +    function setLevel(p, db) {
-+        work.levels[p] = db
-+        touch()
++        channelLevels.setLevel(positions.indexOf(p), db, raised)
 +    }
 +
 +    function farthest() {
@@ -981,18 +1055,8 @@ index 00000000..e806c717
 +
 +    // What the person has set for this device, as the drop-in's state; an empty object when every speaker is at its defaults.
 +    function composeDevice() {
-+        let levels = {}
 +        let any = false
-+        for (const k in work.levels) {
-+            if (work.levels[k] !== 0 && positions.indexOf(k) >= 0) {
-+                levels[k] = work.levels[k]
-+                any = true
-+            }
-+        }
 +        let d = {positions: positions}
-+        if (any) {
-+            d.levels = levels
-+        }
 +        if (work.distances !== null) {
 +            let all = positions.map(p => work.distances[p])
 +            if (Math.max.apply(null, all) > Math.min.apply(null, all)) {
@@ -1125,6 +1189,16 @@ index 00000000..e806c717
 +            enabled: !setup.busy
 +            onToggled: page.allAccounts = checked
 +        }
++
++        Label {
++            Layout.leftMargin: Kirigami.Units.largeSpacing
++            Layout.rightMargin: Kirigami.Units.largeSpacing
++            Layout.fillWidth: true
++            wrapMode: Text.Wrap
++            font: Kirigami.Theme.smallFont
++            opacity: 0.7
++            text: i18nd("kcm_pulseaudio", "For every account applies to distances and bass management only. Levels are the device's channel volumes, which each account keeps.")
++        }
 +    }
 +
 +    view: Flickable {
@@ -1245,8 +1319,8 @@ index 00000000..e806c717
 +                    Kirigami.FormData.label: i18nd("kcm_pulseaudio", "Level:")
 +                    SpinBox {
 +                        id: levelBox
-+                        from: Math.round(setup.minLevel * 10)
-+                        to: Math.round(setup.maxLevel * 10)
++                        from: Math.round(channelLevels.minimumDb() * 10)
++                        to: Math.floor(channelLevels.maximumDb(page.raised) * 10)
 +                        stepSize: 5
 +                        editable: true
 +                        value: Math.round(page.levelOf(page.selected) * 10)
@@ -1257,9 +1331,18 @@ index 00000000..e806c717
 +                    Button {
 +                        icon.name: "edit-undo"
 +                        text: i18nd("kcm_pulseaudio", "0 dB")
-+                        enabled: page.levelOf(page.selected) !== 0
++                        enabled: Math.abs(page.levelOf(page.selected)) > 0.05
 +                        onClicked: page.setLevel(page.selected, 0)
 +                    }
++                }
++
++                Label {
++                    Layout.fillWidth: true
++                    Layout.maximumWidth: page.textWidth
++                    wrapMode: Text.Wrap
++                    font: Kirigami.Theme.smallFont
++                    opacity: 0.7
++                    text: i18nd("kcm_pulseaudio", "Levels are the device's channel volumes, the same values as Show Channels, and change at once. They go from -30 dB to 0 dB, or up to +10.6 dB when Raise maximum volume is on in Configure Volume Controls.")
 +                }
 +
 +                RowLayout {
@@ -1426,12 +1509,22 @@ index 00000000..e806c717
 +        Layout.fillWidth: true
 +        spacing: Kirigami.Units.smallSpacing
 +
-+        Item {
++        Label {
 +            Layout.fillWidth: true
++            Layout.leftMargin: Kirigami.Units.largeSpacing
++            wrapMode: Text.Wrap
++            visible: page.hasChanges
++            text: i18nd("kcm_pulseaudio", "Applying this restarts the sound system: sound stops for a moment in every program.")
++        }
++
++        Item {
++            Layout.fillWidth: !page.hasChanges
 +        }
 +
 +        Button {
 +            icon.name: "edit-reset"
++            ToolTip.visible: hovered && enabled
++            ToolTip.text: i18nd("kcm_pulseaudio", "Applying this restarts the sound system: sound stops for a moment in every program.")
 +            text: i18nd("kcm_pulseaudio", "Back to defaults")
 +            enabled: !setup.busy && page.eligible && Object.keys(page.savedDevice).length > 0
 +            onClicked: page.backToDefaults()
@@ -1452,7 +1545,7 @@ index 00000000..e806c717
 +    }
 +}
 diff --git a/src/kcm/ui/main.qml b/src/kcm/ui/main.qml
-index 91604a64..e16c7d5e 100644
+index 91604a64..d7beb63b 100644
 --- a/src/kcm/ui/main.qml
 +++ b/src/kcm/ui/main.qml
 @@ -69,14 +69,21 @@ KCM.ScrollViewKCM {
@@ -1488,7 +1581,7 @@ index 91604a64..e16c7d5e 100644
 +                    soundFormats: soundFormatsModel
 +                    speakerSetup: speakerSetupModel
                      comboBoxLabelsVisible: column.comboBoxLabelsVisible
-+                    onSpeakerSetupRequested: name => kcm.push("SpeakerSetup.qml", { "deviceName": name })
++                    onSpeakerSetupRequested: name => kcm.push("SpeakerSetup.qml", { "deviceName": name, "config": config })
                  }
              }
  
@@ -1502,31 +1595,192 @@ index 91604a64..e16c7d5e 100644
                  }
              }
 diff --git a/src/qml/plugin.cpp b/src/qml/plugin.cpp
-index 9500a2a5..159a3036 100644
+index 9500a2a5..ad60278c 100644
 --- a/src/qml/plugin.cpp
 +++ b/src/qml/plugin.cpp
-@@ -36,6 +36,7 @@
+@@ -36,6 +36,8 @@
  #include "microphonetest.h"
  #include "routingcontroller.h"
  #include "soundformats.h"
++#include "speakerlevels.h"
 +#include "speakersetup.h"
  
  static QJSValue pulseaudio_singleton(QQmlEngine *engine, QJSEngine *scriptEngine)
  {
-@@ -79,6 +80,7 @@ void Plugin::registerTypes(const char *uri)
+@@ -79,6 +81,8 @@ void Plugin::registerTypes(const char *uri)
      qmlRegisterType<MicrophoneTest>(uri, 0, 1, "MicrophoneTest");
      qmlRegisterType<RoutingController>(uri, 0, 1, "RoutingController");
      qmlRegisterType<SoundFormats>(uri, 0, 1, "SoundFormats");
 +    qmlRegisterType<SpeakerSetup>(uri, 0, 1, "SpeakerSetup");
++    qmlRegisterType<SpeakerLevels>(uri, 0, 1, "SpeakerLevels");
      qmlRegisterType<GlobalConfig>(uri, 0, 1, "GlobalConfig");
      qmlRegisterType<DeviceRenameModel>(uri, 0, 1, "DeviceRenameModel");
      qmlRegisterType<DeviceRenameSaver>(uri, 0, 1, "DeviceRenameSaver");
+diff --git a/src/qml/speakerlevels.cpp b/src/qml/speakerlevels.cpp
+new file mode 100644
+index 00000000..1c7513b7
+--- /dev/null
++++ b/src/qml/speakerlevels.cpp
+@@ -0,0 +1,90 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++
++#include "speakerlevels.h"
++
++#include "speakerlevelmath.h"
++
++#include <PulseAudioQt/Context>
++#include <PulseAudioQt/Sink>
++
++SpeakerLevels::SpeakerLevels(QObject *parent)
++    : QObject(parent)
++{
++    auto *context = PulseAudioQt::Context::instance();
++    connect(context, &PulseAudioQt::Context::sinkAdded, this, &SpeakerLevels::rebind);
++    connect(context, &PulseAudioQt::Context::sinkRemoved, this, &SpeakerLevels::rebind);
++    m_pendingClear.setSingleShot(true);
++    m_pendingClear.setInterval(1500);
++    connect(&m_pendingClear, &QTimer::timeout, this, [this] {
++        m_pending.clear();
++    });
++}
++
++void SpeakerLevels::setNode(const QString &node)
++{
++    if (m_node == node) {
++        return;
++    }
++    m_node = node;
++    Q_EMIT nodeChanged();
++    rebind();
++}
++
++void SpeakerLevels::rebind()
++{
++    PulseAudioQt::Sink *found = nullptr;
++    for (auto *sink : PulseAudioQt::Context::instance()->sinks()) {
++        if (sink->name() == m_node) {
++            found = sink;
++            break;
++        }
++    }
++    if (found != m_sink.data()) {
++        if (m_sink) {
++            disconnect(m_sink, nullptr, this, nullptr);
++        }
++        m_sink = found;
++        if (m_sink) {
++            connect(m_sink, &PulseAudioQt::VolumeObject::channelVolumesChanged, this, &SpeakerLevels::levelsChanged);
++        }
++    }
++    Q_EMIT levelsChanged();
++}
++
++QVariantList SpeakerLevels::levels() const
++{
++    QVariantList out;
++    if (m_sink) {
++        const auto volumes = m_sink->channelVolumes();
++        for (const auto v : volumes) {
++            out << SpeakerLevelMath::volumeToDb(v);
++        }
++    }
++    return out;
++}
++
++void SpeakerLevels::setLevel(int channel, double db, bool raised)
++{
++    if (m_sink && channel >= 0 && channel < m_sink->channelVolumes().size()) {
++        QVector<qint64> volumes = m_pending.isEmpty() ? m_sink->channelVolumes() : m_pending;
++        volumes[channel] = SpeakerLevelMath::dbToVolume(SpeakerLevelMath::clampDb(db, raised));
++        m_pending = volumes;
++        m_pendingClear.start();
++        m_sink->setChannelVolumes(volumes);
++    }
++}
++
++double SpeakerLevels::minimumDb() const
++{
++    return SpeakerLevelMath::minimumDb;
++}
++
++double SpeakerLevels::maximumDb(bool raised) const
++{
++    return SpeakerLevelMath::maximumDb(raised);
++}
++
++#include "moc_speakerlevels.cpp"
+diff --git a/src/qml/speakerlevels.h b/src/qml/speakerlevels.h
+new file mode 100644
+index 00000000..47c15dd5
+--- /dev/null
++++ b/src/qml/speakerlevels.h
+@@ -0,0 +1,57 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++#pragma once
++
++#include <QObject>
++#include <QPointer>
++#include <QTimer>
++#include <QVector>
++#include <QString>
++#include <QVariantList>
++
++namespace PulseAudioQt
++{
++class Sink;
++}
++
++/**
++ * The levels of a device's speakers: its channel volumes, the same values "Show Channels" shows, as dB.
++ *
++ * Nothing is written to a file and no filter is made: a change goes to the sound server at once and every view of the
++ * volume (this page, Show Channels, the volume widget) follows it through the server's own notifications.
++ */
++class SpeakerLevels : public QObject
++{
++    Q_OBJECT
++    Q_PROPERTY(QString node READ node WRITE setNode NOTIFY nodeChanged)
++    Q_PROPERTY(QVariantList levels READ levels NOTIFY levelsChanged)
++    Q_PROPERTY(bool available READ available NOTIFY levelsChanged)
++public:
++    explicit SpeakerLevels(QObject *parent = nullptr);
++
++    QString node() const { return m_node; }
++    void setNode(const QString &node);
++    /** The level of each channel in dB, in the order of the device's channel map; empty when the device is not there. */
++    QVariantList levels() const;
++    bool available() const { return !m_sink.isNull(); }
++
++    /** Set channel number `channel` to db, kept inside the range the Sound page allows (0 dB, or up to +10.57 dB when `raised`). */
++    Q_INVOKABLE void setLevel(int channel, double db, bool raised);
++    Q_INVOKABLE double minimumDb() const;
++    Q_INVOKABLE double maximumDb(bool raised) const;
++
++Q_SIGNALS:
++    void nodeChanged();
++    void levelsChanged();
++
++private:
++    void rebind();
++
++    QString m_node;
++    QPointer<PulseAudioQt::Sink> m_sink;
++    // The volumes last sent: the server answers a moment later, and a second change before that must build on the first.
++    QVector<qint64> m_pending;
++    QTimer m_pendingClear;
++};
 diff --git a/src/qml/speakersetup.cpp b/src/qml/speakersetup.cpp
 new file mode 100644
-index 00000000..2b1e694a
+index 00000000..0c096080
 --- /dev/null
 +++ b/src/qml/speakersetup.cpp
-@@ -0,0 +1,740 @@
+@@ -0,0 +1,735 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
@@ -1604,12 +1858,6 @@ index 00000000..2b1e694a
 +QMap<QString, double> expectedControls(const QVariantMap &dev)
 +{
 +    QMap<QString, double> want;
-+    const QVariantMap levels = dev.value(u"levels"_s).toMap();
-+    for (auto it = levels.begin(); it != levels.end(); ++it) {
-+        if (it.value().toDouble() != 0.0) {
-+            want.insert(u"g_%1:Mult"_s.arg(it.key()), SpeakerSetupConf::gain(it.value().toDouble()));
-+        }
-+    }
 +    const QVariantMap distances = dev.value(u"distances"_s).toMap();
 +    double farthest = 0;
 +    for (auto it = distances.begin(); it != distances.end(); ++it) {
@@ -1648,14 +1896,6 @@ index 00000000..2b1e694a
 +double SpeakerSetup::speedOfSound() const
 +{
 +    return SpeakerSetupConf::speedOfSound;
-+}
-+double SpeakerSetup::minLevel() const
-+{
-+    return SpeakerSetupConf::minLevel;
-+}
-+double SpeakerSetup::maxLevel() const
-+{
-+    return SpeakerSetupConf::maxLevel;
 +}
 +double SpeakerSetup::minDistance() const
 +{
@@ -1821,11 +2061,15 @@ index 00000000..2b1e694a
 +        return out;
 +    }
 +    QSet<QString> setups;
++    QSet<QString> present;
 +    for (const auto &item : doc.array()) {
 +        const auto props = item.toObject().value(u"info"_s).toObject().value(u"props"_s).toObject();
 +        const QString name = propString(props, u"node.name"_s);
-+        if (propString(props, u"media.class"_s) == u"Audio/Sink"_s && name.startsWith(u"speaker_setup."_s)) {
-+            setups.insert(name);
++        if (propString(props, u"media.class"_s) == u"Audio/Sink"_s) {
++            present.insert(name);
++            if (name.startsWith(u"speaker_setup."_s)) {
++                setups.insert(name);
++            }
 +        }
 +    }
 +    for (const auto &item : doc.array()) {
@@ -1864,7 +2108,11 @@ index 00000000..2b1e694a
 +            (SpeakerSetupConf::validPosition(t) ? known : unknown) << t;
 +        }
 +        QString reason;
-+        if (SpeakerSetupConf::isSetupSink(name)) {
++        const bool setupSink = SpeakerSetupConf::isSetupSink(name);
++        const bool deviceConnected = !setupSink || present.contains(name.mid(QStringLiteral("speaker_setup.").size()));
++        if (setupSink && !deviceConnected) {
++            reason = i18nd("kcm_pulseaudio", "The device of this speaker setup is not connected. The setup waits for it and plays nowhere else.");
++        } else if (setupSink) {
 +            reason = i18nd("kcm_pulseaudio", "This is the speaker setup of another device. Set up the speakers from that device.");
 +        } else if (channels <= 2) {
 +            reason = channels == 0 ? i18nd("kcm_pulseaudio", "The channels of this device could not be read, so Speaker Setup is not offered.")
@@ -1885,7 +2133,8 @@ index 00000000..2b1e694a
 +                        {u"eligible"_s, reason.isEmpty()},
 +                        {u"reason"_s, reason},
 +                        {u"setupActive"_s, setups.contains(SpeakerSetupConf::sinkName(name))},
-+                        {u"setupSink"_s, SpeakerSetupConf::sinkName(name)}};
++                        {u"setupSink"_s, SpeakerSetupConf::sinkName(name)},
++                        {u"deviceConnected"_s, deviceConnected}};
 +        out << dev;
 +    }
 +    return out;
@@ -2190,7 +2439,7 @@ index 00000000..2b1e694a
 +        return;
 +    }
 +    const QStringList positions = dev.value(u"positions"_s).toStringList();
-+    // Through the speaker setup when there is one, so that what the person hears has the levels and delays; else to the device itself.
++    // Through the speaker setup when there is one, so that what the person hears has the delays and the bass management; else to the device itself.
 +    const QString target = dev.value(u"setupActive"_s).toBool() ? dev.value(u"setupSink"_s).toString() : node;
 +    const QString exe = QStandardPaths::findExecutable(u"pw-cat"_s);
 +    if (exe.isEmpty()) {
@@ -2269,10 +2518,10 @@ index 00000000..2b1e694a
 +#include "moc_speakersetup.cpp"
 diff --git a/src/qml/speakersetup.h b/src/qml/speakersetup.h
 new file mode 100644
-index 00000000..acdde20a
+index 00000000..c42b116c
 --- /dev/null
 +++ b/src/qml/speakersetup.h
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,134 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
@@ -2311,8 +2560,6 @@ index 00000000..acdde20a
 +    Q_PROPERTY(bool feet READ feet WRITE setFeet NOTIFY settingsChanged)
 +    Q_PROPERTY(int testSeconds READ testSeconds WRITE setTestSeconds NOTIFY settingsChanged)
 +    Q_PROPERTY(double speedOfSound READ speedOfSound CONSTANT)
-+    Q_PROPERTY(double minLevel READ minLevel CONSTANT)
-+    Q_PROPERTY(double maxLevel READ maxLevel CONSTANT)
 +    Q_PROPERTY(double minDistance READ minDistance CONSTANT)
 +    Q_PROPERTY(double maxDistance READ maxDistance CONSTANT)
 +    Q_PROPERTY(int minCrossover READ minCrossover CONSTANT)
@@ -2335,8 +2582,6 @@ index 00000000..acdde20a
 +    int testSeconds() const { return m_testSeconds; }
 +    void setTestSeconds(int seconds);
 +    double speedOfSound() const;
-+    double minLevel() const;
-+    double maxLevel() const;
 +    double minDistance() const;
 +    double maxDistance() const;
 +    int minCrossover() const;
@@ -2411,12 +2656,59 @@ index 00000000..acdde20a
 +    QStringList m_testOrder;
 +    int m_testStep = 0;
 +};
+diff --git a/src/speakerlevelmath.h b/src/speakerlevelmath.h
+new file mode 100644
+index 00000000..bb2f68c0
+--- /dev/null
++++ b/src/speakerlevelmath.h
+@@ -0,0 +1,41 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++*/
++#pragma once
++
++#include <QtMath>
++
++/**
++ * A speaker's level in dB and the channel volume the sound server holds for it.
++ *
++ * The Sound page's sliders and PulseAudio count a channel's volume in 65536ths (65536 is 100 %, "0 dB") with a cubic scale:
++ * the amplitude is (volume / 65536) ^ 3, so a volume of 65536 * 10^(dB / 60) is a gain of `dB` decibels
++ * (pa_sw_volume_to_dB in PulseAudio's volume.c). The Sound page lets a slider go to 100 %, or to 150 % when "Raise maximum
++ * volume" is on, which is 60 * log10(1.5) = +10.57 dB.
++ */
++namespace SpeakerLevelMath
++{
++constexpr double normalVolume = 65536.0;
++constexpr double minimumDb = -30.0;
++inline double raisedMaximumDb()
++{
++    return 60.0 * std::log10(1.5);
++}
++inline double maximumDb(bool raised)
++{
++    return raised ? raisedMaximumDb() : 0.0;
++}
++inline double clampDb(double db, bool raised)
++{
++    return qBound(minimumDb, db, maximumDb(raised));
++}
++inline double volumeToDb(qint64 volume)
++{
++    return volume <= 0 ? -std::numeric_limits<double>::infinity() : 60.0 * std::log10(double(volume) / normalVolume);
++}
++inline qint64 dbToVolume(double db)
++{
++    return qint64(std::llround(normalVolume * std::pow(10.0, db / 60.0)));
++}
++}
 diff --git a/src/speakersetupconf.cpp b/src/speakersetupconf.cpp
 new file mode 100644
-index 00000000..19396331
+index 00000000..6b7a49f8
 --- /dev/null
 +++ b/src/speakersetupconf.cpp
-@@ -0,0 +1,513 @@
+@@ -0,0 +1,478 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
@@ -2489,12 +2781,6 @@ index 00000000..19396331
 +
 +bool hasEffect(const QVariantMap &dev)
 +{
-+    const QVariantMap levels = dev.value(u"levels"_s).toMap();
-+    for (auto it = levels.begin(); it != levels.end(); ++it) {
-+        if (it.value().toDouble() != 0.0) {
-+            return true;
-+        }
-+    }
 +    const QVariantMap distances = dev.value(u"distances"_s).toMap();
 +    double lo = 1e9;
 +    double hi = -1e9;
@@ -2538,7 +2824,6 @@ index 00000000..19396331
 +QString renderDevice(const QString &node, const QVariantMap &dev)
 +{
 +    const QStringList positions = dev.value(u"positions"_s).toStringList();
-+    const QVariantMap levels = dev.value(u"levels"_s).toMap();
 +    const QVariantMap distances = dev.value(u"distances"_s).toMap();
 +    const QStringList small = dev.value(u"small"_s).toStringList();
 +    const double crossover = dev.value(u"crossover"_s, SpeakerSetupConf::defaultCrossover).toDouble();
@@ -2567,12 +2852,6 @@ index 00000000..19396331
 +            continue;
 +        }
 +        QString head = u"in_%1:Out"_s.arg(p);
-+        const double level = levels.value(p).toDouble();
-+        if (level != 0.0) {
-+            g.node(u"g_"_s + p, u"linear"_s, {}, u"Mult = %1 Add = 0.000000000"_s.arg(num(SpeakerSetupConf::gain(level))));
-+            g.link(head, u"g_%1:In"_s.arg(p));
-+            head = u"g_%1:Out"_s.arg(p);
-+        }
 +        if (small.contains(p)) {
 +            const QString control = u"Freq = %1 Q = 0.707106781"_s.arg(num(crossover));
 +            for (const QString &k : {u"1"_s, u"2"_s}) {
@@ -2602,12 +2881,6 @@ index 00000000..19396331
 +            }
 +            head = u"mix_LFE:Out"_s;
 +        }
-+        const double level = levels.value(u"LFE"_s).toDouble();
-+        if (level != 0.0) {
-+            g.node(u"g_LFE"_s, u"linear"_s, {}, u"Mult = %1 Add = 0.000000000"_s.arg(num(SpeakerSetupConf::gain(level))));
-+            g.link(head, u"g_LFE:In"_s);
-+            head = u"g_LFE:Out"_s;
-+        }
 +        g.outputs.insert(u"LFE"_s, delayAfter(u"LFE"_s, head));
 +    }
 +    QStringList outs;
@@ -2631,7 +2904,7 @@ index 00000000..19396331
 +    text += u"        }\n"_s;
 +    text += u"        capture.props = { node.name = \"%1\" media.class = Audio/Sink audio.channels = %2 audio.position = %3 }\n"_s.arg(
 +        SpeakerSetupConf::sinkName(node), QString::number(positions.size()), pos);
-+    text += u"        playback.props = { node.name = \"speaker_setup_out.%1\" target.object = \"%1\" node.passive = true stream.dont-remix = true "
++    text += u"        playback.props = { node.name = \"speaker_setup_out.%1\" target.object = \"%1\" node.passive = true stream.dont-remix = true node.dont-fallback = true node.linger = true "
 +            "audio.channels = %2 audio.position = %3 }\n"_s.arg(node, QString::number(positions.size()), pos);
 +    text += u"      }\n"_s;
 +    text += u"    }\n"_s;
@@ -2740,11 +3013,6 @@ index 00000000..19396331
 +    return 180; // RC, and LFE
 +}
 +
-+double SpeakerSetupConf::gain(double db)
-+{
-+    return qPow(10.0, db / 20.0);
-+}
-+
 +double SpeakerSetupConf::delaySeconds(double distance, double farthest)
 +{
 +    const double d = (farthest - distance) / speedOfSound;
@@ -2765,7 +3033,7 @@ index 00000000..19396331
 +    if (devices.size() > MAX_DEVICES) {
 +        return u"devices"_s;
 +    }
-+    static const QSet<QString> deviceKeys = {u"positions"_s, u"label"_s, u"levels"_s, u"distances"_s, u"small"_s, u"crossover"_s};
++    static const QSet<QString> deviceKeys = {u"positions"_s, u"label"_s, u"distances"_s, u"small"_s, u"crossover"_s};
 +    for (auto it = devices.begin(); it != devices.end(); ++it) {
 +        if (!validNodeName(it.key())) {
 +            return u"device.name"_s;
@@ -2791,17 +3059,6 @@ index 00000000..19396331
 +        }
 +        if (dev.contains(u"label"_s) && (dev.value(u"label"_s).typeId() != QMetaType::QString || !validLabel(dev.value(u"label"_s).toString()))) {
 +            return u"device.label"_s;
-+        }
-+        if (dev.contains(u"levels"_s)) {
-+            if (dev.value(u"levels"_s).typeId() != QMetaType::QVariantMap) {
-+                return u"device.levels"_s;
-+            }
-+            const QVariantMap levels = dev.value(u"levels"_s).toMap();
-+            for (auto l = levels.begin(); l != levels.end(); ++l) {
-+                if (!positions.contains(l.key()) || !isNumber(l.value()) || l.value().toDouble() < minLevel || l.value().toDouble() > maxLevel) {
-+                    return u"device.levels"_s;
-+                }
-+            }
 +        }
 +        if (dev.contains(u"distances"_s)) {
 +            if (dev.value(u"distances"_s).typeId() != QMetaType::QVariantMap) {
@@ -2932,10 +3189,10 @@ index 00000000..19396331
 +}
 diff --git a/src/speakersetupconf.h b/src/speakersetupconf.h
 new file mode 100644
-index 00000000..63a4315f
+index 00000000..83115079
 --- /dev/null
 +++ b/src/speakersetupconf.h
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,74 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
@@ -2954,10 +3211,11 @@ index 00000000..63a4315f
 + * One file, 50-speaker-page.conf in pipewire/pipewire.conf.d under a base directory (~/.config for one account, /etc for
 + * every account), beside ORDER 20's 50-sound-page.conf and the edition's 00-sparky-stereo-audio.conf. It holds one
 + * filter-chain sink per device the person set up. Nothing is written for a device whose speakers are all at their
-+ * defaults (levels at 0 dB, equal distances, every speaker large): the device then has no filter in its signal path.
++ * defaults (equal distances, every speaker large): the device then has no filter in its signal path.
++ * A speaker's level is the device's channel volume (the same value as "Show Channels"), set live and never written here.
 + * The class never computes a default; a key that is absent is the default.
 + *
-+ * State, as a map: "devices" { nodeName { "positions" [ch], "label" text, "levels" {ch: dB}, "distances" {ch: metres},
++ * State, as a map: "devices" { nodeName { "positions" [ch], "label" text, "distances" {ch: metres},
 + * "small" [ch], "crossover" Hz } }. "positions" is the channel map of the device's current profile and the only
 + * required key. "distances", when present, names every position; the delays are relative to the farthest speaker.
 + */
@@ -2967,7 +3225,7 @@ index 00000000..63a4315f
 +    static QString fileName();
 +    static QString mark();
 +
-+    /** Empty when the state is acceptable, else a code naming the first value refused: "device.name", "device.levels"... */
++    /** Empty when the state is acceptable, else a code naming the first value refused: "device.name", "device.distances"... */
 +    static QString validate(const QVariantMap &state);
 +
 +    /** Relative path (under the base directory) to file content; an empty content means that file is not wanted. */
@@ -3000,16 +3258,13 @@ index 00000000..63a4315f
 +    static double angle(const QString &position, const QStringList &positions);
 +
 +    static constexpr double speedOfSound = 343.0; // m/s, dry air at 20 C
-+    static constexpr double minLevel = -30.0;
-+    static constexpr double maxLevel = 15.0;
 +    static constexpr double minDistance = 0.3;
 +    static constexpr double maxDistance = 30.0;
 +    static constexpr int minCrossover = 40;
 +    static constexpr int maxCrossover = 250;
 +    static constexpr int defaultCrossover = 80;
 +
-+    /** The linear gain of a level in dB, and the delay in seconds of a speaker at distance (m) when the farthest stands at farthest (m). */
-+    static double gain(double db);
++    /** The delay in seconds of a speaker at distance (m) when the farthest stands at farthest (m). */
 +    static double delaySeconds(double distance, double farthest);
 +};
 diff --git a/src/speakertestsignal.cpp b/src/speakertestsignal.cpp
