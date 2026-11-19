@@ -216,9 +216,21 @@ def main():
                               args.overlay.resolve() if args.overlay else None)
             if args.reapply_patches:
                 env = dict(os.environ, QUILT_PATCHES='debian/patches')
+                # Pop with the patch contents that are actually applied, before
+                # installing replacements of earlier members of the series.
+                overlay = args.overlay.resolve()
+                for replacement in (overlay / 'patches').rglob('*'):
+                    if replacement.is_file():
+                        rel = replacement.relative_to(overlay)
+                        original = old / 'debian' / rel
+                        if original.is_file():
+                            shutil.copy2(original, new / 'debian' / rel)
                 popped = subprocess.run(['quilt', 'pop', '-a'], cwd=new, env=env)
                 if popped.returncode not in (0, 2):
                     raise subprocess.CalledProcessError(popped.returncode, popped.args)
+                for replacement in overlay.rglob('*'):
+                    if replacement.is_file():
+                        shutil.copy2(replacement, new / 'debian' / replacement.relative_to(overlay))
                 subprocess.run(['quilt', 'push', '-a'], cwd=new, env=env, check=True)
                 report['patches_reapplied'] = True
             finish(work, dsc, name, version, report['new'], old, out, report)
