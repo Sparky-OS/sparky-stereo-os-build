@@ -1,0 +1,627 @@
+From fc2211a13c57f9528bf6e740fb0d1e533d3c72fb Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 19 Nov 2026 05:08:39 -0300
+Subject: [PATCH 2/3] Draw the 3D view as one stereo area with two parallel
+ cameras
+
+The 3D view is a QOpenGLWidget that asks for a stereo surface: the edition's Qt calls
+paintGL() once for each eye and shows the widget as a native window of its own, declared
+full side by side, while the rest of the window stays one flat picture. Each eye has its
+own camera, moved sideways by half the offset, with its frustum shifted so that the plane
+through the middle of the mesh stays at the screen.
+
+The offset is the largest for which every visible vertex stays inside the person's depth
+limits (read through libstereo-declare from the top level's surface and scaled to the
+width of the view), with no setting. The maths is in stereofit.cpp and is tested against
+an independent projection in tests/stereofit-test.cpp. Save Image and Copy Image take one eye, the left, at the size of the view. On X11 (Xwayland) the same widget is the stereo area, with the limits read from the declared child window.
+
+
+Assisted-by: Claude Sonnet via Claude Code
+---
+ src/meshview.cpp         | 236 ++++++++++++++++++++++++++++++++++++++-
+ src/meshview.h           |  31 +++++
+ src/src.pro              |   5 +-
+ src/stereofit.cpp        |  64 +++++++++++
+ src/stereofit.h          |  42 +++++++
+ tests/stereofit-test.cpp |  71 ++++++++++++
+ 6 files changed, 446 insertions(+), 3 deletions(-)
+ create mode 100644 src/stereofit.cpp
+ create mode 100644 src/stereofit.h
+ create mode 100644 tests/stereofit-test.cpp
+
+diff --git a/src/meshview.cpp b/src/meshview.cpp
+index b7588ef..6251393 100644
+--- a/src/meshview.cpp
++++ b/src/meshview.cpp
+@@ -30,6 +30,23 @@
+ #include <QOpenGLContext>
+ #include <QWheelEvent>
+ #include <QKeyEvent>
++#include <QWindow>
++#include <QGuiApplication>
++#include <QSurfaceFormat>
++#include <X11/Xatom.h>
++#include <QOpenGLFramebufferObject>
++
++#include <errno.h>
++#include <stdio.h>
++
++#include <stereo-declare.h>
++#include <qpa/qplatformnativeinterface.h>
++
++#include "stereofit.h"
++
++#include <QLoggingCategory>
++
++Q_LOGGING_CATEGORY( lcStereo, "fraqtive.stereo" )
+ 
+ #include "fractalpresenter.h"
+ #include "datafunctions.h"
+@@ -44,8 +61,30 @@ MeshView::MeshView( QWidget* parent, FractalPresenter* presenter ) : QOpenGLWidg
+     m_averageHeight( 0.0 ),
+     m_rotation( 0.0 ),
+     m_angle( -45.0 ),
++    m_stereoSurface( false ),
++    m_stereoEnabled( true ),
++    m_renderScale( 1.0 ),
++    m_sunkLimit( 0.0 ),
++    m_poppedLimit( 0.0 ),
++    m_haveLimits( false ),
++    m_limitsResult( -ENODATA ),
++    m_limitsTimer( NULL ),
++    m_offset( 0.0 ),
+     m_tracking( NoTracking )
+ {
++    // The 3D view is one stereo area: Qt calls paintGL() once for each eye and the edition's Qt gives the widget a native
++    // window of its own, declared full side by side, on Wayland and on X11, while the rest of the window stays one flat
++    // picture. When the surface comes without two views the window says so (pollLimits).
++    QSurfaceFormat format = this->format();
++    format.setOption( QSurfaceFormat::StereoBuffers );
++    setFormat( format );
++    m_stereoSurface = true;
++
++    m_sinceStart.start();
++    m_limitsTimer = new QTimer( this );
++    connect( m_limitsTimer, &QTimer::timeout, this, &MeshView::pollLimits );
++    m_limitsTimer->start( 250 );
++
+     setContextMenuPolicy( Qt::PreventContextMenu );
+     setFocusPolicy( Qt::WheelFocus );
+ }
+@@ -62,9 +101,22 @@ MeshView::~MeshView()
+     delete[] m_textureCoordArray;
+ }
+ 
++// The picture that Save Image and Copy Image take of the 3D view: one eye's plain picture (the left eye) at the size of the view,
++// never the pair and never a doubled picture.
+ QImage MeshView::image()
+ {
+-    return grabFramebuffer();
++    makeCurrent();
++    QSize size( qMax( 1, qRound( width() * devicePixelRatioF() ) ), qMax( 1, qRound( height() * devicePixelRatioF() ) ) );
++    QOpenGLFramebufferObjectFormat format;
++    format.setAttachment( QOpenGLFramebufferObject::CombinedDepthStencil );
++    QOpenGLFramebufferObject target( size, format );
++    target.bind();
++    glViewport( 0, 0, size.width(), size.height() );
++    drawScene( -1 );
++    QImage result = target.toImage().convertToFormat( QImage::Format_RGB32 );
++    target.release();
++    doneCurrent();
++    return result;
+ }
+ 
+ void MeshView::clearView()
+@@ -260,6 +312,16 @@ static const double NearClipping = 10.0;
+ static const double FarClipping = 70.0;
+ 
+ void MeshView::paintGL()
++{
++    // Qt calls paintGL() once for each eye of the stereo surface (the left eye when no surface has two views)
++    int eye = 0;
++    if ( m_stereoSurface && context()->format().stereo() )
++        eye = currentTargetBuffer() == QOpenGLWidget::RightBuffer ? 1 : -1;
++    drawScene( eye );
++}
++
++// the scene seen by one eye (-1 left, 1 right, 0 the middle) into the framebuffer that is bound
++void MeshView::drawScene( int eye )
+ {
+     glClearColor( m_backgroundColor.redF(), m_backgroundColor.greenF(), m_backgroundColor.blueF(), m_backgroundColor.alphaF() );
+     glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+@@ -306,6 +368,9 @@ void MeshView::paintGL()
+         glTexParameteri( GL_TEXTURE_1D, GL_TEXTURE_WRAP_S, GL_REPEAT );
+     }
+ 
++    // the viewport is the size of this view in device pixels, whatever the framebuffer that is bound had before (EXPLICIT)
++    glViewport( 0, 0, qMax( 1, qRound( width() * devicePixelRatioF() ) ), qMax( 1, qRound( height() * devicePixelRatioF() ) ) );
++
+     GLint viewport[ 4 ];
+     glGetIntegerv( GL_VIEWPORT, viewport );
+ 
+@@ -315,14 +380,19 @@ void MeshView::paintGL()
+     double fy = tan( 0.5 * m_settings.cameraZoom() * M_PI / 180.0 ) * NearClipping;
+     double fx = fy * vw / vh;
+ 
++    // two parallel cameras, one for each eye (Qt calls paintGL() once for each): each is moved sideways by half the offset
++    // and its frustum is shifted so that the plane through the centre of the mesh, at CameraDistance, stays at the screen
++    double cameraX = eye * 0.5 * eyeOffset( vw, fx );
++
+     glMatrixMode( GL_PROJECTION );
+     glLoadIdentity();
+-    glFrustum( -fx, fx, -fy, fy, NearClipping, FarClipping );
++    glFrustum( -fx - cameraX * NearClipping / CameraDistance, fx - cameraX * NearClipping / CameraDistance, -fy, fy, NearClipping, FarClipping );
+ 
+     double rotation = m_rotation - m_animationState.rotation() * 360.0;
+ 
+     glMatrixMode( GL_MODELVIEW );
+     glLoadIdentity();
++    glTranslated( -cameraX, 0.0, 0.0 );
+     glTranslated( 0.0, 0.0, -CameraDistance );
+     glRotated( m_angle, 1.0, 0.0, 0.0 );
+     glRotated( rotation, 0.0, 0.0, 1.0 );
+@@ -354,6 +424,168 @@ void MeshView::paintGL()
+ 
+     if ( hasLockArrays( context() ) )
+         p_glUnlockArraysEXT();
++
++}
++
++void MeshView::setStereoEnabled( bool enabled )
++{
++    m_stereoEnabled = enabled;
++    pollLimits();
++    update();
++}
++
++void MeshView::setRenderScale( double scale )
++{
++    m_renderScale = scale;
++}
++
++// The window of this view holds each eye at the render resolution; Stereo KWin shows it at the size of the area. Wayland: the
++// viewport destination, through the window's _q_stereo_view_size (logical pixels, the edition's Qt). X11: the declared child's
++// _KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_SIZE (display pixels, declaration support 6 or more).
++void MeshView::setShownSize( const QSize& area )
++{
++    m_shownSize = area;
++    applyShownSize();
++}
++
++void MeshView::applyShownSize()
++{
++    QWindow* handle = windowHandle();
++    if ( !handle )
++        return;
++    handle->setProperty( "_q_stereo_view_size", m_shownSize );
++
++    if ( QGuiApplication::platformName() == QLatin1String( "xcb" ) ) {
++        QPlatformNativeInterface* native = QGuiApplication::platformNativeInterface();
++        Display* display = native ? (Display*)native->nativeResourceForIntegration( "display" ) : NULL;
++        if ( !display )
++            return;
++        Atom atom = XInternAtom( display, "_KDE_NET_WM_STEREO_CONTENT_ONE_VIEW_SIZE", False );
++        if ( m_shownSize.isEmpty() ) {
++            XDeleteProperty( display, (Window)handle->winId(), atom );
++        } else {
++            qreal ratio = devicePixelRatioF();
++            unsigned long size[ 2 ] = { (unsigned long)qRound( m_shownSize.width() * ratio ), (unsigned long)qRound( m_shownSize.height() * ratio ) };
++            XChangeProperty( display, (Window)handle->winId(), atom, XA_CARDINAL, 32, PropModeReplace, (const unsigned char*)size, 2 );
++        }
++        XFlush( display );
++    }
++}
++
++void MeshView::setStereoStatus( const QString& text )
++{
++    if ( text != m_stereoStatus ) {
++        m_stereoStatus = text;
++        emit stereoStatusChanged( text );
++    }
++}
++
++// The person's limits, in pixels of a view 1920 wide, from Stereo KWin through libstereo-declare; never invented here. The
++// limits belong to the window, so they are asked with the top level's surface.
++int MeshView::readDepthLimits( double* sunk, double* popped )
++{
++    QWindow* topLevel = window()->windowHandle();
++    QPlatformNativeInterface* native = QGuiApplication::platformNativeInterface();
++    if ( !topLevel || !native )
++        return -ENODATA;
++
++    if ( QGuiApplication::platformName() == QLatin1String( "xcb" ) ) {
++        // X11 (Xwayland): the limits are a property of the declared child window, which is the 3D area's own window
++        Display* xdisplay = (Display*)native->nativeResourceForIntegration( "display" );
++        QWindow* child = windowHandle();
++        if ( !xdisplay || !child )
++            return -ENODATA;
++        XSelectInput( xdisplay, (Window)child->winId(), PropertyChangeMask );
++        struct stereo_depth_limits xlimits;
++        int xresult = stereo_depth_x11_get_limits( xdisplay, (Window)child->winId(), &xlimits );
++        if ( xresult == 0 ) {
++            *sunk = xlimits.sunk;
++            *popped = xlimits.popped;
++        }
++        return xresult;
++    }
++
++    struct wl_display* display = (struct wl_display*)native->nativeResourceForIntegration( "wl_display" );
++    struct wl_surface* surface = (struct wl_surface*)native->nativeResourceForWindow( "surface", topLevel );
++    if ( !display || !surface )
++        return -ENOTSUP;
++
++    static bool initialized = false;
++    if ( !initialized ) {
++        stereo_declare_wayland_init( display, NULL );
++        initialized = true;
++    }
++
++    struct stereo_depth_limits limits;
++    int result = stereo_depth_wayland_get_limits( surface, &limits );
++    if ( result == 0 ) {
++        *sunk = limits.sunk;
++        *popped = limits.popped;
++    }
++    return result;
++}
++
++void MeshView::pollLimits()
++{
++    applyShownSize();
++    double sunk = 0.0, popped = 0.0;
++    int result = m_stereoSurface ? readDepthLimits( &sunk, &popped ) : -ENOTSUP;
++    bool changed = result != m_limitsResult || ( result == 0 && ( sunk != m_sunkLimit || popped != m_poppedLimit ) );
++    m_limitsResult = result;
++    m_haveLimits = result == 0;
++    if ( m_haveLimits ) {
++        m_sunkLimit = sunk;
++        m_poppedLimit = popped;
++    }
++
++    // the first answers come while the connection to the compositor is still being set up: tell the person only after a moment
++    bool settled = m_sinceStart.elapsed() > 2500;
++    QString text;
++    if ( !m_stereoEnabled )
++        text = QString();
++    else if ( m_stereoSurface && !context() )
++        text = QString();
++    else if ( m_stereoSurface && context() && !context()->format().stereo() )
++        text = tr( "The 3D view is shown flat: this computer cannot give a window with two views." );
++    else if ( settled && result == -ENOTSUP )
++        text = tr( "The 3D view is shown flat: the compositor does not tell the depth limits of the screen." );
++    else if ( m_haveLimits && m_sunkLimit <= 0.0 && m_poppedLimit <= 0.0 )
++        text = tr( "The 3D view is shown flat: the depth limits of the screen are zero." );
++    else if ( settled && result == -ENODATA )
++        text = tr( "The 3D view is shown flat: the compositor has not told the depth limits of the screen yet." );
++    setStereoStatus( text );
++
++    if ( changed )
++        update();
++}
++
++// The largest camera offset for which every vertex of the visible mesh stays inside the person's limits, one rule and no setting.
++// The limits are pixels of a view 1920 wide and are scaled to the width of this view.
++double MeshView::eyeOffset( double viewWidth, double halfFrustumWidth )
++{
++    if ( !m_stereoEnabled || !m_haveLimits || m_resolution.isEmpty() || !m_vertexArray )
++        return 0.0;
++
++    SceneGeometry scene;
++    scene.maximumDepth = m_maximumDepth;
++    scene.averageHeight = m_averageHeight;
++    scene.heightScale = m_settings.heightScale();
++    scene.rotation = m_rotation - m_animationState.rotation() * 360.0;
++    scene.angle = m_angle;
++    scene.cameraDistance = CameraDistance;
++    scene.nearClipping = NearClipping;
++    scene.farClipping = FarClipping;
++
++    double focal = 0.5 * viewWidth * NearClipping / halfFrustumWidth;
++    double scale = viewWidth / 1920.0;
++    double farthest = 0.0, nearest = 0.0;
++    double offset = stereoFitOffset( m_vertexArray, m_resolution.width() * m_resolution.height(), scene, focal, m_sunkLimit * scale, m_poppedLimit * scale, &farthest, &nearest );
++    if ( fabs( offset - m_offset ) > 0.01 * offset ) {
++        m_offset = offset;
++        qCDebug( lcStereo, "view %.0f px wide, offset %.5f, predicted disparity (right minus left, px): farthest %+.3f nearest %+.3f, limits sunk %.3f popped %.3f px",
++                 viewWidth, offset, offset * farthest, offset * nearest, m_sunkLimit * scale, m_poppedLimit * scale );
++    }
++    return offset;
+ }
+ 
+ void MeshView::generateTexture()
+diff --git a/src/meshview.h b/src/meshview.h
+index 7f5eb9c..d08fd73 100644
+--- a/src/meshview.h
++++ b/src/meshview.h
+@@ -20,6 +20,8 @@
+ #define MESHVIEW_H
+ 
+ #include <QOpenGLWidget>
++#include <QElapsedTimer>
++#include <QTimer>
+ 
+ #include "abstractview.h"
+ #include "datastructures.h"
+@@ -54,6 +56,15 @@ public: // AbstractView implementation
+ 
+     void setAnimationState( const AnimationState& state );
+ 
++    // the 3D options of the program: whether the two views differ, and the render resolution of each (a fraction of the area)
++    void setStereoEnabled( bool enabled );
++    void setRenderScale( double scale );
++    void setShownSize( const QSize& area );
++
++signals:
++    // what the person must be told about the two views ("" when they are given); a sentence in the person's language
++    void stereoStatusChanged( const QString& text );
++
+ protected: // overrides
+     void initializeGL();
+     void resizeGL( int width, int height );
+@@ -67,11 +78,18 @@ protected: // overrides
+     void keyPressEvent( QKeyEvent* e );
+ 
+ private:
++    void drawScene( int eye );
+     void generateTexture();
+ 
+     void initializeVertices();
+     void updateVertices( const FractalData* data, const QRect& region );
+ 
++    int readDepthLimits( double* sunk, double* popped );
++    double eyeOffset( double viewWidth, double halfFrustumWidth );
++    void setStereoStatus( const QString& text );
++    void pollLimits();
++    void applyShownSize();
++
+ private:
+     enum Tracking
+     {
+@@ -98,6 +116,19 @@ private:
+     float* m_textureCoordArray;
+     QSize m_resolution;
+ 
++    QSize m_shownSize;
++    bool m_stereoSurface;
++    bool m_stereoEnabled;
++    double m_renderScale;
++    double m_sunkLimit;
++    double m_poppedLimit;
++    bool m_haveLimits;
++    int m_limitsResult;
++    QElapsedTimer m_sinceStart;
++    QTimer* m_limitsTimer;
++    QString m_stereoStatus;
++    double m_offset;
++
+     QRect m_updatedRegion;
+ 
+     double m_maximumDepth;
+diff --git a/src/src.pro b/src/src.pro
+index d1f4be6..97c7f79 100644
+--- a/src/src.pro
++++ b/src/src.pro
+@@ -3,7 +3,8 @@ include( ../config.pri )
+ TEMPLATE = app
+ TARGET = fraqtive
+ 
+-QT += widgets openglwidgets xml
++QT += widgets openglwidgets xml gui-private
++LIBS += -lstereo-declare -lX11
+ 
+ HEADERS   += aboutbox.h \
+              abstractjobprovider.h \
+@@ -40,6 +41,7 @@ HEADERS   += aboutbox.h \
+              loadbookmarkdialog.h \
+              loadpresetdialog.h \
+              meshview.h \
++             stereofit.h \
+              parameterspage.h \
+              presetlistview.h \
+              presetmodel.h \
+@@ -83,6 +85,7 @@ SOURCES   += aboutbox.cpp \
+              loadpresetdialog.cpp \
+              main.cpp \
+              meshview.cpp \
++             stereofit.cpp \
+              parameterspage.cpp \
+              presetlistview.cpp \
+              presetmodel.cpp \
+diff --git a/src/stereofit.cpp b/src/stereofit.cpp
+new file mode 100644
+index 0000000..1fd032c
+--- /dev/null
++++ b/src/stereofit.cpp
+@@ -0,0 +1,64 @@
++/**************************************************************************
++* This file is part of the Fraqtive program
++* Copyright (C) 2026 Daniel Campos Ramos
++*
++* This program is free software: you can redistribute it and/or modify
++* it under the terms of the GNU General Public License as published by
++* the Free Software Foundation, either version 3 of the License, or
++* (at your option) any later version.
++**************************************************************************/
++
++#include "stereofit.h"
++
++#include <math.h>
++
++#ifndef M_PI
++# define M_PI 3.14159265358979323846
++#endif
++
++double stereoDepth( const SceneGeometry& scene, double x, double y, double z )
++{
++    double r = scene.rotation * M_PI / 180.0;
++    double a = scene.angle * M_PI / 180.0;
++    z = scene.heightScale * ( z + scene.averageHeight );
++    double ry = x * sin( r ) + y * cos( r );
++    return scene.cameraDistance - ( ry * sin( a ) + z * cos( a ) );
++}
++
++double stereoDisparity( double focal, double zeroParallax, double depth )
++{
++    return focal * ( 1.0 / zeroParallax - 1.0 / depth );
++}
++
++double stereoFitOffset( const float* vertices, int count, const SceneGeometry& scene, double focal, double sunkPixels, double poppedPixels,
++                        double* farthest, double* nearest )
++{
++    double far = 0.0, near = 0.0;
++    double limit = scene.maximumDepth - 0.001;
++
++    for ( int i = 0; i < count; i++ ) {
++        double z = vertices[ 3 * i + 2 ];
++        if ( z + limit < 0.0 )
++            continue;
++        double depth = stereoDepth( scene, vertices[ 3 * i ], vertices[ 3 * i + 1 ], z );
++        if ( depth < scene.nearClipping || depth > scene.farClipping )
++            continue;
++        double disparity = stereoDisparity( focal, scene.cameraDistance, depth );
++        if ( disparity > far )
++            far = disparity;
++        if ( disparity < near )
++            near = disparity;
++    }
++
++    if ( farthest )
++        *farthest = far;
++    if ( nearest )
++        *nearest = near;
++
++    double offset = 1e9;
++    if ( far > 0.0 && sunkPixels / far < offset )
++        offset = sunkPixels / far;
++    if ( near < 0.0 && poppedPixels / -near < offset )
++        offset = poppedPixels / -near;
++    return offset < 1e9 ? offset : 0.0;
++}
+diff --git a/src/stereofit.h b/src/stereofit.h
+new file mode 100644
+index 0000000..98084e9
+--- /dev/null
++++ b/src/stereofit.h
+@@ -0,0 +1,42 @@
++/**************************************************************************
++* This file is part of the Fraqtive program
++* Copyright (C) 2026 Daniel Campos Ramos
++*
++* This program is free software: you can redistribute it and/or modify
++* it under the terms of the GNU General Public License as published by
++* the Free Software Foundation, either version 3 of the License, or
++* (at your option) any later version.
++**************************************************************************/
++
++#ifndef STEREOFIT_H
++#define STEREOFIT_H
++
++// The two parallel cameras of the 3D view. The cameras sit half the offset to each side of the view and each frustum is shifted
++// so that the plane at zeroParallax distance stays at the screen; a point at depth Z then has the screen disparity
++// (right eye minus left eye, positive behind the screen) focal * offset * ( 1 / zeroParallax - 1 / Z ), focal being the
++// focal length in pixels of one view.
++
++struct SceneGeometry
++{
++    double maximumDepth;
++    double averageHeight;
++    double heightScale;
++    double rotation; // degrees about the z axis
++    double angle;    // degrees about the x axis
++    double cameraDistance;
++    double nearClipping;
++    double farClipping;
++};
++
++// the depth of a model point from the camera plane
++double stereoDepth( const SceneGeometry& scene, double x, double y, double z );
++
++// the disparity of a point at that depth, for an offset of one
++double stereoDisparity( double focal, double zeroParallax, double depth );
++
++// The largest offset for which every visible vertex stays inside the limits (pixels of one view). Returns 0 when the mesh
++// holds no vertex in front of or behind the screen; farthest and nearest get the extreme disparities for an offset of one.
++double stereoFitOffset( const float* vertices, int count, const SceneGeometry& scene, double focal, double sunkPixels, double poppedPixels,
++                        double* farthest, double* nearest );
++
++#endif
+diff --git a/tests/stereofit-test.cpp b/tests/stereofit-test.cpp
+new file mode 100644
+index 0000000..f9e757c
+--- /dev/null
++++ b/tests/stereofit-test.cpp
+@@ -0,0 +1,71 @@
++// The camera maths of the 3D view against an independent pinhole projection: for thousands of random vertices and views, the
++// disparity the program predicts (stereofit.cpp) must equal the difference of the two projected positions computed here with the
++// OpenGL matrices written out; the fitted offset must put the extreme vertices exactly on the limits; the vertical disparity is 0.
++// Build: g++ -O1 -I../src -o stereofit-test stereofit-test.cpp ../src/stereofit.cpp && ./stereofit-test
++#include "stereofit.h"
++#include <math.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <vector>
++
++struct P { double x, y; };
++
++static P project( const SceneGeometry& s, double fx, double fy, double cx, double W, double H, double x, double y, double z )
++{
++    double r = s.rotation * M_PI / 180.0, a = s.angle * M_PI / 180.0;
++    double px = x, py = y, pz = s.heightScale * ( z + s.averageHeight );              // T(0,0,avg) then S(1,1,hs)
++    double qx = px * cos( r ) - py * sin( r ), qy = px * sin( r ) + py * cos( r ), qz = pz; // Rz
++    double ex = qx, ey = qy * cos( a ) - qz * sin( a ), ez = qy * sin( a ) + qz * cos( a ); // Rx
++    ez -= s.cameraDistance;                                                              // T(0,0,-C)
++    ex -= cx;                                                                            // T(-cx,0,0) (the camera moves by cx)
++    double N = s.nearClipping, l = -fx - cx * N / s.cameraDistance, rr = fx - cx * N / s.cameraDistance;
++    double xn = ( 2 * N / ( rr - l ) ) * ex / -ez - ( rr + l ) / ( rr - l );
++    double yn = ( N / fy ) * ey / -ez;
++    return { ( xn + 1 ) * 0.5 * W, ( yn + 1 ) * 0.5 * H };
++}
++
++int main()
++{
++    srand( 743 );
++    double worst = 0, worstFit = 0, vertical = 0;
++    int checked = 0, fitChecked = 0;
++    for ( int trial = 0; trial < 200; trial++ ) {
++        SceneGeometry s = { 1.0 + rand() % 5, ( rand() % 100 ) / 50.0 - 1.0, 0.2 + ( rand() % 100 ) / 40.0, rand() % 360 - 180.0, -45.0 + rand() % 20, 40.0, 10.0, 70.0 };
++        double W = 400 + rand() % 1500, H = 300 + rand() % 800, fyv = tan( 0.5 * ( 20 + rand() % 40 ) * M_PI / 180.0 ) * s.nearClipping, fxv = fyv * W / H;
++        double focal = 0.5 * W * s.nearClipping / fxv;
++        std::vector<float> v;
++        for ( int i = 0; i < 2000; i++ ) {
++            v.push_back( ( rand() % 2000 - 1000 ) / 100.0f ); v.push_back( ( rand() % 2000 - 1000 ) / 100.0f ); v.push_back( -( rand() % 100 ) / 100.0f * s.maximumDepth );
++        }
++        double e = 0.37 + ( rand() % 100 ) / 100.0;
++        for ( size_t i = 0; i < v.size(); i += 3 ) {
++            double Z = stereoDepth( s, v[i], v[i + 1], v[i + 2] );
++            if ( Z < s.nearClipping || Z > s.farClipping )
++                continue;
++            P l = project( s, fxv, fyv, -0.5 * e, W, H, v[i], v[i + 1], v[i + 2] ), r = project( s, fxv, fyv, 0.5 * e, W, H, v[i], v[i + 1], v[i + 2] );
++            double d = r.x - l.x, predicted = e * stereoDisparity( focal, s.cameraDistance, Z );
++            if ( fabs( d - predicted ) > worst ) worst = fabs( d - predicted );
++            if ( fabs( r.y - l.y ) > vertical ) vertical = fabs( r.y - l.y );
++            checked++;
++        }
++        // the fitted offset puts the extreme vertices on the limits
++        double sunk = 3 + rand() % 10, popped = 1 + rand() % 6, far, near;
++        double off = stereoFitOffset( v.data(), (int)( v.size() / 3 ), s, focal, sunk, popped, &far, &near );
++        if ( off > 0 ) {
++            double maxD = 0, minD = 0;
++            for ( size_t i = 0; i < v.size(); i += 3 ) {
++                double Z = stereoDepth( s, v[i], v[i + 1], v[i + 2] );
++                if ( v[i + 2] + s.maximumDepth - 0.001 < 0 || Z < s.nearClipping || Z > s.farClipping ) continue;
++                P l = project( s, fxv, fyv, -0.5 * off, W, H, v[i], v[i + 1], v[i + 2] ), r = project( s, fxv, fyv, 0.5 * off, W, H, v[i], v[i + 1], v[i + 2] );
++                double d = r.x - l.x; if ( d > maxD ) maxD = d; if ( d < minD ) minD = d;
++            }
++            if ( maxD > sunk + 1e-6 || -minD > popped + 1e-6 ) { printf( "FAIL fit leaves the limits: %f %f against %f %f\n", maxD, -minD, sunk, popped ); return 1; }
++            double hit = ( maxD > 0 ? maxD / sunk : 0 ) > ( minD < 0 ? -minD / popped : 0 ) ? maxD / sunk : -minD / popped;
++            if ( 1.0 - hit > worstFit ) worstFit = 1.0 - hit;
++            fitChecked++;
++        }
++    }
++    printf( "%d vertices: largest difference between the program's disparity and the projected one %.2e px, largest vertical disparity %.2e px\n", checked, worst, vertical );
++    printf( "%d fits: every vertex inside the limits, the binding limit reached to within %.2e of itself\n", fitChecked, worstFit );
++    return worst < 1e-6 && vertical < 1e-6 && worstFit < 1e-6 ? 0 : 1;
++}
+-- 
+2.53.0
+

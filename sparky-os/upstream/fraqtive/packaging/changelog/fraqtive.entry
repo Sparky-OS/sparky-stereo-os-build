@@ -1,5 +1,8 @@
 fraqtive (@VERSION@) unstable; urgency=medium
 
-  * Draw the 3D view: set the vertex arrays while the OpenGL context is
-    current (the view stayed black on X11), and draw it with QOpenGLWidget
-    instead of QGLWidget (the view stayed empty on Wayland).
+  * Build on Qt 6: the 3D view is one stereo area with two parallel cameras
+    fitted to the depth limits of Stereo KWin (on Wayland; flat on X11, and
+    the window says so), with the options Enable 3D and Render Resolution per
+    Eye and a shortcut to Display Settings, its sentences in ten languages.
+  * Build-Depends: Qt 6 (qt6-base-dev, qt6-base-private-dev, qt6-l10n-tools,
+    libqt6opengl6-dev, libqt6openglwidgets6), libstereo-declare-dev, libx11-dev.
