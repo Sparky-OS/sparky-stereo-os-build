@@ -28,6 +28,24 @@ if not any(l.startswith("STEREO|summary|kwin|") for l in lines):
     sys.exit(77)
 ok = True
 for lay in layouts:
+    if lay == "edid-no-3d":
+        # the EDID the guest read (edid-decode, written beside the results) declares no HDMI 3D: no "3D present", no "3D:" structure line
+        path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), "..", "edid-decode.txt")
+        text = open(path, errors="replace").read() if os.path.exists(path) else ""
+        hdmi = "Vendor-Specific Data Block (HDMI)" in text
+        threed = [l.strip() for l in text.splitlines() if re.search(r"\b3D present\b|^\s*3D:|3D VIC", l)]
+        good = hdmi and not threed
+        print("%-9s the EDID is an HDMI sink (a vendor block: %s) declaring no 3D (%d lines about 3D) -> %s" % (lay, "yes" if hdmi else "no", len(threed), "holds" if good else "does not hold"))
+        ok = ok and good
+        continue
+    if lay == "no-3d-modes":
+        # the compositor lists no 3D mode for that output (the count line of the kwin phase)
+        n = [re.search(r"output \S+, (\d+) 3D modes listed", l) for l in lines if l.startswith("STEREO|kwin|output ")]
+        n = [int(m.group(1)) for m in n if m]
+        good = bool(n) and n[0] == 0
+        print("%-9s the compositor lists %s 3D modes -> %s" % (lay, n[0] if n else "an unknown number of", "holds" if good else "does not hold"))
+        ok = ok and good
+        continue
     chk = [l for l in lines if re.match(r"STEREO\|check\|kwin/%s-" % re.escape(lay), l)]
     skip = [l for l in lines if l.startswith("STEREO|skip|kwin/%s|" % lay)]
     passed = [l for l in chk if "|PASS|" in l]
