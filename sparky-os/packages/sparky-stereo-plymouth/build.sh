@@ -9,7 +9,7 @@
 set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 OUT=$(readlink -f "${1:-.}")
-VERSION=20261117~sparky9~0+lc1
+VERSION=20261119~sparky9~0+lc1
 PKG=sparky-stereo-plymouth
 # the host's facts for the build record, and the source date from the recipe's last commit (ORDER 394b, ORDER 421b)
 . "$HERE/../../repo/build-provenance.sh"
