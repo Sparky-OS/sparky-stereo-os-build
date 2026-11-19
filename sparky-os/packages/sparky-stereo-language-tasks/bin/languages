@@ -20,6 +20,8 @@ ROWS = {r['code'].lower(): r for r in DATA['languages']}
 FAILURE = 'Language %s is incomplete (%s). Connect to the network and retry this installation step.'
 MIGRATION = 'Language support could not be completed: %s. Check the network and retry the update.'
 DRY = os.environ.get('SPARKY_STEREO_LANG_DRY_RUN') == '1'
+LIVE = ('installed', 'triggers-pending', 'triggers-awaited', 'half-configured')
+NETWORK = re.compile(r'Could not resolve|Failed to fetch|Temporary failure|Unable to connect|Connection (?:failed|timed out|refused)|Network is unreachable|^Err:\d', re.M)
 locale = os.environ.get('INSTALLER_LANG') or os.environ.get('LANG', 'en')
 _ = gettext.translation('sparky-stereo-language-tasks', '/usr/share/locale', languages=[locale.split('.')[0]], fallback=True).gettext
 
@@ -43,10 +45,37 @@ def run(args, check=True):
     return p
 
 
+class Blocked(RuntimeError):
+    def __init__(self, blockers):
+        self.blockers = sorted(blockers)
+        super().__init__('Remv: ' + ', '.join(self.blockers))
+
+
 def installed():
     text = run(['dpkg-query', '-W', '-f', '${Package}\t${db:Status-Status}\t${Depends}, ${Pre-Depends}, ${Recommends}\t${Provides}\n']).stdout
     return {f[0]: {'deps': f[2], 'provides': f[3], 'status': f[1]} for line in text.splitlines()
-            if len(f := line.split('\t')) == 4 and f[1] in ('installed', 'triggers-pending', 'triggers-awaited', 'half-configured')}
+            if len(f := line.split('\t')) == 4 and f[1] in LIVE}
+
+
+def debian_tasks():
+    # Debian's own task packages: built from the tasksel source, each locked to tasksel's exact version.
+    text = run(['dpkg-query', '-W', '-f', '${Package}\t${db:Status-Status}\t${Source}\n']).stdout
+    return {f[0] for line in text.splitlines() if len(f := line.split('\t')) == 3 and f[1] in LIVE
+            and f[0].startswith('task-') and not f[0].startswith('task-sparky-') and re.match(r'tasksel(?: |$)', f[2])}
+
+
+def held():
+    # A Debian task locked to the installed tasksel while Debian offers a newer one.
+    have = installed()
+    tasks = debian_tasks() & set(have)
+    if not tasks or 'tasksel' not in have:
+        return False
+    policy = run(['apt-cache', 'policy', 'tasksel'], False).stdout
+    current = re.search(r'Installed: (\S+)', policy)
+    candidate = re.search(r'Candidate: (\S+)', policy)
+    if not current or not candidate or current[1] == candidate[1]:
+        return False
+    return any(re.search(r'tasksel \(= ' + re.escape(current[1]) + r'\)', have[n]['deps']) for n in tasks)
 
 
 def names(groups):
@@ -95,11 +124,23 @@ def requested(values):
 
 def plan(args, allowed=()):
     p = run(['apt-get', '-s', '-o', 'DPkg::Lock::Timeout=-1', '--no-install-recommends'] + args)
-    removed = {line.split()[1].split(':')[0] for line in p.stdout.splitlines() if line.startswith(('Remv ', 'Purg '))}
+    removed = removals(p)
     if removed - set(allowed):
-        raise RuntimeError('Remv: ' + ', '.join(sorted(removed - set(allowed))))
+        raise Blocked(removed - set(allowed))
     print(p.stdout, end='')
     return p
+
+
+def removals(p):
+    return {line.split()[1].split(':')[0] for line in p.stdout.splitlines() if line.startswith(('Remv ', 'Purg '))}
+
+
+def keep_payload(retired, have, leaving):
+    # What a retired Debian task brought stays, as the person's own packages.
+    kept = actual(names([have[n]['deps'] for n in retired if n in have]), have) - set(leaving) - {'tasksel', 'tasksel-data'}
+    if kept and not DRY:
+        run(['apt-mark', 'manual'] + sorted(kept))
+    return kept
 
 
 def verify(codes):
@@ -198,8 +239,14 @@ def migrate():
             run(['apt-mark', 'manual'] + roots)
         codes = set(pending['codes'])
         wrappers = {n for c in codes for n in ROWS[c]['conflicts']}
+        debian = debian_tasks()
         args = ['install', 'tasksel', 'tasksel-data'] + [ROWS[c]['name'] for c in sorted(codes)] + roots
-        p = plan(args, wrappers)
+        p = plan(args, wrappers | debian)
+        retired = removals(p) & debian
+        if retired:
+            kept = keep_payload(retired, installed(), wrappers | debian)
+            print('Debian tasks retired with tasksel: ' + ', '.join(sorted(retired)))
+            print('Kept as installed packages: ' + ', '.join(sorted(kept)))
         print(run(['apt-get', '-y', '-o', 'DPkg::Lock::Timeout=-1', '--no-install-recommends'] + args).stdout)
         verify(codes)
         after = run(['apt-get', '-s', 'autoremove'])
@@ -221,9 +268,11 @@ def main():
     elif action == 'queue':
         capture()
     elif action == 'retry':
+        if not (STATE / 'pending').exists() and held():
+            capture()
         if (STATE / 'pending').exists() and Path('/run/systemd/system').is_dir():
-            run(['systemctl', 'reset-failed', 'sparky-stereo-language-tasks.path', 'sparky-stereo-language-tasks.service'])
-            run(['systemctl', '--no-block', 'start', 'sparky-stereo-language-tasks.path', 'sparky-stereo-language-tasks.service'])
+            run(['systemctl', 'reset-failed', 'sparky-stereo-language-tasks.path', 'sparky-stereo-language-tasks.timer', 'sparky-stereo-language-tasks.service'])
+            run(['systemctl', '--no-block', 'start', 'sparky-stereo-language-tasks.path', 'sparky-stereo-language-tasks.timer', 'sparky-stereo-language-tasks.service'])
     elif action == 'migrate':
         migrate()
     elif action == 'verify':
@@ -249,13 +298,30 @@ def main():
         raise ValueError(action)
 
 
+def failure(error):
+    # The message names what really failed: packages apt would remove, a fetch that failed, or apt's own error.
+    if isinstance(error, Blocked):
+        return 'LOCAL3', ', '.join(error.blockers)
+    text = str(error)
+    lines = text.splitlines()
+    first = next((i for i, line in enumerate(lines) if line.startswith('E:')), None)
+    if first is None:
+        picked = [line.strip() for line in lines if line.strip()][-3:]
+    else:
+        # apt gives the reason on the lines after its first E: line
+        picked = [line.strip() for line in lines[first:first + 6] if line.strip()]
+    summary = ' '.join(picked)[:600].rstrip(' :.') or type(error).__name__
+    return ('LOCAL2' if NETWORK.search(text) else 'LOCAL4'), summary
+
+
 if __name__ == '__main__':
     try:
         main()
     except (OSError, ValueError, RuntimeError) as error:
         print(str(error), file=sys.stderr)
         if sys.argv[1:2] == ['migrate']:
+            key, argument = failure(error)
             run(['sparky-stereo-problems', 'keep', '--machine', '--repair',
                  '["/usr/lib/sparky-stereo-language-tasks/languages","migrate"]',
-                 'sparky-stereo-language-tasks', 'migration', 'LOCAL2', str(error)], False)
+                 'sparky-stereo-language-tasks', 'migration', key, argument], False)
         sys.exit(1)

@@ -1,0 +1,63 @@
+Description: GamesModel::reload(): each answer owns its watcher
+ reload() replaced m_getManagedObjectsWatcher and every watcher's handler
+ called m_getManagedObjectsWatcher->deleteLater() and set the member to null.
+ When the GameMode service appears while the first ListGames answer is still
+ on its way, reload() runs twice and both answers arrive: the first handler
+ deletes the second reload's watcher and clears the member, and the second
+ handler calls deleteLater() on a null pointer, so plasmashell dies with
+ SIGSEGV at login. Now the handler captures the watcher it was made for and
+ deletes that one, the member is cleared only when it still points to that
+ watcher, and reset() disconnects the watcher of a listing it gives up.
+ The Game Mode applet keeps working on the panel.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: vendor
+Bug-Upstream: none, nothing found on 2026-11-19 in invent.kde.org/sitter/plasma-gamemode (no commit after 4d603583 of 2024-03-15, issue 1 and merge requests 1 to 3 are about Plasma 6 and translations) or in Debian's tracker for plasma-gamemode (SOAP get_bugs, package and src: no bugs)
+Forwarded: no
+Last-Update: 2026-11-19
+---
+--- a/src/gamesmodel.cpp
++++ b/src/gamesmodel.cpp
+@@ -176,6 +176,8 @@
+     }
+ 
+     if (m_getManagedObjectsWatcher) {
++        // An answer that is already on its way must not reach the handler of a listing we gave up.
++        m_getManagedObjectsWatcher->disconnect(this);
+         m_getManagedObjectsWatcher->deleteLater();
+         m_getManagedObjectsWatcher = nullptr;
+         Q_EMIT waitingChanged();
+@@ -196,23 +198,24 @@
+ 
+     Q_EMIT validChanged();
+ 
+-    // Load existing objects.
+-    if (m_getManagedObjectsWatcher) {
+-        // Last reload didn't finish before this one, so throw away the last watcher
+-        m_getManagedObjectsWatcher->deleteLater();
+-    }
++    // Load existing objects. reset() has already given up the watcher of an earlier reload, so there is none here.
+     auto call = m_iface->ListGames();
+-    m_getManagedObjectsWatcher = new QDBusPendingCallWatcher(call, this);
++    auto watcher = new QDBusPendingCallWatcher(call, this);
++    m_getManagedObjectsWatcher = watcher;
+     Q_EMIT waitingChanged();
+-    connect(m_getManagedObjectsWatcher, &QDBusPendingCallWatcher::finished, this, [call, this] {
++    // The handler owns its watcher: it deletes the one it was called for, and clears the member only if that is still
++    // the member's watcher, never the watcher of a newer reload.
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [call, watcher, this] {
+ 
+         qDebug() << Q_FUNC_INFO << "lambda" << call.error();
+         auto map = call.value();
+         for (const auto &entry : map) {
+             addObject(entry.pid, entry.path);
+         }
+-        m_getManagedObjectsWatcher->deleteLater();
+-        m_getManagedObjectsWatcher = nullptr;
+-        Q_EMIT waitingChanged();
++        watcher->deleteLater();
++        if (m_getManagedObjectsWatcher == watcher) {
++            m_getManagedObjectsWatcher = nullptr;
++            Q_EMIT waitingChanged();
++        }
+     });
+ }
