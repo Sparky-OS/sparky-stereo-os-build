@@ -1,0 +1,48 @@
+Description: WebXR flat display: the separation is the screen's limit in the window's own pixels, never the window's width (ORDER 750d)
+ The person's depth limits are set once, for the screen (Daniel, 2026-11-19: "one separation setting, centralized, tailored TO THE
+ SCREEN not to the element size"), in pixels of a view as wide as the output. An inline-stereo session (WebXR 3.4) shows its two
+ views through the page's canvas, at the canvas's own width on the output, and GetWindowViews gave the eyes a separation that was
+ that limit over 1920 times the canvas's width (published +stereo3d15 in the rig: the farthest point of a tilted object at 9.94
+ px on the screen with a canvas 1904 wide, 4.06 px with a canvas 890 wide). The separation is now the share of the window that
+ is the output's width over the width the window is shown at, the same conversion as the WebGL camera (sunk / 1920 * output
+ width / canvas width), with the output's width from the same source (widget::StereoDepthProcessLimits, the screen when none is
+ known). An immersive session fills the output, so its ratio is one and it is unchanged.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+diff --git a/dom/vr/XRSession.cpp b/dom/vr/XRSession.cpp
+index d1a0f12..98892a2 100644
+--- a/dom/vr/XRSession.cpp
++++ b/dom/vr/XRSession.cpp
+@@ -38,6 +38,7 @@
+ #include "mozilla/dom/HTMLCanvasElement.h"
+ #include "mozilla/dom/KeyboardEvent.h"
+ #include "mozilla/dom/MouseEvent.h"
++#include "mozilla/widget/StereoDepthState.h"
+ #include "mozilla/dom/WheelEvent.h"
+ #include "mozilla/widget/Screen.h"
+ #include "mozilla/widget/ScreenManager.h"
+@@ -582,7 +583,21 @@ XRSession::WindowViews XRSession::GetWindowViews() const {
+     // towards the far limit and pops in front of the plane.
+     plane = FlatScenePlaneMm(1000.0);
+     const double windowWidth = width * plane / viewer;
+-    separation = mFlatDepth.mSunkPx / 1920.0 * windowWidth;
++    // The limits are the screen's, in pixels of a view as wide as the output
++    // the window is on, so the separation is a share of the window that
++    // is the output's width over the width the window is shown at: the
++    // canvas of an inline session is shown at its own width, the canvas of an
++    // immersive session fills the output. A unit conversion, never the
++    // window's size alone.
++    const int32_t processOutput =
++        widget::StereoDepthProcessLimits::sOutputWidth;
++    const double outputWidth =
++        processOutput > 0 ? double(processOutput) : double(screenPixels.width);
++    const double shownWidth = IsImmersive() ? outputWidth : double(pixels.width);
++    separation = shownWidth > 0
++                     ? mFlatDepth.mSunkPx / 1920.0 * windowWidth *
++                           outputWidth / shownWidth
++                     : 0.0;
+     // the window as the eyes at the plane see it
+   } else {
+     // The expert's own physical separation: the screen at the viewer's
