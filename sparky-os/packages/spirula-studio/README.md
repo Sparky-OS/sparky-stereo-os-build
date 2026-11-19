@@ -33,3 +33,9 @@ Run the source checks before the build projection, backend parity on both GPUs, 
 
 The application belongs on Graphics/Editors and Stereo players, editors and tools in AppCenter.
 The accepted role mapping is designer and creator, as Suggests; this recipe changes neither role list.
+
+For a packaging-only successor, set SPIRULA_REPACK_FROM to the qualified predecessor directory named by debian/repack-predecessor.json.
+The recipe verifies its source and build record, carries its source-consumer preserve plan and copies the declared original components without downloading them.
+Both composition paths normalize the source tree with SOURCE_DATE_EPOCH immediately before dpkg-source -b.
+The reuse path checks all predecessor archive hashes and unchanged native inputs, then restores authored payloads through HR and repeats the normal payload and link/start gates.
+The build record retains the new recipe identity and the compiled predecessor identity; reuse never invokes a native compiler.

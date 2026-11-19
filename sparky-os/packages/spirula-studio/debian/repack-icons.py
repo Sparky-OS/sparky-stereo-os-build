@@ -33,7 +33,7 @@ for name, expected in plan['archives'].items():
         raise SystemExit('Predecessor archive hash mismatch: ' + name)
 parent_record = json.loads((archives / plan['build_record']['name']).read_text())
 assert sha(archives / plan['build_record']['name']) == plan['build_record']['sha256']
-assert parent_record['recipeCommit'] == plan['compiled_recipe_commit']
+assert parent_record['recipeCommit'] == plan.get('predecessor_recipe_commit', plan['compiled_recipe_commit'])
 assert not parent_record['unrecorded']
 assert sha(archives / plan['source']['name']) == plan['source']['sha256']
 previous = work / 'previous-source'
