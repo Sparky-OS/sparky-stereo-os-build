@@ -10,6 +10,7 @@ docker run --name pv24-ums-package --pull=never --platform linux/amd64 --ulimit 
  --hostname pv24-ums --add-host pv24-ums:127.0.0.1 --add-host repo.sparkyos.org:192.168.0.60 --cap-add NET_ADMIN --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
  "${SPARKY_PROV_ARGS[@]}" \
  --mount type=bind,source="${PV24_WORKSPACE:?set the isolated work directory}",target=/work \
+ --mount type=bind,source="${PV24_UMS_JOB:?set the isolated package scratch}",target=/work/linux/ums-package \
  --mount type=bind,source="${PV24_ARCHIVE:?set the published archive}",target=/repo,readonly \
  -e PV24_PHASE="${PV24_PHASE:-build}" \
  --mount type=bind,source="${PV24_CA_BUNDLE:?set the CA bundle}",target=/run/host-ca.crt,readonly \
