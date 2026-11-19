@@ -1,11 +1,11 @@
-From 6f9c3fda43ce0e405b048f80e97882a7dd074598 Mon Sep 17 00:00:00 2001
+From c4dbeecf92b3f6cea82a260c8a5ff4341232d3c6 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Thu, 19 Nov 2026 05:08:39 -0300
 Subject: [PATCH 3/3] 3D options, the sentences for the person, and ten
  languages
 
 Enable 3D, Render Resolution per Eye and Display Settings in the View strip; a message above
-the view says when the two views cannot be given (X11, no stereo surface, limits not told,
+the view says when the two views cannot be given (no stereo surface, limits not told,
 limits zero); the 3D View action no longer fails without a sentence. The program's sentences
 are translated into the ten languages of the edition and embedded.
 
@@ -16,18 +16,18 @@ Assisted-by: Claude Sonnet via Claude Code
  src/fraqtivemainwindow.h             |  3 ++
  src/resources/fraqtivemainwindow.xml |  5 +++
  src/src.pro                          |  2 +
- src/translations/fraqtive_de.ts      | 23 ++++++++++
- src/translations/fraqtive_es.ts      | 23 ++++++++++
- src/translations/fraqtive_fr.ts      | 23 ++++++++++
- src/translations/fraqtive_ja.ts      | 23 ++++++++++
- src/translations/fraqtive_ko.ts      | 23 ++++++++++
- src/translations/fraqtive_pl.ts      | 23 ++++++++++
- src/translations/fraqtive_pt_BR.ts   | 23 ++++++++++
- src/translations/fraqtive_zh_CN.ts   | 23 ++++++++++
- src/translations/fraqtive_zh_TW.ts   | 23 ++++++++++
- src/viewcontainer.cpp                | 16 +++++++
+ src/translations/fraqtive_de.ts      | 22 ++++++++++
+ src/translations/fraqtive_es.ts      | 22 ++++++++++
+ src/translations/fraqtive_fr.ts      | 22 ++++++++++
+ src/translations/fraqtive_ja.ts      | 22 ++++++++++
+ src/translations/fraqtive_ko.ts      | 22 ++++++++++
+ src/translations/fraqtive_pl.ts      | 22 ++++++++++
+ src/translations/fraqtive_pt_BR.ts   | 22 ++++++++++
+ src/translations/fraqtive_zh_CN.ts   | 22 ++++++++++
+ src/translations/fraqtive_zh_TW.ts   | 22 ++++++++++
+ src/viewcontainer.cpp                | 19 +++++++-
  src/viewcontainer.h                  |  7 +++
- 16 files changed, 312 insertions(+), 1 deletion(-)
+ 16 files changed, 305 insertions(+), 2 deletions(-)
  create mode 100644 src/translations/fraqtive_de.ts
  create mode 100644 src/translations/fraqtive_es.ts
  create mode 100644 src/translations/fraqtive_fr.ts
@@ -65,7 +65,7 @@ index 951e9e4..5db9183 100644
  
      m_jobScheduler = new JobScheduler();
 diff --git a/src/fraqtivemainwindow.cpp b/src/fraqtivemainwindow.cpp
-index ffe68ec..e22b5f2 100644
+index ffe68ec..2be7a99 100644
 --- a/src/fraqtivemainwindow.cpp
 +++ b/src/fraqtivemainwindow.cpp
 @@ -22,6 +22,8 @@
@@ -132,9 +132,9 @@ index ffe68ec..e22b5f2 100644
 +        }
 +
          MeshView* view = new MeshView( m_ui.mainContainer, m_model->presenter() );
++        connect( view, SIGNAL( stereoStatusChanged( const QString& ) ), m_ui.mainContainer, SLOT( setMessage( const QString& ) ) );
 +        view->setStereoEnabled( action( "enable3d" )->isChecked() );
 +        view->setRenderScale( fraqtive()->configuration()->value( "RenderScalePercent", 100 ).toInt() / 100.0 );
-+        connect( view, SIGNAL( stereoStatusChanged( const QString& ) ), m_ui.mainContainer, SLOT( setMessage( const QString& ) ) );
  
          m_model->presenter()->setView( view );
          m_ui.mainContainer->setView( view );
@@ -223,10 +223,10 @@ index 97c7f79..debca9c 100644
               abstractjobprovider.h \
 diff --git a/src/translations/fraqtive_de.ts b/src/translations/fraqtive_de.ts
 new file mode 100644
-index 0000000..2d5d861
+index 0000000..6f8ac2c
 --- /dev/null
 +++ b/src/translations/fraqtive_de.ts
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,22 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<!DOCTYPE TS>
 +<TS version="2.1" language="de">
@@ -243,7 +243,6 @@ index 0000000..2d5d861
 +<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>Die Anzeigeeinstellungen konnten nicht geöffnet werden (kcmshell6 wurde nicht gefunden).</translation></message>
 +</context>
 +<context><name>MeshView</name>
-+<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>Die 3D-Ansicht wird flach gezeigt: Unter X11 kann dieses Programm noch keine zwei Ansichten liefern.</translation></message>
 +<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>Die 3D-Ansicht wird flach gezeigt: Dieser Computer kann kein Fenster mit zwei Ansichten liefern.</translation></message>
 +<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>Die 3D-Ansicht wird flach gezeigt: Der Compositor nennt die Tiefengrenzen des Bildschirms nicht.</translation></message>
 +<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>Die 3D-Ansicht wird flach gezeigt: Der Compositor hat die Tiefengrenzen des Bildschirms noch nicht mitgeteilt.</translation></message>
@@ -252,10 +251,10 @@ index 0000000..2d5d861
 +</TS>
 diff --git a/src/translations/fraqtive_es.ts b/src/translations/fraqtive_es.ts
 new file mode 100644
-index 0000000..c22640b
+index 0000000..15e5b5f
 --- /dev/null
 +++ b/src/translations/fraqtive_es.ts
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,22 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<!DOCTYPE TS>
 +<TS version="2.1" language="es">
@@ -272,7 +271,6 @@ index 0000000..c22640b
 +<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>No se pudo abrir la configuración de pantalla (no se encontró kcmshell6).</translation></message>
 +</context>
 +<context><name>MeshView</name>
-+<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>La vista 3D se muestra plana: en X11 este programa aún no puede dar dos vistas.</translation></message>
 +<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>La vista 3D se muestra plana: este equipo no puede dar una ventana con dos vistas.</translation></message>
 +<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>La vista 3D se muestra plana: el compositor no indica los límites de profundidad de la pantalla.</translation></message>
 +<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>La vista 3D se muestra plana: el compositor aún no ha indicado los límites de profundidad de la pantalla.</translation></message>
@@ -281,10 +279,10 @@ index 0000000..c22640b
 +</TS>
 diff --git a/src/translations/fraqtive_fr.ts b/src/translations/fraqtive_fr.ts
 new file mode 100644
-index 0000000..f2286e4
+index 0000000..72bcdb8
 --- /dev/null
 +++ b/src/translations/fraqtive_fr.ts
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,22 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<!DOCTYPE TS>
 +<TS version="2.1" language="fr">
@@ -301,7 +299,6 @@ index 0000000..f2286e4
 +<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>Les paramètres d’affichage n’ont pas pu être ouverts (kcmshell6 est introuvable).</translation></message>
 +</context>
 +<context><name>MeshView</name>
-+<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>La vue 3D est affichée à plat : sous X11, ce programme ne peut pas encore donner deux vues.</translation></message>
 +<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>La vue 3D est affichée à plat : cet ordinateur ne peut pas donner une fenêtre à deux vues.</translation></message>
 +<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>La vue 3D est affichée à plat : le compositeur n’indique pas les limites de profondeur de l’écran.</translation></message>
 +<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>La vue 3D est affichée à plat : le compositeur n’a pas encore indiqué les limites de profondeur de l’écran.</translation></message>
@@ -310,10 +307,10 @@ index 0000000..f2286e4
 +</TS>
 diff --git a/src/translations/fraqtive_ja.ts b/src/translations/fraqtive_ja.ts
 new file mode 100644
-index 0000000..b263e8b
+index 0000000..186d82c
 --- /dev/null
 +++ b/src/translations/fraqtive_ja.ts
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,22 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<!DOCTYPE TS>
 +<TS version="2.1" language="ja">
@@ -330,7 +327,6 @@ index 0000000..b263e8b
 +<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>ディスプレイ設定を開けませんでした（kcmshell6 が見つかりません）。</translation></message>
 +</context>
 +<context><name>MeshView</name>
-+<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>3Dビューは平面で表示されています: X11 では、このプログラムはまだ2つのビューを出せません。</translation></message>
 +<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>3Dビューは平面で表示されています: このコンピューターでは2つのビューを持つウィンドウを出せません。</translation></message>
 +<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>3Dビューは平面で表示されています: コンポジターが画面の奥行き制限を知らせていません。</translation></message>
 +<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>3Dビューは平面で表示されています: コンポジターがまだ画面の奥行き制限を知らせていません。</translation></message>
@@ -339,10 +335,10 @@ index 0000000..b263e8b
 +</TS>
 diff --git a/src/translations/fraqtive_ko.ts b/src/translations/fraqtive_ko.ts
 new file mode 100644
-index 0000000..25740fd
+index 0000000..f5268d1
 --- /dev/null
 +++ b/src/translations/fraqtive_ko.ts
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,22 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<!DOCTYPE TS>
 +<TS version="2.1" language="ko">
@@ -359,7 +355,6 @@ index 0000000..25740fd
 +<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>디스플레이 설정을 열 수 없습니다(kcmshell6을 찾을 수 없음).</translation></message>
 +</context>
 +<context><name>MeshView</name>
-+<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>3D 보기가 평면으로 표시됩니다: X11에서는 이 프로그램이 아직 두 개의 뷰를 제공할 수 없습니다.</translation></message>
 +<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>3D 보기가 평면으로 표시됩니다: 이 컴퓨터는 두 개의 뷰를 가진 창을 제공할 수 없습니다.</translation></message>
 +<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>3D 보기가 평면으로 표시됩니다: 컴포지터가 화면의 깊이 한계를 알려 주지 않습니다.</translation></message>
 +<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>3D 보기가 평면으로 표시됩니다: 컴포지터가 아직 화면의 깊이 한계를 알려 주지 않았습니다.</translation></message>
@@ -368,10 +363,10 @@ index 0000000..25740fd
 +</TS>
 diff --git a/src/translations/fraqtive_pl.ts b/src/translations/fraqtive_pl.ts
 new file mode 100644
-index 0000000..4565aae
+index 0000000..ccbb661
 --- /dev/null
 +++ b/src/translations/fraqtive_pl.ts
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,22 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<!DOCTYPE TS>
 +<TS version="2.1" language="pl">
@@ -388,7 +383,6 @@ index 0000000..4565aae
 +<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>Nie udało się otworzyć ustawień ekranu (nie znaleziono kcmshell6).</translation></message>
 +</context>
 +<context><name>MeshView</name>
-+<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>Widok 3D jest pokazany płasko: w X11 ten program nie potrafi jeszcze dać dwóch widoków.</translation></message>
 +<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>Widok 3D jest pokazany płasko: ten komputer nie potrafi dać okna z dwoma widokami.</translation></message>
 +<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>Widok 3D jest pokazany płasko: kompozytor nie podaje granic głębi ekranu.</translation></message>
 +<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>Widok 3D jest pokazany płasko: kompozytor nie podał jeszcze granic głębi ekranu.</translation></message>
@@ -397,10 +391,10 @@ index 0000000..4565aae
 +</TS>
 diff --git a/src/translations/fraqtive_pt_BR.ts b/src/translations/fraqtive_pt_BR.ts
 new file mode 100644
-index 0000000..93a0408
+index 0000000..8fb82b2
 --- /dev/null
 +++ b/src/translations/fraqtive_pt_BR.ts
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,22 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<!DOCTYPE TS>
 +<TS version="2.1" language="pt_BR">
@@ -417,7 +411,6 @@ index 0000000..93a0408
 +<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>Não foi possível abrir as configurações de tela (kcmshell6 não foi encontrado).</translation></message>
 +</context>
 +<context><name>MeshView</name>
-+<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>A vista 3D é mostrada plana: no X11 este programa ainda não consegue dar duas vistas.</translation></message>
 +<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>A vista 3D é mostrada plana: este computador não consegue dar uma janela com duas vistas.</translation></message>
 +<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>A vista 3D é mostrada plana: o compositor não informa os limites de profundidade da tela.</translation></message>
 +<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>A vista 3D é mostrada plana: o compositor ainda não informou os limites de profundidade da tela.</translation></message>
@@ -426,10 +419,10 @@ index 0000000..93a0408
 +</TS>
 diff --git a/src/translations/fraqtive_zh_CN.ts b/src/translations/fraqtive_zh_CN.ts
 new file mode 100644
-index 0000000..ccf057e
+index 0000000..3748bdb
 --- /dev/null
 +++ b/src/translations/fraqtive_zh_CN.ts
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,22 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<!DOCTYPE TS>
 +<TS version="2.1" language="zh_CN">
@@ -446,7 +439,6 @@ index 0000000..ccf057e
 +<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>无法打开显示设置（找不到 kcmshell6）。</translation></message>
 +</context>
 +<context><name>MeshView</name>
-+<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>3D 视图以平面显示：在 X11 上，本程序暂时无法提供两个视图。</translation></message>
 +<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>3D 视图以平面显示：这台电脑无法提供带两个视图的窗口。</translation></message>
 +<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>3D 视图以平面显示：合成器没有告知屏幕的深度限制。</translation></message>
 +<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>3D 视图以平面显示：合成器尚未告知屏幕的深度限制。</translation></message>
@@ -455,10 +447,10 @@ index 0000000..ccf057e
 +</TS>
 diff --git a/src/translations/fraqtive_zh_TW.ts b/src/translations/fraqtive_zh_TW.ts
 new file mode 100644
-index 0000000..010ada3
+index 0000000..7ecb9cf
 --- /dev/null
 +++ b/src/translations/fraqtive_zh_TW.ts
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,22 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<!DOCTYPE TS>
 +<TS version="2.1" language="zh_TW">
@@ -475,7 +467,6 @@ index 0000000..010ada3
 +<message><source>Display Settings could not be opened (kcmshell6 was not found).</source><translation>無法開啟顯示設定（找不到 kcmshell6）。</translation></message>
 +</context>
 +<context><name>MeshView</name>
-+<message><source>The 3D view is shown flat: on X11 this program cannot give two views yet.</source><translation>3D 檢視以平面顯示：在 X11 上，本程式暫時無法提供兩個視圖。</translation></message>
 +<message><source>The 3D view is shown flat: this computer cannot give a window with two views.</source><translation>3D 檢視以平面顯示：這台電腦無法提供具有兩個視圖的視窗。</translation></message>
 +<message><source>The 3D view is shown flat: the compositor does not tell the depth limits of the screen.</source><translation>3D 檢視以平面顯示：合成器沒有告知螢幕的深度限制。</translation></message>
 +<message><source>The 3D view is shown flat: the compositor has not told the depth limits of the screen yet.</source><translation>3D 檢視以平面顯示：合成器尚未告知螢幕的深度限制。</translation></message>
@@ -483,10 +474,10 @@ index 0000000..010ada3
 +</context>
 +</TS>
 diff --git a/src/viewcontainer.cpp b/src/viewcontainer.cpp
-index c8dfe94..057f57a 100644
+index c8dfe94..a5e1725 100644
 --- a/src/viewcontainer.cpp
 +++ b/src/viewcontainer.cpp
-@@ -19,12 +19,22 @@
+@@ -19,12 +19,23 @@
  #include "viewcontainer.h"
  
  #include <QVBoxLayout>
@@ -504,12 +495,18 @@ index c8dfe94..057f57a 100644
 +    m_message->setAutoFillBackground( true );
 +    m_message->setBackgroundRole( QPalette::ToolTipBase );
 +    m_message->setForegroundRole( QPalette::ToolTipText );
++    m_message->setSizePolicy( QSizePolicy::Preferred, QSizePolicy::Maximum );
 +    m_message->hide();
 +    m_layout->addWidget( m_message );
  }
  
  ViewContainer::~ViewContainer()
-@@ -40,6 +50,12 @@ void ViewContainer::setView( QWidget* view )
+@@ -36,10 +47,16 @@ void ViewContainer::setView( QWidget* view )
+     if ( m_view != view ) {
+         delete m_view;
+         m_view = view;
+-        m_layout->addWidget( view );
++        m_layout->addWidget( view, 1 );
      }
  }
  

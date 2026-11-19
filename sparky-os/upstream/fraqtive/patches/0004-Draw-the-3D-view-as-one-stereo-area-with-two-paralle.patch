@@ -1,4 +1,4 @@
-From 5b96235abfbcc56d90b70c7ef5d3d64f34676d26 Mon Sep 17 00:00:00 2001
+From 0fe2ac1aa8dea2e627f2533f211e6c5f70afef36 Mon Sep 17 00:00:00 2001
 From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Date: Thu, 19 Nov 2026 05:08:39 -0300
 Subject: [PATCH 2/3] Draw the 3D view as one stereo area with two parallel
@@ -13,24 +13,24 @@ through the middle of the mesh stays at the screen.
 The offset is the largest for which every visible vertex stays inside the person's depth
 limits (read through libstereo-declare from the top level's surface and scaled to the
 width of the view), with no setting. The maths is in stereofit.cpp and is tested against
-an independent projection in tests/stereofit-test.cpp. On X11 no stereo area can be given
-yet and the view is drawn flat.
+an independent projection in tests/stereofit-test.cpp. On X11 (Xwayland) the same widget is the stereo area, with the limits read from the declared child window.
+
 
 Assisted-by: Claude Sonnet via Claude Code
 ---
- src/meshview.cpp         | 195 ++++++++++++++++++++++++++++++++++++++-
+ src/meshview.cpp         | 207 ++++++++++++++++++++++++++++++++++++++-
  src/meshview.h           |  29 ++++++
  src/src.pro              |   5 +-
- src/stereofit.cpp        |  64 +++++++++++++
- src/stereofit.h          |  42 +++++++++
+ src/stereofit.cpp        |  64 ++++++++++++
+ src/stereofit.h          |  42 ++++++++
  tests/stereofit-test.cpp |  71 ++++++++++++++
- 6 files changed, 404 insertions(+), 2 deletions(-)
+ 6 files changed, 416 insertions(+), 2 deletions(-)
  create mode 100644 src/stereofit.cpp
  create mode 100644 src/stereofit.h
  create mode 100644 tests/stereofit-test.cpp
 
 diff --git a/src/meshview.cpp b/src/meshview.cpp
-index b7588ef..1e84af7 100644
+index b7588ef..2b5d1c2 100644
 --- a/src/meshview.cpp
 +++ b/src/meshview.cpp
 @@ -30,6 +30,23 @@
@@ -57,7 +57,7 @@ index b7588ef..1e84af7 100644
  
  #include "fractalpresenter.h"
  #include "datafunctions.h"
-@@ -44,14 +61,45 @@ MeshView::MeshView( QWidget* parent, FractalPresenter* presenter ) : QOpenGLWidg
+@@ -44,14 +61,43 @@ MeshView::MeshView( QWidget* parent, FractalPresenter* presenter ) : QOpenGLWidg
      m_averageHeight( 0.0 ),
      m_rotation( 0.0 ),
      m_angle( -45.0 ),
@@ -74,14 +74,12 @@ index b7588ef..1e84af7 100644
      m_tracking( NoTracking )
  {
 +    // The 3D view is one stereo area: Qt calls paintGL() once for each eye and the edition's Qt gives the widget a native
-+    // window of its own, declared full side by side, while the rest of the window stays one flat picture. On X11 no stereo
-+    // area can be given yet (the view is shown flat and the window says so).
-+    if ( QGuiApplication::platformName() != QLatin1String( "xcb" ) ) {
-+        QSurfaceFormat format = this->format();
-+        format.setOption( QSurfaceFormat::StereoBuffers );
-+        setFormat( format );
-+        m_stereoSurface = true;
-+    }
++    // window of its own, declared full side by side, on Wayland and on X11, while the rest of the window stays one flat
++    // picture. When the surface comes without two views the window says so (pollLimits).
++    QSurfaceFormat format = this->format();
++    format.setOption( QSurfaceFormat::StereoBuffers );
++    setFormat( format );
++    m_stereoSurface = true;
 +
 +    m_sinceStart.start();
 +    m_limitsTimer = new QTimer( this );
@@ -103,7 +101,7 @@ index b7588ef..1e84af7 100644
      if ( m_textureId != 0 ) {
          makeCurrent();
          glDeleteTextures( 1, &m_textureId );
-@@ -261,6 +309,21 @@ static const double FarClipping = 70.0;
+@@ -261,6 +307,21 @@ static const double FarClipping = 70.0;
  
  void MeshView::paintGL()
  {
@@ -125,7 +123,7 @@ index b7588ef..1e84af7 100644
      glClearColor( m_backgroundColor.redF(), m_backgroundColor.greenF(), m_backgroundColor.blueF(), m_backgroundColor.alphaF() );
      glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
  
-@@ -315,14 +378,22 @@ void MeshView::paintGL()
+@@ -315,14 +376,22 @@ void MeshView::paintGL()
      double fy = tan( 0.5 * m_settings.cameraZoom() * M_PI / 180.0 ) * NearClipping;
      double fx = fy * vw / vh;
  
@@ -149,7 +147,7 @@ index b7588ef..1e84af7 100644
      glTranslated( 0.0, 0.0, -CameraDistance );
      glRotated( m_angle, 1.0, 0.0, 0.0 );
      glRotated( rotation, 0.0, 0.0, 1.0 );
-@@ -354,6 +425,128 @@ void MeshView::paintGL()
+@@ -354,6 +423,142 @@ void MeshView::paintGL()
  
      if ( hasLockArrays( context() ) )
          p_glUnlockArraysEXT();
@@ -157,9 +155,9 @@ index b7588ef..1e84af7 100644
 +    if ( scaled ) {
 +        QOpenGLExtraFunctions* f = context()->extraFunctions();
 +        f->glBindFramebuffer( GL_READ_FRAMEBUFFER, m_renderTarget->handle() );
-+        f->glBindFramebuffer( GL_DRAW_FRAMEBUFFER, defaultFramebufferObject() );
++        f->glBindFramebuffer( GL_DRAW_FRAMEBUFFER, defaultFramebufferObject( currentTargetBuffer() ) );
 +        f->glBlitFramebuffer( 0, 0, render.width(), render.height(), 0, 0, area.width(), area.height(), GL_COLOR_BUFFER_BIT, GL_LINEAR );
-+        f->glBindFramebuffer( GL_FRAMEBUFFER, defaultFramebufferObject() );
++        f->glBindFramebuffer( GL_FRAMEBUFFER, defaultFramebufferObject( currentTargetBuffer() ) );
 +    }
 +}
 +
@@ -192,6 +190,22 @@ index b7588ef..1e84af7 100644
 +    QPlatformNativeInterface* native = QGuiApplication::platformNativeInterface();
 +    if ( !topLevel || !native )
 +        return -ENODATA;
++
++    if ( QGuiApplication::platformName() == QLatin1String( "xcb" ) ) {
++        // X11 (Xwayland): the limits are a property of the declared child window, which is the 3D area's own window
++        Display* xdisplay = (Display*)native->nativeResourceForIntegration( "display" );
++        QWindow* child = windowHandle();
++        if ( !xdisplay || !child )
++            return -ENODATA;
++        XSelectInput( xdisplay, (Window)child->winId(), PropertyChangeMask );
++        struct stereo_depth_limits xlimits;
++        int xresult = stereo_depth_x11_get_limits( xdisplay, (Window)child->winId(), &xlimits );
++        if ( xresult == 0 ) {
++            *sunk = xlimits.sunk;
++            *popped = xlimits.popped;
++        }
++        return xresult;
++    }
 +
 +    struct wl_display* display = (struct wl_display*)native->nativeResourceForIntegration( "wl_display" );
 +    struct wl_surface* surface = (struct wl_surface*)native->nativeResourceForWindow( "surface", topLevel );
@@ -230,8 +244,6 @@ index b7588ef..1e84af7 100644
 +    QString text;
 +    if ( !m_stereoEnabled )
 +        text = QString();
-+    else if ( QGuiApplication::platformName() == QLatin1String( "xcb" ) )
-+        text = tr( "The 3D view is shown flat: on X11 this program cannot give two views yet." );
 +    else if ( m_stereoSurface && !context() )
 +        text = QString();
 +    else if ( m_stereoSurface && context() && !context()->format().stereo() )
