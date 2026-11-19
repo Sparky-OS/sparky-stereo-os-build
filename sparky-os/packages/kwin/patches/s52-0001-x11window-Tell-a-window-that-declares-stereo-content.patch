@@ -14,7 +14,7 @@ StereoDepthStates::update() already has the two numbers for the window's
 output. For an X11 window that declares stereo content it now also writes
 them, as the Wayland event carries them (wl_fixed_t, 24.8 fixed point, pixels
 of a view 1920 wide), in _KDE_NET_WM_STEREO_DEPTH_LIMITS: CARDINAL/32, exactly
-two values, sunk then popped. The property follows the person's settings, the
+two values, sunk then popped: the limits of the screen the window is on, never to be scaled by the window's own width (libstereo-declare's stereo_depth_limits_for_buffer gives them in a buffer's pixels). The property follows the person's settings, the
 output's mode and kind and the window's move to another output, and goes when
 the window stops declaring. _KDE_NET_WM_STEREO_CONTENT_SUPPORTED is 10, so a
 client knows the property will come.
