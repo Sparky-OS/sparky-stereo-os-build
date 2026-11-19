@@ -1,0 +1,27 @@
+Description: [PATCH 12/22] ccaption_dec: fix pts in real_time mode.
+Author: Damiano Galassi
+Origin: other, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/ffmpeg/A12-ccaption_dec-fix-pts-in-real_time-mode.patch
+Bug: https://github.com/HandBrake/HandBrake/commit/e8991642000428af9c898bbcf9950db572040d62
+Forwarded: not-needed
+Comment: Backported to the edition FFmpeg 9.0.2; preserve public enum values.
+
+--- a/libavcodec/ccaption_dec.c
++++ b/libavcodec/ccaption_dec.c
+@@ -893,12 +893,13 @@
+ 
+         if (ctx->buffer[bidx].str[0] || ctx->real_time) {
+             ff_dlog(avctx, "cdp writing data (%s)\n", ctx->buffer[bidx].str);
+-            start_time = ctx->buffer_time[0];
+-            sub->pts = start_time;
+-            end_time = ctx->buffer_time[1];
+-            if (!ctx->real_time)
++            if (!ctx->real_time) {
++                start_time = ctx->buffer_time[0];
++                sub->pts = start_time;
++                end_time = ctx->buffer_time[1];
+                 sub->end_display_time = av_rescale_q(end_time - start_time,
+                                                      AV_TIME_BASE_Q, ms_tb);
++            }
+             else
+                 sub->end_display_time = -1;
+             ret = ff_ass_add_rect2(sub, ctx->buffer[bidx].str, ctx->readorder++, 0, NULL, NULL, &nb_rect_allocated);
