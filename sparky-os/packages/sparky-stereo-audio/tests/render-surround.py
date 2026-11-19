@@ -20,7 +20,7 @@ import time
 import wave
 
 import numpy as np
-from scipy.signal import correlate
+from scipy.signal import correlate, lfilter
 
 spec = importlib.util.spec_from_file_location('surround', Path(__file__).resolve().parents[1] / 'lib/surround.py')
 s = importlib.util.module_from_spec(spec)
@@ -244,7 +244,18 @@ def main():
                     energy=np.sum(actual.astype('float64')**2,axis=0)
                     assert front_error < 2e-6, front_error
                     assert energy[4] > 0 and energy[5] > 0, energy
-                    if mode == 'decode': assert energy[2] == energy[3] == 0, energy
+                    if mode == 'decode':
+                        assert energy[2] == energy[3] == 0, energy
+                        w=2*math.pi*7000/rate; alpha=math.sin(w)/(2*math.sqrt(.5))
+                        b=np.array([(1-math.cos(w))/2,1-math.cos(w),(1-math.cos(w))/2])/(1+alpha)
+                        a=[1,-2*math.cos(w)/(1+alpha),(1-alpha)/(1+alpha)]
+                        rear=np.column_stack([.5878*source[:,0]-.3928*source[:,1],.3928*source[:,0]-.5878*source[:,1]])
+                        expected_rear=lfilter(b,a,rear,axis=0)
+                        delay=round(.02*rate)
+                        expected_rear=np.pad(expected_rear,((delay,0),(0,0)))[:frames]
+                        rear_error=float(np.max(np.abs(actual[:,4:6]-expected_rear)))
+                        assert rear_error < 2e-6,rear_error
+                        Path('/evidence/matrix-rear-'+str(rate)+'.json').write_text(json.dumps({'rate':rate,'rear_delay_samples':delay,'independent_biquad_and_matrix_max_error':rear_error},indent=2)+'\n')
                     results.append({'mode':mode,'rate':rate,'front_max_error':front_error,'channel_energy':energy.tolist()})
                     continue
                 if mode == 'switch':
