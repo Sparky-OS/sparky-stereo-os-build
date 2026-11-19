@@ -1,0 +1,56 @@
+#!/usr/bin/make -f
+
+export HOME := $(CURDIR)/debian/home
+X := debian/extras
+D := debian/ums
+S := $(D)/usr/share/ums
+EXT := src/main/external-resources
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	mkdir -p src/test/resources/stereo-policy
+	cp debian/stereo-policy-vectors/*.tsv src/test/resources/stereo-policy/
+
+override_dh_auto_build-indep:
+	mvn -B -Doffline=true -DskipTests -Dmaven.gitcommitid.skip=true process-classes assembly:single@make-jar-with-dependencies
+
+override_dh_auto_test:
+	mvn -B -Doffline=true -DreuseForks=false -Dmaven.gitcommitid.skip=true test
+
+override_dh_auto_clean:
+	rm -rf debian/home target react-client/node react-client/node_modules src/main/external-resources/web
+
+override_dh_auto_install-indep:
+	install -D -m 755 $(X)/ums $(D)/usr/bin/ums
+	install -D -m 644 target/ums-15.9.0-jar-with-dependencies.jar $(S)/ums.jar
+	install -m 644 $(EXT)/UMS.conf $(EXT)/logback.xml $(EXT)/logback.headless.xml $(EXT)/DummyInput.ass $(EXT)/DummyInput.jpg $(S)/
+	cp -r $(EXT)/renderers $(EXT)/web $(S)/
+	find $(S) -name .gitignore -delete
+	find $(S) -type d -exec chmod 755 {} +
+	find $(S) -type f -exec chmod 644 {} +
+	install -D -m 644 $(X)/lang/* -t $(D)/usr/share/sparky/ums
+	install -D -m 644 $(X)/ums.service $(D)/usr/lib/systemd/user/ums.service
+	install -D -m 644 $(X)/ums.desktop $(D)/usr/share/applications/ums.desktop
+	for n in 16 20 24 28 32 36 40 44 48 128; do \
+		install -D -m 644 src/main/resources/images/icon-$$n.png $(D)/usr/share/icons/hicolor/$${n}x$${n}/apps/ums.png; done
+	install -D -m 644 src/main/resources/images/logo.png $(D)/usr/share/icons/hicolor/256x256/apps/ums.png
+	install -D -m 644 $(X)/UMS.conf $(D)/etc/skel/.config/UMS/UMS.conf
+	install -D -m 644 $(X)/CHANGELOG $(D)/usr/share/doc/ums/README.Sparky
+	install -D -m 644 LICENSE.txt $(D)/usr/share/doc/ums/LICENSE.txt
+	install -D -m 644 README.md $(D)/usr/share/doc/ums/README.md
+	gzip -9n $(D)/usr/share/doc/ums/README.md
+
+override_dh_installsystemduser:
+
+# Distribution-only processing; authored source remains in the source archive.
+execute_before_dh_auto_configure:
+	PYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.source_tree project $(CURDIR)
+
+execute_before_dh_auto_clean:
+	PYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.source_tree restore $(CURDIR)
+	rm -rf .sparky-lc
+
+override_dh_builddeb:
+	PYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.debhelper --provenance $(CURDIR)/debian/sparky-lean-toolkit/provenance.sh
