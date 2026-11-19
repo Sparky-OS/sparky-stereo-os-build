@@ -130,10 +130,31 @@ Assisted-by: GPT-6 (Codex)
  
      A surface may have any number of these objects. The depth state is sent
      to each of them. The surface is marked as desktop depth while any of
-@@ -161,15 +193,53 @@
+@@ -161,15 +193,17 @@
      <arg name="output_edges" type="uint" enum="edge" summary="the surface's edges on its output's edge"/>
    </event>
  
++
++
+   <request name="set_desktop_depth">
+     <description summary="Mark the surface's pair as the desktop's own depth">
+       Nonzero marks the full side-by-side pair the surface shows, declared
+       with kde_stereo_content_v1 by this client or its graphics library, as
+-      the desktop's own elements drawn once per eye rather than stereo
++      the desktop's own elements drawn once per view rather than stereo
+       content: where the compositor treats stereo content differently, for
+       example in switching a display into a 3D mode, in stereo screenshots
+       or in estimating the depth of content, the surface counts as part of
+-      the desktop. The compositor still shows each view in its eye. Zero
++      the desktop. The compositor still presents each view separately. Zero
+       withdraws the mark.
+ 
+       Takes effect with the next wl_surface commit.
+@@ -199,6 +233,45 @@
+       wl_surface commit.
+     </description>
+   </request>
++
 +  <event name="depth_limits" since="5">
 +    <description summary="The depth limits on the surface's output">
 +      Sent after depth_state once the object is created and again whenever
@@ -172,17 +193,33 @@ Assisted-by: GPT-6 (Codex)
 +    <arg name="width" type="uint" summary="selected output width in pixels per view, or zero"/>
 +  </event>
 +
-   <request name="set_desktop_depth">
-     <description summary="Mark the surface's pair as the desktop's own depth">
-       Nonzero marks the full side-by-side pair the surface shows, declared
-       with kde_stereo_content_v1 by this client or its graphics library, as
--      the desktop's own elements drawn once per eye rather than stereo
-+      the desktop's own elements drawn once per view rather than stereo
-       content: where the compositor treats stereo content differently, for
-       example in switching a display into a 3D mode, in stereo screenshots
-       or in estimating the depth of content, the surface counts as part of
--      the desktop. The compositor still shows each view in its eye. Zero
-+      the desktop. The compositor still presents each view separately. Zero
-       withdraws the mark.
+ </interface>
  
-       Takes effect with the next wl_surface commit.
+ </protocol>
+--- a/tests/virtual-stereo-contract.py
++++ b/tests/virtual-stereo-contract.py
+@@ -17,14 +17,21 @@
+     def test_desktop_depth(self):
+         protocol = ET.parse(ROOT / 'kde-stereo-content-v1.xml')
+         manager = protocol.find("interface[@name='kde_stereo_content_manager_v1']")
+-        self.assertEqual(manager.get('version'), '3')
+-        self.assertEqual(protocol.find("interface[@name='kde_stereo_content_v1']").get('version'), '3')
++        self.assertEqual(manager.get('version'), '6')
++        self.assertEqual(protocol.find("interface[@name='kde_stereo_content_v1']").get('version'), '6')
+         get_depth = manager.find("request[@name='get_depth']")
+         self.assertEqual(get_depth.get('since'), '3')
+         self.assertEqual([(a.get('name'), a.get('type'), a.get('interface')) for a in get_depth.findall('arg')],
+                          [('id', 'new_id', 'kde_stereo_depth_v1'), ('surface', 'object', 'wl_surface')])
+         depth = protocol.find("interface[@name='kde_stereo_depth_v1']")
+-        self.assertEqual(depth.get('version'), '3')
++        self.assertEqual(depth.get('version'), '6')
++        limits = depth.find("event[@name='depth_limits']")
++        self.assertEqual(limits.get('since'), '5')
++        self.assertEqual([(a.get('name'), a.get('type')) for a in limits.findall('arg')],
++                         [('sunk', 'fixed'), ('popped', 'fixed')])
++        width = depth.find("event[@name='output_width']")
++        self.assertEqual(width.get('since'), '6')
++        self.assertEqual([(a.get('name'), a.get('type')) for a in width.findall('arg')], [('width', 'uint')])
+         state = depth.find("event[@name='depth_state']")
+         self.assertEqual([(a.get('name'), a.get('type')) for a in state.findall('arg')], [('awake', 'uint'), ('output_edges', 'uint')])
+         edges = depth.find("enum[@name='edge']")
