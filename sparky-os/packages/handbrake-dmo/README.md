@@ -1,10 +1,16 @@
 # HandBrake stereo successor
 
-The source baseline is deb-multimedia's `handbrake-dmo` 1:1.11.2-dmo3.
-Keep its three binary package names and bundled media-library route.
-The initial patches carry Damiano Galassi's upstream stereo metadata preservation and Daniel Ramos's upstream x264 frame-packing commit, with DEP-3 attribution in each patch.
+Build the committed order742 branch of Sparky-OS/HandBrake, based on 1.11.2.
+`export-source.py FORK DMO_DEBIAN_TAR OUTPUT` records the fork commit in the
+upstream source version and exports DMO packaging before adaptation.
+`prepare-source.py SOURCE` adds edition library dependencies and Lean Code.
+Contrib archives are neither fetched nor linked.
 
-`prepare-source.py SOURCE` accepts a fresh extraction of that descriptor, applies the recipe's patches and prepares the source through the edition's Lean Code adapter.
-The recipe must be committed before preparation, because its source date and build record come from the commit.
-GTK sources retain translator comments through message extraction and resource generation.
-The installed-package marked-source matrix and package comparison qualify the resulting binaries separately.
+The fork adapts Debian 1.11.2+ds1's shared-library patches while retaining FDK-AAC,
+Dolby Vision, NUMA, NVENC, NVDEC, VCE and QSV. Debian's ambient-viewing and Dolby
+Vision removal patches are omitted: the owning shared libraries carry those APIs.
+The three deb-multimedia binary names and epoch are retained.
+
+Upstream stereo metadata and x264 commits retain their authors; spherical
+metadata preservation is their prerequisite. x265 frame packing and SEI scanning
+are separate commits. Installed sample and package comparisons qualify binaries.
