@@ -31,6 +31,7 @@ with tempfile.TemporaryDirectory(prefix='language-source-', dir=out) as temporar
     if text.count(marker) != 1:
         raise ValueError('Standalone source builder changed: catalogue hook location is ambiguous')
     hook = ('    subprocess.run([sys.executable, str(root / "authoring/tests/test_system_language.py")], check=True)\n'
+            '    subprocess.run([sys.executable, str(root / "authoring/tests/test_debian_tasks.py")], check=True)\n'
             '    subprocess.run([sys.executable, str(root / "authoring/catalogues.py"), '
             '"--source-dir", str(root / "upstream"), "--tree", str(staging)], check=True)\n')
     builder.write_text(text.replace(marker, hook + marker))
