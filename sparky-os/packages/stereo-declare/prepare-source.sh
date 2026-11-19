@@ -5,9 +5,9 @@ set -euo pipefail
 unset DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 export TMPDIR="${TMPDIR:?set a private assembly temporary directory}"
-rev=c4507e1d9b20b58ba1a74db8dc85a57b4dc128a8
-version=1.11.0-1
-prefix=stereo-declare-1.11.0
+rev=d7250cdad78646d4f2b3bb3d71389ddd7185db52
+version=1.12.0-1
+prefix=stereo-declare-1.12.0
 out=$(realpath -m "$1")
 clone=$(realpath "$2")
 toolkit=$(realpath "$3")
@@ -20,9 +20,9 @@ rm -r "$out/export/$prefix/debian"
 stamp=$(git -C "$clone" log -1 --format=%ct "$rev")
 # The source is dated by its release commit, never by the clock (ORDER 421b); debian/ is normalized before each dpkg-source -b.
 export SOURCE_DATE_EPOCH=$stamp
-tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$stamp" -C "$out/export" -cf - "$prefix" | xz -T4 -6 > "$out/plain/stereo-declare_1.11.0.orig.tar.xz"
+tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$stamp" -C "$out/export" -cf - "$prefix" | xz -T4 -6 > "$out/plain/stereo-declare_1.12.0.orig.tar.xz"
 cd "$out/plain"
-tar -xf stereo-declare_1.11.0.orig.tar.xz
+tar -xf stereo-declare_1.12.0.orig.tar.xz
 cp -a "$out/debian-export" "$prefix/debian"
 python3 "$toolkit/repo/reproducible.py" normalize-tree "$stamp" "$prefix"
 dpkg-source -b "$prefix"
@@ -37,11 +37,11 @@ from pathlib import Path
 p = Path('source/debian/changelog')
 s = p.read_text()
 head = s.split('\n\n', 1)[0]
-assert head == 'stereo-declare (1.11.0-1+lc1) UNRELEASED; urgency=medium'
+assert head == 'stereo-declare (1.12.0-1+lc1) UNRELEASED; urgency=medium'
 lines = s.splitlines(keepends=True)
 index = next(i for i, line in enumerate(lines) if line.startswith(' -- '))
 assert lines[index].startswith(' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ')
-lines[index] = lines[index].split('>  ', 1)[0] + '>  Thu, 19 Nov 2026 12:00:00 +0000\n'
+lines[index] = lines[index].split('>  ', 1)[0] + '>  Thu, 19 Nov 2026 15:00:00 +0000\n'
 p.write_text(''.join(lines))
 DATE
 # The sole LC descriptor is shared by both native architecture builds.
