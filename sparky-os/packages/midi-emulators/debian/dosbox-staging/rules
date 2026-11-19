@@ -1,0 +1,14 @@
+#!/usr/bin/make -f
+include /usr/share/dpkg/architecture.mk
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+%:
+	dh $@ --buildsystem=meson
+
+override_dh_auto_configure:
+	dh_auto_configure -- --wrap-mode=nofallback -Duse_mt32emu=true -Duse_zlib_ng=false -Dunit_tests=disabled
+
+override_dh_auto_install:
+	dh_auto_install
+	mv debian/dosbox-staging/usr/bin/dosbox debian/dosbox-staging/usr/bin/dosbox-staging
+	find debian/dosbox-staging/usr/share/applications -name '*.desktop' -exec sed -i 's/Exec=dosbox /Exec=dosbox-staging /g' {} +
+	if test -f debian/dosbox-staging/usr/share/man/man1/dosbox.1; then mv debian/dosbox-staging/usr/share/man/man1/dosbox.1 debian/dosbox-staging/usr/share/man/man1/dosbox-staging.1; fi

@@ -26,8 +26,6 @@ mkdir -p "$D/DEBIAN" "$D/usr/bin" "$D/usr/share/sparky/$PKG" "$D/usr/share/doc/$
 install -m 755 "$HERE/bin/sparky-stereo-audio" "$D/usr/bin/"
 mkdir -p "$D/usr/share/applications" "$D/etc/xdg" "$D/usr/lib/modules-load.d"
 printf '[Desktop Entry]\nType=Application\nName=FluidSynth\nExec=sparky-stereo-audio midi --play %%f\nIcon=audio-x-generic\nTerminal=false\nCategories=AudioVideo;Audio;\nMimeType=audio/midi;audio/x-midi;\n' > "$D/usr/share/applications/sparky-stereo-midi.desktop"
-printf '[Default Applications]\naudio/midi=sparky-stereo-midi.desktop\naudio/x-midi=sparky-stereo-midi.desktop\n' > "$D/etc/xdg/mimeapps.list"
-printf '/etc/xdg/mimeapps.list\n' > "$D/DEBIAN/conffiles"
 printf '# General MIDI ports for ALSA programs, including software-only games.\nsnd_seq\n' > "$D/usr/lib/modules-load.d/sparky-stereo-midi.conf"
 mkdir -p "$D/usr/lib/systemd/user/fluidsynth.service.d"
 install -m 644 "$HERE/systemd/fluidsynth-override.conf" "$D/usr/lib/systemd/user/fluidsynth.service.d/00-sparky-midi.conf"
@@ -48,7 +46,7 @@ ln -s ../sparky-stereo-audio.service "$D/usr/lib/systemd/system/multi-user.targe
 ln -s ../sparky-stereo-audio-apply.path "$D/usr/lib/systemd/user/default.target.wants/sparky-stereo-audio-apply.path"
 ln -s ../sparky-stereo-audio-apply.service "$D/usr/lib/systemd/user/default.target.wants/sparky-stereo-audio-apply.service"
 # the package's failure messages (LOCAL20 to LOCAL23), word for word, as journal catalogs the engine reads in the person's language
-sparky-stereo-problems catalog $PKG "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL1 --keys LOCAL20,LOCAL21,LOCAL22,LOCAL23,LOCAL27,LOCAL29,LOCAL40,LOCAL41,LOCAL53,LOCAL54,LOCAL55
+sparky-stereo-problems catalog $PKG "$HERE/lang" "$D/usr/lib/systemd/catalog" --subject LOCAL1 --keys LOCAL20,LOCAL21,LOCAL22,LOCAL23,LOCAL27,LOCAL29,LOCAL40,LOCAL41,LOCAL53,LOCAL54,LOCAL55,LOCAL56
 
 # The program says and keeps what fails (sparky-stereo-problems); the package configures either way, as debhelper's own
 # service starts do, and `sparky-stereo-audio detect --write` does the step again.
