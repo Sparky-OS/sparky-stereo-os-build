@@ -1,0 +1,8 @@
+#!/usr/bin/make -f
+include /usr/share/dpkg/architecture.mk
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+%:
+	dh $@ --buildsystem=cmake
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DlibADLMIDI_SHARED=ON -DlibADLMIDI_STATIC=OFF -DWITH_EMBEDDED_BANKS=OFF -DWITH_HQ_RESAMPLER=ON -DWITH_MIDIPLAY=OFF -DCMAKE_INSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH)

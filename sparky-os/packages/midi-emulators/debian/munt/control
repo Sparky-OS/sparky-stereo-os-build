@@ -1,0 +1,29 @@
+Source: munt
+Section: sound
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 13), cmake, ninja-build, pkg-config, libasound2-dev, libsamplerate0-dev, qt6-base-dev, libglib2.0-dev, libpulse-dev
+Standards-Version: 4.7.4
+Rules-Requires-Root: no
+Homepage: https://github.com/munt/munt
+
+Package: libmt32emu2
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: MT-32 synthesis library without ROM data
+ Built from the pinned upstream source with its notices retained.
+ No MT-32 ROM or unapproved instrument bank is included.
+
+Package: libmt32emu-dev
+Architecture: any
+Depends: libmt32emu2 (= ${binary:Version}), ${misc:Depends}
+Description: development files for the MT-32 synthesis library
+ Built from the pinned upstream source with its notices retained.
+ No MT-32 ROM or unapproved instrument bank is included.
+
+Package: munt
+Architecture: any
+Depends: libmt32emu2 (= ${binary:Version}), ${shlibs:Depends}, ${misc:Depends}, sparky-stereo-audio (>= 0.3.0)
+Description: MT-32 emulator interface without ROM data
+ Built from the pinned upstream source with its notices retained.
+ No MT-32 ROM or unapproved instrument bank is included.
