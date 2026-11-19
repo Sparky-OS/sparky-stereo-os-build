@@ -11,6 +11,7 @@
 # Needs a committed recipe: the source is dated by the last commit touching sparky-os/upstream/fraqtive (ORDER 421b).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/../../../repo/build-provenance.sh"
 RECIPE=$(cd "$HERE/.." && pwd)
 TOOLKIT=$(cd "$RECIPE/../.." && pwd)
 [ $# -eq 3 ] || { sed -n '/^# Usage/,/^# Needs/p' "$0" | sed 's/^# \?//' >&2; exit 2; }
@@ -18,9 +19,10 @@ W=$(mkdir -p "$1" && cd "$1" && pwd) TREE=$(readlink -f "$2") ARCHIVE=$(cd "$3" 
 [ -z "$(ls -A "$W")" ] || { echo "$W is not empty" >&2; exit 1; }
 IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}
 export BUILD_NAME_PREFIX=${BUILD_NAME_PREFIX:-fq743-build} THREADS=${THREADS:-4}
-SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(python3 "$TOOLKIT/repo/reproducible.py" epoch "$RECIPE")}
-SOURCE_DATE_RFC2822=$(python3 "$TOOLKIT/repo/reproducible.py" rfc2822 "$SOURCE_DATE_EPOCH")
-export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822 SPARKY_SOURCE_DATE_BASIS="the last commit touching sparky-os/upstream/fraqtive"
+# the host facts of the build record, and the source date (the last commit touching this recipe, ORDER 421b)
+SPARKY_SOURCE_DATE_BASIS="the last commit touching sparky-os/upstream/fraqtive"
+sparky_provenance_init "$IMAGE" "$RECIPE"
+export SPARKY_BUILD_IMAGE=$IMAGE
 mkdir -p "$W/src" "$W/prev"
 docker run --rm --name "$BUILD_NAME_PREFIX-source" --pull=never --ulimit core=0 --cpus "$THREADS" --platform linux/amd64 \
 	-e SOURCE_DATE_EPOCH -e SOURCE_DATE_RFC2822 \
