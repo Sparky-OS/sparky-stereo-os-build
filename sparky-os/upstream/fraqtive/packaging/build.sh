@@ -27,7 +27,6 @@ mkdir -p "$W/src" "$W/prev"
 docker run --rm --name "$BUILD_NAME_PREFIX-source" --pull=never --ulimit core=0 --cpus "$THREADS" --platform linux/amd64 \
 	"${SPARKY_PROV_ARGS[@]}" \
 	--mount type=bind,src="$TOOLKIT",dst=/toolkit,readonly --mount type=bind,src="$RECIPE",dst=/recipe,readonly --mount type=bind,src="$W/src",dst=/out \
-	--mount type=bind,src="$TOOLKIT/repo/reproducible.py",dst=/run/reproducible.py,readonly \
 	--mount type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/host-ca.crt,readonly --mount type=bind,src="$TOOLKIT/../tools/https-only-apt.sh",dst=/run/https-only-apt.sh,readonly \
 	--entrypoint bash "$IMAGE" -c 'sh /run/https-only-apt.sh && bash /recipe/packaging/next-source.sh /out' >"$W/next-source.log" 2>&1 \
 	|| { tail -30 "$W/next-source.log"; exit 1; }
