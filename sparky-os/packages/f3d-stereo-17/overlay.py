@@ -67,7 +67,7 @@ old = 'Package: f3d\nArchitecture: any\nDepends: ${shlibs:Depends}, ${misc:Depen
 assert old in control, 'Debian control changed'
 control = control.replace(old, 'Package: f3d\nArchitecture: any\n'
                           'Depends: libf3d3 (= ${binary:Version}), sparky-stereo-mime-models, ${shlibs:Depends}, ${misc:Depends}', 1)
-control = control.replace('Build-Depends: debhelper-compat (= 13),', 'Build-Depends: debhelper-compat (= 13),\n               libstereo-declare-dev (>= 1.10.0),\n               patchelf,\n               zlib1g-dev,', 1)
+control = control.replace('Build-Depends: debhelper-compat (= 13),', 'Build-Depends: debhelper-compat (= 13),\n               libstereo-declare-dev (>= 1.11.0),\n               patchelf,\n               zlib1g-dev,', 1)
 control += """
 Package: libf3d3
 Section: libs

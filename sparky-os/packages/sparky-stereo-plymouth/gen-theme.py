@@ -80,21 +80,22 @@ SECS_BETWEEN_ANIMS = 2.5;
 # the depth config by, and in this order of importance: 1 - User choice (but based on 2); 2 - Current display"): the boot
 # hands Plymouth the main screen's PoppedLimit and SunkLimit as Stereo KWin resolves them (plymouth.stereo= popped=,
 # sunk=, pixels of a view 1920 wide, scaled by the eye's width over 1920 the way KWin scales them), and Plymouth gives them
-# to the theme. Nothing is in front of the screen by more than the popped limit, nothing behind it by more than the sunk
-# limit (ORDER 472, ORDER 481). Where the boot gave none, Plymouth says so and gives the display's default, 4 and 10.
-# Popped is smaller than sunk: a popped thing that nears the edge breaks the window, a sunk one does not.
+# to the theme (ORDER 481). Where the boot gave none, Plymouth says so and gives the display's default, 4 and 10.
 DEPTH_FOLLOWS = "%(depth)s";
 POPPED_LIMIT = Window.GetStereoPoppedLimit ();
 SUNK_LIMIT = Window.GetStereoSunkLimit ();
 
-# The levels, as parallax in front of the screen: the base is half the popped limit, the logo the popped limit,
-# so the logo stands one step above the base as the base stands one step above the screen. The electrons ride the base
-# and pop at most to the popped limit (BASE + POP), and sink by 0.6 of the sunk limit from the base at most, so
-# the farthest one stays inside the sunk limit (BASE - SINK is never below minus the sunk limit).
-STEP_PX = POPPED_LIMIT / 2;
+# The levels, as parallax in front of the screen, the ones the theme had before ORDER 472 (the SparkyOS stereo theme's
+# raise, measured in a real stereo clip: 0.00473 of the eye's width, 9.08 px at 1920): the base one step, the logo two, so
+# the logo stands one step above the base as the base stands one step above the screen; the electrons ride the base and
+# pop by the popped limit, and sink by 0.6 of the sunk limit. At the display's default limits (popped 4, sunk 10) that is
+# step 4.54, logo 9.08, pop 4 and sink 6 px, as before; they follow the person's limits from Plymouth, in the same
+# proportion, and are scaled by the eye's width over 1920 (the screen's) and by nothing else: no logo, sprite or element size
+# enters (Daniel, 2026-11-19: "one separation setting, centralized, tailored TO THE SCREEN not to the element size").
+STEP_PX = POPPED_LIMIT * 1.135;
 BASE_PX = STEP_PX;
 LOGO_PX = 2 * STEP_PX;
-POP_PX = STEP_PX;
+POP_PX = POPPED_LIMIT;
 SINK_PX = SUNK_LIMIT * 0.6;
 
 #------------------------------- Globals -------------------------------------------
@@ -240,10 +241,10 @@ fun layout () {
     EYE_H = win_height;
     POPPED_LIMIT = Window.GetStereoPoppedLimit ();
     SUNK_LIMIT = Window.GetStereoSunkLimit ();
-    STEP_PX = POPPED_LIMIT / 2;
+    STEP_PX = POPPED_LIMIT * 1.135;
     BASE_PX = STEP_PX;
     LOGO_PX = 2 * STEP_PX;
-    POP_PX = STEP_PX;
+    POP_PX = POPPED_LIMIT;
     SINK_PX = SUNK_LIMIT * 0.6;
     POP = POP_PX * EYE_W / 1920;
     SINK = SINK_PX * EYE_W / 1920;

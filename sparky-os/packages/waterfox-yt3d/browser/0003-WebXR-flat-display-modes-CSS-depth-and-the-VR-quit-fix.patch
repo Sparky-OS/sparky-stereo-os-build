@@ -1148,7 +1148,7 @@ index 54e40b7484..252ccba1cc 100644
 +    const double person = StaticPrefs::dom_vr_flat_screen_plane_mm();
 +    plane = person > 0 ? person : 1000.0;
 +    const double windowWidth = width * plane / viewer;
-+    separation = mFlatDepth.mSunkPx / 1920.0 * windowWidth;
++    separation = pixels.width > 0 ? mFlatDepth.mSunkPx / 1920.0 * windowWidth * screenPixels.width / pixels.width : 0.0;  // the sunk limit of the screen, a share of the window that is the screen's width over the window's, never the window's alone
 +    // the window as the eyes at the plane see it
 +  } else {
 +    // The expert's own physical separation: the screen at the viewer's

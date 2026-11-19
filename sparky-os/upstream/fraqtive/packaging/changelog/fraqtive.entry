@@ -6,3 +6,9 @@ fraqtive (@VERSION@) unstable; urgency=medium
     Eye and a shortcut to Display Settings, its sentences in ten languages.
   * Build-Depends: Qt 6 (qt6-base-dev, qt6-base-private-dev, qt6-l10n-tools,
     libqt6opengl6-dev, libqt6openglwidgets6), libstereo-declare-dev, libx11-dev.
+  * The camera separation is the person's depth limits for the screen, never
+    scaled by the size of the window or of the 3D view (ORDER 750): the limits
+    come in the pixels of the view's buffer from libstereo-declare 1.11
+    (limit * output width / 1920 * buffer width / shown width), so the same
+    scene has the same separation on the output in a small window, full screen
+    and at 50 % render resolution. Build-Depends and Depends: libstereo-declare 1.11.
