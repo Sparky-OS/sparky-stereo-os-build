@@ -163,7 +163,7 @@ def command(argv, say):
     parser.add_argument('--serve', action='store_true')
     parser.add_argument('--play')
     parser.add_argument('--emulator-error', choices=('DOSBox-Staging',))
-    parser.add_argument('--emulator-ready', choices=('DOSBox-Staging',))
+    parser.add_argument('--emulator-ready', choices=('DOSBox-Staging', 'Munt'))
     parser.add_argument('--rom-error', choices=('Munt', 'DOSBox-Staging'))
     try:
         args = parser.parse_args(argv)
