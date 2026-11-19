@@ -27,10 +27,10 @@ index d4bb5ace..de7ab9c7 100644
 +target_include_directories(speakertestsignaltest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 diff --git a/autotests/speakersetupconftest.cpp b/autotests/speakersetupconftest.cpp
 new file mode 100644
-index 00000000..31c48a64
+index 00000000..7fa3a819
 --- /dev/null
 +++ b/autotests/speakersetupconftest.cpp
-@@ -0,0 +1,396 @@
+@@ -0,0 +1,422 @@
 +// SPDX-License-Identifier: BSD-2-Clause
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +
@@ -409,6 +409,32 @@ index 00000000..31c48a64
 +        QCOMPARE(SpeakerSetupConf::validate(doc.object().toVariantMap()), code);
 +    }
 +
++    void aLabelIsSanitisedToWhatIsAccepted_data()
++    {
++        QTest::addColumn<QString>("text");
++        QTest::addColumn<QString>("want");
++        QTest::newRow("plain") << u"Built-in Audio Analog Surround 5.1"_s << u"Built-in Audio Analog Surround 5.1"_s;
++        QTest::newRow("quotes and braces go") << u"Dock \"A\" {x} [y] #z =1, \\"_s << u"Dock A x y z 1"_s;
++        QTest::newRow("a newline and a tab go") << u"Dock\nA\tB"_s << u"DockAB"_s;
++        QTest::newRow("line separators and format characters go") << u"A\u2028B\u2029C\u200bD\u0085E"_s << u"ABCDE"_s;
++        QTest::newRow("CJK stays") << u"\u30b9\u30d4\u30fc\u30ab\u30fc 5.1"_s << u"\u30b9\u30d4\u30fc\u30ab\u30fc 5.1"_s;
++        QTest::newRow("cut to the limit") << QString(100, u'a') << QString(56, u'a');
++        QTest::newRow("trimmed") << u"  Dock  "_s << u"Dock"_s;
++        QTest::newRow("starts with a mark, so nothing usable") << u"(Dock)"_s << QString();
++        QTest::newRow("nothing left") << u"\"\"{}"_s << QString();
++        QTest::newRow("an emoji goes") << u"Dock \U0001F50A 5.1"_s << u"Dock  5.1"_s;
++    }
++    void aLabelIsSanitisedToWhatIsAccepted()
++    {
++        QFETCH(QString, text);
++        QFETCH(QString, want);
++        const QString got = SpeakerSetupConf::sanitiseLabel(text, 56);
++        QCOMPARE(got, want);
++        if (!got.isEmpty()) {
++            QVERIFY(SpeakerSetupConf::validLabel(got));
++        }
++    }
++
 +    void theAnglesAreTheStandards()
 +    {
 +        const QStringList p51 = {u"FL"_s, u"FR"_s, u"FC"_s, u"LFE"_s, u"RL"_s, u"RR"_s};
@@ -770,10 +796,10 @@ index 25880c82..826ca8ec 100644
      Repeater {
 diff --git a/src/kcm/ui/SpeakerSetup.qml b/src/kcm/ui/SpeakerSetup.qml
 new file mode 100644
-index 00000000..d21ae836
+index 00000000..e806c717
 --- /dev/null
 +++ b/src/kcm/ui/SpeakerSetup.qml
-@@ -0,0 +1,652 @@
+@@ -0,0 +1,651 @@
 +// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 +// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +
@@ -984,11 +1010,10 @@ index 00000000..d21ae836
 +            return null
 +        }
 +        // The label becomes the setup's name in the lists of devices; only characters the drop-in accepts go into it.
-+        const allowed = "\\p{L}\\p{N}\\p{M}\\p{Zs}._+:()\\/\\uFF1A\\uFF08\\uFF09\\-"
-+        const text = info.description.replace(new RegExp("[^" + allowed + "]", "gu"), "").trim().substring(0, 56)
-+        if (/^[\p{L}\p{N}]/u.test(text)) {
++        const text = setup.sanitiseLabel(info.description)
++        if (text !== "") {
 +            const translated = i18nd("kcm_pulseaudio", "Speaker Setup: %1", text)
-+            d.label = new RegExp("^[\\p{L}\\p{N}][" + allowed + "]{0,79}$", "u").test(translated) ? translated : "Speaker Setup: " + text
++            d.label = setup.validLabel(translated) ? translated : "Speaker Setup: " + text
 +        }
 +        return d
 +    }
@@ -1156,7 +1181,7 @@ index 00000000..d21ae836
 +                            }
 +                            return base * Math.max(0.25, page.distanceOf(modelData) / room.farMax)
 +                        }
-+                        width: Kirigami.Units.gridUnit * 4
++                        width: Kirigami.Units.gridUnit * 3.2
 +                        height: Kirigami.Units.gridUnit * 2.4
 +                        x: (isSub ? room.width - width - Kirigami.Units.smallSpacing : room.cx + orbit * Math.sin(angle)) - (isSub ? 0 : width / 2)
 +                        y: (isSub ? room.height - height - Kirigami.Units.smallSpacing : room.cy - orbit * Math.cos(angle)) - (isSub ? 0 : height / 2)
@@ -1498,10 +1523,10 @@ index 9500a2a5..159a3036 100644
      qmlRegisterType<DeviceRenameSaver>(uri, 0, 1, "DeviceRenameSaver");
 diff --git a/src/qml/speakersetup.cpp b/src/qml/speakersetup.cpp
 new file mode 100644
-index 00000000..f97bb27c
+index 00000000..2b1e694a
 --- /dev/null
 +++ b/src/qml/speakersetup.cpp
-@@ -0,0 +1,730 @@
+@@ -0,0 +1,740 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
@@ -1661,6 +1686,16 @@ index 00000000..f97bb27c
 +double SpeakerSetup::delaySeconds(double distance, double farthest) const
 +{
 +    return SpeakerSetupConf::delaySeconds(distance, farthest);
++}
++
++QString SpeakerSetup::sanitiseLabel(const QString &description) const
++{
++    return SpeakerSetupConf::sanitiseLabel(description, 56);
++}
++
++bool SpeakerSetup::validLabel(const QString &label) const
++{
++    return SpeakerSetupConf::validLabel(label);
 +}
 +
 +void SpeakerSetup::loadSettings()
@@ -2234,10 +2269,10 @@ index 00000000..f97bb27c
 +#include "moc_speakersetup.cpp"
 diff --git a/src/qml/speakersetup.h b/src/qml/speakersetup.h
 new file mode 100644
-index 00000000..b94d3b4f
+index 00000000..acdde20a
 --- /dev/null
 +++ b/src/qml/speakersetup.h
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,138 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
@@ -2313,6 +2348,10 @@ index 00000000..b94d3b4f
 +    Q_INVOKABLE double angle(const QString &position, const QStringList &positions) const;
 +    /** The delay in seconds a speaker at distance (metres) gets when the farthest speaker is at farthest. */
 +    Q_INVOKABLE double delaySeconds(double distance, double farthest) const;
++    /** A device's description cut to what a setup's name may hold; empty when nothing usable is left. */
++    Q_INVOKABLE QString sanitiseLabel(const QString &description) const;
++    /** Whether a label is one the drop-in accepts. */
++    Q_INVOKABLE bool validLabel(const QString &label) const;
 +    /** The setup, for this account or every account, as the person set it for one device. */
 +    Q_INVOKABLE QVariantMap deviceState(bool system, const QString &node) const;
 +    /**
@@ -2374,10 +2413,10 @@ index 00000000..b94d3b4f
 +};
 diff --git a/src/speakersetupconf.cpp b/src/speakersetupconf.cpp
 new file mode 100644
-index 00000000..a5df6df0
+index 00000000..19396331
 --- /dev/null
 +++ b/src/speakersetupconf.cpp
-@@ -0,0 +1,494 @@
+@@ -0,0 +1,513 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
@@ -2645,6 +2684,25 @@ index 00000000..a5df6df0
 +    return re.match(label).hasMatch();
 +}
 +
++QString SpeakerSetupConf::sanitiseLabel(const QString &text, int maxCharacters)
++{
++    static const QRegularExpression keep(u"^[\\p{L}\\p{N}\\p{M}\\p{Zs}._+:()/\\x{FF1A}\\x{FF08}\\x{FF09}-]$"_s);
++    QString out;
++    int count = 0;
++    for (const char32_t c : text.toUcs4()) {
++        if (count >= maxCharacters) {
++            break;
++        }
++        const QString one = QString::fromUcs4(&c, 1);
++        if (keep.match(one).hasMatch()) {
++            out += one;
++            ++count;
++        }
++    }
++    out = out.trimmed();
++    return validLabel(out) ? out : QString();
++}
++
 +QString SpeakerSetupConf::sinkName(const QString &nodeName)
 +{
 +    return u"speaker_setup."_s + nodeName;
@@ -2874,10 +2932,10 @@ index 00000000..a5df6df0
 +}
 diff --git a/src/speakersetupconf.h b/src/speakersetupconf.h
 new file mode 100644
-index 00000000..f2649b71
+index 00000000..63a4315f
 --- /dev/null
 +++ b/src/speakersetupconf.h
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,76 @@
 +/*
 +    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 +    SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
@@ -2923,6 +2981,8 @@ index 00000000..f2649b71
 +
 +    static bool validNodeName(const QString &name);
 +    static bool validLabel(const QString &label);
++    /** The text with every character a label does not accept removed, trimmed and cut to maxCharacters; empty when it does not start with a letter or digit. */
++    static QString sanitiseLabel(const QString &text, int maxCharacters);
 +    static bool validPosition(const QString &position);
 +    static QStringList knownPositions();
 +
