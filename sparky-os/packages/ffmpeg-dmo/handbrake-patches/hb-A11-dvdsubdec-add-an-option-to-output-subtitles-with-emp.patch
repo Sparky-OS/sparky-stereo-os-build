@@ -1,0 +1,34 @@
+Description: [PATCH 11/22] dvdsubdec: add an option to output subtitles with empty or fully transparent rects.
+Author: Damiano Galassi
+Origin: other, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/ffmpeg/A11-dvdsubdec-add-an-option-to-output-subtitles-with-emp.patch
+Bug: https://github.com/HandBrake/HandBrake/commit/213e22ecf53fe303b482dcfe9fa8c8e1c2c89b19
+Forwarded: not-needed
+Comment: Backported to the edition FFmpeg 9.0.2; preserve public enum values.
+
+--- a/libavcodec/dvdsubdec.c
++++ b/libavcodec/dvdsubdec.c
+@@ -46,6 +46,7 @@
+   int      forced_subs_only;
+   uint8_t  used_color[256];
+   int64_t  pts;
++  int      output_empty_rects;
+ } DVDSubContext;
+ 
+ static void yuv_a_to_rgba(const uint8_t *ycbcr, const uint8_t *alpha, uint32_t *rgba, int num_values)
+@@ -568,7 +569,7 @@
+         ctx->pts = AV_NOPTS_VALUE;
+         return buf_size;
+     }
+-    if (!is_menu && find_smallest_bounding_rectangle(ctx, sub) == 0)
++    if (!is_menu && !ctx->output_empty_rects && find_smallest_bounding_rectangle(ctx, sub) == 0)
+         goto no_subtitle;
+ 
+     if (ctx->forced_subs_only && !(sub->rects[0]->flags & AV_SUBTITLE_FLAG_FORCED))
+@@ -722,6 +723,7 @@
+     { "palette", "set the global palette", OFFSET(palette_str), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, SD },
+     { "ifo_palette", "obtain the global palette from .IFO file", OFFSET(ifo_str), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, SD },
+     { "forced_subs_only", "Only show forced subtitles", OFFSET(forced_subs_only), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, SD},
++    { "output_empty_rects", "Output subtitles with empty or fully transparent rects", OFFSET(output_empty_rects), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, SD},
+     { NULL }
+ };
+ static const AVClass dvdsub_class = {

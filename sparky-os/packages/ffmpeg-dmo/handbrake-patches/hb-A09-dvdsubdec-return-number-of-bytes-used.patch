@@ -1,0 +1,22 @@
+Description: [PATCH 09/22] dvdsubdec: return number of bytes used
+Author: John Stebbins
+Origin: other, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/ffmpeg/A09-dvdsubdec-return-number-of-bytes-used.patch
+Bug: https://github.com/HandBrake/HandBrake/commit/700d8f69087e9e0928a7c860105f60956026cee4
+Forwarded: not-needed
+Comment: Backported to the edition FFmpeg 9.0.2; preserve public enum values.
+
+--- a/libavcodec/dvdsubdec.c
++++ b/libavcodec/dvdsubdec.c
+@@ -547,7 +547,11 @@
+     is_menu = decode_dvd_subtitles(avctx, ctx, sub, buf, buf_size);
+     if (is_menu == AVERROR(EAGAIN)) {
+         *data_size = 0;
+-        return appended ? 0 : append_to_cached_buf(avctx, buf, buf_size);
++        int ret = appended ? 0 : append_to_cached_buf(avctx, buf, buf_size);
++        if (ret < 0) {
++            return ret;
++        }
++        return buf_size;
+     }
+ 
+     if (is_menu < 0) {
