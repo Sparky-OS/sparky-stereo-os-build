@@ -109,7 +109,11 @@ static int sa_close(snd_pcm_ioplug_t *io) {
 	close(s->tfd); free(s);
 	return 0;
 }
-static int sa_hw_params(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *p) { (void)io; (void)p; return 0; }
+static int sa_hw_params(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *p) {
+    (void)p;
+    if (getenv("AS21_REJECT") && io->format == SND_PCM_FORMAT_S16_LE) return -EIO;
+    return 0;
+}
 static const snd_pcm_ioplug_callback_t cb = {
 	.start = sa_start, .stop = sa_stop, .pointer = sa_pointer, .transfer = sa_transfer,
 	.prepare = sa_prepare, .close = sa_close, .hw_params = sa_hw_params, .poll_revents = sa_poll_revents,
