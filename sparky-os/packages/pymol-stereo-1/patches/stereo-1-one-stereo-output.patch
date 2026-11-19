@@ -61,18 +61,30 @@ Last-Update: 2026-11-19
      if (flag == cStereo_openvr) {
 --- a/layer5/PyMOL.cpp
 +++ b/layer5/PyMOL.cpp
-@@ -2191,9 +2191,9 @@
+@@ -2171,11 +2171,6 @@
+     OrthoAddOutput(G,
+         " OpenGL quad-buffer stereo 3D detected and enabled.\n");;
+   } else {
+-    if(G->LaunchStatus & cPyMOLGlobals_LaunchStatus_StereoFailed) {
+-      G->Feedback->addColored(
+-          "Error: The requested stereo 3D visualization mode is not available.\n",
+-          FB_Errors);
+-    }
+   }
+ 
+   if(G->LaunchStatus & cPyMOLGlobals_LaunchStatus_MultisampleFailed) {
+@@ -2191,10 +2186,7 @@
    // quad buffer stereo available?
    GLboolean state;
    glGetBooleanv(GL_STEREO, &state);
 -  G->StereoCapable = state || G->Option->force_stereo > 0;
-+  G->StereoCapable = state;
-   if (!state && G->Option->force_stereo > 0) {
+-  if (!state && G->Option->force_stereo > 0) {
 -    printf("Warning: forcing stereo despite GL_STEREO=0\n");
-+    printf("Stereo 3D was asked for, but this window has no quad buffer: staying 2D\n");
-   }
+-  }
++  G->StereoCapable = state;
  
    // stereo request feedback
+   if (state && G->Option->stereo_mode == cStereo_default) {
 --- a/modules/pmg_qt/pymol_gl_widget.py
 +++ b/modules/pmg_qt/pymol_gl_widget.py
 @@ -3,6 +3,7 @@
