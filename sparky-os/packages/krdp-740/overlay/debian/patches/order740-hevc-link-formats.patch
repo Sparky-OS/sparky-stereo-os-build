@@ -1,0 +1,76 @@
+From bb5f4e7a15ac416d6b8308dfd2081545b2a9ba64 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 19 Nov 2026 05:03:10 -0300
+Subject: [PATCH] Offer HEVC with the encoded geometry of every headset link
+ format
+
+Keep the descriptor packing and refresh shared with H.264 and document the wire raster and explicit Android failure handling.
+
+Assisted-by: GPT-6 via Codex
+---
+ doc/headset-video.md | 22 +++++++++++++++++-----
+ src/VideoStream.cpp  |  4 ++--
+ 2 files changed, 19 insertions(+), 7 deletions(-)
+
+diff --git a/doc/headset-video.md b/doc/headset-video.md
+index 924ab87..6446904 100644
+--- a/doc/headset-video.md
++++ b/doc/headset-video.md
+@@ -6,8 +6,19 @@ H.264 on RDPGFX remains the default, including for stock clients.
+ The channel name is `org.sparky.Headset.Video1`.
+ 
+ Each DVC message starts with nine unsigned little-endian 32-bit words:
+-version (1), kind, native width, native height, refresh in mHz, sequence, flags, payload bytes, codec (2 for HEVC Main).
+-Geometry and refresh must equal the server's panel descriptor throughout the session.
++version (1), kind, encoded link width, encoded link height, refresh in mHz, sequence, flags, payload bytes, codec (2 for HEVC Main).
++Geometry must equal the selected link's encoded raster, and refresh must equal the panel descriptor throughout the session.
++
++| Link format | Encoded raster | Packing |
++| --- | --- | --- |
++| native | physical panel width × height | full side by side |
++| sbs-720 | 2560 × 720 | full side by side |
++| tb-720 | 1280 × 1440 | full top and bottom |
++| sbs-half-720 | 1280 × 720 | half side by side |
++| tb-half-720 | 1280 × 720 | half top and bottom |
++
++Packing comes from the agreed panel descriptor, identically to ordinary H.264.
++The decoder output is fitted to the physical panel by the same per-eye renderer as H.264.
+ The panel descriptor's existing split-eye property defines the two eye viewports, left first.
+ This channel carries only the panel output; it does not invent a file stereo tag.
+ Each frame payload is one Annex B HEVC access unit, including parameter sets on the initial keyframe.
+@@ -30,13 +41,14 @@ Subsequent acknowledgements have a one-second deadline; the Android decoder and
+ Hardware decoders feed the existing lens renderer through SurfaceTexture without a Bitmap copy.
+ Software decoders expose cropped YUV planes, which are uploaded and converted using the stream's BT.709 full-range description.
+ Legacy Android platform codec names are recognized even when their software-only attribute is missing.
+-The current software path rejects unsupported color descriptions and falls back to H.264.
+-A decode or GL wait is bounded; failure rejects this optional channel without disconnecting ordinary RDP.
++The Android software path rejects unsupported color descriptions and reports a codec failure.
++A decode or GL wait is bounded. Android explains failure and keeps the codec preference; the person can explicitly choose H.264 on return.
+ A GL submission acknowledgement is not a physical screen scanout timestamp.
+ 
+ There are at most two unacknowledged access units, eight queued packets, and 8 MiB of queued encoded data.
+ Queue pressure pauses capture instead of dropping predicted frames whose references are needed.
+-Oversized packets, malformed messages, invalid acknowledgements, decoder failure, or expired negotiation/acknowledgement deadlines fall back to H.264.
++Oversized packets, malformed messages, invalid acknowledgements, decoder failure, or expired negotiation/acknowledgement deadlines make the server abandon HEVC and send kind 5. Android treats that message as a visible codec failure, rather than silently changing codec.
++While no HEVC session is active, available H.264 frames stay visible. With HEVC selected and no offer within five seconds of connection, Android explains this temporary picture and offers the explicit H.264 choice on Back.
+ The H.264 encoder is recreated so recovery starts with a keyframe.
+ All channel state belongs to one RDP connection and is discarded on disconnect.
+ 
+diff --git a/src/VideoStream.cpp b/src/VideoStream.cpp
+index 87b2407..d9206e5 100644
+--- a/src/VideoStream.cpp
++++ b/src/VideoStream.cpp
+@@ -619,8 +619,8 @@ void VideoStream::setPanelDescriptor(const PanelDescriptor &panel)
+         return;
+     }
+     // a panel is paced at its own refresh, fraction included, and never above it
+-    if (d->headsetChannel && panel.linkFormat == PanelDescriptor::LinkFormat::Native) {
+-        d->headsetChannel->configure(panel.pixels, panel.refreshMilliHz);
++    if (d->headsetChannel) {
++        d->headsetChannel->configure(panel.encodedPixels(), panel.refreshMilliHz);
+     }
+     d->stereoPanel = panel.splitEye;
+     d->packing = panel.linkFormat == PanelDescriptor::LinkFormat::TopBottom720 ? PipeWireBaseEncodedStream::StereoPacking::TopBottom
+-- 
+2.53.0
+
