@@ -11,10 +11,19 @@ TOOLKIT=$(cd "$HERE/../.." && pwd)
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL='Capitain_Jack@yahoo.com'
 export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git -C "$HERE" log -1 --format=%ct -- .)}
 export DEB_BUILD_OPTIONS="parallel=${JOBS:-4}"
-python3 "$HERE/compose-source.py" --source "$SPIRULA_SOURCE" --out "$OUT" --toolkit "$TOOLKIT"
+if [ -n "${SPIRULA_REPACK_FROM:-}" ]; then
+    python3 "$HERE/compose-repack-source.py" --from "$SPIRULA_REPACK_FROM" --out "$OUT" --toolkit "$TOOLKIT"
+else
+    python3 "$HERE/compose-source.py" --source "$SPIRULA_SOURCE" --out "$OUT" --toolkit "$TOOLKIT"
+fi
 ROOT=$OUT/spirula-studio-2026.11.12
-# Seal authored source before the native Lean Code build projection.
+# Seal both composition paths before the native Lean Code build projection.
+python3 "$TOOLKIT/repo/reproducible.py" normalize-tree "$SOURCE_DATE_EPOCH" "$ROOT"
 (cd "$OUT" && dpkg-source -b "$(basename "$ROOT")")
-(cd "$ROOT" && dpkg-buildpackage -us -uc -b -j"${JOBS:-4}")
+if [ -n "${SPIRULA_REPACK_FROM:-}" ]; then
+    (cd "$ROOT" && dpkg-buildpackage -d -us -uc -b -nc -j"${JOBS:-4}")
+else
+    (cd "$ROOT" && dpkg-buildpackage -us -uc -b -j"${JOBS:-4}")
+fi
 PYTHONPATH="$TOOLKIT" python3 -m lean.release check-debs "$OUT"/*.deb
 sync
