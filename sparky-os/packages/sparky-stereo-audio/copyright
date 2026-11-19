@@ -29,3 +29,18 @@ License:
 
 On Debian systems, the complete text of the GNU General
 Public License can be found in `/usr/share/common-licenses/GPL-3'.
+
+The new graphs use PipeWire's filter-chain and SOFA spatializer (Dmitry
+Sharshakov), the upstream HeSuVi channel convention and PSD upmix settings
+(PipeWire authors). The passive matrix coefficients and delay follow Steve
+Davies' MPlayer surround decoder (GPL-2.0-or-later), whose notice and source
+are at https://github.com/pigoz/mplayer-svn/blob/master/libaf/af_surround.c .
+This implementation is GPL-3.0-or-later, compatible with that permission.
+
+The MIT KEMAR measurements are by Bill Gardner and Keith Martin, MIT Media
+Laboratory, 1994: https://sound.media.mit.edu/resources/KEMAR.html . Their
+release allows use without restrictions provided the authors are cited.
+The response file is supplied by the libmysofa dependency, not copied here.
+libmysofa, by Christian Hoene and its contributors, reads SOFA; PipeWire's
+SOFA spatializer performs the convolution. Imported response files stay
+owned by the person and are never included in this package.
