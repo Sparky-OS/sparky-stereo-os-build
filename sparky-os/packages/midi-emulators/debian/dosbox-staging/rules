@@ -2,10 +2,10 @@
 include /usr/share/dpkg/architecture.mk
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 %:
-	dh $@ --buildsystem=meson
+	dh $@ --buildsystem=cmake
 
 override_dh_auto_configure:
-	dh_auto_configure -- --wrap-mode=nofallback -Duse_mt32emu=true -Duse_zlib_ng=false -Dunit_tests=disabled
+	dh_auto_configure -- -DUSE_SYSTEM_LIBS=ON -DOPT_TESTS=OFF -DOPT_MT32EMU=ON -DCMAKE_INSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH)
 
 override_dh_auto_install:
 	dh_auto_install

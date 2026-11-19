@@ -86,13 +86,15 @@
     "rom_named_paths": [],
     "source": "dosbox-staging",
     "version": "0.83.1+stereo3d1",
-    "build": "meson",
+    "build": "cmake",
     "flags": [
-      "--wrap-mode=nofallback",
-      "-Duse_mt32emu=true",
-      "-Duse_zlib_ng=false",
-      "-Dunit_tests=disabled"
+      "-DUSE_SYSTEM_LIBS=ON",
+      "-DOPT_TESTS=OFF",
+      "-DOPT_MT32EMU=ON"
     ],
-    "upstream_tree_tar_sha256": "655faf2318ed167596f2c70e8a6fab1dcc4fa916e02c99c921207e0f9cbd7309"
+    "upstream_tree_tar_sha256": "655faf2318ed167596f2c70e8a6fab1dcc4fa916e02c99c921207e0f9cbd7309",
+    "upstream_fixes": [
+      "482477a6f48ba30520920c0a09732371ba1cd772"
+    ]
   }
 }
