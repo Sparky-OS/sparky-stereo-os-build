@@ -1,0 +1,2532 @@
+Description: Carry the accepted sensor channel and paired OpenXR orientation adapter
+Author: Daniel Campos Ramos
+Origin: vendor
+Forwarded: not-needed
+Last-Update: 2026-11-20
+
+diff --git a/autotests/CMakeLists.txt b/autotests/CMakeLists.txt
+index 161bf47..43f90ef 100644
+--- a/autotests/CMakeLists.txt
++++ b/autotests/CMakeLists.txt
+@@ -30,3 +30,9 @@ if (BUILD_PLASMA_SESSION)
+     add_test(NAME PanelSessionDBusTest COMMAND dbus-run-session -- $<TARGET_FILE:PanelSessionDBusTest>)
+     set_tests_properties(PanelSessionDBusTest PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+ endif()
++add_subdirectory(stereotracking)
++
++add_executable(HeadsetPoseConsumerTest HeadsetPoseConsumerTest.cpp ../server/HeadsetPoseConsumer.cpp)
++target_include_directories(HeadsetPoseConsumerTest PRIVATE ../src ../server)
++target_compile_features(HeadsetPoseConsumerTest PRIVATE cxx_std_20)
++add_test(NAME HeadsetPoseConsumerTest COMMAND HeadsetPoseConsumerTest)
+diff --git a/autotests/HeadsetPoseConsumerTest.cpp b/autotests/HeadsetPoseConsumerTest.cpp
+new file mode 100644
+index 0000000..79d3a93
+--- /dev/null
++++ b/autotests/HeadsetPoseConsumerTest.cpp
+@@ -0,0 +1,34 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: BSD-2-Clause
++#include "HeadsetPoseConsumer.h"
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <unistd.h>
++int main()
++{
++    char directory[] = "/tmp/sd762-pose-XXXXXX";
++    if (!mkdtemp(directory)) return 2;
++    const std::string path = std::string(directory) + "/pose";
++    KRdp::TrackingSource source;
++    source.source[0] = 1; source.session[0] = 2; source.lease[0] = 3; source.output[0] = 4;
++    HeadsetPoseConsumer consumer(path);
++    bool ok = !consumer.registerSource(source);
++    int server = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
++    sockaddr_un address{};address.sun_family = AF_UNIX;
++    std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
++    if (bind(server, reinterpret_cast<sockaddr *>(&address), sizeof(address)) || listen(server, 1)) return 3;
++    ok = ok && consumer.registerSource(source) && consumer.available();
++    int peer = accept(server, nullptr, nullptr);
++    unsigned char bytes[161]{};
++    const auto size = recv(peer, bytes, sizeof(bytes), 0);
++    ok = ok && size == 160 && !std::memcmp(bytes,"SDVR",4) && bytes[4] == 1 && bytes[6] == 0 && bytes[8] == 1 && bytes[24] == 2 && bytes[40] == 3 && bytes[56] == 4;
++    close(peer);
++    // Losing the runtime must be observed even when Android publishes no new pose.
++    const bool lossObserved = !consumer.available();
++    std::printf("registration=%s disconnected-runtime=%s\n",ok?"PASS":"FAIL",lossObserved?"PASS":"FAIL");
++    close(server);unlink(path.c_str());rmdir(directory);
++    return ok && lossObserved ? 0 : 1;
++}
+diff --git a/autotests/stereotracking/CMakeLists.txt b/autotests/stereotracking/CMakeLists.txt
+new file mode 100644
+index 0000000..af7c32a
+--- /dev/null
++++ b/autotests/stereotracking/CMakeLists.txt
+@@ -0,0 +1,24 @@
++# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++# SPDX-License-Identifier: BSD-2-Clause
++if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
++    cmake_minimum_required(VERSION 3.16)
++    project(StereoTrackingProtocolTests LANGUAGES CXX)
++endif()
++set(CMAKE_CXX_STANDARD 20)
++set(CMAKE_CXX_STANDARD_REQUIRED ON)
++enable_testing()
++add_executable(StereoTrackingProtocolTest ProtocolTest.cpp ../../src/stereotracking/Protocol.cpp)
++target_include_directories(StereoTrackingProtocolTest PRIVATE ../../src/stereotracking)
++add_test(NAME StereoTrackingProtocolTest COMMAND StereoTrackingProtocolTest)
++
++foreach(name ClockSync Geometry)
++    add_executable(${name}Test ${name}Test.cpp ../../src/stereotracking/${name}.cpp)
++    target_include_directories(${name}Test PRIVATE ../../src/stereotracking)
++    add_test(NAME ${name}Test COMMAND ${name}Test)
++endforeach()
++add_executable(PoseStateTest PoseStateTest.cpp ../../src/stereotracking/PoseState.cpp ../../src/stereotracking/ClockSync.cpp ../../src/stereotracking/Geometry.cpp ../../src/stereotracking/Protocol.cpp)
++target_include_directories(PoseStateTest PRIVATE ../../src/stereotracking)
++add_test(NAME PoseStateTest COMMAND PoseStateTest)
++add_executable(SessionTest SessionTest.cpp ../../src/stereotracking/Session.cpp ../../src/stereotracking/PoseState.cpp ../../src/stereotracking/ClockSync.cpp ../../src/stereotracking/Geometry.cpp ../../src/stereotracking/Protocol.cpp)
++target_include_directories(SessionTest PRIVATE ../../src/stereotracking)
++add_test(NAME SessionTest COMMAND SessionTest)
+diff --git a/autotests/stereotracking/ClockSyncTest.cpp b/autotests/stereotracking/ClockSyncTest.cpp
+new file mode 100644
+index 0000000..af01f3f
+--- /dev/null
++++ b/autotests/stereotracking/ClockSyncTest.cpp
+@@ -0,0 +1,39 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#include "ClockSync.h"
++#include <cstdio>
++using namespace KRdp::StereoTracking;
++#define CHECK(t)                                                                                                                                               \
++    do {                                                                                                                                                       \
++        if (!(t)) {                                                                                                                                            \
++            std::fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #t);                                                                                          \
++            return 1;                                                                                                                                          \
++        }                                                                                                                                                      \
++    } while (false)
++int main()
++{
++    ClockSync clock;
++    constexpr uint64_t offset = 5000000000ULL;
++    CHECK(!clock.map(100, 100));
++    for (uint64_t i = 0; i < 8; ++i) {
++        const auto t0 = 1000000000ULL + i * 10000000ULL;
++        CHECK(clock.addExchange(t0, t0 + offset + 2000000, t0 + offset + 2100000, t0 + 4100000));
++        if (i < 7)
++            CHECK(!clock.map(t0 + offset, t0));
++    }
++    const uint64_t now = 1100000000ULL;
++    const auto mapped = clock.map(now + offset - 10000000, now);
++    CHECK(mapped && mapped->timeNs == now - 10000000);
++    CHECK(mapped->uncertaintyNs >= 2000000 && mapped->uncertaintyNs < 2100000);
++    CHECK(!clock.map(now + offset, now + 11000000000ULL));
++    CHECK(!clock.addExchange(now, now + offset, now + offset - 1, now + 100));
++    CHECK(!clock.map(now + offset, now));
++    for (uint64_t i = 0; i < 8; ++i)
++        CHECK(clock.addExchange(now + i * 10000, now + offset + i * 10000, now + offset + i * 10000, now + i * 10000));
++    CHECK(!clock.addExchange(now + 1000000, now + offset + 1000000000, now + offset + 1000000000, now + 1000001));
++    CHECK(!clock.map(now + offset, now));
++    CHECK(!clock.addExchange(20, 30, 31, 19));
++    CHECK(!clock.addExchange(20, 30, 50, 25));
++    CHECK(!clock.addExchange(UINT64_MAX, 0, 0, UINT64_MAX));
++    std::puts("PASS eight probes, known offset, processing delay, uncertainty drift, impossible order and discontinuity");
++}
+diff --git a/autotests/stereotracking/GeometryTest.cpp b/autotests/stereotracking/GeometryTest.cpp
+new file mode 100644
+index 0000000..491f1bc
+--- /dev/null
++++ b/autotests/stereotracking/GeometryTest.cpp
+@@ -0,0 +1,90 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#include "Geometry.h"
++#include <cmath>
++#include <cstdio>
++using namespace KRdp::StereoTracking;
++#define CHECK(t)                                                                                                                                               \
++    do {                                                                                                                                                       \
++        if (!(t)) {                                                                                                                                            \
++            std::fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #t);                                                                                          \
++            return 1;                                                                                                                                          \
++        }                                                                                                                                                      \
++    } while (false)
++bool same(Quaternion a, Quaternion b)
++{
++    double dot = 0;
++    for (size_t i = 0; i < 4; ++i)
++        dot += a[i] * b[i];
++    return std::abs(std::abs(dot) - 1) < 1e-9;
++}
++int main()
++{
++    struct Fixture {
++        uint32_t mount;
++        Quaternion raw;
++        Quaternion expected;
++        Vector3 forward;
++        Vector3 up;
++    };
++    // Independent constant fixtures: +/-90 degrees about each physical device axis, both landscape mounts.
++    const Fixture cases[] = {
++        {1, {0, 0.70710678118654757, 0, 0.70710678118654757}, {0, 0.70710678118654757, 0, 0.70710678118654757}, {-1, 0, 0}, {0, 1, 0}},
++        {1, {0.70710678118654757, 0, -0.70710678118654757, 0}, {0, -0.70710678118654757, 0, 0.70710678118654757}, {1, 0, 0}, {0, 1, 0}},
++        {1, {0, 0, -0.70710678118654757, 0.70710678118654757}, {-0.70710678118654757, 0, 0, 0.70710678118654757}, {0, -1, 0}, {0, 0, -1}},
++        {1, {0.70710678118654757, 0.70710678118654757, 0, 0}, {0.70710678118654757, 0, 0, 0.70710678118654757}, {0, 1, 0}, {0, 0, 1}},
++        {1, {0, 0.70710678118654757, -0.70710678118654757, 0}, {0, 0, -0.70710678118654757, 0.70710678118654757}, {0, 0, -1}, {1, 0, 0}},
++        {1, {0.70710678118654757, 0, 0, 0.70710678118654757}, {0, 0, 0.70710678118654757, 0.70710678118654757}, {0, 0, -1}, {-1, 0, 0}},
++        {3, {0, -0.70710678118654757, 0, 0.70710678118654757}, {0, -0.70710678118654757, 0, 0.70710678118654757}, {1, 0, 0}, {0, 1, 0}},
++        {3, {0.70710678118654757, 0, 0.70710678118654757, 0}, {0, 0.70710678118654757, 0, 0.70710678118654757}, {-1, 0, 0}, {0, 1, 0}},
++        {3, {0.70710678118654757, -0.70710678118654757, 0, 0}, {0.70710678118654757, 0, 0, 0.70710678118654757}, {0, 1, 0}, {0, 0, 1}},
++        {3, {0, 0, 0.70710678118654757, 0.70710678118654757}, {-0.70710678118654757, 0, 0, 0.70710678118654757}, {0, -1, 0}, {0, 0, -1}},
++        {3, {0.70710678118654757, 0, 0, 0.70710678118654757}, {0, 0, -0.70710678118654757, 0.70710678118654757}, {0, 0, -1}, {1, 0, 0}},
++        {3, {0, -0.70710678118654757, 0.70710678118654757, 0}, {0, 0, 0.70710678118654757, 0.70710678118654757}, {0, 0, -1}, {-1, 0, 0}},
++    };
++    Geometry geometry;
++    CHECK(!geometry.apply({0, 0, 0, 1}, 1));
++    CHECK(!geometry.recenter({0, 0, 0, 1}, 1)); // Device back points along gravity.
++    unsigned rejectedWrongMount = 0, rejectedWFirst = 0;
++    for (const auto &test : cases) {
++        const Quaternion origin = test.mount == 1 ? Quaternion{.5, .5, -.5, .5} : Quaternion{.5, -.5, .5, .5};
++        CHECK(geometry.recenter(origin, test.mount));
++        const auto identity = geometry.apply(origin, test.mount);
++        CHECK(identity && same(*identity, {0, 0, 0, 1}));
++        const auto q = geometry.apply(test.raw, test.mount);
++        CHECK(q && same(*q, test.expected));
++        const auto forward = Geometry::rotate(*q, {0, 0, -1});
++        const auto up = Geometry::rotate(*q, {0, 1, 0});
++        for (size_t i = 0; i < 3; ++i) {
++            CHECK(std::abs(forward[i] - test.forward[i]) < 1e-9);
++            CHECK(std::abs(up[i] - test.up[i]) < 1e-9);
++        }
++        CHECK(!geometry.apply(test.raw, test.mount == 1 ? 3 : 1));
++        Geometry mutant;
++        CHECK(mutant.recenter(origin, test.mount == 1 ? 3 : 1));
++        const auto wrong = mutant.apply(test.raw, test.mount == 1 ? 3 : 1);
++        if (wrong && !same(*wrong, test.expected))
++            ++rejectedWrongMount;
++        const Quaternion wfirst = {test.raw[3], test.raw[0], test.raw[1], test.raw[2]};
++        const auto swapped = geometry.apply(wfirst, test.mount);
++        if (swapped && !same(*swapped, test.expected))
++            ++rejectedWFirst;
++        const auto direct = geometry.apply(test.raw, test.mount);
++        CHECK(direct);
++        Quaternion opposite = test.raw;
++        for (auto &v : opposite)
++            v = -v;
++        const auto continuous = geometry.apply(opposite, test.mount);
++        CHECK(continuous && same(*continuous, test.expected));
++        double dot = 0;
++        for (size_t i = 0; i < 4; ++i)
++            dot += (*direct)[i] * (*continuous)[i];
++        CHECK(dot > .999999);
++    }
++    CHECK(rejectedWrongMount >= 8 && rejectedWFirst >= 8);
++    const auto forward = Geometry::rotate({0, 0, 0, 1}, {0, 0, -1});
++    CHECK((forward == Vector3{0, 0, -1}));
++    std::printf("PASS 12 physical-axis fixtures, both mounts, wrong-mount=%u w-first=%u, sign continuity and vertical rejection\n",
++                rejectedWrongMount,
++                rejectedWFirst);
++}
+diff --git a/autotests/stereotracking/PoseStateTest.cpp b/autotests/stereotracking/PoseStateTest.cpp
+new file mode 100644
+index 0000000..936e7c5
+--- /dev/null
++++ b/autotests/stereotracking/PoseStateTest.cpp
+@@ -0,0 +1,136 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#include "PoseState.h"
++#include <bit>
++#include <cstdio>
++using namespace KRdp;
++using namespace KRdp::StereoTracking;
++#define CHECK(t)                                                                                                                                               \
++    do {                                                                                                                                                       \
++        if (!(t)) {                                                                                                                                            \
++            std::fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #t);                                                                                          \
++            return 1;                                                                                                                                          \
++        }                                                                                                                                                      \
++    } while (false)
++struct Consumer : StereoPoseConsumer {
++    unsigned registrations = 0, poses = 0, invalidations = 0, revocations = 0;
++    bool held = false;
++    bool registerSource(const TrackingSource &) noexcept override
++    {
++        ++registrations;
++        return true;
++    }
++    void submitPose(const StereoPose &) noexcept override
++    {
++        ++poses;
++        held = true;
++    }
++    void invalidateSource(const TrackingSource &, TrackingReason) noexcept override
++    {
++        ++invalidations;
++        held = false;
++    }
++    void unregisterSource(const TrackingSource &) noexcept override
++    {
++        ++revocations;
++        held = false;
++    }
++};
++TrackingGrant grant()
++{
++    TrackingGrant g;
++    g.peerToken = 123;
++    g.remoteInputApproved = true;
++    g.active = std::make_shared<std::atomic_bool>(true);
++    g.source.source[0] = 1;
++    g.source.session[0] = 2;
++    g.source.lease[0] = 3;
++    g.source.output[0] = 4;
++    g.source.seat = "test-seat";
++    return g;
++}
++Message pose(uint64_t seq, uint64_t time, uint32_t sourceEpoch = 1)
++{
++    Message p{Type::Pose, 7, seq, time, std::vector<uint8_t>(32)};
++    auto put = [&](size_t off, uint32_t value) {
++        for (size_t i = 0; i < 4; ++i)
++            p.payload[off + i] = uint8_t(value >> (8 * i));
++    };
++    for (size_t i = 0; i < 4; ++i)
++        put(i * 4, std::bit_cast<uint32_t>(i == 2 ? -.5F : .5F));
++    p.payload[16] = 15;
++    p.payload[18] = 3;
++    put(20, 3);
++    put(24, sourceEpoch);
++    put(28, 1);
++    return p;
++}
++int main()
++{
++    ClockSync clock;
++    for (uint64_t i = 0; i < 8; ++i)
++        CHECK(clock.addExchange(1000000000 + i * 10000, 1000000000 + i * 10000, 1000000000 + i * 10000, 1000000000 + i * 10000));
++    Consumer sink;
++    auto g = grant();
++    PoseState state(g, 123, 7, 15, 1, sink);
++    CHECK(sink.registrations == 1);
++    CHECK(state.accept(pose(1, 1100000000), clock, 1100000000));
++    CHECK(state.state() == TrackingState::Active && sink.poses == 1 && sink.held);
++    CHECK(state.latest() && state.latest()->orientationValid && !state.latest()->positionValid && !state.latest()->positionModeled
++          && !state.latest()->confidence);
++    CHECK(!state.accept(pose(2, 1, 9), clock, 1100100000));
++    CHECK(state.state() == TrackingState::Active && sink.held); // Expired source metadata cannot force a recenter.
++    state.tick(1200000000);
++    CHECK(state.state() == TrackingState::Paused && !sink.held);
++    state.tick(1350000000);
++    CHECK(state.state() == TrackingState::Unavailable);
++    CHECK(!state.accept(pose(3, 1100000001), clock, 1350000000)); // Old capture cannot be made fresh by receipt.
++    for (uint64_t i = 0; i < 3; ++i) {
++        state.accept(pose(4 + i, 1360000000 + i * 1000000), clock, 1360000000 + i * 1000000);
++        CHECK((state.state() == TrackingState::Active) == (i == 2));
++    }
++    CHECK(sink.held);
++    CHECK(!state.accept(pose(7, 1370000000, 2), clock, 1370000000));
++    CHECK(state.reason() == TrackingReason::SensorRestarted && !sink.held);
++    CHECK(state.requestRecenter());
++    CHECK(state.accept(pose(8, 1380000000, 2), clock, 1380000000));
++    CHECK(state.latest()->origin == 2);
++    g.active->store(false);
++    state.tick(1380000001);
++    CHECK(!sink.held && state.state() == TrackingState::Stopped);
++    for (int bad = 0; bad < 4; ++bad) {
++        Consumer denied;
++        auto approval = grant();
++        if (bad == 0)
++            approval.peerToken = 124;
++        if (bad == 1)
++            approval.source.lease = {};
++        if (bad == 2)
++            approval.remoteInputApproved = false;
++        if (bad == 3)
++            approval.active->store(false);
++        PoseState blocked(approval, 123, 7, 15, 1, denied);
++        CHECK(!blocked.accept(pose(1, 1100000000), clock, 1100000000));
++        CHECK(denied.registrations == 0 && denied.poses == 0);
++    }
++    Consumer replaySink;
++    PoseState replay(grant(), 123, 7, 15, 1, replaySink);
++    CHECK(replay.accept(pose(1, 1100000000), clock, 1100000000));
++    CHECK(!replay.accept(pose(1, 1100000001), clock, 1100000001));
++    CHECK(replay.state() == TrackingState::Error && !replaySink.held);
++    Consumer epochSink;
++    PoseState epoch(grant(), 123, 7, 15, 1, epochSink);
++    auto old = pose(1, 1100000000);
++    old.epoch = 6;
++    CHECK(!epoch.accept(old, clock, 1100000000));
++    CHECK(epochSink.poses == 0);
++    ClockSync zeroClock;
++    for (unsigned i = 0; i < 8; ++i)
++        CHECK(zeroClock.addExchange(0, 0, 0, 0));
++    Consumer zeroSink;
++    PoseState zero(grant(), 123, 7, 15, 1, zeroSink);
++    CHECK(zero.accept(pose(0, 0), zeroClock, 0));
++    zero.tick(100000000);
++    CHECK(zero.state() == TrackingState::Paused && !zeroSink.held);
++    std::puts("PASS bound peer/lease/permission, capture freshness, freeze/lost release, three-sample recovery, source restart/recenter, replay and old epoch");
++}
+diff --git a/autotests/stereotracking/ProtocolTest.cpp b/autotests/stereotracking/ProtocolTest.cpp
+new file mode 100644
+index 0000000..77ccbf2
+--- /dev/null
++++ b/autotests/stereotracking/ProtocolTest.cpp
+@@ -0,0 +1,125 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#include "Protocol.h"
++#include <cstdio>
++#include <cstdlib>
++using namespace KRdp::StereoTracking;
++#define CHECK(test)                                                                                                                                            \
++    do {                                                                                                                                                       \
++        if (!(test)) {                                                                                                                                         \
++            std::fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #test);                                                                                       \
++            return 1;                                                                                                                                          \
++        }                                                                                                                                                      \
++    } while (false)
++int main()
++{
++    // Hand-authored, independent of the production writer: 64-byte identity POSE.
++    const std::array<uint8_t, 64> identity = {'S', 'D', 'P', '1', 1, 0, 3, 0, 64, 0, 0, 0, 7, 0, 0,   0,  1,  0, 0, 0, 0, 0, 0, 0, 0, 202, 154, 59, 0, 0, 0, 0,
++                                              0,   0,   0,   0,   0, 0, 0, 0, 0,  0, 0, 0, 0, 0, 128, 63, 15, 0, 3, 0, 3, 0, 0, 0, 1, 0,   0,   0,  1, 0, 0, 0};
++    std::string error;
++    const auto message = decode(identity, Receiver::PC, error);
++    CHECK(message.has_value());
++    CHECK(message->type == Type::Pose && message->epoch == 7 && message->sequence == 1);
++    CHECK(message->timeNs == 1000000000ULL);
++    const auto pose = decodePose(*message);
++    CHECK(pose.has_value());
++    CHECK((pose->quaternion == std::array<double, 4>{0, 0, 0, 1}));
++    CHECK(pose->sensor == 15 && pose->accuracy == 3 && pose->flags == 3 && pose->mounting == 1);
++    CHECK(encode(*message) == std::vector<uint8_t>(identity.begin(), identity.end()));
++    CHECK(!decode(identity, Receiver::Phone, error));
++    for (const auto offset : {0, 4, 8, 50, 52, 60}) {
++        auto bad = identity;
++        bad[offset] = 255;
++        CHECK(!decode(bad, Receiver::PC, error));
++    }
++    auto nan = identity;
++    nan[32] = 0;
++    nan[33] = 0;
++    nan[34] = 192;
++    nan[35] = 127;
++    CHECK(!decode(nan, Receiver::PC, error));
++    CHECK(!decode(std::span(identity).first(63), Receiver::PC, error));
++    Framer framer;
++    std::vector<Message> messages;
++    for (const auto byte : identity)
++        CHECK(framer.feed(std::span(&byte, 1), Receiver::PC, messages, error));
++    CHECK(messages.size() == 1 && messages[0].timeNs == 1000000000ULL);
++    CHECK(framer.feed(identity, Receiver::PC, messages, error));
++    CHECK(messages.size() == 2);
++    auto fixture = [](uint8_t type, size_t size, uint8_t epoch) {
++        std::vector<uint8_t> p(size);
++        p[0] = 'S';
++        p[1] = 'D';
++        p[2] = 'P';
++        p[3] = '1';
++        p[4] = 1;
++        p[6] = type;
++        p[8] = uint8_t(size);
++        p[9] = uint8_t(size >> 8);
++        p[12] = epoch;
++        p[16] = 1;
++        return p;
++    };
++    auto hello = fixture(1, 96, 0);
++    hello[48] = 1;
++    hello[56] = 1;
++    hello[60] = 120;
++    hello[62] = 1;
++    hello[64] = 16;
++    hello[65] = 39;
++    hello[69] = 16;
++    hello[72] = 28;
++    CHECK(decode(hello, Receiver::PC, error));
++    hello[78] = 1;
++    CHECK(!decode(hello, Receiver::PC, error));
++    hello[78] = 0;
++    hello[60] = 121;
++    CHECK(!decode(hello, Receiver::PC, error));
++    auto selection = fixture(2, 96, 7);
++    selection[64] = 1;
++    selection[72] = 60;
++    selection[74] = 15;
++    selection[76] = 100;
++    selection[78] = 250;
++    selection[80] = 1;
++    selection[82] = 1;
++    selection[84] = 7;
++    CHECK(decode(selection, Receiver::Phone, error));
++    CHECK(!decode(selection, Receiver::PC, error));
++    selection[95] = 1;
++    CHECK(!decode(selection, Receiver::Phone, error));
++    selection[95] = 0;
++    selection[84] = 6;
++    CHECK(!decode(selection, Receiver::Phone, error));
++    auto request = fixture(4, 40, 7);
++    CHECK(decode(request, Receiver::Phone, error));
++    CHECK(!decode(request, Receiver::PC, error));
++    auto response = fixture(5, 56, 7);
++    response[40] = 10;
++    response[48] = 11;
++    CHECK(decode(response, Receiver::PC, error));
++    response[48] = 9;
++    CHECK(!decode(response, Receiver::PC, error));
++    auto status = fixture(6, 43, 7);
++    status[32] = 1;
++    status[36] = 3;
++    status[40] = 0xe2;
++    status[41] = 0x82;
++    status[42] = 0xac;
++    CHECK(decode(status, Receiver::PC, error));
++    CHECK(decode(status, Receiver::Phone, error));
++    status[41] = 0;
++    CHECK(!decode(status, Receiver::PC, error));
++    auto oversized = identity;
++    oversized[8] = 255;
++    oversized[9] = 255;
++    oversized[10] = 255;
++    oversized[11] = 255;
++    std::vector<Message> rejected;
++    CHECK(!framer.feed(oversized, Receiver::PC, rejected, error));
++    CHECK(!framer.feed(identity, Receiver::PC, rejected, error));
++    framer.reset();
++    CHECK(framer.feed(identity, Receiver::PC, rejected, error));
++    CHECK(rejected.size() == 1);
++    std::puts("PASS all six message types, hand-authored pose, direction, bounds, reserved fields, UTF8, NaN and fragmented reads");
++}
+diff --git a/autotests/stereotracking/SessionTest.cpp b/autotests/stereotracking/SessionTest.cpp
+new file mode 100644
+index 0000000..dc9a214
+--- /dev/null
++++ b/autotests/stereotracking/SessionTest.cpp
+@@ -0,0 +1,155 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: BSD-2-Clause
++#include "Session.h"
++#include <cstdlib>
++#include <iostream>
++using namespace KRdp;
++using namespace KRdp::StereoTracking;
++static void check(bool v, const char *s)
++{
++    if (!v) {
++        std::cerr << s << '\n';
++        std::exit(1);
++    }
++}
++static void put(std::vector<uint8_t> &p, size_t i, uint64_t v, size_t n)
++{
++    while (n--) {
++        p[i++] = uint8_t(v);
++        v >>= 8;
++    }
++}
++static uint64_t get(const std::vector<uint8_t> &p, size_t i, size_t n)
++{
++    uint64_t v = 0;
++    for (size_t k = 0; k < n; ++k)
++        v |= uint64_t(p[i + k]) << (8 * k);
++    return v;
++}
++struct Consumer : StereoPoseConsumer {
++    int registered = 0, poses = 0, invalid = 0, removed = 0;
++    bool registerSource(const TrackingSource &) noexcept override
++    {
++        ++registered;
++        return true;
++    }
++    void submitPose(const StereoPose &) noexcept override
++    {
++        ++poses;
++    }
++    void invalidateSource(const TrackingSource &, TrackingReason) noexcept override
++    {
++        ++invalid;
++    }
++    void unregisterSource(const TrackingSource &) noexcept override
++    {
++        ++removed;
++    }
++};
++static TrackingGrant grant()
++{
++    TrackingGrant g;
++    g.peerToken = 7;
++    g.remoteInputApproved = true;
++    g.active = std::make_shared<std::atomic_bool>(true);
++    g.source.source[0] = 1;
++    g.source.session[0] = 2;
++    g.source.lease[0] = 3;
++    g.source.output[0] = 4;
++    g.source.seat = "seat-fixture";
++    return g;
++}
++static Message hello()
++{
++    Message h{Type::Hello, 0, 0, 5000000000, {}};
++    h.payload.resize(64);
++    h.payload[0] = 42;
++    put(h.payload, 16, 1, 8);
++    put(h.payload, 24, 3, 4);
++    put(h.payload, 28, 100, 2);
++    put(h.payload, 32, 10000, 4);
++    put(h.payload, 36, 4096, 4);
++    put(h.payload, 40, 28, 4);
++    h.payload[48] = 6;
++    return h;
++}
++int main()
++{
++    constexpr uint64_t start = 1000000000;
++    auto g = grant();
++    Consumer c;
++    std::vector<Message> sent;
++    auto writer = [&](std::span<const uint8_t> b) {
++        std::string error;
++        auto m = decode(b, Receiver::Phone, error);
++        check(bool(m), "PC generated invalid message");
++        sent.push_back(*m);
++        return true;
++    };
++    Session s(g, 7, {}, 19, c, writer, start);
++    const auto wire = encode(hello());
++    check(s.receive(std::span(wire).first(11), start), "fragment must be retained");
++    check(s.receive(std::span(wire).subspan(11), start), "HELLO must negotiate");
++    check(sent.size() == 1 && sent.back().type == Type::Select, "HELLO must produce SELECT");
++    const auto &p = sent.back().payload;
++    check(p[16] == 42 && get(p, 40, 2) == 60 && get(p, 42, 2) == 15 && get(p, 48, 2) == 1 && get(p, 52, 4) == 19,
++          "nonce/rate/sensor/mount/epoch selection mismatch");
++    check(c.registered == 1, "approved peer must register once");
++    Message status{Type::Status, 19, 1, 5000000000, std::vector<uint8_t>(8)};
++    put(status.payload, 0, 1, 2);
++    check(s.receive(encode(status), start), "ACTIVE acknowledgement");
++    uint64_t now = start;
++    uint64_t seq = 2;
++    for (unsigned i = 0; i < 8; ++i) {
++        now += 25000000;
++        s.tick(now);
++        check(sent.back().type == Type::ClockRequest, "startup clock probe missing");
++        const uint64_t t0 = get(sent.back().payload, 0, 8);
++        Message r{Type::ClockResponse, 19, seq++, 0, std::vector<uint8_t>(24)};
++        put(r.payload, 0, t0, 8);
++        put(r.payload, 8, t0 + 5001000000, 8);
++        put(r.payload, 16, t0 + 5001100000, 8);
++        check(s.receive(encode(r), t0 + 2100000), "valid clock response");
++    }
++    Message pose{Type::Pose, 19, seq++, now + 5001100000, std::vector<uint8_t>(32)};
++    // Device X +90 degrees faces horizontally in sensor world.
++    put(pose.payload, 0, 0x3f3504f3, 4);
++    put(pose.payload, 12, 0x3f3504f3, 4);
++    put(pose.payload, 16, 15, 2);
++    put(pose.payload, 18, 3, 2);
++    put(pose.payload, 20, 3, 4);
++    put(pose.payload, 24, 1, 4);
++    put(pose.payload, 28, 1, 4);
++    check(s.receive(encode(pose), now + 2200000) && c.poses == 1, "synchronized pose must reach consumer");
++    s.tick(now + 103000000);
++    check(s.state() == TrackingState::Paused && c.invalid > 0, "idle timer must freeze pose");
++    s.tick(now + 253000000);
++    check(s.state() == TrackingState::Unavailable, "idle timer must expose lost tracking");
++    g.active->store(false);
++    s.tick(now + 254000000);
++    check(s.closed() && c.removed == 1, "revoked grant must close and remove source");
++    struct RefusingConsumer : Consumer {
++        bool registerSource(const TrackingSource &) noexcept override { return false; }
++    } refusing;
++    Session refused(grant(), 7, {}, 24, refusing, writer, start);
++    check(!refused.receive(wire, start), "refused source must fail");
++    check(sent.back().type == Type::Status && sent.back().epoch == 0,
++          "rejection before SELECT must use epoch zero so the phone can read its reason");
++    Consumer unsupported;
++    Session rate(grant(), 7, {120, 15, 1}, 20, unsupported, writer, start);
++    check(!rate.receive(wire, start) && rate.closed() && unsupported.registered == 0, "unavailable rate must fail without substitution");
++    Consumer replay;
++    Session r(grant(), 7, {}, 21, replay, writer, start);
++    check(r.receive(wire, start), "fresh HELLO");
++    check(!r.receive(wire, start + 1) && r.closed(), "replayed HELLO must close only tracking session");
++    Consumer absent;
++    Session timeout(grant(), 7, {}, 22, absent, writer, start);
++    timeout.tick(start + 5000000001);
++    check(timeout.closed() && timeout.reason() == TrackingReason::PeerDisconnected, "silent channel needs bounded handshake timeout");
++    Consumer incompatible;
++    Session version(grant(), 7, {}, 23, incompatible, writer, start);
++    auto future = wire;
++    future[4] = 2;
++    check(!version.receive(future, start) && version.reason() == TrackingReason::UnsupportedVersion, "unsupported version must have its named reason");
++    std::cout << "SESSION PASS fragmented HELLO/select nonce, 8 clock probes, capture mapping, idle/revoke, unavailable rate, replay, timeout\n";
++}
+diff --git a/examples/CMakeLists.txt b/examples/CMakeLists.txt
+index 6e887eb..5052a26 100644
+--- a/examples/CMakeLists.txt
++++ b/examples/CMakeLists.txt
+@@ -2,3 +2,5 @@
+ # SPDX-License-Identifier: BSD-2-Clause
+ 
+ add_subdirectory(streamer)
++
++add_subdirectory(stereopose)
+diff --git a/examples/stereopose/CMakeLists.txt b/examples/stereopose/CMakeLists.txt
+new file mode 100644
+index 0000000..8594740
+--- /dev/null
++++ b/examples/stereopose/CMakeLists.txt
+@@ -0,0 +1,5 @@
++# SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++# SPDX-License-Identifier: BSD-2-Clause
++add_executable(krdpstereopose main.cpp)
++target_include_directories(krdpstereopose PRIVATE ../../src ${CMAKE_BINARY_DIR}/src)
++target_link_libraries(krdpstereopose PRIVATE KRdp Qt::Gui)
+diff --git a/examples/stereopose/main.cpp b/examples/stereopose/main.cpp
+new file mode 100644
+index 0000000..32aeb48
+--- /dev/null
++++ b/examples/stereopose/main.cpp
+@@ -0,0 +1,191 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: BSD-2-Clause
++#include "RdpConnection.h"
++#include "Server.h"
++#include "VideoStream.h"
++#include <QCommandLineParser>
++#include <QGuiApplication>
++#include <QHostAddress>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QTimer>
++#include <array>
++#include <atomic>
++#include <cstdio>
++
++using namespace KRdp;
++// The fixture owns no real output or desktop input permission. This exercises
++// the proposed consumer seam with an explicitly synthetic grant and a bounded
++// single-producer/single-consumer mailbox, never KWin input injection.
++class Consumer : public StereoPoseConsumer
++{
++public:
++    struct Sample {
++        uint64_t capture, sourceCapture, uncertainty, origin;
++        uint32_t epoch, mount;
++        uint16_t sensor;
++        int16_t accuracy;
++        bool drift;
++        std::array<double, 4> orientation;
++    };
++    std::array<Sample, 256> samples;
++    std::atomic_uint written = 0, read = 0, poses = 0, invalidations = 0, removed = 0;
++    std::atomic_bool valid = false;
++    bool registerSource(const TrackingSource &) noexcept override
++    {
++        return true;
++    }
++    void submitPose(const StereoPose &p) noexcept override
++    {
++        const auto w = written.load(std::memory_order_relaxed);
++        if (w - read.load(std::memory_order_acquire) >= samples.size())
++            return;
++        samples[w % samples.size()] = {p.captureTimeNs,
++                                       p.sourceCaptureTimeNs,
++                                       p.uncertaintyNs,
++                                       p.origin,
++                                       p.sourceEpoch,
++                                       p.mounting,
++                                       p.sensorType,
++                                       p.sensorAccuracy,
++                                       p.yawMayDrift,
++                                       p.orientation};
++        written.store(w + 1, std::memory_order_release);
++        poses.fetch_add(1);
++        valid.store(true);
++    }
++    void invalidateSource(const TrackingSource &, TrackingReason) noexcept override
++    {
++        valid.store(false);
++        invalidations.fetch_add(1);
++    }
++    void unregisterSource(const TrackingSource &) noexcept override
++    {
++        valid.store(false);
++        removed.fetch_add(1);
++    }
++    void drain()
++    {
++        auto r = read.load(std::memory_order_relaxed);
++        const auto w = written.load(std::memory_order_acquire);
++        while (r < w) {
++            const auto &p = samples[r % samples.size()];
++            QJsonArray q;
++            for (double v : p.orientation)
++                q.append(v);
++            const QJsonObject object{{QStringLiteral("captureNs"), QString::number(p.capture)},
++                                     {QStringLiteral("sourceCaptureNs"), QString::number(p.sourceCapture)},
++                                     {QStringLiteral("uncertaintyNs"), QString::number(p.uncertainty)},
++                                     {QStringLiteral("origin"), QString::number(p.origin)},
++                                     {QStringLiteral("sourceEpoch"), int(p.epoch)},
++                                     {QStringLiteral("mounting"), int(p.mount)},
++                                     {QStringLiteral("sensor"), int(p.sensor)},
++                                     {QStringLiteral("accuracy"), int(p.accuracy)},
++                                     {QStringLiteral("yawMayDrift"), p.drift},
++                                     {QStringLiteral("orientation"), q},
++                                     {QStringLiteral("position"), QJsonValue::Null},
++                                     {QStringLiteral("confidence"), QJsonValue::Null},
++                                     {QStringLiteral("positionValid"), false},
++                                     {QStringLiteral("positionModeled"), false}};
++            const auto json = QJsonDocument(object).toJson(QJsonDocument::Compact);
++            std::printf("POSE %s\n", json.constData());
++            ++r;
++        }
++        read.store(r, std::memory_order_release);
++    }
++};
++int main(int argc, char **argv)
++{
++    QGuiApplication app(argc, argv);
++    QCommandLineParser args;
++    args.addHelpOption();
++    args.addOption({QStringLiteral("certificate"), QStringLiteral("Disposable fixture certificate"), QStringLiteral("file")});
++    args.addOption({QStringLiteral("key"), QStringLiteral("Disposable fixture key"), QStringLiteral("file")});
++    args.addOption({QStringLiteral("seconds"), QStringLiteral("Probe duration"), QStringLiteral("n"), QStringLiteral("20")});
++    args.addOption({QStringLiteral("rate"), QStringLiteral("Explicit publication rate"), QStringLiteral("hz"), QStringLiteral("60")});
++    args.addOption({QStringLiteral("sensor"), QStringLiteral("Explicit fused sensor type"), QStringLiteral("type"), QStringLiteral("15")});
++    args.addOption({QStringLiteral("mount"), QStringLiteral("Explicit mounting quarter turn"), QStringLiteral("n"), QStringLiteral("1")});
++    args.addOption({QStringLiteral("negative"), QStringLiteral("Require a connected peer and no pose")});
++    args.addOption({QStringLiteral("recenter-at"), QStringLiteral("Recenter after milliseconds"), QStringLiteral("ms"), QStringLiteral("0")});
++    args.addOption({QStringLiteral("revoke-at"), QStringLiteral("Revoke after milliseconds"), QStringLiteral("ms"), QStringLiteral("0")});
++    args.process(app);
++    if (args.value(QStringLiteral("certificate")).isEmpty() || args.value(QStringLiteral("key")).isEmpty())
++        return 2;
++    Server server;
++    server.setAddress(QHostAddress::AnyIPv4);
++    server.setPort(3389);
++    server.setUsePAMAuthentication(true);
++    server.setTlsCertificate(args.value(QStringLiteral("certificate")).toStdString());
++    server.setTlsCertificateKey(args.value(QStringLiteral("key")).toStdString());
++    server.addUser({QStringLiteral("fixture"), QStringLiteral("fixture"), false});
++    auto consumer = std::make_shared<Consumer>();
++    auto active = std::make_shared<std::atomic_bool>(true);
++    bool connected = false;
++    QTimer deadline;
++    deadline.setSingleShot(true);
++    QObject::connect(&server, &Server::newConnectionCreated, &app, [&](RdpConnection *connection) {
++        TrackingGrant grant;
++        grant.peerToken = connection->stereoTrackingPeerToken();
++        grant.remoteInputApproved = true;
++        grant.active = active;
++        grant.source.source[0] = 1;
++        grant.source.session[0] = 2;
++        grant.source.lease[0] = 3;
++        grant.source.output[0] = 4;
++        grant.source.seat = "fixture-seat";
++        const StereoTracking::Options options{uint16_t(args.value(QStringLiteral("rate")).toUInt()),
++                                              uint16_t(args.value(QStringLiteral("sensor")).toUInt()),
++                                              uint16_t(args.value(QStringLiteral("mount")).toUInt())};
++        if (!connection->configureStereoTracking(grant, options, consumer)) {
++            app.exit(3);
++            return;
++        }
++        QObject::connect(connection, &RdpConnection::stateChanged, &app, [&, connection](RdpConnection::State state) {
++            std::printf("RDP_STATE %d\n", int(state));
++            if (!connected && (state == RdpConnection::State::Activated || state == RdpConnection::State::Streaming)) {
++                connected = true;
++                deadline.start(args.value(QStringLiteral("seconds")).toInt() * 1000);
++                const auto recenter = args.value(QStringLiteral("recenter-at")).toInt();
++                if (recenter > 0)
++                    QTimer::singleShot(recenter, connection, &RdpConnection::recenterStereoTracking);
++                const auto revoke = args.value(QStringLiteral("revoke-at")).toInt();
++                if (revoke > 0)
++                    QTimer::singleShot(revoke, &app, [active] {
++                        active->store(false);
++                        std::puts("GRANT_REVOKED");
++                    });
++            }
++        });
++    });
++    QTimer::singleShot(35000, &app, [&] {
++        if (!connected) {
++            std::puts("POSE_RESULT FAIL no activated peer");
++            app.exit(1);
++        }
++    });
++    QTimer drain;
++    QObject::connect(&drain, &QTimer::timeout, &app, [&] {
++        consumer->drain();
++    });
++    drain.start(20);
++    QObject::connect(&deadline, &QTimer::timeout, &app, [&] {
++        consumer->drain();
++        const auto n = consumer->poses.load();
++        const bool passed = connected && (args.isSet(QStringLiteral("negative")) ? n == 0 : n >= 10);
++        std::printf("POSE_RESULT %s connected=%d poses=%u invalidations=%u unregistered=%u valid=%d\n",
++                    passed ? "PASS" : "FAIL",
++                    connected,
++                    n,
++                    consumer->invalidations.load(),
++                    consumer->removed.load(),
++                    consumer->valid.load());
++        server.stop();
++        app.exit(passed ? 0 : 1);
++    });
++    if (!server.start())
++        return 4;
++    std::setvbuf(stdout, nullptr, _IOLBF, 0);
++    std::puts("LISTENING synthetic grant; no compositor input");
++    return app.exec();
++}
+diff --git a/server/CMakeLists.txt b/server/CMakeLists.txt
+index 2b1d061..edc5f5e 100644
+--- a/server/CMakeLists.txt
++++ b/server/CMakeLists.txt
+@@ -5,7 +5,7 @@ add_definitions(-DTRANSLATION_DOMAIN=\"krdpserver\")
+ 
+ add_executable(krdpserver)
+ 
+-target_sources(krdpserver PRIVATE main.cpp SessionController.cpp PanelSessionService.cpp)
++target_sources(krdpserver PRIVATE main.cpp SessionController.cpp PanelSessionService.cpp HeadsetPoseConsumer.cpp)
+ 
+ kconfig_target_kcfg_file(krdpserver FILE krdpserversettings.kcfg CLASS_NAME ServerConfig SINGLETON)
+ 
+diff --git a/server/HeadsetPoseConsumer.cpp b/server/HeadsetPoseConsumer.cpp
+new file mode 100644
+index 0000000..155e463
+--- /dev/null
++++ b/server/HeadsetPoseConsumer.cpp
+@@ -0,0 +1,81 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#include "HeadsetPoseConsumer.h"
++#include <array>
++#include <bit>
++#include <cstring>
++#include <poll.h>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <unistd.h>
++
++HeadsetPoseConsumer::HeadsetPoseConsumer(std::string path) : m_path(std::move(path)) {}
++HeadsetPoseConsumer::~HeadsetPoseConsumer() { close(); }
++void HeadsetPoseConsumer::close() noexcept
++{
++    if (m_socket >= 0) ::close(m_socket);
++    m_socket = -1;
++}
++bool HeadsetPoseConsumer::available() const noexcept
++{
++    if (!m_registered) return true;
++    if (m_socket < 0) return false;
++    pollfd descriptor{m_socket, POLLIN, 0};
++    const int result = ::poll(&descriptor, 1, 0);
++    return result >= 0 && !(descriptor.revents & (POLLHUP | POLLERR | POLLNVAL));
++}
++bool HeadsetPoseConsumer::registerSource(const KRdp::TrackingSource &source) noexcept
++{
++    close();
++    m_registered = true;
++    m_source = source;
++    sockaddr_un address{};
++    address.sun_family = AF_UNIX;
++    if (m_path.empty() || m_path.size() >= sizeof(address.sun_path)) return false;
++    std::memcpy(address.sun_path, m_path.c_str(), m_path.size() + 1);
++    m_socket = ::socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
++    if (m_socket < 0 || ::connect(m_socket, reinterpret_cast<sockaddr *>(&address), sizeof(address)) != 0) {
++        close();
++        return false;
++    }
++    ucred peer{};
++    socklen_t size = sizeof(peer);
++    if (getsockopt(m_socket, SOL_SOCKET, SO_PEERCRED, &peer, &size) != 0 || peer.uid != geteuid()) {
++        close();
++        return false;
++    }
++    return send(0);
++}
++bool HeadsetPoseConsumer::send(unsigned kind, const KRdp::StereoPose *pose, KRdp::TrackingReason reason) noexcept
++{
++    // SDVR local ABI 1: fixed 160 bytes, little endian; no native struct layout.
++    // ids at 8/24/40/56; BOOTTIME/source/uncertainty/origin at 72/80/88/96;
++    // xyzw doubles at 104; source epoch/mount/flags/reason at 136/140/144/148.
++    std::array<unsigned char, 160> bytes{};
++    auto put = [&](size_t offset, uint64_t value, size_t width) {
++        for (size_t i = 0; i < width; ++i) bytes[offset + i] = (value >> (8 * i)) & 255;
++    };
++    std::memcpy(bytes.data(), "SDVR", 4);
++    put(4, 1, 2); put(6, kind, 2);
++    std::memcpy(bytes.data() + 8, m_source.source.data(), 16);
++    std::memcpy(bytes.data() + 24, m_source.session.data(), 16);
++    std::memcpy(bytes.data() + 40, m_source.lease.data(), 16);
++    std::memcpy(bytes.data() + 56, m_source.output.data(), 16);
++    if (pose) {
++        put(72, pose->captureTimeNs, 8); put(80, pose->sourceCaptureTimeNs, 8);
++        put(88, pose->uncertaintyNs, 8); put(96, pose->origin, 8);
++        for (size_t i = 0; i < 4; ++i) put(104 + i * 8, std::bit_cast<uint64_t>(pose->orientation[i]), 8);
++        put(136, pose->sourceEpoch, 4); put(140, pose->mounting, 4);
++        put(144, pose->orientationValid ? 1 : 0, 4);
++    }
++    put(148, uint16_t(reason), 2);
++    if (m_socket < 0 || ::send(m_socket, bytes.data(), bytes.size(), MSG_NOSIGNAL | MSG_DONTWAIT) != ssize_t(bytes.size())) {
++        // Never retain an apparently healthy source after bounded delivery fails.
++        close();
++        return false;
++    }
++    return true;
++}
++void HeadsetPoseConsumer::submitPose(const KRdp::StereoPose &pose) noexcept { send(1, &pose); }
++void HeadsetPoseConsumer::invalidateSource(const KRdp::TrackingSource &, KRdp::TrackingReason reason) noexcept { send(2, nullptr, reason); }
++void HeadsetPoseConsumer::unregisterSource(const KRdp::TrackingSource &) noexcept { send(3); close(); }
+diff --git a/server/HeadsetPoseConsumer.h b/server/HeadsetPoseConsumer.h
+new file mode 100644
+index 0000000..02fafb4
+--- /dev/null
++++ b/server/HeadsetPoseConsumer.h
+@@ -0,0 +1,26 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#pragma once
++#include <StereoPose.h>
++#include <string>
++
++// Local runtime boundary only. The phone's transport remains its paired RDP DVC.
++class HeadsetPoseConsumer final : public KRdp::StereoPoseConsumer
++{
++public:
++    explicit HeadsetPoseConsumer(std::string path);
++    ~HeadsetPoseConsumer() override;
++    bool registerSource(const KRdp::TrackingSource &) noexcept override;
++    void submitPose(const KRdp::StereoPose &) noexcept override;
++    void invalidateSource(const KRdp::TrackingSource &, KRdp::TrackingReason) noexcept override;
++    void unregisterSource(const KRdp::TrackingSource &) noexcept override;
++    bool available() const noexcept override;
++    KRdp::TrackingReason unavailableReason() const noexcept override { return KRdp::TrackingReason::TrackerUnavailable; }
++private:
++    bool send(unsigned kind, const KRdp::StereoPose *pose = nullptr, KRdp::TrackingReason reason = KRdp::TrackingReason::None) noexcept;
++    void close() noexcept;
++    std::string m_path;
++    KRdp::TrackingSource m_source;
++    int m_socket = -1;
++    bool m_registered = false;
++};
+diff --git a/server/PanelSessionService.cpp b/server/PanelSessionService.cpp
+index b7726af..24c21d6 100644
+--- a/server/PanelSessionService.cpp
++++ b/server/PanelSessionService.cpp
+@@ -1,6 +1,9 @@
+ // SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
+ #include "PanelSessionService.h"
+ #include "SessionController.h"
++#include "HeadsetPoseConsumer.h"
++#include <RdpConnection.h>
++#include <QStandardPaths>
+ #include <PanelDescriptor.h>
+ #include <Server.h>
+ #include <QCryptographicHash>
+@@ -12,9 +15,11 @@
+ #include <QSslCertificate>
+ #include <QTemporaryDir>
+ #include <QUuid>
++#include <cstring>
+ 
+ struct PanelSessionService::Entry {
+     KRdp::PanelDescriptor panel;
++    bool headTracking = false;
+     QTemporaryDir certificates;
+     std::unique_ptr<KRdp::Server> server;
+     std::unique_ptr<SessionController> controller;
+@@ -25,6 +30,8 @@ struct PanelSessionService::Entry {
+         QString transport;
+     };
+     QHash<QString, Lease> leases;
++    std::shared_ptr<std::atomic_bool> trackingActive = std::make_shared<std::atomic_bool>(true);
++    ~Entry() { trackingActive->store(false); }
+ };
+ 
+ PanelSessionService::PanelSessionService(QObject *parent)
+@@ -38,21 +45,32 @@ PanelSessionService::~PanelSessionService() = default;
+ 
+ QVariantMap PanelSessionService::acquireApproved(const QByteArray &descriptor, const QString &transport, const QString &authenticatedIdentity)
+ {
+-    const auto panel = descriptor.size() <= 16384 ? KRdp::PanelDescriptor::fromJson(QJsonDocument::fromJson(descriptor).object()) : std::nullopt;
++    const auto object = descriptor.size() <= 16384 ? QJsonDocument::fromJson(descriptor).object() : QJsonObject();
++    const auto panel = KRdp::PanelDescriptor::fromJson(object);
++    const bool headTracking = object.value(QStringLiteral("tracking")).toString() == QStringLiteral("orientation");
++    if (object.contains(QStringLiteral("tracking")) && !headTracking) {
++        sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("Unsupported headset tracking request"));
++        return {};
++    }
+     if (!panel || panel->identity != authenticatedIdentity
+         || (transport != QStringLiteral("kdeconnect") && transport != QStringLiteral("ssdp") && transport != QStringLiteral("usb"))) {
+         sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("Expected an authenticated panel and a supported transport"));
+         return {};
+     }
++    if (headTracking && transport != QStringLiteral("kdeconnect")) {
++        sendErrorReply(QDBusError::AccessDenied, QStringLiteral("StereoDroidVR requires KDE Connect pairing"));
++        return {};
++    }
+     const QString caller = message().service();
+     auto found = m_entries.find(panel->identity);
+-    if (found != m_entries.end() && found->second->panel != *panel) {
++    if (found != m_entries.end() && (found->second->panel != *panel || found->second->headTracking != headTracking)) {
+         sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("An active panel has different properties; release it before changing its descriptor"));
+         return {};
+     }
+     if (found == m_entries.end()) {
+         auto entry = std::make_unique<Entry>();
+         entry->panel = *panel;
++        entry->headTracking = headTracking;
+         if (!entry->certificates.isValid()) {
+             sendErrorReply(QDBusError::Failed, QStringLiteral("Cannot create temporary certificate storage"));
+             return {};
+@@ -87,6 +105,29 @@ QVariantMap PanelSessionService::acquireApproved(const QByteArray &descriptor, c
+         entry->controller = std::make_unique<SessionController>(entry->server.get(), SessionController::SessionType::Plasma);
+         entry->controller->setVirtualMonitor({panel->identity, panel->pixels, panel->scale, panel});
+         entry->controller->setQuality(100);
++        if (headTracking) {
++            const auto identity = panel->identity;
++            const auto active = entry->trackingActive;
++            const auto leaseId = QUuid::createUuid().toRfc4122();
++            const auto outputId = QCryptographicHash::hash(identity.toUtf8(), QCryptographicHash::Sha256).first(16);
++            connect(entry->server.get(), &KRdp::Server::newConnectionCreated, this,
++                [identity, active, leaseId, outputId](KRdp::RdpConnection *connection) {
++                    KRdp::TrackingGrant grant;
++                    grant.peerToken = connection->stereoTrackingPeerToken();
++                    grant.remoteInputApproved = true;
++                    grant.active = active;
++                    const auto sourceId = QCryptographicHash::hash(identity.toUtf8().append(":orientation"), QCryptographicHash::Sha256).first(16);
++                    const auto sessionId = QUuid::createUuid().toRfc4122();
++                    std::memcpy(grant.source.source.data(), sourceId.constData(), 16);
++                    std::memcpy(grant.source.session.data(), sessionId.constData(), 16);
++                    std::memcpy(grant.source.lease.data(), leaseId.constData(), 16);
++                    std::memcpy(grant.source.output.data(), outputId.constData(), 16);
++                    grant.source.seat = "paired-headset";
++                    const QString path = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation) + QStringLiteral("/stereodroidvr/pose");
++                    auto consumer = std::make_shared<HeadsetPoseConsumer>(path.toStdString());
++                    if (!connection->configureStereoTracking(grant, {}, consumer)) connection->close(KRdp::RdpConnection::CloseReason::None);
++                });
++        }
+         if (!entry->server->start()) {
+             sendErrorReply(QDBusError::Failed, QStringLiteral("Cannot start the panel RDP listener"));
+             return {};
+@@ -106,7 +147,9 @@ QVariantMap PanelSessionService::acquireApproved(const QByteArray &descriptor, c
+         entry.leases.insert(lease, {caller, transport});
+         m_watch.addWatchedService(caller);
+     }
+-    return {{QStringLiteral("identity"), panel->identity}, {QStringLiteral("panel"), panel->toJson().toVariantMap()}, {QStringLiteral("lease"), lease},
++    auto confirmed = panel->toJson();
++    if (headTracking) confirmed.insert(QStringLiteral("tracking"), QStringLiteral("orientation"));
++    return {{QStringLiteral("identity"), panel->identity}, {QStringLiteral("panel"), confirmed.toVariantMap()}, {QStringLiteral("lease"), lease},
+             {QStringLiteral("port"), entry.server->serverPort()}, {QStringLiteral("username"), QStringLiteral("panel")},
+             {QStringLiteral("password"), entry.password}, {QStringLiteral("certificateFingerprint"), entry.fingerprint}};
+ }
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index eb6aa6a..9eb50dd 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -23,6 +23,12 @@ target_sources(KRdp PRIVATE
+     AbstractSession.cpp
+     Clipboard.cpp
+     Clipboard.h
++    stereotracking/Protocol.cpp
++    stereotracking/ClockSync.cpp
++    stereotracking/Geometry.cpp
++    stereotracking/PoseState.cpp
++    stereotracking/Session.cpp
++    stereotracking/Channel.cpp
+     RdpConnection.cpp
+     Server.cpp
+     Server.h
+diff --git a/src/RdpConnection.cpp b/src/RdpConnection.cpp
+index 6896b3f..7e8a550 100644
+--- a/src/RdpConnection.cpp
++++ b/src/RdpConnection.cpp
+@@ -14,6 +14,8 @@
+ #include <fcntl.h>
+ 
+ #include <QHostAddress>
++#include <QRandomGenerator>
++#include "stereotracking/Channel.h"
+ #include <QStandardPaths>
+ #include <QTcpSocket>
+ #include <QTemporaryFile>
+@@ -256,6 +258,13 @@ public:
+ 
+     std::jthread thread;
+     QTemporaryFile samFile;
++    const uint64_t trackingPeer = QRandomGenerator::system()->generate64();
++    std::optional<TrackingGrant> trackingGrant;
++    StereoTracking::Options trackingOptions;
++    std::shared_ptr<StereoPoseConsumer> trackingConsumer;
++    std::unique_ptr<StereoTracking::Channel> trackingChannel;
++    std::atomic_bool trackingRecenter = false;
++
+ };
+ 
+ RdpConnection::RdpConnection(Server *server, qintptr socketHandle)
+@@ -360,6 +369,25 @@ NetworkDetection *RdpConnection::networkDetection() const
+     return d->networkDetection.get();
+ }
+ 
++uint64_t RdpConnection::stereoTrackingPeerToken() const
++{
++    return d->trackingPeer;
++}
++bool RdpConnection::configureStereoTracking(TrackingGrant grant, StereoTracking::Options options, std::shared_ptr<StereoPoseConsumer> consumer)
++{
++    if (d->state != State::Initial || !consumer || !grant.remoteInputApproved || !grant.active || !grant.active->load()
++        || grant.peerToken != d->trackingPeer || grant.peerToken == 0)
++        return false;
++    d->trackingGrant = std::move(grant);
++    d->trackingOptions = options;
++    d->trackingConsumer = std::move(consumer);
++    return true;
++}
++void RdpConnection::recenterStereoTracking()
++{
++    d->trackingRecenter.store(true);
++}
++
+ void RdpConnection::initialize()
+ {
+     setState(State::Starting);
+@@ -496,7 +524,7 @@ void RdpConnection::run(std::stop_token stopToken)
+             break;
+         }
+         // Wait for something to happen on the connection.
+-        WaitForMultipleObjects(2 + handleCount, events.data(), FALSE, 50);
++        WaitForMultipleObjects(2 + handleCount, events.data(), FALSE, d->trackingGrant ? 10 : 50);
+ 
+         // Read data from the socket and have FreeRDP process it.
+         if (d->peer->CheckFileDescriptor(d->peer) != TRUE) {
+@@ -552,6 +580,15 @@ void RdpConnection::run(std::stop_token stopToken)
+         if (drdynvcState == DRDYNVC_STATE_READY) {
+             d->headsetChannel->pump(context->virtualChannelManager);
+         }
++        if (d->trackingGrant && d->peer->connected && (d->state == State::Activated || d->state == State::Streaming)
++            && drdynvcState == DRDYNVC_STATE_READY) {
++            if (!d->trackingChannel) {
++                d->trackingChannel = std::make_unique<StereoTracking::Channel>(context->virtualChannelManager, *d->trackingGrant,
++                    d->trackingPeer, d->trackingOptions, *d->trackingConsumer, StereoTracking::Channel::now());
++            }
++            d->trackingChannel->poll(StereoTracking::Channel::now(), d->trackingRecenter.exchange(false));
++        }
++
+         d->networkDetection->update();
+     }
+ 
+@@ -632,6 +669,7 @@ bool RdpConnection::onPostConnect()
+ 
+ bool RdpConnection::onClose()
+ {
++    d->trackingChannel.reset();
+     d->clipboard->close();
+     d->videoStream->close();
+     setState(State::Closed);
+diff --git a/src/RdpConnection.h b/src/RdpConnection.h
+index d2f4b65..95d8d30 100644
+--- a/src/RdpConnection.h
++++ b/src/RdpConnection.h
+@@ -12,6 +12,7 @@
+ #include <freerdp/freerdp.h>
+ 
+ #include "krdp_export.h"
++#include "StereoPose.h"
+ 
+ namespace KRdp
+ {
+@@ -100,6 +101,13 @@ public:
+ 
+     NetworkDetection *networkDetection() const;
+ 
++    // Prototype stereo-pointer seam. Only the owner may bind an approved input
++    // lease, before queued initialization; ordinary RDP sessions remain untracked.
++    uint64_t stereoTrackingPeerToken() const;
++    bool configureStereoTracking(TrackingGrant grant, StereoTracking::Options options, std::shared_ptr<StereoPoseConsumer> consumer);
++    void recenterStereoTracking();
++
++
+ private:
+     friend BOOL peerCapabilities(freerdp_peer *);
+     friend BOOL peerActivate(freerdp_peer *);
+diff --git a/src/StereoPose.h b/src/StereoPose.h
+new file mode 100644
+index 0000000..5e821b7
+--- /dev/null
++++ b/src/StereoPose.h
+@@ -0,0 +1,92 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#pragma once
++#include <array>
++#include <atomic>
++#include <cstdint>
++#include <memory>
++#include <optional>
++#include <string>
++
++namespace KRdp
++{
++namespace StereoTracking
++{
++struct Options {
++    uint16_t rate = 60;
++    uint16_t sensor = 15;
++    uint16_t mounting = 1;
++};
++}
++using TrackingId = std::array<uint8_t, 16>;
++enum class TrackingState : uint16_t {
++    Pending,
++    Active,
++    Paused,
++    Unavailable,
++    Error,
++    Stopped
++};
++enum class TrackingReason : uint16_t {
++    None,
++    NoSensor,
++    UnsupportedVersion,
++    PermissionDenied,
++    CameraUnavailable,
++    EncoderUnavailable,
++    TrackerUnavailable,
++    TimingUnavailable,
++    StaleInput,
++    InvalidMessage,
++    CalibrationRequired,
++    PeerDisconnected,
++    SensorRestarted
++};
++// Prototype input contract for the proposed common stereo pointer adapter.
++// This does not grant KWin input permission or define a Wayland protocol.
++struct TrackingSource {
++    TrackingId source{};
++    TrackingId session{};
++    TrackingId lease{};
++    TrackingId output{};
++    std::string seat;
++    std::string kind = "phone-orientation";
++};
++struct TrackingGrant {
++    TrackingSource source;
++    uint64_t peerToken = 0;
++    bool remoteInputApproved = false;
++    std::shared_ptr<std::atomic_bool> active;
++};
++struct StereoPose {
++    TrackingSource source;
++    uint64_t origin = 0;
++    uint64_t captureTimeNs = 0;
++    uint64_t sourceCaptureTimeNs = 0; // Original phone sensor clock, retained for diagnostics.
++    uint64_t uncertaintyNs = 0;
++    std::array<double, 4> orientation{}; // Canonical U frame, xyzw; look -Z, up +Y.
++    std::optional<std::array<double, 3>> positionMeters;
++    std::optional<double> confidence; // Android accuracy is not a calibrated confidence.
++    int16_t sensorAccuracy = -1;
++    uint16_t sensorType = 0;
++    bool yawMayDrift = false;
++    uint32_t sourceEpoch = 0;
++    uint32_t mounting = 0;
++    bool orientationValid = false;
++    bool positionValid = false;
++    bool positionModeled = false;
++};
++class StereoPoseConsumer
++{
++public:
++    virtual ~StereoPoseConsumer() = default;
++    virtual bool available() const noexcept { return true; }
++    virtual TrackingReason unavailableReason() const noexcept { return TrackingReason::PermissionDenied; }
++    // Called on the RDP worker. Implementations must use bounded, nonblocking delivery.
++    virtual bool registerSource(const TrackingSource &) noexcept = 0;
++    virtual void submitPose(const StereoPose &) noexcept = 0;
++    // Release held gestures/actions whenever the source is invalidated or revoked.
++    virtual void invalidateSource(const TrackingSource &, TrackingReason) noexcept = 0;
++    virtual void unregisterSource(const TrackingSource &) noexcept = 0;
++};
++}
+diff --git a/src/stereotracking/Channel.cpp b/src/stereotracking/Channel.cpp
+new file mode 100644
+index 0000000..a405826
+--- /dev/null
++++ b/src/stereotracking/Channel.cpp
+@@ -0,0 +1,112 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#include "Channel.h"
++#include "krdp_logging.h"
++#include <freerdp/channels/wtsvc.h>
++#include <time.h>
++#include <winpr/wtsapi.h>
++
++namespace KRdp::StereoTracking
++{
++uint64_t Channel::now()
++{
++    timespec t{};
++    if (clock_gettime(CLOCK_BOOTTIME, &t) != 0)
++        return 0;
++    return uint64_t(t.tv_sec) * 1000000000ULL + t.tv_nsec;
++}
++Channel::Channel(HANDLE manager, TrackingGrant grant, uint64_t peer, Options options, StereoPoseConsumer &consumer, uint64_t now)
++    : m_started(now)
++{
++    char name[] = "Sparky.StereoDroid.Pose.1";
++    ULONG *sessionId = nullptr;
++    DWORD size = 0;
++    if (!WTSQuerySessionInformationA(manager, WTS_CURRENT_SESSION, WTSSessionId, reinterpret_cast<char **>(&sessionId), &size))
++        return;
++    const auto id = *sessionId;
++    WTSFreeMemory(sessionId);
++    m_channel = WTSVirtualChannelOpenEx(id, name, WTS_CHANNEL_OPTION_DYNAMIC | WTS_CHANNEL_OPTION_DYNAMIC_PRI_HIGH);
++    if (!m_channel) {
++        qCWarning(KRDP) << "Stereo tracking channel unavailable";
++        return;
++    }
++    qCInfo(KRDP) << "STEREO_DVC_OPEN requested";
++    auto writer = [this](std::span<const uint8_t> bytes) {
++        ULONG written = 0;
++        return m_channel && bytes.size() <= 4096
++            && WTSVirtualChannelWrite(m_channel, reinterpret_cast<char *>(const_cast<uint8_t *>(bytes.data())), bytes.size(), &written)
++            && written == bytes.size();
++    };
++    static std::atomic_uint32_t nextEpoch{1};
++    const auto epoch = nextEpoch.fetch_add(1);
++    m_session = std::make_unique<Session>(std::move(grant), peer, options, epoch, consumer, writer, now);
++}
++Channel::~Channel()
++{
++    close(TrackingReason::PeerDisconnected);
++}
++void Channel::close(TrackingReason reason)
++{
++    if (m_session)
++        m_session->stop(reason);
++    if (m_channel) {
++        WTSVirtualChannelClose(m_channel);
++        m_channel = nullptr;
++    }
++}
++void Channel::poll(uint64_t now, bool recenter)
++{
++    if (!m_channel || !m_session)
++        return;
++    if (m_closeAt) {
++        if (now >= *m_closeAt)
++            close(m_session->reason());
++        return;
++    }
++
++    if (!m_ready) {
++        void *data = nullptr;
++        DWORD size = 0;
++        if (!WTSVirtualChannelQuery(m_channel, WTSVirtualChannelReady, &data, &size)) {
++            qCWarning(KRDP) << "STEREO_DVC_REJECTED";
++            close(TrackingReason::PeerDisconnected);
++            return;
++        }
++        m_ready = data && size == sizeof(BOOL) && *static_cast<BOOL *>(data);
++        WTSFreeMemory(data);
++        if (!m_ready) {
++            if (now - m_started > 5000000000)
++                close(TrackingReason::PeerDisconnected);
++            return;
++        }
++        qCInfo(KRDP) << "STEREO_DVC_READY";
++    }
++    std::array<uint8_t, 4096> bytes{};
++    // Bound work per turn so a flooding peer cannot starve input or freshness timers.
++    for (unsigned n = 0; n < 16; ++n) {
++        ULONG read = 0;
++        if (!WTSVirtualChannelRead(m_channel, 0, reinterpret_cast<char *>(bytes.data()), bytes.size(), &read)) {
++            if (GetLastError() != ERROR_NO_DATA)
++                close(TrackingReason::PeerDisconnected);
++            break;
++        }
++        if (!read)
++            break;
++        if (!m_session->receive(std::span(bytes).first(read), now))
++            break;
++    }
++    if (recenter)
++        m_session->recenter(now);
++    m_session->tick(now);
++    if (m_session->state() != m_loggedState || m_session->reason() != m_loggedReason) {
++        m_loggedState = m_session->state();
++        m_loggedReason = m_session->reason();
++        qCInfo(KRDP) << "STEREO_STATE" << uint16_t(m_loggedState) << "reason" << uint16_t(m_loggedReason) << "pcNs" << now;
++    }
++    if (m_session->closed()) {
++        // Invalidation is immediate. Let the manager flush the queued terminal
++        // STATUS before closing the DVC and discarding its unsent messages.
++        m_closeAt = now + 100000000;
++    }
++}
++}
+diff --git a/src/stereotracking/Channel.h b/src/stereotracking/Channel.h
+new file mode 100644
+index 0000000..1ca42b6
+--- /dev/null
++++ b/src/stereotracking/Channel.h
+@@ -0,0 +1,27 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#pragma once
++#include "Session.h"
++#include <winpr/wtypes.h>
++
++namespace KRdp::StereoTracking
++{
++class Channel
++{
++public:
++    Channel(HANDLE manager, TrackingGrant grant, uint64_t peer, Options options, StereoPoseConsumer &consumer, uint64_t now);
++    ~Channel();
++    void poll(uint64_t now, bool recenter);
++    static uint64_t now();
++
++private:
++    void close(TrackingReason reason);
++    HANDLE m_channel = nullptr;
++    std::unique_ptr<Session> m_session;
++    uint64_t m_started;
++    std::optional<uint64_t> m_closeAt;
++    bool m_ready = false;
++    TrackingState m_loggedState = TrackingState::Pending;
++    TrackingReason m_loggedReason = TrackingReason::None;
++};
++}
+diff --git a/src/stereotracking/ClockSync.cpp b/src/stereotracking/ClockSync.cpp
+new file mode 100644
+index 0000000..2a46f1e
+--- /dev/null
++++ b/src/stereotracking/ClockSync.cpp
+@@ -0,0 +1,60 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#include "ClockSync.h"
++#include <cmath>
++#include <limits>
++
++namespace KRdp::StereoTracking
++{
++bool ClockSync::addExchange(uint64_t t0, uint64_t t1, uint64_t t2, uint64_t t3)
++{
++    const auto invalid = [this] {
++        reset();
++        return false;
++    };
++    constexpr auto limit = uint64_t(std::numeric_limits<int64_t>::max());
++    if (t0 > limit || t1 > limit || t2 > limit || t3 > limit || t3 < t0 || t2 < t1 || t3 - t0 < t2 - t1 || (!m_window.empty() && t3 < m_window.back().pcTime))
++        return invalid();
++    const long double offset = ((static_cast<long double>(t1) - t0) + (static_cast<long double>(t2) - t3)) / 2;
++    if (offset < -static_cast<long double>(limit) || offset > static_cast<long double>(limit))
++        return invalid();
++    Estimate sample{int64_t(std::llround(offset)), (t3 - t0 - (t2 - t1) + 1) / 2, t3};
++    if (!m_window.empty()) {
++        const Estimate *best = &m_window.front();
++        for (const auto &e : m_window)
++            if (e.uncertainty <= best->uncertainty)
++                best = &e;
++        const auto bound = best->uncertainty + sample.uncertainty + 10000000 + (t3 - best->pcTime) / 1000;
++        if (std::abs(static_cast<long double>(sample.offset) - best->offset) > bound)
++            return invalid();
++    }
++    m_window.push_back(sample);
++    if (m_window.size() > 8)
++        m_window.pop_front();
++    return true;
++}
++std::optional<CaptureTime> ClockSync::map(uint64_t phoneTime, uint64_t nowPc) const
++{
++    constexpr auto limit = uint64_t(std::numeric_limits<int64_t>::max());
++    if (m_window.size() != 8 || phoneTime > limit || nowPc > limit)
++        return {};
++    const Estimate *best = &m_window.front();
++    for (const auto &e : m_window)
++        if (e.uncertainty <= best->uncertainty)
++            best = &e;
++    if (nowPc < best->pcTime)
++        return {};
++    // Engineering drift allowance between exchanges: 1000 ppm, not a measured device bound.
++    const auto uncertainty = best->uncertainty + (nowPc - best->pcTime) / 1000;
++    if (uncertainty > 10000000)
++        return {};
++    const long double capture = static_cast<long double>(phoneTime) - best->offset;
++    if (capture < 0 || capture > limit)
++        return {};
++    return CaptureTime{uint64_t(std::llround(capture)), uncertainty};
++}
++void ClockSync::reset()
++{
++    m_window.clear();
++}
++}
+diff --git a/src/stereotracking/ClockSync.h b/src/stereotracking/ClockSync.h
+new file mode 100644
+index 0000000..ab8916a
+--- /dev/null
++++ b/src/stereotracking/ClockSync.h
+@@ -0,0 +1,28 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#pragma once
++#include <cstdint>
++#include <deque>
++#include <optional>
++namespace KRdp::StereoTracking
++{
++struct CaptureTime {
++    uint64_t timeNs;
++    uint64_t uncertaintyNs;
++};
++class ClockSync
++{
++public:
++    bool addExchange(uint64_t t0, uint64_t t1, uint64_t t2, uint64_t t3);
++    std::optional<CaptureTime> map(uint64_t phoneTime, uint64_t nowPc) const;
++    void reset();
++
++private:
++    struct Estimate {
++        int64_t offset;
++        uint64_t uncertainty;
++        uint64_t pcTime;
++    };
++    std::deque<Estimate> m_window;
++};
++}
+diff --git a/src/stereotracking/Geometry.cpp b/src/stereotracking/Geometry.cpp
+new file mode 100644
+index 0000000..35e5993
+--- /dev/null
++++ b/src/stereotracking/Geometry.cpp
+@@ -0,0 +1,89 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#include "Geometry.h"
++#include <cmath>
++#include <numbers>
++
++namespace KRdp::StereoTracking
++{
++namespace
++{
++Quaternion multiply(Quaternion a, Quaternion b)
++{
++    return {a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
++            a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
++            a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
++            a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2]};
++}
++Quaternion conjugate(Quaternion q)
++{
++    return {-q[0], -q[1], -q[2], q[3]};
++}
++std::optional<Quaternion> normalized(Quaternion q)
++{
++    double norm2 = 0;
++    for (auto v : q) {
++        if (!std::isfinite(v))
++            return {};
++        norm2 += v * v;
++    }
++    if (norm2 < .99 * .99 || norm2 > 1.01 * 1.01)
++        return {};
++    for (auto &v : q)
++        v /= std::sqrt(norm2);
++    return q;
++}
++Quaternion mountingRotation(uint32_t mount)
++{
++    const double angle = mount * std::numbers::pi / 4;
++    return {0, 0, std::sin(angle), std::cos(angle)};
++}
++}
++bool Geometry::recenter(Quaternion deviceToWorld, uint32_t mounting)
++{
++    reset();
++    const auto device = normalized(deviceToWorld);
++    if (!device || mounting > 3)
++        return false;
++    const auto head = multiply(*device, mountingRotation(mounting));
++    const auto back = rotate(head, {0, 0, 1});
++    if (std::hypot(back[0], back[1]) < .001)
++        return false;
++    const double yaw = std::atan2(back[0], -back[1]);
++    const auto z = Quaternion{0, 0, std::sin(yaw / 2), std::cos(yaw / 2)};
++    const double half = std::sqrt(.5);
++    m_reference = multiply(z, {half, 0, 0, half});
++    m_mounting = mounting;
++    m_valid = true;
++    return true;
++}
++std::optional<Quaternion> Geometry::apply(Quaternion deviceToWorld, uint32_t mounting)
++{
++    const auto device = normalized(deviceToWorld);
++    if (!m_valid || mounting != m_mounting || !device)
++        return {};
++    auto result = normalized(multiply(conjugate(m_reference), multiply(*device, mountingRotation(mounting))));
++    if (!result)
++        return {};
++    if (m_last) {
++        double dot = 0;
++        for (size_t i = 0; i < 4; ++i)
++            dot += (*m_last)[i] * (*result)[i];
++        if (dot < 0)
++            for (auto &v : *result)
++                v = -v;
++    }
++    m_last = result;
++    return result;
++}
++void Geometry::reset()
++{
++    m_valid = false;
++    m_last.reset();
++}
++Vector3 Geometry::rotate(Quaternion q, Vector3 vector)
++{
++    const auto result = multiply(multiply(q, {vector[0], vector[1], vector[2], 0}), conjugate(q));
++    return {result[0], result[1], result[2]};
++}
++}
+diff --git a/src/stereotracking/Geometry.h b/src/stereotracking/Geometry.h
+new file mode 100644
+index 0000000..282ce68
+--- /dev/null
++++ b/src/stereotracking/Geometry.h
+@@ -0,0 +1,25 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#pragma once
++#include <array>
++#include <cstdint>
++#include <optional>
++namespace KRdp::StereoTracking
++{
++using Quaternion = std::array<double, 4>;
++using Vector3 = std::array<double, 3>;
++class Geometry
++{
++public:
++    bool recenter(Quaternion deviceToWorld, uint32_t mounting);
++    std::optional<Quaternion> apply(Quaternion deviceToWorld, uint32_t mounting);
++    void reset();
++    static Vector3 rotate(Quaternion q, Vector3 vector);
++
++private:
++    bool m_valid = false;
++    uint32_t m_mounting = 0;
++    Quaternion m_reference{};
++    std::optional<Quaternion> m_last;
++};
++}
+diff --git a/src/stereotracking/PoseState.cpp b/src/stereotracking/PoseState.cpp
+new file mode 100644
+index 0000000..b5dee62
+--- /dev/null
++++ b/src/stereotracking/PoseState.cpp
+@@ -0,0 +1,176 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#include "PoseState.h"
++#include <algorithm>
++
++namespace KRdp::StereoTracking
++{
++namespace
++{
++bool present(const TrackingId &id)
++{
++    return std::any_of(id.begin(), id.end(), [](uint8_t v) {
++        return v != 0;
++    });
++}
++}
++PoseState::PoseState(TrackingGrant grant, uint64_t peer, uint32_t epoch, uint16_t sensor, uint32_t mounting, StereoPoseConsumer &consumer)
++    : m_grant(std::move(grant))
++    , m_peer(peer)
++    , m_epoch(epoch)
++    , m_sensor(sensor)
++    , m_mounting(mounting)
++    , m_consumer(consumer)
++{
++    if (!authorized()) {
++        m_state = TrackingState::Unavailable;
++        m_reason = TrackingReason::PermissionDenied;
++        return;
++    }
++    if (epoch == 0 || (sensor != 11 && sensor != 15) || mounting > 3) {
++        m_state = TrackingState::Error;
++        m_reason = TrackingReason::InvalidMessage;
++        return;
++    }
++    m_registered = m_consumer.registerSource(m_grant.source);
++    if (!m_registered) {
++        m_state = TrackingState::Unavailable;
++        m_reason = m_consumer.unavailableReason();
++    }
++}
++PoseState::~PoseState()
++{
++    stop(TrackingReason::PeerDisconnected);
++}
++bool PoseState::authorized() const
++{
++    return m_peer != 0 && m_grant.peerToken == m_peer && m_grant.remoteInputApproved && m_grant.active && m_grant.active->load()
++        && present(m_grant.source.source) && present(m_grant.source.session) && present(m_grant.source.lease) && present(m_grant.source.output)
++        && !m_grant.source.seat.empty() && m_grant.source.kind == "phone-orientation";
++}
++void PoseState::invalidate(TrackingState state, TrackingReason reason)
++{
++    if (m_latest)
++        m_latest->orientationValid = false;
++    if (m_registered && (state != m_state || reason != m_reason || m_state == TrackingState::Active))
++        m_consumer.invalidateSource(m_grant.source, reason);
++    m_state = state;
++    m_reason = reason;
++    m_recovery = 0;
++}
++bool PoseState::accept(const Message &message, const ClockSync &clock, uint64_t now)
++{
++    if (!authorized()) {
++        stop(TrackingReason::PermissionDenied);
++        return false;
++    }
++    if (!m_registered || m_state == TrackingState::Error || m_state == TrackingState::Stopped)
++        return false;
++    const auto pose = decodePose(message);
++    if (!pose || message.epoch != m_epoch || (m_lastSequence && message.sequence <= *m_lastSequence) || pose->sensor != m_sensor
++        || pose->mounting != m_mounting) {
++        invalidate(TrackingState::Error, TrackingReason::InvalidMessage);
++        return false;
++    }
++    m_lastSequence = message.sequence;
++    if (m_needRecenter)
++        return false;
++    const auto time = clock.map(message.timeNs, now);
++    if (!time) {
++        invalidate(TrackingState::Unavailable, TrackingReason::TimingUnavailable);
++        return false;
++    }
++    if ((time->timeNs > now && time->timeNs - now > time->uncertaintyNs) || (now >= time->timeNs && now - time->timeNs > 100000000)
++        || (m_lastSensorTime && message.timeNs <= *m_lastSensorTime))
++        return false;
++    if (m_sourceEpoch && *m_sourceEpoch != pose->sourceEpoch) {
++        m_needRecenter = true;
++        invalidate(TrackingState::Paused, TrackingReason::SensorRestarted);
++        return false;
++    }
++    if (!(pose->flags & 1)) {
++        invalidate(TrackingState::Paused, TrackingReason::StaleInput);
++        return false;
++    }
++    if (!m_sourceEpoch) {
++        if (!m_geometry.recenter(pose->quaternion, m_mounting)) {
++            m_needRecenter = true;
++            invalidate(TrackingState::Paused, TrackingReason::CalibrationRequired);
++            return false;
++        }
++        m_sourceEpoch = pose->sourceEpoch;
++    }
++    const auto orientation = m_geometry.apply(pose->quaternion, m_mounting);
++    if (!orientation) {
++        invalidate(TrackingState::Error, TrackingReason::InvalidMessage);
++        return false;
++    }
++    m_lastSensorTime = message.timeNs;
++    m_lastCapture = time->timeNs;
++    if (m_state == TrackingState::Paused || m_state == TrackingState::Unavailable) {
++        if (++m_recovery < 3)
++            return false;
++    }
++    StereoPose result{};
++    result.source = m_grant.source;
++    result.origin = m_origin;
++    result.captureTimeNs = time->timeNs;
++    result.sourceCaptureTimeNs = message.timeNs;
++    result.uncertaintyNs = time->uncertaintyNs;
++    result.orientation = *orientation;
++    result.sensorAccuracy = pose->accuracy;
++    result.sensorType = pose->sensor;
++    result.yawMayDrift = (pose->flags & 2) != 0;
++    result.sourceEpoch = pose->sourceEpoch;
++    result.mounting = m_mounting;
++    result.orientationValid = true;
++    m_latest = result;
++    m_state = TrackingState::Active;
++    m_reason = TrackingReason::None;
++    m_recovery = 0;
++    m_consumer.submitPose(result);
++    return true;
++}
++void PoseState::tick(uint64_t now)
++{
++    if (!authorized()) {
++        stop(TrackingReason::PermissionDenied);
++        return;
++    }
++    if (!m_registered || m_state == TrackingState::Stopped || m_state == TrackingState::Error || m_needRecenter || !m_lastCapture)
++        return;
++    const auto age = now >= *m_lastCapture ? now - *m_lastCapture : 0;
++    if (age >= 250000000)
++        invalidate(TrackingState::Unavailable, TrackingReason::StaleInput);
++    else if (age >= 100000000)
++        invalidate(TrackingState::Paused, TrackingReason::StaleInput);
++}
++bool PoseState::requestRecenter()
++{
++    if (!authorized() || !m_registered || m_state == TrackingState::Error || m_state == TrackingState::Stopped)
++        return false;
++    invalidate(TrackingState::Pending, TrackingReason::CalibrationRequired);
++    m_geometry.reset();
++    m_sourceEpoch.reset();
++    m_lastSensorTime.reset();
++    m_lastCapture.reset();
++    m_needRecenter = false;
++    ++m_origin;
++    return true;
++}
++void PoseState::pause(TrackingReason reason)
++{
++    if (m_registered)
++        invalidate(TrackingState::Paused, reason);
++}
++void PoseState::stop(TrackingReason reason)
++{
++    if (m_registered) {
++        invalidate(TrackingState::Stopped, reason);
++        m_consumer.unregisterSource(m_grant.source);
++        m_registered = false;
++    }
++    m_state = TrackingState::Stopped;
++    m_reason = reason;
++}
++}
+diff --git a/src/stereotracking/PoseState.h b/src/stereotracking/PoseState.h
+new file mode 100644
+index 0000000..e2ec066
+--- /dev/null
++++ b/src/stereotracking/PoseState.h
+@@ -0,0 +1,55 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#pragma once
++#include "../StereoPose.h"
++#include "ClockSync.h"
++#include "Geometry.h"
++#include "Protocol.h"
++namespace KRdp::StereoTracking
++{
++class PoseState
++{
++public:
++    PoseState(TrackingGrant grant, uint64_t peer, uint32_t epoch, uint16_t sensor, uint32_t mounting, StereoPoseConsumer &consumer);
++    ~PoseState();
++    bool accept(const Message &message, const ClockSync &clock, uint64_t now);
++    void tick(uint64_t now);
++    bool requestRecenter();
++    void pause(TrackingReason reason);
++    void stop(TrackingReason reason);
++    TrackingState state() const
++    {
++        return m_state;
++    }
++    TrackingReason reason() const
++    {
++        return m_reason;
++    }
++    const std::optional<StereoPose> &latest() const
++    {
++        return m_latest;
++    }
++
++private:
++    bool authorized() const;
++    void invalidate(TrackingState state, TrackingReason reason);
++    TrackingGrant m_grant;
++    uint64_t m_peer;
++    uint32_t m_epoch;
++    uint16_t m_sensor;
++    uint32_t m_mounting;
++    StereoPoseConsumer &m_consumer;
++    Geometry m_geometry;
++    TrackingState m_state = TrackingState::Pending;
++    TrackingReason m_reason = TrackingReason::None;
++    bool m_registered = false;
++    bool m_needRecenter = false;
++    std::optional<uint32_t> m_sourceEpoch;
++    std::optional<StereoPose> m_latest;
++    std::optional<uint64_t> m_lastSequence;
++    std::optional<uint64_t> m_lastSensorTime;
++    std::optional<uint64_t> m_lastCapture;
++    uint64_t m_origin = 1;
++    unsigned m_recovery = 0;
++};
++}
+diff --git a/src/stereotracking/Protocol.cpp b/src/stereotracking/Protocol.cpp
+new file mode 100644
+index 0000000..5d44941
+--- /dev/null
++++ b/src/stereotracking/Protocol.cpp
+@@ -0,0 +1,216 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#include "Protocol.h"
++#include <algorithm>
++#include <bit>
++#include <cmath>
++
++namespace KRdp::StereoTracking
++{
++namespace
++{
++uint16_t u16(std::span<const uint8_t> p, size_t i)
++{
++    return uint16_t(p[i]) | (uint16_t(p[i + 1]) << 8);
++}
++uint32_t u32(std::span<const uint8_t> p, size_t i)
++{
++    return uint32_t(u16(p, i)) | (uint32_t(u16(p, i + 2)) << 16);
++}
++uint64_t u64(std::span<const uint8_t> p, size_t i)
++{
++    return uint64_t(u32(p, i)) | (uint64_t(u32(p, i + 4)) << 32);
++}
++void put(std::vector<uint8_t> &p, size_t i, uint64_t value, size_t size)
++{
++    for (size_t n = 0; n < size; ++n)
++        p[i + n] = uint8_t(value >> (8 * n));
++}
++bool zero(std::span<const uint8_t> p)
++{
++    return std::all_of(p.begin(), p.end(), [](uint8_t x) {
++        return x == 0;
++    });
++}
++bool utf8(std::span<const uint8_t> p)
++{
++    size_t i = 0;
++    while (i < p.size()) {
++        const uint8_t lead = p[i++];
++        if (lead < 0x80)
++            continue;
++        unsigned count;
++        uint32_t cp;
++        if (lead >= 0xc2 && lead <= 0xdf) {
++            count = 1;
++            cp = lead & 0x1f;
++        } else if (lead >= 0xe0 && lead <= 0xef) {
++            count = 2;
++            cp = lead & 0x0f;
++        } else if (lead >= 0xf0 && lead <= 0xf4) {
++            count = 3;
++            cp = lead & 7;
++        } else
++            return false;
++        const unsigned length = count;
++        if (i + count > p.size())
++            return false;
++        while (count--) {
++            const auto c = p[i++];
++            if ((c & 0xc0) != 0x80)
++                return false;
++            cp = (cp << 6) | (c & 0x3f);
++        }
++        if ((length == 1 && cp < 0x80) || (length == 2 && cp < 0x800) || (length == 3 && cp < 0x10000) || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff))
++            return false;
++    }
++    return true;
++}
++bool payloadValid(Type type, uint32_t epoch, std::span<const uint8_t> p)
++{
++    switch (type) {
++    case Type::Hello:
++        return epoch == 0 && p.size() == 64 && (u64(p, 16) & ~15ULL) == 0 && (u32(p, 24) & ~3U) == 0 && u16(p, 28) <= 120 && u16(p, 30) <= 3 && u32(p, 36) >= 32
++            && u32(p, 36) <= 4096 && u16(p, 46) == 0 && (!(u64(p, 16) & 1) || (u32(p, 24) != 0 && u16(p, 28) != 0));
++    case Type::Select: {
++        if (epoch == 0 || p.size() != 64 || (u64(p, 32) & ~15ULL) != 0 || u32(p, 52) != epoch || !zero(p.subspan(56)) || u16(p, 48) > 3 || u16(p, 44) != 100
++            || u16(p, 46) != 250)
++            return false;
++        const auto hz = u16(p, 40);
++        const auto sensor = u16(p, 42);
++        if (u16(p, 50) == 1)
++            return (u64(p, 32) & 1) && (sensor == 11 || sensor == 15) && (hz == 30 || hz == 60 || hz == 90 || hz == 120);
++        return u16(p, 50) == 2 && !(u64(p, 32) & 1) && hz == 0 && sensor == 0;
++    }
++    case Type::Pose: {
++        if (epoch == 0 || p.size() != 32 || (u16(p, 16) != 11 && u16(p, 16) != 15) || int16_t(u16(p, 18)) < -1 || int16_t(u16(p, 18)) > 3
++            || (u32(p, 20) & ~3U) != 0 || u32(p, 28) > 3)
++            return false;
++        double norm2 = 0;
++        for (size_t i = 0; i < 16; i += 4) {
++            const auto value = std::bit_cast<float>(u32(p, i));
++            if (!std::isfinite(value))
++                return false;
++            norm2 += double(value) * value;
++        }
++        return norm2 >= .99 * .99 && norm2 <= 1.01 * 1.01;
++    }
++    case Type::ClockRequest:
++        return epoch != 0 && p.size() == 8;
++    case Type::ClockResponse:
++        return epoch != 0 && p.size() == 24 && u64(p, 16) >= u64(p, 8);
++    case Type::Status:
++        return p.size() >= 8 && p.size() <= 520 && u16(p, 0) <= 5 && u16(p, 2) <= 12 && u32(p, 4) == p.size() - 8 && utf8(p.subspan(8));
++    }
++    return false;
++}
++}
++
++std::optional<Message> decode(std::span<const uint8_t> bytes, Receiver receiver, std::string &error)
++{
++    error.clear();
++    if (bytes.size() >= 32 && std::equal(bytes.begin(), bytes.begin() + 4, "SDP1") && u16(bytes, 4) != 1) {
++        error = "Unsupported pose version";
++        return {};
++    }
++    if (bytes.size() < 32 || bytes.size() > 4096 || !std::equal(bytes.begin(), bytes.begin() + 4, "SDP1") || u16(bytes, 4) != 1
++        || u32(bytes, 8) != bytes.size()) {
++        error = "Invalid pose envelope";
++        return {};
++    }
++    const auto type = Type(u16(bytes, 6));
++    if ((receiver == Receiver::PC && (type == Type::Select || type == Type::ClockRequest))
++        || (receiver == Receiver::Phone && (type == Type::Hello || type == Type::Pose || type == Type::ClockResponse))) {
++        error = "Invalid pose message direction";
++        return {};
++    }
++    if (!payloadValid(type, u32(bytes, 12), bytes.subspan(32))) {
++        error = "Invalid pose message payload";
++        return {};
++    }
++    return Message{type, u32(bytes, 12), u64(bytes, 16), u64(bytes, 24), {bytes.begin() + 32, bytes.end()}};
++}
++
++std::optional<Pose> decodePose(const Message &message)
++{
++    const auto p = std::span(message.payload);
++    if (message.type != Type::Pose || !payloadValid(Type::Pose, message.epoch, p))
++        return {};
++    Pose result{};
++    double norm2 = 0;
++    for (size_t i = 0; i < 4; ++i) {
++        result.quaternion[i] = std::bit_cast<float>(u32(p, i * 4));
++        norm2 += result.quaternion[i] * result.quaternion[i];
++    }
++    for (auto &v : result.quaternion)
++        v /= std::sqrt(norm2);
++    result.sensor = u16(p, 16);
++    result.accuracy = int16_t(u16(p, 18));
++    result.flags = u32(p, 20);
++    result.sourceEpoch = u32(p, 24);
++    result.mounting = u32(p, 28);
++    return result;
++}
++
++std::vector<uint8_t> encode(const Message &message)
++{
++    if (!payloadValid(message.type, message.epoch, message.payload))
++        return {};
++    std::vector<uint8_t> result(32 + message.payload.size());
++    std::copy_n("SDP1", 4, result.begin());
++    put(result, 4, 1, 2);
++    put(result, 6, uint16_t(message.type), 2);
++    put(result, 8, result.size(), 4);
++    put(result, 12, message.epoch, 4);
++    put(result, 16, message.sequence, 8);
++    put(result, 24, message.timeNs, 8);
++    std::copy(message.payload.begin(), message.payload.end(), result.begin() + 32);
++    return result;
++}
++
++bool Framer::feed(std::span<const uint8_t> bytes, Receiver receiver, std::vector<Message> &messages, std::string &error)
++{
++    if (m_failed) {
++        error = "Pose framing already failed";
++        return false;
++    }
++    while (!bytes.empty()) {
++        const auto count = std::min(m_expected - m_bytes.size(), bytes.size());
++        m_bytes.insert(m_bytes.end(), bytes.begin(), bytes.begin() + count);
++        bytes = bytes.subspan(count);
++        if (m_bytes.size() != m_expected)
++            continue;
++        if (m_expected == 32) {
++            const auto total = u32(m_bytes, 8);
++            if (std::equal(m_bytes.begin(), m_bytes.begin() + 4, "SDP1") && u16(m_bytes, 4) != 1) {
++                m_failed = true;
++                error = "Unsupported pose version";
++                return false;
++            }
++            if (!std::equal(m_bytes.begin(), m_bytes.begin() + 4, "SDP1") || u16(m_bytes, 4) != 1 || total < 32 || total > 4096) {
++                m_failed = true;
++                error = "Invalid fragmented pose envelope";
++                return false;
++            }
++            m_expected = total;
++            if (total > 32)
++                continue;
++        }
++        auto message = decode(m_bytes, receiver, error);
++        if (!message) {
++            m_failed = true;
++            return false;
++        }
++        messages.push_back(std::move(*message));
++        m_bytes.clear();
++        m_expected = 32;
++    }
++    return true;
++}
++void Framer::reset()
++{
++    m_bytes.clear();
++    m_expected = 32;
++    m_failed = false;
++}
++}
+diff --git a/src/stereotracking/Protocol.h b/src/stereotracking/Protocol.h
+new file mode 100644
+index 0000000..9b08209
+--- /dev/null
++++ b/src/stereotracking/Protocol.h
+@@ -0,0 +1,54 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#pragma once
++#include <array>
++#include <cstdint>
++#include <optional>
++#include <span>
++#include <string>
++#include <vector>
++
++namespace KRdp::StereoTracking
++{
++enum class Type : uint16_t {
++    Hello = 1,
++    Select,
++    Pose,
++    ClockRequest,
++    ClockResponse,
++    Status
++};
++enum class Receiver {
++    Phone,
++    PC
++};
++struct Message {
++    Type type;
++    uint32_t epoch;
++    uint64_t sequence;
++    uint64_t timeNs;
++    std::vector<uint8_t> payload;
++};
++struct Pose {
++    std::array<double, 4> quaternion; // Device-to-world, xyzw.
++    uint16_t sensor;
++    int16_t accuracy;
++    uint32_t flags;
++    uint32_t sourceEpoch;
++    uint32_t mounting;
++};
++std::optional<Message> decode(std::span<const uint8_t> bytes, Receiver receiver, std::string &error);
++std::optional<Pose> decodePose(const Message &message);
++std::vector<uint8_t> encode(const Message &message);
++class Framer
++{
++public:
++    bool feed(std::span<const uint8_t> bytes, Receiver receiver, std::vector<Message> &messages, std::string &error);
++    void reset();
++
++private:
++    std::vector<uint8_t> m_bytes;
++    size_t m_expected = 32;
++    bool m_failed = false;
++};
++}
+diff --git a/src/stereotracking/Session.cpp b/src/stereotracking/Session.cpp
+new file mode 100644
+index 0000000..39da509
+--- /dev/null
++++ b/src/stereotracking/Session.cpp
+@@ -0,0 +1,213 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#include "Session.h"
++#include <algorithm>
++
++namespace KRdp::StereoTracking
++{
++namespace
++{
++uint64_t get(std::span<const uint8_t> p, size_t i, size_t n)
++{
++    uint64_t v = 0;
++    for (size_t k = 0; k < n; ++k)
++        v |= uint64_t(p[i + k]) << (8 * k);
++    return v;
++}
++void put(std::vector<uint8_t> &p, size_t i, uint64_t v, size_t n)
++{
++    while (n--) {
++        p[i++] = uint8_t(v);
++        v >>= 8;
++    }
++}
++}
++Session::Session(TrackingGrant grant, uint64_t peer, Options options, uint32_t epoch, StereoPoseConsumer &consumer, Writer writer, uint64_t now)
++    : m_grant(std::move(grant))
++    , m_peer(peer)
++    , m_options(options)
++    , m_epoch(epoch)
++    , m_consumer(consumer)
++    , m_writer(std::move(writer))
++    , m_started(now)
++{
++}
++Session::~Session()
++{
++    stop(TrackingReason::PeerDisconnected);
++}
++bool Session::send(Type type, std::vector<uint8_t> payload, uint64_t now)
++{
++    const auto bytes = encode({type, (m_selected || type == Type::Select) ? m_epoch : 0, m_outSequence++, now, std::move(payload)});
++    if (bytes.empty() || !m_writer(bytes)) {
++        stop(TrackingReason::PeerDisconnected);
++        return false;
++    }
++    if (type == Type::Select) m_selected = true;
++    return true;
++}
++bool Session::fail(TrackingReason reason, uint64_t now)
++{
++    m_state = TrackingState::Error;
++    m_reason = reason;
++    std::vector<uint8_t> p(8);
++    put(p, 0, uint16_t(m_state), 2);
++    put(p, 2, uint16_t(reason), 2);
++    send(Type::Status, std::move(p), now);
++    if (m_pose)
++        m_pose->stop(reason);
++    m_closed = true;
++    return false;
++}
++bool Session::receive(std::span<const uint8_t> bytes, uint64_t now)
++{
++    if (m_closed)
++        return false;
++    std::vector<Message> messages;
++    std::string error;
++    if (!m_framer.feed(bytes, Receiver::PC, messages, error))
++        return fail(error == "Unsupported pose version" ? TrackingReason::UnsupportedVersion : TrackingReason::InvalidMessage, now);
++    for (const auto &msg : messages) {
++        if ((m_sequence && msg.sequence <= *m_sequence) || (m_pose && msg.epoch != m_epoch))
++            return fail(TrackingReason::InvalidMessage, now);
++        m_sequence = msg.sequence;
++        if (!message(msg, now))
++            return false;
++    }
++    return true;
++}
++bool Session::message(const Message &msg, uint64_t now)
++{
++    if (msg.type == Type::Hello && !m_pose) {
++        const auto &h = msg.payload;
++        if (m_epoch == 0 || !(get(h, 16, 8) & 1) || !(get(h, 24, 4) & (m_options.sensor == 15 ? 1 : 2)) || get(h, 28, 2) < m_options.rate || get(h, 36, 4) < 96
++            || (m_options.sensor != 15 && m_options.sensor != 11) || m_options.mounting > 3
++            || (m_options.rate != 30 && m_options.rate != 60 && m_options.rate != 90 && m_options.rate != 120))
++            return fail(TrackingReason::NoSensor, now);
++        m_pose = std::make_unique<PoseState>(m_grant, m_peer, m_epoch, m_options.sensor, m_options.mounting, m_consumer);
++        if (m_pose->state() != TrackingState::Pending)
++            return fail(m_pose->reason(), now);
++        std::vector<uint8_t> p(64);
++        std::copy(m_grant.source.session.begin(), m_grant.source.session.end(), p.begin());
++        std::copy_n(h.begin(), 16, p.begin() + 16);
++        put(p, 32, 1, 8);
++        put(p, 40, m_options.rate, 2);
++        put(p, 42, m_options.sensor, 2);
++        put(p, 44, 100, 2);
++        put(p, 46, 250, 2);
++        put(p, 48, m_options.mounting, 2);
++        put(p, 50, 1, 2);
++        put(p, 52, m_epoch, 4);
++        return send(Type::Select, std::move(p), now);
++    }
++    if (!m_pose)
++        return fail(TrackingReason::InvalidMessage, now);
++    if (msg.type == Type::Status) {
++        const auto state = TrackingState(get(msg.payload, 0, 2));
++        const auto reason = TrackingReason(get(msg.payload, 2, 2));
++        if (state == TrackingState::Active) {
++            m_acknowledged = true;
++        } else if (state == TrackingState::Pending && reason == TrackingReason::CalibrationRequired) {
++            return recenter(now);
++        } else if (state == TrackingState::Paused || state == TrackingState::Pending) {
++            m_pose->pause(reason);
++        } else {
++            return fail(reason, now);
++        }
++        return true;
++    }
++    if (!m_acknowledged)
++        return fail(TrackingReason::InvalidMessage, now);
++    if (msg.type == Type::ClockResponse) {
++        const auto t0 = get(msg.payload, 0, 8);
++        if (!m_probe || *m_probe != t0 || !m_clock.addExchange(t0, get(msg.payload, 8, 8), get(msg.payload, 16, 8), now))
++            return fail(TrackingReason::TimingUnavailable, now);
++        m_probe.reset();
++        ++m_clockSamples;
++        return true;
++    }
++    if (msg.type == Type::Pose) {
++        // Await the eight real exchanges, never substitute receipt time.
++        if (m_clockSamples < 8)
++            return true;
++        m_pose->accept(msg, m_clock, now);
++        if (m_pose->state() == TrackingState::Error)
++            return fail(m_pose->reason(), now);
++        return true;
++    }
++    return fail(TrackingReason::InvalidMessage, now);
++}
++void Session::tick(uint64_t now)
++{
++    if (m_closed)
++        return;
++    if (!m_grant.active || !m_grant.active->load() || !m_grant.remoteInputApproved || m_grant.peerToken != m_peer) {
++        fail(TrackingReason::PermissionDenied, now);
++        return;
++    }
++    if (!m_consumer.available()) {
++        fail(TrackingReason::TrackerUnavailable, now);
++        return;
++    }
++    if ((!m_pose || !m_acknowledged) && now - m_started > 5000000000) {
++        fail(TrackingReason::PeerDisconnected, now);
++        return;
++    }
++    if (!m_pose || !m_acknowledged)
++        return;
++    m_pose->tick(now);
++    if (m_pose->state() == TrackingState::Stopped) {
++        stop(m_pose->reason());
++        return;
++    }
++    if (m_pose->state() != m_state || m_pose->reason() != m_reason) {
++        m_state = m_pose->state();
++        m_reason = m_pose->reason();
++        std::vector<uint8_t> p(8);
++        put(p, 0, uint16_t(m_state), 2);
++        put(p, 2, uint16_t(m_reason), 2);
++        if (!send(Type::Status, std::move(p), now))
++            return;
++    }
++    if (m_probe && now - *m_probe > 1000000000) {
++        fail(TrackingReason::TimingUnavailable, now);
++        return;
++    }
++    // Eight startup probes, then frequent refresh bounds the declared drift margin.
++    const auto interval = m_clockSamples < 8 ? 20000000ULL : 250000000ULL;
++    if (!m_probe && (m_lastProbe == 0 || now - m_lastProbe >= interval)) {
++        m_probe = now;
++        m_lastProbe = now;
++        std::vector<uint8_t> p(8);
++        put(p, 0, now, 8);
++        send(Type::ClockRequest, std::move(p), now);
++    }
++}
++bool Session::recenter(uint64_t now)
++{
++    if (m_closed || !m_pose || !m_pose->requestRecenter())
++        return false;
++    std::vector<uint8_t> p(8);
++    put(p, 0, uint16_t(TrackingState::Pending), 2);
++    put(p, 2, uint16_t(TrackingReason::CalibrationRequired), 2);
++    return send(Type::Status, std::move(p), now);
++}
++void Session::stop(TrackingReason reason)
++{
++    if (m_closed)
++        return;
++    if (m_pose)
++        m_pose->stop(reason);
++    m_closed = true;
++    m_state = TrackingState::Stopped;
++    m_reason = reason;
++}
++TrackingState Session::state() const
++{
++    return m_closed ? m_state : (m_pose ? m_pose->state() : m_state);
++}
++TrackingReason Session::reason() const
++{
++    return m_closed ? m_reason : (m_pose ? m_pose->reason() : m_reason);
++}
++}
+diff --git a/src/stereotracking/Session.h b/src/stereotracking/Session.h
+new file mode 100644
+index 0000000..54cdb99
+--- /dev/null
++++ b/src/stereotracking/Session.h
+@@ -0,0 +1,52 @@
++// SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
++// SPDX-License-Identifier: LGPL-2.1-only OR LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL
++#pragma once
++#include "PoseState.h"
++#include <functional>
++
++namespace KRdp::StereoTracking
++{
++// One RDP worker owns this state. The writer must enqueue one bounded DVC message.
++class Session
++{
++public:
++    using Writer = std::function<bool(std::span<const uint8_t>)>;
++    Session(TrackingGrant grant, uint64_t peer, Options options, uint32_t epoch, StereoPoseConsumer &consumer, Writer writer, uint64_t now);
++    ~Session();
++    bool receive(std::span<const uint8_t> bytes, uint64_t now);
++    void tick(uint64_t now);
++    bool recenter(uint64_t now);
++    void stop(TrackingReason reason);
++    bool closed() const
++    {
++        return m_closed;
++    }
++    TrackingState state() const;
++    TrackingReason reason() const;
++
++private:
++    bool message(const Message &message, uint64_t now);
++    bool send(Type type, std::vector<uint8_t> payload, uint64_t now);
++    bool fail(TrackingReason reason, uint64_t now);
++    TrackingGrant m_grant;
++    uint64_t m_peer;
++    Options m_options;
++    uint32_t m_epoch;
++    StereoPoseConsumer &m_consumer;
++    Writer m_writer;
++    Framer m_framer;
++    ClockSync m_clock;
++    std::unique_ptr<PoseState> m_pose;
++    std::optional<uint64_t> m_sequence;
++    uint64_t m_outSequence = 0;
++    uint64_t m_started;
++    uint64_t m_lastProbe = 0;
++    std::optional<uint64_t> m_probe;
++    unsigned m_clockSamples = 0;
++    bool m_selected = false;
++    bool m_acknowledged = false;
++    bool m_closed = false;
++    TrackingState m_state = TrackingState::Pending;
++    TrackingReason m_reason = TrackingReason::None;
++};
++}
