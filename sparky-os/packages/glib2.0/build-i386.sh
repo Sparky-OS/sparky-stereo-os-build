@@ -4,8 +4,7 @@
 # Copyright 2026 under the GNU GPL3 License
 # libglib2.0-0t64, libgirepository-2.0-0 and gir1.2-glib-2.0 are Multi-Arch: same, and every 32-bit program (Steam, Wine)
 # loads GLib, so an amd64 build alone is kept back on those systems. Every architecture comes from the one source package
-# (dpkg-buildpackage -B on the same .dsc, so the changelog and /usr/share files are the same bytes). The build's jobs are
-# not capped: dpkg-buildpackage -jauto.
+# (dpkg-buildpackage -B on the same .dsc, so the changelog and /usr/share files are the same bytes).
 # Usage: build-i386.sh WORK AMD64_LC_DIR PREVIOUS_DIR   (AMD64_LC_DIR: build.sh's WORK/lc, holding the +lc1 .dsc and its
 #   files; PREVIOUS_DIR: the i386 predecessor .debs for the link gate, Debian's 2.90.1-2 i386 build)
 # SPARKY_BUILD_IMAGE names the builder image when it is not sparky-lc-migration:20261020-i386.
@@ -23,7 +22,7 @@ PREV=$(cd "$3" && pwd)
 IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020-i386}
 name=${SPARKY_BUILD_CONTAINER:-glib2.0-build-i386-$$}
 sparky_provenance_init "$IMAGE"
-docker run -d --name "$name" --pull=never --ulimit core=0 --platform linux/386 \
+docker run -d --name "$name" --pull=never --ulimit core=0 --cpus 4 --platform linux/386 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
 	-v "$WORK":/work -v "$SRC":/src:ro -v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro \
@@ -33,7 +32,7 @@ docker run -d --name "$name" --pull=never --ulimit core=0 --platform linux/386 \
 trap "chown -R 1000:1000 /work" EXIT
 set -euo pipefail
 sh /run/https-only-apt.sh
-export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS="nocheck"
+export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS="parallel=4 nocheck"
 export DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com
 printf "deb [trusted=yes] file:/repo mashtabba main\n" > /etc/apt/sources.list.d/edition.list
 printf "deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n" > /etc/apt/sources.list.d/multimedia.list
@@ -48,7 +47,7 @@ mkdir -p "$SPARKY_LC_SCRATCH"
 useradd --create-home --uid 1000 builder
 chown -R builder:builder /work
 cd /work/source
-runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" dpkg-buildpackage -us -uc -B -jauto
+runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" dpkg-buildpackage -us -uc -B -j4
 cd /work
 PYTHONPATH=/toolkit python3 -m lean.release check-debs /work/*+lc1_i386.deb
 rm -rf /work/source' > /dev/null
