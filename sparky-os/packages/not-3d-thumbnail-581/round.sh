@@ -65,7 +65,7 @@ build() { # build SOURCE SOURCE_DIR ROUND_SOURCES [PROFILES]
 }
 in_container() { # in_container NAME SCRIPT ARGS...: a recipe script inside the migration container, no network
 	local name=$1; shift
-	docker run --rm --name "$name" --ulimit core=0 --cpus "$THREADS" --platform linux/amd64 --network none -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+	docker run --rm --name "$name" --ulimit core=1 --cpus "$THREADS" --platform linux/amd64 --network none -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
 		-v "$TREE":/repo:ro -v "$HERE/../..":/toolkit:ro -v "$W":/work --entrypoint bash "$IMAGE" -c 'set -e; "$@"; chown -R 1000:1000 /work' -- "$@"
 }
 for step in $STEPS; do

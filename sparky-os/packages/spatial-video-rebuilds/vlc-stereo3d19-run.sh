@@ -21,7 +21,7 @@ cp "$pool"/vlc_3.0.24-1+stereo3d16+lc1.dsc "$pool"/vlc_3.0.24-1+stereo3d16+lc1.d
 cp "$pool"/vlc-stereo_3.0.24-1+stereo3d16+lc1_amd64.deb "$pool"/vlc-stereo-plugin-pipewire_3.0.24-1+stereo3d16+lc1_amd64.deb "$pool"/vlc-stereo-lc-hr_3.0.24-1+stereo3d16+lc1_amd64.deb "$out/prev/"
 . "$tree/sparky-os/repo/build-provenance.sh"
 sparky_provenance_init "$image" "$here"
-docker run --rm --ulimit core=0 --cpus 4 --platform linux/amd64 \
+docker run --rm --ulimit core=1 --cpus 4 --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/out/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$tree/tools/https-only-apt.sh:/run/https-only-apt.sh:ro" \

@@ -33,7 +33,7 @@ for a in $(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1
 	f=$(j apps "$a" fonts); [ -d "$OUT/fonts/craft-fonts-${f:0:8}" ] || fetch craft-fonts "$(j fonts_repository).git" "$f" "$OUT/fonts/craft-fonts-${f:0:8}"
 	i=$(j apps "$a" i18n); [ -z "$i" ] || [ -d "$OUT/i18n/craft-i18n-${i:0:8}" ] || fetch craft-i18n "$(j i18n_repository).git" "$i" "$OUT/i18n/craft-i18n-${i:0:8}"
 done
-docker run --rm --name "$SPARKY_CONTAINER_PREFIX-fetch" --ulimit core=0 --cpus 4 --user "$(id -u):$(id -g)" --platform linux/amd64 \
+docker run --rm --name "$SPARKY_CONTAINER_PREFIX-fetch" --ulimit core=1 --cpus 4 --user "$(id -u):$(id -g)" --platform linux/amd64 \
 	--mount "type=bind,src=$OUT,dst=/out" --mount "type=bind,src=$HERE,dst=/tools,readonly" \
 	-e HOME=/out/work/home -e CARGO_HOME=/out/work/cargo-home -e PATH=/usr/bin:/bin "$FETCH_IMAGE" bash -c '
 set -euo pipefail

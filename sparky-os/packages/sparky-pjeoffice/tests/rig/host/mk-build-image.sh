@@ -4,7 +4,7 @@ export DOCKER_HOST=unix:///K3D/partners/queue/pje-office-2/docker.sock
 BASE=gr108-base:testing-20261027
 docker image inspect "$BASE" >/dev/null
 docker rm -f pj18-mkbuild >/dev/null 2>&1 || true
-docker run --name pj18-mkbuild --pull=never --ulimit core=0 --platform linux/amd64 \
+docker run --name pj18-mkbuild --pull=never --ulimit core=1 --platform linux/amd64 \
   -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v /K3D/partners/https-only-apt.sh:/run/https-only-apt.sh:ro \
   --mount type=bind,src=/K3D/sparky-repo-r1117a,dst=/repo,readonly \
   -v /K3D/GitHub/sparky-stereo-os-build/sparky-os/apt/sparky-stereo:/run/pin:ro \

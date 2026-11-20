@@ -46,7 +46,7 @@ status = {'source': 'sparky-stereo-browser', 'version': '6.7.5-0+stereo3d5+lc1',
           'headless_stereo_bench': 'required after successful package build'}
 (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
 container = 'sparky-lc-browser-amd64'
-command = ['docker', 'run', '--rm', *provenance_args('sparky-lc-migration:20261020'), '--platform', 'linux/amd64', '--name', container,
+command = ['docker', 'run', '--ulimit', 'core=1', '--rm', *provenance_args('sparky-lc-migration:20261020'), '--platform', 'linux/amd64', '--name', container,
            '--cpus', '4', '--memory', '32g', '-v', str(work) + ':/work',
            '-v', str(source) + ':/work/source',
            '-v', str(cfg.path('SPARKY_BROWSER_WORK') / 'home') + ':/browser-toolchains:ro',

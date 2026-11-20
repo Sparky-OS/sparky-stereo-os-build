@@ -50,9 +50,11 @@ inputs, without workstation library paths, cache, configuration or environment.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import tempfile
 
@@ -562,12 +564,14 @@ def _depends(deb):
     return {re.split(r'[ (:]', alt.strip())[0] for part in fields.split(',') for alt in part.split('|') if alt.strip()}
 
 
-def smoke(deb, table, timeout=10, extra_dirs=(), qualified=None):
+def smoke(deb, table, timeout=10, extra_dirs=(), qualified=None, notes=None):
     """Start smoke programs with immediate binding in the qualified, headless root."""
     if extra_dirs or qualified is None:
         raise package.Invalid('smoke requires archive-qualified inputs; supply sibling .debs')
     name, arch = control_field(deb, 'Package'), qualified.arch
     findings = []
+    own_notes = notes is None
+    notes = notes if notes is not None else []
     rows = [line.split('\t') for line in Path(table).read_text().splitlines()
             if line.strip() and not line.startswith('#')]
     with tempfile.TemporaryDirectory(prefix='inspect-smoke-', dir=qualified.directory) as root:
@@ -581,6 +585,7 @@ def smoke(deb, table, timeout=10, extra_dirs=(), qualified=None):
                 findings.append(f'{program}: listed in the smoke table, missing from the package')
                 continue
             args = row[2].split() if len(row) > 2 else ['--version']
+            run = None
             try:
                 command, _ = loader_command(exe, Path(root), qualified) if _is_elf(exe) else ([program], False)
                 run = qualified.run(command + args, {'LD_BIND_NOW': '1'}, timeout)
@@ -594,6 +599,26 @@ def smoke(deb, table, timeout=10, extra_dirs=(), qualified=None):
                 continue
             if LOADER_ERRORS.search(text):
                 findings.append(f'{program}: loader error at start: {text.strip()[:300]}')
+            elif run is not None and run.returncode and 'bwrap:' not in text:
+                status = str(run.returncode)
+                number = -run.returncode if run.returncode < 0 else run.returncode - 128
+                try:
+                    status += f' ({signal.Signals(number).name})'
+                except ValueError:
+                    pass
+                stderr = run.stderr.strip().splitlines()
+                detail = stderr[0] if stderr else 'no stderr'
+                # Keep the first line and Qt's fatal diagnosis when setup warnings precede it.
+                platform = next((line for line in stderr[1:] if 'platform plugin' in line), None)
+                if platform:
+                    detail += '; ' + platform
+                notes.append(f'{program}: smoke status {status}: {detail}')
+    if own_notes:
+        (qualified.directory / 'smoke.json').write_text(json.dumps({
+            'package': str(deb), 'findings': findings, 'notes': notes,
+        }, indent=2) + '\n')
+        for note in notes:
+            print(f'lc1 link note: {Path(deb).name}: {note}')
     return findings
 
 
@@ -609,7 +634,10 @@ def check(new_deb, previous_deb=None, smoke_table=None, extra_dirs=(), archive_c
         findings, notes = compare(new_deb, previous_deb, qualified=qualified, archive_context=archive_context,
                                   siblings=siblings, previous_siblings=previous_siblings)
         if smoke_table:
-            findings += smoke(new_deb, smoke_table, qualified=qualified)
+            findings += smoke(new_deb, smoke_table, qualified=qualified, notes=notes)
+        (qualified.directory / 'link-check.json').write_text(json.dumps({
+            'package': str(new_deb), 'findings': findings, 'notes': notes,
+        }, indent=2) + '\n')
         for note in notes:
             print(f'lc1 link note: {Path(new_deb).name}: {note}')
         if findings:

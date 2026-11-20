@@ -80,7 +80,7 @@ fi
     (work / "run.sh").write_text(recipe)
     with (work / "build.log").open("wb") as log:
         process = start_build([
-            "docker", "run", "--rm", *provenance_args("sparky-lc-migration:20261020"), "--platform", "linux/amd64", "--name", "sparky-lc-source-" + name,
+            "docker", "run", '--ulimit', 'core=1', "--rm", *provenance_args("sparky-lc-migration:20261020"), "--platform", "linux/amd64", "--name", "sparky-lc-source-" + name,
             "--cpus", "2", "-e", "TASK_DSC=" + dsc.name,
             "-e", "TASK_SOURCE=" + name,
             "-v", f"{work}:/work", "-v", f"{kit}:/toolkit:ro",

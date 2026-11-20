@@ -33,12 +33,12 @@ fi
 mkdir -p "$WORK/kern/ours" "$WORK/kern/stock" "$WORK/guest"
 have() { docker image inspect "$1" >/dev/null 2>&1; }
 apt_run() { # apt_run NAME OUTDIR COMMAND: a debian:testing container with apt over https, OUTDIR mounted at /out
-	docker run --rm --name "$1" --pull=never --ulimit core=0 -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro \
+	docker run --rm --name "$1" --pull=never --ulimit core=1 -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro \
 		-v "$HELP":/run/https-only-apt.sh:ro --mount type=bind,src="$2",dst=/out --user 0 debian:testing sh -c "sh /run/https-only-apt.sh >/dev/null; apt-get update -qq; $3"
 }
 if ! have lab22-guest:1; then
 	docker rm -f lab22-build-guest >/dev/null 2>&1 || true
-	docker run --name lab22-build-guest --pull=never --ulimit core=0 --cpus 4 -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro \
+	docker run --name lab22-build-guest --pull=never --ulimit core=1 --cpus 4 -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro \
 		-v "$HELP":/run/https-only-apt.sh:ro debian:testing sh -c 'set -e; sh /run/https-only-apt.sh; apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get -y -qq --no-install-recommends install qemu-system-x86 busybox-static gcc libc6-dev libsdl3-dev libsdl3-0 python3 python3-pil python3-numpy edid-decode cpio xz-utils kmod file pkg-config >/dev/null; apt-get clean'
 	docker commit lab22-build-guest lab22-guest:1 >/dev/null; docker rm lab22-build-guest >/dev/null

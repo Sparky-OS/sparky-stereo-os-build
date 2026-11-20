@@ -16,7 +16,7 @@ WORK=${1:-${SPARKY_WORKSPACES:?}/hand-installed-apps/ptx/build}
 NEW=1.15.0
 OUR=$NEW+ds-1+sparky1
 mkdir -p "$WORK"
-docker run --rm -e HOST_UID=$(id -u) -e NEW=$NEW -e OUR=$OUR -v "$WORK":/out -v "$(dirname "$(readlink -f "$0")")/patches":/patches:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro sparky-pkg-base:amd64 bash -c '
+docker run --ulimit core=1 --rm -e HOST_UID=$(id -u) -e NEW=$NEW -e OUR=$OUR -v "$WORK":/out -v "$(dirname "$(readlink -f "$0")")/patches":/patches:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro sparky-pkg-base:amd64 bash -c '
 set -e
 sh /run/https-only-apt.sh
 sed -i "s/^Suites: unstable/Suites: testing testing-updates/" /etc/apt/sources.list.d/debian.sources

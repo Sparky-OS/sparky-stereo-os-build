@@ -134,7 +134,7 @@ if image_id.returncode == 0 and image_id.stdout.strip().startswith('sha256:'):
     provenance += ['-e', 'SPARKY_BUILD_IMAGE_ID=' + image_id.stdout.strip(), '-e', 'SPARKY_BUILD_IMAGE_REPO_DIGESTS=' + digests]
 else:
     print(f'provenance: NOT recorded: docker image inspect {image} gave no id', file=sys.stderr)
-command = ['docker', 'run', '-d' if args.detach else '--rm', '--ulimit', 'core=0', '--platform', 'linux/amd64', '--name', container,
+command = ['docker', 'run', '-d' if args.detach else '--rm', '--ulimit', 'core=1', '--platform', 'linux/amd64', '--name', container,
            '--cpus', args.cpus, '--memory', args.memory, '--security-opt', 'seccomp=unconfined',
            '--security-opt', 'apparmor=unconfined', '--security-opt', 'systempaths=unconfined',
            '-e', f'SPARKY_LC_MIN_FREE_GIB={int(scratch_disk.floor_gib(base))}', '-v', str(work) + ':/work',

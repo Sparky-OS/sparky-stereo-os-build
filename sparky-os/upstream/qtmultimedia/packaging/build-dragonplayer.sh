@@ -12,7 +12,7 @@ W=${1:-${SPARKY_SCRATCH:?}/qtmm-lane/pkg-dragon}
 H=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p $W/patches $W/home
 cp $H/dragon/*.patch $W/patches/
-docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) --cpus 4 -e HOME=/w/home -e DEBIAN_FRONTEND=noninteractive \
+docker run --ulimit core=1 --rm --platform linux/amd64 --user $(id -u):$(id -g) --cpus 4 -e HOME=/w/home -e DEBIAN_FRONTEND=noninteractive \
   -v $W:/w -v ${SPARKY_REPO_DIR:?}:/repo:ro qtmm-build:2 bash -c '
 set -e
 cd /w; rm -rf tree; mkdir tree; cd tree

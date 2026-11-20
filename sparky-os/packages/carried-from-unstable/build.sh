@@ -21,7 +21,7 @@ ARCHIVE=$(cd "$5" && pwd)
 . "$TOOLKIT/repo/build-provenance.sh"
 export SPARKY_PROVENANCE_REQUIRED=1
 sparky_provenance_init "$IMAGE" "$HERE"
-docker run --rm --name "${SPARKY_CONTAINER_PREFIX}build-$name" --platform linux/amd64 --cpus 4 --ulimit core=0 \
+docker run --rm --name "${SPARKY_CONTAINER_PREFIX}build-$name" --platform linux/amd64 --cpus 4 --ulimit core=1 \
  --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
  --user "$(id -u):$(id -g)" "${SPARKY_PROV_ARGS[@]}" \
  -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \

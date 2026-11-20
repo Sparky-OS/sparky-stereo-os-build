@@ -8,7 +8,7 @@ TREE=${1:?published tree}; OLD=${2:?sparky-os subset from before the change}; WO
 IMAGE=${IMAGE:-gr108-base:testing-20261027}
 HERE=$(cd "$(dirname "$0")" && pwd); NEW=$(cd "$HERE/../.." && pwd)
 mkdir -p "$WORK"
-docker run --rm --cpus 2 --ulimit core=0 --name gr108-pair -e DEBIAN_FRONTEND=noninteractive -v "$TREE:/tree:ro" -v "$OLD:/old:ro" -v "$NEW:/new:ro" \
+docker run --rm --cpus 2 --ulimit core=1 --name gr108-pair -e DEBIAN_FRONTEND=noninteractive -v "$TREE:/tree:ro" -v "$OLD:/old:ro" -v "$NEW:/new:ro" \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v /K3D/partners/https-only-apt.sh:/run/https-only-apt.sh:ro -v "$WORK:/work" "$IMAGE" bash -c '
 sh /run/https-only-apt.sh >/dev/null; apt-get -y update >/dev/null 2>&1; apt-get -y install python3 >/dev/null 2>&1
 failed=0; ok() { echo "PASS $*"; }; bad() { echo "FAIL $*"; failed=1; }

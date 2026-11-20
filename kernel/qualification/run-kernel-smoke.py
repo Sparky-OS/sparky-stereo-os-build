@@ -46,7 +46,7 @@ if args.resume:
 (base / 'run.sh').write_text(recipe)
 status = {'state': 'building', 'purpose': 'smoke test only; never publish these packages'}
 (base / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
-command = ['docker', 'run', '--rm', '--platform', 'linux/amd64', '--name', container,
+command = ['docker', 'run', '--ulimit', 'core=1', '--rm', '--platform', 'linux/amd64', '--name', container,
            '--cpus', '4', '-v', str(base) + ':/work', '-v', str(source) + ':/work/source',
            '-v', str(cfg.TREE / 'sparky-os') + ':/toolkit:ro',
            '-v', '/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro',

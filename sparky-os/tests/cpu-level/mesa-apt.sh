@@ -26,7 +26,7 @@ V3F=$V2,avx,avx2,bmi1,bmi2,f16c,fma,abm,movbe,xsave
 for l in 1 3; do v=V$l; [ $l = 3 ] && v=V3F; printf 'processor\t: 0\nvendor_id\t: TestCPU\nflags\t\t: %s\n' "${!v//,/ }" >"$WORK/cpu/v$l"; done
 HTTPS=(-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v /K3D/partners/https-only-apt.sh:/run/https-only-apt.sh:ro)
 rc=0
-docker run --rm --cpus 2 --ulimit core=0 --name gr108-mesa-p1 -e DEBIAN_FRONTEND=noninteractive -e KEY_PKG -e KEY_GLOB -e TAG -e MIN_EXTRA "${HTTPS[@]}" -v "$BASE:/base:ro" -v "$V3:/v3:ro" -v "$I386:/i386:ro" \
+docker run --rm --cpus 2 --ulimit core=1 --name gr108-mesa-p1 -e DEBIAN_FRONTEND=noninteractive -e KEY_PKG -e KEY_GLOB -e TAG -e MIN_EXTRA "${HTTPS[@]}" -v "$BASE:/base:ro" -v "$V3:/v3:ro" -v "$I386:/i386:ro" \
 	-v "$SPARKY_OS:/sparky-os:ro" -v "$HERE/mesa-phase1.sh:/phase1.sh:ro" -v "$WORK:/work" "$IMAGE" bash /phase1.sh || rc=1
 for case in v3 base optout v3-on-base; do
 	case $case in
@@ -35,7 +35,7 @@ for case in v3 base optout v3-on-base; do
 		optout) cpu=v3; mode=install-optout; want=base; name='faked v3 processor with the opt-out';;
 		v3-on-base) cpu=v1; mode=guard; want=guard; name='processor without v3 (the loader offers v2) with the v3 build installed';;
 	esac
-	got=$(docker run --rm --cpus 2 --ulimit core=0 --name gr108-mesa-p2 -e DEBIAN_FRONTEND=noninteractive -e MODE=$mode -e KEY_PKG -e KEY_LIB -e INSTALL -e TAG -e NO_I386 "${HTTPS[@]}" -v "$WORK:/work" -v "$WORK/cpu/$cpu:/proc/cpuinfo:ro" \
+	got=$(docker run --rm --cpus 2 --ulimit core=1 --name gr108-mesa-p2 -e DEBIAN_FRONTEND=noninteractive -e MODE=$mode -e KEY_PKG -e KEY_LIB -e INSTALL -e TAG -e NO_I386 "${HTTPS[@]}" -v "$WORK:/work" -v "$WORK/cpu/$cpu:/proc/cpuinfo:ro" \
 		-v "$POOL:/repo:ro" -v "$I386:/i386:ro" -v "${STAGE_HW:?folder with sparky-stereo-hardware}:/hw:ro" -v "$SPARKY_OS/packages/sparky-stereo-apt:/apt:ro" \
 		-v "$HERE/mesa-phase2.sh:/phase2.sh:ro" "$IMAGE" bash /phase2.sh 2>&1 | tail -8)
 	if printf '%s\n' "$got" | grep -qx "result: $want"; then echo "PASS apt on a $name: $want"; printf '%s\n' "$got" | grep -v '^result' | sed 's/^/     /'; else echo "FAIL apt on a $name: $got"; rc=1; fi

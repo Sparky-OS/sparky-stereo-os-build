@@ -12,7 +12,7 @@ print(json.dumps(['--vo=' + vo, '--no-osc', '--osd-level=0', '--keep-open=yes', 
 PY
 )
 cfg=$(STEPS="$STEPS" python3 -c "import json,sys,os; t=json.loads(sys.argv[1]); print(json.dumps({'mpv': json.loads(sys.argv[2]), 'caps': t, 'screen': sys.argv[3], 'end': t[-1]+1, 'bin': sys.argv[4], **({'steps': json.loads(os.environ['STEPS'])} if os.environ.get('STEPS') else {})}))" "$times" "$mpv" "$SCREEN" "${MPVBIN:-mpv}")
-timeout ${TMO:-180} docker run --rm --name mdmo-run-$name --user $(id -u):$(id -g) --cpus ${CPUS:-2} --cap-add SYS_NICE --device /dev/dri/renderD128 --group-add 125 \
+timeout ${TMO:-180} docker run --ulimit core=1 --rm --name mdmo-run-$name --user $(id -u):$(id -g) --cpus ${CPUS:-2} --cap-add SYS_NICE --device /dev/dri/renderD128 --group-add 125 \
   -v $PWD/passwd:/etc/passwd:ro -e HOME=/tmp/home -e LIBGL_ALWAYS_SOFTWARE=${SW:-0} -v $PWD:/w $img \
   sh -c "dbus-run-session -- python3 /w/scripts/drv.py /w/$out '$cfg' > /w/$out/drv.log 2>&1"
 python3 scripts/analyze.py $out ${SCREEN%x*} > $out/analysis.txt 2>&1; cat $out/analysis.txt | tail -${TAILN:-14}

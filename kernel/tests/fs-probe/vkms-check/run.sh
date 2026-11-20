@@ -8,7 +8,7 @@ set -euo pipefail
 K=$(readlink -f "$1"); P=$(readlink -f "$2"); E=$(readlink -f "$3"); OUT=$(mkdir -p "$4" && readlink -f "$4")
 HERE=$(dirname "$(readlink -f "$0")")
 exec env -u DISPLAY -u WAYLAND_DISPLAY -u DBUS_SESSION_BUS_ADDRESS -u XAUTHORITY \
-docker run --rm --platform linux/amd64 --cpus 4 --memory 4g --user "$(id -u):$(id -g)" -e HOME=/tmp \
+docker run --ulimit core=1 --rm --platform linux/amd64 --cpus 4 --memory 4g --user "$(id -u):$(id -g)" -e HOME=/tmp \
 	--device /dev/kvm --group-add "$(getent group kvm | cut -d: -f3)" \
 	-v "$HERE":/t:ro -v "$K":/bzImage:ro -v "$P":/fs-probe:ro -v "$E":/edid.bin:ro -v "$OUT":/out \
 	"${IMAGE:-dp-stereo-257-m3-bench:1}" sh -euc '

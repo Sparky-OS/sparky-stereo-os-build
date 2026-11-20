@@ -83,7 +83,7 @@ for p in sorted(inputs.rglob('*')):
     settings_sha256=hashlib.sha256(settings[0].read_bytes()).hexdigest(),
     files=inventory), indent=2) + '\n')
 name = 'sparky-lc-kernel-check-' + flavour
-command = ['docker', 'run', '--rm', '--name', name, '--cpus', '4', '--memory', '8g',
+command = ['docker', 'run', '--ulimit', 'core=1', '--rm', '--name', name, '--cpus', '4', '--memory', '8g',
            '--device', '/dev/kvm', '-v', str(out) + ':/validation',
            '-v', str(inputs) + ':/inputs:ro', tools['image'], 'python3', '/inputs/run.py', release]
 scope = ('Harness rehearsal with existing build 8; NOT build-9 kernel qualification'

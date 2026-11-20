@@ -100,7 +100,7 @@ echo "PASS $CASE"
 '
 status=0
 for case in ${CASES:-control upgrade${FROM:+ from}}; do
-	docker run --rm --name "$PREFIX-$case" --ulimit core=0 --platform linux/amd64 --cpus 4 --memory 4g \
+	docker run --rm --name "$PREFIX-$case" --ulimit core=1 --platform linux/amd64 --cpus 4 --memory 4g \
 		-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
 		-v "$REPO":/proof/repo:ro -v "$CAND":/proof/candidate:ro $FROMMOUNT -v "$OUT":/proof/out \
 		-e CASE="$case" -e METAS="$metas" "$IMAGE" sh -c "$INNER" > "$OUT/$case.log" 2>&1 || status=1

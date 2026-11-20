@@ -6,7 +6,7 @@ IMG=$1 DIR=$2
 : "${DOCKER_HOST:?set DOCKER_HOST}"
 rm -rf "$DIR"; mkdir -p "$DIR"
 docker rm -f lab22-export-root >/dev/null 2>&1 || true
-docker create --name lab22-export-root --pull=never "$IMG" /bin/true >/dev/null
+docker create --name lab22-export-root --pull=never --ulimit core=1 "$IMG" /bin/true >/dev/null
 docker export lab22-export-root | tar -C "$DIR" --exclude='./dev/*' --exclude='./proc/*' --exclude='./sys/*' -xf - 2>/dev/null || true
 docker rm lab22-export-root >/dev/null
 chmod -R u+rwX "$DIR" 2>/dev/null || true

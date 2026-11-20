@@ -17,7 +17,7 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 IMG=${IMG:-debian@sha256:fe4be93b807e7d05dccdaf54931173d9368b349f91a8170dadd787213aa3bf19}
 for case in published map; do
 	mkdir -p "$OUT/$case"
-	docker run --rm --platform linux/amd64 --cpus 4 -e CASE=$case -v "$(dirname "$DSC")":/in:ro -v "$OUT/$case":/out \
+	docker run --ulimit core=1 --rm --platform linux/amd64 --cpus 4 -e CASE=$case -v "$(dirname "$DSC")":/in:ro -v "$OUT/$case":/out \
 		-v "$HERE/debian/sparky-lean-payload-sources.json":/map.json:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMG" bash -c '
 set -euo pipefail
 sh /run/https-only-apt.sh

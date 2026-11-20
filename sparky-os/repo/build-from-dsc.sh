@@ -38,7 +38,7 @@ NAME=${DSC%.dsc}
 if [ -z "${OUT:-}" ]; then sparky_need SPARKY_STAGING_DIR; OUT=$SPARKY_STAGING_DIR/$NAME-$ARCH; fi
 B=$SPARKY_BUILD_SCRATCH/build-from-dsc/$NAME-$ARCH
 rm -rf "$B" "$OUT"; mkdir -p "$B" "$OUT"
-docker run --rm --name "build-from-dsc-${NAME//[^A-Za-z0-9_.-]/-}-$ARCH" \
+docker run --ulimit core=1 --rm --name "build-from-dsc-${NAME//[^A-Za-z0-9_.-]/-}-$ARCH" \
 	-v "$SRC_DIR":/src:ro -v "$B":/build -v "$OUT":/out \
 	-e DEBIAN_FRONTEND=noninteractive -e DSC="$DSC" -e APT_UPDATE="$APT_UPDATE" -e FLAGS="$FLAGS" -e JOBS="$JOBS" \
 	-e OWNER="$(id -u):$(id -g)" -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMG" bash -c '

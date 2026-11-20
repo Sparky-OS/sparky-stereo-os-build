@@ -4,7 +4,7 @@ export DOCKER_HOST=unix:///K3D/partners/queue/nvidia-gl-stereo-146b/docker.sock
 TAG=$1; shift
 M=""; for d in "$@"; do M="$M -v $d:/debs/$(basename $d):ro"; done
 docker rm -f nvidia-gl-stereo-146b-pkginst >/dev/null 2>&1
-docker run --name nvidia-gl-stereo-146b-pkginst --ulimit core=0 --add-host repo.sparkyos.org:192.168.0.60 \
+docker run --name nvidia-gl-stereo-146b-pkginst --ulimit core=1 --add-host repo.sparkyos.org:192.168.0.60 \
   -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v /K3D/partners/https-only-apt.sh:/run/https-only-apt.sh:ro $M \
   nvidia-gl-stereo-146b-rig:3 sh -c '
     sh /run/https-only-apt.sh && apt-get update -qq

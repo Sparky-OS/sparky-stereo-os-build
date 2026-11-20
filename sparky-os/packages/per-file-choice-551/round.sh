@@ -74,7 +74,7 @@ build() { # build SOURCE SOURCE_DIR ROUND_SOURCES [PROFILES]
 }
 in_container() { # in_container NAME SCRIPT ARGS...: a recipe script inside the migration container, no network
 	local name=$1; shift
-	docker run --rm --name "$name" --ulimit core=0 --cpus "$THREADS" --platform linux/amd64 --network none -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+	docker run --rm --name "$name" --ulimit core=1 --cpus "$THREADS" --platform linux/amd64 --network none -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
 		-v "$TREE":/repo:ro -v "$HERE/../..":/toolkit:ro -v "$W":/work --entrypoint bash "$IMAGE" -c 'set -e; "$@"; chown -R 1000:1000 /work' -- "$@"
 }
 for step in $STEPS; do
@@ -87,7 +87,7 @@ for step in $STEPS; do
 	case $step in
 	bootstrap)
 		rm -rf "$W/bootstrap"; mkdir -p "$W/bootstrap"
-		docker run --rm -i --name "${BUILD_NAME_PREFIX}-bootstrap-policy" --ulimit core=0 --cpus "$THREADS" --platform linux/amd64 -e REV="$REV" -e THREADS="$THREADS" \
+		docker run --rm -i --name "${BUILD_NAME_PREFIX}-bootstrap-policy" --ulimit core=1 --cpus "$THREADS" --platform linux/amd64 -e REV="$REV" -e THREADS="$THREADS" \
 			-v "$FORK":/fork:ro -v "$TREE":/repo:ro -v "$W/bootstrap":/out \
 			-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
 			-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
@@ -123,7 +123,7 @@ INNER
 	kimageformats)
 		rm -rf "$W/kf6-kimageformats-src"; mkdir -p "$W/kf6-kimageformats-src"
 		export SOURCE_DATE_EPOCH=$(python3 "$HERE/../../repo/reproducible.py" epoch "$HERE/../jps-descriptor")
-		docker run --rm --name "${BUILD_NAME_PREFIX}-source-kimageformats" --ulimit core=0 --cpus "$THREADS" --platform linux/amd64 --network none -e SOURCE_DATE_EPOCH \
+		docker run --rm --name "${BUILD_NAME_PREFIX}-source-kimageformats" --ulimit core=1 --cpus "$THREADS" --platform linux/amd64 --network none -e SOURCE_DATE_EPOCH \
 			-v "$TREE/pool/main/k/kf6-kimageformats":/in:ro -v "$HERE/../..":/toolkit:ro -v "$W/kf6-kimageformats-src":/out \
 			--entrypoint bash "$IMAGE" /toolkit/packages/per-file-choice-551/kimageformats-source.sh | tail -4
 		build kf6-kimageformats "$W/kf6-kimageformats-src" 'stereo-layer kf6-kimageformats'

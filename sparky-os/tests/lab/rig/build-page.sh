@@ -16,7 +16,7 @@ for side in stock ours; do
 	pkg="plasma-pa"
 	extra=()
 	if [ $side = ours ]; then pkg=/deb/$(basename "$DEB"); extra=(-v "$(dirname "$DEB")":/deb:ro); fi
-	docker run --name lab22-build-page-$side --pull=never --ulimit core=0 --cpus 4 "${apt_mounts[@]}" "${extra[@]}" -v "$PAGE":/page:ro lab22-audio-$side:1 sh -c '
+	docker run --name lab22-build-page-$side --pull=never --ulimit core=1 --cpus 4 "${apt_mounts[@]}" "${extra[@]}" -v "$PAGE":/page:ro lab22-audio-$side:1 sh -c '
 set -e
 sh /run/https-only-apt.sh
 apt-get update -qq
