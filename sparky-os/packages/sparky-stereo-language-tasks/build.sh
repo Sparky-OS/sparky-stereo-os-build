@@ -6,7 +6,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 python3 "$HERE/tests/test_system_language.py"
 python3 "$HERE/tests/test_debian_tasks.py"
 OUT=${OUT:?}
-VERSION=1.0.9+lc1
+VERSION=1.0.10+lc1
 TASKSEL_SOURCE_DIR=${TASKSEL_SOURCE_DIR:?Set TASKSEL_SOURCE_DIR to Debian tasksel 3.92 descriptor and source archive}
 WORK=$(mktemp -d "${BUILD_ROOT:?}/language-tasks.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
