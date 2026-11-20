@@ -25,7 +25,7 @@ pixel are traced.
 
 Assisted-by: Claude Opus 5.5 via Claude Code
 ---
- 3d-viewer/3d_canvas/eda_3d_canvas.cpp         | 120 +++++++++-
+ 3d-viewer/3d_canvas/eda_3d_canvas.cpp         | 131 ++++++++++-
  3d-viewer/3d_canvas/eda_3d_canvas.h           |  15 ++
  3d-viewer/3d_canvas/eda_3d_stereo.cpp         |  70 ++++++
  3d-viewer/3d_canvas/eda_3d_stereo.h           |  61 ++++++
@@ -39,12 +39,12 @@ Assisted-by: Claude Opus 5.5 via Claude Code
  .../dialogs/panel_3D_opengl_options_base.cpp  |  17 +-
  .../dialogs/panel_3D_opengl_options_base.fbp  | 205 +++++++-----------
  .../dialogs/panel_3D_opengl_options_base.h    |   5 +-
- 14 files changed, 462 insertions(+), 157 deletions(-)
+ 14 files changed, 473 insertions(+), 157 deletions(-)
  create mode 100644 3d-viewer/3d_canvas/eda_3d_stereo.cpp
  create mode 100644 3d-viewer/3d_canvas/eda_3d_stereo.h
 
 diff --git a/3d-viewer/3d_canvas/eda_3d_canvas.cpp b/3d-viewer/3d_canvas/eda_3d_canvas.cpp
-index 0a6cb2e4..f0435710 100644
+index 0a6cb2e4..fed50153 100644
 --- a/3d-viewer/3d_canvas/eda_3d_canvas.cpp
 +++ b/3d-viewer/3d_canvas/eda_3d_canvas.cpp
 @@ -32,6 +32,7 @@
@@ -74,7 +74,7 @@ index 0a6cb2e4..f0435710 100644
      m_is_currently_painting.clear();
  
      m_3d_render_raytracing = new RENDER_3D_RAYTRACE_GL( this, m_boardAdapter, m_camera );
-@@ -530,14 +536,66 @@ void EDA_3D_CANVAS::DoRePaint()
+@@ -530,14 +536,46 @@ void EDA_3D_CANVAS::DoRePaint()
      const EDA_3D_VIEWER_SETTINGS::RENDER_SETTINGS& renderCfg = m_boardAdapter.m_Cfg->m_Render;
      const bool  stereo = m_has_stereo_buffers && m_3d_render == m_3d_render_opengl
                           && renderCfg.opengl_stereo;
@@ -99,26 +99,6 @@ index 0a6cb2e4..f0435710 100644
 +        m_stereoLimits = EDA_3D_STEREO::ReadDepthLimits( m_stereoWindow, m_stereoWidth,
 +                                                         m_stereoSunk, m_stereoPopped );
 +        fitToLimits = m_stereoLimits == EDA_3D_STEREO::LIMITS::DELIVERED;
-+
-+        const bool waited = GetRunningMicroSecs() - m_stereoSince > 2000000;
-+
-+        if( !fitToLimits && !m_stereoTold
-+                && ( m_stereoLimits != EDA_3D_STEREO::LIMITS::NOT_DELIVERED || waited ) )
-+        {
-+            if( m_stereoLimits == EDA_3D_STEREO::LIMITS::NOT_OFFERED )
-+                warningReporter.Report( _( "3D depth: this desktop offers no depth limits, so both "
-+                                           "eyes show the same picture" ), RPT_SEVERITY_WARNING );
-+            else if( m_stereoLimits == EDA_3D_STEREO::LIMITS::NOT_DELIVERED )
-+                warningReporter.Report( _( "3D depth: the desktop has not delivered the depth "
-+                                           "limits yet, both eyes show the same picture for now" ),
-+                                        RPT_SEVERITY_INFO );
-+            else
-+                warningReporter.Report( _( "3D depth: this window cannot read the desktop's depth "
-+                                           "limits, so both eyes show the same picture" ),
-+                                        RPT_SEVERITY_WARNING );
-+
-+            m_stereoTold = true;
-+        }
 +    }
  
 -    for( int eye = 0; eye < ( stereo ? 2 : 1 ); ++eye )
@@ -145,7 +125,7 @@ index 0a6cb2e4..f0435710 100644
          }
  
          if( m_3d_render )
-@@ -579,6 +637,35 @@ void EDA_3D_CANVAS::DoRePaint()
+@@ -579,6 +617,35 @@ void EDA_3D_CANVAS::DoRePaint()
              }
          }
  
@@ -181,7 +161,45 @@ index 0a6cb2e4..f0435710 100644
          if( m_render_pivot )
          {
              const float scale = glm::min( m_camera.GetZoom(), 1.0f );
-@@ -1283,6 +1370,31 @@ void EDA_3D_CANVAS::OnTimerTimeout_Redraw( wxTimerEvent& aEvent )
+@@ -598,6 +665,37 @@ void EDA_3D_CANVAS::DoRePaint()
+     {
+         m_camera.SetStereoEye( STEREO_EYE::NONE, 0.0f );
+         glDrawBuffer( GL_BACK );
++
++        // Said after the render passes, because a board reload reports its own warning (or an
++        // empty one) into the same info bar; when the frame has a warning of its own, the next
++        // frame says it
++        const bool waited = GetRunningMicroSecs() - m_stereoSince > 2000000;
++
++        if( !fitToLimits && !m_stereoTold
++                && ( m_stereoLimits != EDA_3D_STEREO::LIMITS::NOT_DELIVERED || waited ) )
++        {
++            if( warningReporter.HasMessage() )
++            {
++                Request_refresh();
++            }
++            else
++            {
++                if( m_stereoLimits == EDA_3D_STEREO::LIMITS::NOT_OFFERED )
++                    warningReporter.Report( _( "3D depth: this desktop offers no depth limits, so "
++                                               "both eyes show the same picture" ),
++                                            RPT_SEVERITY_WARNING );
++                else if( m_stereoLimits == EDA_3D_STEREO::LIMITS::NOT_DELIVERED )
++                    warningReporter.Report( _( "3D depth: the desktop has not delivered the depth "
++                                               "limits yet, both eyes show the same picture for now" ),
++                                            RPT_SEVERITY_INFO );
++                else
++                    warningReporter.Report( _( "3D depth: this window cannot read the desktop's "
++                                               "depth limits, so both eyes show the same picture" ),
++                                            RPT_SEVERITY_WARNING );
++
++                m_stereoTold = true;
++            }
++        }
+     }
+ 
+     // "Swaps the double-buffer of this window, making the back-buffer the
+@@ -1283,6 +1381,31 @@ void EDA_3D_CANVAS::OnTimerTimeout_Redraw( wxTimerEvent& aEvent )
  }
  
  
