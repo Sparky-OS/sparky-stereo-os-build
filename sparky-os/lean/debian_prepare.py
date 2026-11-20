@@ -3,7 +3,9 @@
 """Add reproducible Lean Code stages to a disposable, conventional dh source tree.
 
 This is intentionally a checked preparation step, not an unrestricted rules
-rewriter. Custom packaging hooks require their own reviewed integration.
+rewriter. A configure or clean hook the rules file already defines is kept and
+the toolkit's commands join it as a prerequisite (ORDER 768b); any other custom
+packaging hook still requires its own reviewed integration.
 """
 import argparse
 import datetime
@@ -23,6 +25,72 @@ TARGETS = (
     "execute_before_dh_auto_clean",
     "override_dh_builddeb",
 )
+
+HEADER = "\n\n# Distribution-only processing; authored source remains in the source archive.\n"
+PROJECT = "\tPYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.source_tree project $(CURDIR)\n"
+RESTORE = ("\tPYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.source_tree restore $(CURDIR)\n"
+           "\trm -rf .sparky-lc\n")
+BUILDDEB = ("override_dh_builddeb:\n"
+            "\tPYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.debhelper --provenance "
+            "$(CURDIR)/debian/sparky-lean-toolkit/provenance.sh\n")
+# ORDER 768b: a hook the rules file already defines (Debian's glib2.0: `execute_before_dh_auto_configure: cross-tools`) is
+# kept as it is, and the toolkit's commands go into a target of its own that becomes a prerequisite of that hook.
+# GNU make merges the prerequisites of all the rules of one target, in the order the rules appear, and runs them before
+# the target's one recipe; the toolkit's rule is appended last, and `.WAIT` (GNU make 4.4) keeps it after the others under
+# make -j. So the toolkit's commands run after the hook's own prerequisites and before its recipe:
+# - the projection sees the tree as Debian's prerequisites leave it (they prepare inputs: glib's writes debian/cross-tools,
+#   and debian/ is never projected) and runs before configure and compilation read the sources; a recipe of Debian's that
+#   then edits a projected source makes the restore stop with that file's name ("Refusing to overwrite modified source");
+# - the restore runs before Debian's clean recipe and dh_auto_clean, so they see the authored sources; it needs every
+#   projected file as the projection left it, and stops with the file's name if a clean prerequisite of Debian's changed one.
+# dh runs a plain hook target for every package and then never its -arch or -indep form (Debian::Debhelper::SequencerUtil,
+# run_hook_target), so the toolkit's target joins the plain hook only when the rules file defines it; when it defines only
+# the -arch or -indep form, the target joins both forms (the one it lacks is added with nothing else), so arch-only,
+# indep-only and full builds run it. A full build then runs it twice; the second projection finds its record and returns,
+# and the second restore finds no record.
+KEPT = {
+    "execute_before_dh_auto_configure": ("sparky-lean-source-project", PROJECT),
+    "execute_before_dh_auto_clean": ("sparky-lean-source-restore", RESTORE),
+}
+
+
+def defined_targets(rules):
+    """The toolkit's targets the rules file defines: {target: [(line, "" or "-arch" or "-indep", ":" or "::")]}."""
+    found = {}
+    pattern = re.compile("(" + "|".join(map(re.escape, TARGETS)) + r")(-arch|-indep)?\s*(::?)(?![:=])")
+    for number, line in enumerate(rules.splitlines(), 1):
+        m = pattern.match(line)
+        if m:
+            found.setdefault(m.group(1), []).append((number, m.group(2) or "", m.group(3)))
+    return found
+
+
+def kept_hook(target, rules_lines):
+    name, commands = KEPT[target]
+    variants = {variant for _, variant, _ in rules_lines}
+    hooks = [target] if "" in variants else [target + "-arch", target + "-indep"]
+    where = ", ".join(str(number) for number, _, _ in rules_lines)
+    return (f"# debian/rules defines {target} itself (line {where}); that rule stays as it is, and {name}\n"
+            "# runs as its prerequisite: after the rule's own prerequisites, before its recipe.\n"
+            f".PHONY: {name}\n"
+            + "".join(f"{hook}: .WAIT {name}\n" for hook in hooks)
+            + f"{name}:\n" + commands)
+
+
+def lean_rules(rules):
+    """The text appended to the rules file, or ValueError naming the file and the line of a target it cannot keep."""
+    found = defined_targets(rules)
+    for number, variant, separator in found.get("override_dh_builddeb", ()):
+        raise ValueError(f"debian/rules:{number}: Existing override_dh_builddeb: preserve and integrate its behavior explicitly")
+    for target in KEPT:
+        for number, variant, separator in found.get(target, ()):
+            if separator == "::":
+                raise ValueError(f"debian/rules:{number}: {target}{variant} is a double-colon rule, which a prerequisite "
+                                 "rule cannot join; integrate it explicitly")
+    sections = []
+    for target, (name, commands) in KEPT.items():
+        sections.append(kept_hook(target, found[target]) if target in found else f"{target}:\n{commands}")
+    return HEADER + "\n".join(sections) + "\n" + BUILDDEB
 
 
 def add_build_dependencies(control, dependencies):
@@ -65,9 +133,7 @@ def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=(), 
     # the dh call may follow one make variable (Debian's rustc: `$(SYSTEM_WORKAROUNDS) dh $@ --parallel`), nothing else
     if not re.search(r"^\s*(?:\$\([A-Z][A-Z0-9_]*\)[ \t]+)?dh\s+[\"']?\$(?:@|\{@\}|\(@\))(?=[\"'\s]|$)", rules, re.M):
         raise ValueError("Not a conventional dh rules file; integrate its builder explicitly")
-    for target in TARGETS:
-        if re.search(r"^" + re.escape(target) + r"(?:-arch|-indep)?\s*:", rules, re.M):
-            raise ValueError(f"Existing {target}: preserve and integrate its behavior explicitly")
+    appended = lean_rules(rules)
     if "sparky-lean-toolkit" in rules:
         raise ValueError("Source is already integrated")
     old = subprocess.check_output(
@@ -143,19 +209,7 @@ def prepare(root, version, toolkit, build_dependencies=(), preserve_sources=(), 
         "Apply verified native Lean Code before compilation and qualified lc1 "
         "payload assembly; retain exact authored source and HR companions.",
     ], cwd=root, check=True)
-    rules_path.write_text(rules.rstrip() + """
-
-# Distribution-only processing; authored source remains in the source archive.
-execute_before_dh_auto_configure:
-\tPYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.source_tree project $(CURDIR)
-
-execute_before_dh_auto_clean:
-\tPYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.source_tree restore $(CURDIR)
-\trm -rf .sparky-lc
-
-override_dh_builddeb:
-\tPYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.debhelper --provenance $(CURDIR)/debian/sparky-lean-toolkit/provenance.sh
-""")
+    rules_path.write_text(rules.rstrip() + appended)
     print(f"Prepared {root.name}: {old} -> {version}; native and payload stages retained in source")
 
 
