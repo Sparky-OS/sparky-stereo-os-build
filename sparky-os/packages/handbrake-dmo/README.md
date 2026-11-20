@@ -8,11 +8,12 @@ Contrib archives are neither fetched nor linked.
 
 The fork adapts Debian 1.11.2+ds1's shared-library patches and keeps the build
 switches for FDK-AAC, Dolby Vision, NUMA, NVENC, NVDEC, VCE and QSV.
-The required-encoder gate must pass before a package is built: the current
-edition FFmpeg lacks libfdk_aac, while installed HandBrake offers fdk_aac and
-fdk_haac. Keeping those choices remains unresolved; enabling the HandBrake
-configure flag alone does not provide the FFmpeg encoder. Do not ship a package
-that silently drops these options. Debian's ambient-viewing and Dolby
+The edition's FFmpeg is published without libfdk_aac (FFmpeg's LICENSE.md calls such a GPL build unredistributable);
+`sparky-stereo-ffmpeg-fdk` rebuilds it with the profile `pkg.ffmpeg-dmo.fdk` on the person's computer.
+So `check-required-encoders.py` runs in the rig against the FFmpeg built with that profile, not in the package build:
+with it, HandBrake offers fdk_aac and fdk_haac as deb-multimedia's does.
+Enabling HandBrake's FDK configure switch alone never provides the encoders; they come through libavcodec.
+Debian's ambient-viewing and Dolby
 Vision removal patches are omitted: the owning shared libraries carry those APIs.
 The three deb-multimedia binary names and epoch are retained.
 
