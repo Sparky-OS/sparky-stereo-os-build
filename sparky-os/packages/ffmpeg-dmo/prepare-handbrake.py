@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Prepare FFmpeg +16 from the published +15 source with HandBrake's fixes."""
+"""Prepare FFmpeg +17 from the published +15 source: HandBrake's fixes (+16), and Build-Depends without
+libnvidia-glvkspirv (+17), so the package builds where the edition's NVIDIA pin gives that library no candidate."""
 import os
 from pathlib import Path
 import shutil
@@ -33,6 +34,19 @@ subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', '1
                 '--distribution', 'UNRELEASED',
                 'Import the HandBrake 1.11.2 FFmpeg fixes into the shared edition libraries; build against x265 ABI 30219.'],
                cwd=source, env=env, check=True)
-subprocess.run([sys.executable, '-m', 'lean.debian_prepare', str(source), '10:9.0.2-dmo1+stereo3d16+lc1',
+nvidia = 'libchromaprint-dev <!pkg.ffmpeg.stage1>, libnvidia-glvkspirv [amd64 i386], clang [amd64 arm64]'
+text = control.read_text()
+assert text.count(nvidia) == 1, 'libnvidia-glvkspirv is not where +16 has it'
+control.write_text(text.replace(nvidia, 'libchromaprint-dev <!pkg.ffmpeg.stage1>, clang [amd64 arm64]'))
+subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', '10:9.0.2-dmo1+stereo3d17',
+                '--distribution', 'UNRELEASED',
+                'Drop libnvidia-glvkspirv [amd64 i386] from Build-Depends, inherited from deb-multimedia since its 7.x '
+                'sources: nothing in the source names it (no configure test, rule or test), its package ships only '
+                "NVIDIA's private versioned library, and the edition's NVIDIA pin gives it no candidate on a machine "
+                'without a driver lock, so sparky-stereo-ffmpeg-fdk stopped at build-dep there. Built without it, every '
+                'binary package equals +16 apart from the version: file lists, Depends, NEEDED, exported symbols, '
+                '-buildconf and the lists of encoders, decoders, filters, hwaccels, bitstream filters and protocols.'],
+               cwd=source, env=env, check=True)
+subprocess.run([sys.executable, '-m', 'lean.debian_prepare', str(source), '10:9.0.2-dmo1+stereo3d17+lc1',
                 '--toolkit', str(toolkit), '--preserve-plan', str(plan)], env=env, check=True)
 reproducible.normalize_tree(source, stamp)
