@@ -134,7 +134,9 @@ def findings(rel, text):
     return problems, count
 
 
-# A shell's own ulimit inside the container lowers what --ulimit core=1 gave; runuser and bubblewrap keep it.
+# A shell's own core ulimit inside the container: bash counts it in 1024-byte blocks, so it can only lower the 1 byte
+# that --ulimit core=1 gives to 0 (runuser and bubblewrap keep that 0, and the kernel's piped core helper runs again),
+# or fail raising it to a block. The limit is docker run's alone.
 ULIMIT_CORE = re.compile(r'\bulimit\s+-[A-Za-z]*c[A-Za-z]*\s+([^\s;&|)\x27\"]+)')
 
 
@@ -144,9 +146,8 @@ def ulimit_findings(rel, text):
         if line.lstrip().startswith('#'):
             continue
         for value in ULIMIT_CORE.findall(line):
-            if value != '1':
-                problems.append(f'{rel}:{number}: ulimit sets the core limit to {value}; only 1 stops the piped '
-                                f'core helper (ulimit -c 1)')
+            problems.append(f'{rel}:{number}: ulimit sets the core limit ({value}); bash counts 1024-byte blocks, so it '
+                            f'lowers --ulimit core=1 to 0 or fails: leave the core limit to docker run --ulimit core=1')
     return problems
 
 

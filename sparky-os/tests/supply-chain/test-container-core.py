@@ -44,15 +44,17 @@ class CoreLimits(unittest.TestCase):
         self.assertEqual(self.check('# docker run img\ngrep "docker run" file', 0), 0)
 
     def test_shell_ulimit_inside_the_container(self):
-        # Measured (ORDER 742): docker run --ulimit core=1 gives 1; a recipe's own zero core ulimit gives 0,
-        # and runuser and bubblewrap keep 0, so a crash in the gate reached the host's crash list.
+        # Measured (ORDER 742): docker run --ulimit core=1 gives 1 byte; a recipe's own `ulimit -c 0` gives 0, which
+        # runuser and bubblewrap keep, so a crash in the gate reached the host's crash list; `ulimit -c 1` asks for
+        # 1024 bytes and fails (EPERM). Any core ulimit in a shell is a finding.
         # The cases are assembled so that this file is not a finding of the tree check itself.
         def ulimit(text):
             return corecheck.ulimit_findings('case.sh', text)
-        zero, soft_zero, unlimited = 'ulimit -c' + ' 0', 'ulimit -Sc' + ' 0', 'ulimit -c' + ' unlimited'
+        zero, one, soft_zero = 'ulimit -c' + ' 0', 'ulimit -c' + ' 1', 'ulimit -Sc' + ' 0'
         self.assertEqual(len(ulimit(f"bash -c 'set -eu; {zero}; runuser -u builder -- make'")), 1)
-        self.assertEqual(len(ulimit(f'{soft_zero}\n{unlimited}')), 2)
-        self.assertEqual(ulimit("bash -c 'set -eu; ulimit -c 1; runuser -u builder -- make'"), [])
+        self.assertEqual(len(ulimit(f"bash -c 'set -eu; {one}; runuser -u builder -- make'")), 1)
+        self.assertEqual(len(ulimit(f'{soft_zero}\n{one}')), 2)
+        self.assertEqual(ulimit("bash -c 'set -eu; runuser -u builder -- make'"), [])
         self.assertEqual(ulimit(f'# {zero} was the old rule'), [])
         self.assertEqual(ulimit('ulimit -n 4096'), [])
 

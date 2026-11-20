@@ -9,7 +9,6 @@
 # Usage: build-in-container.sh DSC_NAME
 set -euo pipefail
 trap 'chown -R 1000:1000 /work' EXIT
-ulimit -c 1
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 DSC=$1

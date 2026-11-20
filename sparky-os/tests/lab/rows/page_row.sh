@@ -6,7 +6,6 @@
 # SIDE ours: the engine (sparky-stereo-audio detect --write) has made its choices first, as at install time. SIDE stock: Debian's
 # plasma-pa, no engine. Exit codes are the judge's: 0 holds, 1 does not, 77 the session could not start, 2 a crash.
 set -u
-ulimit -c 1
 SIDE=$1 STEPS=${2:-page-steps.json}
 mkdir -p /run/sa631 && chmod 777 /run/sa631
 export SPARKY_STEREO_AUDIO_PROC=/opt/sa631/proc-asound

@@ -25,7 +25,6 @@ docker run --rm --name "${SPARKY_CONTAINER_PREFIX:-os16}-$NAME-build" --platform
  --mount "type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/host-ca.crt,readonly" \
  --mount "type=bind,src=$OS/../tools/https-only-apt.sh,dst=/run/https-only-apt.sh,readonly" "$IMAGE" bash -c '
 set -euo pipefail
-ulimit -c 1
 trap '\''chown -R "$OWNER" /work'\'' EXIT
 sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com DEB_BUILD_OPTIONS=parallel=4

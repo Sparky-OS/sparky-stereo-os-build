@@ -25,7 +25,6 @@ if [ "${GL_STEREO_TEST_SCOPE:-full}" = output ]; then
     ./tests/run-output.sh
     gcc -shared -fPIC $(pkg-config --cflags stereo-declare) -o out/legacy-declaration.so \
         tests/legacy-declaration.c $(pkg-config --libs stereo-declare)
-    ulimit -c 1
     rc=0
     env LD_PRELOAD="$PWD/libgl-stereo.so:$PWD/out/legacy-declaration.so" \
         GL_STEREO=1 TEST_SUPPORT_VERSION=2 ./tests/quad visual > out/old-helper-rejected.log 2>&1 || rc=$?
