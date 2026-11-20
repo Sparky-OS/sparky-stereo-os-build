@@ -1,0 +1,117 @@
+From f049bb2903cdd270ab550af31243149b1109ee55 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 19 Nov 2026 23:22:18 -0300
+Subject: [PATCH] autotests: Require stereo composition for a 2D source with
+ stereo replicas
+
+Test physical stereo, anaglyph and native split-eye targets, with a plain replica as the negative control. The three stereo rows fail on +stereo3d60.
+
+Assisted-by: Codex
+---
+ autotests/integration/outputchanges_test.cpp | 76 ++++++++++++++++++++
+ 1 file changed, 76 insertions(+)
+
+diff --git a/autotests/integration/outputchanges_test.cpp b/autotests/integration/outputchanges_test.cpp
+index 7f2c026..b617c51 100644
+--- a/autotests/integration/outputchanges_test.cpp
++++ b/autotests/integration/outputchanges_test.cpp
+@@ -30,6 +30,7 @@
+ #include <QJsonArray>
+ #include <QJsonDocument>
+ #include <QJsonObject>
++#include <QScopeGuard>
+ #include <ranges>
+ 
+ using namespace std::chrono_literals;
+@@ -156,6 +157,8 @@ private Q_SLOTS:
+ 
+     void testMirroring_data();
+     void testMirroring();
++    void testMirroringStereoComposition_data();
++    void testMirroringStereoComposition();
+ 
+     void testAutoBrightness();
+     void testPerOutputDesktopsOutputToggle();
+@@ -2717,6 +2720,79 @@ void OutputChangesTest::testMirroring()
+     input()->removeInputDevice(&lidSwitch);
+ }
+ 
++void OutputChangesTest::testMirroringStereoComposition_data()
++{
++    QTest::addColumn<int>("targetLayout");
++    QTest::addColumn<bool>("phone");
++    QTest::addColumn<bool>("stereo");
++
++    QTest::newRow("plain replica") << 0 << false << false;
++    QTest::newRow("3D replica") << int(OutputModeline::Flag::Stereo3DSideBySideFull) << false << true;
++    QTest::newRow("anaglyph replica") << int(OutputModeline::Flag::Stereo3DAnaglyphModern | OutputModeline::Flag::VirtualStereo) << false << true;
++    QTest::newRow("native phone replica") << 0 << true << true;
++}
++
++void OutputChangesTest::testMirroringStereoComposition()
++{
++    QFETCH(int, targetLayout);
++    QFETCH(bool, phone);
++    QFETCH(bool, stereo);
++
++    const QSize size(1920, 1080);
++    const OutputModeline plain(size, 60000, OutputModeline::Flag::Preferred);
++    const OutputModeline targetMode(size, 60000, OutputModeline::Flags::fromInt(targetLayout));
++    Test::setOutputConfig({
++        Test::OutputInfo{.geometry = Rect(QPoint(), size), .modes = {plain}},
++        Test::OutputInfo{.geometry = Rect(QPoint(1920, 0), size), .modes = {plain, targetMode}},
++    });
++    auto backend = kwinApp()->outputBackend();
++    BackendOutput *source = backend->outputs().front();
++    BackendOutput *target = backend->outputs().back();
++    if (phone) {
++        target = backend->createVirtualOutput(VirtualOutputProperties{
++            .name = QStringLiteral("replica-phone"),
++            .description = QStringLiteral("Native split-eye replica"),
++            .pixelSize = QSize(3840, 1080),
++            .splitEye = true,
++            .networked = true,
++        });
++        QVERIFY(target);
++    }
++    const auto removePhone = qScopeGuard([&] {
++        if (phone) {
++            backend->removeVirtualOutput(target);
++        }
++    });
++    if (!phone && targetLayout) {
++        OutputConfiguration config;
++        config.changeSet(target)->currentMode = targetMode;
++        QCOMPARE(workspace()->applyOutputConfiguration(config), OutputConfigurationError::None);
++    }
++    LogicalOutput *logicalSource = workspace()->findOutput(source);
++    QVERIFY(logicalSource);
++    QVERIFY(!logicalSource->hasStereoEyes());
++    QVERIFY(!source->hasStereoEyes());
++    QCOMPARE(target->hasStereoEyes(), stereo);
++
++    {
++        OutputConfiguration config;
++        config.changeSet(target)->replicationSource = source->uuid();
++        QCOMPARE(workspace()->applyOutputConfiguration(config), OutputConfigurationError::None);
++    }
++    QCOMPARE(workspace()->findOutput(target), logicalSource);
++    QCOMPARE(logicalSource->hasStereoEyes(), stereo);
++    QVERIFY(!source->hasStereoEyes());
++    QCOMPARE(source->currentMode()->flags(), plain.flags());
++
++    {
++        OutputConfiguration config;
++        config.changeSet(target)->replicationSource = QString();
++        QCOMPARE(workspace()->applyOutputConfiguration(config), OutputConfigurationError::None);
++    }
++    QVERIFY(!logicalSource->hasStereoEyes());
++    QCOMPARE(workspace()->findOutput(target)->hasStereoEyes(), stereo);
++}
++
+ #define COMPARE_RANGE(expression, value, uncertainty) \
+     QCOMPARE_GE(expression, value - uncertainty);     \
+     QCOMPARE_LE(expression, value + uncertainty);
+-- 
+2.53.0
+

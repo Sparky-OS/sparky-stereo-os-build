@@ -1,0 +1,135 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] Stereo composition for replicas of a 2D source (ORDER 763)
+
+diff --git a/kcm/output_model.cpp b/kcm/output_model.cpp
+index 51ff837..dd7cd6d 100644
+--- a/kcm/output_model.cpp
++++ b/kcm/output_model.cpp
+@@ -367,6 +367,8 @@ QVariant OutputModel::data(const QModelIndex &index, int role) const
+ #if HAVE_KSCREEN_STEREO_SWAP_EYES
+     case StereoSwapEyesRole:
+         return output->stereoSwapEyes();
++    case StereoCompositionActiveRole:
++        return stereoCompositionActive(output);
+     case StereoModesRole: {
+         const auto modes = output->modes();
+         return std::ranges::any_of(modes, [](const KScreen::ModePtr &mode) {
+@@ -815,6 +817,7 @@ QHash<int, QByteArray> OutputModel::roleNames() const
+ #if HAVE_KSCREEN_STEREO_SWAP_EYES
+     roles[StereoSwapEyesRole] = "stereoSwapEyes";
+     roles[StereoModesRole] = "stereoModes";
++    roles[StereoCompositionActiveRole] = "stereoCompositionActive";
+ #endif
+     roles[AbmLevelRole] = "abmLevel";
+     return roles;
+@@ -847,6 +850,15 @@ void OutputModel::add(const KScreen::OutputPtr &output)
+ 
+     endInsertRows();
+ 
++#if HAVE_KSCREEN_STEREO_SWAP_EYES
++    connect(output.data(), &KScreen::Output::currentModeIdChanged, this, &OutputModel::stereoCompositionChanged);
++    connect(output.data(), &KScreen::Output::isEnabledChanged, this, &OutputModel::stereoCompositionChanged);
++    connect(output.data(), &KScreen::Output::replicationSourceChanged, this, &OutputModel::stereoCompositionChanged);
++    connect(output.data(), &KScreen::Output::stereoPairChanged, this, &OutputModel::stereoCompositionChanged);
++    connect(output.data(), &KScreen::Output::modesChanged, this, &OutputModel::stereoCompositionChanged);
++    stereoCompositionChanged();
++#endif
++
+     connect(output.data(), &KScreen::Output::modesChanged, this, [this, output]() {
+         rolesChanged(output->id(),
+                      {ResolutionsRole,
+@@ -884,6 +896,9 @@ void OutputModel::remove(int outputId)
+         beginRemoveRows(QModelIndex(), index, index);
+         m_outputs.erase(it);
+         endRemoveRows();
++#if HAVE_KSCREEN_STEREO_SWAP_EYES
++        stereoCompositionChanged();
++#endif
+     }
+ }
+ 
+@@ -1681,6 +1696,30 @@ bool OutputModel::shouldShowConnector(const KScreen::OutputPtr &output) const
+     });
+ }
+ 
++#if HAVE_KSCREEN_STEREO_SWAP_EYES
++bool OutputModel::stereoCompositionActive(const KScreen::OutputPtr &output) const
++{
++    if (!output->isEnabled()) {
++        return false;
++    }
++    const int sourceId = output->replicationSource() ? output->replicationSource() : output->id();
++    return std::ranges::any_of(m_outputs, [sourceId](const Output &entry) {
++        const auto &peer = entry.ptr;
++        const int peerSource = peer->replicationSource() ? peer->replicationSource() : peer->id();
++        return peer->isEnabled() && peerSource == sourceId
++            && ((peer->currentMode() && peer->currentMode()->stereo3D() != KScreen::Mode::Stereo3D::None)
++                || (!peer->stereoPairPartner().isEmpty() && peer->stereoPairMode() != KScreen::Output::StereoPairMode::None));
++    });
++}
++
++void OutputModel::stereoCompositionChanged()
++{
++    if (!m_outputs.isEmpty()) {
++        Q_EMIT dataChanged(index(0, 0), index(rowCount() - 1, 0), {StereoCompositionActiveRole});
++    }
++}
++#endif
++
+ void OutputModel::rolesChanged(int outputId, const QList<int> &roles)
+ {
+     const auto index = indexForOutputId(outputId);
+diff --git a/kcm/output_model.h b/kcm/output_model.h
+index 204646d..8ab5b94 100644
+--- a/kcm/output_model.h
++++ b/kcm/output_model.h
+@@ -91,6 +91,8 @@ public:
+         StereoSwapEyesRole,
+         /** The output lists a 3D mode (an HDMI 3D mode or a virtual twin), so its eye order has a meaning. */
+         StereoModesRole,
++        /** The selected replica group composes two views for this output. */
++        StereoCompositionActiveRole,
+ #endif
+         AbmLevelRole,
+         /** The output is mirrored before it is turned: the flipped transforms of Wayland's wl_output. */
+@@ -184,6 +186,10 @@ private:
+     };
+ 
+     void rolesChanged(int outputId, const QList<int> &roles);
++#if HAVE_KSCREEN_STEREO_SWAP_EYES
++    bool stereoCompositionActive(const KScreen::OutputPtr &output) const;
++    void stereoCompositionChanged();
++#endif
+     QModelIndex indexForOutputId(int outputId) const;
+ 
+     void resetPosition(Output &output);
+diff --git a/kcm/ui/OutputPanel.qml b/kcm/ui/OutputPanel.qml
+index 6ba0d2c..9f39bf0 100644
+--- a/kcm/ui/OutputPanel.qml
++++ b/kcm/ui/OutputPanel.qml
+@@ -144,20 +144,22 @@ Kirigami.FormLayout {
+         }
+     }
+ 
+-    // The output's eye order, the one definitive swap: offered where the output lists a 3D mode, never on a 2D one
+     Loader {
+-        active: kcm.stereoSwapEyesSupported && (element.capabilities & KScreen.Output.Capability.StereoSwapEyes) && element.stereoModes
++        active: kcm.stereoSwapEyesSupported && (element.capabilities & KScreen.Output.Capability.StereoSwapEyes)
+         visible: active
+         sourceComponent: ColumnLayout {
+             QQC2.CheckBox {
+                 text: i18n("Swap left and right eyes")
++                enabled: element.stereoCompositionActive
+                 checked: element.stereoSwapEyes
+                 onToggled: element.stereoSwapEyes = checked
+             }
+             QQC2.Label {
+                 Layout.maximumWidth: Kirigami.Units.gridUnit * 32
+                 wrapMode: Text.WordWrap
+-                text: i18n("For a display or glasses that show the eyes reversed: every 3D mode of this output sends the right eye where the left one goes and the left eye where the right one goes. A wrongly marked file is corrected in the program's own 3D menu instead.")
++                text: element.stereoCompositionActive
++                    ? i18nc("@info Explanation of the per-screen eye selector", "Exchange the views on this screen. A 2D screen shows the right eye of the shared 3D desktop when this is enabled. Correct a wrongly marked file in the program's own 3D menu.")
++                    : i18nc("@info Reason why the eye selector is disabled", "3D is not active for this screen.")
+             }
+         }
+     }
