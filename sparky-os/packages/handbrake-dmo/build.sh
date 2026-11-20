@@ -13,7 +13,7 @@ docker run --name "${SPARKY_CONTAINER_PREFIX:-handbrake}-handbrake-shared-packag
     "${SPARKY_PROV_ARGS[@]}" -e DEB_BUILD_OPTIONS=parallel=4 \
     -e DEBFULLNAME='Daniel Ramos (Capitain Jack)' -e DEBEMAIL=Capitain_Jack@yahoo.com \
     -e SPARKY_LC_ARCHIVE_CONFIG=/recipe/archive-sources.json -e SPARKY_LC_SCRATCH=/work/link-handbrake \
-    -e SPARKY_LC_SIBLINGS_FILE=/work/siblings.txt -e SPARKY_LC_PREVIOUS_DIR=/work/previous \
+    -e SPARKY_LC_SIBLINGS_FILE=/work/siblings-handbrake.txt -e SPARKY_LC_PREVIOUS_DIR=/work/previous-handbrake \
     --mount "type=bind,src=$WORK,dst=/work" --mount "type=bind,src=$REPO,dst=/repo,readonly" \
     --mount "type=bind,src=$HERE,dst=/recipe,readonly" \
     --mount type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/host-ca.crt,readonly \
