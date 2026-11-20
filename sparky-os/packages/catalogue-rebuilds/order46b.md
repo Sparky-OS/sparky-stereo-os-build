@@ -17,6 +17,19 @@ keys with the receiving staging tree first and retain any already equivalent
 entries. For KWin the KCM JSON also supplies the generated Settings desktop
 entry.
 
+The Throw and Catch names also apply to translations already in the published
+source. Append `krdc-throw-catch-names.patch`, `kwin-throw-catch-names.patch`
+and `krdp-throw-catch-names.patch` to the corresponding source's series after
+its ORDER 46b patch. For KRdp apply `krdp-packaging-throw-catch-names.patch`
+alongside the earlier packaging patch before producing the .dsc. These
+supplemental patches update the eight locales already in the source; the
+original catalogue patches provide the Spanish keys. Compare the exact values
+and replay against the receiving version using its signed source descriptor.
+The published-base replay does not qualify the later KRdp catalogue context.
+
+The Calamares branding package builds its updated slide catalogues from the
+TS files checked in beside `slides-20261016.json`.
+
 For the browser, apply the `.packaging.patch` to the source root while
 preparing `debian/`, before generating the .dsc. This localizes the packaged
 desktop and AppStream files that the browser recipe already installs.
