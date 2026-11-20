@@ -1,0 +1,489 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 20 Nov 2026 05:32:11 -0300
+Subject: [PATCH 5/7] wxGUI/nviz: the stereo separation is the person's depth
+ limits
+
+The two eyes are as far apart as the person's depth limits allow, and no
+farther: the desktop gives the 3D view's window the limits set once for the
+screen (Stereo KWin's 3D Depth settings, read through libstereo-declare in
+the pixels of the view), a first pass from the camera between the eyes reads
+how near and how far the pixels of the scene are, and the separation is the
+largest under which every one of them stays inside the limits.  The limits
+are read again four times a second while the view shows 3D.  Without limits
+the eyes are the same picture and the console says why, once.
+
+The eye separation setting is gone.  The 3D view's options are "Enable 3D",
+on unless the person turns it off, and a button to the display settings,
+where each screen's 3D mode, output and eye order are chosen.  On a screen
+with no stereo visual the view stays one picture without a word; it is said
+only when the person ticks Enable 3D there.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ gui/wxpython/core/settings.py        |   5 +-
+ gui/wxpython/gui_core/preferences.py |  71 +++++++++-------
+ gui/wxpython/nviz/mapwindow.py       | 121 ++++++++++++++++++++++-----
+ gui/wxpython/nviz/stereo3d.py        |  97 +++++++++++++++++++++
+ gui/wxpython/nviz/wxnviz.py          |  28 ++++++-
+ 5 files changed, 265 insertions(+), 57 deletions(-)
+ create mode 100644 gui/wxpython/nviz/stereo3d.py
+
+diff --git a/gui/wxpython/core/settings.py b/gui/wxpython/core/settings.py
+index 206bef8..52128d3 100644
+--- a/gui/wxpython/core/settings.py
++++ b/gui/wxpython/core/settings.py
+@@ -229,10 +229,7 @@ class Settings:
+                     "value": 16,
+                 },
+                 "nvizStereo": {
+-                    "enabled": False,
+-                },
+-                "nvizEyeSeparation": {
+-                    "value": 3,
++                    "enabled": True,
+                 },
+             },
+             #
+diff --git a/gui/wxpython/gui_core/preferences.py b/gui/wxpython/gui_core/preferences.py
+index 7722a6f..4b81301 100644
+--- a/gui/wxpython/gui_core/preferences.py
++++ b/gui/wxpython/gui_core/preferences.py
+@@ -48,7 +48,7 @@ import grass.script as gs
+ from grass.exceptions import OpenError
+ 
+ from core import globalvar
+-from core.gcmd import GError
++from core.gcmd import GError, GMessage
+ from core.utils import ListOfMapsets, GetColorTables, ReadEpsgCodes
+ from core.settings import UserSettings
+ from core.globalvar import CheckWxVersion
+@@ -865,6 +865,40 @@ class PreferencesDialog(PreferencesBaseDialog):
+ 
+         return panel
+ 
++    def OnEnable3D(self, event):
++        """A screen in a 3D mode offers the 3D view a stereo visual; on any
++        other screen the view stays one picture without a word, unless the
++        person turns 3D on themselves"""
++        event.Skip()
++        if not event.IsChecked():
++            return
++        from wx import glcanvas
++
++        attribs = [
++            glcanvas.WX_GL_RGBA,
++            glcanvas.WX_GL_DOUBLEBUFFER,
++            glcanvas.WX_GL_DEPTH_SIZE,
++            16,
++            glcanvas.WX_GL_STEREO,
++            0,
++        ]
++        if not glcanvas.GLCanvas.IsDisplaySupported(attribs):
++            GMessage(
++                parent=self,
++                message=_(
++                    "This screen offers no quad buffer, so the 3D view stays 2D. "
++                    "Stereo KWin offers one only on a screen in a 3D mode."
++                ),
++            )
++
++    def OnDisplaySettings(self, event):
++        """Open the display settings, where each screen's 3D mode, output and
++        eye order are chosen"""
++        from nviz import stereo3d
++
++        if not stereo3d.OpenDisplaySettings():
++            GError(parent=self, message=_("Display Settings could not be opened."))
++
+     def _createDisplayPage(self, notebook):
+         """Create notebook page for display settings"""
+ 
+@@ -1180,45 +1214,22 @@ class PreferencesDialog(PreferencesBaseDialog):
+             nvizStereo = wx.CheckBox(
+                 parent=panel,
+                 id=wx.ID_ANY,
+-                label=_(
+-                    "3D view in stereo, left and right eye (when the display offers it, "
+-                    "applies to 3D views opened afterwards)"
+-                ),
++                label=_("Enable 3D (applies to 3D views opened afterwards)"),
+                 name="IsChecked",
+             )
+             nvizStereo.SetValue(
+                 self.settings.Get(group="display", key="nvizStereo", subkey="enabled")
+             )
++            nvizStereo.Bind(wx.EVT_CHECKBOX, self.OnEnable3D)
+             self.winId["display:nvizStereo:enabled"] = nvizStereo.GetId()
+             gridSizer.Add(nvizStereo, pos=(row, 0), span=(1, 2))
+ 
+             row += 1
+-            gridSizer.Add(
+-                StaticText(
+-                    parent=panel,
+-                    id=wx.ID_ANY,
+-                    label=_(
+-                        "3D view eye separation in percent of the distance "
+-                        "to the focus point:"
+-                    ),
+-                ),
+-                flag=wx.ALIGN_LEFT | wx.ALIGN_CENTER_VERTICAL,
+-                pos=(row, 0),
+-            )
+-            value = self.settings.Get(
+-                group="display", key="nvizEyeSeparation", subkey="value"
+-            )
+-            textCtrl = TextCtrl(
+-                parent=panel,
+-                id=wx.ID_ANY,
+-                value=str(value),
+-                validator=IntegerValidator(),
+-                name="GetValue",
+-            )
+-            self.winId["display:nvizEyeSeparation:value"] = textCtrl.GetId()
+-            gridSizer.Add(
+-                textCtrl, flag=wx.ALIGN_RIGHT | wx.ALIGN_CENTER_VERTICAL, pos=(row, 1)
++            displaySettings = Button(
++                parent=panel, id=wx.ID_ANY, label=_("3D display settings...")
+             )
++            displaySettings.Bind(wx.EVT_BUTTON, self.OnDisplaySettings)
++            gridSizer.Add(displaySettings, pos=(row, 0), span=(1, 2))
+ 
+             gridSizer.AddGrowableCol(0)
+             sizer.Add(gridSizer, proportion=1, flag=wx.ALL | wx.EXPAND, border=5)
+diff --git a/gui/wxpython/nviz/mapwindow.py b/gui/wxpython/nviz/mapwindow.py
+index a5b3483..294194f 100644
+--- a/gui/wxpython/nviz/mapwindow.py
++++ b/gui/wxpython/nviz/mapwindow.py
+@@ -41,7 +41,7 @@ from core.globalvar import CheckWxVersion
+ from core.settings import UserSettings
+ from core.utils import str2rgb
+ from mapwin.base import MapWindowBase
+-from nviz import wxnviz
++from nviz import stereo3d, wxnviz
+ from nviz.animation import Animation
+ from nviz.workspace import NvizSettings
+ from wx import glcanvas
+@@ -159,6 +159,13 @@ class GLWindow(MapWindowBase, glcanvas.GLCanvas):
+         self.init = False
+         self.initView = False
+         self.stereo = False
++        # the person's depth limits (see nviz.stereo3d), read at every draw and
++        # four times a second, and whether the person was told that none came
++        self.stereoWindow = (None, 0)
++        self.stereoLimits = (stereo3d.NOT_DELIVERED, 0.0, 0.0)
++        self.stereoWidth = 0
++        self.stereoSince = 0.0
++        self.stereoTold = False
+         self.context: glcanvas.GLContext | None = None
+         if CheckWxVersion(version=[2, 9]):
+             self.context = glcanvas.GLContext(self)
+@@ -241,6 +248,7 @@ class GLWindow(MapWindowBase, glcanvas.GLCanvas):
+         self.timerFly = wx.Timer(self)
+         # timer for animations
+         self.timerAnim = wx.Timer(self)
++        self.timerStereo = wx.Timer(self)
+         self.animation = Animation(mapWindow=self, timer=self.timerAnim)
+ 
+         self.Bind(wx.EVT_ERASE_BACKGROUND, self.OnEraseBackground)
+@@ -255,6 +263,7 @@ class GLWindow(MapWindowBase, glcanvas.GLCanvas):
+ 
+         self.Bind(wx.EVT_TIMER, self.OnTimerAnim, self.timerAnim)
+         self.Bind(wx.EVT_TIMER, self.OnTimerFly, self.timerFly)
++        self.Bind(wx.EVT_TIMER, self.OnTimerStereo, self.timerStereo)
+         self.Bind(wx.EVT_KEY_DOWN, self.OnKeyDown)
+         self.Bind(wx.EVT_KEY_UP, self.OnKeyUp)
+ 
+@@ -473,6 +482,9 @@ class GLWindow(MapWindowBase, glcanvas.GLCanvas):
+             self._display.InitView()
+             self.initView = True
+             self.stereo = self.stereoRequested and self._display.IsStereo()
++            if self.stereo:
++                self.stereoSince = time.monotonic()
++                self.timerStereo.Start(250)
+ 
+         self.LoadDataLayers()
+         self.UnloadDataLayers()
+@@ -1248,6 +1260,69 @@ class GLWindow(MapWindowBase, glcanvas.GLCanvas):
+         if event.refresh:
+             self.Refresh(False)
+ 
++    def _drawScene(self) -> None:
++        """Draw the data layers into the current eye's buffer"""
++        if self.render["quick"] is False:
++            self._display.Draw(False, -1)
++        elif self.render["quick"] is True:
++            # quick
++            mode = wxnviz.DRAW_QUICK_SURFACE | wxnviz.DRAW_QUICK_VOLUME
++            if self.render["vlines"]:
++                mode |= wxnviz.DRAW_QUICK_VLINES
++            if self.render["vpoints"]:
++                mode |= wxnviz.DRAW_QUICK_VPOINTS
++            self._display.Draw(True, mode)
++        # None -> reuse last rendered image: TODO
++
++    def _readStereoLimits(self) -> tuple[int, float, float]:
++        """Read the person's depth limits for the window the 3D view draws to
++        and say once why there are none"""
++        self.stereoWindow = stereo3d.CurrentWindow()
++        self.stereoWidth = self.GetClientSize()[0] * self.GetContentScaleFactor()
++        self.stereoLimits = stereo3d.ReadDepthLimits(
++            self.stereoWindow[0], self.stereoWindow[1], self.stereoWidth
++        )
++        state = self.stereoLimits[0]
++        waited = time.monotonic() - self.stereoSince > 2.0
++        if (
++            state != stereo3d.DELIVERED
++            and not self.stereoTold
++            and (state != stereo3d.NOT_DELIVERED or waited)
++        ):
++            if state == stereo3d.NOT_OFFERED:
++                message = _(
++                    "3D depth: this desktop offers no depth limits, so both eyes show "
++                    "the same picture"
++                )
++            elif state == stereo3d.NOT_DELIVERED:
++                message = _(
++                    "3D depth: the desktop has not delivered the depth limits yet, both "
++                    "eyes show the same picture for now"
++                )
++            else:
++                message = _(
++                    "3D depth: this window cannot read the desktop's depth limits, so "
++                    "both eyes show the same picture"
++                )
++            self._giface.WriteWarning(message)
++            self.stereoTold = True
++        return self.stereoLimits
++
++    def OnTimerStereo(self, event) -> None:
++        """Read the person's depth limits again and draw when they changed, or
++        once more when they have not come after two seconds, so the person is
++        told"""
++        limits = stereo3d.ReadDepthLimits(
++            self.stereoWindow[0], self.stereoWindow[1], self.stereoWidth
++        )
++        waited = (
++            limits[0] == stereo3d.NOT_DELIVERED
++            and not self.stereoTold
++            and time.monotonic() - self.stereoSince > 2.0
++        )
++        if limits != self.stereoLimits or waited:
++            self.Refresh(False)
++
+     def UpdateMap(self, render: bool = True, reRenderTool: bool = False) -> None:
+         """Updates the canvas anytime there is a change to the
+         underlying images or to the geometry of the canvas.
+@@ -1272,15 +1347,27 @@ class GLWindow(MapWindowBase, glcanvas.GLCanvas):
+                 self.parent.GetProgressBar().SetValue(0)
+ 
+         # in stereo each eye is drawn from its camera to its back buffer,
+-        # then both are swapped together
++        # then both are swapped together; the eyes are as far apart as the
++        # person's depth limits allow, and no farther: a first pass from the
++        # camera between the eyes reads how near and how far the pixels of the
++        # scene are, and the separation is the largest under which every one of
++        # them stays inside the limits
+         if self.stereo:
+-            self._display.SetEyeSeparation(
+-                float(
+-                    UserSettings.Get(
+-                        group="display", key="nvizEyeSeparation", subkey="value"
++            separation = 0.0
++            if self._readStereoLimits()[0] == stereo3d.DELIVERED:
++                self._display.SetEyeSeparation(0.0)
++                self._display.SetEye(wxnviz.GSD_EYE_LEFT)
++                self._drawScene()
++                depthRange = self._display.GetDepthRange()
++                if depthRange:
++                    separation = self._display.GetStereoSeparation(
++                        depthRange[0],
++                        depthRange[1],
++                        self.stereoLimits[1],
++                        self.stereoLimits[2],
++                        self.stereoWidth,
+                     )
+-                )
+-            )
++            self._display.SetEyeSeparation(separation)
+             eyes = (wxnviz.GSD_EYE_LEFT, wxnviz.GSD_EYE_RIGHT)
+         else:
+             eyes = (wxnviz.GSD_EYE_MONO,)
+@@ -1289,20 +1376,10 @@ class GLWindow(MapWindowBase, glcanvas.GLCanvas):
+             if self.render["quick"] is False:
+                 if sys.platform != "darwin":
+                     self.parent.GetProgressBar().SetValue(1)
+-                self._display.Draw(False, -1)
+-                if self.saveHistory:
+-                    self.ViewHistory(view=self.view, iview=self.iview)
+-                    self.saveHistory = False
+-            elif self.render["quick"] is True:
+-                # quick
+-                mode = wxnviz.DRAW_QUICK_SURFACE | wxnviz.DRAW_QUICK_VOLUME
+-                if self.render["vlines"]:
+-                    mode |= wxnviz.DRAW_QUICK_VLINES
+-                if self.render["vpoints"]:
+-                    mode |= wxnviz.DRAW_QUICK_VPOINTS
+-                self._display.Draw(True, mode)
+-            else:  # None -> reuse last rendered image
+-                pass  # TODO
++            self._drawScene()
++            if self.render["quick"] is False and self.saveHistory:
++                self.ViewHistory(view=self.view, iview=self.iview)
++                self.saveHistory = False
+ 
+             if self.stereo:
+                 # no front buffer in stereo, 2D overlays are drawn the same in each eye
+diff --git a/gui/wxpython/nviz/stereo3d.py b/gui/wxpython/nviz/stereo3d.py
+new file mode 100644
+index 0000000..109dfdf
+--- /dev/null
++++ b/gui/wxpython/nviz/stereo3d.py
+@@ -0,0 +1,97 @@
++"""
++@package nviz.stereo3d
++
++@brief The person's depth limits for the 3D view in stereo, and the shortcut to
++the display settings
++
++Stereo KWin (Sparky Stereo OS) keeps one pair of depth limits for each screen,
++set in its 3D Depth settings: how far behind the screen and how far in front
++of it anything may appear.  libstereo-declare hands them to the window of the
++3D view in the pixels of its own picture; the view never scales them.
++
++(C) 2026 by the GRASS Development Team
++
++This program is free software under the GNU General Public License
++(>=v2). Read the file COPYING that comes with GRASS for details.
++"""
++
++import ctypes
++import ctypes.util
++import errno
++import subprocess
++
++DELIVERED = 0
++NOT_OFFERED = 1
++NOT_DELIVERED = 2
++NOT_READABLE = 3
++
++
++class _Limits(ctypes.Structure):
++    _fields_ = [("sunk", ctypes.c_double), ("popped", ctypes.c_double)]
++
++
++_libraries = {}
++
++
++def _library(name, soname):
++    if name not in _libraries:
++        try:
++            _libraries[name] = ctypes.CDLL(soname)
++        except OSError:
++            _libraries[name] = None
++    return _libraries[name]
++
++
++def CurrentWindow():
++    """The X11 display and window the current GL context draws to (the one the
++    desktop sees declared), or (None, 0)"""
++    gl = _library("GL", ctypes.util.find_library("GL") or "libGL.so.1")
++    if gl is None:
++        return None, 0
++    gl.glXGetCurrentDisplay.restype = ctypes.c_void_p
++    gl.glXGetCurrentDrawable.restype = ctypes.c_ulong
++    return gl.glXGetCurrentDisplay(), gl.glXGetCurrentDrawable()
++
++
++def ReadDepthLimits(display, window, width):
++    """Read the depth limits of the window in pixels of a picture width pixels
++    wide shown at that width.
++
++    :return: (state, sunk, popped); the values are 0 unless state is DELIVERED
++    """
++    declare = _library("stereo-declare", "libstereo-declare.so.1")
++    if declare is None or not display or not window or width <= 0:
++        return NOT_READABLE, 0.0, 0.0
++    function = declare.stereo_depth_x11_get_buffer_limits
++    function.argtypes = [
++        ctypes.c_void_p,
++        ctypes.c_ulong,
++        ctypes.c_double,
++        ctypes.c_double,
++        ctypes.POINTER(_Limits),
++    ]
++    function.restype = ctypes.c_int
++    limits = _Limits()
++    result = function(display, window, float(width), float(width), ctypes.byref(limits))
++    if result == 0:
++        return DELIVERED, limits.sunk, limits.popped
++    if result == -errno.ENODATA:
++        return NOT_DELIVERED, 0.0, 0.0
++    if result == -errno.ENOTSUP:
++        return NOT_OFFERED, 0.0, 0.0
++    return NOT_READABLE, 0.0, 0.0
++
++
++def OpenDisplaySettings():
++    """Open the display settings, where each screen's 3D mode, output and eye
++    order are chosen.
++
++    :return: True if they were started
++    """
++    for argv in (["systemsettings", "kcm_kscreen"], ["kcmshell6", "kcm_kscreen"]):
++        try:
++            subprocess.Popen(argv)
++        except OSError:
++            continue
++        return True
++    return False
+diff --git a/gui/wxpython/nviz/wxnviz.py b/gui/wxpython/nviz/wxnviz.py
+index 259cd4a..4cc9e4a 100644
+--- a/gui/wxpython/nviz/wxnviz.py
++++ b/gui/wxpython/nviz/wxnviz.py
+@@ -186,6 +186,8 @@ try:
+         GS_get_trans,
+         GS_get_val_at_xy,
+         GS_get_viewdir,
++        GS_get_depth_range,
++        GS_get_stereo_separation,
+         GS_is_stereo,
+         GS_libinit,
+         GS_num_surfs,
+@@ -549,11 +551,35 @@ class Nviz:
+     def SetEyeSeparation(self, sep: float) -> None:
+         """Set the distance between the eyes
+ 
+-        :param sep: distance in percent of the distance to the focus point,
++        :param sep: distance as a fraction of the distance to the focus point,
+                     which is shown at the screen's depth
+         """
+         GS_set_eye_separation(sep)
+ 
++    def GetDepthRange(self) -> tuple[float, float] | None:
++        """Get the distances of the nearest and the farthest pixel the last
++        drawing left in the viewport
++
++        :return: (nearest, farthest), or None when no pixel shows data
++        """
++        nearest = c_double()
++        farthest = c_double()
++        if not GS_get_depth_range(byref(nearest), byref(farthest)):
++            return None
++        return nearest.value, farthest.value
++
++    def GetStereoSeparation(
++        self, nearest: float, farthest: float, sunk: float, popped: float, width: int
++    ) -> float:
++        """Get the largest separation of the eyes under which every distance
++        from nearest to farthest stays inside the depth limits
++
++        :param sunk: how far behind the screen anything may be, in pixels of the view
++        :param popped: how far in front of the screen, in pixels of the view
++        :param width: the view's width in pixels
++        """
++        return GS_get_stereo_separation(nearest, farthest, sunk, popped, int(width))
++
+     def EraseMap(self) -> None:
+         """Erase map display (with background color)"""
+         Debug.msg(1, "Nviz::EraseMap()")

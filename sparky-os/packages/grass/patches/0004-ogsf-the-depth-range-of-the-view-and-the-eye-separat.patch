@@ -1,0 +1,194 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 20 Nov 2026 05:32:11 -0300
+Subject: [PATCH 4/7] ogsf: the depth range of the view, and the eye separation
+ that fits limits
+
+GS_get_depth_range() reads the distances of the nearest and the farthest
+pixel the last drawing left in the viewport, and GS_get_stereo_separation()
+gives the largest separation of the eyes under which every distance between
+them stays inside a sunk and a popped limit, in pixels of the view.  The
+separation GS_set_eye_separation() takes is now a fraction of the distance to
+the focus point.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ include/grass/defs/ogsf.h |  4 +++
+ lib/ogsf/gs2.c            | 66 ++++++++++++++++++++++++++++++++++++++-
+ lib/ogsf/gsd_views.c      | 50 ++++++++++++++++++++++++++++-
+ 3 files changed, 118 insertions(+), 2 deletions(-)
+
+diff --git a/include/grass/defs/ogsf.h b/include/grass/defs/ogsf.h
+index 97802a0..120ea24 100644
+--- a/include/grass/defs/ogsf.h
++++ b/include/grass/defs/ogsf.h
+@@ -150,6 +150,8 @@ int GS_is_stereo(void);
+ void GS_set_eye(int);
+ int GS_get_eye(void);
+ void GS_set_eye_separation(float);
++int GS_get_depth_range(double *, double *);
++float GS_get_stereo_separation(double, double, double, double, int);
+ int GS_get_twist(void);
+ void GS_set_twist(int);
+ void GS_set_nofocus(void);
+@@ -562,6 +564,8 @@ int gsd_norm_arrows(geosurf *);
+ int gsd_get_los(float (*)[3], short, short);
+ void gsd_set_view(geoview *, geodisplay *);
+ void gsd_check_focus(geoview *);
++double gsd_get_stereo_separation(geoview *, geodisplay *, double, double, double,
++                                 double, int);
+ void gsd_get_zup(geoview *, double *);
+ int gsd_zup_twist(geoview *);
+ void gsd_do_scale(int);
+diff --git a/lib/ogsf/gs2.c b/lib/ogsf/gs2.c
+index 3831603..50b1121 100644
+--- a/lib/ogsf/gs2.c
++++ b/lib/ogsf/gs2.c
+@@ -2901,7 +2901,7 @@ int GS_get_eye(void)
+ /*!
+    \brief Set the distance between the eyes
+ 
+-   \param sep distance in percent of the distance from the camera to
++   \param sep distance as a fraction of the distance from the camera to
+    the focus point, which is shown at the screen's depth
+  */
+ void GS_set_eye_separation(float sep)
+@@ -2911,6 +2911,70 @@ void GS_set_eye_separation(float sep)
+     return;
+ }
+ 
++/*!
++   \brief Get the distances of the nearest and the farthest pixel of the
++   view
++
++   Reads the depth buffer of the viewport as the last drawing left it:
++   a pixel still at the cleared depth shows no data.
++
++   \param[out] nearest, farthest distances from the camera plane
++
++   \return 1 if a pixel shows data
++   \return 0 otherwise
++ */
++int GS_get_depth_range(double *nearest, double *farthest)
++{
++    GLint viewport[4];
++    GLfloat *depth;
++    float lo = 1.f, hi = 0.f;
++    double n = Gd.nearclip, f = Gd.farclip;
++    long i, count;
++
++    glGetIntegerv(GL_VIEWPORT, viewport);
++    if (viewport[2] <= 0 || viewport[3] <= 0)
++        return 0;
++    count = (long)viewport[2] * viewport[3];
++    depth = (GLfloat *)G_malloc(count * sizeof(GLfloat));
++    glPixelStorei(GL_PACK_ALIGNMENT, 4);
++    glReadPixels(viewport[0], viewport[1], viewport[2], viewport[3],
++                 GL_DEPTH_COMPONENT, GL_FLOAT, depth);
++    for (i = 0; i < count; i++) {
++        if (depth[i] >= 1.f)
++            continue;
++        if (depth[i] < lo)
++            lo = depth[i];
++        if (depth[i] > hi)
++            hi = depth[i];
++    }
++    G_free(depth);
++    if (lo > hi)
++        return 0;
++
++    /* the perspective of gsd_set_view(): window depth d is n f / (f - d (f - n)) */
++    *nearest = n * f / (f - lo * (f - n));
++    *farthest = n * f / (f - hi * (f - n));
++
++    return 1;
++}
++
++/*!
++   \brief Get the separation of the eyes that fits the nearest and the
++   farthest pixel inside depth limits (see gsd_get_stereo_separation())
++
++   \param nearest, farthest distances, from GS_get_depth_range()
++   \param sunk, popped limits in pixels of the view
++   \param width the view's width in pixels
++
++   \return separation for GS_set_eye_separation()
++ */
++float GS_get_stereo_separation(double nearest, double farthest, double sunk,
++                               double popped, int width)
++{
++    return (float)gsd_get_stereo_separation(&Gv, &Gd, nearest, farthest, sunk,
++                                            popped, width);
++}
++
+ /*!
+    \brief Get twist value
+ 
+diff --git a/lib/ogsf/gsd_views.c b/lib/ogsf/gsd_views.c
+index 4295d19..0fce2f0 100644
+--- a/lib/ogsf/gsd_views.c
++++ b/lib/ogsf/gsd_views.c
+@@ -158,6 +158,54 @@ static double gsd_get_focus_dist(geoview *gv)
+     return gv->focus_dist > 0. ? gv->focus_dist : 1.;
+ }
+ 
++/*!
++   \brief Get the separation of the eyes that fits a range of distances
++   inside depth limits
++
++   The eyes look the same way and their frustums meet at the focus
++   distance f (gsd_set_view()), so a point at distance z is
++   k t (1 - f / z) pixels to the right in the right eye, t being the
++   separation as a fraction of f and k half the view's width in pixels
++   over the tangent of half the horizontal field of view.
++
++   \param gv view (geoview)
++   \param gd display (geodisplay)
++   \param nearest, farthest distances of the nearest and the farthest pixel
++   \param sunk, popped how far behind and in front of the screen anything
++   may be, in pixels of the view
++   \param width the view's width in pixels
++
++   \return the largest separation under which every distance stays inside
++   the limits (infinity at the sunk limit when nothing is off the focus
++   plane), 0 when nothing can be fitted
++ */
++double gsd_get_stereo_separation(geoview *gv, geodisplay *gd, double nearest,
++                                 double farthest, double sunk, double popped,
++                                 int width)
++{
++    double f, k, t = -1.;
++
++    f = gsd_get_focus_dist(gv);
++    k = .5 * width /
++        (tan((double).05 * (gv->fov) * M_PI / 180.) * GS_get_aspect());
++    if (k <= 0. || nearest <= 0. || nearest > farthest || sunk < 0. ||
++        popped < 0.)
++        return 0.;
++
++    if (farthest > f)
++        t = sunk / (k * (1. - f / farthest));
++    if (nearest < f) {
++        double near_t = popped / (k * (f / nearest - 1.));
++
++        if (t < 0. || near_t < t)
++            t = near_t;
++    }
++    if (t < 0.)
++        t = sunk / k;
++
++    return t;
++}
++
+ /*!
+    \brief Set view
+ 
+@@ -194,7 +242,7 @@ void gsd_set_view(geoview *gv, geodisplay *gd)
+            camera, looking the same way (no toe-in); the frustum is shifted
+            so that the planes of both eyes meet at the focus distance */
+         focus_dist = gsd_get_focus_dist(gv);
+-        eye_x = .005 * gv->eye_sep * focus_dist;
++        eye_x = .5 * gv->eye_sep * focus_dist;
+         if (gv->eye == GSD_EYE_LEFT)
+             eye_x = -eye_x;
+         top = tan((double).05 * (gv->fov) * M_PI / 180.) * gd->nearclip;
