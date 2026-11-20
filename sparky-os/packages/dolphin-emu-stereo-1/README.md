@@ -1,6 +1,6 @@
 # dolphin-emu-stereo-1 (ORDER 39)
 
-Dolphin 2609.b+dfsg-1+stereo3d1+lc1, built from Debian's own source package (2609.b+dfsg-1, the release Debian testing ships) with two patches, `patches/stereo-1-one-declared-output.patch` and `patches/stereo-2-translations.patch`, made from branch `order39` of the edition's Dolphin fork (commits 9b9a77e to 0d9e0eb on Debian's patched tree 2b493fa).
+Dolphin 2609.b+dfsg-1+stereo3d2+lc1, built from Debian's own source package (2609.b+dfsg-1, the release Debian testing ships) with two patches, `patches/stereo-1-one-declared-output.patch` and `patches/stereo-2-translations.patch`, made from branch `order39` of the edition's Dolphin fork (commits 9b9a77e to 0d9e0eb on Debian's patched tree 2b493fa).
 
 Design followed:
 - /K3D/CLAUDE.md: "Every source ... hands KWin full side by side: the two eyes as separate complete pictures, side by side, left eye first, declared once"; "A program never stretches or squeezes an eye"; "a program that renders its own 3D scene offers no swap". The one output is the declared pair; Dolphin's top and bottom, anaglyph, quad buffer, passive, half-width eyes and eye swap are not built.
@@ -14,3 +14,5 @@ How the pair is made:
 - The no-GUI front end declares nothing: it shows 2D and says so when the person turned 3D on.
 
 Build: `build.sh WORK PREVIOUS_DIR SOURCE_DIR IMAGE` with `SPARKY_REPO_DIR` and `SPARKY_LC_ARCHIVE_DIR` set (see the header of build.sh); `build-in-container.sh` runs inside. Role line: `lists/emulation-3d.list` already names dolphin-emu.
+
++stereo3d2 (ORDER 774) is +stereo3d1 plus `Breaks: mesa-vulkan-drivers (<< 26.1.6-1+stereo3d29~)` on dolphin-emu (`overlay.py`) and one changelog sentence; apt installs the emulator only with Mesa +stereo3d29 or later.
