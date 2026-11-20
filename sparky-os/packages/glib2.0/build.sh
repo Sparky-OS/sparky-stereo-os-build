@@ -25,7 +25,7 @@ SRC=$(cd "$3" && pwd)
 IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}
 name=${SPARKY_BUILD_CONTAINER:-glib2.0-build-$$}
 sparky_provenance_init "$IMAGE"
-docker run -d --name "$name" --pull=never --ulimit core=0 --cpus 4 --platform linux/amd64 \
+docker run -d --name "$name" --pull=never --ulimit core=1 --cpus 4 --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
 	-v "$WORK":/work -v "$SRC":/src:ro \

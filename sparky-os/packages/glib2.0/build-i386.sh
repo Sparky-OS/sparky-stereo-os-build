@@ -22,7 +22,7 @@ PREV=$(cd "$3" && pwd)
 IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020-i386}
 name=${SPARKY_BUILD_CONTAINER:-glib2.0-build-i386-$$}
 sparky_provenance_init "$IMAGE"
-docker run -d --name "$name" --pull=never --ulimit core=0 --cpus 4 --platform linux/386 \
+docker run -d --name "$name" --pull=never --ulimit core=1 --cpus 4 --platform linux/386 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
 	-v "$WORK":/work -v "$SRC":/src:ro -v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro \
