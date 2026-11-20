@@ -3,7 +3,7 @@
 # Copyright 2026 under the GNU GPL3 License
 # thermald after the metapackage stops depending on it (ORDER 43). Container, root, built package unpacked at /t/hw, a cpuinfo
 # fixture mounted over /proc/cpuinfo; WANT is "intel" or "other", MARK is "auto" or "manual" (how thermald was installed).
-#   docker run --rm --ulimit core=0 -e WANT=other -e MARK=auto -v CA:/run/host-ca.crt:ro -v HELPER:/run/https-only-apt.sh:ro -v DIR:/t:ro -v CPUINFO:/proc/cpuinfo:ro IMAGE sh /t/thermald-manual.sh
+#   docker run --rm --ulimit core=1 -e WANT=other -e MARK=auto -v CA:/run/host-ca.crt:ro -v HELPER:/run/https-only-apt.sh:ro -v DIR:/t:ro -v CPUINFO:/proc/cpuinfo:ro IMAGE sh /t/thermald-manual.sh
 set -u
 sh /run/https-only-apt.sh || exit 1
 export DEBIAN_FRONTEND=noninteractive

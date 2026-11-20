@@ -2,7 +2,7 @@
 # build image: debian:testing + our development repository + Plank Player's build dependencies
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 docker rm -f plank-img >/dev/null 2>&1
-docker run --name plank-img --platform linux/amd64 --cpus 4 -v ${SPARKY_REPO_DIR:?}:/repo:ro -v ${SPARKY_WORKSPACES:?}/plank-player/run/pin:/pin:ro -e DEBIAN_FRONTEND=noninteractive debian:testing bash -c '
+docker run --ulimit core=1 --name plank-img --platform linux/amd64 --cpus 4 -v ${SPARKY_REPO_DIR:?}:/repo:ro -v ${SPARKY_WORKSPACES:?}/plank-player/run/pin:/pin:ro -e DEBIAN_FRONTEND=noninteractive debian:testing bash -c '
 set -e
 echo "deb [trusted=yes] file:/repo ./" > /etc/apt/sources.list.d/zrepo.list
 cp /pin /etc/apt/preferences.d/sparky-stereo

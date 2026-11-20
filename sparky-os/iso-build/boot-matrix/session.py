@@ -17,7 +17,7 @@ from vmctl import Qmp  # noqa: E402
 
 
 def extract(iso, path, dst):
-    subprocess.check_call(["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{os.path.dirname(iso)}:/i:ro",
+    subprocess.check_call(["docker", "run", '--ulimit', 'core=1', "--rm", "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{os.path.dirname(iso)}:/i:ro",
                            "-v", f"{os.path.dirname(dst)}:/o", "beta-iso-lutz-build:1", "xorriso", "-osirrox", "on", "-indev",
                            "/i/" + os.path.basename(iso), "-extract", path, "/o/" + os.path.basename(dst)],
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

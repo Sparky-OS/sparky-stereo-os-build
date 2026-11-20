@@ -35,7 +35,7 @@ if [ -n "${ORIG_CACHE:-}" ] && [ -f "$ORIG_CACHE/coolercontrol_$UPV.orig-npm.tar
 	cp "$ORIG_CACHE"/coolercontrol_"$UPV".orig*.tar.xz "$ORIG_CACHE"/*.tsv "$ORIG_CACHE"/cargo-config.toml "$ORIG_CACHE"/rollup-cargo-config.toml "$WORK/orig/"
 	cp -a "$ORIG_CACHE/crate-licences" "$ORIG_CACHE/rollup-crate-licences" "$ORIG_CACHE/npm-legal" "$WORK/orig/"
 else
-docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}coolercontrol-orig" --platform linux/amd64 --cpus "${CPUS:-4}" --ulimit core=0 \
+docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}coolercontrol-orig" --platform linux/amd64 --cpus "${CPUS:-4}" --ulimit core=1 \
 	-v "$WORK/orig":/out -v "$HERE":/pkg:ro -e OWNER="$(id -u):$(id -g)" \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMAGE" bash -c '
 set -euo pipefail

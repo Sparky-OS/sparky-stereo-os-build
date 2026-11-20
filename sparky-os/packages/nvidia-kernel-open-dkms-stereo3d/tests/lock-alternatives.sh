@@ -12,7 +12,7 @@ OUT=$(mkdir -p "${4:?output directory}" && realpath "$4")
 NAME_PREFIX=${NAME_PREFIX:-nvidia-lock-proof-$$}
 for direction in main legacy; do
 	mkdir -p "$OUT/$direction"
-	docker run --rm -i --name "$NAME_PREFIX-$direction" --platform linux/amd64 \
+	docker run --ulimit core=1 --rm -i --name "$NAME_PREFIX-$direction" --platform linux/amd64 \
 		-e DIRECTION="$direction" -e OWNER="$(id -u):$(id -g)" \
 		-v "$MAIN":/inputs/main.deb:ro -v "$LEGACY":/inputs/legacy.deb:ro \
 		-v "$CUDA":/inputs/cuda.deb:ro -v "$OUT/$direction":/out -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "$IMAGE" bash -s <<'EOF'

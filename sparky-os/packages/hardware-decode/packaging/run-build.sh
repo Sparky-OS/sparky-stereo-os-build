@@ -23,7 +23,7 @@ entry=build-in-container.sh
 cp "$here/$entry" "$work/build-entry.sh"
 printf '%s\n' "$name" >> "${SPARKY_ARTIFACTS:?Set the lane artifact record}"
 sparky_provenance_init "$SPARKY_PACKAGE_IMAGE"
-docker run --platform linux/amd64 --cpus 4 --name "$name" "${SPARKY_PROV_ARGS[@]}" -e PKG="$pkg" -e SOURCE_DSC="${SOURCE_DSC:-}" -e BINARY_ONLY="${BINARY_ONLY:-}" \
+docker run --ulimit core=1 --platform linux/amd64 --cpus 4 --name "$name" "${SPARKY_PROV_ARGS[@]}" -e PKG="$pkg" -e SOURCE_DSC="${SOURCE_DSC:-}" -e BINARY_ONLY="${BINARY_ONLY:-}" \
  -v "$work:/work" -v "$SPARKY_PUBLISHED_TREE:/pub:ro" \
  -v "$SPARKY_PACKAGE_WORK/new:/new:ro" -v "$SPARKY_PACKAGE_WORK/previous:/previous:ro" \
  -v "$SPARKY_PACKAGE_WORK/out/$pkg:/candidate:ro" -v "$packages:/kit:ro" -v "$SPARKY_RELEASE_TOOLKIT:/toolkit:ro" \

@@ -2,7 +2,7 @@
 # PSNR of the left eye (restored view) against ffmpeg's references and the truth, for anamorphic 3D clips; scaling 0 bilinear 1 bicubic 2 Lanczos
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 cd ${SPARKY_SCRATCH:?}/qtmm-lane/run
-Q="docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) -v ${SPARKY_SCRATCH:?}/qtmm-lane:/w qtmm-run:3"
+Q="docker run --ulimit core=1 --rm --platform linux/amd64 --user $(id -u):$(id -g) -v ${SPARKY_SCRATCH:?}/qtmm-lane:/w qtmm-run:3"
 for build in before offer after; do
   case $build in
     before) env=(); view="-";;

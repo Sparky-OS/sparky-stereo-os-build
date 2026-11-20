@@ -17,7 +17,7 @@ mkdir -p $W/patches $W/home
 cp $H/plank-player/*.patch $W/patches/
 cp -r $H/packaging/plank-player-debian $W/
 cp ${SPARKY_WORKSPACES:?}/plank-player/outA/plank-player_5.27.80+git20261005.f87e775.orig.tar.xz $W/
-docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) --cpus 4 -e HOME=/w/home -e DEBIAN_FRONTEND=noninteractive \
+docker run --ulimit core=1 --rm --platform linux/amd64 --user $(id -u):$(id -g) --cpus 4 -e HOME=/w/home -e DEBIAN_FRONTEND=noninteractive \
   -v $W:/w -v ${SPARKY_REPO_DIR:?}:/repo:ro plank-build:1 bash -c '
 set -e
 cd /w; U=5.27.80+git20261005.f87e775

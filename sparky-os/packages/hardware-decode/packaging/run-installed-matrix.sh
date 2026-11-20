@@ -20,7 +20,7 @@ for pair in amd-only nvidia-only hybrid-amd hybrid-nvidia; do
   scenario=final-$client-$pair
   name=$SPARKY_TEST_PREFIX-$scenario
   printf '%s\n' "$name" >> "$SPARKY_ARTIFACTS"
-  docker run --platform linux/amd64 --cpus 4 --user 1000:1000 --ulimit core=0 "${device[@]}" "${extra[@]}" --name "$name" \
+  docker run --platform linux/amd64 --cpus 4 --user 1000:1000 --ulimit core=1 "${device[@]}" "${extra[@]}" --name "$name" \
    -e HOME=/tmp/home -e ROUTE_INSTALLED=1 -e DISPLAY_GPU="$display" -e SCENARIO="$scenario" -e CLIENT_SCRIPT="$client" \
    -v "$SPARKY_INSTALLED_WORK:/w" -v "$SPARKY_DECODER_WORK:/prev:ro" -v "$SPARKY_ROUTING_TESTS:/kit:ro" \
    "$SPARKY_INSTALLED_IMAGE" sh /kit/baseline-weston.sh

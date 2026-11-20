@@ -32,11 +32,11 @@ mkdir -p "$D"
 cp -r "$T/out/sparky-stereo-hardware-support/DEBIAN" "$D/"
 dpkg-deb --root-owner-group -b "$D" "$T/scratch/" >/dev/null
 (cd "$T/scratch" && dpkg-scanpackages . 2>/dev/null >Packages) || \
-	docker run --rm -v "$T/scratch:/s" debian:testing bash -c 'apt-get update -qq >/dev/null; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dpkg-dev >/dev/null; cd /s && dpkg-scanpackages . >Packages 2>/dev/null'
+	docker run --ulimit core=1 --rm -v "$T/scratch:/s" debian:testing bash -c 'apt-get update -qq >/dev/null; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dpkg-dev >/dev/null; cd /s && dpkg-scanpackages . >Packages 2>/dev/null'
 rm -rf "$D"
 
 OUTFILE=$T/sim.out
-docker run --rm -e DEBIAN_FRONTEND=noninteractive -e LC_ALL=C \
+docker run --ulimit core=1 --rm -e DEBIAN_FRONTEND=noninteractive -e LC_ALL=C \
 	-v "$REPO:$REPO:ro" -v "$T/scratch:/scratch:ro" -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro debian:testing bash -c '
 sh /run/https-only-apt.sh
 rm -f /etc/apt/sources.list.d/*

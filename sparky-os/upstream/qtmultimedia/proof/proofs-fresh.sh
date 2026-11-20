@@ -4,7 +4,7 @@
 cd ${SPARKY_SCRATCH:?}/qtmm-lane/run
 export IMG=qtmm-fresh:1
 unset DEV DEVDIR
-Q="docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) -v ${SPARKY_SCRATCH:?}/qtmm-lane:/w qtmm-run:3"
+Q="docker run --ulimit core=1 --rm --platform linux/amd64 --user $(id -u):$(id -g) -v ${SPARKY_SCRATCH:?}/qtmm-lane:/w qtmm-run:3"
 LOG='{"QT_LOGGING_RULES":"qt.multimedia.video.stereopresenter.debug=true;qt.multimedia.video.stereolayer.debug=true"}'
 {
 echo "== depth: the layer's buffer under the edition's defaults (stereoSurface BySource); levels of red per view, counted in the buffer before it is committed (KWin's capture is 8 bit)"

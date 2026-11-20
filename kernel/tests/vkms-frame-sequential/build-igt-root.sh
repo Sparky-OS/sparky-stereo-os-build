@@ -13,13 +13,13 @@ SRC=$(mkdir -p "$1" && readlink -f "$1"); OUT=$(mkdir -p "$2" && readlink -f "$2
 [ -d "$SRC/igt/.git" ] || git clone -q https://gitlab.freedesktop.org/drm/igt-gpu-tools.git "$SRC/igt"
 git -C "$SRC/igt" checkout -q --detach "$IGT_COMMIT"
 git -C "$SRC/igt" -c user.name=bench -c user.email=bench@localhost am -q "$HERE"/../igt/*.patch
-docker run --rm --platform linux/amd64 --cpus 4 --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$SRC:$SRC" "$IMAGE" sh -c "
+docker run --ulimit core=1 --rm --platform linux/amd64 --cpus 4 --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$SRC:$SRC" "$IMAGE" sh -c "
 	meson setup --wipe '$SRC/build' '$SRC/igt' -Dprefix=/usr/local -Dtests=enabled -Drunner=disabled \
 		-Dchamelium=disabled -Dvalgrind=disabled -Dman=disabled -Ddocs=disabled -Doverlay=disabled \
 		-Dtestplan=disabled -Dsphinx=disabled -Dlibdrm_drivers= -Dvmtb=disabled -Doping=disabled \
 		-Dlibunwind=enabled -Dxe_driver=disabled >/dev/null &&
 	ninja -C '$SRC/build' -j4 tests/kms_frame_sequential"
-cid=$(docker create --platform linux/amd64 "$IMAGE")
+cid=$(docker create --ulimit core=1 --platform linux/amd64 "$IMAGE")
 docker export "$cid" | tar -x -C "$OUT" 2>/dev/null || true
 docker rm "$cid" >/dev/null
 mkdir -p "$OUT/usr/local/bin" "$OUT/usr/local/lib" "$OUT/usr/local/share/igt-gpu-tools"

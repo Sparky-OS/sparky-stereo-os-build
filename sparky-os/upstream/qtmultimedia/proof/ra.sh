@@ -7,4 +7,4 @@ name=$1; clip=$2
 rm -rf $W/out/$name
 DEVENV=""
 if [ -n "$DEV" ]; then DEVENV="-e LD_LIBRARY_PATH=${DEVDIR:-/w/dev}/lib/x86_64-linux-gnu -e QML_IMPORT_PATH=${DEVDIR:-/w/dev}/lib/x86_64-linux-gnu/qt6/qml -e QT_PLUGIN_PATH=${DEVDIR:-/w/dev}/lib/x86_64-linux-gnu/qt6/plugins"; fi
-docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) --cpus 2 -e HOME=/tmp/homea -e SINKRATE -e SINKFMT -e PEXTRA $DEVENV -v $P/passwd:/etc/passwd:ro -v $W:/w ${IMG:-qtmm-run:4} dbus-run-session -- python3 /w/run/audio.py /w/out/$name /w/clips/$clip
+docker run --ulimit core=1 --rm --platform linux/amd64 --user $(id -u):$(id -g) --cpus 2 -e HOME=/tmp/homea -e SINKRATE -e SINKFMT -e PEXTRA $DEVENV -v $P/passwd:/etc/passwd:ro -v $W:/w ${IMG:-qtmm-run:4} dbus-run-session -- python3 /w/run/audio.py /w/out/$name /w/clips/$clip

@@ -9,7 +9,7 @@ TREE=${1:-${SPARKY_WORKSPACES:?}/nvidia-16bpc/open-gpu-kernel-modules}
 OUT=${2:-${SPARKY_SCRATCH:?}/sparky-os/nvkms-query}
 VER=$(sed -n 's/^NVIDIA_VERSION *= *//p' "$TREE/version.mk")
 mkdir -p "$(dirname "$OUT")"
-docker run --rm --cpus 4 -e DEBIAN_FRONTEND=noninteractive \
+docker run --ulimit core=1 --rm --cpus 4 -e DEBIAN_FRONTEND=noninteractive \
 	-v "$HERE":/src:ro -v "$TREE":/tree:ro -v "$(dirname "$OUT")":/out -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
 	debian:testing sh -c "
 set -e

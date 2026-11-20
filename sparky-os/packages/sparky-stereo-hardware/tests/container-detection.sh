@@ -13,7 +13,7 @@ set -euo pipefail
 PKG=$(cd "${1:-$(dirname "$0")/..}" && pwd)
 TESTS=$(cd "$(dirname "$0")" && pwd)
 TREE=$(cd "${SPARKY_TREE:?set SPARKY_TREE to a published apt tree (the source of sparky-stereo-problems)}" && pwd)
-docker run --rm ${CONTAINER_NAME:+--name "$CONTAINER_NAME"} --ulimit core=0 -e DEBIAN_FRONTEND=noninteractive -v "$PKG":/pkg:ro -v "$TESTS":/tests:ro -v "$TREE":/tree:ro \
+docker run --rm ${CONTAINER_NAME:+--name "$CONTAINER_NAME"} --ulimit core=1 -e DEBIAN_FRONTEND=noninteractive -v "$PKG":/pkg:ro -v "$TESTS":/tests:ro -v "$TREE":/tree:ro \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro "${IMAGE:-debian:testing}" bash -c '
 sh /run/https-only-apt.sh
 apt-get update -qq >/dev/null && apt-get install -y -qq python3 >/dev/null

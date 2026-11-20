@@ -46,7 +46,7 @@ sys.exit('not in the published Sources: ' + dsc)
 PY
 DSC_SHA256=$(cat "$WORK/dsc.sha256")
 sparky_provenance_init "$SPARKY_BUILD_IMAGE"
-docker run --rm --cpus 4 --platform linux/amd64 \
+docker run --ulimit core=1 --rm --cpus 4 --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	-e DSC="$DSC" -e DSC_SHA256="$DSC_SHA256" -e PLAIN_OPTIONS="$PLAIN_OPTIONS" \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \

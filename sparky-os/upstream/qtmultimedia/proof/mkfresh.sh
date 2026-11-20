@@ -2,7 +2,7 @@
 # a fresh debian:testing + our repository (pinned) + headless KWin + the three programs, installed from the repository
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 docker rm -f qtmm-fresh >/dev/null 2>&1
-docker run --name qtmm-fresh --platform linux/amd64 --cpus 4 -v ${SPARKY_REPO_DIR:?}:/repo:ro -v ${SPARKY_SCRATCH:?}/qtmm-lane/run/pin:/pin:ro -e DEBIAN_FRONTEND=noninteractive debian:testing bash -c '
+docker run --ulimit core=1 --name qtmm-fresh --platform linux/amd64 --cpus 4 -v ${SPARKY_REPO_DIR:?}:/repo:ro -v ${SPARKY_SCRATCH:?}/qtmm-lane/run/pin:/pin:ro -e DEBIAN_FRONTEND=noninteractive debian:testing bash -c '
 echo "deb [trusted=yes] file:/repo ./" > /etc/apt/sources.list.d/zrepo.list
 cp /pin /etc/apt/preferences.d/sparky-stereo
 apt-get -y update >/dev/null 2>&1
