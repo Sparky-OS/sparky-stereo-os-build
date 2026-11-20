@@ -56,7 +56,8 @@ docker logs "$name" > "$WORK/build.log" 2>&1
 docker rm "$name" >/dev/null
 [ "$status" = 0 ] || { echo "the build failed (exit $status): $WORK/build.log" >&2; exit 1; }
 # the files every architecture shares are the same bytes (Multi-Arch: same); the Lean Code record is named after its
-# architecture (/usr/share/dpkg-stereo/lc/PACKAGE/ARCH.json), so the twins carry one each
+# architecture (/usr/share/dpkg-stereo/lc/PACKAGE/ARCH.json), so the twins carry one each; an -lc-hr companion's authored
+# texts lie under /usr/share/dpkg-stereo/hr/PACKAGE/ARCH/ and are compared with that folder named alike
 python3 - "$SRC" "$WORK" <<'SAME'
 import subprocess, sys, tempfile
 from pathlib import Path
@@ -79,6 +80,12 @@ for deb in sorted(work.glob('*_i386.deb')):
                 rel = f.relative_to(share).as_posix()
                 if rel.startswith('dpkg-stereo/lc/') and rel.endswith('/' + arch + '.json'):
                     continue
+                # an -lc-hr companion keeps the authored texts under dpkg-stereo/hr/PACKAGE/ARCH/: the paths differ by
+                # architecture, so the twins never share them; the hashed files in them must be the same
+                parts = rel.split('/')
+                if rel.startswith('dpkg-stereo/hr/') and len(parts) > 3 and parts[3] == arch:
+                    parts[3] = 'ARCH'
+                    rel = '/'.join(parts)
                 files[rel] = f.read_bytes()
         trees[arch] = files
         subprocess.run(['rm', '-rf', str(root)], check=True)
