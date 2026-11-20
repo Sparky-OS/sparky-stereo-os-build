@@ -1,0 +1,9 @@
+# Spectacle stereo screenshots
+
+Build `4:6.7.4-1+stereo3d3+lc1` from the exact published +stereo3d2 source. The recipe retains all three published patches, adds the accepted ORDER 180/772 capture changes from Sparky-OS/spectacle commit 49ac1e4f05a336f2ad1196ced19f0fda2248cf7e, then the accepted and new translations. Binary branding assets are retained in source-files with their upstream/edition source provenance.
+
+`prepare-source-3.sh PUBLISHED_2_DIR OUT TOOLKIT` makes the descriptor. Set SOURCE_DATE_EPOCH from this recipe's clean commit. It never reads an uncommitted application checkout. The overlay contains the capture patch, both accepted translation patches and the new ten-language catalog changes. The preserve plan retains headers for moc/qmltyperegistrar; QML is outside the native C/C++ projection walk.
+
+`build-3.sh WORK SOURCE_DIR PREVIOUS_DIR REPO_DIR ARCHIVE_DIR SIBLINGS_FILE` builds from that descriptor with an owned image named by SPARKY_BUILD_IMAGE and containers named by BUILD_NAME_PREFIX. Export the owned DOCKER_HOST before invoking it. The archive folder contains archive-config.json for signed HTTPS/archive inputs; sibling paths refer to the read-only /repo mount. The build supplies host provenance from this checkout, compiles native Lean Code, runs the QtTests, resolves ELF imports against the previous package and writes genuine Debian receipts plus the complete build record. The source-input receipt folder is writable and all package staging starts fresh.
+
+Stereo captures require KWin ScreenShot2 version 7 (KWin +stereo3d62). This is a runtime API check, not a new package relation. On an older screenshot API, a 3D capture explains the prerequisite; ordinary 2D capture remains available. Native MPO/JPS writing requires kimageformat6-plugins >=6.30.0-1+stereo3d7. The authored files and original notices remain the authority.

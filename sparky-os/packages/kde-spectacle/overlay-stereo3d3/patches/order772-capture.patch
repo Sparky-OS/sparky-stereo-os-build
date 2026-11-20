@@ -1,0 +1,2346 @@
+Description: Complete the accepted ORDER 180 capture work and ORDER 772 mode-driven stereo saves
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Origin: other, Sparky-OS/spectacle order772 49ac1e4f05a336f2ad1196ced19f0fda2248cf7e
+Forwarded: not-needed
+Last-Update: 2026-11-20
+
+--- /dev/null
++++ b/.github/sparky-stereo-os/sparkyos-swirl-dark-128.png.license
+@@ -0,0 +1,2 @@
++SPDX-FileCopyrightText: 2018-2026 Daniel Ramos (Capitain Jack)
++SPDX-License-Identifier: GPL-2.0-or-later
+--- /dev/null
++++ b/.github/sparky-stereo-os/sparkyos-swirl-light-128.png.license
+@@ -0,0 +1,2 @@
++SPDX-FileCopyrightText: 2018-2026 Daniel Ramos (Capitain Jack)
++SPDX-License-Identifier: GPL-2.0-or-later
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -111,6 +111,7 @@
+ pkg_check_modules(TESSERACT REQUIRED IMPORTED_TARGET tesseract)
+ 
+ # optional components
++find_package(StereoLayer 1.10 QUIET)
+ find_package(KF6DocTools ${KF6_MIN_VERSION})
+ set_package_properties(KF6DocTools PROPERTIES DESCRIPTION
+     "Tools to generate documentation"
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,29 @@
++<picture>
++  <source media="(prefers-color-scheme: dark)" srcset=".github/sparky-stereo-os/sparkyos-swirl-light-128.png">
++  <img src=".github/sparky-stereo-os/sparkyos-swirl-dark-128.png" alt="SparkyOS" width="128" height="128">
++</picture>
++
++## Sparky Stereo OS
++
++This is the stereo version of Spectacle by Sparky Stereo OS, forked from [KDE/spectacle](https://github.com/KDE/spectacle).
++It saves stereo screenshots as JPS and as MPO (CIPA DC-007 Multi-Picture Format) pictures.
++
++Where it comes from:
++
++- [Spectacle](https://invent.kde.org/plasma/spectacle) is made by the KDE community. Its authors are Boudhayan Gupta, David Redondo and Noah Davis.
++- [Debian](https://www.debian.org/) is the base of the system.
++- [SparkyLinux](https://sparkylinux.org/), by Paweł "pavroo" Pijanowski, builds on Debian.
++- [Sparky Stereo OS](https://github.com/Sparky-OS/sparky-stereo-os) is the stereo 3D edition of SparkyLinux: SparkyOS, powered by Debian.
++
++The `stereo3d` branch holds the version the distribution builds.
++KDE develops Spectacle on invent.kde.org.
++The canonical version of this work is there too, on the [`stereo3d`](https://invent.kde.org/danielcamposramos/spectacle/-/tree/stereo3d) branch.
++The licences are unchanged; see [LICENSES](LICENSES).
++
++Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo" Pijanowski).
++
++---
++
+ # <img src="logo.png" width="48"/> Spectacle - The KDE Screenshot Utility
+ 
+ Spectacle is a screenshot taking utility for the KDE desktop. Spectacle
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -25,6 +25,7 @@
+     CommandLineOptions.cpp
+     ExportManager.cpp
+     Geometry.cpp
++    MonitorCapture.cpp
+     OcrManager.cpp
+     Gui/CaptureWindow.cpp
+     Gui/ExportMenu.cpp
+@@ -85,6 +86,10 @@
+ 
+ if(PURPOSE_FOUND)
+     target_link_libraries(spectacle PRIVATE KF6::PurposeWidgets)
++endif()
++
++if(StereoLayer_FOUND)
++    target_link_libraries(spectacle PRIVATE Stereo::Layer)
+ endif()
+ 
+ ki18n_wrap_ui(spectacle
+--- /dev/null
++++ b/src/CaptureImage.h
+@@ -0,0 +1,41 @@
++/* SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++ * SPDX-License-Identifier: LGPL-2.0-or-later
++ */
++#pragma once
++
++#include <QImage>
++#include <QRect>
++#include <QPainter>
++#include "ImageMetaData.h"
++
++namespace CaptureImage
++{
++inline QImage eye(const QImage &image, bool right = false)
++{
++    if (!ImageMetaData::isStereo(image)) {
++        return image;
++    }
++    auto result = image.copy(right ? image.width() / 2 : 0, 0, image.width() / 2, image.height());
++    ImageMetaData::setStereo(result, false);
++    return result;
++}
++
++inline QImage cropped(const QImage &image, const QRect &rect)
++{
++    if (!ImageMetaData::isStereo(image)) {
++        return image.copy(rect);
++    }
++    const QRect eyeRect(0, 0, image.width() / 2, image.height());
++    const QRect selection = rect.intersected(eyeRect);
++    if (selection.isEmpty()) {
++        return {};
++    }
++    QImage result(QSize(selection.width() * 2, selection.height()), image.format());
++    QPainter painter(&result);
++    painter.drawImage(0, 0, image, selection.x(), selection.y(), selection.width(), selection.height());
++    painter.drawImage(selection.width(), 0, image, selection.x() + eyeRect.width(), selection.y(), selection.width(), selection.height());
++    painter.end();
++    ImageMetaData::copy(result, image);
++    return result;
++}
++}
+--- a/src/CaptureModeModel.cpp
++++ b/src/CaptureModeModel.cpp
+@@ -3,6 +3,7 @@
+  */
+ 
+ #include "CaptureModeModel.h"
++#include "MonitorCapture.h"
+ #include "ShortcutActions.h"
+ #include "SpectacleCore.h"
+ 
+@@ -53,6 +54,9 @@
+     connect(platform, &ImagePlatform::supportedGrabModesChanged, this, [this, platform]() {
+         setGrabModes(platform->supportedGrabModes());
+     });
++    connect(platform, &ImagePlatform::stereoActiveChanged, this, [this, platform] {
++        setGrabModes(platform->supportedGrabModes());
++    });
+     setGrabModes(platform->supportedGrabModes());
+ }
+ 
+@@ -98,11 +102,14 @@
+ 
+ void CaptureModeModel::setGrabModes(ImagePlatform::GrabModes modes)
+ {
+-    if (m_grabModes == modes) {
++    const bool stereoActive = SpectacleCore::instance()->imagePlatform()->stereoActive();
++    if (m_grabModes == modes && m_stereoActive == stereoActive) {
+         return;
+     }
+     m_grabModes = modes;
++    m_stereoActive = stereoActive;
+     const int oldCount = m_data.size();
++    beginResetModel();
+     m_data.clear();
+ 
+     const bool hasCurrentScreen = m_grabModes.testFlag(ImagePlatform::GrabMode::CurrentScreen);
+@@ -117,9 +124,13 @@
+     if (m_grabModes.testFlag(ImagePlatform::GrabMode::AllScreens)) {
+         m_data.append({
+             CaptureModeModel::AllScreens,
+-            captureModeLabel(hasCurrentScreen ? CaptureMode::AllScreens : CaptureMode::FullScreen),
++            m_stereoActive ? monitorModeLabel(MonitorCapture::AllMonitors2D)
++                           : captureModeLabel(hasCurrentScreen ? CaptureMode::AllScreens : CaptureMode::FullScreen),
+             actionShortcutsToString(ShortcutActions::self()->fullScreenAction()),
+         });
++    }
++    if (m_stereoActive && modes.testFlag(ImagePlatform::AllScreensStereo)) {
++        m_data.append({CaptureMode::AllScreensStereo, monitorModeLabel(MonitorCapture::AllMonitors3D)});
+     }
+     if (m_grabModes.testFlag(ImagePlatform::GrabMode::AllScreensScaled)) {
+         m_data.append({
+@@ -130,9 +141,12 @@
+     if (hasCurrentScreen) {
+         m_data.append({
+             CaptureModeModel::CurrentScreen,
+-            captureModeLabel(CaptureModeModel::CurrentScreen),
++            m_stereoActive ? monitorModeLabel(MonitorCapture::ThisMonitor2D) : captureModeLabel(CaptureModeModel::CurrentScreen),
+             actionShortcutsToString(ShortcutActions::self()->currentScreenAction()),
+         });
++    }
++    if (m_stereoActive && modes.testFlag(ImagePlatform::CurrentScreenStereo)) {
++        m_data.append({CaptureMode::CurrentScreenStereo, monitorModeLabel(MonitorCapture::ThisMonitor3D)});
+     }
+     if (m_grabModes.testFlag(ImagePlatform::GrabMode::ActiveWindow)) {
+         m_data.append({
+@@ -149,6 +163,7 @@
+         });
+     }
+ 
++    endResetModel();
+     Q_EMIT captureModesChanged();
+     if (oldCount != m_data.size()) {
+         Q_EMIT countChanged();
+@@ -174,8 +189,27 @@
+         return i18nc("@action in capture mode section", "All Screens");
+     case CaptureMode::FullScreen:
+         return i18nc("@action in capture mode section", "Full Screen");
++    case CaptureMode::AllScreensStereo:
++        return monitorModeLabel(MonitorCapture::AllMonitors3D);
++    case CaptureMode::CurrentScreenStereo:
++        return monitorModeLabel(MonitorCapture::ThisMonitor3D);
+     }
+     return QString{};
+ }
+ 
++QString CaptureModeModel::monitorModeLabel(int mode)
++{
++    switch (mode) {
++    case MonitorCapture::AllMonitors2D:
++        return i18nc("@action in capture mode section", "All Monitors 2D");
++    case MonitorCapture::AllMonitors3D:
++        return i18nc("@action in capture mode section", "All Monitors 3D");
++    case MonitorCapture::ThisMonitor2D:
++        return i18nc("@action in capture mode section", "This Monitor 2D");
++    case MonitorCapture::ThisMonitor3D:
++        return i18nc("@action in capture mode section", "This Monitor 3D");
++    }
++    return {};
++}
++
+ #include "moc_CaptureModeModel.cpp"
+--- a/src/CaptureModeModel.h
++++ b/src/CaptureModeModel.h
+@@ -42,6 +42,8 @@
+         ActiveWindow,
+         WindowUnderCursor,
+         FullScreen,
++        AllScreensStereo,
++        CurrentScreenStereo,
+     };
+     Q_ENUM(CaptureMode)
+ 
+@@ -59,6 +61,7 @@
+     void setGrabModes(ImagePlatform::GrabModes modes);
+ 
+     static QString captureModeLabel(CaptureMode mode);
++    static QString monitorModeLabel(int mode);
+ 
+ Q_SIGNALS:
+     void captureModesChanged();
+@@ -74,4 +77,5 @@
+     QList<Item> m_data;
+     QHash<int, QByteArray> m_roleNames;
+     ImagePlatform::GrabModes m_grabModes;
++    bool m_stereoActive = false;
+ };
+--- a/src/CommandLineOptions.h
++++ b/src/CommandLineOptions.h
+@@ -114,11 +114,16 @@
+         u"existingFileName"_s
+     };
+     const QCommandLineOption releaseCapture = {{u"k"_s, u"release-capture"_s}, i18n("Accept region selection on click-and-release")};
++    const QCommandLineOption monitorMode = {
++        {u"monitor-mode"_s},
++        i18n("Capture monitors using all-2d, all-3d, current-2d, or current-3d"),
++        u"mode"_s,
++    };
+ 
+     const QList<QCommandLineOption> allOptions = {
+-        fullscreen, scaled,      current,      activeWindow, windowUnderCursor, transientOnly, region,       record,         launchOnly,
+-        gui,        background,  dbus,         noNotify,     output,            delay,         copyImage,    copyPath,
+-        onClick,    newInstance, pointer,      noDecoration, noShadow,          editExisting,  releaseCapture,
++        fullscreen,   scaled,         current,     activeWindow, windowUnderCursor, transientOnly, region,  record,      launchOnly, gui,          background,
++        dbus,         noNotify,       output,      delay,        copyImage,         copyPath,      onClick, newInstance, pointer,    noDecoration, noShadow,
++        editExisting, releaseCapture, monitorMode,
+     };
+ 
+     // Keep order in sync with allOptions
+@@ -147,6 +152,7 @@
+         NoShadow,
+         EditExisting,
+         ReleaseCapture,
++        MonitorMode,
+         TotalOptions
+     };
+ };
+--- a/src/Config.h.in
++++ b/src/Config.h.in
+@@ -1,5 +1,7 @@
+ #ifndef SPECTACLE_CONFIG_H
+ #define SPECTACLE_CONFIG_H
++
++#cmakedefine StereoLayer_FOUND 1
+ 
+ /* Define to 1 if we are building with XCB */
+ #cmakedefine XCB_FOUND 1
+--- a/src/ExportManager.cpp
++++ b/src/ExportManager.cpp
+@@ -13,6 +13,7 @@
+ #include <QApplication>
+ #include <QBuffer>
+ #include <QClipboard>
++#include <QColorSpace>
+ #include <QDataStream>
+ #include <QDir>
+ #include <QFileDialog>
+@@ -29,8 +30,8 @@
+ #include <QString>
+ #include <QTemporaryDir>
+ #include <QTemporaryFile>
++#include <QTimer>
+ #include <QtConcurrent/QtConcurrentRun>
+-#include <QTimer>
+ 
+ #include <KIO/DeleteJob>
+ #include <KIO/FileCopyJob>
+@@ -51,6 +52,12 @@
+     , m_saveImage(QImage())
+     , m_tempFile(QUrl())
+ {
++    connect(Settings::self(), &Settings::stereoExportEyeChanged, this, [this] {
++        setImage(m_saveImage);
++    });
++    connect(Settings::self(), &Settings::captureDimensionChanged, this, [this] {
++        setImage(m_saveImage);
++    });
+     connect(this, &ExportManager::imageExported, this, [](Actions actions, const QUrl &url) {
+         if (actions & AnySave) {
+             Settings::setLastImageSaveLocation(url);
+@@ -404,15 +411,15 @@
+     }
+ 
+     if (type.isEmpty()) {
+-        type = Settings::preferredImageFormat().toLower();
+-    }
+-
+-    if (ImageMetaData::isStereo(m_saveImage) && type != u"jps"_s && type != u"mpo"_s) {
+-        if (type == u"jpg"_s || type == u"jpeg"_s || type == u"webp"_s || type == u"avif"_s) {
+-            return u"jps"_s;
+-        }
+-        return u"mpo"_s;
+-    }
++        const bool stereoCapture = ImageMetaData::isStereo(m_saveImage)
++            && (Settings::captureDimension() == Settings::StereoCapture
++                || (Settings::captureDimension() == Settings::FollowOutputMode && ImageMetaData::isStereoOutput(m_saveImage)));
++        const bool chosenFormat = Settings::preferredImageFormat() != Settings::defaultPreferredImageFormatValue()
++            || Settings::self()->config()->group(u"ImageSave"_s).hasKey(u"preferredImageFormat"_s)
++            || !Settings::useCaptureModeForImageFormat();
++        type = stereoCapture && !chosenFormat ? u"mpo"_s : Settings::preferredImageFormat().toLower();
++    }
++
+     return type;
+ }
+ 
+@@ -451,8 +458,36 @@
+                              fastScale ? Qt::FastTransformation : Qt::SmoothTransformation);
+ }
+ 
++QImage ExportManager::imageForExport(const QByteArray &suffix) const
++{
++    auto image = scaledImageFromSubGeometry(m_saveImage);
++    if (ImageMetaData::isStereo(image) && suffix != "jps" && suffix != "mpo") {
++        const int viewWidth = image.width() / 2;
++        const int x = Settings::stereoExportEye() == Settings::RightEye ? viewWidth : 0;
++        const auto eye = image.copy(x, 0, viewWidth, image.height());
++        // QImage::setText cannot remove keys. Copy pixels without the stereo metadata.
++        image = QImage(eye.constBits(), eye.width(), eye.height(), eye.bytesPerLine(), eye.format()).copy();
++        image.setColorTable(eye.colorTable());
++        image.setColorSpace(eye.colorSpace());
++        image.setDevicePixelRatio(eye.devicePixelRatio());
++        image.setDotsPerMeterX(eye.dotsPerMeterX());
++        image.setDotsPerMeterY(eye.dotsPerMeterY());
++        image.setOffset(eye.offset());
++        const auto keys = eye.textKeys();
++        for (const auto &key : keys) {
++            if (key != ImageMetaData::Keys::stereo && key != u"Stereo3DLayout" && key != u"X-KDE::Stereo3DLayout") {
++                image.setText(key, eye.text(key));
++            }
++        }
++    }
++    return image;
++}
++
+ bool ExportManager::writeImage(QIODevice *device, const QByteArray &suffix)
+ {
++    if (!checkImageFormat(suffix)) {
++        return false;
++    }
+     // In the documentation for QImageWriter, it is a bit ambiguous what "format" means.
+     // From looking at how QImageWriter handles the built-in supported formats internally,
+     // "format" basically means the file extension, not the mimetype.
+@@ -478,7 +513,21 @@
+     }
+     // Scale image to original scale if possible.
+     // This is done here because we need the highest resolution version in the rest of the app.
+-    return imageWriter.write(scaledImageFromSubGeometry(m_saveImage));
++    if (!imageWriter.write(imageForExport(suffix))) {
++        Q_EMIT errorMessage(i18nc("%1 is an error message", "QImageWriter cannot write image: %1", imageWriter.errorString()));
++        return false;
++    }
++    return true;
++}
++
++bool ExportManager::checkImageFormat(const QByteArray &suffix)
++{
++    if ((Settings::captureDimension() == Settings::MonoCapture || ImageMetaData::isMonitorPanorama(m_saveImage) || m_saveImage.text(u"Stereo3DLayout"_s) == u"mono") && (suffix == "jps" || suffix == "mpo")) {
++        Q_EMIT errorMessage(
++            i18nc("@info", "This capture is a 2D picture. Choose an ordinary image format, or select This Monitor 3D to save one stereo pair."));
++        return false;
++    }
++    return true;
+ }
+ 
+ bool ExportManager::localSave(const QUrl &url, const QString &suffix)
+@@ -497,8 +546,7 @@
+ 
+     QFile outputFile(url.toLocalFile());
+ 
+-    outputFile.open(QFile::WriteOnly);
+-    if (!writeImage(&outputFile, suffix.toLatin1())) {
++    if (!outputFile.open(QFile::WriteOnly) || !writeImage(&outputFile, suffix.toLatin1())) {
+         Q_EMIT errorMessage(i18n("Cannot save screenshot. Error while writing file."));
+         return false;
+     }
+@@ -565,7 +613,7 @@
+         const auto formattedFilename = this->formattedFilename(Settings::imageFilenameTemplate(), m_timestamp, ImageMetaData::windowTitle(m_saveImage), Settings::imageSaveLocation());
+         const QString baseFileName = m_tempDir->path() + u'/' + QUrl::fromLocalFile(formattedFilename).fileName();
+ 
+-        QString suffix = imageFileSuffix(QUrl(baseFileName));
++        const QString suffix = imageFileSuffix({});
+         const QString fileName = autoIncrementFilename(baseFileName, suffix, &ExportManager::isTempFileAlreadyUsed);
+         QFile tmpFile(fileName);
+         if (tmpFile.open(QFile::WriteOnly)) {
+@@ -591,24 +639,18 @@
+     }
+ 
+     const QString suffix = imageFileSuffix(url);
+-    QUrl saveUrl = url;
+-    if (ImageMetaData::isStereo(m_saveImage)) {
+-        QString path = saveUrl.path();
+-        const qsizetype dot = path.lastIndexOf(u'.');
+-        if (dot >= 0) {
+-            path.truncate(dot);
+-        }
+-        saveUrl.setPath(path + u'.' + suffix);
++    if (!checkImageFormat(suffix.toLatin1())) {
++        return false;
+     }
+     bool saveSucceded = false;
+-    if (saveUrl.isLocalFile()) {
+-        saveSucceded = localSave(saveUrl, suffix);
++    if (url.isLocalFile()) {
++        saveSucceded = localSave(url, suffix);
+     } else {
+-        saveSucceded = remoteSave(saveUrl, suffix);
++        saveSucceded = remoteSave(url, suffix);
+     }
+     if (saveSucceded) {
+         m_imageSavedNotInTemp = true;
+-        KRecentDocument::add(saveUrl, QGuiApplication::desktopFileName());
++        KRecentDocument::add(url, QGuiApplication::desktopFileName());
+     }
+     return saveSucceded;
+ }
+@@ -650,6 +692,10 @@
+         const auto mimeTypes = QImageWriter::supportedMimeTypes();
+         supportedFilters.reserve(mimeTypes.count());
+         for (const auto &mimeType : mimeTypes) {
++            if ((Settings::captureDimension() == Settings::MonoCapture || ImageMetaData::isMonitorPanorama(m_saveImage) || m_saveImage.text(u"Stereo3DLayout"_s) == u"mono")
++                && (mimeType == "image/x-jps" || mimeType == "image/mpo" || mimeType == "image/x-mpo")) {
++                continue;
++            }
+             supportedFilters.append(QString::fromUtf8(mimeType).trimmed());
+         }
+ 
+@@ -662,10 +708,17 @@
+         QUrl dirUrl = url.adjusted(QUrl::RemoveFilename);
+         if (!dirUrl.isValid()) {
+             dirUrl = Settings::self()->lastImageSaveAsLocation().adjusted(QUrl::RemoveFilename);
++            if ((dirUrl.isLocalFile() && !QDir(dirUrl.toLocalFile()).exists())
++                || (!dirUrl.isLocalFile() && !isFileExists(dirUrl))) {
++                dirUrl = QUrl::fromLocalFile(defaultSaveLocation());
++            }
+         }
+         dialog->setDirectoryUrl(dirUrl);
+         const auto formattedFilename = this->formattedFilename(Settings::imageFilenameTemplate(), m_timestamp, ImageMetaData::windowTitle(m_saveImage), dirUrl);
+-        dialog->selectFile(formattedFilename + u"."_s + filenameExtension);
++        const auto fileName = !url.fileName().isEmpty()
++            ? url.fileName()
++            : (formattedFilename + u"."_s + filenameExtension);
++        dialog->selectFile(fileName);
+         dialog->setDefaultSuffix(u"."_s + filenameExtension);
+         dialog->setMimeTypeFilters(supportedFilters);
+         dialog->selectMimeTypeFilter(mimetype);
+@@ -706,7 +759,7 @@
+         if (!url.isValid() && m_imageSavedNotInTemp) {
+             url = Settings::self()->lastImageSaveLocation();
+         }
+-        auto data = new QMimeData();
++        auto data = std::make_unique<QMimeData>();
+         const auto preferredFormat = imageFileSuffix({});
+         // TODO: Maybe copy a temp file URL instead? That way we could reliably
+         // paste as the preferred format without decompression. The issue with
+@@ -714,16 +767,10 @@
+         // Flatpak even if you use KUrlMimeData::exportUrlsToPortal().
+         QBuffer buffer;
+         buffer.open(QIODevice::ReadWrite);
+-        QImageWriter writer(&buffer, preferredFormat.toLatin1());
+-        if (preferredFormat == u"mpo") {
+-            // MPO stores JPEG images; use the highest quality and no chroma subsampling.
+-            writer.setQuality(100);
+-        } else if (preferredFormat != u"png") {
+-            writer.setQuality(Settings::imageCompressionQuality());
+-        }
+-        // We want to reuse this image to waste less CPU.
+-        auto image = scaledImageFromSubGeometry(m_saveImage);
+-        writer.write(image);
++        if (!writeImage(&buffer, preferredFormat.toLatin1())) {
++            return;
++        }
++        const auto image = imageForExport(preferredFormat.toLatin1());
+         buffer.reset();
+         // Set first so that it gets chosen first.
+         data->setData(u"image/" + preferredFormat, buffer.readAll());
+@@ -748,7 +795,7 @@
+         // "application/x-kde-suggestedfilename" is handled by KIO/PasteJob.
+         // It should put a useful default filename in the paste dialog.
+         data->setData(u"application/x-kde-suggestedfilename"_s, QFile::encodeName(fileName));
+-        KSystemClipboard::instance()->setMimeData(data, QClipboard::Clipboard);
++        KSystemClipboard::instance()->setMimeData(data.release(), QClipboard::Clipboard);
+         success = true;
+     }
+ 
+--- a/src/ExportManager.h
++++ b/src/ExportManager.h
+@@ -151,7 +151,9 @@
+     using FileNameAlreadyUsedCheck = bool (ExportManager::*)(const QUrl &) const;
+     QString autoIncrementFilename(const QString &baseName, const QString &extension, FileNameAlreadyUsedCheck isFileNameUsed) const;
+     QString imageFileSuffix(const QUrl &url) const;
++    QImage imageForExport(const QByteArray &suffix) const;
+     bool writeImage(QIODevice *device, const QByteArray &suffix);
++    bool checkImageFormat(const QByteArray &suffix);
+     bool save(const QUrl &url);
+     bool localSave(const QUrl &url, const QString &suffix);
+     bool remoteSave(const QUrl &url, const QString &suffix);
+--- a/src/Gui/CaptureModeButtonsColumn.qml
++++ b/src/Gui/CaptureModeButtonsColumn.qml
+@@ -37,6 +37,12 @@
+             onClicked: if (showCancel) {
+                 SpectacleCore.cancelScreenshot()
+             } else {
++                if (ImagePlatform.stereoActive) {
++                    if (model.captureMode === CaptureModeModel.AllScreens || model.captureMode === CaptureModeModel.CurrentScreen)
++                        Settings.captureDimension = Settings.MonoCapture
++                    else if (model.captureMode === CaptureModeModel.AllScreensStereo || model.captureMode === CaptureModeModel.CurrentScreenStereo)
++                        Settings.captureDimension = Settings.StereoCapture
++                }
+                 Settings.captureMode = model.captureMode
+                 SpectacleCore.takeNewScreenshot()
+             }
+--- a/src/Gui/CaptureSettingsColumn.qml
++++ b/src/Gui/CaptureSettingsColumn.qml
+@@ -11,6 +11,15 @@
+ ColumnLayout {
+     Layout.minimumWidth: delayRow.implicitWidth
+     spacing: Kirigami.Units.mediumSpacing
++    QQC.ComboBox {
++        Layout.fillWidth: true
++        visible: ImagePlatform.stereoActive
++        model: [i18nc("@option:radio", "Follow Screen Mode"),
++                i18nc("@option:radio", "2D Picture"),
++                i18nc("@option:radio", "3D Picture")]
++        currentIndex: Settings.captureDimension
++        onActivated: Settings.captureDimension = currentIndex
++    }
+     QQC.CheckBox {
+         Layout.fillWidth: true
+         text: i18n("Include mouse pointer")
+--- a/src/Gui/OptionsMenu.cpp
++++ b/src/Gui/OptionsMenu.cpp
+@@ -5,6 +5,8 @@
+ #include "OptionsMenu.h"
+ 
+ #include "CaptureModeModel.h"
++#include "ExportManager.h"
++#include "ImageMetaData.h"
+ #include "Gui/SmartSpinBox.h"
+ #include "Gui/SettingsDialog/SettingsDialog.h"
+ #include "SpectacleCore.h"
+@@ -15,6 +17,7 @@
+ #include <KLocalizedString>
+ #include <KStandardActions>
+ 
++#include <QActionGroup>
+ #include <QHBoxLayout>
+ #include <QLabel>
+ #include <QList>
+@@ -75,6 +78,66 @@
+         QObject::connect(onlyCapturePopupAction, &QAction::toggled, Settings::self(), &Settings::setTransientOnly);
+         QObject::connect(Settings::self(), &Settings::transientOnlyChanged, onlyCapturePopupAction, [onlyCapturePopupAction](){
+             onlyCapturePopupAction->setChecked(Settings::transientOnly());
++        });
++    }
++
++    auto pictureMenu = addMenu(i18nc("@title:menu", "Screenshot View"));
++    auto pictureGroup = new QActionGroup(pictureMenu);
++    const QStringList pictureLabels = {i18nc("@option:radio", "Follow Screen Mode"),
++                                       i18nc("@option:radio", "2D Picture"),
++                                       i18nc("@option:radio", "3D Picture")};
++    for (int mode = 0; mode < pictureLabels.size(); ++mode) {
++        auto action = pictureMenu->addAction(pictureLabels.at(mode));
++        pictureGroup->addAction(action);
++        action->setCheckable(true);
++        auto update = [action, mode] {
++            action->setChecked(Settings::captureDimension() == mode);
++            action->setEnabled(mode != Settings::StereoCapture || ImageMetaData::isStereo(ExportManager::instance()->image())
++                               || SpectacleCore::instance()->imagePlatform()->stereoActive());
++        };
++        connect(action, &QAction::triggered, this, [mode] { Settings::setCaptureDimension(mode); });
++        connect(Settings::self(), &Settings::captureDimensionChanged, action, update);
++        connect(ExportManager::instance(), &ExportManager::imageChanged, action, update);
++        update();
++    }
++
++    auto monitorMenu = addMenu(i18nc("@title:menu", "Captured Monitors"));
++    auto monitorGroup = new QActionGroup(monitorMenu);
++    const auto core = SpectacleCore::instance();
++    auto updateMonitorMenu = [core, monitorMenu] {
++        monitorMenu->menuAction()->setVisible(core->monitorCapture().hasStereo());
++    };
++    updateMonitorMenu();
++    connect(core, &SpectacleCore::monitorCaptureChanged, monitorMenu, updateMonitorMenu);
++    for (auto mode : {MonitorCapture::AllMonitors2D, MonitorCapture::AllMonitors3D, MonitorCapture::ThisMonitor2D, MonitorCapture::ThisMonitor3D}) {
++        auto action = monitorMenu->addAction(CaptureModeModel::monitorModeLabel(mode));
++        monitorGroup->addAction(action);
++        action->setCheckable(true);
++        auto update = [core, action, mode] {
++            action->setEnabled(core->monitorCapture().supports(mode));
++            action->setChecked(core->monitorCaptureMode() == mode);
++        };
++        update();
++        connect(core, &SpectacleCore::monitorCaptureChanged, action, update);
++        connect(action, &QAction::triggered, this, [core, mode, update] {
++            core->setMonitorCaptureMode(mode);
++            update();
++        });
++    }
++
++    auto eyeMenu = addMenu(i18nc("@title:menu Eye used when exporting a stereo capture to a 2D format", "Eye for 2D Export"));
++    auto eyeGroup = new QActionGroup(eyeMenu);
++    for (const auto eye : {Settings::LeftEye, Settings::RightEye}) {
++        auto action = eyeMenu->addAction(eye == Settings::LeftEye ? i18nc("@action:inmenu Eye used for 2D export", "Left Eye")
++                                                                  : i18nc("@action:inmenu Eye used for 2D export", "Right Eye"));
++        eyeGroup->addAction(action);
++        action->setCheckable(true);
++        action->setChecked(Settings::stereoExportEye() == eye);
++        connect(action, &QAction::triggered, this, [eye] {
++            Settings::setStereoExportEye(eye);
++        });
++        connect(Settings::self(), &Settings::stereoExportEyeChanged, action, [action, eye] {
++            action->setChecked(Settings::stereoExportEye() == eye);
+         });
+     }
+ 
+--- a/src/Gui/SceenshotModeMenu.qml
++++ b/src/Gui/SceenshotModeMenu.qml
+@@ -15,6 +15,12 @@
+             required property var model
+             text: model.display
+             onTriggered: (source) => {
++                if (ImagePlatform.stereoActive) {
++                    if (model.captureMode === CaptureModeModel.AllScreens || model.captureMode === CaptureModeModel.CurrentScreen)
++                        Settings.captureDimension = Settings.MonoCapture
++                    else if (model.captureMode === CaptureModeModel.AllScreensStereo || model.captureMode === CaptureModeModel.CurrentScreenStereo)
++                        Settings.captureDimension = Settings.StereoCapture
++                }
+                 Settings.captureMode = model.captureMode
+                 SpectacleCore.takeNewScreenshot()
+             }
+--- a/src/Gui/ScreenshotModeMenu.cpp
++++ b/src/Gui/ScreenshotModeMenu.cpp
+@@ -6,6 +6,8 @@
+ #include "CaptureModeModel.h"
+ #include "SpectacleCore.h"
+ #include "ShortcutActions.h"
++#include "settings.h"
++#include "Platforms/ImagePlatform.h"
+ #include <KGlobalAccel>
+ 
+ using namespace Qt::StringLiterals;
+@@ -54,6 +56,13 @@
+             }
+             action->setShortcuts(globalShortcuts(globalAction));
+             auto onTriggered = [mode] {
++                if (SpectacleCore::instance()->imagePlatform()->stereoActive()) {
++                    if (mode == CaptureModeModel::AllScreens || mode == CaptureModeModel::CurrentScreen) {
++                        Settings::setCaptureDimension(Settings::MonoCapture);
++                    } else if (mode == CaptureModeModel::AllScreensStereo || mode == CaptureModeModel::CurrentScreenStereo) {
++                        Settings::setCaptureDimension(Settings::StereoCapture);
++                    }
++                }
+                 SpectacleCore::instance()->takeNewScreenshot(mode);
+             };
+             connect(action, &QAction::triggered, action, onTriggered);
+--- a/src/Gui/SettingsDialog/ImageSaveOptions.ui
++++ b/src/Gui/SettingsDialog/ImageSaveOptions.ui
+@@ -97,6 +97,11 @@
+      </item>
+     </layout>
+    </item>
++   <item row="4" column="1">
++    <widget class="QCheckBox" name="kcfg_useCaptureModeForImageFormat">
++     <property name="text"><string>Use MPO by default for 3D captures</string></property>
++    </widget>
++   </item>
+    <item row="5" column="0">
+     <widget class="QLabel" name="PreviewLabel">
+      <property name="text">
+--- a/src/Gui/SettingsDialog/ImageSaveOptionsPage.cpp
++++ b/src/Gui/SettingsDialog/ImageSaveOptionsPage.cpp
+@@ -65,6 +65,9 @@
+         }
+         return items;
+     }());
++    connect(m_ui->kcfg_preferredImageFormat, &QComboBox::activated, this, [this] {
++        m_ui->kcfg_useCaptureModeForImageFormat->setChecked(false);
++    });
+     connect(m_ui->kcfg_preferredImageFormat, &QComboBox::currentTextChanged, this, &ImageSaveOptionsPage::updateFilenamePreview);
+ 
+     m_ui->captureInstructionLabel->setText(CaptureInstructions::text(false));
+--- a/src/Gui/SettingsDialog/spectacle.kcfg
++++ b/src/Gui/SettingsDialog/spectacle.kcfg
+@@ -145,6 +145,24 @@
+         <min>0</min>
+         <max>100</max>
+     </entry>
++    <entry name="stereoExportEye" type="Enum">
++        <choices>
++            <choice name="LeftEye"/>
++            <choice name="RightEye"/>
++        </choices>
++        <default>LeftEye</default>
++    </entry>
++    <entry name="captureDimension" type="Enum">
++        <choices>
++            <choice name="FollowOutputMode"/>
++            <choice name="MonoCapture"/>
++            <choice name="StereoCapture"/>
++        </choices>
++        <default>FollowOutputMode</default>
++    </entry>
++    <entry name="useCaptureModeForImageFormat" type="Bool">
++        <default>true</default>
++    </entry>
+     <entry name="preferredImageFormat" type="String">
+         <!--This is a string because the available formats
+         come from QImageWriter::supportedImageFormats()-->
+--- a/src/Gui/SpectacleWindow.cpp
++++ b/src/Gui/SpectacleWindow.cpp
+@@ -32,6 +32,7 @@
+ QString SpectacleWindow::s_previousTitle = QGuiApplication::applicationDisplayName();
+ bool SpectacleWindow::s_synchronizingAnnotating = false;
+ bool SpectacleWindow::s_isAnnotating = false;
++QByteArray SpectacleWindow::s_activationToken;
+ 
+ SpectacleWindow::SpectacleWindow(QQmlEngine *engine, QWindow *parent)
+     : QQuickView(engine, parent)
+@@ -99,14 +100,32 @@
+     return s_spectacleWindowInstances;
+ }
+ 
++void SpectacleWindow::setActivationToken(const QByteArray &token)
++{
++    if (token.isEmpty()) {
++        return;
++    }
++    s_activationToken = token;
++}
++
+ void SpectacleWindow::setVisibilityForAll(QWindow::Visibility visibility)
+ {
+     if (s_synchronizingVisibility || s_spectacleWindowInstances.isEmpty()) {
+         return;
+     }
+     s_synchronizingVisibility = true;
++    const bool visible = visibility != QWindow::Visibility::Hidden && visibility != QWindow::Visibility::Minimized;
+     for (auto window : std::as_const(s_spectacleWindowInstances)) {
++        // NOTE the token has to be set for every window, since Qt
++        // un-sets it again when activating a window
++        if (visible && !s_activationToken.isEmpty()) {
++            qputenv("XDG_ACTIVATION_TOKEN", s_activationToken);
++        }
+         window->setVisibility(visibility);
++    }
++    if (visible && !s_activationToken.isEmpty()) {
++        s_activationToken.clear();
++        qunsetenv("XDG_ACTIVATION_TOKEN");
+     }
+     s_synchronizingVisibility = false;
+ }
+@@ -243,7 +262,8 @@
+         return;
+     }
+     SpectacleCore::instance()->syncExportImage();
+-    ExportManager::instance()->exportImage(ExportManager::SaveAs | ExportManager::UserAction);
++    ExportManager::instance()->exportImage(ExportManager::SaveAs | ExportManager::UserAction,
++                                           SpectacleCore::instance()->outputUrl());
+ }
+ 
+ void SpectacleWindow::copyImage()
+--- a/src/Gui/SpectacleWindow.h
++++ b/src/Gui/SpectacleWindow.h
+@@ -52,6 +52,8 @@
+      * This will not work until the windows are fully initialized in SpectacleCore.
+      */
+     static void setVisibilityForAll(QWindow::Visibility visibility);
++
++    static void setActivationToken(const QByteArray &token);
+ 
+     /**
+      * For all SpectacleWindows created in SpectacleCore, set the title based on the chosen preset.
+@@ -123,6 +125,7 @@
+     static QString s_previousTitle;
+     static bool s_synchronizingAnnotating;
+     static bool s_isAnnotating;
++    static QByteArray s_activationToken;
+ 
+     const std::unique_ptr<QQmlContext> m_context;
+     std::unique_ptr<QQmlComponent> m_component;
+--- a/src/Gui/ViewerPage.qml
++++ b/src/Gui/ViewerPage.qml
+@@ -23,7 +23,6 @@
+ 
+     // Used in ViewerWindow::setMode()
+     readonly property real minimumWidth: Math.max(
+-        header.implicitWidth,
+         annotationsToolBar.implicitWidth + separator.implicitWidth + footerLoader.implicitWidth,
+         480 // leave some room for content if necessary
+     )
+@@ -36,9 +35,15 @@
+ 
+     header: QQC.ToolBar {
+         id: header
+-        contentItem: ButtonGrid {
++        contentItem: Flow {
+             id: mainToolBarContents
+-            animationsEnabled: true
++            spacing: Kirigami.Units.mediumSpacing
++            move: Transition {
++                NumberAnimation { properties: "x,y"; duration: Kirigami.Units.longDuration; easing.type: Easing.OutCubic }
++            }
++            add: Transition {
++                NumberAnimation { properties: "x,y"; duration: Kirigami.Units.longDuration; easing.type: Easing.OutCubic }
++            }
+             AnimatedLoader {
+                 state: contextWindow.annotating ? "active" : "inactive"
+                 sourceComponent: UndoRedoGroup {
+--- a/src/ImageMetaData.h
++++ b/src/ImageMetaData.h
+@@ -21,7 +21,9 @@
+ static const QString logicalX = u"logicalX"_s;
+ static const QString logicalY = u"logicalY"_s;
+ static const auto subGeometryList = u"subGeometryList"_s;
++static const auto stereoOutput = u"stereoOutput"_s;
+ static const auto stereo = u"stereo"_s;
++static const auto monitorPanorama = u"monitorPanorama"_s;
+ enum SubGeometryProperty : quint8 { X, Y, Width, Height, DevicePixelRatio };
+ }
+ 
+@@ -65,6 +67,28 @@
+ inline void setStereo(QImage &image, bool stereo)
+ {
+     image.setText(Keys::stereo, stereo ? u"true"_s : u"false"_s);
++}
++
++inline bool isStereoOutput(const QImage &image)
++{
++    return image.text(Keys::stereoOutput) == u"true"_s;
++}
++
++inline void setStereoOutput(QImage &image, bool stereoOutput)
++{
++    image.setText(Keys::stereoOutput, stereoOutput ? u"true"_s : u"false"_s);
++}
++
++inline bool isMonitorPanorama(const QImage &image)
++{
++    return image.text(Keys::monitorPanorama) == u"true"_s;
++}
++
++inline void setMonitorPanorama(QImage &image)
++{
++    image.setText(Keys::monitorPanorama, u"true"_s);
++    setStereo(image, false);
++    image.setText(u"Stereo3DLayout"_s, u"mono"_s);
+ }
+ 
+ template<typename Map>
+--- a/src/Main.cpp
++++ b/src/Main.cpp
+@@ -97,7 +97,8 @@
+         // fire it up
+         spectacleCore->activate(app.arguments(), QDir::currentPath());
+ 
+-        return app.exec();
++        const int result = app.exec();
++        return result ? result : spectacleCore->exitStatus();
+     }
+ 
+     // With the StartupOption::Unique flag, this process will exit during the construction of
+@@ -137,5 +138,6 @@
+     // fire it up
+     spectacleCore->activate(app.arguments(), QDir::currentPath());
+ 
+-    return app.exec();
++    const int result = app.exec();
++    return result ? result : spectacleCore->exitStatus();
+ }
+--- /dev/null
++++ b/src/MonitorCapture.cpp
+@@ -0,0 +1,120 @@
++/* SPDX-License-Identifier: LGPL-2.0-or-later */
++
++#include "MonitorCapture.h"
++#include "ImageMetaData.h"
++#include "CaptureImage.h"
++
++#include <QPainter>
++#include <algorithm>
++
++using namespace Qt::StringLiterals;
++
++static QImage selectedEye(const QImage &source, bool rightEye)
++{
++    if (!ImageMetaData::isStereo(source)) {
++        auto image = source;
++        image.setText(u"Stereo3DLayout"_s, u"mono"_s);
++        return image;
++    }
++    const int width = source.width() / 2;
++    auto image = source.copy(rightEye ? width : 0, 0, width, source.height());
++    ImageMetaData::setStereo(image, false);
++    image.setText(u"Stereo3DLayout"_s, u"mono"_s);
++    return image;
++}
++
++bool MonitorCapture::hasStereo() const
++{
++    return std::any_of(monitors.cbegin(), monitors.cend(), ImageMetaData::isStereo);
++}
++
++bool MonitorCapture::supports(Mode mode) const
++{
++    switch (mode) {
++    case AllMonitors2D:
++        return !monitors.empty();
++    case AllMonitors3D:
++        return hasStereo();
++    case ThisMonitor2D:
++        return !currentMonitor.isNull();
++    case ThisMonitor3D:
++        return ImageMetaData::isStereo(currentMonitor);
++    }
++    return false;
++}
++
++QImage MonitorCapture::image(Mode mode, bool rightEye) const
++{
++    if (!supports(mode)) {
++        return {};
++    }
++    if (mode == ThisMonitor3D) {
++        return currentMonitor;
++    }
++    if (mode == ThisMonitor2D) {
++        return selectedEye(currentMonitor, rightEye);
++    }
++
++    auto sources = monitors;
++    std::stable_sort(sources.begin(), sources.end(), [](const QImage &a, const QImage &b) {
++        const auto pa = ImageMetaData::logicalXY(a);
++        const auto pb = ImageMetaData::logicalXY(b);
++        if (pa.x() != pb.x()) {
++            return pa.x() < pb.x();
++        }
++        if (pa.y() != pb.y()) {
++            return pa.y() < pb.y();
++        }
++        return ImageMetaData::screen(a) < ImageMetaData::screen(b);
++    });
++    if (mode == AllMonitors3D) {
++        int eyeWidth = 0;
++        int height = 0;
++        const bool outputMode = std::any_of(sources.cbegin(), sources.cend(), ImageMetaData::isStereoOutput);
++        for (const auto &source : sources) {
++            eyeWidth += source.width() / (ImageMetaData::isStereo(source) ? 2 : 1);
++            height = std::max(height, source.height());
++        }
++        QImage result(QSize(eyeWidth * 2, height), QImage::Format_RGBA8888_Premultiplied);
++        result.fill(Qt::transparent);
++        QPainter painter(&result);
++        int x = 0;
++        for (const auto &source : sources) {
++            auto left = CaptureImage::eye(source);
++            auto right = CaptureImage::eye(source, !outputMode || ImageMetaData::isStereoOutput(source));
++            left.setDevicePixelRatio(1);
++            right.setDevicePixelRatio(1);
++            painter.drawImage(x, 0, left);
++            painter.drawImage(x + eyeWidth, 0, right);
++            x += left.width();
++        }
++        painter.end();
++        ImageMetaData::setStereo(result, true);
++        ImageMetaData::setStereoOutput(result, outputMode);
++        return result;
++    }
++    QList<QImage> images;
++    QSize size(0, 0);
++    for (const auto &source : sources) {
++        if (mode == AllMonitors3D && !ImageMetaData::isStereo(source)) {
++            continue;
++        }
++        auto image = mode == AllMonitors2D ? selectedEye(source, rightEye) : source;
++        // Each monitor keeps its captured pixels, including when its DPR differs from its neighbours.
++        image.setDevicePixelRatio(1);
++        size.rwidth() += image.width();
++        size.setHeight(std::max(size.height(), image.height()));
++        images.append(image);
++    }
++    QImage result(size, QImage::Format_RGBA8888_Premultiplied);
++    result.fill(Qt::transparent);
++    QPainter painter(&result);
++    int x = 0;
++    for (const auto &image : images) {
++        painter.drawImage(x, 0, image);
++        x += image.width();
++    }
++    painter.end();
++    ImageMetaData::setMonitorPanorama(result);
++    return result;
++}
+--- /dev/null
++++ b/src/MonitorCapture.h
+@@ -0,0 +1,24 @@
++/* SPDX-License-Identifier: LGPL-2.0-or-later */
++
++#pragma once
++
++#include <QImage>
++#include <QList>
++
++class MonitorCapture
++{
++public:
++    enum Mode {
++        AllMonitors2D,
++        AllMonitors3D,
++        ThisMonitor2D,
++        ThisMonitor3D
++    };
++
++    QList<QImage> monitors;
++    QImage currentMonitor;
++
++    bool supports(Mode mode) const;
++    bool hasStereo() const;
++    QImage image(Mode mode, bool rightEye) const;
++};
+--- a/src/Platforms/ImagePlatform.h
++++ b/src/Platforms/ImagePlatform.h
+@@ -18,6 +18,7 @@
+     QML_UNCREATABLE("Created by SpectacleCore")
+ 
+     Q_PROPERTY(GrabModes supportedGrabModes READ supportedGrabModes NOTIFY supportedGrabModesChanged)
++    Q_PROPERTY(bool stereoActive READ stereoActive NOTIFY stereoActiveChanged)
+     // Currently, supportedShutterModes never changes.
+     // Be sure to add a changed signal if it is ever able to change.
+     Q_PROPERTY(ShutterModes supportedShutterModes READ supportedShutterModes CONSTANT)
+@@ -32,6 +33,8 @@
+         TransientWithParent =   0b0010000,
+         AllScreensScaled =      0b0100000,
+         PerScreenImageNative =  0b1000000,
++        AllScreensStereo = 128,
++        CurrentScreenStereo = 256,
+     };
+     Q_DECLARE_FLAGS(GrabModes, GrabMode)
+     Q_FLAG(GrabModes)
+@@ -45,6 +48,22 @@
+ 
+     virtual GrabModes supportedGrabModes() const = 0;
+     virtual ShutterModes supportedShutterModes() const = 0;
++    bool stereoActive() const
++    {
++        return m_stereoActive;
++    }
++
++protected:
++    void setStereoActive(bool active)
++    {
++        if (m_stereoActive != active) {
++            m_stereoActive = active;
++            Q_EMIT stereoActiveChanged();
++        }
++    }
++
++private:
++    bool m_stereoActive = false;
+ 
+ public Q_SLOTS:
+     virtual void
+@@ -56,8 +75,10 @@
+ 
+ Q_SIGNALS:
+     void supportedGrabModesChanged();
++    void stereoActiveChanged();
+ 
+     void newScreenshotTaken(const QImage &image = {});
++    void monitorScreenshotTaken(const QList<QImage> &monitors, const QImage &currentMonitor);
+     void newCroppableScreenshotTaken(const QImage &image);
+ 
+     void newScreenshotFailed(const QString &message = {});
+--- a/src/Platforms/ImagePlatformKWin.cpp
++++ b/src/Platforms/ImagePlatformKWin.cpp
+@@ -5,14 +5,21 @@
+ */
+ 
+ #include "ImagePlatformKWin.h"
++#include "Config.h"
++#include "DebugUtils.h"
+ #include "ExportManager.h"
+ #include "Geometry.h"
+-#include "QtCV.h"
+-#include "DebugUtils.h"
+ #include "ImageMetaData.h"
++#include "CaptureImage.h"
++#include "MonitorCapture.h"
++#include "settings.h"
++#ifdef StereoLayer_FOUND
++#include <screenmode.h>
++#endif
+ 
+ #include <KWindowSystem>
+ 
++#include <QColorSpace>
+ #include <QDBusConnection>
+ #include <QDBusConnectionInterface>
+ #include <QDBusPendingCall>
+@@ -70,6 +77,27 @@
+     if (images.size() == 1) {
+         return images.constFirst();
+     }
++    if (std::any_of(images.cbegin(), images.cend(), ImageMetaData::isStereo)) {
++        const bool outputMode = std::any_of(images.cbegin(), images.cend(), ImageMetaData::isStereoOutput);
++        QList<QImage> leftImages;
++        QList<QImage> rightImages;
++        for (const auto &image : images) {
++            leftImages.append(CaptureImage::eye(image));
++            rightImages.append(CaptureImage::eye(image, !outputMode || ImageMetaData::isStereoOutput(image)));
++        }
++        const auto left = combinedImage(leftImages);
++        const auto right = combinedImage(rightImages);
++        QImage result(QSize(left.width() * 2, left.height()), left.format());
++        result.fill(Qt::transparent);
++        QPainter painter(&result);
++        painter.drawImage(0, 0, left);
++        painter.drawImage(left.width(), 0, right);
++        painter.end();
++        ImageMetaData::copy(result, left);
++        ImageMetaData::setStereo(result, true);
++        ImageMetaData::setStereoOutput(result, outputMode);
++        return result;
++    }
+     QRectF imageRect;
+     qreal maxDpr = 0;
+     ImageMetaData::SubGeometryList geometryList;
+@@ -97,7 +125,9 @@
+         return i.devicePixelRatio() == maxDpr;
+     });
+     if (allSameDpr) {
+-        QImage finalImage{imageRect.size().toSize() * maxDpr, finalFormat};
++        QImage finalImage{(imageRect.size() * maxDpr).toSize(), finalFormat};
++        finalImage.setColorSpace(QColorSpace::SRgb);
++        finalImage.fill(Qt::transparent);
+         QPainter painter(&finalImage);
+         for (qsizetype index = 0; index < images.size(); ++index) {
+             const auto &image = images.at(index);
+@@ -117,31 +147,19 @@
+     }
+     // We ceil to the next integer size up so that integer DPR images are always crisp.
+     const auto finalDpr = std::ceil(maxDpr);
+-    // An RGBA8888 based format is needed for compatibility with OpenCV.
+-    // If we used an ARGB32 based format, we'd need to swap red and blue.
+-    // Not sure what to do if we end up having different formats for different screens.
+-    QImage finalImage{imageRect.size().toSize() * finalDpr, finalFormat};
++    QImage finalImage{(imageRect.size() * finalDpr).toSize(), finalFormat};
++    finalImage.setColorSpace(QColorSpace::SRgb);
+     finalImage.fill(Qt::transparent);
+-    auto mainMat = QtCV::qImageToMat(finalImage);
++    QPainter painter(&finalImage);
+     for (qsizetype index = 0; index < images.size(); ++index) {
+         const auto &image = images.at(index);
+-        // Region Of Interest to put the image in the main image.
+-        // Prevent ROI from going out of bounds or having negative size.
+-        const auto rect = [finalDpr, &image, &finalImage, &positions, index] {
+-            auto pos = positions.at(index) * finalDpr;
+-            auto size = image.deviceIndependentSize() * finalDpr;
+-            auto rect = Geometry::rectClipped(QRectF(pos, size).toRect(), //
+-                                              finalImage.rect());
+-            return cv::Rect(rect.x(), rect.y(), rect.width(), rect.height());
+-        }();
+-        const auto imageDpr = image.devicePixelRatio();
+-        const bool hasIntDpr = static_cast<int>(imageDpr) == imageDpr;
+-        const auto interpolation = hasIntDpr ? cv::INTER_AREA : cv::INTER_LANCZOS4;
+-        auto rgbaImage = image.format() == finalImage.format() ? image : image.convertedTo(finalFormat);
+-        const auto mat = QtCV::qImageToMat(rgbaImage);
+-        // Will just copy if there's no difference in size
+-        cv::resize(mat, mainMat(rect), rect.size(), 0, 0, interpolation);
+-    }
++        const auto pos = positions.at(index) * finalDpr;
++        const auto size = (image.deviceIndependentSize() * finalDpr).toSize();
++        const bool hasIntDpr = static_cast<int>(image.devicePixelRatio()) == image.devicePixelRatio();
++        painter.setRenderHint(QPainter::SmoothPixmapTransform, !hasIntDpr);
++        painter.drawImage(QRectF{pos, size}, image);
++    }
++    painter.end();
+     finalImage.setDevicePixelRatio(finalDpr);
+     ImageMetaData::setSubGeometryList(finalImage, geometryList);
+     ImageMetaData::setStereo(finalImage, false);
+@@ -180,9 +198,12 @@
+         }
+     }
+ 
+-    return errors.isEmpty() //
+-        ? ResultVariant{QImage{width, height, static_cast<QImage::Format>(format)}}
+-        : ResultVariant{errors};
++    if (!errors.isEmpty()) {
++        return ResultVariant{errors};
++    }
++    QImage image{width, height, static_cast<QImage::Format>(format)};
++    image.setColorSpace(QColorSpace::SRgb);
++    return ResultVariant{image};
+ }
+ 
+ static ResultVariant readImage(int fileDescriptor, const QVariantMap &metadata)
+@@ -193,6 +214,9 @@
+         return {i18nc("@info", "Could not open file descriptor for reading KWin screenshot.")};
+     }
+ 
++    if (metadata.value(u"stereo"_s).toBool() && !metadata.contains(u"stereoOutput"_s)) {
++        return {i18nc("@info", "Stereo screenshots require KWin ScreenShot2 version 7 or later.")};
++    }
+     ResultVariant result = allocateImage(metadata);
+     if (result.index() != ResultVariant::Image) {
+         return result;
+@@ -244,6 +268,7 @@
+     }
+ 
+     ImageMetaData::setStereo(resultImage, metadata.value(u"stereo"_s).toBool());
++    ImageMetaData::setStereoOutput(resultImage, metadata.value(u"stereoOutput"_s).toBool());
+ 
+     QDataStream stream(&file);
+     stream.readRawData(reinterpret_cast<char *>(resultImage.bits()), resultImage.sizeInBytes());
+@@ -380,12 +405,13 @@
+ ScreenShotSourceMeta2::ScreenShotSourceMeta2(const QVector<ScreenShotSource2 *> &sources)
+ {
+     const auto size = sources.size();
+-    m_results.reserve(size); // reserves memory but does not change size
+-    for (ScreenShotSource2 *source : sources) {
++    m_results.resize(size);
++    for (qsizetype index = 0; index < size; ++index) {
++        auto source = sources.at(index);
+         source->setParent(this);
+-        connect(source, &ScreenShotSource2::finished, this, [this, size](const ResultVariant &result) {
+-            m_results.emplaceBack(result);
+-            if (m_results.size() == size) {
++        connect(source, &ScreenShotSource2::finished, this, [this, size, index](const ResultVariant &result) {
++            m_results[index] = result;
++            if (++m_finished == size) {
+                 Q_EMIT finished(m_results);
+             }
+         });
+@@ -409,6 +435,39 @@
+     updateSupportedGrabModes();
+     connect(qGuiApp, &QGuiApplication::screenAdded, this, &ImagePlatformKWin::updateSupportedGrabModes);
+     connect(qGuiApp, &QGuiApplication::screenRemoved, this, &ImagePlatformKWin::updateSupportedGrabModes);
++    connect(qGuiApp, &QGuiApplication::screenAdded, this, &ImagePlatformKWin::updateStereoOutputs);
++    connect(qGuiApp, &QGuiApplication::screenRemoved, this, &ImagePlatformKWin::updateStereoOutputs);
++    updateStereoOutputs();
++}
++
++void ImagePlatformKWin::updateStereoOutputs()
++{
++    bool active = m_capturedStereoOutput;
++#ifdef StereoLayer_FOUND
++    active = false;
++    const auto screens = qGuiApp->screens();
++    auto modes = findChildren<Stereo::ScreenMode *>(Qt::FindDirectChildrenOnly);
++    for (auto screen : screens) {
++        auto found = std::find_if(modes.cbegin(), modes.cend(), [screen](auto mode) {
++            return mode->screen() == screen;
++        });
++        if (found == modes.cend()) {
++            auto mode = new Stereo::ScreenMode(this);
++            mode->setScreen(screen);
++            connect(mode, &Stereo::ScreenMode::modeChanged, this, &ImagePlatformKWin::updateStereoOutputs);
++            modes.append(mode);
++        }
++    }
++    for (auto mode : modes) {
++        if (!screens.contains(mode->screen())) {
++            mode->deleteLater();
++        } else if (mode->mode() == Stereo::OutputMode::Stereo || mode->mode() == Stereo::OutputMode::Anaglyph) {
++            active = true;
++        }
++    }
++#endif
++    setStereoActive(active);
++    updateSupportedGrabModes();
+ }
+ 
+ ImagePlatform::GrabModes ImagePlatformKWin::supportedGrabModes() const
+@@ -422,6 +481,16 @@
+ 
+     if (m_apiVersion >= 2) {
+         grabModes |= GrabMode::ActiveWindow;
++        if (stereoActive()) {
++            grabModes |= GrabMode::CurrentScreen;
++        }
++#ifdef StereoLayer_FOUND
++        grabModes |= GrabMode::AllScreensStereo | GrabMode::CurrentScreenStereo;
++#else
++        if (m_capturedStereo) {
++            grabModes |= GrabMode::AllScreensStereo | GrabMode::CurrentScreenStereo;
++        }
++#endif
+     }
+ 
+     if (QGuiApplication::screens().count() > 1) {
+@@ -445,6 +514,10 @@
+                                bool includeDecorations,
+                                bool includeShadow)
+ {
++    if (stereoActive() && m_apiVersion < 7) {
++        Q_EMIT newScreenshotFailed(i18nc("@info", "Stereo screenshots require KWin ScreenShot2 version 7 or later."));
++        return;
++    }
+     ScreenShotFlags flags = ScreenShotFlag::NativeSize;
+ 
+     flags.setFlag(ScreenShotFlag::IncludeShadow, includeShadow);
+@@ -458,11 +531,17 @@
+ 
+     switch (grabMode) {
+     case GrabMode::AllScreens:
+-        takeScreenShotWorkspace(flags);
++    case GrabMode::AllScreensStereo:
++        if (m_apiVersion >= 2) {
++            takeMonitorScreenShots(flags, false, grabMode == GrabMode::AllScreensStereo);
++        } else {
++            takeScreenShotWorkspace(flags);
++        }
+         break;
+     case GrabMode::CurrentScreen:
++    case GrabMode::CurrentScreenStereo:
+         if (m_apiVersion >= 2) {
+-            takeScreenShotActiveScreen(flags);
++            takeMonitorScreenShots(flags, true, grabMode == GrabMode::CurrentScreenStereo);
+         } else {
+             takeScreenShotInteractive(InteractiveKind::Screen, flags);
+         }
+@@ -486,13 +565,55 @@
+     }
+ }
+ 
++void ImagePlatformKWin::takeMonitorScreenShots(ScreenShotFlags flags, bool currentScreen, bool stereo)
++{
++    QList<ScreenShotSource2 *> sources{new ScreenShotSourceActiveScreen2(flags)};
++    for (auto screen : qGuiApp->screens()) {
++        sources.append(new ScreenShotSourceScreen2(screen, flags));
++    }
++    auto source = new ScreenShotSourceMeta2(sources);
++    connect(source, &ScreenShotSourceMeta2::finished, this, [this, source, currentScreen, stereo](const QList<ResultVariant> &results) {
++        source->deleteLater();
++        QList<QImage> images;
++        for (const auto &result : results) {
++            if (result.index() != ResultVariant::Image) {
++                if (result.index() == ResultVariant::ErrorString) {
++                    Q_EMIT newScreenshotFailed(std::get<QString>(result));
++                } else {
++                    Q_EMIT newScreenshotCanceled();
++                }
++                return;
++            }
++            images.append(std::get<QImage>(result));
++        }
++        const auto current = images.takeFirst();
++        for (auto &image : images) {
++            if (ImageMetaData::screen(image) == ImageMetaData::screen(current)) {
++                image = current;
++            }
++        }
++        m_capturedStereo = std::any_of(images.cbegin(), images.cend(), ImageMetaData::isStereo);
++        m_capturedStereoOutput = std::any_of(images.cbegin(), images.cend(), ImageMetaData::isStereoOutput);
++        updateStereoOutputs();
++        if (stereo || m_capturedStereo || stereoActive()) {
++            Q_EMIT monitorScreenshotTaken(images, current);
++        } else {
++            Q_EMIT newScreenshotTaken(currentScreen ? current : combinedImage(images));
++        }
++    });
++}
++
+ void ImagePlatformKWin::trackSource(ScreenShotSource2 *source)
+ {
+     connect(source, &ScreenShotSource2::finished, this, [this, source](const ResultVariant &result) {
+         source->deleteLater();
+         const auto index = result.index();
+         if (index == ResultVariant::Image) {
+-            Q_EMIT newScreenshotTaken(std::get<ResultVariant::Image>(result));
++            const auto image = std::get<ResultVariant::Image>(result);
++            m_capturedStereo = ImageMetaData::isStereo(image);
++            m_capturedStereoOutput = ImageMetaData::isStereoOutput(image);
++            updateStereoOutputs();
++            Q_EMIT newScreenshotTaken(image);
+         } else if (index == ResultVariant::ErrorString) {
+             Q_EMIT newScreenshotFailed(std::get<ResultVariant::ErrorString>(result));
+         } else if (index == ResultVariant::CanceledState) {
+@@ -519,8 +640,8 @@
+ 
+         if (!images.empty()) {
+             auto image = combinedImage(images);
+-            if (ordinaryWorkspace) {
+-                ImageMetaData::setStereo(image, false);
++            if (ordinaryWorkspace && images.size() > 1) {
++                image = MonitorCapture{images, images.front()}.image(MonitorCapture::AllMonitors2D, Settings::stereoExportEye() == Settings::RightEye);
+             }
+             Q_EMIT (this->*outputSignal)(image);
+         }
+--- a/src/Platforms/ImagePlatformKWin.h
++++ b/src/Platforms/ImagePlatformKWin.h
+@@ -74,6 +74,7 @@
+ 
+ private Q_SLOTS:
+     void updateSupportedGrabModes();
++    void updateStereoOutputs();
+ 
+ private:
+     void takeScreenShotInteractive(InteractiveKind kind, ScreenShotFlags flags);
+@@ -82,6 +83,7 @@
+     void takeScreenShotActiveScreen(ScreenShotFlags flags);
+     void takeScreenShotScreens(const QList<QScreen *> &screens, ScreenShotFlags flags);
+     void takeScreenShotWorkspace(ScreenShotFlags flags);
++    void takeMonitorScreenShots(ScreenShotFlags flags, bool currentScreen, bool stereo);
+     void takeScreenShotCroppable(ScreenShotFlags flags);
+ 
+     void trackSource(ScreenShotSource2 *source);
+@@ -90,6 +92,8 @@
+ 
+     int m_apiVersion = 1;
+     GrabModes m_grabModes;
++    bool m_capturedStereo = false;
++    bool m_capturedStereoOutput = false;
+ };
+ 
+ /**
+@@ -188,6 +192,7 @@
+ 
+ private:
+     QList<ResultVariant> m_results;
++    qsizetype m_finished = 0;
+ };
+ 
+ /**
+--- a/src/Platforms/ImagePlatformXcb.cpp
++++ b/src/Platforms/ImagePlatformXcb.cpp
+@@ -665,6 +665,8 @@
+     case GrabMode::TransientWithParent:
+         grabTransientWithParent(includePointer, includeDecorations, includeShadow);
+         break;
++    case GrabMode::AllScreensStereo:
++    case GrabMode::CurrentScreenStereo:
+     case GrabMode::NoGrabModes:
+         Q_EMIT newScreenshotFailed();
+     }
+--- a/src/SpectacleCore.cpp
++++ b/src/SpectacleCore.cpp
+@@ -17,6 +17,7 @@
+ #include "Gui/SpectacleWindow.h"
+ #include "Gui/InlineMessageModel.h"
+ #include "ImageMetaData.h"
++#include "CaptureImage.h"
+ #include "OcrManager.h"
+ #include "Platforms/ImagePlatformXcb.h"
+ #include "Platforms/PlatformLoader.h"
+@@ -169,8 +170,18 @@
+         } else {
+             SpectacleWindow::setVisibilityForAll(QWindow::Hidden);
+             deleteWindows();
+-            m_annotationDocument->cropCanvas(rect);
+-            syncExportImage();
++            if (ImageMetaData::isStereo(m_croppableCapture)) {
++                const auto origin = ImageMetaData::logicalXY(m_croppableCapture);
++                const qreal dpr = m_croppableCapture.devicePixelRatio();
++                const QRect pixelRect = QRectF((rect.topLeft() - origin) * dpr, rect.size() * dpr).toAlignedRect();
++                const auto image = CaptureImage::cropped(m_croppableCapture, pixelRect);
++                m_annotationDocument->setBaseImage(image);
++                setExportImage(image);
++                m_croppableCapture = {};
++            } else {
++                m_annotationDocument->cropCanvas(rect);
++                syncExportImage();
++            }
+             auto exportActions = actions & ExportManager::AnyAction ? actions : autoExportActions();
+             if (m_ocrExportInProgress) {
+                 if (Settings::closeAfterOcr()) {
+@@ -187,13 +198,18 @@
+             m_returnToViewer &= !willQuit;
+             showViewerIfGuiMode();
+             SpectacleWindow::setTitleForAll(SpectacleWindow::Unsaved);
+-            ExportManager::instance()->scanQRCode();
++            if (m_startMode != StartMode::Background) {
++                ExportManager::instance()->scanQRCode();
++            }
+             ExportManager::instance()->exportImage(exportActions, outputUrl());
+         }
+     }, Qt::QueuedConnection);
+ 
+-    connect(imagePlatform, &ImagePlatform::newScreenshotTaken, this, [this](const QImage &image){
++    auto onScreenshot = [this](const QImage &image) {
++        m_croppableCapture = {};
+         InlineMessageModel::instance()->clear();
++        m_editExistingUrl.clear();
++        m_cliOptions[CommandLineOptions::EditExisting] = false;
+         m_annotationDocument->clearAnnotations();
+         m_annotationDocument->setBaseImage(image);
+         setExportImage(image);
+@@ -201,15 +217,61 @@
+         m_returnToViewer = true;
+         showViewerIfGuiMode();
+         SpectacleWindow::setTitleForAll(SpectacleWindow::Unsaved);
+-        ExportManager::instance()->scanQRCode();
++        if (m_startMode != StartMode::Background) {
++            ExportManager::instance()->scanQRCode();
++        }
+         ExportManager::instance()->exportImage(autoExportActions(), outputUrl());
+         setVideoMode(false);
++    };
++    connect(imagePlatform, &ImagePlatform::newScreenshotTaken, this, [this, onScreenshot](const QImage &image) {
++        m_monitorCapture = {};
++        Q_EMIT monitorCaptureChanged();
++        onScreenshot(image);
++    });
++    connect(imagePlatform, &ImagePlatform::monitorScreenshotTaken, this, [this, onScreenshot](const QList<QImage> &monitors, const QImage &current) {
++        MonitorCapture capture{monitors, current};
++        const bool outputMode = ImageMetaData::isStereoOutput(current);
++        const bool explicitMonitor = m_cliOptions[CommandLineOptions::MonitorMode];
++        const bool defaultStereo = !explicitMonitor && ImageMetaData::isStereo(current)
++            && (Settings::captureDimension() == Settings::StereoCapture
++                || (outputMode && Settings::captureDimension() == Settings::FollowOutputMode));
++        const auto mode = m_lastGrabMode == ImagePlatform::CurrentScreenStereo ? MonitorCapture::ThisMonitor3D
++            : m_lastGrabMode == ImagePlatform::CurrentScreen ? (defaultStereo ? MonitorCapture::ThisMonitor3D : MonitorCapture::ThisMonitor2D)
++            : m_lastGrabMode == ImagePlatform::AllScreensStereo
++                || (monitors.size() > 1 && !explicitMonitor && Settings::captureDimension() == Settings::StereoCapture) ? MonitorCapture::AllMonitors3D
++            : monitors.size() == 1 ? (defaultStereo ? MonitorCapture::ThisMonitor3D : MonitorCapture::ThisMonitor2D)
++                : MonitorCapture::AllMonitors2D;
++        const auto image = capture.image(mode, Settings::stereoExportEye() == Settings::RightEye);
++        if (image.isNull()) {
++            Q_EMIT this->imagePlatform()->newScreenshotFailed(i18nc("@info", "The selected monitor capture has no stereo image."));
++            return;
++        }
++        m_monitorCapture = capture;
++        m_monitorCaptureMode = mode;
++        Q_EMIT monitorCaptureChanged();
++        onScreenshot(image);
++    });
++    connect(Settings::self(), &Settings::stereoExportEyeChanged, this, [this] {
++        if (m_monitorCapture.supports(m_monitorCaptureMode)
++            && (m_monitorCaptureMode == MonitorCapture::AllMonitors2D || m_monitorCaptureMode == MonitorCapture::ThisMonitor2D)) {
++            const auto image = m_monitorCapture.image(m_monitorCaptureMode, Settings::stereoExportEye() == Settings::RightEye);
++            m_annotationDocument->setBaseImage(image);
++            auto rendered = m_annotationDocument->renderToImage();
++            ImageMetaData::copy(rendered, image);
++            setExportImage(rendered);
++            SpectacleWindow::setTitleForAll(SpectacleWindow::Unsaved);
++        }
+     });
+     connect(imagePlatform, &ImagePlatform::newCroppableScreenshotTaken, this, [this](const QImage &image) {
++        m_monitorCapture = {};
++        Q_EMIT monitorCaptureChanged();
+         InlineMessageModel::instance()->clear();
++        m_editExistingUrl.clear();
++        m_cliOptions[CommandLineOptions::EditExisting] = false;
+         setVideoMode(false);
+         m_annotationDocument->clearAnnotations();
+-        m_annotationDocument->setBaseImage(image);
++        m_croppableCapture = image;
++        m_annotationDocument->setBaseImage(CaptureImage::eye(image));
+         setExportImage(image);
+         ExportManager::instance()->updateTimestamp();
+         initCaptureWindows(CaptureWindow::Image);
+@@ -453,6 +515,10 @@
+     // set up the export manager
+     auto exportManager = ExportManager::instance();
+     auto onImageExported = [this](const ExportManager::Actions &actions, const QUrl &url) {
++        if (actions & ExportManager::AnySave) {
++            m_editExistingUrl = url;
++            m_outputUrl.clear();
++        }
+         if (actions & ExportManager::UserAction && Settings::quitAfterSaveCopyExport()) {
+             deleteWindows();
+         }
+@@ -677,6 +743,7 @@
+     connect(m_annotationSyncTimer.get(), &QTimer::timeout, this, [this] {
+         auto image = m_annotationDocument->renderToImage();
+         auto canvasPos = m_annotationDocument->canvasRect().topLeft();
++        ImageMetaData::copy(image, m_annotationDocument->baseImage());
+         ImageMetaData::setLogicalXY(image, canvasPos.x(), canvasPos.y());
+         ExportManager::instance()->setImage(image);
+     }, Qt::QueuedConnection); // QueuedConnection to help prevent making the visible render lag.
+@@ -874,6 +941,7 @@
+ 
+ void SpectacleCore::activate(const QStringList &arguments, const QString &workingDirectory)
+ {
++    SpectacleWindow::setActivationToken(qgetenv("XDG_ACTIVATION_TOKEN"));
+     if (m_videoPlatform->isRecording()) {
+         // BUG: https://bugs.kde.org/show_bug.cgi?id=481471
+         // TODO: find a way to support screenshot shortcuts while recording?
+@@ -986,6 +1054,8 @@
+             // This QImage constructor only works with local files or Qt resource file names.
+             QImage existingImage(existingLocalFile);
+             m_annotationDocument->clearAnnotations();
++            m_monitorCapture = {};
++            Q_EMIT monitorCaptureChanged();
+             m_annotationDocument->setBaseImage(existingImage);
+             m_returnToViewer = true;
+             showViewerIfGuiMode();
+@@ -1017,7 +1087,34 @@
+     // Determine grab mode
+     using CaptureMode = CaptureModeModel::CaptureMode;
+     using GrabMode = ImagePlatform::GrabMode;
++    std::optional<GrabMode> monitorMode;
++    if (m_cliOptions[Option::MonitorMode]) {
++        const auto mode = parser.value(CommandLineOptions::self()->monitorMode);
++        if (mode == u"all-2d") {
++            monitorMode = GrabMode::AllScreens;
++        } else if (mode == u"all-3d") {
++            monitorMode = GrabMode::AllScreensStereo;
++        } else if (mode == u"current-2d") {
++            monitorMode = GrabMode::CurrentScreen;
++        } else if (mode == u"current-3d") {
++            monitorMode = GrabMode::CurrentScreenStereo;
++        }
++        if (monitorMode) {
++            Settings::setCaptureDimension(*monitorMode == GrabMode::AllScreensStereo || *monitorMode == GrabMode::CurrentScreenStereo
++                ? Settings::StereoCapture : Settings::MonoCapture);
++        }
++        if (!monitorMode
++            || (!m_imagePlatform->supportedGrabModes().testFlag(*monitorMode)
++                && !(*monitorMode == GrabMode::CurrentScreen && m_imagePlatform->supportedGrabModes().testFlag(GrabMode::CurrentScreenStereo)))) {
++            showErrorMessage(i18nc("@info:shell", "The monitor capture mode is invalid or unavailable: %1", mode));
++            Q_EMIT allDone();
++            return;
++        }
++    }
+     auto cliGrabMode = [&]() -> std::optional<GrabMode> {
++        if (monitorMode) {
++            return monitorMode;
++        }
+         if (m_cliOptions[Option::Fullscreen]) {
+             return m_cliOptions[Option::Scaled] ? GrabMode::AllScreensScaled : GrabMode::AllScreens;
+         } else if (m_cliOptions[Option::Current]) {
+@@ -1027,7 +1124,9 @@
+         } else if (m_cliOptions[Option::Region]) {
+             return GrabMode::PerScreenImageNative;
+         } else if (m_cliOptions[Option::WindowUnderCursor]) {
+-            return GrabMode::WindowUnderCursor;
++            return toGrabMode(CaptureMode::WindowUnderCursor, false);
++        } else if (m_cliOptions[Option::TransientOnly]) {
++            return toGrabMode(CaptureMode::WindowUnderCursor, true);
+         }
+         return std::nullopt;
+     };
+@@ -1088,7 +1187,8 @@
+         m_cliOptions[Option::WindowUnderCursor] ||
+         m_cliOptions[Option::TransientOnly] ||
+         m_cliOptions[Option::Region] ||
+-        m_cliOptions[Option::Record];
++        m_cliOptions[Option::Record] ||
++        m_cliOptions[Option::MonitorMode];
+     // clang-format on
+ 
+     switch (m_startMode) {
+@@ -1173,12 +1273,10 @@
+                                       bool includeDecorations,
+                                       bool includeWindowShadow)
+ {
+-    if (m_cliOptions[CommandLineOptions::EditExisting]) {
+-        // Clear when a new screenshot is taken to avoid overwriting
+-        // the existing file with a completely unrelated image.
+-        m_editExistingUrl.clear();
+-        m_cliOptions[CommandLineOptions::EditExisting] = false;
+-    }
++    // Clear when a new screenshot is taken to avoid overwriting
++    // the previous file with a completely unrelated image.
++    m_editExistingUrl.clear();
++    m_cliOptions[CommandLineOptions::EditExisting] = false;
+ 
+     m_delayAnimation->stop();
+ 
+@@ -1275,6 +1373,9 @@
+ 
+     if (m_startMode == StartMode::Gui || m_startMode == StartMode::DBus) {
+         KMessageBox::error(nullptr, message);
++    } else if (isGuiNull()) {
++        m_exitStatus = 1;
++        Q_EMIT allDone();
+     }
+ }
+ 
+@@ -1430,25 +1531,24 @@
+     using GrabMode = ImagePlatform::GrabMode;
+     using CaptureMode = CaptureModeModel::CaptureMode;
+     const auto &supportedGrabModes = m_imagePlatform->supportedGrabModes();
+-    if (captureMode == CaptureMode::CurrentScreen
+-        && supportedGrabModes.testFlag(ImagePlatform::CurrentScreen)) {
++    if (captureMode == CaptureMode::AllScreensStereo && supportedGrabModes.testFlag(GrabMode::AllScreensStereo)) {
++        return GrabMode::AllScreensStereo;
++    } else if (captureMode == CaptureMode::CurrentScreenStereo && supportedGrabModes.testFlag(GrabMode::CurrentScreenStereo)) {
++        return GrabMode::CurrentScreenStereo;
++    } else if (captureMode == CaptureMode::CurrentScreen && supportedGrabModes.testFlag(ImagePlatform::CurrentScreen)) {
+         return GrabMode::CurrentScreen;
+-    } else if (captureMode == CaptureMode::ActiveWindow
+-        && supportedGrabModes.testFlag(ImagePlatform::ActiveWindow)) {
++    } else if (captureMode == CaptureMode::ActiveWindow && supportedGrabModes.testFlag(ImagePlatform::ActiveWindow)) {
+         return GrabMode::ActiveWindow;
+-    } else if (captureMode == CaptureMode::WindowUnderCursor
+-        && supportedGrabModes.testFlag(ImagePlatform::WindowUnderCursor)) {
++    } else if (captureMode == CaptureMode::WindowUnderCursor && supportedGrabModes.testFlag(ImagePlatform::WindowUnderCursor)) {
+         // TODO: Improve API for transientOnly or make it obsolete.
+         if (transientOnly || !supportedGrabModes.testFlag(ImagePlatform::TransientWithParent)) {
+             return GrabMode::WindowUnderCursor;
+         } else {
+             return GrabMode::TransientWithParent;
+         }
+-    } else if (captureMode == CaptureMode::RectangularRegion
+-        && supportedGrabModes.testFlag(ImagePlatform::PerScreenImageNative)) {
++    } else if (captureMode == CaptureMode::RectangularRegion && supportedGrabModes.testFlag(ImagePlatform::PerScreenImageNative)) {
+         return GrabMode::PerScreenImageNative;
+-    } else if (captureMode == CaptureMode::AllScreensScaled
+-        && supportedGrabModes.testFlag(ImagePlatform::AllScreensScaled)) {
++    } else if (captureMode == CaptureMode::AllScreensScaled && supportedGrabModes.testFlag(ImagePlatform::AllScreensScaled)) {
+         return GrabMode::AllScreensScaled;
+     } else if (supportedGrabModes.testFlag(ImagePlatform::AllScreens)) { // default if supported
+         return GrabMode::AllScreens;
+@@ -1461,7 +1561,11 @@
+ {
+     using GrabMode = ImagePlatform::GrabMode;
+     using CaptureMode = CaptureModeModel::CaptureMode;
+-    if (grabMode == GrabMode::CurrentScreen) {
++    if (grabMode == GrabMode::AllScreensStereo) {
++        return CaptureMode::AllScreensStereo;
++    } else if (grabMode == GrabMode::CurrentScreenStereo) {
++        return CaptureMode::CurrentScreenStereo;
++    } else if (grabMode == GrabMode::CurrentScreen) {
+         return CaptureMode::CurrentScreen;
+     } else if (grabMode == GrabMode::ActiveWindow) {
+         return CaptureMode::ActiveWindow;
+@@ -1491,6 +1595,30 @@
+     ViewerWindow::instance()->setVisible(true);
+ }
+ 
++void SpectacleCore::setMonitorCaptureMode(MonitorCapture::Mode mode)
++{
++    if (m_monitorCaptureMode == mode || !m_monitorCapture.supports(mode)) {
++        return;
++    }
++    if (m_annotationDocument->undoStackDepth() > 0
++        && KMessageBox::warningContinueCancel(nullptr,
++                                              i18nc("@info", "Changing the monitor view clears the current annotations."),
++                                              i18nc("@title:window", "Change Monitor View"))
++            != KMessageBox::Continue) {
++        Q_EMIT monitorCaptureChanged();
++        return;
++    }
++    m_annotationDocument->clearAnnotations();
++    m_monitorCaptureMode = mode;
++    Settings::setCaptureDimension(mode == MonitorCapture::AllMonitors3D || mode == MonitorCapture::ThisMonitor3D
++        ? Settings::StereoCapture : Settings::MonoCapture);
++    const auto image = m_monitorCapture.image(mode, Settings::stereoExportEye() == Settings::RightEye);
++    m_annotationDocument->setBaseImage(image);
++    setExportImage(image);
++    SpectacleWindow::setTitleForAll(SpectacleWindow::Unsaved);
++    Q_EMIT monitorCaptureChanged();
++}
++
+ // Hurry up the sync if the sync timer is active.
+ void SpectacleCore::syncExportImage()
+ {
+@@ -1499,8 +1627,8 @@
+     }
+     auto image = m_annotationDocument->renderToImage();
+     auto canvasPos = m_annotationDocument->canvasRect().topLeft();
++    ImageMetaData::copy(image, m_annotationDocument->baseImage());
+     ImageMetaData::setLogicalXY(image, canvasPos.x(), canvasPos.y());
+-    ImageMetaData::setStereo(image, ImageMetaData::isStereo(m_annotationDocument->baseImage()));
+     setExportImage(image);
+ }
+ 
+@@ -1651,6 +1779,7 @@
+ 
+ void SpectacleCore::activateAction(const QString &actionName, const QVariant &parameter)
+ {
++    SpectacleWindow::setActivationToken(qgetenv("XDG_ACTIVATION_TOKEN"));
+     Q_UNUSED(parameter)
+     m_startMode = StartMode::DBus;
+     if (m_videoPlatform->isRecording()) {
+--- a/src/SpectacleCore.h
++++ b/src/SpectacleCore.h
+@@ -16,6 +16,7 @@
+ #include "ExportManager.h"
+ #include "Gui/CaptureWindow.h"
+ #include "Gui/ViewerWindow.h"
++#include "MonitorCapture.h"
+ #include "OcrManager.h"
+ #include "Platforms/PlatformLoader.h"
+ #include "RecordingModeModel.h"
+@@ -55,6 +56,7 @@
+     ~SpectacleCore() noexcept override;
+ 
+     static SpectacleCore *instance();
++    int exitStatus() const { return m_exitStatus; }
+ 
+     ImagePlatform *imagePlatform() const;
+     VideoPlatform *videoPlatform() const;
+@@ -86,6 +88,15 @@
+     void initGuiNoScreenshot();
+ 
+     void syncExportImage();
++    const MonitorCapture &monitorCapture() const
++    {
++        return m_monitorCapture;
++    }
++    MonitorCapture::Mode monitorCaptureMode() const
++    {
++        return m_monitorCaptureMode;
++    }
++    void setMonitorCaptureMode(MonitorCapture::Mode mode);
+ 
+     Q_INVOKABLE void startRecording(VideoPlatform::RecordingMode mode, bool withPointer = Settings::videoIncludePointer());
+     Q_INVOKABLE void finishRecording();
+@@ -128,6 +139,7 @@
+     void showErrorMessage(const QString &message);
+ 
+ Q_SIGNALS:
++    void monitorCaptureChanged();
+     void screenCaptureUrlChanged();
+     void captureTimeRemainingChanged();
+     void captureProgressChanged();
+@@ -190,6 +202,10 @@
+ 
+     QUrl m_editExistingUrl;
+     QUrl m_outputUrl;
++    int m_exitStatus = 0;
++    QImage m_croppableCapture;
++    MonitorCapture m_monitorCapture;
++    MonitorCapture::Mode m_monitorCaptureMode = MonitorCapture::AllMonitors2D;
+ 
+     ImagePlatform::GrabMode m_lastGrabMode = ImagePlatform::GrabMode::NoGrabModes;
+     bool m_lastIncludePointer = false; // cli default value
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -3,6 +3,7 @@
+ SET(FILENAME_TEST_SRCS
+     FilenameTest.cpp
+     ../src/ShortcutActions.cpp
++    ../src/MonitorCapture.cpp
+     ../src/ExportManager.cpp
+     ../src/Platforms/ImagePlatform.cpp
+     ../src/Platforms/VideoPlatform.cpp
+--- a/tests/FilenameTest.cpp
++++ b/tests/FilenameTest.cpp
+@@ -2,22 +2,33 @@
+  *  SPDX-License-Identifier: GPL-2.0-only OR LGPL-2.0-only OR LicenseRef-KDE-Accepted-GPL
+  */
+ 
++#include <KSystemClipboard>
++#include <QApplication>
++#include <QBuffer>
++#include <QClipboard>
+ #include <QDir>
+ #include <QFile>
+-#include <QBuffer>
+-#include <QLocale>
+ #include <QImage>
+ #include <QImageReader>
+ #include <QImageWriter>
++#include <QLocale>
++#include <QMimeData>
+ #include <QMimeDatabase>
+ #include <QPainter>
++#include <QSignalSpy>
++#include <QStandardPaths>
++#include <QTemporaryDir>
+ #include <QTest>
+ #include <QUuid>
+ 
+ #include "ExportManager.h"
++#include "CaptureImage.h"
+ #include "ImageMetaData.h"
++#include "MonitorCapture.h"
+ 
+ using namespace Qt::StringLiterals;
++
++static QImage stereoTestImage();
+ 
+ class FilenameTest : public QObject
+ {
+@@ -31,6 +42,11 @@
+ private Q_SLOTS:
+ 
+     void initTestCase();
++    void testCaptureDefault_data();
++    void testCaptureDefault();
++    void testMonitorStereoComposition();
++    void testStereoRegion_data();
++    void testStereoRegion();
+     void testStrings();
+     void testDateTokens();
+     void testWindowTitle();
+@@ -38,17 +54,95 @@
+     void testCombined();
+     void testStereoMimeTypes();
+     void testStereoFormatMapping();
++    void testExplicitMonoFormat();
++    void testMonoWriter_data();
++    void testMonoWriter();
++    void testExplicitSavePath_data();
++    void testExplicitSavePath();
++    void testTempSaveEyeChange();
++    void testClipboardEye_data();
++    void testClipboardEye();
++    void testWriterError();
+     void testJpsPluginWriter();
+     void testMpoPluginWriter();
+     void testFlatWriter();
++    void testMonitorCapture_data();
++    void testMonitorCapture();
++    void testPanoramaStereoSave();
+ };
+ 
+ void FilenameTest::initTestCase()
+ {
++    QStandardPaths::setTestModeEnabled(true);
+     mExportManager = ExportManager::instance();
+     timestamp = QDateTime::fromString(u"2019-03-22T20:43:25Z"_s, Qt::ISODate);
+     mExportManager->setTimestamp(timestamp);
+     defaultTitle = u"Spectacle"_s;
++}
++
++void FilenameTest::testCaptureDefault_data()
++{
++    QTest::addColumn<bool>("outputMode");
++    QTest::addColumn<bool>("pairedContent");
++    for (const char *mode : {"full", "current", "active", "cursor", "transient", "region", "flat-region", "background", "cli", "dbus"}) {
++        for (bool output : {false, true}) {
++            for (bool content : {false, true}) {
++                const QByteArray name = QByteArray(mode) + (output ? "-3d" : "-2d") + (content ? "-pair" : "-flat");
++                QTest::newRow(name.constData()) << output << content;
++            }
++        }
++    }
++}
++
++void FilenameTest::testCaptureDefault()
++{
++    QFETCH(bool, outputMode);
++    QFETCH(bool, pairedContent);
++    Settings::setPreferredImageFormat(Settings::self()->defaultPreferredImageFormatValue());
++    auto image = stereoTestImage();
++    ImageMetaData::setStereo(image, outputMode || pairedContent);
++    image.setText(u"stereoOutput"_s, outputMode ? u"true"_s : u"false"_s);
++    mExportManager->setImage(image);
++    QCOMPARE(mExportManager->imageFileSuffix({}), outputMode ? u"mpo"_s : u"png"_s);
++    QCOMPARE(mExportManager->imageFileSuffix(QUrl(u"file:///tmp/chosen.png"_s)), u"png"_s);
++}
++
++void FilenameTest::testMonitorStereoComposition()
++{
++    auto pair = stereoTestImage();
++    ImageMetaData::setLogicalXY(pair, 0, 0);
++    QImage mono(2, 2, QImage::Format_RGB32);
++    mono.fill(Qt::yellow);
++    ImageMetaData::setLogicalXY(mono, 4, 0);
++    MonitorCapture capture{{pair, mono}, pair};
++    const auto result = capture.image(MonitorCapture::AllMonitors3D, false);
++    QCOMPARE(result.size(), QSize(12, 2));
++    QVERIFY(ImageMetaData::isStereo(result));
++    QVERIFY(!ImageMetaData::isMonitorPanorama(result));
++    QCOMPARE(result.pixelColor(0, 0), QColor(Qt::red));
++    QCOMPARE(result.pixelColor(4, 0), QColor(Qt::yellow));
++    QCOMPARE(result.pixelColor(6, 0), QColor(Qt::blue));
++    QCOMPARE(result.pixelColor(10, 0), QColor(Qt::yellow));
++}
++
++void FilenameTest::testStereoRegion_data()
++{
++    QTest::addColumn<bool>("flat");
++    QTest::newRow("declared-content") << false;
++    QTest::newRow("flat-content-in-3d") << true;
++}
++
++void FilenameTest::testStereoRegion()
++{
++    QFETCH(bool, flat);
++    auto image = stereoTestImage();
++    if (flat) image.fill(Qt::red);
++    image.setText(u"stereoOutput"_s, u"true"_s);
++    const auto result = CaptureImage::cropped(image, QRect(1, 0, 3, 2));
++    QCOMPARE(result.size(), QSize(6, 2));
++    QVERIFY(ImageMetaData::isStereo(result));
++    QCOMPARE(result.pixelColor(0, 0), QColor(Qt::red));
++    QCOMPARE(result.pixelColor(3, 0), QColor(flat ? Qt::red : Qt::blue));
+ }
+ 
+ void FilenameTest::testStrings()
+@@ -158,22 +252,18 @@
+     }
+ }
+ 
+-// The stereo formats come from KImageFormats' JPS and MPO plugins, which not every
+-// installation (or CI image) carries
+-static bool hasStereoWriters()
+-{
+-    const auto formats = QImageWriter::supportedImageFormats();
+-    return formats.contains("jps") && formats.contains("mpo");
++// The JPS and MPO plugins are in KImageFormats as we carry it, not in the one KDE ships
++static bool hasStereoPlugins()
++{
++    const auto mimeTypes = QImageWriter::supportedMimeTypes();
++    return mimeTypes.contains("image/x-jps") && mimeTypes.contains("image/x-mpo");
+ }
+ 
+ void FilenameTest::testStereoMimeTypes()
+ {
+-    if (!hasStereoWriters()) {
+-        QSKIP("KImageFormats has no JPS and MPO writers here");
+-    }
+-    const auto mimeTypes = QImageWriter::supportedMimeTypes();
+-    QVERIFY(mimeTypes.contains("image/x-jps"));
+-    QVERIFY(mimeTypes.contains("image/x-mpo"));
++    if (!hasStereoPlugins()) {
++        QSKIP("KImageFormats has no JPS and MPO plugins");
++    }
+ 
+     const QMimeDatabase mimeDatabase;
+     QCOMPARE(mimeDatabase.mimeTypeForFile(u"x.jps"_s, QMimeDatabase::MatchExtension).name(), u"image/x-jps"_s);
+@@ -197,9 +287,9 @@
+     mExportManager->m_saveImage = stereoTestImage();
+ 
+     Settings::setPreferredImageFormat(u"JPG"_s);
+-    QCOMPARE(mExportManager->imageFileSuffix({}), u"jps"_s);
++    QCOMPARE(mExportManager->imageFileSuffix({}), u"jpg"_s);
+     Settings::setPreferredImageFormat(u"PNG"_s);
+-    QCOMPARE(mExportManager->imageFileSuffix({}), u"mpo"_s);
++    QCOMPARE(mExportManager->imageFileSuffix({}), u"png"_s);
+ 
+     ImageMetaData::setStereo(mExportManager->m_saveImage, false);
+     Settings::setPreferredImageFormat(u"JPG"_s);
+@@ -207,10 +297,150 @@
+     Settings::setPreferredImageFormat(previousFormat);
+ }
+ 
++void FilenameTest::testExplicitMonoFormat()
++{
++    mExportManager->setImage(stereoTestImage());
++    for (const auto &suffix : {u"bmp"_s, u"png"_s, u"jpg"_s, u"webp"_s}) {
++        QCOMPARE(mExportManager->imageFileSuffix(QUrl(u"file:///tmp/explicit."_s + suffix)), suffix);
++    }
++}
++
++void FilenameTest::testMonoWriter_data()
++{
++    QTest::addColumn<QByteArray>("suffix");
++    QTest::addColumn<bool>("rightEye");
++    QTest::addColumn<qreal>("dpr");
++    for (const auto &suffix : {QByteArray("png"), QByteArray("bmp"), QByteArray("jpg"), QByteArray("webp")}) {
++        if (!QImageWriter::supportedImageFormats().contains(suffix)) {
++            continue;
++        }
++        for (bool right : {false, true}) {
++            for (qreal dpr : {1.0, 1.5, 2.0}) {
++                QTest::newRow(qPrintable(QString::fromLatin1(suffix) + QString::number(right) + u'-' + QString::number(dpr))) << suffix << right << dpr;
++            }
++        }
++    }
++}
++
++void FilenameTest::testMonoWriter()
++{
++    QFETCH(QByteArray, suffix);
++    QFETCH(bool, rightEye);
++    QFETCH(qreal, dpr);
++    Settings::setStereoExportEye(rightEye ? Settings::RightEye : Settings::LeftEye);
++    auto image = stereoTestImage();
++    image.setDevicePixelRatio(dpr);
++    image.setText(u"Stereo3DLayout"_s, u"sideBySideLeftFirst"_s);
++    image.setText(u"X-KDE::Stereo3DLayout"_s, u"sideBySideLeftFirst"_s);
++    mExportManager->setImage(image);
++    QBuffer output;
++    QVERIFY(output.open(QIODevice::WriteOnly));
++    QVERIFY(mExportManager->writeImage(&output, suffix));
++    const auto result = QImage::fromData(output.buffer(), suffix.constData());
++    QCOMPARE(result.size(), QSize(4, 2));
++    verifyEyeColor(result, rightEye ? Qt::blue : Qt::red);
++    for (const auto &key : {ImageMetaData::Keys::stereo, u"Stereo3DLayout"_s, u"X-KDE::Stereo3DLayout"_s}) {
++        QVERIFY(!result.textKeys().contains(key));
++        QVERIFY(!mExportManager->imageForExport(suffix).textKeys().contains(key));
++    }
++    if (suffix == "png" || suffix == "bmp") {
++        auto expected = image.copy(rightEye ? 4 : 0, 0, 4, 2);
++        expected.setDevicePixelRatio(1);
++        QCOMPARE(result, expected);
++    }
++    QCOMPARE(mExportManager->imageForExport(suffix).devicePixelRatio(), dpr);
++    QCOMPARE(mExportManager->image(), image);
++    Settings::setStereoExportEye(Settings::LeftEye);
++}
++
++void FilenameTest::testExplicitSavePath_data()
++{
++    QTest::addColumn<QString>("suffix");
++    for (const auto &suffix : {"png", "bmp", "jpg", "webp", "mpo", "jps"}) {
++        if (QImageWriter::supportedImageFormats().contains(suffix)) {
++            QTest::newRow(suffix) << QString::fromLatin1(suffix);
++        }
++    }
++}
++
++void FilenameTest::testExplicitSavePath()
++{
++    QFETCH(QString, suffix);
++    QTemporaryDir dir;
++    QVERIFY(dir.isValid());
++    mExportManager->setImage(stereoTestImage());
++    const auto url = QUrl::fromLocalFile(dir.filePath(u"explicit."_s + suffix));
++    QSignalSpy exported(mExportManager, &ExportManager::imageExported);
++    mExportManager->exportImage(ExportManager::Save, url);
++    QCOMPARE(exported.count(), 1);
++    QCOMPARE(exported.constFirst().at(1).toUrl(), url);
++    QCOMPARE(Settings::lastImageSaveLocation(), url);
++    QVERIFY(QFile::exists(url.toLocalFile()));
++    QCOMPARE(QDir(dir.path()).entryList(QDir::Files).size(), 1);
++    if (suffix != u"mpo" && suffix != u"jps") {
++        QCOMPARE(QImage(url.toLocalFile()).size(), QSize(4, 2));
++    }
++}
++
++void FilenameTest::testTempSaveEyeChange()
++{
++    const auto previousFormat = Settings::preferredImageFormat();
++    Settings::setPreferredImageFormat(u"PNG"_s);
++    Settings::setStereoExportEye(Settings::LeftEye);
++    mExportManager->setImage(stereoTestImage());
++    const auto left = mExportManager->tempSave();
++    QVERIFY(left.isLocalFile());
++    QCOMPARE(QImage(left.toLocalFile()).pixelColor(2, 1), QColor(Qt::red));
++    Settings::setStereoExportEye(Settings::RightEye);
++    QVERIFY(!QFile::exists(left.toLocalFile()));
++    const auto right = mExportManager->tempSave();
++    QVERIFY(right != left);
++    QCOMPARE(QImage(right.toLocalFile()).pixelColor(2, 1), QColor(Qt::blue));
++    QCOMPARE(QImage(right.toLocalFile()).size(), QSize(4, 2));
++    Settings::setStereoExportEye(Settings::LeftEye);
++    Settings::setPreferredImageFormat(previousFormat);
++}
++
++void FilenameTest::testClipboardEye_data()
++{
++    QTest::addColumn<bool>("rightEye");
++    QTest::newRow("left") << false;
++    QTest::newRow("right") << true;
++}
++
++void FilenameTest::testClipboardEye()
++{
++    QFETCH(bool, rightEye);
++    const auto previousFormat = Settings::preferredImageFormat();
++    Settings::setPreferredImageFormat(u"PNG"_s);
++    Settings::setStereoExportEye(rightEye ? Settings::RightEye : Settings::LeftEye);
++    mExportManager->setImage(stereoTestImage());
++    mExportManager->exportImage(ExportManager::CopyImage);
++    const auto data = KSystemClipboard::instance()->mimeData(QClipboard::Clipboard);
++    QVERIFY(data);
++    const auto encoded = QImage::fromData(data->data(u"image/png"_s), "png");
++    QCOMPARE(encoded.size(), QSize(4, 2));
++    QCOMPARE(encoded.pixelColor(2, 1), QColor(rightEye ? Qt::blue : Qt::red));
++    QCOMPARE(qvariant_cast<QImage>(data->imageData()), encoded);
++    QVERIFY(!encoded.textKeys().contains(ImageMetaData::Keys::stereo));
++    Settings::setStereoExportEye(Settings::LeftEye);
++    Settings::setPreferredImageFormat(previousFormat);
++}
++
++void FilenameTest::testWriterError()
++{
++    mExportManager->setImage(stereoTestImage());
++    QBuffer output;
++    QVERIFY(output.open(QIODevice::WriteOnly));
++    QSignalSpy errors(mExportManager, &ExportManager::errorMessage);
++    QVERIFY(!mExportManager->writeImage(&output, "unsupported-format"));
++    QCOMPARE(errors.count(), 1);
++}
++
+ void FilenameTest::testJpsPluginWriter()
+ {
+-    if (!hasStereoWriters()) {
+-        QSKIP("KImageFormats has no JPS and MPO writers here");
++    if (!hasStereoPlugins()) {
++        QSKIP("KImageFormats has no JPS and MPO plugins");
+     }
+     mExportManager->m_saveImage = stereoTestImage();
+ 
+@@ -232,8 +462,8 @@
+ 
+ void FilenameTest::testMpoPluginWriter()
+ {
+-    if (!hasStereoWriters()) {
+-        QSKIP("KImageFormats has no JPS and MPO writers here");
++    if (!hasStereoPlugins()) {
++        QSKIP("KImageFormats has no JPS and MPO plugins");
+     }
+     mExportManager->m_saveImage = stereoTestImage();
+ 
+@@ -271,6 +501,120 @@
+     QCOMPARE(QImage::fromData(output.buffer(), "png"), image);
+ }
+ 
+-QTEST_GUILESS_MAIN(FilenameTest)
++void FilenameTest::testMonitorCapture_data()
++{
++    QTest::addColumn<int>("mode");
++    QTest::addColumn<bool>("right");
++    for (int mode = 0; mode < 4; ++mode) {
++        for (bool right : {false, true}) {
++            QTest::newRow(qPrintable(QString::number(mode) + (right ? u"-right"_s : u"-left"_s))) << mode << right;
++        }
++    }
++}
++
++void FilenameTest::testMonitorCapture()
++{
++    QFETCH(int, mode);
++    QFETCH(bool, right);
++    const auto source = [](int width, int height, qreal dpr, qreal x, bool stereo, QColor left, QColor right) {
++        QImage image(width, height, QImage::Format_RGB32);
++        image.fill(left);
++        if (stereo) {
++            QPainter painter(&image);
++            painter.fillRect(width / 2, 0, width / 2, height, right);
++        }
++        image.setDevicePixelRatio(dpr);
++        ImageMetaData::setLogicalXY(image, x, 0);
++        ImageMetaData::setStereo(image, stereo);
++        return image;
++    };
++    auto a = source(20, 10, 1.5, -100, true, Qt::red, Qt::blue);
++    auto b = source(8, 6, 1, 0, false, Qt::yellow, Qt::yellow);
++    auto c = source(28, 12, 2, 100, true, Qt::green, Qt::cyan);
++    MonitorCapture capture{{c, a, b}, c};
++    const auto selected = MonitorCapture::Mode(mode);
++    QVERIFY(capture.supports(selected));
++    auto image = capture.image(selected, right);
++    QVERIFY(!image.isNull());
++    if (selected == MonitorCapture::AllMonitors2D) {
++        QCOMPARE(image.size(), QSize(32, 12));
++        QCOMPARE(image.pixelColor(0, 0), QColor(right ? Qt::blue : Qt::red));
++        QCOMPARE(image.pixelColor(10, 0), QColor(Qt::yellow));
++        QCOMPARE(image.pixelColor(18, 0), QColor(right ? Qt::cyan : Qt::green));
++        QCOMPARE(image.pixelColor(0, 11).alpha(), 0);
++    } else if (selected == MonitorCapture::AllMonitors3D) {
++        QCOMPARE(image.size(), QSize(64, 12));
++        QCOMPARE(image.pixelColor(0, 0), QColor(Qt::red));
++        QCOMPARE(image.pixelColor(10, 0), QColor(Qt::yellow));
++        QCOMPARE(image.pixelColor(18, 0), QColor(Qt::green));
++        QCOMPARE(image.pixelColor(32, 0), QColor(Qt::blue));
++        QCOMPARE(image.pixelColor(50, 0), QColor(Qt::cyan));
++    } else if (selected == MonitorCapture::ThisMonitor2D) {
++        QCOMPARE(image.size(), QSize(14, 12));
++        QCOMPARE(image.pixelColor(0, 0), QColor(right ? Qt::cyan : Qt::green));
++        QCOMPARE(image.devicePixelRatio(), 2);
++    } else {
++        QCOMPARE(image, c);
++    }
++    const bool panorama = selected == MonitorCapture::AllMonitors2D;
++    QCOMPARE(ImageMetaData::isMonitorPanorama(image), panorama);
++    QCOMPARE(ImageMetaData::isStereo(image), selected == MonitorCapture::ThisMonitor3D || selected == MonitorCapture::AllMonitors3D);
++    if (panorama) {
++        QCOMPARE(image.text(u"Stereo3DLayout"_s), u"mono"_s);
++        QCOMPARE(image.devicePixelRatio(), 1);
++        mExportManager->setImage(image);
++        QByteArray bytes;
++        QBuffer buffer(&bytes);
++        QVERIFY(buffer.open(QIODevice::WriteOnly));
++        QVERIFY(mExportManager->writeImage(&buffer, "png"));
++        const auto decoded = QImage::fromData(bytes, "PNG");
++        QCOMPARE(decoded.size(), image.size());
++        QCOMPARE(decoded.text(u"Stereo3DLayout"_s), u"mono"_s);
++    }
++    capture.currentMonitor = b;
++    QVERIFY(!capture.supports(MonitorCapture::ThisMonitor3D));
++    QVERIFY(capture.image(MonitorCapture::ThisMonitor3D, right).isNull());
++    QCOMPARE(capture.image(MonitorCapture::ThisMonitor2D, right), b);
++    capture.monitors = {b};
++    QVERIFY(!capture.supports(MonitorCapture::AllMonitors3D));
++    QVERIFY(capture.image(MonitorCapture::AllMonitors3D, right).isNull());
++    capture.monitors = {a};
++    const auto singlePanorama = capture.image(MonitorCapture::AllMonitors3D, right);
++    QVERIFY(!ImageMetaData::isMonitorPanorama(singlePanorama));
++    QVERIFY(ImageMetaData::isStereo(singlePanorama));
++    QCOMPARE(singlePanorama.size(), a.size());
++}
++
++void FilenameTest::testPanoramaStereoSave()
++{
++    QTemporaryDir dir;
++    QVERIFY(dir.isValid());
++    auto image = stereoTestImage();
++    ImageMetaData::setMonitorPanorama(image);
++    mExportManager->setImage(image);
++    for (const auto &suffix : {u"jps"_s, u"mpo"_s}) {
++        const auto path = dir.filePath(u"panorama."_s + suffix);
++        QFile file(path);
++        QVERIFY(file.open(QIODevice::WriteOnly));
++        file.write("keep existing file");
++        file.close();
++        QSignalSpy errors(mExportManager, &ExportManager::errorMessage);
++        QVERIFY(!mExportManager->save(QUrl::fromLocalFile(path)));
++        QCOMPARE(errors.count(), 1);
++        QVERIFY(file.open(QIODevice::ReadOnly));
++        QCOMPARE(file.readAll(), QByteArray("keep existing file"));
++        file.close();
++        QVERIFY(file.remove());
++        QVERIFY(!mExportManager->save(QUrl::fromLocalFile(path)));
++        QVERIFY(!QFile::exists(path));
++        QByteArray bytes;
++        QBuffer buffer(&bytes);
++        QVERIFY(buffer.open(QIODevice::WriteOnly));
++        QVERIFY(!mExportManager->writeImage(&buffer, suffix.toLatin1()));
++        QVERIFY(bytes.isEmpty());
++    }
++}
++
++QTEST_MAIN(FilenameTest)
+ 
+ #include "FilenameTest.moc"
