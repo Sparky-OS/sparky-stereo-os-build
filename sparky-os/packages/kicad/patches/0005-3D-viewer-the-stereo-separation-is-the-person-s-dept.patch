@@ -1,0 +1,963 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 20 Nov 2026 05:22:13 -0300
+Subject: [PATCH 5/5] 3D viewer: the stereo separation is the person's depth
+ limits
+
+The two eyes are as far apart as the person's depth limits allow, and no
+farther: the desktop gives the 3D view's window the limits set once for the
+screen (Stereo KWin's 3D Depth settings, read through libstereo-declare in the
+pixels of the view), a first pass from the camera between the eyes reads how
+near and how far the pixels of the scene are, and the separation is the
+largest under which every one of them stays inside the limits.  The limits
+are read again four times a second while the view shows 3D.  Without limits
+the eyes are the same picture and the info bar says why, once.
+
+The eye separation setting is gone.  The view's 3D options are "Enable 3D",
+on unless the person turns it off, and a button to Display Settings, where
+each screen's 3D mode, output and eye order are chosen.  On a screen with no
+stereo visual the view stays one picture without a word; it is said only
+when the person ticks Enable 3D there.
+
+With WXTRACE=KI_TRACE_EDA_3D_CANVAS each frame's limits, depth range,
+look-at distance, separation and the disparity of its nearest and farthest
+pixel are traced.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ 3d-viewer/3d_canvas/eda_3d_canvas.cpp         | 131 ++++++++++-
+ 3d-viewer/3d_canvas/eda_3d_canvas.h           |  15 ++
+ 3d-viewer/3d_canvas/eda_3d_stereo.cpp         |  70 ++++++
+ 3d-viewer/3d_canvas/eda_3d_stereo.h           |  61 ++++++
+ .../3d_rendering/opengl/render_3d_opengl.cpp  |  44 ++++
+ .../3d_rendering/opengl/render_3d_opengl.h    |  25 +++
+ .../3d_viewer/eda_3d_viewer_settings.cpp      |   5 +-
+ 3d-viewer/3d_viewer/eda_3d_viewer_settings.h  |   3 +-
+ 3d-viewer/CMakeLists.txt                      |   7 +
+ 3d-viewer/dialogs/panel_3D_opengl_options.cpp |  39 +++-
+ 3d-viewer/dialogs/panel_3D_opengl_options.h   |   3 +
+ .../dialogs/panel_3D_opengl_options_base.cpp  |  17 +-
+ .../dialogs/panel_3D_opengl_options_base.fbp  | 205 +++++++-----------
+ .../dialogs/panel_3D_opengl_options_base.h    |   5 +-
+ 14 files changed, 473 insertions(+), 157 deletions(-)
+ create mode 100644 3d-viewer/3d_canvas/eda_3d_stereo.cpp
+ create mode 100644 3d-viewer/3d_canvas/eda_3d_stereo.h
+
+diff --git a/3d-viewer/3d_canvas/eda_3d_canvas.cpp b/3d-viewer/3d_canvas/eda_3d_canvas.cpp
+index 0a6cb2e4..fed50153 100644
+--- a/3d-viewer/3d_canvas/eda_3d_canvas.cpp
++++ b/3d-viewer/3d_canvas/eda_3d_canvas.cpp
+@@ -32,6 +32,7 @@
+ 
+ #include "../common_ogl/ogl_utils.h"
+ #include "eda_3d_canvas.h"
++#include "eda_3d_stereo.h"
+ #include <eda_3d_viewer_frame.h>
+ #include <3d_rendering/raytracing/render_3d_raytrace_gl.h>
+ #include <3d_rendering/opengl/render_3d_opengl.h>
+@@ -111,6 +112,7 @@ EDA_3D_CANVAS::EDA_3D_CANVAS( wxWindow* aParent, const wxGLAttributes& aGLAttrib
+                 wxDefaultSize, wxFULL_REPAINT_ON_RESIZE ),
+     m_editing_timeout_timer( this, wxID_HIGHEST + 1 ),
+     m_redraw_trigger_timer( this, wxID_HIGHEST + 2 ),
++    m_stereo_limits_timer( this, wxID_HIGHEST + 3 ),
+     m_boardAdapter( aBoardAdapter )
+ {
+     wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::EDA_3D_CANVAS" ) );
+@@ -123,6 +125,10 @@ EDA_3D_CANVAS::EDA_3D_CANVAS( wxWindow* aParent, const wxGLAttributes& aGLAttrib
+     Connect( m_redraw_trigger_timer.GetId(), wxEVT_TIMER,
+              wxTimerEventHandler( EDA_3D_CANVAS::OnTimerTimeout_Redraw ), nullptr, this );
+ 
++    m_stereo_limits_timer.SetOwner( this );
++    Connect( m_stereo_limits_timer.GetId(), wxEVT_TIMER,
++             wxTimerEventHandler( EDA_3D_CANVAS::OnTimerTimeout_StereoLimits ), nullptr, this );
++
+     m_is_currently_painting.clear();
+ 
+     m_3d_render_raytracing = new RENDER_3D_RAYTRACE_GL( this, m_boardAdapter, m_camera );
+@@ -530,14 +536,46 @@ void EDA_3D_CANVAS::DoRePaint()
+     const EDA_3D_VIEWER_SETTINGS::RENDER_SETTINGS& renderCfg = m_boardAdapter.m_Cfg->m_Render;
+     const bool  stereo = m_has_stereo_buffers && m_3d_render == m_3d_render_opengl
+                          && renderCfg.opengl_stereo;
+-    const float eyeSeparation = renderCfg.opengl_stereo_eye_separation / 100.0;
++    float       eyeSeparation = 0.0f;
++    bool        fitToLimits = false;
++
++    if( stereo )
++    {
++        // The separation is the person's depth limits, set once for their screen in the
++        // desktop's 3D Depth settings and given to this window by the desktop: the largest one
++        // under which every pixel of the view stays inside them.  Without limits both eyes are
++        // the same picture, and the person is told why.
++        if( !m_stereo_limits_timer.IsRunning() )
++        {
++            m_stereoSince = GetRunningMicroSecs();
++            m_stereo_limits_timer.Start( 250 );
++        }
++
++        m_stereoWindow = EDA_3D_STEREO::CurrentWindow();
++        m_stereoWidth = clientSize.x;
++        m_stereoLimits = EDA_3D_STEREO::ReadDepthLimits( m_stereoWindow, m_stereoWidth,
++                                                         m_stereoSunk, m_stereoPopped );
++        fitToLimits = m_stereoLimits == EDA_3D_STEREO::LIMITS::DELIVERED;
++    }
+ 
+-    for( int eye = 0; eye < ( stereo ? 2 : 1 ); ++eye )
++    // With limits, a first pass from the camera between the eyes reads how near and how far the
++    // pixels of the scene are (it is drawn over by the left eye)
++    for( int eye = ( fitToLimits ? -1 : 0 ); eye < ( stereo ? 2 : 1 ); ++eye )
+     {
+         if( stereo )
+         {
+-            m_camera.SetStereoEye( eye == 0 ? STEREO_EYE::LEFT : STEREO_EYE::RIGHT, eyeSeparation );
+-            glDrawBuffer( eye == 0 ? GL_BACK_LEFT : GL_BACK_RIGHT );
++            if( eye < 0 )
++            {
++                m_camera.SetStereoEye( STEREO_EYE::LEFT, 0.0f );
++                m_3d_render_opengl->CaptureDepthRange();
++            }
++            else
++            {
++                m_camera.SetStereoEye( eye == 0 ? STEREO_EYE::LEFT : STEREO_EYE::RIGHT,
++                                       eyeSeparation );
++            }
++
++            glDrawBuffer( eye == 1 ? GL_BACK_RIGHT : GL_BACK_LEFT );
+         }
+ 
+         if( m_3d_render )
+@@ -579,6 +617,35 @@ void EDA_3D_CANVAS::DoRePaint()
+             }
+         }
+ 
++        if( eye < 0 )
++        {
++            float nearest = 0.0f;
++            float farthest = 0.0f;
++
++            if( m_3d_render_opengl->GetDepthRange( nearest, farthest ) )
++            {
++                eyeSeparation = m_camera.GetStereoSeparationForLimits( nearest, farthest,
++                                                                       m_stereoSunk,
++                                                                       m_stereoPopped,
++                                                                       clientSize.x );
++
++                wxLogTrace( m_logTrace,
++                            wxT( "EDA_3D_CANVAS::DoRePaint stereo: %s view %d px wide, limits "
++                                 "sunk %.4f popped %.4f px, nearest %.6f farthest %.6f look-at "
++                                 "%.6f, separation %.8f, disparity nearest %.4f farthest %.4f "
++                                 "px" ),
++                            m_camera.GetProjection() == PROJECTION_TYPE::PERSPECTIVE
++                                    ? wxT( "perspective" ) : wxT( "orthographic" ),
++                            clientSize.x, m_stereoSunk, m_stereoPopped, nearest, farthest,
++                            std::abs( m_camera.GetCameraPos().z ), eyeSeparation,
++                            m_camera.GetStereoDisparity( nearest, eyeSeparation, clientSize.x ),
++                            m_camera.GetStereoDisparity( farthest, eyeSeparation,
++                                                         clientSize.x ) );
++            }
++
++            continue;
++        }
++
+         if( m_render_pivot )
+         {
+             const float scale = glm::min( m_camera.GetZoom(), 1.0f );
+@@ -598,6 +665,37 @@ void EDA_3D_CANVAS::DoRePaint()
+     {
+         m_camera.SetStereoEye( STEREO_EYE::NONE, 0.0f );
+         glDrawBuffer( GL_BACK );
++
++        // Said after the render passes, because a board reload reports its own warning (or an
++        // empty one) into the same info bar; when the frame has a warning of its own, the next
++        // frame says it
++        const bool waited = GetRunningMicroSecs() - m_stereoSince > 2000000;
++
++        if( !fitToLimits && !m_stereoTold
++                && ( m_stereoLimits != EDA_3D_STEREO::LIMITS::NOT_DELIVERED || waited ) )
++        {
++            if( warningReporter.HasMessage() )
++            {
++                Request_refresh();
++            }
++            else
++            {
++                if( m_stereoLimits == EDA_3D_STEREO::LIMITS::NOT_OFFERED )
++                    warningReporter.Report( _( "3D depth: this desktop offers no depth limits, so "
++                                               "both eyes show the same picture" ),
++                                            RPT_SEVERITY_WARNING );
++                else if( m_stereoLimits == EDA_3D_STEREO::LIMITS::NOT_DELIVERED )
++                    warningReporter.Report( _( "3D depth: the desktop has not delivered the depth "
++                                               "limits yet, both eyes show the same picture for now" ),
++                                            RPT_SEVERITY_INFO );
++                else
++                    warningReporter.Report( _( "3D depth: this window cannot read the desktop's "
++                                               "depth limits, so both eyes show the same picture" ),
++                                            RPT_SEVERITY_WARNING );
++
++                m_stereoTold = true;
++            }
++        }
+     }
+ 
+     // "Swaps the double-buffer of this window, making the back-buffer the
+@@ -1283,6 +1381,31 @@ void EDA_3D_CANVAS::OnTimerTimeout_Redraw( wxTimerEvent& aEvent )
+ }
+ 
+ 
++void EDA_3D_CANVAS::OnTimerTimeout_StereoLimits( wxTimerEvent& aEvent )
++{
++    if( aEvent.GetId() != m_stereo_limits_timer.GetId() )
++    {
++        aEvent.Skip();
++        return;
++    }
++
++    // The person can change their limits, or move the window to another screen, at any time
++    double                      sunk = m_stereoSunk;
++    double                      popped = m_stereoPopped;
++    const EDA_3D_STEREO::LIMITS limits = EDA_3D_STEREO::ReadDepthLimits( m_stereoWindow,
++                                                                         m_stereoWidth, sunk,
++                                                                         popped );
++
++    // Redraw when they changed, and once more when they have not come after two seconds, so the
++    // person is told
++    const bool waited = limits == EDA_3D_STEREO::LIMITS::NOT_DELIVERED && !m_stereoTold
++                        && GetRunningMicroSecs() - m_stereoSince > 2000000;
++
++    if( limits != m_stereoLimits || sunk != m_stereoSunk || popped != m_stereoPopped || waited )
++        Request_refresh( true );
++}
++
++
+ void EDA_3D_CANVAS::OnRefreshRequest( wxEvent& aEvent )
+ {
+     Refresh();
+diff --git a/3d-viewer/3d_canvas/eda_3d_canvas.h b/3d-viewer/3d_canvas/eda_3d_canvas.h
+index d8d4e715..3c116036 100644
+--- a/3d-viewer/3d_canvas/eda_3d_canvas.h
++++ b/3d-viewer/3d_canvas/eda_3d_canvas.h
+@@ -33,6 +33,7 @@
+ #include <gal/hidpi_gl_3D_canvas.h>
+ #include <wx/image.h>
+ #include <wx/timer.h>
++#include "eda_3d_stereo.h"
+ 
+ 
+ class WX_INFOBAR;
+@@ -245,6 +246,9 @@ private:
+     void OnResize( wxSizeEvent& event );
+     void OnTimerTimeout_Redraw( wxTimerEvent& event );
+ 
++    /// Read the person's depth limits again and redraw when they changed.
++    void OnTimerTimeout_StereoLimits( wxTimerEvent& event );
++
+     void OnZoomGesture( wxZoomGestureEvent& event );
+     void OnPanGesture( wxPanGestureEvent& event );
+     void OnRotateGesture( wxRotateGestureEvent& event );
+@@ -311,6 +315,17 @@ private:
+     bool                   m_is_opengl_version_supported = true;
+     bool                   m_has_stereo_buffers = false;
+ 
++    // The stereo pair: the person's depth limits, read from the window the desktop sees
++    // declared, and whether the person has been told that none came
++    EDA_3D_STEREO::WINDOW  m_stereoWindow;
++    EDA_3D_STEREO::LIMITS  m_stereoLimits = EDA_3D_STEREO::LIMITS::NOT_DELIVERED;
++    double                 m_stereoSunk = 0.0;
++    double                 m_stereoPopped = 0.0;
++    double                 m_stereoWidth = 0.0;
++    int64_t                m_stereoSince = 0;
++    bool                   m_stereoTold = false;
++    wxTimer                m_stereo_limits_timer;
++
+     wxTimer                m_editing_timeout_timer;   // Expires after some time signaling that
+                                                       // the mouse / keyboard movements are over
+     wxTimer                m_redraw_trigger_timer;    // Used to schedule a redraw event
+diff --git a/3d-viewer/3d_canvas/eda_3d_stereo.cpp b/3d-viewer/3d_canvas/eda_3d_stereo.cpp
+new file mode 100644
+index 00000000..2bb3088b
+--- /dev/null
++++ b/3d-viewer/3d_canvas/eda_3d_stereo.cpp
+@@ -0,0 +1,70 @@
++/*
++ * This program source code file is part of KiCad, a free EDA CAD application.
++ *
++ * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, you may find one here:
++ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
++ * or you may search the http://www.gnu.org website for the version 2 license,
++ * or you may write to the Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
++ */
++
++// Its own file: the X11 and GLX headers clash with the GL loader the renderers use.
++
++#include "eda_3d_stereo.h"
++
++#include <cerrno>
++
++#include <GL/glx.h>
++#include <stereo-declare.h>
++
++
++EDA_3D_STEREO::WINDOW EDA_3D_STEREO::CurrentWindow()
++{
++    // GLX makes the X11 window itself current (wxGLCanvas), so the drawable is the window
++    WINDOW result;
++    result.display = glXGetCurrentDisplay();
++    result.window = static_cast<unsigned long>( glXGetCurrentDrawable() );
++    return result;
++}
++
++
++EDA_3D_STEREO::LIMITS EDA_3D_STEREO::ReadDepthLimits( const WINDOW& aWindow, double aBufferWidth,
++                                                      double& aSunk, double& aPopped )
++{
++    if( !aWindow.display || !aWindow.window || aBufferWidth <= 0.0 )
++        return LIMITS::NOT_READABLE;
++
++    stereo_depth_limits limits;
++    const int           result =
++            stereo_depth_x11_get_buffer_limits( static_cast<Display*>( aWindow.display ),
++                                                static_cast<Window>( aWindow.window ), aBufferWidth,
++                                                aBufferWidth, &limits );
++
++    if( result == 0 )
++    {
++        aSunk = limits.sunk;
++        aPopped = limits.popped;
++        return LIMITS::DELIVERED;
++    }
++
++    if( result == -ENODATA )
++        return LIMITS::NOT_DELIVERED;
++
++    if( result == -ENOTSUP )
++        return LIMITS::NOT_OFFERED;
++
++    return LIMITS::NOT_READABLE;
++}
+diff --git a/3d-viewer/3d_canvas/eda_3d_stereo.h b/3d-viewer/3d_canvas/eda_3d_stereo.h
+new file mode 100644
+index 00000000..beea2fce
+--- /dev/null
++++ b/3d-viewer/3d_canvas/eda_3d_stereo.h
+@@ -0,0 +1,61 @@
++/*
++ * This program source code file is part of KiCad, a free EDA CAD application.
++ *
++ * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, you may find one here:
++ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
++ * or you may search the http://www.gnu.org website for the version 2 license,
++ * or you may write to the Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
++ */
++
++#ifndef EDA_3D_STEREO_H
++#define EDA_3D_STEREO_H
++
++/**
++ * The person's depth limits for the stereo 3D view, as the desktop gives them.
++ *
++ * Stereo KWin keeps one pair of limits for each screen, set in its 3D Depth settings: how far
++ * behind the screen and how far in front of it anything may appear.  libstereo-declare hands them
++ * to the window of the 3D view in the pixels of its own picture; the view never scales them.
++ */
++namespace EDA_3D_STEREO
++{
++enum class LIMITS
++{
++    DELIVERED,     ///< the limits are in aSunk and aPopped
++    NOT_OFFERED,   ///< the desktop offers no depth limits
++    NOT_DELIVERED, ///< offered, not delivered to this window yet
++    NOT_READABLE   ///< no window to read them from
++};
++
++/// The X11 window of a GL drawable and its display.
++struct WINDOW
++{
++    void*         display = nullptr;
++    unsigned long window = 0;
++};
++
++/// The window the GL context current on this thread draws to: the one the desktop sees declared.
++WINDOW CurrentWindow();
++
++/**
++ * Read the depth limits of \a aWindow in pixels of a picture \a aBufferWidth pixels wide shown
++ * at that width.  The values are left untouched unless the limits are delivered.
++ */
++LIMITS ReadDepthLimits( const WINDOW& aWindow, double aBufferWidth, double& aSunk, double& aPopped );
++}
++
++#endif // EDA_3D_STEREO_H
+diff --git a/3d-viewer/3d_rendering/opengl/render_3d_opengl.cpp b/3d-viewer/3d_rendering/opengl/render_3d_opengl.cpp
+index dee1e332..b779b242 100644
+--- a/3d-viewer/3d_rendering/opengl/render_3d_opengl.cpp
++++ b/3d-viewer/3d_rendering/opengl/render_3d_opengl.cpp
+@@ -38,6 +38,7 @@
+ #include <lset.h>
+ #include <pgm_base.h>
+ #include <math/util.h>      // for KiROUND
++#include <algorithm>
+ #include <utility>
+ #include <vector>
+ #include <wx/log.h>
+@@ -509,6 +510,45 @@ static inline SFVEC4F premultiplyAlpha( const SFVEC4F& aInput )
+ }
+ 
+ 
++void RENDER_3D_OPENGL::captureDepthRange()
++{
++    m_captureDepthRange = false;
++    m_depthRangeValid = false;
++
++    const int width = m_windowSize.x;
++    const int height = m_windowSize.y;
++
++    if( width <= 0 || height <= 0 )
++        return;
++
++    // The background is drawn without the depth test, so every pixel still at the cleared depth
++    // is background; any other pixel shows the scene
++    std::vector<float> depth( static_cast<size_t>( width ) * height );
++
++    glPixelStorei( GL_PACK_ALIGNMENT, 4 );
++    glReadPixels( 0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT, depth.data() );
++
++    float nearest = 1.0f;
++    float farthest = 0.0f;
++
++    for( float value : depth )
++    {
++        if( value >= 1.0f )
++            continue;
++
++        nearest = std::min( nearest, value );
++        farthest = std::max( farthest, value );
++    }
++
++    if( nearest > farthest )
++        return;
++
++    m_depthNearest = m_camera.GetDistanceFromDepth( nearest );
++    m_depthFarthest = m_camera.GetDistanceFromDepth( farthest );
++    m_depthRangeValid = true;
++}
++
++
+ bool RENDER_3D_OPENGL::Redraw( bool aIsMoving, REPORTER* aStatusReporter,
+                                REPORTER* aWarningReporter )
+ {
+@@ -864,6 +904,10 @@ bool RENDER_3D_OPENGL::Redraw( bool aIsMoving, REPORTER* aStatusReporter,
+         glEnable( GL_LIGHTING );
+     }
+ 
++    // The scene is drawn: the 2D navigator comes next
++    if( m_captureDepthRange )
++        captureDepthRange();
++
+     // Render 3D arrows
+     if( cfg.show_navigator )
+     {
+diff --git a/3d-viewer/3d_rendering/opengl/render_3d_opengl.h b/3d-viewer/3d_rendering/opengl/render_3d_opengl.h
+index cf8b6875..573e5284 100644
+--- a/3d-viewer/3d_rendering/opengl/render_3d_opengl.h
++++ b/3d-viewer/3d_rendering/opengl/render_3d_opengl.h
+@@ -84,7 +84,27 @@ public:
+     SPHERES_GIZMO::GizmoSphereSelection getSelectedGizmoSphere() const;
+     void                                resetSelectedGizmoSphere();
+ 
++    /**
++     * Ask the next #Redraw to read, before the 2D navigator is drawn, the distances from the
++     * camera plane of the nearest and the farthest pixel the scene covers.
++     */
++    void CaptureDepthRange() { m_captureDepthRange = true; m_depthRangeValid = false; }
++
++    /**
++     * The distances read by the last #Redraw that was asked to capture them.
++     *
++     * @return false when that view showed nothing of the scene, only the background.
++     */
++    bool GetDepthRange( float& aNearest, float& aFarthest ) const
++    {
++        aNearest = m_depthNearest;
++        aFarthest = m_depthFarthest;
++        return m_depthRangeValid;
++    }
++
+ private:
++    void captureDepthRange();
++
+     OPENGL_RENDER_LIST* generateHoles( const LIST_OBJECT2D& aListHolesObject2d,
+                                        const SHAPE_POLY_SET& aPoly, float aZtop, float aZbot,
+                                        bool aInvertFaces,
+@@ -294,6 +314,11 @@ private:
+     SHAPE_POLY_SET m_antiBoardPolys; ///< The negative polygon representation of the board
+                                      ///< outline.
+     SPHERES_GIZMO* m_spheres_gizmo;
++
++    bool  m_captureDepthRange = false;
++    bool  m_depthRangeValid = false;
++    float m_depthNearest = 0.0f;
++    float m_depthFarthest = 0.0f;
+ };
+ 
+ #endif // RENDER_3D_OPENGL_H
+diff --git a/3d-viewer/3d_viewer/eda_3d_viewer_settings.cpp b/3d-viewer/3d_viewer/eda_3d_viewer_settings.cpp
+index ae7180a9..a2ceaa0f 100644
+--- a/3d-viewer/3d_viewer/eda_3d_viewer_settings.cpp
++++ b/3d-viewer/3d_viewer/eda_3d_viewer_settings.cpp
+@@ -272,10 +272,7 @@ EDA_3D_VIEWER_SETTINGS::EDA_3D_VIEWER_SETTINGS() :
+     m_params.emplace_back( new PARAM<bool>( "render.opengl_highlight_on_rollover",
+                                             &m_Render.highlight_on_rollover, true ) );
+     m_params.emplace_back( new PARAM<bool>( "render.opengl_stereo",
+-                                            &m_Render.opengl_stereo, false ) );
+-    m_params.emplace_back( new PARAM<double>( "render.opengl_stereo_eye_separation",
+-                                              &m_Render.opengl_stereo_eye_separation, 5.0, 0.0,
+-                                              20.0 ) );
++                                            &m_Render.opengl_stereo, true ) );
+     m_params.emplace_back( new PARAM<bool>( "render.opengl_AA_disableOnMove",
+                                             &m_Render.opengl_AA_disableOnMove, false ) );
+     m_params.emplace_back( new PARAM<bool>( "render.opengl_thickness_disableOnMove",
+diff --git a/3d-viewer/3d_viewer/eda_3d_viewer_settings.h b/3d-viewer/3d_viewer/eda_3d_viewer_settings.h
+index 14a70566..8cf4147b 100644
+--- a/3d-viewer/3d_viewer/eda_3d_viewer_settings.h
++++ b/3d-viewer/3d_viewer/eda_3d_viewer_settings.h
+@@ -98,8 +98,7 @@ public:
+         bool show_off_board_silk;
+         bool highlight_on_rollover;
+         KIGFX::COLOR4D opengl_selection_color;
+-        bool opengl_stereo;
+-        double opengl_stereo_eye_separation;   ///< % of the distance to the look-at point
++        bool opengl_stereo;   ///< Enable 3D: a stereo pair when the screen offers one
+ 
+         bool raytrace_anti_aliasing;
+         bool raytrace_backfloor;
+diff --git a/3d-viewer/CMakeLists.txt b/3d-viewer/CMakeLists.txt
+index 25324fce..27b0a4ab 100644
+--- a/3d-viewer/CMakeLists.txt
++++ b/3d-viewer/CMakeLists.txt
+@@ -28,6 +28,7 @@ set(3D-VIEWER_SRCS
+     3d_cache/3d_plugin_manager.cpp
+     3d_cache/model_substitution_helpers.cpp
+     3d_canvas/board_adapter.cpp
++    3d_canvas/eda_3d_stereo.cpp
+     3d_canvas/create_layer_items.cpp
+     3d_canvas/create_3Dgraphic_brd_items.cpp
+     3d_canvas/eda_3d_canvas.cpp
+@@ -135,6 +136,12 @@ target_link_libraries( 3d-viewer
+         ${OPENGL_LIBRARIES}
+         kicad_3dsg )
+ 
++# The person's depth limits for the stereo 3D view (Sparky Stereo OS: libstereo-declare reads them
++# from the desktop)
++find_package( PkgConfig REQUIRED )
++pkg_check_modules( STEREO_DECLARE REQUIRED IMPORTED_TARGET stereo-declare>=1.11.0 )
++target_link_libraries( 3d-viewer PRIVATE PkgConfig::STEREO_DECLARE )
++
+ add_subdirectory( 3d_cache )
+ 
+ 
+diff --git a/3d-viewer/dialogs/panel_3D_opengl_options.cpp b/3d-viewer/dialogs/panel_3D_opengl_options.cpp
+index 7f7b22bd..11a1175a 100644
+--- a/3d-viewer/dialogs/panel_3D_opengl_options.cpp
++++ b/3d-viewer/dialogs/panel_3D_opengl_options.cpp
+@@ -28,6 +28,9 @@
+ #include <eda_3d_viewer_settings.h>
+ #include <widgets/color_swatch.h>
+ #include "panel_3D_opengl_options.h"
++#include <confirm.h>
++#include <wx/glcanvas.h>
++#include <wx/utils.h>
+ 
+ 
+ PANEL_3D_OPENGL_OPTIONS::PANEL_3D_OPENGL_OPTIONS( wxWindow* aParent ) :
+@@ -35,6 +38,40 @@ PANEL_3D_OPENGL_OPTIONS::PANEL_3D_OPENGL_OPTIONS( wxWindow* aParent ) :
+ {
+     m_selectionColorSwatch->SetDefaultColor( COLOR4D( 0.0, 1.0, 0.0, 1.0 ) );
+     m_selectionColorSwatch->SetSupportsOpacity( false );
++
++    m_checkBoxStereo->Bind( wxEVT_CHECKBOX, &PANEL_3D_OPENGL_OPTIONS::onEnable3D, this );
++    m_buttonDisplaySettings->Bind( wxEVT_BUTTON, &PANEL_3D_OPENGL_OPTIONS::onDisplaySettings, this );
++}
++
++
++void PANEL_3D_OPENGL_OPTIONS::onEnable3D( wxCommandEvent& aEvent )
++{
++    // A screen in a 3D mode offers the 3D viewer a stereo visual; on any other screen the view
++    // stays one picture without a word, unless the person turns 3D on themselves
++    if( !m_checkBoxStereo->GetValue() )
++        return;
++
++    wxGLAttributes stereoAttributes;
++    stereoAttributes.PlatformDefaults().RGBA().DoubleBuffer().Depth( 16 ).Stereo().EndList();
++
++    if( !wxGLCanvas::IsDisplaySupported( stereoAttributes ) )
++    {
++        DisplayInfoMessage( this, _( "This screen offers no quad buffer, so the 3D viewer stays 2D. "
++                                     "Stereo KWin offers one only on a screen in a 3D mode." ) );
++    }
++}
++
++
++void PANEL_3D_OPENGL_OPTIONS::onDisplaySettings( wxCommandEvent& aEvent )
++{
++    // Display Settings choose each screen's 3D mode, its output format and its eye order
++    if( wxExecute( wxS( "systemsettings kcm_kscreen" ), wxEXEC_ASYNC ) > 0 )
++        return;
++
++    if( wxExecute( wxS( "kcmshell6 kcm_kscreen" ), wxEXEC_ASYNC ) > 0 )
++        return;
++
++    DisplayErrorMessage( this, _( "Display Settings could not be opened." ) );
+ }
+ 
+ 
+@@ -44,7 +81,6 @@ void PANEL_3D_OPENGL_OPTIONS::loadSettings( EDA_3D_VIEWER_SETTINGS* aCfg )
+     m_checkBoxBoundingBoxes->SetValue( aCfg->m_Render.show_model_bbox );
+     m_checkBoxHighlightOnRollOver->SetValue( aCfg->m_Render.highlight_on_rollover );
+     m_checkBoxStereo->SetValue( aCfg->m_Render.opengl_stereo );
+-    m_spinEyeSeparation->SetValue( aCfg->m_Render.opengl_stereo_eye_separation );
+ 
+     m_choiceAntiAliasing->SetSelection( static_cast<int>( aCfg->m_Render.opengl_AA_mode ) );
+     m_selectionColorSwatch->SetSwatchColor( aCfg->m_Render.opengl_selection_color, false );
+@@ -71,7 +107,6 @@ bool PANEL_3D_OPENGL_OPTIONS::TransferDataFromWindow()
+         cfg->m_Render.show_model_bbox = m_checkBoxBoundingBoxes->GetValue();
+         cfg->m_Render.highlight_on_rollover = m_checkBoxHighlightOnRollOver->GetValue();
+         cfg->m_Render.opengl_stereo = m_checkBoxStereo->GetValue();
+-        cfg->m_Render.opengl_stereo_eye_separation = m_spinEyeSeparation->GetValue();
+ 
+         cfg->m_Render.opengl_AA_mode = static_cast<ANTIALIASING_MODE>( m_choiceAntiAliasing->GetSelection() );
+         cfg->m_Render.opengl_selection_color = m_selectionColorSwatch->GetSwatchColor();
+diff --git a/3d-viewer/dialogs/panel_3D_opengl_options.h b/3d-viewer/dialogs/panel_3D_opengl_options.h
+index c33e0a50..f18eba01 100644
+--- a/3d-viewer/dialogs/panel_3D_opengl_options.h
++++ b/3d-viewer/dialogs/panel_3D_opengl_options.h
+@@ -40,6 +40,9 @@ public:
+ 
+ private:
+     void loadSettings( EDA_3D_VIEWER_SETTINGS* aCfg );
++
++    void onEnable3D( wxCommandEvent& aEvent );
++    void onDisplaySettings( wxCommandEvent& aEvent );
+ };
+ 
+ 
+diff --git a/3d-viewer/dialogs/panel_3D_opengl_options_base.cpp b/3d-viewer/dialogs/panel_3D_opengl_options_base.cpp
+index 828d3edd..705b4008 100644
+--- a/3d-viewer/dialogs/panel_3D_opengl_options_base.cpp
++++ b/3d-viewer/dialogs/panel_3D_opengl_options_base.cpp
+@@ -38,11 +38,12 @@ PANEL_3D_OPENGL_OPTIONS_BASE::PANEL_3D_OPENGL_OPTIONS_BASE( wxWindow* parent, wx
+ 	m_checkBoxHighlightOnRollOver = new wxCheckBox( this, wxID_ANY, _("Highlight items on rollover"), wxDefaultPosition, wxDefaultSize, 0 );
+ 	bSizerMargins->Add( m_checkBoxHighlightOnRollOver, 0, wxBOTTOM|wxRIGHT|wxLEFT, 5 );
+ 
+-	m_checkBoxStereo = new wxCheckBox( this, wxID_ANY, _("Stereo 3D (needs a stereo-capable display)"), wxDefaultPosition, wxDefaultSize, 0 );
+-	m_checkBoxStereo->SetToolTip( _("3D-Viewer must be closed and re-opened to apply this setting") );
+-
++	m_checkBoxStereo = new wxCheckBox( this, wxID_ANY, _("Enable 3D (applies when the 3D viewer opens again)"), wxDefaultPosition, wxDefaultSize, 0 );
+ 	bSizerMargins->Add( m_checkBoxStereo, 0, wxBOTTOM|wxRIGHT|wxLEFT, 5 );
+ 
++	m_buttonDisplaySettings = new wxButton( this, wxID_ANY, _("3D display settings..."), wxDefaultPosition, wxDefaultSize, 0 );
++	bSizerMargins->Add( m_buttonDisplaySettings, 0, wxBOTTOM|wxRIGHT|wxLEFT, 5 );
++
+ 	wxGridSizer* gSizer1;
+ 	gSizer1 = new wxGridSizer( 0, 2, 0, 0 );
+ 
+@@ -65,16 +66,6 @@ PANEL_3D_OPENGL_OPTIONS_BASE::PANEL_3D_OPENGL_OPTIONS_BASE( wxWindow* parent, wx
+ 	m_selectionColorSwatch = new COLOR_SWATCH( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 0 );
+ 	gSizer1->Add( m_selectionColorSwatch, 0, wxALIGN_CENTER_VERTICAL|wxALL|wxEXPAND, 5 );
+ 
+-	m_eyeSeparationLabel = new wxStaticText( this, wxID_ANY, _("Eye separation (%):"), wxDefaultPosition, wxDefaultSize, 0 );
+-	m_eyeSeparationLabel->Wrap( -1 );
+-	gSizer1->Add( m_eyeSeparationLabel, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT, 5 );
+-
+-	m_spinEyeSeparation = new wxSpinCtrlDouble( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 0, 20, 5, 0.5 );
+-	m_spinEyeSeparation->SetDigits( 1 );
+-	m_spinEyeSeparation->SetToolTip( _("Distance between the eyes as a percentage of the distance to the point the view is centred on") );
+-
+-	gSizer1->Add( m_spinEyeSeparation, 0, wxEXPAND|wxALIGN_CENTER_VERTICAL|wxTOP|wxRIGHT|wxLEFT, 5 );
+-
+ 
+ 	bSizerMargins->Add( gSizer1, 0, 0, 5 );
+ 
+diff --git a/3d-viewer/dialogs/panel_3D_opengl_options_base.fbp b/3d-viewer/dialogs/panel_3D_opengl_options_base.fbp
+index ed61a807..092a7a8f 100644
+--- a/3d-viewer/dialogs/panel_3D_opengl_options_base.fbp
++++ b/3d-viewer/dialogs/panel_3D_opengl_options_base.fbp
+@@ -429,7 +429,7 @@
+                 <property name="gripper">0</property>
+                 <property name="hidden">0</property>
+                 <property name="id">wxID_ANY</property>
+-                <property name="label">Stereo 3D (needs a stereo-capable display)</property>
++                <property name="label">Enable 3D (applies when the 3D viewer opens again)</property>
+                 <property name="max_size"></property>
+                 <property name="maximize_button">0</property>
+                 <property name="maximum_size"></property>
+@@ -450,7 +450,81 @@
+                 <property name="style"></property>
+                 <property name="subclass">; ; forward_declare</property>
+                 <property name="toolbar_pane">0</property>
+-                <property name="tooltip">3D-Viewer must be closed and re-opened to apply this setting</property>
++                <property name="tooltip"></property>
++                <property name="validator_data_type"></property>
++                <property name="validator_style">wxFILTER_NONE</property>
++                <property name="validator_type">wxDefaultValidator</property>
++                <property name="validator_variable"></property>
++                <property name="window_extra_style"></property>
++                <property name="window_name"></property>
++                <property name="window_style"></property>
++              </object>
++            </object>
++            <object class="sizeritem" expanded="false">
++              <property name="border">5</property>
++              <property name="flag">wxBOTTOM|wxRIGHT|wxLEFT</property>
++              <property name="proportion">0</property>
++              <object class="wxButton" expanded="false">
++                <property name="BottomDockable">1</property>
++                <property name="LeftDockable">1</property>
++                <property name="RightDockable">1</property>
++                <property name="TopDockable">1</property>
++                <property name="aui_layer">0</property>
++                <property name="aui_name"></property>
++                <property name="aui_position">0</property>
++                <property name="aui_row">0</property>
++                <property name="auth_needed">0</property>
++                <property name="best_size"></property>
++                <property name="bg"></property>
++                <property name="bitmap"></property>
++                <property name="caption"></property>
++                <property name="caption_visible">1</property>
++                <property name="center_pane">0</property>
++                <property name="close_button">1</property>
++                <property name="context_help"></property>
++                <property name="context_menu">1</property>
++                <property name="current"></property>
++                <property name="default">0</property>
++                <property name="default_pane">0</property>
++                <property name="disabled"></property>
++                <property name="dock">Dock</property>
++                <property name="dock_fixed">0</property>
++                <property name="docking">Left</property>
++                <property name="drag_accept_files">0</property>
++                <property name="enabled">1</property>
++                <property name="fg"></property>
++                <property name="floatable">1</property>
++                <property name="focus"></property>
++                <property name="font"></property>
++                <property name="gripper">0</property>
++                <property name="hidden">0</property>
++                <property name="id">wxID_ANY</property>
++                <property name="label">3D display settings...</property>
++                <property name="margins"></property>
++                <property name="markup">0</property>
++                <property name="max_size"></property>
++                <property name="maximize_button">0</property>
++                <property name="maximum_size"></property>
++                <property name="min_size"></property>
++                <property name="minimize_button">0</property>
++                <property name="minimum_size"></property>
++                <property name="moveable">1</property>
++                <property name="name">m_buttonDisplaySettings</property>
++                <property name="pane_border">1</property>
++                <property name="pane_position"></property>
++                <property name="pane_size"></property>
++                <property name="permission">protected</property>
++                <property name="pin_button">1</property>
++                <property name="pos"></property>
++                <property name="position"></property>
++                <property name="pressed"></property>
++                <property name="resize">Resizable</property>
++                <property name="show">1</property>
++                <property name="size"></property>
++                <property name="style"></property>
++                <property name="subclass">; ; forward_declare</property>
++                <property name="toolbar_pane">0</property>
++                <property name="tooltip"></property>
+                 <property name="validator_data_type"></property>
+                 <property name="validator_style">wxFILTER_NONE</property>
+                 <property name="validator_type">wxDefaultValidator</property>
+@@ -724,133 +798,6 @@
+                     <property name="window_style"></property>
+                   </object>
+                 </object>
+-                <object class="sizeritem" expanded="true">
+-                  <property name="border">5</property>
+-                  <property name="flag">wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT</property>
+-                  <property name="proportion">0</property>
+-                  <object class="wxStaticText" expanded="true">
+-                    <property name="BottomDockable">1</property>
+-                    <property name="LeftDockable">1</property>
+-                    <property name="RightDockable">1</property>
+-                    <property name="TopDockable">1</property>
+-                    <property name="aui_layer">0</property>
+-                    <property name="aui_name"></property>
+-                    <property name="aui_position">0</property>
+-                    <property name="aui_row">0</property>
+-                    <property name="best_size"></property>
+-                    <property name="bg"></property>
+-                    <property name="caption"></property>
+-                    <property name="caption_visible">1</property>
+-                    <property name="center_pane">0</property>
+-                    <property name="close_button">1</property>
+-                    <property name="context_help"></property>
+-                    <property name="context_menu">1</property>
+-                    <property name="default_pane">0</property>
+-                    <property name="dock">Dock</property>
+-                    <property name="dock_fixed">0</property>
+-                    <property name="docking">Left</property>
+-                    <property name="drag_accept_files">0</property>
+-                    <property name="enabled">1</property>
+-                    <property name="fg"></property>
+-                    <property name="floatable">1</property>
+-                    <property name="font"></property>
+-                    <property name="gripper">0</property>
+-                    <property name="hidden">0</property>
+-                    <property name="id">wxID_ANY</property>
+-                    <property name="label">Eye separation (%):</property>
+-                    <property name="markup">0</property>
+-                    <property name="max_size"></property>
+-                    <property name="maximize_button">0</property>
+-                    <property name="maximum_size"></property>
+-                    <property name="min_size"></property>
+-                    <property name="minimize_button">0</property>
+-                    <property name="minimum_size"></property>
+-                    <property name="moveable">1</property>
+-                    <property name="name">m_eyeSeparationLabel</property>
+-                    <property name="pane_border">1</property>
+-                    <property name="pane_position"></property>
+-                    <property name="pane_size"></property>
+-                    <property name="permission">protected</property>
+-                    <property name="pin_button">1</property>
+-                    <property name="pos"></property>
+-                    <property name="resize">Resizable</property>
+-                    <property name="show">1</property>
+-                    <property name="size"></property>
+-                    <property name="style"></property>
+-                    <property name="subclass">; ; forward_declare</property>
+-                    <property name="toolbar_pane">0</property>
+-                    <property name="tooltip"></property>
+-                    <property name="window_extra_style"></property>
+-                    <property name="window_name"></property>
+-                    <property name="window_style"></property>
+-                    <property name="wrap">-1</property>
+-                  </object>
+-                </object>
+-                    <object class="sizeritem" expanded="true">
+-                      <property name="border">5</property>
+-                      <property name="flag">wxEXPAND|wxALIGN_CENTER_VERTICAL|wxTOP|wxRIGHT|wxLEFT</property>
+-                      <property name="proportion">0</property>
+-                      <object class="wxSpinCtrlDouble" expanded="true">
+-                        <property name="BottomDockable">1</property>
+-                        <property name="LeftDockable">1</property>
+-                        <property name="RightDockable">1</property>
+-                        <property name="TopDockable">1</property>
+-                        <property name="aui_layer">0</property>
+-                        <property name="aui_name"></property>
+-                        <property name="aui_position">0</property>
+-                        <property name="aui_row">0</property>
+-                        <property name="best_size"></property>
+-                        <property name="bg"></property>
+-                        <property name="caption"></property>
+-                        <property name="caption_visible">1</property>
+-                        <property name="center_pane">0</property>
+-                        <property name="close_button">1</property>
+-                        <property name="context_help"></property>
+-                        <property name="context_menu">1</property>
+-                        <property name="default_pane">0</property>
+-                        <property name="digits">1</property>
+-                        <property name="dock">Dock</property>
+-                        <property name="dock_fixed">0</property>
+-                        <property name="docking">Left</property>
+-                        <property name="drag_accept_files">0</property>
+-                        <property name="enabled">1</property>
+-                        <property name="fg"></property>
+-                        <property name="floatable">1</property>
+-                        <property name="font"></property>
+-                        <property name="gripper">0</property>
+-                        <property name="hidden">0</property>
+-                        <property name="id">wxID_ANY</property>
+-                        <property name="inc">0.5</property>
+-                        <property name="initial">5</property>
+-                        <property name="max">20</property>
+-                        <property name="max_size"></property>
+-                        <property name="maximize_button">0</property>
+-                        <property name="maximum_size"></property>
+-                        <property name="min">0</property>
+-                        <property name="min_size"></property>
+-                        <property name="minimize_button">0</property>
+-                        <property name="minimum_size"></property>
+-                        <property name="moveable">1</property>
+-                        <property name="name">m_spinEyeSeparation</property>
+-                        <property name="pane_border">1</property>
+-                        <property name="pane_position"></property>
+-                        <property name="pane_size"></property>
+-                        <property name="permission">protected</property>
+-                        <property name="pin_button">1</property>
+-                        <property name="pos"></property>
+-                        <property name="resize">Resizable</property>
+-                        <property name="show">1</property>
+-                        <property name="size"></property>
+-                        <property name="style">wxSP_ARROW_KEYS</property>
+-                        <property name="subclass">; ; forward_declare</property>
+-                        <property name="toolbar_pane">0</property>
+-                        <property name="tooltip">Distance between the eyes as a percentage of the distance to the point the view is centred on</property>
+-                        <property name="value"></property>
+-                        <property name="window_extra_style"></property>
+-                        <property name="window_name"></property>
+-                        <property name="window_style"></property>
+-                      </object>
+-                    </object>
+               </object>
+             </object>
+           </object>
+diff --git a/3d-viewer/dialogs/panel_3D_opengl_options_base.h b/3d-viewer/dialogs/panel_3D_opengl_options_base.h
+index 77910ca6..4d8660c2 100644
+--- a/3d-viewer/dialogs/panel_3D_opengl_options_base.h
++++ b/3d-viewer/dialogs/panel_3D_opengl_options_base.h
+@@ -22,7 +22,7 @@ class COLOR_SWATCH;
+ #include <wx/statline.h>
+ #include <wx/checkbox.h>
+ #include <wx/choice.h>
+-#include <wx/spinctrl.h>
++#include <wx/button.h>
+ #include <wx/sizer.h>
+ #include <wx/panel.h>
+ 
+@@ -42,12 +42,11 @@ class PANEL_3D_OPENGL_OPTIONS_BASE : public RESETTABLE_PANEL
+ 		wxCheckBox* m_checkBoxCuThickness;
+ 		wxCheckBox* m_checkBoxHighlightOnRollOver;
+ 		wxCheckBox* m_checkBoxStereo;
++		wxButton* m_buttonDisplaySettings;
+ 		wxStaticText* m_staticText221;
+ 		wxChoice* m_choiceAntiAliasing;
+ 		wxStaticText* m_selectionColorLabel;
+ 		COLOR_SWATCH* m_selectionColorSwatch;
+-		wxStaticText* m_eyeSeparationLabel;
+-		wxSpinCtrlDouble* m_spinEyeSeparation;
+ 		wxStaticText* m_movingLabel;
+ 		wxStaticLine* m_staticline2;
+ 		wxCheckBox* m_checkBoxDisableAAMove;

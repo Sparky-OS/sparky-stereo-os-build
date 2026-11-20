@@ -1,0 +1,180 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 20 Nov 2026 05:22:13 -0300
+Subject: [PATCH 4/5] 3D camera: the stereo disparity of a distance, and the
+ separation that fits limits
+
+GetStereoDisparity() gives a point's horizontal disparity in pixels for a
+separation, GetStereoSeparationForLimits() the largest separation under which
+every distance of a range stays inside a sunk and a popped limit, and
+GetDistanceFromDepth() turns a window depth of the camera between the eyes
+back into a distance.
+
+The orthographic eyes are now a shear about the look-at point instead of a
+rotation: the views keep their scale, and the separation that fits a small
+depth range has no upper bound to clamp.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ common/gal/3d/camera.cpp | 85 ++++++++++++++++++++++++++++++++++++++--
+ include/gal/3d/camera.h  | 32 +++++++++++++--
+ 2 files changed, 111 insertions(+), 6 deletions(-)
+
+diff --git a/common/gal/3d/camera.cpp b/common/gal/3d/camera.cpp
+index b791ebf5..372e27f3 100644
+--- a/common/gal/3d/camera.cpp
++++ b/common/gal/3d/camera.cpp
+@@ -29,6 +29,8 @@
+ #include <gal/3d/camera.h>
+ #include <wx/log.h>
+ #include <algorithm>
++#include <cmath>
++#include <limits>
+ #include <3d_enums.h>
+ 
+ // A helper function to normalize aAngle between -2PI and +2PI
+@@ -538,15 +540,92 @@ void CAMERA::SetStereoEye( STEREO_EYE aEye, float aSeparation )
+     }
+     else
+     {
+-        const float angle = -sign * std::atan( halfSeparation );
++        // A shear about the look-at point: x moves by half the separation times the depth from
++        // the look-at plane, so the views keep their scale and have no vertical disparity.
++        glm::mat4 shear( 1.0f );
++        shear[2][0] = -sign * halfSeparation;
+ 
+-        m_stereoViewMatrix = glm::translate( glm::mat4( 1.0f ), m_camera_pos )
+-                             * glm::rotate( glm::mat4( 1.0f ), angle, SFVEC3F( 0.0f, 1.0f, 0.0f ) )
++        m_stereoViewMatrix = glm::translate( glm::mat4( 1.0f ), m_camera_pos ) * shear
+                              * glm::translate( glm::mat4( 1.0f ), -m_camera_pos ) * m_viewMatrix;
+     }
+ }
+ 
+ 
++float CAMERA::GetStereoDisparity( float aDistance, float aSeparation, float aViewWidth ) const
++{
++    // Pixels per unit of the view's horizontal coordinate at the camera's projection
++    const double k = 0.5 * aViewWidth * m_projectionMatrix[0][0];
++    const double c = std::abs( m_camera_pos.z );
++
++    if( m_projectionType == PROJECTION_TYPE::PERSPECTIVE )
++    {
++        if( aDistance <= 0.0f )
++            return 0.0f;
++
++        return static_cast<float>( k * aSeparation * ( 1.0 - c / aDistance ) );
++    }
++
++    return static_cast<float>( k * aSeparation * ( aDistance - c ) );
++}
++
++
++float CAMERA::GetStereoSeparationForLimits( float aNearest, float aFarthest, float aSunk,
++                                            float aPopped, float aViewWidth ) const
++{
++    const double k = 0.5 * aViewWidth * m_projectionMatrix[0][0];
++    const double c = std::abs( m_camera_pos.z );
++
++    if( k <= 0.0 || c <= 0.0 || aSunk < 0.0f || aPopped < 0.0f || aNearest > aFarthest )
++        return 0.0f;
++
++    double best = std::numeric_limits<double>::infinity();
++
++    if( m_projectionType == PROJECTION_TYPE::PERSPECTIVE )
++    {
++        if( aNearest <= 0.0f )
++            return 0.0f;
++
++        // disparity = k * t * ( 1 - c / distance ): the farthest point is the most sunk, the
++        // nearest the most popped
++        if( aFarthest > c )
++            best = std::min( best, aSunk / ( k * ( 1.0 - c / aFarthest ) ) );
++
++        if( aNearest < c )
++            best = std::min( best, aPopped / ( k * ( c / aNearest - 1.0 ) ) );
++
++        if( !std::isfinite( best ) )
++            best = aSunk / k;   // nothing off the look-at plane: infinity at the sunk limit
++
++        return static_cast<float>( best );
++    }
++
++    // disparity = k * t * ( distance - c )
++    if( aFarthest > c )
++        best = std::min( best, aSunk / ( k * ( aFarthest - c ) ) );
++
++    if( aNearest < c )
++        best = std::min( best, aPopped / ( k * ( c - aNearest ) ) );
++
++    if( !std::isfinite( best ) )
++        return 0.0f;   // nothing off the look-at plane: an orthographic view has no depth to show
++
++    return static_cast<float>( best );
++}
++
++
++float CAMERA::GetDistanceFromDepth( float aDepth ) const
++{
++    const double ndc = 2.0 * aDepth - 1.0;
++    const double a = m_projectionMatrix[2][2];
++    const double b = m_projectionMatrix[3][2];
++
++    if( m_projectionType == PROJECTION_TYPE::PERSPECTIVE )
++        return static_cast<float>( b / ( ndc + a ) );
++
++    return static_cast<float>( ( b - ndc ) / a );
++}
++
++
+ void CAMERA::SetViewMatrix( glm::mat4 aViewMatrix )
+ {
+     SetRotationMatrix( aViewMatrix );
+diff --git a/include/gal/3d/camera.h b/include/gal/3d/camera.h
+index 1d93c93a..f3787a27 100644
+--- a/include/gal/3d/camera.h
++++ b/include/gal/3d/camera.h
+@@ -145,15 +145,41 @@ public:
+      *
+      * A perspective view moves the camera half the eye separation along its right vector and shifts
+      * the frustum (off-axis) so both eyes meet at the look-at point's distance.  An orthographic
+-     * view rotates the scene around the look-at point instead.  The inverse matrices and the rays
++     * view shears the scene about the look-at point instead.  The inverse matrices and the rays
+      * stay those of the camera between the eyes.
+      *
+      * @param aEye the eye to look through; STEREO_EYE::NONE restores the camera between the eyes.
+-     * @param aSeparation the distance between the eyes as a fraction of the distance to the
+-     *                    look-at point.
++     * @param aSeparation in a perspective view, the distance between the eyes as a fraction of the
++     *                    distance to the look-at point; in an orthographic view, the horizontal
++     *                    shift between the eyes per unit of depth from the look-at point.
+      */
+     void SetStereoEye( STEREO_EYE aEye, float aSeparation );
+ 
++    /**
++     * The horizontal disparity, right eye minus left eye, in pixels of a view \a aViewWidth
++     * pixels wide, of a point \a aDistance from the camera plane when #SetStereoEye is given
++     * \a aSeparation.  Positive is behind the screen, negative in front of it, zero at the
++     * look-at point's distance.
++     */
++    float GetStereoDisparity( float aDistance, float aSeparation, float aViewWidth ) const;
++
++    /**
++     * The largest separation for #SetStereoEye under which every distance from \a aNearest to
++     * \a aFarthest stays inside the limits: at most \a aSunk pixels behind the screen and
++     * \a aPopped pixels in front of it, in pixels of a view \a aViewWidth pixels wide.
++     *
++     * A perspective view of a scene with no depth around the look-at point puts infinity at the
++     * sunk limit.  0 when nothing can be fitted (no depth in an orthographic view, no limits).
++     */
++    float GetStereoSeparationForLimits( float aNearest, float aFarthest, float aSunk, float aPopped,
++                                        float aViewWidth ) const;
++
++    /**
++     * The distance from the camera plane of a window depth value (0 near, 1 far, the default
++     * depth range) drawn with the projection of the camera between the eyes.
++     */
++    float GetDistanceFromDepth( float aDepth ) const;
++
+     const SFVEC3F& GetRight()    const { return m_right; }
+     const SFVEC3F& GetUp()       const { return m_up; }
+     const SFVEC3F& GetDir()      const { return m_dir; }

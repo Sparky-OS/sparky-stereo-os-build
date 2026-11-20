@@ -1,0 +1,5 @@
+Sparky Stereo OS: the 3D view (NVIZ) draws its scene as a stereo pair, two parallel cameras with an off-axis frustum meeting at the focus point, into a quad buffer that the edition's Mesa hands to Stereo KWin as declared full side by side.
+The separation is the person's depth limits, read from the desktop through libstereo-declare: the largest under which every pixel of the view stays inside them; no separation setting. Without limits both eyes are the same picture and the console says why, once.
+The 3D view's options are Enable 3D (on by default) and a button to the display settings; the new sentences in the ten languages (translations/grass-3d-view-stereo.po.patch, with a new zh_TW catalogue).
+grass-gui Depends on grass-core of the same version and on libstereo-declare1 (>= 1.11.0).
+The wxGUI runs on X11 (Xwayland) when wxWidgets' GL canvas has no EGL, as Debian's 3.2 has none: on a Wayland desktop the 3D view stopped the whole GUI with wx's "This program wasn't compiled with EGL support required under Wayland" (KiCad answers the same limit the same way); a GDK_BACKEND the person set is kept.

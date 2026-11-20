@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 20 Nov 2026 05:38:26 -0300
+Subject: [PATCH 6/7] ogsf: say the stereo separation's inputs and result at
+ debug level 3
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ lib/ogsf/gsd_views.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/lib/ogsf/gsd_views.c b/lib/ogsf/gsd_views.c
+index 0fce2f0..fd98088 100644
+--- a/lib/ogsf/gsd_views.c
++++ b/lib/ogsf/gsd_views.c
+@@ -203,6 +203,13 @@ double gsd_get_stereo_separation(geoview *gv, geodisplay *gd, double nearest,
+     if (t < 0.)
+         t = sunk / k;
+ 
++    G_debug(3,
++            "gsd_get_stereo_separation(): view %d px, fov %d, aspect %g, "
++            "focus %g, nearest %g, farthest %g, sunk %g, popped %g px: "
++            "separation %g",
++            width, gv->fov, GS_get_aspect(), f, nearest, farthest, sunk, popped,
++            t);
++
+     return t;
+ }
+ 
