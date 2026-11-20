@@ -43,7 +43,7 @@ id builder > /dev/null 2>&1 || useradd --create-home --uid 1000 builder
 chown -R builder:builder "$job" "$SPARKY_LC_SCRATCH"
 cd "$job/lc/source"
 runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev ${SPARKY_LC_PREVIOUS_SIBLINGS_FILE:+SPARKY_LC_PREVIOUS_SIBLINGS_FILE=$SPARKY_LC_PREVIOUS_SIBLINGS_FILE} \
-    SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" \
+    SPARKY_LC_SIBLINGS_FILE="$SPARKY_LC_PREVIOUS_SIBLINGS_FILE" SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" \
     dpkg-buildpackage -b "${build_args[@]}" -us -uc -j4
 cd "$job/lc"
 PYTHONPATH=/toolkit python3 -m lean.release check-debs "$job/lc/"*.deb
