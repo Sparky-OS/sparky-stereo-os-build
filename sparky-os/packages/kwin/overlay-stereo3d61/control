@@ -1,0 +1,263 @@
+Source: kwin
+Section: kde
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+XSBC-Original-Maintainer: Debian Qt/KDE Maintainers <debian-qt-kde@lists.debian.org>
+Uploaders: Aurélien COUDERC <coucouf@debian.org>,
+           Patrick Franz <deltaone@debian.org>,
+Build-Depends: sparky-stereo-problems (>= 0.2.4) [amd64], gcc, node-acorn, nodejs, perl, python3, python3-yaml, debhelper-compat (= 13),
+               libstereo-policy-dev (>= 1.15.0),
+               dh-sequence-kf6,
+               dh-sequence-plasma,
+               breeze-dev (>= 4:6.7.0~),
+               cmake (>= 3.16~),
+               extra-cmake-modules (>= 6.26.0~),
+               gettext,
+               knighttime-dev (>= 6.7.0~),
+               kscreenlocker-dev (>= 6.6~),
+               kwayland-dev (>= 4:6.7.0~),
+               libcanberra-dev,
+               libcap-dev [linux-any],
+               libcap2-bin [linux-any],
+               libdisplay-info-dev,
+               libdrm-dev (>= 2.4.118~),
+               libegl-dev (>= 1.2~),
+               libeis-dev,
+               libepoxy-dev (>= 1.3),
+               libfontconfig-dev,
+               libfreetype-dev,
+               libgbm-dev,
+               libinput-dev (>= 1.28~),
+               libkdecorations3-dev (>= 4:6.7.0~),
+               libkf6auth-dev (>= 6.26.0~),
+               libkf6colorscheme-dev (>= 6.26.0~),
+               libkf6config-dev (>= 6.26.0~),
+               libkf6coreaddons-dev (>= 6.26.0~),
+               libkf6crash-dev (>= 6.26.0~),
+               libkf6dbusaddons-dev (>= 6.26.0~),
+               libkf6declarative-dev (>= 6.26.0~),
+               libkf6doctools-dev (>= 6.26.0~),
+               libkf6globalaccel-dev (>= 6.26.0~),
+               libkf6guiaddons-dev (>= 6.26.0~),
+               libkf6i18n-dev (>= 6.26.0~),
+               libkf6idletime-dev (>= 6.26.0~),
+               libkf6kcmutils-dev (>= 6.26.0~),
+               libkf6newstuff-dev (>= 6.26.0~),
+               libkf6notifications-dev (>= 6.26.0~),
+               libkf6package-dev (>= 6.26.0~),
+               libkf6runner-dev,
+               libkf6service-dev (>= 6.26.0~),
+               libkf6svg-dev (>= 6.26.0~),
+               libkf6widgetsaddons-dev (>= 6.26.0~),
+               libkf6windowsystem-dev (>= 6.26.0~),
+               libkf6xmlgui-dev (>= 6.26.0~),
+               libkglobalacceld-dev (>= 6.6~),
+               libkirigami-dev (>= 6.26.0~),
+               liblcms2-dev,
+               libpipewire-0.3-dev (>= 0.3.29),
+               libplasma-dev (>= 6.7.0~),
+               libplasmaactivities-dev (>= 6.7.0~),
+               libqaccessibilityclient-qt6-dev,
+               libsystemd-dev [linux-any],
+               libudev-dev [linux-any],
+               libwayland-dev (>= 1.24~),
+               libx11-dev,
+               libx11-xcb-dev,
+               libxcb-composite0-dev (>= 1.10~),
+               libxcb-cursor-dev,
+               libxcb-damage0-dev (>= 1.10~),
+               libxcb-dri3-dev (>= 1.10~),
+               libxcb-glx0-dev (>= 1.10~),
+               libxcb-icccm4-dev,
+               libxcb-image0-dev,
+               libxcb-keysyms1-dev,
+               libxcb-present-dev (>= 1.10~),
+               libxcb-randr0-dev (>= 1.10~),
+               libxcb-render0-dev (>= 1.10~),
+               libxcb-res0-dev (>= 1.10~),
+               libxcb-shape0-dev (>= 1.10~),
+               libxcb-shm0-dev (>= 1.10~),
+               libxcb-sync-dev (>= 1.10~),
+               libxcb-util-dev,
+               libxcb-xfixes0-dev (>= 1.10~),
+               libxcb-xinerama0-dev (>= 1.10~),
+               libxcb-xinput-dev (>= 1.10~),
+               libxcb-xkb-dev (>= 1.10~),
+               libxcb-xtest0-dev,
+               libxcb1-dev (>= 1.10~),
+               libxcursor-dev,
+               libxcvt-dev (>= 0.1.1~),
+               libxi-dev,
+               libxkbcommon-dev (>= 0.7.0~),
+               libxkbcommon-x11-dev,
+               pkgconf,
+               plasma-wayland-protocols (>= 1.21.0-1+stereo3d11~),
+               qt6-5compat-dev (>= 6.10.0~),
+               qt6-base-dev (>= 6.10.0~),
+               qt6-base-private-dev (>= 6.6.0+dfsg~),
+               qt6-declarative-dev (>= 6.10.0~),
+               qt6-declarative-private-dev,
+               qt6-sensors-dev (>= 6.9.0~),
+               qt6-svg-dev (>= 6.10.0~),
+               qt6-tools-dev (>= 6.10.0~),
+               qt6-wayland-dev (>= 6.10.0~),
+               qt6-wayland-private-dev,
+               wayland-protocols (>= 1.48~),
+               xwayland (>= 2:23.1.0~),
+Standards-Version: 4.7.4
+Homepage: https://sparkylinux.org
+Vcs-Browser: https://salsa.debian.org/qt-kde-team/kde/kwin
+Vcs-Git: https://salsa.debian.org/qt-kde-team/kde/kwin.git
+
+Package: kwin-common
+Architecture: any
+Depends: libkwin6 (= ${binary:Version}),
+         kglobalacceld,
+         kwin-data (= ${source:Version}),
+         plasma-desktoptheme,
+         pnp.ids,
+         qml6-module-org-kde-kirigami,
+         qml6-module-org-kde-ksvg,
+         qml6-module-qt5compat-graphicaleffects,
+         qml6-module-qtquick,
+         qml6-module-qtquick-window,
+         ${misc:Depends},
+         ${plasma-version:Depends},
+         ${shlibs:Depends},
+Suggests: kwin-addons (>= 4:6.2.90~),
+Breaks: kwin-data (<< 4:6.1.4-1),
+Replaces: kwin-data (<< 4:6.1.4-1),
+Description: KDE window manager, common files
+ KWin (pronounced as one syllable "kwin") is the window
+ manager for the KDE Plasma Desktop. It gives you complete
+ control over your windows, making sure they're not in the way
+ but aid you in your task. It paints the window decoration,
+ the bar on top of every window with (configurable) buttons
+ like close, maximize and minimize. It also handles placing
+ of windows and switching between them.
+ .
+ This package is part of the KDE base workspace module.
+
+Package: kwin-data
+Architecture: all
+Multi-Arch: foreign
+Depends: ${misc:Depends},
+         ${plasma-version:Depends},
+Recommends: plasma-desktoptheme,
+            qml6-module-org-kde-kirigami,
+            qml6-module-org-kde-kitemmodels,
+            qml6-module-org-kde-kquickcontrolsaddons,
+            qml6-module-org-kde-ksvg,
+            qml6-module-org-kde-quickcharts,
+            qml6-module-qt5compat-graphicaleffects,
+            qml6-module-qtmultimedia,
+            qml6-module-qtquick,
+            qml6-module-qtquick-controls,
+            qml6-module-qtquick-layouts,
+            qml6-module-qtquick-window,
+            systemsettings,
+Breaks: kwin-addons (<< 4:6.0.0~),
+Replaces: kwin-addons (<< 4:6.0.0~),
+Description: KDE window manager data files
+ KWin (pronounced as one syllable "kwin") is the window
+ manager for the KDE Plasma Desktop. It gives you complete
+ control over your windows, making sure they're not in the way
+ but aid you in your task. It paints the window decoration,
+ the bar on top of every window with (configurable) buttons
+ like close, maximize and minimize. It also handles placing
+ of windows and switching between them.
+ .
+ This package contains the data files
+
+Package: kwin-dev
+Section: libdevel
+Architecture: any
+Depends: kwin-common (= ${binary:Version}),
+         libepoxy-dev (>= 1.3),
+         libkf6config-dev (>= 6.26.0~),
+         libkf6coreaddons-dev (>= 6.26.0~),
+         libkf6windowsystem-dev (>= 6.26.0~),
+         libkwin6 (= ${binary:Version}),
+         qt6-base-dev (>= 6.10.0~),
+         qt6-declarative-dev (>= 6.10.0~),
+         ${misc:Depends},
+         ${plasma-version:Depends},
+Description: KDE window manager - devel files
+ KWin (pronounced as one syllable "kwin") is the window
+ manager for the KDE Plasma Desktop. It gives you complete
+ control over your windows, making sure they're not in the way
+ but aid you in your task. It paints the window decoration,
+ the bar on top of every window with (configurable) buttons
+ like close, maximize and minimize. It also handles placing
+ of windows and switching between them.
+ .
+ This package is part of the KDE base workspace module.
+
+Package: kwin-wayland
+Architecture: any
+Depends: libkwin6 (= ${binary:Version}),
+         sparky-stereo-problems (>= 0.2.4) [amd64],
+         hwdata,
+         kwin-common (= ${binary:Version}),
+         libcap2-bin [linux-any],
+         xwayland (>= 2:24.1.13-1+stereo3d3~),
+         ${misc:Depends},
+         ${plasma-version:Depends},
+         ${shlibs:Depends},
+Recommends: kde-style-breeze,
+            kwin-style-aurorae,
+Provides: kwin,
+Breaks: libkscreen-bin (<< 4:6.7.4-1+stereo3d7~),
+        libstereo-declare1 (<< 1.0.1-1),
+        xwaylandvideobridge,
+Description: KDE window manager, Wayland version
+ KWin (pronounced as one syllable "kwin") is the window
+ manager for the KDE Plasma Desktop. It gives you complete
+ control over your windows, making sure they're not in the way
+ but aid you in your task. It paints the window decoration,
+ the bar on top of every window with (configurable) buttons
+ like close, maximize and minimize. It also handles placing
+ of windows and switching between them.
+ .
+ This package provides the wayland compositor.
+
+Package: libkwin6
+Section: libs
+Architecture: any
+Depends: ${misc:Depends},
+         ${plasma-version:Depends},
+         ${shlibs:Depends},
+Breaks: kwin-common (<< ${binary:Version}),
+        kwin-wayland (<< ${binary:Version}),
+Description: KDE window manager library
+ KWin (pronounced as one syllable "kwin") is the window
+ manager for the KDE Plasma Desktop. It gives you complete
+ control over your windows, making sure they're not in the way
+ but aid you in your task. It paints the window decoration,
+ the bar on top of every window with (configurable) buttons
+ like close, maximize and minimize. It also handles placing
+ of windows and switching between them.
+ .
+ This package is part of the KDE base workspace module.
+
+Package: displayxr-window-geometry-publisher-kwin
+Architecture: any
+Depends: kwin-wayland (= ${binary:Version}), libkwin6 (= ${binary:Version}), ${misc:Depends}, ${shlibs:Depends}
+Provides: displayxr-window-geometry-publisher,
+          displayxr-window-geometry-publisher-kwin,
+Conflicts: displayxr-window-geometry-publisher-kwin,
+Replaces: displayxr-window-geometry-publisher-kwin,
+Description: DisplayXR window-geometry service for KWin
+ A KWin plugin that serves org.displayxr.WindowGeometry on the session bus:
+ the position, size and output of every normal window, with the output's
+ scale, so that a spatial display runtime (DisplayXR's, or a vendor's) can
+ weave a lenticular or other phase-sensitive picture where the window's
+ pixels are. It also moves a client's own window on request, keeps a window
+ the user drags on the positions the client's drag table allows or paints it
+ where each frame was woven for (move sync), and keeps a client's own
+ windows out of screenshots and screen casts.
+ .
+ Any program on the session bus can read the titles and rectangles of the
+ windows, as with the GNOME Shell extension that serves the same interface.
+ KWin loads the plugin when it starts, so it takes effect at the next login;
+ it is turned off with displayxrEnabled=false in the [Plugins] group of
+ kwinrc.
