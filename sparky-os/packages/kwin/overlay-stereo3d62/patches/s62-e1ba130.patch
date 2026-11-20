@@ -1,0 +1,67 @@
+From e1ba130d774b1d816fe29592bfc029323e4e9ac1 Mon Sep 17 00:00:00 2001
+From: Vlad Zahorodnii <vlad.zahorodnii@kde.org>
+Date: Wed, 7 Oct 2026 11:27:07 +0300
+Subject: [PATCH] plugins/screenshot: Fix a crash in CaptureScreen()
+
+Backport of upstream dc8d2b7f97bad26a4a54f52185003aad5c7bfa9a. Preserve stereo rendering while restoring the context after prePaint and pairing postPaint on every exit.
+
+SENTRY: KWIN-VPR
+Assisted-by: Codex (GPT-6)
+---
+ src/plugins/screenshot/screenshot.cpp | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/src/plugins/screenshot/screenshot.cpp b/src/plugins/screenshot/screenshot.cpp
+index 6e68173..eec1624 100644
+--- a/src/plugins/screenshot/screenshot.cpp
++++ b/src/plugins/screenshot/screenshot.cpp
+@@ -32,6 +32,7 @@
+ #include "workspace.h"
+ 
+ #include <QPainter>
++#include <QScopeGuard>
+ #include <algorithm>
+ #include <functional>
+ #include <numeric>
+@@ -221,6 +222,12 @@ std::optional<QImage> ScreenShotManager::takeScreenShot(LogicalOutput *screen, S
+     sceneView.setViewport(screen->geometryF());
+     sceneView.setScale(scale);
+     sceneView.prePaint();
++    const auto postPaint = qScopeGuard([&sceneView] {
++        sceneView.postPaint();
++    });
++    if (!context->makeCurrent()) {
++        return std::nullopt;
++    }
+     ItemRenderer *renderer = kwinApp()->scene()->renderer();
+     QImage snapshot;
+     const bool stereo = screenShotIsStereo(screen);
+@@ -232,7 +239,6 @@ std::optional<QImage> ScreenShotManager::takeScreenShot(LogicalOutput *screen, S
+     } else {
+         sceneView.paint(beginInfo->renderTarget, QPoint(), fullDamage);
+     }
+-    sceneView.postPaint();
+     if (!layer.endFrame(fullDamage, fullDamage, nullptr)) {
+         return std::nullopt;
+     }
+@@ -296,6 +302,9 @@ std::optional<QImage> ScreenShotManager::takeScreenShot(const Rect &area, Screen
+     sceneView.setViewport(area);
+     sceneView.setScale(scale);
+     sceneView.prePaint();
++    const auto postPaint = qScopeGuard([&sceneView] {
++        sceneView.postPaint();
++    });
+     if (!context->makeCurrent()) {
+         return std::nullopt;
+     }
+@@ -310,7 +319,6 @@ std::optional<QImage> ScreenShotManager::takeScreenShot(const Rect &area, Screen
+     } else {
+         sceneView.paint(beginInfo->renderTarget, QPoint(), fullDamage);
+     }
+-    sceneView.postPaint();
+     if (!layer.endFrame(fullDamage, fullDamage, nullptr)) {
+         return std::nullopt;
+     }
+-- 
+2.53.0
+

@@ -1,0 +1,231 @@
+From 274869d5609409dd8173a9aa3aed239ca1e7ad27 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 19 Nov 2026 23:44:47 -0300
+Subject: [PATCH] autotests: Require stereo output mode in every screenshot
+ reply
+
+Cover all seven ScreenShot2 methods, both interactive kinds, ordinary and declared windows, and composing/2D output controls. Check native eye geometry and pixels separately from mode metadata.
+
+Assisted-by: Codex (GPT-6)
+---
+ autotests/integration/CMakeLists.txt          |   1 +
+ .../integration/screenshot_reply_test.cpp     | 195 ++++++++++++++++++
+ 2 files changed, 196 insertions(+)
+ create mode 100644 autotests/integration/screenshot_reply_test.cpp
+
+diff --git a/autotests/integration/CMakeLists.txt b/autotests/integration/CMakeLists.txt
+index 4f320b4..ef733da 100644
+--- a/autotests/integration/CMakeLists.txt
++++ b/autotests/integration/CMakeLists.txt
+@@ -165,6 +165,7 @@ integrationTest(NAME testAlphaModifier SRCS alpha_modifier_test.cpp)
+ integrationTest(NAME testStereoContent SRCS stereo_content_test.cpp)
+ integrationTest(NAME testStereoDepthExchange SRCS stereo_depth_exchange_test.cpp)
+ integrationTest(NAME testScreenshotStereo SRCS screenshot_stereo_test.cpp LIBS screenshot_test_support)
++integrationTest(NAME testScreenshotReply SRCS screenshot_reply_test.cpp LIBS screenshot_test_support)
+ integrationTest(NAME testStereoDepthPinned SRCS stereo_depth_pinned_test.cpp LIBS screenshot_test_support)
+ integrationTest(NAME testStereoDepthPinnedStack SRCS stereo_depth_pinned_stack_test.cpp LIBS screenshot_test_support)
+ integrationTest(NAME testOutputOrder SRCS output_order_test.cpp)
+diff --git a/autotests/integration/screenshot_reply_test.cpp b/autotests/integration/screenshot_reply_test.cpp
+new file mode 100644
+index 0000000..4bbc41f
+--- /dev/null
++++ b/autotests/integration/screenshot_reply_test.cpp
+@@ -0,0 +1,195 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++
++#include "kwin_wayland_test.h"
++#include "core/outputconfiguration.h"
++#include "effect/effectloader.h"
++#include "input.h"
++#include "pluginmanager.h"
++#include "plugins/screenshot/screenshot.h"
++#include "wayland_server.h"
++#include "window.h"
++#include "workspace.h"
++
++#include <KConfigGroup>
++#include <KWayland/Client/compositor.h>
++#include <KWayland/Client/surface.h>
++#include <QDBusConnection>
++#include <QDBusMessage>
++#include <QDBusPendingCallWatcher>
++#include <QDBusPendingReply>
++#include <QDBusUnixFileDescriptor>
++#include <QFile>
++#include <QScopeGuard>
++#include <fcntl.h>
++#include <linux/input-event-codes.h>
++#include <unistd.h>
++
++namespace KWin
++{
++
++class ScreenshotReplyTest : public QObject
++{
++    Q_OBJECT
++private Q_SLOTS:
++    void initTestCase();
++    void init();
++    void cleanup();
++    void testReply_data();
++    void testReply();
++};
++
++static const QSize s_outputSize(320, 240);
++
++void ScreenshotReplyTest::initTestCase()
++{
++    if (!Test::renderNodeAvailable()) {
++        QSKIP("A DRM render node is required for screenshot readback");
++    }
++    qputenv("KWIN_COMPOSE", "O2");
++    qputenv("KWIN_SCREENSHOT_NO_PERMISSION_CHECKS", "1");
++    QVERIFY(waylandServer()->init(qAppName()));
++    auto config = KSharedConfig::openConfig(QString(), KConfig::SimpleConfig);
++    KConfigGroup plugins(config, QStringLiteral("Plugins"));
++    for (const QString &name : EffectLoader().listOfKnownEffects()) {
++        plugins.writeEntry(name + QStringLiteral("Enabled"), false);
++    }
++    config->sync();
++    kwinApp()->setConfig(config);
++    kwinApp()->start();
++    kwinApp()->pluginManager()->unloadPlugin(QStringLiteral("screenshot"));
++}
++
++void ScreenshotReplyTest::init()
++{
++    Test::setOutputConfig({Test::OutputInfo{
++        .geometry = Rect(QPoint(), s_outputSize),
++        .modes = {OutputModeline(s_outputSize, 60000, OutputModeline::Flag::Preferred),
++                  OutputModeline(s_outputSize, 60000, OutputModeline::Flag::Stereo3DSideBySideFull)},
++    }});
++    OutputConfiguration configuration;
++    configuration.changeSet(workspace()->outputs().front()->backendOutput())->currentMode = OutputModeline(s_outputSize, 60000, OutputModeline::Flag::Preferred);
++    QCOMPARE(workspace()->applyOutputConfiguration(configuration), OutputConfigurationError::None);
++    QVERIFY(Test::setupWaylandConnection(Test::AdditionalWaylandInterface::StereoContentV1));
++}
++
++void ScreenshotReplyTest::cleanup()
++{
++    Test::destroyWaylandConnection();
++    QTRY_VERIFY(workspace()->windows().isEmpty());
++}
++
++void ScreenshotReplyTest::testReply_data()
++{
++    QTest::addColumn<QString>("method");
++    QTest::addColumn<uint>("interactiveKind");
++    QTest::addColumn<bool>("stereoOutput");
++    QTest::addColumn<bool>("declared");
++    const QStringList methods = {QStringLiteral("CaptureWindow"), QStringLiteral("CaptureActiveWindow"), QStringLiteral("CaptureArea"),
++                                 QStringLiteral("CaptureScreen"), QStringLiteral("CaptureActiveScreen"), QStringLiteral("CaptureInteractive"), QStringLiteral("CaptureWorkspace")};
++    for (bool output : {false, true}) {
++        for (bool content : {false, true}) {
++            for (const QString &method : methods) {
++                const uint kinds = method == QStringLiteral("CaptureInteractive") ? 2 : 1;
++                for (uint kind = 0; kind < kinds; ++kind) {
++                    const auto name = QStringLiteral("%1-%2-%3-%4").arg(output ? QStringLiteral("3d") : QStringLiteral("2d"), content ? QStringLiteral("declared") : QStringLiteral("ordinary"), method).arg(kind).toLatin1();
++                    QTest::newRow(name.constData()) << method << kind << output << content;
++                }
++            }
++        }
++    }
++}
++
++void ScreenshotReplyTest::testReply()
++{
++    QFETCH(QString, method);
++    QFETCH(uint, interactiveKind);
++    QFETCH(bool, stereoOutput);
++    QFETCH(bool, declared);
++    const auto output = workspace()->outputs().front();
++    if (stereoOutput) {
++        OutputConfiguration configuration;
++        configuration.changeSet(output->backendOutput())->currentMode = OutputModeline(s_outputSize, 60000, OutputModeline::Flag::Stereo3DSideBySideFull);
++        QCOMPARE(workspace()->applyOutputConfiguration(configuration), OutputConfigurationError::None);
++    }
++    QVERIFY(Test::waylandSync());
++    QCOMPARE(output->hasStereoEyes(), stereoOutput);
++    auto surface = Test::createSurface();
++    std::unique_ptr<Test::StereoContentV1> declaration;
++    if (declared) {
++        declaration = std::make_unique<Test::StereoContentV1>(Test::stereoContentManager()->create(*surface));
++        declaration->set_content(Test::StereoContentV1::content_side_by_side_full);
++    }
++    auto shell = Test::createXdgToplevelSurface(surface.get());
++    QImage pixels(QSize(declared ? 100 : 50, 50), QImage::Format_ARGB32_Premultiplied);
++    pixels.fill(Qt::red);
++    if (declared) {
++        for (int y = 0; y < pixels.height(); ++y) {
++            for (int x = 50; x < 100; ++x) pixels.setPixelColor(x, y, Qt::blue);
++        }
++    }
++    Window *window = Test::renderAndWaitForShown(surface.get(), pixels);
++    QVERIFY(window);
++    window->move(QPoint(100, 80));
++    QTRY_COMPARE(workspace()->activeWindow(), window);
++    QVERIFY(Test::waylandSync());
++
++    ScreenShotManager manager;
++    const QString connectionName = QStringLiteral("screenshot-reply-client");
++    const auto client = QDBusConnection::connectToBus(QDBusConnection::SessionBus, connectionName);
++    QVERIFY(client.isConnected());
++    const auto disconnect = qScopeGuard([connectionName] { QDBusConnection::disconnectFromBus(connectionName); });
++    int descriptors[2];
++    QVERIFY(pipe2(descriptors, O_CLOEXEC | O_NONBLOCK) == 0);
++    QFile pipeInput;
++    QVERIFY(pipeInput.open(descriptors[0], QIODevice::ReadOnly | QIODevice::Unbuffered, QFileDevice::AutoCloseHandle));
++    const QDBusUnixFileDescriptor pipeFd(descriptors[1]);
++    close(descriptors[1]);
++    QVariantList arguments;
++    if (method == QStringLiteral("CaptureWindow")) arguments << window->internalId().toString();
++    if (method == QStringLiteral("CaptureScreen")) arguments << output->name();
++    if (method == QStringLiteral("CaptureArea")) arguments << 80 << 60 << uint(100) << uint(100);
++    if (method == QStringLiteral("CaptureInteractive")) arguments << interactiveKind;
++    arguments << QVariantMap{{QStringLiteral("native-resolution"), true}, {QStringLiteral("hide-caller-windows"), false},
++                             {QStringLiteral("include-shadow"), false}, {QStringLiteral("include-decoration"), false}} << QVariant::fromValue(pipeFd);
++    auto message = QDBusMessage::createMethodCall(QStringLiteral("org.kde.KWin.ScreenShot2"), QStringLiteral("/org/kde/KWin/ScreenShot2"), QStringLiteral("org.kde.KWin.ScreenShot2"), method);
++    message.setArguments(arguments);
++    QDBusPendingCallWatcher watcher(client.asyncCall(message, 10000));
++    if (method == QStringLiteral("CaptureInteractive")) {
++        QTRY_VERIFY(input()->isSelectingWindow());
++        static quint32 timestamp = 1;
++        Test::pointerMotion(QPointF(120, 100), timestamp++);
++        Test::pointerButtonPressed(BTN_LEFT, timestamp++);
++        Test::pointerButtonReleased(BTN_LEFT, timestamp++);
++    }
++    QSignalSpy finished(&watcher, &QDBusPendingCallWatcher::finished);
++    if (!watcher.isFinished()) QVERIFY(finished.wait(10000));
++    QDBusPendingReply<QVariantMap> reply = watcher;
++    QVERIFY2(!reply.isError(), qPrintable(reply.error().message()));
++    const auto metadata = reply.value();
++    const bool windowRequest = method == QStringLiteral("CaptureWindow") || method == QStringLiteral("CaptureActiveWindow") || (method == QStringLiteral("CaptureInteractive") && interactiveKind == 0);
++    const QSize eyeSize = windowRequest ? QSize(50, 50) : method == QStringLiteral("CaptureArea") ? QSize(100, 100) : s_outputSize;
++    const bool pair = stereoOutput || declared;
++    const QSize expectedSize(eyeSize.width() * (pair ? 2 : 1), eyeSize.height());
++    QByteArray raw;
++    const int byteCount = metadata.value(QStringLiteral("stride")).toInt() * metadata.value(QStringLiteral("height")).toInt();
++    QTRY_VERIFY_WITH_TIMEOUT((raw.append(pipeInput.readAll()), raw.size() == byteCount), 10000);
++    QCOMPARE(metadata.value(QStringLiteral("width")).toInt(), expectedSize.width());
++    QCOMPARE(metadata.value(QStringLiteral("height")).toInt(), expectedSize.height());
++    const bool expectedStereo = method == QStringLiteral("CaptureWorkspace") && !stereoOutput ? false : pair;
++    QCOMPARE(metadata.value(QStringLiteral("stereo")).toBool(), expectedStereo);
++    QVERIFY(metadata.contains(QStringLiteral("stereoOutput")));
++    QCOMPARE(metadata.value(QStringLiteral("stereoOutput")).toBool(), stereoOutput);
++    const QImage captured(reinterpret_cast<const uchar *>(raw.constData()), expectedSize.width(), expectedSize.height(), metadata.value(QStringLiteral("stride")).toInt(), QImage::Format(metadata.value(QStringLiteral("format")).toInt()));
++    const QPoint sample = windowRequest ? QPoint(20, 20) : method == QStringLiteral("CaptureArea") ? QPoint(30, 30) : QPoint(110, 90);
++    QCOMPARE(captured.pixelColor(sample), QColor(Qt::red));
++    if (pair) QCOMPARE(captured.pixelColor(sample + QPoint(eyeSize.width(), 0)), QColor(declared ? Qt::blue : Qt::red));
++}
++
++}
++
++WAYLANDTEST_MAIN(KWin::ScreenshotReplyTest)
++#include "screenshot_reply_test.moc"
+-- 
+2.53.0
+
