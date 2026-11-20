@@ -55,43 +55,35 @@ status=$(docker wait "$name")
 docker logs "$name" > "$WORK/build.log" 2>&1
 docker rm "$name" >/dev/null
 [ "$status" = 0 ] || { echo "the build failed (exit $status): $WORK/build.log" >&2; exit 1; }
-# the files every architecture shares are the same bytes (Multi-Arch: same); the Lean Code record is named after its
-# architecture (/usr/share/dpkg-stereo/lc/PACKAGE/ARCH.json), so the twins carry one each; an -lc-hr companion's authored
-# texts lie under /usr/share/dpkg-stereo/hr/PACKAGE/ARCH/ and are compared with that folder named alike
+# in every Multi-Arch: same package (the ones amd64 and i386 install side by side) each path both architectures ship is the
+# same bytes, as dpkg requires; a path only one of
+# them ships (/usr/lib/TRIPLET/..., /usr/share/gdb/auto-load/usr/lib/TRIPLET/..., the Lean Code record
+# /usr/share/dpkg-stereo/lc/PACKAGE/ARCH.json, an -lc-hr companion's /usr/share/dpkg-stereo/hr/PACKAGE/ARCH/) never collides
 python3 - "$SRC" "$WORK" <<'SAME'
 import subprocess, sys, tempfile
 from pathlib import Path
 src, work = Path(sys.argv[1]), Path(sys.argv[2])
-checked = 0
+checked = shared = 0
 for deb in sorted(work.glob('*_i386.deb')):
     if '-dbgsym_' in deb.name:
         continue
     twin = src / deb.name.replace('_i386.deb', '_amd64.deb')
     if not twin.exists():
         continue
+    if subprocess.run(['dpkg-deb', '-f', str(deb), 'Multi-Arch'], capture_output=True, text=True, check=True).stdout.strip() != 'same':
+        continue
     trees = {}
     for arch, path in (('amd64', twin), ('i386', deb)):
         root = Path(tempfile.mkdtemp(dir=work))
         subprocess.run(['dpkg-deb', '-x', str(path), str(root)], check=True)
-        share = root / 'usr/share'
-        files = {}
-        for f in share.rglob('*') if share.exists() else ():
-            if f.is_file() and not f.is_symlink():
-                rel = f.relative_to(share).as_posix()
-                if rel.startswith('dpkg-stereo/lc/') and rel.endswith('/' + arch + '.json'):
-                    continue
-                # an -lc-hr companion keeps the authored texts under dpkg-stereo/hr/PACKAGE/ARCH/: the paths differ by
-                # architecture, so the twins never share them; the hashed files in them must be the same
-                parts = rel.split('/')
-                if rel.startswith('dpkg-stereo/hr/') and len(parts) > 3 and parts[3] == arch:
-                    parts[3] = 'ARCH'
-                    rel = '/'.join(parts)
-                files[rel] = f.read_bytes()
-        trees[arch] = files
+        trees[arch] = {f.relative_to(root).as_posix(): f.read_bytes()
+                       for f in root.rglob('*') if f.is_file() and not f.is_symlink()}
         subprocess.run(['rm', '-rf', str(root)], check=True)
-    if trees['amd64'] != trees['i386']:
-        diff = sorted(set(trees['amd64']) ^ set(trees['i386'])) or [k for k in trees['amd64'] if trees['amd64'][k] != trees['i386'].get(k)]
-        sys.exit('%s: /usr/share differs between amd64 and i386: %s' % (deb.name, diff[:5]))
+    common = set(trees['amd64']) & set(trees['i386'])
+    differ = sorted(rel for rel in common if trees['amd64'][rel] != trees['i386'][rel])
+    if differ:
+        sys.exit('%s: files both architectures ship differ: %s' % (deb.name, differ[:5]))
     checked += 1
-print('i386: %d packages with an amd64 twin, /usr/share identical apart from each Lean Code record' % checked)
+    shared += len(common)
+print('i386: %d Multi-Arch: same packages with an amd64 twin, the %d files they both ship the same bytes' % (checked, shared))
 SAME
