@@ -29,6 +29,10 @@ Upstream, the same strings go to each language's KDE translation team once the f
 - `digikam-stereo3d.po.patch` (ORDER 551c): the twelve sentences of digiKam's and Showfoto's 3D menu that stay in the program (the menu's title, the anaglyph conversion and its colour pairs, the three eye views) and the sentence that tells a 3D choice could not follow a file digiKam moved, in Polish, Brazilian Portuguese, French, German, Spanish, Japanese, Korean and Chinese, for the `digikam` catalogs; the eleven menu sentences are KPhotoAlbum's translations of the same msgids, word for word. Code half is `sparky-os/packages/album-programs-551c/patches/digikam-enable-3d-and-told-carry.patch`. Every catalog passes `msgfmt -c`. A first draft with AI assistance, pending review by native speakers. Carried last in digikam's series by that recipe.
 - `kscreen-spanish-display-settings.po.patch` (ORDER 507b): Spanish for the 100 strings the edition adds to Display Settings (`kcm_kscreen`): the two 3D switches "Anaglyph" and "Other stereo formats" with their help texts, every 3D mode name, the stereo pair, depth, timing, glasses and eye-swap strings (63 written here, 37 taken from the Spanish hunks of `kscreen-arrangement-view`, `kscreen-dp-frame-sequential` and `kscreen-wdisplays-menus` in this folder, whose copies inside the published source carry no Spanish). It appends to `po/es/kcm_kscreen.po` of the 6.7.4 tarball; `msgfmt -c --check-format` passes. The eight other languages are in `kscreen-stereo.po.patch` and four smaller ones that live only in the published source: see `sparky-os/packages/kscreen/README.md`. Carried last in kscreen's series by `sparky-os/packages/kscreen/overlay-stereo3d14`; its copy there is byte for byte this file. A first draft with AI assistance, pending review by native speakers.
 
+- `kscreenlocker-edition-l10n.po.patch` (ORDER 46) adds the Stereo GL show controls in nine languages and carries the Spanish wallpaper-depth text from the checkout's wallpaper-cost patch. It applies to the published `6.7.4-1+stereo3d3+lc1` source through the `catalogue-rebuilds` recipe.
+
+[ORDER 46 infrastructure recipes and source versions](../packages/catalogue-rebuilds/order46b.md) identify the recipient builds for the order46b overlays.
+
 ## Which package carries each patch (ORDER 391)
 
 A patch ships only when a build names it last in the package's `debian/patches/series` (dpkg-source(1): the series "lists all patches that have to be applied"; a patch no series names never ships).
@@ -52,3 +56,4 @@ Six of these patches were made "for the next package" and no build applied them.
 | `dragon-3d-video.po.patch` | dragon | 4:26.04.0-1+stereo3d7 |
 | `plasma-desktop-tablet-mode-panels.po.patch` | plasma-desktop | 4:6.7.4-1+stereo3d4 |
 | `kwin-keyboard-tablet-mode-only.po.patch` | kwin | 4:6.7.4-2+stereo3d57 |
+| `kscreenlocker-edition-l10n.po.patch` | kscreenlocker | 6.7.4-1+stereo3d4 |

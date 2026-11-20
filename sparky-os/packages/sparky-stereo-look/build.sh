@@ -23,7 +23,7 @@ OUT=$(mkdir -p "${OUT:-${SPARKY_REPO_DIR:?}}" && cd "${OUT:-${SPARKY_REPO_DIR:?}
 IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}
 sparky_provenance_init "$IMAGE" "$HERE"
 TREE=$(cd "$HERE/../../.." && pwd)
-VERSION=${VERSION:-20261118.5~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
+VERSION=${VERSION:-20261118.7~sparky9~0+lc1}   # generation-tied (skill); sorts above the first 1.0~dev1 builds
 case ${1:-all} in all|default) ;; *) echo 'Usage: build.sh [all|default]' >&2; exit 2 ;; esac
 WORK=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/look-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -56,6 +56,23 @@ control() { # dir package depends recommends description...
 		shift
 		for l in "$@"; do echo " $l"; done
 	} >"$d/DEBIAN/control"
+}
+localize_theme() {
+	local target=$1 fields=$2
+	# Merge only locale keys supplied here; retain the upstream file's structure and assets.
+	python3 - "$target" "$fields" <<'PYTHON'
+from pathlib import Path
+import sys
+
+target, fragment = map(Path, sys.argv[1:])
+fields = dict(line.split('=', 1) for line in fragment.read_text().splitlines())
+lines = target.read_text().splitlines(keepends=True)
+end = next((i for i, line in enumerate(lines[1:], 1) if line.startswith('[')), len(lines))
+lines[1:end] = [f'{key}={value}\n' for key, value in fields.items()] + [
+    line for line in lines[1:end] if line.partition('=')[0] not in fields
+]
+target.write_text(''.join(lines))
+PYTHON
 }
 build() { # dir package: the Lean Code package and its source, then the gate that writes the build record, in the build image
 	find "$1" -name '*.qmlc' -delete
@@ -161,7 +178,9 @@ cp "$HERE/sparkyblack/splash/Splash.qml" "$D/$LNF/org.kde.sparkyblack.desktop/co
 cp "$HERE/sparkyblack/metadata.json" "$D/$LNF/org.kde.sparkyblack.desktop/"
 cp "$HERE/sparkyblack/defaults" "$D/$LNF/org.kde.sparkyblack.desktop/contents/defaults"
 cp -a /usr/share/plasma/desktoptheme/sparkyblack "$D/usr/share/plasma/desktoptheme/"
+localize_theme "$D/usr/share/plasma/desktoptheme/sparkyblack/metadata.desktop" "$HERE/sparkyblack/plasma-style-l10n.ini"
 rsync -a --no-owner --no-group --exclude=.directory /usr/share/icons/sparkyblack "$D/usr/share/icons/"   # .directory: a root-only folder-view file
+localize_theme "$D/usr/share/icons/sparkyblack/index.theme" "$HERE/sparkyblack/icon-theme-l10n.ini"
 cp -a /usr/share/plymouth/themes/sparky-lines "$D/usr/share/plymouth/themes/"
 # Our own Qt 6 port of Pawel's sparky-black SDDM theme, under our own name (his is never modified)
 cp -a "$HERE/sparkyblack/sddm/sparky-stereo-black" "$D/usr/share/sddm/themes/"

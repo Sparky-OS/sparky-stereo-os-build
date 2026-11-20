@@ -1,3 +1,9 @@
+sparky-stereo-look-kubabbar-glass 20261119.2~sparky9~0 (2026-11-20)
+  * Translate theme, cursor and icon metadata in the edition languages (ORDER 46).
+
+sparky-stereo-look-kubabbar-glass-menubar 20261119.2~sparky9~0 (2026-11-20)
+  * Add German menu bar theme metadata (ORDER 46).
+
 sparky-stereo-look-kubabbar-glass 20261119.1~sparky9~0 (2026-11-19)
   * The 3D icons (the empty and the full Trash) take one separation for the screen, never a share of the icon's size: the model's nearest point stands 1 pixel in front of the screen and its farthest 1 pixel behind it, pixels of a screen 1920 wide, at every size from 16 to 256 px (before, 3 % of the picture's width, so sizes up to 64 px were flat). tools/icons3d/scene.py takes the range as pixels; candidate b (popped 4, sunk 10, the desktop's limits) is kept beside it for Daniel's pick (ORDER 750)
   * index.theme gives every stereo folder X-StereoLayout=sbs-left-first, the one layout KIconThemes' loadStereoIcon() reads: without it the loader dropped every stereo folder ("Invalid X-StereoLayout line") and no program could draw the Trash as a pair; Dolphin's item view then draws it per eye (measured in a Stereo KWin rig, ORDER 750a)

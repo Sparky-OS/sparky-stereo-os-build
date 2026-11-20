@@ -1,3 +1,6 @@
+sparky-stereo-headset 0.2.1 (2026-11-20)
+  * Translate the System Settings search keywords (ORDER 46).
+
 sparky-stereo-headset 0.2.0 (2026-11-18)
   * The headset's battery is in Plasma's own list (ORDER 700): the Power and Battery applet, the Info Centre's Energy page and PowerDevil's low-battery notice for peripherals, through UPower and the kernel's power_supply class. The new system service sparky-stereo-headset-battery (in /usr/libexec, hardened, started by udev with a listed headset and stopped with it) reads the charge through HeadsetControl and gives the kernel a virtual HID device (/dev/uhid) carrying only that charge; 72-sparky-stereo-headset-battery.rules makes it a headset to UPower. A headset for which the kernel has its own entry (hid-corsair-void, hid-steelseries-arctis, hid-logitech-hidpp) gets nothing added. The entry goes when the headset is off, out of range or unplugged.
   * The notice of a low battery that watch sent (event lowBattery, the level read from powerdevilrc) is gone: PowerDevil tells the person, once, at its own peripheral level. The user service only sends the saved choices.

@@ -1,0 +1,141 @@
+diff --git a/debian/sparky-stereo-browser.desktop b/debian/sparky-stereo-browser.desktop
+--- a/debian/sparky-stereo-browser.desktop
++++ b/debian/sparky-stereo-browser.desktop
+@@ -8,59 +8,82 @@
+ StartupWMClass=sparky-stereo-browser
+ Categories=Network;WebBrowser;
+ MimeType=application/json;application/pdf;application/rdf+xml;application/rss+xml;application/x-xpinstall;application/xhtml+xml;application/xml;audio/flac;audio/ogg;audio/webm;image/avif;image/gif;image/jpeg;image/png;image/svg+xml;image/webp;text/html;text/xml;video/ogg;video/webm;x-scheme-handler/chrome;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/mailto;
+ StartupNotify=true
+ Actions=new-window;new-private-window;open-profile-manager;
+ Name=Sparky Stereo Browser
++Name[zh_TW]=Sparky Stereo Browser
++Name[zh_CN]=Sparky Stereo Browser
++Name[ko]=Sparky Stereo Browser
++Name[ja]=Sparky Stereo Browser
++Name[es]=Sparky Stereo Browser
++Name[de]=Sparky Stereo Browser
++Name[fr]=Sparky Stereo Browser
++Name[pt_BR]=Sparky Stereo Browser
++Name[pl]=Sparky Stereo Browser
+ Comment=Browse the Web
++Comment[es]=Navegar por la web
+ Comment[pl]=Przeglądaj strony WWW
+ Comment[pt_BR]=Navegue na Web
+ Comment[fr]=Naviguer sur le Web
+ Comment[de]=Im Internet surfen
+ Comment[ja]=ウェブを閲覧します
+ Comment[ko]=웹을 탐색합니다
+ Comment[zh_CN]=浏览互联网
+ Comment[zh_TW]=瀏覽網際網路
+ GenericName=Web Browser
++GenericName[es]=Navegador web
+ GenericName[pl]=Przeglądarka WWW
+ GenericName[pt_BR]=Navegador Web
+ GenericName[fr]=Navigateur Web
+ GenericName[de]=Webbrowser
+ GenericName[ja]=ウェブブラウザー
+ GenericName[ko]=웹 브라우저
+ GenericName[zh_CN]=网页浏览器
+ GenericName[zh_TW]=網頁瀏覽器
+ Keywords=Internet;WWW;Browser;Web;Explorer;Waterfox;Firefox;
++Keywords[zh_TW]=網際網路;WWW;瀏覽器;網頁;檔案總管;Waterfox;Firefox;
++Keywords[zh_CN]=互联网;WWW;浏览器;网页;资源管理器;Waterfox;Firefox;
++Keywords[ko]=인터넷;WWW;브라우저;웹;탐색기;Waterfox;Firefox;
++Keywords[ja]=インターネット;WWW;ブラウザー;ウェブ;エクスプローラー;Waterfox;Firefox;
++Keywords[es]=Internet;WWW;Navegador;Web;Explorador;Waterfox;Firefox;
++Keywords[de]=Internet;WWW;Browser;Web;Explorer;Waterfox;Firefox;
++Keywords[fr]=Internet;WWW;Navigateur;Web;Explorateur;Waterfox;Firefox;
++Keywords[pt_BR]=Internet;WWW;Navegador;Web;Explorador;Waterfox;Firefox;
++Keywords[pl]=Internet;WWW;Przeglądarka;Sieć;Eksplorator;Waterfox;Firefox;
+ 
+ [Desktop Action new-window]
+ Exec=sparky-stereo-browser --new-window %u
+ Name=New Window
++Name[es]=Nueva ventana
+ Name[pl]=Nowe okno
+ Name[pt_BR]=Nova janela
+ Name[fr]=Nouvelle fenêtre
+ Name[de]=Neues Fenster
+ Name[ja]=新しいウィンドウ
+ Name[ko]=새 창
+ Name[zh_CN]=新建窗口
+ Name[zh_TW]=開新視窗
+ 
+ [Desktop Action new-private-window]
+ Exec=sparky-stereo-browser --private-window %u
+ Name=New Private Window
++Name[es]=Nueva ventana privada
+ Name[pl]=Nowe okno prywatne
+ Name[pt_BR]=Nova janela privativa
+ Name[fr]=Nouvelle fenêtre de navigation privée
+ Name[de]=Neues privates Fenster
+ Name[ja]=新しいプライベートウィンドウ
+ Name[ko]=새 사생활 보호 창
+ Name[zh_CN]=新建隐私浏览窗口
+ Name[zh_TW]=開新隱私視窗
+ 
+ [Desktop Action open-profile-manager]
+ Exec=sparky-stereo-browser --ProfileManager
+ Name=Open Profile Manager
++Name[es]=Abrir el gestor de perfiles
+ Name[pl]=Otwórz menedżera profili
+ Name[pt_BR]=Abrir gerenciador de perfis
+ Name[fr]=Ouvrir le gestionnaire de profils
+ Name[de]=Profilverwaltung öffnen
+ Name[ja]=プロファイルマネージャーを開く
+ Name[ko]=프로필 관리자 열기
+diff --git a/debian/sparky-stereo-browser.metainfo.xml b/debian/sparky-stereo-browser.metainfo.xml
+--- a/debian/sparky-stereo-browser.metainfo.xml
++++ b/debian/sparky-stereo-browser.metainfo.xml
+@@ -1,24 +1,51 @@
+ <?xml version="1.0" encoding="UTF-8"?>
+ <component type="desktop-application">
+   <id>org.sparkylinux.sparky-stereo-browser</id>
+   <launchable type="desktop-id">sparky-stereo-browser.desktop</launchable>
+   <name>Sparky Stereo Browser</name>
++  <name xml:lang="pl">Sparky Stereo Browser</name>
++  <name xml:lang="pt-BR">Sparky Stereo Browser</name>
++  <name xml:lang="fr">Sparky Stereo Browser</name>
++  <name xml:lang="de">Sparky Stereo Browser</name>
++  <name xml:lang="es">Sparky Stereo Browser</name>
++  <name xml:lang="ja">Sparky Stereo Browser</name>
++  <name xml:lang="ko">Sparky Stereo Browser</name>
++  <name xml:lang="zh-CN">Sparky Stereo Browser</name>
++  <name xml:lang="zh-TW">Sparky Stereo Browser</name>
+   <summary>Sparky Stereo OS's build of Waterfox</summary>
++  <summary xml:lang="pl">Kompilacja Waterfox dla Sparky Stereo OS</summary>
++  <summary xml:lang="pt-BR">Versão do Waterfox do Sparky Stereo OS</summary>
++  <summary xml:lang="fr">Version de Waterfox pour Sparky Stereo OS</summary>
++  <summary xml:lang="de">Waterfox-Ausgabe von Sparky Stereo OS</summary>
++  <summary xml:lang="es">Versión de Waterfox de Sparky Stereo OS</summary>
++  <summary xml:lang="ja">Sparky Stereo OS 版の Waterfox</summary>
++  <summary xml:lang="ko">Sparky Stereo OS용 Waterfox 빌드</summary>
++  <summary xml:lang="zh-CN">Sparky Stereo OS 构建的 Waterfox</summary>
++  <summary xml:lang="zh-TW">Sparky Stereo OS 建置的 Waterfox</summary>
+   <metadata_license>CC0-1.0</metadata_license>
+   <project_license>MPL-2.0</project_license>
+   <developer id="org.sparkylinux">
+     <name>Sparky Stereo OS</name>
+   </developer>
+   <description>
+     <p>
+       A web browser built from the Waterfox release by BrowserWorks, which is
+       based on Mozilla Firefox, for Sparky Stereo OS, an edition of
+       SparkyLinux. Waterfox is a trademark of BrowserWorks; this build is not
+       made or endorsed by BrowserWorks.
+     </p>
++    <p xml:lang="pl">Przeglądarka internetowa dla Sparky Stereo OS, edycji SparkyLinux, zbudowana z wydania Waterfox firmy BrowserWorks opartego na Mozilla Firefox. Waterfox jest znakiem towarowym BrowserWorks. Firma BrowserWorks nie przygotowała ani nie zatwierdziła tej kompilacji.</p>
++    <p xml:lang="pt-BR">Um navegador para o Sparky Stereo OS, uma edição do SparkyLinux, feito a partir da versão do Waterfox da BrowserWorks, que tem como base o Mozilla Firefox. Waterfox é uma marca da BrowserWorks. A BrowserWorks não fez nem endossou esta versão.</p>
++    <p xml:lang="fr">Un navigateur web pour Sparky Stereo OS, une édition de SparkyLinux, compilé à partir de la version de Waterfox publiée par BrowserWorks et basée sur Mozilla Firefox. Waterfox est une marque de BrowserWorks. BrowserWorks n’a ni produit ni approuvé cette compilation.</p>
++    <p xml:lang="de">Ein Webbrowser für Sparky Stereo OS, eine Ausgabe von SparkyLinux. Er wurde aus der Waterfox-Version von BrowserWorks erstellt, die auf Mozilla Firefox basiert. Waterfox ist eine Marke von BrowserWorks. BrowserWorks hat dieses Paket weder erstellt noch gebilligt.</p>
++    <p xml:lang="es">Navegador web para Sparky Stereo OS, una edición de SparkyLinux, compilado a partir de la versión de Waterfox de BrowserWorks, que se basa en Mozilla Firefox. Waterfox es una marca de BrowserWorks. BrowserWorks no ha creado ni avalado esta compilación.</p>
++    <p xml:lang="ja">SparkyLinux のエディションである Sparky Stereo OS 向けのウェブブラウザーです。Mozilla Firefox をベースにした BrowserWorks の Waterfox リリースからビルドしています。Waterfox は BrowserWorks の商標です。このビルドは BrowserWorks による作成や承認を受けたものではありません。</p>
++    <p xml:lang="ko">SparkyLinux의 에디션인 Sparky Stereo OS용 웹 브라우저입니다. Mozilla Firefox를 기반으로 하는 BrowserWorks의 Waterfox 릴리스를 빌드했습니다. Waterfox는 BrowserWorks의 상표입니다. BrowserWorks는 이 빌드를 제작하거나 승인하지 않았습니다.</p>
++    <p xml:lang="zh-CN">为 SparkyLinux 的一个版本 Sparky Stereo OS 构建的网络浏览器。它来自 BrowserWorks 发布的 Waterfox，而 Waterfox 基于 Mozilla Firefox。Waterfox 是 BrowserWorks 的商标。BrowserWorks 未制作或背书此构建。</p>
++    <p xml:lang="zh-TW">為 SparkyLinux 的版本 Sparky Stereo OS 建置的網頁瀏覽器，採用 BrowserWorks 發行的 Waterfox，而 Waterfox 以 Mozilla Firefox 為基礎。Waterfox 是 BrowserWorks 的商標。BrowserWorks 並未製作或背書這個組建。</p>
+   </description>
+   <url type="homepage">https://sparkylinux.org</url>
+   <categories>
+     <category>Network</category>
+     <category>WebBrowser</category>
+   </categories>
