@@ -1,0 +1,375 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 20 Nov 2026 14:01:17 -0300
+Subject: [PATCH] 3D viewer: a translucent model counts in the depth fit by its
+ share of each pixel
+
+The separation is the largest under which every pixel of the view stays
+inside the person's depth limits, a translucent pixel's depth being the mean
+of what it shows, each weighted by its share of the pixel's colour.  The
+transparent 3D models are drawn without writing depth, so the first pass
+from the camera between the eyes did not see a translucent model standing
+in front of everything else, and its pixels could pass the popped limit.
+
+That pass is now drawn into an off-screen float framebuffer.  Before the
+transparent models it reads the depth of what is drawn and writes each
+pixel's distance into the colour, the background at the screen.  The
+transparent models are then drawn as the eyes draw them, in the same order,
+with the same alpha and blending, but each fragment's colour is its own
+distance: the texture stage gives black and keeps the model's alpha, and
+linear fog over the distance adds it.  Blended so, every pixel ends as the
+contribution-weighted mean distance of what it shows; what is drawn after
+them (the grid) keeps its own depth.  Without a float framebuffer the
+transparent models write depth in that pass and count at their own
+distance, which keeps every pixel inside the limits.
+
+Assisted-by: Claude Opus 5.5 via Claude Code
+---
+ .../3d_rendering/opengl/render_3d_opengl.cpp  | 247 +++++++++++++++++-
+ .../3d_rendering/opengl/render_3d_opengl.h    |  16 ++
+ 2 files changed, 254 insertions(+), 9 deletions(-)
+
+diff --git a/3d-viewer/3d_rendering/opengl/render_3d_opengl.cpp b/3d-viewer/3d_rendering/opengl/render_3d_opengl.cpp
+index b779b242..c1714573 100644
+--- a/3d-viewer/3d_rendering/opengl/render_3d_opengl.cpp
++++ b/3d-viewer/3d_rendering/opengl/render_3d_opengl.cpp
+@@ -39,6 +39,8 @@
+ #include <pgm_base.h>
+ #include <math/util.h>      // for KiROUND
+ #include <algorithm>
++#include <cmath>
++#include <limits>
+ #include <utility>
+ #include <vector>
+ #include <wx/log.h>
+@@ -96,7 +98,10 @@ RENDER_3D_OPENGL::~RENDER_3D_OPENGL()
+     freeAllLists();
+ 
+     if( m_canvasInitialized )
++    {
+         glDeleteTextures( 1, &m_circleTexture );
++        deleteDepthFbo();
++    }
+ 
+     delete m_spheres_gizmo;
+ }
+@@ -528,27 +533,239 @@ void RENDER_3D_OPENGL::captureDepthRange()
+     glPixelStorei( GL_PACK_ALIGNMENT, 4 );
+     glReadPixels( 0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT, depth.data() );
+ 
+-    float nearest = 1.0f;
+-    float farthest = 0.0f;
++    const bool translucent = m_translucentMean.size() == depth.size()
++                             && m_opaqueDepth.size() == depth.size();
++
++    if( m_depthFboBound )
++    {
++        glBindFramebuffer( GL_FRAMEBUFFER, 0 );
++        m_depthFboBound = false;
++    }
++
++    float nearest = std::numeric_limits<float>::max();
++    float farthest = std::numeric_limits<float>::lowest();
+ 
+-    for( float value : depth )
++    for( size_t i = 0; i < depth.size(); ++i )
+     {
+-        if( value >= 1.0f )
++        float distance;
++
++        // What was drawn after the translucent models (the grid) shows at its own depth; under
++        // translucent models a pixel's distance is the mean of what it shows, each weighted by
++        // its share of the pixel's colour
++        if( translucent && depth[i] == m_opaqueDepth[i] )
++        {
++            if( std::isnan( m_translucentMean[i] ) )
++                continue;
++
++            distance = m_translucentMean[i];
++        }
++        else if( depth[i] < 1.0f )
++        {
++            distance = m_camera.GetDistanceFromDepth( depth[i] );
++        }
++        else
++        {
+             continue;
++        }
+ 
+-        nearest = std::min( nearest, value );
+-        farthest = std::max( farthest, value );
++        nearest = std::min( nearest, distance );
++        farthest = std::max( farthest, distance );
+     }
+ 
++    m_opaqueDepth.clear();
++    m_translucentMean.clear();
++
+     if( nearest > farthest )
+         return;
+ 
+-    m_depthNearest = m_camera.GetDistanceFromDepth( nearest );
+-    m_depthFarthest = m_camera.GetDistanceFromDepth( farthest );
++    m_depthNearest = nearest;
++    m_depthFarthest = farthest;
+     m_depthRangeValid = true;
+ }
+ 
+ 
++bool RENDER_3D_OPENGL::bindDepthFbo()
++{
++    if( m_windowSize.x <= 0 || m_windowSize.y <= 0 || !glGenFramebuffers )
++        return false;
++
++    if( m_depthFbo && m_depthFboSize != m_windowSize )
++        deleteDepthFbo();
++
++    if( !m_depthFbo )
++    {
++        glGenFramebuffers( 1, &m_depthFbo );
++        glGenRenderbuffers( 1, &m_depthFboColor );
++        glGenRenderbuffers( 1, &m_depthFboDepth );
++
++        glBindRenderbuffer( GL_RENDERBUFFER, m_depthFboColor );
++        glRenderbufferStorage( GL_RENDERBUFFER, GL_RGBA32F, m_windowSize.x, m_windowSize.y );
++        glBindRenderbuffer( GL_RENDERBUFFER, m_depthFboDepth );
++        glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, m_windowSize.x,
++                               m_windowSize.y );
++        glBindRenderbuffer( GL_RENDERBUFFER, 0 );
++
++        glBindFramebuffer( GL_FRAMEBUFFER, m_depthFbo );
++        glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
++                                   m_depthFboColor );
++        glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER,
++                                   m_depthFboDepth );
++        m_depthFboSize = m_windowSize;
++
++        if( glCheckFramebufferStatus( GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE )
++        {
++            wxLogTrace( m_logTrace, wxT( "RENDER_3D_OPENGL: no float framebuffer, translucent "
++                                         "models are measured at their own depth" ) );
++            glBindFramebuffer( GL_FRAMEBUFFER, 0 );
++            deleteDepthFbo();
++            return false;
++        }
++
++        return true;
++    }
++
++    glBindFramebuffer( GL_FRAMEBUFFER, m_depthFbo );
++    return true;
++}
++
++
++void RENDER_3D_OPENGL::deleteDepthFbo()
++{
++    if( !m_depthFbo )
++        return;
++
++    glDeleteFramebuffers( 1, &m_depthFbo );
++    glDeleteRenderbuffers( 1, &m_depthFboColor );
++    glDeleteRenderbuffers( 1, &m_depthFboDepth );
++    m_depthFbo = m_depthFboColor = m_depthFboDepth = 0;
++}
++
++
++glm::mat4 RENDER_3D_OPENGL::beginTranslucentDepth( const glm::mat4& aCameraViewMatrix )
++{
++    m_opaqueDepth.clear();
++    m_translucentMean.clear();
++
++    // Without the float buffer a translucent model counts at its own depth, as if it were opaque:
++    // every pixel stays inside the limits, with less depth than the rule allows
++    if( !m_depthFboBound )
++    {
++        glDepthMask( GL_TRUE );
++        return aCameraViewMatrix;
++    }
++
++    const int    width = m_windowSize.x;
++    const int    height = m_windowSize.y;
++    const size_t count = static_cast<size_t>( width ) * height;
++    const float  nearD = m_camera.GetNear();
++    const float  farD = m_camera.GetFar();
++
++    // The background is drawn the same in both eyes, so it stands at the screen: the look-at
++    // distance, where the eyes' views cross
++    const float screen = std::abs( m_camera.GetCameraPos().z );
++
++    m_opaqueDepth.resize( count );
++    glPixelStorei( GL_PACK_ALIGNMENT, 4 );
++    glReadPixels( 0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT, m_opaqueDepth.data() );
++
++    // Each pixel starts as the distance of what is drawn so far, (distance - near) / (far - near),
++    // with alpha 1 where the scene is and 0 on the background
++    std::vector<float> base( count * 4, 0.0f );
++
++    for( size_t i = 0; i < count; ++i )
++    {
++        const bool  scene = m_opaqueDepth[i] < 1.0f;
++        const float distance = scene ? m_camera.GetDistanceFromDepth( m_opaqueDepth[i] ) : screen;
++
++        base[i * 4] = ( distance - nearD ) / ( farD - nearD );
++        base[i * 4 + 3] = scene ? 1.0f : 0.0f;
++    }
++
++    glPushAttrib( GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
++    glPushClientAttrib( GL_CLIENT_PIXEL_STORE_BIT );
++    glDisable( GL_DEPTH_TEST );
++    glDisable( GL_STENCIL_TEST );
++    glDisable( GL_BLEND );
++    glDisable( GL_ALPHA_TEST );
++    glDisable( GL_TEXTURE_2D );
++    glDisable( GL_FOG );
++    glDisable( GL_LIGHTING );
++    glPixelStorei( GL_UNPACK_ALIGNMENT, 4 );
++    glPixelStorei( GL_UNPACK_ROW_LENGTH, 0 );
++    glPixelStorei( GL_UNPACK_SKIP_ROWS, 0 );
++    glPixelStorei( GL_UNPACK_SKIP_PIXELS, 0 );
++    glWindowPos2i( 0, 0 );
++    glDrawPixels( width, height, GL_RGBA, GL_FLOAT, base.data() );
++    glPopClientAttrib();
++    glPopAttrib();
++
++    // The translucent models are drawn as the eyes draw them, in the same order, with the same
++    // alpha and blending, but each fragment's colour is its distance: the texture stage gives black
++    // and keeps the model's alpha, and linear fog over the distance adds
++    // (distance - near) / (far - near).  Blended over the start, every pixel ends as the mean
++    // distance of what it shows, each weighted by its share of the pixel's colour.
++    glPushAttrib( GL_FOG_BIT | GL_TEXTURE_BIT | GL_HINT_BIT );
++    glActiveTexture( GL_TEXTURE0 );
++    glTexEnvi( GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_SUBTRACT );
++    glTexEnvi( GL_TEXTURE_ENV, GL_SRC0_RGB, GL_PRIMARY_COLOR );
++    glTexEnvi( GL_TEXTURE_ENV, GL_OPERAND0_RGB, GL_SRC_COLOR );
++    glTexEnvi( GL_TEXTURE_ENV, GL_SRC1_RGB, GL_PRIMARY_COLOR );
++    glTexEnvi( GL_TEXTURE_ENV, GL_OPERAND1_RGB, GL_SRC_COLOR );
++
++    // Fog takes the distance without its sign: the orthographic view, whose clip planes are on
++    // both sides of the camera, is moved in front of it for the fog, and the projection moves it
++    // back, so the picture's place does not change
++    const float     offset = std::max( 0.0f, -nearD );
++    const GLfloat   white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
++
++    glEnable( GL_FOG );
++    glFogi( GL_FOG_MODE, GL_LINEAR );
++    glFogi( GL_FOG_COORD_SRC, GL_FRAGMENT_DEPTH );
++    glFogfv( GL_FOG_COLOR, white );
++    glFogf( GL_FOG_START, nearD + offset );
++    glFogf( GL_FOG_END, farD + offset );
++    glHint( GL_FOG_HINT, GL_NICEST );
++
++    glMatrixMode( GL_PROJECTION );
++    glPushMatrix();
++    glTranslatef( 0.0f, 0.0f, offset );
++    glMatrixMode( GL_MODELVIEW );
++
++    return glm::translate( glm::mat4( 1.0f ), SFVEC3F( 0.0f, 0.0f, -offset ) ) * aCameraViewMatrix;
++}
++
++
++void RENDER_3D_OPENGL::endTranslucentDepth()
++{
++    if( !m_depthFboBound )
++        return;
++
++    glMatrixMode( GL_PROJECTION );
++    glPopMatrix();
++    glMatrixMode( GL_MODELVIEW );
++    glPopAttrib();
++
++    const size_t count = m_opaqueDepth.size();
++    const float  nearD = m_camera.GetNear();
++    const float  farD = m_camera.GetFar();
++
++    std::vector<float> rgba( count * 4 );
++
++    glPixelStorei( GL_PACK_ALIGNMENT, 4 );
++    glReadPixels( 0, 0, m_windowSize.x, m_windowSize.y, GL_RGBA, GL_FLOAT, rgba.data() );
++
++    m_translucentMean.resize( count );
++
++    // A background pixel no translucent model covers keeps alpha 0
++    for( size_t i = 0; i < count; ++i )
++    {
++        m_translucentMean[i] = rgba[i * 4 + 3] > 0.0f
++                                       ? nearD + rgba[i * 4] * ( farD - nearD )
++                                       : std::numeric_limits<float>::quiet_NaN();
++    }
++}
++
++
+ bool RENDER_3D_OPENGL::Redraw( bool aIsMoving, REPORTER* aStatusReporter,
+                                REPORTER* aWarningReporter )
+ {
+@@ -606,6 +823,10 @@ bool RENDER_3D_OPENGL::Redraw( bool aIsMoving, REPORTER* aStatusReporter,
+         glEnable( GL_MULTISAMPLE );
+ 
+     // clear color and depth buffers
++    // The pass that measures the depth range is drawn off screen, where each translucent model's
++    // share of a pixel can be summed
++    m_depthFboBound = m_captureDepthRange && bindDepthFbo();
++
+     glClearColor( 0.0f, 0.0f, 0.0f, 0.0f );
+     glClearDepth( 1.0f );
+     glClearStencil( 0x00 );
+@@ -886,7 +1107,15 @@ bool RENDER_3D_OPENGL::Redraw( bool aIsMoving, REPORTER* aStatusReporter,
+     glTexEnvi( GL_TEXTURE_ENV, GL_SRC1_ALPHA, GL_CONSTANT );
+     glTexEnvi( GL_TEXTURE_ENV, GL_OPERAND1_ALPHA, GL_SRC_ALPHA );
+ 
+-    renderTransparentModels( cameraViewMatrix );
++    if( m_captureDepthRange )
++    {
++        renderTransparentModels( beginTranslucentDepth( cameraViewMatrix ) );
++        endTranslucentDepth();
++    }
++    else
++    {
++        renderTransparentModels( cameraViewMatrix );
++    }
+ 
+     glDisable( GL_BLEND );
+     OglResetTextureState();
+diff --git a/3d-viewer/3d_rendering/opengl/render_3d_opengl.h b/3d-viewer/3d_rendering/opengl/render_3d_opengl.h
+index 573e5284..22ca3886 100644
+--- a/3d-viewer/3d_rendering/opengl/render_3d_opengl.h
++++ b/3d-viewer/3d_rendering/opengl/render_3d_opengl.h
+@@ -43,6 +43,8 @@
+ #include "3d_cache/3d_info.h"
+ 
+ #include <geometry/eda_angle.h>
++
++#include <vector>
+ #include <pad.h> // For PAD_DRILL_POST_MACHINING_MODE
+ 
+ #include <map>
+@@ -104,6 +106,10 @@ public:
+ 
+ private:
+     void captureDepthRange();
++    bool bindDepthFbo();
++    void deleteDepthFbo();
++    glm::mat4 beginTranslucentDepth( const glm::mat4& aCameraViewMatrix );
++    void endTranslucentDepth();
+ 
+     OPENGL_RENDER_LIST* generateHoles( const LIST_OBJECT2D& aListHolesObject2d,
+                                        const SHAPE_POLY_SET& aPoly, float aZtop, float aZbot,
+@@ -319,6 +325,16 @@ private:
+     bool  m_depthRangeValid = false;
+     float m_depthNearest = 0.0f;
+     float m_depthFarthest = 0.0f;
++
++    // The pass that measures the depth range is drawn off screen, into a float colour buffer
++    // where each translucent model's share of a pixel is summed with the depth of what it covers
++    GLuint             m_depthFbo = 0;
++    GLuint             m_depthFboColor = 0;
++    GLuint             m_depthFboDepth = 0;
++    wxSize             m_depthFboSize;
++    bool               m_depthFboBound = false;
++    std::vector<float> m_opaqueDepth;      ///< window depth before the translucent models
++    std::vector<float> m_translucentMean;  ///< contribution-weighted distance, NaN for background
+ };
+ 
+ #endif // RENDER_3D_OPENGL_H
+-- 
+2.53.0
+
