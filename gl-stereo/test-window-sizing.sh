@@ -13,7 +13,6 @@ container=$(docker run --ulimit core=1 -d --init --name "$name" --user "$(id -u)
     --device /dev/dri/renderD128 -v "$workspace:$workspace" -v "$rig:/rig:ro" \
     -v "$rig/passwd:/etc/passwd:ro" -v "$rig/group:/etc/group:ro" \
     -w "$repo" gl-stereo-sizing:1 bash -c '
-        ulimit -c 0
         gcc -O2 -Wall -Wextra tests/window-sizing.c -o out/window-sizing/client -lGL -lX11 -ldl &&
         for name in before after quad future gears; do
             python3 tests/run-window-rig.py "$name" >"out/window-sizing/$name.log" 2>&1 || exit

@@ -7,7 +7,6 @@
 # Usage: signing.sh MODE (file | softhsm) OUT   Needs: /tools (tools/pjeoffice-audit), /classes (its compiled helpers), /scratch (rw), this folder at /rig
 set -u
 MODE=${1:?file or softhsm}; OUT=${2:?result folder under /scratch}
-ulimit -c 0
 export DISPLAY=:99
 mkdir -p "$OUT/shots"; cd /scratch
 sh /tools/token-fixture.sh /scratch/identity > "$OUT/fixture.log" 2>&1 || { tail -5 "$OUT/fixture.log"; echo "FAIL fixture"; exit 1; }

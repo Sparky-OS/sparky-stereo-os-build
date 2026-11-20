@@ -1,0 +1,56 @@
+Description: [PATCH 20/22] videotoolbox: speedup decoding
+Author: Damiano Galassi
+Origin: other, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/ffmpeg/A20-videotoolbox-speedup-decoding.patch
+Bug: https://github.com/HandBrake/HandBrake/commit/292b17a3df281d5a79558f372c06dd8977897719
+Forwarded: not-needed
+Comment: Backported to the edition FFmpeg 9.0.2; preserve public enum values.
+
+--- a/libavcodec/videotoolbox.c
++++ b/libavcodec/videotoolbox.c
+@@ -134,9 +134,6 @@
+     frame->crop_top = 0;
+     frame->crop_bottom = 0;
+ 
+-    if ((ret = av_vt_pixbuf_set_attachments(avctx, ref->pixbuf, frame)) < 0)
+-        return ret;
+-
+     frame->data[3] = (uint8_t*)ref->pixbuf;
+ 
+     if (ref->hw_frames_ctx) {
+@@ -822,7 +819,7 @@
+ #if TARGET_OS_IPHONE
+     CFDictionarySetValue(buffer_attributes, kCVPixelBufferOpenGLESCompatibilityKey, kCFBooleanTrue);
+ #else
+-    CFDictionarySetValue(buffer_attributes, kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey, kCFBooleanTrue);
++    CFDictionarySetValue(buffer_attributes, kCVPixelBufferMetalCompatibilityKey, kCFBooleanTrue);
+ #endif
+ 
+     CFRelease(io_surface_properties);
+--- a/libavutil/hwcontext_videotoolbox.c
++++ b/libavutil/hwcontext_videotoolbox.c
+@@ -194,7 +194,8 @@
+     VTFramesContext *fctx = ctx->hwctx;
+     AVVTFramesContext *hw_ctx = &fctx->p;
+     CVReturn err;
+-    CFNumberRef w, h, pixfmt;
++    CFNumberRef w, h, extend_w_num, extend_h_num, pixfmt;
++    int extend_w, extend_h;
+     uint32_t cv_pixfmt;
+     CFMutableDictionaryRef attributes, iosurface_properties;
+ 
+@@ -226,6 +227,15 @@
+     CFDictionarySetValue(attributes, kCVPixelBufferHeightKey, h);
+     CFRelease(w);
+     CFRelease(h);
++
++    extend_w = FFALIGN(ctx->width,  16) - ctx->width;
++    extend_h = FFALIGN(ctx->height, 16) - ctx->height;
++    extend_w_num = CFNumberCreate(NULL, kCFNumberSInt32Type, &extend_w);
++    extend_h_num = CFNumberCreate(NULL, kCFNumberSInt32Type, &extend_h);
++    CFDictionarySetValue(attributes, kCVPixelBufferExtendedPixelsRightKey, extend_w_num);
++    CFDictionarySetValue(attributes, kCVPixelBufferExtendedPixelsBottomKey, extend_h_num);
++    CFRelease(extend_w_num);
++    CFRelease(extend_h_num);
+ 
+     err = CVPixelBufferPoolCreate(
+         NULL,

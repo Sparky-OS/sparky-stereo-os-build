@@ -134,6 +134,23 @@ def findings(rel, text):
     return problems, count
 
 
+# A shell's own core ulimit inside the container: bash counts it in 1024-byte blocks, so it can only lower the 1 byte
+# that --ulimit core=1 gives to 0 (runuser and bubblewrap keep that 0, and the kernel's piped core helper runs again),
+# or fail raising it to a block. The limit is docker run's alone.
+ULIMIT_CORE = re.compile(r'\bulimit\s+-[A-Za-z]*c[A-Za-z]*\s+([^\s;&|)\x27\"]+)')
+
+
+def ulimit_findings(rel, text):
+    problems = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith('#'):
+            continue
+        for value in ULIMIT_CORE.findall(line):
+            problems.append(f'{rel}:{number}: ulimit sets the core limit ({value}); bash counts 1024-byte blocks, so it '
+                            f'lowers --ulimit core=1 to 0 or fails: leave the core limit to docker run --ulimit core=1')
+    return problems
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('root', nargs='?', type=Path, default=Path(__file__).resolve().parents[3])
@@ -151,10 +168,13 @@ def main():
             continue
         raw = (subprocess.check_output(['git', '-C', str(root), 'show', f'{args.revision}:{rel}'])
                if args.revision else path.read_bytes())
-        if b'docker' not in raw or b'\0' in raw:
+        if b'\0' in raw or (b'docker' not in raw and b'ulimit' not in raw):
             continue
         try:
             text = raw.decode()
+            problems.extend(ulimit_findings(rel, text))
+            if 'docker' not in text:
+                continue
             found, n = findings(rel, text)
         except (UnicodeError, SyntaxError) as exc:
             problems.append(f'{rel}: cannot inspect: {exc}')

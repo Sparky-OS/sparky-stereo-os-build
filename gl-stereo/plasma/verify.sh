@@ -1,7 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 set -euo pipefail
-ulimit -c 0
 test -e /.dockerenv
 test "$(id -u)" != 0
 unset DISPLAY WAYLAND_DISPLAY LD_PRELOAD

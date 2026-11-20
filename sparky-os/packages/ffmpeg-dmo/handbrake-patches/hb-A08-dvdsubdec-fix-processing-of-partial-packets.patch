@@ -1,0 +1,49 @@
+Description: [PATCH 08/22] dvdsubdec: fix processing of partial packets
+Author: John Stebbins
+Origin: other, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/ffmpeg/A08-dvdsubdec-fix-processing-of-partial-packets.patch
+Bug: https://github.com/HandBrake/HandBrake/commit/26491abb53d313e01fbcea48a9b3b4ff13a8a150
+Forwarded: not-needed
+Comment: Backported to the edition FFmpeg 9.0.2; preserve public enum values.
+
+--- a/libavcodec/dvdsubdec.c
++++ b/libavcodec/dvdsubdec.c
+@@ -230,7 +230,10 @@
+     uint32_t size;
+     int64_t offset1, offset2;
+ 
+-    if (buf_size < 10)
++    if (buf_size < 2)
++        return AVERROR(EAGAIN);
++
++    if (buf_size == 2 && AV_RB16(buf) == 0)
+         return -1;
+ 
+     if (AV_RB16(buf) == 0) {   /* HD subpicture with 4-byte offsets */
+@@ -243,15 +246,21 @@
+         cmd_pos = 2;
+     }
+ 
++    if (big_offsets && buf_size < 6)
++        return AVERROR(EAGAIN);
++
+     size = READ_OFFSET(buf + (big_offsets ? 2 : 0));
++    if (size == 0)
++        return -1;
++
++    if (buf_size < size)
++        return AVERROR(EAGAIN);
++
+     cmd_pos = READ_OFFSET(buf + cmd_pos);
+ 
+-    if (cmd_pos < 0 || cmd_pos > buf_size - 2 - offset_size) {
+-        if (cmd_pos > size) {
+-            av_log(logctx, AV_LOG_ERROR, "Discarding invalid packet\n");
+-            return 0;
+-        }
+-        return AVERROR(EAGAIN);
++    if (cmd_pos < 0 || cmd_pos > size) {
++        av_log(ctx, AV_LOG_ERROR, "Discarding invalid packet\n");
++        return AVERROR_INVALIDDATA;
+     }
+ 
+     while (cmd_pos > 0 && cmd_pos < buf_size - 2 - offset_size) {

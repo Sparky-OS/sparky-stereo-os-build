@@ -3,7 +3,6 @@
 # Copyright 2026 under the GNU GPL2 License
 # Last update 2026/10/08
 set -euo pipefail
-ulimit -c 0
 [[ -e /.dockerenv ]]
 : "${POWERDEVIL_SOURCE:?Set POWERDEVIL_SOURCE to the patched source tree}"
 : "${PLASMA_WORKSPACE_SOURCE:?Set PLASMA_WORKSPACE_SOURCE to its source tree}"

@@ -1,0 +1,53 @@
+Description: Preserve HandBrake H.273 matrix coefficients 16 and 17
+Author: Damiano Galassi
+Origin: backport, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/x265/A04-add-new-matrix-coefficients-from-H.273-v3.patch
+Last-Update: 2026-11-19
+
+--- a/source/common/param.cpp
++++ b/source/common/param.cpp
+@@ -1857,10 +1857,10 @@
+           " smpte170m, smpte240m, linear, log100, log316, iec61966-2-4, bt1361e,"
+           " iec61966-2-1, bt2020-10, bt2020-12, smpte-st-2084, smpte-st-428 or arib-std-b67");
+     CHECK(param->vui.matrixCoeffs < 0
+-          || param->vui.matrixCoeffs > 15
++          || param->vui.matrixCoeffs > 17
+           || param->vui.matrixCoeffs == 3,
+           "Matrix Coefficients must be unknown, bt709, fcc, bt470bg, smpte170m,"
+-          " smpte240m, gbr, ycgco, bt2020nc, bt2020c, smpte-st-2085, chroma-nc, chroma-c, ictcp or ipt-pq-c2");
++          " smpte240m, gbr, ycgco, bt2020nc, bt2020c, smpte-st-2085, chroma-nc, chroma-c, ictcp, ipt-pq-c2, ycgco-re or ycgco-ro");
+     CHECK(param->vui.chromaSampleLocTypeTopField < 0
+           || param->vui.chromaSampleLocTypeTopField > 5,
+           "Chroma Sample Location Type Top Field must be 0-5");
+--- a/source/x265.h
++++ b/source/x265.h
+@@ -761,7 +761,7 @@
+                                                     "log316", "iec61966-2-4", "bt1361e", "iec61966-2-1", "bt2020-10", "bt2020-12",
+                                                     "smpte2084", "smpte428", "arib-std-b67", 0 };
+ static const char * const x265_colmatrix_names[] = { "gbr", "bt709", "unknown", "", "fcc", "bt470bg", "smpte170m", "smpte240m",
+-                                                     "ycgco", "bt2020nc", "bt2020c", "smpte2085", "chroma-derived-nc", "chroma-derived-c", "ictcp", "ipt-pq-c2", 0 };
++                                                     "ycgco", "bt2020nc", "bt2020c", "smpte2085", "chroma-derived-nc", "chroma-derived-c", "ictcp", "ipt-pq-c2", "ycgco-re", "ycgco-ro", 0 };
+ static const char * const x265_sar_names[] = { "unknown", "1:1", "12:11", "10:11", "16:11", "40:33", "24:11", "20:11",
+                                                "32:11", "80:33", "18:11", "15:11", "64:33", "160:99", "4:3", "3:2", "2:1", 0 };
+ static const char * const x265_interlace_names[] = { "prog", "tff", "bff", 0 };
+--- a/source/x265cli.cpp
++++ b/source/x265cli.cpp
+@@ -333,7 +333,7 @@
+         H0("                                 smpte240m, linear, log100, log316, iec61966-2-4, bt1361e, iec61966-2-1,\n");
+         H0("                                 bt2020-10, bt2020-12, smpte2084, smpte428, arib-std-b67. Default unknown\n");
+         H1("   --colormatrix <string>        Specify color matrix setting from unknown, bt709, fcc, bt470bg, smpte170m,\n");
+-        H1("                                 smpte240m, gbr, ycgco, bt2020nc, bt2020c, smpte2085, chroma-derived-nc, chroma-derived-c, ictcp, ipt-pq-c2. Default unknown\n");
++        H1("                                 smpte240m, gbr, ycgco, bt2020nc, bt2020c, smpte2085, chroma-derived-nc, chroma-derived-c, ictcp, ipt-pq-c2, ycgco-re, ycgco-ro. Default unknown\n");
+         H1("   --chromaloc <integer>         Specify chroma sample location (0 to 5). Default of %d\n", param->vui.chromaSampleLocTypeTopField);
+         H0("   --master-display <string>     SMPTE ST 2086 master display color volume info SEI (HDR)\n");
+         H0("                                    format: G(x,y)B(x,y)R(x,y)WP(x,y)L(max,min)\n");
+--- a/doc/reST/cli.rst
++++ b/doc/reST/cli.rst
+@@ -2427,6 +2427,8 @@
+ 	13. chroma-derived-c
+ 	14. ictcp
+ 	15. ipt-pq-c2
++	16. ycgco-re
++	17. ycgco-ro
+ 
+ .. option:: --chromaloc <0..5>
+ 

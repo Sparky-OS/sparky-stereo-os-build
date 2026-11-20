@@ -10,7 +10,6 @@
 # source package) and its changelog entry; the tests run in the build (dh_auto_test).
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
-ulimit -c 0
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 NEWV=26.9+stereo3d5
