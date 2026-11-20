@@ -1,7 +1,7 @@
 #!/bin/bash
 # Created by Daniel Ramos (Capitain Jack) 2026/11/19
 # Copyright 2026 under the GNU GPL3 License
-# Sparky Stereo OS, ORDER 39: dolphin-emu 2609.b+dfsg-1+stereo3d2+lc1, inside the build container that build.sh starts.
+# Sparky Stereo OS, ORDER 39: dolphin-emu 2609.b+dfsg-1+stereo3d1+lc1, inside the build container that build.sh starts.
 # /work the job folder, /src Debian's source package, /prev Debian's own dolphin-emu build (the link gate's predecessor),
 # /tools this folder, /toolkit the build tree's sparky-os, /repo the edition's published tree.
 trap 'chown -R 1000:1000 /work' EXIT
@@ -9,7 +9,7 @@ set -euo pipefail
 : "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: run this through build.sh (sparky_provenance_init)}" "${SOURCE_DATE_RFC2822:?see SOURCE_DATE_EPOCH}"
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS='parallel=4 nocheck'
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
-V=2609.b+dfsg-1 NEXT=2609.b+dfsg-1+stereo3d2
+V=2609.b+dfsg-1 NEXT=2609.b+dfsg-1+stereo3d1
 cd /work && mkdir s1 && cd s1
 echo 'f814ca630589a07a3f6963d4c13475c9566fecbe8a77234c63798b9651239a24  /src/dolphin-emu_2609.b+dfsg-1.dsc' | sha256sum -c
 cp /src/dolphin-emu_$V.dsc /src/dolphin-emu_$V.debian.tar.xz /src/dolphin-emu_2609.b+dfsg.orig.tar.xz .

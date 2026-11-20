@@ -11,11 +11,6 @@ control = Path('debian/control').read_text()
 old = ' libsdl3-dev,\n'
 assert control.count(old) == 1, 'Debian control changed'
 control = control.replace(old, old + ' libstereo-declare-dev (>= 1.7.0),\n', 1)
-# ORDER 774: Mesa up to +stereo3d28 gives a Vulkan X11 surface half its window's width at random (Mesa patch 0047); the
-# Dolphin emulator on Vulkan draws each eye at half the width on such a Mesa, so apt installs it only with the fixed one.
-old = 'Depends: ${shlibs:Depends}, ${misc:Depends}, dolphin-emu-data (= ${source:Version})\n'
-assert control.count(old) == 1, 'Debian control changed'
-control = control.replace(old, old + 'Breaks: mesa-vulkan-drivers (<< 26.1.6-1+stereo3d29~)\n', 1)
 Path('debian/control').write_text(control)
 
 copyright = Path('debian/copyright').read_text()
