@@ -4,7 +4,7 @@
 # As the person in a container with the package installed, no network, a private Xvfb: Dolphin on a folder with one PDF, the context menu of the file opened with the
 # keyboard's menu key, a picture of it, and the action's own command line read from the menu entry file. Usage: dolphin.sh OUT
 set -u
-OUT=${1:?}; mkdir -p "$OUT" "$HOME/docs"; ulimit -c 1
+OUT=${1:?}; mkdir -p "$OUT" "$HOME/docs"
 export OUT DISPLAY=:98 LANG=${LOGIN_LANG:-C.UTF-8} QT_QPA_PLATFORM=xcb
 Xvfb :98 -screen 0 1280x800x24 -nolisten tcp > "$OUT/xvfb.log" 2>&1 &
 sleep 1

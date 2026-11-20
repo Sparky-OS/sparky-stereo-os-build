@@ -3,7 +3,6 @@
 # Generate a disposable identity and verify the software-token fixture in a container.
 set -eu
 umask 077
-ulimit -c 1
 fixture=${1:?new scratch directory}
 mkdir "$fixture"
 cd "$fixture"

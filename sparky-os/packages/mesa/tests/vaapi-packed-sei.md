@@ -12,7 +12,6 @@ Use the build tree's HTTPS apt helper for any package installation.
 Inside that container, as an unprivileged user with render-node access:
 
 ```sh
-ulimit -c 1
 python3 vaapi-packed-sei.py --run /writable/new-evidence-directory
 ```
 

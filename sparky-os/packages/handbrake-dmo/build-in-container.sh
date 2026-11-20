@@ -1,7 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -euo pipefail
-ulimit -c 1
 sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 cohort=()

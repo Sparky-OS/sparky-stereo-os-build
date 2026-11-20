@@ -2,7 +2,6 @@
 # Created by Daniel Ramos (Capitain Jack) 2026/11/16
 # Copyright 2026 under the GNU GPL3 License
 set -eu
-ulimit -c 1
 export HTTPS_ONLY_APT_CONF=/build/https-only-apt.conf
 sh /run/https-only-apt.sh
 export APT_CONFIG="$HTTPS_ONLY_APT_CONF"

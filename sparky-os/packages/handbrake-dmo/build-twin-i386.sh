@@ -37,7 +37,7 @@ docker run --name "${SPARKY_CONTAINER_PREFIX:-twin}-$(basename "$RECIPE")-i386" 
 	--mount "type=bind,src=$(dirname "$DSC"),dst=/src,readonly" --mount "type=bind,src=$RECIPE,dst=/recipe,readonly" \
 	--mount type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/host-ca.crt,readonly \
 	--mount "type=bind,src=$RECIPE/../../../tools/https-only-apt.sh,dst=/run/https-only-apt.sh,readonly" \
-	"$IMAGE" bash -c 'set -eu; ulimit -c 1; sh /run/https-only-apt.sh; export DEBIAN_FRONTEND=noninteractive
+	"$IMAGE" bash -c 'set -eu; sh /run/https-only-apt.sh; export DEBIAN_FRONTEND=noninteractive
 [ "$(dpkg --print-architecture)" = i386 ] || { echo "not an i386 image" >&2; exit 2; }
 id builder >/dev/null 2>&1 || useradd --uid 1000 --no-create-home builder
 runuser -u builder -- dpkg-source -x "$TWIN_DSC" /work/tree

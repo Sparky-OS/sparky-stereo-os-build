@@ -1,7 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 export LC_ALL=C
-ulimit -c 1
 for tool in python3 flock nohup readlink; do
     command -v "$tool" >/dev/null || { echo "Required host tool missing: $tool" >&2; exit 1; }
 done

@@ -6,7 +6,7 @@
 # the compositor's own output buffer (capture-qpainter.py) of the desktop and of the package's System Settings page.
 # Usage: plasma.sh OUT   Needs /rig (this folder)
 set -u
-OUT=${1:?result folder}; mkdir -p "$OUT"; ulimit -c 1
+OUT=${1:?result folder}; mkdir -p "$OUT"
 export XDG_RUNTIME_DIR=/tmp/r$$; mkdir -p $XDG_RUNTIME_DIR; chmod 700 $XDG_RUNTIME_DIR
 export LANG=${LOGIN_LANG:-C.UTF-8} LANGUAGE=${LOGIN_LANGUAGE:-} OUT KWIN_VIRTUAL_STEREO_MODES=0 KWIN_WAYLAND_NO_PERMISSION_CHECKS=1
 export QT_QPA_PLATFORM=wayland
