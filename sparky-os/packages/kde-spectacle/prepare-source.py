@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """Refresh a successor against the exact published source, retaining its quilt series."""
-import email.utils
 import json
 import os
 import re
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import argparse
 ap=argparse.ArgumentParser(description=__doc__)
@@ -15,6 +15,8 @@ ap.add_argument('input',type=Path);ap.add_argument('out',type=Path);ap.add_argum
 args=ap.parse_args()
 recipe=Path(__file__).resolve().parent
 build=args.toolkit.resolve()
+sys.path.insert(0, str(build / "repo"))
+from reproducible import pack, rfc2822
 epoch=int(os.environ['SOURCE_DATE_EPOCH'])
 work=args.out.resolve();work.mkdir(parents=True,exist_ok=True)
 assert not list(work.iterdir()),'source output must be empty'
@@ -44,6 +46,7 @@ for language in config['translations']:
     subprocess.run(['msgfmt','--check','-o','/dev/null',str(root/'po'/language/'spectacle.po')],check=True)
 control=root/'debian/control'
 s=control.read_text().replace('Build-Depends:', 'Build-Depends: libstereo-layer-dev (>= 1.10),',1).replace('kimageformat6-plugins (>= 6.30.0-1+stereo3d1)','kimageformat6-plugins (>= 6.30.0-1+stereo3d7)')
+s = s.replace('Depends: kimageformat6-plugins', 'Depends: kwin-common (>= 4:6.7.4-2+stereo3d62~), kimageformat6-plugins', 1)
 control.write_text(s)
 if binary_files:(root/'debian/source/include-binaries').write_text('\n'.join(binary_files)+'\n')
 changelog=root/'debian/changelog'
@@ -53,14 +56,11 @@ changelog.write_text('kde-spectacle (4:6.7.4-1+stereo3d3) unstable; urgency=high
     '  * Crop both eye rectangles and retain mono monitors in explicit 3D views.\n'
     '  * Carry upstream capture/save fixes with their original author credit.\n'
     '  * Add Spanish and translate the new capture choices in all ten languages.\n\n'
-    ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  '+email.utils.formatdate(epoch,usegmt=True).replace('GMT','+0000')+'\n\n'+changelog.read_text())
+    ' -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  '+rfc2822(epoch)+'\n\n'+changelog.read_text())
 subprocess.run(['python3','-m','lean.debian_prepare',str(root),'4:6.7.4-1+stereo3d3+lc1','--toolkit',str(build),
     '--preserve-plan',str(work/'preserve-plan.json'),
     '--preserve-source','src/*.h','Qt moc and qmltyperegistrar consume declarations; retain authored generator inputs.'],
     env={**os.environ,'PYTHONPATH':str(build)},check=True)
 # QML is outside the native C/C++ projection walk and remains authored automatically.
-import sys
-sys.path.insert(0, str(build / 'repo'))
-from reproducible import pack
 pack(str(work), 'successor', epoch)
 print('Prepared and packed successor:', root)
