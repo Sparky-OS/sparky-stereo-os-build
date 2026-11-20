@@ -6,7 +6,6 @@
 # Source package once (upstream's commit 4301b49671 after Debian's series, the changelog entry), then the Lean Code source,
 # then the build with the link and start gate against Debian's 2.90.1-2 build (ORDER 768). The test of the fix
 # (tests/deadlock-reproducer/run.sh) runs apart from the package build, as Debian's packaging stays as Debian has it (nocheck).
-# The build's jobs are not capped: dpkg-buildpackage -jauto.
 # Usage: build.sh WORK PREVIOUS_DIR SOURCE_DIR   (PREVIOUS_DIR: a folder holding Debian's glib2.0 2.90.1-2 amd64 and all .deb
 #   files for the link gate; SOURCE_DIR: the folder holding Debian's glib2.0_2.90.1-2.dsc, its debian.tar.xz and both orig
 #   tarballs, checked against Debian testing's signed Sources index)
@@ -26,7 +25,7 @@ SRC=$(cd "$3" && pwd)
 IMAGE=${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}
 name=${SPARKY_BUILD_CONTAINER:-glib2.0-build-$$}
 sparky_provenance_init "$IMAGE"
-docker run -d --name "$name" --pull=never --ulimit core=0 --platform linux/amd64 \
+docker run -d --name "$name" --pull=never --ulimit core=0 --cpus 4 --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
 	-v "$WORK":/work -v "$SRC":/src:ro \
