@@ -1,89 +1,167 @@
 diff --git a/discovery/directwifi/org.kde.krdp-direct-wifi.desktop b/discovery/directwifi/org.kde.krdp-direct-wifi.desktop
 --- a/discovery/directwifi/org.kde.krdp-direct-wifi.desktop
 +++ b/discovery/directwifi/org.kde.krdp-direct-wifi.desktop
-@@ -1,10 +1,12 @@
+@@ -1,24 +1,26 @@
  [Desktop Entry]
  Type=Application
  Name=Throw via Direct Wi-Fi
-+Name[es]=Lanzar por Wi-Fi Direct
++Name[es]=Throw (lanzar) por Wi-Fi Direct
  Comment=Connect directly to a phone running Flat Headset
 +Comment[es]=Conectar directamente a un teléfono con Flat Headset
  Exec=krdp-direct-wifi
  Icon=network-wireless
  Terminal=false
  Categories=Network;RemoteAccess;
- Name[pl]=Throw przez bezpośrednie Wi-Fi
+-Name[pl]=Throw przez bezpośrednie Wi-Fi
++Name[pl]=Throw (przerzucić) przez bezpośrednie Wi-Fi
  Comment[pl]=Połącz bezpośrednio z telefonem z uruchomionym Flat Headset
+-Name[pt_BR]=Throw via Wi-Fi direto
++Name[pt_BR]=Throw (jogar) por Wi-Fi Direct
+ Comment[pt_BR]=Conecte-se diretamente a um telefone com Flat Headset
+-Name[fr]=Throw via Wi-Fi direct
++Name[fr]=Throw (envoyer) via Wi-Fi Direct
+ Comment[fr]=Se connecter directement à un téléphone utilisant Flat Headset
+-Name[de]=Throw über direktes WLAN
++Name[de]=Throw (senden) über Wi-Fi Direct
+ Comment[de]=Direkt mit einem Telefon mit Flat Headset verbinden
+-Name[ja]=直接 Wi-Fi で Throw
++Name[ja]=Wi-Fi Direct で Throw (送る)
+ Comment[ja]=Flat Headset を実行中の電話に直接接続
+-Name[ko]=직접 Wi-Fi로 Throw
++Name[ko]=Wi-Fi Direct로 Throw (보내다)
+ Comment[ko]=Flat Headset이 실행 중인 휴대전화에 직접 연결
+-Name[zh_CN]=通过 Wi-Fi 直连 Throw
++Name[zh_CN]=通过 Wi-Fi Direct 使用 Throw (发送)
+ Comment[zh_CN]=直接连接运行 Flat Headset 的手机
+-Name[zh_TW]=透過 Wi-Fi 直連 Throw
++Name[zh_TW]=透過 Wi-Fi Direct 使用 Throw (傳送)
+ Comment[zh_TW]=直接連線至執行 Flat Headset 的手機
 diff --git a/discovery/krdp-panel-discovery.notifyrc b/discovery/krdp-panel-discovery.notifyrc
 --- a/discovery/krdp-panel-discovery.notifyrc
 +++ b/discovery/krdp-panel-discovery.notifyrc
-@@ -1,38 +1,42 @@
+@@ -1,41 +1,45 @@
  [Global]
  IconName=krdc
  Name=Throw discovery
-+Name[es]=Detección para el lanzamiento
- Name[pl]=Wykrywanie do przerzucania
- Name[pt_BR]=Descoberta para arremesso
- Name[fr]=Découverte pour le lancer
- Name[de]=Erkennung für das Werfen
- Name[ja]=スロー先の検出
- Name[ko]=던지기 대상 검색
- Name[zh_CN]=投送发现
- Name[zh_TW]=投送探索
+-Name[pl]=Wykrywanie do przerzucania
+-Name[pt_BR]=Descoberta para arremesso
+-Name[fr]=Découverte pour le lancer
+-Name[de]=Erkennung für das Werfen
+-Name[ja]=スロー先の検出
+-Name[ko]=던지기 대상 검색
+-Name[zh_CN]=投送发现
+-Name[zh_TW]=投送探索
++Name[es]=Búsqueda de dispositivos para Throw (lanzar)
++Name[pl]=Wyszukiwanie urządzeń dla Throw (przerzucić)
++Name[pt_BR]=Busca de aparelhos para o Throw (jogar)
++Name[fr]=Recherche d’appareils pour Throw (envoyer)
++Name[de]=Gerätesuche für Throw (senden)
++Name[ja]=Throw (送る) の接続先を検索
++Name[ko]=Throw (보내다) 대상 검색
++Name[zh_CN]=搜索 Throw (发送) 设备
++Name[zh_TW]=搜尋 Throw (傳送) 裝置
  Comment=Find a nearby phone to Throw a stereo display to
-+Comment[es]=Buscar un teléfono cercano al que lanzar una pantalla estéreo
- Comment[pl]=Znajdź pobliski telefon, do którego można przerzucić ekran stereo
- Comment[pt_BR]=Encontrar um telefone próximo para arremessar uma tela estéreo
- Comment[fr]=Trouver un téléphone proche vers lequel lancer un écran stéréo
- Comment[de]=Ein Telefon in der Nähe zum Werfen eines Stereodisplays finden
- Comment[ja]=近くの電話を探してステレオ画面をスロー
- Comment[ko]=스테레오 화면을 던질 주변 휴대전화 찾기
- Comment[zh_CN]=查找附近的手机以投送立体显示屏
- Comment[zh_TW]=尋找附近的手機以投送立體顯示螢幕
+-Comment[pl]=Znajdź pobliski telefon, do którego można przerzucić ekran stereo
+-Comment[pt_BR]=Encontrar um telefone próximo para arremessar uma tela estéreo
+-Comment[fr]=Trouver un téléphone proche vers lequel lancer un écran stéréo
+-Comment[de]=Ein Telefon in der Nähe zum Werfen eines Stereodisplays finden
+-Comment[ja]=近くの電話を探してステレオ画面をスロー
+-Comment[ko]=스테레오 화면을 던질 주변 휴대전화 찾기
+-Comment[zh_CN]=查找附近的手机以投送立体显示屏
+-Comment[zh_TW]=尋找附近的手機以投送立體顯示螢幕
++Comment[es]=Busque un teléfono cercano al que enviar una pantalla estéreo con Throw (lanzar)
++Comment[pl]=Znajdź pobliski telefon, aby przesłać na niego ekran stereo przez Throw (przerzucić)
++Comment[pt_BR]=Encontre um celular próximo para mandar a tela estéreo com Throw (jogar)
++Comment[fr]=Trouvez un téléphone à proximité pour lui envoyer un écran stéréo avec Throw (envoyer)
++Comment[de]=Ein Smartphone in der Nähe suchen, um mit Throw (senden) einen Stereobildschirm zu senden
++Comment[ja]=Throw (送る) でステレオ画面を送るため、近くのスマートフォンを探します
++Comment[ko]=Throw (보내다)로 스테레오 화면을 보낼 주변 휴대전화를 찾습니다
++Comment[zh_CN]=查找附近的手机，用 Throw (发送) 发送立体屏幕画面
++Comment[zh_TW]=尋找附近的手機，用 Throw (傳送) 傳送立體螢幕畫面
  
  [Event/headsetFound]
  Name=Headset ready for Throw
-+Name[es]=Visor listo para el lanzamiento
- Name[pl]=Gogle gotowe do przerzucania
- Name[pt_BR]=Óculos prontos para o arremesso
- Name[fr]=Casque prêt pour le lancer
- Name[de]=Headset bereit für den Wurf
- Name[ja]=ヘッドセットがスローを受信できます
- Name[ko]=헤드셋 던지기 준비 완료
- Name[zh_CN]=头显已准备好接收投送
- Name[zh_TW]=頭戴裝置已準備好接收投送
+-Name[pl]=Gogle gotowe do przerzucania
+-Name[pt_BR]=Óculos prontos para o arremesso
+-Name[fr]=Casque prêt pour le lancer
+-Name[de]=Headset bereit für den Wurf
+-Name[ja]=ヘッドセットがスローを受信できます
+-Name[ko]=헤드셋 던지기 준비 완료
+-Name[zh_CN]=头显已准备好接收投送
+-Name[zh_TW]=頭戴裝置已準備好接收投送
++Name[es]=Visor listo para Throw (lanzar)
++Name[pl]=Gogle są gotowe do użycia funkcji Throw (przerzucić)
++Name[pt_BR]=O visor está pronto para o Throw (jogar)
++Name[fr]=Casque prêt pour Throw (envoyer)
++Name[de]=Headset bereit für Throw (senden)
++Name[ja]=ヘッドセットが Throw (送る) の受信準備完了
++Name[ko]=헤드셋이 Throw (보내다)를 받을 준비가 됨
++Name[zh_CN]=头显已准备好接收 Throw (发送)
++Name[zh_TW]=頭戴裝置已準備好接收 Throw (傳送)
  Comment=Approve a Throw to a nearby headset
-+Comment[es]=Autorizar el lanzamiento a un visor cercano
- Comment[pl]=Zatwierdź przerzucenie do pobliskich gogli
- Comment[pt_BR]=Aprovar um arremesso para óculos próximos
- Comment[fr]=Autoriser un lancer vers un casque proche
- Comment[de]=Einen Wurf auf ein Headset in der Nähe erlauben
- Comment[ja]=近くのヘッドセットへのスローを許可
- Comment[ko]=주변 헤드셋으로 던지기 승인
+-Comment[pl]=Zatwierdź przerzucenie do pobliskich gogli
+-Comment[pt_BR]=Aprovar um arremesso para óculos próximos
+-Comment[fr]=Autoriser un lancer vers un casque proche
+-Comment[de]=Einen Wurf auf ein Headset in der Nähe erlauben
+-Comment[ja]=近くのヘッドセットへのスローを許可
+-Comment[ko]=주변 헤드셋으로 던지기 승인
+-Comment[zh_CN]=批准向附近头显投送
+-Comment[zh_TW]=核准向附近頭戴裝置投送
++Comment[es]=Autorice Throw (lanzar) a un visor cercano
++Comment[pl]=Zezwól na Throw (przerzucić) do pobliskich gogli
++Comment[pt_BR]=Autorize o Throw (jogar) para um visor próximo
++Comment[fr]=Autorisez Throw (envoyer) vers un casque à proximité
++Comment[de]=Throw (senden) an ein Headset in der Nähe genehmigen
++Comment[ja]=近くのヘッドセットへの Throw (送る) を許可します
++Comment[ko]=주변 헤드셋으로의 Throw (보내다)를 승인합니다
++Comment[zh_CN]=允许向附近的头显进行 Throw (发送)
++Comment[zh_TW]=允許向附近的頭戴裝置進行 Throw (傳送)
+ Action=Popup
 diff --git a/discovery/org.kde.krdp-panel-discovery.desktop b/discovery/org.kde.krdp-panel-discovery.desktop
 --- a/discovery/org.kde.krdp-panel-discovery.desktop
 +++ b/discovery/org.kde.krdp-panel-discovery.desktop
-@@ -1,18 +1,20 @@
+@@ -1,23 +1,25 @@
  [Desktop Entry]
  Type=Application
  Name=Throw discovery
-+Name[es]=Detección para el lanzamiento
- Name[pl]=Wykrywanie do przerzucania
- Name[pt_BR]=Descoberta para arremesso
- Name[fr]=Découverte pour le lancer
- Name[de]=Erkennung für das Werfen
- Name[ja]=スロー先の検出
- Name[ko]=던지기 대상 검색
- Name[zh_CN]=投送发现
- Name[zh_TW]=投送探索
+-Name[pl]=Wykrywanie do przerzucania
+-Name[pt_BR]=Descoberta para arremesso
+-Name[fr]=Découverte pour le lancer
+-Name[de]=Erkennung für das Werfen
+-Name[ja]=スロー先の検出
+-Name[ko]=던지기 대상 검색
+-Name[zh_CN]=投送发现
+-Name[zh_TW]=投送探索
++Name[es]=Búsqueda de dispositivos para Throw (lanzar)
++Name[pl]=Wyszukiwanie urządzeń dla Throw (przerzucić)
++Name[pt_BR]=Busca de aparelhos para o Throw (jogar)
++Name[fr]=Recherche d’appareils pour Throw (envoyer)
++Name[de]=Gerätesuche für Throw (senden)
++Name[ja]=Throw (送る) の接続先を検索
++Name[ko]=Throw (보내다) 대상 검색
++Name[zh_CN]=搜索 Throw (发送) 设备
++Name[zh_TW]=搜尋 Throw (傳送) 裝置
  Comment=Find a nearby phone to Throw a stereo display to
-+Comment[es]=Buscar un teléfono cercano al que lanzar una pantalla estéreo
- Comment[pl]=Znajdź pobliski telefon, do którego można przerzucić ekran stereo
- Comment[pt_BR]=Encontrar um telefone próximo para arremessar uma tela estéreo
- Comment[fr]=Trouver un téléphone proche vers lequel lancer un écran stéréo
- Comment[de]=Ein Telefon in der Nähe zum Werfen eines Stereodisplays finden
- Comment[ja]=近くの電話を探してステレオ画面をスロー
- Comment[ko]=스테레오 화면을 던질 주변 휴대전화 찾기
+-Comment[pl]=Znajdź pobliski telefon, do którego można przerzucić ekran stereo
+-Comment[pt_BR]=Encontrar um telefone próximo para arremessar uma tela estéreo
+-Comment[fr]=Trouver un téléphone proche vers lequel lancer un écran stéréo
+-Comment[de]=Ein Telefon in der Nähe zum Werfen eines Stereodisplays finden
+-Comment[ja]=近くの電話を探してステレオ画面をスロー
+-Comment[ko]=스테레오 화면을 던질 주변 휴대전화 찾기
+-Comment[zh_CN]=查找附近的手机以投送立体显示屏
+-Comment[zh_TW]=尋找附近的手機以投送立體顯示螢幕
++Comment[es]=Busque un teléfono cercano al que enviar una pantalla estéreo con Throw (lanzar)
++Comment[pl]=Znajdź pobliski telefon, aby przesłać na niego ekran stereo przez Throw (przerzucić)
++Comment[pt_BR]=Encontre um celular próximo para mandar a tela estéreo com Throw (jogar)
++Comment[fr]=Trouvez un téléphone à proximité pour lui envoyer un écran stéréo avec Throw (envoyer)
++Comment[de]=Ein Smartphone in der Nähe suchen, um mit Throw (senden) einen Stereobildschirm zu senden
++Comment[ja]=Throw (送る) でステレオ画面を送るため、近くのスマートフォンを探します
++Comment[ko]=Throw (보내다)로 스테레오 화면을 보낼 주변 휴대전화를 찾습니다
++Comment[zh_CN]=查找附近的手机，用 Throw (发送) 发送立体屏幕画面
++Comment[zh_TW]=尋找附近的手機，用 Throw (傳送) 傳送立體螢幕畫面
+ Exec=krdp-panel-discovery
+ Icon=flat-headset
+ Terminal=false
 diff --git a/po/de/krdpserver.po b/po/de/krdpserver.po
 --- a/po/de/krdpserver.po
 +++ b/po/de/krdpserver.po
@@ -112,13 +190,13 @@ diff --git a/po/es/krdpserver.po b/po/es/krdpserver.po
 +msgstr "Cancelar"
 +
 +msgid "Throw"
-+msgstr "Lanzar"
++msgstr "Throw (lanzar)"
 +
 +msgid "Throw a stereo display to %1? The headset receives the picture. Sound and input stay on this computer."
-+msgstr "¿Lanzar una pantalla estéreo a %1? El casco recibe la imagen. El sonido y los controles se quedan en este equipo."
++msgstr "¿Enviar una pantalla estéreo a %1 con Throw (lanzar)? El visor recibe la imagen. El sonido y los controles se quedan en este equipo."
 +
 +msgid "Throw to → %1"
-+msgstr "Lanzar a → %1"
++msgstr "Throw (lanzar) a → %1"
 diff --git a/po/fr/krdpserver.po b/po/fr/krdpserver.po
 --- a/po/fr/krdpserver.po
 +++ b/po/fr/krdpserver.po
