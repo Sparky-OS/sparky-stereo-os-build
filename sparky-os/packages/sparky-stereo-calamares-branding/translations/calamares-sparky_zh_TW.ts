@@ -149,15 +149,15 @@
     </message>
     <message>
         <source>Throw and Catch</source>
-        <translation>投送與接收</translation>
+        <translation>Throw (傳送) 與 Catch (接收)</translation>
     </message>
     <message>
         <source>Throw a window, a film or the whole desktop to a TV, a phone or another computer, sound included.</source>
-        <translation>把視窗、電影或整個桌面連同聲音投送到電視、手機或另一台電腦。</translation>
+        <translation>使用 Throw (傳送) 可將視窗、影片或整個桌面連同聲音一起傳送到電視、手機或另一台電腦。</translation>
     </message>
     <message>
         <source>The other side catches it with one click.</source>
-        <translation>另一端點一下就能接收。</translation>
+        <translation>另一端只要按一下 Catch (接收) 即可接收。</translation>
     </message>
     <message>
         <source>Sound, your way</source>
