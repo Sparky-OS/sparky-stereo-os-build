@@ -26,7 +26,7 @@ if [ -n "${4:-}" ]; then
 	POLICY_ARGS=(--mount "type=bind,src=$POLICY,dst=/policy-candidate,readonly")
 fi
 sparky_provenance_init sparky-lc-migration:20261020
-docker run --rm --name "${SPARKY_SVIEW_CONTAINER:-sview-build}" --cpus 4 --platform linux/amd64 --ulimit core=0 \
+docker run --rm --name "${SPARKY_SVIEW_CONTAINER:-sview-build}" --cpus 4 --platform linux/amd64 --ulimit core=1 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch --mount "type=bind,src=$SPARKY_LC_ARCHIVE_DIR,dst=/archive,readonly" "${POLICY_ARGS[@]}" \
 	--mount "type=bind,src=$WORK,dst=/work" --mount "type=bind,src=$PREV,dst=/prev,readonly" --mount "type=bind,src=$SPARKY_REPO_DIR,dst=/repo,readonly" \

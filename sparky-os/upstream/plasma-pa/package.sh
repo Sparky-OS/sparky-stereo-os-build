@@ -12,7 +12,7 @@ SRC=$(cd "${2:?directory holding Debian plasma-pa_6.7.4-1.dsc and its archives}"
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 export SPARKY_PROVENANCE_REQUIRED=1
 sparky_provenance_init "$IMAGE" "$HERE"
-docker run --rm --name "${CONTAINER_NAME:-plasma-pa-source}" --platform linux/amd64 --ulimit core=0 --cpus "$CPUS" \
+docker run --rm --name "${CONTAINER_NAME:-plasma-pa-source}" --platform linux/amd64 --ulimit core=1 --cpus "$CPUS" \
     "${SPARKY_PROV_ARGS[@]}" \
     -e BUILD_UID="$BUILD_UID" -e BUILD_GID="$BUILD_GID" -e PYTHONDONTWRITEBYTECODE=1 \
     -v "$WORK:/work" -v "$SRC:/source-input:ro" -v "$ROOT:/build-tree:ro" \

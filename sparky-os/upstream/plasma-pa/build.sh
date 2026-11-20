@@ -19,7 +19,7 @@ sparky_provenance_init "$IMAGE" "$HERE"
 # Edition packages this one depends on that are staged and not yet in the signed repository (sparky-stereo-audio, ORDER 631): their paths, as seen in /previous, one per line in PREVIOUS_DEBS_DIR/siblings.txt
 SIBLINGS=()
 [ -f "$PREV/siblings.txt" ] && SIBLINGS=(-e SPARKY_LC_SIBLINGS_FILE=/previous/siblings.txt)
-docker run --rm --name "${CONTAINER_NAME:-plasma-pa-build}" --platform linux/amd64 --ulimit core=0 --cpus "$CPUS" \
+docker run --rm --name "${CONTAINER_NAME:-plasma-pa-build}" --platform linux/amd64 --ulimit core=1 --cpus "$CPUS" \
     --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
     "${SPARKY_PROV_ARGS[@]}" "${SIBLINGS[@]}" \
     -e BUILD_UID="$BUILD_UID" -e BUILD_GID="$BUILD_GID" -e PYTHONDONTWRITEBYTECODE=1 -e BUILD_THREADS="$CPUS" \

@@ -25,7 +25,7 @@ SPARKY_SOURCE_DATE_BASIS="the last commit touching sparky-os/upstream/fraqtive"
 sparky_provenance_init "$IMAGE" "$RECIPE"
 export SPARKY_BUILD_IMAGE=$IMAGE
 mkdir -p "$W/src" "$W/prev"
-docker run --rm --name "$BUILD_NAME_PREFIX-source" --pull=never --ulimit core=0 --cpus "$THREADS" --platform linux/amd64 \
+docker run --rm --name "$BUILD_NAME_PREFIX-source" --pull=never --ulimit core=1 --cpus "$THREADS" --platform linux/amd64 \
 	"${SPARKY_PROV_ARGS[@]}" \
 	--mount type=bind,src="$TOOLKIT",dst=/toolkit,readonly --mount type=bind,src="$RECIPE",dst=/recipe,readonly --mount type=bind,src="$W/src",dst=/out \
 	--mount type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/host-ca.crt,readonly --mount type=bind,src="$TOOLKIT/../tools/https-only-apt.sh",dst=/run/https-only-apt.sh,readonly \

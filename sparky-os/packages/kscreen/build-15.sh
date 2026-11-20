@@ -20,7 +20,7 @@ else
     [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 fi
 sparky_provenance_init "$SPARKY_BUILD_IMAGE"
-docker run --pull=never --ulimit core=0 --name "${BUILD_NAME_PREFIX}-kscreen" --cpus 4 --platform linux/amd64 \
+docker run --pull=never --ulimit core=1 --name "${BUILD_NAME_PREFIX}-kscreen" --cpus 4 --platform linux/amd64 \
     --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
     "${SPARKY_PROV_ARGS[@]}" -e SPARKY_KSCREEN_RESUME="${SPARKY_PKG_RESUME:-0}" \
     -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \

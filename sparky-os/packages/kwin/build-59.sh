@@ -26,7 +26,7 @@ else
 	[ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 fi
 sparky_provenance_init "${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}"
-docker run --rm --ulimit core=0 --name "${BUILD_NAME_PREFIX:-kwin-59}-kwin" --cpus 4 --platform linux/amd64 \
+docker run --rm --ulimit core=1 --name "${BUILD_NAME_PREFIX:-kwin-59}-kwin" --cpus 4 --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_KWIN_RESUME="${SPARKY_KWIN_RESUME:-0}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$ARCHIVE":/archive:ro \
 	${SIBS:+-v "$SIBS":/previous-siblings.txt:ro -e SPARKY_LC_PREVIOUS_SIBLINGS_FILE=/previous-siblings.txt} \

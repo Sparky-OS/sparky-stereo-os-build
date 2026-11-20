@@ -505,7 +505,7 @@ def run_job_locked(name, job, cfg, args, ctx):
 
     d = env["CI_PROJECT_DIR"]
     cmd = ["docker", "run", "--rm", "--platform", "linux/amd64", "--user", "1000:1000",
-           "--ulimit", "core=0",
+           "--ulimit", "core=1",
            "--cpus", CPUS, "--shm-size", "1g", "--init",
            "-v", f"{jobdir}:{d}", "-w", d,
            "-v", f"{scriptfile}:/job.sh:ro",

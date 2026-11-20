@@ -24,7 +24,7 @@ docker image inspect "$IMAGE" >/dev/null 2>&1 || "$HERE/../tools/https-only-buil
 mkdir -p "$OUT"
 GITMOUNT=; [ -n "${KERNEL_GIT:-}" ] && GITMOUNT="-v $KERNEL_GIT:/kernel-git:ro"
 # shellcheck disable=SC2086
-docker run --rm ${NAME:+--name "$NAME"} --ulimit core=0 --platform linux/amd64 --cpus "${CPUS:-2}" --memory "${MEM:-8g}" --user "$(id -u):$(id -g)" \
+docker run --rm ${NAME:+--name "$NAME"} --ulimit core=1 --platform linux/amd64 --cpus "${CPUS:-2}" --memory "${MEM:-8g}" --user "$(id -u):$(id -g)" \
     -v "$OUT":/out -v "$HERE":/kernel:ro -v "$SERIES":/series:ro $GITMOUNT \
     -e TAG="$TAG" -e TAG_COMMIT="$TAG_COMMIT" -e FLAVOURS="$FLAVOURS" -e HAVE_KERNEL_GIT="${KERNEL_GIT:+1}" \
     "$IMAGE" sh -eu -c '
