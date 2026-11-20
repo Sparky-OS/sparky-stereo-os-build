@@ -9,7 +9,7 @@ rig=${SPARKY_WORKSPACES:?}/kwin-package-17/m2/rig
 ./test.sh >out/window-sizing-savers.log 2>&1
 name="gl-stereo-sizing-$(date +%s)-$$"
 printf '%s\n' "$name" >> "$workspace/.artifacts"
-container=$(docker run -d --init --name "$name" --user "$(id -u):$(id -g)" --group-add 125 --cpus 4 \
+container=$(docker run --ulimit core=1 -d --init --name "$name" --user "$(id -u):$(id -g)" --group-add 125 --cpus 4 \
     --device /dev/dri/renderD128 -v "$workspace:$workspace" -v "$rig:/rig:ro" \
     -v "$rig/passwd:/etc/passwd:ro" -v "$rig/group:/etc/group:ro" \
     -w "$repo" gl-stereo-sizing:1 bash -c '

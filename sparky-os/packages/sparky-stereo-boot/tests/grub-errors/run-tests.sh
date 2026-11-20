@@ -14,7 +14,7 @@ cp "$HERE/mkcase.py" "$HERE/boot-one.sh" "$HERE/fixture-grub.cfg" "$W/"; cp "$KE
 cases=${*:-$(grep -v '^#' "$HERE/expected.txt" | cut -d'|' -f1 | tr -d ' ')}
 fail=0
 for c in $cases; do
-	docker run --rm --ulimit core=0 --network none --user "$(id -u):$(id -g)" -v "$W:/work" "$IMAGE" sh /work/boot-one.sh "$c" > "$W/log-$c.txt" 2>&1 || { echo "FAIL $c: the guest did not run, see $W/log-$c.txt"; fail=$((fail + 1)); continue; }
+	docker run --rm --ulimit core=1 --network none --user "$(id -u):$(id -g)" -v "$W:/work" "$IMAGE" sh /work/boot-one.sh "$c" > "$W/log-$c.txt" 2>&1 || { echo "FAIL $c: the guest did not run, see $W/log-$c.txt"; fail=$((fail + 1)); continue; }
 	python3 -I "$HERE/check.py" "$HERE/expected.txt" "${EXPECTATION_FROM:-$c}" "$W/out/$c/serial.log" "$c" || fail=$((fail + 1))
 done
 echo "$fail failing"

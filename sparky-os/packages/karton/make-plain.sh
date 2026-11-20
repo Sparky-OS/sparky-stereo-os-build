@@ -19,7 +19,7 @@ mkdir -p "$WORK"
 STAMP=$(python3 "$TOP/repo/reproducible.py" epoch "$RECIPE" "$HERE")
 DATE=$(python3 "$TOP/repo/reproducible.py" rfc2822 "$STAMP")
 SRC=$(dirname "$DSC")
-docker run --rm --platform linux/amd64 -e TZ=UTC -v "$SRC":/src:ro -v "$WORK":/work -v "$TOP":/toolkit:ro -e OWNER="$(id -u):$(id -g)" "$IMAGE" bash -c '
+docker run --ulimit core=1 --rm --platform linux/amd64 -e TZ=UTC -v "$SRC":/src:ro -v "$WORK":/work -v "$TOP":/toolkit:ro -e OWNER="$(id -u):$(id -g)" "$IMAGE" bash -c '
 	set -euo pipefail
 	trap "chown -R $OWNER /work" EXIT
 	cd /work

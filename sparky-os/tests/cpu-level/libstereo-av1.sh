@@ -21,11 +21,11 @@ V3F=$V2,avx,avx2,bmi1,bmi2,f16c,fma,abm,movbe,xsave
 for l in 1 3; do v=V$l; [ $l = 3 ] && v=V3F; printf 'processor\t: 0\nvendor_id\t: TestCPU\nflags\t\t: %s\n' "${!v//,/ }" >"$WORK/cpu/v$l"; done
 HTTPS=(-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v /K3D/partners/https-only-apt.sh:/run/https-only-apt.sh:ro)
 rc=0
-docker run --rm --cpus 2 --ulimit core=0 --name gr108-av1 -e DEBIAN_FRONTEND=noninteractive "${HTTPS[@]}" -v "$BASE:/base:ro" -v "$V3:/v3:ro" \
+docker run --rm --cpus 2 --ulimit core=1 --name gr108-av1 -e DEBIAN_FRONTEND=noninteractive "${HTTPS[@]}" -v "$BASE:/base:ro" -v "$V3:/v3:ro" \
 	-v "$SPARKY_OS:/sparky-os:ro" -v "${POOL:-/K3D/sparky-repo-r1114a/pool/main/s/stereo-layer}:/tree-pool:ro" -v "$HERE/phase1.sh:/phase1.sh:ro" -v "$WORK:/work" "$IMAGE" bash /phase1.sh || rc=1
 for l in 1 3; do
 	name=$([ $l = 3 ] && echo 'faked v3 processor' || echo 'faked baseline processor')
-	got=$(docker run --rm --cpus 2 --ulimit core=0 --name gr108-av1apt -e DEBIAN_FRONTEND=noninteractive "${HTTPS[@]}" -v "$WORK:/work" -v "$WORK/cpu/v$l:/proc/cpuinfo:ro" \
+	got=$(docker run --rm --cpus 2 --ulimit core=1 --name gr108-av1apt -e DEBIAN_FRONTEND=noninteractive "${HTTPS[@]}" -v "$WORK:/work" -v "$WORK/cpu/v$l:/proc/cpuinfo:ro" \
 		-v /K3D/sparky-repo-r1114a:/repo:ro -v "$SPARKY_OS/packages/sparky-stereo-apt:/apt:ro" -v "$HERE/phase2.sh:/phase2.sh:ro" "$IMAGE" bash /phase2.sh 2>&1 | tail -4)
 	want=$([ $l = 3 ] && echo v3 || echo base)
 	if printf '%s\n' "$got" | grep -qx "installed: $want"; then echo "PASS apt on a $name installs the $want library"; else echo "FAIL apt on a $name: $got"; rc=1; fi

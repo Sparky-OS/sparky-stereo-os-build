@@ -30,7 +30,7 @@ for step in $STEPS; do
 	rm -rf "$W/$step-src" "$W/$step-work" "$W/$step-prev"; mkdir -p "$W/$step-src" "$W/$step-prev"
 	pool=pool/main/${step:0:1}/$step
 	dsc=$(cd "$TREE" && ls "$pool/$step"_*+lc1.dsc)
-	docker run --rm --name "${BUILD_NAME_PREFIX}-source-$step" --ulimit core=0 --cpus "$THREADS" --platform linux/amd64 --network none -e SOURCE_DATE_EPOCH \
+	docker run --rm --name "${BUILD_NAME_PREFIX}-source-$step" --ulimit core=1 --cpus "$THREADS" --platform linux/amd64 --network none -e SOURCE_DATE_EPOCH \
 		-v "$TREE":/repo:ro -v "$HERE/../..":/toolkit:ro -v "$W":/work --entrypoint bash "$IMAGE" -c '
 			set -e; step=$1 dsc=$2 pool=$3
 			export TMPDIR=/work/tmp-$step; mkdir -p "$TMPDIR"

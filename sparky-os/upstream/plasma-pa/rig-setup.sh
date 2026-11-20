@@ -5,7 +5,7 @@ set -euo pipefail
 : "${DOCKER_HOST:?Use the lane Docker socket}"
 lane=${1:?lane folder}
 base=sha256:283f4a3d748a86277c05e12182cde09f7a90a7a04ebea454c1cff01005fba3b0
-docker run -d --name pa19-rig --platform linux/amd64 --ulimit core=0 --cpus 2 \
+docker run -d --name pa19-rig --platform linux/amd64 --ulimit core=1 --cpus 2 \
     -v "$lane:/lane" \
     -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro \
     -v /K3D/partners/https-only-apt.sh:/run/https-only-apt.sh:ro \

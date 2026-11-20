@@ -88,7 +88,7 @@ status = {'source': name, 'version': version, 'architecture': 'amd64',
           'source_descriptor_sha256': hashlib.sha256(descriptor.read_bytes()).hexdigest()}
 (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
 container = 'sparky-lc-' + name + '-amd64'
-command = ['docker', 'run', '--rm', *provenance_args('sparky-lc-migration:20261020'), '--platform', 'linux/amd64', '--name', container, '--cpus', '4',
+command = ['docker', 'run', '--ulimit', 'core=1', '--rm', *provenance_args('sparky-lc-migration:20261020'), '--platform', 'linux/amd64', '--name', container, '--cpus', '4',
            '-e', 'TASK_DSC=' + descriptor.name, '-v', str(work) + ':/work',
            '-e', 'TASK_KIND=' + ('signed-upstream-release' if vendor_release else 'native'),
            '-v', str(cfg.path('SPARKY_REPO_DIR')) + ':/repo:ro', '-v', str(kit) + ':/toolkit:ro',

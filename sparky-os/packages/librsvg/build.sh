@@ -24,7 +24,7 @@ SRC=$(cd "$3" && pwd)
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 name=librsvg-build-$$
 sparky_provenance_init sparky-lc-migration:20261020
-docker run -d --name "$name" --cpus 4 --platform linux/amd64 \
+docker run --ulimit core=1 -d --name "$name" --cpus 4 --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
 	-v "$WORK":/work -v "$SRC":/src:ro \

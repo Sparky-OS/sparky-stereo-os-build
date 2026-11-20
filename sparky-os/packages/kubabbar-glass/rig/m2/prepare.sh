@@ -5,7 +5,7 @@ lane=$(cd "$(dirname "$0")/../../.." && pwd)
 [ -S "$lane/docker.sock" ] && export DOCKER_HOST="unix://$lane/docker.sock" || true
 printf '%s\n' classic-look-m2-prepare classic-look-rig:m2 >> "$lane/.artifacts"
 trap 'docker rm classic-look-m2-prepare >/dev/null 2>&1 || true' EXIT
-docker run --name classic-look-m2-prepare --platform linux/amd64 --cpus 4 --user 0:0 --entrypoint /bin/sh \
+docker run --ulimit core=1 --name classic-look-m2-prepare --platform linux/amd64 --cpus 4 --user 0:0 --entrypoint /bin/sh \
  -v ${SPARKY_REPO_DIR:?}:/var/local/sparky-stereo-repo:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro classic-look-rig:m1-oxygen -c '
  set -e
  sh /run/https-only-apt.sh

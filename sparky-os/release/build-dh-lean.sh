@@ -42,7 +42,7 @@ NAME=${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lean-dh-$(basename "$S
 EXTRA_MOUNT=()
 [ -n "${EXTRA:-}" ] && EXTRA_MOUNT=(-v "$(realpath "$EXTRA")":/extra-debs:ro)
 # the gate isolates each case with bubblewrap, which needs the container's /proc unmasked
-docker run --rm --name "$NAME" --platform linux/amd64 --cpus "${CPUS:-4}" --memory 8g \
+docker run --ulimit core=1 --rm --name "$NAME" --platform linux/amd64 --cpus "${CPUS:-4}" --memory 8g \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$ARCHIVE":/archive:ro \
 	"${PREV_MOUNT[@]}" "${PREV_ENV[@]}" \

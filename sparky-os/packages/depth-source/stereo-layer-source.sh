@@ -13,7 +13,7 @@ FORK=$(cd "$1" && pwd)
 REV=$2
 OUT=$(mkdir -p "$3" && cd "$3" && pwd)
 [ -z "$(ls -A "$OUT")" ] || { echo "$OUT is not empty" >&2; exit 1; }
-docker run --rm -i --name "${SOURCE_NAME:-stereo-layer-source}" --ulimit core=0 --network none --user "$(id -u):$(id -g)" -e HOME=/tmp --cpus "${THREADS:-4}" --platform linux/amd64 -e REV="$REV" --mount type=bind,src="$FORK",dst=/fork,readonly --mount type=bind,src="$OUT",dst=/out --mount type=bind,src="$HERE/../..",dst=/toolkit,readonly \
+docker run --rm -i --name "${SOURCE_NAME:-stereo-layer-source}" --ulimit core=1 --network none --user "$(id -u):$(id -g)" -e HOME=/tmp --cpus "${THREADS:-4}" --platform linux/amd64 -e REV="$REV" --mount type=bind,src="$FORK",dst=/fork,readonly --mount type=bind,src="$OUT",dst=/out --mount type=bind,src="$HERE/../..",dst=/toolkit,readonly \
 	--entrypoint bash "${SPARKY_BUILD_IMAGE:-sparky-lc-migration:20261020}" -s <<'INNER'
 set -euo pipefail
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com

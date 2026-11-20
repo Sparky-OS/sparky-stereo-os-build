@@ -86,7 +86,7 @@ rm -rf "$WORK/$RELEASE"; mkdir -p "$WORK/$RELEASE" "$OUT/$RELEASE"
 echo "== release $RELEASE  package version $PKGVER  flavour $FLAVOUR  tag $TAG  cpus $CPUS  memory $MEM"
 GITMOUNT=; [ -n "${KERNEL_GIT:-}" ] && GITMOUNT="-v $KERNEL_GIT:/kernel-git:ro"
 # shellcheck disable=SC2086
-docker run --rm --name "${NAME:-sparky-kernel-$RELEASE}" --platform linux/amd64 --cpus "$CPUS" --memory "$MEM" --user "$(id -u):$(id -g)" \
+docker run --ulimit core=1 --rm --name "${NAME:-sparky-kernel-$RELEASE}" --platform linux/amd64 --cpus "$CPUS" --memory "$MEM" --user "$(id -u):$(id -g)" \
     -v "$WORK/$RELEASE":/work -v "$OUT/$RELEASE":/out -v "$HERE":/kernel:ro -v "$SERIES":/series:ro $GITMOUNT \
     -e FLAVOUR="$FLAVOUR" -e BUILD="$BUILD" -e TAG="$TAG" -e TAG_COMMIT="$TAG_COMMIT" -e RELEASE="$RELEASE" -e LV="$LV" \
     -e PKGVER="$PKGVER" -e JOBS="$JOBS" -e SMOKE="$SMOKE" -e SKIP="${SKIP:-}" -e HAVE_KERNEL_GIT="${KERNEL_GIT:+1}" \

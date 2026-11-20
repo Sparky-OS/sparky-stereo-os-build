@@ -15,7 +15,7 @@ FX=${FX:-${SPARKY_WORKSPACES:?}/artcraft-stereo/work/fixtures/video}
 for t in dmo ours; do
   echo "=== $t"
   mkdir -p "$H/out-$t"
-  docker run --rm --platform linux/amd64 --cpus 1 --user "$(id -u):$(id -g)" -v "$FX":/fx:ro -v "$H/repro":/r:ro -v "$H/out-$t":/out "mdmo-ff:$t" sh -c 'cp /r/*.py /r/*.sh /out/ 2>/dev/null; /out/remux.sh r'
-  docker run --rm --platform linux/amd64 --cpus 1 --user "$(id -u):$(id -g)" -v "$H/probe-files":/out:ro "mdmo-ff:$t" sh -c 'for f in probe-original probe-no-vexu probe-no-st3d probe-vexu-first; do printf "%-20s " $f; ffprobe -hide_banner /out/$f.mp4 2>&1 | grep -E "Stereo 3D|nvalid" | sed "s/^ *//" | tr "\n" "|"; echo; done'
+  docker run --ulimit core=1 --rm --platform linux/amd64 --cpus 1 --user "$(id -u):$(id -g)" -v "$FX":/fx:ro -v "$H/repro":/r:ro -v "$H/out-$t":/out "mdmo-ff:$t" sh -c 'cp /r/*.py /r/*.sh /out/ 2>/dev/null; /out/remux.sh r'
+  docker run --ulimit core=1 --rm --platform linux/amd64 --cpus 1 --user "$(id -u):$(id -g)" -v "$H/probe-files":/out:ro "mdmo-ff:$t" sh -c 'for f in probe-original probe-no-vexu probe-no-st3d probe-vexu-first; do printf "%-20s " $f; ffprobe -hide_banner /out/$f.mp4 2>&1 | grep -E "Stereo 3D|nvalid" | sed "s/^ *//" | tr "\n" "|"; echo; done'
 done
 python3 "$H/repro/boxes.py" "$H"/out-ours/r/*.u.mp4 | head -60

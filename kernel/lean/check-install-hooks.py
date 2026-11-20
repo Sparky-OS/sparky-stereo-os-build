@@ -103,7 +103,7 @@ for flavour, release in cases:
             script += f'grep -F "|Yes|{arg} old-version|{release} /boot/vmlinuz-{release}" /trace >/dev/null\n'
         script += f"printf 'PASS {flavour} {phase}\\n'\n"
 (fixtures / 'test.sh').write_text(script)
-command = ['docker', 'run', '--rm', '--network', 'none', '--platform', 'linux/amd64',
+command = ['docker', 'run', '--ulimit', 'core=1', '--rm', '--network', 'none', '--platform', 'linux/amd64',
            '-v', str(fixtures) + ':/fixtures:ro', args.container_image,
            'sh', '/fixtures/test.sh']
 with (root / 'hook-execution.log').open('w') as log:

@@ -23,7 +23,7 @@ for f in glob.glob(sys.argv[1] + '/*.patch'):
     if u != t:
         open(f, 'w').write(u)
 PY
-docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) --cpus 4 -e HOME=/w/home -e DEBIAN_FRONTEND=noninteractive \
+docker run --ulimit core=1 --rm --platform linux/amd64 --user $(id -u):$(id -g) --cpus 4 -e HOME=/w/home -e DEBIAN_FRONTEND=noninteractive \
   -v $W:/w -v ${SPARKY_REPO_DIR:?}:/repo:ro qtmm-build:1 bash -c '
 set -e
 cd /w
