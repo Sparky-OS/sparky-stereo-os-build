@@ -10,7 +10,9 @@ cd "$job"
 if [ ! -d source ]; then dpkg-source -x displayxr-runtime_2.66.3-1+stereo3d4+lc1.dsc source; fi
 cd source
 if [ "${SD762_PHASE:-build}" = compile ]; then
- dh build --until=dh_auto_build --buildsystem=cmake+ninja --builddirectory=obj-x86_64-linux-gnu
+ debian/rules execute_before_dh_auto_configure
+ DH_OPTIONS="--buildsystem=cmake+ninja --builddirectory=obj-x86_64-linux-gnu" debian/rules override_dh_auto_configure
+ dh_auto_build --buildsystem=cmake+ninja --builddirectory=obj-x86_64-linux-gnu
 elif [ "${SD762_PHASE:-build}" = build ]; then
  dpkg-buildpackage -Tbuild -us -uc -j4
 else
