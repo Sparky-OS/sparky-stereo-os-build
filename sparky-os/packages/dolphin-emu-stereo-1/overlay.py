@@ -2,7 +2,8 @@
 # Created by Daniel Ramos (Capitain Jack) 2026/11/19
 # Copyright 2026 under the GNU GPL3 License
 """Sparky Stereo OS, ORDER 39: the changes to Debian's own debian/ of dolphin-emu 2609.b+dfsg-1: the build declares the
-pair through libstereo-declare, and the copyright file credits our additions after Debian's paragraphs. Run in the
+pair through libstereo-declare, the copyright file credits our additions after Debian's paragraphs, and Lean Code is told
+where the data package's files come from. Run in the
 unpacked source. Every replace states what it expects and stops when Debian's file is not the one this was written for."""
 from pathlib import Path
 
@@ -23,3 +24,11 @@ Comment: Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux
  Dolphin is by the Dolphin Emulator Project and its contributors; its stereoscopy (the geometry shader that draws two
  eyes, Depth and Convergence) is theirs.
 ''')
+
+# dolphin-emu-data installs Data/Sys as it is. Without this plan Lean Code maps an installed file back to its source by the
+# hash of the source's projected form, and Dolphin's empty GraphicMods marker files (Data/Sys/Load/GraphicMods/*/*.txt)
+# matched Externals/picojson/picojson.cpp, whose only line is a comment (its projected form is empty): the first build
+# wrote that comment into 60 markers (sparky-os/lean/source_tree.py restore_payload; docs/lean-code-packages.md,
+# "Installed source copies").
+Path('debian/sparky-lean-payload-sources.json').write_text('{"/usr/share/games/dolphin-emu/Sys": "Data/Sys"}\n')
+
