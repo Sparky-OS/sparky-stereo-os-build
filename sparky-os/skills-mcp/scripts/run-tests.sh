@@ -14,7 +14,7 @@ rm -rf "$OUT/out/tests"
 (cd "$HERE" && zig build test-bins --prefix "$OUT/out" -Dskills-src="$SKILLS_SRC")
 mounts=(-v "$HERE:/product:ro" -v "$OUT/out/tests:/t:ro")
 [ -d "$SKILLS_SRC" ] && mounts+=(-v "$SKILLS_SRC:$SKILLS_SRC:ro")
-docker run --rm --network none --ulimit core=0 --tmpfs /tmp:mode=1777 --user "$(id -u):$(id -g)" "${mounts[@]}" -w /product \
+docker run --rm --network none --ulimit core=1 --tmpfs /tmp:mode=1777 --user "$(id -u):$(id -g)" "${mounts[@]}" -w /product \
 	-e FILTER="$FILTER" "$IMAGE" bash -c '
 	pass=0; fail=0; failed=()
 	for t in /t/*; do

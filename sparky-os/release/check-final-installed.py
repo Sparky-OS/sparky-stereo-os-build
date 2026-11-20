@@ -151,7 +151,7 @@ python3 /proof/inner.py
 '''
 (out / 'run.sh').write_text(recipe)
 name = 'sparky-lc-final-installed'
-command = ['docker', 'run', '--rm', '--platform', 'linux/amd64', '--name', name, '--cpus', '2', '--memory', '8g',
+command = ['docker', 'run', '--ulimit', 'core=1', '--rm', '--platform', 'linux/amd64', '--name', name, '--cpus', '2', '--memory', '8g',
            '-v', str(out) + ':/proof', '-v', str(repo) + ':/repo:ro',
            '-v', '/etc/apt/sources.list.d/sparky.sources:/host-sparky.sources:ro',
            '-v', '/etc/apt/trusted.gpg.d/sparky-repo.asc:/bootstrap-sparky.asc:ro',

@@ -25,7 +25,7 @@ if [ "$2" != debian ]; then
 fi
 mkdir "$RESULTS/out"
 # the edition sits on deb-multimedia (the edition's librsvg links its dav1d), so the test image has it too
-docker run --rm --cpus 4 --platform linux/amd64 "${MOUNTS[@]}" -v "$RESULTS/corpus":/corpus:ro -v "$HERE":/tools:ro \
+docker run --ulimit core=1 --rm --cpus 4 --platform linux/amd64 "${MOUNTS[@]}" -v "$RESULTS/corpus":/corpus:ro -v "$HERE":/tools:ro \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
 	-v "$RESULTS/out":/out "$IMAGE" bash -c 'sh /run/https-only-apt.sh && bash /tools/test-in-container.sh'

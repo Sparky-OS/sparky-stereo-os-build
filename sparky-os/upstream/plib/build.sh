@@ -16,7 +16,7 @@ sparky_provenance_init "$IMAGE" "$HERE"
 mkdir -p "$WORK"
 EXTRA_MOUNT=()
 [ -z "${6:-}" ] || EXTRA_MOUNT=(--mount "type=bind,src=$(realpath "$6"),dst=/extra,readonly")
-docker run --rm --name "${SPARKY_CONTAINER_PREFIX:-os16}-$NAME-build" --platform linux/amd64 --cpus 4 --ulimit core=0 \
+docker run --rm --name "${SPARKY_CONTAINER_PREFIX:-os16}-$NAME-build" --platform linux/amd64 --cpus 4 --ulimit core=1 \
  --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
  "${SPARKY_PROV_ARGS[@]}" -e NAME="$NAME" -e DSC="$(basename "$DSC")" -e OWNER="$(id -u):$(id -g)" \
  --mount "type=bind,src=$OS/..,dst=/recipe,readonly" --mount "type=bind,src=$WORK,dst=/work" \

@@ -22,7 +22,7 @@ export SOURCE_DATE_EPOCH SPARKY_SOURCE_DATE_BASIS='the newest kcm-ums changelog 
 sparky_provenance_init "$IMAGE"
 python3 "$HERE/../../../tools/copy-recipe.py" "$HERE" "$WORK/plain/source"
 docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}kcm-ums-build" \
- --platform linux/amd64 --cpus 4 --ulimit core=0 \
+ --platform linux/amd64 --cpus 4 --ulimit core=1 \
  --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
  "${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json \
  -e SPARKY_LC_SCRATCH=/work/link-scratch -e SPARKY_LC_PREVIOUS_DIR=/previous \

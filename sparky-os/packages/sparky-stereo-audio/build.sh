@@ -13,7 +13,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=0.3.0+lc1
+VERSION=0.3.1+lc1
 PKG=sparky-stereo-audio
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/audio-build.XXXXXX")
 trap 'rm -rf "$W"' EXIT

@@ -4,7 +4,7 @@
 tag=$1; dir=$2
 docker rm -f plank-runimg >/dev/null 2>&1
 if [ "$dir" = repo ]; then inst=plank-player; mnt=/tmp; else inst=$(ls $dir/plank-player_*_amd64.deb | sed 's#.*/#/pk/#'); mnt=$dir; fi
-docker run --name plank-runimg --platform linux/amd64 --cpus 4 -v ${SPARKY_REPO_DIR:?}:/repo:ro -v ${SPARKY_WORKSPACES:?}/plank-player/run/pin:/pin:ro -v $mnt:/pk:ro -e DEBIAN_FRONTEND=noninteractive debian:testing bash -c '
+docker run --ulimit core=1 --name plank-runimg --platform linux/amd64 --cpus 4 -v ${SPARKY_REPO_DIR:?}:/repo:ro -v ${SPARKY_WORKSPACES:?}/plank-player/run/pin:/pin:ro -v $mnt:/pk:ro -e DEBIAN_FRONTEND=noninteractive debian:testing bash -c '
 echo "deb [trusted=yes] file:/repo ./" > /etc/apt/sources.list.d/zrepo.list
 cp /pin /etc/apt/preferences.d/sparky-stereo
 apt-get -y update >/dev/null 2>&1

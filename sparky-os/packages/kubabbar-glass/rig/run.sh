@@ -15,7 +15,7 @@ container="classic-look-$case_name"
 printf '%s\n' "$container" >> "$lane/.artifacts"
 trap 'docker stop --timeout 2 "$container" >/dev/null 2>&1 || true; docker rm "$container" >/dev/null 2>&1 || true' EXIT
 mkdir -p "$lane/theme/rig/bin"
-docker run --name "$container" --platform linux/amd64 --cpus 4 \
+docker run --ulimit core=1 --name "$container" --platform linux/amd64 --cpus 4 \
 	--device /dev/dri/renderD128 --group-add "$(getent group render | cut -d: -f3)" \
 	--user "$(id -u):$(id -g)" --entrypoint /bin/sh \
 	-v "$lane:$lane" -e CLASSIC_LANE="$lane" -e CLASSIC_CASE="$case_name" \

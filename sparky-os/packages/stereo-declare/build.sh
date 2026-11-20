@@ -15,7 +15,7 @@ if [ "$mode" = source ]; then
     CLONE=$(realpath "$3")
     : "${SPARKY_LC_TOOLKIT:?the reviewed current toolkit directory}"
     sparky_provenance_init "$4"
-    docker run --rm --cpus 4 --platform linux/amd64 --user "$(id -u):$(id -g)" \
+    docker run --ulimit core=1 --rm --cpus 4 --platform linux/amd64 --user "$(id -u):$(id -g)" \
         "${SPARKY_PROV_ARGS[@]}" -v "$WORK":/work -v "$CLONE":/fork:ro -v "$SPARKY_LC_TOOLKIT":/toolkit:ro -v "$HERE":/tools:ro \
         "$4" bash -c 'mkdir /work/tmp; TMPDIR=/work/tmp bash /tools/prepare-source.sh /work/source /fork /toolkit'
 elif [ "$mode" = binary ]; then
@@ -24,11 +24,11 @@ elif [ "$mode" = binary ]; then
     case "$6" in amd64) platform=linux/amd64 ;; i386) platform=linux/386 ;; *) exit 1 ;; esac
     : "${SPARKY_LC_ARCHIVE_DIR:?public sources.json and public keyrings}"
     sparky_provenance_init "$5"
-    docker run --rm --cpus 4 --platform "$platform" --user "$(id -u):$(id -g)" \
+    docker run --ulimit core=1 --rm --cpus 4 --platform "$platform" --user "$(id -u):$(id -g)" \
         --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
         "${SPARKY_PROV_ARGS[@]}" -v "$WORK":/work -v "$SRC":/src:ro -v "$PREV":/prev:ro -v "$HERE":/tools:ro \
         -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro "$5" \
-        bash /tools/build-in-container.sh /work/build /src/stereo-declare_1.11.0-1+lc1.dsc /prev /archive/sources.json
+        bash /tools/build-in-container.sh /work/build /src/stereo-declare_1.12.1-1+lc1.dsc /prev /archive/sources.json
 else
     echo 'Expected source or binary' >&2
     exit 1

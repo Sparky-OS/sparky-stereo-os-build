@@ -1,0 +1,707 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Subject: [PATCH] Stereo composition for replicas of a 2D source (ORDER 763)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index bc96727..22be536 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -396,6 +396,7 @@ endif()
+ 
+ pkg_check_modules(libdisplayinfo REQUIRED IMPORTED_TARGET libdisplay-info>=0.2.0)
+ pkg_check_modules(StereoPolicy REQUIRED IMPORTED_TARGET stereo-policy>=1.15.0)
++set(KWIN_SPARKY_STEREO_PROBLEMS_LIBRARY "" CACHE FILEPATH "Problems engine library used by the edition")
+ add_feature_info(StereoPolicy StereoPolicy_FOUND "The depth of a display, one source for the desktop and the browser: libstereo-policy")
+ add_feature_info(libdisplayinfo libdisplayinfo_FOUND "EDID and DisplayID library: https://gitlab.freedesktop.org/emersion/libdisplay-info")
+ if (libdisplayinfo_VERSION VERSION_GREATER_EQUAL 0.4.0)
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 3f9dd63..f3644f1 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -42,6 +42,7 @@ target_sources(kwin PRIVATE
+     appmenu.cpp
+     client_machine.cpp
+     compositor.cpp
++    utils/stereoreplicaproblems.cpp
+     core/backendoutput.cpp
+     core/colorlut3d.cpp
+     core/colorpipeline.cpp
+@@ -253,6 +254,11 @@ target_sources(kwin PRIVATE
+     xxpipv1window.cpp
+ )
+ 
++if(KWIN_SPARKY_STEREO_PROBLEMS_LIBRARY)
++    set_source_files_properties(utils/stereoreplicaproblems.cpp PROPERTIES
++        COMPILE_DEFINITIONS "KWIN_SPARKY_STEREO_PROBLEMS_LIBRARY=\"${KWIN_SPARKY_STEREO_PROBLEMS_LIBRARY}\"")
++endif()
++
+ target_link_libraries(kwin
+     PUBLIC
+         Qt::DBus
+diff --git a/src/backends/drm/drm_egl_layer.cpp b/src/backends/drm/drm_egl_layer.cpp
+index d15b7d1..ca9a58d 100644
+--- a/src/backends/drm/drm_egl_layer.cpp
++++ b/src/backends/drm/drm_egl_layer.cpp
+@@ -94,7 +94,7 @@ std::optional<OutputLayerBeginFrameInfo> EglGbmLayer::doBeginFrame()
+                                     drmOutput()->wireTransfer(drmOutput()->nextState()),
+                                     drmOutput()->scale(),
+                                     drmOutput()->colorPowerTradeoff(),
+-                                    drmOutput()->needsShadowBuffer(),
++                                    drmOutput()->needsShadowBuffer() || eyesWanted(),
+                                     m_requiredAlphaBits);
+ }
+ 
+@@ -105,7 +105,7 @@ bool EglGbmLayer::doEndFrame(const Region &renderedDeviceRegion, const Region &d
+ 
+ bool EglGbmLayer::hasStereoEyes() const
+ {
+-    return m_type == OutputLayerType::Primary && drmOutput()->activeStereoLayout() != StereoLayout::None;
++    return m_type == OutputLayerType::Primary && (drmOutput()->activeStereoLayout() != StereoLayout::None || eyesWanted());
+ }
+ 
+ void EglGbmLayer::setEyesWanted(bool wanted)
+@@ -209,7 +209,7 @@ static const bool s_directScanoutDisabled = environmentVariableBoolValue("KWIN_D
+ 
+ bool EglGbmLayer::earlyScanoutChecks()
+ {
+-    if (s_directScanoutDisabled) {
++    if (s_directScanoutDisabled || eyesWanted()) {
+         return false;
+     }
+     if (m_type != OutputLayerType::Primary && drmOutput()->shouldDisableNonPrimaryPlanes()) {
+diff --git a/src/backends/drm/drm_egl_layer_surface.cpp b/src/backends/drm/drm_egl_layer_surface.cpp
+index b4becfd..4aaa7e5 100644
+--- a/src/backends/drm/drm_egl_layer_surface.cpp
++++ b/src/backends/drm/drm_egl_layer_surface.cpp
+@@ -132,7 +132,8 @@ std::optional<OutputLayerBeginFrameInfo> EglGbmLayerSurface::startRendering(cons
+     m_surface->currentSlot = slot;
+     m_surface->scale = scale;
+ 
+-    if (m_surface->blendingColor != blendingColor
++    if (m_surface->needsShadowBuffer != useShadowBuffer
++        || m_surface->blendingColor != blendingColor
+         || m_surface->layerBlendingColor != layerBlendingColor
+         || m_surface->iccProfile != iccProfile
+         || m_surface->wireColor != wireColor
+@@ -620,7 +621,7 @@ bool EglGbmLayerSurface::endRendering(const Region &damagedDeviceRegion, OutputF
+     const bool stereo = m_stereoLayout != StereoLayout::None && m_surface->needsShadowBuffer;
+     const bool lineAlternative = m_stereoLayout == StereoLayout::LineAlternative && m_surface->needsShadowBuffer;
+     const bool pictureAndDepth = isPictureAndDepth(m_stereoLayout) && m_surface->needsShadowBuffer;
+-    const Region scanoutDamage = stereo ? Region(Rect(QPoint(), m_surface->gbmSwapchain->size())) : damagedDeviceRegion;
++    const Region scanoutDamage = (stereo || m_shareEyes) ? Region(Rect(QPoint(), m_surface->gbmSwapchain->size())) : damagedDeviceRegion;
+     if (m_surface->needsShadowBuffer) {
+         const Region deviceRepaint = scanoutDamage | m_surface->damageJournal.accumulate(m_surface->currentSlot->age(), Region::infinite());
+         m_surface->damageJournal.add(scanoutDamage);
+@@ -701,11 +702,12 @@ bool EglGbmLayerSurface::endRendering(const Region &damagedDeviceRegion, OutputF
+                 }
+             }
+         } else if (const auto vbo = uploadGeometry(repaint, m_surface->gbmSwapchain->size())) {
+-            m_surface->currentShadowSlot->texture()->bind();
++            const auto &slot = m_stereoSwapEyes && m_surface->currentRightShadowSlot ? m_surface->currentRightShadowSlot : m_surface->currentShadowSlot;
++            slot->texture()->bind();
+             vbo->render(GL_TRIANGLES);
+-            m_surface->currentShadowSlot->texture()->unbind();
++            slot->texture()->unbind();
+         }
+-        if (m_shareEyes && stereo && !pictureAndDepth && !m_surface->iccProfile) {
++        if (m_shareEyes && (stereo || m_surface->currentRightShadowSlot) && !pictureAndDepth && !m_surface->iccProfile) {
+             // the eyes stay as they are for outputs that replicate this one: holding the release
+             // points keeps the swapchains from reusing the buffers until the pair is let go
+             auto eyes = std::make_shared<StereoEyePair>();
+diff --git a/src/backends/drm/drm_virtual_egl_layer.cpp b/src/backends/drm/drm_virtual_egl_layer.cpp
+index 0240ae5..f2a1f7e 100644
+--- a/src/backends/drm/drm_virtual_egl_layer.cpp
++++ b/src/backends/drm/drm_virtual_egl_layer.cpp
+@@ -11,6 +11,8 @@
+ #include "drm_gpu.h"
+ #include "drm_logging.h"
+ #include "drm_virtual_output.h"
++#include "core/colorconversion.h"
++#include "core/stereoeyepair.h"
+ #include "opengl/eglnativefence.h"
+ #include "opengl/eglswapchain.h"
+ #include "opengl/glrendertimequery.h"
+@@ -127,6 +129,19 @@ bool VirtualEglGbmLayer::doesGbmSwapchainFit(EglSwapchain *swapchain) const
+     return swapchain && swapchain->size() == m_output->modeSize();
+ }
+ 
++bool VirtualEglGbmLayer::canCopyEyes(const StereoEyePair &eyes) const
++{
++    return eyes.owner == m_eglBackend->openglContext()
++        && eyes.transform == OutputTransform(OutputTransform::Normal).combine(OutputTransform::FlipY)
++        && m_output->transform() == OutputTransform::Normal
++        && ColorConversionTable::forCopy(eyes.blendingColor, ColorDescription::sRGB, eyesHdrContent(), nullptr);
++}
++
++std::shared_ptr<const ColorConversionTable> VirtualEglGbmLayer::eyesConversion(const StereoEyePair &eyes) const
++{
++    return ColorConversionTable::forCopy(eyes.blendingColor, ColorDescription::sRGB, eyesHdrContent(), nullptr);
++}
++
+ bool VirtualEglGbmLayer::earlyScanoutChecks()
+ {
+     return true;
+diff --git a/src/backends/drm/drm_virtual_egl_layer.h b/src/backends/drm/drm_virtual_egl_layer.h
+index 265e310..e05ec7b 100644
+--- a/src/backends/drm/drm_virtual_egl_layer.h
++++ b/src/backends/drm/drm_virtual_egl_layer.h
+@@ -36,6 +36,8 @@ public:
+     std::optional<OutputLayerBeginFrameInfo> doBeginFrame() override;
+     bool doEndFrame(const Region &renderedDeviceRegion, const Region &damagedDeviceRegion, OutputFrame *frame) override;
+     void releaseBuffers() override;
++    bool canCopyEyes(const StereoEyePair &eyes) const override;
++    std::shared_ptr<const ColorConversionTable> eyesConversion(const StereoEyePair &eyes) const override;
+     DrmDevice *scanoutDevice() const override;
+     FormatModifierMap supportedDrmFormats() const override;
+ 
+diff --git a/src/compositor.cpp b/src/compositor.cpp
+index 67c9f80..51eb350 100644
+--- a/src/compositor.cpp
++++ b/src/compositor.cpp
+@@ -43,6 +43,7 @@
+ #include "scene/windowitem.h"
+ #include "scene/workspacescene.h"
+ #include "utils/common.h"
++#include "utils/stereoreplicaproblems.h"
+ #include "utils/envvar.h"
+ #include "wayland/surface.h"
+ #include "wayland_server.h"
+@@ -610,10 +611,43 @@ static void fenceEyeReaders(const StereoEyePair &eyes)
+     }
+ }
+ 
++std::shared_ptr<StereoEyePair> Compositor::composedEyes(LogicalOutput *output, bool *hdrContent, bool *cursorVisible) const
++{
++    if (!s_stereoReplicaCopy) {
++        return nullptr;
++    }
++    for (const auto &[loop, view] : m_primaryViews) {
++        if (view->logicalOutput() == output && view->backendOutput() == output->backendOutput()) {
++            const auto eyes = view->layer()->composedEyes();
++            const auto generation = m_eyesGeneration.find(loop);
++            if (!eyes || generation == m_eyesGeneration.end() || generation->second != eyes->generation) {
++                return nullptr;
++            }
++            if (hdrContent) {
++                *hdrContent = view->layer()->eyesHdrContent();
++            }
++            if (cursorVisible) {
++                const auto visible = m_eyesCursorVisible.find(loop);
++                *cursorVisible = visible != m_eyesCursorVisible.end() && visible->second;
++            }
++            return eyes;
++        }
++    }
++    return nullptr;
++}
++
+ static bool renderLayer(RenderView *view, LogicalOutput *logicalOutput, BackendOutput *backendOutput, const std::shared_ptr<OutputFrame> &frame, const Region &surfaceDamage, const StereoEyePair *copiedEyes = nullptr, const ColorConversionTable *conversion = nullptr)
+ {
++    if (backendOutput && backendOutput->hasStereoEyes()
++        && Compositor::self()->backend()->compositingType() == QPainterCompositing) {
++        setStereoReplicaProblem(backendOutput, StereoReplicaFailure::Renderer);
++        return false;
++    }
+     auto beginInfo = view->layer()->beginFrame();
+     if (!beginInfo) {
++        if (logicalOutput->hasStereoEyes()) {
++            setStereoReplicaProblem(backendOutput, StereoReplicaFailure::EyeBuffer);
++        }
+         return false;
+     }
+     auto &[renderTarget, repaint] = beginInfo.value();
+@@ -631,7 +665,9 @@ static bool renderLayer(RenderView *view, LogicalOutput *logicalOutput, BackendO
+                 copied = copyEye(*copiedEyes, true, view, rightInfo->renderTarget, conversion);
+                 copies += copied ? 1 : 0;
+             } else {
+-                qCWarning(KWIN_CORE, "Rendering the right eye failed, showing the left eye in both");
++                setStereoReplicaProblem(backendOutput, StereoReplicaFailure::EyeBuffer);
++                qCWarning(KWIN_CORE, "Copying the right eye failed; not presenting a flat stereo copy");
++                return false;
+             }
+         }
+         if (copied) {
+@@ -660,14 +696,21 @@ static bool renderLayer(RenderView *view, LogicalOutput *logicalOutput, BackendO
+             renderer->setStereoEye(StereoEye::Right);
+             view->paint(rightInfo->renderTarget, view->renderOffset(), rightDamage);
+         } else {
+-            qCWarning(KWIN_CORE, "Rendering the right eye failed, showing the left eye in both");
++            renderer->setStereoEye(StereoEye::None);
++            setStereoReplicaProblem(backendOutput, StereoReplicaFailure::EyeBuffer);
++            qCWarning(KWIN_CORE, "Rendering the right eye failed; not presenting a flat stereo copy");
++            return false;
+         }
+         renderer->setStereoEye(StereoEye::None);
+     } else {
+         ItemRenderer *renderer = kwinApp()->scene()->renderer();
+         qCDebug(KWIN_CORE, "stereo-replica: %s scene pass (one)", backendOutput ? qPrintable(backendOutput->name()) : "");
+-        if (backendOutput && !view->layer()->hasStereoEyes() && backendOutput->stereoSwapEyes()) {
+-            renderer->setStereoEye(StereoEye::Right);
++        if (backendOutput && !view->layer()->hasStereoEyes()) {
++            if (backendOutput->stereoSwapEyes()) {
++                renderer->setStereoEye(StereoEye::Right);
++            } else if (logicalOutput->hasStereoEyes()) {
++                renderer->setStereoEye(StereoEye::Left);
++            }
+         }
+         view->paint(renderTarget, view->renderOffset(), bufferDamage);
+         renderer->setStereoEye(StereoEye::None);
+@@ -998,7 +1041,11 @@ void Compositor::composite(RenderLoop *renderLoop)
+             }
+             hasReplicas = true;
+         }
+-        hasReplicasOfThis = s_stereoReplicaCopy && hasReplicas && logicalOutput->backendOutput() == output;
++        hasReplicasOfThis = s_stereoReplicaCopy && hasReplicas && logicalOutput->hasStereoEyes() && logicalOutput->backendOutput() == output;
++        if (logicalOutput->backendOutput() == output) {
++            primaryView->layer()->setEyesWanted(hasReplicasOfThis);
++            primaryView->layer()->setEyesHdrContent(showsHdrContent(primaryView));
++        }
+         if (s_stereoReplicaCopy && logicalOutput->backendOutput() != output && sourceView) {
+             OutputLayer *const sourceLayer = sourceView->layer();
+             OutputLayer *const ownPrimary = findLayer(unusedOutputLayers, OutputLayerType::Primary);
+@@ -1021,8 +1068,9 @@ void Compositor::composite(RenderLoop *renderLoop)
+     output->setReplicatesEyes(copiedEyes != nullptr);
+ 
+     const bool overlaysAllowed = m_allowOverlaysEnv.value_or(output->recommendsOverlayUse());
+-    QList<OutputLayer *> allowedOutputLayers = unusedOutputLayers | std::views::filter([this, renderLoop, overlaysAllowed](OutputLayer *layer) {
+-        return (!m_brokenCursors.contains(renderLoop) || layer->type() != OutputLayerType::CursorOnly)
++    QList<OutputLayer *> allowedOutputLayers = unusedOutputLayers | std::views::filter([this, renderLoop, overlaysAllowed, hasReplicasOfThis](OutputLayer *layer) {
++        return (!hasReplicasOfThis || layer->type() == OutputLayerType::Primary)
++            && (!m_brokenCursors.contains(renderLoop) || layer->type() != OutputLayerType::CursorOnly)
+             && (overlaysAllowed || layer->type() != OutputLayerType::GenericLayer);
+     }) | std::ranges::to<QList>();
+     std::ranges::sort(allowedOutputLayers, [](OutputLayer *left, OutputLayer *right) {
+@@ -1073,6 +1121,10 @@ void Compositor::composite(RenderLoop *renderLoop)
+         }
+     }
+ 
++    if (output->hasStereoEyes() && m_backend->compositingType() == QPainterCompositing) {
++        result = false;
++    }
++
+     const auto renderLayers = [&]() {
+         const bool holdStereoPair = !output->frameSequentialNeedsNewFrame();
+         for (auto &layer : layers) {
+@@ -1169,6 +1221,9 @@ void Compositor::composite(RenderLoop *renderLoop)
+     if (hasReplicasOfThis) {
+         if (const auto eyes = primaryView->layer()->composedEyes(); eyes && m_eyesGeneration[renderLoop] != eyes->generation) {
+             m_eyesGeneration[renderLoop] = eyes->generation;
++            Cursor *cursor = Cursors::self()->currentCursor();
++            m_eyesCursorVisible[renderLoop] = !Cursors::self()->isCursorHidden() && cursor && cursor->source()
++                && !cursor->source()->isBlank() && cursor->isOnOutput(logicalOutput);
+             for (const auto &[loop, view] : m_primaryViews) {
+                 if (view.get() != primaryView && view->logicalOutput() == logicalOutput && view->backendOutput() != output) {
+                     view->addDeviceRepaint(Region::infinite());
+@@ -1179,6 +1234,9 @@ void Compositor::composite(RenderLoop *renderLoop)
+ 
+     // the layers have to stay valid until after postPaint, so this needs to happen after it
+     if (!result) {
++        if (logicalOutput->hasStereoEyes()) {
++            setStereoReplicaProblem(output, m_backend->compositingType() == QPainterCompositing ? StereoReplicaFailure::Renderer : StereoReplicaFailure::EyeBuffer);
++        }
+         qCWarning(KWIN_CORE, "Failed to find a working output layer configuration! Enabled layers:");
+         for (const auto &layer : layers) {
+             if (!layer.view->layer()->isEnabled()) {
+@@ -1187,6 +1245,8 @@ void Compositor::composite(RenderLoop *renderLoop)
+             qCWarning(KWIN_CORE) << "src" << layer.view->layer()->sourceRect() << "-> dst" << layer.view->layer()->targetRect();
+         }
+         output->repairPresentation();
++    } else {
++        setStereoReplicaProblem(output, std::nullopt);
+     }
+ 
+     const bool forceRepaintForBrightness = (frame->brightness() && std::abs(*frame->brightness() - output->brightnessSetting()) > 0.001)
+@@ -1227,6 +1287,8 @@ void Compositor::addOutput(LogicalOutput *logicalOutput, BackendOutput *backendO
+ 
+ void Compositor::removeOutput(BackendOutput *output)
+ {
++    setStereoReplicaProblem(output, std::nullopt);
++    setStereoReplicaProblem(output, std::nullopt, true);
+     if (output->isPlaceholder()) {
+         return;
+     }
+@@ -1235,6 +1297,7 @@ void Compositor::removeOutput(BackendOutput *output)
+     m_primaryViews.erase(output->renderLoop());
+     m_brokenCursors.erase(output->renderLoop());
+     m_eyesGeneration.erase(output->renderLoop());
++    m_eyesCursorVisible.erase(output->renderLoop());
+ }
+ 
+ void Compositor::assignOutputLayers(LogicalOutput *logicalOutput, BackendOutput *backendOutput)
+diff --git a/src/compositor.h b/src/compositor.h
+index 5043bd1..c47a2c9 100644
+--- a/src/compositor.h
++++ b/src/compositor.h
+@@ -33,6 +33,7 @@ class WorkspaceScene;
+ class Window;
+ class OutputFrame;
+ class SceneView;
++class StereoEyePair;
+ class ItemView;
+ class RenderLoopDrivenQAnimationDriver;
+ class RenderView;
+@@ -77,6 +78,8 @@ public:
+ 
+     void createRenderer();
+ 
++    std::shared_ptr<StereoEyePair> composedEyes(LogicalOutput *output, bool *hdrContent = nullptr, bool *cursorVisible = nullptr) const;
++
+ Q_SIGNALS:
+     void compositingToggled(bool active);
+     void aboutToDestroy();
+@@ -133,6 +136,7 @@ protected:
+     std::unordered_set<RenderLoop *> m_brokenCursors;
+     // the generation of the last pair of eyes each output composed, to wake the outputs that replicate it once per pair
+     std::unordered_map<RenderLoop *, quint64> m_eyesGeneration;
++    std::unordered_map<RenderLoop *, bool> m_eyesCursorVisible;
+     std::optional<bool> m_allowOverlaysEnv;
+     RenderLoopDrivenQAnimationDriver *m_renderLoopDrivenAnimationDriver;
+ };
+diff --git a/src/core/output.cpp b/src/core/output.cpp
+index 641463b..8761579 100644
+--- a/src/core/output.cpp
++++ b/src/core/output.cpp
+@@ -585,7 +585,7 @@ bool LogicalOutput::isInternal() const
+ 
+ bool LogicalOutput::hasStereoEyes() const
+ {
+-    return m_backendOutput->hasStereoEyes();
++    return m_backendOutput->hasStereoEyes() || m_stereoReplicas;
+ }
+ 
+ uint32_t LogicalOutput::refreshRate() const
+diff --git a/src/core/output.h b/src/core/output.h
+index e1ca145..9d1c789 100644
+--- a/src/core/output.h
++++ b/src/core/output.h
+@@ -582,6 +582,7 @@ Q_SIGNALS:
+ protected:
+     BackendOutput *const m_backendOutput;
+     int m_refCount = 1;
++    bool m_stereoReplicas = false;
+ 
+     // only Workspace is meant to change these properties
+     friend class Workspace;
+diff --git a/src/plugins/screencast/outputscreencastsource.cpp b/src/plugins/screencast/outputscreencastsource.cpp
+index e76662b..d3d11de 100644
+--- a/src/plugins/screencast/outputscreencastsource.cpp
++++ b/src/plugins/screencast/outputscreencastsource.cpp
+@@ -11,6 +11,9 @@
+ 
+ #include "compositor.h"
+ #include "core/backendoutput.h"
++#include "core/colorconversion.h"
++#include "core/stereoeyepair.h"
++#include "core/syncobjtimeline.h"
+ #include "core/output.h"
+ #include "core/outputbackend.h"
+ #include "core/renderbackend.h"
+@@ -19,12 +22,19 @@
+ #include "opengl/eglbackend.h"
+ #include "opengl/egldisplay.h"
+ #include "opengl/eglcontext.h"
++#include "opengl/eglnativefence.h"
++#include "opengl/eglswapchain.h"
++#include "opengl/glshadermanager.h"
++#include "opengl/glshader.h"
++#include "kwinscreencast_logging.h"
++#include "utils/stereoreplicaproblems.h"
+ #include "opengl/glframebuffer.h"
+ #include "opengl/gltexture.h"
+ #include "scene/workspacescene.h"
+ #include "scene/itemrenderer.h"
+ 
+ #include <QScopeGuard>
++#include <algorithm>
+ #include "workspace.h"
+ #include "window.h"
+ 
+@@ -196,9 +206,78 @@ Region OutputScreenCastSource::render(GLFramebuffer *target, const Region &buffe
+     return bufferDamage;
+ }
+ 
++bool OutputScreenCastSource::copyStereoEyes(const RenderTarget &target, GLFramebuffer *streamTarget)
++{
++    // A filtered capture must still paint its own view. Never copy a window or cursor
++    // the person asked to leave out of the stream.
++    if (!m_panel || m_panel->replicationSource().isEmpty() || captureViewport() != m_output->geometryF()
++        || backendOutput()->transform() != OutputTransform::Normal
++        || std::ranges::any_of(workspace()->windows(), [this](Window *window) {
++               return window->excludeFromCapture() || (m_pidToHide && window->pid() == *m_pidToHide);
++           })) {
++        return false;
++    }
++    bool hdrContent = false;
++    bool cursorVisible = false;
++    const auto eyes = Compositor::self()->composedEyes(m_output, &hdrContent, &cursorVisible);
++    if (!m_renderCursor && cursorVisible) {
++        return false;
++    }
++    if (!eyes || !eyes->left || !eyes->right || eyes->owner != EglContext::currentContext()
++        || eyes->transform != OutputTransform(OutputTransform::Normal).combine(OutputTransform::FlipY)) {
++        return false;
++    }
++    const auto conversion = ColorConversionTable::forCopy(eyes->blendingColor, target.colorDescription(), hdrContent, nullptr);
++    if (!conversion) {
++        return false;
++    }
++    const Rect place = target.transform().map(m_sceneView->deviceRect(), target.transformedSize()) & Rect(QPoint(), target.size());
++    if (place.isEmpty() || place != target.transform().map(m_sceneView->deviceRect(), target.transformedSize())) {
++        return false;
++    }
++    GLFramebuffer *destination = target.framebuffer();
++    GLFramebuffer::pushFramebuffer(destination);
++    glClearColor(0, 0, 0, 0);
++    glClear(GL_COLOR_BUFFER_BIT);
++    GLFramebuffer::popFramebuffer();
++    for (int eye = 0; eye < 2; ++eye) {
++        const auto &slot = eye == 0 ? eyes->left : eyes->right;
++        GLFramebuffer::pushFramebuffer(destination);
++        QMatrix4x4 matrix;
++        matrix.ortho(QRectF(QPointF(), destination->size()));
++        matrix.translate(place.x(), place.y());
++        ShaderBinder binder(ShaderTrait::MapTexture | ShaderTrait::TransformColorspace);
++        binder.shader()->setUniform(GLShader::Mat4Uniform::ModelViewProjectionMatrix, matrix);
++        binder.shader()->setColorspaceUniforms(*conversion);
++        slot->texture()->setFilter(GL_LINEAR);
++        glDisable(GL_BLEND);
++        slot->texture()->render(Rect(QPoint(), eyes->size), Region::infinite(), place.size(), 1);
++        GLFramebuffer::popFramebuffer();
++        GLFramebuffer::pushFramebuffer(destination);
++        streamTarget->blitFromFramebuffer(Rect(QPoint(), destination->size()), Rect(QPoint(eye * destination->size().width(), 0), destination->size()), GL_NEAREST);
++        GLFramebuffer::popFramebuffer();
++    }
++    EGLNativeFence fence(EglContext::currentContext()->displayObject());
++    if (fence.isValid()) {
++        if (eyes->leftHold) {
++            eyes->leftHold->addReleaseFence(fence.fileDescriptor());
++        }
++        if (eyes->rightHold) {
++            eyes->rightHold->addReleaseFence(fence.fileDescriptor());
++        }
++    }
++    qCDebug(KWIN_SCREENCAST, "stereo-replica: %s stream scene passes 0, eye copies 2", qPrintable(m_panel->name()));
++    return true;
++}
++
+ Region OutputScreenCastSource::renderStereo(GLFramebuffer *target)
+ {
+     updateView();
++    // Until a complete pair reaches the stream, retain a visible failure rather
++    // than returning an empty update without telling the person.
++    auto reportFailure = qScopeGuard([this] {
++        setStereoReplicaProblem(backendOutput(), StereoReplicaFailure::EyeBuffer, true);
++    });
+     const QSize eyeSize = backendOutput()->viewSize();
+     if (target->size() != textureSize()) {
+         return Region{};
+@@ -234,6 +313,16 @@ Region OutputScreenCastSource::renderStereo(GLFramebuffer *target)
+     renderer->setStereoCapture(true);
+     m_sceneView->prePaint();
+     m_layer->resetRepaints();
++    if (copyStereoEyes(beginInfo->renderTarget, target)) {
++        m_sceneView->postPaint();
++        if (!m_layer->endFrame(eyeDamage, eyeDamage, nullptr)) {
++            return Region{};
++        }
++        reportFailure.dismiss();
++        setStereoReplicaProblem(backendOutput(), std::nullopt, true);
++        return Rect(QPoint(), target->size());
++    }
++    qCDebug(KWIN_SCREENCAST, "stereo-replica: %s stream scene passes 2", qPrintable(backendOutput()->name()));
+     for (int eye = 0; eye < 2; ++eye) {
+         renderer->setStereoEye(eye == 0 ? StereoEye::Left : StereoEye::Right);
+         m_sceneView->paint(beginInfo->renderTarget, m_sceneView->renderOffset(), eyeDamage);
+@@ -245,6 +334,8 @@ Region OutputScreenCastSource::renderStereo(GLFramebuffer *target)
+     if (!m_layer->endFrame(eyeDamage, eyeDamage, nullptr)) {
+         return Region{};
+     }
++    reportFailure.dismiss();
++    setStereoReplicaProblem(backendOutput(), std::nullopt, true);
+     return Rect(QPoint(), target->size());
+ }
+ 
+diff --git a/src/plugins/screencast/outputscreencastsource.h b/src/plugins/screencast/outputscreencastsource.h
+index 3a79f64..edb82ab 100644
+--- a/src/plugins/screencast/outputscreencastsource.h
++++ b/src/plugins/screencast/outputscreencastsource.h
+@@ -17,6 +17,7 @@ class BackendOutput;
+ class FilteredSceneView;
+ class ItemTreeView;
+ class LogicalOutput;
++class RenderTarget;
+ class ScreencastLayer;
+ 
+ class OutputScreenCastSource : public ScreenCastSource
+@@ -48,6 +49,7 @@ public:
+ 
+ private:
+     Region renderStereo(GLFramebuffer *target);
++    bool copyStereoEyes(const RenderTarget &target, GLFramebuffer *streamTarget);
+     BackendOutput *backendOutput() const;
+     RectF captureViewport() const;
+     qreal renderScale() const;
+diff --git a/src/utils/stereoreplicaproblems.cpp b/src/utils/stereoreplicaproblems.cpp
+new file mode 100644
+index 0000000..1c457af
+--- /dev/null
++++ b/src/utils/stereoreplicaproblems.cpp
+@@ -0,0 +1,81 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#include "stereoreplicaproblems.h"
++
++#include "core/backendoutput.h"
++#include "utils/common.h"
++
++#include <QCryptographicHash>
++#include <QHash>
++#include <QLibrary>
++#include <QProcess>
++
++#ifndef KWIN_SPARKY_STEREO_PROBLEMS_LIBRARY
++#define KWIN_SPARKY_STEREO_PROBLEMS_LIBRARY ""
++#endif
++
++namespace KWin
++{
++
++static void reportProblem(BackendOutput *output, std::optional<StereoReplicaFailure> failure, const QString &prefix, const QString &identity)
++{
++    // Clear a record from an earlier compositor process once too; cache both
++    // transitions so the engine is not called on every successful frame.
++    static QHash<QString, int> reported;
++    if (!output) {
++        return;
++    }
++    const QString key = prefix + QString::fromLatin1(QCryptographicHash::hash(identity.toUtf8(), QCryptographicHash::Sha256).toHex());
++    const int state = failure ? int(*failure) + 1 : 0;
++    const auto existing = reported.constFind(key);
++    if (existing != reported.cend() && *existing == state) {
++        return;
++    }
++    reported.insert(key, state);
++
++    // Keep the engine's private library out of libkwin's ELF dependencies.
++    static QLibrary library(QString::fromUtf8(KWIN_SPARKY_STEREO_PROBLEMS_LIBRARY));
++    library.setLoadHints(QLibrary::PreventUnloadHint);
++    using Keep = int (*)(int, const char *, const char *, const char *, const char *const *, int, const char *);
++    using Clear = int (*)(int, const char *, const char *);
++    const auto keep = library.fileName().isEmpty() ? nullptr : reinterpret_cast<Keep>(library.resolve("ssp_keep"));
++    const auto clear = library.fileName().isEmpty() ? nullptr : reinterpret_cast<Clear>(library.resolve("ssp_clear"));
++    const QByteArray id = key.toUtf8();
++    int result;
++    if (failure && keep) {
++        const QByteArray name = output->name().toUtf8();
++        const char *args[] = {name.constData(), *failure == StereoReplicaFailure::Renderer ? "@LOCAL3" : "@LOCAL4"};
++        result = keep(2, "kwin-wayland", id.constData(), "LOCAL2", args, 2, nullptr);
++    } else if (!failure && clear) {
++        result = clear(2, "kwin-wayland", id.constData());
++    } else {
++        QStringList args;
++        if (failure) {
++            args = {QStringLiteral("keep"), QStringLiteral("--person"), QStringLiteral("--quiet"), QStringLiteral("kwin-wayland"), key,
++                    QStringLiteral("LOCAL2"), output->name(), *failure == StereoReplicaFailure::Renderer ? QStringLiteral("@LOCAL3") : QStringLiteral("@LOCAL4")};
++        } else {
++            args = {QStringLiteral("clear"), QStringLiteral("--person"), QStringLiteral("kwin-wayland"), key};
++        }
++        result = QProcess::execute(QStringLiteral("/usr/bin/sparky-stereo-problems"), args);
++    }
++    if (result != 0) {
++        qCWarning(KWIN_CORE) << "Could not" << (failure ? "tell the person about a failed stereo copy" : "clear a recovered stereo copy problem") << output->name() << result;
++    }
++}
++
++void setStereoReplicaProblem(BackendOutput *output, std::optional<StereoReplicaFailure> failure, bool capture)
++{
++    if (!output) {
++        return;
++    }
++    reportProblem(output, failure, capture ? QStringLiteral("stereo-capture-") : QStringLiteral("stereo-output-"), output->uuid().isEmpty() ? output->name() : output->uuid());
++}
++
++void setStereoReplicaConfigurationProblem(BackendOutput *output, std::optional<StereoReplicaFailure> failure, const QString &identity)
++{
++    reportProblem(output, failure, QStringLiteral("stereo-configuration-"), identity);
++}
++
++}
+diff --git a/src/utils/stereoreplicaproblems.h b/src/utils/stereoreplicaproblems.h
+new file mode 100644
+index 0000000..50ca963
+--- /dev/null
++++ b/src/utils/stereoreplicaproblems.h
+@@ -0,0 +1,23 @@
++/*
++    SPDX-FileCopyrightText: 2026 Daniel Campos Ramos <Capitain_Jack@yahoo.com>
++    SPDX-License-Identifier: GPL-2.0-or-later
++*/
++#pragma once
++
++#include "kwin_export.h"
++
++#include <optional>
++#include <QString>
++
++namespace KWin
++{
++class BackendOutput;
++
++enum class StereoReplicaFailure {
++    Renderer,
++    EyeBuffer,
++};
++
++KWIN_EXPORT void setStereoReplicaProblem(BackendOutput *output, std::optional<StereoReplicaFailure> failure, bool capture = false);
++KWIN_EXPORT void setStereoReplicaConfigurationProblem(BackendOutput *output, std::optional<StereoReplicaFailure> failure, const QString &identity);
++}
+diff --git a/src/workspace.cpp b/src/workspace.cpp
+index 391bebf..fdd3124 100644
+--- a/src/workspace.cpp
++++ b/src/workspace.cpp
+@@ -56,6 +56,8 @@
+ #include "tiles/tilemanager.h"
+ #include "useractions.h"
+ #include "utils/envvar.h"
++#include "utils/stereoreplicaproblems.h"
++#include "core/renderbackend.h"
+ #include "utils/kernel.h"
+ #include "utils/lightsensor.h"
+ #include "utils/orientationsensor.h"
+@@ -601,8 +603,25 @@ OutputConfigurationError Workspace::applyOutputConfiguration(OutputConfiguration
+     }
+     auto error = kwinApp()->outputBackend()->applyOutputChanges(config);
+     if (error != OutputConfigurationError::None) {
++        for (BackendOutput *output : backendOutputs) {
++            const auto change = config.changeSet(output);
++            qCDebug(KWIN_CORE) << "stereo-replica: rejected configuration" << output->name()
++                              << change->enabled.value_or(output->isEnabled())
++                              << change->replicationSource.value_or(output->replicationSource())
++                              << int(effectiveMode(output).flags());
++            if (change->enabled.value_or(output->isEnabled())
++                && !change->replicationSource.value_or(output->replicationSource()).isEmpty()
++                && (effectiveMode(output).flags() & OutputModeline::AllStereo3D)) {
++                const bool software = Compositor::self() && Compositor::self()->backend()
++                    && Compositor::self()->backend()->compositingType() == QPainterCompositing;
++                setStereoReplicaConfigurationProblem(output, software ? StereoReplicaFailure::Renderer : StereoReplicaFailure::EyeBuffer, effectiveUuid(output));
++            }
++        }
+         return error;
+     }
++    for (BackendOutput *output : backendOutputs) {
++        setStereoReplicaConfigurationProblem(output, std::nullopt, output->uuid());
++    }
+     updateOutputs();
+     m_outputConfigStore->storeConfig(backendOutputs, m_lidSwitchTracker->isLidClosed());
+     m_orientationSensor->setEnabled(m_outputConfigStore->isAutoRotateActive(backendOutputs, kwinApp()->tabletModeManager()->effectiveTabletMode()));
+@@ -1495,6 +1514,9 @@ void Workspace::updateOutputs()
+         } else {
+             m_outputs.push_back(*existing);
+         }
++        m_outputs.back()->m_stereoReplicas = std::ranges::any_of(availableOutputs, [output](BackendOutput *replica) {
++            return replica->isEnabled() && replica->replicationSource() == output->uuid() && replica->hasStereoEyes();
++        });
+         // update geometry
+         m_outputs.back()->setData(output->position() - topLeftMostCoordinates, output->viewSize(),
+                                   output->refreshRate(), output->transform(), output->scale(),

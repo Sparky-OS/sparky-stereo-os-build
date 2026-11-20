@@ -42,7 +42,7 @@ The image is a freshly updated `debian:testing` (record its Qt, FFmpeg and PipeW
 
 ```
 mkdir -p work out
-docker run --rm --user $(id -u):$(id -g) -e VER=3.0.24-1+stereo3d6 \
+docker run --ulimit core=1 --rm --user $(id -u):$(id -g) -e VER=3.0.24-1+stereo3d6 \
   -v $PWD/sparky-os/upstream/vlc:/src:ro -v $PWD/work:/work -v $PWD/out:/out \
   vlc-stereo-build bash /src/vlc-stereo-packaging/build.sh
 ```

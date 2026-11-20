@@ -11,7 +11,7 @@ rm -rf "$OUT2"; mkdir -p "$OUT2"
 . "$BT/sparky-os/repo/build-provenance.sh"
 cd "$BT/sparky-os/packages/sparky-aptus-stereo-appcenter"
 SPARKY_PROVENANCE_REQUIRED=1 sparky_provenance_init "$IMAGE" "$PWD"
-docker run --rm --name pj18-build-ac2 --pull=never --ulimit core=0 --cpus 4 --user "$(id -u):$(id -g)" -e HOME="$SCRATCH/home" \
+docker run --rm --name pj18-build-ac2 --pull=never --ulimit core=1 --cpus 4 --user "$(id -u):$(id -g)" -e HOME="$SCRATCH/home" \
   -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH="$SCRATCH/link" "${SPARKY_PROV_ARGS[@]}" \
   --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
   -v /var/tmp/pje-office-18/archive:/archive:ro -v /K3D/sparky-repo-r1117a:/repo:ro -v /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro \

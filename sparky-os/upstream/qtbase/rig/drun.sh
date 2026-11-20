@@ -11,7 +11,7 @@ EVROOT=${EVROOT:-${SPARKY_SCRATCH:?}/qtbase-pkg/evidence}
 ev=$EVROOT/$case_
 rm -rf "$ev"; mkdir -p "$ev"
 uid=$(id -u); gid=$(id -g)
-exec docker run --rm --platform linux/amd64 --cpus 4 --cap-add SYS_NICE \
+exec docker run --ulimit core=1 --rm --platform linux/amd64 --cpus 4 --cap-add SYS_NICE \
   --device /dev/dri/renderD128 --group-add 125 --user $uid:$gid \
   -e KWIN_WAYLAND_NO_PERMISSION_CHECKS -e NODECO -e CSD -e SOFT -e PLAT -e SIZE -e WAIT -e SHIM -e MYQT -e CLIENT_ENV -e RUN_UID=$uid -e RUN_GID=$gid \
   -e QT_STEREO_WIDTH -e QT_STEREO_HEIGHT -e QT_STEREO_HOLD_MS -e QT_STEREO_SWAP_EYES -e QT_STEREO_OFF \

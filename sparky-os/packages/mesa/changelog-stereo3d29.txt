@@ -1,0 +1,12 @@
+mesa (26.1.6-1+stereo3d29) forky; urgency=medium
+
+  * A Vulkan window surface on X11 reports its window's size again (ORDER 39,
+    patch 0047). Patch 0041 gave the surface three fields for a window the
+    compositor makes two views wide and set them only when such a swapchain is
+    made; the surface's allocation is not cleared, so its extents were halved
+    whenever the memory held old bytes there, on any X server and for every
+    Mesa Vulkan driver. A stereo swapchain made at that size is never told it
+    is out of date, so the Dolphin emulator drew each eye at half the width in
+    4 of 10 fresh sessions. Both surface kinds, xcb and Xlib, now start with
+    no doubled window; tests/vk-x11-surface-extent.c fails on +stereo3d26 and
+    passes with the patch on RADV and lavapipe, on Xvfb and under Stereo KWin.

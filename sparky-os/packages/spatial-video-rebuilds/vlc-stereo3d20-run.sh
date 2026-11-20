@@ -22,7 +22,7 @@ cp "$pool"/vlc_3.0.24-1+stereo3d19+lc1.dsc "$pool"/vlc_3.0.24-1+stereo3d19+lc1.d
 cp "$pool"/vlc-stereo_3.0.24-1+stereo3d19+lc1_amd64.deb "$pool"/vlc-stereo-plugin-pipewire_3.0.24-1+stereo3d19+lc1_amd64.deb "$pool"/vlc-stereo-lc-hr_3.0.24-1+stereo3d19+lc1_amd64.deb "$out/prev/"
 . "$tree/sparky-os/repo/build-provenance.sh"
 sparky_provenance_init "$image" "$here"
-docker run --rm --ulimit core=0 --cpus 4 --platform linux/amd64 ${SPARKY_CONTAINER_NAME:+--name "$SPARKY_CONTAINER_NAME"} \
+docker run --rm --ulimit core=1 --cpus 4 --platform linux/amd64 ${SPARKY_CONTAINER_NAME:+--name "$SPARKY_CONTAINER_NAME"} \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/out/link-scratch \
 	--mount "type=bind,src=$SPARKY_LC_ARCHIVE_DIR,dst=/archive,readonly" \

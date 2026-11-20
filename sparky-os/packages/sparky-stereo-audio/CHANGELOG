@@ -1,3 +1,12 @@
+sparky-stereo-audio 0.3.1 (2026-11-19)
+  * ORDER 757: a graphics card's HDMI or DisplayPort sound is no longer "could not be read" when no sound is playing.
+    The reader took an HDA output only when the kernel printed a Device line for it, and for an HDMI codec the kernel
+    prints that line only while a PCM is open. The card is now recognised by its codec's HDMI or DP pins and its ELD
+    files; its outputs are the displays connected, with the ELD's rates within the converters' rates.
+  * No display connected is not a fault. What was read from a display is kept for that display and used while it is away.
+  * A display connected or disconnected is noticed by a udev rule on the graphics driver's hotplug event, and the
+    service reads the card again until two readings agree.
+
 sparky-stereo-audio 0.3.0 (2026-11-19)
   * General MIDI through a dedicated user service and Debian libfluidsynth, with its audio
     renderer started for notes and released after voices and effects finish.

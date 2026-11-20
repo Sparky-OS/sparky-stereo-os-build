@@ -4,7 +4,7 @@
 # the baseline when the person opts out, and Debian's own repository is untouched. Control: an amd64v3 index that is not a full copy hides a
 # baseline-only package (why the repository must publish a complete copy).
 # Usage: run.sh PUBLISHED_DEB WORK_FOLDER   (DOCKER_HOST set; IMAGE defaults to gr108-base:testing-20261027, an amd64 debian:testing by digest)
-# Containers: --cpus 2, --ulimit core=0, --network none except the toy-repository builder and the Debian-repository case, which use the
+# Containers: --cpus 2, --ulimit core=1, --network none except the toy-repository builder and the Debian-repository case, which use the
 # https-only apt helper (/K3D/partners/https-only-apt.sh) as the house rules ask.
 set -euo pipefail
 PUB=${1:?published sparky-stereo-apt .deb}
@@ -13,7 +13,7 @@ IMAGE=${IMAGE:-gr108-base:testing-20261027}
 HERE=$(cd "$(dirname "$0")" && pwd)
 PKGDIR=$(cd "$HERE/../.." && pwd)
 HTTPS=(-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v /K3D/partners/https-only-apt.sh:/run/https-only-apt.sh:ro)
-COMMON=(--rm --cpus 2 --ulimit core=0 --user "$(id -u):$(id -g)")
+COMMON=(--rm --cpus 2 --ulimit core=1 --user "$(id -u):$(id -g)")
 mkdir -p "$WORK"/{red,green,cpu,toy,opt}
 rm -rf "$WORK/red" "$WORK/green"; mkdir -p "$WORK/red" "$WORK/green"
 
@@ -32,7 +32,7 @@ for l in 1 2 3; do v=V$l; printf 'processor\t: 0\nvendor_id\t: TestCPU\nflags\t\
 
 # toy repositories
 if [ ! -f "$WORK/toy/complete/dists/toy/Release" ]; then
-	docker run --rm --cpus 2 --ulimit core=0 --name gr108-toy "${HTTPS[@]}" -e DEBIAN_FRONTEND=noninteractive \
+	docker run --rm --cpus 2 --ulimit core=1 --name gr108-toy "${HTTPS[@]}" -e DEBIAN_FRONTEND=noninteractive \
 		-v "$HERE:/t:ro" -v "$WORK/toy:/out" "$IMAGE" sh -c \
 		'sh /run/https-only-apt.sh && apt-get -y update >/dev/null && apt-get -y install apt-utils >/dev/null && bash /t/make-toy.sh /out && chown -R '"$(id -u):$(id -g)"' /out'
 fi

@@ -26,7 +26,7 @@ SEED=${4:+$(cd "$4" && pwd)}
 floor=$(( (${SPARKY_DISK_FLOOR_GIB:-12} + 1) * 1024 * 1024 * 1024 ))
 disk=${SPARKY_DISK_PATH:-$WORK}
 image=$SPARKY_CONTAINER_PREFIX-deps-$UPSTREAM:1
-common=(--ulimit core=0 --cpus 4 --memory 24g --platform linux/amd64 -e "VERSION_FILE=/tools/versions/$(basename "$VERSIONS")"
+common=(--ulimit core=1 --cpus 4 --memory 24g --platform linux/amd64 -e "VERSION_FILE=/tools/versions/$(basename "$VERSIONS")"
 	--mount "type=bind,src=$WORK,dst=/work" --mount "type=bind,src=$SRC,dst=/src,readonly"
 	--mount "type=bind,src=$HERE/../..,dst=/toolkit,readonly" --mount "type=bind,src=$HERE,dst=/tools,readonly")
 [ -z "$SEED" ] || common+=(--mount "type=bind,src=$SEED,dst=/seed,readonly")

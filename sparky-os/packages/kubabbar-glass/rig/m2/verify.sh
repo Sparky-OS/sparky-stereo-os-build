@@ -7,7 +7,7 @@ lane=$(cd "$(dirname "$0")/../../.." && pwd)
 container=classic-look-verify-m2
 printf '%s\n' "$container" >> "$lane/.artifacts"
 trap 'docker rm "$container" >/dev/null 2>&1 || true' EXIT
-docker run --name "$container" --platform linux/amd64 --cpus 2 --user "$(id -u):$(id -g)" --entrypoint /bin/sh \
+docker run --ulimit core=1 --name "$container" --platform linux/amd64 --cpus 2 --user "$(id -u):$(id -g)" --entrypoint /bin/sh \
 	-v "$lane:$lane" -w "$lane/theme" "${CLASSIC_IMAGE:-classic-look-blender}" -c '
 	set -e
 	export LANG=C.UTF-8

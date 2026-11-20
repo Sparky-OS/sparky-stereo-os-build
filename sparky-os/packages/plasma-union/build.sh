@@ -24,7 +24,7 @@ STAGED=()
 [ -n "${4:-}" ] && STAGED=(-v "$(cd "$4" && pwd)":/staged:ro)
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 sparky_provenance_init sparky-lc-migration:20261020
-docker run "${SPARKY_PROV_ARGS[@]}" --rm --cpus 4 --platform linux/amd64 -e UNION_CONTROL="${UNION_CONTROL:-}" -v "$WORK":/work -v "$CLONE":/fork:ro \
+docker run --ulimit core=1 "${SPARKY_PROV_ARGS[@]}" --rm --cpus 4 --platform linux/amd64 -e UNION_CONTROL="${UNION_CONTROL:-}" -v "$WORK":/work -v "$CLONE":/fork:ro \
 	-v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro "${STAGED[@]}" -v "$HERE/../..":/toolkit:ro -v "$HERE":/tools:ro \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \

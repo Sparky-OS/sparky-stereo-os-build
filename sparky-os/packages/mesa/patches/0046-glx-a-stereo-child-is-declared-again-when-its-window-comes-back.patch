@@ -1,0 +1,130 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 19 Nov 2026 16:00:00 -0300
+Subject: [PATCH] glx: a stereo child is declared again when its window comes back
+
+A stereo child window of a window that is unmapped (a program hides it) or
+minimised (Stereo KWin unmaps a minimised X11 window) stays flat when the window
+returns, on DRI3 and on the software path. The presents the child makes while its
+window is away complete as copies, because the compositor holds no surface for a
+window that is not on the screen; two copies take the declaration back (the
+pair rule of glx_stereo_pair.h) and a flat child never flips, so nothing declares
+it again. A present that completes while the child's window is not viewable
+(map_state of the window and of every ancestor, as patch 0045 reads it) is now
+left out of the pair rule, and the first completion after the window is viewable
+again drops the child from its window's list and declares it anew, so the
+compositor takes it again (the next swap waits for its limits, as patch 0043
+says). A child of a window that stays on the screen, and a top-level window, take
+the old path: only a present that completes as a copy asks whether the window is
+away, one round trip to the X server.
+
+Assisted-by: Claude Sonnet 5.5 via Claude Code
+---
+--- a/src/glx/dri_common.c
++++ b/src/glx/dri_common.c
+@@ -399,6 +399,21 @@
+    return parent != root && parent != None;
+ }
+ 
++/* Whether a child window is away from the screen now (the window or an ancestor is
++ * unmapped, minimised or on its way back).  A present that completes as a copy while
++ * the window is away says nothing of the compositor's ability to show the pair: the
++ * compositor holds no surface for a window that is not on the screen.
++ */
++bool
++glx_x11_stereo_child_away(Display *dpy, Window window)
++{
++   XWindowAttributes attributes;
++
++   if (!XGetWindowAttributes(dpy, window, &attributes))
++      return false;
++   return glx_x11_stereo_child_hidden(dpy, window, attributes.map_state);
++}
++
+ void
+ glx_x11_wait_stereo_child_adopted(Display *dpy, int screen, Window window)
+ {
+--- a/src/glx/dri_common.h
++++ b/src/glx/dri_common.h
+@@ -131,6 +131,8 @@
+ glx_x11_wait_stereo_child_adopted(Display *dpy, int screen, Window window);
+ bool
+ glx_x11_stereo_child_hidden(Display *dpy, Window window, int map_state);
++bool
++glx_x11_stereo_child_away(Display *dpy, Window window);
+ #endif /* GLX_DIRECT_RENDERING */
+ 
+ #endif /* _DRI_COMMON_H */
+--- a/src/glx/dri3_glx.c
++++ b/src/glx/dri3_glx.c
+@@ -123,6 +123,24 @@
+        mode == XCB_PRESENT_COMPLETE_MODE_SUBOPTIMAL_COPY)
+       return;
+ 
++   /* A child window that leaves the screen (unmapped, minimised) and comes back: the
++    * presents made while it is away complete as copies and must not take the
++    * declaration back; once it is viewable again the compositor takes the child anew.
++    */
++   if (pdraw->stereo_declared && !pdraw->pair.flat &&
++       (pdraw->stereo_away || mode != XCB_PRESENT_COMPLETE_MODE_FLIP)) {
++      if (glx_x11_stereo_child_away(pdraw->base.psc->dpy, pdraw->base.xDrawable)) {
++         pdraw->stereo_away = true;
++         return;
++      }
++      if (pdraw->stereo_away) {
++         pdraw->stereo_away = false;
++         glx_x11_undeclare_stereo_child(pdraw->base.psc->dpy, pdraw->base.xDrawable);
++         pdraw->stereo_declared = false;
++         return;
++      }
++   }
++
+    switch (glx_stereo_pair_completed(&pdraw->pair, pdraw->base.psc->dpy,
+                                      pdraw->base.xDrawable,
+                                      mode == XCB_PRESENT_COMPLETE_MODE_FLIP,
+--- a/src/glx/dri3_priv.h
++++ b/src/glx/dri3_priv.h
+@@ -91,6 +91,8 @@
+    __GLXDRIdrawable base;
+    struct loader_dri3_drawable loader_drawable;
+    bool stereo_declared;
++   /* a present completed while the window was away: the declaration is made again when it is back */
++   bool stereo_away;
+    struct glx_stereo_pair pair;
+ 
+    /* LIBGL_SHOW_FPS support */
+--- a/src/glx/drisw_glx.c
++++ b/src/glx/drisw_glx.c
+@@ -231,6 +231,22 @@
+             wait = false;
+             if (ce->mode != XCB_PRESENT_COMPLETE_MODE_SKIP &&
+                 ce->mode != XCB_PRESENT_COMPLETE_MODE_SUBOPTIMAL_COPY) {
++               /* a child window that is away from the screen: see glx_dri3_present_completed */
++               if (pdp->stereo_declared && !pdp->pair.flat &&
++                   (pdp->stereo_away || ce->mode != XCB_PRESENT_COMPLETE_MODE_FLIP)) {
++                  if (glx_x11_stereo_child_away(pdraw->psc->dpy, pdraw->xDrawable)) {
++                     pdp->stereo_away = true;
++                     free(ev);
++                     continue;
++                  }
++                  if (pdp->stereo_away) {
++                     pdp->stereo_away = false;
++                     glx_x11_undeclare_stereo_child(pdraw->psc->dpy, pdraw->xDrawable);
++                     pdp->stereo_declared = false;
++                     free(ev);
++                     continue;
++                  }
++               }
+                switch (glx_stereo_pair_completed(&pdp->pair, pdraw->psc->dpy,
+                                                  pdraw->xDrawable,
+                                                  ce->mode == XCB_PRESENT_COMPLETE_MODE_FLIP,
+--- a/src/glx/drisw_priv.h
++++ b/src/glx/drisw_priv.h
+@@ -52,6 +52,8 @@
+    int xDepth;
+    int swapInterval;
+    bool stereo_declared;
++   /* a present completed while the window was away: the declaration is made again when it is back */
++   bool stereo_away;
+    /* The presents of a stereo window that stays one eye wide (glx_stereo_pair.h) */
+    struct glx_stereo_pair pair;
+    uint32_t present_eid;

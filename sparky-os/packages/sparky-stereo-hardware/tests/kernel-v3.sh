@@ -7,7 +7,7 @@
 set -uo pipefail
 TREE=${1:?published tree}
 IMAGE=${IMAGE:-gr108-base:testing-20261027}
-docker run --rm --cpus 2 --ulimit core=0 --name gr108-kv3 -e DEBIAN_FRONTEND=noninteractive \
+docker run --rm --cpus 2 --ulimit core=1 --name gr108-kv3 -e DEBIAN_FRONTEND=noninteractive \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v /K3D/partners/https-only-apt.sh:/run/https-only-apt.sh:ro -v "$TREE:/tree:ro" "$IMAGE" bash -c '
 failed=0
 ok() { echo "PASS $*"; }; bad() { echo "FAIL $*"; failed=1; }

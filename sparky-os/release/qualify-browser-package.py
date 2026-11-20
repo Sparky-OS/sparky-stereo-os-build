@@ -58,7 +58,7 @@ Path('/proof/payload-check.json').write_text(json.dumps(dict(passed=True,files=c
 '''
 (out / 'verify-payload.py').write_text(verify)
 name = 'sparky-lc-browser-install'
-command = ['docker', 'run', '--name', name, '--user', '0', '--cpus', '2', '--memory', '4g',
+command = ['docker', 'run', '--ulimit', 'core=1', '--name', name, '--user', '0', '--cpus', '2', '--memory', '4g',
            '-v', str(archive) + ':/candidate.deb:ro', '-v', str(out) + ':/proof',
            parent, 'bash', '-c', 'set -e; export DEBIAN_FRONTEND=noninteractive; dpkg -i /candidate.deb; python3 /proof/verify-payload.py']
 with (out / 'install.log').open('w') as log:
@@ -96,7 +96,7 @@ results = []
 media = copy_media(out)
 for case in baseline['cases']:
     rig = subprocess.check_output(['python3', str(tests / 'case-rig.py'), case], text=True).strip()
-    command = ['docker', 'run', '--rm', '--name', 'sparky-lc-browser-runtime', '--user', f'{uid}:{gid}',
+    command = ['docker', 'run', '--ulimit', 'core=1', '--rm', '--name', 'sparky-lc-browser-runtime', '--user', f'{uid}:{gid}',
                '--cpus', '2', '--memory', '12g', '--shm-size', '2g', '--device', str(render),
                '--group-add', str(render.stat().st_gid), '-e', 'HOME=/proof/home', '-e', 'TZ=UTC',
                '-e', 'KWIN_LOG_DIR=/proof', '-v', str(out) + ':/proof', '-v', str(tests) + ':/bench:ro',
