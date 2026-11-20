@@ -45,7 +45,27 @@ mkdir -p /work/lc && cd /work/lc
 cp ../s1/glib2.0_2.90.1-2+stereo3d1.dsc ../s1/glib2.0_2.90.1-2+stereo3d1.debian.tar.xz ../s1/glib2.0_2.90.1.orig.tar.xz ../s1/glib2.0_2.90.1.orig-unicode-data.tar.xz .
 dpkg-source -x glib2.0_2.90.1-2+stereo3d1.dsc /work/lc/source >/dev/null
 cd /work/lc/source
-PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source 2.90.1-2+stereo3d1+lc1 --toolkit /toolkit
+# Headers kept as written (ORDER 768b, way 1): g-ir-scanner reads 297 headers of this tree (the file lists of Debian's
+# configured build.ninja); the projection changes 95 of them, and in these 32 it moves a line the scanner records
+# (<source-position filename line> in GLib-2.0.gir or Gio-2.0.gir, which gi-docgen turns into the [src] links of the
+# reference pages). Kept, both introspection files and the 530 pages equal Debian's. In the other 63 every recorded line
+# keeps its authored number (the projection keeps notices, and no recorded line follows the comments it removes).
+WHY_GLIB='g-ir-scanner records its declarations by line in GLib-2.0.gir, and gi-docgen links those lines'
+WHY_GIO='g-ir-scanner records its declarations by line in Gio-2.0.gir, and gi-docgen links those lines'
+preserve=()
+for h in glib/deprecated/gcache.h glib/deprecated/gcompletion.h glib/deprecated/grel.h glib/garray.h glib/gasyncqueue.h \
+		glib/gdate.h glib/genviron.h glib/ggettext.h glib/gkeyfile.h glib/glib-typeof.h glib/glist.h glib/gprimes.h glib/gqsort.h \
+		glib/gquark.h glib/grand.h glib/gsequence.h glib/gshell.h glib/gslice.h glib/gslist.h glib/gstring.h glib/gstringchunk.h \
+		glib/gthreadpool.h glib/gtimer.h glib/gtrashstack.h glib/gversion.h; do
+	preserve+=(--preserve-source "$h" "$WHY_GLIB")
+done
+for h in gio/gaction.h gio/gactiongroup.h gio/gcredentials.h gio/gsocketclient.h gio/gsocketconnection.h gio/gsubprocesslauncher.h \
+		gio/gthreadedsocketservice.h; do
+	preserve+=(--preserve-source "$h" "$WHY_GIO")
+done
+[ ${#preserve[@]} = 96 ] || { echo "expected 32 kept headers, have $(( ${#preserve[@]} / 3 ))" >&2; exit 1; }
+for ((i = 1; i < ${#preserve[@]}; i += 3)); do [ -f "${preserve[i]}" ] || { echo "kept header missing: ${preserve[i]}" >&2; exit 1; }; done
+PYTHONPATH=/toolkit python3 -m lean.debian_prepare /work/lc/source 2.90.1-2+stereo3d1+lc1 --toolkit /toolkit "${preserve[@]}"
 apt-get -y update >/dev/null 2>&1
 apt-get -y --no-install-recommends build-dep /work/lc/source >/work/build-dep.log 2>&1
 # the link and start gate of lean.debhelper runs the rebuilt programs in a bubblewrap root
