@@ -18,7 +18,7 @@ gcc -Wall -Wextra -o "$B/repro" "$HERE/repro.c" $(pkg-config --cflags --libs gio
 	gcc -Wall -Wextra -shared -fPIC -o "$B/modules/libg768slowproxy.so" "$HERE/slowproxy.c" $(pkg-config --cflags --libs gio-2.0) ||
 	{ echo "the reproducer did not build" >&2; exit 125; }
 dpkg-query -W -f '${Package} ${Version} ${Architecture}\n' 'libglib2.0-0t64*' > "$OUT/glib.txt"
-ulimit -c 0
+ulimit -c 1
 : > "$OUT/runs.tsv"
 ok=0
 for i in $(seq "$N"); do
