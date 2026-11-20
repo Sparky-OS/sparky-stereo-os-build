@@ -11,6 +11,7 @@ PREV=$(realpath "$3")
 REPO=$(realpath "$4")
 ARCHIVE=$(realpath "$5")
 EXTRA=$(realpath "$6")
+STAGED=$(dirname "$EXTRA")
 SIBS=$(realpath "$7")
 : "${SPARKY_BUILD_IMAGE:?an owned build image}" "${BUILD_NAME_PREFIX:?an owned container prefix}"
 if [ "${SPARKY_PKG_RESUME:-0}" = 1 ]; then
@@ -28,7 +29,7 @@ docker run --pull=never --ulimit core=0 --name "${BUILD_NAME_PREFIX}-kwin" --cpu
     --mount "type=bind,src=$SIBS,dst=/previous-siblings.txt,readonly" \
     --mount "type=bind,src=$WORK,dst=/work" --mount "type=bind,src=$SRC,dst=/src,readonly" \
     --mount "type=bind,src=$EXTRA,dst=/extra,readonly" --mount "type=bind,src=$REPO,dst=/repo,readonly" \
-    --mount type=bind,src=/mnt/build/one-separation-outputs-750e/stage,dst=/staged,readonly \
+    --mount "type=bind,src=$STAGED,dst=/staged,readonly" \
     --mount "type=bind,src=$PREV,dst=/prev,readonly" --mount "type=bind,src=$HERE/../..,dst=/toolkit,readonly" \
     --mount "type=bind,src=$HERE,dst=/tools,readonly" \
     --mount type=bind,src=/usr/share/keyrings/deb-multimedia-keyring.pgp,dst=/usr/share/keyrings/deb-multimedia-keyring.pgp,readonly \
