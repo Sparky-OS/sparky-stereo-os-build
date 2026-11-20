@@ -1,0 +1,15 @@
+Katemark for Sparky Stereo OS
+-----------------------------
+
+The plugin is installed and off. In Kate: Settings, Configure Kate, Plugins, tick Katemark, OK. Ctrl+Shift+M opens
+and closes the preview beside the document.
+
+Nothing is fetched from the network by default. Katemark's own page of Kate's settings has two choices that can reach it:
+"Load media previews from remote URLs" (off) lets a picture on the web load into the preview, and "Check for updates"
+asks GitHub for the latest release only when the button is clicked. The package manager keeps this package up to date;
+the button's answer is about upstream's releases, not about this package.
+
+The JavaScript libraries (markdown-it and its plugins, KaTeX, Mermaid, highlight.js, js-yaml) are upstream's bundled
+minified copies, compiled into the plugin; their versions and licences are in debian/copyright and in
+/usr/share/doc/katemark/THIRD-PARTY-NOTICES.md. Debian's copies are older (KaTeX 0.16.10 against the bundled 0.19.0,
+Mermaid 9.2.2 against 12.1.0, highlight.js 10.7.3 against 11.10.0) and upstream tests only the bundled ones.
