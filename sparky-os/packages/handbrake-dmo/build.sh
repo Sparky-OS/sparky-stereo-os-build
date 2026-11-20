@@ -8,7 +8,7 @@ REPO=$(realpath "$3")
 . "$HERE/../../repo/build-provenance.sh"
 sparky_provenance_init "$1" "$HERE"
 docker run --name "${SPARKY_CONTAINER_PREFIX:-handbrake}-handbrake-shared-package" --pull=never \
-    --platform linux/amd64 --cpus 4 --ulimit core=0 \
+    --platform linux/amd64 --cpus 4 --ulimit core=1 \
     --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
     "${SPARKY_PROV_ARGS[@]}" -e DEB_BUILD_OPTIONS=parallel=4 \
     -e DEBFULLNAME='Daniel Ramos (Capitain Jack)' -e DEBEMAIL=Capitain_Jack@yahoo.com \
