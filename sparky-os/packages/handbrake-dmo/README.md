@@ -20,3 +20,13 @@ The three deb-multimedia binary names and epoch are retained.
 Upstream stereo metadata and x264 commits retain their authors; spherical
 metadata preservation is their prerequisite. x265 frame packing and SEI scanning
 are separate commits. Installed sample and package comparisons qualify binaries.
+
+The programs' Depends carry floors on the cohort's libraries (FFmpeg +16, x264 +stereo3d1, x265 30219): shlibs alone
+accept the published FFmpeg +15, and on a machine with the i386 FFmpeg libraries apt then kept the cohort back and Stereo
+HandBrake ran on +15. `build-twin-i386.sh RECIPE_DIR IMAGE_I386 DSC WORK REPO [EXTRA_DEB ...]` builds the i386 twin of
+x264-dmo, x265-dmo or ffmpeg-dmo from the source package its amd64 build wrote (`dpkg-buildpackage -B` on the same .dsc);
+FFmpeg's twin needs the i386 libx265-30219 and libx265-dev as EXTRA_DEB.
+
+An audio encoder this computer's FFmpeg lacks (Fraunhofer's fdk_aac and fdk_haac until `sparky-stereo-ffmpeg-fdk` has
+run) is never replaced in silence: HandBrakeCLI stops before scanning and exits non-zero unless `--audio-fallback` names
+another encoder, a job that names one does not start, and the window lists the two encoders and says how to get them.
