@@ -400,7 +400,7 @@ for name in requested:
     version = job["version"] + "+lc1"
     container = "sparky-lc-" + name.replace("+", "-").replace(".", "-") + "-amd64"
     command = [
-        "docker", "run", "--rm", *provenance_args("sparky-lc-migration:20261020"), "--name", container, "--cpus", "4",
+        "docker", "run", '--ulimit', 'core=1', "--rm", *provenance_args("sparky-lc-migration:20261020"), "--name", container, "--cpus", "4",
         "-e", f"TASK_DSC={dsc}", "-e", f"TASK_VERSION={version}",
         "-e", f"TASK_SOURCE={name}",
         "-v", f"{work}:/work", "-v", f"{repo}:/repo:ro",

@@ -35,7 +35,7 @@ tar -xJOf "${DSC%.dsc}.debian.tar.xz" debian/changelog > "$tmp/changelog"
 SOURCE_DATE_EPOCH=$(python3 "$HERE/../repo/reproducible.py" changelog "$tmp/changelog")
 export SOURCE_DATE_EPOCH SPARKY_SOURCE_DATE_BASIS="the newest changelog entry of $(basename "$DSC")"
 sparky_provenance_init "$IMG" "$HERE"
-docker run --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lc-dsc-$(basename "$DSC" .dsc | tr -c 'A-Za-z0-9_.-' -)-$ARCH" --platform "linux/$ARCH" --cpus "${CPUS:-4}" --memory 8g \
+docker run --ulimit core=1 --rm --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lc-dsc-$(basename "$DSC" .dsc | tr -c 'A-Za-z0-9_.-' -)-$ARCH" --platform "linux/$ARCH" --cpus "${CPUS:-4}" --memory 8g \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$ARCHIVE":/archive:ro \
 	"${PREV_MOUNT[@]}" "${PREV_ENV[@]}" \

@@ -18,7 +18,7 @@ PREV=$(cd "$3" && pwd -P)
 FORK=$(cd "$4" && pwd -P)
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 sparky_provenance_init sparky-lc-migration:20261020
-docker run --rm --name w196-stereo-layer --cpus "${CPUS:-8}" --memory 32g --platform linux/amd64 \
+docker run --ulimit core=1 --rm --name w196-stereo-layer --cpus "${CPUS:-8}" --memory 32g --platform linux/amd64 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -e JOBS="${CPUS:-8}" -e STEREO_LAYER_VERSION="${STEREO_LAYER_VERSION:-1.13.0}" \
 	-v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro -v "$WORK":/work -v "$PUB":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../..":/toolkit:ro -v "$FORK":/fork:ro \

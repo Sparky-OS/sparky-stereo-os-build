@@ -57,7 +57,7 @@ sys.exit('not in SHA256SUMS or the published Sources: ' + dsc)
 PY
 DSC_SHA256=$(cat "$WORK/dsc.sha256")
 sparky_provenance_init "$SPARKY_BUILD_IMAGE"
-docker run --rm --cpus 4 --platform linux/amd64 "${SPARKY_PROV_ARGS[@]}" \
+docker run --ulimit core=1 --rm --cpus 4 --platform linux/amd64 "${SPARKY_PROV_ARGS[@]}" \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	-e DSC="$DSC" -e DSC_SHA256="$DSC_SHA256" -e PLAIN_OPTIONS="$PLAIN_OPTIONS" -e PATCH="$PATCH" -e CODE_PATCH="${CODE_PATCH:-}" -e CONTROL_PACKAGE="${CONTROL_PACKAGE:-}" -e CONTROL_FIELD="${CONTROL_FIELD:-}" -e CONTROL_ADD="${CONTROL_ADD:-}" \
 	-e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \

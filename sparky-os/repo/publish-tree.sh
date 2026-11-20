@@ -464,7 +464,7 @@ PY
   }
 }
 EOF
-	APPSTREAM_DOCKER=(docker run --rm --pull never --cpus 4 --network none --user "$SPARKY_APPSTREAM_USER" -v "$DEP11:/dep11")
+	APPSTREAM_DOCKER=(docker run --ulimit core=1 --rm --pull never --cpus 4 --network none --user "$SPARKY_APPSTREAM_USER" -v "$DEP11:/dep11")
 	while IFS= read -r root; do
 		APPSTREAM_DOCKER+=(-v "$root:$root:ro")
 	done <"$DEP11/mounts.txt"

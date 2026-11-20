@@ -18,5 +18,5 @@ while [ "${1:-}" = "-m" ]; do MOUNTS="$MOUNTS -v $2"; shift 2; done
 KVM=
 if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then KVM="--device /dev/kvm --group-add $(getent group kvm | cut -d: -f3)"; fi
 # shellcheck disable=SC2086
-exec docker run --rm --platform linux/amd64 --cpus "${BENCH_CPUS:-4}" --memory "${BENCH_MEM:-16g}" --user "$(id -u):$(id -g)" $KVM \
+exec docker run --ulimit core=1 --rm --platform linux/amd64 --cpus "${BENCH_CPUS:-4}" --memory "${BENCH_MEM:-16g}" --user "$(id -u):$(id -g)" $KVM \
     -v "$HERE":/bench:ro -v "$PWD/bench-work":/work $MOUNTS -e HOME=/tmp "$IMAGE" /bench/bench --work /work "$@"
