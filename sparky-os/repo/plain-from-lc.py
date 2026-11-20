@@ -4,7 +4,8 @@
 """plain-from-lc.py LC_SOURCE_DIR: undoes, in an unpacked +lc1 source tree, exactly what
 sparky-os/lean/debian_prepare.py adds to a plain source (the toolkit folder, the optional
 preserve plan, the six build dependencies at the front of Build-Depends, the dch entry of the
-+lc1 version and the three rules targets it appends), so the tree is the plain source again.
++lc1 version and the rules targets it appends, in either of its forms: its three targets, or, where Debian's rules define
+a configure or clean hook of their own, the kept-hook form of ORDER 768b), so the tree is the plain source again.
 Every step checks that the text it removes is the text debian_prepare writes; anything else stops.
 The published repository holds only +lc1 sources, and the next version of a package starts from
 its plain source: unpack the published .dsc (dpkg-source -x), run this on the tree, then pack it
@@ -83,21 +84,21 @@ else:
     writes.append((deb / 'control', control.replace(prefix, 'Build-Depends:')))
 
 rules = (deb / 'rules').read_text()
-tail = """
-
-# Distribution-only processing; authored source remains in the source archive.
-execute_before_dh_auto_configure:
-\tPYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.source_tree project $(CURDIR)
-
-execute_before_dh_auto_clean:
-\tPYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.source_tree restore $(CURDIR)
-\trm -rf .sparky-lc
-
-override_dh_builddeb:
-\tPYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.debhelper --provenance $(CURDIR)/debian/sparky-lean-toolkit/provenance.sh
-"""
-assert rules.endswith(tail), 'the rules file does not end with the lc1 targets'
-writes.append((deb / 'rules', rules[:-len(tail)] + '\n'))
+# the targets lean.debian_prepare appends begin with its header line; what precedes it is the plain rules file (ending in one
+# newline, as the step strips it before appending), and the tail must be exactly what the step writes for that file: the three
+# toolkit targets, or, where Debian's rules define execute_before_dh_auto_configure or execute_before_dh_auto_clean, the kept-hook
+# form (ORDER 768b), rendered by the step's own lean_rules so the two never drift apart
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lean.debian_prepare import HEADER, lean_rules  # noqa: E402
+start = rules.rfind(HEADER)
+assert start >= 0, 'the rules file does not end with the lc1 targets'
+plain_rules = rules[:start] + '\n'
+try:
+    expected = plain_rules.rstrip() + lean_rules(plain_rules)
+except ValueError as error:
+    raise AssertionError(f'the rules file does not end with the lc1 targets ({error})')
+assert rules == expected, 'the rules file does not end with the lc1 targets'
+writes.append((deb / 'rules', plain_rules))
 
 changelog = (deb / 'changelog').read_text()
 first, body, trailer, rest = changelog.split('\n\n', 3)
