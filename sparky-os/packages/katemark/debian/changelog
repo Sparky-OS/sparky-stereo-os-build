@@ -1,0 +1,9 @@
+katemark (0.4.7-1) unstable; urgency=medium
+
+  * The edition's build of Katemark 0.4.7 (Olivier Booklage, github.com/obook/katemark, release of 2026-11-08, a fork of uwuclxdy's Katdown), the Markdown preview plugin for Kate with Mermaid, KaTeX and scroll sync. Debian has no package of it (no source package in testing or unstable, read 2026-11-20) and SparkyLinux does not host it; the author's own roadmap says a Debian package is not made yet.
+  * Built from the tag's source, pinned in the recipe by commit 9b9a0505b13099ff7f485b630d38b2915c3dfab7, the tarball's SHA-256 and the git tree id 42743438bffd8c18a9c39141c9070619c5869ea9, with Debian's and the edition's own Qt 6 and KDE Frameworks libraries; upstream's five test programs run in the build. The program is not changed. Upstream's prebuilt packages are not used.
+  * The JavaScript libraries (markdown-it and its plugins, KaTeX, Mermaid, highlight.js, js-yaml) are upstream's bundled minified copies, compiled into the plugin: Debian's are older than the versions upstream tests, so they are not used (debian/README.Debian has the versions). Their licences are in debian/copyright and in THIRD-PARTY-NOTICES.md.
+  * One binary package, katemark, which Depends on kate. The plugin is installed and off until the person ticks it in Kate's settings.
+  * Lean Code 0.1.30: the C++ sources are projected as build inputs by the C adapter.
+
+ -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  Fri, 20 Nov 2026 18:30:00 -0300
