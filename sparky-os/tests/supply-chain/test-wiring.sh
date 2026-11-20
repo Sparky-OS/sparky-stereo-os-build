@@ -13,7 +13,7 @@ wired_ok() {  # wired_ok FILE
 	local init run
 	init=$(grep -n '^[[:space:]]*sparky_provenance_init ' "$f" | head -1 | cut -d: -f1)
 	run=$(grep -n 'docker run' "$f" | grep -v '^[0-9]*:#' | head -1 | cut -d: -f1)
-	[ -n "$init" ] && [ -n "$run" ] && [ "$init" -lt "$run" ] || { echo "$f: sparky_provenance_init is not before docker run"; return 1; }
+	[ -n "$init" ] && [ -n "$run" ] && [ "$init" -lt "$run" ] || { echo "$f: sparky_provenance_init is not before the container starts"; return 1; }
 	# grep -c reads to the end: with grep -q, sed's next 4 KB block met a closed pipe (SIGPIPE) and pipefail failed a wired script under load
 	sed -n "${run},\$p" "$f" | grep -c '"${SPARKY_PROV_ARGS\[@\]}"' >/dev/null || { echo "$f: docker run lacks \"\${SPARKY_PROV_ARGS[@]}\""; return 1; }
 }
