@@ -1,0 +1,269 @@
+From 5f7c6e813f5350f6558046a40f72e86648cdbea6 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Fri, 20 Nov 2026 00:12:50 -0300
+Subject: [PATCH] plugins/screenshot: Capture both eyes according to output
+ mode
+
+Expose stereoOutput independently of paired content. Capture ordinary windows with both eyes on composing outputs and assemble paired workspaces, duplicating mono output views. Keep 2D-only replies and the legacy strip helper unchanged.
+
+Assisted-by: Codex (GPT-6)
+---
+ .../screenshot/org.kde.KWin.ScreenShot2.xml   | 30 ++++++++---
+ src/plugins/screenshot/screenshot.cpp         | 52 +++++++++++++++++--
+ src/plugins/screenshot/screenshot.h           |  4 ++
+ .../screenshot/screenshotdbusinterface2.cpp   | 14 +++--
+ 4 files changed, 87 insertions(+), 13 deletions(-)
+
+diff --git a/src/plugins/screenshot/org.kde.KWin.ScreenShot2.xml b/src/plugins/screenshot/org.kde.KWin.ScreenShot2.xml
+index eb8fa1a..7f23b25 100644
+--- a/src/plugins/screenshot/org.kde.KWin.ScreenShot2.xml
++++ b/src/plugins/screenshot/org.kde.KWin.ScreenShot2.xml
+@@ -18,6 +18,8 @@
+         view, with the left eye in the left half and the right eye in the right half.
+         Both eyes have the same scale. JPS writers swap the halves to follow the JPS
+         right-eye-first convention.
++        Since version 7, stereoOutput reports output mode separately from stereo
++        content: it is true if a captured output composes two eyes.
+     -->
+     <interface name="org.kde.KWin.ScreenShot2">
+         <!--
+@@ -63,6 +65,8 @@
+             * "scale" (d): The ratio between the native size and the logical
+                            size of the contents, corresponds to QImage::devicePixelRatio().
+                            Available since version 4.
++            * "stereoOutput" (b): Whether a captured output composes two eyes.
++                                   Available since version 7.
+             * "stereo" (b): Whether the raw image is a stereo pair. A stereo pair is
+                              double width with the left eye in the left half and the
+                              right eye in the right half. Available since version 6.
+@@ -113,6 +117,8 @@
+             * "scale" (d): The ratio between the native size and the logical
+                            size of the contents, corresponds to QImage::devicePixelRatio().
+                            Available since version 4.
++            * "stereoOutput" (b): Whether a captured output composes two eyes.
++                                   Available since version 7.
+             * "stereo" (b): Whether the raw image is a stereo pair. A stereo pair is
+                              double width with the left eye in the left half and the
+                              right eye in the right half. Available since version 6.
+@@ -161,6 +167,8 @@
+             * "scale" (d): The ratio between the native size and the logical
+                            size of the contents, corresponds to QImage::devicePixelRatio().
+                            Available since version 4.
++            * "stereoOutput" (b): Whether a captured output composes two eyes.
++                                   Available since version 7.
+             * "stereo" (b): Whether the raw image is a stereo pair. A stereo pair is
+                              double width with the left eye in the left half and the
+                              right eye in the right half. Available since version 6.
+@@ -212,6 +220,8 @@
+             * "scale" (d): The ratio between the native size and the logical
+                            size of the contents, corresponds to QImage::devicePixelRatio().
+                            Available since version 4.
++            * "stereoOutput" (b): Whether a captured output composes two eyes.
++                                   Available since version 7.
+             * "stereo" (b): Whether the raw image is a stereo pair. A stereo pair is
+                              double width with the left eye in the left half and the
+                              right eye in the right half. Available since version 6.
+@@ -261,6 +271,8 @@
+             * "scale" (d): The ratio between the native size and the logical
+                            size of the contents, corresponds to QImage::devicePixelRatio().
+                            Available since version 4.
++            * "stereoOutput" (b): Whether a captured output composes two eyes.
++                                   Available since version 7.
+             * "stereo" (b): Whether the raw image is a stereo pair. A stereo pair is
+                              double width with the left eye in the left half and the
+                              right eye in the right half. Available since version 6.
+@@ -310,6 +322,8 @@
+             * "scale" (d): The ratio between the native size and the logical
+                            size of the contents, corresponds to QImage::devicePixelRatio().
+                            Available since version 4.
++            * "stereoOutput" (b): Whether a captured output composes two eyes.
++                                   Available since version 7.
+             * "stereo" (b): Whether the raw image is a stereo pair. A stereo pair is
+                              double width with the left eye in the left half and the
+                              right eye in the right half. Available since version 6.
+@@ -338,10 +352,10 @@
+             @options: Optional vardict with screenshot options
+             @pipe: The pipe file descriptor where the screenshot will be written
+ 
+-            Take a screenshot of the workspace, i.e. all screens united. A stereo
+-            output occupies a double-width section with its two eyes next to each
+-            other; a 2D output occupies one section. The "stereo" result is false
+-            because this is an ordinary image containing per-output stereo sections.
++            Take a screenshot of the workspace, i.e. all screens united. When any
++            output composes two eyes, the result is a complete left workspace
++            followed by a complete right workspace; mono outputs are identical
++            in both. In 2D-only mode, the legacy per-output strip is unchanged.
+ 
+             Supported since version 3.
+ 
+@@ -370,9 +384,11 @@
+             * "scale" (d): The ratio between the native size and the logical
+                            size of the contents, corresponds to QImage::devicePixelRatio().
+                            Available since version 4.
+-            * "stereo" (b): Always false for this all-screens strip. Stereo output
+-                             sections are already placed side by side in the image.
+-                             Available since version 6.
++            * "stereoOutput" (b): Whether a captured output composes two eyes.
++                                   Available since version 7.
++            * "stereo" (b): True for a paired workspace when stereoOutput is true.
++                             False for the legacy 2D-only per-output strip.
++                             Available since version 6; paired workspace since version 7.
+         -->
+         <method name="CaptureWorkspace">
+             <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QVariantMap" />
+diff --git a/src/plugins/screenshot/screenshot.cpp b/src/plugins/screenshot/screenshot.cpp
+index eec1624..398ef88 100644
+--- a/src/plugins/screenshot/screenshot.cpp
++++ b/src/plugins/screenshot/screenshot.cpp
+@@ -107,16 +107,26 @@ bool screenShotIsStereo(LogicalOutput *screen)
+     return screen->hasStereoEyes() || showsStereoContent(screen->geometryF());
+ }
+ 
+-bool screenShotIsStereo(const Rect &area)
++bool screenShotHasStereoOutput(const Rect &area)
+ {
+     return std::ranges::any_of(workspace()->outputs(), [&area](LogicalOutput *output) {
+         return output->hasStereoEyes() && output->geometry().intersects(area);
+-    }) || showsStereoContent(RectF(area));
++    });
++}
++
++bool screenShotHasStereoOutput(Window *window)
++{
++    return screenShotHasStereoOutput(window->frameGeometry().toAlignedRect());
++}
++
++bool screenShotIsStereo(const Rect &area)
++{
++    return screenShotHasStereoOutput(area) || showsStereoContent(RectF(area));
+ }
+ 
+ bool screenShotIsStereo(Window *window)
+ {
+-    return window->holdsStereoContent();
++    return screenShotHasStereoOutput(window) || window->holdsStereoContent();
+ }
+ 
+ class StereoCaptureScope
+@@ -330,6 +340,42 @@ std::optional<QImage> ScreenShotManager::takeScreenShot(const Rect &area, Screen
+     return snapshot;
+ }
+ 
++std::optional<QImage> ScreenShotManager::takeStereoScreenShotWorkspace(ScreenShotFlags flags, std::optional<pid_t> pidToHide)
++{
++    const auto outputs = workspace()->outputs();
++    if (outputs.isEmpty()) {
++        return std::nullopt;
++    }
++    Rect geometry = outputs.front()->geometry();
++    for (LogicalOutput *output : outputs | std::views::drop(1)) {
++        geometry = geometry.united(output->geometry());
++    }
++    const qreal scale = flags & ScreenShotNativeResolution
++        ? std::ranges::max(outputs, {}, &LogicalOutput::scale)->scale()
++        : 1.0;
++    const QSize eyeSize(qRound(geometry.width() * scale), qRound(geometry.height() * scale));
++    QImage result(QSize(eyeSize.width() * 2, eyeSize.height()), QImage::Format_ARGB32_Premultiplied);
++    result.fill(Qt::transparent);
++    QPainter painter(&result);
++    for (LogicalOutput *output : outputs) {
++        const auto image = takeScreenShot(output, flags, pidToHide);
++        if (!image) {
++            return std::nullopt;
++        }
++        const int sourceWidth = image->width() / (screenShotIsStereo(output) ? 2 : 1);
++        const QRectF leftSource(0, 0, sourceWidth, image->height());
++        const QRectF rightSource(output->hasStereoEyes() ? sourceWidth : 0, 0, sourceWidth, image->height());
++        const Rect section = output->geometry();
++        const QRect target(qRound((section.x() - geometry.x()) * scale), qRound((section.y() - geometry.y()) * scale),
++                           qRound(section.width() * scale), qRound(section.height() * scale));
++        painter.drawImage(target, *image, leftSource);
++        painter.drawImage(target.translated(eyeSize.width(), 0), *image, rightSource);
++    }
++    painter.end();
++    result.setDevicePixelRatio(scale);
++    return result;
++}
++
+ std::optional<QImage> ScreenShotManager::takeScreenShotWorkspace(ScreenShotFlags flags, std::optional<pid_t> pidToHide)
+ {
+     const auto outputs = workspace()->outputs();
+diff --git a/src/plugins/screenshot/screenshot.h b/src/plugins/screenshot/screenshot.h
+index c25f3a5..90f2685 100644
+--- a/src/plugins/screenshot/screenshot.h
++++ b/src/plugins/screenshot/screenshot.h
+@@ -31,6 +31,9 @@ class Rect;
+ class ScreenShotDBusInterface2;
+ class Window;
+ 
++bool screenShotHasStereoOutput(const Rect &area);
++bool screenShotHasStereoOutput(Window *window);
++
+ bool screenShotIsStereo(LogicalOutput *screen);
+ bool screenShotIsStereo(const Rect &area);
+ bool screenShotIsStereo(Window *window);
+@@ -48,6 +51,7 @@ public:
+     std::optional<QImage> takeScreenShot(LogicalOutput *screen, ScreenShotFlags flags, std::optional<pid_t> pidToHide);
+     std::optional<QImage> takeScreenShot(const Rect &area, ScreenShotFlags flags, std::optional<pid_t> pidToHide);
+     std::optional<QImage> takeScreenShotWorkspace(ScreenShotFlags flags, std::optional<pid_t> pidToHide);
++    std::optional<QImage> takeStereoScreenShotWorkspace(ScreenShotFlags flags, std::optional<pid_t> pidToHide);
+     std::optional<QImage> takeScreenShot(Window *window, ScreenShotFlags flags = {});
+ 
+ private:
+diff --git a/src/plugins/screenshot/screenshotdbusinterface2.cpp b/src/plugins/screenshot/screenshotdbusinterface2.cpp
+index d73c6de..b3fa386 100644
+--- a/src/plugins/screenshot/screenshotdbusinterface2.cpp
++++ b/src/plugins/screenshot/screenshotdbusinterface2.cpp
+@@ -223,7 +223,7 @@ ScreenShotDBusInterface2::~ScreenShotDBusInterface2()
+ 
+ int ScreenShotDBusInterface2::version() const
+ {
+-    return 6;
++    return 7;
+ }
+ 
+ std::optional<pid_t> ScreenShotDBusInterface2::determineCallerPid() const
+@@ -436,6 +436,7 @@ void ScreenShotDBusInterface2::takeScreenShot(LogicalOutput *screen, ScreenShotF
+         sink->flush(*result, QVariantMap{
+                                  {QStringLiteral("screen"), screen->name()},
+                                  {QStringLiteral("stereo"), screenShotIsStereo(screen)},
++                                 {QStringLiteral("stereoOutput"), screen->hasStereoEyes()},
+                              });
+     } else {
+         sink->cancel();
+@@ -449,6 +450,7 @@ void ScreenShotDBusInterface2::takeScreenShot(const Rect &area, ScreenShotFlags
+     if (const auto result = m_effect->takeScreenShot(area, flags, pid)) {
+         sink->flush(*result, QVariantMap{
+                                  {QStringLiteral("stereo"), screenShotIsStereo(area)},
++                                 {QStringLiteral("stereoOutput"), screenShotHasStereoOutput(area)},
+                              });
+     } else {
+         sink->cancel();
+@@ -460,9 +462,14 @@ void ScreenShotDBusInterface2::takeScreenShotWorkspace(ScreenShotFlags flags,
+                                                        ScreenShotSinkPipe2 *sink,
+                                                        std::optional<pid_t> pid)
+ {
+-    if (const auto result = m_effect->takeScreenShotWorkspace(flags, pid)) {
++    const bool stereoOutput = std::ranges::any_of(workspace()->outputs(), [](LogicalOutput *output) {
++        return output->hasStereoEyes();
++    });
++    const auto result = stereoOutput ? m_effect->takeStereoScreenShotWorkspace(flags, pid) : m_effect->takeScreenShotWorkspace(flags, pid);
++    if (result) {
+         sink->flush(*result, QVariantMap{
+-                                 {QStringLiteral("stereo"), false},
++                                 {QStringLiteral("stereo"), stereoOutput},
++                                 {QStringLiteral("stereoOutput"), stereoOutput},
+                              });
+     } else {
+         sink->cancel();
+@@ -477,6 +484,7 @@ void ScreenShotDBusInterface2::takeScreenShot(Window *window, ScreenShotFlags fl
+         sink->flush(*result, QVariantMap{
+                                  {QStringLiteral("windowId"), window->internalId().toString()},
+                                  {QStringLiteral("stereo"), screenShotIsStereo(window)},
++                                 {QStringLiteral("stereoOutput"), screenShotHasStereoOutput(window)},
+                              });
+     } else {
+         sink->cancel();
+-- 
+2.53.0
+
