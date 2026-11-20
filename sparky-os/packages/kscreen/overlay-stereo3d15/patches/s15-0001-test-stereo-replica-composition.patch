@@ -1,0 +1,66 @@
+From 8df6eaad0feb086aa3c642124be8789101603a22 Mon Sep 17 00:00:00 2001
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 19 Nov 2026 23:29:33 -0300
+Subject: [PATCH] autotests: Require eye-swap availability to follow stereo
+ replica composition
+
+Assisted-by: Codex
+---
+ tests/swapeyes.cpp | 41 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 41 insertions(+)
+
+diff --git a/tests/swapeyes.cpp b/tests/swapeyes.cpp
+index 54b069f..db05fee 100644
+--- a/tests/swapeyes.cpp
++++ b/tests/swapeyes.cpp
+@@ -110,6 +110,47 @@ private Q_SLOTS:
+         }
+     }
+ 
++    void stereoCompositionFollowsTheReplicaGroup()
++    {
++        ConfigHandler handler;
++        auto source = configure(handler, {mode("2d", Layout::None)}, KScreen::Output::Capability::StereoSwapEyes);
++        const auto config = handler.config();
++        KScreen::OutputPtr target(new KScreen::Output);
++        target->setId(2);
++        target->setName(QStringLiteral("replica"));
++        target->setConnected(true);
++        target->setEnabled(true);
++        target->setCapabilities(KScreen::Output::Capability::StereoSwapEyes);
++        target->setModes({{QStringLiteral("2d"), mode("2d", Layout::None)}, {QStringLiteral("3d"), mode("3d", Layout::SideBySideFull)}});
++        target->setCurrentModeId(QStringLiteral("2d"));
++        target->setSize(QSize(1920, 1080));
++        target->setExplicitLogicalSize(QSize(1920, 1080));
++        target->setReplicationSource(source->id());
++        config->addOutput(target);
++        handler.setConfig(config);
++        auto model = handler.outputModel();
++        const auto sourceIndex = model->indexForOutput(source);
++        const int composition = role(model, "stereoCompositionActive");
++        QVERIFY(composition >= 0);
++        QVERIFY(!model->data(sourceIndex, composition).toBool());
++        QSignalSpy changes(model, &QAbstractItemModel::dataChanged);
++        target->setCurrentModeId(QStringLiteral("3d"));
++        QVERIFY(model->data(sourceIndex, composition).toBool());
++        QVERIFY(!changes.isEmpty());
++        QVERIFY(changes.last().at(2).value<QList<int>>().contains(composition));
++        // An independent 2D output has no second view to select.
++        target->setReplicationSource(0);
++        QVERIFY(!model->data(sourceIndex, composition).toBool());
++        target->setReplicationSource(source->id());
++        QVERIFY(model->data(sourceIndex, composition).toBool());
++        target->setEnabled(false);
++        QVERIFY(!model->data(sourceIndex, composition).toBool());
++        target->setEnabled(true);
++        QVERIFY(model->data(sourceIndex, composition).toBool());
++        target->setCurrentModeId(QStringLiteral("2d"));
++        QVERIFY(!model->data(sourceIndex, composition).toBool());
++    }
++
+     void theSwitchSetsTheOutput()
+     {
+         ConfigHandler handler;
+-- 
+2.53.0
+
