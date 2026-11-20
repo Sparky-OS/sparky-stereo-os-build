@@ -34,6 +34,12 @@ t = t.replace('--build=$(DEB_BUILD_GNU_TYPE)', '--build=$(DEB_HOST_GNU_TYPE:%-li
 # debhelper builds in configure's folder, which is named by that same tuple.
 t = t.replace('dh $@ -B$(DEB_HOST_GNU_TYPE)', 'dh $@ -B$(DEB_HOST_GNU_TYPE:%-linux-gnu=%-unknown-linux-gnu)')
 rules.write_text(t)
+# The link gate counts every imported symbol named "stereo". deb-multimedia's HandBrake linked its own FFmpeg statically,
+# so its programs imported libspeex's stereo decoding; with the shared FFmpeg, libavcodec63 imports it (nm -D), and the
+# programs no longer do. Speex stereo decoding is kept; the import moved to the library.
+(source / 'debian/sparky-lean-retired-stereo-imports').write_text(
+    'speex_decode_stereo_int Speex stereo decoding moved with FFmpeg into the shared libavcodec63, which imports it\n'
+    'speex_std_stereo_request_handler Speex stereo decoding moved with FFmpeg into the shared libavcodec63, which imports it\n')
 subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', version,
                 '--distribution', 'UNRELEASED',
                 'Build the Sparky-OS HandBrake fork against shared edition libraries, preserving all three binary names and encoder features.'],
