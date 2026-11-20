@@ -40,10 +40,14 @@ if [ "${SPARKY_KWIN_RESUME:-0}" = 1 ]; then
     (cd "$job/lc/source" && for p in $(dh_listpackages); do rm -rf "debian/$p" "debian/$p.debhelper.log" "debian/$p.substvars"; done && rm -rf debian/.debhelper debian/tmp debian/files)
 fi
 mkdir -p "$SPARKY_LC_SCRATCH"
-id builder > /dev/null 2>&1 || useradd --create-home --uid 1000 builder
-chown -R builder:builder "$job" "$SPARKY_LC_SCRATCH"
+build_user=$(getent passwd 1000 | cut -d: -f1)
+if [ -z "$build_user" ]; then
+    useradd --create-home --uid 1000 builder
+    build_user=builder
+fi
+chown -R 1000:1000 "$job" "$SPARKY_LC_SCRATCH"
 cd "$job/lc/source"
-runuser -u builder -- env SPARKY_LC_PREVIOUS_DIR=/prev ${SPARKY_LC_PREVIOUS_SIBLINGS_FILE:+SPARKY_LC_PREVIOUS_SIBLINGS_FILE=$SPARKY_LC_PREVIOUS_SIBLINGS_FILE} \
+runuser -u "$build_user" -- env SPARKY_LC_PREVIOUS_DIR=/prev ${SPARKY_LC_PREVIOUS_SIBLINGS_FILE:+SPARKY_LC_PREVIOUS_SIBLINGS_FILE=$SPARKY_LC_PREVIOUS_SIBLINGS_FILE} \
     SPARKY_LC_SIBLINGS_FILE="$SPARKY_LC_PREVIOUS_SIBLINGS_FILE" SPARKY_LC_ARCHIVE_CONFIG="$SPARKY_LC_ARCHIVE_CONFIG" SPARKY_LC_SCRATCH="$SPARKY_LC_SCRATCH" \
     dpkg-buildpackage -b "${build_args[@]}" -us -uc -j4
 cd "$job/lc"
