@@ -16,5 +16,5 @@ docker run --rm --pull=never --name "$name" --platform linux/amd64 --ulimit core
   -e HOME=/tmp -e PYTHONPATH=/toolkit \
   -e DEBFULLNAME='Daniel Ramos (Capitain Jack)' -e DEBEMAIL=Capitain_Jack@yahoo.com \
   -v "$build_tree/sparky-os":/toolkit:ro -v "$output":/output \
-  "$image" bash -euc 'ulimit -c 0; python3 /toolkit/repo/rebuild-script-source.py "/output/$1"; python3 -m lean.release check-debs /output/*.deb' \
+  "$image" bash -euc 'ulimit -c 1; python3 /toolkit/repo/rebuild-script-source.py "/output/$1"; python3 -m lean.release check-debs /output/*.deb' \
   bash "$(basename "$descriptor")"

@@ -134,6 +134,22 @@ def findings(rel, text):
     return problems, count
 
 
+# A shell's own ulimit inside the container lowers what --ulimit core=1 gave; runuser and bubblewrap keep it.
+ULIMIT_CORE = re.compile(r'\bulimit\s+-[A-Za-z]*c[A-Za-z]*\s+([^\s;&|)\x27\"]+)')
+
+
+def ulimit_findings(rel, text):
+    problems = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith('#'):
+            continue
+        for value in ULIMIT_CORE.findall(line):
+            if value != '1':
+                problems.append(f'{rel}:{number}: ulimit sets the core limit to {value}; only 1 stops the piped '
+                                f'core helper (ulimit -c 1)')
+    return problems
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('root', nargs='?', type=Path, default=Path(__file__).resolve().parents[3])
@@ -151,10 +167,13 @@ def main():
             continue
         raw = (subprocess.check_output(['git', '-C', str(root), 'show', f'{args.revision}:{rel}'])
                if args.revision else path.read_bytes())
-        if b'docker' not in raw or b'\0' in raw:
+        if b'\0' in raw or (b'docker' not in raw and b'ulimit' not in raw):
             continue
         try:
             text = raw.decode()
+            problems.extend(ulimit_findings(rel, text))
+            if 'docker' not in text:
+                continue
             found, n = findings(rel, text)
         except (UnicodeError, SyntaxError) as exc:
             problems.append(f'{rel}: cannot inspect: {exc}')

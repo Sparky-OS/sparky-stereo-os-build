@@ -43,6 +43,19 @@ class CoreLimits(unittest.TestCase):
     def test_comments_and_inspection_are_not_launchers(self):
         self.assertEqual(self.check('# docker run img\ngrep "docker run" file', 0), 0)
 
+    def test_shell_ulimit_inside_the_container(self):
+        # Measured (ORDER 742): docker run --ulimit core=1 gives 1; a recipe's own zero core ulimit gives 0,
+        # and runuser and bubblewrap keep 0, so a crash in the gate reached the host's crash list.
+        # The cases are assembled so that this file is not a finding of the tree check itself.
+        def ulimit(text):
+            return corecheck.ulimit_findings('case.sh', text)
+        zero, soft_zero, unlimited = 'ulimit -c' + ' 0', 'ulimit -Sc' + ' 0', 'ulimit -c' + ' unlimited'
+        self.assertEqual(len(ulimit(f"bash -c 'set -eu; {zero}; runuser -u builder -- make'")), 1)
+        self.assertEqual(len(ulimit(f'{soft_zero}\n{unlimited}')), 2)
+        self.assertEqual(ulimit("bash -c 'set -eu; ulimit -c 1; runuser -u builder -- make'"), [])
+        self.assertEqual(ulimit(f'# {zero} was the old rule'), [])
+        self.assertEqual(ulimit('ulimit -n 4096'), [])
+
     def test_python_argv(self):
         self.check("a = ['docker', 'run', '--ulimit', 'core=1', image]", 0, 'case.py')
         self.check("a = ['docker', 'run', image, '--ulimit', 'core=1']", 1, 'case.py')

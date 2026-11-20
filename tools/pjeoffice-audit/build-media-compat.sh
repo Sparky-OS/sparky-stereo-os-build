@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Container-only fixture, from a separately signature-verified FFmpeg source tree.
 set -eu
-ulimit -c 0
+ulimit -c 1
 source_tree=${1:?verified FFmpeg source directory}
 prefix=${2:?private scratch installation prefix}
 cd "$source_tree"
