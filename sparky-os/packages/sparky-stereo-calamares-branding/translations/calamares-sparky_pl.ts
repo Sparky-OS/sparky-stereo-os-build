@@ -149,15 +149,15 @@
     </message>
     <message>
         <source>Throw and Catch</source>
-        <translation>Przerzuć i Odbierz</translation>
+        <translation>Throw (przerzucić) i Catch (odebrać)</translation>
     </message>
     <message>
         <source>Throw a window, a film or the whole desktop to a TV, a phone or another computer, sound included.</source>
-        <translation>Przerzuć okno, film lub cały pulpit na telewizor, telefon albo inny komputer, razem z dźwiękiem.</translation>
+        <translation>Użyj Throw (przerzucić), aby przesłać okno, film lub cały pulpit wraz z dźwiękiem na telewizor, telefon lub inny komputer.</translation>
     </message>
     <message>
         <source>The other side catches it with one click.</source>
-        <translation>Druga strona odbiera to jednym kliknięciem.</translation>
+        <translation>Po drugiej stronie wystarczy kliknąć Catch (odebrać), aby odebrać obraz.</translation>
     </message>
     <message>
         <source>Sound, your way</source>

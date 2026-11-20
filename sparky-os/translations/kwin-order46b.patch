@@ -242,22 +242,22 @@ diff --git a/po/es/kwin.po b/po/es/kwin.po
 +msgstr "Pantalla independiente y escala de KDE…"
 +
 +msgid "Start Throwing to a headset, then open this window again."
-+msgstr "Empiece a lanzar a un casco y vuelva a abrir esta ventana."
++msgstr "Inicie Throw (lanzar) hacia un visor y vuelva a abrir esta ventana."
 +
 +msgid "The Throw view could not be saved. Check that the headset is still connected."
-+msgstr "No se pudo guardar la vista de lanzamiento. Compruebe que el casco sigue conectado."
++msgstr "No se pudo guardar la vista de Throw (lanzar). Compruebe que el visor siga conectado."
 +
 +msgid "These settings affect the headset’s mirrored Throw view. The real monitor and its windows keep their placement."
-+msgstr "Estos ajustes afectan a la vista reflejada que se lanza al casco. El monitor real y sus ventanas conservan su posición."
++msgstr "Estos ajustes afectan a la vista duplicada de Throw (lanzar) en el visor. El monitor físico y sus ventanas conservan su posición."
 +
 +msgid "Throw view"
-+msgstr "Vista de lanzamiento"
++msgstr "Vista de Throw (lanzar)"
 +
 +msgid "Throw view preview"
-+msgstr "Vista previa de la vista de lanzamiento"
++msgstr "Vista previa de la vista de Throw (lanzar)"
 +
 +msgid "Throw view saved."
-+msgstr "Vista de lanzamiento guardada."
++msgstr "Se guardó la vista de Throw (lanzar)."
 +
 +msgid "Vertical center:"
 +msgstr "Centro vertical:"
@@ -820,27 +820,48 @@ diff --git a/po/zh_TW/kwin.po b/po/zh_TW/kwin.po
 diff --git a/src/helpers/headset-view/org.kde.kwin.headsetview.desktop b/src/helpers/headset-view/org.kde.kwin.headsetview.desktop
 --- a/src/helpers/headset-view/org.kde.kwin.headsetview.desktop
 +++ b/src/helpers/headset-view/org.kde.kwin.headsetview.desktop
-@@ -1,18 +1,20 @@
+@@ -1,23 +1,25 @@
  [Desktop Entry]
  Type=Application
  Name=Throw view
-+Name[es]=Vista del lanzamiento
- Name[pl]=Widok przerzucania
- Name[pt_BR]=Visão do arremesso
- Name[fr]=Vue du lancer
- Name[de]=Ansicht beim Werfen
- Name[ja]=スローの表示
- Name[ko]=던지기 화면
- Name[zh_CN]=投送视图
- Name[zh_TW]=投送檢視
+-Name[pl]=Widok przerzucania
+-Name[pt_BR]=Visão do arremesso
+-Name[fr]=Vue du lancer
+-Name[de]=Ansicht beim Werfen
+-Name[ja]=スローの表示
+-Name[ko]=던지기 화면
+-Name[zh_CN]=投送视图
+-Name[zh_TW]=投送檢視
++Name[es]=Vista de Throw (lanzar)
++Name[pl]=Widok funkcji Throw (przerzucić)
++Name[pt_BR]=Visão do Throw (jogar)
++Name[fr]=Vue de Throw (envoyer)
++Name[de]=Ansicht für Throw (senden)
++Name[ja]=Throw (送る) の表示
++Name[ko]=Throw (보내다) 화면
++Name[zh_CN]=Throw (发送) 视图
++Name[zh_TW]=Throw (傳送) 檢視
  Comment=Choose fit, pan or zoom for a Throw view
-+Comment[es]=Ajustar, desplazar o ampliar la vista de un lanzamiento
- Comment[pl]=Wybierz dopasowanie, przesuwanie lub powiększenie przerzucanego widoku
- Comment[pt_BR]=Escolher ajuste, deslocamento ou ampliação da visão do arremesso
- Comment[fr]=Choisir l’ajustement, le déplacement ou le zoom de la vue du lancer
- Comment[de]=Einpassen, Verschieben oder Vergrößern der Wurfansicht wählen
- Comment[ja]=スロー表示の全体表示、移動、拡大を選択
- Comment[ko]=던지기 화면의 맞춤, 이동 또는 확대 선택
+-Comment[pl]=Wybierz dopasowanie, przesuwanie lub powiększenie przerzucanego widoku
+-Comment[pt_BR]=Escolher ajuste, deslocamento ou ampliação da visão do arremesso
+-Comment[fr]=Choisir l’ajustement, le déplacement ou le zoom de la vue du lancer
+-Comment[de]=Einpassen, Verschieben oder Vergrößern der Wurfansicht wählen
+-Comment[ja]=スロー表示の全体表示、移動、拡大を選択
+-Comment[ko]=던지기 화면의 맞춤, 이동 또는 확대 선택
+-Comment[zh_CN]=选择投送视图的适应、平移或缩放方式
+-Comment[zh_TW]=選擇投送檢視的符合、平移或縮放方式
++Comment[es]=Elija cómo ajustar, desplazar o ampliar la vista de Throw (lanzar)
++Comment[pl]=Wybierz dopasowanie, przesuwanie lub powiększenie widoku funkcji Throw (przerzucić)
++Comment[pt_BR]=Escolha como ajustar, mover ou ampliar a visão do Throw (jogar)
++Comment[fr]=Choisissez l’ajustement, le déplacement ou le zoom de la vue de Throw (envoyer)
++Comment[de]=Ansicht für Throw (senden) einpassen, verschieben oder vergrößern
++Comment[ja]=Throw (送る) の表示を画面に合わせるか、移動するか、拡大するかを選びます
++Comment[ko]=Throw (보내다) 화면 맞춤, 이동 또는 확대를 선택합니다
++Comment[zh_CN]=选择如何适配、平移或缩放 Throw (发送) 视图
++Comment[zh_TW]=選擇如何配合、平移或縮放 Throw (傳送) 檢視
+ Exec=kwin-headset-view
+ Icon=video-display
+ Categories=Qt;KDE;Settings;HardwareSettings;
 diff --git a/src/kcms/stereodepth/kcm_kwinstereodepth.json b/src/kcms/stereodepth/kcm_kwinstereodepth.json
 --- a/src/kcms/stereodepth/kcm_kwinstereodepth.json
 +++ b/src/kcms/stereodepth/kcm_kwinstereodepth.json
