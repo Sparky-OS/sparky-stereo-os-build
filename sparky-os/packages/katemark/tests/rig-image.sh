@@ -13,12 +13,15 @@ export DEBIAN_FRONTEND=noninteractive
 cp /repo/sparky-stereo-repo.asc /usr/share/keyrings/
 printf "Types: deb\nURIs: file:/repo\nSuites: mashtabba\nComponents: main\nSigned-By: /usr/share/keyrings/sparky-stereo-repo.asc\n" > /etc/apt/sources.list.d/sparky.sources
 printf "Package: *\nPin: release o=Sparky Stereo OS\nPin-Priority: 1001\n" > /etc/apt/preferences.d/sparky
+apt-get -y update >/dev/null
+apt-get -y --no-install-recommends install deb-multimedia-keyring >/dev/null
+printf "deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\\n" > /etc/apt/sources.list.d/multimedia.list
 apt-get -y update >/dev/null'
 COMMON=(--platform linux/amd64 -v "$REPO":/repo:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro)
 docker run --ulimit core=1 --pull=never --name "$NAME-red-build" "${COMMON[@]}" "$BASE" bash -c "set -e
 $INSTALL
 apt-get -y --no-install-recommends install kwin-wayland kate qt6-wayland dbus dbus-user-session xwayland mesa-libgallium libgl1-mesa-dri \
-	fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji python3-gi python3-numpy python3-pil gir1.2-glib-2.0 gcc libc6-dev libwayland-dev wayland-protocols dpkg-dev procps iproute2 libqt6webenginewidgets6 qt6-webengine-data poppler-utils
+	fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji python3-gi python3-numpy python3-pil gir1.2-glib-2.0 gcc libc6-dev libwayland-dev wayland-protocols dpkg-dev procps iproute2 libqt6webenginewidgets6 poppler-utils
 apt-get -y --no-install-recommends install pkgconf >/dev/null
 useradd --uid 1000 --create-home tester
 apt-get clean"
