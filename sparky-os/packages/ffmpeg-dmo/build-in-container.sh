@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-ulimit -c 0
+ulimit -c 1
 trap 'chown -R "$OWNER" /work' EXIT
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com

@@ -1,7 +1,7 @@
 #!/bin/sh
 # A single EGL frame, where Present can only copy: preserve its first left view and tell the person.
 set -eu
-ulimit -c 0
+ulimit -c 1
 cd "$(dirname "$0")"
 W=${AUTOPKGTEST_TMP:-$(mktemp -d)}
 for tool in Xvfb cc; do

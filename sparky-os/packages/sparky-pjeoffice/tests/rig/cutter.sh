@@ -5,7 +5,7 @@
 # ALSA null device (no sound device exists): PJeOffice Pro's JavaFX media loader without and with the package's private codec libraries, then the program's own
 # cutter on a generated MP4. Usage: cutter.sh OUT   Needs /classes (MediaProbe, CutterTaskProbe), /scratch (rw)
 set -u
-OUT=${1:?result folder}; mkdir -p "$OUT"; ulimit -c 0
+OUT=${1:?result folder}; mkdir -p "$OUT"; ulimit -c 1
 export DISPLAY=:99
 APP=/opt/pjeoffice-pro/current; JAVA=$APP/jre/bin/java; CODEC=/usr/lib/sparky-pjeoffice/codec
 Xvfb :99 -screen 0 1280x800x24 -nolisten tcp > "$OUT/xvfb.log" 2>&1 &

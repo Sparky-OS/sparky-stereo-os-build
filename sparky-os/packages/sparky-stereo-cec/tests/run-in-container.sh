@@ -3,7 +3,7 @@
 # Copyright 2026 under the GNU GPL3 License
 # Last update 2026/10/08
 set -euo pipefail
-ulimit -c 0
+ulimit -c 1
 [[ -e /.dockerenv ]]
 : "${CEC_WORK:?Set CEC_WORK to workspace scratch}"
 : "${CEC_SDK:?Set CEC_SDK to extracted dependency prefix}"

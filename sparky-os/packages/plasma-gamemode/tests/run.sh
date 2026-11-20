@@ -12,7 +12,7 @@ N=${2:-1}
 B=${BUILD_DIR:-$(mktemp -d)}
 cmake -S "$HERE" -B "$B" -G Ninja -DGAMEMODE_SRC="$SRC" >"$B/cmake.log" 2>&1 && cmake --build "$B" >"$B/build.log" 2>&1 || { tail -20 "$B/cmake.log" "$B/build.log"; exit 125; }
 export B HERE N DELAY_MS=${DELAY_MS:-0}
-ulimit -c 0
+ulimit -c 1
 exec dbus-run-session -- bash -c '
 python3 "$HERE/standin.py" >"$B/standin.log" 2>&1 & S=$!
 for i in $(seq 100); do grep -q ready "$B/standin.log" && break; sleep 0.1; done

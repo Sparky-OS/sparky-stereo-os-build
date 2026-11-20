@@ -6,7 +6,7 @@
 # earlier in the round, /toolkit the build tree's sparky-os.
 trap 'chown -R 1000:1000 /work' EXIT
 set -euo pipefail
-ulimit -c 0
+ulimit -c 1
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS="nocheck parallel=${THREADS:-4}"
 export DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 [ ! -d /new ] || printf 'deb [trusted=yes] file:/new ./\n' > /etc/apt/sources.list.d/edition-new.list
