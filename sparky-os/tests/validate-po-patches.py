@@ -11,6 +11,16 @@ import sys
 import tempfile
 
 DSC_MAP = {
+    "command-not-found-order46b.po.patch": "command-not-found_23.04.0-3+sparky1+lc1.dsc",
+    "kdeconnect-order46b.po.patch": "kdeconnect_26.04.3-2+stereo3d1+lc1.dsc",
+    "kf6-kfilemetadata-order46b.po.patch": "kf6-kfilemetadata_6.30.0-1+stereo3d5+lc1.dsc",
+    "kf6-kio-order46b.po.patch": "kf6-kio_6.30.0-1+stereo3d11+lc1.dsc",
+    "krdc-order46b.po.patch": "krdc_26.04.0-1+stereo3d1+lc1.dsc",
+    "plasma-desktop-order46b.po.patch": "plasma-desktop_6.7.4-1+stereo3d4+lc1.dsc",
+    "plasma-discover-order46b.po.patch": "plasma-discover_6.7.4-3+stereo3d2+lc1.dsc",
+    "plasma-nm-order46b.po.patch": "plasma-nm_6.7.4-2+stereo3d1+lc1.dsc",
+    "plasma-workspace-order46b.po.patch": "plasma-workspace_6.7.4-2+stereo3d10+lc1.dsc",
+    "powerdevil-order46b.po.patch": "powerdevil_6.7.4-1+stereo3d2+lc1.dsc",
     "plasma-pa-virtual-streams.po.patch": "plasma-pa_6.7.4-1.dsc",
     "plasma-pa-audio-routes.po.patch": "plasma-pa_6.7.4-1+stereo3d1+lc1.dsc",
     "kalgebra-stereo3d.po.patch": "kalgebra_26.04.0-1+stereo3d2.dsc",

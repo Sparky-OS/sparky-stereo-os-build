@@ -31,6 +31,8 @@ Upstream, the same strings go to each language's KDE translation team once the f
 
 - `kscreenlocker-edition-l10n.po.patch` (ORDER 46) adds the Stereo GL show controls in nine languages and carries the Spanish wallpaper-depth text from the checkout's wallpaper-cost patch. It applies to the published `6.7.4-1+stereo3d3+lc1` source through the `catalogue-rebuilds` recipe.
 
+[ORDER 46 infrastructure recipes and source versions](../packages/catalogue-rebuilds/order46b.md) identify the recipient builds for the order46b overlays.
+
 ## Which package carries each patch (ORDER 391)
 
 A patch ships only when a build names it last in the package's `debian/patches/series` (dpkg-source(1): the series "lists all patches that have to be applied"; a patch no series names never ships).
