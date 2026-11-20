@@ -12,7 +12,10 @@ fork, packaging, output = map(lambda p: Path(p).resolve(), sys.argv[1:])
 assert not subprocess.check_output(['git', 'status', '--porcelain'], cwd=fork), 'Commit the fork first'
 commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=fork, text=True).strip()
 stamp = int(subprocess.check_output(['git', 'show', '-s', '--format=%ct', 'HEAD'], cwd=fork))
-upstream = '1.11.2+git' + commit[:9]
+# The fork's commit count first, so a later commit of the branch always sorts higher (a bare hash does not:
+# 1.11.2+git2... sorts below 1.11.2+gitb4...); the hash names the commit.
+count = subprocess.check_output(['git', 'rev-list', '--count', 'HEAD'], cwd=fork, text=True).strip()
+upstream = '1.11.2+r' + count + '.git' + commit[:9]
 dirname = 'handbrake-dmo-' + upstream
 output.mkdir(parents=True, exist_ok=True)
 source = output / dirname

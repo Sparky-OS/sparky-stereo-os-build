@@ -15,7 +15,7 @@ import reproducible
 source = Path(sys.argv[1]).resolve()
 stamp = reproducible.recipe_epoch([recipe])
 info = json.loads((source / 'debian/sparky-fork-source.json').read_text())
-version = '1:' + info['upstream_version'] + '-dmo3+stereo3d1'
+version = '1:' + info['upstream_version'] + '-dmo3+stereo3d2'
 env = os.environ | {'SOURCE_DATE_EPOCH': str(stamp), 'PYTHONPATH': str(toolkit),
                     'DEBFULLNAME': 'Daniel Ramos (Capitain Jack)', 'DEBEMAIL': 'Capitain_Jack@yahoo.com'}
 control = source / 'debian/control'
@@ -24,7 +24,7 @@ t = t.replace('libx264-dev (>= 3:0.155~)', 'libx264-dev (>= 4:0.165.3222+gitb356
 t = t.replace(' libmp3lame-dev,',
               ' libavcodec-dev (>= 10:9.0.2-dmo1+stereo3d16+lc1), libavformat-dev (>= 10:9.0.2-dmo1+stereo3d16+lc1),\n'
               ' libavfilter-dev, libavutil-dev, libswscale-dev, libswresample-dev, libdvdread-dev,\n'
-              ' libx265-dev (>= 1:4.3-dmo1+stereo3d2+lc1), libstereo-gtk-dev (>= 1.23.1-1+lc1), zlib1g-dev, libmp3lame-dev,')
+              ' libx265-dev (>= 1:4.3-dmo1+stereo3d2+lc1), libstereo-gtk-dev (>= 1.23.2-1+lc1), zlib1g-dev, libmp3lame-dev,')
 # shlibs give only libavcodec63 (>= 10:9.0.2), which the published +15 meets: on a machine with the i386 FFmpeg
 # libraries apt then kept the cohort back and Stereo HandBrake ran on +15 (ORDER 742). The floors keep the two programs
 # on the libraries that carry HandBrake's imported patches and the frame packing API.
@@ -35,6 +35,13 @@ floors += ', libx264-165 (>= 4:0.165.3222+gitb35605a-dmo5+stereo3d1~), libx265-3
 if t.count('Depends: ${shlibs:Depends},') != 2:
     raise SystemExit('expected the two program stanzas of handbrake-cli and handbrake-gtk')
 t = t.replace('Depends: ${shlibs:Depends},', 'Depends: ${shlibs:Depends}, ' + floors + ',')
+# ghb plays the live preview through GTK's GStreamer backend (GstPlay), which ends the program when GStreamer's playbin
+# element is missing; playbin is in gstreamer1.0-plugins-base (libgstplayback.so). A dependency a feature needs is a
+# Depends (ORDER 742). libstereo-gtk1 1.23.2 declares the preview's 3D area again after "Enable 3D" is turned back on.
+gtk_stanza = t.index('Package: handbrake-gtk')
+gtk_depends = t.index('Depends: ${shlibs:Depends}, ', gtk_stanza)
+t = t[:gtk_depends] + 'Depends: ${shlibs:Depends}, gstreamer1.0-plugins-base, libstereo-gtk1 (>= 1.23.2),' + \
+    t[gtk_depends + len('Depends: ${shlibs:Depends},'):]
 control.write_text(t)
 rules = source / 'debian/rules'
 t = rules.read_text()
@@ -52,7 +59,9 @@ rules.write_text(t)
     'speex_std_stereo_request_handler Speex stereo decoding moved with FFmpeg into the shared libavcodec63, which imports it\n')
 subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', version,
                 '--distribution', 'UNRELEASED',
-                'Build the Sparky-OS HandBrake fork against shared edition libraries, preserving all three binary names and encoder features.'],
+                'Build the Sparky-OS HandBrake fork against shared edition libraries, preserving all three binary names and encoder features. '
+                'An MV-HEVC source is scanned and encoded as one full side-by-side frame; views in turn are paired from the source\'s first frame; '
+                '"Enable 3D" comes back on in the preview; a missing GStreamer playbin is said, and handbrake-gtk Depends on gstreamer1.0-plugins-base.'],
                cwd=source, env=env, check=True)
 subprocess.run([sys.executable, '-m', 'lean.debian_prepare', str(source), version + '+lc1', '--toolkit', str(toolkit),
                 '--build-dependency', 'bubblewrap', '--preserve-source', 'gtk/*',

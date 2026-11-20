@@ -2,7 +2,8 @@
 
 Build the committed order742 branch of Sparky-OS/HandBrake, based on 1.11.2.
 `export-source.py FORK DMO_DEBIAN_TAR OUTPUT` records the fork commit in the
-upstream source version and exports DMO packaging before adaptation.
+upstream source version (`1.11.2+rCOUNT.gitHASH`: the branch's commit count first, so
+a later commit always sorts higher) and exports DMO packaging before adaptation.
 `prepare-source.py SOURCE` adds edition library dependencies and Lean Code.
 Contrib archives are neither fetched nor linked.
 
@@ -30,3 +31,8 @@ FFmpeg's twin needs the i386 libx265-30219 and libx265-dev as EXTRA_DEB.
 An audio encoder this computer's FFmpeg lacks (Fraunhofer's fdk_aac and fdk_haac until `sparky-stereo-ffmpeg-fdk` has
 run) is never replaced in silence: HandBrakeCLI stops before scanning and exits non-zero unless `--audio-fallback` names
 another encoder, a job that names one does not start, and the window lists the two encoders and says how to get them.
+
+handbrake-gtk Depends on gstreamer1.0-plugins-base: the live preview plays through GTK's GStreamer backend (GstPlay),
+which ends the program when the `playbin` element is missing; where it is still missing, ghb says so before it encodes
+a clip. It also Depends on libstereo-gtk1 (>= 1.23.2), which declares the preview's 3D area again after "Enable 3D" is
+turned back on.
