@@ -32,7 +32,7 @@ docker run -d --name "$name" --pull=never --ulimit core=0 --cpus 4 --platform li
 trap "chown -R 1000:1000 /work" EXIT
 set -euo pipefail
 sh /run/https-only-apt.sh
-export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS="parallel=4 nocheck"
+export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS="parallel=4 nocheck" DEB_BUILD_PROFILES=noudeb
 export DEBFULLNAME="Daniel Ramos (Capitain Jack)" DEBEMAIL=Capitain_Jack@yahoo.com
 printf "deb [trusted=yes] file:/repo mashtabba main\n" > /etc/apt/sources.list.d/edition.list
 printf "deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n" > /etc/apt/sources.list.d/multimedia.list
