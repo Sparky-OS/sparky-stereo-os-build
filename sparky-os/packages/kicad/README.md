@@ -22,6 +22,6 @@ Rule of the fit (Daniel, 2026-11-18): every pixel of the 3D area stays inside th
 Debian's wxWidgets 3.2 is built without its EGL GL canvas, so KiCad runs on Xwayland (it sets GDK_BACKEND=x11 itself) and the 3D view is a GLX child window: Stereo KWin's declared X11 child, with the limits written on it (KWin +stereo3d59, support 11).
 
 ## Build
-The recipe adds `-DKICAD_BUILD_QA_TESTS=OFF` to Debian's CMake options in debian/rules (DEB_KICAD_CMAKE_OPTS): Debian builds the QA test programs even under nocheck, they are never run here and install nothing (qa/ has no install rule), and with them the build tree reached 31.5 GB.
+The recipe adds `-DKICAD_BUILD_QA_TESTS=OFF` to Debian's CMake options in debian/rules (DEB_KICAD_CMAKE_OPTS): Debian builds the QA test programs even under nocheck, they are never run here and install nothing (qa/ has no install rule), and with them the build tree reached 31.5 GB. The debug information is compressed in the objects and linked files (`-gz=zstd`, `-Wl,--compress-debug-sections=zstd` through DEB_*_MAINT_APPEND in build.sh): most of the tree is debug information, kicad-dbgsym keeps all of it, and the installed files and their paths are the same.
 
 `build.sh DEBIAN.dsc WORK` in a disposable container with the build dependencies, `libstereo-declare-dev` 1.11 or later, bubblewrap, clang, python3 and devscripts (SPARKY_LC_* as the build record route needs them), then `lean.release check-debs`.
