@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+    if command -v sparky-stereo-problems >/dev/null 2>&1; then
+        sparky-stereo-problems clear --all kwin-wayland || true
+    fi
+fi
+#DEBHELPER#

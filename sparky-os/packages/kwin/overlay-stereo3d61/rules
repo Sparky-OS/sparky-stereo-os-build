@@ -1,0 +1,40 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+include /usr/share/dpkg/architecture.mk
+
+export DEB_BUILD_MAINT_OPTIONS=hardening=+all
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	grep -q stereo_sequential_displayport /usr/share/plasma-wayland-protocols/kde-output-device-v2.xml
+	grep -q 'name="interlaced" value="0x2000000"' /usr/share/plasma-wayland-protocols/kde-output-device-v2.xml
+	dh_auto_configure -- -DBUILD_TESTING=OFF -DKWIN_SPARKY_STEREO_PROBLEMS_LIBRARY=/usr/lib/$(DEB_HOST_MULTIARCH)/sparky-stereo-problems/libsparky-stereo-problems.so.0 \
+		-DQTWAYLANDSCANNER_KDE_EXECUTABLE=/usr/lib/qt6/libexec/qtwaylandscanner
+
+override_dh_auto_test:
+	# Disable auto tests at build time
+	:
+
+override_dh_install:
+	dh_install
+	# The DisplayXR window-geometry plugin ships in its own package.
+	rm debian/kwin-common/usr/lib/*/qt6/plugins/kwin/plugins/displayxr.so
+
+# Distribution-only processing; authored source remains in the source archive.
+execute_before_dh_auto_configure:
+	PYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.source_tree project $(CURDIR)
+
+execute_before_dh_auto_clean:
+	PYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.source_tree restore $(CURDIR)
+	rm -rf .sparky-lc
+
+override_dh_builddeb:
+	PYTHONPATH=$(CURDIR)/debian/sparky-lean-toolkit python3 -m lean.debhelper --provenance $(CURDIR)/debian/sparky-lean-toolkit/provenance.sh
+
+execute_after_dh_auto_install:
+ifeq ($(DEB_HOST_ARCH),amd64)
+	sparky-stereo-problems catalog kwin-wayland debian/stereo-replica-lang debian/kwin-wayland/usr/lib/systemd/catalog --subject LOCAL1
+endif
