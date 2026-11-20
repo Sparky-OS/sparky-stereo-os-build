@@ -149,15 +149,15 @@
     </message>
     <message>
         <source>Throw and Catch</source>
-        <translation>던지기와 받기</translation>
+        <translation>Throw (보내다) 및 Catch (받다)</translation>
     </message>
     <message>
         <source>Throw a window, a film or the whole desktop to a TV, a phone or another computer, sound included.</source>
-        <translation>창, 영화, 데스크톱 전체를 소리까지 TV, 휴대폰, 다른 컴퓨터로 던지세요.</translation>
+        <translation>Throw (보내다)로 창, 영화, 전체 데스크톱을 소리와 함께 TV, 휴대전화 또는 다른 컴퓨터로 보낼 수 있습니다.</translation>
     </message>
     <message>
         <source>The other side catches it with one click.</source>
-        <translation>받는 쪽은 클릭 한 번으로 받습니다.</translation>
+        <translation>받는 쪽에서는 Catch (받다)를 한 번 클릭하면 됩니다.</translation>
     </message>
     <message>
         <source>Sound, your way</source>

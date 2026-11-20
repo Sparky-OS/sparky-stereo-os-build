@@ -149,15 +149,15 @@
     </message>
     <message>
         <source>Throw and Catch</source>
-        <translation>スローと受け取り</translation>
+        <translation>Throw (送る) と Catch (受け取る)</translation>
     </message>
     <message>
         <source>Throw a window, a film or the whole desktop to a TV, a phone or another computer, sound included.</source>
-        <translation>ウィンドウ、映画、デスクトップ全体を、テレビ、スマートフォン、別のコンピューターへ、音声ごとスローできます。</translation>
+        <translation>Throw (送る) で、ウィンドウ、動画、デスクトップ全体を音声ごとテレビ、スマートフォン、別のコンピューターに送れます。</translation>
     </message>
     <message>
         <source>The other side catches it with one click.</source>
-        <translation>相手側はワンクリックで受け取ります。</translation>
+        <translation>受信側は Catch (受け取る) を一度クリックするだけで受け取れます。</translation>
     </message>
     <message>
         <source>Sound, your way</source>
