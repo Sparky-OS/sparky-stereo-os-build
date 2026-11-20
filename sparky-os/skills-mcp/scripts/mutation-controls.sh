@@ -25,7 +25,7 @@ PY
 	if [ ! -x "$W/out/tests/$bin" ]; then
 		echo "BUILD BROKE (the mutation must compile): $name"; fails=$((fails + 1)); rm -rf "$W/cache" "$W/out"; return
 	fi
-	if docker run --rm --network none --ulimit core=0 --user "$(id -u):$(id -g)" --tmpfs /tmp:mode=1777 -v "$W/p:/product:ro" -v "$W/out/tests:/t:ro" -w /product "$IMAGE" "/t/$bin" >/dev/null 2>&1; then
+	if docker run --rm --network none --ulimit core=1 --user "$(id -u):$(id -g)" --tmpfs /tmp:mode=1777 -v "$W/p:/product:ro" -v "$W/out/tests:/t:ro" -w /product "$IMAGE" "/t/$bin" >/dev/null 2>&1; then
 		echo "NOT RED: $name ($bin still passes without the rule)"; fails=$((fails + 1))
 	else
 		echo "RED as expected: $name"

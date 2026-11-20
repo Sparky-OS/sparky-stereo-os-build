@@ -87,7 +87,7 @@ installed = {line.split(',', 1)[0] for line in host_status.splitlines() if ': in
 covered = {case['name'] + '/' + case['version'] for case in cases}
 assert installed <= covered, ('Host DKMS matrix changed', sorted(installed - covered))
 name = 'sparky-lc-dkms-check-' + flavour
-command = ['docker', 'run', '--rm', '--name', name, '--cpus', '4', '--memory', '12g',
+command = ['docker', 'run', '--ulimit', 'core=1', '--rm', '--name', name, '--cpus', '4', '--memory', '12g',
            '-v', str(out) + ':/validation', tools['image'],
            'python3', '/validation/dkms-inputs/run.py', release]
 scope = ('Candidate DKMS packages against existing build-8 headers; NOT build-9 qualification'

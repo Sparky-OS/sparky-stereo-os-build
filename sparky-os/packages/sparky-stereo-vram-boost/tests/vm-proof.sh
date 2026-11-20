@@ -16,7 +16,7 @@ HERE=$(dirname "$(readlink -f "$0")")
 RIG=${RIG_IMAGE:-kernel-73-263-efi-rig:1}
 OUT=$W/$LABEL; rm -rf "$OUT"; mkdir -p "$OUT"
 # the system, in a throwaway forky container (apt from Debian; the edition's packages from DEBS_DIR as a flat source)
-docker run --name "vram-vm-$LABEL" --platform linux/amd64 -v "$DEBS":/debs:ro -v "$KDEB":/kernel.deb:ro -v "$HERE":/t:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro debian:forky bash -c '
+docker run --ulimit core=1 --name "vram-vm-$LABEL" --platform linux/amd64 -v "$DEBS":/debs:ro -v "$KDEB":/kernel.deb:ro -v "$HERE":/t:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro debian:forky bash -c '
 set -e
 sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive
@@ -37,7 +37,7 @@ dpkg-query -W -f="\${Package} \${Version}\n" dmemcg-booster sparky-stereo-vram-b
 docker export "vram-vm-$LABEL" > "$W/$LABEL-rootfs.tar"
 docker rm "vram-vm-$LABEL" >/dev/null
 # the disk, as root in the rig image so that the files keep their owners, then handed back
-docker run --rm --platform linux/amd64 --cpus 2 -e OWNER="$(id -u):$(id -g)" -v "$W:$W" "$RIG" bash -c '
+docker run --ulimit core=1 --rm --platform linux/amd64 --cpus 2 -e OWNER="$(id -u):$(id -g)" -v "$W:$W" "$RIG" bash -c '
 set -e
 cd "$1"; mkdir -p root-$2; tar -xf "$2-rootfs.tar" -C root-$2 --exclude=dev/* 2>/dev/null || true
 k=$(ls root-$2/boot/vmlinuz-* | head -1); i=$(ls root-$2/boot/initrd.img-* | head -1)
@@ -45,7 +45,7 @@ cp "$k" "$2/vmlinuz"; cp "$i" "$2/initrd.img"
 mke2fs -q -t ext4 -d root-$2 -L root "$2/disk.img" 3G
 rm -rf root-$2 "$2-rootfs.tar"; chown -R "$OWNER" "$2"
 ' x "$W" "$LABEL"
-docker run --rm --platform linux/amd64 --cpus 2 --memory 4g --user "$(id -u):$(id -g)" --device /dev/kvm --group-add "$(getent group kvm | cut -d: -f3)" \
+docker run --ulimit core=1 --rm --platform linux/amd64 --cpus 2 --memory 4g --user "$(id -u):$(id -g)" --device /dev/kvm --group-add "$(getent group kvm | cut -d: -f3)" \
 	-v "$W:$W" "$RIG" bash -c '
 set -e
 cd "$1"

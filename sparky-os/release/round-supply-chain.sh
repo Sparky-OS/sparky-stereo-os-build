@@ -49,7 +49,7 @@ done
 [ -s "$OUT/work/stagedirs.txt" ] || { echo "STAGEDIRS lists no folder" >&2; exit 1; }
 # the container writes its output to OUT/work/round.log (the docker stream can lose the last lines of a short run)
 status=0
-docker run --rm --network none --user "$(id -u):$(id -g)" --cpus 4 -e HOME=/out -e ROUND="$ROUND" -e ROUND_BUILD_COMMIT="${ROUND_BUILD_COMMIT:-}" \
+docker run --ulimit core=1 --rm --network none --user "$(id -u):$(id -g)" --cpus 4 -e HOME=/out -e ROUND="$ROUND" -e ROUND_BUILD_COMMIT="${ROUND_BUILD_COMMIT:-}" \
 	-v "$DEST":/dest:ro -v "$HERE/..":/toolkit:ro -v "$OUT":/out "${MOUNTS[@]}" \
 	"$IMAGE" bash /toolkit/release/round-supply-chain-inner.sh || status=$?
 cat "$OUT/work/round.log" 2>/dev/null || true

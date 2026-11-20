@@ -6,7 +6,7 @@ lane=$(cd "$(dirname "$0")/../.." && pwd)
 container=classic-look-verify
 printf '%s\n' "$container" >> "$lane/.artifacts"
 trap 'docker rm "$container" >/dev/null 2>&1 || true' EXIT
-docker run --name "$container" --platform linux/amd64 --cpus 4 \
+docker run --ulimit core=1 --name "$container" --platform linux/amd64 --cpus 4 \
     --user "$(id -u):$(id -g)" --entrypoint /bin/sh \
     -v "$lane:$lane" -e CLASSIC_ROOT="$lane/theme" classic-look-rig:m1-oxygen -c '
     set -e

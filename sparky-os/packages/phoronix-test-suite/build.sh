@@ -8,7 +8,7 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 WORK=${1:-${SPARKY_WORKSPACES:?}/hand-installed-apps/pts/build}
 mkdir -p "$WORK"
-docker run --rm -e HOST_UID=$(id -u) -v "$WORK":/out -v "$HERE/debian":/debian-ours:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro sparky-pkg-base:amd64 bash -c '
+docker run --ulimit core=1 --rm -e HOST_UID=$(id -u) -v "$WORK":/out -v "$HERE/debian":/debian-ours:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro sparky-pkg-base:amd64 bash -c '
 set -e
 sh /run/https-only-apt.sh
 sed -i "s/^Suites: unstable/Suites: testing testing-updates/" /etc/apt/sources.list.d/debian.sources

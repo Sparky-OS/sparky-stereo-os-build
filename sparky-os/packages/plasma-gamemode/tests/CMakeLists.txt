@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 Daniel Campos Ramos
+# Builds the applet's GamesModel from the plasma-gamemode source tree given as -DGAMEMODE_SRC=.../src (its src/ folder)
+# with a test that calls reload() twice before the first answer arrives.
+cmake_minimum_required(VERSION 3.16)
+project(gamesmodel-race-test CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_AUTOMOC ON)
+set(GAMEMODE_SRC "" CACHE PATH "the src/ folder of the plasma-gamemode source")
+if(NOT EXISTS "${GAMEMODE_SRC}/gamesmodel.cpp")
+    message(FATAL_ERROR "set -DGAMEMODE_SRC to the src/ folder of plasma-gamemode")
+endif()
+find_package(Qt6 REQUIRED COMPONENTS Core DBus)
+set(generated_SRCS)
+set_source_files_properties(${GAMEMODE_SRC}/com.feralinteractive.GameMode.xml PROPERTIES NO_NAMESPACE TRUE INCLUDE types.h)
+set_source_files_properties(${GAMEMODE_SRC}/com.feralinteractive.GameMode.Game.xml PROPERTIES NO_NAMESPACE TRUE)
+qt_add_dbus_interface(generated_SRCS ${GAMEMODE_SRC}/org.freedesktop.DBus.Properties.xml org.freedesktop.DBus.Properties)
+qt_add_dbus_interface(generated_SRCS ${GAMEMODE_SRC}/com.feralinteractive.GameMode.Game.xml com.feralinteractive.GameMode.Game)
+qt_add_dbus_interface(generated_SRCS ${GAMEMODE_SRC}/com.feralinteractive.GameMode.xml com.feralinteractive.GameMode)
+add_executable(race-test race-test.cpp ${GAMEMODE_SRC}/gamesmodel.cpp ${GAMEMODE_SRC}/types.cpp ${generated_SRCS})
+target_include_directories(race-test PRIVATE ${GAMEMODE_SRC} ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(race-test Qt6::Core Qt6::DBus)
+target_compile_options(race-test PRIVATE -g -O1)

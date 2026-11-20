@@ -3,7 +3,7 @@
 # Copyright 2026 under the GNU GPL3 License
 """Tests of sparky-stereo-audio's reading of the devices, its choices and its files (ORDER 631).
 Run: python3 -I tests/test-detect.py [PATH-TO-sparky-stereo-audio]   (no root, no sound system needed)"""
-import importlib.machinery, importlib.util, os, shutil, subprocess, sys, tempfile, unittest
+import importlib.machinery, importlib.util, os, re, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOL = sys.argv.pop(1) if len(sys.argv) > 1 and sys.argv[1].endswith('sparky-stereo-audio') else os.path.join(HERE, '..', 'bin', 'sparky-stereo-audio')
@@ -11,6 +11,17 @@ loader = importlib.machinery.SourceFileLoader('ssa', TOOL)
 spec = importlib.util.spec_from_loader('ssa', loader)
 ssa = importlib.util.module_from_spec(spec)
 loader.exec_module(ssa)
+# the engine's library: beside the source tree's bin/, or in an unpacked package's usr/lib/sparky-stereo-audio
+LIB = [d for d in (os.path.join(os.path.dirname(os.path.realpath(TOOL)), '..', 'lib'),
+                   os.path.join(os.path.dirname(os.path.realpath(TOOL)), '..', 'lib', 'sparky-stereo-audio')) if os.path.exists(os.path.join(d, 'session.py'))][0]
+
+
+def install_lib(root):
+    dest = root + '/usr/lib/sparky-stereo-audio'
+    os.makedirs(dest)
+    for f in os.listdir(LIB):
+        if f.endswith('.py'):
+            shutil.copy(os.path.join(LIB, f), dest)
 
 USB = """Generic USB Audio at usb-0000:00:14.0-2, high speed : USB Audio
 
@@ -142,6 +153,7 @@ class Run(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix='ssa-run.')
         self.addCleanup(shutil.rmtree, self.root)
+        install_lib(self.root)
         lang = self.root + '/usr/share/sparky/sparky-stereo-audio'
         os.makedirs(lang)
         for f in os.listdir(os.path.join(HERE, '..', 'lang')):
@@ -247,6 +259,224 @@ class Run(unittest.TestCase):
                 self.assertEqual(en[k].count('%s'), t[k].count('%s'), '%s LOCAL%d' % (f, k))
                 self.assertEqual(en[k].count('%%'), t[k].count('%%'), '%s LOCAL%d' % (f, k))
         self.assertEqual(sorted(os.listdir(d)), ['de', 'en', 'es', 'fr', 'ja', 'ko', 'pl', 'pt_BR', 'zh_CN', 'zh_TW'])
+
+
+IDLE = os.path.join(HERE, 'fixtures', 'station-idle')
+NO_DISPLAY = 'monitor_present\t\t0\neld_valid\t\t0\ncodec_pin_nid\t\t%s\n'
+
+
+def copy_station(dest, no_display=False, no_eld=False, pcm_open=False):
+    """The station's real /proc/asound with no stream playing (fixtures/station-idle: card0 NVidia, card1 Creative, card2
+    Generic, copied on 2026-11-19 with both televisions lit), or the same cards in another state."""
+    shutil.copytree(IDLE, dest)
+    for card in ('card0', 'card2'):
+        for f in os.listdir(os.path.join(dest, card)):
+            p = os.path.join(dest, card, f)
+            if f.startswith('eld#') and no_eld:
+                os.unlink(p)
+            elif f.startswith('eld#') and no_display:
+                pin = re.search(r'codec_pin_nid\s+(\S+)', open(p).read()).group(1)
+                open(p, 'w').write(NO_DISPLAY % pin)
+    if pcm_open:       # the kernel prints a Device line under the converter that holds a stream (sound/hda/common/proc.c)
+        for card, node, name, dev in (('card0', '0x08', 'HDMI 0', 3), ('card2', '0x04', 'HDMI 1', 7)):
+            p = os.path.join(dest, card, 'codec#0')
+            t = open(p).read()
+            open(p, 'w').write(re.sub(r'(Node %s \[Audio Output\][^\n]*\n)' % node,
+                                      r'\1  Device: name="%s", type="HDMI", device=%d\n' % (name, dev), t, count=1))
+
+
+class GraphicsCardAudio(unittest.TestCase):
+    """ORDER 757: a graphics card's HDMI or DisplayPort sound is read whether or not a PCM is open."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix='ssa-hdmi.')
+        self.addCleanup(shutil.rmtree, self.root)
+
+    def station(self, name, **kw):
+        dest = os.path.join(self.root, name)
+        copy_station(dest, **kw)
+        return dest
+
+    def by_id(self, cards):
+        return {c['id']: c for c in cards}
+
+    def test_the_idle_codec_has_no_device_line(self):
+        for card in ('card0', 'card2'):
+            self.assertNotIn('Device:', open(os.path.join(IDLE, card, 'codec#0')).read())
+
+    def test_displays_connected_are_the_outputs_with_no_pcm_open(self):
+        cards = self.by_id(ssa.scan(IDLE))
+        nv, gen = cards['NVidia'], cards['Generic']
+        self.assertTrue(nv['readable'] and nv['hdmi'] and gen['readable'] and gen['hdmi'])
+        self.assertEqual([(o['label'], o['rates']) for o in nv['outputs']], [('SONY TV', [32000, 44100, 48000])])
+        self.assertEqual(sorted((o['label'], tuple(o['rates'])) for o in gen['outputs']),
+                         [('LE26W154', (32000, 44100, 48000)), ('SONY TV', (32000, 44100, 48000))])
+        self.assertEqual(ssa.choose_rates(list(cards.values()))[2], [])
+
+    def test_the_result_is_the_same_with_a_pcm_open(self):
+        idle = ssa.scan(IDLE)
+        opened = ssa.scan(self.station('open', pcm_open=True))
+        self.assertEqual(idle, opened)
+
+    def test_the_converters_rates_limit_the_displays(self):
+        # the NVidia converters list 32000 to 192000; a display that lists a rate no converter has gets no such rate
+        d = self.station('limit')
+        p = os.path.join(d, 'card0', 'eld#0.4')
+        t = open(p).read().replace('sad0_rates\t\t[0xe0] 32000 44100 48000', 'sad0_rates\t\t[0xe0] 32000 44100 48000 384000')
+        open(p, 'w').write(t)
+        nv = self.by_id(ssa.scan(d))['NVidia']
+        self.assertEqual(nv['outputs'][0]['rates'], [32000, 44100, 48000])
+
+    def test_the_displays_rates_stand_alone_where_no_converter_lists_any(self):
+        d = self.station('nopcm')
+        for f in ('codec#0',):
+            p = os.path.join(d, 'card2', f)
+            t = open(p).read()
+            t = re.sub(r'(Default PCM:\n\s*rates \[[^\]]*\]:)[^\n]*', r'\1', t)
+            open(p, 'w').write(t)
+        gen = self.by_id(ssa.scan(d))['Generic']
+        self.assertEqual(sorted(o['label'] for o in gen['outputs']), ['LE26W154', 'SONY TV'])
+        self.assertEqual(gen['outputs'][0]['rates'], [32000, 44100, 48000])
+
+    def test_nothing_connected_is_a_card_read_with_no_output(self):
+        for kw in ({'no_display': True}, {'no_eld': True}):
+            cards = self.by_id(ssa.scan(self.station('none-%s' % list(kw)[0], **kw)))
+            for cid in ('NVidia', 'Generic'):
+                self.assertTrue(cards[cid]['readable'], kw)
+                self.assertTrue(cards[cid]['hdmi'], kw)
+                self.assertEqual(cards[cid]['outputs'], [], kw)
+            self.assertEqual(ssa.choose_rates(list(cards.values()))[2], [], kw)
+
+    def test_a_card_with_no_codec_file_or_an_empty_one_is_still_unreadable(self):
+        cards = ssa.scan(self.tree([('Gone', {}), ('Blank', {'codec#0': ''})]))
+        self.assertEqual([c['readable'] for c in cards], [False, False])
+        self.assertEqual([c['id'] for c in ssa.choose_rates(cards)[2]], ['Gone', 'Blank'])
+
+    def tree(self, spec):
+        root = tempfile.mkdtemp(prefix='ssa-test.', dir=self.root)
+        for i, (ident, files) in enumerate(spec):
+            card(root, i, ident, files)
+        return root
+
+    def test_an_analog_codec_beside_the_displays_is_unchanged(self):
+        cards = self.by_id(ssa.scan(IDLE))
+        c = cards['Creative']
+        self.assertFalse(c.get('hdmi'))
+        self.assertEqual([o['label'] for o in c['outputs']], ['CA0132 Analog', 'CA0132 Digital'])
+
+    def test_two_televisions_of_one_name_have_two_identities(self):
+        ids = [o['display'] for c in ssa.scan(IDLE) for o in c['outputs'] if o['label'] == 'SONY TV']
+        self.assertEqual(len(ids), 2)
+        self.assertEqual(len(set(ids)), 2)
+        self.assertEqual(sorted(ids), ['0xd94d:0x2c02:SONY TV', '0xd94d:0x7402:SONY TV'])
+
+    def test_the_hdmi_pins_alone_make_a_graphics_card(self):
+        self.assertIsNone(ssa.hdmi_codec(open(os.path.join(IDLE, 'card1', 'codec#1')).read()))
+        self.assertEqual(ssa.hdmi_codec(open(os.path.join(IDLE, 'card2', 'codec#0')).read()), {32000, 44100, 48000})
+        self.assertEqual(ssa.hdmi_codec(open(os.path.join(IDLE, 'card0', 'codec#0')).read()),
+                         {32000, 44100, 48000, 88200, 96000, 176400, 192000})
+
+
+class RememberedDisplays(unittest.TestCase):
+    """What was read from a display is kept for that display and used while it is away (Daniel, 2026-11-19)."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix='ssa-mem.')
+        self.addCleanup(shutil.rmtree, self.root)
+        install_lib(self.root)
+        lang = self.root + '/usr/share/sparky/sparky-stereo-audio'
+        os.makedirs(lang)
+        for f in os.listdir(os.path.join(HERE, '..', 'lang')):
+            shutil.copy(os.path.join(HERE, '..', 'lang', f), lang)
+        self.with_displays = IDLE
+        self.away = os.path.join(self.root, 'away')
+        copy_station(self.away, no_display=True)
+
+    def run_tool(self, proc, *args, lang='C'):
+        e = dict(os.environ, SPARKY_STEREO_AUDIO_ROOT=self.root, SPARKY_STEREO_AUDIO_PROC=proc, SPARKY_STEREO_AUDIO_CPU_COST='10.7',
+                 SPARKY_STEREO_AUDIO_SETTLE_STEP='0.05', LANG=lang, LANGUAGE='', LC_ALL='', HOME=self.root + '/home')
+        return subprocess.run([sys.executable, '-I', TOOL] + list(args), capture_output=True, text=True, env=e)
+
+    def store(self):
+        import json
+        return json.load(open(self.root + '/var/lib/sparky-stereo-audio/displays.json'))
+
+    def conf(self):
+        return open(self.root + '/etc/pipewire/pipewire.conf.d/00-sparky-stereo-audio.conf').read()
+
+    def test_boot_with_the_displays_keeps_them_and_says_nothing(self):
+        r = self.run_tool(self.with_displays, 'detect', '--write', '--settle')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('could not be read', r.stderr + r.stdout)
+        self.assertEqual(sorted(v['name'] for v in self.store().values()), ['LE26W154', 'SONY TV', 'SONY TV'])
+        self.assertIn('SONY TV (Nvidia GPU 9f HDMI/DP): 32000 44100 48000 Hz', r.stdout)
+        self.assertNotIn('remembered', r.stdout)
+
+    def test_boot_without_a_display_is_no_fault(self):
+        r = self.run_tool(self.away, 'detect', '--write')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('could not be read', r.stderr + r.stdout)
+        self.assertIn('no display is connected now', r.stdout)
+        self.assertNotIn('No sound device was found', r.stdout)
+        self.assertFalse(os.path.exists(self.root + '/var/lib/sparky-stereo-audio/displays.json') and self.store())
+
+    def test_a_display_that_is_away_has_its_remembered_values(self):
+        self.run_tool(self.with_displays, 'detect', '--write')
+        before = self.store()
+        r = self.run_tool(self.away, 'detect', '--write')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('could not be read', r.stderr + r.stdout)
+        self.assertIn('LE26W154 (ATI R6xx HDMI): 32000 44100 48000 Hz, up to 24 bit (remembered', r.stdout)
+        self.assertIn('allowed-rates = [ 16000 32000 44100 48000 88200 96000 192000 ]', self.conf())
+        self.assertEqual(self.store(), before)
+        shown = self.run_tool(self.away, 'show').stdout
+        self.assertIn('remembered', shown)
+
+    def test_a_display_arriving_is_read_again_and_no_longer_remembered(self):
+        self.run_tool(self.with_displays, 'detect', '--write')
+        self.run_tool(self.away, 'detect', '--write')
+        # the same television arrives with another audio block: the new values replace the old
+        arrive = os.path.join(self.root, 'arrive')
+        copy_station(arrive)
+        p = os.path.join(arrive, 'card0', 'eld#0.4')
+        text = open(p).read().replace('sad0_rates\t\t[0xe0] 32000 44100 48000', 'sad0_rates\t\t[0xe8] 32000 44100 48000 96000')
+        open(p, 'w').write(text)
+        r = self.run_tool(arrive, 'detect', '--write', '--settle')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('remembered', r.stdout)
+        self.assertEqual(self.store()['0xd94d:0x2c02:SONY TV']['rates'], [32000, 44100, 48000, 96000])
+        self.assertIn('96000', self.conf())
+
+    def test_the_same_display_on_another_port_is_the_same_display(self):
+        self.run_tool(self.with_displays, 'detect', '--write')
+        moved = os.path.join(self.root, 'moved')
+        copy_station(moved)
+        os.rename(os.path.join(moved, 'card0', 'eld#0.4'), os.path.join(moved, 'card0', 'eld#0.9'))
+        self.run_tool(moved, 'detect', '--write')
+        self.assertEqual(len(self.store()), 3)
+
+    def test_the_sixteen_most_recent_displays_are_kept(self):
+        store = {'x:%d' % i: {'name': 'D%d' % i, 'card': 'NVidia', 'rates': [48000], 'bits': [24], 'codecs': []} for i in range(20)}
+        new = ssa.remember(ssa.scan(IDLE), store)
+        self.assertEqual(len(new), 16)
+        self.assertIn('0xd94d:0x7402:SONY TV', new)
+        self.assertNotIn('x:0', new)
+
+    def test_a_card_that_cannot_be_read_is_still_told_beside_the_displays(self):
+        proc = os.path.join(self.root, 'mixed')
+        copy_station(proc)
+        os.makedirs(os.path.join(proc, 'card3'))
+        open(os.path.join(proc, 'card3', 'id'), 'w').write('Broken\n')
+        r = self.run_tool(proc, 'detect', '--write')
+        self.assertIn('The sound devices Broken could not be read', r.stderr)
+
+    def test_show_speaks_the_remembered_and_waiting_lines_in_every_language(self):
+        self.run_tool(self.with_displays, 'detect', '--write')
+        self.run_tool(self.away, 'detect', '--write')
+        for lg, word in (('pt_BR.UTF-8', 'lembrado'), ('de_DE.UTF-8', 'gemerkt'), ('fr_FR.UTF-8', 'mémorisé'), ('es_ES.UTF-8', 'recordado'),
+                         ('pl_PL.UTF-8', 'zapamiętane'), ('ja_JP.UTF-8', '記憶済み'), ('ko_KR.UTF-8', '기억된'), ('zh_CN.UTF-8', '已记住'),
+                         ('zh_TW.UTF-8', '已記住')):
+            self.assertIn(word, self.run_tool(self.away, 'show', lang=lg).stdout, lg)
 
 
 if __name__ == '__main__':

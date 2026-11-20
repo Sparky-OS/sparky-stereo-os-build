@@ -39,7 +39,7 @@ HOST=; [ -n "${REPO_HOST:-}" ] && HOST="--add-host repo.sparkyos.org:$REPO_HOST"
 run() {
 	name=$1; shift
 	# shellcheck disable=SC2086
-	docker run --rm --name "libc-dev-cross-proof-$name" --platform linux/amd64 --cpus 4 --memory 3g $HOST \
+	docker run --ulimit core=1 --rm --name "libc-dev-cross-proof-$name" --platform linux/amd64 --cpus 4 --memory 3g $HOST \
 		-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro -v "$CAND":/proof/candidate:ro -v "$POOL":/proof/pool:ro ${START:+-v "$START":/proof/start:ro} ${NEXT:+-v "$NEXT":/proof/next:ro} -e CASE="$name" "$IMAGE" sh -eu -c "$INNER"
 }
 INNER='

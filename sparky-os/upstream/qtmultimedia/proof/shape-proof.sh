@@ -1,7 +1,7 @@
 #!/bin/bash
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 cd ${SPARKY_SCRATCH:?}/qtmm-lane/run
-Q="docker run --rm --platform linux/amd64 --user $(id -u):$(id -g) -v ${SPARKY_SCRATCH:?}/qtmm-lane:/w qtmm-run:3"
+Q="docker run --ulimit core=1 --rm --platform linux/amd64 --user $(id -u):$(id -g) -v ${SPARKY_SCRATCH:?}/qtmm-lane:/w qtmm-run:3"
 for build in edition offerable; do
   [ $build = edition ] && D=/w/b-final || D=/w/b-luma
   for c in L-plain-sbs-32x9.mp4 L-plain-sbs-full.mp4 2d-239.mp4 2d-169.mp4 L-2d.mp4; do

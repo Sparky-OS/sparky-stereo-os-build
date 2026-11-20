@@ -21,7 +21,7 @@ NEW=$(cd "$5" && pwd)
 FORK=${6:+$(cd "$6" && pwd)}
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 sparky_provenance_init sparky-lc-migration:20261020
-docker run "${SPARKY_PROV_ARGS[@]}" --rm --name "full-sbs-$PKG" --cpus 4 --platform linux/amd64 -e PKG="$PKG" -v "$WORK":/work \
+docker run --ulimit core=1 "${SPARKY_PROV_ARGS[@]}" --rm --name "full-sbs-$PKG" --cpus 4 --platform linux/amd64 -e PKG="$PKG" -v "$WORK":/work \
 	-v "$SPARKY_REPO_DIR/source":/src:ro -v "$PUB":/pub:ro -v "$NEW":/new:ro -v "$PREV":/prev:ro \
 	-v "$HERE/../..":/toolkit:ro -v "$HERE/patches":/patches:ro -v "$HERE/changelog":/changelog:ro \
 	${FORK:+-v "$FORK":/fork:ro} \

@@ -47,7 +47,7 @@ release = next((out / 'image/boot').glob('vmlinuz-*')).name.removeprefix('vmlinu
     settings=str(settings), image=IMAGE), indent=2) + '\n')
 name = os.environ.get('SPARKY_QUALIFY_NAME', 'sparky-212-boot-' + flavour)
 detach = os.environ.get('SPARKY_DOCKER_DETACH') == '1'
-command = ['docker', 'run', '-d' if detach else '--rm', '--ulimit', 'core=0', '--name', name, '--cpus', '4', '--memory', '8g',
+command = ['docker', 'run', '-d' if detach else '--rm', '--ulimit', 'core=1', '--name', name, '--cpus', '4', '--memory', '8g',
            '--device', '/dev/kvm', '-e', 'SPARKY_UNSIGNED=1', '-v', f'{out}:/validation', '-v', f'{inputs}:/inputs:ro',
            IMAGE, 'python3', '/inputs/run.py', release]
 with (out / 'driver.log').open('w') as log:

@@ -78,7 +78,7 @@ python3 /evidence/check.py
 rm -rf /var/lib/apt/lists/*
 '''
 name = 'sparky-lc-qemu-installed-check'
-command = ['docker','run','--name',name,'--cpus','4','--device','/dev/kvm',
+command = ['docker','run', '--ulimit', 'core=1','--name',name,'--cpus','4','--device','/dev/kvm',
     '-v',str(job)+':/packages:ro','-v',str(out)+':/evidence',
     '-v',str(cfg.TREE / 'kernel/qualification/hibernate-bench') + ':/bench:ro',
     '-v', '/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro',

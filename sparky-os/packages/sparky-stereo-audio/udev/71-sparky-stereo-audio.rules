@@ -3,3 +3,6 @@
 # A sound card appears or goes, or a display's audio changes (HDMI or DisplayPort connected): read the sound devices again.
 # The program only reads /proc/asound; it touches no device and no display mode.
 SUBSYSTEM=="sound", KERNEL=="card[0-9]*", ACTION=="add|remove|change", RUN+="/usr/bin/systemctl --no-block start sparky-stereo-audio.service"
+# A display is connected or disconnected on a graphics card: the kernel raises no event on the sound card for it, only the
+# graphics driver does (HOTPLUG=1), and the display's audio block (ELD) is filled a moment later, which --settle waits for.
+SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ACTION=="change", ENV{HOTPLUG}=="1", RUN+="/usr/bin/systemctl --no-block start sparky-stereo-audio.service"

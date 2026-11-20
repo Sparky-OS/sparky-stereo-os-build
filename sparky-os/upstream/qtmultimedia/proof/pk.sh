@@ -18,7 +18,7 @@ osd)
     $W/run/rt.sh $n '[["wait",2.2],["cap","c1"],["wait",0.2],["cap","c2"],["wait",0.3],["cap","c3"],["wait",0.2],["cap","c4"],["wait",0.1],["cap","c5"],["wait",0.1],["cap","c6"]]' /w/clips/L-$c >/dev/null 2>&1
     echo "== $n: declarations=$(grep -c 'set_content(3)' $W/out/$n/client0.log) subsurfaces=$(grep -c get_subsurface $W/out/$n/client0.log)"
     $W/run/ana2.sh $n 2>&1 | grep -v dbus
-    docker run --rm --platform linux/amd64 -v $W:/w qtmm-run:3 sh -c "python3 /w/run/osdcheck.py /w/out/$n/c*.png" | cut -c1-200
+    docker run --ulimit core=1 --rm --platform linux/amd64 -v $W:/w qtmm-run:3 sh -c "python3 /w/run/osdcheck.py /w/out/$n/c*.png" | cut -c1-200
   done;;
 manual)
   # usage: manual <prefix> <name> <clip> <downs...>

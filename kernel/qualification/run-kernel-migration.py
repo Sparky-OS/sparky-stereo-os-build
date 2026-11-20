@@ -146,7 +146,7 @@ test ! -s /work/key-remnants.txt
                   source_descriptor_sha256=hashlib.sha256(descriptor.read_bytes()).hexdigest())
     (work / 'status.json').write_text(json.dumps(status, indent=2) + '\n')
     container = 'sparky-lc-kernel-' + flavour
-    command = ['docker', 'run', '--rm', '--platform', 'linux/amd64', '--name', container,
+    command = ['docker', 'run', '--ulimit', 'core=1', '--rm', '--platform', 'linux/amd64', '--name', container,
                '--cpus', '4', '--memory', '32g', '-v', str(work) + ':/work',
                '-v', str(keydir) + ':/signing:ro',
                '-v', str(kit / 'sparky-os') + ':/toolkit:ro',

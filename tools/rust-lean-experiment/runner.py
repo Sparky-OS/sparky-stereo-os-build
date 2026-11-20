@@ -118,7 +118,7 @@ class Runner:
     def container(self,name,image,mounts,command,user=None,remove=True):
         if user is None:user=str(os.getuid())+':'+str(os.getgid())
         argv=[*self.engine,'run',*(['--rm'] if remove else []),'--name',name,'--network','none','--sig-proxy=true','--pull=never','--cpus',self.cpus,
-              '--memory','8g','--ulimit','core=0','--cap-add','SYS_ADMIN','--cap-add','PERFMON','--user',user,
+              '--memory','8g','--ulimit','core=1','--cap-add','SYS_ADMIN','--cap-add','PERFMON','--user',user,
               '-e','LC_ALL=C','-e','HOME=/work/home','-e','PYTHONDONTWRITEBYTECODE=1','-e','RL541_CPUS='+self.cpus]
         if self.plan.get('fixture'):
             argv+=['-e','RL541_FIXTURE=1']

@@ -129,7 +129,7 @@ for name in sys.argv[1:]:
         shutil.copy2(original, work / filename)
     (work / "run.sh").write_text(recipe)
     container = "sparky-lc-" + name + "-" + architecture
-    command = ["docker", "run", "--rm", *provenance_args("sparky-lc-migration:20261020-" + architecture), "--platform", platform,
+    command = ["docker", "run", '--ulimit', 'core=1', "--rm", *provenance_args("sparky-lc-migration:20261020-" + architecture), "--platform", platform,
                "--name", container, "--cpus", "4", "-e", f"TASK_DSC={dsc.name}",
                "-e", f"TASK_ARCH={architecture}",
                "-v", f"{work}:/work", "-v", f"{repo}:/repo:ro",

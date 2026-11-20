@@ -17,15 +17,15 @@ OUT=${OUT:-${SPARKY_REPO_DIR:?}}
 PKG=sparky-backup-core-stereo
 SOURCE_VERSION=$(sed -n '2s/^  Version \(.*\) (.*$/\1/p' "$SRC/CHANGELOG")
 [ -n "$SOURCE_VERSION" ] || { echo "no version in $SRC/CHANGELOG" >&2; exit 1; }
-VERSION=${VERSION:-20261117~sparky9~0+lc1}
+VERSION=${VERSION:-20261119~sparky9~0+lc1}
 # The source is one commit of the fork, never "whatever is checked out": 20261111 was built from a work tree left on
 # an older branch (partner/lean-code-20261020), and lost the packer's menu generator, its keyboard layouts and its
 # menu languages while every gate passed; the developer ISO of 2026-11-17 could not be packed with it.
 # SOURCE_COMMIT names the commit of danielcamposramos/sparky-backup-core (branch stereo) and SOURCE_TREE is the
 # fingerprint of its folder 9: sha256 over "path NUL sha256-of-file LF" for every file in path order, __pycache__
 # left out. A folder that is not that commit stops the build. To move to a new commit, change both together.
-SOURCE_COMMIT=${SOURCE_COMMIT:-8c234115415685d4747651ac457e334099afbeb5}
-SOURCE_TREE=${SOURCE_TREE:-5a5471515bb6f26776b46d4a221f711ad450a1811bce04f8e71a8fc61930b10a}
+SOURCE_COMMIT=${SOURCE_COMMIT:-f69e5b3ca304175ae8908c02c23d6e522ef13499}
+SOURCE_TREE=${SOURCE_TREE:-df4e94b39843b6ff20a09c3bb0b91288ff3e94b02e2a39e25201e57ba3e0d4e3}
 got=$(python3 - "$SRC" <<'FINGERPRINT'
 import hashlib, os, sys
 root = sys.argv[1]
@@ -45,7 +45,7 @@ FINGERPRINT
 	echo "Export that commit (git archive $SOURCE_COMMIT 9) and build from the export; a work tree on another branch gives another packer." >&2
 	exit 1
 }
-for needed in lib/stereo/gen-menus.py lib/stereo/keyboard-layouts lib/stereo/isolinux-head.cfg lib/stereo/lang/en; do
+for needed in lib/stereo/gen-menus.py lib/stereo/keyboard-layouts lib/stereo/isolinux-head.cfg lib/stereo/lang/en systemd-user/10-live-only.conf; do
 	[ -e "$SRC/$needed" ] || { echo "$SRC has no $needed: the Stereo profile cannot write its menus without it" >&2; exit 1; }
 done
 grep -q -- '-isohybrid-apm-hfsplus' "$SRC/bin/sparkybackup" || { echo "$SRC/bin/sparkybackup does not write the Apple partition map" >&2; exit 1; }
@@ -84,6 +84,9 @@ install -m 644 "$SRC"/idesk/* "$D/usr/share/sparkybackup/idesk/"
 install -m 644 "$SRC"/lang-inst/* "$D/usr/share/sparky/sparky-advanced-installer/"
 install -m 644 "$SRC"/lang-core/* "$D/usr/share/sparky/sparky-backup-core/"
 install -m 644 "$SRC"/xdg/* "$D/etc/xdg/autostart/"
+# Sparky SetXKB is for a live session: the unit systemd makes from its autostart entry is skipped elsewhere (ORDER 755)
+mkdir -p "$D/usr/lib/systemd/user/app-sparky\x2dsetxkb@.service.d"
+install -m 644 "$SRC/systemd-user/10-live-only.conf" "$D/usr/lib/systemd/user/app-sparky\x2dsetxkb@.service.d/"
 install -m 644 "$SRC/copyright" "$D/usr/share/doc/$PKG/copyright"
 find "$D/usr/lib/sparkybackup" -type d -exec chmod 755 {} + && find "$D/usr/lib/sparkybackup" -type f -exec chmod 644 {} +
 (cd "$D" && find etc -type f | sed 's|^|/|' | sort) >"$D/DEBIAN/conffiles"

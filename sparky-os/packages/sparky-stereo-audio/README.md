@@ -30,9 +30,14 @@ They start with 00, so a file of yours with any later name in /etc, or any file 
 
 Commands:
 ---------
-- `sparky-stereo-audio detect [--write]`: read the devices and say the choices; with --write (root), write the files.
+- `sparky-stereo-audio detect [--write] [--settle]`: read the devices and say the choices; with --write (root), write the files; with --settle, read a graphics card again until two readings agree (the moment after a display was plugged in).
 - `sparky-stereo-audio show`: the choices, in plain words.
 - `sparky-stereo-audio apply`: in a session, give the running sound system the current list of rates (a user service runs it at login and when the system service has rewritten the list).
+
+A graphics card's audio (HDMI or DisplayPort) is recognised by its codec's HDMI or DP pins and its `eld#` files, never by the kernel's `Device:` line, which the kernel prints for such a codec only while a PCM is open.
+Its outputs are the displays connected now (a valid ELD each); an output with no display connected is no fault and is not said as one.
+What was read from a display is kept in `/var/lib/sparky-stereo-audio/displays.json` by the display's identity (the ELD's manufacture_id, product_id and monitor_name, so the same display on another port is the same display), used while that display is away and read again when it is connected; the sixteen displays connected most recently are kept.
+A display connected or disconnected is noticed by a udev rule on the graphics driver's hotplug event, because the kernel raises none on the sound card; the service then reads with `--settle`.
 
 A failure (devices that cannot be read, a file that cannot be written, a processor that cannot be measured) is said and kept by sparky-stereo-problems until it is repaired.
 
@@ -135,8 +140,7 @@ weak-processor cutoff is shipped. Automatic hardware connections remain off
 pending a design decision; the command exposes the existing FluidSynth option.
 PipeWire's existing ALSA sequencer bridge is the only bridge; a2jmidid is not
 started. MIDI files use one visible connection to the service's port. The existing file-player defaults stay. The MIDI command and its desktop entry are additional choices.
-The renderer is a separate native package so the existing script/data engine
-keeps its architecture-independent source and Lean Code route.
+The renderer is a separate native package so the existing script/data engine keeps its architecture-independent source and Lean Code route.
 
 The dedicated unit keeps the default small: Debian’s fluidsynth CLI package recommends Qsynth, whose recommendation installs FluidR3 even when TimGM6mb is already present.
 The renderer uses the same Debian synthesis library without that CLI/GUI dependency chain.

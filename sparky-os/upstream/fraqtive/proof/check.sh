@@ -14,7 +14,7 @@ status=0
 for route in "$@"; do
 	name=check-$route
 	mkdir -p "$OUT/$name"
-	docker run --rm --pull=never --ulimit core=0 --cpus 4 --user 1000:1000 --cap-add SYS_NICE ${RENDER_ARGS:?} \
+	docker run --rm --pull=never --ulimit core=1 --cpus 4 --user 1000:1000 --cap-add SYS_NICE ${RENDER_ARGS:?} \
 		--mount type=bind,src="$WORK/passwd",dst=/etc/passwd,readonly --mount type=bind,src="$WORK/group",dst=/etc/group,readonly \
 		--mount type=bind,src="$WORK",dst=/w,readonly --mount type=bind,src="$OUT/$name",dst=/o --tmpfs /tmp:exec,mode=1777 \
 		"$img" dbus-run-session -- /w/cell.sh "$route" "/o/$name" >/dev/null 2>&1 || true

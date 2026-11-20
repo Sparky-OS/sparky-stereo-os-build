@@ -15,7 +15,7 @@ for pair in amd-only nvidia-only hybrid-amd hybrid-nvidia; do
  for client in choice-clients caps-clients engine-clients vlc-clients; do
   scenario=final-$client-$pair
   name=${SPARKY_TEST_PREFIX}-$scenario
-  docker run --platform linux/amd64 --cpus 4 --user 1000:1000 --ulimit core=0 "${device[@]}" "${extra[@]}" --name "$name" -e HOME=/tmp/home -e DISPLAY_GPU="$display" -e SCENARIO="$scenario" -e CLIENT_SCRIPT="$client" -v "$SPARKY_ROUTING_WORK:/w" -v "$SPARKY_DECODER_WORK:/prev:ro" -v "$SPARKY_ROUTING_WORK/vlc-build/modules/.libs/libavcodec_plugin.so:/usr/lib/x86_64-linux-gnu/vlc-stereo/vlc/plugins/codec/libavcodec_plugin.so:ro" -v "$SPARKY_ROUTING_TESTS:/kit:ro" "$SPARKY_ROUTING_IMAGE" sh /kit/baseline-weston.sh
+  docker run --platform linux/amd64 --cpus 4 --user 1000:1000 --ulimit core=1 "${device[@]}" "${extra[@]}" --name "$name" -e HOME=/tmp/home -e DISPLAY_GPU="$display" -e SCENARIO="$scenario" -e CLIENT_SCRIPT="$client" -v "$SPARKY_ROUTING_WORK:/w" -v "$SPARKY_DECODER_WORK:/prev:ro" -v "$SPARKY_ROUTING_WORK/vlc-build/modules/.libs/libavcodec_plugin.so:/usr/lib/x86_64-linux-gnu/vlc-stereo/vlc/plugins/codec/libavcodec_plugin.so:ro" -v "$SPARKY_ROUTING_TESTS:/kit:ro" "$SPARKY_ROUTING_IMAGE" sh /kit/baseline-weston.sh
   docker logs "$name" > "$SPARKY_ROUTING_WORK/logs/$scenario-start.log" 2>&1
   echo "$scenario finished"
  done

@@ -11,7 +11,7 @@ output=$(dirname "$(readlink -f "$descriptor")")
 . "$build_tree/sparky-os/repo/build-provenance.sh"
 unset SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
 sparky_provenance_init "$image" "$recipe"
-docker run --rm --pull=never --name "$name" --platform linux/amd64 --ulimit core=0 --cpus 4 --network none \
+docker run --rm --pull=never --name "$name" --platform linux/amd64 --ulimit core=1 --cpus 4 --network none \
   --user "$(id -u):$(id -g)" "${SPARKY_PROV_ARGS[@]}" \
   -e HOME=/tmp -e PYTHONPATH=/toolkit \
   -e DEBFULLNAME='Daniel Ramos (Capitain Jack)' -e DEBEMAIL=Capitain_Jack@yahoo.com \
