@@ -46,4 +46,8 @@ export PYTHONPATH="$TREE${PYTHONPATH:+:$PYTHONPATH}"
 python3 -m lean.debian_prepare "$PWD" "$VERSION+lc1" --toolkit "$TREE"
 python3 "$TREE/repo/reproducible.py" normalize-tree "$SOURCE_DATE_EPOCH" "$PWD"
 export DEB_BUILD_OPTIONS=${DEB_BUILD_OPTIONS:-parallel=4 nocheck}
+# The debug information is kept, compressed in the objects and the linked files (most of the build tree is debug
+# information); dh_strip moves it into kicad-dbgsym compressed as before, and the installed files are the same files.
+export DEB_CFLAGS_MAINT_APPEND='-gz=zstd' DEB_CXXFLAGS_MAINT_APPEND='-gz=zstd'
+export DEB_LDFLAGS_MAINT_APPEND='-Wl,--compress-debug-sections=zstd'
 dpkg-buildpackage -us -uc -sa -j4 --build=source,any
