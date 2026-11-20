@@ -13,7 +13,7 @@ BASE=${LAB_BASE_IMAGE:-debian:testing}
 HELP=/K3D/partners/https-only-apt.sh
 apt_mounts=(-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HELP":/run/https-only-apt.sh:ro)
 docker rm -f lab22-build-stock lab22-build-ours >/dev/null 2>&1 || true
-docker run --name lab22-build-stock --pull=never --ulimit core=0 --cpus 4 "${apt_mounts[@]}" -v "$RIG":/src:ro "$BASE" sh -c '
+docker run --name lab22-build-stock --pull=never --ulimit core=1 --cpus 4 "${apt_mounts[@]}" -v "$RIG":/src:ro "$BASE" sh -c '
 set -e
 sh /run/https-only-apt.sh
 apt-get update -qq
@@ -35,7 +35,7 @@ apt-get clean
 '
 docker commit lab22-build-stock lab22-audio-stock:1 >/dev/null
 docker rm lab22-build-stock >/dev/null
-docker run --name lab22-build-ours --pull=never --ulimit core=0 --cpus 4 "${apt_mounts[@]}" -v "$STAGE":/stage:ro -v "$TREE":/repo:ro lab22-audio-stock:1 sh -c '
+docker run --name lab22-build-ours --pull=never --ulimit core=1 --cpus 4 "${apt_mounts[@]}" -v "$STAGE":/stage:ro -v "$TREE":/repo:ro lab22-audio-stock:1 sh -c '
 set -e
 sh /run/https-only-apt.sh
 echo "deb [trusted=yes] file:///stage ./" > /etc/apt/sources.list.d/lab22-stage.list

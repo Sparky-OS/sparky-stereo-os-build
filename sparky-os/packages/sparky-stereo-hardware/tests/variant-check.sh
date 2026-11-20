@@ -20,13 +20,13 @@ V3=$V2,avx,avx2,bmi1,bmi2,f16c,fma,abm,movbe,xsave
 cpu() { printf 'processor\t: 0\nvendor_id\t: TestCPU\nflags\t\t: %s\n' "${1//,/ }" >"$WORK/cpu/now"; }   # in place: the container's bind mount follows the inode
 cpu "$V3"
 if [ ! -f "$WORK/toy/complete/dists/toy/Release" ]; then
-	docker run --rm --cpus 2 --ulimit core=0 --name gr108-toy "${HTTPS[@]}" -e DEBIAN_FRONTEND=noninteractive \
+	docker run --rm --cpus 2 --ulimit core=1 --name gr108-toy "${HTTPS[@]}" -e DEBIAN_FRONTEND=noninteractive \
 		-v "$APTPKG/tests/variants:/t:ro" -v "$WORK/toy:/out" "$IMAGE" sh -c \
 		'sh /run/https-only-apt.sh && apt-get -y update >/dev/null && apt-get -y install apt-utils >/dev/null && bash /t/make-toy.sh /out && chown -R '"$(id -u):$(id -g)"' /out' >/dev/null || { echo 'FAIL the toy repository'; exit 1; }
 fi
 C=gr108-vc
 docker rm -f $C >/dev/null 2>&1
-docker run -d --name $C --cpus 2 --ulimit core=0 "${HTTPS[@]}" -v "$WORK/cpu/now:/proc/cpuinfo:ro" -v "$WORK/toy:/toy:ro" -v "$PKG:/pkg:ro" \
+docker run -d --name $C --cpus 2 --ulimit core=1 "${HTTPS[@]}" -v "$WORK/cpu/now:/proc/cpuinfo:ro" -v "$WORK/toy:/toy:ro" -v "$PKG:/pkg:ro" \
 	-v "$APTPKG:/aptpkg:ro" "$IMAGE" sleep 1800 >/dev/null
 trap 'docker rm -f $C >/dev/null 2>&1' EXIT
 x() { docker exec -e DEBIAN_FRONTEND=noninteractive "$@"; }

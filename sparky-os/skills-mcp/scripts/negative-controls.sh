@@ -10,7 +10,7 @@ trap 'rm -rf "$W"' EXIT
 cp -r "$HERE/compiled" "$HERE/surfaces" "$HERE/tests" "$HERE/data" "$W/"
 printf 'const find = @import("op_find");\n' > "$W/compiled/L4_atomic/manifest/upward.zig"
 printf 'pub const era = "stateless_2026_07_28";\n' > "$W/compiled/L5_executable/hardcoded.zig"
-docker run --rm --network none --ulimit core=0 --user "$(id -u):$(id -g)" -v "$W:/w:ro" -v "$OUT/out/tests:/t:ro" -w /w "$IMAGE" bash -c '
+docker run --rm --network none --ulimit core=1 --user "$(id -u):$(id -g)" -v "$W:/w:ro" -v "$OUT/out/tests:/t:ro" -w /w "$IMAGE" bash -c '
 	for t in lint_layers_test lint_no_hardcoded_variants_test; do
 		if /t/$t >/dev/null 2>&1; then echo "NOT RED: $t"; exit 1; else echo "RED as expected: $t"; fi
 	done'

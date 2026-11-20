@@ -9,7 +9,7 @@ T=$(cd "$(dirname "$0")" && pwd)
 REPO=${REPO:-/K3D/sparky-repo-r1107a}
 HELPER=${HELPER:-/K3D/partners/https-only-apt.sh}
 mkdir -p "$EVID" "$CACHE/partial"
-docker run --rm --name "mlt-458-$MODE" --cpus 2 --ulimit core=0 --platform linux/amd64 \
+docker run --rm --name "mlt-458-$MODE" --cpus 2 --ulimit core=1 --platform linux/amd64 \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HELPER":/run/https-only-apt.sh:ro \
 	-v "$REPO":/repo:ro -v "$NEW":/new:ro -v "$T":/t:ro -v "$CACHE":/var/cache/apt/archives "$IMAGE" \
 	bash /t/inside.sh "$MODE" 2>&1 | tee "$EVID/$MODE.log"

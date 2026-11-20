@@ -16,7 +16,7 @@ source "$HERE/../repo/build-provenance.sh"
 export SPARKY_PROVENANCE_REQUIRED=1
 sparky_provenance_init "$RIG_IMAGE" "$HERE"
 docker run --rm --pull never --name "${CONTAINER_NAME:-theme-editor-build}" --platform linux/amd64 \
- --cpus 2 --ulimit core=0 --user "$(id -u):$(id -g)" --cap-add SYS_ADMIN \
+ --cpus 2 --ulimit core=1 --user "$(id -u):$(id -g)" --cap-add SYS_ADMIN \
  --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
  "${SPARKY_PROV_ARGS[@]}" \
  -v "${SPARKY_HTTPS_APT_HELPER:?}:/run/https-only-apt.sh:ro" \

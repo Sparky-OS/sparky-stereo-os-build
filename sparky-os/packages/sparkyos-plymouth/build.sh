@@ -124,7 +124,7 @@ printf 'artwork repository commit %s\nplymouth/ tree %s\n' "$ART_COMMIT" "$ART_T
 TREE=$(cd "$HERE/../../.." && pwd)
 IMAGE=$SPARKY_BUILD_IMAGE
 chmod -R a+rX "$W"
-docker run --rm --pull=never --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lean-standalone-sparkyos-plymouth" --ulimit core=0 --network none --platform linux/amd64 \
+docker run --rm --pull=never --name "${SPARKY_CONTAINER_PREFIX:+$SPARKY_CONTAINER_PREFIX-}lean-standalone-sparkyos-plymouth" --ulimit core=1 --network none --platform linux/amd64 \
 	--user "$(id -u):$(id -g)" "${SPARKY_PROV_ARGS[@]}" -e HOME=/tmp -e PYTHONPATH="$TREE/sparky-os" \
 	-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
 	--mount "type=bind,src=$TREE,dst=$TREE,readonly" --mount "type=bind,src=$W,dst=$W" --mount "type=bind,src=$OUT,dst=$OUT" "$IMAGE" \
