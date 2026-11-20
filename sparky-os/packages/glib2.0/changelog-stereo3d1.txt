@@ -1,0 +1,17 @@
+glib2.0 (2.90.1-2+stereo3d1) unstable; urgency=medium
+
+  * Sparky Stereo OS: the location service starts again (ORDER 768).
+    GLib 2.89.2 to 2.90.1 can deadlock at the first can_reach_async() of
+    the netlink network monitor: a pool thread builds the default proxy
+    resolver while holding default_modules_lock and waits for the GOnce
+    of g_vfs_get_default(), which the main thread owns while it waits for
+    that lock. geoclue then never takes its bus name and its start times
+    out. This carries Thomas Hebb's upstream commit 4301b49671 unchanged
+    (glib-2-90, merge request 5460; afa628dfbd on main, merge request
+    5418): the proxy address enumerator is made on the calling thread and
+    only the resolution stays asynchronous. GLib issue 4078 (Thomas Hebb)
+    and 4047 (Julian Grinblat); merged by Philip Withnall and Emmanuele
+    Bassi. Nothing else in GLib changes. Retired when Debian ships the
+    commit.
+    Test: tests/deadlock-reproducer (hangs on 2.90.1-2, finishes with the
+    commit).
