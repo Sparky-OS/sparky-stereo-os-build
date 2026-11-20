@@ -1,0 +1,30 @@
+From 41890277d00ea3c79ebede3fca5794b67668c992 Mon Sep 17 00:00:00 2001
+From: Xaver Hugl
+Date: Tue, 29 Sep 2026 08:59:44 -0400
+Subject: [PATCH] plugins/screenshot: make the context current after prePaint
+
+Backport of upstream ad655ed764a61995776abd6b59d98cec1814531f to the edition stereo capture paths.
+
+BUG: 524840
+Assisted-by: Codex (GPT-6)
+---
+ src/plugins/screenshot/screenshot.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/plugins/screenshot/screenshot.cpp b/src/plugins/screenshot/screenshot.cpp
+index d7c69aa..6e68173 100644
+--- a/src/plugins/screenshot/screenshot.cpp
++++ b/src/plugins/screenshot/screenshot.cpp
+@@ -296,6 +296,9 @@ std::optional<QImage> ScreenShotManager::takeScreenShot(const Rect &area, Screen
+     sceneView.setViewport(area);
+     sceneView.setScale(scale);
+     sceneView.prePaint();
++    if (!context->makeCurrent()) {
++        return std::nullopt;
++    }
+     ItemRenderer *renderer = kwinApp()->scene()->renderer();
+     QImage snapshot;
+     const bool stereo = screenShotIsStereo(area);
+-- 
+2.53.0
+
