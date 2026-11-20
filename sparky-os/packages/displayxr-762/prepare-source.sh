@@ -5,7 +5,7 @@ input=$(realpath "$1")
 out=$(realpath -m "$2")
 packaging=$(realpath "$3")
 : "${SOURCE_DATE_EPOCH:?set to the committed recipe date}"
-commit=335445418fdc84c61500bae1be21b0600709d45e
+commit=f310f8f7b8f98b47f2d57c070c49fa379dc91c48
 [ "$(git -C "$packaging" rev-parse HEAD)" = "$commit" ] || { echo 'Unexpected packaging commit' >&2; exit 1; }
 overlay=$(mktemp -d "${SD762_SCRATCH:?}/runtime-overlay.XXXXXX")
 trap 'rm -rf "$overlay"' EXIT
