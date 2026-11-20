@@ -14,7 +14,10 @@ Design followed:
 3. 3D viewer: light the navigator gizmo from the camera between the eyes (October).
 4. 3D camera: the stereo disparity of a distance, and the separation that fits limits (the orthographic eyes become a shear).
 5. 3D viewer: the stereo separation is the person's depth limits (a first pass from the camera between the eyes reads the nearest and farthest pixel; the limits are read again four times a second; Enable 3D and the Display Settings button are the options).
+6. 3D viewer: a translucent model counts in the depth fit by its share of each pixel (that first pass is drawn into an off-screen float framebuffer; the transparent models are drawn there as the eyes draw them, with each fragment's colour its distance, so every pixel ends as the contribution-weighted mean distance of what it shows).
 Then `../../translations/kicad-3d-viewer-stereo.po.patch`: the seven new sentences in pl, pt_BR, fr, de, es, ja, ko, zh_CN and zh_TW (the three "3D depth" sentences are CloudCompare's, "3D display settings..." is PyMOL's).
+
+Rule of the fit (Daniel, 2026-11-18): every pixel of the 3D area stays inside the person's limits, a translucent pixel's depth being its contribution-weighted mean.
 
 Debian's wxWidgets 3.2 is built without its EGL GL canvas, so KiCad runs on Xwayland (it sets GDK_BACKEND=x11 itself) and the 3D view is a GLX child window: Stereo KWin's declared X11 child, with the limits written on it (KWin +stereo3d59, support 11).
 
