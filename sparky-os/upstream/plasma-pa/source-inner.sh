@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -euo pipefail
-ulimit -c 0
 trap 'chown -R "$BUILD_UID:$BUILD_GID" /work' EXIT
 sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com LC_ALL=C.UTF-8

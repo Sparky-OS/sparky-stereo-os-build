@@ -93,7 +93,6 @@ for step in $STEPS; do
 			-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
 			--entrypoint bash "$IMAGE" -c 'sh /run/https-only-apt.sh && bash -s' > "$W/bootstrap.log" 2>&1 <<'INNER' || { tail -30 "$W/bootstrap.log"; exit 1; }
 set -euo pipefail
-ulimit -c 0
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS="nocheck parallel=$THREADS" DEBFULLNAME='Daniel Ramos (Capitain Jack)' DEBEMAIL=Capitain_Jack@yahoo.com
 printf 'deb [trusted=yes] file:/repo mashtabba main\n' > /etc/apt/sources.list.d/edition.list
 printf 'deb [signed-by=/usr/share/keyrings/deb-multimedia-keyring.pgp] https://www.deb-multimedia.org forky main non-free\n' > /etc/apt/sources.list.d/multimedia.list

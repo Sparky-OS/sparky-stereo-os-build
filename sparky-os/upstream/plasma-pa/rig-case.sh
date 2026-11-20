@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: 2026 Daniel Campos Ramos
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -euo pipefail
-ulimit -c 0
 case_name=${1:?published, candidate or installed}
 scale=${2:-1}
 phase=${3:-page}

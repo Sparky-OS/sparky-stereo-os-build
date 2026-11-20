@@ -1,0 +1,71 @@
+Description: [PATCH 14/22] Expose the unmodified Dolby Vision RPU T35 buffers
+Author: Damiano Galassi
+Origin: other, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/ffmpeg/A14-Expose-the-unmodified-Dolby-Vision-RPU-T35-buffers.patch
+Bug: https://github.com/HandBrake/HandBrake/commit/8deff21ece692e4be4e448553b576487a059a191
+Forwarded: not-needed
+Comment: Backported to the edition FFmpeg 9.0.2; preserve public enum values.
+
+--- a/libavcodec/av1dec.c
++++ b/libavcodec/av1dec.c
+@@ -969,6 +969,18 @@
+     if (ret <= 0)
+         return ret;
+ 
++    if (itut35.country_code == ITU_T_T35_COUNTRY_CODE_US &&
++        itut35.provider_code == ITU_T_T35_PROVIDER_CODE_DOLBY) {
++        AVBufferRef *rpu_buf = av_buffer_alloc(itut_t35->payload_size);
++        if (!rpu_buf)
++            return AVERROR(ENOMEM);
++        memcpy(rpu_buf->data, itut_t35->payload, itut_t35->payload_size);
++        if (!av_frame_new_side_data_from_buf(frame, AV_FRAME_DATA_DOVI_RPU_BUFFER_T35, rpu_buf)) {
++            av_buffer_unref(&rpu_buf);
++            return AVERROR(ENOMEM);
++        }
++    }
++
+     ret = ff_itut_t35_parse_payload_to_frame(&itut35, &aux, avctx, frame);
+     if (ret < 0)
+         return ret;
+--- a/libavcodec/libdav1d.c
++++ b/libavcodec/libdav1d.c
+@@ -364,6 +364,18 @@
+     if (res <= 0)
+         return res;
+ 
++    if (itut35.country_code == ITU_T_T35_COUNTRY_CODE_US &&
++        itut35.provider_code == ITU_T_T35_PROVIDER_CODE_DOLBY) {
++        AVBufferRef *rpu_buf = av_buffer_alloc(itut_t35->payload_size);
++        if (!rpu_buf)
++            return AVERROR(ENOMEM);
++        memcpy(rpu_buf->data, itut_t35->payload, itut_t35->payload_size);
++        if (!av_frame_new_side_data_from_buf(frame, AV_FRAME_DATA_DOVI_RPU_BUFFER_T35, rpu_buf)) {
++            av_buffer_unref(&rpu_buf);
++            return AVERROR(ENOMEM);
++        }
++    }
++
+     res = ff_itut_t35_parse_payload_to_frame(&itut35, &aux, c, frame);
+     if (res < 0)
+         return res;
+--- a/libavutil/frame.h
++++ b/libavutil/frame.h
+@@ -367,6 +367,9 @@
+      * defined in libavutil/multiview.h.
+      */
+     AV_FRAME_DATA_AUXILIARY_VIDEO_INFO,
++    /** Unmodified Dolby Vision RPU ITU T35 bytes (HandBrake/SVT-AV1). */
++    AV_FRAME_DATA_DOVI_RPU_BUFFER_T35,
++
+ };
+ 
+ enum AVActiveFormatDescription {
+--- a/libavutil/side_data.c
++++ b/libavutil/side_data.c
+@@ -25,6 +25,7 @@
+ #include "side_data.h"
+ 
+ static const AVSideDataDescriptor sd_props[] = {
++    [AV_FRAME_DATA_DOVI_RPU_BUFFER_T35] = { "Dolby Vision RPU ITU T35 Data", AV_SIDE_DATA_PROP_COLOR_DEPENDENT },
+     [AV_FRAME_DATA_PANSCAN]                     = { "AVPanScan",                                    AV_SIDE_DATA_PROP_SIZE_DEPENDENT },
+     [AV_FRAME_DATA_A53_CC]                      = { "ATSC A53 Part 4 Closed Captions" },
+     [AV_FRAME_DATA_MATRIXENCODING]              = { "AVMatrixEncoding",                             AV_SIDE_DATA_PROP_CHANNEL_DEPENDENT },

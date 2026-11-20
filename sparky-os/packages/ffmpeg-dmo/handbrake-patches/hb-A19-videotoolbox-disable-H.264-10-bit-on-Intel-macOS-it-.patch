@@ -1,0 +1,23 @@
+Description: [PATCH 19/22] videotoolbox: disable H.264 10-bit on Intel macOS, it's not decoded properly. Disable H.264 level 6.1 and 6.2 too, seems to have issue in some specific cases.
+Author: Damiano Galassi
+Origin: other, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/ffmpeg/A19-videotoolbox-disable-H.264-10-bit-on-Intel-macOS-it-.patch
+Bug: https://github.com/HandBrake/HandBrake/commit/b2fea2782b6aef1120e6038c67dbd75c82ad8ee5
+Forwarded: not-needed
+Comment: Backported to the edition FFmpeg 9.0.2; preserve public enum values.
+
+--- a/libavcodec/videotoolbox.c
++++ b/libavcodec/videotoolbox.c
+@@ -964,6 +964,13 @@
+         break;
+     }
+ 
++#if ARCH_X86_64
++    if (avctx->codec_id == AV_CODEC_ID_H264 && avctx->sw_pix_fmt == AV_PIX_FMT_YUV420P10)
++        return AVERROR(ENOSYS);
++#endif
++    if (avctx->codec_id == AV_CODEC_ID_H264 && (avctx->level == 61 || avctx->level == 62))
++        return AVERROR(ENOSYS);
++
+ #if defined(MAC_OS_X_VERSION_10_9) && !TARGET_OS_IPHONE && (MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_9) && AV_HAS_BUILTIN(__builtin_available)
+     if (avctx->codec_id == AV_CODEC_ID_PRORES || avctx->codec_id == AV_CODEC_ID_PRORES_RAW) {
+         if (__builtin_available(macOS 10.9, *)) {

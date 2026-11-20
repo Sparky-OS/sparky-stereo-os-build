@@ -1,0 +1,25 @@
+Description: Preserve HandBrake Apple Silicon frame thread tuning
+Author: Damiano Galassi
+Origin: backport, https://github.com/HandBrake/HandBrake/blob/1.11.2/contrib/x265/A02-Apple-Silicon-tuning.patch
+Last-Update: 2026-11-19
+
+--- a/source/common/threadpool.cpp
++++ b/source/common/threadpool.cpp
+@@ -859,10 +859,16 @@
+     else if (cpuCount >= 32)
+         return (p->sourceHeight > 2000) ? 6 : 5; 
+     else if (cpuCount >= 16)
+-        return 4; 
++#if MACOS && X265_ARCH_ARM64
++        return 16;
++#else
++        return 4;
++#endif 
+     else if (cpuCount >= 8)
+ #if _WIN32 && X265_ARCH_ARM64
+         return cpuCount;
++#elif MACOS && X265_ARCH_ARM64
++        return 8;
+ #else
+         return 3;
+ #endif
