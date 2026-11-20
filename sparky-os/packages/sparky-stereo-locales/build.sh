@@ -8,7 +8,7 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-"$HERE/../../../../out"}
-VERSION=0.4.1+lc1
+VERSION=0.4.2+lc1
 PKG=sparky-stereo-locales
 SHARE=/usr/share/$PKG
 mkdir -p "$OUT"
