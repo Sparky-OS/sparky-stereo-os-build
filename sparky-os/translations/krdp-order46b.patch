@@ -1,0 +1,212 @@
+diff --git a/discovery/directwifi/org.kde.krdp-direct-wifi.desktop b/discovery/directwifi/org.kde.krdp-direct-wifi.desktop
+--- a/discovery/directwifi/org.kde.krdp-direct-wifi.desktop
++++ b/discovery/directwifi/org.kde.krdp-direct-wifi.desktop
+@@ -1,10 +1,12 @@
+ [Desktop Entry]
+ Type=Application
+ Name=Throw via Direct Wi-Fi
++Name[es]=Lanzar por Wi-Fi Direct
+ Comment=Connect directly to a phone running Flat Headset
++Comment[es]=Conectar directamente a un teléfono con Flat Headset
+ Exec=krdp-direct-wifi
+ Icon=network-wireless
+ Terminal=false
+ Categories=Network;RemoteAccess;
+ Name[pl]=Throw przez bezpośrednie Wi-Fi
+ Comment[pl]=Połącz bezpośrednio z telefonem z uruchomionym Flat Headset
+diff --git a/discovery/krdp-panel-discovery.notifyrc b/discovery/krdp-panel-discovery.notifyrc
+--- a/discovery/krdp-panel-discovery.notifyrc
++++ b/discovery/krdp-panel-discovery.notifyrc
+@@ -1,38 +1,42 @@
+ [Global]
+ IconName=krdc
+ Name=Throw discovery
++Name[es]=Detección para el lanzamiento
+ Name[pl]=Wykrywanie do przerzucania
+ Name[pt_BR]=Descoberta para arremesso
+ Name[fr]=Découverte pour le lancer
+ Name[de]=Erkennung für das Werfen
+ Name[ja]=スロー先の検出
+ Name[ko]=던지기 대상 검색
+ Name[zh_CN]=投送发现
+ Name[zh_TW]=投送探索
+ Comment=Find a nearby phone to Throw a stereo display to
++Comment[es]=Buscar un teléfono cercano al que lanzar una pantalla estéreo
+ Comment[pl]=Znajdź pobliski telefon, do którego można przerzucić ekran stereo
+ Comment[pt_BR]=Encontrar um telefone próximo para arremessar uma tela estéreo
+ Comment[fr]=Trouver un téléphone proche vers lequel lancer un écran stéréo
+ Comment[de]=Ein Telefon in der Nähe zum Werfen eines Stereodisplays finden
+ Comment[ja]=近くの電話を探してステレオ画面をスロー
+ Comment[ko]=스테레오 화면을 던질 주변 휴대전화 찾기
+ Comment[zh_CN]=查找附近的手机以投送立体显示屏
+ Comment[zh_TW]=尋找附近的手機以投送立體顯示螢幕
+ 
+ [Event/headsetFound]
+ Name=Headset ready for Throw
++Name[es]=Visor listo para el lanzamiento
+ Name[pl]=Gogle gotowe do przerzucania
+ Name[pt_BR]=Óculos prontos para o arremesso
+ Name[fr]=Casque prêt pour le lancer
+ Name[de]=Headset bereit für den Wurf
+ Name[ja]=ヘッドセットがスローを受信できます
+ Name[ko]=헤드셋 던지기 준비 완료
+ Name[zh_CN]=头显已准备好接收投送
+ Name[zh_TW]=頭戴裝置已準備好接收投送
+ Comment=Approve a Throw to a nearby headset
++Comment[es]=Autorizar el lanzamiento a un visor cercano
+ Comment[pl]=Zatwierdź przerzucenie do pobliskich gogli
+ Comment[pt_BR]=Aprovar um arremesso para óculos próximos
+ Comment[fr]=Autoriser un lancer vers un casque proche
+ Comment[de]=Einen Wurf auf ein Headset in der Nähe erlauben
+ Comment[ja]=近くのヘッドセットへのスローを許可
+ Comment[ko]=주변 헤드셋으로 던지기 승인
+diff --git a/discovery/org.kde.krdp-panel-discovery.desktop b/discovery/org.kde.krdp-panel-discovery.desktop
+--- a/discovery/org.kde.krdp-panel-discovery.desktop
++++ b/discovery/org.kde.krdp-panel-discovery.desktop
+@@ -1,18 +1,20 @@
+ [Desktop Entry]
+ Type=Application
+ Name=Throw discovery
++Name[es]=Detección para el lanzamiento
+ Name[pl]=Wykrywanie do przerzucania
+ Name[pt_BR]=Descoberta para arremesso
+ Name[fr]=Découverte pour le lancer
+ Name[de]=Erkennung für das Werfen
+ Name[ja]=スロー先の検出
+ Name[ko]=던지기 대상 검색
+ Name[zh_CN]=投送发现
+ Name[zh_TW]=投送探索
+ Comment=Find a nearby phone to Throw a stereo display to
++Comment[es]=Buscar un teléfono cercano al que lanzar una pantalla estéreo
+ Comment[pl]=Znajdź pobliski telefon, do którego można przerzucić ekran stereo
+ Comment[pt_BR]=Encontrar um telefone próximo para arremessar uma tela estéreo
+ Comment[fr]=Trouver un téléphone proche vers lequel lancer un écran stéréo
+ Comment[de]=Ein Telefon in der Nähe zum Werfen eines Stereodisplays finden
+ Comment[ja]=近くの電話を探してステレオ画面をスロー
+ Comment[ko]=스테레오 화면을 던질 주변 휴대전화 찾기
+diff --git a/po/de/krdpserver.po b/po/de/krdpserver.po
+--- a/po/de/krdpserver.po
++++ b/po/de/krdpserver.po
+@@ -111,6 +111,9 @@
+ msgstr "Koppeln Sie dieses Headset vor dem Verbinden in KDE Connect mit diesem Computer."
+ 
+ #: discovery/PanelDiscovery.cpp
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "Headset getrennt: Die Kopplung in KDE Connect wurde entfernt."
++
++msgid "Cancel"
++msgstr "Abbrechen"
+diff --git a/po/es/krdpserver.po b/po/es/krdpserver.po
+--- a/po/es/krdpserver.po
++++ b/po/es/krdpserver.po
+@@ -96,6 +96,18 @@
+ msgstr "Antes de conectar, empareje este visor con este equipo en KDE Connect."
+ 
+ #: discovery/PanelDiscovery.cpp
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "Visor desconectado: se eliminó el emparejamiento en KDE Connect."
++
++msgid "Cancel"
++msgstr "Cancelar"
++
++msgid "Throw"
++msgstr "Lanzar"
++
++msgid "Throw a stereo display to %1? The headset receives the picture. Sound and input stay on this computer."
++msgstr "¿Lanzar una pantalla estéreo a %1? El casco recibe la imagen. El sonido y los controles se quedan en este equipo."
++
++msgid "Throw to → %1"
++msgstr "Lanzar a → %1"
+diff --git a/po/fr/krdpserver.po b/po/fr/krdpserver.po
+--- a/po/fr/krdpserver.po
++++ b/po/fr/krdpserver.po
+@@ -109,6 +109,9 @@
+ msgstr "Avant la connexion, associez ce casque à cet ordinateur dans KDE Connect."
+ 
+ #: discovery/PanelDiscovery.cpp
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "Casque déconnecté : l’association dans KDE Connect a été supprimée."
++
++msgid "Cancel"
++msgstr "Annuler"
+diff --git a/po/ja/krdpserver.po b/po/ja/krdpserver.po
+--- a/po/ja/krdpserver.po
++++ b/po/ja/krdpserver.po
+@@ -33,6 +33,9 @@
+ msgstr "接続する前に、KDE Connect でこのヘッドセットとこのコンピューターをペアリングしてください。"
+ 
+ #: discovery/PanelDiscovery.cpp
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "ヘッドセットの接続が切れました。KDE Connect のペアリングが解除されました。"
++
++msgid "Cancel"
++msgstr "キャンセル"
+diff --git a/po/ko/krdpserver.po b/po/ko/krdpserver.po
+--- a/po/ko/krdpserver.po
++++ b/po/ko/krdpserver.po
+@@ -109,6 +109,9 @@
+ msgstr "연결하기 전에 KDE Connect에서 이 헤드셋을 이 컴퓨터와 페어링하세요."
+ 
+ #: discovery/PanelDiscovery.cpp
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "헤드셋 연결이 끊어졌습니다. KDE Connect 페어링이 해제되었습니다."
++
++msgid "Cancel"
++msgstr "취소"
+diff --git a/po/pl/krdpserver.po b/po/pl/krdpserver.po
+--- a/po/pl/krdpserver.po
++++ b/po/pl/krdpserver.po
+@@ -110,6 +110,9 @@
+ msgstr "Przed połączeniem sparuj ten zestaw z tym komputerem w KDE Connect."
+ 
+ #: discovery/PanelDiscovery.cpp
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "Zestaw rozłączony: usunięto parowanie w KDE Connect."
++
++msgid "Cancel"
++msgstr "Anuluj"
+diff --git a/po/pt_BR/krdpserver.po b/po/pt_BR/krdpserver.po
+--- a/po/pt_BR/krdpserver.po
++++ b/po/pt_BR/krdpserver.po
+@@ -116,6 +116,9 @@
+ msgstr "Antes de conectar, emparelhe este headset com este computador no KDE Connect."
+ 
+ #: discovery/PanelDiscovery.cpp
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "Headset desconectado: o emparelhamento no KDE Connect foi removido."
++
++msgid "Cancel"
++msgstr "Cancelar"
+diff --git a/po/zh_CN/krdpserver.po b/po/zh_CN/krdpserver.po
+--- a/po/zh_CN/krdpserver.po
++++ b/po/zh_CN/krdpserver.po
+@@ -109,6 +109,9 @@
+ msgstr "连接前，请在 KDE Connect 中将此头显与这台计算机配对。"
+ 
+ #: discovery/PanelDiscovery.cpp
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "头显已断开连接：KDE Connect 配对已解除。"
++
++msgid "Cancel"
++msgstr "取消"
+diff --git a/po/zh_TW/krdpserver.po b/po/zh_TW/krdpserver.po
+--- a/po/zh_TW/krdpserver.po
++++ b/po/zh_TW/krdpserver.po
+@@ -109,6 +109,9 @@
+ msgstr "連線前，請在 KDE Connect 中將此頭戴裝置與這台電腦配對。"
+ 
+ #: discovery/PanelDiscovery.cpp
+ #, kde-format
+ msgid "Headset disconnected: KDE Connect pairing was removed."
+ msgstr "頭戴裝置已中斷連線：KDE Connect 配對已解除。"
++
++msgid "Cancel"
++msgstr "取消"
