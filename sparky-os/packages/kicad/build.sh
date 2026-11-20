@@ -27,6 +27,12 @@ c = Path('debian/control').read_text()
 old = ' libssl-dev,\n'
 assert c.count(old) == 1, 'Debian control changed'
 Path('debian/control').write_text(c.replace(old, old + ' libstereo-declare-dev (>= 1.11.0),\n', 1))
+# KiCad's QA test programs (qa/, KICAD_BUILD_QA_TESTS, default ON) are built by Debian's rules even under nocheck, are never
+# run here and install nothing (qa/ has no install() rule); without them the build tree is far smaller.
+r = Path('debian/rules').read_text()
+old = '\t-DKICAD_BUILD_I18N=ON \\\n'
+assert r.count(old) == 1, 'Debian rules changed'
+Path('debian/rules').write_text(r.replace(old, old + '\t-DKICAD_BUILD_QA_TESTS=OFF \\\n', 1))
 PY
 VERSION=10.0.6+dfsg-1+stereo3d1
 DATE=$(date -u -d "@$SOURCE_DATE_EPOCH" -R)

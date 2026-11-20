@@ -2,3 +2,4 @@ Sparky Stereo OS: the 3D viewer draws its OpenGL view as a stereo pair, two para
 The separation is the person's depth limits, read from the desktop through libstereo-declare: the largest under which every pixel of the view stays inside them; no separation setting. Without limits both eyes are the same picture and the info bar says why, once.
 The 3D viewer's 3D options are Enable 3D (on by default) and a button to Display Settings; the new sentences in the ten languages (translations/kicad-3d-viewer-stereo.po.patch).
 Build-Depends on libstereo-declare-dev (>= 1.11.0); the source and the kicad package are built, the architecture-independent packages stay Debian's.
+KiCad's QA test programs are not built (-DKICAD_BUILD_QA_TESTS=OFF in debian/rules): they are never run in this build and install nothing.
