@@ -1,0 +1,42 @@
+From: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Date: Thu, 19 Nov 2026 23:40:00 -0300
+Subject: [PATCH] vulkan/wsi/x11: a new surface starts with no doubled window
+
+Patch 0041 gave the X11 surface three fields for a window the compositor makes
+two views wide (doubled, doubled_seen, view_width) and set them only when such a
+swapchain is made; wsi_CreateXcbSurfaceKHR and wsi_CreateXlibSurfaceKHR allocate
+the surface with vk_alloc2, which does not clear it. x11_surface_get_capabilities
+halves the extents whenever doubled and doubled_seen read as true, so a window's
+surface reported half its width whenever the allocation held old bytes there: on
+any X server, for every Mesa Vulkan driver, a stereo swapchain or not. "With
+Xcb, minImageExtent, maxImageExtent, and currentExtent must always equal the
+window size" (VK_KHR_xcb_surface; the same for Xlib). A stereo swapchain made at
+that size is never told it is out of date (the suboptimal check is skipped for a
+stereo chain), so its program drew each eye at half the window's width for good:
+the Dolphin emulator on Vulkan, 4 of 10 and 4 of 8 fresh sessions (ORDER 39).
+Both create functions now set the three fields.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+--- a/src/vulkan/wsi/wsi_common_x11.c
++++ b/src/vulkan/wsi/wsi_common_x11.c
+@@ -1110,6 +1110,9 @@
+    surface->has_alpha = visual_has_alpha(visual, visual_depth);
+    surface->stereo_swapchain_created = false;
+    surface->stereo_chain = NULL;
++   surface->doubled = false;
++   surface->doubled_seen = false;
++   surface->view_width = 0;
+ 
+    *pSurface = VkIcdSurfaceBase_to_handle(&surface->xcb.base);
+    return VK_SUCCESS;
+@@ -1144,6 +1147,9 @@
+    surface->has_alpha = visual_has_alpha(visual, visual_depth);
+    surface->stereo_swapchain_created = false;
+    surface->stereo_chain = NULL;
++   surface->doubled = false;
++   surface->doubled_seen = false;
++   surface->view_width = 0;
+ 
+    *pSurface = VkIcdSurfaceBase_to_handle(&surface->xlib.base);
+    return VK_SUCCESS;
