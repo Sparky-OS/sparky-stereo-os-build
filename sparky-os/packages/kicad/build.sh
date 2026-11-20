@@ -26,7 +26,13 @@ from pathlib import Path
 c = Path('debian/control').read_text()
 old = ' libssl-dev,\n'
 assert c.count(old) == 1, 'Debian control changed'
-Path('debian/control').write_text(c.replace(old, old + ' libstereo-declare-dev (>= 1.11.0),\n', 1))
+c = c.replace(old, old + ' libstereo-declare-dev (>= 1.11.0),\n', 1)
+# The binary targets run without fakeroot: the Lean Code gate starts the package's programs under bubblewrap, which
+# cannot map its user under fakeroot's LD_PRELOAD ("bwrap: setting up uid map: Operation not permitted"). Debian's rules
+# change no owner (only modes, in dh_fixperms), and dpkg-deb gives every file root:root as before.
+old = 'Rules-Requires-Root: binary-targets\n'
+assert c.count(old) == 1, 'Debian control changed'
+Path('debian/control').write_text(c.replace(old, 'Rules-Requires-Root: no\n', 1))
 # KiCad's QA test programs (qa/, KICAD_BUILD_QA_TESTS, default ON) are built by Debian's rules even under nocheck, are never
 # run here and install nothing (qa/ has no install() rule); without them the build tree is far smaller.
 r = Path('debian/rules').read_text()
