@@ -62,4 +62,5 @@ if git -C "$OS/.." rev-parse --git-dir >/dev/null 2>&1; then
 fi
 python3 "$OS/tests/supply-chain/check-container-core.py" "$OS/.." || fail=1
 python3 "$OS/tests/supply-chain/test-container-core.py" || fail=1
+PYTHONDONTWRITEBYTECODE=1 python3 "$OS/tests/supply-chain/test-smoke-notes.py" || fail=1
 [ $fail = 0 ] && echo "ALL PASS" || { echo "FAILED"; exit 1; }
