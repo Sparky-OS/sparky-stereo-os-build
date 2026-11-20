@@ -31,6 +31,8 @@ t = rules.read_text()
 # The fork keeps upstream's GNU tuple parser rather than DMO's vendorless parser.
 t = t.replace('--host=$(DEB_HOST_GNU_TYPE)', '--host=$(DEB_HOST_GNU_TYPE:%-linux-gnu=%-unknown-linux-gnu)')
 t = t.replace('--build=$(DEB_BUILD_GNU_TYPE)', '--build=$(DEB_HOST_GNU_TYPE:%-linux-gnu=%-unknown-linux-gnu)')
+# debhelper builds in configure's folder, which is named by that same tuple.
+t = t.replace('dh $@ -B$(DEB_HOST_GNU_TYPE)', 'dh $@ -B$(DEB_HOST_GNU_TYPE:%-linux-gnu=%-unknown-linux-gnu)')
 rules.write_text(t)
 subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', version,
                 '--distribution', 'UNRELEASED',
