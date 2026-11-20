@@ -8,7 +8,7 @@ repo=$PWD
 protocols=${SPARKY_TREE:?}/plasma-wayland-protocols
 container_name="gl-stereo-test-$(date +%s)-$$"
 printf '%s\n' "$container_name" >> "$workspace/.artifacts"
-container=$(docker run -d --name "$container_name" --user "$(id -u):$(id -g)" --cpus 4 \
+container=$(docker run --ulimit core=1 -d --name "$container_name" --user "$(id -u):$(id -g)" --cpus 4 \
     -e HOME="$repo/out/home" -e STEREO_DECLARE_SOURCE="$protocols/stereo-declare" -e GL_STEREO_TEST_SCOPE="${GL_STEREO_TEST_SCOPE:-savers}" \
     -v "$workspace:$workspace" -v "$protocols:$protocols:ro" \
     -w "$repo" "${GL_STEREO_TEST_IMAGE:-gl-stereo-test:3}" ./test-in-container.sh)

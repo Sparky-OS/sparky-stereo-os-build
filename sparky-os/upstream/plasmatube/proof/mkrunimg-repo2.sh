@@ -3,7 +3,7 @@
 # Workstation paths come from the local configuration: sparky-os/config/build.conf.example.
 tag=$1; dir=$2
 docker rm -f pt-runimg >/dev/null 2>&1
-docker run --name pt-runimg --platform linux/amd64 --cpus 4 -v ${SPARKY_REPO_DIR:?}:/repo:ro -v ${SPARKY_WORKSPACES:?}/plasmatube/run/pin:/pin:ro -v $dir:/pt:ro -e DEBIAN_FRONTEND=noninteractive debian:testing bash -c '
+docker run --ulimit core=1 --name pt-runimg --platform linux/amd64 --cpus 4 -v ${SPARKY_REPO_DIR:?}:/repo:ro -v ${SPARKY_WORKSPACES:?}/plasmatube/run/pin:/pin:ro -v $dir:/pt:ro -e DEBIAN_FRONTEND=noninteractive debian:testing bash -c '
 echo "deb [trusted=yes] file:/repo ./" > /etc/apt/sources.list.d/zrepo.list
 cp /pin /etc/apt/preferences.d/sparky-stereo
 apt-get -y update >/dev/null 2>&1

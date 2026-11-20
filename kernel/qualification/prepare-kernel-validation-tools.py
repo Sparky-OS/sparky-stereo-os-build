@@ -15,7 +15,7 @@ apt-get -y update
 apt-get -y --no-install-recommends install qemu-system-x86 ovmf swtpm swtpm-tools tpm2-tools libtss2-tcti-swtpm0 libtss2-tcti-device0 python3-virt-firmware sbsigntool efitools openssl busybox-static cpio kmod gzip xz-utils zstd ca-certificates procps file build-essential bc bison flex libssl-dev libelf-dev dwarves dkms
 rm -rf /var/lib/apt/lists/*
 '''
-command=['docker','run','--name',name,'--cpus','4',
+command=['docker','run', '--ulimit', 'core=1','--name',name,'--cpus','4',
          '-v', '/etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro',
          '-v', str(Path(__file__).resolve().parents[2] / 'tools' / 'https-only-apt.sh') + ':/run/https-only-apt.sh:ro',
          'sparky-lc-migration:20261020','bash','-c',recipe]

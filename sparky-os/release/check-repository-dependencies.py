@@ -131,7 +131,7 @@ apt-get update
 python3 /proof/inner.py
 '''
 (out / 'run.sh').write_text(recipe)
-command = ['docker', 'run', '--rm', '--name', 'sparky-lc-dependency-preflight', '--cpus', '2', '--memory', '4g',
+command = ['docker', 'run', '--ulimit', 'core=1', '--rm', '--name', 'sparky-lc-dependency-preflight', '--cpus', '2', '--memory', '4g',
            '-v', str(out) + ':/proof',
            '-v', '/etc/apt/sources.list.d/sparky.sources:/host-sparky.sources:ro',
            '-v', '/etc/apt/trusted.gpg.d/sparky-repo.asc:/etc/apt/trusted.gpg.d/sparky-repo.asc:ro',

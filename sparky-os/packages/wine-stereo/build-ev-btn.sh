@@ -25,7 +25,7 @@ source)
 	export SOURCE_DATE_EPOCH=$(python3 "$TOP/repo/reproducible.py" epoch "$HERE")
 	export SPARKY_SOURCE_DATE_BASIS="the last commit touching sparky-os/packages/wine-stereo"
 	sparky_provenance_init "$IMAGE" "$HERE"
-	docker run --rm --platform linux/amd64 -e TZ=UTC "${SPARKY_PROV_ARGS[@]}" -e OWNER="$(id -u):$(id -g)" \
+	docker run --ulimit core=1 --rm --platform linux/amd64 -e TZ=UTC "${SPARKY_PROV_ARGS[@]}" -e OWNER="$(id -u):$(id -g)" \
 		-v "$(dirname "$DSC")":/src:ro -v "$WORK":/work -v "$TOP":/toolkit:ro \
 		-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$TOP/../tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
 		"$IMAGE" bash -c '
@@ -53,7 +53,7 @@ build)
 	export SOURCE_DATE_EPOCH=$(python3 "$TOP/repo/reproducible.py" epoch "$HERE")
 	export SPARKY_SOURCE_DATE_BASIS="the last commit touching sparky-os/packages/wine-stereo"
 	sparky_provenance_init "$IMG" "$HERE"
-	docker run --rm --name "ev-btn-15-wine-$ARCH" --platform "linux/$ARCH" --cpus "${CPUS:-4}" --memory 12g \
+	docker run --ulimit core=1 --rm --name "ev-btn-15-wine-$ARCH" --platform "linux/$ARCH" --cpus "${CPUS:-4}" --memory 12g \
 		--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 		"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch \
 		-e OWNER="$(id -u):$(id -g)" -e FLAGS="$FLAGS" -e ARCH="$ARCH" -e NEXT="$NEXT" -v "$ARCHIVE":/archive:ro \

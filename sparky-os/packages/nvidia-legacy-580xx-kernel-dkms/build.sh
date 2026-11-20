@@ -38,7 +38,7 @@ python3 -c 'import json, sys; sys.exit(json.load(open(sys.argv[1])) != {sys.argv
 	"$HERE/debian/sparky-lean-payload-sources.json" "/usr/src/nvidia-$UPV" ||
 	{ echo "debian/sparky-lean-payload-sources.json does not map /usr/src/nvidia-$UPV" >&2; exit 1; }
 WORK=$(mktemp -d "${SPARKY_SCRATCH:?}/$SRC.XXXXXX")
-trap 'docker run --rm -v "$WORK":/w debian:testing chown -R "$(id -u):$(id -g)" /w >/dev/null 2>&1; rm -rf "$WORK"' EXIT
+trap 'docker run --ulimit core=1 --rm -v "$WORK":/w debian:testing chown -R "$(id -u):$(id -g)" /w >/dev/null 2>&1; rm -rf "$WORK"' EXIT
 # NVIDIA's key for its Debian 12 repository, armored next to this script, is NVIDIA's file byte for byte once dearmored
 # (RFC 9580 section 6: base64 between the header and the CRC line). gpgv checks the Release signature with it here; Debian 14's
 # APT (sqv) refuses this key, whose binding signature is SHA-1, so no package of this source names that repository.

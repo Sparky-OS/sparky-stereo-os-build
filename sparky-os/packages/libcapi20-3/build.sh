@@ -16,7 +16,7 @@ REPRO="$HERE/../../repo/reproducible.py"
 : "${SOURCE_DATE_EPOCH:?a source is dated by its recipe, never by the clock: export SOURCE_DATE_EPOCH (python3 sparky-os/repo/reproducible.py epoch RECIPE_DIR) or run through build-provenance.sh}"
 SOURCE_DATE_RFC2822=$(python3 "$REPRO" rfc2822 "$SOURCE_DATE_EPOCH")
 export SOURCE_DATE_EPOCH SOURCE_DATE_RFC2822
-docker run --rm -e HOST_UID=$(id -u) -v "$WORK":/out -v "$HERE/compat-include":/compat:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro sparky-pkg-base:amd64 bash -c '
+docker run --ulimit core=1 --rm -e HOST_UID=$(id -u) -v "$WORK":/out -v "$HERE/compat-include":/compat:ro -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HERE/../../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro sparky-pkg-base:amd64 bash -c '
 set -e
 sh /run/https-only-apt.sh
 sed -i "s/^Suites: unstable/Suites: testing testing-updates/" /etc/apt/sources.list.d/debian.sources
