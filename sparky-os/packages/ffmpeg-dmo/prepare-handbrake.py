@@ -32,7 +32,9 @@ control = source / 'debian/control'
 control.write_text(control.read_text().replace('libx265-dev (>= 1:3.5)', 'libx265-dev (>= 1:4.3-dmo1+stereo3d2+lc1)'))
 subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', '10:9.0.2-dmo1+stereo3d16',
                 '--distribution', 'UNRELEASED',
-                'Import the HandBrake 1.11.2 FFmpeg fixes into the shared edition libraries; build against x265 ABI 30219.'],
+                'This entry holds the changes of two versions, because +stereo3d16 was staged and never published. '
+                'First (+stereo3d16): import the HandBrake 1.11.2 FFmpeg fixes into the shared edition libraries; '
+                'build against x265 ABI 30219.'],
                cwd=source, env=env, check=True)
 nvidia = 'libchromaprint-dev <!pkg.ffmpeg.stage1>, libnvidia-glvkspirv [amd64 i386], clang [amd64 arm64]'
 text = control.read_text()
@@ -40,7 +42,7 @@ assert text.count(nvidia) == 1, 'libnvidia-glvkspirv is not where +16 has it'
 control.write_text(text.replace(nvidia, 'libchromaprint-dev <!pkg.ffmpeg.stage1>, clang [amd64 arm64]'))
 subprocess.run(['dch', '--date', reproducible.rfc2822(stamp), '--newversion', '10:9.0.2-dmo1+stereo3d17',
                 '--distribution', 'UNRELEASED',
-                'Drop libnvidia-glvkspirv [amd64 i386] from Build-Depends, inherited from deb-multimedia since its 7.x '
+                'Second (+stereo3d17): drop libnvidia-glvkspirv [amd64 i386] from Build-Depends, inherited from deb-multimedia since its 7.x '
                 'sources: nothing in the source names it (no configure test, rule or test), its package ships only '
                 "NVIDIA's private versioned library, and the edition's NVIDIA pin gives it no candidate on a machine "
                 'without a driver lock, so sparky-stereo-ffmpeg-fdk stopped at build-dep there. Built without it, every '
