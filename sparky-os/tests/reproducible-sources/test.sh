@@ -183,5 +183,8 @@ bash "$OS/tests/reproducible-sources/transition-preserve.sh" "$OS" || fail=1
 # ORDER 435: every route through plain-from-lc.py keeps the plan; plain-from-lc.py is atomic
 bash "$OS/tests/reproducible-sources/plain-preserve.sh" "$OS" || fail=1
 
+# ORDER 768b: plain-from-lc.py undoes the kept-hook form, and the step on the plain tree gives the same +lc1 tree
+bash "$OS/tests/reproducible-sources/plain-kept-hook.sh" "$OS" || fail=1
+
 [ $fail = 0 ] && echo "PASS reproducible sources" || echo "FAILED"
 exit $fail
