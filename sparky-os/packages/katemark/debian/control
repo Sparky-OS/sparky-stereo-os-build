@@ -1,0 +1,33 @@
+Source: katemark
+Section: editors
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Build-Depends: debhelper-compat (= 14), cmake, extra-cmake-modules, gettext, pkgconf,
+ qt6-base-dev, qt6-webengine-dev, libkf6texteditor-dev, libkf6coreaddons-dev, libkf6i18n-dev,
+ libkf6config-dev, libkf6xmlgui-dev, libkf6widgetsaddons-dev, libkf6syntaxhighlighting-dev,
+ poppler-utils
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+Homepage: https://github.com/obook/katemark
+
+Package: katemark
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, kate
+Description: Markdown preview beside the editor in Kate, with scroll sync
+ Katemark shows the Markdown document you are editing in a panel beside the
+ text, as GitHub would, and follows what you type and where you scroll. It
+ draws tables, task lists, footnotes and syntax-highlighted code, math with
+ KaTeX and diagrams with Mermaid, reads the CodiMD, Obsidian and MkDocs
+ syntax, and exports to PDF and HTML.
+ .
+ The renderer, its styles and its fonts are inside the plugin, so the preview
+ needs no network. A picture on the web is loaded only when the person turns
+ that on in Katemark's page of Kate's settings; the same page has a button that
+ asks GitHub for the latest release, used only when it is clicked. The plugin is
+ off until it is ticked under Settings, Configure Kate, Plugins; the preview
+ opens with Ctrl+Shift+M.
+ .
+ Katemark is Olivier Booklage's work, a fork of uwuclxdy's Katdown. This
+ package is Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Pawel
+ "pavroo" Pijanowski), built from the release's source with the edition's own
+ Qt and KDE libraries.
