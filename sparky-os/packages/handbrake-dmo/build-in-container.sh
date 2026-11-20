@@ -5,7 +5,7 @@ ulimit -c 0
 sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=parallel=4
 cohort=()
-for family in x264 x265 ffmpeg; do
+for family in x264 x265 ffmpeg layer; do
     for archive in /work/"$family"-build/*.deb; do
         case "$archive" in *-dbgsym_*) continue ;; esac
         cohort+=("$archive")
