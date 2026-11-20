@@ -19,9 +19,13 @@ each screen's 3D mode, output and eye order are chosen.  On a screen with no
 stereo visual the view stays one picture without a word; it is said only
 when the person ticks Enable 3D there.
 
+With WXTRACE=KI_TRACE_EDA_3D_CANVAS each frame's limits, depth range,
+look-at distance, separation and the disparity of its nearest and farthest
+pixel are traced.
+
 Assisted-by: Claude Opus 5.5 via Claude Code
 ---
- 3d-viewer/3d_canvas/eda_3d_canvas.cpp         | 107 ++++++++-
+ 3d-viewer/3d_canvas/eda_3d_canvas.cpp         | 120 +++++++++-
  3d-viewer/3d_canvas/eda_3d_canvas.h           |  15 ++
  3d-viewer/3d_canvas/eda_3d_stereo.cpp         |  70 ++++++
  3d-viewer/3d_canvas/eda_3d_stereo.h           |  61 ++++++
@@ -35,12 +39,12 @@ Assisted-by: Claude Opus 5.5 via Claude Code
  .../dialogs/panel_3D_opengl_options_base.cpp  |  17 +-
  .../dialogs/panel_3D_opengl_options_base.fbp  | 205 +++++++-----------
  .../dialogs/panel_3D_opengl_options_base.h    |   5 +-
- 14 files changed, 449 insertions(+), 157 deletions(-)
+ 14 files changed, 462 insertions(+), 157 deletions(-)
  create mode 100644 3d-viewer/3d_canvas/eda_3d_stereo.cpp
  create mode 100644 3d-viewer/3d_canvas/eda_3d_stereo.h
 
 diff --git a/3d-viewer/3d_canvas/eda_3d_canvas.cpp b/3d-viewer/3d_canvas/eda_3d_canvas.cpp
-index 0a6cb2e4..1d210003 100644
+index 0a6cb2e4..f0435710 100644
 --- a/3d-viewer/3d_canvas/eda_3d_canvas.cpp
 +++ b/3d-viewer/3d_canvas/eda_3d_canvas.cpp
 @@ -32,6 +32,7 @@
@@ -141,7 +145,7 @@ index 0a6cb2e4..1d210003 100644
          }
  
          if( m_3d_render )
-@@ -579,6 +637,22 @@ void EDA_3D_CANVAS::DoRePaint()
+@@ -579,6 +637,35 @@ void EDA_3D_CANVAS::DoRePaint()
              }
          }
  
@@ -156,6 +160,19 @@ index 0a6cb2e4..1d210003 100644
 +                                                                       m_stereoSunk,
 +                                                                       m_stereoPopped,
 +                                                                       clientSize.x );
++
++                wxLogTrace( m_logTrace,
++                            wxT( "EDA_3D_CANVAS::DoRePaint stereo: %s view %d px wide, limits "
++                                 "sunk %.4f popped %.4f px, nearest %.6f farthest %.6f look-at "
++                                 "%.6f, separation %.8f, disparity nearest %.4f farthest %.4f "
++                                 "px" ),
++                            m_camera.GetProjection() == PROJECTION_TYPE::PERSPECTIVE
++                                    ? wxT( "perspective" ) : wxT( "orthographic" ),
++                            clientSize.x, m_stereoSunk, m_stereoPopped, nearest, farthest,
++                            std::abs( m_camera.GetCameraPos().z ), eyeSeparation,
++                            m_camera.GetStereoDisparity( nearest, eyeSeparation, clientSize.x ),
++                            m_camera.GetStereoDisparity( farthest, eyeSeparation,
++                                                         clientSize.x ) );
 +            }
 +
 +            continue;
@@ -164,7 +181,7 @@ index 0a6cb2e4..1d210003 100644
          if( m_render_pivot )
          {
              const float scale = glm::min( m_camera.GetZoom(), 1.0f );
-@@ -1283,6 +1357,31 @@ void EDA_3D_CANVAS::OnTimerTimeout_Redraw( wxTimerEvent& aEvent )
+@@ -1283,6 +1370,31 @@ void EDA_3D_CANVAS::OnTimerTimeout_Redraw( wxTimerEvent& aEvent )
  }
  
  
