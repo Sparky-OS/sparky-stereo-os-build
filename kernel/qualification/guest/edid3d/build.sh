@@ -6,7 +6,7 @@ HDR=$(readlink -f "${1:?headers dir}"); OUT=$(mkdir -p "${2:?out dir}" && readli
 HERE=$(cd "$(dirname "$0")" && pwd)
 python3 "$HERE/make_edid.py" "$OUT" >/dev/null
 cp "$HERE/edid3d.c" "$HERE/Makefile" "$OUT/"
-docker run --rm --platform linux/amd64 --cpus 2 --memory 4g --user "$(id -u):$(id -g)" -e HOME=/tmp \
+docker run --ulimit core=1 --rm --platform linux/amd64 --cpus 2 --memory 4g --user "$(id -u):$(id -g)" -e HOME=/tmp \
     -v "$HDR":/hdr:ro -v "$OUT":/m kernel-soul-tools:1 sh -c 'make -C /hdr M=/m modules 2>&1 | tail -15'
 ls -l "$OUT/edid3d.ko"
 modinfo -F vermagic "$OUT/edid3d.ko" 2>/dev/null || true

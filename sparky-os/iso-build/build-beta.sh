@@ -47,7 +47,7 @@ sm="$sm -e LEAN=${LEAN:-1} -e ISO_PURPOSE=${ISO_PURPOSE:-release} -e EDITION_REP
 for h in ${ADD_HOSTS:-}; do sm="$sm --add-host $h"; done
 run() {
 	# shellcheck disable=SC2086
-	docker run --rm --name "$NAME-$1" --privileged --cpus 4 --memory 16g \
+	docker run --ulimit core=1 --rm --name "$NAME-$1" --privileged --cpus 4 --memory 16g \
 		-v "$TREE:/rootfs" -v "$CACHE:/cache" -v "$REPO:/repo:ro" -v "$STAGE:/stage" -v "$HERE:/build:ro" \
 		-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$ED/tools/https-only-apt.sh":/run/https-only-apt.sh:ro \
 		-v "$ED/sparky-os/apt:/edition-apt:ro" -v "$ED/sparky-os/lists:/edition-lists:ro" -v "$ED/sparky-os/repo:/edition-repo:ro" -v "$WORK:/work" -v "$OUT:/out" -v "$OVL:/overlay" \

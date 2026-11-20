@@ -30,7 +30,7 @@ if [ -n "${SPARKY_LC_SIBLINGS_FILE:-}" ]; then
 	while read -r dir; do SIBLING_MOUNTS+=(-v "$dir":"$dir":ro); done < <(xargs -d '\n' -n1 dirname < "$SPARKY_LC_SIBLINGS_FILE" | sort -u)
 fi
 sparky_provenance_init sparky-lc-migration:20261020
-docker run --rm --cpus 4 --platform linux/amd64 "${SIBLING_MOUNTS[@]}" \
+docker run --ulimit core=1 --rm --cpus 4 --platform linux/amd64 "${SIBLING_MOUNTS[@]}" \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$SPARKY_LC_ARCHIVE_DIR":/archive:ro \
 	-v "$WORK":/work -v "$SRC":/src:ro \

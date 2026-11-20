@@ -274,7 +274,7 @@ class DockerPath(Base):
         self.assertEqual([c[c.index("--name") + 1] for c in runs], ["lab22-dock-ours", "lab22-dock-stock"])
         for c in runs:
             self.assertIn("--pull=never", c)
-            self.assertEqual(c[c.index("--ulimit") + 1], "core=0")
+            self.assertEqual(c[c.index("--ulimit") + 1], "core=1")
             self.assertEqual(c[c.index("--network") + 1], "none")
             self.assertEqual(c[c.index("--cpus") + 1], "2")
             self.assertEqual(c[c.index("--memory") + 1], "2g")

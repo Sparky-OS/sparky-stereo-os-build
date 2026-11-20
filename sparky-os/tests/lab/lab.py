@@ -18,7 +18,7 @@ The exit status is 1 when any row is FAIL, 2 for a bad matrix or usage, else 0 (
 that is not a named skip).
 
 A side's check is an argument list run in a container of the row's image (docker run --name lab22-ROW-SIDE
---pull=never --ulimit core=0 --network none ...). It is removed by its literal name. DOCKER_HOST must be set: the lab never
+--pull=never --ulimit core=1 --network none ...). It is removed by its literal name. DOCKER_HOST must be set: the lab never
 talks to the default Docker. A check's own exit status says what it saw: 0 holds, 1 does not hold, 77 cannot run (its last
 stdout line "SKIP: reason" says why). /evidence in the container is the side's own folder, kept in the report.
 A time is reported, never a pass condition.
@@ -159,7 +159,7 @@ class Lab:
     def docker_argv(self, row, side, outdir, name, cmd=None):
         s = row["sides"][side]
         lim = row.get("limits", {})
-        a = [self.docker, "run", "--name", name, "--pull=never", "--ulimit", "core=0"]
+        a = [self.docker, "run", "--name", name, "--pull=never", "--ulimit", "core=1"]
         a += ["--network", row.get("network", "none")]
         if lim.get("cpus"):
             a += ["--cpus", str(lim["cpus"])]

@@ -11,7 +11,7 @@ PKGS="ca-certificates kwin-wayland libkscreen-bin qt6-wayland mesa-libgallium li
 for side in stock ours; do
 	docker rm -f lab22-build-kwin-$side >/dev/null 2>&1 || true
 	extra=""
-	docker run --name lab22-build-kwin-$side --pull=never --ulimit core=0 --cpus 4 "${apt_mounts[@]}" -v "$TREE":/repo:ro \
+	docker run --name lab22-build-kwin-$side --pull=never --ulimit core=1 --cpus 4 "${apt_mounts[@]}" -v "$TREE":/repo:ro \
 		-e SIDE=$side -e PKGS="$PKGS $extra" debian:testing sh -c '
 set -e
 sh /run/https-only-apt.sh

@@ -16,7 +16,7 @@ IMAGE=${IMAGE:-gr108-base:testing-20261027}
 HERE=$(cd "$(dirname "$0")" && pwd)
 SPARKY_OS=$(cd "$HERE/../../.." && pwd)
 mkdir -p "$WORK"
-docker run --rm --cpus 2 --ulimit core=0 --name gr108-pub -e DEBIAN_FRONTEND=noninteractive \
+docker run --rm --cpus 2 --ulimit core=1 --name gr108-pub -e DEBIAN_FRONTEND=noninteractive \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v /K3D/partners/https-only-apt.sh:/run/https-only-apt.sh:ro \
 	-v "$SPARKY_OS:/sparky-os:ro" -v "$OLD:/old:ro" -v "$HERE/inside.sh:/inside.sh:ro" -v "$WORK:/work" "$IMAGE" bash /inside.sh || rc=1
 # Phase 2: apt on the trees, on a faked v3 processor and a faked baseline one
@@ -27,7 +27,7 @@ mkdir -p "$WORK/cpu"
 for l in 1 3; do v=V$l; printf 'processor\t: 0\nvendor_id\t: TestCPU\nflags\t\t: %s\n' "${!v//,/ }" >"$WORK/cpu/v$l"; done
 apt_case() { # name tree cpu expected(a|b|c lines)
 	local got
-	got=$(docker run --rm --cpus 2 --ulimit core=0 --name gr108-pubapt -e DEBIAN_FRONTEND=noninteractive -v "$WORK:/work" -v "$WORK/cpu/$3:/proc/cpuinfo:ro" \
+	got=$(docker run --rm --cpus 2 --ulimit core=1 --name gr108-pubapt -e DEBIAN_FRONTEND=noninteractive -v "$WORK:/work" -v "$WORK/cpu/$3:/proc/cpuinfo:ro" \
 		-v "$SPARKY_OS/packages/sparky-stereo-apt:/apt:ro" -v "$HERE/inside-apt.sh:/inside-apt.sh:ro" "$IMAGE" sh /inside-apt.sh "$2" 2>&1 | tr '\n' '|')
 	if [ "$got" = "$4" ]; then echo "PASS apt, $1: $got"; else echo "FAIL apt, $1: got '$got', wanted '$4'"; rc=1; fi
 }

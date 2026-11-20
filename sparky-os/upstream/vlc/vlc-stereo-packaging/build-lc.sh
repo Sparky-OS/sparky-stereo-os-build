@@ -19,7 +19,7 @@ PREV=$(cd "$2" && pwd)
 [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 SOURCES=$(cd "${SOURCES:-$SPARKY_REPO_DIR/source}" && pwd)
 sparky_provenance_init sparky-lc-migration:20261020
-docker run --rm --cpus 4 --platform linux/amd64 "${SPARKY_PROV_ARGS[@]}" -v "$WORK":/work -v "$SOURCES":/src:ro \
+docker run --ulimit core=1 --rm --cpus 4 --platform linux/amd64 "${SPARKY_PROV_ARGS[@]}" -v "$WORK":/work -v "$SOURCES":/src:ro \
 	-v "$SPARKY_REPO_DIR":/repo:ro -v "$PREV":/prev:ro -v "$HERE/../../..":/toolkit:ro -v "$HERE":/tools:ro \
 	-v "$HERE/..":/patches:ro \
 	-v /usr/share/keyrings/deb-multimedia-keyring.pgp:/usr/share/keyrings/deb-multimedia-keyring.pgp:ro \

@@ -11,7 +11,7 @@ T=$(cd "$(dirname "$0")" && pwd)
 : "${OLD:?folder with sparky-stereo-apt 20261104.3 and the keyring debs}" "${NEW:?folder with the new package}" "${EVID:?evidence folder}"
 HELPER=${HELPER:-/K3D/partners/https-only-apt.sh}
 mkdir -p "$EVID"
-docker run --rm --name "r413-$MODE" --cpus 2 --ulimit core=0 --platform linux/amd64 --network bridge --add-host repo.sparkyos.org:192.168.0.60 \
+docker run --rm --name "r413-$MODE" --cpus 2 --ulimit core=1 --platform linux/amd64 --network bridge --add-host repo.sparkyos.org:192.168.0.60 \
 	-v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$HELPER":/run/https-only-apt.sh:ro \
 	-v "$OLD":/old:ro -v "$NEW":/new:ro -v "$T":/t:ro debian:testing \
 	sh -c "sh /run/https-only-apt.sh && bash /t/inside.sh $MODE" 2>&1 | tee "$EVID/$MODE.log"

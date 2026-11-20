@@ -8,9 +8,9 @@ S=$W/vmrig/s-$NAME; OUT=$W/runs/vm-$NAME
 rm -rf "$S" "$OUT"
 mounts=(); args=()
 for d in "$@"; do mounts+=(-v "$d:/debs/$(basename "$d"):ro"); args+=("/debs/$(basename "$d")"); done
-docker run --rm --name efi-mixed-mkvm --platform linux/amd64 --cpus 2 -e OWNER_UID=$(id -u) -e IA32_NOKASLR="${IA32_NOKASLR:-}" \
+docker run --ulimit core=1 --rm --name efi-mixed-mkvm --platform linux/amd64 --cpus 2 -e OWNER_UID=$(id -u) -e IA32_NOKASLR="${IA32_NOKASLR:-}" \
 	-v "$W:$W" -v "$R:/rig:ro" "${mounts[@]}" ${RIG_IMAGE:-efi-mixed-rig} /rig/vmrig/mkscenario.sh "$S" "$W/vmrig/rootfs-base.tar.zst" "$FIRSTK" "${args[@]}" > "$W/runs/mk-$NAME.log" 2>&1
-docker run --rm --name efi-mixed-boot --platform linux/amd64 --cpus 4 --memory 16g --user $(id -u):$(id -g) --device /dev/kvm --group-add $(getent group kvm | cut -d: -f3) \
+docker run --ulimit core=1 --rm --name efi-mixed-boot --platform linux/amd64 --cpus 4 --memory 16g --user $(id -u):$(id -g) --device /dev/kvm --group-add $(getent group kvm | cut -d: -f3) \
 	-v "$W:$W" -v "$W/fw:/fw:ro" -v "$R:/rig:ro" ${RIG_IMAGE:-efi-mixed-rig} \
 	python3 -I /rig/boots.py --loader grub --rw --grub-disk "$S/disk.img" --sysmap "$SYSMAP" --out "$OUT" --count $((N + 1)) --timeout 200 > "$OUT.log" 2>&1
 python3 -I - "$OUT" <<'PY'

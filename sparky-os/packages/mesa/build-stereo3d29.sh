@@ -19,7 +19,7 @@ SIBS=${5:+$(readlink -f "$5")}
 : "${SPARKY_REPO_DIR:?the signed published tree}"
 [ "${SPARKY_MESA_RESUME:-0}" = 1 ] || [ -z "$(ls -A "$WORK")" ] || { echo "$WORK is not empty" >&2; exit 1; }
 sparky_provenance_init "$SPARKY_MESA_BUILD_IMAGE"
-docker run --rm --ulimit core=0 --name "${BUILD_NAME_PREFIX:-mesa-29}-mesa" --cpus "${SPARKY_BUILD_CPUS:-6}" --platform "${SPARKY_PLATFORM:-linux/amd64}" \
+docker run --rm --ulimit core=1 --name "${BUILD_NAME_PREFIX:-mesa-29}-mesa" --cpus "${SPARKY_BUILD_CPUS:-6}" --platform "${SPARKY_PLATFORM:-linux/amd64}" \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_MESA_RESUME="${SPARKY_MESA_RESUME:-0}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH=/work/link-scratch -v "$ARCHIVE":/archive:ro \
 	${SIBS:+-v "$SIBS":/previous-siblings.txt:ro -e SPARKY_LC_PREVIOUS_SIBLINGS_FILE=/previous-siblings.txt -e SPARKY_LC_SIBLINGS_FILE=/previous-siblings.txt} \

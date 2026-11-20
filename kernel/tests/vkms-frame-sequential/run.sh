@@ -14,7 +14,7 @@ HERE=$(dirname "$(readlink -f "$0")")
 IGT_ARGS=$(IFS=,; echo "$*")
 KVM=()
 if [ -w /dev/kvm ]; then KVM=(--device /dev/kvm --group-add "$(getent group kvm | cut -d: -f3)"); fi
-exec docker run --rm --platform linux/amd64 --cpus "${CPUS:-4}" --memory 6g --user "$(id -u):$(id -g)" -e HOME=/tmp \
+exec docker run --ulimit core=1 --rm --platform linux/amd64 --cpus "${CPUS:-4}" --memory 6g --user "$(id -u):$(id -g)" -e HOME=/tmp \
 	"${KVM[@]}" -v "$HERE":/t:ro -v "$K":/bzImage:ro -v "$ROOT":/root-igt:ro -v "$OUT":/out \
 	"${IMAGE:-dp-stereo-257-m3-bench:1}" sh -euc '
 	W=$(mktemp -d)

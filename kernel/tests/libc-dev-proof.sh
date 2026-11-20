@@ -13,7 +13,7 @@
 set -eu
 DEB=$(readlink -f "${1:?usage: libc-dev-proof.sh linux-libc-dev.deb image}")
 IMAGE=${2:?image}
-docker run --rm --platform linux/amd64 -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro -v "$DEB":/proof/ours.deb:ro "$IMAGE" sh -eu -c '
+docker run --ulimit core=1 --rm --platform linux/amd64 -v /etc/ssl/certs/ca-certificates.crt:/run/host-ca.crt:ro -v "$(dirname "$(readlink -f "$0")")/../../tools/https-only-apt.sh":/run/https-only-apt.sh:ro -v "$DEB":/proof/ours.deb:ro "$IMAGE" sh -eu -c '
 sh /run/https-only-apt.sh
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq >/dev/null 2>&1
