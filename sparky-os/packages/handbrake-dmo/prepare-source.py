@@ -24,7 +24,17 @@ t = t.replace('libx264-dev (>= 3:0.155~)', 'libx264-dev (>= 4:0.165.3222+gitb356
 t = t.replace(' libmp3lame-dev,',
               ' libavcodec-dev (>= 10:9.0.2-dmo1+stereo3d16+lc1), libavformat-dev (>= 10:9.0.2-dmo1+stereo3d16+lc1),\n'
               ' libavfilter-dev, libavutil-dev, libswscale-dev, libswresample-dev, libdvdread-dev,\n'
-              ' libx265-dev (>= 1:4.3-dmo1+stereo3d2+lc1), libstereo-gtk-dev (>= 1.23.0-1+lc1), zlib1g-dev, libmp3lame-dev,')
+              ' libx265-dev (>= 1:4.3-dmo1+stereo3d2+lc1), libstereo-gtk-dev (>= 1.23.1-1+lc1), zlib1g-dev, libmp3lame-dev,')
+# shlibs give only libavcodec63 (>= 10:9.0.2), which the published +15 meets: on a machine with the i386 FFmpeg
+# libraries apt then kept the cohort back and Stereo HandBrake ran on +15 (ORDER 742). The floors keep the two programs
+# on the libraries that carry HandBrake's imported patches and the frame packing API.
+cohort = '10:9.0.2-dmo1+stereo3d16~'
+floors = ', '.join(f'{name} (>= {cohort})' for name in (
+    'libavcodec63', 'libavfilter12', 'libavformat63', 'libavutil61', 'libswresample7', 'libswscale10'))
+floors += ', libx264-165 (>= 4:0.165.3222+gitb35605a-dmo5+stereo3d1~), libx265-30219 (>= 1:4.3-dmo1+stereo3d2~)'
+if t.count('Depends: ${shlibs:Depends},') != 2:
+    raise SystemExit('expected the two program stanzas of handbrake-cli and handbrake-gtk')
+t = t.replace('Depends: ${shlibs:Depends},', 'Depends: ${shlibs:Depends}, ' + floors + ',')
 control.write_text(t)
 rules = source / 'debian/rules'
 t = rules.read_text()
