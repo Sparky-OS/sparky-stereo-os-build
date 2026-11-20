@@ -2,6 +2,7 @@
 """Validate .po.patch files and their exact DSC sources."""
 
 import argparse
+import ast
 import pathlib
 import re
 import shutil
@@ -10,12 +11,23 @@ import sys
 import tempfile
 
 DSC_MAP = {
+    "command-not-found-order46b.po.patch": "command-not-found_23.04.0-3+sparky1+lc1.dsc",
+    "kdeconnect-order46b.po.patch": "kdeconnect_26.04.3-2+stereo3d1+lc1.dsc",
+    "kf6-kfilemetadata-order46b.po.patch": "kf6-kfilemetadata_6.30.0-1+stereo3d5+lc1.dsc",
+    "kf6-kio-order46b.po.patch": "kf6-kio_6.30.0-1+stereo3d11+lc1.dsc",
+    "krdc-order46b.po.patch": "krdc_26.04.0-1+stereo3d1+lc1.dsc",
+    "plasma-desktop-order46b.po.patch": "plasma-desktop_6.7.4-1+stereo3d4+lc1.dsc",
+    "plasma-discover-order46b.po.patch": "plasma-discover_6.7.4-3+stereo3d2+lc1.dsc",
+    "plasma-nm-order46b.po.patch": "plasma-nm_6.7.4-2+stereo3d1+lc1.dsc",
+    "plasma-workspace-order46b.po.patch": "plasma-workspace_6.7.4-2+stereo3d10+lc1.dsc",
+    "powerdevil-order46b.po.patch": "powerdevil_6.7.4-1+stereo3d2+lc1.dsc",
     "plasma-pa-virtual-streams.po.patch": "plasma-pa_6.7.4-1.dsc",
     "plasma-pa-audio-routes.po.patch": "plasma-pa_6.7.4-1+stereo3d1+lc1.dsc",
     "kalgebra-stereo3d.po.patch": "kalgebra_26.04.0-1+stereo3d2.dsc",
     "kalzium-stereo3d.po.patch": "kalzium_26.04.3-1+stereo3d4.dsc",
     "kf6-kfilemetadata-stereo3d.po.patch": "kf6-kfilemetadata_6.30.0-1+stereo3d2.dsc",
     "kinfocenter-stereo3d.po.patch": "kinfocenter_6.7.4-1+stereo3d1.dsc",
+    "kscreenlocker-edition-l10n.po.patch": "kscreenlocker_6.7.4-1+stereo3d3+lc1.dsc",
     "kubrick-stereo3d.po.patch": "kubrick_26.04.0-1+stereo3d2.dsc",
     "plasma-workspace-recovery.po.patch": "plasma-workspace_6.7.4-2+stereo3d2.dsc",
 }
@@ -88,7 +100,7 @@ def parse_patch_sections(patch_text, errors, patch_name):
 
         if hunk_open and (not line or line[:1] in {"+", "-", " "}):
             first = line[:1] if line else " "
-            if first == "+" or first == "-":
+            if first == "+":
                 section["added"].append(line[1:])
             if first != "-":
                 counted_new += 1
@@ -175,120 +187,61 @@ def parse_targets(patch_text):
     return targets
 
 
-def parse_added_messages(patch_text, path):
-    sections = parse_patch_sections(patch_text, [], path)
-    target_lines = []
-    for section in sections:
-        if path in (section["old_path"], section["new_path"]):
-            target_lines.extend(section["added"])
-    messages = []
-    index = 0
-    context = None
-    while index < len(target_lines):
-        stripped = target_lines[index].strip()
-        if stripped.startswith("msgctxt "):
-            context = stripped
-            index += 1
-            continue
-        if not stripped.startswith("msgid "):
-            index += 1
-            continue
-        msgid_parts = [stripped]
-        index += 1
-        while index < len(target_lines) and not target_lines[index].startswith("msgstr "):
-            msgid_parts.append(target_lines[index].strip())
-            index += 1
-        if index >= len(target_lines):
-            break
-        msgstr_parts = [target_lines[index].strip()]
-        index += 1
-        while index < len(target_lines) and target_lines[index].startswith('"'):
-            msgstr_parts.append(target_lines[index].strip())
-            index += 1
-        messages.append((context, "\n".join(msgid_parts), "\n".join(msgstr_parts)))
-        context = None
+PO_FIELD = re.compile(r'(msgctxt|msgid(?:_plural)?|msgstr(?:\[\d+\])?)\s+(".*")$')
+
+
+def parse_messages(lines):
+    """Read complete active entries with their decoded singular or plural values."""
+    messages = {}
+    fields = {}
+    field = None
+
+    def flush():
+        translations = {key: value for key, value in fields.items() if key.startswith("msgstr")}
+        if fields.get("msgid") and translations:
+            identity = (fields.get("msgctxt", ""), fields["msgid"], fields.get("msgid_plural"))
+            messages[identity] = translations
+        fields.clear()
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        match = PO_FIELD.fullmatch(line)
+        if match:
+            field, literal = match.groups()
+            if field == "msgctxt" or (field == "msgid" and field in fields):
+                flush()
+            fields[field] = ast.literal_eval(literal)
+        elif field and line.startswith('"') and line.endswith('"'):
+            fields[field] += ast.literal_eval(line)
+        elif not line or line.startswith("#"):
+            flush()
+            field = None
+    flush()
     return messages
 
 
-def unquote(value):
-    value = re.sub(r"^\s*msg(?:ctxt|id|str)\s*", "", value).strip()
-    if value.startswith('"') and value.endswith('"'):
-        value = value[1:-1]
-    return value
-
-
-def parse_po_entries(file_path):
-    text = file_path.read_text(encoding="utf-8")
-    entries = []
-    context = None
-    msgid_parts = None
-    msgstr_parts = None
-    mode = None
-
-    def flush():
-        if msgid_parts is not None and msgstr_parts is not None:
-            entries.append((
-                unquote(context) if context is not None else "",
-                unquote("\n".join(msgid_parts)),
-                unquote("\n".join(msgstr_parts)),
-            ))
-
-    for raw_line in text.splitlines() + [""]:
-        line = raw_line.strip()
-        if line.startswith("#~"):
-            continue
-        if line.startswith("msgctxt "):
-            flush()
-            context = line[len("msgctxt "):].strip()
-            msgid_parts = None
-            msgstr_parts = None
-            mode = None
-        elif line.startswith("msgid "):
-            flush()
-            context = context if context is not None else None
-            msgid_parts = [line[len("msgid "):].strip()]
-            msgstr_parts = None
-            mode = "msgid"
-        elif line.startswith("msgstr "):
-            if msgid_parts is not None:
-                msgstr_parts = [line[len("msgstr "):].strip()]
-                mode = "msgstr"
-            else:
-                msgid_parts = None
-                msgstr_parts = None
-                mode = None
-        elif line.startswith('"') and line.endswith('"'):
-            if mode == "msgid" and msgid_parts is not None:
-                msgid_parts.append(line)
-            elif mode == "msgstr" and msgstr_parts is not None:
-                msgstr_parts.append(line)
-        elif not line:
-            flush()
-            context = None
-            msgid_parts = None
-            msgstr_parts = None
-            mode = None
-    # Clear the context before msgid only, not after a completed entry.
-    return [(entry_context, entry_id, entry_str)
-            for entry_context, entry_id, entry_str in entries]
+def parse_added_messages(patch_text, path):
+    sections = parse_patch_sections(patch_text, [], path)
+    return parse_messages(
+        line for section in sections if path in (section["old_path"], section["new_path"])
+        for line in section["added"]
+    )
 
 
 def po_has_messages(file_path, added_messages):
     try:
-        entries = parse_po_entries(file_path)
-    except (OSError, UnicodeError) as error:
+        entries = parse_messages(file_path.read_text(encoding="utf-8").splitlines())
+    except (OSError, UnicodeError, SyntaxError, ValueError) as error:
         return ["cannot read %s: %s" % (file_path, error)]
     errors = []
-    for added_context, added_msgid, added_msgstr in added_messages:
-        wanted_context = unquote(added_context) if added_context is not None else ""
-        wanted_id = unquote(added_msgid)
-        wanted_str = unquote(added_msgstr)
-        if not wanted_str:
-            errors.append("patch translation is empty: " + wanted_id)
-            continue
-        if not any(actual_context == wanted_context and actual_id == wanted_id
-                   and actual_str == wanted_str for actual_context, actual_id, actual_str in entries):
-            errors.append("added msgid not found with the exact non-empty msgstr: " + wanted_id)
+    for identity, forms in added_messages.items():
+        context, msgid, _ = identity
+        label = "%s [%s]" % (msgid, context) if context else msgid
+        for field, wanted in forms.items():
+            if not wanted.strip():
+                errors.append("patch translation is empty for %s: %s" % (field, label))
+        if entries.get(identity) != forms:
+            errors.append("added msgid not found with the exact translation forms: " + label)
     return errors
 
 

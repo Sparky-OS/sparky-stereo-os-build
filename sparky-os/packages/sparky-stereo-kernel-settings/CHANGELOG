@@ -1,4 +1,9 @@
 -------------------------------------------------------------------------------
+  Version 20261116.3~sparky9~0 (2026-11-20)
+-------------------------------------------------------------------------------
+  * Add the Spanish journal messages (ORDER 46).
+
+-------------------------------------------------------------------------------
   Version 20261116.2~sparky9~0 (2026-11-16)
 -------------------------------------------------------------------------------
   * The values read again at their sources on 2026-11-16 (ORDER 108; Daniel, 2026-11-02: "adopt what main gammer distros were using"): CachyOS-Settings master 9e6603a82c89, Bazzite main 69db4d1cf118 (desktop and deck), CachyOS/linux tag cachyos-7.3.4-1. Comments only, no value changes: where CachyOS and Bazzite agree ours already equal them (nmi_watchdog 0, split_lock_mitigate 0, watermark_boost_factor 0, the THP and block rules); where they differ ours stay with both listed (vm.dirty_bytes and vm.dirty_background_bytes: CachyOS now uses ratios 10 and 3, Bazzite's deck bytes 268435456 and 134217728; vm.dirty_writeback_centisecs: neither ships it now); vm.page-cluster = 0 is shipped by both but our swap is a file on disk and the file says its swap read-ahead stays at the default, so it is listed, not added

@@ -6,8 +6,8 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dest=${DEST:-${SPARKY_STAGING_DIR:?}/classic-look/m3}
-version=${VERSION:-20261104.1~sparky9~0+lc1}
-base=${BASE_VERSION:-20261104.1~sparky9~0+lc1}
+version=${VERSION:-20261119.2~sparky9~0+lc1}
+base=${BASE_VERSION:-20261119.2~sparky9~0+lc1}
 work=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}}/kubabbar-m3-pkg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 RECIPE=$repo

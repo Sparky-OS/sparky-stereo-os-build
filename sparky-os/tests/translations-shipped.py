@@ -53,6 +53,7 @@ SOURCES = {
     'kscreen-spanish-display-settings.po.patch': ('kscreen', None),
     'kscreen-wdisplays-menus.po.patch': ('kscreen', None),
     'kscreenlocker-wallpaper-cost.po.patch': ('kscreenlocker', None),
+    'kscreenlocker-edition-l10n.po.patch': ('kscreenlocker', None),
     'kubrick-stereo3d.po.patch': ('kubrick', None),
     'kwin-wallpaper-cost.po.patch': ('kwin', None),
     'plasma-desktop-wallpaper-cost.po.patch': ('plasma-desktop', None),
