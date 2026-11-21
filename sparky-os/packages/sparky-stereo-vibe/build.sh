@@ -5,7 +5,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the output directory}
 PKG=sparky-stereo-vibe
-VERSION=0.1.0+lc1
+VERSION=0.1.1+lc1
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.$PKG.XXXXXX")
 trap 'rm -r "$W"' EXIT
