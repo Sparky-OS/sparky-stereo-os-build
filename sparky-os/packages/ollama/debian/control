@@ -9,7 +9,7 @@ Rules-Requires-Root: no
 
 Package: ollama
 Architecture: amd64
-Depends: ${misc:Depends}, ${shlibs:Depends}, libvulkan1
+Depends: ${misc:Depends}, ${shlibs:Depends}, libvulkan1, sparky-stereo-graphics (>= 0.2.16)
 Suggests: ollama-cuda, ollama-rocm
 Description: run language models on this computer (Ollama)
  Ollama answers programs on this computer that ask a language model for
@@ -23,6 +23,10 @@ Description: run language models on this computer (Ollama)
  SHA-256 against the release's own checksum list, which comes from the same
  origin as the file. The source package carries the tagged source and the
  release files it installs.
+ .
+ The service runs the engine on the card chosen for partners in System
+ Settings (Graphics, or Partners), and only on that card, or on the
+ processor alone when that is the choice.
  .
  Nothing runs after installation: the user service ollama.service is not
  enabled. No model is in the package; models are downloaded only when the

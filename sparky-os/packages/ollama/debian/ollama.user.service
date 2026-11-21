@@ -5,11 +5,17 @@ StartLimitIntervalSec=60
 StartLimitBurst=3
 
 [Service]
-ExecStart=/usr/bin/ollama serve
+# The card the Partners choice names (System Settings, Graphics or Partners: [Render] Partners), and only that card,
+# through sparky-stereo-gpu-env --print compute-env; a card that cannot be used is said and kept, and the engine does not start
+ExecStart=/usr/bin/sparky-stereo-gpu-run --compute --category partners /usr/bin/ollama serve
 Environment=OLLAMA_HOST=127.0.0.1:11434
+# the card chosen is the only one visible: an integrated one too, which Ollama otherwise leaves out
+Environment=OLLAMA_IGPU_ENABLE=1
 Environment=OLLAMA_ORIGINS=moz-extension://*
 Restart=on-failure
 RestartSec=5
+# a card that cannot be used (4), or the Graphics command missing (127), is said once: starting again changes nothing
+RestartPreventExitStatus=4 127
 
 [Install]
 WantedBy=default.target
