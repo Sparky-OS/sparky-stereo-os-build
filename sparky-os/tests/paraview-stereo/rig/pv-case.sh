@@ -5,6 +5,8 @@
 #   PV_NODATA=1   no --data (a state file opens its own)
 #   PV_SETTINGS   the user settings file's JSON (default: Auto Apply on)
 #   MENU=1        after the captures, open the View menu (xcb: Alt+V through xdotool) and capture it as shot-menu.png
+#   MENU_KEYS     with MENU=1: keys sent after Alt+V instead of Escape ("Up Up Return": Enable 3D; "Up Return": 3D display
+#                 settings...), then shot-act.png, windows-act.txt, act-processes.txt and settings-after.json
 #   WAIT          seconds before the first capture (default 25)
 # Writes in $OUT: paraview.log (stdout and stderr, Wayland debug lines out), wl.txt (the declaration lines), rc.txt,
 # windows.txt (KWin's windows: caption, frame, class), props.json, shot1.png/json, shot2.png/json, tree.txt,
@@ -49,7 +51,22 @@ if [ "${MENU:-}" = 1 ]; then
   [ -n "$wid" ] && xdotool windowactivate --sync "$wid" key --clearmodifiers alt+v 2>> $OUT/menu.log
   sleep 2
   python3 /rig/capture.py $OUT/shot-menu.png > $OUT/shot-menu.json 2>&1
-  xdotool key Escape 2>> $OUT/menu.log
+  if [ -n "${MENU_KEYS:-}" ]; then
+    xdotool key --clearmodifiers $MENU_KEYS 2>> $OUT/menu.log
+    sleep 4
+    python3 /rig/capture.py $OUT/shot-act.png > $OUT/shot-act.json 2>&1
+    n=$(grep -c 'WIN|' $OUT/kwin.log)
+    python3 /rig/kwin_script.py $OUT/kwin.log '
+for (const w of workspace.stackingOrder) {
+  print("WIN|" + w.caption + "|" + w.frameGeometry.x + "," + w.frameGeometry.y + "," + w.frameGeometry.width + "," + w.frameGeometry.height + "|" + w.resourceClass + "|" + (w.minimized ? "min" : "shown"));
+}'
+    sleep 1
+    grep -o 'WIN|.*' $OUT/kwin.log | tail -n +$((n + 1)) > $OUT/windows-act.txt
+    ps -eo pid,args | grep -E '[k]cmshell|[s]ystemsettings|[k]screen' > $OUT/act-processes.txt
+    cp $HOME/.config/ParaView/ParaView-UserSettings.json $OUT/settings-after.json
+  else
+    xdotool key Escape 2>> $OUT/menu.log
+  fi
 fi
 [ -n "$pid" ] && kill $pid 2>/dev/null; sleep 2
 [ -n "$pid" ] && kill -9 $pid 2>/dev/null
