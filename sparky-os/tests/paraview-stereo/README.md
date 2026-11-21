@@ -21,6 +21,10 @@ The lane's rig, with its paths (`S`, the lane scratch; `L`, the lane folder with
 - `vtk9-after.sh`: after the vtk9 build, its stage, comparison, tree removal, the paraview build, the green image and rows.
 - `pv-after.sh`: after the paraview build, its stage, comparison, tree removal, the green-pv image, the edition ParaView's rows, the upgrade simulation and `view_equal.py`'s render-view comparisons (Debian's mono start against ours, Enable 3D off against Debian's mono, same route each).
 - `disk-guard.sh`, `vtk9-space.sh`: the vtk9 build's room on /mnt/games: the guard pauses the build under 2.5 GB free; the watcher removes the object files once `override_dh_auto_install-arch` starts (no later step reads them: `CMAKE_SKIP_INSTALL_ALL_DEPENDENCY=ON`, one Python) and the rest of the build tree once `dh_install -a` starts.
+- `pv-savestate-case.sh`: Debian's ParaView in Anaglyph saves its own state (`anaglyph.pvsm`, the old-state fixture: File > Save State is Alt+F, S; Ctrl+S is Save Data).
+- `pv-gdb-case.sh`, `pv-gdb-trace-case.sh`: ParaView under gdb (image with gdb and paraview-dbgsym): the backtrace of a crash; each call of the functions in `TRACE`, with a time stamp and `BT` frames.
+- `pv-notice-case.sh`, `notice_probe.py`, `notice-probe-case.sh`: KWin's window list every 3 s after ParaView starts (where the told-once notices are), and a PyQt6 probe of a window-modal box opened before and after its main window shows.
+- `pv-after2.sh`: the chain after ParaView's rebuild with patch 0003.
 - `pv-noareas-case.sh` (as `SESSION=`): ParaView on a bare X server (no compositor, no stereo announced), captured through X (`xshot.py`).
 - `red-batch.sh`, `qb-batch.sh`, `g3-batch.sh`: the red rows (Debian's packages), the reproducer's rows, and the edition ParaView's rows.
 - `compare-debs.py`: a package against the one it replaces, file by file (paths, owners, modes, bytes; Lean Code projections checked against the manifest's `sha_hr`; ELF NEEDED, SONAME and defined dynamic symbols; control fields).

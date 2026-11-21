@@ -17,7 +17,12 @@ $S/scripts/drun.sh upgrade-sim sci50f-rig:1 --cpus 1 -v "$F":/flat:ro -v /var/li
   apt-get update -qq 2>&1 | tail -3
   pkgs='libvtk9.6=9.6.2+ds-3 libvtk9.6-qt=9.6.2+ds-3 libvtk9-dev=9.6.2+ds-3 libvtk9-qt-dev=9.6.2+ds-3 python3-vtk9=9.6.2+ds-3 libvtk9-java=9.6.2+ds-3 vtk9=9.6.2+ds-3 paraview=6.1.1+dfsg1-3 paraview-dev=6.1.1+dfsg1-3 python3-paraview=6.1.1+dfsg1-3'
   apt-get install -y -q --no-install-recommends \$pkgs > /tmp/debian.log 2>&1 || { tail -20 /tmp/debian.log; exit 1; }
+  # the rest of the system brought up to date first (the rig's base is older than today's testing), so the simulation shows
+  # only what the stage changes
+  apt-get -y -q full-upgrade > /tmp/base-upgrade.log 2>&1 || { tail -20 /tmp/base-upgrade.log; exit 1; }
+  apt-mark hold libvtk9.6 libvtk9.6-qt libvtk9-dev libvtk9-qt-dev python3-vtk9 libvtk9-java vtk9 paraview paraview-dev python3-paraview > /dev/null
   dpkg-query -W libvtk9.6 libvtk9.6-qt libvtk9-dev libvtk9-qt-dev python3-vtk9 libvtk9-java vtk9 paraview paraview-dev python3-paraview > /runs/apt-upgrade-before.txt
+  apt-mark unhold libvtk9.6 libvtk9.6-qt libvtk9-dev libvtk9-qt-dev python3-vtk9 libvtk9-java vtk9 paraview paraview-dev python3-paraview > /dev/null
   echo 'deb [trusted=yes] file:/flat ./' > /etc/apt/sources.list.d/stage.list
   apt-get update -qq 2>&1 | tail -3
   apt-get -s full-upgrade > /tmp/sim.txt 2>&1

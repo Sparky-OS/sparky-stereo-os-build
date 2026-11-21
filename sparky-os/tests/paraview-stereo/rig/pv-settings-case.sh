@@ -30,7 +30,8 @@ if [ "${TAB_KEYS:-}" = 1 ]; then xdotool mousemove 940 230 click 1; sleep 0.5; x
 python3 /rig/capture.py $OUT/shot-settings-1.png > /dev/null 2>&1
 xdotool key --delay 500 Tab Tab 2>> $OUT/keys.log; sleep 1
 python3 /rig/capture.py $OUT/shot-settings-1b.png > /dev/null 2>&1
-xdotool type --delay 80 stereo 2>> $OUT/keys.log; sleep 2
+# SEARCH: the word typed (default stereo); ParaView searches the translated texts, so pt_BR's "estereo" needs another word
+xdotool type --delay 80 "${SEARCH:-stereo}" 2>> $OUT/keys.log; sleep 2
 python3 /rig/capture.py $OUT/shot-settings-2.png > /dev/null 2>&1
 xwininfo -root -tree > $OUT/tree.txt 2>&1
 xdotool key --delay 500 Escape Escape 2>> $OUT/keys.log; sleep 2
