@@ -1,0 +1,29 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: sparky-stereo-obs
+Upstream-Contact: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+
+Files: *
+Copyright: 2026 Daniel Ramos (Capitain Jack)
+License: GPL-3+
+Comment: Sparky Stereo OS, Daniel Ramos's (Capitain Jack) edition of SparkyLinux
+ (https://sparkylinux.org, by Paweł "pavroo" Pijanowski).
+ .
+ The module is built against OBS Studio's libobs and obs-frontend-api (original
+ author Lain Bailey, with the contributors in OBS's AUTHORS file, GPL-2.0-or-later,
+ https://obsproject.com) as deb-multimedia packages them (Christian Marillat).
+ Its encoder paths, muxer helper, plugin loader and frontend were read in OBS
+ Studio 33.0.1; the filter's render follows the pattern of OBS's own crop filter.
+ No code is copied from OBS. The packing list and the video layout rule come from
+ the stereo layer (libstereo-policy, LGPL-2.1-or-later) and its translations from
+ the layer's catalogue; the unpacking rule and the anaglyph table follow the
+ layer's storedView() and Picture::anaglyphTransform(). x264 (VideoLAN and the
+ x264 authors) writes the frame packing arrangement message through its own
+ frame-packing option.
+
+License: GPL-3+
+ This program is free software: you can redistribute it and/or modify it
+ under the terms of the GNU General Public License as published by the Free
+ Software Foundation, either version 3, or (at your option) any later version.
+ .
+ On Debian systems the complete GPL version 3 is in
+ /usr/share/common-licenses/GPL-3.

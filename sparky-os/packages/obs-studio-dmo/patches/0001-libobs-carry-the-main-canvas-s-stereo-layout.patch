@@ -1,0 +1,105 @@
+Description: libobs: carry the main canvas's stereo layout
+ obs_set_video_stereo3d() and obs_get_video_stereo3d() keep how the main canvas holds the two views of a stereo pair, with
+ the values of FFmpeg's AVStereo3DType (every frame packing arrangement of H.264 Table D-9 and H.265 Table D.8, both eye
+ orders); obs_encoder_get_stereo3d() gives it to an encoder of the main canvas, scaled or not, and 2D to any other.
+ Encoders and outputs read it when they start, so they write the 3D marks while they work. New symbols only: no
+ structure that modules see changes.
+Author: Daniel Campos Ramos
+Origin: other, Sparky Stereo OS (ORDER 61, milestone 2)
+Forwarded: no, OBS asks for human-written submissions only (CONTRIBUTING.md, AI/Machine Learning Policy)
+Last-Update: 2026-11-21
+---
+diff --git a/libobs/obs-internal.h b/libobs/obs-internal.h
+index c326604..198bba6 100644
+--- a/libobs/obs-internal.h
++++ b/libobs/obs-internal.h
+@@ -428,6 +428,10 @@ struct obs_core_video {
+ 	float sdr_white_level;
+ 	float hdr_nominal_peak_level;
+ 
++	/* the main canvas's stereo layout, enum obs_stereo3d_type, and OBS_STEREO3D_FLAG_* */
++	volatile long stereo3d_type;
++	volatile long stereo3d_flags;
++
+ 	pthread_mutex_t task_mutex;
+ 	struct deque tasks;
+ 
+diff --git a/libobs/obs.c b/libobs/obs.c
+index 0058e0c..6c04afb 100644
+--- a/libobs/obs.c
++++ b/libobs/obs.c
+@@ -1674,6 +1674,37 @@ float obs_get_video_hdr_nominal_peak_level(void)
+ 	return video->graphics ? video->hdr_nominal_peak_level : 1000.f;
+ }
+ 
++void obs_set_video_stereo3d(enum obs_stereo3d_type type, uint32_t flags)
++{
++	struct obs_core_video *video = &obs->video;
++	if (type < OBS_STEREO3D_2D || type > OBS_STEREO3D_COLUMNS) {
++		blog(LOG_WARNING, "obs_set_video_stereo3d: unknown layout %d, the canvas is taken as 2D", (int)type);
++		type = OBS_STEREO3D_2D;
++	}
++	os_atomic_set_long(&video->stereo3d_flags, type == OBS_STEREO3D_2D ? 0 : (long)flags);
++	os_atomic_set_long(&video->stereo3d_type, (long)type);
++}
++
++enum obs_stereo3d_type obs_get_video_stereo3d(uint32_t *flags)
++{
++	struct obs_core_video *video = &obs->video;
++	if (flags)
++		*flags = (uint32_t)os_atomic_load_long(&video->stereo3d_flags);
++	return (enum obs_stereo3d_type)os_atomic_load_long(&video->stereo3d_type);
++}
++
++enum obs_stereo3d_type obs_encoder_get_stereo3d(const obs_encoder_t *encoder, uint32_t *flags)
++{
++	if (flags)
++		*flags = 0;
++	if (!encoder || obs_encoder_get_type(encoder) != OBS_ENCODER_VIDEO)
++		return OBS_STEREO3D_2D;
++	video_t *video = obs_encoder_parent_video(encoder);
++	if (!video || video != obs_get_video())
++		return OBS_STEREO3D_2D;
++	return obs_get_video_stereo3d(flags);
++}
++
+ void obs_set_video_levels(float sdr_white_level, float hdr_nominal_peak_level)
+ {
+ 	struct obs_core_video *video = &obs->video;
+diff --git a/libobs/obs.h b/libobs/obs.h
+index dbc5ed3..7e4182b 100644
+--- a/libobs/obs.h
++++ b/libobs/obs.h
+@@ -477,6 +477,32 @@ EXPORT float obs_get_video_hdr_nominal_peak_level(void);
+ /** Sets the video levels */
+ EXPORT void obs_set_video_levels(float sdr_white_level, float hdr_nominal_peak_level);
+ 
++/**
++ * The stereo layout of the main canvas: how its picture holds the two views of a stereo pair, so that encoders write
++ * the frame packing arrangement SEI (H.264 D.2.26, Table D-9; H.265 D.3.16, Table D.8) and muxers the container's mark
++ * (Matroska StereoMode, RFC 9559 5.1.4.1.28.3; MP4 st3d) while they work. The values are those of FFmpeg's
++ * AVStereo3DType, the whole set: OBS_STEREO3D_2D means one picture. Encoders and outputs read it when they start.
++ */
++enum obs_stereo3d_type {
++	OBS_STEREO3D_2D = 0,
++	OBS_STEREO3D_SIDE_BY_SIDE = 1,
++	OBS_STEREO3D_TOP_BOTTOM = 2,
++	OBS_STEREO3D_FRAME_SEQUENCE = 3,
++	OBS_STEREO3D_CHECKERBOARD = 4,
++	OBS_STEREO3D_SIDE_BY_SIDE_QUINCUNX = 5,
++	OBS_STEREO3D_LINES = 6,
++	OBS_STEREO3D_COLUMNS = 7,
++};
++
++/** The right eye's view comes first (content_interpretation_type 2, H.264 Table D-10). */
++#define OBS_STEREO3D_FLAG_INVERT (1 << 0)
++
++EXPORT void obs_set_video_stereo3d(enum obs_stereo3d_type type, uint32_t flags);
++EXPORT enum obs_stereo3d_type obs_get_video_stereo3d(uint32_t *flags);
++/** The layout of the canvas an encoder encodes: the main canvas's for an encoder of the main canvas (scaled or not),
++ *  OBS_STEREO3D_2D for any other. */
++EXPORT enum obs_stereo3d_type obs_encoder_get_stereo3d(const obs_encoder_t *encoder, uint32_t *flags);
++
+ /** Gets the current audio settings, returns false if no audio */
+ EXPORT bool obs_get_audio_info(struct obs_audio_info *oai);
+ 

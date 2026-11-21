@@ -1,0 +1,16 @@
+# sparky-stereo-obs
+
+The edition's stereo module for OBS Studio, a native integration pack (skill `stereo-integrations`).
+It is built against the edition's OBS (`obs-studio-dmo` rebuilt as ours, with the canvas's stereo layout in libobs), and loads with nothing to click from OBS's system plugin folder (`/usr/lib/<triplet>/obs-modules/plugins/sparky-stereo-obs.so`, data in `/usr/share/obs/obs-modules/plugins/sparky-stereo-obs/`).
+
+- **Tools, Stereo 3D…** holds a program's three 3D options: "Enable 3D", the render resolution per eye (1920 × 1080 by default) and "Display Settings…".
+  Enable 3D sets the canvas (Settings, Video: base and output resolution) to two eyes side by side, left eye first; off, the canvas the person had returns.
+  The dialog says, for the recording and the stream, which 3D marks the next start will carry and why any will not.
+- **3D on by itself.** When a screen shows 3D (a 3D mode or an anaglyph twin; the stereo layer's `Stereo::ScreenMode`, the signal Spectacle reads), a new profile starts with the full side by side canvas at the default per-eye resolution; on a 2D-only desktop nothing changes. A profile that already holds the person's scenes keeps its canvas and is told once, with "Enable 3D" as the action. The person's own choice in the dialog is kept from then on (Daniel, 2026-11-19, for the edition's capture programs: "the default mode is 3D when 3D is active"; "in 2d only, the default is also a 2D picture").
+- **The marks are written while encoding, by the edition's OBS** (`obs-studio-dmo` `+stereo3d1`, recipe `../obs-studio-dmo`): the module hands libobs the canvas's layout (`obs_set_video_stereo3d()`), and x264, VA-API, NVENC, the muxer helper (Matroska StereoMode, MP4 `st3d`), the hybrid MP4 muxer and the custom FFmpeg output write the marks from it. What is still not marked (Quick Sync, AV1's stream, OpenH264, AMF, an encoder of the custom output that writes none) is told before each start, once a session in OBS's window and always in its log; the first keyframe of every running output is read.
+- **The Stereo input filter** takes a source in any packing of the stereo layer's input list (`stereo_policy_input_format_at()`) to full side by side, each eye at the resolution it has, every sample copied, never resized: side by side, top and bottom, rows, columns, checkerboard, side by side quincunx, both eye orders, the three anaglyphs, Not 3D, and Automatic by the layer's video rule. It offers "Swap left and right eyes" per source. Frames in turn, both views in one block and picture-and-depth inputs are listed and not converted yet: the filter says so where they are chosen.
+- On a 2D canvas the module changes nothing in what OBS writes.
+
+The words shared with every program of the edition ("Enable 3D", "3D Input Format", each packing, "Swap left and right eyes", "Display Settings…") come from the stereo layer's catalogue; the module's own sentences are in `data/locale`, in the ten required languages.
+
+Build: `OUT=... IMAGE=... SCRATCH=... bash build-in-container.sh` (the builder image carries `debian/control`'s Build-Depends). The module's unit test (`tests/test-sei.c`) runs in the build.
