@@ -18,7 +18,7 @@ check() { if [ "$2" = "$3" ]; then pass=$((pass + 1)); echo "PASS $1"; else fail
 has() { if grep -qF -- "$3" "$2"; then pass=$((pass + 1)); echo "PASS $1"; else fail=$((fail + 1)); echo "FAIL $1: '$3' not in: $(head -c 500 "$2")"; fi; }
 systemctl start "user@$uid.service" || { echo "FAIL the user manager did not start"; exit 1; }
 T=$(mktemp -d); chmod 755 "$T"
-as() { runuser -u "$user" -- env XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus LANG=${LANG:-C.UTF-8} "$@"; }
+as() { runuser -u "$user" -- env PIDFILE=/tmp/partners-squat.pid XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus LANG=${LANG:-C.UTF-8} "$@"; }
 cmd() { as sparky-stereo-partners "$@" >"$T/out" 2>"$T/err"; echo $?; }
 json() { as sparky-stereo-partners status --json | python3 -I -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 listeners() { ss -Htln | awk '{print $4}' | grep -cx '127.0.0.1:11434'; }
@@ -54,13 +54,13 @@ check "engine off: disabled" "$(as systemctl --user is-enabled ollama.service)" 
 check "engine off: nothing listens" "$(listeners)" 0
 
 echo "== its address taken by another program"
-as python3 -c 'import socket,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", 11434)); s.listen(); time.sleep(60)' & squat=$!
+as python3 -c 'import os,socket,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", 11434)); s.listen(); open(os.environ["PIDFILE"], "w").write(str(os.getpid())); time.sleep(120)' & squat=$!
 for _ in $(seq 1 20); do [ "$(listeners)" = 1 ] && break; sleep 0.25; done
 check "engine on: exit 6" "$(cmd engine on)" 6
 has "engine on: said, with the other program" "$T/err" "Another program already uses Ollama's address, 127.0.0.1:11434 (python3, pid"
 check "engine on: the engine was not started" "$(as systemctl --user is-active ollama.service)" inactive
 check "kept by the problems engine" "$(as sparky-stereo-problems list --json sparky-stereo-partners | python3 -I -c 'import json,sys; print([p["key"] for p in json.load(sys.stdin)])')" "['engine']"
-kill $squat; wait $squat 2>/dev/null
+kill "$(cat /tmp/partners-squat.pid)"; wait $squat 2>/dev/null   # the program itself, not runuser in front of it
 check "the address free again: engine on, exit 0" "$(cmd engine on)" 0
 check "the address free again: the problem goes" "$(as sparky-stereo-problems list --json sparky-stereo-partners | python3 -I -c 'import json,sys; print([p["key"] for p in json.load(sys.stdin)])')" "[]"
 
@@ -76,7 +76,7 @@ check "metered: nothing downloaded" "$(json "len(d['engine']['models'])")" 0
 echo 0 >/run/fake-nm-metered
 check "not known: held (exit 5)" "$(cmd download standin:tiny)" 5
 has "not known: said, with why" "$T/err" "Whether this connection is metered could not be read (NetworkManager does not know (unknown)), so the download waits."
-check "not known, Download anyway: exit 0" "$(cmd download standin:tiny --even-if-metered)" 0
+check "not known, Download anyway: exit 0" "$(cmd download standin:tiny --even-if-metered)" 0; cat "$T/err" | head -3
 check "the model is on this computer" "$(json "[m['name'] for m in d['engine']['models']]")" "['127.0.0.1:5005/library/standin:tiny']"
 check "the default's model is written in the person's file only" "$(grep -c '^Model=standin:tiny$' "$home/.config/sparky-stereo-partnersrc") $(grep -c '^Model=' /etc/xdg/sparky-stereo-partnersrc)" "1 0"
 echo 2 >/run/fake-nm-metered
