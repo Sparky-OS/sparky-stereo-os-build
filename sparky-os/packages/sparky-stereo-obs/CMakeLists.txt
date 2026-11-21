@@ -3,7 +3,7 @@
 # The edition's stereo module for OBS Studio: built against the libobs and obs-frontend-api of the OBS the edition
 # installs (deb-multimedia's obs-studio, libobs-dev), the shared stereo policy (libstereo-policy) and Qt 6 Widgets.
 cmake_minimum_required(VERSION 3.25)
-project(sparky-stereo-obs VERSION 0.1.0 LANGUAGES C CXX)
+project(sparky-stereo-obs VERSION 0.2.0 LANGUAGES C CXX)
 
 include(GNUInstallDirs)
 set(CMAKE_CXX_STANDARD 17)
@@ -15,6 +15,9 @@ find_package(obs-frontend-api REQUIRED)
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(STEREO_POLICY REQUIRED IMPORTED_TARGET stereo-policy>=1.23.0)
+# Stereo::ScreenMode: whether a screen shows 3D, the one signal the edition's capture programs read (Spectacle's
+# ImagePlatformKWin::updateStereoOutputs())
+find_package(StereoLayer 1.23 REQUIRED)
 
 add_library(sparky-stereo-obs MODULE
 	src/plugin.cpp
@@ -24,7 +27,7 @@ add_library(sparky-stereo-obs MODULE
 	src/layer-words.cpp)
 set_target_properties(sparky-stereo-obs PROPERTIES PREFIX "")
 target_link_libraries(sparky-stereo-obs PRIVATE OBS::libobs OBS::obs-frontend-api Qt6::Core Qt6::Widgets
-	PkgConfig::STEREO_POLICY)
+	PkgConfig::STEREO_POLICY Stereo::Layer)
 target_compile_options(sparky-stereo-obs PRIVATE -Wall -Wextra)
 target_compile_definitions(sparky-stereo-obs PRIVATE PROJECT_VERSION="${PROJECT_VERSION}")
 

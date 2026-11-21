@@ -17,13 +17,9 @@ struct MarkPlan {
 	QStringList missing;
 };
 
-// The x264 option the module adds: frame packing arrangement type 3, side by side (H.264 V16 D.2.26, Table D-9);
-// x264 writes content_interpretation_type 1, frame 0 the left view (Table D-10).
-inline constexpr const char *kX264Token = "frame-packing=3";
-
-// On a stereo canvas, adds kX264Token to the x264 options of every OBS x264 encoder of the main canvas that is not
-// running; on a 2D canvas, takes out the token this module added and nothing else.
-void applyX264Mark(bool stereo);
+// Hands the edition's libobs the main canvas's layout: full side by side, left eye first, on a stereo canvas, 2D otherwise.
+// The encoders and muxers of the edition's OBS read it when they start and write the 3D marks from it.
+void setCanvasLayout(bool stereo);
 
 // The plan for the next start of kind, from the encoder the output already has or, before its first start, the one
 // the profile names (Settings, Output).

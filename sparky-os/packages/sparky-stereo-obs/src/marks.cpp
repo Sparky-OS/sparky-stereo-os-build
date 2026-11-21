@@ -19,76 +19,6 @@ namespace SparkyStereo {
 
 namespace {
 
-// the encoders whose x264 options carry the token because this module put it there, by name
-std::set<std::string> markedByUs;
-
-bool hasToken(const std::string &options)
-{
-	size_t at = 0;
-	const std::string token = kX264Token;
-	while ((at = options.find(token, at)) != std::string::npos) {
-		const bool startOk = at == 0 || options[at - 1] == ' ';
-		const size_t end = at + token.size();
-		const bool endOk = end == options.size() || options[end] == ' ';
-		if (startOk && endOk)
-			return true;
-		at = end;
-	}
-	return false;
-}
-
-std::string withoutToken(std::string options)
-{
-	const std::string token = kX264Token;
-	size_t at = 0;
-	while ((at = options.find(token, at)) != std::string::npos) {
-		const size_t end = at + token.size();
-		if ((at == 0 || options[at - 1] == ' ') && (end == options.size() || options[end] == ' ')) {
-			size_t from = at, to = end;
-			if (to < options.size())
-				to++;
-			else if (from > 0)
-				from--;
-			options.erase(from, to - from);
-		} else {
-			at = end;
-		}
-	}
-	return options;
-}
-
-bool updateX264(void *param, obs_encoder_t *encoder)
-{
-	const bool stereo = *static_cast<bool *>(param);
-	if (obs_encoder_get_type(encoder) != OBS_ENCODER_VIDEO || strcmp(obs_encoder_get_id(encoder), "obs_x264") != 0)
-		return true;
-	video_t *video = obs_encoder_video(encoder);
-	if (video && video != obs_get_video())
-		return true; // another canvas
-	if (obs_encoder_active(encoder))
-		return true; // its options were read when it started
-	const std::string name = obs_encoder_get_name(encoder) ? obs_encoder_get_name(encoder) : "";
-	obs_data_t *settings = obs_encoder_get_settings(encoder);
-	const std::string options = obs_data_get_string(settings, "x264opts");
-	obs_data_release(settings);
-	std::string next = options;
-	if (stereo && !hasToken(options)) {
-		next = options.empty() ? std::string(kX264Token) : options + " " + kX264Token;
-		markedByUs.insert(name);
-	} else if (!stereo && markedByUs.count(name)) {
-		next = withoutToken(options);
-		markedByUs.erase(name);
-	}
-	if (next != options) {
-		obs_data_t *update = obs_data_create();
-		obs_data_set_string(update, "x264opts", next.c_str());
-		obs_encoder_update(encoder, update);
-		obs_data_release(update);
-		blog(LOG_INFO, "[sparky-stereo-obs] %s: x264 options \"%s\"", name.c_str(), next.c_str());
-	}
-	return true;
-}
-
 obs_output_t *outputOf(OutputKind kind)
 {
 	switch (kind) {
@@ -162,36 +92,6 @@ std::string predictedEncoder(OutputKind kind, bool *usesStreamEncoder)
 	return simpleEncoderId(config_get_string(config, "SimpleOutput", "RecEncoder"));
 }
 
-// The person's own x264 options replace the encoder's whole option string at the start (SimpleOutput::Update with
-// "Enable Advanced Encoder Settings"; AdvancedOutput reads streamEncoder.json and recordEncoder.json): what they hold
-// decides. Returns false when the person has none.
-bool ownX264Options(bool usesStreamEncoder, std::string *options)
-{
-	config_t *config = obs_frontend_get_profile_config();
-	if (!advancedMode(config)) {
-		if (!usesStreamEncoder || !config_get_bool(config, "SimpleOutput", "UseAdvanced"))
-			return false;
-		const char *custom = config_get_string(config, "SimpleOutput", "x264Settings");
-		if (!custom || !*custom)
-			return false;
-		*options = custom;
-		return true;
-	}
-	char *profile = obs_frontend_get_current_profile_path();
-	if (!profile)
-		return false;
-	const std::string path = std::string(profile) + (usesStreamEncoder ? "/streamEncoder.json" : "/recordEncoder.json");
-	bfree(profile);
-	obs_data_t *data = obs_data_create_from_json_file_safe(path.c_str(), "bak");
-	if (!data)
-		return false;
-	const bool has = obs_data_has_user_value(data, "x264opts") && *obs_data_get_string(data, "x264opts");
-	if (has)
-		*options = obs_data_get_string(data, "x264opts");
-	obs_data_release(data);
-	return has;
-}
-
 QString text(const char *key)
 {
 	return QString::fromUtf8(obs_module_text(key));
@@ -203,15 +103,18 @@ QString encoderName(const std::string &id)
 	return QString::fromUtf8(name ? name : id.c_str());
 }
 
-// why an encoder of the shipped OBS (33.0.1) cannot be given the layout from a module, read at its source
+// whether the edition's OBS writes the frame packing arrangement for this encoder (its patches 0002 to 0004), and why not
+bool writesMark(const std::string &id)
+{
+	if (id.find("av1") != std::string::npos)
+		return false;
+	return id == "obs_x264" || id.find("vaapi") != std::string::npos || id.find("nvenc") != std::string::npos;
+}
+
 const char *reasonFor(const std::string &id)
 {
 	if (id.find("av1") != std::string::npos)
 		return "Reason.AV1";
-	if (id.find("vaapi") != std::string::npos)
-		return "Reason.VAAPI";
-	if (id.find("nvenc") != std::string::npos)
-		return "Reason.NVENC";
 	if (id.rfind("obs_qsv11", 0) == 0)
 		return "Reason.QSV";
 	if (id.find("amf") != std::string::npos)
@@ -270,9 +173,15 @@ void onPacket(obs_output_t *, struct encoder_packet *packet, struct encoder_pack
 
 } // namespace
 
-void applyX264Mark(bool stereo)
+void setCanvasLayout(bool stereo)
 {
-	obs_enum_encoders(updateX264, &stereo);
+	uint32_t flags = 0;
+	const enum obs_stereo3d_type before = obs_get_video_stereo3d(&flags);
+	const enum obs_stereo3d_type after = stereo ? OBS_STEREO3D_SIDE_BY_SIDE : OBS_STEREO3D_2D;
+	if (before != after || flags != 0) {
+		obs_set_video_stereo3d(after, 0);
+		blog(LOG_INFO, "[sparky-stereo-obs] canvas layout: %s", stereo ? "side by side, left eye first" : "2D");
+	}
 }
 
 MarkPlan planFor(OutputKind kind)
@@ -280,24 +189,16 @@ MarkPlan planFor(OutputKind kind)
 	MarkPlan plan;
 	bool usesStreamEncoder = false;
 	std::string id = predictedEncoder(kind, &usesStreamEncoder);
+	(void)usesStreamEncoder;
 	if (obs_output_t *output = outputOf(kind)) {
 		if (obs_encoder_t *encoder = obs_output_get_video_encoder(output))
 			id = obs_encoder_get_id(encoder);
 		obs_output_release(output);
 	}
 	plan.encoderId = QString::fromStdString(id);
-	if (id == "obs_x264") {
-		std::string own;
-		if (ownX264Options(usesStreamEncoder, &own) && !hasToken(own)) {
-			plan.missing << text("Reason.OwnX264").arg(QString::fromStdString(own));
-		} else {
-			plan.streamMarked = true;
-		}
-	} else {
+	plan.streamMarked = writesMark(id);
+	if (!plan.streamMarked)
 		plan.missing << text(reasonFor(id)).arg(encoderName(id));
-	}
-	if (kind != OutputKind::Stream && plan.streamMarked)
-		plan.missing << text("Reason.Container");
 	return plan;
 }
 
