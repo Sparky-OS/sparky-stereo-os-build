@@ -24,7 +24,8 @@ Description: offline speech transcription with Whisper models
  the tagged source and the signed release.
  .
  At run time: the models (Whisper, voice activity detection, speaker
- separation) are not in the package. Vibe downloads the ones you choose from
- huggingface.co when you ask, and it can check GitHub for a newer release.
+ separation) are not in the package. With no speech model installed, Vibe
+ can automatically download its default model on first start. Additional
+ models can be selected in Vibe. It can check GitHub for a newer release.
  Recognition runs on the CPU, and on the GPU through Vulkan when a Vulkan
  driver is present (vibe-server, the engine, is built on ggml).
