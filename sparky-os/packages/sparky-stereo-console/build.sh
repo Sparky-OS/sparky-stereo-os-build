@@ -25,7 +25,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-${SPARKY_REPO_DIR:?}}
-VERSION=20261121~sparky9~0+lc1
+VERSION=20261121.1~sparky9~0+lc1
 PKG=sparky-stereo-console
 B=$HERE/base
 W=$(mktemp -d "${TMPDIR:-${SPARKY_SCRATCH:?}/sparky-os}/console-build.XXXXXX")
@@ -100,6 +100,8 @@ PY
 
 # Debian's skel .bashrc reads ~/.bash_aliases after it has made the prompt and the ls alias, so a new account gets
 # what our own copy of that .bashrc gave up to 20261102, with bash's .bashrc left as bash ships it (rows 629/802).
+# Sparky Stereo OS (Daniel, 2026-10-14: "I love colored console", "my editor of choice in terminal is nano"): the file
+# lands in every new account's home, so it says only what its lines do.
 cat >"$D/etc/skel/.bash_aliases" <<'BASH'
 # Sparky Stereo OS: read by Debian's ~/.bashrc, after it has made the prompt.
 # The coloured prompt on every terminal, the Linux console too (force_color_prompt=yes in ~/.bashrc does the same):
@@ -115,8 +117,7 @@ xterm*|rxvt*)
     PS1="\[\e]0;${debian_chroot:+($debian_chroot)}\u@\h: \w\a\]$PS1"
     ;;
 esac
-# Daniel, 2026-10-14: "I love colored console", "my editor of choice in terminal is nano":
-# grep, dir and vdir in colour, GCC's colours, and nano as the editor.
+# grep, dir and vdir in colour, GCC's colours, nano as the terminal editor.
 if [ -x /usr/bin/dircolors ]; then
     alias dir='dir --color=auto'
     alias vdir='vdir --color=auto'
@@ -242,5 +243,6 @@ mkdir -p "$OUT"
 PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.standalone "$D" "$OUT" --authoring "$HERE"
 # the source rebuilds to the same package, and check-debs writes the build record, as sparky-stereo-boot's recipe does
 python3 "$HERE/../../repo/rebuild-script-source.py" "$OUT/${PKG}_${VERSION}.dsc"
-(cd "$OUT" && PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-debs "./${PKG}_${VERSION}_all.deb")
+# the package and its -lc-hr companion (the authored text of every projected file) are checked together
+(cd "$OUT" && PYTHONPATH="$HERE/../..${PYTHONPATH:+:$PYTHONPATH}" python3 -m lean.release check-debs ./"$PKG"*_"$VERSION"_all.deb)
 echo "built $OUT/${PKG}_${VERSION}_all.deb"
