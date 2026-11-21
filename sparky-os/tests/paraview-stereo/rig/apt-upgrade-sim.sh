@@ -27,5 +27,6 @@ $S/scripts/drun.sh upgrade-sim sci50f-rig:1 --cpus 1 -v "$F":/flat:ro -v /var/li
   apt-get update -qq 2>&1 | tail -3
   apt-get -s full-upgrade > /tmp/sim.txt 2>&1
   grep -E '^(Inst|Remv|Conf|Purg)|upgraded|newly installed' /tmp/sim.txt > /runs/apt-upgrade-sim.txt
-  chown 1000:1000 /runs/apt-upgrade-sim.txt /runs/apt-upgrade-before.txt"
+  cp /tmp/sim.txt /runs/apt-upgrade-sim-full.txt
+  chown 1000:1000 /runs/apt-upgrade-sim.txt /runs/apt-upgrade-sim-full.txt /runs/apt-upgrade-before.txt"
 cat $S/runs/apt-upgrade-sim.txt
