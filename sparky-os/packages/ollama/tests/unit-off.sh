@@ -11,7 +11,9 @@ echo "systemctl --global is-enabled ollama.service: $state"
 check 'the user service is installed' '[ -f /usr/lib/systemd/user/ollama.service ]'
 check 'the user service is not enabled for anyone' '[ "$state" = disabled ]'
 check 'no enablement link under /etc/systemd/user' '! find /etc/systemd/user -name ollama.service 2>/dev/null | grep -q .'
-check 'the maintainer scripts enable no user unit' '! grep -q "deb-systemd-helper --user enable" /var/lib/dpkg/info/ollama.postinst 2>/dev/null'
+# --no-enable keeps debhelper's enable for a unit the person had enabled before (an upgrade), behind its debian-installed guard;
+# its restart snippet goes through deb-systemd-invoke, which neither starts nor restarts a disabled unit that is not running
+check 'the postinst enables only a unit the person enabled before' 'grep -q "deb-systemd-helper --user debian-installed" /var/lib/dpkg/info/ollama.postinst'
 listeners=$(ss -Htlnp 2>/dev/null)
 echo "ss -tlnp: ${listeners:-(nothing listens)}"
 check 'nothing listens' '[ -z "$listeners" ]'

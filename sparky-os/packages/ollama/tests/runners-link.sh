@@ -11,7 +11,9 @@ for pkg in "$@"; do
 		[ -f "$f" ] && [ ! -L "$f" ] || continue
 		file -b "$f" | grep -q 'ELF 64-bit LSB' || continue
 		n=$((n + 1))
-		missing=$(LD_LIBRARY_PATH= ldd "$f" 2>&1 | grep 'not found' | awk '{print $1}' | sort -u | tr '\n' ' ')
+		# a back end in a subfolder (vulkan/, cuda_v13/, rocm_v7_2/) is opened by the engine after it loaded libggml-base.so.0
+		# from /usr/lib/ollama, so that folder is on the search path here, as the loaded base is in the engine
+		missing=$(LD_LIBRARY_PATH=/usr/lib/ollama ldd "$f" 2>&1 | grep 'not found' | awk '{print $1}' | sort -u | tr '\n' ' ')
 		if [ -n "$missing" ]; then echo "FAIL $pkg: $f needs $missing"; fail=1; fi
 	done < <(dpkg -L "$pkg")
 	echo "$pkg: $n ELF files checked"
