@@ -8,16 +8,16 @@ say_kept() {
     case "$locale" in C|C.*|POSIX) locale=en ;; *) locale=${LANGUAGE:-$locale} ;; esac
     locale=${locale%%:*}
     case "$locale" in
-        pl*) message='Twoje zmiany w /etc/skel/.bashrc zachowano w /etc/skel/.bashrc.dpkg-old; wrócił własny plik /etc/skel/.bashrc pakietu bash, a znak zachęty, kolory i edytor, które edycja ustawia nowym kontom, są teraz w /etc/skel/.bash_aliases.' ;;
-        pt*) message='Suas alterações em /etc/skel/.bashrc foram mantidas em /etc/skel/.bashrc.dpkg-old; o /etc/skel/.bashrc do próprio bash voltou, e o prompt, as cores e o editor que a edição dá às novas contas agora estão em /etc/skel/.bash_aliases.' ;;
-        de*) message='Ihre Änderungen an /etc/skel/.bashrc bleiben in /etc/skel/.bashrc.dpkg-old erhalten; die eigene /etc/skel/.bashrc von bash ist zurück, und Eingabeaufforderung, Farben und Editor, die die Edition neuen Konten gibt, stehen jetzt in /etc/skel/.bash_aliases.' ;;
-        es*) message='Sus cambios en /etc/skel/.bashrc se conservan en /etc/skel/.bashrc.dpkg-old; el /etc/skel/.bashrc propio de bash ha vuelto, y el prompt, los colores y el editor que la edición da a las cuentas nuevas están ahora en /etc/skel/.bash_aliases.' ;;
-        fr*) message='Vos modifications de /etc/skel/.bashrc sont conservées dans /etc/skel/.bashrc.dpkg-old ; le /etc/skel/.bashrc propre à bash est rétabli, et l’invite, les couleurs et l’éditeur que l’édition donne aux nouveaux comptes sont désormais dans /etc/skel/.bash_aliases.' ;;
-        ja*) message='/etc/skel/.bashrc への変更は /etc/skel/.bashrc.dpkg-old に保存されました。bash 本来の /etc/skel/.bashrc が戻り、エディションが新しいアカウントに与えるプロンプト、色、エディターは /etc/skel/.bash_aliases に移りました。' ;;
-        ko*) message='/etc/skel/.bashrc에 대한 변경 사항은 /etc/skel/.bashrc.dpkg-old에 보존되었습니다. bash 고유의 /etc/skel/.bashrc가 돌아왔으며, 에디션이 새 계정에 주는 프롬프트, 색상, 편집기는 이제 /etc/skel/.bash_aliases에 있습니다.' ;;
-        zh_CN*|zh_SG*) message='您对 /etc/skel/.bashrc 的修改已保留在 /etc/skel/.bashrc.dpkg-old 中；bash 自带的 /etc/skel/.bashrc 已恢复，本版本为新账户设置的提示符、颜色和编辑器现位于 /etc/skel/.bash_aliases。' ;;
-        zh_TW*|zh_HK*|zh_MO*) message='您對 /etc/skel/.bashrc 的修改已保留在 /etc/skel/.bashrc.dpkg-old 中；bash 本身的 /etc/skel/.bashrc 已恢復，本版本為新帳號設定的提示字元、顏色和編輯器現位於 /etc/skel/.bash_aliases。' ;;
-        *) message='Your changes to /etc/skel/.bashrc are kept in /etc/skel/.bashrc.dpkg-old; bash'\''s own /etc/skel/.bashrc is back, and the prompt, colours and editor the edition gives new accounts are now in /etc/skel/.bash_aliases.' ;;
+        pl*) message='Twoje zmiany w /etc/skel/.bashrc zachowano w /var/backups/sparky-stereo-console-skel.bashrc; wrócił własny plik /etc/skel/.bashrc pakietu bash, a znak zachęty, kolory i edytor, które edycja ustawia nowym kontom, są teraz w /etc/skel/.bash_aliases.' ;;
+        pt*) message='Suas alterações em /etc/skel/.bashrc foram mantidas em /var/backups/sparky-stereo-console-skel.bashrc; o /etc/skel/.bashrc do próprio bash voltou, e o prompt, as cores e o editor que a edição dá às novas contas agora estão em /etc/skel/.bash_aliases.' ;;
+        de*) message='Ihre Änderungen an /etc/skel/.bashrc bleiben in /var/backups/sparky-stereo-console-skel.bashrc erhalten; die eigene /etc/skel/.bashrc von bash ist zurück, und Eingabeaufforderung, Farben und Editor, die die Edition neuen Konten gibt, stehen jetzt in /etc/skel/.bash_aliases.' ;;
+        es*) message='Sus cambios en /etc/skel/.bashrc se conservan en /var/backups/sparky-stereo-console-skel.bashrc; el /etc/skel/.bashrc propio de bash ha vuelto, y el prompt, los colores y el editor que la edición da a las cuentas nuevas están ahora en /etc/skel/.bash_aliases.' ;;
+        fr*) message='Vos modifications de /etc/skel/.bashrc sont conservées dans /var/backups/sparky-stereo-console-skel.bashrc ; le /etc/skel/.bashrc propre à bash est rétabli, et l’invite, les couleurs et l’éditeur que l’édition donne aux nouveaux comptes sont désormais dans /etc/skel/.bash_aliases.' ;;
+        ja*) message='/etc/skel/.bashrc への変更は /var/backups/sparky-stereo-console-skel.bashrc に保存されました。bash 本来の /etc/skel/.bashrc が戻り、エディションが新しいアカウントに与えるプロンプト、色、エディターは /etc/skel/.bash_aliases に移りました。' ;;
+        ko*) message='/etc/skel/.bashrc에 대한 변경 사항은 /var/backups/sparky-stereo-console-skel.bashrc에 보존되었습니다. bash 고유의 /etc/skel/.bashrc가 돌아왔으며, 에디션이 새 계정에 주는 프롬프트, 색상, 편집기는 이제 /etc/skel/.bash_aliases에 있습니다.' ;;
+        zh_CN*|zh_SG*) message='您对 /etc/skel/.bashrc 的修改已保留在 /var/backups/sparky-stereo-console-skel.bashrc 中；bash 自带的 /etc/skel/.bashrc 已恢复，本版本为新账户设置的提示符、颜色和编辑器现位于 /etc/skel/.bash_aliases。' ;;
+        zh_TW*|zh_HK*|zh_MO*) message='您對 /etc/skel/.bashrc 的修改已保留在 /var/backups/sparky-stereo-console-skel.bashrc 中；bash 本身的 /etc/skel/.bashrc 已恢復，本版本為新帳號設定的提示字元、顏色和編輯器現位於 /etc/skel/.bash_aliases。' ;;
+        *) message='Your changes to /etc/skel/.bashrc are kept in /var/backups/sparky-stereo-console-skel.bashrc; bash'\''s own /etc/skel/.bashrc is back, and the prompt, colours and editor the edition gives new accounts are now in /etc/skel/.bash_aliases.' ;;
     esac
     printf '%s: %s\n' "$package" "$message" >&2
     logger -t "$package" -- "$message" 2>/dev/null || :
@@ -35,13 +35,15 @@ if [ "$1" = "install" ] || [ "$1" = "upgrade" ]; then
         fi
     done
     # Up to 20261102 our own copy of bash's skel .bashrc was at @GIVEN_BACK@. It is no file of ours any more, so dpkg
-    # removes it at this unpack; a person's change to it is kept beside it, as dpkg keeps a changed conffile, and said.
+    # removes it at this unpack; a person's change to it is kept and said. Not in /etc/skel: useradd copies every file
+    # there into each new account (Debian's adduser skips *.dpkg-old, useradd does not).
     f=@GIVEN_BACK@
     if [ "$1" = "upgrade" ] && [ "$(dpkg-divert --listpackage "$f")" = "$package" ] && [ -f "$f" ]; then
         want=$(awk -v p="${f#/}" '$2 == p {print $1}' "/var/lib/dpkg/info/$package.md5sums" 2>/dev/null)
         have=$(md5sum <"$f" | cut -d' ' -f1)
         if [ -n "$want" ] && [ "$want" != "$have" ]; then
-            cp -p "$f" "$f.dpkg-old"
+            mkdir -p /var/backups
+            cp -p "$f" /var/backups/sparky-stereo-console-skel.bashrc
             say_kept
         fi
     fi
