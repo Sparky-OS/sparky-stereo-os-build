@@ -7,6 +7,8 @@ ollama (0.40.16+ds-2) unstable; urgency=medium
     visible to the CUDA, ROCm and Vulkan runners, or none for the processor.
     A card that cannot be used is said and kept, and the engine does not
     start. OLLAMA_IGPU_ENABLE=1, so a chosen integrated card is used.
+    SyslogIdentifier=ollama keeps the engine's journal lines under its own
+    name.
     Measured on an RTX 3060 and a Renoir APU with every runner installed:
     the RTX 3060 chosen runs on CUDA alone, the APU on Vulkan alone, the
     processor on the processor. Depends on sparky-stereo-graphics 0.2.16.

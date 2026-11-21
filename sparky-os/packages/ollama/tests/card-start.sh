@@ -33,7 +33,7 @@ for pair in "$@"; do
 		sleep 0.5
 	done
 	sleep 1
-	journalctl -q --since "$since" _SYSTEMD_USER_UNIT=ollama.service | grep -E 'inference compute|sparky-stereo-gpu|not in this computer|cannot run' | sed -E 's/^.*\]: //; s/^time=[^ ]+ //' | cut -c1-260 | head -8
+	journalctl -q --since "$since" _SYSTEMD_USER_UNIT=ollama.service | grep -E 'msg="inference compute"|not in this computer|cannot run|was not started' | sed -E 's/^.*\]: //; s/^time=[^ ]+ //; s/GPU-([0-9a-f]{4})[0-9a-f-]{32}/GPU-\1.../g' | cut -c1-260 | head -8
 	if [ "$want" = fails ]; then
 		check "$choice: the service failed" "$(as_user systemctl --user show -p ActiveState --value ollama.service)" failed
 		check "$choice: with status 4" "$(as_user systemctl --user show -p ExecMainStatus --value ollama.service)" 4
@@ -42,6 +42,8 @@ for pair in "$@"; do
 		check "$choice: nothing listens" "$(ss -Htln | grep -c ':11434 ')" 0
 	else
 		got=$(journalctl -q --since "$since" _SYSTEMD_USER_UNIT=ollama.service | grep 'inference compute' | sed -E 's/.* library=([^ ]+) .* pci_id=("[^"]*"|[^ ]*) .*/\1@\2/; s/"//g; s/^cpu@$/cpu/' | sort | tr '\n' ' ')
+		echo "   the engine reports: $got"
+		check "$choice: the journal names the engine" "$(journalctl -q --since "$since" _SYSTEMD_USER_UNIT=ollama.service -o cat --output-fields=SYSLOG_IDENTIFIER | sort -u | tr '\n' ' ')" "ollama "
 		check "$choice: the engine computes on exactly" "$got" "$(printf '%s\n' "${want//,/ }" | tr ' ' '\n' | sort | tr '\n' ' ')"
 		check "$choice: the service is running" "$(as_user systemctl --user show -p ActiveState --value ollama.service)" active
 		check "$choice: it listens on 127.0.0.1:11434" "$(ss -Htln | awk '{print $4}' | grep -cx '127.0.0.1:11434')" 1
