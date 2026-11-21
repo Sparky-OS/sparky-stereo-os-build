@@ -7,7 +7,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:?Set OUT to the output directory}
-VERSION=0.1.4+lc1
+VERSION=0.1.5+lc1
 PKG=sparky-stereo-integration
 mkdir -p "$OUT"
 W=$(mktemp -d "$OUT/.$PKG.XXXXXX")
@@ -24,6 +24,10 @@ install -m755 "$HERE/bin/sparky-stereo-integration" "$D/usr/bin/"
 install -m755 "$HERE/krunner/missing-program" "$D/usr/lib/sparky-stereo/krunner-missing-program"
 install -m644 "$HERE/share/sparky-stereo-missing-program.desktop" "$D/usr/share/krunner/dbusplugins/"
 install -m644 "$HERE/share/org.sparky.stereo.MissingProgram.service" "$D/usr/share/dbus-1/services/"
+mkdir -p "$D/usr/lib/systemd/user/default.target.wants"
+install -m644 "$HERE/share/sparky-stereo-integration.service" "$HERE/share/sparky-stereo-integration.path" "$D/usr/lib/systemd/user/"
+ln -s ../sparky-stereo-integration.service "$D/usr/lib/systemd/user/default.target.wants/sparky-stereo-integration.service"
+ln -s ../sparky-stereo-integration.path "$D/usr/lib/systemd/user/default.target.wants/sparky-stereo-integration.path"
 install -m644 "$HERE/share/sparky-stereo-integrationrc" "$D/etc/xdg/"
 install -m644 "$HERE/share/sparky-stereo-integration-sync.desktop" "$D/etc/xdg/autostart/"
 install -m644 "$HERE"/lang/* "$D/usr/share/sparky/$PKG/"
@@ -68,7 +72,7 @@ Version: $VERSION
 Architecture: all
 Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
 Installed-Size: $SIZE
-Depends: bash, command-not-found (>= 23.04.0-3+sparky1), kdialog, python3, python3-dbus, python3-gi, sparky-stereo-integration-catalogue, sparky-stereo-problems (>= 0.1.2)
+Depends: bash, util-linux, command-not-found (>= 23.04.0-3+sparky1), kdialog, python3, python3-dbus, python3-gi, sparky-stereo-integration-catalogue, sparky-stereo-problems (>= 0.1.2)
 Recommends: pkexec
 Section: Utilities
 Priority: optional
