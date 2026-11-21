@@ -6,8 +6,9 @@
 # tree as file:/repo, with their keyrings) and the edition's packages the module needs that are newer than the published tree.
 # Usage: OUT=DIR SPARKY_LC_ARCHIVE_DIR=DIR REPO=PUBLISHED_TREE IMAGE=BUILDER SCRATCH=DIR [SIBLINGS_DIR=DIR SIBLINGS=FILE] \
 #        bash build-in-container.sh
-# The builder image carries debian/control's Build-Depends: deb-multimedia's libobs-dev for the OBS the edition installs, and
-# the edition's libstereo-policy-dev 1.23 or newer (the shared input list for C programs).
+# The builder image carries debian/control's Build-Depends: the edition's libobs-dev (obs-studio-dmo rebuilt as +stereo3d1,
+# sparky-os/packages/obs-studio-dmo) and libstereo-layer-dev 1.23 or newer; SIBLINGS names those debs for the link gate
+# while the published tree lacks them.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE=$(cd "$HERE/../../.." && pwd)
@@ -24,7 +25,7 @@ if [ -n "${SIBLINGS:-}" ]; then
 	sibling_args=(-e SPARKY_LC_SIBLINGS_FILE=/archive-siblings.txt -v "$SIBLINGS":/archive-siblings.txt:ro)
 fi
 sparky_provenance_init "$IMAGE" "$HERE"
-docker run --rm --ulimit core=1 --cpus 4 --user "$(id -u):$(id -g)" -e HOME="$SCRATCH/home" -e OUT="$OUT" -e JOBS=4 \
+docker run --rm --pull=never --ulimit core=1 --cpus 4 --user "$(id -u):$(id -g)" -e HOME="$SCRATCH/home" -e OUT="$OUT" -e JOBS=4 \
 	--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
 	"${SPARKY_PROV_ARGS[@]}" -e SPARKY_LC_ARCHIVE_CONFIG=/archive/sources.json -e SPARKY_LC_SCRATCH="$SCRATCH/link" \
 	"${sibling_args[@]}" -v "$SIBLINGS_DIR":/siblings:ro \
