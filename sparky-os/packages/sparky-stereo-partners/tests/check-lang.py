@@ -14,6 +14,10 @@ DOMAIN = "kcm_sparkystereo_partners"
 PO_DIR = Path(__file__).resolve().parents[1] / "po"
 PLURAL_COUNT = {"de": 2, "es": 2, "fr": 2, "ja": 1, "ko": 1,
                 "pl": 3, "pt_BR": 2, "zh_CN": 1, "zh_TW": 1}
+# Sentences added after the translations lane's last run (ORDER 70 piece 3 and later): one "CONTEXT|TEXT" per line. They may
+# be untranslated in the eight languages that lane writes, and are named in the output; any other gap fails. The lane empties
+# the file when it delivers them.
+PENDING = Path(__file__).resolve().parents[1] / "po" / "pending-translation.txt"
 PLACEHOLDERS = re.compile(r"%L?(?:[1-9][0-9]*|n)")
 ACCELERATORS = re.compile(r"&&|&(?!\s)")
 
@@ -23,18 +27,43 @@ def format_tokens(text):
             frozenset(Counter(ACCELERATORS.findall(text)).items()))
 
 
+def pending():
+    if not PENDING.exists():
+        return set()
+    keys = set()
+    for line in PENDING.read_text(encoding="utf-8").splitlines():
+        if line.strip() and not line.startswith("#"):
+            context, _, text = line.partition("|")
+            text = text.replace("\\n", "\n")
+            keys.add(context + "\x04" + text if context else text)
+    return keys
+
+
+def untranslated(path):
+    """The keys msgfmt leaves out of PATH: its untranslated messages, as CONTEXT\x04TEXT."""
+    out = subprocess.run(["msgattrib", "--untranslated", "--no-obsolete", "--no-wrap", "-o", "-", str(path)], check=True, capture_output=True)
+    if b"msgid" not in out.stdout:
+        return set()
+    compiled = subprocess.run(["msgfmt", "-o", "-", "-"], input=subprocess.run(["msgen", "-"], input=out.stdout, check=True,
+                              capture_output=True).stdout, check=True, capture_output=True).stdout
+    return {key for key in gettext.GNUTranslations(io.BytesIO(compiled))._catalog if key}
+
+
 def read_catalogue(path, template=None):
     command = ["msgfmt", "-o", "-", str(path)]
     if template is not None:
         command = ["msgfmt", "--check", "--statistics", "-o", "-", str(path)]
-        subprocess.run(["msgcmp", "--no-fuzzy-matching", str(path), str(template)], check=True)
+        subprocess.run(["msgcmp", "--no-fuzzy-matching", "--use-untranslated", str(path), str(template)], check=True)
     result = subprocess.run(command, check=True, capture_output=True,
                             env=os.environ | {"LC_ALL": "C"})
     if template is not None:
         stats = result.stderr.decode("utf-8").splitlines()
         print(f"{path.parent.name}: {stats[-1]}")
-        if "fuzzy" in stats[-1] or "untranslated" in stats[-1]:
+        missing = untranslated(path)
+        if "fuzzy" in stats[-1] or (missing - pending()) or ("untranslated" in stats[-1] and not missing):
             raise ValueError(f"{path}: fuzzy or untranslated messages")
+        if missing:
+            print(f"{path.parent.name}: {len(missing)} waiting for the translations lane (po/pending-translation.txt)")
     return gettext.GNUTranslations(io.BytesIO(result.stdout))
 
 
@@ -60,6 +89,8 @@ def check_catalogue(locale, english, translation):
         elif key:
             expected[key] = {format_tokens(value)}
     actual = translation._catalog
+    waiting = {key for key in pending() if key not in actual}
+    expected = {key: value for key, value in expected.items() if key not in waiting}
     if set(expected) != actual.keys() - {""}:
         raise ValueError(f"{locale}: compiled message keys differ from the template")
     for key, alternatives in expected.items():

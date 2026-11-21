@@ -1,31 +1,7 @@
 #!/usr/bin/python3
 # Created by Daniel Ramos (Capitain Jack) 2026/11/21
 # Copyright 2026 under the GNU GPL3 License
-"""sparky-stereo-partners: the Partners page's choices, for the page, for programs and for tests (ORDER 70).
-
-    sparky-stereo-partners status [--json]               the engine, its card, the defaults, the programs, the providers
-    sparky-stereo-partners resolve --kind KIND [--program DESKTOP-ID] [--shell]
-                                                          who answers: the interface's address, the model, the card's variables
-    sparky-stereo-partners set-default KIND [--interface ID] [--model NAME|--no-model]
-    sparky-stereo-partners program DESKTOP-ID KIND follow | own [--interface ID] [--model NAME]
-    sparky-stereo-partners card auto|cpu|integrated|discrete|profile|pci-...   (the one key, [Render] Partners, as the Graphics page)
-    sparky-stereo-partners engine on|off [--engine ollama|llamacpp]
-                                                          a local engine's user service (ollama.service, sparky-stereo-llama-server.service)
-    sparky-stereo-partners account [--json] | signin | signout
-                                                          Ollama's service (ollama.com), through the local engine: signed in or not
-    sparky-stereo-partners models [--json]               the models the page offers, each with its size from the registry
-    sparky-stereo-partners download NAME [--even-if-metered]   the engine downloads one model (its size said first)
-    sparky-stereo-partners provider add ID --name NAME --url URL   (the key is read from standard input, kept in KDE Wallet)
-    sparky-stereo-partners provider remove ID | provider list [--json]
-    sparky-stereo-partners install-plan [--engine E] | install [--engine E] [--even-if-metered]
-                                                          (through pkexec: the engine and this computer's runner)
-
-The choices live in sparky-stereo-partnersrc: the system's in /etc/xdg (shipped), the person's in ~/.config, key by key as
-KConfig cascades them; this command writes only the person's file, through kwriteconfig6. Keys never go into either file.
-Exit status: 0 done, 1 not known (a value nobody set), 2 wrong arguments, 3 failed (said, and kept by the problems engine), 4 the
-card cannot be used (sparky-stereo-gpu-env said why), 5 held: the connection is metered or its state could not be read,
-6 another program already uses the engine's address, 7 not signed in to Ollama's service (the address to sign in is printed).
-"""
+"""sparky-stereo-partners: the Partners page's choices, for the page, for programs and for tests (ORDER 70); --help says how."""
 import configparser
 import gettext
 import json
@@ -528,6 +504,7 @@ def download(settings, name, even):
     clear('download')
     if not settings.get(['Default', 'text'], 'Model'):
         write(['Default', 'text'], 'Model', name)
+        sync(Settings())
     return 0
 
 
@@ -593,6 +570,61 @@ def provider_remove(provider):
     return 0
 
 
+# ---------- programs that read a file of their own ----------
+
+# Betterbird (the app center's entry places it in /opt/betterbird) with ThunderAI, offered, not installed: ThunderAI reads
+# browser.storage.managed, which Betterbird answers from an enterprise policy for the add-on, else from a managed-storage
+# manifest, per person in ~/.mozilla/managed-storage/ (read in Betterbird 153.7.0esr-bb13's own ext-storage.js and
+# NativeManifests.sys.mjs). The values are unlocked: the person's own settings in ThunderAI win (its order: locked policy,
+# the person's value, unlocked policy, its default). No key is written: a provider's key stays in KDE Wallet.
+BETTERBIRD = 'eu.betterbird.Betterbird'
+
+
+def betterbird_installed(settings):
+    paths = [p for p in settings.get(['ProgramInfo', BETTERBIRD], 'Executables', '').split(',') if p]
+    return any(os.access(p, os.X_OK) for p in paths) or bool(shutil.which('betterbird'))
+
+
+def thunderai_data(c):
+    if c['protocol'] == 'ollama' and c['url']:
+        return {'connection_type': 'ollama_api', 'ollama_host': c['url'], 'ollama_model': c['model']}
+    if c['protocol'] == 'openai-compatible' and c['url']:
+        host, v1 = c['url'].rstrip('/'), False
+        if host.endswith('/v1'):
+            host, v1 = host[:-3], True
+        return {'connection_type': 'openai_comp_api', 'openai_comp_host': host, 'openai_comp_model': c['model'], 'openai_comp_use_v1': v1}
+    return None
+
+
+def sync(settings):
+    """Writes, or removes, the files of programs that cannot ask the command: Betterbird's ThunderAI manifest."""
+    addon = settings.get(['ProgramInfo', BETTERBIRD], 'ManagedStorage', '')
+    if not addon:
+        return 0
+    folder = os.path.join(os.path.expanduser('~'), '.mozilla', 'managed-storage')
+    path = os.path.join(folder, addon + '.json')
+    data = thunderai_data(choice(settings, 'text', BETTERBIRD)) if betterbird_installed(settings) else None
+    if data is None:
+        # Betterbird not installed, or a choice ThunderAI cannot use (none): nothing of ours stays behind
+        try:
+            with open(path, encoding='utf-8') as stream:
+                ours = json.load(stream).get('description', '').startswith(PACKAGE)
+        except (OSError, ValueError):
+            ours = False
+        if ours:
+            os.remove(path)
+        return 0
+    manifest = {'name': addon, 'description': PACKAGE + ': the text choice of System Settings, Partners, for Betterbird',
+                'type': 'storage', 'data': data}
+    os.makedirs(folder, exist_ok=True)
+    temporary = path + '.new'
+    with open(temporary, 'w', encoding='utf-8') as stream:
+        json.dump(manifest, stream, indent=1)
+        stream.write('\n')
+    os.replace(temporary, path)
+    return 0
+
+
 # ---------- who answers ----------
 
 def interfaces(settings):
@@ -639,8 +671,8 @@ def choice(settings, kind, program=None):
 
 def resolve(settings, kind, program, shell):
     c = choice(settings, kind, program)
-    lines = [('PARTNER_INTERFACE', c['interface']), ('PARTNER_KIND', c['protocol']), ('PARTNER_URL', c['url']), ('PARTNER_MODEL', c['model']),
-             ('PARTNER_RUNS', c['runs'])]
+    lines = [('PARTNER_INTERFACE', c['interface']), ('PARTNER_KIND', c['protocol']), ('PARTNER_NAME', c['name']), ('PARTNER_URL', c['url']),
+             ('PARTNER_MODEL', c['model']), ('PARTNER_RUNS', c['runs'])]
     env = gpu_env('--category', 'partners', '--print', 'compute-env')
     status = 0
     if env is None or env.returncode:
@@ -691,7 +723,9 @@ def status(settings):
     for pid in settings.children('ProgramInfo'):
         g = ['ProgramInfo', pid]
         programs.append({'id': pid, 'name': settings.get(g, 'Name', pid), 'kinds': [k for k in settings.get(g, 'Kinds', '').split(',') if k],
-                         'package': settings.get(g, 'Package', ''), 'installed': bool(installed(settings.get(g, 'Package', ''))),
+                         'package': settings.get(g, 'Package', ''),
+                         'installed': bool(installed(settings.get(g, 'Package', ''))) if settings.get(g, 'Package', '') else
+                         any(os.access(e, os.X_OK) for e in settings.get(g, 'Executables', '').split(',') if e),
                          'note': settings.get(g, 'Note', ''),
                          'choices': [choice(settings, k, pid) for k in settings.get(g, 'Kinds', '').split(',') if k]})
     return {'engine': engine, 'llamacpp': llamacpp, 'card': card, 'proposal': proposal(card),
@@ -708,7 +742,34 @@ def apt_size(package):
 
 def main(argv):
     if not argv or argv[0] in ('-h', '--help'):
-        print(__doc__)
+        # for people: in their language, through the page's catalogue
+        print(tr('@info:shell the command\'s help', """sparky-stereo-partners: the Partners page's choices, for the page, for programs and for tests (ORDER 70).
+
+    sparky-stereo-partners status [--json]               the engine, its card, the defaults, the programs, the providers
+    sparky-stereo-partners resolve --kind KIND [--program DESKTOP-ID] [--shell]
+                                                          who answers: the interface's address, the model, the card's variables
+    sparky-stereo-partners set-default KIND [--interface ID] [--model NAME|--no-model]
+    sparky-stereo-partners program DESKTOP-ID KIND follow | own [--interface ID] [--model NAME]
+    sparky-stereo-partners card auto|cpu|integrated|discrete|profile|pci-...   (the one key, [Render] Partners, as the Graphics page)
+    sparky-stereo-partners engine on|off [--engine ollama|llamacpp]
+                                                          a local engine's user service (ollama.service, sparky-stereo-llama-server.service)
+    sparky-stereo-partners account [--json] | signin | signout
+                                                          Ollama's service (ollama.com), through the local engine: signed in or not
+    sparky-stereo-partners models [--json]               the models the page offers, each with its size from the registry
+    sparky-stereo-partners download NAME [--even-if-metered]   the engine downloads one model (its size said first)
+    sparky-stereo-partners provider add ID --name NAME --url URL   (the key is read from standard input, kept in KDE Wallet)
+    sparky-stereo-partners provider remove ID | provider list [--json]
+    sparky-stereo-partners sync                          programs that read a file of their own get the page's choice: Betterbird's
+                                                          ThunderAI (a managed-storage manifest in ~/.mozilla), when Betterbird is installed
+    sparky-stereo-partners install-plan [--engine E] | install [--engine E] [--even-if-metered]
+                                                          (through pkexec: the engine and this computer's runner)
+
+The choices live in sparky-stereo-partnersrc: the system's in /etc/xdg (shipped), the person's in ~/.config, key by key as
+KConfig cascades them; this command writes only the person's file, through kwriteconfig6. Keys never go into either file.
+Exit status: 0 done, 1 not known (a value nobody set), 2 wrong arguments, 3 failed (said, and kept by the problems engine), 4 the
+card cannot be used (sparky-stereo-gpu-env said why), 5 held: the connection is metered or its state could not be read,
+6 another program already uses the engine's address, 7 not signed in to Ollama's service (the address to sign in is printed).
+"""))
         return 0 if argv else 2
     settings = Settings()
     cmd, rest = argv[0], argv[1:]
@@ -720,11 +781,17 @@ def main(argv):
         if flag('--json'):
             print(json.dumps(data, ensure_ascii=False))
         else:
-            e = data['engine']
-            print('engine: %s, %s, %s' % (e['installed'] or 'not installed', 'on' if e['on'] else 'off', e['address']))
-            print('card: %s (%s)' % (data['card']['name'] or data['card']['id'], data['card']['reason']))
+            # for people, in their language (programs read --json)
+            for key, engine in (('engine', ENGINES['ollama']), ('llamacpp', ENGINES['llamacpp'])):
+                e = data[key]
+                state = (tr('@info', 'Not installed') if not e['installed'] else
+                         tr('@info %1 an address', 'On, answering on this computer only (%1)', e['address']) if e['on'] else tr('@info', 'Off'))
+                print(tr('@info:shell %1 an engine, %2 its state', '%1: %2', tr(*engine['name']), state))
+            card = data['card']
+            print(tr('@info:shell %1 a card, %2 why', 'Card: %1 (%2)', card['name'] or card['id'], card['reason']))
             for d in data['defaults']:
-                print('%s: %s %s' % (d['kind'], d['interface'] or '-', d['model'] or '-'))
+                print(tr('@info:shell %1 a kind of work, %2 who answers, %3 the model', '%1: %2, %3', d['kind'],
+                         d['name'] or tr('@item:inlistbox no interface', 'None'), d['model'] or tr('@item:inlistbox', 'No model chosen')))
         return 0
     if cmd == 'resolve':
         kind = opt('--kind')
@@ -738,18 +805,20 @@ def main(argv):
             write(['Default', rest[0]], 'Model', opt('--model'))
         if flag('--no-model'):
             write(['Default', rest[0]], 'Model', None)
-        return 0
+        return sync(Settings())
+    if cmd == 'sync':
+        return sync(settings)
     if cmd == 'program' and len(rest) >= 3:
         pid, kind, how = rest[:3]
         if how == 'follow':
             write(['Program', pid, kind], 'Interface', None)
             write(['Program', pid, kind], 'Model', None)
-            return 0
+            return sync(Settings())
         if how == 'own':
             for field in ('Interface', 'Model'):
                 if opt('--' + field.lower()):
                     write(['Program', pid, kind], field, opt('--' + field.lower()))
-            return 0
+            return sync(Settings())
         return 2
     if cmd == 'card' and rest:
         return card_set(rest[0])

@@ -14,3 +14,7 @@ override_dh_auto_install:
 # llama.cpp's user service stays off until the person turns it on on the page
 override_dh_installsystemduser:
 	dh_installsystemduser --no-enable
+
+# every catalogue complete, its placeholders kept, or the sentence named in po/pending-translation.txt (the translations lane's next run)
+override_dh_auto_test:
+	python3 tests/check-lang.py
