@@ -1,0 +1,90 @@
+Description: Xge: keep the extension record for the life of the process
+ _xgeDpyClose() freed the process-wide xge_info record when the last display
+ registered with the Generic Event extension was closed (commit ed8d50ba,
+ "Destroy generic event extension after last display is removed").
+ _xgeFindDisplay() reads xge_info without any lock and passes it to
+ XextAddDisplay(), so when one thread closes its last such display while
+ another thread is setting up an extension on its own display, the second
+ thread writes into the freed record: XextAddDisplay() stores the new display
+ at extinfo->head, offset 0 of a freed 24-byte block, which is where glibc
+ keeps a freed chunk's tcache pointer. The heap is then damaged and the next
+ allocation of that size aborts ("malloc(): unaligned tcache chunk detected",
+ "free(): chunks in smallbin corrupted") or crashes.
+ .
+ Every other extension in libXext and libXrandr keeps its XExtensionInfo for
+ the life of the process and only removes the display at close
+ (XEXT_GENERATE_CLOSE_DISPLAY; libXrandr's static XRRExtensionInfo). Do the
+ same here with static storage, as libXrandr does: the record is neither
+ created lazily nor freed, so no thread can see it change under it, and no
+ heap record is left behind either.
+ .
+ Reproduced with a program in which one thread keeps a display open and three
+ threads open a display, call XRRQueryExtension/XRRQueryVersion/XRRGetMonitors
+ and close it, all at once: 10 of 10 rounds crashed within 0.2 s with
+ libxext6 2:1.3.4-1+b4; Valgrind memcheck reports "Invalid write of size 8 at
+ XextAddDisplay (extutil.c:167) ... 0 bytes inside a block of size 24 free'd
+ ... by _xgeDpyClose (Xge.c:231) ... by XCloseDisplay".
+ .
+ No fix found elsewhere, searched 2026-11-21: X.Org libXext main at 4770cdff
+ (src/Xge.c unchanged since ed8d50ba apart from casts, NULL checks and unused
+ parameters), its merge requests and issues (issue 3, XGE close hooks left
+ behind when libXext is unloaded, is a different fault), Salsa's libxext
+ packaging (debian-unstable at 2:1.3.4-1, no patches), Debian testing and
+ unstable (2:1.3.4-1; experimental has no libxext) and Debian bugs 1002981,
+ 1024924 and 1102748 (none about it). DisplayXR issue 2711 reports the
+ symptom.
+Author: Daniel Campos Ramos
+Origin: vendor, Sparky Stereo OS queue row 762c
+Forwarded: no
+Assisted-by: Claude Code:claude-opus-5-5
+Last-Update: 2026-11-21
+---
+ src/Xge.c | 21 ++++++---------------
+ 1 file changed, 6 insertions(+), 15 deletions(-)
+
+diff --git a/src/Xge.c b/src/Xge.c
+index 2811ae8..c5a5369 100644
+--- a/src/Xge.c
++++ b/src/Xge.c
+@@ -75,7 +75,11 @@ static XGEVersionRec* _xgeGetExtensionVersion(Display*,
+ static Bool _xgeCheckExtension(Display* dpy, XExtDisplayInfo* info);
+ 
+ /* main extension information data */
+-static XExtensionInfo *xge_info;
++/* Static storage for the life of the process, as libXrandr keeps its
++ * XRRExtensionInfo: displays are added and removed under _Xglobal_lock,
++ * and the record itself never changes under another thread. */
++static XExtensionInfo xge_info_storage;
++static XExtensionInfo *const xge_info = &xge_info_storage;
+ static const char xge_extension_name[] = GE_NAME;
+ static XExtensionHooks xge_extension_hooks = {
+     NULL,	        /* create_gc */
+@@ -95,11 +99,6 @@ static XExtensionHooks xge_extension_hooks = {
+ static XExtDisplayInfo *_xgeFindDisplay(Display *dpy)
+ {
+     XExtDisplayInfo *dpyinfo;
+-    if (!xge_info)
+-    {
+-        if (!(xge_info = XextCreateExtension()))
+-            return NULL;
+-    }
+     if (!(dpyinfo = XextFindDisplay (xge_info, dpy)))
+     {
+         dpyinfo = XextAddDisplay (xge_info,
+@@ -224,15 +223,7 @@ _xgeDpyClose(Display* dpy, XExtCodes* codes)
+         XFree(xge_data);
+     }
+ 
+-    if(!XextRemoveDisplay(xge_info, dpy))
+-        return 0;
+-
+-    if (xge_info->ndisplays == 0) {
+-        XextDestroyExtension(xge_info);
+-        xge_info = NULL;
+-    }
+-
+-    return 1;
++    return XextRemoveDisplay(xge_info, dpy);
+ }
+ 
+ /*

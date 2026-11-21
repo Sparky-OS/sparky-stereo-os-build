@@ -1,0 +1,19 @@
+libxext (2:1.3.4-1+stereo3d1) unstable; urgency=medium
+
+  * Sparky Stereo OS: programs that open and close X displays from several
+    threads no longer break their heap (queue row 762c). Since commit
+    ed8d50ba the Generic Event extension frees its process-wide record when
+    the last display using it is closed, while another thread may be
+    writing a new display into that record (XextAddDisplay); glibc then
+    aborts ("malloc(): unaligned tcache chunk detected") or the program
+    crashes. DisplayXR's OpenXR runtime died this way at start. The record
+    now lives as long as the process, as libXrandr keeps its own
+    (libxext-xge-static-extension-record.patch, Origin: vendor; no fix was
+    found in X.Org's libXext, Salsa's packaging or Debian on 2026-11-21).
+    Nothing else in libXext changes. Retired when Debian ships a fix.
+    Test: tests/xge-thread-stress (crashes on 2:1.3.4-1+b4, finishes with
+    the fix).
+  * Carry Helmut Grohne's patch from Debian bug 1024924, which gives the
+    udeb the noudeb build profile: the edition builds no udeb.
+  * Debian's source format 1.0 is kept: both patches are applied in the
+    source and kept with their headers in debian/patches.
