@@ -1,0 +1,10 @@
+#!/usr/bin/make -f
+%:
+	dh $@ --buildsystem=cmake+ninja
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DBUILD_TESTING=ON "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=$(CURDIR)=." "-DCMAKE_C_FLAGS=-ffile-prefix-map=$(CURDIR)=."
+
+override_dh_auto_install:
+	dh_auto_install
+	rm -f debian/sparky-stereo-obs/usr/bin/test-sei

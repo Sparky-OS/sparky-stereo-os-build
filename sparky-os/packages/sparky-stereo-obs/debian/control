@@ -1,0 +1,21 @@
+Source: sparky-stereo-obs
+Section: video
+Priority: optional
+Maintainer: Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>
+Standards-Version: 4.7.4
+Build-Depends: debhelper-compat (= 13), cmake, ninja-build, pkgconf, libobs-dev (>= 1:33.0.1), libsimde-dev, libstereo-policy-dev (>= 1.23.0), qt6-base-dev
+Rules-Requires-Root: no
+Homepage: https://sparkylinux.org
+Bugs: https://github.com/Sparky-OS/sparky-stereo-os/issues
+
+Package: sparky-stereo-obs
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, obs-studio (>= 1:33.0.1), libstereo-layer1 (>= 1.23.0)
+Enhances: obs-studio
+Description: Stereo 3D module for OBS Studio
+ Enable 3D makes OBS Studio's canvas full side by side, left eye first, each
+ eye at the chosen render resolution. The x264 encoder then writes the frame
+ packing arrangement message in every recording and stream; before a start, OBS
+ says which encoder or file mark cannot be written and why. The Stereo input
+ filter takes a source in any packing of the stereo layer's list to full side
+ by side, with the swap of the eyes for a source whose mark is wrong.
