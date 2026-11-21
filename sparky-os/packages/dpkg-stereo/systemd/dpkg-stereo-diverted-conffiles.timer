@@ -1,0 +1,10 @@
+[Unit]
+Description=Retry installing the settings files a diversion kept from their package (dpkg-stereo)
+
+[Timer]
+# what had to wait (a metered connection, no network, an image built without systemd) is done when it can be
+OnBootSec=5min
+OnUnitActiveSec=1h
+
+[Install]
+WantedBy=timers.target
