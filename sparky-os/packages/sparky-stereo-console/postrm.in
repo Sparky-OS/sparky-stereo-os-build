@@ -34,7 +34,13 @@ fi
 case "$1" in
 remove|purge|abort-install)
     for f in @DIVERTED@; do
+        [ "$(dpkg-divert --listpackage "$f")" = "$package" ] || continue
         dpkg-divert --quiet --package "$package" --remove --rename --divert "$f.debian" "$f"
+        # an owning package unpacked in this same dpkg run waits to be configured with its conffile at the
+        # diverted name: it goes back to the name dpkg will now look for (rows 629/802)
+        if [ -e "$f.debian.dpkg-new" ] && [ ! -e "$f.dpkg-new" ]; then
+            mv "$f.debian.dpkg-new" "$f.dpkg-new"
+        fi
     done
     if [ -e /etc/motd ]; then
         # An existing MOTD belongs to the administrator; never replace it.
