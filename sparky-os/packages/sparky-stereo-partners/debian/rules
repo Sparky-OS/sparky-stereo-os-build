@@ -7,7 +7,9 @@ override_dh_auto_configure:
 
 override_dh_auto_install:
 	dh_auto_install
-	sparky-stereo-problems catalog sparky-stereo-partners po debian/sparky-stereo-partners/usr/lib/systemd/catalog \
+	# the journal catalogue holds what the problems engine shows: the kept problems' sentences, the action, the title
+	python3 po/problems-only.py po debian/problems-po
+	sparky-stereo-problems catalog sparky-stereo-partners debian/problems-po debian/sparky-stereo-partners/usr/lib/systemd/catalog \
 		--domain kcm_sparkystereo_partners --context "@info" --context "@action:button" \
 		--subject "@title notification|A partner cannot work"
 
