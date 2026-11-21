@@ -3223,7 +3223,7 @@ def repair_diverted(P, fetch=False):
         by.setdefault((pkg, ver, arch), []).append((path, to))
     cached = cached_debs(P)
     env = dict(os.environ, DEBIAN_FRONTEND='noninteractive')
-    failed, detail = [], []
+    failed, detail, groups = [], [], {True: [], False: []}
     for (pkg, ver, arch), paths in sorted(by.items()):
         name = pkg.split(':')[0]
         spec = f'{name}:{arch}={ver}' if arch and arch != 'all' else f'{name}={ver}'
@@ -3231,20 +3231,28 @@ def repair_diverted(P, fetch=False):
         size = '0 kB' if here else download_size(spec)
         if not here and not fetch and metered():
             failed.append((pkg, paths, size, ['LOCAL98'], ['LOCAL97']))
+        else:
+            groups[here].append((pkg, spec, paths, size))
+    # one apt run for those in APT's cache (no download at all) and one for the rest: a dpkg run of its own each, so
+    # a cache emptied after a dpkg run (Debian's container images do it) does not lose the second package's .deb
+    for here, group in ((True, groups[True]), (False, groups[False])):
+        if not group:
             continue
         cmd = ['apt-get', '-y', '-q', '-o', 'DPkg::Lock::Timeout=-1', '-o', 'Dpkg::Options::=--force-confdef',
                '-o', 'Dpkg::Options::=--force-confold'] + (['--no-download'] if here else []) + \
-            ['install', '--reinstall', spec]
+            ['install', '--reinstall'] + [spec for _, spec, _, _ in group]
         r = subprocess.run(cmd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True)
         out = (r.stdout + r.stderr).strip().splitlines()
         detail.append(f'$ {" ".join(cmd)}\n' + '\n'.join(out[-30:]))
-        still = {p for q, _, _, p, _ in lost_diverted(P) if q == pkg}
-        for path, to in paths:
-            if path not in still:
-                say('LOCAL99', [pkg, path, to], sys.stdout)
-        if still:
-            why = next((l for l in reversed(out) if l.startswith(('E:', 'W:'))), out[-1] if out else f'exit {r.returncode}')
-            failed.append((pkg, [(p, t) for p, t in paths if p in still], size, why, ['LOCAL35']))
+        still = {(q, p) for q, _, _, p, _ in lost_diverted(P)}
+        why = next((l for l in reversed(out) if l.startswith(('E:', 'W:'))), out[-1] if out else f'exit {r.returncode}')
+        for pkg, _, paths, size in group:
+            for path, to in paths:
+                if (pkg, path) not in still:
+                    say('LOCAL99', [pkg, path, to], sys.stdout)
+            left = [(p, t) for p, t in paths if (pkg, p) in still]
+            if left:
+                failed.append((pkg, left, size, why, ['LOCAL35']))
     if failed:
         write_diverted_pending(P, lost_diverted(P))
         pkg, paths, size, why, fix = failed[0]
