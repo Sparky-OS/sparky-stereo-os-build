@@ -82,6 +82,12 @@ for patch in manifest['patches']:
         assert sha(carried) == patch['replacement_sha256'], carried
     shutil.copyfile(carried, patchdir / patch['name'])
     names.append(patch['name'])
+for catalogue in manifest.get('additional_catalogues', []):
+    path = Path(__file__).resolve().parents[1] / catalogue['path']
+    assert sha(path) == catalogue['sha256'], path
+    assert path.name not in names
+    shutil.copyfile(path, patchdir / path.name)
+    names.append(path.name)
 series.write_text('\n'.join(names) + '\n')
 for relative in manifest['carry_debian_paths']:
     before = published / relative

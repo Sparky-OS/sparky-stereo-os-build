@@ -13,3 +13,6 @@ The changelog, binary fixtures, added symbols, copyrights and installed-test har
 Build amd64 only.
 Use the same signed archive snapshot for build dependencies and final link/upgrade qualification.
 Record a clean recipe commit before the build; qualify every resulting binary and its source closure before publication.
+
+The accepted catalogue recipe already carries the Spanish Stereo 3D Layout label in kf6-kfilemetadata-order46b.po.patch.
+Append that frozen catalogue after the complete published series and include it in translations-shipped.py's source mapping, so the successor's label is tested in all ten languages.
