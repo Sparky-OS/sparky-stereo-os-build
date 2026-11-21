@@ -1,0 +1,20 @@
+#!/bin/bash
+# Created by Daniel Ramos (Capitain Jack) 2026/11/21
+# Copyright 2026 under the GNU GPL3 License
+# Every installed library of the named packages resolves every library it needs (ldd), so a runner the engine loads can load.
+# Usage: runners-link.sh PACKAGE...   Exit 0 when nothing is "not found".
+set -u
+fail=0
+for pkg in "$@"; do
+	n=0
+	while IFS= read -r f; do
+		[ -f "$f" ] && [ ! -L "$f" ] || continue
+		file -b "$f" | grep -q 'ELF 64-bit LSB' || continue
+		n=$((n + 1))
+		missing=$(LD_LIBRARY_PATH= ldd "$f" 2>&1 | grep 'not found' | awk '{print $1}' | sort -u | tr '\n' ' ')
+		if [ -n "$missing" ]; then echo "FAIL $pkg: $f needs $missing"; fail=1; fi
+	done < <(dpkg -L "$pkg")
+	echo "$pkg: $n ELF files checked"
+done
+[ $fail = 0 ] && echo "PASS every library resolves"
+exit $fail
