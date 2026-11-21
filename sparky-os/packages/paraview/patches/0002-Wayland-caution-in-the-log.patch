@@ -1,0 +1,25 @@
+Description: On Wayland, ParaView's caution goes to the log, not to a window
+ ParaView logs "ParaView is not fully tested on Wayland ... export
+ QT_QPA_PLATFORM=xcb" as a warning at every start on Wayland, and its Output
+ Messages window opens with it, mono views included. Wayland is the route the
+ edition tests and ships ParaView on (EGL, which the same block selects), and
+ the advice to move to xcb does not apply there, so the caution is logged at
+ INFO: still in the log at that verbosity, no window at start.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-needed
+Last-Update: 2026-11-21
+---
+--- a/CMake/paraview_client_main.cxx.in
++++ b/CMake/paraview_client_main.cxx.in
+@@ -121,7 +121,10 @@
+         // Mixing GLX and EGL in the same application leads to crashes.
+         if (QGuiApplication::platformName().compare("wayland", Qt::CaseInsensitive) == 0)
+         {
+-          vtkLogF(WARNING,
++          // Sparky Stereo OS: Wayland is the route the edition tests and ships ParaView on (EGL, as
++          // set below), so this caution goes to the log at INFO and does not open the Output
++          // Messages window at every start.
++          vtkVLogF(vtkLogger::VERBOSITY_INFO,
+             "ParaView is not fully tested on Wayland. You may experience issues. "
+             "To work around crashes, you may wish to 'export QT_QPA_PLATFORM=xcb' in "
+             "a shell and run the paraview executable from there. "
