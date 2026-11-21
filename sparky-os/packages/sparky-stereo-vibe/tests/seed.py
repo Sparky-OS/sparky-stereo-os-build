@@ -41,7 +41,7 @@ class SeedTest(unittest.TestCase):
                 result = list(pool.map(lambda _: seed.seed('light'), range(20)))
         self.assertEqual(sum(result), 1)
         values = json.loads(self.target.read_text())
-        self.assertTrue(values['model.path'].endswith('/ggml-medium-q8_0.bin'))
+        self.assertNotIn('model.path', values)
         self.assertFalse(values['analytics_enabled'])
         self.assertEqual(self.target.stat().st_mode & 0o777, 0o600)
         self.assertEqual(list(self.target.parent.glob('.app_config.*')), [])

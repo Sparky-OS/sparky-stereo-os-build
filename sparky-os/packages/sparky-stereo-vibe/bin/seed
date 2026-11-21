@@ -66,7 +66,6 @@ def seed(preset=None):
     device, has_gpu = gpu_facts()
     preset = preset or ('default' if memory_kib() >= 8 * 1024 * 1024 or has_gpu else 'light')
     values = json.loads((PRESETS / (preset + '.json')).read_text())
-    values['model.path'] = str(folder / Path(values['model.path']).name)
     values['model.gpuDevice'] = device
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix='.app_config.', dir=folder)

@@ -140,6 +140,7 @@ ROLES = {
     'gamer': ('gamer', 'games, Steam, the stereo Lutris build, the game runtimes and the controllers'),
     'designer': ('designer', 'drawing, painting, photo and 3D modelling programs, colour management'),
     'creator': ('video creator', 'video editing, streaming, encoding and subtitling'),
+    'partner-accessibility': ('partner enhanced accessibility features', 'local speech transcription with Vibe, machine presets and the Make captions (Vibe) file action. For Light and Basic, choose medium-q8_0 (ggml-medium-q8_0.bin) in Vibe’s model list. Basic keeps FFmpeg and leaves AI tasks off'),
     'musician': ('musician', 'audio production: plugins, synthesizers, routing and recording'),
     'scientist': ('scientist', 'science and engineering: mathematics, chemistry, maps, CAD, GIS and plotting'),
     'student': ('student', 'education: the KDE Edu programs and GCompris'),
@@ -151,7 +152,7 @@ ROLES = {
 }
 # The developer tasks are opt-in (Daniel, 2026-10-16: "just install the meta and start developing"): tasksel lists them,
 # and sparky-stereo does not pull them in.
-OPT_IN = {'developer', 'os-developer'}
+OPT_IN = {'developer', 'os-developer', 'partner-accessibility'}
 
 # The development files of our stereo stack, at the repository's versions, in the Depends of the Stereo OS developer task.
 OS_DEV_STACK = [f'{n} (>= {RV[n]})' for n in (
@@ -221,6 +222,9 @@ def tasks():
             rec = sorted(set(rec) | set(GAMING_LISTS) | {'sparky-stereo-game-performance'})
         if r in OPT_IN:
             rec = sorted(set(rec) | set(lst(r)))
+        if r == 'partner-accessibility':
+            # Future partner components join only when our repository publishes them.
+            rec += [name for name in lst('partner-accessibility-pending') if name in RV]
         if r == 'os-developer':
             # Daniel, 2026-10-19: these instructions belong to distro developers, not regular developers.
             dep += ['task-sparky-stereo-developer', 'sparky-stereo-skills (>= 0.2.0~dev20261019)',
@@ -342,7 +346,7 @@ META.update(tasks())
 META['sparky-stereo'] = (META['sparky-stereo'][0], META['sparky-stereo'][1].replace('the desktop, gaming, languages, hardware support and system meta packages', 'the desktop, languages, hardware support and system meta packages, and every role task (gamer, designer, video creator, musician, scientist, student, simulator pilot and driver, maker, electrical and automation engineer); the two developer tasks are installed on request'), META['sparky-stereo'][2], META['sparky-stereo'][3] + sorted(k for k in META if k.startswith('task-') and k[len('task-sparky-stereo-'):] not in OPT_IN))
 META['sparky-stereo-tasks'] = (
     'Sparky Stereo OS tasks for tasksel',
-    'This package lists the role tasks of Sparky Stereo OS in tasksel, the Debian way: gamer, designer, video creator, musician, scientist, student, simulator pilot and driver, maker, electrical and automation engineer, developer and Stereo OS developer, with the 2D programs of science and education as their own tasks.',
+    'This package lists the role tasks of Sparky Stereo OS in tasksel, the Debian way: gamer, designer, video creator, musician, scientist, student, simulator pilot and driver, maker, electrical and automation engineer, developer, Stereo OS developer and partner enhanced accessibility features, with the 2D programs of science and education as their own tasks.',
     ['tasksel', 'sparky-stereo-language-tasks (>= 1.0.4)'], [])
 
 LANGUAGE_TASKS = json.load(open(os.path.join(HERE, 'language-tasks.json')))
