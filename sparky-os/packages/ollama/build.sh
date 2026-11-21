@@ -82,6 +82,10 @@ PYTHONPATH=/toolkit python3 -m lean.release check-debs ./*+lc1_*.deb
 lintian -I --pedantic ./*.dsc ./*.deb > lintian.txt 2>&1 || true
 grep -c "^E:" lintian.txt || true'
 mkdir -p "$OUT"
-cp -a "$WORK"/*.deb "$WORK"/*.dsc "$WORK"/*.tar.xz "$WORK"/*.buildinfo "$WORK"/*.changes "$WORK"/build.log "$WORK"/lintian.txt "$OUT"/
-(cd "$OUT" && sha256sum ./*.deb ./*.dsc ./*.tar.xz > SHA256SUMS)
+# the stage is the source closure: the archives, the .dsc and every file it names, the buildinfo, the changes and the build record
+# lean.release check-debs wrote beside them (it was left in the work folder before, ORDER 70), with the logs
+cp -a "$WORK"/*.deb "$WORK"/*.dsc "$WORK"/*.tar.xz "$WORK"/*.buildinfo "$WORK"/*.changes "$WORK"/*.sparky-build.json \
+	"$WORK"/build.log "$WORK"/lintian.txt "$OUT"/
+# every file of the stage but this list itself
+(cd "$OUT" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)
 echo "built: $(cd "$OUT" && ls)"
