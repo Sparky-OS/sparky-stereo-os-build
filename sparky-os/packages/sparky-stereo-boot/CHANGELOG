@@ -1,4 +1,21 @@
 -------------------------------------------------------------------------------
+  Version 0.1.13 (2026-11-21)
+-------------------------------------------------------------------------------
+  * Rows 629/802: grub2-common's /etc/grub.d/10_linux is no longer diverted (Debian Policy, appendix 7: "Do not
+    attempt to divert a conffile"). A Linux entry records its start through the load_video line Debian's 10_linux
+    writes into it: 01_sparky_stereo_menu writes 00_header's own load_video again under another name and a load_video
+    that first calls recordfail when GRUB's "chosen" is an entry of this system's Linux (gnulinux-...), never one of
+    another system. The menu after a start that did not finish, the forced check, the reason entry and the note at
+    login are as in 0.1.11. With GRUB_GFXPAYLOAD_LINUX=text Debian writes no load_video: 90_sparky_stereo_start says
+    and keeps that a start cannot be recorded (LOCAL97), as the former wrapper did for an entry it did not know.
+  * The postinst gives Debian's 10_linux back at its name, with the person's changes to it (a preinst removal would
+    make dpkg delete it as the link 0.1.12 shipped there), then writes the menu again with update-grub as its last step.
+  * initramfs-tools' update-initramfs.conf stays diverted (initramfs-tools reads one fixed file), and no longer costs
+    initramfs-tools its conffile: when initramfs-tools was unpacked earlier in the same dpkg run, the preinst moves its
+    pending update-initramfs.conf.dpkg-new to the diverted name before our link is unpacked (dpkg recorded the
+    conffile "newconffile" and never installed it). The postrm does the reverse.
+
+-------------------------------------------------------------------------------
   Version 0.1.12 (2026-11-17)
 -------------------------------------------------------------------------------
   * The splash of a restart or a shutdown shows the main screen as the person set it now (ORDER 639; Daniel, 2026-11-17:

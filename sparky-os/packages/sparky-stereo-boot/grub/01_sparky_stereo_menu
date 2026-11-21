@@ -93,6 +93,32 @@ export sparky_stereo_check
 CHECK
 	;;
 esac
+# The call (0.1.13, rows 629/802): Debian's 10_linux writes "load_video" into each of its entries unless
+# GRUB_GFXPAYLOAD_LINUX=text, GRUB runs a function by its last definition (grub-core/script/function.c), and GRUB sets
+# "chosen" to the entry's id, "parent>child" inside a submenu, before it runs the entry (grub-core/normal/menu.c). So
+# 00_header's own load_video is written again under another name, and a load_video that first records the start, for
+# an entry of this system's Linux only ("gnulinux-..."; an entry of another system is "osprober-..." and must not count,
+# or a start of Windows would be one of ours that did not finish). grub2-common's 10_linux stays as Debian ships it
+# (0.1.11 and 0.1.12 diverted it; Debian Policy, appendix 7: "Do not attempt to divert a conffile"), and
+# 90_sparky_stereo_start says when a Linux entry carries no load_video. 00_header's font lines and the ones below call
+# load_video before any entry runs, with "chosen" unset, so they get Debian's body alone.
+case $record in
+grubenv|esp:*)
+	body=$("${SPARKY_GRUB_00_HEADER:-/etc/grub.d/00_header}" 2>/dev/null |
+		awk '/^function load_video \{$/ {f = 1; next} f && /^\}$/ {exit} f {print}') || body=
+	if [ -n "$body" ]; then
+		printf 'function sparky_stereo_load_video {\n%s\n}\n' "$body"
+		cat <<'CALL'
+function load_video {
+	if regexp '^gnulinux-' "${chosen}"; then
+		recordfail
+	fi
+	sparky_stereo_load_video
+}
+CALL
+	fi
+	;;
+esac
 [ -n "${GRUB_FONT:-}" ] || exit 0
 case "${GRUB_TERMINAL_OUTPUT:-gfxterm}" in gfxterm) ;; *) exit 0 ;; esac
 case "${GRUB_TERMINAL:-gfxterm}" in gfxterm) ;; *) exit 0 ;; esac
