@@ -1,0 +1,90 @@
+Description: obs-ffmpeg-mux: write the container's stereo mark
+ The canvas's layout goes to the muxer helper as one more video argument and becomes AV_PKT_DATA_STEREO3D on the video
+ stream: Matroska writes StereoMode (RFC 9559 5.1.4.1.28.3) and MP4 the st3d box, which FFmpeg writes only at
+ FF_COMPLIANCE_UNOFFICIAL, set for MP4 with a stereo layout only.
+Author: Daniel Campos Ramos
+Origin: other, Sparky Stereo OS (ORDER 61, milestone 2)
+Forwarded: no, OBS asks for human-written submissions only (CONTRIBUTING.md, AI/Machine Learning Policy)
+Last-Update: 2026-11-21
+---
+diff --git a/plugins/obs-ffmpeg/ffmpeg-mux/ffmpeg-mux.c b/plugins/obs-ffmpeg/ffmpeg-mux/ffmpeg-mux.c
+index b9fdf6e..00145d0 100644
+--- a/plugins/obs-ffmpeg/ffmpeg-mux/ffmpeg-mux.c
++++ b/plugins/obs-ffmpeg/ffmpeg-mux/ffmpeg-mux.c
+@@ -34,6 +34,7 @@
+ #include <libavformat/avformat.h>
+ #include <libavutil/channel_layout.h>
+ #include <libavutil/mastering_display_metadata.h>
++#include <libavutil/stereo3d.h>
+ 
+ #define ANSI_COLOR_RED "\x1b[0;91m"
+ #define ANSI_COLOR_MAGENTA "\x1b[0;95m"
+@@ -98,6 +99,7 @@ struct main_params {
+ 	char *acodec;
+ 	char *muxer_settings;
+ 	int codec_tag;
++	int stereo3d;
+ };
+ 
+ struct audio_params {
+@@ -384,6 +386,8 @@ static bool init_params(int *argc, char ***argv, struct main_params *params, str
+ 			return false;
+ 		if (!get_opt_int(argc, argv, &params->codec_tag, "video codec tag"))
+ 			params->codec_tag = 0;
++		if (!get_opt_int(argc, argv, &params->stereo3d, "video stereo layout"))
++			params->stereo3d = 0;
+ 	}
+ 
+ 	if (params->tracks) {
+@@ -503,6 +507,22 @@ static void create_video_stream(struct ffmpeg_mux *ffm)
+ 	}
+ 
+ 	ffm->video_ctx = context;
++	/* the container's stereo mark (Matroska StereoMode, RFC 9559 5.1.4.1.28.3; MP4 st3d), from the canvas's layout */
++	const int stereo_type = ffm->params.stereo3d & 0xff;
++	if (stereo_type != 0) {
++		size_t size = 0;
++		AVStereo3D *stereo = av_stereo3d_alloc_size(&size);
++		if (stereo) {
++			stereo->type = (enum AVStereo3DType)stereo_type;
++			stereo->flags = (ffm->params.stereo3d >> 8) & 1 ? AV_STEREO3D_FLAG_INVERT : 0;
++			if (!av_packet_side_data_add(&ffm->video_stream->codecpar->coded_side_data,
++						     &ffm->video_stream->codecpar->nb_coded_side_data, AV_PKT_DATA_STEREO3D,
++						     (uint8_t *)stereo, size, 0)) {
++				av_free(stereo);
++				fprintf(stderr, "Failed to add the stereo layout to the video stream\n");
++			}
++		}
++	}
+ }
+ 
+ static void create_audio_stream(struct ffmpeg_mux *ffm, int idx)
+@@ -926,6 +946,13 @@ static inline int open_output_file(struct ffmpeg_mux *ffm)
+ 		printf("\n");
+ 	}
+ 
++	if ((ffm->params.stereo3d & 0xff) != 0 && ffm->output->oformat &&
++	    (strcmp(ffm->output->oformat->name, "mp4") == 0 || strstr(ffm->output->oformat->name, "mp4"))) {
++		/* FFmpeg's MP4 muxer writes the st3d box (Spherical Video V2) only at this strictness */
++		ffm->output->strict_std_compliance = FF_COMPLIANCE_UNOFFICIAL;
++		printf("Stereo layout %d: st3d written (strict unofficial)\n", ffm->params.stereo3d & 0xff);
++	}
++
+ 	ret = avformat_write_header(ffm->output, &dict);
+ 	if (ret < 0) {
+ 		fprintf(stderr, "Error opening '%s': %s", ffm->params.printable_file.array, av_err2str(ret));
+diff --git a/plugins/obs-ffmpeg/obs-ffmpeg-mux.c b/plugins/obs-ffmpeg/obs-ffmpeg-mux.c
+index e9a6454..96ea2ab 100644
+--- a/plugins/obs-ffmpeg/obs-ffmpeg-mux.c
++++ b/plugins/obs-ffmpeg/obs-ffmpeg-mux.c
+@@ -197,6 +197,10 @@ static void add_video_encoder_params(struct ffmpeg_muxer *stream, os_process_arg
+ 	os_process_args_add_argf(args, "%d", (int)info->fps_num);
+ 	os_process_args_add_argf(args, "%d", (int)info->fps_den);
+ 	os_process_args_add_argf(args, "%d", codec_tag);
++	/* the canvas's stereo layout for the container's mark: type | flags << 8 (enum obs_stereo3d_type) */
++	uint32_t stereo_flags = 0;
++	const enum obs_stereo3d_type stereo = obs_encoder_get_stereo3d(vencoder, &stereo_flags);
++	os_process_args_add_argf(args, "%d", (int)stereo | (int)(stereo_flags << 8));
+ }
+ 
+ static void add_audio_encoder_params(os_process_args_t *args, obs_encoder_t *aencoder)

@@ -1,0 +1,206 @@
+Description: obs-nvenc: send the frame packing arrangement SEI
+ An NV_ENC_SEI_PAYLOAD (payloadType 45) built from the canvas's layout bit by bit after H.264 D.1.26 and H.265
+ D.2.16, sent with every picture of H.264 and HEVC: both eye orders, quincunx, frames in turn with
+ current_frame_is_frame0_flag alternating; HEVC only for types 3 to 5 (Table D.8), any other told in the log.
+Author: Daniel Campos Ramos
+Origin: other, Sparky Stereo OS (ORDER 61, milestone 2)
+Forwarded: no, OBS asks for human-written submissions only (CONTRIBUTING.md, AI/Machine Learning Policy)
+Last-Update: 2026-11-21
+---
+diff --git a/plugins/obs-nvenc/nvenc-internal.h b/plugins/obs-nvenc/nvenc-internal.h
+index 2b23322..fd1eb9f 100644
+--- a/plugins/obs-nvenc/nvenc-internal.h
++++ b/plugins/obs-nvenc/nvenc-internal.h
+@@ -62,6 +62,13 @@ struct nvenc_properties {
+ struct nvenc_data {
+ 	obs_encoder_t *encoder;
+ 	enum codec_type codec;
++
++	/* the frame packing arrangement SEI of a stereo canvas, sent with every picture (0 bytes: none) */
++	NV_ENC_SEI_PAYLOAD fpa;
++	uint8_t fpa_bytes[32];
++	bool fpa_temporal;
++	uint64_t fpa_pictures;
++	int fpa_type, fpa_quincunx, fpa_interpretation;
+ 	GUID codec_guid;
+ 
+ 	void *session;
+diff --git a/plugins/obs-nvenc/nvenc.c b/plugins/obs-nvenc/nvenc.c
+index 73e41ab..9eb6c59 100644
+--- a/plugins/obs-nvenc/nvenc.c
++++ b/plugins/obs-nvenc/nvenc.c
+@@ -854,6 +854,8 @@ static bool init_encoder(struct nvenc_data *enc, enum codec_type codec, obs_data
+ 	return false;
+ }
+ 
++static void fpa_init(struct nvenc_data *enc);
++
+ static void *nvenc_create_internal(enum codec_type codec, obs_data_t *settings, obs_encoder_t *encoder, bool texture)
+ {
+ 	struct nvenc_data *enc = bzalloc(sizeof(*enc));
+@@ -914,6 +916,7 @@ static void *nvenc_create_internal(enum codec_type codec, obs_data_t *settings,
+ #endif
+ 
+ 	enc->codec = codec;
++	fpa_init(enc);
+ 
+ 	return enc;
+ 
+@@ -1281,6 +1284,148 @@ static void add_roi(struct nvenc_data *enc, NV_ENC_PIC_PARAMS *params)
+ 	params->qpDeltaMapSize = (uint32_t)map_size;
+ }
+ 
++/* ------------------------------------------------------------------------- */
++/* The frame packing arrangement SEI (payloadType 45) of the canvas's stereo layout: H.264 V16 D.1.26 (semantics D.2.26,
++ * Table D-9, Table D-10) and H.265 V11 D.2.16 (D.3.16, Table D.8, Table D.9). NVENC adds the payload type, size and
++ * emulation prevention itself. */
++
++struct fpa_bits {
++	uint8_t *data;
++	size_t size, pos;
++};
++
++static void fpa_put(struct fpa_bits *b, uint32_t value, int count)
++{
++	for (int i = count - 1; i >= 0; i--) {
++		if (b->pos / 8 >= b->size)
++			return;
++		if ((value >> i) & 1)
++			b->data[b->pos / 8] |= (uint8_t)(0x80 >> (b->pos % 8));
++		b->pos++;
++	}
++}
++
++static void fpa_put_ue(struct fpa_bits *b, uint32_t value)
++{
++	uint32_t v = value + 1;
++	int length = 0;
++	while ((v >> length) > 1)
++		length++;
++	fpa_put(b, 0, length);
++	fpa_put(b, v, length + 1);
++}
++
++static uint32_t fpa_build(struct nvenc_data *enc, bool frame0)
++{
++	struct fpa_bits b = {enc->fpa_bytes, sizeof(enc->fpa_bytes), 0};
++	memset(enc->fpa_bytes, 0, sizeof(enc->fpa_bytes));
++	fpa_put_ue(&b, 0);                          /* frame_packing_arrangement_id */
++	fpa_put(&b, 0, 1);                          /* frame_packing_arrangement_cancel_flag */
++	fpa_put(&b, (uint32_t)enc->fpa_type, 7);    /* frame_packing_arrangement_type */
++	fpa_put(&b, (uint32_t)enc->fpa_quincunx, 1);
++	fpa_put(&b, (uint32_t)enc->fpa_interpretation, 6);
++	fpa_put(&b, 0, 1);                          /* spatial_flipping_flag */
++	fpa_put(&b, 0, 1);                          /* frame0_flipped_flag */
++	fpa_put(&b, 0, 1);                          /* field_views_flag */
++	fpa_put(&b, enc->fpa_temporal && frame0, 1); /* current_frame_is_frame0_flag */
++	fpa_put(&b, 0, 1);                          /* frame0_self_contained_flag */
++	fpa_put(&b, 0, 1);                          /* frame1_self_contained_flag */
++	if (!enc->fpa_quincunx && enc->fpa_type != 5)
++		fpa_put(&b, 0, 16);                 /* the frames' grid positions */
++	fpa_put(&b, 0, 8);                          /* frame_packing_arrangement_reserved_byte */
++	if (enc->codec == CODEC_HEVC) {
++		fpa_put(&b, enc->fpa_temporal ? 0 : 1, 1); /* frame_packing_arrangement_persistence_flag */
++		fpa_put(&b, 0, 1);                         /* upsampled_aspect_ratio_flag: each view at its own size */
++	} else {
++		fpa_put_ue(&b, enc->fpa_temporal ? 0 : 1); /* frame_packing_arrangement_repetition_period */
++		fpa_put(&b, 0, 1);                         /* frame_packing_arrangement_extension_flag */
++	}
++	if (b.pos % 8) {
++		fpa_put(&b, 1, 1); /* payload alignment, D.1.1 / 7.3.5 */
++		while (b.pos % 8)
++			fpa_put(&b, 0, 1);
++	}
++	return (uint32_t)(b.pos / 8);
++}
++
++static void fpa_init(struct nvenc_data *enc)
++{
++	enc->fpa.payloadSize = 0;
++	if (enc->codec != CODEC_H264 && enc->codec != CODEC_HEVC)
++		return;
++	uint32_t flags = 0;
++	const enum obs_stereo3d_type stereo = obs_encoder_get_stereo3d(enc->encoder, &flags);
++	int type = -1, quincunx = 0;
++	switch (stereo) {
++	case OBS_STEREO3D_CHECKERBOARD:
++		type = 0, quincunx = 1;
++		break;
++	case OBS_STEREO3D_COLUMNS:
++		type = 1;
++		break;
++	case OBS_STEREO3D_COLUMNS_QUINCUNX:
++		type = 1, quincunx = 1;
++		break;
++	case OBS_STEREO3D_LINES:
++		type = 2;
++		break;
++	case OBS_STEREO3D_LINES_QUINCUNX:
++		type = 2, quincunx = 1;
++		break;
++	case OBS_STEREO3D_SIDE_BY_SIDE:
++		type = 3;
++		break;
++	case OBS_STEREO3D_SIDE_BY_SIDE_QUINCUNX:
++		type = 3, quincunx = 1;
++		break;
++	case OBS_STEREO3D_TOP_BOTTOM:
++		type = 4;
++		break;
++	case OBS_STEREO3D_TOP_BOTTOM_QUINCUNX:
++		type = 4, quincunx = 1;
++		break;
++	case OBS_STEREO3D_FRAME_SEQUENCE:
++		type = 5;
++		break;
++	case OBS_STEREO3D_TILED:
++		type = 7;
++		break;
++	default:
++		return;
++	}
++	/* H.265 Table D.8 defines types 3, 4 and 5 only; the others are reserved there */
++	if (enc->codec == CODEC_HEVC && (type < 3 || type > 5)) {
++		warn("the canvas's stereo layout %d has no frame packing arrangement type in HEVC: no message", (int)stereo);
++		return;
++	}
++	enc->fpa_type = type;
++	enc->fpa_quincunx = quincunx;
++	enc->fpa_interpretation = (flags & OBS_STEREO3D_FLAG_INVERT) ? 2 : 1;
++	enc->fpa_temporal = type == 5;
++	enc->fpa_pictures = 0;
++	enc->fpa.payloadType = 45;
++	enc->fpa.payload = enc->fpa_bytes;
++	enc->fpa.payloadSize = fpa_build(enc, true);
++	info("stereo: frame packing arrangement type %d, content interpretation %d from the canvas", type,
++	     enc->fpa_interpretation);
++}
++
++static void fpa_attach(struct nvenc_data *enc, NV_ENC_PIC_PARAMS *params)
++{
++	if (!enc->fpa.payloadSize)
++		return;
++	if (enc->fpa_temporal)
++		enc->fpa.payloadSize = fpa_build(enc, (enc->fpa_pictures & 1) == 0);
++	enc->fpa_pictures++;
++	if (enc->codec == CODEC_HEVC) {
++		params->codecPicParams.hevcPicParams.seiPayloadArray = &enc->fpa;
++		params->codecPicParams.hevcPicParams.seiPayloadArrayCnt = 1;
++	} else {
++		params->codecPicParams.h264PicParams.seiPayloadArray = &enc->fpa;
++		params->codecPicParams.h264PicParams.seiPayloadArrayCnt = 1;
++	}
++}
++
+ bool nvenc_encode_base(struct nvenc_data *enc, struct nv_bitstream *bs, void *pic, int64_t pts,
+ 		       struct encoder_packet *packet, bool *received_packet)
+ {
+@@ -1322,6 +1467,8 @@ bool nvenc_encode_base(struct nvenc_data *enc, struct nv_bitstream *bs, void *pi
+ 	if (obs_encoder_has_roi(enc->encoder))
+ 		add_roi(enc, &params);
+ 
++	fpa_attach(enc, &params);
++
+ 	NVENCSTATUS err = nv.nvEncEncodePicture(enc->session, &params);
+ 	if (err != NV_ENC_SUCCESS && err != NV_ENC_ERR_NEED_MORE_INPUT) {
+ 		nv_failed(enc->encoder, err, __FUNCTION__, "nvEncEncodePicture");
