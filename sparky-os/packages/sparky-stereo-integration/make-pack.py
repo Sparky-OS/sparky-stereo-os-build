@@ -34,6 +34,9 @@ def main():
     cd = os.path.join(out, 'usr/share/sparky-stereo/integrations.d')
     os.makedirs(sm, exist_ok=True)
     os.makedirs(cd, exist_ok=True)
+    initializer = spec.get('initialize', '')
+    if initializer and (not initializer.startswith('/') or any(c in initializer for c in '\n\r')):
+        sys.exit('initialize must be an absolute executable path')
     files = []
     for m in spec['menus']:
         name = m['file'] + '.desktop'
@@ -58,6 +61,7 @@ def main():
                    f'Exec=sparky-stereo-integration run {pid}{" " + args if args else ""} -- %F']
         open(os.path.join(sm, name), 'w').write('\n'.join(ln) + '\n')
     open(os.path.join(cd, pid + '.conf'), 'w').write(
-        f'program={program}\nworker={worker}\nmenus={" ".join(files)}\n')
+        f'program={program}\nworker={worker}\nmenus={" ".join(files)}\n' +
+        (f'initialize={initializer}\n' if initializer else ''))
 
 main()
