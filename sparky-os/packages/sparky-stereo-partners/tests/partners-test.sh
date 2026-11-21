@@ -6,8 +6,10 @@
 # no network: the engine on and off through systemctl --user, its address taken by another program, the card that cannot be
 # used, the model list with sizes from a stand-in registry, a download held on a metered connection (a stand-in
 # NetworkManager answers Metered on the system bus), a download from the stand-in registry (a few kilobytes, not a model),
-# the registry gone, a provider and a program's own choice, and who answers. No model is pulled, loaded or run.
-# Usage: partners-test.sh USER   (this folder holds standin-registry.py and fake-networkmanager.py)
+# the registry gone, a provider and a program's own choice, and who answers; llama.cpp, the other local engine (Debian's
+# llama-server installed in the rig, started empty); signing in to Ollama's service through the real engine against a
+# stand-in of ollama.com over TLS with its own certificate authority. No model is pulled, loaded or run.
+# Usage: partners-test.sh USER   (this folder holds standin-registry.py, fake-networkmanager.py and standin-ollama-com.py)
 set -u
 user=$1
 here=$(cd "$(dirname "$0")" && pwd)
@@ -22,6 +24,7 @@ as() { runuser -u "$user" -- env PIDFILE=/tmp/partners-squat.pid XDG_RUNTIME_DIR
 cmd() { as sparky-stereo-partners "$@" >"$T/out" 2>"$T/err"; echo $?; }
 json() { as sparky-stereo-partners status --json | python3 -I -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 listeners() { ss -Htln | awk '{print $4}' | grep -cx '127.0.0.1:11434'; }
+llisteners() { ss -Htln | awk '{print $4}' | grep -c ':8080$'; }
 
 # the stand-in NetworkManager on the real system bus, and the stand-in registry
 printf '<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">\n<busconfig><policy user="root"><allow own="org.freedesktop.NetworkManager"/></policy><policy context="default"><allow send_destination="org.freedesktop.NetworkManager"/></policy></busconfig>\n' >/etc/dbus-1/system.d/zz-standin-nm.conf
@@ -33,7 +36,19 @@ for _ in $(seq 1 40); do grep -q ready "$T/registry" && busctl --system get-prop
 size=$(awk '/ready/{print $2}' "$T/registry")
 as mkdir -p "$home/.config"
 as sh -c "printf '[Models]\nRegistry=http://127.0.0.1:5005\nText=standin:tiny\n' > '$home/.config/sparky-stereo-partnersrc'"
-trap 'kill $nm $reg 2>/dev/null; rm -f /etc/dbus-1/system.d/zz-standin-nm.conf; rm -rf "$T"' EXIT
+# ollama.com, as the engine reaches it: a name in /etc/hosts, a certificate from a certificate authority of the test's own
+# (trusted before the engine starts), the stand-in on 127.0.0.4:443; and a browser that only writes down what it was asked
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=Partners test authority" -keyout "$T/ca.key" -out "$T/ca.crt" 2>/dev/null
+openssl req -newkey rsa:2048 -nodes -subj "/CN=ollama.com" -keyout "$T/com.key" -out "$T/com.csr" 2>/dev/null
+printf 'subjectAltName=DNS:ollama.com\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n' >"$T/ext"
+openssl x509 -req -in "$T/com.csr" -CA "$T/ca.crt" -CAkey "$T/ca.key" -CAcreateserial -days 2 -extfile "$T/ext" -out "$T/com.crt" 2>/dev/null
+cp "$T/ca.crt" /usr/local/share/ca-certificates/partners-test-authority.crt && update-ca-certificates >/dev/null 2>&1
+cp /etc/hosts "$T/hosts" && echo '127.0.0.4 ollama.com' >>/etc/hosts
+python3 "$here/standin-ollama-com.py" "$T/com.crt" "$T/com.key" "$T/account" "$T/com.log" >"$T/com.out" 2>"$T/com.err" & com=$!
+printf '#!/bin/sh\necho "$1" >> /tmp/partners-browser.log\n' >/usr/local/bin/xdg-open && chmod 755 /usr/local/bin/xdg-open
+rm -f /tmp/partners-browser.log
+for _ in $(seq 1 40); do grep -q ready "$T/com.out" && break; sleep 0.25; done
+trap 'kill $nm $reg $com 2>/dev/null; rm -f /etc/dbus-1/system.d/zz-standin-nm.conf /usr/local/bin/xdg-open /usr/local/share/ca-certificates/partners-test-authority.crt; update-ca-certificates --fresh >/dev/null 2>&1; cp "$T/hosts" /etc/hosts; rm -rf "$T"' EXIT
 
 echo "== before anything: the engine installed and off, nothing listens, no model chosen"
 check "status: the engine is installed" "$(json "bool(d['engine']['installed'])")" True
@@ -92,6 +107,7 @@ True 0"
 echo "== who answers"
 check "resolve text: exit 0" "$(cmd resolve --kind text)" 0
 check "resolve text: the engine's address and the model" "$(grep -E '^PARTNER_(URL|MODEL|RUNS)=' "$T/out" | tr '\n' ' ')" "PARTNER_URL=http://127.0.0.1:11434 PARTNER_MODEL=standin:tiny PARTNER_RUNS=here "
+check "resolve text: the interface's protocol, for KDE's text add-ons" "$(grep '^PARTNER_KIND=' "$T/out")" "PARTNER_KIND=ollama"
 check "resolve text: the card's variables" "$(grep -c -E '^(CUDA_VISIBLE_DEVICES|HIP_VISIBLE_DEVICES)=' "$T/out")" 2
 
 echo "== a provider, and a program's own choice"
@@ -101,6 +117,9 @@ check "providers: listed" "$(as sparky-stereo-partners provider list)" "provider
 check "KMail's own choice: exit 0" "$(cmd program org.kde.kmail2 text own --interface provider-acme)" 0
 check "KMail resolves to the provider" "$(cmd resolve --kind text --program org.kde.kmail2; grep -E '^PARTNER_(URL|RUNS)=' "$T/out" | tr '\n' ' ')" "0
 PARTNER_URL=https://api.example.invalid PARTNER_RUNS=provider "
+check "Kontact and the Sieve editor take KMail's choice" "$(as sparky-stereo-partners resolve --kind text --program org.kde.kontact 2>/dev/null | grep '^PARTNER_URL='; as sparky-stereo-partners resolve --kind text --program org.kde.sieveeditor 2>/dev/null | grep '^PARTNER_URL=')" "PARTNER_URL=https://api.example.invalid
+PARTNER_URL=https://api.example.invalid"
+check "the page's KMail row knows the add-ons cannot follow a provider" "$(json "[c['protocol'] for p in d['programs'] if p['id']=='org.kde.kmail2' for c in p['choices']]")" "['openai-compatible']"
 check "the default is untouched" "$(as sparky-stereo-partners resolve --kind text 2>/dev/null | grep '^PARTNER_URL=')" "PARTNER_URL=http://127.0.0.1:11434"
 check "KMail follows the default again" "$(cmd program org.kde.kmail2 text follow; as sparky-stereo-partners resolve --kind text --program org.kde.kmail2 2>/dev/null | grep '^PARTNER_URL=')" "0
 PARTNER_URL=http://127.0.0.1:11434"
@@ -113,6 +132,54 @@ has "said" "$T/err" "the card chosen for partners cannot be used now"
 check "the Graphics package keeps it" "$(as sparky-stereo-problems list --json sparky-stereo-graphics | python3 -I -c 'import json,sys; print([p["key"] for p in json.load(sys.stdin)])')" "['partners']"
 check "card: Automatic again, the engine starts" "$(cmd card auto; cmd engine on)" "0
 0"
+
+echo "== Ollama's service: signing in, through the engine, to the stand-in of ollama.com"
+check "the engine on" "$(cmd engine on)" 0
+check "account: not signed in (exit 7)" "$(cmd account --json)" 7
+check "account: the connect page for this computer's name" "$(python3 -I -c 'import json,sys; a=json.load(open(sys.argv[1])); print(a["state"], a["url"].split("&")[0])' "$T/out")" "signed-out https://ollama.com/connect?name=$(hostname)"
+check "account: the key in it is Ollama's public key for this computer" "$(python3 -I -c 'import base64,json,sys,urllib.parse; a=json.load(open(sys.argv[1])); k=urllib.parse.parse_qs(urllib.parse.urlsplit(a["url"]).query)["key"][0]; print(base64.urlsafe_b64decode(k + "=" * (-len(k) % 4)).decode() == " ".join(open(sys.argv[2]).read().split()[:2]))' "$T/out" "$home/.ollama/id_ed25519.pub")" True
+has "account: the engine asked ollama.com with its signature" "$T/com.log" "POST /api/me auth=yes"
+check "sign in: exit 7, the next step said" "$(cmd signin)" 7
+has "sign in: the words" "$T/out" "Finish signing in on ollama.com in your browser, then choose Check."
+sleep 1
+check "sign in: the browser was asked for the connect page" "$(cut -d'&' -f1 /tmp/partners-browser.log)" "https://ollama.com/connect?name=$(hostname)"
+echo linked >"$T/account"
+check "after the person linked it: signed in (exit 0)" "$(cmd account)" 0
+check "after the person linked it: the account" "$(cat "$T/out")" "signed-in	tester"
+check "sign out: exit 0" "$(cmd signout)" 0
+has "sign out: the engine unlinked its key at ollama.com" "$T/com.log" "DELETE /api/user/keys/"
+check "after signing out: not signed in" "$(cmd account)" 7
+kill $com; wait $com 2>/dev/null
+check "the service unreachable: exit 3" "$(cmd account --json)" 3
+check "the service unreachable: said" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["state"])' "$T/out")" unavailable
+has "the service unreachable: the words" "$T/err" "Ollama's service could not be reached:"
 cmd engine off >/dev/null
+check "the engine off: exit 3" "$(cmd account --json)" 3
+check "the engine off: said" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["state"])' "$T/out")" off
+
+echo "== llama.cpp, the other local engine (Debian's llama-server, started empty)"
+check "status: installed, off" "$(json "(bool(d['llamacpp']['installed']), d['llamacpp']['on'])")" "(True, False)"
+check "its service is installed off" "$(as systemctl --user is-enabled sparky-stereo-llama-server.service) $(systemctl --global is-enabled sparky-stereo-llama-server.service)" "disabled disabled"
+check "nothing listens on its address" "$(llisteners)" 0
+as mkdir -p "$home/.local/share/llama.cpp/models"
+as sh -c "head -c 4096 /dev/zero > '$home/.local/share/llama.cpp/models/tiny-file.gguf'"
+check "off: the folder's model files are listed, with their size" "$(json "[(m['name'], m['size']) for m in d['llamacpp']['models']]")" "[('tiny-file', 4096)]"
+as rm "$home/.local/share/llama.cpp/models/tiny-file.gguf"
+check "on: exit 0" "$(cmd engine on --engine llamacpp)" 0
+check "on: active" "$(as systemctl --user is-active sparky-stereo-llama-server.service)" active
+check "on: it listens on 127.0.0.1:8080 only" "$(llisteners) $(ss -Htln | awk '{print $4}' | grep -cx '127.0.0.1:8080')" "1 1"
+check "on: its own health and model list answer" "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health) $(curl -s http://127.0.0.1:8080/v1/models | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["data"])')" "200 []"
+check "on: a web page of another origin gets no permission to read it" "$(curl -s -D - -o /dev/null -H 'Origin: https://example.com' http://127.0.0.1:8080/v1/models | grep -ci '^access-control-allow-origin: https://example.com')" 0
+check "on: a page of this computer does" "$(curl -s -D - -o /dev/null -H 'Origin: http://localhost:3000' http://127.0.0.1:8080/v1/models | grep -ci '^access-control-allow-origin: http://localhost:3000')" 1
+check "on: offline, as its unit says" "$(as systemctl --user show -p ExecStart sparky-stereo-llama-server.service | grep -c -- '--offline')" 1
+check "status: on" "$(json "d['llamacpp']['on']")" True
+check "text on llama.cpp: exit 0" "$(cmd set-default text --interface llamacpp-local)" 0
+check "text on llama.cpp: who answers" "$(cmd resolve --kind text; grep -E '^PARTNER_(KIND|URL|RUNS)=' "$T/out" | tr '\n' ' ')" "0
+PARTNER_KIND=openai-compatible PARTNER_URL=http://127.0.0.1:8080/v1 PARTNER_RUNS=here "
+check "text back on Ollama" "$(cmd set-default text --interface ollama-local)" 0
+check "off: exit 0" "$(cmd engine off --engine llamacpp)" 0
+check "off: nothing listens on its address" "$(llisteners)" 0
+check "its install plan names Debian's llama-server and the Vulkan back end" "$(/usr/libexec/sparky-stereo-partners/install-engine plan llamacpp | grep '^packages')" "packages	llama.cpp-tools libggml0-backend-vulkan"
+check "an engine the command does not know: refused (exit 2)" "$(cmd engine on --engine other)" 2
 echo "partners: $pass passed, $fail failed"
 [ "$fail" = 0 ]
