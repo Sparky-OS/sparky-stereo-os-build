@@ -1,0 +1,480 @@
+Description: In a 3D project a 2D element is in both eyes, and the monitors work at full eye resolution
+ "Faked 3D becomes stereo by doubling": in a 3D project (its packing from its
+ clips, one of them 3D) a 2D clip, title, still or colour is the same picture in
+ both eyes, at the screen plane, through MLT's stereo3d_unpack packing=mono as
+ the first filter of its timeline producer; colours, stills and titles get
+ timeline producers of their own there, and every clip's timeline instances
+ follow when the project becomes 3D or stops being, and once more when it has
+ finished opening. Both monitors work on the project's frame of two eyes, each
+ a whole picture of the project's resolution (the monitors' profile twice as
+ wide, of twice the display aspect; "full is the layout, not a size"); the clip
+ monitor makes it from the clip's own picture, so its 3D, left-eye and off
+ views are of that frame. The render keeps adding the filter to a 2D producer
+ that lacks it.
+Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
+Forwarded: not-yet
+Last-Update: 2026-11-21
+--- a/src/bin/projectclip.cpp
++++ b/src/bin/projectclip.cpp
+@@ -708,6 +708,10 @@ bool ProjectClip::setProducer(std::share
+     if (pCore->window()) {
+         Q_EMIT pCore->window()->enableUndo(true);
+     }
++    // a 3D clip in the bin makes the project a pair project (its 2D clips go to both eyes, the monitors work on two eyes)
++    if (pCore->currentDoc()) {
++        pCore->currentDoc()->checkStereo3DPairProject();
++    }
+     return true;
+ }
+ 
+@@ -1049,41 +1053,43 @@ void ProjectClip::applyStereoUnpack(cons
+         }
+     }
+     KdenliveDoc *doc = pCore->currentDoc();
+-    if (!m_masterProducer || !doc || !doc->isStereo3DAutomatic()) {
++    if (!m_masterProducer || !doc || !doc->isStereo3DPairProject()) {
+         return;
+     }
+-    // the packing the clip is shown with: the file's, or the person's correction
++    // In a pair project every picture of the timeline is two eyes side by side, each a whole picture of the project's resolution:
++    // a 3D clip's views taken apart (the file's packing, or the person's correction), a 2D clip, title, picture or colour the same
++    // picture in both eyes, at the screen plane ("faked 3D becomes stereo by doubling"). Frame sequences are kept as they are.
+     const Stereo3D::Format format = stereo3DFormat();
+-    if (!Stereo3D::bothViewsInFrame(format.packing)) {
+-        return;
+-    }
+-    // The views of the project's frames are whole pictures, or squeezed to half their width (a 1920x1080 side by side frame), by
+-    // the shape of the frame shown, as the players judge it
+-    const QSize frame = pCore->getCurrentFrameSize();
+-    const bool projectFull =
+-        Stereo3D::fullSizeViews(QSize(qRound(frame.width() * pCore->getCurrentSar()), frame.height()), Stereo3D::Packing::SideBySide);
+-    if (format.packing == Stereo3D::Packing::SideBySide && !format.rightFirst) {
+-        // Already side by side, the left eye first: left as it is when its views are of the project's kind
+-        const QSize clip(m_masterProducer->get_int("meta.media.width"), m_masterProducer->get_int("meta.media.height"));
+-        const double sar = m_masterProducer->get_double("aspect_ratio") > 0 ? m_masterProducer->get_double("aspect_ratio") : 1.0;
+-        const int hint = Stereo3D::viewsHint(QString::fromUtf8(m_masterProducer->get("meta.media.stereo3d.views")));
+-        // only when it is known: a timeline producer can be made before the clip's frame size is (an unmarked clip given its packing
+-        // in its properties); the filter then decides by the clip's own frame
+-        if ((hint >= 0 || (clip.width() > 0 && clip.height() > 0))
+-            && Stereo3D::fullSizeViews(QSize(qRound(clip.width() * sar), clip.height()), format.packing, hint) == projectFull) {
+-            return;
++    QString packing;
++    if (Stereo3D::bothViewsInFrame(format.packing)) {
++        if (format.packing == Stereo3D::Packing::SideBySide && !format.rightFirst) {
++            // a clip whose frame is the pair frame itself (two whole views, square samples) is taken as it is, at its own depth
++            const QSize clip(m_masterProducer->get_int("meta.media.width"), m_masterProducer->get_int("meta.media.height"));
++            const double sar = m_masterProducer->get_double("aspect_ratio") > 0 ? m_masterProducer->get_double("aspect_ratio") : 1.0;
++            if (clip == doc->stereo3DPairFrame() && qFuzzyCompare(sar, 1.0) && qFuzzyCompare(pCore->getCurrentSar(), 1.0)) {
++                return;
++            }
+         }
++        packing = Stereo3D::mltName(format.packing);
++    } else if (format.isStereo()) {
++        return;
++    } else if (Stereo3D::carriesPicture(m_clipType)) {
++        packing = QStringLiteral("mono");
++    } else {
++        return;
+     }
+-    Mlt::Filter unpack(pCore->getProjectProfile(), "stereo3d_unpack");
++    // made with the monitors' profile: the filter makes a frame of that size, the working frame of two eyes (and the preview
++    // resolution's when the person chose a smaller one); a render document gives it its own
++    Mlt::Filter unpack(pCore->getMonitorProfile(), "stereo3d_unpack");
+     if (!unpack.is_valid()) {
+-        qCWarning(KDENLIVE_LOG) << "MLT has no stereo3d_unpack filter: the 3D clip" << clipName() << "keeps its packing in the project";
++        qCWarning(KDENLIVE_LOG) << "MLT has no stereo3d_unpack filter: the clip" << clipName() << "is not taken to the project's two eyes";
+         return;
+     }
+-    unpack.set("packing", Stereo3D::mltName(format.packing).toUtf8().constData());
++    unpack.set("packing", packing.toUtf8().constData());
+     unpack.set("invert", format.rightFirst ? 1 : 0);
+     unpack.set("output", "side_by_side");
+     unpack.set("in_producer", 1);
+-    unpack.set("target_views", projectFull ? "full" : "half");
++    unpack.set("target_views", "full");
+     unpack.set("kdenlive:stereo3d_unpack", 1);
+     producer->attach(unpack);
+     // first of the producer's filters, before its rescaling and padding
+@@ -1095,6 +1101,10 @@ void ProjectClip::updateStereoUnpack()
+     for (auto &producer : m_videoProducers) {
+         applyStereoUnpack(producer.second);
+     }
++    // this clip's packing may make the project a pair project or end it
++    if (pCore->currentDoc()) {
++        pCore->currentDoc()->checkStereo3DPairProject();
++    }
+ }
+ 
+ void ProjectClip::setStereo3DFromFrame(const QString &type, int invert, const QString &views)
+@@ -1231,9 +1241,13 @@ std::shared_ptr<Mlt::Producer> ProjectCl
+             }
+         }
+ 
++        // in a 3D project (a pair project) a colour, picture or title of the timeline has a producer of its own, which carries its
++        // conversion to the two eyes, as any video clip
++        const bool pairProject = pCore->currentDoc() && pCore->currentDoc()->isStereo3DPairProject();
+         if (byPassTrackProducer ||
+-            (state == PlaylistState::VideoOnly && (m_clipType == ClipType::Color || m_clipType == ClipType::Image || m_clipType == ClipType::Text ||
+-                                                   m_clipType == ClipType::TextTemplate || m_clipType == ClipType::Qml))) {
++            (state == PlaylistState::VideoOnly && !pairProject &&
++             (m_clipType == ClipType::Color || m_clipType == ClipType::Image || m_clipType == ClipType::Text ||
++              m_clipType == ClipType::TextTemplate || m_clipType == ClipType::Qml))) {
+             // Temporary copy, return clone of master
+             int duration = 0;
+             if (m_clipType == ClipType::Timeline) {
+--- a/src/doc/kdenlivedoc.cpp
++++ b/src/doc/kdenlivedoc.cpp
+@@ -16,6 +16,7 @@ SPDX-License-Identifier: GPL-3.0-only OR
+ #include "bin/projectclip.h"
+ #include "bin/projectitemmodel.h"
+ #include "core.h"
++#include "monitor/monitormanager.h"
+ #include "dialogs/profilesdialog.h"
+ #include "documentchecker.h"
+ #include "documentvalidator.h"
+@@ -3073,6 +3074,7 @@ void KdenliveDoc::setStereo3DFormat(cons
+             clip->updateStereoUnpack();
+         }
+     }
++    checkStereo3DPairProject();
+     pCore->refreshProjectMonitorOnce();
+ }
+ 
+@@ -3080,3 +3082,60 @@ bool KdenliveDoc::isStereo3DAutomatic()
+ {
+     return getDocumentProperty(QStringLiteral("stereo3d")).isEmpty();
+ }
++
++bool KdenliveDoc::isStereo3DPairProject() const
++{
++    if (!isStereo3DAutomatic()) {
++        return false;
++    }
++    const Stereo3D::Format format = stereo3DFormat();
++    return format.packing == Stereo3D::Packing::SideBySide && !format.rightFirst;
++}
++
++QSize KdenliveDoc::stereo3DPairFrame() const
++{
++    if (!isStereo3DPairProject()) {
++        return {};
++    }
++    // "Full" is the layout, not a size: each eye is a whole picture of the project's resolution. A project whose own frame already
++    // holds two whole views (3840x1080) keeps it.
++    const QSize frame = pCore->getCurrentFrameSize();
++    if (Stereo3D::fullSizeViews(QSize(qRound(frame.width() * pCore->getCurrentSar()), frame.height()), Stereo3D::Packing::SideBySide)) {
++        return frame;
++    }
++    return {2 * frame.width(), frame.height()};
++}
++
++void KdenliveDoc::checkStereo3DPairProject(bool afterLoading)
++{
++    if (m_checkingStereoPair || !pCore->projectItemModel()) {
++        return;
++    }
++    const bool pair = isStereo3DPairProject();
++    // Once the project is open its timeline is there: whatever was decided while its clips loaded, every clip's timeline instances
++    // follow what the project is
++    if (pair == m_stereoPairProject && !(afterLoading && pair)) {
++        return;
++    }
++    m_checkingStereoPair = true;
++    m_stereoPairProject = pair;
++    // every clip's conversion: 3D clips taken apart, 2D ones in both eyes, or nothing in a 2D project
++    const std::vector<QString> ids = pCore->projectItemModel()->getAllClipIds();
++    for (const QString &id : ids) {
++        if (const std::shared_ptr<ProjectClip> clip = pCore->projectItemModel()->getClipByBinID(id)) {
++            const int type = clip->clipType();
++            if (type == ClipType::Color || type == ClipType::Image || type == ClipType::Text || type == ClipType::TextTemplate || type == ClipType::Qml) {
++                // their timeline instances are cuts of the clip's own producer in a 2D project and producers of their own in a 3D one
++                clip->reloadTimeline();
++            } else {
++                clip->updateStereoUnpack();
++            }
++        }
++    }
++    m_checkingStereoPair = false;
++    // the monitors' working frame: two eyes side by side, or the project's own
++    if (pCore->monitorManager()) {
++        Q_EMIT pCore->monitorManager()->updatePreviewScaling();
++    }
++    pCore->refreshProjectMonitorOnce();
++}
+--- a/src/doc/kdenlivedoc.h
++++ b/src/doc/kdenlivedoc.h
+@@ -153,6 +153,16 @@ public:
+     /** @brief Choose the packing of the project, none for a project that is not 3D, or let it follow the clips (@c automatic) */
+     void setStereo3DFormat(const Stereo3D::Format &format, bool automatic);
+     bool isStereo3DAutomatic() const;
++    /** @brief A 3D project whose frames are the two eyes side by side, the left eye first, each a whole picture of the project's
++     *  resolution: its packing comes from its clips and one of them holds both views in its frames. Its 3D clips are taken apart side
++     *  by side and its 2D clips, titles, pictures and colours are the same picture in both eyes. */
++    bool isStereo3DPairProject() const;
++    /** @brief The frame the monitors work on and a render writes in a pair project: two of the project's pictures side by side, or the
++     *  project's own frame when it already holds two whole views. Empty when the project is not a pair project. */
++    QSize stereo3DPairFrame() const;
++    /** @brief Whether the project became a pair project or stopped being one: then every clip's conversion and the monitors' working
++     *  frame follow, once. */
++    void checkStereo3DPairProject(bool afterLoading = false);
+     virtual const QString getDocumentProperty(const QString &name, const QString &defaultValue = QString()) const;
+     bool hasDocumentProperty(const QString &name) const;
+     /** @brief Set a timeline sequence property. */
+@@ -327,6 +337,8 @@ protected:
+     static int next_id; /// next valid id to assign
+ 
+ private:
++    bool m_stereoPairProject{false};
++    bool m_checkingStereoPair{false};
+     /** @brief Create a new KdenliveDoc using the provided QDomDocument (an
+      * existing project file), used by the Open() named constructor. */
+     KdenliveDoc(const QUrl &url, QDomDocument& newDom, QString projectFolder, QUndoGroup *undoGroup,
+--- a/src/monitor/monitor.cpp
++++ b/src/monitor/monitor.cpp
+@@ -2700,8 +2700,31 @@ Stereo3D::Format Monitor::stereoFormat()
+ 
+ void Monitor::updateStereoPreview()
+ {
+-    const Stereo3D::Format format = stereoFormat();
++    Stereo3D::Format format = stereoFormat();
+     const int mode = stereoPreviewSetting();
++    // In a 3D project (a pair project) both monitors work on its frame of two eyes side by side, each at the project's resolution: the
++    // project monitor's frames are that already; the clip monitor makes it from the clip's own picture, a 3D clip's views fitted, a 2D
++    // clip the same picture in both eyes, in every view the person chooses (3D, the left eye, off)
++    const bool pairProject = pCore->currentDoc() && pCore->currentDoc()->isStereo3DPairProject();
++    QString filterPacking;
++    bool filterInvert = false;
++    bool fromOwnPicture = false;
++    if (pairProject && m_id == Kdenlive::ProjectMonitor) {
++        format = {Stereo3D::Packing::SideBySide, false};
++    } else if (pairProject && m_id == Kdenlive::ClipMonitor && m_controller) {
++        if (format.isStereo()) {
++            fromOwnPicture = true;
++            filterPacking = Stereo3D::mltName(format.packing);
++            filterInvert = format.rightFirst;
++        } else if (Stereo3D::carriesPicture(m_controller->clipType())) {
++            fromOwnPicture = true;
++            filterPacking = QStringLiteral("mono");
++        }
++        if (fromOwnPicture) {
++            // what the filter gives: the two eyes side by side, the left one first
++            format = {Stereo3D::Packing::SideBySide, false};
++        }
++    }
+     // The 3D area shows both views, side by side with the left eye first, whatever the packing; Left Eye Only for the packings that
+     // are interleaved at the pixel or in time takes the view out of the full colour picture, which the shader cannot (it only has the
+     // subsampled chroma of the preview)
+@@ -2717,12 +2740,18 @@ void Monitor::updateStereoPreview()
+     const bool unpackedByFilter = format.packing == Stereo3D::Packing::Lines || format.packing == Stereo3D::Packing::Columns
+         || format.packing == Stereo3D::Packing::Checkerboard || format.packing == Stereo3D::Packing::FrameSequence;
+     QString unpack;
+-    if (layer) {
++    if (pairProject && m_id == Kdenlive::ProjectMonitor) {
++        // the timeline made the two eyes already
++    } else if (fromOwnPicture) {
++        unpack = QStringLiteral("side_by_side");
++    } else if (layer) {
+         unpack = QStringLiteral("side_by_side");
+     } else if (mode == 1 && unpackedByFilter) {
+         unpack = QStringLiteral("left");
+     }
+-    m_glMonitor->setStereoPreview(format, mode == 1 && !unpackedByFilter, unpack);
++    m_glMonitor->setStereoFilterMode(filterPacking, filterInvert, fromOwnPicture);
++    // the left eye of a frame of two eyes is its left half
++    m_glMonitor->setStereoPreview(format, mode == 1 && (!unpackedByFilter || fromOwnPicture || pairProject), unpack);
+ #ifdef HAVE_STEREO_PREVIEW
+     if (layer && !m_stereoLayer) {
+         m_stereoLayer = new StereoLayer(m_glMonitor, this);
+--- a/src/monitor/videowidget.cpp
++++ b/src/monitor/videowidget.cpp
+@@ -18,6 +18,7 @@
+ #endif
+ #include "bin/model/markersortmodel.h"
+ #include "core.h"
++#include "doc/kdenlivedoc.h"
+ #include "kdenlivesettings.h"
+ #include "monitor/monitor.h"
+ #include "monitor/view/qmliconprovider.hpp"
+@@ -662,7 +663,7 @@ void VideoWidget::applyStereoFilter()
+         m_consumer->detach(*m_stereoFilter);
+         m_stereoFilter.reset();
+     }
+-    if (m_stereoUnpack.isEmpty() || !m_stereoFormat.isStereo()) {
++    if (m_stereoUnpack.isEmpty() || (!m_stereoFormat.isStereo() && m_stereoFilterPacking.isEmpty())) {
+         return;
+     }
+     // The filter asks for the full colour picture and takes the views out of it, before the preview's subsampled formats
+@@ -670,9 +671,20 @@ void VideoWidget::applyStereoFilter()
+     if (!filter->is_valid()) {
+         return;
+     }
+-    filter->set("packing", Stereo3D::mltName(m_stereoFormat.packing).toUtf8().constData());
+-    filter->set("invert", m_stereoFormat.rightFirst ? 1 : 0);
++    const QString packing = m_stereoFilterPacking.isEmpty() ? Stereo3D::mltName(m_stereoFormat.packing) : m_stereoFilterPacking;
++    filter->set("packing", packing.toUtf8().constData());
++    filter->set("invert", (m_stereoFilterPacking.isEmpty() ? m_stereoFormat.rightFirst : m_stereoFilterInvert) ? 1 : 0);
+     filter->set("output", m_stereoUnpack.toUtf8().constData());
++    if (m_stereoFilterOwnPicture) {
++        // A 3D project's working frame (the monitors' profile): the views of the clip's own picture fitted, keeping their shape, each to
++        // its half; a frame sequence, which has one view in each frame, is asked for at one eye's size
++        if (packing == QLatin1String("frame_sequence")) {
++            filter->set("eye_request", 1);
++        } else {
++            filter->set("in_producer", 1);
++            filter->set("target_views", "full");
++        }
++    }
+     if (!m_stereoResource.isEmpty()) {
+         filter->set("resource", m_stereoResource.toUtf8().constData());
+         filter->set("offset", m_stereoOffset);
+@@ -682,6 +694,18 @@ void VideoWidget::applyStereoFilter()
+     }
+ }
+ 
++void VideoWidget::setStereoFilterMode(const QString &packing, bool invert, bool fromOwnPicture)
++{
++    if (packing == m_stereoFilterPacking && invert == m_stereoFilterInvert && fromOwnPicture == m_stereoFilterOwnPicture) {
++        return;
++    }
++    m_stereoFilterPacking = packing;
++    m_stereoFilterInvert = invert;
++    m_stereoFilterOwnPicture = fromOwnPicture;
++    QMutexLocker locker(&m_mltMutex);
++    applyStereoFilter();
++}
++
+ void VideoWidget::setStereoSource(const QString &resource, int offset)
+ {
+     if (resource == m_stereoResource && offset == m_stereoOffset) {
+@@ -1533,6 +1557,18 @@ bool VideoWidget::updateScaling()
+     if (pWidth % 2 > 0) {
+         pWidth++;
+     }
++    // A 3D project's working frame is its two eyes side by side, each at the project's resolution ("full is the layout, not a size";
++    // the compositor scales once, at the output): twice as wide, of twice the display aspect, so a picture keeps its shape in each half
++    bool pair = false;
++    if (KdenliveDoc *doc = pCore->currentDoc()) {
++        const QSize pairFrame = doc->stereo3DPairFrame();
++        pair = pairFrame.isValid() && pairFrame != pCore->getCurrentFrameSize();
++    }
++    if (pair) {
++        pWidth *= 2;
++    }
++    pCore->getMonitorProfile().set_display_aspect(pCore->getProjectProfile().display_aspect_num() * (pair ? 2 : 1),
++                                                  pCore->getProjectProfile().display_aspect_den());
+     QSize profileSize(pWidth, previewHeight);
+     if (profileSize == m_profileSize) {
+         return false;
+--- a/src/monitor/videowidget.h
++++ b/src/monitor/videowidget.h
+@@ -87,6 +87,9 @@ public:
+     /** @brief The file the frames of a frame sequence come from, and the position in the monitor of its first frame (the project's
+      *  frames are made of many clips, so the filter cannot tell it from the frames). */
+     void setStereoSource(const QString &resource, int offset);
++    /** @brief How the consumer's filter makes the two eyes of a 3D project's working frame: from the clip's own picture (each view
++     *  fitted, keeping its shape, to its half), and with @p packing in place of the format's (mono: a 2D clip in both eyes) */
++    void setStereoFilterMode(const QString &packing, bool invert, bool fromOwnPicture);
+     /** @brief The video is drawn by a layer under the window (a 3D area): this widget draws none of it and is transparent over it */
+     void setStereoLayerActive(bool active);
+     bool stereoLayerActive() const { return m_stereoLayerActive; }
+@@ -228,6 +231,9 @@ protected:
+     bool m_stereoLeftEyeOnly{false};
+     /** @brief What the stereo3d_unpack filter on the consumer gives (left, right or side_by_side), empty for none */
+     QString m_stereoUnpack;
++    QString m_stereoFilterPacking;
++    bool m_stereoFilterInvert{false};
++    bool m_stereoFilterOwnPicture{false};
+     QString m_stereoResource;
+     int m_stereoOffset{0};
+     std::unique_ptr<Mlt::Filter> m_stereoFilter;
+--- a/src/render/renderrequest.cpp
++++ b/src/render/renderrequest.cpp
+@@ -461,9 +461,9 @@ void RenderRequest::setDocGeneralParams(
+ bool RenderRequest::prepareStereoRender(QDomDocument &doc, bool profileOnly)
+ {
+     // A 3D project's resolution is one eye's ("render resolution per eye"): a project of 1920x1080 writes 3840x1080, each eye a
+-    // 1920x1080 picture, nothing squeezed. The monitors show the project's frame, both eyes in it at half width, and hand them to
+-    // the compositor as they are. A project whose own frame already holds two whole views (3840x1080) is written as it is, and a
+-    // project whose packing the person declared by hand (its clips are not taken apart) too.
++    // 1920x1080 picture, nothing squeezed, the frame the monitors work on (KdenliveDoc::stereo3DPairFrame()). A project whose own frame
++    // already holds two whole views (3840x1080) is written as it is, and a project whose packing the person declared by hand (its
++    // clips are not taken apart) too.
+     KdenliveDoc *project = pCore->currentDoc();
+     if (!project || !project->isStereo3DAutomatic()) {
+         return false;
+@@ -532,13 +532,15 @@ bool RenderRequest::prepareStereoRender(
+             for (QDomElement &filter : unneeded) {
+                 service.removeChild(filter);
+             }
+-            if (hasUnpack || asItIs || !clip || !Stereo3D::bothViewsInFrame(format.packing)) {
++            // a 2D clip, title, picture or colour: the same picture in both eyes, as the timeline has it
++            const bool mono = clip && !format.isStereo() && Stereo3D::carriesPicture(clip->clipType());
++            if (hasUnpack || asItIs || !clip || (!Stereo3D::bothViewsInFrame(format.packing) && !mono)) {
+                 continue;
+             }
+             QDomElement filter = doc.createElement(QStringLiteral("filter"));
+             filter.setAttribute(QStringLiteral("id"), QStringLiteral("kdenlive_stereo3d_render_%1").arg(++added));
+             Xml::setXmlProperty(filter, QStringLiteral("mlt_service"), QStringLiteral("stereo3d_unpack"));
+-            Xml::setXmlProperty(filter, QStringLiteral("packing"), Stereo3D::mltName(format.packing));
++            Xml::setXmlProperty(filter, QStringLiteral("packing"), mono ? QStringLiteral("mono") : Stereo3D::mltName(format.packing));
+             Xml::setXmlProperty(filter, QStringLiteral("invert"), format.rightFirst ? QStringLiteral("1") : QStringLiteral("0"));
+             Xml::setXmlProperty(filter, QStringLiteral("output"), QStringLiteral("side_by_side"));
+             Xml::setXmlProperty(filter, QStringLiteral("in_producer"), QStringLiteral("1"));
+--- a/src/utils/stereo3d.cpp
++++ b/src/utils/stereo3d.cpp
+@@ -5,6 +5,7 @@
+ */
+ 
+ #include "stereo3d.h"
++#include "definitions.h"
+ 
+ #ifdef HAVE_STEREO_LAYER
+ #include <video.h>
+@@ -250,6 +251,25 @@ bool bothViewsInFrame(Packing packing)
+     return packing != Packing::None && packing != Packing::FrameSequence;
+ }
+ 
++bool carriesPicture(int clipType)
++{
++    switch (clipType) {
++    case ClipType::Video:
++    case ClipType::AV:
++    case ClipType::Color:
++    case ClipType::Image:
++    case ClipType::Text:
++    case ClipType::SlideShow:
++    case ClipType::TextTemplate:
++    case ClipType::QText:
++    case ClipType::Qml:
++    case ClipType::Animation:
++        return true;
++    default:
++        return false;
++    }
++}
++
+ QSize viewSize(const QSize &frame, Packing packing, int viewsHint)
+ {
+     switch (packing) {
+--- a/src/utils/stereo3d.h
++++ b/src/utils/stereo3d.h
+@@ -41,6 +41,8 @@ struct Format
+ 
+ /** @brief Whether each frame holds both views (every packing but a frame sequence, which has one view in each frame) */
+ bool bothViewsInFrame(Packing packing);
++/** @brief Whether a clip of this type has a picture: in a 3D project it is the same picture in both eyes when it is 2D */
++bool carriesPicture(int clipType);
+ 
+ /** @brief The MLT name of a packing, empty for none */
+ QString mltName(Packing packing);
+--- a/src/project/projectmanager.cpp
++++ b/src/project/projectmanager.cpp
+@@ -1125,6 +1125,8 @@ void ProjectManager::doOpenFile(const QU
+     polishTimelines(m_project->getTimelinesUuids());
+     m_lastSave.start();
+     m_project->loading = false;
++    // a 3D project: its 2D clips, titles, pictures and colours in both eyes, the monitors on its frame of two eyes
++    m_project->checkStereo3DPairProject(true);
+     if (pCore->closing) {
+         pCore->closeApp();
+     }

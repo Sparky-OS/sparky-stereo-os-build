@@ -47,6 +47,7 @@ SOURCES = {
     'dragon-3d-video.po.patch': ('dragon', None),
     'kalgebra-stereo3d.po.patch': ('kalgebra', None),
     'kdenlive-order61e.po.patch': ('kdenlive', None),
+    'kdenlive-order61f.po.patch': ('kdenlive', None),
     'kalzium-stereo3d.po.patch': ('kalzium', None),
     'kf6-kfilemetadata-stereo3d.po.patch': ('kf6-kfilemetadata', None),
     'kf6-kio-gpu-launch.po.patch': ('kf6-kio', None),
