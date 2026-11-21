@@ -1,0 +1,12 @@
+[Unit]
+Description=Install the settings files a diversion kept from their package (dpkg-stereo)
+Documentation=man:dpkg-divert(1)
+# written by dpkg-stereo's hook when such a conffile is found, removed when none is left (rows 629/802)
+ConditionPathExists=/var/lib/dpkg-stereo/diverted-conffiles.pending
+After=network-online.target
+
+[Service]
+Type=oneshot
+# waits until no apt or dpkg run holds dpkg's locks, then installs the owning package again; never asks
+ExecStart=/usr/sbin/dpkg-stereo --repair-diverted
+SuccessExitStatus=1

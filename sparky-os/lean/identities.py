@@ -66,6 +66,10 @@ RELEASED = {
     # ORDER 108 milestone 9: the Go adapter (lang_go.py), for build inputs under a language plan; installed Go files stay authored.
     '0.1.30': {'44c285cbedd14ec1f253b092314360a0ee32e36142a0d4398d20739439ef9151':
                'lean 0.1.30 (collapse-blank,pointer,c-drop-lines) code 44c285cbedd14ec1'},
+    # Rows 629/802: the startup files bash reads (.bash_aliases, .bash_logout, .bash_profile, .bash_login, .profile) are
+    # shell by their name, as /etc/skel/.bashrc was by its path.
+    '0.1.31': {'7c590f9475843d26831db3753dd954d9a450b92d8a7f25c7fb4d7a4f16159f42':
+               'lean 0.1.31 (collapse-blank,pointer,c-drop-lines) code 7c590f9475843d26'},
 }
 
 # Digests that built under a label without being its released renderer: never accepted.
