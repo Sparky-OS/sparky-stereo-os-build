@@ -468,14 +468,19 @@ def provider_add(provider, name, url, secret):
             opened = subprocess.run([gdbus or 'gdbus', 'call', '--session', '--timeout', '600', '--dest', 'org.kde.kwalletd6', '--object-path', '/modules/kwalletd6',
                                      '--method', 'org.kde.KWallet.open', wallet, '0', PACKAGE], capture_output=True, text=True, timeout=620) \
                 if gdbus else None
-            handle = re.match(r'\((-?\d+),\)', opened.stdout.strip()) if opened else None
-            if not handle or int(handle.group(1)) < 0:
+            # the wallet's own answer decides: it is there now, or it was not made (the dialog's handle is not read: KF 6.30's
+            # shim answered a handle the wallet then did not have, measured in the rig)
+            again = subprocess.run([tool, '-l', '-f', PACKAGE, wallet], capture_output=True, text=True, timeout=60)
+            if not opened or 'not found' in again.stdout + again.stderr:
                 why = (opened.stderr.strip() if opened else 'gdbus is not installed') or tr('@info', 'the wallet was not made')
                 keep('wallet', '@info', 'The key of %1 could not be kept in KDE Wallet: %2', [name, why])
                 return 3
         out = subprocess.run([tool, '-w', 'provider-' + provider, '-f', PACKAGE, wallet], input=secret, capture_output=True, text=True)
-        if out.returncode:
-            keep('wallet', '@info', 'The key of %1 could not be kept in KDE Wallet: %2', [name, out.stderr.strip() or out.stdout.strip()])
+        back = subprocess.run([tool, '-r', 'provider-' + provider, '-f', PACKAGE, wallet], capture_output=True, text=True)
+        if not out.returncode and back.stdout.strip() != secret:
+            out = back  # what the wallet says, said below
+        if out.returncode or back.stdout.strip() != secret:
+            keep('wallet', '@info', 'The key of %1 could not be kept in KDE Wallet: %2', [name, out.stderr.strip() or out.stdout.strip() or tr('@info', 'the wallet was not made')])
             return 3
         clear('wallet')
     for field, value in (('Name', name), ('Kind', 'openai-compatible'), ('Url', url), ('Runs', 'provider'),
