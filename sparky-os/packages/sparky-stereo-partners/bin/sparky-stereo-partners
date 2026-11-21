@@ -466,7 +466,7 @@ def provider_add(provider, name, url, secret):
             # the dialog waits for the person: gdbus's own 25 s limit would end the call first (KIO's kpasswdserver notes that
             # KWallet opens a wallet synchronously with a 24-day timeout); ten minutes, then said
             opened = subprocess.run([gdbus or 'gdbus', 'call', '--session', '--timeout', '600', '--dest', 'org.kde.kwalletd6', '--object-path', '/modules/kwalletd6',
-                                     '--method', 'org.kde.KWallet.open', wallet, '0', PACKAGE], capture_output=True, text=True, timeout=600) \
+                                     '--method', 'org.kde.KWallet.open', wallet, '0', PACKAGE], capture_output=True, text=True, timeout=620) \
                 if gdbus else None
             handle = re.match(r'\((-?\d+),\)', opened.stdout.strip()) if opened else None
             if not handle or int(handle.group(1)) < 0:
