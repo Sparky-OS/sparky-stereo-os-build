@@ -1,8 +1,5 @@
-Description: Brazilian Portuguese for the sentences of ORDER 61e
- The sentences the patches 0010, 0011 and 0014 to 0017 add (the first milestone's
- eight, then the clip's 3D corrections, the monitors' 3D options, the moved Right
- Eye First and the unknown render preset), in Brazilian Portuguese; the other
- eight required languages are the translations lane's.
+Description: Translate the Kdenlive sentences of ORDER 61e
+ Keep English in the program and the other nine required languages in the recipe.
 Author: Daniel Campos Ramos <Capitain_Jack@yahoo.com>
 Forwarded: not-needed
 Last-Update: 2026-11-21
@@ -10,10 +7,9 @@ Last-Update: 2026-11-21
 diff --git a/po/pt_BR/kdenlive.po b/po/pt_BR/kdenlive.po
 --- a/po/pt_BR/kdenlive.po
 +++ b/po/pt_BR/kdenlive.po
-@@ -47987,3 +47987,81 @@ msgstr "Linhas entrelaçadas"
- msgctxt "The video shown in 3D by the compositor, in the monitor itself"
- msgid "3D"
- msgstr "3D"
+@@ -33,4 +33,82 @@
+ "Rocha Tostes, Jorge Santiago, Víctor Aquino, Geraldo Simião, Guilherme "
+ "Marçal Silva"
 +
 +msgid "This monitor shows a 3D video in 3D only when Kdenlive runs on Wayland. It shows the packed frame as it is."
 +msgstr "Este monitor mostra um vídeo 3D em 3D só quando o Kdenlive roda no Wayland. Ele mostra o quadro empacotado como está."
@@ -92,3 +88,754 @@ diff --git a/po/pt_BR/kdenlive.po b/po/pt_BR/kdenlive.po
 +
 +msgid "Display Settings could not be opened: the program “%1” could not be started. It comes with KDE's settings modules, and the screens' 3D formats are on the Display Configuration page of System Settings."
 +msgstr "Não foi possível abrir as Configurações da tela: o programa “%1” não pôde ser iniciado. Ele vem com os módulos de configuração do KDE, e os formatos 3D das telas estão na página Configurações da tela das Configurações do sistema."
+ 
+ #, kde-format
+diff --git a/po/es/kdenlive.po b/po/es/kdenlive.po
+--- a/po/es/kdenlive.po
++++ b/po/es/kdenlive.po
+@@ -24,4 +24,90 @@
+ msgid "Your names"
+ msgstr "Gabriel Gazzán"
++
++msgid "This monitor shows a 3D video in 3D only when Kdenlive runs on Wayland. It shows the packed frame as it is."
++msgstr "Este monitor solo muestra un video 3D en 3D cuando Kdenlive se ejecuta en Wayland. Muestra el fotograma empaquetado tal cual."
++
++#, kde-format
++msgid "This monitor cannot show the video in 3D: %1 It shows the packed frame as it is."
++msgstr "Este monitor no puede mostrar el video en 3D: %1 Muestra el fotograma empaquetado tal cual."
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the monitor's window has no Wayland surface."
++msgstr "la ventana del monitor no tiene una superficie Wayland."
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the stereo declaration library could not start."
++msgstr "la biblioteca de declaración estéreo no pudo iniciarse."
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor does not take stereo content."
++msgstr "el compositor no acepta contenido estéreo."
++
++#, kde-format
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor refused the stereo declaration (%1)."
++msgstr "el compositor rechazó la declaración estéreo (%1)."
++
++msgid "This project has no stereoscopic 3D clip: a 3D preset would mark a 2D video as 3D. Choose another preset."
++msgstr "Este proyecto no contiene ningún medio de video 3D estereoscópico. Un preajuste 3D marcaría como 3D un video 2D. Elija otro preajuste."
++
++#, kde-format
++msgid "The 3D presets write side by side, the left eye first, and this project's frames are packed: %1. Set the Packing of the Project to Automatic (From the Clips) in the project monitor's Stereoscopic 3D menu."
++msgstr "Los preajustes 3D escriben en formato lado a lado, ojo izquierdo primero, y los fotogramas de este proyecto tienen este formato: %1. En el menú 3D estereoscópico del Monitor de secuencias, seleccione Automático (según los clips) en Formato del proyecto."
++
++msgid "This clip has no 3D correction to save."
++msgstr "Este medio no tiene ninguna corrección 3D que guardar."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format has no 3D mark that can be written (Matroska, WebM and MP4 have one)."
++msgstr "su formato no admite una marca 3D que se pueda escribir (Matroska, WebM y MP4 sí la admiten)."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format's mark has no value for this 3D input format."
++msgstr "la marca de su formato no tiene un valor para este formato de entrada 3D."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its video stream declares another 3D format itself, and the stream's declaration comes before the container's mark."
++msgstr "el propio flujo de video declara otro formato 3D, y la declaración del flujo tiene prioridad sobre la marca del contenedor."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "the mark cannot be added to this MP4 file without moving its media data."
++msgstr "no se puede añadir la marca a este archivo MP4 sin mover sus datos multimedia."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "writing a Matroska file's mark needs mkvpropedit (MKVToolNix), which is not installed."
++msgstr "para escribir la marca en un archivo Matroska se necesita mkvpropedit (MKVToolNix), que no está instalado."
++
++#, kde-format
++msgctxt "Why a 3D correction could not be saved into a file, %1 what the system said"
++msgid "the write failed (%1)."
++msgstr "no se pudo escribir la marca (%1)."
++
++#, kde-format
++msgid "The 3D correction could not be saved into %1: %2 The file is as it was, and the correction stays in the project."
++msgstr "No se pudo guardar la corrección 3D en %1: %2 El archivo sigue como estaba y la corrección se conserva en el proyecto."
++
++msgid "This build of Kdenlive cannot write a 3D mark into a file."
++msgstr "Esta compilación de Kdenlive no puede escribir una marca 3D en un archivo."
++
++msgid "Enable 3D"
++msgstr "Activar 3D"
++
++msgid "Display Settings…"
++msgstr "Configuración de pantalla…"
++
++#, kde-format
++msgid "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clip has that 3D input format in its properties, and the project takes its packing from its clips."
++msgid_plural "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clips have that 3D input format in their properties, and the project takes its packing from its clips."
++msgstr[0] "El formato de este proyecto estaba configurado como «%2», con el ojo derecho primero. Ahora cada medio tiene su propio orden de ojos: %1 medio de video tiene ese formato de entrada 3D en sus propiedades y el proyecto toma su formato de los medios."
++msgstr[1] "El formato de este proyecto estaba configurado como «%2», con el ojo derecho primero. Ahora cada medio tiene su propio orden de ojos: %1 medios de video tienen ese formato de entrada 3D en sus propiedades y el proyecto toma su formato de los medios."
++
++#, kde-format
++msgid "Kdenlive has no render preset named “%1”: nothing was rendered. The render presets are:"
++msgstr "Kdenlive no tiene un preajuste de procesamiento llamado «%1». No se procesó nada. Los preajustes de procesamiento son:"
++
++#, kde-format
++msgid "Display Settings could not be opened: the program “%1” could not be started. It comes with KDE's settings modules, and the screens' 3D formats are on the Display Configuration page of System Settings."
++msgstr "No se pudo abrir Configuración de pantalla: no se pudo iniciar el programa «%1». Este programa viene con los módulos de configuración de KDE. Los formatos 3D de las pantallas están en la página Configuración de la pantalla de Preferencias del sistema."
+ 
+ #, kde-format
+diff --git a/po/fr/kdenlive.po b/po/fr/kdenlive.po
+--- a/po/fr/kdenlive.po
++++ b/po/fr/kdenlive.po
+@@ -36,4 +36,90 @@
+ msgid "Your names"
+ msgstr "Vincent Pinon, Simon Depiets, Xavier Besnard, Alexandre Bento"
++
++msgid "This monitor shows a 3D video in 3D only when Kdenlive runs on Wayland. It shows the packed frame as it is."
++msgstr "Ce moniteur affiche une vidéo 3D en 3D uniquement lorsque Kdenlive fonctionne sous Wayland. Il affiche l’image empaquetée telle quelle."
++
++#, kde-format
++msgid "This monitor cannot show the video in 3D: %1 It shows the packed frame as it is."
++msgstr "Ce moniteur ne peut pas afficher la vidéo en 3D : %1 Il affiche l’image empaquetée telle quelle."
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the monitor's window has no Wayland surface."
++msgstr "la fenêtre du moniteur n’a pas de surface Wayland."
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the stereo declaration library could not start."
++msgstr "la bibliothèque de déclaration stéréo n’a pas pu démarrer."
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor does not take stereo content."
++msgstr "le compositeur n’accepte pas le contenu stéréo."
++
++#, kde-format
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor refused the stereo declaration (%1)."
++msgstr "le compositeur a refusé la déclaration stéréo (%1)."
++
++msgid "This project has no stereoscopic 3D clip: a 3D preset would mark a 2D video as 3D. Choose another preset."
++msgstr "Ce projet ne contient aucun clip vidéo en 3D stéréoscopique. Un préréglage 3D marquerait une vidéo 2D comme étant en 3D. Choisissez un autre préréglage."
++
++#, kde-format
++msgid "The 3D presets write side by side, the left eye first, and this project's frames are packed: %1. Set the Packing of the Project to Automatic (From the Clips) in the project monitor's Stereoscopic 3D menu."
++msgstr "Les préréglages 3D écrivent les images côte à côte, œil gauche en premier, et les images de ce projet ont la disposition suivante : %1. Dans le menu Stéréoscopique en 3D du Moniteur de projet, réglez Disposition du projet sur Automatique (d’après les clips)."
++
++msgid "This clip has no 3D correction to save."
++msgstr "Ce clip n’a aucune correction 3D à enregistrer."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format has no 3D mark that can be written (Matroska, WebM and MP4 have one)."
++msgstr "son format ne permet pas d’écrire une marque 3D (Matroska, WebM et MP4 le permettent)."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format's mark has no value for this 3D input format."
++msgstr "la marque de son format ne prévoit aucune valeur pour ce format d'entrée 3D."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its video stream declares another 3D format itself, and the stream's declaration comes before the container's mark."
++msgstr "son flux vidéo déclare lui-même un autre format 3D, et cette déclaration prend le pas sur la marque du conteneur."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "the mark cannot be added to this MP4 file without moving its media data."
++msgstr "la marque ne peut pas être ajoutée à ce fichier MP4 sans déplacer ses données multimédias."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "writing a Matroska file's mark needs mkvpropedit (MKVToolNix), which is not installed."
++msgstr "pour écrire la marque d’un fichier Matroska, il faut mkvpropedit (MKVToolNix), qui n’est pas installé."
++
++#, kde-format
++msgctxt "Why a 3D correction could not be saved into a file, %1 what the system said"
++msgid "the write failed (%1)."
++msgstr "l’écriture a échoué (%1)."
++
++#, kde-format
++msgid "The 3D correction could not be saved into %1: %2 The file is as it was, and the correction stays in the project."
++msgstr "Impossible d’enregistrer la correction 3D dans %1 : %2 Le fichier reste tel quel et la correction est conservée dans le projet."
++
++msgid "This build of Kdenlive cannot write a 3D mark into a file."
++msgstr "Cette version de Kdenlive ne peut pas écrire de marque 3D dans un fichier."
++
++msgid "Enable 3D"
++msgstr "Activer la 3D"
++
++msgid "Display Settings…"
++msgstr "Paramètres d’affichage…"
++
++#, kde-format
++msgid "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clip has that 3D input format in its properties, and the project takes its packing from its clips."
++msgid_plural "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clips have that 3D input format in their properties, and the project takes its packing from its clips."
++msgstr[0] "La disposition de ce projet était « %2 », avec l’œil droit en premier. Désormais, chaque clip a son propre ordre des yeux : %1 clip vidéo a ce format d'entrée 3D dans ses propriétés, et le projet reprend la disposition de ses clips."
++msgstr[1] "La disposition de ce projet était « %2 », avec l’œil droit en premier. Désormais, chaque clip a son propre ordre des yeux : %1 clips vidéo ont ce format d'entrée 3D dans leurs propriétés, et le projet reprend la disposition de ses clips."
++
++#, kde-format
++msgid "Kdenlive has no render preset named “%1”: nothing was rendered. The render presets are:"
++msgstr "Kdenlive n’a pas de préréglage de rendu nommé « %1 ». Aucun rendu n’a été effectué. Voici les préréglages de rendu :"
++
++#, kde-format
++msgid "Display Settings could not be opened: the program “%1” could not be started. It comes with KDE's settings modules, and the screens' 3D formats are on the Display Configuration page of System Settings."
++msgstr "Impossible d’ouvrir les Paramètres d’affichage : le programme « %1 » n’a pas pu démarrer. Il est fourni avec les modules de configuration de KDE. Les formats 3D des écrans se trouvent sur la page Configuration de l'affichage de la Configuration du système."
+ 
+ #, kde-format
+diff --git a/po/de/kdenlive.po b/po/de/kdenlive.po
+--- a/po/de/kdenlive.po
++++ b/po/de/kdenlive.po
+@@ -33,4 +33,90 @@
+ msgid "Your names"
+ msgstr "Deutsches KDE-Übersetzungsteam"
++
++msgid "This monitor shows a 3D video in 3D only when Kdenlive runs on Wayland. It shows the packed frame as it is."
++msgstr "Dieser Monitor zeigt ein 3D-Video nur dann in 3D an, wenn Kdenlive unter Wayland läuft. Das gepackte Bild wird unverändert angezeigt."
++
++#, kde-format
++msgid "This monitor cannot show the video in 3D: %1 It shows the packed frame as it is."
++msgstr "Dieser Monitor kann das Video nicht in 3D anzeigen: %1 Das gepackte Bild wird unverändert angezeigt."
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the monitor's window has no Wayland surface."
++msgstr "das Monitorfenster hat keine Wayland-Oberfläche."
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the stereo declaration library could not start."
++msgstr "die Bibliothek für die Stereo-Deklaration konnte nicht gestartet werden."
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor does not take stereo content."
++msgstr "der Compositor nimmt keine Stereo-Inhalte an."
++
++#, kde-format
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor refused the stereo declaration (%1)."
++msgstr "der Compositor hat die Stereo-Deklaration abgelehnt (%1)."
++
++msgid "This project has no stereoscopic 3D clip: a 3D preset would mark a 2D video as 3D. Choose another preset."
++msgstr "Dieses Projekt enthält kein stereoskopisches 3D-Video. Eine 3D-Voreinstellung würde ein 2D-Video als 3D markieren. Wählen Sie eine andere Voreinstellung."
++
++#, kde-format
++msgid "The 3D presets write side by side, the left eye first, and this project's frames are packed: %1. Set the Packing of the Project to Automatic (From the Clips) in the project monitor's Stereoscopic 3D menu."
++msgstr "Die 3D-Voreinstellungen schreiben die Ansichten nebeneinander, linkes Auge zuerst. Die Bilder dieses Projekts sind so gepackt: %1. Wählen Sie im Projektmonitor unter Stereoskopisches 3D für Projektlayout die Einstellung Automatisch (aus den Clips)."
++
++msgid "This clip has no 3D correction to save."
++msgstr "Für diesen Clip gibt es keine 3D-Korrektur zu speichern."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format has no 3D mark that can be written (Matroska, WebM and MP4 have one)."
++msgstr "das Format unterstützt keine 3D-Markierung, die geschrieben werden kann (Matroska, WebM und MP4 unterstützen sie)."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format's mark has no value for this 3D input format."
++msgstr "die Markierung dieses Formats hat keinen Wert für dieses 3D-Eingabeformat."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its video stream declares another 3D format itself, and the stream's declaration comes before the container's mark."
++msgstr "der Videostream deklariert selbst ein anderes 3D-Format. Die Deklaration des Streams hat Vorrang vor der Markierung im Container."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "the mark cannot be added to this MP4 file without moving its media data."
++msgstr "die Markierung kann nicht zu dieser MP4-Datei hinzugefügt werden, ohne ihre Mediendaten zu verschieben."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "writing a Matroska file's mark needs mkvpropedit (MKVToolNix), which is not installed."
++msgstr "zum Schreiben der Markierung in eine Matroska-Datei wird mkvpropedit (MKVToolNix) benötigt. Das Programm ist nicht installiert."
++
++#, kde-format
++msgctxt "Why a 3D correction could not be saved into a file, %1 what the system said"
++msgid "the write failed (%1)."
++msgstr "das Schreiben ist fehlgeschlagen (%1)."
++
++#, kde-format
++msgid "The 3D correction could not be saved into %1: %2 The file is as it was, and the correction stays in the project."
++msgstr "Die 3D-Korrektur konnte nicht in %1 gespeichert werden: %2 Die Datei ist unverändert und die Korrektur bleibt im Projekt gespeichert."
++
++msgid "This build of Kdenlive cannot write a 3D mark into a file."
++msgstr "Diese Version von Kdenlive kann keine 3D-Markierung in eine Datei schreiben."
++
++msgid "Enable 3D"
++msgstr "3D aktivieren"
++
++msgid "Display Settings…"
++msgstr "Anzeigeeinstellungen …"
++
++#, kde-format
++msgid "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clip has that 3D input format in its properties, and the project takes its packing from its clips."
++msgid_plural "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clips have that 3D input format in their properties, and the project takes its packing from its clips."
++msgstr[0] "Das Projektlayout war auf „%2“ mit dem rechten Auge zuerst eingestellt. Die Augenreihenfolge ist jetzt für jeden Clip einzeln festgelegt: %1 Video hat dieses 3D-Eingabeformat in seinen Eigenschaften. Das Projekt übernimmt das Layout aus seinen Clips."
++msgstr[1] "Das Projektlayout war auf „%2“ mit dem rechten Auge zuerst eingestellt. Die Augenreihenfolge ist jetzt für jeden Clip einzeln festgelegt: %1 Videos haben dieses 3D-Eingabeformat in ihren Eigenschaften. Das Projekt übernimmt das Layout aus seinen Clips."
++
++#, kde-format
++msgid "Kdenlive has no render preset named “%1”: nothing was rendered. The render presets are:"
++msgstr "Kdenlive hat keine Render-Voreinstellung namens „%1“. Es wurde nichts gerendert. Die Render-Voreinstellungen sind:"
++
++#, kde-format
++msgid "Display Settings could not be opened: the program “%1” could not be started. It comes with KDE's settings modules, and the screens' 3D formats are on the Display Configuration page of System Settings."
++msgstr "Die Anzeigeeinstellungen konnten nicht geöffnet werden: Das Programm „%1“ konnte nicht gestartet werden. Es gehört zu den KDE-Einstellungsmodulen. Die 3D-Formate der Bildschirme finden Sie in den Systemeinstellungen unter Anzeige-Einrichtung."
+ 
+ #, kde-format
+diff --git a/po/pl/kdenlive.po b/po/pl/kdenlive.po
+--- a/po/pl/kdenlive.po
++++ b/po/pl/kdenlive.po
+@@ -23,4 +23,91 @@
+ msgid "Your names"
+ msgstr "Łukasz Wojniłowicz"
++
++msgid "This monitor shows a 3D video in 3D only when Kdenlive runs on Wayland. It shows the packed frame as it is."
++msgstr "Ten monitor wyświetla film 3D w trzech wymiarach tylko wtedy, gdy Kdenlive działa w sesji Wayland. Pokazuje spakowaną klatkę bez zmian."
++
++#, kde-format
++msgid "This monitor cannot show the video in 3D: %1 It shows the packed frame as it is."
++msgstr "Ten monitor nie może wyświetlić filmu w 3D: %1 Pokazuje spakowaną klatkę bez zmian."
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the monitor's window has no Wayland surface."
++msgstr "okno monitora nie ma powierzchni Wayland."
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the stereo declaration library could not start."
++msgstr "nie udało się uruchomić biblioteki deklaracji stereo."
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor does not take stereo content."
++msgstr "kompozytor nie przyjmuje treści stereo."
++
++#, kde-format
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor refused the stereo declaration (%1)."
++msgstr "kompozytor odrzucił deklarację stereo (%1)."
++
++msgid "This project has no stereoscopic 3D clip: a 3D preset would mark a 2D video as 3D. Choose another preset."
++msgstr "Projekt nie zawiera żadnego stereoskopowego wycinka wideo 3D. Nastawa 3D oznaczyłaby film 2D jako 3D. Wybierz inną nastawę."
++
++#, kde-format
++msgid "The 3D presets write side by side, the left eye first, and this project's frames are packed: %1. Set the Packing of the Project to Automatic (From the Clips) in the project monitor's Stereoscopic 3D menu."
++msgstr "Nastawy 3D zapisują widoki obok siebie, lewe oko pierwsze. Klatki tego projektu mają ustawiony układ: %1. W menu Stereoskopowy 3D monitora projektu ustaw Układ projektu na Automatycznie (z klipów)."
++
++msgid "This clip has no 3D correction to save."
++msgstr "Ten wycinek nie ma poprawki 3D do zapisania."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format has no 3D mark that can be written (Matroska, WebM and MP4 have one)."
++msgstr "ten format nie obsługuje zapisu znacznika 3D (Matroska, WebM i MP4 to umożliwiają)."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format's mark has no value for this 3D input format."
++msgstr "znacznik tego formatu nie ma wartości dla tego formatu wejściowego 3D."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its video stream declares another 3D format itself, and the stream's declaration comes before the container's mark."
++msgstr "strumień wideo sam deklaruje inny format 3D, a deklaracja strumienia ma pierwszeństwo przed znacznikiem w kontenerze."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "the mark cannot be added to this MP4 file without moving its media data."
++msgstr "do tego pliku MP4 nie można dodać znacznika bez przeniesienia danych multimedialnych."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "writing a Matroska file's mark needs mkvpropedit (MKVToolNix), which is not installed."
++msgstr "zapis znacznika w pliku Matroska wymaga programu mkvpropedit (MKVToolNix), który nie jest zainstalowany."
++
++#, kde-format
++msgctxt "Why a 3D correction could not be saved into a file, %1 what the system said"
++msgid "the write failed (%1)."
++msgstr "zapis się nie powiódł (%1)."
++
++#, kde-format
++msgid "The 3D correction could not be saved into %1: %2 The file is as it was, and the correction stays in the project."
++msgstr "Nie udało się zapisać poprawki 3D w %1: %2 Plik pozostał bez zmian, a poprawka jest nadal zapisana w projekcie."
++
++msgid "This build of Kdenlive cannot write a 3D mark into a file."
++msgstr "Ta wersja Kdenlive nie może zapisać znacznika 3D w pliku."
++
++msgid "Enable 3D"
++msgstr "Włącz 3D"
++
++msgid "Display Settings…"
++msgstr "Ustawienia ekranu…"
++
++#, kde-format
++msgid "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clip has that 3D input format in its properties, and the project takes its packing from its clips."
++msgid_plural "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clips have that 3D input format in their properties, and the project takes its packing from its clips."
++msgstr[0] "Układ projektu był ustawiony na „%2”, z prawym okiem jako pierwszym. Teraz każdy wycinek ma własną kolejność oczu: %1 wycinek wideo ma ten format wejściowy 3D w swoich właściwościach, a projekt pobiera układ z wycinków."
++msgstr[1] "Układ projektu był ustawiony na „%2”, z prawym okiem jako pierwszym. Teraz każdy wycinek ma własną kolejność oczu: %1 wycinki wideo mają ten format wejściowy 3D w swoich właściwościach, a projekt pobiera układ z wycinków."
++msgstr[2] "Układ projektu był ustawiony na „%2”, z prawym okiem jako pierwszym. Teraz każdy wycinek ma własną kolejność oczu: %1 wycinków wideo ma ten format wejściowy 3D w swoich właściwościach, a projekt pobiera układ z wycinków."
++
++#, kde-format
++msgid "Kdenlive has no render preset named “%1”: nothing was rendered. The render presets are:"
++msgstr "Kdenlive nie ma nastawy wyświetlania o nazwie „%1”. Nic nie zostało wyrenderowane. Dostępne nastawy wyświetlania:"
++
++#, kde-format
++msgid "Display Settings could not be opened: the program “%1” could not be started. It comes with KDE's settings modules, and the screens' 3D formats are on the Display Configuration page of System Settings."
++msgstr "Nie udało się otworzyć okna Ustawienia ekranu: nie można uruchomić programu „%1”. Jest on dostarczany z modułami ustawień KDE. Formaty 3D ekranów znajdziesz na stronie Ustawienia wyświetlania w Ustawieniach systemowych."
+ 
+ #, kde-format
+diff --git a/po/ja/kdenlive.po b/po/ja/kdenlive.po
+--- a/po/ja/kdenlive.po
++++ b/po/ja/kdenlive.po
+@@ -27,4 +27,89 @@
+ msgid "Your names"
+ msgstr "Hagoromo Shizuku, Ryuichi Yamada"
++
++msgid "This monitor shows a 3D video in 3D only when Kdenlive runs on Wayland. It shows the packed frame as it is."
++msgstr "このモニタで 3D 動画を 3D 表示できるのは、Kdenlive が Wayland 上で動作しているときだけです。パッキングされたフレームをそのまま表示します。"
++
++#, kde-format
++msgid "This monitor cannot show the video in 3D: %1 It shows the packed frame as it is."
++msgstr "このモニタでは動画を 3D 表示できません: %1 パッキングされたフレームをそのまま表示します。"
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the monitor's window has no Wayland surface."
++msgstr "モニタのウィンドウに Wayland サーフェスがありません。"
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the stereo declaration library could not start."
++msgstr "ステレオ宣言ライブラリを起動できませんでした。"
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor does not take stereo content."
++msgstr "コンポジターがステレオコンテンツを受け付けません。"
++
++#, kde-format
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor refused the stereo declaration (%1)."
++msgstr "コンポジターがステレオ宣言を拒否しました (%1)。"
++
++msgid "This project has no stereoscopic 3D clip: a 3D preset would mark a 2D video as 3D. Choose another preset."
++msgstr "このプロジェクトには立体視 3D のビデオクリップがありません。3D プリセットを使うと、2D 動画に 3D のマークが付きます。別のプリセットを選んでください。"
++
++#, kde-format
++msgid "The 3D presets write side by side, the left eye first, and this project's frames are packed: %1. Set the Packing of the Project to Automatic (From the Clips) in the project monitor's Stereoscopic 3D menu."
++msgstr "3D プリセットはサイドバイサイド、左目が先の順で書き出します。このプロジェクトのフレームの配置は %1 です。プロジェクトモニタの「立体視 3D」メニューで「プロジェクトの配置」を「自動（クリップに従う）」に設定してください。"
++
++msgid "This clip has no 3D correction to save."
++msgstr "このクリップには保存する 3D 補正がありません。"
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format has no 3D mark that can be written (Matroska, WebM and MP4 have one)."
++msgstr "この形式には書き込める 3D マークがありません (Matroska、WebM、MP4 にはあります)。"
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format's mark has no value for this 3D input format."
++msgstr "この形式のマークには、この 3D 入力形式に対応する値がありません。"
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its video stream declares another 3D format itself, and the stream's declaration comes before the container's mark."
++msgstr "ビデオストリーム自体が別の 3D 形式を宣言しています。ストリームの宣言がコンテナのマークより優先されます。"
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "the mark cannot be added to this MP4 file without moving its media data."
++msgstr "この MP4 ファイルにマークを追加するには、メディアデータを移動する必要があります。"
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "writing a Matroska file's mark needs mkvpropedit (MKVToolNix), which is not installed."
++msgstr "Matroska ファイルへのマークの書き込みに必要な mkvpropedit (MKVToolNix) がインストールされていません。"
++
++#, kde-format
++msgctxt "Why a 3D correction could not be saved into a file, %1 what the system said"
++msgid "the write failed (%1)."
++msgstr "書き込みに失敗しました (%1)。"
++
++#, kde-format
++msgid "The 3D correction could not be saved into %1: %2 The file is as it was, and the correction stays in the project."
++msgstr "%1 に 3D 補正を保存できませんでした: %2 ファイルは変更されていません。補正はプロジェクトに残っています。"
++
++msgid "This build of Kdenlive cannot write a 3D mark into a file."
++msgstr "このビルドの Kdenlive ではファイルに 3D マークを書き込めません。"
++
++msgid "Enable 3D"
++msgstr "3D を有効にする"
++
++msgid "Display Settings…"
++msgstr "ディスプレイの設定…"
++
++#, kde-format
++msgid "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clip has that 3D input format in its properties, and the project takes its packing from its clips."
++msgid_plural "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clips have that 3D input format in their properties, and the project takes its packing from its clips."
++msgstr[0] "このプロジェクトの配置は右目を先にする「%2」に設定されていました。現在はクリップごとに左右の目の順序を設定します。%1 個のビデオクリップのプロパティにこの 3D 入力形式が指定され、プロジェクトはクリップの配置を使います。"
++
++#, kde-format
++msgid "Kdenlive has no render preset named “%1”: nothing was rendered. The render presets are:"
++msgstr "Kdenlive に「%1」というレンダープリセットがありません。レンダリングは行われませんでした。利用できるレンダープリセット:"
++
++#, kde-format
++msgid "Display Settings could not be opened: the program “%1” could not be started. It comes with KDE's settings modules, and the screens' 3D formats are on the Display Configuration page of System Settings."
++msgstr "「ディスプレイの設定」を開けませんでした。プログラム「%1」を起動できませんでした。このプログラムは KDE の設定モジュールに含まれています。画面の 3D 形式はKDE システム設定の「ディスプレイ設定」ページにあります。"
+ 
+ #, kde-format
+diff --git a/po/ko/kdenlive.po b/po/ko/kdenlive.po
+--- a/po/ko/kdenlive.po
++++ b/po/ko/kdenlive.po
+@@ -23,4 +23,89 @@
+ msgid "Your names"
+ msgstr "이정희,박신조"
++
++msgid "This monitor shows a 3D video in 3D only when Kdenlive runs on Wayland. It shows the packed frame as it is."
++msgstr "이 모니터는 Kdenlive가 Wayland에서 실행될 때만 3D 동영상을 3D로 표시합니다. 패킹된 프레임을 그대로 표시합니다."
++
++#, kde-format
++msgid "This monitor cannot show the video in 3D: %1 It shows the packed frame as it is."
++msgstr "이 모니터에서는 동영상을 3D로 표시할 수 없습니다: %1 패킹된 프레임을 그대로 표시합니다."
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the monitor's window has no Wayland surface."
++msgstr "모니터 창에 Wayland 표면이 없습니다."
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the stereo declaration library could not start."
++msgstr "스테레오 선언 라이브러리를 시작할 수 없습니다."
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor does not take stereo content."
++msgstr "컴포지터가 스테레오 콘텐츠를 받지 않습니다."
++
++#, kde-format
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor refused the stereo declaration (%1)."
++msgstr "컴포지터가 스테레오 선언을 거부했습니다(%1)."
++
++msgid "This project has no stereoscopic 3D clip: a 3D preset would mark a 2D video as 3D. Choose another preset."
++msgstr "이 프로젝트에는 스테레오 3D 동영상 클립이 없습니다. 3D 사전 설정을 사용하면 2D 동영상에 3D 표시가 붙습니다. 다른 사전 설정을 선택하세요."
++
++#, kde-format
++msgid "The 3D presets write side by side, the left eye first, and this project's frames are packed: %1. Set the Packing of the Project to Automatic (From the Clips) in the project monitor's Stereoscopic 3D menu."
++msgstr "3D 사전 설정은 왼쪽 눈 먼저 두 영상을 좌우 나란히 기록합니다. 이 프로젝트의 프레임 배치는 %1입니다. 프로젝트 모니터의 스테레오 3D 메뉴에서 프로젝트 배치를 자동 (클립에 따름)으로 설정하세요."
++
++msgid "This clip has no 3D correction to save."
++msgstr "이 클립에는 저장할 3D 보정이 없습니다."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format has no 3D mark that can be written (Matroska, WebM and MP4 have one)."
++msgstr "이 형식에는 기록할 수 있는 3D 표시가 없습니다(Matroska, WebM, MP4에는 있습니다)."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format's mark has no value for this 3D input format."
++msgstr "이 형식의 표시에는 이 3D 입력 형식에 해당하는 값이 없습니다."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its video stream declares another 3D format itself, and the stream's declaration comes before the container's mark."
++msgstr "동영상 스트림이 자체적으로 다른 3D 형식을 선언합니다. 스트림의 선언이 컨테이너의 표시보다 우선합니다."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "the mark cannot be added to this MP4 file without moving its media data."
++msgstr "미디어 데이터를 옮기지 않고는 이 MP4 파일에 표시를 추가할 수 없습니다."
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "writing a Matroska file's mark needs mkvpropedit (MKVToolNix), which is not installed."
++msgstr "Matroska 파일에 표시를 기록하는 데 필요한 mkvpropedit(MKVToolNix)가 설치되어 있지 않습니다."
++
++#, kde-format
++msgctxt "Why a 3D correction could not be saved into a file, %1 what the system said"
++msgid "the write failed (%1)."
++msgstr "기록에 실패했습니다(%1)."
++
++#, kde-format
++msgid "The 3D correction could not be saved into %1: %2 The file is as it was, and the correction stays in the project."
++msgstr "3D 보정을 %1에 저장할 수 없습니다: %2 파일은 바뀌지 않았으며 보정은 프로젝트에 남아 있습니다."
++
++msgid "This build of Kdenlive cannot write a 3D mark into a file."
++msgstr "이 Kdenlive 빌드에서는 파일에 3D 표시를 기록할 수 없습니다."
++
++msgid "Enable 3D"
++msgstr "3D 사용"
++
++msgid "Display Settings…"
++msgstr "디스플레이 설정…"
++
++#, kde-format
++msgid "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clip has that 3D input format in its properties, and the project takes its packing from its clips."
++msgid_plural "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clips have that 3D input format in their properties, and the project takes its packing from its clips."
++msgstr[0] "이 프로젝트의 배치는 오른쪽 눈이 먼저인 “%2”로 설정되어 있었습니다. 이제 눈 순서는 클립마다 따로 정합니다. 동영상 클립 %1개의 속성에 이 3D 입력 형식이 지정되어 있으며, 프로젝트는 클립의 배치를 따릅니다."
++
++#, kde-format
++msgid "Kdenlive has no render preset named “%1”: nothing was rendered. The render presets are:"
++msgstr "Kdenlive에 “%1” 렌더링 사전 설정이 없습니다. 아무것도 렌더링하지 않았습니다. 사용할 수 있는 렌더링 사전 설정:"
++
++#, kde-format
++msgid "Display Settings could not be opened: the program “%1” could not be started. It comes with KDE's settings modules, and the screens' 3D formats are on the Display Configuration page of System Settings."
++msgstr "디스플레이 설정을 열 수 없습니다. “%1” 프로그램을 시작할 수 없었습니다. 이 프로그램은 KDE 설정 모듈에 포함되어 있습니다. 화면의 3D 형식은 시스템 설정의 디스플레이 설정 페이지에 있습니다."
+ 
+ #, kde-format
+diff --git a/po/zh_CN/kdenlive.po b/po/zh_CN/kdenlive.po
+--- a/po/zh_CN/kdenlive.po
++++ b/po/zh_CN/kdenlive.po
+@@ -25,4 +25,89 @@
+ "mrwang, ovo-Tim, phone-burner, Tyson Tan, Wu Junjie(ShiroAzusa), Yuchen "
+ "Deng, Zhang Jie, 大宝, 潘晓宇, 阎金昭"
++
++msgid "This monitor shows a 3D video in 3D only when Kdenlive runs on Wayland. It shows the packed frame as it is."
++msgstr "只有在 Wayland 下运行 Kdenlive 时，此监视器才会以 3D 显示 3D 视频。否则会原样显示封装后的帧。"
++
++#, kde-format
++msgid "This monitor cannot show the video in 3D: %1 It shows the packed frame as it is."
++msgstr "此监视器无法以 3D 显示视频：%1 将原样显示封装后的帧。"
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the monitor's window has no Wayland surface."
++msgstr "监视器窗口没有 Wayland 表面。"
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the stereo declaration library could not start."
++msgstr "无法启动立体声明库。"
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor does not take stereo content."
++msgstr "合成器不接受立体内容。"
++
++#, kde-format
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor refused the stereo declaration (%1)."
++msgstr "合成器拒绝了立体声明（%1）。"
++
++msgid "This project has no stereoscopic 3D clip: a 3D preset would mark a 2D video as 3D. Choose another preset."
++msgstr "此项目没有立体 3D 视频片段。3D 预设会将 2D 视频标为 3D。请选择其他预设。"
++
++#, kde-format
++msgid "The 3D presets write side by side, the left eye first, and this project's frames are packed: %1. Set the Packing of the Project to Automatic (From the Clips) in the project monitor's Stereoscopic 3D menu."
++msgstr "3D 预设以左右并排、左眼在前的方式写入。此项目的帧布局是 %1。请在项目监视器的“双图像立体3D”菜单中，将“项目布局”设为“自动（按片段）”。"
++
++msgid "This clip has no 3D correction to save."
++msgstr "此片段没有可保存的 3D 校正。"
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format has no 3D mark that can be written (Matroska, WebM and MP4 have one)."
++msgstr "此格式没有可写入的 3D 标记（Matroska、WebM 和 MP4 有）。"
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format's mark has no value for this 3D input format."
++msgstr "此格式的标记没有与这种 3D 输入格式对应的值。"
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its video stream declares another 3D format itself, and the stream's declaration comes before the container's mark."
++msgstr "视频流自身声明了另一种 3D 格式，其声明优先于容器的标记。"
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "the mark cannot be added to this MP4 file without moving its media data."
++msgstr "要在此 MP4 文件中添加标记，就必须移动其中的媒体数据。"
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "writing a Matroska file's mark needs mkvpropedit (MKVToolNix), which is not installed."
++msgstr "写入 Matroska 文件的标记需要 mkvpropedit（MKVToolNix），但它未安装。"
++
++#, kde-format
++msgctxt "Why a 3D correction could not be saved into a file, %1 what the system said"
++msgid "the write failed (%1)."
++msgstr "写入失败（%1）。"
++
++#, kde-format
++msgid "The 3D correction could not be saved into %1: %2 The file is as it was, and the correction stays in the project."
++msgstr "无法将 3D 校正保存到 %1：%2 文件保持原样，校正仍保存在项目中。"
++
++msgid "This build of Kdenlive cannot write a 3D mark into a file."
++msgstr "此 Kdenlive 构建版本无法将 3D 标记写入文件。"
++
++msgid "Enable 3D"
++msgstr "启用 3D"
++
++msgid "Display Settings…"
++msgstr "显示设置…"
++
++#, kde-format
++msgid "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clip has that 3D input format in its properties, and the project takes its packing from its clips."
++msgid_plural "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clips have that 3D input format in their properties, and the project takes its packing from its clips."
++msgstr[0] "此项目原先的布局设为右眼在前的“%2”。现在每个片段各自决定左右眼的顺序。%1 个视频片段的属性已设为此 3D 输入格式，项目采用各片段的布局。"
++
++#, kde-format
++msgid "Kdenlive has no render preset named “%1”: nothing was rendered. The render presets are:"
++msgstr "Kdenlive 没有名为“%1”的渲染预设，未进行渲染。可用的渲染预设："
++
++#, kde-format
++msgid "Display Settings could not be opened: the program “%1” could not be started. It comes with KDE's settings modules, and the screens' 3D formats are on the Display Configuration page of System Settings."
++msgstr "无法打开“显示设置”：无法启动程序“%1”。此程序随 KDE 设置模块提供。屏幕的 3D 格式在系统设置的“显示器配置”页面上。"
+ 
+ #, kde-format
+diff --git a/po/zh_TW/kdenlive.po b/po/zh_TW/kdenlive.po
+--- a/po/zh_TW/kdenlive.po
++++ b/po/zh_TW/kdenlive.po
+@@ -22,4 +22,89 @@
+ msgid "Your names"
+ msgstr "byStarTW, Kisaragi Hiu"
++
++msgid "This monitor shows a 3D video in 3D only when Kdenlive runs on Wayland. It shows the packed frame as it is."
++msgstr "只有在 Wayland 下執行 Kdenlive 時，這個預覽視窗才會以 3D 顯示 3D 影片。否則會原樣顯示封裝後的影格。"
++
++#, kde-format
++msgid "This monitor cannot show the video in 3D: %1 It shows the packed frame as it is."
++msgstr "這個預覽視窗無法以 3D 顯示影片：%1 將原樣顯示封裝後的影格。"
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the monitor's window has no Wayland surface."
++msgstr "預覽視窗沒有 Wayland 表面。"
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the stereo declaration library could not start."
++msgstr "無法啟動立體宣告函式庫。"
++
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor does not take stereo content."
++msgstr "合成器不接受立體內容。"
++
++#, kde-format
++msgctxt "Why the monitor cannot show 3D, ends the sentence: This monitor cannot show the video in 3D: %1"
++msgid "the compositor refused the stereo declaration (%1)."
++msgstr "合成器拒絕了立體宣告（%1）。"
++
++msgid "This project has no stereoscopic 3D clip: a 3D preset would mark a 2D video as 3D. Choose another preset."
++msgstr "這個專案沒有立體 3D 視訊素材。3D 預設檔會把 2D 影片標為 3D。請選擇其他預設檔。"
++
++#, kde-format
++msgid "The 3D presets write side by side, the left eye first, and this project's frames are packed: %1. Set the Packing of the Project to Automatic (From the Clips) in the project monitor's Stereoscopic 3D menu."
++msgstr "3D 預設檔會以左右並排、左眼在前的方式寫入。此專案的影格配置為 %1。請在專案預覽視窗的「立體 3D」選單中，將「專案配置」設為「自動（依片段）」。"
++
++msgid "This clip has no 3D correction to save."
++msgstr "這個素材沒有可儲存的 3D 校正。"
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format has no 3D mark that can be written (Matroska, WebM and MP4 have one)."
++msgstr "此格式沒有可寫入的 3D 標記（Matroska、WebM 和 MP4 有）。"
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its format's mark has no value for this 3D input format."
++msgstr "此格式的標記沒有對應這種 3D 輸入格式的值。"
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "its video stream declares another 3D format itself, and the stream's declaration comes before the container's mark."
++msgstr "視訊串流本身宣告了另一種 3D 格式，其宣告優先於容器的標記。"
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "the mark cannot be added to this MP4 file without moving its media data."
++msgstr "必須移動此 MP4 檔案中的媒體資料，才能加入標記。"
++
++msgctxt "Why a 3D correction could not be saved into a file"
++msgid "writing a Matroska file's mark needs mkvpropedit (MKVToolNix), which is not installed."
++msgstr "寫入 Matroska 檔案的標記需要 mkvpropedit（MKVToolNix），但它尚未安裝。"
++
++#, kde-format
++msgctxt "Why a 3D correction could not be saved into a file, %1 what the system said"
++msgid "the write failed (%1)."
++msgstr "寫入失敗（%1）。"
++
++#, kde-format
++msgid "The 3D correction could not be saved into %1: %2 The file is as it was, and the correction stays in the project."
++msgstr "無法將 3D 校正儲存到 %1：%2 檔案維持原樣，校正仍保留在專案中。"
++
++msgid "This build of Kdenlive cannot write a 3D mark into a file."
++msgstr "此 Kdenlive 組建版本無法將 3D 標記寫入檔案。"
++
++msgid "Enable 3D"
++msgstr "啟用 3D"
++
++msgid "Display Settings…"
++msgstr "顯示設定…"
++
++#, kde-format
++msgid "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clip has that 3D input format in its properties, and the project takes its packing from its clips."
++msgid_plural "This project's packing was set to “%2” with the right eye first. The eye order is now each clip's own: %1 video clips have that 3D input format in their properties, and the project takes its packing from its clips."
++msgstr[0] "此專案原本的配置設為右眼在前的「%2」。現在各個素材有各自的左右眼順序。%1 個視訊素材的屬性設為此 3D 輸入格式，專案會採用各素材的配置。"
++
++#, kde-format
++msgid "Kdenlive has no render preset named “%1”: nothing was rendered. The render presets are:"
++msgstr "Kdenlive 沒有名稱為「%1」的算繪預設檔，因此未進行算繪。可用的算繪預設檔："
++
++#, kde-format
++msgid "Display Settings could not be opened: the program “%1” could not be started. It comes with KDE's settings modules, and the screens' 3D formats are on the Display Configuration page of System Settings."
++msgstr "無法開啟「顯示設定」：無法啟動程式「%1」。這個程式隨 KDE 設定模組提供。螢幕的 3D 格式位於系統設定的「顯示器設定」頁面。"
+ 
+ #, kde-format
