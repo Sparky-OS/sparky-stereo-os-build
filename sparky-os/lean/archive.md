@@ -186,27 +186,49 @@ When the public archives moved under an already published edition, an explicit p
 The second source list has the same archives, suites, components, architecture restrictions and public signing keys, in the same order.
 Its URIs may point to dated archive snapshots or a retained signed mirror.
 Debian must use `https://snapshot.debian.org/archive/debian/TIMESTAMP` (or `debian-security`).
-Both that timestamp and every archive's signed Release Date must be no later than the supplied publication instant.
-This includes third-party archives; changing only Debian while using newer third-party metadata does not establish a publication-time view.
+The changed archive's snapshot timestamp and signed Release Date must be no later than the supplied publication instant.
 APT authenticates each InRelease with its explicit Signed-By key.
 The gate additionally binds every retained Packages target to its own InRelease SHA-256 and size, checks its frozen bytes, and compares signed Origin, Label, Suite and Codename across views.
 Every configured archive must be represented.
 It records the complete metadata, dates and hashes in `predecessor-views.json`.
 Expired freshness can be disabled in the source configuration, but authentication and hashes cannot.
 
+An unrelated archive lacking a dated signed copy may use the candidate's exact frozen index with `--previous-archive-policy /path/to/search-evidence.json`.
+That JSON names the publication instant and `candidate_frozen`, keyed by the one-based source-list position.
+Each entry binds `uri`, `suite` and three `searches`: `official-mirrors`, `retained-baseline`, and `archive-search`.
+Each search records `result: no-dated-signed-copy`, a substantive `summary`, and nonempty `files` containing `path` and `sha256` for the actual retained search results.
+The gate checks the cutoff, archive identity, search categories, outcome and every evidence-file hash.
+This is an evidence-bound search result, not a claim that software can prove worldwide nonexistence.
+The gate then checks InRelease and every Packages hash equal the candidate view, and that no solver-named package belongs to this archive's authenticated indexes.
+Package names appearing in the solver's dependency chain are attributed too, not only its terminal cause.
+Ambiguous names occurring in multiple indexes conservatively name every such archive.
+An implicated archive with only a later index still blocks.
+An unchanged candidate index whose signed Date already precedes publication needs no absence exception.
+
 The previous edition's exact sibling universe is tried in the candidate view first.
 No selected candidate identity may be present in that previous snapshot or either public archive view.
-Only a complete APT dependency-solver refusal is eligible for the dated retry.
+Only a complete APT dependency-solver refusal is eligible for the dated or mixed retry.
 Every conditional-policy attempt must name a terminal unsatisfied dependency or conflict owner outside the selected candidate package names.
 The gate retains the complete logs and hashes and names those external owners in `dated-predecessor-eligibility.json`.
 APT's preceding request chain is not the terminal cause: it necessarily includes the predecessor that was requested.
 Unknown diagnostic forms, candidate-owned failures, download failures, signature failures, extraction failures, space refusals and link failures do not authorize the retry.
 The parser accepts APT's terminal conflicting-assignment diagnostic and its classic unmet-dependency rows; ambiguity fails closed.
 
-The dated retry uses only the unchanged previous sibling snapshot.
+The dated or mixed retry uses only the unchanged previous sibling snapshot.
 It must solve, link and pass applicable start probes there; failure in both views still blocks.
 The previous build's narrow Recommends probe also stays in its chosen view.
 The candidate always solves, links and starts in the candidate view, with the existing regression checks unchanged.
-Every input result identifies its predecessor view (`candidate`, `dated`, or `none`), and the successful summary counts dated baselines.
+Every input result identifies its predecessor view and each archive’s view, reason and InRelease hash; the successful summary counts dated and mixed baselines. A mixed-view solver refusal retains every attempt and identifies the named packages and archives.
 A dated baseline is not a substitute candidate dependency or a waiver of a failed candidate start.
 The signed offline tests cover the current-view refusal, dated success, failure in both views, a snapshot after publication, candidate contamination, an external cause that is itself taken, key mismatch, changed metadata, and the existing missing-library regression.
+
+
+## Keep the publication's archive views
+
+Pass `--archive-evidence /path/to/pool-evidence/archive-views` to retain the candidate's authenticated view for each architecture.
+The gate copies every InRelease and Packages file plus the public signing keys, with an archive-view.json and SHA256SUMS; it independently verifies each Packages hash against InRelease and each copied file against its source.
+It never hard-links an archive input.
+Check `sha256sum -c SHA256SUMS` in every architecture directory and retain the complete successful gate log beside the record.
+The publication step must copy this evidence directory into the round's supply-chain record before the round goes online, then verify its sums there.
+The archive-view record identifies inputs; it does not by itself certify a successful whole-pool gate.
+A round published without its archive views cannot later serve as a dated predecessor for an archive that moves; an independently authenticated snapshot service is then required.

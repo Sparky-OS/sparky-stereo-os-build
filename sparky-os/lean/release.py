@@ -229,7 +229,7 @@ def previous_build(deb, previous_dir=None, previous_debs=(), controls=None):
 
 def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, scratch=None, siblings=(),
                previous_siblings=(), min_free_gib=None, root_min_free_gib=1,
-               previous_archive_config=None, previous_published_at=None):
+               previous_archive_config=None, previous_published_at=None, previous_archive_policy=None, archive_evidence=None):
     """Qualify edition snapshots, optionally using a checked dated view for an unsolvable predecessor."""
     archive_config = archive_config or os.environ.get('SPARKY_LC_ARCHIVE_CONFIG')
     scratch = scratch or os.environ.get('SPARKY_LC_SCRATCH')
@@ -254,7 +254,7 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
     # a refusal before a package's check comes after the checks of the packages before it (ORDER 638)
     _LINK.update(contexts=contexts, smoke=smoke_table, plan=[], private={})
     stop = None
-    dated_count = 0
+    dated_count = mixed_count = 0
     try:
         for deb in debs:
             arch = controls[deb]['Architecture']
@@ -264,11 +264,14 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
                 raise package.Invalid(f'{deb}: unsupported execution gate for {arch} on {native}; use a native runner')
             if arch not in contexts:
                 contexts[arch] = archive.Archive(archive_config, scratch, arch, min_free_gib, root_min_free_gib)
+                if archive_evidence:
+                    from .historical import retain_view
+                    retain_view(contexts[arch], archive_evidence)
                 if previous_archive_config:
                     from .historical import PreviousView
                     selected = [p for p in debs if controls[p]['Architecture'] in (arch, 'all')]
                     contexts[arch].previous_view = PreviousView(contexts[arch], previous_archive_config,
-                                                              previous_published_at, selected)
+                                                              previous_published_at, selected, previous_archive_policy)
             same_arch = [p for p in current_inputs if controls[p]['Architecture'] in (arch, 'all')]
             old_arch = [p for p in previous_inputs if controls[p]['Architecture'] in (arch, 'all')]
             contexts[arch].freeze(same_arch + old_arch)
@@ -297,8 +300,13 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
             if previous_archive_config:
                 view = predecessor.get('view', 'none')
                 print(f'lc1: {Path(_LINK["plan"][index][0]).name}: predecessor view={view}')
-                if view == 'dated':
+                for row in predecessor.get('archives', []):
+                    print(f'lc1: {Path(_LINK["plan"][index][0]).name}: predecessor archive '
+                          f'{row["archive"]}: {row["view"]}; {row["reason"]}; InRelease={row["InRelease_sha256"]}')
+                if view in ('dated', 'mixed'):
                     dated_count += 1
+                if view == 'mixed':
+                    mixed_count += 1
             if error is not None:
                 raise error
     finally:
@@ -307,7 +315,7 @@ def check_link(debs, previous_dir=None, smoke_table=None, archive_config=None, s
         raise stop
     print(f'lc1: archive-qualified link check passed for {len(debs)} packages')
     if previous_archive_config:
-        print(f'lc1: dated predecessor baselines: {dated_count} of {len(debs)}')
+        print(f'lc1: dated predecessor baselines: {dated_count} of {len(debs)}; mixed dated/current: {mixed_count}')
 
 
 _LINK = {}
@@ -350,6 +358,8 @@ def main():
     link.add_argument('--smoke', default=str(Path(__file__).with_name('smoke.tsv')), help='programs to start with LD_BIND_NOW=1')
     link.add_argument('--archive-config', help='JSON signed public archive sources (SPARKY_LC_ARCHIVE_CONFIG)')
     link.add_argument('--previous-archive-config', help='same signed archives in a dated predecessor view')
+    link.add_argument('--previous-archive-policy', help='hashed per-archive search evidence for unchanged unrelated indexes')
+    link.add_argument('--archive-evidence', help='retain authenticated archive views here for the round supply-chain record')
     link.add_argument('--previous-published-at', help='predecessor publication instant, ISO 8601 with timezone')
     link.add_argument('--scratch', help='private APT state, verified cache and roots (SPARKY_LC_SCRATCH)')
     link.add_argument('--siblings-file', help='newline-separated authoritative current edition .debs')
@@ -386,7 +396,7 @@ def main():
                        Path(args.siblings_file).read_text().splitlines() if args.siblings_file else (),
                        Path(args.previous_siblings_file).read_text().splitlines() if args.previous_siblings_file else (),
                        args.min_free_gib, args.root_min_free_gib,
-                       args.previous_archive_config, args.previous_published_at)
+                       args.previous_archive_config, args.previous_published_at, args.previous_archive_policy, args.archive_evidence)
         elif args.command == 'check-selection':
             paths = [line.split('\t')[0] for line in Path(args.tsv).read_text().splitlines()
                      if line.split('\t')[-1] != 'source']

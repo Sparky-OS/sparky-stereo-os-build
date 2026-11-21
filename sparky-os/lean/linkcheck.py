@@ -478,7 +478,7 @@ def compare(new_deb, previous_deb=None, extra_dirs=(), qualified=None, previous_
                 with tempfile.TemporaryDirectory(prefix='inspect-old-', dir=previous_qualified.directory) as old_root:
                     extract(previous_deb, old_root, previous_qualified.owner.ensure_space)
                     before = resolve(old_root, qualified=previous_qualified)
-                    if (previous_smoke and getattr(archive_context, 'predecessor_result', {}).get('view') == 'dated'):
+                    if (previous_smoke and getattr(archive_context, 'predecessor_result', {}).get('view') in ('dated', 'mixed')):
                         failed = smoke(previous_deb, previous_smoke, qualified=previous_qualified, notes=notes)
                         if failed:
                             raise package.Invalid('dated predecessor failed start qualification: ' + '; '.join(failed))
