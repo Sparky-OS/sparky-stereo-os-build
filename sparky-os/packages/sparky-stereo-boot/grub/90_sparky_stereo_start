@@ -24,12 +24,29 @@ grubenv|esp:*)
 				/^[[:space:]]*linux[[:space:]]/ { if (!video) missing++ }
 				END { exit (missing > 0) }' || known=no
 		fi
+		# 0.1.14 (rows 629/802): when the cause is the person's GRUB_GFXPAYLOAD_LINUX=text, that is said with the file
+		# and the line that set it (grub-mkconfig reads /etc/default/grub, then /etc/default/grub.d/*.cfg in name
+		# order, so the last line setting text wins), and what brings the menu back; "repair" cannot (LOCAL102).
+		# A value that came from update-grub's own environment is named as that command.
+		where=
+		if [ "$known" = no ] && [ "${GRUB_GFXPAYLOAD_LINUX:-}" = text ]; then
+			where=update-grub
+			for f in "${SPARKY_GRUB_DEFAULT:-/etc/default/grub}" "${SPARKY_GRUB_DEFAULT_D:-/etc/default/grub.d}"/*.cfg; do
+				[ -f "$f" ] || continue
+				n=$(grep -n -E "^[[:space:]]*(export[[:space:]]+)?GRUB_GFXPAYLOAD_LINUX=[\"']?text[\"']?[[:space:]]*(#.*)?\$" "$f" | tail -n 1 | cut -d: -f1)
+				[ -z "$n" ] || where="$f:$n"
+			done
+		fi
 		if [ -f "$lib/problems.py" ] && command -v python3 >/dev/null; then
 			if [ "$known" = yes ]; then
 				python3 "$lib/problems.py" clear start-record >&2
+			elif [ -n "$where" ]; then
+				python3 "$lib/problems.py" record start-record LOCAL102 "$where" >&2
 			else
 				python3 "$lib/problems.py" record start-record LOCAL97 --repair update-grub >&2
 			fi
+		elif [ -n "$where" ]; then
+			printf 'sparky-stereo-boot: GRUB_GFXPAYLOAD_LINUX=text (%s): %s\n' "$where" "GRUB's menu cannot show by itself after a start that did not finish. Remove or change that line, then: sudo update-grub" >&2
 		elif [ "$known" = no ]; then
 			printf 'sparky-stereo-boot: %s\n' "Debian's /etc/grub.d/10_linux wrote its entries in a form sparky-stereo-boot does not know, so a start is not recorded and GRUB's menu cannot show by itself after a start that did not finish. Then: sudo sparky-stereo-boot repair" >&2
 		fi

@@ -109,9 +109,25 @@ start() { env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin SPARKY_STEREO_ROOT="$W/st" S
 plist() { SPARKY_STEREO_ROOT=$W/st SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" LANG=C.UTF-8 sparky-stereo-problems list 2>&1; }
 mkdir -p "$W/st"
 start grubenv >"$W/out" 2>"$W/err"; ok 'every entry records: 90 exits 0 and says nothing' "$?|$(wc -c <"$W/err")" '0|0'
-start grubenv "$W/10_linux.text" >/dev/null 2>"$W/err"; has 'GRUB_GFXPAYLOAD_LINUX=text (no load_video): said' "$(cat $W/err)" 'wrote its entries in a form sparky-stereo-boot does not know'
+start grubenv "$W/10_linux.text" >/dev/null 2>"$W/err"; has 'entries without load_video and no text setting (another cause): LOCAL97 said' "$(cat $W/err)" 'wrote its entries in a form sparky-stereo-boot does not know'
 has 'and kept' "$(plist)" 'form sparky-stereo-boot does not know'
 start grubenv >/dev/null 2>&1; hasnot 'cleared when the entries carry load_video again' "$(plist)" 'form sparky-stereo-boot does not know'
+# 0.1.14 (rows 629/802): the person's GRUB_GFXPAYLOAD_LINUX=text has its own sentence (LOCAL102): the file and the line
+# that set it, what brings the menu back, and no "repair", which cannot help while the setting stays
+mkdir -p "$W/def.d"; printf 'GRUB_DEFAULT=0\nGRUB_TIMEOUT=5\nGRUB_GFXPAYLOAD_LINUX=text\n' > "$W/def"
+start_text() { env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin SPARKY_STEREO_ROOT="$W/st" SPARKY_STEREO_LIB="$PKG/lib" SPARKY_STEREO_LANG_DIR="$PKG/lang" SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" \
+	LANG=C.UTF-8 SPARKY_STEREO_RECORD=grubenv SPARKY_GRUB_10_LINUX="$W/10_linux.text" SPARKY_GRUB_00_HEADER="$W/00_header.debian" SPARKY_STEREO_BIN=/nonexistent \
+	GRUB_GFXPAYLOAD_LINUX=text SPARKY_GRUB_DEFAULT="$W/def" SPARKY_GRUB_DEFAULT_D="$W/def.d" sh "$PKG/grub/90_sparky_stereo_start"; }
+start_text >/dev/null 2>"$W/err"; has 'text in /etc/default/grub: its own sentence, with the file and the line' "$(cat $W/err)" "GRUB_GFXPAYLOAD_LINUX=text is set ($W/def:3)"
+hasnot 'text in /etc/default/grub: no repair instruction' "$(cat $W/err)" 'sparky-stereo-boot repair'
+hasnot 'text in /etc/default/grub: not the other cause' "$(cat $W/err)" 'form sparky-stereo-boot does not know'
+has 'text: kept, with what brings the menu back' "$(plist)" 'remove or change that line, then: sudo update-grub'
+has 'text: said in pt_BR' "$(SPARKY_STEREO_ROOT=$W/st SPARKY_STEREO_PROBLEMS_CATALOG="$CAT:/usr/lib/systemd/catalog" LANG=pt_BR.UTF-8 sparky-stereo-problems list 2>&1)" 'GRUB_GFXPAYLOAD_LINUX=text está definido'
+printf 'GRUB_GFXPAYLOAD_LINUX=keep\n' > "$W/def"; printf '# the person\nexport GRUB_GFXPAYLOAD_LINUX="text"\n' > "$W/def.d/50-person.cfg"
+start_text >/dev/null 2>"$W/err"; has 'text in /etc/default/grub.d: that file and line are named' "$(cat $W/err)" "($W/def.d/50-person.cfg:2)"
+rm -f "$W/def.d/50-person.cfg"
+start_text >/dev/null 2>"$W/err"; has "text from update-grub's environment only: named as that command" "$(cat $W/err)" '(update-grub)'
+start grubenv >/dev/null 2>&1; hasnot 'cleared when the entries carry load_video again (after LOCAL102)' "$(plist)" 'GRUB_GFXPAYLOAD_LINUX=text is set'
 start esp:ABCD-1234:/EFI/sparky-stereo-boot/grubenv "$W/10_linux" "$W/00_header.odd" >/dev/null 2>"$W/err"; has "00_header without a load_video: said" "$(cat $W/err)" 'form sparky-stereo-boot does not know'
 start grubenv >/dev/null 2>&1
 ok 'off: 90 writes and says nothing' "$(start off "$W/10_linux.text" 2>&1 | wc -c)" 0
