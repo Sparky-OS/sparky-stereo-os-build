@@ -117,6 +117,8 @@ $PACKAGE ($VERSION) unstable; urgency=medium
     can, else the discrete card with the most own memory that can, else an
     integrated card (it computes in the computer's memory), else the
     processor, each said. The person's own choice is kept as before.
+  * The translations lane's corrections to 0.2.16's sentences in de, es, fr,
+    ja, ko, pl, zh_CN and zh_TW (order46g, 24 corrections).
 
  -- Daniel Ramos (Capitain Jack) <Capitain_Jack@yahoo.com>  ${SOURCE_DATE_RFC2822:?}
 
