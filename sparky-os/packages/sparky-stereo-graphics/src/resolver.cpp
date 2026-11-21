@@ -35,12 +35,77 @@ QString powerProfileToString(PowerProfile profile)
     return u"balanced"_s;
 }
 
-Resolver::Resolver(const QList<Gpu> &gpus, const QString &savedMainGpu, const ProfileReading &profile, const QString &measuredBest)
+Resolver::Resolver(const QList<Gpu> &gpus, const QString &savedMainGpu, const ProfileReading &profile, const QString &measuredBest,
+                   const QString &partnersBest)
     : m_gpus(gpus)
     , m_savedMain(savedMainGpu)
     , m_profile(profile)
     , m_measuredBest(measuredBest)
+    , m_partnersBest(partnersBest)
 {
+}
+
+static QString pciIdOf(const Gpu &gpu)
+{
+    return QStringLiteral("%1:%2").arg(gpu.vendorId, 4, 16, QLatin1Char('0')).arg(gpu.deviceId, 4, 16, QLatin1Char('0'));
+}
+
+int Resolver::partnersMeasuredIndex() const
+{
+    if (m_partnersBest.isEmpty()) {
+        return -1;
+    }
+    for (int i = 0; i < m_gpus.size(); ++i) {
+        const Gpu &gpu = m_gpus.at(i);
+        if ((gpu.id == m_partnersBest || pciIdOf(gpu) == m_partnersBest) && gpu.usable()) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+bool Resolver::holdsPartnersModel(const Gpu &gpu)
+{
+    return gpu.kind == GpuKind::Integrated || gpu.memory == 0 || gpu.memory >= partnersModelMemory;
+}
+
+Resolution Resolver::resolvePartnersAutomatic() const
+{
+    // ORDER 70, the main session's ruling of 2026-11-21: a record measured on the machine decides (the A10: the Carrizo,
+    // 3.73 tokens a second against the Hainan's 3.17 and the processor's 3.43, the whole model in its memory against 12%);
+    // on a machine without one, a card whose own memory cannot hold the model the page proposes is not Automatic's pick.
+    // The order below is the lane's reading for Daniel to read, not his words.
+    const int measured = partnersMeasuredIndex();
+    if (measured >= 0) {
+        return make(measured, u"measured"_s);
+    }
+    const bool recordMissing = !m_partnersBest.isEmpty();
+    int renderers = 0;
+    for (const Gpu &gpu : m_gpus) {
+        renderers += gpu.usable() ? 1 : 0;
+    }
+    const int presenting = presentingIndex();
+    if (presenting >= 0 && holdsPartnersModel(m_gpus.at(presenting))) {
+        return make(presenting, recordMissing ? u"measured-missing"_s : renderers <= 1 ? u"only-gpu"_s : u"unmeasured"_s);
+    }
+    int best = -1;
+    for (int i = 0; i < m_gpus.size(); ++i) {
+        const Gpu &gpu = m_gpus.at(i);
+        if (gpu.usable() && gpu.kind == GpuKind::Discrete && gpu.memory >= partnersModelMemory && (best < 0 || gpu.memory > m_gpus.at(best).memory)) {
+            best = i;
+        }
+    }
+    if (best < 0) {
+        best = firstOfKind(GpuKind::Integrated);
+    }
+    if (best >= 0) {
+        return make(best, u"unmeasured-memory"_s);
+    }
+    // no card here can hold the model: the processor, said as Automatic's answer
+    Resolution resolution;
+    resolution.reason = u"cpu-memory"_s;
+    resolution.isMain = false;
+    return resolution;
 }
 
 int Resolver::measuredIndex() const
@@ -293,6 +358,9 @@ Resolution Resolver::resolveChoice(const QString &choice, Category category, boo
     const int main = mainIndex();
     if (main < 0) {
         return {}; // no GPU: nothing to choose
+    }
+    if (choice == u"auto"_s && category == Category::Partners) {
+        return resolvePartnersAutomatic();
     }
     int renderers = 0;
     for (const Gpu &gpu : m_gpus) {
