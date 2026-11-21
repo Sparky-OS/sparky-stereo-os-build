@@ -1,4 +1,29 @@
 -------------------------------------------------------------------------------
+  Version 0.1.43 (2026-11-21)
+-------------------------------------------------------------------------------
+  * A file under a dpkg diversion is judged where dpkg keeps it (rows 629 and 802). dpkg puts the diverting package's
+    own copy at the path and every other package's copy at the name dpkg-divert gave it (dpkg-divert(1), --package:
+    "package is the name of a package whose copy of file will not be diverted"); --verify, post-invoke, pre-invoke,
+    --restore and --repair read a record of the path at its path, so on the published edition, untouched, --verify
+    said "CHANGED /etc/skel/.bashrc (changed by the person)" (bash's record read on sparky-stereo-console's file), and
+    with sparky-stereo-boot 0.1.11 "CHANGED /etc/grub.d/10_linux (changed by the person)"; an edit of bash's copy, at
+    /etc/skel/.bashrc.debian, was never seen. Now the owner's record is read at the diverted name and a line about it
+    says where ("..., at NAME: PACKAGE's copy, diverted by OTHER"); the diverting package's copy at the path is that
+    package's (its lc1 manifest judges it). A really changed file still fails at either place, and an edit is kept.
+    An lc1 package's row is read at the diverted name too: --verify --deep called plymouth's plymouthd.defaults,
+    which sparky-stereo-plymouth diverts, "changed after the install"
+  * The owner's copy under another package's diversion is projected where dpkg keeps it, so its record follows its
+    upgrades; the diverting package's own copy, a copy the person set aside with dpkg-divert --local, and any file at
+    a diverted name are left alone, as before (a record made before a local diversion is still judged where the copy is)
+  * A projected conffile that is the same in two versions of its package keeps its record under the new version.
+    dpkg keeps such a file on disk, post-invoke deleted the record of the old version, and the scan found the lean
+    bytes "already projected", so no record came back; the next version that changed the file made dpkg ask
+    "Modified locally since installation" about a file nobody touched (exit 1 with no terminal, a .dpkg-new left)
+  * test/diversions-test.sh: the untouched case, the edited replacement, the edited original, the owner upgraded
+    under the diversion (its conffile the same, then changed), restore, the diversion removed again, an edit kept
+    through both, the diversion made before the owner is installed, and the conffile kept across two versions
+
+-------------------------------------------------------------------------------
   Version 0.1.42 (2026-11-18)
 -------------------------------------------------------------------------------
   * Carry Lean Code 0.1.30 (main's toolkit): the Go adapter for build inputs

@@ -639,18 +639,53 @@ def package_files(P, info):
         return []
 
 
-def diversions(P):
-    """dpkg diversions: a diverted path holds another package's file; such paths are left alone."""
-    out = set()
+def diversion_table(P):
+    """{path: (diverted name, diverting package or None)}: dpkg's diversions, three lines each in
+    /var/lib/dpkg/diversions (the path, the name it is diverted to, the diverting package or ':' for a local one;
+    src/main/divertdb.c). dpkg puts the diverting package's own copy at the path and every other package's copy at the
+    diverted name (dpkg-divert(1): --package "is the name of a package whose copy of file will not be diverted"); a
+    local diversion diverts every package's copy."""
+    out = {}
     try:
         with open(P.real('/var/lib/dpkg/diversions'), encoding='utf-8', errors='surrogateescape') as f:
             lines = f.read().split('\n')
         for k in range(0, len(lines) - 2, 3):
-            out.add(lines[k])
-            out.add(lines[k + 1])
+            out[lines[k]] = (lines[k + 1], None if lines[k + 2] == ':' else lines[k + 2])
     except FileNotFoundError:
         pass
     return out
+
+
+def diversions(P):
+    """Both names of every dpkg diversion."""
+    return {n for path, (to, _) in diversion_table(P).items() for n in (path, to)}
+
+
+def on_disk(P, path, package, table=None):
+    """Where dpkg keeps PACKAGE's copy of PATH: at PATH, or at the name a diversion gives every package but the
+    diverting one (rows 629 and 802: --verify read a diverted conffile's record at its path, where the diverting
+    package's file is, and called an untouched system "changed by the person")."""
+    row = (diversion_table(P) if table is None else table).get(path)
+    if row and row[1] != package.split(':')[0]:
+        return P.real(row[0])
+    return P.real(path)
+
+
+def diverted_note(path, package, table):
+    """', at NAME: PACKAGE's copy, diverted by OTHER' for a line of --verify about a diverted file, else ''."""
+    row = table.get(path)
+    if not row or row[1] == package.split(':')[0]:
+        return ''
+    return f", at {row[0]}: {package}'s copy, diverted by {row[1] or 'a local diversion'}"
+
+
+def diverted_away(path, package, table):
+    """True when PACKAGE's copy of PATH is not projected because of a diversion: PACKAGE diverts the path itself (its
+    own copy stays at the path, and its lc1 manifest judges it; the record of the path is its owner's copy), or the
+    diversion is a local one (dpkg-divert --local: the person set every package's copy aside, and it stays as they
+    left it). Under another package's diversion the owner's copy is projected where dpkg keeps it."""
+    row = table.get(path)
+    return bool(row) and (row[1] is None or row[1] == package.split(':')[0])
 
 
 def _work(args):
@@ -854,7 +889,11 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
     # may still list the path from before it moved (a Replaces takeover takes the path out of the old
     # package's file list and leaves its md5sums as they were, src/main/unpack.c)
     confs = conffiles(P, db)
-    div = diversions(P)
+    # under another package's diversion, the path's record is its owner's copy, projected where dpkg keeps it (the
+    # diverted name); the diverting package's own copy at the path, a copy a local diversion set aside, and any file at
+    # a diverted name are left alone (0.1.43, rows 629/802)
+    divs = diversion_table(P)
+    moved = {to for to, _ in divs.values()}
     # a shared file of a Multi-Arch: same package is recorded once, for the instance that projected it: the tables of
     # the other architectures' instances are read too, so their projection is seen (0.1.27, ORDER 363)
     tables = set(pkgs) | {t for k in pkgs for t in twins(k, everything)} if names else None
@@ -889,8 +928,9 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
         own = package_files(P, info)
         data_read = data_readers(P, own)
         for path in own:
-            if path in held or path in div or (only is not None and path not in only):
+            if path in held or path in moved or diverted_away(path, name, divs) or (only is not None and path not in only):
                 continue
+            real = on_disk(P, path, name, divs)
             if path in data_read:
                 # another file of the package reads it as data (Zig's @embedFile): it stays as authored
                 if path in files and files[path]['package'] == name:
@@ -904,9 +944,9 @@ def project_packages(P, names, jobs, image=False, log=print, only=None, known=No
                 # our dpkg replaced with the package's bytes when it unpacked this instance): the worker only looks
                 # whether it is still lean (a file back in its package's bytes is projected again, a changed one is
                 # left alone)
-                tasks.append((path, P.real(path), name, (rec['sha_orig'], rec['sha_lean'])))
+                tasks.append((path, real, name, (rec['sha_orig'], rec['sha_lean'])))
                 continue
-            tasks.append((path, P.real(path), name, (known or {}).get(path)))
+            tasks.append((path, real, name, (known or {}).get(path)))
     t0 = time.time()
     done = skipped = same = 0
     pys = []
@@ -1253,10 +1293,11 @@ def pre_invoke(P, action=None):
         restored = []
     listed = set(restored)
     owners, metadata, refused = None, {}, []
+    divs = diversion_table(P)
     for path, rec in files.items():
         if rec.get('conffile') != '1' or (only is not None and rec['package'] not in only):
             continue
-        real = P.real(path)
+        real = on_disk(P, path, rec['package'], divs)
         if not size_may_be(real, rec.get('bytes_lean')):
             continue                 # not the lean form's size: the person's edit, or already its package's bytes
         try:
@@ -1332,13 +1373,14 @@ def post_invoke(P, jobs):
     # a recorded conffile in its package's bytes was restored for some dpkg run and never projected again
     # (that run stopped before its post-invoke, or its list was lost): it is projected now, like the list
     listed = set(restored)
+    divs = diversion_table(P)
     for path, rec in conf_idx.items():
         if rec.get('conffile') != '1' or rec['package'] in ch or path in listed:
             continue
-        if not size_may_be(P.real(path), rec.get('bytes_orig')):
+        if not size_may_be(on_disk(P, path, rec['package'], divs), rec.get('bytes_orig')):
             continue                 # not the original's size: the projection, or the person's edit
         try:
-            with open(P.real(path), 'rb') as f:
+            with open(on_disk(P, path, rec['package'], divs), 'rb') as f:
                 if sha256(f.read()) == rec['sha_orig']:
                     restored.append(path)
         except OSError:
@@ -1398,7 +1440,7 @@ def post_invoke(P, jobs):
             # installed it (a migration earlier in this hook, which leaves packages.tsv as it was): the files
             # themselves say which of them dpkg replaced
             try:
-                with open(P.real(path), 'rb') as f:
+                with open(on_disk(P, path, rec['package'], divs), 'rb') as f:
                     data = f.read()
                 cur = sha256(data)
             except FileNotFoundError:
@@ -1418,13 +1460,30 @@ def post_invoke(P, jobs):
                     continue
             if owner in same_version:
                 again.add(path)      # (a package whose version changed is projected whole below)
+        elif rec.get('conffile') == '1':
+            # a new version whose conffile is the one the record names (dpkg keeps the file on disk when the two
+            # versions ship the same conffile): the projection stays, and so does its record, under the new version.
+            # Deleted here until 0.1.42, the record never came back (the scan found the lean bytes "already
+            # projected"), and the next version that changed the file made dpkg ask "Modified locally since
+            # installation" about a file nobody touched
+            if conf is None:
+                conf = conffiles(P, db)
+            try:
+                with open(on_disk(P, path, rec['package'], divs), 'rb') as f:
+                    cur = sha256(f.read())
+            except FileNotFoundError:
+                cur = None
+            if cur == rec['sha_lean'] and conf.get(owner, {}).get(path) == rec.get('md5_orig'):
+                files[path] = dict(rec, version=pkgs[owner][0])
+                dirty = True
+                continue
         del files[path]
         dirty = True
     for path in restored:
         rec = files.get(path)
         if not rec:
             continue
-        real = P.real(path)
+        real = on_disk(P, path, rec['package'], divs)
         try:
             with open(real, 'rb') as f:
                 data = f.read()
@@ -1482,7 +1541,7 @@ def removed_conffile_back(P, path, rec, db):
     if not stanza or not stanza.get('Status', '').endswith(' config-files') \
             or stanza.get('Conffiles', {}).get(path) != rec.get('md5_orig'):
         return False
-    real = P.real(path)
+    real = on_disk(P, path, rec['package'])
     if not size_may_be(real, rec.get('bytes_lean')):
         return False
     try:
@@ -1518,7 +1577,7 @@ class Heirs:
 
     def find(self, path, rec):
         try:
-            with open(self.P.real(path), 'rb') as f:
+            with open(on_disk(self.P, path, rec['package']), 'rb') as f:
                 if sha256(f.read()) != rec['sha_lean']:
                     return None
         except OSError:
@@ -2024,6 +2083,7 @@ def verify(P, names, deep=False):
     # --deep files whose original could not be had: never counted as checked (U57)
     unchecked = {}
     deb_errors = {}
+    divs = diversion_table(P)
     for name, obj in lc_package.installed(P, names or None).items():
         if names and name not in names and name.split(':')[0] not in names:
             continue
@@ -2036,23 +2096,26 @@ def verify(P, names, deep=False):
             if not deep and row['status'] != 'projected':
                 continue
             path = row['path']
+            # a file another package diverts is judged where dpkg keeps this package's copy (0.1.43, rows 629/802)
+            real = on_disk(P, path, name, divs)
             try:
                 if row['kind'] == 'file':
-                    good = not os.path.islink(P.real(path)) and lc_package.file_hash(P.real(path)) == row['sha256']
+                    good = not os.path.islink(real) and lc_package.file_hash(real) == row['sha256']
                 else:
-                    good = os.path.islink(P.real(path)) and os.readlink(P.real(path)) == row['target']
+                    good = os.path.islink(real) and os.readlink(real) == row['target']
             except OSError:
                 good = False
             if good:
                 continue
-            if row['status'] != 'projected' and os.path.lexists(P.real(path)):
+            if row['status'] != 'projected' and os.path.lexists(real):
                 # --deep checks the rows dpkg-stereo did not project too, for the payload's own bytes: a maintainer
                 # script, a trigger or the person may rewrite one after the install (depmod's modules.dep, the
                 # os-release and issue files), and dpkg-stereo leaves it; it is said, not counted
-                print(f'AFTERINST {path} ({text("LOCAL78")})')
+                print(f'AFTERINST {path} ({text("LOCAL78")}{diverted_note(path, name, divs)})')
                 unprojected += 1
                 continue
-            print(f'LCCHANGED {path} (differs from its build-time payload; user edits remain untouched)')
+            print(f'LCCHANGED {path} (differs from its build-time payload{diverted_note(path, name, divs)}; '
+                  'user edits remain untouched)')
             bad += 1
     sums_cache = {}
     owners = dict(_installed(P, db))
@@ -2067,22 +2130,23 @@ def verify(P, names, deep=False):
     for path, rec in items:
         if names and rec['package'].split(':')[0] not in names and rec['package'] not in names:
             continue
+        note = diverted_note(path, rec['package'], divs)
         try:
-            with open(P.real(path), 'rb') as f:
+            with open(on_disk(P, path, rec['package'], divs), 'rb') as f:
                 data = f.read()
         except FileNotFoundError:
-            print(f'MISSING   {path}')
+            print(f'MISSING   {path}{" (" + note[2:] + ")" if note else ""}')
             bad += 1
             continue
         h = sha256(data)
         if h != rec['sha_lean'] and h == rec['sha_orig']:
             print(f'RESTORED  {path} (its package\'s own bytes, not projected: the next dpkg run or '
-                  f'dpkg-stereo --project projects it again)')
+                  f'dpkg-stereo --project projects it again{note})')
             back += 1
             continue
         if h != rec['sha_lean']:
             what = 'changed by the person' if rec.get('conffile') == '1' else 'changed since projection'
-            print(f'CHANGED   {path} ({what})')
+            print(f'CHANGED   {path} ({what}{note})')
             bad += 1
             continue
         if pkgs.get(rec['package'], ('',))[0] != rec['version']:
@@ -2345,6 +2409,7 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None, fetc
         return package.partition(':')[2] or instance(package).get('Architecture') or None
 
     files = Records(P, 'records', pkgs)
+    divs = diversion_table(P)
     groups = {}
     for path, rec in files.items():
         groups.setdefault((rec['package'], rec['version']), []).append(path)
@@ -2422,7 +2487,7 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None, fetc
         for path in paths:
             rec = files[path]
             try:
-                with open(P.real(path), 'rb') as f:
+                with open(on_disk(P, path, rec['package'], divs), 'rb') as f:
                     data = f.read()
             except FileNotFoundError:
                 del files[path]
@@ -2457,7 +2522,7 @@ def restore(P, names, drop_hold=False, pkgs=None, log=print, progress=None, fetc
                 fail += 1
                 why = ('other-bytes', f'{package}: {path}: {reason}: {detail}; current bytes kept', None)
                 continue
-            real = P.real(path)
+            real = on_disk(P, path, rec['package'], divs)
             write_lean(real, data, orig, os.lstat(real))
             if path.endswith('.py'):
                 pys.append(real)
@@ -2753,7 +2818,7 @@ def repair_conffile_owners(P, jobs=4, pkgs=None):
         if rec['reason'] != PERSON_CHANGED or rec['package'] not in pkgs:
             continue
         try:
-            with open(P.real(path), 'rb') as f:
+            with open(on_disk(P, path, rec['package']), 'rb') as f:
                 data = f.read()
         except OSError:
             continue
