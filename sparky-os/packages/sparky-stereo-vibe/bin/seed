@@ -28,15 +28,21 @@ def match_device(name, devices):
 
 def gpu_facts():
     try:
-        choice = subprocess.run(['sparky-stereo-gpu-env', '--app', 'vibe.desktop', '--print', 'gpu'],
+        choice = subprocess.run(['sparky-stereo-gpu-env', '--app', 'vibe.desktop', '--print', 'id'],
                                 text=True, capture_output=True, timeout=15)
         if choice.returncode:
             print(choice.stderr.strip(), file=sys.stderr)
             return None, False
+        inventory = json.loads(subprocess.run(['sparky-stereo-gpu-env', '--list', '--json'],
+                                             text=True, capture_output=True, timeout=15, check=True).stdout)
+        selected = [gpu for gpu in inventory if gpu.get('id') == choice.stdout.strip()]
+        name = selected[0].get('name', '') if len(selected) == 1 else ''
+        if sum(gpu.get('name', '').casefold() == name.casefold() for gpu in inventory) != 1:
+            name = ''
         result = subprocess.run(['vibe-server', 'devices'], text=True, capture_output=True,
                                 timeout=30, check=True)
         devices = json.loads(result.stdout)
-        return match_device(choice.stdout, devices), bool(devices)
+        return match_device(name, devices), bool(devices)
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
         notice = 'Mapeamento de GPU indisponível; gpuDevice permanece nulo' if PT else 'Vibe GPU mapping unavailable; keeping gpuDevice null'
         print(f'{notice}: {error}', file=sys.stderr)
